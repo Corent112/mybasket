@@ -1,0 +1,204 @@
+/* ============================================================
+   app/accompagnement/accompagnement.css
+   Styles partagés des pages Accompagnement (MyBasket)
+   Design identique à la maquette d'origine.
+   ============================================================ */
+
+.acc-scope {
+  --bordeaux: #6B1A2C;
+  --bordeaux-d: #4A0F1E;
+  --or: #D4A24C;
+  --or-d: #B8842C;
+  --or-l: #E8C078;
+  --orange: #E87722;
+  --orange-d: #D45F0D;
+  --noir: #0F0F12;
+  --blanc: #FFFFFF;
+  --gris-med: #C8C8C8;
+  --gris-text: #6B6B6B;
+  --rouge: #E63946;
+  --varsity: 'Alfa Slab One', serif;
+  --body: 'Roboto', sans-serif;
+
+  font-family: var(--body);
+  color: var(--noir);
+  background: var(--blanc);
+}
+
+.acc-container { max-width: 1200px; margin: 0 auto; padding: 0 1.25rem; }
+.acc-container--narrow { max-width: 1100px; }
+.acc-section { padding: 1.5rem 0 3rem; }
+
+/* ---- Back link ---- */
+.acc-back { text-align: left; margin: 1.25rem 0 0; }
+.acc-btn-outline {
+  display: inline-flex; align-items: center; gap: .4rem;
+  padding: .35rem .85rem; border-radius: 999px;
+  border: 1.5px solid var(--noir); color: var(--noir);
+  background: transparent; font-size: .82rem; font-weight: 500;
+  transition: .15s; cursor: pointer;
+}
+.acc-btn-outline:hover { background: var(--noir); color: var(--blanc); }
+
+/* ---- Barre de titre (page d'accueil) ---- */
+.acc-title-bar { position: relative; text-align: center; margin: 2.5rem 0 1.5rem; }
+.acc-title-bar h2 {
+  font-family: var(--varsity); font-size: clamp(1.4rem, 2.5vw, 2rem);
+  letter-spacing: .05em; color: var(--noir);
+  display: inline-block; background: var(--blanc); padding: 0 1.5rem;
+  position: relative; z-index: 1;
+}
+.acc-title-bar::before, .acc-title-bar::after {
+  content: ''; position: absolute; top: 50%; left: 50%;
+  transform: translate(-50%, -50%); height: 5px; background: var(--noir);
+  width: 78%; max-width: 680px;
+}
+.acc-title-bar::after { top: calc(50% + 14px); }
+
+.acc-intro { text-align: center; color: var(--gris-text); margin: .85rem auto 1.5rem; max-width: 680px; }
+.acc-subtitle { text-align: center; font-family: var(--varsity); font-size: 1.2rem; margin: 1.5rem 0 .85rem; letter-spacing: .04em; }
+
+/* ---- Titre universitaire centré (sous-pages) ---- */
+.acc-hero { text-align: center; margin: 2rem 0 .5rem; }
+.acc-hero h1 {
+  font-family: var(--varsity); font-size: clamp(2rem, 5vw, 3.4rem);
+  letter-spacing: .06em; margin: 0; color: var(--noir); line-height: 1.05;
+}
+.acc-hero-rule {
+  width: 120px; height: 3px;
+  background: linear-gradient(90deg, transparent, var(--noir) 20%, var(--noir) 80%, transparent);
+  margin: .85rem auto 0;
+}
+
+/* ---- Valeurs ---- */
+.values-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 1.75rem; padding: 1.5rem 0; text-align: center; }
+.value-card .ico { font-size: 3rem; margin-bottom: .55rem; }
+.value-card h3 { font-family: var(--varsity); letter-spacing: .05em; color: var(--bordeaux); margin-bottom: .55rem; font-size: 1.25rem; }
+.value-card p { font-size: 1.05rem; color: var(--gris-text); line-height: 1.5; }
+
+/* ---- Cartes services (accueil) ---- */
+.services-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 1.25rem; padding: 1.5rem 0; }
+.acc-card {
+  background: var(--blanc); border: 1px solid var(--gris-med); border-radius: 4px;
+  padding: 1.5rem; cursor: pointer; transition: .2s; display: block; color: inherit;
+}
+.acc-card:hover { transform: translateY(-3px); box-shadow: 0 8px 20px rgba(0,0,0,.1); border-color: var(--or); }
+.acc-card-img {
+  width: 100%; aspect-ratio: 1.1; background: #fff; display: flex;
+  align-items: center; justify-content: center; margin-bottom: .6rem;
+  border-radius: 8px; overflow: hidden;
+}
+.acc-card-img img { max-width: 80%; max-height: 80%; object-fit: contain; }
+.acc-card h3 { font-family: var(--varsity); font-size: 1.25rem; margin: .65rem 0 .35rem; letter-spacing: .04em; }
+.acc-card .acc-card-role { font-size: .8rem; color: var(--gris-text); margin-bottom: .85rem; letter-spacing: .04em; }
+.acc-card .acc-card-more { margin-top: .85rem; color: var(--bordeaux); font-weight: 600; font-size: .85rem; }
+
+/* ---- Grille 2 colonnes (sous-pages) ---- */
+.acc-grid { display: grid; grid-template-columns: 1.4fr 1fr; gap: 3rem; align-items: center; margin-top: 2.5rem; }
+.acc-grid--even { grid-template-columns: 1fr 1fr; gap: 2rem; align-items: start; margin-top: 1.5rem; }
+
+.acc-text { line-height: 1.75; color: #1A1A1E; }
+.acc-text p { font-size: .96rem; margin-bottom: .85rem; }
+.acc-text p.lead { font-size: 1.05rem; margin: 0 0 1rem; }
+.acc-text p.italic { font-style: italic; color: #555; }
+.acc-text ul { margin: 0 0 1rem 1.2rem; padding: 0; font-size: .93rem; line-height: 1.85; }
+
+.acc-note {
+  font-size: .96rem; margin-bottom: 0; padding: .8rem 1rem;
+  background: linear-gradient(90deg, rgba(232,119,34,.08), transparent);
+  border-left: 4px solid var(--orange); border-radius: 4px;
+}
+
+/* ---- Illustration carrée ---- */
+.acc-illus { display: flex; align-items: center; justify-content: center; }
+.acc-illus-box {
+  width: 100%; max-width: 340px; aspect-ratio: 1; border: 2px solid var(--noir);
+  border-radius: 18px; display: flex; align-items: center; justify-content: center;
+  position: relative; overflow: hidden;
+}
+.acc-illus-box--light { background: linear-gradient(135deg, #FFFAF0 0%, #FFF 60%, #FAFAFA 100%); box-shadow: 0 12px 40px rgba(0,0,0,.08); }
+.acc-illus-box--dark { background: linear-gradient(135deg, #0F0F12 0%, #2A2A2E 100%); box-shadow: 0 12px 40px rgba(0,0,0,.18); }
+.acc-illus-inner { position: relative; text-align: center; z-index: 2; }
+.acc-illus-emoji { font-size: 5rem; line-height: 1; }
+.acc-illus-label { font-family: var(--varsity); font-size: .95rem; letter-spacing: .08em; margin-top: .6rem; color: var(--noir); font-weight: 700; }
+.acc-illus-label--light { color: #fff; }
+.acc-illus-sub { font-size: .72rem; color: #555; letter-spacing: .04em; text-transform: uppercase; margin-top: .2rem; }
+.acc-illus-sub--light { color: #bbb; }
+.acc-blob { position: absolute; border-radius: 50%; }
+.acc-blob--orange { top: -30px; right: -30px; width: 120px; height: 120px; background: radial-gradient(circle, var(--orange), var(--orange-d)); opacity: .92; }
+.acc-blob--noir { bottom: -40px; left: -40px; width: 140px; height: 140px; background: radial-gradient(circle, var(--noir), #2A2A2E); opacity: .95; }
+.acc-ring { position: absolute; border-radius: 50%; border: 5px solid var(--orange); }
+.acc-ring--1 { top: -30px; right: -30px; width: 120px; height: 120px; opacity: .7; }
+.acc-ring--2 { bottom: -40px; left: -40px; width: 140px; height: 140px; opacity: .5; }
+.acc-play {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 110px; height: 110px; background: rgba(255,255,255,.08);
+  border: 3px solid var(--orange); border-radius: 50%; margin-bottom: .85rem;
+  box-shadow: 0 0 30px rgba(232,119,34,.25);
+}
+.acc-play span { width: 0; height: 0; border-top: 22px solid transparent; border-bottom: 22px solid transparent; border-left: 34px solid var(--orange); margin-left: 8px; }
+
+/* ---- Panneau "Notre accompagnement" (clair) ---- */
+.acc-panel { margin-top: 3rem; padding: 2rem; background: #FAF7F0; border-radius: 12px; border: 1px solid #E8E2D0; }
+.acc-panel h2 { font-family: var(--varsity); letter-spacing: .05em; font-size: 1.3rem; margin: 0 0 1.2rem; text-align: center; color: var(--noir); }
+.acc-tile-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: .85rem; }
+.acc-tile {
+  background: #fff; padding: 1rem 1.2rem; border-radius: 8px; border-left: 4px solid var(--orange);
+  box-shadow: 0 2px 6px rgba(0,0,0,.04); transition: transform .2s, box-shadow .2s;
+}
+.acc-tile:hover { transform: translateY(-2px); box-shadow: 0 6px 16px rgba(0,0,0,.1); }
+.acc-tile .ico { font-size: 1.3rem; margin-bottom: .3rem; }
+.acc-tile .lbl { font-weight: 700; font-size: .92rem; color: var(--noir); }
+
+/* ---- Panneau "Ce que nous livrons" (sombre) ---- */
+.acc-panel--dark { background: var(--noir); color: #fff; border: none; }
+.acc-panel--dark h2 { color: #fff; }
+.acc-deliver-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 1rem; }
+.acc-deliver {
+  background: rgba(255,255,255,.05); padding: 1rem; border-radius: 8px;
+  border-left: 4px solid var(--orange); transition: background .2s;
+}
+.acc-deliver:hover { background: rgba(232,119,34,.15); }
+.acc-deliver .ico { font-size: 1.5rem; margin-bottom: .3rem; }
+.acc-deliver .lbl { font-weight: 700; font-size: .92rem; margin-bottom: .2rem; }
+.acc-deliver .desc { font-size: .78rem; color: #bbb; }
+
+/* ---- CTA ---- */
+.acc-cta { text-align: center; margin: 2.5rem 0 1rem; }
+.acc-cta-btn {
+  background: var(--noir); color: #fff; border: 2px solid var(--noir);
+  padding: 1rem 3rem; border-radius: 50px; font-family: var(--varsity);
+  font-size: 1.05rem; letter-spacing: .08em; font-weight: 700; cursor: pointer;
+  transition: all .25s; box-shadow: 0 6px 20px rgba(0,0,0,.15);
+  display: inline-flex; align-items: center; gap: .5rem;
+}
+.acc-cta-btn:hover { background: var(--orange); border-color: var(--orange); transform: translateY(-2px); box-shadow: 0 10px 30px rgba(232,119,34,.4); }
+.acc-cta-note { font-size: .78rem; color: #666; margin-top: .5rem; }
+
+/* ---- Formation : formats & tarifs ---- */
+.acc-format-list { list-style: none; padding: 0; margin-top: .85rem; }
+.acc-format-item { padding: .7rem 1rem; background: #FAF7F0; border-left: 3px solid var(--or); margin-bottom: .4rem; border-radius: 4px; }
+.acc-format-item span { font-size: .85rem; color: var(--gris-text); }
+.acc-block-title { font-family: var(--varsity); letter-spacing: .04em; font-size: 1.1rem; }
+.acc-price { margin-top: 1.5rem; padding: 1rem; background: linear-gradient(135deg, var(--or), #B8861F); color: var(--noir); border-radius: 8px; }
+.acc-price b { font-family: var(--varsity); letter-spacing: .04em; }
+.acc-price span { font-size: .85rem; }
+
+/* ---- Formulaire ---- */
+.acc-form { display: grid; gap: .85rem; background: #fff; border: 1px solid var(--gris-med); border-radius: 8px; padding: 1.2rem; }
+.acc-form-row { display: grid; grid-template-columns: 135px 1fr; gap: .85rem; align-items: center; }
+.acc-form-row label { font-weight: 700; font-size: .9rem; text-transform: uppercase; letter-spacing: .03em; }
+.acc-form-row input, .acc-form-row select, .acc-form-row textarea { background: var(--gris-med); border: none; padding: .55rem .95rem; border-radius: 999px; font-size: .92rem; }
+.acc-form-row textarea { border-radius: 8px; min-height: 80px; resize: vertical; }
+.acc-form-row input:focus, .acc-form-row select:focus, .acc-form-row textarea:focus { outline: 2px solid var(--bordeaux); background: var(--blanc); }
+.acc-form-submit {
+  width: 100%; background: var(--noir); color: var(--blanc); border: none;
+  padding: .7rem 1.25rem; border-radius: 999px; font-weight: 500; cursor: pointer; transition: .15s;
+}
+.acc-form-submit:hover { background: var(--bordeaux); transform: translateY(-1px); }
+
+/* ---- Responsive ---- */
+@media (max-width: 768px) {
+  .acc-grid, .acc-grid--even { grid-template-columns: 1fr; }
+  .acc-form-row { grid-template-columns: 1fr; gap: .3rem; }
+}

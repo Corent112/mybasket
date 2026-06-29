@@ -1,0 +1,305 @@
+.adminSettings {
+  background:
+    radial-gradient(circle at top left, rgba(212, 162, 76, 0.14), transparent 34%),
+    linear-gradient(180deg, #fffaf2 0%, #f7f7f8 42%, #ffffff 100%);
+  min-height: 100vh;
+  padding: 30px 40px 80px;
+}
+
+.container {
+  width: calc(100vw - 80px);
+  max-width: 1800px;
+  margin: 0 auto;
+}
+
+.backLink {
+  display: inline-flex;
+  margin-bottom: 18px;
+  color: #6b1a2c;
+  font-weight: 900;
+  text-decoration: none;
+  border: 1px solid rgba(107, 26, 44, 0.22);
+  background: white;
+  padding: 10px 15px;
+  border-radius: 999px;
+  font-size: 13px;
+}
+
+.hero {
+  background:
+    radial-gradient(circle at top right, rgba(212, 162, 76, 0.32), transparent 34%),
+    linear-gradient(135deg, #210913, #6b1a2c);
+  color: white;
+  border-radius: 18px;
+  padding: 32px 36px;
+  box-shadow: 0 18px 45px rgba(33, 9, 19, 0.18);
+}
+
+.hero p {
+  text-transform: uppercase;
+  color: #d4a24c;
+  font-size: 12px;
+  letter-spacing: 0.16em;
+  font-weight: 1000;
+  margin: 0 0 8px;
+}
+
+.hero h1 {
+  margin: 0;
+  font-size: clamp(34px, 4vw, 52px);
+  line-height: 0.95;
+  text-transform: uppercase;
+}
+
+.hero span {
+  display: block;
+  margin-top: 8px;
+  color: rgba(255, 255, 255, 0.82);
+  font-weight: 650;
+  max-width: 900px;
+}
+
+.statsGrid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 16px;
+  margin: 24px 0;
+}
+
+.statCard,
+.card,
+.tableCard,
+.defaultCard {
+  background: white;
+  border: 1px solid rgba(107, 26, 44, 0.08);
+  box-shadow: 0 15px 35px rgba(0, 0, 0, 0.05);
+}
+
+.statCard {
+  border-radius: 16px;
+  padding: 23px 16px;
+  text-align: center;
+  overflow: hidden;
+}
+
+.statCard strong {
+  display: block;
+  font-size: 28px;
+  color: #6b1a2c;
+  line-height: 1;
+  word-break: break-word;
+}
+
+.statCard span {
+  display: block;
+  margin-top: 10px;
+  font-size: 12px;
+  text-transform: uppercase;
+  color: #777;
+  font-weight: 1000;
+}
+
+.green strong {
+  color: #16a34a;
+}
+
+.red strong {
+  color: #dc2626;
+}
+
+.gold strong {
+  color: #d4a24c;
+}
+
+.dark strong {
+  color: #111827;
+}
+
+.card {
+  border-radius: 20px;
+  padding: 22px;
+  margin-bottom: 22px;
+}
+
+.cardHead {
+  margin-bottom: 16px;
+}
+
+.cardHead h2,
+.tableHead h2 {
+  margin: 0;
+  color: #221;
+  font-size: 21px;
+}
+
+.cardHead span,
+.tableHead span {
+  display: block;
+  margin-top: 5px;
+  color: #777;
+  font-weight: 800;
+  font-size: 13px;
+}
+
+.form {
+  display: grid;
+  grid-template-columns: 220px 1fr 180px 1fr 170px;
+  gap: 11px;
+}
+
+.form input,
+.form button {
+  min-height: 48px;
+  border: 1px solid #ddd;
+  border-radius: 13px;
+  padding: 0 14px;
+  font-weight: 850;
+  background: white;
+}
+
+.form button {
+  background: #6b1a2c;
+  color: white;
+  cursor: pointer;
+  border-color: #6b1a2c;
+}
+
+.defaultGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
+  gap: 14px;
+}
+
+.defaultCard {
+  border-radius: 16px;
+  padding: 16px;
+  display: grid;
+  gap: 8px;
+}
+
+.defaultCard strong {
+  color: #6b1a2c;
+}
+
+.defaultCard span {
+  font-weight: 900;
+  color: #111;
+}
+
+.defaultCard p {
+  margin: 0;
+  color: #777;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.defaultCard button {
+  border: none;
+  border-radius: 999px;
+  background: #6b1a2c;
+  color: white;
+  padding: 10px 14px;
+  font-weight: 1000;
+  cursor: pointer;
+}
+
+.tableCard {
+  border-radius: 20px;
+  overflow: hidden;
+}
+
+.tableHead {
+  padding: 20px 24px;
+  border-bottom: 1px solid #ececec;
+  display: flex;
+  justify-content: space-between;
+}
+
+.tableWrapper {
+  overflow-x: auto;
+}
+
+.tableWrapper table {
+  width: 100%;
+  min-width: 1050px;
+  border-collapse: collapse;
+}
+
+.tableWrapper th {
+  text-align: left;
+  font-size: 12px;
+  color: #6b1a2c;
+  text-transform: uppercase;
+  background: #faf7f4;
+  padding: 16px 18px;
+  border-bottom: 1px solid #e8ded8;
+}
+
+.tableWrapper td {
+  padding: 18px;
+  border-bottom: 1px solid #efefef;
+  color: #333;
+  font-weight: 650;
+  font-size: 14px;
+}
+
+.tableWrapper tr:hover td {
+  background: #fffaf2;
+}
+
+.tableWrapper form {
+  display: inline-flex;
+}
+
+.dangerBtn {
+  border: 1px solid #fecaca;
+  background: #fee2e2;
+  color: #991b1b;
+  border-radius: 999px;
+  padding: 9px 13px;
+  text-decoration: none;
+  font-size: 12px;
+  font-weight: 1000;
+  cursor: pointer;
+}
+
+.emptyState {
+  text-align: center;
+  padding: 35px 20px;
+  color: #777;
+  font-weight: 900;
+}
+
+@media (max-width: 1200px) {
+  .statsGrid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+
+  .form {
+    grid-template-columns: 1fr;
+  }
+
+  .container {
+    width: calc(100vw - 48px);
+  }
+
+  .adminSettings {
+    padding-left: 24px;
+    padding-right: 24px;
+  }
+}
+
+@media (max-width: 760px) {
+  .statsGrid {
+    grid-template-columns: 1fr;
+  }
+
+  .container {
+    width: calc(100vw - 32px);
+  }
+
+  .adminSettings {
+    padding-left: 16px;
+    padding-right: 16px;
+  }
+}

@@ -1,0 +1,168 @@
+@import url('https://fonts.googleapis.com/css2?family=Alfa+Slab+One&family=Roboto:wght@400;500;700;900&display=swap');
+
+/* =========================================================================
+   MyBasket — Mon compte > Mes équipes (thème clair bordeaux/or) — CSS Modules
+   ========================================================================= */
+.wrap {
+  --bordeaux: #6B1A2C;
+  --bordeaux-2: #561522;
+  --gold: #D4A24C;
+  --gold-2: #C28F38;
+  --gold-soft: #F5E6CC;
+  --page: #FAF7F2;
+  --card: #ffffff;
+  --border: #ECE3D6;
+  --ink: #1F1A17;
+  --muted: #8A7F73;
+  --emerald: #2E8B57;
+  --red: #C0392B;
+  --font-display: 'Alfa Slab One', Georgia, serif;
+  --font-body: 'Roboto', system-ui, sans-serif;
+
+  min-height: 100vh;
+  background: var(--page);
+  color: var(--ink);
+  font-family: var(--font-body);
+  padding: 20px 16px 48px;
+  -webkit-font-smoothing: antialiased;
+}
+.wrap * { box-sizing: border-box; }
+.wrap img { display: block; max-width: 100%; }
+@media (min-width: 768px) { .wrap { padding: 28px 24px 56px; } }
+
+/* -------------------------------- boutons ------------------------------- */
+.btn { display: inline-flex; align-items: center; justify-content: center; gap: 8px; border: none; cursor: pointer; font-family: var(--font-body); font-weight: 700; font-size: 14px; padding: 10px 16px; border-radius: 12px; transition: .15s; white-space: nowrap; }
+.btnGold { background: var(--gold); color: #3a2a0e; }
+.btnGold:hover { background: var(--gold-2); }
+.btnOutline { background: var(--card); border: 1.5px solid var(--gold); color: var(--bordeaux); }
+.btnOutline:hover { background: var(--gold-soft); }
+
+/* ----------------------------- liste équipes ---------------------------- */
+.listHead { display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; flex-wrap: wrap; margin-bottom: 22px; }
+.listTitle { font-family: var(--font-display); font-size: 30px; color: var(--bordeaux); line-height: 1; }
+.listSub { margin-top: 8px; font-size: 14px; color: var(--muted); }
+.teamGrid { display: grid; grid-template-columns: 1fr; gap: 18px; }
+@media (min-width: 700px) { .teamGrid { grid-template-columns: repeat(2, 1fr); } }
+@media (min-width: 1100px) { .teamGrid { grid-template-columns: repeat(3, 1fr); } }
+.teamCard { background: var(--card); border: 1px solid var(--border); border-radius: 18px; padding: 20px; box-shadow: 0 6px 20px rgba(107, 26, 44, .05); }
+.teamCardName { margin-top: 14px; font-family: var(--font-display); font-size: 20px; color: var(--bordeaux); line-height: 1.1; }
+.teamCardSub { font-size: 13px; color: var(--muted); margin-top: 2px; }
+.teamCardFoot { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 16px; }
+.count { font-size: 13px; font-weight: 700; color: var(--muted); }
+
+/* chips */
+.chips { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+.chip { background: var(--gold-soft); color: #7a5a1c; font-size: 11px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; padding: 5px 12px; border-radius: 999px; }
+
+/* -------------------------------- back ---------------------------------- */
+.backLink { display: inline-flex; align-items: center; gap: 5px; background: none; border: none; cursor: pointer; color: var(--bordeaux); font-weight: 700; font-size: 14px; padding: 0; margin-bottom: 14px; }
+.backLink:hover { color: var(--gold-2); }
+
+/* ----------------------------- barre MyBasket --------------------------- */
+.topbar { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; justify-content: space-between; background: var(--card); border: 1px solid var(--border); border-radius: 16px; padding: 14px 18px; box-shadow: 0 6px 20px rgba(107, 26, 44, .05); }
+.brand { display: inline-flex; align-items: center; gap: 10px; }
+.brandBall { display: inline-flex; }
+.brandText { font-family: var(--font-display); font-size: 22px; color: var(--bordeaux); }
+.brandAccent { color: var(--gold); }
+.season { display: inline-flex; align-items: center; gap: 7px; font-size: 14px; font-weight: 500; color: var(--ink); }
+.topActions { display: flex; gap: 10px; flex-wrap: wrap; }
+
+/* ------------------------------- identité ------------------------------- */
+.identity { display: flex; align-items: center; gap: 20px; margin-top: 22px; }
+.logoTile { display: grid; place-items: center; border-radius: 18px; background: var(--bordeaux); color: #fff; overflow: hidden; flex-shrink: 0; box-shadow: 0 8px 24px rgba(107, 26, 44, .18); }
+.logoTile img { width: 100%; height: 100%; object-fit: cover; }
+.idInfo { min-width: 0; }
+.teamTitle { font-family: var(--font-display); font-size: 34px; color: var(--bordeaux); line-height: 1; text-transform: uppercase; }
+.teamSub { display: flex; align-items: center; gap: 10px; margin-top: 8px; font-size: 15px; font-weight: 500; color: var(--ink); }
+.dot { width: 8px; height: 8px; border-radius: 50%; background: var(--gold); display: inline-block; }
+@media (max-width: 560px) { .teamTitle { font-size: 26px; } .identity { gap: 14px; } }
+
+/* ----------------------------- bandeau stats ---------------------------- */
+.statsCard { margin-top: 20px; background: var(--card); border: 1px solid var(--border); border-radius: 16px; display: grid; grid-template-columns: repeat(3, 1fr); box-shadow: 0 6px 20px rgba(107, 26, 44, .05); overflow: hidden; }
+@media (min-width: 768px) { .statsCard { grid-template-columns: repeat(6, 1fr); } }
+.statCell { padding: 18px 12px; text-align: center; border-right: 1px solid var(--border); border-bottom: 1px solid var(--border); }
+.statCell:nth-child(3n) { border-right: none; }
+@media (min-width: 768px) { .statCell { border-bottom: none; } .statCell:nth-child(3n) { border-right: 1px solid var(--border); } .statCell:last-child { border-right: none; } }
+.statIcon { color: var(--gold); }
+.statValue { font-family: var(--font-display); font-size: 26px; color: var(--ink); line-height: 1; margin-top: 8px; }
+.statLabel { margin-top: 7px; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
+
+/* -------------------------------- bannière ------------------------------ */
+.banner { margin-top: 20px; height: 230px; border-radius: 18px; overflow: hidden; background-size: cover; background-position: center; background-color: var(--bordeaux); background-image: linear-gradient(135deg, var(--bordeaux), #3a0e18 60%, var(--gold-2)); display: grid; place-items: center; box-shadow: 0 10px 30px rgba(107, 26, 44, .12); }
+.bannerPh { font-family: var(--font-display); font-size: 40px; color: rgba(255, 255, 255, .85); letter-spacing: .04em; text-transform: uppercase; }
+@media (max-width: 560px) { .banner { height: 160px; } .bannerPh { font-size: 28px; } }
+
+/* --------------------------------- panneaux ----------------------------- */
+.panel { margin-top: 20px; background: var(--card); border: 1px solid var(--border); border-radius: 18px; padding: 20px; box-shadow: 0 6px 20px rgba(107, 26, 44, .05); }
+.panelHead { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 16px; }
+.panelTitle { display: inline-flex; align-items: center; gap: 8px; font-family: var(--font-display); font-size: 16px; color: var(--bordeaux); letter-spacing: .03em; }
+.panelRight { font-size: 13px; font-weight: 700; color: var(--muted); }
+.addMini { display: grid; place-items: center; width: 32px; height: 32px; border-radius: 10px; border: 1.5px solid var(--gold); background: var(--card); color: var(--bordeaux); cursor: pointer; transition: .15s; }
+.addMini:hover { background: var(--gold-soft); }
+.panelEmpty { font-size: 14px; color: var(--muted); padding: 12px 0; }
+.empty { display: flex; flex-direction: column; align-items: center; gap: 10px; text-align: center; color: var(--muted); padding: 32px 16px; }
+
+/* --------------------------------- effectif ----------------------------- */
+.effectifGrid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 14px; }
+@media (min-width: 560px) { .effectifGrid { grid-template-columns: repeat(3, 1fr); } }
+@media (min-width: 900px) { .effectifGrid { grid-template-columns: repeat(4, 1fr); } }
+@media (min-width: 1200px) { .effectifGrid { grid-template-columns: repeat(6, 1fr); } }
+.pCard { position: relative; border: 1px solid var(--border); border-radius: 16px; padding: 16px 10px 14px; text-align: center; cursor: pointer; background: var(--card); transition: .16s; }
+.pCard:hover { border-color: var(--gold); transform: translateY(-3px); box-shadow: 0 8px 22px rgba(107, 26, 44, .08); }
+.pEdit { position: absolute; top: 8px; right: 8px; display: grid; place-items: center; width: 26px; height: 26px; border-radius: 8px; border: none; background: var(--gold-soft); color: var(--bordeaux); cursor: pointer; opacity: 0; transition: .15s; }
+.pCard:hover .pEdit { opacity: 1; }
+.pAvatarWrap { position: relative; width: max-content; margin: 0 auto; }
+.pAvatar { display: grid; place-items: center; border-radius: 50%; overflow: hidden; background: #0F0F12; color: var(--gold); font-family: var(--font-display); border: 2px solid var(--gold-soft); }
+.pAvatar img { width: 100%; height: 100%; object-fit: cover; }
+.pNum { position: absolute; top: -4px; right: -4px; min-width: 24px; height: 24px; padding: 0 6px; border-radius: 999px; background: var(--bordeaux); color: #fff; font-size: 11px; font-weight: 700; display: grid; place-items: center; border: 2px solid var(--card); }
+.pName { margin-top: 12px; font-size: 14px; font-weight: 700; color: var(--ink); line-height: 1.2; }
+.pPoste { margin-top: 4px; font-size: 13px; font-weight: 700; color: var(--gold-2); }
+
+/* --------------------------- staff + événements ------------------------- */
+.bottomGrid { display: grid; grid-template-columns: 1fr; gap: 20px; }
+@media (min-width: 900px) { .bottomGrid { grid-template-columns: 1fr 1fr; } }
+
+.staffList { display: flex; flex-direction: column; gap: 12px; }
+.staffRow { display: flex; align-items: center; gap: 14px; background: #FBF7F1; border: 1px solid var(--border); border-radius: 14px; padding: 12px 14px; }
+.staffAvatar { display: grid; place-items: center; width: 46px; height: 46px; border-radius: 50%; background: var(--bordeaux); color: #fff; font-weight: 700; font-size: 15px; flex-shrink: 0; }
+.staffInfo { flex: 1; min-width: 0; }
+.staffName { font-weight: 700; font-size: 15px; color: var(--ink); }
+.roleChip { display: inline-block; margin-top: 4px; background: var(--gold-soft); color: #7a5a1c; font-size: 10px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; padding: 3px 9px; border-radius: 999px; }
+.staffChev { color: var(--muted); flex-shrink: 0; }
+
+.evList { display: flex; flex-direction: column; }
+.evRow { display: flex; align-items: center; gap: 14px; padding: 14px 4px; border-bottom: 1px solid var(--border); }
+.evRow:last-child { border-bottom: none; }
+.evIcon { display: grid; place-items: center; width: 44px; height: 44px; border-radius: 50%; background: var(--gold-soft); color: var(--bordeaux); flex-shrink: 0; }
+.evInfo { flex: 1; min-width: 0; }
+.evTitle { font-weight: 700; font-size: 14px; color: var(--ink); }
+.evMeta { font-size: 13px; color: var(--muted); margin-top: 2px; }
+.evPlace { font-size: 13px; color: var(--muted); }
+.evChev { color: var(--muted); flex-shrink: 0; }
+
+.footerBtn { display: inline-flex; align-items: center; justify-content: center; gap: 8px; width: 100%; margin-top: 16px; padding: 11px; border-radius: 12px; border: 1.5px solid var(--gold); background: var(--card); color: var(--bordeaux); font-weight: 700; font-size: 14px; cursor: pointer; transition: .15s; font-family: var(--font-body); }
+.footerBtn:hover { background: var(--gold-soft); }
+
+/* --------------------------------- footer ------------------------------- */
+.footerDivider { display: flex; align-items: center; gap: 16px; margin-top: 32px; }
+.footerDivider span { flex: 1; height: 2px; background: linear-gradient(90deg, transparent, var(--gold), transparent); }
+
+/* --------------------------------- modal -------------------------------- */
+.modalOverlay { position: fixed; inset: 0; z-index: 50; display: flex; align-items: flex-start; justify-content: center; overflow-y: auto; background: rgba(31, 26, 23, .5); padding: 16px; backdrop-filter: blur(3px); }
+.modal { margin: 32px 0; width: 100%; max-width: 580px; border-radius: 18px; border: 1px solid var(--border); background: var(--card); box-shadow: 0 20px 60px rgba(31, 26, 23, .25); }
+.modalHead { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; border-bottom: 1px solid var(--border); padding: 20px; }
+.modalTitle { font-family: var(--font-display); font-size: 20px; color: var(--bordeaux); }
+.modalClose { background: none; border: none; color: var(--muted); cursor: pointer; }
+.modalClose:hover { color: var(--bordeaux); }
+.modalBody { padding: 20px; }
+.modalFoot { display: flex; justify-content: flex-end; gap: 8px; border-top: 1px solid var(--border); padding: 16px 20px; }
+.formGrid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+@media (max-width: 520px) { .formGrid { grid-template-columns: 1fr; } }
+.field { display: flex; flex-direction: column; gap: 5px; }
+.fieldFull { grid-column: 1 / -1; }
+.fieldLabel { font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
+.input { width: 100%; border-radius: 10px; border: 1.5px solid var(--border); background: #FCFAF6; padding: 9px 12px; font-size: 14px; color: var(--ink); outline: none; font-family: var(--font-body); }
+.input:focus { border-color: var(--gold); }
+
+/* --------------------------------- toast -------------------------------- */
+.toast { position: fixed; bottom: 24px; left: 50%; z-index: 60; transform: translateX(-50%); border-radius: 999px; background: var(--bordeaux); padding: 10px 18px; font-size: 14px; font-weight: 700; color: #fff; box-shadow: 0 12px 30px rgba(107, 26, 44, .35); }
