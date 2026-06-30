@@ -461,10 +461,43 @@ const currentRef = useRef(current);
   const getBallCurrentPoint = (): Pt | null => {
     const ph = phasesRef.current[currentRef.current]; return ph ? simulatePhase(ph).ballPt : null;
   };
+
+  // Porteurs de balle à la fin de la phase courante.
+  // Règle MyBasket :
+  // - chaque joueur qui a un ballon associé est porteur ;
+  // - plusieurs joueurs peuvent donc être porteurs dans la même phase ;
+  // - une passe transfère uniquement le ballon du joueur source vers le receveur ;
+  // - un tir enlève uniquement le ballon du tireur.
+  const getBallCurrentOwners = (): Set<string> => {
+    const ph = phasesRef.current[currentRef.current];
+    const owners = new Set<string>();
+
+    if (!ph) return owners;
+
+    ph.players.forEach((player) => {
+      if (player.hasBall) owners.add(player.id);
+    });
+
+    orderedActions(ph).forEach((line) => {
+      const sourceId = line.sourcePlayerId || null;
+
+      if (line.action === 'pass') {
+        if (sourceId) owners.delete(sourceId);
+        if (line.targetPlayerId) owners.add(line.targetPlayerId);
+      }
+
+      if (line.action === 'shoot') {
+        if (sourceId) owners.delete(sourceId);
+      }
+    });
+
+    return owners;
+  };
+
   // le joueur a-t-il le ballon au moment où une NOUVELLE action démarrerait (= après les actions existantes) ?
-  // Important : on utilise la simulation de phase, pas seulement l'état initial.
-  // Ainsi, si 1 passe à 2, alors 2 peut directement dribbler / passer / tirer dans la même phase.
-  const playerHasBallAtActionStart = (playerId: string): boolean => getBallCurrentOwner() === playerId;
+  // Important : tous les joueurs avec un ballon associé sont considérés comme porteurs.
+  const playerHasBallAtActionStart = (playerId: string): boolean =>
+    getBallCurrentOwners().has(playerId);
   // point de départ effectif d'une trajectoire (suit le joueur source / la fin de sa dernière action)
   const resolveFrom = (l: Line): Pt => {
     if (l.sourcePlayerId) { const ph = phasesRef.current[currentRef.current]; const pos = ph ? lineStartN(ph, l) : null; if (pos) return pos; }
