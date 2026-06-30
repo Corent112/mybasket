@@ -815,11 +815,17 @@ const currentRef = useRef(current);
   // Lignes visibles à l'écran.
   // En mode édition : on affiche tout.
   // En animation : on affiche uniquement l'action en cours, puis elle disparaît.
-  const lineRenderEntries = (ph: Phase): { line: Line; opacity: number }[] => {
+  const lineRenderEntries = (
+    ph: Phase
+  ): { line: Line; opacity: number; eraseProgress: number }[] => {
     const anim = animPosRef.current;
 
     if (!anim) {
-      return ph.lines.map((line) => ({ line, opacity: 1 }));
+      return ph.lines.map((line) => ({
+        line,
+        opacity: 1,
+        eraseProgress: 0,
+      }));
     }
 
     const sched = scheduleRef.current;
@@ -844,14 +850,87 @@ const currentRef = useRef(current);
     return activePhase.actSched
       .filter((a) => local >= a.start && local <= a.end)
       .map((a) => {
-        const progress = Math.max(0, Math.min(1, (local - a.start) / Math.max(1, a.dur)));
+        const progress = Math.max(
+          0,
+          Math.min(1, (local - a.start) / Math.max(1, a.dur))
+        );
 
-        // L'action reste bien visible au début, puis disparaît sur la fin du mouvement.
-        const opacity = progress < 0.78 ? 1 : Math.max(0, 1 - (progress - 0.78) / 0.22);
+        return {
+          line: a.line,
+          opacity: 1,
+          eraseProgress: progress,
+        };
+      });
+  };
 
-        return { line: a.line, opacity };
-      })
-      .filter((entry) => entry.opacity > 0.01);
+  const drawLineProgressiveErase = (
+    ctx: CanvasRenderingContext2D,
+    canvas: HTMLCanvasElement,
+    line: Line,
+    eraseProgress: number
+  ) => {
+    if (eraseProgress <= 0) {
+      drawLine(ctx, canvas, line);
+      return;
+    }
+
+    if (eraseProgress >= 1) return;
+
+    const poly = linePoly(canvas, line);
+
+    if (poly.length < 2) {
+      drawLine(ctx, canvas, line);
+      return;
+    }
+
+    const total = poly.reduce((sum, point, index) => {
+      if (index === 0) return sum;
+      const prev = poly[index - 1];
+      return sum + Math.hypot(point.x - prev.x, point.y - prev.y);
+    }, 0);
+
+    if (total <= 0) return;
+
+    const startDistance = total * eraseProgress;
+
+    let walked = 0;
+    const remaining: Pt[] = [];
+
+    for (let i = 1; i < poly.length; i += 1) {
+      const prev = poly[i - 1];
+      const cur = poly[i];
+      const seg = Math.hypot(cur.x - prev.x, cur.y - prev.y);
+
+      if (walked + seg < startDistance) {
+        walked += seg;
+        continue;
+      }
+
+      if (remaining.length === 0) {
+        const ratio = seg ? (startDistance - walked) / seg : 0;
+
+        remaining.push({
+          x: prev.x + (cur.x - prev.x) * ratio,
+          y: prev.y + (cur.y - prev.y) * ratio,
+        });
+      }
+
+      remaining.push(cur);
+      walked += seg;
+    }
+
+    if (remaining.length < 2) return;
+
+    const remainingLine: Line = {
+      ...line,
+      from: toNc(canvas, remaining[0]),
+      to: toNc(canvas, remaining[remaining.length - 1]),
+      points: remaining.map((point) => toNc(canvas, point)),
+      ctrls: [],
+      ctrl: undefined,
+    };
+
+    drawLine(ctx, canvas, remainingLine);
   };
 
 
@@ -864,10 +943,10 @@ const currentRef = useRef(current);
     const anim = animPosRef.current;
 
     const lineEntries = lineRenderEntries(ph);
-    lineEntries.forEach(({ line, opacity }) => {
+    lineEntries.forEach(({ line, opacity, eraseProgress }) => {
       ctx.save();
       ctx.globalAlpha = opacity;
-      drawLine(ctx, canvas, line);
+      drawLineProgressiveErase(ctx, canvas, line, eraseProgress);
       ctx.restore();
     });
 
@@ -1602,7 +1681,22 @@ animPosRef.current = { players, balls };
       // départ ancré au joueur (sa position OU la fin de sa dernière action), jamais le point cliqué
       const startN = getPlayerCurrentPoint(sourceId) || n;
       const isShoot = tool.action === 'shoot';
-      dragRef.current = { id: uid(), action: tool.action, sourcePlayerId: sourceId, from: startN, to: isShoot ? basketFor(courtType, startN) : n, rotation: 0, target: isShoot ? 'basket' : undefined, order: Date.now(), startMode: 'afterPrevious', duration: 1 };
+      const existingActions = orderedActions(ph);
+      const shouldStartWithPrevious = existingActions.length > 0;
+
+      dragRef.current = {
+        id: uid(),
+        action: tool.action,
+        sourcePlayerId: sourceId,
+        from: startN,
+        to: isShoot ? basketFor(courtType, startN) : n,
+        rotation: 0,
+        target: isShoot ? 'basket' : undefined,
+        order: Date.now(),
+        startMode: shouldStartWithPrevious ? 'withPrevious' : 'afterPrevious',
+        duration: 1,
+      };
+
       drawingRef.current = true; render();
     }
   };
