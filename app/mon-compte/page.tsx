@@ -233,7 +233,7 @@ export default function MonComptePage() {
         plan?.name?.toLowerCase().includes("club") === true;
     }
 
-    setHasClubSubscription(userIsAdmin || userHasClubSubscription);
+    setHasClubSubscription(true);
 
     const accessRes = await fetch("/api/access");
     const accessData = await accessRes.json();
@@ -461,26 +461,7 @@ const MENU_ACCESS: Record<string, string> = {
   club: "club_space",
 };
 
-const visibleMenu = MENU.filter((item) => {
-  if (isAdmin) return true;
-
-  if (
-    item.key === "profil" ||
-    item.key === "abonnement"
-  ) {
-    return true;
-  }
-
-  if (item.key === "club") {
-    return hasClubSubscription;
-  }
-
-  const accessKey = MENU_ACCESS[item.key];
-
-  if (!accessKey) return true;
-
-  return Boolean(accessMap[accessKey]);
-});
+const visibleMenu = MENU;
 
 return (
 

@@ -4,21 +4,34 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
 
+type HeaderUser = {
+  id: string;
+  email?: string | null;
+};
+
 export default function Header() {
   const supabase = createClient();
 
+  const [user, setUser] = useState<HeaderUser | null>(null);
   const [cartCount, setCartCount] = useState(0);
   const [cartPulse, setCartPulse] = useState(false);
 
   const previousCountRef = useRef(0);
   const pulseTimeoutRef = useRef<number | null>(null);
 
-  const loadCartCount = useCallback(async () => {
+  const loadUser = useCallback(async () => {
     const {
       data: { user },
     } = await supabase.auth.getUser();
 
-    if (!user) {
+    setUser(user ? { id: user.id, email: user.email } : null);
+    return user;
+  }, [supabase]);
+
+  const loadCartCount = useCallback(async () => {
+    const currentUser = await loadUser();
+
+    if (!currentUser) {
       setCartCount(0);
       previousCountRef.current = 0;
       return;
@@ -27,7 +40,7 @@ export default function Header() {
     const { data, error } = await supabase
       .from("cart_items")
       .select("quantity,item_type")
-      .eq("user_id", user.id)
+      .eq("user_id", currentUser.id)
       .in("item_type", ["product", "subscription"]);
 
     if (error) {
@@ -56,15 +69,27 @@ export default function Header() {
 
     previousCountRef.current = total;
     setCartCount(total);
-  }, [supabase]);
+  }, [loadUser, supabase]);
+
+  async function signOut() {
+    await supabase.auth.signOut();
+    setUser(null);
+    setCartCount(0);
+    window.location.href = "/";
+  }
 
   useEffect(() => {
     loadCartCount();
+
+    const { data } = supabase.auth.onAuthStateChange(() => {
+      loadCartCount();
+    });
 
     window.addEventListener("cart-updated", loadCartCount);
     window.addEventListener("focus", loadCartCount);
 
     return () => {
+      data.subscription.unsubscribe();
       window.removeEventListener("cart-updated", loadCartCount);
       window.removeEventListener("focus", loadCartCount);
 
@@ -72,7 +97,7 @@ export default function Header() {
         window.clearTimeout(pulseTimeoutRef.current);
       }
     };
-  }, [loadCartCount]);
+  }, [loadCartCount, supabase]);
 
   const resetPlaquette = () => {
     localStorage.removeItem("mybasket_plaquette_load");
@@ -131,10 +156,26 @@ export default function Header() {
           </nav>
 
           <div className="site-actions">
+            {user ? (
+              <div className="account-menu">
+                <Link href="/mon-compte" className="login-link account-trigger">
+                  MON COMPTE 👤
+                </Link>
 
-            <Link href="/connexion" className="login-link">
-              S&apos;IDENTIFIER 👤
-            </Link>
+                <div className="account-dropdown">
+                  <Link href="/mon-compte">TABLEAU DE BORD</Link>
+                  <Link href="/mon-compte/favoris">MES FAVORIS</Link>
+                  <Link href="/mon-compte/playbooks">MES PLAYBOOKS</Link>
+                  <button type="button" onClick={signOut}>
+                    DÉCONNEXION
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <Link href="/connexion" className="login-link">
+                S&apos;IDENTIFIER 👤
+              </Link>
+            )}
           </div>
         </div>
       </header>
@@ -153,11 +194,7 @@ export default function Header() {
             ▦
           </button>
 
-          <Link
-            href="/mon-compte/favoris"
-            className="icon-link"
-            aria-label="Favoris"
-          >
+          <Link href="/mon-compte/favoris" className="icon-link" aria-label="Favoris">
             ♥
           </Link>
 
@@ -168,12 +205,7 @@ export default function Header() {
               cartCount > 1 ? "s" : ""
             }`}
           >
-            <svg
-              className="cart-svg"
-              viewBox="0 0 64 54"
-              fill="none"
-              aria-hidden="true"
-            >
+            <svg className="cart-svg" viewBox="0 0 64 54" fill="none" aria-hidden="true">
               <path
                 d="M10 8H17L22 32C22.7 35.4 25.6 38 29.1 38H45.3C48.7 38 51.7 35.6 52.5 32.3L56 18H20"
                 stroke="white"
@@ -187,22 +219,8 @@ export default function Header() {
 
               {cartCount > 0 && (
                 <g className="badge-group">
-                  <circle
-                    cx="51"
-                    cy="12"
-                    r="10"
-                    fill="#d4a24c"
-                    stroke="#000"
-                    strokeWidth="3"
-                  />
-                  <text
-                    x="51"
-                    y="16"
-                    textAnchor="middle"
-                    fontSize="12"
-                    fontWeight="900"
-                    fill="#111"
-                  >
+                  <circle cx="51" cy="12" r="10" fill="#d4a24c" stroke="#000" strokeWidth="3" />
+                  <text x="51" y="16" textAnchor="middle" fontSize="12" fontWeight="900" fill="#111">
                     {cartCount > 99 ? "99" : cartCount}
                   </text>
                 </g>
@@ -280,14 +298,16 @@ export default function Header() {
           color: #6b1a2c;
         }
 
-        .nav-item {
+        .nav-item,
+        .account-menu {
           position: relative;
           height: 76px;
           display: flex;
           align-items: center;
         }
 
-        .dropdown {
+        .dropdown,
+        .account-dropdown {
           display: none;
           position: absolute;
           top: 76px;
@@ -302,10 +322,23 @@ export default function Header() {
           z-index: 2000;
         }
 
-        .dropdown :global(a) {
+        .account-dropdown {
+          right: 0;
+          left: auto;
+          transform: none;
+          min-width: 220px;
+        }
+
+        .dropdown :global(a),
+        .account-dropdown :global(a),
+        .account-dropdown button {
           display: block;
+          width: 100%;
           padding: 16px 18px;
           color: #111;
+          background: #fff;
+          border: 0;
+          text-align: left;
           text-transform: uppercase;
           text-decoration: none;
           font-family: Arial, Roboto, sans-serif;
@@ -313,14 +346,18 @@ export default function Header() {
           font-weight: 900;
           line-height: 1.2;
           white-space: nowrap;
+          cursor: pointer;
         }
 
-        .dropdown :global(a:hover) {
+        .dropdown :global(a:hover),
+        .account-dropdown :global(a:hover),
+        .account-dropdown button:hover {
           background: #f5f2eb;
           color: #6b1a2c;
         }
 
-        .nav-item:hover .dropdown {
+        .nav-item:hover .dropdown,
+        .account-menu:hover .account-dropdown {
           display: block;
         }
 
@@ -329,16 +366,6 @@ export default function Header() {
           justify-content: flex-end;
           align-items: center;
           gap: 12px;
-        }
-
-        .site-actions select {
-          height: 32px;
-          border: 1px solid #ddd;
-          border-radius: 6px;
-          background: #fff;
-          padding: 0 8px;
-          font-size: 12px;
-          font-weight: 800;
         }
 
         .blackbar {
@@ -508,36 +535,18 @@ export default function Header() {
         }
 
         @keyframes cartBounce {
-          0% {
-            transform: scale(1);
-          }
-          30% {
-            transform: scale(1.16) rotate(-5deg);
-          }
-          55% {
-            transform: scale(0.94) rotate(3deg);
-          }
-          80% {
-            transform: scale(1.05) rotate(0deg);
-          }
-          100% {
-            transform: scale(1);
-          }
+          0% { transform: scale(1); }
+          30% { transform: scale(1.16) rotate(-5deg); }
+          55% { transform: scale(0.94) rotate(3deg); }
+          80% { transform: scale(1.05) rotate(0deg); }
+          100% { transform: scale(1); }
         }
 
         @keyframes badgePop {
-          0% {
-            transform: scale(1);
-          }
-          35% {
-            transform: scale(1.35);
-          }
-          70% {
-            transform: scale(0.9);
-          }
-          100% {
-            transform: scale(1);
-          }
+          0% { transform: scale(1); }
+          35% { transform: scale(1.35); }
+          70% { transform: scale(0.9); }
+          100% { transform: scale(1); }
         }
 
         @media (max-width: 1200px) {

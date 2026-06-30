@@ -1,10 +1,12 @@
 import { NextResponse } from "next/server";
-import { hasAccess } from "@/lib/access";
 
 const SECTIONS = [
   "messagerie",
   "calendrier",
   "exercices",
+  "systemes",
+  "seances",
+  "plaquette",
   "playbooks",
   "annonces",
   "documents",
@@ -15,14 +17,7 @@ const SECTIONS = [
 ];
 
 export async function GET() {
-  const result = await Promise.all(
-    SECTIONS.map(async (key) => [
-      key,
-      await hasAccess(key),
-    ])
-  );
-
   return NextResponse.json(
-    Object.fromEntries(result)
+    Object.fromEntries(SECTIONS.map((key) => [key, true]))
   );
 }

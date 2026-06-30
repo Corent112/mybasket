@@ -44,7 +44,6 @@ function getAnnonce(id: string): Annonce | null {
     if (!Array.isArray(list)) return null;
 
     const found = list.find((a: any) => String(a.id) === String(id));
-
     if (!found) return null;
 
     return {
