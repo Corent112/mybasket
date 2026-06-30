@@ -16,6 +16,37 @@ type PlatformRole = "user" | "ceo" | "superadmin" | string | null;
 type ReviewStatus = "draft" | "submitted" | "approved" | "rejected";
 type Visibility = "private" | "public";
 
+const AGE_CATEGORIES = ["U9", "U11", "U13", "U15", "U18", "U21", "Senior"];
+
+function normalizeCategory(value: unknown): string {
+  if (typeof value !== "string") return "";
+
+  const clean = value.trim();
+  if (!clean) return "";
+
+  const found = AGE_CATEGORIES.find(
+    (category) => category.toLowerCase() === clean.toLowerCase()
+  );
+
+  return found ?? "";
+}
+
+function isAgeCategory(value: unknown): boolean {
+  return Boolean(normalizeCategory(value));
+}
+
+function normalizeThemes(value: unknown, fallback?: unknown): string[] {
+  const fromMain = toArray(value);
+  const fromFallback = toArray(fallback);
+
+  return [...fromMain, ...fromFallback]
+    .map((item) => item.trim())
+    .filter(Boolean)
+    .filter((item, index, array) => array.indexOf(item) === index)
+    .filter((item) => !isAgeCategory(item));
+}
+
+
 function showSupabaseError(label: string, error: any) {
   const message =
     error?.message ||
@@ -106,16 +137,19 @@ function rowToExercise(row: any): Exercise {
     ? row.schema_data_list
     : [];
 
+  const category = normalizeCategory(row.categorie ?? row.category);
+  const themes = normalizeThemes(row.themes ?? row.tags, row.theme);
+
   return {
     id: row.id,
     title: row.title ?? "",
 
-    theme: row.themes?.[0] ?? row.theme ?? "",
-    themes: row.themes ?? [],
+    theme: themes[0] ?? "",
+    themes,
 
     type: row.type ?? "",
-    category: row.categorie ?? row.category ?? "",
-    categorie: row.categorie ?? row.category ?? "",
+    category,
+    categorie: category,
 
     level: row.niveau ?? row.level ?? "",
     niveau: row.niveau ?? row.level ?? "",
@@ -157,11 +191,7 @@ function rowToExercise(row: any): Exercise {
     paniers: row.paniers ?? "",
     joueurs: row.joueurs ?? "",
 
-    tags: Array.isArray(row.tags)
-      ? row.tags
-      : Array.isArray(row.themes)
-      ? row.themes
-      : [],
+    tags: themes,
 
     diagrams: schemaImages.map((img: string, index: number) => ({
       id: `schema_phase_${index + 1}`,
@@ -227,12 +257,12 @@ function exerciseToRow(ex: any, userId: string) {
     paniers: ex.paniers ?? null,
     joueurs: ex.joueurs ?? null,
 
-    categorie: ex.categorie ?? ex.category ?? "",
+    categorie: normalizeCategory(ex.categorie ?? ex.category),
     type: ex.type ?? "",
     niveau: ex.niveau ?? ex.level ?? "",
     temps: ex.temps ?? ex.duration ?? null,
 
-    themes: toArray(ex.themes ?? ex.tags ?? ex.theme),
+    themes: normalizeThemes(ex.themes ?? ex.tags ?? ex.theme),
     images: Array.isArray(ex.images) ? ex.images : [],
     videos: Array.isArray(ex.videos) ? ex.videos : [],
 
