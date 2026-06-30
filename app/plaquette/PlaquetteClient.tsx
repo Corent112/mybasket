@@ -462,20 +462,25 @@ const currentRef = useRef(current);
     const ph = phasesRef.current[currentRef.current]; return ph ? simulatePhase(ph).ballPt : null;
   };
 
-  // Porteurs de balle à la fin de la phase courante.
-  // Règle MyBasket :
-  // - chaque joueur qui a un ballon associé est porteur ;
-  // - plusieurs joueurs peuvent donc être porteurs dans la même phase ;
-  // - une passe transfère uniquement le ballon du joueur source vers le receveur ;
-  // - un tir enlève uniquement le ballon du tireur.
+  // Porteurs de balle disponibles pour créer la prochaine action.
+  // Règle MyBasket conservée : plusieurs ballons peuvent exister.
+  // - Tout joueur avec `hasBall` est porteur, même si un tir existe déjà dans la phase
+  //   (cas rebond : tu réassocies un ballon et le joueur peut rejouer).
+  // - Une passe transfère le ballon du joueur source vers le receveur.
+  // - Un tir enlève le ballon simulé du tireur, mais ne bloque pas un ballon réassocié ensuite.
   const getBallCurrentOwners = (): Set<string> => {
     const ph = phasesRef.current[currentRef.current];
     const owners = new Set<string>();
 
     if (!ph) return owners;
 
+    const associatedOwners = new Set<string>();
+
     ph.players.forEach((player) => {
-      if (player.hasBall) owners.add(player.id);
+      if (player.hasBall) {
+        owners.add(player.id);
+        associatedOwners.add(player.id);
+      }
     });
 
     orderedActions(ph).forEach((line) => {
@@ -491,13 +496,23 @@ const currentRef = useRef(current);
       }
     });
 
+    // Le bouton / panneau qui associe un ballon à un joueur doit toujours primer :
+    // si un joueur porte visuellement un ballon, il peut dribbler, passer ou tirer.
+    associatedOwners.forEach((id) => owners.add(id));
+
     return owners;
   };
 
-  // le joueur a-t-il le ballon au moment où une NOUVELLE action démarrerait (= après les actions existantes) ?
-  // Important : tous les joueurs avec un ballon associé sont considérés comme porteurs.
-  const playerHasBallAtActionStart = (playerId: string): boolean =>
-    getBallCurrentOwners().has(playerId);
+  // Le joueur peut démarrer une action avec ballon s'il est porteur simulé
+  // OU si un ballon lui est explicitement associé sur la phase.
+  const playerHasBallAtActionStart = (playerId: string): boolean => {
+    const ph = phasesRef.current[currentRef.current];
+    const hasAssociatedBall = Boolean(
+      ph?.players.some((player) => player.id === playerId && player.hasBall)
+    );
+
+    return hasAssociatedBall || getBallCurrentOwners().has(playerId);
+  };
   // point de départ effectif d'une trajectoire (suit le joueur source / la fin de sa dernière action)
   const resolveFrom = (l: Line): Pt => {
     if (l.sourcePlayerId) { const ph = phasesRef.current[currentRef.current]; const pos = ph ? lineStartN(ph, l) : null; if (pos) return pos; }
@@ -1690,7 +1705,7 @@ animPosRef.current = { players, balls };
       updatePhase((ph) => ({ ...ph, objects: [...ph.objects, { id: uid(), x: n.x, y: n.y, kind: tool.obj, rotation: 0 }] }));
       return;
     }
-    // « Donner ballon » : cliquer sur un joueur → il reçoit le ballon, les autres le perdent
+    // « Donner ballon » : cliquer sur un joueur → associe/retire un ballon à ce joueur (multi-ballons)
     if (tool.kind === 'action' && tool.action === 'giveball') {
       const hit = hitTest(canvas, getPx(e));
       if (hit && hit.type === 'player') { giveBall(hit.id); setSelection([hit]); }
