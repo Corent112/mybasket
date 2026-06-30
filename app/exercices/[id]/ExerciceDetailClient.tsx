@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
-import { getExercise } from "@/lib/exercises";
+import { getExercise, isCeoUser, updateExercise } from "@/lib/exercises";
 import type { Exercise } from "@/types/exercise";
 
 function normalizeList(value: unknown): string[] {
@@ -33,6 +33,56 @@ function statusLabel(status?: string | null) {
   return "Brouillon privé";
 }
 
+function getSchemaImages(exercise: Exercise | null): string[] {
+  if (!exercise) return [];
+
+  if (Array.isArray(exercise.schemaImages) && exercise.schemaImages.length) {
+    return exercise.schemaImages.filter(Boolean);
+  }
+
+  if (Array.isArray(exercise.diagrams) && exercise.diagrams.length) {
+    return exercise.diagrams
+      .map((diagram) => diagram.imageUrl)
+      .filter(Boolean) as string[];
+  }
+
+  if (exercise.schemaImage) return [exercise.schemaImage];
+
+  return [];
+}
+
+function getSchemaDataList(exercise: Exercise | null): any[] {
+  if (!exercise) return [];
+
+  if (Array.isArray(exercise.schemaDataList)) return exercise.schemaDataList;
+
+  if (Array.isArray(exercise.diagrams) && exercise.diagrams.length) {
+    return exercise.diagrams.map((diagram) => ({
+      phases: diagram.phases ?? [],
+    }));
+  }
+
+  if (exercise.schemaData) return [exercise.schemaData];
+
+  return [];
+}
+
+function getVideos(exercise: Exercise | null): string[] {
+  if (!exercise) return [];
+
+  const raw = (exercise as unknown as Record<string, unknown>).videos;
+
+  if (Array.isArray(raw)) {
+    return raw.map((video) => String(video)).filter(Boolean);
+  }
+
+  if (typeof raw === "string" && raw.trim()) {
+    return [raw.trim()];
+  }
+
+  return [];
+}
+
 export default function ExerciceDetailClient() {
   const router = useRouter();
   const params = useParams<{ id: string }>();
@@ -44,6 +94,8 @@ export default function ExerciceDetailClient() {
   const [current, setCurrent] = useState(0);
   const [addingSession, setAddingSession] = useState(false);
   const [addingFavorite, setAddingFavorite] = useState(false);
+  const [ceoMode, setCeoMode] = useState(false);
+  const [savingSchema, setSavingSchema] = useState(false);
 
   useEffect(() => {
     async function loadExercise() {
@@ -56,6 +108,9 @@ export default function ExerciceDetailClient() {
           router.replace("/abonnements");
           return;
         }
+
+        const ceo = await isCeoUser();
+        setCeoMode(ceo);
 
         if (!id) {
           setReady(true);
@@ -75,19 +130,97 @@ export default function ExerciceDetailClient() {
     loadExercise();
   }, [id, router, supabase]);
 
-  const images = useMemo(() => {
-    if (!exercise) return [];
+  useEffect(() => {
+    async function handlePlaquetteResult() {
+      if (!id) return;
 
-    if (exercise.diagrams?.length) {
-      return exercise.diagrams
-        .map((diagram) => diagram.imageUrl)
-        .filter(Boolean) as string[];
+      const rawResult = localStorage.getItem("mybasket_plaquette_result");
+      if (!rawResult) return;
+
+      try {
+        const result = JSON.parse(rawResult);
+
+        const targetType = result?.type ?? result?.targetType;
+        const targetId = result?.exerciseId ?? result?.targetId ?? result?.id;
+        const editIndex =
+          typeof result?.editIndex === "number"
+            ? result.editIndex
+            : Number(localStorage.getItem("mybasket_edit_schema_index"));
+
+        if (targetType && targetType !== "exercise") return;
+        if (targetId && String(targetId) !== String(id)) return;
+
+        const fresh = await getExercise(id);
+        if (!fresh) return;
+
+        const currentImages = getSchemaImages(fresh);
+        const currentData = getSchemaDataList(fresh);
+
+        const incomingImages: string[] =
+          Array.isArray(result?.schemaImages) && result.schemaImages.length
+            ? result.schemaImages
+            : result?.schemaImage
+            ? [result.schemaImage]
+            : [];
+
+        const incomingData: any[] =
+          Array.isArray(result?.schemaDataList) && result.schemaDataList.length
+            ? result.schemaDataList
+            : result?.schemaData
+            ? [result.schemaData]
+            : [];
+
+        if (!incomingImages.length) return;
+
+        let nextImages = [...currentImages];
+        let nextData = [...currentData];
+
+        if (Number.isFinite(editIndex) && editIndex >= 0) {
+          nextImages[editIndex] = incomingImages[0];
+          nextData[editIndex] = incomingData[0] ?? null;
+        } else {
+          nextImages = [...nextImages, ...incomingImages];
+          nextData = [...nextData, ...incomingData];
+        }
+
+        setSavingSchema(true);
+
+        const updated = await updateExercise(id, {
+          schemaImages: nextImages,
+          schemaDataList: nextData,
+          schemaImage: nextImages[0] ?? "",
+          schemaData: nextData[0] ?? null,
+          visibility: "public",
+          review_status: "approved",
+        } as Partial<Exercise>);
+
+        if (updated) {
+          setExercise(updated);
+          setCurrent(
+            Number.isFinite(editIndex) && editIndex >= 0
+              ? editIndex
+              : nextImages.length - 1
+          );
+        }
+
+        localStorage.removeItem("mybasket_plaquette_result");
+        localStorage.removeItem("mybasket_plaquette_load");
+        localStorage.removeItem("mybasket_edit_schema_index");
+        localStorage.removeItem("mybasket_edit_exercise_id");
+        localStorage.removeItem("mybasket_edit_schema_group_id");
+      } catch (error) {
+        console.error("Erreur retour plaquette :", error);
+      } finally {
+        setSavingSchema(false);
+      }
     }
 
-    if (exercise.schemaImages?.length) return exercise.schemaImages;
+    handlePlaquetteResult();
+  }, [id]);
 
-    return exercise.images ?? [];
-  }, [exercise]);
+  const images = useMemo(() => getSchemaImages(exercise), [exercise]);
+  const schemaDataList = useMemo(() => getSchemaDataList(exercise), [exercise]);
+  const videos = useMemo(() => getVideos(exercise), [exercise]);
 
   const steps = normalizeList(
     (exercise as unknown as Record<string, unknown> | null)?.deroulement
@@ -101,8 +234,6 @@ export default function ExerciceDetailClient() {
   const variantes = normalizeList(
     (exercise as unknown as Record<string, unknown> | null)?.variantes
   );
-
-  const videos = exercise?.videos ?? [];
 
   async function requireUser() {
     const {
@@ -224,6 +355,95 @@ export default function ExerciceDetailClient() {
     )}`;
   }
 
+  function addSchema() {
+    if (!exercise?.id) return;
+
+    localStorage.removeItem("mybasket_plaquette_result");
+    localStorage.removeItem("mybasket_plaquette_load");
+    localStorage.removeItem("mybasket_edit_schema_index");
+
+    localStorage.setItem("mybasket_edit_exercise_id", exercise.id);
+    localStorage.setItem("mybasket_edit_schema_group_id", "exercise_public_library");
+
+    window.location.href = `/plaquette?type=exercise&exerciseId=${encodeURIComponent(
+      exercise.id
+    )}`;
+  }
+
+  function editSchema(index: number) {
+    if (!exercise?.id) return;
+
+    const schemaImage = images[index] ?? "";
+    const schemaData = schemaDataList[index] ?? null;
+
+    if (!schemaImage && !schemaData) {
+      alert("Impossible de modifier ce schéma : données introuvables.");
+      return;
+    }
+
+    localStorage.removeItem("mybasket_plaquette_result");
+
+    localStorage.setItem("mybasket_edit_exercise_id", exercise.id);
+    localStorage.setItem("mybasket_edit_schema_index", String(index));
+    localStorage.setItem("mybasket_edit_schema_group_id", "exercise_public_library");
+
+    localStorage.setItem(
+      "mybasket_plaquette_load",
+      JSON.stringify({
+        type: "exercise",
+        exerciseId: exercise.id,
+        targetId: exercise.id,
+        editIndex: index,
+        schemaImage,
+        schemaImages: [schemaImage],
+        schemaData,
+        schemaDataList: [schemaData],
+        title: exercise.title || `Phase ${index + 1}`,
+      })
+    );
+
+    window.location.href = `/plaquette?type=exercise&exerciseId=${encodeURIComponent(
+      exercise.id
+    )}&editSchema=${index}`;
+  }
+
+  async function deleteSchema(index: number) {
+    if (!exercise?.id) return;
+
+    const ok = window.confirm(
+      `Supprimer définitivement le schéma ${index + 1} de la bibliothèque publique ?`
+    );
+
+    if (!ok) return;
+
+    const nextImages = images.filter((_, i) => i !== index);
+    const nextData = schemaDataList.filter((_, i) => i !== index);
+
+    setSavingSchema(true);
+
+    try {
+      const updated = await updateExercise(exercise.id, {
+        schemaImages: nextImages,
+        schemaDataList: nextData,
+        schemaImage: nextImages[0] ?? "",
+        schemaData: nextData[0] ?? null,
+        visibility: "public",
+        review_status: "approved",
+      } as Partial<Exercise>);
+
+      if (updated) {
+        setExercise(updated);
+        setCurrent((value) => {
+          if (nextImages.length === 0) return 0;
+          if (value >= nextImages.length) return nextImages.length - 1;
+          return value;
+        });
+      }
+    } finally {
+      setSavingSchema(false);
+    }
+  }
+
   function prevImage() {
     setCurrent((value) => (value <= 0 ? images.length - 1 : value - 1));
   }
@@ -295,6 +515,8 @@ export default function ExerciceDetailClient() {
         <button type="button" onClick={() => router.push("/exercices")}>
           ← Retour aux exercices
         </button>
+
+        {ceoMode && <div className="ceo-mini">CEO — édition bibliothèque publique</div>}
       </div>
 
       <section className="exo-hero">
@@ -334,8 +556,19 @@ export default function ExerciceDetailClient() {
             </button>
 
             <button type="button" className="dark" onClick={editExercise}>
-              Modifier
+              Modifier fiche
             </button>
+
+            {ceoMode && (
+              <button
+                type="button"
+                className="ceo"
+                onClick={addSchema}
+                disabled={savingSchema}
+              >
+                + Ajouter un schéma public
+              </button>
+            )}
           </div>
         </div>
 
@@ -360,7 +593,24 @@ export default function ExerciceDetailClient() {
       <div className="exo-layout">
         <section className="main-col">
           <article className="exo-card">
-            <h2>DESSIN DE L’EXERCICE</h2>
+            <div className="card-head">
+              <h2>DESSIN DE L’EXERCICE</h2>
+
+              {ceoMode && (
+                <button
+                  type="button"
+                  className="small-ceo"
+                  onClick={addSchema}
+                  disabled={savingSchema}
+                >
+                  + Ajouter
+                </button>
+              )}
+            </div>
+
+            {savingSchema && (
+              <div className="save-box">Mise à jour de la bibliothèque publique...</div>
+            )}
 
             {images.length > 0 ? (
               <>
@@ -380,6 +630,28 @@ export default function ExerciceDetailClient() {
                   )}
                 </div>
 
+                {ceoMode && (
+                  <div className="schema-actions">
+                    <button
+                      type="button"
+                      className="edit-schema"
+                      onClick={() => editSchema(current)}
+                      disabled={savingSchema}
+                    >
+                      Modifier ce schéma
+                    </button>
+
+                    <button
+                      type="button"
+                      className="delete-schema"
+                      onClick={() => deleteSchema(current)}
+                      disabled={savingSchema}
+                    >
+                      Supprimer ce schéma
+                    </button>
+                  </div>
+                )}
+
                 {images.length > 1 && (
                   <div className="thumbs">
                     {images.map((src, index) => (
@@ -390,15 +662,42 @@ export default function ExerciceDetailClient() {
                         onClick={() => setCurrent(index)}
                       >
                         <img src={src} alt={`Phase ${index + 1}`} />
+                        {ceoMode && <span>{index + 1}</span>}
                       </button>
                     ))}
                   </div>
                 )}
               </>
             ) : (
-              <div className="empty">Aucun schéma.</div>
+              <div className="empty">
+                <p>Aucun schéma.</p>
+
+                {ceoMode && (
+                  <button type="button" className="ceo" onClick={addSchema}>
+                    Créer le premier schéma public
+                  </button>
+                )}
+              </div>
             )}
           </article>
+
+          {videos.length > 0 && (
+            <article className="exo-card">
+              <h2>VIDÉO / ANIMATION</h2>
+
+              <div className="video-list">
+                {videos.map((src, index) => (
+                  <video
+                    key={`${src}-${index}`}
+                    src={src}
+                    controls
+                    playsInline
+                    className="exo-video"
+                  />
+                ))}
+              </div>
+            </article>
+          )}
 
           <article className="exo-card">
             <h2>OBJECTIF</h2>
@@ -519,6 +818,7 @@ export default function ExerciceDetailClient() {
           justify-content: space-between;
           align-items: center;
           margin-bottom: 20px;
+          gap: 12px;
         }
 
         button {
@@ -534,6 +834,15 @@ export default function ExerciceDetailClient() {
         button:disabled {
           opacity: 0.65;
           cursor: not-allowed;
+        }
+
+        .ceo-mini {
+          background: #111;
+          color: #fff;
+          border-radius: 999px;
+          padding: 9px 13px;
+          font-size: 12px;
+          font-weight: 900;
         }
 
         .badges {
@@ -591,6 +900,13 @@ export default function ExerciceDetailClient() {
 
         .exerciseActions .dark {
           background: #111;
+          color: white;
+        }
+
+        .exerciseActions .ceo,
+        .ceo,
+        .small-ceo {
+          background: #f47b20;
           color: white;
         }
 
@@ -673,11 +989,23 @@ export default function ExerciceDetailClient() {
           box-shadow: 0 8px 24px rgba(0, 0, 0, 0.04);
         }
 
+        .card-head {
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          gap: 12px;
+          margin-bottom: 18px;
+        }
+
         .exo-card h2 {
           margin: 0 0 18px;
           font-size: 0.95rem;
           font-weight: 1000;
           text-transform: uppercase;
+        }
+
+        .card-head h2 {
+          margin-bottom: 0;
         }
 
         .exo-card h2::after {
@@ -687,6 +1015,16 @@ export default function ExerciceDetailClient() {
           height: 3px;
           margin-top: 8px;
           background: #f47b20;
+        }
+
+        .save-box {
+          margin-bottom: 14px;
+          background: #fff4dd;
+          color: #6b1a2c;
+          border-radius: 12px;
+          padding: 10px 12px;
+          font-weight: 900;
+          font-size: 13px;
         }
 
         .image-wrap {
@@ -702,6 +1040,20 @@ export default function ExerciceDetailClient() {
           max-width: 100%;
           max-height: 460px;
           object-fit: contain;
+        }
+
+        .video-list {
+          display: flex;
+          flex-direction: column;
+          gap: 14px;
+        }
+
+        .exo-video {
+          width: 100%;
+          max-height: 480px;
+          border-radius: 14px;
+          background: #000;
+          display: block;
         }
 
         .arrow {
@@ -729,6 +1081,24 @@ export default function ExerciceDetailClient() {
           right: 0;
         }
 
+        .schema-actions {
+          display: flex;
+          flex-wrap: wrap;
+          justify-content: center;
+          gap: 10px;
+          margin-top: 16px;
+        }
+
+        .edit-schema {
+          background: #111;
+          color: #fff;
+        }
+
+        .delete-schema {
+          background: #ffe8ec;
+          color: #c5283d;
+        }
+
         .thumbs {
           display: flex;
           gap: 10px;
@@ -745,6 +1115,7 @@ export default function ExerciceDetailClient() {
           overflow: hidden;
           border: 2px solid transparent;
           background: #eee;
+          position: relative;
         }
 
         .thumbs button.active {
@@ -756,6 +1127,18 @@ export default function ExerciceDetailClient() {
           height: 100%;
           object-fit: contain;
           background: #6b1a2c;
+        }
+
+        .thumbs span {
+          position: absolute;
+          right: 4px;
+          bottom: 4px;
+          background: #111;
+          color: #fff;
+          border-radius: 999px;
+          font-size: 10px;
+          font-weight: 900;
+          padding: 2px 5px;
         }
 
         .criteria {
@@ -815,6 +1198,8 @@ export default function ExerciceDetailClient() {
         .empty {
           min-height: 260px;
           display: flex;
+          flex-direction: column;
+          gap: 14px;
           align-items: center;
           justify-content: center;
           color: #888;

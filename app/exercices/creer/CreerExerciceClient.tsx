@@ -472,7 +472,7 @@ export default function CreerExerciceClient() {
         tags: ex.themes,
         images: uploadedImages,
         schemaImages: ex.schemaImages,
-        videos: ex.videos.filter((v) => !v.startsWith("data:")),
+        videos: ex.videos,
         schemaDataList: ex.schemaDataList.map((schema, index) => ({
           title: schema?.title ?? `Schéma ${index + 1}`,
           schemaGroupId: schema?.schemaGroupId ?? crypto.randomUUID(),
