@@ -449,40 +449,86 @@ export default function CreerExerciceClient() {
     }));
 
   async function uploadBase64Image(base64: string, folder = "schemas") {
-    if (!base64.startsWith("data:image")) return base64;
+  if (!base64.startsWith("data:image")) return base64;
 
-    const { createClient } = await import("@/lib/supabase/client");
-    const supabase = createClient();
+  const { createClient } = await import("@/lib/supabase/client");
+  const supabase = createClient();
 
-    const {
-      data: { user },
-      error: userError,
-    } = await supabase.auth.getUser();
+  const {
+    data: { user },
+    error: userError,
+  } = await supabase.auth.getUser();
 
-    if (userError || !user) {
-      throw new Error("Utilisateur non connecté");
-    }
-
-    const res = await fetch(base64);
-    const blob = await res.blob();
-
-    const fileName = `${user.id}/${folder}/${Date.now()}-${Math.random()
-      .toString(36)
-      .slice(2)}.png`;
-
-    const { error } = await supabase.storage
-      .from("exercise-schemas")
-      .upload(fileName, blob, {
-        contentType: "image/png",
-        upsert: false,
-      });
-
-    if (error) throw error;
-
-    const { data } = supabase.storage.from("exercise-schemas").getPublicUrl(fileName);
-
-    return data.publicUrl;
+  if (userError || !user) {
+    throw new Error("Utilisateur non connecté");
   }
+
+  const res = await fetch(base64);
+  const blob = await res.blob();
+
+  const fileName = `${user.id}/${folder}/${Date.now()}-${Math.random()
+    .toString(36)
+    .slice(2)}.png`;
+
+  const { error } = await supabase.storage
+    .from("exercise-schemas")
+    .upload(fileName, blob, {
+      contentType: "image/png",
+      upsert: false,
+    });
+
+  if (error) throw error;
+
+  const { data } = supabase.storage
+    .from("exercise-schemas")
+    .getPublicUrl(fileName);
+
+  return data.publicUrl;
+}
+
+async function uploadBase64Video(base64: string, folder = "videos") {
+  if (!base64.startsWith("data:video")) return base64;
+
+  const { createClient } = await import("@/lib/supabase/client");
+  const supabase = createClient();
+
+  const {
+    data: { user },
+    error: userError,
+  } = await supabase.auth.getUser();
+
+  if (userError || !user) {
+    throw new Error("Utilisateur non connecté");
+  }
+
+  const res = await fetch(base64);
+  const blob = await res.blob();
+
+  const extension = blob.type.includes("quicktime")
+    ? "mov"
+    : blob.type.includes("webm")
+    ? "webm"
+    : "mp4";
+
+  const fileName = `${user.id}/${folder}/${Date.now()}-${Math.random()
+    .toString(36)
+    .slice(2)}.${extension}`;
+
+  const { error } = await supabase.storage
+    .from("exercise-videos")
+    .upload(fileName, blob, {
+      contentType: blob.type || "video/mp4",
+      upsert: false,
+    });
+
+  if (error) throw error;
+
+  const { data } = supabase.storage
+    .from("exercise-videos")
+    .getPublicUrl(fileName);
+
+  return data.publicUrl;
+}
 
   const save = async () => {
     if (!ex.title.trim()) {
@@ -497,10 +543,16 @@ export default function CreerExerciceClient() {
 
     try {
       const uploadedImages = await Promise.all(
-        ex.images.map((image) =>
-          uploadBase64Image(image, `exercices/${exerciseStorageId}/images`)
-        )
-      );
+  ex.images.map((image) =>
+    uploadBase64Image(image, `exercices/${exerciseStorageId}/images`)
+  )
+);
+
+const uploadedVideos = await Promise.all(
+  ex.videos.map((video) =>
+    uploadBase64Video(video, `exercices/${exerciseStorageId}/videos`)
+  )
+);
 
       const cleanSchemaDataList = syncSchemas(ex.schemaImages, ex.schemaDataList);
 
@@ -525,7 +577,7 @@ export default function CreerExerciceClient() {
         tags: ex.themes,
         images: uploadedImages,
         schemaImages: ex.schemaImages,
-        videos: ex.videos.filter((video) => !video.startsWith("data:")),
+        videos: uploadedVideos,
         schemaDataList: cleanSchemaDataList,
       };
 
