@@ -88,6 +88,15 @@ function toArray(value: unknown): string[] {
   return [];
 }
 
+function isUuid(value: string | null | undefined) {
+  return (
+    typeof value === "string" &&
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+      value
+    )
+  );
+}
+
 function rowToExercise(row: any): Exercise {
   const schemaImages = Array.isArray(row.schema_images)
     ? row.schema_images
@@ -237,22 +246,12 @@ function exerciseToRow(ex: any, userId: string) {
   };
 }
 
-function isUuid(value: string | null | undefined) {
-  return (
-    typeof value === "string" &&
-    /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value)
-  );
-}
-
 function exerciseToInsertRow(ex: any, userId: string) {
   const row: any = {
     ...exerciseToRow(ex, userId),
     created_at: new Date().toISOString(),
   };
 
-  // Pour une création classique, on laisse Supabase générer l'id.
-  // Si la page a préparé un vrai UUID de brouillon, on peut le garder,
-  // mais saveExercise vérifiera d'abord s'il existe déjà avant d'insérer.
   if (isUuid(ex.id)) row.id = ex.id;
 
   return row;
@@ -283,9 +282,8 @@ export async function listExercises(): Promise<Exercise[]> {
   const { data, error } = await supabase
     .from("exercises")
     .select("*")
-    .or(
-      "visibility.eq.public,is_public.eq.true,review_status.eq.approved,status.eq.approved,status.eq.published,status.eq.active"
-    )
+    .eq("visibility", "public")
+    .eq("review_status", "approved")
     .order("created_at", { ascending: false });
 
   if (error) {
@@ -302,18 +300,11 @@ export async function listMyExercises(): Promise<Exercise[]> {
 
   if (!user) return [];
 
-  const ceo = await isCeoUser();
-
-  let query = supabase
+  const { data, error } = await supabase
     .from("exercises")
     .select("*")
+    .or(`owner_id.eq.${user.id},user_id.eq.${user.id}`)
     .order("created_at", { ascending: false });
-
-  if (!ceo) {
-    query = query.or(`owner_id.eq.${user.id},user_id.eq.${user.id}`);
-  }
-
-  const { data, error } = await query;
 
   if (error) {
     showSupabaseError("Erreur Supabase listMyExercises:", error);
@@ -332,6 +323,7 @@ export async function listSubmittedExercisesForCeo(): Promise<Exercise[]> {
   const { data, error } = await supabase
     .from("exercises")
     .select("*")
+    .eq("visibility", "private")
     .eq("review_status", "submitted")
     .order("submitted_at", { ascending: false });
 
@@ -361,11 +353,13 @@ export async function getExercise(
 
   if (!existing) return null;
 
-  const isPublic = existing.visibility === "public";
+  const isOfficialPublic =
+    existing.visibility === "public" && existing.review_status === "approved";
+
   const isOwner =
     !!user && (existing.owner_id === user.id || existing.user_id === user.id);
 
-  if (!isPublic && !isOwner && !ceo) {
+  if (!isOfficialPublic && !isOwner && !ceo) {
     return null;
   }
 
@@ -392,23 +386,27 @@ export async function saveExercise(ex: any): Promise<Exercise | null> {
     original_exercise_id: ex.original_exercise_id ?? null,
   };
 
-  const row = exerciseToInsertRow(prepared, user.id);
   const requestedId = isUuid(prepared.id) ? prepared.id : null;
 
-  // Cas critique corrigé : les pages de création gardent parfois un id de brouillon
-  // dans le localStorage. Si cet id existe déjà, on met à jour au lieu de refaire
-  // un insert qui casse sur exercises_pkey.
   if (requestedId) {
     const existing = await getExerciseRaw(requestedId);
 
     if (existing) {
+      const isMine =
+        existing.owner_id === user.id || existing.user_id === user.id;
+
+      if (!ceo && !isMine) {
+        if (isBrowser()) alert("Tu ne peux modifier que tes exercices.");
+        return null;
+      }
+
       const updateRow = exerciseToRow(
         {
           ...existing,
           ...prepared,
           owner_id: existing.owner_id ?? user.id,
           user_id: existing.user_id ?? user.id,
-          visibility: ceo ? prepared.visibility ?? "public" : existing.visibility ?? "private",
+          visibility: ceo ? prepared.visibility ?? "public" : "private",
           review_status: ceo
             ? prepared.review_status ?? "approved"
             : existing.review_status === "submitted"
@@ -434,7 +432,8 @@ export async function saveExercise(ex: any): Promise<Exercise | null> {
     }
   }
 
-  // Création neuve : si aucun id valable n'est demandé, Supabase génère l'id.
+  const row = exerciseToInsertRow(prepared, user.id);
+
   const { data, error } = await supabase
     .from("exercises")
     .insert(row)
@@ -484,9 +483,9 @@ export async function updateExercise(
       ...patch,
       owner_id: existing.owner_id ?? user.id,
       user_id: existing.user_id ?? user.id,
-      visibility: ceo ? "public" : existing.visibility ?? "private",
+      visibility: ceo ? existing.visibility ?? "public" : "private",
       review_status: ceo
-        ? "approved"
+        ? existing.review_status ?? "approved"
         : existing.review_status === "submitted"
         ? "draft"
         : existing.review_status ?? "draft",
@@ -562,20 +561,46 @@ export async function approveExerciseForLibrary(id: string): Promise<boolean> {
     return false;
   }
 
-  const { error } = await supabase
+  const existing = await getExerciseRaw(id);
+
+  if (!existing) return false;
+
+  const officialCopy = exerciseToInsertRow(
+    {
+      ...existing,
+      id: crypto.randomUUID(),
+      owner_id: user.id,
+      user_id: user.id,
+      visibility: "public",
+      review_status: "approved",
+      original_exercise_id: existing.id,
+    },
+    user.id
+  );
+
+  const { error: insertError } = await supabase
+    .from("exercises")
+    .insert(officialCopy);
+
+  if (insertError) {
+    showSupabaseError("Erreur Supabase approveExerciseForLibrary insert:", insertError);
+    return false;
+  }
+
+  const { error: updateError } = await supabase
     .from("exercises")
     .update({
-      visibility: "public",
+      visibility: "private",
       review_status: "approved",
       reviewed_at: new Date().toISOString(),
       reviewed_by: user.id,
       rejection_reason: null,
       updated_at: new Date().toISOString(),
     })
-    .eq("id", id);
+    .eq("id", existing.id);
 
-  if (error) {
-    showSupabaseError("Erreur Supabase approveExerciseForLibrary:", error);
+  if (updateError) {
+    showSupabaseError("Erreur Supabase approveExerciseForLibrary update:", updateError);
     return false;
   }
 
@@ -685,7 +710,6 @@ export function emptyExercise(): Exercise {
 
     description: "",
     organisation: "",
-
     instructions: "",
     consignes: "",
 

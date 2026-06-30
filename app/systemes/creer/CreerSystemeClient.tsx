@@ -104,7 +104,35 @@ const blank = (): Systeme => ({
   schemaDataList: [],
 });
 
+function normalizeSchemaData(schema: any, index: number, image = "") {
+  return {
+    title: schema?.title ?? `Schéma ${index + 1}`,
+    schemaGroupId: schema?.schemaGroupId ?? crypto.randomUUID(),
+    phaseIndex: index,
+    courtType: schema?.courtType ?? "half",
+    phases: Array.isArray(schema?.phases) ? schema.phases : [],
+    sheet: schema?.sheet ?? null,
+    current: typeof schema?.current === "number" ? schema.current : 0,
+    imageData: schema?.imageData ?? image ?? "",
+    phaseImages: Array.isArray(schema?.phaseImages)
+      ? schema.phaseImages
+      : image
+      ? [image]
+      : [],
+    editable: true,
+  };
+}
+
+function syncSchemas(images: string[], dataList: any[]) {
+  return images.map((image, index) =>
+    normalizeSchemaData(dataList[index], index, image)
+  );
+}
+
 function systemToForm(system: SystemItem): Systeme {
+  const schemaImages = system.schemaImages || [];
+  const schemaDataList = syncSchemas(schemaImages, system.schemaDataList || []);
+
   return {
     id: system.id,
     title: system.title || "",
@@ -120,8 +148,8 @@ function systemToForm(system: SystemItem): Systeme {
     tags: system.tags || [],
     images: system.images || [],
     videos: system.videos || [],
-    schemaImages: system.schemaImages || [],
-    schemaDataList: system.schemaDataList || [],
+    schemaImages,
+    schemaDataList,
     createdAt: system.createdAt,
   };
 }
@@ -222,51 +250,65 @@ export default function SystemesClient() {
         if (resultRaw) {
           const result = JSON.parse(resultRaw);
 
-          const incomingImages = Array.isArray(result.schemaImages)
-            ? result.schemaImages
+          const incomingImages: string[] = Array.isArray(result.schemaImages)
+            ? result.schemaImages.filter(Boolean)
+            : result.schemaImage
+            ? [result.schemaImage]
             : [];
 
-          const incomingData = Array.isArray(result.schemaDataList)
+          const incomingData: any[] = Array.isArray(result.schemaDataList)
             ? result.schemaDataList
+            : result.schemaData
+            ? [result.schemaData]
             : [];
+
+          const storedEditIndex = localStorage.getItem(EDIT_INDEX_KEY);
 
           const editIndex =
-            typeof result.editIndex === "number" ? result.editIndex : null;
+            typeof result.editIndex === "number"
+              ? result.editIndex
+              : storedEditIndex !== null
+              ? Number(storedEditIndex)
+              : null;
 
-          const editedGroupId =
-            result.schemaGroupId ||
-            (editIndex !== null
-              ? base.schemaDataList[editIndex]?.schemaGroupId
-              : null);
+          if (incomingImages.length) {
+            const nextImages = [...base.schemaImages];
+            const nextData = [...base.schemaDataList];
 
-          if (editedGroupId) {
-            const firstIndex = base.schemaDataList.findIndex(
-              (item) => item?.schemaGroupId === editedGroupId
-            );
+            if (
+              editIndex !== null &&
+              Number.isFinite(editIndex) &&
+              editIndex >= 0 &&
+              editIndex < nextImages.length
+            ) {
+              nextImages.splice(editIndex, 1, ...incomingImages);
 
-            const keepImages = base.schemaImages.filter(
-              (_, idx) => base.schemaDataList[idx]?.schemaGroupId !== editedGroupId
-            );
+              nextData.splice(
+                editIndex,
+                1,
+                ...incomingImages.map((img, idx) =>
+                  normalizeSchemaData(incomingData[idx], editIndex + idx, img)
+                )
+              );
+            } else {
+              const startIndex = nextImages.length;
 
-            const keepData = base.schemaDataList.filter(
-              (item) => item?.schemaGroupId !== editedGroupId
-            );
+              nextImages.push(...incomingImages);
 
-            const insertAt = firstIndex >= 0 ? firstIndex : keepImages.length;
+              incomingImages.forEach((img, idx) => {
+                nextData.push(
+                  normalizeSchemaData(incomingData[idx], startIndex + idx, img)
+                );
+              });
+            }
 
-            keepImages.splice(insertAt, 0, ...incomingImages);
-            keepData.splice(insertAt, 0, ...incomingData);
+            const limitedImages = nextImages.slice(0, 50);
+            const limitedData = syncSchemas(limitedImages, nextData).slice(0, 50);
 
             base = {
               ...base,
-              schemaImages: keepImages.slice(0, 50),
-              schemaDataList: keepData.slice(0, 50),
-            };
-          } else {
-            base = {
-              ...base,
-              schemaImages: [...base.schemaImages, ...incomingImages].slice(0, 50),
-              schemaDataList: [...base.schemaDataList, ...incomingData].slice(0, 50),
+              schemaImages: limitedImages,
+              schemaDataList: limitedData,
             };
           }
 
@@ -281,7 +323,10 @@ export default function SystemesClient() {
           flash("Schéma ajouté au système ✅");
         }
 
-        setSysteme(base);
+        setSysteme({
+          ...base,
+          schemaDataList: syncSchemas(base.schemaImages, base.schemaDataList),
+        });
       } catch (error) {
         console.error(error);
         setLoading(false);
@@ -300,10 +345,16 @@ export default function SystemesClient() {
 
     const id = editId || systeme.id || newSystemId();
 
+    const cleanSchemaDataList = syncSchemas(
+      systeme.schemaImages,
+      systeme.schemaDataList
+    );
+
     const payload: Systeme = {
       ...systeme,
       id,
       title: systeme.title.trim(),
+      schemaDataList: cleanSchemaDataList,
     };
 
     const saved =
@@ -331,6 +382,10 @@ export default function SystemesClient() {
     if (!saved) return;
 
     const currentId = saved.id;
+    const cleanDataList = syncSchemas(
+      saved.schemaImages || [],
+      saved.schemaDataList || []
+    );
 
     localStorage.setItem(EDIT_SYSTEM_ID_KEY, currentId);
     localStorage.setItem(CURRENT_SYSTEM_ID_KEY, currentId);
@@ -342,25 +397,17 @@ export default function SystemesClient() {
     if (typeof index === "number") {
       localStorage.setItem(EDIT_INDEX_KEY, String(index));
 
-      const schemaData = saved.schemaDataList?.[index];
+      const schemaData = cleanDataList[index];
       const schemaImage = saved.schemaImages?.[index];
-
-      const schemaGroupId = schemaData?.schemaGroupId || crypto.randomUUID();
-
-      localStorage.setItem(EDIT_SCHEMA_GROUP_KEY, schemaGroupId);
 
       const loadPayload = {
         title: schemaData?.title || `Schéma ${index + 1}`,
-        schemaGroupId,
+        editIndex: index,
+        schemaGroupId: schemaData?.schemaGroupId || crypto.randomUUID(),
         courtType: schemaData?.courtType || "half",
         phases: Array.isArray(schemaData?.phases) ? schemaData.phases : [],
         sheet: schemaData?.sheet ?? null,
-        current:
-          typeof schemaData?.current === "number"
-            ? schemaData.current
-            : typeof schemaData?.phaseIndex === "number"
-            ? schemaData.phaseIndex
-            : 0,
+        current: typeof schemaData?.current === "number" ? schemaData.current : 0,
         imageData: schemaData?.imageData || schemaImage || "",
         phaseImages: Array.isArray(schemaData?.phaseImages)
           ? schemaData.phaseImages
@@ -385,24 +432,13 @@ export default function SystemesClient() {
 
   const removeSchema = (index: number) => {
     setSysteme((prev) => {
-      const removedGroupId = prev.schemaDataList[index]?.schemaGroupId;
-
-      if (removedGroupId) {
-        return {
-          ...prev,
-          schemaImages: prev.schemaImages.filter(
-            (_, idx) => prev.schemaDataList[idx]?.schemaGroupId !== removedGroupId
-          ),
-          schemaDataList: prev.schemaDataList.filter(
-            (item) => item?.schemaGroupId !== removedGroupId
-          ),
-        };
-      }
+      const nextImages = prev.schemaImages.filter((_, i) => i !== index);
+      const nextData = prev.schemaDataList.filter((_, i) => i !== index);
 
       return {
         ...prev,
-        schemaImages: prev.schemaImages.filter((_, i) => i !== index),
-        schemaDataList: prev.schemaDataList.filter((_, i) => i !== index),
+        schemaImages: nextImages,
+        schemaDataList: syncSchemas(nextImages, nextData),
       };
     });
   };
@@ -469,63 +505,58 @@ export default function SystemesClient() {
 
     const id = editId || systeme.id || newSystemId();
 
-    const uploadedImages = await Promise.all(
-      systeme.images.map(async (img) => {
-        if (img.startsWith("http")) return img;
-        return uploadSchemaImage(img, "systemes-images");
-      })
-    );
+    try {
+      const uploadedImages = await Promise.all(
+        systeme.images.map(async (img) => {
+          if (img.startsWith("http")) return img;
+          return uploadSchemaImage(img, "systemes-images");
+        })
+      );
 
-    const payload: Systeme = {
-      ...systeme,
-      id,
-      title: systeme.title.trim(),
-      images: uploadedImages,
-      schemaImages: systeme.schemaImages,
-      schemaDataList: systeme.schemaDataList.map((schema, index) => ({
-        title: schema?.title ?? `Schéma ${index + 1}`,
-        schemaGroupId: schema?.schemaGroupId ?? crypto.randomUUID(),
-        phaseIndex:
-          typeof schema?.phaseIndex === "number" ? schema.phaseIndex : index,
-        courtType: schema?.courtType ?? "half",
-        phases: Array.isArray(schema?.phases) ? schema.phases : [],
-        sheet: schema?.sheet ?? null,
-        current: typeof schema?.current === "number" ? schema.current : index,
-        imageData: schema?.imageData ?? systeme.schemaImages[index] ?? "",
-        phaseImages: Array.isArray(schema?.phaseImages)
-          ? schema.phaseImages
-          : systeme.schemaImages[index]
-          ? [systeme.schemaImages[index]]
-          : [],
-        editable: true,
-      })),
-    };
+      const cleanSchemaDataList = syncSchemas(
+        systeme.schemaImages,
+        systeme.schemaDataList
+      );
 
-    const saved =
-      editId || systeme.id
-        ? await updateSystem(id, payload)
-        : await saveSystem(payload);
+      const payload: Systeme = {
+        ...systeme,
+        id,
+        title: systeme.title.trim(),
+        images: uploadedImages,
+        schemaImages: systeme.schemaImages,
+        schemaDataList: cleanSchemaDataList,
+      };
 
-    setLoading(false);
+      const saved =
+        editId || systeme.id
+          ? await updateSystem(id, payload)
+          : await saveSystem(payload);
 
-    if (!saved) {
+      setLoading(false);
+
+      if (!saved) {
+        flash("Erreur lors de la sauvegarde");
+        return;
+      }
+
+      localStorage.removeItem(RETURN_KEY);
+      localStorage.removeItem(LOAD_KEY);
+      localStorage.removeItem(RESULT_KEY);
+      localStorage.removeItem(EDIT_INDEX_KEY);
+      localStorage.removeItem(EDIT_SCHEMA_GROUP_KEY);
+      localStorage.removeItem(EDIT_SYSTEM_ID_KEY);
+      localStorage.removeItem(CURRENT_SYSTEM_ID_KEY);
+
+      flash(editId ? "Système mis à jour ✅" : "Système enregistré ✅");
+
+      setTimeout(() => {
+        router.push(`/systemes/${saved.id}`);
+      }, 600);
+    } catch (error) {
+      console.error(error);
+      setLoading(false);
       flash("Erreur lors de la sauvegarde");
-      return;
     }
-
-    localStorage.removeItem(RETURN_KEY);
-    localStorage.removeItem(LOAD_KEY);
-    localStorage.removeItem(RESULT_KEY);
-    localStorage.removeItem(EDIT_INDEX_KEY);
-    localStorage.removeItem(EDIT_SCHEMA_GROUP_KEY);
-    localStorage.removeItem(EDIT_SYSTEM_ID_KEY);
-    localStorage.removeItem(CURRENT_SYSTEM_ID_KEY);
-
-    flash(editId ? "Système mis à jour ✅" : "Système enregistré ✅");
-
-    setTimeout(() => {
-      router.push(`/systemes/${saved.id}`);
-    }, 600);
   };
 
   return (
@@ -619,7 +650,11 @@ export default function SystemesClient() {
                   <button type="button" onClick={() => openDraw(index)}>
                     ✏️ Modifier
                   </button>
-                  <button type="button" className="rm" onClick={() => removeSchema(index)}>
+                  <button
+                    type="button"
+                    className="rm"
+                    onClick={() => removeSchema(index)}
+                  >
                     ✕ Retirer
                   </button>
                 </div>

@@ -812,23 +812,79 @@ const currentRef = useRef(current);
     return { id: l.id, f: g.f, t: g.t, ctrls: g.ctrls, isShoot };
   };
 
+  // Lignes visibles à l'écran.
+  // En mode édition : on affiche tout.
+  // En animation : on affiche uniquement l'action en cours, puis elle disparaît.
+  const lineRenderEntries = (ph: Phase): { line: Line; opacity: number }[] => {
+    const anim = animPosRef.current;
+
+    if (!anim) {
+      return ph.lines.map((line) => ({ line, opacity: 1 }));
+    }
+
+    const sched = scheduleRef.current;
+    const clock = clockRef.current;
+    const phaseIdx = currentRef.current;
+
+    let activePhase: Sched | null = null;
+
+    for (const s of sched) {
+      if (s.idx !== phaseIdx) continue;
+      if (clock < s.start || clock > s.end) continue;
+
+      if (!activePhase || s.start >= activePhase.start) {
+        activePhase = s;
+      }
+    }
+
+    if (!activePhase) return [];
+
+    const local = clock - activePhase.start;
+
+    return activePhase.actSched
+      .filter((a) => local >= a.start && local <= a.end)
+      .map((a) => {
+        const progress = Math.max(0, Math.min(1, (local - a.start) / Math.max(1, a.dur)));
+
+        // L'action reste bien visible au début, puis disparaît sur la fin du mouvement.
+        const opacity = progress < 0.78 ? 1 : Math.max(0, 1 - (progress - 0.78) / 0.22);
+
+        return { line: a.line, opacity };
+      })
+      .filter((entry) => entry.opacity > 0.01);
+  };
+
+
   // render() — redessine tout
   const render = () => {
     const canvas = canvasRef.current; if (!canvas) return;
     const ctx = canvas.getContext('2d'); if (!ctx) return;
     drawBackground(ctx, canvas);
     const ph = phasesRef.current[currentRef.current]; if (!ph) return;
-    ph.lines.forEach((l) => drawLine(ctx, canvas, l));
-    if (dragRef.current) drawLine(ctx, canvas, dragRef.current);
+    const anim = animPosRef.current;
+
+    const lineEntries = lineRenderEntries(ph);
+    lineEntries.forEach(({ line, opacity }) => {
+      ctx.save();
+      ctx.globalAlpha = opacity;
+      drawLine(ctx, canvas, line);
+      ctx.restore();
+    });
+
+    if (!anim && dragRef.current) drawLine(ctx, canvas, dragRef.current);
+
     // numéros d'actions (rond doré au milieu de la trajectoire)
+    // En animation, on numérote uniquement l'action visible.
+    const visibleLineIds = new Set(lineEntries.map((entry) => entry.line.id));
     const acts = orderedActions(ph);
     acts.forEach((l, i) => {
+      if (anim && !visibleLineIds.has(l.id)) return;
       const poly = linePoly(canvas, l); if (!poly.length) return;
       const m = poly[Math.floor(poly.length / 2)] || poly[0];
       drawActionNumber(ctx, m.x, m.y, i + 1);
     });
+
     ph.objects.forEach((o) => drawObject(ctx, canvas, o));
-    const anim = animPosRef.current;
     const roster = anim ? rosterRef.current : ph.players;
     roster.forEach((p) => {
   const ap = anim ? anim.players[p.id] : null;
@@ -995,86 +1051,139 @@ if (anim && anim.balls) {
 
   // évènements ballon (passe/tir) sur la timeline globale, avec fenêtres absolues (action par action)
   const buildBallEvents = (sched: Sched[]) => {
-    const evs: { src: string | null; target: string | null; shoot: boolean; wStart: number; wEnd: number; from?: Pt; to?: Pt; tMode?: 'player' | 'playerCurrentPoint'; createdPt?: Pt }[] = [];
-    sched.forEach((s) => s.actSched.forEach((a) => {
-      if (a.line.action !== 'pass' && a.line.action !== 'shoot') return;
-      evs.push({ src: a.line.sourcePlayerId || null, target: a.line.targetPlayerId || null, shoot: a.line.action === 'shoot', wStart: s.start + a.start, wEnd: s.start + a.end, from: a.line.from, to: a.line.to, tMode: a.line.targetMode, createdPt: a.line.createdTargetPoint });
-    }));
-    evs.sort((a, b) => a.wStart - b.wStart);
+    const evs: {
+      src: string | null;
+      target: string | null;
+      shoot: boolean;
+      wStart: number;
+      wEnd: number;
+      from?: Pt;
+      to?: Pt;
+      tMode?: 'player' | 'playerCurrentPoint';
+      createdPt?: Pt;
+    }[] = [];
+
+    sched.forEach((s) =>
+      s.actSched.forEach((a) => {
+        if (a.line.action !== 'pass' && a.line.action !== 'shoot') return;
+
+        evs.push({
+          src: a.line.sourcePlayerId || null,
+          target: a.line.targetPlayerId || null,
+          shoot: a.line.action === 'shoot',
+          wStart: s.start + a.start,
+          wEnd: s.start + a.end,
+          from: a.line.from,
+          to: a.line.to,
+          tMode: a.line.targetMode,
+          createdPt: a.line.createdTargetPoint,
+        });
+      })
+    );
+
+    evs.sort((a, b) => a.wStart - b.wStart || a.wEnd - b.wEnd);
     return evs;
   };
 
   const initialCarrier = (sched: Sched[]): string | null => {
-    for (const s of sched) { const c = phasesRef.current[s.idx].players.find((p) => p.hasBall); if (c) return c.id; }
+    const firstStart = sched.length ? Math.min(...sched.map((s) => s.start)) : 0;
+
+    for (const s of sched) {
+      if (s.start !== firstStart) continue;
+      const c = phasesRef.current[s.idx].players.find((p) => p.hasBall);
+      if (c) return c.id;
+    }
+
     return null;
   };
 
-  // position du ballon à l'instant clock. La possession ne change qu'À LA RÉCEPTION (fin de la passe).
-  const ballsPosAtClock = (
-  sched: Sched[],
-  evs: typeof ballEventsRef.current,
-  clock: number
-): Pt[] => {
-  const balls: Pt[] = [];
+  const initialBallOwners = (sched: Sched[]): Set<string> => {
+    const owners = new Set<string>();
+    if (!sched.length) return owners;
 
-  const activeEvents = evs.filter(
-    (e) => clock >= e.wStart && clock < e.wEnd
-  );
+    const firstStart = Math.min(...sched.map((s) => s.start));
 
-  const activeSources = new Set(
-    activeEvents.map((e) => e.src).filter(Boolean) as string[]
-  );
-
-  // Ballons qui restent sur les joueurs porteurs
-  rosterRef.current.forEach((p) => {
-    if (!p.hasBall) return;
-    if (activeSources.has(p.id)) return;
-
-    const pos = playerPosAtClock(sched, p.id, clock);
-    if (pos) balls.push(pos);
-  });
-
-  // Ballons des passes / tirs actifs
-  activeEvents.forEach((active) => {
-    const from = active.src
-      ? playerPosAtClock(sched, active.src, clock)
-      : active.from || null;
-
-    if (!from) return;
-
-    let target: Pt;
-
-    if (active.shoot) {
-      target = basketFor(courtRef.current, from);
-    } else if (active.target) {
-  target =
-    playerPosAtClock(sched, active.target, clock) ||
-    active.createdPt ||
-    active.to ||
-    from;
-} else {
-      target =
-        (active.target
-          ? playerPosAtClock(sched, active.target, clock)
-          : null) ||
-        active.to ||
-        from;
-    }
-
-    const te = ease(
-      Math.min(1, Math.max(0, (clock - active.wStart) / (active.wEnd - active.wStart)))
-    );
-
-    const arc = Math.sin(te * Math.PI) * 0.05;
-
-    balls.push({
-      x: from.x + (target.x - from.x) * te,
-      y: from.y + (target.y - from.y) * te - arc,
+    sched.forEach((s) => {
+      if (s.start !== firstStart) return;
+      phasesRef.current[s.idx].players.forEach((p) => {
+        if (p.hasBall) owners.add(p.id);
+      });
     });
-  });
 
-  return balls;
-};
+    return owners;
+  };
+
+  // Position des ballons à l'instant clock.
+  // Règle importante :
+  // - un joueur qui FAIT une passe perd son ballon dès le départ de la passe ;
+  // - le receveur ne récupère le ballon qu'à la fin de la passe ;
+  // - on ne se base pas sur `p.hasBall` des phases suivantes, sinon le receveur
+  //   affiche déjà un ballon avant de l'avoir reçu.
+  const ballsPosAtClock = (
+    sched: Sched[],
+    evs: typeof ballEventsRef.current,
+    clock: number
+  ): Pt[] => {
+    const balls: Pt[] = [];
+    const owners = initialBallOwners(sched);
+
+    const activeEvents = evs.filter((e) => clock >= e.wStart && clock < e.wEnd);
+    const endedEvents = evs.filter((e) => e.wEnd <= clock);
+
+    // Applique tous les transferts terminés avant l'instant courant.
+    endedEvents.forEach((e) => {
+      if (e.src) owners.delete(e.src);
+
+      if (!e.shoot && e.target) {
+        owners.add(e.target);
+      }
+    });
+
+    // Dès qu'une passe/tir démarre, le porteur n'a plus le ballon sur lui.
+    activeEvents.forEach((e) => {
+      if (e.src) owners.delete(e.src);
+    });
+
+    // Ballons attachés aux joueurs réellement porteurs à cet instant.
+    owners.forEach((ownerId) => {
+      const pos = playerPosAtClock(sched, ownerId, clock);
+      if (pos) balls.push(pos);
+    });
+
+    // Ballons en vol : passe ou tir actif.
+    activeEvents.forEach((active) => {
+      const from = active.src
+        ? playerPosAtClock(sched, active.src, clock)
+        : active.from || null;
+
+      if (!from) return;
+
+      let target: Pt;
+
+      if (active.shoot) {
+        target = basketFor(courtRef.current, from);
+      } else if (active.target) {
+        target =
+          playerPosAtClock(sched, active.target, clock) ||
+          active.createdPt ||
+          active.to ||
+          from;
+      } else {
+        target = active.to || from;
+      }
+
+      const duration = Math.max(1, active.wEnd - active.wStart);
+      const te = ease(Math.min(1, Math.max(0, (clock - active.wStart) / duration)));
+      const arc = Math.sin(te * Math.PI) * 0.05;
+
+      balls.push({
+        x: from.x + (target.x - from.x) * te,
+        y: from.y + (target.y - from.y) * te - arc,
+      });
+    });
+
+    return balls;
+  };
 
   const renderAnimFrame = (clock: number) => {
     const sched = scheduleRef.current;

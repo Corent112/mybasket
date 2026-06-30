@@ -33,11 +33,27 @@ const EDIT_INDEX_KEY = "mybasket_edit_schema_index";
 const EDIT_EXERCISE_ID_KEY = "mybasket_edit_exercise_id";
 
 const NUM = (n: number) => Array.from({ length: n + 1 }, (_, i) => String(i));
+
 const CATS = ["— Choisir —", "U9", "U11", "U13", "U15", "U18", "U21", "Senior"];
+
 const TYPES = ["Individuel", "Pré-co", "Collectif"];
+
 const NIVEAUX = ["Débutant", "Intermédiaire", "Confirmé"];
+
 const TEMPS = ["5", "10", "15", "20", "25", "30", "40", "45", "60", "75", "90"];
-const THEMES = ["Échauffement", "Dribble", "Passe", "Défense", "Tir", "Pré-co", "Surnombre", "Ludique", "Rebonds", "Physique"];
+
+const THEMES = [
+  "Échauffement",
+  "Dribble",
+  "Passe",
+  "Défense",
+  "Tir",
+  "Pré-co",
+  "Surnombre",
+  "Ludique",
+  "Rebonds",
+  "Physique",
+];
 
 const toNum = (v: string): number | undefined => {
   if (v === "" || v == null) return undefined;
@@ -74,6 +90,31 @@ const blank = (): Ex => ({
   schemaDataList: [],
 });
 
+function normalizeSchemaData(schema: any, index: number, image = "") {
+  return {
+    title: schema?.title ?? `Schéma ${index + 1}`,
+    schemaGroupId: schema?.schemaGroupId ?? crypto.randomUUID(),
+    phaseIndex: index,
+    courtType: schema?.courtType ?? "half",
+    phases: Array.isArray(schema?.phases) ? schema.phases : [],
+    sheet: schema?.sheet ?? null,
+    current: typeof schema?.current === "number" ? schema.current : 0,
+    imageData: schema?.imageData ?? image ?? "",
+    phaseImages: Array.isArray(schema?.phaseImages)
+      ? schema.phaseImages
+      : image
+      ? [image]
+      : [],
+    editable: true,
+  };
+}
+
+function syncSchemas(images: string[], dataList: any[]) {
+  return images.map((image, index) =>
+    normalizeSchemaData(dataList[index], index, image)
+  );
+}
+
 export default function CreerExerciceClient() {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -90,33 +131,24 @@ export default function CreerExerciceClient() {
 
   const toastT = useRef<number | null>(null);
 
-  const flash = (m: string) => {
-    setToast(m);
+  const flash = (message: string) => {
+    setToast(message);
     if (toastT.current) window.clearTimeout(toastT.current);
     toastT.current = window.setTimeout(() => setToast(""), 2600);
   };
 
-  const set = <K extends keyof Ex>(k: K, v: Ex[K]) =>
-    setEx((s) => ({ ...s, [k]: v }));
+  const set = <K extends keyof Ex>(key: K, value: Ex[K]) =>
+    setEx((current) => ({ ...current, [key]: value }));
 
-  const toggleTheme = (t: string) =>
-    setEx((s) => ({
-      ...s,
-      themes: s.themes.includes(t)
-        ? s.themes.filter((x) => x !== t)
-        : [...s.themes, t],
+  const toggleTheme = (theme: string) =>
+    setEx((current) => ({
+      ...current,
+      themes: current.themes.includes(theme)
+        ? current.themes.filter((item) => item !== theme)
+        : [...current.themes, theme],
     }));
 
   useEffect(() => {
-    /**
-     * IMPORTANT
-     * Cet identifiant sert uniquement de dossier temporaire pour :
-     * - stocker les images avant sauvegarde ;
-     * - permettre à la plaquette de retrouver le brouillon.
-     *
-     * Il ne doit jamais être envoyé comme `id` d'une nouvelle ligne Supabase.
-     * En création, Supabase génère l'id avec `gen_random_uuid()`.
-     */
     if (editId) {
       setExerciseStorageId(editId);
       return;
@@ -140,20 +172,23 @@ export default function CreerExerciceClient() {
       let base = blank();
 
       try {
-  const resultRaw = localStorage.getItem(RESULT_KEY);
-  const draftRaw = localStorage.getItem(draftKey);
+        const resultRaw = localStorage.getItem(RESULT_KEY);
+        const draftRaw = localStorage.getItem(draftKey);
 
-  if (draftRaw) {
-    base = {
-      ...base,
-      ...JSON.parse(draftRaw),
-    };
-  }
+        if (draftRaw) {
+          base = {
+            ...base,
+            ...JSON.parse(draftRaw),
+          };
+        }
 
-  if (editId) {
-    const existing = await getExercise(editId);
+        if (editId) {
+          const existing = await getExercise(editId);
 
           if (existing) {
+            const schemaImages = ((existing as any).schemaImages || []) as string[];
+            const schemaDataList = ((existing as any).schemaDataList || []) as any[];
+
             base = {
               ...base,
               title: existing.title || "",
@@ -178,72 +213,91 @@ export default function CreerExerciceClient() {
               themes: ((existing as any).themes || existing.tags || []) as string[],
               images: ((existing as any).images || []) as string[],
               videos: ((existing as any).videos || []) as string[],
-              schemaImages: ((existing as any).schemaImages || []) as string[],
-              schemaDataList: ((existing as any).schemaDataList || []) as any[],
+              schemaImages,
+              schemaDataList: syncSchemas(schemaImages, schemaDataList),
             };
           }
         }
 
         if (resultRaw) {
-  const result = JSON.parse(resultRaw);
+          const result = JSON.parse(resultRaw);
 
-  const incomingImages = Array.isArray(result.schemaImages)
-    ? result.schemaImages
-    : [];
+          const incomingImages: string[] = Array.isArray(result.schemaImages)
+            ? result.schemaImages.filter(Boolean)
+            : result.schemaImage
+            ? [result.schemaImage]
+            : [];
 
-  const incomingData = Array.isArray(result.schemaDataList)
-    ? result.schemaDataList
-    : [];
+          const incomingData: any[] = Array.isArray(result.schemaDataList)
+            ? result.schemaDataList
+            : result.schemaData
+            ? [result.schemaData]
+            : [];
 
-  const editIndex =
-    typeof result.editIndex === "number" ? result.editIndex : null;
+          const storedEditIndex = localStorage.getItem(EDIT_INDEX_KEY);
 
-  const editedGroupId =
-    result.schemaGroupId ||
-    (editIndex !== null ? base.schemaDataList[editIndex]?.schemaGroupId : null);
+          const editIndex =
+            typeof result.editIndex === "number"
+              ? result.editIndex
+              : storedEditIndex !== null
+              ? Number(storedEditIndex)
+              : null;
 
-  if (editedGroupId) {
-    const firstIndex = base.schemaDataList.findIndex(
-      (item) => item?.schemaGroupId === editedGroupId
-    );
+          if (incomingImages.length) {
+            const nextImages = [...base.schemaImages];
+            const nextData = [...base.schemaDataList];
 
-    const keepImages = base.schemaImages.filter(
-      (_, idx) => base.schemaDataList[idx]?.schemaGroupId !== editedGroupId
-    );
+            if (
+              editIndex !== null &&
+              Number.isFinite(editIndex) &&
+              editIndex >= 0 &&
+              editIndex < nextImages.length
+            ) {
+              nextImages.splice(editIndex, 1, ...incomingImages);
 
-    const keepData = base.schemaDataList.filter(
-      (item) => item?.schemaGroupId !== editedGroupId
-    );
+              nextData.splice(
+                editIndex,
+                1,
+                ...incomingImages.map((image, index) =>
+                  normalizeSchemaData(incomingData[index], editIndex + index, image)
+                )
+              );
+            } else {
+              const startIndex = nextImages.length;
 
-    const insertAt = firstIndex >= 0 ? firstIndex : keepImages.length;
+              nextImages.push(...incomingImages);
 
-    keepImages.splice(insertAt, 0, ...incomingImages);
-    keepData.splice(insertAt, 0, ...incomingData);
+              incomingImages.forEach((image, index) => {
+                nextData.push(
+                  normalizeSchemaData(incomingData[index], startIndex + index, image)
+                );
+              });
+            }
 
-    base = {
-      ...base,
-      schemaImages: keepImages.slice(0, 50),
-      schemaDataList: keepData.slice(0, 50),
-    };
-  } else {
-    base = {
-      ...base,
-      schemaImages: [...base.schemaImages, ...incomingImages].slice(0, 50),
-      schemaDataList: [...base.schemaDataList, ...incomingData].slice(0, 50),
-    };
-  }
+            const limitedImages = nextImages.slice(0, 50);
+            const limitedData = syncSchemas(limitedImages, nextData).slice(0, 50);
 
-  localStorage.removeItem(RESULT_KEY);
-  localStorage.removeItem(EDIT_INDEX_KEY);
-  localStorage.removeItem(LOAD_KEY);
-  localStorage.removeItem(RETURN_KEY);
-  localStorage.removeItem(EDIT_EXERCISE_ID_KEY);
-  localStorage.removeItem("mybasket_edit_schema_group_id");
-}
+            base = {
+              ...base,
+              schemaImages: limitedImages,
+              schemaDataList: limitedData,
+            };
+          }
 
-        setEx(base);
-      } catch (e) {
-        console.error(e);
+          localStorage.removeItem(RESULT_KEY);
+          localStorage.removeItem(EDIT_INDEX_KEY);
+          localStorage.removeItem(LOAD_KEY);
+          localStorage.removeItem(RETURN_KEY);
+          localStorage.removeItem(EDIT_EXERCISE_ID_KEY);
+          localStorage.removeItem("mybasket_edit_schema_group_id");
+        }
+
+        setEx({
+          ...base,
+          schemaDataList: syncSchemas(base.schemaImages, base.schemaDataList),
+        });
+      } catch (error) {
+        console.error(error);
         flash("Erreur lors du chargement");
       }
     };
@@ -269,7 +323,16 @@ export default function CreerExerciceClient() {
     }
 
     try {
-      localStorage.setItem(draftKey, JSON.stringify(ex));
+      const cleanDataList = syncSchemas(ex.schemaImages, ex.schemaDataList);
+
+      localStorage.setItem(
+        draftKey,
+        JSON.stringify({
+          ...ex,
+          schemaDataList: cleanDataList,
+        })
+      );
+
       localStorage.setItem("mybasket_current_exercise_id", exerciseStorageId);
 
       localStorage.removeItem(LOAD_KEY);
@@ -279,25 +342,17 @@ export default function CreerExerciceClient() {
       if (typeof index === "number") {
         localStorage.setItem(EDIT_INDEX_KEY, String(index));
 
-        const schemaData = ex.schemaDataList[index];
+        const schemaData = cleanDataList[index];
         const schemaImage = ex.schemaImages[index];
-
-        const schemaGroupId = schemaData?.schemaGroupId || crypto.randomUUID();
-
-        localStorage.setItem("mybasket_edit_schema_group_id", schemaGroupId);
 
         const loadPayload = {
           title: schemaData?.title || `Schéma ${index + 1}`,
-          schemaGroupId,
+          editIndex: index,
+          schemaGroupId: schemaData?.schemaGroupId || crypto.randomUUID(),
           courtType: schemaData?.courtType || "half",
           phases: Array.isArray(schemaData?.phases) ? schemaData.phases : [],
           sheet: schemaData?.sheet ?? null,
-          current:
-            typeof schemaData?.current === "number"
-              ? schemaData.current
-              : typeof schemaData?.phaseIndex === "number"
-              ? schemaData.phaseIndex
-              : 0,
+          current: typeof schemaData?.current === "number" ? schemaData.current : 0,
           imageData: schemaData?.imageData || schemaImage || "",
           phaseImages: Array.isArray(schemaData?.phaseImages)
             ? schemaData.phaseImages
@@ -328,72 +383,68 @@ export default function CreerExerciceClient() {
     }
   };
 
-  const removeSchema = (i: number) =>
-    setEx((s) => {
-      const removedGroupId = s.schemaDataList[i]?.schemaGroupId;
-
-      if (removedGroupId) {
-        return {
-          ...s,
-          schemaImages: s.schemaImages.filter(
-            (_, idx) => s.schemaDataList[idx]?.schemaGroupId !== removedGroupId
-          ),
-          schemaDataList: s.schemaDataList.filter(
-            (item) => item?.schemaGroupId !== removedGroupId
-          ),
-        };
-      }
+  const removeSchema = (index: number) =>
+    setEx((current) => {
+      const nextImages = current.schemaImages.filter((_, itemIndex) => itemIndex !== index);
+      const nextData = current.schemaDataList.filter(
+        (_, itemIndex) => itemIndex !== index
+      );
 
       return {
-        ...s,
-        schemaImages: s.schemaImages.filter((_, idx) => idx !== i),
-        schemaDataList: s.schemaDataList.filter((_, idx) => idx !== i),
+        ...current,
+        schemaImages: nextImages,
+        schemaDataList: syncSchemas(nextImages, nextData),
       };
     });
 
-  const onImages = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const files = Array.from(e.target.files || []);
+  const onImages = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(event.target.files || []);
+
     if (!files.length) return;
 
     const room = 5 - ex.images.length;
 
-    files.slice(0, room).forEach((f) => {
+    files.slice(0, room).forEach((file) => {
       const reader = new FileReader();
+
       reader.onload = () =>
-        setEx((s) => ({
-          ...s,
-          images: [...s.images, reader.result as string].slice(0, 5),
+        setEx((current) => ({
+          ...current,
+          images: [...current.images, reader.result as string].slice(0, 5),
         }));
-      reader.readAsDataURL(f);
+
+      reader.readAsDataURL(file);
     });
 
-    e.target.value = "";
+    event.target.value = "";
   };
 
-  const removeImage = (i: number) =>
-    setEx((s) => ({
-      ...s,
-      images: s.images.filter((_, idx) => idx !== i),
+  const removeImage = (index: number) =>
+    setEx((current) => ({
+      ...current,
+      images: current.images.filter((_, itemIndex) => itemIndex !== index),
     }));
 
-  const onVideos = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const f = (e.target.files || [])[0];
-    if (!f) return;
+  const onVideos = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = (event.target.files || [])[0];
+
+    if (!file) return;
 
     const reader = new FileReader();
+
     reader.onload = () =>
-      setEx((s) => ({
-        ...s,
+      setEx((current) => ({
+        ...current,
         videos: [reader.result as string],
       }));
 
-    reader.readAsDataURL(f);
-    e.target.value = "";
+    reader.readAsDataURL(file);
+    event.target.value = "";
   };
 
   const removeVideo = () =>
-    setEx((s) => ({
-      ...s,
+    setEx((current) => ({
+      ...current,
       videos: [],
     }));
 
@@ -428,9 +479,7 @@ export default function CreerExerciceClient() {
 
     if (error) throw error;
 
-    const { data } = supabase.storage
-      .from("exercise-schemas")
-      .getPublicUrl(fileName);
+    const { data } = supabase.storage.from("exercise-schemas").getPublicUrl(fileName);
 
     return data.publicUrl;
   }
@@ -448,8 +497,12 @@ export default function CreerExerciceClient() {
 
     try {
       const uploadedImages = await Promise.all(
-        ex.images.map((img) => uploadBase64Image(img, `exercices/${exerciseStorageId}/images`))
+        ex.images.map((image) =>
+          uploadBase64Image(image, `exercices/${exerciseStorageId}/images`)
+        )
       );
+
+      const cleanSchemaDataList = syncSchemas(ex.schemaImages, ex.schemaDataList);
 
       const payload = {
         title: ex.title.trim(),
@@ -472,25 +525,8 @@ export default function CreerExerciceClient() {
         tags: ex.themes,
         images: uploadedImages,
         schemaImages: ex.schemaImages,
-        videos: ex.videos,
-        schemaDataList: ex.schemaDataList.map((schema, index) => ({
-          title: schema?.title ?? `Schéma ${index + 1}`,
-          schemaGroupId: schema?.schemaGroupId ?? crypto.randomUUID(),
-          phaseIndex:
-            typeof schema?.phaseIndex === "number" ? schema.phaseIndex : index,
-          courtType: schema?.courtType ?? "half",
-          phases: Array.isArray(schema?.phases) ? schema.phases : [],
-          sheet: schema?.sheet ?? null,
-          current:
-            typeof schema?.current === "number" ? schema.current : index,
-          imageData: schema?.imageData ?? ex.schemaImages[index] ?? "",
-          phaseImages: Array.isArray(schema?.phaseImages)
-            ? schema.phaseImages
-            : ex.schemaImages[index]
-            ? [ex.schemaImages[index]]
-            : [],
-          editable: true,
-        })),
+        videos: ex.videos.filter((video) => !video.startsWith("data:")),
+        schemaDataList: cleanSchemaDataList,
       };
 
       const saved = editId
@@ -520,8 +556,8 @@ export default function CreerExerciceClient() {
         if (goId) router.push(`/exercices/${goId}`);
         else router.push("/mon-compte/exercices");
       }, 600);
-    } catch (e) {
-      console.error(e);
+    } catch (error) {
+      console.error(error);
       flash("Erreur lors de la sauvegarde");
     }
   };
@@ -531,9 +567,13 @@ export default function CreerExerciceClient() {
       <style>{CSS}</style>
 
       <div className="ce-topbar">
-        <button className="ce-retour" onClick={() => router.push("/mon-compte/exercices")}>
+        <button
+          className="ce-retour"
+          onClick={() => router.push("/mon-compte/exercices")}
+        >
           ← Retour à mes exercices
         </button>
+
         <span className="ce-nouvel">
           {editId ? "✏️ MODIFIER L’EXERCICE" : "+ NOUVEL EXERCICE"}
         </span>
@@ -546,36 +586,76 @@ export default function CreerExerciceClient() {
       </div>
 
       <p className="ce-sub">
-        Renseigne les informations de ton exercice. Il restera privé dans ton compte tant que tu ne le proposes pas au CEO.
+        Renseigne les informations de ton exercice. Il restera privé dans ton compte
+        tant que tu ne le proposes pas au CEO.
       </p>
 
       <div className="ce-grid">
         <div className="ce-card">
-          <label className="ce-lab">Titre de l’exercice <b className="req">*</b></label>
-          <input className="ce-input" value={ex.title} onChange={(e) => set("title", e.target.value)} />
+          <label className="ce-lab">
+            Titre de l’exercice <b className="req">*</b>
+          </label>
+
+          <input
+            className="ce-input"
+            value={ex.title}
+            onChange={(event) => set("title", event.target.value)}
+          />
 
           <label className="ce-lab">Organisation</label>
-          <textarea className="ce-area" value={ex.organisation} onChange={(e) => set("organisation", e.target.value)} />
+
+          <textarea
+            className="ce-area"
+            value={ex.organisation}
+            onChange={(event) => set("organisation", event.target.value)}
+          />
 
           <label className="ce-lab">Déroulement</label>
-          <textarea className="ce-area" value={ex.deroulement} onChange={(e) => set("deroulement", e.target.value)} />
+
+          <textarea
+            className="ce-area"
+            value={ex.deroulement}
+            onChange={(event) => set("deroulement", event.target.value)}
+          />
 
           <label className="ce-lab">Consignes techniques</label>
-          <textarea className="ce-area" value={ex.consignes} onChange={(e) => set("consignes", e.target.value)} />
+
+          <textarea
+            className="ce-area"
+            value={ex.consignes}
+            onChange={(event) => set("consignes", event.target.value)}
+          />
 
           <label className="ce-lab">Évolution / Variantes</label>
-          <textarea className="ce-area" value={ex.variantes} onChange={(e) => set("variantes", e.target.value)} />
 
-          <label className="ce-lab">Dessins de l’exercice <span className="ce-lab-soft">(50 phases max)</span></label>
+          <textarea
+            className="ce-area"
+            value={ex.variantes}
+            onChange={(event) => set("variantes", event.target.value)}
+          />
+
+          <label className="ce-lab">
+            Dessins de l’exercice{" "}
+            <span className="ce-lab-soft">(50 phases max)</span>
+          </label>
 
           <div className="ce-schemas">
-            {ex.schemaImages.map((src, i) => (
-              <div key={`${src}-${i}`} className="ce-schema">
-                <img src={src} alt={`Schéma ${i + 1}`} />
+            {ex.schemaImages.map((src, index) => (
+              <div key={`${src}-${index}`} className="ce-schema">
+                <img src={src} alt={`Schéma ${index + 1}`} />
 
                 <div className="ce-schema-acts">
-                  <button type="button" onClick={() => openDraw(i)}>✏️ Modifier</button>
-                  <button type="button" className="rm" onClick={() => removeSchema(i)}>✕ Retirer</button>
+                  <button type="button" onClick={() => openDraw(index)}>
+                    ✏️ Modifier
+                  </button>
+
+                  <button
+                    type="button"
+                    className="rm"
+                    onClick={() => removeSchema(index)}
+                  >
+                    ✕ Retirer
+                  </button>
                 </div>
               </div>
             ))}
@@ -589,40 +669,71 @@ export default function CreerExerciceClient() {
             )}
           </div>
 
-          <label className="ce-lab">Vidéo / Animation <span className="ce-lab-soft">(1 max)</span></label>
+          <label className="ce-lab">
+            Vidéo / Animation <span className="ce-lab-soft">(1 max)</span>
+          </label>
 
           <div className="ce-videos">
             {ex.videos[0] ? (
               <div className="ce-video">
                 <video src={ex.videos[0]} controls />
-                <button type="button" className="rm" onClick={removeVideo}>✕ Retirer</button>
+
+                <button type="button" className="rm" onClick={removeVideo}>
+                  ✕ Retirer
+                </button>
               </div>
             ) : (
-              <button type="button" className="ce-addvid" onClick={() => vidInput.current?.click()}>
+              <button
+                type="button"
+                className="ce-addvid"
+                onClick={() => vidInput.current?.click()}
+              >
                 🎬 Ajouter une vidéo
               </button>
             )}
 
-            <input ref={vidInput} type="file" accept="video/mp4,video/*" hidden onChange={onVideos} />
+            <input
+              ref={vidInput}
+              type="file"
+              accept="video/mp4,video/*"
+              hidden
+              onChange={onVideos}
+            />
           </div>
 
-          <label className="ce-lab">Images / Schémas <span className="ce-lab-soft">(5 max)</span></label>
+          <label className="ce-lab">
+            Images / Schémas <span className="ce-lab-soft">(5 max)</span>
+          </label>
 
           <div className="ce-imgs">
-            {ex.images.map((src, i) => (
-              <div key={`${src}-${i}`} className="ce-thumb">
+            {ex.images.map((src, index) => (
+              <div key={`${src}-${index}`} className="ce-thumb">
                 <img src={src} alt="" />
-                <button type="button" onClick={() => removeImage(i)}>✕</button>
+
+                <button type="button" onClick={() => removeImage(index)}>
+                  ✕
+                </button>
               </div>
             ))}
 
             {ex.images.length < 5 && (
-              <button type="button" className="ce-addimg" onClick={() => imgInput.current?.click()}>
+              <button
+                type="button"
+                className="ce-addimg"
+                onClick={() => imgInput.current?.click()}
+              >
                 📷 Ajouter une image
               </button>
             )}
 
-            <input ref={imgInput} type="file" accept="image/*" multiple hidden onChange={onImages} />
+            <input
+              ref={imgInput}
+              type="file"
+              accept="image/*"
+              multiple
+              hidden
+              onChange={onImages}
+            />
           </div>
         </div>
 
@@ -630,61 +741,123 @@ export default function CreerExerciceClient() {
           <h2>CRITÈRES</h2>
 
           <label className="ce-lab">Plots</label>
-          <select className="ce-select" value={ex.plots} onChange={(e) => set("plots", e.target.value)}>
+
+          <select
+            className="ce-select"
+            value={ex.plots}
+            onChange={(event) => set("plots", event.target.value)}
+          >
             <option value="">—</option>
-            {NUM(12).map((n) => <option key={n}>{n}</option>)}
+            {NUM(12).map((number) => (
+              <option key={number}>{number}</option>
+            ))}
           </select>
 
           <label className="ce-lab">Ballons</label>
-          <select className="ce-select" value={ex.ballons} onChange={(e) => set("ballons", e.target.value)}>
+
+          <select
+            className="ce-select"
+            value={ex.ballons}
+            onChange={(event) => set("ballons", event.target.value)}
+          >
             <option value="">—</option>
-            {NUM(12).map((n) => <option key={n}>{n}</option>)}
+            {NUM(12).map((number) => (
+              <option key={number}>{number}</option>
+            ))}
           </select>
 
           <label className="ce-lab">Nombre de paniers</label>
-          <select className="ce-select" value={ex.paniers} onChange={(e) => set("paniers", e.target.value)}>
+
+          <select
+            className="ce-select"
+            value={ex.paniers}
+            onChange={(event) => set("paniers", event.target.value)}
+          >
             <option value="">—</option>
-            {NUM(8).map((n) => <option key={n}>{n}</option>)}
+            {NUM(8).map((number) => (
+              <option key={number}>{number}</option>
+            ))}
           </select>
 
           <label className="ce-lab">Nombre de joueurs</label>
-          <select className="ce-select" value={ex.joueurs} onChange={(e) => set("joueurs", e.target.value)}>
-            {NUM(20).slice(1).map((n) => <option key={n}>{n}</option>)}
+
+          <select
+            className="ce-select"
+            value={ex.joueurs}
+            onChange={(event) => set("joueurs", event.target.value)}
+          >
+            {NUM(20)
+              .slice(1)
+              .map((number) => (
+                <option key={number}>{number}</option>
+              ))}
           </select>
 
           <label className="ce-lab">Catégorie</label>
-          <select className="ce-select" value={ex.categorie} onChange={(e) => set("categorie", e.target.value)}>
-            {CATS.map((c) => <option key={c}>{c}</option>)}
+
+          <select
+            className="ce-select"
+            value={ex.categorie}
+            onChange={(event) => set("categorie", event.target.value)}
+          >
+            {CATS.map((category) => (
+              <option key={category}>{category}</option>
+            ))}
           </select>
 
           <label className="ce-lab">Type</label>
+
           <div className="ce-toggles">
-            {TYPES.map((t) => (
-              <button type="button" key={t} className={"ce-toggle" + (ex.type === t ? " on" : "")} onClick={() => set("type", t)}>
-                {t}
+            {TYPES.map((type) => (
+              <button
+                type="button"
+                key={type}
+                className={"ce-toggle" + (ex.type === type ? " on" : "")}
+                onClick={() => set("type", type)}
+              >
+                {type}
               </button>
             ))}
           </div>
 
           <label className="ce-lab">Niveau</label>
+
           <div className="ce-toggles">
-            {NIVEAUX.map((n) => (
-              <button type="button" key={n} className={"ce-toggle" + (ex.niveau === n ? " on" : "")} onClick={() => set("niveau", n)}>
-                {n}
+            {NIVEAUX.map((level) => (
+              <button
+                type="button"
+                key={level}
+                className={"ce-toggle" + (ex.niveau === level ? " on" : "")}
+                onClick={() => set("niveau", level)}
+              >
+                {level}
               </button>
             ))}
           </div>
 
           <label className="ce-lab">Temps estimé min</label>
-          <select className="ce-select" value={ex.temps} onChange={(e) => set("temps", e.target.value)}>
-            {TEMPS.map((t) => <option key={t}>{t}</option>)}
+
+          <select
+            className="ce-select"
+            value={ex.temps}
+            onChange={(event) => set("temps", event.target.value)}
+          >
+            {TEMPS.map((time) => (
+              <option key={time}>{time}</option>
+            ))}
           </select>
 
           <label className="ce-lab">Thèmes</label>
+
           <div className="ce-themes">
-            {THEMES.map((t) => (
-              <label key={t} className="ce-theme">
-                <input type="checkbox" checked={ex.themes.includes(t)} onChange={() => toggleTheme(t)} /> {t}
+            {THEMES.map((theme) => (
+              <label key={theme} className="ce-theme">
+                <input
+                  type="checkbox"
+                  checked={ex.themes.includes(theme)}
+                  onChange={() => toggleTheme(theme)}
+                />{" "}
+                {theme}
               </label>
             ))}
           </div>
@@ -692,7 +865,10 @@ export default function CreerExerciceClient() {
       </div>
 
       <div className="ce-actions">
-        <button type="button" className="ce-btn ghost" onClick={() => router.back()}>Annuler</button>
+        <button type="button" className="ce-btn ghost" onClick={() => router.back()}>
+          Annuler
+        </button>
+
         <button type="button" className="ce-btn save" onClick={save}>
           💾 {editId ? "METTRE À JOUR L’EXERCICE" : "SAUVEGARDER L’EXERCICE"}
         </button>
