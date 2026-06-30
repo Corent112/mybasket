@@ -462,13 +462,9 @@ const currentRef = useRef(current);
     const ph = phasesRef.current[currentRef.current]; return ph ? simulatePhase(ph).ballPt : null;
   };
   // le joueur a-t-il le ballon au moment où une NOUVELLE action démarrerait (= après les actions existantes) ?
-  const playerHasBallAtActionStart = (playerId: string): boolean => {
-  const ph = phasesRef.current[currentRef.current];
-  if (!ph) return false;
-
-  const player = ph.players.find((p) => p.id === playerId);
-  return !!player?.hasBall;
-};
+  // Important : on utilise la simulation de phase, pas seulement l'état initial.
+  // Ainsi, si 1 passe à 2, alors 2 peut directement dribbler / passer / tirer dans la même phase.
+  const playerHasBallAtActionStart = (playerId: string): boolean => getBallCurrentOwner() === playerId;
   // point de départ effectif d'une trajectoire (suit le joueur source / la fin de sa dernière action)
   const resolveFrom = (l: Line): Pt => {
     if (l.sourcePlayerId) { const ph = phasesRef.current[currentRef.current]; const pos = ph ? lineStartN(ph, l) : null; if (pos) return pos; }
@@ -1682,7 +1678,11 @@ animPosRef.current = { players, balls };
       const startN = getPlayerCurrentPoint(sourceId) || n;
       const isShoot = tool.action === 'shoot';
       const existingActions = orderedActions(ph);
-      const shouldStartWithPrevious = existingActions.length > 0;
+      const hasBallAtPhaseStart = ph.players.some((p) => p.id === sourceId && p.hasBall);
+      const isBallAction = tool.action === 'dribble' || tool.action === 'pass' || tool.action === 'shoot';
+      // Si le joueur vient de recevoir le ballon dans cette même phase, son action doit s'enchaîner
+      // après la passe précédente, sinon elle partirait en même temps que la passe.
+      const shouldStartWithPrevious = existingActions.length > 0 && !(isBallAction && !hasBallAtPhaseStart);
 
       dragRef.current = {
         id: uid(),

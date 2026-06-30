@@ -7,9 +7,10 @@ import type { Exercise } from "@/types/exercise";
 
 type SortKey = "recent" | "alpha";
 
+const CATEGORY_OPTIONS = ["U9", "U11", "U13", "U15", "U18", "U21", "Senior"];
+
 const FILTERS = [
   { key: "theme", label: "THÈMES" },
-  { key: "type", label: "TYPE" },
   { key: "category", label: "CATÉGORIE" },
   { key: "level", label: "NIVEAU" },
 ] as const;
@@ -131,7 +132,9 @@ export default function ExercicesClient() {
     return Object.fromEntries(
       FILTERS.map((f) => [
         f.key,
-        Array.from(sets[f.key]).sort((a, b) => a.localeCompare(b, "fr")),
+        f.key === "category"
+          ? CATEGORY_OPTIONS
+          : Array.from(sets[f.key]).sort((a, b) => a.localeCompare(b, "fr")),
       ])
     ) as Record<string, string[]>;
   }, [items]);
