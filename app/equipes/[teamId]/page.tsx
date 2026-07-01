@@ -1264,6 +1264,10 @@ export default function EquipeDetailPage({
         }
 
         @media (max-width: 980px) {
+          .training-all-row{grid-template-columns:1fr}.training-all-main{grid-template-columns:1fr}.training-all-main b{text-align:left}.training-row-actions{justify-content:flex-start}
+        }
+
+        @media (max-width: 980px) {
           .team-hero-linked {
             padding-right: 0;
             padding-top: 86px;
@@ -1738,6 +1742,14 @@ function TrainingAnalysisBlock({
     [periodSessions],
   );
   const summary = useMemo(() => buildTrainingSummary(periodSessions), [periodSessions]);
+  const allSessionsSorted = useMemo(
+    () =>
+      [...sessions].sort(
+        (a, b) =>
+          new Date(b.date || 0).getTime() - new Date(a.date || 0).getTime(),
+      ),
+    [sessions],
+  );
 
   async function deleteSession(session: TrainingSession) {
     if (!confirm(`Supprimer la séance "${session.title}" ?`)) return;
@@ -1809,6 +1821,49 @@ function TrainingAnalysisBlock({
           <p className="muted">Toutes les données sont calculées depuis les séances générées et liées à cette équipe.</p>
         </div>
         <button className="tl-btn tl-btn-bx" type="button" onClick={loadSessions}>Actualiser</button>
+      </div>
+
+      <div className="training-all-sessions">
+        <div className="training-section-head">
+          <div>
+            <h3>Séances réalisées avec cette équipe</h3>
+            <p>Toutes les séances générées et associées à {team.name} sont consultables ici.</p>
+          </div>
+          <span>{allSessionsSorted.length} séance{allSessionsSorted.length > 1 ? "s" : ""}</span>
+        </div>
+
+        {loading ? (
+          <div className="empty">Chargement des séances...</div>
+        ) : allSessionsSorted.length === 0 ? (
+          <div className="empty">Aucune séance réalisée liée à cette équipe pour le moment.</div>
+        ) : (
+          <div className="training-all-list">
+            {allSessionsSorted.map((session) => (
+              <article key={session.id} className="training-all-row">
+                <button type="button" className="training-all-main" onClick={() => setSelectedSession(session)}>
+                  <span className="date">{formatMatchDate(session.date)}</span>
+                  <strong>{session.title}</strong>
+                  <em>{team.name}</em>
+                  <b>{minutesToLabel(session.duration)}</b>
+                </button>
+
+                <div className="training-row-actions">
+                  <button type="button" onClick={() => setSelectedSession(session)}>Consulter</button>
+                  <button type="button" onClick={() => downloadSession(session)}>Télécharger</button>
+                  <button type="button" onClick={() => printSession(session)}>Imprimer</button>
+                  <button type="button" className="danger" onClick={() => deleteSession(session)}>Supprimer</button>
+                </div>
+              </article>
+            ))}
+          </div>
+        )}
+      </div>
+
+      <div className="training-analysis-title">
+        <div>
+          <h3>Analyse de ce qu'on travaille</h3>
+          <p>Répartition automatique par semaine, mois ou année.</p>
+        </div>
       </div>
 
       <div className="training-periodbar">
@@ -1932,7 +1987,7 @@ function TrainingAnalysisBlock({
       )}
 
       <style jsx>{`
-        .training-card{margin-top:1.2rem}.training-head{display:flex;justify-content:space-between;gap:1rem;align-items:flex-start;margin-bottom:1rem}.eyebrow{margin:0;color:#d4a24c;font-size:.78rem;font-weight:900;text-transform:uppercase;letter-spacing:.06em}h2{margin:.15rem 0 0;color:#6b1a2c;font-size:1.55rem;font-weight:950}.muted{margin:.25rem 0 0;color:#9a8a82;font-weight:700}.training-periodbar{display:grid;grid-template-columns:auto 1fr auto;gap:1rem;align-items:center;border:1px solid #efe6db;background:#fff8ef;border-radius:22px;padding:.9rem;margin-bottom:1rem}.period-buttons{display:flex;gap:.45rem}.period-buttons button,.period-nav button{border:1px solid #eadccc;background:#fff;color:#6b1a2c;border-radius:12px;padding:.65rem .9rem;font-weight:950;cursor:pointer}.period-buttons button.on{background:#6b1a2c;color:#fff;border-color:#6b1a2c}.period-nav{display:flex;align-items:center;justify-content:center;gap:.65rem;color:#24171b}.period-nav strong{text-transform:capitalize}.training-total{display:flex;flex-direction:column;align-items:flex-end}.training-total span,.training-total em{color:#9a8a82;font-size:.8rem;font-weight:900;text-transform:uppercase}.training-total b{font-size:1.35rem;color:#1f171a}.training-grid{display:grid;grid-template-columns:1.25fr .85fr;gap:1rem}.training-donut-card,.training-sessions-card,.training-table-wrap{border:1px solid #efe6db;border-radius:20px;background:#fff;padding:1rem;box-shadow:0 10px 24px rgba(60,30,20,.045)}.training-donut-card h3,.training-sessions-card h3,.training-table-wrap h3{margin:0 0 .9rem;color:#6b1a2c}.training-donut-layout{display:grid;grid-template-columns:280px 1fr;gap:1rem;align-items:center}.training-donut-wrap{position:relative;width:260px;height:260px;display:grid;place-items:center}.training-donut{width:260px;height:260px}.training-donut-center{position:absolute;text-align:center}.training-donut-center strong{display:block;color:#1f171a;font-size:1.7rem}.training-donut-center span{color:#9a8a82;font-weight:900}.training-legend{display:flex;flex-direction:column;gap:.55rem}.legend-line{display:grid;grid-template-columns:12px 1fr auto auto;gap:.65rem;align-items:center;padding:.55rem 0;border-bottom:1px solid #f0e7dc}.legend-line span,.training-table .dot{width:10px;height:10px;border-radius:999px;display:inline-block}.legend-line strong{color:#1f171a}.legend-line b{color:#6b1a2c}.legend-line em{color:#9a8a82;font-style:normal;font-weight:800}.training-session-list{display:flex;flex-direction:column;gap:.5rem;max-height:320px;overflow:auto}.training-session-row{display:grid;grid-template-columns:90px 1fr auto;gap:.65rem;align-items:center;text-align:left;border:1px solid #efe6db;background:#fff;border-radius:14px;padding:.75rem;cursor:pointer}.training-session-row:hover{border-color:#d4a24c;box-shadow:0 8px 18px rgba(60,30,20,.06)}.training-session-row span{color:#9a8a82;font-weight:900}.training-session-row strong{color:#1f171a}.training-session-row em{font-style:normal;color:#6b1a2c;font-weight:950}.training-table-wrap{margin-top:1rem;overflow:auto}.training-table{width:100%;border-collapse:collapse;font-size:.9rem}.training-table th{background:#fff8ef;color:#6b1a2c;text-align:left;font-size:.78rem;text-transform:uppercase;letter-spacing:.04em}.training-table th,.training-table td{padding:.8rem;border-bottom:1px solid #f0e7dc}.training-table td:first-child{font-weight:900;color:#1f171a}.training-table .dot{margin-right:.5rem;vertical-align:middle}.bar{display:inline-flex;width:88px;height:8px;border-radius:999px;background:#f1e8dd;margin-right:.55rem;overflow:hidden}.bar i{display:block;height:100%;border-radius:999px}.total-row td{font-weight:950;background:#fffdf9}.empty{padding:1.2rem;border:1px dashed #eadccc;border-radius:18px;background:#fffdf9;color:#9a8a82;font-weight:900}.training-modal-backdrop{position:fixed;inset:0;z-index:1000;background:rgba(17,24,39,.45);display:grid;place-items:center;padding:1rem}.training-modal{width:min(760px,96vw);max-height:90vh;overflow:auto;background:#fff;border-radius:24px;padding:1.2rem;box-shadow:0 24px 80px rgba(0,0,0,.3)}.training-modal-head{display:flex;justify-content:space-between;gap:1rem;align-items:flex-start;margin-bottom:1rem}.training-modal-head h3{margin:0;color:#6b1a2c;font-size:1.4rem}.training-modal-head p{margin:.2rem 0 0;color:#9a8a82;font-weight:800}.training-modal-head button{border:0;background:#6b1a2c;color:#fff;width:34px;height:34px;border-radius:999px;font-size:1.3rem;cursor:pointer}.training-table.compact th,.training-table.compact td{padding:.65rem}.training-modal-actions{display:flex;justify-content:flex-end;gap:.6rem;margin-top:1rem}.training-modal-actions button{border:1px solid #eadccc;background:#fff;color:#6b1a2c;border-radius:999px;padding:.7rem 1rem;font-weight:950;cursor:pointer}.training-modal-actions .danger{background:#fee2e2;border-color:#fecaca;color:#b91c1c}@media(max-width:1050px){.training-periodbar,.training-grid,.training-donut-layout{grid-template-columns:1fr}.training-total{align-items:flex-start}.training-donut-wrap{margin:auto}}@media(max-width:640px){.training-head{flex-direction:column}.period-buttons{flex-wrap:wrap}.training-session-row{grid-template-columns:1fr}.training-modal-actions{flex-direction:column}.training-modal-actions button{width:100%}}
+        .training-card{margin-top:1.2rem}.training-head{display:flex;justify-content:space-between;gap:1rem;align-items:flex-start;margin-bottom:1rem}.training-all-sessions{border:1px solid #efe6db;border-radius:24px;background:#fffdf9;padding:1rem;margin:1rem 0 1.1rem;box-shadow:0 12px 28px rgba(60,30,20,.045)}.training-section-head,.training-analysis-title{display:flex;align-items:flex-start;justify-content:space-between;gap:1rem;margin-bottom:.9rem}.training-section-head h3,.training-analysis-title h3{margin:0;color:#6b1a2c;font-size:1.15rem;font-weight:950}.training-section-head p,.training-analysis-title p{margin:.2rem 0 0;color:#9a8a82;font-weight:800}.training-section-head span{border-radius:999px;background:#fff8ef;color:#6b1a2c;border:1px solid #eadccc;padding:.45rem .75rem;font-weight:950;white-space:nowrap}.training-all-list{display:flex;flex-direction:column;gap:.65rem;max-height:420px;overflow:auto;padding-right:.25rem}.training-all-row{display:grid;grid-template-columns:1fr auto;gap:.8rem;align-items:center;border:1px solid #f0e7dc;background:#fff;border-radius:18px;padding:.65rem}.training-all-main{border:0;background:transparent;text-align:left;display:grid;grid-template-columns:120px 1fr 170px 80px;gap:.75rem;align-items:center;cursor:pointer;color:#24171b}.training-all-main .date{color:#6b1a2c;font-weight:950}.training-all-main strong{font-weight:950;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.training-all-main em{font-style:normal;color:#9a8a82;font-weight:850;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.training-all-main b{color:#d4a24c;font-weight:950;text-align:right}.training-row-actions{display:flex;gap:.4rem;flex-wrap:wrap;justify-content:flex-end}.training-row-actions button{border:1px solid #eadccc;background:#fff8ef;color:#6b1a2c;border-radius:999px;padding:.45rem .65rem;font-weight:950;cursor:pointer}.training-row-actions button.danger{background:#fff1f1;color:#b42318;border-color:#ffd0d0}.training-analysis-title{margin:1.25rem 0 .75rem}.eyebrow{margin:0;color:#d4a24c;font-size:.78rem;font-weight:900;text-transform:uppercase;letter-spacing:.06em}h2{margin:.15rem 0 0;color:#6b1a2c;font-size:1.55rem;font-weight:950}.muted{margin:.25rem 0 0;color:#9a8a82;font-weight:700}.training-periodbar{display:grid;grid-template-columns:auto 1fr auto;gap:1rem;align-items:center;border:1px solid #efe6db;background:#fff8ef;border-radius:22px;padding:.9rem;margin-bottom:1rem}.period-buttons{display:flex;gap:.45rem}.period-buttons button,.period-nav button{border:1px solid #eadccc;background:#fff;color:#6b1a2c;border-radius:12px;padding:.65rem .9rem;font-weight:950;cursor:pointer}.period-buttons button.on{background:#6b1a2c;color:#fff;border-color:#6b1a2c}.period-nav{display:flex;align-items:center;justify-content:center;gap:.65rem;color:#24171b}.period-nav strong{text-transform:capitalize}.training-total{display:flex;flex-direction:column;align-items:flex-end}.training-total span,.training-total em{color:#9a8a82;font-size:.8rem;font-weight:900;text-transform:uppercase}.training-total b{font-size:1.35rem;color:#1f171a}.training-grid{display:grid;grid-template-columns:1.25fr .85fr;gap:1rem}.training-donut-card,.training-sessions-card,.training-table-wrap{border:1px solid #efe6db;border-radius:20px;background:#fff;padding:1rem;box-shadow:0 10px 24px rgba(60,30,20,.045)}.training-donut-card h3,.training-sessions-card h3,.training-table-wrap h3{margin:0 0 .9rem;color:#6b1a2c}.training-donut-layout{display:grid;grid-template-columns:280px 1fr;gap:1rem;align-items:center}.training-donut-wrap{position:relative;width:260px;height:260px;display:grid;place-items:center}.training-donut{width:260px;height:260px}.training-donut-center{position:absolute;text-align:center}.training-donut-center strong{display:block;color:#1f171a;font-size:1.7rem}.training-donut-center span{color:#9a8a82;font-weight:900}.training-legend{display:flex;flex-direction:column;gap:.55rem}.legend-line{display:grid;grid-template-columns:12px 1fr auto auto;gap:.65rem;align-items:center;padding:.55rem 0;border-bottom:1px solid #f0e7dc}.legend-line span,.training-table .dot{width:10px;height:10px;border-radius:999px;display:inline-block}.legend-line strong{color:#1f171a}.legend-line b{color:#6b1a2c}.legend-line em{color:#9a8a82;font-style:normal;font-weight:800}.training-session-list{display:flex;flex-direction:column;gap:.5rem;max-height:320px;overflow:auto}.training-session-row{display:grid;grid-template-columns:90px 1fr auto;gap:.65rem;align-items:center;text-align:left;border:1px solid #efe6db;background:#fff;border-radius:14px;padding:.75rem;cursor:pointer}.training-session-row:hover{border-color:#d4a24c;box-shadow:0 8px 18px rgba(60,30,20,.06)}.training-session-row span{color:#9a8a82;font-weight:900}.training-session-row strong{color:#1f171a}.training-session-row em{font-style:normal;color:#6b1a2c;font-weight:950}.training-table-wrap{margin-top:1rem;overflow:auto}.training-table{width:100%;border-collapse:collapse;font-size:.9rem}.training-table th{background:#fff8ef;color:#6b1a2c;text-align:left;font-size:.78rem;text-transform:uppercase;letter-spacing:.04em}.training-table th,.training-table td{padding:.8rem;border-bottom:1px solid #f0e7dc}.training-table td:first-child{font-weight:900;color:#1f171a}.training-table .dot{margin-right:.5rem;vertical-align:middle}.bar{display:inline-flex;width:88px;height:8px;border-radius:999px;background:#f1e8dd;margin-right:.55rem;overflow:hidden}.bar i{display:block;height:100%;border-radius:999px}.total-row td{font-weight:950;background:#fffdf9}.empty{padding:1.2rem;border:1px dashed #eadccc;border-radius:18px;background:#fffdf9;color:#9a8a82;font-weight:900}.training-modal-backdrop{position:fixed;inset:0;z-index:1000;background:rgba(17,24,39,.45);display:grid;place-items:center;padding:1rem}.training-modal{width:min(760px,96vw);max-height:90vh;overflow:auto;background:#fff;border-radius:24px;padding:1.2rem;box-shadow:0 24px 80px rgba(0,0,0,.3)}.training-modal-head{display:flex;justify-content:space-between;gap:1rem;align-items:flex-start;margin-bottom:1rem}.training-modal-head h3{margin:0;color:#6b1a2c;font-size:1.4rem}.training-modal-head p{margin:.2rem 0 0;color:#9a8a82;font-weight:800}.training-modal-head button{border:0;background:#6b1a2c;color:#fff;width:34px;height:34px;border-radius:999px;font-size:1.3rem;cursor:pointer}.training-table.compact th,.training-table.compact td{padding:.65rem}.training-modal-actions{display:flex;justify-content:flex-end;gap:.6rem;margin-top:1rem}.training-modal-actions button{border:1px solid #eadccc;background:#fff;color:#6b1a2c;border-radius:999px;padding:.7rem 1rem;font-weight:950;cursor:pointer}.training-modal-actions .danger{background:#fee2e2;border-color:#fecaca;color:#b91c1c}@media(max-width:1050px){.training-periodbar,.training-grid,.training-donut-layout{grid-template-columns:1fr}.training-total{align-items:flex-start}.training-donut-wrap{margin:auto}}@media(max-width:640px){.training-head{flex-direction:column}.period-buttons{flex-wrap:wrap}.training-session-row{grid-template-columns:1fr}.training-modal-actions{flex-direction:column}.training-modal-actions button{width:100%}}
       `}</style>
     </section>
   );
