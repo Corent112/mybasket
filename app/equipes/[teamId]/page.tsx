@@ -65,7 +65,7 @@ const EVENT_EMOJI: Record<string, keyof typeof ICONS> = {
   Autre: "cal",
 };
 
-type TeamMainTab = "presentation" | "stats";
+type TeamMainTab = "presentation" | "training" | "stats";
 
 type TeamDashboardData = {
   loading: boolean;
@@ -807,6 +807,15 @@ export default function EquipeDetailPage({
 
           <button
             type="button"
+            className={activeTab === "training" ? "active" : ""}
+            onClick={() => setActiveTab("training")}
+          >
+            <Ic d={ICONS.cal} size={16} />
+            Entraînements
+          </button>
+
+          <button
+            type="button"
             className={activeTab === "stats" ? "active" : ""}
             onClick={() => setActiveTab("stats")}
           >
@@ -1035,6 +1044,12 @@ export default function EquipeDetailPage({
               )}
               <button className="tl-linkbtn">Voir tout le staff</button>
             </section>
+          </div>
+        )}
+
+        {activeTab === "training" && (
+          <div className="team-tab-panel training-panel">
+            <TrainingAnalysisBlock teamId={linkedStatsTeamId} fallbackTeamId={teamId} team={team} />
           </div>
         )}
 
@@ -1303,6 +1318,626 @@ export default function EquipeDetailPage({
   );
 }
 
+
+/* ---------- ANALYSE DES ENTRAÎNEMENTS : liée aux séances de l'équipe ---------- */
+
+type TrainingPeriod = "week" | "month" | "year";
+
+type TrainingSessionItem = {
+  id: string;
+  category: string;
+  title: string;
+  minutes: number;
+};
+
+type TrainingSession = {
+  id: string;
+  title: string;
+  date: string;
+  duration: number;
+  raw: Record<string, any>;
+  items: TrainingSessionItem[];
+};
+
+type TrainingCategorySummary = {
+  category: string;
+  minutes: number;
+  pct: number;
+  sessions: number;
+};
+
+const TRAINING_CATEGORY_COLORS = [
+  "#6b1a2c",
+  "#d4a24c",
+  "#111827",
+  "#7f8c8d",
+  "#ef4444",
+  "#22a06b",
+  "#1f6fb2",
+  "#7c4dff",
+  "#f47b20",
+];
+
+function startOfWeek(date: Date) {
+  const d = new Date(date);
+  const day = d.getDay() || 7;
+  d.setHours(0, 0, 0, 0);
+  d.setDate(d.getDate() - day + 1);
+  return d;
+}
+
+function endOfWeek(date: Date) {
+  const d = startOfWeek(date);
+  d.setDate(d.getDate() + 6);
+  d.setHours(23, 59, 59, 999);
+  return d;
+}
+
+function getPeriodRange(period: TrainingPeriod, anchorDate: Date) {
+  const d = new Date(anchorDate);
+
+  if (period === "week") {
+    return { start: startOfWeek(d), end: endOfWeek(d) };
+  }
+
+  if (period === "month") {
+    return {
+      start: new Date(d.getFullYear(), d.getMonth(), 1, 0, 0, 0, 0),
+      end: new Date(d.getFullYear(), d.getMonth() + 1, 0, 23, 59, 59, 999),
+    };
+  }
+
+  return {
+    start: new Date(d.getFullYear(), 0, 1, 0, 0, 0, 0),
+    end: new Date(d.getFullYear(), 11, 31, 23, 59, 59, 999),
+  };
+}
+
+function addPeriod(anchorDate: Date, period: TrainingPeriod, amount: number) {
+  const d = new Date(anchorDate);
+
+  if (period === "week") d.setDate(d.getDate() + amount * 7);
+  if (period === "month") d.setMonth(d.getMonth() + amount);
+  if (period === "year") d.setFullYear(d.getFullYear() + amount);
+
+  return d;
+}
+
+function formatPeriodLabel(period: TrainingPeriod, anchorDate: Date) {
+  const { start, end } = getPeriodRange(period, anchorDate);
+
+  if (period === "week") {
+    return `${start.toLocaleDateString("fr-FR", { day: "2-digit", month: "short" })} – ${end.toLocaleDateString("fr-FR", { day: "2-digit", month: "short", year: "numeric" })}`;
+  }
+
+  if (period === "month") {
+    return anchorDate.toLocaleDateString("fr-FR", { month: "long", year: "numeric" });
+  }
+
+  return anchorDate.toLocaleDateString("fr-FR", { year: "numeric" });
+}
+
+function minutesToLabel(minutes: number) {
+  const total = Math.max(0, Math.round(minutes));
+  const h = Math.floor(total / 60);
+  const m = total % 60;
+
+  if (h && m) return `${h}h ${String(m).padStart(2, "0")}`;
+  if (h) return `${h}h`;
+  return `${m}min`;
+}
+
+function parseTrainingDate(row: Record<string, any>) {
+  return String(
+    row.session_date ||
+      row.event_date ||
+      row.date ||
+      row.scheduled_at ||
+      row.created_at ||
+      "",
+  );
+}
+
+function normalizeTrainingCategory(value: unknown) {
+  const raw = String(value || "").trim();
+  if (!raw) return "Autre";
+
+  const lower = raw.toLowerCase();
+  if (lower.includes("surnombre")) return "Surnombre";
+  if (lower.includes("pré") || lower.includes("pre") || lower.includes("collect")) return "Pré-collectif";
+  if (lower.includes("tir")) return "Tirs";
+  if (lower.includes("déf") || lower.includes("def")) return "Défense";
+  if (lower.includes("transition") || lower.includes("jeu rapide")) return "Transition / Jeu rapide";
+  if (lower.includes("1c1") || lower.includes("1v1") || lower.includes("situation")) return "1c1 / Situations";
+  if (lower.includes("dribble")) return "Dribble";
+  if (lower.includes("passe")) return "Passe";
+  if (lower.includes("phys")) return "Physique";
+  if (lower.includes("échauff") || lower.includes("echauff")) return "Échauffement";
+
+  return raw.charAt(0).toUpperCase() + raw.slice(1);
+}
+
+function parseTrainingMinutes(value: unknown) {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (!value) return 0;
+
+  const text = String(value).toLowerCase().replace(",", ".");
+  const hourMatch = text.match(/(\d+(?:\.\d+)?)\s*h/);
+  const minuteMatch = text.match(/(\d+(?:\.\d+)?)\s*(min|mn|minutes?)/);
+
+  if (hourMatch || minuteMatch) {
+    return Math.round((Number(hourMatch?.[1] || 0) * 60) + Number(minuteMatch?.[1] || 0));
+  }
+
+  const n = Number(text.replace(/[^\d.]/g, ""));
+  return Number.isFinite(n) ? n : 0;
+}
+
+function getTrainingSessionTitle(row: Record<string, any>) {
+  return String(row.title || row.titre || row.name || row.theme || row.objectif || "Séance");
+}
+
+function extractTrainingItems(row: Record<string, any>) {
+  const rawItems =
+    row.items ||
+    row.session_items ||
+    row.practice_session_items ||
+    row.exercices ||
+    row.exercises ||
+    row.blocks ||
+    row.content ||
+    [];
+
+  if (Array.isArray(rawItems) && rawItems.length > 0) {
+    return rawItems.map((item: any, index: number) => ({
+      id: String(item?.id || `${row.id || "session"}_item_${index}`),
+      category: normalizeTrainingCategory(
+        item?.category ||
+          item?.categorie ||
+          item?.theme ||
+          item?.type ||
+          item?.tag ||
+          item?.title ||
+          item?.titre,
+      ),
+      title: String(item?.title || item?.titre || item?.name || `Bloc ${index + 1}`),
+      minutes: parseTrainingMinutes(
+        item?.duration_minutes || item?.minutes || item?.duration || item?.temps || item?.time,
+      ),
+    }));
+  }
+
+  const themes = Array.isArray(row.themes)
+    ? row.themes
+    : Array.isArray(row.tags)
+      ? row.tags
+      : [];
+
+  if (themes.length > 0) {
+    const total = parseTrainingMinutes(row.duration_minutes || row.duration || row.temps || row.total_minutes);
+    const split = total ? Math.round(total / themes.length) : 0;
+
+    return themes.map((theme: unknown, index: number) => ({
+      id: `${row.id || "session"}_theme_${index}`,
+      category: normalizeTrainingCategory(theme),
+      title: String(theme || `Bloc ${index + 1}`),
+      minutes: split,
+    }));
+  }
+
+  const category = normalizeTrainingCategory(row.category || row.categorie || row.theme || row.type || row.objectif);
+
+  return [
+    {
+      id: `${row.id || "session"}_main`,
+      category,
+      title: getTrainingSessionTitle(row),
+      minutes: parseTrainingMinutes(row.duration_minutes || row.duration || row.temps || row.total_minutes),
+    },
+  ];
+}
+
+function normalizeTrainingSession(row: Record<string, any>): TrainingSession {
+  const items = extractTrainingItems(row);
+  const rawDuration = parseTrainingMinutes(row.duration_minutes || row.duration || row.temps || row.total_minutes);
+  const itemsDuration = items.reduce((sum, item) => sum + item.minutes, 0);
+  const duration = rawDuration || itemsDuration;
+
+  const finalItems = items.map((item) => ({
+    ...item,
+    minutes: item.minutes || (items.length ? Math.round(duration / items.length) : duration),
+  }));
+
+  return {
+    id: String(row.id || crypto.randomUUID()),
+    title: getTrainingSessionTitle(row),
+    date: parseTrainingDate(row),
+    duration,
+    raw: row,
+    items: finalItems,
+  };
+}
+
+function sessionIsInRange(session: TrainingSession, start: Date, end: Date) {
+  const d = new Date(session.date);
+  if (Number.isNaN(d.getTime())) return false;
+  return d >= start && d <= end;
+}
+
+function buildTrainingSummary(sessions: TrainingSession[]) {
+  const totalMinutes = sessions.reduce((sum, session) => sum + session.duration, 0);
+  const categoryMap = new Map<string, { minutes: number; sessionIds: Set<string> }>();
+
+  sessions.forEach((session) => {
+    session.items.forEach((item) => {
+      const category = normalizeTrainingCategory(item.category);
+      if (!categoryMap.has(category)) {
+        categoryMap.set(category, { minutes: 0, sessionIds: new Set() });
+      }
+      const entry = categoryMap.get(category)!;
+      entry.minutes += item.minutes;
+      entry.sessionIds.add(session.id);
+    });
+  });
+
+  return Array.from(categoryMap.entries())
+    .map<TrainingCategorySummary>(([category, entry]) => ({
+      category,
+      minutes: Math.round(entry.minutes),
+      pct: totalMinutes ? Math.round((entry.minutes / totalMinutes) * 1000) / 10 : 0,
+      sessions: entry.sessionIds.size,
+    }))
+    .sort((a, b) => b.minutes - a.minutes);
+}
+
+function TrainingDonut({ rows, totalMinutes }: { rows: TrainingCategorySummary[]; totalMinutes: number }) {
+  let offset = 0;
+  const radius = 48;
+  const circumference = 2 * Math.PI * radius;
+
+  return (
+    <div className="training-donut-wrap">
+      <svg viewBox="0 0 140 140" className="training-donut" aria-label="Répartition des entraînements">
+        <circle cx="70" cy="70" r={radius} fill="none" stroke="#f1e8dd" strokeWidth="22" />
+        {rows.map((row, index) => {
+          const dash = totalMinutes ? (row.minutes / totalMinutes) * circumference : 0;
+          const strokeDasharray = `${dash} ${circumference - dash}`;
+          const strokeDashoffset = -offset;
+          offset += dash;
+
+          return (
+            <circle
+              key={row.category}
+              cx="70"
+              cy="70"
+              r={radius}
+              fill="none"
+              stroke={TRAINING_CATEGORY_COLORS[index % TRAINING_CATEGORY_COLORS.length]}
+              strokeWidth="22"
+              strokeDasharray={strokeDasharray}
+              strokeDashoffset={strokeDashoffset}
+              strokeLinecap="butt"
+              transform="rotate(-90 70 70)"
+            />
+          );
+        })}
+      </svg>
+
+      <div className="training-donut-center">
+        <strong>{minutesToLabel(totalMinutes)}</strong>
+        <span>Total</span>
+      </div>
+    </div>
+  );
+}
+
+function TrainingAnalysisBlock({
+  teamId,
+  fallbackTeamId,
+  team,
+}: {
+  teamId: string;
+  fallbackTeamId: string;
+  team: Team;
+}) {
+  const supabase = createClient();
+  const [period, setPeriod] = useState<TrainingPeriod>("week");
+  const [anchorDate, setAnchorDate] = useState(new Date());
+  const [loading, setLoading] = useState(true);
+  const [sessions, setSessions] = useState<TrainingSession[]>([]);
+  const [selectedSession, setSelectedSession] = useState<TrainingSession | null>(null);
+
+  const teamIdCandidates = useMemo(() => getTeamIdCandidates(fallbackTeamId, team), [fallbackTeamId, team]);
+
+  async function loadSessions() {
+    setLoading(true);
+
+    try {
+      const candidateIds = compactStrings([teamId, fallbackTeamId, ...teamIdCandidates]);
+      const columns = ["team_id", "equipe_id", "associated_team_id", "club_team_id"];
+      let rows: Record<string, any>[] = [];
+
+      for (const column of columns) {
+        const { data, error } = await supabase
+          .from("practice_sessions")
+          .select("*")
+          .in(column, candidateIds)
+          .order("created_at", { ascending: false });
+
+        if (!error && data && data.length > 0) {
+          rows = data as Record<string, any>[];
+          break;
+        }
+      }
+
+      const sessionIds = rows.map((row) => String(row.id || "")).filter(Boolean);
+      let itemRows: Record<string, any>[] = [];
+
+      if (sessionIds.length > 0) {
+        for (const table of ["practice_session_items", "session_items"]) {
+          const { data, error } = await supabase
+            .from(table)
+            .select("*")
+            .in("session_id", sessionIds);
+
+          if (!error && data && data.length > 0) {
+            itemRows = data as Record<string, any>[];
+            break;
+          }
+        }
+      }
+
+      if (itemRows.length > 0) {
+        const bySession = itemRows.reduce((acc: Record<string, any[]>, item) => {
+          const sessionId = String(item.session_id || item.practice_session_id || "");
+          if (!sessionId) return acc;
+          if (!acc[sessionId]) acc[sessionId] = [];
+          acc[sessionId].push(item);
+          return acc;
+        }, {});
+
+        rows = rows.map((row) => ({
+          ...row,
+          items: bySession[String(row.id)] || row.items || [],
+        }));
+      }
+
+      if (rows.length === 0 && typeof window !== "undefined") {
+        const keys = ["mybasket_sessions", "mybasket_seances", "practice_sessions"];
+        for (const key of keys) {
+          try {
+            const parsed = JSON.parse(window.localStorage.getItem(key) || "[]");
+            if (Array.isArray(parsed) && parsed.length > 0) {
+              rows = parsed.filter((row: any) => candidateIds.includes(String(row.team_id || row.teamId || row.equipe_id || row.equipeId || "")));
+              if (rows.length > 0) break;
+            }
+          } catch {}
+        }
+      }
+
+      setSessions(rows.map(normalizeTrainingSession));
+    } catch (error) {
+      console.error("Erreur chargement séances équipe :", error);
+      setSessions([]);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    loadSessions();
+  }, [teamId, fallbackTeamId, teamIdCandidates.join("|")]);
+
+  const range = useMemo(() => getPeriodRange(period, anchorDate), [period, anchorDate]);
+  const periodSessions = useMemo(
+    () => sessions.filter((session) => sessionIsInRange(session, range.start, range.end)),
+    [sessions, range.start, range.end],
+  );
+  const totalMinutes = useMemo(
+    () => periodSessions.reduce((sum, session) => sum + session.duration, 0),
+    [periodSessions],
+  );
+  const summary = useMemo(() => buildTrainingSummary(periodSessions), [periodSessions]);
+
+  async function deleteSession(session: TrainingSession) {
+    if (!confirm(`Supprimer la séance "${session.title}" ?`)) return;
+
+    const { error } = await supabase.from("practice_sessions").delete().eq("id", session.id);
+
+    if (error) {
+      console.error("Erreur suppression séance :", error);
+      alert("Impossible de supprimer cette séance. Vérifie les droits Supabase/RLS.");
+      return;
+    }
+
+    setSessions((prev) => prev.filter((item) => item.id !== session.id));
+    setSelectedSession(null);
+  }
+
+  function downloadSession(session: TrainingSession) {
+    const lines = [
+      `${team.name} — ${session.title}`,
+      `Date : ${formatMatchDate(session.date)}`,
+      `Durée : ${minutesToLabel(session.duration)}`,
+      "",
+      "Contenu :",
+      ...session.items.map((item) => `- ${item.category} — ${item.title} — ${minutesToLabel(item.minutes)}`),
+    ];
+
+    downloadText(`${team.name}-${session.title}.txt`.replace(/\s+/g, "-"), lines.join("\n"));
+  }
+
+  function printSession(session: TrainingSession) {
+    const html = `
+      <html>
+        <head>
+          <title>${session.title}</title>
+          <style>
+            body{font-family:Arial,sans-serif;padding:32px;color:#111827}
+            h1{color:#6b1a2c;margin-bottom:4px}
+            .meta{color:#666;margin-bottom:24px}
+            table{width:100%;border-collapse:collapse;margin-top:18px}
+            th,td{border:1px solid #ddd;padding:10px;text-align:left}
+            th{background:#f8f1e8;color:#6b1a2c}
+          </style>
+        </head>
+        <body>
+          <h1>${session.title}</h1>
+          <div class="meta">${team.name} · ${formatMatchDate(session.date)} · ${minutesToLabel(session.duration)}</div>
+          <table>
+            <thead><tr><th>Catégorie</th><th>Bloc</th><th>Durée</th></tr></thead>
+            <tbody>${session.items.map((item) => `<tr><td>${item.category}</td><td>${item.title}</td><td>${minutesToLabel(item.minutes)}</td></tr>`).join("")}</tbody>
+          </table>
+        </body>
+      </html>
+    `;
+
+    const w = window.open("", "_blank", "noopener,noreferrer");
+    if (!w) return alert("Autorise les popups pour imprimer la séance.");
+    w.document.write(html);
+    w.document.close();
+    w.focus();
+    setTimeout(() => w.print(), 300);
+  }
+
+  return (
+    <section className="tl-card training-card">
+      <div className="training-head">
+        <div>
+          <p className="eyebrow">Suivi automatique</p>
+          <h2>Analyse des entraînements</h2>
+          <p className="muted">Toutes les données sont calculées depuis les séances générées et liées à cette équipe.</p>
+        </div>
+        <button className="tl-btn tl-btn-bx" type="button" onClick={loadSessions}>Actualiser</button>
+      </div>
+
+      <div className="training-periodbar">
+        <div className="period-buttons">
+          <button className={period === "week" ? "on" : ""} onClick={() => setPeriod("week")}>Semaine</button>
+          <button className={period === "month" ? "on" : ""} onClick={() => setPeriod("month")}>Mois</button>
+          <button className={period === "year" ? "on" : ""} onClick={() => setPeriod("year")}>Année</button>
+        </div>
+        <div className="period-nav">
+          <button onClick={() => setAnchorDate((d) => addPeriod(d, period, -1))}>‹</button>
+          <strong>{formatPeriodLabel(period, anchorDate)}</strong>
+          <button onClick={() => setAnchorDate((d) => addPeriod(d, period, 1))}>›</button>
+        </div>
+        <div className="training-total">
+          <span>Durée totale</span>
+          <b>{minutesToLabel(totalMinutes)}</b>
+          <em>{periodSessions.length} séance{periodSessions.length > 1 ? "s" : ""}</em>
+        </div>
+      </div>
+
+      {loading ? (
+        <div className="empty">Chargement des séances...</div>
+      ) : periodSessions.length === 0 ? (
+        <div className="empty">Aucune séance liée à cette équipe sur cette période.</div>
+      ) : (
+        <>
+          <div className="training-grid">
+            <div className="training-donut-card">
+              <h3>Répartition par catégorie</h3>
+              <div className="training-donut-layout">
+                <TrainingDonut rows={summary} totalMinutes={totalMinutes} />
+                <div className="training-legend">
+                  {summary.map((row, index) => (
+                    <div key={row.category} className="legend-line">
+                      <span style={{ background: TRAINING_CATEGORY_COLORS[index % TRAINING_CATEGORY_COLORS.length] }} />
+                      <strong>{row.category}</strong>
+                      <b>{row.pct}%</b>
+                      <em>{minutesToLabel(row.minutes)}</em>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+
+            <div className="training-sessions-card">
+              <h3>Séances de la période</h3>
+              <div className="training-session-list">
+                {periodSessions.map((session) => (
+                  <button key={session.id} className="training-session-row" onClick={() => setSelectedSession(session)}>
+                    <span>{formatMatchDate(session.date)}</span>
+                    <strong>{session.title}</strong>
+                    <em>{minutesToLabel(session.duration)}</em>
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+
+          <div className="training-table-wrap">
+            <h3>Récapitulatif détaillé</h3>
+            <table className="training-table">
+              <thead>
+                <tr>
+                  <th>Catégorie</th>
+                  <th>Durée</th>
+                  <th>Pourcentage</th>
+                  <th>Nombre de séances</th>
+                  <th>Durée moyenne / séance</th>
+                </tr>
+              </thead>
+              <tbody>
+                {summary.map((row, index) => (
+                  <tr key={row.category}>
+                    <td><span className="dot" style={{ background: TRAINING_CATEGORY_COLORS[index % TRAINING_CATEGORY_COLORS.length] }} />{row.category}</td>
+                    <td>{minutesToLabel(row.minutes)}</td>
+                    <td><span className="bar"><i style={{ width: `${Math.min(100, row.pct)}%`, background: TRAINING_CATEGORY_COLORS[index % TRAINING_CATEGORY_COLORS.length] }} /></span>{row.pct}%</td>
+                    <td>{row.sessions}</td>
+                    <td>{minutesToLabel(row.sessions ? row.minutes / row.sessions : 0)}</td>
+                  </tr>
+                ))}
+                <tr className="total-row">
+                  <td>Total</td>
+                  <td>{minutesToLabel(totalMinutes)}</td>
+                  <td>100%</td>
+                  <td>{periodSessions.length}</td>
+                  <td>—</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </>
+      )}
+
+      {selectedSession && (
+        <div className="training-modal-backdrop" onClick={() => setSelectedSession(null)}>
+          <div className="training-modal" onClick={(e) => e.stopPropagation()}>
+            <div className="training-modal-head">
+              <div>
+                <h3>{selectedSession.title}</h3>
+                <p>{formatMatchDate(selectedSession.date)} · {minutesToLabel(selectedSession.duration)}</p>
+              </div>
+              <button onClick={() => setSelectedSession(null)}>×</button>
+            </div>
+
+            <table className="training-table compact">
+              <thead><tr><th>Catégorie</th><th>Bloc</th><th>Durée</th></tr></thead>
+              <tbody>
+                {selectedSession.items.map((item) => (
+                  <tr key={item.id}><td>{item.category}</td><td>{item.title}</td><td>{minutesToLabel(item.minutes)}</td></tr>
+                ))}
+              </tbody>
+            </table>
+
+            <div className="training-modal-actions">
+              <button onClick={() => downloadSession(selectedSession)}>Télécharger</button>
+              <button onClick={() => printSession(selectedSession)}>Imprimer</button>
+              <button className="danger" onClick={() => deleteSession(selectedSession)}>Supprimer</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      <style jsx>{`
+        .training-card{margin-top:1.2rem}.training-head{display:flex;justify-content:space-between;gap:1rem;align-items:flex-start;margin-bottom:1rem}.eyebrow{margin:0;color:#d4a24c;font-size:.78rem;font-weight:900;text-transform:uppercase;letter-spacing:.06em}h2{margin:.15rem 0 0;color:#6b1a2c;font-size:1.55rem;font-weight:950}.muted{margin:.25rem 0 0;color:#9a8a82;font-weight:700}.training-periodbar{display:grid;grid-template-columns:auto 1fr auto;gap:1rem;align-items:center;border:1px solid #efe6db;background:#fff8ef;border-radius:22px;padding:.9rem;margin-bottom:1rem}.period-buttons{display:flex;gap:.45rem}.period-buttons button,.period-nav button{border:1px solid #eadccc;background:#fff;color:#6b1a2c;border-radius:12px;padding:.65rem .9rem;font-weight:950;cursor:pointer}.period-buttons button.on{background:#6b1a2c;color:#fff;border-color:#6b1a2c}.period-nav{display:flex;align-items:center;justify-content:center;gap:.65rem;color:#24171b}.period-nav strong{text-transform:capitalize}.training-total{display:flex;flex-direction:column;align-items:flex-end}.training-total span,.training-total em{color:#9a8a82;font-size:.8rem;font-weight:900;text-transform:uppercase}.training-total b{font-size:1.35rem;color:#1f171a}.training-grid{display:grid;grid-template-columns:1.25fr .85fr;gap:1rem}.training-donut-card,.training-sessions-card,.training-table-wrap{border:1px solid #efe6db;border-radius:20px;background:#fff;padding:1rem;box-shadow:0 10px 24px rgba(60,30,20,.045)}.training-donut-card h3,.training-sessions-card h3,.training-table-wrap h3{margin:0 0 .9rem;color:#6b1a2c}.training-donut-layout{display:grid;grid-template-columns:280px 1fr;gap:1rem;align-items:center}.training-donut-wrap{position:relative;width:260px;height:260px;display:grid;place-items:center}.training-donut{width:260px;height:260px}.training-donut-center{position:absolute;text-align:center}.training-donut-center strong{display:block;color:#1f171a;font-size:1.7rem}.training-donut-center span{color:#9a8a82;font-weight:900}.training-legend{display:flex;flex-direction:column;gap:.55rem}.legend-line{display:grid;grid-template-columns:12px 1fr auto auto;gap:.65rem;align-items:center;padding:.55rem 0;border-bottom:1px solid #f0e7dc}.legend-line span,.training-table .dot{width:10px;height:10px;border-radius:999px;display:inline-block}.legend-line strong{color:#1f171a}.legend-line b{color:#6b1a2c}.legend-line em{color:#9a8a82;font-style:normal;font-weight:800}.training-session-list{display:flex;flex-direction:column;gap:.5rem;max-height:320px;overflow:auto}.training-session-row{display:grid;grid-template-columns:90px 1fr auto;gap:.65rem;align-items:center;text-align:left;border:1px solid #efe6db;background:#fff;border-radius:14px;padding:.75rem;cursor:pointer}.training-session-row:hover{border-color:#d4a24c;box-shadow:0 8px 18px rgba(60,30,20,.06)}.training-session-row span{color:#9a8a82;font-weight:900}.training-session-row strong{color:#1f171a}.training-session-row em{font-style:normal;color:#6b1a2c;font-weight:950}.training-table-wrap{margin-top:1rem;overflow:auto}.training-table{width:100%;border-collapse:collapse;font-size:.9rem}.training-table th{background:#fff8ef;color:#6b1a2c;text-align:left;font-size:.78rem;text-transform:uppercase;letter-spacing:.04em}.training-table th,.training-table td{padding:.8rem;border-bottom:1px solid #f0e7dc}.training-table td:first-child{font-weight:900;color:#1f171a}.training-table .dot{margin-right:.5rem;vertical-align:middle}.bar{display:inline-flex;width:88px;height:8px;border-radius:999px;background:#f1e8dd;margin-right:.55rem;overflow:hidden}.bar i{display:block;height:100%;border-radius:999px}.total-row td{font-weight:950;background:#fffdf9}.empty{padding:1.2rem;border:1px dashed #eadccc;border-radius:18px;background:#fffdf9;color:#9a8a82;font-weight:900}.training-modal-backdrop{position:fixed;inset:0;z-index:1000;background:rgba(17,24,39,.45);display:grid;place-items:center;padding:1rem}.training-modal{width:min(760px,96vw);max-height:90vh;overflow:auto;background:#fff;border-radius:24px;padding:1.2rem;box-shadow:0 24px 80px rgba(0,0,0,.3)}.training-modal-head{display:flex;justify-content:space-between;gap:1rem;align-items:flex-start;margin-bottom:1rem}.training-modal-head h3{margin:0;color:#6b1a2c;font-size:1.4rem}.training-modal-head p{margin:.2rem 0 0;color:#9a8a82;font-weight:800}.training-modal-head button{border:0;background:#6b1a2c;color:#fff;width:34px;height:34px;border-radius:999px;font-size:1.3rem;cursor:pointer}.training-table.compact th,.training-table.compact td{padding:.65rem}.training-modal-actions{display:flex;justify-content:flex-end;gap:.6rem;margin-top:1rem}.training-modal-actions button{border:1px solid #eadccc;background:#fff;color:#6b1a2c;border-radius:999px;padding:.7rem 1rem;font-weight:950;cursor:pointer}.training-modal-actions .danger{background:#fee2e2;border-color:#fecaca;color:#b91c1c}@media(max-width:1050px){.training-periodbar,.training-grid,.training-donut-layout{grid-template-columns:1fr}.training-total{align-items:flex-start}.training-donut-wrap{margin:auto}}@media(max-width:640px){.training-head{flex-direction:column}.period-buttons{flex-wrap:wrap}.training-session-row{grid-template-columns:1fr}.training-modal-actions{flex-direction:column}.training-modal-actions button{width:100%}}
+      `}</style>
+    </section>
+  );
+}
+
 /* ---------- BLOCS STATS FICHE ÉQUIPE : intégrés dans ce fichier pour éviter les erreurs d'import ---------- */
 
 type SupaStatRow = {
@@ -1337,6 +1972,17 @@ type SupaMatchRow = {
   result?: string | null;
   home: boolean | null;
 };
+
+function downloadText(filename: string, text: string, type = "text/plain") {
+  const blob = new Blob([text], { type });
+  const a = document.createElement("a");
+
+  a.href = URL.createObjectURL(blob);
+  a.download = filename;
+  a.click();
+
+  URL.revokeObjectURL(a.href);
+}
 
 const safeNum = (value: unknown) => {
   const parsed = Number(value);
