@@ -149,8 +149,7 @@ export default function ScoutingVideoPage() {
           lineHeight: 1.6,
         }}
       >
-        🎓 Diplômé DAVB - Assistant Vidéo Basketball
-        &nbsp;&nbsp;•&nbsp;&nbsp; 📊 Diplômé Analyste du Jeu Basketball
+        📊 Diplômé Analyste du Jeu Basketball
         &nbsp;&nbsp;•&nbsp;&nbsp; 🏀 Entraîneur Professionnel de Basketball
       </div>
 
@@ -176,10 +175,9 @@ export default function ScoutingVideoPage() {
 
           <p style={{ lineHeight: 1.8 }}>
             Grâce à une expertise acquise sur le terrain et validée par le{" "}
-            <b>Diplôme d’Assistant Vidéo Basketball</b> ainsi que par le{" "}
             <b>Diplôme d’Analyste du Jeu Basketball</b>, MyBasket accompagne les
-            joueurs, entraîneurs et clubs dans l’exploitation de la vidéo comme
-            véritable levier de progression.
+            joueurs, les entraîneurs et les clubs dans l’exploitation de la vidéo
+            comme un véritable levier de progression.
           </p>
 
           <p style={{ lineHeight: 1.8 }}>
@@ -273,7 +271,7 @@ export default function ScoutingVideoPage() {
                 fontWeight: 900,
               }}
             >
-              DAVB • ANALYSTE DU JEU • PERFORMANCE
+              ANALYSTE DU JEU • PERFORMANCE
             </p>
 
             <p

@@ -75,7 +75,7 @@ const EDIT_EXERCISE_ID_KEY = "mybasket_edit_exercise_id";
 
   // ----------------------- Modèle -----------------------
   type Pt = { x: number; y: number };
-  type Player = { id: string; x: number; y: number; label: string; team: 'att' | 'def'; shape: 'circle' | 'square'; coach?: boolean; rotation?: number; name?: string; color?: string; size?: number; photo?: string; hasBall?: boolean; linkedPlayerId?: string; linkedPlayerName?: string; linkedTeamId?: string; linkedTeamName?: string };
+  type Player = { id: string; x: number; y: number; label: string; team: 'att' | 'def'; shape: 'circle' | 'square'; coach?: boolean; rotation?: number; name?: string; color?: string; size?: number; photo?: string; hasBall?: boolean; ballCount?: number; linkedPlayerId?: string; linkedPlayerName?: string; linkedTeamId?: string; linkedTeamName?: string };
   type Obj = { id: string; x: number; y: number; kind: string; text?: string; rotation?: number };
   type Line = { id: string; action: string; from: Pt; to: Pt; ctrls?: Pt[]; ctrl?: Pt; points?: Pt[]; rotation?: number; target?: 'basket'; sourcePlayerId?: string; targetPlayerId?: string; order?: number; startMode?: 'withPrevious' | 'afterPrevious'; duration?: number; targetMode?: 'player' | 'playerCurrentPoint'; createdTargetPoint?: Pt };
   type ActSched = { line: Line; start: number; dur: number; end: number };
@@ -416,6 +416,40 @@ const currentRef = useRef(current);
   };
   // ----- Possession du ballon & simulation de phase -----
   const ACTION_KINDS = ['cut', 'dribble', 'screen', 'pass', 'shoot'];
+
+  // Ballons attachés à un joueur.
+  // Compatibilité : les anciens schémas utilisent hasBall=true.
+  // Nouveau : ballCount permet 0, 1 ou 2 ballons sur le même joueur.
+  const playerBallCount = (player?: Player | null): number => {
+    if (!player) return 0;
+    const raw = player.ballCount ?? (player.hasBall ? 1 : 0);
+    const n = Number(raw);
+    return Math.max(0, Math.min(2, Number.isFinite(n) ? Math.round(n) : 0));
+  };
+
+  const ballPatch = (count: number): Partial<Player> => {
+    const next = Math.max(0, Math.min(2, Math.round(count || 0)));
+    return { hasBall: next > 0, ballCount: next };
+  };
+
+  const offsetBallPoint = (pt: Pt, index: number, count: number): Pt => {
+    if (count <= 1) return pt;
+    const gap = 0.016;
+    return {
+      x: pt.x + (index - (count - 1) / 2) * gap,
+      y: pt.y - 0.012,
+    };
+  };
+
+  const addOwnerBall = (owners: Map<string, number>, id: string, amount = 1) => {
+    owners.set(id, Math.min(2, (owners.get(id) || 0) + amount));
+  };
+
+  const removeOwnerBall = (owners: Map<string, number>, id: string, amount = 1) => {
+    const next = (owners.get(id) || 0) - amount;
+    if (next > 0) owners.set(id, next);
+    else owners.delete(id);
+  };
   // actions ordonnées d'une phase (par order de création, sinon ordre du tableau)
   const orderedActions = (ph: Phase): Line[] =>
     ph.lines
@@ -428,7 +462,7 @@ const currentRef = useRef(current);
   const simulatePhase = (ph: Phase, uptoId?: string): { pos: Record<string, Pt>; owner: string | null; ballPt: Pt | null } => {
     const pos: Record<string, Pt> = {};
     ph.players.forEach((p) => { pos[p.id] = { x: p.x, y: p.y }; });
-    let owner: string | null = ph.players.find((p) => p.hasBall)?.id ?? null;
+    let owner: string | null = ph.players.find((p) => playerBallCount(p) > 0)?.id ?? null;
     let ballPt: Pt | null = owner && pos[owner] ? { ...pos[owner] } : null;
     for (const l of orderedActions(ph)) {
       if (uptoId && l.id === uptoId) break;
@@ -477,7 +511,7 @@ const currentRef = useRef(current);
     const associatedOwners = new Set<string>();
 
     ph.players.forEach((player) => {
-      if (player.hasBall) {
+      if (playerBallCount(player) > 0) {
         owners.add(player.id);
         associatedOwners.add(player.id);
       }
@@ -508,7 +542,7 @@ const currentRef = useRef(current);
   const playerHasBallAtActionStart = (playerId: string): boolean => {
     const ph = phasesRef.current[currentRef.current];
     const hasAssociatedBall = Boolean(
-      ph?.players.some((player) => player.id === playerId && player.hasBall)
+      ph?.players.some((player) => player.id === playerId && playerBallCount(player) > 0)
     );
 
     return hasAssociatedBall || getBallCurrentOwners().has(playerId);
@@ -828,7 +862,18 @@ const currentRef = useRef(current);
       ctx.textAlign = 'center'; ctx.textBaseline = 'top';
       ctx.fillText(p.name, x, y + r + 2); ctx.restore();
     }
-    if (p.hasBall) drawBall(ctx, x + r * 0.78, y - r * 0.78, Math.max(5, r * 0.42));
+    const attachedBallCount = playerBallCount(p);
+
+    if (attachedBallCount >= 1) {
+      // 1er ballon : position historique MyBasket.
+      // Ne pas modifier : il reste collé au joueur comme avant.
+      drawBall(ctx, x + r * 0.78, y - r * 0.78, Math.max(5, r * 0.42));
+    }
+
+    if (attachedBallCount >= 2) {
+      // 2e ballon : même hauteur, symétrique à gauche du joueur.
+      drawBall(ctx, x - r * 0.78, y - r * 0.78, Math.max(5, r * 0.42));
+    }
   };
 
   // géométrie d'un élément (centre + rayon de contour)
@@ -1015,7 +1060,8 @@ const currentRef = useRef(current);
 
   drawPlayer(ctx, canvas, {
   ...p,
-  hasBall: anim ? false : p.hasBall,
+  hasBall: anim ? false : playerBallCount(p) > 0,
+  ballCount: anim ? 0 : playerBallCount(p),
   ...(ap ? { x: ap.x, y: ap.y } : {}),
 });
 });
@@ -1213,15 +1259,15 @@ if (anim && anim.balls) {
 
     for (const s of sched) {
       if (s.start !== firstStart) continue;
-      const c = phasesRef.current[s.idx].players.find((p) => p.hasBall);
+      const c = phasesRef.current[s.idx].players.find((p) => playerBallCount(p) > 0);
       if (c) return c.id;
     }
 
     return null;
   };
 
-  const initialBallOwners = (sched: Sched[]): Set<string> => {
-    const owners = new Set<string>();
+  const initialBallOwners = (sched: Sched[]): Map<string, number> => {
+    const owners = new Map<string, number>();
     if (!sched.length) return owners;
 
     const firstStart = Math.min(...sched.map((s) => s.start));
@@ -1229,7 +1275,8 @@ if (anim && anim.balls) {
     sched.forEach((s) => {
       if (s.start !== firstStart) return;
       phasesRef.current[s.idx].players.forEach((p) => {
-        if (p.hasBall) owners.add(p.id);
+        const count = playerBallCount(p);
+        if (count > 0) owners.set(p.id, Math.min(2, Math.max(owners.get(p.id) || 0, count)));
       });
     });
 
@@ -1255,22 +1302,25 @@ if (anim && anim.balls) {
 
     // Applique tous les transferts terminés avant l'instant courant.
     endedEvents.forEach((e) => {
-      if (e.src) owners.delete(e.src);
+      if (e.src) removeOwnerBall(owners, e.src);
 
       if (!e.shoot && e.target) {
-        owners.add(e.target);
+        addOwnerBall(owners, e.target);
       }
     });
 
     // Dès qu'une passe/tir démarre, le porteur n'a plus le ballon sur lui.
     activeEvents.forEach((e) => {
-      if (e.src) owners.delete(e.src);
+      if (e.src) removeOwnerBall(owners, e.src);
     });
 
     // Ballons attachés aux joueurs réellement porteurs à cet instant.
-    owners.forEach((ownerId) => {
+    owners.forEach((count, ownerId) => {
       const pos = playerPosAtClock(sched, ownerId, clock);
-      if (pos) balls.push(pos);
+      if (!pos) return;
+      for (let i = 0; i < count; i += 1) {
+        balls.push(offsetBallPoint(pos, i, count));
+      }
     });
 
     // Ballons en vol : passe ou tir actif.
@@ -1446,16 +1496,20 @@ animPosRef.current = { players, balls };
   const updatePlayer = (id: string, patch: Partial<Player>) =>
     updatePhase((ph) => ({ ...ph, players: ph.players.map((z) => (z.id === id ? { ...z, ...patch } : z)) }));
   const giveBall = (id: string) => {
-  pushHistory();
+    pushHistory();
 
-  updatePhase((ph) => ({
-    ...ph,
-    players: ph.players.map((z) =>
-      z.id === id ? { ...z, hasBall: !z.hasBall } : z
-    ),
-  }));
-};
-  const removeBall = (id: string) => { pushHistory(); updatePlayer(id, { hasBall: false }); };
+    updatePhase((ph) => ({
+      ...ph,
+      players: ph.players.map((z) => {
+        if (z.id !== id) return z;
+
+        // Cycle au clic : 0 ballon → 1 ballon → 2 ballons → 0 ballon.
+        const nextCount = (playerBallCount(z) + 1) % 3;
+        return { ...z, ...ballPatch(nextCount) };
+      }),
+    }));
+  };
+  const removeBall = (id: string) => { pushHistory(); updatePlayer(id, ballPatch(0)); };
   const deletePlayerById = (id: string) => {
     pushHistory();
     updatePhase((ph) => ({ ...ph, players: ph.players.filter((z) => z.id !== id) }));
@@ -1465,7 +1519,7 @@ animPosRef.current = { players, balls };
     pushHistory();
     updatePhase((ph) => {
       const o = ph.players.find((z) => z.id === id); if (!o) return ph;
-      return { ...ph, players: [...ph.players, { ...o, id: uid(), x: Math.min(0.97, o.x + 0.04), y: Math.min(0.97, o.y + 0.04), hasBall: false }] };
+      return { ...ph, players: [...ph.players, { ...o, id: uid(), x: Math.min(0.97, o.x + 0.04), y: Math.min(0.97, o.y + 0.04), hasBall: false, ballCount: 0 }] };
     });
   };
   const onPhotoFile = (id: string, file?: File | null) => {
@@ -1726,7 +1780,7 @@ animPosRef.current = { players, balls };
       const startN = getPlayerCurrentPoint(sourceId) || n;
       const isShoot = tool.action === 'shoot';
       const existingActions = orderedActions(ph);
-      const hasBallAtPhaseStart = ph.players.some((p) => p.id === sourceId && p.hasBall);
+      const hasBallAtPhaseStart = ph.players.some((p) => p.id === sourceId && playerBallCount(p) > 0);
       const isBallAction = tool.action === 'dribble' || tool.action === 'pass' || tool.action === 'shoot';
       // Si le joueur vient de recevoir le ballon dans cette même phase, son action doit s'enchaîner
       // après la passe précédente, sinon elle partirait en même temps que la passe.
@@ -1884,7 +1938,7 @@ animPosRef.current = { players, balls };
     setPhases((prev) => prev.map((p, i) => {
       if (i !== current) return p;
       const np = [...p.players], no = [...p.objects], nl = [...p.lines];
-      p.players.forEach((o) => { if (has('player', o.id)) { const id = uid(); np.push({ ...o, id, x: Math.min(0.97, o.x + 0.04), y: Math.min(0.97, o.y + 0.04), hasBall: false }); newSel.push({ type: 'player', id }); } });
+      p.players.forEach((o) => { if (has('player', o.id)) { const id = uid(); np.push({ ...o, id, x: Math.min(0.97, o.x + 0.04), y: Math.min(0.97, o.y + 0.04), hasBall: false, ballCount: 0 }); newSel.push({ type: 'player', id }); } });
       p.objects.forEach((o) => { if (has('object', o.id)) { const id = uid(); no.push({ ...o, id, x: Math.min(0.97, o.x + 0.04), y: Math.min(0.97, o.y + 0.04) }); newSel.push({ type: 'object', id }); } });
       p.lines.forEach((o) => { if (has('line', o.id)) { const id = uid(); const oc = o.ctrls ?? (o.ctrl ? [o.ctrl] : []); nl.push({ ...o, id, from: { x: o.from.x + 0.04, y: o.from.y + 0.04 }, to: { x: o.to.x + 0.04, y: o.to.y + 0.04 }, ctrls: oc.length ? oc.map((c) => ({ x: c.x + 0.04, y: c.y + 0.04 })) : undefined, ctrl: undefined, points: o.points ? o.points.map((q) => ({ x: q.x + 0.04, y: q.y + 0.04 })) : undefined }); newSel.push({ type: 'line', id }); } });
       return { ...p, players: np, objects: no, lines: nl };
@@ -2461,17 +2515,20 @@ const exportJson = () => {
   const span = phaseSpanMs(phaseIdx, actSched);
   const s: Sched = { idx: phaseIdx, start: 0, span, end: span, actSched };
 
-  const owners = new Set<string>(
-    ph.players.filter((p) => p.hasBall).map((p) => p.id)
-  );
+  const owners = new Map<string, number>();
+
+  ph.players.forEach((p) => {
+    const count = playerBallCount(p);
+    if (count > 0) owners.set(p.id, count);
+  });
 
   const evs = buildBallEvents([s]).slice().sort((a, b) => a.wEnd - b.wEnd);
 
   for (const e of evs) {
-    if (e.src) owners.delete(e.src);
+    if (e.src) removeOwnerBall(owners, e.src);
 
     if (!e.shoot && e.target) {
-      owners.add(e.target);
+      addOwnerBall(owners, e.target);
     }
   }
 
@@ -2482,15 +2539,19 @@ const exportJson = () => {
       ...p,
       x: pos.x,
       y: pos.y,
-      hasBall: owners.has(p.id),
+      hasBall: (owners.get(p.id) || 0) > 0,
+      ballCount: owners.get(p.id) || 0,
     };
   });
 
-  const ballOwnerIds = Array.from(owners);
+  const ballOwnerIds = Array.from(owners.keys());
 
-  const ballPositions = ballOwnerIds
-    .map((id) => phasePlayerPosAt(s, id, span))
-    .filter(Boolean) as Pt[];
+  const ballPositions = ballOwnerIds.flatMap((id) => {
+    const pos = phasePlayerPosAt(s, id, span);
+    const count = owners.get(id) || 0;
+    if (!pos || count <= 0) return [];
+    return Array.from({ length: count }, (_, index) => offsetBallPoint(pos, index, count));
+  });
 
   return { players, ballOwnerIds, ballPositions };
 };
@@ -3001,8 +3062,8 @@ const exportJson = () => {
                         <span>Lié à <b>{editingPlayer.linkedPlayerName}</b> · {editingPlayer.linkedTeamName}</span>
                         <span onClick={() => unlinkPlayer(editingPlayer.id)} style={{ cursor: 'pointer', color: 'var(--rouge)', fontWeight: 600 }}>Dissocier</span>
                       </div>
-                      <button className="btn btn-outline btn-small btn-block" onClick={() => (editingPlayer.hasBall ? removeBall(editingPlayer.id) : giveBall(editingPlayer.id))}>
-                        {editingPlayer.hasBall ? '🏀 Enlever le ballon' : '🏀 Donner le ballon à ce joueur'}
+                      <button className="btn btn-outline btn-small btn-block" onClick={() => (playerBallCount(editingPlayer) >= 2 ? removeBall(editingPlayer.id) : giveBall(editingPlayer.id))}>
+                        {playerBallCount(editingPlayer) >= 2 ? '🏀 Enlever les ballons' : playerBallCount(editingPlayer) === 1 ? '🏀 Ajouter un 2e ballon' : '🏀 Donner le ballon à ce joueur'}
                       </button>
                     </div>
                   )}
@@ -3032,9 +3093,11 @@ const exportJson = () => {
                 </div>
 
                 <div style={{ display: 'flex', gap: '.4rem' }}>
-                  {editingPlayer.hasBall
-                    ? <button className="btn btn-outline btn-small btn-block" onClick={() => removeBall(editingPlayer.id)}>🏀 Enlever le ballon</button>
-                    : <button className="btn btn-outline btn-small btn-block" onClick={() => giveBall(editingPlayer.id)}>🏀 Donner le ballon</button>}
+                  {playerBallCount(editingPlayer) >= 2
+                    ? <button className="btn btn-outline btn-small btn-block" onClick={() => removeBall(editingPlayer.id)}>🏀 Enlever les ballons</button>
+                    : <button className="btn btn-outline btn-small btn-block" onClick={() => giveBall(editingPlayer.id)}>
+                        {playerBallCount(editingPlayer) === 1 ? '🏀 Ajouter un 2e ballon' : '🏀 Donner le ballon'}
+                      </button>}
                 </div>
 
                 <div style={{ display: 'flex', gap: '.4rem' }}>

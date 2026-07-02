@@ -11,7 +11,6 @@ import LineChart from "../../../../components/equipes/LineChart";
 import { Jersey, Sparkline } from "../../../../components/equipes/Sparkline";
 import type { Player, Team } from "../../../../types/player";
 import { createClient } from "@/lib/supabase/client";
-import PlayerTeamComparisonSection from "@/components/equipes/PlayerTeamComparisonSection";
 
 type PlayerExtra = Player & {
   licenceNumber?: string;
@@ -1527,6 +1526,8 @@ export default function JoueurDetailPage({
             latestBilan={latestBilan}
             prediction={growthPrediction}
             liveStats={liveStats}
+            teamPlayersStats={teamPlayersStats}
+            currentPlayerId={String(playerId)}
           />
         )}
 
@@ -1536,12 +1537,15 @@ export default function JoueurDetailPage({
 
         {tab === "Stats" && (
           <>
-            <StatsTab p={p} tdj={tdj} tdjPct={tdjPct} cmp={cmp} team={team} liveStats={liveStats} />
-
-            <PlayerTeamComparisonSection
-              playerName={`${p.firstName ?? p.first_name ?? ""} ${p.lastName ?? p.last_name ?? ""}`.trim()}
+            <StatsTab
+              p={p}
+              tdj={tdj}
+              tdjPct={tdjPct}
+              cmp={cmp}
+              team={team}
+              liveStats={liveStats}
+              teamPlayersStats={teamPlayersStats}
               currentPlayerId={String(playerId)}
-              playersStats={teamPlayersStats}
             />
           </>
         )}
@@ -1826,6 +1830,8 @@ function OverviewTab({
   latestBilan,
   prediction,
   liveStats,
+  teamPlayersStats,
+  currentPlayerId,
 }: {
   p: any;
   team: Team;
@@ -1837,6 +1843,8 @@ function OverviewTab({
   latestBilan?: PlayerBilan;
   prediction: ReturnType<typeof predictedHeightRange>;
   liveStats: PlayerLiveStats;
+  teamPlayersStats: TeamPlayerComparisonStat[];
+  currentPlayerId: string;
 }) {
   const latestMedical = [...medical].sort((a, b) => b.date.localeCompare(a.date))[0];
   const latestTests = ["Taille", "Poids", "Envergure", "Détente sèche", "VMA"]
@@ -1935,15 +1943,13 @@ function OverviewTab({
         </div>
       </div>
 
-      <h3 className="compare-title-light">Comparaison dans l'équipe <span>({team.name})</span></h3>
-
-      <div className="compare-light">
-        <Compare icon="🏀" bg="#f47b20" label="Points" rang={cmp.pointsRang || 0} eff={cmp.effectif || 0} sub={`${p.stats?.pts || 0} pts / match`} />
-        <Compare icon="🎯" bg="#e0a800" label="Passes décisives" rang={cmp.passesRang || 0} eff={cmp.effectif || 0} sub={`${p.stats?.ast || 0} ast / match`} />
-        <Compare icon="✅" bg="#22a06b" label="Présences" rang={cmp.presencesRang || 0} eff={cmp.effectif || 0} sub={`${p.presencePct || 0}% de présence`} />
-        <Compare icon="⭐" bg="#1f6fb2" label="Note coach" rang={cmp.noteCoachRang || 0} eff={cmp.effectif || 0} sub="évaluation coach" />
-        <Compare icon="⏱" bg="#7c4dff" label="Temps de jeu" rang={cmp.tempsJeuRang || 0} eff={cmp.effectif || 0} sub={`${tdj.tempsMoyenMatchMin || 0} min / match`} />
-      </div>
+      <ModernPlayerComparisonSection
+        team={team}
+        p={p}
+        liveStats={liveStats}
+        teamPlayersStats={teamPlayersStats}
+        currentPlayerId={currentPlayerId}
+      />
     </>
   );
 }
@@ -2007,6 +2013,8 @@ function StatsTab({
   cmp,
   team,
   liveStats,
+  teamPlayersStats,
+  currentPlayerId,
 }: {
   p: any;
   tdj: any;
@@ -2014,6 +2022,8 @@ function StatsTab({
   cmp: any;
   team: Team;
   liveStats: PlayerLiveStats;
+  teamPlayersStats: TeamPlayerComparisonStat[];
+  currentPlayerId: string;
 }) {
   const hasLiveStats = liveStats.hasData;
   const totals = liveStats.totals;
@@ -2137,16 +2147,195 @@ function StatsTab({
         </div>
       </div>
 
-      <h3 className="compare-title-light">Comparaison dans l'équipe <span>({team.name})</span></h3>
-
-      <div className="compare-light">
-        <Compare icon="🏀" bg="#f47b20" label="Points" rang={cmp.pointsRang || 0} eff={cmp.effectif || 0} sub={`${hasLiveStats ? averages.pts : p.stats?.pts || 0} pts / match`} />
-        <Compare icon="🎯" bg="#e0a800" label="Passes décisives" rang={cmp.passesRang || 0} eff={cmp.effectif || 0} sub={`${hasLiveStats ? averages.ast : p.stats?.ast || 0} ast / match`} />
-        <Compare icon="✅" bg="#22a06b" label="Présences" rang={cmp.presencesRang || 0} eff={cmp.effectif || 0} sub={`${hasLiveStats ? liveStats.attendancePct : p.presencePct || 0}% de présence`} />
-        <Compare icon="⭐" bg="#1f6fb2" label="Note coach" rang={cmp.noteCoachRang || 0} eff={cmp.effectif || 0} sub="évaluation coach" />
-        <Compare icon="⏱" bg="#7c4dff" label="Matchs joués" rang={cmp.tempsJeuRang || 0} eff={cmp.effectif || 0} sub={`${hasLiveStats ? liveStats.games : tdj.matchsJoues || 0} match(s)`} />
-      </div>
+      <ModernPlayerComparisonSection
+        team={team}
+        p={p}
+        liveStats={liveStats}
+        teamPlayersStats={teamPlayersStats}
+        currentPlayerId={currentPlayerId}
+      />
     </>
+  );
+}
+
+
+function ModernPlayerComparisonSection({
+  team,
+  p,
+  liveStats,
+  teamPlayersStats,
+  currentPlayerId,
+}: {
+  team: Team;
+  p: any;
+  liveStats: PlayerLiveStats;
+  teamPlayersStats: TeamPlayerComparisonStat[];
+  currentPlayerId: string;
+}) {
+  const fallbackCurrent: TeamPlayerComparisonStat = {
+    id: currentPlayerId,
+    player_id: currentPlayerId,
+    first_name: p.firstName ?? p.first_name ?? null,
+    last_name: p.lastName ?? p.last_name ?? null,
+    position: p.postePrincipal ?? p.position ?? null,
+    pts: liveStats.hasData ? liveStats.averages.pts : statNumber(p.stats?.pts),
+    reb: liveStats.hasData ? liveStats.averages.reb : statNumber(p.stats?.reb),
+    ast: liveStats.hasData ? liveStats.averages.ast : statNumber(p.stats?.ast),
+    stl: liveStats.hasData ? liveStats.averages.stl : statNumber(p.stats?.stl),
+    blk: liveStats.hasData ? liveStats.averages.blk : statNumber(p.stats?.blk),
+    turnovers: liveStats.hasData ? liveStats.averages.to : statNumber(p.stats?.to),
+    plus_minus: statNumber(p.stats?.plusMinus ?? p.stats?.plus_minus),
+  };
+
+  const effectif = Math.max(team.players?.length || 0, teamPlayersStats.length || 0, 1);
+  const rows = teamPlayersStats.length ? teamPlayersStats : [fallbackCurrent];
+  const normalizedRows = rows.map((row) =>
+    String(row.player_id || row.id) === currentPlayerId
+      ? { ...row, ...fallbackCurrent }
+      : row
+  );
+
+  const playerRow =
+    normalizedRows.find((row) => String(row.player_id || row.id) === currentPlayerId) ||
+    fallbackCurrent;
+
+  const metrics: Array<{
+    key: keyof Pick<TeamPlayerComparisonStat, "pts" | "reb" | "ast" | "stl" | "blk" | "turnovers" | "plus_minus">;
+    label: string;
+    short: string;
+    icon: string;
+    unit: string;
+    lowerIsBetter?: boolean;
+  }> = [
+    { key: "pts", label: "Points", short: "POINTS", icon: "🏀", unit: "pts" },
+    { key: "reb", label: "Rebonds", short: "REBONDS", icon: "🧺", unit: "reb" },
+    { key: "ast", label: "Passes", short: "PASSES", icon: "🎯", unit: "ast" },
+    { key: "stl", label: "Interceptions", short: "INTERCEPTIONS", icon: "✋", unit: "int" },
+    { key: "blk", label: "Contres", short: "CONTRES", icon: "🛡️", unit: "ctr" },
+    { key: "turnovers", label: "Balles perdues", short: "BALLES PERDUES", icon: "🏀", unit: "bp", lowerIsBetter: true },
+    { key: "plus_minus", label: "+/-", short: "+/-", icon: "✚", unit: "+/-" },
+  ];
+
+  function metricValue(row: TeamPlayerComparisonStat, key: typeof metrics[number]["key"]) {
+    return roundStat(statNumber(row[key]));
+  }
+
+  function averageFor(key: typeof metrics[number]["key"]) {
+    const source = normalizedRows.filter((row) => row.player_id || row.id);
+    if (!source.length) return 0;
+    return roundStat(source.reduce((sum, row) => sum + metricValue(row, key), 0) / source.length);
+  }
+
+  function rankFor(key: typeof metrics[number]["key"], lowerIsBetter?: boolean) {
+    const current = metricValue(playerRow, key);
+    const sorted = [...normalizedRows]
+      .filter((row) => row.player_id || row.id)
+      .sort((a, b) => {
+        const av = metricValue(a, key);
+        const bv = metricValue(b, key);
+        return lowerIsBetter ? av - bv : bv - av;
+      });
+
+    const index = sorted.findIndex((row) => String(row.player_id || row.id) === currentPlayerId);
+    if (index >= 0) return index + 1;
+
+    const better = sorted.filter((row) => {
+      const value = metricValue(row, key);
+      return lowerIsBetter ? value < current : value > current;
+    }).length;
+
+    return better + 1;
+  }
+
+  function medal(rank: number) {
+    if (rank === 1) return "🥇";
+    if (rank === 2) return "🥈";
+    if (rank === 3) return "🥉";
+    return "🏅";
+  }
+
+  const comparisonRows = metrics.map((metric) => {
+    const value = metricValue(playerRow, metric.key);
+    const avg = averageFor(metric.key);
+    const rank = rankFor(metric.key, metric.lowerIsBetter);
+    const diff = roundStat(value - avg);
+    const isGood = metric.lowerIsBetter ? diff <= 0 : diff >= 0;
+    const max = Math.max(Math.abs(value), Math.abs(avg), 1);
+    const playerPct = Math.min(100, Math.max(1, (Math.abs(value) / max) * 100));
+    const teamPct = Math.min(100, Math.max(1, (Math.abs(avg) / max) * 100));
+
+    return { metric, value, avg, rank, diff, isGood, playerPct, teamPct };
+  });
+
+  return (
+    <section className="mb-compare-modern">
+      <div className="mb-compare-heading">
+        <h2>Classement & comparaison</h2>
+        <span />
+        <p>Analysez vos performances et comparez-vous à votre équipe.</p>
+      </div>
+
+      <div className="mb-rank-card">
+        <h3><span>🏀</span> Classement dans l'équipe</h3>
+        <div className="mb-rank-grid">
+          {comparisonRows.map((row) => (
+            <article key={row.metric.key} className="mb-rank-tile">
+              <div className="mb-rank-icon">{row.metric.icon}</div>
+              <strong>{row.metric.short}</strong>
+              <b>{row.value}</b>
+              <small>moy. équipe {row.avg}</small>
+              <em>{medal(row.rank)} {row.rank}/{effectif}</em>
+            </article>
+          ))}
+        </div>
+      </div>
+
+      <div className="mb-average-card">
+        <div className="mb-average-head">
+          <h3><span>📊</span> Comparaison avec la moyenne</h3>
+          <div className="mb-legend-modern">
+            <i className="player" /> Joueur
+            <i className="team" /> Équipe
+            <i className="diff" /> Différence
+          </div>
+        </div>
+
+        <div className="mb-average-list">
+          {comparisonRows.map((row) => (
+            <article key={row.metric.key} className="mb-average-row">
+              <div className="mb-average-label">
+                <span>{row.metric.icon}</span>
+                <div>
+                  <strong>{row.metric.short}</strong>
+                  <b className={row.isGood ? "good" : "bad"}>{row.diff > 0 ? "+" : ""}{row.diff}</b>
+                </div>
+              </div>
+
+              <div className="mb-bars-side">
+                <div className="mb-bar-line">
+                  <div className="mb-bar-meta"><span>Joueur</span><b>{row.value}</b></div>
+                  <div className="mb-bar-track"><i className="player" style={{ width: `${row.playerPct}%` }} /></div>
+                </div>
+
+                <div className="mb-bar-line">
+                  <div className="mb-bar-meta"><span>Équipe</span><b>{row.avg}</b></div>
+                  <div className="mb-bar-track"><i className="team" style={{ width: `${row.teamPct}%` }} /></div>
+                </div>
+              </div>
+
+              <div className={`mb-diff ${row.isGood ? "good" : "bad"}`}>
+                <span>Différence</span>
+                <strong>{row.diff > 0 ? "+" : ""}{row.diff}</strong>
+              </div>
+            </article>
+          ))}
+        </div>
+      </div>
+
+      <style jsx>{`
+        .mb-compare-modern{margin-top:28px}.mb-compare-heading h2{margin:0;color:#111;font-size:2rem;font-weight:950;text-transform:uppercase;letter-spacing:.01em}.mb-compare-heading span{display:block;width:108px;height:7px;border-radius:999px;background:linear-gradient(90deg,#6b1a2c 0 55%,#d4a24c 55%);margin:.55rem 0 .7rem}.mb-compare-heading p{margin:0 0 1.2rem;color:#6f625d;font-weight:800}.mb-rank-card,.mb-average-card{border:1px solid #eadfd6;border-radius:18px;background:#fff;box-shadow:0 18px 40px rgba(60,30,20,.08);padding:1.35rem;margin-bottom:1.35rem}.mb-rank-card h3,.mb-average-card h3{margin:0;color:#6b1a2c;font-size:1.35rem;text-transform:uppercase;font-weight:950;display:flex;align-items:center;gap:.55rem}.mb-rank-grid{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:1rem;margin-top:1.25rem}.mb-rank-tile{min-height:190px;border:1px solid #eadfd6;border-radius:16px;background:linear-gradient(180deg,#fff,#fffdf9);display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;padding:1rem;box-shadow:0 8px 20px rgba(60,30,20,.045)}.mb-rank-icon{width:54px;height:54px;border-radius:999px;background:radial-gradient(circle at 30% 20%,#b51d3a,#6b1a2c 72%);color:white;display:grid;place-items:center;font-size:1.45rem;box-shadow:0 8px 18px rgba(107,26,44,.25);margin-bottom:.7rem}.mb-rank-tile strong{font-size:.82rem;color:#24171b;text-transform:uppercase}.mb-rank-tile b{font-size:1.65rem;color:#111;margin:.35rem 0 .15rem}.mb-rank-tile small{color:#6f625d;font-weight:800}.mb-rank-tile em{font-style:normal;margin-top:.65rem;color:#111;font-weight:950;font-size:1.1rem}.mb-average-head{display:flex;align-items:center;justify-content:space-between;gap:1rem;margin-bottom:1.2rem}.mb-legend-modern{display:flex;align-items:center;gap:.7rem;color:#6f625d;font-weight:900;font-size:.82rem;text-transform:uppercase}.mb-legend-modern i{width:12px;height:12px;border-radius:999px;display:inline-block}.mb-legend-modern .player{background:#6b1a2c}.mb-legend-modern .team{background:#d4a24c}.mb-legend-modern .diff{background:#b7b7b7}.mb-average-list{display:flex;flex-direction:column;gap:.55rem}.mb-average-row{display:grid;grid-template-columns:260px 1fr 135px;align-items:center;gap:1.3rem;border:1px solid #eadfd6;border-radius:14px;background:#fff;padding:.9rem 1rem}.mb-average-label{display:flex;align-items:center;gap:1rem}.mb-average-label>span{width:42px;height:42px;border-radius:999px;background:#6b1a2c;color:#fff;display:grid;place-items:center;font-size:1.15rem}.mb-average-label strong{display:block;color:#111;font-weight:950;text-transform:uppercase}.mb-average-label b{display:block;margin-top:.2rem;font-size:1.05rem}.good{color:#17803a!important}.bad{color:#c02626!important}.mb-bars-side{display:grid;grid-template-columns:1fr 1fr;gap:1.6rem}.mb-bar-meta{display:flex;justify-content:space-between;align-items:flex-end;margin-bottom:.35rem}.mb-bar-meta span{color:#6f625d;text-transform:uppercase;font-size:.72rem;font-weight:950}.mb-bar-meta b{font-size:1.15rem;color:#6b1a2c}.mb-bar-track{height:9px;border-radius:999px;background:#f0ece8;overflow:hidden}.mb-bar-track i{display:block;height:100%;border-radius:999px}.mb-bar-track .player{background:#6b1a2c}.mb-bar-track .team{background:#d4a24c}.mb-diff{text-align:center}.mb-diff span{display:block;color:#6f625d;text-transform:uppercase;font-size:.72rem;font-weight:950}.mb-diff strong{display:block;margin-top:.35rem;font-size:1.2rem}@media(max-width:1180px){.mb-rank-grid{grid-template-columns:repeat(3,1fr)}.mb-average-row{grid-template-columns:1fr}.mb-bars-side{grid-template-columns:1fr}}@media(max-width:700px){.mb-rank-grid{grid-template-columns:1fr}.mb-average-head{align-items:flex-start;flex-direction:column}.mb-legend-modern{flex-wrap:wrap}}
+      `}</style>
+    </section>
   );
 }
 

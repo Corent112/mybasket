@@ -150,11 +150,176 @@ function subscriptionImage(title: string) {
 
   return "/images/abonnement-basic.png";
 }
+
+
+type Html2PdfWorker = {
+  set: (options: Record<string, unknown>) => Html2PdfWorker;
+  from: (source: HTMLElement | string) => Html2PdfWorker;
+  outputPdf: (type: "blob") => Promise<Blob>;
+  save: (filename?: string) => Promise<void>;
+};
+
+type Html2PdfFactory = () => Html2PdfWorker;
+
+declare global {
+  interface Window {
+    html2pdf?: Html2PdfFactory;
+  }
+}
+
+const PRACTICE_PDF_BUCKET = "practice-session-pdfs";
+
+function safeFileName(value: string) {
+  return String(value || "fiche-seance")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-zA-Z0-9-_]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .toLowerCase();
+}
+
+function htmlForPdf(html: string) {
+  return html
+    .replace(/<script[\s\S]*?<\/script>/gi, "")
+    .replace(/window\.print\(\)/g, "");
+}
+
+async function loadHtml2Pdf() {
+  if (typeof window === "undefined") {
+    throw new Error("Génération PDF disponible uniquement dans le navigateur.");
+  }
+
+  if (window.html2pdf) return window.html2pdf;
+
+  await new Promise<void>((resolve, reject) => {
+    const existing = document.querySelector<HTMLScriptElement>("script[data-html2pdf]");
+
+    if (existing) {
+      existing.addEventListener("load", () => resolve(), { once: true });
+      existing.addEventListener("error", () => reject(new Error("Chargement html2pdf impossible.")), { once: true });
+      return;
+    }
+
+    const script = document.createElement("script");
+    script.src = "https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js";
+    script.async = true;
+    script.dataset.html2pdf = "true";
+    script.onload = () => resolve();
+    script.onerror = () => reject(new Error("Chargement html2pdf impossible."));
+    document.head.appendChild(script);
+  });
+
+  if (!window.html2pdf) {
+    throw new Error("html2pdf n'est pas disponible.");
+  }
+
+  return window.html2pdf;
+}
+
+async function createPdfBlobFromHtml(html: string) {
+  const html2pdf = await loadHtml2Pdf();
+  const holder = document.createElement("div");
+  holder.style.position = "fixed";
+  holder.style.left = "-10000px";
+  holder.style.top = "0";
+  holder.style.width = "1120px";
+  holder.innerHTML = htmlForPdf(html);
+  document.body.appendChild(holder);
+
+  try {
+    const page = holder.querySelector<HTMLElement>(".page") || holder;
+    return await html2pdf()
+      .set({
+        margin: 0,
+        filename: "fiche-seance.pdf",
+        image: { type: "jpeg", quality: 0.98 },
+        html2canvas: { scale: 2, useCORS: true, backgroundColor: "#ffffff" },
+        jsPDF: { unit: "px", format: [1120, 790], orientation: "landscape" },
+        pagebreak: { mode: ["avoid-all", "css", "legacy"] },
+      })
+      .from(page)
+      .outputPdf("blob");
+  } finally {
+    holder.remove();
+  }
+}
+
+function downloadBlobFile(filename: string, blob: Blob) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+
 function notifyCartUpdated() {
   if (typeof window === "undefined") return;
 
   window.dispatchEvent(new Event("cart-updated"));
 }
+
+function safeLocalJsonArray(key: string): any[] {
+  if (typeof window === "undefined") return [];
+
+  try {
+    const parsed = JSON.parse(window.localStorage.getItem(key) || "[]");
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function writeLocalJsonArray(key: string, value: any[]) {
+  if (typeof window === "undefined") return;
+
+  try {
+    window.localStorage.setItem(key, JSON.stringify(value));
+  } catch (error) {
+    console.error(`Erreur localStorage ${key}:`, error);
+  }
+}
+
+function getSessionItemCategory(item: CartItem, sessionTheme: string) {
+  const text = [
+    item.title,
+    item.description,
+    sessionTheme,
+    item.item_type,
+  ]
+    .filter(Boolean)
+    .join(" ")
+    .toLowerCase();
+
+  if (text.includes("surnombre")) return "Surnombre";
+  if (text.includes("pré") || text.includes("pre") || text.includes("collect")) return "Pré-collectif";
+  if (text.includes("tir")) return "Tirs";
+  if (text.includes("déf") || text.includes("def")) return "Défense";
+  if (text.includes("transition") || text.includes("jeu rapide")) return "Transition / Jeu rapide";
+  if (text.includes("1c1") || text.includes("1v1")) return "1c1 / Situations";
+  if (text.includes("dribble")) return "Dribble";
+  if (text.includes("passe")) return "Passe";
+  if (text.includes("phys")) return "Physique";
+
+  if (item.item_type === "system") return "Pré-collectif";
+  return sessionTheme ? getSessionThemeCategory(sessionTheme) : "Autre";
+}
+function getSessionThemeCategory(theme: string) {
+  const text = String(theme || "").toLowerCase();
+  if (text.includes("surnombre")) return "Surnombre";
+  if (text.includes("pré") || text.includes("pre") || text.includes("collect")) return "Pré-collectif";
+  if (text.includes("tir")) return "Tirs";
+  if (text.includes("déf") || text.includes("def")) return "Défense";
+  if (text.includes("transition") || text.includes("jeu rapide")) return "Transition / Jeu rapide";
+  if (text.includes("1c1") || text.includes("1v1")) return "1c1 / Situations";
+  if (text.includes("dribble")) return "Dribble";
+  if (text.includes("passe")) return "Passe";
+  if (text.includes("phys")) return "Physique";
+  return theme || "Autre";
+}
+
 export default function PanierPage() {
   const supabase = createClient();
 
@@ -512,28 +677,97 @@ setLoading(false);
   }
 }
 
-  async function saveSessionToCalendar() {
-  const {
-    data: { user },
-    error: userError,
-  } = await supabase.auth.getUser();
+  async function saveSessionToCalendar(pdfHtml: string, pdfUrl: string | null) {
+    const {
+      data: { user },
+      error: userError,
+    } = await supabase.auth.getUser();
 
-  if (userError || !user) {
-    alert("Connecte-toi pour ajouter la séance au calendrier.");
-    return;
-  }
+    if (userError || !user) {
+      alert("Connecte-toi pour ajouter la séance au calendrier.");
+      return;
+    }
 
-  const isUuid = (value: string | null | undefined) =>
-    !!value &&
-    /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{12}$/i.test(
-      value
+    const isUuid = (value: string | null | undefined) =>
+      !!value &&
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{12}$/i.test(
+        value
+      );
+
+    const teamName = selectedTeam?.name ?? selectedTeam?.clubName ?? "Équipe";
+    const sortedSessionItems = [...sessionItems].sort(
+      (a, b) => a.sort_order - b.sort_order
     );
+    const totalMinutes = sortedSessionItems.reduce(
+      (sum, item) => sum + Number(item.duration_minutes ?? 15),
+      0
+    );
+    const clubLogoUrl =
+      selectedTeam?.logo ||
+      selectedTeam?.logoUrl ||
+      selectedTeam?.logo_url ||
+      selectedTeam?.clubLogo ||
+      selectedTeam?.clubLogoUrl ||
+      selectedTeam?.club_logo_url ||
+      null;
 
-  const teamName = selectedTeam?.name ?? selectedTeam?.clubName ?? "Équipe";
+    const sessionItemsPayload = sortedSessionItems.map((item, index) => ({
+      item_type: item.item_type,
+      item_id: item.item_id,
+      title: item.title,
+      description: item.description,
+      category: getSessionItemCategory(item, sessionTheme),
+      duration_minutes: Number(item.duration_minutes ?? 15),
+      assigned_to: item.assigned_to ?? "Coach principal",
+      sort_order: index + 1,
+      image_url: item.image_url,
+      schema_images: uniqueImages([
+        ...(item.schemaImages ?? []),
+        ...(item.schema_images ?? []),
+      ]),
+      consignes: item.consignes ?? item.instructions ?? null,
+      instructions: item.instructions ?? item.consignes ?? null,
+    }));
 
-  const { data: createdSession, error: sessionError } = await supabase
-    .from("practice_sessions")
-    .insert({
+    const fullSessionPayload = {
+      user_id: user.id,
+      owner_id: user.id,
+      team_id: isUuid(selectedTeamId) ? selectedTeamId : null,
+      team_local_id: selectedTeamId || null,
+      team_name: teamName,
+      title: `Séance ${teamName}`,
+      theme: sessionTheme,
+      session_date: sessionDate,
+      start_time: sessionStartTime,
+      end_time: sessionEndTime,
+      location: teamName,
+      duration_minutes: totalMinutes,
+      total_minutes: totalMinutes,
+      club_logo_url: clubLogoUrl,
+      mybasket_logo_url: "/logo-mybasket02.png",
+      notes: null,
+      visibility: "private",
+      pdf_generated: true,
+      pdf_generated_at: new Date().toISOString(),
+      pdf_html: pdfHtml,
+      pdf_url: pdfUrl,
+      attachment_url: pdfUrl,
+      session_content: {
+        theme: sessionTheme,
+        total_minutes: totalMinutes,
+        pdf_html: pdfHtml,
+        pdf_url: pdfUrl,
+        items: sessionItemsPayload,
+        players: sessionPlayers,
+        team: {
+          id: selectedTeamId,
+          name: teamName,
+          logo_url: clubLogoUrl,
+        },
+      },
+    };
+
+    const legacySessionPayload = {
       user_id: user.id,
       owner_id: user.id,
       team_id: isUuid(selectedTeamId) ? selectedTeamId : null,
@@ -543,71 +777,190 @@ setLoading(false);
       start_time: sessionStartTime,
       end_time: sessionEndTime,
       location: teamName,
-      club_logo_url:
-        selectedTeam?.logo ||
-        selectedTeam?.logoUrl ||
-        selectedTeam?.logo_url ||
-        selectedTeam?.clubLogo ||
-        selectedTeam?.clubLogoUrl ||
-        selectedTeam?.club_logo_url ||
-        null,
+      club_logo_url: clubLogoUrl,
       mybasket_logo_url: "/logo-mybasket02.png",
-      notes: null,
+      notes: JSON.stringify({
+        team_local_id: selectedTeamId,
+        team_name: teamName,
+        total_minutes: totalMinutes,
+        pdf_html: pdfHtml,
+        pdf_url: pdfUrl,
+        items: sessionItemsPayload,
+        players: sessionPlayers,
+      }),
       visibility: "private",
       pdf_generated: true,
       pdf_generated_at: new Date().toISOString(),
-    })
-    .select("id")
-    .single();
+      pdf_html: pdfHtml,
+      pdf_url: pdfUrl,
+      attachment_url: pdfUrl,
+    };
 
-  if (sessionError || !createdSession) {
-    console.error("Erreur création practice_sessions:", {
-      code: sessionError?.code,
-      message: sessionError?.message,
-      details: sessionError?.details,
-      hint: sessionError?.hint,
+    let createdSession: { id: string } | null = null;
+    let sessionError: any = null;
+
+    const fullInsert = await supabase
+      .from("practice_sessions")
+      .insert(fullSessionPayload)
+      .select("id")
+      .single();
+
+    if (fullInsert.error) {
+      console.warn("Insertion practice_sessions complète impossible, fallback legacy :", {
+        code: fullInsert.error.code,
+        message: fullInsert.error.message,
+        details: fullInsert.error.details,
+        hint: fullInsert.error.hint,
+      });
+
+      const legacyInsert = await supabase
+        .from("practice_sessions")
+        .insert(legacySessionPayload)
+        .select("id")
+        .single();
+
+      createdSession = legacyInsert.data as { id: string } | null;
+      sessionError = legacyInsert.error;
+    } else {
+      createdSession = fullInsert.data as { id: string } | null;
+    }
+
+    if (sessionError || !createdSession) {
+      console.error("Erreur création practice_sessions:", {
+        code: sessionError?.code,
+        message: sessionError?.message,
+        details: sessionError?.details,
+        hint: sessionError?.hint,
+      });
+
+      alert(
+        `La fiche est générée, mais la séance Supabase n'a pas été créée : ${sessionError?.message}`
+      );
+
+      return;
+    }
+
+    const fullItemRows = sessionItemsPayload.map((item) => ({
+      session_id: createdSession.id,
+      owner_id: user.id,
+      team_id: isUuid(selectedTeamId) ? selectedTeamId : null,
+      team_local_id: selectedTeamId || null,
+      ...item,
+    }));
+
+    const legacyItemRows = sessionItemsPayload.map((item) => ({
+      session_id: createdSession.id,
+      item_type: item.item_type,
+      item_id: item.item_id,
+      title: item.title,
+      category: item.category,
+      duration_minutes: item.duration_minutes,
+      sort_order: item.sort_order,
+    }));
+
+    if (fullItemRows.length > 0) {
+      const { error: itemsError } = await supabase
+        .from("practice_session_items")
+        .insert(fullItemRows);
+
+      if (itemsError) {
+        console.warn("Insertion complète practice_session_items impossible, fallback legacy :", {
+          code: itemsError.code,
+          message: itemsError.message,
+          details: itemsError.details,
+          hint: itemsError.hint,
+        });
+
+        const { error: legacyItemsError } = await supabase
+          .from("practice_session_items")
+          .insert(legacyItemRows);
+
+        if (legacyItemsError) {
+          console.warn("Séance créée sans lignes practice_session_items :", {
+            code: legacyItemsError.code,
+            message: legacyItemsError.message,
+            details: legacyItemsError.details,
+            hint: legacyItemsError.hint,
+          });
+        }
+      }
+    }
+
+    const localSession = {
+      id: String(createdSession.id),
+      supabase_id: String(createdSession.id),
+      team_id: selectedTeamId,
+      teamId: selectedTeamId,
+      team_local_id: selectedTeamId,
+      supabase_team_id: isUuid(selectedTeamId) ? selectedTeamId : null,
+      title: `Séance ${teamName}`,
+      theme: sessionTheme,
+      session_date: sessionDate,
+      date: sessionDate,
+      start_time: sessionStartTime,
+      end_time: sessionEndTime,
+      location: teamName,
+      duration_minutes: totalMinutes,
+      total_minutes: totalMinutes,
+      visibility: "private",
+      created_at: new Date().toISOString(),
+      session_content: {
+        theme: sessionTheme,
+        total_minutes: totalMinutes,
+        pdf_html: pdfHtml,
+        pdf_url: pdfUrl,
+        items: sessionItemsPayload,
+        players: sessionPlayers,
+      },
+      items: sessionItemsPayload.map((item) => ({
+        id: `${createdSession.id}_${item.sort_order}`,
+        session_id: createdSession.id,
+        ...item,
+      })),
+    };
+
+    const localKey = "mybasket_team_practice_sessions";
+    const previousLocalSessions = safeLocalJsonArray(localKey);
+    writeLocalJsonArray(localKey, [
+      localSession,
+      ...previousLocalSessions.filter((session) => String(session.id) !== String(localSession.id)),
+    ]);
+
+    window.dispatchEvent(new Event("mybasket-practice-sessions-updated"));
+
+    const { error } = await supabase.from("calendar_events").insert({
+      user_id: user.id,
+      owner_id: user.id,
+
+      title: `Séance ${teamName}`,
+      description: `Thème : ${sessionTheme}`,
+
+      event_date: sessionDate,
+      start_time: sessionStartTime,
+      end_time: sessionEndTime,
+
+      location: teamName,
+      event_type: "training",
+
+      session_id: createdSession.id,
+      attachment_url: pdfUrl,
+
+      visibility: "private",
     });
 
-    alert(
-      `La fiche est générée, mais la séance Supabase n'a pas été créée : ${sessionError?.message}`
-    );
+    if (error) {
+      console.error("Erreur ajout calendrier:", {
+        code: error.code,
+        message: error.message,
+        details: error.details,
+        hint: error.hint,
+      });
 
-    return;
+      alert(
+        `La fiche est générée, mais l’ajout au calendrier a échoué : ${error.message}`
+      );
+    }
   }
-
-  const { error } = await supabase.from("calendar_events").insert({
-    user_id: user.id,
-    owner_id: user.id,
-
-    title: `Séance ${teamName}`,
-    description: `Thème : ${sessionTheme}`,
-
-    event_date: sessionDate,
-    start_time: sessionStartTime,
-    end_time: sessionEndTime,
-
-    location: teamName,
-    event_type: "training",
-
-    session_id: createdSession.id,
-    attachment_url: null,
-
-    visibility: "private",
-  });
-
-  if (error) {
-    console.error("Erreur ajout calendrier:", {
-      code: error.code,
-      message: error.message,
-      details: error.details,
-      hint: error.hint,
-    });
-
-    alert(
-      `La fiche est générée, mais l’ajout au calendrier a échoué : ${error.message}`
-    );
-  }
-}
 
   async function generateSessionPdf() {
     if (!sessionDate || !sessionStartTime || !sessionEndTime || !sessionTheme) {
@@ -644,6 +997,8 @@ setLoading(false);
       selectedTeam.clubLogoUrl ||
       selectedTeam.club_logo_url ||
       "";
+
+    const teamName = selectedTeam.name ?? selectedTeam.clubName ?? "Équipe";
 
     const rows = sortedItems
       .map((item) => {
@@ -994,18 +1349,50 @@ setLoading(false);
       </html>
     `;
 
-    const printWindow = window.open("", "_blank");
+    let pdfBlob: Blob | null = null;
+    let pdfUrl: string | null = null;
 
-    if (!printWindow) {
-      alert("Autorise les pop-ups pour générer la fiche séance.");
-      return;
+    try {
+      pdfBlob = await createPdfBlobFromHtml(html);
+
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+
+      if (user) {
+        const filePath = `${user.id}/${safeFileName(selectedTeamId || teamName)}/${Date.now()}-${safeFileName(`Séance ${teamName}`)}.pdf`;
+        const { error: uploadError } = await supabase.storage
+          .from(PRACTICE_PDF_BUCKET)
+          .upload(filePath, pdfBlob, {
+            contentType: "application/pdf",
+            upsert: true,
+          });
+
+        if (uploadError) {
+          console.error("Upload PDF séance impossible:", uploadError);
+        } else {
+          const { data: publicData } = supabase.storage
+            .from(PRACTICE_PDF_BUCKET)
+            .getPublicUrl(filePath);
+          pdfUrl = publicData.publicUrl;
+        }
+      }
+
+      downloadBlobFile(`${safeFileName(`Séance ${teamName}`)}.pdf`, pdfBlob);
+    } catch (error) {
+      console.error("Génération PDF impossible:", error);
+      alert("La fiche est créée, mais le téléchargement PDF automatique a échoué. Tu peux utiliser Imprimer > Enregistrer en PDF.");
     }
 
-    printWindow.document.open();
-    printWindow.document.write(html);
-    printWindow.document.close();
+    const printWindow = window.open("", "_blank");
 
-    await saveSessionToCalendar();
+    if (printWindow) {
+      printWindow.document.open();
+      printWindow.document.write(html);
+      printWindow.document.close();
+    }
+
+    await saveSessionToCalendar(html, pdfUrl);
     setSessionModalOpen(false);
   }
 

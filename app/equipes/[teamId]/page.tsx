@@ -1104,6 +1104,7 @@ export default function EquipeDetailPage({
       )}
       {toast && <div className="tl-toast">{toast}</div>}
 
+
       <style jsx>{`
         .team-hero-linked {
           position: relative;
@@ -1261,10 +1262,6 @@ export default function EquipeDetailPage({
             opacity: 1;
             transform: translateY(0);
           }
-        }
-
-        @media (max-width: 980px) {
-          .training-all-row{grid-template-columns:1fr}.training-all-main{grid-template-columns:1fr}.training-all-main b{text-align:left}.training-row-actions{justify-content:flex-start}
         }
 
         @media (max-width: 980px) {
@@ -1478,10 +1475,12 @@ function parseTrainingMinutes(value: unknown) {
 }
 
 function getTrainingSessionTitle(row: Record<string, any>) {
-  return String(row.title || row.titre || row.name || row.theme || row.objectif || "Séance");
+  const content = readSessionContent(row);
+  return String(row.title || row.titre || row.name || row.theme || row.objectif || content?.theme || "Séance");
 }
 
 function extractTrainingItems(row: Record<string, any>) {
+  const content = readSessionContent(row);
   const rawItems =
     row.items ||
     row.session_items ||
@@ -1489,7 +1488,8 @@ function extractTrainingItems(row: Record<string, any>) {
     row.exercices ||
     row.exercises ||
     row.blocks ||
-    row.content ||
+    content?.items ||
+    content?.session_items ||
     [];
 
   if (Array.isArray(rawItems) && rawItems.length > 0) {
@@ -1515,10 +1515,12 @@ function extractTrainingItems(row: Record<string, any>) {
     ? row.themes
     : Array.isArray(row.tags)
       ? row.tags
-      : [];
+      : Array.isArray(content?.themes)
+        ? content.themes
+        : [];
 
   if (themes.length > 0) {
-    const total = parseTrainingMinutes(row.duration_minutes || row.duration || row.temps || row.total_minutes);
+    const total = parseTrainingMinutes(row.duration_minutes || row.duration || row.temps || row.total_minutes || content?.total_minutes || content?.duration_minutes);
     const split = total ? Math.round(total / themes.length) : 0;
 
     return themes.map((theme: unknown, index: number) => ({
@@ -1529,25 +1531,29 @@ function extractTrainingItems(row: Record<string, any>) {
     }));
   }
 
-  const category = normalizeTrainingCategory(row.category || row.categorie || row.theme || row.type || row.objectif);
+  const category = normalizeTrainingCategory(row.category || row.categorie || row.theme || row.type || row.objectif || content?.theme);
 
   return [
     {
       id: `${row.id || "session"}_main`,
       category,
       title: getTrainingSessionTitle(row),
-      minutes: parseTrainingMinutes(row.duration_minutes || row.duration || row.temps || row.total_minutes),
+      minutes: parseTrainingMinutes(row.duration_minutes || row.duration || row.temps || row.total_minutes || content?.total_minutes || content?.duration_minutes),
     },
   ];
 }
 
 function normalizeTrainingSession(row: Record<string, any>): TrainingSession {
+  const content = readSessionContent(row);
   const items = extractTrainingItems(row);
-  const rawDuration = parseTrainingMinutes(row.duration_minutes || row.duration || row.temps || row.total_minutes);
-  const itemsDuration = items.reduce((sum, item) => sum + item.minutes, 0);
+  const rawDuration = parseTrainingMinutes(row.duration_minutes || row.duration || row.temps || row.total_minutes || content?.total_minutes || content?.duration_minutes);
+  const itemsDuration = items.reduce(
+    (sum: number, item: TrainingSessionItem) => sum + item.minutes,
+    0
+  );
   const duration = rawDuration || itemsDuration;
 
-  const finalItems = items.map((item) => ({
+  const finalItems = items.map((item: TrainingSessionItem) => ({
     ...item,
     minutes: item.minutes || (items.length ? Math.round(duration / items.length) : duration),
   }));
@@ -1635,6 +1641,161 @@ function TrainingDonut({ rows, totalMinutes }: { rows: TrainingCategorySummary[]
   );
 }
 
+function isUuidValue(value: string | null | undefined) {
+  return (
+    !!value &&
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{12}$/i.test(value)
+  );
+}
+
+function readSessionContent(row: Record<string, any>) {
+  const direct = row.session_content || row.content_json || row.content;
+
+  if (!direct) {
+    try {
+      const parsedNotes = typeof row.notes === "string" ? JSON.parse(row.notes) : row.notes;
+      return parsedNotes && typeof parsedNotes === "object" ? parsedNotes : null;
+    } catch {
+      return null;
+    }
+  }
+
+  if (typeof direct === "string") {
+    try {
+      return JSON.parse(direct);
+    } catch {
+      return null;
+    }
+  }
+
+  return direct;
+}
+
+
+function getSessionSavedHtml(session: TrainingSession) {
+  const raw = session.raw || {};
+  const content = readSessionContent(raw) || {};
+  return String(raw.pdf_html || raw.pdfHtml || content.pdf_html || content.pdfHtml || "");
+}
+
+type Html2PdfWorker = {
+  set: (options: Record<string, unknown>) => Html2PdfWorker;
+  from: (source: HTMLElement | string) => Html2PdfWorker;
+  outputPdf: (type: "blob") => Promise<Blob>;
+  save: (filename?: string) => Promise<void>;
+};
+
+type Html2PdfFactory = () => Html2PdfWorker;
+
+declare global {
+  interface Window {
+    html2pdf?: Html2PdfFactory;
+  }
+}
+
+function safeFileName(value: string) {
+  return String(value || "fiche-seance")
+    .normalize("NFD")
+    .replace(/[̀-ͯ]/g, "")
+    .replace(/[^a-zA-Z0-9-_]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .toLowerCase();
+}
+
+function htmlForPdf(html: string) {
+  return html
+    .replace(/<script[\s\S]*?<\/script>/gi, "")
+    .replace(/window\.print\(\)/g, "");
+}
+
+function htmlForPreview(html: string) {
+  const extra = `
+    <style>
+      html,body{max-width:100%!important;overflow-x:hidden!important;background:#fff!important;}
+      .page{width:100%!important;max-width:1120px!important;min-height:auto!important;margin:0 auto!important;}
+      img{max-width:100%;}
+    </style>
+  `;
+
+  if (html.includes("</head>")) return html.replace("</head>", `${extra}</head>`);
+  return `${extra}${html}`;
+}
+
+async function loadHtml2Pdf() {
+  if (typeof window === "undefined") {
+    throw new Error("Génération PDF disponible uniquement dans le navigateur.");
+  }
+
+  if (window.html2pdf) return window.html2pdf;
+
+  await new Promise<void>((resolve, reject) => {
+    const existing = document.querySelector<HTMLScriptElement>("script[data-html2pdf]");
+
+    if (existing) {
+      existing.addEventListener("load", () => resolve(), { once: true });
+      existing.addEventListener("error", () => reject(new Error("Chargement html2pdf impossible.")), { once: true });
+      return;
+    }
+
+    const script = document.createElement("script");
+    script.src = "https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js";
+    script.async = true;
+    script.dataset.html2pdf = "true";
+    script.onload = () => resolve();
+    script.onerror = () => reject(new Error("Chargement html2pdf impossible."));
+    document.head.appendChild(script);
+  });
+
+  if (!window.html2pdf) throw new Error("html2pdf n'est pas disponible.");
+  return window.html2pdf;
+}
+
+async function createPdfBlobFromHtml(html: string) {
+  const html2pdf = await loadHtml2Pdf();
+  const holder = document.createElement("div");
+  holder.style.position = "fixed";
+  holder.style.left = "-10000px";
+  holder.style.top = "0";
+  holder.style.width = "1120px";
+  holder.innerHTML = htmlForPdf(html);
+  document.body.appendChild(holder);
+
+  try {
+    const page = holder.querySelector<HTMLElement>(".page") || holder;
+    return await html2pdf()
+      .set({
+        margin: 0,
+        filename: "fiche-seance.pdf",
+        image: { type: "jpeg", quality: 0.98 },
+        html2canvas: { scale: 2, useCORS: true, backgroundColor: "#ffffff" },
+        jsPDF: { unit: "px", format: [1120, 790], orientation: "landscape" },
+        pagebreak: { mode: ["avoid-all", "css", "legacy"] },
+      })
+      .from(page)
+      .outputPdf("blob");
+  } finally {
+    holder.remove();
+  }
+}
+
+function downloadBlob(filename: string, blob: Blob) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+
+async function downloadFileFromUrl(url: string, filename: string) {
+  const response = await fetch(url);
+  if (!response.ok) throw new Error("Téléchargement impossible.");
+  const blob = await response.blob();
+  downloadBlob(filename, blob);
+}
+
 function TrainingAnalysisBlock({
   teamId,
   fallbackTeamId,
@@ -1650,6 +1811,7 @@ function TrainingAnalysisBlock({
   const [loading, setLoading] = useState(true);
   const [sessions, setSessions] = useState<TrainingSession[]>([]);
   const [selectedSession, setSelectedSession] = useState<TrainingSession | null>(null);
+  const [sessionPreviewHtml, setSessionPreviewHtml] = useState<string | null>(null);
 
   const teamIdCandidates = useMemo(() => getTeamIdCandidates(fallbackTeamId, team), [fallbackTeamId, team]);
 
@@ -1658,19 +1820,60 @@ function TrainingAnalysisBlock({
 
     try {
       const candidateIds = compactStrings([teamId, fallbackTeamId, ...teamIdCandidates]);
-      const columns = ["team_id", "equipe_id", "associated_team_id", "club_team_id"];
+      const uuidCandidateIds = candidateIds.filter(isUuidValue);
       let rows: Record<string, any>[] = [];
 
-      for (const column of columns) {
+      const queryAttempts: Array<{ column: string; ids: string[] }> = [
+        { column: "team_local_id", ids: candidateIds },
+        { column: "team_id", ids: uuidCandidateIds },
+        { column: "equipe_id", ids: candidateIds },
+        { column: "associated_team_id", ids: candidateIds },
+        { column: "club_team_id", ids: candidateIds },
+      ].filter((attempt) => attempt.ids.length > 0);
+
+      for (const attempt of queryAttempts) {
         const { data, error } = await supabase
           .from("practice_sessions")
           .select("*")
-          .in(column, candidateIds)
-          .order("created_at", { ascending: false });
+          .in(attempt.column, attempt.ids)
+          .order("session_date", { ascending: false });
 
         if (!error && data && data.length > 0) {
           rows = data as Record<string, any>[];
           break;
+        }
+      }
+
+      // Fallback owner : récupère les séances privées du coach puis filtre côté client
+      // avec team_local_id, team_id, notes JSON ou session_content.
+      if (rows.length === 0) {
+        const { data: userData } = await supabase.auth.getUser();
+        const ownerId = userData.user?.id;
+
+        if (ownerId) {
+          const { data, error } = await supabase
+            .from("practice_sessions")
+            .select("*")
+            .or(`owner_id.eq.${ownerId},user_id.eq.${ownerId}`)
+            .order("session_date", { ascending: false });
+
+          if (!error && data) {
+            rows = (data as Record<string, any>[]).filter((row) => {
+              const content = readSessionContent(row);
+              const possibleIds = compactStrings([
+                row.team_id,
+                row.team_local_id,
+                row.teamId,
+                row.equipe_id,
+                row.equipeId,
+                content?.team_local_id,
+                content?.team_id,
+                content?.team?.id,
+              ]);
+
+              return possibleIds.some((value) => candidateIds.includes(value));
+            });
+          }
         }
       }
 
@@ -1682,7 +1885,8 @@ function TrainingAnalysisBlock({
           const { data, error } = await supabase
             .from(table)
             .select("*")
-            .in("session_id", sessionIds);
+            .in("session_id", sessionIds)
+            .order("sort_order", { ascending: true });
 
           if (!error && data && data.length > 0) {
             itemRows = data as Record<string, any>[];
@@ -1700,19 +1904,56 @@ function TrainingAnalysisBlock({
           return acc;
         }, {});
 
-        rows = rows.map((row) => ({
-          ...row,
-          items: bySession[String(row.id)] || row.items || [],
-        }));
+        rows = rows.map((row) => {
+          const content = readSessionContent(row);
+
+          return {
+            ...row,
+            session_content: content || row.session_content,
+            items:
+              bySession[String(row.id)] ||
+              row.items ||
+              content?.items ||
+              content?.session_items ||
+              [],
+          };
+        });
+      } else {
+        rows = rows.map((row) => {
+          const content = readSessionContent(row);
+          return {
+            ...row,
+            session_content: content || row.session_content,
+            items: row.items || content?.items || content?.session_items || [],
+            duration_minutes:
+              row.duration_minutes ||
+              row.total_minutes ||
+              content?.total_minutes ||
+              content?.duration_minutes,
+          };
+        });
       }
 
       if (rows.length === 0 && typeof window !== "undefined") {
-        const keys = ["mybasket_sessions", "mybasket_seances", "practice_sessions"];
+        const keys = ["mybasket_team_practice_sessions", "mybasket_sessions", "mybasket_seances", "practice_sessions"];
         for (const key of keys) {
           try {
             const parsed = JSON.parse(window.localStorage.getItem(key) || "[]");
             if (Array.isArray(parsed) && parsed.length > 0) {
-              rows = parsed.filter((row: any) => candidateIds.includes(String(row.team_id || row.teamId || row.equipe_id || row.equipeId || "")));
+              rows = parsed.filter((row: any) => {
+                const content = readSessionContent(row) || {};
+                const possibleIds = compactStrings([
+                  row.team_id,
+                  row.teamId,
+                  row.team_local_id,
+                  row.equipe_id,
+                  row.equipeId,
+                  content.team_local_id,
+                  content.team_id,
+                  content.team?.id,
+                ]);
+                return possibleIds.some((value) => candidateIds.includes(value));
+              });
               if (rows.length > 0) break;
             }
           } catch {}
@@ -1742,14 +1983,6 @@ function TrainingAnalysisBlock({
     [periodSessions],
   );
   const summary = useMemo(() => buildTrainingSummary(periodSessions), [periodSessions]);
-  const allSessionsSorted = useMemo(
-    () =>
-      [...sessions].sort(
-        (a, b) =>
-          new Date(b.date || 0).getTime() - new Date(a.date || 0).getTime(),
-      ),
-    [sessions],
-  );
 
   async function deleteSession(session: TrainingSession) {
     if (!confirm(`Supprimer la séance "${session.title}" ?`)) return;
@@ -1766,50 +1999,146 @@ function TrainingAnalysisBlock({
     setSelectedSession(null);
   }
 
-  function downloadSession(session: TrainingSession) {
-    const lines = [
-      `${team.name} — ${session.title}`,
-      `Date : ${formatMatchDate(session.date)}`,
-      `Durée : ${minutesToLabel(session.duration)}`,
-      "",
-      "Contenu :",
-      ...session.items.map((item) => `- ${item.category} — ${item.title} — ${minutesToLabel(item.minutes)}`),
-    ];
+  function buildSessionDocumentHtml(session: TrainingSession, shouldPrint = false) {
+    const savedHtml = getSessionSavedHtml(session);
+    if (savedHtml) {
+      if (!shouldPrint) return savedHtml;
+      return savedHtml.includes("</body>")
+        ? savedHtml.replace("</body>", `<script>window.onload=function(){setTimeout(function(){window.print()},400)}</script></body>`)
+        : `${savedHtml}<script>window.onload=function(){setTimeout(function(){window.print()},400)}</script>`;
+    }
 
-    downloadText(`${team.name}-${session.title}.txt`.replace(/\s+/g, "-"), lines.join("\n"));
-  }
+    const itemsRows = session.items
+      .map(
+        (item) => `
+          <tr>
+            <td>${item.category}</td>
+            <td><strong>${item.title}</strong></td>
+            <td>${minutesToLabel(item.minutes)}</td>
+          </tr>
+        `,
+      )
+      .join("");
 
-  function printSession(session: TrainingSession) {
-    const html = `
+    return `
+      <!doctype html>
       <html>
         <head>
+          <meta charset="utf-8" />
           <title>${session.title}</title>
           <style>
-            body{font-family:Arial,sans-serif;padding:32px;color:#111827}
-            h1{color:#6b1a2c;margin-bottom:4px}
-            .meta{color:#666;margin-bottom:24px}
-            table{width:100%;border-collapse:collapse;margin-top:18px}
-            th,td{border:1px solid #ddd;padding:10px;text-align:left}
-            th{background:#f8f1e8;color:#6b1a2c}
+            *{box-sizing:border-box}
+            body{margin:0;background:#f7f2eb;font-family:Arial,sans-serif;color:#1f171a}
+            .page{width:1120px;min-height:790px;margin:0 auto;background:white;padding:28px}
+            .header{display:grid;grid-template-columns:120px 1fr 120px;align-items:center;border-bottom:3px solid #111;padding-bottom:18px}
+            .logo{width:96px;height:74px;display:grid;place-items:center;border:2px solid #eadccc;border-radius:16px;color:#6b1a2c;font-weight:900}
+            .title{text-align:center}.title h1{margin:0 0 10px;color:#6b1a2c;font-size:40px;letter-spacing:4px;text-transform:uppercase}.title p{margin:4px 0;color:#6f625d;text-transform:uppercase;font-weight:800;font-size:13px}
+            .summary{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin:22px 0}.box{border:1px solid #eadccc;border-radius:16px;padding:14px;background:#fff8ef}.box span{display:block;color:#9a8a82;text-transform:uppercase;font-size:11px;font-weight:900}.box b{display:block;color:#1f171a;font-size:20px;margin-top:4px}
+            table{width:100%;border-collapse:collapse;border:2px solid #111;margin-top:18px}th{background:#f8f1e8;color:#6b1a2c;text-transform:uppercase;font-size:12px;letter-spacing:1px}th,td{border:1px solid #e4d7c7;padding:13px;text-align:left}td:nth-child(3){font-weight:900;color:#6b1a2c}
+            .footer{margin-top:18px;text-align:center;color:#9a8a82;font-size:12px;text-transform:uppercase;letter-spacing:1px}
+            .actions{position:sticky;top:0;background:#fff;padding:12px;text-align:right;border-bottom:1px solid #eadccc}.actions button{border:0;border-radius:999px;background:#6b1a2c;color:white;font-weight:900;padding:12px 18px;cursor:pointer;margin-left:8px}
+            @media print{body{background:#fff;-webkit-print-color-adjust:exact;print-color-adjust:exact}.actions{display:none}.page{width:100%;margin:0;padding:10mm}}
           </style>
         </head>
         <body>
-          <h1>${session.title}</h1>
-          <div class="meta">${team.name} · ${formatMatchDate(session.date)} · ${minutesToLabel(session.duration)}</div>
-          <table>
-            <thead><tr><th>Catégorie</th><th>Bloc</th><th>Durée</th></tr></thead>
-            <tbody>${session.items.map((item) => `<tr><td>${item.category}</td><td>${item.title}</td><td>${minutesToLabel(item.minutes)}</td></tr>`).join("")}</tbody>
-          </table>
+          <div class="actions"><button onclick="window.print()">Télécharger / imprimer en PDF</button></div>
+          <div class="page">
+            <div class="header">
+              <div class="logo">MyBasket</div>
+              <div class="title">
+                <h1>Practice Plan</h1>
+                <p><strong>Équipe :</strong> ${team.name}</p>
+                <p><strong>Date :</strong> ${formatMatchDate(session.date)}</p>
+              </div>
+              <div class="logo">Club</div>
+            </div>
+            <div class="summary">
+              <div class="box"><span>Séance</span><b>${session.title}</b></div>
+              <div class="box"><span>Durée totale</span><b>${minutesToLabel(session.duration)}</b></div>
+              <div class="box"><span>Blocs</span><b>${session.items.length}</b></div>
+              <div class="box"><span>Date</span><b>${formatMatchDate(session.date)}</b></div>
+            </div>
+            <table>
+              <thead><tr><th>Catégorie</th><th>Bloc travaillé</th><th>Durée</th></tr></thead>
+              <tbody>${itemsRows}</tbody>
+            </table>
+            <div class="footer">${team.name} · Fiche séance générée avec MyBasket</div>
+          </div>
+          ${shouldPrint ? `<script>window.onload=function(){setTimeout(function(){window.print()},400)}</script>` : ""}
         </body>
       </html>
     `;
+  }
 
-    const w = window.open("", "_blank", "noopener,noreferrer");
-    if (!w) return alert("Autorise les popups pour imprimer la séance.");
-    w.document.write(html);
-    w.document.close();
-    w.focus();
-    setTimeout(() => w.print(), 300);
+  function printHtmlWithoutPopup(html: string) {
+    const iframe = document.createElement("iframe");
+    iframe.style.position = "fixed";
+    iframe.style.right = "0";
+    iframe.style.bottom = "0";
+    iframe.style.width = "0";
+    iframe.style.height = "0";
+    iframe.style.border = "0";
+    document.body.appendChild(iframe);
+
+    const doc = iframe.contentWindow?.document;
+    if (!doc) return;
+
+    doc.open();
+    doc.write(html);
+    doc.close();
+
+    setTimeout(() => {
+      iframe.contentWindow?.focus();
+      iframe.contentWindow?.print();
+      setTimeout(() => iframe.remove(), 1200);
+    }, 350);
+  }
+
+  function openSessionDocument(session: TrainingSession, shouldPrint = false) {
+    const pdfUrl = String(session.raw?.pdf_url || session.raw?.pdfUrl || "");
+    const html = buildSessionDocumentHtml(session, shouldPrint);
+
+    if (pdfUrl && !shouldPrint) {
+      setSessionPreviewHtml(`<iframe src="${pdfUrl}" style="width:100%;height:100%;border:0"></iframe>`);
+      return;
+    }
+
+    if (shouldPrint) {
+      printHtmlWithoutPopup(html);
+      return;
+    }
+
+    setSessionPreviewHtml(htmlForPreview(html));
+  }
+
+  function viewSession(session: TrainingSession) {
+    if (typeof window === "undefined") return;
+
+    const url = `/seances/apercu/${encodeURIComponent(session.id)}`;
+    window.open(url, "_blank", "noopener,noreferrer");
+  }
+
+  async function downloadSession(session: TrainingSession) {
+    const pdfUrl = String(session.raw?.pdf_url || session.raw?.pdfUrl || session.raw?.attachment_url || "");
+    const filename = `${safeFileName(`${team.name}-${session.title}`)}.pdf`;
+
+    try {
+      if (pdfUrl) {
+        await downloadFileFromUrl(pdfUrl, filename);
+        return;
+      }
+
+      const html = buildSessionDocumentHtml(session, false);
+      const pdfBlob = await createPdfBlobFromHtml(html);
+      downloadBlob(filename, pdfBlob);
+    } catch (error) {
+      console.error("Téléchargement PDF séance impossible:", error);
+      alert("Impossible de télécharger le PDF. Essaie avec le bouton Imprimer > Enregistrer en PDF.");
+    }
+  }
+
+  function printSession(session: TrainingSession) {
+    openSessionDocument(session, true);
   }
 
   return (
@@ -1820,50 +2149,7 @@ function TrainingAnalysisBlock({
           <h2>Analyse des entraînements</h2>
           <p className="muted">Toutes les données sont calculées depuis les séances générées et liées à cette équipe.</p>
         </div>
-        <button className="tl-btn tl-btn-bx" type="button" onClick={loadSessions}>Actualiser</button>
-      </div>
-
-      <div className="training-all-sessions">
-        <div className="training-section-head">
-          <div>
-            <h3>Séances réalisées avec cette équipe</h3>
-            <p>Toutes les séances générées et associées à {team.name} sont consultables ici.</p>
-          </div>
-          <span>{allSessionsSorted.length} séance{allSessionsSorted.length > 1 ? "s" : ""}</span>
-        </div>
-
-        {loading ? (
-          <div className="empty">Chargement des séances...</div>
-        ) : allSessionsSorted.length === 0 ? (
-          <div className="empty">Aucune séance réalisée liée à cette équipe pour le moment.</div>
-        ) : (
-          <div className="training-all-list">
-            {allSessionsSorted.map((session) => (
-              <article key={session.id} className="training-all-row">
-                <button type="button" className="training-all-main" onClick={() => setSelectedSession(session)}>
-                  <span className="date">{formatMatchDate(session.date)}</span>
-                  <strong>{session.title}</strong>
-                  <em>{team.name}</em>
-                  <b>{minutesToLabel(session.duration)}</b>
-                </button>
-
-                <div className="training-row-actions">
-                  <button type="button" onClick={() => setSelectedSession(session)}>Consulter</button>
-                  <button type="button" onClick={() => downloadSession(session)}>Télécharger</button>
-                  <button type="button" onClick={() => printSession(session)}>Imprimer</button>
-                  <button type="button" className="danger" onClick={() => deleteSession(session)}>Supprimer</button>
-                </div>
-              </article>
-            ))}
-          </div>
-        )}
-      </div>
-
-      <div className="training-analysis-title">
-        <div>
-          <h3>Analyse de ce qu'on travaille</h3>
-          <p>Répartition automatique par semaine, mois ou année.</p>
-        </div>
+        <button className="tl-btn tl-btn-bx training-refresh-btn" type="button" onClick={loadSessions}>↻ Actualiser</button>
       </div>
 
       <div className="training-periodbar">
@@ -1978,7 +2264,8 @@ function TrainingAnalysisBlock({
             </table>
 
             <div className="training-modal-actions">
-              <button onClick={() => downloadSession(selectedSession)}>Télécharger</button>
+              <button onClick={() => viewSession(selectedSession)}>Visualiser</button>
+              <button onClick={() => downloadSession(selectedSession)}>Télécharger PDF</button>
               <button onClick={() => printSession(selectedSession)}>Imprimer</button>
               <button className="danger" onClick={() => deleteSession(selectedSession)}>Supprimer</button>
             </div>
@@ -1986,8 +2273,24 @@ function TrainingAnalysisBlock({
         </div>
       )}
 
+      {sessionPreviewHtml && (
+        <div className="training-modal-backdrop" onClick={() => setSessionPreviewHtml(null)}>
+          <div className="training-preview-modal" onClick={(e) => e.stopPropagation()}>
+            <div className="training-modal-head">
+              <div>
+                <h3>Fiche séance</h3>
+                <p>Visualisation complète sans popup</p>
+              </div>
+              <button onClick={() => setSessionPreviewHtml(null)}>×</button>
+            </div>
+            <iframe title="Fiche séance" srcDoc={sessionPreviewHtml} />
+          </div>
+        </div>
+      )}
+
+
       <style jsx>{`
-        .training-card{margin-top:1.2rem}.training-head{display:flex;justify-content:space-between;gap:1rem;align-items:flex-start;margin-bottom:1rem}.training-all-sessions{border:1px solid #efe6db;border-radius:24px;background:#fffdf9;padding:1rem;margin:1rem 0 1.1rem;box-shadow:0 12px 28px rgba(60,30,20,.045)}.training-section-head,.training-analysis-title{display:flex;align-items:flex-start;justify-content:space-between;gap:1rem;margin-bottom:.9rem}.training-section-head h3,.training-analysis-title h3{margin:0;color:#6b1a2c;font-size:1.15rem;font-weight:950}.training-section-head p,.training-analysis-title p{margin:.2rem 0 0;color:#9a8a82;font-weight:800}.training-section-head span{border-radius:999px;background:#fff8ef;color:#6b1a2c;border:1px solid #eadccc;padding:.45rem .75rem;font-weight:950;white-space:nowrap}.training-all-list{display:flex;flex-direction:column;gap:.65rem;max-height:420px;overflow:auto;padding-right:.25rem}.training-all-row{display:grid;grid-template-columns:1fr auto;gap:.8rem;align-items:center;border:1px solid #f0e7dc;background:#fff;border-radius:18px;padding:.65rem}.training-all-main{border:0;background:transparent;text-align:left;display:grid;grid-template-columns:120px 1fr 170px 80px;gap:.75rem;align-items:center;cursor:pointer;color:#24171b}.training-all-main .date{color:#6b1a2c;font-weight:950}.training-all-main strong{font-weight:950;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.training-all-main em{font-style:normal;color:#9a8a82;font-weight:850;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.training-all-main b{color:#d4a24c;font-weight:950;text-align:right}.training-row-actions{display:flex;gap:.4rem;flex-wrap:wrap;justify-content:flex-end}.training-row-actions button{border:1px solid #eadccc;background:#fff8ef;color:#6b1a2c;border-radius:999px;padding:.45rem .65rem;font-weight:950;cursor:pointer}.training-row-actions button.danger{background:#fff1f1;color:#b42318;border-color:#ffd0d0}.training-analysis-title{margin:1.25rem 0 .75rem}.eyebrow{margin:0;color:#d4a24c;font-size:.78rem;font-weight:900;text-transform:uppercase;letter-spacing:.06em}h2{margin:.15rem 0 0;color:#6b1a2c;font-size:1.55rem;font-weight:950}.muted{margin:.25rem 0 0;color:#9a8a82;font-weight:700}.training-periodbar{display:grid;grid-template-columns:auto 1fr auto;gap:1rem;align-items:center;border:1px solid #efe6db;background:#fff8ef;border-radius:22px;padding:.9rem;margin-bottom:1rem}.period-buttons{display:flex;gap:.45rem}.period-buttons button,.period-nav button{border:1px solid #eadccc;background:#fff;color:#6b1a2c;border-radius:12px;padding:.65rem .9rem;font-weight:950;cursor:pointer}.period-buttons button.on{background:#6b1a2c;color:#fff;border-color:#6b1a2c}.period-nav{display:flex;align-items:center;justify-content:center;gap:.65rem;color:#24171b}.period-nav strong{text-transform:capitalize}.training-total{display:flex;flex-direction:column;align-items:flex-end}.training-total span,.training-total em{color:#9a8a82;font-size:.8rem;font-weight:900;text-transform:uppercase}.training-total b{font-size:1.35rem;color:#1f171a}.training-grid{display:grid;grid-template-columns:1.25fr .85fr;gap:1rem}.training-donut-card,.training-sessions-card,.training-table-wrap{border:1px solid #efe6db;border-radius:20px;background:#fff;padding:1rem;box-shadow:0 10px 24px rgba(60,30,20,.045)}.training-donut-card h3,.training-sessions-card h3,.training-table-wrap h3{margin:0 0 .9rem;color:#6b1a2c}.training-donut-layout{display:grid;grid-template-columns:280px 1fr;gap:1rem;align-items:center}.training-donut-wrap{position:relative;width:260px;height:260px;display:grid;place-items:center}.training-donut{width:260px;height:260px}.training-donut-center{position:absolute;text-align:center}.training-donut-center strong{display:block;color:#1f171a;font-size:1.7rem}.training-donut-center span{color:#9a8a82;font-weight:900}.training-legend{display:flex;flex-direction:column;gap:.55rem}.legend-line{display:grid;grid-template-columns:12px 1fr auto auto;gap:.65rem;align-items:center;padding:.55rem 0;border-bottom:1px solid #f0e7dc}.legend-line span,.training-table .dot{width:10px;height:10px;border-radius:999px;display:inline-block}.legend-line strong{color:#1f171a}.legend-line b{color:#6b1a2c}.legend-line em{color:#9a8a82;font-style:normal;font-weight:800}.training-session-list{display:flex;flex-direction:column;gap:.5rem;max-height:320px;overflow:auto}.training-session-row{display:grid;grid-template-columns:90px 1fr auto;gap:.65rem;align-items:center;text-align:left;border:1px solid #efe6db;background:#fff;border-radius:14px;padding:.75rem;cursor:pointer}.training-session-row:hover{border-color:#d4a24c;box-shadow:0 8px 18px rgba(60,30,20,.06)}.training-session-row span{color:#9a8a82;font-weight:900}.training-session-row strong{color:#1f171a}.training-session-row em{font-style:normal;color:#6b1a2c;font-weight:950}.training-table-wrap{margin-top:1rem;overflow:auto}.training-table{width:100%;border-collapse:collapse;font-size:.9rem}.training-table th{background:#fff8ef;color:#6b1a2c;text-align:left;font-size:.78rem;text-transform:uppercase;letter-spacing:.04em}.training-table th,.training-table td{padding:.8rem;border-bottom:1px solid #f0e7dc}.training-table td:first-child{font-weight:900;color:#1f171a}.training-table .dot{margin-right:.5rem;vertical-align:middle}.bar{display:inline-flex;width:88px;height:8px;border-radius:999px;background:#f1e8dd;margin-right:.55rem;overflow:hidden}.bar i{display:block;height:100%;border-radius:999px}.total-row td{font-weight:950;background:#fffdf9}.empty{padding:1.2rem;border:1px dashed #eadccc;border-radius:18px;background:#fffdf9;color:#9a8a82;font-weight:900}.training-modal-backdrop{position:fixed;inset:0;z-index:1000;background:rgba(17,24,39,.45);display:grid;place-items:center;padding:1rem}.training-modal{width:min(760px,96vw);max-height:90vh;overflow:auto;background:#fff;border-radius:24px;padding:1.2rem;box-shadow:0 24px 80px rgba(0,0,0,.3)}.training-modal-head{display:flex;justify-content:space-between;gap:1rem;align-items:flex-start;margin-bottom:1rem}.training-modal-head h3{margin:0;color:#6b1a2c;font-size:1.4rem}.training-modal-head p{margin:.2rem 0 0;color:#9a8a82;font-weight:800}.training-modal-head button{border:0;background:#6b1a2c;color:#fff;width:34px;height:34px;border-radius:999px;font-size:1.3rem;cursor:pointer}.training-table.compact th,.training-table.compact td{padding:.65rem}.training-modal-actions{display:flex;justify-content:flex-end;gap:.6rem;margin-top:1rem}.training-modal-actions button{border:1px solid #eadccc;background:#fff;color:#6b1a2c;border-radius:999px;padding:.7rem 1rem;font-weight:950;cursor:pointer}.training-modal-actions .danger{background:#fee2e2;border-color:#fecaca;color:#b91c1c}@media(max-width:1050px){.training-periodbar,.training-grid,.training-donut-layout{grid-template-columns:1fr}.training-total{align-items:flex-start}.training-donut-wrap{margin:auto}}@media(max-width:640px){.training-head{flex-direction:column}.period-buttons{flex-wrap:wrap}.training-session-row{grid-template-columns:1fr}.training-modal-actions{flex-direction:column}.training-modal-actions button{width:100%}}
+        .training-card{margin-top:1.2rem}.training-refresh-btn{min-width:205px!important;min-height:54px!important;padding:0 24px!important;font-size:.92rem!important;box-shadow:0 12px 28px rgba(107,26,44,.24)!important}.training-head{display:flex;justify-content:space-between;gap:1rem;align-items:flex-start;margin-bottom:1rem}.eyebrow{margin:0;color:#d4a24c;font-size:.78rem;font-weight:900;text-transform:uppercase;letter-spacing:.06em}h2{margin:.15rem 0 0;color:#6b1a2c;font-size:1.55rem;font-weight:950}.muted{margin:.25rem 0 0;color:#9a8a82;font-weight:700}.training-periodbar{display:grid;grid-template-columns:auto 1fr auto;gap:1rem;align-items:center;border:1px solid #efe6db;background:#fff8ef;border-radius:22px;padding:.9rem;margin-bottom:1rem}.period-buttons{display:flex;gap:.45rem}.period-buttons button,.period-nav button{border:1px solid #eadccc;background:#fff;color:#6b1a2c;border-radius:12px;padding:.65rem .9rem;font-weight:950;cursor:pointer}.period-buttons button.on{background:#6b1a2c;color:#fff;border-color:#6b1a2c}.period-nav{display:flex;align-items:center;justify-content:center;gap:.65rem;color:#24171b}.period-nav strong{text-transform:capitalize}.training-total{display:flex;flex-direction:column;align-items:flex-end}.training-total span,.training-total em{color:#9a8a82;font-size:.8rem;font-weight:900;text-transform:uppercase}.training-total b{font-size:1.35rem;color:#1f171a}.training-grid{display:grid;grid-template-columns:1.25fr .85fr;gap:1rem}.training-donut-card,.training-sessions-card,.training-table-wrap{border:1px solid #efe6db;border-radius:20px;background:#fff;padding:1rem;box-shadow:0 10px 24px rgba(60,30,20,.045)}.training-donut-card h3,.training-sessions-card h3,.training-table-wrap h3{margin:0 0 .9rem;color:#6b1a2c}.training-donut-layout{display:grid;grid-template-columns:280px 1fr;gap:1rem;align-items:center}.training-donut-wrap{position:relative;width:260px;height:260px;display:grid;place-items:center}.training-donut{width:260px;height:260px}.training-donut-center{position:absolute;text-align:center}.training-donut-center strong{display:block;color:#1f171a;font-size:1.7rem}.training-donut-center span{color:#9a8a82;font-weight:900}.training-legend{display:flex;flex-direction:column;gap:.55rem}.legend-line{display:grid;grid-template-columns:12px 1fr auto auto;gap:.65rem;align-items:center;padding:.55rem 0;border-bottom:1px solid #f0e7dc}.legend-line span,.training-table .dot{width:10px;height:10px;border-radius:999px;display:inline-block}.legend-line strong{color:#1f171a}.legend-line b{color:#6b1a2c}.legend-line em{color:#9a8a82;font-style:normal;font-weight:800}.training-session-list{display:flex;flex-direction:column;gap:.5rem;max-height:320px;overflow:auto}.training-session-row{display:grid;grid-template-columns:90px 1fr auto;gap:.65rem;align-items:center;text-align:left;border:1px solid #efe6db;background:#fff;border-radius:14px;padding:.75rem;cursor:pointer}.training-session-row:hover{border-color:#d4a24c;box-shadow:0 8px 18px rgba(60,30,20,.06)}.training-session-row span{color:#9a8a82;font-weight:900}.training-session-row strong{color:#1f171a}.training-session-row em{font-style:normal;color:#6b1a2c;font-weight:950}.training-table-wrap{margin-top:1rem;overflow:auto}.training-table{width:100%;border-collapse:collapse;font-size:.9rem}.training-table th{background:#fff8ef;color:#6b1a2c;text-align:left;font-size:.78rem;text-transform:uppercase;letter-spacing:.04em}.training-table th,.training-table td{padding:.8rem;border-bottom:1px solid #f0e7dc}.training-table td:first-child{font-weight:900;color:#1f171a}.training-table .dot{margin-right:.5rem;vertical-align:middle}.bar{display:inline-flex;width:88px;height:8px;border-radius:999px;background:#f1e8dd;margin-right:.55rem;overflow:hidden}.bar i{display:block;height:100%;border-radius:999px}.total-row td{font-weight:950;background:#fffdf9}.empty{padding:1.2rem;border:1px dashed #eadccc;border-radius:18px;background:#fffdf9;color:#9a8a82;font-weight:900}.training-modal-backdrop{position:fixed;inset:0;z-index:1000;background:rgba(17,24,39,.45);display:grid;place-items:center;padding:1rem}.training-modal{width:min(760px,96vw);max-height:90vh;overflow:auto;background:#fff;border-radius:24px;padding:1.2rem;box-shadow:0 24px 80px rgba(0,0,0,.3)}.training-preview-modal{width:min(1240px,96vw);height:92vh;background:#fff;border-radius:24px;padding:1.2rem;box-shadow:0 24px 80px rgba(0,0,0,.3);display:flex;flex-direction:column}.training-preview-modal iframe{flex:1;width:100%;border:1px solid #eadccc;border-radius:16px;background:#fff;min-height:0} .training-modal-head{display:flex;justify-content:space-between;gap:1rem;align-items:flex-start;margin-bottom:1rem}.training-modal-head h3{margin:0;color:#6b1a2c;font-size:1.4rem}.training-modal-head p{margin:.2rem 0 0;color:#9a8a82;font-weight:800}.training-modal-head button{border:0;background:#6b1a2c;color:#fff;width:34px;height:34px;border-radius:999px;font-size:1.3rem;cursor:pointer}.training-table.compact th,.training-table.compact td{padding:.65rem}.training-modal-actions{display:flex;justify-content:flex-end;gap:.6rem;margin-top:1rem}.training-modal-actions button{border:1px solid #eadccc;background:#fff;color:#6b1a2c;border-radius:999px;padding:.7rem 1rem;font-weight:950;cursor:pointer}.training-modal-actions .danger{background:#fee2e2;border-color:#fecaca;color:#b91c1c}@media(max-width:1050px){.training-periodbar,.training-grid,.training-donut-layout{grid-template-columns:1fr}.training-total{align-items:flex-start}.training-donut-wrap{margin:auto}}@media(max-width:640px){.training-head{flex-direction:column}.period-buttons{flex-wrap:wrap}.training-session-row{grid-template-columns:1fr}.training-modal-actions{flex-direction:column}.training-modal-actions button{width:100%}}
       `}</style>
     </section>
   );

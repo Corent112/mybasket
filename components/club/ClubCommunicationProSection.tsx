@@ -1,5 +1,6 @@
 "use client";
 
+// components/club/ClubCommunicationProSection.tsx
 import { useEffect, useMemo, useState } from "react";
 import type { ClubCoach, ClubPlayer, ClubTeam } from "@/lib/club-core";
 import {
@@ -42,6 +43,12 @@ function emptyFilters(): CommunicationFilters {
     licenseStatus: null,
     medicalOnly: false,
   };
+}
+
+function statusLabel(status: string) {
+  if (status === "draft") return "Brouillon";
+  if (status.startsWith("sent")) return "Envoyée";
+  return status || "—";
 }
 
 export default function ClubCommunicationProSection({
@@ -147,7 +154,7 @@ export default function ClubCommunicationProSection({
           type: row.memberType,
           playerId: row.playerId,
           coachId: row.coachId,
-        })) as ResolvedRecipient[]
+        })) as ResolvedRecipient[],
       );
     }
 
@@ -158,9 +165,7 @@ export default function ClubCommunicationProSection({
   }, [clubId, selectedListId]);
 
   const categories = useMemo(() => {
-    return Array.from(
-      new Set(players.map((player) => player.category).filter(Boolean))
-    );
+    return Array.from(new Set(players.map((player) => player.category).filter(Boolean)));
   }, [players]);
 
   const finalRecipients = selectedListId ? manualRecipients : recipients;
@@ -168,6 +173,9 @@ export default function ClubCommunicationProSection({
   const selectedCampaign = useMemo(() => {
     return campaigns.find((campaign) => campaign.id === selectedCampaignId) || null;
   }, [campaigns, selectedCampaignId]);
+
+  const draftCampaigns = campaigns.filter((campaign) => campaign.status === "draft").length;
+  const sentCampaigns = campaigns.filter((campaign) => campaign.status.startsWith("sent")).length;
 
   function resetComposer() {
     setEditingCampaignId(null);
@@ -250,7 +258,7 @@ export default function ClubCommunicationProSection({
         });
 
         setCampaigns((prev) =>
-          prev.map((campaign) => (campaign.id === updated.id ? updated : campaign))
+          prev.map((campaign) => (campaign.id === updated.id ? updated : campaign)),
         );
         setSelectedCampaignId(updated.id);
         setMessage("Campagne modifiée.");
@@ -290,7 +298,7 @@ export default function ClubCommunicationProSection({
 
   async function removeCampaign(campaign: CommunicationCampaign) {
     const ok = window.confirm(
-      `Supprimer la campagne "${campaign.title}" ?\n\nLes destinataires liés seront aussi supprimés.`
+      `Supprimer la campagne "${campaign.title}" ?\n\nLes destinataires liés seront aussi supprimés.`,
     );
 
     if (!ok) return;
@@ -300,7 +308,6 @@ export default function ClubCommunicationProSection({
 
     try {
       await deleteCommunicationCampaign(clubId, campaign.id);
-
       setCampaigns((prev) => prev.filter((item) => item.id !== campaign.id));
 
       if (selectedCampaignId === campaign.id) {
@@ -320,7 +327,7 @@ export default function ClubCommunicationProSection({
 
   async function sendCampaign(campaign: CommunicationCampaign) {
     const ok = window.confirm(
-      `Envoyer la campagne "${campaign.title}" à ${campaign.recipientsCount} destinataire(s) ?`
+      `Envoyer la campagne "${campaign.title}" à ${campaign.recipientsCount} destinataire(s) ?`,
     );
 
     if (!ok) return;
@@ -340,18 +347,20 @@ export default function ClubCommunicationProSection({
       setSending(false);
     }
   }
+
   return (
     <section className="communication">
       <div className="top">
         <div>
-          <p>COMMUNICATION</p>
+          <p>COMMUNICATION CLUB</p>
           <h2>Messages & campagnes</h2>
           <span>
-            Utilise tes listes de mailings ou un ciblage dynamique précis.
+            Ici, on envoie les messages généraux du club. Les relances financières
+            restent dans l’onglet Relances.
           </span>
         </div>
 
-        <button className="newBtn" onClick={resetComposer}>
+        <button className="newBtn" onClick={resetComposer} type="button">
           + Nouveau message
         </button>
       </div>
@@ -359,16 +368,39 @@ export default function ClubCommunicationProSection({
       {error && <div className="alert error">{error}</div>}
       {message && <div className="alert ok">{message}</div>}
 
+      <div className="overview">
+        <article>
+          <span>Destinataires actuels</span>
+          <strong>{finalRecipients.length}</strong>
+          <small>{selectedListId ? "liste mailing" : "ciblage dynamique"}</small>
+        </article>
+        <article>
+          <span>Campagnes</span>
+          <strong>{campaigns.length}</strong>
+          <small>total</small>
+        </article>
+        <article>
+          <span>Brouillons</span>
+          <strong>{draftCampaigns}</strong>
+          <small>à envoyer</small>
+        </article>
+        <article>
+          <span>Envoyées</span>
+          <strong>{sentCampaigns}</strong>
+          <small>historique</small>
+        </article>
+      </div>
+
       <div className="layout">
         <aside className="filters">
-          <h3>Ciblage</h3>
+          <div className="panelHead">
+            <p>Ciblage</p>
+            <h3>Destinataires</h3>
+          </div>
 
           <label>
             Liste mailing
-            <select
-              value={selectedListId}
-              onChange={(e) => setSelectedListId(e.target.value)}
-            >
+            <select value={selectedListId} onChange={(e) => setSelectedListId(e.target.value)}>
               <option value="">Ciblage dynamique</option>
               {mailingLists.map((list) => (
                 <option key={list.id} value={list.id}>
@@ -403,9 +435,7 @@ export default function ClubCommunicationProSection({
                 Équipe
                 <select
                   value={filters.teamId || ""}
-                  onChange={(e) =>
-                    setFilters({ ...filters, teamId: e.target.value || null })
-                  }
+                  onChange={(e) => setFilters({ ...filters, teamId: e.target.value || null })}
                 >
                   <option value="">Tout le club</option>
                   {teams.map((team) => (
@@ -420,33 +450,12 @@ export default function ClubCommunicationProSection({
                 Catégorie
                 <select
                   value={filters.category || ""}
-                  onChange={(e) =>
-                    setFilters({ ...filters, category: e.target.value || null })
-                  }
+                  onChange={(e) => setFilters({ ...filters, category: e.target.value || null })}
                 >
                   <option value="">Toutes</option>
                   {categories.map((cat) => (
                     <option key={cat}>{cat}</option>
                   ))}
-                </select>
-              </label>
-
-              <label>
-                Paiement
-                <select
-                  value={filters.paymentStatus || ""}
-                  onChange={(e) =>
-                    setFilters({
-                      ...filters,
-                      paymentStatus: e.target.value || null,
-                    })
-                  }
-                >
-                  <option value="">Tous</option>
-                  <option value="paid">Payé</option>
-                  <option value="partial">Partiel</option>
-                  <option value="pending">En attente</option>
-                  <option value="late">Retard</option>
                 </select>
               </label>
 
@@ -472,19 +481,14 @@ export default function ClubCommunicationProSection({
                 <input
                   type="checkbox"
                   checked={Boolean(filters.medicalOnly)}
-                  onChange={(e) =>
-                    setFilters({
-                      ...filters,
-                      medicalOnly: e.target.checked,
-                    })
-                  }
+                  onChange={(e) => setFilters({ ...filters, medicalOnly: e.target.checked })}
                 />
-                Uniquement les dossiers médicaux signalés
+                Dossiers médicaux signalés
               </label>
             </>
           )}
 
-          <div className="preview">
+          <div className="recipientBox">
             <b>{finalRecipients.length}</b>
             <span>{selectedListId ? "contacts liste" : "destinataires"}</span>
           </div>
@@ -500,14 +504,16 @@ export default function ClubCommunicationProSection({
           )}
 
           {!selectedListId && (
-            <>
+            <div className="groupBuilder">
               <input
                 value={groupName}
                 onChange={(e) => setGroupName(e.target.value)}
                 placeholder="Nom du groupe dynamique..."
               />
-              <button onClick={saveGroup}>Créer groupe</button>
-            </>
+              <button onClick={saveGroup} type="button">
+                Créer groupe
+              </button>
+            </div>
           )}
 
           {groups.length > 0 && (
@@ -525,13 +531,8 @@ export default function ClubCommunicationProSection({
             <div className="composerHead">
               <div>
                 <p>{editingCampaignId ? "MODIFICATION" : "NOUVEAU MESSAGE"}</p>
-                <h3>
-                  {editingCampaignId
-                    ? "Modifier la campagne"
-                    : "Créer une campagne"}
-                </h3>
+                <h3>{editingCampaignId ? "Modifier la campagne" : "Créer une campagne"}</h3>
               </div>
-
               <div className="recipientBadge">
                 <strong>{finalRecipients.length}</strong>
                 <span>destinataire(s)</span>
@@ -541,10 +542,7 @@ export default function ClubCommunicationProSection({
             <div className="composerGrid">
               <label>
                 Modèle
-                <select
-                  value={templateId}
-                  onChange={(e) => applyTemplate(e.target.value)}
-                >
+                <select value={templateId} onChange={(e) => applyTemplate(e.target.value)}>
                   <option value="">Sans modèle</option>
                   {templates.map((template) => (
                     <option key={template.id} value={template.id}>
@@ -583,102 +581,96 @@ export default function ClubCommunicationProSection({
             </div>
 
             <div className="composerFooter">
-              <div>
+              <div className="selectedCount">
                 <strong>{finalRecipients.length}</strong>
                 <span> destinataire(s) sélectionné(s)</span>
               </div>
 
               <div className="actions">
-                <button onClick={saveCampaign}>
+                <button onClick={saveCampaign} type="button">
                   {editingCampaignId ? "Mettre à jour" : "Créer brouillon"}
                 </button>
 
                 {editingCampaignId && (
-                  <button className="ghost" onClick={resetComposer}>
+                  <button className="ghost" onClick={resetComposer} type="button">
                     Annuler
                   </button>
                 )}
               </div>
             </div>
           </div>
+        </main>
 
-          <div className="history">
-            <div className="historyHead">
+        <aside className="history">
+          <div className="historyHead">
+            <div>
+              <p>Historique</p>
               <h3>Campagnes</h3>
-              <span>{campaigns.length} campagne(s)</span>
             </div>
+            <span>{campaigns.length}</span>
+          </div>
 
-            {campaigns.length === 0 ? (
-              <div className="empty">Aucune campagne pour le moment.</div>
-            ) : (
-              campaigns.map((campaign) => (
+          {campaigns.length === 0 ? (
+            <div className="empty">Aucune campagne pour le moment.</div>
+          ) : (
+            <div className="campaignList">
+              {campaigns.map((campaign) => (
                 <article
-                  className={`campaign ${
-                    selectedCampaignId === campaign.id ? "active" : ""
-                  }`}
+                  className={`campaign ${selectedCampaignId === campaign.id ? "active" : ""}`}
                   key={campaign.id}
                 >
                   <button
                     className="campaignOpen"
                     onClick={() => setSelectedCampaignId(campaign.id)}
+                    type="button"
                   >
                     <strong>{campaign.title}</strong>
                     <span>
-                      {campaign.status} · {campaign.recipientsCount} destinataires
-                      · {campaign.sentCount} envoyés
+                      {statusLabel(campaign.status)} · {campaign.recipientsCount} destinataire(s)
                     </span>
                   </button>
 
                   <div className="campaignActions">
-                    <button className="ghost" onClick={() => editCampaign(campaign)}>
+                    <button className="ghost" onClick={() => editCampaign(campaign)} type="button">
                       Modifier
                     </button>
-
                     <button
                       disabled={sending || campaign.status.startsWith("sent")}
                       onClick={() => sendCampaign(campaign)}
+                      type="button"
                     >
                       {campaign.status.startsWith("sent") ? "Envoyée" : "Envoyer"}
                     </button>
-
-                    <button
-                      className="danger"
-                      onClick={() => removeCampaign(campaign)}
-                    >
+                    <button className="danger" onClick={() => removeCampaign(campaign)} type="button">
                       Supprimer
                     </button>
                   </div>
                 </article>
-              ))
-            )}
-          </div>
+              ))}
+            </div>
+          )}
 
           {selectedCampaignId && (
             <div className="recipients">
-              <h3>
-                Destinataires campagne
+              <h4>
+                Destinataires
                 {selectedCampaign && <small> · {selectedCampaign.title}</small>}
-              </h3>
+              </h4>
 
-              <div className="table">
-                <div className="row head">
-                  <span>Nom</span>
-                  <span>Email</span>
-                  <span>Statut</span>
-                </div>
-
+              <div className="recipientList">
                 {campaignRecipients.map((recipient) => (
-                  <div className="row" key={recipient.id}>
-                    <span>{recipient.name}</span>
+                  <div className="recipientRow" key={recipient.id}>
+                    <strong>{recipient.name}</strong>
                     <span>{recipient.email || "—"}</span>
-                    <span>{recipient.status}</span>
+                    <small>{recipient.status}</small>
                   </div>
                 ))}
               </div>
             </div>
           )}
-        </main>
+        </aside>
       </div>
+
       <style jsx>{`
         .communication {
           border: 1px solid #eadfd5;
@@ -690,22 +682,25 @@ export default function ClubCommunicationProSection({
         }
 
         .top {
-          display: flex;
-          justify-content: space-between;
-          align-items: center;
+          display: grid;
+          grid-template-columns: minmax(0, 1fr) auto;
           gap: 20px;
+          align-items: center;
           padding: 24px;
           background: linear-gradient(135deg, #fff, #fff5e8);
           border-bottom: 1px solid #eadfd5;
         }
 
         .top p,
-        .composerHead p {
+        .composerHead p,
+        .panelHead p,
+        .historyHead p {
           margin: 0 0 6px;
           color: #d4a24c;
           font-size: 0.72rem;
           font-weight: 900;
-          letter-spacing: .12em;
+          letter-spacing: 0.12em;
+          text-transform: uppercase;
         }
 
         .top h2 {
@@ -717,7 +712,8 @@ export default function ClubCommunicationProSection({
 
         .top span {
           color: #6b7280;
-          font-weight: 700;
+          font-weight: 800;
+          line-height: 1.5;
         }
 
         .alert {
@@ -737,21 +733,92 @@ export default function ClubCommunicationProSection({
           color: #b91c1c;
         }
 
+        button {
+          border: none;
+          border-radius: 999px;
+          padding: 11px 16px;
+          cursor: pointer;
+          font-weight: 900;
+          transition: 0.18s ease;
+          background: #6b1a2c;
+          color: white;
+          white-space: nowrap;
+        }
+
+        button:hover:not(:disabled) {
+          transform: translateY(-1px);
+          box-shadow: 0 12px 26px rgba(107, 26, 44, 0.18);
+        }
+
+        button:disabled {
+          opacity: 0.45;
+          cursor: not-allowed;
+        }
+
+        .newBtn {
+          min-height: 48px;
+          padding: 0 22px;
+        }
+
+        .ghost {
+          background: #f3f4f6;
+          color: #374151;
+        }
+
+        .danger {
+          background: #fee2e2;
+          color: #991b1b;
+        }
+
+        .overview {
+          display: grid;
+          grid-template-columns: repeat(4, minmax(140px, 1fr));
+          gap: 12px;
+          padding: 18px;
+          border-bottom: 1px solid #f0e7dd;
+          background: #fffdf8;
+        }
+
+        .overview article {
+          border: 1px solid #eadfd5;
+          border-radius: 20px;
+          padding: 16px;
+          background: white;
+        }
+
+        .overview span,
+        .overview small {
+          display: block;
+          color: #8d7d75;
+          font-size: 0.72rem;
+          font-weight: 900;
+          text-transform: uppercase;
+        }
+
+        .overview strong {
+          display: block;
+          margin: 8px 0 4px;
+          color: #6b1a2c;
+          font-size: 1.7rem;
+          line-height: 1;
+        }
+
         .layout {
           display: grid;
-          grid-template-columns: 320px 1fr;
+          grid-template-columns: minmax(270px, 0.75fr) minmax(420px, 1.35fr) minmax(300px, 0.9fr);
           gap: 18px;
           padding: 20px;
+          align-items: start;
         }
 
         .filters,
         .composer,
-        .history,
-        .recipients {
+        .history {
           background: white;
           border: 1px solid #ece8df;
           border-radius: 24px;
           padding: 20px;
+          min-width: 0;
         }
 
         .filters {
@@ -759,18 +826,12 @@ export default function ClubCommunicationProSection({
         }
 
         .main {
-          display: flex;
-          flex-direction: column;
-          gap: 18px;
+          min-width: 0;
         }
 
-        h3 {
-          margin: 0 0 16px;
-          color: #6b1a2c;
-        }
-
+        h3,
         h4 {
-          margin: 20px 0 8px;
+          margin: 0 0 16px;
           color: #6b1a2c;
         }
 
@@ -779,8 +840,8 @@ export default function ClubCommunicationProSection({
           flex-direction: column;
           gap: 6px;
           margin-bottom: 14px;
-          font-size: .82rem;
-          font-weight: 800;
+          font-size: 0.82rem;
+          font-weight: 900;
           color: #6b7280;
         }
 
@@ -794,11 +855,13 @@ export default function ClubCommunicationProSection({
         select,
         textarea {
           width: 100%;
+          min-width: 0;
           border: 1px solid #dcdcdc;
           border-radius: 14px;
           padding: 12px;
           font: inherit;
-          transition: .2s;
+          transition: 0.18s ease;
+          background: white;
         }
 
         input:focus,
@@ -806,74 +869,43 @@ export default function ClubCommunicationProSection({
         textarea:focus {
           outline: none;
           border-color: #6b1a2c;
-          box-shadow: 0 0 0 3px rgba(107,26,44,.12);
+          box-shadow: 0 0 0 3px rgba(107, 26, 44, 0.12);
         }
 
         textarea {
           resize: vertical;
-          min-height: 220px;
+          min-height: 240px;
           line-height: 1.6;
         }
 
-        button {
-          border: none;
-          border-radius: 999px;
-          padding: 11px 18px;
-          cursor: pointer;
-          font-weight: 800;
-          transition: .2s;
-          background: #6b1a2c;
-          color: white;
-        }
-
-        button:hover {
-          transform: translateY(-1px);
-        }
-
-        button:disabled {
-          opacity: .45;
-          cursor: not-allowed;
-          transform: none;
-        }
-
-        .ghost {
-          background: #f3f4f6;
-          color: #374151;
-        }
-
-        .danger {
-          background: #fee2e2;
-          color: #991b1b;
-        }
-
-        .preview,
+        .recipientBox,
         .recipientBadge {
-          background: linear-gradient(135deg,#fff8ec,#fff);
+          background: linear-gradient(135deg, #fff8ec, #fff);
           border: 1px solid #eadfd5;
           border-radius: 18px;
-          padding: 20px;
+          padding: 18px;
           text-align: center;
           margin: 16px 0;
         }
 
-        .preview b,
+        .recipientBox b,
         .recipientBadge strong {
           display: block;
-          font-size: 2rem;
+          font-size: 1.8rem;
           color: #6b1a2c;
         }
 
-        .preview span,
+        .recipientBox span,
         .recipientBadge span {
           color: #6b7280;
-          font-weight: 700;
+          font-weight: 800;
         }
 
         .groups,
-        .listPreview {
-          display: flex;
-          flex-direction: column;
-          gap: 6px;
+        .listPreview,
+        .groupBuilder {
+          display: grid;
+          gap: 8px;
           margin-top: 14px;
         }
 
@@ -883,18 +915,22 @@ export default function ClubCommunicationProSection({
           background: #fafafa;
           border-radius: 10px;
           color: #6b7280;
+          overflow-wrap: anywhere;
         }
 
-        .composerHead {
-          display: flex;
-          justify-content: space-between;
+        .composerHead,
+        .composerFooter,
+        .historyHead {
+          display: grid;
+          grid-template-columns: minmax(0, 1fr) auto;
+          gap: 16px;
           align-items: center;
-          margin-bottom: 20px;
+          margin-bottom: 18px;
         }
 
         .composerGrid {
           display: grid;
-          grid-template-columns: repeat(2,1fr);
+          grid-template-columns: repeat(2, minmax(0, 1fr));
           gap: 16px;
         }
 
@@ -903,12 +939,18 @@ export default function ClubCommunicationProSection({
         }
 
         .composerFooter {
-          display: flex;
-          justify-content: space-between;
-          align-items: center;
           margin-top: 18px;
           padding-top: 16px;
           border-top: 1px solid #ececec;
+        }
+
+        .selectedCount {
+          color: #6b7280;
+          font-weight: 800;
+        }
+
+        .selectedCount strong {
+          color: #6b1a2c;
         }
 
         .actions,
@@ -916,93 +958,116 @@ export default function ClubCommunicationProSection({
           display: flex;
           gap: 10px;
           flex-wrap: wrap;
+          justify-content: flex-end;
         }
 
-        .historyHead {
-          display: flex;
-          justify-content: space-between;
-          align-items: center;
-          margin-bottom: 18px;
+        .campaignList {
+          display: grid;
+          gap: 12px;
         }
 
         .campaign {
           border: 1px solid #ececec;
           border-radius: 18px;
-          padding: 18px;
-          margin-bottom: 14px;
-          display: flex;
-          justify-content: space-between;
-          gap: 20px;
-          align-items: center;
-          transition: .2s;
+          padding: 14px;
+          display: grid;
+          gap: 12px;
+          transition: 0.18s ease;
         }
 
         .campaign.active {
           border-color: #6b1a2c;
-          box-shadow: 0 0 0 3px rgba(107,26,44,.08);
+          box-shadow: 0 0 0 3px rgba(107, 26, 44, 0.08);
         }
 
         .campaignOpen {
           background: transparent;
           color: inherit;
           padding: 0;
-          flex: 1;
           text-align: left;
+          white-space: normal;
+        }
+
+        .campaignOpen:hover {
+          transform: none;
+          box-shadow: none;
         }
 
         .campaignOpen strong {
           display: block;
           color: #6b1a2c;
           margin-bottom: 6px;
+          overflow-wrap: anywhere;
         }
 
         .campaignOpen span {
           color: #6b7280;
-          font-size: .8rem;
+          font-size: 0.8rem;
+          line-height: 1.4;
         }
 
-        .table {
-          border: 1px solid #ececec;
-          border-radius: 18px;
-          overflow: hidden;
+        .recipients {
+          margin-top: 18px;
+          border-top: 1px solid #ececec;
+          padding-top: 18px;
         }
 
-        .row {
+        .recipientList {
           display: grid;
-          grid-template-columns: 1fr 1.3fr .8fr;
-          border-bottom: 1px solid #ececec;
+          gap: 8px;
         }
 
-        .row:last-child {
-          border-bottom: none;
+        .recipientRow {
+          border: 1px solid #f0ece5;
+          border-radius: 14px;
+          padding: 10px;
+          display: grid;
+          gap: 3px;
+          background: #fffdf9;
         }
 
-        .row span {
-          padding: 14px;
-          font-weight: 700;
+        .recipientRow strong,
+        .recipientRow span,
+        .recipientRow small {
+          overflow-wrap: anywhere;
         }
 
-        .row.head {
-          background: #f9fafb;
+        .recipientRow strong {
+          color: #6b1a2c;
+        }
+
+        .recipientRow span,
+        .recipientRow small {
           color: #6b7280;
-          font-size: .8rem;
+          font-weight: 800;
         }
 
         .empty {
           text-align: center;
-          padding: 50px;
+          padding: 30px;
           color: #9ca3af;
           border: 2px dashed #ececec;
           border-radius: 18px;
         }
 
-        @media (max-width:1000px) {
-
+        @media (max-width: 1250px) {
           .layout {
-            grid-template-columns: 1fr;
+            grid-template-columns: 320px minmax(0, 1fr);
           }
 
-          .composerGrid {
+          .history {
+            grid-column: 1 / -1;
+          }
+        }
+
+        @media (max-width: 900px) {
+          .top,
+          .layout,
+          .overview,
+          .composerGrid,
+          .composerHead,
+          .composerFooter,
+          .historyHead {
             grid-template-columns: 1fr;
           }
 
@@ -1010,23 +1075,11 @@ export default function ClubCommunicationProSection({
             grid-column: span 1;
           }
 
-          .composerFooter,
-          .campaign,
-          .composerHead,
-          .top {
-            flex-direction: column;
-            align-items: stretch;
-          }
-
-          .row {
-            grid-template-columns: 1fr;
-          }
-
-          .row.head {
-            display: none;
+          .actions,
+          .campaignActions {
+            justify-content: flex-start;
           }
         }
-
       `}</style>
     </section>
   );
