@@ -294,6 +294,341 @@ function saveLiveMatchMirrorToLocalStore(
   }
 }
 
+/* ============================================================================
+ * Persistance TEMPS RÉEL de LiveStat (source unique = match_actions).
+ * Le wizard/commit() reste le cerveau ; ces fonctions ne font qu'ÉCRIRE, de
+ * façon non bloquante. Elles réutilisent EXACTEMENT le même mapping que
+ * saveLiveMatch (camelCase → snake_case), plus client_action_id pour ancrer
+ * chaque action (modif / suppression / synchro vidéo après coup).
+ * ========================================================================== */
+
+// Ligne match_actions à partir d'une action LiveStat (mapping unique, réutilisé).
+function buildActionRow(
+  action: LiveMatchAction,
+  ctx: { userId: string; matchId: string; teamId: string }
+) {
+  return {
+    user_id: ctx.userId,
+    match_id: ctx.matchId,
+    team_id: ctx.teamId,
+
+    client_action_id: action.id ?? null,
+
+    player_id: action.playerId || null,
+    assist_player_id: action.assistPlayerId || null,
+    rebound_player_id: action.reboundPlayerId || null,
+
+    quarter: safeNumber(action.q),
+    clock: action.clock || null,
+    context: action.context || null,
+    inbound: action.inbound || null,
+    temps_fort: action.tempsFort || null,
+    coverage: action.coverage || null,
+    action_type: action.actionType || null,
+    shot_type: action.shotType || null,
+    shot_result: action.shotResult || null,
+    special_case: action.specialCase || null,
+
+    ft_attempts: safeNumber(action.ftAttempts),
+    ft_made: safeNumber(action.ftMade),
+    ft_results: action.ftResults ?? [],
+
+    rebound_type: action.reboundType || null,
+    foul_outcome: action.foulOutcome || null,
+
+    court_x: action.courtX ?? null,
+    court_y: action.courtY ?? null,
+
+    lineup: action.lineup ?? [],
+  };
+}
+
+// Ligne match_player_stats à partir d'une ligne boxscore (mapping unique).
+function buildPlayerRow(
+  line: LivePlayerLine,
+  ctx: { userId: string; matchId: string; teamId: string }
+) {
+  return {
+    user_id: ctx.userId,
+    match_id: ctx.matchId,
+    team_id: ctx.teamId,
+    player_id: line.playerId,
+    present: Boolean(line.present),
+    pts: points(line),
+    p2m: safeNumber(line.p2m),
+    p2a: safeNumber(line.p2a),
+    p3m: safeNumber(line.p3m),
+    p3a: safeNumber(line.p3a),
+    ftm: safeNumber(line.ftm),
+    fta: safeNumber(line.fta),
+    off_reb: safeNumber(line.offReb),
+    def_reb: safeNumber(line.defReb),
+    reb: totalReb(line),
+    ast: safeNumber(line.ast),
+    stl: safeNumber(line.stl),
+    blk: safeNumber(line.blk),
+    turnovers: safeNumber(line.to),
+    pf: safeNumber(line.pf),
+  };
+}
+
+export type EnsureLiveMatchPayload = {
+  teamId: string;
+  opponent: string;
+  date: string;
+  home?: boolean;
+  playerIds?: string[];
+};
+
+export type EnsureLiveMatchResponse =
+  | { ok: true; matchId: string; teamId: string; localOnly?: boolean }
+  | { ok: false; error: string };
+
+/**
+ * Crée (ou prépare) la ligne match_stats au DÉMARRAGE du match, statut 'live'.
+ * Retourne le matchId + le realTeamId à réutiliser pour toutes les écritures
+ * incrémentales. À appeler UNE fois (le composant garde le matchId en state).
+ */
+export async function ensureLiveMatch(
+  payload: EnsureLiveMatchPayload
+): Promise<EnsureLiveMatchResponse> {
+  try {
+    const supabase = createClient();
+    const {
+      data: { user },
+      error: userError,
+    } = await supabase.auth.getUser();
+
+    if (userError) throw userError;
+    if (!user) return { ok: false, error: "Utilisateur non connecté" };
+
+    const realTeamId = await resolveRealTeamId(
+      supabase,
+      user.id,
+      payload.teamId,
+      payload.playerIds ?? []
+    );
+
+    if (!realTeamId) {
+      // Pas d'équipe UUID : on continue en local uniquement (le live reste OK).
+      return { ok: true, matchId: `local_${Date.now().toString(36)}`, teamId: payload.teamId, localOnly: true };
+    }
+
+    const { data: match, error: matchError } = await supabase
+      .from("match_stats")
+      .insert({
+        user_id: user.id,
+        team_id: realTeamId,
+        opponent: payload.opponent || "Adversaire",
+        match_date: payload.date,
+        home: payload.home ?? true,
+        us_score: 0,
+        them_score: 0,
+        score_us: 0,
+        score_them: 0,
+        status: "live",
+        result: "N",
+        per_q: { 1: { us: 0, them: 0 } },
+      })
+      .select("id")
+      .single();
+
+    if (matchError) {
+      logSupabaseError("ensureLiveMatch: insert match_stats", matchError);
+      return { ok: false, error: supabaseErrorMessage(matchError) };
+    }
+    if (!match?.id) return { ok: false, error: "Match créé sans identifiant" };
+
+    return { ok: true, matchId: String(match.id), teamId: realTeamId };
+  } catch (error: any) {
+    logSupabaseError("ensureLiveMatch", error);
+    return { ok: false, error: supabaseErrorMessage(error) };
+  }
+}
+
+/**
+ * Écrit UNE action immédiatement dans match_actions (upsert idempotent sur
+ * (match_id, client_action_id)). Non bloquant : en cas d'erreur, le live
+ * continue en local. matchId "local_*" → no-op silencieux.
+ */
+export async function persistLiveAction(args: {
+  matchId: string;
+  teamId: string;
+  action: LiveMatchAction;
+}): Promise<{ ok: boolean; error?: string }> {
+  const { matchId, teamId, action } = args;
+  if (!matchId || matchId.startsWith("local_")) return { ok: true };
+  if (!isUuid(teamId)) return { ok: true };
+
+  try {
+    const supabase = createClient();
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+    if (!user) return { ok: false, error: "Utilisateur non connecté" };
+
+    const row = buildActionRow(action, { userId: user.id, matchId, teamId });
+
+    const { error } = await supabase
+      .from("match_actions")
+      .upsert(row, { onConflict: "match_id,client_action_id" });
+
+    if (error) {
+      logSupabaseError("persistLiveAction (non bloquant)", error);
+      return { ok: false, error: supabaseErrorMessage(error) };
+    }
+    return { ok: true };
+  } catch (error: any) {
+    logSupabaseError("persistLiveAction (non bloquant)", error);
+    return { ok: false, error: supabaseErrorMessage(error) };
+  }
+}
+
+/** Supprime UNE action de match_actions (undo / correction). Non bloquant. */
+export async function deleteLiveAction(args: {
+  matchId: string;
+  clientActionId: string;
+}): Promise<{ ok: boolean; error?: string }> {
+  const { matchId, clientActionId } = args;
+  if (!matchId || matchId.startsWith("local_") || !clientActionId) return { ok: true };
+
+  try {
+    const supabase = createClient();
+    const { error } = await supabase
+      .from("match_actions")
+      .delete()
+      .eq("match_id", matchId)
+      .eq("client_action_id", clientActionId);
+
+    if (error) {
+      logSupabaseError("deleteLiveAction (non bloquant)", error);
+      return { ok: false, error: supabaseErrorMessage(error) };
+    }
+    return { ok: true };
+  } catch (error: any) {
+    logSupabaseError("deleteLiveAction (non bloquant)", error);
+    return { ok: false, error: supabaseErrorMessage(error) };
+  }
+}
+
+/**
+ * Recalcule/upsert le boxscore joueurs (match_player_stats) au fil de l'eau.
+ * Upsert en un seul appel (onConflict match_id,player_id). Non bloquant.
+ * Met aussi à jour le score live sur match_stats si us/them fournis.
+ */
+export async function upsertLiveMatchAggregates(args: {
+  matchId: string;
+  teamId: string;
+  lines: LivePlayerLine[];
+  us?: number;
+  them?: number;
+  perQ?: PerQuarter;
+}): Promise<{ ok: boolean; error?: string }> {
+  const { matchId, teamId, lines } = args;
+  if (!matchId || matchId.startsWith("local_")) return { ok: true };
+  if (!isUuid(teamId)) return { ok: true };
+
+  try {
+    const supabase = createClient();
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+    if (!user) return { ok: false, error: "Utilisateur non connecté" };
+
+    const rows = lines
+      .filter((line) => line.playerId)
+      .map((line) => buildPlayerRow(line, { userId: user.id, matchId, teamId }));
+
+    if (rows.length > 0) {
+      const { error } = await supabase
+        .from("match_player_stats")
+        .upsert(rows, { onConflict: "match_id,player_id" });
+      if (error) logSupabaseError("upsertLiveMatchAggregates: match_player_stats (non bloquant)", error);
+    }
+
+    if (args.us != null || args.them != null || args.perQ) {
+      const patch: Record<string, unknown> = {};
+      if (args.us != null) { patch.us_score = safeNumber(args.us); patch.score_us = safeNumber(args.us); }
+      if (args.them != null) { patch.them_score = safeNumber(args.them); patch.score_them = safeNumber(args.them); }
+      if (args.perQ) patch.per_q = args.perQ;
+      const { error: scoreError } = await supabase.from("match_stats").update(patch).eq("id", matchId);
+      if (scoreError) logSupabaseError("upsertLiveMatchAggregates: score live (non bloquant)", scoreError);
+    }
+
+    return { ok: true };
+  } catch (error: any) {
+    logSupabaseError("upsertLiveMatchAggregates (non bloquant)", error);
+    return { ok: false, error: supabaseErrorMessage(error) };
+  }
+}
+
+/**
+ * Finalise un match déjà alimenté en temps réel : score final, résultat,
+ * statut 'finished', + upsert final du boxscore. NE recrée PAS les actions
+ * (déjà écrites au fil de l'eau). Écrit aussi le miroir local.
+ */
+export async function finalizeLiveMatch(args: {
+  matchId: string;
+  teamId: string;
+  payload: SaveLiveMatchPayload;
+}): Promise<SaveLiveMatchResponse> {
+  const { matchId, teamId, payload } = args;
+
+  // Filet local : la fiche équipe/joueur reste alimentée même hors Supabase.
+  saveLiveMatchMirrorToLocalStore(payload, matchId);
+
+  if (!matchId || matchId.startsWith("local_") || !isUuid(teamId)) {
+    return {
+      ok: true,
+      matchId: matchId || `local_${Date.now().toString(36)}`,
+      warning: "Match finalisé localement (pas de vraie équipe Supabase UUID).",
+    };
+  }
+
+  try {
+    const supabase = createClient();
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+    if (!user) return { ok: false, error: "Utilisateur non connecté" };
+
+    // 1) Finaliser match_stats
+    const { error: matchError } = await supabase
+      .from("match_stats")
+      .update({
+        us_score: safeNumber(payload.us),
+        them_score: safeNumber(payload.them),
+        score_us: safeNumber(payload.us),
+        score_them: safeNumber(payload.them),
+        result: payload.result,
+        per_q: payload.perQ,
+        status: "finished",
+        opponent: payload.opponent || "Adversaire",
+        match_date: payload.date,
+        home: payload.home ?? true,
+      })
+      .eq("id", matchId);
+    if (matchError) logSupabaseError("finalizeLiveMatch: update match_stats (non bloquant)", matchError);
+
+    // 2) Upsert final du boxscore joueurs
+    const rows = payload.lines
+      .filter((line) => line.playerId)
+      .map((line) => buildPlayerRow(line, { userId: user.id, matchId, teamId }));
+    if (rows.length > 0) {
+      const { error: linesError } = await supabase
+        .from("match_player_stats")
+        .upsert(rows, { onConflict: "match_id,player_id" });
+      if (linesError) logSupabaseError("finalizeLiveMatch: upsert match_player_stats (non bloquant)", linesError);
+    }
+
+    // NB : on NE réécrit PAS match_actions (déjà en base au fil de l'eau).
+    return { ok: true, matchId };
+  } catch (error: any) {
+    logSupabaseError("finalizeLiveMatch", error);
+    return { ok: false, error: supabaseErrorMessage(error) };
+  }
+}
+
 export async function saveLiveMatch(
   payload: SaveLiveMatchPayload
 ): Promise<SaveLiveMatchResponse> {

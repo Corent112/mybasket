@@ -12,9 +12,17 @@
  *  - box-score consultable + analyses (temps forts/joueur, lineups, stops, possessions)
  */
 
-import { type MouseEvent, useEffect, useState } from 'react';
+import { type MouseEvent, useEffect, useRef, useState } from 'react';
 import { createClient } from "@/lib/supabase/client";
-import { saveLiveMatch } from "@/lib/stats-supabase";
+import {
+  saveLiveMatch,
+  ensureLiveMatch,
+  persistLiveAction,
+  deleteLiveAction,
+  upsertLiveMatchAggregates,
+  finalizeLiveMatch,
+} from "@/lib/stats-supabase";
+import { useLivestatTags } from "@/lib/livestat-tags";
 
 /* ============================ Types ============================ */
 interface Player { id: string; num: number; name: string; pos: string; photo?: string }
@@ -535,6 +543,61 @@ export default function PriseStatsProPage() {
   const [toast, setToast] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
 
+  /* -------- Persistance TEMPS RÉEL (match_actions = source unique) -------- */
+  // matchId Supabase du match en cours + realTeamId résolu, gardés en state ET
+  // en ref pour un accès synchrone dans commit()/undo() sans attendre un render.
+  const [liveMatchId, setLiveMatchId] = useState<string | null>(null);
+  const liveMatchIdRef = useRef<string | null>(null);
+  const liveTeamIdRef = useRef<string | null>(null);
+  const ensuringRef = useRef(false); // évite les doubles créations concurrentes
+
+  const setLiveMatch = (matchId: string | null, teamId: string | null) => {
+    liveMatchIdRef.current = matchId;
+    liveTeamIdRef.current = teamId;
+    setLiveMatchId(matchId);
+  };
+
+  // Recalcule les lignes boxscore (mapping identique à finishMatch) à partir
+  // de l'état courant, pour l'upsert live de match_player_stats.
+  const buildLiveLines = (arr: StatA[], court: string[]) => {
+    const playedIds = new Set<string>();
+    arr.forEach((action) => (action.lineup || []).forEach((id) => playedIds.add(id)));
+    court.forEach((id) => playedIds.add(id));
+
+    const box = computeBox(arr, roster);
+    const byId: Record<string, any> = {};
+    box.forEach((line: any) => { byId[line.p.id] = line; });
+
+    return roster.map((player) => {
+      const line = byId[player.id] || {};
+      return {
+        playerId: player.id,
+        present: playedIds.has(player.id),
+        p2m: line.p2m || 0, p2a: line.p2a || 0,
+        p3m: line.p3m || 0, p3a: line.p3a || 0,
+        ftm: line.ftm || 0, fta: line.fta || 0,
+        offReb: line.offReb || 0, defReb: line.defReb || 0,
+        ast: line.ast || 0, stl: line.stl || 0, blk: line.blk || 0,
+        to: line.to || 0, pf: line.pf || 0,
+      };
+    });
+  };
+
+  // Écrit le boxscore + le score live à partir d'un jeu d'actions donné.
+  // Non bloquant : toute erreur est avalée (le live continue en local).
+  const syncLiveAggregates = (arr: StatA[], court: string[], perQuarters: typeof perQ) => {
+    const matchId = liveMatchIdRef.current;
+    const teamId = liveTeamIdRef.current;
+    if (!matchId || !teamId) return;
+    const us = Object.values(perQuarters).reduce((s, q) => s + (q?.us || 0), 0);
+    const them = Object.values(perQuarters).reduce((s, q) => s + (q?.them || 0), 0);
+    upsertLiveMatchAggregates({
+      matchId, teamId,
+      lines: buildLiveLines(arr, court),
+      us, them, perQ: perQuarters,
+    }).catch(() => {});
+  };
+
   useEffect(() => {
     document.body.classList.add('prise-stats-fullscreen');
 
@@ -642,6 +705,23 @@ export default function PriseStatsProPage() {
     setRoster(selTeam.players); setTeamName(selTeam.name); setOnCourt(starters.slice());
     setActions([]); setMinutesByPlayer({}); setPerQ({ 1: { us: 0, them: 0 } }); setQ(1); setSecs(600); setRunning(false);
     setDraft(emptyDraft()); setStage('context'); setScreen('live');
+
+    // Prépare la ligne match_stats (statut 'live') UNE fois, en arrière-plan.
+    // Non bloquant : si ça échoue, la saisie continue et tout reste en local.
+    setLiveMatch(null, null);
+    ensuringRef.current = true;
+    ensureLiveMatch({
+      teamId: selTeam.id,
+      opponent: opponent || 'Adversaire',
+      date,
+      home,
+      playerIds: selTeam.players.map((p) => p.id),
+    })
+      .then((res) => {
+        if (res.ok) setLiveMatch(res.matchId, res.teamId);
+      })
+      .catch(() => {})
+      .finally(() => { ensuringRef.current = false; });
   };
 
   /* -------- horloge / quart-temps -------- */
@@ -657,6 +737,36 @@ export default function PriseStatsProPage() {
     setActions((arr) => [...arr, a]);
     setPerQ((p) => { const cur = p[q] || { us: 0, them: 0 }; return { ...p, [q]: { us: cur.us + ptsOf(a), them: cur.them + themPtsOf(a) } }; });
     flash('Enregistré : ' + describe(a, find).t);
+
+    /* --- Écriture TEMPS RÉEL (non bloquante) : match_actions + boxscore ---
+       Le state React se met à jour de façon asynchrone : on calcule donc
+       localement le prochain jeu d'actions et le prochain perQ pour écrire des
+       valeurs à jour, sans attendre le render. En cas d'erreur Supabase, le
+       live continue en local (localStorage + export CSV/JSON restent le filet). */
+    const matchId = liveMatchIdRef.current;
+    const teamId = liveTeamIdRef.current;
+    if (matchId && teamId) {
+      persistLiveAction({
+        matchId, teamId,
+        action: {
+          id: a.id, q: a.q, clock: a.clock, lineup: a.lineup,
+          context: a.context, inbound: a.inbound, tempsFort: a.tempsFort,
+          coverage: a.coverage, playerId: a.playerId,
+          actionType: a.actionType, shotType: a.shotType, shotResult: a.shotResult,
+          specialCase: a.specialCase, ftAttempts: a.ftAttempts, ftMade: a.ftMade,
+          ftResults: a.ftResults, reboundType: a.reboundType,
+          reboundPlayerId: a.reboundPlayerId, assist: a.assist,
+          assistPlayerId: a.assistPlayerId, foulOutcome: a.foulOutcome,
+          courtX: a.courtX ?? null, courtY: a.courtY ?? null,
+        },
+      }).catch(() => {});
+
+      const nextActions = [...actions, a];
+      const cur = perQ[q] || { us: 0, them: 0 };
+      const nextPerQ = { ...perQ, [q]: { us: cur.us + ptsOf(a), them: cur.them + themPtsOf(a) } };
+      syncLiveAggregates(nextActions, onCourt, nextPerQ);
+    }
+
     let next: Ctx, inbound = false;
     if (a.actionType === 'touche') next = 'attaque';
     else if (a.actionType === 'faute-commise' && a.context === 'defense') next = 'defense';
@@ -888,6 +998,17 @@ export default function PriseStatsProPage() {
     subtractActionFromScore(a);
     restoreDraftFromAction(a);
     flash('Dernière action annulée et replacée en correction');
+
+    // Correction TEMPS RÉEL (non bloquante) : retire la ligne + resync boxscore.
+    const matchId = liveMatchIdRef.current;
+    const teamId = liveTeamIdRef.current;
+    if (matchId && teamId) {
+      deleteLiveAction({ matchId, clientActionId: a.id }).catch(() => {});
+      const nextActions = actions.filter((x) => x.id !== a.id);
+      const cur = perQ[a.q] || { us: 0, them: 0 };
+      const nextPerQ = { ...perQ, [a.q]: { us: cur.us - ptsOf(a), them: cur.them - themPtsOf(a) } };
+      syncLiveAggregates(nextActions, onCourt, nextPerQ);
+    }
   };
 
   const removeAction = (id: string) => {
@@ -897,6 +1018,17 @@ export default function PriseStatsProPage() {
     setActions((arr) => arr.filter((x) => x.id !== id));
     subtractActionFromScore(a);
     flash('Action supprimée de l’historique');
+
+    // Correction TEMPS RÉEL (non bloquante) : retire la ligne + resync boxscore.
+    const matchId = liveMatchIdRef.current;
+    const teamId = liveTeamIdRef.current;
+    if (matchId && teamId) {
+      deleteLiveAction({ matchId, clientActionId: a.id }).catch(() => {});
+      const nextActions = actions.filter((x) => x.id !== id);
+      const cur = perQ[a.q] || { us: 0, them: 0 };
+      const nextPerQ = { ...perQ, [a.q]: { us: cur.us - ptsOf(a), them: cur.them - themPtsOf(a) } };
+      syncLiveAggregates(nextActions, onCourt, nextPerQ);
+    }
   };
   const resetDraft = () => {
     setDraft(emptyDraft());
@@ -1002,7 +1134,7 @@ export default function PriseStatsProPage() {
       console.log('LINES =', lines);
       console.log('ACTIONS =', actions);
 
-      const res = await saveLiveMatch({
+      const payload = {
         teamId: realTeamId,
         opponent: opponent || 'Adversaire',
         date,
@@ -1013,15 +1145,27 @@ export default function PriseStatsProPage() {
         lines,
         actions,
         home,
-      } as any);
+      } as any;
+
+      // Le match a été alimenté en TEMPS RÉEL : finishMatch FINALISE (score
+      // final + statut 'finished' + boxscore), il ne recrée pas tout. Si aucun
+      // match live n'a pu être créé au démarrage (ex. ensureLiveMatch échoué),
+      // on retombe sur saveLiveMatch (filet : écriture complète en une fois).
+      const activeMatchId = liveMatchIdRef.current;
+      const activeTeamForWrite = liveTeamIdRef.current || realTeamId;
+
+      const res = activeMatchId && !activeMatchId.startsWith('local_')
+        ? await finalizeLiveMatch({ matchId: activeMatchId, teamId: activeTeamForWrite, payload })
+        : await saveLiveMatch(payload);
 
       console.log('SAVE RESULT =', res);
 
       if (res.ok) {
         flash('Match enregistré ✓');
+        setLiveMatch(null, null);
         setScreen('box');
       } else {
-        console.error('saveLiveMatch a renvoyé une erreur:', res.error);
+        console.error('finalize/saveLiveMatch a renvoyé une erreur:', res.error);
         flash('Enregistrement échoué — utilise ⬇ CSV / JSON pour exporter');
         setScreen('box');
       }
@@ -1223,7 +1367,7 @@ export default function PriseStatsProPage() {
       <div className="qstrip">{Object.keys(perQ).map((k) => <span key={k} className={`qbox ${+k === q ? 'cur' : ''}`}>{periodLabel(+k)} <b>{perQ[+k].us}-{perQ[+k].them}</b></span>)}</div>
 
       {screen === 'box' ? (
-        <BoxView actions={actions} roster={roster} />
+        <BoxView actions={actions} roster={roster} teamId={activeTeamId || teamId} />
       ) : (
         <>
           <nav className="steps">
@@ -1267,6 +1411,18 @@ export default function PriseStatsProPage() {
                               subtractActionFromScore(a);
                               restoreDraftFromAction(a);
                               flash('Action ouverte en correction');
+
+                              // Retire la ligne côté Supabase (re-créée au prochain
+                              // commit, même client_action_id → upsert idempotent).
+                              const mId = liveMatchIdRef.current;
+                              const tId = liveTeamIdRef.current;
+                              if (mId && tId) {
+                                deleteLiveAction({ matchId: mId, clientActionId: a.id }).catch(() => {});
+                                const nextActions = actions.filter((x) => x.id !== a.id);
+                                const cur = perQ[a.q] || { us: 0, them: 0 };
+                                const nextPerQ = { ...perQ, [a.q]: { us: cur.us - ptsOf(a), them: cur.them - themPtsOf(a) } };
+                                syncLiveAggregates(nextActions, onCourt, nextPerQ);
+                              }
                             }}
                           >
                             ↩
@@ -1512,7 +1668,8 @@ export default function PriseStatsProPage() {
 }
 
 /* ============================ Box-score ============================ */
-function BoxView({ actions, roster }: { actions: StatA[]; roster: Player[] }) {
+function BoxView({ actions, roster, teamId }: { actions: StatA[]; roster: Player[]; teamId?: string }) {
+  const tags = useLivestatTags(teamId);
   const box = computeBox(actions, roster);
   const pts = (l: any) => l.p2m * 2 + l.p3m * 3 + l.ftm;
 
@@ -1659,7 +1816,7 @@ function BoxView({ actions, roster }: { actions: StatA[]; roster: Player[] }) {
               <tr>
                 <th className="l">Joueur</th>
                 {A.tfUsed.map((t) => (
-                  <th key={t.id}>{t.label}</th>
+                  <th key={t.id}>{tags.emoji(t.id)} {tags.label(t.id)}</th>
                 ))}
                 <th>Tot.</th>
               </tr>

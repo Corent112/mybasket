@@ -11,6 +11,7 @@ import LineChart from "../../../../components/equipes/LineChart";
 import { Jersey, Sparkline } from "../../../../components/equipes/Sparkline";
 import type { Player, Team } from "../../../../types/player";
 import { createClient } from "@/lib/supabase/client";
+import { useLivestatTags } from "@/lib/livestat-tags";
 
 type PlayerExtra = Player & {
   licenceNumber?: string;
@@ -28,6 +29,7 @@ const TABS = [
   "Aperçu",
   "Informations",
   "Stats",
+  "Vidéo",
   "Tests",
   "Médical",
   "Bilans",
@@ -691,6 +693,54 @@ function computeTeamPlayersComparisonStats(
     });
 }
 
+/* ============================================================
+ * LiveStat — rentabilité par temps fort (lecture match_actions)
+ * Ajout non intrusif : ne touche pas aux stats existantes.
+ * ============================================================ */
+function matchActionPoints(a: any): number {
+  if (a.context === "defense") return 0;
+  const shotType = a.shot_type;
+  const made = a.shot_result === "made";
+  const ftMade = statNumber(a.ft_made);
+  let p = 0;
+  if (shotType === "LF") p += ftMade;
+  else if (a.action_type === "tir" && made) {
+    if (shotType === "2PTS") p = 2;
+    else if (shotType === "3PTS") p = 3;
+  }
+  if (a.action_type === "tir" && shotType !== "LF" && made && a.special_case && a.special_case !== "aucun") {
+    p += ftMade;
+  }
+  return p;
+}
+
+type PlayerTfRow = { key: string; actions: number; points: number; ppa: number; clips: number };
+
+function computePlayerTempsFortRentability(actions: any[]): PlayerTfRow[] {
+  const map = new Map<string, { actions: number; points: number; clips: number }>();
+
+  for (const a of actions ?? []) {
+    const key = a.temps_fort;
+    if (!key) continue;
+
+    if (!map.has(key)) map.set(key, { actions: 0, points: 0, clips: 0 });
+    const row = map.get(key)!;
+
+    row.actions += 1;
+    row.points += matchActionPoints(a);
+    if (a.clip_start != null || a.video_time != null) row.clips += 1;
+  }
+
+  return Array.from(map.entries())
+    .map(([key, v]) => ({
+      key,
+      actions: v.actions,
+      points: v.points,
+      ppa: v.actions ? roundStat(v.points / v.actions) : 0,
+      clips: v.clips,
+    }))
+    .sort((a, b) => b.points - a.points);
+}
 
 export default function JoueurDetailPage({
   params,
@@ -701,9 +751,12 @@ export default function JoueurDetailPage({
   const router = useRouter();
   const supabase = createClient();
 
+  const tags = useLivestatTags(teamId);
+
   const [player, setPlayer] = useState<PlayerExtra | undefined>();
   const [team, setTeam] = useState<Team | undefined>();
   const [liveStats, setLiveStats] = useState<PlayerLiveStats>(EMPTY_LIVE_STATS);
+  const [playerActions, setPlayerActions] = useState<any[]>([]);
   const [teamPlayersStats, setTeamPlayersStats] = useState<TeamPlayerComparisonStat[]>([]);
   const [tab, setTab] = useState<Tab>("Aperçu");
   const [editing, setEditing] = useState(false);
@@ -1007,6 +1060,68 @@ export default function JoueurDetailPage({
       active = false;
     };
   }, [supabase, teamId, playerId, team?.players]);
+
+  useEffect(() => {
+    let active = true;
+
+    async function loadPlayerActions() {
+      try {
+        const { data, error } = await supabase
+          .from("match_actions")
+          .select("*")
+          .eq("team_id", teamId)
+          .or(
+            `player_id.eq.${playerId},assist_player_id.eq.${playerId},rebound_player_id.eq.${playerId}`
+          );
+
+        if (error) throw error;
+        if (!active) return;
+        setPlayerActions((data ?? []) as any[]);
+      } catch (error) {
+        console.error("Erreur chargement match_actions joueur :", error);
+        if (active) setPlayerActions([]);
+      }
+    }
+
+    loadPlayerActions();
+
+    return () => {
+      active = false;
+    };
+  }, [supabase, teamId, playerId]);
+
+  const tfRentability = useMemo(
+    () => computePlayerTempsFortRentability(playerActions),
+    [playerActions]
+  );
+
+  async function requestActionExport(actionId: string) {
+    if (!actionId) return;
+    // Best-effort : nécessite les colonnes export_status / export_requested_at
+    // (voir migration SQL). Non bloquant si absentes.
+    try {
+      const { error } = await supabase
+        .from("match_actions")
+        .update({
+          export_status: "requested",
+          export_requested_at: new Date().toISOString(),
+        })
+        .eq("id", actionId);
+
+      if (error) {
+        console.error("Demande d'export MP4 non enregistrée (non bloquant) :", error);
+        return;
+      }
+
+      setPlayerActions((prev) =>
+        prev.map((a) =>
+          String(a.id) === String(actionId) ? { ...a, export_status: "requested" } : a
+        )
+      );
+    } catch (error) {
+      console.error("Demande d'export MP4 impossible (non bloquant) :", error);
+    }
+  }
 
   async function handleSave(p: Player) {
     try {
@@ -1548,6 +1663,17 @@ export default function JoueurDetailPage({
               currentPlayerId={String(playerId)}
             />
           </>
+        )}
+
+        {tab === "Vidéo" && (
+          <VideoRentabilityTab
+            actions={playerActions}
+            tags={tags}
+            playerId={String(playerId)}
+            playerName={`${p.firstName ?? ""} ${p.lastName ?? ""}`.trim() || "Joueur"}
+            matches={liveStats.matches}
+            onRequestExport={requestActionExport}
+          />
         )}
 
         {tab === "Tests" && (
@@ -2155,6 +2281,1952 @@ function StatsTab({
         currentPlayerId={currentPlayerId}
       />
     </>
+  );
+}
+
+
+/* ======================================================================
+   Onglet Vidéo & Rentabilité — helpers de classification (match_actions)
+   Vocabulaire réel du wizard : action_type ∈ tir/faute-provoquee/touche/
+   perte/faute-commise (att) + interception/perte-adverse/contre (def) ;
+   shot_type 2PTS/3PTS/LF ; shot_result made/missed ; rebound_type off/def/
+   touche-pour/touche-contre ; special_case aucun/2pts+1lf/3pts+1lf.
+   On stocke la key temps_fort ; on affiche via tags.label(key).
+====================================================================== */
+
+const low = (v: unknown) => String(v ?? "").toLowerCase().trim();
+
+function isActorRow(a: any, playerId: string) {
+  return String(a.player_id ?? "") === String(playerId);
+}
+function isFieldShot(a: any) {
+  return low(a.action_type) === "tir" && (a.shot_type === "2PTS" || a.shot_type === "3PTS");
+}
+function shotIsMade(a: any) {
+  return low(a.shot_result) === "made";
+}
+function shotIsMissed(a: any) {
+  return low(a.shot_result) === "missed";
+}
+function actionHasClip(a: any) {
+  return a.clip_start != null || a.video_time != null;
+}
+function actionVideoUrl(a: any): string | null {
+  return a.video_url ?? a.clip_url ?? a.source_url ?? null;
+}
+function actionIsYoutube(a: any) {
+  const u = low(actionVideoUrl(a) || a.video_provider);
+  return u.includes("youtube") || u.includes("youtu.be");
+}
+function actionIsPlayable(a: any) {
+  return actionHasClip(a) && !!actionVideoUrl(a) && !actionIsYoutube(a);
+}
+function exportEligibility(a: any): { ok: boolean; reason: string } {
+  if (!actionHasClip(a)) return { ok: false, reason: "Vidéo non synchronisée" };
+  if (actionIsYoutube(a)) return { ok: false, reason: "Source YouTube non exportable" };
+  if (!actionVideoUrl(a)) return { ok: false, reason: "Source vidéo locale requise" };
+  return { ok: true, reason: "" };
+}
+
+function shotZone(a: any): { id: string; label: string } {
+  const x = Number(a.court_x);
+  const y = Number(a.court_y);
+  const side = x < 0.38 ? "G" : x > 0.62 ? "D" : "C";
+  const sideLabel = side === "G" ? "gauche" : side === "D" ? "droite" : "axe";
+  if (a.shot_type === "3PTS") return { id: `3-${side}`, label: `3PTS ${sideLabel}` };
+  if (Number.isFinite(y) && y < 0.28) return { id: "paint", label: "Près du panier" };
+  return { id: `mid-${side}`, label: `Mi-distance ${sideLabel}` };
+}
+const ZONE_ORDER = ["paint", "mid-G", "mid-C", "mid-D", "3-G", "3-C", "3-D"];
+
+type MtxBucket = {
+  key: string;
+  actor: any[];
+  assist: any[];
+  reboff: any[];
+  rebdef: any[];
+  all: any[];
+  points: number;
+};
+
+function buildTempsFortBuckets(actions: any[], playerId: string): Map<string, MtxBucket> {
+  const map = new Map<string, MtxBucket>();
+  const ensure = (key: string) => {
+    if (!map.has(key)) {
+      map.set(key, { key, actor: [], assist: [], reboff: [], rebdef: [], all: [], points: 0 });
+    }
+    return map.get(key)!;
+  };
+
+  for (const a of actions ?? []) {
+    const key = a.temps_fort;
+    if (!key) continue;
+    const b = ensure(key);
+    b.all.push(a);
+
+    if (isActorRow(a, playerId)) {
+      b.actor.push(a);
+      b.points += matchActionPoints(a);
+    }
+    if (String(a.assist_player_id ?? "") === String(playerId)) b.assist.push(a);
+    if (String(a.rebound_player_id ?? "") === String(playerId)) {
+      if (low(a.rebound_type) === "off") b.reboff.push(a);
+      else if (low(a.rebound_type) === "def") b.rebdef.push(a);
+    }
+  }
+
+  return map;
+}
+
+type MtxCol = {
+  id: string;
+  label: string;
+  value: (b: MtxBucket) => number;
+  list: (b: MtxBucket) => any[];
+  ratio?: boolean;
+};
+
+const MATRIX_COLUMNS: MtxCol[] = [
+  { id: "actions", label: "Actions", value: (b) => b.actor.length, list: (b) => b.actor },
+  { id: "points", label: "Points", value: (b) => b.points, list: (b) => b.actor.filter((a) => matchActionPoints(a) > 0) },
+  { id: "ppa", label: "Pts/action", value: (b) => (b.actor.length ? roundStat(b.points / b.actor.length) : 0), list: (b) => b.actor, ratio: true },
+  { id: "p2m", label: "2PTS M", value: (b) => b.actor.filter((a) => a.shot_type === "2PTS" && shotIsMade(a)).length, list: (b) => b.actor.filter((a) => a.shot_type === "2PTS" && shotIsMade(a)) },
+  { id: "p2r", label: "2PTS R", value: (b) => b.actor.filter((a) => a.shot_type === "2PTS" && shotIsMissed(a)).length, list: (b) => b.actor.filter((a) => a.shot_type === "2PTS" && shotIsMissed(a)) },
+  { id: "p3m", label: "3PTS M", value: (b) => b.actor.filter((a) => a.shot_type === "3PTS" && shotIsMade(a)).length, list: (b) => b.actor.filter((a) => a.shot_type === "3PTS" && shotIsMade(a)) },
+  { id: "p3r", label: "3PTS R", value: (b) => b.actor.filter((a) => a.shot_type === "3PTS" && shotIsMissed(a)).length, list: (b) => b.actor.filter((a) => a.shot_type === "3PTS" && shotIsMissed(a)) },
+  { id: "lfm", label: "LF M", value: (b) => b.actor.filter((a) => a.shot_type === "LF").reduce((s, a) => s + statNumber(a.ft_made), 0), list: (b) => b.actor.filter((a) => a.shot_type === "LF" && statNumber(a.ft_made) > 0) },
+  { id: "lfr", label: "LF R", value: (b) => b.actor.filter((a) => a.shot_type === "LF").reduce((s, a) => s + Math.max(0, statNumber(a.ft_attempts) - statNumber(a.ft_made)), 0), list: (b) => b.actor.filter((a) => a.shot_type === "LF" && statNumber(a.ft_attempts) - statNumber(a.ft_made) > 0) },
+  { id: "ast", label: "Passes déc.", value: (b) => b.assist.length, list: (b) => b.assist },
+  { id: "roff", label: "Reb off.", value: (b) => b.reboff.length, list: (b) => b.reboff },
+  { id: "rdef", label: "Reb déf.", value: (b) => b.rebdef.length, list: (b) => b.rebdef },
+  { id: "to", label: "Pertes", value: (b) => b.actor.filter((a) => low(a.action_type) === "perte").length, list: (b) => b.actor.filter((a) => low(a.action_type) === "perte") },
+  { id: "stl", label: "Interceptions", value: (b) => b.actor.filter((a) => low(a.action_type) === "interception").length, list: (b) => b.actor.filter((a) => low(a.action_type) === "interception") },
+  { id: "blk", label: "Contres", value: (b) => b.actor.filter((a) => low(a.action_type) === "contre").length, list: (b) => b.actor.filter((a) => low(a.action_type) === "contre") },
+  { id: "fd", label: "Fautes prov.", value: (b) => b.actor.filter((a) => low(a.action_type) === "faute-provoquee").length, list: (b) => b.actor.filter((a) => low(a.action_type) === "faute-provoquee") },
+  { id: "fc", label: "Fautes com.", value: (b) => b.actor.filter((a) => low(a.action_type) === "faute-commise").length, list: (b) => b.actor.filter((a) => low(a.action_type) === "faute-commise") },
+  { id: "clips", label: "Clips", value: (b) => b.all.filter(actionHasClip).length, list: (b) => b.all.filter(actionHasClip) },
+];
+
+function quarterLabel(q: unknown): string {
+  const n = Number(q);
+  if (!Number.isFinite(n) || n <= 0) return "—";
+  return n <= 4 ? `Q${n}` : `OT${n - 4}`;
+}
+
+/* ======================================================================
+   Onglet Vidéo & Rentabilité (joueur) — dashboard pro façon Hudl/Synergy,
+   identité MyBasket. Tout est calculé côté client depuis match_actions.
+   Réutilise les helpers module : low, isActorRow, buildTempsFortBuckets,
+   shotZone, matchActionPoints, exportEligibility, actionHasClip,
+   actionVideoUrl, actionIsYoutube, actionIsPlayable, quarterLabel.
+====================================================================== */
+
+function actionResultCategory(a: any): "made" | "missed" | "fauteProv" | "intercept" | "perte" | "autre" {
+  const at = low(a.action_type);
+  if (at === "tir") {
+    if (a.shot_type === "LF") {
+      if (statNumber(a.ft_made) > 0) return "made";
+      if (statNumber(a.ft_attempts) > 0) return "missed";
+      return "autre";
+    }
+    if (shotIsMade(a)) return "made";
+    if (shotIsMissed(a)) return "missed";
+    return "autre";
+  }
+  if (at === "faute-provoquee") return "fauteProv";
+  if (at === "interception") return "intercept";
+  if (at === "perte") return "perte";
+  return "autre";
+}
+
+const RESULT_KEYS = ["made", "missed", "fauteProv", "intercept", "perte"] as const;
+type ResultKey = (typeof RESULT_KEYS)[number];
+
+type VideoFilters = {
+  match: string;
+  quarter: string;
+  tf: string;
+  side: string;
+  results: Record<ResultKey, boolean>;
+  shots: { p2: boolean; p3: boolean; lf: boolean };
+};
+
+const DEFAULT_VIDEO_FILTERS: VideoFilters = {
+  match: "all",
+  quarter: "all",
+  tf: "all",
+  side: "all",
+  results: { made: true, missed: true, fauteProv: true, intercept: true, perte: true },
+  shots: { p2: true, p3: true, lf: true },
+};
+
+function filterVideoActions(actions: any[], f: VideoFilters): any[] {
+  const allResult = RESULT_KEYS.every((k) => f.results[k]);
+  const allShot = f.shots.p2 && f.shots.p3 && f.shots.lf;
+  return (actions ?? []).filter((a) => {
+    if (f.match !== "all" && String(a.match_id ?? "") !== f.match) return false;
+    if (f.quarter !== "all" && String(a.quarter ?? "") !== f.quarter) return false;
+    if (f.tf !== "all" && String(a.temps_fort ?? "") !== f.tf) return false;
+    if (f.side !== "all" && low(a.context) !== f.side) return false;
+    if (!allResult) {
+      const cat = actionResultCategory(a);
+      if (cat === "autre" || !f.results[cat as ResultKey]) return false;
+    }
+    if (!allShot && low(a.action_type) === "tir") {
+      const st = a.shot_type;
+      const ok =
+        (st === "2PTS" && f.shots.p2) ||
+        (st === "3PTS" && f.shots.p3) ||
+        (st === "LF" && f.shots.lf);
+      if (!ok) return false;
+    }
+    return true;
+  });
+}
+
+/* ------- Matrice de rentabilité (temps fort × résultat) ------- */
+type RentabRow = {
+  key: string;
+  made: { n: number; pts: number; list: any[] };
+  missed: { n: number; pts: number; list: any[] };
+  fauteProv: { n: number; pts: number; list: any[] };
+  intercept: { n: number; pts: number; list: any[] };
+  perte: { n: number; pts: number; list: any[] };
+  total: { n: number; pts: number; list: any[] };
+  ppa: number;
+};
+
+function computeTempsFortMatrix(
+  buckets: Map<string, MtxBucket>,
+  orderedKeys: string[]
+): RentabRow[] {
+  const cell = (list: any[]) => ({
+    n: list.length,
+    pts: list.reduce((s, a) => s + matchActionPoints(a), 0),
+    list,
+  });
+  return orderedKeys.map((key) => {
+    const b = buckets.get(key)!;
+    const actor = b.actor;
+    const made = actor.filter((a) => actionResultCategory(a) === "made");
+    const missed = actor.filter((a) => actionResultCategory(a) === "missed");
+    const fauteProv = actor.filter((a) => actionResultCategory(a) === "fauteProv");
+    const intercept = actor.filter((a) => actionResultCategory(a) === "intercept");
+    const perte = actor.filter((a) => actionResultCategory(a) === "perte");
+    const total = cell(actor);
+    return {
+      key,
+      made: cell(made),
+      missed: cell(missed),
+      fauteProv: cell(fauteProv),
+      intercept: cell(intercept),
+      perte: cell(perte),
+      total,
+      ppa: total.n ? roundStat(total.pts / total.n) : 0,
+    };
+  });
+}
+
+const RENTAB_COLS: { id: keyof RentabRow; label: string; icon: string; tint: string }[] = [
+  { id: "made", label: "Marqué", icon: "✅", tint: "green" },
+  { id: "missed", label: "Manqué", icon: "❌", tint: "red" },
+  { id: "fauteProv", label: "Faute provoquée", icon: "🔔", tint: "amber" },
+  { id: "intercept", label: "Intercepté", icon: "🖐", tint: "violet" },
+  { id: "perte", label: "Perte", icon: "↩️", tint: "grey" },
+  { id: "total", label: "Total", icon: "", tint: "neutral" },
+];
+
+function ppaClass(ppa: number): string {
+  if (ppa >= 1.2) return "ppa-good";
+  if (ppa >= 0.8) return "ppa-mid";
+  if (ppa > 0) return "ppa-low";
+  return "ppa-zero";
+}
+
+/* ------- Shot chart zones ------- */
+const ZONE_LABELS: Record<string, string> = {
+  paint: "Près du panier",
+  "mid-G": "Mi-distance gauche",
+  "mid-C": "Mi-distance axe",
+  "mid-D": "Mi-distance droite",
+  "3-G": "3PTS gauche",
+  "3-C": "3PTS axe",
+  "3-D": "3PTS droite",
+};
+const ZONE_LAYOUT: Record<string, { l: number; t: number; w: number; h: number }> = {
+  "3-G": { l: 3, t: 5, w: 25, h: 30 },
+  "3-C": { l: 30, t: 3, w: 40, h: 24 },
+  "3-D": { l: 72, t: 5, w: 25, h: 30 },
+  "mid-G": { l: 6, t: 40, w: 25, h: 30 },
+  "mid-C": { l: 33, t: 31, w: 34, h: 26 },
+  "mid-D": { l: 69, t: 40, w: 25, h: 30 },
+  paint: { l: 33, t: 61, w: 34, h: 33 },
+};
+
+type ZoneStat = { id: string; label: string; made: number; att: number; pts: number; shots: any[] };
+
+function computeShotZones(fieldShots: any[]): ZoneStat[] {
+  const m = new Map<string, ZoneStat>();
+  for (const a of fieldShots) {
+    if (a.court_x == null || a.court_y == null) continue;
+    const z = shotZone(a);
+    if (!m.has(z.id)) m.set(z.id, { id: z.id, label: ZONE_LABELS[z.id] || z.label, made: 0, att: 0, pts: 0, shots: [] });
+    const zs = m.get(z.id)!;
+    zs.att += 1;
+    if (shotIsMade(a)) {
+      zs.made += 1;
+      zs.pts += matchActionPoints(a);
+    }
+    zs.shots.push(a);
+  }
+  return ZONE_ORDER.map((id) => m.get(id)).filter(Boolean) as ZoneStat[];
+}
+function zoneColor(pct: number): string {
+  if (pct >= 60) return "#2f9e6a";
+  if (pct >= 45) return "#8fce9f";
+  if (pct >= 30) return "#e4b64c";
+  return "#e0645c";
+}
+
+function clipDurationLabel(a: any): string {
+  const start = a.clip_start;
+  const end = a.clip_end;
+  if (start != null && end != null) {
+    const d = Math.max(0, Math.round(Number(end) - Number(start)));
+    return `00:${String(d).padStart(2, "0")}`;
+  }
+  return "—";
+}
+function matchTimeLabel(a: any): string {
+  if (a.clock) return String(a.clock);
+  if (a.video_time != null) {
+    const s = Math.max(0, Math.round(Number(a.video_time)));
+    return `${String(Math.floor(s / 60)).padStart(2, "0")}:${String(s % 60).padStart(2, "0")}`;
+  }
+  return "—";
+}
+function actionTypeLabel(a: any): string {
+  const at = low(a.action_type);
+  if (at === "tir") return a.shot_type || "Tir";
+  if (at === "faute-provoquee") return "Faute provoquée";
+  if (at === "faute-commise") return "Faute commise";
+  if (at === "interception") return "Interception";
+  if (at === "perte") return "Perte";
+  if (at === "contre") return "Contre";
+  if (at === "touche") return "Touche";
+  return a.action_type || "Action";
+}
+
+/* ------- V4 · intelligence vidéo / scouting (tout côté client) ------- */
+
+type VideoProfile = {
+  style: { icon: string; label: string };
+  bestWeapon: { key: string; ppa: number; actions: number } | null;
+  weakness: { key: string; ppa: number; losses: number } | null;
+};
+
+function computeVideoProfile(
+  actorActions: any[],
+  buckets: Map<string, MtxBucket>,
+  matrix: RentabRow[]
+): VideoProfile {
+  const transitionPts = actorActions
+    .filter((a) => a.temps_fort === "transition" || a.temps_fort === "fast-break")
+    .reduce((s, a) => s + matchActionPoints(a), 0);
+  const threeVol = actorActions.filter((a) => a.shot_type === "3PTS").length;
+  const paintMade = actorActions.filter(
+    (a) => isFieldShot(a) && a.shot_type === "2PTS" && shotIsMade(a) && shotZone(a).id === "paint"
+  ).length;
+
+  let assists = 0;
+  let rebDef = 0;
+  buckets.forEach((b) => {
+    assists += b.assist.length;
+    rebDef += b.rebdef.length;
+  });
+  const steals = actorActions.filter((a) => low(a.action_type) === "interception").length;
+  const blocks = actorActions.filter((a) => low(a.action_type) === "contre").length;
+
+  const scored = [
+    { icon: "⚡", label: "Transition scorer", score: transitionPts },
+    { icon: "🎯", label: "Shooter", score: threeVol * 1.2 },
+    { icon: "🧱", label: "Finisseur intérieur", score: paintMade * 1.3 },
+    { icon: "🧠", label: "Créateur", score: assists * 1.6 },
+    { icon: "🛡", label: "Défenseur impact", score: (steals + blocks) * 1.5 + rebDef * 0.6 },
+  ].sort((a, b) => b.score - a.score);
+
+  const style =
+    scored[0] && scored[0].score > 0
+      ? { icon: scored[0].icon, label: scored[0].label }
+      : { icon: "🏀", label: "Joueur polyvalent" };
+
+  const MIN = 4;
+  const eligible = matrix.filter((r) => r.total.n >= MIN);
+  let bestWeapon: VideoProfile["bestWeapon"] = null;
+  let weakness: VideoProfile["weakness"] = null;
+  if (eligible.length) {
+    const best = [...eligible].sort((a, b) => b.ppa - a.ppa)[0];
+    const worst = [...eligible].sort((a, b) => a.ppa - b.ppa)[0];
+    bestWeapon = { key: best.key, ppa: best.ppa, actions: best.total.n };
+    weakness = { key: worst.key, ppa: worst.ppa, losses: worst.perte.n };
+  }
+  return { style, bestWeapon, weakness };
+}
+
+type ScoutRow = {
+  key: string;
+  positive: any[];
+  negative: any[];
+  creation: any[];
+  defense: any[];
+  neutre: any[];
+  score: number;
+};
+
+function computeScoutMatrix(buckets: Map<string, MtxBucket>, orderedKeys: string[]): ScoutRow[] {
+  return orderedKeys.map((key) => {
+    const b = buckets.get(key)!;
+    const made = b.actor.filter((a) => actionResultCategory(a) === "made");
+    const missed = b.actor.filter((a) => actionResultCategory(a) === "missed");
+    const perte = b.actor.filter((a) => low(a.action_type) === "perte");
+    const fCom = b.actor.filter((a) => low(a.action_type) === "faute-commise");
+    const fProv = b.actor.filter((a) => low(a.action_type) === "faute-provoquee");
+    const steals = b.actor.filter((a) => low(a.action_type) === "interception");
+    const blocks = b.actor.filter((a) => low(a.action_type) === "contre");
+    const driveKick = b.actor.filter((a) => a.temps_fort === "drive-kick");
+
+    const positive = [...made, ...b.assist, ...fProv, ...b.reboff];
+    const negative = [...missed, ...perte, ...fCom];
+    const creation = [...b.assist, ...fProv, ...driveKick];
+    const defense = [...steals, ...blocks, ...b.rebdef];
+    const counted = new Set<any>([...positive, ...negative, ...creation, ...defense]);
+    const neutre = b.actor.filter((a) => !counted.has(a));
+
+    return { key, positive, negative, creation, defense, neutre, score: positive.length - negative.length };
+  });
+}
+
+const SCOUT_COLS: { id: keyof ScoutRow; label: string; icon: string; cls: string }[] = [
+  { id: "positive", label: "Positives", icon: "🟢", cls: "sc-pos" },
+  { id: "negative", label: "Négatives", icon: "🔴", cls: "sc-neg" },
+  { id: "creation", label: "Création", icon: "🎯", cls: "sc-cre" },
+  { id: "defense", label: "Défense", icon: "🛡", cls: "sc-def" },
+  { id: "neutre", label: "Neutre", icon: "⚪", cls: "sc-neu" },
+];
+
+type TLEvent = { a: any; icon: string; cat: string };
+
+function timelineCategory(a: any, playerId: string): { icon: string; cat: string } {
+  if (String(a.assist_player_id ?? "") === String(playerId) && !isActorRow(a, playerId))
+    return { icon: "🎯", cat: "Passe décisive" };
+  if (
+    String(a.rebound_player_id ?? "") === String(playerId) &&
+    low(a.rebound_type) === "def" &&
+    !isActorRow(a, playerId)
+  )
+    return { icon: "🛡", cat: "Rebond défensif" };
+  const at = low(a.action_type);
+  if (at === "interception") return { icon: "🛡", cat: "Interception" };
+  if (at === "contre") return { icon: "🛡", cat: "Contre" };
+  const rc = actionResultCategory(a);
+  if (rc === "made") return { icon: "🔥", cat: "Marqué" };
+  if (rc === "missed") return { icon: "❌", cat: "Manqué" };
+  if (rc === "perte") return { icon: "❌", cat: "Perte" };
+  if (at === "faute-commise") return { icon: "❌", cat: "Faute commise" };
+  return { icon: "•", cat: actionTypeLabel(a) };
+}
+
+function computeTimeline(actions: any[], playerId: string): { quarter: number; events: TLEvent[] }[] {
+  const byQ = new Map<number, TLEvent[]>();
+  for (const a of actions ?? []) {
+    const q = Number(a.quarter) || 0;
+    if (!byQ.has(q)) byQ.set(q, []);
+    const { icon, cat } = timelineCategory(a, playerId);
+    byQ.get(q)!.push({ a, icon, cat });
+  }
+  return Array.from(byQ.entries())
+    .sort((x, y) => x[0] - y[0])
+    .map(([quarter, events]) => ({ quarter, events }));
+}
+
+type SmartPlaylist = { id: string; icon: string; name: string; actions: any[]; best: any | null };
+
+function computeSmartPlaylists(actions: any[], playerId: string): SmartPlaylist[] {
+  const actor = actions.filter((a) => isActorRow(a, playerId));
+  const assists = actions.filter(
+    (a) => String(a.assist_player_id ?? "") === String(playerId) && !isActorRow(a, playerId)
+  );
+  const rebDef = actions.filter(
+    (a) =>
+      String(a.rebound_player_id ?? "") === String(playerId) &&
+      low(a.rebound_type) === "def" &&
+      !isActorRow(a, playerId)
+  );
+  const made = actor.filter((a) => actionResultCategory(a) === "made");
+  const missed = actor.filter((a) => actionResultCategory(a) === "missed");
+  const perte = actor.filter((a) => low(a.action_type) === "perte");
+  const fCom = actor.filter((a) => low(a.action_type) === "faute-commise");
+  const fProv = actor.filter((a) => low(a.action_type) === "faute-provoquee");
+  const steals = actor.filter((a) => low(a.action_type) === "interception");
+  const blocks = actor.filter((a) => low(a.action_type) === "contre");
+  const shots = actor.filter((a) => low(a.action_type) === "tir");
+  const driveKick = actor.filter((a) => a.temps_fort === "drive-kick");
+
+  const best = (list: any[]) =>
+    list.length ? [...list].sort((a, b) => matchActionPoints(b) - matchActionPoints(a))[0] : null;
+  const pl = (id: string, icon: string, name: string, list: any[]): SmartPlaylist => ({
+    id,
+    icon,
+    name,
+    actions: list,
+    best: best(list),
+  });
+
+  return [
+    pl("highlights", "🔥", "Highlights", [...made, ...assists, ...steals, ...blocks]),
+    pl("corrections", "⚠️", "Corrections", [...perte, ...missed, ...fCom]),
+    pl("shooting", "🎯", "Shooting", shots),
+    pl("creation", "🧠", "Création", [...assists, ...driveKick, ...fProv]),
+    pl("defense", "🛡", "Défense", [...steals, ...blocks, ...rebDef]),
+  ];
+}
+
+// Qualité de tir : dépend d'un champ optionnel (absent aujourd'hui → seule l'option "Tous")
+function actionShotQuality(a: any): string | null {
+  const q = a.shot_quality ?? a.quality ?? a.catch_shoot ?? null;
+  return q != null && q !== "" ? String(q) : null;
+}
+
+/* ------- V4.1 · structures préparées pour une future persistance Supabase -------
+   Future tables : video_notes, video_tags, video_highlights.
+   (Aucune table créée, aucune écriture DB — state local uniquement pour l'instant.) */
+type VideoNote = { action_id: string; note: string; type: string; created_at: string };
+type VideoCustomTag = { action_id: string; tags: string[] };
+type HighlightClip = { action_id: string; temps_fort: string; label: string; added_at: string };
+
+const NOTE_TYPES = ["Correction", "Positif", "Question joueur", "Objectif travail"];
+const QUICK_TAGS = ["🔥 Excellent", "⚠️ À corriger", "👀 À revoir", "⭐ Exemple équipe"];
+
+/* ------- V4.1 · comparateur avant / après (créé depuis created_at) ------- */
+type EvoBucket = { n: number; ppa: number; success: number; positives: number; negatives: number };
+type VideoEvolution = { early: EvoBucket; recent: EvoBucket } | null;
+
+function evoBucket(list: any[]): EvoBucket {
+  const n = list.length;
+  const points = list.reduce((s, a) => s + matchActionPoints(a), 0);
+  const shots = list.filter((a) => low(a.action_type) === "tir");
+  const madeShots = shots.filter((a) => actionResultCategory(a) === "made");
+  const positives = list.filter((a) => {
+    const c = actionResultCategory(a);
+    return c === "made" || c === "fauteProv";
+  }).length;
+  const negatives = list.filter((a) => {
+    const c = actionResultCategory(a);
+    return c === "missed" || c === "perte" || low(a.action_type) === "faute-commise";
+  }).length;
+  return {
+    n,
+    ppa: n ? roundStat(points / n) : 0,
+    success: shots.length ? Math.round((madeShots.length / shots.length) * 100) : 0,
+    positives,
+    negatives,
+  };
+}
+
+function computeVideoEvolution(actorActions: any[]): VideoEvolution {
+  const MIN_EACH = 5;
+  const now = Date.now();
+  const cutoff = now - 30 * 24 * 60 * 60 * 1000;
+  const dated = actorActions.filter((a) => a.created_at && !Number.isNaN(new Date(a.created_at).getTime()));
+  if (dated.length < MIN_EACH * 2) return null;
+  const recent = dated.filter((a) => new Date(a.created_at).getTime() >= cutoff);
+  const early = dated.filter((a) => new Date(a.created_at).getTime() < cutoff);
+  if (recent.length < MIN_EACH || early.length < MIN_EACH) return null;
+  return { early: evoBucket(early), recent: evoBucket(recent) };
+}
+
+/* ------- V4.1 · insights automatiques (aucune IA externe) ------- */
+function tfVolumeTrend(actorActions: any[]): { key: string; delta: number } | null {
+  const now = Date.now();
+  const cutoff = now - 30 * 24 * 60 * 60 * 1000;
+  const dated = actorActions.filter((a) => a.created_at && !Number.isNaN(new Date(a.created_at).getTime()) && a.temps_fort);
+  if (dated.length < 10) return null;
+  const delta = new Map<string, number>();
+  for (const a of dated) {
+    const recent = new Date(a.created_at).getTime() >= cutoff;
+    delta.set(a.temps_fort, (delta.get(a.temps_fort) || 0) + (recent ? 1 : -1));
+  }
+  let best: { key: string; delta: number } | null = null;
+  delta.forEach((d, key) => {
+    if (d > 0 && (!best || d > best.delta)) best = { key, delta: d };
+  });
+  return best;
+}
+
+function computeAutoInsights(
+  matrix: RentabRow[],
+  actorActions: any[],
+  label: (k: string) => string
+): string[] {
+  const insights: string[] = [];
+  const elig = matrix.filter((r) => r.total.n >= 4);
+
+  if (elig.length) {
+    const best = [...elig].sort((a, b) => b.ppa - a.ppa)[0];
+    if (best.ppa >= 1.0) insights.push(`Très efficace sur ${label(best.key)} avec ${best.ppa.toFixed(2)} pts/action.`);
+  }
+
+  const trend = tfVolumeTrend(actorActions);
+  if (trend && trend.delta > 0) {
+    insights.push(`Le volume de ${label(trend.key)} augmente sur les 30 derniers jours.`);
+  } else {
+    const topVol = [...matrix].sort((a, b) => b.total.n - a.total.n)[0];
+    if (topVol && topVol.total.n > 0) insights.push(`Temps fort le plus utilisé : ${label(topVol.key)} (${topVol.total.n} actions).`);
+  }
+
+  const mostTO = [...matrix].sort((a, b) => b.perte.n - a.perte.n)[0];
+  const worst = elig.length ? [...elig].sort((a, b) => a.ppa - b.ppa)[0] : null;
+  if (mostTO && mostTO.perte.n >= 2) {
+    insights.push(`Attention aux pertes de balle sur ${label(mostTO.key)} (${mostTO.perte.n}).`);
+  } else if (worst && worst.ppa < 0.9) {
+    insights.push(`Point à travailler : ${label(worst.key)} à ${worst.ppa.toFixed(2)} pts/action.`);
+  }
+
+  if (!insights.length) insights.push("Pas encore assez d'actions pour générer une analyse.");
+  return insights.slice(0, 3);
+}
+
+function VideoRentabilityTab({
+  actions,
+  tags,
+  playerId,
+  playerName,
+  matches,
+  onRequestExport,
+}: {
+  actions: any[];
+  tags: ReturnType<typeof useLivestatTags>;
+  playerId: string;
+  playerName: string;
+  matches: PlayerLiveMatchLine[];
+  onRequestExport: (actionId: string) => void;
+}) {
+  const [view, setView] = useState<"matrice" | "shot" | "actions" | "clips" | "timeline">("matrice");
+  const [showFilters, setShowFilters] = useState(true);
+  const [filters, setFilters] = useState<VideoFilters>(DEFAULT_VIDEO_FILTERS);
+  const [popup, setPopup] = useState<{ title: string; actions: any[]; index?: number } | null>(null);
+  const [mtxView, setMtxView] = useState<"perf" | "scout">("perf");
+  const [quality, setQuality] = useState("all");
+  const [highlightQueue, setHighlightQueue] = useState<HighlightClip[]>([]);
+  const [coachNotes, setCoachNotes] = useState<VideoNote[]>([]);
+  const [customTags, setCustomTags] = useState<VideoCustomTag[]>([]);
+
+  const matchLabelOf = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const row of matches ?? []) {
+      const label = `${row.opponent || "Adversaire"}${row.date ? ` · ${fmtDate(row.date)}` : ""}`;
+      m.set(String(row.matchId), label);
+    }
+    return (id: unknown) => m.get(String(id ?? "")) || "Match";
+  }, [matches]);
+
+  const allActions = actions ?? [];
+  const filtered = useMemo(() => filterVideoActions(allActions, filters), [allActions, filters]);
+  const actorActions = useMemo(() => filtered.filter((a) => isActorRow(a, playerId)), [filtered, playerId]);
+  const buckets = useMemo(() => buildTempsFortBuckets(filtered, playerId), [filtered, playerId]);
+
+  const orderedTfKeys = useMemo(() => {
+    const present = new Set(Array.from(buckets.keys()));
+    const ordered: string[] = [];
+    for (const t of tags.active ?? []) if (present.has(t.key)) { ordered.push(t.key); present.delete(t.key); }
+    return [...ordered, ...Array.from(present)];
+  }, [buckets, tags]);
+
+  const matrix = useMemo(() => computeTempsFortMatrix(buckets, orderedTfKeys), [buckets, orderedTfKeys]);
+  const fieldShots = useMemo(() => {
+    let s = actorActions.filter(isFieldShot);
+    if (quality !== "all") s = s.filter((a) => actionShotQuality(a) === quality);
+    return s;
+  }, [actorActions, quality]);
+  const zones = useMemo(() => computeShotZones(fieldShots), [fieldShots]);
+
+  const qualityOptions = useMemo(() => {
+    const set = new Set<string>();
+    for (const a of actorActions.filter(isFieldShot)) {
+      const q = actionShotQuality(a);
+      if (q) set.add(q);
+    }
+    return Array.from(set);
+  }, [actorActions]);
+
+  const profile = useMemo(
+    () => computeVideoProfile(actorActions, buckets, matrix),
+    [actorActions, buckets, matrix]
+  );
+  const scoutMatrix = useMemo(() => computeScoutMatrix(buckets, orderedTfKeys), [buckets, orderedTfKeys]);
+  const timeline = useMemo(() => computeTimeline(filtered, playerId), [filtered, playerId]);
+  const smartPlaylists = useMemo(() => computeSmartPlaylists(filtered, playerId), [filtered, playerId]);
+
+  const evolution = useMemo(() => computeVideoEvolution(actorActions), [actorActions]);
+  const autoInsights = useMemo(
+    () => computeAutoInsights(matrix, actorActions, (k: string) => tags.label(k)),
+    [matrix, actorActions, tags]
+  );
+
+  const toggleHighlight = (a: any) => {
+    const id = String(a.id ?? "");
+    setHighlightQueue((q) =>
+      q.some((c) => c.action_id === id)
+        ? q.filter((c) => c.action_id !== id)
+        : [...q, { action_id: id, temps_fort: a.temps_fort, label: tags.label(a.temps_fort), added_at: new Date().toISOString() }]
+    );
+  };
+  const removeHighlight = (id: string) => setHighlightQueue((q) => q.filter((c) => c.action_id !== id));
+  const clearHighlights = () => setHighlightQueue([]);
+  const saveNote = (n: VideoNote) => setCoachNotes((prev) => [...prev.filter((x) => x.action_id !== n.action_id), n]);
+  const saveTags = (t: VideoCustomTag) => setCustomTags((prev) => [...prev.filter((x) => x.action_id !== t.action_id), t]);
+
+  // Options filtres
+  const matchOptions = useMemo(() => {
+    const ids = Array.from(new Set(allActions.map((a) => String(a.match_id ?? "")).filter(Boolean)));
+    return ids.map((id) => ({ id, label: matchLabelOf(id) }));
+  }, [allActions, matchLabelOf]);
+  const quarterOptions = useMemo(
+    () => Array.from(new Set(allActions.map((a) => String(a.quarter ?? "")).filter(Boolean))).sort((a, b) => Number(a) - Number(b)),
+    [allActions]
+  );
+  const tfOptions = useMemo(() => {
+    const present = new Set(allActions.map((a) => String(a.temps_fort ?? "")).filter(Boolean));
+    const ordered: string[] = [];
+    for (const t of tags.active ?? []) if (present.has(t.key)) { ordered.push(t.key); present.delete(t.key); }
+    return [...ordered, ...Array.from(present)];
+  }, [allActions, tags]);
+
+  // KPIs
+  const totalActions = actorActions.length;
+  const totalPoints = actorActions.reduce((s, a) => s + matchActionPoints(a), 0);
+  const totalClips = filtered.filter(actionHasClip).length;
+  const usedTf = orderedTfKeys.length;
+
+  // Totaux matrice
+  const totalsRow = useMemo(() => {
+    const acc = { made: { n: 0, pts: 0 }, missed: { n: 0, pts: 0 }, fauteProv: { n: 0, pts: 0 }, intercept: { n: 0, pts: 0 }, perte: { n: 0, pts: 0 }, total: { n: 0, pts: 0 } };
+    for (const r of matrix) {
+      for (const k of ["made", "missed", "fauteProv", "intercept", "perte", "total"] as const) {
+        acc[k].n += (r[k] as any).n;
+        acc[k].pts += (r[k] as any).pts;
+      }
+    }
+    const ppa = acc.total.n ? roundStat(acc.total.pts / acc.total.n) : 0;
+    return { ...acc, ppa };
+  }, [matrix]);
+
+  const shotTotals = useMemo(() => {
+    const made = zones.reduce((s, z) => s + z.made, 0);
+    const att = zones.reduce((s, z) => s + z.att, 0);
+    return { made, att, pct: att ? Math.round((made / att) * 100) : 0 };
+  }, [zones]);
+
+  const clipActions = useMemo(() => {
+    const withClips = filtered.filter(actionHasClip);
+    const src = withClips.length ? withClips : filtered;
+    return [...src]
+      .sort((a, b) => Number(b.quarter ?? 0) - Number(a.quarter ?? 0))
+      .slice(0, 12);
+  }, [filtered]);
+
+  const lastActions = useMemo(
+    () => [...actorActions].slice(-6).reverse(),
+    [actorActions]
+  );
+
+  const openPopup = (title: string, list: any[], index = 0) => {
+    if (!list || !list.length) return;
+    setPopup({ title, actions: list, index });
+  };
+
+  const filtersActive = JSON.stringify(filters) !== JSON.stringify(DEFAULT_VIDEO_FILTERS);
+  const setResult = (k: ResultKey, v: boolean) =>
+    setFilters((f) => ({ ...f, results: { ...f.results, [k]: v } }));
+  const setShot = (k: "p2" | "p3" | "lf", v: boolean) =>
+    setFilters((f) => ({ ...f, shots: { ...f.shots, [k]: v } }));
+
+  const SUBTABS: { id: typeof view; icon: string; label: string }[] = [
+    { id: "matrice", icon: "▦", label: "Matrice de rentabilité" },
+    { id: "shot", icon: "◎", label: "Shot chart" },
+    { id: "timeline", icon: "⧗", label: "Timeline" },
+    { id: "actions", icon: "≣", label: "Liste des actions" },
+    { id: "clips", icon: "🎞", label: "Clips clés" },
+  ];
+
+  /* ---------------- rendus de sections ---------------- */
+  const renderMatrice = () => (
+    <div className="vr-card">
+      <div className="vr-card-head">
+        <h3>Matrice de rentabilité</h3>
+        <span className="vr-sub">Rentabilité par temps fort et résultat.</span>
+      </div>
+
+      {orderedTfKeys.length === 0 ? (
+        <p className="empty-small">Aucune action pour ce filtre.</p>
+      ) : (
+        <div className="vr-mtx-scroll">
+          <table className="vr-mtx">
+            <thead>
+              <tr>
+                <th className="l">Temps fort</th>
+                {RENTAB_COLS.map((c) => (
+                  <th key={String(c.id)}>{c.icon} {c.label}</th>
+                ))}
+                <th>Pts/action</th>
+              </tr>
+            </thead>
+            <tbody>
+              {matrix.map((r) => (
+                <tr key={r.key}>
+                  <td className="l">
+                    <span style={{ color: tags.color(r.key), fontWeight: 800 }}>
+                      {tags.emoji(r.key)} {tags.label(r.key)}
+                    </span>
+                  </td>
+                  {RENTAB_COLS.map((c) => {
+                    const cell = r[c.id] as { n: number; pts: number; list: any[] };
+                    const clickable = cell.n > 0 && c.id !== "total";
+                    const isTotal = c.id === "total";
+                    return (
+                      <td
+                        key={String(c.id)}
+                        className={`vr-mc tint-${c.tint} ${clickable ? "click" : ""} ${!cell.n ? "z" : ""}`}
+                        onClick={clickable ? () => openPopup(`${tags.label(r.key)} · ${c.label}`, cell.list) : undefined}
+                      >
+                        <b>{cell.n}</b>
+                        <em>{isTotal || cell.pts ? `${cell.pts} pts` : "0 pt"}</em>
+                      </td>
+                    );
+                  })}
+                  <td className={`vr-ppa ${ppaClass(r.ppa)}`}>{r.ppa.toFixed(2)}</td>
+                </tr>
+              ))}
+              <tr className="vr-total">
+                <td className="l">TOTAL</td>
+                {RENTAB_COLS.map((c) => {
+                  const t =
+  c.id === "ppa"
+    ? { n: totalsRow.ppa, pts: 0 }
+    : (totalsRow[c.id as Exclude<keyof typeof totalsRow, "ppa">] as {
+        n: number;
+        pts: number;
+      });
+                  return (
+                    <td key={String(c.id)} className={`vr-mc tint-${c.tint}`}>
+                      <b>{t.n}</b>
+                      <em>{t.pts} pts</em>
+                    </td>
+                  );
+                })}
+                <td className={`vr-ppa ${ppaClass(totalsRow.ppa)}`}>{totalsRow.ppa.toFixed(2)}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      <div className="vr-legend">
+        <span className="lbl">Pts/action</span>
+        <i className="ppa-good" /> ≥ 1.2
+        <i className="ppa-mid" /> 0.8 – 1.2
+        <i className="ppa-low" /> &lt; 0.8
+        <i className="ppa-zero" /> 0
+      </div>
+      <p className="vr-note">Basé uniquement sur les actions en attaque.</p>
+    </div>
+  );
+
+  const renderShotChart = (large: boolean) => (
+    <div className="vr-card">
+      <div className="vr-card-head vr-sc-head">
+        <h3>Shot chart <span className="vr-sub">· cliquez une zone</span></h3>
+        <div className="vr-sc-tools">
+          <select value={quality} onChange={(e) => setQuality(e.target.value)} title="Qualité de tir">
+            <option value="all">Toutes qualités</option>
+            {qualityOptions.map((q) => (<option key={q} value={q}>{q}</option>))}
+          </select>
+        </div>
+      </div>
+
+      {zones.length === 0 ? (
+        <p className="empty-small">Aucun tir de champ localisé (court_x / court_y) pour ce filtre.</p>
+      ) : (
+        <>
+          <div className={`vr-court-wrap ${large ? "big" : ""}`}>
+            <div className="vr-court-bg">
+              <PlayerCourt />
+            </div>
+            {zones.map((z) => {
+              const pos = ZONE_LAYOUT[z.id];
+              if (!pos) return null;
+              const pct = z.att ? Math.round((z.made / z.att) * 100) : 0;
+              const ppShot = z.att ? roundStat(z.pts / z.att) : 0;
+              return (
+                <button
+                  key={z.id}
+                  className="vr-zone-tile"
+                  title={`${z.label} · ${z.pts} pts · ${ppShot} pts/tir`}
+                  onClick={() => openPopup(`${z.label} · tirs`, z.shots)}
+                  style={{
+                    left: `${pos.l}%`,
+                    top: `${pos.t}%`,
+                    width: `${pos.w}%`,
+                    height: `${pos.h}%`,
+                    background: zoneColor(pct),
+                  }}
+                >
+                  <b>{z.made}/{z.att}</b>
+                  <em>{pct}%</em>
+                  <i>{z.pts} pts</i>
+                </button>
+              );
+            })}
+          </div>
+
+          <div className="vr-court-foot">
+            <span>Total : {shotTotals.made}/{shotTotals.att} ({shotTotals.pct}%)</span>
+            <div className="vr-court-legend">
+              <i style={{ background: "#2f9e6a" }} /> ≥ 60%
+              <i style={{ background: "#8fce9f" }} /> 45–60%
+              <i style={{ background: "#e4b64c" }} /> 30–45%
+              <i style={{ background: "#e0645c" }} /> &lt; 30%
+            </div>
+          </div>
+
+          <div className="vr-mtx-scroll">
+            <table className="vr-last vr-zonetable">
+              <thead>
+                <tr><th className="l">Zone</th><th>Tentés</th><th>Réussis</th><th>%</th><th>PTS</th><th>Pts/tir</th></tr>
+              </thead>
+              <tbody>
+                {zones.map((z) => {
+                  const pct = z.att ? Math.round((z.made / z.att) * 100) : 0;
+                  return (
+                    <tr key={z.id} className="vr-zrow" onClick={() => openPopup(`${z.label} · tirs`, z.shots)}>
+                      <td className="l">{z.label}</td>
+                      <td>{z.att}</td>
+                      <td>{z.made}</td>
+                      <td>{pct}%</td>
+                      <td>{z.pts}</td>
+                      <td>{z.att ? roundStat(z.pts / z.att) : 0}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </>
+      )}
+    </div>
+  );
+
+  const renderDernieres = () => (
+    <div className="vr-card">
+      <div className="vr-card-head"><h3>Dernières actions</h3></div>
+      {lastActions.length === 0 ? (
+        <p className="empty-small">Aucune action pour ce filtre.</p>
+      ) : (
+        <table className="vr-last">
+          <thead>
+            <tr><th className="l">Temps fort</th><th>Résultat</th><th>Action</th><th>Période</th><th>Clip</th></tr>
+          </thead>
+          <tbody>
+            {lastActions.map((a, i) => {
+              const cat = actionResultCategory(a);
+              return (
+                <tr key={a.id || i}>
+                  <td className="l">
+                    <span style={{ color: tags.color(a.temps_fort) }}>{tags.emoji(a.temps_fort)} {tags.label(a.temps_fort)}</span>
+                  </td>
+                  <td className={`vr-res ${cat}`}>
+                    {cat === "made" ? "✅ Marqué" : cat === "missed" ? "❌ Manqué" : cat === "fauteProv" ? "🔔 Faute provoquée" : cat === "intercept" ? "🖐 Intercepté" : cat === "perte" ? "↩️ Perte" : actionTypeLabel(a)}
+                  </td>
+                  <td>{actionTypeLabel(a)}</td>
+                  <td>{quarterLabel(a.quarter)}</td>
+                  <td>
+                    <button className="vr-cam" title="Voir le clip" onClick={() => openPopup(actionTypeLabel(a), [a])}>🎥</button>
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      )}
+      {actorActions.length > lastActions.length && (
+        <button className="light-btn outline vr-more" onClick={() => setView("actions")}>
+          ≣ Voir toutes les actions ({actorActions.length})
+        </button>
+      )}
+    </div>
+  );
+
+  const renderActionsFull = () => (
+    <div className="vr-card">
+      <div className="vr-card-head"><h3>Liste des actions <span className="vr-sub">· {actorActions.length}</span></h3></div>
+      {actorActions.length === 0 ? (
+        <p className="empty-small">Aucune action pour ce filtre.</p>
+      ) : (
+        <div className="vr-mtx-scroll">
+          <table className="vr-last full">
+            <thead>
+              <tr><th className="l">Temps fort</th><th>Résultat</th><th>Action</th><th>Type tir</th><th>Points</th><th>Période</th><th>Match</th><th>Clip</th></tr>
+            </thead>
+            <tbody>
+              {[...actorActions].reverse().map((a, i) => {
+                const cat = actionResultCategory(a);
+                return (
+                  <tr key={a.id || i}>
+                    <td className="l"><span style={{ color: tags.color(a.temps_fort) }}>{tags.emoji(a.temps_fort)} {tags.label(a.temps_fort)}</span></td>
+                    <td className={`vr-res ${cat}`}>{cat === "made" ? "✅ Marqué" : cat === "missed" ? "❌ Manqué" : cat === "fauteProv" ? "🔔 Faute prov." : cat === "intercept" ? "🖐 Intercepté" : cat === "perte" ? "↩️ Perte" : "—"}</td>
+                    <td>{actionTypeLabel(a)}</td>
+                    <td>{a.shot_type || "—"}</td>
+                    <td>{matchActionPoints(a) || "—"}</td>
+                    <td>{quarterLabel(a.quarter)}</td>
+                    <td>{matchLabelOf(a.match_id)}</td>
+                    <td><button className="vr-cam" onClick={() => openPopup(actionTypeLabel(a), [a])}>🎥</button></td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+
+  const renderEvolution = () => {
+    const cmp = (label: string, key: keyof EvoBucket, suffix = "", betterUp = true) => {
+      const e = evolution!.early[key] as number;
+      const r = evolution!.recent[key] as number;
+      const diff = roundStat(r - e);
+      const good = betterUp ? diff >= 0 : diff <= 0;
+      return (
+        <div className="vr-evo-cell" key={label}>
+          <span className="vr-evo-lbl">{label}</span>
+          <div className="vr-evo-vals">
+            <b>{e}{suffix}</b>
+            <i>→</i>
+            <b>{r}{suffix}</b>
+          </div>
+          <em className={diff === 0 ? "" : good ? "good" : "bad"}>
+            {diff > 0 ? "+" : ""}{diff}{suffix}
+          </em>
+        </div>
+      );
+    };
+    return (
+      <div className="vr-card vr-evo">
+        <div className="vr-card-head"><h3>📈 Évolution vidéo <span className="vr-sub">· début saison → 30 derniers jours</span></h3></div>
+        {!evolution ? (
+          <p className="empty-small">Pas encore assez de données.</p>
+        ) : (
+          <div className="vr-evo-grid">
+            {cmp("Pts/action", "ppa")}
+            {cmp("% réussite", "success", "%")}
+            {cmp("Actions positives", "positives")}
+            {cmp("Actions négatives", "negatives", "", false)}
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  const renderInsights = () => (
+    <div className="vr-card vr-insights">
+      <div className="vr-card-head"><h3>🤖 Analyse MyBasket</h3></div>
+      <ul className="vr-insight-list">
+        {autoInsights.map((t, i) => (
+          <li key={i}><span>›</span> {t}</li>
+        ))}
+      </ul>
+    </div>
+  );
+
+  const renderProfile = () => (
+    <div className="vr-card vr-profile">
+      <div className="vr-card-head"><h3>🧠 Profil vidéo</h3></div>
+      <div className="vr-profile-grid">
+        <div className="vr-prof-cell">
+          <span className="vr-prof-lbl">Style dominant</span>
+          <strong className="vr-prof-style">{profile.style.icon} {profile.style.label}</strong>
+        </div>
+
+        <div className="vr-prof-cell">
+          <span className="vr-prof-lbl">Meilleure arme</span>
+          {profile.bestWeapon ? (
+            <>
+              <strong style={{ color: tags.color(profile.bestWeapon.key) }}>
+                {tags.emoji(profile.bestWeapon.key)} {tags.label(profile.bestWeapon.key)}
+              </strong>
+              <em className="good">{profile.bestWeapon.ppa.toFixed(2)} pts/action</em>
+              <em>{profile.bestWeapon.actions} actions</em>
+            </>
+          ) : (
+            <em>Pas assez d'actions</em>
+          )}
+        </div>
+
+        <div className="vr-prof-cell">
+          <span className="vr-prof-lbl">Point à travailler</span>
+          {profile.weakness ? (
+            <>
+              <strong style={{ color: tags.color(profile.weakness.key) }}>
+                {tags.emoji(profile.weakness.key)} {tags.label(profile.weakness.key)}
+              </strong>
+              <em className="bad">{profile.weakness.ppa.toFixed(2)} pts/action</em>
+              <em>{profile.weakness.losses} perte{profile.weakness.losses > 1 ? "s" : ""}</em>
+            </>
+          ) : (
+            <em>Pas assez d'actions</em>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+
+  const renderMtxSwitch = () => (
+    <div className="vr-mtx-switch">
+      <button className={mtxView === "perf" ? "active" : ""} onClick={() => setMtxView("perf")}>Performance</button>
+      <button className={mtxView === "scout" ? "active" : ""} onClick={() => setMtxView("scout")}>Scout</button>
+    </div>
+  );
+
+  const renderScoutTable = () => (
+    <div className="vr-card">
+      <div className="vr-card-head">
+        <h3>Matrice scouting</h3>
+        <span className="vr-sub">Actions positives / négatives / création / défense par temps fort.</span>
+      </div>
+      {orderedTfKeys.length === 0 ? (
+        <p className="empty-small">Aucune action pour ce filtre.</p>
+      ) : (
+        <div className="vr-mtx-scroll">
+          <table className="vr-mtx">
+            <thead>
+              <tr>
+                <th className="l">Temps fort</th>
+                {SCOUT_COLS.map((c) => (<th key={String(c.id)}>{c.icon} {c.label}</th>))}
+                <th>Efficacité</th>
+              </tr>
+            </thead>
+            <tbody>
+              {scoutMatrix.map((r) => (
+                <tr key={r.key}>
+                  <td className="l">
+                    <span style={{ color: tags.color(r.key), fontWeight: 800 }}>{tags.emoji(r.key)} {tags.label(r.key)}</span>
+                  </td>
+                  {SCOUT_COLS.map((c) => {
+                    const list = r[c.id] as any[];
+                    const clickable = list.length > 0;
+                    return (
+                      <td
+                        key={String(c.id)}
+                        className={`vr-mc ${c.cls} ${clickable ? "click" : ""} ${!list.length ? "z" : ""}`}
+                        onClick={clickable ? () => openPopup(`${tags.label(r.key)} · ${c.label}`, list) : undefined}
+                      >
+                        <b>{list.length}</b>
+                      </td>
+                    );
+                  })}
+                  <td className={`vr-ppa ${r.score > 0 ? "ppa-good" : r.score < 0 ? "ppa-low" : "ppa-zero"}`}>
+                    {r.score > 0 ? "+" : ""}{r.score}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+      <p className="vr-note">🟢 panier / passe déc. / faute provoquée / rebond off. — 🔴 tir raté / perte / faute commise — 🎯 création — 🛡 défense.</p>
+    </div>
+  );
+
+  const renderTimeline = () => (
+    <div className="vr-card">
+      <div className="vr-card-head"><h3>Timeline match <span className="vr-sub">· cliquez une action pour la vidéo</span></h3></div>
+      {timeline.length === 0 ? (
+        <p className="empty-small">Aucune action pour ce filtre.</p>
+      ) : (
+        <div className="vr-timeline">
+          {timeline.map(({ quarter, events }) => (
+            <div key={quarter} className="vr-tl-row">
+              <span className="vr-tl-q">{quarterLabel(quarter)}</span>
+              <div className="vr-tl-track">
+                {events.map((ev, i) => (
+                  <button
+                    key={ev.a.id || i}
+                    className="vr-tl-dot"
+                    title={`${tags.label(ev.a.temps_fort)} · ${ev.cat}`}
+                    onClick={() => openPopup(`${tags.label(ev.a.temps_fort)} · ${ev.cat}`, events.map((e) => e.a), i)}
+                  >
+                    {ev.icon}
+                  </button>
+                ))}
+              </div>
+            </div>
+          ))}
+          <div className="vr-tl-legend">
+            <span>🔥 positive</span><span>❌ erreur</span><span>🎯 passe déc.</span><span>🛡 défense</span>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+
+  const renderSmartPlaylists = () => (
+    <div className="vr-card">
+      <div className="vr-card-head"><h3>Playlists intelligentes</h3></div>
+      <div className="vr-pl-grid">
+        {smartPlaylists.map((pl) => (
+          <div key={pl.id} className={`vr-pl vr-pl-${pl.id}`}>
+            <div className="vr-pl-top">
+              <span className="vr-pl-icon">{pl.icon}</span>
+              <div>
+                <strong>{pl.name}</strong>
+                <em>{pl.actions.length} clip{pl.actions.length > 1 ? "s" : ""}</em>
+              </div>
+            </div>
+            <div className="vr-pl-best">
+              {pl.best ? (
+                <>Meilleure : <b style={{ color: tags.color(pl.best.temps_fort) }}>{tags.emoji(pl.best.temps_fort)} {tags.label(pl.best.temps_fort)}</b> · {actionTypeLabel(pl.best)}</>
+              ) : (
+                <span className="muted">Aucune action</span>
+              )}
+            </div>
+            <button className="light-btn primary vr-pl-play" disabled={!pl.actions.length} onClick={() => openPopup(pl.name, pl.actions)}>
+              ▶ Lire la playlist
+            </button>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+
+  const renderClips = (compact: boolean) => {
+    const list = compact ? clipActions.slice(0, 5) : clipActions;
+    return (
+      <div className="vr-card">
+        <div className="vr-card-head"><h3>Clips clés</h3></div>
+        {list.length === 0 ? (
+          <p className="empty-small">Aucun clip pour ce filtre.</p>
+        ) : (
+          <div className="vr-clips">
+            {list.map((a, i) => (
+              <button key={a.id || i} className="vr-clip" onClick={() => openPopup(actionTypeLabel(a), [a])}>
+                <span className="vr-clip-poster">
+                  <span className="vr-clip-dur">{clipDurationLabel(a)}</span>
+                  <span className="vr-clip-play">▶</span>
+                </span>
+                <strong style={{ color: tags.color(a.temps_fort) }}>{tags.emoji(a.temps_fort)} {tags.label(a.temps_fort)}</strong>
+                <small>{actionTypeLabel(a)} {actionResultCategory(a) === "made" ? "marqué" : actionResultCategory(a) === "missed" ? "manqué" : ""}</small>
+                <em>{quarterLabel(a.quarter)} · {matchTimeLabel(a)}</em>
+              </button>
+            ))}
+            {compact && (
+              <button className="vr-clip vr-clip-all" onClick={() => setView("clips")}>
+                <span className="vr-clip-allicon">🗂</span>
+                <strong>Voir tous les clips</strong>
+                <small>{totalClips} clips disponibles</small>
+              </button>
+            )}
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  return (
+    <>
+      <div className="section-head vr-header">
+        <div>
+          <h2>Vidéo &amp; Rentabilité</h2>
+          <p>Analyse complète des actions LiveStat du joueur avec clips vidéo synchronisés.</p>
+        </div>
+      </div>
+
+      {/* KPIs */}
+      <div className="kpi-row-light">
+        <Kpi icon="🎬" label="Actions codées" value={String(totalActions)} sub="Total LiveStat" />
+        <Kpi icon="🏀" label="Points générés" value={String(totalPoints)} sub="En attaque" />
+        <Kpi icon="🎞" label="Clips disponibles" value={String(totalClips)} sub="Après synchro vidéo" />
+        <Kpi icon="⭐" label="Temps forts utilisés" value={String(usedTf)} sub={`Sur ${(tags.active ?? []).length} tags`} />
+      </div>
+
+      {/* Profil vidéo automatique */}
+      {renderProfile()}
+
+      {/* Évolution avant/après + insights auto */}
+      <div className="vr-grid vr-evo-row">
+        <div className="vr-col-main">{renderEvolution()}</div>
+        <div className="vr-col-side">{renderInsights()}</div>
+      </div>
+
+      {/* Barre de sous-onglets */}
+      <div className="vr-subtabs">
+        <div className="vr-subtabs-left">
+          {SUBTABS.map((t) => (
+            <button key={t.id} className={view === t.id ? "active" : ""} onClick={() => setView(t.id)}>
+              <span>{t.icon}</span> {t.label}
+            </button>
+          ))}
+        </div>
+        <button className="vr-filters-toggle" onClick={() => setShowFilters((s) => !s)}>⧩ Filtres</button>
+      </div>
+
+      <div className={`vr-shell ${showFilters ? "with-aside" : ""}`}>
+        <div className="vr-main">
+          {view === "matrice" && (
+            <>
+              <div className="vr-grid">
+                <div className="vr-col-main">
+                  {renderMtxSwitch()}
+                  {mtxView === "perf" ? renderMatrice() : renderScoutTable()}
+                </div>
+                <div className="vr-col-side">
+                  {renderShotChart(false)}
+                  {renderDernieres()}
+                </div>
+              </div>
+              {renderClips(true)}
+            </>
+          )}
+          {view === "shot" && (
+            <div className="vr-grid">
+              <div className="vr-col-main">{renderShotChart(true)}</div>
+              <div className="vr-col-side">{renderDernieres()}</div>
+            </div>
+          )}
+          {view === "timeline" && (
+            <div className="vr-grid">
+              <div className="vr-col-main">{renderTimeline()}</div>
+              <div className="vr-col-side">{renderDernieres()}</div>
+            </div>
+          )}
+          {view === "actions" && renderActionsFull()}
+          {view === "clips" && (
+            <>
+              {renderSmartPlaylists()}
+              {renderClips(false)}
+            </>
+          )}
+        </div>
+
+        {showFilters && (
+          <aside className="vr-aside">
+            <h3>Filtres</h3>
+
+            <div className="vr-fgroup">
+              <span className="vr-flabel">Résultat</span>
+              <label className="vr-chk">
+                <input
+                  type="checkbox"
+                  checked={RESULT_KEYS.every((k) => filters.results[k])}
+                  onChange={(e) =>
+                    setFilters((f) => ({
+                      ...f,
+                      results: { made: e.target.checked, missed: e.target.checked, fauteProv: e.target.checked, intercept: e.target.checked, perte: e.target.checked },
+                    }))
+                  }
+                />
+                <span>Tous les résultats</span>
+              </label>
+              {([
+                ["made", "✅ Marqué", "#168653"],
+                ["missed", "❌ Manqué", "#c5283d"],
+                ["fauteProv", "🔔 Faute provoquée", "#b26a1b"],
+                ["intercept", "🖐 Intercepté", "#7a3ea8"],
+                ["perte", "↩️ Perte", "#7a7069"],
+              ] as [ResultKey, string, string][]).map(([k, lbl, col]) => (
+                <label key={k} className="vr-chk">
+                  <input type="checkbox" checked={filters.results[k]} onChange={(e) => setResult(k, e.target.checked)} />
+                  <span style={{ color: col }}>{lbl}</span>
+                </label>
+              ))}
+            </div>
+
+            <div className="vr-fgroup">
+              <span className="vr-flabel">Type de tir</span>
+              <label className="vr-chk">
+                <input
+                  type="checkbox"
+                  checked={filters.shots.p2 && filters.shots.p3 && filters.shots.lf}
+                  onChange={(e) => setFilters((f) => ({ ...f, shots: { p2: e.target.checked, p3: e.target.checked, lf: e.target.checked } }))}
+                />
+                <span>Tous les tirs</span>
+              </label>
+              <label className="vr-chk"><input type="checkbox" checked={filters.shots.p2} onChange={(e) => setShot("p2", e.target.checked)} /><span>2 Points</span></label>
+              <label className="vr-chk"><input type="checkbox" checked={filters.shots.p3} onChange={(e) => setShot("p3", e.target.checked)} /><span>3 Points</span></label>
+              <label className="vr-chk"><input type="checkbox" checked={filters.shots.lf} onChange={(e) => setShot("lf", e.target.checked)} /><span>Lancer franc</span></label>
+            </div>
+
+            <div className="vr-fgroup">
+              <span className="vr-flabel">Match</span>
+              <select value={filters.match} onChange={(e) => setFilters({ ...filters, match: e.target.value })}>
+                <option value="all">Tous les matchs</option>
+                {matchOptions.map((m) => (<option key={m.id} value={m.id}>{m.label}</option>))}
+              </select>
+            </div>
+
+            <div className="vr-fgroup">
+              <span className="vr-flabel">Période</span>
+              <select value={filters.quarter} onChange={(e) => setFilters({ ...filters, quarter: e.target.value })}>
+                <option value="all">Toutes les périodes</option>
+                {quarterOptions.map((q) => (<option key={q} value={q}>{quarterLabel(q)}</option>))}
+              </select>
+            </div>
+
+            <div className="vr-fgroup">
+              <span className="vr-flabel">Temps fort</span>
+              <select value={filters.tf} onChange={(e) => setFilters({ ...filters, tf: e.target.value })}>
+                <option value="all">Tous les temps forts</option>
+                {tfOptions.map((k) => (<option key={k} value={k}>{tags.label(k)}</option>))}
+              </select>
+            </div>
+
+            <div className="vr-fgroup">
+              <span className="vr-flabel">Attaque / Défense</span>
+              <select value={filters.side} onChange={(e) => setFilters({ ...filters, side: e.target.value })}>
+                <option value="all">Les deux</option>
+                <option value="attaque">Attaque</option>
+                <option value="defense">Défense</option>
+              </select>
+            </div>
+
+            <button className="light-btn outline vr-reset" disabled={!filtersActive} onClick={() => setFilters(DEFAULT_VIDEO_FILTERS)}>
+              ↺ Réinitialiser les filtres
+            </button>
+          </aside>
+        )}
+      </div>
+
+      {popup && (
+        <VideoModal
+          title={popup.title}
+          actions={popup.actions}
+          startIndex={popup.index ?? 0}
+          tags={tags}
+          playerName={playerName}
+          matchLabelOf={matchLabelOf}
+          onRequestExport={onRequestExport}
+          highlightQueue={highlightQueue}
+          onToggleHighlight={toggleHighlight}
+          onRemoveHighlight={removeHighlight}
+          onClearHighlights={clearHighlights}
+          coachNotes={coachNotes}
+          onSaveNote={saveNote}
+          customTags={customTags}
+          onSaveTags={saveTags}
+          onClose={() => setPopup(null)}
+        />
+      )}
+
+      <style jsx>{`
+        .vr-header h2 { color: #6b1a2c; }
+        .vr-evo-row { margin-bottom: 0; }
+        .vr-evo-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: .8rem; }
+        .vr-evo-cell { border: 1px solid #efe4da; border-radius: 12px; padding: .7rem .8rem; background: #fff; display: grid; gap: .3rem; }
+        .vr-evo-lbl { color: #8a7b73; font-size: .66rem; font-weight: 900; text-transform: uppercase; letter-spacing: .04em; }
+        .vr-evo-vals { display: flex; align-items: center; gap: .5rem; }
+        .vr-evo-vals b { font-family: "Oswald", sans-serif; font-size: 1.25rem; color: #171717; }
+        .vr-evo-vals i { color: #b8ada5; font-style: normal; }
+        .vr-evo-cell em { font-style: normal; font-weight: 800; font-size: .78rem; color: #8a7b73; }
+        .vr-evo-cell em.good { color: #17803a; } .vr-evo-cell em.bad { color: #c02626; }
+        .vr-insights { background: linear-gradient(180deg, #fbf6ef, #fff); }
+        .vr-insight-list { list-style: none; margin: 0; padding: 0; display: grid; gap: .55rem; }
+        .vr-insight-list li { display: flex; gap: .5rem; color: #3f3733; font-size: .86rem; line-height: 1.35; font-weight: 600; }
+        .vr-insight-list li span { color: #d4a24c; font-weight: 900; }
+        .vr-profile { background: linear-gradient(180deg, #fffdf9, #fff); }
+        .vr-profile-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1rem; }
+        .vr-prof-cell { border: 1px solid #efe4da; border-radius: 12px; padding: .8rem .9rem; background: #fff; display: grid; gap: .2rem; align-content: start; }
+        .vr-prof-lbl { color: #8a7b73; font-size: .66rem; font-weight: 900; text-transform: uppercase; letter-spacing: .05em; }
+        .vr-prof-cell strong { color: #171717; font-size: 1.05rem; font-weight: 900; }
+        .vr-prof-style { color: #6b1a2c !important; font-family: "Oswald", sans-serif; font-size: 1.2rem !important; }
+        .vr-prof-cell em { font-style: normal; font-weight: 800; font-size: .8rem; color: #8a7b73; }
+        .vr-prof-cell em.good { color: #17803a; } .vr-prof-cell em.bad { color: #c02626; }
+        .vr-mtx-switch { display: inline-flex; border: 1px solid #e8e2da; border-radius: 999px; overflow: hidden; margin-bottom: .8rem; }
+        .vr-mtx-switch button { border: 0; background: #fff; color: #8a7b73; font-weight: 900; font-size: .78rem; padding: .45rem 1rem; cursor: pointer; }
+        .vr-mtx-switch button.active { background: #6b1a2c; color: #fff; }
+        .sc-pos { background: #eef8f1; } .sc-neg { background: #fdf0ef; } .sc-cre { background: #fdf5e7; } .sc-def { background: #eef3fb; } .sc-neu { background: #f6f3f0; }
+        .vr-sc-head { display: flex; align-items: center; justify-content: space-between; gap: 1rem; }
+        .vr-sc-tools select { border: 1px solid #e8e2da; border-radius: 8px; padding: .4rem .5rem; background: #fff; font: inherit; font-size: .8rem; }
+        .vr-zonetable { margin-top: 1rem; width: 100%; }
+        .vr-zrow { cursor: pointer; }
+        .vr-zrow:hover td { background: #fdeef0; }
+        .vr-zone-tile i { font-style: normal; font-size: .62rem; font-weight: 800; opacity: .85; }
+        .vr-timeline { display: grid; gap: .7rem; }
+        .vr-tl-row { display: grid; grid-template-columns: 48px 1fr; align-items: center; gap: .6rem; }
+        .vr-tl-q { color: #6b1a2c; font-family: "Oswald", sans-serif; font-weight: 900; font-size: .9rem; }
+        .vr-tl-track { display: flex; flex-wrap: wrap; gap: .25rem; border-left: 3px solid #efe4da; padding: .3rem .4rem; background: #fbf9f6; border-radius: 8px; min-height: 34px; }
+        .vr-tl-dot { border: 0; background: #fff; border: 1px solid #eee4dc; border-radius: 7px; width: 26px; height: 26px; cursor: pointer; font-size: .9rem; line-height: 1; display: grid; place-items: center; }
+        .vr-tl-dot:hover { transform: scale(1.15); border-color: #f0d2d9; }
+        .vr-tl-legend { display: flex; gap: 1rem; flex-wrap: wrap; color: #8a7b73; font-size: .74rem; font-weight: 800; margin-top: .3rem; }
+        .vr-pl-grid { display: grid; grid-template-columns: repeat(5, 1fr); gap: .8rem; }
+        .vr-pl { border: 1px solid #e8e2da; border-radius: 14px; padding: .9rem; background: #fff; display: grid; gap: .5rem; align-content: start; }
+        .vr-pl-top { display: flex; align-items: center; gap: .6rem; }
+        .vr-pl-icon { font-size: 1.5rem; }
+        .vr-pl-top strong { display: block; color: #171717; font-size: .92rem; font-weight: 900; }
+        .vr-pl-top em { font-style: normal; color: #8a7b73; font-size: .76rem; font-weight: 800; }
+        .vr-pl-best { color: #6f625d; font-size: .74rem; line-height: 1.3; min-height: 2.4em; }
+        .vr-pl-best b { font-weight: 800; }
+        .vr-pl-best .muted { color: #b8ada5; }
+        .vr-pl-play { width: 100%; }
+        .vr-pl-play:disabled { opacity: .5; cursor: not-allowed; }
+        .vr-pl-highlights { border-top: 3px solid #e0645c; } .vr-pl-corrections { border-top: 3px solid #e4b64c; }
+        .vr-pl-shooting { border-top: 3px solid #6b1a2c; } .vr-pl-creation { border-top: 3px solid #7a3ea8; } .vr-pl-defense { border-top: 3px solid #2f6fb2; }
+        .vr-subtabs { display: flex; align-items: center; justify-content: space-between; gap: 1rem; border-bottom: 1px solid #e8e2da; margin: .4rem 0 1rem; flex-wrap: wrap; }
+        .vr-subtabs-left { display: flex; gap: 1.4rem; overflow-x: auto; }
+        .vr-subtabs-left button { border: 0; background: none; color: #8a7b73; font-weight: 900; text-transform: uppercase; font-size: .74rem; letter-spacing: .03em; padding: .7rem 0; white-space: nowrap; display: inline-flex; align-items: center; gap: .35rem; }
+        .vr-subtabs-left button.active { color: #6b1a2c; border-bottom: 2px solid #6b1a2c; }
+        .vr-filters-toggle { border: 1px solid #e8e2da; background: #fff; color: #6b1a2c; border-radius: 999px; padding: .4rem .8rem; font-weight: 900; font-size: .78rem; }
+        .vr-shell { display: grid; grid-template-columns: 1fr; gap: 1rem; align-items: start; }
+        .vr-shell.with-aside { grid-template-columns: minmax(0,1fr) 250px; }
+        .vr-grid { display: grid; grid-template-columns: minmax(0, 1.5fr) minmax(0, 1fr); gap: 1rem; align-items: start; }
+        .vr-col-side { display: grid; gap: 1rem; }
+        .vr-card { border: 1px solid #e8e2da; border-radius: 16px; background: #fff; box-shadow: 0 8px 22px rgba(60,30,20,.06); padding: 1.1rem 1.2rem; margin-bottom: 1rem; }
+        .vr-card-head { display: flex; align-items: baseline; gap: .6rem; margin-bottom: .9rem; flex-wrap: wrap; }
+        .vr-card-head h3 { font-family: "Oswald", sans-serif; text-transform: uppercase; color: #6b1a2c; margin: 0; font-size: 1.05rem; letter-spacing: .03em; }
+        .vr-sub { color: #8a7b73; font-size: .78rem; font-weight: 600; }
+        .vr-mtx-scroll { overflow-x: auto; }
+        .vr-mtx { border-collapse: collapse; width: 100%; font-size: .8rem; min-width: 720px; }
+        .vr-mtx th { color: #8a7b73; text-transform: uppercase; font-size: .62rem; font-weight: 900; padding: .5rem .4rem; text-align: center; border-bottom: 1px solid #eee4dc; white-space: nowrap; }
+        .vr-mtx th.l, .vr-mtx td.l { text-align: left; }
+        .vr-mtx td { padding: .45rem .4rem; text-align: center; border-bottom: 1px solid #f2ece5; }
+        .vr-mc { line-height: 1.05; }
+        .vr-mc b { display: block; color: #171717; font-size: .98rem; font-weight: 800; }
+        .vr-mc em { font-style: normal; color: #9b8f87; font-size: .66rem; }
+        .vr-mc.z b { color: #cbbfb6; }
+        .vr-mc.click { cursor: pointer; }
+        .vr-mc.click:hover { outline: 2px solid #f0d2d9; outline-offset: -2px; border-radius: 6px; }
+        .tint-green { background: #eef8f1; } .tint-red { background: #fdf0ef; } .tint-amber { background: #fdf5e7; }
+        .tint-violet { background: #f5f0fb; } .tint-grey { background: #f6f3f0; } .tint-neutral { background: #fbf9f6; }
+        .vr-ppa { font-weight: 900; font-family: "Oswald", sans-serif; font-size: 1rem; border-radius: 6px; }
+        .ppa-good { color: #17803a; } .ppa-mid { color: #b26a1b; } .ppa-low { color: #c02626; } .ppa-zero { color: #b8ada5; }
+        .vr-total td { border-top: 2px solid #e8e2da; font-weight: 900; }
+        .vr-total .l { color: #6b1a2c; }
+        .vr-legend { display: flex; align-items: center; gap: .5rem; margin-top: .9rem; color: #8a7b73; font-size: .74rem; font-weight: 800; flex-wrap: wrap; }
+        .vr-legend .lbl { text-transform: uppercase; margin-right: .3rem; }
+        .vr-legend i { width: 22px; height: 12px; border-radius: 4px; display: inline-block; margin-left: .5rem; }
+        .vr-legend i.ppa-good { background: #bfe6cd; } .vr-legend i.ppa-mid { background: #f6e2bb; } .vr-legend i.ppa-low { background: #f4c9c4; } .vr-legend i.ppa-zero { background: #eee7e0; }
+        .vr-note { color: #9b8f87; font-size: .76rem; margin: .5rem 0 0; }
+        .vr-court-wrap { position: relative; width: 100%; aspect-ratio: 5 / 4; border: 1px solid #efe4da; border-radius: 14px; overflow: hidden; background: #fff; }
+        .vr-court-wrap.big { max-width: 560px; margin: 0 auto; }
+        .vr-court-bg { position: absolute; inset: 0; opacity: .16; }
+        .vr-court-bg :global(svg) { width: 100%; height: 100%; }
+        .vr-zone-tile { position: absolute; border: 2px solid #fff; border-radius: 12px; color: #163b28; display: grid; place-items: center; gap: 0; cursor: pointer; box-shadow: 0 3px 8px rgba(0,0,0,.12); transition: transform .08s; }
+        .vr-zone-tile:hover { transform: scale(1.03); z-index: 2; }
+        .vr-zone-tile b { font-size: .95rem; font-weight: 900; }
+        .vr-zone-tile em { font-style: normal; font-size: .74rem; font-weight: 800; }
+        .vr-court-foot { display: flex; align-items: center; justify-content: space-between; gap: 1rem; margin-top: .8rem; flex-wrap: wrap; }
+        .vr-court-foot > span { color: #6b1a2c; font-weight: 900; font-size: .85rem; }
+        .vr-court-legend { display: flex; align-items: center; gap: .4rem; color: #8a7b73; font-size: .72rem; font-weight: 800; flex-wrap: wrap; }
+        .vr-court-legend i { width: 12px; height: 12px; border-radius: 50%; display: inline-block; margin-left: .5rem; }
+        .vr-last { width: 100%; border-collapse: collapse; font-size: .82rem; }
+        .vr-last.full { min-width: 760px; }
+        .vr-last th { color: #8a7b73; text-transform: uppercase; font-size: .64rem; font-weight: 900; text-align: left; padding: .4rem .3rem; border-bottom: 1px solid #eee4dc; white-space: nowrap; }
+        .vr-last td { padding: .5rem .3rem; border-bottom: 1px solid #f2ece5; color: #171717; font-weight: 600; white-space: nowrap; }
+        .vr-res.made { color: #168653; font-weight: 800; } .vr-res.missed { color: #c5283d; font-weight: 800; }
+        .vr-res.fauteProv { color: #b26a1b; font-weight: 800; } .vr-res.intercept { color: #7a3ea8; font-weight: 800; } .vr-res.perte { color: #7a7069; font-weight: 800; }
+        .vr-cam { border: 0; background: none; cursor: pointer; font-size: 1rem; }
+        .vr-more { margin-top: .8rem; }
+        .vr-clips { display: grid; grid-template-columns: repeat(6, 1fr); gap: .7rem; }
+        .vr-clip { border: 1px solid #e8e2da; border-radius: 12px; background: #fff; padding: 0 0 .6rem; text-align: left; cursor: pointer; overflow: hidden; display: grid; gap: .2rem; }
+        .vr-clip:hover { border-color: #f0d2d9; box-shadow: 0 6px 16px rgba(60,30,20,.1); }
+        .vr-clip-poster { position: relative; display: block; aspect-ratio: 16/10; background: linear-gradient(135deg, #7a1228, #b07f3e); }
+        .vr-clip-dur { position: absolute; bottom: 6px; left: 6px; background: rgba(0,0,0,.7); color: #fff; font-size: .66rem; font-weight: 900; padding: .1rem .35rem; border-radius: 5px; }
+        .vr-clip-play { position: absolute; inset: 0; display: grid; place-items: center; color: rgba(255,255,255,.9); font-size: 1.4rem; }
+        .vr-clip strong { font-size: .78rem; padding: 0 .5rem; margin-top: .3rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .vr-clip small { color: #171717; font-size: .72rem; padding: 0 .5rem; }
+        .vr-clip em { font-style: normal; color: #8a7b73; font-size: .68rem; padding: 0 .5rem; }
+        .vr-clip-all { display: grid; place-items: center; text-align: center; gap: .3rem; background: #fbf6ef; }
+        .vr-clip-allicon { font-size: 1.6rem; }
+        .vr-aside { border: 1px solid #e8e2da; border-radius: 16px; background: #fff; box-shadow: 0 8px 22px rgba(60,30,20,.06); padding: 1.1rem; position: sticky; top: 1rem; }
+        .vr-aside h3 { font-family: "Oswald", sans-serif; text-transform: uppercase; color: #6b1a2c; margin: 0 0 1rem; font-size: 1rem; }
+        .vr-fgroup { display: grid; gap: .4rem; padding-bottom: .9rem; margin-bottom: .9rem; border-bottom: 1px solid #f2ece5; }
+        .vr-flabel { color: #8a7b73; font-size: .66rem; font-weight: 900; text-transform: uppercase; letter-spacing: .05em; }
+        .vr-chk { display: flex; align-items: center; gap: .5rem; font-size: .82rem; color: #171717; font-weight: 600; cursor: pointer; }
+        .vr-chk input { accent-color: #6b1a2c; width: 16px; height: 16px; }
+        .vr-aside select { border: 1px solid #e8e2da; border-radius: 8px; padding: .45rem .5rem; background: #fff; font: inherit; font-size: .82rem; width: 100%; }
+        .vr-reset { width: 100%; }
+        .vr-reset:disabled { opacity: .5; cursor: not-allowed; }
+        @media (max-width: 1100px) {
+          .vr-shell.with-aside { grid-template-columns: 1fr; }
+          .vr-aside { position: relative; top: 0; }
+          .vr-grid { grid-template-columns: 1fr; }
+          .vr-clips { grid-template-columns: repeat(3, 1fr); }
+          .vr-profile-grid { grid-template-columns: 1fr; }
+          .vr-pl-grid { grid-template-columns: repeat(2, 1fr); }
+        }
+        @media (max-width: 640px) {
+          .vr-clips { grid-template-columns: repeat(2, 1fr); }
+          .vr-pl-grid { grid-template-columns: 1fr; }
+        }
+      `}</style>
+    </>
+  );
+}
+
+function PlayerCourt() {
+  return (
+    <svg viewBox="0 0 400 280" preserveAspectRatio="xMidYMid meet" aria-hidden="true">
+      <defs>
+        <linearGradient id="vrwood" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0" stopColor="#caa06a" />
+          <stop offset="1" stopColor="#b07f3e" />
+        </linearGradient>
+      </defs>
+      <rect width="400" height="280" fill="url(#vrwood)" />
+      <g stroke="#fff" strokeWidth="2" fill="none" opacity=".92">
+        <rect x="8" y="8" width="384" height="264" rx="4" />
+        <rect x="150" y="8" width="100" height="104" fill="rgba(158,27,50,.40)" />
+        <circle cx="200" cy="112" r="36" />
+        <path d="M40 8 L40 64 A170 170 0 0 0 360 64 L360 8" />
+        <circle cx="200" cy="34" r="9" stroke="#ff5a3c" strokeWidth="3" />
+        <line x1="172" y1="20" x2="228" y2="20" strokeWidth="3" />
+        <circle cx="200" cy="272" r="30" />
+      </g>
+    </svg>
+  );
+}
+
+function VideoModal({
+  title,
+  actions,
+  startIndex,
+  tags,
+  playerName,
+  matchLabelOf,
+  onRequestExport,
+  highlightQueue,
+  onToggleHighlight,
+  onRemoveHighlight,
+  onClearHighlights,
+  coachNotes,
+  onSaveNote,
+  customTags,
+  onSaveTags,
+  onClose,
+}: {
+  title: string;
+  actions: any[];
+  startIndex: number;
+  tags: ReturnType<typeof useLivestatTags>;
+  playerName: string;
+  matchLabelOf: (id: unknown) => string;
+  onRequestExport: (actionId: string) => void;
+  highlightQueue: HighlightClip[];
+  onToggleHighlight: (a: any) => void;
+  onRemoveHighlight: (id: string) => void;
+  onClearHighlights: () => void;
+  coachNotes: VideoNote[];
+  onSaveNote: (n: VideoNote) => void;
+  customTags: VideoCustomTag[];
+  onSaveTags: (t: VideoCustomTag) => void;
+  onClose: () => void;
+}) {
+  const [pf, setPf] = useState({ result: "all", shot: "all", tf: "all", quarter: "all", match: "all" });
+  const [idx, setIdx] = useState(startIndex || 0);
+  const [panel, setPanel] = useState<"" | "note" | "tag" | "montage">("");
+  const [noteText, setNoteText] = useState("");
+  const [noteType, setNoteType] = useState(NOTE_TYPES[0]);
+  const [tagDraft, setTagDraft] = useState<string[]>([]);
+  const [tagFree, setTagFree] = useState("");
+  const stageRef = useRef<HTMLDivElement | null>(null);
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+
+  const tfKeys = useMemo(() => Array.from(new Set(actions.map((a) => String(a.temps_fort ?? "")).filter(Boolean))), [actions]);
+  const quarters = useMemo(() => Array.from(new Set(actions.map((a) => String(a.quarter ?? "")).filter(Boolean))).sort((a, b) => Number(a) - Number(b)), [actions]);
+  const matchIds = useMemo(() => Array.from(new Set(actions.map((a) => String(a.match_id ?? "")).filter(Boolean))), [actions]);
+  const hasLF = useMemo(() => actions.some((a) => a.shot_type === "LF"), [actions]);
+
+  const list = useMemo(() => {
+    return actions.filter((a) => {
+      if (pf.result !== "all") {
+        const cat = actionResultCategory(a);
+        if (pf.result === "made" && cat !== "made") return false;
+        if (pf.result === "missed" && cat !== "missed") return false;
+        if (pf.result === "perte" && cat !== "perte") return false;
+        if (pf.result === "passe" && String(a.assist_player_id ?? "") === "") return false;
+        if (pf.result === "defense" && low(a.context) !== "defense") return false;
+      }
+      if (pf.shot !== "all" && a.shot_type !== pf.shot) return false;
+      if (pf.tf !== "all" && String(a.temps_fort ?? "") !== pf.tf) return false;
+      if (pf.quarter !== "all" && String(a.quarter ?? "") !== pf.quarter) return false;
+      if (pf.match !== "all" && String(a.match_id ?? "") !== pf.match) return false;
+      return true;
+    });
+  }, [actions, pf]);
+
+  const safeIdx = list.length ? Math.min(idx, list.length - 1) : 0;
+  const current = list[safeIdx];
+
+  useEffect(() => { setIdx(startIndex || 0); }, [startIndex]);
+  useEffect(() => { setIdx(0); }, [pf]);
+  useEffect(() => {
+    if (current && actionIsPlayable(current) && videoRef.current && current.clip_start != null) {
+      try { videoRef.current.currentTime = Number(current.clip_start) || 0; } catch { /* no-op */ }
+    }
+  }, [current]);
+
+  const goPrev = () => setIdx((i) => Math.max(0, (list.length ? Math.min(i, list.length - 1) : 0) - 1));
+  const goNext = () => setIdx((i) => Math.min(list.length - 1, (list.length ? Math.min(i, list.length - 1) : 0) + 1));
+  const goFullscreen = () => {
+    const el = stageRef.current as any;
+    if (el?.requestFullscreen) el.requestFullscreen();
+    else if (el?.webkitRequestFullscreen) el.webkitRequestFullscreen();
+  };
+
+  const elig = current ? exportEligibility(current) : { ok: false, reason: "Aucune action" };
+  const playable = current ? actionIsPlayable(current) : false;
+  const url = current ? actionVideoUrl(current) : null;
+  const cat = current ? actionResultCategory(current) : "autre";
+  const catLabel = cat === "made" ? "Marqué" : cat === "missed" ? "Manqué" : cat === "fauteProv" ? "Faute provoquée" : cat === "intercept" ? "Intercepté" : cat === "perte" ? "Perte" : actionTypeLabel(current || {});
+
+  const currentId = current ? String(current.id ?? "") : "";
+  const isQueued = !!currentId && highlightQueue.some((c) => c.action_id === currentId);
+  const existingNote = coachNotes.find((n) => n.action_id === currentId) || null;
+  const existingTags = customTags.find((t) => t.action_id === currentId)?.tags || [];
+
+  useEffect(() => {
+    setNoteText(existingNote?.note || "");
+    setNoteType(existingNote?.type || NOTE_TYPES[0]);
+    setTagDraft(existingTags);
+    setTagFree("");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentId]);
+
+  const toggleTagDraft = (t: string) =>
+    setTagDraft((d) => (d.includes(t) ? d.filter((x) => x !== t) : [...d, t]));
+  const submitNote = () => {
+    if (!current) return;
+    onSaveNote({ action_id: currentId, note: noteText.trim(), type: noteType, created_at: new Date().toISOString() });
+    setPanel("");
+  };
+  const submitTags = () => {
+    if (!current) return;
+    const all = Array.from(new Set([...tagDraft, ...(tagFree.trim() ? [tagFree.trim()] : [])]));
+    onSaveTags({ action_id: currentId, tags: all });
+    setTagFree("");
+    setPanel("");
+  };
+
+  return (
+    <div className="modal-bg" onClick={onClose}>
+      <div className="vr-modal" onClick={(e) => e.stopPropagation()}>
+        <div className="vr-modal-head">
+          <h2>{current ? `${tags.label(current.temps_fort)} - ${actionTypeLabel(current)} ${cat === "made" ? "marqué" : cat === "missed" ? "manqué" : ""}` : title}</h2>
+          <div className="vr-head-right">
+            {highlightQueue.length > 0 && (
+              <button className={`vr-montage-count ${panel === "montage" ? "on" : ""}`} onClick={() => setPanel((p) => (p === "montage" ? "" : "montage"))}>
+                ⭐ Montage ({highlightQueue.length})
+              </button>
+            )}
+            <button className="vr-modal-x" onClick={onClose}>×</button>
+          </div>
+        </div>
+
+        {panel === "montage" && (
+          <div className="vr-montage-panel">
+            <div className="vr-montage-head">
+              <strong>Mon montage · {highlightQueue.length} clip{highlightQueue.length > 1 ? "s" : ""}</strong>
+              <button className="vr-montage-clear" onClick={onClearHighlights} disabled={!highlightQueue.length}>Vider</button>
+            </div>
+            {highlightQueue.length === 0 ? (
+              <p className="vr-montage-empty">Aucun clip sélectionné. Utilise ⭐ Highlight sur une action.</p>
+            ) : (
+              <ul className="vr-montage-list">
+                {highlightQueue.map((c) => (
+                  <li key={c.action_id}>
+                    <span style={{ color: tags.color(c.temps_fort) }}>{tags.emoji(c.temps_fort)} {tags.label(c.temps_fort)}</span>
+                    <button onClick={() => onRemoveHighlight(c.action_id)} title="Retirer">✕</button>
+                  </li>
+                ))}
+              </ul>
+            )}
+            <p className="vr-montage-note">Export vidéo du montage : à venir.</p>
+          </div>
+        )}
+
+        <div className="vr-modal-body">
+          <div className="vr-modal-stage" ref={stageRef}>
+            {current && playable && url ? (
+              <video ref={videoRef} src={url} controls playsInline className="vr-modal-video" />
+            ) : (
+              <div className="vr-modal-empty">
+                <span>🎬 Clip à synchroniser</span>
+                <small>{current ? "L'action est enregistrée. Le clip se lira ici dès la synchronisation de la vidéo du match." : "Aucune action."}</small>
+              </div>
+            )}
+          </div>
+
+          <div className="vr-modal-meta">
+            <div className="vr-meta-row"><span>⚡ Temps fort</span><b style={{ color: current ? tags.color(current.temps_fort) : undefined }}>{current ? tags.label(current.temps_fort) : "—"}</b></div>
+            <div className="vr-meta-row"><span>✔ Résultat</span><b className={`vr-res ${cat}`}>{catLabel}</b></div>
+            <div className="vr-meta-row"><span>🎯 Type de tir</span><b>{current?.shot_type || actionTypeLabel(current || {})}</b></div>
+            <div className="vr-meta-row"><span>🏀 Points</span><b>{current ? matchActionPoints(current) : 0}</b></div>
+            <div className="vr-meta-row"><span>⏱ Période</span><b>{current ? quarterLabel(current.quarter) : "—"}</b></div>
+            <div className="vr-meta-row"><span>🎬 Match</span><b>{current ? matchLabelOf(current.match_id) : "—"}</b></div>
+            <div className="vr-meta-row"><span>🕑 Temps match</span><b>{current ? matchTimeLabel(current) : "—"}</b></div>
+            {current && (current.score || current.us_score != null) && (
+              <div className="vr-meta-row"><span>🔢 Score</span><b>{current.score ?? `${current.us_score}-${current.them_score}`}</b></div>
+            )}
+            <div className="vr-meta-row"><span>👤 Joueur</span><b>{playerName}</b></div>
+
+            <div className="vr-modal-tools">
+              <button className={`vr-tool ${isQueued ? "on" : ""}`} disabled={!current} onClick={() => current && onToggleHighlight(current)} title="Ajouter au highlight">
+                {isQueued ? "★ Retirer" : "⭐ Highlight"}
+              </button>
+              <button className={`vr-tool ${panel === "note" ? "on" : ""} ${existingNote ? "has" : ""}`} disabled={!current} onClick={() => setPanel((p) => (p === "note" ? "" : "note"))} title="Note coach">📝 Note{existingNote ? " •" : ""}</button>
+              <button className={`vr-tool ${panel === "tag" ? "on" : ""} ${existingTags.length ? "has" : ""}`} disabled={!current} onClick={() => setPanel((p) => (p === "tag" ? "" : "tag"))} title="Tag perso">🏷 Tag{existingTags.length ? ` (${existingTags.length})` : ""}</button>
+            </div>
+
+            {panel === "note" && current && (
+              <div className="vr-subpanel">
+                <strong className="vr-subpanel-title">Note coach</strong>
+                <select value={noteType} onChange={(e) => setNoteType(e.target.value)}>
+                  {NOTE_TYPES.map((t) => (<option key={t} value={t}>{t}</option>))}
+                </select>
+                <textarea placeholder="Commentaire…" value={noteText} onChange={(e) => setNoteText(e.target.value)} />
+                <div className="vr-subpanel-actions">
+                  <button className="ghost" onClick={() => setPanel("")}>Annuler</button>
+                  <button className="solid" onClick={submitNote}>Enregistrer</button>
+                </div>
+              </div>
+            )}
+
+            {panel === "tag" && current && (
+              <div className="vr-subpanel">
+                <strong className="vr-subpanel-title">Tags coach</strong>
+                <div className="vr-quicktags">
+                  {QUICK_TAGS.map((t) => (
+                    <button key={t} className={`vr-qtag ${tagDraft.includes(t) ? "on" : ""}`} onClick={() => toggleTagDraft(t)}>{t}</button>
+                  ))}
+                </div>
+                <input placeholder="Tag libre…" value={tagFree} onChange={(e) => setTagFree(e.target.value)} />
+                <div className="vr-subpanel-actions">
+                  <button className="ghost" onClick={() => setPanel("")}>Annuler</button>
+                  <button className="solid" onClick={submitTags}>Enregistrer</button>
+                </div>
+              </div>
+            )}
+
+            <button
+              className="vr-export-btn"
+              disabled={!elig.ok}
+              title={elig.ok ? "Préparer l'export MP4" : elig.reason}
+              onClick={() => current && elig.ok && onRequestExport(String(current.id))}
+            >
+              ⬇ Exporter en MP4
+            </button>
+            <div className={`vr-export-status ${elig.ok ? "ok" : "ko"}`}>
+              {elig.ok ? "✔ Export possible · vidéo locale synchronisée" : `⚠ ${elig.reason}`}
+            </div>
+          </div>
+        </div>
+
+        <div className="vr-modal-filters">
+          <select value={pf.result} onChange={(e) => setPf({ ...pf, result: e.target.value })}>
+            <option value="all">Tous</option>
+            <option value="made">Marqués</option>
+            <option value="missed">Ratés</option>
+            <option value="perte">Perte</option>
+            <option value="passe">Passe</option>
+            <option value="defense">Défense</option>
+          </select>
+          <select value={pf.shot} onChange={(e) => setPf({ ...pf, shot: e.target.value })}>
+            <option value="all">2PTS & 3PTS</option>
+            <option value="2PTS">2PTS</option>
+            <option value="3PTS">3PTS</option>
+            {hasLF && <option value="LF">LF</option>}
+          </select>
+          <select value={pf.tf} onChange={(e) => setPf({ ...pf, tf: e.target.value })}>
+            <option value="all">Tous temps forts</option>
+            {tfKeys.map((k) => (<option key={k} value={k}>{tags.label(k)}</option>))}
+          </select>
+          <select value={pf.quarter} onChange={(e) => setPf({ ...pf, quarter: e.target.value })}>
+            <option value="all">Toutes périodes</option>
+            {quarters.map((q) => (<option key={q} value={q}>{quarterLabel(q)}</option>))}
+          </select>
+          <select value={pf.match} onChange={(e) => setPf({ ...pf, match: e.target.value })}>
+            <option value="all">Tous les matchs</option>
+            {matchIds.map((id) => (<option key={id} value={id}>{matchLabelOf(id)}</option>))}
+          </select>
+        </div>
+
+        <div className="vr-modal-nav">
+          <button className="light-btn outline" onClick={goPrev} disabled={safeIdx <= 0}>‹ Précédent</button>
+          <span className="vr-counter">{list.length ? safeIdx + 1 : 0} / {list.length}</span>
+          <button className="light-btn outline" onClick={goNext} disabled={safeIdx >= list.length - 1}>Suivant ›</button>
+          <button className="light-btn outline" onClick={goFullscreen} disabled={!playable}>⛶</button>
+        </div>
+      </div>
+
+      <style jsx>{`
+        .vr-modal { position: fixed; right: 1.2rem; bottom: 1.2rem; width: min(560px, 94vw); background: #14100f; color: #f4efe8; border-radius: 16px; overflow: hidden; box-shadow: 0 24px 60px rgba(0,0,0,.5); z-index: 1300; }
+        .vr-modal-head { display: flex; align-items: center; justify-content: space-between; gap: 1rem; padding: .8rem 1rem; border-bottom: 1px solid rgba(255,255,255,.08); }
+        .vr-modal-head h2 { font-size: .95rem; margin: 0; font-weight: 800; color: #fff; }
+        .vr-head-right { display: flex; align-items: center; gap: .5rem; }
+        .vr-modal-x { width: 30px; height: 30px; border-radius: 999px; border: 0; background: rgba(255,255,255,.12); color: #fff; font-size: 1.1rem; cursor: pointer; }
+        .vr-montage-count { border: 1px solid #d4a24c; background: rgba(212,162,76,.16); color: #f4c56a; border-radius: 999px; padding: .3rem .6rem; font-weight: 900; font-size: .74rem; cursor: pointer; white-space: nowrap; }
+        .vr-montage-count.on { background: #d4a24c; color: #201b19; }
+        .vr-montage-panel { margin: 0 1rem .4rem; background: rgba(255,255,255,.05); border: 1px solid rgba(255,255,255,.1); border-radius: 10px; padding: .6rem .7rem; }
+        .vr-montage-head { display: flex; align-items: center; justify-content: space-between; gap: 1rem; margin-bottom: .4rem; }
+        .vr-montage-head strong { color: #f4c56a; font-size: .8rem; }
+        .vr-montage-clear { background: none; border: 1px solid rgba(255,255,255,.2); color: #f4efe8; border-radius: 6px; padding: .2rem .5rem; font-size: .7rem; font-weight: 800; cursor: pointer; }
+        .vr-montage-clear:disabled { opacity: .4; cursor: not-allowed; }
+        .vr-montage-empty, .vr-montage-note { color: #b9aca4; font-size: .72rem; margin: .2rem 0 0; }
+        .vr-montage-list { list-style: none; margin: 0; padding: 0; display: grid; gap: .25rem; max-height: 130px; overflow: auto; }
+        .vr-montage-list li { display: flex; align-items: center; justify-content: space-between; gap: .5rem; background: rgba(255,255,255,.05); border-radius: 6px; padding: .25rem .5rem; font-size: .76rem; font-weight: 700; }
+        .vr-montage-list li button { background: none; border: 0; color: #ff8a80; cursor: pointer; font-weight: 900; }
+        .vr-modal-body { display: grid; grid-template-columns: minmax(0, 1.5fr) minmax(0, 1fr); gap: .8rem; padding: .9rem 1rem; }
+        .vr-modal-stage { background: #000; border-radius: 10px; overflow: hidden; min-height: 170px; display: grid; }
+        .vr-modal-video { width: 100%; display: block; max-height: 300px; }
+        .vr-modal-empty { display: grid; place-items: center; gap: .3rem; text-align: center; padding: 1rem; }
+        .vr-modal-empty span { font-weight: 900; }
+        .vr-modal-empty small { color: #b9aca4; font-size: .72rem; line-height: 1.35; }
+        .vr-modal-meta { display: grid; gap: .3rem; align-content: start; }
+        .vr-meta-row { display: flex; align-items: center; justify-content: space-between; gap: .5rem; font-size: .74rem; border-bottom: 1px solid rgba(255,255,255,.06); padding: .18rem 0; }
+        .vr-meta-row span { color: #b9aca4; }
+        .vr-meta-row b { color: #fff; font-weight: 800; text-align: right; }
+        .vr-meta-row .vr-res.made { color: #6ee7a0; } .vr-meta-row .vr-res.missed { color: #ff8a80; }
+        .vr-export-btn { margin-top: .5rem; width: 100%; border: 0; border-radius: 8px; padding: .5rem; font-weight: 900; background: #c0392b; color: #fff; cursor: pointer; }
+        .vr-modal-tools { display: flex; gap: .35rem; margin-top: .5rem; flex-wrap: wrap; }
+        .vr-tool { flex: 1; min-width: 74px; border: 1px solid rgba(255,255,255,.16); background: rgba(255,255,255,.06); color: #f4efe8; border-radius: 7px; padding: .35rem .3rem; font-size: .68rem; font-weight: 800; cursor: pointer; }
+        .vr-tool:disabled { opacity: .4; cursor: not-allowed; }
+        .vr-tool.on { background: #d4a24c; color: #201b19; border-color: #d4a24c; }
+        .vr-tool.has { border-color: #d4a24c; }
+        .vr-subpanel { margin-top: .5rem; background: rgba(255,255,255,.05); border: 1px solid rgba(255,255,255,.1); border-radius: 8px; padding: .6rem; display: grid; gap: .4rem; }
+        .vr-subpanel-title { color: #f4c56a; font-size: .74rem; }
+        .vr-subpanel select, .vr-subpanel textarea, .vr-subpanel input { background: #201b19; color: #f4efe8; border: 1px solid rgba(255,255,255,.14); border-radius: 7px; padding: .4rem .5rem; font: inherit; font-size: .76rem; width: 100%; }
+        .vr-subpanel textarea { min-height: 56px; resize: vertical; }
+        .vr-quicktags { display: flex; flex-wrap: wrap; gap: .3rem; }
+        .vr-qtag { border: 1px solid rgba(255,255,255,.16); background: rgba(255,255,255,.06); color: #f4efe8; border-radius: 999px; padding: .25rem .5rem; font-size: .7rem; font-weight: 800; cursor: pointer; }
+        .vr-qtag.on { background: #d4a24c; color: #201b19; border-color: #d4a24c; }
+        .vr-subpanel-actions { display: flex; justify-content: flex-end; gap: .4rem; }
+        .vr-subpanel-actions button { border-radius: 7px; padding: .35rem .8rem; font-weight: 800; font-size: .74rem; cursor: pointer; border: 1px solid rgba(255,255,255,.18); }
+        .vr-subpanel-actions .ghost { background: transparent; color: #f4efe8; }
+        .vr-subpanel-actions .solid { background: #d4a24c; color: #201b19; border-color: #d4a24c; }
+        .vr-export-btn:disabled { background: #5a4a48; color: #cbbcb8; cursor: not-allowed; }
+        .vr-export-status { margin-top: .35rem; font-size: .66rem; border-radius: 6px; padding: .3rem .4rem; text-align: center; }
+        .vr-export-status.ok { background: rgba(212,162,76,.16); color: #f4c56a; }
+        .vr-export-status.ko { background: rgba(255,255,255,.06); color: #d9b7b2; }
+        .vr-modal-filters { display: flex; flex-wrap: wrap; gap: .4rem; padding: 0 1rem .3rem; }
+        .vr-modal-filters select { background: #201b19; color: #f4efe8; border: 1px solid rgba(255,255,255,.12); border-radius: 6px; padding: .3rem .4rem; font: inherit; font-size: .72rem; }
+        .vr-modal-nav { display: flex; align-items: center; gap: .5rem; padding: .5rem 1rem .9rem; }
+        .vr-modal-nav .light-btn { background: rgba(255,255,255,.1); color: #fff; border-color: rgba(255,255,255,.15); }
+        .vr-modal-nav .light-btn:disabled { opacity: .4; cursor: not-allowed; }
+        .vr-counter { color: #b9aca4; font-weight: 900; font-size: .8rem; margin: 0 auto; }
+        @media (max-width: 560px) {
+          .vr-modal { right: .5rem; left: .5rem; width: auto; bottom: .5rem; }
+          .vr-modal-body { grid-template-columns: 1fr; }
+        }
+      `}</style>
+    </div>
   );
 }
 
