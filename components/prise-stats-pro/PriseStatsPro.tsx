@@ -38,7 +38,17 @@ interface Draft {
   assist: boolean | null; assistPlayerId: string | null;
   foulOutcome: string;
 }
-interface StatA extends Draft { id: string; clock: string; q: number; lineup: string[] }
+interface StatA extends Draft {
+  id: string;
+  clock: string;
+  q: number;
+  lineup: string[];
+
+  videoTime?: number | null;
+  clipStart?: number | null;
+  clipEnd?: number | null;
+  syncStatus?: string | null;
+}
 
 /* ============================ Données "Mes équipes" ============================ */
 const TEAMS_KEY = 'mybasket_equipes';
@@ -243,6 +253,57 @@ const DEF_ACTIONS = [
 ];
 const NEEDS_PLAYER_DEF = ["contre"];
 const CAN_TAG_PLAYER_DEF = ["interception", "perte-adverse"];
+
+/* ============================================================================
+ * V6 · Boutons de codification configurables (préparation Management)
+ * ----------------------------------------------------------------------------
+ * Les temps forts continuent d'utiliser livestat_tags. Les AUTRES boutons
+ * (actions attaque/défense, coverages, résultats, rebonds, fautes) pourront
+ * plus tard venir de la table `livestat_coding_buttons`. Ici on ne BRANCHE
+ * rien qui puisse casser : on définit seulement le TYPE de config + un
+ * resolver à FALLBACK sur les constantes actuelles. La `key` reste stable
+ * (matrices/fiches restent reliées) ; on n'affiche jamais la key brute.
+ * ========================================================================== */
+type CodingButtonCfg = {
+  key: string;            // clé stable (= id historique) — jamais affichée telle quelle
+  label: string;         // libellé affiché
+  emoji?: string;        // emoji/icône
+  category?: string;     // 'att-action' | 'def-action' | 'coverage' | 'result' | 'rebound' | 'foul'
+  stage?: string;        // étape wizard concernée
+  color?: string | null;
+  shortcut_key?: string | null;
+  shortcut_modifier?: string | null;
+  sort_order?: number;
+  is_active?: boolean;
+  clip_mode?: string | null;
+  pre_roll?: number | null;
+  post_roll?: number | null;
+};
+
+// Fallback = constantes actuelles, converties une seule fois au shape config.
+const CODING_FALLBACK: Record<string, CodingButtonCfg[]> = {
+  'att-action': ATT_ACTIONS.map((o, i) => ({ key: o.id, label: o.label, emoji: o.ic, category: 'att-action', stage: 'action', sort_order: i, is_active: true })),
+  'def-action': DEF_ACTIONS.map((o, i) => ({ key: o.id, label: o.label, emoji: o.ic, category: 'def-action', stage: 'action', sort_order: i, is_active: true })),
+  'coverage': COVERAGES.map((o, i) => ({ key: o.id, label: o.label, category: 'coverage', stage: 'coverage', sort_order: i, is_active: true })),
+};
+
+/**
+ * Resolver de boutons de codification. En V6 il renvoie toujours le fallback
+ * (constantes). Quand Management écrira dans livestat_coding_buttons, il
+ * suffira d'alimenter `db` : les boutons actifs de la catégorie priment, triés
+ * par sort_order ; sinon fallback constantes. AUCUNE key n'est inventée.
+ */
+function resolveCodingButtons(
+  category: string,
+  db?: CodingButtonCfg[] | null
+): CodingButtonCfg[] {
+  if (db && db.length) {
+    const rows = db.filter((b) => b.category === category && b.is_active !== false);
+    if (rows.length) return [...rows].sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0));
+  }
+  return CODING_FALLBACK[category] ?? [];
+}
+
 const NAV = ['Contexte', 'Temps fort', 'Joueur', "Type d'action", 'Résultat', 'Où ?', 'Conséquence'];
 const STAGE_NAV: Record<string, number> = {
   context: 0, inbound: 1, temps: 1, coverage: 1, player: 2, action: 3, faute: 3, result: 4, ft: 4, zone: 5, rebound: 6, assist: 6,
@@ -540,8 +601,82 @@ export default function PriseStatsProPage() {
   const [running, setRunning] = useState(false);
   const [perQ, setPerQ] = useState<Record<number, { us: number; them: number }>>({ 1: { us: 0, them: 0 } });
   const [subSel, setSubSel] = useState<string | null>(null);
+
+  /* V6→final · boutons de codification configurables (Management).
+     Chargés depuis livestat_coding_buttons pour l'équipe active ; si vide ou
+     erreur → null → resolveCodingButtons retombe sur les constantes. Un
+     changement dans Management se répercute ici (label/emoji/couleur/ordre). */
+  const [codingDb, setCodingDb] = useState<CodingButtonCfg[] | null>(null);
   const [toast, setToast] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+
+  /* -------- V5 · choix vidéo à la création du match (structure + UI) --------
+     Aucun upload serveur / ffmpeg ici : on ne prépare que la donnée et l'UI. */
+  const [videoMode, setVideoMode] = useState<'later' | 'file' | 'youtube'>('later');
+  const [videoFile, setVideoFile] = useState<File | null>(null);
+  const [youtubeUrl, setYoutubeUrl] = useState('');
+  const [videoStatus, setVideoStatus] = useState('pending');   // pending | ready | linked
+  const [videoProvider, setVideoProvider] = useState('none');  // none | local | youtube
+  const [videoUrl, setVideoUrl] = useState('');                // objectURL local ou lien YouTube
+  const [videoFilename, setVideoFilename] = useState('');
+
+  // Accès synchrone dans commit() (le state est async) + base de temps vidéo.
+  const videoProviderRef = useRef('none');
+  const matchStartAtRef = useRef<number | null>(null);
+  const VIDEO_PRE_ROLL = 6;   // s avant l'action (préparation du clip)
+  const VIDEO_POST_ROLL = 4;  // s après l'action
+
+  // Sélection d'un fichier vidéo local (objectURL, pas d'upload réel en V5).
+  const onPickVideoFile = (file: File | null) => {
+    if (!file) return;
+    setVideoFile(file);
+    setVideoFilename(file.name);
+    try { setVideoUrl(URL.createObjectURL(file)); } catch { setVideoUrl(''); }
+    setVideoProvider('local');
+    setVideoStatus('ready');
+  };
+
+  // Saisie d'un lien YouTube.
+  const onSetYoutube = (url: string) => {
+    setYoutubeUrl(url);
+    const ok = /youtu\.?be/i.test(url) && url.trim().length > 0;
+    setVideoUrl(url.trim());
+    setVideoProvider(ok ? 'youtube' : 'none');
+    setVideoStatus(ok ? 'linked' : 'pending');
+  };
+
+  // Bascule entre les 3 modes (réinitialise proprement les champs liés).
+  const chooseVideoMode = (mode: 'later' | 'file' | 'youtube') => {
+    setVideoMode(mode);
+    if (mode === 'later') {
+      setVideoFile(null); setVideoFilename(''); setYoutubeUrl('');
+      setVideoUrl(''); setVideoProvider('none'); setVideoStatus('pending');
+    } else if (mode === 'file') {
+      setYoutubeUrl('');
+      setVideoProvider(videoFile ? 'local' : 'none');
+      setVideoStatus(videoFile ? 'ready' : 'pending');
+    } else {
+      setVideoFile(null); setVideoFilename('');
+      const ok = /youtu\.?be/i.test(youtubeUrl) && youtubeUrl.trim().length > 0;
+      setVideoProvider(ok ? 'youtube' : 'none');
+      setVideoStatus(ok ? 'linked' : 'pending');
+    }
+  };
+
+  // Prépare video_time / clip_start / clip_end au moment d'un commit.
+  // Vidéo active (local/youtube) → timestamp relatif au coup d'envoi ; sinon null.
+  const stampVideo = (): { videoTime: number | null; clipStart: number | null; clipEnd: number | null; syncStatus: string | null } => {
+    if (videoProviderRef.current === 'none' || matchStartAtRef.current == null) {
+      return { videoTime: null, clipStart: null, clipEnd: null, syncStatus: 'pending' };
+    }
+    const t = Math.max(0, Math.round((Date.now() - matchStartAtRef.current) / 1000));
+    return {
+      videoTime: t,
+      clipStart: Math.max(0, t - VIDEO_PRE_ROLL),
+      clipEnd: t + VIDEO_POST_ROLL,
+      syncStatus: 'prepared',
+    };
+  };
 
   /* -------- Persistance TEMPS RÉEL (match_actions = source unique) -------- */
   // matchId Supabase du match en cours + realTeamId résolu, gardés en state ET
@@ -610,6 +745,106 @@ export default function PriseStatsProPage() {
   const floor = roster.filter((p) => onCourt.includes(p.id));
   const bench = roster.filter((p) => !onCourt.includes(p.id));
 
+  // Résolution d'affichage des temps forts (label/emoji/color) pour l'écran live.
+  const tags = useLivestatTags(activeTeamId || teamId);
+
+  /* ---------------- V7 · ergonomie vidéo + workspace à onglets ---------------- */
+  // Onglet de travail visible dans l'écran live (desktop + mobile).
+  const [workTab, setWorkTab] = useState<'coding' | 'center' | 'analysis'>('coding');
+
+  // Lecteur vidéo local + saut réglable + Tab+flèches.
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+  const [videoStepSeconds, setVideoStepSeconds] = useState(5);
+  const [videoStepCustom, setVideoStepCustom] = useState(false);
+  const tabHeldRef = useRef(false);
+
+  const hasLocalVideo = () => videoProvider === 'local' && !!videoRef.current;
+  const nudgeVideo = (dir: -1 | 1) => {
+    const v = videoRef.current;
+    if (videoProvider !== 'local' || !v) return; // pas de vidéo active → rien
+    const dur = Number.isFinite(v.duration) ? v.duration : Infinity;
+    v.currentTime = Math.max(0, Math.min(dur, v.currentTime + dir * videoStepSeconds));
+  };
+
+  // Revoir un clip : place la vidéo locale à clip_start (ou videoTime) ; sinon message.
+  const playClip = (a: StatA) => {
+    const t = (a.clipStart ?? a.videoTime) as number | null;
+    if (videoProvider === 'local' && videoRef.current && t != null) {
+      setWorkTab((w) => (w === 'coding' ? w : w)); // vidéo toujours visible au centre
+      try { videoRef.current.currentTime = t; videoRef.current.play().catch(() => {}); } catch { /* noop */ }
+      flash('Clip : ' + fmt(Math.round(t)));
+    } else if (videoProvider === 'youtube' && videoUrl && t != null) {
+      flash('YouTube lié — repère à ' + fmt(Math.round(t)));
+    } else {
+      flash('Clip à synchroniser');
+    }
+  };
+
+  // Filtres matrice (agissent sur les actions LOCALES pendant le match).
+  const [mxPlayer, setMxPlayer] = useState('all');
+  const [mxPeriod, setMxPeriod] = useState('all');
+  const [mxSide, setMxSide] = useState<'all' | 'attaque' | 'defense'>('all');
+  const [mxShotRes, setMxShotRes] = useState<'all' | 'made' | 'missed'>('all');
+  const [mxShotType, setMxShotType] = useState<'all' | '2PTS' | '3PTS' | 'LF'>('all');
+  const [mxCell, setMxCell] = useState<{ tf: string; cat: string } | null>(null);
+  // V7.1 · sous-onglet de la colonne analyse (droite) + zone shot chart sélectionnée
+  const [analysisTab, setAnalysisTab] = useState<'history' | 'matrix' | 'montage'>('history');
+  const [zoneSel, setZoneSel] = useState<string | null>(null);
+
+  // Montage en cours (reçoit des actions LOCALES pendant le match).
+  const [montageTitle, setMontageTitle] = useState('Nouveau montage');
+  const [montageNote, setMontageNote] = useState('');
+  const [montageItems, setMontageItems] = useState<{ caid: string; label: string; sub: string; note: string; clipStart: number | null; clipEnd: number | null }[]>([]);
+  const [montageSaving, setMontageSaving] = useState(false);
+
+  const addToMontage = (a: StatA) => {
+    const p = find(a.playerId);
+    const label = `${tags.label(a.tempsFort) || '—'} · ${describe(a, find).t}`;
+    const sub = [periodLabel(a.q), a.clock, p ? `#${p.num} ${p.name}` : null].filter(Boolean).join(' · ');
+    setMontageItems((prev) => prev.some((x) => x.caid === a.id)
+      ? prev
+      : [...prev, { caid: a.id, label, sub, note: '', clipStart: a.clipStart ?? null, clipEnd: a.clipEnd ?? null }]);
+    flash('Ajouté au montage');
+  };
+  const removeMontageItem = (caid: string) => setMontageItems((prev) => prev.filter((x) => x.caid !== caid));
+  const moveMontageItem = (idx: number, dir: -1 | 1) => {
+    const j = idx + dir;
+    setMontageItems((prev) => {
+      if (j < 0 || j >= prev.length) return prev;
+      const next = prev.slice();
+      [next[idx], next[j]] = [next[j], next[idx]];
+      return next;
+    });
+  };
+  const setMontageItemNote = (caid: string, note: string) =>
+    setMontageItems((prev) => prev.map((x) => (x.caid === caid ? { ...x, note } : x)));
+
+  const saveMontage = async () => {
+    const tId = activeTeamId || teamId;
+    if (!montageItems.length) { flash('Ajoute au moins un clip.'); return; }
+    if (!isSupabaseUuid(tId)) { flash('Équipe non Supabase — montage gardé en local.'); return; }
+    setMontageSaving(true);
+    try {
+      const supabase = createClient();
+      const { data, error } = await supabase
+        .from('livestat_montages')
+        .insert({ team_id: tId, match_id: liveMatchIdRef.current, title: montageTitle, coach_note: montageNote || null, status: 'draft' })
+        .select('id').single();
+      if (error || !data) { flash('Montage non enregistré : ' + (error?.message || '')); setMontageSaving(false); return; }
+      const payload = montageItems.map((it, i) => ({
+        montage_id: data.id, match_id: liveMatchIdRef.current, client_action_id: it.caid,
+        sort_order: i, title: it.label, note: it.note || null, clip_start: it.clipStart, clip_end: it.clipEnd,
+      }));
+      const { error: itErr } = await supabase.from('livestat_montage_items').insert(payload);
+      if (itErr) { flash('Clips non enregistrés : ' + itErr.message); }
+      else flash('Montage enregistré ✓');
+    } catch (e: any) {
+      flash('Erreur : ' + (e?.message || 'montage'));
+    } finally {
+      setMontageSaving(false);
+    }
+  };
+
   useEffect(() => {
     let active = true;
 
@@ -634,6 +869,50 @@ export default function PriseStatsProPage() {
       setStarters([]);
     }
   }, [teams, teamId]);
+
+  // V7 · Tab maintenu + flèche gauche/droite = reculer/avancer la vidéo locale.
+  // Si aucune vidéo locale active, on ne fait rien (et on n'entrave pas le Tab).
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Tab') {
+        if (hasLocalVideo()) { tabHeldRef.current = true; e.preventDefault(); }
+        return;
+      }
+      if (!tabHeldRef.current) return;
+      if (e.key === 'ArrowRight') { e.preventDefault(); nudgeVideo(1); }
+      else if (e.key === 'ArrowLeft') { e.preventDefault(); nudgeVideo(-1); }
+    };
+    const onKeyUp = (e: KeyboardEvent) => { if (e.key === 'Tab') tabHeldRef.current = false; };
+    window.addEventListener('keydown', onKeyDown);
+    window.addEventListener('keyup', onKeyUp);
+    return () => { window.removeEventListener('keydown', onKeyDown); window.removeEventListener('keyup', onKeyUp); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [videoProvider, videoStepSeconds]);
+
+  // Charge les boutons de codification configurés pour l'équipe active.
+  // Non bloquant : en cas d'absence/erreur, on garde null (fallback constantes).
+  useEffect(() => {
+    let active = true;
+    const tId = activeTeamId || teamId;
+    if (!tId || !isSupabaseUuid(tId)) { setCodingDb(null); return; }
+
+    (async () => {
+      try {
+        const supabase = createClient();
+        const { data, error } = await supabase
+          .from('livestat_coding_buttons')
+          .select('key,label,emoji,category,stage,color,shortcut_key,shortcut_modifier,sort_order,is_active,clip_mode,pre_roll,post_roll')
+          .eq('team_id', tId);
+        if (!active) return;
+        if (error || !data || !data.length) { setCodingDb(null); return; }
+        setCodingDb(data as CodingButtonCfg[]);
+      } catch {
+        if (active) setCodingDb(null);
+      }
+    })();
+
+    return () => { active = false; };
+  }, [activeTeamId, teamId]);
 
   // chrono + calcul automatique du temps de jeu
   useEffect(() => {
@@ -709,6 +988,8 @@ export default function PriseStatsProPage() {
     // Prépare la ligne match_stats (statut 'live') UNE fois, en arrière-plan.
     // Non bloquant : si ça échoue, la saisie continue et tout reste en local.
     setLiveMatch(null, null);
+    videoProviderRef.current = videoProvider;
+    matchStartAtRef.current = Date.now();
     ensuringRef.current = true;
     ensureLiveMatch({
       teamId: selTeam.id,
@@ -716,6 +997,12 @@ export default function PriseStatsProPage() {
       date,
       home,
       playerIds: selTeam.players.map((p) => p.id),
+      videoMode,
+      videoStatus,
+      videoProvider,
+      videoUrl,
+      videoFilename,
+      youtubeUrl,
     })
       .then((res) => {
         if (res.ok) setLiveMatch(res.matchId, res.teamId);
@@ -746,6 +1033,7 @@ export default function PriseStatsProPage() {
     const matchId = liveMatchIdRef.current;
     const teamId = liveTeamIdRef.current;
     if (matchId && teamId) {
+      const vstamp = stampVideo();
       persistLiveAction({
         matchId, teamId,
         action: {
@@ -758,6 +1046,8 @@ export default function PriseStatsProPage() {
           reboundPlayerId: a.reboundPlayerId, assist: a.assist,
           assistPlayerId: a.assistPlayerId, foulOutcome: a.foulOutcome,
           courtX: a.courtX ?? null, courtY: a.courtY ?? null,
+          videoTime: vstamp.videoTime, clipStart: vstamp.clipStart,
+          clipEnd: vstamp.clipEnd, syncStatus: vstamp.syncStatus,
         },
       }).catch(() => {});
 
@@ -1286,6 +1576,53 @@ export default function PriseStatsProPage() {
               </label>
             </div>
             <div>
+              <p className="sub-h">Vidéo du match <span className="cnt">— optionnel, modifiable après le match</span></p>
+              <div className="vid-modes">
+                <button type="button" className={`vmode ${videoMode === 'later' ? 'on' : ''}`} onClick={() => chooseVideoMode('later')}>
+                  <span className="vm-ic">⏳</span>
+                  <span className="vm-tt">Sans vidéo / plus tard</span>
+                  <span className="vm-sub">Coder maintenant, ajouter la vidéo ensuite</span>
+                </button>
+                <button type="button" className={`vmode ${videoMode === 'file' ? 'on' : ''}`} onClick={() => chooseVideoMode('file')}>
+                  <span className="vm-ic">🎥</span>
+                  <span className="vm-tt">Fichier vidéo maintenant</span>
+                  <span className="vm-sub">Sélectionner un fichier local</span>
+                </button>
+                <button type="button" className={`vmode ${videoMode === 'youtube' ? 'on' : ''}`} onClick={() => chooseVideoMode('youtube')}>
+                  <span className="vm-ic">▶️</span>
+                  <span className="vm-tt">Lien YouTube</span>
+                  <span className="vm-sub">Coller l'URL de la vidéo</span>
+                </button>
+              </div>
+
+              {videoMode === 'file' && (
+                <div className="vid-input">
+                  <label className="vid-file">
+                    <input type="file" accept="video/*" onChange={(e) => onPickVideoFile(e.target.files?.[0] ?? null)} />
+                    <span className="vf-btn">📁 Choisir un fichier vidéo</span>
+                    <span className="vf-name">{videoFilename || 'Aucun fichier sélectionné'}</span>
+                  </label>
+                  {videoProvider === 'local' && <p className="vid-ok">🎥 Vidéo locale prête — les repères clip seront préparés à chaque action.</p>}
+                  <p className="vid-note">L'upload serveur n'est pas encore géré : la vidéo reste locale pour l'instant.</p>
+                </div>
+              )}
+
+              {videoMode === 'youtube' && (
+                <div className="vid-input">
+                  <input
+                    className="vid-yt"
+                    placeholder="https://www.youtube.com/watch?v=…"
+                    value={youtubeUrl}
+                    onChange={(e) => onSetYoutube(e.target.value)}
+                  />
+                  {videoProvider === 'youtube'
+                    ? <p className="vid-ok">▶️ YouTube lié — les repères clip seront préparés à chaque action.</p>
+                    : youtubeUrl.trim().length > 0 && <p className="vid-warn">Lien YouTube non reconnu.</p>}
+                </div>
+              )}
+            </div>
+
+            <div>
               <p className="sub-h">5 majeur <span className="cnt">— {starters.length}/5 sélectionnés</span></p>
               <div className="starters">
                 {setupRoster.map((p) => (
@@ -1310,7 +1647,15 @@ export default function PriseStatsProPage() {
   return (
     <div className="ps-root">
       <header className="h">
-        <div className="h-l"><div className="h-ic">📊</div><div><div className="h-tt">PRISE DE STATS LIVE</div><div className="h-sub">{screen === 'box' ? 'Box-score' : NAV[navIdx]}</div></div></div>
+        <div className="h-l"><div className="h-ic">📊</div><div><div className="h-tt">PRISE DE STATS LIVE</div><div className="h-sub">{screen === 'box' ? 'Box-score' : NAV[navIdx]}</div></div>
+          {screen !== 'box' && (
+            <div className={`vid-badge ${videoProvider === 'local' ? 'is-local' : videoProvider === 'youtube' ? 'is-yt' : 'is-later'}`}>
+              {videoProvider === 'local' ? '🎥 Vidéo locale prête'
+                : videoProvider === 'youtube' ? '▶️ YouTube lié'
+                : '⏳ Vidéo à ajouter après match'}
+            </div>
+          )}
+        </div>
         <div className="h-c">
           <div className="team"><div className="logo">{teamName.slice(0, 2)}</div><span>{teamName}</span></div>
           <div className="score us">{scoreUs}</div>
@@ -1370,196 +1715,130 @@ export default function PriseStatsProPage() {
         <BoxView actions={actions} roster={roster} teamId={activeTeamId || teamId} />
       ) : (
         <>
-          <nav className="steps">
-            {NAV.map((s, i) => (
-              <span
-                key={i}
-                className={`step ${i === navIdx ? 'active' : i < navIdx ? 'done' : ''}`}
-              >
-                <span className="n">{i + 1}</span>
-                {s}
-              </span>
+          {/* Onglets mobiles — pilotent la colonne affichée sur petit écran */}
+          <nav className="wtabs">
+            {([['coding', '🎯 Codage'], ['center', '🎥 Vidéo'], ['analysis', '📊 Analyse']] as const).map(([k, l]) => (
+              <button key={k} className={`wtab ${workTab === k ? 'on' : ''}`} onClick={() => setWorkTab(k as any)}>{l}</button>
             ))}
           </nav>
 
-          <div className="liveFrame">
-            <div className="wrap">
-              <aside className="pane historyPane">
-                <h3>Historique</h3>
-                <div className="hist">
-                  {actions.length === 0 && <div className="hist-empty">Aucune action.</div>}
-
-                  {actions
-                    .slice()
-                    .reverse()
-                    .map((a) => {
-                      const d = describe(a, find);
-                      const p = find(a.playerId);
-
-                      return (
-                        <div className="hrow" key={a.id}>
-                          <span className="htime">{a.clock}</span>
-                          <span className={`badge ${d.c}`}>{d.b}</span>
-                          <span className="hbody">
-                            <b>{p ? `#${p.num} ${p.name}` : '—'}</b>
-                            <em>{d.t}</em>
-                          </span>
-                          <button
-                            className="hist-edit"
-                            onClick={() => {
-                              setActions((arr) => arr.filter((x) => x.id !== a.id));
-                              subtractActionFromScore(a);
-                              restoreDraftFromAction(a);
-                              flash('Action ouverte en correction');
-
-                              // Retire la ligne côté Supabase (re-créée au prochain
-                              // commit, même client_action_id → upsert idempotent).
-                              const mId = liveMatchIdRef.current;
-                              const tId = liveTeamIdRef.current;
-                              if (mId && tId) {
-                                deleteLiveAction({ matchId: mId, clientActionId: a.id }).catch(() => {});
-                                const nextActions = actions.filter((x) => x.id !== a.id);
-                                const cur = perQ[a.q] || { us: 0, them: 0 };
-                                const nextPerQ = { ...perQ, [a.q]: { us: cur.us - ptsOf(a), them: cur.them - themPtsOf(a) } };
-                                syncLiveAggregates(nextActions, onCourt, nextPerQ);
-                              }
-                            }}
-                          >
-                            ↩
-                          </button>
-                          <button className="hist-del" onClick={() => removeAction(a.id)}>
-                            ✕
-                          </button>
-                        </div>
-                      );
-                    })}
+          <div className="live3">
+            {/* ============ GAUCHE 25% · CODAGE compact ============ */}
+            <aside className={`lc lc-code ${workTab === 'coding' ? 'mshow' : ''}`}>
+              <div className="lc-head">
+                <div className="crumb-mini">
+                  {['Contexte', 'Temps fort', 'Joueur', 'Action', 'Résultat', 'Zone'].map((c, i) => {
+                    const state = navIdx === i ? 'cur' : navIdx > i ? 'done' : '';
+                    return <span key={c} className={`cm ${state}`} title={c}>{c}</span>;
+                  })}
                 </div>
-              </aside>
-
-              <section className="pane center">
+              </div>
+              <div className="lc-body codeDense">
                 {stage !== 'context' && (
-                  <button
-                    className="backBtn"
-                    onClick={() => {
-                      const order = [
-                        'context',
-                        'inbound',
-                        'temps',
-                        'coverage',
-                        'player',
-                        'action',
-                        'faute',
-                        'result',
-                        'ft',
-                        'zone',
-                        'rebound',
-                        'assist',
-                      ];
-
-                      const currentIndex = order.indexOf(stage);
-
-                      if (currentIndex > 0) setStage(order[currentIndex - 1]);
-                    }}
-                  >
-                    ← Retour
-                  </button>
+                  <button className="backBtn sm" onClick={() => {
+                    const order = ['context', 'inbound', 'temps', 'coverage', 'player', 'action', 'faute', 'result', 'ft', 'zone', 'rebound', 'assist'];
+                    const currentIndex = order.indexOf(stage);
+                    if (currentIndex > 0) setStage(order[currentIndex - 1]);
+                  }}>← Retour</button>
                 )}
-
                 {renderStage()}
-              </section>
-
-              <aside className="pane courtPane">
-                <h3>Terrain</h3>
-                <div className={`courtbox ${liveCourt ? 'live' : ''}`} onClick={courtClick}>
-                  <Court />
-                  {actions
-                    .filter((a) => a.courtX != null)
-                    .map((a) => (
-                      <span
-                        key={a.id}
-                        className="shotdot"
-                        style={{
-                          left: `${(a.courtX as number) * 100}%`,
-                          top: `${(a.courtY as number) * 100}%`,
-                          background: a.shotResult === 'made' ? 'var(--green)' : 'var(--red)',
-                        }}
-                      />
-                    ))}
-                  {draft.courtX != null && (
-                    <span
-                      className={`mark ${draft.shotResult === 'made' ? 'made' : 'miss'}`}
-                      style={{
-                        left: `${draft.courtX * 100}%`,
-                        top: `${(draft.courtY as number) * 100}%`,
-                      }}
-                    />
-                  )}
+              </div>
+              <div className="lc-foot">
+                <button className="qbtn sm" onClick={undo}>↺ Annuler</button>
+                <button className="qbtn sm" onClick={resetDraft}>🗑 Reset</button>
+              </div>
+              {/* Bandeau joueurs compact (remplacements) */}
+              <div className="lc-players">
+                <div className="lcp-row">
+                  {floor.map((p) => (
+                    <button key={p.id} className={`pchip xs ${draft.playerId === p.id ? 'active' : ''} ${subSel !== null ? 'swap' : ''}`} onClick={subSel !== null ? () => swap(p.id) : undefined}>
+                      <span className="num">{p.num}</span><span className="nm">{p.name}</span>
+                    </button>
+                  ))}
                 </div>
-                <p className="courthint">
-                  {liveCourt ? 'Clique sur le terrain' : "Terrain actif à l'étape Où ?"}
-                </p>
-              </aside>
-            </div>
-
-            <div className="bottom">
-              <div className="pane playersPane">
-                <div className="playersHead">
-                  <h3>Joueurs</h3>
-                  <button
-                    className={`ghost ${subSel !== null ? 'on' : ''}`}
-                    onClick={() => setSubSel((s) => (s === null ? '' : null))}
-                  >
-                    ⇄ Changements
-                  </button>
-                </div>
-
-                <div className="playersGrid">
-                  <div className="floor">
-                    <div className="miniTitle">Terrain</div>
-                    {floor.map((p) => (
-                      <div
-                        key={p.id}
-                        className={`fc ${draft.playerId === p.id ? 'active' : ''} ${subSel !== null ? 'swap' : ''}`}
-                        onClick={subSel !== null ? () => swap(p.id) : undefined}
-                      >
-                        <Av p={p} />
-                        <span className="num">{p.num}</span>
-                        <span className="nm">{p.name}</span>
-                        <span className="pos">{p.pos}</span>
-                      </div>
-                    ))}
-                  </div>
-
-                  <div className="bench">
-                    <div className="miniTitle">Remplaçants</div>
-                    {bench.map((p) => (
-                      <button
-                        key={p.id}
-                        className={`bchip ${subSel === p.id ? 'sel' : ''}`}
-                        onClick={() => setSubSel(p.id)}
-                      >
-                        <Av p={p} /> #{p.num} {p.name}
-                      </button>
-                    ))}
-                    {bench.length === 0 && <span className="hist-empty">Banc vide.</span>}
-                  </div>
+                <div className="lcp-row bench">
+                  <button className={`pbtoggle xs ${subSel !== null ? 'on' : ''}`} onClick={() => setSubSel((s) => (s === null ? '' : null))}>⇄</button>
+                  {bench.map((p) => (
+                    <button key={p.id} className={`pchip xs bench ${subSel === p.id ? 'sel' : ''}`} onClick={() => setSubSel(p.id)}>
+                      <span className="num">{p.num}</span><span className="nm">{p.name}</span>
+                    </button>
+                  ))}
                 </div>
               </div>
+            </aside>
 
-              <div className="pane quickPane">
-                <h3>Actions rapides</h3>
-                <div className="quick">
-                  <button className="qbtn" onClick={undo}>
-                    ↺ Annuler
-                    <small>Dernière action</small>
-                  </button>
-                  <button className="qbtn" onClick={resetDraft}>
-                    🗑 Reset
-                    <small>Action en cours</small>
-                  </button>
-                </div>
+            {/* ============ CENTRE 50% · VIDÉO prioritaire + shot chart zones ============ */}
+            <section className={`lc lc-center ${workTab === 'center' ? 'mshow' : ''}`}>
+              <div className="videoSlot big">
+                {videoProvider === 'local' && videoUrl ? (
+                  <video ref={videoRef} className="vplayer" src={videoUrl} controls />
+                ) : videoProvider === 'youtube' && videoUrl ? (
+                  <div className="vyt">
+                    <div className="vyt-ic">▶️</div>
+                    <div className="vyt-tx">YouTube lié</div>
+                    <a className="vyt-open" href={videoUrl} target="_blank" rel="noreferrer">Ouvrir</a>
+                  </div>
+                ) : (
+                  <div className="vempty">
+                    <div className="vempty-tt">Ajouter une vidéo</div>
+                    <div className="vempty-sub">Le codage fonctionne sans vidéo — synchronisable après le match.</div>
+                    <div className="vempty-btns">
+                      <label className="vbtn"><input type="file" accept="video/*" onChange={(e) => onPickVideoFile(e.target.files?.[0] ?? null)} />📁 Fichier</label>
+                      <button className="vbtn" onClick={() => { const u = window.prompt('Lien YouTube :', youtubeUrl); if (u != null) onSetYoutube(u); }}>▶️ YouTube</button>
+                      <button className="vbtn ghosty" onClick={() => flash('Vidéo à ajouter après le match')}>⏳ Plus tard</button>
+                    </div>
+                  </div>
+                )}
               </div>
-            </div>
+
+              {/* Contrôles de lecture (visibles si vidéo locale) */}
+              {videoProvider === 'local' && videoUrl && (
+                <div className="vbar">
+                  <button className="vnav" onClick={() => nudgeVideo(-1)} title="Reculer (Tab + ←)">« −{videoStepSeconds}s</button>
+                  <div className="vstep">
+                    <span>Saut</span>
+                    {[3, 5, 10].map((s) => (
+                      <button key={s} className={!videoStepCustom && videoStepSeconds === s ? 'on' : ''} onClick={() => { setVideoStepCustom(false); setVideoStepSeconds(s); }}>{s}s</button>
+                    ))}
+                    <button className={videoStepCustom ? 'on' : ''} onClick={() => setVideoStepCustom(true)}>Perso</button>
+                    {videoStepCustom && <input type="number" min={1} max={60} value={videoStepSeconds} onChange={(e) => setVideoStepSeconds(Math.max(1, Number(e.target.value) || 1))} />}
+                  </div>
+                  <button className="vnav" onClick={() => nudgeVideo(1)} title="Avancer (Tab + →)">+{videoStepSeconds}s »</button>
+                </div>
+              )}
+
+              {/* Shot chart PAR ZONES (petite) — + terrain de saisie actif à l'étape zone */}
+              <div className="scZone">
+                {liveCourt ? (
+                  <div className="scZone-live">
+                    <div className="courtSlotHead"><span>🎯 Clique la zone exacte du tir</span></div>
+                    <div className="courtbox live" onClick={courtClick}>
+                      <Court />
+                      {actions.filter((a) => a.courtX != null).map((a) => (
+                        <span key={a.id} className="shotdot" style={{ left: `${(a.courtX as number) * 100}%`, top: `${(a.courtY as number) * 100}%`, background: a.shotResult === 'made' ? 'var(--green)' : 'var(--red)' }} />
+                      ))}
+                      {draft.courtX != null && (
+                        <span className={`mark ${draft.shotResult === 'made' ? 'made' : 'miss'}`} style={{ left: `${draft.courtX * 100}%`, top: `${(draft.courtY as number) * 100}%` }} />
+                      )}
+                    </div>
+                  </div>
+                ) : renderZoneChart()}
+              </div>
+            </section>
+
+            {/* ============ DROITE 25% · ANALYSE LIVE (3 sous-onglets) ============ */}
+            <aside className={`lc lc-analysis ${workTab === 'analysis' ? 'mshow' : ''}`}>
+              <div className="an-tabs">
+                {([['history', 'Historique'], ['matrix', 'Matrice'], ['montage', `Montage${montageItems.length ? ' · ' + montageItems.length : ''}`]] as const).map(([k, l]) => (
+                  <button key={k} className={`an-tab ${analysisTab === k ? 'on' : ''}`} onClick={() => setAnalysisTab(k as any)}>{l}</button>
+                ))}
+              </div>
+              <div className="an-body">
+                {analysisTab === 'history' && renderHistoryList()}
+                {analysisTab === 'matrix' && renderMatrix()}
+                {analysisTab === 'montage' && renderMontage()}
+              </div>
+            </aside>
           </div>
         </>
       )}
@@ -1586,6 +1865,289 @@ export default function PriseStatsProPage() {
     </>);
   }
 
+  /* ============ V7 · onglets de travail (historique / matrice / montage / joueurs) ============ */
+  function mxCat(a: StatA): string {
+    const at = a.actionType;
+    if (at === 'tir') return a.shotResult === 'made' ? 'made' : 'missed';
+    if (at === 'faute-provoquee') return 'foul';
+    if (at === 'perte' || at === 'perte-adverse') return 'to';
+    if (at === 'interception') return 'stl';
+    return 'other';
+  }
+  const MX_COLS: { id: string; label: string }[] = [
+    { id: 'made', label: 'Marqué' }, { id: 'missed', label: 'Manqué' },
+    { id: 'foul', label: 'Faute prov.' }, { id: 'to', label: 'Perte' }, { id: 'stl', label: 'Interc.' },
+  ];
+  function mxFiltered(): StatA[] {
+    return actions.filter((a) => {
+      if (mxPlayer !== 'all' && a.playerId !== mxPlayer) return false;
+      if (mxPeriod !== 'all' && String(a.q) !== mxPeriod) return false;
+      if (mxSide !== 'all' && a.context !== mxSide) return false;
+      if (mxShotRes !== 'all') { if (a.actionType !== 'tir' || a.shotResult !== mxShotRes) return false; }
+      if (mxShotType !== 'all') { if (a.shotType !== mxShotType) return false; }
+      return true;
+    });
+  }
+
+  function renderHistoryList() {
+    return (
+      <div className="hist">
+        {actions.length === 0 && <div className="hist-empty">Aucune action.</div>}
+        {actions.slice().reverse().map((a) => {
+          const d = describe(a, find);
+          const p = find(a.playerId);
+          const hasClip = a.videoTime != null || a.clipStart != null;
+          return (
+            <div className="hrow2" key={a.id}>
+              <span className="htime">{a.clock}</span>
+              <span className="hvtime">{a.videoTime != null ? '🎬 ' + fmt(Math.round(a.videoTime)) : ''}</span>
+              <span className="htf" style={{ color: tags.color(a.tempsFort) }} title={tags.label(a.tempsFort)}>{tags.emoji(a.tempsFort)}</span>
+              <span className="hbody">
+                <b>{p ? `#${p.num} ${p.name}` : '—'}</b>
+                <em><span className="htf-l">{tags.label(a.tempsFort)}</span> · {d.t}</em>
+              </span>
+              <button className={`hplay ${hasClip ? 'has' : ''}`} title={hasClip ? 'Revoir le clip' : 'Clip à synchroniser'} onClick={() => playClip(a)}>▶</button>
+              <button className="hadd" title="Ajouter au montage" onClick={() => addToMontage(a)}>⭐</button>
+              <button className="hedit" title="Corriger" onClick={() => {
+                setActions((arr) => arr.filter((x) => x.id !== a.id));
+                subtractActionFromScore(a);
+                restoreDraftFromAction(a);
+                flash('Action ouverte en correction');
+                const mId = liveMatchIdRef.current;
+                const tId = liveTeamIdRef.current;
+                if (mId && tId) {
+                  deleteLiveAction({ matchId: mId, clientActionId: a.id }).catch(() => {});
+                  const nextActions = actions.filter((x) => x.id !== a.id);
+                  const cur = perQ[a.q] || { us: 0, them: 0 };
+                  const nextPerQ = { ...perQ, [a.q]: { us: cur.us - ptsOf(a), them: cur.them - themPtsOf(a) } };
+                  syncLiveAggregates(nextActions, onCourt, nextPerQ);
+                }
+              }}>↩</button>
+              <button className="hdel" title="Supprimer" onClick={() => removeAction(a.id)}>✕</button>
+            </div>
+          );
+        })}
+      </div>
+    );
+  }
+
+  /* V7.1 · shot chart par ZONES (style Synergy/Hudl) — lecture seule, sur actions locales.
+     N'interfère pas avec courtClick (qui, lui, ne s'active qu'à l'étape 'zone' du wizard). */
+  function shotZoneOf(a: StatA): string | null {
+    if (a.actionType !== 'tir' || a.courtX == null || a.courtY == null) return null;
+    if (a.shotType === 'LF') return null;
+    const x = a.courtX as number; // 0 (gauche) .. 1 (droite)
+    const y = a.courtY as number; // 0 (panier, haut) .. 1 (loin)
+    const three = a.shotType === '3PTS';
+    if (three) {
+      if (y < 0.30) { return x < 0.5 ? 'corner3-l' : 'corner3-r'; }      // corners (proches ligne de fond)
+      if (x < 0.30) return 'wing3-l';
+      if (x > 0.70) return 'wing3-r';
+      return 'top3';
+    }
+    // 2 points
+    if (y < 0.16 && x > 0.34 && x < 0.66) return 'rim';                   // cercle
+    if (y < 0.34 && x > 0.30 && x < 0.70) return 'paint';                 // peinture
+    if (x < 0.37) return 'mid-l';
+    if (x > 0.63) return 'mid-r';
+    return 'mid-c';
+  }
+  const ZONES: { id: string; label: string; x: number; y: number }[] = [
+    { id: 'rim', label: 'Cercle', x: 50, y: 20 },
+    { id: 'paint', label: 'Peinture', x: 50, y: 42 },
+    { id: 'mid-l', label: 'Mid G', x: 16, y: 40 },
+    { id: 'mid-c', label: 'Mid axe', x: 50, y: 66 },
+    { id: 'mid-r', label: 'Mid D', x: 84, y: 40 },
+    { id: 'corner3-l', label: 'Corner G', x: 9, y: 14 },
+    { id: 'wing3-l', label: 'Aile G', x: 16, y: 74 },
+    { id: 'top3', label: 'Axe 3PTS', x: 50, y: 90 },
+    { id: 'wing3-r', label: 'Aile D', x: 84, y: 74 },
+    { id: 'corner3-r', label: 'Corner D', x: 91, y: 14 },
+  ];
+  function zoneStat(zoneId: string, list: StatA[]) {
+    const shots = list.filter((a) => shotZoneOf(a) === zoneId);
+    const made = shots.filter((a) => a.shotResult === 'made').length;
+    return { made, att: shots.length, pct: shots.length ? Math.round((made / shots.length) * 100) : 0 };
+  }
+  function zoneColor(pct: number, att: number): string {
+    if (!att) return 'rgba(255,255,255,0.05)';
+    if (pct >= 55) return 'rgba(46,158,91,0.55)';
+    if (pct >= 40) return 'rgba(212,162,76,0.5)';
+    return 'rgba(192,57,43,0.5)';
+  }
+
+  function renderZoneChart() {
+    const list = mxFiltered();
+    const zoneActions = zoneSel ? list.filter((a) => shotZoneOf(a) === zoneSel) : [];
+    return (
+      <div className="zc-wrap">
+        <div className="zc-court">
+          <Court />
+          <div className="zc-zones">
+            {ZONES.map((z) => {
+              const s = zoneStat(z.id, list);
+              const on = zoneSel === z.id;
+              return (
+                <button
+                  key={z.id}
+                  className={`zc-zone ${on ? 'on' : ''} ${s.att ? 'has' : ''}`}
+                  style={{ left: `${z.x}%`, top: `${z.y}%`, background: zoneColor(s.pct, s.att) }}
+                  onClick={() => s.att && setZoneSel(on ? null : z.id)}
+                  title={z.label}
+                >
+                  <span className="zc-frac">{s.made}/{s.att}</span>
+                  <span className="zc-pct">{s.att ? s.pct + '%' : ''}</span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+        {zoneSel && (
+          <div className="zc-clips">
+            <div className="zc-clips-head">
+              <b>{ZONES.find((z) => z.id === zoneSel)?.label} — clips</b>
+              <button onClick={() => setZoneSel(null)}>×</button>
+            </div>
+            {zoneActions.length === 0 ? <div className="hist-empty">Aucun tir.</div> : zoneActions.map((a) => {
+              const p = find(a.playerId);
+              const hasClip = a.videoTime != null || a.clipStart != null;
+              return (
+                <div className="mx-arow" key={a.id}>
+                  <span className="htime">{periodLabel(a.q)} {a.clock}</span>
+                  <span className="hbody"><b>{p ? `#${p.num} ${p.name}` : '—'}</b><em>{describe(a, find).t}</em></span>
+                  <button className={`hplay ${hasClip ? 'has' : ''}`} onClick={() => playClip(a)}>▶</button>
+                  <button className="hadd" onClick={() => addToMontage(a)}>⭐</button>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  function renderMatrix() {
+    const list = mxFiltered();
+    const tfKeys = (tags.active && tags.active.length ? tags.active.map((t: any) => t.key) : TEMPS.map((t) => t.id));
+    const cellActions = mxCell ? list.filter((a) => a.tempsFort === mxCell.tf && mxCat(a) === mxCell.cat) : [];
+    return (
+      <div className="mx-wrap">
+        <div className="mx-filters">
+          <select value={mxPlayer} onChange={(e) => { setMxPlayer(e.target.value); setMxCell(null); }}>
+            <option value="all">Tous les joueurs</option>
+            {roster.map((p) => <option key={p.id} value={p.id}>#{p.num} {p.name}</option>)}
+          </select>
+          <select value={mxPeriod} onChange={(e) => { setMxPeriod(e.target.value); setMxCell(null); }}>
+            <option value="all">Toutes périodes</option>
+            {Object.keys(perQ).map((k) => <option key={k} value={k}>{periodLabel(+k)}</option>)}
+          </select>
+          <select value={mxSide} onChange={(e) => { setMxSide(e.target.value as any); setMxCell(null); }}>
+            <option value="all">Attaque + Défense</option>
+            <option value="attaque">Attaque</option>
+            <option value="defense">Défense</option>
+          </select>
+          <select value={mxShotRes} onChange={(e) => { setMxShotRes(e.target.value as any); setMxCell(null); }}>
+            <option value="all">Tirs : tous</option>
+            <option value="made">Marqués</option>
+            <option value="missed">Ratés</option>
+          </select>
+          <select value={mxShotType} onChange={(e) => { setMxShotType(e.target.value as any); setMxCell(null); }}>
+            <option value="all">Type : tous</option>
+            <option value="2PTS">2 PTS</option>
+            <option value="3PTS">3 PTS</option>
+            <option value="LF">LF</option>
+          </select>
+        </div>
+        <div className="mx-scroll">
+          <table className="mx-table">
+            <thead>
+              <tr><th className="mx-corner">Temps fort</th>{MX_COLS.map((c) => <th key={c.id}>{c.label}</th>)}<th>Pts</th><th>Pts/Act</th></tr>
+            </thead>
+            <tbody>
+              {tfKeys.map((tf: string) => {
+                const rows = list.filter((a) => a.tempsFort === tf);
+                if (!rows.length) return null;
+                const pts = rows.reduce((s, a) => s + ptsOf(a), 0);
+                const ppa = rows.length ? pts / rows.length : 0;
+                return (
+                  <tr key={tf}>
+                    <th className="mx-row" style={{ color: tags.color(tf) }}>{tags.emoji(tf)} {tags.label(tf)}</th>
+                    {MX_COLS.map((c) => {
+                      const n = rows.filter((a) => mxCat(a) === c.id).length;
+                      const on = mxCell && mxCell.tf === tf && mxCell.cat === c.id;
+                      return <td key={c.id} className={`mx-cell ${n ? 'has' : ''} ${on ? 'on' : ''}`} onClick={() => n && setMxCell(on ? null : { tf, cat: c.id })}>{n || ''}</td>;
+                    })}
+                    <td className="mx-pts">{pts}</td>
+                    <td className={`mx-ppa ${ppa >= 1.1 ? 'good' : ppa > 0 && ppa < 0.85 ? 'bad' : ''}`}>{ppa ? ppa.toFixed(2) : '—'}</td>
+                  </tr>
+                );
+              })}
+              {list.length === 0 && <tr><td className="mx-empty" colSpan={MX_COLS.length + 3}>Aucune action (avec ces filtres).</td></tr>}
+            </tbody>
+          </table>
+        </div>
+        {mxCell && (
+          <div className="mx-pop" onClick={() => setMxCell(null)}>
+            <div className="mx-pop-card" onClick={(e) => e.stopPropagation()}>
+              <div className="mx-detail-head">
+                <b>{tags.emoji(mxCell.tf)} {tags.label(mxCell.tf)} · {MX_COLS.find((c) => c.id === mxCell.cat)?.label}</b>
+                <button onClick={() => setMxCell(null)}>×</button>
+              </div>
+              <div className="mx-pop-list">
+                {cellActions.length === 0 ? <div className="hist-empty">Aucune action.</div> : cellActions.map((a) => {
+                  const p = find(a.playerId);
+                  const hasClip = a.videoTime != null || a.clipStart != null;
+                  return (
+                    <div className="mx-arow" key={a.id}>
+                      <span className="htime">{periodLabel(a.q)} {a.clock}</span>
+                      <span className="hbody"><b>{p ? `#${p.num} ${p.name}` : '—'}</b><em>{describe(a, find).t}</em></span>
+                      <button className={`hplay ${hasClip ? 'has' : ''}`} title={hasClip ? 'Revoir le clip' : 'Clip à synchroniser'} onClick={() => playClip(a)}>▶</button>
+                      <button className="hadd" title="Ajouter au montage" onClick={() => addToMontage(a)}>⭐</button>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  function renderMontage() {
+    return (
+      <div className="mo-wrap">
+        <div className="mo-meta">
+          <input className="mo-title" value={montageTitle} onChange={(e) => setMontageTitle(e.target.value)} placeholder="Titre du montage (thème, joueur, temps fort…)" />
+          <textarea className="mo-note" value={montageNote} onChange={(e) => setMontageNote(e.target.value)} placeholder="Note coach…" />
+          <div className="mo-status">
+            <span className="mo-badge">🎬 {montageItems.length} clip{montageItems.length > 1 ? 's' : ''}</span>
+            <span className="mo-badge pending">⏳ Export à venir</span>
+            <button className="mo-save" disabled={montageSaving || !montageItems.length} onClick={saveMontage}>{montageSaving ? '⏳ …' : '💾 Enregistrer'}</button>
+          </div>
+        </div>
+        <div className="mo-list">
+          {montageItems.length === 0
+            ? <div className="hist-empty">Ajoute des clips depuis l'Historique ou la Matrice (bouton ＋).</div>
+            : montageItems.map((it, idx) => (
+              <div className="mo-item" key={it.caid}>
+                <span className="mo-num">{idx + 1}</span>
+                <div className="mo-body">
+                  <b>{it.label}</b><small>{it.sub}</small>
+                  <input className="mo-inote" value={it.note} placeholder="Note sur ce clip…" onChange={(e) => setMontageItemNote(it.caid, e.target.value)} />
+                </div>
+                <div className="mo-ctrl">
+                  <button disabled={idx === 0} onClick={() => moveMontageItem(idx, -1)}>▲</button>
+                  <button disabled={idx === montageItems.length - 1} onClick={() => moveMontageItem(idx, 1)}>▼</button>
+                  <button className="rm" onClick={() => removeMontageItem(it.caid)}>✕</button>
+                </div>
+              </div>
+            ))}
+        </div>
+      </div>
+    );
+  }
+
   function renderStage() {
     switch (stage) {
       case 'context':
@@ -1601,7 +2163,7 @@ export default function PriseStatsProPage() {
       case 'temps':
         return <>{head('Temps fort', 'Type de jeu')}{tileGrid(TEMPS, draft.tempsFort, tempsPick)}</>;
       case 'coverage':
-        return <>{head("Défense sur l'écran", 'Comment défend-on le pick ?')}<div className="grid c3">{COVERAGES.map((c) => <button key={c.id} className={`chip ${draft.coverage === c.id ? 'active' : ''}`} onClick={() => covPick(c.id)}>{c.label}</button>)}</div></>;
+        return <>{head("Défense sur l'écran", 'Comment défend-on le pick ?')}<div className="grid c3">{resolveCodingButtons('coverage', codingDb).map((c) => <button key={c.key} className={`chip ${draft.coverage === c.key ? 'active' : ''}`} onClick={() => covPick(c.key)}>{c.emoji ? c.emoji + ' ' : ''}{c.label}</button>)}</div></>;
       case "player": {
   const canSkip =
     draft.context === "defense" &&
@@ -1633,7 +2195,8 @@ export default function PriseStatsProPage() {
   );
 }
       case 'action': {
-        const opts = draft.context === 'defense' ? DEF_ACTIONS : ATT_ACTIONS;
+        const cfg = resolveCodingButtons(draft.context === 'defense' ? 'def-action' : 'att-action', codingDb);
+        const opts = cfg.map((b) => ({ id: b.key, label: b.label, ic: b.emoji }));
         return <>{head("Type d'action", draft.context === 'defense' ? 'Action défensive' : 'Action offensive')}{tileGrid(opts, draft.actionType, actionPick)}</>;
       }
       case 'faute':
@@ -2104,6 +2667,69 @@ function Style() {
         color: #1a0f05;
       }
 
+      /* --- V5 vidéo : choix à la création --- */
+      .vid-modes {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 10px;
+        margin-top: 8px;
+      }
+      .vmode {
+        display: grid;
+        gap: 3px;
+        text-align: left;
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        background: rgba(255, 255, 255, 0.03);
+        border-radius: 12px;
+        padding: 12px;
+        cursor: pointer;
+        color: var(--ink, #f4efe8);
+      }
+      .vmode:hover { border-color: rgba(212, 162, 76, 0.5); }
+      .vmode.on { border-color: var(--gold); background: rgba(212, 162, 76, 0.12); }
+      .vmode .vm-ic { font-size: 20px; }
+      .vmode .vm-tt { font-weight: 900; font-size: 13px; }
+      .vmode .vm-sub { font-size: 11px; color: var(--mute); }
+      .vid-input { margin-top: 10px; display: grid; gap: 6px; }
+      .vid-file { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; cursor: pointer; }
+      .vid-file input[type="file"] { display: none; }
+      .vf-btn {
+        border: 1px solid var(--gold);
+        color: var(--gold);
+        border-radius: 8px;
+        padding: 8px 12px;
+        font-weight: 900;
+        font-size: 12px;
+        white-space: nowrap;
+      }
+      .vf-name { font-size: 12px; color: var(--mute); }
+      .vid-yt {
+        width: 100%;
+        background: rgba(0, 0, 0, 0.25);
+        border: 1px solid rgba(255, 255, 255, 0.14);
+        border-radius: 8px;
+        padding: 9px 11px;
+        color: var(--ink, #f4efe8);
+        font: inherit;
+        font-size: 13px;
+      }
+      .vid-ok { font-size: 12px; color: #46c17f; font-weight: 800; margin: 0; }
+      .vid-warn { font-size: 12px; color: #e0a13a; font-weight: 800; margin: 0; }
+      .vid-note { font-size: 11px; color: var(--mute); margin: 0; }
+      .vid-badge {
+        margin-left: 10px;
+        align-self: center;
+        border-radius: 999px;
+        padding: 5px 11px;
+        font-size: 11px;
+        font-weight: 900;
+        white-space: nowrap;
+        border: 1px solid transparent;
+      }
+      .vid-badge.is-local { background: rgba(70, 193, 127, 0.16); color: #46c17f; border-color: rgba(70, 193, 127, 0.4); }
+      .vid-badge.is-yt { background: rgba(224, 63, 63, 0.16); color: #f07171; border-color: rgba(224, 63, 63, 0.4); }
+      .vid-badge.is-later { background: rgba(212, 162, 76, 0.14); color: var(--gold); border-color: rgba(212, 162, 76, 0.4); }
+
       .sub-h {
         font-size: 12px;
         text-transform: uppercase;
@@ -2430,201 +3056,385 @@ function Style() {
         border-color: var(--gold);
       }
 
-      .steps {
-        flex: 0 0 30px;
-        min-height: 30px;
-        display: flex;
-        align-items: center;
-        gap: 4px;
-        padding: 4px 10px;
-        background: #0c1020;
-        border-bottom: 1px solid var(--border);
-        overflow: hidden;
-      }
+      /* ===================== V6 · Studio layout ===================== */
+      .mtabs { display: none; }
 
-      .step {
-        display: flex;
-        align-items: center;
-        gap: 6px;
-        padding: 4px 9px;
-        border-radius: 16px;
-        white-space: nowrap;
-        color: var(--mute);
-        font-size: 11px;
-      }
+      /* ===================== V7 · Workspace à onglets ===================== */
+      .wtabs { flex: 0 0 auto; display: flex; gap: 4px; padding: 6px 10px; background: #0c1020; border-bottom: 1px solid var(--border); overflow-x: auto; }
+      .wtab { flex: 0 0 auto; border: 1px solid var(--border); background: transparent; color: var(--mute); border-radius: 9px; padding: 7px 12px; font-size: 12.5px; font-weight: 800; cursor: pointer; white-space: nowrap; }
+      .wtab.on { background: var(--bordeaux); color: #fff; border-color: var(--bordeaux); }
 
-      .step .n {
-        width: 15px;
-        height: 15px;
-        border-radius: 50%;
-        border: 1px solid currentColor;
-        display: grid;
-        place-items: center;
-        font-size: 11px;
-      }
+      /* ===================== V7.1 · Layout live 25 / 50 / 25 ===================== */
+      .live3 { flex: 1; min-height: 0; display: grid; grid-template-columns: 25% 50% 25%; gap: 8px; padding: 8px 10px; overflow: hidden; }
+      .lc { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; display: flex; flex-direction: column; min-height: 0; overflow: hidden; }
 
-      .step.done {
-        color: var(--gold);
-      }
+      /* -- Gauche : codage compact/dense -- */
+      .lc-head { flex: 0 0 auto; padding: 7px 8px; border-bottom: 1px solid var(--border); }
+      .crumb-mini { display: flex; flex-wrap: wrap; gap: 3px; }
+      .cm { font-size: 9px; font-weight: 800; text-transform: uppercase; letter-spacing: .02em; color: var(--mute); opacity: .5; white-space: nowrap; }
+      .cm::after { content: '›'; margin-left: 3px; opacity: .5; }
+      .cm:last-child::after { content: ''; }
+      .cm.done { color: var(--gold); opacity: .9; } .cm.cur { color: #fff; opacity: 1; }
+      .lc-body { flex: 1; min-height: 0; overflow-y: auto; padding: 8px; display: flex; flex-direction: column; gap: 6px; }
+      .lc-foot { flex: 0 0 auto; display: grid; grid-template-columns: 1fr 1fr; gap: 5px; padding: 6px 8px; border-top: 1px solid var(--border); }
+      .backBtn.sm { align-self: flex-start; font-size: 11px; padding: 4px 8px; }
+      .qbtn.sm { padding: 6px 4px; font-size: 11px; min-height: 0; }
 
-      .step.active {
-        color: #fff;
-        background: var(--bordeaux);
-      }
+      /* Codage DENSE : boutons petits, façon scouting pro */
+      .codeDense .grid { gap: 5px; }
+      .codeDense .grid.c2, .codeDense .grid.c3 { grid-template-columns: repeat(2, 1fr); }
+      .codeDense .bt { min-height: 0 !important; height: auto !important; flex-direction: row; justify-content: flex-start; gap: 7px; padding: 8px 9px !important; border-radius: 8px; }
+      .codeDense .bt .ic { font-size: 15px !important; }
+      .codeDense .bt .lbl { font-size: 12px !important; font-weight: 700; text-align: left; }
+      .codeDense .grid.big { grid-template-columns: 1fr 1fr; }
+      .codeDense .grid.big .bt { min-height: 0 !important; height: auto !important; padding: 12px 10px !important; }
+      .codeDense .chip { padding: 7px 9px; font-size: 12px; }
+      .codeDense .seg { gap: 4px; }
+      .codeDense .segb { padding: 7px 6px; font-size: 12px; }
+      .codeDense .res { padding: 9px 10px; font-size: 13px; }
+      .codeDense .pl { min-height: 0 !important; height: auto !important; flex-direction: row; justify-content: flex-start; gap: 6px; padding: 6px 8px !important; }
+      .codeDense .pl .nm { font-size: 12px; }
+      .codeDense .wztitle { font-size: 15px; }
+      .codeDense .wzsub { font-size: 11px; }
+      .codeDense .wzstep { font-size: 9px; }
 
-      .step.active .n {
-        background: #fff;
-        color: var(--bordeaux);
-        border-color: #fff;
-      }
+      /* Joueurs compacts dans la colonne codage */
+      .lc-players { flex: 0 0 auto; border-top: 1px solid var(--border); padding: 6px 8px; display: grid; gap: 4px; }
+      .lcp-row { display: flex; gap: 4px; overflow-x: auto; }
+      .pchip.xs { flex: 0 0 auto; display: inline-flex; align-items: center; gap: 4px; padding: 4px 8px; border-radius: 999px; border: 1px solid var(--border); background: var(--card); color: var(--ink); cursor: pointer; font-size: 11px; }
+      .pchip.xs .num { font-weight: 900; }
+      .pchip.xs.active { border-color: var(--gold); background: rgba(212,162,76,.16); }
+      .pchip.xs.swap { outline: 1px dashed var(--gold); }
+      .pchip.xs.bench { opacity: .8; }
+      .pchip.xs.bench.sel { opacity: 1; border-color: var(--gold); background: rgba(212,162,76,.16); }
+      .pbtoggle.xs { flex: 0 0 auto; width: 24px; height: 24px; border-radius: 999px; border: 1px solid var(--border); background: var(--card); color: var(--mute); cursor: pointer; }
+      .pbtoggle.xs.on { border-color: var(--gold); color: var(--gold); }
 
-      .liveFrame {
+      /* -- Centre : vidéo prioritaire + contrôles + shot chart zones -- */
+      .lc-center { padding: 8px; gap: 8px; }
+      .videoSlot.big { flex: 1 1 auto; min-height: 200px; }
+      .vbar { flex: 0 0 auto; display: flex; align-items: center; gap: 8px; justify-content: center; padding: 4px 0; flex-wrap: wrap; }
+      .vbar .vnav { border: 1px solid var(--border); background: var(--card); color: var(--ink); border-radius: 8px; padding: 7px 12px; font-weight: 800; font-size: 12px; cursor: pointer; }
+      .vbar .vstep { display: flex; align-items: center; gap: 4px; }
+      .vbar .vstep > span { font-size: 10px; color: var(--mute); font-weight: 800; text-transform: uppercase; }
+      .vbar .vstep button { border: 1px solid var(--border); background: var(--card); color: var(--ink); border-radius: 6px; padding: 4px 8px; font-size: 11px; font-weight: 800; cursor: pointer; }
+      .vbar .vstep button.on { background: var(--gold); color: #201b19; border-color: var(--gold); }
+      .vbar .vstep input { width: 46px; border-radius: 6px; border: 1px solid var(--border); background: var(--card); color: var(--ink); padding: 3px 5px; font: inherit; font-size: 11px; }
+
+      .scZone { flex: 0 0 auto; }
+      .scZone-live .courtSlotHead { font-size: 11px; color: var(--gold); text-transform: uppercase; margin-bottom: 3px; }
+      .zc-wrap { display: flex; flex-direction: column; gap: 6px; }
+      .zc-court { position: relative; width: 100%; max-width: 340px; margin: 0 auto; aspect-ratio: 400 / 280; border-radius: 10px; overflow: hidden; border: 1px solid var(--border); }
+      .zc-zones { position: absolute; inset: 0; }
+      .zc-zone { position: absolute; transform: translate(-50%, -50%); display: grid; place-items: center; width: 52px; height: 40px; border: 1px solid rgba(255,255,255,.35); border-radius: 8px; color: #fff; cursor: default; font-weight: 800; text-shadow: 0 1px 2px rgba(0,0,0,.6); }
+      .zc-zone.has { cursor: pointer; }
+      .zc-zone.on { outline: 2px solid var(--gold); }
+      .zc-frac { font-size: 12px; line-height: 1; }
+      .zc-pct { font-size: 10px; line-height: 1.1; opacity: .95; }
+      .zc-clips { border: 1px solid var(--border); border-radius: 10px; background: var(--card); padding: 8px; max-height: 150px; overflow: auto; }
+      .zc-clips-head { display: flex; align-items: center; justify-content: space-between; font-size: 12px; margin-bottom: 4px; }
+      .zc-clips-head button { border: 0; background: transparent; color: var(--mute); font-size: 15px; cursor: pointer; }
+
+      /* -- Droite : analyse (sous-onglets) -- */
+      .lc-analysis { padding: 0; }
+      .an-tabs { flex: 0 0 auto; display: flex; gap: 4px; padding: 6px; border-bottom: 1px solid var(--border); }
+      .an-tab { flex: 1; border: 1px solid var(--border); background: transparent; color: var(--mute); border-radius: 8px; padding: 6px 4px; font-size: 12px; font-weight: 800; cursor: pointer; }
+      .an-tab.on { background: var(--bordeaux); color: #fff; border-color: var(--bordeaux); }
+      .an-body { flex: 1; min-height: 0; overflow: hidden; display: flex; flex-direction: column; }
+      .an-body .hist { padding: 6px; overflow-y: auto; }
+
+      /* Popup matrice */
+      .mx-pop { position: fixed; inset: 0; background: rgba(0,0,0,.5); display: grid; place-items: center; z-index: 60; padding: 20px; }
+      .mx-pop-card { width: min(460px, 92vw); max-height: 80vh; background: var(--panel); border: 1px solid var(--border); border-radius: 14px; padding: 12px; display: flex; flex-direction: column; }
+      .mx-pop-list { overflow: auto; }
+      .mx-ppa { font-weight: 900; }
+      .mx-ppa.good { color: var(--green); } .mx-ppa.bad { color: var(--red); }
+
+      .studio2 { flex: 1; min-height: 0; display: grid; grid-template-columns: 46% 54%; gap: 8px; padding: 8px 10px; overflow: hidden; }
+      .colWork { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; display: flex; flex-direction: column; min-height: 0; overflow: hidden; }
+
+      /* Contrôles de saut vidéo + navigation */
+      .vctrls { position: absolute; left: 0; right: 0; bottom: 0; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 6px 10px; background: linear-gradient(transparent, rgba(0,0,0,0.72)); }
+      .vstep { display: flex; align-items: center; gap: 4px; }
+      .vstep > span { font-size: 10px; color: #cdd6e6; font-weight: 800; text-transform: uppercase; }
+      .vstep button { border: 1px solid rgba(255,255,255,.22); background: rgba(255,255,255,.08); color: #eaf0ff; border-radius: 6px; padding: 3px 7px; font-size: 11px; font-weight: 800; cursor: pointer; }
+      .vstep button.on { background: var(--gold); color: #201b19; border-color: var(--gold); }
+      .vstep input { width: 48px; border-radius: 6px; border: 1px solid rgba(255,255,255,.22); background: #12151f; color: #fff; padding: 2px 5px; font: inherit; font-size: 11px; }
+      .vnudge { display: flex; gap: 4px; margin-left: auto; }
+      .vnudge button { border: 1px solid rgba(255,255,255,.22); background: rgba(255,255,255,.08); color: #eaf0ff; border-radius: 6px; padding: 3px 9px; font-size: 11px; font-weight: 800; cursor: pointer; }
+
+      /* Historique enrichi (chrono + temps vidéo + temps fort + joueur + action) */
+      .hrow2 { display: grid; grid-template-columns: 40px 58px 20px minmax(0,1fr) 24px 24px 24px 24px; align-items: center; gap: 6px; padding: 6px 8px; background: var(--card); border: 1px solid var(--border); border-radius: 9px; margin-bottom: 5px; }
+      .hvtime { font-size: 10px; color: var(--gold); font-weight: 800; white-space: nowrap; }
+      .htf { font-size: 15px; text-align: center; }
+      .htf-l { font-weight: 800; }
+      .hadd { width: 24px; height: 24px; border-radius: 6px; border: 1px solid var(--gold); background: transparent; color: var(--gold); cursor: pointer; font-size: 13px; font-weight: 900; }
+      .hplay.has { color: var(--gold); border-color: var(--gold); }
+
+      /* Matrice */
+      .mx-wrap { flex: 1; min-height: 0; display: flex; flex-direction: column; overflow: hidden; padding: 8px; gap: 8px; }
+      .mx-filters { display: flex; flex-wrap: wrap; gap: 6px; }
+      .mx-filters select { border: 1px solid var(--border); border-radius: 8px; padding: 6px 8px; font: inherit; font-size: 12px; background: var(--card); color: var(--ink); }
+      .mx-scroll { flex: 1; min-height: 0; overflow: auto; border: 1px solid var(--border); border-radius: 10px; }
+      .mx-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+      .mx-table th, .mx-table td { border-bottom: 1px solid var(--border); padding: 7px 8px; text-align: center; }
+      .mx-table thead th { position: sticky; top: 0; background: #0c1020; color: var(--mute); font-size: 10.5px; text-transform: uppercase; letter-spacing: .03em; z-index: 1; }
+      .mx-corner, .mx-row { text-align: left !important; white-space: nowrap; }
+      .mx-row { font-weight: 800; }
+      .mx-cell { cursor: default; color: var(--mute); }
+      .mx-cell.has { cursor: pointer; color: var(--ink); font-weight: 800; }
+      .mx-cell.has:hover { background: rgba(212,162,76,.14); }
+      .mx-cell.on { background: var(--gold); color: #201b19; }
+      .mx-tot { font-weight: 800; }
+      .mx-pts { font-weight: 900; color: var(--gold); }
+      .mx-empty { color: var(--mute); padding: 20px; }
+      .mx-detail { flex: 0 0 auto; max-height: 210px; overflow: auto; border: 1px solid var(--border); border-radius: 10px; padding: 8px; background: var(--card); }
+      .mx-detail-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px; font-size: 12.5px; }
+      .mx-detail-head button { border: 0; background: transparent; color: var(--mute); font-size: 16px; cursor: pointer; }
+      .mx-arow { display: grid; grid-template-columns: 84px minmax(0,1fr) 24px 24px; align-items: center; gap: 6px; padding: 5px 4px; border-top: 1px dashed var(--border); }
+
+      /* Montage (in-live) */
+      .mo-wrap { flex: 1; min-height: 0; display: flex; flex-direction: column; overflow: hidden; padding: 8px; gap: 8px; }
+      .mo-meta { display: grid; gap: 6px; }
+      .mo-title { border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; font: inherit; font-size: 14px; font-weight: 700; background: var(--card); color: var(--ink); }
+      .mo-note { border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; font: inherit; font-size: 13px; min-height: 46px; resize: vertical; background: var(--card); color: var(--ink); }
+      .mo-status { display: flex; align-items: center; gap: 6px; }
+      .mo-badge { font-size: 11.5px; font-weight: 800; border-radius: 999px; padding: 4px 10px; background: rgba(212,162,76,.14); color: var(--gold); }
+      .mo-badge.pending { background: rgba(255,255,255,.06); color: var(--mute); }
+      .mo-save { margin-left: auto; border: 1px solid var(--gold); background: var(--gold); color: #201b19; border-radius: 8px; padding: 7px 12px; font-weight: 800; font-size: 12.5px; cursor: pointer; }
+      .mo-save:disabled { opacity: .5; cursor: not-allowed; }
+      .mo-list { flex: 1; min-height: 0; overflow: auto; display: flex; flex-direction: column; gap: 6px; }
+      .mo-item { display: grid; grid-template-columns: 24px minmax(0,1fr) auto; align-items: center; gap: 8px; border: 1px solid var(--border); border-radius: 9px; padding: 7px 9px; background: var(--card); }
+      .mo-num { width: 22px; height: 22px; border-radius: 50%; background: var(--bordeaux); color: #fff; font-size: 11px; font-weight: 900; display: grid; place-items: center; }
+      .mo-body { min-width: 0; display: grid; gap: 3px; }
+      .mo-body b { font-size: 12.5px; }
+      .mo-body small { font-size: 11px; color: var(--mute); }
+      .mo-inote { border: 1px solid var(--border); border-radius: 6px; padding: 4px 7px; font: inherit; font-size: 11.5px; background: var(--panel); color: var(--ink); }
+      .mo-ctrl { display: flex; gap: 4px; }
+      .mo-ctrl button { border: 1px solid var(--border); background: var(--panel); border-radius: 6px; cursor: pointer; font-size: 11px; width: 24px; height: 24px; }
+      .mo-ctrl button:disabled { opacity: .35; cursor: not-allowed; }
+      .mo-ctrl .rm { color: var(--red); border-color: #e6b9b9; }
+
+      /* Joueurs (onglet) */
+      .pl-wrap { flex: 1; min-height: 0; overflow: auto; padding: 10px; display: flex; flex-direction: column; gap: 12px; }
+      .pl-sec .miniTitle { display: flex; align-items: center; justify-content: space-between; }
+      .pl-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+
+      .studio {
         flex: 1;
         min-height: 0;
         display: grid;
-        grid-template-rows: minmax(0, 1fr) 198px;
+        grid-template-columns: 22% 48% 30%;
         gap: 8px;
-        padding: 7px 10px 8px;
+        padding: 8px 10px 6px;
         overflow: hidden;
       }
 
-      .wrap {
-        min-height: 0;
-        display: grid;
-        grid-template-columns: minmax(180px, 20%) minmax(300px, 40%) minmax(300px, 40%);
-        gap: 8px;
-        overflow: hidden;
-      }
-
-      .pane {
+      .col {
         background: var(--panel);
         border: 1px solid var(--border);
         border-radius: 12px;
-        padding: 8px;
         display: flex;
         flex-direction: column;
         min-height: 0;
         overflow: hidden;
       }
 
-      .pane h3 {
+      .colHead {
         flex: 0 0 auto;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 8px 10px;
+        border-bottom: 1px solid var(--border);
+      }
+      .colHead h3 {
+        margin: 0;
         font-size: 11px;
         text-transform: uppercase;
         letter-spacing: 0.05em;
         color: var(--mute);
-        margin: 0 0 6px;
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-        line-height: 1.1;
+      }
+      .colCount {
+        font-size: 11px;
+        font-weight: 800;
+        color: var(--gold);
+        background: rgba(212, 162, 76, 0.12);
+        border-radius: 999px;
+        padding: 1px 8px;
       }
 
-      .historyPane,
-      .courtPane,
-      .center {
-        height: 100%;
-        max-height: 100%;
-      }
-
-      .center {
-        padding: 12px 14px;
-        gap: 8px;
-        overflow-y: auto;
-      }
-
+      /* ---------- Historique compact ---------- */
       .hist {
         flex: 1;
         min-height: 0;
         overflow-y: auto;
         display: flex;
         flex-direction: column;
-        gap: 5px;
-        padding-right: 2px;
+        gap: 4px;
+        padding: 6px;
       }
-
       .hrow {
         display: grid;
-        grid-template-columns: 30px auto minmax(0, 1fr) 20px 20px;
+        grid-template-columns: 34px 8px minmax(0, 1fr) 22px 22px 22px;
         align-items: center;
-        gap: 5px;
-        padding: 5px 6px;
+        gap: 6px;
+        max-height: 52px;
+        padding: 6px 7px;
         background: var(--card);
         border: 1px solid var(--border);
         border-radius: 8px;
       }
+      .htime { font-size: 11px; color: var(--mute); font-variant-numeric: tabular-nums; }
+      .hdot { width: 8px; height: 8px; border-radius: 50%; background: var(--mute); }
+      .hdot.b-made, .hdot.b-ft { background: var(--green); }
+      .hdot.b-miss, .hdot.b-to, .hdot.b-foul { background: var(--red); }
+      .hdot.b-ast { background: var(--gold); }
+      .hdot.b-stl, .hdot.b-def { background: #4a90d9; }
+      .hdot.b-neutral { background: var(--mute); }
+      .hbody { min-width: 0; display: flex; flex-direction: column; line-height: 1.15; }
+      .hbody b { font-size: 12px; color: var(--ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+      .hbody em { font-size: 10.5px; font-style: normal; color: var(--mute); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+      .hplay, .hedit, .hdel {
+        width: 22px; height: 22px; border-radius: 6px; border: 1px solid var(--border);
+        background: transparent; color: var(--mute); cursor: pointer; font-size: 11px;
+        display: grid; place-items: center;
+      }
+      .hplay { color: var(--gold); }
+      .hplay:disabled { opacity: 0.35; cursor: not-allowed; }
+      .hedit:hover, .hplay:hover:not(:disabled) { border-color: var(--gold); color: var(--gold); }
+      .hdel:hover { border-color: var(--red); color: var(--red); }
+      .hist-empty { color: var(--mute); font-size: 12px; padding: 10px; text-align: center; }
 
-      .hist-edit,
-      .hist-del {
-        width: 20px;
-        height: 20px;
-        border-radius: 6px;
+      /* ---------- Centre : vidéo + terrain ---------- */
+      .colCenter { gap: 8px; padding: 8px; }
+      .videoSlot {
+        flex: 0 0 auto;
+        height: 300px;
+        max-height: 46vh;
+        border-radius: 10px;
+        overflow: hidden;
+        background: #05070e;
         border: 1px solid var(--border);
-        background: #2a3142;
-        color: #fff;
-        font-size: 9px;
-        display: grid;
-        place-items: center;
-        padding: 0;
-      }
-
-      .hist-edit:hover {
-        background: var(--gold);
-        border-color: var(--gold);
-        color: #1a1a1a;
-      }
-
-      .hist-del:hover {
-        background: var(--red);
-        border-color: var(--red);
-        color: #fff;
-      }
-
-      .htime {
-        font-size: 9px;
-        color: var(--mute);
-      }
-
-      .badge {
-        font-size: 7.5px;
-        font-weight: 800;
-        padding: 2px 5px;
-        border-radius: 5px;
-        white-space: nowrap;
-      }
-
-      .b-made { background: #1f7a44; color: #fff; }
-      .b-miss { background: var(--red); color: #fff; }
-      .b-ast { background: #1f7a44; color: #fff; }
-      .b-stl,
-      .b-def { background: var(--blue); color: #fff; }
-      .b-to { background: var(--gold); color: #1a1a1a; }
-      .b-foul { background: #7a4fb5; color: #fff; }
-      .b-neutral { background: #3a4256; color: #fff; }
-      .b-reb { background: var(--orange); color: #fff; }
-      .b-ft { background: #1f7a44; color: #fff; }
-
-      .hbody {
         display: flex;
         flex-direction: column;
-        min-width: 0;
+        position: relative;
       }
-
-      .hbody b {
-        font-size: 11px;
-        white-space: nowrap;
-        overflow: hidden;
-        text-overflow: ellipsis;
+      .vplayer { width: 100%; height: 100%; object-fit: contain; background: #000; }
+      .vctrls { position: absolute; left: 0; right: 0; bottom: 0; display: flex; align-items: center; gap: 8px; padding: 6px 10px; background: linear-gradient(transparent, rgba(0,0,0,0.6)); }
+      .vname { font-size: 11px; color: #dfe6f5; font-weight: 700; }
+      .vyt { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; color: #dfe6f5; }
+      .vyt-ic { font-size: 34px; }
+      .vyt-tx { font-weight: 800; }
+      .vyt-open { font-size: 12px; color: var(--gold); text-decoration: none; border: 1px solid var(--gold); border-radius: 8px; padding: 5px 12px; }
+      .vempty { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; padding: 16px; text-align: center; }
+      .vempty-tt { font-size: 16px; font-weight: 900; color: #eaf0ff; }
+      .vempty-sub { font-size: 12px; color: var(--mute); max-width: 340px; }
+      .vempty-btns { display: flex; gap: 8px; flex-wrap: wrap; justify-content: center; margin-top: 4px; }
+      .vbtn {
+        border: 1px solid var(--gold); color: var(--gold); background: transparent;
+        border-radius: 9px; padding: 8px 14px; font-weight: 800; font-size: 13px; cursor: pointer;
+        display: inline-flex; align-items: center; gap: 6px;
       }
+      .vbtn input[type="file"] { display: none; }
+      .vbtn.ghosty { border-color: var(--border); color: var(--mute); }
+      .vbtn:hover { filter: brightness(1.1); }
 
-      .hbody em {
-        font-size: 9px;
+      .courtSlot {
+        flex: 1;
+        min-height: 0;
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+      }
+      .courtSlotHead { flex: 0 0 auto; font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--mute); }
+      .courtSlotHead span { color: var(--gold); }
+
+      /* ---------- Droite : codification progressive ---------- */
+      .colCoding { padding: 0; }
+      .crumbBar {
+        flex: 0 0 auto;
+        display: flex;
+        flex-wrap: wrap;
+        gap: 4px;
+        padding: 8px 10px;
+        border-bottom: 1px solid var(--border);
+      }
+      .crumb {
+        font-size: 10px;
+        font-weight: 800;
+        text-transform: uppercase;
+        letter-spacing: 0.03em;
         color: var(--mute);
-        font-style: normal;
+        opacity: 0.55;
         white-space: nowrap;
-        overflow: hidden;
-        text-overflow: ellipsis;
       }
+      .crumb::after { content: '›'; margin-left: 4px; opacity: 0.5; }
+      .crumb:last-child::after { content: ''; }
+      .crumb.done { color: var(--gold); opacity: 0.9; }
+      .crumb.cur { color: #fff; opacity: 1; }
+
+      .codingBody {
+        flex: 1;
+        min-height: 0;
+        overflow-y: auto;
+        padding: 12px;
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+      }
+      .codingFoot {
+        flex: 0 0 auto;
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 6px;
+        padding: 8px 10px;
+        border-top: 1px solid var(--border);
+      }
+
+      /* ---------- Bas : joueurs en chips compactes ---------- */
+      .playersBar {
+        flex: 0 0 auto;
+        display: grid;
+        grid-template-columns: 1fr auto;
+        gap: 8px;
+        padding: 0 10px 8px;
+      }
+      .pbSection {
+        background: var(--panel);
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        padding: 6px 8px;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        min-width: 0;
+        overflow: hidden;
+      }
+      .pbSection.bench { background: #0c1020; }
+      .pbLabel { flex: 0 0 auto; font-size: 9.5px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--mute); writing-mode: vertical-rl; transform: rotate(180deg); }
+      .pbChips { display: flex; gap: 6px; overflow-x: auto; padding: 2px; min-width: 0; }
+      .pchip {
+        flex: 0 0 auto;
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        padding: 5px 10px 5px 5px;
+        border-radius: 999px;
+        border: 1px solid var(--border);
+        background: var(--card);
+        color: var(--ink);
+        cursor: pointer;
+        white-space: nowrap;
+      }
+      .pchip .num { font-weight: 900; font-size: 12px; }
+      .pchip .nm { font-size: 12px; }
+      .pchip.active { border-color: var(--gold); background: rgba(212, 162, 76, 0.16); }
+      .pchip.swap { outline: 1px dashed var(--gold); }
+      .pchip.bench { opacity: 0.82; }
+      .pchip.bench.sel { opacity: 1; border-color: var(--gold); background: rgba(212, 162, 76, 0.16); }
+      .pbtoggle { flex: 0 0 auto; width: 30px; height: 30px; border-radius: 999px; border: 1px solid var(--border); background: var(--card); color: var(--mute); cursor: pointer; font-size: 14px; }
+      .pbtoggle.on { border-color: var(--gold); color: var(--gold); }
 
       .wzhead {
         text-align: center;
@@ -3241,102 +4051,62 @@ function Style() {
         font-size: 12px;
         z-index: 10000;
       }
+      .courtbox { max-height: 220px; }
 
-      @media (max-height: 760px) {
-        .h { flex-basis: 14dvh; min-height: 98px; padding: 6px 12px; }
-        .h-c { grid-template-columns: minmax(110px, 1fr) 82px 145px 102px minmax(110px, 1fr); }
-        .score { font-size: 28px; min-width: 58px; padding: 6px 0; }
-        .clockbox { width: 145px; min-width: 145px; padding: 8px 10px; }
-        .clk { font-size: 28px; }
-        .qtag { font-size: 15px; }
-        .mini { width: 30px; height: 26px; }
-        .ghost { font-size: 12px; padding: 9px 11px; }
-        .qstrip { flex-basis: 42px; min-height: 42px; }
-        .qbox { font-size: 15px; padding: 7px 18px; }
-        .steps { flex-basis: 28px; min-height: 28px; padding: 3px 8px; }
-        .liveFrame { grid-template-rows: minmax(0, 1fr) 184px; gap: 6px; padding: 6px 8px 7px; }
-        .wztitle { font-size: 21px; }
-        .bt { min-height: 110px; height: 110px; padding: 14px 12px; }
-        .bt .ic { font-size: 30px; }
-        .bt .lbl { font-size: 15px; }
-        .grid.big .bt { min-height: 125px; height: 125px; }
-        .pl { min-height: 68px; height: 68px; }
-        .fc { min-width: 112px; min-height: 78px; padding: 8px 10px; }
-        .bchip { min-height: 44px; font-size: 12px; }
-      }
-
+      /* ===================== V6/V7.1 · Responsive ===================== */
       @media (max-width: 1200px) {
-        .h {
-          grid-template-columns: 150px minmax(0, 1fr) auto;
-        }
-
-        .h-tt,
-        .team {
-          font-size: 11px;
-        }
-
-        .ghost {
-          font-size: 9.5px;
-          padding: 5px 6px;
-        }
-
-        .wrap {
-          grid-template-columns: minmax(160px, 20%) minmax(280px, 40%) minmax(280px, 40%);
-        }
-
-        .bottom {
-          grid-template-columns: minmax(0, 1fr) 240px;
-        }
+        .studio { grid-template-columns: 30% 70%; grid-template-rows: minmax(0, 1fr); }
+        .studio2 { grid-template-columns: 40% 60%; }
+        .live3 { grid-template-columns: 28% 44% 28%; }
+        .colHistory { display: none; }
+        .colCenter { order: 2; }
+        .colCoding { order: 1; }
+        .videoSlot { height: 240px; }
+        .zc-court { max-width: 280px; }
       }
 
-      @media (max-width: 920px) {
-        .ps-root {
-          position: fixed;
-          inset: 0;
-          height: 100dvh;
-          overflow: auto;
+      @media (max-width: 900px) {
+        .mtabs, .wtabs { display: flex; }
+        .wtabs { gap: 4px; }
+        .mtab {
+          flex: 1;
+          border: 1px solid var(--border);
+          background: transparent;
+          color: var(--mute);
+          border-radius: 8px;
+          padding: 7px 4px;
+          font-size: 12px;
+          font-weight: 800;
+          cursor: pointer;
         }
+        .mtab.on { background: var(--bordeaux); color: #fff; border-color: var(--bordeaux); }
+        .wtab { flex: 1; text-align: center; }
 
-        .h {
-          grid-template-columns: 1fr;
-          height: auto;
-          min-height: 0;
-        }
+        .studio { grid-template-columns: 1fr; }
+        .studio2 { grid-template-columns: 1fr; grid-auto-rows: min-content; overflow-y: auto; }
+        .hrow2 { grid-template-columns: 38px 20px minmax(0,1fr) 22px 22px 22px 22px; }
+        .hvtime { display: none; }
+        .colCenter, .colWork { min-height: 0; }
+        .colHistory { display: none; }
+        .playersBar { display: none; }
+        .videoSlot { height: 200px; max-height: 40vh; }
+        .courtbox { max-height: 180px; }
 
-        .h-c,
-        .h-r {
-          justify-content: center;
-          flex-wrap: wrap;
-        }
-
-        .liveFrame {
-          display: block;
-          overflow: auto;
-        }
-
-        .wrap,
-        .bottom,
-        .playersGrid {
-          display: grid;
-          grid-template-columns: 1fr;
-          height: auto;
-          overflow: visible;
-        }
-
-        .wrap,
-        .bottom {
-          gap: 8px;
-        }
-
-        .pane {
-          min-height: 180px;
-        }
-
-        .courtbox {
-          aspect-ratio: 400 / 280;
-          flex: 0 0 auto;
-        }
+        /* live3 → une colonne, pilotée par les onglets .wtabs */
+        .live3 { grid-template-columns: 1fr; }
+        .lc { display: none; }
+        .lc.mshow { display: flex; }
+        .codeDense .grid.c2, .codeDense .grid.c3 { grid-template-columns: repeat(3, 1fr); }
+        .videoSlot.big { min-height: 210px; }
       }
+
+      @media (max-width: 560px) {
+        .h-r .ghost { padding: 6px 8px; font-size: 11px; }
+        .vempty-tt { font-size: 14px; }
+        .videoSlot { height: 170px; }
+        .codeDense .grid.c2, .codeDense .grid.c3 { grid-template-columns: repeat(2, 1fr); }
+      }
+
     `}</style>
   );
 }

@@ -54,6 +54,12 @@ export type LiveMatchAction = {
 
   courtX?: number | null;
   courtY?: number | null;
+
+  // Vidéo (préparés au commit si une vidéo est active ; sinon null).
+  videoTime?: number | null;
+  clipStart?: number | null;
+  clipEnd?: number | null;
+  syncStatus?: string | null;
 };
 
 export type SaveLiveMatchPayload = {
@@ -311,6 +317,7 @@ function buildActionRow(
     user_id: ctx.userId,
     match_id: ctx.matchId,
     team_id: ctx.teamId,
+    actor_type: action.playerId ? "player" : "team",
 
     client_action_id: action.id ?? null,
 
@@ -338,6 +345,11 @@ function buildActionRow(
 
     court_x: action.courtX ?? null,
     court_y: action.courtY ?? null,
+
+    video_time: action.videoTime ?? null,
+    clip_start: action.clipStart ?? null,
+    clip_end: action.clipEnd ?? null,
+    sync_status: action.syncStatus ?? null,
 
     lineup: action.lineup ?? [],
   };
@@ -378,6 +390,14 @@ export type EnsureLiveMatchPayload = {
   date: string;
   home?: boolean;
   playerIds?: string[];
+
+  // Choix vidéo fait sur l'écran de création (structure V5).
+  videoMode?: "later" | "file" | "youtube";
+  videoStatus?: string;
+  videoProvider?: string;
+  videoUrl?: string;
+  videoFilename?: string;
+  youtubeUrl?: string;
 };
 
 export type EnsureLiveMatchResponse =
@@ -429,6 +449,12 @@ export async function ensureLiveMatch(
         status: "live",
         result: "N",
         per_q: { 1: { us: 0, them: 0 } },
+        video_mode: payload.videoMode ?? "later",
+        video_status: payload.videoStatus ?? "pending",
+        video_provider: payload.videoProvider ?? "none",
+        video_url: payload.videoUrl ?? null,
+        video_filename: payload.videoFilename ?? null,
+        youtube_url: payload.youtubeUrl ?? null,
       })
       .select("id")
       .single();
@@ -469,9 +495,25 @@ export async function persistLiveAction(args: {
 
     const row = buildActionRow(action, { userId: user.id, matchId, teamId });
 
-    const { error } = await supabase
-      .from("match_actions")
-      .upsert(row, { onConflict: "match_id,client_action_id" });
+    // IMPORTANT : ne pas utiliser .upsert(... onConflict: "match_id,client_action_id")
+    // ici, car certaines bases existantes n'ont pas encore de contrainte UNIQUE
+    // sur (match_id, client_action_id). Supabase renvoie alors une erreur au
+    // premier clic. On fait donc un delete ciblé puis un insert : c'est
+    // idempotent côté application, non bloquant, et ça ne dépend d'aucune
+    // contrainte SQL supplémentaire.
+    if (action.id) {
+      const { error: deleteError } = await supabase
+        .from("match_actions")
+        .delete()
+        .eq("match_id", matchId)
+        .eq("client_action_id", action.id);
+
+      if (deleteError) {
+        logSupabaseError("persistLiveAction: delete ancienne action (non bloquant)", deleteError);
+      }
+    }
+
+    const { error } = await supabase.from("match_actions").insert(row);
 
     if (error) {
       logSupabaseError("persistLiveAction (non bloquant)", error);
@@ -749,6 +791,8 @@ export async function saveLiveMatch(
       user_id: user.id,
       match_id: match.id,
       team_id: realTeamId,
+      actor_type: action.playerId ? "player" : "team",
+      client_action_id: action.id ?? null,
 
       player_id: action.playerId || null,
       assist_player_id: action.assistPlayerId || null,
@@ -774,6 +818,11 @@ export async function saveLiveMatch(
 
       court_x: action.courtX ?? null,
       court_y: action.courtY ?? null,
+
+      video_time: action.videoTime ?? null,
+      clip_start: action.clipStart ?? null,
+      clip_end: action.clipEnd ?? null,
+      sync_status: action.syncStatus ?? null,
 
       lineup: action.lineup ?? [],
     }));
