@@ -23,7 +23,7 @@ import {
   finalizeLiveMatch,
 } from "@/lib/stats-supabase";
 import { useLivestatTags } from "@/lib/livestat-tags";
-import ShotChart, { zoneById, resolveShotZone } from "@/components/prise-stats-pro/ShotChart";
+import ShotChart, { SHOT_ZONES, zoneById, resolveShotZone } from "@/components/prise-stats-pro/ShotChart";
 
 /* ============================ Types ============================ */
 interface Player { id: string; num: number; name: string; pos: string; photo?: string }
@@ -749,20 +749,29 @@ export default function PriseStatsProPage() {
   // Résolution d'affichage des temps forts (label/emoji/color) pour l'écran live.
   const tags = useLivestatTags(activeTeamId || teamId);
 
+  // Boutons "temps fort" du wizard, dérivés de la config dynamique par équipe
+  // (livestat_tags via useLivestatTags). key = id stable ; label/emoji renommables
+  // depuis Management > Codification sans casser les stats. Fallback constantes
+  // intégré dans useLivestatTags → jamais vide, jamais de key brute affichée.
+  const tempsFortsButtons = (tags.active.length ? tags.active : TEMPS.map((t) => ({ key: t.id, label: t.label, emoji: t.ic })))
+    .map((t: { key: string; label: string; emoji?: string | null }) => ({ id: t.key, label: t.label, ic: t.emoji || '' }));
+
   /* ---------------- V7 · ergonomie vidéo + workspace à onglets ---------------- */
   // Onglet de travail visible dans l'écran live (desktop + mobile).
   const [workTab, setWorkTab] = useState<'coding' | 'center' | 'analysis'>('coding');
 
   // Lecteur vidéo local + saut réglable + Tab+flèches.
   const videoRef = useRef<HTMLVideoElement | null>(null);
+  const clipVideoRef = useRef<HTMLVideoElement | null>(null); // vidéo du popup "revoir séquence"
   const [videoStepSeconds, setVideoStepSeconds] = useState(5);
   const [videoStepCustom, setVideoStepCustom] = useState(false);
   const tabHeldRef = useRef(false);
 
-  const hasLocalVideo = () => videoProvider === 'local' && !!videoRef.current;
+  const hasLocalVideo = () => (videoProvider === 'local' && !!videoRef.current) || !!clipVideoRef.current;
   const nudgeVideo = (dir: -1 | 1) => {
-    const v = videoRef.current;
-    if (videoProvider !== 'local' || !v) return; // pas de vidéo active → rien
+    // Priorité à la vidéo du popup clip si elle est ouverte, sinon la vidéo centrale.
+    const v = clipVideoRef.current || (videoProvider === 'local' ? videoRef.current : null);
+    if (!v) return;
     const dur = Number.isFinite(v.duration) ? v.duration : Infinity;
     v.currentTime = Math.max(0, Math.min(dur, v.currentTime + dir * videoStepSeconds));
   };
@@ -789,24 +798,61 @@ export default function PriseStatsProPage() {
   const [mxShotType, setMxShotType] = useState<'all' | '2PTS' | '3PTS' | 'LF'>('all');
   const [mxCell, setMxCell] = useState<{ tf: string; cat: string } | null>(null);
   // V7.1 · sous-onglet de la colonne analyse (droite) + zone shot chart sélectionnée
-  const [analysisTab, setAnalysisTab] = useState<'history' | 'matrix' | 'montage'>('history');
-  const [zoneSel, setZoneSel] = useState<string | null>(null);
+  const [analysisTab, setAnalysisTab] = useState<'history' | 'timeline' | 'matrix' | 'montage'>('history');  const [zoneSel, setZoneSel] = useState<string | null>(null);
   const [zoneFilter, setZoneFilter] = useState<'all' | 'made' | 'missed'>('all');
+  // V8 · timeline Sportscode : événement sélectionné (popup revoir/modifier)
+  const [evtSel, setEvtSel] = useState<string | null>(null);
+  // V8 · édition de clip locale (hors match_actions) : rognage / note coach / dessins.
+  // Clé = id d'action ; stockée séparément, jamais persistée dans match_actions.
+  type ClipDraw = { id: string; tool: 'arrow' | 'circle' | 'rect' | 'text'; x1: number; y1: number; x2: number; y2: number; text?: string };
+  type ClipEdit = { trimStart: number | null; trimEnd: number | null; note: string; draws: ClipDraw[] };
+  const [clipEdits, setClipEdits] = useState<Record<string, ClipEdit>>({});
+  const [drawTool, setDrawTool] = useState<'arrow' | 'circle' | 'rect' | 'text' | null>(null);
+  const drawStartRef = useRef<{ x: number; y: number } | null>(null);
+
+  const getClipEdit = (id: string): ClipEdit => clipEdits[id] || { trimStart: null, trimEnd: null, note: '', draws: [] };
+  const setClipEdit = (id: string, upd: Partial<ClipEdit>) =>
+    setClipEdits((prev) => ({ ...prev, [id]: { ...getClipEdit(id), ...upd } }));
+
+  // Navigation précédent / suivant dans la liste chronologique des actions.
+  const gotoEvt = (dir: -1 | 1) => {
+    if (!evtSel) return;
+    const idx = actions.findIndex((x) => x.id === evtSel);
+    const j = idx + dir;
+    if (idx < 0 || j < 0 || j >= actions.length) return;
+    setEvtSel(actions[j].id);
+    setDrawTool(null);
+  };
 
   // Montage en cours (reçoit des actions LOCALES pendant le match).
   const [montageTitle, setMontageTitle] = useState('Nouveau montage');
   const [montageNote, setMontageNote] = useState('');
   const [montageItems, setMontageItems] = useState<{ caid: string; label: string; sub: string; note: string; clipStart: number | null; clipEnd: number | null }[]>([]);
   const [montageSaving, setMontageSaving] = useState(false);
+  // V8 · rechargement d'un montage existant depuis Supabase.
+  const [montageId, setMontageId] = useState<string | null>(null);      // montage en cours d'édition (null = nouveau)
+  const [savedMontages, setSavedMontages] = useState<{ id: string; title: string; coach_note: string | null }[]>([]);
+  const [montageLoading, setMontageLoading] = useState(false);
 
   const addToMontage = (a: StatA) => {
     const p = find(a.playerId);
     const label = `${tags.label(a.tempsFort) || '—'} · ${describe(a, find).t}`;
     const sub = [periodLabel(a.q), a.clock, p ? `#${p.num} ${p.name}` : null].filter(Boolean).join(' · ');
-    setMontageItems((prev) => prev.some((x) => x.caid === a.id)
-      ? prev
-      : [...prev, { caid: a.id, label, sub, note: '', clipStart: a.clipStart ?? null, clipEnd: a.clipEnd ?? null }]);
-    flash('Ajouté au montage');
+    // Reprend le rognage + la note saisis dans la popup clip (édition locale),
+    // sinon retombe sur les repères auto de l'action.
+    const ce = clipEdits[a.id];
+    const cs = (ce?.trimStart ?? a.clipStart) ?? null;
+    const cEnd = (ce?.trimEnd ?? a.clipEnd) ?? null;
+    const note = ce?.note || '';
+    setMontageItems((prev) => {
+      const existing = prev.find((x) => x.caid === a.id);
+      if (existing) {
+        flash('Clip mis à jour dans le montage');
+        return prev.map((x) => (x.caid === a.id ? { ...x, label, sub, clipStart: cs, clipEnd: cEnd, note: note || x.note } : x));
+      }
+      flash('Ajouté au montage');
+      return [...prev, { caid: a.id, label, sub, note, clipStart: cs, clipEnd: cEnd }];
+    });
   };
   const removeMontageItem = (caid: string) => setMontageItems((prev) => prev.filter((x) => x.caid !== caid));
   const moveMontageItem = (idx: number, dir: -1 | 1) => {
@@ -821,6 +867,22 @@ export default function PriseStatsProPage() {
   const setMontageItemNote = (caid: string, note: string) =>
     setMontageItems((prev) => prev.map((x) => (x.caid === caid ? { ...x, note } : x)));
 
+  // Bloc 6 · élément sélectionné dans le storyboard (pour le panneau Propriétés).
+  const [montageSel, setMontageSel] = useState<string | null>(null);
+  // Mise à jour générique d'un item du montage (titre/note/rognage).
+  const updateMontageItem = (caid: string, patch: Partial<{ label: string; note: string; clipStart: number | null; clipEnd: number | null }>) =>
+    setMontageItems((prev) => prev.map((x) => (x.caid === caid ? { ...x, ...patch } : x)));
+  // Ajoute un élément non-vidéo (diapo couleur / image / texte). Persiste dans le
+  // schéma EXISTANT : client_action_id synthétique + titre/note. Pas de colonne
+  // supplémentaire → aucune migration Supabase requise. Le texte est conservé.
+  const addMontageElement = (kind: 'slide' | 'image' | 'text') => {
+    const caid = `${kind}_${uid()}`;
+    const label = kind === 'slide' ? '🟥 Diapo couleur' : kind === 'image' ? '🖼 Image' : '✎ Texte';
+    setMontageItems((prev) => [...prev, { caid, label, sub: 'Élément', note: '', clipStart: null, clipEnd: null }]);
+    setMontageSel(caid);
+    flash(kind === 'slide' ? 'Diapo ajoutée' : kind === 'image' ? 'Image ajoutée' : 'Texte ajouté');
+  };
+
   const saveMontage = async () => {
     const tId = activeTeamId || teamId;
     if (!montageItems.length) { flash('Ajoute au moins un clip.'); return; }
@@ -828,23 +890,95 @@ export default function PriseStatsProPage() {
     setMontageSaving(true);
     try {
       const supabase = createClient();
-      const { data, error } = await supabase
-        .from('livestat_montages')
-        .insert({ team_id: tId, match_id: liveMatchIdRef.current, title: montageTitle, coach_note: montageNote || null, status: 'draft' })
-        .select('id').single();
-      if (error || !data) { flash('Montage non enregistré : ' + (error?.message || '')); setMontageSaving(false); return; }
+      let mId = montageId;
+
+      if (mId) {
+        // Mise à jour d'un montage existant : titre/note + on remplace ses items.
+        const { error: upErr } = await supabase
+          .from('livestat_montages')
+          .update({ title: montageTitle, coach_note: montageNote || null })
+          .eq('id', mId);
+        if (upErr) { flash('Maj impossible : ' + upErr.message); setMontageSaving(false); return; }
+        await supabase.from('livestat_montage_items').delete().eq('montage_id', mId);
+      } else {
+        const { data, error } = await supabase
+          .from('livestat_montages')
+          .insert({ team_id: tId, match_id: liveMatchIdRef.current, title: montageTitle, coach_note: montageNote || null, status: 'draft' })
+          .select('id').single();
+        if (error || !data) { flash('Montage non enregistré : ' + (error?.message || '')); setMontageSaving(false); return; }
+        mId = data.id;
+        setMontageId(mId);
+      }
+
       const payload = montageItems.map((it, i) => ({
-        montage_id: data.id, match_id: liveMatchIdRef.current, client_action_id: it.caid,
+        montage_id: mId, match_id: liveMatchIdRef.current, client_action_id: it.caid,
         sort_order: i, title: it.label, note: it.note || null, clip_start: it.clipStart, clip_end: it.clipEnd,
       }));
       const { error: itErr } = await supabase.from('livestat_montage_items').insert(payload);
       if (itErr) { flash('Clips non enregistrés : ' + itErr.message); }
-      else flash('Montage enregistré ✓');
+      else { flash(montageId ? 'Montage mis à jour ✓' : 'Montage enregistré ✓'); loadMontageList(); }
     } catch (e: any) {
       flash('Erreur : ' + (e?.message || 'montage'));
     } finally {
       setMontageSaving(false);
     }
+  };
+
+  // Liste des montages sauvegardés de l'équipe (pour le sélecteur).
+  const loadMontageList = async () => {
+    const tId = activeTeamId || teamId;
+    if (!isSupabaseUuid(tId)) return;
+    try {
+      const supabase = createClient();
+      const { data } = await supabase
+        .from('livestat_montages')
+        .select('id,title,coach_note')
+        .eq('team_id', tId)
+        .order('created_at', { ascending: false });
+      setSavedMontages((data ?? []) as { id: string; title: string; coach_note: string | null }[]);
+    } catch { /* noop */ }
+  };
+
+  // Charge un montage existant + ses items dans l'éditeur.
+  const loadMontage = async (id: string) => {
+    if (!id) return;
+    setMontageLoading(true);
+    try {
+      const supabase = createClient();
+      const { data: m } = await supabase.from('livestat_montages').select('id,title,coach_note').eq('id', id).single();
+      const { data: items } = await supabase
+        .from('livestat_montage_items')
+        .select('client_action_id,sort_order,title,note,clip_start,clip_end')
+        .eq('montage_id', id)
+        .order('sort_order', { ascending: true });
+      if (m) {
+        setMontageId(m.id);
+        setMontageTitle(m.title || 'Montage');
+        setMontageNote(m.coach_note || '');
+      }
+      setMontageItems((items ?? []).map((it: any) => ({
+        caid: it.client_action_id || uid(),
+        label: it.title || 'Clip',
+        sub: '',
+        note: it.note || '',
+        clipStart: it.clip_start ?? null,
+        clipEnd: it.clip_end ?? null,
+      })));
+      flash('Montage chargé');
+    } catch (e: any) {
+      flash('Chargement impossible : ' + (e?.message || ''));
+    } finally {
+      setMontageLoading(false);
+    }
+  };
+
+  // Nouveau montage vierge (repart de zéro sans toucher aux montages sauvegardés).
+  const newMontage = () => {
+    setMontageId(null);
+    setMontageTitle('Nouveau montage');
+    setMontageNote('');
+    setMontageItems([]);
+    flash('Nouveau montage');
   };
 
   useEffect(() => {
@@ -872,17 +1006,33 @@ export default function PriseStatsProPage() {
     }
   }, [teams, teamId]);
 
-  // V7 · Tab maintenu + flèche gauche/droite = reculer/avancer la vidéo locale.
-  // Si aucune vidéo locale active, on ne fait rien (et on n'entrave pas le Tab).
+  // V10 · Raccourcis clavier : ESPACE = play/pause vidéo, B = chrono start/stop,
+  // SHIFT + flèche = reculer/avancer la vidéo. (Compat V7 : Tab+flèche marche aussi.)
+  // On n'intercepte pas quand on tape dans un champ (input/textarea/select).
+  const toggleVideo = () => {
+    const v = clipVideoRef.current || videoRef.current;
+    if (!v) return;
+    if (v.paused) v.play().catch(() => {}); else v.pause();
+  };
   useEffect(() => {
+    const typing = (t: EventTarget | null) => {
+      const el = t as HTMLElement | null;
+      if (!el) return false;
+      const tag = el.tagName;
+      return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || el.isContentEditable;
+    };
     const onKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Tab') {
-        if (hasLocalVideo()) { tabHeldRef.current = true; e.preventDefault(); }
-        return;
-      }
-      if (!tabHeldRef.current) return;
-      if (e.key === 'ArrowRight') { e.preventDefault(); nudgeVideo(1); }
-      else if (e.key === 'ArrowLeft') { e.preventDefault(); nudgeVideo(-1); }
+      if (typing(e.target)) return;
+
+      // ESPACE = play/pause vidéo
+      if (e.key === ' ' || e.code === 'Space') { e.preventDefault(); toggleVideo(); return; }
+      // B = start/stop du chrono match
+      if (e.key === 'b' || e.key === 'B') { e.preventDefault(); setRunning((r) => !r); return; }
+
+      // SHIFT + flèche = seek vidéo (ou Tab maintenu + flèche, compat V7)
+      if (e.key === 'Tab') { if (hasLocalVideo()) { tabHeldRef.current = true; e.preventDefault(); } return; }
+      if (e.key === 'ArrowRight' && (e.shiftKey || tabHeldRef.current)) { e.preventDefault(); nudgeVideo(1); return; }
+      if (e.key === 'ArrowLeft' && (e.shiftKey || tabHeldRef.current)) { e.preventDefault(); nudgeVideo(-1); return; }
     };
     const onKeyUp = (e: KeyboardEvent) => { if (e.key === 'Tab') tabHeldRef.current = false; };
     window.addEventListener('keydown', onKeyDown);
@@ -915,6 +1065,12 @@ export default function PriseStatsProPage() {
 
     return () => { active = false; };
   }, [activeTeamId, teamId]);
+
+  // Charge la liste des montages sauvegardés quand on ouvre l'onglet Montage.
+  useEffect(() => {
+    if (analysisTab === 'montage') loadMontageList();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [analysisTab, activeTeamId, teamId]);
 
   // chrono + calcul automatique du temps de jeu
   useEffect(() => {
@@ -977,7 +1133,7 @@ export default function PriseStatsProPage() {
   /* -------- création du match -------- */
   const selTeam = teams.find((t) => t.id === teamId);
   const setupRoster = selTeam?.players || [];
-  const canStart = !!opponent.trim() && starters.length === 5;
+  const canStart = !!date && !!teamId && !!selTeam && !!opponent.trim() && starters.length === 5;
   const toggleStarter = (id: string) => setStarters((s) => (s.includes(id) ? s.filter((x) => x !== id) : s.length < 5 ? [...s, id] : s));
   const startMatch = () => {
     if (!selTeam) return;
@@ -1023,7 +1179,6 @@ export default function PriseStatsProPage() {
   /* -------- enregistrement (auto, sans validation) -------- */
   const commit = (d: Draft) => {
     const vstamp = stampVideo();
-
     const a: StatA = {
       ...d,
       id: uid(),
@@ -1035,7 +1190,6 @@ export default function PriseStatsProPage() {
       clipEnd: vstamp.clipEnd,
       syncStatus: vstamp.syncStatus,
     };
-
     setActions((arr) => [...arr, a]);
     setPerQ((p) => { const cur = p[q] || { us: 0, them: 0 }; return { ...p, [q]: { us: cur.us + ptsOf(a), them: cur.them + themPtsOf(a) } }; });
     flash('Enregistré : ' + describe(a, find).t);
@@ -1576,88 +1730,131 @@ export default function PriseStatsProPage() {
 
   /* ============================ Rendu ============================ */
   if (screen === 'setup') {
+    const startersList = setupRoster.filter((p) => starters.includes(p.id));
+    const videoLabel = videoMode === 'file' ? '📁 Fichier vidéo' : videoMode === 'youtube' ? '▶️ Lien YouTube' : '🏟 Aucune sélection';
     return (
       <div className="ps-root">
-        <div className="setup"><div className="setup-card">
-          <div className="setup-head"><div className="kicker">PRISE DE STATS · NOUVEAU MATCH</div><h1>Créer le match</h1></div>
-          <div className="setup-body">
-            <div className="row">
-              <label className="fld"><span>Date</span><input type="date" value={date} onChange={(e) => setDate(e.target.value)} /></label>
-              <label className="fld"><span>Équipe Supabase</span>
-                <select value={teamId} onChange={(e) => { setTeamId(e.target.value); setStarters([]); }}>
-                  {teams.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
-                </select>
-              </label>
-              <label className="fld"><span>Adversaire</span><input placeholder="Nom de l'adversaire" value={opponent} onChange={(e) => setOpponent(e.target.value)} /></label>
-              <label className="fld venue-field">
-                <span>Lieu du match</span>
-                <div className="venue-switch">
-                  <button type="button" className={home ? 'on' : ''} onClick={() => setHome(true)}>🏠 Domicile</button>
-                  <button type="button" className={!home ? 'on' : ''} onClick={() => setHome(false)}>🚌 Extérieur</button>
+        <div id="create-match">
+          <header className="cm-head">
+            <div className="cm-brand"><div className="cm-logo">📊</div><div><div className="cm-t">PRISE DE STATS</div><div className="cm-s">LIVE STATS PRO</div></div></div>
+            <div className="cm-head-r"><button className="cm-ghost" type="button">↺ Historique des matchs</button></div>
+          </header>
+
+          <div className="cm-body">
+            {/* Colonne gauche */}
+            <div className="cm-left">
+              <div className="cm-hero">
+                <div className="cm-hero-ic">🏀</div>
+                <div>
+                  <div className="cm-eyebrow">NOUVEAU MATCH</div>
+                  <h1 className="cm-h1">Créer le match</h1>
+                  <p className="cm-sub">Configurez les informations du match et sélectionnez votre 5 majeur.</p>
                 </div>
-              </label>
-            </div>
-            <div>
-              <p className="sub-h">Vidéo du match <span className="cnt">— optionnel, modifiable après le match</span></p>
-              <div className="vid-modes">
-                <button type="button" className={`vmode ${videoMode === 'later' ? 'on' : ''}`} onClick={() => chooseVideoMode('later')}>
-                  <span className="vm-ic">⏳</span>
-                  <span className="vm-tt">Sans vidéo / plus tard</span>
-                  <span className="vm-sub">Coder maintenant, ajouter la vidéo ensuite</span>
-                </button>
-                <button type="button" className={`vmode ${videoMode === 'file' ? 'on' : ''}`} onClick={() => chooseVideoMode('file')}>
-                  <span className="vm-ic">🎥</span>
-                  <span className="vm-tt">Fichier vidéo maintenant</span>
-                  <span className="vm-sub">Sélectionner un fichier local</span>
-                </button>
-                <button type="button" className={`vmode ${videoMode === 'youtube' ? 'on' : ''}`} onClick={() => chooseVideoMode('youtube')}>
-                  <span className="vm-ic">▶️</span>
-                  <span className="vm-tt">Lien YouTube</span>
-                  <span className="vm-sub">Coller l'URL de la vidéo</span>
-                </button>
               </div>
 
-              {videoMode === 'file' && (
-                <div className="vid-input">
-                  <label className="vid-file">
-                    <input type="file" accept="video/*" onChange={(e) => onPickVideoFile(e.target.files?.[0] ?? null)} />
-                    <span className="vf-btn">📁 Choisir un fichier vidéo</span>
-                    <span className="vf-name">{videoFilename || 'Aucun fichier sélectionné'}</span>
+              <section className="cm-card">
+                <div className="cm-card-t">📋 INFORMATIONS DU MATCH</div>
+                <div className="cm-form">
+                  <label className="cm-field">Date du match
+                    <div className="cm-input"><span>📅</span><input type="date" value={date} onChange={(e) => setDate(e.target.value)} /></div></label>
+                  <label className="cm-field">Équipe Supabase
+                    <div className="cm-input"><span>🅧</span>
+                      <select value={teamId} onChange={(e) => { setTeamId(e.target.value); setStarters([]); }}>
+                        {teams.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
+                      </select>
+                    </div>
+                    <span className="cm-auto">↳ depuis <b>Mes équipes</b> : joueurs, numéros, postes, photos et staff récupérés automatiquement</span>
                   </label>
-                  {videoProvider === 'local' && <p className="vid-ok">🎥 Vidéo locale prête — les repères clip seront préparés à chaque action.</p>}
-                  <p className="vid-note">L'upload serveur n'est pas encore géré : la vidéo reste locale pour l'instant.</p>
+                  <label className="cm-field">Adversaire
+                    <div className="cm-input"><input placeholder="Nom de l'adversaire" value={opponent} onChange={(e) => setOpponent(e.target.value)} /></div></label>
+                  <div className="cm-field">Lieu du match
+                    <div className="cm-venue"><button type="button" className={`cm-v ${home ? 'on' : ''}`} onClick={() => setHome(true)}>🏠 DOMICILE</button><button type="button" className={`cm-v ${!home ? 'on' : ''}`} onClick={() => setHome(false)}>🏟 EXTÉRIEUR</button></div></div>
                 </div>
-              )}
+              </section>
 
-              {videoMode === 'youtube' && (
-                <div className="vid-input">
-                  <input
-                    className="vid-yt"
-                    placeholder="https://www.youtube.com/watch?v=…"
-                    value={youtubeUrl}
-                    onChange={(e) => onSetYoutube(e.target.value)}
-                  />
-                  {videoProvider === 'youtube'
-                    ? <p className="vid-ok">▶️ YouTube lié — les repères clip seront préparés à chaque action.</p>
-                    : youtubeUrl.trim().length > 0 && <p className="vid-warn">Lien YouTube non reconnu.</p>}
+              <section className="cm-card">
+                <div className="cm-card-t">🎥 VIDÉO DU MATCH <span className="cm-opt">OPTIONNEL, MODIFIABLE APRÈS LE MATCH</span></div>
+                <div className="cm-video">
+                  <div className={`cm-vid ${videoMode === 'later' ? 'on' : ''}`} onClick={() => chooseVideoMode('later')}>{videoMode === 'later' && <div className="cm-vid-ck">✓</div>}<div className="cm-vid-ic">🎥</div><div className="cm-vid-t">Sans vidéo / plus tard</div><div className="cm-vid-d">Coder maintenant, ajouter la vidéo ensuite.</div></div>
+                  <div className={`cm-vid ${videoMode === 'file' ? 'on' : ''}`} onClick={() => chooseVideoMode('file')}>{videoMode === 'file' && <div className="cm-vid-ck">✓</div>}<div className="cm-vid-ic">▶</div><div className="cm-vid-t">Fichier vidéo maintenant</div><div className="cm-vid-d">Sélectionner un fichier vidéo sur votre appareil.</div></div>
+                  <div className={`cm-vid ${videoMode === 'youtube' ? 'on' : ''}`} onClick={() => chooseVideoMode('youtube')}>{videoMode === 'youtube' && <div className="cm-vid-ck">✓</div>}<div className="cm-vid-ic">▶</div><div className="cm-vid-t">Lien YouTube</div><div className="cm-vid-d">Coller l'URL d'une vidéo YouTube.</div></div>
                 </div>
-              )}
+                {videoMode === 'file' && (
+                  <div className="vid-input">
+                    <label className="vid-file">
+                      <input type="file" accept="video/*" onChange={(e) => onPickVideoFile(e.target.files?.[0] ?? null)} />
+                      <span className="vf-btn">📁 Choisir un fichier vidéo</span>
+                      <span className="vf-name">{videoFilename || 'Aucun fichier sélectionné'}</span>
+                    </label>
+                  </div>
+                )}
+                {videoMode === 'youtube' && (
+                  <div className="vid-input">
+                    <input className="vid-yt" placeholder="https://www.youtube.com/watch?v=…" value={youtubeUrl} onChange={(e) => onSetYoutube(e.target.value)} />
+                  </div>
+                )}
+              </section>
             </div>
 
-            <div>
-              <p className="sub-h">5 majeur <span className="cnt">— {starters.length}/5 sélectionnés</span></p>
-              <div className="starters">
-                {setupRoster.map((p) => (
-                  <button key={p.id} type="button" className={`scard ${starters.includes(p.id) ? 'on' : ''}`} onClick={() => toggleStarter(p.id)}>
-                    <Av p={p} /><span className="n">{p.num}</span><span>{p.name}<br /><small>{p.pos}</small></span>
-                  </button>
-                ))}
+            {/* Colonne droite : 5 majeur */}
+            <div className="cm-right">
+              <div className="cm-right-head">
+                <div className="cm-5t">👥 <b>5 MAJEUR</b> <span className="cm-5c">{starters.length} / 5 SÉLECTIONNÉS</span></div>
+                <button className="cm-ghost sm" type="button" onClick={() => setStarters([])}>Vider la sélection</button>
+              </div>
+              <div className="cm-players">
+                {setupRoster.map((p) => {
+                  const on = starters.includes(p.id);
+                  return (
+                    <div key={p.id} className={`cm-p ${on ? 'on' : ''}`} onClick={() => toggleStarter(p.id)}>
+                      <div className="cm-p-num">{p.num}</div>
+                      <div className="cm-p-ck">{on ? '✓' : '○'}</div>
+                      <div className="cm-p-av"><Av p={p} /></div>
+                      <div className="cm-p-nm">{p.name}</div>
+                      <div className="cm-p-pos">● {p.pos}</div>
+                    </div>
+                  );
+                })}
                 {setupRoster.length === 0 && <span className="cnt">Aucun joueur Supabase dans cette équipe.</span>}
+              </div>
+              <div className="cm-slots">
+                {[0, 1, 2, 3, 4].map((i) => {
+                  const p = startersList[i];
+                  return (
+                    <div className="cm-slot" key={i}>
+                      <span className="cm-slot-l">TITULAIRE {i + 1}</span>
+                      {p
+                        ? <div className="cm-slot-f"><span className="rm" onClick={() => toggleStarter(p.id)}>✕</span><b>{p.num}</b><span>{p.name}</span></div>
+                        : <div className="cm-slot-e">＋ Ajouter</div>}
+                    </div>
+                  );
+                })}
+              </div>
+              <div className={`cm-warn ${starters.length === 5 ? 'ok' : ''}`}>
+                {starters.length === 5 ? <><span>✓</span> 5 joueurs sélectionnés — le reste de l'effectif passe automatiquement sur le banc.</> : <><span>⚠</span> Sélectionnez 5 joueurs pour démarrer la saisie des statistiques.</>}
               </div>
             </div>
           </div>
-          <div className="setup-foot"><button className="btn primary" disabled={!canStart} onClick={startMatch}>Démarrer la saisie →</button></div>
-        </div></div>
+
+          {/* Résumé + démarrer */}
+          <footer className="cm-foot">
+            <div className="cm-summary">
+              <div className="cm-sum-t">📋 RÉSUMÉ DU MATCH</div>
+              <div className="cm-sum-grid">
+                <div className="cm-sum"><span className="cm-sum-l">DATE</span><span className="cm-sum-v">{date || '-'}</span></div>
+                <div className="cm-sum"><span className="cm-sum-l">ÉQUIPE</span><span className="cm-sum-v">{selTeam?.name || '-'}</span></div>
+                <div className="cm-sum"><span className="cm-sum-l">ADVERSAIRE</span><span className="cm-sum-v">{opponent.trim() || '-'}</span></div>
+                <div className="cm-sum"><span className="cm-sum-l">LIEU</span><span className="cm-sum-v">{home ? '🏠 DOMICILE' : '🏟 EXTÉRIEUR'}</span></div>
+                <div className="cm-sum"><span className="cm-sum-l">VIDÉO</span><span className="cm-sum-v">{videoLabel}</span></div>
+                <div className="cm-sum"><span className="cm-sum-l">5 MAJEUR</span><span className="cm-sum-v"><b className="gold">{starters.length} / 5</b> sélectionnés</span></div>
+              </div>
+            </div>
+            <div className="cm-start-wrap">
+              <button className="cm-start" disabled={!canStart} onClick={startMatch}>▶ Démarrer la saisie</button>
+              <div className="cm-start-hint">{canStart ? 'Tout est prêt — lancez la saisie' : (starters.length < 5 ? 'Complétez votre 5 majeur pour continuer' : 'Renseignez date, équipe et adversaire')}</div>
+            </div>
+          </footer>
+        </div>
         <Style />
       </div>
     );
@@ -1745,7 +1942,47 @@ export default function PriseStatsProPage() {
           </nav>
 
           <div className="live3">
-            {/* ============ GAUCHE 25% · CODAGE compact ============ */}
+            {/* ============ GAUCHE · VIDÉO (élément principal) ============ */}
+            <section className={`lc lc-video ${workTab === 'center' ? 'mshow' : ''}`}>
+              <div className="videoSlot big">
+                {videoProvider === 'local' && videoUrl ? (
+                  <video ref={videoRef} className="vplayer" src={videoUrl} controls />
+                ) : videoProvider === 'youtube' && videoUrl ? (
+                  <div className="vyt">
+                    <div className="vyt-ic">▶️</div>
+                    <div className="vyt-tx">YouTube lié</div>
+                    <a className="vyt-open" href={videoUrl} target="_blank" rel="noreferrer">Ouvrir</a>
+                  </div>
+                ) : (
+                  <div className="vempty">
+                    <div className="vempty-tt">Ajouter une vidéo</div>
+                    <div className="vempty-sub">Le codage fonctionne sans vidéo — synchronisable après le match.</div>
+                    <div className="vempty-btns">
+                      <label className="vbtn"><input type="file" accept="video/*" onChange={(e) => onPickVideoFile(e.target.files?.[0] ?? null)} />📁 Fichier</label>
+                      <button className="vbtn" onClick={() => { const u = window.prompt('Lien YouTube :', youtubeUrl); if (u != null) onSetYoutube(u); }}>▶️ YouTube</button>
+                      <button className="vbtn ghosty" onClick={() => flash('Vidéo à ajouter après le match')}>⏳ Plus tard</button>
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {videoProvider === 'local' && videoUrl && (
+                <div className="vbar">
+                  <button className="vnav" onClick={() => nudgeVideo(-1)} title="Reculer (Tab + ←)">« −{videoStepSeconds}s</button>
+                  <div className="vstep">
+                    <span>Saut</span>
+                    {[3, 5, 10].map((s) => (
+                      <button key={s} className={!videoStepCustom && videoStepSeconds === s ? 'on' : ''} onClick={() => { setVideoStepCustom(false); setVideoStepSeconds(s); }}>{s}s</button>
+                    ))}
+                    <button className={videoStepCustom ? 'on' : ''} onClick={() => setVideoStepCustom(true)}>Perso</button>
+                    {videoStepCustom && <input type="number" min={1} max={60} value={videoStepSeconds} onChange={(e) => setVideoStepSeconds(Math.max(1, Number(e.target.value) || 1))} />}
+                  </div>
+                  <button className="vnav" onClick={() => nudgeVideo(1)} title="Avancer (Tab + →)">+{videoStepSeconds}s »</button>
+                </div>
+              )}
+            </section>
+
+            {/* ============ CENTRE · CODAGE (wizard) ============ */}
             <aside className={`lc lc-code ${workTab === 'coding' ? 'mshow' : ''}`}>
               <div className="lc-head">
                 <div className="crumb-mini">
@@ -1769,66 +2006,10 @@ export default function PriseStatsProPage() {
                 <button className="qbtn sm" onClick={undo}>↺ Annuler</button>
                 <button className="qbtn sm" onClick={resetDraft}>🗑 Reset</button>
               </div>
-              {/* Bandeau joueurs compact (remplacements) */}
-              <div className="lc-players">
-                <div className="lcp-row">
-                  {floor.map((p) => (
-                    <button key={p.id} className={`pchip xs ${draft.playerId === p.id ? 'active' : ''} ${subSel !== null ? 'swap' : ''}`} onClick={subSel !== null ? () => swap(p.id) : undefined}>
-                      <span className="num">{p.num}</span><span className="nm">{p.name}</span>
-                    </button>
-                  ))}
-                </div>
-                <div className="lcp-row bench">
-                  <button className={`pbtoggle xs ${subSel !== null ? 'on' : ''}`} onClick={() => setSubSel((s) => (s === null ? '' : null))}>⇄</button>
-                  {bench.map((p) => (
-                    <button key={p.id} className={`pchip xs bench ${subSel === p.id ? 'sel' : ''}`} onClick={() => setSubSel(p.id)}>
-                      <span className="num">{p.num}</span><span className="nm">{p.name}</span>
-                    </button>
-                  ))}
-                </div>
-              </div>
             </aside>
 
-            {/* ============ CENTRE 50% · VIDÉO prioritaire + shot chart zones ============ */}
-            <section className={`lc lc-center ${workTab === 'center' ? 'mshow' : ''}`}>
-              <div className="videoSlot big">
-                {videoProvider === 'local' && videoUrl ? (
-                  <video ref={videoRef} className="vplayer" src={videoUrl} controls />
-                ) : videoProvider === 'youtube' && videoUrl ? (
-                  <div className="vyt">
-                    <div className="vyt-ic">▶️</div>
-                    <div className="vyt-tx">YouTube lié</div>
-                    <a className="vyt-open" href={videoUrl} target="_blank" rel="noreferrer">Ouvrir</a>
-                  </div>
-                ) : (
-                  <div className="vempty">
-                    <div className="vempty-tt">Ajouter une vidéo</div>
-                    <div className="vempty-sub">Le codage fonctionne sans vidéo — synchronisable après le match.</div>
-                    <div className="vempty-btns">
-                      <label className="vbtn"><input type="file" accept="video/*" onChange={(e) => onPickVideoFile(e.target.files?.[0] ?? null)} />📁 Fichier</label>
-                      <button className="vbtn" onClick={() => { const u = window.prompt('Lien YouTube :', youtubeUrl); if (u != null) onSetYoutube(u); }}>▶️ YouTube</button>
-                      <button className="vbtn ghosty" onClick={() => flash('Vidéo à ajouter après le match')}>⏳ Plus tard</button>
-                    </div>
-                  </div>
-                )}
-              </div>
-
-              {/* Contrôles de lecture (visibles si vidéo locale) */}
-              {videoProvider === 'local' && videoUrl && (
-                <div className="vbar">
-                  <button className="vnav" onClick={() => nudgeVideo(-1)} title="Reculer (Tab + ←)">« −{videoStepSeconds}s</button>
-                  <div className="vstep">
-                    <span>Saut</span>
-                    {[3, 5, 10].map((s) => (
-                      <button key={s} className={!videoStepCustom && videoStepSeconds === s ? 'on' : ''} onClick={() => { setVideoStepCustom(false); setVideoStepSeconds(s); }}>{s}s</button>
-                    ))}
-                    <button className={videoStepCustom ? 'on' : ''} onClick={() => setVideoStepCustom(true)}>Perso</button>
-                    {videoStepCustom && <input type="number" min={1} max={60} value={videoStepSeconds} onChange={(e) => setVideoStepSeconds(Math.max(1, Number(e.target.value) || 1))} />}
-                  </div>
-                  <button className="vnav" onClick={() => nudgeVideo(1)} title="Avancer (Tab + →)">+{videoStepSeconds}s »</button>
-                </div>
-              )}
-
+            {/* ============ DROITE · SHOT CHART + JOUEURS / BANC ============ */}
+            <aside className={`lc lc-right ${workTab === 'analysis' ? 'mshow' : ''}`}>
               {/* Shot chart PAR ZONES pro — pick à l'étape zone, analyse sinon */}
               <div className="scZone">
                 {liveCourt ? (
@@ -1852,24 +2033,168 @@ export default function PriseStatsProPage() {
                   />
                 )}
               </div>
-            </section>
 
-            {/* ============ DROITE 25% · ANALYSE LIVE (3 sous-onglets) ============ */}
-            <aside className={`lc lc-analysis ${workTab === 'analysis' ? 'mshow' : ''}`}>
-              <div className="an-tabs">
-                {([['history', 'Historique'], ['matrix', 'Matrice'], ['montage', `Montage${montageItems.length ? ' · ' + montageItems.length : ''}`]] as const).map(([k, l]) => (
-                  <button key={k} className={`an-tab ${analysisTab === k ? 'on' : ''}`} onClick={() => setAnalysisTab(k as any)}>{l}</button>
-                ))}
-              </div>
-              <div className="an-body">
-                {analysisTab === 'history' && renderHistoryList()}
-                {analysisTab === 'matrix' && renderMatrix()}
-                {analysisTab === 'montage' && renderMontage()}
+              {/* Joueurs sur le terrain + banc (remplacements) */}
+              <div className="lc-players">
+                <div className="lcp-row">
+                  {floor.map((p) => (
+                    <button key={p.id} className={`pchip xs ${draft.playerId === p.id ? 'active' : ''} ${subSel !== null ? 'swap' : ''}`} onClick={subSel !== null ? () => swap(p.id) : undefined}>
+                      <span className="num">{p.num}</span><span className="nm">{p.name}</span>
+                    </button>
+                  ))}
+                </div>
+                <div className="lcp-row bench">
+                  <button className={`pbtoggle xs ${subSel !== null ? 'on' : ''}`} onClick={() => setSubSel((s) => (s === null ? '' : null))}>⇄</button>
+                  {bench.map((p) => (
+                    <button key={p.id} className={`pchip xs bench ${subSel === p.id ? 'sel' : ''}`} onClick={() => setSubSel(p.id)}>
+                      <span className="num">{p.num}</span><span className="nm">{p.name}</span>
+                    </button>
+                  ))}
+                </div>
               </div>
             </aside>
           </div>
+
+          {/* ============ BAS · TIMELINE / HISTORIQUE (+ matrice / montage) ============ */}
+          <div className={`live-strip ${workTab === 'analysis' ? 'mshow' : ''}`}>
+            <div className="an-tabs">
+              {([['history', 'Historique'], ['timeline', 'Timeline'], ['matrix', 'Matrice'], ['montage', `Montage${montageItems.length ? ' · ' + montageItems.length : ''}`]] as const).map(([k, l]) => (
+                <button key={k} className={`an-tab ${analysisTab === k ? 'on' : ''}`} onClick={() => setAnalysisTab(k as any)}>{l}</button>
+              ))}
+            </div>
+            <div className="an-body">
+              {analysisTab === 'history' && renderHistoryList()}
+              {analysisTab === 'timeline' && renderTimeline()}
+              {analysisTab === 'matrix' && renderMatrix()}
+              {analysisTab === 'montage' && renderMontage()}
+            </div>
+          </div>
         </>
       )}
+
+      {evtSel && (() => {
+        const a = actions.find((x) => x.id === evtSel);
+        if (!a) return null;
+        const p = find(a.playerId);
+        const hasClip = a.videoTime != null || a.clipStart != null;
+        const isShot = a.actionType === 'tir' && a.shotType !== 'LF';
+        const ce = getClipEdit(a.id);
+        const baseStart = (ce.trimStart ?? a.clipStart ?? a.videoTime) as number | null;
+        const idx = actions.findIndex((x) => x.id === a.id);
+        const patch = (upd: Partial<StatA>) => {
+          setActions((arr) => arr.map((x) => (x.id === a.id ? { ...x, ...upd } as StatA : x)));
+          flash('Séquence modifiée');
+        };
+        const seek = (t: number | null) => { const v = clipVideoRef.current; if (v && t != null) { try { v.currentTime = Math.max(0, t); v.play().catch(() => {}); } catch { /* noop */ } } };
+        const curTime = () => { const v = clipVideoRef.current; return v ? Math.round(v.currentTime) : null; };
+
+        // Dessin : conversion coordonnées écran → repère 0..100 du calque.
+        const rel = (e: MouseEvent) => {
+          const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
+          return { x: ((e.clientX - r.left) / r.width) * 100, y: ((e.clientY - r.top) / r.height) * 100 };
+        };
+        const onDrawDown = (e: MouseEvent) => { if (!drawTool) return; drawStartRef.current = rel(e); };
+        const onDrawUp = (e: MouseEvent) => {
+          if (!drawTool || !drawStartRef.current) return;
+          const s = drawStartRef.current; const en = rel(e);
+          drawStartRef.current = null;
+          let text: string | undefined;
+          if (drawTool === 'text') { const t = window.prompt('Texte :', ''); if (t == null || !t.trim()) return; text = t.trim(); }
+          const d: ClipDraw = { id: uid(), tool: drawTool, x1: s.x, y1: s.y, x2: en.x, y2: en.y, text };
+          setClipEdit(a.id, { draws: [...ce.draws, d] });
+        };
+
+        return (
+          <div className="zpop" onClick={() => { setEvtSel(null); setDrawTool(null); }}>
+            <div className="zpop-card clip" onClick={(e) => e.stopPropagation()}>
+              <div className="zpop-head">
+                <b>{periodLabel(a.q)} {a.clock} · {tags.label(a.tempsFort)}</b>
+                <div className="clip-nav">
+                  <button disabled={idx <= 0} onClick={() => gotoEvt(-1)} title="Précédent">‹ Préc.</button>
+                  <button disabled={idx >= actions.length - 1} onClick={() => gotoEvt(1)} title="Suivant">Suiv. ›</button>
+                  <button onClick={() => { setEvtSel(null); setDrawTool(null); }}>×</button>
+                </div>
+              </div>
+
+              {/* Vidéo + calque de dessin */}
+              <div className="clip-stage">
+                {videoProvider === 'local' && videoUrl && hasClip ? (
+                  <video
+                    className="evt-vplayer"
+                    src={videoUrl}
+                    controls
+                    ref={(el) => { clipVideoRef.current = el; if (el && baseStart != null && el.dataset.seeded !== a.id) { try { el.currentTime = baseStart; el.dataset.seeded = a.id; } catch { /* noop */ } } }}
+                  />
+                ) : (
+                  <div className="evt-noclip">{hasClip ? '▶️ YouTube lié — repère ' + fmt(Math.round((a.clipStart ?? a.videoTime) as number)) : 'Clip à synchroniser (ajoute une vidéo locale)'}</div>
+                )}
+
+                {/* Calque d'annotations (SVG 0..100) */}
+                <svg className={`clip-draw ${drawTool ? 'active' : ''}`} viewBox="0 0 100 100" preserveAspectRatio="none"
+                  onMouseDown={onDrawDown} onMouseUp={onDrawUp}>
+                  <defs>
+                    <marker id="arrowhead" markerWidth="4" markerHeight="4" refX="3" refY="2" orient="auto">
+                      <path d="M0,0 L4,2 L0,4 Z" fill="var(--gold)" />
+                    </marker>
+                  </defs>
+                  {ce.draws.map((d) => {
+                    if (d.tool === 'arrow') return <line key={d.id} x1={d.x1} y1={d.y1} x2={d.x2} y2={d.y2} stroke="var(--gold)" strokeWidth="0.8" markerEnd="url(#arrowhead)" />;
+                    if (d.tool === 'circle') { const rx = Math.abs(d.x2 - d.x1) / 2, ry = Math.abs(d.y2 - d.y1) / 2; return <ellipse key={d.id} cx={(d.x1 + d.x2) / 2} cy={(d.y1 + d.y2) / 2} rx={rx} ry={ry} fill="none" stroke="var(--gold)" strokeWidth="0.8" />; }
+                    if (d.tool === 'rect') return <rect key={d.id} x={Math.min(d.x1, d.x2)} y={Math.min(d.y1, d.y2)} width={Math.abs(d.x2 - d.x1)} height={Math.abs(d.y2 - d.y1)} fill="none" stroke="var(--gold)" strokeWidth="0.8" />;
+                    if (d.tool === 'text') return <text key={d.id} x={d.x1} y={d.y1} fill="var(--gold)" fontSize="5" fontWeight="800">{d.text}</text>;
+                    return null;
+                  })}
+                </svg>
+              </div>
+
+              {/* Barre d'outils dessin */}
+              <div className="clip-draws">
+                {([['arrow', '↗ Flèche'], ['circle', '◯ Cercle'], ['rect', '▭ Rectangle'], ['text', 'T Texte']] as const).map(([t, l]) => (
+                  <button key={t} className={drawTool === t ? 'on' : ''} onClick={() => setDrawTool(drawTool === t ? null : t)}>{l}</button>
+                ))}
+                <button className="danger" disabled={!ce.draws.length} onClick={() => setClipEdit(a.id, { draws: [] })}>🧹 Effacer</button>
+              </div>
+
+              {/* Rognage */}
+              <div className="clip-trim">
+                <span className="clip-trim-lbl">Rognage</span>
+                <button onClick={() => { const t = curTime(); if (t != null) { setClipEdit(a.id, { trimStart: t }); flash('Début → ' + fmt(t)); } }}>⇤ Début ici</button>
+                <span className="clip-trim-val">{ce.trimStart != null ? fmt(ce.trimStart) : (a.clipStart != null ? fmt(a.clipStart) + ' (auto)' : '—')}</span>
+                <button onClick={() => { const t = curTime(); if (t != null) { setClipEdit(a.id, { trimEnd: t }); flash('Fin → ' + fmt(t)); } }}>⇥ Fin ici</button>
+                <span className="clip-trim-val">{ce.trimEnd != null ? fmt(ce.trimEnd) : (a.clipEnd != null ? fmt(a.clipEnd) + ' (auto)' : '—')}</span>
+                <button onClick={() => seek(baseStart)}>▶ Revoir début</button>
+              </div>
+
+              <div className="evt-info">
+                <span>{p ? `#${p.num} ${p.name}` : 'Sans joueur'}</span>
+                <span>{describe(a, find).t}</span>
+              </div>
+
+              {/* Correction rapide + montage */}
+              <div className="evt-tools">
+                {isShot && (
+                  <>
+                    <button className={a.shotResult === 'made' ? 'on' : ''} onClick={() => patch({ shotResult: 'made' })}>✓ Marqué</button>
+                    <button className={a.shotResult === 'missed' ? 'on' : ''} onClick={() => patch({ shotResult: 'missed' })}>✕ Raté</button>
+                  </>
+                )}
+                <select value={a.playerId ?? ''} onChange={(e) => patch({ playerId: e.target.value || null })}>
+                  <option value="">Joueur…</option>
+                  {roster.map((pl) => <option key={pl.id} value={pl.id}>#{pl.num} {pl.name}</option>)}
+                </select>
+                <button onClick={() => addToMontage(a)}>⭐ Montage</button>
+                <button className="danger" onClick={() => { removeAction(a.id); setEvtSel(null); }}>🗑 Supprimer</button>
+              </div>
+
+              {/* Note coach */}
+              <textarea className="clip-note" placeholder="Note coach sur ce clip…" value={ce.note}
+                onChange={(e) => setClipEdit(a.id, { note: e.target.value })} />
+
+              <div className="evt-note">Rognage, note et dessins sont stockés en local (hors match_actions). La correction Marqué/Raté/joueur modifie l'action ; pour un recalcul de score immédiat, préfère ↩ dans l'historique.</div>
+            </div>
+          </div>
+        );
+      })()}
 
       {zoneSel && (() => {
         const z = zoneById(zoneSel);
@@ -1995,6 +2320,89 @@ export default function PriseStatsProPage() {
     );
   }
 
+  /* ============ V8 · Timeline Sportscode ============
+     Une piste (row) par catégorie codée effectivement utilisée : les temps
+     forts (via tags) + les contextes attaque/défense. Chaque événement est
+     placé horizontalement selon son chrono dans le quart-temps ; séparateurs
+     verticaux entre QT. Hover = tags ; clic = popup revoir/modifier (evtSel).
+     Lecture seule des `actions` locales : aucun impact moteur. */
+  function evtColor(a: StatA): string {
+    // Bleu = attaque réussie, Rouge = erreur/perte, Vert = positif défensif, Orange = faute
+    if (a.actionType === 'tir' && a.shotResult === 'made') return 'var(--blue)';
+    if (a.actionType === 'perte' || a.actionType === 'perte-adverse') return 'var(--red)';
+    if (a.actionType === 'tir' && a.shotResult === 'missed') return 'var(--red)';
+    if (a.actionType === 'interception' || a.actionType === 'contre') return 'var(--green)';
+    if (a.actionType === 'faute-provoquee' || a.actionType === 'faute-commise') return 'var(--orange)';
+    if (a.context === 'attaque') return 'var(--bordeaux2)';
+    return 'var(--mute)';
+  }
+  // Position horizontale 0..1 d'une action dans son quart-temps (chrono décroissant).
+  function evtX(a: StatA): number {
+    const parts = (a.clock || '00:00').split(':');
+    const rem = (parseInt(parts[0], 10) || 0) * 60 + (parseInt(parts[1], 10) || 0);
+    const dur = periodDuration(a.q);
+    return Math.max(0, Math.min(1, (dur - rem) / dur)); // début QT = 0, fin QT = 1
+  }
+
+  function renderTimeline() {
+    const list = mxFiltered();
+    // Lignes = catégories réellement utilisées : temps forts d'abord, puis contextes.
+    const usedTf = (tags.active && tags.active.length ? tags.active.map((t: any) => t.key) : TEMPS.map((t) => t.id))
+      .filter((k: string) => list.some((a) => a.tempsFort === k));
+    const rows: { key: string; label: string; color?: string; test: (a: StatA) => boolean }[] = [
+      ...usedTf.map((k: string) => ({ key: 'tf:' + k, label: tags.label(k), color: tags.color(k), test: (a: StatA) => a.tempsFort === k })),
+      { key: 'ctx:attaque', label: 'Attaque', test: (a: StatA) => a.context === 'attaque' },
+      { key: 'ctx:defense', label: 'Défense', test: (a: StatA) => a.context === 'defense' },
+    ];
+    const quarters = Object.keys(perQ).map(Number).sort((a, b) => a - b);
+
+    return (
+      <div className="tl-wrap">
+        <div className="tl-legend">
+          <span><i style={{ background: 'var(--blue)' }} />Attaque réussie</span>
+          <span><i style={{ background: 'var(--red)' }} />Erreur / raté</span>
+          <span><i style={{ background: 'var(--green)' }} />Positif déf.</span>
+          <span><i style={{ background: 'var(--orange)' }} />Faute</span>
+        </div>
+        <div className="tl-grid">
+          {rows.length === 0 && <div className="hist-empty">Aucune action à afficher.</div>}
+          {rows.map((row) => {
+            const evs = list.filter(row.test);
+            return (
+              <div className="tl-row" key={row.key}>
+                <div className="tl-label" style={{ color: row.color || 'var(--txt)' }} title={row.label}>{row.label}</div>
+                <div className="tl-track">
+                  {/* séparateurs de quart-temps */}
+                  {quarters.slice(1).map((_, i) => (
+                    <span key={i} className="tl-qsep" style={{ left: `${((i + 1) / quarters.length) * 100}%` }} />
+                  ))}
+                  {evs.map((a) => {
+                    const qi = Math.max(0, quarters.indexOf(a.q));
+                    const left = ((qi + evtX(a)) / quarters.length) * 100;
+                    const p = find(a.playerId);
+                    const tip = `${periodLabel(a.q)} ${a.clock} · ${p ? '#' + p.num + ' ' + p.name : '—'} · ${describe(a, find).t}`;
+                    return (
+                      <button
+                        key={a.id}
+                        className="tl-evt"
+                        style={{ left: `${left}%`, background: evtColor(a) }}
+                        title={tip}
+                        onClick={() => setEvtSel(a.id)}
+                      />
+                    );
+                  })}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+        <div className="tl-axis">
+          {quarters.map((qq) => <span key={qq} style={{ width: `${100 / quarters.length}%` }}>{periodLabel(qq)}</span>)}
+        </div>
+      </div>
+    );
+  }
+
   function renderMatrix() {
     const list = mxFiltered();
     const tfKeys = (tags.active && tags.active.length ? tags.active.map((t: any) => t.key) : TEMPS.map((t) => t.id));
@@ -2084,34 +2492,103 @@ export default function PriseStatsProPage() {
   }
 
   function renderMontage() {
+    const sel = montageItems.find((x) => x.caid === montageSel) || null;
+    const inMontage = new Set(montageItems.map((x) => x.caid));
+    // Bibliothèque : actions codées disponibles (clip vidéo prioritaire), non déjà ajoutées.
+    const library = actions.filter((a) => !inMontage.has(a.id));
     return (
-      <div className="mo-wrap">
-        <div className="mo-meta">
-          <input className="mo-title" value={montageTitle} onChange={(e) => setMontageTitle(e.target.value)} placeholder="Titre du montage (thème, joueur, temps fort…)" />
-          <textarea className="mo-note" value={montageNote} onChange={(e) => setMontageNote(e.target.value)} placeholder="Note coach…" />
-          <div className="mo-status">
-            <span className="mo-badge">🎬 {montageItems.length} clip{montageItems.length > 1 ? 's' : ''}</span>
-            <span className="mo-badge pending">⏳ Export à venir</span>
-            <button className="mo-save" disabled={montageSaving || !montageItems.length} onClick={saveMontage}>{montageSaving ? '⏳ …' : '💾 Enregistrer'}</button>
+      <div className="mo3">
+        {/* ---------- GAUCHE · Bibliothèque de clips ---------- */}
+        <div className="mo-col">
+          <div className="mo-col-h">Bibliothèque · {library.length} clip{library.length > 1 ? 's' : ''}</div>
+          <div className="mo-col-b">
+            {library.length === 0
+              ? <div className="hist-empty">Toutes les actions codées sont déjà dans le montage.</div>
+              : library.slice().reverse().map((a) => {
+                const p = find(a.playerId);
+                return (
+                  <div className="mo-lib" key={a.id}>
+                    <div className="mo-lib-tx">
+                      <b>{tags.emoji(a.tempsFort)} {tags.label(a.tempsFort)}</b>
+                      <small>{periodLabel(a.q)} {a.clock}{p ? ` · #${p.num}` : ''} · {describe(a, find).t}</small>
+                    </div>
+                    <button className="mo-lib-add" onClick={() => addToMontage(a)} title="Ajouter au montage">＋</button>
+                  </div>
+                );
+              })}
           </div>
         </div>
-        <div className="mo-list">
-          {montageItems.length === 0
-            ? <div className="hist-empty">Ajoute des clips depuis l'Historique ou la Matrice (bouton ＋).</div>
-            : montageItems.map((it, idx) => (
-              <div className="mo-item" key={it.caid}>
-                <span className="mo-num">{idx + 1}</span>
-                <div className="mo-body">
-                  <b>{it.label}</b><small>{it.sub}</small>
-                  <input className="mo-inote" value={it.note} placeholder="Note sur ce clip…" onChange={(e) => setMontageItemNote(it.caid, e.target.value)} />
+
+        {/* ---------- CENTRE · Storyboard (montage final) ---------- */}
+        <div className="mo-col">
+          <div className="mo-col-h">
+            <select className="mo-pick" value={montageId ?? ''} onChange={(e) => { const v = e.target.value; if (v) loadMontage(v); else newMontage(); }}>
+              <option value="">➕ Nouveau montage</option>
+              {savedMontages.map((m) => <option key={m.id} value={m.id}>{m.title || 'Montage'}</option>)}
+            </select>
+            <button className="mo-new" onClick={newMontage} title="Repartir d'un montage vierge">Nouveau</button>
+            {montageLoading && <span className="mo-badge">⏳</span>}
+          </div>
+          <div className="mo-col-b">
+            {montageItems.length === 0
+              ? <div className="hist-empty">Ajoute des clips depuis la bibliothèque (＋), la popup clip (⭐), l'Historique ou la Matrice.</div>
+              : montageItems.map((it, idx) => (
+                <div className={`mo-item ${montageSel === it.caid ? 'sel' : ''}`} key={it.caid} onClick={() => setMontageSel(it.caid)}>
+                  <span className="mo-num">{idx + 1}</span>
+                  <div className="mo-body"><b>{it.label}</b><small>{it.sub}</small></div>
+                  <div className="mo-ctrl">
+                    <button disabled={idx === 0} onClick={(e) => { e.stopPropagation(); moveMontageItem(idx, -1); }}>▲</button>
+                    <button disabled={idx === montageItems.length - 1} onClick={(e) => { e.stopPropagation(); moveMontageItem(idx, 1); }}>▼</button>
+                    <button className="rm" onClick={(e) => { e.stopPropagation(); removeMontageItem(it.caid); if (montageSel === it.caid) setMontageSel(null); }}>✕</button>
+                  </div>
                 </div>
-                <div className="mo-ctrl">
-                  <button disabled={idx === 0} onClick={() => moveMontageItem(idx, -1)}>▲</button>
-                  <button disabled={idx === montageItems.length - 1} onClick={() => moveMontageItem(idx, 1)}>▼</button>
-                  <button className="rm" onClick={() => removeMontageItem(it.caid)}>✕</button>
+              ))}
+          </div>
+          <div className="mo-add">
+            <button onClick={() => addMontageElement('image')}>🖼 Image</button>
+            <button onClick={() => addMontageElement('slide')}>🟥 Diapo</button>
+            <button onClick={() => addMontageElement('text')}>✎ Texte</button>
+          </div>
+        </div>
+
+        {/* ---------- DROITE · Propriétés ---------- */}
+        <div className="mo-col mo-props">
+          <div className="mo-col-h">Propriétés</div>
+          <div className="mo-col-b">
+            {/* Propriétés du montage */}
+            <label className="mo-f">Titre du montage
+              <input value={montageTitle} onChange={(e) => setMontageTitle(e.target.value)} placeholder="Thème, joueur, temps fort…" />
+            </label>
+            <label className="mo-f">Note coach (montage)
+              <textarea value={montageNote} onChange={(e) => setMontageNote(e.target.value)} placeholder="Note coach…" />
+            </label>
+            <div className="mo-sep" />
+            {/* Propriétés de l'élément sélectionné */}
+            {sel ? (
+              <>
+                <div className="mo-f-h">Élément sélectionné</div>
+                <label className="mo-f">Titre
+                  <input value={sel.label} onChange={(e) => updateMontageItem(sel.caid, { label: e.target.value })} />
+                </label>
+                <label className="mo-f">Note
+                  <textarea value={sel.note} onChange={(e) => updateMontageItem(sel.caid, { note: e.target.value })} placeholder="Note sur cet élément…" />
+                </label>
+                <div className="mo-frow">
+                  <label className="mo-f">Début (s)
+                    <input type="number" value={sel.clipStart ?? ''} onChange={(e) => updateMontageItem(sel.caid, { clipStart: e.target.value === '' ? null : Number(e.target.value) })} />
+                  </label>
+                  <label className="mo-f">Fin (s)
+                    <input type="number" value={sel.clipEnd ?? ''} onChange={(e) => updateMontageItem(sel.caid, { clipEnd: e.target.value === '' ? null : Number(e.target.value) })} />
+                  </label>
                 </div>
-              </div>
-            ))}
+              </>
+            ) : <div className="tip">Sélectionne un élément du storyboard pour éditer ses propriétés.</div>}
+          </div>
+          <div className="mo-foot">
+            <span className="mo-badge">🎬 {montageItems.length} clip{montageItems.length > 1 ? 's' : ''}</span>
+            <button className="mo-save" disabled={montageSaving || !montageItems.length} onClick={saveMontage}>{montageSaving ? '⏳ …' : (montageId ? '💾 Enregistrer les modifs' : '💾 Enregistrer')}</button>
+            <button className="mo-export" disabled title="Bientôt disponible">⬇ Export vidéo (à venir)</button>
+          </div>
         </div>
       </div>
     );
@@ -2130,7 +2607,7 @@ export default function PriseStatsProPage() {
           <button className={`bt ${draft.inbound === 'blob' ? 'active' : ''}`} onClick={() => inboundPick('blob')}><span className="ic">⎯</span><span className="lbl">BLOB<br /><small className="mut">Ligne de fond</small></span></button>
         </div></>;
       case 'temps':
-        return <>{head('Temps fort', 'Type de jeu')}{tileGrid(TEMPS, draft.tempsFort, tempsPick)}</>;
+        return <>{head('Temps fort', 'Type de jeu')}{tileGrid(tempsFortsButtons, draft.tempsFort, tempsPick)}</>;
       case 'coverage':
         return <>{head("Défense sur l'écran", 'Comment défend-on le pick ?')}<div className="grid c3">{resolveCodingButtons('coverage', codingDb).map((c) => <button key={c.key} className={`chip ${draft.coverage === c.key ? 'active' : ''}`} onClick={() => covPick(c.key)}>{c.emoji ? c.emoji + ' ' : ''}{c.label}</button>)}</div></>;
       case "player": {
@@ -2183,8 +2660,15 @@ export default function PriseStatsProPage() {
       case 'zone':
         return <>{head('Où ?', 'Cliquez directement sur le terrain (shot chart)')}<div className="tip">Pas d'étiquette de zone : cliquez l'emplacement exact du tir sur le terrain à droite.</div></>;
       case 'rebound': {
-        const reb: [string, string][] = [['off', 'Rebond offensif'], ['def', 'Rebond défensif'], ['touche-pour', 'Touche pour'], ['touche-contre', 'Touche contre']];
-        return <>{head('Conséquence', 'Rebond sur tir manqué')}<div className="grid c2">{reb.map(([id, l]) => <button key={id} className={`chip ${draft.reboundType === id ? 'active' : ''}`} onClick={() => rebPick(id)}>{l}</button>)}</div>
+        // Rebonds : ids STABLES (off/def/touche-pour/touche-contre) utilisés par le
+        // moteur (isMyRebound/reboundNext) — jamais modifiés. Seuls les LIBELLÉS sont
+        // configurables via livestat_coding_buttons (catégorie 'rebound') : la config
+        // par équipe écrase le label par key, sinon on garde les libellés par défaut.
+        const rebDefaults: Record<string, string> = { 'off': 'Rebond offensif', 'def': 'Rebond défensif', 'touche-pour': 'Touche pour', 'touche-contre': 'Touche contre' };
+        const rebCfg = resolveCodingButtons('rebound', codingDb);
+        const rebLabelOf = (id: string) => rebCfg.find((c) => c.key === id)?.label ?? rebDefaults[id];
+        const reb: string[] = ['off', 'def', 'touche-pour', 'touche-contre'];
+        return <>{head('Conséquence', 'Rebond sur tir manqué')}<div className="grid c2">{reb.map((id) => <button key={id} className={`chip ${draft.reboundType === id ? 'active' : ''}`} onClick={() => rebPick(id)}>{rebLabelOf(id)}</button>)}</div>
           {draft.reboundType && isMyRebound(draft.context, draft.reboundType) && <><div className="sublbl">Qui prend le rebond ?</div>{players3(draft.reboundPlayerId, rebWho)}<button className="chip" style={{ marginTop: 8 }} onClick={() => commit(draft)}>Sans précision →</button></>}
         </>;
       }
@@ -2202,238 +2686,203 @@ export default function PriseStatsProPage() {
 /* ============================ Box-score ============================ */
 function BoxView({ actions, roster, teamId }: { actions: StatA[]; roster: Player[]; teamId?: string }) {
   const tags = useLivestatTags(teamId);
+  const find = (id: string | null) => roster.find((p) => p.id === id);
   const box = computeBox(actions, roster);
+  const A = computeAnalytics(actions, roster);
   const pts = (l: any) => l.p2m * 2 + l.p3m * 3 + l.ftm;
+  const [boxTab, setBoxTab] = useState<'box' | 'team' | 'matrix' | 'search' | 'lineups' | 'shot' | 'video'>('box');
 
   const tot: any = box.reduce((t: any, l: any) => {
-    [
-      "p2m",
-      "p2a",
-      "p3m",
-      "p3a",
-      "ftm",
-      "fta",
-      "offReb",
-      "defReb",
-      "ast",
-      "stl",
-      "blk",
-      "to",
-      "pf",
-    ].forEach((k) => {
-      t[k] = (t[k] || 0) + (l[k] || 0);
-    });
-
+    ['p2m', 'p2a', 'p3m', 'p3a', 'ftm', 'fta', 'offReb', 'defReb', 'ast', 'stl', 'blk', 'to', 'pf'].forEach((k) => { t[k] = (t[k] || 0) + (l[k] || 0); });
     t.pts = (t.pts || 0) + pts(l);
-
     return t;
   }, {});
 
-  const A = computeAnalytics(actions, roster);
+  // --- KPIs collectifs (calculés sur les vraies actions) ---
+  const teamPts = tot.pts || 0;
+  const fga = (tot.p2a || 0) + (tot.p3a || 0);
+  const fgm = (tot.p2m || 0) + (tot.p3m || 0);
+  const efg = fga ? ((fgm + 0.5 * (tot.p3m || 0)) / fga) * 100 : 0;
+  const ts = (fga || tot.fta) ? (teamPts / (2 * (fga + 0.44 * (tot.fta || 0)))) * 100 : 0;
+  const ppp = A.offPoss ? teamPts / A.offPoss : 0;
+  const astTo = (tot.to || 0) ? (tot.ast || 0) / (tot.to || 0) : (tot.ast || 0);
+
+  // --- Matrice temps forts × résultats ---
+  const tfRows = A.tfUsed.map((t) => {
+    const list = actions.filter((a) => a.tempsFort === t.id);
+    const made = list.filter((a) => a.actionType === 'tir' && a.shotResult === 'made').length;
+    const missed = list.filter((a) => a.actionType === 'tir' && a.shotResult === 'missed').length;
+    const lost = list.filter((a) => a.actionType === 'perte').length;
+    const points = list.reduce((s, a) => s + ptsOf(a), 0);
+    const poss = list.length;
+    const shots = made + missed;
+    return { t, made, missed, lost, points, poss, pct: shots ? Math.round((made / shots) * 100) : 0, ppp: poss ? points / poss : 0 };
+  });
+
+  // --- Recherche avancée : filtres cumulables ---
+  const [fPlayer, setFPlayer] = useState('all');
+  const [fQ, setFQ] = useState('all');
+  const [fTf, setFTf] = useState('all');
+  const [fAct, setFAct] = useState('all');
+  const [fRes, setFRes] = useState('all');
+  const filtered = actions.filter((a) =>
+    (fPlayer === 'all' || a.playerId === fPlayer) &&
+    (fQ === 'all' || String(a.q) === fQ) &&
+    (fTf === 'all' || a.tempsFort === fTf) &&
+    (fAct === 'all' || a.actionType === fAct) &&
+    (fRes === 'all' || a.shotResult === fRes)
+  );
+
+  const videoClips = actions.filter((a) => a.videoTime != null || a.clipStart != null);
+
   const Sec = ({ t }: { t: string }) => <div className="boxsec">{t}</div>;
   const Card = ({ t, v, c }: { t: string; v: any; c?: string }) => (
-    <div className="boxcard">
-      <div className="bt-lbl2">{t}</div>
-      <div className="bt-val" style={{ color: c || "var(--txt)" }}>
-        {v}
-      </div>
-    </div>
+    <div className="boxcard"><div className="bt-lbl2">{t}</div><div className="bt-val" style={{ color: c || 'var(--txt)' }}>{v}</div></div>
   );
+
+  const TABS: [typeof boxTab, string][] = [
+    ['box', 'Boxscore joueurs'], ['team', 'Collectif'], ['matrix', 'Matrice'],
+    ['search', 'Recherche avancée'], ['lineups', 'Lineups'], ['shot', 'Shot chart'], ['video', 'Vidéo'],
+  ];
 
   return (
     <div className="box">
-      <Sec t="Box-score joueurs" />
-
-      <table>
-        <thead>
-          <tr>
-            <th className="l">Joueur</th>
-            <th>PTS</th>
-            <th>2PTS</th>
-            <th>3PTS</th>
-            <th>LF</th>
-            <th>RO</th>
-            <th>RD</th>
-            <th>RT</th>
-            <th>PD</th>
-            <th>INT</th>
-            <th>CT</th>
-            <th>BP</th>
-            <th>F</th>
-          </tr>
-        </thead>
-
-        <tbody>
-          {box.map((l: any) => (
-            <tr key={l.p.id}>
-              <td className="l">
-                #{l.p.num} {l.p.name}
-              </td>
-              <td>
-                <b>{pts(l)}</b>
-              </td>
-              <td>
-                {l.p2m}/{l.p2a}
-              </td>
-              <td>
-                {l.p3m}/{l.p3a}
-              </td>
-              <td>
-                {l.ftm}/{l.fta}
-              </td>
-              <td>{l.offReb || 0}</td>
-              <td>{l.defReb || 0}</td>
-              <td>{(l.offReb || 0) + (l.defReb || 0)}</td>
-              <td>{l.ast}</td>
-              <td>{l.stl}</td>
-              <td>{l.blk}</td>
-              <td>{l.to}</td>
-              <td>{l.pf}</td>
-            </tr>
-          ))}
-
-          {box.length === 0 && (
-            <tr>
-              <td className="l" colSpan={13}>
-                Aucune stat pour le moment.
-              </td>
-            </tr>
-          )}
-
-          {box.length > 0 && (
-            <tr className="tot">
-              <td className="l">TOTAL ÉQUIPE</td>
-              <td>{tot.pts || 0}</td>
-              <td>
-                {tot.p2m || 0}/{tot.p2a || 0}
-              </td>
-              <td>
-                {tot.p3m || 0}/{tot.p3a || 0}
-              </td>
-              <td>
-                {tot.ftm || 0}/{tot.fta || 0}
-              </td>
-              <td>{tot.offReb || 0}</td>
-              <td>{tot.defReb || 0}</td>
-              <td>{(tot.offReb || 0) + (tot.defReb || 0)}</td>
-              <td>{tot.ast || 0}</td>
-              <td>{tot.stl || 0}</td>
-              <td>{tot.blk || 0}</td>
-              <td>{tot.to || 0}</td>
-              <td>{tot.pf || 0}</td>
-            </tr>
-          )}
-        </tbody>
-      </table>
-
-      <Sec t="Possessions & stops" />
-      <div className="cardrow">
-        <Card t="Possessions offensives" v={A.offPoss} />
-        <Card t="Possessions défensives" v={A.defPoss} />
-        <Card t="Stops d'affilé (max)" v={A.maxStreak} c="var(--green)" />
-        <Card t="Stops d'affilé (en cours)" v={A.curStreak} c="var(--green)" />
-      </div>
-      <div className="tip" style={{ marginTop: 8 }}>
-        Possession = de la récupération du ballon jusqu'à ce que l'adversaire
-        le récupère. Un « stop » = possession défensive sans point adverse
-        encaissé.
+      <div className="box-tabs">
+        {TABS.map(([k, l]) => (
+          <button key={k} className={`box-tab ${boxTab === k ? 'on' : ''}`} onClick={() => setBoxTab(k)}>{l}</button>
+        ))}
       </div>
 
-      <Sec t="Box-score des temps forts par joueur (points)" />
-
-      {A.tfUsed.length ? (
-        <div style={{ overflow: "auto" }}>
-          <table>
-            <thead>
-              <tr>
-                <th className="l">Joueur</th>
-                {A.tfUsed.map((t) => (
-                  <th key={t.id}>{tags.emoji(t.id)} {tags.label(t.id)}</th>
-                ))}
-                <th>Tot.</th>
+      {/* ===== Boxscore joueurs ===== */}
+      {boxTab === 'box' && (
+        <table>
+          <thead><tr><th className="l">Joueur</th><th>PTS</th><th>2PTS</th><th>3PTS</th><th>LF</th><th>RO</th><th>RD</th><th>RT</th><th>PD</th><th>INT</th><th>CT</th><th>BP</th><th>F</th></tr></thead>
+          <tbody>
+            {box.map((l: any) => (
+              <tr key={l.p.id}>
+                <td className="l">#{l.p.num} {l.p.name}</td>
+                <td><b>{pts(l)}</b></td>
+                <td>{l.p2m}/{l.p2a}</td><td>{l.p3m}/{l.p3a}</td><td>{l.ftm}/{l.fta}</td>
+                <td>{l.offReb || 0}</td><td>{l.defReb || 0}</td><td>{(l.offReb || 0) + (l.defReb || 0)}</td>
+                <td>{l.ast}</td><td>{l.stl}</td><td>{l.blk}</td><td>{l.to}</td><td>{l.pf}</td>
               </tr>
-            </thead>
+            ))}
+            {box.length === 0 && <tr><td className="l" colSpan={13}>Aucune stat pour le moment.</td></tr>}
+            {box.length > 0 && (
+              <tr className="tot">
+                <td className="l">TOTAL ÉQUIPE</td><td>{tot.pts || 0}</td>
+                <td>{tot.p2m || 0}/{tot.p2a || 0}</td><td>{tot.p3m || 0}/{tot.p3a || 0}</td><td>{tot.ftm || 0}/{tot.fta || 0}</td>
+                <td>{tot.offReb || 0}</td><td>{tot.defReb || 0}</td><td>{(tot.offReb || 0) + (tot.defReb || 0)}</td>
+                <td>{tot.ast || 0}</td><td>{tot.stl || 0}</td><td>{tot.blk || 0}</td><td>{tot.to || 0}</td><td>{tot.pf || 0}</td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      )}
 
+      {/* ===== Collectif ===== */}
+      {boxTab === 'team' && (
+        <>
+          <div className="cardrow">
+            <Card t="Points" v={teamPts} />
+            <Card t="Possessions off." v={A.offPoss} />
+            <Card t="Possessions déf." v={A.defPoss} />
+            <Card t="Points / possession" v={ppp.toFixed(2)} c="var(--gold)" />
+            <Card t="eFG%" v={efg.toFixed(1) + '%'} />
+            <Card t="TS%" v={ts.toFixed(1) + '%'} />
+            <Card t="Ratio PD / BP" v={astTo.toFixed(2)} />
+            <Card t="Rebonds off." v={tot.offReb || 0} />
+            <Card t="Rebonds déf." v={tot.defReb || 0} />
+            <Card t="Stops d'affilé (max)" v={A.maxStreak} c="var(--green)" />
+            <Card t="Stops d'affilé (en cours)" v={A.curStreak} c="var(--green)" />
+          </div>
+          <div className="tip" style={{ marginTop: 8 }}>Possession = de la récupération du ballon jusqu'à ce que l'adversaire le récupère. Un « stop » = possession défensive sans point encaissé. Métriques calculées sur les actions codées ; certaines (pace, ORB% adverse) nécessitent les données adverses non suivies ici.</div>
+          <Sec t="Rentabilité par temps fort" />
+          {tfRows.length ? (
+            <table>
+              <thead><tr><th className="l">Temps fort</th><th>Poss.</th><th>Points</th><th>PPP</th><th>Réussite</th></tr></thead>
+              <tbody>{tfRows.map((r) => (
+                <tr key={r.t.id}><td className="l">{tags.emoji(r.t.id)} {tags.label(r.t.id)}</td><td>{r.poss}</td><td>{r.points}</td><td>{r.ppp.toFixed(2)}</td><td>{r.pct}%</td></tr>
+              ))}</tbody>
+            </table>
+          ) : <div className="tip">Aucune action rattachée à un temps fort.</div>}
+        </>
+      )}
+
+      {/* ===== Matrice temps forts × résultats ===== */}
+      {boxTab === 'matrix' && (
+        tfRows.length ? (
+          <table>
+            <thead><tr><th className="l">Temps fort</th><th>Marqué</th><th>Raté</th><th>Perte</th><th>%</th><th>Points</th><th>PPP</th></tr></thead>
+            <tbody>{tfRows.map((r) => (
+              <tr key={r.t.id}><td className="l">{tags.emoji(r.t.id)} {tags.label(r.t.id)}</td><td>{r.made}</td><td>{r.missed}</td><td>{r.lost}</td><td>{r.pct}%</td><td>{r.points}</td><td>{r.ppp.toFixed(2)}</td></tr>
+            ))}</tbody>
+          </table>
+        ) : <div className="tip">Aucune action rattachée à un temps fort.</div>
+      )}
+
+      {/* ===== Recherche avancée : filtres cumulables ===== */}
+      {boxTab === 'search' && (
+        <>
+          <div className="srch-filters">
+            <select value={fPlayer} onChange={(e) => setFPlayer(e.target.value)}><option value="all">Joueur : tous</option>{roster.map((p) => <option key={p.id} value={p.id}>#{p.num} {p.name}</option>)}</select>
+            <select value={fQ} onChange={(e) => setFQ(e.target.value)}><option value="all">QT : tous</option>{[1, 2, 3, 4].map((n) => <option key={n} value={String(n)}>{periodLabel(n)}</option>)}</select>
+            <select value={fTf} onChange={(e) => setFTf(e.target.value)}><option value="all">Temps fort : tous</option>{A.tfUsed.map((t) => <option key={t.id} value={t.id}>{tags.label(t.id)}</option>)}</select>
+            <select value={fAct} onChange={(e) => setFAct(e.target.value)}><option value="all">Action : toutes</option><option value="tir">Tir</option><option value="perte">Perte</option><option value="faute-provoquee">Faute provoquée</option><option value="interception">Interception</option><option value="contre">Contre</option></select>
+            <select value={fRes} onChange={(e) => setFRes(e.target.value)}><option value="all">Résultat : tous</option><option value="made">Marqué</option><option value="missed">Raté</option></select>
+            <button className="srch-reset" onClick={() => { setFPlayer('all'); setFQ('all'); setFTf('all'); setFAct('all'); setFRes('all'); }}>↺ Réinitialiser</button>
+          </div>
+          <div className="srch-count"><b>{filtered.length}</b> action{filtered.length > 1 ? 's' : ''} trouvée{filtered.length > 1 ? 's' : ''}</div>
+          <div className="srch-list">
+            {filtered.slice(0, 200).map((a) => {
+              const p = find(a.playerId);
+              return <div key={a.id} className="srch-row"><span className="sr-t">{periodLabel(a.q)} {a.clock}</span><span className="sr-p">{p ? `#${p.num} ${p.name}` : '—'}</span><span className="sr-d">{tags.label(a.tempsFort)} · {describe(a, find).t}</span></div>;
+            })}
+            {filtered.length === 0 && <div className="tip">Aucune action ne correspond à ces filtres.</div>}
+          </div>
+        </>
+      )}
+
+      {/* ===== Lineups ===== */}
+      {boxTab === 'lineups' && (
+        A.lineups.length ? (
+          <table>
+            <thead><tr><th className="l">5 sur le terrain</th><th>Actions</th><th>Pts pour</th><th>Pts contre</th><th>+/-</th><th>OffRtg</th><th>DefRtg</th><th>NetRtg</th></tr></thead>
             <tbody>
-              {box.map((l: any) => {
-                const row = A.tfMatrix[l.p.id] || {};
-                const tt = A.tfUsed.reduce((s, t) => s + (row[t.id] || 0), 0);
-
+              {A.lineups.slice().sort((a: any, b: any) => (b.us - b.them) - (a.us - a.them)).map((L: any, i: number) => {
+                const names = L.ids.map((id: string) => { const p = roster.find((x) => x.id === id); return p ? '#' + p.num : '?'; }).join(' ');
+                const diff = L.us - L.them;
+                const off = L.n ? Math.round((L.us / L.n) * 100) : 0;
+                const def = L.n ? Math.round((L.them / L.n) * 100) : 0;
                 return (
-                  <tr key={l.p.id}>
-                    <td className="l">
-                      #{l.p.num} {l.p.name}
-                    </td>
-                    {A.tfUsed.map((t) => (
-                      <td key={t.id}>{row[t.id] || 0}</td>
-                    ))}
-                    <td>
-                      <b>{tt}</b>
-                    </td>
+                  <tr key={i}><td className="l">{names}</td><td>{L.n}</td><td>{L.us}</td><td>{L.them}</td>
+                    <td><b style={{ color: diff >= 0 ? 'var(--green)' : 'var(--red)' }}>{diff >= 0 ? '+' : ''}{diff}</b></td>
+                    <td>{off}</td><td>{def}</td><td><b style={{ color: off - def >= 0 ? 'var(--green)' : 'var(--red)' }}>{off - def >= 0 ? '+' : ''}{off - def}</b></td>
                   </tr>
                 );
               })}
             </tbody>
           </table>
-        </div>
-      ) : (
-        <div className="tip">Aucune action rattachée à un temps fort.</div>
+        ) : <div className="tip">Pas encore de données de lineup.</div>
       )}
 
-      <Sec t="Analyse des 5 sur le terrain (lineups)" />
+      {/* ===== Shot chart ===== */}
+      {boxTab === 'shot' && (
+        <div className="box-shot">
+          <ShotChart mode="analysis" size="lg" showPoints shots={actions.filter((a) => a.actionType === 'tir')} />
+        </div>
+      )}
 
-      {A.lineups.length ? (
-        <table>
-          <thead>
-            <tr>
-              <th className="l">5 sur le terrain</th>
-              <th>Actions</th>
-              <th>Pts pour</th>
-              <th>Pts contre</th>
-              <th>+/-</th>
-            </tr>
-          </thead>
-
-          <tbody>
-            {A.lineups
-              .slice()
-              .sort(
-                (a: any, b: any) =>
-                  b.us - b.them - (a.us - a.them)
-              )
-              .map((L: any, i: number) => {
-                const names = L.ids
-                  .map((id: string) => {
-                    const p = roster.find((x) => x.id === id);
-                    return p ? "#" + p.num : "?";
-                  })
-                  .join(" ");
-
-                const diff = L.us - L.them;
-
-                return (
-                  <tr key={i}>
-                    <td className="l">{names}</td>
-                    <td>{L.n}</td>
-                    <td>{L.us}</td>
-                    <td>{L.them}</td>
-                    <td>
-                      <b
-                        style={{
-                          color: diff >= 0 ? "var(--green)" : "var(--red)",
-                        }}
-                      >
-                        {diff >= 0 ? "+" : ""}
-                        {diff}
-                      </b>
-                    </td>
-                  </tr>
-                );
-              })}
-          </tbody>
-        </table>
-      ) : (
-        <div className="tip">Pas encore de données de lineup.</div>
+      {/* ===== Vidéo ===== */}
+      {boxTab === 'video' && (
+        videoClips.length ? (
+          <div className="srch-list">
+            {videoClips.map((a) => {
+              const p = find(a.playerId);
+              return <div key={a.id} className="srch-row"><span className="sr-t">{periodLabel(a.q)} {a.clock}</span><span className="sr-p">{p ? `#${p.num} ${p.name}` : '—'}</span><span className="sr-d">{tags.label(a.tempsFort)} · {describe(a, find).t}</span></div>;
+            })}
+          </div>
+        ) : <div className="tip">Aucun clip vidéo synchronisé pour le moment.</div>
       )}
     </div>
   );
@@ -2542,6 +2991,89 @@ function Style() {
         line-height: 1;
         color: var(--gold);
         font-weight: 900;
+      }
+
+      /* ===== ÉCRAN CRÉER LE MATCH (design V10.8) ===== */
+      #create-match { position: fixed; inset: 0; z-index: 40; overflow: auto; display: flex; flex-direction: column;
+        background: radial-gradient(1200px 600px at 50% -5%, #141a2b 0%, var(--bg) 60%); }
+      .cm-head { flex: 0 0 auto; display: flex; align-items: center; justify-content: space-between; padding: 16px 26px; border-bottom: 1px solid var(--border); }
+      .cm-brand { display: flex; align-items: center; gap: 11px; }
+      .cm-logo { width: 34px; height: 34px; border-radius: 9px; background: var(--panel2); display: grid; place-items: center; color: var(--gold); font-size: 17px; }
+      .cm-t { font-size: 13px; font-weight: 900; letter-spacing: .03em; } .cm-s { font-size: 9px; color: var(--mute); font-weight: 800; letter-spacing: .12em; }
+      .cm-head-r { display: flex; gap: 10px; align-items: center; }
+      .cm-ghost { display: flex; align-items: center; gap: 7px; background: var(--panel2); border: 1px solid var(--border); border-radius: 10px; padding: 9px 14px; font-size: 12px; font-weight: 800; color: var(--txt); cursor: pointer; }
+      .cm-ghost.sm { padding: 6px 11px; font-size: 11px; }
+      .cm-body { flex: 1; display: grid; grid-template-columns: 1fr 1fr; gap: 22px; padding: 24px 26px; align-items: start; }
+      .cm-hero { display: flex; gap: 18px; align-items: center; margin-bottom: 20px; }
+      .cm-hero-ic { width: 92px; height: 92px; border-radius: 50%; background: radial-gradient(circle at 40% 30%, #6d1626, #45101c); display: grid; place-items: center; font-size: 38px; flex: 0 0 auto; border: 1px solid #7c2136; }
+      .cm-eyebrow { font-size: 11px; font-weight: 900; color: var(--gold); letter-spacing: .14em; }
+      .cm-h1 { font-size: 44px; font-weight: 900; line-height: 1.02; margin: 2px 0 6px; }
+      .cm-sub { font-size: 13px; color: var(--mute); }
+      .cm-card { background: rgba(16,19,31,.7); border: 1px solid var(--border); border-radius: 16px; padding: 18px 20px; margin-bottom: 16px; }
+      .cm-card-t { font-size: 12px; font-weight: 900; color: var(--gold); letter-spacing: .08em; margin-bottom: 14px; }
+      .cm-opt { color: var(--mute); font-weight: 700; letter-spacing: .04em; font-size: 10px; margin-left: 6px; }
+      .cm-form { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+      .cm-field { display: flex; flex-direction: column; gap: 6px; font-size: 11px; font-weight: 800; color: var(--mute); }
+      .cm-auto { font-size: 10px; font-weight: 600; color: var(--mute); font-style: italic; }
+      .cm-auto b { color: var(--gold); font-style: normal; }
+      .cm-input { display: flex; align-items: center; gap: 8px; border: 1px solid var(--border); border-radius: 10px; background: var(--panel); padding: 0 11px; height: 44px; }
+      .cm-input span { color: var(--mute); font-size: 13px; }
+      .cm-input input, .cm-input select { flex: 1; border: 0; background: transparent; color: var(--txt); font: inherit; font-size: 13px; font-weight: 700; outline: none; height: 100%; }
+      .cm-input input::placeholder { color: #5a6070; font-weight: 600; }
+      .cm-venue { display: grid; grid-template-columns: 1fr 1fr; border: 1px solid var(--border); border-radius: 10px; overflow: hidden; height: 44px; }
+      .cm-v { background: var(--panel); font-size: 12px; font-weight: 900; display: flex; align-items: center; justify-content: center; gap: 6px; color: var(--txt); cursor: pointer; border: 0; }
+      .cm-v.on { background: var(--gold); color: #201b19; }
+      .cm-video { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; }
+      .cm-vid { position: relative; border: 1px solid var(--border); border-radius: 14px; background: var(--card); padding: 16px 14px; cursor: pointer; min-height: 120px; }
+      .cm-vid.on { border-color: var(--gold); }
+      .cm-vid-ck { position: absolute; top: 10px; right: 10px; width: 22px; height: 22px; border-radius: 50%; background: var(--gold); color: #201b19; display: grid; place-items: center; font-size: 12px; font-weight: 900; }
+      .cm-vid-ic { font-size: 22px; color: var(--gold); margin-bottom: 8px; }
+      .cm-vid-t { font-size: 13px; font-weight: 800; margin-bottom: 4px; } .cm-vid-d { font-size: 11px; color: var(--mute); line-height: 1.35; }
+      .cm-right { background: rgba(16,19,31,.55); border: 1px solid var(--border); border-radius: 16px; padding: 16px; }
+      .cm-right-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
+      .cm-5t { font-size: 13px; } .cm-5t b { color: var(--gold); } .cm-5c { color: var(--mute); font-size: 11px; font-weight: 800; margin-left: 6px; }
+      .cm-players { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 11px; }
+      .cm-p { position: relative; border: 1px solid var(--border); border-radius: 13px; background: var(--card); padding: 12px 10px 10px; text-align: center; cursor: pointer; transition: border-color .12s; }
+      .cm-p:hover { border-color: #3a4256; }
+      .cm-p.on { border-color: var(--gold); box-shadow: 0 0 0 1px var(--gold) inset; }
+      .cm-p-num { position: absolute; top: 9px; left: 11px; font-size: 17px; font-weight: 900; }
+      .cm-p-ck { position: absolute; top: 9px; right: 11px; color: var(--mute); font-size: 15px; }
+      .cm-p.on .cm-p-ck { color: var(--gold); }
+      .cm-p-av { width: 56px; height: 56px; border-radius: 50%; overflow: hidden; margin: 6px auto 8px; display: grid; place-items: center; }
+      .cm-p-av .av { width: 56px; height: 56px; border-radius: 50%; font-size: 18px; }
+      .cm-p-nm { font-size: 12px; font-weight: 800; }
+      .cm-p-pos { font-size: 9.5px; font-weight: 800; margin-top: 3px; color: var(--blue); }
+      .cm-slots { display: grid; grid-template-columns: repeat(5,1fr); gap: 8px; margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--border); }
+      .cm-slot { display: flex; flex-direction: column; gap: 5px; }
+      .cm-slot-l { font-size: 9px; font-weight: 800; color: var(--mute); letter-spacing: .04em; text-align: center; }
+      .cm-slot-e { border: 1px dashed var(--border); border-radius: 10px; min-height: 54px; display: grid; place-items: center; font-size: 11px; font-weight: 800; color: var(--mute); text-align: center; padding: 4px; }
+      .cm-slot-f { border: 1px solid var(--gold); border-radius: 10px; min-height: 54px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; background: rgba(212,162,76,.1); font-size: 11px; font-weight: 800; padding: 4px; position: relative; }
+      .cm-slot-f .rm { position: absolute; top: 3px; right: 5px; color: var(--mute); font-size: 11px; cursor: pointer; }
+      .cm-warn { margin-top: 14px; display: flex; align-items: center; gap: 9px; background: rgba(212,162,76,.1); border: 1px solid rgba(212,162,76,.4); border-radius: 10px; padding: 11px 14px; font-size: 12px; font-weight: 700; color: var(--gold); }
+      .cm-warn.ok { background: rgba(54,179,126,.12); border-color: rgba(54,179,126,.4); color: var(--green); }
+      .cm-foot { flex: 0 0 auto; display: grid; grid-template-columns: 1fr auto; gap: 22px; align-items: center; padding: 18px 26px; margin: 0 26px 22px; background: rgba(16,19,31,.8); border: 1px solid var(--border); border-radius: 16px; }
+      .cm-sum-t { font-size: 12px; font-weight: 900; color: var(--gold); letter-spacing: .08em; margin-bottom: 12px; }
+      .cm-sum-grid { display: grid; grid-template-columns: repeat(6,auto); gap: 26px; }
+      .cm-sum { display: flex; flex-direction: column; gap: 4px; }
+      .cm-sum-l { font-size: 9px; font-weight: 800; color: var(--mute); letter-spacing: .08em; }
+      .cm-sum-v { font-size: 13px; font-weight: 800; } .cm-sum-v .gold { color: var(--gold); }
+      .cm-start-wrap { text-align: center; }
+      .cm-start { background: linear-gradient(180deg,#c12a44,#8a1428); border: 1px solid #c12a44; border-radius: 12px; padding: 18px 34px; font-size: 17px; font-weight: 900; color: #fff; white-space: nowrap; }
+      .cm-start:disabled { background: #2a2030; border-color: #3a2f3a; color: #7a6a72; cursor: not-allowed; opacity: .7; }
+      .cm-start:not(:disabled) { box-shadow: 0 10px 30px -10px #c12a44; cursor: pointer; }
+      .cm-start-hint { font-size: 11px; color: var(--mute); margin-top: 8px; }
+      .cm-left .vid-input { margin-top: 12px; }
+      @media (max-width: 1000px) {
+        .cm-body { grid-template-columns: 1fr; }
+        .cm-h1 { font-size: 34px; }
+        .cm-sum-grid { grid-template-columns: 1fr 1fr 1fr; gap: 14px; }
+        .cm-foot { grid-template-columns: 1fr; gap: 14px; }
+      }
+      @media (max-width: 600px) {
+        .cm-form { grid-template-columns: 1fr; } .cm-video { grid-template-columns: 1fr; }
+        .cm-players { grid-template-columns: 1fr 1fr; } .cm-slots { grid-template-columns: 1fr 1fr; }
+        .cm-hero-ic { width: 64px; height: 64px; font-size: 26px; } .cm-h1 { font-size: 26px; }
+        .cm-sum-grid { grid-template-columns: 1fr 1fr; } .cm-start { width: 100%; }
       }
 
       .setup {
@@ -3033,9 +3565,19 @@ function Style() {
       .wtab { flex: 0 0 auto; border: 1px solid var(--border); background: transparent; color: var(--mute); border-radius: 9px; padding: 7px 12px; font-size: 12.5px; font-weight: 800; cursor: pointer; white-space: nowrap; }
       .wtab.on { background: var(--bordeaux); color: #fff; border-color: var(--bordeaux); }
 
-      /* ===================== V7.1 · Layout live 25 / 50 / 25 ===================== */
-      .live3 { flex: 1; min-height: 0; display: grid; grid-template-columns: 25% 50% 25%; gap: 8px; padding: 8px 10px; overflow: hidden; }
+      /* ===================== V10.8 · Layout live (vidéo / codage / chart+joueurs / strip) ===================== */
+      .live3 { flex: 1; min-height: 0; display: grid; grid-template-columns: 46% minmax(0, 1fr) 300px; gap: 8px; padding: 8px 10px 4px; overflow: hidden; }
       .lc { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; display: flex; flex-direction: column; min-height: 0; overflow: hidden; }
+      /* Vidéo = élément principal, occupe toute la colonne gauche */
+      .lc-video { padding: 0; }
+      .lc-video .videoSlot { flex: 1; min-height: 0; }
+      /* Colonne droite : shot chart en haut + joueurs/banc en bas, scrollable */
+      .lc-right { overflow-y: auto; }
+      .lc-right .scZone { flex: 0 0 auto; }
+      /* Bandeau bas : timeline / historique / matrice / montage */
+      .live-strip { flex: 0 0 auto; height: 210px; margin: 0 10px 8px; background: var(--panel); border: 1px solid var(--border); border-radius: 12px; display: flex; flex-direction: column; min-height: 0; overflow: hidden; }
+      .live-strip .an-tabs { flex: 0 0 auto; }
+      .live-strip .an-body { flex: 1; min-height: 0; overflow-y: auto; }
 
       /* -- Gauche : codage compact/dense -- */
       .lc-head { flex: 0 0 auto; padding: 7px 8px; border-bottom: 1px solid var(--border); }
@@ -3111,6 +3653,53 @@ function Style() {
       .an-body { flex: 1; min-height: 0; overflow: hidden; display: flex; flex-direction: column; }
       .an-body .hist { padding: 6px; overflow-y: auto; }
 
+      /* V8 · Timeline Sportscode */
+      .tl-wrap { flex: 1; min-height: 0; display: flex; flex-direction: column; overflow: hidden; padding: 8px; gap: 6px; }
+      .tl-legend { flex: 0 0 auto; display: flex; flex-wrap: wrap; gap: 10px; font-size: 10px; color: var(--mute); }
+      .tl-legend span { display: inline-flex; align-items: center; gap: 4px; }
+      .tl-legend i { width: 9px; height: 9px; border-radius: 2px; display: inline-block; }
+      .tl-grid { flex: 1; min-height: 0; overflow: auto; display: flex; flex-direction: column; gap: 3px; }
+      .tl-row { display: grid; grid-template-columns: 84px 1fr; align-items: center; gap: 6px; min-height: 24px; }
+      .tl-label { font-size: 11px; font-weight: 800; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+      .tl-track { position: relative; height: 22px; background: var(--card); border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }
+      .tl-qsep { position: absolute; top: 0; bottom: 0; width: 1px; background: rgba(255,255,255,.18); }
+      .tl-evt { position: absolute; top: 3px; width: 10px; height: 16px; transform: translateX(-50%); border: 1px solid rgba(0,0,0,.4); border-radius: 3px; cursor: pointer; padding: 0; }
+      .tl-evt:hover { outline: 2px solid var(--gold); z-index: 2; }
+      .tl-axis { flex: 0 0 auto; display: flex; padding-left: 90px; }
+      .tl-axis span { font-size: 10px; color: var(--mute); text-align: center; border-left: 1px solid var(--border); }
+
+      /* V8 · Popup événement (revoir + modifier) */
+      .zpop-card.evt { width: min(560px, 94vw); gap: 10px; }
+      .evt-video { background: #05070e; border-radius: 10px; overflow: hidden; aspect-ratio: 16/9; display: grid; place-items: center; }
+      .evt-vplayer { width: 100%; height: 100%; object-fit: contain; background: #000; }
+      .evt-noclip { color: var(--mute); font-size: 13px; }
+      .evt-info { display: flex; justify-content: space-between; gap: 8px; font-size: 13px; font-weight: 700; }
+      .evt-tools { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+      .evt-tools button, .evt-tools select { border: 1px solid var(--border); background: var(--card); color: var(--txt); border-radius: 8px; padding: 6px 10px; font-size: 12px; font-weight: 800; cursor: pointer; }
+      .evt-tools button.on { background: var(--gold); color: #201b19; border-color: var(--gold); }
+      .evt-tools button.danger { color: var(--red); border-color: #e6b9b9; }
+      .evt-note { font-size: 10.5px; color: var(--mute); }
+
+      /* V8 · Popup clip complète (rognage / note / dessin / préc-suiv) */
+      .zpop-card.clip { width: min(680px, 96vw); gap: 9px; }
+      .clip-nav { display: flex; align-items: center; gap: 6px; }
+      .clip-nav button { border: 1px solid var(--border); background: var(--card); color: var(--txt); border-radius: 8px; padding: 4px 9px; font-size: 12px; font-weight: 800; cursor: pointer; }
+      .clip-nav button:last-child { border: 0; background: transparent; color: var(--mute); font-size: 18px; padding: 0 4px; }
+      .clip-nav button:disabled { opacity: .4; cursor: not-allowed; }
+      .clip-stage { position: relative; background: #05070e; border-radius: 10px; overflow: hidden; aspect-ratio: 16/9; display: grid; place-items: center; }
+      .clip-draw { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+      .clip-draw.active { pointer-events: auto; cursor: crosshair; }
+      .clip-draws { display: flex; flex-wrap: wrap; gap: 6px; }
+      .clip-draws button { border: 1px solid var(--border); background: var(--card); color: var(--txt); border-radius: 8px; padding: 6px 10px; font-size: 12px; font-weight: 800; cursor: pointer; }
+      .clip-draws button.on { background: var(--gold); color: #201b19; border-color: var(--gold); }
+      .clip-draws button.danger { color: var(--red); border-color: #e6b9b9; }
+      .clip-draws button:disabled { opacity: .4; cursor: not-allowed; }
+      .clip-trim { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+      .clip-trim-lbl { font-size: 10px; font-weight: 800; text-transform: uppercase; letter-spacing: .04em; color: var(--mute); }
+      .clip-trim button { border: 1px solid var(--border); background: var(--card); color: var(--txt); border-radius: 8px; padding: 5px 9px; font-size: 12px; font-weight: 800; cursor: pointer; }
+      .clip-trim-val { font-size: 11px; color: var(--gold); font-weight: 800; font-variant-numeric: tabular-nums; }
+      .clip-note { border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; font: inherit; font-size: 13px; min-height: 46px; resize: vertical; background: var(--card); color: var(--txt); }
+
       /* Popup matrice */
       .mx-pop { position: fixed; inset: 0; background: rgba(0,0,0,.5); display: grid; place-items: center; z-index: 60; padding: 20px; }
       .mx-pop-card { width: min(460px, 92vw); max-height: 80vh; background: var(--panel); border: 1px solid var(--border); border-radius: 14px; padding: 12px; display: flex; flex-direction: column; }
@@ -3163,6 +3752,9 @@ function Style() {
 
       /* Montage (in-live) */
       .mo-wrap { flex: 1; min-height: 0; display: flex; flex-direction: column; overflow: hidden; padding: 8px; gap: 8px; }
+      .mo-picker { display: flex; align-items: center; gap: 6px; }
+      .mo-picker select { flex: 1; min-width: 0; border: 1px solid var(--border); border-radius: 8px; padding: 7px 9px; font: inherit; font-size: 13px; background: var(--card); color: var(--txt); }
+      .mo-new { border: 1px solid var(--border); background: var(--card); color: var(--txt); border-radius: 8px; padding: 7px 10px; font-size: 12px; font-weight: 800; cursor: pointer; white-space: nowrap; }
       .mo-meta { display: grid; gap: 6px; }
       .mo-title { border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; font: inherit; font-size: 14px; font-weight: 700; background: var(--card); color: var(--ink); }
       .mo-note { border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; font: inherit; font-size: 13px; min-height: 46px; resize: vertical; background: var(--card); color: var(--ink); }
@@ -3182,6 +3774,31 @@ function Style() {
       .mo-ctrl button { border: 1px solid var(--border); background: var(--panel); border-radius: 6px; cursor: pointer; font-size: 11px; width: 24px; height: 24px; }
       .mo-ctrl button:disabled { opacity: .35; cursor: not-allowed; }
       .mo-ctrl .rm { color: var(--red); border-color: #e6b9b9; }
+
+      /* Bloc 6 · Montage 3 colonnes (bibliothèque / storyboard / propriétés) */
+      .mo3 { flex: 1; min-height: 0; display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; padding: 8px; overflow: hidden; }
+      .mo-col { min-height: 0; display: flex; flex-direction: column; border: 1px solid var(--border); border-radius: 10px; background: var(--panel); overflow: hidden; }
+      .mo-col-h { flex: 0 0 auto; display: flex; align-items: center; gap: 6px; padding: 7px 9px; border-bottom: 1px solid var(--border); font-size: 11.5px; font-weight: 800; color: var(--mute); }
+      .mo-col-b { flex: 1; min-height: 0; overflow-y: auto; padding: 7px; display: flex; flex-direction: column; gap: 6px; }
+      .mo-lib { display: grid; grid-template-columns: minmax(0,1fr) 30px; align-items: center; gap: 6px; border: 1px solid var(--border); border-radius: 8px; padding: 6px 8px; background: var(--card); }
+      .mo-lib-tx { min-width: 0; display: grid; gap: 2px; }
+      .mo-lib-tx b { font-size: 12px; } .mo-lib-tx small { font-size: 10.5px; color: var(--mute); }
+      .mo-lib-add { width: 28px; height: 28px; border-radius: 7px; border: 1px solid var(--gold); background: rgba(212,162,76,.14); color: var(--gold); font-size: 16px; font-weight: 900; cursor: pointer; }
+      .mo-pick { flex: 1; min-width: 0; border: 1px solid var(--border); border-radius: 8px; padding: 6px 8px; font: inherit; font-size: 12px; background: var(--card); color: var(--txt); }
+      .mo-item { cursor: pointer; }
+      .mo-item.sel { border-color: var(--gold); box-shadow: 0 0 0 1px var(--gold) inset; }
+      .mo-add { flex: 0 0 auto; display: flex; gap: 5px; padding: 7px; border-top: 1px solid var(--border); }
+      .mo-add button { flex: 1; border: 1px solid var(--border); background: var(--card); color: var(--txt); border-radius: 7px; padding: 7px 4px; font-size: 11.5px; font-weight: 800; cursor: pointer; }
+      .mo-props .mo-col-b { gap: 8px; }
+      .mo-f { display: flex; flex-direction: column; gap: 4px; font-size: 10.5px; font-weight: 800; color: var(--mute); }
+      .mo-f input, .mo-f textarea { border: 1px solid var(--border); border-radius: 7px; padding: 6px 8px; font: inherit; font-size: 12.5px; font-weight: 600; background: var(--card); color: var(--txt); }
+      .mo-f textarea { min-height: 44px; resize: vertical; }
+      .mo-f-h { font-size: 11px; font-weight: 800; color: var(--gold); text-transform: uppercase; letter-spacing: .04em; }
+      .mo-frow { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+      .mo-sep { height: 1px; background: var(--border); margin: 2px 0; }
+      .mo-foot { flex: 0 0 auto; display: flex; align-items: center; gap: 6px; flex-wrap: wrap; padding: 7px; border-top: 1px solid var(--border); }
+      .mo-export { border: 1px solid var(--border); background: var(--panel); color: var(--mute); border-radius: 8px; padding: 7px 10px; font-size: 11.5px; font-weight: 800; opacity: .55; cursor: not-allowed; }
+      @media (max-width: 900px) { .mo3 { grid-template-columns: 1fr; overflow-y: auto; } .mo-col { min-height: 160px; } }
 
       /* Joueurs (onglet) */
       .pl-wrap { flex: 1; min-height: 0; overflow: auto; padding: 10px; display: flex; flex-direction: column; gap: 12px; }
@@ -3942,6 +4559,21 @@ function Style() {
         overflow: auto;
       }
 
+      /* Onglets de l'analyse (7 vues) */
+      .box-tabs { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 12px; position: sticky; top: 0; background: var(--bg); padding-bottom: 4px; z-index: 2; }
+      .box-tab { border: 1px solid var(--border); background: transparent; color: var(--mute); border-radius: 9px; padding: 8px 14px; font-size: 12.5px; font-weight: 800; cursor: pointer; white-space: nowrap; }
+      .box-tab.on { background: var(--card); color: var(--txt); border-color: var(--gold); }
+      /* Recherche avancée */
+      .srch-filters { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }
+      .srch-filters select { border: 1px solid var(--border); background: var(--card); color: var(--txt); border-radius: 8px; padding: 7px 9px; font: inherit; font-size: 12px; }
+      .srch-reset { border: 1px solid var(--border); background: var(--panel); color: var(--txt); border-radius: 8px; padding: 7px 11px; font-size: 12px; font-weight: 800; cursor: pointer; }
+      .srch-count { font-size: 14px; margin: 6px 0 10px; } .srch-count b { color: var(--gold); font-size: 18px; }
+      .srch-list { display: flex; flex-direction: column; gap: 5px; }
+      .srch-row { display: grid; grid-template-columns: 90px 130px 1fr; align-items: center; gap: 8px; border: 1px solid var(--border); border-radius: 8px; padding: 7px 10px; background: var(--card); font-size: 12.5px; }
+      .srch-row .sr-t { color: var(--mute); font-variant-numeric: tabular-nums; }
+      .srch-row .sr-p { font-weight: 800; }
+      .box-shot { max-width: 680px; margin: 0 auto; }
+
       .box table {
         width: 100%;
         border-collapse: collapse;
@@ -4025,7 +4657,7 @@ function Style() {
       @media (max-width: 1200px) {
         .studio { grid-template-columns: 30% 70%; grid-template-rows: minmax(0, 1fr); }
         .studio2 { grid-template-columns: 40% 60%; }
-        .live3 { grid-template-columns: 28% 44% 28%; }
+        .live3 { grid-template-columns: 42% minmax(0, 1fr) 240px; }
         .colHistory { display: none; }
         .colCenter { order: 2; }
         .colCoding { order: 1; }
@@ -4063,6 +4695,8 @@ function Style() {
         .live3 { grid-template-columns: 1fr; }
         .lc { display: none; }
         .lc.mshow { display: flex; }
+        .live-strip { display: none; height: 260px; }
+        .live-strip.mshow { display: flex; }
         .codeDense .grid.c2, .codeDense .grid.c3 { grid-template-columns: repeat(3, 1fr); }
         .videoSlot.big { min-height: 210px; }
       }

@@ -225,7 +225,7 @@ export default function MonCalendrier() {
     const { data, error } = await supabase
       .from("calendar_events")
       .select("*")
-      .or(`user_id.eq.${user.id},owner_id.eq.${user.id}`)
+      .eq("user_id", user.id)
       .order("event_date", { ascending: true })
       .order("start_time", { ascending: true });
 
@@ -286,7 +286,6 @@ export default function MonCalendrier() {
 
     const payload = {
       user_id: user.id,
-      owner_id: user.id,
       title: fTitle.trim() || "Entraînement",
       description: fNotes || null,
       event_date: fDate,
@@ -305,7 +304,7 @@ export default function MonCalendrier() {
         .from("calendar_events")
         .update(payload)
         .eq("id", editingId)
-        .or(`user_id.eq.${user.id},owner_id.eq.${user.id}`);
+        .eq("user_id", user.id);
 
       if (error) {
         console.error("Erreur modification événement:", {
@@ -354,7 +353,7 @@ export default function MonCalendrier() {
       .from("calendar_events")
       .delete()
       .eq("id", editingId)
-      .or(`user_id.eq.${user.id},owner_id.eq.${user.id}`);
+      .eq("user_id", user.id);
 
     if (error) {
       console.error("Erreur suppression événement:", {

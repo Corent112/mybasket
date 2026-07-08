@@ -204,8 +204,9 @@ function rowToExercise(row: any): Exercise {
       order: index,
     })),
 
-    owner_id: row.owner_id ?? row.user_id ?? null,
-    user_id: row.user_id ?? row.owner_id ?? null,
+    // Compatibilité côté front uniquement. La table Supabase exercises utilise user_id.
+    owner_id: row.user_id ?? null,
+    user_id: row.user_id ?? null,
 
     visibility: row.visibility ?? "private",
     review_status: row.review_status ?? "draft",
@@ -236,7 +237,6 @@ function exerciseToRow(ex: any, userId: string) {
 
   return {
     user_id: ex.user_id ?? userId,
-    owner_id: ex.owner_id ?? userId,
 
     visibility: (ex.visibility ?? "private") as Visibility,
     review_status: (ex.review_status ?? "draft") as ReviewStatus,
@@ -333,7 +333,7 @@ export async function listMyExercises(): Promise<Exercise[]> {
   const { data, error } = await supabase
     .from("exercises")
     .select("*")
-    .or(`owner_id.eq.${user.id},user_id.eq.${user.id}`)
+    .eq("user_id", user.id)
     .order("created_at", { ascending: false });
 
   if (error) {
@@ -387,7 +387,7 @@ export async function getExercise(
     existing.visibility === "public" && existing.review_status === "approved";
 
   const isOwner =
-    !!user && (existing.owner_id === user.id || existing.user_id === user.id);
+    !!user && existing.user_id === user.id;
 
   if (!isOfficialPublic && !isOwner && !ceo) {
     return null;
@@ -409,7 +409,6 @@ export async function saveExercise(ex: any): Promise<Exercise | null> {
 
   const prepared = {
     ...ex,
-    owner_id: user.id,
     user_id: user.id,
     visibility: ceo ? ex.visibility ?? "public" : "private",
     review_status: ceo ? ex.review_status ?? "approved" : "draft",
@@ -423,7 +422,7 @@ export async function saveExercise(ex: any): Promise<Exercise | null> {
 
     if (existing) {
       const isMine =
-        existing.owner_id === user.id || existing.user_id === user.id;
+        existing.user_id === user.id;
 
       if (!ceo && !isMine) {
         if (isBrowser()) alert("Tu ne peux modifier que tes exercices.");
@@ -434,7 +433,6 @@ export async function saveExercise(ex: any): Promise<Exercise | null> {
         {
           ...existing,
           ...prepared,
-          owner_id: existing.owner_id ?? user.id,
           user_id: existing.user_id ?? user.id,
           visibility: ceo ? prepared.visibility ?? "public" : "private",
           review_status: ceo
@@ -500,7 +498,7 @@ export async function updateExercise(
   }
 
   const ceo = await isCeoUser();
-  const isMine = existing.owner_id === user.id || existing.user_id === user.id;
+  const isMine = existing.user_id === user.id;
 
   if (!ceo && !isMine) {
     if (isBrowser()) alert("Tu ne peux modifier que tes exercices.");
@@ -511,7 +509,6 @@ export async function updateExercise(
     {
       ...existing,
       ...patch,
-      owner_id: existing.owner_id ?? user.id,
       user_id: existing.user_id ?? user.id,
       visibility: ceo ? existing.visibility ?? "public" : "private",
       review_status: ceo
@@ -549,7 +546,7 @@ export async function submitExerciseForReview(id: string): Promise<boolean> {
 
   if (!existing) return false;
 
-  const isMine = existing.owner_id === user.id || existing.user_id === user.id;
+  const isMine = existing.user_id === user.id;
 
   if (!isMine) {
     if (isBrowser()) alert("Tu ne peux proposer que tes propres exercices.");
@@ -599,7 +596,6 @@ export async function approveExerciseForLibrary(id: string): Promise<boolean> {
     {
       ...existing,
       id: crypto.randomUUID(),
-      owner_id: user.id,
       user_id: user.id,
       visibility: "public",
       review_status: "approved",
@@ -685,7 +681,7 @@ export async function deleteExercise(id: string): Promise<boolean> {
   if (!existing) return false;
 
   const ceo = await isCeoUser();
-  const isMine = existing.owner_id === user.id || existing.user_id === user.id;
+  const isMine = existing.user_id === user.id;
 
   if (!ceo && !isMine) {
     if (isBrowser()) alert("Tu ne peux supprimer que tes exercices.");

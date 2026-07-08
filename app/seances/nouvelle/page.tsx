@@ -228,7 +228,6 @@ export default function NouvelleSeancePage() {
       .from("practice_sessions")
       .insert({
         user_id: user.id,
-        owner_id: user.id,
         visibility: "private",
         team_id: teamId,
         title,
@@ -295,7 +294,6 @@ export default function NouvelleSeancePage() {
 
     const { error: calendarError } = await supabase.from("calendar_events").insert({
   user_id: user.id,
-  owner_id: user.id,
   visibility: "private",
   event_type: "training",
   session_id: session.id,

@@ -222,7 +222,7 @@ async function createPdfBlobFromHtml(html: string) {
   holder.style.position = "fixed";
   holder.style.left = "-10000px";
   holder.style.top = "0";
-  holder.style.width = "1120px";
+  holder.style.width = "794px";
   holder.innerHTML = htmlForPdf(html);
   document.body.appendChild(holder);
 
@@ -234,7 +234,7 @@ async function createPdfBlobFromHtml(html: string) {
         filename: "fiche-seance.pdf",
         image: { type: "jpeg", quality: 0.98 },
         html2canvas: { scale: 2, useCORS: true, backgroundColor: "#ffffff" },
-        jsPDF: { unit: "px", format: [1120, 790], orientation: "landscape" },
+        jsPDF: { unit: "px", format: [794, 1123], orientation: "portrait" },
         pagebreak: { mode: ["avoid-all", "css", "legacy"] },
       })
       .from(page)
@@ -259,6 +259,13 @@ function notifyCartUpdated() {
   if (typeof window === "undefined") return;
 
   window.dispatchEvent(new Event("cart-updated"));
+}
+
+function notifySessionCartCleared() {
+  if (typeof window === "undefined") return;
+
+  window.dispatchEvent(new Event("cart-updated"));
+  window.dispatchEvent(new Event("mybasket:session-cart-cleared"));
 }
 
 function safeLocalJsonArray(key: string): any[] {
@@ -677,6 +684,31 @@ setLoading(false);
   }
 }
 
+  async function clearSessionCart(userId: string) {
+    const sessionTypes: CartItem["item_type"][] = ["exercise", "system", "session"];
+
+    setItems((prev) => prev.filter((item) => !sessionTypes.includes(item.item_type)));
+
+    const { error } = await supabase
+      .from("cart_items")
+      .delete()
+      .eq("user_id", userId)
+      .in("item_type", sessionTypes);
+
+    if (error) {
+      console.error("Erreur vidage panier séance:", {
+        code: error.code,
+        message: error.message,
+        details: error.details,
+        hint: error.hint,
+      });
+      await loadCart();
+      return;
+    }
+
+    notifySessionCartCleared();
+  }
+
   async function saveSessionToCalendar(pdfHtml: string, pdfUrl: string | null) {
     const {
       data: { user },
@@ -731,7 +763,6 @@ setLoading(false);
 
     const fullSessionPayload = {
       user_id: user.id,
-      owner_id: user.id,
       team_id: isUuid(selectedTeamId) ? selectedTeamId : null,
       team_local_id: selectedTeamId || null,
       team_name: teamName,
@@ -769,7 +800,6 @@ setLoading(false);
 
     const legacySessionPayload = {
       user_id: user.id,
-      owner_id: user.id,
       team_id: isUuid(selectedTeamId) ? selectedTeamId : null,
       title: `Séance ${teamName}`,
       theme: sessionTheme,
@@ -842,7 +872,6 @@ setLoading(false);
 
     const fullItemRows = sessionItemsPayload.map((item) => ({
       session_id: createdSession.id,
-      owner_id: user.id,
       team_id: isUuid(selectedTeamId) ? selectedTeamId : null,
       team_local_id: selectedTeamId || null,
       ...item,
@@ -928,25 +957,25 @@ setLoading(false);
 
     window.dispatchEvent(new Event("mybasket-practice-sessions-updated"));
 
-    const { error } = await supabase.from("calendar_events").insert({
+    const calendarPayload = {
       user_id: user.id,
-      owner_id: user.id,
-
       title: `Séance ${teamName}`,
       description: `Thème : ${sessionTheme}`,
-
       event_date: sessionDate,
       start_time: sessionStartTime,
       end_time: sessionEndTime,
-
       location: teamName,
       event_type: "training",
-
       session_id: createdSession.id,
       attachment_url: pdfUrl,
-
       visibility: "private",
-    });
+    };
+
+    const { data: createdEvent, error } = await supabase
+      .from("calendar_events")
+      .insert(calendarPayload)
+      .select("id")
+      .single();
 
     if (error) {
       console.error("Erreur ajout calendrier:", {
@@ -959,7 +988,15 @@ setLoading(false);
       alert(
         `La fiche est générée, mais l’ajout au calendrier a échoué : ${error.message}`
       );
+      return null;
     }
+
+    window.dispatchEvent(new Event("mybasket-calendar-updated"));
+
+    return {
+      sessionId: String(createdSession.id),
+      eventId: createdEvent?.id ? String(createdEvent.id) : null,
+    };
   }
 
   async function generateSessionPdf() {
@@ -1073,8 +1110,8 @@ setLoading(false);
             }
 
             .page {
-              width: 1120px;
-              min-height: 790px;
+              width: 794px;
+              min-height: 1123px;
               margin: 0 auto;
               padding: 24px;
               background: white;
@@ -1082,28 +1119,28 @@ setLoading(false);
 
             .header {
               display: grid;
-              grid-template-columns: 150px 1fr 150px;
+              grid-template-columns: 110px 1fr 110px;
               align-items: center;
               border-bottom: 3px solid #111;
               padding-bottom: 18px;
             }
 
             .logoBox {
-              width: 120px;
-              height: 90px;
+              width: 96px;
+              height: 72px;
               display: grid;
               place-items: center;
             }
 
             .logoBox img {
-              max-width: 120px;
-              max-height: 90px;
+              max-width: 96px;
+              max-height: 72px;
               object-fit: contain;
             }
 
             .missingLogo {
-              width: 110px;
-              height: 80px;
+              width: 92px;
+              height: 68px;
               display: grid;
               place-items: center;
               border: 2px dashed #ccc;
@@ -1118,8 +1155,8 @@ setLoading(false);
 
             .title h1 {
               margin: 0 0 12px;
-              font-size: 38px;
-              letter-spacing: 8px;
+              font-size: 30px;
+              letter-spacing: 5px;
               font-weight: 900;
             }
 
@@ -1138,7 +1175,7 @@ setLoading(false);
             }
 
             .playersCol {
-              min-height: 100px;
+              min-height: 86px;
               border-right: 2px solid #111;
               text-align: center;
               padding-bottom: 12px;
@@ -1150,11 +1187,11 @@ setLoading(false);
 
             .playersCol h3 {
               margin: 0 0 12px;
-              padding: 10px;
+              padding: 7px;
               border-bottom: 2px solid #111;
               background: #f3f3f3;
-              font-size: 14px;
-              letter-spacing: 2px;
+              font-size: 12px;
+              letter-spacing: 1.5px;
             }
 
             .playersCol p {
@@ -1166,8 +1203,9 @@ setLoading(false);
             table {
               width: 100%;
               border-collapse: collapse;
-              margin-top: 18px;
+              margin-top: 14px;
               border: 2px solid #111;
+              table-layout: fixed;
             }
 
             th {
@@ -1181,25 +1219,25 @@ setLoading(false);
             td {
               border: 2px solid #111;
               vertical-align: middle;
-              padding: 10px;
+              padding: 7px;
             }
 
             .who {
-              width: 55px;
+              width: 40px;
               text-align: center;
-              font-size: 18px;
+              font-size: 15px;
               font-weight: 900;
             }
 
             .time {
-              width: 60px;
+              width: 45px;
               text-align: center;
-              font-size: 24px;
+              font-size: 19px;
               font-weight: 900;
             }
 
             .situation {
-              width: 340px;
+              width: 220px;
               text-align: center;
             }
 
@@ -1226,8 +1264,8 @@ setLoading(false);
             }
 
             .situation img {
-              width: 125px;
-              height: 90px;
+              width: 96px;
+              height: 70px;
               object-fit: contain;
               border: 1px solid #ddd;
               border-radius: 6px;
@@ -1235,8 +1273,8 @@ setLoading(false);
             }
 
             .emptySchema {
-              width: 230px;
-              height: 120px;
+              width: 170px;
+              height: 90px;
               margin: 0 auto;
               border: 1px solid #ddd;
               border-radius: 6px;
@@ -1246,23 +1284,24 @@ setLoading(false);
             }
 
             .explain {
-              width: 360px;
-              font-size: 15px;
+              width: 240px;
+              font-size: 12px;
             }
 
             .explain strong {
-              font-size: 17px;
+              font-size: 13px;
             }
 
             .explain p,
             .instructions p {
               margin: 8px 0 0;
-              line-height: 1.45;
+              line-height: 1.35;
             }
 
             .instructions {
-              width: 300px;
+              width: 200px;
               color: #555;
+              font-size: 12px;
             }
 
             .footer {
@@ -1392,7 +1431,18 @@ setLoading(false);
       printWindow.document.close();
     }
 
-    await saveSessionToCalendar(html, pdfUrl);
+    const saved = await saveSessionToCalendar(html, pdfUrl);
+
+    if (saved?.sessionId) {
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+
+      if (user) {
+        await clearSessionCart(user.id);
+      }
+    }
+
     setSessionModalOpen(false);
   }
 

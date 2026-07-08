@@ -41,7 +41,7 @@ export default function MesSeancesPage() {
     const { data, error } = await supabase
       .from("practice_sessions")
       .select("*")
-      .eq("owner_id", user.id)
+      .eq("user_id", user.id)
       .eq("visibility", "private")
       .order("session_date", { ascending: false });
 

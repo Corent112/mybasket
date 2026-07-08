@@ -10,7 +10,7 @@ export type PracticeSession = {
   location: string | null;
   pdf_url: string | null;
   visibility: "public" | "private";
-  owner_id: string | null;
+  user_id: string | null;
 };
 
 export async function listPublicSessions() {
@@ -42,7 +42,7 @@ export async function listMySessions() {
   const { data, error } = await supabase
     .from("practice_sessions")
     .select("*")
-    .eq("owner_id", user.id)
+    .eq("user_id", user.id)
     .eq("visibility", "private")
     .order("session_date", { ascending: false });
 

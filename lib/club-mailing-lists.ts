@@ -362,7 +362,7 @@ export async function getMailingWorkspace(clubId: string): Promise<{
 export function renderTemplate(text: string, values: Record<string, string | number | null | undefined>) {
   let output = text;
   Object.entries(values).forEach(([key, value]) => {
-    output = output.replaceAll(`{${key}}`, String(value ?? ""));
+    output = output.split(`{${key}}`).join(String(value ?? ""));
   });
   return output;
 }
