@@ -6,7 +6,7 @@ const isBrowser = () => typeof window !== "undefined";
 
 const isUuid = (value: string | null | undefined) =>
   !!value &&
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{12}$/i.test(
     value
   );
 
@@ -111,7 +111,7 @@ function normalizeSchemaDataList(source: any): unknown[] {
 
   const hasSchemaData = source?.schemaData !== undefined && source.schemaData !== null;
   const hasSnakeSchemaData =
-    source?.schema_data !== undefined && source.schema_data !== null;
+    source?.schema_data !== undefined && source?.schema_data !== null;
 
   return [
     ...fromSchemaDataList,
@@ -226,8 +226,12 @@ export function rowToSystem(row: any): SystemItem {
     schemaDataList,
     playIds,
     play_ids: playIds,
-    owner_id: row.owner_id ?? row.user_id ?? null,
-    user_id: row.user_id ?? row.owner_id ?? null,
+
+    // Compatibilité côté front uniquement.
+    // La table Supabase systems utilise user_id.
+    owner_id: row.user_id ?? null,
+    user_id: row.user_id ?? null,
+
     visibility: row.visibility ?? "private",
     review_status: row.review_status ?? "draft",
     submitted_at: row.submitted_at ?? null,
@@ -248,7 +252,6 @@ function systemToRow(system: any, userId: string) {
   return {
     id: isUuid(system?.id) ? system.id : crypto.randomUUID(),
     user_id: system?.user_id ?? userId,
-    owner_id: system?.owner_id ?? userId,
     visibility: (system?.visibility ?? "private") as Visibility,
     review_status: (system?.review_status ?? "draft") as ReviewStatus,
     original_system_id: system?.original_system_id ?? null,
@@ -316,7 +319,7 @@ export async function listMySystems(): Promise<SystemItem[]> {
   const { data, error } = await supabase
     .from("systems")
     .select("*")
-    .or(`owner_id.eq.${user.id},user_id.eq.${user.id}`)
+    .eq("user_id", user.id)
     .order("created_at", { ascending: false });
 
   if (error) {
@@ -372,8 +375,7 @@ export async function getSystem(
   const isOfficialPublic =
     existing.visibility === "public" && existing.review_status === "approved";
 
-  const isOwner =
-    !!user && (existing.owner_id === user.id || existing.user_id === user.id);
+  const isOwner = !!user && existing.user_id === user.id;
 
   if (!isOfficialPublic && !isOwner && !ceo) {
     return null;
@@ -442,7 +444,7 @@ export async function upsertSystemPlay({
   }
 
   const ceo = await isCeoUser();
-  const isMine = system.owner_id === user.id || system.user_id === user.id;
+  const isMine = system.user_id === user.id;
 
   if (!ceo && !isMine) {
     if (isBrowser()) alert("Tu ne peux modifier que tes systèmes.");
@@ -519,7 +521,6 @@ export async function saveSystem(system: any): Promise<SystemItem | null> {
 
   const prepared = {
     ...system,
-    owner_id: user.id,
     user_id: user.id,
     visibility: ceo ? system.visibility ?? "public" : "private",
     review_status: ceo ? system.review_status ?? "approved" : "draft",
@@ -530,7 +531,7 @@ export async function saveSystem(system: any): Promise<SystemItem | null> {
   const existing = await getSystemRaw(row.id);
 
   if (existing) {
-    const isMine = existing.owner_id === user.id || existing.user_id === user.id;
+    const isMine = existing.user_id === user.id;
 
     if (!ceo && !isMine) {
       if (isBrowser()) alert("Tu ne peux modifier que tes systèmes.");
@@ -541,7 +542,6 @@ export async function saveSystem(system: any): Promise<SystemItem | null> {
       {
         ...existing,
         ...prepared,
-        owner_id: existing.owner_id ?? user.id,
         user_id: existing.user_id ?? user.id,
         visibility: ceo ? prepared.visibility ?? "public" : "private",
         review_status: ceo
@@ -604,7 +604,7 @@ export async function updateSystem(
   }
 
   const ceo = await isCeoUser();
-  const isMine = existing.owner_id === user.id || existing.user_id === user.id;
+  const isMine = existing.user_id === user.id;
 
   if (!ceo && !isMine) {
     if (isBrowser()) alert("Tu ne peux modifier que tes systèmes.");
@@ -616,7 +616,6 @@ export async function updateSystem(
       ...existing,
       ...patch,
       id,
-      owner_id: existing.owner_id ?? user.id,
       user_id: existing.user_id ?? user.id,
       visibility: ceo ? existing.visibility ?? "public" : "private",
       review_status: ceo
@@ -655,7 +654,7 @@ export async function submitSystemForReview(id: string): Promise<boolean> {
 
   if (!existing) return false;
 
-  const isMine = existing.owner_id === user.id || existing.user_id === user.id;
+  const isMine = existing.user_id === user.id;
 
   if (!isMine) {
     if (isBrowser()) alert("Tu ne peux proposer que tes propres systèmes.");
@@ -703,7 +702,6 @@ export async function approveSystemForLibrary(id: string): Promise<boolean> {
     {
       ...existing,
       id: crypto.randomUUID(),
-      owner_id: user.id,
       user_id: user.id,
       visibility: "public",
       review_status: "approved",
@@ -718,7 +716,10 @@ export async function approveSystemForLibrary(id: string): Promise<boolean> {
   });
 
   if (insertError) {
-    showSupabaseError("Erreur Supabase approveSystemForLibrary insert:", insertError);
+    showSupabaseError(
+      "Erreur Supabase approveSystemForLibrary insert:",
+      insertError
+    );
     return false;
   }
 
@@ -735,7 +736,10 @@ export async function approveSystemForLibrary(id: string): Promise<boolean> {
     .eq("id", existing.id);
 
   if (updateError) {
-    showSupabaseError("Erreur Supabase approveSystemForLibrary update:", updateError);
+    showSupabaseError(
+      "Erreur Supabase approveSystemForLibrary update:",
+      updateError
+    );
     return false;
   }
 
@@ -790,7 +794,7 @@ export async function deleteSystem(id: string): Promise<void> {
   if (!existing) return;
 
   const ceo = await isCeoUser();
-  const isMine = existing.owner_id === user.id || existing.user_id === user.id;
+  const isMine = existing.user_id === user.id;
 
   if (!ceo && !isMine) {
     if (isBrowser()) alert("Tu ne peux supprimer que tes systèmes.");

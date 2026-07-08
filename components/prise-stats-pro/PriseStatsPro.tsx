@@ -23,6 +23,7 @@ import {
   finalizeLiveMatch,
 } from "@/lib/stats-supabase";
 import { useLivestatTags } from "@/lib/livestat-tags";
+import ShotChart, { zoneById, resolveShotZone } from "@/components/prise-stats-pro/ShotChart";
 
 /* ============================ Types ============================ */
 interface Player { id: string; num: number; name: string; pos: string; photo?: string }
@@ -790,6 +791,7 @@ export default function PriseStatsProPage() {
   // V7.1 · sous-onglet de la colonne analyse (droite) + zone shot chart sélectionnée
   const [analysisTab, setAnalysisTab] = useState<'history' | 'matrix' | 'montage'>('history');
   const [zoneSel, setZoneSel] = useState<string | null>(null);
+  const [zoneFilter, setZoneFilter] = useState<'all' | 'made' | 'missed'>('all');
 
   // Montage en cours (reçoit des actions LOCALES pendant le match).
   const [montageTitle, setMontageTitle] = useState('Nouveau montage');
@@ -1020,7 +1022,20 @@ export default function PriseStatsProPage() {
 
   /* -------- enregistrement (auto, sans validation) -------- */
   const commit = (d: Draft) => {
-    const a: StatA = { ...d, id: uid(), clock: fmt(secs), q, lineup: onCourt.slice() };
+    const vstamp = stampVideo();
+
+    const a: StatA = {
+      ...d,
+      id: uid(),
+      clock: fmt(secs),
+      q,
+      lineup: onCourt.slice(),
+      videoTime: vstamp.videoTime,
+      clipStart: vstamp.clipStart,
+      clipEnd: vstamp.clipEnd,
+      syncStatus: vstamp.syncStatus,
+    };
+
     setActions((arr) => [...arr, a]);
     setPerQ((p) => { const cur = p[q] || { us: 0, them: 0 }; return { ...p, [q]: { us: cur.us + ptsOf(a), them: cur.them + themPtsOf(a) } }; });
     flash('Enregistré : ' + describe(a, find).t);
@@ -1033,7 +1048,6 @@ export default function PriseStatsProPage() {
     const matchId = liveMatchIdRef.current;
     const teamId = liveTeamIdRef.current;
     if (matchId && teamId) {
-      const vstamp = stampVideo();
       persistLiveAction({
         matchId, teamId,
         action: {
@@ -1220,6 +1234,14 @@ export default function PriseStatsProPage() {
     if (stage !== 'zone') return;
     const r = (e.currentTarget as HTMLDivElement).getBoundingClientRect();
     const d = { ...draft, courtX: (e.clientX - r.left) / r.width, courtY: (e.clientY - r.top) / r.height };
+    if (d.shotResult === 'missed') { setDraft(d); setStage('rebound'); } else { setDraft(d); setStage('assist'); }
+  };
+
+  // V7.2 · sélection par ZONE (shot chart pro). Écrit shot_zone_id (dans draft.zone)
+  // + court_x/court_y = centroïde de la zone (repère 0..1). Transition INCHANGÉE.
+  const zonePick = (zone: { id: string; cx: number; cy: number }) => {
+    if (stage !== 'zone') return;
+    const d = { ...draft, zone: zone.id, courtX: zone.cx / 100, courtY: zone.cy / 100 };
     if (d.shotResult === 'missed') { setDraft(d); setStage('rebound'); } else { setDraft(d); setStage('assist'); }
   };
   const rebPick = (id: string) => { const d = { ...draft, reboundType: id }; if (isMyRebound(d.context, id)) { setDraft(d); } else commit(d); };
@@ -1807,22 +1829,28 @@ export default function PriseStatsProPage() {
                 </div>
               )}
 
-              {/* Shot chart PAR ZONES (petite) — + terrain de saisie actif à l'étape zone */}
+              {/* Shot chart PAR ZONES pro — pick à l'étape zone, analyse sinon */}
               <div className="scZone">
                 {liveCourt ? (
                   <div className="scZone-live">
-                    <div className="courtSlotHead"><span>🎯 Clique la zone exacte du tir</span></div>
-                    <div className="courtbox live" onClick={courtClick}>
-                      <Court />
-                      {actions.filter((a) => a.courtX != null).map((a) => (
-                        <span key={a.id} className="shotdot" style={{ left: `${(a.courtX as number) * 100}%`, top: `${(a.courtY as number) * 100}%`, background: a.shotResult === 'made' ? 'var(--green)' : 'var(--red)' }} />
-                      ))}
-                      {draft.courtX != null && (
-                        <span className={`mark ${draft.shotResult === 'made' ? 'made' : 'miss'}`} style={{ left: `${draft.courtX * 100}%`, top: `${(draft.courtY as number) * 100}%` }} />
-                      )}
-                    </div>
+                    <div className="courtSlotHead"><span>🎯 Choisis la zone du tir ({draft.shotType || '2PTS'})</span></div>
+                    <ShotChart
+                      mode="pick"
+                      size="sm"
+                      shotType={draft.shotType === '3PTS' ? '3PTS' : '2PTS'}
+                      selectedZone={draft.zone || null}
+                      onPick={(z) => zonePick(z)}
+                    />
                   </div>
-                ) : renderZoneChart()}
+                ) : (
+                  <ShotChart
+                    mode="analysis"
+                    size="sm"
+                    showPoints
+                    shots={actions.filter((a) => a.actionType === 'tir')}
+                    onZoneClick={(zid) => { setZoneSel(zid); setZoneFilter('all'); }}
+                  />
+                )}
               </div>
             </section>
 
@@ -1842,6 +1870,42 @@ export default function PriseStatsProPage() {
           </div>
         </>
       )}
+
+      {zoneSel && (() => {
+        const z = zoneById(zoneSel);
+        const shotsAll = actions.filter((a) => a.actionType === 'tir' && a.shotType !== 'LF' && resolveShotZone(a) === zoneSel);
+        const shots = shotsAll.filter((a) => zoneFilter === 'all' ? true : zoneFilter === 'made' ? a.shotResult === 'made' : a.shotResult !== 'made');
+        const made = shotsAll.filter((a) => a.shotResult === 'made').length;
+        return (
+          <div className="zpop" onClick={() => setZoneSel(null)}>
+            <div className="zpop-card" onClick={(e) => e.stopPropagation()}>
+              <div className="zpop-head">
+                <b>{z?.label} · {z?.type} — {made}/{shotsAll.length}{shotsAll.length ? ` (${Math.round((made / shotsAll.length) * 100)}%)` : ''}</b>
+                <button onClick={() => setZoneSel(null)}>×</button>
+              </div>
+              <div className="zpop-filters">
+                {([['all', 'Tous'], ['made', 'Marqués'], ['missed', 'Ratés']] as const).map(([k, l]) => (
+                  <button key={k} className={zoneFilter === k ? 'on' : ''} onClick={() => setZoneFilter(k)}>{l}</button>
+                ))}
+              </div>
+              <div className="zpop-list">
+                {shots.length === 0 ? <div className="hist-empty">Aucun tir.</div> : shots.map((a) => {
+                  const p = find(a.playerId);
+                  const hasClip = a.videoTime != null || a.clipStart != null;
+                  return (
+                    <div className="mx-arow" key={a.id}>
+                      <span className="htime">{periodLabel(a.q)} {a.clock}</span>
+                      <span className="hbody"><b>{p ? `#${p.num} ${p.name}` : '—'}</b><em>{tags.label(a.tempsFort)} · {describe(a, find).t}</em></span>
+                      <button className={`hplay ${hasClip ? 'has' : ''}`} title={hasClip ? 'Revoir le clip' : 'Clip à synchroniser'} onClick={() => playClip(a)}>▶</button>
+                      <button className="hadd" onClick={() => addToMontage(a)}>⭐</button>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+        );
+      })()}
 
       {toast && <div className="toast show">{toast}</div>}
       <Style />
@@ -1927,101 +1991,6 @@ export default function PriseStatsProPage() {
             </div>
           );
         })}
-      </div>
-    );
-  }
-
-  /* V7.1 · shot chart par ZONES (style Synergy/Hudl) — lecture seule, sur actions locales.
-     N'interfère pas avec courtClick (qui, lui, ne s'active qu'à l'étape 'zone' du wizard). */
-  function shotZoneOf(a: StatA): string | null {
-    if (a.actionType !== 'tir' || a.courtX == null || a.courtY == null) return null;
-    if (a.shotType === 'LF') return null;
-    const x = a.courtX as number; // 0 (gauche) .. 1 (droite)
-    const y = a.courtY as number; // 0 (panier, haut) .. 1 (loin)
-    const three = a.shotType === '3PTS';
-    if (three) {
-      if (y < 0.30) { return x < 0.5 ? 'corner3-l' : 'corner3-r'; }      // corners (proches ligne de fond)
-      if (x < 0.30) return 'wing3-l';
-      if (x > 0.70) return 'wing3-r';
-      return 'top3';
-    }
-    // 2 points
-    if (y < 0.16 && x > 0.34 && x < 0.66) return 'rim';                   // cercle
-    if (y < 0.34 && x > 0.30 && x < 0.70) return 'paint';                 // peinture
-    if (x < 0.37) return 'mid-l';
-    if (x > 0.63) return 'mid-r';
-    return 'mid-c';
-  }
-  const ZONES: { id: string; label: string; x: number; y: number }[] = [
-    { id: 'rim', label: 'Cercle', x: 50, y: 20 },
-    { id: 'paint', label: 'Peinture', x: 50, y: 42 },
-    { id: 'mid-l', label: 'Mid G', x: 16, y: 40 },
-    { id: 'mid-c', label: 'Mid axe', x: 50, y: 66 },
-    { id: 'mid-r', label: 'Mid D', x: 84, y: 40 },
-    { id: 'corner3-l', label: 'Corner G', x: 9, y: 14 },
-    { id: 'wing3-l', label: 'Aile G', x: 16, y: 74 },
-    { id: 'top3', label: 'Axe 3PTS', x: 50, y: 90 },
-    { id: 'wing3-r', label: 'Aile D', x: 84, y: 74 },
-    { id: 'corner3-r', label: 'Corner D', x: 91, y: 14 },
-  ];
-  function zoneStat(zoneId: string, list: StatA[]) {
-    const shots = list.filter((a) => shotZoneOf(a) === zoneId);
-    const made = shots.filter((a) => a.shotResult === 'made').length;
-    return { made, att: shots.length, pct: shots.length ? Math.round((made / shots.length) * 100) : 0 };
-  }
-  function zoneColor(pct: number, att: number): string {
-    if (!att) return 'rgba(255,255,255,0.05)';
-    if (pct >= 55) return 'rgba(46,158,91,0.55)';
-    if (pct >= 40) return 'rgba(212,162,76,0.5)';
-    return 'rgba(192,57,43,0.5)';
-  }
-
-  function renderZoneChart() {
-    const list = mxFiltered();
-    const zoneActions = zoneSel ? list.filter((a) => shotZoneOf(a) === zoneSel) : [];
-    return (
-      <div className="zc-wrap">
-        <div className="zc-court">
-          <Court />
-          <div className="zc-zones">
-            {ZONES.map((z) => {
-              const s = zoneStat(z.id, list);
-              const on = zoneSel === z.id;
-              return (
-                <button
-                  key={z.id}
-                  className={`zc-zone ${on ? 'on' : ''} ${s.att ? 'has' : ''}`}
-                  style={{ left: `${z.x}%`, top: `${z.y}%`, background: zoneColor(s.pct, s.att) }}
-                  onClick={() => s.att && setZoneSel(on ? null : z.id)}
-                  title={z.label}
-                >
-                  <span className="zc-frac">{s.made}/{s.att}</span>
-                  <span className="zc-pct">{s.att ? s.pct + '%' : ''}</span>
-                </button>
-              );
-            })}
-          </div>
-        </div>
-        {zoneSel && (
-          <div className="zc-clips">
-            <div className="zc-clips-head">
-              <b>{ZONES.find((z) => z.id === zoneSel)?.label} — clips</b>
-              <button onClick={() => setZoneSel(null)}>×</button>
-            </div>
-            {zoneActions.length === 0 ? <div className="hist-empty">Aucun tir.</div> : zoneActions.map((a) => {
-              const p = find(a.playerId);
-              const hasClip = a.videoTime != null || a.clipStart != null;
-              return (
-                <div className="mx-arow" key={a.id}>
-                  <span className="htime">{periodLabel(a.q)} {a.clock}</span>
-                  <span className="hbody"><b>{p ? `#${p.num} ${p.name}` : '—'}</b><em>{describe(a, find).t}</em></span>
-                  <button className={`hplay ${hasClip ? 'has' : ''}`} onClick={() => playClip(a)}>▶</button>
-                  <button className="hadd" onClick={() => addToMontage(a)}>⭐</button>
-                </div>
-              );
-            })}
-          </div>
-        )}
       </div>
     );
   }
@@ -3123,17 +3092,16 @@ function Style() {
 
       .scZone { flex: 0 0 auto; }
       .scZone-live .courtSlotHead { font-size: 11px; color: var(--gold); text-transform: uppercase; margin-bottom: 3px; }
-      .zc-wrap { display: flex; flex-direction: column; gap: 6px; }
-      .zc-court { position: relative; width: 100%; max-width: 340px; margin: 0 auto; aspect-ratio: 400 / 280; border-radius: 10px; overflow: hidden; border: 1px solid var(--border); }
-      .zc-zones { position: absolute; inset: 0; }
-      .zc-zone { position: absolute; transform: translate(-50%, -50%); display: grid; place-items: center; width: 52px; height: 40px; border: 1px solid rgba(255,255,255,.35); border-radius: 8px; color: #fff; cursor: default; font-weight: 800; text-shadow: 0 1px 2px rgba(0,0,0,.6); }
-      .zc-zone.has { cursor: pointer; }
-      .zc-zone.on { outline: 2px solid var(--gold); }
-      .zc-frac { font-size: 12px; line-height: 1; }
-      .zc-pct { font-size: 10px; line-height: 1.1; opacity: .95; }
-      .zc-clips { border: 1px solid var(--border); border-radius: 10px; background: var(--card); padding: 8px; max-height: 150px; overflow: auto; }
-      .zc-clips-head { display: flex; align-items: center; justify-content: space-between; font-size: 12px; margin-bottom: 4px; }
-      .zc-clips-head button { border: 0; background: transparent; color: var(--mute); font-size: 15px; cursor: pointer; }
+
+      /* Popup zone (clic sur une zone du shot chart) */
+      .zpop { position: fixed; inset: 0; background: rgba(0,0,0,.5); display: grid; place-items: center; z-index: 60; padding: 20px; }
+      .zpop-card { width: min(460px, 92vw); max-height: 80vh; background: var(--panel); border: 1px solid var(--border); border-radius: 14px; padding: 12px; display: flex; flex-direction: column; gap: 8px; }
+      .zpop-head { display: flex; align-items: center; justify-content: space-between; font-size: 13px; }
+      .zpop-head button { border: 0; background: transparent; color: var(--mute); font-size: 18px; cursor: pointer; }
+      .zpop-filters { display: flex; gap: 4px; flex-wrap: wrap; }
+      .zpop-filters button { border: 1px solid var(--border); background: var(--card); color: var(--mute); border-radius: 999px; padding: 4px 12px; font-size: 12px; font-weight: 800; cursor: pointer; }
+      .zpop-filters button.on { background: var(--bordeaux); color: #fff; border-color: var(--bordeaux); }
+      .zpop-list { overflow: auto; display: flex; flex-direction: column; gap: 4px; }
 
       /* -- Droite : analyse (sous-onglets) -- */
       .lc-analysis { padding: 0; }
@@ -4062,7 +4030,6 @@ function Style() {
         .colCenter { order: 2; }
         .colCoding { order: 1; }
         .videoSlot { height: 240px; }
-        .zc-court { max-width: 280px; }
       }
 
       @media (max-width: 900px) {
