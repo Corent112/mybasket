@@ -1,11 +1,11 @@
 "use client";
 
-import PriseStatsPro from "@/components/prise-stats-pro/PriseStatsPro";
+import PriseStatsProPage from "@/components/prise-stats-pro/PriseStatsPro";
 
 export default function PriseStatsLivePage() {
   return (
     <main className="liveFull">
-      <PriseStatsPro />
+      <PriseStatsProPage />
 
       <style jsx global>{`
         html,
