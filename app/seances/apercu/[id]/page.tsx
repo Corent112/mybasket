@@ -1,5 +1,7 @@
 "use client";
 
+import { openFileSameTab } from "@/lib/client-file-actions";
+
 import { use, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
@@ -72,6 +74,8 @@ function htmlForPdf(html: string) {
 function htmlForPreview(html: string) {
   const extra = `
     <style>
+      @page { size: A4 portrait; margin: 0; }
+      @media print { html, body { width: 210mm; min-height: 297mm; } }
       html, body {
         max-width: 100% !important;
         min-height: 100% !important;
@@ -82,9 +86,9 @@ function htmlForPreview(html: string) {
         padding: 32px !important;
       }
       .page {
-        width: 1120px !important;
+        width: 794px !important;
         max-width: none !important;
-        min-height: 790px !important;
+        min-height: 1123px !important;
         margin: 0 auto !important;
         box-shadow: 0 18px 55px rgba(15, 23, 42, .16) !important;
         border-radius: 10px !important;
@@ -163,9 +167,9 @@ async function createPdfBlobFromHtml(html: string) {
   const html2pdf = await loadHtml2Pdf();
   const holder = document.createElement("div");
   holder.style.position = "fixed";
-  holder.style.left = "-10000px";
+  holder.style.left = "0";
   holder.style.top = "0";
-  holder.style.width = "1120px";
+  holder.style.width = "794px";
   holder.innerHTML = htmlForPdf(html);
   document.body.appendChild(holder);
 
@@ -177,7 +181,7 @@ async function createPdfBlobFromHtml(html: string) {
         filename: "fiche-seance.pdf",
         image: { type: "jpeg", quality: 0.98 },
         html2canvas: { scale: 2, useCORS: true, backgroundColor: "#ffffff" },
-        jsPDF: { unit: "px", format: [1120, 790], orientation: "landscape" },
+        jsPDF: { unit: "px", format: [794, 1123], orientation: "portrait" },
         pagebreak: { mode: ["avoid-all", "css", "legacy"] },
       })
       .from(page)
@@ -266,7 +270,7 @@ export default function SessionPreviewPage({ params }: PageProps) {
 
   function printSession() {
     if (pdfUrl) {
-      window.open(pdfUrl, "_blank", "noopener,noreferrer");
+      openFileSameTab(pdfUrl);
       return;
     }
 

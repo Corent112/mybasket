@@ -17,18 +17,44 @@ type AccompagnementRequest = {
   created_at: string | null;
 };
 
-function formatDate(value: string | null) {
+type SearchParams = Promise<{
+  q?: string;
+  status?: string;
+  sort?: string;
+}>;
+
+function formatDate(value: string | null, withTime = false) {
   if (!value) return "—";
-  return new Date(value).toLocaleDateString("fr-FR");
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "—";
+
+  return new Intl.DateTimeFormat("fr-FR", {
+    day: "2-digit",
+    month: "long",
+    year: "numeric",
+    ...(withTime
+      ? {
+          hour: "2-digit",
+          minute: "2-digit",
+        }
+      : {}),
+  }).format(date);
 }
 
 function getName(row: AccompagnementRequest) {
   return [row.first_name, row.last_name].filter(Boolean).join(" ") || "Sans nom";
 }
 
+function initials(row: AccompagnementRequest) {
+  return getName(row)
+    .split(" ")
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((part) => part.charAt(0).toUpperCase())
+    .join("") || "?";
+}
+
 function statusLabel(status: string | null) {
-  if (status === "new") return "Nouveau";
-  if (status === "pending") return "À traiter";
   if (status === "in_progress") return "En cours";
   if (status === "done") return "Traité";
   if (status === "archived") return "Archivé";
@@ -36,23 +62,21 @@ function statusLabel(status: string | null) {
 }
 
 function statusClass(status: string | null) {
-  if (status === "done") return styles.green;
-  if (status === "in_progress") return styles.orange;
-  if (status === "archived") return styles.dark;
-  return styles.red;
+  if (status === "in_progress") return styles.progressStatus;
+  if (status === "done") return styles.doneStatus;
+  if (status === "archived") return styles.archivedStatus;
+  return styles.newStatus;
 }
 
 async function updateAccompagnementStatus(formData: FormData) {
   "use server";
 
   const { supabase } = await requireAdmin();
-
   const id = String(formData.get("id") || "");
   const status = String(formData.get("status") || "in_progress");
-
   if (!id) return;
 
-  await supabase
+  const { error } = await supabase
     .from("accompagnement_requests")
     .update({
       status,
@@ -60,21 +84,21 @@ async function updateAccompagnementStatus(formData: FormData) {
     })
     .eq("id", id);
 
+  if (error) console.error("ADMIN_REQUEST_STATUS_ERROR", error);
   revalidatePath("/admin");
   revalidatePath("/admin/accompagnement");
+  revalidatePath("/admin/scouting-video");
 }
 
 async function updateAccompagnementNote(formData: FormData) {
   "use server";
 
   const { supabase } = await requireAdmin();
-
   const id = String(formData.get("id") || "");
   const internalNote = String(formData.get("internal_note") || "");
-
   if (!id) return;
 
-  await supabase
+  const { error } = await supabase
     .from("accompagnement_requests")
     .update({
       internal_note: internalNote,
@@ -82,168 +106,400 @@ async function updateAccompagnementNote(formData: FormData) {
     })
     .eq("id", id);
 
+  if (error) console.error("ADMIN_REQUEST_NOTE_ERROR", error);
+  revalidatePath("/admin");
   revalidatePath("/admin/accompagnement");
+  revalidatePath("/admin/scouting-video");
 }
 
 async function deleteAccompagnementRequest(formData: FormData) {
   "use server";
 
   const { supabase } = await requireAdmin();
-
   const id = String(formData.get("id") || "");
   if (!id) return;
 
-  await supabase.from("accompagnement_requests").delete().eq("id", id);
-
+  const { error } = await supabase.from("accompagnement_requests").delete().eq("id", id);
+  if (error) console.error("ADMIN_REQUEST_DELETE_ERROR", error);
   revalidatePath("/admin");
   revalidatePath("/admin/accompagnement");
+  revalidatePath("/admin/scouting-video");
 }
 
-export default async function AdminAccompagnementPage() {
+export default async function AdminServiceRequestsPage({
+  searchParams,
+}: {
+  searchParams: SearchParams;
+}) {
+  const params = await searchParams;
+  const q = String(params.q || "").trim().toLowerCase();
+  const statusFilter = String(params.status || "all");
+  const sort = String(params.sort || "newest");
+
   const { supabase } = await requireAdmin();
 
-  const { data } = await supabase
+  const { data, error } = await supabase
     .from("accompagnement_requests")
     .select("*")
     .order("created_at", { ascending: false });
 
-  const requests = (data || []) as AccompagnementRequest[];
+  if (error) console.error("ADMIN_REQUESTS_LOAD_ERROR", error);
 
-  const total = requests.length;
-  const newCount = requests.filter((r) =>
-    ["new", "pending", null].includes(r.status)
+  const rows = (data || []) as AccompagnementRequest[];
+
+  const serviceRequests = rows.filter((request) => {
+    const service = String(request.service_type || "").toLowerCase();
+
+    if (service.startsWith("direction technique")) return true;
+
+    const isScouting =
+      service.includes("scouting") ||
+      service.includes("vidéo") ||
+      service.includes("video") ||
+      service.includes("édition standard") ||
+      service.includes("édition scouting") ||
+      service.includes("édition luxe") ||
+      service.includes("retour performance");
+
+    const isFormation =
+      service.includes("formation") ||
+      service.includes("mentorat") ||
+      service.includes("mentor") ||
+      service.includes("tutorat") ||
+      service.includes("suivi élite");
+
+    return !isScouting && !isFormation;
+  });
+
+  const unfilteredRequests = serviceRequests;
+
+  const total = unfilteredRequests.length;
+  const newCount = unfilteredRequests.filter((request) =>
+    ["new", "pending", null].includes(request.status)
   ).length;
-  const inProgress = requests.filter((r) => r.status === "in_progress").length;
-  const done = requests.filter((r) => r.status === "done").length;
-  const archived = requests.filter((r) => r.status === "archived").length;
+  const inProgress = unfilteredRequests.filter(
+    (request) => request.status === "in_progress"
+  ).length;
+  const done = unfilteredRequests.filter(
+    (request) => request.status === "done"
+  ).length;
+  const archived = unfilteredRequests.filter(
+    (request) => request.status === "archived"
+  ).length;
+
+  const requests = unfilteredRequests
+    .filter((request) => {
+      if (statusFilter !== "all") {
+        const normalized =
+          ["new", "pending", null].includes(request.status)
+            ? "new"
+            : request.status;
+        if (normalized !== statusFilter) return false;
+      }
+
+      if (!q) return true;
+
+      const haystack = [
+        getName(request),
+        request.email,
+        request.phone,
+        request.club,
+        request.service_type,
+        request.message,
+        request.internal_note,
+      ]
+        .filter(Boolean)
+        .join(" ")
+        .toLowerCase();
+
+      return haystack.includes(q);
+    })
+    .sort((a, b) => {
+      const timeA = a.created_at ? new Date(a.created_at).getTime() : 0;
+      const timeB = b.created_at ? new Date(b.created_at).getTime() : 0;
+      return sort === "oldest" ? timeA - timeB : timeB - timeA;
+    });
 
   return (
-    <main className={styles.adminAccompagnement}>
+    <main className={styles.page}>
       <div className={styles.container}>
         <Link href="/admin" className={styles.backLink}>
-          ← Retour Dashboard CEO
+          ← Retour au dashboard CEO
         </Link>
 
-        <section className={styles.hero}>
+        <header className={styles.header}>
           <div>
-            <p>Administration MyBasket</p>
-            <h1>Accompagnement</h1>
+            <h1>Direction technique</h1>
+            <p>Gestion des demandes de projet sportif, de structuration de club et d’accompagnement technique.</p>
+          </div>
+
+          <div className={styles.adminBadge}>
+            <div className={styles.adminAvatar}>CEO</div>
+            <div>
+              <strong>Administration MyBasket</strong>
+              <small>Gestion des demandes</small>
+            </div>
+          </div>
+        </header>
+
+        <section className={styles.stats}>
+          <article className={styles.stat}>
+            <div className={styles.statIcon}>✉</div>
+            <div>
+              <strong>{newCount}</strong>
+              <span>Nouvelles demandes</span>
+              <small>À traiter</small>
+            </div>
+          </article>
+
+          <article className={styles.stat}>
+            <div className={styles.statIcon}>◷</div>
+            <div>
+              <strong>{inProgress}</strong>
+              <span>En cours</span>
+              <small>Prises en charge</small>
+            </div>
+          </article>
+
+          <article className={styles.stat}>
+            <div className={styles.statIcon}>✓</div>
+            <div>
+              <strong>{done}</strong>
+              <span>Traitées</span>
+              <small>Dossiers terminés</small>
+            </div>
+          </article>
+
+          <article className={styles.stat}>
+            <div className={styles.statIcon}>▣</div>
+            <div>
+              <strong>{archived}</strong>
+              <span>Archivées</span>
+              <small>Historique</small>
+            </div>
+          </article>
+
+          <article className={styles.stat}>
+            <div className={styles.statIcon}>◎</div>
+            <div>
+              <strong>{total}</strong>
+              <span>Total</span>
+              <small>Toutes les demandes</small>
+            </div>
+          </article>
+        </section>
+
+        <section className={styles.workspace}>
+          <div className={styles.toolbar}>
+            <nav className={styles.tabs} aria-label="Types de demandes">
+              <Link href="/admin/formation" className={`${styles.tab} `}>
+                🎓 Formation
+              </Link>
+              <Link
+                href="/admin/accompagnement"
+                className={`${styles.tab} ${styles.activeTab}`}>
+                🧭 Direction technique
+              </Link>
+              <Link
+                href="/admin/scouting-video"
+                className={`${styles.tab} `}>
+                🎬 Scouting vidéo
+              </Link>
+            </nav>
+
+            <form className={styles.filters} method="get">
+              <div className={styles.searchWrap}>
+                <input
+                  type="search"
+                  name="q"
+                  defaultValue={params.q || ""}
+                  className={styles.search}
+                  placeholder="Rechercher une demande…"
+                />
+                <span>⌕</span>
+              </div>
+
+              <select
+                name="status"
+                defaultValue={statusFilter}
+                className={styles.select}
+                aria-label="Filtrer par statut"
+              >
+                <option value="all">Tous les statuts</option>
+                <option value="new">Nouveau</option>
+                <option value="in_progress">En cours</option>
+                <option value="done">Traité</option>
+                <option value="archived">Archivé</option>
+              </select>
+
+              <select
+                name="sort"
+                defaultValue={sort}
+                className={styles.select}
+                aria-label="Trier les demandes"
+              >
+                <option value="newest">Plus récentes</option>
+                <option value="oldest">Plus anciennes</option>
+              </select>
+
+              <button type="submit" className={styles.filterButton}>
+                Appliquer
+              </button>
+
+              <Link href="/admin/accompagnement" className={styles.resetButton}>
+                Réinitialiser
+              </Link>
+            </form>
+          </div>
+
+          <div className={styles.listHeader}>
+            <h2>Demandes de direction technique</h2>
             <span>
-              Suis les demandes clubs, direction technique, vidéo, scouting et
-              accompagnements personnalisés.
+              {requests.length} affichée{requests.length > 1 ? "s" : ""} sur {total}
             </span>
           </div>
-        </section>
 
-        <section className={styles.statsGrid}>
-          <div className={styles.statCard}>
-            <strong>{total}</strong>
-            <span>Demandes</span>
-          </div>
-
-          <div className={`${styles.statCard} ${styles.red}`}>
-            <strong>{newCount}</strong>
-            <span>À traiter</span>
-          </div>
-
-          <div className={`${styles.statCard} ${styles.orange}`}>
-            <strong>{inProgress}</strong>
-            <span>En cours</span>
-          </div>
-
-          <div className={`${styles.statCard} ${styles.green}`}>
-            <strong>{done}</strong>
-            <span>Traitées</span>
-          </div>
-
-          <div className={`${styles.statCard} ${styles.dark}`}>
-            <strong>{archived}</strong>
-            <span>Archivées</span>
-          </div>
-        </section>
-
-        <section className={styles.tableCard}>
-          <div className={styles.tableHead}>
-            <h2>Demandes d’accompagnement</h2>
-            <span>{total} demandes</span>
-          </div>
-
-          <div className={styles.grid}>
+          <div className={styles.requests}>
             {requests.map((request) => (
               <article key={request.id} className={styles.card}>
-                <div className={styles.cardTop}>
-                  <span
-                    className={`${styles.statusBadge} ${statusClass(
-                      request.status
-                    )}`}
-                  >
-                    {statusLabel(request.status)}
-                  </span>
+                <div className={styles.cardMain}>
+                  <aside className={styles.identityColumn}>
+                    <div className={styles.person}>
+                      <div className={styles.avatar}>{initials(request)}</div>
+                      <div>
+                        <h3>{getName(request)}</h3>
+                        <span
+                          className={`${styles.status} ${statusClass(
+                            request.status
+                          )}`}
+                        >
+                          {statusLabel(request.status)}
+                        </span>
+                      </div>
+                    </div>
 
-                  <span className={styles.date}>
-                    {formatDate(request.created_at)}
-                  </span>
+                    <div className={styles.meta}>
+                      <div>▣ {formatDate(request.created_at, true)}</div>
+                      <div>🏀 {request.club || "Club non renseigné"}</div>
+                    </div>
+
+                    <p className={styles.requestId}>
+                      ID : #{request.id.slice(0, 8).toUpperCase()}
+                    </p>
+                  </aside>
+
+                  <section className={styles.contentColumn}>
+                    <div className={styles.contactRow}>
+                      {request.email ? (
+                        <a href={`mailto:${request.email}`}>
+                          ✉ {request.email}
+                        </a>
+                      ) : (
+                        <span>✉ E-mail non renseigné</span>
+                      )}
+
+                      {request.phone ? (
+                        <a href={`tel:${request.phone.replace(/\s/g, "")}`}>
+                          ☎ {request.phone}
+                        </a>
+                      ) : (
+                        <span>☎ Téléphone non renseigné</span>
+                      )}
+
+                      <span>🏠 Club : {request.club || "Non renseigné"}</span>
+                    </div>
+
+                    <p className={styles.typeLabel}>Type de demande</p>
+                    <div className={styles.badges}>
+                      <span className={styles.badge}>
+                        {request.service_type || "Demande générale"}
+                      </span>
+                    </div>
+
+                    <p className={styles.messageTitle}>Message reçu</p>
+                    <div className={styles.message}>
+                      {request.message || "Aucun message renseigné."}
+                    </div>
+                  </section>
+
+                  <aside className={styles.noteColumn}>
+                    <form action={updateAccompagnementNote}>
+                      <input type="hidden" name="id" value={request.id} />
+                      <label htmlFor={`note-${request.id}`}>
+                        Notes internes CEO
+                      </label>
+                      <small>Visible uniquement par l’administration</small>
+                      <textarea
+                        id={`note-${request.id}`}
+                        name="internal_note"
+                        defaultValue={request.internal_note || ""}
+                        placeholder="Ajouter une note interne…"
+                      />
+                      <button type="submit" className={styles.saveNote}>
+                        Enregistrer la note
+                      </button>
+                    </form>
+                  </aside>
                 </div>
 
-                <h2>{getName(request)}</h2>
+                <footer className={styles.actions}>
+                  {request.phone ? (
+                    <a
+                      className={styles.action}
+                      href={`tel:${request.phone.replace(/\s/g, "")}`}
+                    >
+                      ☎ Appeler
+                    </a>
+                  ) : (
+                    <span className={styles.action}>☎ Appeler</span>
+                  )}
 
-                <div className={styles.meta}>
-                  <span>{request.email || "Email non renseigné"}</span>
-                  <span>{request.phone || "Téléphone non renseigné"}</span>
-                  <span>{request.club || "Club non renseigné"}</span>
-                  <span>{request.service_type || "Demande générale"}</span>
-                </div>
+                  {request.email ? (
+                    <a
+                      className={styles.action}
+                      href={`mailto:${request.email}`}
+                    >
+                      ✉ Répondre par e-mail
+                    </a>
+                  ) : (
+                    <span className={styles.action}>✉ Répondre</span>
+                  )}
 
-                {request.message && (
-                  <p className={styles.message}>{request.message}</p>
-                )}
-
-                <form
-                  action={updateAccompagnementNote}
-                  className={styles.noteForm}
-                >
-                  <input type="hidden" name="id" value={request.id} />
-                  <textarea
-                    name="internal_note"
-                    defaultValue={request.internal_note || ""}
-                    placeholder="Note interne CEO..."
-                    rows={3}
-                  />
-                  <button type="submit">Enregistrer la note</button>
-                </form>
-
-                <div className={styles.actions}>
                   <form action={updateAccompagnementStatus}>
                     <input type="hidden" name="id" value={request.id} />
                     <input type="hidden" name="status" value="in_progress" />
-                    <button type="submit">Prendre en charge</button>
+                    <button type="submit" className={styles.take}>
+                      ◇ Prendre en charge
+                    </button>
                   </form>
 
                   <form action={updateAccompagnementStatus}>
                     <input type="hidden" name="id" value={request.id} />
                     <input type="hidden" name="status" value="done" />
-                    <button type="submit">Marquer traité</button>
+                    <button type="submit" className={styles.done}>
+                      ✓ Marquer traité
+                    </button>
                   </form>
 
                   <form action={updateAccompagnementStatus}>
                     <input type="hidden" name="id" value={request.id} />
                     <input type="hidden" name="status" value="archived" />
-                    <button type="submit">Archiver</button>
+                    <button type="submit">▣ Archiver</button>
                   </form>
 
                   <form action={deleteAccompagnementRequest}>
                     <input type="hidden" name="id" value={request.id} />
-                    <button type="submit" className={styles.dangerBtn}>
-                      Supprimer
+                    <button type="submit" className={styles.danger}>
+                      ♲ Supprimer
                     </button>
                   </form>
-                </div>
+                </footer>
               </article>
             ))}
 
             {requests.length === 0 && (
-              <div className={styles.emptyState}>
-                Aucune demande d’accompagnement pour le moment.
+              <div className={styles.empty}>
+                Aucune demande ne correspond aux filtres sélectionnés.
               </div>
             )}
           </div>

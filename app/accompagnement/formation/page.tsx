@@ -283,7 +283,6 @@ export default function FormationPage() {
                 <option>Mentorat Performance</option>
                 <option>Suivi Élite</option>
                 <option>Consulting Club</option>
-                <option>Analyse Vidéo & Scouting</option>
                 <option>Accompagnement Joueur</option>
                 <option>Je ne sais pas encore</option>
               </select>

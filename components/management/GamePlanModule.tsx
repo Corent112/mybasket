@@ -32,7 +32,7 @@ import type {
   MouseEvent as ReactMouseEvent,
   TouchEvent as ReactTouchEvent,
 } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { getTeams } from "@/lib/equipes-store";
 import ScoutingModule from "./ScoutingModule";
@@ -451,6 +451,7 @@ function extractPlaquetteImages(raw: any): string[] {
 
 export default function GamePlanModule() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const supabase = useMemo(() => createClient(), []); // FIX #2 : client stable
 
   const [teams, setTeams] = useState<Team[]>([]);
@@ -463,6 +464,13 @@ export default function GamePlanModule() {
   const [rotationTick, setRotationTick] = useState(0);
   const [activeTab, setActiveTab] = useState<"systems" | "scout" | "rotation">("systems");
   const [pendingDraw, setPendingDraw] = useState<{ section: SystemSection; image: string } | null>(null);
+
+  useEffect(() => {
+    const requestedTab = searchParams.get("gamePlanTab");
+    if (requestedTab === "systems" || requestedTab === "scout" || requestedTab === "rotation") {
+      setActiveTab(requestedTab);
+    }
+  }, [searchParams]);
 
   const dirtyRef = useRef(false); // FIX #1 : édition en cours non sauvegardée
   const teamIdRef = useRef("");
@@ -750,7 +758,7 @@ export default function GamePlanModule() {
   };
 
   const ensureCalendarMatchEvent = useCallback(
-    async (base: GamePlan = gpRef.current): Promise<GamePlan> => {
+    async (base: GamePlan = gpRef.current, attachmentUrl = ""): Promise<GamePlan> => {
       if (!teamIdRef.current || !base.date) return base;
 
       const eventId = base.calendarEventId || newId();
@@ -779,6 +787,10 @@ export default function GamePlanModule() {
         players: [] as string[],
         joueurs: [] as string[],
         notes: `Game Plan — ${team?.name || ""}`,
+        description: `Game Plan — ${team?.name || ""}`,
+        attachment: attachmentUrl || "",
+        attachment_url: attachmentUrl || null,
+        game_plan_id: teamIdRef.current,
         gamePlanTeamId: teamIdRef.current,
         source: "gameplan",
         updatedAt: new Date().toISOString(),
@@ -794,6 +806,41 @@ export default function GamePlanModule() {
           : [eventPayload, ...current];
 
       lsSet(K_CAL, nextEvents);
+
+      // Synchronisation Supabase : le match et le PDF du Game Plan deviennent
+      // consultables depuis Mon Calendrier sur tous les appareils.
+      try {
+        const { data: auth } = await supabase.auth.getUser();
+        const user = auth.user;
+        if (user) {
+          const dbPayload: Record<string, any> = {
+            id: eventId,
+            user_id: user.id,
+            title,
+            description: `Game Plan — ${team?.name || ""}`,
+            event_type: "game",
+            event_date: base.date,
+            start_time: base.matchTime || null,
+            team_id: teamIdRef.current,
+            opponent: base.opponent || null,
+            attachment_url: attachmentUrl || null,
+          };
+          let { error } = await supabase.from("calendar_events").upsert(dbPayload, { onConflict: "id" });
+          if (error) {
+            // Compatibilité avec les anciens schémas calendar_events.
+            const fallback = {
+              id: eventId, user_id: user.id, title, event_date: base.date,
+              start_time: base.matchTime || null, event_type: "game",
+              attachment_url: attachmentUrl || null,
+            };
+            ({ error } = await supabase.from("calendar_events").upsert(fallback, { onConflict: "id" }));
+          }
+          if (error) console.error("Synchronisation calendrier Game Plan:", error);
+        }
+      } catch (error) {
+        console.error("Synchronisation calendrier Game Plan:", error);
+      }
+
       try {
         window.dispatchEvent(new CustomEvent("mybasket:calendar-updated"));
       } catch {}
@@ -910,7 +957,8 @@ export default function GamePlanModule() {
     }
 
     try {
-      const next = await ensureCalendarMatchEvent(gpRef.current);
+      const pdf = await exportGamePlanPdf(team!, gpRef.current, rotation, { download: false });
+      const next = await ensureCalendarMatchEvent(gpRef.current, pdf?.dataUrl || "");
       gpRef.current = next;
       setGp(next);
       dirtyRef.current = true;
@@ -963,7 +1011,12 @@ export default function GamePlanModule() {
     } catch {}
     lsSet(K_PENDING, { section, teamId, title: `Système ${SECTION_LABEL[section]}` });
     try {
-      localStorage.setItem("mb_plaquette_return_to", "/mon-compte?tab=management&module=gameplan");
+      localStorage.setItem(
+        "mb_plaquette_return_to",
+        section === "scout"
+          ? "/mon-compte?tab=management&module=gameplan&gamePlanTab=scout"
+          : "/mon-compte?tab=management&module=gameplan&gamePlanTab=systems",
+      );
       localStorage.removeItem("mybasket_scouting_pending");
     } catch {}
     setAddSysFor(null);
@@ -1866,7 +1919,7 @@ async function imageToDataUrl(src: string): Promise<string | null> {
   }
 }
 
-async function exportGamePlanPdf(team: Team, gp: GamePlan, rotation: Rotation | null) {
+async function exportGamePlanPdf(team: Team, gp: GamePlan, rotation: Rotation | null, options: { download?: boolean } = {}) {
   try {
     const jsPDF = await loadPdfJs();
     const doc = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4" });
@@ -2039,10 +2092,14 @@ async function exportGamePlanPdf(team: Team, gp: GamePlan, rotation: Rotation | 
     }
 
     const safeName = `${team.name || "game-plan"}-${gp.opponent || "match"}`.replace(/[^a-z0-9_-]+/gi, "-").replace(/-+/g, "-");
-    doc.save(`${safeName}.pdf`);
+    const fileName = `${safeName}.pdf`;
+    const dataUrl = doc.output("datauristring");
+    if (options.download !== false) doc.save(fileName);
+    return { dataUrl, fileName };
   } catch (error) {
     console.error("Export PDF impossible:", error);
     window.alert("Impossible de télécharger le PDF. Vérifie ta connexion puis réessaie.");
+    return null;
   }
 }
 
@@ -2116,7 +2173,7 @@ const styles = `
   .gp-tabs button { border:none; background:transparent; padding:.75rem 1rem; cursor:pointer; font-weight:900; color:#7b6f69; border-radius:12px; transition:.18s ease; }
   .gp-tabs button:hover { background:#fff; color:#6B1A2C; }
   .gp-tabs button.active { color:#fff; background:#6B1A2C; box-shadow:0 10px 24px rgba(107,26,44,.18); }
-  .gp-layout { display:grid; grid-template-columns:minmax(0,1.25fr) 360px; gap:1rem; align-items:start; }
+  .gp-layout { display:grid; grid-template-columns:minmax(0,1fr) 390px; gap:1.15rem; align-items:start; }
   .gp-card,.gp-preview { background:#fff; border:1px solid #ece3d6; border-radius:18px; padding:1.05rem; margin-bottom:1rem; box-shadow:0 14px 38px rgba(60,30,20,.07); }
   .gp-card.dark { background:#111; color:#fff; border-color:rgba(255,255,255,.12); }
   .gp-cardhead { display:flex; align-items:center; justify-content:space-between; gap:1rem; border-bottom:1.5px solid #D4A24C; padding-bottom:.6rem; margin-bottom:.8rem; }
@@ -2125,14 +2182,14 @@ const styles = `
   .gp-card.dark .gp-cardhead h3 { color:#D4A24C; }
   .gp-sub { color:#8a7b73; font-size:.78rem; font-style:italic; }
   .gp-grid2 { display:grid; grid-template-columns:1fr 1fr; gap:.8rem; }
-  .gp-grid4 { display:grid; grid-template-columns:repeat(4,1fr); gap:.8rem; }
+  .gp-grid4 { display:grid; grid-template-columns:2fr 1.15fr 1fr 1.7fr; gap:.85rem; align-items:end; }
   .gp-field { margin-bottom:.85rem; }
   .gp-field label { display:block; font-size:.72rem; font-weight:900; color:#6B1A2C; text-transform:uppercase; letter-spacing:.04em; margin-bottom:.35rem; }
   .gp-card.dark .gp-field label { color:#D4A24C; }
   .gp :global(input),.gp :global(textarea),.gp :global(select) { width:100%; border:1px solid #e1d8cc; border-radius:10px; padding:.7rem .85rem; font-size:.95rem; line-height:1.5; font-family:inherit; color:#0F0F12; background:#fff; resize:vertical; box-sizing:border-box; }
   .gp :global(textarea) { min-height:130px; display:block; width:100% !important; max-width:100% !important; box-sizing:border-box; cursor:text; }
   .gp-endblock :global(textarea) { min-height:150px; }
-  .gp-card.dark :global(input) { background:#191919; color:#fff; border-color:rgba(255,255,255,.15); }
+  .gp-card.dark :global(input),.gp-card.dark :global(textarea) { background:#fff; color:#201a1c; border:2px solid #d9d3d0; box-shadow:none; }
   .gp :global(input:focus),.gp :global(textarea:focus) { outline:none; border-color:#6B1A2C; box-shadow:0 0 0 3px rgba(107,26,44,.1); }
   .gp-syschips { display:flex; flex-wrap:wrap; gap:.4rem; margin:.2rem 0 .6rem; }
   .gp-syschip { display:inline-flex; align-items:center; gap:.4rem; background:#FFF1F2; border:1px solid #e8c9cf; color:#6B1A2C; border-radius:999px; padding:.3rem .65rem; font-size:.8rem; font-weight:700; }
@@ -2163,8 +2220,8 @@ const styles = `
   .gp-system strong { display:block; font-size:.75rem; color:#111; }
   .gp-systemactions { display:flex; gap:.5rem; margin-top:.7rem; }
   .gp-systemactions button,.gp-system > button { flex:1; border:1px solid #ddd; background:#fff; border-radius:8px; padding:.45rem; cursor:pointer; }
-  .gp-match-notes { display:grid; grid-template-columns:1fr 1fr; gap:.8rem; margin-top:1rem; padding-top:.9rem; border-top:1px solid rgba(255,255,255,.12); }
-  .gp-match-notes :global(textarea) { min-height:112px; }
+  .gp-match-notes { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:.85rem; margin-top:1rem; padding-top:1rem; border-top:1px solid rgba(255,255,255,.12); }
+  .gp-match-notes :global(textarea) { min-height:145px; line-height:1.5; }
   .gp-plan-card { background:linear-gradient(180deg,#fff,#fffaf4); }
   .gp-plan-objectives { display:grid; grid-template-columns:1.1fr 1fr 1fr; gap:.85rem; }
   .gp-plan-box { background:#fff; border:1px solid #eadfce; border-radius:16px; padding:.85rem; box-shadow:inset 0 0 0 1px rgba(255,255,255,.45); }
@@ -2190,9 +2247,9 @@ const styles = `
   .gp-toggle input { width:18px; height:18px; accent-color:#6B1A2C; }
   .gp-rotrecap { margin-top:.7rem; background:#FAFAFA; padding:.7rem; border-radius:10px; font-size:.82rem; line-height:1.7; }
   .gp-rotrecap b { color:#6B1A2C; }
-  .gp-preview { position:sticky; top:1rem; }
+  .gp-preview { position:sticky; top:1rem; padding:1.2rem; }
   .gp-preview h3 { margin:0 0 .75rem; color:#6B1A2C; text-transform:uppercase; }
-  .gp-a4 { background:#fff; border:1px solid #ddd; box-shadow:0 15px 35px rgba(0,0,0,.12); min-height:520px; padding:1rem; }
+  .gp-a4 { background:#fff; border:1px solid #ddd; box-shadow:0 15px 35px rgba(0,0,0,.10); min-height:620px; padding:1.2rem; }
   .gp-a4 h4 { margin:0; color:#6B1A2C; font-size:1.8rem; }
   .gp-a4 p { margin:.25rem 0; }
   .gp-a4 ul { padding-left:1.1rem; font-size:.82rem; }
@@ -2215,7 +2272,7 @@ const styles = `
   .de-ghost,.de-black { border-radius:10px; padding:.7rem 1.15rem; font-weight:900; cursor:pointer; }
   .de-ghost { border:1px solid #ddd; background:#fff; }
   .de-black { border:none; background:#6B1A2C; color:#fff; }
-  @media (max-width:1100px){ .gp-layout{ grid-template-columns:1fr; } .gp-preview{ position:static; } }
+  @media (max-width:1200px){ .gp-layout{ grid-template-columns:1fr; } .gp-preview{ position:static; } .gp-match-notes{grid-template-columns:1fr 1fr;} }
   @media (max-width:760px){
     .gp-hero,.gp-grid2,.gp-grid4,.gp-actioncards,.gp-systemgrid,.gp-systemgrid.small { grid-template-columns:1fr; display:grid; }
     .gp-hero { display:grid; }

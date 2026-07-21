@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { revalidatePath } from "next/cache";
 import { requireAdmin } from "@/lib/admin/guard";
+import { normalizeProduct } from "@/lib/shop/queries";
 import styles from "./page.module.css";
 
 type Product = {
@@ -15,35 +16,32 @@ type Product = {
   stock_quantity: number | null;
   status: string | null;
   is_featured: boolean | null;
+  metadata: Record<string, unknown> | null;
   created_at: string | null;
 };
 
-function slugify(value: string) {
-  return value
-    .toLowerCase()
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "");
-}
-
-function eurosToCents(value: FormDataEntryValue | null) {
-  const raw = String(value || "").replace(",", ".").trim();
-  const number = Number(raw);
-  if (Number.isNaN(number)) return 0;
-  return Math.round(number * 100);
-}
-
-function formatMoney(cents: number | null) {
+function formatMoney(cents: number | null | undefined) {
   return new Intl.NumberFormat("fr-FR", {
     style: "currency",
     currency: "EUR",
-  }).format((cents || 0) / 100);
+  }).format(Number(cents || 0) / 100);
+}
+
+function priceHt(product: Product) {
+  const metadata = product.metadata || {};
+  const taxRate = Number(metadata.tax_rate ?? 20);
+  return Number(
+    metadata.price_ht_cents ??
+      Math.round(Number(product.price_cents || 0) / (1 + taxRate / 100)),
+  );
+}
+
+function taxRate(product: Product) {
+  return Number(product.metadata?.tax_rate ?? 20);
 }
 
 function statusLabel(status: string | null) {
-  if (status === "active") return "En vente";
-  if (status === "draft") return "Brouillon";
+  if (status === "active") return "Publié";
   if (status === "archived") return "Archivé";
   return "Brouillon";
 }
@@ -54,40 +52,7 @@ function statusClass(status: string | null) {
   return styles.draft;
 }
 
-async function createProductAction(formData: FormData) {
-  "use server";
-
-  const { supabase } = await requireAdmin();
-
-  const name = String(formData.get("name") || "").trim();
-  const description = String(formData.get("description") || "").trim();
-  const category = String(formData.get("category") || "").trim();
-  const imageUrl = String(formData.get("image_url") || "").trim();
-  const priceCents = eurosToCents(formData.get("price"));
-  const compareAtPriceCents = eurosToCents(formData.get("compare_at_price"));
-  const stockQuantity = Number(formData.get("stock_quantity") || 0);
-  const status = String(formData.get("status") || "draft");
-  const isFeatured = formData.get("is_featured") === "on";
-
-  if (!name) return;
-
-  const { error } = await supabase.from("products").insert({
-    name,
-    slug: `${slugify(name)}-${Date.now()}`,
-    description: description || null,
-    category: category || null,
-    image_url: imageUrl || null,
-    price_cents: priceCents,
-    compare_at_price_cents: compareAtPriceCents || null,
-    stock_quantity: stockQuantity,
-    status,
-    is_featured: isFeatured,
-    created_at: new Date().toISOString(),
-    updated_at: new Date().toISOString(),
-  });
-
-  if (error) throw error;
-
+function revalidateShop() {
   revalidatePath("/admin");
   revalidatePath("/admin/boutique");
   revalidatePath("/boutique");
@@ -97,66 +62,71 @@ async function toggleProductStatusAction(formData: FormData) {
   "use server";
 
   const { supabase } = await requireAdmin();
-
   const id = String(formData.get("id") || "");
   const status = String(formData.get("status") || "draft");
-
   if (!id) return;
 
   const { error } = await supabase
     .from("products")
-    .update({
-      status,
-      updated_at: new Date().toISOString(),
-    })
+    .update({ status, active: status === "active", updated_at: new Date().toISOString() })
     .eq("id", id);
 
   if (error) throw error;
-
-  revalidatePath("/admin");
-  revalidatePath("/admin/boutique");
-  revalidatePath("/boutique");
+  revalidateShop();
 }
 
 async function archiveProductAction(formData: FormData) {
   "use server";
 
   const { supabase } = await requireAdmin();
-
   const id = String(formData.get("id") || "");
   if (!id) return;
 
   const { error } = await supabase
     .from("products")
-    .update({
-      status: "archived",
-      updated_at: new Date().toISOString(),
-    })
+    .update({ status: "archived", active: false, updated_at: new Date().toISOString() })
     .eq("id", id);
 
   if (error) throw error;
+  revalidateShop();
+}
 
-  revalidatePath("/admin");
-  revalidatePath("/admin/boutique");
-  revalidatePath("/boutique");
+async function deleteProductAction(formData: FormData) {
+  "use server";
+
+  const { supabase } = await requireAdmin();
+  const id = String(formData.get("id") || "");
+  if (!id) return;
+
+  const { error } = await supabase.from("products").delete().eq("id", id);
+  if (error) throw error;
+  revalidateShop();
 }
 
 export default async function AdminBoutiquePage() {
   const { supabase } = await requireAdmin();
 
-  const { data } = await supabase
+  const { data, error } = await supabase
     .from("products")
     .select("*")
     .order("created_at", { ascending: false });
 
-  const products = (data || []) as Product[];
+  if (error) console.error("ADMIN_PRODUCTS_LOAD_ERROR", error);
 
+  const products = (data || []).map((row) => normalizeProduct(row as Record<string, unknown>)) as Product[];
   const total = products.length;
-  const active = products.filter((p) => p.status === "active").length;
-  const draft = products.filter((p) => !p.status || p.status === "draft").length;
-  const archived = products.filter((p) => p.status === "archived").length;
-  const featured = products.filter((p) => p.is_featured).length;
-  const stock = products.reduce((sum, p) => sum + (p.stock_quantity || 0), 0);
+  const active = products.filter((product) => product.status === "active").length;
+  const draft = products.filter(
+    (product) => !product.status || product.status === "draft",
+  ).length;
+  const archived = products.filter(
+    (product) => product.status === "archived",
+  ).length;
+  const featured = products.filter((product) => product.is_featured).length;
+  const stock = products.reduce(
+    (sum, product) => sum + Number(product.stock_quantity || 0),
+    0,
+  );
 
   return (
     <main className={styles.adminShop}>
@@ -166,13 +136,19 @@ export default async function AdminBoutiquePage() {
         </Link>
 
         <section className={styles.hero}>
-          <div>
-            <p>Administration MyBasket</p>
-            <h1>Boutique</h1>
-            <span>
-              Crée, publie, masque et archive les produits visibles dans la
-              boutique du site.
-            </span>
+          <div className={styles.heroContent}>
+            <div>
+              <p>Administration MyBasket</p>
+              <h1>Boutique</h1>
+              <span>
+                Crée les produits en brouillon, ajoute leur image et publie-les
+                seulement lorsqu’ils sont prêts.
+              </span>
+            </div>
+
+            <Link href="/admin/boutique/nouveau" className={styles.newProductBtn}>
+              + Créer un produit
+            </Link>
           </div>
         </section>
 
@@ -183,7 +159,7 @@ export default async function AdminBoutiquePage() {
           </div>
           <div className={`${styles.statCard} ${styles.green}`}>
             <strong>{active}</strong>
-            <span>En vente</span>
+            <span>Publiés</span>
           </div>
           <div className={`${styles.statCard} ${styles.orange}`}>
             <strong>{draft}</strong>
@@ -203,53 +179,16 @@ export default async function AdminBoutiquePage() {
           </div>
         </section>
 
-        <section className={styles.card}>
-          <div className={styles.cardHead}>
-            <h2>Créer un produit</h2>
-            <span>Le produit peut être créé en brouillon ou publié directement.</span>
-          </div>
-
-          <form action={createProductAction} className={styles.form}>
-            <input name="name" placeholder="Nom du produit" required />
-            <input name="category" placeholder="Catégorie" />
-            <input name="price" placeholder="Prix €" inputMode="decimal" />
-            <input
-              name="compare_at_price"
-              placeholder="Prix barré €"
-              inputMode="decimal"
-            />
-            <input
-              name="stock_quantity"
-              placeholder="Stock"
-              type="number"
-              defaultValue={0}
-            />
-            <input name="image_url" placeholder="URL image" />
-            <textarea
-              name="description"
-              placeholder="Description du produit"
-              rows={3}
-            />
-
-            <select name="status" defaultValue="draft">
-              <option value="draft">Brouillon</option>
-              <option value="active">En vente</option>
-              <option value="archived">Archivé</option>
-            </select>
-
-            <label className={styles.check}>
-              <input type="checkbox" name="is_featured" />
-              Produit vedette
-            </label>
-
-            <button type="submit">Créer le produit</button>
-          </form>
-        </section>
-
         <section className={styles.tableCard}>
           <div className={styles.tableHead}>
-            <h2>Produits boutique</h2>
-            <span>{total} produits</span>
+            <div>
+              <h2>Produits boutique</h2>
+              <span>
+                Un produit publié apparaît automatiquement dans la boutique du
+                site.
+              </span>
+            </div>
+            <strong>{total} produit(s)</strong>
           </div>
 
           <div className={styles.tableWrapper}>
@@ -258,9 +197,10 @@ export default async function AdminBoutiquePage() {
                 <tr>
                   <th>Produit</th>
                   <th>Catégorie</th>
-                  <th>Prix</th>
+                  <th>Prix HT</th>
+                  <th>Prix TTC</th>
+                  <th>TVA</th>
                   <th>Stock</th>
-                  <th>Vedette</th>
                   <th>Statut</th>
                   <th>Actions</th>
                 </tr>
@@ -279,18 +219,20 @@ export default async function AdminBoutiquePage() {
                             // eslint-disable-next-line @next/next/no-img-element
                             <img src={product.image_url} alt="" />
                           ) : (
-                            <div className={styles.noImage}>🏀</div>
+                            <div className={styles.noImage}>📦</div>
                           )}
 
                           <div>
                             <strong>{product.name || "Produit sans nom"}</strong>
-                            <span>{product.slug || "slug-auto"}</span>
+                            <span>
+                              {product.is_featured ? "⭐ Produit vedette" : product.slug}
+                            </span>
                           </div>
                         </div>
                       </td>
 
                       <td>{product.category || "—"}</td>
-
+                      <td>{formatMoney(priceHt(product))}</td>
                       <td>
                         <strong>{formatMoney(product.price_cents)}</strong>
                         {product.compare_at_price_cents ? (
@@ -299,14 +241,13 @@ export default async function AdminBoutiquePage() {
                           </span>
                         ) : null}
                       </td>
-
+                      <td>{taxRate(product)} %</td>
                       <td>{product.stock_quantity ?? 0}</td>
-                      <td>{product.is_featured ? "Oui" : "Non"}</td>
 
                       <td>
                         <span
                           className={`${styles.statusBadge} ${statusClass(
-                            product.status
+                            product.status,
                           )}`}
                         >
                           {statusLabel(product.status)}
@@ -336,11 +277,16 @@ export default async function AdminBoutiquePage() {
                           {product.status !== "archived" ? (
                             <form action={archiveProductAction}>
                               <input type="hidden" name="id" value={product.id} />
-                              <button type="submit" className={styles.dangerBtn}>
-                                Archiver
-                              </button>
+                              <button type="submit">Archiver</button>
                             </form>
                           ) : null}
+
+                          <form action={deleteProductAction}>
+                            <input type="hidden" name="id" value={product.id} />
+                            <button type="submit" className={styles.dangerBtn}>
+                              Supprimer
+                            </button>
+                          </form>
                         </div>
                       </td>
                     </tr>
@@ -349,9 +295,10 @@ export default async function AdminBoutiquePage() {
 
                 {products.length === 0 && (
                   <tr>
-                    <td colSpan={7}>
+                    <td colSpan={8}>
                       <div className={styles.emptyState}>
-                        Aucun produit créé pour le moment.
+                        Aucun produit. Clique sur « Créer un produit » pour
+                        commencer.
                       </div>
                     </td>
                   </tr>

@@ -19,6 +19,9 @@ type CalendarEvent = {
   event_type: CalendarEventType | null;
   session_id: string | null;
   attachment_url: string | null;
+  match_id?: string | null;
+  team_id?: string | null;
+  game_plan_id?: string | null;
   visibility?: string | null;
   created_at?: string | null;
 };
@@ -467,7 +470,13 @@ export default function MonCalendrier() {
 
               <div className="events">
                 {dayEvents.map((event) => (
-                  <article className="eventCard" key={event.id}>
+                  <article
+                    className={`eventCard ${event.session_id ? "clickableEvent" : ""}`}
+                    key={event.id}
+                    onClick={() => {
+                      if (event.session_id) window.location.href = `/seances/${event.session_id}`;
+                    }}
+                  >
                     <div className="eventType">{eventLabel(event.event_type)}</div>
 
                     <div className="eventMain">
@@ -484,14 +493,26 @@ export default function MonCalendrier() {
                       </div>
                     </div>
 
-                    <div className="actions">
+                    <div className="actions" onClick={(event) => event.stopPropagation()}>
                       {event.session_id && (
                         <Link href={`/seances/${event.session_id}`}>Voir séance</Link>
                       )}
 
+                      {event.session_id && (
+                        <Link href={`/seances/apercu/${event.session_id}`} aria-label="Consulter la fiche séance">
+                          👁 Fiche PDF
+                        </Link>
+                      )}
+
+                      {event.match_id && event.team_id && (
+                        <Link href={`/equipes/${event.team_id}?match=${event.match_id}`}>
+                          Boxscore complet
+                        </Link>
+                      )}
+
                       {event.attachment_url && (
                         <a href={event.attachment_url} target="_blank" rel="noreferrer">
-                          PDF
+                          Ouvrir le PDF
                         </a>
                       )}
 
@@ -684,6 +705,17 @@ export default function MonCalendrier() {
           border-radius: 14px;
           padding: 18px;
           box-shadow: 0 8px 24px rgba(0, 0, 0, 0.06);
+        }
+
+        .clickableEvent {
+          cursor: pointer;
+          transition: transform 0.18s ease, border-color 0.18s ease, box-shadow 0.18s ease;
+        }
+
+        .clickableEvent:hover {
+          transform: translateY(-2px);
+          border-color: #d4a24c;
+          box-shadow: 0 12px 30px rgba(107, 26, 44, 0.12);
         }
 
         .eventType {

@@ -1,0 +1,289 @@
+.adminFormation {
+  background:
+    radial-gradient(circle at top left, rgba(212, 162, 76, 0.14), transparent 34%),
+    linear-gradient(180deg, #fffaf2 0%, #f7f7f8 42%, #ffffff 100%);
+  min-height: 100vh;
+  padding: 30px 40px 80px;
+}
+
+.container {
+  width: calc(100vw - 80px);
+  max-width: 1800px;
+  margin: 0 auto;
+}
+
+.backLink {
+  display: inline-flex;
+  margin-bottom: 18px;
+  color: #6b1a2c;
+  font-weight: 900;
+  text-decoration: none;
+  border: 1px solid rgba(107, 26, 44, 0.22);
+  background: white;
+  padding: 10px 15px;
+  border-radius: 999px;
+  font-size: 13px;
+}
+
+.hero {
+  background:
+    radial-gradient(circle at top right, rgba(212, 162, 76, 0.32), transparent 34%),
+    linear-gradient(135deg, #210913, #6b1a2c);
+  color: white;
+  border-radius: 18px;
+  padding: 32px 36px;
+  box-shadow: 0 18px 45px rgba(33, 9, 19, 0.18);
+}
+
+.hero p {
+  text-transform: uppercase;
+  color: #d4a24c;
+  font-size: 12px;
+  letter-spacing: 0.16em;
+  font-weight: 1000;
+  margin: 0 0 8px;
+}
+
+.hero h1 {
+  margin: 0;
+  font-size: clamp(34px, 4vw, 52px);
+  line-height: 0.95;
+  text-transform: uppercase;
+}
+
+.hero span {
+  display: block;
+  margin-top: 8px;
+  color: rgba(255, 255, 255, 0.82);
+  font-weight: 650;
+  max-width: 760px;
+}
+
+.statsGrid {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 16px;
+  margin: 24px 0;
+}
+
+.statCard,
+.tableCard,
+.card {
+  background: white;
+  border: 1px solid rgba(107, 26, 44, 0.08);
+  box-shadow: 0 15px 35px rgba(0, 0, 0, 0.05);
+}
+
+.statCard {
+  border-radius: 16px;
+  padding: 23px 16px;
+  text-align: center;
+}
+
+.statCard strong {
+  display: block;
+  font-size: 34px;
+  color: #6b1a2c;
+  line-height: 1;
+}
+
+.statCard span {
+  display: block;
+  margin-top: 10px;
+  font-size: 12px;
+  text-transform: uppercase;
+  color: #777;
+  font-weight: 1000;
+}
+
+.green strong {
+  color: #16a34a;
+}
+
+.orange strong {
+  color: #f97316;
+}
+
+.red strong {
+  color: #dc2626;
+}
+
+.dark strong {
+  color: #111827;
+}
+
+.tableCard {
+  border-radius: 20px;
+  overflow: hidden;
+}
+
+.tableHead {
+  padding: 20px 24px;
+  border-bottom: 1px solid #ececec;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.tableHead h2 {
+  margin: 0;
+  color: #221;
+  font-size: 21px;
+}
+
+.tableHead span {
+  color: #777;
+  font-weight: 900;
+  font-size: 14px;
+}
+
+.grid {
+  padding: 22px;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(360px, 1fr));
+  gap: 18px;
+}
+
+.card {
+  border-radius: 18px;
+  padding: 20px;
+}
+
+.cardTop {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: center;
+  margin-bottom: 12px;
+}
+
+.statusBadge {
+  display: inline-flex;
+  border-radius: 999px;
+  padding: 8px 11px;
+  font-size: 12px;
+  font-weight: 1000;
+  white-space: nowrap;
+}
+
+.card h2 {
+  margin: 0 0 12px;
+  color: #6b1a2c;
+}
+
+.date {
+  color: #888;
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 14px;
+}
+
+.meta span {
+  background: #fff4d8;
+  color: #8a6115;
+  border-radius: 999px;
+  padding: 7px 10px;
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.message {
+  color: #555;
+  line-height: 1.55;
+  margin: 0 0 14px;
+  font-weight: 650;
+}
+
+.noteForm {
+  display: grid;
+  gap: 10px;
+  margin: 14px 0;
+}
+
+.noteForm textarea {
+  resize: vertical;
+  border: 1px solid #ddd;
+  border-radius: 13px;
+  padding: 12px;
+  font-family: inherit;
+  font-weight: 750;
+}
+
+.noteForm button,
+.actions button {
+  border: 1px solid #ddd;
+  background: white;
+  color: #333;
+  border-radius: 999px;
+  padding: 10px 14px;
+  font-size: 12px;
+  font-weight: 1000;
+  cursor: pointer;
+}
+
+.noteForm button {
+  background: #6b1a2c;
+  color: white;
+  border-color: #6b1a2c;
+}
+
+.actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.actions form {
+  display: inline-flex;
+}
+
+.dangerBtn {
+  background: #fee2e2 !important;
+  color: #991b1b !important;
+  border-color: #fecaca !important;
+}
+
+.emptyState {
+  grid-column: 1 / -1;
+  text-align: center;
+  padding: 35px 20px;
+  color: #777;
+  font-weight: 900;
+}
+
+@media (max-width: 1200px) {
+  .statsGrid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+
+  .container {
+    width: calc(100vw - 48px);
+  }
+
+  .adminFormation {
+    padding-left: 24px;
+    padding-right: 24px;
+  }
+}
+
+@media (max-width: 760px) {
+  .statsGrid,
+  .grid {
+    grid-template-columns: 1fr;
+  }
+
+  .container {
+    width: calc(100vw - 32px);
+  }
+
+  .adminFormation {
+    padding-left: 16px;
+    padding-right: 16px;
+  }
+}

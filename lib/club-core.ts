@@ -15,6 +15,7 @@ export type ClubTeam = {
   coachId: string | null;
   assistantId: string | null;
   notes: string;
+  teamNumber?: number;
   playersCount?: number;
   sessionsCount?: number;
   matchesCount?: number;
@@ -105,8 +106,76 @@ function sb() {
 }
 
 function normalizeError(error: any) {
-  console.error("CLUB_CORE_SUPABASE_ERROR", error);
-  return new Error(error?.message || error?.details || error?.hint || "Erreur Supabase");
+  const details = {
+    code: error?.code ?? null,
+    message: error?.message ?? null,
+    details: error?.details ?? null,
+    hint: error?.hint ?? null,
+  };
+  console.error("CLUB_CORE_SUPABASE_ERROR", details);
+  return new Error(
+    error?.message || error?.details || error?.hint ||
+    "Erreur Supabase : vérifie la migration Espace club et les droits RLS."
+  );
+}
+
+async function assertClientClubLimit(
+  clubId: string,
+  kind: "players" | "coaches",
+): Promise<void> {
+  const supabase = sb();
+  const { data: { user }, error: userError } = await supabase.auth.getUser();
+  if (userError || !user) throw new Error("Non connecté.");
+
+  const { data: profile } = await supabase
+    .from("profiles")
+    .select("platform_role")
+    .eq("id", user.id)
+    .maybeSingle();
+
+  if (["ceo", "superadmin", "admin"].includes(String(profile?.platform_role ?? ""))) return;
+
+  const { data: subscription } = await supabase
+    .from("subscriptions")
+    .select("plan_id")
+    .eq("user_id", user.id)
+    .eq("status", "active")
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (!subscription?.plan_id) throw new Error("Aucun abonnement actif.");
+
+  const limitColumn = kind === "players" ? "max_players" : "max_coaches";
+  const { data: plan, error: planError } = await supabase
+    .from("subscription_plans")
+    .select(`id,${limitColumn}`)
+    .eq("id", subscription.plan_id)
+    .maybeSingle();
+  if (planError) throw normalizeError(planError);
+
+  const rawLimit = (plan as Record<string, unknown> | null)?.[limitColumn];
+  const limit = rawLimit === null || rawLimit === undefined ? null : Number(rawLimit);
+  if (limit === null || !Number.isFinite(limit)) return;
+
+  const table = kind === "players" ? "club_players" : "club_coaches";
+  const { count, error: countError } = await supabase
+    .from(table)
+    .select("*", { count: "exact", head: true })
+    .eq("club_id", clubId);
+  if (countError) throw normalizeError(countError);
+
+  if ((count ?? 0) >= limit) {
+    throw new Error(
+      kind === "players"
+        ? `Limite de ${limit} joueur(s) atteinte pour votre abonnement.`
+        : `Limite de ${limit} entraîneur(s) atteinte pour votre abonnement.`,
+    );
+  }
+}
+
+function isMissingColumn(error: any) {
+  return error?.code === "PGRST204" || /column .* schema cache/i.test(String(error?.message || ""));
 }
 
 function rowToTeam(row: any): ClubTeam {
@@ -122,6 +191,7 @@ function rowToTeam(row: any): ClubTeam {
     coachId: row.coach_id ?? null,
     assistantId: row.assistant_id ?? null,
     notes: row.notes ?? "",
+    teamNumber: Number(row.team_number ?? (String(row.name || "").match(/Équipe\s+(\d+)/i)?.[1] || 1)),
   };
 }
 
@@ -243,36 +313,59 @@ export async function listClubTeams(clubId: string): Promise<ClubTeam[]> {
 
 export async function createClubTeam(clubId: string, input: Partial<ClubTeam>): Promise<ClubTeam> {
   const supabase = sb();
-  const { data: userData } = await supabase.auth.getUser();
+  const { data: userData, error: authError } = await supabase.auth.getUser();
+  if (authError || !userData.user) throw new Error("Tu dois être connecté pour créer une équipe.");
 
-  const { data, error } = await supabase
-    .from("club_teams")
-    .insert({
-      club_id: clubId,
-      name: input.name || `${input.category || "Équipe"} ${input.gender || ""}`.trim(),
-      category: input.category || "",
-      gender: input.gender || "Mixte",
-      level: input.level || "",
-      season: input.season || "",
-      status: input.status || "active",
-      coach_id: input.coachId || null,
-      assistant_id: input.assistantId || null,
-      notes: input.notes || "",
-      created_by: userData.user?.id ?? null,
-    })
-    .select("*")
-    .single();
+  const category = String(input.category || "Équipe").trim();
+  const parsedNumber = Number(input.teamNumber ?? String(input.name || "").match(/Équipe\s+(\d+)/i)?.[1] ?? 1);
+  const teamNumber = Number.isFinite(parsedNumber) && parsedNumber > 0 ? Math.floor(parsedNumber) : 1;
+  const generatedName = `${category} Équipe ${teamNumber}`;
+  const fullPayload: Record<string, unknown> = {
+    club_id: clubId,
+    name: generatedName,
+    team_number: teamNumber,
+    category,
+    gender: input.gender || "Mixte",
+    level: input.level || "",
+    season: input.season || "",
+    status: input.status || "active",
+    coach_id: input.coachId || null,
+    assistant_id: input.assistantId || null,
+    notes: input.notes || "",
+    created_by: userData.user.id,
+  };
 
-  if (error) throw normalizeError(error);
-  return rowToTeam(data);
+  let result = await supabase.from("club_teams").insert(fullPayload).select("*").single();
+
+  // Compatibilité avec les anciennes tables : on retire seulement les colonnes absentes,
+  // sans perdre la catégorie, le nom généré ni l'affectation du coach.
+  if (result.error && isMissingColumn(result.error)) {
+    const compatiblePayload = { ...fullPayload };
+    for (const optional of ["team_number", "created_by", "assistant_id", "notes", "status", "season", "level"]) {
+      delete compatiblePayload[optional];
+      result = await supabase.from("club_teams").insert(compatiblePayload).select("*").single();
+      if (!result.error) break;
+      if (!isMissingColumn(result.error)) break;
+    }
+  }
+
+  if (result.error) throw normalizeError(result.error);
+  return rowToTeam(result.data);
 }
 
 export async function updateClubTeam(teamId: string, patch: Partial<ClubTeam>): Promise<ClubTeam> {
   const supabase = sb();
 
   const payload: Record<string, unknown> = {};
-  if (patch.name !== undefined) payload.name = patch.name;
-  if (patch.category !== undefined) payload.category = patch.category;
+  if (patch.category !== undefined || patch.teamNumber !== undefined || patch.name !== undefined) {
+    const current = await supabase.from("club_teams").select("category, name, team_number").eq("id", teamId).single();
+    if (current.error) throw normalizeError(current.error);
+    const category = String(patch.category ?? current.data.category ?? "Équipe");
+    const number = Number(patch.teamNumber ?? current.data.team_number ?? String(patch.name ?? current.data.name ?? "").match(/Équipe\s+(\d+)/i)?.[1] ?? 1);
+    payload.category = category;
+    payload.team_number = Number.isFinite(number) && number > 0 ? Math.floor(number) : 1;
+    payload.name = `${category} Équipe ${payload.team_number}`;
+  }
   if (patch.gender !== undefined) payload.gender = patch.gender;
   if (patch.level !== undefined) payload.level = patch.level;
   if (patch.season !== undefined) payload.season = patch.season;
@@ -333,6 +426,7 @@ export async function listClubPlayers(
 }
 
 export async function createClubPlayer(clubId: string, input: Partial<ClubPlayer>): Promise<ClubPlayer> {
+  await assertClientClubLimit(clubId, "players");
   const supabase = sb();
   const { data: userData } = await supabase.auth.getUser();
 

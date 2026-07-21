@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
-import { useSearchParams } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { listSystems, type SystemItem } from "@/lib/systems";
 import {
@@ -16,17 +16,65 @@ import {
 type SortKey = "recent" | "alpha";
 
 const FILTERS = [
-  { key: "type", label: "TYPE" },
+  { key: "type", label: "BASE" },
   { key: "categorie", label: "CATÉGORIE" },
+  { key: "tempsForts", label: "TEMPS FORT" },
 ] as const;
 
-const PLAYBOOK_CATEGORIES = ["U11", "U13", "U15", "U18", "U21", "Seniors"];
-const PLAYBOOK_LEVELS = ["Départemental", "Régional", "National"];
+const PLAYBOOK_CATEGORIES = ["U13", "U15", "U18", "U21", "Seniors"];
 const PLAYBOOK_SEASONS = ["2025-2026", "2026-2027", "2027-2028"];
+
+const SYSTEM_BASES = [
+  "SLOB",
+  "BLOB",
+  "Homme à Homme demi terrain",
+  "Attaque de Zone",
+  "Transition",
+];
+
+const SYSTEM_CATEGORIES = ["U13", "U15", "U18", "U21", "Seniors"];
+
+const SYSTEM_TEMPS_FORTS = [
+  "Pick top",
+  "Pick side",
+  "Hand off",
+  "Isolation",
+  "Post-up",
+  "Écran non porteur",
+];
+
+const FILTER_OPTIONS: Record<string, string[]> = {
+  type: SYSTEM_BASES,
+  categorie: SYSTEM_CATEGORIES,
+  tempsForts: SYSTEM_TEMPS_FORTS,
+};
 
 function getField(item: SystemItem, key: string): string {
   const value = (item as unknown as Record<string, unknown>)[key];
   return typeof value === "string" ? value : "";
+}
+
+function canonicalSystemValue(key: string, value: string): string {
+  const clean = value.trim();
+  const pools = FILTER_OPTIONS[key] ?? [];
+  const match = pools.find((option) =>
+    option.localeCompare(clean, "fr", { sensitivity: "base" }) === 0
+  );
+  if (match) return match;
+  if (key === "categorie" && clean.toLowerCase() === "senior") return "Seniors";
+  return clean;
+}
+
+function getFieldValues(item: SystemItem, key: string): string[] {
+  const value = (item as unknown as Record<string, unknown>)[key];
+  if (Array.isArray(value)) {
+    return value
+      .filter((entry): entry is string => typeof entry === "string")
+      .map((entry) => canonicalSystemValue(key, entry));
+  }
+  return typeof value === "string" && value
+    ? [canonicalSystemValue(key, value)]
+    : [];
 }
 
 function formatDate(date: string | number | undefined) {
@@ -46,7 +94,6 @@ function systemCategoryToPlaybookCategory(
 
   if (v.includes("SLOB")) return "SLOB";
   if (v.includes("BLOB")) return "BLOB";
-  if (v.includes("ATO")) return "ATO";
 
   return "Système demi-terrain";
 }
@@ -109,6 +156,7 @@ function SystemCard({
 }
 
 export default function SystemesClient() {
+  const router = useRouter();
   const searchParams = useSearchParams();
   const forcedPlaybookId = searchParams.get("addToPlaybook");
 
@@ -126,7 +174,6 @@ export default function SystemesClient() {
   const [creatingPlaybook, setCreatingPlaybook] = useState(false);
   const [newPlaybookTitle, setNewPlaybookTitle] = useState("");
   const [newPlaybookCategory, setNewPlaybookCategory] = useState("U18");
-  const [newPlaybookLevel, setNewPlaybookLevel] = useState("National");
   const [newPlaybookSeason, setNewPlaybookSeason] = useState("2025-2026");
   const [adding, setAdding] = useState(false);
 
@@ -156,27 +203,7 @@ export default function SystemesClient() {
     load();
   }, []);
 
-  const options = useMemo(() => {
-    const sets: Record<string, Set<string>> = {};
-
-    for (const f of FILTERS) {
-      sets[f.key] = new Set();
-    }
-
-    for (const item of items) {
-      for (const f of FILTERS) {
-        const value = getField(item, f.key);
-        if (value) sets[f.key].add(value);
-      }
-    }
-
-    return Object.fromEntries(
-      FILTERS.map((f) => [
-        f.key,
-        Array.from(sets[f.key]).sort((a, b) => a.localeCompare(b, "fr")),
-      ])
-    ) as Record<string, string[]>;
-  }, [items]);
+  const options = FILTER_OPTIONS;
 
   function toggleFilter(key: string, value: string) {
     setSelected((prev) => {
@@ -228,9 +255,8 @@ export default function SystemesClient() {
       const created = await createPlaybook({
         title: newPlaybookTitle.trim(),
         category: newPlaybookCategory,
-        level: newPlaybookLevel,
         season: newPlaybookSeason,
-        description: `${newPlaybookCategory} · ${newPlaybookLevel} · ${newPlaybookSeason}`,
+        description: `${newPlaybookCategory} · ${newPlaybookSeason}`,
       });
 
       await addSystem(selectedSystem, created.id);
@@ -264,7 +290,7 @@ export default function SystemesClient() {
         tags: system.tags ?? [],
       });
 
-      window.location.href = `/mon-compte/playbooks/${playbookId}`;
+      router.push(`/mon-compte/playbooks/${playbookId}`);
     } catch (error: any) {
       console.error(error);
       alert(error?.message || "Erreur ajout playbook");
@@ -280,7 +306,7 @@ export default function SystemesClient() {
       .filter((item) => {
         for (const f of FILTERS) {
           const sel = selected[f.key] ?? [];
-          if (sel.length && !sel.includes(getField(item, f.key))) return false;
+          if (sel.length && !getFieldValues(item, f.key).some((value) => sel.includes(value))) return false;
         }
 
         if (!q) return true;
@@ -469,19 +495,6 @@ export default function SystemesClient() {
                   {PLAYBOOK_CATEGORIES.map((category) => (
                     <option key={category} value={category}>
                       {category}
-                    </option>
-                  ))}
-                </select>
-
-                <label>Niveau</label>
-
-                <select
-                  value={newPlaybookLevel}
-                  onChange={(e) => setNewPlaybookLevel(e.target.value)}
-                >
-                  {PLAYBOOK_LEVELS.map((level) => (
-                    <option key={level} value={level}>
-                      {level}
                     </option>
                   ))}
                 </select>

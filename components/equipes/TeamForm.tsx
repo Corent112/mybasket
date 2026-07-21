@@ -151,7 +151,7 @@ export default function TeamForm({
                 <button
                   type="button"
                   className="tl-btn tl-btn-ghost tl-btn-sm"
-                  style={{ marginTop: ".4rem" }}
+                  style={{ marginTop: ".4rem", minWidth: 110, minHeight: 42, padding: "0.65rem 1rem", whiteSpace: "nowrap" }}
                   onClick={() => logoRef.current?.click()}
                 >
                   Choisir
@@ -210,7 +210,7 @@ export default function TeamForm({
               <button
                 type="button"
                 className="tl-btn tl-btn-ghost tl-btn-sm"
-                style={{ marginTop: ".4rem" }}
+                style={{ marginTop: ".4rem", minWidth: 160, minHeight: 42, padding: "0.65rem 1rem", whiteSpace: "nowrap" }}
                 onClick={() => bannerRef.current?.click()}
               >
                 Choisir une photo
@@ -421,11 +421,11 @@ export default function TeamForm({
         <input type="hidden" value={t.clubId ?? ""} readOnly />
 
         <div className="tl-modal-actions">
-          <button type="button" className="tl-btn tl-btn-ghost" onClick={onClose}>
+          <button type="button" className="tl-btn tl-btn-ghost" style={{ minWidth: 120, minHeight: 44, padding: "0.7rem 1.2rem", whiteSpace: "nowrap" }} onClick={onClose}>
             Annuler
           </button>
 
-          <button type="button" className="tl-btn tl-btn-bx" onClick={submit}>
+          <button type="button" className="tl-btn tl-btn-bx" style={{ minWidth: 130, minHeight: 44, padding: "0.7rem 1.2rem", whiteSpace: "nowrap" }} onClick={submit}>
             Enregistrer
           </button>
         </div>

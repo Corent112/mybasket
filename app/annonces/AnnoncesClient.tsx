@@ -86,13 +86,39 @@ function ImagesEditor({ value, onChange }: { value: string[]; onChange: (v: stri
     </div>
   );
 }
+function VideoEditor({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+  const readVideo = (file?: File) => {
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => onChange(String(reader.result || ''));
+    reader.readAsDataURL(file);
+  };
+  return (
+    <div className="mba-video-editor">
+      <input value={value || ''} placeholder="Lien YouTube ou Vimeo" onChange={(e) => onChange(e.target.value)} />
+      <span>ou</span>
+      <label className="mba-btn ghost sm">Téléverser une vidéo<input type="file" accept="video/*" hidden onChange={(e) => readVideo(e.target.files?.[0])} /></label>
+      {value && <small>{value.startsWith('data:video') ? 'Vidéo téléversée prête à être publiée' : 'Lien vidéo renseigné'}</small>}
+    </div>
+  );
+}
 function FieldInput({ field, value, onChange }: { field: Field; value: any; onChange: (v: any) => void }) {
   if (field.type === 'images') return <ImagesEditor value={asList(value)} onChange={onChange} />;
   if (field.type === 'includes') return <IncludesEditor value={asIncludes(value)} onChange={onChange} />;
   if (field.type === 'list') return <ListEditor value={asList(value)} onChange={onChange} />;
   if (field.type === 'textarea') return <textarea rows={4} value={value || ''} placeholder={field.placeholder} onChange={(e) => onChange(e.target.value)} />;
   if (field.type === 'select') return <select value={value || ''} onChange={(e) => onChange(e.target.value)}><option value="">—</option>{field.options?.map((o) => <option key={o} value={o}>{o}</option>)}</select>;
-  if (field.type === 'file') return <input type="file" multiple={field.multiple} onChange={(e) => onChange(Array.from(e.target.files || []).map((f) => f.name).join(', '))} />;
+  if (field.type === 'video') return <VideoEditor value={value || ''} onChange={onChange} />;
+  if (field.type === 'file') return <input type="file" accept="application/pdf,image/jpeg,image/png,image/webp,application/vnd.openxmlformats-officedocument.wordprocessingml.document" multiple={field.multiple} onChange={async (e) => {
+    const files = Array.from(e.target.files || []);
+    const values = await Promise.all(files.map((file) => new Promise<string>((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result || ''));
+      reader.onerror = () => reject(reader.error);
+      reader.readAsDataURL(file);
+    })));
+    onChange(values);
+  }} />;
   const t = field.type === 'number' ? 'number' : field.type === 'email' ? 'email' : field.type === 'tel' ? 'tel' : 'text';
   return <input type={t} value={value || ''} placeholder={field.placeholder} onChange={(e) => onChange(e.target.value)} />;
 }
@@ -182,9 +208,15 @@ function Gallery({ images }: { images: string[] }) {
 function AdPublicPage({ ad, fav, onFav, onClose, onReserve }: { ad: Ad; fav: boolean; onClose: () => void; onFav: () => void; onReserve: () => void }) {
   const meta = adTypeByKey(ad.type)!;
   const d = ad.data;
-  const pillars = asList(d.pillars);
+  const toLines = (value: unknown) => Array.isArray(value)
+    ? value.filter((item): item is string => typeof item === 'string' && item.trim().length > 0)
+    : typeof value === 'string'
+      ? value.split(/\n|\r|\|/).map((item) => item.trim()).filter(Boolean)
+      : [];
+  const pillars = toLines(d.pillars);
   const includes = asIncludes(d.includes);
-  const program = asList(d.program);
+  const program = toLines(d.program);
+  const coachesPresent = toLines(d.coachesPresent);
   const aboutBullets = asList(d.aboutBullets);
   const descBullets = asList(d.descBullets);
   const highlights = asList(d.highlights);
@@ -240,6 +272,9 @@ function AdPublicPage({ ad, fav, onFav, onClose, onReserve }: { ad: Ad; fav: boo
               )}
               {program.length > 0 && (
                 <div className="mba-panel"><h3>Programme type</h3><ul className="mba-prog">{program.map((p, i) => <li key={i}><span className="ic">⟐</span>{p}</li>)}</ul></div>
+              )}
+              {coachesPresent.length > 0 && (
+                <div className="mba-panel"><h3>Coachs présents</h3><ul className="mba-prog">{coachesPresent.map((coach, i) => <li key={i}><span className="ic">🏀</span>{coach}</li>)}</ul></div>
               )}
               {d.quote && <div className="mba-quote-card"><span className="q">“</span><div className="qt">{d.quote.split(',').map((s: string, i: number) => <div key={i}>{s.trim().toUpperCase()}</div>)}</div></div>}
             </div>
@@ -324,7 +359,7 @@ function AdReserveModal({ ad, onClose, onConfirm }: { ad: Ad; onClose: () => voi
 // =====================================================================
 // VIDÉO 2 — Wizard Coach (remplit la maquette n°2)
 // =====================================================================
-const C_STEPS = ['Infos', 'À propos', 'Séance', 'Tarifs', 'Déroulement', 'Propose', 'Médias', 'Aperçu'];
+const C_STEPS = ['Infos', 'À propos', 'Séance', 'Tarifs', 'Médias', 'Aperçu'];
 const emptyCoach = (): CoachProfile => ({
   id: uid('coach_'), firstName: '', lastName: '', jobTitle: 'Coach individuel de basketball', available: true,
   location: '', mobilityNote: 'Déplacements possibles', phone: '', email: '', bio: '', bioBullets: [], pillars: [], tags: [],
@@ -372,7 +407,7 @@ function CoachWizard({ onClose, onPublish }: { onClose: () => void; onPublish: (
         {step === 1 && (
           <div className="mba-form-grid">
             <label className="mba-field full"><span>Bio (sous le titre)</span><textarea rows={3} value={c.bio} onChange={(e) => set({ bio: e.target.value })} placeholder="Ancien joueur professionnel…" /></label>
-            <div className="mba-field full"><span>À propos de moi — puces ✓</span><ListEditor value={c.bioBullets} placeholder="Approche personnalisée" onChange={(v) => set({ bioBullets: v })} /></div>
+            <label className="mba-field full"><span>À propos de moi — valeurs</span><textarea rows={5} value={c.bioBullets.join('\n')} onChange={(e) => set({ bioBullets: e.target.value.split('\n').map((v) => v.trim()).filter(Boolean) })} placeholder="Décris tes valeurs, ton approche et ta façon de travailler." /></label>
             <div className="mba-field full"><span>4 piliers (icônes sous le titre)</span><ListEditor value={c.pillars} placeholder="Technique individuelle" onChange={(v) => set({ pillars: v })} /></div>
             <div className="mba-field full"><span>Tags / compétences</span><ListEditor value={c.tags} placeholder="Shooting" onChange={(v) => set({ tags: v })} /></div>
           </div>
@@ -580,33 +615,9 @@ function CoachWizard({ onClose, onPublish }: { onClose: () => void; onPublish: (
           </div>
         )}
         {step === 4 && (
-          <div className="mba-repeat">
-            {c.sessionFlow.map((s) => (
-              <div key={s.id} className="mba-repeat-row"><div className="mba-form-grid">
-                <label className="mba-field"><span>Étape</span><input value={s.title} onChange={(e) => set({ sessionFlow: updArr(c.sessionFlow, s.id, { title: e.target.value }) })} placeholder="Échauffement & activation" /></label>
-                <label className="mba-field full"><span>Description</span><input value={s.desc} onChange={(e) => set({ sessionFlow: updArr(c.sessionFlow, s.id, { desc: e.target.value }) })} /></label>
-              </div><button className="mba-del" onClick={() => set({ sessionFlow: delArr(c.sessionFlow, s.id) })}>🗑</button></div>
-            ))}
-            <button className="mba-btn ghost" onClick={() => set({ sessionFlow: [...c.sessionFlow, { id: uid(), title: '', desc: '' }] })}>+ Ajouter une étape</button>
-          </div>
-        )}
-        {step === 5 && (
-          <>
-            <div className="mba-repeat">
-              {c.offers.map((o) => (
-                <div key={o.id} className="mba-repeat-row"><div className="mba-form-grid">
-                  <label className="mba-field"><span>Prestation</span><input value={o.title} onChange={(e) => set({ offers: updArr(c.offers, o.id, { title: e.target.value }) })} placeholder="Amélioration technique" /></label>
-                  <label className="mba-field full"><span>Description</span><input value={o.desc} onChange={(e) => set({ offers: updArr(c.offers, o.id, { desc: e.target.value }) })} /></label>
-                </div><button className="mba-del" onClick={() => set({ offers: delArr(c.offers, o.id) })}>🗑</button></div>
-              ))}
-              <button className="mba-btn ghost" onClick={() => set({ offers: [...c.offers, { id: uid(), title: '', desc: '' }] })}>+ Ajouter une prestation</button>
-            </div>
-            <div className="mba-field full" style={{ marginTop: 16 }}><span>Matériel utilisé</span><ListEditor value={c.material} placeholder="Ballons de basket" onChange={(v) => set({ material: v })} /></div>
-          </>
-        )}
-        {step === 6 && (
           <div className="mba-form-grid">
-            <label className="mba-field full"><span>Vidéo de présentation (lien)</span><input value={c.videoUrl || ''} onChange={(e) => set({ videoUrl: e.target.value })} placeholder="YouTube, Vimeo…" /></label>
+            <div className="mba-field full"><span>Vidéo de présentation</span><VideoEditor value={c.videoUrl || ''} onChange={(v) => set({ videoUrl: v })} /></div>
+            <label className="mba-field full"><span>Lien Instagram</span><input type="url" value={c.instagramUrl || ''} onChange={(e) => set({ instagramUrl: e.target.value })} placeholder="https://instagram.com/monprofil" /></label>
             <div className="mba-field full"><span>Photos / vidéos</span><ImagesEditor value={c.photos} onChange={(v) => set({ photos: v })} /></div>
             <div className="mba-field full"><span>Avis (optionnel)</span>
               <div className="mba-repeat">
@@ -622,7 +633,7 @@ function CoachWizard({ onClose, onPublish }: { onClose: () => void; onPublish: (
             </div>
           </div>
         )}
-        {step === 7 && <CoachPublicContent coach={c} preview />}
+        {step === 5 && <CoachPublicContent coach={c} preview />}
       </div>
 
       <div className="mba-mfoot">
@@ -662,9 +673,9 @@ function CoachPublicContent({ coach, preview, onReserve }: { coach: CoachProfile
             <div className="mba-pub-meta light">{coach.location && <span>📍 {coach.location}</span>}{coach.mobilityNote && <span>🚗 {coach.mobilityNote}</span>}</div>
             {coach.bio && <p className="mba-pub-intro">{coach.bio}</p>}
             {coach.pillars.length > 0 && <div className="mba-pillars">{coach.pillars.slice(0, 4).map((p, i) => <div key={i} className="mba-pillar"><span className="ic">{PILL[i % 4]}</span><span>{p}</span></div>)}</div>}
-            {coach.bioBullets.length > 0 && <div className="mba-pub-about"><h3>À propos de moi</h3><ul className="mba-check">{coach.bioBullets.map((b, i) => <li key={i}>{b}</li>)}</ul></div>}
+            {coach.bioBullets.length > 0 && <div className="mba-pub-about"><h3>À propos de moi — valeurs</h3><div className="mba-values-text">{coach.bioBullets.map((b, i) => <p key={i}>{b}</p>)}</div></div>}
             <div className="mba-pub-cta"><button className="mba-btn gold" disabled={preview} onClick={() => onReserve?.(durId)}>Réserver une séance</button><button className="mba-btn outline-light" disabled={preview} onClick={() => { window.location.href = `mailto:${coach.email}`; }}>Me contacter</button></div>
-            {coach.tags.length > 0 && <div className="mba-tags">{coach.tags.slice(0, 4).map((t, i) => <span key={i}>{t}</span>)}{coach.tags.length > 4 && <span className="more">+{coach.tags.length - 4}</span>}</div>}
+            {coach.tags.length > 0 && <div className="mba-tags">{coach.tags.slice(0, 4).map((t, i) => <span key={i}>{t}</span>)}{coach.tags.length > 4 && <span className="more">+{coach.tags.length - 4}</span>}</div>}{coach.instagramUrl && <a className="mba-instagram-link" href={coach.instagramUrl} target="_blank" rel="noreferrer">Voir la page Instagram ↗</a>}
           </div>
           <aside className="mba-c2-side">
             <div className="mba-side-card"><h4>Informations</h4><dl>
@@ -692,8 +703,6 @@ function CoachPublicContent({ coach, preview, onReserve }: { coach: CoachProfile
       {/* CORPS */}
       <div className="mba-pub-body">
         <div className="mba-pub-row2">
-          {coach.sessionFlow.length > 0 && <div className="mba-panel"><h3>Déroulement d’une séance</h3>{coach.sessionFlow.map((s, i) => <div key={s.id} className="mba-flow"><span className="n">{i + 1}</span><div><b>{s.title}</b><p>{s.desc}</p></div></div>)}</div>}
-          {coach.offers.length > 0 && <div className="mba-panel"><h3>Ce que je propose</h3>{coach.offers.map((o) => <div key={o.id} className="mba-offer"><span className="ic">🏀</span><div><b>{o.title}</b><p>{o.desc}</p></div></div>)}</div>}
         </div>
         {(coach.reviews.length > 0 || coach.photos.length > 0) && (
           <div className="mba-pub-row2">
@@ -914,6 +923,9 @@ type DbAnnouncement = {
   city: string | null;
   price_cents: number | null;
   image_url: string | null;
+  images: string[] | null;
+  payload_data: Record<string, any> | null;
+  video_url: string | null;
   status: string | null;
   views_count: number | null;
   contacts_count: number | null;
@@ -930,6 +942,10 @@ type DbCoachProfile = {
   price_from: number | null;
   rating: number | null;
   status: string | null;
+  profile_data: CoachProfile | null;
+  instagram_url: string | null;
+  video_url: string | null;
+  updated_at: string | null;
   created_at: string | null;
 };
 
@@ -959,24 +975,47 @@ function priceToCents(value: unknown) {
 }
 
 function categoryToAdType(category: string | null): AdTypeKey {
-  if (category === 'club_recherche_joueur') return 'club-recherche-joueur' as AdTypeKey;
-  if (category === 'club_recherche_entraineur') return 'club-recherche-entraineur' as AdTypeKey;
-  if (category === 'entraineur_recherche_club') return 'entraineur-recherche-club' as AdTypeKey;
-  if (category === 'preparateur_physique') return 'preparateur-physique' as AdTypeKey;
-  if (category === 'analyste_video') return 'analyste-video' as AdTypeKey;
-  if (category === 'camp_stage') return 'camp' as AdTypeKey;
-  return 'autre' as AdTypeKey;
+  if (category === 'club_recherche_joueur') return 'club-recherche-joueur';
+  if (category === 'club_recherche_staff') return 'club-recherche-staff';
+  if (category === 'staff_recherche_club') return 'staff-recherche-club';
+  if (category === 'camp_stage') return 'camp-stage';
+  return 'camp-stage';
 }
 
 function adTypeToCategory(type: AdTypeKey) {
-  const key = String(type);
-  if (key === 'club-recherche-joueur') return 'club_recherche_joueur';
-  if (key === 'club-recherche-entraineur') return 'club_recherche_entraineur';
-  if (key === 'entraineur-recherche-club') return 'entraineur_recherche_club';
-  if (key === 'preparateur-physique') return 'preparateur_physique';
-  if (key === 'analyste-video') return 'analyste_video';
-  if (key === 'camp') return 'camp_stage';
-  return 'autre';
+  if (type === 'club-recherche-joueur') return 'club_recherche_joueur';
+  if (type === 'club-recherche-staff') return 'club_recherche_staff';
+  if (type === 'staff-recherche-club') return 'staff_recherche_club';
+  return 'camp_stage';
+}
+
+async function uploadDataUrl(
+  supabase: ReturnType<typeof createClient>,
+  userId: string,
+  dataUrl: string,
+  folder: string,
+) {
+  if (!dataUrl.startsWith('data:')) return dataUrl;
+
+  const response = await fetch(dataUrl);
+  const blob = await response.blob();
+  const extension = blob.type.split('/')[1]?.replace('jpeg', 'jpg') || 'bin';
+  const path = `${userId}/${folder}/${Date.now()}-${Math.random().toString(36).slice(2)}.${extension}`;
+  const { error } = await supabase.storage.from('annonces-media').upload(path, blob, {
+    contentType: blob.type,
+    upsert: false,
+  });
+  if (error) throw error;
+  return supabase.storage.from('annonces-media').getPublicUrl(path).data.publicUrl;
+}
+
+async function uploadManyDataUrls(
+  supabase: ReturnType<typeof createClient>,
+  userId: string,
+  values: string[],
+  folder: string,
+) {
+  return Promise.all(values.map((value) => uploadDataUrl(supabase, userId, value, folder)));
 }
 
 function safeSlug(value: string) {
@@ -990,75 +1029,69 @@ function safeSlug(value: string) {
 
 function dbAnnouncementToAd(row: DbAnnouncement): Ad {
   const type = categoryToAdType(row.category);
-  const images = row.image_url ? [row.image_url] : [];
+  const payload = row.payload_data || {};
+  const images = row.images?.length ? row.images : row.image_url ? [row.image_url] : [];
 
   return {
     id: row.id,
     type,
     title: row.title || 'Annonce sans titre',
-    titleAccent: '',
+    titleAccent: typeof payload.titreAccent === 'string' ? payload.titreAccent : '',
     author: row.author_name || row.author_email || 'Auteur MyBasket',
     location: row.city || '',
-    level: '',
-    contract: '',
+    level: typeof payload.niveau === 'string' ? payload.niveau : '',
+    contract: typeof payload.contrat === 'string' ? payload.contrat : '',
     description: row.description || '',
     images,
     createdAt: row.created_at ? new Date(row.created_at).getTime() : Date.now(),
     status: row.status || 'approved',
     data: {
-      intro: row.description || '',
-      city: row.city || '',
-      location: row.city || '',
-      orgName: row.author_name || '',
-      email: row.author_email || '',
-      phone: row.author_phone || '',
-      prix: centsToEuroLabel(row.price_cents),
-      price: centsToEuroLabel(row.price_cents),
+      ...payload,
+      videoUrl: row.video_url || payload.videoUrl || '',
+      intro: payload.intro || row.description || '',
+      city: payload.city || row.city || '',
+      location: payload.location || row.city || '',
+      orgName: payload.orgName || row.author_name || '',
+      email: payload.email || row.author_email || '',
+      phone: payload.phone || row.author_phone || '',
+      prix: payload.prix || centsToEuroLabel(row.price_cents),
+      price: payload.price || centsToEuroLabel(row.price_cents),
     },
   } as Ad;
 }
 
 function dbCoachToCoachProfile(row: DbCoachProfile, profile?: DbProfile): CoachProfile {
+  if (row.profile_data && typeof row.profile_data === 'object') {
+    return {
+      ...emptyCoach(),
+      ...row.profile_data,
+      id: row.id,
+      instagramUrl: row.instagram_url || row.profile_data.instagramUrl || '',
+      videoUrl: row.video_url || row.profile_data.videoUrl || '',
+      createdAt: row.created_at ? new Date(row.created_at).getTime() : row.profile_data.createdAt || Date.now(),
+    };
+  }
+
   const displayName = profile?.display_name || 'Coach MyBasket';
   const parts = displayName.split(' ').filter(Boolean);
-  const firstName = parts[0] || 'Coach';
-  const lastName = parts.slice(1).join(' ') || '';
   const price = centsToEuroLabel(row.price_from) || '60 €';
-
   return {
+    ...emptyCoach(),
     id: row.id,
-    firstName,
-    lastName,
+    firstName: parts[0] || 'Coach',
+    lastName: parts.slice(1).join(' '),
     jobTitle: row.speciality || 'Coach individuel de basketball',
-    available: true,
     location: row.city || '',
-    mobilityNote: 'Déplacements possibles',
-    phone: '',
     email: profile?.email || '',
     bio: row.bio || '',
-    bioBullets: [],
-    pillars: [],
-    tags: row.speciality ? [row.speciality] : [],
-    sessionType: 'Individuelle',
-    audience: '',
-    level: '',
-    locationLabel: row.city || '',
-    availability: '',
-    travel: 'Oui',
-    materialProvided: 'Oui',
     durations: [{ id: uid(), label: '1h', price }],
-    material: [],
-    sessionFlow: [],
-    offers: [],
-    sessionsCount: 0,
-    experienceYears: '',
     rating: row.rating || 5,
-    reviewsCount: 0,
-    reviews: [],
     photos: profile?.avatar_url ? [profile.avatar_url] : [],
     photo: profile?.avatar_url || undefined,
+    instagramUrl: row.instagram_url || '',
+    videoUrl: row.video_url || '',
     createdAt: row.created_at ? new Date(row.created_at).getTime() : Date.now(),
-  } as CoachProfile;
+  };
 }
 
 // =====================================================================
@@ -1099,7 +1132,7 @@ export default function AnnoncesClient() {
         supabase
           .from('announcements')
           .select('*')
-          .eq('status', 'approved')
+          .in('status', ['approved', 'published'])
           .order('created_at', { ascending: false }),
         supabase
           .from('coach_profiles')
@@ -1145,69 +1178,94 @@ export default function AnnoncesClient() {
 
   const publishAd = async (ad: Ad) => {
     const supabase = createClient();
-    const { data: authData } = await supabase.auth.getUser();
-    const user = authData.user;
+    try {
+      const { data: authData, error: authError } = await supabase.auth.getUser();
+      if (authError) throw authError;
+      const user = authData.user;
+      if (!user) {
+        alert('Vous devez être connecté pour publier une annonce.');
+        return;
+      }
 
-    const { error } = await supabase.from('announcements').insert({
-      author_user_id: user?.id ?? null,
-      author_type: user ? 'user' : 'external',
-      author_name: ad.author || ad.data?.orgName || null,
-      author_email: ad.data?.email || ad.data?.contactEmail || null,
-      author_phone: ad.data?.phone || ad.data?.contactPhone || null,
-      category: adTypeToCategory(ad.type),
-      title: ad.title,
-      description: ad.description || ad.data?.intro || null,
-      city: ad.location || ad.data?.city || ad.data?.location || null,
-      price_cents: priceToCents(ad.data?.prix || ad.data?.price || ad.data?.tarif),
-      image_url: ad.images?.[0] || null,
-      status: 'pending',
-      views_count: 0,
-      contacts_count: 0,
-    });
+      const uploadedImages = await uploadManyDataUrls(supabase, user.id, ad.images || [], 'announcements/images');
+      const rawVideo = typeof ad.data?.videoUrl === 'string' ? ad.data.videoUrl : '';
+      const uploadedVideo = rawVideo ? await uploadDataUrl(supabase, user.id, rawVideo, 'announcements/videos') : '';
+      const rawDocuments = Array.isArray(ad.data?.documents) ? ad.data.documents.filter((value: unknown): value is string => typeof value === 'string') : [];
+      const uploadedDocuments = await uploadManyDataUrls(supabase, user.id, rawDocuments, 'announcements/documents');
+      const payloadData = { ...ad.data, images: uploadedImages, videoUrl: uploadedVideo, documents: uploadedDocuments };
 
-    if (error) {
-      console.error('Erreur création annonce:', error);
-      alert("Erreur lors de l'envoi de l'annonce.");
-      return;
+      const { error } = await supabase.from('announcements').insert({
+        author_user_id: user.id,
+        author_type: 'user',
+        author_name: ad.author || ad.data?.orgName || null,
+        author_email: ad.data?.email || ad.data?.contactEmail || user.email || null,
+        author_phone: ad.data?.phone || ad.data?.contactPhone || null,
+        category: adTypeToCategory(ad.type),
+        title: ad.title,
+        description: ad.description || ad.data?.intro || null,
+        city: ad.location || ad.data?.city || ad.data?.location || null,
+        price_cents: priceToCents(ad.data?.prix || ad.data?.price || ad.data?.tarif),
+        image_url: uploadedImages[0] || null,
+        images: uploadedImages,
+        video_url: uploadedVideo || null,
+        payload_data: payloadData,
+        status: 'pending',
+        views_count: 0,
+        contacts_count: 0,
+      });
+      if (error) throw error;
+
+      setFlow({ kind: 'none' });
+      flash('Annonce envoyée ✓ Elle sera publiée après validation.');
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.error('Erreur création annonce:', message, error);
+      alert(`Erreur lors de l'envoi de l'annonce : ${message}`);
     }
-
-    setFlow({ kind: 'none' });
-    flash('Annonce envoyée ✓ Elle sera publiée après validation.');
   };
 
   const publishCoach = async (c: CoachProfile) => {
     const supabase = createClient();
-    const { data: authData } = await supabase.auth.getUser();
-    const user = authData.user;
+    try {
+      const { data: authData, error: authError } = await supabase.auth.getUser();
+      if (authError) throw authError;
+      const user = authData.user;
+      if (!user) {
+        alert('Vous devez être connecté pour créer un profil coach.');
+        return;
+      }
 
-    if (!user) {
-      alert('Vous devez être connecté pour créer un profil coach.');
-      return;
+      const photo = c.photo ? await uploadDataUrl(supabase, user.id, c.photo, 'coach/photo') : '';
+      const cover = c.cover ? await uploadDataUrl(supabase, user.id, c.cover, 'coach/cover') : '';
+      const videoUrl = c.videoUrl ? await uploadDataUrl(supabase, user.id, c.videoUrl, 'coach/video') : '';
+      const photos = await uploadManyDataUrls(supabase, user.id, c.photos || [], 'coach/gallery');
+      const storedProfile: CoachProfile = { ...c, photo: photo || undefined, cover: cover || undefined, videoUrl: videoUrl || undefined, photos };
+      const fullName = `${c.firstName || ''} ${c.lastName || ''}`.trim();
+      const firstPrice = c.durations?.[0]?.price || '';
+
+      const { error } = await supabase.from('coach_profiles').upsert({
+        user_id: user.id,
+        slug: safeSlug(fullName),
+        city: c.location || c.locationLabel || null,
+        bio: c.bio || null,
+        speciality: c.jobTitle || 'Coach individuel',
+        price_from: priceToCents(firstPrice),
+        rating: c.rating || 0,
+        status: 'pending',
+        profile_data: storedProfile,
+        instagram_url: c.instagramUrl || null,
+        video_url: videoUrl || null,
+        updated_at: new Date().toISOString(),
+      }, { onConflict: 'user_id' });
+      if (error) throw error;
+
+      setFlow({ kind: 'none' });
+      flash('Profil coach envoyé ✓ Il sera publié après validation.');
+    } catch (error: any) {
+      const message = error?.message || error?.details || error?.hint || String(error);
+      console.error('Erreur création profil coach:', { message, code: error?.code, details: error?.details, hint: error?.hint });
+      alert(`Erreur lors de l'envoi du profil coach : ${message}`);
     }
-
-    const fullName = `${c.firstName || ''} ${c.lastName || ''}`.trim();
-    const firstPrice = c.durations?.[0]?.price || '';
-
-    const { error } = await supabase.from('coach_profiles').upsert({
-      user_id: user.id,
-      slug: safeSlug(fullName),
-      city: c.location || c.locationLabel || null,
-      bio: c.bio || null,
-      speciality: c.jobTitle || 'Coach individuel',
-      price_from: priceToCents(firstPrice),
-      rating: c.rating || 0,
-      status: 'pending',
-      updated_at: new Date().toISOString(),
-    }, { onConflict: 'user_id' });
-
-    if (error) {
-      console.error('Erreur création profil coach:', error);
-      alert("Erreur lors de l'envoi du profil coach.");
-      return;
-    }
-
-    setFlow({ kind: 'none' });
-    flash('Profil coach envoyé ✓ Il sera publié après validation.');
   };
   const confirmBooking = (b: Booking) => { saveBookings([...loadBookings(), b]); setFlow({ kind: 'none' }); flash('Réservation confirmée ✓'); };
   const toggleFav = (id: string) => { const n = favs.includes(id) ? favs.filter((x) => x !== id) : [...favs, id]; setFavs(n); saveFavs(n); };
@@ -1215,7 +1273,7 @@ export default function AnnoncesClient() {
   const reset = () => { setQ(''); setFType(''); setFLevel(''); setFLoc(''); setFContract(''); };
 
   const fAds = useMemo(() => ads.filter((a) => {
-  if ((a.status || "approved") !== "approved") return false;
+  if (!["approved", "published"].includes(a.status || "approved")) return false;
 
   if (q && !((a.title + a.author + a.description + a.location).toLowerCase().includes(q.toLowerCase()))) return false;
   if (fType && a.type !== fType) return false;
@@ -1535,4 +1593,8 @@ const ANNONCES_CSS = `
     height:190px;
   }
 }
+/* Bloc 6 — formulaires annonces / coach */
+.mba-mhead h2{font-family:var(--font-roboto),Roboto,Arial,sans-serif!important;font-weight:900!important;letter-spacing:-.02em}.mba-type-card .ti{font-family:var(--font-roboto),Roboto,Arial,sans-serif!important;font-weight:900!important}.mba-form-grid textarea{resize:vertical;min-height:120px}.mba-form-grid textarea[name="program"]{min-height:220px}.mba-availability-row{grid-template-columns:minmax(150px,1fr) 150px 150px!important}.mba-day-check{display:flex;align-items:center;gap:10px;font-weight:800}.mba-field.full textarea{width:100%}
+
+.mba-video-editor{display:grid;grid-template-columns:minmax(0,1fr) auto auto;align-items:center;gap:10px}.mba-video-editor small{grid-column:1/-1;color:var(--txt-3)}.mba-values-text{display:grid;gap:8px}.mba-values-text p{margin:0;line-height:1.65}.mba-instagram-link{display:inline-flex;margin-top:14px;color:var(--or);font-weight:800;text-decoration:none}.mba-availability-row{display:grid!important;grid-template-columns:minmax(130px,1fr) minmax(120px,160px) minmax(120px,160px);gap:12px;align-items:center}.mba-availability-row input[type=time]{width:100%;min-width:0}@media(max-width:700px){.mba-video-editor{grid-template-columns:1fr}.mba-video-editor span{display:none}.mba-availability-row{grid-template-columns:1fr 1fr}.mba-day-check{grid-column:1/-1}}
 `;

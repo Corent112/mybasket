@@ -212,6 +212,7 @@ export default function ScoutingModule() {
   const [teamId, setTeamId] = useState("");
   const [sc, setSc] = useState<Scouting>(EMPTY);
   const [loading, setLoading] = useState(true);
+  const [autoInfo, setAutoInfo] = useState("");
   const [saved, setSaved] = useState(false);
   const [openPlayer, setOpenPlayer] = useState<string | null>(null);
   const [previewPlay, setPreviewPlay] = useState<OppPlay | null>(null);
@@ -293,7 +294,7 @@ export default function ScoutingModule() {
     if (!roster.length) { window.alert("Aucun effectif trouvé pour cette équipe."); return; }
     patch({ players: [...sc.players, ...roster] });
   };
-  const autoFill = () => window.alert("Mode automatique : la récupération effectif/stats depuis des bases publiques nécessite un connecteur serveur (API/fournisseur). L'interface est prête — branche un endpoint et je pré-remplis le scouting.");
+  const autoFill = () => setAutoInfo("Le mode automatique nécessite un connecteur serveur vers une source de données. Tu peux continuer en mode manuel ; aucune donnée saisie ne sera perdue.");
 
   // ---------- Playbook adverse (via la VRAIE plaquette) ----------
   const openPlaquette = (opts: { id?: string; title: string; kind: string; asSystem?: boolean; play?: OppPlay }) => {
@@ -301,7 +302,7 @@ export default function ScoutingModule() {
     if (teamId) { writeScout(supabase, teamId, scRef.current).catch(() => {}); }
     lsSet(K_PENDING, { teamId, playId: opts.id || null, title: opts.title || "Système adverse", kind: opts.kind || "Attaque", asSystem: !!opts.asSystem });
     // contexte de retour pour la plaquette (affiche le bouton « Insérer » et nous renvoie ici)
-    try { localStorage.setItem("mb_plaquette_return_to", window.location.pathname + window.location.search); } catch {}
+    try { localStorage.setItem("mb_plaquette_return_to", "/mon-compte?tab=management&module=gameplan&gamePlanTab=scout"); } catch {}
     // on repart propre : pas d'ids exercice/système hérités → la plaquette génère un dossier dédié
     ["mybasket_edit_exercise_id", "mybasket_current_exercise_id", "mybasket_edit_system_id", "mybasket_current_system_id", "mybasket_edit_schema_index", "mybasket_edit_schema_group_id"].forEach(lsDel);
     // réédition : on charge les phases existantes du système
@@ -340,7 +341,10 @@ export default function ScoutingModule() {
           {teams.length > 1 && <select value={teamId} onChange={(e) => selectTeam(e.target.value)}>{teams.map((t) => <option key={t.id} value={t.id}>{t.name} {t.cat ? `· ${t.cat}` : ""}</option>)}</select>}
           {saved && <span className="sm-saved">✓ Enregistré</span>}
           <button className="sm-btn ghost" onClick={saveNow}>💾 Sauvegarder</button>
-          <button className="sm-btn dark" onClick={async () => { await saveNow(); exportScoutPdf(team, scRef.current); }}>📄 Export scouting</button>
+          <button className="sm-btn dark" onClick={async () => {
+            await saveNow();
+            await exportScoutPdf(team, scRef.current, supabase, teamId);
+          }}>📥 Télécharger le scouting</button>
         </div>
       </div>
 
@@ -350,7 +354,7 @@ export default function ScoutingModule() {
           <h3>Équipe — cahier de scouting</h3>
           <div className="sm-mode"><button className={sc.mode === "manuel" ? "on" : ""} onClick={() => patch({ mode: "manuel" })}>Manuel</button><button className={sc.mode === "auto" ? "on" : ""} onClick={() => patch({ mode: "auto" })}>Auto</button></div>
         </div>
-        {sc.mode === "auto" && <div className="sm-auto"><span>Renseigne équipe + compétition, puis récupère les données publiques.</span><button className="sm-btn dark sm" onClick={autoFill}>⟳ Récupérer</button></div>}
+        {sc.mode === "auto" && <><div className="sm-auto"><span>Renseigne équipe + compétition, puis récupère les données publiques.</span><button className="sm-btn dark sm" onClick={autoFill}>⟳ Récupérer</button></div>{autoInfo && <div className="sm-inline-info">{autoInfo}<button type="button" onClick={() => setAutoInfo("")}>Fermer</button></div>}</>}
 
         <Field label="Équipe adverse"><input value={sc.team} onChange={(e) => patch({ team: e.target.value })} placeholder="Ex : Blois" /></Field>
 
@@ -427,7 +431,7 @@ export default function ScoutingModule() {
         ) : <div className="sm-sysempty"><p>Aucun système adverse. Dessine leurs systèmes avec l'outil de dessin — ils apparaîtront en schémas, comme tes systèmes offensifs.</p><button className="sm-add" onClick={() => setDraftSys({ title: "", kind: "Attaque" })}>✏️ Dessiner un système adverse</button></div>}
       </div>
 
-      {/* ====== Situations spéciales (BLOB / SLOB / ATO) — comme des systèmes, schémas visibles ====== */}
+      {/* ====== Situations spéciales (BLOB / SLOB) — comme des systèmes, schémas visibles ====== */}
       <div className="sm-card">
         <div className="sm-cardh"><h3>🎯 Situations spéciales</h3><button className="sm-btn dark sm" onClick={() => setDraftSys({ title: "", kind: "BLOB" })}>✏️ Dessiner une situation</button></div>
         {specials.length ? (
@@ -534,7 +538,12 @@ function PlayerFiche({ player, onClose, onChange, onRemove }: { player: ScoutPla
 }
 
 /* ============================ Export PDF ============================ */
-function exportScoutPdf(team: Team, sc: Scouting) {
+async function exportScoutPdf(
+  team: Team,
+  sc: Scouting,
+  supabase: ReturnType<typeof createClient>,
+  teamId: string,
+) {
   const esc = escapeHtml; const sh = sc.sheet;
   const list = (t: string) => esc(t || "—").split("\n").filter(Boolean).map((x) => `<li>${x}</li>`).join("") || "<li>—</li>";
   const tableRows = TABLE_ROWS.map((r) => `<tr><td class="rl">${esc(r)}</td><td>${esc(sh.table[r]?.att || "")}</td><td>${esc(sh.table[r]?.def || "")}</td><td>${esc(sh.table[r]?.vd || "")}</td></tr>`).join("");
@@ -583,17 +592,101 @@ function exportScoutPdf(team: Team, sc: Scouting) {
   ${systems.length ? `<div class="page"><h2>Playbook adverse</h2><div class="systems">${playsHtml}</div></div>` : ""}
   ${specials.length ? `<div class="page"><h2>Situations spéciales (BLOB / SLOB / ATO)</h2><div class="systems">${specialsHtml}</div></div>` : ""}
   ${pages}</body></html>`;
+  const host = document.createElement("div");
+  host.setAttribute("aria-hidden", "true");
+  Object.assign(host.style, {
+    position: "fixed",
+    left: "-100000px",
+    top: "0",
+    width: "794px",
+    background: "#ffffff",
+    zIndex: "-1",
+  });
+
   try {
-    const iframe = document.createElement("iframe");
-    Object.assign(iframe.style, { position: "fixed", right: "0", bottom: "0", width: "0", height: "0", border: "0" } as CSSStyleDeclaration);
-    document.body.appendChild(iframe);
-    const doc = iframe.contentWindow?.document; if (!doc) throw new Error("no doc");
-    doc.open(); doc.write(html); doc.close();
-    const done = () => { try { iframe.contentWindow?.focus(); iframe.contentWindow?.print(); } catch {} window.setTimeout(() => { try { document.body.removeChild(iframe); } catch {} }, 1500); };
-    if (iframe.contentWindow) iframe.contentWindow.onload = done; window.setTimeout(done, 800);
-  } catch {
-    const w = window.open("", "_blank"); if (!w) { window.alert("Autorise les popups pour imprimer."); return; }
-    w.document.write(html + "<script>setTimeout(function(){window.print()},400)<\/script>"); w.document.close();
+    const styleMatch = html.match(/<style>([\s\S]*?)<\/style>/i);
+    const bodyMatch = html.match(/<body>([\s\S]*?)<\/body>/i);
+    host.innerHTML = `${styleMatch ? `<style>${styleMatch[1]}</style>` : ""}${bodyMatch ? bodyMatch[1] : html}`;
+    document.body.appendChild(host);
+
+    const images = Array.from(host.querySelectorAll("img"));
+    await Promise.all(images.map((img) => new Promise<void>((resolve) => {
+      if (img.complete) return resolve();
+      img.onload = () => resolve();
+      img.onerror = () => resolve();
+    })));
+
+    const [{ default: html2canvas }, { jsPDF }] = await Promise.all([
+      import("html2canvas"),
+      import("jspdf"),
+    ]);
+
+    const pdf = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4", compress: true });
+    const pages = Array.from(host.querySelectorAll<HTMLElement>(".page"));
+
+    for (let index = 0; index < pages.length; index += 1) {
+      const page = pages[index];
+      page.style.width = "794px";
+      page.style.minHeight = "1123px";
+      page.style.padding = "38px";
+      page.style.background = "#ffffff";
+      page.style.pageBreakAfter = "auto";
+
+      const canvas = await html2canvas(page, {
+        scale: 1.8,
+        useCORS: true,
+        allowTaint: false,
+        backgroundColor: "#ffffff",
+        logging: false,
+      });
+
+      if (index > 0) pdf.addPage();
+      const image = canvas.toDataURL("image/jpeg", 0.92);
+      const ratio = Math.min(190 / canvas.width, 277 / canvas.height);
+      const width = canvas.width * ratio;
+      const height = canvas.height * ratio;
+      pdf.addImage(image, "JPEG", (210 - width) / 2, 10, width, height, undefined, "FAST");
+    }
+
+    const safeName = (sc.team || team.name || "adversaire")
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .replace(/[^a-zA-Z0-9_-]+/g, "-")
+      .replace(/^-+|-+$/g, "")
+      .toLowerCase() || "adversaire";
+    const filename = `scouting-${safeName}-${new Date().toISOString().slice(0, 10)}.pdf`;
+    const blob = pdf.output("blob");
+
+    // Copie durable dans Supabase Storage pour consultation sur un autre appareil.
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (user && teamId) {
+        const path = `${user.id}/${teamId}/${Date.now()}-${filename}`;
+        const { error: uploadError } = await supabase.storage
+          .from("scouting-exports")
+          .upload(path, blob, { contentType: "application/pdf", upsert: true });
+
+        if (!uploadError) {
+          const { data: publicData } = supabase.storage.from("scouting-exports").getPublicUrl(path);
+          await supabase
+            .from("management_gameplans")
+            .update({ scouting_pdf_url: publicData.publicUrl, updated_at: new Date().toISOString() })
+            .eq("user_id", user.id)
+            .eq("team_id", teamId);
+        } else {
+          console.warn("Archivage du scouting dans Supabase impossible:", uploadError.message);
+        }
+      }
+    } catch (storageError) {
+      console.warn("Archivage du PDF scouting indisponible:", storageError);
+    }
+
+    pdf.save(filename);
+  } catch (error) {
+    console.error("Export scouting:", error);
+    window.alert("Impossible de générer le PDF du scouting. Vérifie les images puis réessaie.");
+  } finally {
+    host.remove();
   }
 }
 
@@ -772,4 +865,6 @@ const css = `
   @media(max-width:980px){.sm-keys{grid-template-columns:repeat(3,minmax(0,1fr))}.sm-grid2{grid-template-columns:1fr}.sm-bar{position:relative}.sm-barr{justify-content:flex-start}.sm-4{grid-template-columns:repeat(2,minmax(0,1fr))}}
   @media(max-width:620px){.sm{padding:.5rem 0}.sm-card,.sm-bar{border-radius:18px;padding:.85rem}.sm-keys,.sm-2,.sm-3,.sm-4{grid-template-columns:1fr}.pf-top{grid-template-columns:1fr}.pf-photo{width:100%;height:180px}.pf-stats,.pf-shoot{grid-template-columns:repeat(2,1fr)}}
 
+
+.sm-inline-info{display:flex;align-items:center;justify-content:space-between;gap:1rem;margin:.75rem 0 1rem;padding:.9rem 1rem;border:1px solid #e5c882;border-radius:12px;background:#fff8e8;color:#6b1a2c;font-weight:750;line-height:1.45}.sm-inline-info button{border:0;background:#6b1a2c;color:#fff;border-radius:9px;padding:.5rem .75rem;font-weight:900;cursor:pointer;white-space:nowrap}
 `;

@@ -5,6 +5,8 @@ import "./globals.css";
 
 import Header from "@/components/Header";
 import Footer from "@/components/Footer";
+import LegacyBusinessStateMigration from "@/components/LegacyBusinessStateMigration";
+import EmptyRangesPolyfill from "@/components/EmptyRangesPolyfill";
 
 const roboto = Roboto({
   weight: ["400", "500", "700", "900"],
@@ -31,6 +33,8 @@ export default function RootLayout({
   return (
     <html lang="fr" className={`${roboto.variable} ${alfa.variable}`}>
       <body>
+        <LegacyBusinessStateMigration />
+        <EmptyRangesPolyfill />
         <div className="app-shell">
           <Header />
 

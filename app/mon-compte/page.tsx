@@ -1,12 +1,13 @@
-'use client';
+"use client";
 
-import { useEffect, useMemo, useRef, useState } from 'react';
-import { useRouter } from 'next/navigation';
-import Link from 'next/link';
-import { createClient } from '@/lib/supabase/client';
-import MonCalendrier from './Calendrier';
-import Messagerie from '@/components/account/Messagerie';
-import MesPapiers from './MesPapiers';
+import { useEffect, useMemo, useRef, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
+import Link from "next/link";
+import { createClient } from "@/lib/supabase/client";
+import { uploadProfileAsset } from "@/lib/profile-assets";
+import MonCalendrier from "./Calendrier";
+import Messagerie from "@/components/account/Messagerie";
+import MesPapiers from "./MesPapiers";
 import LiveStatsModule from "@/components/management/LiveStatsModule";
 import StatsJoueursModule from "@/components/management/StatsJoueursModule";
 import StatsTempsFortsModule from "@/components/management/StatsTempsFortsModule";
@@ -21,7 +22,7 @@ import {
   upsertPlayer,
   addMatch,
   deleteMatch,
-} from '@/lib/equipes-store';
+} from "@/lib/equipes-store";
 import {
   listPlaybooks,
   createPlaybook as createPlaybookDb,
@@ -29,12 +30,11 @@ import {
   updatePlaybook,
   type Playbook,
 } from "@/lib/playbook";
-import TeamForm from '@/components/equipes/TeamForm';
-import PlayerForm from '@/components/equipes/PlayerForm';
-import type { Player, Team, TeamMatch } from '@/types/player';
+import TeamForm from "@/components/equipes/TeamForm";
+import PlayerForm from "@/components/equipes/PlayerForm";
+import type { Player, Team, TeamMatch } from "@/types/player";
 import GamePlanModule from "@/components/management/GamePlanModule";
 import GestionAdminModule from "@/components/management/GestionAdminModule";
-
 
 type Form = {
   photo: string;
@@ -55,65 +55,67 @@ type MenuItem = {
   href?: string;
 };
 
-const STORAGE_KEY = 'mybasket_profile';
-const CATS = ['U9', 'U11', 'U13', 'U15', 'U18', 'U21', 'SENIOR'];
+const CATS = ["U9", "U11", "U13", "U15", "U18", "U21", "SENIOR"];
 
 const blank = (): Form => ({
-  photo: '',
-  logo: '',
-  firstName: '',
-  lastName: '',
-  birthdate: '',
-  phone: '',
-  club: '',
-  category: '',
-  subscription: 'Aucun',
+  photo: "",
+  logo: "",
+  firstName: "",
+  lastName: "",
+  birthdate: "",
+  phone: "",
+  club: "",
+  category: "",
+  subscription: "Aucun",
 });
 
 const MENU: MenuItem[] = [
-  { key: 'profil', label: 'Mon Profil', icon: '👤' },
-  { key: 'messagerie', label: 'Messagerie', icon: '💬' },
+  { key: "profil", label: "Mon Profil", icon: "👤" },
+  { key: "messagerie", label: "Messagerie", icon: "💬" },
 
   {
-  key: 'club',
-  label: 'Espace Club',
-  icon: '🏛️',
-  href: '/mon-compte/club',
-},
+    key: "club",
+    label: "Espace Club",
+    icon: "🏛️",
+    href: "/mon-compte/club",
+  },
 
-  { key: 'abonnement', label: 'Mon Abonnement', icon: '💎' },
-  { key: 'calendrier', label: 'Mon Calendrier', icon: '📒' },
+  { key: "abonnement", label: "Mon Abonnement", icon: "💎" },
+  { key: "calendrier", label: "Mon Calendrier", icon: "📒" },
 
   {
-  key: 'exercices',
-  label: 'Mes Exercices',
-  icon: '🏀',
-  href: '/mon-compte/exercices',
-},
+    key: "exercices",
+    label: "Mes Exercices",
+    icon: "🏀",
+    href: "/mon-compte/exercices",
+  },
   {
-  key: 'playbooks',
-  label: 'Mes Playbooks',
-  icon: '📁',
-},
-  { key: 'profilcoach', label: 'Mon Profil Coach', icon: '⚡' },
-  { key: 'annonces', label: 'Mes Annonces', icon: '📣' },
-  { key: 'papiers', label: 'Mes Papiers', icon: '📃' },
-  { key: 'equipes', label: 'Mes Équipes', icon: '👥' },
-  { key: 'management', label: 'Management', icon: '📊' },
+    key: "playbooks",
+    label: "Mes Playbooks",
+    icon: "📁",
+  },
+  { key: "profilcoach", label: "Mon Profil Coach", icon: "⚡" },
+  { key: "annonces", label: "Mes Annonces", icon: "📣" },
+  { key: "papiers", label: "Mes Papiers", icon: "📃" },
+  { key: "equipes", label: "Mes Équipes", icon: "👥" },
+  { key: "management", label: "Management", icon: "📊" },
 ];
 
 const fmtDate = (v: string) => {
-  const d = v.replace(/\D/g, '').slice(0, 8);
-  return [d.slice(0, 2), d.slice(2, 4), d.slice(4, 8)].filter(Boolean).join('/');
+  const d = v.replace(/\D/g, "").slice(0, 8);
+  return [d.slice(0, 2), d.slice(2, 4), d.slice(4, 8)]
+    .filter(Boolean)
+    .join("/");
 };
 
 const fmtPhone = (v: string) => {
-  const d = v.replace(/\D/g, '').slice(0, 10);
-  return d.replace(/(\d{2})(?=\d)/g, '$1.');
+  const d = v.replace(/\D/g, "").slice(0, 10);
+  return d.replace(/(\d{2})(?=\d)/g, "$1.");
 };
 
 export default function MonComptePage() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const supabase = createClient();
 
   const photoInput = useRef<HTMLInputElement | null>(null);
@@ -122,36 +124,65 @@ export default function MonComptePage() {
   const toastT = useRef<number | null>(null);
 
   const [loading, setLoading] = useState(true);
-  const [email, setEmail] = useState('');
-  const [uid, setUid] = useState('');
+  const [email, setEmail] = useState("");
+  const [uid, setUid] = useState("");
   const [isAdmin, setIsAdmin] = useState(false);
   const [hasClubSubscription, setHasClubSubscription] = useState(false);
   const [accessMap, setAccessMap] = useState<Record<string, boolean>>({});
-  const [active, setActive] = useState<string>('profil');
+  const [active, setActive] = useState<string>("profil");
   const [managementView, setManagementView] = useState<
-  | "stats-joueurs"
-  | "stats-equipe"
-  | "stats-jeu"
-  | "live"
-  | "historique"
-  | "rotation"
-  | "gameplan"
-  | "gestion-admin"
->("rotation");
+    | "stats-joueurs"
+    | "stats-equipe"
+    | "stats-jeu"
+    | "live"
+    | "historique"
+    | "rotation"
+    | "gameplan"
+    | "gestion-admin"
+  >("rotation");
   const [form, setForm] = useState<Form>(blank());
-  const [toast, setToast] = useState('');
+  const [photoFile, setPhotoFile] = useState<File | null>(null);
+  const [logoFile, setLogoFile] = useState<File | null>(null);
+  const [savingProfile, setSavingProfile] = useState(false);
+  const [toast, setToast] = useState("");
 
   const [teams, setTeams] = useState<Team[]>([]);
-  const [teamForm, setTeamForm] = useState<{ open: boolean; team?: Team }>({ open: false });
+  const [teamForm, setTeamForm] = useState<{ open: boolean; team?: Team }>({
+    open: false,
+  });
   const [playerFor, setPlayerFor] = useState<string | null>(null);
   const [matchFor, setMatchFor] = useState<string | null>(null);
   const [playbookModalOpen, setPlaybookModalOpen] = useState(false);
   const [playbooks, setPlaybooks] = useState<Playbook[]>([]);
 
+  useEffect(() => {
+    const requestedTab = searchParams.get("tab");
+    const requestedModule = searchParams.get("module");
+    const allowedTabs = new Set(MENU.map((item) => item.key));
+    const allowedManagementViews = new Set([
+      "stats-joueurs",
+      "stats-equipe",
+      "stats-jeu",
+      "live",
+      "historique",
+      "rotation",
+      "gameplan",
+      "gestion-admin",
+    ]);
+
+    if (requestedTab && allowedTabs.has(requestedTab)) {
+      setActive(requestedTab);
+    }
+
+    if (requestedModule && allowedManagementViews.has(requestedModule)) {
+      setManagementView(requestedModule as typeof managementView);
+    }
+  }, [searchParams]);
+
   const showToast = (message: string) => {
     setToast(message);
     if (toastT.current) window.clearTimeout(toastT.current);
-    toastT.current = window.setTimeout(() => setToast(''), 2200);
+    toastT.current = window.setTimeout(() => setToast(""), 2200);
   };
 
   const reloadTeams = async () => {
@@ -164,122 +195,116 @@ export default function MonComptePage() {
     }
   };
   const reloadPlaybooks = async () => {
-  try {
-    const data = await listPlaybooks();
-    setPlaybooks(data);
-  } catch (error) {
-    console.error("Erreur chargement playbooks:", error);
-  }
-};
-  useEffect(() => {
-  const load = async () => {
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
-
-    if (!user) {
-      router.replace("/connexion?next=/mon-compte");
-      return;
-    }
-
-    setUid(user.id);
-    setEmail(user.email ?? "");
-
-    let local = blank();
-
     try {
-      const raw = localStorage.getItem(STORAGE_KEY);
-      if (raw) local = { ...local, ...JSON.parse(raw) };
-    } catch {}
+      const data = await listPlaybooks();
+      setPlaybooks(data);
+    } catch (error) {
+      console.error("Erreur chargement playbooks:", error);
+    }
+  };
+  useEffect(() => {
+    const load = async () => {
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
 
-    const { data: profile } = await supabase
-      .from("profiles")
-      .select("display_name, club, avatar_url, platform_role")
-      .eq("id", user.id)
-      .single();
+      if (!user) {
+        router.replace("/connexion?next=/mon-compte");
+        return;
+      }
 
-    const userIsAdmin =
-      profile?.platform_role === "ceo" ||
-      profile?.platform_role === "superadmin" ||
-      profile?.platform_role === "admin";
+      setUid(user.id);
+      setEmail(user.email ?? "");
 
-    setIsAdmin(userIsAdmin);
+      const local = blank();
 
-    let subscriptionLabel = "Aucun";
-    let userHasClubSubscription = userIsAdmin;
+      const { data: profile } = await supabase
+        .from("profiles")
+        .select("display_name, first_name, last_name, club, avatar_url, club_logo_url, phone, birthdate, category, platform_role")
+        .eq("id", user.id)
+        .single();
 
-    const { data: subscription } = await supabase
-      .from("subscriptions")
-      .select("plan_id, status")
-      .eq("user_id", user.id)
-      .eq("status", "active")
-      .limit(1)
-      .maybeSingle();
+      const userIsAdmin =
+        profile?.platform_role === "ceo" ||
+        profile?.platform_role === "superadmin" ||
+        profile?.platform_role === "admin";
 
-    if (subscription?.plan_id) {
-      const { data: plan } = await supabase
-        .from("subscription_plans")
-        .select("name, slug, target")
-        .eq("id", subscription.plan_id)
+      setIsAdmin(userIsAdmin);
+
+      let subscriptionLabel = userIsAdmin ? "Accès total CEO" : "Aucun";
+      let userHasClubSubscription = userIsAdmin;
+
+      const { data: subscription } = await supabase
+        .from("subscriptions")
+        .select("plan_id, status")
+        .eq("user_id", user.id)
+        .eq("status", "active")
+        .limit(1)
         .maybeSingle();
 
-      subscriptionLabel = plan?.name || "Aucun";
+      if (subscription?.plan_id) {
+        const { data: plan } = await supabase
+          .from("subscription_plans")
+          .select("name, slug, target")
+          .eq("id", subscription.plan_id)
+          .maybeSingle();
 
-      userHasClubSubscription =
-        plan?.target === "club" ||
-        plan?.slug === "club-bronze" ||
-        plan?.slug === "club-silver" ||
-        plan?.slug === "club-gold" ||
-        plan?.name?.toLowerCase().includes("club") === true;
-    }
+        if (!userIsAdmin) subscriptionLabel = plan?.name || "Aucun";
 
-    setHasClubSubscription(true);
+        userHasClubSubscription =
+          plan?.target === "club" ||
+          plan?.slug === "club-bronze" ||
+          plan?.slug === "club-silver" ||
+          plan?.slug === "club-gold" ||
+          plan?.name?.toLowerCase().includes("club") === true;
+      }
 
-    const accessRes = await fetch("/api/access");
-    const accessData = await accessRes.json();
+      setHasClubSubscription(userIsAdmin || userHasClubSubscription);
 
-    setAccessMap(accessData);
+      const accessRes = await fetch("/api/access");
+      const accessData = await accessRes.json();
 
-    const dn = (profile?.display_name || "").trim();
+      setAccessMap(accessData);
 
-    setForm({
-      ...local,
-      firstName: local.firstName || (dn ? dn.split(" ")[0] : ""),
-      lastName: local.lastName || (dn ? dn.split(" ").slice(1).join(" ") : ""),
-      club: local.club || profile?.club || "",
-      photo: local.photo || profile?.avatar_url || "",
-      subscription: subscriptionLabel,
-    });
+      const dn = (profile?.display_name || "").trim();
+      const birthdate = profile?.birthdate
+        ? String(profile.birthdate).split("-").reverse().join("/")
+        : "";
 
-    await reloadTeams();
-    await reloadPlaybooks();
+      setForm({
+        ...local,
+        firstName: profile?.first_name || (dn ? dn.split(" ")[0] : ""),
+        lastName: profile?.last_name || (dn ? dn.split(" ").slice(1).join(" ") : ""),
+        club: profile?.club || "",
+        photo: profile?.avatar_url || "",
+        logo: profile?.club_logo_url || "",
+        phone: profile?.phone || "",
+        birthdate,
+        category: profile?.category || "",
+        subscription: subscriptionLabel,
+      });
 
-    setLoading(false);
-  };
+      await reloadTeams();
+      await reloadPlaybooks();
 
-  load();
-}, [router, supabase]);
+      setLoading(false);
+    };
 
-  const readFile = (file: File): Promise<string> =>
-    new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload = () => resolve(String(reader.result));
-      reader.onerror = reject;
-      reader.readAsDataURL(file);
-    });
+    load();
+  }, [router, supabase]);
 
-  const onPhoto = async (e: React.ChangeEvent<HTMLInputElement>) => {
+  const onPhoto = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
-    const photo = await readFile(file);
-    setForm((prev) => ({ ...prev, photo }));
+    setPhotoFile(file);
+    setForm((prev) => ({ ...prev, photo: URL.createObjectURL(file) }));
   };
 
-  const onLogo = async (e: React.ChangeEvent<HTMLInputElement>) => {
+  const onLogo = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
-    const logo = await readFile(file);
-    setForm((prev) => ({ ...prev, logo }));
+    setLogoFile(file);
+    setForm((prev) => ({ ...prev, logo: URL.createObjectURL(file) }));
   };
 
   const setField = (key: keyof Form, value: string) => {
@@ -287,23 +312,64 @@ export default function MonComptePage() {
   };
 
   const save = async () => {
+    if (!uid || savingProfile) return;
+    setSavingProfile(true);
+
     try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(form));
-    } catch {}
+      const display = `${form.firstName} ${form.lastName}`.trim();
+      let avatarUrl = form.photo || null;
+      let clubLogoUrl = form.logo || null;
 
-    const display = `${form.firstName} ${form.lastName}`.trim();
+      if (photoFile) {
+        avatarUrl = await uploadProfileAsset(supabase, uid, "avatar", photoFile);
+      }
+      if (logoFile) {
+        clubLogoUrl = await uploadProfileAsset(supabase, uid, "club-logo", logoFile);
+      }
 
-    if (uid) {
-      await supabase
-        .from('profiles')
-        .update({
-          display_name: display,
-          club: form.club,
-        })
-        .eq('id', uid);
+      const birthdateIso = form.birthdate
+        ? form.birthdate.split("/").reverse().join("-")
+        : null;
+
+      const payload = {
+        id: uid,
+        email,
+        display_name: display,
+        first_name: form.firstName.trim() || null,
+        last_name: form.lastName.trim() || null,
+        club: form.club.trim() || null,
+        phone: form.phone.trim() || null,
+        birthdate: birthdateIso,
+        avatar_url: avatarUrl,
+        club_logo_url: clubLogoUrl,
+        category: form.category || null,
+        updated_at: new Date().toISOString(),
+      };
+
+      const { error } = await supabase
+        .from("profiles")
+        .upsert(payload, { onConflict: "id" });
+
+      if (error) throw error;
+
+      setForm((prev) => ({
+        ...prev,
+        photo: avatarUrl || "",
+        logo: clubLogoUrl || "",
+      }));
+      setPhotoFile(null);
+      setLogoFile(null);
+      showToast("Profil enregistré dans Supabase");
+    } catch (error) {
+      console.error("Erreur sauvegarde profil Supabase:", error);
+      alert(
+        error instanceof Error
+          ? error.message
+          : "Impossible d’enregistrer le profil dans Supabase."
+      );
+    } finally {
+      setSavingProfile(false);
     }
-
-    showToast('Modifications enregistrées');
   };
 
   const handleTeamSave = async (team: Team) => {
@@ -319,7 +385,8 @@ export default function MonComptePage() {
   };
 
   const handleDeleteTeam = async (team: Team) => {
-    if (!confirm(`Supprimer définitivement l'équipe « ${team.name} » ?`)) return;
+    if (!confirm(`Supprimer définitivement l'équipe « ${team.name} » ?`))
+      return;
 
     try {
       await deleteTeam(team.id);
@@ -365,116 +432,119 @@ export default function MonComptePage() {
       alert("Erreur pendant la suppression du match.");
     }
   };
-const createPlaybook = async () => {
-  const title = window.prompt("Nom du playbook ?");
+  const createPlaybook = async () => {
+    const title = window.prompt("Nom du playbook ?");
 
-  if (!title || !title.trim()) return;
+    if (!title || !title.trim()) return;
 
-  try {
-    const created = await createPlaybookDb({
-      title: title.trim(),
-      description: "",
-    });
+    try {
+      const created = await createPlaybookDb({
+        title: title.trim(),
+        description: "",
+      });
 
-    setPlaybooks((prev) => [created, ...prev]);
-    router.push(`/mon-compte/playbooks?id=${created.id}`);
-  } catch (error) {
-    console.error(error);
-    alert("Erreur pendant la création du playbook");
-  }
-};
+      setPlaybooks((prev) => [created, ...prev]);
+      router.push(`/mon-compte/playbooks/${created.id}`);
+    } catch (error) {
+      const message =
+        error instanceof Error
+          ? error.message
+          : "Erreur pendant la création du playbook";
+      console.error("Erreur pendant la création du playbook:", error);
+      alert(message);
+    }
+  };
 
-const deletePlaybook = async (id: string) => {
-  const ok = window.confirm("Supprimer ce playbook ?");
-  if (!ok) return;
+  const deletePlaybook = async (id: string) => {
+    const ok = window.confirm("Supprimer ce playbook ?");
+    if (!ok) return;
 
-  try {
-    await deletePlaybookDb(id);
-    setPlaybooks((prev) => prev.filter((playbook) => playbook.id !== id));
-    showToast("Playbook supprimé");
-  } catch (error) {
-    console.error(error);
-    alert("Erreur pendant la suppression du playbook");
-  }
-};
+    try {
+      await deletePlaybookDb(id);
+      setPlaybooks((prev) => prev.filter((playbook) => playbook.id !== id));
+      showToast("Playbook supprimé");
+    } catch (error) {
+      console.error(error);
+      alert("Erreur pendant la suppression du playbook");
+    }
+  };
 
-const renamePlaybook = async (id: string) => {
-  const current = playbooks.find((playbook) => playbook.id === id);
-  if (!current) return;
+  const renamePlaybook = async (id: string) => {
+    const current = playbooks.find((playbook) => playbook.id === id);
+    if (!current) return;
 
-  const title = window.prompt("Nouveau nom du playbook ?", current.title);
+    const title = window.prompt("Nouveau nom du playbook ?", current.title);
 
-  if (!title || !title.trim()) return;
+    if (!title || !title.trim()) return;
 
-  try {
-    const updated = await updatePlaybook(id, {
-      title: title.trim(),
-    });
+    try {
+      const updated = await updatePlaybook(id, {
+        title: title.trim(),
+      });
 
-    setPlaybooks((prev) =>
-      prev.map((playbook) =>
-        playbook.id === id ? updated : playbook
-      )
-    );
+      setPlaybooks((prev) =>
+        prev.map((playbook) => (playbook.id === id ? updated : playbook)),
+      );
 
-    showToast("Playbook modifié");
-  } catch (error) {
-    console.error(error);
-    alert("Erreur pendant la modification du playbook");
-  }
-};
+      showToast("Playbook modifié");
+    } catch (error) {
+      console.error(error);
+      alert("Erreur pendant la modification du playbook");
+    }
+  };
 
-const openPlaybook = (id: string) => {
-  window.location.href = `/mon-compte/playbooks/${id}`;
-};
+  const openPlaybook = (id: string) => {
+    window.location.href = `/mon-compte/playbooks/${id}`;
+  };
 
-const fullName =
-  `${form.firstName || ""} ${form.lastName || ""}`.trim().toUpperCase() ||
-  "MON PROFIL";
+  const fullName =
+    `${form.firstName || ""} ${form.lastName || ""}`.trim().toUpperCase() ||
+    "MON PROFIL";
 
-const initials =
-  (
-    (form.firstName?.[0] || "") +
-      (form.lastName?.[0] || "") ||
-    (email?.[0] || "?")
+  const initials = (
+    (form.firstName?.[0] || "") + (form.lastName?.[0] || "") ||
+    email?.[0] ||
+    "?"
   ).toUpperCase();
 
-const MENU_ACCESS: Record<string, string> = {
-  messagerie: "messagerie",
-  calendrier: "calendrier",
+  const MENU_ACCESS: Record<string, string> = {
+    messagerie: "messagerie",
+    calendrier: "calendrier",
 
-  exercices: "exercices",
+    exercices: "exercices",
 
-  playbooks: "playbooks",
+    playbooks: "playbooks",
 
-  annonces: "annonces",
+    annonces: "annonces",
 
-  papiers: "documents",
+    papiers: "documents",
 
-  equipes: "equipes",
+    equipes: "equipes",
 
-  management: "management",
+    management: "management",
 
-  profilcoach: "profil_coach",
+    profilcoach: "profil_coach",
 
+    club: "club_space",
+  };
 
-  club: "club_space",
-};
+  const visibleMenu = MENU;
 
-const visibleMenu = MENU;
-
-return (
-
+  return (
     <div className="mc">
       <style>{CSS}</style>
 
       <div className="mc-profilehead">
-        <button className="mc-retour" onClick={() => router.push('/')}>
+        <button className="mc-retour" onClick={() => router.push("/")}>
           ← Retour
         </button>
 
         <div className="mc-avatar-round">
-          {form.photo ? <img src={form.photo} alt="" /> : <span>{initials}</span>}
+          {form.photo ? (
+            <img src={form.photo} alt="" />
+          ) : (
+            <span>{initials}</span>
+          )}
         </div>
 
         <div className="mc-profilehead-info">
@@ -482,24 +552,24 @@ return (
 
           <div className="mc-club-line">
             {form.logo && <img src={form.logo} alt="" />}
-            <span>{form.club || '—'}</span>
+            <span>{form.club || "—"}</span>
           </div>
 
-          <div className="mc-line strong">{form.birthdate || '—'}</div>
+          <div className="mc-line strong">{form.birthdate || "—"}</div>
 
           <a className="mc-mail" href={`mailto:${email}`}>
             {email}
           </a>
 
-          <div className="mc-line strong">{form.phone || '—'}</div>
+          <div className="mc-line strong">{form.phone || "—"}</div>
         </div>
 
         <button
           className="mc-modifier"
           onClick={() =>
             formRef.current?.scrollIntoView({
-              behavior: 'smooth',
-              block: 'start',
+              behavior: "smooth",
+              block: "start",
             })
           }
         >
@@ -521,13 +591,13 @@ return (
               <button
                 key={item.key}
                 type="button"
-                className={'mc-side-item' + (active === item.key ? ' on' : '')}
+                className={"mc-side-item" + (active === item.key ? " on" : "")}
                 onClick={() => setActive(item.key)}
               >
                 <span>{item.icon}</span>
                 {item.label}
               </button>
-            )
+            ),
           )}
 
           {isAdmin && (
@@ -539,37 +609,66 @@ return (
         </aside>
 
         <section className="mc-content" ref={formRef}>
-          {active === 'profil' && (
+          {active === "profil" && (
             <div className="mc-form">
               <div className="mc-row top">
                 <label className="k">Photo de Profil</label>
                 <div className="f">
-                  <div className="mc-photo" onClick={() => photoInput.current?.click()}>
-                    {form.photo ? <img src={form.photo} alt="" /> : <span className="ph">＋</span>}
+                  <div
+                    className="mc-photo"
+                    onClick={() => photoInput.current?.click()}
+                  >
+                    {form.photo ? (
+                      <img src={form.photo} alt="" />
+                    ) : (
+                      <span className="ph">＋</span>
+                    )}
                     <span className="mc-plus">＋</span>
                   </div>
-                  <input ref={photoInput} type="file" accept="image/*" hidden onChange={onPhoto} />
+                  <input
+                    ref={photoInput}
+                    type="file"
+                    accept="image/*"
+                    hidden
+                    onChange={onPhoto}
+                  />
                 </div>
               </div>
 
               <div className="mc-row">
                 <label className="k">Nom</label>
                 <div className="f">
-                  <input className="pill" value={form.lastName} onChange={(e) => setField('lastName', e.target.value)} />
+                  <input
+                    className="pill"
+                    value={form.lastName}
+                    onChange={(e) => setField("lastName", e.target.value)}
+                  />
                 </div>
               </div>
 
               <div className="mc-row">
                 <label className="k">Prénom</label>
                 <div className="f">
-                  <input className="pill" value={form.firstName} onChange={(e) => setField('firstName', e.target.value)} />
+                  <input
+                    className="pill"
+                    value={form.firstName}
+                    onChange={(e) => setField("firstName", e.target.value)}
+                  />
                 </div>
               </div>
 
               <div className="mc-row">
                 <label className="k">Date de naissance</label>
                 <div className="f">
-                  <input className="pill" inputMode="numeric" placeholder="JJ/MM/AAAA" value={form.birthdate} onChange={(e) => setField('birthdate', fmtDate(e.target.value))} />
+                  <input
+                    className="pill"
+                    inputMode="numeric"
+                    placeholder="JJ/MM/AAAA"
+                    value={form.birthdate}
+                    onChange={(e) =>
+                      setField("birthdate", fmtDate(e.target.value))
+                    }
+                  />
                 </div>
               </div>
 
@@ -583,25 +682,50 @@ return (
               <div className="mc-row">
                 <label className="k">N° de téléphone</label>
                 <div className="f">
-                  <input className="pill" inputMode="numeric" placeholder="00.00.00.00.00" value={form.phone} onChange={(e) => setField('phone', fmtPhone(e.target.value))} />
+                  <input
+                    className="pill"
+                    inputMode="numeric"
+                    placeholder="00.00.00.00.00"
+                    value={form.phone}
+                    onChange={(e) =>
+                      setField("phone", fmtPhone(e.target.value))
+                    }
+                  />
                 </div>
               </div>
 
               <div className="mc-row">
                 <label className="k">Club</label>
                 <div className="f">
-                  <input className="pill" value={form.club} onChange={(e) => setField('club', e.target.value)} />
+                  <input
+                    className="pill"
+                    value={form.club}
+                    onChange={(e) => setField("club", e.target.value)}
+                  />
                 </div>
               </div>
 
               <div className="mc-row top">
                 <label className="k">Logo du club</label>
                 <div className="f">
-                  <div className="mc-logo" onClick={() => logoInput.current?.click()}>
-                    {form.logo ? <img src={form.logo} alt="" /> : <span className="ph">＋</span>}
+                  <div
+                    className="mc-logo"
+                    onClick={() => logoInput.current?.click()}
+                  >
+                    {form.logo ? (
+                      <img src={form.logo} alt="" />
+                    ) : (
+                      <span className="ph">＋</span>
+                    )}
                     <span className="mc-plus">＋</span>
                   </div>
-                  <input ref={logoInput} type="file" accept="image/*" hidden onChange={onLogo} />
+                  <input
+                    ref={logoInput}
+                    type="file"
+                    accept="image/*"
+                    hidden
+                    onChange={onLogo}
+                  />
                 </div>
               </div>
 
@@ -611,7 +735,13 @@ return (
                   <div className="mc-cats">
                     {CATS.map((cat) => (
                       <label key={cat} className="mc-cat">
-                        <input type="radio" name="cat" checked={form.category === cat} onChange={() => setField('category', cat)} /> {cat}
+                        <input
+                          type="radio"
+                          name="cat"
+                          checked={form.category === cat}
+                          onChange={() => setField("category", cat)}
+                        />{" "}
+                        {cat}
                       </label>
                     ))}
                   </div>
@@ -626,37 +756,36 @@ return (
               </div>
 
               <div className="mc-save-row">
-                <button className="mc-save" onClick={save}>
-                  Sauvegarder
+                <button className="mc-save" onClick={save} disabled={savingProfile}>
+                  {savingProfile ? "Enregistrement…" : "Sauvegarder"}
                 </button>
               </div>
             </div>
           )}
 
-          {active === 'messagerie' && <Messagerie />}
-          {active === 'calendrier' && <MonCalendrier />}
-          {active === 'papiers' && <MesPapiers />}
+          {active === "messagerie" && <Messagerie />}
+          {active === "calendrier" && <MonCalendrier />}
+          {active === "papiers" && <MesPapiers />}
 
-          {active === 'abonnement' && uid && (
-            <AbonnementSection userId={uid} />
+          {active === "abonnement" && uid && <AbonnementSection userId={uid} />}
+
+          {active === "profilcoach" && uid && (
+            <CoachProfileSection userId={uid} />
           )}
 
-          {active === 'profilcoach' && uid && (
-  <CoachProfileSection userId={uid} />
-)}
+          {active === "annonces" && uid && <AnnoncesSection userId={uid} />}
 
-          {active === 'annonces' && uid && (
-            <AnnoncesSection userId={uid} />
-          )}
-
-          {active === 'equipes' && (
+          {active === "equipes" && (
             <div className="mc-equipes">
               <div className="mc-equipes-head">
                 <div>
                   <h2>Mes Équipes</h2>
                   <p>Crée tes équipes, gère leurs effectifs et leurs matchs.</p>
                 </div>
-                <button className="mc-new-team" onClick={() => setTeamForm({ open: true })}>
+                <button
+                  className="mc-new-team"
+                  onClick={() => setTeamForm({ open: true })}
+                >
                   + Nouvelle équipe
                 </button>
               </div>
@@ -665,18 +794,28 @@ return (
                 {teams.map((team) => (
                   <article key={team.id} className="mc-teamcard">
                     <div className="mc-team-banner">
-                      {team.banniere ? <img src={team.banniere} alt="" /> : <span>🏀</span>}
+                      {team.banniere ? (
+                        <img src={team.banniere} alt="" />
+                      ) : (
+                        <span>🏀</span>
+                      )}
                     </div>
 
                     <div className="mc-team-body">
                       <div className="mc-team-title">
                         <div className="mc-team-logo">
-                          {team.logo ? <img src={team.logo} alt="" /> : <span>🏀</span>}
+                          {team.logo ? (
+                            <img src={team.logo} alt="" />
+                          ) : (
+                            <span>🏀</span>
+                          )}
                         </div>
 
                         <div>
                           <h3>{team.name}</h3>
-                          <p>{team.cat} · {team.players.length} joueur(s)</p>
+                          <p>
+                            {team.cat} · {team.players.length} joueur(s)
+                          </p>
                         </div>
                       </div>
 
@@ -686,10 +825,16 @@ return (
                             <button
                               key={player.id}
                               type="button"
-                              onClick={() => router.push(`/equipes/${team.id}/${player.id}`)}
+                              onClick={() =>
+                                router.push(`/equipes/${team.id}/${player.id}`)
+                              }
                             >
                               <span>
-                                {player.photo ? <img src={player.photo} alt="" /> : player.firstName?.[0] || '?'}
+                                {player.photo ? (
+                                  <img src={player.photo} alt="" />
+                                ) : (
+                                  player.firstName?.[0] || "?"
+                                )}
                               </span>
                               {player.firstName} {player.lastName?.[0]}.
                             </button>
@@ -705,27 +850,62 @@ return (
 
                           {team.matchs.map((match) => (
                             <div key={match.id} className="mc-match">
-                              <span>{match.kind === 'Match' ? '🏀' : '🏋️'}</span>
-                              <strong>{match.date} {match.heure}</strong>
+                              <span>
+                                {match.kind === "Match" ? "🏀" : "🏋️"}
+                              </span>
+                              <strong>
+                                {match.date} {match.heure}
+                              </strong>
                               <em>
-                                {match.kind === 'Match'
-                                  ? `vs ${match.adversaire || '—'}`
-                                  : 'Entraînement'}
+                                {match.kind === "Match"
+                                  ? `vs ${match.adversaire || "—"}`
+                                  : "Entraînement"}
                               </em>
-                              <button type="button" onClick={() => handleMatchDelete(team.id, match.id)}>🗑️</button>
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  handleMatchDelete(team.id, match.id)
+                                }
+                              >
+                                🗑️
+                              </button>
                             </div>
                           ))}
                         </div>
                       )}
 
                       <div className="mc-team-actions">
-                        <button className="main" onClick={() => router.push(`/equipes/${team.id}`)}>
+                        <button
+                          className="main"
+                          onClick={() => router.push(`/equipes/${team.id}`)}
+                        >
                           Voir la page de l'équipe
                         </button>
-                        <button type="button" onClick={() => setPlayerFor(team.id)}>+ Joueur</button>
-                        <button type="button" onClick={() => setMatchFor(team.id)}>+ Match / Entraînement</button>
-                        <button type="button" onClick={() => setTeamForm({ open: true, team })}>Éditer</button>
-                        <button type="button" className="danger" onClick={() => handleDeleteTeam(team)}>🗑️</button>
+                        <button
+                          type="button"
+                          onClick={() => setPlayerFor(team.id)}
+                        >
+                          + Joueur
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setMatchFor(team.id)}
+                        >
+                          + Match / Entraînement
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setTeamForm({ open: true, team })}
+                        >
+                          Éditer
+                        </button>
+                        <button
+                          type="button"
+                          className="danger"
+                          onClick={() => handleDeleteTeam(team)}
+                        >
+                          🗑️
+                        </button>
                       </div>
                     </div>
                   </article>
@@ -733,231 +913,231 @@ return (
               </div>
             </div>
           )}
-{active === "playbooks" && (
-  <div className="mc-equipes">
-    <div className="mc-equipes-head">
-      <div>
-        <h2>Mes Playbooks</h2>
-        <p>
-          Crée tes playbooks, organise tes systèmes et construis ton identité de jeu.
-        </p>
-      </div>
-
-      <button
-  type="button"
-  className="mc-new-team"
-  onClick={() => setPlaybookModalOpen(true)}
->
-  + Nouveau playbook
-</button>
-    </div>
-
-    {playbooks.length === 0 ? (
-      <div className="mc-soft">
-        <h2>Aucun playbook</h2>
-        <p>Crée ton premier playbook pour ranger tes systèmes.</p>
-
-        <button
-          type="button"
-          className="mc-new-team"
-          onClick={() => setPlaybookModalOpen(true)}
-        >
-          + Créer un playbook
-        </button>
-      </div>
-    ) : (
-      <div className="mc-teamgrid">
-        {playbooks.map((playbook) => (
-          <article key={playbook.id} className="mc-teamcard">
-            <button
-              type="button"
-              className="mc-team-banner"
-              onClick={() => openPlaybook(playbook.id)}
-              style={{
-                cursor: "pointer",
-                border: 0,
-                width: "100%",
-              }}
-            >
-              📁
-            </button>
-
-            <div className="mc-team-body">
-              <div className="mc-team-title">
-                <div className="mc-team-logo">📋</div>
-
+          {active === "playbooks" && (
+            <div className="mc-equipes">
+              <div className="mc-equipes-head">
                 <div>
-                  <h3>{playbook.title}</h3>
+                  <h2>Mes Playbooks</h2>
                   <p>
-                    {playbook.category || "Playbook"} ·{" "}
-                    {playbook.season || "Saison non définie"}
+                    Crée tes playbooks, organise tes systèmes et construis ton
+                    identité de jeu.
                   </p>
                 </div>
+
+                <button
+                  type="button"
+                  className="mc-new-team"
+                  onClick={() => setPlaybookModalOpen(true)}
+                >
+                  + Nouveau playbook
+                </button>
               </div>
 
-              <div className="mc-team-actions">
+              {playbooks.length === 0 ? (
+                <div className="mc-soft">
+                  <h2>Aucun playbook</h2>
+                  <p>Crée ton premier playbook pour ranger tes systèmes.</p>
+
+                  <button
+                    type="button"
+                    className="mc-new-team"
+                    onClick={() => setPlaybookModalOpen(true)}
+                  >
+                    + Créer un playbook
+                  </button>
+                </div>
+              ) : (
+                <div className="mc-teamgrid">
+                  {playbooks.map((playbook) => (
+                    <article key={playbook.id} className="mc-teamcard">
+                      <button
+                        type="button"
+                        className="mc-team-banner"
+                        onClick={() => openPlaybook(playbook.id)}
+                        style={{
+                          cursor: "pointer",
+                          border: 0,
+                          width: "100%",
+                        }}
+                      >
+                        📁
+                      </button>
+
+                      <div className="mc-team-body">
+                        <div className="mc-team-title">
+                          <div className="mc-team-logo">📋</div>
+
+                          <div>
+                            <h3>{playbook.title}</h3>
+                            <p>
+                              {playbook.category || "Playbook"} ·{" "}
+                              {playbook.season || "Saison non définie"}
+                            </p>
+                          </div>
+                        </div>
+
+                        <div className="mc-team-actions">
+                          <button
+                            type="button"
+                            className="main"
+                            onClick={() => openPlaybook(playbook.id)}
+                          >
+                            Ouvrir le playbook
+                          </button>
+
+                          <button
+                            type="button"
+                            onClick={() => renamePlaybook(playbook.id)}
+                          >
+                            Modifier
+                          </button>
+
+                          <button
+                            type="button"
+                            className="danger"
+                            onClick={() => deletePlaybook(playbook.id)}
+                          >
+                            🗑️
+                          </button>
+                        </div>
+                      </div>
+                    </article>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+          {active === "management" && (
+            <div className="mc-management">
+              <div className="mc-management-header">
+                <h2>Management</h2>
+                <p>
+                  Gère les statistiques, les rotations, le game plan et la prise
+                  de stats live.
+                </p>
+              </div>
+
+              <div className="mc-management-tabs">
                 <button
-                  type="button"
-                  className="main"
-                  onClick={() => openPlaybook(playbook.id)}
+                  className={managementView === "stats-joueurs" ? "on" : ""}
+                  onClick={() => setManagementView("stats-joueurs")}
                 >
-                  Ouvrir le playbook
+                  📈 Stats joueurs
                 </button>
 
                 <button
-                  type="button"
-                  onClick={() => renamePlaybook(playbook.id)}
+                  className={managementView === "stats-equipe" ? "on" : ""}
+                  onClick={() => setManagementView("stats-equipe")}
                 >
-                  Modifier
+                  🏀 Stats équipe
                 </button>
 
                 <button
-                  type="button"
-                  className="danger"
-                  onClick={() => deletePlaybook(playbook.id)}
+                  className={managementView === "stats-jeu" ? "on" : ""}
+                  onClick={() => setManagementView("stats-jeu")}
                 >
-                  🗑️
+                  🎯 Stats jeu
                 </button>
+
+                <button
+                  className={managementView === "live" ? "on" : ""}
+                  onClick={() => setManagementView("live")}
+                >
+                  🔴 Stats Live
+                </button>
+
+                <button
+                  className={managementView === "historique" ? "on" : ""}
+                  onClick={() => setManagementView("historique")}
+                >
+                  📚 Historique
+                </button>
+
+                <button
+                  className={managementView === "rotation" ? "on" : ""}
+                  onClick={() => setManagementView("rotation")}
+                >
+                  🔄 Rotation
+                </button>
+
+                <button
+                  className={managementView === "gameplan" ? "on" : ""}
+                  onClick={() => setManagementView("gameplan")}
+                >
+                  🧠 Game Plan
+                </button>
+
+                {isAdmin && (
+                  <button
+                    type="button"
+                    className={managementView === "gestion-admin" ? "on" : ""}
+                    onClick={() => setManagementView("gestion-admin")}
+                  >
+                    ⚙️ Gestion Admin
+                  </button>
+                )}
+              </div>
+
+              <div className="mc-management-content">
+                {managementView === "stats-joueurs" && <StatsJoueursModule />}
+
+                {managementView === "stats-equipe" && <StatsEquipeModule />}
+
+                {managementView === "stats-jeu" && <StatsTempsFortsModule />}
+
+                {managementView === "live" && (
+                  <div className="mc-live-launch">
+                    <div className="mc-live-icon">🔴</div>
+
+                    <h3>Prise de Stats Live</h3>
+
+                    <p>
+                      Lance l'outil de prise de statistiques en plein écran pour
+                      bénéficier d'un maximum d'espace pendant le match.
+                    </p>
+
+                    <button
+                      className="mc-live-btn"
+                      onClick={() =>
+                        window.open(
+                          "/prise-stats-live",
+                          "_blank",
+                          "noopener,noreferrer",
+                        )
+                      }
+                    >
+                      🔴 Ouvrir la prise de stats
+                    </button>
+                  </div>
+                )}
+                {managementView === "historique" && <HistoriqueMatchsModule />}
+
+                {managementView === "rotation" && <RotationModule />}
+
+                {managementView === "gameplan" && <GamePlanModule />}
+
+                {managementView === "gestion-admin" && isAdmin && (
+                  <GestionAdminModule />
+                )}
               </div>
             </div>
-          </article>
-        ))}
-      </div>
-    )}
-  </div>
-)}
-          {active === "management" && (
-  <div className="mc-management">
-    <div className="mc-management-header">
-      <h2>Management</h2>
-      <p>
-        Gère les statistiques, les rotations, le game plan et la prise de stats live.
-      </p>
-    </div>
+          )}
 
-    <div className="mc-management-tabs">
-      <button
-        className={managementView === "stats-joueurs" ? "on" : ""}
-        onClick={() => setManagementView("stats-joueurs")}
-      >
-        📈 Stats joueurs
-      </button>
-
-      <button
-        className={managementView === "stats-equipe" ? "on" : ""}
-        onClick={() => setManagementView("stats-equipe")}
-      >
-        🏀 Stats équipe
-      </button>
-
-      <button
-        className={managementView === "stats-jeu" ? "on" : ""}
-        onClick={() => setManagementView("stats-jeu")}
-      >
-        🎯 Stats jeu
-      </button>
-
-      <button
-        className={managementView === "live" ? "on" : ""}
-        onClick={() => setManagementView("live")}
-      >
-        🔴 Stats Live
-      </button>
-
-      <button
-        className={managementView === "historique" ? "on" : ""}
-        onClick={() => setManagementView("historique")}
-      >
-        📚 Historique
-      </button>
-
-      <button
-        className={managementView === "rotation" ? "on" : ""}
-        onClick={() => setManagementView("rotation")}
-      >
-        🔄 Rotation
-      </button>
-
-      <button
-        className={managementView === "gameplan" ? "on" : ""}
-        onClick={() => setManagementView("gameplan")}
-      >
-        🧠 Game Plan
-      </button>
-
-      {isAdmin && (
-  <button
-    type="button"
-    className={managementView === "gestion-admin" ? "on" : ""}
-    onClick={() => setManagementView("gestion-admin")}
-  >
-    ⚙️ Gestion Admin
-  </button>
-)}
-    </div>
-
-    <div className="mc-management-content">
-      {managementView === "stats-joueurs" && <StatsJoueursModule />}
-
-      {managementView === "stats-equipe" && <StatsEquipeModule />}
-
-      {managementView === "stats-jeu" && <StatsTempsFortsModule />}
-
-      {managementView === "live" && (
-  <div className="mc-live-launch">
-    <div className="mc-live-icon">🔴</div>
-
-    <h3>Prise de Stats Live</h3>
-
-    <p>
-      Lance l'outil de prise de statistiques en plein écran pour bénéficier
-      d'un maximum d'espace pendant le match.
-    </p>
-
-    <button
-  className="mc-live-btn"
-  onClick={() =>
-    window.open(
-      "/prise-stats-live",
-      "_blank",
-      "noopener,noreferrer"
-    )
-  }
->
-  🔴 Ouvrir la prise de stats
-</button>
-  </div>
-)}
-{managementView === "historique" && <HistoriqueMatchsModule />}
-
-      {managementView === "rotation" && <RotationModule />}
-
-{managementView === "gameplan" && (
-  <GamePlanModule />
-)}
-
-{managementView === "gestion-admin" && isAdmin && (
-  <GestionAdminModule />
-)}
-    </div>
-  </div>
-)}
-
-{active !== "profil" &&
-  active !== "messagerie" &&
-  active !== "calendrier" &&
-  active !== "equipes" &&
-  active !== "playbooks" &&
-  active !== "papiers" &&
-  active !== "abonnement" &&
-  active !== "profilcoach" &&
-  active !== "annonces" &&
-  active !== "management" && (
-    <div className="mc-soft">
-      <h2>{MENU.find((item) => item.key === active)?.label}</h2>
-      <p>🚧 Section bientôt disponible.</p>
-    </div>
-  )}
+          {active !== "profil" &&
+            active !== "messagerie" &&
+            active !== "calendrier" &&
+            active !== "equipes" &&
+            active !== "playbooks" &&
+            active !== "papiers" &&
+            active !== "abonnement" &&
+            active !== "profilcoach" &&
+            active !== "annonces" &&
+            active !== "management" && (
+              <div className="mc-soft">
+                <h2>{MENU.find((item) => item.key === active)?.label}</h2>
+                <p>🚧 Section bientôt disponible.</p>
+              </div>
+            )}
         </section>
       </div>
 
@@ -982,17 +1162,17 @@ return (
           onClose={() => setMatchFor(null)}
         />
       )}
-{playbookModalOpen && (
-  <PlaybookCreateModal
-    onClose={() => setPlaybookModalOpen(false)}
-    onCreated={(playbookId) => {
-      setPlaybookModalOpen(false);
-      reloadPlaybooks();
+      {playbookModalOpen && (
+        <PlaybookCreateModal
+          onClose={() => setPlaybookModalOpen(false)}
+          onCreated={(playbookId) => {
+            setPlaybookModalOpen(false);
+            reloadPlaybooks();
 
-      window.location.href = `/mon-compte/playbook/${playbookId}`;
-    }}
-  />
-)}
+            router.push(`/mon-compte/playbooks/${playbookId}`);
+          }}
+        />
+      )}
       {toast && <div className="mc-toast">{toast}</div>}
     </div>
   );
@@ -1099,23 +1279,558 @@ type Subscription = {
 };
 
 function AbonnementSection({ userId }: { userId: string }) {
+  const [loading, setLoading] = useState(true);
+  const [plan, setPlan] = useState<
+    (Plan & { image_url?: string | null; slug?: string | null }) | null
+  >(null);
+  const [subscription, setSubscription] = useState<Subscription | null>(null);
+  const [isCeo, setIsCeo] = useState(false);
+
+  useEffect(() => {
+    let mounted = true;
+
+    async function loadSubscription() {
+      const supabase = createClient();
+
+      const { data: profile } = await supabase
+        .from("profiles")
+        .select("platform_role")
+        .eq("id", userId)
+        .maybeSingle();
+
+      const admin = ["ceo", "superadmin", "admin"].includes(
+        profile?.platform_role || "",
+      );
+
+      if (mounted) setIsCeo(admin);
+
+      if (admin) {
+        if (mounted) setLoading(false);
+        return;
+      }
+
+      const { data: sub } = await supabase
+        .from("subscriptions")
+        .select("plan_id,billing_period,status,current_period_end")
+        .eq("user_id", userId)
+        .eq("status", "active")
+        .order("created_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      if (sub?.plan_id) {
+        const { data: currentPlan } = await supabase
+          .from("subscription_plans")
+          .select("*")
+          .eq("id", sub.plan_id)
+          .maybeSingle();
+
+        if (mounted) {
+          setPlan(
+            currentPlan as
+              | (Plan & { image_url?: string | null; slug?: string | null })
+              | null,
+          );
+        }
+      }
+
+      if (mounted) {
+        setSubscription((sub as Subscription | null) ?? null);
+        setLoading(false);
+      }
+    }
+
+    loadSubscription();
+
+    return () => {
+      mounted = false;
+    };
+  }, [userId]);
+
+  const formatEndDate = (value: string | null | undefined) => {
+    if (!value) return null;
+    return new Date(value).toLocaleDateString("fr-FR");
+  };
+
+  if (loading) {
+    return (
+      <section className="account-card">
+        <p>Chargement de l’abonnement…</p>
+      </section>
+    );
+  }
+
+  const planName = isCeo ? "CEO" : plan?.name || "LIBRE";
+  const statusLabel = isCeo
+    ? "Accès total"
+    : subscription?.status === "active"
+      ? "Actif"
+      : "Inactif";
+
   return (
-    <section className="account-card">
-      <div>
-        <p className="eyebrow">Abonnement</p>
-        <h2>Mon abonnement</h2>
-        <p className="muted">
-          Gérez votre formule MyBasket et vos accès.
-        </p>
+    <section className="account-card subscription-card">
+      <div className="subscription-layout">
+        <div className="subscription-left">
+          <div className="subscription-head">
+            <div>
+              <p className="eyebrow">Abonnement</p>
+              <h2>
+                {isCeo ? "Accès CEO" : plan?.name || "Aucun abonnement actif"}
+              </h2>
+              <p className="muted">
+                {isCeo
+                  ? "Accès total à MyBasket, indépendant de tout abonnement."
+                  : plan?.description ||
+                    "Choisissez une formule pour débloquer vos accès."}
+              </p>
+            </div>
+
+            <a className="primary-btn" href="/abonnements">
+              Voir les abonnements
+            </a>
+          </div>
+
+          <div className="subscription-details">
+            <p>
+              <span>Statut</span>
+              <strong>{statusLabel}</strong>
+            </p>
+
+            {!isCeo && subscription?.billing_period && (
+              <p>
+                <span>Période</span>
+                <strong>
+                  {subscription.billing_period === "yearly"
+                    ? "Annuelle"
+                    : "Mensuelle"}
+                </strong>
+              </p>
+            )}
+
+            {!isCeo && formatEndDate(subscription?.current_period_end) && (
+              <p>
+                <span>Prochaine échéance</span>
+                <strong>
+                  {formatEndDate(subscription?.current_period_end)}
+                </strong>
+              </p>
+            )}
+          </div>
+        </div>
+
+        <div className="subscription-visual-column">
+          {plan?.image_url ? (
+            <img
+              className="subscription-plan-image"
+              src={plan.image_url}
+              alt={`Carte abonnement ${plan.name}`}
+            />
+          ) : (
+            <div
+              className="membership-card"
+              aria-label={`Carte abonnement ${planName}`}
+            >
+              <div className="membership-glow glow-one" />
+              <div className="membership-glow glow-two" />
+
+              <div className="membership-topline">
+                <span>MYBASKET</span>
+                <span className="membership-chip" aria-hidden="true">
+                  <i />
+                  <i />
+                  <i />
+                </span>
+              </div>
+
+              <div className="membership-center">
+                <div className="membership-ball" aria-hidden="true">
+                  <span />
+                  <span />
+                  <span />
+                </div>
+              </div>
+
+              <div className="membership-bottom">
+                <div>
+                  <small>ACCÈS</small>
+                  <strong>{planName}</strong>
+                </div>
+
+                <div className="membership-status">
+                  <small>STATUT</small>
+                  <strong>{statusLabel}</strong>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
       </div>
 
-      <a className="primary-btn" href="/abonnements">
-        Voir les abonnements
-      </a>
+      <style jsx>{`
+        .subscription-card {
+          overflow: hidden;
+          padding: 0;
+        }
+
+        .subscription-layout {
+          display: grid;
+          grid-template-columns: minmax(0, 1fr) minmax(360px, 48%);
+          min-height: 390px;
+        }
+
+        .subscription-left {
+          padding: 36px 38px;
+          display: flex;
+          flex-direction: column;
+          justify-content: space-between;
+          gap: 34px;
+          min-width: 0;
+        }
+
+        .subscription-head {
+          display: flex;
+          justify-content: space-between;
+          align-items: flex-start;
+          gap: 24px;
+        }
+
+        .subscription-head h2 {
+          margin: 5px 0 10px;
+          font-family: "Alfa Slab One", Georgia, serif;
+          font-size: clamp(28px, 3vw, 44px);
+          font-weight: 400;
+          line-height: 1;
+          color: #111114;
+        }
+
+        .eyebrow {
+          margin: 0;
+          color: #6b1a2c;
+          font-size: 12px;
+          font-weight: 900;
+          letter-spacing: 0.18em;
+          text-transform: uppercase;
+        }
+
+        .muted {
+          max-width: 560px;
+          margin: 0;
+          color: #777178;
+          font-size: 14px;
+          line-height: 1.6;
+        }
+
+        .primary-btn {
+          flex: 0 0 auto;
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          min-height: 42px;
+          padding: 11px 18px;
+          border-radius: 10px;
+          background: #6b1a2c;
+          color: #fff;
+          font-size: 13px;
+          font-weight: 900;
+          white-space: nowrap;
+          transition:
+            transform 0.2s ease,
+            background 0.2s ease;
+        }
+
+        .primary-btn:hover {
+          background: #551522;
+          transform: translateY(-2px);
+        }
+
+        .subscription-details {
+          display: grid;
+          gap: 0;
+          border-top: 1px solid #eee8ea;
+        }
+
+        .subscription-details p {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 24px;
+          margin: 0;
+          padding: 17px 0;
+          border-bottom: 1px solid #eee8ea;
+        }
+
+        .subscription-details span {
+          color: #8a8589;
+          font-size: 13px;
+          font-weight: 700;
+        }
+
+        .subscription-details strong {
+          color: #161318;
+          font-size: 14px;
+          font-weight: 900;
+          text-align: right;
+        }
+
+        .subscription-visual-column {
+          min-width: 0;
+          padding: 32px;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          background:
+            radial-gradient(
+              circle at 85% 10%,
+              rgba(212, 162, 76, 0.18),
+              transparent 32%
+            ),
+            linear-gradient(145deg, #faf8f6 0%, #f2ece7 100%);
+          border-left: 1px solid #eee5df;
+        }
+
+        .subscription-plan-image {
+          display: block;
+          width: 100%;
+          max-width: 620px;
+          aspect-ratio: 1.62 / 1;
+          object-fit: cover;
+          border-radius: 26px;
+          box-shadow: 0 28px 60px rgba(22, 15, 18, 0.22);
+        }
+
+        .membership-card {
+          position: relative;
+          isolation: isolate;
+          width: min(100%, 620px);
+          aspect-ratio: 1.62 / 1;
+          overflow: hidden;
+          border-radius: 28px;
+          padding: 30px;
+          display: flex;
+          flex-direction: column;
+          justify-content: space-between;
+          color: #fff;
+          background:
+            linear-gradient(135deg, rgba(255, 255, 255, 0.05), transparent 35%),
+            linear-gradient(145deg, #070709 0%, #171116 54%, #09090b 100%);
+          border: 1px solid rgba(212, 162, 76, 0.64);
+          box-shadow:
+            0 30px 65px rgba(18, 12, 15, 0.28),
+            inset 0 0 0 1px rgba(255, 255, 255, 0.03);
+          transition:
+            transform 0.35s ease,
+            box-shadow 0.35s ease;
+        }
+
+        .membership-card:hover {
+          transform: translateY(-7px) rotateX(1deg) rotateY(-1deg);
+          box-shadow:
+            0 38px 76px rgba(18, 12, 15, 0.34),
+            inset 0 0 0 1px rgba(255, 255, 255, 0.04);
+        }
+
+        .membership-card::before {
+          content: "";
+          position: absolute;
+          inset: 0;
+          z-index: -1;
+          background: repeating-linear-gradient(
+            115deg,
+            transparent 0,
+            transparent 16px,
+            rgba(255, 255, 255, 0.018) 17px,
+            transparent 18px
+          );
+          pointer-events: none;
+        }
+
+        .membership-glow {
+          position: absolute;
+          z-index: -1;
+          border-radius: 999px;
+          filter: blur(18px);
+          pointer-events: none;
+        }
+
+        .glow-one {
+          width: 250px;
+          height: 250px;
+          top: -130px;
+          right: -70px;
+          background: rgba(212, 162, 76, 0.28);
+        }
+
+        .glow-two {
+          width: 230px;
+          height: 230px;
+          bottom: -150px;
+          left: -90px;
+          background: rgba(107, 26, 44, 0.55);
+        }
+
+        .membership-topline,
+        .membership-bottom {
+          display: flex;
+          align-items: flex-start;
+          justify-content: space-between;
+          gap: 20px;
+        }
+
+        .membership-topline > span:first-child {
+          color: #d4a24c;
+          font-size: 14px;
+          font-weight: 1000;
+          letter-spacing: 0.24em;
+        }
+
+        .membership-chip {
+          width: 45px;
+          height: 34px;
+          padding: 6px;
+          display: grid;
+          grid-template-columns: repeat(3, 1fr);
+          gap: 3px;
+          border-radius: 8px;
+          background: linear-gradient(135deg, #f0cc78, #a87423);
+          box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.35);
+        }
+
+        .membership-chip i {
+          display: block;
+          border-left: 1px solid rgba(50, 32, 8, 0.48);
+          border-right: 1px solid rgba(255, 255, 255, 0.24);
+        }
+
+        .membership-center {
+          position: absolute;
+          inset: 0;
+          display: grid;
+          place-items: center;
+          pointer-events: none;
+        }
+
+        .membership-ball {
+          position: relative;
+          width: 118px;
+          height: 118px;
+          opacity: 0.8;
+          border: 3px solid #d4a24c;
+          border-radius: 50%;
+          transform: rotate(-12deg);
+          box-shadow: 0 0 35px rgba(212, 162, 76, 0.14);
+        }
+
+        .membership-ball span {
+          position: absolute;
+          display: block;
+          background: #d4a24c;
+        }
+
+        .membership-ball span:nth-child(1) {
+          width: 3px;
+          height: 100%;
+          left: 50%;
+          top: 0;
+        }
+
+        .membership-ball span:nth-child(2) {
+          width: 100%;
+          height: 3px;
+          left: 0;
+          top: 50%;
+        }
+
+        .membership-ball span:nth-child(3) {
+          width: 80%;
+          height: 80%;
+          left: 10%;
+          top: 10%;
+          border: 3px solid #d4a24c;
+          border-top-color: transparent;
+          border-bottom-color: transparent;
+          border-radius: 50%;
+          background: transparent;
+        }
+
+        .membership-bottom {
+          align-items: flex-end;
+        }
+
+        .membership-bottom small {
+          display: block;
+          margin-bottom: 5px;
+          color: rgba(255, 255, 255, 0.54);
+          font-size: 9px;
+          font-weight: 800;
+          letter-spacing: 0.18em;
+        }
+
+        .membership-bottom strong {
+          display: block;
+          max-width: 260px;
+          color: #fff;
+          font-family: "Alfa Slab One", Georgia, serif;
+          font-size: clamp(24px, 3vw, 38px);
+          font-weight: 400;
+          line-height: 1;
+          text-transform: uppercase;
+        }
+
+        .membership-status {
+          text-align: right;
+        }
+
+        .membership-status strong {
+          color: #d4a24c;
+          font-family: inherit;
+          font-size: 12px;
+          font-weight: 900;
+          letter-spacing: 0.08em;
+        }
+
+        @media (max-width: 1050px) {
+          .subscription-layout {
+            grid-template-columns: 1fr;
+          }
+
+          .subscription-visual-column {
+            border-top: 1px solid #eee5df;
+            border-left: 0;
+          }
+        }
+
+        @media (max-width: 650px) {
+          .subscription-left,
+          .subscription-visual-column {
+            padding: 24px 20px;
+          }
+
+          .subscription-head {
+            display: grid;
+          }
+
+          .primary-btn {
+            width: 100%;
+          }
+
+          .membership-card {
+            padding: 22px;
+            border-radius: 22px;
+          }
+
+          .membership-ball {
+            width: 84px;
+            height: 84px;
+          }
+
+          .membership-bottom strong {
+            font-size: 22px;
+          }
+        }
+      `}</style>
     </section>
   );
 }
-
 /* ============== ⚡ PROFIL COACH INDIVIDUEL (+ REVENUS) ================== */
 
 type Draft = {
@@ -1158,120 +1873,120 @@ function CoachProfileSection({ userId }: { userId: string }) {
   const [revLoading, setRevLoading] = useState(true);
 
   useEffect(() => {
-  let active = true;
+    let active = true;
 
-  async function loadCoachProfile() {
-    try {
-      const supabase = createClient();
+    async function loadCoachProfile() {
+      try {
+        const supabase = createClient();
 
-      const { data, error } = await supabase
-        .from(TABLES.coachProfiles)
-        .select(
-          "display_name, city, bio, hourly_rate_cents, phone, specialties, levels, is_published"
-        )
-        .eq("user_id", userId)
-        .maybeSingle();
+        const { data, error } = await supabase
+          .from(TABLES.coachProfiles)
+          .select(
+            "display_name, city, bio, hourly_rate_cents, phone, specialties, levels, is_published",
+          )
+          .eq("user_id", userId)
+          .maybeSingle();
 
-      if (error) {
-        console.error("Erreur Supabase profil coach :", error);
-        throw error;
-      }
+        if (error) {
+          console.error("Erreur Supabase profil coach :", error);
+          throw error;
+        }
 
-      if (!active) return;
+        if (!active) return;
 
-      if (!data) {
-        setDraft(EMPTY_DRAFT);
-        return;
-      }
+        if (!data) {
+          setDraft(EMPTY_DRAFT);
+          return;
+        }
 
-      setDraft({
-        display_name: String(data.display_name ?? ""),
-        city: String(data.city ?? ""),
-        bio: String(data.bio ?? ""),
-        hourly_rate: centsToEuros(
-          typeof data.hourly_rate_cents === "number"
-            ? data.hourly_rate_cents
-            : null
-        ),
-        phone: String(data.phone ?? ""),
-        specialtiesText: toList(data.specialties).join("\n"),
-        levels: toList(data.levels),
-        is_published: Boolean(data.is_published),
-      });
-    } catch (e: unknown) {
-      const message =
-        e instanceof Error
-          ? e.message
-          : typeof e === "object" && e !== null
-            ? JSON.stringify(e)
-            : String(e);
+        setDraft({
+          display_name: String(data.display_name ?? ""),
+          city: String(data.city ?? ""),
+          bio: String(data.bio ?? ""),
+          hourly_rate: centsToEuros(
+            typeof data.hourly_rate_cents === "number"
+              ? data.hourly_rate_cents
+              : null,
+          ),
+          phone: String(data.phone ?? ""),
+          specialtiesText: toList(data.specialties).join("\n"),
+          levels: toList(data.levels),
+          is_published: Boolean(data.is_published),
+        });
+      } catch (e: unknown) {
+        const message =
+          e instanceof Error
+            ? e.message
+            : typeof e === "object" && e !== null
+              ? JSON.stringify(e)
+              : String(e);
 
-      console.error("Erreur chargement profil coach :", message, e);
+        console.error("Erreur chargement profil coach :", message, e);
 
-      if (active) {
-        setDraft(EMPTY_DRAFT);
-      }
-    } finally {
-      if (active) {
-        setLoading(false);
+        if (active) {
+          setDraft(EMPTY_DRAFT);
+        }
+      } finally {
+        if (active) {
+          setLoading(false);
+        }
       }
     }
-  }
 
-  loadCoachProfile();
+    loadCoachProfile();
 
-  return () => {
-    active = false;
-  };
-}, [userId]);
+    return () => {
+      active = false;
+    };
+  }, [userId]);
 
   useEffect(() => {
-  let active = true;
+    let active = true;
 
-  async function loadCoachRevenus() {
-    try {
-      const supabase = createClient();
+    async function loadCoachRevenus() {
+      try {
+        const supabase = createClient();
 
-      const { data, error } = await supabase
-        .from(TABLES.revenus)
-        .select("id, label, amount_cents, status, created_at")
-        .eq("user_id", userId)
-        .order("created_at", { ascending: false });
+        const { data, error } = await supabase
+          .from(TABLES.revenus)
+          .select("id, label, amount_cents, status, created_at")
+          .eq("user_id", userId)
+          .order("created_at", { ascending: false });
 
-      if (error) {
-        console.error("Erreur Supabase revenus coach :", error);
-        throw error;
-      }
+        if (error) {
+          console.error("Erreur Supabase revenus coach :", error);
+          throw error;
+        }
 
-      if (!active) return;
+        if (!active) return;
 
-      setRevenus((data as Revenu[]) ?? []);
-    } catch (e: unknown) {
-      const message =
-        e instanceof Error
-          ? e.message
-          : typeof e === "object" && e !== null
-            ? JSON.stringify(e)
-            : String(e);
+        setRevenus((data as Revenu[]) ?? []);
+      } catch (e: unknown) {
+        const message =
+          e instanceof Error
+            ? e.message
+            : typeof e === "object" && e !== null
+              ? JSON.stringify(e)
+              : String(e);
 
-      console.error("Erreur chargement revenus coach :", message, e);
+        console.error("Erreur chargement revenus coach :", message, e);
 
-      if (active) {
-        setRevenus([]);
-      }
-    } finally {
-      if (active) {
-        setRevLoading(false);
+        if (active) {
+          setRevenus([]);
+        }
+      } finally {
+        if (active) {
+          setRevLoading(false);
+        }
       }
     }
-  }
 
-  loadCoachRevenus();
+    loadCoachRevenus();
 
-  return () => {
-    active = false;
-  };
-}, [userId]);
+    return () => {
+      active = false;
+    };
+  }, [userId]);
 
   const setField = (patch: Partial<Draft>) =>
     setDraft((d) => ({ ...d, ...patch }));
@@ -1317,7 +2032,7 @@ function CoachProfileSection({ userId }: { userId: string }) {
     } catch (e) {
       window.alert(
         "Erreur d'enregistrement : " +
-          (e instanceof Error ? e.message : "inconnue")
+          (e instanceof Error ? e.message : "inconnue"),
       );
     } finally {
       setSaving(false);
@@ -1326,7 +2041,7 @@ function CoachProfileSection({ userId }: { userId: string }) {
 
   const totalCents = useMemo(
     () => revenus.reduce((s, r) => s + (r.amount_cents ?? 0), 0),
-    [revenus]
+    [revenus],
   );
 
   const monthCents = useMemo(() => {
@@ -1498,9 +2213,7 @@ function CoachProfileSection({ userId }: { userId: string }) {
                     <td>{r.label ?? "—"}</td>
                     <td>
                       <span
-                        className={`badge${
-                          r.status === "paid" ? " ok" : ""
-                        }`}
+                        className={`badge${r.status === "paid" ? " ok" : ""}`}
                       >
                         {r.status ?? "—"}
                       </span>
@@ -1778,7 +2491,7 @@ function AnnoncesSection({ userId }: { userId: string }) {
         const res = await supabase
           .from(TABLES.annonces)
           .select(
-            "id, title, city, description, price_cents, date_start, date_end, status, created_at, registrations_count, inscrits_count"
+            "id, title, city, description, price_cents, date_start, date_end, status, created_at, registrations_count, inscrits_count",
           )
           .eq("user_id", userId)
           .eq("category", ANNONCE_CAMP_CATEGORY)
@@ -1821,7 +2534,7 @@ function AnnoncesSection({ userId }: { userId: string }) {
     } catch (e) {
       window.alert(
         "Erreur de suppression : " +
-          (e instanceof Error ? e.message : "inconnue")
+          (e instanceof Error ? e.message : "inconnue"),
       );
     } finally {
       setDeletingId(null);
@@ -1842,8 +2555,8 @@ function AnnoncesSection({ userId }: { userId: string }) {
 
       {!loading && annonces.length === 0 && (
         <p className="muted">
-          Tu n'as pas encore d'annonce. Clique sur « + Créer une annonce »
-          pour en créer une.
+          Tu n'as pas encore d'annonce. Clique sur « + Créer une annonce » pour
+          en créer une.
         </p>
       )}
 
@@ -1856,9 +2569,7 @@ function AnnoncesSection({ userId }: { userId: string }) {
 
                 {a.status && (
                   <span
-                    className={`badge${
-                      a.status === "published" ? " ok" : ""
-                    }`}
+                    className={`badge${a.status === "published" ? " ok" : ""}`}
                   >
                     {a.status}
                   </span>
@@ -1878,7 +2589,7 @@ function AnnoncesSection({ userId }: { userId: string }) {
               {a.description && <p className="card__desc">{a.description}</p>}
 
               <div className="annonce-registrations">
-                👥 {(a.registrations_count ?? a.inscrits_count ?? 0)} inscrit(s)
+                👥 {a.registrations_count ?? a.inscrits_count ?? 0} inscrit(s)
               </div>
 
               <div className="card__foot">
@@ -1904,157 +2615,225 @@ function AnnoncesSection({ userId }: { userId: string }) {
         </div>
       )}
 
-      <style jsx>{`
-        .head {
-          display: flex;
-          align-items: center;
-          justify-content: space-between;
-          gap: 12px;
-          flex-wrap: wrap;
-          margin-bottom: 18px;
-        }
+      <style jsx>
+        {`
+          .head {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 12px;
+            flex-wrap: wrap;
+            margin-bottom: 18px;
+          }
 
-        .acc-h2 {
-          font-family: "Alfa Slab One", Georgia, serif;
-          font-weight: 400;
-          letter-spacing: 0.05em;
-          font-size: 22px;
-          margin: 0;
-        }
+          .acc-h2 {
+            font-family: "Alfa Slab One", Georgia, serif;
+            font-weight: 400;
+            letter-spacing: 0.05em;
+            font-size: 22px;
+            margin: 0;
+          }
 
-        .muted {
-          color: #6f6f6f;
-        }
+          .muted {
+            color: #6f6f6f;
+          }
 
-        .btn {
-          display: inline-block;
-          text-decoration: none;
-          background: #6b1a2c;
-          color: #fff;
-          border: none;
-          border-radius: 9px;
-          padding: 10px 16px;
-          font-size: 14px;
-          font-weight: 700;
-          cursor: pointer;
-        }
+          .btn {
+            display: inline-block;
+            text-decoration: none;
+            background: #6b1a2c;
+            color: #fff;
+            border: none;
+            border-radius: 9px;
+            padding: 10px 16px;
+            font-size: 14px;
+            font-weight: 700;
+            cursor: pointer;
+          }
 
-        .btn:hover {
-          background: #551522;
-        }
+          .btn:hover {
+            background: #551522;
+          }
 
-        .grid {
-          display: grid;
-          grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
-          gap: 16px;
-        }
+          .grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+            gap: 16px;
+          }
 
-        .card {
-          border: 1px solid #e6e6e6;
-          border-radius: 12px;
-          padding: 18px;
-          display: flex;
-          flex-direction: column;
-        }
+          .card {
+            border: 1px solid #e6e6e6;
+            border-radius: 12px;
+            padding: 18px;
+            display: flex;
+            flex-direction: column;
+          }
 
-        .card__top {
-          display: flex;
-          align-items: center;
-          justify-content: space-between;
-          gap: 10px;
-        }
+          .card__top {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 10px;
+          }
 
-        .card__top h3 {
-          font-family: "Alfa Slab One", Georgia, serif;
-          font-weight: 400;
-          font-size: 18px;
-          margin: 0;
-        }
+          .card__top h3 {
+            font-family: "Alfa Slab One", Georgia, serif;
+            font-weight: 400;
+            font-size: 18px;
+            margin: 0;
+          }
 
-        .card__meta {
-          color: #6b1a2c;
-          font-weight: 600;
-          font-size: 13px;
-          margin: 8px 0 0;
-        }
+          .card__meta {
+            color: #6b1a2c;
+            font-weight: 600;
+            font-size: 13px;
+            margin: 8px 0 0;
+          }
 
-        .card__desc {
-          color: #444;
-          font-size: 14px;
-          margin: 10px 0 0;
-          flex: 1;
-        }
+          .card__desc {
+            color: #444;
+            font-size: 14px;
+            margin: 10px 0 0;
+            flex: 1;
+          }
 
-        .annonce-registrations {
-          margin-top: 0.8rem;
-          display: inline-flex;
-          align-items: center;
-          width: max-content;
-          gap: 0.35rem;
-          background: #fff8ef;
-          border: 1px solid #eadccc;
-          color: #6b1a2c;
-          border-radius: 999px;
-          padding: 0.45rem 0.75rem;
-          font-weight: 900;
-          font-size: 0.85rem;
-        }
+          .annonce-registrations {
+            margin-top: 0.8rem;
+            display: inline-flex;
+            align-items: center;
+            width: max-content;
+            gap: 0.35rem;
+            background: #fff8ef;
+            border: 1px solid #eadccc;
+            color: #6b1a2c;
+            border-radius: 999px;
+            padding: 0.45rem 0.75rem;
+            font-weight: 900;
+            font-size: 0.85rem;
+          }
 
-        .card__foot {
-          display: flex;
-          align-items: center;
-          justify-content: space-between;
-          margin-top: 16px;
-          padding-top: 12px;
-          border-top: 1px solid #eee;
-        }
+          .card__foot {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-top: 16px;
+            padding-top: 12px;
+            border-top: 1px solid #eee;
+          }
 
-        .price {
-          font-family: "Alfa Slab One", Georgia, serif;
-          font-size: 18px;
-          color: #0f0f12;
-        }
+          .price {
+            font-family: "Alfa Slab One", Georgia, serif;
+            font-size: 18px;
+            color: #0f0f12;
+          }
 
-        .card__actions {
-          display: flex;
-          gap: 14px;
-        }
+          .card__actions {
+            display: flex;
+            gap: 14px;
+          }
 
-        .link {
-          background: none;
-          border: none;
-          padding: 0;
-          font-family: inherit;
-          font-size: 14px;
-          font-weight: 600;
-          color: #6b1a2c;
-          text-decoration: none;
-          cursor: pointer;
-        }
+          .link {
+            background: none;
+            border: none;
+            padding: 0;
+            font-family: inherit;
+            font-size: 14px;
+            font-weight: 600;
+            color: #6b1a2c;
+            text-decoration: none;
+            cursor: pointer;
+          }
 
-        .link:hover {
-          text-decoration: underline;
-        }
+          .link:hover {
+            text-decoration: underline;
+          }
 
-        .link--danger {
-          color: #b3261e;
-        }
+          .link--danger {
+            color: #b3261e;
+          }
 
-        .badge {
-          font-size: 12px;
-          font-weight: 700;
-          padding: 3px 10px;
-          border-radius: 999px;
-          background: #eee;
-          color: #555;
-          text-transform: capitalize;
-        }
+          .badge {
+            font-size: 12px;
+            font-weight: 700;
+            padding: 3px 10px;
+            border-radius: 999px;
+            background: #eee;
+            color: #555;
+            text-transform: capitalize;
+          }
 
-        .badge.ok {
-          background: #e3f4ea;
-          color: #1f8a4c;
-        }
-      `}</style>
+          .badge.ok {
+            background: #e3f4ea;
+            color: #1f8a4c;
+          }
+
+          .subscription-card {
+            display: grid;
+            gap: 22px;
+          }
+          .subscription-head {
+            display: flex;
+            justify-content: space-between;
+            gap: 20px;
+            align-items: flex-start;
+          }
+          .subscription-content {
+            display: grid;
+            grid-template-columns: minmax(220px, 360px) 1fr;
+            gap: 24px;
+            align-items: stretch;
+          }
+          .subscription-visual img,
+          .subscription-placeholder {
+            width: 100%;
+            min-height: 190px;
+            border-radius: 20px;
+            object-fit: cover;
+          }
+          .subscription-placeholder {
+            display: flex;
+            flex-direction: column;
+            justify-content: flex-end;
+            padding: 24px;
+            background: linear-gradient(135deg, #111, #6b1a2c);
+            color: #fff;
+            box-shadow: inset 0 0 0 1px rgba(212, 162, 76, 0.45);
+          }
+          .subscription-placeholder span {
+            font-size: 0.78rem;
+            letter-spacing: 0.22em;
+            color: #d4a24c;
+          }
+          .subscription-placeholder strong {
+            font-family: "Alfa Slab One", serif;
+            font-size: 2rem;
+          }
+          .subscription-details {
+            display: grid;
+            align-content: center;
+            gap: 12px;
+          }
+          .subscription-details p {
+            display: flex;
+            justify-content: space-between;
+            gap: 18px;
+            margin: 0;
+            padding: 14px 0;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+          }
+          .subscription-details span {
+            opacity: 0.7;
+          }
+          @media (max-width: 760px) {
+            .subscription-head {
+              display: grid;
+            }
+            .subscription-content {
+              grid-template-columns: 1fr;
+            }
+          }
+        `}
+      </style>
     </section>
   );
 }
@@ -2067,11 +2846,11 @@ function MatchForm({
   onClose: () => void;
 }) {
   const [match, setMatch] = useState<TeamMatch>({
-    id: '',
-    kind: 'Match',
-    date: '',
-    heure: '',
-    adversaire: '',
+    id: "",
+    kind: "Match",
+    date: "",
+    heure: "",
+    adversaire: "",
     domicile: true,
   });
 
@@ -2083,7 +2862,15 @@ function MatchForm({
         <div className="tl-fields">
           <label>
             Type
-            <select value={match.kind} onChange={(e) => setMatch({ ...match, kind: e.target.value as TeamMatch['kind'] })}>
+            <select
+              value={match.kind}
+              onChange={(e) =>
+                setMatch({
+                  ...match,
+                  kind: e.target.value as TeamMatch["kind"],
+                })
+              }
+            >
               <option>Match</option>
               <option>Entraînement</option>
             </select>
@@ -2091,30 +2878,46 @@ function MatchForm({
 
           <label>
             Date
-            <input value={match.date} onChange={(e) => setMatch({ ...match, date: e.target.value })} placeholder="30/05/2026" />
+            <input
+              value={match.date}
+              onChange={(e) => setMatch({ ...match, date: e.target.value })}
+              placeholder="30/05/2026"
+            />
           </label>
 
           <label>
             Heure
-            <input value={match.heure} onChange={(e) => setMatch({ ...match, heure: e.target.value })} placeholder="15:30" />
+            <input
+              value={match.heure}
+              onChange={(e) => setMatch({ ...match, heure: e.target.value })}
+              placeholder="15:30"
+            />
           </label>
 
-          {match.kind === 'Match' && (
+          {match.kind === "Match" && (
             <label>
               Adversaire
-              <input value={match.adversaire} onChange={(e) => setMatch({ ...match, adversaire: e.target.value })} placeholder="Massy" />
+              <input
+                value={match.adversaire}
+                onChange={(e) =>
+                  setMatch({ ...match, adversaire: e.target.value })
+                }
+                placeholder="Massy"
+              />
             </label>
           )}
         </div>
 
         <div className="tl-modal-actions">
-          <button type="button" onClick={onClose}>Annuler</button>
+          <button type="button" onClick={onClose}>
+            Annuler
+          </button>
           <button
             type="button"
             className="primary"
             onClick={() => {
               if (!match.date.trim()) {
-                alert('La date est obligatoire.');
+                alert("La date est obligatoire.");
                 return;
               }
               onSave(match);
@@ -2135,7 +2938,7 @@ function PlaybookCreateModal({
   onCreated: (id: string) => void;
 }) {
   const [title, setTitle] = useState("");
-  const [category, setCategory] = useState("U18 Élite");
+  const [category, setCategory] = useState("U18");
   const [season, setSeason] = useState("2026-2027");
   const [loading, setLoading] = useState(false);
 
@@ -2157,8 +2960,10 @@ function PlaybookCreateModal({
 
       onCreated(created.id);
     } catch (e) {
-      console.error(e);
-      alert("Erreur création playbook");
+      const message =
+        e instanceof Error ? e.message : "Erreur création playbook";
+      console.error("Erreur création playbook:", e);
+      alert(message);
     } finally {
       setLoading(false);
     }
@@ -2185,22 +2990,17 @@ function PlaybookCreateModal({
               value={category}
               onChange={(e) => setCategory(e.target.value)}
             >
-              <option>U15 France</option>
-              <option>U18 Élite</option>
-              <option>NM3</option>
-              <option>NM2</option>
-              <option>NM1</option>
-              <option>Pro B</option>
-              <option>Betclic Elite</option>
+              <option>U13</option>
+              <option>U15</option>
+              <option>U18</option>
+              <option>U21</option>
+              <option>Seniors</option>
             </select>
           </label>
 
           <label>
             Saison
-            <select
-              value={season}
-              onChange={(e) => setSeason(e.target.value)}
-            >
+            <select value={season} onChange={(e) => setSeason(e.target.value)}>
               <option>2025-2026</option>
               <option>2026-2027</option>
               <option>2027-2028</option>
@@ -2210,15 +3010,9 @@ function PlaybookCreateModal({
         </div>
 
         <div className="tl-modal-actions">
-          <button onClick={onClose}>
-            Annuler
-          </button>
+          <button onClick={onClose}>Annuler</button>
 
-          <button
-            className="primary"
-            onClick={create}
-            disabled={loading}
-          >
+          <button className="primary" onClick={create} disabled={loading}>
             {loading ? "Création..." : "Créer"}
           </button>
         </div>

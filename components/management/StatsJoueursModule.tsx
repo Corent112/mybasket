@@ -314,12 +314,17 @@ export default function StatsJoueursModule() {
     const divisor = isTotal ? teamGames : r.games;
 
     return (
-      <tr key={r.playerId} className={isTotal ? "total" : ""}>
+      <tr key={r.playerId} className={isTotal ? "total-row" : "player-row"}>
         <td className="player">{r.name}</td>
+        <td>{isTotal ? teamGames : r.games}</td>
         <td>{displayMadeAtt(fgm, fga, divisor)}</td>
+        <td>{pct(fgm, fga)}</td>
         <td>{displayMadeAtt(r.p2m, r.p2a, divisor)}</td>
+        <td>{pct(r.p2m, r.p2a)}</td>
         <td>{displayMadeAtt(r.p3m, r.p3a, divisor)}</td>
+        <td>{pct(r.p3m, r.p3a)}</td>
         <td>{displayMadeAtt(r.ftm, r.fta, divisor)}</td>
+        <td>{pct(r.ftm, r.fta)}</td>
         <td>{display(r.off, divisor)}</td>
         <td>{display(r.def, divisor)}</td>
         <td>{display(r.reb, divisor)}</td>
@@ -387,41 +392,45 @@ export default function StatsJoueursModule() {
             </button>
           </div>
 
+          <div className="summary-grid">
+            <div><span>Joueurs</span><strong>{rows.length}</strong></div>
+            <div><span>Matchs</span><strong>{teamGames}</strong></div>
+            <div><span>Points</span><strong>{totals.pts}</strong></div>
+            <div><span>Rebonds</span><strong>{totals.reb}</strong></div>
+            <div><span>Passes</span><strong>{totals.ast}</strong></div>
+            <div><span>Adresse</span><strong>{pct(totalFgm, totalFga)}</strong></div>
+          </div>
+
           <div className="table">
             <table>
               <thead>
-                <tr>
-                  <th>Player</th>
-                  <th>FGM-A</th>
-                  <th>2PM-A</th>
-                  <th>3PM-A</th>
-                  <th>FTM-A</th>
-                  <th>OFF</th>
-                  <th>DEF</th>
-                  <th>TOT</th>
-                  <th>AST</th>
-                  <th>ST</th>
-                  <th>TO</th>
-                  <th>BS</th>
-                  <th>PF</th>
-                  <th>FPF</th>
-                  <th>EFF</th>
-                  <th>PTS</th>
+                <tr className="group-head">
+                  <th rowSpan={2}>Joueur</th>
+                  <th rowSpan={2}>MJ</th>
+                  <th colSpan={2}>Total tirs</th>
+                  <th colSpan={2}>2 points</th>
+                  <th colSpan={2}>3 points</th>
+                  <th colSpan={2}>L-F</th>
+                  <th colSpan={3}>Rebonds</th>
+                  <th colSpan={4}>Création / Défense</th>
+                  <th colSpan={2}>Fautes</th>
+                  <th colSpan={2}>Impact</th>
+                </tr>
+                <tr className="sub-head">
+                  <th>M-A</th><th>%</th>
+                  <th>M-A</th><th>%</th>
+                  <th>M-A</th><th>%</th>
+                  <th>M-A</th><th>%</th>
+                  <th>OFF</th><th>DEF</th><th>TOT</th>
+                  <th>AST</th><th>ST</th><th>TO</th><th>BS</th>
+                  <th>PF</th><th>FPF</th>
+                  <th>EFF</th><th>PTS</th>
                 </tr>
               </thead>
 
               <tbody>
                 {rows.map((r) => renderRow(r))}
                 {renderRow(totals, true)}
-
-                <tr className="percent">
-                  <td>Pourcentages</td>
-                  <td>{pct(totalFgm, totalFga)}</td>
-                  <td>{pct(totals.p2m, totals.p2a)}</td>
-                  <td>{pct(totals.p3m, totals.p3a)}</td>
-                  <td>{pct(totals.ftm, totals.fta)}</td>
-                  <td colSpan={11}></td>
-                </tr>
               </tbody>
             </table>
           </div>
@@ -498,7 +507,37 @@ export default function StatsJoueursModule() {
 
         .mode-switch button.on {
           background: #6b1a2c;
-          color: white;
+          color: #fff;
+        }
+
+        .summary-grid {
+          display: grid;
+          grid-template-columns: repeat(6, minmax(0, 1fr));
+          gap: 0.8rem;
+          margin-bottom: 1.15rem;
+        }
+
+        .summary-grid div {
+          border: 1px solid #eee2d6;
+          border-radius: 16px;
+          padding: 1rem;
+          background: #fffdf9;
+        }
+
+        .summary-grid span {
+          display: block;
+          color: #7c7470;
+          font-size: 0.75rem;
+          font-weight: 900;
+          text-transform: uppercase;
+        }
+
+        .summary-grid strong {
+          display: block;
+          margin-top: 0.35rem;
+          color: #6b1a2c;
+          font-size: 1.45rem;
+          font-weight: 900;
         }
 
         .table {
@@ -511,71 +550,127 @@ export default function StatsJoueursModule() {
 
         table {
           width: 100%;
-          min-width: 1360px;
+          min-width: 1860px;
           border-collapse: separate;
           border-spacing: 0;
-          font-size: 0.92rem;
+          font-size: 0.79rem;
         }
 
         th {
-          background: linear-gradient(#696973, #3f3f48);
-          color: white;
-          padding: 1rem 0.9rem;
+          background: linear-gradient(#ff402d, #d72718);
+          color: #111;
+          padding: 0.62rem 0.42rem;
           text-align: center;
+          vertical-align: middle;
           font-weight: 900;
           white-space: nowrap;
+          border-right: 1px solid rgba(0, 0, 0, 0.35);
+          border-bottom: 1px solid rgba(0, 0, 0, 0.35);
+        }
+
+        thead tr:nth-child(2) th {
+          background: #f6d5d5;
         }
 
         th:first-child {
-          text-align: left;
-          min-width: 300px;
-          padding-left: 1.15rem;
+          width: 135px;
+          min-width: 135px;
+          max-width: 135px;
         }
 
-        td {
-          padding: 1rem 0.9rem;
-          border-bottom: 1px solid #ece8e4;
+        th:nth-child(2) {
+          width: 54px;
+          min-width: 54px;
+          max-width: 54px;
+        }
+
+        /* Les lignes sont produites par renderRow(), donc elles doivent être globales. */
+        :global(.player-row),
+        :global(.total-row) {
+          height: 52px;
+        }
+
+        :global(.player-row td),
+        :global(.total-row td) {
+          height: 52px;
+          padding: 0.72rem 0.5rem;
+          border-right: 1px solid #d7d7d7;
+          border-bottom: 1px solid #d7d7d7;
           text-align: center;
+          vertical-align: middle;
           white-space: nowrap;
+          color: #111;
+          line-height: 1.25;
         }
 
-        td:first-child {
-          text-align: left;
-          min-width: 300px;
-          padding-left: 1.15rem;
+        :global(.player-row td) {
+          background: #fff;
+          font-weight: 600;
         }
 
-        tbody tr:nth-child(even) {
-          background: #f8f8fa;
-        }
-
-        tbody tr:hover {
-          background: #fff8ef;
-        }
-
-        .player {
+        :global(.player-row td:first-child),
+        :global(.total-row td:first-child) {
+          width: 135px;
+          min-width: 135px;
+          max-width: 135px;
+          text-align: center;
+          vertical-align: middle;
           font-weight: 900;
-          color: #333;
+          background: #efefef;
+          overflow: hidden;
+          text-overflow: ellipsis;
         }
 
-        .pts {
-          color: #d4a24c;
+        :global(.player-row td:nth-child(2)),
+        :global(.total-row td:nth-child(2)) {
+          width: 54px;
+          min-width: 54px;
+          max-width: 54px;
+          padding-left: 0.25rem;
+          padding-right: 0.25rem;
+        }
+
+        :global(.player-row td:not(:first-child)),
+        :global(.total-row td:not(:first-child)) {
+          min-width: 74px;
+          text-align: center;
+          vertical-align: middle;
+        }
+
+        :global(.player-row:nth-child(even) td) {
+          background: #fafafa;
+        }
+
+        :global(.player-row:nth-child(even) td:first-child) {
+          background: #e9e9e9;
+        }
+
+        :global(.player-row:hover td) {
+          background: #fff7ec;
+        }
+
+        :global(.player-row:hover td:first-child) {
+          background: #e4e4e4;
+        }
+
+        :global(.total-row td) {
+          background: #f7f7f7;
           font-weight: 900;
         }
 
-        .total {
-          font-weight: 900;
-          background: #faf3e8 !important;
+        :global(.total-row td:first-child) {
+          background: #e9e9e9;
         }
 
-        .percent {
-          background: #fff8ef !important;
-          color: #6b1a2c;
+        :global(.pts) {
+          color: #111;
           font-weight: 900;
         }
 
-        .percent td {
-          border-bottom: 0;
+        @media (max-width: 1100px) {
+          .summary-grid {
+            grid-template-columns: repeat(3, 1fr);
+          }
         }
 
         @media (max-width: 900px) {
@@ -598,6 +693,10 @@ export default function StatsJoueursModule() {
 
           .mode-switch button {
             flex: 1;
+          }
+
+          .summary-grid {
+            grid-template-columns: repeat(2, 1fr);
           }
         }
       `}</style>

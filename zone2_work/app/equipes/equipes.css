@@ -1,0 +1,836 @@
+/* app/equipes/equipes.css
+   Thème sombre "fiche joueur" MyBasket (= la photo).
+   Importé une seule fois dans app/equipes/layout.tsx. */
+
+@import url("https://fonts.googleapis.com/css2?family=Oswald:wght@400;500;600;700&family=Roboto:wght@400;500;700;900&display=swap");
+
+.mbk {
+  --bg: #0c0c11;
+  --bg-2: #101017;
+  --card: #16161e;
+  --card-2: #1b1b24;
+  --line: #26262f;
+  --or: #f47b20;
+  --or-d: #c85f10;
+  --bleu: #1f6fb2;
+  --vert: #22a06b;
+  --rouge: #e4564f;
+  --txt: #f3f3f6;
+  --txt-2: #c7c7d1;
+  --txt-3: #8a8a95;
+  --display: "Oswald", sans-serif;
+  --body: "Roboto", sans-serif;
+
+  display: grid;
+  grid-template-columns: 232px 1fr;
+  min-height: 100vh;
+  background: var(--bg);
+  color: var(--txt);
+  font-family: var(--body);
+  -webkit-font-smoothing: antialiased;
+}
+.mbk * {
+  box-sizing: border-box;
+}
+
+/* ---------- SIDEBAR ---------- */
+.mbk-side {
+  background: #07070b;
+  border-right: 1px solid var(--line);
+  padding: 1.1rem 0;
+  display: flex;
+  flex-direction: column;
+  position: sticky;
+  top: 0;
+  height: 100vh;
+}
+.mbk-logo {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  padding: 0 1.2rem 1.3rem;
+  font-family: var(--display);
+  font-weight: 700;
+  font-size: 1.15rem;
+  letter-spacing: 0.04em;
+}
+.mbk-logo .my {
+  color: #fff;
+}
+.mbk-logo .basket {
+  color: var(--or);
+}
+.mbk-nav {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+  flex: 1;
+}
+.mbk-nav a {
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+  padding: 0.62rem 1.2rem;
+  color: var(--txt-3);
+  text-decoration: none;
+  font-size: 0.9rem;
+  border-left: 3px solid transparent;
+  transition: 0.15s;
+  cursor: pointer;
+}
+.mbk-nav a:hover {
+  color: var(--txt);
+  background: rgba(255, 255, 255, 0.03);
+}
+.mbk-nav a.active {
+  color: var(--or);
+  background: rgba(244, 123, 32, 0.1);
+  border-left-color: var(--or);
+  font-weight: 600;
+}
+.mbk-nav a svg {
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+}
+.mbk-side-foot {
+  padding: 1rem 1.2rem 0;
+  border-top: 1px solid var(--line);
+  margin-top: 0.8rem;
+  font-size: 0.78rem;
+  color: var(--txt-3);
+}
+
+/* ---------- MAIN ---------- */
+.mbk-main {
+  padding: 1.4rem 1.8rem 3rem;
+  max-width: 1180px;
+}
+.mbk-topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 1.4rem;
+  flex-wrap: wrap;
+}
+.mbk-back {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  color: var(--txt-2);
+  background: none;
+  border: none;
+  font-size: 0.92rem;
+  cursor: pointer;
+  font-family: var(--body);
+}
+.mbk-back:hover {
+  color: var(--or);
+}
+
+/* boutons */
+.mbk-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  border-radius: 8px;
+  padding: 0.5rem 0.95rem;
+  font-size: 0.85rem;
+  font-weight: 600;
+  cursor: pointer;
+  border: 1px solid transparent;
+  font-family: var(--body);
+  transition: 0.15s;
+}
+.mbk-btn-orange {
+  background: var(--or);
+  color: #1a1208;
+}
+.mbk-btn-orange:hover {
+  background: #ff8a30;
+}
+.mbk-btn-ghost {
+  background: transparent;
+  color: var(--txt-2);
+  border-color: var(--line);
+}
+.mbk-btn-ghost:hover {
+  border-color: var(--or);
+  color: var(--or);
+}
+.mbk-btn-red {
+  background: transparent;
+  color: var(--rouge);
+  border-color: rgba(228, 86, 79, 0.4);
+}
+.mbk-btn-red:hover {
+  background: rgba(228, 86, 79, 0.12);
+}
+
+/* cartes */
+.mbk-card {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 1.1rem 1.2rem;
+}
+.mbk-card-title {
+  font-family: var(--display);
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  font-size: 0.92rem;
+  text-transform: uppercase;
+  color: var(--txt);
+  margin: 0 0 0.9rem;
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+}
+.mbk-grid {
+  display: grid;
+  gap: 1rem;
+}
+
+/* HERO fiche joueur */
+.mbk-hero {
+  display: grid;
+  grid-template-columns: 200px 1fr 220px;
+  gap: 1.2rem;
+  margin-bottom: 1.2rem;
+}
+.mbk-hero-photo {
+  position: relative;
+  border-radius: 14px;
+  overflow: hidden;
+  background: linear-gradient(160deg, #1c1c26, #0f0f16);
+  aspect-ratio: 3 / 4;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  border: 1px solid var(--line);
+}
+.mbk-hero-photo img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.mbk-hero-photo .placeholder {
+  font-family: var(--display);
+  font-size: 4rem;
+  color: var(--or);
+  align-self: center;
+}
+.mbk-hero-num {
+  position: absolute;
+  top: 10px;
+  left: 10px;
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  border: 2px solid var(--or);
+  color: var(--or);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--display);
+  font-weight: 700;
+  font-size: 1rem;
+  background: rgba(0, 0, 0, 0.5);
+}
+.mbk-hero-name {
+  font-family: var(--display);
+  font-weight: 700;
+  font-size: clamp(1.7rem, 3.4vw, 2.6rem);
+  letter-spacing: 0.01em;
+  line-height: 1.02;
+  margin: 0.15rem 0 0.2rem;
+  text-transform: uppercase;
+}
+.mbk-club {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-weight: 700;
+  font-size: 0.95rem;
+  color: var(--txt-2);
+}
+.mbk-cat {
+  font-size: 0.82rem;
+  color: var(--txt-3);
+  margin: 0.3rem 0 0.9rem;
+}
+.mbk-cat b {
+  color: var(--or);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  font-size: 0.72rem;
+}
+.mbk-attr-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 0.8rem 1.4rem;
+  padding: 0.9rem 0;
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+}
+.mbk-attr label {
+  display: block;
+  font-size: 0.64rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--txt-3);
+  margin-bottom: 0.18rem;
+}
+.mbk-attr span {
+  font-size: 0.95rem;
+  font-weight: 600;
+}
+.mbk-hero-bottom {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  margin-top: 0.9rem;
+  flex-wrap: wrap;
+}
+.mbk-status {
+  padding: 0.25rem 0.7rem;
+  border-radius: 20px;
+  font-size: 0.75rem;
+  font-weight: 700;
+}
+.mbk-status.dispo {
+  background: rgba(34, 160, 107, 0.18);
+  color: #36c98a;
+}
+.mbk-status.blesse {
+  background: rgba(228, 86, 79, 0.18);
+  color: #ff6a63;
+}
+.mbk-status.absent,
+.mbk-status.suspendu {
+  background: rgba(244, 123, 32, 0.18);
+  color: var(--or);
+}
+.mbk-stars {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  color: var(--txt-3);
+  font-size: 0.82rem;
+}
+.mbk-stars .stars {
+  color: var(--or);
+  font-size: 1rem;
+  letter-spacing: 1px;
+}
+
+/* carte maillot (droite) */
+.mbk-jersey-card {
+  background: linear-gradient(160deg, #1a1a23, #101017);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 1rem;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.5rem;
+}
+.mbk-jersey-meta {
+  width: 100%;
+  border-top: 1px solid var(--line);
+  padding-top: 0.7rem;
+}
+.mbk-jersey-meta div {
+  font-size: 0.78rem;
+  color: var(--txt-3);
+}
+.mbk-jersey-meta b {
+  display: block;
+  color: var(--txt);
+  font-size: 0.92rem;
+  font-weight: 600;
+}
+
+/* tabs */
+.mbk-tabs {
+  display: flex;
+  gap: 1.6rem;
+  border-bottom: 1px solid var(--line);
+  margin: 0.4rem 0 1.3rem;
+  overflow-x: auto;
+}
+.mbk-tab {
+  background: none;
+  border: none;
+  color: var(--txt-3);
+  font-family: var(--display);
+  font-size: 0.85rem;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  padding: 0.7rem 0;
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+  white-space: nowrap;
+}
+.mbk-tab.active {
+  color: var(--or);
+  border-bottom-color: var(--or);
+}
+.mbk-tab:hover {
+  color: var(--txt);
+}
+
+/* cartes indicateurs (haut) */
+.mbk-kpi-row {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 1rem;
+  margin-bottom: 1.2rem;
+}
+.mbk-kpi {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 1rem 1.1rem;
+}
+.mbk-kpi .head {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  color: var(--txt-3);
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  font-weight: 600;
+  margin-bottom: 0.55rem;
+}
+.mbk-kpi .val {
+  font-family: var(--display);
+  font-weight: 700;
+  font-size: 2rem;
+  line-height: 1;
+}
+.mbk-kpi .sub {
+  font-size: 0.72rem;
+  color: var(--txt-3);
+  margin-top: 0.2rem;
+}
+
+/* STATS MATCH grille */
+.mbk-stats-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 0.5rem;
+}
+.mbk-stat-cell {
+  text-align: center;
+  padding: 0.6rem 0.2rem;
+}
+.mbk-stat-cell .n {
+  font-family: var(--display);
+  font-weight: 700;
+  font-size: 1.7rem;
+}
+.mbk-stat-cell .l {
+  font-size: 0.66rem;
+  color: var(--txt-3);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+.mbk-pct-row {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 0.5rem;
+  border-top: 1px solid var(--line);
+  margin-top: 0.5rem;
+  padding-top: 0.6rem;
+}
+
+/* SUIVI PHYSIQUE table */
+.mbk-phys {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.85rem;
+}
+.mbk-phys th {
+  text-align: left;
+  color: var(--txt-3);
+  font-weight: 500;
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding-bottom: 0.5rem;
+}
+.mbk-phys td {
+  padding: 0.5rem 0;
+  border-top: 1px solid var(--line);
+}
+.mbk-phys .up {
+  color: var(--vert);
+}
+.mbk-phys .down {
+  color: var(--vert);
+}
+
+/* feedback */
+.mbk-feedback {
+  display: flex;
+  gap: 0.8rem;
+  padding: 0.7rem 0;
+  border-top: 1px solid var(--line);
+}
+.mbk-feedback:first-of-type {
+  border-top: none;
+}
+.mbk-feedback .date {
+  flex-shrink: 0;
+  width: 44px;
+  text-align: center;
+  font-family: var(--display);
+}
+.mbk-feedback .date .d {
+  font-size: 1.2rem;
+  font-weight: 700;
+  color: var(--or);
+}
+.mbk-feedback .date .m {
+  font-size: 0.62rem;
+  color: var(--txt-3);
+  text-transform: uppercase;
+}
+.mbk-feedback .body p {
+  margin: 0 0 0.2rem;
+  font-size: 0.86rem;
+}
+.mbk-feedback .body small {
+  color: var(--txt-3);
+}
+
+/* videos */
+.mbk-video {
+  display: flex;
+  gap: 0.8rem;
+  align-items: center;
+  padding: 0.6rem 0;
+  border-top: 1px solid var(--line);
+}
+.mbk-video:first-of-type {
+  border-top: none;
+}
+.mbk-video .thumb {
+  width: 92px;
+  height: 56px;
+  border-radius: 8px;
+  background: linear-gradient(135deg, #23232e, #14141b);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  color: var(--or);
+  overflow: hidden;
+}
+.mbk-video .thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+/* comparaison pills */
+.mbk-compare {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 1rem;
+}
+.mbk-compare-item {
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 0.8rem 0.9rem;
+}
+.mbk-compare-item .icon {
+  width: 38px;
+  height: 38px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  font-size: 1.1rem;
+}
+.mbk-compare-item .l {
+  font-size: 0.68rem;
+  color: var(--txt-3);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.mbk-compare-item .rang {
+  font-family: var(--display);
+  font-weight: 700;
+  font-size: 1.15rem;
+}
+.mbk-compare-item .rang small {
+  color: var(--txt-3);
+  font-weight: 400;
+  font-size: 0.8rem;
+}
+.mbk-compare-item .sub {
+  font-size: 0.68rem;
+  color: var(--txt-3);
+}
+
+/* ----- liste équipes / effectif ----- */
+.mbk-team-card {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 1.2rem;
+  cursor: pointer;
+  transition: 0.16s;
+}
+.mbk-team-card:hover {
+  border-color: var(--or);
+  transform: translateY(-3px);
+}
+.mbk-player-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 0.9rem;
+}
+.mbk-player-card {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 1rem 0.8rem;
+  text-align: center;
+  cursor: pointer;
+  transition: 0.16s;
+  position: relative;
+}
+.mbk-player-card:hover {
+  border-color: var(--or);
+  transform: translateY(-3px);
+}
+.mbk-player-card .pp {
+  width: 78px;
+  height: 78px;
+  border-radius: 50%;
+  margin: 0 auto 0.6rem;
+  object-fit: cover;
+  border: 3px solid var(--or);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--display);
+  font-size: 1.8rem;
+  font-weight: 700;
+  background: linear-gradient(135deg, var(--or), #8a5d10);
+  color: #fff;
+}
+.mbk-player-card .badge {
+  position: absolute;
+  top: 0.6rem;
+  right: 0.6rem;
+  background: #000;
+  border: 1px solid var(--line);
+  color: #fff;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.72rem;
+  font-weight: 700;
+}
+
+/* ----- MODALE FORMULAIRE ----- */
+.mbk-modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.6);
+  backdrop-filter: blur(3px);
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding: 2.5rem 1rem;
+  z-index: 1000;
+  overflow-y: auto;
+}
+.mbk-modal {
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  width: 100%;
+  max-width: 640px;
+  padding: 1.6rem;
+}
+.mbk-modal h2 {
+  font-family: var(--display);
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  margin: 0 0 1.2rem;
+  text-transform: uppercase;
+  font-size: 1.2rem;
+}
+.mbk-form-section {
+  margin-bottom: 1.3rem;
+}
+.mbk-form-section > h3 {
+  font-family: var(--display);
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  font-size: 0.78rem;
+  color: var(--or);
+  margin: 0 0 0.7rem;
+  border-bottom: 1px solid var(--line);
+  padding-bottom: 0.4rem;
+}
+.mbk-fields {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.8rem;
+}
+.mbk-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+.mbk-field.full {
+  grid-column: 1 / -1;
+}
+.mbk-field label {
+  font-size: 0.72rem;
+  color: var(--txt-3);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.mbk-field input,
+.mbk-field select,
+.mbk-field textarea {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: var(--txt);
+  padding: 0.55rem 0.7rem;
+  font-size: 0.9rem;
+  font-family: var(--body);
+  outline: none;
+}
+.mbk-field input:focus,
+.mbk-field select:focus,
+.mbk-field textarea:focus {
+  border-color: var(--or);
+}
+.mbk-field .slider-row {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+}
+.mbk-field input[type="range"] {
+  flex: 1;
+  accent-color: var(--or);
+  padding: 0;
+}
+.mbk-field .slider-val {
+  font-family: var(--display);
+  font-weight: 700;
+  color: var(--or);
+  min-width: 22px;
+  text-align: right;
+}
+.mbk-photo-pick {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+}
+.mbk-photo-pick .preview {
+  width: 84px;
+  height: 84px;
+  border-radius: 50%;
+  border: 3px dashed var(--line);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.6rem;
+  color: var(--txt-3);
+  overflow: hidden;
+  flex-shrink: 0;
+}
+.mbk-photo-pick .preview img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.mbk-modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.6rem;
+  margin-top: 1.2rem;
+  border-top: 1px solid var(--line);
+  padding-top: 1.1rem;
+}
+.mbk-toast {
+  position: fixed;
+  bottom: 1.5rem;
+  left: 50%;
+  transform: translateX(-50%);
+  background: var(--or);
+  color: #1a1208;
+  font-weight: 600;
+  padding: 0.7rem 1.3rem;
+  border-radius: 10px;
+  z-index: 2000;
+  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.4);
+}
+
+/* ----- responsive ----- */
+@media (max-width: 980px) {
+  .mbk {
+    grid-template-columns: 1fr;
+  }
+  .mbk-side {
+    position: static;
+    height: auto;
+    flex-direction: row;
+    align-items: center;
+    overflow-x: auto;
+    padding: 0.6rem 0.4rem;
+  }
+  .mbk-logo {
+    padding: 0 0.8rem;
+  }
+  .mbk-nav {
+    flex-direction: row;
+  }
+  .mbk-nav a {
+    border-left: none;
+    border-bottom: 3px solid transparent;
+    white-space: nowrap;
+  }
+  .mbk-nav a.active {
+    border-left: none;
+    border-bottom-color: var(--or);
+  }
+  .mbk-side-foot {
+    display: none;
+  }
+  .mbk-hero {
+    grid-template-columns: 1fr;
+  }
+  .mbk-attr-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+  .mbk-kpi-row {
+    grid-template-columns: repeat(2, 1fr);
+  }
+  .mbk-compare {
+    grid-template-columns: repeat(2, 1fr);
+  }
+  .mbk-fields {
+    grid-template-columns: 1fr;
+  }
+}

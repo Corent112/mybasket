@@ -1,0 +1,102 @@
+.wrap {
+  position: relative;
+  width: 100%;
+  max-width: none;
+  aspect-ratio: 1048 / 664;
+  overflow: hidden;
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, .12);
+  background: #f3d8aa;
+}
+
+.svg {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+.bgImage {
+  pointer-events: none;
+}
+
+.zone {
+  fill: rgba(255, 255, 255, 0.001);
+  stroke: transparent;
+  stroke-width: 0;
+  vector-effect: non-scaling-stroke;
+  transition: fill 140ms ease, stroke 140ms ease, opacity 140ms ease;
+}
+
+.pick .active {
+  cursor: crosshair;
+}
+
+.pick .active:hover {
+  fill: rgba(212, 162, 76, .24);
+  stroke: rgba(212, 162, 76, .9);
+  stroke-width: 2.8;
+}
+
+.inactive {
+  fill: rgba(8, 10, 18, .46);
+  cursor: not-allowed;
+}
+
+.selected {
+  fill: rgba(107, 26, 44, .30) !important;
+  stroke: rgba(212, 162, 76, .95);
+  stroke-width: 3.2;
+}
+
+.label,
+.statLabel {
+  pointer-events: none;
+}
+
+.label circle {
+  fill: rgba(255, 255, 255, .9);
+  stroke: rgba(0, 0, 0, .9);
+  stroke-width: 2.2;
+  vector-effect: non-scaling-stroke;
+}
+
+.label text {
+  text-anchor: middle;
+  font: 900 26px system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  fill: #111;
+}
+
+.statLabel text {
+  text-anchor: middle;
+  font-family: Georgia, 'Times New Roman', serif;
+  fill: #111;
+  paint-order: stroke;
+  stroke: rgba(255, 255, 255, .78);
+  stroke-width: 3;
+  stroke-linejoin: round;
+}
+
+.statLabel text:first-child {
+  font-size: 26px;
+  font-weight: 900;
+}
+
+.statLabel text:last-child {
+  font-size: 15px;
+  font-weight: 700;
+}
+
+.shotDot {
+  stroke: #fff;
+  stroke-width: 2.6;
+  vector-effect: non-scaling-stroke;
+  cursor: pointer;
+  filter: drop-shadow(0 2px 4px rgba(0, 0, 0, .45));
+}
+
+.shotDot:hover {
+  stroke-width: 4;
+}
+
+.made { fill: #22c55e; }
+.missed { fill: #ef4444; }

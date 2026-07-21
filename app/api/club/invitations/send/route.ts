@@ -1,6 +1,7 @@
 // app/api/club/invitations/send/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
+import { canCreateClubCoach } from "@/lib/access";
 
 export async function POST(request: NextRequest) {
   try {
@@ -52,6 +53,13 @@ export async function POST(request: NextRequest) {
       return NextResponse.json(
         { error: "Rôle insuffisant pour inviter un coach." },
         { status: 403 }
+      );
+    }
+
+    if (!(await canCreateClubCoach(clubId))) {
+      return NextResponse.json(
+        { error: "La limite d’entraîneurs de votre abonnement est atteinte." },
+        { status: 403 },
       );
     }
 

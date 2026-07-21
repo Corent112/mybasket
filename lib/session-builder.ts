@@ -10,6 +10,7 @@ export type SessionBuilderItem = {
   duration_minutes: number | null;
   assigned_to: string | null;
   sort_order: number;
+  metadata?: Record<string, unknown> | null;
 };
 
 export async function loadSessionBuilderItems(): Promise<SessionBuilderItem[]> {

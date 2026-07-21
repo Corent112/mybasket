@@ -314,9 +314,9 @@ function InsightCard({
 }) {
   return (
     <article className={`insight-card ${tone}`}>
-      <span>{label}</span>
-      <strong>{title}</strong>
-      <em>{value}</em>
+      <div className="insight-label">{label}</div>
+      <div className="insight-title">{title}</div>
+      <div className="insight-value">{value}</div>
     </article>
   );
 }
@@ -640,10 +640,15 @@ export default function StatsTempsFortsModule() {
             <div className="tf-table-wrap">
               <table className="tf-table">
                 <thead>
-                  <tr>
-                    <th>Temps fort</th>
-                    <th>Poss.</th>
-                    <th>% Util.</th>
+                  <tr className="group-head">
+                    <th rowSpan={2}>TEMPS FORT</th>
+                    <th colSpan={4}>PERFORMANCE</th>
+                    <th colSpan={6}>TIRS</th>
+                    <th colSpan={7}>IMPACT</th>
+                  </tr>
+                  <tr className="sub-columns">
+                    <th>POSS.</th>
+                    <th>% UTIL.</th>
                     <th>PTS</th>
                     <th>PPP</th>
                     <th>2PM-A</th>
@@ -709,15 +714,20 @@ export default function StatsTempsFortsModule() {
             <div className="tf-table-wrap">
               <table className="tf-table winloss">
                 <thead>
-                  <tr>
-                    <th>Temps fort</th>
-                    <th>PPP Victoire</th>
-                    <th>PPP Défaite</th>
-                    <th>Diff PPP</th>
-                    <th>Util. Victoire</th>
-                    <th>Util. Défaite</th>
-                    <th>Poss V</th>
-                    <th>Poss D</th>
+                  <tr className="group-head">
+                    <th rowSpan={2}>TEMPS FORT</th>
+                    <th colSpan={3}>RENDEMENT</th>
+                    <th colSpan={2}>UTILISATION</th>
+                    <th colSpan={4}>VOLUME</th>
+                  </tr>
+                  <tr className="sub-columns">
+                    <th>PPP VICTOIRE</th>
+                    <th>PPP DÉFAITE</th>
+                    <th>DIFF PPP</th>
+                    <th>UTIL. VICTOIRE</th>
+                    <th>UTIL. DÉFAITE</th>
+                    <th>POSS V</th>
+                    <th>POSS D</th>
                     <th>PTS V</th>
                     <th>PTS D</th>
                   </tr>
@@ -759,43 +769,44 @@ export default function StatsTempsFortsModule() {
       <style jsx>{`
         .tf {
           width: 100%;
-          background: white;
-          border: 1px solid #efe6db;
-          border-radius: 18px;
-          padding: 1.2rem;
-          box-shadow: 0 12px 34px rgba(60, 30, 20, 0.06);
+          background: #fff;
+          border: 1px solid #eadfd5;
+          border-radius: 22px;
+          padding: 1.45rem;
+          box-shadow: 0 16px 42px rgba(60, 30, 20, 0.07);
         }
 
         .tf-head {
           display: flex;
           justify-content: space-between;
           align-items: flex-start;
-          gap: 1rem;
-          margin-bottom: 1rem;
+          gap: 1.25rem;
+          margin-bottom: 1.15rem;
         }
 
         .tf-head h3 {
           margin: 0;
           color: #6b1a2c;
-          font-size: 1.5rem;
+          font-size: 1.7rem;
           font-weight: 900;
+          letter-spacing: -0.02em;
         }
 
         .tf-head p {
-          margin: 0.25rem 0 0;
-          color: #7c7470;
-          font-size: 0.9rem;
+          margin: 0.35rem 0 0;
+          color: #81736f;
+          font-size: 0.94rem;
           line-height: 1.45;
         }
 
         select {
-          border: 1px solid #eadccc;
-          border-radius: 10px;
-          padding: 0.65rem 0.9rem;
+          border: 1px solid #e4d4c4;
+          border-radius: 8px;
+          padding: 0.62rem 2.6rem 0.62rem 0.9rem;
           font-weight: 900;
           color: #6b1a2c;
-          background: white;
-          min-width: 220px;
+          background: #fff;
+          min-width: 250px;
         }
 
         .tf-empty {
@@ -809,9 +820,9 @@ export default function StatsTempsFortsModule() {
 
         .mode-switch {
           display: inline-flex;
-          gap: 0.4rem;
+          gap: 0.35rem;
           background: #fff8ef;
-          border: 1px solid #eadccc;
+          border: 1px solid #e6d5c4;
           border-radius: 999px;
           padding: 0.3rem;
           margin-bottom: 1rem;
@@ -821,147 +832,229 @@ export default function StatsTempsFortsModule() {
           border: 0;
           background: transparent;
           color: #6b1a2c;
-          padding: 0.65rem 1.05rem;
+          padding: 0.68rem 1.2rem;
           border-radius: 999px;
           cursor: pointer;
           font-weight: 900;
         }
 
         .mode-switch button.on {
-          background: #6b1a2c;
-          color: white;
+          background: #76192d;
+          color: #fff;
+          box-shadow: 0 6px 16px rgba(107, 26, 44, 0.22);
         }
 
         .tf-kpis {
           display: grid;
-          grid-template-columns: repeat(6, minmax(0, 1fr));
-          gap: 0.75rem;
-          margin-bottom: 1rem;
+          grid-template-columns: repeat(6, minmax(120px, 1fr));
+          gap: 0;
+          margin: 0.35rem 0 1rem;
+          border-bottom: 1px solid #eee3dc;
         }
 
-        .kpi,
-        .insight-card {
-          border: 1px solid #efe6db;
-          border-radius: 14px;
-          padding: 0.9rem;
-          background: #fff8ef;
+        .kpi {
+          min-height: 80px;
+          padding: 0.8rem 1rem 1rem;
+          background: #fff;
+          display: flex;
+          flex-direction: column;
+          justify-content: center;
         }
 
-        .kpi span,
-        .insight-card span {
+        .kpi + .kpi {
+          border-left: 1px solid #f0e6df;
+        }
+
+        .kpi span {
+          color: #3f3738;
+          font-size: 0.88rem;
+          font-weight: 700;
+          text-transform: none;
+          letter-spacing: 0;
+        }
+
+        .kpi strong {
           display: block;
-          color: #7c7470;
-          font-size: 0.75rem;
+          color: #111;
+          font-size: 1.16rem;
+          line-height: 1;
+          margin-top: 0.18rem;
           font-weight: 900;
-          text-transform: uppercase;
-        }
-
-        .kpi strong,
-        .insight-card strong {
-          display: block;
-          color: #6b1a2c;
-          font-size: 1.25rem;
-          margin-top: 0.25rem;
-          font-weight: 900;
-        }
-
-        .insight-card em {
-          display: block;
-          margin-top: 0.25rem;
-          font-style: normal;
-          font-weight: 900;
-          color: #d4a24c;
-        }
-
-        .insight-card.good em {
-          color: #177245;
-        }
-
-        .insight-card.bad em {
-          color: #a82018;
         }
 
         .insights-grid {
           display: grid;
           grid-template-columns: repeat(4, minmax(0, 1fr));
-          gap: 0.75rem;
-          margin-bottom: 1rem;
+          gap: 0;
+          margin-bottom: 1.3rem;
+          border-top: 1px solid #ece4dd;
+          border-bottom: 1px solid #ece4dd;
+        }
+
+        .insight-card {
+          min-height: 108px;
+          padding: 0.95rem 1.15rem 1rem;
+          background: #fff;
+          display: flex;
+          flex-direction: column;
+          justify-content: flex-start;
+        }
+
+        .insight-card + .insight-card {
+          border-left: 1px solid #ece4dd;
+        }
+
+        .insight-label {
+          color: #444;
+          font-size: 0.88rem;
+          font-weight: 700;
+          line-height: 1.3;
+          margin-bottom: 0.5rem;
+        }
+
+        .insight-title {
+          color: #111;
+          font-size: 1.05rem;
+          font-weight: 900;
+          line-height: 1.2;
+          overflow-wrap: anywhere;
+        }
+
+        .insight-value {
+          margin-top: 0.3rem;
+          font-size: 0.95rem;
+          line-height: 1.2;
+          font-style: italic;
+          font-weight: 800;
+          color: #6b1a2c;
+        }
+
+        .insight-card.good .insight-value {
+          color: #177245;
+        }
+
+        .insight-card.bad .insight-value {
+          color: #b42318;
+        }
+
+        .insight-card.neutral .insight-value {
+          color: #6b1a2c;
         }
 
         .sub-block {
-          border: 1px solid #efe6db;
-          border-radius: 16px;
+          border: 1px solid #e7d8cc;
+          border-radius: 18px;
           overflow: hidden;
           margin-top: 1rem;
+          background: #fff;
         }
 
         .sub-head {
           background: #fff8ef;
-          border-bottom: 1px solid #efe6db;
-          padding: 1rem;
+          border-bottom: 1px solid #e4d4c4;
+          padding: 1rem 1.15rem;
         }
 
         .sub-head h4 {
           margin: 0;
           color: #6b1a2c;
-          font-size: 1.05rem;
+          font-size: 1.08rem;
           font-weight: 900;
         }
 
         .sub-head p {
-          margin: 0.25rem 0 0;
-          color: #7c7470;
-          font-size: 0.85rem;
-          font-weight: 800;
+          margin: 0.3rem 0 0;
+          color: #81736f;
+          font-size: 0.84rem;
+          font-weight: 700;
         }
 
         .tf-table-wrap {
           width: 100%;
-          overflow-x: auto;
+          overflow: auto;
         }
 
         .tf-table {
           width: 100%;
-          min-width: 1550px;
+          min-width: 1450px;
           border-collapse: separate;
           border-spacing: 0;
-          font-size: 0.82rem;
+          font-size: 0.8rem;
         }
 
         .tf-table.winloss {
-          min-width: 980px;
+          min-width: 1020px;
         }
 
-        th {
-          background: linear-gradient(180deg, #6b1a2c, #49101d);
-          color: white;
-          padding: 0.78rem 0.65rem;
+        .group-head th {
+          position: sticky;
+          top: 0;
+          z-index: 4;
+          background: linear-gradient(180deg, #ff3a2f 0%, #e92d24 100%);
+          color: #111;
+          padding: 0.85rem 0.65rem;
+          text-align: center;
+          white-space: nowrap;
+          font-weight: 1000;
+          border-right: 1px solid rgba(88, 0, 0, 0.25);
+          border-bottom: 1px solid rgba(88, 0, 0, 0.25);
+        }
+
+        .group-head th:first-child {
+          position: sticky;
+          left: 0;
+          z-index: 6;
+          min-width: 220px;
+          background: linear-gradient(180deg, #ff3a2f 0%, #e92d24 100%);
+          text-align: left;
+        }
+
+        .sub-columns th {
+          position: sticky;
+          top: 45px;
+          z-index: 3;
+          background: #f5d2d2;
+          color: #111;
+          padding: 0.65rem 0.56rem;
           text-align: center;
           white-space: nowrap;
           font-weight: 900;
-        }
-
-        th:first-child {
-          text-align: left;
-          min-width: 190px;
+          border-right: 1px solid #c7aaaa;
+          border-bottom: 1px solid #c7aaaa;
         }
 
         td {
-          padding: 0.78rem 0.65rem;
-          border-bottom: 1px solid #eee;
+          padding: 0.72rem 0.58rem;
+          border-right: 1px solid #d9d9d9;
+          border-bottom: 1px solid #d9d9d9;
           text-align: center;
           white-space: nowrap;
           background: #fff;
-          font-weight: 800;
+          font-weight: 700;
+          color: #111;
         }
 
         td:first-child {
+          position: sticky;
+          left: 0;
+          z-index: 2;
           text-align: left;
-          min-width: 190px;
-          max-width: 190px;
-          overflow: hidden;
-          text-overflow: ellipsis;
+          min-width: 220px;
+          background: #f3f3f3;
+          color: #6b1a2c;
+          font-weight: 900;
+        }
+
+        tbody tr:nth-child(even) td:not(:first-child) {
           background: #fafafa;
+        }
+
+        tbody tr:hover td {
+          background: #fff7e8;
+        }
+
+        tbody tr:hover td:first-child {
+          background: #f7e8dc;
         }
 
         .label {
@@ -971,7 +1064,7 @@ export default function StatsTempsFortsModule() {
 
         .pts {
           color: #d4a24c;
-          font-weight: 900;
+          font-weight: 1000;
         }
 
         .good {
@@ -980,7 +1073,7 @@ export default function StatsTempsFortsModule() {
         }
 
         .bad {
-          color: #a82018;
+          color: #b42318;
           font-weight: 900;
         }
 
@@ -991,23 +1084,37 @@ export default function StatsTempsFortsModule() {
           padding: 1.5rem;
         }
 
-        @media (max-width: 1100px) {
+        @media (max-width: 1200px) {
           .tf-kpis {
             grid-template-columns: repeat(3, 1fr);
+          }
+
+          .kpi:nth-child(4) {
+            border-left: 0;
           }
 
           .insights-grid {
             grid-template-columns: repeat(2, 1fr);
           }
+
+          .insight-card:nth-child(3) {
+            border-left: 0;
+          }
         }
 
-        @media (max-width: 980px) {
+        @media (max-width: 760px) {
+          .tf {
+            padding: 1rem;
+          }
+
           .tf-head {
+            align-items: stretch;
             flex-direction: column;
           }
 
           select {
             width: 100%;
+            min-width: 0;
           }
 
           .mode-switch {
@@ -1017,12 +1124,16 @@ export default function StatsTempsFortsModule() {
           .mode-switch button {
             flex: 1;
           }
-        }
 
-        @media (max-width: 640px) {
           .tf-kpis,
           .insights-grid {
             grid-template-columns: 1fr;
+          }
+
+          .kpi + .kpi,
+          .insight-card + .insight-card {
+            border-left: 0;
+            border-top: 1px solid #f0e6df;
           }
         }
       `}</style>

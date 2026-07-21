@@ -52,15 +52,14 @@ function isUuid(value: string | null | undefined): boolean {
 }
 
 function logSupabaseError(context: string, error: any, payload?: unknown): void {
-  console.error("══════════════════════════════");
-  console.error(context);
-  console.error("Code    :", error?.code);
-  console.error("Message :", error?.message);
-  console.error("Details :", error?.details);
-  console.error("Hint    :", error?.hint);
-  if (payload !== undefined) console.error("Payload :", payload);
-  console.error(error);
-  console.error("══════════════════════════════");
+  console.error(context, {
+    code: error?.code ?? null,
+    message: error?.message ?? null,
+    details: error?.details ?? null,
+    hint: error?.hint ?? null,
+    payload,
+    originalError: error,
+  });
 }
 
 async function getUserId(): Promise<string> {
@@ -202,26 +201,26 @@ function normalizeMatchRow(row: any): TeamMatch {
 }
 
 function normalizeStatMatchRow(row: any): MatchRecord {
-  const data =
-    row?.metadata && typeof row.metadata === "object"
-      ? row.metadata
-      : row?.data && typeof row.data === "object"
-        ? row.data
-        : {};
+  const projectState =
+    row?.project_state && typeof row.project_state === "object"
+      ? row.project_state
+      : {};
+
+  const players = Array.isArray(projectState.players)
+    ? projectState.players.map(normalizeMatchLine)
+    : [];
 
   return {
-    ...data,
+    ...projectState,
     id: row.id,
-    date: row.match_date ?? row.date ?? data.date ?? "",
-    opponent: row.opponent ?? row.opponent_name ?? data.opponent ?? "",
-    scoreUs: row.score_us ?? row.us ?? data.scoreUs ?? 0,
-    scoreThem: row.score_them ?? row.them ?? data.scoreThem ?? 0,
-    source: row.source ?? data.source ?? "live",
-    players: Array.isArray(row.lines)
-      ? row.lines
-      : Array.isArray(data.players)
-        ? data.players
-        : [],
+    date: row.match_date ?? projectState.date ?? "",
+    opponent: row.opponent ?? projectState.opponent ?? "",
+    scoreUs:
+      row.score_us ?? row.us_score ?? row.us ?? projectState.scoreUs ?? 0,
+    scoreThem:
+      row.score_them ?? row.them_score ?? row.them ?? projectState.scoreThem ?? 0,
+    source: row.source ?? projectState.source ?? "live",
+    players,
   } as MatchRecord;
 }
 
@@ -284,21 +283,48 @@ function matchPayload(teamId: string, match: TeamMatch, userId: string) {
 }
 
 function statMatchPayload(teamId: string, record: MatchRecord, userId: string) {
+  const scoreUs = safeNumber(record.scoreUs);
+  const scoreThem = safeNumber(record.scoreThem);
+  const normalizedPlayers = (record.players || []).map(normalizeMatchLine);
+
+  const computedResult =
+    scoreUs > scoreThem ? "win" : scoreUs < scoreThem ? "loss" : "draw";
+
   return {
     id: isUuid(record.id) ? record.id : undefined,
     user_id: userId,
+    created_by: userId,
     team_id: teamId,
     match_date: record.date || null,
     opponent: record.opponent || null,
-    score_us: safeNumber(record.scoreUs),
-    score_them: safeNumber(record.scoreThem),
+
+    // Colonnes historiques toujours NOT NULL dans la table.
+    us: scoreUs,
+    them: scoreThem,
+
+    // Colonnes plus récentes utilisées par les différentes pages MyBasket.
+    score_us: scoreUs,
+    score_them: scoreThem,
+    us_score: scoreUs,
+    them_score: scoreThem,
+
+    // La contrainte SQL match_stats_result_check utilise des valeurs propres
+    // à la base. Comme la colonne est nullable, on évite toute valeur non
+    // reconnue et on garde le résultat calculé dans project_state.
+    result: null,
     source: record.source || "live",
-    lines: (record.players || []).map(normalizeMatchLine),
-    data: {
+    project_status: "completed",
+    status: "completed",
+
+    // La table match_stats ne possède plus data/lines. Les lignes joueurs et
+    // les propriétés supplémentaires sont conservées dans le JSONB prévu.
+    project_state: {
       ...record,
-      players: (record.players || []).map(normalizeMatchLine),
+      players: normalizedPlayers,
+      scoreUs,
+      scoreThem,
+      result: computedResult,
     },
-    updated_at: new Date().toISOString(),
   };
 }
 
@@ -382,6 +408,11 @@ export async function getTeams(): Promise<Team[]> {
       .from("match_stats")
       .select("*")
       .in("team_id", teamIds)
+      // AJOUT · un match en cours de codage (projet brouillon) n'alimente PAS
+      // les statistiques officielles de la fiche équipe. Seul « Terminer le
+      // match » le passe en 'completed'. `or` couvre les lignes anciennes
+      // dont project_status est encore null.
+      .or("project_status.is.null,project_status.eq.completed")
       .order("match_date", { ascending: true }),
   ]);
 
@@ -630,7 +661,7 @@ export async function getProfile(): Promise<UserProfile> {
 
   const { data, error } = await supabase
     .from("profiles")
-    .select("id, email, display_name, club, avatar_url, phone, birthdate")
+    .select("id, email, display_name, first_name, last_name, club, avatar_url, club_logo_url, phone, birthdate, category")
     .eq("id", userId)
     .maybeSingle();
 
@@ -644,10 +675,10 @@ export async function getProfile(): Promise<UserProfile> {
 
   return {
     ...emptyProfile(),
-    prenom: parts[0] ?? "",
-    nom: parts.slice(1).join(" "),
+    prenom: data?.first_name ?? parts[0] ?? "",
+    nom: data?.last_name ?? parts.slice(1).join(" "),
     club: data?.club ?? "",
-    clubLogo: null,
+    clubLogo: data?.club_logo_url ?? null,
     photo: data?.avatar_url ?? null,
     dob: data?.birthdate ?? "",
     email: data?.email ?? "",
@@ -661,8 +692,11 @@ export async function saveProfile(profile: UserProfile): Promise<void> {
 
   const payload = {
     display_name: `${profile.prenom ?? ""} ${profile.nom ?? ""}`.trim(),
+    first_name: profile.prenom ?? null,
+    last_name: profile.nom ?? null,
     club: profile.club ?? null,
     avatar_url: profile.photo ?? null,
+    club_logo_url: profile.clubLogo ?? null,
     phone: profile.telephone ?? null,
     birthdate: profile.dob ?? null,
     updated_at: new Date().toISOString(),

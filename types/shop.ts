@@ -1,12 +1,12 @@
 export type FilterGroup = "type" | "category" | "level" | "age" | "price";
-export type ProductStatus = "draft" | "active" | "archived";
+export type ProductStatus = "draft" | "active" | "published" | "archived";
 
 export type Product = {
   id: string;
+
+  // Modèle moderne utilisé par le back-office.
   name: string;
-  slug: string | null;
   description: string | null;
-  category: string | null;
   image_url: string | null;
   price_cents: number;
   compare_at_price_cents: number | null;
@@ -14,8 +14,25 @@ export type Product = {
   status: ProductStatus | string;
   is_featured: boolean | null;
   metadata: Record<string, unknown> | null;
+
+  // Colonnes communes.
+  slug: string | null;
+  category: string | null;
   created_at: string | null;
   updated_at: string | null;
+
+  // Ancien modèle encore présent dans la table Supabase.
+  title?: string | null;
+  description_short?: string | null;
+  description_long?: string | null;
+  price?: number | null;
+  promo_price?: number | null;
+  images?: string[] | null;
+  tags?: string[] | null;
+  featured?: boolean | null;
+  premium?: boolean | null;
+  active?: boolean | null;
+  stock?: number | null;
 };
 
 export type ProductFilter = {

@@ -78,7 +78,7 @@ async function updateAnnonceStatus(formData: FormData) {
   if (!id) return;
 
   await supabase
-    .from("annonces")
+    .from("announcements")
     .update({
       status,
       updated_at: new Date().toISOString(),
@@ -101,7 +101,7 @@ async function toggleAnnonceFeatured(formData: FormData) {
   if (!id) return;
 
   await supabase
-    .from("annonces")
+    .from("announcements")
     .update({
       is_featured: next,
       updated_at: new Date().toISOString(),
@@ -120,7 +120,7 @@ async function deleteAnnonce(formData: FormData) {
   const id = String(formData.get("id") || "");
   if (!id) return;
 
-  await supabase.from("annonces").delete().eq("id", id);
+  await supabase.from("announcements").delete().eq("id", id);
 
   revalidatePath("/admin");
   revalidatePath("/admin/annonces");
@@ -131,7 +131,7 @@ export default async function AdminAnnoncesPage() {
   const { supabase } = await requireAdmin();
 
   const { data } = await supabase
-    .from("annonces")
+    .from("announcements")
     .select("*")
     .order("created_at", { ascending: false });
 
@@ -289,7 +289,7 @@ export default async function AdminAnnoncesPage() {
 
                           <form action={updateAnnonceStatus}>
                             <input type="hidden" name="id" value={annonce.id} />
-                            <input type="hidden" name="status" value="published" />
+                            <input type="hidden" name="status" value="approved" />
                             <button type="submit">Valider</button>
                           </form>
 

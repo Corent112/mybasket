@@ -1,0 +1,17 @@
+{
+	"folders": [
+		{
+			"name": "mybasket",
+			"path": "."
+		},
+		{
+			"name": "scripts",
+			"path": "../Downloads/mybasket-cahier-exercices-import-ready/scripts"
+		},
+		{
+			"name": "schemas",
+			"path": "../Downloads/mybasket-cahier-exercices-import-ready/schemas"
+		}
+	],
+	"settings": {}
+}

@@ -7,6 +7,7 @@ const menu = [
   ["Clubs", "/admin/clubs", "🏛️"],
   ["Coachs", "/admin/coachs", "🧑‍🏫"],
   ["Annonces", "/admin/annonces", "📣"],
+  ["Boutique", "/admin/boutique", "🛍️"],
   ["Abonnements", "/admin/abonnements", "💳"],
   ["Paiements", "/admin/paiements", "💰"],
   ["Exercices", "/admin/exercices", "🏀"],
@@ -14,9 +15,7 @@ const menu = [
   ["Séances", "/admin/seances", "🗓️"],
   ["Formation", "/admin/formation", "🎓"],
   ["Accompagnement", "/admin/accompagnement", "🤝"],
-  ["LiveStat", "/admin/livestat", "📈"],
-  ["Tags", "/admin/tags", "🏷️"],
-  ["Filtres", "/admin/filtres", "🔎"],
+  ["Scouting vidéo", "/admin/scouting-video", "🎬"],
   ["Slider", "/admin/slider", "🖼️"],
   ["Statistiques", "/admin/statistiques", "📊"],
   ["Paramètres", "/admin/settings", "⚙️"],
@@ -42,12 +41,14 @@ export default async function AdminDashboardPage() {
     data.systemesPending +
     data.seancesPending +
     data.formationPending +
-    data.accompagnementPending;
+    data.accompagnementPending +
+    data.scoutingPending;
 
   const kpis = [
     ["👥", "Utilisateurs", data.users, "/admin/utilisateurs"],
     ["🏛️", "Clubs", data.clubs, "/admin/clubs"],
     ["🧑‍🏫", "Coachs", data.coachs, "/admin/coachs"],
+    ["🛍️", "Boutique", "Gérer", "/admin/boutique"],
     ["🏀", "Exercices", data.exercices, "/admin/exercices"],
     ["📋", "Systèmes", data.systemes, "/admin/systemes"],
     ["💰", "CA mensuel", money(data.revenue), "/admin/paiements"],
@@ -68,14 +69,17 @@ export default async function AdminDashboardPage() {
       data.accompagnementPending,
       "/admin/accompagnement",
     ],
+    ["🎬", "Demandes scouting vidéo", data.scoutingPending, "/admin/scouting-video"],
   ] as const;
 
   const quick = [
     ["Modérer les coachs", "/admin/coachs", "🧑‍🏫"],
     ["Modérer les annonces", "/admin/annonces", "📣"],
+    ["Gérer la boutique", "/admin/boutique", "🛍️"],
     ["Valider les exercices", "/admin/exercices", "🏀"],
     ["Valider les systèmes", "/admin/systemes", "📋"],
-    ["Valider les séances", "/admin/seances", "🗓️"],
+    ["Publier les séances modèles", "/admin/seances", "🗓️"],
+    ["Traiter le scouting vidéo", "/admin/scouting-video", "🎬"],
     ["Gérer les abonnements", "/admin/abonnements", "💳"],
     ["Voir les clubs", "/admin/clubs", "🏛️"],
     ["Voir les revenus", "/admin/paiements", "💰"],

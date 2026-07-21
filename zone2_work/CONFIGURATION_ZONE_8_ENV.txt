@@ -1,0 +1,7 @@
+À ajouter dans .env.local, uniquement côté serveur :
+
+SUPABASE_SERVICE_ROLE_KEY=ta_cle_service_role_supabase
+
+Ne préfixe jamais cette clé par NEXT_PUBLIC_.
+Elle permet au Dashboard CEO de comparer directement auth.users avec profiles.
+La migration SQL synchronise également tous les comptes dans profiles, ce qui garde un fonctionnement de secours.

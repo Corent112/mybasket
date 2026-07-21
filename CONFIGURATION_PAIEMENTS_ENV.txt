@@ -1,0 +1,15 @@
+À AJOUTER À TON .env.local EXISTANT (ne supprime pas les autres lignes)
+
+# Stripe déjà utilisé par le projet
+STRIPE_SECRET_KEY=...
+STRIPE_WEBHOOK_SECRET=...
+NEXT_PUBLIC_SITE_URL=http://localhost:3000
+
+# PayPal
+PAYPAL_CLIENT_ID=...
+PAYPAL_CLIENT_SECRET=...
+PAYPAL_ENV=sandbox
+
+En production :
+NEXT_PUBLIC_SITE_URL=https://ton-domaine.fr
+PAYPAL_ENV=live

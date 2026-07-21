@@ -1,23 +1,62 @@
-// app/accompagnement/direction-technique/page.tsx
-import type { Metadata } from "next";
+"use client";
+
+import { useState, type FormEvent } from "react";
 import Link from "next/link";
 
-export const metadata: Metadata = {
-  title: "Direction Technique — MyBasket",
-  description:
-    "MyBasket joue le rôle d'un directeur technique externe : projet sportif, philosophie de jeu, plannings et accompagnement des entraîneurs.",
-};
-
 const SERVICES = [
-  { ico: "🎯", lbl: "Créer une véritable dynamique de formation" },
-  { ico: "👨‍🏫", lbl: "Développer les jeunes entraîneurs" },
-  { ico: "🏀", lbl: "Développer les opérations basket école" },
-  { ico: "👩", lbl: "Développer le basket féminin" },
-  { ico: "📋", lbl: "Accompagnement administratif" },
-  { ico: "🏅", lbl: "Aide à l'obtention des labels" },
+  { ico: "🎯", lbl: "Construire le projet sportif du club" },
+  { ico: "👨‍🏫", lbl: "Former et accompagner les entraîneurs" },
+  { ico: "🏀", lbl: "Définir une identité et une philosophie de jeu" },
+  { ico: "📅", lbl: "Structurer les plannings et les contenus" },
+  { ico: "📋", lbl: "Accompagner l’organisation administrative" },
+  { ico: "🏅", lbl: "Préparer les labels et projets de développement" },
 ];
 
 export default function DirectionTechniquePage() {
+  const [sent, setSent] = useState(false);
+  const [sending, setSending] = useState(false);
+
+  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+
+    const form = event.currentTarget;
+    const formData = new FormData(form);
+    setSending(true);
+
+    try {
+      const response = await fetch("/api/accompagnement", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          page: "Direction technique",
+          type_demande: formData.get("type"),
+          nom: formData.get("nom"),
+          prenom: formData.get("prenom"),
+          email: formData.get("email"),
+          telephone: formData.get("telephone"),
+          club: formData.get("club"),
+          message: formData.get("message"),
+        }),
+      });
+
+      if (!response.ok) {
+        const payload = await response.json().catch(() => null);
+        throw new Error(payload?.error || "Envoi impossible");
+      }
+
+      form.reset();
+      setSent(true);
+    } catch (error) {
+      alert(
+        error instanceof Error
+          ? error.message
+          : "Erreur lors de l’envoi de la demande."
+      );
+    } finally {
+      setSending(false);
+    }
+  }
+
   return (
     <section className="acc-container acc-container--narrow acc-section">
       <div className="acc-back">
@@ -32,54 +71,31 @@ export default function DirectionTechniquePage() {
       </div>
 
       <div className="acc-grid">
-        {/* TEXTE */}
         <div className="acc-text">
           <p className="lead">
-            <b>Vous souhaitez développer votre club ?</b>
+            <b>Vous souhaitez structurer durablement votre club ?</b>
           </p>
           <p>
-            MyBasket vous propose de vous accompagner en jouant le rôle d'un{" "}
-            <b>directeur technique</b>.
+            MyBasket intervient comme un <b>directeur technique externe</b> pour
+            construire avec vous un projet sportif clair, cohérent et applicable
+            sur le terrain.
           </p>
           <p>
-            Nous vous proposons de mettre en place ensemble un projet sportif. Nous définirons
-            ensemble une philosophie de club et préparerons les contenus de formations pour
-            emmener les jeunes sur cette fameuse philosophie.
+            Nous définissons une philosophie de club, une identité de jeu, une
+            progression par catégorie et une méthode commune pour accompagner les
+            entraîneurs.
           </p>
           <p>
-            La <b>philosophie de jeu</b> d'un club c'est quand les équipes ont une façon de jouer
-            identifiable sur le terrain, invariable selon les matchs. De par notre expérience, nous
-            dirions qu'elle se transmet par les plus jeunes.
+            L’accompagnement peut également inclure les plannings, les contenus
+            de séances, la formation des cadres, le développement du basket
+            féminin, les opérations basket école et les dossiers de labels.
           </p>
-          <p style={{ marginBottom: ".6rem" }}>
-            Elle s'articule souvent de principes simples basés sur :
-          </p>
-          <ul>
-            <li>
-              le <b>jeu en mouvement</b>
-            </li>
-            <li>
-              le <b>jeu sans ballon</b>
-            </li>
-            <li>
-              les <b>choix défensifs</b>
-            </li>
-            <li>
-              l'<b>identité de jeu</b> du club
-            </li>
-          </ul>
           <p className="italic">
-            Très peu de clubs en France travaillent de cette manière. On pourrait citer Manchester
-            City en football ou les Golden State Warriors en NBA comme exemples de clubs avec une
-            forte identité de jeu.
-          </p>
-          <p style={{ marginBottom: 0 }}>
-            Nous ferons également les <b>plannings</b> et accompagnerons les entraîneurs dans
-            l'élaboration de leurs <b>séances</b>.
+            Chaque mission est adaptée à la taille de la structure, à ses moyens,
+            à son niveau et à ses objectifs.
           </p>
         </div>
 
-        {/* ILLUSTRATION */}
         <div className="acc-illus">
           <div className="acc-illus-box acc-illus-box--light">
             <div className="acc-blob acc-blob--orange" />
@@ -87,31 +103,102 @@ export default function DirectionTechniquePage() {
             <div className="acc-illus-inner">
               <div className="acc-illus-emoji">🏛️</div>
               <div className="acc-illus-label">PROJET SPORTIF</div>
-              <div className="acc-illus-sub">Club · Philosophie · Identité</div>
+              <div className="acc-illus-sub">Club · Méthode · Identité</div>
             </div>
           </div>
         </div>
       </div>
 
-      {/* LISTE DES SERVICES */}
       <div className="acc-panel">
         <h2>Notre accompagnement complet</h2>
         <div className="acc-tile-grid">
-          {SERVICES.map((s) => (
-            <div className="acc-tile" key={s.lbl}>
-              <div className="ico">{s.ico}</div>
-              <div className="lbl">{s.lbl}</div>
+          {SERVICES.map((service) => (
+            <div className="acc-tile" key={service.lbl}>
+              <div className="ico">{service.ico}</div>
+              <div className="lbl">{service.lbl}</div>
             </div>
           ))}
         </div>
       </div>
 
-      {/* CTA */}
       <div className="acc-cta">
-        <Link className="acc-cta-btn" href="/contact">
-          📅 PRISE DE RENDEZ-VOUS
+        <Link className="acc-cta-btn" href="#demande-direction-technique">
+          📅 DEMANDER UN ÉCHANGE
         </Link>
-        <div className="acc-cta-note">Un échange gratuit pour comprendre votre projet</div>
+        <div className="acc-cta-note">
+          La demande arrivera directement dans le dashboard Direction technique
+        </div>
+      </div>
+
+      <div id="demande-direction-technique" className="acc-request-block">
+        <h2>Demander un accompagnement</h2>
+        <p>
+          Présentez votre club et votre besoin. La demande sera classée
+          automatiquement dans Direction technique.
+        </p>
+
+        {sent ? (
+          <div className="acc-form-success" role="status">
+            ✓ Demande envoyée. Nous revenons vers vous rapidement.
+          </div>
+        ) : (
+          <form className="acc-form-grid" onSubmit={handleSubmit}>
+            <div className="acc-form-field">
+              <label htmlFor="dt-prenom">Prénom *</label>
+              <input id="dt-prenom" name="prenom" required />
+            </div>
+
+            <div className="acc-form-field">
+              <label htmlFor="dt-nom">Nom *</label>
+              <input id="dt-nom" name="nom" required />
+            </div>
+
+            <div className="acc-form-field">
+              <label htmlFor="dt-email">E-mail *</label>
+              <input id="dt-email" type="email" name="email" required />
+            </div>
+
+            <div className="acc-form-field">
+              <label htmlFor="dt-phone">Téléphone</label>
+              <input id="dt-phone" type="tel" name="telephone" />
+            </div>
+
+            <div className="acc-form-field">
+              <label htmlFor="dt-club">Club / structure *</label>
+              <input id="dt-club" name="club" required />
+            </div>
+
+            <div className="acc-form-field">
+              <label htmlFor="dt-type">Besoin principal</label>
+              <select id="dt-type" name="type">
+                <option>Projet sportif global</option>
+                <option>Philosophie et identité de jeu</option>
+                <option>Formation des entraîneurs</option>
+                <option>Structuration de l’école de basket</option>
+                <option>Organisation technique et plannings</option>
+                <option>Labels et développement du club</option>
+                <option>Autre besoin de direction technique</option>
+              </select>
+            </div>
+
+            <div className="acc-form-field acc-form-field--full">
+              <label htmlFor="dt-message">Votre contexte et vos objectifs</label>
+              <textarea
+                id="dt-message"
+                name="message"
+                placeholder="Catégories concernées, nombre d’équipes, problématiques actuelles, objectifs du club…"
+              />
+            </div>
+
+            <button
+              type="submit"
+              className="acc-form-primary"
+              disabled={sending}
+            >
+              {sending ? "Envoi en cours…" : "Envoyer la demande"}
+            </button>
+          </form>
+        )}
       </div>
     </section>
   );

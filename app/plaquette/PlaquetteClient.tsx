@@ -76,7 +76,7 @@ const EDIT_EXERCISE_ID_KEY = "mybasket_edit_exercise_id";
   // ----------------------- Modèle -----------------------
   type Pt = { x: number; y: number };
   type Player = { id: string; x: number; y: number; label: string; team: 'att' | 'def'; shape: 'circle' | 'square'; coach?: boolean; rotation?: number; name?: string; color?: string; size?: number; photo?: string; hasBall?: boolean; ballCount?: number; linkedPlayerId?: string; linkedPlayerName?: string; linkedTeamId?: string; linkedTeamName?: string };
-  type Obj = { id: string; x: number; y: number; kind: string; text?: string; rotation?: number };
+  type Obj = { id: string; x: number; y: number; kind: string; text?: string; rotation?: number; size?: number; scaleX?: number; scaleY?: number; points?: Pt[]; color?: string; sourcePlayerId?: string; targetPlayerId?: string };
   type Line = { id: string; action: string; from: Pt; to: Pt; ctrls?: Pt[]; ctrl?: Pt; points?: Pt[]; rotation?: number; target?: 'basket'; sourcePlayerId?: string; targetPlayerId?: string; order?: number; startMode?: 'withPrevious' | 'afterPrevious'; duration?: number; targetMode?: 'player' | 'playerCurrentPoint'; createdTargetPoint?: Pt };
   type ActSched = { line: Line; start: number; dur: number; end: number };
   type Sched = { idx: number; start: number; span: number; end: number; actSched: ActSched[] };
@@ -238,6 +238,15 @@ const currentRef = useRef(current);
   const drawingRef = useRef(false);
   const rotatingRef = useRef(false);
   const rotCenterRef = useRef<Pt | null>(null);
+  const resizingRef = useRef(false);
+  const resizeStartRef = useRef<{
+    id: string;
+    mode: 'vertex' | 'box';
+    vertexIndex?: number;
+    center?: Pt;
+    rotation?: number;
+    baseRadius?: number;
+  } | null>(null);
   const movingRef = useRef(false);
   const moveStartRef = useRef<{ start: Pt; orig: Map<string, Player | Obj | Line> } | null>(null);
   const lineDragRef = useRef<{ id: string; which: 'from' | 'to' | 'ctrl'; index?: number } | null>(null);
@@ -712,40 +721,138 @@ const currentRef = useRef(current);
     }
   };
 
+  const objectPolygonPointsPx = (
+    canvas: HTMLCanvasElement,
+    o: Obj
+  ): Pt[] | null => {
+    if (!['triangle', 'square'].includes(o.kind)) return null;
+
+    if (Array.isArray(o.points) && o.points.length >= 3) {
+      return o.points.map((point) => toPx(canvas, point));
+    }
+
+    const center = toPx(canvas, { x: o.x, y: o.y });
+    const s = cs(canvas) * 0.018 * (o.size || 1);
+    const scaleX = o.scaleX || 1;
+    const scaleY = o.scaleY || 1;
+    const rotation = ((o.rotation || 0) * Math.PI) / 180;
+
+    const local =
+      o.kind === 'triangle'
+        ? [
+            { x: 0, y: -s * 1.2 },
+            { x: s, y: s },
+            { x: -s, y: s },
+          ]
+        : [
+            { x: -s, y: -s },
+            { x: s, y: -s },
+            { x: s, y: s },
+            { x: -s, y: s },
+          ];
+
+    return local.map((point) => {
+      const sx = point.x * scaleX;
+      const sy = point.y * scaleY;
+      return {
+        x: center.x + sx * Math.cos(rotation) - sy * Math.sin(rotation),
+        y: center.y + sx * Math.sin(rotation) + sy * Math.cos(rotation),
+      };
+    });
+  };
+
   const drawObject = (ctx: CanvasRenderingContext2D, canvas: HTMLCanvasElement, o: Obj) => {
+    const polygonPoints = objectPolygonPointsPx(canvas, o);
+
+    if (polygonPoints && Array.isArray(o.points)) {
+      const shapeColor = o.color || '#0F0F12';
+      ctx.save();
+      ctx.strokeStyle = shapeColor;
+      ctx.fillStyle = shapeColor;
+      ctx.lineWidth = Math.max(2, cs(canvas) * 0.003);
+      ctx.beginPath();
+      polygonPoints.forEach((point, index) => {
+        if (index === 0) ctx.moveTo(point.x, point.y);
+        else ctx.lineTo(point.x, point.y);
+      });
+      ctx.closePath();
+      ctx.save();
+      ctx.globalAlpha = 0.22;
+      ctx.fill();
+      ctx.restore();
+      ctx.stroke();
+      ctx.restore();
+      return;
+    }
+
     const pos = toPx(canvas, { x: o.x, y: o.y }); const x = pos.x, y = pos.y;
-    const s = cs(canvas) * 0.018;
-    ctx.save(); ctx.translate(x, y); ctx.rotate(((o.rotation || 0) * Math.PI) / 180);
-    ctx.lineWidth = Math.max(2, cs(canvas) * 0.003);
+    const s = cs(canvas) * 0.018 * (o.size || 1);
+    const scaleX = o.scaleX || 1;
+    const scaleY = o.scaleY || 1;
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.rotate(((o.rotation || 0) * Math.PI) / 180);
+    ctx.scale(scaleX, scaleY);
+    ctx.lineWidth = Math.max(2, cs(canvas) * 0.003) / Math.max(scaleX, scaleY);
     ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
     switch (o.kind) {
       case 'ball':
-        ctx.fillStyle = '#E8743C'; ctx.strokeStyle = '#7a3a10';
+        ctx.fillStyle = o.color || '#E8743C'; ctx.strokeStyle = o.color || '#7a3a10';
         ctx.beginPath(); ctx.arc(0, 0, s, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
         ctx.beginPath(); ctx.moveTo(-s, 0); ctx.lineTo(s, 0); ctx.moveTo(0, -s); ctx.lineTo(0, s); ctx.stroke();
         break;
       case 'cone':
-        ctx.fillStyle = '#E87722';
+        ctx.fillStyle = o.color || '#E87722';
         ctx.beginPath(); ctx.moveTo(0, -s * 1.2); ctx.lineTo(s, s); ctx.lineTo(-s, s); ctx.closePath(); ctx.fill();
         break;
-      case 'triangle':
-        ctx.strokeStyle = '#0F0F12';
-        ctx.beginPath(); ctx.moveTo(0, -s * 1.2); ctx.lineTo(s, s); ctx.lineTo(-s, s); ctx.closePath(); ctx.stroke();
+      case 'triangle': {
+        const shapeColor = o.color || '#0F0F12';
+        ctx.strokeStyle = shapeColor;
+        ctx.fillStyle = shapeColor;
+        ctx.beginPath();
+        ctx.moveTo(0, -s * 1.2);
+        ctx.lineTo(s, s);
+        ctx.lineTo(-s, s);
+        ctx.closePath();
+        ctx.save();
+        ctx.globalAlpha = 0.22;
+        ctx.fill();
+        ctx.restore();
+        ctx.stroke();
         break;
-      case 'square':
-        ctx.strokeStyle = '#0F0F12'; ctx.strokeRect(-s, -s, 2 * s, 2 * s);
+      }
+      case 'square': {
+        const shapeColor = o.color || '#0F0F12';
+        ctx.strokeStyle = shapeColor;
+        ctx.fillStyle = shapeColor;
+        ctx.save();
+        ctx.globalAlpha = 0.22;
+        ctx.fillRect(-s, -s, 2 * s, 2 * s);
+        ctx.restore();
+        ctx.strokeRect(-s, -s, 2 * s, 2 * s);
         break;
-      case 'circle':
-        ctx.strokeStyle = '#0F0F12'; ctx.beginPath(); ctx.arc(0, 0, s, 0, Math.PI * 2); ctx.stroke();
+      }
+      case 'circle': {
+        const shapeColor = o.color || '#0F0F12';
+        ctx.strokeStyle = shapeColor;
+        ctx.fillStyle = shapeColor;
+        ctx.beginPath();
+        ctx.arc(0, 0, s, 0, Math.PI * 2);
+        ctx.save();
+        ctx.globalAlpha = 0.22;
+        ctx.fill();
+        ctx.restore();
+        ctx.stroke();
         break;
+      }
       case 'handoff':
-        ctx.fillStyle = '#0F0F12';
+        ctx.fillStyle = o.color || '#0F0F12';
         ctx.font = '700 ' + Math.round(s * 1.9) + "px Arial, sans-serif";
         ctx.fillText('H', 0, 0);
         break;
       case 'text':
-        ctx.fillStyle = '#0F0F12';
-        ctx.font = '700 ' + Math.round(cs(canvas) * 0.024) + "px 'Roboto', sans-serif";
+        ctx.fillStyle = o.color || '#0F0F12';
+        ctx.font = '700 ' + Math.round(cs(canvas) * 0.024 * (o.size || 1)) + "px 'Roboto', sans-serif";
         ctx.fillText(o.text || '', 0, 0);
         break;
     }
@@ -881,7 +988,25 @@ const currentRef = useRef(current);
     const ph = phasesRef.current[currentRef.current]; if (!ph) return null;
     const scale = cs(canvas);
     if (item.type === 'player') { const p = ph.players.find((z) => z.id === item.id); if (!p) return null; const base = scale * 0.024 * (p.size || 1); const c = toPx(canvas, { x: p.x, y: p.y }); return { cx: c.x, cy: c.y, ringR: base * (p.team === 'def' ? 2.85 : 1.55), rotDeg: p.rotation || 0 }; }
-    if (item.type === 'object') { const o = ph.objects.find((z) => z.id === item.id); if (!o) return null; const c = toPx(canvas, { x: o.x, y: o.y }); return { cx: c.x, cy: c.y, ringR: scale * 0.018 * 1.8, rotDeg: o.rotation || 0 }; }
+    if (item.type === 'object') {
+      const o = ph.objects.find((z) => z.id === item.id);
+      if (!o) return null;
+      const c = toPx(canvas, { x: o.x, y: o.y });
+      const base = scale * 0.018 * (o.size || 1);
+      const halfW = base * (o.scaleX || 1) * 1.25;
+      const halfH = base * (o.scaleY || 1) * 1.25;
+      return {
+        cx: c.x,
+        cy: c.y,
+        ringR: Math.max(halfW, halfH) * 1.45,
+        halfW,
+        halfH,
+        baseRadius: base,
+        scaleX: o.scaleX || 1,
+        scaleY: o.scaleY || 1,
+        rotDeg: o.rotation || 0,
+      };
+    }
     const l = ph.lines.find((z) => z.id === item.id); if (!l) return null; const poly = linePoly(canvas, l); const m = poly[Math.floor(poly.length / 2)] || poly[0]; return { cx: m.x, cy: m.y, ringR: 26, rotDeg: l.rotation || 0 };
   };
   // poignée de rotation : uniquement si UNE seule sélection joueur/objet (les lignes utilisent leurs poignées de courbe)
@@ -891,6 +1016,60 @@ const currentRef = useRef(current);
     const rad = (g.rotDeg * Math.PI) / 180; const hr = g.ringR + 18;
     return { cx: g.cx, cy: g.cy, hx: g.cx + Math.sin(rad) * hr, hy: g.cy - Math.cos(rad) * hr, ringR: g.ringR, rad };
   };
+  // vrais sommets indépendants pour le triangle et le carré
+  const getResizeHandles = (canvas: HTMLCanvasElement) => {
+    const sel = selectionRef.current;
+    if (sel.length !== 1 || sel[0].type !== 'object') return null;
+
+    const ph = phasesRef.current[currentRef.current];
+    if (!ph) return null;
+
+    const object = ph.objects.find((item) => item.id === sel[0].id);
+    if (!object) return null;
+
+    if (object.kind === 'triangle' || object.kind === 'square') {
+      const points = objectPolygonPointsPx(canvas, object);
+      if (!points) return null;
+
+      return {
+        id: object.id,
+        mode: 'vertex' as const,
+        points,
+      };
+    }
+
+    // Les autres formes conservent leur redimensionnement classique.
+    if (!['circle', 'cone'].includes(object.kind)) return null;
+
+    const geom = itemGeom(canvas, sel[0]) as any;
+    if (!geom) return null;
+
+    const rotation = ((object.rotation || 0) * Math.PI) / 180;
+    const rotate = (lx: number, ly: number) => ({
+      x: geom.cx + lx * Math.cos(rotation) - ly * Math.sin(rotation),
+      y: geom.cy + lx * Math.sin(rotation) + ly * Math.cos(rotation),
+    });
+
+    const pad = 10;
+    const halfW = geom.halfW + pad;
+    const halfH = geom.halfH + pad;
+
+    return {
+      id: object.id,
+      mode: 'box' as const,
+      cx: geom.cx,
+      cy: geom.cy,
+      rotation,
+      baseRadius: geom.baseRadius,
+      points: [
+        rotate(-halfW, -halfH),
+        rotate(halfW, -halfH),
+        rotate(halfW, halfH),
+        rotate(-halfW, halfH),
+      ],
+    };
+  };
+
   // poignées d'édition d'une trajectoire (départ / arrivée / points de contrôle) si une seule ligne est sélectionnée
   const lineHandles = (canvas: HTMLCanvasElement) => {
     const sel = selectionRef.current; if (sel.length !== 1 || sel[0].type !== 'line') return null;
@@ -1096,6 +1275,35 @@ if (anim && anim.balls) {
       ctx.beginPath(); ctx.arc(g.hx, g.hy, 7, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
       ctx.restore();
     }
+
+    // poignées placées directement sur chaque sommet réel
+    const resizeHandles = getResizeHandles(canvas);
+    if (resizeHandles) {
+      ctx.save();
+      ctx.setLineDash([5, 4]);
+      ctx.strokeStyle = '#1B5E9C';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      resizeHandles.points.forEach((point, index) => {
+        if (index === 0) ctx.moveTo(point.x, point.y);
+        else ctx.lineTo(point.x, point.y);
+      });
+      ctx.closePath();
+      ctx.stroke();
+      ctx.setLineDash([]);
+
+      resizeHandles.points.forEach((handle) => {
+        ctx.fillStyle = '#1B5E9C';
+        ctx.strokeStyle = '#FFFFFF';
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.arc(handle.x, handle.y, 8, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.stroke();
+      });
+      ctx.restore();
+    }
+
     // poignées d'édition de courbe (une seule trajectoire sélectionnée)
     const lh = lineHandles(canvas);
     if (lh) {
@@ -1633,7 +1841,57 @@ animPosRef.current = { players, balls };
     const scale = cs(canvas);
     const distSeg = (p: Pt, a: Pt, b: Pt) => { const dx = b.x - a.x, dy = b.y - a.y; const L = dx * dx + dy * dy || 1; let tt = ((p.x - a.x) * dx + (p.y - a.y) * dy) / L; tt = Math.max(0, Math.min(1, tt)); return Math.hypot(p.x - (a.x + tt * dx), p.y - (a.y + tt * dy)); };
     for (let i = ph.players.length - 1; i >= 0; i--) { const p = ph.players[i]; const c = toPx(canvas, { x: p.x, y: p.y }); if (Math.hypot(P.x - c.x, P.y - c.y) < scale * 0.024 * 1.25) return { type: 'player', id: p.id }; }
-    for (let i = ph.objects.length - 1; i >= 0; i--) { const o = ph.objects[i]; const c = toPx(canvas, { x: o.x, y: o.y }); if (Math.hypot(P.x - c.x, P.y - c.y) < scale * 0.018 * 1.5) return { type: 'object', id: o.id }; }
+    for (let i = ph.objects.length - 1; i >= 0; i--) {
+      const o = ph.objects[i];
+
+      if (
+        (o.kind === 'triangle' || o.kind === 'square') &&
+        Array.isArray(o.points)
+      ) {
+        const polygon = o.points.map((point) => toPx(canvas, point));
+        let inside = false;
+
+        for (
+          let a = 0, b = polygon.length - 1;
+          a < polygon.length;
+          b = a++
+        ) {
+          const pa = polygon[a];
+          const pb = polygon[b];
+          const intersects =
+            pa.y > P.y !== pb.y > P.y &&
+            P.x <
+              ((pb.x - pa.x) * (P.y - pa.y)) /
+                ((pb.y - pa.y) || 0.00001) +
+                pa.x;
+          if (intersects) inside = !inside;
+        }
+
+        if (inside) return { type: 'object', id: o.id };
+
+        for (let a = 0; a < polygon.length; a++) {
+          const b = (a + 1) % polygon.length;
+          if (distSeg(P, polygon[a], polygon[b]) < 12) {
+            return { type: 'object', id: o.id };
+          }
+        }
+
+        continue;
+      }
+
+      const c = toPx(canvas, { x: o.x, y: o.y });
+      const rotation = -((o.rotation || 0) * Math.PI) / 180;
+      const dx = P.x - c.x;
+      const dy = P.y - c.y;
+      const localX = dx * Math.cos(rotation) - dy * Math.sin(rotation);
+      const localY = dx * Math.sin(rotation) + dy * Math.cos(rotation);
+      const base = scale * 0.018 * (o.size || 1);
+      const halfW = base * (o.scaleX || 1) * 1.55;
+      const halfH = base * (o.scaleY || 1) * 1.55;
+      if (Math.abs(localX) <= halfW && Math.abs(localY) <= halfH) {
+        return { type: 'object', id: o.id };
+      }
+    }
     for (let i = ph.lines.length - 1; i >= 0; i--) {
       const l = ph.lines[i];
       if (l.action === 'freedraw' && l.points) { for (const q of l.points) { const c = toPx(canvas, q); if (Math.hypot(P.x - c.x, P.y - c.y) < 9) return { type: 'line', id: l.id }; } continue; }
@@ -1713,7 +1971,38 @@ animPosRef.current = { players, balls };
         if (!lh.isShoot && near(lh.t)) { lineDragRef.current = { id: lh.id, which: 'to' }; histPushedRef.current = false; return; }
         if (near(lh.f)) { lineDragRef.current = { id: lh.id, which: 'from' }; histPushedRef.current = false; return; }
       }
-      // 2) poignée de rotation (joueur / objet)
+      // 2) poignées placées sur les vrais sommets
+      const resizeHandles = getResizeHandles(canvas);
+      if (resizeHandles) {
+        const vertexIndex = resizeHandles.points.findIndex(
+          (handle) => Math.hypot(P.x - handle.x, P.y - handle.y) < 18
+        );
+
+        if (vertexIndex >= 0) {
+          resizingRef.current = true;
+          resizeStartRef.current = {
+            id: resizeHandles.id,
+            mode: resizeHandles.mode,
+            vertexIndex,
+            center:
+              resizeHandles.mode === 'box'
+                ? { x: resizeHandles.cx, y: resizeHandles.cy }
+                : undefined,
+            rotation:
+              resizeHandles.mode === 'box'
+                ? resizeHandles.rotation
+                : undefined,
+            baseRadius:
+              resizeHandles.mode === 'box'
+                ? Math.max(1, resizeHandles.baseRadius)
+                : undefined,
+          };
+          histPushedRef.current = false;
+          return;
+        }
+      }
+
+      // 3) poignée de rotation (joueur / objet)
       const g = getSelGeom(canvas);
       if (g && Math.hypot(P.x - g.hx, P.y - g.hy) < 13) { rotatingRef.current = true; rotCenterRef.current = { x: g.cx, y: g.cy }; histPushedRef.current = false; return; }
       const hit = hitTest(canvas, P);
@@ -1756,7 +2045,51 @@ animPosRef.current = { players, balls };
         drawingRef.current = true; histPushedRef.current = false; render(); return;
       }
       pushHistory();
-      updatePhase((ph) => ({ ...ph, objects: [...ph.objects, { id: uid(), x: n.x, y: n.y, kind: tool.obj, rotation: 0 }] }));
+      updatePhase((ph) => {
+        if (tool.obj !== 'handoff') {
+          return { ...ph, objects: [...ph.objects, { id: uid(), x: n.x, y: n.y, kind: tool.obj, rotation: 0, size: 1, color: '#0F0F12' }] };
+        }
+
+        // Un H placé entre deux attaquants représente un main à main.
+        // On relie automatiquement les deux joueurs les plus proches du symbole et
+        // on transfère le ballon du porteur vers son partenaire.
+        const nearest = ph.players
+          .filter((player) => player.team === 'att' && !player.coach)
+          .map((player) => ({ player, distance: Math.hypot(player.x - n.x, player.y - n.y) }))
+          .sort((a, b) => a.distance - b.distance)
+          .slice(0, 2)
+          .map((entry) => entry.player);
+
+        let sourcePlayerId: string | undefined;
+        let targetPlayerId: string | undefined;
+        let nextPlayers = ph.players;
+
+        if (nearest.length === 2) {
+          const [first, second] = nearest;
+          const firstHasBall = playerBallCount(first) > 0;
+          const secondHasBall = playerBallCount(second) > 0;
+          const source = firstHasBall ? first : secondHasBall ? second : first;
+          const target = source.id === first.id ? second : first;
+          sourcePlayerId = source.id;
+          targetPlayerId = target.id;
+
+          nextPlayers = ph.players.map((player) => {
+            if (player.id === source.id) return { ...player, hasBall: false, ballCount: 0 };
+            if (player.id === target.id) return { ...player, hasBall: true, ballCount: Math.max(1, playerBallCount(player)) };
+            return player;
+          });
+
+          showHint(`Main à main : ballon transféré de ${source.label} vers ${target.label}`);
+        } else {
+          showHint('Place le H entre deux attaquants pour créer le main à main');
+        }
+
+        return {
+          ...ph,
+          players: nextPlayers,
+          objects: [...ph.objects, { id: uid(), x: n.x, y: n.y, kind: 'handoff', rotation: 0, size: 1, color: '#0F0F12', sourcePlayerId, targetPlayerId }],
+        };
+      });
       return;
     }
     // « Donner ballon » : cliquer sur un joueur → associe/retire un ballon à ce joueur (multi-ballons)
@@ -1836,6 +2169,97 @@ animPosRef.current = { players, balls };
       }));
       return;
     }
+    // déplacement libre d'un sommet du triangle/carré
+    if (resizingRef.current && resizeStartRef.current) {
+      if (!histPushedRef.current) {
+        pushHistory();
+        histPushedRef.current = true;
+      }
+
+      const start = resizeStartRef.current;
+      const pointerN = getN(e);
+
+      setPhases((prev) =>
+        prev.map((phase, index) => {
+          if (index !== currentRef.current) return phase;
+
+          return {
+            ...phase,
+            objects: phase.objects.map((object) => {
+              if (object.id !== start.id) return object;
+
+              if (
+                start.mode === 'vertex' &&
+                start.vertexIndex != null &&
+                (object.kind === 'triangle' || object.kind === 'square')
+              ) {
+                const canvas = canvasRef.current;
+                if (!canvas) return object;
+
+                const existing =
+                  Array.isArray(object.points) && object.points.length >= 3
+                    ? object.points.map((point) => ({ ...point }))
+                    : (objectPolygonPointsPx(canvas, object) || []).map((point) =>
+                        toNc(canvas, point)
+                      );
+
+                if (!existing[start.vertexIndex]) return object;
+
+                existing[start.vertexIndex] = {
+                  x: Math.max(0, Math.min(1, pointerN.x)),
+                  y: Math.max(0, Math.min(1, pointerN.y)),
+                };
+
+                const center = existing.reduce(
+                  (acc, point) => ({
+                    x: acc.x + point.x / existing.length,
+                    y: acc.y + point.y / existing.length,
+                  }),
+                  { x: 0, y: 0 }
+                );
+
+                return {
+                  ...object,
+                  x: center.x,
+                  y: center.y,
+                  points: existing,
+                  rotation: 0,
+                  scaleX: 1,
+                  scaleY: 1,
+                };
+              }
+
+              if (
+                start.mode === 'box' &&
+                start.center &&
+                start.rotation != null &&
+                start.baseRadius
+              ) {
+                const P = getPx(e);
+                const dx = P.x - start.center.x;
+                const dy = P.y - start.center.y;
+                const localX =
+                  dx * Math.cos(-start.rotation) -
+                  dy * Math.sin(-start.rotation);
+                const localY =
+                  dx * Math.sin(-start.rotation) +
+                  dy * Math.cos(-start.rotation);
+
+                return {
+                  ...object,
+                  scaleX: Math.max(0.02, Math.abs(localX) / start.baseRadius),
+                  scaleY: Math.max(0.02, Math.abs(localY) / start.baseRadius),
+                };
+              }
+
+              return object;
+            }),
+          };
+        })
+      );
+      return;
+    }
+
     // rotation (sélection unique)
     if (rotatingRef.current && rotCenterRef.current && selectionRef.current.length === 1) {
       if (!histPushedRef.current) { pushHistory(); histPushedRef.current = true; }
@@ -1856,7 +2280,28 @@ animPosRef.current = { players, balls };
       const n = getN(e); const { start, orig } = moveStartRef.current; const dx = n.x - start.x, dy = n.y - start.y;
       setPhases((prev) => prev.map((p, i) => {
         if (i !== currentRef.current) return p;
-        const mvP = (el: Player | Obj) => { const o = orig.get(el.id) as Player | Obj | undefined; return o ? { ...el, x: Math.max(0, Math.min(1, o.x + dx)), y: Math.max(0, Math.min(1, o.y + dy)) } : el; };
+        const mvP = (el: Player | Obj) => {
+          const o = orig.get(el.id) as Player | Obj | undefined;
+          if (!o) return el;
+
+          const moved = {
+            ...el,
+            x: Math.max(0, Math.min(1, o.x + dx)),
+            y: Math.max(0, Math.min(1, o.y + dy)),
+          };
+
+          if ('points' in o && Array.isArray(o.points)) {
+            return {
+              ...moved,
+              points: o.points.map((point) => ({
+                x: Math.max(0, Math.min(1, point.x + dx)),
+                y: Math.max(0, Math.min(1, point.y + dy)),
+              })),
+            };
+          }
+
+          return moved;
+        };
         const mvL = (el: Line) => {
           const o = orig.get(el.id) as Line | undefined; if (!o) return el;
           const oc = o.ctrls ?? (o.ctrl ? [o.ctrl] : []);
@@ -1877,6 +2322,11 @@ animPosRef.current = { players, balls };
     if (pressTimerRef.current) { window.clearTimeout(pressTimerRef.current); pressTimerRef.current = null; }
     pressRef.current = null;
     if (lineDragRef.current) { lineDragRef.current = null; return; }
+    if (resizingRef.current) {
+      resizingRef.current = false;
+      resizeStartRef.current = null;
+      return;
+    }
     if (rotatingRef.current) { rotatingRef.current = false; rotCenterRef.current = null; return; }
     if (movingRef.current) { movingRef.current = false; moveStartRef.current = null; return; }
     if (drawingRef.current && dragRef.current) {
@@ -2013,7 +2463,7 @@ const exportPng = () => {
 const LOAD_KEY = "mybasket_plaquette_load";
 const GAMEPLAN_PENDING_KEY = "mybasket_gameplan_pending_system";
 const GAMEPLAN_RETURN_URL = "/mon-compte?tab=management&module=gameplan";
-const SCOUTING_RETURN_URL = "/mon-compte?tab=management&module=gameplan&sub=scout";
+const SCOUTING_RETURN_URL = "/mon-compte?tab=management&module=gameplan&gamePlanTab=scout";
 
 const markManagementGamePlanReturn = () => {
   try {
@@ -2599,6 +3049,22 @@ const exportJson = () => {
   const cw = courtType === 'full' ? 704 : 900;
   const chh = courtType === 'full' ? 1100 : 704;
 
+  const selectedObjectId =
+    selection.length === 1 && selection[0].type === 'object'
+      ? selection[0].id
+      : '';
+
+  const selectedObjectColor = (() => {
+    if (!selectedObjectId) return '#0F0F12';
+    const phase = phases[current];
+    const color = phase?.objects.find(
+      (object) => object.id === selectedObjectId
+    )?.color;
+    return typeof color === 'string' && /^#[0-9a-fA-F]{6}$/.test(color)
+      ? color
+      : '#0F0F12';
+  })();
+
   return (
     <div className="mb-screen">
       <style>{CSS}</style>
@@ -2865,7 +3331,7 @@ const exportJson = () => {
 
             {/* -------- DROITE -------- */}
             <aside className="ed-right">
-              <div className="ed-hint">💡 Place joueurs/objets au clic, trace les actions au glisser. Outil <b>Sélection</b> → clique un élément, puis tourne avec la poignée ou les boutons ↺ ↻.</div>
+              <div className="ed-hint">💡 Place joueurs/objets au clic, trace les actions au glisser. Triangle et carré : chaque poignée bleue est un vrai sommet indépendant. Pose chaque coin exactement où tu veux. Un <b>H placé entre deux joueurs</b> signifie main à main et transfère automatiquement le ballon au second joueur.</div>
 
               <div className="sec-lab">ACTIONS</div>
               <div className="actions-grid">
@@ -2910,7 +3376,7 @@ const exportJson = () => {
                 <div className={'misc-btn' + (isObj('square') ? ' active' : '')} data-misc="square" title="Carré" onClick={() => pick({ kind: 'object', obj: 'square' })}>■</div>
                 <div className={'misc-btn' + (isObj('circle') ? ' active' : '')} data-misc="circle" title="Rond" onClick={() => pick({ kind: 'object', obj: 'circle' })}>●</div>
                 <div className={'misc-btn' + (isObj('text') ? ' active' : '')} data-misc="text" title="Texte" onClick={() => pick({ kind: 'object', obj: 'text' })}>T</div>
-                <div className={'misc-btn' + (isObj('handoff') ? ' active' : '')} data-misc="handoff" title="Handoff" style={{ fontFamily: 'Arial,sans-serif', fontWeight: 900 }} onClick={() => pick({ kind: 'object', obj: 'handoff' })}>H</div>
+                <div className={'misc-btn' + (isObj('handoff') ? ' active' : '')} data-misc="handoff" title="Main à main : place le H entre deux joueurs pour changer le porteur" style={{ fontFamily: 'Arial,sans-serif', fontWeight: 900 }} onClick={() => pick({ kind: 'object', obj: 'handoff' })}>H</div>
                 <div className={'misc-btn' + (isObj('freedraw') ? ' active' : '')} data-misc="freedraw" title="Dessin libre" onClick={() => pick({ kind: 'object', obj: 'freedraw' })}>✎</div>
               </div>
 
@@ -2921,10 +3387,56 @@ const exportJson = () => {
 
                 <button className="btn btn-red btn-block btn-small" id="delSelectedBtn" onClick={deleteSelected}>🗑 Supprimer sélection</button>
                 <button className="btn btn-outline btn-block btn-small" id="dupSelectedBtn" onClick={duplicateSelected}>⎘ Dupliquer</button>
-                <label style={{ fontSize: '.72rem', color: 'var(--gris-text)', textTransform: 'uppercase', letterSpacing: '.04em', marginTop: '.25rem' }}>Couleur des joueurs sélectionnés</label>
-                <input type="color" id="colorPicker" defaultValue="#0F0F12"
-                  onChange={(e) => { const c = e.target.value; if (!selection.length) return; pushHistory(); const has = (t: string, id: string) => selection.some((s) => s.type === t && s.id === id); setPhases((prev) => prev.map((p, i) => (i === current ? { ...p, players: p.players.map((z) => (has('player', z.id) ? { ...z, color: c } : z)) } : p))); }}
-                  style={{ width: '100%', height: 32, cursor: 'pointer' }} />
+                <label style={{ fontSize: '.72rem', color: 'var(--gris-text)', textTransform: 'uppercase', letterSpacing: '.04em', marginTop: '.25rem' }}>Couleur de la sélection</label>
+                <input
+                  key={`shape-color-${current}-${selectedObjectId}-${selectedObjectColor}`}
+                  type="color"
+                  id="colorPicker"
+                  defaultValue={selectedObjectColor}
+                  disabled={!selectedObjectId}
+                  onChange={(e) => {
+                    const c = e.target.value;
+                    if (!selection.length) return;
+                    pushHistory();
+                    const has = (t: string, id: string) => selection.some((s) => s.type === t && s.id === id);
+                    setPhases((prev) => prev.map((p, i) => (i === current ? {
+                      ...p,
+                      players: p.players.map((z) => (has('player', z.id) ? { ...z, color: c } : z)),
+                      objects: p.objects.map((z) => (has('object', z.id) ? { ...z, color: c } : z)),
+                    } : p)));
+                  }}
+                  style={{
+                    width: '100%',
+                    height: 32,
+                    cursor: selectedObjectId ? 'pointer' : 'not-allowed',
+                    opacity: selectedObjectId ? 1 : 0.45,
+                  }}
+                />
+
+                <label style={{ fontSize: '.72rem', color: 'var(--gris-text)', textTransform: 'uppercase', letterSpacing: '.04em', marginTop: '.25rem' }}>Taille des formes sélectionnées</label>
+                <input
+                  type="range"
+                  min="0.05"
+                  max="10"
+                  step="0.05"
+                  defaultValue="1"
+                  disabled={!selection.some((s) => s.type === 'object')}
+                  onChange={(e) => {
+                    const size = Number(e.target.value);
+                    if (!selection.some((s) => s.type === 'object')) return;
+                    const has = (id: string) => selection.some((s) => s.type === 'object' && s.id === id);
+                    setPhases((prev) => prev.map((p, i) => (i === current ? {
+                      ...p,
+                      objects: p.objects.map((z) => (has(z.id) ? { ...z, size } : z)),
+                    } : p)));
+                  }}
+                  onPointerDown={() => pushHistory()}
+                  style={{ width: '100%', cursor: selection.some((s) => s.type === 'object') ? 'pointer' : 'not-allowed' }}
+                />
+                <div style={{ display: 'flex', gap: '.35rem' }}>
+                  <button className="btn btn-outline btn-small" style={{ flex: 1 }} onClick={() => rotateSelected(-15)}>↺ -15°</button>
+                  <button className="btn btn-outline btn-small" style={{ flex: 1 }} onClick={() => rotateSelected(15)}>↻ +15°</button>
+                </div>
               </div>
             </aside>
           </div>

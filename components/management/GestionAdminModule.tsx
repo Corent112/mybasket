@@ -801,7 +801,7 @@ export default function GestionAdminModule() {
                             <span className="ga-avatar sm">{initial(p)}</span>
                           )}
 
-                          <span>{playerName(p)}</span>
+                          <span className="ga-player-name">{playerName(p)}</span>
                         </div>
                       </td>
 
@@ -1151,19 +1151,68 @@ const styles = `
     position: sticky;
     left: 0;
     z-index: 1;
+    width: 240px;
+    min-width: 240px;
+    max-width: 240px;
     text-align: left;
-    min-width: 140px;
   }
 
   .ga-prestable th.sticky-l {
     z-index: 3;
     background: #6B1A2C;
+    padding: 0.75rem 0.9rem;
   }
 
   .ga-prestable td.sticky-l {
     background: #fff;
     border-right: 2px solid #D4A24C;
+    border-bottom: 1px solid #ececec;
+    padding: 0.72rem 0.9rem;
+    height: 58px;
     font-weight: 600;
+    vertical-align: middle;
+    overflow: hidden;
+  }
+
+  .ga-prestable td.sticky-l .ga-player.sm {
+    display: grid;
+    grid-template-columns: 34px minmax(0, 1fr);
+    align-items: center;
+    gap: 0.75rem;
+    width: 100%;
+    min-width: 0;
+  }
+
+  .ga-prestable td.sticky-l .ga-player.sm img,
+  .ga-prestable td.sticky-l .ga-avatar.sm {
+    display: flex;
+    width: 34px !important;
+    min-width: 34px !important;
+    max-width: 34px !important;
+    height: 34px !important;
+    min-height: 34px !important;
+    max-height: 34px !important;
+    aspect-ratio: 1 / 1;
+    border-radius: 999px !important;
+    object-fit: cover;
+    flex: none;
+    align-items: center;
+    justify-content: center;
+    padding: 0 !important;
+    margin: 0 !important;
+    line-height: 1;
+  }
+
+  .ga-player-name {
+    display: block;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    line-height: 1.25;
+    font-size: 0.82rem;
+    font-weight: 800;
+    color: #161116;
   }
 
   .ga-prestable th.ev {
@@ -1197,16 +1246,22 @@ const styles = `
     background: #5a1525 !important;
   }
 
+  .ga-prestable tbody tr {
+    height: 58px;
+  }
+
   .ga-prestable td.cell {
+    height: 58px;
     padding: 0;
     text-align: center;
-    border-bottom: 1px solid #f5f5f5;
-    border-right: 1px solid #f5f5f5;
+    vertical-align: middle;
+    border-bottom: 1px solid #ececec;
+    border-right: 1px solid #ececec;
   }
 
   .ga-pres {
     width: 100%;
-    height: 34px;
+    height: 58px;
     border: none;
     cursor: pointer;
     font-size: 0.95rem;
@@ -1227,10 +1282,14 @@ const styles = `
   }
 
   .ga-prestable td.total {
+    height: 58px;
+    padding: 0.5rem;
     text-align: center;
+    vertical-align: middle;
     background: #FAF7F0;
     font-weight: 700;
     border-left: 2px solid #D4A24C;
+    border-bottom: 1px solid #ececec;
   }
 
   .ga-prestable td.total .pct {

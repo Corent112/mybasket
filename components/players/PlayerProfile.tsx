@@ -382,7 +382,7 @@ function InfoCell({ label, value, accent }: { label: string; value: React.ReactN
 function Sparkline({ data, color }: { data: number[]; color: string }) {
   const d = data.map((v, i) => ({ i, v }));
   return (
-    <ResponsiveContainer width="100%" height={44}>
+    <ResponsiveContainer width="100%" height={44} minWidth={1} minHeight={44} initialDimension={{ width: 320, height: 44 }}>
       <LineChart data={d} margin={{ top: 4, bottom: 4, left: 0, right: 0 }}>
         <Line type="monotone" dataKey="v" stroke={color} strokeWidth={2} dot={false} />
       </LineChart>
@@ -751,7 +751,7 @@ export default function PlayerProfilePage({ teamId = "paris-basketball", playerI
                   <SectionTitle auto>Radar de compétences</SectionTitle>
                   <p className={styles.subNote}>Évaluation coach</p>
                   <div className={styles.chartH}>
-                    <ResponsiveContainer width="100%" height="100%">
+                    <ResponsiveContainer width="100%" height="100%" minWidth={1} minHeight={1} initialDimension={{ width: 320, height: 256 }}>
                       <RadarChart data={p.radar} outerRadius="72%">
                         <PolarGrid stroke="#ECE3D6" />
                         <PolarAngleAxis dataKey="skill" tick={{ fill: "#9A8E80", fontSize: 11 }} />
@@ -786,7 +786,7 @@ export default function PlayerProfilePage({ teamId = "paris-basketball", playerI
                 <Card>
                   <SectionTitle auto>Évolution des stats</SectionTitle>
                   <div className={styles.chartH}>
-                    <ResponsiveContainer width="100%" height="100%">
+                    <ResponsiveContainer width="100%" height="100%" minWidth={1} minHeight={1} initialDimension={{ width: 320, height: 256 }}>
                       <LineChart data={p.evolution} margin={{ top: 8, right: 8, left: -16, bottom: 0 }}>
                         <CartesianGrid strokeDasharray="3 3" stroke="#ECE3D6" vertical={false} />
                         <XAxis dataKey="match" tick={{ fill: "#9A8E80", fontSize: 11 }} axisLine={false} tickLine={false} />
@@ -808,7 +808,7 @@ export default function PlayerProfilePage({ teamId = "paris-basketball", playerI
                   <SectionTitle auto right={<span className={styles.seasonPill}>Saison 2025/2026</span>}>Temps de jeu</SectionTitle>
                   <div className={styles.playtimeWrap}>
                     <div className={styles.donut}>
-                      <ResponsiveContainer width="100%" height="100%">
+                      <ResponsiveContainer width="100%" height="100%" minWidth={1} minHeight={1} initialDimension={{ width: 160, height: 160 }}>
                         <PieChart>
                           <Pie data={[{ v: p.playtime.percent }, { v: 100 - p.playtime.percent }]} dataKey="v" innerRadius={52} outerRadius={70} startAngle={90} endAngle={-270} stroke="none">
                             <Cell fill={ORANGE} /><Cell fill={BLUE} />

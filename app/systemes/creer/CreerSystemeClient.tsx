@@ -39,27 +39,25 @@ const EDIT_SCHEMA_GROUP_KEY = "mybasket_edit_schema_group_id";
 const EDIT_SYSTEM_ID_KEY = "mybasket_edit_system_id";
 const CURRENT_SYSTEM_ID_KEY = "mybasket_current_system_id";
 
-const DEFAULT_FAMILLES = ["Offensif", "Défensif", "Transition", "Remise en jeu"];
+const DEFAULT_FAMILLES = ["Offensif"];
 
 const DEFAULT_TEMPS_FORTS = [
   "Pick top",
   "Pick side",
-  "Pick the picker",
-  "Hand-off",
+  "Hand off",
   "Isolation",
   "Post-up",
-  "Double drag",
-  "Flex cut",
+  "Écran non porteur",
 ];
 
 const DEFAULT_CATEGORIES = ["U13", "U15", "U18", "U21", "Seniors"];
 
 const DEFAULT_TYPES = [
-  "BLOB",
   "SLOB",
-  "Attaque demi-terrain Homme à homme",
-  "Attaque demi-terrain Zone",
-  "ATO",
+  "BLOB",
+  "Homme à Homme demi terrain",
+  "Attaque de Zone",
+  "Transition",
 ];
 
 const DEFAULT_TAGS = [
@@ -73,18 +71,6 @@ const DEFAULT_TAGS = [
   "zone",
 ];
 
-function adminList(key: string, fallback: string[]) {
-  if (typeof window === "undefined") return fallback;
-
-  try {
-    const raw = localStorage.getItem(`mybasket_admin_${key}`);
-    const parsed = raw ? JSON.parse(raw) : null;
-
-    if (Array.isArray(parsed) && parsed.length > 0) return parsed;
-  } catch {}
-
-  return fallback;
-}
 
 const blank = (): Systeme => ({
   title: "",
@@ -95,7 +81,7 @@ const blank = (): Systeme => ({
   variantes: "",
   famille: "Offensif",
   categorie: "U18",
-  type: "Attaque demi-terrain Homme à homme",
+  type: "Homme à Homme demi terrain",
   tempsForts: [],
   tags: [],
   images: [],
@@ -143,7 +129,7 @@ function systemToForm(system: SystemItem): Systeme {
     variantes: system.variantes || "",
     famille: system.famille || "Offensif",
     categorie: system.categorie || "U18",
-    type: system.type || "Attaque demi-terrain Homme à homme",
+    type: system.type || "Homme à Homme demi terrain",
     tempsForts: system.tempsForts || [],
     tags: system.tags || [],
     images: system.images || [],
@@ -169,11 +155,9 @@ export default function SystemesClient() {
   const [toast, setToast] = useState("");
   const [loading, setLoading] = useState(false);
 
-  const [familles, setFamilles] = useState(DEFAULT_FAMILLES);
-  const [tempsFortsOptions, setTempsFortsOptions] = useState(DEFAULT_TEMPS_FORTS);
-  const [categories, setCategories] = useState(DEFAULT_CATEGORIES);
-  const [types, setTypes] = useState(DEFAULT_TYPES);
-  const [tagsOptions, setTagsOptions] = useState(DEFAULT_TAGS);
+  const tempsFortsOptions = DEFAULT_TEMPS_FORTS;
+  const categories = DEFAULT_CATEGORIES;
+  const types = DEFAULT_TYPES;
 
   const flash = (message: string) => {
     setToast(message);
@@ -198,13 +182,6 @@ export default function SystemesClient() {
     });
   };
 
-  useEffect(() => {
-    setFamilles(adminList("systeme_familles", DEFAULT_FAMILLES));
-    setTempsFortsOptions(adminList("systeme_temps_forts", DEFAULT_TEMPS_FORTS));
-    setCategories(DEFAULT_CATEGORIES);
-    setTypes(DEFAULT_TYPES);
-    setTagsOptions(adminList("systeme_tags", DEFAULT_TAGS));
-  }, []);
 
   useEffect(() => {
     const load = async () => {
@@ -582,8 +559,8 @@ export default function SystemesClient() {
       </div>
 
       <p className="cs-sub">
-        Renseigne ton système, ajoute tes schémas, puis classe-le avec les tags
-        configurables depuis le dashboard admin.
+        Renseigne ton système, ajoute tes schémas, puis sélectionne uniquement
+        sa base, sa catégorie et ses temps forts.
       </p>
 
       {loading && <div className="cs-loading">Chargement...</div>}
@@ -778,22 +755,10 @@ export default function SystemesClient() {
             ))}
           </div>
 
-          <label className="cs-lab">Tags</label>
-          <div className="cs-tags">
-            {tagsOptions.map((tag) => (
-              <label key={tag} className="cs-tag">
-                <input
-                  type="checkbox"
-                  checked={systeme.tags.includes(tag)}
-                  onChange={() => toggleArray("tags", tag)}
-                />
-                #{tag}
-              </label>
-            ))}
-          </div>
+
 
           <small className="cs-help">
-            Les tags sont prévus pour être modifiés depuis le dashboard admin.
+            Sélectionne uniquement la base, la catégorie et les temps forts du système.
           </small>
         </div>
       </div>

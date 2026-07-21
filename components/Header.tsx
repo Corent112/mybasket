@@ -20,16 +20,25 @@ export default function Header() {
   const pulseTimeoutRef = useRef<number | null>(null);
 
   const loadUser = useCallback(async () => {
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
-
-    setUser(user ? { id: user.id, email: user.email } : null);
-    return user;
+    try {
+      const { data: { user }, error } = await supabase.auth.getUser();
+      if (error) {
+        console.warn("Header auth indisponible:", error.message);
+        setUser(null);
+        return null;
+      }
+      setUser(user ? { id: user.id, email: user.email } : null);
+      return user;
+    } catch (error) {
+      console.warn("Header auth indisponible:", error instanceof Error ? error.message : error);
+      setUser(null);
+      return null;
+    }
   }, [supabase]);
 
   const loadCartCount = useCallback(async () => {
-    const currentUser = await loadUser();
+    try {
+      const currentUser = await loadUser();
 
     if (!currentUser) {
       setCartCount(0);
@@ -52,7 +61,7 @@ export default function Header() {
     const total = (data ?? []).reduce(
       (sum: number, item: { quantity?: number | string | null }) =>
         sum + Number(item.quantity ?? 1),
-      0
+      0,
     );
 
     if (total > previousCountRef.current) {
@@ -67,31 +76,41 @@ export default function Header() {
       }, 650);
     }
 
-    previousCountRef.current = total;
-    setCartCount(total);
+      previousCountRef.current = total;
+      setCartCount(total);
+    } catch (error) {
+      console.warn("Compteur panier indisponible:", error instanceof Error ? error.message : error);
+      setCartCount(0);
+    }
   }, [loadUser, supabase]);
 
   async function signOut() {
-    await supabase.auth.signOut();
-    setUser(null);
-    setCartCount(0);
-    window.location.href = "/";
+    try {
+      await supabase.auth.signOut();
+    } catch (error) {
+      console.warn("Déconnexion Supabase indisponible:", error instanceof Error ? error.message : error);
+    } finally {
+      setUser(null);
+      setCartCount(0);
+      window.location.href = "/";
+    }
   }
 
   useEffect(() => {
-    loadCartCount();
+    void loadCartCount();
 
     const { data } = supabase.auth.onAuthStateChange(() => {
-      loadCartCount();
+      void loadCartCount();
     });
 
-    window.addEventListener("cart-updated", loadCartCount);
-    window.addEventListener("focus", loadCartCount);
+    const refreshCart = () => { void loadCartCount(); };
+    window.addEventListener("cart-updated", refreshCart);
+    window.addEventListener("focus", refreshCart);
 
     return () => {
       data.subscription.unsubscribe();
-      window.removeEventListener("cart-updated", loadCartCount);
-      window.removeEventListener("focus", loadCartCount);
+      window.removeEventListener("cart-updated", refreshCart);
+      window.removeEventListener("focus", refreshCart);
 
       if (pulseTimeoutRef.current) {
         window.clearTimeout(pulseTimeoutRef.current);
@@ -163,9 +182,9 @@ export default function Header() {
                 </Link>
 
                 <div className="account-dropdown">
-                  <Link href="/mon-compte">TABLEAU DE BORD</Link>
-                  <Link href="/mon-compte/favoris">MES FAVORIS</Link>
-                  <Link href="/mon-compte/playbooks">MES PLAYBOOKS</Link>
+                  <Link href="/mon-compte?tab=profil">MON PROFIL</Link>
+                  <Link href="/mon-compte?tab=equipes">MES ÉQUIPES</Link>
+                  <Link href="/mon-compte?tab=management">MANAGEMENT</Link>
                   <button type="button" onClick={signOut}>
                     DÉCONNEXION
                   </button>
@@ -181,20 +200,12 @@ export default function Header() {
       </header>
 
       <div className="blackbar">
-        <button type="button" className="burger" aria-label="Menu">
-          ☰
-        </button>
-
-        <div className="search">
-          <input type="text" placeholder="Rechercher..." />
-        </div>
-
         <div className="icons">
-          <button type="button" aria-label="Vue grille" className="grid-btn">
-            ▦
-          </button>
-
-          <Link href="/mon-compte/favoris" className="icon-link" aria-label="Favoris">
+          <Link
+            href="/mon-compte/favoris"
+            className="icon-link"
+            aria-label="Favoris"
+          >
             ♥
           </Link>
 
@@ -205,7 +216,12 @@ export default function Header() {
               cartCount > 1 ? "s" : ""
             }`}
           >
-            <svg className="cart-svg" viewBox="0 0 64 54" fill="none" aria-hidden="true">
+            <svg
+              className="cart-svg"
+              viewBox="0 0 64 54"
+              fill="none"
+              aria-hidden="true"
+            >
               <path
                 d="M10 8H17L22 32C22.7 35.4 25.6 38 29.1 38H45.3C48.7 38 51.7 35.6 52.5 32.3L56 18H20"
                 stroke="white"
@@ -219,8 +235,22 @@ export default function Header() {
 
               {cartCount > 0 && (
                 <g className="badge-group">
-                  <circle cx="51" cy="12" r="10" fill="#d4a24c" stroke="#000" strokeWidth="3" />
-                  <text x="51" y="16" textAnchor="middle" fontSize="12" fontWeight="900" fill="#111">
+                  <circle
+                    cx="51"
+                    cy="12"
+                    r="10"
+                    fill="#d4a24c"
+                    stroke="#000"
+                    strokeWidth="3"
+                  />
+                  <text
+                    x="51"
+                    y="16"
+                    textAnchor="middle"
+                    fontSize="12"
+                    fontWeight="900"
+                    fill="#111"
+                  >
                     {cartCount > 99 ? "99" : cartCount}
                   </text>
                 </g>
@@ -374,35 +404,10 @@ export default function Header() {
           border-top: 3px solid #c9a227;
           display: flex;
           align-items: center;
-          justify-content: space-between;
+          justify-content: flex-end;
           padding: 0 40px;
           position: relative;
           z-index: 900;
-        }
-
-        .burger {
-          background: transparent;
-          border: none;
-          color: #c9a227;
-          font-size: 30px;
-          cursor: pointer;
-        }
-
-        .search {
-          flex: 1;
-          display: flex;
-          justify-content: center;
-          margin: 0 40px;
-        }
-
-        .search input {
-          width: 700px;
-          max-width: 100%;
-          height: 38px;
-          border-radius: 999px;
-          border: none;
-          padding: 0 18px;
-          outline: none;
         }
 
         .icons {
@@ -412,7 +417,6 @@ export default function Header() {
           position: relative;
         }
 
-        .grid-btn,
         .icon-link {
           width: 34px;
           height: 34px;
@@ -426,7 +430,9 @@ export default function Header() {
           cursor: pointer;
           text-decoration: none;
           line-height: 1;
-          transition: transform 0.2s ease, color 0.2s ease;
+          transition:
+            transform 0.2s ease,
+            color 0.2s ease;
         }
 
         .cart-link {
@@ -448,7 +454,9 @@ export default function Header() {
           display: block;
           overflow: visible;
           filter: drop-shadow(0 0 4px rgba(255, 255, 255, 0.18));
-          transition: transform 0.2s ease, filter 0.2s ease;
+          transition:
+            transform 0.2s ease,
+            filter 0.2s ease;
         }
 
         .cart-link:hover .cart-svg {
@@ -479,7 +487,9 @@ export default function Header() {
           opacity: 0;
           pointer-events: none;
           transform: translateY(8px);
-          transition: opacity 0.2s ease, transform 0.2s ease;
+          transition:
+            opacity 0.2s ease,
+            transform 0.2s ease;
           z-index: 3000;
           font-family: Arial, Roboto, sans-serif;
         }
@@ -528,25 +538,42 @@ export default function Header() {
           transform: translateY(0);
         }
 
-        .grid-btn:hover,
         .icon-link:hover,
         .cart-link:hover {
           transform: translateY(-2px);
         }
 
         @keyframes cartBounce {
-          0% { transform: scale(1); }
-          30% { transform: scale(1.16) rotate(-5deg); }
-          55% { transform: scale(0.94) rotate(3deg); }
-          80% { transform: scale(1.05) rotate(0deg); }
-          100% { transform: scale(1); }
+          0% {
+            transform: scale(1);
+          }
+          30% {
+            transform: scale(1.16) rotate(-5deg);
+          }
+          55% {
+            transform: scale(0.94) rotate(3deg);
+          }
+          80% {
+            transform: scale(1.05) rotate(0deg);
+          }
+          100% {
+            transform: scale(1);
+          }
         }
 
         @keyframes badgePop {
-          0% { transform: scale(1); }
-          35% { transform: scale(1.35); }
-          70% { transform: scale(0.9); }
-          100% { transform: scale(1); }
+          0% {
+            transform: scale(1);
+          }
+          35% {
+            transform: scale(1.35);
+          }
+          70% {
+            transform: scale(0.9);
+          }
+          100% {
+            transform: scale(1);
+          }
         }
 
         @media (max-width: 1200px) {
@@ -586,10 +613,6 @@ export default function Header() {
 
           .blackbar {
             padding: 0 18px;
-          }
-
-          .search {
-            margin: 0 18px;
           }
 
           .mini-cart {

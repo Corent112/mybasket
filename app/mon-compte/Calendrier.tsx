@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { getTeams } from "@/lib/equipes-store";
+import { downloadDataUrl, openFileSameTab } from "@/lib/client-file-actions";
 
 /* =====================================================================
  * MonCalendrier — transposition fidèle du calendrier de mybasket-app_24.html
@@ -125,26 +126,13 @@ function venueLabel(ev: CalEvent): string {
   return "📌 ";
 }
 
-// Ouvre la pièce jointe dans une nouvelle fenêtre et lance l'impression
+// Consulte ou télécharge la pièce jointe sans ouvrir de popup.
 function printAttachment(att: Attachment) {
-  const win = window.open("", "_blank", "width=900,height=700");
-  if (!win) { window.alert("Autorise les pop-ups pour imprimer la pièce jointe."); return; }
-  const safeName = att.name.replace(/[<>&"]/g, "");
-  let content: string;
-  if (isImage(att)) {
-    content = `<img src="${att.dataUrl}" style="max-width:100%;display:block;margin:0 auto" />`;
-  } else if (isPdf(att)) {
-    content = `<iframe src="${att.dataUrl}" style="border:0;width:100%;height:100vh"></iframe>`;
-  } else {
-    content = `<p style="font-family:sans-serif">Fichier : ${safeName}</p>` +
-      `<a href="${att.dataUrl}" download="${safeName}">Télécharger le fichier</a>`;
+  if (isPdf(att) && !att.dataUrl.startsWith("data:")) {
+    openFileSameTab(att.dataUrl);
+    return;
   }
-  win.document.write(
-    `<!doctype html><html><head><meta charset="utf-8"><title>${safeName}</title>` +
-    `<style>html,body{margin:0;padding:0}</style></head>` +
-    `<body onload="setTimeout(function(){try{window.focus();window.print();}catch(e){}},400)">${content}</body></html>`
-  );
-  win.document.close();
+  downloadDataUrl(att.dataUrl, att.name || "piece-jointe");
 }
 
 export default function MonCalendrier() {

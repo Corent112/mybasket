@@ -17,8 +17,8 @@
   --gris-med: #C8C8C8;
   --gris-text: #6B6B6B;
   --rouge: #E63946;
-  --varsity: 'Alfa Slab One', serif;
-  --body: 'Roboto', sans-serif;
+  --varsity: var(--font-alfa), Arial, sans-serif;
+  --body: var(--font-roboto), Arial, sans-serif;
 
   font-family: var(--body);
   color: var(--noir);
@@ -201,4 +201,403 @@
 @media (max-width: 768px) {
   .acc-grid, .acc-grid--even { grid-template-columns: 1fr; }
   .acc-form-row { grid-template-columns: 1fr; gap: .3rem; }
+}
+
+/* BLOC 4 — Harmonisation des quatre pages Accompagnement */
+.acc-scope, .acc-scope * { font-family: var(--body); }
+.acc-scope :is(h1, h2, h3, .acc-subtitle, .acc-block-title,
+  .acc-illus-label, .acc-price b) {
+  font-family: var(--varsity);
+}
+.acc-scope :is(p, li, label, input, select, textarea, button, a) {
+  font-family: var(--body);
+}
+.acc-hero { margin-top: 2.25rem; }
+.acc-hero h1 { font-size: clamp(1.85rem, 4.6vw, 3.15rem); }
+.acc-text { font-size: 1rem; }
+.acc-text p, .acc-text li { line-height: 1.72; }
+.acc-block-title { font-size: 1.25rem; line-height: 1.3; color: var(--noir); }
+.acc-btn-outline,
+.acc-cta-btn {
+  min-height: 44px;
+  border-radius: 12px;
+  padding: .75rem 1.15rem;
+  font-family: var(--body);
+  font-size: .92rem;
+  font-weight: 900;
+  letter-spacing: .01em;
+}
+.acc-cta-btn {
+  min-width: min(100%, 260px);
+  background: var(--bordeaux);
+  border-color: var(--bordeaux);
+  box-shadow: 0 8px 22px rgba(107, 26, 44, .22);
+}
+.acc-cta-btn:hover {
+  background: var(--bordeaux-d);
+  border-color: var(--or);
+  box-shadow: 0 12px 28px rgba(107, 26, 44, .28);
+}
+.acc-card, .acc-panel, .acc-tile, .acc-deliver {
+  border-radius: 14px;
+}
+.acc-card { box-shadow: 0 8px 24px rgba(15, 15, 18, .06); }
+.acc-form :is(input, select, textarea) {
+  width: 100%;
+  min-height: 44px;
+  border-radius: 10px;
+  font-size: .95rem;
+}
+.acc-form textarea { min-height: 140px; }
+
+@media (max-width: 760px) {
+  .acc-grid, .acc-grid--even { grid-template-columns: 1fr; gap: 1.5rem; }
+  .acc-section { padding-top: .75rem; }
+  .acc-panel { padding: 1.25rem; }
+  .acc-cta-btn { width: 100%; }
+}
+
+/* ZONE 9 — typographie parfaitement homogène sur les actions */
+.acc-scope :is(button, .acc-btn-outline, .acc-cta-btn, .acc-form-submit) {
+  font-family: var(--body) !important;
+  font-weight: 800;
+  letter-spacing: .01em;
+}
+
+
+/* ============================================================
+   CIRCUIT DEMANDES — Direction technique / Formation / Scouting
+   ============================================================ */
+
+.acc-service-intro {
+  display: grid;
+  grid-template-columns: minmax(0, 1.2fr) minmax(280px, .8fr);
+  gap: 2rem;
+  align-items: stretch;
+  margin-top: 2rem;
+}
+
+.acc-service-copy,
+.acc-service-visual {
+  border-radius: 22px;
+}
+
+.acc-service-copy {
+  padding: 1.6rem;
+  border: 1px solid rgba(107, 26, 44, .12);
+  background: #fff;
+  box-shadow: 0 14px 34px rgba(40, 19, 27, .07);
+}
+
+.acc-service-copy h2 {
+  margin: 0 0 .8rem;
+  color: var(--bordeaux);
+  font-family: var(--varsity);
+  font-size: clamp(1.35rem, 2.5vw, 2rem);
+}
+
+.acc-service-copy p {
+  margin: 0 0 .8rem;
+  color: #3d3538;
+  font-size: .98rem;
+  line-height: 1.75;
+}
+
+.acc-service-visual {
+  min-height: 300px;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  position: relative;
+  color: #fff;
+  background:
+    radial-gradient(circle at 82% 14%, rgba(212,162,76,.38), transparent 28%),
+    linear-gradient(145deg, #100e11, #2b2025);
+  border: 2px solid var(--or);
+  box-shadow: 0 18px 42px rgba(15, 15, 18, .18);
+}
+
+.acc-service-visual::before,
+.acc-service-visual::after {
+  content: "";
+  position: absolute;
+  border-radius: 999px;
+  border: 7px solid rgba(212,162,76,.28);
+}
+
+.acc-service-visual::before {
+  width: 180px;
+  height: 180px;
+  right: -70px;
+  top: -70px;
+}
+
+.acc-service-visual::after {
+  width: 220px;
+  height: 220px;
+  left: -95px;
+  bottom: -100px;
+}
+
+.acc-service-visual-inner {
+  position: relative;
+  z-index: 2;
+  padding: 1.5rem;
+  text-align: center;
+}
+
+.acc-service-visual-icon {
+  width: 94px;
+  height: 94px;
+  display: grid;
+  place-items: center;
+  margin: 0 auto 1rem;
+  border: 4px solid var(--or);
+  border-radius: 50%;
+  color: var(--or);
+  font-size: 2.5rem;
+}
+
+.acc-service-visual-inner strong {
+  display: block;
+  font-family: var(--varsity);
+  font-size: 1.6rem;
+  letter-spacing: .04em;
+}
+
+.acc-service-visual-inner span {
+  display: block;
+  margin-top: .5rem;
+  color: #d4cad0;
+  font-size: .82rem;
+  line-height: 1.5;
+}
+
+.acc-offers-section {
+  margin-top: 2.3rem;
+  padding: 1.6rem;
+  border: 1px solid rgba(107, 26, 44, .1);
+  border-radius: 22px;
+  background: #faf6ef;
+}
+
+.acc-offers-section--dark {
+  color: #fff;
+  background: #111116;
+  border-color: #111116;
+}
+
+.acc-offers-head {
+  max-width: 760px;
+  margin: 0 auto 1.4rem;
+  text-align: center;
+}
+
+.acc-offers-head span {
+  display: inline-flex;
+  padding: .42rem .75rem;
+  border-radius: 999px;
+  color: #211315;
+  background: var(--or);
+  font-size: .72rem;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.acc-offers-head h2 {
+  margin: .75rem 0 .4rem;
+  color: var(--bordeaux);
+  font-family: var(--varsity);
+  font-size: clamp(1.4rem, 3vw, 2rem);
+}
+
+.acc-offers-section--dark .acc-offers-head h2 {
+  color: #fff;
+}
+
+.acc-offers-head p {
+  margin: 0;
+  color: #655b5f;
+  line-height: 1.65;
+}
+
+.acc-offers-section--dark .acc-offers-head p {
+  color: #c8c1c4;
+}
+
+.acc-offers-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 1rem;
+}
+
+.acc-offer-card {
+  padding: 1.25rem;
+  border: 1px solid #eadfd9;
+  border-radius: 16px;
+  background: #fff;
+  box-shadow: 0 10px 25px rgba(40, 20, 27, .06);
+}
+
+.acc-offer-card--highlight {
+  color: #fff;
+  background: var(--bordeaux);
+  border-color: var(--or);
+}
+
+.acc-offer-card--dark {
+  color: #fff;
+  background: #201c21;
+  border-left: 5px solid var(--or);
+  border-color: #332d33;
+}
+
+.acc-offer-card h3 {
+  margin: .6rem 0;
+  font-family: var(--varsity);
+  font-size: 1.18rem;
+}
+
+.acc-offer-price {
+  display: block;
+  color: var(--bordeaux);
+  font-size: 1.65rem;
+  font-weight: 950;
+}
+
+.acc-offer-card--highlight .acc-offer-price {
+  color: var(--or);
+}
+
+.acc-offer-card p,
+.acc-offer-card li {
+  font-size: .86rem;
+  line-height: 1.55;
+}
+
+.acc-offer-card ul {
+  margin: .8rem 0 0;
+  padding-left: 1.1rem;
+}
+
+.acc-request-block {
+  scroll-margin-top: 110px;
+  max-width: 900px;
+  margin: 2.5rem auto 0;
+  padding: 1.5rem;
+  border: 1px solid #eadfd9;
+  border-radius: 20px;
+  background: #fff;
+  box-shadow: 0 16px 38px rgba(42, 21, 27, .08);
+}
+
+.acc-request-block h2 {
+  margin: 0 0 .4rem;
+  color: var(--bordeaux);
+  text-align: center;
+  font-family: var(--varsity);
+}
+
+.acc-request-block > p {
+  margin: 0 0 1.2rem;
+  color: #756a6e;
+  text-align: center;
+  font-size: .9rem;
+}
+
+.acc-form-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: .9rem;
+}
+
+.acc-form-field {
+  display: grid;
+  gap: .35rem;
+}
+
+.acc-form-field--full {
+  grid-column: 1 / -1;
+}
+
+.acc-form-field label {
+  color: #5a4e53;
+  font-size: .74rem;
+  font-weight: 900;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+}
+
+.acc-form-field input,
+.acc-form-field select,
+.acc-form-field textarea {
+  width: 100%;
+  min-height: 46px;
+  padding: .75rem .85rem;
+  border: 1px solid #ded5d0;
+  border-radius: 10px;
+  outline: none;
+  color: #241d20;
+  background: #fff;
+  font: inherit;
+}
+
+.acc-form-field textarea {
+  min-height: 130px;
+  resize: vertical;
+}
+
+.acc-form-field input:focus,
+.acc-form-field select:focus,
+.acc-form-field textarea:focus {
+  border-color: var(--or);
+  box-shadow: 0 0 0 3px rgba(212,162,76,.13);
+}
+
+.acc-form-primary {
+  grid-column: 1 / -1;
+  min-height: 48px;
+  border: 0;
+  border-radius: 11px;
+  color: #fff;
+  background: var(--bordeaux);
+  font-weight: 900;
+  cursor: pointer;
+}
+
+.acc-form-primary:hover {
+  background: var(--bordeaux-d);
+}
+
+.acc-form-success {
+  padding: 1rem 1.15rem;
+  border-left: 4px solid #1e9d56;
+  border-radius: 10px;
+  color: #17673a;
+  background: #e8f8ef;
+  font-weight: 800;
+}
+
+@media (max-width: 900px) {
+  .acc-service-intro,
+  .acc-offers-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 650px) {
+  .acc-form-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .acc-form-field--full,
+  .acc-form-primary {
+    grid-column: auto;
+  }
+
+  .acc-request-block,
+  .acc-offers-section,
+  .acc-service-copy {
+    padding: 1.1rem;
+  }
 }

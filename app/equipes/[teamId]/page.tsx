@@ -1,6 +1,7 @@
-// app/equipes/[teamId]/page.tsx
 "use client";
 
+// app/equipes/[teamId]/page.tsx
+import TeamMatchHistoryBlock from "@/components/equipes/TeamMatchHistoryBlock";
 import { use, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
@@ -3996,7 +3997,12 @@ function TeamGameStatsBlock({ teamId }: { teamId: string }) {
 
       <style jsx>{`
         .game-stats-card {
-          margin-top: 1.2rem;
+          margin-top: 1.4rem;
+          padding: 1.45rem;
+          border: 1px solid #eadfd5;
+          border-radius: 22px;
+          background: #fff;
+          box-shadow: 0 14px 34px rgba(62, 31, 22, 0.055);
         }
 
         .block-head {
@@ -4004,141 +4010,184 @@ function TeamGameStatsBlock({ teamId }: { teamId: string }) {
           justify-content: space-between;
           align-items: flex-start;
           gap: 1rem;
-          margin-bottom: 1rem;
+          margin-bottom: 1.25rem;
         }
 
         .eyebrow {
           margin: 0;
           color: #d4a24c;
           font-size: 0.78rem;
-          font-weight: 900;
+          font-weight: 950;
           text-transform: uppercase;
-          letter-spacing: 0.06em;
+          letter-spacing: 0.08em;
         }
 
         h2 {
-          margin: 0.2rem 0 0;
+          margin: 0.25rem 0 0;
           color: #6b1a2c;
-          font-size: 1.45rem;
-          font-weight: 900;
+          font-size: 1.65rem;
+          line-height: 1.1;
+          font-weight: 950;
         }
 
         .muted {
-          margin: 0.25rem 0 0;
-          color: #9a8a82;
-          font-size: 0.92rem;
+          margin: 0.45rem 0 0;
+          color: #8f817b;
+          font-size: 0.95rem;
+          line-height: 1.5;
         }
 
         .empty {
           background: #fff8ef;
           border: 1px dashed #d4a24c;
-          border-radius: 14px;
-          padding: 1rem;
+          border-radius: 16px;
+          padding: 1.1rem;
           color: #6b1a2c;
           font-weight: 900;
         }
 
-        .game-kpis,
-        .insights-grid {
+        .game-kpis {
           display: grid;
           grid-template-columns: repeat(6, minmax(0, 1fr));
-          gap: 0.75rem;
+          gap: 0.85rem;
           margin-bottom: 1rem;
         }
 
-        .insights-grid {
-          grid-template-columns: repeat(4, minmax(0, 1fr));
+        .game-kpis :global(.kpi) {
+          min-height: 102px;
+          border: 1px solid #eadfd5;
+          border-radius: 17px;
+          background: #fffaf4;
+          padding: 1rem 1.05rem;
+          display: flex;
+          flex-direction: column;
+          justify-content: center;
         }
 
-        .kpi,
-        .insight-card {
-          border: 1px solid #efe6db;
-          border-radius: 14px;
-          background: #fffdf9;
-          padding: 0.85rem;
-        }
-
-        .kpi span,
-        .insight-card span {
-          display: block;
-          color: #9a8a82;
-          font-size: 0.72rem;
-          font-weight: 900;
+        .game-kpis :global(.kpi span) {
+          color: #8b7f79;
+          font-size: 0.73rem;
+          font-weight: 950;
           text-transform: uppercase;
+          letter-spacing: 0.05em;
         }
 
-        .kpi strong,
-        .insight-card strong {
+        .game-kpis :global(.kpi strong) {
           display: block;
-          margin-top: 0.25rem;
+          margin-top: 0.35rem;
           color: #6b1a2c;
-          font-size: 1.25rem;
+          font-size: 1.45rem;
+          line-height: 1;
+          font-weight: 950;
+        }
+
+        .insights-grid {
+          display: grid;
+          grid-template-columns: repeat(4, minmax(0, 1fr));
+          border-top: 1px solid #ece4dd;
+          border-bottom: 1px solid #ece4dd;
+          margin: 0 0 1.25rem;
+          background: #fff;
+        }
+
+        .insights-grid :global(.insight-card) {
+          min-height: 126px;
+          padding: 1rem 1.1rem;
+          display: flex;
+          flex-direction: column;
+          justify-content: flex-start;
+          background: #fff;
+        }
+
+        .insights-grid :global(.insight-card + .insight-card) {
+          border-left: 1px solid #ece4dd;
+        }
+
+        .insights-grid :global(.insight-label) {
+          color: #5c5451;
+          font-size: 0.82rem;
+          font-weight: 750;
+          line-height: 1.3;
+          margin-bottom: 0.55rem;
+        }
+
+        .insights-grid :global(.insight-title) {
+          color: #201b1d;
+          font-size: 1.06rem;
+          font-weight: 950;
+          line-height: 1.2;
+          overflow-wrap: anywhere;
+        }
+
+        .insights-grid :global(.insight-value) {
+          margin-top: 0.35rem;
+          color: #6b1a2c;
+          font-size: 0.95rem;
+          font-style: italic;
           font-weight: 900;
         }
 
-        .insight-card em {
-          display: block;
-          margin-top: 0.2rem;
-          font-style: normal;
-          font-weight: 900;
-          color: #d4a24c;
-        }
-
-        .insight-card.good em {
+        .insights-grid :global(.insight-card.good .insight-value) {
           color: #177245;
         }
 
-        .insight-card.bad em {
-          color: #a82018;
+        .insights-grid :global(.insight-card.bad .insight-value) {
+          color: #b42318;
         }
 
         .sub-block {
-          margin-top: 1rem;
-          border: 1px solid #efe6db;
-          border-radius: 16px;
+          margin-top: 1.15rem;
+          border: 1px solid #eadfd5;
+          border-radius: 18px;
           overflow: hidden;
+          background: #fff;
         }
 
         .sub-head {
-          padding: 1rem;
+          padding: 1.05rem 1.2rem;
           background: #fff8ef;
-          border-bottom: 1px solid #efe6db;
+          border-bottom: 1px solid #eadfd5;
         }
 
         .sub-head h3 {
           margin: 0;
           color: #6b1a2c;
-          font-size: 1.05rem;
-          font-weight: 900;
+          font-size: 1.12rem;
+          font-weight: 950;
         }
 
         .sub-head p {
-          margin: 0.25rem 0 0;
-          color: #9a8a82;
-          font-weight: 800;
-          font-size: 0.85rem;
+          margin: 0.3rem 0 0;
+          color: #887a75;
+          font-weight: 750;
+          font-size: 0.86rem;
         }
 
         .game-table-wrap {
           width: 100%;
           overflow-x: auto;
+          background: #fff;
         }
 
         table {
-          width: max-content;
-          min-width: 100%;
+          width: 100%;
+          min-width: 1080px;
           border-collapse: separate;
           border-spacing: 0;
-          font-size: 0.78rem;
+          table-layout: auto;
+          font-size: 0.82rem;
         }
 
         th {
-          background: linear-gradient(#6b1a2c, #49101d);
-          color: white;
-          padding: 0.65rem 0.55rem;
+          background: linear-gradient(180deg, #7a1c32, #5a1325);
+          color: #fff;
+          min-height: 50px;
+          padding: 0.85rem 0.65rem;
           text-align: center;
+          vertical-align: middle;
           white-space: nowrap;
-          font-weight: 900;
+          font-weight: 950;
+          border-right: 1px solid rgba(255, 255, 255, 0.14);
         }
 
         th:first-child,
@@ -4146,46 +4195,66 @@ function TeamGameStatsBlock({ teamId }: { teamId: string }) {
           position: sticky;
           left: 0;
           z-index: 2;
-          min-width: 155px;
+          width: 190px;
+          min-width: 190px;
+          max-width: 190px;
           text-align: left;
         }
 
         th:first-child {
-          background: #6b1a2c;
-        }
-
-        td:first-child {
-          background: #f8f8f8;
+          z-index: 4;
+          background: #65162a;
+          padding-left: 1rem;
         }
 
         td {
-          border-bottom: 1px solid #eee;
-          border-right: 1px solid #eee;
-          padding: 0.62rem 0.55rem;
+          height: 54px;
+          padding: 0.8rem 0.65rem;
+          border-right: 1px solid #e8e3df;
+          border-bottom: 1px solid #e8e3df;
           text-align: center;
+          vertical-align: middle;
           white-space: nowrap;
-          background: white;
-          font-weight: 800;
+          background: #fff;
+          color: #211d1e;
+          font-weight: 750;
+        }
+
+        td:first-child {
+          background: #f7f7f7;
+          padding-left: 1rem;
+        }
+
+        tbody tr:nth-child(even) td:not(:first-child) {
+          background: #fcfaf9;
+        }
+
+        tbody tr:hover td {
+          background: #fff7ea;
+        }
+
+        tbody tr:hover td:first-child {
+          background: #f3e8df;
         }
 
         .label {
           color: #6b1a2c;
-          font-weight: 900;
+          font-weight: 950;
         }
 
         .pts {
-          color: #d4a24c;
-          font-weight: 900;
+          color: #d19b36;
+          font-weight: 950;
         }
 
         .good {
           color: #177245;
-          font-weight: 900;
+          font-weight: 950;
         }
 
         .bad {
-          color: #a82018;
-          font-weight: 900;
+          color: #b42318;
+          font-weight: 950;
         }
 
         @media (max-width: 1100px) {
@@ -4196,12 +4265,30 @@ function TeamGameStatsBlock({ teamId }: { teamId: string }) {
           .insights-grid {
             grid-template-columns: repeat(2, minmax(0, 1fr));
           }
+
+          .insights-grid :global(.insight-card:nth-child(3)) {
+            border-left: 0;
+            border-top: 1px solid #ece4dd;
+          }
+
+          .insights-grid :global(.insight-card:nth-child(4)) {
+            border-top: 1px solid #ece4dd;
+          }
         }
 
         @media (max-width: 700px) {
+          .game-stats-card {
+            padding: 1rem;
+          }
+
           .game-kpis,
           .insights-grid {
             grid-template-columns: 1fr;
+          }
+
+          .insights-grid :global(.insight-card + .insight-card) {
+            border-left: 0;
+            border-top: 1px solid #ece4dd;
           }
         }
       `}</style>
@@ -4222,9 +4309,9 @@ function InsightCard({
 }) {
   return (
     <article className={`insight-card ${tone}`}>
-      <span>{label}</span>
-      <strong>{title}</strong>
-      <em>{value}</em>
+      <div className="insight-label">{label}</div>
+      <div className="insight-title">{title}</div>
+      <div className="insight-value">{value}</div>
     </article>
   );
 }
@@ -4727,7 +4814,12 @@ function TeamLineupsBlock({ teamId }: { teamId: string }) {
 
       <style jsx>{`
         .lineups-card {
-          margin-top: 1.2rem;
+          margin-top: 1.4rem;
+          padding: 1.45rem;
+          border: 1px solid #eadfd5;
+          border-radius: 22px;
+          background: #fff;
+          box-shadow: 0 14px 34px rgba(62, 31, 22, 0.055);
         }
 
         .block-head {
@@ -4735,36 +4827,38 @@ function TeamLineupsBlock({ teamId }: { teamId: string }) {
           justify-content: space-between;
           align-items: flex-start;
           gap: 1rem;
-          margin-bottom: 1rem;
+          margin-bottom: 1.2rem;
         }
 
         .eyebrow {
           margin: 0;
           color: #d4a24c;
           font-size: 0.78rem;
-          font-weight: 900;
+          font-weight: 950;
           text-transform: uppercase;
-          letter-spacing: 0.06em;
+          letter-spacing: 0.08em;
         }
 
         h2 {
-          margin: 0.2rem 0 0;
+          margin: 0.25rem 0 0;
           color: #6b1a2c;
-          font-size: 1.45rem;
-          font-weight: 900;
+          font-size: 1.65rem;
+          line-height: 1.1;
+          font-weight: 950;
         }
 
         .muted {
-          margin: 0.25rem 0 0;
-          color: #9a8a82;
-          font-size: 0.92rem;
+          margin: 0.45rem 0 0;
+          color: #8f817b;
+          font-size: 0.95rem;
+          line-height: 1.5;
         }
 
         .empty {
           background: #fff8ef;
           border: 1px dashed #d4a24c;
-          border-radius: 14px;
-          padding: 1rem;
+          border-radius: 16px;
+          padding: 1.1rem;
           color: #6b1a2c;
           font-weight: 900;
         }
@@ -4772,88 +4866,193 @@ function TeamLineupsBlock({ teamId }: { teamId: string }) {
         .lineup-insights {
           display: grid;
           grid-template-columns: repeat(4, minmax(0, 1fr));
-          gap: 0.75rem;
-          margin-bottom: 1rem;
+          border-top: 1px solid #ece4dd;
+          border-bottom: 1px solid #ece4dd;
+          margin-bottom: 1.2rem;
+          background: #fff;
+        }
+
+        .lineup-insights :global(.insight-card) {
+          min-height: 148px;
+          padding: 1rem 1.1rem;
+          display: flex;
+          flex-direction: column;
+          justify-content: flex-start;
+          overflow: hidden;
+          background: #fff;
+        }
+
+        .lineup-insights :global(.insight-card + .insight-card) {
+          border-left: 1px solid #ece4dd;
+        }
+
+        .lineup-insights :global(.insight-label) {
+          color: #5c5451;
+          font-size: 0.82rem;
+          font-weight: 750;
+          line-height: 1.3;
+          margin-bottom: 0.55rem;
+        }
+
+        .lineup-insights :global(.insight-title) {
+          display: -webkit-box;
+          -webkit-line-clamp: 3;
+          -webkit-box-orient: vertical;
+          overflow: hidden;
+          color: #211d1e;
+          font-size: 0.98rem;
+          line-height: 1.38;
+          font-weight: 950;
+          overflow-wrap: anywhere;
+        }
+
+        .lineup-insights :global(.insight-value) {
+          margin-top: auto;
+          padding-top: 0.6rem;
+          color: #6b1a2c;
+          font-size: 0.98rem;
+          font-style: italic;
+          font-weight: 950;
+        }
+
+        .lineup-insights :global(.insight-card.good .insight-value) {
+          color: #177245;
+        }
+
+        .lineup-insights :global(.insight-card.bad .insight-value) {
+          color: #b42318;
         }
 
         .lineup-table-wrap {
           width: 100%;
           overflow-x: auto;
-          border: 1px solid #efe6db;
-          border-radius: 16px;
+          border: 1px solid #eadfd5;
+          border-radius: 18px;
+          background: #fff;
         }
 
         table {
-          width: max-content;
-          min-width: 100%;
+          width: 100%;
+          min-width: 1540px;
           border-collapse: separate;
           border-spacing: 0;
-          font-size: 0.78rem;
+          font-size: 0.82rem;
         }
 
         th {
-          background: linear-gradient(#6b1a2c, #49101d);
-          color: white;
-          padding: 0.65rem 0.55rem;
+          position: sticky;
+          top: 0;
+          z-index: 3;
+          min-height: 50px;
+          background: linear-gradient(180deg, #7a1c32, #5a1325);
+          color: #fff;
+          padding: 0.85rem 0.65rem;
           text-align: center;
+          vertical-align: middle;
           white-space: nowrap;
-          font-weight: 900;
+          font-weight: 950;
+          border-right: 1px solid rgba(255, 255, 255, 0.14);
         }
 
         th:first-child,
         td:first-child {
           position: sticky;
           left: 0;
-          z-index: 2;
-          min-width: 360px;
-          max-width: 360px;
+          width: 270px;
+          min-width: 270px;
+          max-width: 270px;
           text-align: left;
         }
 
         th:first-child {
-          background: #6b1a2c;
-        }
-
-        td:first-child {
-          background: #f8f8f8;
+          z-index: 5;
+          background: #65162a;
+          padding-left: 1rem;
         }
 
         td {
-          border-bottom: 1px solid #eee;
-          border-right: 1px solid #eee;
-          padding: 0.62rem 0.55rem;
+          height: 58px;
+          padding: 0.82rem 0.65rem;
+          border-right: 1px solid #e8e3df;
+          border-bottom: 1px solid #e8e3df;
           text-align: center;
+          vertical-align: middle;
           white-space: nowrap;
-          background: white;
-          font-weight: 800;
+          background: #fff;
+          color: #211d1e;
+          font-weight: 750;
+        }
+
+        td:first-child {
+          z-index: 2;
+          background: #f7f7f7;
+          padding-left: 1rem;
+        }
+
+        tbody tr:nth-child(even) td:not(:first-child) {
+          background: #fcfaf9;
+        }
+
+        tbody tr:hover td {
+          background: #fff7ea;
+        }
+
+        tbody tr:hover td:first-child {
+          background: #f3e8df;
         }
 
         .lineup-label {
           color: #6b1a2c;
-          font-weight: 900;
-          overflow: hidden;
-          text-overflow: ellipsis;
+          font-weight: 950;
+          white-space: normal !important;
+          line-height: 1.42;
+          overflow-wrap: anywhere;
         }
 
         .good {
           color: #177245;
-          font-weight: 900;
+          font-weight: 950;
         }
 
         .bad {
-          color: #a82018;
-          font-weight: 900;
+          color: #b42318;
+          font-weight: 950;
         }
 
         @media (max-width: 1100px) {
           .lineup-insights {
-            grid-template-columns: repeat(2, minmax(0, 1fr));
+            grid-template-columns: repeat(2, 1fr);
+          }
+
+          .lineup-insights :global(.insight-card:nth-child(3)) {
+            border-left: 0;
+            border-top: 1px solid #ece4dd;
+          }
+
+          .lineup-insights :global(.insight-card:nth-child(4)) {
+            border-top: 1px solid #ece4dd;
           }
         }
 
         @media (max-width: 700px) {
+          .lineups-card {
+            padding: 1rem;
+          }
+
           .lineup-insights {
             grid-template-columns: 1fr;
+          }
+
+          .lineup-insights :global(.insight-card + .insight-card) {
+            border-left: 0;
+            border-top: 1px solid #ece4dd;
+          }
+
+          th:first-child,
+          td:first-child {
+            width: 220px;
+            min-width: 220px;
+            max-width: 220px;
           }
         }
       `}</style>
@@ -4861,223 +5060,8 @@ function TeamLineupsBlock({ teamId }: { teamId: string }) {
   );
 }
 
-/* ---------- 3. HISTORIQUE ---------- */
 
-function TeamMatchHistoryBlock({ teamId }: { teamId: string }) {
-  const supabase = createClient();
 
-  const [loading, setLoading] = useState(true);
-  const [matches, setMatches] = useState<SupaMatchRow[]>([]);
-
-  useEffect(() => {
-    let active = true;
-
-    async function load() {
-      setLoading(true);
-
-      const { data, error } = await supabase
-        .from("match_stats")
-        .select("id, opponent, match_date, us_score, them_score, result, home")
-        .eq("team_id", teamId)
-        .order("match_date", { ascending: false });
-
-      if (!active) return;
-
-      if (error) {
-        console.error("Erreur historique fiche équipe :", error);
-        setMatches([]);
-      } else {
-        setMatches((data ?? []) as SupaMatchRow[]);
-      }
-
-      setLoading(false);
-    }
-
-    load();
-
-    return () => {
-      active = false;
-    };
-  }, [supabase, teamId]);
-
-  const lastMatches = useMemo(() => matches.slice(0, 8), [matches]);
-
-  return (
-    <section className="tl-card history-card">
-      <div className="block-head">
-        <div>
-          <p className="eyebrow">Calendrier</p>
-          <h2>Historique des matchs</h2>
-          <p className="muted">Derniers matchs liés à cette équipe.</p>
-        </div>
-
-        <span className="count">
-          {matches.length} match{matches.length > 1 ? "s" : ""}
-        </span>
-      </div>
-
-      {loading && <div className="empty">Chargement...</div>}
-
-      {!loading && matches.length === 0 && (
-        <div className="empty">Aucun match enregistré pour cette équipe.</div>
-      )}
-
-      {!loading && lastMatches.length > 0 && (
-        <div className="match-grid">
-          {lastMatches.map((match) => {
-            const us = safeNum(match.us_score);
-            const them = safeNum(match.them_score);
-            const win = us > them;
-            const loss = us < them;
-
-            return (
-              <article
-                key={match.id}
-                className={`match-card ${win ? "win" : loss ? "loss" : "draw"}`}
-              >
-                <div>
-                  <p className="date">{formatMatchDate(match.match_date)}</p>
-                  <h3>
-                    {match.home === false ? "@" : "vs"}{" "}
-                    {match.opponent || "Adversaire"}
-                  </h3>
-                  <span className="place">
-                    {match.home === false ? "Extérieur" : "Domicile"}
-                  </span>
-                </div>
-
-                <div className="score">
-                  <strong>
-                    {us} - {them}
-                  </strong>
-                  <span>{win ? "Victoire" : loss ? "Défaite" : "Nul"}</span>
-                </div>
-              </article>
-            );
-          })}
-        </div>
-      )}
-
-      <style jsx>{`
-        .history-card {
-          margin-top: 1.2rem;
-        }
-        .block-head {
-          display: flex;
-          justify-content: space-between;
-          align-items: flex-start;
-          gap: 1rem;
-          margin-bottom: 1rem;
-        }
-        .eyebrow {
-          margin: 0;
-          color: #d4a24c;
-          font-size: 0.78rem;
-          font-weight: 900;
-          text-transform: uppercase;
-          letter-spacing: 0.06em;
-        }
-        h2 {
-          margin: 0.2rem 0 0;
-          color: #6b1a2c;
-          font-size: 1.45rem;
-          font-weight: 900;
-        }
-        .muted {
-          margin: 0.25rem 0 0;
-          color: #9a8a82;
-          font-size: 0.92rem;
-        }
-        .count {
-          display: inline-flex;
-          border-radius: 999px;
-          background: #fff8ef;
-          color: #6b1a2c;
-          border: 1px solid #eadccc;
-          padding: 0.45rem 0.75rem;
-          font-weight: 900;
-          font-size: 0.8rem;
-        }
-        .empty {
-          background: #fff8ef;
-          border: 1px dashed #d4a24c;
-          border-radius: 14px;
-          padding: 1rem;
-          color: #6b1a2c;
-          font-weight: 900;
-        }
-        .match-grid {
-          display: grid;
-          grid-template-columns: repeat(4, minmax(0, 1fr));
-          gap: 0.8rem;
-        }
-        .match-card {
-          border: 1px solid #efe6db;
-          border-radius: 18px;
-          background: #fffdf9;
-          padding: 0.95rem;
-          display: flex;
-          flex-direction: column;
-          gap: 0.85rem;
-          min-height: 145px;
-        }
-        .match-card.win {
-          background: linear-gradient(180deg, #fbfefc, #fff);
-        }
-        .match-card.loss {
-          background: linear-gradient(180deg, #fffdfd, #fff);
-        }
-        .date {
-          margin: 0;
-          color: #d4a24c;
-          font-size: 0.75rem;
-          font-weight: 900;
-          text-transform: uppercase;
-        }
-        h3 {
-          margin: 0.25rem 0;
-          color: #6b1a2c;
-          font-size: 1rem;
-          font-weight: 900;
-        }
-        .place {
-          color: #9a8a82;
-          font-size: 0.8rem;
-          font-weight: 900;
-        }
-        .score strong {
-          display: block;
-          color: #1f171a;
-          font-size: 1.55rem;
-          font-weight: 900;
-        }
-        .score span {
-          display: inline-flex;
-          margin-top: 0.25rem;
-          border-radius: 999px;
-          background: #f5efe6;
-          color: #6b1a2c;
-          padding: 0.2rem 0.55rem;
-          font-size: 0.75rem;
-          font-weight: 900;
-        }
-        @media (max-width: 1100px) {
-          .match-grid {
-            grid-template-columns: repeat(2, minmax(0, 1fr));
-          }
-        }
-        @media (max-width: 700px) {
-          .block-head {
-            flex-direction: column;
-          }
-          .match-grid {
-            grid-template-columns: 1fr;
-          }
-        }
-      `}</style>
-    </section>
-  );
-}
 
 /* ---------- 4. RECORDS ---------- */
 

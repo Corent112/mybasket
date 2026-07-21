@@ -12,6 +12,9 @@ import { Jersey, Sparkline } from "../../../../components/equipes/Sparkline";
 import type { Player, Team } from "../../../../types/player";
 import { createClient } from "@/lib/supabase/client";
 import { useLivestatTags } from "@/lib/livestat-tags";
+import PlayerMontages from "@/components/players/PlayerMontages";
+import ShotChart from "@/components/prise-stats-pro/ShotChart";
+import AdvancedVideoEditor from "@/components/video-editor/AdvancedVideoEditor";
 
 type PlayerExtra = Player & {
   licenceNumber?: string;
@@ -28,8 +31,7 @@ type PlayerExtra = Player & {
 const TABS = [
   "Aperçu",
   "Informations",
-  "Stats",
-  "Vidéo",
+  "Stats & Vidéo",
   "Tests",
   "Médical",
   "Bilans",
@@ -755,6 +757,7 @@ export default function JoueurDetailPage({
 
   const [player, setPlayer] = useState<PlayerExtra | undefined>();
   const [team, setTeam] = useState<Team | undefined>();
+  const [identityLoading, setIdentityLoading] = useState(true);
   const [liveStats, setLiveStats] = useState<PlayerLiveStats>(EMPTY_LIVE_STATS);
   const [playerActions, setPlayerActions] = useState<any[]>([]);
   const [teamPlayersStats, setTeamPlayersStats] = useState<TeamPlayerComparisonStat[]>([]);
@@ -771,6 +774,8 @@ export default function JoueurDetailPage({
   const [testModal, setTestModal] = useState(false);
   const [medicalModal, setMedicalModal] = useState(false);
   const [docModal, setDocModal] = useState(false);
+  const [docUploading, setDocUploading] = useState(false);
+  const [docUploadName, setDocUploadName] = useState("");
   const [bilanModal, setBilanModal] = useState<PlayerBilan | null>(null);
 
   const [testDraft, setTestDraft] = useState<PlayerTest>({
@@ -806,6 +811,7 @@ export default function JoueurDetailPage({
   const printRef = useRef<HTMLDivElement | null>(null);
 
   async function reload() {
+    setIdentityLoading(true);
     try {
       const [playerData, teamData] = await Promise.all([
         getPlayer(teamId, playerId),
@@ -818,6 +824,8 @@ export default function JoueurDetailPage({
       console.error("Erreur chargement joueur:", error);
       setPlayer(undefined);
       setTeam(undefined);
+    } finally {
+      setIdentityLoading(false);
     }
   }
 
@@ -1009,7 +1017,22 @@ export default function JoueurDetailPage({
         if (!active) return;
 
         const allTeamRows = (rows ?? []) as any[];
-        const currentPlayerRows = allTeamRows.filter(
+
+        // §23 · le classement / la comparaison ne doivent compter que les matchs
+        // TERMINÉS. On récupère le statut de tous les matchs de l'équipe et on
+        // écarte les lignes rattachées à un brouillon (project_status = 'draft').
+        const allMatchIds = Array.from(new Set(allTeamRows.map((r) => String(r.match_id ?? "")).filter(Boolean)));
+        const draftMatchIds = new Set<string>();
+        if (allMatchIds.length > 0) {
+          const { data: statusRows } = await supabase
+            .from("match_stats")
+            .select("id, project_status")
+            .in("id", allMatchIds);
+          (statusRows ?? []).forEach((m: any) => { if (m.project_status === "draft") draftMatchIds.add(String(m.id)); });
+        }
+        const completedTeamRows = allTeamRows.filter((r) => !draftMatchIds.has(String(r.match_id ?? "")));
+
+        const currentPlayerRows = completedTeamRows.filter(
           (row) => String(row.player_id ?? "") === String(playerId)
         );
 
@@ -1042,7 +1065,7 @@ export default function JoueurDetailPage({
 
         setLiveStats(computeLiveStats(currentPlayerRows, matchesById));
         setTeamPlayersStats(
-          computeTeamPlayersComparisonStats(allTeamRows, team?.players ?? [])
+          computeTeamPlayersComparisonStats(completedTeamRows, team?.players ?? [])
         );
       } catch (error) {
         console.error("Erreur chargement stats joueur Supabase :", error);
@@ -1287,6 +1310,54 @@ export default function JoueurDetailPage({
     flash("Suivi médical ajouté ✓");
   }
 
+  async function uploadPlayerDocument(file: File) {
+    const allowed = [
+      "application/pdf",
+      "image/jpeg",
+      "image/png",
+      "image/webp",
+      "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    ];
+
+    if (!allowed.includes(file.type)) {
+      alert("Formats acceptés : PDF, JPEG, PNG, WEBP et DOCX.");
+      return;
+    }
+
+    if (file.size > 25 * 1024 * 1024) {
+      alert("Le fichier ne doit pas dépasser 25 Mo.");
+      return;
+    }
+
+    setDocUploading(true);
+    try {
+      const { data: authData, error: authError } = await supabase.auth.getUser();
+      if (authError || !authData.user) throw new Error("Utilisateur non connecté.");
+
+      const safeName = file.name.normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-zA-Z0-9._-]/g, "-");
+      const path = `${authData.user.id}/${teamId}/${playerId}/${Date.now()}-${safeName}`;
+      const { error: uploadError } = await supabase.storage
+        .from("player-documents")
+        .upload(path, file, { cacheControl: "3600", upsert: false });
+
+      if (uploadError) throw uploadError;
+
+      const { data: publicData } = supabase.storage.from("player-documents").getPublicUrl(path);
+      setDocDraft((current) => ({
+        ...current,
+        title: current.title.trim() || file.name.replace(/\.[^.]+$/, ""),
+        url: publicData.publicUrl,
+      }));
+      setDocUploadName(file.name);
+      flash("Document envoyé dans Supabase ✓");
+    } catch (error) {
+      console.error("Erreur upload document joueur :", error);
+      alert(error instanceof Error ? error.message : "Impossible d'envoyer le document.");
+    } finally {
+      setDocUploading(false);
+    }
+  }
+
   async function saveDocument() {
     if (!docDraft.title.trim()) {
       alert("Le titre du document est obligatoire.");
@@ -1331,6 +1402,15 @@ export default function JoueurDetailPage({
     ]);
 
     setDocModal(false);
+    setDocUploadName("");
+    setDocDraft({
+      id: uid(),
+      date: new Date().toISOString().slice(0, 10),
+      title: "",
+      category: "Administratif",
+      url: "",
+      notes: "",
+    });
     flash("Document ajouté ✓");
   }
 
@@ -1410,30 +1490,48 @@ export default function JoueurDetailPage({
     if (!player || !team) return;
 
     const html = bilanHtml(player, team, bilan, tests, medical, growth);
-    const w = window.open("", "_blank", "noopener,noreferrer");
+    const blob = new Blob([html], { type: "text/html;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const iframe = document.createElement("iframe");
+    iframe.style.position = "fixed";
+    iframe.style.width = "1px";
+    iframe.style.height = "1px";
+    iframe.style.right = "0";
+    iframe.style.bottom = "0";
+    iframe.style.border = "0";
+    iframe.style.opacity = "0";
+    iframe.src = url;
+    iframe.onload = () => {
+      window.setTimeout(() => {
+        iframe.contentWindow?.focus();
+        iframe.contentWindow?.print();
+        window.setTimeout(() => {
+          URL.revokeObjectURL(url);
+          iframe.remove();
+        }, 1500);
+      }, 350);
+    };
+    document.body.appendChild(iframe);
+  }
 
-    if (!w) {
-      alert("Autorise les popups pour générer le PDF.");
-      return;
-    }
-
-    w.document.write(html);
-    w.document.close();
-    w.focus();
-    setTimeout(() => w.print(), 500);
+  if (identityLoading) {
+    return (
+      <div className="player-page-light">
+        <style jsx global>{PLAYER_PAGE_CSS}</style>
+        <aside className="player-list-side"><div className="player-list-brand">🏀 MyBasket</div></aside>
+        <main className="player-main"><p className="empty-player">Chargement de la fiche joueur…</p></main>
+      </div>
+    );
   }
 
   if (!player || !team) {
     return (
       <div className="player-page-light">
         <style jsx global>{PLAYER_PAGE_CSS}</style>
-
-        <aside className="player-list-side">
-          <div className="player-list-brand">🏀 MyBasket</div>
-        </aside>
-
+        <aside className="player-list-side"><div className="player-list-brand">🏀 MyBasket</div></aside>
         <main className="player-main">
           <p className="empty-player">Joueur introuvable.</p>
+          <button className="back-btn" onClick={() => router.push(`/equipes/${teamId}`)}>Retour à l’équipe</button>
         </main>
       </div>
     );
@@ -1650,29 +1748,23 @@ export default function JoueurDetailPage({
           <InformationTab p={p} team={team} latestHeight={latestHeight} latestWeight={latestWeight} latestWingspan={latestWingspan} />
         )}
 
-        {tab === "Stats" && (
-          <>
-            <StatsTab
-              p={p}
-              tdj={tdj}
-              tdjPct={tdjPct}
-              cmp={cmp}
-              team={team}
-              liveStats={liveStats}
-              teamPlayersStats={teamPlayersStats}
-              currentPlayerId={String(playerId)}
-            />
-          </>
-        )}
-
-        {tab === "Vidéo" && (
+        {tab === "Stats & Vidéo" && (
           <VideoRentabilityTab
             actions={playerActions}
             tags={tags}
+            teamId={String(teamId)}
             playerId={String(playerId)}
             playerName={`${p.firstName ?? ""} ${p.lastName ?? ""}`.trim() || "Joueur"}
             matches={liveStats.matches}
             onRequestExport={requestActionExport}
+            onOpenMontageStudio={(montageId) => {
+              const params = new URLSearchParams({
+                teamId: String(teamId),
+                playerId: String(playerId),
+              });
+              if (montageId) params.set("montageId", montageId);
+              router.push(`/management/montage?${params.toString()}`);
+            }}
           />
         )}
 
@@ -1913,7 +2005,22 @@ export default function JoueurDetailPage({
                 </select>
               </Field>
 
-              <Field label="Lien / URL">
+              <Field label="Fichier (PDF, JPEG, PNG, WEBP, DOCX)">
+                <input
+                  type="file"
+                  accept=".pdf,.jpg,.jpeg,.png,.webp,.docx,application/pdf,image/jpeg,image/png,image/webp,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                  disabled={docUploading}
+                  onChange={(e) => {
+                    const file = e.target.files?.[0];
+                    if (file) void uploadPlayerDocument(file);
+                    e.currentTarget.value = "";
+                  }}
+                />
+                {docUploading && <small>Envoi vers Supabase…</small>}
+                {!docUploading && docUploadName && <small>Fichier prêt : {docUploadName}</small>}
+              </Field>
+
+              <Field label="Ou lien / URL">
                 <input value={docDraft.url || ""} onChange={(e) => setDocDraft({ ...docDraft, url: e.target.value })} />
               </Field>
 
@@ -2803,6 +2910,25 @@ function actionShotQuality(a: any): string | null {
 type VideoNote = { action_id: string; note: string; type: string; created_at: string };
 type VideoCustomTag = { action_id: string; tags: string[] };
 type HighlightClip = { action_id: string; temps_fort: string; label: string; added_at: string };
+type MontageDesignItem = {
+  id: string;
+  item_type: "title" | "text" | "image";
+  title: string;
+  text: string;
+  image_url: string;
+  background_url: string;
+  font_family: string;
+  font_size: number;
+  font_color: string;
+  placement: "intro" | "outro";
+};
+type SavedMontage = {
+  id: string;
+  title: string | null;
+  match_id: string | null;
+  created_at: string;
+  updated_at: string;
+};
 
 const NOTE_TYPES = ["Correction", "Positif", "Question joueur", "Objectif travail"];
 const QUICK_TAGS = ["🔥 Excellent", "⚠️ À corriger", "👀 À revoir", "⭐ Exemple équipe"];
@@ -2899,817 +3025,841 @@ function computeAutoInsights(
 function VideoRentabilityTab({
   actions,
   tags,
+  teamId,
   playerId,
   playerName,
   matches,
   onRequestExport,
+  onOpenMontageStudio,
 }: {
   actions: any[];
   tags: ReturnType<typeof useLivestatTags>;
+  teamId: string;
   playerId: string;
   playerName: string;
   matches: PlayerLiveMatchLine[];
   onRequestExport: (actionId: string) => void;
+  onOpenMontageStudio: (montageId?: string) => void;
 }) {
-  const [view, setView] = useState<"matrice" | "shot" | "actions" | "clips" | "timeline">("matrice");
-  const [showFilters, setShowFilters] = useState(true);
-  const [filters, setFilters] = useState<VideoFilters>(DEFAULT_VIDEO_FILTERS);
+  const [section, setSection] = useState<"overview" | "shots" | "temps-forts" | "actions" | "montage">("overview");
+  const [shotFilter, setShotFilter] = useState<"all" | "2PTS" | "3PTS">("all");
+  const [matchFilter, setMatchFilter] = useState("all");
   const [popup, setPopup] = useState<{ title: string; actions: any[]; index?: number } | null>(null);
-  const [mtxView, setMtxView] = useState<"perf" | "scout">("perf");
-  const [quality, setQuality] = useState("all");
   const [highlightQueue, setHighlightQueue] = useState<HighlightClip[]>([]);
-  const [coachNotes, setCoachNotes] = useState<VideoNote[]>([]);
-  const [customTags, setCustomTags] = useState<VideoCustomTag[]>([]);
+  const [montageDesignItems, setMontageDesignItems] = useState<MontageDesignItem[]>([]);
+  const [savedMontages, setSavedMontages] = useState<SavedMontage[]>([]);
+  const [activeMontageId, setActiveMontageId] = useState<string>("");
+  const [montageTitle, setMontageTitle] = useState(`Montage ${playerName}`);
+  const [montageBusy, setMontageBusy] = useState(false);
+  const [montageMessage, setMontageMessage] = useState("");
+  const montageSupabase = useMemo(() => createClient(), []);
+  const montageStorageKey = `mybasket_player_montage_${playerId}`;
+  const montageDesignStorageKey = `mybasket_player_montage_design_${playerId}`;
+
+  useEffect(() => {
+    try {
+      const saved = window.localStorage.getItem(montageStorageKey);
+      if (saved) setHighlightQueue(JSON.parse(saved));
+    } catch {
+      setHighlightQueue([]);
+    }
+  }, [montageStorageKey]);
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(montageStorageKey, JSON.stringify(highlightQueue));
+    } catch {
+      // Le montage reste utilisable pendant la session.
+    }
+  }, [highlightQueue, montageStorageKey]);
+
+  useEffect(() => {
+    try {
+      const saved = window.localStorage.getItem(montageDesignStorageKey);
+      if (saved) setMontageDesignItems(JSON.parse(saved));
+    } catch {
+      setMontageDesignItems([]);
+    }
+  }, [montageDesignStorageKey]);
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(montageDesignStorageKey, JSON.stringify(montageDesignItems));
+    } catch {
+      // Le montage reste utilisable pendant la session.
+    }
+  }, [montageDesignItems, montageDesignStorageKey]);
+
+  const flashMontage = (message: string) => {
+    setMontageMessage(message);
+    window.setTimeout(() => setMontageMessage(""), 2400);
+  };
+
+  const refreshSavedMontages = async () => {
+    const { data, error } = await montageSupabase
+      .from("livestat_montages")
+      .select("id,title,match_id,created_at,updated_at")
+      .eq("team_id", teamId)
+      .eq("player_id", playerId)
+      .order("updated_at", { ascending: false });
+
+    if (error) {
+      console.error("Erreur chargement montages joueur :", error);
+      return [];
+    }
+
+    const rows = (data ?? []) as SavedMontage[];
+    setSavedMontages(rows);
+    return rows;
+  };
+
+  const loadSavedMontage = async (montageId: string) => {
+    if (!montageId) return;
+    setMontageBusy(true);
+
+    try {
+      const montage = savedMontages.find((row) => row.id === montageId);
+      const { data: items, error } = await montageSupabase
+        .from("livestat_montage_items")
+        .select("id,item_type,action_id,title,text,image_url,background_url,font_family,font_size,font_color,sort_order,created_at")
+        .eq("montage_id", montageId)
+        .order("sort_order", { ascending: true });
+
+      if (error) throw error;
+
+      setActiveMontageId(montageId);
+      setMontageTitle(montage?.title || `Montage ${playerName}`);
+      const itemRows = ((items ?? []) as any[]);
+      setHighlightQueue(
+        itemRows
+          .filter((item) => item.item_type === "clip" && item.action_id)
+          .map((item) => ({
+            action_id: String(item.action_id),
+            temps_fort: "",
+            label: String(item.title ?? "Clip"),
+            added_at: String(item.created_at ?? new Date().toISOString()),
+          }))
+      );
+      setMontageDesignItems(
+        itemRows
+          .filter((item) => ["title", "text", "image"].includes(String(item.item_type)))
+          .map((item) => ({
+            id: String(item.id),
+            item_type: item.item_type as MontageDesignItem["item_type"],
+            title: String(item.title ?? ""),
+            text: String(item.text ?? ""),
+            image_url: String(item.image_url ?? ""),
+            background_url: String(item.background_url ?? ""),
+            font_family: String(item.font_family ?? "Inter"),
+            font_size: Number(item.font_size ?? 38),
+            font_color: String(item.font_color ?? "#ffffff"),
+            placement: Number(item.sort_order ?? 0) < 0 ? "intro" : "outro",
+          }))
+      );
+      flashMontage("Montage chargé ✓");
+    } catch (error) {
+      console.error("Erreur chargement montage :", error);
+      flashMontage("Impossible de charger le montage");
+    } finally {
+      setMontageBusy(false);
+    }
+  };
+
+  useEffect(() => {
+    let active = true;
+
+    (async () => {
+      const rows = await refreshSavedMontages();
+      if (!active || !rows.length) return;
+
+      let hasLocalDraft = false;
+      try {
+        const local = window.localStorage.getItem(montageStorageKey);
+        hasLocalDraft = Boolean(local && JSON.parse(local)?.length);
+      } catch {
+        hasLocalDraft = false;
+      }
+
+      if (!hasLocalDraft) {
+        await loadSavedMontage(rows[0].id);
+      }
+    })();
+
+    return () => {
+      active = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [teamId, playerId]);
+
+  const toggleHighlight = (action: any) => {
+    const actionId = String(action?.id ?? "");
+    if (!actionId) return;
+
+    setHighlightQueue((current) => {
+      if (current.some((clip) => clip.action_id === actionId)) {
+        return current.filter((clip) => clip.action_id !== actionId);
+      }
+
+      return [
+        ...current,
+        {
+          action_id: actionId,
+          temps_fort: String(action.temps_fort ?? ""),
+          label: actionTypeLabel(action),
+          added_at: new Date().toISOString(),
+        },
+      ];
+    });
+  };
+
+  const removeHighlight = (actionId: string) =>
+    setHighlightQueue((current) => current.filter((clip) => clip.action_id !== actionId));
+
+  const clearHighlights = () => setHighlightQueue([]);
+
+  const newMontage = () => {
+    setActiveMontageId("");
+    setMontageTitle(`Montage ${playerName}`);
+    setHighlightQueue([]);
+    setMontageDesignItems([]);
+    flashMontage("Nouveau montage local");
+  };
+
+  const saveMontageToSupabase = async () => {
+    if (!highlightQueue.length && !montageDesignItems.length) {
+      flashMontage("Ajoute au moins un clip, un titre, un texte ou une image");
+      return;
+    }
+
+    setMontageBusy(true);
+
+    try {
+      const { data: authData, error: authError } = await montageSupabase.auth.getUser();
+      if (authError || !authData.user) throw authError || new Error("Utilisateur non connecté");
+
+      const now = new Date().toISOString();
+      const matchIds = Array.from(
+        new Set(
+          highlightQueue
+            .map((clip) => (actions ?? []).find((action) => String(action.id) === clip.action_id)?.match_id)
+            .filter(Boolean)
+            .map(String)
+        )
+      );
+
+      const payload: any = {
+        user_id: authData.user.id,
+        team_id: teamId,
+        player_id: playerId,
+        match_id: matchIds.length === 1 ? matchIds[0] : null,
+        title: montageTitle.trim() || `Montage ${playerName}`,
+        type: "player",
+        updated_at: now,
+      };
+
+      let montageId = activeMontageId;
+
+      if (montageId) {
+        const { error } = await montageSupabase
+          .from("livestat_montages")
+          .update(payload)
+          .eq("id", montageId);
+        if (error) throw error;
+      } else {
+        const { data, error } = await montageSupabase
+          .from("livestat_montages")
+          .insert(payload)
+          .select("id")
+          .single();
+        if (error) throw error;
+        montageId = String(data.id);
+        setActiveMontageId(montageId);
+      }
+
+      const { error: deleteError } = await montageSupabase
+        .from("livestat_montage_items")
+        .delete()
+        .eq("montage_id", montageId);
+      if (deleteError) throw deleteError;
+
+      const actionById = new Map((actions ?? []).map((action) => [String(action.id ?? ""), action]));
+      const introItems = montageDesignItems.filter((item) => item.placement === "intro");
+      const outroItems = montageDesignItems.filter((item) => item.placement === "outro");
+      const designPayload = (item: MontageDesignItem, sortOrder: number) => ({
+        montage_id: montageId,
+        user_id: authData.user.id,
+        item_type: item.item_type,
+        action_id: null,
+        clip_id: null,
+        title: item.title || null,
+        text: item.text || null,
+        image_url: item.image_url || null,
+        background_url: item.background_url || null,
+        font_family: item.font_family || "Inter",
+        font_size: Number(item.font_size || 38),
+        font_color: item.font_color || "#ffffff",
+        sort_order: sortOrder,
+        position: sortOrder,
+        duration: item.item_type === "image" ? 4 : 3,
+      });
+
+      const clipItems = highlightQueue.map((clip, index) => {
+        const action = actionById.get(clip.action_id) as any;
+        const clipStart = action?.edited_clip_start ?? action?.clip_start ?? action?.video_time ?? null;
+        const clipEnd = action?.edited_clip_end ?? action?.clip_end ?? null;
+
+        return {
+          montage_id: montageId,
+          user_id: authData.user.id,
+          item_type: "clip",
+          action_id: clip.action_id,
+          clip_id: action?.clip_id ?? null,
+          title: clip.label || actionTypeLabel(action || {}),
+          sort_order: introItems.length + index,
+          position: introItems.length + index,
+          clip_start: clipStart,
+          clip_end: clipEnd,
+          duration:
+            clipStart != null && clipEnd != null
+              ? Math.max(0, Number(clipEnd) - Number(clipStart))
+              : null,
+        };
+      });
+
+      const items = [
+        ...introItems.map((item, index) => designPayload(item, index)),
+        ...clipItems,
+        ...outroItems.map((item, index) =>
+          designPayload(item, introItems.length + clipItems.length + index)
+        ),
+      ];
+
+      const { error: insertError } = await montageSupabase
+        .from("livestat_montage_items")
+        .insert(items);
+      if (insertError) throw insertError;
+
+      await refreshSavedMontages();
+      flashMontage("Montage enregistré dans Supabase ✓");
+    } catch (error: any) {
+      console.error("Erreur sauvegarde montage Supabase :", error);
+      flashMontage(error?.message || "Impossible d'enregistrer le montage");
+    } finally {
+      setMontageBusy(false);
+    }
+  };
+
+  const deleteSavedMontage = async () => {
+    if (!activeMontageId) return;
+    if (!window.confirm("Supprimer définitivement ce montage ?")) return;
+
+    setMontageBusy(true);
+    try {
+      const { error } = await montageSupabase
+        .from("livestat_montages")
+        .delete()
+        .eq("id", activeMontageId);
+      if (error) throw error;
+      newMontage();
+      await refreshSavedMontages();
+      flashMontage("Montage supprimé");
+    } catch (error) {
+      console.error("Erreur suppression montage :", error);
+      flashMontage("Impossible de supprimer le montage");
+    } finally {
+      setMontageBusy(false);
+    }
+  };
 
   const matchLabelOf = useMemo(() => {
-    const m = new Map<string, string>();
+    const labels = new Map<string, string>();
     for (const row of matches ?? []) {
-      const label = `${row.opponent || "Adversaire"}${row.date ? ` · ${fmtDate(row.date)}` : ""}`;
-      m.set(String(row.matchId), label);
+      labels.set(
+        String(row.matchId),
+        `${row.opponent || "Adversaire"}${row.date ? ` · ${fmtDate(row.date)}` : ""}`
+      );
     }
-    return (id: unknown) => m.get(String(id ?? "")) || "Match";
+    return (id: unknown) => labels.get(String(id ?? "")) || "Match";
   }, [matches]);
 
-  const allActions = actions ?? [];
-  const filtered = useMemo(() => filterVideoActions(allActions, filters), [allActions, filters]);
-  const actorActions = useMemo(() => filtered.filter((a) => isActorRow(a, playerId)), [filtered, playerId]);
-  const buckets = useMemo(() => buildTempsFortBuckets(filtered, playerId), [filtered, playerId]);
-
-  const orderedTfKeys = useMemo(() => {
-    const present = new Set(Array.from(buckets.keys()));
-    const ordered: string[] = [];
-    for (const t of tags.active ?? []) if (present.has(t.key)) { ordered.push(t.key); present.delete(t.key); }
-    return [...ordered, ...Array.from(present)];
-  }, [buckets, tags]);
-
-  const matrix = useMemo(() => computeTempsFortMatrix(buckets, orderedTfKeys), [buckets, orderedTfKeys]);
-  const fieldShots = useMemo(() => {
-    let s = actorActions.filter(isFieldShot);
-    if (quality !== "all") s = s.filter((a) => actionShotQuality(a) === quality);
-    return s;
-  }, [actorActions, quality]);
-  const zones = useMemo(() => computeShotZones(fieldShots), [fieldShots]);
-
-  const qualityOptions = useMemo(() => {
-    const set = new Set<string>();
-    for (const a of actorActions.filter(isFieldShot)) {
-      const q = actionShotQuality(a);
-      if (q) set.add(q);
-    }
-    return Array.from(set);
-  }, [actorActions]);
-
-  const profile = useMemo(
-    () => computeVideoProfile(actorActions, buckets, matrix),
-    [actorActions, buckets, matrix]
-  );
-  const scoutMatrix = useMemo(() => computeScoutMatrix(buckets, orderedTfKeys), [buckets, orderedTfKeys]);
-  const timeline = useMemo(() => computeTimeline(filtered, playerId), [filtered, playerId]);
-  const smartPlaylists = useMemo(() => computeSmartPlaylists(filtered, playerId), [filtered, playerId]);
-
-  const evolution = useMemo(() => computeVideoEvolution(actorActions), [actorActions]);
-  const autoInsights = useMemo(
-    () => computeAutoInsights(matrix, actorActions, (k: string) => tags.label(k)),
-    [matrix, actorActions, tags]
+  // Données strictement individuelles : aucune action d'un autre joueur.
+  const playerActionsOnly = useMemo(
+    () =>
+      (actions ?? []).filter((a) => {
+        const id = String(playerId);
+        return (
+          String(a.player_id ?? "") === id ||
+          String(a.assist_player_id ?? "") === id ||
+          String(a.rebound_player_id ?? "") === id
+        );
+      }),
+    [actions, playerId]
   );
 
-  const toggleHighlight = (a: any) => {
-    const id = String(a.id ?? "");
-    setHighlightQueue((q) =>
-      q.some((c) => c.action_id === id)
-        ? q.filter((c) => c.action_id !== id)
-        : [...q, { action_id: id, temps_fort: a.temps_fort, label: tags.label(a.temps_fort), added_at: new Date().toISOString() }]
+  const montageActions = useMemo(() => {
+    const byId = new Map(playerActionsOnly.map((action) => [String(action.id ?? ""), action]));
+    return highlightQueue
+      .map((clip) => byId.get(clip.action_id))
+      .filter((action): action is any => Boolean(action));
+  }, [playerActionsOnly, highlightQueue]);
+
+  const matchOptions = useMemo(
+    () =>
+      Array.from(
+        new Set(playerActionsOnly.map((a) => String(a.match_id ?? "")).filter(Boolean))
+      ),
+    [playerActionsOnly]
+  );
+
+  const filteredActions = useMemo(
+    () =>
+      playerActionsOnly.filter(
+        (a) => matchFilter === "all" || String(a.match_id ?? "") === matchFilter
+      ),
+    [playerActionsOnly, matchFilter]
+  );
+
+  // La shot chart ne prend que les tirs dont ce joueur est le tireur.
+  const playerShots = useMemo(() => {
+    return filteredActions.filter(
+      (a) =>
+        String(a.player_id ?? "") === String(playerId) &&
+        isFieldShot(a) &&
+        (shotFilter === "all" || a.shot_type === shotFilter)
     );
-  };
-  const removeHighlight = (id: string) => setHighlightQueue((q) => q.filter((c) => c.action_id !== id));
-  const clearHighlights = () => setHighlightQueue([]);
-  const saveNote = (n: VideoNote) => setCoachNotes((prev) => [...prev.filter((x) => x.action_id !== n.action_id), n]);
-  const saveTags = (t: VideoCustomTag) => setCustomTags((prev) => [...prev.filter((x) => x.action_id !== t.action_id), t]);
+  }, [filteredActions, playerId, shotFilter]);
 
-  // Options filtres
-  const matchOptions = useMemo(() => {
-    const ids = Array.from(new Set(allActions.map((a) => String(a.match_id ?? "")).filter(Boolean)));
-    return ids.map((id) => ({ id, label: matchLabelOf(id) }));
-  }, [allActions, matchLabelOf]);
-  const quarterOptions = useMemo(
-    () => Array.from(new Set(allActions.map((a) => String(a.quarter ?? "")).filter(Boolean))).sort((a, b) => Number(a) - Number(b)),
-    [allActions]
+  const locatedShots = useMemo(
+    () =>
+      playerShots.filter(
+        (a) => Number.isFinite(Number(a.court_x)) && Number.isFinite(Number(a.court_y))
+      ),
+    [playerShots]
   );
-  const tfOptions = useMemo(() => {
-    const present = new Set(allActions.map((a) => String(a.temps_fort ?? "")).filter(Boolean));
-    const ordered: string[] = [];
-    for (const t of tags.active ?? []) if (present.has(t.key)) { ordered.push(t.key); present.delete(t.key); }
-    return [...ordered, ...Array.from(present)];
-  }, [allActions, tags]);
 
-  // KPIs
-  const totalActions = actorActions.length;
-  const totalPoints = actorActions.reduce((s, a) => s + matchActionPoints(a), 0);
-  const totalClips = filtered.filter(actionHasClip).length;
-  const usedTf = orderedTfKeys.length;
+  const shots2 = playerShots.filter((a) => a.shot_type === "2PTS");
+  const shots3 = playerShots.filter((a) => a.shot_type === "3PTS");
+  const made2 = shots2.filter(shotIsMade).length;
+  const made3 = shots3.filter(shotIsMade).length;
+  const made = playerShots.filter(shotIsMade).length;
+  const pct = playerShots.length ? Math.round((made / playerShots.length) * 100) : 0;
+  const totalPoints = filteredActions.reduce((sum, action) => {
+    if (String(action.player_id ?? "") !== String(playerId)) return sum;
+    return sum + matchActionPoints(action);
+  }, 0);
+  const clips = filteredActions.filter(actionHasClip);
+  const zones = computeShotZones(playerShots);
+  const ppa = filteredActions.length
+    ? roundStat(totalPoints / filteredActions.length)
+    : 0;
 
-  // Totaux matrice
-  const totalsRow = useMemo(() => {
-    const acc = { made: { n: 0, pts: 0 }, missed: { n: 0, pts: 0 }, fauteProv: { n: 0, pts: 0 }, intercept: { n: 0, pts: 0 }, perte: { n: 0, pts: 0 }, total: { n: 0, pts: 0 } };
-    for (const r of matrix) {
-      for (const k of ["made", "missed", "fauteProv", "intercept", "perte", "total"] as const) {
-        acc[k].n += (r[k] as any).n;
-        acc[k].pts += (r[k] as any).pts;
-      }
+  const recentActions = [...filteredActions].reverse().slice(0, 8);
+  const recentClips = [...clips].reverse().slice(0, 6);
+
+  // Rentabilité strictement calculée sur les actions dont CE joueur est l'acteur.
+  // Les passes décisives et rebonds où il est seulement associé restent visibles
+  // dans la liste générale, mais ne faussent pas les possessions ni le PPP.
+  const playerActorActions = useMemo(
+    () =>
+      filteredActions.filter(
+        (action) => String(action.player_id ?? "") === String(playerId)
+      ),
+    [filteredActions, playerId]
+  );
+
+  const tempsFortRows = useMemo(() => {
+    const grouped = new Map<string, any[]>();
+
+    for (const action of playerActorActions) {
+      const key = String(action.temps_fort ?? "").trim() || "sans_temps_fort";
+      if (!grouped.has(key)) grouped.set(key, []);
+      grouped.get(key)!.push(action);
     }
-    const ppa = acc.total.n ? roundStat(acc.total.pts / acc.total.n) : 0;
-    return { ...acc, ppa };
-  }, [matrix]);
 
-  const shotTotals = useMemo(() => {
-    const made = zones.reduce((s, z) => s + z.made, 0);
-    const att = zones.reduce((s, z) => s + z.att, 0);
-    return { made, att, pct: att ? Math.round((made / att) * 100) : 0 };
-  }, [zones]);
+    return Array.from(grouped.entries())
+      .map(([key, list]) => {
+        const points = list.reduce((sum, action) => sum + matchActionPoints(action), 0);
+        const madeActions = list.filter((action) => actionResultCategory(action) === "made");
+        const missedActions = list.filter((action) => actionResultCategory(action) === "missed");
+        const foulActions = list.filter((action) => actionResultCategory(action) === "fauteProv");
+        const turnoverActions = list.filter((action) => actionResultCategory(action) === "perte");
+        const stealActions = list.filter((action) => actionResultCategory(action) === "intercept");
+        const otherActions = list.filter((action) => actionResultCategory(action) === "autre");
+        const made = madeActions.length;
+        const missed = missedActions.length;
+        const foulsDrawn = foulActions.length;
+        const turnovers = turnoverActions.length;
+        const steals = stealActions.length;
+        const attempts = made + missed;
+        const clipsCount = list.filter(actionHasClip).length;
 
-  const clipActions = useMemo(() => {
-    const withClips = filtered.filter(actionHasClip);
-    const src = withClips.length ? withClips : filtered;
-    return [...src]
-      .sort((a, b) => Number(b.quarter ?? 0) - Number(a.quarter ?? 0))
-      .slice(0, 12);
-  }, [filtered]);
+        return {
+          key,
+          label: key === "sans_temps_fort" ? "Sans temps fort" : tags.label(key),
+          actions: list,
+          madeActions,
+          missedActions,
+          foulActions,
+          turnoverActions,
+          stealActions,
+          otherActions,
+          possessions: list.length,
+          points,
+          ppp: list.length ? roundStat(points / list.length) : 0,
+          made,
+          missed,
+          foulsDrawn,
+          turnovers,
+          steals,
+          successPct: attempts ? Math.round((made / attempts) * 100) : 0,
+          clipsCount,
+        };
+      })
+      .sort((a, b) => b.possessions - a.possessions || b.ppp - a.ppp);
+  }, [playerActorActions, tags]);
 
-  const lastActions = useMemo(
-    () => [...actorActions].slice(-6).reverse(),
-    [actorActions]
-  );
+  const totalTempsFortPossessions = tempsFortRows.reduce((sum, row) => sum + row.possessions, 0);
+  const totalTempsFortPoints = tempsFortRows.reduce((sum, row) => sum + row.points, 0);
+  const globalTempsFortPpp = totalTempsFortPossessions
+    ? roundStat(totalTempsFortPoints / totalTempsFortPossessions)
+    : 0;
 
   const openPopup = (title: string, list: any[], index = 0) => {
-    if (!list || !list.length) return;
+    if (!list.length) return;
     setPopup({ title, actions: list, index });
   };
 
-  const filtersActive = JSON.stringify(filters) !== JSON.stringify(DEFAULT_VIDEO_FILTERS);
-  const setResult = (k: ResultKey, v: boolean) =>
-    setFilters((f) => ({ ...f, results: { ...f.results, [k]: v } }));
-  const setShot = (k: "p2" | "p3" | "lf", v: boolean) =>
-    setFilters((f) => ({ ...f, shots: { ...f.shots, [k]: v } }));
-
-  const SUBTABS: { id: typeof view; icon: string; label: string }[] = [
-    { id: "matrice", icon: "▦", label: "Matrice de rentabilité" },
-    { id: "shot", icon: "◎", label: "Shot chart" },
-    { id: "timeline", icon: "⧗", label: "Timeline" },
-    { id: "actions", icon: "≣", label: "Liste des actions" },
-    { id: "clips", icon: "🎞", label: "Clips clés" },
-  ];
-
-  /* ---------------- rendus de sections ---------------- */
-  const renderMatrice = () => (
-    <div className="vr-card">
-      <div className="vr-card-head">
-        <h3>Matrice de rentabilité</h3>
-        <span className="vr-sub">Rentabilité par temps fort et résultat.</span>
-      </div>
-
-      {orderedTfKeys.length === 0 ? (
-        <p className="empty-small">Aucune action pour ce filtre.</p>
-      ) : (
-        <div className="vr-mtx-scroll">
-          <table className="vr-mtx">
-            <thead>
-              <tr>
-                <th className="l">Temps fort</th>
-                {RENTAB_COLS.map((c) => (
-                  <th key={String(c.id)}>{c.icon} {c.label}</th>
-                ))}
-                <th>Pts/action</th>
-              </tr>
-            </thead>
-            <tbody>
-              {matrix.map((r) => (
-                <tr key={r.key}>
-                  <td className="l">
-                    <span style={{ color: tags.color(r.key), fontWeight: 800 }}>
-                      {tags.emoji(r.key)} {tags.label(r.key)}
-                    </span>
-                  </td>
-                  {RENTAB_COLS.map((c) => {
-                    const cell = r[c.id] as { n: number; pts: number; list: any[] };
-                    const clickable = cell.n > 0 && c.id !== "total";
-                    const isTotal = c.id === "total";
-                    return (
-                      <td
-                        key={String(c.id)}
-                        className={`vr-mc tint-${c.tint} ${clickable ? "click" : ""} ${!cell.n ? "z" : ""}`}
-                        onClick={clickable ? () => openPopup(`${tags.label(r.key)} · ${c.label}`, cell.list) : undefined}
-                      >
-                        <b>{cell.n}</b>
-                        <em>{isTotal || cell.pts ? `${cell.pts} pts` : "0 pt"}</em>
-                      </td>
-                    );
-                  })}
-                  <td className={`vr-ppa ${ppaClass(r.ppa)}`}>{r.ppa.toFixed(2)}</td>
-                </tr>
-              ))}
-              <tr className="vr-total">
-                <td className="l">TOTAL</td>
-                {RENTAB_COLS.map((c) => {
-                  const t =
-  c.id === "ppa"
-    ? { n: totalsRow.ppa, pts: 0 }
-    : (totalsRow[c.id as Exclude<keyof typeof totalsRow, "ppa">] as {
-        n: number;
-        pts: number;
-      });
-                  return (
-                    <td key={String(c.id)} className={`vr-mc tint-${c.tint}`}>
-                      <b>{t.n}</b>
-                      <em>{t.pts} pts</em>
-                    </td>
-                  );
-                })}
-                <td className={`vr-ppa ${ppaClass(totalsRow.ppa)}`}>{totalsRow.ppa.toFixed(2)}</td>
-              </tr>
-            </tbody>
-          </table>
+  return (
+    <section className="pa-shell">
+      <div className="pa-head">
+        <div>
+          <span className="pa-eyebrow">Analyse individuelle</span>
+          <h2>Stats & vidéo — {playerName}</h2>
+          <p>Uniquement les actions et les tirs de ce joueur.</p>
         </div>
-      )}
 
-      <div className="vr-legend">
-        <span className="lbl">Pts/action</span>
-        <i className="ppa-good" /> ≥ 1.2
-        <i className="ppa-mid" /> 0.8 – 1.2
-        <i className="ppa-low" /> &lt; 0.8
-        <i className="ppa-zero" /> 0
-      </div>
-      <p className="vr-note">Basé uniquement sur les actions en attaque.</p>
-    </div>
-  );
-
-  const renderShotChart = (large: boolean) => (
-    <div className="vr-card">
-      <div className="vr-card-head vr-sc-head">
-        <h3>Shot chart <span className="vr-sub">· cliquez une zone</span></h3>
-        <div className="vr-sc-tools">
-          <select value={quality} onChange={(e) => setQuality(e.target.value)} title="Qualité de tir">
-            <option value="all">Toutes qualités</option>
-            {qualityOptions.map((q) => (<option key={q} value={q}>{q}</option>))}
+        <div className="pa-head-actions">
+          <input
+            className="pa-montage-title"
+            value={montageTitle}
+            onChange={(e) => setMontageTitle(e.target.value)}
+            placeholder="Nom du montage"
+          />
+          <select
+            className="pa-montage-select"
+            value={activeMontageId}
+            onChange={(e) => e.target.value ? loadSavedMontage(e.target.value) : newMontage()}
+          >
+            <option value="">Nouveau montage</option>
+            {savedMontages.map((montage) => (
+              <option key={montage.id} value={montage.id}>
+                {montage.title || "Montage sans titre"}
+              </option>
+            ))}
+          </select>
+          <button type="button" className="pa-montage-secondary" onClick={newMontage}>＋ Nouveau</button>
+          <button
+            type="button"
+            className="pa-montage-save"
+            disabled={montageBusy || !highlightQueue.length}
+            onClick={saveMontageToSupabase}
+          >
+            {montageBusy ? "Enregistrement…" : "☁ Enregistrer"}
+          </button>
+          {activeMontageId && (
+            <button type="button" className="pa-montage-delete" disabled={montageBusy} onClick={deleteSavedMontage}>Supprimer</button>
+          )}
+          <button
+            type="button"
+            className="pa-montage-launch"
+            disabled={!montageActions.length}
+            onClick={() => onOpenMontageStudio(activeMontageId || undefined)}
+          >
+            🎬 Ouvrir <b>{highlightQueue.length}</b>
+          </button>
+          <select value={matchFilter} onChange={(e) => setMatchFilter(e.target.value)}>
+            <option value="all">Tous les matchs</option>
+            {matchOptions.map((id) => (
+              <option key={id} value={id}>{matchLabelOf(id)}</option>
+            ))}
           </select>
         </div>
       </div>
 
-      {zones.length === 0 ? (
-        <p className="empty-small">Aucun tir de champ localisé (court_x / court_y) pour ce filtre.</p>
-      ) : (
-        <>
-          <div className={`vr-court-wrap ${large ? "big" : ""}`}>
-            <div className="vr-court-bg">
-              <PlayerCourt />
-            </div>
-            {zones.map((z) => {
-              const pos = ZONE_LAYOUT[z.id];
-              if (!pos) return null;
-              const pct = z.att ? Math.round((z.made / z.att) * 100) : 0;
-              const ppShot = z.att ? roundStat(z.pts / z.att) : 0;
-              return (
-                <button
-                  key={z.id}
-                  className="vr-zone-tile"
-                  title={`${z.label} · ${z.pts} pts · ${ppShot} pts/tir`}
-                  onClick={() => openPopup(`${z.label} · tirs`, z.shots)}
-                  style={{
-                    left: `${pos.l}%`,
-                    top: `${pos.t}%`,
-                    width: `${pos.w}%`,
-                    height: `${pos.h}%`,
-                    background: zoneColor(pct),
-                  }}
-                >
-                  <b>{z.made}/{z.att}</b>
-                  <em>{pct}%</em>
-                  <i>{z.pts} pts</i>
-                </button>
-              );
-            })}
-          </div>
+      {montageMessage && <div className="pa-montage-message">{montageMessage}</div>}
 
-          <div className="vr-court-foot">
-            <span>Total : {shotTotals.made}/{shotTotals.att} ({shotTotals.pct}%)</span>
-            <div className="vr-court-legend">
-              <i style={{ background: "#2f9e6a" }} /> ≥ 60%
-              <i style={{ background: "#8fce9f" }} /> 45–60%
-              <i style={{ background: "#e4b64c" }} /> 30–45%
-              <i style={{ background: "#e0645c" }} /> &lt; 30%
-            </div>
-          </div>
-
-          <div className="vr-mtx-scroll">
-            <table className="vr-last vr-zonetable">
-              <thead>
-                <tr><th className="l">Zone</th><th>Tentés</th><th>Réussis</th><th>%</th><th>PTS</th><th>Pts/tir</th></tr>
-              </thead>
-              <tbody>
-                {zones.map((z) => {
-                  const pct = z.att ? Math.round((z.made / z.att) * 100) : 0;
-                  return (
-                    <tr key={z.id} className="vr-zrow" onClick={() => openPopup(`${z.label} · tirs`, z.shots)}>
-                      <td className="l">{z.label}</td>
-                      <td>{z.att}</td>
-                      <td>{z.made}</td>
-                      <td>{pct}%</td>
-                      <td>{z.pts}</td>
-                      <td>{z.att ? roundStat(z.pts / z.att) : 0}</td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        </>
-      )}
-    </div>
-  );
-
-  const renderDernieres = () => (
-    <div className="vr-card">
-      <div className="vr-card-head"><h3>Dernières actions</h3></div>
-      {lastActions.length === 0 ? (
-        <p className="empty-small">Aucune action pour ce filtre.</p>
-      ) : (
-        <table className="vr-last">
-          <thead>
-            <tr><th className="l">Temps fort</th><th>Résultat</th><th>Action</th><th>Période</th><th>Clip</th></tr>
-          </thead>
-          <tbody>
-            {lastActions.map((a, i) => {
-              const cat = actionResultCategory(a);
-              return (
-                <tr key={a.id || i}>
-                  <td className="l">
-                    <span style={{ color: tags.color(a.temps_fort) }}>{tags.emoji(a.temps_fort)} {tags.label(a.temps_fort)}</span>
-                  </td>
-                  <td className={`vr-res ${cat}`}>
-                    {cat === "made" ? "✅ Marqué" : cat === "missed" ? "❌ Manqué" : cat === "fauteProv" ? "🔔 Faute provoquée" : cat === "intercept" ? "🖐 Intercepté" : cat === "perte" ? "↩️ Perte" : actionTypeLabel(a)}
-                  </td>
-                  <td>{actionTypeLabel(a)}</td>
-                  <td>{quarterLabel(a.quarter)}</td>
-                  <td>
-                    <button className="vr-cam" title="Voir le clip" onClick={() => openPopup(actionTypeLabel(a), [a])}>🎥</button>
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-      )}
-      {actorActions.length > lastActions.length && (
-        <button className="light-btn outline vr-more" onClick={() => setView("actions")}>
-          ≣ Voir toutes les actions ({actorActions.length})
-        </button>
-      )}
-    </div>
-  );
-
-  const renderActionsFull = () => (
-    <div className="vr-card">
-      <div className="vr-card-head"><h3>Liste des actions <span className="vr-sub">· {actorActions.length}</span></h3></div>
-      {actorActions.length === 0 ? (
-        <p className="empty-small">Aucune action pour ce filtre.</p>
-      ) : (
-        <div className="vr-mtx-scroll">
-          <table className="vr-last full">
-            <thead>
-              <tr><th className="l">Temps fort</th><th>Résultat</th><th>Action</th><th>Type tir</th><th>Points</th><th>Période</th><th>Match</th><th>Clip</th></tr>
-            </thead>
-            <tbody>
-              {[...actorActions].reverse().map((a, i) => {
-                const cat = actionResultCategory(a);
-                return (
-                  <tr key={a.id || i}>
-                    <td className="l"><span style={{ color: tags.color(a.temps_fort) }}>{tags.emoji(a.temps_fort)} {tags.label(a.temps_fort)}</span></td>
-                    <td className={`vr-res ${cat}`}>{cat === "made" ? "✅ Marqué" : cat === "missed" ? "❌ Manqué" : cat === "fauteProv" ? "🔔 Faute prov." : cat === "intercept" ? "🖐 Intercepté" : cat === "perte" ? "↩️ Perte" : "—"}</td>
-                    <td>{actionTypeLabel(a)}</td>
-                    <td>{a.shot_type || "—"}</td>
-                    <td>{matchActionPoints(a) || "—"}</td>
-                    <td>{quarterLabel(a.quarter)}</td>
-                    <td>{matchLabelOf(a.match_id)}</td>
-                    <td><button className="vr-cam" onClick={() => openPopup(actionTypeLabel(a), [a])}>🎥</button></td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
-      )}
-    </div>
-  );
-
-  const renderEvolution = () => {
-    const cmp = (label: string, key: keyof EvoBucket, suffix = "", betterUp = true) => {
-      const e = evolution!.early[key] as number;
-      const r = evolution!.recent[key] as number;
-      const diff = roundStat(r - e);
-      const good = betterUp ? diff >= 0 : diff <= 0;
-      return (
-        <div className="vr-evo-cell" key={label}>
-          <span className="vr-evo-lbl">{label}</span>
-          <div className="vr-evo-vals">
-            <b>{e}{suffix}</b>
-            <i>→</i>
-            <b>{r}{suffix}</b>
-          </div>
-          <em className={diff === 0 ? "" : good ? "good" : "bad"}>
-            {diff > 0 ? "+" : ""}{diff}{suffix}
-          </em>
-        </div>
-      );
-    };
-    return (
-      <div className="vr-card vr-evo">
-        <div className="vr-card-head"><h3>📈 Évolution vidéo <span className="vr-sub">· début saison → 30 derniers jours</span></h3></div>
-        {!evolution ? (
-          <p className="empty-small">Pas encore assez de données.</p>
-        ) : (
-          <div className="vr-evo-grid">
-            {cmp("Pts/action", "ppa")}
-            {cmp("% réussite", "success", "%")}
-            {cmp("Actions positives", "positives")}
-            {cmp("Actions négatives", "negatives", "", false)}
-          </div>
-        )}
+      <div className="pa-kpis">
+        <div><span>Actions</span><strong>{filteredActions.length}</strong></div>
+        <div><span>Points générés</span><strong>{totalPoints}</strong></div>
+        <div><span>Réussite</span><strong>{pct}%</strong></div>
+        <div><span>Clips</span><strong>{clips.length}</strong></div>
       </div>
-    );
-  };
 
-  const renderInsights = () => (
-    <div className="vr-card vr-insights">
-      <div className="vr-card-head"><h3>🤖 Analyse MyBasket</h3></div>
-      <ul className="vr-insight-list">
-        {autoInsights.map((t, i) => (
-          <li key={i}><span>›</span> {t}</li>
-        ))}
-      </ul>
-    </div>
-  );
-
-  const renderProfile = () => (
-    <div className="vr-card vr-profile">
-      <div className="vr-card-head"><h3>🧠 Profil vidéo</h3></div>
-      <div className="vr-profile-grid">
-        <div className="vr-prof-cell">
-          <span className="vr-prof-lbl">Style dominant</span>
-          <strong className="vr-prof-style">{profile.style.icon} {profile.style.label}</strong>
-        </div>
-
-        <div className="vr-prof-cell">
-          <span className="vr-prof-lbl">Meilleure arme</span>
-          {profile.bestWeapon ? (
-            <>
-              <strong style={{ color: tags.color(profile.bestWeapon.key) }}>
-                {tags.emoji(profile.bestWeapon.key)} {tags.label(profile.bestWeapon.key)}
-              </strong>
-              <em className="good">{profile.bestWeapon.ppa.toFixed(2)} pts/action</em>
-              <em>{profile.bestWeapon.actions} actions</em>
-            </>
-          ) : (
-            <em>Pas assez d'actions</em>
-          )}
-        </div>
-
-        <div className="vr-prof-cell">
-          <span className="vr-prof-lbl">Point à travailler</span>
-          {profile.weakness ? (
-            <>
-              <strong style={{ color: tags.color(profile.weakness.key) }}>
-                {tags.emoji(profile.weakness.key)} {tags.label(profile.weakness.key)}
-              </strong>
-              <em className="bad">{profile.weakness.ppa.toFixed(2)} pts/action</em>
-              <em>{profile.weakness.losses} perte{profile.weakness.losses > 1 ? "s" : ""}</em>
-            </>
-          ) : (
-            <em>Pas assez d'actions</em>
-          )}
-        </div>
+      <div className="pa-tabs">
+        <button className={section === "overview" ? "active" : ""} onClick={() => setSection("overview")}>Vue d'ensemble</button>
+        <button className={section === "shots" ? "active" : ""} onClick={() => setSection("shots")}>Shot chart</button>
+        <button className={section === "temps-forts" ? "active" : ""} onClick={() => setSection("temps-forts")}>Temps forts</button>
+        <button className={section === "actions" ? "active" : ""} onClick={() => setSection("actions")}>Actions</button>
+        <button className={section === "montage" ? "active" : ""} onClick={() => setSection("montage")}>Montage</button>
       </div>
-    </div>
-  );
 
-  const renderMtxSwitch = () => (
-    <div className="vr-mtx-switch">
-      <button className={mtxView === "perf" ? "active" : ""} onClick={() => setMtxView("perf")}>Performance</button>
-      <button className={mtxView === "scout" ? "active" : ""} onClick={() => setMtxView("scout")}>Scout</button>
-    </div>
-  );
-
-  const renderScoutTable = () => (
-    <div className="vr-card">
-      <div className="vr-card-head">
-        <h3>Matrice scouting</h3>
-        <span className="vr-sub">Actions positives / négatives / création / défense par temps fort.</span>
-      </div>
-      {orderedTfKeys.length === 0 ? (
-        <p className="empty-small">Aucune action pour ce filtre.</p>
-      ) : (
-        <div className="vr-mtx-scroll">
-          <table className="vr-mtx">
-            <thead>
-              <tr>
-                <th className="l">Temps fort</th>
-                {SCOUT_COLS.map((c) => (<th key={String(c.id)}>{c.icon} {c.label}</th>))}
-                <th>Efficacité</th>
-              </tr>
-            </thead>
-            <tbody>
-              {scoutMatrix.map((r) => (
-                <tr key={r.key}>
-                  <td className="l">
-                    <span style={{ color: tags.color(r.key), fontWeight: 800 }}>{tags.emoji(r.key)} {tags.label(r.key)}</span>
-                  </td>
-                  {SCOUT_COLS.map((c) => {
-                    const list = r[c.id] as any[];
-                    const clickable = list.length > 0;
-                    return (
-                      <td
-                        key={String(c.id)}
-                        className={`vr-mc ${c.cls} ${clickable ? "click" : ""} ${!list.length ? "z" : ""}`}
-                        onClick={clickable ? () => openPopup(`${tags.label(r.key)} · ${c.label}`, list) : undefined}
-                      >
-                        <b>{list.length}</b>
-                      </td>
-                    );
-                  })}
-                  <td className={`vr-ppa ${r.score > 0 ? "ppa-good" : r.score < 0 ? "ppa-low" : "ppa-zero"}`}>
-                    {r.score > 0 ? "+" : ""}{r.score}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
-      <p className="vr-note">🟢 panier / passe déc. / faute provoquée / rebond off. — 🔴 tir raté / perte / faute commise — 🎯 création — 🛡 défense.</p>
-    </div>
-  );
-
-  const renderTimeline = () => (
-    <div className="vr-card">
-      <div className="vr-card-head"><h3>Timeline match <span className="vr-sub">· cliquez une action pour la vidéo</span></h3></div>
-      {timeline.length === 0 ? (
-        <p className="empty-small">Aucune action pour ce filtre.</p>
-      ) : (
-        <div className="vr-timeline">
-          {timeline.map(({ quarter, events }) => (
-            <div key={quarter} className="vr-tl-row">
-              <span className="vr-tl-q">{quarterLabel(quarter)}</span>
-              <div className="vr-tl-track">
-                {events.map((ev, i) => (
-                  <button
-                    key={ev.a.id || i}
-                    className="vr-tl-dot"
-                    title={`${tags.label(ev.a.temps_fort)} · ${ev.cat}`}
-                    onClick={() => openPopup(`${tags.label(ev.a.temps_fort)} · ${ev.cat}`, events.map((e) => e.a), i)}
-                  >
-                    {ev.icon}
+      {(section === "overview" || section === "shots") && (
+        <div className="pa-main-grid">
+          <div className="pa-court-card">
+            <div className="pa-card-title">
+              <div>
+                <h3>Shot chart personnelle</h3>
+                <p>{playerShots.length} tir{playerShots.length > 1 ? "s" : ""} affiché{playerShots.length > 1 ? "s" : ""}</p>
+              </div>
+              <div className="pa-shot-switch">
+                {(["all", "2PTS", "3PTS"] as const).map((value) => (
+                  <button key={value} className={shotFilter === value ? "active" : ""} onClick={() => setShotFilter(value)}>
+                    {value === "all" ? "Tous" : value}
                   </button>
                 ))}
               </div>
             </div>
-          ))}
-          <div className="vr-tl-legend">
-            <span>🔥 positive</span><span>❌ erreur</span><span>🎯 passe déc.</span><span>🛡 défense</span>
+
+            <div className="pa-court pa-court-live">
+              <ShotChart
+                mode="analysis"
+                size="lg"
+                showPoints
+                showDots
+                showStats
+                showLabels={false}
+                shots={playerShots}
+                onShotClick={(shot) => {
+                  const index = playerShots.findIndex((item) => item === shot);
+                  openPopup("Tir du joueur", playerShots, Math.max(0, index));
+                }}
+                onZoneClick={(zoneId) => openPopup(`Zone ${zoneId}`, playerShots.filter((shot) => (shot.shot_zone_id ?? shot.zone) === zoneId))}
+              />
+            </div>
+
+            <div className="pa-legend">
+              <span><i className="made" /> Tir réussi</span>
+              <span><i className="missed" /> Tir manqué</span>
+              {locatedShots.length !== playerShots.length && (
+                <em>{playerShots.length - locatedShots.length} tir(s) sans position</em>
+              )}
+            </div>
+          </div>
+
+          <aside className="pa-summary-card">
+            <h3>Résumé tir</h3>
+            <div className="pa-big-rate"><strong>{pct}%</strong><span>{made}/{playerShots.length}</span></div>
+            <div className="pa-summary-row"><span>2 points</span><b>{made2}/{shots2.length}</b><em>{shots2.length ? Math.round((made2 / shots2.length) * 100) : 0}%</em></div>
+            <div className="pa-summary-row"><span>3 points</span><b>{made3}/{shots3.length}</b><em>{shots3.length ? Math.round((made3 / shots3.length) * 100) : 0}%</em></div>
+            <div className="pa-summary-row"><span>Pts / action</span><b>{ppa.toFixed(2)}</b><em>PPP</em></div>
+            <div className="pa-summary-row"><span>Réussis</span><b className="green">{made}</b><em>tirs</em></div>
+            <div className="pa-summary-row"><span>Manqués</span><b className="red">{Math.max(0, playerShots.length - made)}</b><em>tirs</em></div>
+          </aside>
+        </div>
+      )}
+
+      {section === "temps-forts" && (
+        <div className="pa-tf-card">
+          <div className="pa-card-title pa-tf-head">
+            <div>
+              <h3>Rentabilité par temps fort</h3>
+              <p>Lecture par temps fort : volume, efficacité, résultats et clips associés.</p>
+            </div>
+            <div className="pa-tf-global">
+              <span>PPP global</span>
+              <strong>{globalTempsFortPpp.toFixed(2)}</strong>
+              <em>{totalTempsFortPoints} pts · {totalTempsFortPossessions} possessions</em>
+            </div>
+          </div>
+
+          {tempsFortRows.length === 0 ? (
+            <p className="empty-small">Aucune action avec un temps fort pour ce joueur.</p>
+          ) : (
+            <div className="pa-tf-table-wrap">
+              <table className="pa-tf-table">
+                <thead>
+                  <tr>
+                    <th>Temps fort</th>
+                    <th>Poss.</th>
+                    <th>Points</th>
+                    <th>PPP</th>
+                    <th>Réussite</th>
+                    <th>Résultats</th>
+                    <th>Clips</th>
+                    <th />
+                  </tr>
+                </thead>
+                <tbody>
+                  {tempsFortRows.map((row) => (
+                    <tr key={row.key}>
+                      <td>
+                        <button
+                          className="pa-tf-name"
+                          onClick={() => openPopup(row.label, row.actions)}
+                        >
+                          <strong>{row.label}</strong>
+                          <span>{row.actions.length} action{row.actions.length > 1 ? "s" : ""}</span>
+                        </button>
+                      </td>
+                      <td><b>{row.possessions}</b></td>
+                      <td><b>{row.points}</b></td>
+                      <td>
+                        <span className={`pa-ppp ${row.ppp >= 1.2 ? "good" : row.ppp >= 0.8 ? "mid" : "low"}`}>
+                          {row.ppp.toFixed(2)}
+                        </span>
+                      </td>
+                      <td>
+                        <b>{row.successPct}%</b>
+                        <small>{row.made}/{row.made + row.missed}</small>
+                      </td>
+                      <td>
+                        <div className="pa-tf-results">
+                          <button
+                            className="made"
+                            disabled={!row.made}
+                            title="Revoir les actions marquées"
+                            onClick={() => openPopup(`${row.label} · Marqué`, row.madeActions)}
+                          >
+                            ✓ Marqué <b>{row.made}</b>
+                          </button>
+                          <button
+                            className="missed"
+                            disabled={!row.missed}
+                            title="Revoir les tirs manqués"
+                            onClick={() => openPopup(`${row.label} · Loupé`, row.missedActions)}
+                          >
+                            × Loupé <b>{row.missed}</b>
+                          </button>
+                          <button
+                            className="turnover"
+                            disabled={!row.turnovers}
+                            title="Revoir les balles perdues"
+                            onClick={() => openPopup(`${row.label} · Balle perdue`, row.turnoverActions)}
+                          >
+                            BP <span>Balle perdue</span> <b>{row.turnovers}</b>
+                          </button>
+                          <button
+                            className="foul"
+                            disabled={!row.foulsDrawn}
+                            title="Revoir les fautes provoquées"
+                            onClick={() => openPopup(`${row.label} · Faute provoquée`, row.foulActions)}
+                          >
+                            F <span>Faute provoquée</span> <b>{row.foulsDrawn}</b>
+                          </button>
+                          {row.steals > 0 && (
+                            <button
+                              className="steal"
+                              title="Revoir les interceptions"
+                              onClick={() => openPopup(`${row.label} · Interception`, row.stealActions)}
+                            >
+                              INT <span>Interception</span> <b>{row.steals}</b>
+                            </button>
+                          )}
+                          {row.otherActions.length > 0 && (
+                            <button
+                              className="other"
+                              title="Revoir les autres résultats"
+                              onClick={() => openPopup(`${row.label} · Autres actions`, row.otherActions)}
+                            >
+                              Autres <b>{row.otherActions.length}</b>
+                            </button>
+                          )}
+                        </div>
+                      </td>
+                      <td><b>{row.clipsCount}</b></td>
+                      <td>
+                        <button className="pa-tf-open" onClick={() => openPopup(row.label, row.actions)}>
+                          Revoir →
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+
+          <div className="pa-tf-note">
+            <b>PPP</b> = points marqués ÷ possessions codées pour ce temps fort.
+            Clique sur <b>Marqué</b>, <b>Loupé</b>, <b>Balle perdue</b> ou un autre résultat pour revoir uniquement ces actions.
+            Les actions d'autres joueurs ne sont jamais intégrées.
           </div>
         </div>
       )}
-    </div>
-  );
 
-  const renderSmartPlaylists = () => (
-    <div className="vr-card">
-      <div className="vr-card-head"><h3>Playlists intelligentes</h3></div>
-      <div className="vr-pl-grid">
-        {smartPlaylists.map((pl) => (
-          <div key={pl.id} className={`vr-pl vr-pl-${pl.id}`}>
-            <div className="vr-pl-top">
-              <span className="vr-pl-icon">{pl.icon}</span>
-              <div>
-                <strong>{pl.name}</strong>
-                <em>{pl.actions.length} clip{pl.actions.length > 1 ? "s" : ""}</em>
-              </div>
-            </div>
-            <div className="vr-pl-best">
-              {pl.best ? (
-                <>Meilleure : <b style={{ color: tags.color(pl.best.temps_fort) }}>{tags.emoji(pl.best.temps_fort)} {tags.label(pl.best.temps_fort)}</b> · {actionTypeLabel(pl.best)}</>
-              ) : (
-                <span className="muted">Aucune action</span>
-              )}
-            </div>
-            <button className="light-btn primary vr-pl-play" disabled={!pl.actions.length} onClick={() => openPopup(pl.name, pl.actions)}>
-              ▶ Lire la playlist
-            </button>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-
-  const renderClips = (compact: boolean) => {
-    const list = compact ? clipActions.slice(0, 5) : clipActions;
-    return (
-      <div className="vr-card">
-        <div className="vr-card-head"><h3>Clips clés</h3></div>
-        {list.length === 0 ? (
-          <p className="empty-small">Aucun clip pour ce filtre.</p>
-        ) : (
-          <div className="vr-clips">
-            {list.map((a, i) => (
-              <button key={a.id || i} className="vr-clip" onClick={() => openPopup(actionTypeLabel(a), [a])}>
-                <span className="vr-clip-poster">
-                  <span className="vr-clip-dur">{clipDurationLabel(a)}</span>
-                  <span className="vr-clip-play">▶</span>
-                </span>
-                <strong style={{ color: tags.color(a.temps_fort) }}>{tags.emoji(a.temps_fort)} {tags.label(a.temps_fort)}</strong>
-                <small>{actionTypeLabel(a)} {actionResultCategory(a) === "made" ? "marqué" : actionResultCategory(a) === "missed" ? "manqué" : ""}</small>
-                <em>{quarterLabel(a.quarter)} · {matchTimeLabel(a)}</em>
+      {section === "overview" && (
+        <div className="pa-bottom-grid">
+          <div className="pa-list-card">
+            <div className="pa-card-title"><div><h3>Dernières actions</h3><p>Actions individuelles récentes</p></div></div>
+            {recentActions.length === 0 ? <p className="empty-small">Aucune action.</p> : recentActions.map((action, index) => (
+              <button className="pa-action-row" key={action.id ?? index} onClick={() => openPopup(actionTypeLabel(action), recentActions, index)}>
+                <span className={`pa-result-dot ${actionResultCategory(action)}`} />
+                <span className="pa-action-main"><b>{actionTypeLabel(action)}</b><em>{tags.label(action.temps_fort)}</em></span>
+                <span>{quarterLabel(action.quarter)}</span>
+                <span>{matchActionPoints(action)} pt</span>
+                <span>{actionHasClip(action) ? "▶" : "—"}</span>
               </button>
             ))}
-            {compact && (
-              <button className="vr-clip vr-clip-all" onClick={() => setView("clips")}>
-                <span className="vr-clip-allicon">🗂</span>
-                <strong>Voir tous les clips</strong>
-                <small>{totalClips} clips disponibles</small>
-              </button>
-            )}
           </div>
-        )}
-      </div>
-    );
-  };
 
-  return (
-    <>
-      <div className="section-head vr-header">
-        <div>
-          <h2>Vidéo &amp; Rentabilité</h2>
-          <p>Analyse complète des actions LiveStat du joueur avec clips vidéo synchronisés.</p>
+          <div className="pa-list-card">
+            <div className="pa-card-title"><div><h3>Clips clés</h3><p>Accès rapide aux séquences du joueur</p></div></div>
+            {recentClips.length === 0 ? <p className="empty-small">Aucun clip synchronisé.</p> : recentClips.map((action, index) => (
+              <button className="pa-clip-row" key={action.id ?? index} onClick={() => openPopup(actionTypeLabel(action), recentClips, index)}>
+                <span className="pa-play">▶</span>
+                <span><b>{actionTypeLabel(action)}</b><em>{matchLabelOf(action.match_id)} · {quarterLabel(action.quarter)}</em></span>
+                <small>{matchTimeLabel(action)}</small>
+              </button>
+            ))}
+          </div>
         </div>
-      </div>
+      )}
 
-      {/* KPIs */}
-      <div className="kpi-row-light">
-        <Kpi icon="🎬" label="Actions codées" value={String(totalActions)} sub="Total LiveStat" />
-        <Kpi icon="🏀" label="Points générés" value={String(totalPoints)} sub="En attaque" />
-        <Kpi icon="🎞" label="Clips disponibles" value={String(totalClips)} sub="Après synchro vidéo" />
-        <Kpi icon="⭐" label="Temps forts utilisés" value={String(usedTf)} sub={`Sur ${(tags.active ?? []).length} tags`} />
-      </div>
+      {section === "shots" && (
+        <div className="pa-zones-card">
+          <div className="pa-card-title"><div><h3>Répartition par zone</h3><p>Clique une zone pour voir ses tirs</p></div></div>
+          <div className="pa-zone-grid">
+            {zones.length === 0 ? <p className="empty-small">Aucune zone disponible.</p> : zones.map((zone) => {
+              const zPct = zone.att ? Math.round((zone.made / zone.att) * 100) : 0;
+              return (
+                <button key={zone.id} onClick={() => openPopup(zone.label, zone.shots)}>
+                  <span>{zone.label}</span><strong>{zPct}%</strong><em>{zone.made}/{zone.att}</em>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
 
-      {/* Profil vidéo automatique */}
-      {renderProfile()}
-
-      {/* Évolution avant/après + insights auto */}
-      <div className="vr-grid vr-evo-row">
-        <div className="vr-col-main">{renderEvolution()}</div>
-        <div className="vr-col-side">{renderInsights()}</div>
-      </div>
-
-      {/* Barre de sous-onglets */}
-      <div className="vr-subtabs">
-        <div className="vr-subtabs-left">
-          {SUBTABS.map((t) => (
-            <button key={t.id} className={view === t.id ? "active" : ""} onClick={() => setView(t.id)}>
-              <span>{t.icon}</span> {t.label}
+      {section === "actions" && (
+        <div className="pa-list-card pa-full-list">
+          <div className="pa-card-title"><div><h3>Toutes les actions du joueur</h3><p>{filteredActions.length} action(s)</p></div></div>
+          {[...filteredActions].reverse().map((action, index, list) => (
+            <button className="pa-action-row" key={action.id ?? index} onClick={() => openPopup(actionTypeLabel(action), list, index)}>
+              <span className={`pa-result-dot ${actionResultCategory(action)}`} />
+              <span className="pa-action-main"><b>{actionTypeLabel(action)}</b><em>{tags.label(action.temps_fort)} · {matchLabelOf(action.match_id)}</em></span>
+              <span>{quarterLabel(action.quarter)}</span>
+              <span>{matchActionPoints(action)} pt</span>
+              <span>{actionHasClip(action) ? "▶" : "—"}</span>
             </button>
           ))}
         </div>
-        <button className="vr-filters-toggle" onClick={() => setShowFilters((s) => !s)}>⧩ Filtres</button>
-      </div>
+      )}
 
-      <div className={`vr-shell ${showFilters ? "with-aside" : ""}`}>
-        <div className="vr-main">
-          {view === "matrice" && (
-            <>
-              <div className="vr-grid">
-                <div className="vr-col-main">
-                  {renderMtxSwitch()}
-                  {mtxView === "perf" ? renderMatrice() : renderScoutTable()}
-                </div>
-                <div className="vr-col-side">
-                  {renderShotChart(false)}
-                  {renderDernieres()}
-                </div>
-              </div>
-              {renderClips(true)}
-            </>
-          )}
-          {view === "shot" && (
-            <div className="vr-grid">
-              <div className="vr-col-main">{renderShotChart(true)}</div>
-              <div className="vr-col-side">{renderDernieres()}</div>
-            </div>
-          )}
-          {view === "timeline" && (
-            <div className="vr-grid">
-              <div className="vr-col-main">{renderTimeline()}</div>
-              <div className="vr-col-side">{renderDernieres()}</div>
-            </div>
-          )}
-          {view === "actions" && renderActionsFull()}
-          {view === "clips" && (
-            <>
-              {renderSmartPlaylists()}
-              {renderClips(false)}
-            </>
-          )}
+      {section === "montage" && (
+        <div className="pa-montages-section">
+          <div className="pa-card-title">
+            <div><h3>Montages assignés au joueur</h3><p>Tous les montages enregistrés avec ce joueur.</p></div>
+          </div>
+          <PlayerMontages teamId={teamId} playerId={playerId} showEmpty />
         </div>
-
-        {showFilters && (
-          <aside className="vr-aside">
-            <h3>Filtres</h3>
-
-            <div className="vr-fgroup">
-              <span className="vr-flabel">Résultat</span>
-              <label className="vr-chk">
-                <input
-                  type="checkbox"
-                  checked={RESULT_KEYS.every((k) => filters.results[k])}
-                  onChange={(e) =>
-                    setFilters((f) => ({
-                      ...f,
-                      results: { made: e.target.checked, missed: e.target.checked, fauteProv: e.target.checked, intercept: e.target.checked, perte: e.target.checked },
-                    }))
-                  }
-                />
-                <span>Tous les résultats</span>
-              </label>
-              {([
-                ["made", "✅ Marqué", "#168653"],
-                ["missed", "❌ Manqué", "#c5283d"],
-                ["fauteProv", "🔔 Faute provoquée", "#b26a1b"],
-                ["intercept", "🖐 Intercepté", "#7a3ea8"],
-                ["perte", "↩️ Perte", "#7a7069"],
-              ] as [ResultKey, string, string][]).map(([k, lbl, col]) => (
-                <label key={k} className="vr-chk">
-                  <input type="checkbox" checked={filters.results[k]} onChange={(e) => setResult(k, e.target.checked)} />
-                  <span style={{ color: col }}>{lbl}</span>
-                </label>
-              ))}
-            </div>
-
-            <div className="vr-fgroup">
-              <span className="vr-flabel">Type de tir</span>
-              <label className="vr-chk">
-                <input
-                  type="checkbox"
-                  checked={filters.shots.p2 && filters.shots.p3 && filters.shots.lf}
-                  onChange={(e) => setFilters((f) => ({ ...f, shots: { p2: e.target.checked, p3: e.target.checked, lf: e.target.checked } }))}
-                />
-                <span>Tous les tirs</span>
-              </label>
-              <label className="vr-chk"><input type="checkbox" checked={filters.shots.p2} onChange={(e) => setShot("p2", e.target.checked)} /><span>2 Points</span></label>
-              <label className="vr-chk"><input type="checkbox" checked={filters.shots.p3} onChange={(e) => setShot("p3", e.target.checked)} /><span>3 Points</span></label>
-              <label className="vr-chk"><input type="checkbox" checked={filters.shots.lf} onChange={(e) => setShot("lf", e.target.checked)} /><span>Lancer franc</span></label>
-            </div>
-
-            <div className="vr-fgroup">
-              <span className="vr-flabel">Match</span>
-              <select value={filters.match} onChange={(e) => setFilters({ ...filters, match: e.target.value })}>
-                <option value="all">Tous les matchs</option>
-                {matchOptions.map((m) => (<option key={m.id} value={m.id}>{m.label}</option>))}
-              </select>
-            </div>
-
-            <div className="vr-fgroup">
-              <span className="vr-flabel">Période</span>
-              <select value={filters.quarter} onChange={(e) => setFilters({ ...filters, quarter: e.target.value })}>
-                <option value="all">Toutes les périodes</option>
-                {quarterOptions.map((q) => (<option key={q} value={q}>{quarterLabel(q)}</option>))}
-              </select>
-            </div>
-
-            <div className="vr-fgroup">
-              <span className="vr-flabel">Temps fort</span>
-              <select value={filters.tf} onChange={(e) => setFilters({ ...filters, tf: e.target.value })}>
-                <option value="all">Tous les temps forts</option>
-                {tfOptions.map((k) => (<option key={k} value={k}>{tags.label(k)}</option>))}
-              </select>
-            </div>
-
-            <div className="vr-fgroup">
-              <span className="vr-flabel">Attaque / Défense</span>
-              <select value={filters.side} onChange={(e) => setFilters({ ...filters, side: e.target.value })}>
-                <option value="all">Les deux</option>
-                <option value="attaque">Attaque</option>
-                <option value="defense">Défense</option>
-              </select>
-            </div>
-
-            <button className="light-btn outline vr-reset" disabled={!filtersActive} onClick={() => setFilters(DEFAULT_VIDEO_FILTERS)}>
-              ↺ Réinitialiser les filtres
-            </button>
-          </aside>
-        )}
-      </div>
+      )}
 
       {popup && (
         <VideoModal
           title={popup.title}
           actions={popup.actions}
-          startIndex={popup.index ?? 0}
+          startIndex={popup.index || 0}
           tags={tags}
           playerName={playerName}
           matchLabelOf={matchLabelOf}
@@ -3718,158 +3868,25 @@ function VideoRentabilityTab({
           onToggleHighlight={toggleHighlight}
           onRemoveHighlight={removeHighlight}
           onClearHighlights={clearHighlights}
-          coachNotes={coachNotes}
-          onSaveNote={saveNote}
-          customTags={customTags}
-          onSaveTags={saveTags}
+          onSaveMontage={saveMontageToSupabase}
+          montageBusy={montageBusy}
+          montageTitle={montageTitle}
+          montageId={activeMontageId}
+          teamId={teamId}
+          playerId={playerId}
+          montageDesignItems={montageDesignItems}
+          onChangeMontageDesignItems={setMontageDesignItems}
+          coachNotes={[]}
+          onSaveNote={() => undefined}
+          customTags={[]}
+          onSaveTags={() => undefined}
           onClose={() => setPopup(null)}
         />
       )}
-
-      <style jsx>{`
-        .vr-header h2 { color: #6b1a2c; }
-        .vr-evo-row { margin-bottom: 0; }
-        .vr-evo-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: .8rem; }
-        .vr-evo-cell { border: 1px solid #efe4da; border-radius: 12px; padding: .7rem .8rem; background: #fff; display: grid; gap: .3rem; }
-        .vr-evo-lbl { color: #8a7b73; font-size: .66rem; font-weight: 900; text-transform: uppercase; letter-spacing: .04em; }
-        .vr-evo-vals { display: flex; align-items: center; gap: .5rem; }
-        .vr-evo-vals b { font-family: "Oswald", sans-serif; font-size: 1.25rem; color: #171717; }
-        .vr-evo-vals i { color: #b8ada5; font-style: normal; }
-        .vr-evo-cell em { font-style: normal; font-weight: 800; font-size: .78rem; color: #8a7b73; }
-        .vr-evo-cell em.good { color: #17803a; } .vr-evo-cell em.bad { color: #c02626; }
-        .vr-insights { background: linear-gradient(180deg, #fbf6ef, #fff); }
-        .vr-insight-list { list-style: none; margin: 0; padding: 0; display: grid; gap: .55rem; }
-        .vr-insight-list li { display: flex; gap: .5rem; color: #3f3733; font-size: .86rem; line-height: 1.35; font-weight: 600; }
-        .vr-insight-list li span { color: #d4a24c; font-weight: 900; }
-        .vr-profile { background: linear-gradient(180deg, #fffdf9, #fff); }
-        .vr-profile-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1rem; }
-        .vr-prof-cell { border: 1px solid #efe4da; border-radius: 12px; padding: .8rem .9rem; background: #fff; display: grid; gap: .2rem; align-content: start; }
-        .vr-prof-lbl { color: #8a7b73; font-size: .66rem; font-weight: 900; text-transform: uppercase; letter-spacing: .05em; }
-        .vr-prof-cell strong { color: #171717; font-size: 1.05rem; font-weight: 900; }
-        .vr-prof-style { color: #6b1a2c !important; font-family: "Oswald", sans-serif; font-size: 1.2rem !important; }
-        .vr-prof-cell em { font-style: normal; font-weight: 800; font-size: .8rem; color: #8a7b73; }
-        .vr-prof-cell em.good { color: #17803a; } .vr-prof-cell em.bad { color: #c02626; }
-        .vr-mtx-switch { display: inline-flex; border: 1px solid #e8e2da; border-radius: 999px; overflow: hidden; margin-bottom: .8rem; }
-        .vr-mtx-switch button { border: 0; background: #fff; color: #8a7b73; font-weight: 900; font-size: .78rem; padding: .45rem 1rem; cursor: pointer; }
-        .vr-mtx-switch button.active { background: #6b1a2c; color: #fff; }
-        .sc-pos { background: #eef8f1; } .sc-neg { background: #fdf0ef; } .sc-cre { background: #fdf5e7; } .sc-def { background: #eef3fb; } .sc-neu { background: #f6f3f0; }
-        .vr-sc-head { display: flex; align-items: center; justify-content: space-between; gap: 1rem; }
-        .vr-sc-tools select { border: 1px solid #e8e2da; border-radius: 8px; padding: .4rem .5rem; background: #fff; font: inherit; font-size: .8rem; }
-        .vr-zonetable { margin-top: 1rem; width: 100%; }
-        .vr-zrow { cursor: pointer; }
-        .vr-zrow:hover td { background: #fdeef0; }
-        .vr-zone-tile i { font-style: normal; font-size: .62rem; font-weight: 800; opacity: .85; }
-        .vr-timeline { display: grid; gap: .7rem; }
-        .vr-tl-row { display: grid; grid-template-columns: 48px 1fr; align-items: center; gap: .6rem; }
-        .vr-tl-q { color: #6b1a2c; font-family: "Oswald", sans-serif; font-weight: 900; font-size: .9rem; }
-        .vr-tl-track { display: flex; flex-wrap: wrap; gap: .25rem; border-left: 3px solid #efe4da; padding: .3rem .4rem; background: #fbf9f6; border-radius: 8px; min-height: 34px; }
-        .vr-tl-dot { border: 0; background: #fff; border: 1px solid #eee4dc; border-radius: 7px; width: 26px; height: 26px; cursor: pointer; font-size: .9rem; line-height: 1; display: grid; place-items: center; }
-        .vr-tl-dot:hover { transform: scale(1.15); border-color: #f0d2d9; }
-        .vr-tl-legend { display: flex; gap: 1rem; flex-wrap: wrap; color: #8a7b73; font-size: .74rem; font-weight: 800; margin-top: .3rem; }
-        .vr-pl-grid { display: grid; grid-template-columns: repeat(5, 1fr); gap: .8rem; }
-        .vr-pl { border: 1px solid #e8e2da; border-radius: 14px; padding: .9rem; background: #fff; display: grid; gap: .5rem; align-content: start; }
-        .vr-pl-top { display: flex; align-items: center; gap: .6rem; }
-        .vr-pl-icon { font-size: 1.5rem; }
-        .vr-pl-top strong { display: block; color: #171717; font-size: .92rem; font-weight: 900; }
-        .vr-pl-top em { font-style: normal; color: #8a7b73; font-size: .76rem; font-weight: 800; }
-        .vr-pl-best { color: #6f625d; font-size: .74rem; line-height: 1.3; min-height: 2.4em; }
-        .vr-pl-best b { font-weight: 800; }
-        .vr-pl-best .muted { color: #b8ada5; }
-        .vr-pl-play { width: 100%; }
-        .vr-pl-play:disabled { opacity: .5; cursor: not-allowed; }
-        .vr-pl-highlights { border-top: 3px solid #e0645c; } .vr-pl-corrections { border-top: 3px solid #e4b64c; }
-        .vr-pl-shooting { border-top: 3px solid #6b1a2c; } .vr-pl-creation { border-top: 3px solid #7a3ea8; } .vr-pl-defense { border-top: 3px solid #2f6fb2; }
-        .vr-subtabs { display: flex; align-items: center; justify-content: space-between; gap: 1rem; border-bottom: 1px solid #e8e2da; margin: .4rem 0 1rem; flex-wrap: wrap; }
-        .vr-subtabs-left { display: flex; gap: 1.4rem; overflow-x: auto; }
-        .vr-subtabs-left button { border: 0; background: none; color: #8a7b73; font-weight: 900; text-transform: uppercase; font-size: .74rem; letter-spacing: .03em; padding: .7rem 0; white-space: nowrap; display: inline-flex; align-items: center; gap: .35rem; }
-        .vr-subtabs-left button.active { color: #6b1a2c; border-bottom: 2px solid #6b1a2c; }
-        .vr-filters-toggle { border: 1px solid #e8e2da; background: #fff; color: #6b1a2c; border-radius: 999px; padding: .4rem .8rem; font-weight: 900; font-size: .78rem; }
-        .vr-shell { display: grid; grid-template-columns: 1fr; gap: 1rem; align-items: start; }
-        .vr-shell.with-aside { grid-template-columns: minmax(0,1fr) 250px; }
-        .vr-grid { display: grid; grid-template-columns: minmax(0, 1.5fr) minmax(0, 1fr); gap: 1rem; align-items: start; }
-        .vr-col-side { display: grid; gap: 1rem; }
-        .vr-card { border: 1px solid #e8e2da; border-radius: 16px; background: #fff; box-shadow: 0 8px 22px rgba(60,30,20,.06); padding: 1.1rem 1.2rem; margin-bottom: 1rem; }
-        .vr-card-head { display: flex; align-items: baseline; gap: .6rem; margin-bottom: .9rem; flex-wrap: wrap; }
-        .vr-card-head h3 { font-family: "Oswald", sans-serif; text-transform: uppercase; color: #6b1a2c; margin: 0; font-size: 1.05rem; letter-spacing: .03em; }
-        .vr-sub { color: #8a7b73; font-size: .78rem; font-weight: 600; }
-        .vr-mtx-scroll { overflow-x: auto; }
-        .vr-mtx { border-collapse: collapse; width: 100%; font-size: .8rem; min-width: 720px; }
-        .vr-mtx th { color: #8a7b73; text-transform: uppercase; font-size: .62rem; font-weight: 900; padding: .5rem .4rem; text-align: center; border-bottom: 1px solid #eee4dc; white-space: nowrap; }
-        .vr-mtx th.l, .vr-mtx td.l { text-align: left; }
-        .vr-mtx td { padding: .45rem .4rem; text-align: center; border-bottom: 1px solid #f2ece5; }
-        .vr-mc { line-height: 1.05; }
-        .vr-mc b { display: block; color: #171717; font-size: .98rem; font-weight: 800; }
-        .vr-mc em { font-style: normal; color: #9b8f87; font-size: .66rem; }
-        .vr-mc.z b { color: #cbbfb6; }
-        .vr-mc.click { cursor: pointer; }
-        .vr-mc.click:hover { outline: 2px solid #f0d2d9; outline-offset: -2px; border-radius: 6px; }
-        .tint-green { background: #eef8f1; } .tint-red { background: #fdf0ef; } .tint-amber { background: #fdf5e7; }
-        .tint-violet { background: #f5f0fb; } .tint-grey { background: #f6f3f0; } .tint-neutral { background: #fbf9f6; }
-        .vr-ppa { font-weight: 900; font-family: "Oswald", sans-serif; font-size: 1rem; border-radius: 6px; }
-        .ppa-good { color: #17803a; } .ppa-mid { color: #b26a1b; } .ppa-low { color: #c02626; } .ppa-zero { color: #b8ada5; }
-        .vr-total td { border-top: 2px solid #e8e2da; font-weight: 900; }
-        .vr-total .l { color: #6b1a2c; }
-        .vr-legend { display: flex; align-items: center; gap: .5rem; margin-top: .9rem; color: #8a7b73; font-size: .74rem; font-weight: 800; flex-wrap: wrap; }
-        .vr-legend .lbl { text-transform: uppercase; margin-right: .3rem; }
-        .vr-legend i { width: 22px; height: 12px; border-radius: 4px; display: inline-block; margin-left: .5rem; }
-        .vr-legend i.ppa-good { background: #bfe6cd; } .vr-legend i.ppa-mid { background: #f6e2bb; } .vr-legend i.ppa-low { background: #f4c9c4; } .vr-legend i.ppa-zero { background: #eee7e0; }
-        .vr-note { color: #9b8f87; font-size: .76rem; margin: .5rem 0 0; }
-        .vr-court-wrap { position: relative; width: 100%; aspect-ratio: 5 / 4; border: 1px solid #efe4da; border-radius: 14px; overflow: hidden; background: #fff; }
-        .vr-court-wrap.big { max-width: 560px; margin: 0 auto; }
-        .vr-court-bg { position: absolute; inset: 0; opacity: .16; }
-        .vr-court-bg :global(svg) { width: 100%; height: 100%; }
-        .vr-zone-tile { position: absolute; border: 2px solid #fff; border-radius: 12px; color: #163b28; display: grid; place-items: center; gap: 0; cursor: pointer; box-shadow: 0 3px 8px rgba(0,0,0,.12); transition: transform .08s; }
-        .vr-zone-tile:hover { transform: scale(1.03); z-index: 2; }
-        .vr-zone-tile b { font-size: .95rem; font-weight: 900; }
-        .vr-zone-tile em { font-style: normal; font-size: .74rem; font-weight: 800; }
-        .vr-court-foot { display: flex; align-items: center; justify-content: space-between; gap: 1rem; margin-top: .8rem; flex-wrap: wrap; }
-        .vr-court-foot > span { color: #6b1a2c; font-weight: 900; font-size: .85rem; }
-        .vr-court-legend { display: flex; align-items: center; gap: .4rem; color: #8a7b73; font-size: .72rem; font-weight: 800; flex-wrap: wrap; }
-        .vr-court-legend i { width: 12px; height: 12px; border-radius: 50%; display: inline-block; margin-left: .5rem; }
-        .vr-last { width: 100%; border-collapse: collapse; font-size: .82rem; }
-        .vr-last.full { min-width: 760px; }
-        .vr-last th { color: #8a7b73; text-transform: uppercase; font-size: .64rem; font-weight: 900; text-align: left; padding: .4rem .3rem; border-bottom: 1px solid #eee4dc; white-space: nowrap; }
-        .vr-last td { padding: .5rem .3rem; border-bottom: 1px solid #f2ece5; color: #171717; font-weight: 600; white-space: nowrap; }
-        .vr-res.made { color: #168653; font-weight: 800; } .vr-res.missed { color: #c5283d; font-weight: 800; }
-        .vr-res.fauteProv { color: #b26a1b; font-weight: 800; } .vr-res.intercept { color: #7a3ea8; font-weight: 800; } .vr-res.perte { color: #7a7069; font-weight: 800; }
-        .vr-cam { border: 0; background: none; cursor: pointer; font-size: 1rem; }
-        .vr-more { margin-top: .8rem; }
-        .vr-clips { display: grid; grid-template-columns: repeat(6, 1fr); gap: .7rem; }
-        .vr-clip { border: 1px solid #e8e2da; border-radius: 12px; background: #fff; padding: 0 0 .6rem; text-align: left; cursor: pointer; overflow: hidden; display: grid; gap: .2rem; }
-        .vr-clip:hover { border-color: #f0d2d9; box-shadow: 0 6px 16px rgba(60,30,20,.1); }
-        .vr-clip-poster { position: relative; display: block; aspect-ratio: 16/10; background: linear-gradient(135deg, #7a1228, #b07f3e); }
-        .vr-clip-dur { position: absolute; bottom: 6px; left: 6px; background: rgba(0,0,0,.7); color: #fff; font-size: .66rem; font-weight: 900; padding: .1rem .35rem; border-radius: 5px; }
-        .vr-clip-play { position: absolute; inset: 0; display: grid; place-items: center; color: rgba(255,255,255,.9); font-size: 1.4rem; }
-        .vr-clip strong { font-size: .78rem; padding: 0 .5rem; margin-top: .3rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-        .vr-clip small { color: #171717; font-size: .72rem; padding: 0 .5rem; }
-        .vr-clip em { font-style: normal; color: #8a7b73; font-size: .68rem; padding: 0 .5rem; }
-        .vr-clip-all { display: grid; place-items: center; text-align: center; gap: .3rem; background: #fbf6ef; }
-        .vr-clip-allicon { font-size: 1.6rem; }
-        .vr-aside { border: 1px solid #e8e2da; border-radius: 16px; background: #fff; box-shadow: 0 8px 22px rgba(60,30,20,.06); padding: 1.1rem; position: sticky; top: 1rem; }
-        .vr-aside h3 { font-family: "Oswald", sans-serif; text-transform: uppercase; color: #6b1a2c; margin: 0 0 1rem; font-size: 1rem; }
-        .vr-fgroup { display: grid; gap: .4rem; padding-bottom: .9rem; margin-bottom: .9rem; border-bottom: 1px solid #f2ece5; }
-        .vr-flabel { color: #8a7b73; font-size: .66rem; font-weight: 900; text-transform: uppercase; letter-spacing: .05em; }
-        .vr-chk { display: flex; align-items: center; gap: .5rem; font-size: .82rem; color: #171717; font-weight: 600; cursor: pointer; }
-        .vr-chk input { accent-color: #6b1a2c; width: 16px; height: 16px; }
-        .vr-aside select { border: 1px solid #e8e2da; border-radius: 8px; padding: .45rem .5rem; background: #fff; font: inherit; font-size: .82rem; width: 100%; }
-        .vr-reset { width: 100%; }
-        .vr-reset:disabled { opacity: .5; cursor: not-allowed; }
-        @media (max-width: 1100px) {
-          .vr-shell.with-aside { grid-template-columns: 1fr; }
-          .vr-aside { position: relative; top: 0; }
-          .vr-grid { grid-template-columns: 1fr; }
-          .vr-clips { grid-template-columns: repeat(3, 1fr); }
-          .vr-profile-grid { grid-template-columns: 1fr; }
-          .vr-pl-grid { grid-template-columns: repeat(2, 1fr); }
-        }
-        @media (max-width: 640px) {
-          .vr-clips { grid-template-columns: repeat(2, 1fr); }
-          .vr-pl-grid { grid-template-columns: 1fr; }
-        }
-      `}</style>
-    </>
+    </section>
   );
 }
+
 
 function PlayerCourt() {
   return (
@@ -3906,6 +3923,14 @@ function VideoModal({
   onToggleHighlight,
   onRemoveHighlight,
   onClearHighlights,
+  onSaveMontage,
+  montageBusy,
+  montageTitle,
+  montageId,
+  teamId,
+  playerId,
+  montageDesignItems,
+  onChangeMontageDesignItems,
   coachNotes,
   onSaveNote,
   customTags,
@@ -3923,6 +3948,14 @@ function VideoModal({
   onToggleHighlight: (a: any) => void;
   onRemoveHighlight: (id: string) => void;
   onClearHighlights: () => void;
+  onSaveMontage: () => void;
+  montageBusy: boolean;
+  montageTitle: string;
+  montageId: string;
+  teamId: string;
+  playerId: string;
+  montageDesignItems: MontageDesignItem[];
+  onChangeMontageDesignItems: (items: MontageDesignItem[]) => void;
   coachNotes: VideoNote[];
   onSaveNote: (n: VideoNote) => void;
   customTags: VideoCustomTag[];
@@ -3936,6 +3969,18 @@ function VideoModal({
   const [noteType, setNoteType] = useState(NOTE_TYPES[0]);
   const [tagDraft, setTagDraft] = useState<string[]>([]);
   const [tagFree, setTagFree] = useState("");
+  const [designType, setDesignType] = useState<MontageDesignItem["item_type"]>("title");
+  const [designTitle, setDesignTitle] = useState("");
+  const [designText, setDesignText] = useState("");
+  const [designImage, setDesignImage] = useState("");
+  const [designBackground, setDesignBackground] = useState("");
+  const [designFont, setDesignFont] = useState("Inter");
+  const [designSize, setDesignSize] = useState(38);
+  const [designColor, setDesignColor] = useState("#ffffff");
+  const [designPlacement, setDesignPlacement] = useState<"intro" | "outro">("intro");
+  const [designUploading, setDesignUploading] = useState(false);
+  const [advancedEditorOpen, setAdvancedEditorOpen] = useState(false);
+  const modalSupabase = useMemo(() => createClient(), []);
   const stageRef = useRef<HTMLDivElement | null>(null);
   const videoRef = useRef<HTMLVideoElement | null>(null);
 
@@ -3972,6 +4017,16 @@ function VideoModal({
       try { videoRef.current.currentTime = Number(current.clip_start) || 0; } catch { /* no-op */ }
     }
   }, [current]);
+
+  useEffect(() => {
+    const handleKey = (event: KeyboardEvent) => {
+      if (event.key === "ArrowLeft") setIdx((i) => Math.max(0, i - 1));
+      if (event.key === "ArrowRight") setIdx((i) => Math.min(list.length - 1, i + 1));
+      if (event.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", handleKey);
+    return () => window.removeEventListener("keydown", handleKey);
+  }, [list.length, onClose]);
 
   const goPrev = () => setIdx((i) => Math.max(0, (list.length ? Math.min(i, list.length - 1) : 0) - 1));
   const goNext = () => setIdx((i) => Math.min(list.length - 1, (list.length ? Math.min(i, list.length - 1) : 0) + 1));
@@ -4015,17 +4070,68 @@ function VideoModal({
     setPanel("");
   };
 
+  const uploadMontageImage = async (file: File) => {
+    setDesignUploading(true);
+    try {
+      const { data: authData, error: authError } = await modalSupabase.auth.getUser();
+      if (authError || !authData.user) throw authError || new Error("Utilisateur non connecté");
+      const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, "-");
+      const objectPath = `${authData.user.id}/${teamId}/${playerId}/${Date.now()}-${safeName}`;
+      const { error: uploadError } = await modalSupabase.storage
+        .from("livestat-montages")
+        .upload(objectPath, file, { upsert: false, contentType: file.type || undefined });
+      if (uploadError) throw uploadError;
+      const { data } = modalSupabase.storage.from("livestat-montages").getPublicUrl(objectPath);
+      setDesignImage(data.publicUrl);
+    } catch (error: any) {
+      console.error("Erreur upload image montage :", error);
+      alert(error?.message || "Impossible d'envoyer l'image. Vérifie le bucket livestat-montages.");
+    } finally {
+      setDesignUploading(false);
+    }
+  };
+
+  const addDesignItem = () => {
+    if (designType === "image" && !designImage.trim()) return;
+    if (designType !== "image" && !designTitle.trim() && !designText.trim()) return;
+    const next: MontageDesignItem = {
+      id: uid(),
+      item_type: designType,
+      title: designTitle.trim(),
+      text: designText.trim(),
+      image_url: designImage.trim(),
+      background_url: designBackground.trim(),
+      font_family: designFont,
+      font_size: Number(designSize || 38),
+      font_color: designColor,
+      placement: designPlacement,
+    };
+    onChangeMontageDesignItems([...montageDesignItems, next]);
+    setDesignTitle("");
+    setDesignText("");
+    setDesignImage("");
+    setDesignBackground("");
+  };
+  const removeDesignItem = (id: string) =>
+    onChangeMontageDesignItems(montageDesignItems.filter((item) => item.id !== id));
+  const moveDesignItem = (id: string, dir: -1 | 1) => {
+    const index = montageDesignItems.findIndex((item) => item.id === id);
+    const target = index + dir;
+    if (index < 0 || target < 0 || target >= montageDesignItems.length) return;
+    const copy = [...montageDesignItems];
+    [copy[index], copy[target]] = [copy[target], copy[index]];
+    onChangeMontageDesignItems(copy);
+  };
+
   return (
     <div className="modal-bg" onClick={onClose}>
       <div className="vr-modal" onClick={(e) => e.stopPropagation()}>
         <div className="vr-modal-head">
           <h2>{current ? `${tags.label(current.temps_fort)} - ${actionTypeLabel(current)} ${cat === "made" ? "marqué" : cat === "missed" ? "manqué" : ""}` : title}</h2>
           <div className="vr-head-right">
-            {highlightQueue.length > 0 && (
-              <button className={`vr-montage-count ${panel === "montage" ? "on" : ""}`} onClick={() => setPanel((p) => (p === "montage" ? "" : "montage"))}>
-                ⭐ Montage ({highlightQueue.length})
-              </button>
-            )}
+            <button className={`vr-montage-count ${panel === "montage" ? "on" : ""}`} onClick={() => setPanel((p) => (p === "montage" ? "" : "montage"))}>
+              🎬 Montage ({highlightQueue.length})
+            </button>
             <button className="vr-modal-x" onClick={onClose}>×</button>
           </div>
         </div>
@@ -4033,8 +4139,13 @@ function VideoModal({
         {panel === "montage" && (
           <div className="vr-montage-panel">
             <div className="vr-montage-head">
-              <strong>Mon montage · {highlightQueue.length} clip{highlightQueue.length > 1 ? "s" : ""}</strong>
-              <button className="vr-montage-clear" onClick={onClearHighlights} disabled={!highlightQueue.length}>Vider</button>
+              <strong>{montageTitle || "Mon montage"} · {highlightQueue.length} clip{highlightQueue.length > 1 ? "s" : ""}</strong>
+              <div className="vr-montage-actions">
+                <button className="vr-montage-save" onClick={onSaveMontage} disabled={montageBusy || !highlightQueue.length}>
+                  {montageBusy ? "Enregistrement…" : "☁ Enregistrer"}
+                </button>
+                <button className="vr-montage-clear" onClick={onClearHighlights} disabled={!highlightQueue.length}>Vider</button>
+              </div>
             </div>
             {highlightQueue.length === 0 ? (
               <p className="vr-montage-empty">Aucun clip sélectionné. Utilise ⭐ Highlight sur une action.</p>
@@ -4048,12 +4159,49 @@ function VideoModal({
                 ))}
               </ul>
             )}
-            <p className="vr-montage-note">Export vidéo du montage : à venir.</p>
+            <div className="vr-montage-editor">
+              <div className="vr-editor-head"><strong>Habillage du montage</strong><span>Titre, texte ou image</span></div>
+              <div className="vr-editor-grid">
+                <select value={designType} onChange={(e) => setDesignType(e.target.value as MontageDesignItem["item_type"])}>
+                  <option value="title">Titre</option><option value="text">Texte</option><option value="image">Image</option>
+                </select>
+                <select value={designPlacement} onChange={(e) => setDesignPlacement(e.target.value as "intro" | "outro")}>
+                  <option value="intro">Avant les clips</option><option value="outro">Après les clips</option>
+                </select>
+                <input placeholder="Titre" value={designTitle} onChange={(e) => setDesignTitle(e.target.value)} />
+                <input placeholder="Texte / sous-titre" value={designText} onChange={(e) => setDesignText(e.target.value)} />
+                <input placeholder="URL image" value={designImage} onChange={(e) => setDesignImage(e.target.value)} />
+                <label className="vr-file-field">{designUploading ? "Envoi…" : "Importer une image"}<input type="file" accept="image/*" disabled={designUploading} onChange={(e) => { const file = e.target.files?.[0]; if (file) uploadMontageImage(file); e.currentTarget.value = ""; }} /></label>
+                <input placeholder="URL image de fond" value={designBackground} onChange={(e) => setDesignBackground(e.target.value)} />
+                <select value={designFont} onChange={(e) => setDesignFont(e.target.value)}>
+                  <option>Inter</option><option>Roboto</option><option>Arial</option><option>Georgia</option><option>Impact</option>
+                </select>
+                <input type="number" min="14" max="120" value={designSize} onChange={(e) => setDesignSize(Number(e.target.value))} />
+                <label className="vr-color-field">Couleur <input type="color" value={designColor} onChange={(e) => setDesignColor(e.target.value)} /></label>
+                <button className="vr-add-design" onClick={addDesignItem}>＋ Ajouter</button>
+              </div>
+              {montageDesignItems.length > 0 && (
+                <div className="vr-design-list">
+                  {montageDesignItems.map((item, index) => (
+                    <div className="vr-design-item" key={item.id}>
+                      <div className="vr-design-preview" style={{ backgroundImage: item.background_url ? `linear-gradient(rgba(0,0,0,.38),rgba(0,0,0,.38)),url(${item.background_url})` : undefined }}>
+                        {item.item_type === "image" && item.image_url ? <img src={item.image_url} alt="" /> : <span style={{ fontFamily: item.font_family, fontSize: Math.min(item.font_size, 22), color: item.font_color }}>{item.title || item.text || item.item_type}</span>}
+                      </div>
+                      <div><b>{item.item_type === "title" ? "Titre" : item.item_type === "text" ? "Texte" : "Image"}</b><small>{item.placement === "intro" ? "Avant les clips" : "Après les clips"}</small></div>
+                      <div className="vr-design-actions"><button onClick={() => moveDesignItem(item.id, -1)} disabled={index === 0}>↑</button><button onClick={() => moveDesignItem(item.id, 1)} disabled={index === montageDesignItems.length - 1}>↓</button><button className="danger" onClick={() => removeDesignItem(item.id)}>✕</button></div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+            <p className="vr-montage-note">Les titres, textes et images seront enregistrés dans Supabase avec le montage.</p>
           </div>
         )}
 
         <div className="vr-modal-body">
           <div className="vr-modal-stage" ref={stageRef}>
+            <button className="vr-stage-arrow prev" onClick={goPrev} disabled={safeIdx <= 0} aria-label="Clip précédent">‹</button>
+            <button className="vr-stage-arrow next" onClick={goNext} disabled={safeIdx >= list.length - 1} aria-label="Clip suivant">›</button>
             {current && playable && url ? (
               <video ref={videoRef} src={url} controls playsInline className="vr-modal-video" />
             ) : (
@@ -4079,7 +4227,7 @@ function VideoModal({
 
             <div className="vr-modal-tools">
               <button className={`vr-tool ${isQueued ? "on" : ""}`} disabled={!current} onClick={() => current && onToggleHighlight(current)} title="Ajouter au highlight">
-                {isQueued ? "★ Retirer" : "⭐ Highlight"}
+                {isQueued ? "✓ Dans le montage" : "+ Ajouter au montage"}
               </button>
               <button className={`vr-tool ${panel === "note" ? "on" : ""} ${existingNote ? "has" : ""}`} disabled={!current} onClick={() => setPanel((p) => (p === "note" ? "" : "note"))} title="Note coach">📝 Note{existingNote ? " •" : ""}</button>
               <button className={`vr-tool ${panel === "tag" ? "on" : ""} ${existingTags.length ? "has" : ""}`} disabled={!current} onClick={() => setPanel((p) => (p === "tag" ? "" : "tag"))} title="Tag perso">🏷 Tag{existingTags.length ? ` (${existingTags.length})` : ""}</button>
@@ -4115,6 +4263,9 @@ function VideoModal({
               </div>
             )}
 
+            <button className="vr-tool vr-advanced-edit" disabled={!current || !playable} onClick={() => setAdvancedEditorOpen(true)}>
+              ✂ Éditer la vidéo
+            </button>
             <button
               className="vr-export-btn"
               disabled={!elig.ok}
@@ -4128,6 +4279,17 @@ function VideoModal({
             </div>
           </div>
         </div>
+
+        <AdvancedVideoEditor
+          open={advancedEditorOpen}
+          onClose={() => setAdvancedEditorOpen(false)}
+          action={current}
+          videoUrl={url}
+          montageId={montageId}
+          teamId={teamId}
+          playerId={playerId}
+          montageTitle={montageTitle}
+        />
 
         <div className="vr-modal-filters">
           <select value={pf.result} onChange={(e) => setPf({ ...pf, result: e.target.value })}>
@@ -4167,7 +4329,8 @@ function VideoModal({
       </div>
 
       <style jsx>{`
-        .vr-modal { position: fixed; right: 1.2rem; bottom: 1.2rem; width: min(560px, 94vw); background: #14100f; color: #f4efe8; border-radius: 16px; overflow: hidden; box-shadow: 0 24px 60px rgba(0,0,0,.5); z-index: 1300; }
+        .modal-bg { position: fixed; inset: 0; display: grid; place-items: center; padding: 24px; background: rgba(22, 14, 15, .58); backdrop-filter: blur(5px); z-index: 1299; }
+        .vr-modal { position: relative; width: min(920px, 94vw); max-height: min(88vh, 820px); overflow: auto; background: #14100f; color: #f4efe8; border: 1px solid rgba(255,255,255,.11); border-radius: 18px; box-shadow: 0 30px 90px rgba(0,0,0,.62); z-index: 1300; }
         .vr-modal-head { display: flex; align-items: center; justify-content: space-between; gap: 1rem; padding: .8rem 1rem; border-bottom: 1px solid rgba(255,255,255,.08); }
         .vr-modal-head h2 { font-size: .95rem; margin: 0; font-weight: 800; color: #fff; }
         .vr-head-right { display: flex; align-items: center; gap: .5rem; }
@@ -4175,7 +4338,7 @@ function VideoModal({
         .vr-montage-count { border: 1px solid #d4a24c; background: rgba(212,162,76,.16); color: #f4c56a; border-radius: 999px; padding: .3rem .6rem; font-weight: 900; font-size: .74rem; cursor: pointer; white-space: nowrap; }
         .vr-montage-count.on { background: #d4a24c; color: #201b19; }
         .vr-montage-panel { margin: 0 1rem .4rem; background: rgba(255,255,255,.05); border: 1px solid rgba(255,255,255,.1); border-radius: 10px; padding: .6rem .7rem; }
-        .vr-montage-head { display: flex; align-items: center; justify-content: space-between; gap: 1rem; margin-bottom: .4rem; }
+        .vr-montage-head { display: flex; align-items: center; justify-content: space-between; gap: 1rem; margin-bottom: .4rem; }.vr-montage-actions{display:flex;align-items:center;gap:.4rem}.vr-montage-save{background:#d4a24c;border:1px solid #d4a24c;color:#201b19;border-radius:6px;padding:.25rem .55rem;font-size:.7rem;font-weight:900;cursor:pointer}.vr-montage-save:disabled{opacity:.4;cursor:not-allowed}
         .vr-montage-head strong { color: #f4c56a; font-size: .8rem; }
         .vr-montage-clear { background: none; border: 1px solid rgba(255,255,255,.2); color: #f4efe8; border-radius: 6px; padding: .2rem .5rem; font-size: .7rem; font-weight: 800; cursor: pointer; }
         .vr-montage-clear:disabled { opacity: .4; cursor: not-allowed; }
@@ -4183,8 +4346,13 @@ function VideoModal({
         .vr-montage-list { list-style: none; margin: 0; padding: 0; display: grid; gap: .25rem; max-height: 130px; overflow: auto; }
         .vr-montage-list li { display: flex; align-items: center; justify-content: space-between; gap: .5rem; background: rgba(255,255,255,.05); border-radius: 6px; padding: .25rem .5rem; font-size: .76rem; font-weight: 700; }
         .vr-montage-list li button { background: none; border: 0; color: #ff8a80; cursor: pointer; font-weight: 900; }
+        .vr-montage-editor{margin-top:.65rem;padding-top:.65rem;border-top:1px solid rgba(255,255,255,.1)}.vr-editor-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:.45rem}.vr-editor-head strong{color:#f4c56a;font-size:.78rem}.vr-editor-head span{color:#9f9290;font-size:.66rem}.vr-editor-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:.38rem}.vr-editor-grid input,.vr-editor-grid select{width:100%;min-width:0;background:#171313;border:1px solid rgba(255,255,255,.14);color:#f7f0ea;border-radius:7px;padding:.42rem .5rem;font-size:.7rem}.vr-color-field{display:flex;align-items:center;justify-content:space-between;background:#171313;border:1px solid rgba(255,255,255,.14);border-radius:7px;padding:.28rem .45rem;color:#b9aca4;font-size:.68rem}.vr-color-field input{width:34px;height:24px;padding:0;border:0;background:transparent}.vr-add-design{border:1px solid #d4a24c;background:#d4a24c;color:#211b18;border-radius:7px;font-size:.7rem;font-weight:900;cursor:pointer}.vr-design-list{display:grid;gap:.35rem;margin-top:.5rem;max-height:155px;overflow:auto}.vr-design-item{display:grid;grid-template-columns:78px minmax(0,1fr) auto;gap:.45rem;align-items:center;background:rgba(255,255,255,.045);border:1px solid rgba(255,255,255,.08);border-radius:8px;padding:.35rem}.vr-design-preview{height:46px;border-radius:6px;background:#251e1d center/cover no-repeat;display:grid;place-items:center;overflow:hidden;text-align:center;padding:.25rem}.vr-design-preview img{width:100%;height:100%;object-fit:cover}.vr-design-item b,.vr-design-item small{display:block}.vr-design-item b{font-size:.7rem;color:#f4efe8}.vr-design-item small{font-size:.62rem;color:#9f9290}.vr-design-actions{display:flex;gap:.22rem}.vr-design-actions button{width:26px;height:26px;border-radius:6px;border:1px solid rgba(255,255,255,.14);background:#201a19;color:#f4efe8;cursor:pointer}.vr-design-actions button:disabled{opacity:.3;cursor:default}.vr-design-actions button.danger{color:#ff8a80}.vr-file-field{display:flex;align-items:center;justify-content:center;border:1px dashed rgba(212,162,76,.65);color:#f4c56a;border-radius:7px;font-size:.68rem;font-weight:900;cursor:pointer;min-height:32px}.vr-file-field input{display:none}
         .vr-modal-body { display: grid; grid-template-columns: minmax(0, 1.5fr) minmax(0, 1fr); gap: .8rem; padding: .9rem 1rem; }
-        .vr-modal-stage { background: #000; border-radius: 10px; overflow: hidden; min-height: 170px; display: grid; }
+        .vr-modal-stage { position: relative; background: #000; border-radius: 10px; overflow: hidden; min-height: 260px; display: grid; }
+        .vr-stage-arrow { position: absolute; top: 50%; transform: translateY(-50%); z-index: 5; width: 42px; height: 42px; border-radius: 50%; border: 1px solid rgba(255,255,255,.35); background: rgba(12,8,8,.72); color: #fff; font-size: 28px; line-height: 1; cursor: pointer; box-shadow: 0 8px 22px rgba(0,0,0,.35); }
+        .vr-stage-arrow.prev { left: 12px; }
+        .vr-stage-arrow.next { right: 12px; }
+        .vr-stage-arrow:disabled { opacity: .22; cursor: default; }
         .vr-modal-video { width: 100%; display: block; max-height: 300px; }
         .vr-modal-empty { display: grid; place-items: center; gap: .3rem; text-align: center; padding: 1rem; }
         .vr-modal-empty span { font-weight: 900; }
@@ -4222,7 +4390,8 @@ function VideoModal({
         .vr-modal-nav .light-btn:disabled { opacity: .4; cursor: not-allowed; }
         .vr-counter { color: #b9aca4; font-weight: 900; font-size: .8rem; margin: 0 auto; }
         @media (max-width: 560px) {
-          .vr-modal { right: .5rem; left: .5rem; width: auto; bottom: .5rem; }
+          .modal-bg { padding: 8px; }
+          .vr-modal { width: 100%; max-height: 94vh; }
           .vr-modal-body { grid-template-columns: 1fr; }
         }
       `}</style>
@@ -4298,7 +4467,7 @@ function ModernPlayerComparisonSection({
     return roundStat(source.reduce((sum, row) => sum + metricValue(row, key), 0) / source.length);
   }
 
-  function rankFor(key: typeof metrics[number]["key"], lowerIsBetter?: boolean) {
+  function rankFor(key: typeof metrics[number]["key"], lowerIsBetter?: boolean): number | null {
     const current = metricValue(playerRow, key);
     const sorted = [...normalizedRows]
       .filter((row) => row.player_id || row.id)
@@ -4307,6 +4476,11 @@ function ModernPlayerComparisonSection({
         const bv = metricValue(b, key);
         return lowerIsBetter ? av - bv : bv - av;
       });
+
+    // §23 · si personne n'a de valeur sur cette métrique (tous à zéro), aucun
+    // classement pertinent : on renvoie null → affichage "Pas encore classé".
+    const anyNonZero = sorted.some((row) => metricValue(row, key) !== 0) || current !== 0;
+    if (!anyNonZero) return null;
 
     const index = sorted.findIndex((row) => String(row.player_id || row.id) === currentPlayerId);
     if (index >= 0) return index + 1;
@@ -4319,7 +4493,8 @@ function ModernPlayerComparisonSection({
     return better + 1;
   }
 
-  function medal(rank: number) {
+  function medal(rank: number | null) {
+    if (rank == null) return "";
     if (rank === 1) return "🥇";
     if (rank === 2) return "🥈";
     if (rank === 3) return "🥉";
@@ -4356,7 +4531,7 @@ function ModernPlayerComparisonSection({
               <strong>{row.metric.short}</strong>
               <b>{row.value}</b>
               <small>moy. équipe {row.avg}</small>
-              <em>{medal(row.rank)} {row.rank}/{effectif}</em>
+              <em>{row.rank == null ? 'Pas encore classé' : `${medal(row.rank)} ${row.rank}/${effectif}`}</em>
             </article>
           ))}
         </div>
@@ -4407,6 +4582,9 @@ function ModernPlayerComparisonSection({
       <style jsx>{`
         .mb-compare-modern{margin-top:28px}.mb-compare-heading h2{margin:0;color:#111;font-size:2rem;font-weight:950;text-transform:uppercase;letter-spacing:.01em}.mb-compare-heading span{display:block;width:108px;height:7px;border-radius:999px;background:linear-gradient(90deg,#6b1a2c 0 55%,#d4a24c 55%);margin:.55rem 0 .7rem}.mb-compare-heading p{margin:0 0 1.2rem;color:#6f625d;font-weight:800}.mb-rank-card,.mb-average-card{border:1px solid #eadfd6;border-radius:18px;background:#fff;box-shadow:0 18px 40px rgba(60,30,20,.08);padding:1.35rem;margin-bottom:1.35rem}.mb-rank-card h3,.mb-average-card h3{margin:0;color:#6b1a2c;font-size:1.35rem;text-transform:uppercase;font-weight:950;display:flex;align-items:center;gap:.55rem}.mb-rank-grid{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:1rem;margin-top:1.25rem}.mb-rank-tile{min-height:190px;border:1px solid #eadfd6;border-radius:16px;background:linear-gradient(180deg,#fff,#fffdf9);display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;padding:1rem;box-shadow:0 8px 20px rgba(60,30,20,.045)}.mb-rank-icon{width:54px;height:54px;border-radius:999px;background:radial-gradient(circle at 30% 20%,#b51d3a,#6b1a2c 72%);color:white;display:grid;place-items:center;font-size:1.45rem;box-shadow:0 8px 18px rgba(107,26,44,.25);margin-bottom:.7rem}.mb-rank-tile strong{font-size:.82rem;color:#24171b;text-transform:uppercase}.mb-rank-tile b{font-size:1.65rem;color:#111;margin:.35rem 0 .15rem}.mb-rank-tile small{color:#6f625d;font-weight:800}.mb-rank-tile em{font-style:normal;margin-top:.65rem;color:#111;font-weight:950;font-size:1.1rem}.mb-average-head{display:flex;align-items:center;justify-content:space-between;gap:1rem;margin-bottom:1.2rem}.mb-legend-modern{display:flex;align-items:center;gap:.7rem;color:#6f625d;font-weight:900;font-size:.82rem;text-transform:uppercase}.mb-legend-modern i{width:12px;height:12px;border-radius:999px;display:inline-block}.mb-legend-modern .player{background:#6b1a2c}.mb-legend-modern .team{background:#d4a24c}.mb-legend-modern .diff{background:#b7b7b7}.mb-average-list{display:flex;flex-direction:column;gap:.55rem}.mb-average-row{display:grid;grid-template-columns:260px 1fr 135px;align-items:center;gap:1.3rem;border:1px solid #eadfd6;border-radius:14px;background:#fff;padding:.9rem 1rem}.mb-average-label{display:flex;align-items:center;gap:1rem}.mb-average-label>span{width:42px;height:42px;border-radius:999px;background:#6b1a2c;color:#fff;display:grid;place-items:center;font-size:1.15rem}.mb-average-label strong{display:block;color:#111;font-weight:950;text-transform:uppercase}.mb-average-label b{display:block;margin-top:.2rem;font-size:1.05rem}.good{color:#17803a!important}.bad{color:#c02626!important}.mb-bars-side{display:grid;grid-template-columns:1fr 1fr;gap:1.6rem}.mb-bar-meta{display:flex;justify-content:space-between;align-items:flex-end;margin-bottom:.35rem}.mb-bar-meta span{color:#6f625d;text-transform:uppercase;font-size:.72rem;font-weight:950}.mb-bar-meta b{font-size:1.15rem;color:#6b1a2c}.mb-bar-track{height:9px;border-radius:999px;background:#f0ece8;overflow:hidden}.mb-bar-track i{display:block;height:100%;border-radius:999px}.mb-bar-track .player{background:#6b1a2c}.mb-bar-track .team{background:#d4a24c}.mb-diff{text-align:center}.mb-diff span{display:block;color:#6f625d;text-transform:uppercase;font-size:.72rem;font-weight:950}.mb-diff strong{display:block;margin-top:.35rem;font-size:1.2rem}@media(max-width:1180px){.mb-rank-grid{grid-template-columns:repeat(3,1fr)}.mb-average-row{grid-template-columns:1fr}.mb-bars-side{grid-template-columns:1fr}}@media(max-width:700px){.mb-rank-grid{grid-template-columns:1fr}.mb-average-head{align-items:flex-start;flex-direction:column}.mb-legend-modern{flex-wrap:wrap}}
       `}</style>
+
+      {/* §22 · Montages liés à ce joueur */}
+
     </section>
   );
 }
@@ -6313,4 +6491,7 @@ body {
     flex: 1;
   }
 }
+.pa-shell{padding:24px 0 40px;color:#211c1d}.pa-montage-title{min-width:190px;border:1px solid #e8ded9;background:#fff;border-radius:12px;padding:10px 12px;font-weight:750;color:#352e30}.pa-montage-select{min-width:190px!important}.pa-montage-secondary,.pa-montage-save,.pa-montage-delete{border-radius:11px;padding:10px 12px;font-weight:900;cursor:pointer;white-space:nowrap}.pa-montage-secondary{border:1px solid #dfd1cb;background:#fff;color:#574b4e}.pa-montage-save{border:1px solid #8d1531;background:#8d1531;color:#fff}.pa-montage-delete{border:1px solid #efc8c8;background:#fff5f5;color:#b42318}.pa-montage-save:disabled,.pa-montage-delete:disabled{opacity:.45;cursor:not-allowed}.pa-montage-message{margin:-6px 0 14px;padding:10px 13px;border:1px solid #d8eadf;background:#f1faf4;color:#187746;border-radius:11px;font-size:12px;font-weight:800}.pa-head{display:flex;align-items:flex-end;justify-content:space-between;gap:20px;margin-bottom:18px}.pa-eyebrow{display:block;color:#8d1531;font-size:11px;font-weight:900;text-transform:uppercase;letter-spacing:.14em;margin-bottom:5px}.pa-head h2{margin:0;font-size:27px;letter-spacing:-.03em;color:#211c1d}.pa-head p{margin:6px 0 0;color:#83787a;font-size:13px}.pa-head-actions{display:flex;align-items:center;gap:9px;flex-wrap:wrap}.pa-head-actions select{min-width:210px;border:1px solid #e8ded9;background:#fff;border-radius:12px;padding:11px 36px 11px 13px;font-weight:700;color:#352e30}.pa-montage-launch{border:1px solid #d7a84f;background:#201b19;color:#f4c56a;border-radius:12px;padding:10px 13px;font-weight:900;cursor:pointer;white-space:nowrap}.pa-montage-launch b{display:inline-grid;place-items:center;min-width:22px;height:22px;margin-left:6px;border-radius:999px;background:#d4a24c;color:#201b19}.pa-montage-launch:disabled{opacity:.45;cursor:not-allowed}.pa-kpis{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin-bottom:18px}.pa-kpis>div{background:#fff;border:1px solid #eadfda;border-radius:15px;padding:15px 17px;box-shadow:0 7px 20px rgba(58,35,28,.04)}.pa-kpis span{display:block;color:#918486;font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:.06em}.pa-kpis strong{display:block;margin-top:5px;font-size:26px;color:#8d1531}.pa-tabs{display:flex;gap:6px;border-bottom:1px solid #eadfda;margin-bottom:16px}.pa-tabs button{border:0;background:transparent;padding:11px 14px;color:#8b7f81;font-weight:800;cursor:pointer;border-bottom:3px solid transparent}.pa-tabs button.active{color:#8d1531;border-bottom-color:#f0823f}.pa-main-grid{display:grid;grid-template-columns:minmax(0,1fr) 245px;gap:14px;align-items:stretch}.pa-court-card,.pa-summary-card,.pa-list-card,.pa-zones-card{background:#fff;border:1px solid #eadfda;border-radius:16px;box-shadow:0 8px 26px rgba(60,38,31,.045)}.pa-court-card{padding:15px}.pa-card-title{display:flex;align-items:center;justify-content:space-between;gap:16px;margin-bottom:12px}.pa-card-title h3{margin:0;font-size:16px;color:#292224}.pa-card-title p{margin:3px 0 0;font-size:12px;color:#938789}.pa-shot-switch{display:flex;padding:3px;background:#f5efec;border-radius:10px}.pa-shot-switch button{border:0;background:transparent;border-radius:8px;padding:7px 11px;font-size:11px;font-weight:900;color:#786d6f;cursor:pointer}.pa-shot-switch button.active{background:#8d1531;color:#fff}.pa-court{position:relative;aspect-ratio:10/7;overflow:hidden;border-radius:12px;background:#bd8f56}.pa-court>svg{width:100%;height:100%;display:block}.pa-shot{position:absolute;z-index:3;transform:translate(-50%,-50%);width:22px;height:22px;border-radius:50%;border:2px solid #fff;display:grid;place-items:center;color:#fff;font-size:14px;font-weight:1000;box-shadow:0 2px 7px rgba(0,0,0,.36);cursor:pointer;transition:.16s ease}.pa-shot:hover{transform:translate(-50%,-50%) scale(1.25);z-index:5}.pa-shot.made{background:#1f9d55}.pa-shot.missed{background:#df342c}.pa-legend{display:flex;align-items:center;gap:18px;padding-top:12px;color:#655a5c;font-size:12px;font-weight:700}.pa-legend span{display:flex;align-items:center;gap:7px}.pa-legend i{width:11px;height:11px;border-radius:50%;display:inline-block}.pa-legend i.made{background:#1f9d55}.pa-legend i.missed{background:#df342c}.pa-legend em{margin-left:auto;color:#9a8d90;font-style:normal}.pa-summary-card{padding:18px}.pa-summary-card h3{margin:0 0 14px;font-size:16px}.pa-big-rate{display:flex;align-items:flex-end;gap:9px;padding:16px;border-radius:14px;background:#8d1531;color:#fff;margin-bottom:10px}.pa-big-rate strong{font-size:40px;line-height:1}.pa-big-rate span{font-size:13px;font-weight:800;opacity:.82;padding-bottom:4px}.pa-summary-row{display:grid;grid-template-columns:1fr auto;gap:2px 8px;padding:12px 1px;border-bottom:1px solid #f0e7e3}.pa-summary-row span{font-size:12px;color:#776b6d;font-weight:700}.pa-summary-row b{font-size:16px;color:#2c2527}.pa-summary-row em{grid-column:2;font-size:10px;color:#9b8e90;font-style:normal;text-align:right}.pa-summary-row b.green{color:#1f9d55}.pa-summary-row b.red{color:#df342c}.pa-bottom-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-top:14px}.pa-list-card{padding:15px}.pa-action-row,.pa-clip-row{width:100%;display:grid;align-items:center;border:0;border-top:1px solid #f0e8e4;background:transparent;padding:11px 4px;text-align:left;cursor:pointer;color:#403638}.pa-action-row{grid-template-columns:12px minmax(0,1fr) 45px 45px 28px;gap:9px}.pa-action-row:hover,.pa-clip-row:hover{background:#fbf7f5}.pa-action-main,.pa-clip-row>span:nth-child(2){min-width:0}.pa-action-main b,.pa-clip-row b{display:block;font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.pa-action-main em,.pa-clip-row em,.pa-clip-row small{display:block;color:#998c8e;font-size:10px;font-style:normal;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.pa-result-dot{width:9px;height:9px;border-radius:50%;background:#aaa}.pa-result-dot.made{background:#1f9d55}.pa-result-dot.missed,.pa-result-dot.perte{background:#df342c}.pa-result-dot.intercept,.pa-result-dot.fauteProv{background:#e6a21a}.pa-clip-row{grid-template-columns:34px minmax(0,1fr) auto;gap:10px}.pa-play{width:30px;height:30px;border-radius:50%;display:grid;place-items:center;background:#f8e9df;color:#8d1531;font-size:10px}.pa-zones-card{padding:15px;margin-top:14px}.pa-zone-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:9px}.pa-zone-grid button{border:1px solid #eee2dd;background:#fcf9f7;border-radius:12px;padding:13px;text-align:left;cursor:pointer}.pa-zone-grid button:hover{border-color:#c9977c;background:#fff}.pa-zone-grid span{display:block;color:#817476;font-size:10px;font-weight:800}.pa-zone-grid strong{display:block;font-size:23px;color:#8d1531;margin-top:4px}.pa-zone-grid em{font-style:normal;font-size:11px;color:#998d8f}.pa-full-list{margin-top:2px}.pa-tf-card{background:#fff;border:1px solid #eadfda;border-radius:16px;padding:18px;box-shadow:0 8px 26px rgba(60,38,31,.045)}.pa-tf-head{align-items:flex-start}.pa-tf-global{min-width:185px;background:#8d1531;color:#fff;border-radius:14px;padding:12px 15px;text-align:right}.pa-tf-global span,.pa-tf-global em{display:block}.pa-tf-global span{font-size:10px;font-weight:900;text-transform:uppercase;letter-spacing:.08em;opacity:.78}.pa-tf-global strong{display:block;font-size:31px;line-height:1.05;margin:3px 0}.pa-tf-global em{font-size:10px;font-style:normal;opacity:.78}.pa-tf-table-wrap{overflow:auto;border:1px solid #eee3de;border-radius:13px}.pa-tf-table{width:100%;border-collapse:collapse;min-width:890px}.pa-tf-table th{background:#f8f3f0;color:#87797c;font-size:10px;text-transform:uppercase;letter-spacing:.06em;text-align:left;padding:11px 10px;border-bottom:1px solid #eadfda}.pa-tf-table td{padding:12px 10px;border-bottom:1px solid #f1e9e5;color:#3e3537;font-size:12px;vertical-align:middle}.pa-tf-table tbody tr:last-child td{border-bottom:0}.pa-tf-table tbody tr:hover{background:#fcf8f6}.pa-tf-name{border:0;background:transparent;padding:0;text-align:left;cursor:pointer;color:#2f282a}.pa-tf-name strong,.pa-tf-name span{display:block}.pa-tf-name strong{font-size:13px}.pa-tf-name span{font-size:10px;color:#9a8c8f;margin-top:2px}.pa-ppp{display:inline-flex;min-width:48px;justify-content:center;border-radius:999px;padding:5px 8px;font-weight:900}.pa-ppp.good{background:#e5f6eb;color:#167a43}.pa-ppp.mid{background:#fff3d9;color:#9a6700}.pa-ppp.low{background:#fde8e5;color:#bd2d25}.pa-tf-table td small{display:block;color:#9a8d90;margin-top:2px}.pa-tf-results{display:flex;flex-wrap:wrap;gap:6px}.pa-tf-results button{display:inline-flex;align-items:center;gap:4px;border:1px solid transparent;border-radius:999px;padding:5px 8px;font-size:10px;font-weight:900;cursor:pointer;transition:.15s ease}.pa-tf-results button span{font-weight:800}.pa-tf-results button b{font-size:10px}.pa-tf-results button:hover:not(:disabled){transform:translateY(-1px);filter:brightness(.97);box-shadow:0 3px 8px rgba(45,28,25,.10)}.pa-tf-results button:disabled{opacity:.35;cursor:default}.pa-tf-results .made{background:#e5f6eb;color:#167a43;border-color:#c9ead5}.pa-tf-results .missed{background:#fde8e5;color:#bd2d25;border-color:#f5cfca}.pa-tf-results .foul{background:#fff3d9;color:#9a6700;border-color:#f4dfaa}.pa-tf-results .turnover{background:#eee9f7;color:#624596;border-color:#ddd2ee}.pa-tf-results .steal{background:#e6f1fb;color:#216aa2;border-color:#cbdff2}.pa-tf-results .other{background:#f2eeec;color:#6f6466;border-color:#e4dcda}.pa-tf-open{border:1px solid #dfcfc7;background:#fff;color:#8d1531;border-radius:9px;padding:7px 10px;font-weight:900;font-size:10px;cursor:pointer;white-space:nowrap}.pa-tf-open:hover{background:#8d1531;color:#fff;border-color:#8d1531}.pa-tf-note{margin-top:11px;color:#8a7d80;font-size:11px}.pa-tf-note b{color:#8d1531}.pa-clips-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:13px}.pa-clip-card{border:1px solid #eadfda;background:#fff;border-radius:15px;padding:0;overflow:hidden;text-align:left;cursor:pointer}.pa-clip-cover{height:108px;background:linear-gradient(135deg,#281f21,#8d1531);display:grid;place-items:center}.pa-clip-cover i{width:42px;height:42px;border-radius:50%;display:grid;place-items:center;background:#fff;color:#8d1531;font-style:normal}.pa-clip-info{display:block;padding:13px}.pa-clip-info b,.pa-clip-info em,.pa-clip-info small{display:block}.pa-clip-info b{font-size:13px}.pa-clip-info em{font-style:normal;color:#8d1531;font-size:11px;font-weight:800;margin-top:3px}.pa-clip-info small{color:#95888a;margin-top:6px}.pa-main-grid{grid-template-columns:minmax(0,1fr) 280px}.pa-court-card,.pa-summary-card,.pa-tf-card{border-color:#eadfd8;box-shadow:0 10px 28px rgba(60,30,20,.06)}.pa-court{background:#b98b54;max-height:680px}.pa-court :global(text){display:none!important}.pa-tf-table th{background:#6b1a2c;color:#fff;padding:13px 11px}.pa-tf-table th:first-child{background:#561421}.pa-tf-table td{padding:13px 11px}.pa-tf-table tbody tr:nth-child(even){background:#fcfaf9}.pa-tf-name strong{color:#6b1a2c}.pa-kpis>div{min-height:92px}.pa-tabs button{font-size:12px}.pa-montage-message{font-size:13px}.pa-shell .empty-small{border:1px dashed #d4a24c;border-radius:14px;background:#fff8ef;padding:18px;color:#6b1a2c;font-weight:800}@media(max-width:1050px){.pa-main-grid{grid-template-columns:1fr}.pa-summary-card{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}.pa-summary-card h3{grid-column:1/-1}.pa-big-rate{grid-row:2/4}.pa-kpis{grid-template-columns:repeat(2,1fr)}}@media(max-width:760px){.pa-tf-head{flex-direction:column}.pa-tf-global{width:100%;text-align:left}.pa-head{align-items:flex-start;flex-direction:column}.pa-head-actions,.pa-head-actions select{width:100%}.pa-bottom-grid,.pa-clips-grid{grid-template-columns:1fr}.pa-zone-grid{grid-template-columns:repeat(2,1fr)}.pa-summary-card{display:block}.pa-kpis{grid-template-columns:1fr 1fr}.pa-tabs{overflow:auto}.pa-tabs button{white-space:nowrap}.pa-court{aspect-ratio:4/3}}
+
 `;
+
