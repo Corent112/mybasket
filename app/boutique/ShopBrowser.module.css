@@ -335,15 +335,6 @@
   line-height: 1.2;
 }
 
-.info p {
-  min-height: 34px;
-  margin: 0;
-  overflow: hidden;
-  color: var(--muted);
-  font-size: 10px;
-  line-height: 1.55;
-}
-
 .priceLine {
   display: flex;
   align-items: center;

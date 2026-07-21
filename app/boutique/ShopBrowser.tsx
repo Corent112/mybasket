@@ -298,12 +298,6 @@ export default function ShopBrowser({
                           <h2>{name}</h2>
                         </Link>
 
-                        <p>
-                          {product.description ||
-                            product.description_short ||
-                            "Produit officiel MyBasket."}
-                        </p>
-
                         <div className={styles.priceLine}>
                           <strong>{formatPrice(product.price_cents)}</strong>
                           {product.compare_at_price_cents ? (
