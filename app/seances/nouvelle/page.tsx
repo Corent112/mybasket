@@ -108,11 +108,25 @@ export default function NouvelleSeancePage() {
       if (block.id !== blockId) return block;
       const target = Math.max(1, block.playersPerTeam || 1);
       const needed = Math.max(1, Math.ceil(selectedPlayers.length / target));
-      let teamsCopy = [...block.teams];
-      while (teamsCopy.length < needed) teamsCopy.push({ id: uid("team"), name: `Équipe ${teamsCopy.length + 1}`, playerIds: [] });
-      const cleared = teamsCopy.map((team) => ({ ...team, playerIds: [] }));
-      selectedPlayers.forEach((playerId, index) => cleared[index % Math.min(needed, cleared.length)].playerIds.push(playerId));
-      return { ...block, teams: cleared };
+      const teamsCopy: CompositionTeam[] = block.teams.map((team) => ({
+        ...team,
+        playerIds: [] as string[],
+      }));
+
+      while (teamsCopy.length < needed) {
+        teamsCopy.push({
+          id: uid("team"),
+          name: `Équipe ${teamsCopy.length + 1}`,
+          playerIds: [] as string[],
+        });
+      }
+
+      selectedPlayers.forEach((playerId, index) => {
+        const targetTeam = teamsCopy[index % Math.min(needed, teamsCopy.length)];
+        if (targetTeam) targetTeam.playerIds.push(playerId);
+      });
+
+      return { ...block, teams: teamsCopy };
     }));
   }
   function moveExercise(index: number, delta: number) { const target = index + delta; if (target < 0 || target >= exercises.length) return; const copy = [...exercises]; [copy[index], copy[target]] = [copy[target], copy[index]]; setExercises(copy.map((exercise, i) => ({ ...exercise, sort_order: i }))); }
