@@ -18,36 +18,49 @@ function isClothing(product: Product) {
   return category.includes("vêtement") || category.includes("vetement");
 }
 
-function cleanText(value: unknown) {
-  return String(value || "")
-    .replace(/<[^>]*>/g, " ")
+function cleanText(value: string) {
+  return value
+    .replace(/<br\s*\/?>/gi, "\n")
+    .replace(/<\/p>/gi, "\n")
+    .replace(/<[^>]+>/g, "")
     .replace(/\s+/g, " ")
     .trim();
 }
 
-function truncate(value: string, length = 250) {
-  if (value.length <= length) return value;
-  const cut = value.slice(0, length);
-  const lastSpace = cut.lastIndexOf(" ");
-  return `${cut.slice(0, lastSpace > 150 ? lastSpace : length).trim()}…`;
+function splitSentences(value: string) {
+  return cleanText(value)
+    .split(/(?<=[.!?])\s+(?=[A-ZÀ-ÖØ-Ý])/)
+    .map((sentence) => sentence.trim())
+    .filter(Boolean);
 }
 
-function descriptionParagraphs(value: string) {
-  const sentences = value.match(/[^.!?]+[.!?]+|[^.!?]+$/g)?.map((item) => item.trim()).filter(Boolean) ?? [];
-  const paragraphs: string[] = [];
+function buildIntro(value: string) {
+  const sentences = splitSentences(value);
+  if (sentences.length === 0) return [];
 
+  const first = sentences.slice(0, 2).join(" ");
+  const second = sentences.slice(2, 4).join(" ");
+
+  return [first, second].filter(Boolean);
+}
+
+function buildParagraphs(value: string) {
+  const sentences = splitSentences(value);
+  if (sentences.length === 0) return [];
+
+  const paragraphs: string[] = [];
   for (let index = 0; index < sentences.length; index += 3) {
     paragraphs.push(sentences.slice(index, index + 3).join(" "));
   }
-
-  return paragraphs.length > 0 ? paragraphs : [value];
+  return paragraphs;
 }
 
 export default function ProductDetail({ product }: { product: Product }) {
   const metadata = (product.metadata || {}) as Record<string, unknown>;
   const taxRate = Number(metadata.tax_rate ?? 20);
   const priceHtCents = Number(
-    metadata.price_ht_cents ?? Math.round(product.price_cents / (1 + taxRate / 100)),
+    metadata.price_ht_cents ??
+      Math.round(product.price_cents / (1 + taxRate / 100)),
   );
 
   const configuredSizes = Array.isArray(metadata.sizes)
@@ -61,14 +74,19 @@ export default function ProductDetail({ product }: { product: Product }) {
     : [];
 
   const name = product.name || product.title || "Produit MyBasket";
-  const fullDescription = cleanText(
+  const description =
     product.description ||
-      product.description_long ||
-      product.description_short ||
-      "Produit conçu pour l’univers du basketball et sélectionné par MyBasket.",
-  );
-  const shortDescription = cleanText(product.description_short) || truncate(fullDescription, 265);
-  const paragraphs = descriptionParagraphs(fullDescription);
+    product.description_long ||
+    product.description_short ||
+    "Produit conçu pour l’univers du basketball et sélectionné par MyBasket.";
+
+  const shortDescription =
+    product.description_short ||
+    "Un produit MyBasket pensé pour faciliter le travail des entraîneurs et gagner du temps au quotidien.";
+
+  const introParagraphs = buildIntro(shortDescription || description);
+  const descriptionParagraphs = buildParagraphs(description);
+
   const mainImage = product.image_url || product.images?.[0] || null;
   const gallery = Array.from(
     new Set([mainImage, ...(product.images || [])].filter(Boolean)),
@@ -110,12 +128,16 @@ export default function ProductDetail({ product }: { product: Product }) {
 
         if (result.ok) {
           setMessage(
-            `${quantity} article${quantity > 1 ? "s" : ""} ajouté${quantity > 1 ? "s" : ""} au panier.`,
+            `${quantity} article${quantity > 1 ? "s" : ""} ajouté${
+              quantity > 1 ? "s" : ""
+            } au panier.`,
           );
         }
       } catch (error) {
         setMessage(
-          error instanceof Error ? error.message : "Ajout au panier impossible.",
+          error instanceof Error
+            ? error.message
+            : "Ajout au panier impossible.",
         );
       }
     });
@@ -142,10 +164,10 @@ export default function ProductDetail({ product }: { product: Product }) {
               )}
 
               <div className={styles.mediaBadges}>
-                {product.is_featured && <span>Sélection MyBasket</span>}
+                {product.is_featured && <span>Produit vedette</span>}
                 {saving > 0 && (
                   <span className={styles.promoBadge}>
-                    − {formatPrice(saving)}
+                    Économise {formatPrice(saving)}
                   </span>
                 )}
               </div>
@@ -157,9 +179,10 @@ export default function ProductDetail({ product }: { product: Product }) {
                   <button
                     type="button"
                     key={image}
-                    className={selectedImage === image ? styles.thumbActive : ""}
+                    className={
+                      selectedImage === image ? styles.thumbActive : ""
+                    }
                     onClick={() => setSelectedImage(image)}
-                    aria-label="Afficher cette image"
                   >
                     <img src={image} alt="" />
                   </button>
@@ -186,10 +209,10 @@ export default function ProductDetail({ product }: { product: Product }) {
             </div>
           </div>
 
-          <aside className={styles.infoColumn}>
+          <div className={styles.infoColumn}>
             <div className={styles.topMeta}>
               <span>{product.category || "MyBasket"}</span>
-              {outOfStock ? (
+              {product.stock_quantity === 0 ? (
                 <b className={styles.stockOut}>Rupture</b>
               ) : (
                 <b>En stock</b>
@@ -197,10 +220,34 @@ export default function ProductDetail({ product }: { product: Product }) {
             </div>
 
             <h1>{name}</h1>
-            <p className={styles.subtitle}>{shortDescription}</p>
-            <a className={styles.readMore} href="#description-complete">
-              Lire la description complète ↓
+
+            <div className={styles.intro}>
+              {introParagraphs.map((paragraph, index) => (
+                <p key={`${paragraph}-${index}`}>{paragraph}</p>
+              ))}
+            </div>
+
+            <a className={styles.descriptionLink} href="#description-complete">
+              Découvrir le produit ↓
             </a>
+
+            <div className={styles.highlights}>
+              <div>
+                <span>01</span>
+                <strong>Prêt à l’emploi</strong>
+                <small>Utilisable immédiatement</small>
+              </div>
+              <div>
+                <span>02</span>
+                <strong>Pensé pour les coachs</strong>
+                <small>Simple, concret et efficace</small>
+              </div>
+              <div>
+                <span>03</span>
+                <strong>Qualité MyBasket</strong>
+                <small>Un contenu sélectionné avec soin</small>
+              </div>
+            </div>
 
             <div className={styles.pricePanel}>
               <div>
@@ -215,11 +262,13 @@ export default function ProductDetail({ product }: { product: Product }) {
               </small>
             </div>
 
+            <div className={styles.divider} />
+
             {sizes.length > 0 && (
               <section className={styles.optionSection}>
                 <div className={styles.optionHeader}>
                   <strong>Choisir une taille</strong>
-                  <span>{size || "Aucune taille sélectionnée"}</span>
+                  <button type="button">Guide des tailles</button>
                 </div>
                 <div className={styles.sizes}>
                   {sizes.map((currentSize) => (
@@ -242,7 +291,9 @@ export default function ProductDetail({ product }: { product: Product }) {
                 <small>
                   {product.stock_quantity == null
                     ? "Disponible"
-                    : `${product.stock_quantity} unité${product.stock_quantity > 1 ? "s" : ""} disponible${product.stock_quantity > 1 ? "s" : ""}`}
+                    : `${product.stock_quantity} unité${
+                        product.stock_quantity > 1 ? "s" : ""
+                      } disponible${product.stock_quantity > 1 ? "s" : ""}`}
                 </small>
               </div>
 
@@ -251,7 +302,6 @@ export default function ProductDetail({ product }: { product: Product }) {
                   <button
                     type="button"
                     onClick={() => changeQuantity(quantity - 1)}
-                    aria-label="Réduire la quantité"
                   >
                     −
                   </button>
@@ -267,7 +317,6 @@ export default function ProductDetail({ product }: { product: Product }) {
                   <button
                     type="button"
                     onClick={() => changeQuantity(quantity + 1)}
-                    aria-label="Augmenter la quantité"
                   >
                     +
                   </button>
@@ -302,41 +351,71 @@ export default function ProductDetail({ product }: { product: Product }) {
             )}
 
             <div className={styles.reassurance}>
-              <p><span>✓</span> Produit officiel MyBasket</p>
-              <p><span>✓</span> Paiement 100 % sécurisé</p>
-              <p><span>✓</span> Service client disponible</p>
+              <p>
+                <span>✓</span> Produit officiel MyBasket
+              </p>
+              <p>
+                <span>✓</span> Paiement 100% sécurisé
+              </p>
+              <p>
+                <span>✓</span> Service client disponible
+              </p>
             </div>
-          </aside>
-        </section>
-
-        <section className={styles.featuresSection}>
-          <div className={styles.sectionHeading}>
-            <span>POURQUOI CE PRODUIT ?</span>
-            <h2>Conçu pour être utile.<br />Pensé pour durer.</h2>
-          </div>
-          <div className={styles.featureGrid}>
-            <article><b>01</b><strong>Prêt à l’emploi</strong><p>Une prise en main immédiate, sans configuration compliquée.</p></article>
-            <article><b>02</b><strong>Pour les coachs</strong><p>Une conception adaptée aux besoins réels du terrain.</p></article>
-            <article><b>03</b><strong>Qualité MyBasket</strong><p>Un produit sélectionné pour sa clarté et sa durabilité.</p></article>
-            <article><b>04</b><strong>Suivi simple</strong><p>Commande et panier accessibles depuis ton espace personnel.</p></article>
           </div>
         </section>
 
-        <section id="description-complete" className={styles.detailsSection}>
-          <div className={styles.detailsIntro}>
+        <section
+          id="description-complete"
+          className={styles.detailsSection}
+        >
+          <div className={styles.detailsHeading}>
             <span>À PROPOS DU PRODUIT</span>
-            <h2>{name}</h2>
-            <p>Tout ce qu’il faut savoir avant de commander.</p>
+            <h2>
+              Pensé pour le terrain.
+              <br />
+              Conçu pour durer.
+            </h2>
+            <p>
+              Une présentation claire, libre et agréable à lire, sans mur de
+              texte.
+            </p>
           </div>
+
           <div className={styles.detailsContent}>
-            {paragraphs.map((paragraph, index) => (
-              <p key={`${index}-${paragraph.slice(0, 24)}`}>{paragraph}</p>
-            ))}
-            <ul>
-              <li>Produit sélectionné par l’équipe MyBasket</li>
-              <li>Adapté aux besoins des coachs, joueurs et clubs</li>
-              <li>Commande suivie depuis ton espace personnel</li>
-            </ul>
+            <div className={styles.descriptionBlocks}>
+              {descriptionParagraphs.map((paragraph, index) => (
+                <div key={`${paragraph}-${index}`}>
+                  <strong>
+                    {index === 0
+                      ? "Présentation"
+                      : index === 1
+                        ? "Ce que tu retrouves"
+                        : index === 2
+                          ? "Pensé pour les entraîneurs"
+                          : `En savoir plus ${index + 1}`}
+                  </strong>
+                  <p>{paragraph}</p>
+                </div>
+              ))}
+            </div>
+
+            <div className={styles.benefitsGrid}>
+              <article>
+                <span>01</span>
+                <strong>Organisation claire</strong>
+                <p>Un contenu structuré pour retrouver rapidement l’essentiel.</p>
+              </article>
+              <article>
+                <span>02</span>
+                <strong>Gain de temps</strong>
+                <p>Moins de préparation, plus de temps consacré au terrain.</p>
+              </article>
+              <article>
+                <span>03</span>
+                <strong>Adaptable</strong>
+                <p>Un produit pensé pour différents niveaux et contextes.</p>
+              </article>
+            </div>
           </div>
         </section>
 

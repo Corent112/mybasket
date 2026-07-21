@@ -12,7 +12,12 @@ export default async function BoutiqueProductPage({ params }: Props) {
   const { id } = await params;
   const product = await getProduct(id);
 
-  if (!product || !(product.active || ["active", "published"].includes(product.status))) notFound();
+  if (
+    !product ||
+    !(product.active || ["active", "published"].includes(product.status))
+  ) {
+    notFound();
+  }
 
   return <ProductDetail product={product} />;
 }
