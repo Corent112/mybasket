@@ -139,7 +139,23 @@ export default function NouvelleSeancePage() {
     if (userError || !user) { setSaving(false); return alert("Tu dois être connecté."); }
     if (!teamId || !date || !theme.trim()) { setSaving(false); return alert("Renseigne l'équipe, la date et le thème."); }
     if (!exercises.length) { setSaving(false); return alert("Ajoute au moins un exercice."); }
-    const payload = { user_id: user.id, visibility: "private", team_id: teamId, title: title.trim() || "Séance rapide", theme: theme.trim(), session_date: date, start_time: startTime, end_time: endTime, location, club_logo_url: selectedTeam?.club_logo_url ?? null, mybasket_logo_url: "/logo-mybasket02.png", team_composition_blocks: blocks, player_groups: legacyGroups(blocks), pdf_url: null };
+    const payload = {
+      user_id: user.id,
+      visibility: "private",
+      team_id: teamId,
+      team_name: selectedTeam?.name ?? null,
+      title: title.trim() || "Séance rapide",
+      theme: theme.trim(),
+      session_date: date,
+      start_time: startTime,
+      end_time: endTime,
+      location,
+      club_logo_url: selectedTeam?.club_logo_url ?? null,
+      mybasket_logo_url: "/logo-mybasket02.png",
+      team_composition_blocks: blocks,
+      player_groups: legacyGroups(blocks),
+      pdf_url: null,
+    };
     let sessionId = editingId;
     if (sessionId) {
       const { error } = await supabase.from("practice_sessions").update(payload).eq("id", sessionId).eq("user_id", user.id); if (error) { setSaving(false); return alert(error.message); }
@@ -155,30 +171,82 @@ export default function NouvelleSeancePage() {
     }
     const { error: exerciseError } = await supabase.from("practice_session_exercises").insert(exercises.map((exercise, index) => ({ session_id: sessionId, user_id: user.id, exercise_id: exercise.exercise_id || null, title: exercise.title, who: exercise.who, duration_minutes: exercise.duration_minutes, situation_image_url: exercise.situation_image_url || null, explanation: exercise.explanation || null, instructions: exercise.instructions || null, sort_order: index })));
     if (exerciseError) { setSaving(false); return alert(exerciseError.message); }
-    const calendar = { user_id: user.id, visibility: "private", event_type: "training", session_id: sessionId, title: `${selectedTeam?.name ?? "Équipe"} • ${theme.trim()}`, description: `${title.trim() || "Séance rapide"} — Ouvrir la fiche séance`, event_date: date, start_time: startTime, end_time: endTime, location, attachment_url: null };
+    const calendarPayload = {
+      user_id: user.id,
+      owner_id: user.id,
+      visibility: "private",
+      event_type: "training",
+      session_id: sessionId,
+      team_id: teamId,
+      team_name: selectedTeam?.name ?? null,
+      assigned_player_ids: selectedPlayers,
+      title: `${selectedTeam?.name ?? "Équipe"} • ${theme.trim()}`,
+      description: `${title.trim() || "Séance rapide"} — Ouvrir la fiche séance`,
+      event_date: date,
+      start_time: startTime,
+      end_time: endTime,
+      location,
+      attachment_url: null,
+      updated_at: new Date().toISOString(),
+    };
 
-    // Une séance = un seul événement calendrier.
-    // Les anciennes versions pouvaient en créer plusieurs car maybeSingle échouait
-    // dès que des doublons existaient déjà.
-    const { data: existingEvents } = await supabase
-      .from("calendar_events")
-      .select("id")
-      .eq("session_id", sessionId)
-      .eq("user_id", user.id)
-      .order("created_at", { ascending: true });
+    const { data: existingCalendarEvents, error: calendarLookupError } =
+      await supabase
+        .from("calendar_events")
+        .select("id, created_at")
+        .eq("session_id", sessionId)
+        .or(`user_id.eq.${user.id},owner_id.eq.${user.id}`)
+        .order("created_at", { ascending: true });
 
-    const firstEvent = existingEvents?.[0];
-    if (firstEvent?.id) {
-      await supabase.from("calendar_events").update(calendar).eq("id", firstEvent.id);
+    if (calendarLookupError) {
+      console.error("Erreur recherche événement calendrier:", calendarLookupError);
+      setSaving(false);
+      return alert("La séance est enregistrée, mais le calendrier n'a pas pu être synchronisé.");
+    }
 
-      const duplicateIds = (existingEvents ?? []).slice(1).map((item) => item.id);
-      if (duplicateIds.length > 0) {
-        await supabase.from("calendar_events").delete().in("id", duplicateIds);
+    const eventIds = (
+      (existingCalendarEvents ?? []) as Array<{ id?: string | null }>
+    )
+      .map((event: { id?: string | null }) => String(event.id || ""))
+      .filter(Boolean);
+
+    if (eventIds.length > 0) {
+      const [primaryEventId, ...duplicateEventIds] = eventIds;
+
+      const { error: updateCalendarError } = await supabase
+        .from("calendar_events")
+        .update(calendarPayload)
+        .eq("id", primaryEventId);
+
+      if (updateCalendarError) {
+        console.error("Erreur mise à jour calendrier:", updateCalendarError);
+        setSaving(false);
+        return alert("La séance est enregistrée, mais l'événement calendrier n'a pas pu être mis à jour.");
+      }
+
+      if (duplicateEventIds.length > 0) {
+        await supabase.from("calendar_events").delete().in("id", duplicateEventIds);
       }
     } else {
-      await supabase.from("calendar_events").insert(calendar);
+      const { error: insertCalendarError } = await supabase
+        .from("calendar_events")
+        .insert(calendarPayload);
+
+      if (insertCalendarError) {
+        console.error("Erreur création événement calendrier:", insertCalendarError);
+        setSaving(false);
+        return alert("La séance est enregistrée, mais son événement calendrier n'a pas pu être créé.");
+      }
     }
-    await supabase.from("profiles").update({ active_practice_session_id: null }).eq("id", user.id); await clearSessionBuilderItems(); setSaving(false); window.location.href = `/seances/${sessionId}`;
+
+    await supabase
+      .from("profiles")
+      .update({ active_practice_session_id: null })
+      .eq("id", user.id);
+
+    await clearSessionBuilderItems();
+    setSaving(false);
+    window.location.href = `/seances/${sessionId}`;
   }
 
   if (loading) return <main className="page loading">Chargement du mode Coach…</main>;

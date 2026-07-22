@@ -3,7 +3,6 @@
 import { useEffect, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { getTeams } from "@/lib/equipes-store";
-import { downloadDataUrl, openFileSameTab } from "@/lib/client-file-actions";
 
 /* =====================================================================
  * MonCalendrier — transposition fidèle du calendrier de mybasket-app_24.html
@@ -24,7 +23,7 @@ type Attachment = {
 
 type CalEvent = {
   id: string;
-  date: string;        // "YYYY-MM-DD"
+  date: string;
   title: string;
   type: EventType;
   venue?: Venue;
@@ -32,13 +31,38 @@ type CalEvent = {
   time?: string;
   loc?: string;
   teamId?: string;
+  teamName?: string;
+  sessionId?: string;
   assignedPlayers?: string[];
   notes?: string;
   attachment?: Attachment;
 };
 
-type Player = { id: string; firstName: string };
-type Team = { id: string; name: string; players: Player[] };
+type Player = {
+  id: string;
+  firstName: string;
+  lastName?: string;
+  position?: string;
+  number?: string;
+  avatarUrl?: string;
+};
+
+type Team = {
+  id: string;
+  name: string;
+  logoUrl?: string;
+  players: Player[];
+};
+
+type CalendarDbRow = Record<string, unknown>;
+
+type SessionCalendarRow = {
+  id: string;
+  team_id?: string | null;
+  team_name?: string | null;
+  title?: string | null;
+  pdf_url?: string | null;
+};
 
 
 const MONTHS = ["JANVIER", "FÉVRIER", "MARS", "AVRIL", "MAI", "JUIN", "JUILLET", "AOÛT", "SEPTEMBRE", "OCTOBRE", "NOVEMBRE", "DÉCEMBRE"];
@@ -54,15 +78,27 @@ function normalizeTeamForCalendar(team: any): Team {
   return {
     id: String(team.id ?? ""),
     name: String(team.nom || team.name || team.teamName || "Équipe"),
+    logoUrl: String(
+      team.logo ||
+        team.logoUrl ||
+        team.logo_url ||
+        team.clubLogo ||
+        team.clubLogoUrl ||
+        team.club_logo_url ||
+        "",
+    ),
     players: (team.players || team.joueurs || team.effectif || team.roster || []).map((p: any) => ({
       id: String(p.id ?? p.playerId ?? uid()),
       firstName:
         p.prenom ||
+        p.first_name ||
         p.firstName ||
         (p.name ? String(p.name).split(/\s+/)[0] : "") ||
-        p.nom ||
-        p.lastName ||
-        `#${p.num ?? p.numero ?? p.number ?? ""}`,
+        "Joueur",
+      lastName: p.nom || p.last_name || p.lastName || "",
+      position: p.position_primary || p.position || "",
+      number: String(p.jersey_number || p.number || p.numero || p.num || ""),
+      avatarUrl: String(p.avatar_url || p.photo_url || p.image_url || ""),
     })),
   };
 }
@@ -85,24 +121,28 @@ function calendarTypeToDbType(value: EventType): string {
   return "other";
 }
 
-function normalizeCalendarRow(row: any): CalEvent {
+function normalizeCalendarRow(row: CalendarDbRow): CalEvent {
+  const value = row as Record<string, any>;
+
   return {
-    id: String(row.id ?? ""),
-    date: String(row.event_date ?? ""),
-    title: String(row.title ?? "Évènement"),
-    type: dbTypeToCalendarType(row.event_type),
-    time: row.start_time ? String(row.start_time).slice(0, 5) : undefined,
-    loc: row.location ?? undefined,
-    notes: row.description ?? undefined,
-    attachment: row.attachment_url
+    id: String(value.id ?? ""),
+    date: String(value.event_date ?? ""),
+    title: String(value.title ?? "Évènement"),
+    type: dbTypeToCalendarType(value.event_type),
+    time: value.start_time ? String(value.start_time).slice(0, 5) : undefined,
+    loc: value.location ?? undefined,
+    notes: value.description ?? undefined,
+    teamId: value.team_id ? String(value.team_id) : undefined,
+    teamName: value.team_name ? String(value.team_name) : undefined,
+    sessionId: value.session_id ? String(value.session_id) : undefined,
+    assignedPlayers: Array.isArray(value.assigned_player_ids)
+      ? value.assigned_player_ids.map(String)
+      : [],
+    attachment: value.attachment_url
       ? {
-          name: "Pièce jointe",
-          type: String(row.attachment_url).startsWith("data:application/pdf")
-            ? "application/pdf"
-            : String(row.attachment_url).startsWith("data:image/")
-              ? "image/*"
-              : "text/plain",
-          dataUrl: row.attachment_url,
+          name: "Fiche séance",
+          type: "application/pdf",
+          dataUrl: String(value.attachment_url),
         }
       : undefined,
   };
@@ -126,13 +166,26 @@ function venueLabel(ev: CalEvent): string {
   return "📌 ";
 }
 
-// Consulte ou télécharge la pièce jointe sans ouvrir de popup.
+// Ouvre la pièce jointe dans une nouvelle fenêtre et lance l'impression
 function printAttachment(att: Attachment) {
-  if (isPdf(att) && !att.dataUrl.startsWith("data:")) {
-    openFileSameTab(att.dataUrl);
-    return;
+  const win = window.open("", "_blank", "width=900,height=700");
+  if (!win) { window.alert("Autorise les pop-ups pour imprimer la pièce jointe."); return; }
+  const safeName = att.name.replace(/[<>&"]/g, "");
+  let content: string;
+  if (isImage(att)) {
+    content = `<img src="${att.dataUrl}" style="max-width:100%;display:block;margin:0 auto" />`;
+  } else if (isPdf(att)) {
+    content = `<iframe src="${att.dataUrl}" style="border:0;width:100%;height:100vh"></iframe>`;
+  } else {
+    content = `<p style="font-family:sans-serif">Fichier : ${safeName}</p>` +
+      `<a href="${att.dataUrl}" download="${safeName}">Télécharger le fichier</a>`;
   }
-  downloadDataUrl(att.dataUrl, att.name || "piece-jointe");
+  win.document.write(
+    `<!doctype html><html><head><meta charset="utf-8"><title>${safeName}</title>` +
+    `<style>html,body{margin:0;padding:0}</style></head>` +
+    `<body onload="setTimeout(function(){try{window.focus();window.print();}catch(e){}},400)">${content}</body></html>`
+  );
+  win.document.close();
 }
 
 export default function MonCalendrier() {
@@ -162,8 +215,9 @@ export default function MonCalendrier() {
   const [fNotes, setFNotes] = useState("");
   const [fAttach, setFAttach] = useState<Attachment | null>(null);
 
-  // Modale de prévisualisation de la pièce jointe
+  // Modales de prévisualisation
   const [preview, setPreview] = useState<Attachment | null>(null);
+  const [sessionPreviewId, setSessionPreviewId] = useState<string | null>(null);
 
   const togglePlayer = (pid: string) =>
     setFPlayers((p) => (p.includes(pid) ? p.filter((x) => x !== pid) : [...p, pid]));
@@ -189,7 +243,41 @@ export default function MonCalendrier() {
   async function loadTeams() {
     try {
       const loadedTeams = await getTeams();
-      setTeams((loadedTeams ?? []).map(normalizeTeamForCalendar).filter((t) => t.id));
+      let normalizedTeams = (loadedTeams ?? [])
+        .map(normalizeTeamForCalendar)
+        .filter((team) => team.id);
+
+      const teamIds = normalizedTeams.map((team) => team.id);
+      if (teamIds.length > 0) {
+        const { data: playerRows } = await supabase
+          .from("players")
+          .select("id, team_id, first_name, last_name, position_primary, jersey_number, avatar_url")
+          .in("team_id", teamIds)
+          .order("last_name", { ascending: true });
+
+        const playersByTeam = new Map<string, Player[]>();
+        for (const row of playerRows ?? []) {
+          const teamKey = String(row.team_id || "");
+          const player: Player = {
+            id: String(row.id),
+            firstName: String(row.first_name || "Joueur"),
+            lastName: String(row.last_name || ""),
+            position: String(row.position_primary || ""),
+            number: String(row.jersey_number || ""),
+            avatarUrl: String(row.avatar_url || ""),
+          };
+          playersByTeam.set(teamKey, [...(playersByTeam.get(teamKey) || []), player]);
+        }
+
+        normalizedTeams = normalizedTeams.map((team) => ({
+          ...team,
+          players: playersByTeam.get(team.id)?.length
+            ? playersByTeam.get(team.id) || []
+            : team.players,
+        }));
+      }
+
+      setTeams(normalizedTeams);
     } catch (error) {
       console.error("Erreur chargement équipes calendrier:", error);
       setTeams([]);
@@ -213,7 +301,7 @@ export default function MonCalendrier() {
     const { data, error } = await supabase
       .from("calendar_events")
       .select("*")
-      .eq("user_id", user.id)
+      .or(`user_id.eq.${user.id},owner_id.eq.${user.id}`)
       .order("event_date", { ascending: true })
       .order("start_time", { ascending: true });
 
@@ -229,7 +317,51 @@ export default function MonCalendrier() {
       return;
     }
 
-    setEvents((data ?? []).map(normalizeCalendarRow));
+    const normalizedEvents: CalEvent[] = ((data ?? []) as CalendarDbRow[]).map(
+      (row) => normalizeCalendarRow(row),
+    );
+
+    const sessionIds: string[] = normalizedEvents
+      .map((event: CalEvent) => event.sessionId)
+      .filter((value: string | undefined): value is string => Boolean(value));
+
+    if (sessionIds.length > 0) {
+      const { data: sessionRows } = await supabase
+        .from("practice_sessions")
+        .select("id, team_id, team_name, title, pdf_url")
+        .in("id", sessionIds);
+
+      const typedSessionRows = (sessionRows ?? []) as SessionCalendarRow[];
+      const sessionsById = new Map<string, SessionCalendarRow>(
+        typedSessionRows.map((row: SessionCalendarRow) => [
+          String(row.id),
+          row,
+        ]),
+      );
+
+      for (const event of normalizedEvents) {
+        if (!event.sessionId) continue;
+        const relatedSession = sessionsById.get(event.sessionId);
+        if (!relatedSession) continue;
+
+        event.teamId = event.teamId || String(relatedSession.team_id || "");
+        event.teamName =
+          event.teamName ||
+          String(relatedSession.team_name || "") ||
+          teams.find((team) => team.id === event.teamId)?.name ||
+          String(relatedSession.title || "");
+
+        if (!event.attachment && relatedSession.pdf_url) {
+          event.attachment = {
+            name: "Fiche séance",
+            type: "application/pdf",
+            dataUrl: String(relatedSession.pdf_url),
+          };
+        }
+      }
+    }
+
+    setEvents(normalizedEvents);
     setLoading(false);
   }
 
@@ -274,6 +406,7 @@ export default function MonCalendrier() {
 
     const payload = {
       user_id: user.id,
+      owner_id: user.id,
       title: fTitle.trim() || "Entraînement",
       description: fNotes || null,
       event_date: fDate,
@@ -281,7 +414,11 @@ export default function MonCalendrier() {
       end_time: null,
       location: fLoc || null,
       event_type: calendarTypeToDbType(fType),
-      session_id: null,
+      session_id:
+        events.find((event) => event.id === editingId)?.sessionId || null,
+      team_id: fTeam || null,
+      team_name: selectedTeam?.name || null,
+      assigned_player_ids: fPlayers,
       attachment_url: fAttach?.dataUrl || null,
       visibility: "private",
       updated_at: new Date().toISOString(),
@@ -292,7 +429,7 @@ export default function MonCalendrier() {
         .from("calendar_events")
         .update(payload)
         .eq("id", editingId)
-        .eq("user_id", user.id);
+        .or(`user_id.eq.${user.id},owner_id.eq.${user.id}`);
 
       if (error) {
         console.error("Erreur modification événement:", {
@@ -341,7 +478,7 @@ export default function MonCalendrier() {
       .from("calendar_events")
       .delete()
       .eq("id", editingId)
-      .eq("user_id", user.id);
+      .or(`user_id.eq.${user.id},owner_id.eq.${user.id}`);
 
     if (error) {
       console.error("Erreur suppression événement:", {
@@ -365,7 +502,40 @@ export default function MonCalendrier() {
           <h2 className="cal-title">{title}</h2>
         </div>
         <p style={{ color: "#6B6B6B", fontWeight: 700 }}>Chargement du calendrier...</p>
-        <style jsx>{`
+        {sessionPreviewId && (
+        <div
+          className="cal-overlay cal-session-overlay"
+          onClick={() => setSessionPreviewId(null)}
+        >
+          <div
+            className="cal-session-preview"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="cal-modal-head">
+              <div>
+                <span>FICHE SÉANCE</span>
+                <b>
+                  {events.find((event) => event.sessionId === sessionPreviewId)
+                    ?.title || "Séance"}
+                </b>
+              </div>
+              <button
+                className="cal-x"
+                onClick={() => setSessionPreviewId(null)}
+                aria-label="Fermer"
+              >
+                ✕
+              </button>
+            </div>
+            <iframe
+              src={`/seances/apercu/${sessionPreviewId}`}
+              title="Aperçu de la fiche séance"
+            />
+          </div>
+        </div>
+      )}
+
+      <style jsx>{`
           .mb-cal{
             --bordeaux:#6B1A2C; --or:#D4A24C; --or-l:#E8C078;
             --noir:#0F0F12; --blanc:#FFFFFF;
@@ -500,11 +670,38 @@ export default function MonCalendrier() {
                 {selectedTeam ? (
                   selectedTeam.players.length ? (
                     <div className="cal-players">
-                      {selectedTeam.players.map((p) => (
-                        <button type="button" key={p.id}
-                          className={"cal-pchip" + (fPlayers.includes(p.id) ? " on" : "")}
-                          onClick={() => togglePlayer(p.id)}>
-                          {fPlayers.includes(p.id) ? "✓ " : ""}{p.firstName}
+                      {selectedTeam.players.map((player) => (
+                        <button
+                          type="button"
+                          key={player.id}
+                          className={
+                            "cal-player-card" +
+                            (fPlayers.includes(player.id) ? " on" : "")
+                          }
+                          onClick={() => togglePlayer(player.id)}
+                        >
+                          <span className="cal-player-avatar">
+                            {player.avatarUrl ? (
+                              <img
+                                src={player.avatarUrl}
+                                alt={`${player.firstName} ${player.lastName || ""}`}
+                              />
+                            ) : (
+                              <b>{player.firstName.slice(0, 1).toUpperCase()}</b>
+                            )}
+                          </span>
+                          <span className="cal-player-info">
+                            <strong>
+                              {player.firstName} {player.lastName || ""}
+                            </strong>
+                            <small>
+                              {player.position || "Poste non défini"}
+                              {player.number ? ` · #${player.number}` : ""}
+                            </small>
+                          </span>
+                          <span className="cal-player-check">
+                            {fPlayers.includes(player.id) ? "✓" : "+"}
+                          </span>
                         </button>
                       ))}
                     </div>
@@ -520,6 +717,30 @@ export default function MonCalendrier() {
                 <label>Notes</label>
                 <textarea value={fNotes} onChange={(e) => setFNotes(e.target.value)} placeholder="Infos complémentaires…" />
               </div>
+
+              {editingId && events.find((event) => event.id === editingId)?.sessionId && (
+                <div className="cal-session-card">
+                  <div>
+                    <span>FICHE SÉANCE ASSOCIÉE</span>
+                    <strong>
+                      {selectedTeam?.name ||
+                        events.find((event) => event.id === editingId)?.teamName ||
+                        "Équipe associée"}
+                    </strong>
+                    <small>Consulte la fiche sans quitter le calendrier.</small>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setSessionPreviewId(
+                        events.find((event) => event.id === editingId)?.sessionId || null,
+                      )
+                    }
+                  >
+                    Consulter
+                  </button>
+                </div>
+              )}
 
               <div className="cal-fld">
                 <label>Pièce jointe (PDF, image, doc…)</label>
@@ -664,6 +885,28 @@ export default function MonCalendrier() {
         .cal-preview-body img{max-width:100%;max-height:74vh;object-fit:contain;border-radius:6px;box-shadow:0 4px 16px rgba(0,0,0,.2)}
         .cal-preview-body iframe{width:100%;height:74vh;border:0;background:#fff;border-radius:6px}
         .cal-preview-other{display:flex;flex-direction:column;align-items:center;gap:.85rem;color:var(--gris-text);font-size:.9rem;text-align:center}
+
+        .cal-session-card{display:flex;align-items:center;justify-content:space-between;gap:1rem;padding:1rem;border:1px solid #ead9cb;border-radius:16px;background:linear-gradient(135deg,#fff8ef,#fff)}
+        .cal-session-card span{display:block;color:var(--or);font-size:.68rem;font-weight:950;letter-spacing:.12em}
+        .cal-session-card strong,.cal-session-card small{display:block}
+        .cal-session-card strong{margin-top:.25rem;color:var(--bordeaux);font-size:1rem}
+        .cal-session-card small{margin-top:.2rem;color:var(--gris-text);font-size:.78rem}
+        .cal-session-card button{border:0;border-radius:999px;padding:.7rem 1rem;background:var(--bordeaux);color:#fff;font-weight:900;cursor:pointer}
+        .cal-players{display:grid!important;grid-template-columns:repeat(2,minmax(0,1fr));gap:.6rem!important}
+        .cal-player-card{display:grid;grid-template-columns:40px 1fr 28px;align-items:center;gap:.65rem;width:100%;padding:.65rem;border:1px solid #e8ded8;border-radius:14px;background:#fff;text-align:left;cursor:pointer;transition:.18s ease}
+        .cal-player-card:hover{transform:translateY(-2px);box-shadow:0 10px 24px rgba(107,26,44,.09)}
+        .cal-player-card.on{border-color:var(--or);background:#fff8e9;box-shadow:0 0 0 2px rgba(212,162,76,.13)}
+        .cal-player-avatar{width:40px;height:40px;border-radius:12px;overflow:hidden;display:grid;place-items:center;background:var(--noir);color:var(--or)}
+        .cal-player-avatar img{width:100%;height:100%;object-fit:cover}
+        .cal-player-info strong,.cal-player-info small{display:block}
+        .cal-player-info strong{font-size:.84rem;color:var(--noir)}
+        .cal-player-info small{margin-top:.15rem;color:var(--gris-text);font-size:.7rem}
+        .cal-player-check{width:26px;height:26px;border-radius:9px;display:grid;place-items:center;background:#f2ece8;color:var(--bordeaux);font-weight:950}
+        .cal-player-card.on .cal-player-check{background:var(--bordeaux);color:#fff}
+        .cal-session-overlay{z-index:10000}
+        .cal-session-preview{width:min(1180px,calc(100vw - 36px));height:min(860px,calc(100vh - 36px));display:flex;flex-direction:column;overflow:hidden;border-radius:22px;background:#fff;box-shadow:0 30px 90px rgba(0,0,0,.35)}
+        .cal-session-preview .cal-modal-head span{display:block;color:var(--or);font-size:.68rem;font-weight:950;letter-spacing:.12em}
+        .cal-session-preview iframe{width:100%;flex:1;border:0;background:#eef1f5}
 
         @media (max-width:600px){
           .cal-d{min-height:60px;padding:.25rem}

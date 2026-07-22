@@ -12,6 +12,17 @@ const EXCLUDED_STATUSES = new Set(["absent", "injured", "excused"]);
 
 type GenericRow = Record<string, any>;
 
+type PdfExercise = {
+  title: string;
+  who: string | null;
+  duration_minutes: number | null;
+  situation_image_url?: string | null;
+  schema_urls?: string[] | null;
+  explanation: string | null;
+  instructions: string | null;
+  variants?: string | null;
+};
+
 function normalizePosition(position?: string | null): "guard" | "forward" | "center" {
   const value = String(position || "").toLowerCase();
   if (value.includes("pivot") || value.includes("center") || value.includes("poste 5") || value === "c") return "center";
@@ -206,13 +217,35 @@ export async function POST(
   const myBasketLogo = await imageDataUri("/logo-mybasket02.png");
   const clubLogo = await imageDataUri(clubLogoSource);
 
-  const normalizedExercises = await Promise.all(
-    (exercises ?? []).map(async (exercise: GenericRow) => ({
-      ...exercise,
-      schema_urls: await Promise.all(
-        normalizeExerciseImages(exercise).map(async (url) => (await imageDataUri(url)) || url),
-      ),
-    })),
+  const normalizedExercises: PdfExercise[] = await Promise.all(
+    ((exercises ?? []) as GenericRow[]).map(
+      async (exercise): Promise<PdfExercise> => ({
+        title: String(exercise.title || "Exercice"),
+        who: exercise.who ? String(exercise.who) : null,
+        duration_minutes:
+          exercise.duration_minutes == null
+            ? null
+            : Number(exercise.duration_minutes),
+        situation_image_url: firstString(
+          exercise.situation_image_url,
+          exercise.image_url,
+          exercise.schema_url,
+          exercise.diagram_url,
+        ),
+        schema_urls: await Promise.all(
+          normalizeExerciseImages(exercise).map(
+            async (url) => (await imageDataUri(url)) || url,
+          ),
+        ),
+        explanation: exercise.explanation
+          ? String(exercise.explanation)
+          : null,
+        instructions: exercise.instructions
+          ? String(exercise.instructions)
+          : null,
+        variants: exercise.variants ? String(exercise.variants) : null,
+      }),
+    ),
   );
 
   const document = React.createElement(PracticeSessionPdf, {

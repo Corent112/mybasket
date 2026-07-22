@@ -38,6 +38,14 @@ type SessionPlayer = {
   position: "guard" | "forward" | "center" | null;
 };
 
+type PlayerDetailRow = {
+  id?: string | null;
+  first_name?: string | null;
+  last_name?: string | null;
+  position_primary?: string | null;
+  position?: string | null;
+};
+
 type SessionExercise = {
   id: string;
   title: string;
@@ -187,17 +195,28 @@ export default function SeanceDetailPage() {
     const { data: playerDetails } = playerIds.length
       ? await supabase.from("players").select("*").in("id", playerIds)
       : { data: [] as any[] };
-    const playerById = new Map((playerDetails ?? []).map((row: any) => [String(row.id), row]));
+    const playerById = new Map<string, PlayerDetailRow>(
+      ((playerDetails ?? []) as PlayerDetailRow[]).map(
+        (row: PlayerDetailRow) => [String(row.id || ""), row],
+      ),
+    );
 
     const playersData = sourceRows
       .map((row: any) => {
         const playerId = String(row.player_id || row.id || "");
-        const detail = playerById.get(playerId) || {};
+        const playerDetail: PlayerDetailRow =
+          playerById.get(playerId) ?? {};
+
         return {
           id: playerId,
-          first_name: detail.first_name ?? row.first_name ?? "",
-          last_name: detail.last_name ?? row.last_name ?? "",
-          position: normalizePosition(detail.position_primary ?? detail.position ?? row.position_primary ?? row.position),
+          first_name: playerDetail.first_name ?? row.first_name ?? "",
+          last_name: playerDetail.last_name ?? row.last_name ?? "",
+          position: normalizePosition(
+            playerDetail.position_primary ??
+              playerDetail.position ??
+              row.position_primary ??
+              row.position,
+          ),
         } as SessionPlayer;
       })
       .filter((player: SessionPlayer, index: number, list: SessionPlayer[]) => player.id && list.findIndex((item) => item.id === player.id) === index);
