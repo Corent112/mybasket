@@ -64,7 +64,7 @@ export default function NouvelleSeancePage() {
       const { data: session, error } = await supabase.from("practice_sessions").select("*").eq("id", sessionId).maybeSingle();
       if (error || !session) { alert("Séance introuvable."); setLoading(false); return; }
       setEditingId(sessionId);
-      setTitle(session.title || "Séance rapide"); setTheme(session.theme || ""); setTeamId(session.team_reference_id || session.team_id || "");
+      setTitle(session.theme || session.title || ""); setTheme(session.theme || session.title || ""); setTeamId(session.team_reference_id || session.team_id || "");
       setDate(session.session_date || ""); setStartTime((session.start_time || "18:00").slice(0, 5)); setEndTime((session.end_time || "19:30").slice(0, 5)); setLocation(session.location || "");
       const loadedBlocks = Array.isArray(session.team_composition_blocks) && session.team_composition_blocks.length ? session.team_composition_blocks as TeamCompositionBlock[] : legacyBlocks(session.player_groups);
       setBlocks(loadedBlocks.length ? loadedBlocks : [defaultBlock()]);
@@ -155,13 +155,13 @@ export default function NouvelleSeancePage() {
       team_id: teamId,
       team_reference_id: teamId,
       team_name: selectedTeam?.name ?? null,
-      title: title.trim() || "Séance rapide",
+      title: theme.trim(),
       theme: theme.trim(),
       session_date: date,
       start_time: startTime,
       end_time: endTime,
       location,
-      club_logo_url: selectedTeam?.club_logo_url ?? null,
+      club_logo_url: selectedTeam?.club_logo_url || (selectedTeam as any)?.logo_url || (selectedTeam as any)?.logo || null,
       mybasket_logo_url: "/logo-mybasket02.png",
       team_composition_blocks: blocks,
       player_groups: legacyGroups(blocks),
@@ -196,7 +196,8 @@ export default function NouvelleSeancePage() {
       team_name: selectedTeam?.name ?? null,
       assigned_player_ids: selectedPlayers,
       title: `${selectedTeam?.name ?? "Équipe"} • ${theme.trim()}`,
-      description: `${title.trim() || "Séance rapide"} — Ouvrir la fiche séance`,
+      theme: theme.trim(),
+      description: `Fiche séance : /seances/${sessionId}`,
       event_date: date,
       start_time: startTime,
       end_time: endTime,
@@ -268,7 +269,7 @@ export default function NouvelleSeancePage() {
   return <main className="page">
     <header className="hero"><span>MYBASKET · MODE COACH</span><h1>{editingId ? "MODIFIER LA SÉANCE" : "CONSTRUIRE LA SÉANCE"}</h1><p>Prépare les présents, compose tes groupes et organise ton practice plan.</p></header>
 
-    <section className="panel info"><div className="panelTitle"><span>01</span><div><h2>Informations</h2><p>Cadre général de la séance</p></div></div><div className="infoGrid"><label>Titre<input value={title} onChange={(e) => setTitle(e.target.value)} /></label><label>Équipe<select value={teamId} onChange={(e) => { setTeamId(e.target.value); setSelection([]); }}><option value="">Choisir</option>{teams.map((team) => <option key={team.id} value={team.id}>{team.name}</option>)}</select></label><label>Thème<input value={theme} onChange={(e) => setTheme(e.target.value)} /></label><label>Date<input type="date" value={date} onChange={(e) => setDate(e.target.value)} /></label><label>Début<input type="time" value={startTime} onChange={(e) => setStartTime(e.target.value)} /></label><label>Fin<input type="time" value={endTime} onChange={(e) => setEndTime(e.target.value)} /></label><label className="wide">Lieu<input value={location} onChange={(e) => setLocation(e.target.value)} /></label></div></section>
+    <section className="panel info"><div className="panelTitle"><span>01</span><div><h2>Informations</h2><p>Cadre général de la séance</p></div></div><div className="infoGrid"><label>Équipe<select value={teamId} onChange={(e) => { setTeamId(e.target.value); setSelection([]); }}><option value="">Choisir</option>{teams.map((team) => <option key={team.id} value={team.id}>{team.name}</option>)}</select></label><label>Thème<input value={theme} onChange={(e) => setTheme(e.target.value)} /></label><label>Date<input type="date" value={date} onChange={(e) => setDate(e.target.value)} /></label><label>Début<input type="time" value={startTime} onChange={(e) => setStartTime(e.target.value)} /></label><label>Fin<input type="time" value={endTime} onChange={(e) => setEndTime(e.target.value)} /></label><label className="wide">Lieu<input value={location} onChange={(e) => setLocation(e.target.value)} /></label></div></section>
 
     <section className="panel coachMode"><div className="panelTitle"><span>02</span><div><h2>Mode Coach</h2><p>Sélectionne puis déplace les joueurs dans chaque composition</p></div></div>
       <div className="coachLayout">

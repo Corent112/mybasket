@@ -164,17 +164,18 @@ async function resolveClubLogo(
   session: GenericRow,
 ) {
   let logo = firstString(session.club_logo_url, session.team_logo_url);
-  if (logo || !session.team_id) return logo;
+  const teamLookupId = firstString(session.team_reference_id, session.team_id);
+  if (logo || !teamLookupId) return logo;
 
-  const { data: team } = await supabase.from("teams").select("*").eq("id", session.team_id).maybeSingle();
-  logo = firstString(team?.club_logo_url, team?.logo_url, team?.image_url);
+  const { data: team } = await supabase.from("teams").select("*").eq("id", teamLookupId).maybeSingle();
+  logo = firstString(team?.club_logo_url, team?.logo_url, team?.logo, team?.image_url);
   if (logo) return logo;
 
   const clubId = firstString(team?.club_id, session.club_id);
   if (!clubId) return null;
 
   const { data: club } = await supabase.from("clubs").select("*").eq("id", clubId).maybeSingle();
-  return firstString(club?.logo_url, club?.club_logo_url, club?.image_url);
+  return firstString(club?.logo_url, club?.club_logo_url, club?.logo, club?.image_url, club?.avatar_url);
 }
 
 export async function POST(

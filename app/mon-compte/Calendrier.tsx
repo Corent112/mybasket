@@ -32,6 +32,7 @@ type CalEvent = {
   loc?: string;
   teamId?: string;
   teamName?: string;
+  theme?: string;
   sessionId?: string;
   assignedPlayers?: string[];
   notes?: string;
@@ -62,6 +63,7 @@ type SessionCalendarRow = {
   team_reference_id?: string | null;
   team_name?: string | null;
   title?: string | null;
+  theme?: string | null;
   pdf_url?: string | null;
 };
 
@@ -135,6 +137,7 @@ function normalizeCalendarRow(row: CalendarDbRow): CalEvent {
     notes: value.description ?? undefined,
     teamId: value.team_id ? String(value.team_id) : undefined,
     teamName: value.team_name ? String(value.team_name) : undefined,
+    theme: value.theme ? String(value.theme) : undefined,
     sessionId: value.session_id ? String(value.session_id) : undefined,
     assignedPlayers: Array.isArray(value.assigned_player_ids)
       ? value.assigned_player_ids.map(String)
@@ -329,7 +332,7 @@ export default function MonCalendrier() {
     if (sessionIds.length > 0) {
       const { data: sessionRows } = await supabase
         .from("practice_sessions")
-        .select("id, team_id, team_reference_id, team_name, title, pdf_url")
+        .select("id, team_id, team_reference_id, team_name, title, theme, pdf_url")
         .in("id", sessionIds);
 
       const typedSessionRows = (sessionRows ?? []) as SessionCalendarRow[];
@@ -351,6 +354,7 @@ export default function MonCalendrier() {
           String(relatedSession.team_name || "") ||
           teams.find((team) => team.id === event.teamId)?.name ||
           String(relatedSession.title || "");
+        event.theme = event.theme || String(relatedSession.theme || relatedSession.title || "");
 
         if (!event.attachment && relatedSession.pdf_url) {
           event.attachment = {
@@ -386,7 +390,7 @@ export default function MonCalendrier() {
   const openEdit = (id: string) => {
     const e = events.find((x) => x.id === id); if (!e) return;
     setEditingId(id);
-    setFTitle(e.title); setFDate(e.date); setFTime(e.time || ""); setFType(e.type);
+    setFTitle(e.theme || e.title); setFDate(e.date); setFTime(e.time || ""); setFType(e.type);
     setFVenue(e.venue || "home"); setFOpp(e.opponent || ""); setFLoc(e.loc || "");
     setFTeam(e.teamId || ""); setFPlayers(e.assignedPlayers || []);
     setFNotes(e.notes || ""); setFAttach(e.attachment || null);
@@ -408,7 +412,8 @@ export default function MonCalendrier() {
     const payload = {
       user_id: user.id,
       owner_id: user.id,
-      title: fTitle.trim() || "Entraînement",
+      title: `${selectedTeam?.name || events.find((event) => event.id === editingId)?.teamName || "Équipe"} • ${fTitle.trim() || "Entraînement"}`,
+      theme: fTitle.trim() || "Entraînement",
       description: fNotes || null,
       event_date: fDate,
       start_time: fTime || null,
@@ -644,22 +649,22 @@ export default function MonCalendrier() {
 
               <div className="cal-fld">
                 <label>Équipe associée</label>
-                <select value={fTeam} onChange={(e) => { setFTeam(e.target.value); setFPlayers([]); }}>
-                  <option value="">Aucune</option>
-                  {teams.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
-                </select>
-                {teams.length === 0 ? (
-                  <p className="cal-help">Aucune équipe trouvée — crée d'abord une équipe dans « Mes équipes ».</p>
+                {editingId && events.find((event) => event.id === editingId)?.sessionId ? (
+                  <div className="cal-readonly-team">
+                    <strong>{events.find((event) => event.id === editingId)?.teamName || selectedTeam?.name || "Équipe associée"}</strong>
+                    <small>Équipe liée à la fiche séance.</small>
+                  </div>
                 ) : (
-                  <p className="cal-help">
-                    {"Pour les entraînements, ça permet de gérer la présence et l'historique dans la gestion d'équipe."}
-                  </p>
+                  <select value={fTeam} onChange={(e) => { setFTeam(e.target.value); setFPlayers([]); }}>
+                    <option value="">Aucune</option>
+                    {teams.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
+                  </select>
                 )}
               </div>
 
               <div className="cal-fld">
-                <label>Titre (optionnel)</label>
-                <input type="text" value={fTitle} onChange={(e) => setFTitle(e.target.value)} placeholder="Entraînement" />
+                <label>Thème</label>
+                <input type="text" value={fTitle} onChange={(e) => setFTitle(e.target.value)} placeholder="Ex : Défense" />
               </div>
 
               <div className="cal-fld">
@@ -725,30 +730,15 @@ export default function MonCalendrier() {
                 <textarea value={fNotes} onChange={(e) => setFNotes(e.target.value)} placeholder="Infos complémentaires…" />
               </div>
               <div className="cal-fld">
-                <label>Pièce jointe (PDF, image, doc…)</label>
-                <div className="cal-attach">
-                  <label className="cal-attach-btn">
-                    📎 Ajouter une pièce jointe
-                    <input type="file" accept=".pdf,image/*,.doc,.docx,.txt" hidden
-                      onChange={(e) => onAttach(e.target.files?.[0])} />
-                  </label>
-                  {fAttach && (
-                    <span className="cal-attach-name">
-                      <span className="cal-attach-fn" title={fAttach.name}>{fAttach.name}</span>
-                      <button type="button" className="cal-attach-act" onClick={() => {
-                          const linkedSessionId = events.find(
-                            (event) => event.id === editingId,
-                          )?.sessionId;
-                          if (linkedSessionId) {
-                            setSessionPreviewId(linkedSessionId);
-                          } else {
-                            setPreview(fAttach);
-                          }
-                        }}>Consulter</button>
-                      <button type="button" className="cal-attach-rm" onClick={() => setFAttach(null)} aria-label="Retirer">Retirer ✕</button>
-                    </span>
-                  )}
-                </div>
+                <label>Fiche séance</label>
+                {editingId && events.find((event) => event.id === editingId)?.sessionId ? (
+                  <button type="button" className="cal-open-session" onClick={() => setSessionPreviewId(events.find((event) => event.id === editingId)?.sessionId || null)}>Consulter la fiche séance</button>
+                ) : (
+                  <div className="cal-attach">
+                    <label className="cal-attach-btn">📎 Ajouter une pièce jointe<input type="file" accept=".pdf,image/*,.doc,.docx,.txt" hidden onChange={(e) => onAttach(e.target.files?.[0])} /></label>
+                    {fAttach && <span className="cal-attach-name"><span className="cal-attach-fn">{fAttach.name}</span><button type="button" className="cal-attach-act" onClick={() => setPreview(fAttach)}>Consulter</button><button type="button" className="cal-attach-rm" onClick={() => setFAttach(null)}>Retirer ✕</button></span>}
+                  </div>
+                )}
               </div>
             </div>
 
@@ -849,6 +839,7 @@ export default function MonCalendrier() {
         .cal-row2{display:grid;grid-template-columns:1fr 1fr;gap:.8rem}
         .cal-help{font-size:.74rem;color:var(--gris-text);line-height:1.4;margin:.1rem 0 0}
 
+        .cal-readonly-team{padding:.8rem 1rem;border:1px solid #eaded7;border-radius:12px;background:#f8f5f3}.cal-readonly-team strong,.cal-readonly-team small{display:block}.cal-readonly-team strong{color:var(--bordeaux)}.cal-readonly-team small{margin-top:.25rem;color:var(--gris-text);font-size:.75rem}.cal-open-session{width:100%;padding:.9rem 1rem;border:0;border-radius:12px;background:var(--bordeaux);color:#fff;font-weight:950;cursor:pointer}
         .cal-players{display:flex;flex-wrap:wrap;gap:.4rem}
         .cal-pchip{display:inline-flex;align-items:center;gap:.2rem;padding:.4rem .75rem;border:1.5px solid var(--gris-med);border-radius:999px;font-size:.8rem;font-weight:600;cursor:pointer;background:#fff;color:var(--noir);transition:.13s}
         .cal-pchip:hover{border-color:var(--noir)}
@@ -876,13 +867,6 @@ export default function MonCalendrier() {
         .cal-preview-body img{max-width:100%;max-height:74vh;object-fit:contain;border-radius:6px;box-shadow:0 4px 16px rgba(0,0,0,.2)}
         .cal-preview-body iframe{width:100%;height:74vh;border:0;background:#fff;border-radius:6px}
         .cal-preview-other{display:flex;flex-direction:column;align-items:center;gap:.85rem;color:var(--gris-text);font-size:.9rem;text-align:center}
-
-        .cal-session-card{display:flex;align-items:center;justify-content:space-between;gap:1rem;padding:1rem;border:1px solid #ead9cb;border-radius:16px;background:linear-gradient(135deg,#fff8ef,#fff)}
-        .cal-session-card span{display:block;color:var(--or);font-size:.68rem;font-weight:950;letter-spacing:.12em}
-        .cal-session-card strong,.cal-session-card small{display:block}
-        .cal-session-card strong{margin-top:.25rem;color:var(--bordeaux);font-size:1rem}
-        .cal-session-card small{margin-top:.2rem;color:var(--gris-text);font-size:.78rem}
-        .cal-session-card button{border:0;border-radius:999px;padding:.7rem 1rem;background:var(--bordeaux);color:#fff;font-weight:900;cursor:pointer}
         .cal-players{display:grid!important;grid-template-columns:repeat(2,minmax(0,1fr));gap:.6rem!important}
         .cal-player-card{display:grid;grid-template-columns:40px 1fr 28px;align-items:center;gap:.65rem;width:100%;padding:.65rem;border:1px solid #e8ded8;border-radius:14px;background:#fff;text-align:left;cursor:pointer;transition:.18s ease}
         .cal-player-card:hover{transform:translateY(-2px);box-shadow:0 10px 24px rgba(107,26,44,.09)}

@@ -44,6 +44,7 @@ type Team = {
   clubLogo?: string;
   clubLogoUrl?: string;
   club_logo_url?: string;
+  club_id?: string | null;
   players?: TeamPlayer[];
   effectif?: TeamPlayer[];
 };
@@ -217,6 +218,7 @@ export default function PanierPage() {
   const [loading, setLoading] = useState(true);
 
   const [sessionModalOpen, setSessionModalOpen] = useState(false);
+  const [savingSession, setSavingSession] = useState(false);
   const [teams, setTeams] = useState<Team[]>([]);
   const [selectedTeamId, setSelectedTeamId] = useState("");
   const [sessionDate, setSessionDate] = useState("");
@@ -261,9 +263,32 @@ const subtotal = useMemo(() => {
   const total = subtotal + tax;
 
   useEffect(() => {
-    loadCart();
-    setTeams(readTeamsFromLocalStorage());
+    void loadCart();
+    void loadTeamsAndPlayers();
   }, []);
+
+  async function loadTeamsAndPlayers() {
+    const { data: teamRows, error: teamError } = await supabase.from("teams").select("*").order("name");
+    if (teamError) { console.error(teamError); setTeams(readTeamsFromLocalStorage()); return; }
+    const rawTeams = (teamRows ?? []) as Array<Record<string, any>>;
+    const teamIds = rawTeams.map((team) => String(team.id || "")).filter(Boolean);
+    const clubIds = Array.from(new Set(rawTeams.map((team) => String(team.club_id || "")).filter(Boolean)));
+    const [{ data: playerRows }, { data: clubRows }] = await Promise.all([
+      teamIds.length ? supabase.from("players").select("*").in("team_id", teamIds) : Promise.resolve({ data: [] as any[] }),
+      clubIds.length ? supabase.from("clubs").select("*").in("id", clubIds) : Promise.resolve({ data: [] as any[] }),
+    ]);
+    const clubs = new Map(((clubRows ?? []) as Array<Record<string, any>>).map((club) => [String(club.id), club]));
+    const playersByTeam = new Map<string, TeamPlayer[]>();
+    for (const row of (playerRows ?? []) as Array<Record<string, any>>) {
+      const key = String(row.team_id || "");
+      const player: TeamPlayer = { id: String(row.id), firstName: String(row.first_name || ""), lastName: String(row.last_name || ""), position: String(row.position_primary || row.position || "") };
+      playersByTeam.set(key, [...(playersByTeam.get(key) || []), player]);
+    }
+    setTeams(rawTeams.map((team) => {
+      const club = clubs.get(String(team.club_id || "")) || {};
+      return { ...team, id: String(team.id), name: String(team.name || team.nom || "Équipe"), clubName: String(club.name || club.nom || ""), club_logo_url: String(team.club_logo_url || team.logo_url || team.logo || club.logo_url || club.club_logo_url || club.logo || club.image_url || club.avatar_url || ""), players: playersByTeam.get(String(team.id)) || [] } as Team;
+    }));
+  }
 
   async function loadCart() {
     setLoading(true);
@@ -751,7 +776,7 @@ setLoading(false);
           team.playerIds,
         ]),
       ),
-      title: `Séance ${teamName}`,
+      title: sessionTheme,
       theme: sessionTheme,
       session_date: sessionDate,
       start_time: sessionStartTime,
@@ -829,8 +854,9 @@ setLoading(false);
     team_id: selectedTeamId || null,
     team_name: teamName,
     assigned_player_ids: positionedPlayers.map(({ player }) => player.id),
-    title: `Séance ${teamName}`,
-    description: `Thème : ${sessionTheme}`,
+    title: `${teamName} • ${sessionTheme}`,
+    theme: sessionTheme,
+    description: `Fiche séance : /seances/${createdSession.id}`,
     event_date: sessionDate,
     start_time: sessionStartTime,
     end_time: sessionEndTime,
@@ -855,13 +881,17 @@ setLoading(false);
 }
 
   async function generateSessionPdf() {
+    if (savingSession) return;
+    setSavingSession(true);
     if (!sessionDate || !sessionStartTime || !sessionEndTime || !sessionTheme) {
       alert("Renseigne la date, l'heure de début, l'heure de fin et le thème.");
+      setSavingSession(false);
       return;
     }
 
     if (!selectedTeam) {
       alert("Sélectionne une équipe associée.");
+      setSavingSession(false);
       return;
     }
 
@@ -871,6 +901,7 @@ setLoading(false);
 
     if (sortedItems.length === 0) {
       alert("Ajoute au moins un exercice ou système dans ta séance.");
+      setSavingSession(false);
       return;
     }
 
@@ -1243,6 +1274,7 @@ setLoading(false);
 
     if (!printWindow) {
       alert("Autorise les pop-ups pour générer la fiche séance.");
+      setSavingSession(false);
       return;
     }
 
@@ -1252,6 +1284,7 @@ setLoading(false);
 
     await saveSessionToCalendar();
     setSessionModalOpen(false);
+    setSavingSession(false);
   }
 
   if (loading) {
@@ -1768,8 +1801,9 @@ setLoading(false);
                 type="button"
                 className="saveBtn"
                 onClick={generateSessionPdf}
+                disabled={savingSession}
               >
-                📄 Générer la fiche PDF
+                {savingSession ? "Enregistrement…" : "📄 Générer la fiche PDF"}
               </button>
             </div>
           </div>
