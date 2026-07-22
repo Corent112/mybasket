@@ -331,7 +331,9 @@ const subtotal = useMemo(() => {
         .in("id", exerciseIds);
 
       exercisesById = Object.fromEntries(
-        (exercisesData ?? []).map((exercise) => [exercise.id, exercise])
+        ((exercisesData ?? []) as Array<Record<string, any>>).map(
+          (exercise: Record<string, any>) => [String(exercise.id), exercise],
+        )
       );
     }
 
@@ -1321,10 +1323,6 @@ setLoading(false);
 
           <div className="info">
             <h3>{item.title}</h3>
-            <p>
-              Abonnement MyBasket ·{" "}
-              {item.assigned_to === "yearly" ? "Annuel" : "Mensuel"}
-            </p>
             <strong>{formatPrice(Number(item.price ?? 0))}</strong>
           </div>
 
@@ -1373,7 +1371,6 @@ setLoading(false);
 
           <div className="info">
             <h3>{item.title}</h3>
-            <p>{item.description}</p>
             <strong>{formatPrice(Number(item.price ?? 0))}</strong>
           </div>
 
@@ -1910,32 +1907,38 @@ setLoading(false);
         }
 
         .productCard {
-  display: grid;
-  grid-template-columns: 150px 1fr 120px 50px;
-  gap: 24px;
-  align-items: center;
+          display: grid;
+          grid-template-columns: 108px minmax(0, 1fr) 118px 44px;
+          gap: 18px;
+          align-items: center;
+          border: 1px solid #eadfd9;
+          border-radius: 16px;
+          padding: 14px;
+          margin-bottom: 12px;
+          background: #fff;
+          transition: transform 0.18s ease, box-shadow 0.18s ease;
+        }
 
-  border: 1px solid #eee;
-  border-radius: 12px;
-  padding: 18px;
-  margin-bottom: 14px;
-}
+        .productCard:hover {
+          transform: translateY(-2px);
+          box-shadow: 0 12px 28px rgba(57, 25, 35, 0.08);
+        }
 
         .thumb,
 .sessionThumb {
-  background: #f6f6f6;
-  border-radius: 10px;
-  overflow: hidden;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
+          background: #f6f3f1;
+          border-radius: 12px;
+          overflow: hidden;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+        }
 
-.thumb {
-  width: 150px;
-  height: 150px;
-  flex-shrink: 0;
-}
+        .thumb {
+          width: 108px;
+          height: 108px;
+          flex-shrink: 0;
+        }
 
 .sessionThumb {
   height: 76px;
@@ -1957,28 +1960,22 @@ setLoading(false);
   display: flex;
   flex-direction: column;
   justify-content: center;
-  gap: 8px;
-
+  gap: 10px;
   min-width: 0;
 }
 
 .info h3 {
   margin: 0;
-  color: #6B1A2C;
-  font-size: 22px;
-  font-weight: 900;
-}
-
-.info p {
-  margin: 0;
-  color: #666;
-  font-size: 14px;
+  color: #241b1f;
+  font-size: 18px;
+  line-height: 1.2;
+  font-weight: 950;
 }
 
 .info strong {
   color: #6B1A2C;
-  font-size: 32px;
-  font-weight: 900;
+  font-size: 22px;
+  font-weight: 950;
 }
 
         .quantity {
