@@ -34,6 +34,7 @@ export default function NouvelleSeancePage() {
   const [endTime, setEndTime] = useState("19:30");
   const [location, setLocation] = useState("");
   const [selectedPlayers, setSelectedPlayers] = useState<string[]>([]);
+  const [sessionPositions, setSessionPositions] = useState<Record<string, "guard" | "forward" | "center">>({});
   const [blocks, setBlocks] = useState<TeamCompositionBlock[]>([defaultBlock()]);
   const [exercises, setExercises] = useState<SessionExercise[]>([]);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -63,7 +64,7 @@ export default function NouvelleSeancePage() {
       const { data: session, error } = await supabase.from("practice_sessions").select("*").eq("id", sessionId).maybeSingle();
       if (error || !session) { alert("Séance introuvable."); setLoading(false); return; }
       setEditingId(sessionId);
-      setTitle(session.title || "Séance rapide"); setTheme(session.theme || ""); setTeamId(session.team_id || "");
+      setTitle(session.title || "Séance rapide"); setTheme(session.theme || ""); setTeamId(session.team_reference_id || session.team_id || "");
       setDate(session.session_date || ""); setStartTime((session.start_time || "18:00").slice(0, 5)); setEndTime((session.end_time || "19:30").slice(0, 5)); setLocation(session.location || "");
       const loadedBlocks = Array.isArray(session.team_composition_blocks) && session.team_composition_blocks.length ? session.team_composition_blocks as TeamCompositionBlock[] : legacyBlocks(session.player_groups);
       setBlocks(loadedBlocks.length ? loadedBlocks : [defaultBlock()]);
@@ -79,6 +80,15 @@ export default function NouvelleSeancePage() {
       const directIds = (directRows ?? []).filter((r: any) => r.selected !== false && !["absent", "injured", "excused"].includes(String(r.status || ""))).map((r: any) => String(r.player_id || r.id || "")).filter(Boolean);
       const attendanceIds = (attendanceRows ?? []).filter((r: any) => !["absent", "injured", "excused"].includes(String(r.status || "present"))).map((r: any) => String(r.player_id || "")).filter(Boolean);
       setSelectedPlayers(Array.from(new Set(directIds.length ? directIds : attendanceIds)));
+      const loadedPositions = Object.fromEntries(
+        (directRows ?? []).map((row: any) => [
+          String(row.player_id || row.id || ""),
+          ["guard", "forward", "center"].includes(String(row.position || "").toLowerCase())
+            ? String(row.position).toLowerCase()
+            : "guard",
+        ]),
+      ) as Record<string, "guard" | "forward" | "center">;
+      setSessionPositions(loadedPositions);
     } else {
       const builderItems = await loadSessionBuilderItems();
       setExercises(builderItems.map((item, index) => ({ exercise_id: item.item_id ?? "", title: item.title, who: item.assigned_to ?? "CP", duration_minutes: item.duration_minutes ?? 10, situation_image_url: item.image_url ?? "", explanation: item.description ?? "", instructions: typeof item.metadata?.instructions === "string" ? item.metadata.instructions : "", variants: typeof item.metadata?.variants === "string" ? item.metadata.variants : "", sort_order: index })));
@@ -143,6 +153,7 @@ export default function NouvelleSeancePage() {
       user_id: user.id,
       visibility: "private",
       team_id: teamId,
+      team_reference_id: teamId,
       team_name: selectedTeam?.name ?? null,
       title: title.trim() || "Séance rapide",
       theme: theme.trim(),
@@ -165,8 +176,12 @@ export default function NouvelleSeancePage() {
     }
     const chosen = players.filter((player) => selectedPlayers.includes(player.id));
     if (chosen.length) {
-      await supabase.from("practice_session_attendance").insert(chosen.map((player) => ({ user_id: user.id, session_id: sessionId, player_id: player.id, first_name: player.first_name, last_name: player.last_name, status: "present", comment: "" })));
-      const snapshot = await supabase.from("practice_session_players").insert(chosen.map((player) => ({ user_id: user.id, session_id: sessionId, player_id: player.id, first_name: player.first_name, last_name: player.last_name, position: player.position_primary ?? null, selected: true, status: "present" })));
+      await supabase.from("practice_session_attendance").insert(chosen.map((player) => ({ user_id: user.id, session_id: sessionId, player_id: player.id, first_name: player.first_name, last_name: player.last_name, status: "pending", comment: "" })));
+      const snapshot = await supabase.from("practice_session_players").insert(chosen.map((player) => ({ user_id: user.id, session_id: sessionId, player_id: player.id, first_name: player.first_name, last_name: player.last_name, position: sessionPositions[player.id] ?? (
+        String(player.position_primary || "").toLowerCase().includes("center") ? "center" :
+        String(player.position_primary || "").toLowerCase().includes("forward") ? "forward" :
+        "guard"
+      ), selected: true, status: "pending" })));
       if (snapshot.error) console.warn("practice_session_players non disponible ou schéma différent", snapshot.error);
     }
     const { error: exerciseError } = await supabase.from("practice_session_exercises").insert(exercises.map((exercise, index) => ({ session_id: sessionId, user_id: user.id, exercise_id: exercise.exercise_id || null, title: exercise.title, who: exercise.who, duration_minutes: exercise.duration_minutes, situation_image_url: exercise.situation_image_url || null, explanation: exercise.explanation || null, instructions: exercise.instructions || null, sort_order: index })));

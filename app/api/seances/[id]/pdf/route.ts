@@ -151,7 +151,7 @@ async function loadPresentPlayers(
         first_name: firstString(detail.first_name, row.first_name) || "",
         last_name: firstString(detail.last_name, row.last_name) || "",
         position: normalizePosition(
-          firstString(detail.position_primary, detail.position, row.position_primary, row.position),
+          firstString(row.position, row.position_primary, detail.position, detail.position_primary),
         ),
       };
     })

@@ -59,6 +59,7 @@ type CalendarDbRow = Record<string, unknown>;
 type SessionCalendarRow = {
   id: string;
   team_id?: string | null;
+  team_reference_id?: string | null;
   team_name?: string | null;
   title?: string | null;
   pdf_url?: string | null;
@@ -328,7 +329,7 @@ export default function MonCalendrier() {
     if (sessionIds.length > 0) {
       const { data: sessionRows } = await supabase
         .from("practice_sessions")
-        .select("id, team_id, team_name, title, pdf_url")
+        .select("id, team_id, team_reference_id, team_name, title, pdf_url")
         .in("id", sessionIds);
 
       const typedSessionRows = (sessionRows ?? []) as SessionCalendarRow[];
@@ -344,7 +345,7 @@ export default function MonCalendrier() {
         const relatedSession = sessionsById.get(event.sessionId);
         if (!relatedSession) continue;
 
-        event.teamId = event.teamId || String(relatedSession.team_id || "");
+        event.teamId = event.teamId || String(relatedSession.team_reference_id || relatedSession.team_id || "");
         event.teamName =
           event.teamName ||
           String(relatedSession.team_name || "") ||
@@ -416,8 +417,14 @@ export default function MonCalendrier() {
       event_type: calendarTypeToDbType(fType),
       session_id:
         events.find((event) => event.id === editingId)?.sessionId || null,
-      team_id: fTeam || null,
-      team_name: selectedTeam?.name || null,
+      team_id:
+        fTeam ||
+        events.find((event) => event.id === editingId)?.teamId ||
+        null,
+      team_name:
+        selectedTeam?.name ||
+        events.find((event) => event.id === editingId)?.teamName ||
+        null,
       assigned_player_ids: fPlayers,
       attachment_url: fAttach?.dataUrl || null,
       visibility: "private",
@@ -528,7 +535,7 @@ export default function MonCalendrier() {
               </button>
             </div>
             <iframe
-              src={`/seances/apercu/${sessionPreviewId}`}
+              src={`/seances/${sessionPreviewId}?embed=1`}
               title="Aperçu de la fiche séance"
             />
           </div>
@@ -717,31 +724,6 @@ export default function MonCalendrier() {
                 <label>Notes</label>
                 <textarea value={fNotes} onChange={(e) => setFNotes(e.target.value)} placeholder="Infos complémentaires…" />
               </div>
-
-              {editingId && events.find((event) => event.id === editingId)?.sessionId && (
-                <div className="cal-session-card">
-                  <div>
-                    <span>FICHE SÉANCE ASSOCIÉE</span>
-                    <strong>
-                      {selectedTeam?.name ||
-                        events.find((event) => event.id === editingId)?.teamName ||
-                        "Équipe associée"}
-                    </strong>
-                    <small>Consulte la fiche sans quitter le calendrier.</small>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() =>
-                      setSessionPreviewId(
-                        events.find((event) => event.id === editingId)?.sessionId || null,
-                      )
-                    }
-                  >
-                    Consulter
-                  </button>
-                </div>
-              )}
-
               <div className="cal-fld">
                 <label>Pièce jointe (PDF, image, doc…)</label>
                 <div className="cal-attach">
@@ -753,7 +735,16 @@ export default function MonCalendrier() {
                   {fAttach && (
                     <span className="cal-attach-name">
                       <span className="cal-attach-fn" title={fAttach.name}>{fAttach.name}</span>
-                      <button type="button" className="cal-attach-act" onClick={() => setPreview(fAttach)}>Consulter</button>
+                      <button type="button" className="cal-attach-act" onClick={() => {
+                          const linkedSessionId = events.find(
+                            (event) => event.id === editingId,
+                          )?.sessionId;
+                          if (linkedSessionId) {
+                            setSessionPreviewId(linkedSessionId);
+                          } else {
+                            setPreview(fAttach);
+                          }
+                        }}>Consulter</button>
                       <button type="button" className="cal-attach-rm" onClick={() => setFAttach(null)} aria-label="Retirer">Retirer ✕</button>
                     </span>
                   )}

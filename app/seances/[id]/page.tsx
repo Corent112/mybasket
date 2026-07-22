@@ -31,11 +31,15 @@ type PracticeSession = {
   player_groups?: Record<string, string[]> | null;
 };
 
+type AttendanceStatus = "pending" | "present" | "absent" | "late" | "injured" | "excused";
+
 type SessionPlayer = {
   id: string;
   first_name: string | null;
   last_name: string | null;
   position: "guard" | "forward" | "center" | null;
+  status?: AttendanceStatus;
+  selected?: boolean;
 };
 
 type PlayerDetailRow = {
@@ -68,6 +72,7 @@ export default function SeanceDetailPage() {
   const [exercises, setExercises] = useState<SessionExercise[]>([]);
   const [ready, setReady] = useState(false);
   const [generatingPdf, setGeneratingPdf] = useState(false);
+  const [savingAttendance, setSavingAttendance] = useState<string | null>(null);
 
   const guards = useMemo(
     () => players.filter((player) => player.position === "guard"),
@@ -165,10 +170,9 @@ export default function SeanceDetailPage() {
 
     if (playersError) console.error(playersError);
 
-    let sourceRows = (directPlayers ?? []).filter((row: any) => {
-      const status = String(row.status || "present").toLowerCase();
-      return row.selected !== false && !["absent", "injured", "excused"].includes(status);
-    });
+    let sourceRows = (directPlayers ?? []).filter(
+      (row: any) => row.selected !== false,
+    );
 
     if (sourceRows.length === 0) {
       const { data: attendanceRows } = await supabase
@@ -176,10 +180,9 @@ export default function SeanceDetailPage() {
         .select("*")
         .eq("session_id", sessionId);
 
-      sourceRows = (attendanceRows ?? []).filter((row: any) => {
-        const status = String(row.status || "present").toLowerCase();
-        return row.selected !== false && !["absent", "injured", "excused"].includes(status);
-      });
+      sourceRows = (attendanceRows ?? []).filter(
+        (row: any) => row.selected !== false,
+      );
     }
 
     if (sourceRows.length === 0 && sessionData.team_id) {
@@ -212,11 +215,13 @@ export default function SeanceDetailPage() {
           first_name: playerDetail.first_name ?? row.first_name ?? "",
           last_name: playerDetail.last_name ?? row.last_name ?? "",
           position: normalizePosition(
-            playerDetail.position_primary ??
-              playerDetail.position ??
+            row.position ??
               row.position_primary ??
-              row.position,
+              playerDetail.position ??
+              playerDetail.position_primary,
           ),
+          status: (String(row.status || "pending").toLowerCase() as AttendanceStatus),
+          selected: row.selected !== false,
         } as SessionPlayer;
       })
       .filter((player: SessionPlayer, index: number, list: SessionPlayer[]) => player.id && list.findIndex((item) => item.id === player.id) === index);
@@ -243,6 +248,58 @@ export default function SeanceDetailPage() {
     setPlayers(playersData);
     setExercises((exercisesData ?? []) as SessionExercise[]);
     setReady(true);
+  }
+
+  async function setAttendanceStatus(
+    playerId: string,
+    status: AttendanceStatus,
+  ) {
+    if (!id) return;
+    setSavingAttendance(playerId);
+
+    const player = players.find((item) => item.id === playerId);
+    if (!player) {
+      setSavingAttendance(null);
+      return;
+    }
+
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+
+    const attendancePayload = {
+      user_id: user?.id,
+      session_id: id,
+      player_id: playerId,
+      first_name: player.first_name,
+      last_name: player.last_name,
+      selected: true,
+      status,
+      comment: "",
+    };
+
+    const { error: attendanceError } = await supabase
+      .from("practice_session_attendance")
+      .upsert(attendancePayload, { onConflict: "session_id,player_id" });
+
+    const { error: snapshotError } = await supabase
+      .from("practice_session_players")
+      .update({ status, selected: true })
+      .eq("session_id", id)
+      .eq("player_id", playerId);
+
+    if (attendanceError || snapshotError) {
+      console.error(attendanceError || snapshotError);
+      alert("Impossible de mettre à jour la présence.");
+    } else {
+      setPlayers((current) =>
+        current.map((item) =>
+          item.id === playerId ? { ...item, status } : item,
+        ),
+      );
+    }
+
+    setSavingAttendance(null);
   }
 
   async function generatePdf() {
@@ -329,10 +386,6 @@ export default function SeanceDetailPage() {
         </button>
 
         <div className="topbar-actions">
-          <button onClick={() => router.push(`/seances/${id}/presences`)}>
-            👥 Présences
-          </button>
-
           <button onClick={() => router.push(`/seances/${id}/bilan`)}>
             📊 Bilan séance
           </button>
@@ -356,6 +409,65 @@ export default function SeanceDetailPage() {
           </button>
         </div>
       </div>
+
+      <section className="attendancePanel">
+        <div className="attendanceHead">
+          <div>
+            <span>PRÉSENCE À L’ENTRAÎNEMENT</span>
+            <h2>Effectif convoqué</h2>
+            <p>
+              Les joueurs non convoqués restent grisés et ne sont pas comptés.
+              Renseigne directement le statut des joueurs de cette séance.
+            </p>
+          </div>
+          <div className="attendanceLegend">
+            <span className="present">Présent</span>
+            <span className="absent">Absent</span>
+            <span className="late">Retard</span>
+            <span className="injured">Blessé</span>
+            <span className="excused">Excusé</span>
+          </div>
+        </div>
+
+        <div className="attendanceCards">
+          {players.map((player) => {
+            const status = player.status || "pending";
+            return (
+              <article className={`attendanceCard status-${status}`} key={player.id}>
+                <div className="attendanceAvatar">
+                  {(player.first_name || "?").slice(0, 1).toUpperCase()}
+                </div>
+                <div className="attendanceIdentity">
+                  <strong>{playerName(player)}</strong>
+                  <small>{player.position || "Poste non défini"}</small>
+                </div>
+                <div className="attendanceChoices">
+                  {(
+                    [
+                      ["present", "✓"],
+                      ["absent", "A"],
+                      ["late", "R"],
+                      ["injured", "B"],
+                      ["excused", "E"],
+                    ] as Array<[AttendanceStatus, string]>
+                  ).map(([value, label]) => (
+                    <button
+                      type="button"
+                      key={value}
+                      className={status === value ? "active" : ""}
+                      disabled={savingAttendance === player.id}
+                      onClick={() => setAttendanceStatus(player.id, value)}
+                      title={value}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+              </article>
+            );
+          })}
+        </div>
+      </section>
 
       <section className="practiceSheet">
         <header className="sheetHeader">
@@ -489,6 +601,29 @@ export default function SeanceDetailPage() {
       </section>
 
       <style jsx>{`
+        .attendancePanel{max-width:1280px;margin:0 auto 18px;padding:20px;border:1px solid #eaded7;border-radius:20px;background:#fff;box-shadow:0 14px 40px rgba(45,20,28,.07)}
+        .attendanceHead{display:flex;justify-content:space-between;gap:20px;align-items:flex-start}
+        .attendanceHead span{color:#d4a24c;font-size:10px;font-weight:950;letter-spacing:.14em}
+        .attendanceHead h2{margin:5px 0;color:#6b1a2c}
+        .attendanceHead p{max-width:680px;margin:0;color:#756b6f;font-size:12px}
+        .attendanceLegend{display:flex;flex-wrap:wrap;gap:6px}
+        .attendanceLegend span{padding:6px 9px;border-radius:999px;background:#f4efec;color:#4b4145;font-size:9px;letter-spacing:0}
+        .attendanceCards{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;margin-top:16px}
+        .attendanceCard{display:grid;grid-template-columns:42px 1fr auto;gap:10px;align-items:center;padding:10px;border:1px solid #e9dfda;border-radius:14px;background:#f7f5f4;transition:.18s}
+        .attendanceCard.status-present{border-color:#9fd8b2;background:#eef9f1}
+        .attendanceCard.status-absent{border-color:#efadb6;background:#fff0f2}
+        .attendanceCard.status-late{border-color:#efd58f;background:#fff9e9}
+        .attendanceCard.status-injured{border-color:#d4b8e9;background:#f8f0ff}
+        .attendanceCard.status-excused{border-color:#b9cbe8;background:#eef5ff}
+        .attendanceAvatar{width:42px;height:42px;display:grid;place-items:center;border-radius:13px;background:#111;color:#d4a24c;font-weight:950}
+        .attendanceIdentity strong,.attendanceIdentity small{display:block}
+        .attendanceIdentity strong{font-size:12px}
+        .attendanceIdentity small{margin-top:3px;color:#81767a;font-size:9px;text-transform:uppercase}
+        .attendanceChoices{display:flex;gap:4px}
+        .attendanceChoices button{width:28px;height:28px;border:1px solid #ded4cf;border-radius:8px;background:#fff;font-size:10px;font-weight:950;cursor:pointer}
+        .attendanceChoices button.active{border-color:#6b1a2c;background:#6b1a2c;color:#fff}
+        @media(max-width:900px){.attendanceCards{grid-template-columns:1fr}.attendanceHead{flex-direction:column}}
+
         .seance-detail {
           max-width: 1240px;
           margin: 0 auto;

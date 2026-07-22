@@ -3,8 +3,6 @@
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
-import { getTeams } from "@/lib/equipes-store";
-import { cleanPracticeText, parsePracticeDuration, shortCoachCode } from "@/lib/practice-session-format";
 
 type CartItem = {
   id: string;
@@ -21,10 +19,6 @@ type CartItem = {
   sort_order: number;
   consignes?: string | string[] | null;
   instructions?: string | string[] | null;
-  deroulement?: string | string[] | null;
-  variantes?: string | string[] | null;
-  temps?: string | number | null;
-  metadata?: Record<string, unknown> | null;
   schemaImages?: string[];
   schema_images?: string[];
 };
@@ -57,19 +51,45 @@ type Team = {
 type PlayerPosition = "guard" | "forward" | "center";
 type SessionPlayers = Record<PlayerPosition, TeamPlayer[]>;
 
-type SessionGroup = {
+type CompositionTeam = {
   id: string;
   name: string;
   playerIds: string[];
 };
 
+type TeamCompositionBlock = {
+  id: string;
+  title: string;
+  playersPerTeam: number;
+  teams: CompositionTeam[];
+};
+
 const COACHES = [
-  { value: "Coach principal", code: "CP", label: "Coach principal" },
-  { value: "Assistant coach 1", code: "AC1", label: "Assistant coach 1" },
-  { value: "Assistant coach 2", code: "AC2", label: "Assistant coach 2" },
-  { value: "Préparateur physique", code: "PP", label: "Préparateur physique" },
-  { value: "Responsable vidéo", code: "RV", label: "Responsable vidéo" },
-] as const;
+  "Coach principal",
+  "Assistant coach",
+  "Préparateur physique",
+  "Responsable vidéo",
+];
+
+const compositionUid = (prefix: string) =>
+  `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+
+function createCompositionBlock(
+  title = "3 contre 3",
+  playersPerTeam = 3,
+  teamCount = 3,
+): TeamCompositionBlock {
+  return {
+    id: compositionUid("block"),
+    title,
+    playersPerTeam,
+    teams: Array.from({ length: teamCount }, (_, index) => ({
+      id: compositionUid("team"),
+      name: `Équipe ${index + 1}`,
+      playerIds: [],
+    })),
+  };
+}
 
 const emptyPlayers: SessionPlayers = {
   guard: [],
@@ -92,33 +112,39 @@ function playerName(player: TeamPlayer) {
   );
 }
 
-function playerFirstName(player: TeamPlayer) {
-  if (player.firstName) return player.firstName;
-  const parts = playerName(player).trim().split(/\s+/);
-  return parts[0] || "";
-}
-
-function playerLastName(player: TeamPlayer) {
-  if (player.lastName) return player.lastName;
-  const parts = playerName(player).trim().split(/\s+/);
-  return parts.slice(1).join(" ");
-}
-
 function coachCode(value: string | null) {
-  return shortCoachCode(value);
-}
-
-function escapeHtml(value: string) {
-  return value
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;");
+  if (value === "Assistant coach") return "AC";
+  if (value === "Préparateur physique") return "PP";
+  if (value === "Responsable vidéo") return "RV";
+  return "CP";
 }
 
 function formatText(value: unknown) {
-  const text = cleanPracticeText(value);
-  return text ? text.split(/\n+/).map(escapeHtml).join("<br />") : "—";
+  if (!value) return "—";
+
+  if (Array.isArray(value)) {
+    return value.filter(Boolean).map(String).join("<br />");
+  }
+
+  const text = String(value).trim();
+
+  try {
+    const parsed = JSON.parse(text);
+
+    if (Array.isArray(parsed)) {
+      return parsed.filter(Boolean).map(String).join("<br />");
+    }
+
+    return String(parsed).replace(/\n/g, "<br />");
+  } catch {
+    return text
+      .replace(/^\[/, "")
+      .replace(/\]$/, "")
+      .replace(/^"/, "")
+      .replace(/"$/, "")
+      .replace(/\\"/g, '"')
+      .replace(/\n/g, "<br />");
+  }
 }
 
 function normalizePosition(player: TeamPlayer): PlayerPosition {
@@ -140,6 +166,29 @@ function normalizePosition(player: TeamPlayer): PlayerPosition {
   return "guard";
 }
 
+function readTeamsFromLocalStorage(): Team[] {
+  if (typeof window === "undefined") return [];
+
+  const keys = ["mybasket_equipes", "mybasket_teams", "teams"];
+
+  for (const key of keys) {
+    try {
+      const raw = localStorage.getItem(key);
+      if (!raw) continue;
+
+      const parsed = JSON.parse(raw);
+
+      if (Array.isArray(parsed)) return parsed;
+      if (Array.isArray(parsed?.teams)) return parsed.teams;
+      if (Array.isArray(parsed?.equipes)) return parsed.equipes;
+    } catch {
+      continue;
+    }
+  }
+
+  return [];
+}
+
 function uniqueImages(images: Array<string | null | undefined>) {
   return Array.from(new Set(images.filter(Boolean) as string[]));
 }
@@ -156,247 +205,11 @@ function subscriptionImage(title: string) {
 
   return "/images/abonnement-basic.png";
 }
-
-
-type Html2PdfWorker = {
-  set: (options: Record<string, unknown>) => Html2PdfWorker;
-  from: (source: HTMLElement | string) => Html2PdfWorker;
-  outputPdf: (type: "blob") => Promise<Blob>;
-  save: (filename?: string) => Promise<void>;
-};
-
-type Html2PdfFactory = () => Html2PdfWorker;
-
-declare global {
-  interface Window {
-    html2pdf?: Html2PdfFactory;
-  }
-}
-
-const PRACTICE_PDF_BUCKET = "practice-session-pdfs";
-
-function safeFileName(value: string) {
-  return String(value || "fiche-seance")
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .replace(/[^a-zA-Z0-9-_]+/g, "-")
-    .replace(/^-+|-+$/g, "")
-    .toLowerCase();
-}
-
-function htmlForPdf(html: string) {
-  return html
-    .replace(/<script[\s\S]*?<\/script>/gi, "")
-    .replace(/window\.print\(\)/g, "");
-}
-
-async function loadHtml2Pdf() {
-  if (typeof window === "undefined") {
-    throw new Error("Génération PDF disponible uniquement dans le navigateur.");
-  }
-
-  if (window.html2pdf) return window.html2pdf;
-
-  await new Promise<void>((resolve, reject) => {
-    const existing = document.querySelector<HTMLScriptElement>("script[data-html2pdf]");
-
-    if (existing) {
-      existing.addEventListener("load", () => resolve(), { once: true });
-      existing.addEventListener("error", () => reject(new Error("Chargement html2pdf impossible.")), { once: true });
-      return;
-    }
-
-    const script = document.createElement("script");
-    script.src = "https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js";
-    script.async = true;
-    script.dataset.html2pdf = "true";
-    script.onload = () => resolve();
-    script.onerror = () => reject(new Error("Chargement html2pdf impossible."));
-    document.head.appendChild(script);
-  });
-
-  if (!window.html2pdf) {
-    throw new Error("html2pdf n'est pas disponible.");
-  }
-
-  return window.html2pdf;
-}
-
-async function createPdfBlobFromHtml(html: string) {
-  const html2pdf = await loadHtml2Pdf();
-  const holder = document.createElement("div");
-
-  // Ne jamais placer la source à -10000px : Safari/WebKit peut conserver
-  // ce décalage horizontal dans le canvas et couper presque toute la fiche.
-  // Le rendu reste dans la page, derrière l'interface, avec une largeur A4 fixe.
-  holder.setAttribute("data-practice-pdf-render", "true");
-  holder.style.position = "absolute";
-  holder.style.left = "0";
-  holder.style.top = "0";
-  holder.style.zIndex = "-2147483647";
-  holder.style.pointerEvents = "none";
-  holder.style.width = "794px";
-  holder.style.minWidth = "794px";
-  holder.style.maxWidth = "794px";
-  holder.style.margin = "0";
-  holder.style.padding = "0";
-  holder.style.overflow = "visible";
-  holder.style.background = "#ffffff";
-  holder.innerHTML = htmlForPdf(html);
-  document.body.appendChild(holder);
-
-  try {
-    const page = holder.querySelector<HTMLElement>(".page") || holder;
-
-    // Sécurise la géométrie avant que html2canvas ne clone le document.
-    page.style.position = "relative";
-    page.style.left = "0";
-    page.style.top = "0";
-    page.style.margin = "0";
-    page.style.transform = "none";
-    page.style.transformOrigin = "top left";
-    page.style.width = "794px";
-    page.style.minWidth = "794px";
-    page.style.maxWidth = "794px";
-
-    return await html2pdf()
-      .set({
-        margin: 0,
-        filename: "fiche-seance.pdf",
-        image: { type: "jpeg", quality: 0.98 },
-        html2canvas: {
-          scale: 2,
-          useCORS: true,
-          allowTaint: false,
-          backgroundColor: "#ffffff",
-          scrollX: 0,
-          scrollY: 0,
-          windowWidth: 794,
-          onclone: (clonedDocument: Document) => {
-            const clonedHolder = clonedDocument.querySelector<HTMLElement>(
-              '[data-practice-pdf-render="true"]'
-            );
-            const clonedPage = clonedHolder?.querySelector<HTMLElement>(".page");
-
-            if (clonedHolder) {
-              clonedHolder.style.position = "absolute";
-              clonedHolder.style.left = "0";
-              clonedHolder.style.top = "0";
-              clonedHolder.style.width = "794px";
-              clonedHolder.style.minWidth = "794px";
-              clonedHolder.style.maxWidth = "794px";
-              clonedHolder.style.margin = "0";
-              clonedHolder.style.padding = "0";
-              clonedHolder.style.transform = "none";
-              clonedHolder.style.overflow = "visible";
-            }
-
-            if (clonedPage) {
-              clonedPage.style.position = "relative";
-              clonedPage.style.left = "0";
-              clonedPage.style.top = "0";
-              clonedPage.style.width = "794px";
-              clonedPage.style.minWidth = "794px";
-              clonedPage.style.maxWidth = "794px";
-              clonedPage.style.margin = "0";
-              clonedPage.style.transform = "none";
-              clonedPage.style.transformOrigin = "top left";
-            }
-          },
-        },
-        jsPDF: { unit: "px", format: [794, 1123], orientation: "portrait" },
-        pagebreak: { mode: ["css", "legacy"], avoid: ["tr"] },
-      })
-      .from(page)
-      .outputPdf("blob");
-  } finally {
-    holder.remove();
-  }
-}
-
-function downloadBlobFile(filename: string, blob: Blob) {
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = filename;
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-  URL.revokeObjectURL(url);
-}
-
 function notifyCartUpdated() {
   if (typeof window === "undefined") return;
 
   window.dispatchEvent(new Event("cart-updated"));
 }
-
-function notifySessionCartCleared() {
-  if (typeof window === "undefined") return;
-
-  window.dispatchEvent(new Event("cart-updated"));
-  window.dispatchEvent(new Event("mybasket:session-cart-cleared"));
-}
-
-function safeLocalJsonArray(key: string): any[] {
-  if (typeof window === "undefined") return [];
-
-  try {
-    const parsed = JSON.parse(window.localStorage.getItem(key) || "[]");
-    return Array.isArray(parsed) ? parsed : [];
-  } catch {
-    return [];
-  }
-}
-
-function writeLocalJsonArray(key: string, value: any[]) {
-  if (typeof window === "undefined") return;
-
-  try {
-    window.localStorage.setItem(key, JSON.stringify(value));
-  } catch (error) {
-    console.error(`Erreur localStorage ${key}:`, error);
-  }
-}
-
-function getSessionItemCategory(item: CartItem, sessionTheme: string) {
-  const text = [
-    item.title,
-    item.description,
-    sessionTheme,
-    item.item_type,
-  ]
-    .filter(Boolean)
-    .join(" ")
-    .toLowerCase();
-
-  if (text.includes("surnombre")) return "Surnombre";
-  if (text.includes("pré") || text.includes("pre") || text.includes("collect")) return "Pré-collectif";
-  if (text.includes("tir")) return "Tirs";
-  if (text.includes("déf") || text.includes("def")) return "Défense";
-  if (text.includes("transition") || text.includes("jeu rapide")) return "Transition / Jeu rapide";
-  if (text.includes("1c1") || text.includes("1v1")) return "1c1 / Situations";
-  if (text.includes("dribble")) return "Dribble";
-  if (text.includes("passe")) return "Passe";
-  if (text.includes("phys")) return "Physique";
-
-  if (item.item_type === "system") return "Pré-collectif";
-  return sessionTheme ? getSessionThemeCategory(sessionTheme) : "Autre";
-}
-function getSessionThemeCategory(theme: string) {
-  const text = String(theme || "").toLowerCase();
-  if (text.includes("surnombre")) return "Surnombre";
-  if (text.includes("pré") || text.includes("pre") || text.includes("collect")) return "Pré-collectif";
-  if (text.includes("tir")) return "Tirs";
-  if (text.includes("déf") || text.includes("def")) return "Défense";
-  if (text.includes("transition") || text.includes("jeu rapide")) return "Transition / Jeu rapide";
-  if (text.includes("1c1") || text.includes("1v1")) return "1c1 / Situations";
-  if (text.includes("dribble")) return "Dribble";
-  if (text.includes("passe")) return "Passe";
-  if (text.includes("phys")) return "Physique";
-  return theme || "Autre";
-}
-
 export default function PanierPage() {
   const supabase = createClient();
 
@@ -416,9 +229,8 @@ export default function PanierPage() {
     player: TeamPlayer;
     from: PlayerPosition;
   } | null>(null);
-  const [sessionGroups, setSessionGroups] = useState<SessionGroup[]>([
-    { id: "group-1", name: "Équipe 1", playerIds: [] },
-    { id: "group-2", name: "Équipe 2", playerIds: [] },
+  const [compositionBlocks, setCompositionBlocks] = useState<TeamCompositionBlock[]>([
+    createCompositionBlock(),
   ]);
 
   const productItems = items.filter((item) => item.item_type === "product");
@@ -434,15 +246,6 @@ export default function PanierPage() {
 
   const selectedTeam = teams.find((team) => team.id === selectedTeamId);
 
-  const allSessionPlayers = useMemo(
-    () => [
-      ...sessionPlayers.guard,
-      ...sessionPlayers.forward,
-      ...sessionPlayers.center,
-    ],
-    [sessionPlayers]
-  );
-
 const purchaseItems = useMemo(
   () => [...productItems, ...subscriptionItems],
   [productItems, subscriptionItems]
@@ -454,28 +257,13 @@ const subtotal = useMemo(() => {
   }, 0);
 }, [purchaseItems]);
 
-  // Les prix affichés et administrés dans MyBasket sont TTC.
-  // On extrait la part de TVA uniquement pour information, sans la rajouter.
-  const total = subtotal;
-  const tax = total - total / 1.2;
+  const tax = subtotal * 0.2;
+  const total = subtotal + tax;
 
   useEffect(() => {
-    initialize();
+    loadCart();
+    setTeams(readTeamsFromLocalStorage());
   }, []);
-
-  async function initialize() {
-    await Promise.all([loadCart(), loadTeams()]);
-  }
-
-  async function loadTeams() {
-    try {
-      const data = await getTeams();
-      setTeams((data ?? []) as Team[]);
-    } catch (error) {
-      console.error("Erreur chargement équipes:", error);
-      setTeams([]);
-    }
-  }
 
   async function loadCart() {
     setLoading(true);
@@ -518,7 +306,7 @@ const subtotal = useMemo(() => {
         .in("id", exerciseIds);
 
       exercisesById = Object.fromEntries(
-        (exercisesData ?? []).map((exercise: { id: string; [key: string]: unknown }) => [exercise.id, exercise])
+        (exercisesData ?? []).map((exercise) => [exercise.id, exercise])
       );
     }
 
@@ -537,42 +325,23 @@ const subtotal = useMemo(() => {
       return {
         ...item,
         title: exercise.title ?? item.title,
-        // La colonne Explications reprend uniquement le DÉROULEMENT.
         description:
-          cleanPracticeText(exercise.deroulement) ||
-          cleanPracticeText(exercise.description) ||
-          cleanPracticeText(item.metadata?.explanation) ||
-          cleanPracticeText(item.description) ||
-          null,
-        deroulement: exercise.deroulement ?? item.deroulement ?? null,
-        variantes: exercise.variantes ?? item.variantes ?? null,
-        temps: exercise.temps ?? item.temps ?? null,
+          exercise.organisation ?? exercise.description ?? item.description,
         image_url: schemas[0] ?? item.image_url,
         schema_images: schemas,
         schemaImages: schemas,
-        // Si aucune consigne n'est renseignée, on affiche les variantes.
         consignes:
           exercise.consignes ??
           exercise.instructions ??
-          exercise.variantes ??
           item.consignes ??
           item.instructions ??
-          item.variantes ??
           null,
         instructions:
-          cleanPracticeText(exercise.consignes) ||
-          cleanPracticeText(exercise.instructions) ||
-          cleanPracticeText(exercise.variantes) ||
-          cleanPracticeText(item.consignes) ||
-          cleanPracticeText(item.instructions) ||
-          cleanPracticeText(item.variantes) ||
-          cleanPracticeText(item.metadata?.instructions) ||
+          exercise.instructions ??
+          exercise.consignes ??
+          item.instructions ??
+          item.consignes ??
           null,
-        // La durée vient d'abord du critère TEMPS de l'exercice.
-        duration_minutes: parsePracticeDuration(
-          exercise.temps ?? item.temps ?? exercise.duration ?? item.duration_minutes,
-          10
-        ),
       };
     });
 
@@ -748,63 +517,15 @@ setLoading(false);
     setDraggedPlayer(null);
   }
 
-  function addSessionGroup() {
-    setSessionGroups((prev) => [
-      ...prev,
-      {
-        id: `group-${Date.now()}`,
-        name: `Équipe ${prev.length + 1}`,
-        playerIds: [],
-      },
-    ]);
-  }
-
-  function renameSessionGroup(groupId: string, name: string) {
-    setSessionGroups((prev) =>
-      prev.map((group) => (group.id === groupId ? { ...group, name } : group))
-    );
-  }
-
-  function removeSessionGroup(groupId: string) {
-    setSessionGroups((prev) => prev.filter((group) => group.id !== groupId));
-  }
-
-  function dropPlayerInGroup(groupId: string) {
-    if (!draggedPlayer) return;
-    const playerId = draggedPlayer.player.id;
-
-    setSessionGroups((prev) =>
-      prev.map((group) => ({
-        ...group,
-        playerIds:
-          group.id === groupId
-            ? Array.from(new Set([...group.playerIds, playerId]))
-            : group.playerIds.filter((id) => id !== playerId),
-      }))
-    );
-    setDraggedPlayer(null);
-  }
-
-  function removePlayerFromGroup(groupId: string, playerId: string) {
-    setSessionGroups((prev) =>
-      prev.map((group) =>
-        group.id === groupId
-          ? { ...group, playerIds: group.playerIds.filter((id) => id !== playerId) }
-          : group
-      )
-    );
-  }
-
   async function createCheckout(provider: "stripe" | "paypal" | "apple_pay") {
-  try {
-    const endpoint = provider === "paypal"
-      ? "/api/checkout/paypal"
-      : "/api/checkout/stripe";
+  if (provider !== "stripe") {
+    alert("Ce moyen de paiement arrive bientôt.");
+    return;
+  }
 
-    const response = await fetch(endpoint, {
+  try {
+    const response = await fetch("/api/checkout/stripe", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ preferredMethod: provider }),
     });
 
     const text = await response.text();
@@ -815,7 +536,7 @@ setLoading(false);
       data = JSON.parse(text);
     } catch {
       console.error("Réponse non JSON /api/checkout/stripe :", text);
-      alert("Le service de paiement a renvoyé une réponse invalide. Détail dans la console.");
+      alert("Erreur serveur Stripe. Détail affiché dans la console.");
       return;
     }
 
@@ -825,7 +546,7 @@ setLoading(false);
     }
 
     if (!data.url) {
-      alert("Le service de paiement n'a pas renvoyé d'URL.");
+      alert("Stripe n'a pas renvoyé d'URL de paiement.");
       return;
     }
 
@@ -836,385 +557,302 @@ setLoading(false);
   }
 }
 
-  async function clearSessionCart(userId: string) {
-    const sessionTypes: CartItem["item_type"][] = ["exercise", "system", "session"];
+  const allSessionPlayers = useMemo(
+    () => [
+      ...sessionPlayers.guard,
+      ...sessionPlayers.forward,
+      ...sessionPlayers.center,
+    ],
+    [sessionPlayers],
+  );
 
-    setItems((prev) => prev.filter((item) => !sessionTypes.includes(item.item_type)));
-
-    const { error } = await supabase
-      .from("cart_items")
-      .delete()
-      .eq("user_id", userId)
-      .in("item_type", sessionTypes);
-
-    if (error) {
-      console.error("Erreur vidage panier séance:", {
-        code: error.code,
-        message: error.message,
-        details: error.details,
-        hint: error.hint,
-      });
-      await loadCart();
-      return;
-    }
-
-    notifySessionCartCleared();
+  function addCompositionBlock(
+    title = "Nouveau bloc",
+    playersPerTeam = 3,
+    teamCount = 2,
+  ) {
+    setCompositionBlocks((current) => [
+      ...current,
+      createCompositionBlock(title, playersPerTeam, teamCount),
+    ]);
   }
 
-  async function saveSessionToCalendar(pdfHtml: string, pdfUrl: string | null) {
-    const {
-      data: { user },
-      error: userError,
-    } = await supabase.auth.getUser();
-
-    if (userError || !user) {
-      alert("Connecte-toi pour ajouter la séance au calendrier.");
-      return;
-    }
-
-    const isUuid = (value: string | null | undefined) =>
-      !!value &&
-      /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{12}$/i.test(
-        value
-      );
-
-    const teamName = selectedTeam?.name ?? selectedTeam?.clubName ?? "Équipe";
-    const sortedSessionItems = [...sessionItems].sort(
-      (a, b) => a.sort_order - b.sort_order
+  function updateCompositionBlock(
+    blockId: string,
+    patch: Partial<TeamCompositionBlock>,
+  ) {
+    setCompositionBlocks((current) =>
+      current.map((block) =>
+        block.id === blockId ? { ...block, ...patch } : block,
+      ),
     );
-    const totalMinutes = sortedSessionItems.reduce(
-      (sum, item) => sum + parsePracticeDuration(item.duration_minutes, 10),
-      0
+  }
+
+  function removeCompositionBlock(blockId: string) {
+    setCompositionBlocks((current) =>
+      current.filter((block) => block.id !== blockId),
     );
-    const clubLogoUrl =
-      selectedTeam?.logo ||
-      selectedTeam?.logoUrl ||
-      selectedTeam?.logo_url ||
-      selectedTeam?.clubLogo ||
-      selectedTeam?.clubLogoUrl ||
-      selectedTeam?.club_logo_url ||
-      null;
+  }
 
-    const sessionItemsPayload = sortedSessionItems.map((item, index) => ({
-      item_type: item.item_type,
-      item_id: item.item_id,
-      title: item.title,
-      description: item.description,
-      category: getSessionItemCategory(item, sessionTheme),
-      duration_minutes: parsePracticeDuration(item.duration_minutes, 10),
-      assigned_to: item.assigned_to ?? "Coach principal",
-      sort_order: index + 1,
-      image_url: item.image_url,
-      schema_images: uniqueImages([
-        ...(item.schemaImages ?? []),
-        ...(item.schema_images ?? []),
-      ]),
-      deroulement:
-        item.deroulement ??
-        item.description ??
-        null,
-      consignes:
-        item.consignes ??
-        item.instructions ??
-        item.variantes ??
-        null,
-      variantes: item.variantes ?? null,
-      instructions:
-        item.instructions ??
-        item.consignes ??
-        item.variantes ??
-        null,
-    }));
+  function duplicateCompositionBlock(blockId: string) {
+    setCompositionBlocks((current) => {
+      const source = current.find((block) => block.id === blockId);
+      if (!source) return current;
+      return [
+        ...current,
+        {
+          ...source,
+          id: compositionUid("block"),
+          title: `${source.title} — copie`,
+          teams: source.teams.map((team) => ({
+            ...team,
+            id: compositionUid("team"),
+            playerIds: [...team.playerIds],
+          })),
+        },
+      ];
+    });
+  }
 
-    const fullSessionPayload = {
+  function addCompositionTeam(blockId: string) {
+    setCompositionBlocks((current) =>
+      current.map((block) =>
+        block.id === blockId
+          ? {
+              ...block,
+              teams: [
+                ...block.teams,
+                {
+                  id: compositionUid("team"),
+                  name: `Équipe ${block.teams.length + 1}`,
+                  playerIds: [],
+                },
+              ],
+            }
+          : block,
+      ),
+    );
+  }
+
+  function updateCompositionTeam(
+    blockId: string,
+    teamId: string,
+    patch: Partial<CompositionTeam>,
+  ) {
+    setCompositionBlocks((current) =>
+      current.map((block) =>
+        block.id === blockId
+          ? {
+              ...block,
+              teams: block.teams.map((team) =>
+                team.id === teamId ? { ...team, ...patch } : team,
+              ),
+            }
+          : block,
+      ),
+    );
+  }
+
+  function removeCompositionTeam(blockId: string, teamId: string) {
+    setCompositionBlocks((current) =>
+      current.map((block) =>
+        block.id === blockId
+          ? {
+              ...block,
+              teams: block.teams.filter((team) => team.id !== teamId),
+            }
+          : block,
+      ),
+    );
+  }
+
+  function togglePlayerInComposition(
+    blockId: string,
+    teamId: string,
+    playerId: string,
+  ) {
+    setCompositionBlocks((current) =>
+      current.map((block) => {
+        if (block.id !== blockId) return block;
+        return {
+          ...block,
+          teams: block.teams.map((team) => ({
+            ...team,
+            playerIds:
+              team.id === teamId
+                ? team.playerIds.includes(playerId)
+                  ? team.playerIds.filter((id) => id !== playerId)
+                  : [...team.playerIds, playerId]
+                : team.playerIds.filter((id) => id !== playerId),
+          })),
+        };
+      }),
+    );
+  }
+
+  function autoDistributeComposition(blockId: string) {
+    setCompositionBlocks((current) =>
+      current.map((block) => {
+        if (block.id !== blockId) return block;
+        const size = Math.max(1, block.playersPerTeam || 1);
+        const needed = Math.max(1, Math.ceil(allSessionPlayers.length / size));
+        const teams: CompositionTeam[] = block.teams
+          .slice(0, Math.max(needed, block.teams.length))
+          .map((team) => ({ ...team, playerIds: [] }));
+
+        while (teams.length < needed) {
+          teams.push({
+            id: compositionUid("team"),
+            name: `Équipe ${teams.length + 1}`,
+            playerIds: [],
+          });
+        }
+
+        allSessionPlayers.forEach((player, index) => {
+          teams[index % teams.length]?.playerIds.push(player.id);
+        });
+
+        return { ...block, teams };
+      }),
+    );
+  }
+
+  async function saveSessionToCalendar() {
+  const {
+    data: { user },
+    error: userError,
+  } = await supabase.auth.getUser();
+
+  if (userError || !user) {
+    alert("Connecte-toi pour ajouter la séance au calendrier.");
+    return;
+  }
+
+  const isUuid = (value: string | null | undefined) =>
+    !!value &&
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{12}$/i.test(
+      value
+    );
+
+  const teamName = selectedTeam?.name ?? selectedTeam?.clubName ?? "Équipe";
+
+  const { data: createdSession, error: sessionError } = await supabase
+    .from("practice_sessions")
+    .insert({
       user_id: user.id,
+      owner_id: user.id,
       team_id: isUuid(selectedTeamId) ? selectedTeamId : null,
-      team_local_id: selectedTeamId || null,
+      team_reference_id: selectedTeamId || null,
       team_name: teamName,
-      title: `${teamName} • ${sessionTheme}`,
+      team_composition_blocks: compositionBlocks,
+      player_groups: Object.fromEntries(
+        (compositionBlocks[0]?.teams || []).map((team) => [
+          team.name,
+          team.playerIds,
+        ]),
+      ),
+      title: `Séance ${teamName}`,
       theme: sessionTheme,
       session_date: sessionDate,
       start_time: sessionStartTime,
       end_time: sessionEndTime,
-      location: null,
-      duration_minutes: totalMinutes,
-      total_minutes: totalMinutes,
-      club_logo_url: clubLogoUrl,
+      location: teamName,
+      club_logo_url:
+        selectedTeam?.logo ||
+        selectedTeam?.logoUrl ||
+        selectedTeam?.logo_url ||
+        selectedTeam?.clubLogo ||
+        selectedTeam?.clubLogoUrl ||
+        selectedTeam?.club_logo_url ||
+        null,
       mybasket_logo_url: "/logo-mybasket02.png",
-      player_groups: Object.fromEntries(
-        sessionGroups
-          .filter((group) => group.name.trim())
-          .map((group) => [group.name.trim(), group.playerIds])
-      ),
       notes: null,
       visibility: "private",
       pdf_generated: true,
       pdf_generated_at: new Date().toISOString(),
-      pdf_html: pdfHtml,
-      pdf_url: pdfUrl,
-      attachment_url: pdfUrl,
-      session_content: {
-        theme: sessionTheme,
-        total_minutes: totalMinutes,
-        pdf_html: pdfHtml,
-        pdf_url: pdfUrl,
-        items: sessionItemsPayload,
-        players: sessionPlayers,
-        player_groups: Object.fromEntries(
-          sessionGroups
-            .filter((group) => group.name.trim())
-            .map((group) => [group.name.trim(), group.playerIds])
-        ),
-        team: {
-          id: selectedTeamId,
-          name: teamName,
-          logo_url: clubLogoUrl,
-        },
-      },
-    };
+    })
+    .select("id")
+    .single();
 
-    const legacySessionPayload = {
-      user_id: user.id,
-      team_id: isUuid(selectedTeamId) ? selectedTeamId : null,
-      title: `${teamName} • ${sessionTheme}`,
-      theme: sessionTheme,
-      session_date: sessionDate,
-      start_time: sessionStartTime,
-      end_time: sessionEndTime,
-      location: null,
-      club_logo_url: clubLogoUrl,
-      mybasket_logo_url: "/logo-mybasket02.png",
-      notes: JSON.stringify({
-        team_local_id: selectedTeamId,
-        team_name: teamName,
-        total_minutes: totalMinutes,
-        pdf_html: pdfHtml,
-        pdf_url: pdfUrl,
-        items: sessionItemsPayload,
-        players: sessionPlayers,
-        player_groups: Object.fromEntries(
-          sessionGroups
-            .filter((group) => group.name.trim())
-            .map((group) => [group.name.trim(), group.playerIds])
-        ),
-      }),
-      visibility: "private",
-      pdf_generated: true,
-      pdf_generated_at: new Date().toISOString(),
-      pdf_html: pdfHtml,
-      pdf_url: pdfUrl,
-      attachment_url: pdfUrl,
-    };
+  if (sessionError || !createdSession) {
+    console.error("Erreur création practice_sessions:", {
+      code: sessionError?.code,
+      message: sessionError?.message,
+      details: sessionError?.details,
+      hint: sessionError?.hint,
+    });
 
-    let createdSession: { id: string } | null = null;
-    let sessionError: any = null;
+    alert(
+      `La fiche est générée, mais la séance Supabase n'a pas été créée : ${sessionError?.message}`
+    );
 
-    const fullInsert = await supabase
-      .from("practice_sessions")
-      .insert(fullSessionPayload)
-      .select("id")
-      .single();
-
-    if (fullInsert.error) {
-      console.warn("Insertion practice_sessions complète impossible, fallback legacy :", {
-        code: fullInsert.error.code,
-        message: fullInsert.error.message,
-        details: fullInsert.error.details,
-        hint: fullInsert.error.hint,
-      });
-
-      const legacyInsert = await supabase
-        .from("practice_sessions")
-        .insert(legacySessionPayload)
-        .select("id")
-        .single();
-
-      createdSession = legacyInsert.data as { id: string } | null;
-      sessionError = legacyInsert.error;
-    } else {
-      createdSession = fullInsert.data as { id: string } | null;
-    }
-
-    if (sessionError || !createdSession) {
-      console.error("Erreur création practice_sessions:", {
-        code: sessionError?.code,
-        message: sessionError?.message,
-        details: sessionError?.details,
-        hint: sessionError?.hint,
-      });
-
-      alert(
-        `La fiche est générée, mais la séance Supabase n'a pas été créée : ${sessionError?.message}`
-      );
-
-      return;
-    }
-
-    const fullItemRows = sessionItemsPayload.map((item) => ({
-      session_id: createdSession.id,
-      team_id: isUuid(selectedTeamId) ? selectedTeamId : null,
-      team_local_id: selectedTeamId || null,
-      ...item,
-    }));
-
-    const legacyItemRows = sessionItemsPayload.map((item) => ({
-      session_id: createdSession.id,
-      item_type: item.item_type,
-      item_id: item.item_id,
-      title: item.title,
-      category: item.category,
-      duration_minutes: item.duration_minutes,
-      sort_order: item.sort_order,
-    }));
-
-    if (fullItemRows.length > 0) {
-      const { error: itemsError } = await supabase
-        .from("practice_session_items")
-        .insert(fullItemRows);
-
-      if (itemsError) {
-        console.warn("Insertion complète practice_session_items impossible, fallback legacy :", {
-          code: itemsError.code,
-          message: itemsError.message,
-          details: itemsError.details,
-          hint: itemsError.hint,
-        });
-
-        const { error: legacyItemsError } = await supabase
-          .from("practice_session_items")
-          .insert(legacyItemRows);
-
-        if (legacyItemsError) {
-          console.warn("Séance créée sans lignes practice_session_items :", {
-            code: legacyItemsError.code,
-            message: legacyItemsError.message,
-            details: legacyItemsError.details,
-            hint: legacyItemsError.hint,
-          });
-        }
-      }
-    }
-
-    const practiceExerciseRows = sessionItemsPayload.map((item) => ({
-      session_id: createdSession.id,
-      user_id: user.id,
-      exercise_id: item.item_type === "exercise" ? item.item_id : null,
-      title: item.title,
-      who: coachCode(item.assigned_to),
-      duration_minutes: item.duration_minutes,
-      situation_image_url:
-        item.schema_images?.[0] || item.image_url || null,
-      explanation:
-        cleanPracticeText(item.deroulement) ||
-        cleanPracticeText(item.description) ||
-        null,
-      instructions:
-        cleanPracticeText(item.consignes) ||
-        cleanPracticeText(item.instructions) ||
-        cleanPracticeText(item.variantes) ||
-        null,
-      sort_order: item.sort_order,
-    }));
-
-    if (practiceExerciseRows.length > 0) {
-      const fullExerciseInsert = await supabase
-        .from("practice_session_exercises")
-        .insert(practiceExerciseRows);
-
-      if (fullExerciseInsert.error) {
-        console.warn(
-          "Insertion complète practice_session_exercises impossible, fallback legacy :",
-          fullExerciseInsert.error
-        );
-
-        const legacyExerciseInsert = await supabase
-          .from("practice_session_exercises")
-          .insert(
-            practiceExerciseRows.map(({ user_id, exercise_id, ...row }) => row)
-          );
-
-        if (legacyExerciseInsert.error) {
-          console.error(
-            "Séance créée sans lignes practice_session_exercises :",
-            legacyExerciseInsert.error
-          );
-        }
-      }
-    }
-
-    const sessionPlayerRows = (Object.entries(sessionPlayers) as Array<[PlayerPosition, TeamPlayer[]]>)
-      .flatMap(([position, players]) =>
-        players.map((player) => ({
-          session_id: createdSession.id,
-          user_id: user.id,
-          player_id: player.id,
-          first_name: playerFirstName(player),
-          last_name: playerLastName(player),
-          position,
-          selected: true,
-        }))
-      );
-
-    if (sessionPlayerRows.length > 0) {
-      const playerInsert = await supabase
-        .from("practice_session_players")
-        .insert(sessionPlayerRows);
-
-      if (playerInsert.error) {
-        console.warn("Insertion complète practice_session_players impossible, fallback :", playerInsert.error);
-        const fallbackRows = sessionPlayerRows.map(({ user_id, player_id, ...row }) => row);
-        const fallbackInsert = await supabase
-          .from("practice_session_players")
-          .insert(fallbackRows);
-        if (fallbackInsert.error) {
-          console.error("Joueurs non enregistrés dans la séance :", fallbackInsert.error);
-        }
-      }
-    }
-
-    window.dispatchEvent(new Event("mybasket-practice-sessions-updated"));
-
-    const calendarPayload = {
-      user_id: user.id,
-      title: `${teamName} • ${sessionTheme}`,
-      description: `Thème : ${sessionTheme}\nFiche séance : /seances/${createdSession.id}`,
-      event_date: sessionDate,
-      start_time: sessionStartTime,
-      end_time: sessionEndTime,
-      location: null,
-      event_type: "training",
-      session_id: createdSession.id,
-      attachment_url: pdfUrl,
-      visibility: "private",
-    };
-
-    const { data: createdEvent, error } = await supabase
-      .from("calendar_events")
-      .insert(calendarPayload)
-      .select("id")
-      .single();
-
-    if (error) {
-      console.error("Erreur ajout calendrier:", {
-        code: error.code,
-        message: error.message,
-        details: error.details,
-        hint: error.hint,
-      });
-
-      alert(
-        `La fiche est générée, mais l’ajout au calendrier a échoué : ${error.message}`
-      );
-      return null;
-    }
-
-    window.dispatchEvent(new Event("mybasket-calendar-updated"));
-
-    return {
-      sessionId: String(createdSession.id),
-      eventId: createdEvent?.id ? String(createdEvent.id) : null,
-    };
+    return;
   }
+
+  const positionedPlayers = [
+    ...sessionPlayers.guard.map((player) => ({ player, position: "guard" })),
+    ...sessionPlayers.forward.map((player) => ({ player, position: "forward" })),
+    ...sessionPlayers.center.map((player) => ({ player, position: "center" })),
+  ];
+
+  if (positionedPlayers.length > 0) {
+    await supabase.from("practice_session_players").insert(
+      positionedPlayers.map(({ player, position }) => ({
+        user_id: user.id,
+        session_id: createdSession.id,
+        player_id: player.id,
+        first_name: player.firstName || player.name || "",
+        last_name: player.lastName || "",
+        position,
+        selected: true,
+        status: "pending",
+      })),
+    );
+
+    await supabase.from("practice_session_attendance").insert(
+      positionedPlayers.map(({ player }) => ({
+        user_id: user.id,
+        session_id: createdSession.id,
+        player_id: player.id,
+        first_name: player.firstName || player.name || "",
+        last_name: player.lastName || "",
+        selected: true,
+        status: "pending",
+        comment: "",
+      })),
+    );
+  }
+
+  const { error } = await supabase.from("calendar_events").insert({
+    user_id: user.id,
+    owner_id: user.id,
+    team_id: selectedTeamId || null,
+    team_name: teamName,
+    assigned_player_ids: positionedPlayers.map(({ player }) => player.id),
+    title: `Séance ${teamName}`,
+    description: `Thème : ${sessionTheme}`,
+    event_date: sessionDate,
+    start_time: sessionStartTime,
+    end_time: sessionEndTime,
+    location: teamName,
+    event_type: "training",
+    session_id: createdSession.id,
+    attachment_url: null,
+  });
+
+  if (error) {
+    console.error("Erreur ajout calendrier:", {
+      code: error.code,
+      message: error.message,
+      details: error.details,
+      hint: error.hint,
+    });
+
+    alert(
+      `La fiche est générée, mais l’ajout au calendrier a échoué : ${error.message}`
+    );
+  }
+}
 
   async function generateSessionPdf() {
     if (!sessionDate || !sessionStartTime || !sessionEndTime || !sessionTheme) {
@@ -1237,7 +875,7 @@ setLoading(false);
     }
 
     const totalMinutes = sortedItems.reduce(
-      (sum, item) => sum + parsePracticeDuration(item.duration_minutes, 10),
+      (sum, item) => sum + Number(item.duration_minutes ?? 15),
       0
     );
 
@@ -1252,11 +890,9 @@ setLoading(false);
       selectedTeam.club_logo_url ||
       "";
 
-    const teamName = selectedTeam.name ?? selectedTeam.clubName ?? "Équipe";
-
     const rows = sortedItems
       .map((item) => {
-        const duration = parsePracticeDuration(item.duration_minutes, 10);
+        const duration = item.duration_minutes ?? 15;
 
         const schemas = uniqueImages([
           ...(item.schemaImages ?? []),
@@ -1282,16 +918,16 @@ setLoading(false);
             <td class="who">${coachCode(item.assigned_to)}</td>
             <td class="time">${duration}'</td>
             <td class="situation">
-              <strong class="exerciseTitle">${escapeHtml(item.title || "Exercice")}</strong>
               <div class="schemasGrid schemasCount${Math.min(images.length, 6)}">
                 ${situationImages}
               </div>
             </td>
             <td class="explain">
-              <p>${formatText(item.deroulement ?? item.description)}</p>
+              <strong>${item.title}</strong>
+              <p>${item.description ?? "—"}</p>
             </td>
             <td class="instructions">
-              <p>${formatText(item.consignes ?? item.instructions ?? item.variantes)}</p>
+              <p>${formatText(item.consignes ?? item.instructions)}</p>
             </td>
           </tr>
         `;
@@ -1326,52 +962,38 @@ setLoading(false);
               background: white;
             }
 
-            html, body {
-              height: auto;
-            }
-
             .page {
-              position: relative;
-              left: 0;
-              top: 0;
-              width: 794px;
-              min-width: 794px;
-              max-width: 794px;
-              min-height: 0;
-              margin: 0;
-              padding: 18px 24px 24px;
-              display: block;
-              vertical-align: top;
-              transform: none !important;
-              transform-origin: top left;
-              overflow: visible;
+              width: 1120px;
+              min-height: 790px;
+              margin: 0 auto;
+              padding: 24px;
               background: white;
             }
 
             .header {
               display: grid;
-              grid-template-columns: 110px 1fr 110px;
+              grid-template-columns: 150px 1fr 150px;
               align-items: center;
               border-bottom: 3px solid #111;
               padding-bottom: 18px;
             }
 
             .logoBox {
-              width: 96px;
-              height: 72px;
+              width: 120px;
+              height: 90px;
               display: grid;
               place-items: center;
             }
 
             .logoBox img {
-              max-width: 96px;
-              max-height: 72px;
+              max-width: 120px;
+              max-height: 90px;
               object-fit: contain;
             }
 
             .missingLogo {
-              width: 92px;
-              height: 68px;
+              width: 110px;
+              height: 80px;
               display: grid;
               place-items: center;
               border: 2px dashed #ccc;
@@ -1386,8 +1008,8 @@ setLoading(false);
 
             .title h1 {
               margin: 0 0 12px;
-              font-size: 30px;
-              letter-spacing: 5px;
+              font-size: 38px;
+              letter-spacing: 8px;
               font-weight: 900;
             }
 
@@ -1406,7 +1028,7 @@ setLoading(false);
             }
 
             .playersCol {
-              min-height: 86px;
+              min-height: 100px;
               border-right: 2px solid #111;
               text-align: center;
               padding-bottom: 12px;
@@ -1418,11 +1040,11 @@ setLoading(false);
 
             .playersCol h3 {
               margin: 0 0 12px;
-              padding: 7px;
+              padding: 10px;
               border-bottom: 2px solid #111;
               background: #f3f3f3;
-              font-size: 12px;
-              letter-spacing: 1.5px;
+              font-size: 14px;
+              letter-spacing: 2px;
             }
 
             .playersCol p {
@@ -1434,16 +1056,8 @@ setLoading(false);
             table {
               width: 100%;
               border-collapse: collapse;
-              margin-top: 14px;
+              margin-top: 18px;
               border: 2px solid #111;
-              table-layout: fixed;
-            }
-
-            thead { display: table-header-group; }
-            tbody { display: table-row-group; }
-            tr {
-              break-inside: avoid;
-              page-break-inside: avoid;
             }
 
             th {
@@ -1457,28 +1071,25 @@ setLoading(false);
             td {
               border: 2px solid #111;
               vertical-align: middle;
-              padding: 7px;
+              padding: 10px;
             }
 
-            .colWho { width: 7%; }
-            .colTime { width: 7%; }
-            .colSituation { width: 34%; }
-            .colExplanation { width: 27%; }
-            .colInstructions { width: 25%; }
-
             .who {
+              width: 55px;
               text-align: center;
-              font-size: 15px;
+              font-size: 18px;
               font-weight: 900;
             }
 
             .time {
+              width: 60px;
               text-align: center;
-              font-size: 19px;
+              font-size: 24px;
               font-weight: 900;
             }
 
             .situation {
+              width: 340px;
               text-align: center;
             }
 
@@ -1505,8 +1116,8 @@ setLoading(false);
             }
 
             .situation img {
-              width: 96px;
-              height: 70px;
+              width: 125px;
+              height: 90px;
               object-fit: contain;
               border: 1px solid #ddd;
               border-radius: 6px;
@@ -1514,8 +1125,8 @@ setLoading(false);
             }
 
             .emptySchema {
-              width: 170px;
-              height: 90px;
+              width: 230px;
+              height: 120px;
               margin: 0 auto;
               border: 1px solid #ddd;
               border-radius: 6px;
@@ -1525,26 +1136,23 @@ setLoading(false);
             }
 
             .explain {
-              font-size: 12px;
-              vertical-align: top;
+              width: 360px;
+              font-size: 15px;
             }
 
-            .exerciseTitle {
-              display: block;
-              margin: 0 0 7px;
-              font-size: 12px;
-              line-height: 1.2;
+            .explain strong {
+              font-size: 17px;
             }
 
             .explain p,
             .instructions p {
               margin: 8px 0 0;
-              line-height: 1.35;
+              line-height: 1.45;
             }
 
             .instructions {
+              width: 300px;
               color: #555;
-              font-size: 12px;
             }
 
             .footer {
@@ -1599,18 +1207,11 @@ setLoading(false);
             </div>
 
             <table>
-              <colgroup>
-                <col class="colWho" />
-                <col class="colTime" />
-                <col class="colSituation" />
-                <col class="colExplanation" />
-                <col class="colInstructions" />
-              </colgroup>
               <thead>
                 <tr>
                   <th>QUI</th>
                   <th>TPS</th>
-                  <th>EXERCICE</th>
+                  <th>SITUATIONS</th>
                   <th>EXPLICATIONS</th>
                   <th>CONSIGNES</th>
                 </tr>
@@ -1638,44 +1239,18 @@ setLoading(false);
       </html>
     `;
 
-    // La séance est d'abord enregistrée dans Supabase avec tous ses exercices.
-    // Le PDF est ensuite généré côté serveur avec @react-pdf/renderer :
-    // cela évite les décalages Safari/html2canvas et les exercices coupés.
-    const saved = await saveSessionToCalendar(html, null);
+    const printWindow = window.open("", "_blank");
 
-    if (saved?.sessionId) {
-      try {
-        const response = await fetch(`/api/seances/${saved.sessionId}/pdf`, {
-          method: "POST",
-        });
-        const result = await response.json();
-
-        if (!response.ok) {
-          throw new Error(result?.error || "Génération PDF impossible");
-        }
-
-        if (result?.pdfUrl) {
-          window.open(result.pdfUrl, "_blank", "noopener,noreferrer");
-        }
-      } catch (error) {
-        console.error("Génération PDF serveur impossible:", error);
-        alert(
-          "La séance est bien créée et ajoutée au calendrier, mais le PDF n'a pas pu être généré automatiquement. Tu peux le régénérer depuis la fiche séance."
-        );
-      }
-
-      const {
-        data: { user },
-      } = await supabase.auth.getUser();
-
-      if (user) {
-        await clearSessionCart(user.id);
-      }
-
-      window.location.href = `/seances/${saved.sessionId}`;
+    if (!printWindow) {
+      alert("Autorise les pop-ups pour générer la fiche séance.");
       return;
     }
 
+    printWindow.document.open();
+    printWindow.document.write(html);
+    printWindow.document.close();
+
+    await saveSessionToCalendar();
     setSessionModalOpen(false);
   }
 
@@ -1766,11 +1341,6 @@ setLoading(false);
           <div className="info">
             <h3>{item.title}</h3>
             <p>{item.description}</p>
-            {item.assigned_to ? (
-              <p style={{ color: "#6B1A2C", fontWeight: 900 }}>
-                Taille : {item.assigned_to}
-              </p>
-            ) : null}
             <strong>{formatPrice(Number(item.price ?? 0))}</strong>
           </div>
 
@@ -1891,8 +1461,8 @@ setLoading(false);
                             }
                           >
                             {COACHES.map((coach) => (
-                              <option key={coach.code} value={coach.value}>
-                                {coach.code} — {coach.label}
+                              <option key={coach} value={coach}>
+                                {coach}
                               </option>
                             ))}
                           </select>
@@ -1921,7 +1491,7 @@ setLoading(false);
             Sous-total <strong>{formatPrice(subtotal)}</strong>
           </p>
           <p>
-            Dont TVA 20 % <strong>{formatPrice(tax)}</strong>
+            TVA 20% <strong>{formatPrice(tax)}</strong>
           </p>
           <div className="total">
             TOTAL TTC <strong>{formatPrice(total)}</strong>
@@ -2006,10 +1576,6 @@ setLoading(false);
                 onChange={(e) => {
                   setSelectedTeamId(e.target.value);
                   setSessionPlayers(emptyPlayers);
-                  setSessionGroups([
-                    { id: "group-1", name: "Équipe 1", playerIds: [] },
-                    { id: "group-2", name: "Équipe 2", playerIds: [] },
-                  ]);
                 }}
               >
                 <option value="">Sélectionner une équipe</option>
@@ -2080,66 +1646,112 @@ setLoading(false);
               )}
             </div>
 
-            <section className="teamBuilder">
-              <div className="teamBuilderHead">
+            <section className="compositionBuilder">
+              <div className="compositionHeader">
                 <div>
-                  <h3>COMPOSITION DES ÉQUIPES</h3>
-                  <p>Glisse les joueurs présents dans les équipes. Un joueur ne peut être que dans une seule équipe.</p>
+                  <h3>COMPOSITIONS D’ÉQUIPES</h3>
+                  <p>Crée autant de blocs que nécessaire : 3x3, 5x5, ateliers…</p>
                 </div>
-                <button type="button" className="addGroupBtn" onClick={addSessionGroup}>
-                  + Ajouter une équipe
-                </button>
+                <div className="compositionPresets">
+                  <button type="button" onClick={() => addCompositionBlock("3 contre 3", 3, 3)}>+ 3x3</button>
+                  <button type="button" onClick={() => addCompositionBlock("5 contre 5", 5, 2)}>+ 5x5</button>
+                  <button type="button" onClick={() => addCompositionBlock("Ateliers", 0, 3)}>+ Ateliers</button>
+                  <button type="button" onClick={() => addCompositionBlock()}>+ Nouveau bloc</button>
+                </div>
               </div>
 
-              <div className="groupsGrid">
-                {sessionGroups.map((group) => {
-                  const groupPlayers = group.playerIds
-                    .map((id) => allSessionPlayers.find((player) => player.id === id))
-                    .filter((player): player is TeamPlayer => Boolean(player));
-
-                  return (
-                    <div
-                      key={group.id}
-                      className="groupCard"
-                      onDragOver={(event) => event.preventDefault()}
-                      onDrop={() => dropPlayerInGroup(group.id)}
-                    >
-                      <div className="groupCardHead">
+              <div className="compositionBlocks">
+                {compositionBlocks.map((block, blockIndex) => (
+                  <article className="compositionBlock" key={block.id}>
+                    <div className="blockToolbar">
+                      <input
+                        value={block.title}
+                        onChange={(event) =>
+                          updateCompositionBlock(block.id, {
+                            title: event.target.value,
+                          })
+                        }
+                      />
+                      <label>
+                        Joueurs / équipe
                         <input
-                          value={group.name}
-                          onChange={(event) => renameSessionGroup(group.id, event.target.value)}
-                          aria-label="Nom de l'équipe"
+                          type="number"
+                          min={0}
+                          max={15}
+                          value={block.playersPerTeam}
+                          onChange={(event) =>
+                            updateCompositionBlock(block.id, {
+                              playersPerTeam: Number(event.target.value || 0),
+                            })
+                          }
                         />
-                        <button
-                          type="button"
-                          className="removeGroupBtn"
-                          onClick={() => removeSessionGroup(group.id)}
-                          aria-label="Supprimer l'équipe"
-                        >
-                          ×
-                        </button>
-                      </div>
-
-                      <div className="groupDropZone">
-                        {groupPlayers.length === 0 ? (
-                          <span>Dépose les joueurs ici</span>
-                        ) : (
-                          groupPlayers.map((player) => (
-                            <div key={player.id} className="groupPlayer">
-                              <span>{playerName(player)}</span>
-                              <button
-                                type="button"
-                                onClick={() => removePlayerFromGroup(group.id, player.id)}
-                              >
-                                ×
-                              </button>
-                            </div>
-                          ))
-                        )}
-                      </div>
+                      </label>
+                      <button type="button" onClick={() => autoDistributeComposition(block.id)}>
+                        Répartir automatiquement
+                      </button>
+                      <button type="button" onClick={() => duplicateCompositionBlock(block.id)}>
+                        Dupliquer
+                      </button>
+                      <button type="button" className="dangerMini" onClick={() => removeCompositionBlock(block.id)}>
+                        Supprimer
+                      </button>
                     </div>
-                  );
-                })}
+
+                    <div className="compositionTeams">
+                      {block.teams.map((team) => (
+                        <div className="compositionTeam" key={team.id}>
+                          <div className="teamTitleRow">
+                            <input
+                              value={team.name}
+                              onChange={(event) =>
+                                updateCompositionTeam(block.id, team.id, {
+                                  name: event.target.value,
+                                })
+                              }
+                            />
+                            <button
+                              type="button"
+                              onClick={() => removeCompositionTeam(block.id, team.id)}
+                            >
+                              ×
+                            </button>
+                          </div>
+
+                          <div className="teamPlayerChoices">
+                            {allSessionPlayers.map((player) => {
+                              const active = team.playerIds.includes(player.id);
+                              return (
+                                <button
+                                  type="button"
+                                  key={player.id}
+                                  className={active ? "active" : ""}
+                                  onClick={() =>
+                                    togglePlayerInComposition(
+                                      block.id,
+                                      team.id,
+                                      player.id,
+                                    )
+                                  }
+                                >
+                                  {active ? "✓ " : ""}
+                                  {playerName(player)}
+                                </button>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      ))}
+
+                      <button
+                        type="button"
+                        className="addTeamCard"
+                        onClick={() => addCompositionTeam(block.id)}
+                      >
+                        + Ajouter une équipe
+                      </button>
+                    </div>
+                  </article>
+                ))}
               </div>
             </section>
 
@@ -2165,6 +1777,30 @@ setLoading(false);
       )}
 
       <style jsx>{`
+        .compositionBuilder{margin-top:22px;padding:18px;border:1px solid #ead8ca;border-radius:18px;background:#fffaf6}
+        .compositionHeader{display:flex;justify-content:space-between;gap:16px;align-items:flex-start}
+        .compositionHeader h3{margin:0;color:#6b1a2c;font-size:18px}
+        .compositionHeader p{margin:5px 0 0;color:#756b6f;font-size:12px}
+        .compositionPresets{display:flex;flex-wrap:wrap;gap:7px}
+        .compositionPresets button,.blockToolbar button{border:0;border-radius:999px;padding:9px 12px;background:#6b1a2c;color:#fff;font-weight:900;cursor:pointer}
+        .compositionBlocks{display:grid;gap:15px;margin-top:16px}
+        .compositionBlock{padding:14px;border:1px solid #eadbd3;border-radius:16px;background:#fff}
+        .blockToolbar{display:flex;flex-wrap:wrap;gap:8px;align-items:end}
+        .blockToolbar>input{min-width:210px;flex:1;font-size:16px;font-weight:900}
+        .blockToolbar label{font-size:10px;font-weight:900;color:#74696d}
+        .blockToolbar label input{display:block;width:86px;margin-top:4px}
+        .blockToolbar .dangerMini{background:#d82f46}
+        .compositionTeams{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;margin-top:12px}
+        .compositionTeam,.addTeamCard{min-height:130px;padding:10px;border:1px dashed #d9bfae;border-radius:14px;background:#fffaf8}
+        .teamTitleRow{display:flex;gap:6px}
+        .teamTitleRow input{min-width:0;flex:1;font-weight:900;color:#6b1a2c}
+        .teamTitleRow button{width:34px;border:0;border-radius:9px;background:#fee9e9;color:#c31e35;font-weight:950}
+        .teamPlayerChoices{display:flex;flex-wrap:wrap;gap:6px;margin-top:9px}
+        .teamPlayerChoices button{border:1px solid #e6dcd6;border-radius:999px;padding:6px 9px;background:#fff;font-size:10px;font-weight:850;cursor:pointer}
+        .teamPlayerChoices button.active{border-color:#d4a24c;background:#fff1ca;color:#6b1a2c}
+        .addTeamCard{display:grid;place-items:center;color:#6b1a2c;font-weight:950;cursor:pointer}
+        @media(max-width:900px){.compositionTeams{grid-template-columns:1fr}.compositionHeader{flex-direction:column}}
+
         .cartPage {
           background: #fff;
           min-height: 100vh;
@@ -2664,56 +2300,6 @@ setLoading(false);
           font-size: 13px;
         }
 
-
-        .teamBuilder {
-          margin-top: 24px;
-          padding: 20px;
-          border: 1px solid #ead9d1;
-          border-radius: 18px;
-          background: #fffaf6;
-        }
-        .teamBuilderHead {
-          display: flex;
-          align-items: flex-start;
-          justify-content: space-between;
-          gap: 18px;
-          margin-bottom: 16px;
-        }
-        .teamBuilderHead h3 { margin: 0 0 4px; color: #6b1a2c; }
-        .teamBuilderHead p { margin: 0; color: #766b66; font-size: 13px; }
-        .addGroupBtn {
-          border: 0; border-radius: 12px; padding: 11px 14px;
-          background: #6b1a2c; color: #fff; font-weight: 800; cursor: pointer;
-          white-space: nowrap;
-        }
-        .groupsGrid {
-          display: grid;
-          grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-          gap: 14px;
-        }
-        .groupCard {
-          min-height: 150px;
-          border: 1px dashed #c69a84;
-          border-radius: 14px;
-          background: #fff;
-          padding: 12px;
-        }
-        .groupCardHead { display: flex; gap: 8px; margin-bottom: 10px; }
-        .groupCardHead input {
-          flex: 1; border: 1px solid #e3d5ce; border-radius: 10px;
-          padding: 9px 10px; font-weight: 900; color: #6b1a2c;
-        }
-        .removeGroupBtn {
-          width: 36px; border: 0; border-radius: 10px; background: #ffe7e7;
-          color: #b42338; font-size: 20px; cursor: pointer;
-        }
-        .groupDropZone { min-height: 92px; display: flex; flex-direction: column; gap: 7px; }
-        .groupDropZone > span { color: #a69b96; text-align: center; padding-top: 28px; }
-        .groupPlayer {
-          display: flex; align-items: center; justify-content: space-between; gap: 8px;
-          border-radius: 10px; padding: 9px 10px; background: #f6ebe6; font-weight: 800;
-        }
-        .groupPlayer button { border: 0; background: transparent; color: #b42338; cursor: pointer; font-size: 17px; }
         .modalActions {
           display: flex;
           justify-content: flex-end;
