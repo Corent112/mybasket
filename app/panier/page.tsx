@@ -259,8 +259,10 @@ const subtotal = useMemo(() => {
   }, 0);
 }, [purchaseItems]);
 
-  const tax = subtotal * 0.2;
-  const total = subtotal + tax;
+  // Les prix saisis et affichés sont déjà TTC.
+  // La TVA est uniquement extraite du total pour information.
+  const tax = subtotal - subtotal / 1.2;
+  const total = subtotal;
 
   useEffect(() => {
     void loadCart();
@@ -1518,10 +1520,10 @@ setLoading(false);
         <div>
           <h2>RÉSUMÉ DE COMMANDE</h2>
           <p>
-            Sous-total <strong>{formatPrice(subtotal)}</strong>
+            Sous-total TTC <strong>{formatPrice(subtotal)}</strong>
           </p>
           <p>
-            TVA 20% <strong>{formatPrice(tax)}</strong>
+            Dont TVA 20% <strong>{formatPrice(tax)}</strong>
           </p>
           <div className="total">
             TOTAL TTC <strong>{formatPrice(total)}</strong>
