@@ -1,11 +1,12 @@
 import { Document, Page, Text, View, Image, StyleSheet } from "@react-pdf/renderer";
 import { cleanPracticeText, parsePracticeDuration, shortCoachCode } from "@/lib/practice-session-format";
 
-type TeamCompositionBlock = {
-  id: string;
+type CompositionTeam = { id?: string; name: string; playerIds: string[] };
+type CompositionBlock = {
+  id?: string;
   title: string;
-  playersPerTeam: number;
-  teams: Array<{ id: string; name: string; playerIds: string[] }>;
+  playersPerTeam?: number;
+  teams: CompositionTeam[];
 };
 
 type Session = {
@@ -17,7 +18,7 @@ type Session = {
   location: string | null;
   club_logo_url: string | null;
   mybasket_logo_url: string | null;
-  team_composition_blocks?: TeamCompositionBlock[] | null;
+  team_composition_blocks?: CompositionBlock[] | null;
   player_groups?: Record<string, string[]> | null;
 };
 
@@ -30,158 +31,188 @@ type Player = {
 };
 
 type Exercise = {
-  id?: string;
   title: string;
   who: string | null;
   duration_minutes: number | null;
-  situation_image_url: string | null;
-  situation_image_urls?: string[] | null;
-  image_urls?: string[] | null;
+  situation_image_url?: string | null;
   schema_urls?: string[] | null;
   explanation: string | null;
   instructions: string | null;
   variants?: string | null;
-  metadata?: Record<string, unknown> | null;
 };
 
-type Props = { session: Session; players: Player[]; exercises: Exercise[] };
+type Props = {
+  session: Session;
+  players: Player[];
+  exercises: Exercise[];
+};
 
 function formatDate(date?: string | null) {
-  if (!date) return "Date non définie";
-  return new Date(date).toLocaleDateString("fr-FR", { day: "2-digit", month: "2-digit", year: "numeric" });
+  if (!date) return "—";
+  return new Date(date).toLocaleDateString("fr-FR", {
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+  });
 }
-function formatTime(time?: string | null) { return time ? time.slice(0, 5) : ""; }
-function playerName(player: Player) { return `${player.first_name ?? ""} ${player.last_name ?? ""}`.trim(); }
-function playerId(player: Player) { return String(player.player_id || player.id || ""); }
-function uniqueStrings(values: unknown[]) {
-  return Array.from(new Set(values.flatMap((value) => Array.isArray(value) ? value : [value]).filter((value): value is string => typeof value === "string" && value.trim().length > 0)));
+
+function formatTime(time?: string | null) {
+  return time ? time.slice(0, 5) : "";
 }
-function exerciseImages(exercise: Exercise) {
-  const metadata = exercise.metadata ?? {};
-  return uniqueStrings([
-    exercise.situation_image_url,
-    exercise.situation_image_urls ?? [],
-    exercise.image_urls ?? [],
-    exercise.schema_urls ?? [],
-    (metadata as Record<string, unknown>).situation_image_urls ?? [],
-    (metadata as Record<string, unknown>).image_urls ?? [],
-    (metadata as Record<string, unknown>).schema_urls ?? [],
-  ]);
+
+function playerName(player: Player) {
+  return `${player.first_name ?? ""} ${player.last_name ?? ""}`.trim() || "Joueur";
 }
-function compositionBlocks(session: Session): TeamCompositionBlock[] {
-  if (Array.isArray(session.team_composition_blocks) && session.team_composition_blocks.length) return session.team_composition_blocks;
-  const legacy = session.player_groups && typeof session.player_groups === "object" ? session.player_groups : {};
-  const teams = Object.entries(legacy).map(([name, playerIds], index) => ({ id: `legacy-team-${index}`, name, playerIds: Array.isArray(playerIds) ? playerIds : [] }));
-  return teams.length ? [{ id: "legacy-block", title: "Équipes de travail", playersPerTeam: 0, teams }] : [];
+
+function playerId(player: Player) {
+  return String(player.player_id || player.id || "");
+}
+
+function compositionBlocks(session: Session): CompositionBlock[] {
+  if (Array.isArray(session.team_composition_blocks) && session.team_composition_blocks.length) {
+    return session.team_composition_blocks;
+  }
+
+  const legacy = session.player_groups && typeof session.player_groups === "object"
+    ? Object.entries(session.player_groups).map(([name, ids]) => ({
+        name,
+        playerIds: Array.isArray(ids) ? ids : [],
+      }))
+    : [];
+
+  return legacy.length
+    ? [{ title: "Équipes de travail", playersPerTeam: 0, teams: legacy }]
+    : [];
 }
 
 export default function PracticeSessionPdf({ session, players, exercises }: Props) {
-  const blocks = compositionBlocks(session);
-  const totalDuration = exercises.reduce((total, exercise) => total + parsePracticeDuration(exercise.duration_minutes, 0), 0);
-  const playerById = new Map(players.map((player) => [playerId(player), player]));
   const guards = players.filter((player) => player.position === "guard");
   const forwards = players.filter((player) => player.position === "forward");
   const centers = players.filter((player) => player.position === "center");
+  const blocks = compositionBlocks(session);
+  const totalDuration = exercises.reduce(
+    (total, exercise) => total + parsePracticeDuration(exercise.duration_minutes, 0),
+    0,
+  );
 
   return (
     <Document>
-      <Page size="A4" orientation="portrait" style={styles.page} wrap>
+      <Page size="A4" orientation="portrait" style={styles.page}>
         <View style={styles.header} wrap={false}>
           <View style={styles.logoBox}>
-            {session.mybasket_logo_url ? <Image src={session.mybasket_logo_url} style={styles.logo} /> : <Text style={styles.logoText}>MYBASKET</Text>}
+            {session.mybasket_logo_url ? (
+              <Image src={session.mybasket_logo_url} style={styles.logo} />
+            ) : (
+              <Text style={styles.logoFallback}>MYBASKET</Text>
+            )}
           </View>
-          <View style={styles.titleBox}>
-            <Text style={styles.kicker}>MYBASKET · PRACTICE PLAN</Text>
-            <Text style={styles.title}>{session.title || "FICHE SÉANCE"}</Text>
-            <Text style={styles.meta}>{formatDate(session.session_date)} · {formatTime(session.start_time)} — {formatTime(session.end_time)}</Text>
-            <Text style={styles.meta}>{session.theme || "Sans thème"} · {session.location || "Lieu non défini"} · {totalDuration} min</Text>
+
+          <View style={styles.headerCenter}>
+            <Text style={styles.practicePlan}>Practice Plan</Text>
+            <Text style={styles.headerLine}>Date : {formatDate(session.session_date)}</Text>
+            <Text style={styles.headerLine}>Thème : {session.theme || "—"}</Text>
+            <Text style={styles.headerLine}>
+              Horaire : {formatTime(session.start_time)} - {formatTime(session.end_time)}
+            </Text>
+            <Text style={styles.headerLine}>Lieu : {session.location || "—"}</Text>
+            <Text style={styles.headerLine}>Durée : {totalDuration} min</Text>
           </View>
+
           <View style={styles.logoBox}>
-            {session.club_logo_url ? <Image src={session.club_logo_url} style={styles.logo} /> : <Text style={styles.logoText}>CLUB</Text>}
+            {session.club_logo_url ? (
+              <Image src={session.club_logo_url} style={styles.logo} />
+            ) : (
+              <Text style={styles.logoFallback}>CLUB</Text>
+            )}
           </View>
         </View>
 
-        <View style={styles.presentSection} wrap={false}>
-          <Text style={styles.sectionEyebrow}>JOUEURS PRÉSENTS</Text>
-          <View style={styles.positionGrid}>
-            {[
-              { title: "GUARD", items: guards },
-              { title: "FORWARD", items: forwards },
-              { title: "CENTER", items: centers },
-            ].map((column) => (
-              <View key={column.title} style={styles.positionColumn}>
-                <Text style={styles.positionTitle}>{column.title}</Text>
-                {column.items.length ? column.items.map((player) => (
-                  <Text key={playerId(player)} style={styles.positionPlayer}>{playerName(player)}</Text>
-                )) : <Text style={styles.positionPlayer}>—</Text>}
-              </View>
-            ))}
-          </View>
+        <View style={styles.playersTable} wrap={false}>
+          <PlayerColumn title="Guard" players={guards} />
+          <PlayerColumn title="Forward" players={forwards} />
+          <PlayerColumn title="Center" players={centers} isLast />
+        </View>
+
+        <View style={styles.tableHeader} fixed>
+          <Text style={styles.whoCell}>Qui</Text>
+          <Text style={styles.timeCell}>Tps</Text>
+          <Text style={styles.schemaCell}>Schémas</Text>
+          <Text style={styles.explanationCell}>Explications</Text>
+          <Text style={styles.instructionsCell}>Consignes / Variantes</Text>
         </View>
 
         {exercises.map((exercise, index) => {
-          const images = exerciseImages(exercise);
+          const images = Array.from(
+            new Set([
+              ...(Array.isArray(exercise.schema_urls) ? exercise.schema_urls : []),
+              ...(exercise.situation_image_url ? [exercise.situation_image_url] : []),
+            ].filter(Boolean)),
+          ) as string[];
+
           return (
-            <View key={exercise.id || `${exercise.title}-${index}`} style={styles.exerciseCard} wrap={false}>
-              <View style={styles.exerciseTopline}>
-                <View>
-                  <Text style={styles.exerciseNumber}>EXERCICE {index + 1}</Text>
-                  <Text style={styles.exerciseTitle}>{exercise.title}</Text>
-                </View>
-                <View style={styles.exerciseBadges}>
-                  <Text style={styles.badge}>{shortCoachCode(exercise.who)}</Text>
-                  <Text style={styles.badgeGold}>{parsePracticeDuration(exercise.duration_minutes, 0)} MIN</Text>
-                </View>
+            <View key={`${exercise.title}-${index}`} style={styles.exerciseRow} wrap={false}>
+              <View style={styles.whoCellBody}>
+                <Text>{shortCoachCode(exercise.who)}</Text>
               </View>
-
-              {images.length ? (
-                <View style={images.length === 1 ? styles.singleImageWrap : styles.imageGrid}>
-                  {images.map((src, imageIndex) => (
-                    <Image key={`${src}-${imageIndex}`} src={src} style={images.length === 1 ? styles.singleImage : styles.gridImage} />
-                  ))}
-                </View>
-              ) : (
-                <View style={styles.placeholder}><Text style={styles.placeholderText}>SCHÉMA NON DISPONIBLE</Text></View>
-              )}
-
-              <View style={styles.textGrid}>
-                <View style={styles.textPanel}>
-                  <Text style={styles.textLabel}>DÉROULEMENT</Text>
-                  <Text style={styles.bodyText}>{cleanPracticeText(exercise.explanation) || "—"}</Text>
-                </View>
-                <View style={styles.textPanelGold}>
-                  <Text style={styles.textLabel}>CONSIGNES / VARIANTES</Text>
-                  <Text style={styles.bodyText}>{cleanPracticeText(exercise.instructions) || cleanPracticeText(exercise.variants) || "—"}</Text>
-                </View>
+              <View style={styles.timeCellBody}>
+                <Text>{parsePracticeDuration(exercise.duration_minutes, 0)}'</Text>
+              </View>
+              <View style={styles.schemaCellBody}>
+                <Text style={styles.exerciseTitle}>{exercise.title || `Exercice ${index + 1}`}</Text>
+                {images.length ? (
+                  <View style={styles.imageGrid}>
+                    {images.map((image, imageIndex) => (
+                      <Image
+                        key={`${image}-${imageIndex}`}
+                        src={image}
+                        style={images.length === 1 ? styles.singleImage : styles.multiImage}
+                      />
+                    ))}
+                  </View>
+                ) : (
+                  <View style={styles.noSchema}>
+                    <Text>Aucun schéma</Text>
+                  </View>
+                )}
+              </View>
+              <View style={styles.explanationCellBody}>
+                <Text>{cleanPracticeText(exercise.explanation) || "—"}</Text>
+              </View>
+              <View style={styles.instructionsCellBody}>
+                <Text>
+                  {cleanPracticeText(exercise.instructions) ||
+                    cleanPracticeText(exercise.variants) ||
+                    "—"}
+                </Text>
               </View>
             </View>
           );
         })}
 
         {blocks.length > 0 && (
-          <View style={styles.compositions}>
+          <View style={styles.compositionsSection}>
             <Text style={styles.compositionsTitle}>COMPOSITIONS D’ÉQUIPES</Text>
             {blocks.map((block, blockIndex) => (
-              <View key={block.id} style={styles.block} wrap={false}>
-                <View style={styles.blockHeader}>
-                  <Text style={styles.blockIndex}>BLOC {blockIndex + 1}</Text>
-                  <Text style={styles.blockTitle}>{block.title || "Composition"}</Text>
-                  <Text style={styles.blockCount}>{block.playersPerTeam > 0 ? `${block.playersPerTeam} joueurs / équipe` : "Groupes libres"}</Text>
-                </View>
+              <View key={block.id || `${block.title}-${blockIndex}`} style={styles.blockCard} wrap={false}>
+                <Text style={styles.blockTitle}>{block.title || `Bloc ${blockIndex + 1}`}</Text>
                 <View style={styles.teamsGrid}>
-                  {block.teams.map((team, teamIndex) => {
-                    const teamPlayers = team.playerIds.map((id) => playerById.get(id)).filter((player): player is Player => Boolean(player));
+                  {(block.teams || []).map((team, teamIndex) => {
+                    const teamPlayers = (team.playerIds || [])
+                      .map((id) => players.find((player) => playerId(player) === String(id)))
+                      .filter((player): player is Player => Boolean(player));
+
                     return (
-                      <View key={team.id} style={styles.teamCard}>
-                        <View style={styles.teamCardHeader}>
-                          <Text style={styles.teamDot}>{teamIndex + 1}</Text>
-                          <Text style={styles.teamName}>{team.name}</Text>
-                        </View>
-                        <View style={styles.teamPlayers}>
-                          {teamPlayers.length ? teamPlayers.map((player) => (
-                            <Text key={playerId(player)} style={styles.teamPlayerName}>• {playerName(player)}</Text>
-                          )) : <Text style={styles.teamPlayerName}>—</Text>}
-                        </View>
+                      <View key={team.id || `${team.name}-${teamIndex}`} style={styles.teamCard}>
+                        <Text style={styles.teamTitle}>{team.name || `Équipe ${teamIndex + 1}`}</Text>
+                        {teamPlayers.length ? (
+                          teamPlayers.map((player) => (
+                            <Text key={playerId(player)} style={styles.teamPlayer}>
+                              {playerName(player)}
+                            </Text>
+                          ))
+                        ) : (
+                          <Text style={styles.emptyTeam}>Aucun joueur</Text>
+                        )}
                       </View>
                     );
                   })}
@@ -195,30 +226,270 @@ export default function PracticeSessionPdf({ session, players, exercises }: Prop
   );
 }
 
+function PlayerColumn({
+  title,
+  players,
+  isLast = false,
+}: {
+  title: string;
+  players: Player[];
+  isLast?: boolean;
+}) {
+  return (
+    <View style={[styles.playerColumn, isLast ? styles.playerColumnLast : {}]}>
+      <Text style={styles.playerColumnTitle}>{title}</Text>
+      <View style={styles.playerList}>
+        {players.length ? (
+          players.map((player) => (
+            <Text key={playerId(player)} style={styles.playerName}>
+              {playerName(player)}
+            </Text>
+          ))
+        ) : (
+          <Text style={styles.playerName}>—</Text>
+        )}
+      </View>
+    </View>
+  );
+}
+
+const borderColor = "#111111";
+
 const styles = StyleSheet.create({
-  page: { paddingTop: 18, paddingHorizontal: 18, paddingBottom: 20, fontSize: 9, backgroundColor: "#f7f4ee", color: "#111" },
-  header: { flexDirection: "row", backgroundColor: "#0d0d0f", borderRadius: 10, padding: 12, alignItems: "center", marginBottom: 12 },
-  logoBox: { width: 78, height: 62, alignItems: "center", justifyContent: "center", backgroundColor: "#fff", borderRadius: 8, padding: 6 },
-  logo: { maxWidth: 62, maxHeight: 50, objectFit: "contain" }, logoText: { fontSize: 11, fontWeight: 900 },
-  titleBox: { flex: 1, alignItems: "center", paddingHorizontal: 12 }, kicker: { fontSize: 6.5, letterSpacing: 1.7, color: "#d4a24c", marginBottom: 4 },
-  title: { fontSize: 19, fontWeight: 900, color: "#fff", marginBottom: 4, textAlign: "center" }, meta: { fontSize: 8, color: "#ddd", marginBottom: 2, textAlign: "center" },
-  presentSection: { backgroundColor: "#fff", borderRadius: 9, padding: 10, marginBottom: 12, border: "1px solid #e4dfd6" },
-  sectionEyebrow: { fontSize: 7, fontWeight: 900, letterSpacing: 1.3, color: "#8c651f", marginBottom: 7 },
-  positionGrid: { flexDirection: "row" }, positionColumn: { flex: 1, border: "1px solid #e4dfd6", marginRight: 5 },
-  positionTitle: { backgroundColor: "#111", color: "#d4a24c", fontSize: 8, fontWeight: 900, textAlign: "center", paddingVertical: 5 },
-  positionPlayer: { fontSize: 7.5, fontWeight: 700, textAlign: "center", paddingVertical: 4, borderTop: "1px solid #eee8df" },
-  exerciseCard: { backgroundColor: "#fff", borderRadius: 10, marginBottom: 13, padding: 12, border: "1px solid #ded8ce" },
-  exerciseTopline: { flexDirection: "row", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 9 }, exerciseNumber: { fontSize: 6.5, letterSpacing: 1.5, color: "#9b762f", fontWeight: 900 },
-  exerciseTitle: { fontSize: 16, fontWeight: 900, color: "#111", marginTop: 2 }, exerciseBadges: { flexDirection: "row", gap: 5 }, badge: { backgroundColor: "#111", color: "#fff", borderRadius: 8, paddingVertical: 4, paddingHorizontal: 7, fontSize: 7, fontWeight: 900 }, badgeGold: { backgroundColor: "#d4a24c", color: "#111", borderRadius: 8, paddingVertical: 4, paddingHorizontal: 7, fontSize: 7, fontWeight: 900 },
-  singleImageWrap: { backgroundColor: "#fafafa", borderRadius: 8, padding: 6, marginBottom: 9, alignItems: "center" }, singleImage: { width: "100%", height: 255, objectFit: "contain" },
-  imageGrid: { flexDirection: "row", flexWrap: "wrap", gap: 6, marginBottom: 9 }, gridImage: { width: "48.8%", height: 150, objectFit: "contain", backgroundColor: "#fafafa", borderRadius: 6 },
-  placeholder: { height: 180, border: "1px dashed #cfc7ba", borderRadius: 8, alignItems: "center", justifyContent: "center", marginBottom: 9 }, placeholderText: { color: "#888", fontWeight: 900, letterSpacing: 1 },
-  textGrid: { flexDirection: "row", gap: 8 }, textPanel: { flex: 1, backgroundColor: "#f4f4f4", borderRadius: 7, padding: 9 }, textPanelGold: { flex: 1, backgroundColor: "#f6efe1", borderRadius: 7, padding: 9 },
-  textLabel: { fontSize: 7, fontWeight: 900, letterSpacing: 1, marginBottom: 5, color: "#7d5d25" }, bodyText: { fontSize: 8.5, lineHeight: 1.4 },
-  compositions: { marginTop: 3 }, compositionsTitle: { backgroundColor: "#111", color: "#d4a24c", borderRadius: 8, padding: 10, fontSize: 14, fontWeight: 900, letterSpacing: 1, marginBottom: 9 },
-  block: { backgroundColor: "#fff", borderRadius: 9, padding: 10, marginBottom: 10, border: "1px solid #ded8ce" }, blockHeader: { flexDirection: "row", alignItems: "center", marginBottom: 9 },
-  blockIndex: { backgroundColor: "#d4a24c", color: "#111", borderRadius: 8, paddingVertical: 4, paddingHorizontal: 7, fontSize: 6.5, fontWeight: 900, marginRight: 7 }, blockTitle: { fontSize: 13, fontWeight: 900, flex: 1 }, blockCount: { fontSize: 7, color: "#777" },
-  teamsGrid: { flexDirection: "row", flexWrap: "wrap", gap: 7 }, teamCard: { width: "31.9%", border: "1px solid #ddd5c8", borderRadius: 8, overflow: "hidden" },
-  teamCardHeader: { flexDirection: "row", alignItems: "center", backgroundColor: "#171719", padding: 7 }, teamDot: { width: 16, height: 16, borderRadius: 8, backgroundColor: "#d4a24c", color: "#111", textAlign: "center", paddingTop: 3, fontSize: 6.5, fontWeight: 900, marginRight: 6 }, teamName: { color: "#fff", fontSize: 9, fontWeight: 900 },
-  teamPlayers: { paddingVertical: 6, paddingHorizontal: 8 }, teamPlayerName: { fontSize: 7.5, fontWeight: 700, paddingVertical: 3 },
+  page: {
+    padding: 8,
+    paddingBottom: 16,
+    fontSize: 8,
+    color: "#111111",
+    backgroundColor: "#ffffff",
+  },
+  header: {
+    minHeight: 100,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginBottom: 5,
+  },
+  logoBox: {
+    width: 105,
+    minHeight: 92,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  logo: {
+    width: 88,
+    height: 88,
+    objectFit: "contain",
+  },
+  logoFallback: {
+    fontSize: 12,
+    fontWeight: 900,
+  },
+  headerCenter: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 8,
+  },
+  practicePlan: {
+    fontSize: 15,
+    fontWeight: 900,
+    marginBottom: 3,
+  },
+  headerLine: {
+    fontSize: 9,
+    fontWeight: 700,
+    marginBottom: 1,
+  },
+  playersTable: {
+    flexDirection: "row",
+    borderWidth: 0.8,
+    borderColor,
+    marginBottom: 8,
+  },
+  playerColumn: {
+    flex: 1,
+    minHeight: 72,
+    borderRightWidth: 0.8,
+    borderRightColor: borderColor,
+  },
+  playerColumnLast: {
+    borderRightWidth: 0,
+  },
+  playerColumnTitle: {
+    paddingVertical: 3,
+    textAlign: "center",
+    fontSize: 12,
+    fontWeight: 900,
+    backgroundColor: "#d9d9d9",
+    borderBottomWidth: 0.8,
+    borderBottomColor: borderColor,
+  },
+  playerList: {
+    paddingVertical: 5,
+    paddingHorizontal: 4,
+    alignItems: "center",
+  },
+  playerName: {
+    fontSize: 8.5,
+    fontWeight: 700,
+    marginBottom: 1.2,
+  },
+  tableHeader: {
+    flexDirection: "row",
+    minHeight: 34,
+    alignItems: "stretch",
+    backgroundColor: "#050505",
+    color: "#ffffff",
+    borderWidth: 0.8,
+    borderColor,
+  },
+  whoCell: { width: 30, padding: 4, textAlign: "center", fontWeight: 900 },
+  timeCell: { width: 32, padding: 4, textAlign: "center", fontWeight: 900, borderLeftWidth: 0.8, borderLeftColor: "#ffffff" },
+  schemaCell: { width: 220, padding: 4, textAlign: "center", fontWeight: 900, borderLeftWidth: 0.8, borderLeftColor: "#ffffff" },
+  explanationCell: { width: 145, padding: 4, textAlign: "center", fontWeight: 900, borderLeftWidth: 0.8, borderLeftColor: "#ffffff" },
+  instructionsCell: { flex: 1, padding: 4, textAlign: "center", fontWeight: 900, borderLeftWidth: 0.8, borderLeftColor: "#ffffff" },
+  exerciseRow: {
+    minHeight: 106,
+    flexDirection: "row",
+    borderLeftWidth: 0.8,
+    borderRightWidth: 0.8,
+    borderBottomWidth: 0.8,
+    borderColor,
+  },
+  whoCellBody: {
+    width: 30,
+    alignItems: "center",
+    justifyContent: "center",
+    padding: 3,
+    borderRightWidth: 0.8,
+    borderRightColor: borderColor,
+    fontSize: 9,
+    fontWeight: 900,
+    textAlign: "center",
+  },
+  timeCellBody: {
+    width: 32,
+    alignItems: "center",
+    justifyContent: "center",
+    padding: 3,
+    borderRightWidth: 0.8,
+    borderRightColor: borderColor,
+    fontSize: 9,
+    fontWeight: 900,
+  },
+  schemaCellBody: {
+    width: 220,
+    padding: 4,
+    borderRightWidth: 0.8,
+    borderRightColor: borderColor,
+  },
+  explanationCellBody: {
+    width: 145,
+    alignItems: "center",
+    justifyContent: "center",
+    padding: 6,
+    borderRightWidth: 0.8,
+    borderRightColor: borderColor,
+    lineHeight: 1.35,
+    textAlign: "center",
+    fontSize: 8.5,
+    fontWeight: 700,
+  },
+  instructionsCellBody: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    padding: 6,
+    lineHeight: 1.35,
+    textAlign: "center",
+    fontSize: 8.5,
+    fontWeight: 700,
+  },
+  exerciseTitle: {
+    marginBottom: 4,
+    fontSize: 8.5,
+    fontWeight: 900,
+    textAlign: "center",
+  },
+  imageGrid: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    justifyContent: "center",
+    alignItems: "center",
+    gap: 3,
+  },
+  singleImage: {
+    width: 205,
+    height: 92,
+    objectFit: "contain",
+  },
+  multiImage: {
+    width: 99,
+    height: 74,
+    objectFit: "contain",
+  },
+  noSchema: {
+    minHeight: 72,
+    alignItems: "center",
+    justifyContent: "center",
+    borderWidth: 0.5,
+    borderColor: "#cccccc",
+  },
+  compositionsSection: {
+    marginTop: 14,
+  },
+  compositionsTitle: {
+    paddingVertical: 6,
+    textAlign: "center",
+    fontSize: 13,
+    fontWeight: 900,
+    color: "#6b1a2c",
+    borderTopWidth: 1,
+    borderBottomWidth: 1,
+    borderColor: "#6b1a2c",
+    marginBottom: 8,
+  },
+  blockCard: {
+    marginBottom: 10,
+    padding: 7,
+    borderWidth: 0.8,
+    borderColor: "#d9c7bd",
+    borderRadius: 5,
+  },
+  blockTitle: {
+    marginBottom: 6,
+    fontSize: 11,
+    fontWeight: 900,
+    color: "#6b1a2c",
+  },
+  teamsGrid: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 6,
+  },
+  teamCard: {
+    width: "31.8%",
+    minHeight: 62,
+    padding: 5,
+    borderWidth: 0.7,
+    borderColor: "#bfa99d",
+    borderRadius: 4,
+  },
+  teamTitle: {
+    paddingBottom: 3,
+    marginBottom: 3,
+    borderBottomWidth: 0.6,
+    borderBottomColor: "#d8c7be",
+    fontSize: 9,
+    fontWeight: 900,
+  },
+  teamPlayer: {
+    fontSize: 7.5,
+    marginBottom: 1.5,
+  },
+  emptyTeam: {
+    fontSize: 7.5,
+    color: "#888888",
+  },
 });

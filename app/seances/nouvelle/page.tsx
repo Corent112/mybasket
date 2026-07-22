@@ -156,7 +156,28 @@ export default function NouvelleSeancePage() {
     const { error: exerciseError } = await supabase.from("practice_session_exercises").insert(exercises.map((exercise, index) => ({ session_id: sessionId, user_id: user.id, exercise_id: exercise.exercise_id || null, title: exercise.title, who: exercise.who, duration_minutes: exercise.duration_minutes, situation_image_url: exercise.situation_image_url || null, explanation: exercise.explanation || null, instructions: exercise.instructions || null, sort_order: index })));
     if (exerciseError) { setSaving(false); return alert(exerciseError.message); }
     const calendar = { user_id: user.id, visibility: "private", event_type: "training", session_id: sessionId, title: `${selectedTeam?.name ?? "Équipe"} • ${theme.trim()}`, description: `${title.trim() || "Séance rapide"} — Ouvrir la fiche séance`, event_date: date, start_time: startTime, end_time: endTime, location, attachment_url: null };
-    const { data: event } = await supabase.from("calendar_events").select("id").eq("session_id", sessionId).maybeSingle(); if (event?.id) await supabase.from("calendar_events").update(calendar).eq("id", event.id); else await supabase.from("calendar_events").insert(calendar);
+
+    // Une séance = un seul événement calendrier.
+    // Les anciennes versions pouvaient en créer plusieurs car maybeSingle échouait
+    // dès que des doublons existaient déjà.
+    const { data: existingEvents } = await supabase
+      .from("calendar_events")
+      .select("id")
+      .eq("session_id", sessionId)
+      .eq("user_id", user.id)
+      .order("created_at", { ascending: true });
+
+    const firstEvent = existingEvents?.[0];
+    if (firstEvent?.id) {
+      await supabase.from("calendar_events").update(calendar).eq("id", firstEvent.id);
+
+      const duplicateIds = (existingEvents ?? []).slice(1).map((item) => item.id);
+      if (duplicateIds.length > 0) {
+        await supabase.from("calendar_events").delete().in("id", duplicateIds);
+      }
+    } else {
+      await supabase.from("calendar_events").insert(calendar);
+    }
     await supabase.from("profiles").update({ active_practice_session_id: null }).eq("id", user.id); await clearSessionBuilderItems(); setSaving(false); window.location.href = `/seances/${sessionId}`;
   }
 
