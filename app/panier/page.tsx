@@ -234,11 +234,6 @@ export default function PanierPage() {
   const [compositionBlocks, setCompositionBlocks] = useState<TeamCompositionBlock[]>([
     createCompositionBlock(),
   ]);
-  const [draggedCompositionPlayer, setDraggedCompositionPlayer] = useState<{
-    playerId: string;
-    blockId: string;
-    fromTeamId?: string;
-  } | null>(null);
 
   const productItems = items.filter((item) => item.item_type === "product");
   const subscriptionItems = items.filter(
@@ -698,7 +693,7 @@ setLoading(false);
     );
   }
 
-  function movePlayerInsideCompositionBlock(
+  function togglePlayerInComposition(
     blockId: string,
     teamId: string,
     playerId: string,
@@ -706,67 +701,20 @@ setLoading(false);
     setCompositionBlocks((current) =>
       current.map((block) => {
         if (block.id !== blockId) return block;
-
         return {
           ...block,
           teams: block.teams.map((team) => ({
             ...team,
             playerIds:
               team.id === teamId
-                ? Array.from(new Set([...team.playerIds, playerId]))
+                ? team.playerIds.includes(playerId)
+                  ? team.playerIds.filter((id) => id !== playerId)
+                  : [...team.playerIds, playerId]
                 : team.playerIds.filter((id) => id !== playerId),
           })),
         };
       }),
     );
-  }
-
-  function removePlayerFromCompositionTeam(
-    blockId: string,
-    teamId: string,
-    playerId: string,
-  ) {
-    setCompositionBlocks((current) =>
-      current.map((block) =>
-        block.id === blockId
-          ? {
-              ...block,
-              teams: block.teams.map((team) =>
-                team.id === teamId
-                  ? {
-                      ...team,
-                      playerIds: team.playerIds.filter((id) => id !== playerId),
-                    }
-                  : team,
-              ),
-            }
-          : block,
-      ),
-    );
-  }
-
-  function startCompositionPlayerDrag(
-    blockId: string,
-    playerId: string,
-    fromTeamId?: string,
-  ) {
-    setDraggedCompositionPlayer({ blockId, playerId, fromTeamId });
-  }
-
-  function dropCompositionPlayer(blockId: string, teamId: string) {
-    if (
-      !draggedCompositionPlayer ||
-      draggedCompositionPlayer.blockId !== blockId
-    ) {
-      return;
-    }
-
-    movePlayerInsideCompositionBlock(
-      blockId,
-      teamId,
-      draggedCompositionPlayer.playerId,
-    );
-    setDraggedCompositionPlayer(null);
   }
 
   function autoDistributeComposition(blockId: string) {
@@ -796,7 +744,7 @@ setLoading(false);
     );
   }
 
-  async function saveSessionToCalendar() {
+  async function saveSessionToCalendar(): Promise<string | null> {
   const {
     data: { user },
     error: userError,
@@ -804,7 +752,7 @@ setLoading(false);
 
   if (userError || !user) {
     alert("Connecte-toi pour ajouter la séance au calendrier.");
-    return;
+    return null;
   }
 
   const isUuid = (value: string | null | undefined) =>
@@ -865,7 +813,46 @@ setLoading(false);
       `La fiche est générée, mais la séance Supabase n'a pas été créée : ${sessionError?.message}`
     );
 
-    return;
+    return null;
+  }
+
+  const sortedSessionItems = [...sessionItems].sort(
+    (a, b) => a.sort_order - b.sort_order,
+  );
+
+  const { error: sessionExercisesError } = await supabase
+    .from("practice_session_exercises")
+    .insert(
+      sortedSessionItems.map((item, index) => ({
+        session_id: createdSession.id,
+        user_id: user.id,
+        exercise_id: item.item_id || null,
+        title: item.title,
+        who: coachCode(item.assigned_to),
+        duration_minutes: Number(item.duration_minutes ?? 15),
+        situation_image_url:
+          item.schemaImages?.[0] ||
+          item.schema_images?.[0] ||
+          item.image_url ||
+          null,
+        explanation: item.description || null,
+        instructions:
+          Array.isArray(item.consignes ?? item.instructions)
+            ? (item.consignes ?? item.instructions as string[]).join("\n")
+            : String(item.consignes ?? item.instructions ?? "") || null,
+        sort_order: index,
+      })),
+    );
+
+  if (sessionExercisesError) {
+    console.error(
+      "Erreur sauvegarde exercices de séance:",
+      sessionExercisesError,
+    );
+    alert(
+      `La séance a été créée, mais ses exercices n'ont pas pu être enregistrés : ${sessionExercisesError.message}`,
+    );
+    return null;
   }
 
   const positionedPlayers = [
@@ -902,36 +889,41 @@ setLoading(false);
     );
   }
 
-  const { error } = await supabase.from("calendar_events").insert({
-    user_id: user.id,
-    owner_id: user.id,
-    team_id: selectedTeamId || null,
-    team_name: teamName,
-    assigned_player_ids: positionedPlayers.map(({ player }) => player.id),
-    title: `${teamName} • ${sessionTheme}`,
-    theme: sessionTheme,
-    description: `Fiche séance : /seances/${createdSession.id}`,
-    event_date: sessionDate,
-    start_time: sessionStartTime,
-    end_time: sessionEndTime,
-    location: teamName,
-    event_type: "training",
-    session_id: createdSession.id,
-    attachment_url: null,
-  });
+  const { error: calendarError } = await supabase
+    .from("calendar_events")
+    .insert({
+      user_id: user.id,
+      owner_id: user.id,
+      team_id: selectedTeamId || null,
+      team_name: teamName,
+      assigned_player_ids: positionedPlayers.map(({ player }) => player.id),
+      title: `${teamName} • ${sessionTheme}`,
+      theme: sessionTheme,
+      description: `Fiche séance : /seances/${createdSession.id}`,
+      event_date: sessionDate,
+      start_time: sessionStartTime,
+      end_time: sessionEndTime,
+      location: teamName,
+      event_type: "training",
+      session_id: createdSession.id,
+      attachment_url: null,
+    });
 
-  if (error) {
+  if (calendarError) {
     console.error("Erreur ajout calendrier:", {
-      code: error.code,
-      message: error.message,
-      details: error.details,
-      hint: error.hint,
+      code: calendarError.code,
+      message: calendarError.message,
+      details: calendarError.details,
+      hint: calendarError.hint,
     });
 
     alert(
-      `La fiche est générée, mais l’ajout au calendrier a échoué : ${error.message}`
+      `La séance est enregistrée, mais l’ajout au calendrier a échoué : ${calendarError.message}`,
     );
+    return null;
   }
+
+  return String(createdSession.id);
 }
 
   async function generateSessionPdf() {
@@ -1333,10 +1325,80 @@ setLoading(false);
     }
 
     printWindow.document.open();
-    printWindow.document.write(html);
+    printWindow.document.write(`
+      <!doctype html>
+      <html>
+        <head>
+          <title>Génération de la fiche séance</title>
+          <style>
+            body {
+              min-height: 100vh;
+              display: grid;
+              place-items: center;
+              margin: 0;
+              font-family: Arial, sans-serif;
+              background: #f7f4f1;
+              color: #6b1a2c;
+            }
+            div { text-align: center; }
+            strong { display: block; font-size: 24px; }
+            span { display: block; margin-top: 10px; color: #766c70; }
+          </style>
+        </head>
+        <body>
+          <div>
+            <strong>Génération de la fiche séance…</strong>
+            <span>Le PDF va s’ouvrir automatiquement.</span>
+          </div>
+        </body>
+      </html>
+    `);
     printWindow.document.close();
 
-    await saveSessionToCalendar();
+    const createdSessionId = await saveSessionToCalendar();
+
+    if (!createdSessionId) {
+      printWindow.close();
+      setSavingSession(false);
+      return;
+    }
+
+    try {
+      const pdfResponse = await fetch(
+        `/api/seances/${createdSessionId}/pdf`,
+        { method: "POST" },
+      );
+      const pdfResult = (await pdfResponse.json()) as {
+        pdfUrl?: string;
+        error?: string;
+      };
+
+      if (!pdfResponse.ok || !pdfResult.pdfUrl) {
+        throw new Error(
+          pdfResult.error || "Le PDF n’a pas pu être généré.",
+        );
+      }
+
+      // L'API enregistre également cette URL dans :
+      // - practice_sessions.pdf_url
+      // - calendar_events.attachment_url
+      printWindow.location.replace(pdfResult.pdfUrl);
+    } catch (error) {
+      console.error("Erreur génération PDF automatique:", error);
+
+      // Fallback : l'ancienne fiche imprimable reste disponible si
+      // le service PDF rencontre un problème.
+      printWindow.document.open();
+      printWindow.document.write(html);
+      printWindow.document.close();
+
+      alert(
+        error instanceof Error
+          ? `${error.message} La version imprimable a été ouverte à la place.`
+          : "Le PDF n’a pas pu être généré. La version imprimable a été ouverte.",
+      );
+    }
+
     setSessionModalOpen(false);
     setSavingSession(false);
   }
@@ -1732,240 +1794,108 @@ setLoading(false);
               <div className="compositionHeader">
                 <div>
                   <h3>COMPOSITIONS D’ÉQUIPES</h3>
-                  <p>
-                    Glisse les joueurs dans les équipes. Un joueur ne peut être
-                    présent qu’une fois dans un même bloc, mais peut être utilisé
-                    dans tous les autres blocs.
-                  </p>
+                  <p>Crée autant de blocs que nécessaire : 3x3, 5x5, ateliers…</p>
+                </div>
+                <div className="compositionPresets">
+                  <button type="button" onClick={() => addCompositionBlock("3 contre 3", 3, 3)}>+ 3x3</button>
+                  <button type="button" onClick={() => addCompositionBlock("5 contre 5", 5, 2)}>+ 5x5</button>
+                  <button type="button" onClick={() => addCompositionBlock("Ateliers", 0, 3)}>+ Ateliers</button>
+                  <button type="button" onClick={() => addCompositionBlock()}>+ Nouveau bloc</button>
                 </div>
               </div>
 
               <div className="compositionBlocks">
-                {compositionBlocks.map((block, blockIndex) => {
-                  const assignedIds = new Set(
-                    block.teams.flatMap((team) => team.playerIds),
-                  );
-                  const availablePlayers = allSessionPlayers.filter(
-                    (player) => !assignedIds.has(player.id),
-                  );
-
-                  return (
-                    <article className="compositionBlock" key={block.id}>
-                      <div className="blockToolbar">
-                        <div className="blockNumber">BLOC {blockIndex + 1}</div>
-
+                {compositionBlocks.map((block, blockIndex) => (
+                  <article className="compositionBlock" key={block.id}>
+                    <div className="blockToolbar">
+                      <input
+                        value={block.title}
+                        onChange={(event) =>
+                          updateCompositionBlock(block.id, {
+                            title: event.target.value,
+                          })
+                        }
+                      />
+                      <label>
+                        Joueurs / équipe
                         <input
-                          className="blockTitleInput"
-                          value={block.title}
+                          type="number"
+                          min={0}
+                          max={15}
+                          value={block.playersPerTeam}
                           onChange={(event) =>
                             updateCompositionBlock(block.id, {
-                              title: event.target.value,
+                              playersPerTeam: Number(event.target.value || 0),
                             })
                           }
-                          placeholder="Ex : 3 contre 3, 5 contre 5, Ateliers"
                         />
+                      </label>
+                      <button type="button" onClick={() => autoDistributeComposition(block.id)}>
+                        Répartir automatiquement
+                      </button>
+                      <button type="button" onClick={() => duplicateCompositionBlock(block.id)}>
+                        Dupliquer
+                      </button>
+                      <button type="button" className="dangerMini" onClick={() => removeCompositionBlock(block.id)}>
+                        Supprimer
+                      </button>
+                    </div>
 
-                        <label>
-                          Joueurs / équipe
-                          <input
-                            type="number"
-                            min={0}
-                            max={15}
-                            value={block.playersPerTeam}
-                            onChange={(event) =>
-                              updateCompositionBlock(block.id, {
-                                playersPerTeam: Number(event.target.value || 0),
-                              })
-                            }
-                          />
-                        </label>
-
-                        <button
-                          type="button"
-                          onClick={() => autoDistributeComposition(block.id)}
-                        >
-                          Répartir automatiquement
-                        </button>
-
-                        <button
-                          type="button"
-                          onClick={() => duplicateCompositionBlock(block.id)}
-                        >
-                          Dupliquer
-                        </button>
-
-                        {compositionBlocks.length > 1 && (
-                          <button
-                            type="button"
-                            className="dangerMini"
-                            onClick={() => removeCompositionBlock(block.id)}
-                          >
-                            Supprimer le bloc
-                          </button>
-                        )}
-                      </div>
-
-                      <div className="blockWorkspace">
-                        <div
-                          className="availablePlayersPanel"
-                          onDragOver={(event) => event.preventDefault()}
-                          onDrop={() => {
-                            if (
-                              draggedCompositionPlayer?.blockId === block.id &&
-                              draggedCompositionPlayer.fromTeamId
-                            ) {
-                              removePlayerFromCompositionTeam(
-                                block.id,
-                                draggedCompositionPlayer.fromTeamId,
-                                draggedCompositionPlayer.playerId,
-                              );
-                            }
-                            setDraggedCompositionPlayer(null);
-                          }}
-                        >
-                          <div className="workspaceTitle">
-                            <strong>JOUEURS DISPONIBLES</strong>
-                            <span>{availablePlayers.length}</span>
+                    <div className="compositionTeams">
+                      {block.teams.map((team) => (
+                        <div className="compositionTeam" key={team.id}>
+                          <div className="teamTitleRow">
+                            <input
+                              value={team.name}
+                              onChange={(event) =>
+                                updateCompositionTeam(block.id, team.id, {
+                                  name: event.target.value,
+                                })
+                              }
+                            />
+                            <button
+                              type="button"
+                              onClick={() => removeCompositionTeam(block.id, team.id)}
+                            >
+                              ×
+                            </button>
                           </div>
 
-                          <div className="availablePlayerList">
-                            {availablePlayers.length === 0 ? (
-                              <div className="emptyAvailable">
-                                Tous les joueurs sont répartis dans ce bloc.
-                              </div>
-                            ) : (
-                              availablePlayers.map((player) => (
-                                <div
+                          <div className="teamPlayerChoices">
+                            {allSessionPlayers.map((player) => {
+                              const active = team.playerIds.includes(player.id);
+                              return (
+                                <button
+                                  type="button"
                                   key={player.id}
-                                  className="draggablePlayer"
-                                  draggable
-                                  onDragStart={() =>
-                                    startCompositionPlayerDrag(
+                                  className={active ? "active" : ""}
+                                  onClick={() =>
+                                    togglePlayerInComposition(
                                       block.id,
+                                      team.id,
                                       player.id,
                                     )
                                   }
-                                  onDragEnd={() =>
-                                    setDraggedCompositionPlayer(null)
-                                  }
                                 >
-                                  <span className="dragHandle">⋮⋮</span>
-                                  <span>{playerName(player)}</span>
-                                </div>
-                              ))
-                            )}
+                                  {active ? "✓ " : ""}
+                                  {playerName(player)}
+                                </button>
+                              );
+                            })}
                           </div>
                         </div>
+                      ))}
 
-                        <div className="compositionTeams">
-                          {block.teams.map((team) => (
-                            <div
-                              className="compositionTeam"
-                              key={team.id}
-                              onDragOver={(event) => event.preventDefault()}
-                              onDrop={() =>
-                                dropCompositionPlayer(block.id, team.id)
-                              }
-                            >
-                              <div className="teamTitleRow">
-                                <input
-                                  value={team.name}
-                                  onChange={(event) =>
-                                    updateCompositionTeam(block.id, team.id, {
-                                      name: event.target.value,
-                                    })
-                                  }
-                                />
-                                <button
-                                  type="button"
-                                  onClick={() =>
-                                    removeCompositionTeam(block.id, team.id)
-                                  }
-                                  aria-label="Supprimer l’équipe"
-                                >
-                                  ×
-                                </button>
-                              </div>
-
-                              <div className="teamDropZone">
-                                {team.playerIds.length === 0 ? (
-                                  <div className="dropPlaceholder">
-                                    Glisse les joueurs ici
-                                  </div>
-                                ) : (
-                                  team.playerIds.map((playerId) => {
-                                    const player = allSessionPlayers.find(
-                                      (item) => item.id === playerId,
-                                    );
-                                    if (!player) return null;
-
-                                    return (
-                                      <div
-                                        key={playerId}
-                                        className="assignedPlayer"
-                                        draggable
-                                        onDragStart={() =>
-                                          startCompositionPlayerDrag(
-                                            block.id,
-                                            playerId,
-                                            team.id,
-                                          )
-                                        }
-                                        onDragEnd={() =>
-                                          setDraggedCompositionPlayer(null)
-                                        }
-                                      >
-                                        <span className="dragHandle">⋮⋮</span>
-                                        <span>{playerName(player)}</span>
-                                        <button
-                                          type="button"
-                                          onClick={() =>
-                                            removePlayerFromCompositionTeam(
-                                              block.id,
-                                              team.id,
-                                              playerId,
-                                            )
-                                          }
-                                          aria-label="Retirer le joueur"
-                                        >
-                                          ×
-                                        </button>
-                                      </div>
-                                    );
-                                  })
-                                )}
-                              </div>
-                            </div>
-                          ))}
-
-                          <button
-                            type="button"
-                            className="addTeamCard"
-                            onClick={() => addCompositionTeam(block.id)}
-                          >
-                            + Ajouter une équipe
-                          </button>
-                        </div>
-                      </div>
-                    </article>
-                  );
-                })}
-              </div>
-
-              <div className="addBlockFooter">
-                <button
-                  type="button"
-                  className="addBlockButton"
-                  onClick={() =>
-                    addCompositionBlock(
-                      `Nouveau bloc ${compositionBlocks.length + 1}`,
-                      3,
-                      2,
-                    )
-                  }
-                >
-                  + Ajouter un nouveau bloc d’équipes
-                </button>
+                      <button
+                        type="button"
+                        className="addTeamCard"
+                        onClick={() => addCompositionTeam(block.id)}
+                      >
+                        + Ajouter une équipe
+                      </button>
+                    </div>
+                  </article>
+                ))}
               </div>
             </section>
 
@@ -1993,42 +1923,28 @@ setLoading(false);
 
       <style jsx>{`
         .compositionBuilder{margin-top:22px;padding:18px;border:1px solid #ead8ca;border-radius:18px;background:#fffaf6}
+        .compositionHeader{display:flex;justify-content:space-between;gap:16px;align-items:flex-start}
         .compositionHeader h3{margin:0;color:#6b1a2c;font-size:18px}
-        .compositionHeader p{max-width:760px;margin:5px 0 0;color:#756b6f;font-size:12px;line-height:1.5}
-        .compositionBlocks{display:grid;gap:18px;margin-top:16px}
-        .compositionBlock{padding:15px;border:1px solid #eadbd3;border-radius:17px;background:#fff;box-shadow:0 8px 22px rgba(53,22,31,.04)}
-        .blockToolbar{display:flex;flex-wrap:wrap;gap:8px;align-items:end;padding-bottom:13px;border-bottom:1px solid #eee4de}
-        .blockNumber{align-self:center;padding:8px 10px;border-radius:9px;background:#171216;color:#d4a24c;font-size:10px;font-weight:950;letter-spacing:.08em}
-        .blockTitleInput{min-width:210px;flex:1;font-size:16px;font-weight:900;color:#6b1a2c}
-        .blockToolbar label{color:#74696d;font-size:10px;font-weight:900}
+        .compositionHeader p{margin:5px 0 0;color:#756b6f;font-size:12px}
+        .compositionPresets{display:flex;flex-wrap:wrap;gap:7px}
+        .compositionPresets button,.blockToolbar button{border:0;border-radius:999px;padding:9px 12px;background:#6b1a2c;color:#fff;font-weight:900;cursor:pointer}
+        .compositionBlocks{display:grid;gap:15px;margin-top:16px}
+        .compositionBlock{padding:14px;border:1px solid #eadbd3;border-radius:16px;background:#fff}
+        .blockToolbar{display:flex;flex-wrap:wrap;gap:8px;align-items:end}
+        .blockToolbar>input{min-width:210px;flex:1;font-size:16px;font-weight:900}
+        .blockToolbar label{font-size:10px;font-weight:900;color:#74696d}
         .blockToolbar label input{display:block;width:86px;margin-top:4px}
-        .blockToolbar button{border:0;border-radius:999px;padding:9px 12px;background:#6b1a2c;color:#fff;font-weight:900;cursor:pointer}
         .blockToolbar .dangerMini{background:#d82f46}
-        .blockWorkspace{display:grid;grid-template-columns:210px minmax(0,1fr);gap:13px;margin-top:14px}
-        .availablePlayersPanel{min-height:180px;padding:11px;border:1px solid #ded4cf;border-radius:14px;background:#f6f3f1}
-        .workspaceTitle{display:flex;align-items:center;justify-content:space-between;margin-bottom:9px}
-        .workspaceTitle strong{color:#30272b;font-size:10px;letter-spacing:.06em}
-        .workspaceTitle span{min-width:25px;height:25px;display:grid;place-items:center;border-radius:999px;background:#6b1a2c;color:#fff;font-size:10px;font-weight:950}
-        .availablePlayerList{display:grid;gap:6px}
-        .draggablePlayer,.assignedPlayer{display:grid;grid-template-columns:22px minmax(0,1fr) auto;align-items:center;gap:6px;min-height:34px;padding:6px 8px;border:1px solid #e3d9d3;border-radius:9px;background:#fff;color:#211a1e;font-size:11px;font-weight:850;cursor:grab;transition:.15s}
-        .draggablePlayer{grid-template-columns:22px minmax(0,1fr)}
-        .draggablePlayer:hover,.assignedPlayer:hover{transform:translateY(-1px);box-shadow:0 7px 14px rgba(60,28,38,.08)}
-        .dragHandle{color:#a8999f;font-size:13px;letter-spacing:-4px}
-        .emptyAvailable,.dropPlaceholder{display:grid;min-height:62px;place-items:center;padding:10px;border:1px dashed #d7c9c2;border-radius:10px;color:#a09498;font-size:10px;text-align:center}
-        .compositionTeams{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}
-        .compositionTeam,.addTeamCard{min-height:180px;padding:10px;border:1px dashed #d9bfae;border-radius:14px;background:#fffaf8}
-        .compositionTeam:hover{border-color:#d4a24c;background:#fffdf9}
+        .compositionTeams{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;margin-top:12px}
+        .compositionTeam,.addTeamCard{min-height:130px;padding:10px;border:1px dashed #d9bfae;border-radius:14px;background:#fffaf8}
         .teamTitleRow{display:flex;gap:6px}
         .teamTitleRow input{min-width:0;flex:1;font-weight:900;color:#6b1a2c}
-        .teamTitleRow button,.assignedPlayer button{border:0;border-radius:8px;background:#fee9e9;color:#c31e35;font-weight:950;cursor:pointer}
-        .teamTitleRow button{width:34px}
-        .assignedPlayer button{width:24px;height:24px}
-        .teamDropZone{display:grid;gap:6px;min-height:118px;margin-top:9px}
+        .teamTitleRow button{width:34px;border:0;border-radius:9px;background:#fee9e9;color:#c31e35;font-weight:950}
+        .teamPlayerChoices{display:flex;flex-wrap:wrap;gap:6px;margin-top:9px}
+        .teamPlayerChoices button{border:1px solid #e6dcd6;border-radius:999px;padding:6px 9px;background:#fff;font-size:10px;font-weight:850;cursor:pointer}
+        .teamPlayerChoices button.active{border-color:#d4a24c;background:#fff1ca;color:#6b1a2c}
         .addTeamCard{display:grid;place-items:center;color:#6b1a2c;font-weight:950;cursor:pointer}
-        .addBlockFooter{display:flex;justify-content:flex-end;margin-top:16px}
-        .addBlockButton{border:0;border-radius:12px;padding:12px 17px;background:#171216;color:#d4a24c;font-size:11px;font-weight:950;cursor:pointer}
-        @media(max-width:980px){.blockWorkspace{grid-template-columns:1fr}.compositionTeams{grid-template-columns:repeat(2,minmax(0,1fr))}}
-        @media(max-width:680px){.compositionTeams{grid-template-columns:1fr}.blockToolbar{align-items:stretch}.blockTitleInput{width:100%}}
+        @media(max-width:900px){.compositionTeams{grid-template-columns:1fr}.compositionHeader{flex-direction:column}}
 
         .cartPage {
           background: #fff;

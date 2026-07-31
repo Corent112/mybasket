@@ -431,7 +431,10 @@ export default function MonCalendrier() {
         events.find((event) => event.id === editingId)?.teamName ||
         null,
       assigned_player_ids: fPlayers,
-      attachment_url: fAttach?.dataUrl || null,
+      attachment_url:
+        fAttach?.dataUrl ||
+        events.find((event) => event.id === editingId)?.attachment?.dataUrl ||
+        null,
       visibility: "private",
       updated_at: new Date().toISOString(),
     };
@@ -471,6 +474,57 @@ export default function MonCalendrier() {
     await loadEvents();
     setOpen(false);
   };
+
+  async function consultSessionPdf(eventId: string) {
+    const calendarEvent = events.find((event) => event.id === eventId);
+    if (!calendarEvent?.sessionId) {
+      window.alert("Aucune fiche séance n’est associée à cet événement.");
+      return;
+    }
+
+    if (calendarEvent.attachment?.dataUrl) {
+      setPreview(calendarEvent.attachment);
+      return;
+    }
+
+    try {
+      const response = await fetch(
+        `/api/seances/${calendarEvent.sessionId}/pdf`,
+        { method: "POST" },
+      );
+      const result = (await response.json()) as {
+        pdfUrl?: string;
+        error?: string;
+      };
+
+      if (!response.ok || !result.pdfUrl) {
+        throw new Error(result.error || "Le PDF n’a pas pu être généré.");
+      }
+
+      const attachment: Attachment = {
+        name: "Fiche séance",
+        type: "application/pdf",
+        dataUrl: result.pdfUrl,
+      };
+
+      setEvents((current) =>
+        current.map((event) =>
+          event.id === eventId
+            ? { ...event, attachment }
+            : event,
+        ),
+      );
+      setFAttach(attachment);
+      setPreview(attachment);
+    } catch (error) {
+      console.error("Erreur consultation fiche séance:", error);
+      window.alert(
+        error instanceof Error
+          ? error.message
+          : "Impossible d’ouvrir la fiche séance.",
+      );
+    }
+  }
 
   const deleteEvent = async () => {
     if (!editingId) return;
@@ -732,7 +786,15 @@ export default function MonCalendrier() {
               <div className="cal-fld">
                 <label>Fiche séance</label>
                 {editingId && events.find((event) => event.id === editingId)?.sessionId ? (
-                  <button type="button" className="cal-open-session" onClick={() => setSessionPreviewId(events.find((event) => event.id === editingId)?.sessionId || null)}>Consulter la fiche séance</button>
+                  <button
+                    type="button"
+                    className="cal-open-session"
+                    onClick={() => {
+                      if (editingId) void consultSessionPdf(editingId);
+                    }}
+                  >
+                    Consulter la fiche séance
+                  </button>
                 ) : (
                   <div className="cal-attach">
                     <label className="cal-attach-btn">📎 Ajouter une pièce jointe<input type="file" accept=".pdf,image/*,.doc,.docx,.txt" hidden onChange={(e) => onAttach(e.target.files?.[0])} /></label>

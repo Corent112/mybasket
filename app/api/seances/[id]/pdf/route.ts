@@ -151,7 +151,7 @@ async function loadPresentPlayers(
         first_name: firstString(detail.first_name, row.first_name) || "",
         last_name: firstString(detail.last_name, row.last_name) || "",
         position: normalizePosition(
-          firstString(row.position, row.position_primary, detail.position, detail.position_primary),
+          firstString(detail.position_primary, detail.position, row.position_primary, row.position),
         ),
       };
     })
@@ -164,18 +164,17 @@ async function resolveClubLogo(
   session: GenericRow,
 ) {
   let logo = firstString(session.club_logo_url, session.team_logo_url);
-  const teamLookupId = firstString(session.team_reference_id, session.team_id);
-  if (logo || !teamLookupId) return logo;
+  if (logo || !session.team_id) return logo;
 
-  const { data: team } = await supabase.from("teams").select("*").eq("id", teamLookupId).maybeSingle();
-  logo = firstString(team?.club_logo_url, team?.logo_url, team?.logo, team?.image_url);
+  const { data: team } = await supabase.from("teams").select("*").eq("id", session.team_id).maybeSingle();
+  logo = firstString(team?.club_logo_url, team?.logo_url, team?.image_url);
   if (logo) return logo;
 
   const clubId = firstString(team?.club_id, session.club_id);
   if (!clubId) return null;
 
   const { data: club } = await supabase.from("clubs").select("*").eq("id", clubId).maybeSingle();
-  return firstString(club?.logo_url, club?.club_logo_url, club?.logo, club?.image_url, club?.avatar_url);
+  return firstString(club?.logo_url, club?.club_logo_url, club?.image_url);
 }
 
 export async function POST(
@@ -302,9 +301,12 @@ export async function POST(
 
   await admin
     .from("calendar_events")
-    .update({ attachment_url: pdfUrl })
+    .update({
+      attachment_url: pdfUrl,
+      updated_at: new Date().toISOString(),
+    })
     .eq("session_id", id)
-    .eq("user_id", user.id);
+    .or(`user_id.eq.${user.id},owner_id.eq.${user.id}`);
 
   return NextResponse.json({ pdfUrl });
 }
