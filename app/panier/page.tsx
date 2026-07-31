@@ -836,10 +836,13 @@ setLoading(false);
           item.image_url ||
           null,
         explanation: item.description || null,
-        instructions:
-          Array.isArray(item.consignes ?? item.instructions)
-            ? (item.consignes ?? item.instructions as string[]).join("\n")
-            : String(item.consignes ?? item.instructions ?? "") || null,
+        instructions: (() => {
+          const rawInstructions = item.consignes ?? item.instructions;
+
+          return Array.isArray(rawInstructions)
+            ? rawInstructions.map(String).join("\n")
+            : String(rawInstructions ?? "") || null;
+        })(),
         sort_order: index,
       })),
     );
