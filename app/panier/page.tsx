@@ -234,6 +234,10 @@ export default function PanierPage() {
   const [compositionBlocks, setCompositionBlocks] = useState<TeamCompositionBlock[]>([
     createCompositionBlock(),
   ]);
+  const [editingCompositionTeam, setEditingCompositionTeam] = useState<{
+    blockId: string;
+    teamId: string;
+  } | null>(null);
 
   const productItems = items.filter((item) => item.item_type === "product");
   const subscriptionItems = items.filter(
@@ -716,6 +720,73 @@ setLoading(false);
       }),
     );
   }
+
+  function assignPlayerToCompositionTeam(
+    blockId: string,
+    teamId: string,
+    playerId: string,
+  ) {
+    setCompositionBlocks((current) =>
+      current.map((block) => {
+        if (block.id !== blockId) return block;
+
+        return {
+          ...block,
+          teams: block.teams.map((team) => ({
+            ...team,
+            playerIds:
+              team.id === teamId
+                ? Array.from(new Set([...team.playerIds, playerId]))
+                : team.playerIds.filter((id) => id !== playerId),
+          })),
+        };
+      }),
+    );
+  }
+
+  function removePlayerFromCompositionTeam(
+    blockId: string,
+    teamId: string,
+    playerId: string,
+  ) {
+    setCompositionBlocks((current) =>
+      current.map((block) =>
+        block.id === blockId
+          ? {
+              ...block,
+              teams: block.teams.map((team) =>
+                team.id === teamId
+                  ? {
+                      ...team,
+                      playerIds: team.playerIds.filter(
+                        (id) => id !== playerId,
+                      ),
+                    }
+                  : team,
+              ),
+            }
+          : block,
+      ),
+    );
+  }
+
+  const editingBlock = editingCompositionTeam
+    ? compositionBlocks.find(
+        (block) => block.id === editingCompositionTeam.blockId,
+      )
+    : null;
+
+  const editingTeam = editingCompositionTeam
+    ? editingBlock?.teams.find(
+        (team) => team.id === editingCompositionTeam.teamId,
+      )
+    : null;
+
+  const editingAssignedPlayerIds = new Set(editingTeam?.playerIds || []);
+
+  const editingAvailablePlayers = allSessionPlayers.filter(
+    (player) => !editingAssignedPlayerIds.has(player.id),
+  );
 
   function autoDistributeComposition(blockId: string) {
     setCompositionBlocks((current) =>
@@ -1797,13 +1868,10 @@ setLoading(false);
               <div className="compositionHeader">
                 <div>
                   <h3>COMPOSITIONS D’ÉQUIPES</h3>
-                  <p>Crée autant de blocs que nécessaire : 3x3, 5x5, ateliers…</p>
-                </div>
-                <div className="compositionPresets">
-                  <button type="button" onClick={() => addCompositionBlock("3 contre 3", 3, 3)}>+ 3x3</button>
-                  <button type="button" onClick={() => addCompositionBlock("5 contre 5", 5, 2)}>+ 5x5</button>
-                  <button type="button" onClick={() => addCompositionBlock("Ateliers", 0, 3)}>+ Ateliers</button>
-                  <button type="button" onClick={() => addCompositionBlock()}>+ Nouveau bloc</button>
+                  <p>
+                    Crée tes tableaux d’équipes. Clique sur une équipe pour
+                    gérer ses joueurs.
+                  </p>
                 </div>
               </div>
 
@@ -1811,14 +1879,19 @@ setLoading(false);
                 {compositionBlocks.map((block, blockIndex) => (
                   <article className="compositionBlock" key={block.id}>
                     <div className="blockToolbar">
+                      <span className="blockBadge">BLOC {blockIndex + 1}</span>
+
                       <input
+                        className="blockTitleInput"
                         value={block.title}
                         onChange={(event) =>
                           updateCompositionBlock(block.id, {
                             title: event.target.value,
                           })
                         }
+                        placeholder="Ex : 3 contre 3"
                       />
+
                       <label>
                         Joueurs / équipe
                         <input
@@ -1828,79 +1901,266 @@ setLoading(false);
                           value={block.playersPerTeam}
                           onChange={(event) =>
                             updateCompositionBlock(block.id, {
-                              playersPerTeam: Number(event.target.value || 0),
+                              playersPerTeam: Number(
+                                event.target.value || 0,
+                              ),
                             })
                           }
                         />
                       </label>
-                      <button type="button" onClick={() => autoDistributeComposition(block.id)}>
+
+                      <button
+                        type="button"
+                        onClick={() => autoDistributeComposition(block.id)}
+                      >
                         Répartir automatiquement
                       </button>
-                      <button type="button" onClick={() => duplicateCompositionBlock(block.id)}>
+
+                      <button
+                        type="button"
+                        onClick={() => duplicateCompositionBlock(block.id)}
+                      >
                         Dupliquer
                       </button>
-                      <button type="button" className="dangerMini" onClick={() => removeCompositionBlock(block.id)}>
-                        Supprimer
-                      </button>
+
+                      {compositionBlocks.length > 1 && (
+                        <button
+                          type="button"
+                          className="dangerMini"
+                          onClick={() => removeCompositionBlock(block.id)}
+                        >
+                          Supprimer
+                        </button>
+                      )}
                     </div>
 
-                    <div className="compositionTeams">
-                      {block.teams.map((team) => (
-                        <div className="compositionTeam" key={team.id}>
-                          <div className="teamTitleRow">
-                            <input
-                              value={team.name}
-                              onChange={(event) =>
-                                updateCompositionTeam(block.id, team.id, {
-                                  name: event.target.value,
-                                })
-                              }
+                    <div className="whiteboardGrid">
+                      {block.teams.map((team, teamIndex) => (
+                        <button
+                          type="button"
+                          className="teamWhiteboard"
+                          key={team.id}
+                          onClick={() =>
+                            setEditingCompositionTeam({
+                              blockId: block.id,
+                              teamId: team.id,
+                            })
+                          }
+                        >
+                          <div className="teamWhiteboardTop">
+                            <span
+                              className={`teamColor teamColor${
+                                (teamIndex % 6) + 1
+                              }`}
                             />
-                            <button
-                              type="button"
-                              onClick={() => removeCompositionTeam(block.id, team.id)}
-                            >
-                              ×
-                            </button>
+                            <strong>{team.name}</strong>
+                            <span className="playerCount">
+                              {team.playerIds.length}
+                            </span>
                           </div>
 
-                          <div className="teamPlayerChoices">
-                            {allSessionPlayers.map((player) => {
-                              const active = team.playerIds.includes(player.id);
-                              return (
-                                <button
-                                  type="button"
-                                  key={player.id}
-                                  className={active ? "active" : ""}
-                                  onClick={() =>
-                                    togglePlayerInComposition(
-                                      block.id,
-                                      team.id,
-                                      player.id,
-                                    )
-                                  }
-                                >
-                                  {active ? "✓ " : ""}
-                                  {playerName(player)}
-                                </button>
-                              );
-                            })}
+                          <div className="teamWhiteboardBody">
+                            <span className="teamLabel">
+                              {team.name || `Équipe ${teamIndex + 1}`}
+                            </span>
+
+                            <small>
+                              {team.playerIds.length === 0
+                                ? "Clique pour composer"
+                                : `${team.playerIds.length} joueur${
+                                    team.playerIds.length > 1 ? "s" : ""
+                                  }`}
+                            </small>
                           </div>
-                        </div>
+
+                          <div className="teamWhiteboardFooter">
+                            <span>Modifier la composition</span>
+                            <b>→</b>
+                          </div>
+                        </button>
                       ))}
 
                       <button
                         type="button"
-                        className="addTeamCard"
+                        className="addTeamWhiteboard"
                         onClick={() => addCompositionTeam(block.id)}
                       >
-                        + Ajouter une équipe
+                        <span>+</span>
+                        <strong>Ajouter une équipe</strong>
                       </button>
                     </div>
                   </article>
                 ))}
               </div>
+
+              <div className="addBlockFooter">
+                <button
+                  type="button"
+                  className="addBlockButton"
+                  onClick={() =>
+                    addCompositionBlock(
+                      `Nouveau bloc ${compositionBlocks.length + 1}`,
+                      3,
+                      2,
+                    )
+                  }
+                >
+                  + Ajouter un nouveau bloc d’équipes
+                </button>
+              </div>
             </section>
+
+            {editingCompositionTeam && editingBlock && editingTeam && (
+              <div
+                className="teamEditorOverlay"
+                onClick={() => setEditingCompositionTeam(null)}
+              >
+                <div
+                  className="teamEditorModal"
+                  onClick={(event) => event.stopPropagation()}
+                >
+                  <button
+                    type="button"
+                    className="teamEditorClose"
+                    onClick={() => setEditingCompositionTeam(null)}
+                  >
+                    ×
+                  </button>
+
+                  <div className="teamEditorHeading">
+                    <span>{editingBlock.title}</span>
+                    <input
+                      value={editingTeam.name}
+                      onChange={(event) =>
+                        updateCompositionTeam(
+                          editingBlock.id,
+                          editingTeam.id,
+                          { name: event.target.value },
+                        )
+                      }
+                    />
+                    <p>
+                      Un joueur ne peut être présent qu’une fois dans ce bloc.
+                      Il reste disponible dans les autres blocs.
+                    </p>
+                  </div>
+
+                  <div className="teamEditorColumns">
+                    <section className="teamEditorSection">
+                      <div className="teamEditorSectionTitle">
+                        <strong>JOUEURS DANS L’ÉQUIPE</strong>
+                        <span>{editingTeam.playerIds.length}</span>
+                      </div>
+
+                      <div className="teamEditorPlayers">
+                        {editingTeam.playerIds.length === 0 ? (
+                          <div className="teamEditorEmpty">
+                            Aucun joueur dans cette équipe.
+                          </div>
+                        ) : (
+                          editingTeam.playerIds.map((playerId) => {
+                            const player = allSessionPlayers.find(
+                              (item) => item.id === playerId,
+                            );
+
+                            if (!player) return null;
+
+                            return (
+                              <div
+                                className="teamEditorPlayer assigned"
+                                key={playerId}
+                              >
+                                <div className="teamEditorAvatar">
+                                  {playerName(player)
+                                    .slice(0, 1)
+                                    .toUpperCase()}
+                                </div>
+                                <strong>{playerName(player)}</strong>
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    removePlayerFromCompositionTeam(
+                                      editingBlock.id,
+                                      editingTeam.id,
+                                      playerId,
+                                    )
+                                  }
+                                >
+                                  ×
+                                </button>
+                              </div>
+                            );
+                          })
+                        )}
+                      </div>
+                    </section>
+
+                    <section className="teamEditorSection">
+                      <div className="teamEditorSectionTitle">
+                        <strong>JOUEURS DISPONIBLES</strong>
+                        <span>{editingAvailablePlayers.length}</span>
+                      </div>
+
+                      <div className="teamEditorPlayers">
+                        {editingAvailablePlayers.length === 0 ? (
+                          <div className="teamEditorEmpty">
+                            Tous les joueurs sont déjà utilisés dans cette
+                            équipe.
+                          </div>
+                        ) : (
+                          editingAvailablePlayers.map((player) => (
+                            <button
+                              type="button"
+                              className="teamEditorPlayer available"
+                              key={player.id}
+                              onClick={() =>
+                                assignPlayerToCompositionTeam(
+                                  editingBlock.id,
+                                  editingTeam.id,
+                                  player.id,
+                                )
+                              }
+                            >
+                              <div className="teamEditorAvatar">
+                                {playerName(player)
+                                  .slice(0, 1)
+                                  .toUpperCase()}
+                              </div>
+                              <strong>{playerName(player)}</strong>
+                              <span>+</span>
+                            </button>
+                          ))
+                        )}
+                      </div>
+                    </section>
+                  </div>
+
+                  <div className="teamEditorActions">
+                    <button
+                      type="button"
+                      className="deleteTeamButton"
+                      onClick={() => {
+                        removeCompositionTeam(
+                          editingBlock.id,
+                          editingTeam.id,
+                        );
+                        setEditingCompositionTeam(null);
+                      }}
+                    >
+                      Supprimer l’équipe
+                    </button>
+
+                    <button
+                      type="button"
+                      className="validateTeamButton"
+                      onClick={() => setEditingCompositionTeam(null)}
+                    >
+                      Valider la composition
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
 
             <div className="modalActions">
               <button
@@ -1925,29 +2185,461 @@ setLoading(false);
       )}
 
       <style jsx>{`
-        .compositionBuilder{margin-top:22px;padding:18px;border:1px solid #ead8ca;border-radius:18px;background:#fffaf6}
-        .compositionHeader{display:flex;justify-content:space-between;gap:16px;align-items:flex-start}
-        .compositionHeader h3{margin:0;color:#6b1a2c;font-size:18px}
-        .compositionHeader p{margin:5px 0 0;color:#756b6f;font-size:12px}
-        .compositionPresets{display:flex;flex-wrap:wrap;gap:7px}
-        .compositionPresets button,.blockToolbar button{border:0;border-radius:999px;padding:9px 12px;background:#6b1a2c;color:#fff;font-weight:900;cursor:pointer}
-        .compositionBlocks{display:grid;gap:15px;margin-top:16px}
-        .compositionBlock{padding:14px;border:1px solid #eadbd3;border-radius:16px;background:#fff}
-        .blockToolbar{display:flex;flex-wrap:wrap;gap:8px;align-items:end}
-        .blockToolbar>input{min-width:210px;flex:1;font-size:16px;font-weight:900}
-        .blockToolbar label{font-size:10px;font-weight:900;color:#74696d}
-        .blockToolbar label input{display:block;width:86px;margin-top:4px}
-        .blockToolbar .dangerMini{background:#d82f46}
-        .compositionTeams{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;margin-top:12px}
-        .compositionTeam,.addTeamCard{min-height:130px;padding:10px;border:1px dashed #d9bfae;border-radius:14px;background:#fffaf8}
-        .teamTitleRow{display:flex;gap:6px}
-        .teamTitleRow input{min-width:0;flex:1;font-weight:900;color:#6b1a2c}
-        .teamTitleRow button{width:34px;border:0;border-radius:9px;background:#fee9e9;color:#c31e35;font-weight:950}
-        .teamPlayerChoices{display:flex;flex-wrap:wrap;gap:6px;margin-top:9px}
-        .teamPlayerChoices button{border:1px solid #e6dcd6;border-radius:999px;padding:6px 9px;background:#fff;font-size:10px;font-weight:850;cursor:pointer}
-        .teamPlayerChoices button.active{border-color:#d4a24c;background:#fff1ca;color:#6b1a2c}
-        .addTeamCard{display:grid;place-items:center;color:#6b1a2c;font-weight:950;cursor:pointer}
-        @media(max-width:900px){.compositionTeams{grid-template-columns:1fr}.compositionHeader{flex-direction:column}}
+        .compositionBuilder {
+          margin-top: 22px;
+          padding: 20px;
+          border: 1px solid #ead8ca;
+          border-radius: 20px;
+          background: #fffaf6;
+        }
+
+        .compositionHeader h3 {
+          margin: 0;
+          color: #6b1a2c;
+          font-size: 20px;
+        }
+
+        .compositionHeader p {
+          margin: 6px 0 0;
+          color: #756b6f;
+          font-size: 12px;
+        }
+
+        .compositionBlocks {
+          display: grid;
+          gap: 18px;
+          margin-top: 17px;
+        }
+
+        .compositionBlock {
+          padding: 16px;
+          border: 1px solid #eadbd3;
+          border-radius: 18px;
+          background: #fff;
+        }
+
+        .blockToolbar {
+          display: flex;
+          flex-wrap: wrap;
+          gap: 9px;
+          align-items: end;
+          padding-bottom: 14px;
+          border-bottom: 1px solid #eee5e0;
+        }
+
+        .blockBadge {
+          align-self: center;
+          padding: 9px 11px;
+          border-radius: 10px;
+          background: #171216;
+          color: #d4a24c;
+          font-size: 10px;
+          font-weight: 950;
+        }
+
+        .blockTitleInput {
+          min-width: 220px;
+          flex: 1;
+          font-size: 17px;
+          font-weight: 950;
+          color: #6b1a2c;
+        }
+
+        .blockToolbar label {
+          color: #74696d;
+          font-size: 10px;
+          font-weight: 900;
+        }
+
+        .blockToolbar label input {
+          display: block;
+          width: 88px;
+          margin-top: 4px;
+        }
+
+        .blockToolbar button {
+          border: 0;
+          border-radius: 999px;
+          padding: 9px 12px;
+          background: #6b1a2c;
+          color: #fff;
+          font-weight: 900;
+          cursor: pointer;
+        }
+
+        .blockToolbar .dangerMini {
+          background: #db2e45;
+        }
+
+        .whiteboardGrid {
+          display: grid;
+          grid-template-columns: repeat(3, minmax(0, 1fr));
+          gap: 12px;
+          margin-top: 14px;
+        }
+
+        .teamWhiteboard,
+        .addTeamWhiteboard {
+          min-height: 185px;
+          padding: 0;
+          overflow: hidden;
+          border: 1px solid #ddd2cc;
+          border-radius: 17px;
+          background: #fff;
+          text-align: left;
+          cursor: pointer;
+          transition:
+            transform 0.18s ease,
+            box-shadow 0.18s ease,
+            border-color 0.18s ease;
+        }
+
+        .teamWhiteboard:hover,
+        .addTeamWhiteboard:hover {
+          transform: translateY(-3px);
+          border-color: #d4a24c;
+          box-shadow: 0 14px 30px rgba(58, 24, 35, 0.1);
+        }
+
+        .teamWhiteboardTop {
+          display: grid;
+          grid-template-columns: 10px minmax(0, 1fr) 28px;
+          gap: 9px;
+          align-items: center;
+          padding: 13px;
+          border-bottom: 1px solid #eee5e0;
+          background: #fbf8f6;
+        }
+
+        .teamColor {
+          width: 10px;
+          height: 34px;
+          border-radius: 999px;
+        }
+
+        .teamColor1 { background: #cf344b; }
+        .teamColor2 { background: #1d1b1e; }
+        .teamColor3 { background: #d4a24c; }
+        .teamColor4 { background: #285f9e; }
+        .teamColor5 { background: #30835e; }
+        .teamColor6 { background: #754a93; }
+
+        .teamWhiteboardTop strong {
+          color: #30272b;
+          font-size: 13px;
+        }
+
+        .playerCount {
+          width: 28px;
+          height: 28px;
+          display: grid;
+          place-items: center;
+          border-radius: 9px;
+          background: #6b1a2c;
+          color: #fff;
+          font-size: 10px;
+          font-weight: 950;
+        }
+
+        .teamWhiteboardBody {
+          min-height: 102px;
+          display: grid;
+          place-items: center;
+          align-content: center;
+          gap: 8px;
+          padding: 18px;
+          background:
+            linear-gradient(#f5f2f0 1px, transparent 1px),
+            linear-gradient(90deg, #f5f2f0 1px, transparent 1px),
+            #fff;
+          background-size: 22px 22px;
+        }
+
+        .teamLabel {
+          padding: 9px 15px;
+          border-radius: 999px;
+          background: #171216;
+          color: #d4a24c;
+          font-size: 14px;
+          font-weight: 950;
+        }
+
+        .teamWhiteboardBody small {
+          color: #8b7f84;
+          font-size: 10px;
+        }
+
+        .teamWhiteboardFooter {
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          padding: 10px 13px;
+          border-top: 1px solid #eee5e0;
+          color: #6b1a2c;
+          font-size: 10px;
+          font-weight: 900;
+        }
+
+        .addTeamWhiteboard {
+          display: grid;
+          place-items: center;
+          align-content: center;
+          gap: 8px;
+          border-style: dashed;
+          background: #fffaf8;
+          color: #6b1a2c;
+          text-align: center;
+        }
+
+        .addTeamWhiteboard span {
+          width: 42px;
+          height: 42px;
+          display: grid;
+          place-items: center;
+          border-radius: 14px;
+          background: #6b1a2c;
+          color: #fff;
+          font-size: 22px;
+        }
+
+        .addBlockFooter {
+          display: flex;
+          justify-content: flex-end;
+          margin-top: 17px;
+        }
+
+        .addBlockButton {
+          border: 0;
+          border-radius: 13px;
+          padding: 13px 18px;
+          background: #171216;
+          color: #d4a24c;
+          font-weight: 950;
+          cursor: pointer;
+        }
+
+        .teamEditorOverlay {
+          position: fixed;
+          inset: 0;
+          z-index: 12000;
+          display: grid;
+          place-items: center;
+          padding: 24px;
+          background: rgba(15, 12, 14, 0.72);
+          backdrop-filter: blur(6px);
+        }
+
+        .teamEditorModal {
+          position: relative;
+          width: min(920px, 100%);
+          max-height: min(780px, calc(100vh - 48px));
+          overflow: auto;
+          padding: 26px;
+          border-radius: 22px;
+          background: #fff;
+          box-shadow: 0 30px 100px rgba(0, 0, 0, 0.36);
+        }
+
+        .teamEditorClose {
+          position: absolute;
+          top: 14px;
+          right: 14px;
+          width: 38px;
+          height: 38px;
+          border: 0;
+          border-radius: 11px;
+          background: #f4eeeb;
+          color: #6b1a2c;
+          font-size: 20px;
+          cursor: pointer;
+        }
+
+        .teamEditorHeading span {
+          color: #d4a24c;
+          font-size: 10px;
+          font-weight: 950;
+          letter-spacing: 0.14em;
+          text-transform: uppercase;
+        }
+
+        .teamEditorHeading input {
+          display: block;
+          width: calc(100% - 54px);
+          margin-top: 8px;
+          border: 0;
+          border-bottom: 2px solid #171216;
+          border-radius: 0;
+          color: #6b1a2c;
+          font-size: 28px;
+          font-weight: 950;
+        }
+
+        .teamEditorHeading p {
+          margin: 10px 0 0;
+          color: #776c70;
+          font-size: 12px;
+        }
+
+        .teamEditorColumns {
+          display: grid;
+          grid-template-columns: 1fr 1fr;
+          gap: 14px;
+          margin-top: 22px;
+        }
+
+        .teamEditorSection {
+          padding: 15px;
+          border: 1px solid #e8ded8;
+          border-radius: 17px;
+          background: #faf7f5;
+        }
+
+        .teamEditorSectionTitle {
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          margin-bottom: 11px;
+        }
+
+        .teamEditorSectionTitle strong {
+          font-size: 11px;
+          letter-spacing: 0.06em;
+        }
+
+        .teamEditorSectionTitle span {
+          width: 28px;
+          height: 28px;
+          display: grid;
+          place-items: center;
+          border-radius: 9px;
+          background: #6b1a2c;
+          color: #fff;
+          font-size: 10px;
+          font-weight: 950;
+        }
+
+        .teamEditorPlayers {
+          display: grid;
+          gap: 7px;
+        }
+
+        .teamEditorPlayer {
+          display: grid;
+          grid-template-columns: 38px minmax(0, 1fr) 30px;
+          gap: 9px;
+          align-items: center;
+          min-height: 52px;
+          padding: 7px;
+          border: 1px solid #e2d8d2;
+          border-radius: 12px;
+          background: #fff;
+          text-align: left;
+        }
+
+        button.teamEditorPlayer {
+          width: 100%;
+          cursor: pointer;
+        }
+
+        .teamEditorPlayer.assigned {
+          border-color: #d4a24c;
+          background: #fff9e8;
+        }
+
+        .teamEditorAvatar {
+          width: 38px;
+          height: 38px;
+          display: grid;
+          place-items: center;
+          border-radius: 11px;
+          background: #171216;
+          color: #d4a24c;
+          font-weight: 950;
+        }
+
+        .teamEditorPlayer strong {
+          color: #30272b;
+          font-size: 12px;
+        }
+
+        .teamEditorPlayer button,
+        .teamEditorPlayer > span:last-child {
+          width: 28px;
+          height: 28px;
+          display: grid;
+          place-items: center;
+          border: 0;
+          border-radius: 8px;
+          background: #6b1a2c;
+          color: #fff;
+          font-weight: 950;
+        }
+
+        .teamEditorEmpty {
+          padding: 30px 15px;
+          border: 1px dashed #d8cac3;
+          border-radius: 12px;
+          color: #978b90;
+          font-size: 11px;
+          text-align: center;
+        }
+
+        .teamEditorActions {
+          display: flex;
+          justify-content: space-between;
+          gap: 12px;
+          margin-top: 18px;
+        }
+
+        .teamEditorActions button {
+          border: 0;
+          border-radius: 12px;
+          padding: 12px 17px;
+          font-weight: 950;
+          cursor: pointer;
+        }
+
+        .deleteTeamButton {
+          background: #fee9ec;
+          color: #cc2940;
+        }
+
+        .validateTeamButton {
+          background: #171216;
+          color: #d4a24c;
+        }
+
+        @media (max-width: 900px) {
+          .whiteboardGrid {
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+          }
+
+          .teamEditorColumns {
+            grid-template-columns: 1fr;
+          }
+        }
+
+        @media (max-width: 620px) {
+          .whiteboardGrid {
+            grid-template-columns: 1fr;
+          }
+
+          .blockToolbar {
+            align-items: stretch;
+          }
+
+          .blockTitleInput {
+            width: 100%;
+          }
+
+          .teamEditorModal {
+            padding: 20px;
+          }
+
+          .teamEditorActions {
+            flex-direction: column-reverse;
+          }
+        }
 
         .cartPage {
           background: #fff;
