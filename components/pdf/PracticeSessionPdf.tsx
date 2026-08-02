@@ -122,7 +122,7 @@ export default function PracticeSessionPdf({ session, players, exercises }: Prop
             {session.club_logo_url ? (
               <Image src={session.club_logo_url} style={styles.logo} />
             ) : (
-              <Text style={styles.logoFallback}>CLUB</Text>
+              <Text style={styles.logoFallback}>LOGO CLUB</Text>
             )}
           </View>
         </View>
@@ -349,13 +349,13 @@ const styles = StyleSheet.create({
     borderWidth: 0.8,
     borderColor,
   },
-  whoCell: { width: 30, padding: 4, textAlign: "center", fontWeight: 900 },
-  timeCell: { width: 32, padding: 4, textAlign: "center", fontWeight: 900, borderLeftWidth: 0.8, borderLeftColor: "#ffffff" },
-  schemaCell: { width: 245, padding: 4, textAlign: "center", fontWeight: 900, borderLeftWidth: 0.8, borderLeftColor: "#ffffff" },
-  explanationCell: { width: 130, padding: 4, textAlign: "center", fontWeight: 900, borderLeftWidth: 0.8, borderLeftColor: "#ffffff" },
+  whoCell: { width: 30, padding: 3, textAlign: "center", fontWeight: 900 },
+  timeCell: { width: 32, padding: 3, textAlign: "center", fontWeight: 900, borderLeftWidth: 0.8, borderLeftColor: "#ffffff" },
+  schemaCell: { width: 235, padding: 3, textAlign: "center", fontWeight: 900, borderLeftWidth: 0.8, borderLeftColor: "#ffffff" },
+  explanationCell: { width: 135, padding: 4, textAlign: "center", fontWeight: 900, borderLeftWidth: 0.8, borderLeftColor: "#ffffff" },
   instructionsCell: { flex: 1, padding: 4, textAlign: "center", fontWeight: 900, borderLeftWidth: 0.8, borderLeftColor: "#ffffff" },
   exerciseRow: {
-    minHeight: 104,
+    minHeight: 88,
     flexDirection: "row",
     borderLeftWidth: 0.8,
     borderRightWidth: 0.8,
@@ -384,13 +384,13 @@ const styles = StyleSheet.create({
     fontWeight: 900,
   },
   schemaCellBody: {
-    width: 245,
+    width: 235,
     padding: 4,
     borderRightWidth: 0.8,
     borderRightColor: borderColor,
   },
   explanationCellBody: {
-    width: 130,
+    width: 135,
     alignItems: "center",
     justifyContent: "center",
     padding: 4,
@@ -412,7 +412,7 @@ const styles = StyleSheet.create({
     fontWeight: 700,
   },
   exerciseTitle: {
-    marginBottom: 4,
+    marginBottom: 2,
     fontSize: 8.5,
     fontWeight: 900,
     textAlign: "center",
@@ -425,19 +425,19 @@ const styles = StyleSheet.create({
     gap: 3,
   },
   singleImage: {
-    width: 218,
-    height: 94,
+    width: 208,
+    height: 80,
     objectFit: "contain",
   },
   doubleImage: {
-    width: 112,
-    height: 88,
+    width: 105,
+    height: 76,
     objectFit: "contain",
     margin: 2,
   },
   multiImage: {
-    width: 73,
-    height: 86,
+    width: 68,
+    height: 70,
     objectFit: "contain",
   },
   noSchema: {

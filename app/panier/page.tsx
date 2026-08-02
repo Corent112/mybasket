@@ -625,6 +625,65 @@ setLoading(false);
     ]);
   }
 
+  function compositionPresetValue(block: TeamCompositionBlock) {
+    const normalizedTitle = block.title.toLowerCase();
+
+    if (normalizedTitle.includes("grande")) return "large";
+    if (block.playersPerTeam === 2) return "2v2";
+    if (block.playersPerTeam === 4) return "4v4";
+    if (block.playersPerTeam === 5) return "5v5";
+    return "3v3";
+  }
+
+  function changeCompositionPreset(
+    blockId: string,
+    preset: "2v2" | "3v3" | "4v4" | "5v5" | "large",
+  ) {
+    const settings = {
+      "2v2": { title: "2 contre 2", size: 2, teamCount: 2 },
+      "3v3": { title: "3 contre 3", size: 3, teamCount: 3 },
+      "4v4": { title: "4 contre 4", size: 4, teamCount: 2 },
+      "5v5": { title: "5 contre 5", size: 5, teamCount: 2 },
+      large: { title: "Grande équipe", size: 0, teamCount: 2 },
+    } as const;
+
+    const selected = settings[preset];
+
+    setCompositionBlocks((current) =>
+      current.map((block) => {
+        if (block.id !== blockId) return block;
+
+        const teams: CompositionTeam[] = Array.from(
+          { length: selected.teamCount },
+          (_, index) => ({
+            id: block.teams[index]?.id || compositionUid("team"),
+            name:
+              block.teams[index]?.name ||
+              (preset === "large"
+                ? index === 0
+                  ? "Équipe 1"
+                  : "Équipe 2"
+                : `Équipe ${index + 1}`),
+            playerIds: [],
+          }),
+        );
+
+        if (preset === "large") {
+          allSessionPlayers.forEach((player, index) => {
+            teams[index % 2].playerIds.push(player.id);
+          });
+        }
+
+        return {
+          ...block,
+          title: selected.title,
+          playersPerTeam: selected.size,
+          teams,
+        };
+      }),
+    );
+  }
+
   function updateCompositionBlock(
     blockId: string,
     patch: Partial<TeamCompositionBlock>,
@@ -1901,43 +1960,12 @@ setLoading(false);
                 <div>
                   <h3>COMPOSITIONS D’ÉQUIPES</h3>
                   <p>
-                    Glisse les étiquettes entières d’une équipe à l’autre.
-                    Chaque nouveau bloc récupère tous les joueurs présents.
+                    Choisis un format puis glisse les étiquettes entières
+                    d’une équipe à l’autre.
                   </p>
                 </div>
 
-                <div className="compositionPresets">
-                  <button
-                    type="button"
-                    onClick={() =>
-                      addCompositionBlock("3 contre 3", 3, 3)
-                    }
-                  >
-                    + 3x3
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() =>
-                      addCompositionBlock("5 contre 5", 5, 2)
-                    }
-                  >
-                    + 5x5
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() =>
-                      addCompositionBlock("Ateliers", 0, 3)
-                    }
-                  >
-                    + Ateliers
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => addCompositionBlock()}
-                  >
-                    + Nouveau bloc
-                  </button>
-                </div>
+
               </div>
 
               <div className="compositionBlocks">
@@ -1957,30 +1985,30 @@ setLoading(false);
                           {blockIndex + 1}
                         </span>
 
-                        <input
-                          value={block.title}
-                          onChange={(event) =>
-                            updateCompositionBlock(block.id, {
-                              title: event.target.value,
-                            })
-                          }
-                        />
-
-                        <label>
-                          Joueurs / équipe
-                          <input
-                            type="number"
-                            min={0}
-                            max={15}
-                            value={block.playersPerTeam}
+                        <label className="compositionPresetSelect">
+                          Format
+                          <select
+                            value={compositionPresetValue(block)}
                             onChange={(event) =>
-                              updateCompositionBlock(block.id, {
-                                playersPerTeam: Number(
-                                  event.target.value || 0,
-                                ),
-                              })
+                              changeCompositionPreset(
+                                block.id,
+                                event.target.value as
+                                  | "2v2"
+                                  | "3v3"
+                                  | "4v4"
+                                  | "5v5"
+                                  | "large",
+                              )
                             }
-                          />
+                          >
+                            <option value="2v2">2 contre 2</option>
+                            <option value="3v3">3 contre 3</option>
+                            <option value="4v4">4 contre 4</option>
+                            <option value="5v5">5 contre 5</option>
+                            <option value="large">
+                              Grande équipe - 2 équipes
+                            </option>
+                          </select>
                         </label>
 
                         <button
@@ -2201,16 +2229,18 @@ setLoading(false);
                           );
                         })}
 
-                        <button
-                          type="button"
-                          className="addTeamCard"
-                          onClick={() =>
-                            addCompositionTeam(block.id)
-                          }
-                        >
-                          <span>+</span>
-                          Ajouter une équipe
-                        </button>
+                        {compositionPresetValue(block) !== "large" && (
+                          <button
+                            type="button"
+                            className="addTeamCard"
+                            onClick={() =>
+                              addCompositionTeam(block.id)
+                            }
+                          >
+                            <span>+</span>
+                            Ajouter une équipe
+                          </button>
+                        )}
                       </div>
                     </article>
                   );
@@ -2270,14 +2300,6 @@ setLoading(false);
           line-height: 1.45;
         }
 
-        .compositionPresets {
-          display: flex;
-          flex-wrap: wrap;
-          justify-content: flex-end;
-          gap: 7px;
-        }
-
-        .compositionPresets button,
         .blockToolbar button {
           border: 0;
           border-radius: 999px;
@@ -2322,24 +2344,30 @@ setLoading(false);
           font-weight: 950;
         }
 
-        .blockToolbar > input {
-          min-width: 210px;
-          flex: 1;
-          font-size: 16px;
-          font-weight: 900;
-          color: #6b1a2c;
-        }
-
         .blockToolbar label {
           font-size: 10px;
           font-weight: 900;
           color: #74696d;
         }
 
-        .blockToolbar label input {
+        .compositionPresetSelect {
+          min-width: 250px;
+          flex: 1;
+        }
+
+        .compositionPresetSelect select {
           display: block;
-          width: 86px;
+          width: 100%;
+          min-height: 42px;
           margin-top: 4px;
+          padding: 0 12px;
+          border: 1px solid #d9cfca;
+          border-radius: 10px;
+          background: #ffffff;
+          color: #6b1a2c;
+          font-size: 15px;
+          font-weight: 950;
+          cursor: pointer;
         }
 
         .blockToolbar .dangerMini {
@@ -2594,8 +2622,8 @@ setLoading(false);
             flex-direction: column;
           }
 
-          .compositionPresets {
-            justify-content: flex-start;
+          .compositionPresetSelect {
+            min-width: 100%;
           }
         }
 
