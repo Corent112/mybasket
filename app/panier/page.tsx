@@ -19,6 +19,8 @@ type CartItem = {
   sort_order: number;
   consignes?: string | string[] | null;
   instructions?: string | string[] | null;
+  variantes?: string | string[] | null;
+  variants?: string | string[] | null;
   schemaImages?: string[];
   schema_images?: string[];
 };
@@ -364,10 +366,22 @@ const subtotal = useMemo(() => {
           item.instructions ??
           null,
         instructions:
-          exercise.instructions ??
           exercise.consignes ??
-          item.instructions ??
+          exercise.instructions ??
           item.consignes ??
+          item.instructions ??
+          null,
+        variantes:
+          exercise.variantes ??
+          exercise.variants ??
+          item.variantes ??
+          item.variants ??
+          null,
+        variants:
+          exercise.variantes ??
+          exercise.variants ??
+          item.variantes ??
+          item.variants ??
           null,
       };
     });
@@ -744,7 +758,7 @@ setLoading(false);
     );
   }
 
-  async function saveSessionToCalendar() {
+  async function saveSessionToCalendar(): Promise<boolean> {
   const {
     data: { user },
     error: userError,
@@ -752,7 +766,7 @@ setLoading(false);
 
   if (userError || !user) {
     alert("Connecte-toi pour ajouter la séance au calendrier.");
-    return;
+    return false;
   }
 
   const isUuid = (value: string | null | undefined) =>
@@ -776,7 +790,7 @@ setLoading(false);
     positionedPlayers.map(({ player, position }) => [String(player.id), position]),
   );
 
-  const resolvedClubLogo =
+  let resolvedClubLogo =
     selectedTeam?.logo ||
     selectedTeam?.logoUrl ||
     selectedTeam?.logo_url ||
@@ -784,6 +798,24 @@ setLoading(false);
     selectedTeam?.clubLogoUrl ||
     selectedTeam?.club_logo_url ||
     null;
+
+  // Si le logo n'est pas directement porté par l'équipe chargée dans le panier,
+  // on le récupère depuis le club associé avant de figer la séance.
+  if (!resolvedClubLogo && selectedTeam?.club_id) {
+    const { data: clubRow } = await supabase
+      .from("clubs")
+      .select("*")
+      .eq("id", selectedTeam.club_id)
+      .maybeSingle();
+
+    resolvedClubLogo =
+      clubRow?.logo_url ||
+      clubRow?.club_logo_url ||
+      clubRow?.logo ||
+      clubRow?.image_url ||
+      clubRow?.avatar_url ||
+      null;
+  }
 
   const { data: createdSession, error: sessionError } = await supabase
     .from("practice_sessions")
@@ -832,7 +864,60 @@ setLoading(false);
       `La fiche est générée, mais la séance Supabase n'a pas été créée : ${sessionError?.message}`
     );
 
-    return;
+    return false;
+  }
+
+  const sortedSessionItems = [...sessionItems].sort(
+    (a, b) => a.sort_order - b.sort_order,
+  );
+
+  if (sortedSessionItems.length > 0) {
+    const exerciseRows = sortedSessionItems.map((item, index) => {
+      const rawConsignes = item.consignes ?? item.instructions;
+      const rawVariantes = item.variantes ?? item.variants;
+
+      return {
+        session_id: createdSession.id,
+        user_id: user.id,
+        exercise_id: item.item_id || null,
+        title: item.title,
+        who: coachCode(item.assigned_to),
+        duration_minutes: Number(item.duration_minutes ?? 15),
+        situation_image_url:
+          item.schemaImages?.[0] ||
+          item.schema_images?.[0] ||
+          item.image_url ||
+          null,
+        explanation: item.description || null,
+        instructions: Array.isArray(rawConsignes)
+          ? rawConsignes.map(String).join("\n")
+          : String(rawConsignes ?? "") || null,
+        variants: Array.isArray(rawVariantes)
+          ? rawVariantes.map(String).join("\n")
+          : String(rawVariantes ?? "") || null,
+        sort_order: index,
+      };
+    });
+
+    let exerciseInsert = await supabase
+      .from("practice_session_exercises")
+      .insert(exerciseRows);
+
+    // Compatibilité avec une table plus ancienne ne possédant pas variants.
+    if (exerciseInsert.error) {
+      const legacyRows = exerciseRows.map(({ variants: _variants, ...row }) => row);
+      exerciseInsert = await supabase
+        .from("practice_session_exercises")
+        .insert(legacyRows);
+    }
+
+    if (exerciseInsert.error) {
+      console.error("Erreur sauvegarde exercices:", exerciseInsert.error);
+      alert(
+        `La séance a été créée, mais les exercices n'ont pas pu être sauvegardés : ${exerciseInsert.error.message}`,
+      );
+      return false;
+    }
   }
 
   if (positionedPlayers.length > 0) {
@@ -900,8 +985,43 @@ setLoading(false);
     alert(
       `La fiche est générée, mais l’ajout au calendrier a échoué : ${error.message}`
     );
+    return false;
   }
+
+  return true;
 }
+
+  async function resetSessionBuilderAfterGeneration() {
+    const sessionItemIds = sessionItems.map((item) => item.id);
+
+    if (sessionItemIds.length > 0) {
+      const { error } = await supabase
+        .from("cart_items")
+        .delete()
+        .in("id", sessionItemIds);
+
+      if (error) {
+        console.error("Impossible de vider les éléments séance du panier:", error);
+      }
+    }
+
+    setItems((current) =>
+      current.filter(
+        (item) =>
+          item.item_type !== "exercise" &&
+          item.item_type !== "system" &&
+          item.item_type !== "session",
+      ),
+    );
+    setSelectedTeamId("");
+    setSessionDate("");
+    setSessionStartTime("");
+    setSessionEndTime("");
+    setSessionTheme("");
+    setSessionPlayers(emptyPlayers);
+    setCompositionBlocks([createCompositionBlock()]);
+    notifyCartUpdated();
+  }
 
   async function generateSessionPdf() {
     if (savingSession) return;
@@ -1305,8 +1425,13 @@ setLoading(false);
     printWindow.document.write(html);
     printWindow.document.close();
 
-    await saveSessionToCalendar();
-    setSessionModalOpen(false);
+    const sessionSaved = await saveSessionToCalendar();
+
+    if (sessionSaved) {
+      await resetSessionBuilderAfterGeneration();
+      setSessionModalOpen(false);
+    }
+
     setSavingSession(false);
   }
 

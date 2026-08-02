@@ -99,6 +99,34 @@ async function imageDataUri(source?: string | null) {
   }
 }
 
+function cleanDatabaseText(value: unknown): string {
+  if (Array.isArray(value)) {
+    return value.map(String).filter(Boolean).join("\n");
+  }
+
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+
+    if (
+      (trimmed.startsWith("[") && trimmed.endsWith("]")) ||
+      (trimmed.startsWith("{") && trimmed.endsWith("}"))
+    ) {
+      try {
+        const parsed = JSON.parse(trimmed);
+        if (Array.isArray(parsed)) {
+          return parsed.map(String).filter(Boolean).join("\n");
+        }
+      } catch {
+        // Le texte n'est pas du JSON : on le conserve tel quel.
+      }
+    }
+
+    return trimmed;
+  }
+
+  return value == null ? "" : String(value);
+}
+
 function normalizeExerciseImages(exercise: GenericRow) {
   const candidates = [
     exercise.situation_image_url,
@@ -305,44 +333,84 @@ export async function POST(
       .order("sort_order", { ascending: true }),
   ]);
 
+  const exerciseRows = (exercises ?? []) as GenericRow[];
+  const sourceExerciseIds = Array.from(
+    new Set(
+      exerciseRows
+        .map((exercise) => String(exercise.exercise_id || ""))
+        .filter(Boolean),
+    ),
+  );
+
+  const { data: sourceExercises } = sourceExerciseIds.length
+    ? await supabase.from("exercises").select("*").in("id", sourceExerciseIds)
+    : { data: [] as GenericRow[] };
+
+  const sourceExerciseById = new Map(
+    (sourceExercises ?? []).map((exercise: GenericRow) => [
+      String(exercise.id),
+      exercise,
+    ]),
+  );
+
   const players = await loadPresentPlayers(supabase, session, id);
-  const clubLogoSource = await resolveClubLogo(supabase, session);
+  let clubLogoSource = await resolveClubLogo(supabase, session);
+
+  if (!clubLogoSource) {
+    const logoAdmin = createAdminClient();
+    if (logoAdmin) {
+      clubLogoSource = await resolveClubLogo(logoAdmin as any, session);
+    }
+  }
+
   const myBasketLogo = await imageDataUri("/logo-mybasket02.png");
   const clubLogo = await imageDataUri(clubLogoSource);
 
   const normalizedExercises: PdfExercise[] = await Promise.all(
-    ((exercises ?? []) as GenericRow[]).map(
-      async (exercise): Promise<PdfExercise> => ({
-        title: String(exercise.title || "Exercice"),
-        who: exercise.who ? String(exercise.who) : null,
-        duration_minutes:
-          exercise.duration_minutes == null
-            ? null
-            : Number(exercise.duration_minutes),
-        situation_image_url: firstString(
-          exercise.situation_image_url,
-          exercise.image_url,
-          exercise.schema_url,
-          exercise.diagram_url,
-        ),
-        schema_urls: await Promise.all(
-          Array.from(
-            new Set([
-              ...(Array.isArray(exercise.schema_urls)
-                ? exercise.schema_urls.map(String)
-                : []),
-              ...normalizeExerciseImages(exercise),
-            ]),
-          ).map(async (url) => (await imageDataUri(url)) || url),
-        ),
-        explanation: exercise.explanation
-          ? String(exercise.explanation)
-          : null,
-        instructions: exercise.instructions
-          ? String(exercise.instructions)
-          : null,
-        variants: exercise.variants ? String(exercise.variants) : null,
-      }),
+    exerciseRows.map(
+      async (exercise): Promise<PdfExercise> => {
+        const source =
+          sourceExerciseById.get(String(exercise.exercise_id || "")) || {};
+
+        const imageUrls = Array.from(
+          new Set([
+            ...normalizeExerciseImages(source),
+            ...normalizeExerciseImages(exercise),
+          ]),
+        );
+
+        const sourceConsignes =
+          source.consignes ??
+          source.instructions ??
+          exercise.instructions ??
+          null;
+
+        const sourceVariantes =
+          source.variantes ??
+          source.variants ??
+          exercise.variants ??
+          null;
+
+        return {
+          title: String(source.title || exercise.title || "Exercice"),
+          who: exercise.who ? String(exercise.who) : null,
+          duration_minutes:
+            exercise.duration_minutes == null
+              ? null
+              : Number(exercise.duration_minutes),
+          situation_image_url: imageUrls[0] || null,
+          schema_urls: await Promise.all(
+            imageUrls.map(async (url) => (await imageDataUri(url)) || url),
+          ),
+          explanation: null,
+          instructions: sourceConsignes
+            ? cleanDatabaseText(sourceConsignes)
+            : null,
+          variants: sourceVariantes
+            ? cleanDatabaseText(sourceVariantes)
+            : null,
+        };
+      },
     ),
   );
 

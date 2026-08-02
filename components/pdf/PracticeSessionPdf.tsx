@@ -137,8 +137,8 @@ export default function PracticeSessionPdf({ session, players, exercises }: Prop
           <Text style={styles.whoCell}>Qui</Text>
           <Text style={styles.timeCell}>Tps</Text>
           <Text style={styles.schemaCell}>Schémas</Text>
-          <Text style={styles.explanationCell}>Explications</Text>
-          <Text style={styles.instructionsCell}>Consignes / Variantes</Text>
+          <Text style={styles.explanationCell}>Consignes</Text>
+          <Text style={styles.instructionsCell}>Variantes</Text>
         </View>
 
         {exercises.map((exercise, index) => {
@@ -165,7 +165,13 @@ export default function PracticeSessionPdf({ session, players, exercises }: Prop
                       <Image
                         key={`${image}-${imageIndex}`}
                         src={image}
-                        style={images.length === 1 ? styles.singleImage : styles.multiImage}
+                        style={
+                          images.length === 1
+                            ? styles.singleImage
+                            : images.length === 2
+                              ? styles.doubleImage
+                              : styles.multiImage
+                        }
                       />
                     ))}
                   </View>
@@ -176,14 +182,10 @@ export default function PracticeSessionPdf({ session, players, exercises }: Prop
                 )}
               </View>
               <View style={styles.explanationCellBody}>
-                <Text>{cleanPracticeText(exercise.explanation) || "—"}</Text>
+                <Text>{cleanPracticeText(exercise.instructions) || "—"}</Text>
               </View>
               <View style={styles.instructionsCellBody}>
-                <Text>
-                  {cleanPracticeText(exercise.instructions) ||
-                    cleanPracticeText(exercise.variants) ||
-                    "—"}
-                </Text>
+                <Text>{cleanPracticeText(exercise.variants) || "—"}</Text>
               </View>
             </View>
           );
@@ -349,11 +351,11 @@ const styles = StyleSheet.create({
   },
   whoCell: { width: 30, padding: 4, textAlign: "center", fontWeight: 900 },
   timeCell: { width: 32, padding: 4, textAlign: "center", fontWeight: 900, borderLeftWidth: 0.8, borderLeftColor: "#ffffff" },
-  schemaCell: { width: 220, padding: 4, textAlign: "center", fontWeight: 900, borderLeftWidth: 0.8, borderLeftColor: "#ffffff" },
-  explanationCell: { width: 145, padding: 4, textAlign: "center", fontWeight: 900, borderLeftWidth: 0.8, borderLeftColor: "#ffffff" },
+  schemaCell: { width: 245, padding: 4, textAlign: "center", fontWeight: 900, borderLeftWidth: 0.8, borderLeftColor: "#ffffff" },
+  explanationCell: { width: 130, padding: 4, textAlign: "center", fontWeight: 900, borderLeftWidth: 0.8, borderLeftColor: "#ffffff" },
   instructionsCell: { flex: 1, padding: 4, textAlign: "center", fontWeight: 900, borderLeftWidth: 0.8, borderLeftColor: "#ffffff" },
   exerciseRow: {
-    minHeight: 80,
+    minHeight: 104,
     flexDirection: "row",
     borderLeftWidth: 0.8,
     borderRightWidth: 0.8,
@@ -382,13 +384,13 @@ const styles = StyleSheet.create({
     fontWeight: 900,
   },
   schemaCellBody: {
-    width: 220,
+    width: 245,
     padding: 4,
     borderRightWidth: 0.8,
     borderRightColor: borderColor,
   },
   explanationCellBody: {
-    width: 145,
+    width: 130,
     alignItems: "center",
     justifyContent: "center",
     padding: 4,
@@ -423,13 +425,19 @@ const styles = StyleSheet.create({
     gap: 3,
   },
   singleImage: {
-    width: 200,
-    height: 70,
+    width: 218,
+    height: 94,
     objectFit: "contain",
   },
+  doubleImage: {
+    width: 112,
+    height: 88,
+    objectFit: "contain",
+    margin: 2,
+  },
   multiImage: {
-    width: 98,
-    height: 56,
+    width: 73,
+    height: 86,
     objectFit: "contain",
   },
   noSchema: {
