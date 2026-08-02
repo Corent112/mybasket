@@ -21,6 +21,7 @@
  * ========================================================================== */
 
 import { type PointerEvent as ReactPointerEvent, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { type VideoSyncState, NATIVE_SYNC, resolveActionClipBounds } from '@/lib/video-sync';
 
 /** Forme d'une action lisible en clip (compatible LiveMatchAction / StatA). */
@@ -95,6 +96,59 @@ export default function ActionClipsModal(props: ActionClipsModalProps) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const stopRef = useRef<(() => void) | null>(null);
   const drawing = useRef(false);
+  const popupRef = useRef<Window | null>(null);
+  const onCloseRef = useRef(onClose);
+  const [portalTarget, setPortalTarget] = useState<HTMLElement | null>(null);
+  const [videoDuration, setVideoDuration] = useState(0);
+
+  useEffect(() => {
+    onCloseRef.current = onClose;
+  }, [onClose]);
+
+  useEffect(() => {
+    if (!open) {
+      setPortalTarget(null);
+      if (popupRef.current && !popupRef.current.closed) popupRef.current.close();
+      popupRef.current = null;
+      return;
+    }
+
+    const popup = window.open(
+      '',
+      'mybasket-action-clip-review',
+      'popup=yes,width=1280,height=900,resizable=yes,scrollbars=yes',
+    );
+
+    if (!popup) {
+      setPortalTarget(document.body);
+      return;
+    }
+
+    popupRef.current = popup;
+    popup.document.open();
+    popup.document.write(`<!doctype html>
+      <html lang="fr">
+        <head>
+          <meta charset="utf-8" />
+          <meta name="viewport" content="width=device-width,initial-scale=1" />
+          <title>MyBasket · Revoir une séquence</title>
+        </head>
+        <body style="margin:0;background:#070912;"></body>
+      </html>`);
+    popup.document.close();
+
+    const handlePopupClose = () => onCloseRef.current();
+    popup.addEventListener('beforeunload', handlePopupClose);
+    setPortalTarget(popup.document.body);
+    popup.focus();
+
+    return () => {
+      popup.removeEventListener('beforeunload', handlePopupClose);
+      if (!popup.closed) popup.close();
+      if (popupRef.current === popup) popupRef.current = null;
+      setPortalTarget(null);
+    };
+  }, [open]);
 
   const current: ClipAction | undefined = actions[index];
 
@@ -222,7 +276,7 @@ export default function ActionClipsModal(props: ActionClipsModalProps) {
   const Info = ({ k, v }: { k: string; v: ReactNode }) =>
     (v == null || v === '') ? null : <div className="acm-info"><span>{k}</span><b>{v}</b></div>;
 
-  return (
+  const modalContent = (
     <div className="acm-backdrop" onClick={onClose}>
       <div className={`acm-card ${full ? 'acm-full' : ''}`} onClick={(e) => e.stopPropagation()}>
         <div className="acm-head">
@@ -239,7 +293,17 @@ export default function ActionClipsModal(props: ActionClipsModalProps) {
 
           <div className="acm-videowrap">
             {hasVideo ? (
-              <video ref={videoRef} className="acm-video" src={videoUrl!} controls playsInline />
+              <video
+                ref={videoRef}
+                className="acm-video"
+                src={videoUrl!}
+                controls
+                playsInline
+                onLoadedMetadata={(event) => {
+                  const duration = event.currentTarget.duration;
+                  setVideoDuration(Number.isFinite(duration) ? duration : 0);
+                }}
+              />
             ) : (
               <div className="acm-novideo">
                 {syncedStartOf(cur) != null
@@ -291,10 +355,47 @@ export default function ActionClipsModal(props: ActionClipsModalProps) {
           </div>
 
           {hasVideo && (
-            <div className="acm-trim">
-              <button onClick={() => markTrim('start')}>⏱ Début = {trimStart != null ? fmt(trimStart) : '—'}</button>
-              <button onClick={() => markTrim('end')}>⏱ Fin = {trimEnd != null ? fmt(trimEnd) : '—'}</button>
-              {onTrim && <button className="acm-trim-save" disabled={trimStart == null || trimEnd == null || (trimEnd ?? 0) <= (trimStart ?? 0)} onClick={saveTrim}>✂ Enregistrer le rognage</button>}
+            <div className="acm-trim-editor">
+              <div className="acm-trim">
+                <button onClick={() => markTrim('start')}>⏱ Début = {trimStart != null ? fmt(trimStart) : '—'}</button>
+                <button onClick={() => markTrim('end')}>⏱ Fin = {trimEnd != null ? fmt(trimEnd) : '—'}</button>
+                {onTrim && <button className="acm-trim-save" disabled={trimStart == null || trimEnd == null || (trimEnd ?? 0) <= (trimStart ?? 0)} onClick={saveTrim}>✂ Enregistrer le rognage</button>}
+              </div>
+
+              {videoDuration > 0 && trimStart != null && trimEnd != null && (
+                <div className="acm-range-editor">
+                  <label>
+                    <span>Début précis · {fmt(trimStart)}</span>
+                    <input
+                      type="range"
+                      min={0}
+                      max={Math.max(0, trimEnd - 0.1)}
+                      step={0.1}
+                      value={Math.min(trimStart, Math.max(0, trimEnd - 0.1))}
+                      onChange={(event) => {
+                        const value = Number(event.target.value);
+                        setTrimStart(value);
+                        if (videoRef.current) videoRef.current.currentTime = value;
+                      }}
+                    />
+                  </label>
+                  <label>
+                    <span>Fin précise · {fmt(trimEnd)}</span>
+                    <input
+                      type="range"
+                      min={Math.min(videoDuration, trimStart + 0.1)}
+                      max={videoDuration}
+                      step={0.1}
+                      value={Math.max(trimEnd, trimStart + 0.1)}
+                      onChange={(event) => {
+                        const value = Number(event.target.value);
+                        setTrimEnd(value);
+                        if (videoRef.current) videoRef.current.currentTime = value;
+                      }}
+                    />
+                  </label>
+                </div>
+              )}
             </div>
           )}
 
@@ -333,8 +434,16 @@ export default function ActionClipsModal(props: ActionClipsModalProps) {
         .acm-trim-save:disabled { opacity: .45; cursor: not-allowed; }
         .acm-note { width: 100%; min-height: 56px; resize: vertical; border: 1px solid #2a3142; background: #0c0f1a; color: #eef1f7; border-radius: 9px; padding: 9px 11px; font: inherit; font-size: 12.5px; }
         .acm-note-save { align-self: flex-start; border: 1px solid #2a3142; background: #171b29; color: #eef1f7; border-radius: 8px; padding: 7px 12px; font-size: 11.5px; font-weight: 800; cursor: pointer; }
+        .acm-trim-editor { display: flex; flex-direction: column; gap: 9px; padding: 10px; border: 1px solid #2a3142; border-radius: 10px; background: #0c0f1a; }
+        .acm-range-editor { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+        .acm-range-editor label { display: flex; flex-direction: column; gap: 5px; color: #8a93a8; font-size: 10px; font-weight: 800; }
+        .acm-range-editor input { width: 100%; accent-color: #D4A24C; }
+        @media (max-width: 700px) { .acm-range-editor { grid-template-columns: 1fr; } }
         @media (max-width: 640px) { .acm-card { width: 100vw; height: 100vh; max-height: none; border-radius: 0; } }
       `}</style>
     </div>
   );
+
+  if (!portalTarget) return null;
+  return createPortal(modalContent, portalTarget);
 }

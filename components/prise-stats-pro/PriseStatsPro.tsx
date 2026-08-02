@@ -270,6 +270,7 @@ async function readTeams(): Promise<{ id: string; name: string; players: Player[
 /* ============================ Constantes wizard ============================ */
 const SYSTEMES_JEU = [
   { id: 'contre-attaque', label: 'Contre attaque', ic: '⚡' },
+  { id: 'libre', label: 'Libre', ic: '◌' },
   { id: 'transition', label: 'Transition', ic: '🏃' },
   { id: 'systeme-1', label: 'Système 1', ic: '①' },
   { id: 'systeme-2', label: 'Système 2', ic: '②' },
@@ -326,6 +327,11 @@ const TEMPS = [
     id: "rebond_offensif",
     label: "Rebond offensif",
     icon: "🔄",
+  },
+  {
+    id: "autres",
+    label: "Autres",
+    icon: "＋",
   },
 ];
 const COVERAGES = [
@@ -819,10 +825,12 @@ export default function PriseStatsProPage() {
     // [possessionStart, possessionEnd] reste découpé et retrouvable ensuite.
     // Repli sur le pré-roll/post-roll si aucune possession n'a été ouverte.
     const start = possessionStartRef.current;
+    const requestedEnd = possessionEndOverrideRef.current;
+    const end = requestedEnd != null ? requestedEnd : t;
     return {
       videoTime: t,
       clipStart: start != null ? Math.max(0, start) : Math.max(0, t - VIDEO_PRE_ROLL),
-      clipEnd: start != null ? Math.max(t, start) : t + VIDEO_POST_ROLL,
+      clipEnd: start != null ? Math.max(end, start) : end + VIDEO_POST_ROLL,
       // Sans vidéo, les temps existent mais devront être synchronisés plus tard.
       syncStatus: videoProviderRef.current === 'none' ? 'awaiting-video' : 'prepared',
     };
@@ -934,6 +942,7 @@ export default function PriseStatsProPage() {
   const [playbackRate, setPlaybackRateState] = useState(1);
   // Début de possession (timecode vidéo), posé à l'ouverture de l'étape Système.
   const possessionStartRef = useRef<number | null>(null);
+  const possessionEndOverrideRef = useRef<number | null>(null);
   // Nettoyage de l'arrêt automatique d'un clip en cours.
   const clipStopRef = useRef<(() => void) | null>(null);
 
@@ -1155,6 +1164,21 @@ export default function PriseStatsProPage() {
       return Math.max(0, getCurrentVideoTime());
     }
     return Math.max(0, (Date.now() - matchStartAtRef.current) / 1000);
+  };
+
+  const markClipStartBefore = (secondsBefore: number) => {
+    const now = getRawCodingTime();
+    if (now == null) return;
+    const candidate = Math.max(0, now - secondsBefore);
+    possessionStartRef.current =
+      possessionStartRef.current == null
+        ? candidate
+        : Math.min(possessionStartRef.current, candidate);
+  };
+
+  const markClipEndNow = () => {
+    const now = getRawCodingTime();
+    if (now != null) possessionEndOverrideRef.current = now;
   };
   const isVideoPlaying = (): boolean => {
     if (videoDetached) return detachedPlayingRef.current;
@@ -1890,6 +1914,7 @@ export default function PriseStatsProPage() {
   /* -------- enregistrement (auto, sans validation) -------- */
   const commit = (d: Draft) => {
     const vstamp = stampVideo();
+    possessionEndOverrideRef.current = null;
     // AJOUT §2/§6/§7 · on fige sur l'action les infos système + possession + playbook,
     // pour qu'elles soient identiques partout (state, Supabase, exports, project_state).
     const mappedSys = systemForSlot(d.systemeJeu);
@@ -2028,6 +2053,7 @@ export default function PriseStatsProPage() {
 
   /* -------- handlers -------- */
   const ctxPick = (c: Ctx) => {
+    if (c === 'defense') markClipEndNow();
     possessionStartRef.current = getRawCodingTime(); // AJOUT · début de possession (temps source)
     setDraft({ ...draft, context: c, systemeJeu: '', tempsFort: '', coverage: '' });
     setStage('systeme');
@@ -2037,8 +2063,22 @@ export default function PriseStatsProPage() {
     if (d.actionType === 'touche') commit(d);
     else { possessionStartRef.current = getRawCodingTime(); setDraft(d); setStage('systeme'); } // AJOUT
   };
-  const systemePick = (id: string) => { setDraft({ ...draft, systemeJeu: id, tempsFort: '', coverage: '' }); setStage('temps'); };
-  const tempsPick = (id: string) => { const d = { ...draft, tempsFort: id, coverage: '' }; if (id === 'pick-side' || id === 'pick-top') { setDraft(d); setStage('coverage'); } else { setDraft(d); setStage(d.context === 'defense' ? 'action' : 'player'); } };
+  const systemePick = (id: string) => {
+    if (id === 'libre') markClipStartBefore(3);
+    setDraft({ ...draft, systemeJeu: id, tempsFort: '', coverage: '' });
+    setStage('temps');
+  };
+  const tempsPick = (id: string) => {
+    if (id === 'autres') markClipStartBefore(5);
+    const d = { ...draft, tempsFort: id, coverage: '' };
+    if (id === 'pick-side' || id === 'pick-top') {
+      setDraft(d);
+      setStage('coverage');
+    } else {
+      setDraft(d);
+      setStage(d.context === 'defense' ? 'action' : 'player');
+    }
+  };
   const covPick = (id: string) => { const d = { ...draft, coverage: id }; setDraft(d); setStage(d.context === 'defense' ? 'action' : 'player'); };
   const actionPick = (id: string) => {
   const d = { ...draft, actionType: id };
@@ -2080,6 +2120,8 @@ export default function PriseStatsProPage() {
   }
 };
   const playerPick = (id: string) => {
+  markClipStartBefore(8);
+
   if (draft.context === "defense" && draft.actionType === "faute-commise") {
     setDraft({ ...draft, playerId: id });
     setStage("faute");
@@ -2112,6 +2154,7 @@ export default function PriseStatsProPage() {
     if (res.length >= draft.ftAttempts) { d.ftMade = res.filter((r) => r === 'made').length; afterFT(d); } else setDraft(d);
   };
   const quickShotResult = (shotType: '2PTS' | '3PTS', shotResult: 'made' | 'missed') => {
+    markClipStartBefore(5);
     const d = { ...draft, actionType: 'tir', shotType, shotResult };
 
     // Même logique qu'avant : tout tir extérieur à LF passe par la shot chart,
@@ -2121,6 +2164,7 @@ export default function PriseStatsProPage() {
   };
 
   const resultPick = (r: string) => {
+    markClipStartBefore(5);
     const d = { ...draft, shotResult: r, actionType: 'tir' };
 
     // En défense aussi, on localise le tir concédé sur la shot chart.
@@ -2140,6 +2184,7 @@ export default function PriseStatsProPage() {
     setDraft(d); setStage('zone');
   };
   const special = (s: string) => {
+    markClipStartBefore(5);
     const d = { ...draft, actionType: 'tir', specialCase: s === '2pts1lf' ? '2pts+1lf' : '3pts+1lf', shotType: s === '2pts1lf' ? '2PTS' : '3PTS', shotResult: 'made', ftAttempts: 1, ftMade: 0, ftResults: [] };
     setDraft(d); setStage('zone');
   };
@@ -2166,7 +2211,15 @@ export default function PriseStatsProPage() {
     }
     if (d.shotResult === 'missed') { setDraft(d); setStage('rebound'); } else { setDraft(d); setStage('assist'); }
   };
-  const rebPick = (id: string) => { const d = { ...draft, reboundType: id }; if (isMyRebound(d.context, id)) { setDraft(d); } else commit(d); };
+  const rebPick = (id: string) => {
+    markClipEndNow();
+    const d = { ...draft, reboundType: id };
+    if (isMyRebound(d.context, id)) {
+      setDraft(d);
+    } else {
+      commit(d);
+    }
+  };
   const rebWho = (id: string) => commit({ ...draft, reboundPlayerId: id });
   const passer = (id: string) => { if (id) afterPD({ ...draft, assist: true, assistPlayerId: id }); else afterPD({ ...draft, assist: false, assistPlayerId: null }); };
   const themBtn = (d: number) => setPerQ((p) => { const cur = p[q] || { us: 0, them: 0 }; return { ...p, [q]: { ...cur, them: Math.max(0, cur.them + d) } }; });
