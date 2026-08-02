@@ -245,7 +245,9 @@ async function resolveClubLogo(
     session.clubLogoUrl,
     session.teamLogoUrl,
     notes.club_logo_url,
+    notes.team_logo_url,
     session?.session_content?.team?.logo_url,
+    session?.session_content?.club?.logo_url,
   );
   if (logo) return logo;
 
@@ -282,6 +284,8 @@ async function resolveClubLogo(
     team?.logo,
     team?.image_url,
     team?.avatar_url,
+    team?.club?.logo_url,
+    team?.club?.club_logo_url,
   );
   if (logo) return logo;
 
@@ -379,6 +383,13 @@ export async function POST(
           ]),
         );
 
+        const sourceDeroulement =
+          source.deroulement ??
+          source.description ??
+          source.explanation ??
+          exercise.explanation ??
+          null;
+
         const sourceConsignes =
           source.consignes ??
           source.instructions ??
@@ -402,7 +413,9 @@ export async function POST(
           schema_urls: await Promise.all(
             imageUrls.map(async (url) => (await imageDataUri(url)) || url),
           ),
-          explanation: null,
+          explanation: sourceDeroulement
+            ? cleanDatabaseText(sourceDeroulement)
+            : null,
           instructions: sourceConsignes
             ? cleanDatabaseText(sourceConsignes)
             : null,

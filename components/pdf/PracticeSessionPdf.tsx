@@ -137,8 +137,8 @@ export default function PracticeSessionPdf({ session, players, exercises }: Prop
           <Text style={styles.whoCell}>Qui</Text>
           <Text style={styles.timeCell}>Tps</Text>
           <Text style={styles.schemaCell}>Schémas</Text>
-          <Text style={styles.explanationCell}>Consignes</Text>
-          <Text style={styles.instructionsCell}>Variantes</Text>
+          <Text style={styles.explanationCell}>Déroulement</Text>
+          <Text style={styles.instructionsCell}>Consignes / Variantes</Text>
         </View>
 
         {exercises.map((exercise, index) => {
@@ -182,10 +182,14 @@ export default function PracticeSessionPdf({ session, players, exercises }: Prop
                 )}
               </View>
               <View style={styles.explanationCellBody}>
-                <Text>{cleanPracticeText(exercise.instructions) || "—"}</Text>
+                <Text>{cleanPracticeText(exercise.explanation) || "—"}</Text>
               </View>
               <View style={styles.instructionsCellBody}>
-                <Text>{cleanPracticeText(exercise.variants) || "—"}</Text>
+                <Text>
+                  {cleanPracticeText(exercise.instructions) ||
+                    cleanPracticeText(exercise.variants) ||
+                    "—"}
+                </Text>
               </View>
             </View>
           );
