@@ -44,6 +44,38 @@ function firstString(...values: unknown[]) {
   return null;
 }
 
+function parseSessionNotes(session: GenericRow): GenericRow {
+  if (!session?.notes) return {};
+  if (typeof session.notes === "object") return session.notes as GenericRow;
+
+  try {
+    const parsed = JSON.parse(String(session.notes));
+    return parsed && typeof parsed === "object" ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+function savedPlayerPositionMap(session: GenericRow): Record<string, string> {
+  const notes = parseSessionNotes(session);
+  const fromNotes = notes.player_positions;
+  const fromContent = session?.session_content?.player_positions;
+
+  const candidate =
+    fromNotes && typeof fromNotes === "object"
+      ? fromNotes
+      : fromContent && typeof fromContent === "object"
+        ? fromContent
+        : {};
+
+  return Object.fromEntries(
+    Object.entries(candidate).map(([id, position]) => [
+      String(id),
+      String(position || ""),
+    ]),
+  );
+}
+
 async function imageDataUri(source?: string | null) {
   if (!source) return null;
 
@@ -101,6 +133,8 @@ async function loadPresentPlayers(
     .select("*")
     .eq("session_id", sessionId);
 
+  const exactPositions = savedPlayerPositionMap(session);
+
   let sourceRows = (directRows ?? []).filter((row: GenericRow) => {
     const status = String(row.status || "present").toLowerCase();
     return row.selected !== false && !EXCLUDED_STATUSES.has(status);
@@ -150,8 +184,19 @@ async function loadPresentPlayers(
         player_id: id,
         first_name: firstString(detail.first_name, row.first_name) || "",
         last_name: firstString(detail.last_name, row.last_name) || "",
+        // Ordre strict :
+        // 1. plan exact sauvegardé lors de la génération ;
+        // 2. snapshot practice_session_players ;
+        // 3. poste habituel de la fiche joueur.
         position: normalizePosition(
-          firstString(detail.position_primary, detail.position, row.position_primary, row.position),
+          firstString(
+            exactPositions[id],
+            row.position,
+            row.position_primary,
+            row.session_position,
+            detail.position_primary,
+            detail.position,
+          ),
         ),
       };
     })
@@ -163,18 +208,66 @@ async function resolveClubLogo(
   supabase: Awaited<ReturnType<typeof createClient>>,
   session: GenericRow,
 ) {
-  let logo = firstString(session.club_logo_url, session.team_logo_url);
-  if (logo || !session.team_id) return logo;
+  const notes = parseSessionNotes(session);
 
-  const { data: team } = await supabase.from("teams").select("*").eq("id", session.team_id).maybeSingle();
-  logo = firstString(team?.club_logo_url, team?.logo_url, team?.image_url);
+  let logo = firstString(
+    session.club_logo_url,
+    session.team_logo_url,
+    session.logo_url,
+    session.clubLogoUrl,
+    session.teamLogoUrl,
+    notes.club_logo_url,
+    session?.session_content?.team?.logo_url,
+  );
+  if (logo) return logo;
+
+  const teamReference = firstString(
+    session.team_id,
+    session.team_reference_id,
+    notes.team_reference_id,
+  );
+
+  let team: GenericRow | null = null;
+
+  if (teamReference) {
+    const { data } = await supabase
+      .from("teams")
+      .select("*")
+      .eq("id", teamReference)
+      .maybeSingle();
+    team = data;
+  }
+
+  if (!team && session.team_name) {
+    const { data } = await supabase
+      .from("teams")
+      .select("*")
+      .eq("name", session.team_name)
+      .limit(1)
+      .maybeSingle();
+    team = data;
+  }
+  logo = firstString(
+    team?.club_logo_url,
+    team?.team_logo_url,
+    team?.logo_url,
+    team?.logo,
+    team?.image_url,
+    team?.avatar_url,
+  );
   if (logo) return logo;
 
   const clubId = firstString(team?.club_id, session.club_id);
   if (!clubId) return null;
 
   const { data: club } = await supabase.from("clubs").select("*").eq("id", clubId).maybeSingle();
-  return firstString(club?.logo_url, club?.club_logo_url, club?.image_url);
+  return firstString(
+    club?.logo_url,
+    club?.club_logo_url,
+    club?.logo,
+    club?.image_url,
+    club?.avatar_url,
+  );
 }
 
 export async function POST(
