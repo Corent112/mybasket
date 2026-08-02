@@ -233,12 +233,14 @@ async function loadPresentPlayers(
 }
 
 async function resolveClubLogo(
-  supabase: Awaited<ReturnType<typeof createClient>>,
+  supabase:
+    | Awaited<ReturnType<typeof createClient>>
+    | NonNullable<ReturnType<typeof createAdminClient>>,
   session: GenericRow,
 ) {
   const notes = parseSessionNotes(session);
 
-  let logo = firstString(
+  const directLogo = firstString(
     session.club_logo_url,
     session.team_logo_url,
     session.logo_url,
@@ -246,60 +248,131 @@ async function resolveClubLogo(
     session.teamLogoUrl,
     notes.club_logo_url,
     notes.team_logo_url,
+    session?.session_content?.team?.club_logo_url,
     session?.session_content?.team?.logo_url,
     session?.session_content?.club?.logo_url,
   );
-  if (logo) return logo;
 
-  const teamReference = firstString(
-    session.team_id,
-    session.team_reference_id,
-    notes.team_reference_id,
+  if (directLogo) return directLogo;
+
+  const teamReferences = Array.from(
+    new Set(
+      [
+        session.team_id,
+        session.team_reference_id,
+        notes.team_reference_id,
+      ]
+        .map((value) => String(value || "").trim())
+        .filter(Boolean),
+    ),
   );
 
   let team: GenericRow | null = null;
 
-  if (teamReference) {
+  for (const reference of teamReferences) {
     const { data } = await supabase
       .from("teams")
       .select("*")
-      .eq("id", teamReference)
+      .eq("id", reference)
       .maybeSingle();
-    team = data;
+
+    if (data) {
+      team = data;
+      break;
+    }
   }
 
-  if (!team && session.team_name) {
-    const { data } = await supabase
-      .from("teams")
-      .select("*")
-      .eq("name", session.team_name)
-      .limit(1)
-      .maybeSingle();
-    team = data;
+  const teamNames = Array.from(
+    new Set(
+      [
+        session.team_name,
+        session.location,
+        session?.session_content?.team?.name,
+      ]
+        .map((value) => String(value || "").trim())
+        .filter(Boolean),
+    ),
+  );
+
+  if (!team) {
+    for (const name of teamNames) {
+      const { data } = await supabase
+        .from("teams")
+        .select("*")
+        .or(`name.eq.${name},nom.eq.${name}`)
+        .limit(1)
+        .maybeSingle();
+
+      if (data) {
+        team = data;
+        break;
+      }
+    }
   }
-  logo = firstString(
+
+  const teamLogo = firstString(
     team?.club_logo_url,
     team?.team_logo_url,
     team?.logo_url,
     team?.logo,
     team?.image_url,
     team?.avatar_url,
-    team?.club?.logo_url,
-    team?.club?.club_logo_url,
   );
-  if (logo) return logo;
 
-  const clubId = firstString(team?.club_id, session.club_id);
-  if (!clubId) return null;
+  if (teamLogo) return teamLogo;
 
-  const { data: club } = await supabase.from("clubs").select("*").eq("id", clubId).maybeSingle();
-  return firstString(
-    club?.logo_url,
-    club?.club_logo_url,
-    club?.logo,
-    club?.image_url,
-    club?.avatar_url,
+  const clubReferences = Array.from(
+    new Set(
+      [
+        team?.club_id,
+        session.club_id,
+        notes.club_id,
+      ]
+        .map((value) => String(value || "").trim())
+        .filter(Boolean),
+    ),
   );
+
+  for (const clubId of clubReferences) {
+    const { data: club } = await supabase
+      .from("clubs")
+      .select("*")
+      .eq("id", clubId)
+      .maybeSingle();
+
+    const clubLogo = firstString(
+      club?.logo_url,
+      club?.club_logo_url,
+      club?.logo,
+      club?.image_url,
+      club?.avatar_url,
+    );
+
+    if (clubLogo) return clubLogo;
+  }
+
+  // Dernier recours : le nom de club peut avoir été enregistré comme lieu
+  // ou comme nom d'équipe lors de la création de la séance.
+  for (const name of teamNames) {
+    const { data: club } = await supabase
+      .from("clubs")
+      .select("*")
+      .or(`name.eq.${name},nom.eq.${name}`)
+      .limit(1)
+      .maybeSingle();
+
+    const clubLogo = firstString(
+      club?.logo_url,
+      club?.club_logo_url,
+      club?.logo,
+      club?.image_url,
+      club?.avatar_url,
+    );
+
+    if (clubLogo) return clubLogo;
+  }
+
+  return null;
 }
 
 export async function POST(
@@ -358,13 +431,14 @@ export async function POST(
   );
 
   const players = await loadPresentPlayers(supabase, session, id);
-  let clubLogoSource = await resolveClubLogo(supabase, session);
+  const logoAdmin = createAdminClient();
+
+  let clubLogoSource = logoAdmin
+    ? await resolveClubLogo(logoAdmin as any, session)
+    : null;
 
   if (!clubLogoSource) {
-    const logoAdmin = createAdminClient();
-    if (logoAdmin) {
-      clubLogoSource = await resolveClubLogo(logoAdmin as any, session);
-    }
+    clubLogoSource = await resolveClubLogo(supabase, session);
   }
 
   const myBasketLogo = await imageDataUri("/logo-mybasket02.png");

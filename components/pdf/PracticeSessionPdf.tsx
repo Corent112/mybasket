@@ -69,19 +69,41 @@ function playerId(player: Player) {
 }
 
 function compositionBlocks(session: Session): CompositionBlock[] {
-  if (Array.isArray(session.team_composition_blocks) && session.team_composition_blocks.length) {
-    return session.team_composition_blocks;
+  const cleanBlocks = (blocks: CompositionBlock[]) =>
+    blocks
+      .map((block) => ({
+        ...block,
+        teams: (block.teams || []).filter(
+          (team) =>
+            Array.isArray(team.playerIds) &&
+            team.playerIds.some((id) => Boolean(String(id || "").trim())),
+        ),
+      }))
+      .filter((block) => block.teams.length > 0);
+
+  if (
+    Array.isArray(session.team_composition_blocks) &&
+    session.team_composition_blocks.length
+  ) {
+    return cleanBlocks(session.team_composition_blocks);
   }
 
-  const legacy = session.player_groups && typeof session.player_groups === "object"
-    ? Object.entries(session.player_groups).map(([name, ids]) => ({
-        name,
-        playerIds: Array.isArray(ids) ? ids : [],
-      }))
-    : [];
+  const legacy =
+    session.player_groups && typeof session.player_groups === "object"
+      ? Object.entries(session.player_groups).map(([name, ids]) => ({
+          name,
+          playerIds: Array.isArray(ids) ? ids : [],
+        }))
+      : [];
 
   return legacy.length
-    ? [{ title: "Équipes de travail", playersPerTeam: 0, teams: legacy }]
+    ? cleanBlocks([
+        {
+          title: "Équipes de travail",
+          playersPerTeam: 0,
+          teams: legacy,
+        },
+      ])
     : [];
 }
 
@@ -213,15 +235,11 @@ export default function PracticeSessionPdf({ session, players, exercises }: Prop
                     return (
                       <View key={team.id || `${team.name}-${teamIndex}`} style={styles.teamCard}>
                         <Text style={styles.teamTitle}>{team.name || `Équipe ${teamIndex + 1}`}</Text>
-                        {teamPlayers.length ? (
-                          teamPlayers.map((player) => (
-                            <Text key={playerId(player)} style={styles.teamPlayer}>
-                              {playerName(player)}
-                            </Text>
-                          ))
-                        ) : (
-                          <Text style={styles.emptyTeam}>Aucun joueur</Text>
-                        )}
+                        {teamPlayers.map((player) => (
+                          <Text key={playerId(player)} style={styles.teamPlayer}>
+                            {playerName(player)}
+                          </Text>
+                        ))}
                       </View>
                     );
                   })}
