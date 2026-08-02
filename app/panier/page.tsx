@@ -293,8 +293,10 @@ const subtotal = useMemo(() => {
   }, 0);
 }, [purchaseItems]);
 
-  const tax = subtotal * 0.2;
-  const total = subtotal + tax;
+  // Les prix du panier sont déjà TTC.
+  // La TVA est extraite du total uniquement pour information.
+  const tax = subtotal - subtotal / 1.2;
+  const total = subtotal;
 
   useEffect(() => {
     void loadCart();
@@ -1655,10 +1657,10 @@ setLoading(false);
         <div>
           <h2>RÉSUMÉ DE COMMANDE</h2>
           <p>
-            Sous-total <strong>{formatPrice(subtotal)}</strong>
+            Sous-total TTC <strong>{formatPrice(subtotal)}</strong>
           </p>
           <p>
-            TVA 20% <strong>{formatPrice(tax)}</strong>
+            Dont TVA 20% <strong>{formatPrice(tax)}</strong>
           </p>
           <div className="total">
             TOTAL TTC <strong>{formatPrice(total)}</strong>
@@ -2152,63 +2154,67 @@ setLoading(false);
       <style jsx>{`
         .compositionBuilder {
           margin-top: 22px;
-          padding: 20px;
-          border: 1px solid #ead8ca;
-          border-radius: 20px;
-          background: #fffdfb;
+          padding: 22px;
+          border: 1px solid #eadfd9;
+          border-radius: 22px;
+          background: #ffffff;
+          box-shadow: 0 16px 40px rgba(55, 24, 34, 0.06);
         }
 
         .compositionHeader h3 {
           margin: 0;
           color: #6b1a2c;
-          font-size: 21px;
+          font-size: 22px;
+          letter-spacing: -0.02em;
         }
 
         .compositionHeader p {
-          margin: 6px 0 0;
+          margin: 7px 0 0;
+          max-width: 760px;
           color: #746a6e;
           font-size: 12px;
-          line-height: 1.5;
+          line-height: 1.55;
         }
 
         .compositionBlocks {
           display: grid;
-          gap: 20px;
-          margin-top: 18px;
+          gap: 22px;
+          margin-top: 20px;
         }
 
         .compositionBlock {
-          padding: 16px;
-          border: 1px solid #eadfd9;
+          padding: 18px;
+          border: 1px solid #ece4df;
           border-radius: 18px;
-          background: #fff;
-          box-shadow: 0 10px 28px rgba(55, 24, 34, 0.05);
+          background: #ffffff;
+          box-shadow: 0 10px 28px rgba(55, 24, 34, 0.045);
         }
 
         .blockToolbar {
-          display: flex;
-          flex-wrap: wrap;
-          align-items: end;
+          display: grid;
+          grid-template-columns: 42px minmax(230px, 1fr) 120px auto;
           gap: 12px;
-          padding-bottom: 15px;
-          border-bottom: 1px solid #eee5e0;
+          align-items: end;
+          padding-bottom: 16px;
+          border-bottom: 1px solid #eee7e3;
         }
 
         .blockIndex {
-          width: 38px;
-          height: 38px;
+          width: 42px;
+          height: 42px;
           display: grid;
           place-items: center;
           align-self: center;
           border-radius: 50%;
-          background: #6b1a2c;
-          color: #fff;
+          background: linear-gradient(135deg, #7b2137, #5a1023);
+          color: #ffffff;
           font-size: 17px;
           font-weight: 950;
+          box-shadow: 0 7px 16px rgba(107, 26, 44, 0.18);
         }
 
         .presetField {
-          min-width: 260px;
+          min-width: 0;
         }
 
         .blockToolbar label {
@@ -2216,32 +2222,37 @@ setLoading(false);
           font-size: 10px;
           font-weight: 900;
           text-transform: uppercase;
+          letter-spacing: 0.05em;
         }
 
         .blockToolbar select,
         .blockToolbar input {
           display: block;
           min-height: 44px;
-          margin-top: 5px;
-          border: 1px solid #d9cfca;
-          border-radius: 10px;
-          background: #fff;
+          margin-top: 6px;
+          border: 1px solid #dcd3ce;
+          border-radius: 11px;
+          background: #ffffff;
           color: #2b2327;
           font-size: 14px;
-          font-weight: 800;
+          font-weight: 850;
+          box-shadow: inset 0 0 0 1px rgba(255,255,255,.35);
         }
 
         .blockToolbar select {
           width: 100%;
+          padding: 0 12px;
         }
 
         .blockToolbar input {
-          width: 90px;
+          width: 100%;
+          padding: 0 12px;
         }
 
         .blockToolbarActions {
           display: flex;
           flex-wrap: wrap;
+          justify-content: flex-end;
           gap: 8px;
           margin-left: auto;
         }
@@ -2249,52 +2260,59 @@ setLoading(false);
         .blockToolbarActions button {
           min-height: 42px;
           padding: 0 14px;
-          border: 1px solid #ded3ce;
+          border: 1px solid #ded4cf;
           border-radius: 999px;
-          background: #fff;
+          background: #ffffff;
           color: #2d2529;
           font-weight: 900;
           cursor: pointer;
+          transition: transform .16s ease, box-shadow .16s ease;
+        }
+
+        .blockToolbarActions button:hover {
+          transform: translateY(-1px);
+          box-shadow: 0 7px 16px rgba(45, 20, 28, 0.08);
         }
 
         .blockToolbarActions button:first-child {
           border-color: #6b1a2c;
-          background: #6b1a2c;
-          color: #fff;
+          background: linear-gradient(135deg, #7b2137, #5a1023);
+          color: #ffffff;
         }
 
         .blockToolbarActions .dangerMini {
           border-color: #efc3ca;
+          background: #fff7f8;
           color: #d22740;
         }
 
         .availablePlayerPool {
-          margin-top: 15px;
-          padding: 14px;
-          border: 1px solid #ead8c8;
-          border-radius: 15px;
-          background: #fffaf5;
+          margin-top: 16px;
+          padding: 15px;
+          border: 1px solid #eadfd7;
+          border-radius: 16px;
+          background: #fffdfb;
         }
 
         .poolHeader {
           display: flex;
           justify-content: space-between;
           align-items: center;
-          margin-bottom: 10px;
+          margin-bottom: 11px;
         }
 
         .poolHeader strong {
           color: #6b1a2c;
           font-size: 11px;
-          letter-spacing: 0.05em;
+          letter-spacing: 0.06em;
         }
 
         .poolHeader span {
-          min-width: 28px;
-          height: 28px;
+          min-width: 30px;
+          height: 30px;
           display: grid;
           place-items: center;
-          border-radius: 9px;
+          border-radius: 10px;
           background: #171216;
           color: #d4a24c;
           font-size: 10px;
@@ -2302,32 +2320,40 @@ setLoading(false);
         }
 
         .playerPool {
-          display: flex;
-          flex-wrap: wrap;
-          gap: 8px;
-          min-height: 43px;
-          align-items: center;
+          display: grid;
+          grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+          gap: 9px;
+          min-height: 46px;
+          align-items: stretch;
         }
 
         .playerPool small {
+          grid-column: 1 / -1;
           color: #978b90;
           font-size: 10px;
         }
 
         .compositionPlayerTag {
-          display: inline-grid;
-          grid-template-columns: 30px auto 18px;
+          display: grid;
+          grid-template-columns: 34px minmax(0, 1fr) 18px;
           align-items: center;
-          gap: 7px;
-          min-height: 42px;
-          padding: 5px 8px 5px 5px;
-          border: 1px solid #ddd3ce;
-          border-radius: 10px;
-          background: #fff;
+          gap: 8px;
+          width: 100%;
+          min-height: 46px;
+          padding: 6px 9px 6px 6px;
+          border: 1px solid #ded6d1;
+          border-radius: 12px;
+          background: #ffffff;
           color: #2b2327;
-          box-shadow: 0 4px 10px rgba(45, 20, 28, 0.05);
+          box-shadow: 0 5px 12px rgba(45, 20, 28, 0.045);
           cursor: grab;
           user-select: none;
+          transition: transform .16s ease, box-shadow .16s ease;
+        }
+
+        .compositionPlayerTag:hover {
+          transform: translateY(-1px);
+          box-shadow: 0 8px 18px rgba(45, 20, 28, 0.08);
         }
 
         .compositionPlayerTag:active {
@@ -2335,13 +2361,15 @@ setLoading(false);
         }
 
         .compositionPlayerTag strong {
+          overflow: hidden;
           font-size: 11px;
           white-space: nowrap;
+          text-overflow: ellipsis;
         }
 
         .playerInitial {
-          width: 30px;
-          height: 30px;
+          width: 34px;
+          height: 34px;
           display: grid;
           place-items: center;
           border-radius: 50%;
@@ -2354,39 +2382,41 @@ setLoading(false);
         .dragDots {
           color: #aaa0a4;
           font-size: 15px;
+          text-align: center;
         }
 
         .compositionTeamGrid {
           display: grid;
           grid-template-columns: repeat(3, minmax(0, 1fr));
-          gap: 12px;
-          margin-top: 16px;
+          gap: 14px;
+          margin-top: 17px;
         }
 
         .compositionTeamBoard {
-          min-height: 220px;
+          min-height: 245px;
           overflow: hidden;
-          border: 1px solid #ddd3ce;
-          border-top: 4px solid #cf344b;
-          border-radius: 16px;
-          background: #fff;
+          border: 1px solid #e1d8d3;
+          border-top: 5px solid #cf344b;
+          border-radius: 17px;
+          background: #ffffff;
+          box-shadow: 0 10px 24px rgba(45, 20, 28, 0.05);
         }
 
         .teamTone1 { border-top-color: #cf344b; }
-        .teamTone2 { border-top-color: #2f3033; }
+        .teamTone2 { border-top-color: #303236; }
         .teamTone3 { border-top-color: #d4a24c; }
-        .teamTone4 { border-top-color: #2f659d; }
-        .teamTone5 { border-top-color: #34815f; }
-        .teamTone6 { border-top-color: #754d91; }
+        .teamTone4 { border-top-color: #3b6ea8; }
+        .teamTone5 { border-top-color: #3b8a68; }
+        .teamTone6 { border-top-color: #7d5a9a; }
 
         .teamBoardHeader {
           display: grid;
-          grid-template-columns: 10px minmax(0, 1fr) auto 32px;
-          gap: 8px;
+          grid-template-columns: 10px minmax(0, 1fr) auto 34px;
+          gap: 9px;
           align-items: center;
-          padding: 11px;
-          border-bottom: 1px solid #eee5e0;
-          background: #fbf9f8;
+          padding: 12px;
+          border-bottom: 1px solid #eee7e3;
+          background: #ffffff;
         }
 
         .teamDot {
@@ -2397,11 +2427,11 @@ setLoading(false);
         }
 
         .teamTone1 .teamDot { color: #cf344b; }
-        .teamTone2 .teamDot { color: #2f3033; }
+        .teamTone2 .teamDot { color: #303236; }
         .teamTone3 .teamDot { color: #d4a24c; }
-        .teamTone4 .teamDot { color: #2f659d; }
-        .teamTone5 .teamDot { color: #34815f; }
-        .teamTone6 .teamDot { color: #754d91; }
+        .teamTone4 .teamDot { color: #3b6ea8; }
+        .teamTone5 .teamDot { color: #3b8a68; }
+        .teamTone6 .teamDot { color: #7d5a9a; }
 
         .teamBoardHeader input {
           min-width: 0;
@@ -2417,24 +2447,16 @@ setLoading(false);
           font-weight: 950;
         }
 
-        .countComplete {
-          color: #21824c;
-        }
-
-        .countUnder {
-          color: #c38c25;
-        }
-
-        .countOver {
-          color: #d32b42;
-        }
+        .countComplete { color: #21824c; }
+        .countUnder { color: #c38c25; }
+        .countOver { color: #d32b42; }
 
         .teamBoardHeader button {
-          width: 32px;
-          height: 32px;
+          width: 34px;
+          height: 34px;
           border: 0;
-          border-radius: 9px;
-          background: #fee9ec;
+          border-radius: 10px;
+          background: #fff0f2;
           color: #cc2940;
           font-size: 15px;
           font-weight: 950;
@@ -2442,93 +2464,108 @@ setLoading(false);
         }
 
         .teamBoardDropzone {
-          min-height: 165px;
-          display: flex;
-          flex-wrap: wrap;
+          min-height: 190px;
+          display: grid;
+          grid-template-columns: repeat(2, minmax(0, 1fr));
           align-content: flex-start;
-          gap: 8px;
+          gap: 9px;
           padding: 14px;
-          background:
-            linear-gradient(#f3f0ee 1px, transparent 1px),
-            linear-gradient(90deg, #f3f0ee 1px, transparent 1px),
-            #fff;
-          background-size: 22px 22px;
+          background: #ffffff;
         }
 
         .teamDropHint {
-          width: 100%;
-          min-height: 130px;
+          grid-column: 1 / -1;
+          min-height: 155px;
           display: grid;
           place-items: center;
-          border: 1px dashed #d8cbc4;
-          border-radius: 11px;
+          border: 1px dashed #d9cec8;
+          border-radius: 12px;
+          background: #fffdfc;
           color: #9d9296;
           font-size: 10px;
         }
 
         .compositionPlayerTag.placed {
-          grid-template-columns: 30px auto 18px 23px;
+          grid-template-columns: 32px minmax(0, 1fr) 16px 24px;
           align-self: flex-start;
-          border-color: #d4a24c;
-          background: #fff9e5;
+          min-height: 44px;
+          border-color: #e7d6a7;
+          background: #fffaf0;
+        }
+
+        .compositionPlayerTag.placed .playerInitial {
+          width: 32px;
+          height: 32px;
         }
 
         .compositionPlayerTag.placed button {
-          width: 23px;
-          height: 23px;
+          width: 24px;
+          height: 24px;
           display: grid;
           place-items: center;
           padding: 0;
           border: 0;
-          border-radius: 7px;
+          border-radius: 8px;
           background: #6b1a2c;
-          color: #fff;
+          color: #ffffff;
           font-size: 11px;
           font-weight: 950;
           cursor: pointer;
         }
 
         .addCompositionTeam {
-          min-height: 220px;
+          min-height: 245px;
           display: grid;
           place-items: center;
           align-content: center;
-          gap: 8px;
-          border: 1px dashed #d8c2b4;
-          border-radius: 16px;
-          background: #fffaf8;
+          gap: 9px;
+          border: 1px dashed #d8c7bd;
+          border-radius: 17px;
+          background: #fffdfc;
           color: #6b1a2c;
           font-weight: 950;
           cursor: pointer;
         }
 
         .addCompositionTeam span {
-          width: 40px;
-          height: 40px;
+          width: 42px;
+          height: 42px;
           display: grid;
           place-items: center;
-          border-radius: 12px;
-          background: #6b1a2c;
-          color: #fff;
+          border-radius: 13px;
+          background: linear-gradient(135deg, #7b2137, #5a1023);
+          color: #ffffff;
           font-size: 21px;
         }
 
         .addCompositionBlockFooter {
           display: flex;
           justify-content: center;
-          margin-top: 18px;
+          margin-top: 19px;
         }
 
         .addCompositionBlockFooter button {
           width: 100%;
-          min-height: 58px;
-          border: 1px dashed #d8c2b4;
-          border-radius: 15px;
-          background: #fff;
+          min-height: 60px;
+          border: 1px dashed #d8c7bd;
+          border-radius: 16px;
+          background: #ffffff;
           color: #6b1a2c;
           font-size: 12px;
           font-weight: 950;
           cursor: pointer;
+        }
+
+        @media (max-width: 1100px) {
+          .blockToolbar {
+            grid-template-columns: 42px 1fr 110px;
+          }
+
+          .blockToolbarActions {
+            grid-column: 1 / -1;
+            justify-content: flex-start;
+            margin-left: 0;
+          }
         }
 
         @media (max-width: 980px) {
@@ -2536,19 +2573,26 @@ setLoading(false);
             grid-template-columns: repeat(2, minmax(0, 1fr));
           }
 
-          .blockToolbarActions {
-            width: 100%;
-            margin-left: 0;
+          .teamBoardDropzone {
+            grid-template-columns: 1fr;
           }
         }
 
         @media (max-width: 650px) {
+          .blockToolbar {
+            grid-template-columns: 1fr;
+          }
+
+          .blockIndex {
+            justify-self: start;
+          }
+
           .compositionTeamGrid {
             grid-template-columns: 1fr;
           }
 
-          .presetField {
-            min-width: 100%;
+          .playerPool {
+            grid-template-columns: 1fr;
           }
 
           .blockToolbarActions {
