@@ -233,9 +233,14 @@ export async function POST(
           exercise.diagram_url,
         ),
         schema_urls: await Promise.all(
-          normalizeExerciseImages(exercise).map(
-            async (url) => (await imageDataUri(url)) || url,
-          ),
+          Array.from(
+            new Set([
+              ...(Array.isArray(exercise.schema_urls)
+                ? exercise.schema_urls.map(String)
+                : []),
+              ...normalizeExerciseImages(exercise),
+            ]),
+          ).map(async (url) => (await imageDataUri(url)) || url),
         ),
         explanation: exercise.explanation
           ? String(exercise.explanation)

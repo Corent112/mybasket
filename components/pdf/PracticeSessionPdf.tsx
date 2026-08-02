@@ -193,7 +193,10 @@ export default function PracticeSessionPdf({ session, players, exercises }: Prop
           <View style={styles.compositionsSection}>
             <Text style={styles.compositionsTitle}>COMPOSITIONS D’ÉQUIPES</Text>
             {blocks.map((block, blockIndex) => (
-              <View key={block.id || `${block.title}-${blockIndex}`} style={styles.blockCard} wrap={false}>
+              <View
+                key={block.id || `${block.title}-${blockIndex}`}
+                style={styles.blockCard}
+              >
                 <Text style={styles.blockTitle}>{block.title || `Bloc ${blockIndex + 1}`}</Text>
                 <View style={styles.teamsGrid}>
                   {(block.teams || []).map((team, teamIndex) => {

@@ -883,7 +883,7 @@ setLoading(false);
     );
   }
 
-  async function saveSessionToCalendar() {
+  async function saveSessionToCalendar(): Promise<string | null> {
   const {
     data: { user },
     error: userError,
@@ -891,7 +891,7 @@ setLoading(false);
 
   if (userError || !user) {
     alert("Connecte-toi pour ajouter la séance au calendrier.");
-    return;
+    return null;
   }
 
   const isUuid = (value: string | null | undefined) =>
@@ -952,7 +952,55 @@ setLoading(false);
       `La fiche est générée, mais la séance Supabase n'a pas été créée : ${sessionError?.message}`
     );
 
-    return;
+    return null;
+  }
+
+  const sortedSessionItems = [...sessionItems].sort(
+    (a, b) => a.sort_order - b.sort_order,
+  );
+
+  const { error: sessionExercisesError } = await supabase
+    .from("practice_session_exercises")
+    .insert(
+      sortedSessionItems.map((item, index) => {
+        const rawInstructions =
+          item.consignes ?? item.instructions ?? null;
+
+        return {
+          session_id: createdSession.id,
+          user_id: user.id,
+          exercise_id: item.item_id || null,
+          title: item.title,
+          who: coachCode(item.assigned_to),
+          duration_minutes: Number(item.duration_minutes ?? 15),
+          situation_image_url:
+            item.schemaImages?.[0] ||
+            item.schema_images?.[0] ||
+            item.image_url ||
+            null,
+          schema_urls: uniqueImages([
+            ...(item.schemaImages ?? []),
+            ...(item.schema_images ?? []),
+            ...(item.image_url ? [item.image_url] : []),
+          ]),
+          explanation: item.description || null,
+          instructions: Array.isArray(rawInstructions)
+            ? rawInstructions.map(String).join("\n")
+            : String(rawInstructions ?? "") || null,
+          sort_order: index,
+        };
+      }),
+    );
+
+  if (sessionExercisesError) {
+    console.error(
+      "Erreur sauvegarde exercices de séance:",
+      sessionExercisesError,
+    );
+    alert(
+      `La séance a été créée, mais les exercices n'ont pas pu être sauvegardés : ${sessionExercisesError.message}`,
+    );
+    return null;
   }
 
   const positionedPlayers = [
@@ -989,36 +1037,35 @@ setLoading(false);
     );
   }
 
-  const { error } = await supabase.from("calendar_events").insert({
-    user_id: user.id,
-    owner_id: user.id,
-    team_id: selectedTeamId || null,
-    team_name: teamName,
-    assigned_player_ids: positionedPlayers.map(({ player }) => player.id),
-    title: `${teamName} • ${sessionTheme}`,
-    theme: sessionTheme,
-    description: `Fiche séance : /seances/${createdSession.id}`,
-    event_date: sessionDate,
-    start_time: sessionStartTime,
-    end_time: sessionEndTime,
-    location: teamName,
-    event_type: "training",
-    session_id: createdSession.id,
-    attachment_url: null,
-  });
-
-  if (error) {
-    console.error("Erreur ajout calendrier:", {
-      code: error.code,
-      message: error.message,
-      details: error.details,
-      hint: error.hint,
+  const { error: calendarError } = await supabase
+    .from("calendar_events")
+    .insert({
+      user_id: user.id,
+      owner_id: user.id,
+      team_id: selectedTeamId || null,
+      team_name: teamName,
+      assigned_player_ids: positionedPlayers.map(({ player }) => player.id),
+      title: `${teamName} • ${sessionTheme}`,
+      theme: sessionTheme,
+      description: `Fiche séance : /seances/${createdSession.id}`,
+      event_date: sessionDate,
+      start_time: sessionStartTime,
+      end_time: sessionEndTime,
+      location: teamName,
+      event_type: "training",
+      session_id: createdSession.id,
+      attachment_url: null,
     });
 
+  if (calendarError) {
+    console.error("Erreur ajout calendrier:", calendarError);
     alert(
-      `La fiche est générée, mais l’ajout au calendrier a échoué : ${error.message}`
+      `La séance est enregistrée, mais l’ajout au calendrier a échoué : ${calendarError.message}`,
     );
+    return null;
   }
+
+  return String(createdSession.id);
 }
 
   async function generateSessionPdf() {
@@ -1420,10 +1467,78 @@ setLoading(false);
     }
 
     printWindow.document.open();
-    printWindow.document.write(html);
+    printWindow.document.write(`
+      <!doctype html>
+      <html>
+        <head>
+          <title>Génération de la fiche séance</title>
+          <style>
+            body {
+              min-height: 100vh;
+              display: grid;
+              place-items: center;
+              margin: 0;
+              font-family: Arial, sans-serif;
+              background: #f7f4f1;
+              color: #6b1a2c;
+            }
+            div { text-align: center; }
+            strong { display: block; font-size: 24px; }
+            span { display: block; margin-top: 10px; color: #766c70; }
+          </style>
+        </head>
+        <body>
+          <div>
+            <strong>Génération de la fiche séance…</strong>
+            <span>Le PDF va s’ouvrir automatiquement.</span>
+          </div>
+        </body>
+      </html>
+    `);
     printWindow.document.close();
 
-    await saveSessionToCalendar();
+    const createdSessionId = await saveSessionToCalendar();
+
+    if (!createdSessionId) {
+      printWindow.close();
+      setSavingSession(false);
+      return;
+    }
+
+    try {
+      const pdfResponse = await fetch(
+        `/api/seances/${createdSessionId}/pdf`,
+        { method: "POST" },
+      );
+
+      const pdfResult = (await pdfResponse.json()) as {
+        pdfUrl?: string;
+        error?: string;
+      };
+
+      if (!pdfResponse.ok || !pdfResult.pdfUrl) {
+        throw new Error(
+          pdfResult.error || "Le PDF n’a pas pu être généré.",
+        );
+      }
+
+      // C'est ce même URL qui est enregistré dans l'événement calendrier.
+      printWindow.location.replace(pdfResult.pdfUrl);
+    } catch (error) {
+      console.error("Erreur génération PDF automatique:", error);
+
+      // Fallback uniquement si le service PDF échoue.
+      printWindow.document.open();
+      printWindow.document.write(html);
+      printWindow.document.close();
+
+      alert(
+        error instanceof Error
+          ? `${error.message} La version imprimable a été ouverte à la place.`
+          : "Le PDF n’a pas pu être généré. La version imprimable a été ouverte.",
+      );
+    }
+
     setSessionModalOpen(false);
     setSavingSession(false);
   }
@@ -1929,37 +2044,75 @@ setLoading(false);
                           <span>{availablePlayers.length}</span>
                         </div>
 
-                        <div className="playerPool">
-                          {availablePlayers.length === 0 ? (
-                            <small>
-                              Tous les joueurs sont placés dans ce bloc.
-                            </small>
-                          ) : (
-                            availablePlayers.map((player) => (
-                              <div
-                                className="compositionPlayerTag"
-                                key={player.id}
-                                draggable
-                                onDragStart={() =>
-                                  startCompositionDrag(
-                                    block.id,
-                                    player.id,
-                                  )
-                                }
-                                onDragEnd={() =>
-                                  setDraggedCompositionPlayer(null)
-                                }
-                              >
-                                <span className="playerInitial">
-                                  {playerName(player)
-                                    .slice(0, 2)
-                                    .toUpperCase()}
-                                </span>
-                                <strong>{playerName(player)}</strong>
-                                <span className="dragDots">⠿</span>
+                        <div className="positionPools">
+                          {(
+                            [
+                              {
+                                key: "guard",
+                                label: "GUARD",
+                                players: sessionPlayers.guard.filter(
+                                  (player) => !assignedIds.has(player.id),
+                                ),
+                              },
+                              {
+                                key: "forward",
+                                label: "FORWARD",
+                                players: sessionPlayers.forward.filter(
+                                  (player) => !assignedIds.has(player.id),
+                                ),
+                              },
+                              {
+                                key: "center",
+                                label: "CENTER",
+                                players: sessionPlayers.center.filter(
+                                  (player) => !assignedIds.has(player.id),
+                                ),
+                              },
+                            ] as const
+                          ).map((positionGroup) => (
+                            <section
+                              className="positionPool"
+                              key={positionGroup.key}
+                            >
+                              <div className="positionPoolTitle">
+                                <strong>{positionGroup.label}</strong>
+                                <span>{positionGroup.players.length}</span>
                               </div>
-                            ))
-                          )}
+
+                              <div className="playerPool">
+                                {positionGroup.players.length === 0 ? (
+                                  <small>Aucun joueur disponible</small>
+                                ) : (
+                                  positionGroup.players.map((player) => (
+                                    <div
+                                      className="compositionPlayerTag"
+                                      key={player.id}
+                                      draggable
+                                      onDragStart={() =>
+                                        startCompositionDrag(
+                                          block.id,
+                                          player.id,
+                                        )
+                                      }
+                                      onDragEnd={() =>
+                                        setDraggedCompositionPlayer(null)
+                                      }
+                                    >
+                                      <span className="playerInitial">
+                                        {playerName(player)
+                                          .slice(0, 2)
+                                          .toUpperCase()}
+                                      </span>
+                                      <strong title={playerName(player)}>
+                                        {playerName(player)}
+                                      </strong>
+                                      <span className="dragDots">⠿</span>
+                                    </div>
+                                  ))
+                                )}
+                              </div>
+                            </section>
+                          ))}
                         </div>
                       </div>
 
@@ -2319,10 +2472,51 @@ setLoading(false);
           font-weight: 950;
         }
 
+        .positionPools {
+          display: grid;
+          grid-template-columns: repeat(3, minmax(0, 1fr));
+          gap: 12px;
+        }
+
+        .positionPool {
+          min-width: 0;
+          padding: 11px;
+          border: 1px solid #ebe2dd;
+          border-radius: 13px;
+          background: #ffffff;
+        }
+
+        .positionPoolTitle {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          margin-bottom: 8px;
+          padding-bottom: 7px;
+          border-bottom: 1px solid #eee7e3;
+        }
+
+        .positionPoolTitle strong {
+          color: #2e272a;
+          font-size: 10px;
+          letter-spacing: .08em;
+        }
+
+        .positionPoolTitle span {
+          min-width: 24px;
+          height: 24px;
+          display: grid;
+          place-items: center;
+          border-radius: 8px;
+          background: #f1ebe8;
+          color: #6b1a2c;
+          font-size: 9px;
+          font-weight: 950;
+        }
+
         .playerPool {
           display: grid;
-          grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
-          gap: 9px;
+          grid-template-columns: 1fr;
+          gap: 7px;
           min-height: 46px;
           align-items: stretch;
         }
@@ -2361,10 +2555,12 @@ setLoading(false);
         }
 
         .compositionPlayerTag strong {
-          overflow: hidden;
+          min-width: 0;
+          overflow: visible;
           font-size: 11px;
-          white-space: nowrap;
-          text-overflow: ellipsis;
+          white-space: normal;
+          word-break: break-word;
+          text-overflow: clip;
         }
 
         .playerInitial {
@@ -2466,7 +2662,7 @@ setLoading(false);
         .teamBoardDropzone {
           min-height: 190px;
           display: grid;
-          grid-template-columns: repeat(2, minmax(0, 1fr));
+          grid-template-columns: 1fr;
           align-content: flex-start;
           gap: 9px;
           padding: 14px;
@@ -2488,7 +2684,8 @@ setLoading(false);
         .compositionPlayerTag.placed {
           grid-template-columns: 32px minmax(0, 1fr) 16px 24px;
           align-self: flex-start;
-          min-height: 44px;
+          width: 100%;
+          min-height: 46px;
           border-color: #e7d6a7;
           background: #fffaf0;
         }
@@ -2565,6 +2762,12 @@ setLoading(false);
             grid-column: 1 / -1;
             justify-content: flex-start;
             margin-left: 0;
+          }
+        }
+
+        @media (max-width: 1100px) {
+          .positionPools {
+            grid-template-columns: 1fr;
           }
         }
 
