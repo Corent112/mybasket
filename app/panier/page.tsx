@@ -891,7 +891,7 @@ setLoading(false);
     );
   }
 
-  async function saveSessionToCalendar(): Promise<boolean> {
+  async function saveSessionToCalendar(): Promise<string | null> {
   const {
     data: { user },
     error: userError,
@@ -899,7 +899,7 @@ setLoading(false);
 
   if (userError || !user) {
     alert("Connecte-toi pour ajouter la séance au calendrier.");
-    return false;
+    return null;
   }
 
   const isUuid = (value: string | null | undefined) =>
@@ -997,7 +997,7 @@ setLoading(false);
       `La fiche est générée, mais la séance Supabase n'a pas été créée : ${sessionError?.message}`
     );
 
-    return false;
+    return null;
   }
 
   const sortedSessionItems = [...sessionItems].sort(
@@ -1049,7 +1049,7 @@ setLoading(false);
       alert(
         `La séance a été créée, mais les exercices n'ont pas pu être sauvegardés : ${exerciseInsert.error.message}`,
       );
-      return false;
+      return null;
     }
   }
 
@@ -1118,10 +1118,10 @@ setLoading(false);
     alert(
       `La fiche est générée, mais l’ajout au calendrier a échoué : ${error.message}`
     );
-    return false;
+    return null;
   }
 
-  return true;
+  return String(createdSession.id);
 }
 
   async function resetSessionBuilderAfterGeneration() {
@@ -1546,6 +1546,10 @@ setLoading(false);
       </html>
     `;
 
+    // Conservé comme aperçu de secours interne, mais le fichier officiel
+    // est toujours généré par l'API PDF.
+    void html;
+
     const printWindow = window.open("", "_blank");
 
     if (!printWindow) {
@@ -1555,14 +1559,90 @@ setLoading(false);
     }
 
     printWindow.document.open();
-    printWindow.document.write(html);
+    printWindow.document.write(`
+      <!doctype html>
+      <html lang="fr">
+        <head>
+          <meta charset="utf-8" />
+          <title>Génération de la fiche séance</title>
+          <style>
+            body {
+              min-height: 100vh;
+              display: grid;
+              place-items: center;
+              margin: 0;
+              font-family: Arial, sans-serif;
+              background: #f7f4f1;
+              color: #6b1a2c;
+            }
+
+            div {
+              text-align: center;
+            }
+
+            strong {
+              display: block;
+              font-size: 24px;
+            }
+
+            span {
+              display: block;
+              margin-top: 10px;
+              color: #766c70;
+            }
+          </style>
+        </head>
+        <body>
+          <div>
+            <strong>Génération de la fiche séance…</strong>
+            <span>Le PDF va s’ouvrir automatiquement.</span>
+          </div>
+        </body>
+      </html>
+    `);
     printWindow.document.close();
 
-    const sessionSaved = await saveSessionToCalendar();
+    const createdSessionId = await saveSessionToCalendar();
 
-    if (sessionSaved) {
+    if (!createdSessionId) {
+      printWindow.close();
+      setSavingSession(false);
+      return;
+    }
+
+    try {
+      const response = await fetch(
+        `/api/seances/${createdSessionId}/pdf`,
+        { method: "POST" },
+      );
+
+      const result = (await response.json()) as {
+        pdfUrl?: string;
+        error?: string;
+      };
+
+      if (!response.ok || !result.pdfUrl) {
+        throw new Error(
+          result.error || "Le PDF n’a pas pu être généré.",
+        );
+      }
+
+      // Le PDF ouvert ici est exactement celui enregistré dans :
+      // - practice_sessions.pdf_url
+      // - calendar_events.attachment_url
+      printWindow.location.replace(result.pdfUrl);
+
       await resetSessionBuilderAfterGeneration();
       setSessionModalOpen(false);
+    } catch (error) {
+      console.error("Erreur génération PDF automatique:", error);
+      printWindow.close();
+
+      alert(
+        error instanceof Error
+          ? error.message
+          : "Le PDF n’a pas pu être généré.",
+      );
     }
 
     setSavingSession(false);
