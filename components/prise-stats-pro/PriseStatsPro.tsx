@@ -270,8 +270,8 @@ async function readTeams(): Promise<{ id: string; name: string; players: Player[
 /* ============================ Constantes wizard ============================ */
 const SYSTEMES_JEU = [
   { id: 'contre-attaque', label: 'Contre attaque', ic: '⚡' },
-  { id: 'libre', label: 'Libre', ic: '◌' },
   { id: 'transition', label: 'Transition', ic: '🏃' },
+  { id: 'libre', label: 'Libre', ic: '◌' },
   { id: 'systeme-1', label: 'Système 1', ic: '①' },
   { id: 'systeme-2', label: 'Système 2', ic: '②' },
   { id: 'systeme-3', label: 'Système 3', ic: '③' },
@@ -1290,6 +1290,23 @@ export default function PriseStatsProPage() {
   // §25 · popup clips commune (Historique + Timeline). BoxView a la sienne branchée
   // sur la même modale pour Matrice/Boxscore/Shot chart.
   const [clipModal, setClipModal] = useState<{ title: string; items: StatA[]; index: number } | null>(null);
+  const [clipShortcutThemes, setClipShortcutThemes] = useState<Array<{ key: string; name: string }>>([
+    { key: 'a', name: 'Thème 1' },
+    { key: 'z', name: 'Thème 2' },
+    { key: 'e', name: 'Thème 3' },
+    { key: 'r', name: 'Thème 4' },
+  ]);
+  const [clipThemeAssignments, setClipThemeAssignments] = useState<Record<string, string[]>>({});
+
+  const assignClipTheme = (action: ClipAction, themeName: string) => {
+    if (!action.id) return;
+    setClipThemeAssignments((current) => ({
+      ...current,
+      [action.id!]: Array.from(new Set([...(current[action.id!] || []), themeName])),
+    }));
+    flash(`Clip classé dans ${themeName}`);
+  };
+
   // Bloc C · onglet Boxscore à ouvrir quand on arrive depuis l'Historique (tab=).
   const [initialBoxTab, setInitialBoxTab] = useState<'box' | 'team' | null>(null);
   const openClipModal = (title: string, items: StatA[], index = 0) => {
@@ -3285,6 +3302,11 @@ export default function PriseStatsProPage() {
                   <button key={k} className={zoneFilter === k ? 'on' : ''} onClick={() => setZoneFilter(k)}>{l}</button>
                 ))}
               </div>
+              {shots.length > 0 && (
+                <button className="zoneReviewAll" onClick={() => openClipModal(`Zone ${z?.label || ''}`, shots, 0)}>
+                  ▶ Revoir les {shots.length} séquences de cette zone
+                </button>
+              )}
               <div className="zpop-list">
                 {shots.length === 0 ? <div className="hist-empty">Aucun tir.</div> : shots.map((a) => {
                   const p = find(a.playerId);
@@ -3341,6 +3363,9 @@ export default function PriseStatsProPage() {
         describe={(a: ClipAction) => describe(a as unknown as StatA, find).t}
         playerName={(id: string | null | undefined) => { const p = find(id ?? null); return p ? `#${p.num} ${p.name}` : undefined; }}
         tempsFortLabel={(id: string | null | undefined) => tags.label(id ?? '')}
+        shortcutThemes={clipShortcutThemes}
+        onAssignTheme={(action, themeName) => assignClipTheme(action, themeName)}
+        onRecalibrate={() => setShowVideoSync(true)}
       />
       <Style />
     </div>
@@ -3349,7 +3374,7 @@ export default function PriseStatsProPage() {
   /* ---------- rendu d'une étape ---------- */
   function head(t: string, s?: string) { return <div className="wzhead"><div className="wzstep">{NAV[navIdx].toUpperCase()}</div><div className="wztitle">{t}</div>{s && <div className="wzsub">{s}</div>}</div>; }
   function tileGrid(arr: { id: string; label: string; ic?: string }[], sel: string, fn: (id: string) => void) {
-    return <div className="grid c3">{arr.map((o) => <button key={o.id} className={`bt ${sel === o.id ? 'active' : ''}`} onClick={() => fn(o.id)}><span className="ic">{o.ic || '•'}</span><span className="lbl">{o.label}</span></button>)}</div>;
+    return <div className="grid c3">{arr.map((o) => <button key={o.id} className={`bt ${o.id === 'libre' ? 'systemLibre' : ''} ${sel === o.id ? 'active' : ''}`} onClick={() => fn(o.id)}><span className="ic">{o.ic || '•'}</span><span className="lbl">{o.label}</span></button>)}</div>;
   }
   function players3(sel: string | null, fn: (id: string) => void) {
     return <div className="grid c3">{floor.map((p) => <button key={p.id} className={`pl ${sel === p.id ? 'active' : ''}`} onClick={() => fn(p.id)}><Av p={p} /><span className="num">{p.num}</span><span className="nm">{p.name}</span><span className="pos">{p.pos}</span></button>)}</div>;
@@ -3402,9 +3427,19 @@ export default function PriseStatsProPage() {
               <span className="htf" style={{ color: tags.color(a.tempsFort) }} title={tags.label(a.tempsFort)}>{tags.emoji(a.tempsFort)}</span>
               <span className="hbody">
                 <b>{p ? `#${p.num} ${p.name}` : '—'}</b>
-                <em><span className="htf-l">{tags.label(a.tempsFort)}</span> · {d.t}</em>
+                <span className="historyTags">
+                  <i>{a.context === 'defense' ? 'Défense' : 'Attaque'}</i>
+                  {(a.systemeName || a.systemeJeu || a.systemeSlot) && <i>{a.systemeName || SYSTEMES_JEU.find((s) => s.id === (a.systemeJeu || a.systemeSlot))?.label || a.systemeSlot}</i>}
+                  {a.tempsFort && <i>{tags.label(a.tempsFort)}</i>}
+                  {a.actionType && <i>{a.actionType}</i>}
+                  {a.shotResult && <i>{a.shotResult === 'made' ? 'Marqué' : a.shotResult === 'missed' ? 'Raté' : a.shotResult}</i>}
+                  {a.reboundType && <i>{a.reboundType === 'off' ? 'Rebond off.' : a.reboundType === 'def' ? 'Rebond déf.' : a.reboundType}</i>}
+                  {a.assist && <i>Passe décisive</i>}
+                  {(clipThemeAssignments[a.id] || []).map((theme) => <i key={theme}>🏷 {theme}</i>)}
+                </span>
+                <em>{d.t}</em>
               </span>
-              <button className={`hplay ${hasClip ? 'has' : ''}`} title={hasClip ? 'Revoir le clip' : 'Clip à synchroniser'} onClick={() => playClip(a)}>▶</button>
+              <button className={`hplay ${hasClip ? 'has' : ''}`} title={hasClip ? 'Ouvrir la séquence dans une nouvelle fenêtre' : 'Clip à synchroniser'} onClick={() => { const list = actions.slice().reverse(); openClipModal('Historique des actions', list, list.findIndex((x) => x.id === a.id)); }}>▶</button>
               <button className="hadd" title="Ajouter au montage" onClick={() => addToMontage(a)}>⭐</button>
               <button className="hedit" title="Corriger" onClick={() => {
                 setActions((arr) => arr.filter((x) => x.id !== a.id));
@@ -5482,6 +5517,10 @@ function Style() {
         grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
       }
 
+      .systemLibre { grid-column: 1 / -1 !important; }
+      .historyTags { display:flex; flex-wrap:wrap; gap:4px; margin:4px 0; }
+      .historyTags i { display:inline-flex; padding:3px 6px; border:1px solid rgba(212,162,76,.35); border-radius:999px; background:rgba(212,162,76,.08); color:#f2c76f; font-size:9px; font-style:normal; font-weight:800; }
+      .zoneReviewAll { width:calc(100% - 24px); margin:10px 12px; padding:10px; border:1px solid var(--gold); border-radius:10px; background:rgba(212,162,76,.1); color:var(--gold); font-weight:900; cursor:pointer; }
       .bt {
         display: flex;
         flex-direction: column;

@@ -48,6 +48,11 @@ export type ClipAction = {
   shotType?: string | null;
   shotResult?: string | null;
   zone?: string | null;
+  reboundType?: string | null;
+  reboundPlayerId?: string | null;
+  assist?: boolean | null;
+  assistPlayerId?: string | null;
+  foulOutcome?: string | null;
   courtX?: number | null;
   courtY?: number | null;
   clipStart?: number | null;
@@ -74,6 +79,9 @@ export type ActionClipsModalProps = {
   describe?: (action: ClipAction) => string;
   playerName?: (id: string | null | undefined) => string | undefined;
   tempsFortLabel?: (id: string | null | undefined) => string | undefined;
+  shortcutThemes?: Array<{ key: string; name: string }>;
+  onAssignTheme?: (action: ClipAction, themeName: string, key: string) => void;
+  onRecalibrate?: () => void;
 };
 
 const fmt = (s: number) =>
@@ -100,6 +108,10 @@ export default function ActionClipsModal(props: ActionClipsModalProps) {
   const onCloseRef = useRef(onClose);
   const [portalTarget, setPortalTarget] = useState<HTMLElement | null>(null);
   const [videoDuration, setVideoDuration] = useState(0);
+  const [frozen, setFrozen] = useState(false);
+  const [overlayTool, setOverlayTool] = useState<'text' | 'spotlight' | 'playerCircle' | null>(null);
+  const [overlayPoint, setOverlayPoint] = useState<{ x: number; y: number } | null>(null);
+  const [overlayText, setOverlayText] = useState('');
 
   useEffect(() => {
     onCloseRef.current = onClose;
@@ -214,13 +226,21 @@ export default function ActionClipsModal(props: ActionClipsModalProps) {
       const el = e.target as HTMLElement | null;
       if (el && (el.tagName === 'TEXTAREA' || el.tagName === 'INPUT')) return;
       if (e.key === 'Escape') onClose();
+      else if (e.key === 'Tab') { e.preventDefault(); go(1); }
       else if (e.key === 'ArrowRight') go(1);
       else if (e.key === 'ArrowLeft') go(-1);
       else if (e.key === 'r' || e.key === 'R') applyBoundedPlayback();
+      else {
+        const shortcut = props.shortcutThemes?.find((item) => item.key.toLowerCase() === e.key.toLowerCase());
+        if (shortcut && current && props.onAssignTheme) {
+          e.preventDefault();
+          props.onAssignTheme(current, shortcut.name, shortcut.key);
+        }
+      }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [open, go, onClose, applyBoundedPlayback]);
+  }, [open, go, onClose, applyBoundedPlayback, current, props.shortcutThemes, props.onAssignTheme]);
 
   const canvasPos = (e: ReactPointerEvent<HTMLCanvasElement>) => {
     const c = canvasRef.current!;
@@ -245,6 +265,39 @@ export default function ActionClipsModal(props: ActionClipsModalProps) {
   const clearDraw = () => {
     const c = canvasRef.current; if (!c) return;
     c.getContext('2d')!.clearRect(0, 0, c.width, c.height);
+  };
+
+  const toggleFreeze = () => {
+    const video = videoRef.current;
+    if (!video) return;
+    if (video.paused) {
+      video.play().catch(() => {});
+      setFrozen(false);
+    } else {
+      video.pause();
+      setFrozen(true);
+    }
+  };
+
+  const placeOverlay = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (!overlayTool) return;
+    const rect = event.currentTarget.getBoundingClientRect();
+    const point = {
+      x: ((event.clientX - rect.left) / rect.width) * 100,
+      y: ((event.clientY - rect.top) / rect.height) * 100,
+    };
+    setOverlayPoint(point);
+    if (overlayTool === 'text') {
+      const value = window.prompt('Texte à afficher :', overlayText || '');
+      if (value != null) setOverlayText(value.trim());
+    }
+  };
+
+  const consequenceLabel = (action: ClipAction) => {
+    if (action.reboundType) return action.reboundType === 'off' ? 'Rebond offensif' : action.reboundType === 'def' ? 'Rebond défensif' : action.reboundType;
+    if (action.assist) return 'Passe décisive';
+    if (action.foulOutcome) return action.foulOutcome;
+    return '';
   };
 
   const label = useMemo(() => {
@@ -291,7 +344,7 @@ export default function ActionClipsModal(props: ActionClipsModalProps) {
         <div className="acm-body">
           <div className="acm-title">{label}</div>
 
-          <div className="acm-videowrap">
+          <div className={`acm-videowrap ${overlayTool ? 'placing' : ''}`} onPointerDown={placeOverlay}>
             {hasVideo ? (
               <video
                 ref={videoRef}
@@ -310,6 +363,15 @@ export default function ActionClipsModal(props: ActionClipsModalProps) {
                   ? `Clip enregistré · ${fmt(syncedStartOf(cur)!)}${syncedEndOf(cur) != null ? ` → ${fmt(syncedEndOf(cur)!)}` : ''}`
                   : 'Repère vidéo indisponible'}
               </div>
+            )}
+            {overlayPoint && overlayTool === 'spotlight' && (
+              <div className="acm-spotlight" style={{ left: `${overlayPoint.x}%`, top: `${overlayPoint.y}%` }} />
+            )}
+            {overlayPoint && overlayTool === 'playerCircle' && (
+              <div className="acm-player-circle" style={{ left: `${overlayPoint.x}%`, top: `${overlayPoint.y}%` }} />
+            )}
+            {overlayPoint && overlayTool === 'text' && overlayText && (
+              <div className="acm-overlay-text" style={{ left: `${overlayPoint.x}%`, top: `${overlayPoint.y}%` }}>{overlayText}</div>
             )}
             {hasVideo && draw && (
               <canvas
@@ -331,7 +393,7 @@ export default function ActionClipsModal(props: ActionClipsModalProps) {
             <button disabled={index === actions.length - 1} onClick={() => go(1)}>Suivant →</button>
           </div>
 
-          <div className="acm-infos">
+          <div className="acm-tags">
             <Info k="Match" v={cur.matchLabel} />
             <Info k="Date" v={cur.date} />
             <Info k="Adversaire" v={cur.opponent} />
@@ -343,6 +405,7 @@ export default function ActionClipsModal(props: ActionClipsModalProps) {
             <Info k="Joueur" v={whoLabel(cur)} />
             <Info k="Action" v={cur.actionType} />
             <Info k="Résultat" v={cur.shotResult === 'made' ? 'Marqué' : cur.shotResult === 'missed' ? 'Raté' : cur.shotResult} />
+            <Info k="Conséquence" v={consequenceLabel(cur)} />
             <Info k="Zone" v={cur.zone} />
             <Info k="Clip début" v={syncedStartOf(cur) != null ? fmt(syncedStartOf(cur)!) : null} />
             <Info k="Clip fin" v={syncedEndOf(cur) != null ? fmt(syncedEndOf(cur)!) : null} />
@@ -350,9 +413,27 @@ export default function ActionClipsModal(props: ActionClipsModalProps) {
 
           <div className="acm-tools">
             {onAddToMontage && <button onClick={() => onAddToMontage(cur)}>⭐ Ajouter au montage</button>}
-            <button className={draw ? 'on' : ''} onClick={() => setDraw((d) => !d)}>✏ Dessiner</button>
+            <button className={draw ? 'on' : ''} onClick={() => { setDraw((d) => !d); setOverlayTool(null); }}>✏ Dessiner</button>
             {draw && <button onClick={clearDraw}>🧽 Effacer</button>}
+            <button className={frozen ? 'on' : ''} onClick={toggleFreeze}>⏸ Arrêt sur image</button>
+            <button className={overlayTool === 'text' ? 'on' : ''} onClick={() => { setOverlayTool(overlayTool === 'text' ? null : 'text'); setDraw(false); }}>T Ajouter du texte</button>
+            <button className={overlayTool === 'spotlight' ? 'on' : ''} onClick={() => { setOverlayTool(overlayTool === 'spotlight' ? null : 'spotlight'); setDraw(false); }}>◉ Mettre en lumière</button>
+            <button className={overlayTool === 'playerCircle' ? 'on' : ''} onClick={() => { setOverlayTool(overlayTool === 'playerCircle' ? null : 'playerCircle'); setDraw(false); }}>◯ Rond sous joueur</button>
+            {(overlayPoint || overlayText) && <button onClick={() => { setOverlayPoint(null); setOverlayText(''); setOverlayTool(null); }}>🧹 Effacer l’overlay</button>}
+            {props.onRecalibrate && <button onClick={props.onRecalibrate}>🎯 Recalibrer la vidéo</button>}
           </div>
+
+          {!!props.shortcutThemes?.length && (
+            <div className="acm-shortcuts">
+              <b>Classement rapide</b>
+              {props.shortcutThemes.map((theme) => (
+                <button key={theme.key} onClick={() => props.onAssignTheme?.(cur, theme.name, theme.key)}>
+                  <kbd>{theme.key.toUpperCase()}</kbd> {theme.name}
+                </button>
+              ))}
+              <span><kbd>Tab</kbd> séquence suivante</span>
+            </div>
+          )}
 
           {hasVideo && (
             <div className="acm-trim-editor">
@@ -416,6 +497,10 @@ export default function ActionClipsModal(props: ActionClipsModalProps) {
         .acm-body { padding: 14px 16px 16px; display: flex; flex-direction: column; gap: 12px; }
         .acm-title { font-size: 13px; font-weight: 800; color: #D4A24C; }
         .acm-videowrap { position: relative; }
+        .acm-videowrap.placing { cursor: crosshair; }
+        .acm-spotlight { position:absolute; width:150px; height:150px; transform:translate(-50%,-50%); border-radius:50%; box-shadow:0 0 0 9999px rgba(0,0,0,.62); border:3px solid #D4A24C; pointer-events:none; z-index:4; }
+        .acm-player-circle { position:absolute; width:92px; height:34px; transform:translate(-50%,-50%); border:4px solid #D4A24C; border-radius:50%; pointer-events:none; z-index:4; }
+        .acm-overlay-text { position:absolute; transform:translate(-50%,-50%); color:#D4A24C; font-size:24px; font-weight:950; text-shadow:0 2px 5px #000; pointer-events:none; z-index:4; white-space:nowrap; }
         .acm-video { width: 100%; max-height: 58vh; background: #000; border-radius: 10px; display: block; }
         .acm-card.acm-full .acm-video { max-height: calc(100vh - 320px); }
         .acm-canvas { position: absolute; inset: 0; width: 100%; height: 100%; cursor: crosshair; touch-action: none; }
@@ -423,10 +508,15 @@ export default function ActionClipsModal(props: ActionClipsModalProps) {
         .acm-nav { display: flex; gap: 8px; }
         .acm-nav button { flex: 1; border: 1px solid #2a3142; background: #171b29; color: #eef1f7; border-radius: 9px; padding: 9px; font-size: 12.5px; font-weight: 800; cursor: pointer; }
         .acm-nav button:disabled { opacity: .4; cursor: not-allowed; }
-        .acm-infos { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 6px; background: #0c0f1a; border: 1px solid #2a3142; border-radius: 10px; padding: 10px; }
-        .acm-info { display: flex; flex-direction: column; gap: 1px; }
-        .acm-info span { font-size: 10px; color: #8a93a8; text-transform: uppercase; letter-spacing: .04em; }
-        .acm-info b { font-size: 12.5px; }
+        .acm-tags { display:flex; flex-wrap:wrap; gap:7px; background:#0c0f1a; border:1px solid #2a3142; border-radius:10px; padding:10px; }
+        .acm-info { display:inline-flex; flex-direction:row; align-items:center; gap:6px; padding:6px 9px; border:1px solid #2a3142; border-radius:999px; background:#171b29; }
+        .acm-info span { font-size:9px; color:#D4A24C; text-transform:uppercase; letter-spacing:.04em; }
+        .acm-info b { font-size:11px; }
+        .acm-shortcuts { display:flex; flex-wrap:wrap; align-items:center; gap:7px; padding:10px; border:1px solid #2a3142; border-radius:10px; background:#0c0f1a; }
+        .acm-shortcuts b { margin-right:4px; color:#D4A24C; font-size:11px; }
+        .acm-shortcuts button { border:1px solid #2a3142; background:#171b29; color:#eef1f7; border-radius:8px; padding:7px 9px; cursor:pointer; font-weight:800; }
+        .acm-shortcuts span { color:#8a93a8; font-size:10px; }
+        .acm-shortcuts kbd { color:#D4A24C; font-weight:950; }
         .acm-tools, .acm-trim { display: flex; flex-wrap: wrap; gap: 6px; }
         .acm-tools button, .acm-trim button { border: 1px solid #2a3142; background: #171b29; color: #eef1f7; border-radius: 8px; padding: 7px 11px; font-size: 11.5px; font-weight: 800; cursor: pointer; }
         .acm-tools button.on { border-color: #D4A24C; color: #D4A24C; }
