@@ -317,6 +317,9 @@ async function resolveClubLogo(
     team?.logo,
     team?.image_url,
     team?.avatar_url,
+    team?.metadata?.logo,
+    team?.metadata?.logo_url,
+    team?.metadata?.club_logo_url,
   );
 
   if (teamLogo) return teamLogo;
@@ -349,6 +352,24 @@ async function resolveClubLogo(
     );
 
     if (clubLogo) return clubLogo;
+  }
+
+  // Fallback fiable : le logo du club enregistré dans le profil du créateur.
+  // Les anciennes séances n'avaient pas toujours club_id / team logo persistés.
+  const ownerId = firstString(session.user_id, session.created_by, session.owner_id);
+  if (ownerId) {
+    const { data: profile } = await supabase
+      .from("profiles")
+      .select("*")
+      .eq("id", ownerId)
+      .maybeSingle();
+
+    const profileLogo = firstString(
+      profile?.club_logo_url,
+      profile?.logo_url,
+    );
+
+    if (profileLogo) return profileLogo;
   }
 
   // Dernier recours : le nom de club peut avoir été enregistré comme lieu

@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
+import { createPlatformConversation, notifyAdmin } from "@/lib/server-notifications";
 
 function text(value: unknown) {
   return String(value || "").trim();
@@ -11,6 +12,7 @@ export async function POST(request: Request) {
     const page = text(body.page);
     const normalizedPage = page.toLowerCase();
     const supabase = await createClient();
+    const { data: authData } = await supabase.auth.getUser();
 
     const common = {
       first_name: text(body.prenom) || null,
@@ -66,6 +68,37 @@ export async function POST(request: Request) {
         { status: 400 }
       );
     }
+
+    const serviceLabel = page || text(body.type_demande) || "Accompagnement";
+    const senderName = `${text(body.prenom)} ${text(body.nom)}`.trim() || "Utilisateur";
+    const senderEmail = text(body.email);
+
+    // Les notifications sont secondaires : la demande reste enregistrée même
+    // si Resend ou la messagerie interne sont temporairement indisponibles.
+    await Promise.allSettled([
+      notifyAdmin({
+        subject: `[MyBasket] Nouvelle demande — ${serviceLabel}`,
+        title: `Nouvelle demande ${serviceLabel}`,
+        replyTo: senderEmail || null,
+        fields: [
+          ["Service", serviceLabel],
+          ["Type", text(body.type_demande)],
+          ["Nom", senderName],
+          ["Email", senderEmail],
+          ["Téléphone", text(body.telephone || body.phone)],
+          ["Club", text(body.club)],
+        ],
+        message: text(body.message),
+      }),
+      createPlatformConversation({
+        type: "accompagnement",
+        subject: `${serviceLabel} — ${senderName}`,
+        body: text(body.message) || text(body.type_demande) || "Nouvelle demande",
+        senderUserId: authData.user?.id || null,
+        senderName,
+        senderEmail: senderEmail || null,
+      }),
+    ]);
 
     return NextResponse.json({ ok: true });
   } catch (error) {

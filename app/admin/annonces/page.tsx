@@ -284,8 +284,7 @@ export default async function AdminAnnoncesPage() {
 
                       <td>
                         <div className={styles.actions}>
-                          <Link href={`/annonces/${annonce.id}`}>Voir</Link>
-                          <Link href={`/admin/annonces/${annonce.id}`}>Modifier</Link>
+                          <Link href={`/admin/annonces/${annonce.id}`}>Voir</Link>
 
                           <form action={updateAnnonceStatus}>
                             <input type="hidden" name="id" value={annonce.id} />

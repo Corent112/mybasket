@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import Stripe from "stripe";
-import { createClient } from "@/lib/supabase/server";
+import { createAdminClient } from "@/lib/supabase/admin-server";
+import { sendOrderEmails } from "@/lib/order-email";
 
 const stripeSecretKey = process.env.STRIPE_SECRET_KEY;
 const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET;
@@ -28,8 +29,9 @@ type OrderItem = {
   quantity?: number | null;
 };
 
-async function activateOrder(orderId: string, stripeSession: Stripe.Checkout.Session) {
-  const supabase = await createClient();
+async function activateOrder(orderId: string, stripeSession: Stripe.Checkout.Session): Promise<boolean> {
+  const supabase = createAdminClient();
+  if (!supabase) throw new Error("SUPABASE_SERVICE_ROLE_KEY manquante");
 
   const { data: order, error: orderError } = await supabase
     .from("orders")
@@ -49,7 +51,7 @@ async function activateOrder(orderId: string, stripeSession: Stripe.Checkout.Ses
   };
 
   if (["paid", "succeeded", "completed"].includes(String(typedOrder.status || "").toLowerCase())) {
-    return;
+    return false;
   }
 
   const { data: itemsData, error: itemsError } = await supabase
@@ -124,6 +126,8 @@ async function activateOrder(orderId: string, stripeSession: Stripe.Checkout.Ses
     .delete()
     .eq("user_id", typedOrder.user_id)
     .in("item_type", ["product", "subscription"]);
+
+  return true;
 }
 
 export async function POST(request: Request) {
@@ -153,7 +157,8 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "order_id manquant" }, { status: 400 });
     }
 
-    await activateOrder(orderId, session);
+    const activated = await activateOrder(orderId, session);
+    if (activated) await sendOrderEmails(orderId);
   }
 
   return NextResponse.json({ received: true });

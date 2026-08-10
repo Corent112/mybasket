@@ -58,7 +58,7 @@ function idsMatch(a: unknown, b: unknown): boolean {
 function isUuid(value: string | null | undefined): boolean {
   return (
     !!value &&
-    /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{12}$/i.test(
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
       value
     )
   );
@@ -194,31 +194,18 @@ function normalizePlayerRow(row: any): Player {
     ponctualitePct: row.punctuality_pct ?? data.ponctualitePct ?? 0,
     potentiel: row.potential ?? data.potentiel ?? 0,
     notes: row.notes ?? data.notes ?? "",
+    licenceNumber:
+      row.license_number ?? data.licenceNumber ?? data.licenseNumber ?? data.license_number ?? "",
     licenseNumber:
-      row.license_number ??
-      data.licenseNumber ??
-      data.license_number ??
-      "",
-    tutor1Phone:
-      row.tutor1_phone ??
-      data.tutor1Phone ??
-      data.tutor1_phone ??
-      "",
-    tutor1Email:
-      row.tutor1_email ??
-      data.tutor1Email ??
-      data.tutor1_email ??
-      "",
-    tutor2Phone:
-      row.tutor2_phone ??
-      data.tutor2Phone ??
-      data.tutor2_phone ??
-      "",
-    tutor2Email:
-      row.tutor2_email ??
-      data.tutor2Email ??
-      data.tutor2_email ??
-      "",
+      row.license_number ?? data.licenseNumber ?? data.licenceNumber ?? data.license_number ?? "",
+    tuteur1Phone: row.tutor1_phone ?? data.tuteur1Phone ?? data.tutor1Phone ?? data.tutor1_phone ?? "",
+    tutor1Phone: row.tutor1_phone ?? data.tutor1Phone ?? data.tuteur1Phone ?? data.tutor1_phone ?? "",
+    tuteur1Email: row.tutor1_email ?? data.tuteur1Email ?? data.tutor1Email ?? data.tutor1_email ?? "",
+    tutor1Email: row.tutor1_email ?? data.tutor1Email ?? data.tuteur1Email ?? data.tutor1_email ?? "",
+    tuteur2Phone: row.tutor2_phone ?? data.tuteur2Phone ?? data.tutor2Phone ?? data.tutor2_phone ?? "",
+    tutor2Phone: row.tutor2_phone ?? data.tutor2Phone ?? data.tuteur2Phone ?? data.tutor2_phone ?? "",
+    tuteur2Email: row.tutor2_email ?? data.tuteur2Email ?? data.tutor2Email ?? data.tutor2_email ?? "",
+    tutor2Email: row.tutor2_email ?? data.tutor2Email ?? data.tuteur2Email ?? data.tutor2_email ?? "",
     stats:
       data.stats ?? {
         pts: 0,
@@ -306,14 +293,19 @@ function teamPayload(team: Team, userId: string) {
 function playerPayload(teamId: string, player: Player, userId: string) {
   const extended = player as Player & {
     supabasePlayerId?: string | null;
+    licenceNumber?: string;
     licenseNumber?: string;
     license_number?: string;
+    tuteur1Phone?: string;
     tutor1Phone?: string;
     tutor1_phone?: string;
+    tuteur1Email?: string;
     tutor1Email?: string;
     tutor1_email?: string;
+    tuteur2Phone?: string;
     tutor2Phone?: string;
     tutor2_phone?: string;
+    tuteur2Email?: string;
     tutor2Email?: string;
     tutor2_email?: string;
   };
@@ -344,22 +336,27 @@ function playerPayload(teamId: string, player: Player, userId: string) {
     dominant_hand: player.mainDominante ?? "",
     status: player.statut ?? "Disponible",
     license_number:
+      extended.licenceNumber ??
       extended.licenseNumber ??
       extended.license_number ??
       null,
     tutor1_phone:
+      extended.tuteur1Phone ??
       extended.tutor1Phone ??
       extended.tutor1_phone ??
       null,
     tutor1_email:
+      extended.tuteur1Email ??
       extended.tutor1Email ??
       extended.tutor1_email ??
       null,
     tutor2_phone:
+      extended.tuteur2Phone ??
       extended.tutor2Phone ??
       extended.tutor2_phone ??
       null,
     tutor2_email:
+      extended.tuteur2Email ??
       extended.tutor2Email ??
       extended.tutor2_email ??
       null,
@@ -600,6 +597,48 @@ export async function saveTeam(team: Team): Promise<Team> {
 export async function deleteTeam(teamId: string): Promise<void> {
   const supabase = createClient();
   const userId = await getUserId();
+
+  if (!isUuid(teamId)) {
+    throw new Error(`Identifiant équipe invalide : ${teamId}`);
+  }
+
+  // Suppression irréversible : on nettoie les données de management liées
+  // avant de supprimer l'équipe. Les tables optionnelles absentes sont ignorées.
+  const dependentTables = [
+    "match_actions",
+    "match_player_stats",
+    "match_stats",
+    "team_matches",
+    "livestat_tags",
+    "game_plan_scouting",
+    "game_plan_systems",
+    "game_plans",
+    "management_gameplans",
+    "practice_sessions",
+    "calendar_events",
+    "players",
+  ];
+
+  for (const table of dependentTables) {
+    const { error: cleanupError } = await supabase
+      .from(table)
+      .delete()
+      .eq("team_id", teamId);
+
+    if (cleanupError) {
+      const code = String((cleanupError as any)?.code || "");
+      const message = String((cleanupError as any)?.message || "");
+      const optionalSchemaError =
+        code === "PGRST204" ||
+        code === "PGRST205" ||
+        message.includes("schema cache") ||
+        message.includes("Could not find");
+
+      if (!optionalSchemaError) {
+        logSupabaseError(`Nettoyage ${table}`, cleanupError, { teamId });
+      }
+    }
+  }
 
   const { error } = await supabase
     .from("teams")

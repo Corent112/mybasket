@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import Stripe from "stripe";
-import { createClient } from "@/lib/supabase/server";
+import { createAdminClient } from "@/lib/supabase/admin-server";
+import { sendOrderEmails } from "@/lib/order-email";
 
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!);
 
@@ -27,7 +28,8 @@ export async function POST(request: Request) {
     );
   }
 
-  const supabase = await createClient();
+  const supabase = createAdminClient();
+  if (!supabase) return NextResponse.json({ error: "SUPABASE_SERVICE_ROLE_KEY manquante" }, { status: 500 });
 
   if (event.type === "checkout.session.completed") {
     const session = event.data.object as Stripe.Checkout.Session;
@@ -46,11 +48,47 @@ export async function POST(request: Request) {
         .eq("id", orderId)
         .eq("user_id", userId);
 
+      const { data: subscriptionItems } = await supabase
+        .from("order_items")
+        .select("item_id,assigned_to")
+        .eq("order_id", orderId)
+        .eq("item_type", "subscription");
+
+      if (subscriptionItems?.length) {
+        const now = new Date();
+        await supabase
+          .from("subscriptions")
+          .update({ status: "canceled", updated_at: now.toISOString() })
+          .eq("user_id", userId)
+          .eq("status", "active");
+
+        for (const item of subscriptionItems) {
+          if (!item.item_id) continue;
+          const end = new Date(now);
+          const yearly = item.assigned_to === "yearly";
+          if (yearly) end.setFullYear(end.getFullYear() + 1);
+          else end.setMonth(end.getMonth() + 1);
+
+          await supabase.from("subscriptions").insert({
+            user_id: userId,
+            plan_id: item.item_id,
+            billing_period: yearly ? "yearly" : "monthly",
+            status: "active",
+            current_period_start: now.toISOString(),
+            current_period_end: end.toISOString(),
+            created_at: now.toISOString(),
+            updated_at: now.toISOString(),
+          });
+        }
+      }
+
       await supabase
         .from("cart_items")
         .delete()
         .eq("user_id", userId)
-        .eq("item_type", "product");
+        .in("item_type", ["product", "subscription"]);
+
+      await sendOrderEmails(orderId);
     }
   }
 

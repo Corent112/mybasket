@@ -1,169 +1,81 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import {
-  addReply,
-  deleteMessage,
-  getMessages,
-  markAsRead,
-  TYPE_LABEL,
-  type MbMessage,
-} from "@/lib/messages";
+import { addReply, deleteMessage, getMessages, markAsRead, TYPE_LABEL, type MbMessage } from "@/lib/messages";
+
+type PlatformConversation = {
+  id: string; conversation_type: string; subject: string; initial_message: string;
+  sender_name: string | null; sender_email: string | null; reference_id: string | null;
+  created_at: string; platform_conversation_replies?: Array<{ id:string; sender_user_id:string; message:string; created_at:string }>;
+};
+
+type Unified = { source:"local"; local:MbMessage } | { source:"platform"; platform:PlatformConversation };
 
 export default function Messagerie() {
-  const [messages, setMessages] = useState<MbMessage[]>([]);
+  const [local, setLocal] = useState<MbMessage[]>([]);
+  const [platform, setPlatform] = useState<PlatformConversation[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [reply, setReply] = useState("");
 
-  useEffect(() => {
-    const list = getMessages();
-    setMessages(list);
-    if (list[0]) setSelectedId(list[0].id);
-  }, []);
-
-  const selected = useMemo(
-    () => messages.find((m) => m.id === selectedId) || null,
-    [messages, selectedId]
-  );
-
-  const selectMessage = (msg: MbMessage) => {
-    setSelectedId(msg.id);
-    setReply("");
-
-    if (msg.statut === "non lu") {
-      markAsRead(msg.id);
-      setMessages(getMessages());
+  async function reload() {
+    const localList = getMessages();
+    setLocal(localList);
+    try {
+      const res = await fetch("/api/messages/platform", { cache:"no-store" });
+      const json = await res.json();
+      const remote = Array.isArray(json.conversations) ? json.conversations : [];
+      setPlatform(remote);
+      if (!selectedId) setSelectedId(remote[0] ? `p:${remote[0].id}` : localList[0] ? `l:${localList[0].id}` : null);
+    } catch {
+      if (!selectedId && localList[0]) setSelectedId(`l:${localList[0].id}`);
     }
-  };
+  }
+  useEffect(() => { reload(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, []);
 
-  const sendReply = () => {
+  const messages = useMemo<Unified[]>(() => [
+    ...platform.map((p) => ({ source:"platform", platform:p } as Unified)),
+    ...local.map((l) => ({ source:"local", local:l } as Unified)),
+  ], [platform, local]);
+  const selected = messages.find((m) => selectedId === (m.source === "platform" ? `p:${m.platform.id}` : `l:${m.local.id}`)) || null;
+
+  async function sendReply() {
     if (!selected || !reply.trim()) return;
-
-    addReply(selected.id, reply.trim());
-    setReply("");
-    setMessages(getMessages());
-  };
-
-  const handleDeleteMessage = () => {
-    if (!selected) return;
-
-    const ok = window.confirm("Supprimer cette conversation ?");
-    if (!ok) return;
-
-    const next = deleteMessage(selected.id);
-    setMessages(next);
-
-    if (next.length > 0) {
-      setSelectedId(next[0].id);
-    } else {
-      setSelectedId(null);
+    if (selected.source === "platform") {
+      const res = await fetch("/api/messages/platform", { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({ conversationId:selected.platform.id, message:reply.trim() }) });
+      if (!res.ok) { const j=await res.json().catch(()=>({})); alert(j.error || "Réponse non envoyée"); return; }
+      setReply(""); await reload(); return;
     }
+    addReply(selected.local.id, reply.trim()); setReply(""); setLocal(getMessages());
+  }
 
+  function choose(m:Unified) {
+    if (m.source === "platform") setSelectedId(`p:${m.platform.id}`);
+    else { setSelectedId(`l:${m.local.id}`); if (m.local.statut === "non lu") { markAsRead(m.local.id); setLocal(getMessages()); } }
     setReply("");
-  };
+  }
 
-  const formatDate = (iso: string) =>
-    new Date(iso).toLocaleDateString("fr-FR", {
-      day: "2-digit",
-      month: "2-digit",
-      year: "numeric",
-      hour: "2-digit",
-      minute: "2-digit",
-    });
+  function fmt(iso:string){ return new Date(iso).toLocaleString("fr-FR",{day:"2-digit",month:"2-digit",year:"numeric",hour:"2-digit",minute:"2-digit"}); }
 
-  return (
-    <div className="msg-page">
-      <style>{CSS}</style>
+  const sender = selected?.source === "platform" ? selected.platform.sender_name || "Utilisateur" : selected?.source === "local" ? selected.local.expediteurNom || "Utilisateur" : "";
+  const email = selected?.source === "platform" ? selected.platform.sender_email : selected?.source === "local" ? selected.local.expediteurEmail : null;
+  const subject = selected?.source === "platform" ? selected.platform.subject : selected?.source === "local" ? selected.local.annonceTitre || selected.local.sujet : "";
 
-      <h1>Messagerie</h1>
-
-      <div className="msg-box">
-        <aside className="msg-left">
-          {messages.length === 0 ? (
-            <div className="msg-empty-left">Aucun message.</div>
-          ) : (
-            messages.map((msg) => (
-              <button
-                key={msg.id}
-                className={
-                  "msg-preview" +
-                  (selectedId === msg.id ? " active" : "") +
-                  (msg.statut === "non lu" ? " unread" : "")
-                }
-                onClick={() => selectMessage(msg)}
-              >
-                <strong>{msg.expediteurNom || "Utilisateur"}</strong>
-                <span className="msg-preview-sub">
-                  📋 {msg.annonceTitre || msg.sujet}
-                </span>
-                <p>{msg.message}</p>
-              </button>
-            ))
-          )}
-        </aside>
-
-        <section className="msg-right">
-          {!selected ? (
-            <div className="msg-empty-main">Sélectionne une conversation.</div>
-          ) : (
-            <>
-              <div className="msg-head">
-                <div>
-                  <h2>{selected.expediteurNom || "Utilisateur"}</h2>
-                  <p>📋 {selected.annonceTitre || selected.sujet}</p>
-                  <p>✉️ {selected.expediteurEmail || "Email non renseigné"}</p>
-                  <span className="msg-type">{TYPE_LABEL[selected.type]}</span>
-                </div>
-
-                <div className="msg-head-actions">
-                  {selected.annonceId && (
-                    <button
-                      className="msg-ad-btn"
-                      onClick={() => {
-                        if (selected.annonceId) {
-                          window.location.href = `/annonces/${selected.annonceId}`;
-                        }
-                      }}
-                    >
-                      👁 Voir l&apos;annonce
-                    </button>
-                  )}
-
-                  <button className="msg-delete-btn" onClick={handleDeleteMessage}>
-                    🗑 Supprimer
-                  </button>
-                </div>
-              </div>
-
-              <div className="msg-thread">
-                <div className="bubble incoming">
-                  <p>{selected.message}</p>
-                  <span>{formatDate(selected.date)}</span>
-                </div>
-
-                {(selected.reponses ?? []).map((r, index) => (
-                  <div className="bubble outgoing" key={index}>
-                    <p>{r.texte}</p>
-                    <span>{formatDate(r.date)} · Toi</span>
-                  </div>
-                ))}
-              </div>
-
-              <div className="msg-compose">
-                <textarea
-                  value={reply}
-                  onChange={(e) => setReply(e.target.value)}
-                  placeholder="Écris ta réponse..."
-                />
-
-                <button onClick={sendReply}>📨 Envoyer</button>
-              </div>
-            </>
-          )}
-        </section>
-      </div>
-    </div>
-  );
+  return <div className="msg-page"><style>{CSS}</style><h1>Messagerie</h1><div className="msg-box">
+    <aside className="msg-left">{messages.length===0?<div className="msg-empty-left">Aucun message.</div>:messages.map((m)=>{
+      const id=m.source==="platform"?`p:${m.platform.id}`:`l:${m.local.id}`;
+      const name=m.source==="platform"?m.platform.sender_name||"Utilisateur":m.local.expediteurNom||"Utilisateur";
+      const sub=m.source==="platform"?m.platform.subject:m.local.annonceTitre||m.local.sujet;
+      const body=m.source==="platform"?m.platform.initial_message:m.local.message;
+      return <button key={id} className={`msg-preview ${selectedId===id?"active":""}`} onClick={()=>choose(m)}><strong>{name}</strong><span className="msg-preview-sub">📋 {sub}</span><p>{body}</p></button>;
+    })}</aside>
+    <section className="msg-right">{!selected?<div className="msg-empty-main">Sélectionne une conversation.</div>:<>
+      <div className="msg-head"><div><h2>{sender}</h2><p>📋 {subject}</p><p>✉️ {email||"Email non renseigné"}</p><span className="msg-type">{selected.source==="platform"?selected.platform.conversation_type.toUpperCase():TYPE_LABEL[selected.local.type]}</span></div>
+      <div className="msg-head-actions">{selected.source==="platform"&&selected.platform.reference_id&&selected.platform.conversation_type==="annonce"?<button className="msg-ad-btn" onClick={()=>location.href=`/admin/annonces/${selected.platform.reference_id}`}>👁 Voir l'annonce</button>:null}{selected.source==="local"&&selected.local.annonceId?<button className="msg-ad-btn" onClick={()=>location.href=`/annonces/${selected.local.annonceId}`}>👁 Voir l'annonce</button>:null}</div></div>
+      <div className="msg-thread"><div className="bubble incoming"><p>{selected.source==="platform"?selected.platform.initial_message:selected.local.message}</p><span>{fmt(selected.source==="platform"?selected.platform.created_at:selected.local.date)}</span></div>
+      {selected.source==="platform"?(selected.platform.platform_conversation_replies||[]).map(r=><div className="bubble outgoing" key={r.id}><p>{r.message}</p><span>{fmt(r.created_at)}</span></div>):(selected.local.reponses||[]).map((r,i)=><div className="bubble outgoing" key={i}><p>{r.texte}</p><span>{fmt(r.date)} · Toi</span></div>)}</div>
+      <div className="msg-compose"><textarea value={reply} onChange={e=>setReply(e.target.value)} placeholder="Écris ta réponse..."/><button onClick={sendReply}>📨 Envoyer</button></div>
+    </>}</section>
+  </div></div>;
 }
 
 const CSS = `

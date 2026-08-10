@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
+import { sendOrderEmails } from "@/lib/order-email";
 
 function siteUrl() { return (process.env.NEXT_PUBLIC_SITE_URL || "http://localhost:3000").replace(/\/$/, ""); }
 function paypalBaseUrl() { return process.env.PAYPAL_ENV === "live" ? "https://api-m.paypal.com" : "https://api-m.sandbox.paypal.com"; }
@@ -48,6 +49,7 @@ export async function GET(request: Request) {
       }
     }
     await supabase.from("cart_items").delete().eq("user_id", user.id).in("item_type", ["product", "subscription"]);
+    await sendOrderEmails(localOrderId);
     return NextResponse.redirect(`${siteUrl()}/panier/success?order=${localOrderId}`);
   } catch (error) {
     console.error("Capture PayPal:", error);

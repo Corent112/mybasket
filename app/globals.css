@@ -3384,3 +3384,323 @@ th, td { vertical-align: middle; }
   font-weight:900;
   text-transform:uppercase;
 }
+
+/* ========================================================================== */
+/* MYBASKET — RESPONSIVE GLOBAL TABLETTE + SMARTPHONE                         */
+/* Ajout 10/08/2026 : garde le desktop intact et adapte l'interface tactile.  */
+/* ========================================================================== */
+
+html,
+body,
+.app-shell,
+.app-main {
+  width: 100%;
+  max-width: 100%;
+}
+
+html,
+body {
+  overflow-x: clip;
+}
+
+.app-shell {
+  min-height: 100dvh;
+  display: flex;
+  flex-direction: column;
+}
+
+.app-main {
+  min-width: 0;
+  flex: 1 0 auto;
+}
+
+/* Les médias ne doivent jamais provoquer un débordement horizontal. */
+img,
+svg,
+video,
+canvas,
+iframe {
+  max-width: 100%;
+}
+
+video,
+iframe {
+  height: auto;
+}
+
+/* Les contrôles restent utilisables au doigt. */
+input,
+select,
+textarea,
+button {
+  max-width: 100%;
+}
+
+input,
+select,
+textarea {
+  font-size: 16px;
+}
+
+/* Les tableaux restent complets : défilement horizontal au lieu de les casser. */
+.responsive-table,
+.table-scroll,
+.table-wrap,
+[class*="tableWrap"],
+[class*="table-wrap"],
+[class*="tableScroll"],
+[class*="table-scroll"] {
+  max-width: 100%;
+  overflow-x: auto;
+  overscroll-behavior-inline: contain;
+  -webkit-overflow-scrolling: touch;
+}
+
+/* Les fenêtres doivent rester accessibles, même en paysage ou petit écran. */
+.modal-overlay,
+.tl-modal-bg,
+.mbk-modal-overlay,
+[class*="modalOverlay"],
+[class*="modal-overlay"] {
+  max-width: 100vw;
+  max-height: 100dvh;
+}
+
+.modal,
+.tl-modal,
+.mbk-modal,
+[class*="Modal"],
+[class*="modal"] {
+  max-width: calc(100vw - 24px);
+}
+
+/* LiveStats / management : on conserve l'outil complet et on autorise le pan tactile. */
+.ps-root,
+.mc-management-content,
+[class*="management-content"] {
+  max-width: 100%;
+}
+
+@media (max-width: 1024px) {
+  :root {
+    --maxw: 100%;
+  }
+
+  .container {
+    width: 100%;
+    padding-inline: clamp(14px, 3vw, 28px);
+  }
+
+  /* Grilles commerciales et pages de contenu : deux colonnes maximum sur tablette. */
+  .product-grid,
+  .products-grid,
+  .cards-grid,
+  .annonces-grid,
+  .library-grid,
+  .shop-grid,
+  .subscription-grid,
+  .pricing-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+  }
+
+  /* Boutons d'action : pas de débordement quand les libellés sont longs. */
+  .actions,
+  .toolbar,
+  .page-actions,
+  .form-actions,
+  .modal-foot,
+  .tl-modal-actions,
+  .mbk-modal-actions {
+    flex-wrap: wrap;
+  }
+
+  /* PDF/aperçus restent centrés et manipulables. */
+  embed[type="application/pdf"],
+  iframe[src*="pdf"],
+  object[type="application/pdf"] {
+    width: 100% !important;
+    max-width: 100% !important;
+  }
+}
+
+@media (max-width: 768px) {
+  html {
+    font-size: 14px;
+    -webkit-text-size-adjust: 100%;
+  }
+
+  body {
+    line-height: 1.4;
+  }
+
+  .container {
+    padding-inline: 14px;
+  }
+
+  /* Titres fluides sans casser l'identité visuelle. */
+  h1 {
+    font-size: clamp(1.75rem, 8vw, 2.5rem);
+    overflow-wrap: anywhere;
+  }
+
+  h2 {
+    font-size: clamp(1.35rem, 6vw, 2rem);
+    overflow-wrap: anywhere;
+  }
+
+  h3 {
+    overflow-wrap: anywhere;
+  }
+
+  /* Une seule colonne sur smartphone. */
+  .product-grid,
+  .products-grid,
+  .cards-grid,
+  .annonces-grid,
+  .library-grid,
+  .shop-grid,
+  .subscription-grid,
+  .pricing-grid,
+  .form-grid,
+  .tl-fields,
+  .mbk-form-grid {
+    grid-template-columns: minmax(0, 1fr) !important;
+  }
+
+  /* Barre d'actions mobile : boutons larges et tactiles. */
+  .modal-foot,
+  .tl-modal-actions,
+  .mbk-modal-actions {
+    display: grid !important;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px !important;
+    width: 100%;
+  }
+
+  .modal-foot button,
+  .tl-modal-actions button,
+  .mbk-modal-actions button {
+    min-height: 44px;
+    width: 100%;
+  }
+
+  .modal-overlay,
+  .tl-modal-bg,
+  .mbk-modal-overlay,
+  [class*="modalOverlay"],
+  [class*="modal-overlay"] {
+    align-items: flex-start !important;
+    padding: 10px !important;
+    overflow-y: auto !important;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .modal,
+  .tl-modal,
+  .mbk-modal {
+    width: 100% !important;
+    max-width: 100% !important;
+    max-height: calc(100dvh - 20px) !important;
+    border-radius: 14px !important;
+  }
+
+  .modal-body {
+    overflow-y: auto;
+    overscroll-behavior: contain;
+  }
+
+  /* Zones tactiles minimum recommandées. */
+  button,
+  [role="button"],
+  a.btn,
+  .btn-primary,
+  .btn-secondary {
+    min-height: 42px;
+  }
+
+  /* Les groupes de filtres et contrôles passent à la ligne. */
+  .filters,
+  .filter-row,
+  .filters-row,
+  .toolbar,
+  .page-actions,
+  .form-actions,
+  .actions {
+    flex-wrap: wrap !important;
+    max-width: 100%;
+  }
+
+  /* Évite qu'une longue URL, un email ou une référence casse la page. */
+  p,
+  td,
+  th,
+  label,
+  small,
+  span {
+    overflow-wrap: anywhere;
+  }
+
+  /* LiveStats reste complet : le conteneur peut être déplacé horizontalement au doigt. */
+  .ps-root {
+    width: 100%;
+    max-width: 100vw;
+    overflow-x: auto;
+    overscroll-behavior-x: contain;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  /* Les graphiques Recharts s'adaptent au parent. */
+  .recharts-responsive-container,
+  .recharts-wrapper,
+  .recharts-surface {
+    max-width: 100% !important;
+  }
+
+  /* Footer : colonnes verticales si nécessaire. */
+  footer [class*="grid"],
+  footer [class*="columns"] {
+    grid-template-columns: 1fr !important;
+  }
+}
+
+@media (max-width: 480px) {
+  .container {
+    padding-inline: 10px;
+  }
+
+  .modal-foot,
+  .tl-modal-actions,
+  .mbk-modal-actions {
+    grid-template-columns: 1fr;
+  }
+
+  .hero-slider {
+    min-height: 320px;
+    height: min(66vh, 420px);
+  }
+
+  .slide {
+    padding: 20px 14px;
+  }
+
+  .slide h1 {
+    font-size: clamp(2rem, 12vw, 3rem);
+  }
+}
+
+/* Paysage smartphone : ne jamais perdre les boutons en bas d'une popup. */
+@media (max-height: 560px) and (orientation: landscape) {
+  .modal-overlay,
+  .tl-modal-bg,
+  .mbk-modal-overlay,
+  [class*="modalOverlay"],
+  [class*="modal-overlay"] {
+    align-items: flex-start !important;
+  }
+
+  .modal,
+  .tl-modal,
+  .mbk-modal {
+    max-height: calc(100dvh - 12px) !important;
+  }
+}

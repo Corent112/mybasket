@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { Roboto, Alfa_Slab_One } from "next/font/google";
 
 import "./globals.css";
@@ -23,6 +23,12 @@ const alfa = Alfa_Slab_One({
 export const metadata: Metadata = {
   title: "MyBasket",
   description: "L'application des coachs de basket",
+};
+
+export const viewport: Viewport = {
+  width: "device-width",
+  initialScale: 1,
+  viewportFit: "cover",
 };
 
 export default function RootLayout({

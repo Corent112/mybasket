@@ -60,7 +60,7 @@ export const adTypeByKey = (k: string) => AD_TYPES.find((t) => t.key === k);
 // ---------------------------------------------------------------------------
 // Référentiels
 // ---------------------------------------------------------------------------
-export const LEVELS = ["Départemental", "Régional", "National"];
+export const LEVELS = ["Tous niveaux", "Départemental", "Régional", "National"];
 
 export const CONTRACTS = [
   "Bénévole",

@@ -126,7 +126,7 @@ export default async function AdminSliderPage() {
           <div>
             <p>Administration MyBasket</p>
             <h1>Slider accueil</h1>
-            <span>Choisis l’image, le texte, le lien, l’ordre et le statut de publication de chaque slide.</span>
+            <span>Gère ici le slider affiché sur la page d’accueil, directement sous le bandeau noir : image, texte, lien, ordre et publication.</span>
           </div>
         </section>
 

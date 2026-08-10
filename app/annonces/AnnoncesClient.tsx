@@ -1194,7 +1194,7 @@ export default function AnnoncesClient() {
       const uploadedDocuments = await uploadManyDataUrls(supabase, user.id, rawDocuments, 'announcements/documents');
       const payloadData = { ...ad.data, images: uploadedImages, videoUrl: uploadedVideo, documents: uploadedDocuments };
 
-      const { error } = await supabase.from('announcements').insert({
+      const { data: createdAnnouncement, error } = await supabase.from('announcements').insert({
         author_user_id: user.id,
         author_type: 'user',
         author_name: ad.author || ad.data?.orgName || null,
@@ -1212,8 +1212,18 @@ export default function AnnoncesClient() {
         status: 'pending',
         views_count: 0,
         contacts_count: 0,
-      });
+      }).select('id').single();
       if (error) throw error;
+
+      // Notification CEO : email + messagerie interne. Une panne de notification
+      // ne bloque jamais le dépôt de l'annonce.
+      if (createdAnnouncement?.id) {
+        fetch('/api/notifications/announcement', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ announcementId: createdAnnouncement.id }),
+        }).catch(() => undefined);
+      }
 
       setFlow({ kind: 'none' });
       flash('Annonce envoyée ✓ Elle sera publiée après validation.');
@@ -1402,7 +1412,7 @@ const ANNONCES_CSS = `
 /* overlay/modale */
 .mba-overlay{position:fixed;inset:0;background:rgba(8,8,10,.62);backdrop-filter:blur(3px);z-index:1000;display:flex;align-items:center;justify-content:center;padding:1rem;animation:mbaIn .15s ease}@keyframes mbaIn{from{opacity:0}to{opacity:1}}
 .mba-modal{background:#fff;border-radius:18px;width:560px;max-width:96vw;max-height:92vh;display:flex;flex-direction:column;overflow:hidden;box-shadow:0 30px 80px rgba(0,0,0,.5);border-top:4px solid var(--or)}
-.mba-modal.lg{width:880px}.mba-modal.full{width:1040px;max-height:96vh;border-top:none}
+.mba-modal.lg{width:880px}.mba-modal.full{width:1040px;max-height:calc(100vh - 24px);border-top:none;overflow-y:auto;overscroll-behavior:contain}
 .mba-mhead{display:flex;align-items:flex-start;justify-content:space-between;gap:1rem;padding:1.1rem 1.3rem;border-bottom:1px solid var(--gris)}
 .mba-mhead h2{font-family:var(--varsity);font-size:1.25rem;line-height:1.1}.mba-mhead p{color:var(--txt-3);font-size:.85rem;margin-top:.25rem}
 .mba-x{background:none;border:none;font-size:1.3rem;cursor:pointer;color:var(--txt-3);line-height:1}.mba-x:hover{color:var(--noir)}.mba-x.light{color:#fff}

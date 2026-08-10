@@ -15,6 +15,7 @@ export default function Header() {
   const [user, setUser] = useState<HeaderUser | null>(null);
   const [cartCount, setCartCount] = useState(0);
   const [cartPulse, setCartPulse] = useState(false);
+  const [mobileOpen, setMobileOpen] = useState(false);
 
   const previousCountRef = useRef(0);
   const pulseTimeoutRef = useRef<number | null>(null);
@@ -118,6 +119,26 @@ export default function Header() {
     };
   }, [loadCartCount, supabase]);
 
+  useEffect(() => {
+    if (!mobileOpen) return;
+
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setMobileOpen(false);
+    };
+
+    window.addEventListener("keydown", onKeyDown);
+
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      window.removeEventListener("keydown", onKeyDown);
+    };
+  }, [mobileOpen]);
+
+  const closeMobile = () => setMobileOpen(false);
+
   const resetPlaquette = () => {
     localStorage.removeItem("mybasket_plaquette_load");
     localStorage.removeItem("mybasket_plaquette_result");
@@ -139,6 +160,19 @@ export default function Header() {
               className="site-logo-img"
             />
           </Link>
+
+          <button
+            type="button"
+            className={`mobile-menu-toggle ${mobileOpen ? "open" : ""}`}
+            onClick={() => setMobileOpen((value) => !value)}
+            aria-expanded={mobileOpen}
+            aria-controls="mybasket-mobile-navigation"
+            aria-label={mobileOpen ? "Fermer le menu" : "Ouvrir le menu"}
+          >
+            <span />
+            <span />
+            <span />
+          </button>
 
           <nav className="site-nav">
             <div className="nav-item">
@@ -197,6 +231,59 @@ export default function Header() {
             )}
           </div>
         </div>
+
+        <div
+          id="mybasket-mobile-navigation"
+          className={`mobile-drawer ${mobileOpen ? "open" : ""}`}
+          aria-hidden={!mobileOpen}
+        >
+          <div className="mobile-drawer-head">
+            <img src="/logo-mybasket02.png" alt="MyBasket" />
+            <button type="button" onClick={closeMobile} aria-label="Fermer le menu">×</button>
+          </div>
+
+          <div className="mobile-drawer-scroll">
+            <Link href="/bibliotheque" onClick={closeMobile}>BIBLIOTHÈQUE</Link>
+            <div className="mobile-subnav">
+              <Link href="/exercices" onClick={closeMobile}>Exercices</Link>
+              <Link href="/systemes" onClick={closeMobile}>Systèmes</Link>
+              <Link href="/seances" onClick={closeMobile}>Séances</Link>
+            </div>
+
+            <Link href="/plaquette?new=1" onClick={() => { resetPlaquette(); closeMobile(); }}>PLAQUETTE</Link>
+            <Link href="/accompagnement" onClick={closeMobile}>ACCOMPAGNEMENT</Link>
+            <div className="mobile-subnav">
+              <Link href="/accompagnement/direction-technique" onClick={closeMobile}>Direction technique</Link>
+              <Link href="/accompagnement/formation" onClick={closeMobile}>Formation</Link>
+              <Link href="/accompagnement/scouting-video" onClick={closeMobile}>Scouting vidéo</Link>
+            </div>
+
+            <Link href="/annonces" onClick={closeMobile}>ANNONCES</Link>
+            <Link href="/abonnements" onClick={closeMobile}>ABONNEMENTS</Link>
+            <Link href="/boutique" onClick={closeMobile}>BOUTIQUE</Link>
+
+            <div className="mobile-divider" />
+
+            {user ? (
+              <>
+                <Link href="/mon-compte?tab=profil" onClick={closeMobile}>MON PROFIL</Link>
+                <Link href="/mon-compte?tab=equipes" onClick={closeMobile}>MES ÉQUIPES</Link>
+                <Link href="/mon-compte?tab=management" onClick={closeMobile}>MANAGEMENT</Link>
+                <button type="button" className="mobile-signout" onClick={signOut}>DÉCONNEXION</button>
+              </>
+            ) : (
+              <Link href="/connexion" onClick={closeMobile}>S&apos;IDENTIFIER</Link>
+            )}
+          </div>
+        </div>
+
+        <button
+          type="button"
+          className={`mobile-backdrop ${mobileOpen ? "open" : ""}`}
+          onClick={closeMobile}
+          aria-label="Fermer le menu"
+          tabIndex={mobileOpen ? 0 : -1}
+        />
       </header>
 
       <div className="blackbar">
@@ -576,7 +663,201 @@ export default function Header() {
           }
         }
 
-        @media (max-width: 1200px) {
+        .mobile-menu-toggle,
+        .mobile-drawer,
+        .mobile-backdrop {
+          display: none;
+        }
+
+        @media (max-width: 980px) {
+          .site-header {
+            height: 68px;
+            position: sticky;
+            top: 0;
+          }
+
+          .site-header-inner {
+            height: 68px;
+            display: grid;
+            grid-template-columns: 56px 1fr auto;
+            gap: 10px;
+            padding: 0 14px;
+          }
+
+          .site-logo {
+            justify-self: center;
+            grid-column: 2;
+          }
+
+          .site-logo-img {
+            width: 58px;
+            height: 58px;
+          }
+
+          .site-nav {
+            display: none;
+          }
+
+          .site-actions {
+            grid-column: 3;
+            grid-row: 1;
+          }
+
+          .site-actions .account-menu > :global(a),
+          .site-actions > :global(a) {
+            display: none;
+          }
+
+          .mobile-menu-toggle {
+            display: inline-flex;
+            grid-column: 1;
+            grid-row: 1;
+            width: 42px;
+            height: 42px;
+            border: 1px solid #e8e0d6;
+            border-radius: 11px;
+            background: #fff;
+            align-items: center;
+            justify-content: center;
+            flex-direction: column;
+            gap: 5px;
+            z-index: 3050;
+          }
+
+          .mobile-menu-toggle span {
+            width: 19px;
+            height: 2px;
+            border-radius: 999px;
+            background: #6b1a2c;
+            transition: transform .2s ease, opacity .2s ease;
+          }
+
+          .mobile-menu-toggle.open span:nth-child(1) {
+            transform: translateY(7px) rotate(45deg);
+          }
+          .mobile-menu-toggle.open span:nth-child(2) { opacity: 0; }
+          .mobile-menu-toggle.open span:nth-child(3) {
+            transform: translateY(-7px) rotate(-45deg);
+          }
+
+          .mobile-drawer {
+            display: flex;
+            position: fixed;
+            inset: 0 auto 0 0;
+            width: min(86vw, 380px);
+            height: 100dvh;
+            background: #fff;
+            z-index: 3200;
+            flex-direction: column;
+            transform: translateX(-105%);
+            transition: transform .25s ease;
+            box-shadow: 22px 0 60px rgba(0,0,0,.22);
+          }
+
+          .mobile-drawer.open { transform: translateX(0); }
+
+          .mobile-drawer-head {
+            min-height: 72px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 8px 16px;
+            border-bottom: 1px solid #ece4da;
+          }
+
+          .mobile-drawer-head img {
+            width: 58px;
+            height: 58px;
+            object-fit: contain;
+          }
+
+          .mobile-drawer-head button {
+            width: 40px;
+            height: 40px;
+            border-radius: 50%;
+            background: #f7f2ec;
+            color: #6b1a2c;
+            font-size: 28px;
+            line-height: 1;
+          }
+
+          .mobile-drawer-scroll {
+            padding: 12px 16px 28px;
+            overflow-y: auto;
+            overscroll-behavior: contain;
+            -webkit-overflow-scrolling: touch;
+          }
+
+          .mobile-drawer-scroll > :global(a),
+          .mobile-signout {
+            display: flex;
+            width: 100%;
+            min-height: 48px;
+            align-items: center;
+            padding: 0 10px;
+            border-radius: 9px;
+            color: #181413;
+            font-weight: 900;
+            font-size: 15px;
+            text-align: left;
+          }
+
+          .mobile-drawer-scroll > :global(a:hover),
+          .mobile-signout:hover { background: #fbf4ea; color: #6b1a2c; }
+
+          .mobile-subnav {
+            display: grid;
+            gap: 2px;
+            padding: 0 0 7px 14px;
+          }
+
+          .mobile-subnav :global(a) {
+            padding: 8px 10px;
+            border-left: 2px solid #d4a24c;
+            color: #766a64;
+            font-size: 13px;
+            font-weight: 800;
+          }
+
+          .mobile-divider {
+            height: 1px;
+            margin: 10px 0;
+            background: #ece4da;
+          }
+
+          .mobile-signout {
+            border: 0;
+            background: transparent;
+          }
+
+          .mobile-backdrop {
+            display: block;
+            position: fixed;
+            inset: 0;
+            z-index: 3100;
+            background: rgba(0,0,0,.45);
+            opacity: 0;
+            pointer-events: none;
+            transition: opacity .2s ease;
+          }
+
+          .mobile-backdrop.open {
+            opacity: 1;
+            pointer-events: auto;
+          }
+
+          .blackbar {
+            height: 50px;
+            padding: 0 14px;
+          }
+
+          .icons { gap: 12px; }
+          .icon-link { width: 32px; height: 32px; }
+          .cart-link, .cart-svg { width: 52px; height: 44px; }
+          .mini-cart { display: none; }
+        }
+
+        @media (min-width: 981px) and (max-width: 1200px) {
           .site-header-inner {
             grid-template-columns: 110px 1fr 210px;
           }
@@ -593,31 +874,10 @@ export default function Header() {
           }
         }
 
-        @media (max-width: 820px) {
-          .site-header {
-            height: auto;
-          }
-
-          .site-header-inner {
-            height: auto;
-            grid-template-columns: 80px 1fr;
-            padding: 10px 16px;
-          }
-
-          .site-nav {
-            grid-column: 1 / -1;
-            justify-content: flex-start;
-            overflow-x: auto;
-            padding-bottom: 8px;
-          }
-
-          .blackbar {
-            padding: 0 18px;
-          }
-
-          .mini-cart {
-            display: none;
-          }
+        @media (max-width: 520px) {
+          .site-header-inner { padding: 0 10px; }
+          .blackbar { padding: 0 10px; }
+          .mobile-drawer { width: min(92vw, 360px); }
         }
       `}</style>
     </>
