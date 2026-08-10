@@ -144,7 +144,7 @@ export default function TeamForm({
 
         <div
           style={{
-            padding: "1rem 1.25rem",
+            padding: "1.1rem 1.35rem 1.25rem",
             overflowY: "auto",
             flex: "1 1 auto",
           }}
@@ -180,7 +180,12 @@ export default function TeamForm({
                     style={{
                       width: 110,
                       height: 110,
-                      objectFit: "cover",
+                      objectFit: "contain",
+                      background: "#ffffff",
+                      border: "1px solid #eadfd5",
+                      borderRadius: 14,
+                      padding: 8,
+                      boxSizing: "border-box",
                     }}
                   />
                 ) : (
@@ -191,6 +196,9 @@ export default function TeamForm({
                       height: 110,
                       margin: "0 auto",
                       display: "flex",
+                      background: "#ffffff",
+                      border: "1px solid #eadfd5",
+                      borderRadius: 14,
                       alignItems: "center",
                       justifyContent: "center",
                     }}
@@ -201,15 +209,21 @@ export default function TeamForm({
 
                 <button
                   type="button"
-                  className="tl-btn tl-btn-ghost tl-btn-sm"
+                  
                   style={{
                     marginTop: ".45rem",
                     minWidth: 110,
                     minHeight: 40,
-                    background: "#ffffff",
+                    appearance: "none",
+                    WebkitAppearance: "none",
+                    background: "#fff7f8",
                     color: "#7a1228",
                     border: "1.5px solid #7a1228",
-                    fontWeight: 800,
+                    borderRadius: 10,
+                    fontSize: ".82rem",
+                    lineHeight: 1,
+                    fontWeight: 900,
+                    cursor: "pointer",
                   }}
                   onClick={() => logoRef.current?.click()}
                 >
@@ -267,15 +281,21 @@ export default function TeamForm({
 
                 <button
                   type="button"
-                  className="tl-btn tl-btn-ghost tl-btn-sm"
+                  
                   style={{
                     marginTop: ".45rem",
                     minWidth: 150,
                     minHeight: 40,
-                    background: "#ffffff",
+                    appearance: "none",
+                    WebkitAppearance: "none",
+                    background: "#fff7f8",
                     color: "#7a1228",
                     border: "1.5px solid #7a1228",
-                    fontWeight: 800,
+                    borderRadius: 10,
+                    fontSize: ".82rem",
+                    lineHeight: 1,
+                    fontWeight: 900,
+                    cursor: "pointer",
                   }}
                   onClick={() => bannerRef.current?.click()}
                 >
@@ -406,31 +426,43 @@ export default function TeamForm({
         </div>
 
         <div
-          className="tl-modal-actions"
           style={{
             flex: "0 0 auto",
             margin: 0,
-            padding: ".9rem 1.25rem",
+            padding: ".9rem 1.35rem 1rem",
             borderTop: "1px solid #efe6db",
-            background: "#fff",
+            background: "rgba(255,255,255,.98)",
             position: "sticky",
             bottom: 0,
-            zIndex: 5,
+            zIndex: 20,
+            display: "flex",
+            justifyContent: "flex-end",
+            alignItems: "center",
+            gap: ".75rem",
+            minHeight: 72,
+            boxSizing: "border-box",
           }}
         >
           <button
             type="button"
-            className="tl-btn tl-btn-ghost"
+            
             style={{
               minWidth: 120,
               minHeight: 44,
               padding: ".7rem 1.2rem",
               whiteSpace: "nowrap",
+              appearance: "none",
+              WebkitAppearance: "none",
               background: "#ffffff",
               color: "#7a1228",
               border: "1.5px solid #7a1228",
-              borderRadius: 11,
-              fontWeight: 800,
+              borderRadius: 12,
+              fontSize: ".9rem",
+              lineHeight: 1,
+              fontWeight: 900,
+              cursor: "pointer",
+              opacity: 1,
+              visibility: "visible",
             }}
             onClick={onClose}
           >
@@ -439,18 +471,25 @@ export default function TeamForm({
 
           <button
             type="button"
-            className="tl-btn tl-btn-bx"
+            
             style={{
               minWidth: 140,
               minHeight: 44,
               padding: ".7rem 1.2rem",
               whiteSpace: "nowrap",
+              appearance: "none",
+              WebkitAppearance: "none",
               background: "#7a1228",
               color: "#ffffff",
               border: "1.5px solid #7a1228",
-              borderRadius: 11,
+              borderRadius: 12,
+              fontSize: ".9rem",
+              lineHeight: 1,
               fontWeight: 900,
-              boxShadow: "0 4px 14px rgba(122, 18, 40, 0.24)",
+              cursor: "pointer",
+              opacity: 1,
+              visibility: "visible",
+              boxShadow: "0 5px 16px rgba(122, 18, 40, 0.24)",
             }}
             onClick={submit}
           >
