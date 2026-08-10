@@ -81,7 +81,16 @@ export default function PlayerForm({
       return;
     }
 
-    onSave(p as Player);
+    const playerToSave: Player = {
+      ...(p as Player),
+      id:
+        p.id ||
+        (typeof crypto !== "undefined" && "randomUUID" in crypto
+          ? crypto.randomUUID()
+          : p.id),
+    };
+
+    onSave(playerToSave);
   }
 
   const num = (v: number | null) => (v == null ? "" : String(v));

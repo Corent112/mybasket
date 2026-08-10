@@ -528,7 +528,27 @@ export async function upsertPlayer(
   const supabase = createClient();
   const userId = await getUserId();
 
-  const payload = playerPayload(teamId, player, userId);
+  // Un nouveau joueur sort de emptyPlayer() avec id: "".
+  // On lui attribue donc un UUID AVANT l'upsert au lieu d'envoyer
+  // id: undefined et de dépendre d'un DEFAULT SQL éventuel sur players.id.
+  const playerWithId: Player = {
+    ...player,
+    id: isUuid(player.id) ? player.id : uid("p"),
+  };
+
+  if (!isUuid(playerWithId.id)) {
+    throw new Error(
+      "Impossible de générer un identifiant UUID valide pour le joueur."
+    );
+  }
+
+  if (!isUuid(teamId)) {
+    throw new Error(
+      `L'équipe sélectionnée n'a pas un identifiant Supabase valide : ${teamId}`
+    );
+  }
+
+  const payload = playerPayload(teamId, playerWithId, userId);
 
   const { data, error } = await supabase
     .from("players")
@@ -538,7 +558,17 @@ export async function upsertPlayer(
 
   if (error) {
     logSupabaseError("Erreur upsertPlayer", error, payload);
-    throw error;
+
+    throw new Error(
+      [
+        error.code ? `[${error.code}]` : "",
+        error.message || "Erreur pendant l'enregistrement du joueur.",
+        error.details ? `Détails : ${error.details}` : "",
+        error.hint ? `Aide : ${error.hint}` : "",
+      ]
+        .filter(Boolean)
+        .join(" ")
+    );
   }
 
   return normalizePlayerRow(data);
