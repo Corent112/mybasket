@@ -206,6 +206,10 @@ export default function TeamForm({
                     marginTop: ".45rem",
                     minWidth: 110,
                     minHeight: 40,
+                    background: "#ffffff",
+                    color: "#7a1228",
+                    border: "1.5px solid #7a1228",
+                    fontWeight: 800,
                   }}
                   onClick={() => logoRef.current?.click()}
                 >
@@ -268,6 +272,10 @@ export default function TeamForm({
                     marginTop: ".45rem",
                     minWidth: 150,
                     minHeight: 40,
+                    background: "#ffffff",
+                    color: "#7a1228",
+                    border: "1.5px solid #7a1228",
+                    fontWeight: 800,
                   }}
                   onClick={() => bannerRef.current?.click()}
                 >
@@ -418,6 +426,11 @@ export default function TeamForm({
               minHeight: 44,
               padding: ".7rem 1.2rem",
               whiteSpace: "nowrap",
+              background: "#ffffff",
+              color: "#7a1228",
+              border: "1.5px solid #7a1228",
+              borderRadius: 11,
+              fontWeight: 800,
             }}
             onClick={onClose}
           >
@@ -432,6 +445,12 @@ export default function TeamForm({
               minHeight: 44,
               padding: ".7rem 1.2rem",
               whiteSpace: "nowrap",
+              background: "#7a1228",
+              color: "#ffffff",
+              border: "1.5px solid #7a1228",
+              borderRadius: 11,
+              fontWeight: 900,
+              boxShadow: "0 4px 14px rgba(122, 18, 40, 0.24)",
             }}
             onClick={submit}
           >
