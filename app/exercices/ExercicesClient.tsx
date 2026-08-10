@@ -585,11 +585,18 @@ export default function ExercicesClient() {
           display: grid;
           grid-template-columns: repeat(auto-fill, minmax(250px, 270px));
           gap: 1.4rem;
-          align-items: start;
+          align-items: stretch;
+          grid-auto-rows: 1fr;
         }
         .mb-exercise-card {
-          width: 100%; background: #fff; border: 1.5px solid #cfcfcf;
-          border-radius: 14px; overflow: hidden; padding: 12px;
+          width: 100%;
+          height: 100%;
+          box-sizing: border-box;
+          background: #fff;
+          border: 1.5px solid #cfcfcf;
+          border-radius: 14px;
+          overflow: hidden;
+          padding: 12px;
           box-shadow: 0 6px 18px rgba(0,0,0,.04);
         }
         .mb-exercise-cover { display:flex; align-items:center; justify-content:center; width:100%; height:190px; background:#fff; overflow:hidden; text-decoration:none; }
