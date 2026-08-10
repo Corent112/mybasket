@@ -79,6 +79,14 @@ function savedPlayerPositionMap(session: GenericRow): Record<string, string> {
 async function imageDataUri(source?: string | null) {
   if (!source) return null;
 
+  // Les logos ajoutés depuis TeamForm sont enregistrés directement
+  // en Data URI (data:image/png;base64,...). Ils sont déjà exploitables
+  // par @react-pdf/renderer et ne doivent surtout pas être traités
+  // comme un chemin de fichier dans /public.
+  if (/^data:image\/[a-zA-Z0-9.+-]+;base64,/i.test(source)) {
+    return source;
+  }
+
   try {
     if (/^https?:\/\//i.test(source)) {
       const response = await fetch(source, { cache: "no-store" });
