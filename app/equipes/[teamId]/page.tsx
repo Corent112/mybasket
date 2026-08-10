@@ -579,7 +579,11 @@ export default function EquipeDetailPage({
     setTimeout(() => setToast(""), 2200);
   }
 
-  function compress(file: File, max: number): Promise<string> {
+  function compress(
+    file: File,
+    max: number,
+    preserveTransparency = false,
+  ): Promise<string> {
     return new Promise((resolve, reject) => {
       const r = new FileReader();
       r.onload = () => {
@@ -589,8 +593,21 @@ export default function EquipeDetailPage({
           const c = document.createElement("canvas");
           c.width = Math.round(img.width * s);
           c.height = Math.round(img.height * s);
-          c.getContext("2d")!.drawImage(img, 0, 0, c.width, c.height);
-          resolve(c.toDataURL("image/jpeg", 0.85));
+
+          const ctx = c.getContext("2d");
+          if (!ctx) {
+            reject(new Error("Canvas indisponible"));
+            return;
+          }
+
+          ctx.clearRect(0, 0, c.width, c.height);
+          ctx.drawImage(img, 0, 0, c.width, c.height);
+
+          resolve(
+            preserveTransparency
+              ? c.toDataURL("image/png")
+              : c.toDataURL("image/jpeg", 0.85),
+          );
         };
         img.onerror = reject;
         img.src = r.result as string;
@@ -603,7 +620,7 @@ export default function EquipeDetailPage({
   async function changeLogo(e: React.ChangeEvent<HTMLInputElement>) {
     const f = e.target.files?.[0];
     if (!f || !team) return;
-    const logo = await compress(f, 400);
+    const logo = await compress(f, 400, true);
     await saveTeam({ ...team, logo });
     await reload();
     flash("Logo mis à jour ✓");
@@ -730,7 +747,18 @@ export default function EquipeDetailPage({
 
           <div className="tl-hero-logo">
             {team.logo ? (
-              <img src={team.logo} alt="" />
+              <img
+                src={team.logo}
+                alt=""
+                style={{
+                  width: "100%",
+                  height: "100%",
+                  objectFit: "contain",
+                  objectPosition: "center",
+                  background: "transparent",
+                  display: "block",
+                }}
+              />
             ) : (
               <svg
                 className="ball"
@@ -1107,6 +1135,19 @@ export default function EquipeDetailPage({
 
 
       <style jsx>{`
+        .tl-hero-logo {
+          background: transparent !important;
+          overflow: hidden;
+        }
+
+        .tl-hero-logo > img {
+          width: 100%;
+          height: 100%;
+          object-fit: contain;
+          object-position: center;
+          background: transparent;
+        }
+
         .team-hero-linked {
           position: relative;
           padding-right: 470px;
