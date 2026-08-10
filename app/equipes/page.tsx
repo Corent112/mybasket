@@ -47,6 +47,23 @@ function str(value: unknown): string {
   return String(value ?? "").trim();
 }
 
+function toIsoDate(value: unknown): string | null {
+  const raw = str(value);
+  if (!raw) return null;
+
+  // Déjà au bon format Supabase/Postgres.
+  if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) return raw;
+
+  // Format français JJ/MM/AAAA.
+  const french = raw.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+  if (french) {
+    const [, day, month, year] = french;
+    return `${year}-${month.padStart(2, "0")}-${day.padStart(2, "0")}`;
+  }
+
+  return null;
+}
+
 function toArray(value: unknown): string[] {
   if (Array.isArray(value)) return value.map(String);
   if (!value) return [];
@@ -204,28 +221,69 @@ function teamToSupabase(team: Team, userId: string) {
 }
 
 function playerToSupabase(player: Player, teamId: string, userId: string) {
+  const extended = player as Player & {
+    licenseNumber?: string;
+    license_number?: string;
+    tutor1Phone?: string;
+    tutor1_phone?: string;
+    tutor1Email?: string;
+    tutor1_email?: string;
+    tutor2Phone?: string;
+    tutor2_phone?: string;
+    tutor2Email?: string;
+    tutor2_email?: string;
+  };
+
   return {
     id: player.id || player.supabasePlayerId || uuid(),
     user_id: userId,
     team_id: teamId,
+
     first_name: player.firstName || "",
     last_name: player.lastName || "",
     number: player.num ?? null,
     photo_url: player.photo || null,
 
-    // Colonnes réellement utilisées par la table players.
-    position: player.postePrincipal || "",
-    secondary_position: player.posteSecondaire || "",
-    status: player.statut || "Disponible",
-    presence_pct: player.presencePct || 0,
+    // Noms EXACTS de la table public.players.
+    position_primary: player.postePrincipal || "",
+    position_secondary: player.posteSecondaire || "",
 
-    // Les informations complémentaires restent disponibles sans dépendre
-    // de colonnes SQL optionnelles qui peuvent ne pas exister.
-    metadata: {
-      ...player,
-      id: player.id || player.supabasePlayerId || undefined,
-      teamId,
-    },
+    birth_date: toIsoDate(player.dob),
+    age: player.age ?? null,
+    height: player.taille || "",
+    weight: player.poids || "",
+    dominant_hand: player.mainDominante || "",
+    status: player.statut || "Disponible",
+
+    license_number:
+      extended.licenseNumber ??
+      extended.license_number ??
+      null,
+
+    tutor1_phone:
+      extended.tutor1Phone ??
+      extended.tutor1_phone ??
+      null,
+    tutor1_email:
+      extended.tutor1Email ??
+      extended.tutor1_email ??
+      null,
+    tutor2_phone:
+      extended.tutor2Phone ??
+      extended.tutor2_phone ??
+      null,
+    tutor2_email:
+      extended.tutor2Email ??
+      extended.tutor2_email ??
+      null,
+
+    presence_pct: player.presencePct ?? 0,
+    punctuality_pct: player.ponctualitePct ?? 0,
+    potential: player.potentiel ?? null,
+    notes: player.notes || "",
+
+    // Copie complète pour conserver les données métier non matérialisées en colonnes.
+    metadata: player,
 
     updated_at: new Date().toISOString(),
   };
@@ -526,15 +584,40 @@ export default function MesEquipesPage() {
     try {
       const {
         data: { user },
+        error: authError,
       } = await supabase.auth.getUser();
 
+      if (authError) throw authError;
       if (!user) throw new Error("Utilisateur non connecté");
 
       if (!teamId) {
         throw new Error("Aucune équipe n'est associée au joueur.");
       }
 
+      // Vérifie la FK players_team_id_fkey AVANT l'insert.
+      const { data: existingTeam, error: teamLookupError } = await supabase
+        .from("teams")
+        .select("id,user_id")
+        .eq("id", teamId)
+        .maybeSingle();
+
+      if (teamLookupError) throw teamLookupError;
+
+      if (!existingTeam?.id) {
+        throw new Error(
+          `L'équipe ${teamId} n'existe pas dans la table teams.`
+        );
+      }
+
+      if (existingTeam.user_id && existingTeam.user_id !== user.id) {
+        throw new Error(
+          "Cette équipe n'appartient pas à l'utilisateur connecté."
+        );
+      }
+
       const payload = playerToSupabase(p, teamId, user.id);
+
+      console.log("Payload création joueur :", payload);
 
       const { data, error } = await supabase
         .from("players")
@@ -564,7 +647,9 @@ export default function MesEquipesPage() {
       }
 
       if (!data?.id) {
-        throw new Error("Le joueur a été envoyé mais Supabase n'a retourné aucun identifiant.");
+        throw new Error(
+          "Supabase n'a retourné aucun identifiant après la création du joueur."
+        );
       }
 
       setPlayerFor(null);
@@ -577,8 +662,6 @@ export default function MesEquipesPage() {
         error?.message ||
         "Erreur pendant l'enregistrement du joueur.";
 
-      // On affiche volontairement la vraie erreur pendant la phase de correction,
-      // au lieu de masquer le problème derrière un message générique.
       alert(message);
       flash(message);
     }
