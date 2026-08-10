@@ -1297,6 +1297,10 @@ export default function PriseStatsProPage() {
     { key: 'r', name: 'Thème 4' },
   ]);
   const [clipThemeAssignments, setClipThemeAssignments] = useState<Record<string, string[]>>({});
+  const [historySearch, setHistorySearch] = useState('');
+  const [historyScope, setHistoryScope] = useState<'all' | 'attaque' | 'defense' | 'made' | 'missed'>('all');
+  const [timelineCompact, setTimelineCompact] = useState(false);
+  const [timelineHiddenRows, setTimelineHiddenRows] = useState<Record<string, boolean>>({});
 
   const assignClipTheme = (action: ClipAction, themeName: string) => {
     if (!action.id) return;
@@ -1395,39 +1399,1578 @@ export default function PriseStatsProPage() {
   };
 
   const openMontageWindow = () => {
-    const w = window.open('', 'mybasket-montage-window', 'width=1380,height=860');
-    if (!w) { flash('Popup bloquée par le navigateur.'); return; }
+    const w = window.open(
+      '',
+      'mybasket-montage-window',
+      'width=1560,height=960,resizable=yes,scrollbars=yes',
+    );
 
-    // §7 · Le montage conserve les bornes ORIGINALES (clipStart/clipEnd bruts) et
-    // expose EN PLUS les bornes synchronisées (mediaStart/mediaEnd), calculées à
-    // l'export via la synchro du match. On ne duplique ni ne modifie les clips.
-    const items = montageItems.map((item, index) => ({
+    if (!w) {
+      flash('Popup bloquée par le navigateur.');
+      return;
+    }
+
+    const montagePayloadItems = montageItems.map((item, index) => ({
       ...item,
       index: index + 1,
-      mediaStart: resolveSyncedVideoTime(item.clipStart, videoSyncRef.current),
-      mediaEnd: resolveSyncedVideoTime(item.clipEnd, videoSyncRef.current),
+      type: item.caid.startsWith('slide_')
+        ? 'title'
+        : item.caid.startsWith('image_')
+          ? 'image'
+          : item.caid.startsWith('text_')
+            ? 'text'
+            : 'clip',
+      mediaStart: resolveSyncedVideoTime(
+        item.clipStart,
+        videoSyncRef.current,
+      ),
+      mediaEnd: resolveSyncedVideoTime(
+        item.clipEnd,
+        videoSyncRef.current,
+      ),
     }));
-    const itemsJson = JSON.stringify(items).replace(/</g, '\\u003c');
-    const titleJson = JSON.stringify(montageTitle || 'Nouveau montage');
-    const noteJson = JSON.stringify(montageNote || '');
 
-    w.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>MyBasket · Montage</title><style>
-      *{box-sizing:border-box}html,body{margin:0;height:100%;background:#07101f;color:#fff;font-family:Inter,system-ui,sans-serif}
-      header{height:64px;display:flex;align-items:center;justify-content:space-between;padding:0 22px;background:#111827;border-bottom:1px solid #293449}
-      header b{font-size:20px}.app{display:grid;grid-template-columns:270px 1fr 330px;height:calc(100% - 64px)}
-      aside,.props{padding:18px;background:#0b1424;overflow:auto}.props{border-left:1px solid #263044}aside{border-right:1px solid #263044}
-      main{padding:20px;overflow:auto}.preview{height:52%;border-radius:18px;background:#000;display:grid;place-items:center;border:1px solid #263044;color:#65718a}
-      .timeline{margin-top:18px;display:flex;gap:10px;overflow:auto;padding:12px;background:#0b1424;border-radius:14px}
-      .clip{min-width:210px;padding:12px;border:1px solid #33415d;border-radius:12px;background:#111b2d}.clip b{display:block;color:#f0bd55;margin-bottom:6px}
-      button,input,textarea{font:inherit}.tool{width:100%;padding:11px;margin:0 0 8px;border-radius:10px;border:1px solid #33415d;background:#172238;color:#fff;text-align:left;cursor:pointer}
-      input,textarea{width:100%;padding:10px;border-radius:10px;border:1px solid #33415d;background:#08111f;color:#fff;margin-bottom:12px}textarea{min-height:110px}
-      .export{padding:11px 16px;border:0;border-radius:10px;background:#d4a24c;color:#10131d;font-weight:900;cursor:pointer}
-    </style></head><body><header><b>🎬 MyBasket Montage</b><button class="export" id="export">Exporter le projet</button></header><div class="app"><aside><h3>Bibliothèque</h3><button class="tool">＋ Ajouter un titre</button><button class="tool">＋ Ajouter une image</button><button class="tool">✎ Ajouter du texte</button><button class="tool">➜ Outil dessin</button><button class="tool">✂ Rogner un clip</button></aside><main><div class="preview">Aperçu du montage</div><div class="timeline" id="timeline"></div></main><div class="props"><h3>Projet</h3><label>Titre</label><input id="title"><label>Notes</label><textarea id="note"></textarea><p style="color:#94a3b8;font-size:12px">Les clips sélectionnés dans LiveStat apparaissent dans la timeline.</p></div></div><script>
-      const items=${itemsJson}; const timeline=document.getElementById('timeline');
-      document.getElementById('title').value=${titleJson}; document.getElementById('note').value=${noteJson};
-      timeline.innerHTML=items.length?items.map(x=>'<div class="clip"><b>'+x.index+'. '+String(x.label||'Clip')+'</b><small>'+String(x.sub||'')+'</small><p>'+String(x.note||'')+'</p></div>').join(''):'<div style="color:#65718a">Aucun clip sélectionné.</div>';
-      document.getElementById('export').onclick=()=>{ const data={title:document.getElementById('title').value,note:document.getElementById('note').value,items}; const a=document.createElement('a'); a.href=URL.createObjectURL(new Blob([JSON.stringify(data,null,2)],{type:'application/json'})); a.download='montage-mybasket.json'; a.click(); };
-    <\/script></body></html>`);
+    const montageLibrary = actions.map((action) => {
+      const player = find(action.playerId);
+      const edit = clipEdits[action.id];
+
+      return {
+        caid: action.id,
+        type: 'clip',
+        label: `${tags.label(action.tempsFort) || 'Action'} · ${
+          describe(action, find).t
+        }`,
+        sub: [
+          periodLabel(action.q),
+          action.clock,
+          player ? `#${player.num} ${player.name}` : null,
+        ]
+          .filter(Boolean)
+          .join(' · '),
+        note: edit?.note || '',
+        mediaStart: resolveSyncedVideoTime(
+          edit?.trimStart ?? action.clipStart ?? action.possessionStart,
+          videoSyncRef.current,
+        ),
+        mediaEnd: resolveSyncedVideoTime(
+          edit?.trimEnd ?? action.clipEnd ?? action.possessionEnd,
+          videoSyncRef.current,
+        ),
+        tags: [
+          action.context,
+          action.systemeName || action.systemeJeu || action.systemeSlot,
+          tags.label(action.tempsFort),
+          action.actionType,
+          action.shotType,
+          action.shotResult === 'made'
+            ? 'Marqué'
+            : action.shotResult === 'missed'
+              ? 'Raté'
+              : action.shotResult,
+          action.zone,
+          ...(clipThemeAssignments[action.id] || []),
+        ].filter(Boolean),
+      };
+    });
+
+    const payload = JSON.stringify({
+      items: montagePayloadItems,
+      library: montageLibrary,
+      shortcuts: clipShortcutThemes,
+      title: montageTitle || 'Nouveau montage',
+      note: montageNote || '',
+      videoUrl: videoUrl || '',
+    }).replace(/</g, '\\u003c');
+
+    w.document.open();
+    w.document.write(`<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>MyBasket · Montage Pro</title>
+  <style>
+    :root {
+      --bg: #070b14;
+      --panel: #0c1423;
+      --panel2: #111b2d;
+      --line: #29364e;
+      --text: #eef2f8;
+      --muted: #8794aa;
+      --gold: #d4a24c;
+      --wine: #6b1a2c;
+      --green: #22c55e;
+      --red: #ef4444;
+    }
+
+    * { box-sizing: border-box; }
+
+    html, body {
+      width: 100%;
+      height: 100%;
+      margin: 0;
+      overflow: hidden;
+      background: var(--bg);
+      color: var(--text);
+      font-family: Inter, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+
+    button, input, textarea, select {
+      font: inherit;
+    }
+
+    button {
+      cursor: pointer;
+    }
+
+    .topbar {
+      height: 64px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      padding: 0 18px;
+      border-bottom: 1px solid var(--line);
+      background: #0e1727;
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .brand b {
+      font-size: 19px;
+    }
+
+    .brand span {
+      padding: 3px 7px;
+      border: 1px solid rgba(212,162,76,.55);
+      border-radius: 999px;
+      color: var(--gold);
+      font-size: 9px;
+      font-weight: 900;
+    }
+
+    .top-actions {
+      display: flex;
+      gap: 8px;
+    }
+
+    .top-actions button {
+      min-height: 38px;
+      padding: 0 13px;
+      border: 1px solid var(--line);
+      border-radius: 9px;
+      background: #172238;
+      color: var(--text);
+      font-weight: 850;
+    }
+
+    .top-actions .primary {
+      border-color: var(--gold);
+      background: var(--gold);
+      color: #17120a;
+    }
+
+    .workspace {
+      display: grid;
+      grid-template-columns: 300px minmax(0,1fr) 330px;
+      height: calc(100% - 64px);
+      min-width: 1100px;
+    }
+
+    .library,
+    .properties {
+      min-width: 0;
+      overflow: auto;
+      padding: 14px;
+      background: var(--panel);
+    }
+
+    .library {
+      border-right: 1px solid var(--line);
+    }
+
+    .properties {
+      border-left: 1px solid var(--line);
+    }
+
+    .column-title {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 10px;
+    }
+
+    .column-title b {
+      font-size: 14px;
+    }
+
+    .count {
+      min-width: 26px;
+      height: 26px;
+      display: grid;
+      place-items: center;
+      border-radius: 8px;
+      background: #171f30;
+      color: var(--gold);
+      font-size: 10px;
+      font-weight: 900;
+    }
+
+    .search {
+      width: 100%;
+      height: 38px;
+      margin-bottom: 10px;
+      padding: 0 10px;
+      border: 1px solid var(--line);
+      border-radius: 9px;
+      background: #08111f;
+      color: #fff;
+    }
+
+    .library-list {
+      display: grid;
+      gap: 8px;
+    }
+
+    .library-card {
+      display: grid;
+      grid-template-columns: minmax(0,1fr) 34px;
+      gap: 8px;
+      padding: 10px;
+      border: 1px solid #2c3951;
+      border-radius: 10px;
+      background: #111b2d;
+    }
+
+    .library-card b,
+    .library-card small {
+      display: block;
+    }
+
+    .library-card b {
+      font-size: 11px;
+      line-height: 1.35;
+    }
+
+    .library-card small {
+      margin-top: 4px;
+      color: var(--muted);
+      font-size: 9px;
+    }
+
+    .tag-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 4px;
+      margin-top: 7px;
+    }
+
+    .tag {
+      padding: 3px 6px;
+      border: 1px solid #3a4862;
+      border-radius: 999px;
+      color: #cbd5e1;
+      font-size: 8px;
+      font-weight: 800;
+    }
+
+    .library-card button {
+      width: 34px;
+      height: 34px;
+      align-self: center;
+      border: 1px solid var(--gold);
+      border-radius: 9px;
+      background: rgba(212,162,76,.1);
+      color: var(--gold);
+      font-size: 18px;
+      font-weight: 900;
+    }
+
+    .center {
+      display: grid;
+      grid-template-rows: minmax(360px, 55%) minmax(300px, 45%);
+      min-width: 0;
+      overflow: hidden;
+    }
+
+    .viewer {
+      display: grid;
+      grid-template-rows: minmax(0,1fr) auto auto;
+      min-height: 0;
+      overflow: hidden;
+      border-bottom: 1px solid var(--line);
+      background: #03060c;
+    }
+
+    .stage {
+      position: relative;
+      display: grid;
+      place-items: center;
+      min-height: 0;
+      overflow: hidden;
+      background: #000;
+    }
+
+    .stage video {
+      width: 100%;
+      height: 100%;
+      object-fit: contain;
+    }
+
+    .stage canvas {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      pointer-events: none;
+    }
+
+    .stage canvas.active {
+      pointer-events: auto;
+      cursor: crosshair;
+    }
+
+    .empty-preview {
+      color: #657289;
+      text-align: center;
+    }
+
+    .spotlight {
+      position: absolute;
+      width: 160px;
+      height: 160px;
+      transform: translate(-50%, -50%);
+      border: 3px solid var(--gold);
+      border-radius: 50%;
+      box-shadow: 0 0 0 9999px rgba(0,0,0,.64);
+      pointer-events: none;
+    }
+
+    .player-circle {
+      position: absolute;
+      width: 105px;
+      height: 38px;
+      transform: translate(-50%, -50%);
+      border: 4px solid var(--gold);
+      border-radius: 50%;
+      pointer-events: none;
+    }
+
+    .overlay-text {
+      position: absolute;
+      transform: translate(-50%, -50%);
+      color: var(--gold);
+      font-size: 25px;
+      font-weight: 950;
+      text-shadow: 0 2px 5px #000;
+      pointer-events: none;
+      white-space: nowrap;
+    }
+
+    .transport {
+      display: grid;
+      grid-template-columns: auto minmax(0,1fr) auto;
+      gap: 10px;
+      align-items: center;
+      padding: 8px 12px;
+      border-top: 1px solid #202b3f;
+      background: #0b1220;
+    }
+
+    .transport-buttons {
+      display: flex;
+      gap: 5px;
+    }
+
+    .transport button,
+    .tool-button,
+    .trim-button {
+      min-height: 34px;
+      border: 1px solid #344159;
+      border-radius: 8px;
+      background: #172238;
+      color: #eef2f8;
+      font-size: 10px;
+      font-weight: 850;
+    }
+
+    .transport button {
+      min-width: 36px;
+    }
+
+    .transport input[type="range"] {
+      width: 100%;
+    }
+
+    .timecode {
+      color: var(--gold);
+      font-size: 11px;
+      font-weight: 900;
+      white-space: nowrap;
+    }
+
+    .tools {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      padding: 8px 12px;
+      border-top: 1px solid #202b3f;
+      background: #0d1524;
+    }
+
+    .tool-button,
+    .trim-button {
+      padding: 0 10px;
+    }
+
+    .tool-button.on,
+    .trim-button.on {
+      border-color: var(--gold);
+      background: rgba(212,162,76,.12);
+      color: var(--gold);
+    }
+
+    .editor-bottom {
+      display: grid;
+      grid-template-rows: auto minmax(0,1fr);
+      min-height: 0;
+      overflow: hidden;
+      background: #080e19;
+    }
+
+    .timeline-toolbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 8px 12px;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .add-elements {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+    }
+
+    .add-elements button {
+      height: 32px;
+      padding: 0 10px;
+      border: 1px solid #344159;
+      border-radius: 8px;
+      background: #131e31;
+      color: #dbe4f2;
+      font-size: 10px;
+      font-weight: 850;
+    }
+
+    .timeline {
+      min-height: 0;
+      overflow: auto;
+      padding: 12px;
+    }
+
+    .timeline-track {
+      display: flex;
+      align-items: stretch;
+      gap: 8px;
+      min-width: max-content;
+      min-height: 146px;
+      padding: 12px;
+      border: 1px dashed #35425a;
+      border-radius: 12px;
+      background:
+        repeating-linear-gradient(
+          90deg,
+          transparent 0,
+          transparent 99px,
+          rgba(255,255,255,.025) 100px
+        );
+    }
+
+    .timeline-item {
+      position: relative;
+      width: 205px;
+      min-height: 120px;
+      padding: 10px;
+      border: 1px solid #344159;
+      border-radius: 10px;
+      background: #111b2d;
+      cursor: grab;
+    }
+
+    .timeline-item.selected {
+      border-color: var(--gold);
+      box-shadow: 0 0 0 2px rgba(212,162,76,.18);
+    }
+
+    .timeline-item .number {
+      position: absolute;
+      top: 7px;
+      right: 7px;
+      min-width: 23px;
+      height: 23px;
+      display: grid;
+      place-items: center;
+      border-radius: 7px;
+      background: #070b14;
+      color: var(--gold);
+      font-size: 9px;
+      font-weight: 900;
+    }
+
+    .timeline-item b {
+      display: block;
+      padding-right: 27px;
+      color: #f4c665;
+      font-size: 11px;
+      line-height: 1.35;
+    }
+
+    .timeline-item small {
+      display: block;
+      margin-top: 5px;
+      color: var(--muted);
+      font-size: 9px;
+    }
+
+    .timeline-item .duration {
+      margin-top: 9px;
+      color: #dbe4f2;
+      font-size: 10px;
+      font-weight: 850;
+    }
+
+    .timeline-item .remove {
+      position: absolute;
+      right: 7px;
+      bottom: 7px;
+      width: 27px;
+      height: 27px;
+      border: 0;
+      border-radius: 7px;
+      background: var(--wine);
+      color: #fff;
+      font-weight: 900;
+    }
+
+    .property-section {
+      margin-bottom: 18px;
+    }
+
+    .property-section h3 {
+      margin: 0 0 10px;
+      color: var(--gold);
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: .08em;
+    }
+
+    .properties label {
+      display: block;
+      margin: 9px 0 4px;
+      color: #98a6bc;
+      font-size: 10px;
+      font-weight: 800;
+    }
+
+    .properties input,
+    .properties textarea,
+    .properties select {
+      width: 100%;
+      padding: 9px;
+      border: 1px solid #344159;
+      border-radius: 8px;
+      background: #08111f;
+      color: #fff;
+    }
+
+    .properties textarea {
+      min-height: 82px;
+      resize: vertical;
+    }
+
+    .property-row {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 7px;
+    }
+
+    .trim-panel {
+      padding: 10px;
+      border: 1px solid #2d3a52;
+      border-radius: 10px;
+      background: #0a1220;
+    }
+
+    .trim-value {
+      display: flex;
+      justify-content: space-between;
+      margin: 6px 0;
+      color: #c7d0df;
+      font-size: 10px;
+    }
+
+    .trim-actions {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 5px;
+      margin-top: 8px;
+    }
+
+    .shortcut-list {
+      display: grid;
+      gap: 6px;
+    }
+
+    .shortcut {
+      display: grid;
+      grid-template-columns: 35px minmax(0,1fr);
+      gap: 7px;
+      align-items: center;
+    }
+
+    .shortcut kbd {
+      height: 32px;
+      display: grid;
+      place-items: center;
+      border: 1px solid var(--gold);
+      border-radius: 8px;
+      background: rgba(212,162,76,.1);
+      color: var(--gold);
+      font-size: 11px;
+      font-weight: 900;
+    }
+
+    .shortcut span {
+      overflow: hidden;
+      color: #c9d3e2;
+      font-size: 10px;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .hint {
+      color: var(--muted);
+      font-size: 9px;
+      line-height: 1.5;
+    }
+
+    .empty {
+      padding: 30px;
+      color: #66738b;
+      text-align: center;
+    }
+
+    @media (max-width: 1250px) {
+      .workspace {
+        grid-template-columns: 260px minmax(0,1fr) 290px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <b>🎬 MyBasket Montage Pro</b>
+      <span>ÉDITEUR</span>
+    </div>
+
+    <div class="top-actions">
+      <button id="saveProject">💾 Sauvegarder</button>
+      <button id="exportProject">⬇ Exporter le projet</button>
+      <button class="primary" id="renderVideo">🎞 Export vidéo</button>
+    </div>
+  </header>
+
+  <div class="workspace">
+    <aside class="library">
+      <div class="column-title">
+        <b>Bibliothèque de clips</b>
+        <span class="count" id="libraryCount">0</span>
+      </div>
+
+      <input
+        id="librarySearch"
+        class="search"
+        placeholder="Rechercher joueur, système, tag…"
+      />
+
+      <div id="libraryList" class="library-list"></div>
+    </aside>
+
+    <main class="center">
+      <section class="viewer">
+        <div class="stage" id="stage">
+          <div class="empty-preview">Sélectionne un clip dans la timeline.</div>
+        </div>
+
+        <div class="transport">
+          <div class="transport-buttons">
+            <button id="backFrame" title="Reculer de 0,1 seconde">−0,1</button>
+            <button id="playPause">▶</button>
+            <button id="forwardFrame" title="Avancer de 0,1 seconde">+0,1</button>
+          </div>
+
+          <input id="scrubber" type="range" min="0" max="1" step="0.01" value="0" />
+
+          <span id="timecode" class="timecode">00:00.0 / 00:00.0</span>
+        </div>
+
+        <div class="tools">
+          <button class="trim-button" id="markIn">I · Début</button>
+          <button class="trim-button" id="markOut">O · Fin</button>
+          <button class="tool-button" data-tool="draw">✏ Dessin</button>
+          <button class="tool-button" data-tool="circle">◯ Cercle joueur</button>
+          <button class="tool-button" data-tool="spotlight">◉ Spotlight</button>
+          <button class="tool-button" data-tool="text">T Texte</button>
+          <button class="tool-button" data-tool="freeze">⏸ Freeze</button>
+          <button class="tool-button" id="clearTools">🧽 Effacer</button>
+        </div>
+      </section>
+
+      <section class="editor-bottom">
+        <div class="timeline-toolbar">
+          <div>
+            <b>Ordre du montage</b>
+            <span class="hint" id="totalDuration">0 clip</span>
+          </div>
+
+          <div class="add-elements">
+            <button data-add="title">＋ Titre</button>
+            <button data-add="text">＋ Texte</button>
+            <button data-add="image">＋ Image</button>
+            <button data-add="freeze">＋ Arrêt image</button>
+            <button data-add="audio">＋ Audio</button>
+          </div>
+        </div>
+
+        <div class="timeline">
+          <div id="timelineTrack" class="timeline-track"></div>
+        </div>
+      </section>
+    </main>
+
+    <aside class="properties">
+      <section class="property-section">
+        <h3>Projet</h3>
+
+        <label for="projectTitle">Titre</label>
+        <input id="projectTitle" />
+
+        <label for="projectNote">Notes</label>
+        <textarea id="projectNote"></textarea>
+      </section>
+
+      <section class="property-section">
+        <h3>Élément sélectionné</h3>
+        <div id="itemProperties" class="hint">
+          Aucun élément sélectionné.
+        </div>
+      </section>
+
+      <section class="property-section">
+        <h3>Raccourcis</h3>
+        <div id="shortcutList" class="shortcut-list"></div>
+        <p class="hint">
+          <b>Tab</b> : clip suivant · <b>I</b> : début · <b>O</b> : fin ·
+          <b>Suppr.</b> : retirer de la timeline · <b>Espace</b> : lecture.
+        </p>
+      </section>
+    </aside>
+  </div>
+
+  <script>
+    const state = ${payload};
+
+    let items = Array.isArray(state.items) ? state.items.slice() : [];
+    let library = Array.isArray(state.library) ? state.library.slice() : [];
+    let shortcuts = Array.isArray(state.shortcuts) ? state.shortcuts.slice() : [];
+    let selectedId = items[0] ? items[0].caid : null;
+    let activeTool = null;
+    let overlayPoint = null;
+    let overlayText = '';
+    let drawing = false;
+    let dragFromId = null;
+
+    const videoUrl = state.videoUrl || '';
+
+    const byId = (id) => document.getElementById(id);
+    const stage = byId('stage');
+    const timelineTrack = byId('timelineTrack');
+    const itemProperties = byId('itemProperties');
+    const scrubber = byId('scrubber');
+    const timecode = byId('timecode');
+
+    const escapeHtml = (value) =>
+      String(value == null ? '' : value).replace(/[&<>"']/g, (character) => ({
+        '&': '&amp;',
+        '<': '&lt;',
+        '>': '&gt;',
+        '"': '&quot;',
+        "'": '&#039;',
+      }[character]));
+
+    const formatTime = (seconds) => {
+      const safe = Number.isFinite(Number(seconds)) ? Math.max(0, Number(seconds)) : 0;
+      const minutes = Math.floor(safe / 60);
+      const rest = (safe % 60).toFixed(1).padStart(4, '0');
+      return String(minutes).padStart(2, '0') + ':' + rest;
+    };
+
+    const selectedItem = () => items.find((item) => item.caid === selectedId) || null;
+    const previewVideo = () => byId('previewVideo');
+
+    function itemDuration(item) {
+      if (!item || item.type !== 'clip') return Number(item && item.duration || 2);
+      const start = Number(item.mediaStart);
+      const end = Number(item.mediaEnd);
+      return Number.isFinite(start) && Number.isFinite(end) && end > start
+        ? end - start
+        : 0;
+    }
+
+    function totalDuration() {
+      return items.reduce((sum, item) => sum + itemDuration(item), 0);
+    }
+
+    function addLibraryClip(clip) {
+      if (!clip) return;
+      const existing = items.find((item) => item.caid === clip.caid);
+
+      if (existing) {
+        selectedId = existing.caid;
+      } else {
+        items.push({
+          ...clip,
+          collections: Array.isArray(clip.collections) ? clip.collections : [],
+        });
+        selectedId = clip.caid;
+      }
+
+      renderAll();
+    }
+
+    function addElement(type) {
+      const id = type + '_' + Date.now();
+
+      const labels = {
+        title: 'Titre',
+        text: 'Texte',
+        image: 'Image',
+        freeze: 'Arrêt sur image',
+        audio: 'Piste audio',
+      };
+
+      items.push({
+        caid: id,
+        type,
+        label: labels[type] || 'Élément',
+        sub: 'Élément de montage',
+        note: '',
+        duration: type === 'freeze' ? 2 : 3,
+        mediaStart: null,
+        mediaEnd: null,
+      });
+
+      selectedId = id;
+      renderAll();
+    }
+
+    function removeItem(id) {
+      items = items.filter((item) => item.caid !== id);
+
+      if (selectedId === id) {
+        selectedId = items[0] ? items[0].caid : null;
+      }
+
+      renderAll();
+    }
+
+    function moveItem(fromId, toId) {
+      const fromIndex = items.findIndex((item) => item.caid === fromId);
+      const toIndex = items.findIndex((item) => item.caid === toId);
+
+      if (fromIndex < 0 || toIndex < 0 || fromIndex === toIndex) return;
+
+      const next = items.slice();
+      const moved = next.splice(fromIndex, 1)[0];
+      next.splice(toIndex, 0, moved);
+      items = next;
+      renderTimeline();
+    }
+
+    function setActiveTool(tool) {
+      activeTool = activeTool === tool ? null : tool;
+
+      document.querySelectorAll('[data-tool]').forEach((button) => {
+        button.classList.toggle('on', button.dataset.tool === activeTool);
+      });
+
+      const canvas = byId('drawingCanvas');
+
+      if (canvas) {
+        canvas.classList.toggle('active', activeTool === 'draw');
+      }
+    }
+
+    function clearVisualTools() {
+      overlayPoint = null;
+      overlayText = '';
+
+      const canvas = byId('drawingCanvas');
+
+      if (canvas) {
+        const context = canvas.getContext('2d');
+        context.clearRect(0, 0, canvas.width, canvas.height);
+      }
+
+      renderOverlay();
+    }
+
+    function renderOverlay() {
+      stage.querySelectorAll('.spotlight,.player-circle,.overlay-text').forEach((node) => node.remove());
+
+      if (!overlayPoint || !activeTool) return;
+
+      if (activeTool === 'spotlight') {
+        const node = document.createElement('div');
+        node.className = 'spotlight';
+        node.style.left = overlayPoint.x + '%';
+        node.style.top = overlayPoint.y + '%';
+        stage.appendChild(node);
+      }
+
+      if (activeTool === 'circle') {
+        const node = document.createElement('div');
+        node.className = 'player-circle';
+        node.style.left = overlayPoint.x + '%';
+        node.style.top = overlayPoint.y + '%';
+        stage.appendChild(node);
+      }
+
+      if (activeTool === 'text' && overlayText) {
+        const node = document.createElement('div');
+        node.className = 'overlay-text';
+        node.style.left = overlayPoint.x + '%';
+        node.style.top = overlayPoint.y + '%';
+        node.textContent = overlayText;
+        stage.appendChild(node);
+      }
+    }
+
+    function bindDrawingCanvas() {
+      const canvas = byId('drawingCanvas');
+
+      if (!canvas) return;
+
+      canvas.width = Math.max(640, stage.clientWidth);
+      canvas.height = Math.max(360, stage.clientHeight);
+
+      const context = canvas.getContext('2d');
+      context.strokeStyle = '#d4a24c';
+      context.lineWidth = 4;
+      context.lineCap = 'round';
+
+      const position = (event) => {
+        const rect = canvas.getBoundingClientRect();
+
+        return {
+          x: ((event.clientX - rect.left) / rect.width) * canvas.width,
+          y: ((event.clientY - rect.top) / rect.height) * canvas.height,
+        };
+      };
+
+      canvas.onpointerdown = (event) => {
+        if (activeTool !== 'draw') return;
+        drawing = true;
+        const point = position(event);
+        context.beginPath();
+        context.moveTo(point.x, point.y);
+      };
+
+      canvas.onpointermove = (event) => {
+        if (!drawing || activeTool !== 'draw') return;
+        const point = position(event);
+        context.lineTo(point.x, point.y);
+        context.stroke();
+      };
+
+      canvas.onpointerup = () => {
+        drawing = false;
+      };
+
+      canvas.onpointerleave = () => {
+        drawing = false;
+      };
+    }
+
+    function showPreview(item) {
+      if (!item) {
+        stage.innerHTML = '<div class="empty-preview">Sélectionne un clip dans la timeline.</div>';
+        scrubber.max = '1';
+        scrubber.value = '0';
+        timecode.textContent = '00:00.0 / 00:00.0';
+        return;
+      }
+
+      overlayPoint = null;
+      overlayText = '';
+
+      if (item.type === 'clip' && videoUrl) {
+        stage.innerHTML =
+          '<video id="previewVideo" src="' +
+          escapeHtml(videoUrl) +
+          '" controls playsinline></video>' +
+          '<canvas id="drawingCanvas"></canvas>';
+
+        const video = previewVideo();
+
+        video.onloadedmetadata = () => {
+          const start = Number(item.mediaStart);
+          const end = Number(item.mediaEnd);
+
+          if (Number.isFinite(start)) {
+            video.currentTime = Math.max(0, start);
+          }
+
+          scrubber.min = '0';
+          scrubber.max = String(Number.isFinite(video.duration) ? video.duration : 1);
+          scrubber.value = String(video.currentTime || 0);
+          updateTimecode();
+        };
+
+        video.ontimeupdate = () => {
+          const end = Number(item.mediaEnd);
+
+          if (Number.isFinite(end) && video.currentTime >= end) {
+            video.pause();
+          }
+
+          scrubber.value = String(video.currentTime || 0);
+          updateTimecode();
+        };
+
+        bindDrawingCanvas();
+      } else {
+        stage.innerHTML =
+          '<div class="empty-preview"><b>' +
+          escapeHtml(item.label || 'Élément') +
+          '</b><br />' +
+          escapeHtml(item.note || item.type || '') +
+          '</div>';
+      }
+
+      renderOverlay();
+    }
+
+    function updateTimecode() {
+      const video = previewVideo();
+
+      if (!video) {
+        timecode.textContent = '00:00.0 / 00:00.0';
+        return;
+      }
+
+      timecode.textContent =
+        formatTime(video.currentTime || 0) +
+        ' / ' +
+        formatTime(Number.isFinite(video.duration) ? video.duration : 0);
+    }
+
+    function selectItem(id) {
+      selectedId = id;
+      renderTimeline();
+      renderProperties();
+      showPreview(selectedItem());
+    }
+
+    function renderLibrary() {
+      const query = byId('librarySearch').value.trim().toLowerCase();
+
+      const filtered = library.filter((clip) => {
+        const content = [
+          clip.label,
+          clip.sub,
+          ...(Array.isArray(clip.tags) ? clip.tags : []),
+        ]
+          .filter(Boolean)
+          .join(' ')
+          .toLowerCase();
+
+        return !query || content.includes(query);
+      });
+
+      byId('libraryCount').textContent = String(filtered.length);
+
+      const container = byId('libraryList');
+
+      container.innerHTML = '';
+
+      if (!filtered.length) {
+        container.innerHTML = '<div class="empty">Aucun clip correspondant.</div>';
+        return;
+      }
+
+      filtered
+        .slice()
+        .reverse()
+        .forEach((clip) => {
+          const card = document.createElement('div');
+          card.className = 'library-card';
+
+          const content = document.createElement('div');
+          content.innerHTML =
+            '<b>' +
+            escapeHtml(clip.label || 'Clip') +
+            '</b><small>' +
+            escapeHtml(clip.sub || '') +
+            '</small><div class="tag-row">' +
+            (Array.isArray(clip.tags)
+              ? clip.tags
+                  .slice(0, 8)
+                  .map((tag) => '<span class="tag">' + escapeHtml(tag) + '</span>')
+                  .join('')
+              : '') +
+            '</div>';
+
+          const addButton = document.createElement('button');
+          addButton.textContent = '+';
+          addButton.title = 'Ajouter à la timeline';
+          addButton.onclick = () => addLibraryClip(clip);
+
+          card.appendChild(content);
+          card.appendChild(addButton);
+          container.appendChild(card);
+        });
+    }
+
+    function renderTimeline() {
+      timelineTrack.innerHTML = '';
+
+      if (!items.length) {
+        timelineTrack.innerHTML =
+          '<div class="empty">Ajoute des clips ou des éléments à ton montage.</div>';
+      }
+
+      items.forEach((item, index) => {
+        const card = document.createElement('article');
+        card.className =
+          'timeline-item' + (selectedId === item.caid ? ' selected' : '');
+        card.draggable = true;
+        card.dataset.id = item.caid;
+
+        card.innerHTML =
+          '<span class="number">' +
+          (index + 1) +
+          '</span><b>' +
+          escapeHtml(item.label || 'Élément') +
+          '</b><small>' +
+          escapeHtml(item.sub || item.type || '') +
+          '</small><div class="duration">' +
+          formatTime(itemDuration(item)) +
+          '</div><button class="remove" title="Retirer">×</button>';
+
+        card.onclick = (event) => {
+          if (event.target.classList.contains('remove')) return;
+          selectItem(item.caid);
+        };
+
+        card.querySelector('.remove').onclick = (event) => {
+          event.stopPropagation();
+          removeItem(item.caid);
+        };
+
+        card.ondragstart = () => {
+          dragFromId = item.caid;
+        };
+
+        card.ondragover = (event) => {
+          event.preventDefault();
+        };
+
+        card.ondrop = (event) => {
+          event.preventDefault();
+
+          if (dragFromId) {
+            moveItem(dragFromId, item.caid);
+          }
+
+          dragFromId = null;
+        };
+
+        timelineTrack.appendChild(card);
+      });
+
+      byId('totalDuration').textContent =
+        items.length +
+        ' élément' +
+        (items.length > 1 ? 's' : '') +
+        ' · ' +
+        formatTime(totalDuration());
+    }
+
+    function renderProperties() {
+      const item = selectedItem();
+
+      if (!item) {
+        itemProperties.innerHTML = 'Aucun élément sélectionné.';
+        return;
+      }
+
+      const isClip = item.type === 'clip';
+
+      itemProperties.innerHTML =
+        '<label>Titre</label>' +
+        '<input id="itemLabel" value="' +
+        escapeHtml(item.label || '') +
+        '" />' +
+        '<label>Note / texte</label>' +
+        '<textarea id="itemNote">' +
+        escapeHtml(item.note || '') +
+        '</textarea>' +
+        (isClip
+          ? '<div class="trim-panel">' +
+            '<div class="trim-value"><span>Début</span><b id="startValue">' +
+            formatTime(item.mediaStart) +
+            '</b></div>' +
+            '<input id="itemStart" type="number" step="0.1" value="' +
+            (item.mediaStart == null ? '' : item.mediaStart) +
+            '" />' +
+            '<div class="trim-value"><span>Fin</span><b id="endValue">' +
+            formatTime(item.mediaEnd) +
+            '</b></div>' +
+            '<input id="itemEnd" type="number" step="0.1" value="' +
+            (item.mediaEnd == null ? '' : item.mediaEnd) +
+            '" />' +
+            '<div class="trim-actions">' +
+            '<button class="trim-button" data-nudge-start="-1">−1 début</button>' +
+            '<button class="trim-button" data-nudge-start="1">+1 début</button>' +
+            '<button class="trim-button" data-nudge-end="-1">−1 fin</button>' +
+            '<button class="trim-button" data-nudge-end="1">+1 fin</button>' +
+            '</div></div>'
+          : '<label>Durée de l’élément (s)</label>' +
+            '<input id="itemDuration" type="number" min="0.5" step="0.5" value="' +
+            Number(item.duration || 2) +
+            '" />');
+
+      byId('itemLabel').oninput = (event) => {
+        item.label = event.target.value;
+        renderTimeline();
+      };
+
+      byId('itemNote').oninput = (event) => {
+        item.note = event.target.value;
+      };
+
+      if (isClip) {
+        byId('itemStart').oninput = (event) => {
+          item.mediaStart =
+            event.target.value === '' ? null : Number(event.target.value);
+          renderTimeline();
+          renderProperties();
+        };
+
+        byId('itemEnd').oninput = (event) => {
+          item.mediaEnd =
+            event.target.value === '' ? null : Number(event.target.value);
+          renderTimeline();
+          renderProperties();
+        };
+
+        itemProperties.querySelectorAll('[data-nudge-start]').forEach((button) => {
+          button.onclick = () => {
+            const delta = Number(button.dataset.nudgeStart);
+            item.mediaStart = Math.max(0, Number(item.mediaStart || 0) + delta);
+
+            if (
+              Number.isFinite(Number(item.mediaEnd)) &&
+              item.mediaStart >= item.mediaEnd
+            ) {
+              item.mediaStart = Math.max(0, Number(item.mediaEnd) - 0.1);
+            }
+
+            renderAll();
+          };
+        });
+
+        itemProperties.querySelectorAll('[data-nudge-end]').forEach((button) => {
+          button.onclick = () => {
+            const delta = Number(button.dataset.nudgeEnd);
+            item.mediaEnd = Math.max(
+              Number(item.mediaStart || 0) + 0.1,
+              Number(item.mediaEnd || item.mediaStart || 0) + delta,
+            );
+            renderAll();
+          };
+        });
+      } else {
+        byId('itemDuration').oninput = (event) => {
+          item.duration = Math.max(0.5, Number(event.target.value || 2));
+          renderTimeline();
+        };
+      }
+    }
+
+    function renderShortcuts() {
+      const container = byId('shortcutList');
+      container.innerHTML = '';
+
+      shortcuts.forEach((shortcut) => {
+        const row = document.createElement('div');
+        row.className = 'shortcut';
+        row.innerHTML =
+          '<kbd>' +
+          escapeHtml(String(shortcut.key || '').toUpperCase()) +
+          '</kbd><span>' +
+          escapeHtml(shortcut.name || '') +
+          '</span>';
+        container.appendChild(row);
+      });
+    }
+
+    function renderAll() {
+      renderLibrary();
+      renderTimeline();
+      renderProperties();
+      renderShortcuts();
+      showPreview(selectedItem());
+    }
+
+    function markBoundary(type) {
+      const item = selectedItem();
+      const video = previewVideo();
+
+      if (!item || item.type !== 'clip' || !video) return;
+
+      const value = Math.max(0, Number(video.currentTime || 0));
+
+      if (type === 'in') {
+        item.mediaStart = value;
+      } else {
+        item.mediaEnd = Math.max(Number(item.mediaStart || 0) + 0.1, value);
+      }
+
+      renderTimeline();
+      renderProperties();
+    }
+
+    function nudgeVideo(delta) {
+      const video = previewVideo();
+
+      if (!video) return;
+
+      const duration = Number.isFinite(video.duration) ? video.duration : Infinity;
+      video.currentTime = Math.max(
+        0,
+        Math.min(duration, Number(video.currentTime || 0) + delta),
+      );
+      updateTimecode();
+    }
+
+    function assignShortcut(key) {
+      const item = selectedItem();
+
+      if (!item || item.type !== 'clip') return false;
+
+      const shortcut = shortcuts.find(
+        (entry) => String(entry.key || '').toLowerCase() === key.toLowerCase(),
+      );
+
+      if (!shortcut) return false;
+
+      item.collections = Array.from(
+        new Set([...(item.collections || []), shortcut.name]),
+      );
+
+      return true;
+    }
+
+    byId('projectTitle').value = state.title || '';
+    byId('projectNote').value = state.note || '';
+
+    byId('librarySearch').oninput = renderLibrary;
+
+    byId('playPause').onclick = () => {
+      const video = previewVideo();
+
+      if (!video) return;
+
+      if (video.paused) {
+        video.play().catch(() => {});
+      } else {
+        video.pause();
+      }
+    };
+
+    byId('backFrame').onclick = () => nudgeVideo(-0.1);
+    byId('forwardFrame').onclick = () => nudgeVideo(0.1);
+    byId('markIn').onclick = () => markBoundary('in');
+    byId('markOut').onclick = () => markBoundary('out');
+    byId('clearTools').onclick = clearVisualTools;
+
+    scrubber.oninput = () => {
+      const video = previewVideo();
+
+      if (!video) return;
+
+      video.currentTime = Number(scrubber.value || 0);
+      updateTimecode();
+    };
+
+    document.querySelectorAll('[data-tool]').forEach((button) => {
+      button.onclick = () => {
+        const tool = button.dataset.tool;
+
+        if (tool === 'freeze') {
+          const video = previewVideo();
+
+          if (video) {
+            if (video.paused) {
+              video.play().catch(() => {});
+            } else {
+              video.pause();
+            }
+          }
+
+          return;
+        }
+
+        setActiveTool(tool);
+      };
+    });
+
+    document.querySelectorAll('[data-add]').forEach((button) => {
+      button.onclick = () => addElement(button.dataset.add);
+    });
+
+    stage.onpointerdown = (event) => {
+      if (!['circle', 'spotlight', 'text'].includes(activeTool)) return;
+
+      const rect = stage.getBoundingClientRect();
+
+      overlayPoint = {
+        x: ((event.clientX - rect.left) / rect.width) * 100,
+        y: ((event.clientY - rect.top) / rect.height) * 100,
+      };
+
+      if (activeTool === 'text') {
+        const value = window.prompt('Texte à afficher :', overlayText || '');
+
+        if (value != null) {
+          overlayText = value.trim();
+        }
+      }
+
+      renderOverlay();
+    };
+
+    window.addEventListener('keydown', (event) => {
+      const activeTag = document.activeElement && document.activeElement.tagName;
+
+      if (['INPUT', 'TEXTAREA', 'SELECT'].includes(activeTag)) return;
+
+      if (event.code === 'Space') {
+        event.preventDefault();
+        byId('playPause').click();
+        return;
+      }
+
+      if (event.key === 'Tab') {
+        event.preventDefault();
+
+        if (!items.length) return;
+
+        const index = items.findIndex((item) => item.caid === selectedId);
+        const next = items[(index + 1 + items.length) % items.length];
+        selectItem(next.caid);
+        return;
+      }
+
+      if (event.key.toLowerCase() === 'i') {
+        event.preventDefault();
+        markBoundary('in');
+        return;
+      }
+
+      if (event.key.toLowerCase() === 'o') {
+        event.preventDefault();
+        markBoundary('out');
+        return;
+      }
+
+      if (event.key === 'ArrowLeft') {
+        event.preventDefault();
+        nudgeVideo(event.shiftKey ? -1 : -0.1);
+        return;
+      }
+
+      if (event.key === 'ArrowRight') {
+        event.preventDefault();
+        nudgeVideo(event.shiftKey ? 1 : 0.1);
+        return;
+      }
+
+      if (event.key === 'Delete' || event.key === 'Backspace') {
+        if (selectedId) {
+          event.preventDefault();
+          removeItem(selectedId);
+        }
+        return;
+      }
+
+      if (assignShortcut(event.key)) {
+        event.preventDefault();
+        renderProperties();
+      }
+    });
+
+    byId('saveProject').onclick = () => {
+      localStorage.setItem(
+        'mybasket_montage_project',
+        JSON.stringify(projectData()),
+      );
+      window.alert('Projet sauvegardé dans ce navigateur.');
+    };
+
+    byId('exportProject').onclick = () => {
+      const anchor = document.createElement('a');
+
+      anchor.href = URL.createObjectURL(
+        new Blob([JSON.stringify(projectData(), null, 2)], {
+          type: 'application/json',
+        }),
+      );
+      anchor.download = 'montage-mybasket.json';
+      anchor.click();
+      URL.revokeObjectURL(anchor.href);
+    };
+
+    byId('renderVideo').onclick = () => {
+      window.alert(
+        'Le montage et ses découpes sont prêts. Le rendu MP4 nécessite le moteur d’export serveur FFmpeg/Remotion, qui sera branché dans l’étape suivante.',
+      );
+    };
+
+    function projectData() {
+      return {
+        title: byId('projectTitle').value,
+        note: byId('projectNote').value,
+        items,
+        shortcuts,
+        exportedAt: new Date().toISOString(),
+      };
+    }
+
+    renderAll();
+  <\/script>
+</body>
+</html>`);
+
     w.document.close();
   };
 
@@ -3413,50 +4956,170 @@ export default function PriseStatsProPage() {
   }
 
   function renderHistoryList() {
+    const normalizedSearch = historySearch.trim().toLowerCase();
+    const filtered = actions.filter((a) => {
+      if (historyScope === 'attaque' && a.context !== 'attaque') return false;
+      if (historyScope === 'defense' && a.context !== 'defense') return false;
+      if (historyScope === 'made' && a.shotResult !== 'made') return false;
+      if (historyScope === 'missed' && a.shotResult !== 'missed') return false;
+      if (!normalizedSearch) return true;
+      const p = find(a.playerId);
+      const haystack = [
+        a.context,
+        a.systemeName,
+        a.systemeJeu,
+        a.systemeSlot,
+        tags.label(a.tempsFort),
+        p?.name,
+        p?.num,
+        a.actionType,
+        a.shotType,
+        a.shotResult,
+        a.reboundType,
+        a.zone,
+        ...(clipThemeAssignments[a.id] || []),
+      ].filter(Boolean).join(' ').toLowerCase();
+      return haystack.includes(normalizedSearch);
+    });
+
+    const tag = (label: string, kind = '') => <i className={`historyTag ${kind}`}>{label}</i>;
+
     return (
-      <div className="hist">
-        {actions.length === 0 && <div className="hist-empty">Aucune action.</div>}
-        {actions.slice().reverse().map((a) => {
+      <div className="hist proHistory">
+        <div className="historyToolbar">
+          <input value={historySearch} onChange={(e) => setHistorySearch(e.target.value)} placeholder="Rechercher joueur, système, temps fort, zone…" />
+          <div className="historyScopes">
+            {([['all','Tous'],['attaque','Attaque'],['defense','Défense'],['made','Marqués'],['missed','Ratés']] as const).map(([key,label]) => (
+              <button key={key} className={historyScope === key ? 'on' : ''} onClick={() => setHistoryScope(key)}>{label}</button>
+            ))}
+          </div>
+          <span className="historyCount">{filtered.length} action{filtered.length > 1 ? 's' : ''}</span>
+        </div>
+
+        <div className="historyShortcutEditor">
+          <div className="historyShortcutTitle">
+            <div>
+              <b>Raccourcis de classement</b>
+              <span>Dans la popup vidéo, appuie sur la touche pour classer immédiatement le clip.</span>
+            </div>
+            <button
+              type="button"
+              onClick={() =>
+                setClipShortcutThemes((current) => [
+                  ...current,
+                  {
+                    key: String.fromCharCode(65 + Math.min(current.length, 25)).toLowerCase(),
+                    name: `Thème ${current.length + 1}`,
+                  },
+                ])
+              }
+            >
+              + Ajouter
+            </button>
+          </div>
+
+          <div className="historyShortcutGrid">
+            {clipShortcutThemes.map((shortcut, index) => (
+              <div className="historyShortcutItem" key={`${shortcut.key}:${index}`}>
+                <input
+                  className="historyShortcutKey"
+                  value={shortcut.key.toUpperCase()}
+                  maxLength={1}
+                  aria-label={`Touche du raccourci ${index + 1}`}
+                  onChange={(event) => {
+                    const key = event.target.value.slice(-1).toLowerCase();
+                    setClipShortcutThemes((current) =>
+                      current.map((item, itemIndex) =>
+                        itemIndex === index ? { ...item, key } : item,
+                      ),
+                    );
+                  }}
+                />
+                <input
+                  value={shortcut.name}
+                  aria-label={`Nom du raccourci ${index + 1}`}
+                  onChange={(event) =>
+                    setClipShortcutThemes((current) =>
+                      current.map((item, itemIndex) =>
+                        itemIndex === index
+                          ? { ...item, name: event.target.value }
+                          : item,
+                      ),
+                    )
+                  }
+                />
+                <button
+                  type="button"
+                  title="Supprimer ce raccourci"
+                  onClick={() =>
+                    setClipShortcutThemes((current) =>
+                      current.filter((_, itemIndex) => itemIndex !== index),
+                    )
+                  }
+                >
+                  ×
+                </button>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {filtered.length === 0 && <div className="hist-empty">Aucune action correspondant aux filtres.</div>}
+        {filtered.slice().reverse().map((a) => {
           const d = describe(a, find);
           const p = find(a.playerId);
+          const rebounder = find(a.reboundPlayerId);
+          const assister = find(a.assistPlayerId);
           const hasClip = a.videoTime != null || a.clipStart != null;
+          const systemName = a.systemeName || SYSTEMES_JEU.find((item) => item.id === (a.systemeJeu || a.systemeSlot))?.label || a.systemeSlot;
+          const consequence = a.reboundType
+            ? `${a.reboundType === 'off' ? 'Rebond offensif' : a.reboundType === 'def' ? 'Rebond défensif' : a.reboundType}${rebounder ? ` · #${rebounder.num} ${rebounder.name}` : ''}`
+            : a.assist
+              ? `Passe décisive${assister ? ` · #${assister.num} ${assister.name}` : ''}`
+              : a.foulOutcome || '';
           return (
-            <div className="hrow2" key={a.id}>
-              <span className="htime">{a.clock}</span>
-              <span className="hvtime">{a.videoTime != null ? '🎬 ' + fmt(Math.round(a.videoTime)) : ''}</span>
-              <span className="htf" style={{ color: tags.color(a.tempsFort) }} title={tags.label(a.tempsFort)}>{tags.emoji(a.tempsFort)}</span>
-              <span className="hbody">
-                <b>{p ? `#${p.num} ${p.name}` : '—'}</b>
-                <span className="historyTags">
-                  <i>{a.context === 'defense' ? 'Défense' : 'Attaque'}</i>
-                  {(a.systemeName || a.systemeJeu || a.systemeSlot) && <i>{a.systemeName || SYSTEMES_JEU.find((s) => s.id === (a.systemeJeu || a.systemeSlot))?.label || a.systemeSlot}</i>}
-                  {a.tempsFort && <i>{tags.label(a.tempsFort)}</i>}
-                  {a.actionType && <i>{a.actionType}</i>}
-                  {a.shotResult && <i>{a.shotResult === 'made' ? 'Marqué' : a.shotResult === 'missed' ? 'Raté' : a.shotResult}</i>}
-                  {a.reboundType && <i>{a.reboundType === 'off' ? 'Rebond off.' : a.reboundType === 'def' ? 'Rebond déf.' : a.reboundType}</i>}
-                  {a.assist && <i>Passe décisive</i>}
-                  {(clipThemeAssignments[a.id] || []).map((theme) => <i key={theme}>🏷 {theme}</i>)}
-                </span>
-                <em>{d.t}</em>
-              </span>
-              <button className={`hplay ${hasClip ? 'has' : ''}`} title={hasClip ? 'Ouvrir la séquence dans une nouvelle fenêtre' : 'Clip à synchroniser'} onClick={() => { const list = actions.slice().reverse(); openClipModal('Historique des actions', list, list.findIndex((x) => x.id === a.id)); }}>▶</button>
-              <button className="hadd" title="Ajouter au montage" onClick={() => addToMontage(a)}>⭐</button>
-              <button className="hedit" title="Corriger" onClick={() => {
-                setActions((arr) => arr.filter((x) => x.id !== a.id));
-                subtractActionFromScore(a);
-                restoreDraftFromAction(a);
-                flash('Action ouverte en correction');
-                const mId = liveMatchIdRef.current;
-                const tId = liveTeamIdRef.current;
-                if (mId && tId) {
-                  deleteLiveAction({ matchId: mId, clientActionId: a.id }).catch(() => {});
-                  const nextActions = actions.filter((x) => x.id !== a.id);
-                  const cur = perQ[a.q] || { us: 0, them: 0 };
-                  const nextPerQ = { ...perQ, [a.q]: { us: cur.us - ptsOf(a), them: cur.them - themPtsOf(a) } };
-                  syncLiveAggregates(nextActions, onCourt, nextPerQ);
-                }
-              }}>↩</button>
-              <button className="hdel" title="Supprimer" onClick={() => removeAction(a.id)}>✕</button>
+            <div className="historyActionCard" key={a.id}>
+              <div className="historyActionTime">
+                <b>{periodLabel(a.q)} · {a.clock}</b>
+                <span>{a.videoTime != null ? '🎬 ' + fmt(Math.round(a.videoTime)) : 'Sans repère vidéo'}</span>
+              </div>
+              <div className="historyActionContent">
+                <div className="historyActionHeadline">
+                  <strong>{p ? `#${p.num} ${p.name}` : a.opponentPlayerName || 'Action collective'}</strong>
+                  <em>{d.t}</em>
+                </div>
+                <div className="historyTags">
+                  {tag(a.context === 'defense' ? 'Défense' : 'Attaque', a.context || '')}
+                  {systemName && tag(systemName, 'system')}
+                  {a.tempsFort && tag(tags.label(a.tempsFort), 'tempo')}
+                  {a.actionType && tag(a.actionType.replaceAll('-', ' '), 'action')}
+                  {a.shotType && tag(a.shotType, 'shot')}
+                  {a.shotResult && tag(a.shotResult === 'made' ? 'Marqué' : a.shotResult === 'missed' ? 'Raté' : a.shotResult, a.shotResult)}
+                  {a.zone && tag(zoneById(a.zone)?.shortLabel || a.zone, 'zone')}
+                  {consequence && tag(consequence, 'consequence')}
+                  {(clipThemeAssignments[a.id] || []).map((theme) => <i className="historyTag custom" key={theme}>🏷 {theme}</i>)}
+                </div>
+              </div>
+              <div className="historyActionButtons">
+                <button className={`hplay ${hasClip ? 'has' : ''}`} title={hasClip ? 'Revoir dans la popup indépendante' : 'Clip à synchroniser'} onClick={() => { const list = filtered.slice().reverse(); openClipModal('Historique des actions', list, list.findIndex((x) => x.id === a.id)); }}>▶</button>
+                <button className="hadd" title="Ajouter au montage" onClick={() => addToMontage(a)}>⭐</button>
+                <button className="hedit" title="Reprendre l’action pour correction" onClick={() => {
+                  setActions((arr) => arr.filter((x) => x.id !== a.id));
+                  subtractActionFromScore(a);
+                  restoreDraftFromAction(a);
+                  flash('Action ouverte en correction');
+                  const mId = liveMatchIdRef.current;
+                  const tId = liveTeamIdRef.current;
+                  if (mId && tId) {
+                    deleteLiveAction({ matchId: mId, clientActionId: a.id }).catch(() => {});
+                    const nextActions = actions.filter((x) => x.id !== a.id);
+                    const cur = perQ[a.q] || { us: 0, them: 0 };
+                    const nextPerQ = { ...perQ, [a.q]: { us: cur.us - ptsOf(a), them: cur.them - themPtsOf(a) } };
+                    syncLiveAggregates(nextActions, onCourt, nextPerQ);
+                  }
+                }}>↩</button>
+                <button className="hdel" title="Supprimer" onClick={() => removeAction(a.id)}>✕</button>
+              </div>
             </div>
           );
         })}
@@ -3490,58 +5153,88 @@ export default function PriseStatsProPage() {
 
   function renderTimeline() {
     const list = mxFiltered();
-    // Lignes = catégories réellement utilisées : temps forts d'abord, puis contextes.
-    const usedTf = (tags.active && tags.active.length ? tags.active.map((t: any) => t.key) : TEMPS.map((t) => t.id))
-      .filter((k: string) => list.some((a) => a.tempsFort === k));
-    const rows: { key: string; label: string; color?: string; test: (a: StatA) => boolean }[] = [
-      ...usedTf.map((k: string) => ({ key: 'tf:' + k, label: tags.label(k), color: tags.color(k), test: (a: StatA) => a.tempsFort === k })),
-      { key: 'ctx:attaque', label: 'Attaque', test: (a: StatA) => a.context === 'attaque' },
-      { key: 'ctx:defense', label: 'Défense', test: (a: StatA) => a.context === 'defense' },
-    ];
-    const quarters = Object.keys(perQ).map(Number).sort((a, b) => a - b);
+    const totalSeconds = Math.max(
+      1,
+      ...list.map((a) => Number(a.possessionEnd ?? a.clipEnd ?? a.videoTime ?? 0)),
+    );
+    const unique = <T,>(values: T[]) => Array.from(new Set(values));
+    const systemValues = unique(list.map((a) => a.systemeName || a.systemeJeu || a.systemeSlot).filter(Boolean) as string[]);
+    const tfValues = unique(list.map((a) => a.tempsFort).filter(Boolean) as string[]);
+    const actionValues = unique(list.map((a) => a.actionType).filter(Boolean) as string[]);
+    const customValues = unique(Object.values(clipThemeAssignments).flat()) as string[];
+
+    const rows: { key: string; label: string; group: string; color: string; test: (a: StatA) => boolean }[] = [
+      { key: 'ctx:attaque', label: 'Attaque', group: 'Contexte', color: '#ff7a18', test: (a: StatA) => a.context === 'attaque' },
+      { key: 'ctx:defense', label: 'Défense', group: 'Contexte', color: '#32b7ef', test: (a: StatA) => a.context === 'defense' },
+      ...systemValues.map((value) => ({ key: `sys:${value}`, label: value, group: 'Systèmes', color: '#7c5cff', test: (a: StatA) => (a.systemeName || a.systemeJeu || a.systemeSlot) === value })),
+      ...tfValues.map((value) => ({ key: `tf:${value}`, label: tags.label(value), group: 'Temps forts', color: tags.color(value) || '#d4a24c', test: (a: StatA) => a.tempsFort === value })),
+      ...actionValues.map((value) => ({ key: `act:${value}`, label: String(value).replace(/-/g, ' '), group: 'Actions', color: '#d94b71', test: (a: StatA) => a.actionType === value })),
+      { key: 'res:made', label: 'Tirs marqués', group: 'Résultats', color: '#22c55e', test: (a: StatA) => a.shotResult === 'made' },
+      { key: 'res:missed', label: 'Tirs ratés', group: 'Résultats', color: '#ef4444', test: (a: StatA) => a.shotResult === 'missed' },
+      { key: 'reb:off', label: 'Rebond offensif', group: 'Conséquences', color: '#f59e0b', test: (a: StatA) => a.reboundType === 'off' },
+      { key: 'reb:def', label: 'Rebond défensif', group: 'Conséquences', color: '#06b6d4', test: (a: StatA) => a.reboundType === 'def' },
+      ...customValues.map((value) => ({ key: `custom:${value}`, label: value, group: 'Collections', color: '#d4a24c', test: (a: StatA) => (clipThemeAssignments[a.id] || []).includes(value) })),
+    ].filter((row) => list.some(row.test));
+
+    const visibleRows = rows.filter((row) => !timelineHiddenRows[row.key]);
+    const grouped = unique(rows.map((row) => row.group));
+    const openRowClips = (row: typeof rows[number]) => {
+      const clips = list.filter(row.test);
+      if (clips.length) openClipModal(row.label, clips, 0);
+    };
 
     return (
-      <div className="tl-wrap">
-        <div className="tl-legend">
-          <span><i style={{ background: 'var(--blue)' }} />Attaque réussie</span>
-          <span><i style={{ background: 'var(--red)' }} />Erreur / raté</span>
-          <span><i style={{ background: 'var(--green)' }} />Positif déf.</span>
-          <span><i style={{ background: 'var(--orange)' }} />Faute</span>
+      <div className={`proTimeline ${timelineCompact ? 'compact' : ''}`}>
+        <div className="proTimelineToolbar">
+          <div>
+            <b>Timeline d’analyse</b>
+            <span>{visibleRows.length} pistes · {list.length} actions</span>
+          </div>
+          <div className="proTimelineTools">
+            <button className={timelineCompact ? 'on' : ''} onClick={() => setTimelineCompact((value) => !value)}>Vue compacte</button>
+            <button onClick={() => setTimelineHiddenRows({})}>Tout afficher</button>
+          </div>
         </div>
-        <div className="tl-grid">
-          {rows.length === 0 && <div className="hist-empty">Aucune action à afficher.</div>}
-          {rows.map((row) => {
-            const evs = list.filter(row.test);
-            return (
-              <div className="tl-row" key={row.key}>
-                <div className="tl-label" style={{ color: row.color || 'var(--txt)' }} title={row.label}>{row.label}</div>
-                <div className="tl-track">
-                  {/* séparateurs de quart-temps */}
-                  {quarters.slice(1).map((_, i) => (
-                    <span key={i} className="tl-qsep" style={{ left: `${((i + 1) / quarters.length) * 100}%` }} />
-                  ))}
-                  {evs.map((a) => {
-                    const qi = Math.max(0, quarters.indexOf(a.q));
-                    const left = ((qi + evtX(a)) / quarters.length) * 100;
-                    const p = find(a.playerId);
-                    const tip = `${periodLabel(a.q)} ${a.clock} · ${p ? '#' + p.num + ' ' + p.name : '—'} · ${describe(a, find).t}`;
-                    return (
-                      <button
-                        key={a.id}
-                        className="tl-evt"
-                        style={{ left: `${left}%`, background: evtColor(a) }}
-                        title={tip}
-                        onClick={() => setEvtSel(a.id)}
-                      />
-                    );
-                  })}
-                </div>
-              </div>
-            );
-          })}
+        <div className="timelineRuler">
+          <div className="timelineRulerLabel">Temps vidéo</div>
+          <div className="timelineRulerTrack">
+            {Array.from({ length: 7 }).map((_, index) => {
+              const value = (totalSeconds * index) / 6;
+              return <span key={index} style={{ left: `${(index / 6) * 100}%` }}>{fmt(Math.round(value))}</span>;
+            })}
+          </div>
         </div>
-        <div className="tl-axis">
-          {quarters.map((qq) => <span key={qq} style={{ width: `${100 / quarters.length}%` }}>{periodLabel(qq)}</span>)}
+        <div className="timelineMatrix">
+          {grouped.map((group) => (
+            <div className="timelineGroup" key={group}>
+              <div className="timelineGroupTitle">{group}</div>
+              {rows.filter((row) => row.group === group).map((row) => {
+                const hidden = Boolean(timelineHiddenRows[row.key]);
+                const events = list.filter(row.test);
+                return (
+                  <div className={`timelineLane ${hidden ? 'hidden' : ''}`} key={row.key}>
+                    <button className="timelineLaneLabel" onDoubleClick={() => openRowClips(row)} onClick={() => setTimelineHiddenRows((current) => ({ ...current, [row.key]: !current[row.key] }))} title="Cliquer pour masquer/afficher · double-clic pour revoir toute la piste">
+                      <i style={{ background: row.color }} />
+                      <span>{row.label}</span>
+                      <b>{events.length}</b>
+                    </button>
+                    {!hidden && <div className="timelineLaneTrack">
+                      {events.map((a) => {
+                        const start = Number(a.possessionStart ?? a.clipStart ?? a.videoTime ?? 0);
+                        const endValue = Number(a.possessionEnd ?? a.clipEnd ?? start + 2);
+                        const end = Math.max(start + 1, endValue);
+                        const left = Math.max(0, Math.min(99, (start / totalSeconds) * 100));
+                        const width = Math.max(0.7, Math.min(30, ((end - start) / totalSeconds) * 100));
+                        const p = find(a.playerId);
+                        return <button key={`${row.key}:${a.id}`} className="timelineEventBlock" style={{ left: `${left}%`, width: `${width}%`, background: row.color }} onClick={() => openClipModal(row.label, events, events.findIndex((item) => item.id === a.id))} title={`${periodLabel(a.q)} ${a.clock} · ${p ? `#${p.num} ${p.name}` : 'Action'} · ${describe(a, find).t}`}><span>{p ? p.num : ''}</span></button>;
+                      })}
+                    </div>}
+                  </div>
+                );
+              })}
+            </div>
+          ))}
+          {rows.length === 0 && <div className="hist-empty">Aucune piste à afficher.</div>}
         </div>
       </div>
     );
@@ -3750,8 +5443,18 @@ export default function PriseStatsProPage() {
           <button className={`bt ${draft.inbound === 'slob' ? 'active' : ''}`} onClick={() => inboundPick('slob')}><span className="ic">↔</span><span className="lbl">SLOB<br /><small className="mut">Côté</small></span></button>
           <button className={`bt ${draft.inbound === 'blob' ? 'active' : ''}`} onClick={() => inboundPick('blob')}><span className="ic">⎯</span><span className="lbl">BLOB<br /><small className="mut">Ligne de fond</small></span></button>
         </div></>;
-      case 'systeme':
-        return <>{head('Système de jeu', playbookId ? 'Systèmes du playbook associé' : 'Organisation de la possession')}{tileGrid(systemeButtons, draft.systemeJeu, systemePick)}</>;
+      case 'systeme': {
+        const firstLine = systemeButtons.filter((item) => item.id === 'contre-attaque' || item.id === 'transition');
+        const libre = systemeButtons.find((item) => item.id === 'libre');
+        const rest = systemeButtons.filter((item) => !['contre-attaque', 'transition', 'libre'].includes(item.id));
+        return <>{head('Système de jeu', playbookId ? 'Systèmes du playbook associé' : 'Organisation de la possession')}
+          <div className="systemChoiceLayout">
+            {tileGrid(firstLine, draft.systemeJeu, systemePick)}
+            {libre && <div className="systemLibreRow">{tileGrid([libre], draft.systemeJeu, systemePick)}</div>}
+            {tileGrid(rest, draft.systemeJeu, systemePick)}
+          </div>
+        </>;
+      }
       case 'temps':
         return <>{head('Temps fort', 'Type de jeu')}{tileGrid(tempsFortsButtons, draft.tempsFort, tempsPick)}</>;
       case 'coverage':
@@ -6265,12 +7968,44 @@ function Style() {
       .pchip.xs .pstat b { font-size: 13px; color: #fff; }
       .fdots { grid-column: 2 / 4; grid-row: 2; gap: 5px; }
       .fdots i { width: 8px; height: 8px; border-width: 1px; }
+      .systemChoiceLayout { display:grid; gap:10px; }
+      .systemLibreRow { display:grid; grid-template-columns:minmax(0,1fr); }
+      .systemLibreRow .grid { grid-template-columns:1fr !important; }
+      .historyToolbar { display:grid; grid-template-columns:minmax(220px,1fr) auto auto; gap:10px; align-items:center; margin-bottom:10px; }
+      .historyToolbar input { height:36px; border:1px solid #2b354b; border-radius:9px; background:#0b1220; color:#fff; padding:0 11px; }
+      .historyScopes { display:flex; gap:5px; flex-wrap:wrap; }
+      .historyScopes button,.proTimelineTools button { border:1px solid #303b52; border-radius:8px; background:#131c2d; color:#aeb9ce; padding:7px 9px; font-size:10px; cursor:pointer; }
+      .historyScopes button.on,.proTimelineTools button.on { border-color:var(--gold); color:var(--gold); background:rgba(212,162,76,.1); }
+      .historyCount { color:#7f8ca3; font-size:10px; white-space:nowrap; }
+      .historyActionCard { display:grid; grid-template-columns:105px minmax(0,1fr) auto; gap:12px; align-items:center; padding:12px; margin-bottom:8px; border:1px solid #29344a; border-radius:11px; background:linear-gradient(135deg,#121a2a,#0d1422); }
+      .historyActionTime b,.historyActionTime span { display:block; }.historyActionTime b{font-size:12px;color:#fff}.historyActionTime span{font-size:10px;color:var(--gold);margin-top:5px}
+      .historyActionHeadline { display:flex; gap:10px; align-items:baseline; margin-bottom:7px; }.historyActionHeadline strong{font-size:12px}.historyActionHeadline em{font-size:10px;color:#8490a7;font-style:normal}
+      .historyTags { display:flex; flex-wrap:wrap; gap:5px; }.historyTag{font-style:normal;border:1px solid #35415a;border-radius:999px;padding:4px 7px;background:#172238;color:#d8dfec;font-size:9px;font-weight:850;text-transform:capitalize}.historyTag.attaque{background:rgba(255,122,24,.14);border-color:#ff7a18;color:#ffad67}.historyTag.defense{background:rgba(50,183,239,.13);border-color:#32b7ef;color:#79d5fa}.historyTag.system{border-color:#7c5cff}.historyTag.tempo{border-color:#d4a24c;color:#f4c665}.historyTag.made{border-color:#22c55e;color:#6ee7a0}.historyTag.missed{border-color:#ef4444;color:#fb8a8a}.historyTag.custom{border-color:#d4a24c;background:rgba(212,162,76,.12)}
+      .historyActionButtons { display:flex; gap:5px; }.historyActionButtons button{width:32px;height:32px;border-radius:8px}
+      .proTimeline { min-width:760px; }.proTimelineToolbar { display:flex;justify-content:space-between;align-items:center;margin-bottom:10px}.proTimelineToolbar b,.proTimelineToolbar span{display:block}.proTimelineToolbar b{color:#fff}.proTimelineToolbar span{font-size:10px;color:#7f8ca3;margin-top:3px}.proTimelineTools{display:flex;gap:6px}
+      .timelineRuler { display:grid;grid-template-columns:150px minmax(0,1fr);margin-bottom:5px}.timelineRulerLabel{font-size:9px;color:#76839b;padding:0 8px}.timelineRulerTrack{position:relative;height:22px;border-bottom:1px solid #2b3549}.timelineRulerTrack span{position:absolute;transform:translateX(-50%);font-size:8px;color:#6e7b92;bottom:4px}
+      .timelineGroup { margin-bottom:8px;border:1px solid #202b3f;border-radius:9px;overflow:hidden}.timelineGroupTitle{padding:5px 9px;background:#101827;color:#d4a24c;font-size:9px;font-weight:900;text-transform:uppercase;letter-spacing:.08em}
+      .timelineLane { display:grid;grid-template-columns:150px minmax(0,1fr);min-height:34px;border-top:1px solid #1e293b}.timelineLane.hidden{min-height:27px;opacity:.55}.timelineLaneLabel{display:grid;grid-template-columns:8px minmax(0,1fr) auto;gap:7px;align-items:center;border:0;border-right:1px solid #273247;background:#0d1524;color:#dbe3ef;text-align:left;padding:0 9px;cursor:pointer}.timelineLaneLabel i{width:8px;height:8px;border-radius:2px}.timelineLaneLabel span{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:10px}.timelineLaneLabel b{font-size:9px;color:#71809a}.timelineLaneTrack{position:relative;min-height:34px;background:repeating-linear-gradient(90deg,transparent 0,transparent calc(10% - 1px),rgba(255,255,255,.025) calc(10% - 1px),rgba(255,255,255,.025) 10%)}
+      .timelineEventBlock{position:absolute;top:7px;height:20px;min-width:7px;border:1px solid rgba(255,255,255,.32);border-radius:4px;opacity:.92;cursor:pointer;padding:0;box-shadow:0 2px 5px rgba(0,0,0,.3)}.timelineEventBlock:hover{transform:translateY(-2px);z-index:3}.timelineEventBlock span{font-size:8px;font-weight:900;color:#fff;text-shadow:0 1px 2px #000}.proTimeline.compact .timelineLane,.proTimeline.compact .timelineLaneTrack{min-height:25px}.proTimeline.compact .timelineEventBlock{top:4px;height:17px}
+      @media(max-width:900px){.historyToolbar{grid-template-columns:1fr}.historyActionCard{grid-template-columns:1fr}.historyActionButtons{justify-content:flex-end}}
       .timelinePull { position: fixed; left: 50%; bottom: 12px; transform: translateX(-50%); z-index: 1001; border: 1px solid rgba(212,162,76,.65); background: rgba(10,13,25,.96); color: var(--gold); border-radius: 999px; height: 28px; padding: 0 16px; font-size: 12px; font-weight: 950; cursor: pointer; box-shadow: 0 8px 22px rgba(0,0,0,.35); }
       .timelinePull.open { bottom: 226px; }
       .live-strip.timelineOnly { position: fixed; left: 10px; right: 10px; bottom: 8px; z-index: 1000; height: 210px; margin: 0; box-shadow: 0 -18px 40px rgba(0,0,0,.35); animation: slideTimeline .18s ease-out; }
       @keyframes slideTimeline { from { transform: translateY(105%); opacity: .4; } to { transform: translateY(0); opacity: 1; } }
       .floatingPanel { position: fixed; z-index: 1200; right: 14px; top: 88px; width: min(620px, calc(100vw - 28px)); max-height: calc(100vh - 120px); background: rgba(13,17,31,.98); border: 1px solid var(--border); border-radius: 16px; box-shadow: 0 24px 70px rgba(0,0,0,.45); overflow: hidden; display: flex; flex-direction: column; }
+      .historyPanel { width: min(840px, calc(100vw - 28px)); }
       .montagePanel { width: min(760px, calc(100vw - 28px)); }
+      .historyShortcutEditor { margin: 0 0 12px; padding: 11px; border: 1px solid #29364d; border-radius: 11px; background: #0b1322; }
+      .historyShortcutTitle { display:flex; justify-content:space-between; align-items:center; gap:12px; margin-bottom:9px; }
+      .historyShortcutTitle b,.historyShortcutTitle span { display:block; }
+      .historyShortcutTitle b { color:#fff; font-size:11px; }
+      .historyShortcutTitle span { color:#7f8ca3; font-size:9px; margin-top:3px; }
+      .historyShortcutTitle button { border:1px solid var(--gold); border-radius:8px; background:rgba(212,162,76,.1); color:var(--gold); padding:7px 10px; font-size:9px; font-weight:900; cursor:pointer; }
+      .historyShortcutGrid { display:grid; grid-template-columns:repeat(auto-fill,minmax(180px,1fr)); gap:7px; }
+      .historyShortcutItem { display:grid; grid-template-columns:38px minmax(0,1fr) 28px; gap:6px; align-items:center; }
+      .historyShortcutItem input { height:34px; border:1px solid #303c54; border-radius:8px; background:#111b2d; color:#fff; padding:0 8px; font-size:10px; font-weight:800; }
+      .historyShortcutItem .historyShortcutKey { padding:0; text-align:center; border-color:var(--gold); color:var(--gold); font-weight:950; text-transform:uppercase; }
+      .historyShortcutItem button { width:28px; height:28px; border:0; border-radius:7px; background:var(--bordeaux); color:#fff; font-weight:950; cursor:pointer; }
       .floatingHead { height: 44px; padding: 0 14px; display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid var(--border); color: #fff; }
       .floatingHead button { border: 1px solid var(--border); background: rgba(255,255,255,.06); color: #fff; width: 28px; height: 28px; border-radius: 9px; cursor: pointer; }
       .floatingBody { flex: 1; min-height: 0; overflow: auto; padding: 10px; }
