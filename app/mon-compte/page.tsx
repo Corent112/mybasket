@@ -211,11 +211,17 @@ export default function MonComptePage() {
 
     const local = blank();
 
-    const { data: profile } = await supabase
+    const { data: profile, error: profileError } = await supabase
       .from("profiles")
-      .select("display_name, club, avatar_url, platform_role")
+      .select(
+        "display_name, first_name, last_name, club, avatar_url, club_logo_url, phone, birthdate, category, platform_role"
+      )
       .eq("id", user.id)
-      .single();
+      .maybeSingle();
+
+    if (profileError) {
+      console.error("Erreur chargement profil :", profileError);
+    }
 
     const userIsAdmin =
       profile?.platform_role === "ceo" ||
@@ -260,13 +266,24 @@ export default function MonComptePage() {
     setAccessMap(accessData);
 
     const dn = (profile?.display_name || "").trim();
+    const displayParts = dn.split(" ").filter(Boolean);
 
     setForm({
       ...local,
-      firstName: local.firstName || (dn ? dn.split(" ")[0] : ""),
-      lastName: local.lastName || (dn ? dn.split(" ").slice(1).join(" ") : ""),
-      club: local.club || profile?.club || "",
-      photo: local.photo || profile?.avatar_url || "",
+      firstName:
+        profile?.first_name ||
+        displayParts[0] ||
+        "",
+      lastName:
+        profile?.last_name ||
+        displayParts.slice(1).join(" ") ||
+        "",
+      birthdate: profile?.birthdate || "",
+      phone: profile?.phone || "",
+      club: profile?.club || "",
+      category: profile?.category || "",
+      photo: profile?.avatar_url || "",
+      logo: profile?.club_logo_url || "",
       subscription: subscriptionLabel,
     });
 
@@ -306,20 +323,41 @@ export default function MonComptePage() {
   };
 
   const save = async () => {
+    if (!uid) return;
 
     const display = `${form.firstName} ${form.lastName}`.trim();
 
-    if (uid) {
-      await supabase
-        .from('profiles')
+    try {
+      const { error } = await supabase
+        .from("profiles")
         .update({
-          display_name: display,
-          club: form.club,
+          display_name: display || null,
+          first_name: form.firstName.trim() || null,
+          last_name: form.lastName.trim() || null,
+          birthdate: form.birthdate.trim() || null,
+          phone: form.phone.trim() || null,
+          club: form.club.trim() || null,
+          category: form.category.trim() || null,
+          avatar_url: form.photo || null,
+          club_logo_url: form.logo || null,
+          updated_at: new Date().toISOString(),
         })
-        .eq('id', uid);
-    }
+        .eq("id", uid);
 
-    showToast('Modifications enregistrées');
+      if (error) {
+        console.error("Erreur sauvegarde profil Supabase :", error);
+        throw error;
+      }
+
+      showToast("Modifications enregistrées ✓");
+    } catch (error) {
+      console.error("Erreur sauvegarde profil :", error);
+      alert(
+        error instanceof Error
+          ? error.message
+          : "Impossible d'enregistrer les modifications du profil."
+      );
+    }
   };
 
   const handleTeamSave = async (team: Team) => {
