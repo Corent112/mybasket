@@ -55,6 +55,10 @@ export default function TeamForm({
     season: team?.season ?? "2025-2026",
   }));
 
+  const [clubName, setClubName] = useState(
+    () => (team as Team & { clubName?: string })?.clubName || "",
+  );
+
   const logoRef = useRef<HTMLInputElement>(null);
   const bannerRef = useRef<HTMLInputElement>(null);
 
@@ -62,15 +66,6 @@ export default function TeamForm({
     setT((prev) => ({ ...prev, [k]: v }));
   }
 
-  function setKpi(k: keyof Team["kpi"], v: number) {
-    setT((prev) => ({
-      ...prev,
-      kpi: {
-        ...prev.kpi,
-        [k]: Number.isFinite(v) ? v : 0,
-      },
-    }));
-  }
 
   function setColor(i: number, v: string) {
     setT((prev) => {
@@ -96,10 +91,12 @@ export default function TeamForm({
       return;
     }
 
-    const tags =
-      t.tags && t.tags.length
-        ? t.tags
-        : [t.niveau, t.cat, t.genre].filter(Boolean);
+    if (!clubName.trim()) {
+      alert("Le nom du club est obligatoire.");
+      return;
+    }
+
+    const tags = [t.niveau, t.cat].filter(Boolean);
 
     onSave({
       ...t,
@@ -107,325 +104,337 @@ export default function TeamForm({
       season: t.season || "2025-2026",
       supabaseTeamId: t.supabaseTeamId ?? null,
       clubId: t.clubId ?? null,
-    });
+      clubName: clubName.trim(),
+    } as Team & { clubName: string });
   }
 
   return (
-    <div className="tl-modal-bg" onClick={onClose}>
-      <div className="tl-modal" onClick={(e) => e.stopPropagation()}>
-        <h3>{team ? "Modifier l'équipe" : "Nouvelle équipe"}</h3>
+    <div
+      className="tl-modal-bg"
+      onClick={onClose}
+      style={{
+        alignItems: "center",
+        padding: "1rem",
+        overflow: "hidden",
+      }}
+    >
+      <div
+        className="tl-modal"
+        onClick={(e) => e.stopPropagation()}
+        style={{
+          width: "min(720px, calc(100vw - 2rem))",
+          maxHeight: "90vh",
+          display: "flex",
+          flexDirection: "column",
+          overflow: "hidden",
+          padding: 0,
+        }}
+      >
+        <div
+          style={{
+            padding: "1.1rem 1.25rem .9rem",
+            borderBottom: "1px solid #efe6db",
+            flex: "0 0 auto",
+          }}
+        >
+          <h3 style={{ margin: 0 }}>
+            {team ? "Modifier l'équipe" : "Nouvelle équipe"}
+          </h3>
+        </div>
 
-        {/* Visuels */}
-        <div className="grp">
-          <div className="h">Visuels</div>
+        <div
+          style={{
+            padding: "1rem 1.25rem",
+            overflowY: "auto",
+            flex: "1 1 auto",
+          }}
+        >
+          <div className="grp" style={{ marginBottom: "1rem" }}>
+            <div className="h">Photos</div>
 
-          <div style={{ display: "flex", gap: "1.4rem", flexWrap: "wrap" }}>
-            <div style={{ textAlign: "center" }}>
-              <div
-                style={{
-                  fontSize: ".72rem",
-                  color: "#6a5b54",
-                  marginBottom: ".3rem",
-                  fontWeight: 700,
-                }}
-              >
-                LOGO
-              </div>
-
-              {t.logo ? (
-                <img src={t.logo} alt="" className="tl-upload-prev" />
-              ) : (
+            <div
+              style={{
+                display: "grid",
+                gridTemplateColumns: "minmax(150px, 180px) minmax(0, 1fr)",
+                gap: "1rem",
+                alignItems: "start",
+              }}
+            >
+              <div style={{ textAlign: "center" }}>
                 <div
-                  className="tl-upload-prev"
                   style={{
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
+                    fontSize: ".72rem",
+                    color: "#6a5b54",
+                    marginBottom: ".35rem",
+                    fontWeight: 800,
                   }}
                 >
-                  🏀
+                  LOGO DU CLUB
                 </div>
-              )}
 
-              <div>
+                {t.logo ? (
+                  <img
+                    src={t.logo}
+                    alt=""
+                    className="tl-upload-prev"
+                    style={{
+                      width: 110,
+                      height: 110,
+                      objectFit: "cover",
+                    }}
+                  />
+                ) : (
+                  <div
+                    className="tl-upload-prev"
+                    style={{
+                      width: 110,
+                      height: 110,
+                      margin: "0 auto",
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                    }}
+                  >
+                    🏀
+                  </div>
+                )}
+
                 <button
                   type="button"
                   className="tl-btn tl-btn-ghost tl-btn-sm"
-                  style={{ marginTop: ".4rem", minWidth: 110, minHeight: 42, padding: "0.65rem 1rem", whiteSpace: "nowrap" }}
+                  style={{
+                    marginTop: ".45rem",
+                    minWidth: 110,
+                    minHeight: 40,
+                  }}
                   onClick={() => logoRef.current?.click()}
                 >
                   Choisir
                 </button>
-              </div>
 
-              <input
-                ref={logoRef}
-                type="file"
-                accept="image/*"
-                hidden
-                onChange={pickLogo}
-              />
-            </div>
-
-            <div style={{ flex: 1, minWidth: 200, textAlign: "center" }}>
-              <div
-                style={{
-                  fontSize: ".72rem",
-                  color: "#6a5b54",
-                  marginBottom: ".3rem",
-                  fontWeight: 700,
-                }}
-              >
-                PHOTO D'ÉQUIPE
-              </div>
-
-              {t.banniere ? (
-                <img
-                  src={t.banniere}
-                  alt=""
-                  style={{
-                    width: "100%",
-                    maxHeight: 90,
-                    objectFit: "cover",
-                    borderRadius: 12,
-                    border: "1px solid #efe6db",
-                  }}
+                <input
+                  ref={logoRef}
+                  type="file"
+                  accept="image/*"
+                  hidden
+                  onChange={pickLogo}
                 />
-              ) : (
+              </div>
+
+              <div style={{ textAlign: "center" }}>
                 <div
                   style={{
-                    height: 72,
-                    borderRadius: 12,
-                    border: "1px dashed #e0cdbb",
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    color: "#9a8a82",
+                    fontSize: ".72rem",
+                    color: "#6a5b54",
+                    marginBottom: ".35rem",
+                    fontWeight: 800,
                   }}
                 >
-                  Aucune photo
+                  PHOTO DE L'ÉQUIPE
                 </div>
-              )}
 
-              <button
-                type="button"
-                className="tl-btn tl-btn-ghost tl-btn-sm"
-                style={{ marginTop: ".4rem", minWidth: 160, minHeight: 42, padding: "0.65rem 1rem", whiteSpace: "nowrap" }}
-                onClick={() => bannerRef.current?.click()}
-              >
-                Choisir une photo
-              </button>
+                {t.banniere ? (
+                  <img
+                    src={t.banniere}
+                    alt=""
+                    style={{
+                      width: "100%",
+                      height: 110,
+                      objectFit: "cover",
+                      borderRadius: 12,
+                      border: "1px solid #efe6db",
+                    }}
+                  />
+                ) : (
+                  <div
+                    style={{
+                      height: 110,
+                      borderRadius: 12,
+                      border: "1px dashed #e0cdbb",
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      color: "#9a8a82",
+                    }}
+                  >
+                    Aucune photo
+                  </div>
+                )}
 
-              <input
-                ref={bannerRef}
-                type="file"
-                accept="image/*"
-                hidden
-                onChange={pickBanner}
-              />
+                <button
+                  type="button"
+                  className="tl-btn tl-btn-ghost tl-btn-sm"
+                  style={{
+                    marginTop: ".45rem",
+                    minWidth: 150,
+                    minHeight: 40,
+                  }}
+                  onClick={() => bannerRef.current?.click()}
+                >
+                  Choisir une photo
+                </button>
+
+                <input
+                  ref={bannerRef}
+                  type="file"
+                  accept="image/*"
+                  hidden
+                  onChange={pickBanner}
+                />
+              </div>
             </div>
           </div>
-        </div>
 
-        {/* Identité */}
-        <div className="grp">
-          <div className="h">Identité</div>
+          <div className="grp">
+            <div className="h">Informations de l'équipe</div>
 
-          <div className="tl-fields">
-            <div className="tl-field full">
-              <label>Nom de l'équipe</label>
-              <input
-                value={t.name}
-                onChange={(e) => set("name", e.target.value)}
-                placeholder="Paris Basketball"
-              />
-            </div>
+            <div className="tl-fields">
+              <div className="tl-field full">
+                <label>Nom du club</label>
+                <input
+                  value={clubName}
+                  onChange={(e) => setClubName(e.target.value)}
+                  placeholder="Paris Basketball"
+                />
+              </div>
 
-            <div className="tl-field full">
-              <label>Catégorie (libellé)</label>
-              <input
-                value={t.categorieLabel}
-                onChange={(e) => set("categorieLabel", e.target.value)}
-                placeholder="U15 France - Masculins"
-              />
-            </div>
+              <div className="tl-field full">
+                <label>Nom de l'équipe</label>
+                <input
+                  value={t.name}
+                  onChange={(e) => set("name", e.target.value)}
+                  placeholder="PB18"
+                />
+              </div>
 
-            <div className="tl-field">
-              <label>Catégorie courte</label>
-              <input
-                value={t.cat}
-                onChange={(e) => set("cat", e.target.value)}
-                placeholder="U15"
-              />
-            </div>
+              <div className="tl-field">
+                <label>Catégorie</label>
+                <select
+                  value={t.cat}
+                  onChange={(e) => {
+                    set("cat", e.target.value);
+                    set("categorieLabel", e.target.value);
+                  }}
+                >
+                  <option value="">Choisir</option>
+                  <option value="U7">U7</option>
+                  <option value="U9">U9</option>
+                  <option value="U11">U11</option>
+                  <option value="U13">U13</option>
+                  <option value="U15">U15</option>
+                  <option value="U18">U18</option>
+                  <option value="U21">U21</option>
+                  <option value="SENIOR">Senior</option>
+                </select>
+              </div>
 
-            <div className="tl-field">
-              <label>Niveau</label>
-              <input
-                value={t.niveau}
-                onChange={(e) => set("niveau", e.target.value)}
-                placeholder="Départemental"
-              />
-            </div>
+              <div className="tl-field">
+                <label>Niveau de l'équipe</label>
+                <input
+                  value={t.niveau}
+                  onChange={(e) => set("niveau", e.target.value)}
+                  placeholder="Départemental, Régional, France..."
+                />
+              </div>
 
-            <div className="tl-field">
-              <label>Genre</label>
-              <input
-                value={t.genre}
-                onChange={(e) => set("genre", e.target.value)}
-                placeholder="Masculins"
-              />
-            </div>
+              <div className="tl-field">
+                <label>Couleur maillot 1</label>
+                <div
+                  style={{
+                    display: "flex",
+                    gap: ".6rem",
+                    alignItems: "center",
+                  }}
+                >
+                  <input
+                    type="color"
+                    value={t.couleurs?.[0] || "#7a1228"}
+                    onChange={(e) => setColor(0, e.target.value)}
+                    style={{ width: 54, height: 42, padding: 3 }}
+                  />
+                  <span
+                    style={{
+                      fontSize: ".8rem",
+                      color: "#6a5b54",
+                      fontWeight: 700,
+                    }}
+                  >
+                    {t.couleurs?.[0] || "#7a1228"}
+                  </span>
+                </div>
+              </div>
 
-            <div className="tl-field">
-              <label>Saison</label>
-              <input
-                value={t.season || ""}
-                onChange={(e) => set("season", e.target.value)}
-                placeholder="2025-2026"
-              />
-            </div>
-
-            <div className="tl-field">
-              <label>Création de l'équipe</label>
-              <input
-                value={t.dateCreation}
-                onChange={(e) => set("dateCreation", e.target.value)}
-                placeholder="01/07/2025"
-              />
-            </div>
-          </div>
-        </div>
-
-        {/* Encadrement */}
-        <div className="grp">
-          <div className="h">Encadrement</div>
-
-          <div className="tl-fields">
-            <div className="tl-field">
-              <label>Entraîneur principal</label>
-              <input
-                value={t.entraineurPrincipal}
-                onChange={(e) => set("entraineurPrincipal", e.target.value)}
-                placeholder="Lucas Martin"
-              />
-            </div>
-
-            <div className="tl-field">
-              <label>Assistant</label>
-              <input
-                value={t.assistant}
-                onChange={(e) => set("assistant", e.target.value)}
-                placeholder="Noah Bernard"
-              />
-            </div>
-
-            <div className="tl-field full">
-              <label>Salle principale</label>
-              <input
-                value={t.sallePrincipale}
-                onChange={(e) => set("sallePrincipale", e.target.value)}
-                placeholder="Gymnase Carpentier"
-              />
-            </div>
-
-            <div className="tl-field">
-              <label>Couleur 1</label>
-              <input
-                type="color"
-                value={t.couleurs?.[0] || "#7a1228"}
-                onChange={(e) => setColor(0, e.target.value)}
-              />
-            </div>
-
-            <div className="tl-field">
-              <label>Couleur 2</label>
-              <input
-                type="color"
-                value={t.couleurs?.[1] || "#e0a82e"}
-                onChange={(e) => setColor(1, e.target.value)}
-              />
+              <div className="tl-field">
+                <label>Couleur maillot 2</label>
+                <div
+                  style={{
+                    display: "flex",
+                    gap: ".6rem",
+                    alignItems: "center",
+                  }}
+                >
+                  <input
+                    type="color"
+                    value={t.couleurs?.[1] || "#e0a82e"}
+                    onChange={(e) => setColor(1, e.target.value)}
+                    style={{ width: 54, height: 42, padding: 3 }}
+                  />
+                  <span
+                    style={{
+                      fontSize: ".8rem",
+                      color: "#6a5b54",
+                      fontWeight: 700,
+                    }}
+                  >
+                    {t.couleurs?.[1] || "#e0a82e"}
+                  </span>
+                </div>
+              </div>
             </div>
           </div>
+
+          <input type="hidden" value={t.supabaseTeamId ?? ""} readOnly />
+          <input type="hidden" value={t.clubId ?? ""} readOnly />
         </div>
 
-        {/* Indicateurs saison */}
-        <div className="grp">
-          <div className="h">Indicateurs de la saison</div>
-
-          <div className="tl-fields">
-            <div className="tl-field">
-              <label>Présence moy. (%)</label>
-              <input
-                type="number"
-                value={t.kpi.presenceMoyennePct}
-                onChange={(e) =>
-                  setKpi("presenceMoyennePct", Number(e.target.value))
-                }
-              />
-            </div>
-
-            <div className="tl-field">
-              <label>Matchs joués</label>
-              <input
-                type="number"
-                value={t.kpi.matchsJoues}
-                onChange={(e) => setKpi("matchsJoues", Number(e.target.value))}
-              />
-            </div>
-
-            <div className="tl-field">
-              <label>Victoires</label>
-              <input
-                type="number"
-                value={t.kpi.victoires}
-                onChange={(e) => setKpi("victoires", Number(e.target.value))}
-              />
-            </div>
-
-            <div className="tl-field">
-              <label>Défaites</label>
-              <input
-                type="number"
-                value={t.kpi.defaites}
-                onChange={(e) => setKpi("defaites", Number(e.target.value))}
-              />
-            </div>
-
-            <div className="tl-field">
-              <label>Points moy.</label>
-              <input
-                type="number"
-                value={t.kpi.pointsMoyenne}
-                onChange={(e) =>
-                  setKpi("pointsMoyenne", Number(e.target.value))
-                }
-              />
-            </div>
-
-            <div className="tl-field">
-              <label>Progression (%)</label>
-              <input
-                type="number"
-                value={t.kpi.progressionPct}
-                onChange={(e) =>
-                  setKpi("progressionPct", Number(e.target.value))
-                }
-              />
-            </div>
-          </div>
-        </div>
-
-        {/* Liaison technique invisible dans l'interface principale */}
-        <input type="hidden" value={t.supabaseTeamId ?? ""} readOnly />
-        <input type="hidden" value={t.clubId ?? ""} readOnly />
-
-        <div className="tl-modal-actions">
-          <button type="button" className="tl-btn tl-btn-ghost" style={{ minWidth: 120, minHeight: 44, padding: "0.7rem 1.2rem", whiteSpace: "nowrap" }} onClick={onClose}>
+        <div
+          className="tl-modal-actions"
+          style={{
+            flex: "0 0 auto",
+            margin: 0,
+            padding: ".9rem 1.25rem",
+            borderTop: "1px solid #efe6db",
+            background: "#fff",
+            position: "sticky",
+            bottom: 0,
+            zIndex: 5,
+          }}
+        >
+          <button
+            type="button"
+            className="tl-btn tl-btn-ghost"
+            style={{
+              minWidth: 120,
+              minHeight: 44,
+              padding: ".7rem 1.2rem",
+              whiteSpace: "nowrap",
+            }}
+            onClick={onClose}
+          >
             Annuler
           </button>
 
-          <button type="button" className="tl-btn tl-btn-bx" style={{ minWidth: 130, minHeight: 44, padding: "0.7rem 1.2rem", whiteSpace: "nowrap" }} onClick={submit}>
+          <button
+            type="button"
+            className="tl-btn tl-btn-bx"
+            style={{
+              minWidth: 140,
+              minHeight: 44,
+              padding: ".7rem 1.2rem",
+              whiteSpace: "nowrap",
+            }}
+            onClick={submit}
+          >
             Enregistrer
           </button>
         </div>
