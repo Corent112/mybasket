@@ -32,6 +32,19 @@ function asText(value: unknown): string {
   return String(value ?? "").trim();
 }
 
+function toIsoDate(value: unknown): string | null {
+  const raw = asText(value);
+  if (!raw) return null;
+
+  if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) return raw;
+
+  const match = raw.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+  if (!match) return null;
+
+  const [, day, month, year] = match;
+  return `${year}-${month.padStart(2, "0")}-${day.padStart(2, "0")}`;
+}
+
 function round1(value: number): number {
   return Math.round(value * 10) / 10;
 }
@@ -161,10 +174,51 @@ function normalizePlayerRow(row: any): Player {
     lastName: row.last_name ?? data.lastName ?? "",
     num: row.number ?? data.num ?? null,
     photo: row.photo_url ?? data.photo ?? null,
-    postePrincipal: row.position ?? data.postePrincipal ?? "",
-    posteSecondaire: row.secondary_position ?? data.posteSecondaire ?? "",
+    postePrincipal:
+      row.position_primary ??
+      row.position ??
+      data.postePrincipal ??
+      "",
+    posteSecondaire:
+      row.position_secondary ??
+      row.secondary_position ??
+      data.posteSecondaire ??
+      "",
+    dob: row.birth_date ?? data.dob ?? "",
+    age: row.age ?? data.age ?? null,
+    taille: row.height ?? data.taille ?? "",
+    poids: row.weight ?? data.poids ?? "",
+    mainDominante: row.dominant_hand ?? data.mainDominante ?? "Droite",
     statut: row.status ?? data.statut ?? "Disponible",
     presencePct: row.presence_pct ?? data.presencePct ?? 0,
+    ponctualitePct: row.punctuality_pct ?? data.ponctualitePct ?? 0,
+    potentiel: row.potential ?? data.potentiel ?? 0,
+    notes: row.notes ?? data.notes ?? "",
+    licenseNumber:
+      row.license_number ??
+      data.licenseNumber ??
+      data.license_number ??
+      "",
+    tutor1Phone:
+      row.tutor1_phone ??
+      data.tutor1Phone ??
+      data.tutor1_phone ??
+      "",
+    tutor1Email:
+      row.tutor1_email ??
+      data.tutor1Email ??
+      data.tutor1_email ??
+      "",
+    tutor2Phone:
+      row.tutor2_phone ??
+      data.tutor2Phone ??
+      data.tutor2_phone ??
+      "",
+    tutor2Email:
+      row.tutor2_email ??
+      data.tutor2Email ??
+      data.tutor2_email ??
+      "",
     stats:
       data.stats ?? {
         pts: 0,
@@ -250,18 +304,69 @@ function teamPayload(team: Team, userId: string) {
 }
 
 function playerPayload(teamId: string, player: Player, userId: string) {
+  const extended = player as Player & {
+    supabasePlayerId?: string | null;
+    licenseNumber?: string;
+    license_number?: string;
+    tutor1Phone?: string;
+    tutor1_phone?: string;
+    tutor1Email?: string;
+    tutor1_email?: string;
+    tutor2Phone?: string;
+    tutor2_phone?: string;
+    tutor2Email?: string;
+    tutor2_email?: string;
+  };
+
+  const idCandidate =
+    isUuid(player.id)
+      ? player.id
+      : isUuid(extended.supabasePlayerId)
+        ? extended.supabasePlayerId
+        : undefined;
+
   return {
-    id: isUuid(player.id) ? player.id : undefined,
+    id: idCandidate,
     user_id: userId,
     team_id: teamId,
     first_name: player.firstName ?? "",
     last_name: player.lastName ?? "",
     number: player.num ?? null,
     photo_url: player.photo ?? null,
-    position: player.postePrincipal ?? "",
-    secondary_position: player.posteSecondaire ?? "",
+
+    // Schéma réel public.players
+    position_primary: player.postePrincipal ?? "",
+    position_secondary: player.posteSecondaire ?? "",
+    birth_date: toIsoDate(player.dob),
+    age: player.age ?? null,
+    height: player.taille ?? "",
+    weight: player.poids ?? "",
+    dominant_hand: player.mainDominante ?? "",
     status: player.statut ?? "Disponible",
+    license_number:
+      extended.licenseNumber ??
+      extended.license_number ??
+      null,
+    tutor1_phone:
+      extended.tutor1Phone ??
+      extended.tutor1_phone ??
+      null,
+    tutor1_email:
+      extended.tutor1Email ??
+      extended.tutor1_email ??
+      null,
+    tutor2_phone:
+      extended.tutor2Phone ??
+      extended.tutor2_phone ??
+      null,
+    tutor2_email:
+      extended.tutor2Email ??
+      extended.tutor2_email ??
+      null,
     presence_pct: player.presencePct ?? 0,
+    punctuality_pct: player.ponctualitePct ?? 0,
+    potential: player.potentiel ?? null,
+    notes: player.notes ?? "",
     metadata: player,
     updated_at: new Date().toISOString(),
   };
@@ -528,33 +633,60 @@ export async function upsertPlayer(
   const supabase = createClient();
   const userId = await getUserId();
 
-  // Un nouveau joueur sort de emptyPlayer() avec id: "".
-  // On lui attribue donc un UUID AVANT l'upsert au lieu d'envoyer
-  // id: undefined et de dépendre d'un DEFAULT SQL éventuel sur players.id.
-  const playerWithId: Player = {
-    ...player,
-    id: isUuid(player.id) ? player.id : uid("p"),
-  };
-
-  if (!isUuid(playerWithId.id)) {
-    throw new Error(
-      "Impossible de générer un identifiant UUID valide pour le joueur."
-    );
-  }
-
   if (!isUuid(teamId)) {
     throw new Error(
-      `L'équipe sélectionnée n'a pas un identifiant Supabase valide : ${teamId}`
+      `team_id invalide pour Supabase : ${teamId || "(vide)"}`
     );
   }
 
-  const payload = playerPayload(teamId, playerWithId, userId);
+  const { data: existingTeam, error: teamError } = await supabase
+    .from("teams")
+    .select("id,user_id")
+    .eq("id", teamId)
+    .maybeSingle();
 
-  const { data, error } = await supabase
-    .from("players")
-    .upsert(payload, { onConflict: "id" })
-    .select("*")
-    .single();
+  if (teamError) {
+    logSupabaseError("Erreur vérification team avant joueur", teamError, {
+      teamId,
+      userId,
+    });
+    throw new Error(
+      `[${teamError.code || "SUPABASE"}] ${teamError.message || "Impossible de vérifier l'équipe."}`
+    );
+  }
+
+  if (!existingTeam?.id) {
+    throw new Error(
+      `L'équipe ${teamId} n'existe pas dans public.teams.`
+    );
+  }
+
+  if (existingTeam.user_id && existingTeam.user_id !== userId) {
+    throw new Error(
+      "Cette équipe n'appartient pas à l'utilisateur connecté."
+    );
+  }
+
+  const payload = playerPayload(teamId, player, userId);
+
+  // Pour un nouveau joueur, on laisse PostgreSQL utiliser gen_random_uuid().
+  // Pour un joueur existant, on conserve son UUID et on fait l'upsert.
+  const query = isUuid((payload as any).id)
+    ? supabase
+        .from("players")
+        .upsert(payload, { onConflict: "id" })
+        .select("*")
+        .single()
+    : supabase
+        .from("players")
+        .insert({
+          ...payload,
+          id: undefined,
+        })
+        .select("*")
+        .single();
+
+  const { data, error } = await query;
 
   if (error) {
     logSupabaseError("Erreur upsertPlayer", error, payload);
@@ -562,12 +694,18 @@ export async function upsertPlayer(
     throw new Error(
       [
         error.code ? `[${error.code}]` : "",
-        error.message || "Erreur pendant l'enregistrement du joueur.",
+        error.message || "Erreur Supabase pendant l'enregistrement du joueur.",
         error.details ? `Détails : ${error.details}` : "",
         error.hint ? `Aide : ${error.hint}` : "",
       ]
         .filter(Boolean)
         .join(" ")
+    );
+  }
+
+  if (!data?.id) {
+    throw new Error(
+      "Supabase n'a retourné aucun identifiant pour le joueur créé."
     );
   }
 
