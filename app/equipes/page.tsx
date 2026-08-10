@@ -210,20 +210,24 @@ function playerToSupabase(player: Player, teamId: string, userId: string) {
     team_id: teamId,
     first_name: player.firstName || "",
     last_name: player.lastName || "",
-    number: player.num,
+    number: player.num ?? null,
     photo_url: player.photo || null,
-    position_pri: player.postePrincipal || "",
-    position_sec: player.posteSecondaire || "",
-    birth_date: player.dob || null,
-    age: player.age,
-    height: player.taille || "",
-    weight: player.poids || "",
-    dominant_hand: player.mainDominante || "",
-    status: player.statut || "",
+
+    // Colonnes réellement utilisées par la table players.
+    position: player.postePrincipal || "",
+    secondary_position: player.posteSecondaire || "",
+    status: player.statut || "Disponible",
     presence_pct: player.presencePct || 0,
-    punctuality_pct: player.ponctualitePct || 0,
-    potential: player.potentiel || 0,
-    notes: player.notes || "",
+
+    // Les informations complémentaires restent disponibles sans dépendre
+    // de colonnes SQL optionnelles qui peuvent ne pas exister.
+    metadata: {
+      ...player,
+      id: player.id || player.supabasePlayerId || undefined,
+      teamId,
+    },
+
+    updated_at: new Date().toISOString(),
   };
 }
 
@@ -526,17 +530,57 @@ export default function MesEquipesPage() {
 
       if (!user) throw new Error("Utilisateur non connecté");
 
-      const payload = playerToSupabase(p, teamId, user.id);
-      const { error } = await supabase.from("players").upsert(payload);
+      if (!teamId) {
+        throw new Error("Aucune équipe n'est associée au joueur.");
+      }
 
-      if (error) throw error;
+      const payload = playerToSupabase(p, teamId, user.id);
+
+      const { data, error } = await supabase
+        .from("players")
+        .upsert(payload, { onConflict: "id" })
+        .select("*")
+        .single();
+
+      if (error) {
+        console.error("Erreur Supabase création joueur :", {
+          code: error.code,
+          message: error.message,
+          details: error.details,
+          hint: error.hint,
+          payload,
+        });
+
+        throw new Error(
+          [
+            error.code ? `[${error.code}]` : "",
+            error.message || "Erreur pendant l'enregistrement du joueur.",
+            error.details ? `Détails : ${error.details}` : "",
+            error.hint ? `Aide : ${error.hint}` : "",
+          ]
+            .filter(Boolean)
+            .join(" ")
+        );
+      }
+
+      if (!data?.id) {
+        throw new Error("Le joueur a été envoyé mais Supabase n'a retourné aucun identifiant.");
+      }
 
       setPlayerFor(null);
       await reload();
       flash("Joueur enregistré dans Supabase ✓");
     } catch (error: any) {
       console.error("Erreur sauvegarde joueur :", error);
-      flash(error?.message || "Erreur sauvegarde joueur");
+
+      const message =
+        error?.message ||
+        "Erreur pendant l'enregistrement du joueur.";
+
+      // On affiche volontairement la vraie erreur pendant la phase de correction,
+      // au lieu de masquer le problème derrière un message générique.
+      alert(message);
+      flash(message);
     }
   }
 
