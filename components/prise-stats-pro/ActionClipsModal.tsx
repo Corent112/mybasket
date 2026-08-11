@@ -21,7 +21,6 @@
  * ========================================================================== */
 
 import { type PointerEvent as ReactPointerEvent, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { createPortal } from 'react-dom';
 import { type VideoSyncState, NATIVE_SYNC, resolveActionClipBounds } from '@/lib/video-sync';
 
 /** Forme d'une action lisible en clip (compatible LiveMatchAction / StatA). */
@@ -48,11 +47,6 @@ export type ClipAction = {
   shotType?: string | null;
   shotResult?: string | null;
   zone?: string | null;
-  reboundType?: string | null;
-  reboundPlayerId?: string | null;
-  assist?: boolean | null;
-  assistPlayerId?: string | null;
-  foulOutcome?: string | null;
   courtX?: number | null;
   courtY?: number | null;
   clipStart?: number | null;
@@ -79,8 +73,6 @@ export type ActionClipsModalProps = {
   describe?: (action: ClipAction) => string;
   playerName?: (id: string | null | undefined) => string | undefined;
   tempsFortLabel?: (id: string | null | undefined) => string | undefined;
-  shortcutThemes?: Array<{ key: string; name: string }>;
-  onAssignTheme?: (action: ClipAction, themeName: string, key: string) => void;
 };
 
 const fmt = (s: number) =>
@@ -103,63 +95,6 @@ export default function ActionClipsModal(props: ActionClipsModalProps) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const stopRef = useRef<(() => void) | null>(null);
   const drawing = useRef(false);
-  const popupRef = useRef<Window | null>(null);
-  const onCloseRef = useRef(onClose);
-  const [portalTarget, setPortalTarget] = useState<HTMLElement | null>(null);
-  const [videoDuration, setVideoDuration] = useState(0);
-  const [frozen, setFrozen] = useState(false);
-  const [overlayTool, setOverlayTool] = useState<'text' | 'spotlight' | 'playerCircle' | null>(null);
-  const [overlayPoint, setOverlayPoint] = useState<{ x: number; y: number } | null>(null);
-  const [overlayText, setOverlayText] = useState('');
-
-  useEffect(() => {
-    onCloseRef.current = onClose;
-  }, [onClose]);
-
-  useEffect(() => {
-    if (!open) {
-      setPortalTarget(null);
-      if (popupRef.current && !popupRef.current.closed) popupRef.current.close();
-      popupRef.current = null;
-      return;
-    }
-
-    const popup = window.open(
-      '',
-      'mybasket-action-clip-review',
-      'popup=yes,width=1280,height=900,resizable=yes,scrollbars=yes',
-    );
-
-    if (!popup) {
-      setPortalTarget(document.body);
-      return;
-    }
-
-    popupRef.current = popup;
-    popup.document.open();
-    popup.document.write(`<!doctype html>
-      <html lang="fr">
-        <head>
-          <meta charset="utf-8" />
-          <meta name="viewport" content="width=device-width,initial-scale=1" />
-          <title>MyBasket · Revoir une séquence</title>
-        </head>
-        <body style="margin:0;background:#070912;"></body>
-      </html>`);
-    popup.document.close();
-
-    const handlePopupClose = () => onCloseRef.current();
-    popup.addEventListener('beforeunload', handlePopupClose);
-    setPortalTarget(popup.document.body);
-    popup.focus();
-
-    return () => {
-      popup.removeEventListener('beforeunload', handlePopupClose);
-      if (!popup.closed) popup.close();
-      if (popupRef.current === popup) popupRef.current = null;
-      setPortalTarget(null);
-    };
-  }, [open]);
 
   const current: ClipAction | undefined = actions[index];
 
@@ -195,17 +130,87 @@ export default function ActionClipsModal(props: ActionClipsModalProps) {
     const v = videoRef.current;
     const start = syncedStartOf(current);
     const end = syncedEndOf(current);
+
     stopRef.current?.();
     stopRef.current = null;
+
     if (!v || start == null) return;
-    try { v.currentTime = Math.max(0, start); v.play().catch(() => {}); } catch { /* noop */ }
-    if (end != null) {
-      const onTick = () => {
-        if (v.currentTime >= end) { v.pause(); v.removeEventListener('timeupdate', onTick); stopRef.current = null; }
+
+    const safeStart = Math.max(0, start);
+    const safeEnd =
+      end != null && Number.isFinite(end)
+        ? Math.max(safeStart + 0.05, end)
+        : null;
+
+    let disposed = false;
+
+    const stopAtEnd = () => {
+      if (disposed || safeEnd == null) return;
+      if (v.currentTime >= safeEnd - 0.03) {
+        v.pause();
+        try { v.currentTime = safeEnd; } catch { /* noop */ }
+      }
+    };
+
+    const enforceBoundsOnPlay = () => {
+      if (disposed) return;
+      // Si l'utilisateur relance avec les contrôles natifs alors qu'il est
+      // sorti du clip (ou à sa fin), on repart TOUJOURS du début du clip.
+      if (
+        v.currentTime < safeStart - 0.08 ||
+        (safeEnd != null && v.currentTime >= safeEnd - 0.05)
+      ) {
+        try { v.currentTime = safeStart; } catch { /* noop */ }
+      }
+    };
+
+    const seekAndPlay = () => {
+      if (disposed) return;
+
+      const maxStart =
+        Number.isFinite(v.duration) && v.duration > 0
+          ? Math.min(safeStart, Math.max(0, v.duration - 0.05))
+          : safeStart;
+
+      const startPlayback = () => {
+        if (disposed) return;
+        v.play().catch(() => {});
       };
-      v.addEventListener('timeupdate', onTick);
-      stopRef.current = () => v.removeEventListener('timeupdate', onTick);
+
+      try {
+        // fastSeek est plus fiable pour les gros fichiers quand disponible,
+        // puis currentTime garantit la position exacte.
+        const fastSeek = (v as HTMLVideoElement & { fastSeek?: (time: number) => void }).fastSeek;
+        if (typeof fastSeek === 'function') {
+          try { fastSeek.call(v, maxStart); } catch { /* noop */ }
+        }
+        v.currentTime = maxStart;
+      } catch { /* noop */ }
+
+      if (Math.abs(v.currentTime - maxStart) <= 0.12) {
+        startPlayback();
+      } else {
+        v.addEventListener('seeked', startPlayback, { once: true });
+      }
+    };
+
+    v.addEventListener('timeupdate', stopAtEnd);
+    v.addEventListener('play', enforceBoundsOnPlay);
+
+    // Le point important : on ne cherche PAS avant que les métadonnées soient
+    // disponibles. Sinon Safari/Chrome peuvent remettre currentTime à 0.
+    if (v.readyState >= 1) {
+      seekAndPlay();
+    } else {
+      v.addEventListener('loadedmetadata', seekAndPlay, { once: true });
     }
+
+    stopRef.current = () => {
+      disposed = true;
+      v.removeEventListener('timeupdate', stopAtEnd);
+      v.removeEventListener('play', enforceBoundsOnPlay);
+      v.removeEventListener('loadedmetadata', seekAndPlay);
+    };
   }, [current, syncedStartOf, syncedEndOf]);
 
   useEffect(() => {
@@ -225,21 +230,13 @@ export default function ActionClipsModal(props: ActionClipsModalProps) {
       const el = e.target as HTMLElement | null;
       if (el && (el.tagName === 'TEXTAREA' || el.tagName === 'INPUT')) return;
       if (e.key === 'Escape') onClose();
-      else if (e.key === 'Tab') { e.preventDefault(); go(1); }
       else if (e.key === 'ArrowRight') go(1);
       else if (e.key === 'ArrowLeft') go(-1);
       else if (e.key === 'r' || e.key === 'R') applyBoundedPlayback();
-      else {
-        const shortcut = props.shortcutThemes?.find((item) => item.key.toLowerCase() === e.key.toLowerCase());
-        if (shortcut && current && props.onAssignTheme) {
-          e.preventDefault();
-          props.onAssignTheme(current, shortcut.name, shortcut.key);
-        }
-      }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [open, go, onClose, applyBoundedPlayback, current, props.shortcutThemes, props.onAssignTheme]);
+  }, [open, go, onClose, applyBoundedPlayback]);
 
   const canvasPos = (e: ReactPointerEvent<HTMLCanvasElement>) => {
     const c = canvasRef.current!;
@@ -264,39 +261,6 @@ export default function ActionClipsModal(props: ActionClipsModalProps) {
   const clearDraw = () => {
     const c = canvasRef.current; if (!c) return;
     c.getContext('2d')!.clearRect(0, 0, c.width, c.height);
-  };
-
-  const toggleFreeze = () => {
-    const video = videoRef.current;
-    if (!video) return;
-    if (video.paused) {
-      video.play().catch(() => {});
-      setFrozen(false);
-    } else {
-      video.pause();
-      setFrozen(true);
-    }
-  };
-
-  const placeOverlay = (event: ReactPointerEvent<HTMLDivElement>) => {
-    if (!overlayTool) return;
-    const rect = event.currentTarget.getBoundingClientRect();
-    const point = {
-      x: ((event.clientX - rect.left) / rect.width) * 100,
-      y: ((event.clientY - rect.top) / rect.height) * 100,
-    };
-    setOverlayPoint(point);
-    if (overlayTool === 'text') {
-      const value = window.prompt('Texte à afficher :', overlayText || '');
-      if (value != null) setOverlayText(value.trim());
-    }
-  };
-
-  const consequenceLabel = (action: ClipAction) => {
-    if (action.reboundType) return action.reboundType === 'off' ? 'Rebond offensif' : action.reboundType === 'def' ? 'Rebond défensif' : action.reboundType;
-    if (action.assist) return 'Passe décisive';
-    if (action.foulOutcome) return action.foulOutcome;
-    return '';
   };
 
   const label = useMemo(() => {
@@ -328,7 +292,7 @@ export default function ActionClipsModal(props: ActionClipsModalProps) {
   const Info = ({ k, v }: { k: string; v: ReactNode }) =>
     (v == null || v === '') ? null : <div className="acm-info"><span>{k}</span><b>{v}</b></div>;
 
-  const modalContent = (
+  return (
     <div className="acm-backdrop" onClick={onClose}>
       <div className={`acm-card ${full ? 'acm-full' : ''}`} onClick={(e) => e.stopPropagation()}>
         <div className="acm-head">
@@ -343,18 +307,16 @@ export default function ActionClipsModal(props: ActionClipsModalProps) {
         <div className="acm-body">
           <div className="acm-title">{label}</div>
 
-          <div className={`acm-videowrap ${overlayTool ? 'placing' : ''}`} onPointerDown={placeOverlay}>
+          <div className="acm-videowrap">
             {hasVideo ? (
               <video
+                key={`${cur.id ?? index}:${syncedStartOf(cur) ?? 'na'}:${syncedEndOf(cur) ?? 'na'}`}
                 ref={videoRef}
                 className="acm-video"
                 src={videoUrl!}
                 controls
                 playsInline
-                onLoadedMetadata={(event) => {
-                  const duration = event.currentTarget.duration;
-                  setVideoDuration(Number.isFinite(duration) ? duration : 0);
-                }}
+                preload="metadata"
               />
             ) : (
               <div className="acm-novideo">
@@ -362,15 +324,6 @@ export default function ActionClipsModal(props: ActionClipsModalProps) {
                   ? `Clip enregistré · ${fmt(syncedStartOf(cur)!)}${syncedEndOf(cur) != null ? ` → ${fmt(syncedEndOf(cur)!)}` : ''}`
                   : 'Repère vidéo indisponible'}
               </div>
-            )}
-            {overlayPoint && overlayTool === 'spotlight' && (
-              <div className="acm-spotlight" style={{ left: `${overlayPoint.x}%`, top: `${overlayPoint.y}%` }} />
-            )}
-            {overlayPoint && overlayTool === 'playerCircle' && (
-              <div className="acm-player-circle" style={{ left: `${overlayPoint.x}%`, top: `${overlayPoint.y}%` }} />
-            )}
-            {overlayPoint && overlayTool === 'text' && overlayText && (
-              <div className="acm-overlay-text" style={{ left: `${overlayPoint.x}%`, top: `${overlayPoint.y}%` }}>{overlayText}</div>
             )}
             {hasVideo && draw && (
               <canvas
@@ -392,7 +345,7 @@ export default function ActionClipsModal(props: ActionClipsModalProps) {
             <button disabled={index === actions.length - 1} onClick={() => go(1)}>Suivant →</button>
           </div>
 
-          <div className="acm-tags">
+          <div className="acm-infos">
             <Info k="Match" v={cur.matchLabel} />
             <Info k="Date" v={cur.date} />
             <Info k="Adversaire" v={cur.opponent} />
@@ -404,7 +357,6 @@ export default function ActionClipsModal(props: ActionClipsModalProps) {
             <Info k="Joueur" v={whoLabel(cur)} />
             <Info k="Action" v={cur.actionType} />
             <Info k="Résultat" v={cur.shotResult === 'made' ? 'Marqué' : cur.shotResult === 'missed' ? 'Raté' : cur.shotResult} />
-            <Info k="Conséquence" v={consequenceLabel(cur)} />
             <Info k="Zone" v={cur.zone} />
             <Info k="Clip début" v={syncedStartOf(cur) != null ? fmt(syncedStartOf(cur)!) : null} />
             <Info k="Clip fin" v={syncedEndOf(cur) != null ? fmt(syncedEndOf(cur)!) : null} />
@@ -412,69 +364,15 @@ export default function ActionClipsModal(props: ActionClipsModalProps) {
 
           <div className="acm-tools">
             {onAddToMontage && <button onClick={() => onAddToMontage(cur)}>⭐ Ajouter au montage</button>}
-            <button className={draw ? 'on' : ''} onClick={() => { setDraw((d) => !d); setOverlayTool(null); }}>✏ Dessiner</button>
+            <button className={draw ? 'on' : ''} onClick={() => setDraw((d) => !d)}>✏ Dessiner</button>
             {draw && <button onClick={clearDraw}>🧽 Effacer</button>}
-            <button className={frozen ? 'on' : ''} onClick={toggleFreeze}>⏸ Arrêt sur image</button>
-            <button className={overlayTool === 'text' ? 'on' : ''} onClick={() => { setOverlayTool(overlayTool === 'text' ? null : 'text'); setDraw(false); }}>T Ajouter du texte</button>
-            <button className={overlayTool === 'spotlight' ? 'on' : ''} onClick={() => { setOverlayTool(overlayTool === 'spotlight' ? null : 'spotlight'); setDraw(false); }}>◉ Mettre en lumière</button>
-            <button className={overlayTool === 'playerCircle' ? 'on' : ''} onClick={() => { setOverlayTool(overlayTool === 'playerCircle' ? null : 'playerCircle'); setDraw(false); }}>◯ Rond sous joueur</button>
-            {(overlayPoint || overlayText) && <button onClick={() => { setOverlayPoint(null); setOverlayText(''); setOverlayTool(null); }}>🧹 Effacer l’overlay</button>}
           </div>
 
-          {!!props.shortcutThemes?.length && (
-            <div className="acm-shortcuts">
-              <b>Classement rapide</b>
-              {props.shortcutThemes.map((theme) => (
-                <button key={theme.key} onClick={() => props.onAssignTheme?.(cur, theme.name, theme.key)}>
-                  <kbd>{theme.key.toUpperCase()}</kbd> {theme.name}
-                </button>
-              ))}
-              <span><kbd>Tab</kbd> séquence suivante</span>
-            </div>
-          )}
-
           {hasVideo && (
-            <div className="acm-trim-editor">
-              <div className="acm-trim">
-                <button onClick={() => markTrim('start')}>⏱ Début = {trimStart != null ? fmt(trimStart) : '—'}</button>
-                <button onClick={() => markTrim('end')}>⏱ Fin = {trimEnd != null ? fmt(trimEnd) : '—'}</button>
-                {onTrim && <button className="acm-trim-save" disabled={trimStart == null || trimEnd == null || (trimEnd ?? 0) <= (trimStart ?? 0)} onClick={saveTrim}>✂ Enregistrer le rognage</button>}
-              </div>
-
-              {videoDuration > 0 && trimStart != null && trimEnd != null && (
-                <div className="acm-range-editor">
-                  <label>
-                    <span>Début précis · {fmt(trimStart)}</span>
-                    <input
-                      type="range"
-                      min={0}
-                      max={Math.max(0, trimEnd - 0.1)}
-                      step={0.1}
-                      value={Math.min(trimStart, Math.max(0, trimEnd - 0.1))}
-                      onChange={(event) => {
-                        const value = Number(event.target.value);
-                        setTrimStart(value);
-                        if (videoRef.current) videoRef.current.currentTime = value;
-                      }}
-                    />
-                  </label>
-                  <label>
-                    <span>Fin précise · {fmt(trimEnd)}</span>
-                    <input
-                      type="range"
-                      min={Math.min(videoDuration, trimStart + 0.1)}
-                      max={videoDuration}
-                      step={0.1}
-                      value={Math.max(trimEnd, trimStart + 0.1)}
-                      onChange={(event) => {
-                        const value = Number(event.target.value);
-                        setTrimEnd(value);
-                        if (videoRef.current) videoRef.current.currentTime = value;
-                      }}
-                    />
-                  </label>
-                </div>
-              )}
+            <div className="acm-trim">
+              <button onClick={() => markTrim('start')}>⏱ Début = {trimStart != null ? fmt(trimStart) : '—'}</button>
+              <button onClick={() => markTrim('end')}>⏱ Fin = {trimEnd != null ? fmt(trimEnd) : '—'}</button>
+              {onTrim && <button className="acm-trim-save" disabled={trimStart == null || trimEnd == null || (trimEnd ?? 0) <= (trimStart ?? 0)} onClick={saveTrim}>✂ Enregistrer le rognage</button>}
             </div>
           )}
 
@@ -495,10 +393,6 @@ export default function ActionClipsModal(props: ActionClipsModalProps) {
         .acm-body { padding: 14px 16px 16px; display: flex; flex-direction: column; gap: 12px; }
         .acm-title { font-size: 13px; font-weight: 800; color: #D4A24C; }
         .acm-videowrap { position: relative; }
-        .acm-videowrap.placing { cursor: crosshair; }
-        .acm-spotlight { position:absolute; width:150px; height:150px; transform:translate(-50%,-50%); border-radius:50%; box-shadow:0 0 0 9999px rgba(0,0,0,.62); border:3px solid #D4A24C; pointer-events:none; z-index:4; }
-        .acm-player-circle { position:absolute; width:92px; height:34px; transform:translate(-50%,-50%); border:4px solid #D4A24C; border-radius:50%; pointer-events:none; z-index:4; }
-        .acm-overlay-text { position:absolute; transform:translate(-50%,-50%); color:#D4A24C; font-size:24px; font-weight:950; text-shadow:0 2px 5px #000; pointer-events:none; z-index:4; white-space:nowrap; }
         .acm-video { width: 100%; max-height: 58vh; background: #000; border-radius: 10px; display: block; }
         .acm-card.acm-full .acm-video { max-height: calc(100vh - 320px); }
         .acm-canvas { position: absolute; inset: 0; width: 100%; height: 100%; cursor: crosshair; touch-action: none; }
@@ -506,15 +400,10 @@ export default function ActionClipsModal(props: ActionClipsModalProps) {
         .acm-nav { display: flex; gap: 8px; }
         .acm-nav button { flex: 1; border: 1px solid #2a3142; background: #171b29; color: #eef1f7; border-radius: 9px; padding: 9px; font-size: 12.5px; font-weight: 800; cursor: pointer; }
         .acm-nav button:disabled { opacity: .4; cursor: not-allowed; }
-        .acm-tags { display:flex; flex-wrap:wrap; gap:7px; background:#0c0f1a; border:1px solid #2a3142; border-radius:10px; padding:10px; }
-        .acm-info { display:inline-flex; flex-direction:row; align-items:center; gap:6px; padding:6px 9px; border:1px solid #2a3142; border-radius:999px; background:#171b29; }
-        .acm-info span { font-size:9px; color:#D4A24C; text-transform:uppercase; letter-spacing:.04em; }
-        .acm-info b { font-size:11px; }
-        .acm-shortcuts { display:flex; flex-wrap:wrap; align-items:center; gap:7px; padding:10px; border:1px solid #2a3142; border-radius:10px; background:#0c0f1a; }
-        .acm-shortcuts b { margin-right:4px; color:#D4A24C; font-size:11px; }
-        .acm-shortcuts button { border:1px solid #2a3142; background:#171b29; color:#eef1f7; border-radius:8px; padding:7px 9px; cursor:pointer; font-weight:800; }
-        .acm-shortcuts span { color:#8a93a8; font-size:10px; }
-        .acm-shortcuts kbd { color:#D4A24C; font-weight:950; }
+        .acm-infos { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 6px; background: #0c0f1a; border: 1px solid #2a3142; border-radius: 10px; padding: 10px; }
+        .acm-info { display: flex; flex-direction: column; gap: 1px; }
+        .acm-info span { font-size: 10px; color: #8a93a8; text-transform: uppercase; letter-spacing: .04em; }
+        .acm-info b { font-size: 12.5px; }
         .acm-tools, .acm-trim { display: flex; flex-wrap: wrap; gap: 6px; }
         .acm-tools button, .acm-trim button { border: 1px solid #2a3142; background: #171b29; color: #eef1f7; border-radius: 8px; padding: 7px 11px; font-size: 11.5px; font-weight: 800; cursor: pointer; }
         .acm-tools button.on { border-color: #D4A24C; color: #D4A24C; }
@@ -522,16 +411,8 @@ export default function ActionClipsModal(props: ActionClipsModalProps) {
         .acm-trim-save:disabled { opacity: .45; cursor: not-allowed; }
         .acm-note { width: 100%; min-height: 56px; resize: vertical; border: 1px solid #2a3142; background: #0c0f1a; color: #eef1f7; border-radius: 9px; padding: 9px 11px; font: inherit; font-size: 12.5px; }
         .acm-note-save { align-self: flex-start; border: 1px solid #2a3142; background: #171b29; color: #eef1f7; border-radius: 8px; padding: 7px 12px; font-size: 11.5px; font-weight: 800; cursor: pointer; }
-        .acm-trim-editor { display: flex; flex-direction: column; gap: 9px; padding: 10px; border: 1px solid #2a3142; border-radius: 10px; background: #0c0f1a; }
-        .acm-range-editor { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
-        .acm-range-editor label { display: flex; flex-direction: column; gap: 5px; color: #8a93a8; font-size: 10px; font-weight: 800; }
-        .acm-range-editor input { width: 100%; accent-color: #D4A24C; }
-        @media (max-width: 700px) { .acm-range-editor { grid-template-columns: 1fr; } }
         @media (max-width: 640px) { .acm-card { width: 100vw; height: 100vh; max-height: none; border-radius: 0; } }
       `}</style>
     </div>
   );
-
-  if (!portalTarget) return null;
-  return createPortal(modalContent, portalTarget);
 }

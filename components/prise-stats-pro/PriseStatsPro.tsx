@@ -61,16 +61,6 @@ if (typeof globalThis !== 'undefined' && !(globalThis as any).EmptyRanges) {
 interface Player { id: string; num: number; name: string; pos: string; photo?: string }
 type Ctx = '' | 'attaque' | 'defense';
 
-type EventClipKind = 'systeme' | 'temps-fort' | 'action' | 'resultat' | 'rebond' | 'passe' | 'faute' | 'couverture';
-interface EventClip {
-  id: string;
-  kind: EventClipKind;
-  label: string;
-  at: number;
-  start: number;
-  end: number;
-}
-
 interface Draft {
   context: Ctx; systemeJeu: string; inbound: string; tempsFort: string; coverage: string;
   playerId: string | null; actionType: string;
@@ -90,7 +80,6 @@ interface Draft {
   opponentPlayerId?: string | null;
   opponentPlayerName?: string | null;
   opponentPlayerNumber?: string | null;
-  eventClips?: EventClip[];
 }
 interface StatA extends Draft {
   id: string;
@@ -1202,43 +1191,6 @@ export default function PriseStatsProPage() {
     const now = getRawCodingTime();
     if (now != null) possessionEndOverrideRef.current = now;
   };
-
-  const withEventClip = (
-    base: Draft,
-    kind: EventClipKind,
-    label: string,
-    preRoll = 6,
-    postRoll = 4,
-  ): Draft => {
-    const now = getRawCodingTime();
-    if (now == null) return base;
-    const possessionStart = possessionStartRef.current ?? Math.max(0, now - preRoll);
-    const start = Math.max(0, possessionStart, now - preRoll);
-    const clip: EventClip = {
-      id: uid(),
-      kind,
-      label,
-      at: now,
-      start,
-      end: now + postRoll,
-    };
-    return { ...base, eventClips: [...(base.eventClips || []), clip] };
-  };
-
-  const eventClipAsAction = (parent: StatA, clip: EventClip): StatA => ({
-    ...parent,
-    id: `${parent.id}::event::${clip.id}`,
-    videoTime: clip.at,
-    clipStart: clip.start,
-    clipEnd: clip.end,
-    possessionStart: clip.start,
-    possessionEnd: clip.end,
-    syncStatus: parent.syncStatus ?? null,
-  });
-
-  const openEventClip = (parent: StatA, clip: EventClip) => {
-    openClipModal(clip.label, [eventClipAsAction(parent, clip)], 0);
-  };
   const isVideoPlaying = (): boolean => {
     if (videoDetached) return detachedPlayingRef.current;
     const v = videoRef.current;
@@ -1358,7 +1310,6 @@ export default function PriseStatsProPage() {
   const [clipThemeAssignments, setClipThemeAssignments] = useState<Record<string, string[]>>({});
   const [historySearch, setHistorySearch] = useState('');
   const [historyScope, setHistoryScope] = useState<'all' | 'attaque' | 'defense' | 'made' | 'missed'>('all');
-  const [historyExpanded, setHistoryExpanded] = useState<Record<string, boolean>>({});
   const [timelineCompact, setTimelineCompact] = useState(false);
   const [timelineHiddenRows, setTimelineHiddenRows] = useState<Record<string, boolean>>({});
   // Timeline type Sportscode / LongoMatch : zoom horizontal du canevas.
@@ -3650,13 +3601,6 @@ export default function PriseStatsProPage() {
     // AJOUT §2/§6/§7 · on fige sur l'action les infos système + possession + playbook,
     // pour qu'elles soient identiques partout (state, Supabase, exports, project_state).
     const mappedSys = systemForSlot(d.systemeJeu);
-    const possessionStart = vstamp.clipStart ?? possessionStartRef.current ?? 0;
-    const possessionEnd = vstamp.clipEnd ?? Math.max(possessionStart + 0.35, getRawCodingTime() ?? possessionStart + 0.35);
-    const finalEventClips = (d.eventClips || []).map((clip) => {
-      const start = Math.max(possessionStart, clip.start);
-      const end = Math.min(possessionEnd, Math.max(start + 0.35, clip.end));
-      return { ...clip, start, end, at: Math.max(start, Math.min(end, clip.at)) };
-    });
     const enrich: Partial<StatA> = {
       playbookId: playbookId || null,
       systemeSlot: d.systemeJeu || null,
@@ -3665,7 +3609,6 @@ export default function PriseStatsProPage() {
         ?? (SYSTEMES_JEU.find((s) => s.id === d.systemeJeu)?.label ?? null),
       possessionStart: vstamp.clipStart ?? null,
       possessionEnd: vstamp.clipEnd ?? null,
-      eventClips: finalEventClips,
     };
     const a: StatA = { ...d, ...enrich, id: uid(), clock: fmt(secs), q, lineup: onCourt.slice(), ...vstamp };
     setActions((arr) => [...arr, a]);
@@ -3804,25 +3747,13 @@ export default function PriseStatsProPage() {
     else { possessionStartRef.current = getRawCodingTime(); setDraft(d); setStage('systeme'); } // AJOUT
   };
   const systemePick = (id: string) => {
-    const systemLabel = SYSTEMES_JEU.find((item) => item.id === id)?.label || systemForSlot(id)?.title || id;
-    const d = withEventClip(
-      { ...draft, systemeJeu: id, tempsFort: '', coverage: '' },
-      'systeme',
-      `Système · ${systemLabel}`,
-      6,
-      4,
-    );
-    setDraft(d);
+    if (id === 'libre') markClipStartBefore(3);
+    setDraft({ ...draft, systemeJeu: id, tempsFort: '', coverage: '' });
     setStage('temps');
   };
   const tempsPick = (id: string) => {
-    const d = withEventClip(
-      { ...draft, tempsFort: id, coverage: '' },
-      'temps-fort',
-      `Temps fort · ${tags.label(id) || id}`,
-      6,
-      4,
-    );
+    if (id === 'autres') markClipStartBefore(5);
+    const d = { ...draft, tempsFort: id, coverage: '' };
     if (id === 'pick-side' || id === 'pick-top') {
       setDraft(d);
       setStage('coverage');
@@ -3831,25 +3762,9 @@ export default function PriseStatsProPage() {
       setStage(d.context === 'defense' ? 'action' : 'player');
     }
   };
-  const covPick = (id: string) => {
-    const d = withEventClip(
-      { ...draft, coverage: id },
-      'couverture',
-      `Couverture · ${id.replaceAll('-', ' ')}`,
-      5,
-      3,
-    );
-    setDraft(d);
-    setStage(d.context === 'defense' ? 'action' : 'player');
-  };
+  const covPick = (id: string) => { const d = { ...draft, coverage: id }; setDraft(d); setStage(d.context === 'defense' ? 'action' : 'player'); };
   const actionPick = (id: string) => {
-  const d = withEventClip(
-    { ...draft, actionType: id },
-    'action',
-    `Action · ${id.replaceAll('-', ' ')}`,
-    5,
-    3,
-  );
+  const d = { ...draft, actionType: id };
 
   if (d.context === "defense") {
     if (id === "tir") {
@@ -3888,6 +3803,7 @@ export default function PriseStatsProPage() {
   }
 };
   const playerPick = (id: string) => {
+  markClipStartBefore(8);
 
   if (draft.context === "defense" && draft.actionType === "faute-commise") {
     setDraft({ ...draft, playerId: id });
@@ -3921,20 +3837,8 @@ export default function PriseStatsProPage() {
     if (res.length >= draft.ftAttempts) { d.ftMade = res.filter((r) => r === 'made').length; afterFT(d); } else setDraft(d);
   };
   const quickShotResult = (shotType: '2PTS' | '3PTS', shotResult: 'made' | 'missed') => {
-    let d = withEventClip(
-      { ...draft, actionType: 'tir', shotType, shotResult },
-      'action',
-      `Tir · ${shotType}`,
-      5,
-      3,
-    );
-    d = withEventClip(
-      d,
-      'resultat',
-      `Résultat · ${shotType} ${shotResult === 'made' ? 'marqué' : 'raté'}`,
-      5,
-      3,
-    );
+    markClipStartBefore(5);
+    const d = { ...draft, actionType: 'tir', shotType, shotResult };
 
     // Même logique qu'avant : tout tir extérieur à LF passe par la shot chart,
     // y compris en défense pour localiser le panier concédé.
@@ -3943,13 +3847,8 @@ export default function PriseStatsProPage() {
   };
 
   const resultPick = (r: string) => {
-    const d = withEventClip(
-      { ...draft, shotResult: r, actionType: 'tir' },
-      'resultat',
-      `Résultat · ${draft.shotType || 'Tir'} ${r === 'made' ? 'marqué' : r === 'missed' ? 'raté' : r}`,
-      5,
-      3,
-    );
+    markClipStartBefore(5);
+    const d = { ...draft, shotResult: r, actionType: 'tir' };
 
     // En défense aussi, on localise le tir concédé sur la shot chart.
     // Le point est affiché temporairement pendant l'action puis enregistré
@@ -3968,14 +3867,8 @@ export default function PriseStatsProPage() {
     setDraft(d); setStage('zone');
   };
   const special = (s: string) => {
-    const shotType = s === '2pts1lf' ? '2PTS' : '3PTS';
-    const d = withEventClip(
-      { ...draft, actionType: 'tir', specialCase: s === '2pts1lf' ? '2pts+1lf' : '3pts+1lf', shotType, shotResult: 'made', ftAttempts: 1, ftMade: 0, ftResults: [] },
-      'resultat',
-      `Résultat · ${shotType} marqué + faute`,
-      5,
-      3,
-    );
+    markClipStartBefore(5);
+    const d = { ...draft, actionType: 'tir', specialCase: s === '2pts1lf' ? '2pts+1lf' : '3pts+1lf', shotType: s === '2pts1lf' ? '2PTS' : '3PTS', shotResult: 'made', ftAttempts: 1, ftMade: 0, ftResults: [] };
     setDraft(d); setStage('zone');
   };
   const courtClick = (e: MouseEvent<HTMLDivElement>) => {
@@ -4003,13 +3896,7 @@ export default function PriseStatsProPage() {
   };
   const rebPick = (id: string) => {
     markClipEndNow();
-    const d = withEventClip(
-      { ...draft, reboundType: id },
-      'rebond',
-      `Rebond · ${id.replaceAll('-', ' ')}`,
-      3,
-      3,
-    );
+    const d = { ...draft, reboundType: id };
     if (isMyRebound(d.context, id)) {
       setDraft(d);
     } else {
@@ -5160,8 +5047,6 @@ export default function PriseStatsProPage() {
         describe={(a: ClipAction) => describe(a as unknown as StatA, find).t}
         playerName={(id: string | null | undefined) => { const p = find(id ?? null); return p ? `#${p.num} ${p.name}` : undefined; }}
         tempsFortLabel={(id: string | null | undefined) => tags.label(id ?? '')}
-        shortcutThemes={clipShortcutThemes}
-        onAssignTheme={(action, themeName) => assignClipTheme(action, themeName)}
       />
       <Style />
     </div>
@@ -5249,6 +5134,74 @@ export default function PriseStatsProPage() {
           <span className="historyCount">{filtered.length} action{filtered.length > 1 ? 's' : ''}</span>
         </div>
 
+        <div className="historyShortcutEditor">
+          <div className="historyShortcutTitle">
+            <div>
+              <b>Raccourcis de classement</b>
+              <span>Dans la popup vidéo, appuie sur la touche pour classer immédiatement le clip.</span>
+            </div>
+            <button
+              type="button"
+              onClick={() =>
+                setClipShortcutThemes((current) => [
+                  ...current,
+                  {
+                    key: String.fromCharCode(65 + Math.min(current.length, 25)).toLowerCase(),
+                    name: `Thème ${current.length + 1}`,
+                  },
+                ])
+              }
+            >
+              + Ajouter
+            </button>
+          </div>
+
+          <div className="historyShortcutGrid">
+            {clipShortcutThemes.map((shortcut, index) => (
+              <div className="historyShortcutItem" key={`${shortcut.key}:${index}`}>
+                <input
+                  className="historyShortcutKey"
+                  value={shortcut.key.toUpperCase()}
+                  maxLength={1}
+                  aria-label={`Touche du raccourci ${index + 1}`}
+                  onChange={(event) => {
+                    const key = event.target.value.slice(-1).toLowerCase();
+                    setClipShortcutThemes((current) =>
+                      current.map((item, itemIndex) =>
+                        itemIndex === index ? { ...item, key } : item,
+                      ),
+                    );
+                  }}
+                />
+                <input
+                  value={shortcut.name}
+                  aria-label={`Nom du raccourci ${index + 1}`}
+                  onChange={(event) =>
+                    setClipShortcutThemes((current) =>
+                      current.map((item, itemIndex) =>
+                        itemIndex === index
+                          ? { ...item, name: event.target.value }
+                          : item,
+                      ),
+                    )
+                  }
+                />
+                <button
+                  type="button"
+                  title="Supprimer ce raccourci"
+                  onClick={() =>
+                    setClipShortcutThemes((current) =>
+                      current.filter((_, itemIndex) => itemIndex !== index),
+                    )
+                  }
+                >
+                  ×
+                </button>
+              </div>
+            ))}
+          </div>
+        </div>
+
         {filtered.length === 0 && <div className="hist-empty">Aucune action correspondant aux filtres.</div>}
         {filtered.slice().reverse().map((a) => {
           const d = describe(a, find);
@@ -5256,98 +5209,55 @@ export default function PriseStatsProPage() {
           const rebounder = find(a.reboundPlayerId);
           const assister = find(a.assistPlayerId);
           const hasClip = a.videoTime != null || a.clipStart != null;
-          const possessionStart = Number(a.possessionStart ?? a.clipStart ?? a.videoTime ?? 0);
-          const possessionEnd = Math.max(possessionStart, Number(a.possessionEnd ?? a.clipEnd ?? possessionStart));
-          const possessionDuration = Math.max(0, possessionEnd - possessionStart);
-          const eventClips = a.eventClips || [];
-          const expanded = Boolean(historyExpanded[a.id]);
           const systemName = a.systemeName || SYSTEMES_JEU.find((item) => item.id === (a.systemeJeu || a.systemeSlot))?.label || a.systemeSlot;
           const consequence = a.reboundType
             ? `${a.reboundType === 'off' ? 'Rebond offensif' : a.reboundType === 'def' ? 'Rebond défensif' : a.reboundType}${rebounder ? ` · #${rebounder.num} ${rebounder.name}` : ''}`
             : a.assist
               ? `Passe décisive${assister ? ` · #${assister.num} ${assister.name}` : ''}`
               : a.foulOutcome || '';
-
           return (
-            <div className="historyPossessionBlock" key={a.id}>
-              <div className="historyActionCard">
-                <button
-                  type="button"
-                  className={`historyExpand ${expanded ? 'open' : ''}`}
-                  onClick={() => setHistoryExpanded((current) => ({ ...current, [a.id]: !current[a.id] }))}
-                  title={expanded ? 'Masquer les mini-clips' : 'Voir le découpage de la possession'}
-                  disabled={eventClips.length === 0}
-                >
-                  {expanded ? '⌄' : '›'}
-                </button>
-
-                <div className="historyActionTime">
-                  <b>{periodLabel(a.q)} · {a.clock}</b>
-                  <span>{a.context === 'defense' ? 'DÉFENSE' : 'ATTAQUE'} · {possessionDuration.toFixed(1)}s</span>
+            <div className="historyActionCard" key={a.id}>
+              <div className="historyActionTime">
+                <b>{periodLabel(a.q)} · {a.clock}</b>
+                <span>{a.videoTime != null ? '🎬 ' + fmt(Math.round(a.videoTime)) : 'Sans repère vidéo'}</span>
+              </div>
+              <div className="historyActionContent">
+                <div className="historyActionHeadline">
+                  <strong>{p ? `#${p.num} ${p.name}` : a.opponentPlayerName || 'Action collective'}</strong>
+                  <em>{d.t}</em>
                 </div>
-
-                <div className="historyActionContent">
-                  <div className="historyActionHeadline">
-                    <strong>{p ? `#${p.num} ${p.name}` : a.opponentPlayerName || 'Possession collective'}</strong>
-                    <em>{d.t}</em>
-                  </div>
-                  <div className="historyTags">
-                    {tag(a.context === 'defense' ? 'Défense' : 'Attaque', a.context || '')}
-                    {systemName && tag(systemName, 'system')}
-                    {a.tempsFort && tag(tags.label(a.tempsFort), 'tempo')}
-                    {a.actionType && tag(a.actionType.replaceAll('-', ' '), 'action')}
-                    {a.shotType && tag(a.shotType, 'shot')}
-                    {a.shotResult && tag(a.shotResult === 'made' ? 'Marqué' : a.shotResult === 'missed' ? 'Raté' : a.shotResult, a.shotResult)}
-                    {a.zone && tag(zoneById(a.zone)?.shortLabel || a.zone, 'zone')}
-                    {consequence && tag(consequence, 'consequence')}
-                  </div>
-                </div>
-
-                <div className="historyActionButtons">
-                  <button
-                    className={`hplay ${hasClip ? 'has' : ''}`}
-                    title={hasClip ? `Revoir la possession complète (${possessionDuration.toFixed(1)}s)` : 'Clip à synchroniser'}
-                    onClick={() => {
-                      const list = filtered.slice().reverse();
-                      openClipModal('Possessions', list, list.findIndex((x) => x.id === a.id));
-                    }}
-                  >
-                    ▶ <span>{possessionDuration.toFixed(1)}s</span>
-                  </button>
-                  <button className="hadd" title="Ajouter la possession au montage" onClick={() => addToMontage(a)}>⭐</button>
+                <div className="historyTags">
+                  {tag(a.context === 'defense' ? 'Défense' : 'Attaque', a.context || '')}
+                  {systemName && tag(systemName, 'system')}
+                  {a.tempsFort && tag(tags.label(a.tempsFort), 'tempo')}
+                  {a.actionType && tag(a.actionType.replaceAll('-', ' '), 'action')}
+                  {a.shotType && tag(a.shotType, 'shot')}
+                  {a.shotResult && tag(a.shotResult === 'made' ? 'Marqué' : a.shotResult === 'missed' ? 'Raté' : a.shotResult, a.shotResult)}
+                  {a.zone && tag(zoneById(a.zone)?.shortLabel || a.zone, 'zone')}
+                  {consequence && tag(consequence, 'consequence')}
+                  {(clipThemeAssignments[a.id] || []).map((theme) => <i className="historyTag custom" key={theme}>🏷 {theme}</i>)}
                 </div>
               </div>
-
-              {expanded && eventClips.length > 0 && (
-                <div className="historyEventClips">
-                  <div className="historyEventClipsTitle">
-                    <span>Découpage de la possession</span>
-                    <b>{eventClips.length} mini-clip{eventClips.length > 1 ? 's' : ''}</b>
-                  </div>
-
-                  {eventClips.map((clip, index) => {
-                    const duration = Math.max(0, clip.end - clip.start);
-                    return (
-                      <div className="historyEventClipRow" key={clip.id}>
-                        <span className="historyEventIndex">{index + 1}</span>
-                        <div className="historyEventMeta">
-                          <b>{clip.label}</b>
-                          <small>{fmt(Math.round(clip.start))} → {fmt(Math.round(clip.end))}</small>
-                        </div>
-                        <span className="historyEventDuration">{duration.toFixed(1)}s</span>
-                        <button
-                          type="button"
-                          className="historyEventPlay"
-                          onClick={() => openEventClip(a, clip)}
-                          title={`Revoir uniquement ${clip.label}`}
-                        >
-                          ▶
-                        </button>
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
+              <div className="historyActionButtons">
+                <button className={`hplay ${hasClip ? 'has' : ''}`} title={hasClip ? 'Revoir dans la popup indépendante' : 'Clip à synchroniser'} onClick={() => { const list = filtered.slice().reverse(); openClipModal('Historique des actions', list, list.findIndex((x) => x.id === a.id)); }}>▶</button>
+                <button className="hadd" title="Ajouter au montage" onClick={() => addToMontage(a)}>⭐</button>
+                <button className="hedit" title="Reprendre l’action pour correction" onClick={() => {
+                  setActions((arr) => arr.filter((x) => x.id !== a.id));
+                  subtractActionFromScore(a);
+                  restoreDraftFromAction(a);
+                  flash('Action ouverte en correction');
+                  const mId = liveMatchIdRef.current;
+                  const tId = liveTeamIdRef.current;
+                  if (mId && tId) {
+                    deleteLiveAction({ matchId: mId, clientActionId: a.id }).catch(() => {});
+                    const nextActions = actions.filter((x) => x.id !== a.id);
+                    const cur = perQ[a.q] || { us: 0, them: 0 };
+                    const nextPerQ = { ...perQ, [a.q]: { us: cur.us - ptsOf(a), them: cur.them - themPtsOf(a) } };
+                    syncLiveAggregates(nextActions, onCourt, nextPerQ);
+                  }
+                }}>↩</button>
+                <button className="hdel" title="Supprimer" onClick={() => removeAction(a.id)}>✕</button>
+              </div>
             </div>
           );
         })}
@@ -5393,9 +5303,25 @@ export default function PriseStatsProPage() {
 
     const clipDurationOf = (a: StatA) => Math.max(0.35, clipEndOf(a) - clipStartOf(a));
 
-    const totalSeconds = Math.max(
+    // La timeline utilise la durée TOTALE de la vidéo comme référence.
+    // Si aucune vidéo locale n'est disponible/chargée, on garde la durée
+    // calculée depuis les clips comme fallback.
+    const codedEndSeconds = Math.max(
       1,
       ...list.map((a) => clipEndOf(a)),
+    );
+
+    const loadedVideoDuration =
+      videoProvider === 'local' &&
+      videoRef.current &&
+      Number.isFinite(videoRef.current.duration) &&
+      videoRef.current.duration > 0
+        ? videoRef.current.duration
+        : 0;
+
+    const totalSeconds = Math.max(
+      1,
+      loadedVideoDuration || codedEndSeconds,
     );
 
     const unique = <T,>(values: T[]) => Array.from(new Set(values));
@@ -5481,7 +5407,9 @@ export default function PriseStatsProPage() {
         <div className="proTimelineToolbar">
           <div>
             <b>Timeline vidéo</b>
-            <span>{visibleRows.length} pistes · {list.length} clips · {fmt(Math.round(totalSeconds))}</span>
+            <span>
+              {visibleRows.length} pistes · {list.length} clips · vidéo {fmt(Math.round(totalSeconds))}
+            </span>
           </div>
 
           <div className="proTimelineTools">
@@ -8340,27 +8268,7 @@ function Style() {
       .historyActionTime b,.historyActionTime span { display:block; }.historyActionTime b{font-size:12px;color:#fff}.historyActionTime span{font-size:10px;color:var(--gold);margin-top:5px}
       .historyActionHeadline { display:flex; gap:10px; align-items:baseline; margin-bottom:7px; }.historyActionHeadline strong{font-size:12px}.historyActionHeadline em{font-size:10px;color:#8490a7;font-style:normal}
       .historyTags { display:flex; flex-wrap:wrap; gap:5px; }.historyTag{font-style:normal;border:1px solid #35415a;border-radius:999px;padding:4px 7px;background:#172238;color:#d8dfec;font-size:9px;font-weight:850;text-transform:capitalize}.historyTag.attaque{background:rgba(255,122,24,.14);border-color:#ff7a18;color:#ffad67}.historyTag.defense{background:rgba(50,183,239,.13);border-color:#32b7ef;color:#79d5fa}.historyTag.system{border-color:#7c5cff}.historyTag.tempo{border-color:#d4a24c;color:#f4c665}.historyTag.made{border-color:#22c55e;color:#6ee7a0}.historyTag.missed{border-color:#ef4444;color:#fb8a8a}.historyTag.custom{border-color:#d4a24c;background:rgba(212,162,76,.12)}
-      .historyActionButtons { display:flex; gap:5px; align-items:center; }
-      .historyActionButtons button{min-width:32px;height:32px;border-radius:8px}
-      .historyActionButtons .hplay{width:auto;padding:0 9px;display:inline-flex;align-items:center;gap:5px}
-      .historyActionButtons .hplay span{font-size:8px;font-weight:900}
-      .historyPossessionBlock{margin-bottom:8px;border:1px solid #29344a;border-radius:11px;overflow:hidden;background:#0c1422}
-      .historyPossessionBlock .historyActionCard{margin:0;border:0;border-radius:0;grid-template-columns:30px 105px minmax(0,1fr) auto}
-      .historyExpand{width:26px;height:26px;border:1px solid #34415a;border-radius:7px;background:#111b2d;color:#d4a24c;font-size:17px;font-weight:900;cursor:pointer}
-      .historyExpand.open{background:rgba(212,162,76,.13);border-color:#d4a24c}
-      .historyExpand:disabled{opacity:.28;cursor:default}
-      .historyEventClips{border-top:1px solid #273247;background:#080f1b;padding:7px 10px 9px 40px}
-      .historyEventClipsTitle{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:5px;color:#8794a9;font-size:8px;text-transform:uppercase;letter-spacing:.06em}
-      .historyEventClipsTitle b{color:#d4a24c}
-      .historyEventClipRow{display:grid;grid-template-columns:22px minmax(0,1fr) 48px 30px;gap:7px;align-items:center;min-height:34px;padding:5px 6px;border-top:1px solid #1d293c}
-      .historyEventClipRow:first-of-type{border-top:0}
-      .historyEventIndex{width:19px;height:19px;border-radius:50%;display:grid;place-items:center;background:#152238;color:#8e9bb0;font-size:8px;font-weight:900}
-      .historyEventMeta{min-width:0}
-      .historyEventMeta b{display:block;color:#dfe6f2;font-size:9px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-      .historyEventMeta small{display:block;margin-top:2px;color:#65738a;font-size:7px}
-      .historyEventDuration{justify-self:end;border:1px solid #36445e;border-radius:999px;padding:3px 6px;color:#f4c665;background:#101827;font-size:8px;font-weight:900;font-variant-numeric:tabular-nums}
-      .historyEventPlay{width:27px;height:27px;border:1px solid #d4a24c;border-radius:7px;background:rgba(212,162,76,.08);color:#d4a24c;font-size:10px;cursor:pointer}
-      .historyEventPlay:hover{background:rgba(212,162,76,.18)}
+      .historyActionButtons { display:flex; gap:5px; }.historyActionButtons button{width:32px;height:32px;border-radius:8px}
       .proTimeline {
         min-width: 760px;
         height: 100%;
