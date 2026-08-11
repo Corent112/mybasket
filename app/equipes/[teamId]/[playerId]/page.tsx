@@ -374,6 +374,102 @@ function fmtDate(iso: string) {
   return d.toLocaleDateString("fr-FR", { day: "2-digit", month: "short", year: "numeric" });
 }
 
+function parseBirthDate(value: string | null | undefined): Date | null {
+  const raw = String(value ?? "").trim();
+  if (!raw) return null;
+
+  let year: number;
+  let month: number;
+  let day: number;
+
+  const iso = raw.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  const fr = raw.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+
+  if (iso) {
+    year = Number(iso[1]);
+    month = Number(iso[2]);
+    day = Number(iso[3]);
+  } else if (fr) {
+    day = Number(fr[1]);
+    month = Number(fr[2]);
+    year = Number(fr[3]);
+  } else {
+    return null;
+  }
+
+  const date = new Date(year, month - 1, day, 12, 0, 0, 0);
+
+  if (
+    date.getFullYear() !== year ||
+    date.getMonth() !== month - 1 ||
+    date.getDate() !== day
+  ) {
+    return null;
+  }
+
+  return date;
+}
+
+function formatBirthDate(value: string | null | undefined): string {
+  const date = parseBirthDate(value);
+  if (!date) return value ? String(value) : "—";
+
+  return date.toLocaleDateString("fr-FR", {
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+  });
+}
+
+function exactAgeLabel(value: string | null | undefined): string {
+  const birthDate = parseBirthDate(value);
+  if (!birthDate) return "—";
+
+  const now = new Date();
+  const today = new Date(
+    now.getFullYear(),
+    now.getMonth(),
+    now.getDate(),
+    12,
+    0,
+    0,
+    0,
+  );
+
+  if (birthDate > today) return "—";
+
+  let years = today.getFullYear() - birthDate.getFullYear();
+
+  let lastBirthday = new Date(
+    today.getFullYear(),
+    birthDate.getMonth(),
+    birthDate.getDate(),
+    12,
+    0,
+    0,
+    0,
+  );
+
+  if (lastBirthday > today) {
+    years -= 1;
+    lastBirthday = new Date(
+      today.getFullYear() - 1,
+      birthDate.getMonth(),
+      birthDate.getDate(),
+      12,
+      0,
+      0,
+      0,
+    );
+  }
+
+  const days = Math.floor(
+    (today.getTime() - lastBirthday.getTime()) / (24 * 60 * 60 * 1000),
+  );
+
+  return `${years} an${years > 1 ? "s" : ""} et ${days} jour${days > 1 ? "s" : ""}`;
+}
+
 function statusClass(s: string) {
   return s === "Disponible" ? "dispo" : s === "Blessé" ? "blesse" : (s || "").toLowerCase();
 }
@@ -1685,8 +1781,8 @@ export default function JoueurDetailPage({
               <Attr label="Poste secondaire" value={p.posteSecondaire || "—"} />
               <Attr label="Taille" value={latestHeight ? `${latestHeight.value} cm` : p.taille || "—"} />
               <Attr label="Poids" value={latestWeight ? `${latestWeight.value} kg` : p.poids || "—"} />
-              <Attr label="Âge" value={p.age != null ? `${p.age} ans` : "—"} />
-              <Attr label="Date de naissance" value={p.dob || "—"} />
+              <Attr label="Âge" value={exactAgeLabel(p.dob)} />
+              <Attr label="Date de naissance" value={formatBirthDate(p.dob)} />
               <Attr label="Main dominante" value={p.mainDominante || "—"} />
               <Attr label="Numéro" value={p.num != null ? String(p.num) : "—"} />
             </div>
@@ -2214,8 +2310,8 @@ function InformationTab({
           <Attr label="Taille" value={latestHeight ? `${latestHeight.value} cm` : p.taille || "—"} />
           <Attr label="Poids" value={latestWeight ? `${latestWeight.value} kg` : p.poids || "—"} />
           <Attr label="Envergure" value={latestWingspan ? `${latestWingspan.value} cm` : "—"} />
-          <Attr label="Âge" value={p.age != null ? `${p.age} ans` : "—"} />
-          <Attr label="Date de naissance" value={p.dob || "—"} />
+          <Attr label="Âge" value={exactAgeLabel(p.dob)} />
+          <Attr label="Date de naissance" value={formatBirthDate(p.dob)} />
           <Attr label="Main dominante" value={p.mainDominante || "—"} />
           <Attr label="Numéro" value={p.num != null ? String(p.num) : "—"} />
         </div>
