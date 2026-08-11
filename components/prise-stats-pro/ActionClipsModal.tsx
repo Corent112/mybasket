@@ -81,7 +81,6 @@ export type ActionClipsModalProps = {
   tempsFortLabel?: (id: string | null | undefined) => string | undefined;
   shortcutThemes?: Array<{ key: string; name: string }>;
   onAssignTheme?: (action: ClipAction, themeName: string, key: string) => void;
-  onRecalibrate?: () => void;
 };
 
 const fmt = (s: number) =>
@@ -420,7 +419,6 @@ export default function ActionClipsModal(props: ActionClipsModalProps) {
             <button className={overlayTool === 'spotlight' ? 'on' : ''} onClick={() => { setOverlayTool(overlayTool === 'spotlight' ? null : 'spotlight'); setDraw(false); }}>◉ Mettre en lumière</button>
             <button className={overlayTool === 'playerCircle' ? 'on' : ''} onClick={() => { setOverlayTool(overlayTool === 'playerCircle' ? null : 'playerCircle'); setDraw(false); }}>◯ Rond sous joueur</button>
             {(overlayPoint || overlayText) && <button onClick={() => { setOverlayPoint(null); setOverlayText(''); setOverlayTool(null); }}>🧹 Effacer l’overlay</button>}
-            {props.onRecalibrate && <button onClick={props.onRecalibrate}>🎯 Recalibrer la vidéo</button>}
           </div>
 
           {!!props.shortcutThemes?.length && (

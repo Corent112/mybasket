@@ -22,6 +22,8 @@
 
 export type VideoSyncMode = 'native' | 'offset' | 'calibrated';
 
+export type PeriodVideoMarkers = Record<string, { start?: number | null; end?: number | null }>;
+
 /** État de synchro d'un match (persisté dans match_stats + project_state). */
 export type VideoSyncState = {
   mode: VideoSyncMode;
@@ -30,8 +32,10 @@ export type VideoSyncState = {
   anchorActionId?: string | null;
   anchorSourceTime?: number | null;
   anchorMediaTime?: number | null;
-  /** true dès qu'une synchro a été validée (évite de redemander à la réouverture). */
+  /** true dès que les repères vidéo ont été enregistrés. */
   validated?: boolean;
+  /** Repères simples saisis par le coach : début/fin de chaque période dans la vidéo. */
+  periodMarkers?: PeriodVideoMarkers;
 };
 
 /** Synchro par défaut : vidéo présente pendant le codage, aucun décalage. */
@@ -43,6 +47,7 @@ export const NATIVE_SYNC: VideoSyncState = {
   anchorSourceTime: null,
   anchorMediaTime: null,
   validated: false,
+  periodMarkers: {},
 };
 
 function safeFinite(value: unknown, fallback: number): number {
@@ -107,6 +112,9 @@ export function normalizeSync(
       ? Boolean(p.validated ?? p.videoSyncValidated)
       : mode !== 'native';
 
+  const periodMarkers =
+    ((p.periodMarkers ?? p.videoPeriodMarkers ?? {}) as PeriodVideoMarkers) || {};
+
   return {
     mode,
     offset,
@@ -117,6 +125,7 @@ export function normalizeSync(
     anchorMediaTime:
       anchorMediaTimeRaw == null ? null : safeFinite(anchorMediaTimeRaw, 0),
     validated,
+    periodMarkers,
   };
 }
 
@@ -266,5 +275,6 @@ export function syncToProjectState(sync: VideoSyncState) {
     videoSyncAnchorSourceTime: sync.anchorSourceTime ?? null,
     videoSyncAnchorMediaTime: sync.anchorMediaTime ?? null,
     videoSyncValidated: sync.validated ?? false,
+    videoPeriodMarkers: sync.periodMarkers ?? {},
   };
 }
