@@ -1358,11 +1358,11 @@ setLoading(false);
           String(item.session_consignes_variantes ?? "").length;
 
         const densityClass =
-          textLength > 900
+          textLength > 650
             ? " textVeryDense"
-            : textLength > 550
+            : textLength > 400
               ? " textDense"
-              : textLength > 300
+              : textLength > 220
                 ? " textMedium"
                 : "";
 
@@ -1371,12 +1371,12 @@ setLoading(false);
             <td class="who">${coachCode(item.assigned_to)}</td>
             <td class="time">${duration}'</td>
             <td class="situation">
+              <div class="schemaTitle">${formatText(item.title)}</div>
               <div class="schemasGrid schemasCount${Math.min(images.length, 6)}">
                 ${situationImages}
               </div>
             </td>
             <td class="explain">
-              <strong>${item.title}</strong>
               <p>${formatText(item.session_deroulement ?? "")}</p>
             </td>
             <td class="instructions">
@@ -1580,25 +1580,34 @@ setLoading(false);
             td {
               border: 2px solid #111;
               vertical-align: middle;
-              padding: 10px;
+              padding: 6px;
             }
 
             .who {
               width: 55px;
               text-align: center;
-              font-size: 18px;
+              font-size: 14px;
               font-weight: 900;
             }
 
             .time {
               width: 60px;
               text-align: center;
-              font-size: 24px;
+              font-size: 18px;
               font-weight: 900;
             }
 
             .situation {
               width: 340px;
+              text-align: center;
+            }
+
+            .schemaTitle {
+              margin: 0 0 4px;
+              font-size: 9px;
+              line-height: 1.08;
+              font-weight: 900;
+              text-transform: uppercase;
               text-align: center;
             }
 
@@ -1646,62 +1655,44 @@ setLoading(false);
 
             .explain {
               width: 360px;
-              font-size: 13px;
-            }
-
-            .explain strong {
-              font-size: 15px;
+              font-size: 10px;
             }
 
             .explain p,
             .instructions p {
-              margin: 5px 0 0;
-              line-height: 1.28;
+              margin: 0;
+              line-height: 1.16;
             }
 
             .instructions {
               width: 300px;
               color: #555;
-              font-size: 13px;
+              font-size: 10px;
             }
 
             tr.textMedium .explain,
             tr.textMedium .instructions {
-              font-size: 12px;
-            }
-
-            tr.textMedium .explain strong {
-              font-size: 14px;
+              font-size: 9px;
             }
 
             tr.textDense .explain,
             tr.textDense .instructions {
-              font-size: 10.5px;
-            }
-
-            tr.textDense .explain strong {
-              font-size: 12.5px;
+              font-size: 8px;
             }
 
             tr.textDense .explain p,
             tr.textDense .instructions p {
-              line-height: 1.18;
-              margin-top: 3px;
+              line-height: 1.1;
             }
 
             tr.textVeryDense .explain,
             tr.textVeryDense .instructions {
-              font-size: 9px;
-            }
-
-            tr.textVeryDense .explain strong {
-              font-size: 11px;
+              font-size: 7px;
             }
 
             tr.textVeryDense .explain p,
             tr.textVeryDense .instructions p {
-              line-height: 1.12;
-              margin-top: 2px;
+              line-height: 1.05;
             }
 
             .compositionsPdf {
