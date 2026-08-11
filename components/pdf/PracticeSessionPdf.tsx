@@ -182,13 +182,10 @@ export default function PracticeSessionPdf({ session, players, exercises }: Prop
 
           <View style={styles.headerCenter}>
             <Text style={styles.practicePlan}>Practice Plan</Text>
-            <Text style={styles.headerLine}>Date : {formatDate(session.session_date)}</Text>
-            <Text style={styles.headerLine}>Thème : {session.theme || "—"}</Text>
-            <Text style={styles.headerLine}>
-              Horaire : {formatTime(session.start_time)} - {formatTime(session.end_time)}
+            <Text style={styles.headerMetaLine}>
+              Date : {formatDate(session.session_date)}   •   Horaire : {formatTime(session.start_time)} - {formatTime(session.end_time)}   •   Équipe : {session.title || "—"}
             </Text>
-            <Text style={styles.headerLine}>Lieu : {session.location || "—"}</Text>
-            <Text style={styles.headerLine}>Durée : {totalDuration} min</Text>
+            <Text style={styles.headerLine}>Thème : {session.theme || "—"}</Text>
           </View>
 
           <View style={styles.logoBox}>
@@ -319,7 +316,17 @@ function PlayerColumn({
       <View style={styles.playerList}>
         {players.length ? (
           players.map((player) => (
-            <Text key={playerId(player)} style={styles.playerName}>
+            <Text
+              key={playerId(player)}
+              style={[
+                styles.playerName,
+                players.length >= 10
+                  ? styles.playerNameVeryCompact
+                  : players.length >= 7
+                    ? styles.playerNameCompact
+                    : {},
+              ]}
+            >
               {playerName(player)}
             </Text>
           ))
@@ -342,7 +349,7 @@ const styles = StyleSheet.create({
     backgroundColor: "#ffffff",
   },
   header: {
-    minHeight: 100,
+    minHeight: 76,
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
@@ -370,10 +377,18 @@ const styles = StyleSheet.create({
     paddingHorizontal: 8,
   },
   practicePlan: {
-    fontSize: 15,
-    fontWeight: 900,
-    marginBottom: 3,
-  },
+  fontSize: 17,
+  fontWeight: 900,
+  textTransform: "uppercase",
+  marginBottom: 3,
+},
+
+headerMetaLine: {
+  fontSize: 8,
+  fontWeight: 700,
+  marginBottom: 1,
+  textAlign: "center",
+},
   headerLine: {
     fontSize: 9,
     fontWeight: 700,
@@ -387,7 +402,7 @@ const styles = StyleSheet.create({
   },
   playerColumn: {
     flex: 1,
-    minHeight: 72,
+    minHeight: 44,
     borderRightWidth: 0.8,
     borderRightColor: borderColor,
   },
@@ -395,23 +410,31 @@ const styles = StyleSheet.create({
     borderRightWidth: 0,
   },
   playerColumnTitle: {
-    paddingVertical: 3,
+    paddingVertical: 2,
     textAlign: "center",
-    fontSize: 12,
+    fontSize: 9,
     fontWeight: 900,
     backgroundColor: "#d9d9d9",
     borderBottomWidth: 0.8,
     borderBottomColor: borderColor,
   },
   playerList: {
-    paddingVertical: 5,
+    paddingVertical: 2.5,
     paddingHorizontal: 4,
     alignItems: "center",
   },
   playerName: {
-    fontSize: 8.5,
+    fontSize: 7,
     fontWeight: 700,
-    marginBottom: 1.2,
+    marginBottom: 0.5,
+  },
+  playerNameCompact: {
+    fontSize: 6.2,
+    marginBottom: 0.25,
+  },
+  playerNameVeryCompact: {
+    fontSize: 5.4,
+    marginBottom: 0.1,
   },
   tableHeader: {
     flexDirection: "row",
@@ -546,10 +569,12 @@ const styles = StyleSheet.create({
     fontSize: 11,
     fontWeight: 900,
     color: "#6b1a2c",
+    textAlign: "center",
   },
   teamsGrid: {
     flexDirection: "row",
     flexWrap: "wrap",
+    justifyContent: "center",
     gap: 6,
   },
   teamCard: {
