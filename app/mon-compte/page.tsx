@@ -1183,7 +1183,9 @@ type Subscription = {
 
 function AbonnementSection({ userId }: { userId: string }) {
   const [loading, setLoading] = useState(true);
-  const [plan, setPlan] = useState<(Plan & { image_url?: string | null; slug?: string | null }) | null>(null);
+  const [plan, setPlan] = useState<
+    (Plan & { image_url?: string | null; slug?: string | null }) | null
+  >(null);
   const [subscription, setSubscription] = useState<Subscription | null>(null);
   const [isCeo, setIsCeo] = useState(false);
 
@@ -1192,13 +1194,17 @@ function AbonnementSection({ userId }: { userId: string }) {
 
     async function loadSubscription() {
       const supabase = createClient();
+
       const { data: profile } = await supabase
         .from("profiles")
         .select("platform_role")
         .eq("id", userId)
         .maybeSingle();
 
-      const admin = ["ceo", "superadmin", "admin"].includes(profile?.platform_role || "");
+      const admin = ["ceo", "superadmin", "admin"].includes(
+        profile?.platform_role || "",
+      );
+
       if (mounted) setIsCeo(admin);
 
       if (admin) {
@@ -1221,7 +1227,14 @@ function AbonnementSection({ userId }: { userId: string }) {
           .select("*")
           .eq("id", sub.plan_id)
           .maybeSingle();
-        if (mounted) setPlan(currentPlan as (Plan & { image_url?: string | null; slug?: string | null }) | null);
+
+        if (mounted) {
+          setPlan(
+            currentPlan as
+              | (Plan & { image_url?: string | null; slug?: string | null })
+              | null,
+          );
+        }
       }
 
       if (mounted) {
@@ -1231,7 +1244,10 @@ function AbonnementSection({ userId }: { userId: string }) {
     }
 
     loadSubscription();
-    return () => { mounted = false; };
+
+    return () => {
+      mounted = false;
+    };
   }, [userId]);
 
   const formatEndDate = (value: string | null | undefined) => {
@@ -1240,46 +1256,481 @@ function AbonnementSection({ userId }: { userId: string }) {
   };
 
   if (loading) {
-    return <section className="account-card"><p>Chargement de l’abonnement…</p></section>;
+    return (
+      <section className="account-card">
+        <p>Chargement de l’abonnement…</p>
+      </section>
+    );
   }
+
+  const planName = isCeo ? "CEO" : plan?.name || "LIBRE";
+  const statusLabel = isCeo
+    ? "Accès total"
+    : subscription?.status === "active"
+      ? "Actif"
+      : "Inactif";
 
   return (
     <section className="account-card subscription-card">
-      <div className="subscription-head">
-        <div>
-          <p className="eyebrow">Abonnement</p>
-          <h2>{isCeo ? "Accès CEO" : plan?.name || "Aucun abonnement actif"}</h2>
-          <p className="muted">
-            {isCeo
-              ? "Accès total à MyBasket, indépendant de tout abonnement."
-              : plan?.description || "Choisissez une formule pour débloquer vos accès."}
-          </p>
-        </div>
-        <a className="primary-btn" href="/abonnements">Voir les abonnements</a>
-      </div>
+      <div className="subscription-layout">
+        <div className="subscription-left">
+          <div className="subscription-head">
+            <div>
+              <p className="eyebrow">Abonnement</p>
+              <h2>
+                {isCeo ? "Accès CEO" : plan?.name || "Aucun abonnement actif"}
+              </h2>
+              <p className="muted">
+                {isCeo
+                  ? "Accès total à MyBasket, indépendant de tout abonnement."
+                  : plan?.description ||
+                    "Choisissez une formule pour débloquer vos accès."}
+              </p>
+            </div>
 
-      <div className="subscription-content">
-        <div className="subscription-details">
-          <p><span>Statut</span><strong>{isCeo ? "Accès total" : subscription?.status === "active" ? "Actif" : "Inactif"}</strong></p>
-          {!isCeo && subscription?.billing_period && (
-            <p><span>Période</span><strong>{subscription.billing_period === "yearly" ? "Annuelle" : "Mensuelle"}</strong></p>
-          )}
-          {!isCeo && formatEndDate(subscription?.current_period_end) && (
-            <p><span>Prochaine échéance</span><strong>{formatEndDate(subscription?.current_period_end)}</strong></p>
-          )}
+            <a className="primary-btn" href="/abonnements">
+              Voir les abonnements
+            </a>
+          </div>
+
+          <div className="subscription-details">
+            <p>
+              <span>Statut</span>
+              <strong>{statusLabel}</strong>
+            </p>
+
+            {!isCeo && subscription?.billing_period && (
+              <p>
+                <span>Période</span>
+                <strong>
+                  {subscription.billing_period === "yearly"
+                    ? "Annuelle"
+                    : "Mensuelle"}
+                </strong>
+              </p>
+            )}
+
+            {!isCeo && formatEndDate(subscription?.current_period_end) && (
+              <p>
+                <span>Prochaine échéance</span>
+                <strong>
+                  {formatEndDate(subscription?.current_period_end)}
+                </strong>
+              </p>
+            )}
+          </div>
         </div>
 
-        <div className="subscription-visual">
+        <div className="subscription-visual-column">
           {plan?.image_url ? (
-            <img src={plan.image_url} alt={plan.name} />
+            <img
+              className="subscription-plan-image"
+              src={plan.image_url}
+              alt={`Carte abonnement ${plan.name}`}
+            />
           ) : (
-            <div className="subscription-placeholder" aria-label="Visuel abonnement">
-              <span>MYBASKET</span>
-              <strong>{isCeo ? "CEO" : plan?.name || "LIBRE"}</strong>
+            <div
+              className="membership-card"
+              aria-label={`Carte abonnement ${planName}`}
+            >
+              <div className="membership-glow glow-one" />
+              <div className="membership-glow glow-two" />
+
+              <div className="membership-topline">
+                <span>MYBASKET</span>
+                <span className="membership-chip" aria-hidden="true">
+                  <i />
+                  <i />
+                  <i />
+                </span>
+              </div>
+
+              <div className="membership-center">
+                <div className="membership-ball" aria-hidden="true">
+                  <span />
+                  <span />
+                  <span />
+                </div>
+              </div>
+
+              <div className="membership-bottom">
+                <div>
+                  <small>ACCÈS</small>
+                  <strong>{planName}</strong>
+                </div>
+
+                <div className="membership-status">
+                  <small>STATUT</small>
+                  <strong>{statusLabel}</strong>
+                </div>
+              </div>
             </div>
           )}
         </div>
       </div>
+
+      <style jsx>{`
+        .subscription-card {
+          overflow: hidden;
+          padding: 0;
+        }
+
+        .subscription-layout {
+          display: grid;
+          grid-template-columns: minmax(0, 1fr) minmax(360px, 48%);
+          min-height: 390px;
+        }
+
+        .subscription-left {
+          padding: 36px 38px;
+          display: flex;
+          flex-direction: column;
+          justify-content: space-between;
+          gap: 34px;
+          min-width: 0;
+        }
+
+        .subscription-head {
+          display: flex;
+          justify-content: space-between;
+          align-items: flex-start;
+          gap: 24px;
+        }
+
+        .subscription-head h2 {
+          margin: 5px 0 10px;
+          font-family: "Alfa Slab One", Georgia, serif;
+          font-size: clamp(28px, 3vw, 44px);
+          font-weight: 400;
+          line-height: 1;
+          color: #111114;
+        }
+
+        .eyebrow {
+          margin: 0;
+          color: #6b1a2c;
+          font-size: 12px;
+          font-weight: 900;
+          letter-spacing: 0.18em;
+          text-transform: uppercase;
+        }
+
+        .muted {
+          max-width: 560px;
+          margin: 0;
+          color: #777178;
+          font-size: 14px;
+          line-height: 1.6;
+        }
+
+        .primary-btn {
+          flex: 0 0 auto;
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          min-height: 42px;
+          padding: 11px 18px;
+          border-radius: 10px;
+          background: #6b1a2c;
+          color: #fff;
+          font-size: 13px;
+          font-weight: 900;
+          white-space: nowrap;
+          transition:
+            transform 0.2s ease,
+            background 0.2s ease;
+        }
+
+        .primary-btn:hover {
+          background: #551522;
+          transform: translateY(-2px);
+        }
+
+        .subscription-details {
+          display: grid;
+          gap: 0;
+          border-top: 1px solid #eee8ea;
+        }
+
+        .subscription-details p {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 24px;
+          margin: 0;
+          padding: 17px 0;
+          border-bottom: 1px solid #eee8ea;
+        }
+
+        .subscription-details span {
+          color: #8a8589;
+          font-size: 13px;
+          font-weight: 700;
+        }
+
+        .subscription-details strong {
+          color: #161318;
+          font-size: 14px;
+          font-weight: 900;
+          text-align: right;
+        }
+
+        .subscription-visual-column {
+          min-width: 0;
+          padding: 32px;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          background:
+            radial-gradient(
+              circle at 85% 10%,
+              rgba(212, 162, 76, 0.18),
+              transparent 32%
+            ),
+            linear-gradient(145deg, #faf8f6 0%, #f2ece7 100%);
+          border-left: 1px solid #eee5df;
+        }
+
+        .subscription-plan-image {
+          display: block;
+          width: 100%;
+          max-width: 620px;
+          aspect-ratio: 1.62 / 1;
+          object-fit: cover;
+          border-radius: 26px;
+          box-shadow: 0 28px 60px rgba(22, 15, 18, 0.22);
+        }
+
+        .membership-card {
+          position: relative;
+          isolation: isolate;
+          width: min(100%, 620px);
+          aspect-ratio: 1.62 / 1;
+          overflow: hidden;
+          border-radius: 28px;
+          padding: 30px;
+          display: flex;
+          flex-direction: column;
+          justify-content: space-between;
+          color: #fff;
+          background:
+            linear-gradient(135deg, rgba(255, 255, 255, 0.05), transparent 35%),
+            linear-gradient(145deg, #070709 0%, #171116 54%, #09090b 100%);
+          border: 1px solid rgba(212, 162, 76, 0.64);
+          box-shadow:
+            0 30px 65px rgba(18, 12, 15, 0.28),
+            inset 0 0 0 1px rgba(255, 255, 255, 0.03);
+          transition:
+            transform 0.35s ease,
+            box-shadow 0.35s ease;
+        }
+
+        .membership-card:hover {
+          transform: translateY(-7px) rotateX(1deg) rotateY(-1deg);
+          box-shadow:
+            0 38px 76px rgba(18, 12, 15, 0.34),
+            inset 0 0 0 1px rgba(255, 255, 255, 0.04);
+        }
+
+        .membership-card::before {
+          content: "";
+          position: absolute;
+          inset: 0;
+          z-index: -1;
+          background: repeating-linear-gradient(
+            115deg,
+            transparent 0,
+            transparent 16px,
+            rgba(255, 255, 255, 0.018) 17px,
+            transparent 18px
+          );
+          pointer-events: none;
+        }
+
+        .membership-glow {
+          position: absolute;
+          z-index: -1;
+          border-radius: 999px;
+          filter: blur(18px);
+          pointer-events: none;
+        }
+
+        .glow-one {
+          width: 250px;
+          height: 250px;
+          top: -130px;
+          right: -70px;
+          background: rgba(212, 162, 76, 0.28);
+        }
+
+        .glow-two {
+          width: 230px;
+          height: 230px;
+          bottom: -150px;
+          left: -90px;
+          background: rgba(107, 26, 44, 0.55);
+        }
+
+        .membership-topline,
+        .membership-bottom {
+          display: flex;
+          align-items: flex-start;
+          justify-content: space-between;
+          gap: 20px;
+        }
+
+        .membership-topline > span:first-child {
+          color: #d4a24c;
+          font-size: 14px;
+          font-weight: 1000;
+          letter-spacing: 0.24em;
+        }
+
+        .membership-chip {
+          width: 45px;
+          height: 34px;
+          padding: 6px;
+          display: grid;
+          grid-template-columns: repeat(3, 1fr);
+          gap: 3px;
+          border-radius: 8px;
+          background: linear-gradient(135deg, #f0cc78, #a87423);
+          box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.35);
+        }
+
+        .membership-chip i {
+          display: block;
+          border-left: 1px solid rgba(50, 32, 8, 0.48);
+          border-right: 1px solid rgba(255, 255, 255, 0.24);
+        }
+
+        .membership-center {
+          position: absolute;
+          inset: 0;
+          display: grid;
+          place-items: center;
+          pointer-events: none;
+        }
+
+        .membership-ball {
+          position: relative;
+          width: 118px;
+          height: 118px;
+          opacity: 0.8;
+          border: 3px solid #d4a24c;
+          border-radius: 50%;
+          transform: rotate(-12deg);
+          box-shadow: 0 0 35px rgba(212, 162, 76, 0.14);
+        }
+
+        .membership-ball span {
+          position: absolute;
+          display: block;
+          background: #d4a24c;
+        }
+
+        .membership-ball span:nth-child(1) {
+          width: 3px;
+          height: 100%;
+          left: 50%;
+          top: 0;
+        }
+
+        .membership-ball span:nth-child(2) {
+          width: 100%;
+          height: 3px;
+          left: 0;
+          top: 50%;
+        }
+
+        .membership-ball span:nth-child(3) {
+          width: 80%;
+          height: 80%;
+          left: 10%;
+          top: 10%;
+          border: 3px solid #d4a24c;
+          border-top-color: transparent;
+          border-bottom-color: transparent;
+          border-radius: 50%;
+          background: transparent;
+        }
+
+        .membership-bottom {
+          align-items: flex-end;
+        }
+
+        .membership-bottom small {
+          display: block;
+          margin-bottom: 5px;
+          color: rgba(255, 255, 255, 0.54);
+          font-size: 9px;
+          font-weight: 800;
+          letter-spacing: 0.18em;
+        }
+
+        .membership-bottom strong {
+          display: block;
+          max-width: 260px;
+          color: #fff;
+          font-family: "Alfa Slab One", Georgia, serif;
+          font-size: clamp(24px, 3vw, 38px);
+          font-weight: 400;
+          line-height: 1;
+          text-transform: uppercase;
+        }
+
+        .membership-status {
+          text-align: right;
+        }
+
+        .membership-status strong {
+          color: #d4a24c;
+          font-family: inherit;
+          font-size: 12px;
+          font-weight: 900;
+          letter-spacing: 0.08em;
+        }
+
+        @media (max-width: 1050px) {
+          .subscription-layout {
+            grid-template-columns: 1fr;
+          }
+
+          .subscription-visual-column {
+            border-top: 1px solid #eee5df;
+            border-left: 0;
+          }
+        }
+
+        @media (max-width: 650px) {
+          .subscription-left,
+          .subscription-visual-column {
+            padding: 24px 20px;
+          }
+
+          .subscription-head {
+            display: grid;
+          }
+
+          .primary-btn {
+            width: 100%;
+          }
+
+          .membership-card {
+            padding: 22px;
+            border-radius: 22px;
+          }
+
+          .membership-ball {
+            width: 84px;
+            height: 84px;
+          }
+
+          .membership-bottom strong {
+            font-size: 22px;
+          }
+        }
+      `}</style>
     </section>
   );
 }
