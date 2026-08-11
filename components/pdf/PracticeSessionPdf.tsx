@@ -81,18 +81,37 @@ function compositionBlocks(session: Session): CompositionBlock[] {
       }))
       .filter((block) => block.teams.length > 0);
 
-  if (
-    Array.isArray(session.team_composition_blocks) &&
-    session.team_composition_blocks.length
-  ) {
-    return cleanBlocks(session.team_composition_blocks);
+  let rawBlocks: unknown = session.team_composition_blocks;
+
+  // Compatibilité : selon l'historique de la base, le JSON peut parfois
+  // revenir sous forme de chaîne. On le reparcourt sans changer les données.
+  if (typeof rawBlocks === "string") {
+    try {
+      rawBlocks = JSON.parse(rawBlocks);
+    } catch {
+      rawBlocks = [];
+    }
+  }
+
+  if (Array.isArray(rawBlocks) && rawBlocks.length > 0) {
+    return cleanBlocks(rawBlocks as CompositionBlock[]);
+  }
+
+  let rawGroups: unknown = session.player_groups;
+
+  if (typeof rawGroups === "string") {
+    try {
+      rawGroups = JSON.parse(rawGroups);
+    } catch {
+      rawGroups = {};
+    }
   }
 
   const legacy =
-    session.player_groups && typeof session.player_groups === "object"
-      ? Object.entries(session.player_groups).map(([name, ids]) => ({
+    rawGroups && typeof rawGroups === "object" && !Array.isArray(rawGroups)
+      ? Object.entries(rawGroups as Record<string, unknown>).map(([name, ids]) => ({
           name,
-          playerIds: Array.isArray(ids) ? ids : [],
+          playerIds: Array.isArray(ids) ? ids.map(String) : [],
         }))
       : [];
 
@@ -235,11 +254,15 @@ export default function PracticeSessionPdf({ session, players, exercises }: Prop
                     return (
                       <View key={team.id || `${team.name}-${teamIndex}`} style={styles.teamCard}>
                         <Text style={styles.teamTitle}>{team.name || `Équipe ${teamIndex + 1}`}</Text>
-                        {teamPlayers.map((player) => (
-                          <Text key={playerId(player)} style={styles.teamPlayer}>
-                            {playerName(player)}
-                          </Text>
-                        ))}
+                        {teamPlayers.length > 0 ? (
+                          teamPlayers.map((player) => (
+                            <Text key={playerId(player)} style={styles.teamPlayer}>
+                              {playerName(player)}
+                            </Text>
+                          ))
+                        ) : (
+                          <Text style={styles.teamPlayer}>—</Text>
+                        )}
                       </View>
                     );
                   })}

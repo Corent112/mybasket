@@ -2258,8 +2258,8 @@ setLoading(false);
         .blockToolbar .dangerMini{background:#d82f46}
         .playersToPlace{margin-top:12px;padding:12px;border:1px solid #eadbd3;border-radius:14px;background:#fffaf8}
         .playersToPlaceTitle{margin-bottom:9px;color:#6b1a2c;font-size:11px;font-weight:900}
-        .playersToPlaceList{display:flex;flex-wrap:wrap;gap:8px;min-height:38px;align-items:center}
-        .compositionPlayerChip{border:1px solid #e1d5ce;border-radius:999px;background:#fff;padding:7px 10px;color:#211b1d;font-size:12px;font-weight:800;cursor:grab}
+        .playersToPlaceList{display:grid;grid-template-columns:1fr;gap:7px;min-height:38px;align-items:center}
+        .compositionPlayerChip{width:100%;display:flex;align-items:center;justify-content:flex-start;box-sizing:border-box;border:1px solid #e1d5ce;border-radius:9px;background:#fff;padding:9px 11px;color:#211b1d;font-size:12px;font-weight:800;cursor:grab;text-align:left}
         .compositionPlayerChip:active{cursor:grabbing}
         .compositionPlayerChip.assigned{background:#fff8e8;border-color:#e1b948}
         .allPlayersPlaced,.dropHint{color:#887b74;font-size:12px;font-weight:700}
