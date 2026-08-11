@@ -1322,6 +1322,51 @@ setLoading(false);
       ? `<img src="${logoClub}" />`
       : `<div class="missingLogo">LOGO CLUB</div>`;
 
+    const compositionHtml = compositionBlocks
+      .map((block) => {
+        const teamsWithPlayers = (block.teams || [])
+          .map((team) => ({
+            ...team,
+            players: (team.playerIds || [])
+              .map((playerId) =>
+                allSessionPlayers.find(
+                  (player) => String(player.id) === String(playerId),
+                ),
+              )
+              .filter((player): player is TeamPlayer => Boolean(player)),
+          }))
+          .filter((team) => team.players.length > 0);
+
+        if (teamsWithPlayers.length === 0) return "";
+
+        return `
+          <section class="compositionBlock">
+            <div class="compositionFormat">${formatText(block.title || "Composition")}</div>
+            <div class="compositionTeamsPdf">
+              ${teamsWithPlayers
+                .map(
+                  (team) => `
+                    <div class="compositionTeamPdf">
+                      <div class="compositionTeamTitle">${formatText(team.name || "Équipe")}</div>
+                      <div class="compositionTeamPlayers">
+                        ${team.players
+                          .map(
+                            (player) =>
+                              `<div class="compositionPlayerPdf">${formatText(playerName(player))}</div>`,
+                          )
+                          .join("")}
+                      </div>
+                    </div>
+                  `,
+                )
+                .join("")}
+            </div>
+          </section>
+        `;
+      })
+      .filter(Boolean)
+      .join("");
+
     const html = `
       <!doctype html>
       <html>
@@ -1532,6 +1577,77 @@ setLoading(false);
               color: #555;
             }
 
+            .compositionsPdf {
+              margin-top: 18px;
+              border-top: 2px solid #6b1a2c;
+              padding-top: 10px;
+              page-break-inside: avoid;
+              break-inside: avoid;
+            }
+
+            .compositionsPdfTitle {
+              margin: 0 0 10px;
+              text-align: center;
+              color: #6b1a2c;
+              font-size: 18px;
+              font-weight: 900;
+              letter-spacing: 1.5px;
+            }
+
+            .compositionBlock {
+              margin-top: 10px;
+              border: 1px solid #d9c9c1;
+              border-radius: 8px;
+              padding: 10px;
+              page-break-inside: avoid;
+              break-inside: avoid;
+            }
+
+            .compositionFormat {
+              margin-bottom: 8px;
+              color: #6b1a2c;
+              font-size: 15px;
+              font-weight: 900;
+            }
+
+            .compositionTeamsPdf {
+              display: grid;
+              grid-template-columns: repeat(3, minmax(0, 1fr));
+              gap: 8px;
+            }
+
+            .compositionTeamPdf {
+              border: 1px solid #ddd;
+              border-radius: 6px;
+              background: #fff;
+              overflow: hidden;
+            }
+
+            .compositionTeamTitle {
+              padding: 7px 9px;
+              border-bottom: 1px solid #ddd;
+              background: #f8f5f3;
+              color: #111;
+              font-size: 13px;
+              font-weight: 900;
+            }
+
+            .compositionTeamPlayers {
+              display: grid;
+              gap: 4px;
+              padding: 7px;
+            }
+
+            .compositionPlayerPdf {
+              width: 100%;
+              padding: 6px 8px;
+              border: 1px solid #eadfd9;
+              border-radius: 5px;
+              background: white;
+              font-size: 12px;
+              font-weight: 700;
+            }
+
             .footer {
               text-align: center;
               margin-top: 16px;
@@ -1597,6 +1713,17 @@ setLoading(false);
                 ${rows}
               </tbody>
             </table>
+
+            ${
+              compositionHtml
+                ? `
+                  <div class="compositionsPdf">
+                    <div class="compositionsPdfTitle">COMPOSITIONS D’ÉQUIPES</div>
+                    ${compositionHtml}
+                  </div>
+                `
+                : ""
+            }
 
             <div class="footer">
               ${
