@@ -23,6 +23,13 @@ type CartItem = {
   variants?: string | string[] | null;
   schemaImages?: string[];
   schema_images?: string[];
+
+  // Contenu utilisé uniquement pour la fiche séance générée.
+  use_mybasket_content?: boolean;
+  mybasket_deroulement?: string;
+  mybasket_consignes_variantes?: string;
+  session_deroulement?: string;
+  session_consignes_variantes?: string;
 };
 
 type TeamPlayer = {
@@ -113,6 +120,14 @@ function playerName(player: TeamPlayer) {
     `${player.firstName ?? ""} ${player.lastName ?? ""}`.trim() ||
     "Joueur"
   );
+}
+
+function sessionText(value: unknown): string {
+  if (Array.isArray(value)) {
+    return value.map((entry) => String(entry ?? "").trim()).filter(Boolean).join("\n");
+  }
+
+  return String(value ?? "").trim();
 }
 
 function coachCode(value: string | null) {
@@ -236,11 +251,6 @@ export default function PanierPage() {
   const [compositionBlocks, setCompositionBlocks] = useState<TeamCompositionBlock[]>([
     createCompositionBlock(),
   ]);
-  const [draggedCompositionPlayer, setDraggedCompositionPlayer] = useState<{
-    blockId: string;
-    playerId: string;
-    fromTeamId?: string;
-  } | null>(null);
 
   const productItems = items.filter((item) => item.item_type === "product");
   const subscriptionItems = items.filter(
@@ -266,10 +276,8 @@ const subtotal = useMemo(() => {
   }, 0);
 }, [purchaseItems]);
 
-  // Les prix enregistrés dans le panier sont déjà TTC.
-  // On extrait uniquement la part de TVA pour l'affichage.
-  const tax = subtotal - subtotal / 1.2;
-  const total = subtotal;
+  const tax = subtotal * 0.2;
+  const total = subtotal + tax;
 
   useEffect(() => {
     void loadCart();
@@ -358,6 +366,25 @@ const subtotal = useMemo(() => {
         ...(exercise.schemaImages ?? []),
       ]);
 
+      const myBasketDeroulement = sessionText(
+        exercise.deroulement ??
+          exercise.description ??
+          exercise.organisation ??
+          item.description ??
+          "",
+      );
+
+      const myBasketConsignes = sessionText(
+        exercise.consignes ?? exercise.instructions ?? item.consignes ?? item.instructions,
+      );
+
+      const myBasketVariantes = sessionText(
+        exercise.variantes ?? exercise.variants ?? item.variantes ?? item.variants,
+      );
+
+      const myBasketConsignesVariantes =
+        myBasketConsignes || myBasketVariantes;
+
       return {
         ...item,
         title: exercise.title ?? item.title,
@@ -390,6 +417,13 @@ const subtotal = useMemo(() => {
           item.variantes ??
           item.variants ??
           null,
+
+        // Chaque exercice garde son propre choix.
+        use_mybasket_content: true,
+        mybasket_deroulement: myBasketDeroulement,
+        mybasket_consignes_variantes: myBasketConsignesVariantes,
+        session_deroulement: myBasketDeroulement,
+        session_consignes_variantes: myBasketConsignesVariantes,
       };
     });
 
@@ -449,6 +483,39 @@ setLoading(false);
 
   loadCart();
 }
+
+  function toggleMyBasketContent(id: string, checked: boolean) {
+    setItems((prev) =>
+      prev.map((item) => {
+        if (item.id !== id) return item;
+
+        return {
+          ...item,
+          use_mybasket_content: checked,
+          session_deroulement: checked ? item.mybasket_deroulement ?? "" : "",
+          session_consignes_variantes: checked
+            ? item.mybasket_consignes_variantes ?? ""
+            : "",
+        };
+      }),
+    );
+  }
+
+  function updateSessionDeroulement(id: string, value: string) {
+    setItems((prev) =>
+      prev.map((item) =>
+        item.id === id ? { ...item, session_deroulement: value } : item,
+      ),
+    );
+  }
+
+  function updateSessionConsignesVariantes(id: string, value: string) {
+    setItems((prev) =>
+      prev.map((item) =>
+        item.id === id ? { ...item, session_consignes_variantes: value } : item,
+      ),
+    );
+  }
 
   async function updateDuration(id: string, duration: number) {
     const nextDuration = Math.max(1, duration || 1);
@@ -625,65 +692,6 @@ setLoading(false);
     ]);
   }
 
-  function compositionPresetValue(block: TeamCompositionBlock) {
-    const normalizedTitle = block.title.toLowerCase();
-
-    if (normalizedTitle.includes("grande")) return "large";
-    if (block.playersPerTeam === 2) return "2v2";
-    if (block.playersPerTeam === 4) return "4v4";
-    if (block.playersPerTeam === 5) return "5v5";
-    return "3v3";
-  }
-
-  function changeCompositionPreset(
-    blockId: string,
-    preset: "2v2" | "3v3" | "4v4" | "5v5" | "large",
-  ) {
-    const settings = {
-      "2v2": { title: "2 contre 2", size: 2, teamCount: 2 },
-      "3v3": { title: "3 contre 3", size: 3, teamCount: 3 },
-      "4v4": { title: "4 contre 4", size: 4, teamCount: 2 },
-      "5v5": { title: "5 contre 5", size: 5, teamCount: 2 },
-      large: { title: "Grande équipe", size: 0, teamCount: 2 },
-    } as const;
-
-    const selected = settings[preset];
-
-    setCompositionBlocks((current) =>
-      current.map((block) => {
-        if (block.id !== blockId) return block;
-
-        const teams: CompositionTeam[] = Array.from(
-          { length: selected.teamCount },
-          (_, index) => ({
-            id: block.teams[index]?.id || compositionUid("team"),
-            name:
-              block.teams[index]?.name ||
-              (preset === "large"
-                ? index === 0
-                  ? "Équipe 1"
-                  : "Équipe 2"
-                : `Équipe ${index + 1}`),
-            playerIds: [],
-          }),
-        );
-
-        if (preset === "large") {
-          allSessionPlayers.forEach((player, index) => {
-            teams[index % 2].playerIds.push(player.id);
-          });
-        }
-
-        return {
-          ...block,
-          title: selected.title,
-          playersPerTeam: selected.size,
-          teams,
-        };
-      }),
-    );
-  }
-
   function updateCompositionBlock(
     blockId: string,
     patch: Partial<TeamCompositionBlock>,
@@ -773,7 +781,7 @@ setLoading(false);
     );
   }
 
-  function movePlayerInComposition(
+  function togglePlayerInComposition(
     blockId: string,
     teamId: string,
     playerId: string,
@@ -781,87 +789,20 @@ setLoading(false);
     setCompositionBlocks((current) =>
       current.map((block) => {
         if (block.id !== blockId) return block;
-
         return {
           ...block,
           teams: block.teams.map((team) => ({
             ...team,
             playerIds:
               team.id === teamId
-                ? Array.from(new Set([...team.playerIds, playerId]))
+                ? team.playerIds.includes(playerId)
+                  ? team.playerIds.filter((id) => id !== playerId)
+                  : [...team.playerIds, playerId]
                 : team.playerIds.filter((id) => id !== playerId),
           })),
         };
       }),
     );
-  }
-
-  function removePlayerFromComposition(
-    blockId: string,
-    teamId: string,
-    playerId: string,
-  ) {
-    setCompositionBlocks((current) =>
-      current.map((block) =>
-        block.id === blockId
-          ? {
-              ...block,
-              teams: block.teams.map((team) =>
-                team.id === teamId
-                  ? {
-                      ...team,
-                      playerIds: team.playerIds.filter(
-                        (id) => id !== playerId,
-                      ),
-                    }
-                  : team,
-              ),
-            }
-          : block,
-      ),
-    );
-  }
-
-  function startCompositionDrag(
-    blockId: string,
-    playerId: string,
-    fromTeamId?: string,
-  ) {
-    setDraggedCompositionPlayer({ blockId, playerId, fromTeamId });
-  }
-
-  function dropCompositionPlayer(blockId: string, teamId: string) {
-    if (
-      !draggedCompositionPlayer ||
-      draggedCompositionPlayer.blockId !== blockId
-    ) {
-      return;
-    }
-
-    movePlayerInComposition(
-      blockId,
-      teamId,
-      draggedCompositionPlayer.playerId,
-    );
-    setDraggedCompositionPlayer(null);
-  }
-
-  function returnCompositionPlayerToPool(blockId: string) {
-    if (
-      !draggedCompositionPlayer ||
-      draggedCompositionPlayer.blockId !== blockId ||
-      !draggedCompositionPlayer.fromTeamId
-    ) {
-      setDraggedCompositionPlayer(null);
-      return;
-    }
-
-    removePlayerFromComposition(
-      blockId,
-      draggedCompositionPlayer.fromTeamId,
-      draggedCompositionPlayer.playerId,
-    );
-    setDraggedCompositionPlayer(null);
   }
 
   function autoDistributeComposition(blockId: string) {
@@ -891,7 +832,7 @@ setLoading(false);
     );
   }
 
-  async function saveSessionToCalendar(): Promise<string | null> {
+  async function saveSessionToCalendar(): Promise<boolean> {
   const {
     data: { user },
     error: userError,
@@ -899,12 +840,12 @@ setLoading(false);
 
   if (userError || !user) {
     alert("Connecte-toi pour ajouter la séance au calendrier.");
-    return null;
+    return false;
   }
 
   const isUuid = (value: string | null | undefined) =>
     !!value &&
-    /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{12}$/i.test(
       value
     );
 
@@ -997,7 +938,7 @@ setLoading(false);
       `La fiche est générée, mais la séance Supabase n'a pas été créée : ${sessionError?.message}`
     );
 
-    return null;
+    return false;
   }
 
   const sortedSessionItems = [...sessionItems].sort(
@@ -1006,8 +947,10 @@ setLoading(false);
 
   if (sortedSessionItems.length > 0) {
     const exerciseRows = sortedSessionItems.map((item, index) => {
-      const rawConsignes = item.consignes ?? item.instructions;
-      const rawVariantes = item.variantes ?? item.variants;
+      const finalDeroulement = String(item.session_deroulement ?? "").trim();
+      const finalConsignesVariantes = String(
+        item.session_consignes_variantes ?? "",
+      ).trim();
 
       return {
         session_id: createdSession.id,
@@ -1021,13 +964,12 @@ setLoading(false);
           item.schema_images?.[0] ||
           item.image_url ||
           null,
-        explanation: item.description || null,
-        instructions: Array.isArray(rawConsignes)
-          ? rawConsignes.map(String).join("\n")
-          : String(rawConsignes ?? "") || null,
-        variants: Array.isArray(rawVariantes)
-          ? rawVariantes.map(String).join("\n")
-          : String(rawVariantes ?? "") || null,
+
+        // Snapshot de la séance : on sauvegarde exactement ce que le coach
+        // a laissé dans les champs au moment de générer la fiche.
+        explanation: finalDeroulement || null,
+        instructions: finalConsignesVariantes || null,
+        variants: null,
         sort_order: index,
       };
     });
@@ -1049,7 +991,7 @@ setLoading(false);
       alert(
         `La séance a été créée, mais les exercices n'ont pas pu être sauvegardés : ${exerciseInsert.error.message}`,
       );
-      return null;
+      return false;
     }
   }
 
@@ -1118,10 +1060,10 @@ setLoading(false);
     alert(
       `La fiche est générée, mais l’ajout au calendrier a échoué : ${error.message}`
     );
-    return null;
+    return false;
   }
 
-  return String(createdSession.id);
+  return true;
 }
 
   async function resetSessionBuilderAfterGeneration() {
@@ -1234,7 +1176,7 @@ setLoading(false);
               <p>${item.description ?? "—"}</p>
             </td>
             <td class="instructions">
-              <p>${formatText(item.consignes ?? item.instructions)}</p>
+              <p>${formatText(item.session_consignes_variantes ?? "")}</p>
             </td>
           </tr>
         `;
@@ -1546,10 +1488,6 @@ setLoading(false);
       </html>
     `;
 
-    // Conservé comme aperçu de secours interne, mais le fichier officiel
-    // est toujours généré par l'API PDF.
-    void html;
-
     const printWindow = window.open("", "_blank");
 
     if (!printWindow) {
@@ -1559,90 +1497,14 @@ setLoading(false);
     }
 
     printWindow.document.open();
-    printWindow.document.write(`
-      <!doctype html>
-      <html lang="fr">
-        <head>
-          <meta charset="utf-8" />
-          <title>Génération de la fiche séance</title>
-          <style>
-            body {
-              min-height: 100vh;
-              display: grid;
-              place-items: center;
-              margin: 0;
-              font-family: Arial, sans-serif;
-              background: #f7f4f1;
-              color: #6b1a2c;
-            }
-
-            div {
-              text-align: center;
-            }
-
-            strong {
-              display: block;
-              font-size: 24px;
-            }
-
-            span {
-              display: block;
-              margin-top: 10px;
-              color: #766c70;
-            }
-          </style>
-        </head>
-        <body>
-          <div>
-            <strong>Génération de la fiche séance…</strong>
-            <span>Le PDF va s’ouvrir automatiquement.</span>
-          </div>
-        </body>
-      </html>
-    `);
+    printWindow.document.write(html);
     printWindow.document.close();
 
-    const createdSessionId = await saveSessionToCalendar();
+    const sessionSaved = await saveSessionToCalendar();
 
-    if (!createdSessionId) {
-      printWindow.close();
-      setSavingSession(false);
-      return;
-    }
-
-    try {
-      const response = await fetch(
-        `/api/seances/${createdSessionId}/pdf`,
-        { method: "POST" },
-      );
-
-      const result = (await response.json()) as {
-        pdfUrl?: string;
-        error?: string;
-      };
-
-      if (!response.ok || !result.pdfUrl) {
-        throw new Error(
-          result.error || "Le PDF n’a pas pu être généré.",
-        );
-      }
-
-      // Le PDF ouvert ici est exactement celui enregistré dans :
-      // - practice_sessions.pdf_url
-      // - calendar_events.attachment_url
-      printWindow.location.replace(result.pdfUrl);
-
+    if (sessionSaved) {
       await resetSessionBuilderAfterGeneration();
       setSessionModalOpen(false);
-    } catch (error) {
-      console.error("Erreur génération PDF automatique:", error);
-      printWindow.close();
-
-      alert(
-        error instanceof Error
-          ? error.message
-          : "Le PDF n’a pas pu être généré.",
-      );
     }
 
     setSavingSession(false);
@@ -1857,6 +1719,48 @@ setLoading(false);
                           </select>
                         </label>
                       </div>
+
+                      {item.item_type === "exercise" && (
+                        <div className="sessionContentEditor">
+                          <label className="myBasketContentChoice">
+                            <input
+                              type="checkbox"
+                              checked={item.use_mybasket_content !== false}
+                              onChange={(e) =>
+                                toggleMyBasketContent(item.id, e.target.checked)
+                              }
+                            />
+                            <span>Utiliser les informations MyBasket</span>
+                          </label>
+
+                          <div className="sessionTextFields">
+                            <label>
+                              Déroulement
+                              <textarea
+                                value={item.session_deroulement ?? ""}
+                                placeholder="Ajoute ton déroulement pour cette séance…"
+                                onChange={(e) =>
+                                  updateSessionDeroulement(item.id, e.target.value)
+                                }
+                              />
+                            </label>
+
+                            <label>
+                              Consignes / Variantes
+                              <textarea
+                                value={item.session_consignes_variantes ?? ""}
+                                placeholder="Ajoute tes consignes ou variantes pour cette séance…"
+                                onChange={(e) =>
+                                  updateSessionConsignesVariantes(
+                                    item.id,
+                                    e.target.value,
+                                  )
+                                }
+                              />
+                            </label>
+                          </div>
+                        </div>
+                      )}
                     </div>
                   </article>
                 ))}
@@ -1877,10 +1781,10 @@ setLoading(false);
         <div>
           <h2>RÉSUMÉ DE COMMANDE</h2>
           <p>
-            Sous-total TTC <strong>{formatPrice(subtotal)}</strong>
+            Sous-total <strong>{formatPrice(subtotal)}</strong>
           </p>
           <p>
-            Dont TVA 20% <strong>{formatPrice(tax)}</strong>
+            TVA 20% <strong>{formatPrice(tax)}</strong>
           </p>
           <div className="total">
             TOTAL TTC <strong>{formatPrice(total)}</strong>
@@ -2039,292 +1943,108 @@ setLoading(false);
               <div className="compositionHeader">
                 <div>
                   <h3>COMPOSITIONS D’ÉQUIPES</h3>
-                  <p>
-                    Choisis un format puis glisse les étiquettes entières
-                    d’une équipe à l’autre.
-                  </p>
+                  <p>Crée autant de blocs que nécessaire : 3x3, 5x5, ateliers…</p>
                 </div>
-
-
+                <div className="compositionPresets">
+                  <button type="button" onClick={() => addCompositionBlock("3 contre 3", 3, 3)}>+ 3x3</button>
+                  <button type="button" onClick={() => addCompositionBlock("5 contre 5", 5, 2)}>+ 5x5</button>
+                  <button type="button" onClick={() => addCompositionBlock("Ateliers", 0, 3)}>+ Ateliers</button>
+                  <button type="button" onClick={() => addCompositionBlock()}>+ Nouveau bloc</button>
+                </div>
               </div>
 
               <div className="compositionBlocks">
-                {compositionBlocks.map((block, blockIndex) => {
-                  const assignedIds = new Set(
-                    block.teams.flatMap((team) => team.playerIds),
-                  );
-
-                  const availablePlayers = allSessionPlayers.filter(
-                    (player) => !assignedIds.has(player.id),
-                  );
-
-                  return (
-                    <article className="compositionBlock" key={block.id}>
-                      <div className="blockToolbar">
-                        <span className="compositionBlockNumber">
-                          {blockIndex + 1}
-                        </span>
-
-                        <label className="compositionPresetSelect">
-                          Format
-                          <select
-                            value={compositionPresetValue(block)}
-                            onChange={(event) =>
-                              changeCompositionPreset(
-                                block.id,
-                                event.target.value as
-                                  | "2v2"
-                                  | "3v3"
-                                  | "4v4"
-                                  | "5v5"
-                                  | "large",
-                              )
-                            }
-                          >
-                            <option value="2v2">2 contre 2</option>
-                            <option value="3v3">3 contre 3</option>
-                            <option value="4v4">4 contre 4</option>
-                            <option value="5v5">5 contre 5</option>
-                            <option value="large">
-                              Grande équipe - 2 équipes
-                            </option>
-                          </select>
-                        </label>
-
-                        <button
-                          type="button"
-                          onClick={() =>
-                            autoDistributeComposition(block.id)
-                          }
-                        >
-                          Répartir automatiquement
-                        </button>
-
-                        <button
-                          type="button"
-                          onClick={() =>
-                            duplicateCompositionBlock(block.id)
-                          }
-                        >
-                          Dupliquer
-                        </button>
-
-                        {compositionBlocks.length > 1 && (
-                          <button
-                            type="button"
-                            className="dangerMini"
-                            onClick={() =>
-                              removeCompositionBlock(block.id)
-                            }
-                          >
-                            Supprimer
-                          </button>
-                        )}
-                      </div>
-
-                      <div
-                        className="compositionPlayerPool"
-                        onDragOver={(event) => event.preventDefault()}
-                        onDrop={() =>
-                          returnCompositionPlayerToPool(block.id)
+                {compositionBlocks.map((block, blockIndex) => (
+                  <article className="compositionBlock" key={block.id}>
+                    <div className="blockToolbar">
+                      <input
+                        value={block.title}
+                        onChange={(event) =>
+                          updateCompositionBlock(block.id, {
+                            title: event.target.value,
+                          })
                         }
-                      >
-                        <div className="compositionPlayerPoolHeader">
-                          <strong>JOUEURS À PLACER</strong>
-                          <span>{availablePlayers.length}</span>
-                        </div>
+                      />
+                      <label>
+                        Joueurs / équipe
+                        <input
+                          type="number"
+                          min={0}
+                          max={15}
+                          value={block.playersPerTeam}
+                          onChange={(event) =>
+                            updateCompositionBlock(block.id, {
+                              playersPerTeam: Number(event.target.value || 0),
+                            })
+                          }
+                        />
+                      </label>
+                      <button type="button" onClick={() => autoDistributeComposition(block.id)}>
+                        Répartir automatiquement
+                      </button>
+                      <button type="button" onClick={() => duplicateCompositionBlock(block.id)}>
+                        Dupliquer
+                      </button>
+                      <button type="button" className="dangerMini" onClick={() => removeCompositionBlock(block.id)}>
+                        Supprimer
+                      </button>
+                    </div>
 
-                        <div className="compositionPlayerPoolGrid">
-                          {availablePlayers.length === 0 ? (
-                            <small>
-                              Tous les joueurs sont placés dans ce bloc.
-                            </small>
-                          ) : (
-                            availablePlayers.map((player) => (
-                              <div
-                                className="compositionPlayerLabel"
-                                key={player.id}
-                                draggable
-                                onDragStart={() =>
-                                  startCompositionDrag(
-                                    block.id,
-                                    player.id,
-                                  )
-                                }
-                                onDragEnd={() =>
-                                  setDraggedCompositionPlayer(null)
-                                }
-                              >
-                                <span className="compositionPlayerInitial">
-                                  {playerName(player)
-                                    .slice(0, 2)
-                                    .toUpperCase()}
-                                </span>
-                                <strong>{playerName(player)}</strong>
-                                <span className="compositionDragHandle">
-                                  ⠿
-                                </span>
-                              </div>
-                            ))
-                          )}
-                        </div>
-                      </div>
-
-                      <div className="compositionTeams">
-                        {block.teams.map((team, teamIndex) => {
-                          const isOver =
-                            block.playersPerTeam > 0 &&
-                            team.playerIds.length >
-                              block.playersPerTeam;
-
-                          const isComplete =
-                            block.playersPerTeam > 0 &&
-                            team.playerIds.length ===
-                              block.playersPerTeam;
-
-                          return (
-                            <div
-                              className={`compositionTeam compositionTone${
-                                (teamIndex % 6) + 1
-                              }`}
-                              key={team.id}
-                              onDragOver={(event) =>
-                                event.preventDefault()
+                    <div className="compositionTeams">
+                      {block.teams.map((team) => (
+                        <div className="compositionTeam" key={team.id}>
+                          <div className="teamTitleRow">
+                            <input
+                              value={team.name}
+                              onChange={(event) =>
+                                updateCompositionTeam(block.id, team.id, {
+                                  name: event.target.value,
+                                })
                               }
-                              onDrop={() =>
-                                dropCompositionPlayer(
-                                  block.id,
-                                  team.id,
-                                )
-                              }
+                            />
+                            <button
+                              type="button"
+                              onClick={() => removeCompositionTeam(block.id, team.id)}
                             >
-                              <div className="teamTitleRow">
-                                <span className="compositionTeamDot" />
+                              ×
+                            </button>
+                          </div>
 
-                                <input
-                                  value={team.name}
-                                  onChange={(event) =>
-                                    updateCompositionTeam(
-                                      block.id,
-                                      team.id,
-                                      {
-                                        name: event.target.value,
-                                      },
-                                    )
-                                  }
-                                />
-
-                                <strong
-                                  className={
-                                    isOver
-                                      ? "compositionCountOver"
-                                      : isComplete
-                                        ? "compositionCountComplete"
-                                        : "compositionCountUnder"
-                                  }
-                                >
-                                  {block.playersPerTeam > 0
-                                    ? `${team.playerIds.length}/${block.playersPerTeam}`
-                                    : team.playerIds.length}
-                                </strong>
-
+                          <div className="teamPlayerChoices">
+                            {allSessionPlayers.map((player) => {
+                              const active = team.playerIds.includes(player.id);
+                              return (
                                 <button
                                   type="button"
+                                  key={player.id}
+                                  className={active ? "active" : ""}
                                   onClick={() =>
-                                    removeCompositionTeam(
+                                    togglePlayerInComposition(
                                       block.id,
                                       team.id,
+                                      player.id,
                                     )
                                   }
                                 >
-                                  ×
+                                  {active ? "✓ " : ""}
+                                  {playerName(player)}
                                 </button>
-                              </div>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      ))}
 
-                              <div className="compositionTeamCanvas">
-                                {team.playerIds.length === 0 ? (
-                                  <div className="compositionDropHint">
-                                    Glisser un joueur ici
-                                  </div>
-                                ) : (
-                                  team.playerIds.map((playerId) => {
-                                    const player =
-                                      allSessionPlayers.find(
-                                        (item) =>
-                                          item.id === playerId,
-                                      );
-
-                                    if (!player) return null;
-
-                                    return (
-                                      <div
-                                        className="compositionPlayerLabel placed"
-                                        key={playerId}
-                                        draggable
-                                        onDragStart={() =>
-                                          startCompositionDrag(
-                                            block.id,
-                                            playerId,
-                                            team.id,
-                                          )
-                                        }
-                                        onDragEnd={() =>
-                                          setDraggedCompositionPlayer(
-                                            null,
-                                          )
-                                        }
-                                      >
-                                        <span className="compositionPlayerInitial">
-                                          {playerName(player)
-                                            .slice(0, 2)
-                                            .toUpperCase()}
-                                        </span>
-
-                                        <strong>
-                                          {playerName(player)}
-                                        </strong>
-
-                                        <span className="compositionDragHandle">
-                                          ⠿
-                                        </span>
-
-                                        <button
-                                          type="button"
-                                          onClick={() =>
-                                            removePlayerFromComposition(
-                                              block.id,
-                                              team.id,
-                                              playerId,
-                                            )
-                                          }
-                                        >
-                                          ×
-                                        </button>
-                                      </div>
-                                    );
-                                  })
-                                )}
-                              </div>
-                            </div>
-                          );
-                        })}
-
-                        {compositionPresetValue(block) !== "large" && (
-                          <button
-                            type="button"
-                            className="addTeamCard"
-                            onClick={() =>
-                              addCompositionTeam(block.id)
-                            }
-                          >
-                            <span>+</span>
-                            Ajouter une équipe
-                          </button>
-                        )}
-                      </div>
-                    </article>
-                  );
-                })}
+                      <button
+                        type="button"
+                        className="addTeamCard"
+                        onClick={() => addCompositionTeam(block.id)}
+                      >
+                        + Ajouter une équipe
+                      </button>
+                    </div>
+                  </article>
+                ))}
               </div>
             </section>
 
@@ -2351,361 +2071,29 @@ setLoading(false);
       )}
 
       <style jsx>{`
-        .compositionBuilder {
-          margin-top: 22px;
-          padding: 20px;
-          border: 1px solid #eadfd8;
-          border-radius: 20px;
-          background: #ffffff;
-          box-shadow: 0 12px 32px rgba(54, 23, 34, 0.06);
-        }
-
-        .compositionHeader {
-          display: flex;
-          justify-content: space-between;
-          gap: 16px;
-          align-items: flex-start;
-        }
-
-        .compositionHeader h3 {
-          margin: 0;
-          color: #6b1a2c;
-          font-size: 19px;
-        }
-
-        .compositionHeader p {
-          margin: 6px 0 0;
-          color: #756b6f;
-          font-size: 12px;
-          line-height: 1.45;
-        }
-
-        .blockToolbar button {
-          border: 0;
-          border-radius: 999px;
-          padding: 9px 12px;
-          background: #6b1a2c;
-          color: #ffffff;
-          font-weight: 900;
-          cursor: pointer;
-        }
-
-        .compositionBlocks {
-          display: grid;
-          gap: 18px;
-          margin-top: 17px;
-        }
-
-        .compositionBlock {
-          padding: 16px;
-          border: 1px solid #e9dfda;
-          border-radius: 17px;
-          background: #ffffff;
-        }
-
-        .blockToolbar {
-          display: flex;
-          flex-wrap: wrap;
-          gap: 9px;
-          align-items: end;
-          padding-bottom: 14px;
-          border-bottom: 1px solid #eee7e3;
-        }
-
-        .compositionBlockNumber {
-          width: 36px;
-          height: 36px;
-          display: grid;
-          place-items: center;
-          align-self: center;
-          border-radius: 50%;
-          background: #171216;
-          color: #d4a24c;
-          font-weight: 950;
-        }
-
-        .blockToolbar label {
-          font-size: 10px;
-          font-weight: 900;
-          color: #74696d;
-        }
-
-        .compositionPresetSelect {
-          min-width: 250px;
-          flex: 1;
-        }
-
-        .compositionPresetSelect select {
-          display: block;
-          width: 100%;
-          min-height: 42px;
-          margin-top: 4px;
-          padding: 0 12px;
-          border: 1px solid #d9cfca;
-          border-radius: 10px;
-          background: #ffffff;
-          color: #6b1a2c;
-          font-size: 15px;
-          font-weight: 950;
-          cursor: pointer;
-        }
-
-        .blockToolbar .dangerMini {
-          background: #d82f46;
-        }
-
-        .compositionPlayerPool {
-          margin-top: 14px;
-          padding: 13px;
-          border: 1px solid #e8ddd7;
-          border-radius: 14px;
-          background: #fffaf6;
-        }
-
-        .compositionPlayerPoolHeader {
-          display: flex;
-          justify-content: space-between;
-          align-items: center;
-          margin-bottom: 10px;
-        }
-
-        .compositionPlayerPoolHeader strong {
-          color: #6b1a2c;
-          font-size: 10px;
-          letter-spacing: 0.06em;
-        }
-
-        .compositionPlayerPoolHeader span {
-          min-width: 28px;
-          height: 28px;
-          display: grid;
-          place-items: center;
-          border-radius: 9px;
-          background: #171216;
-          color: #d4a24c;
-          font-size: 10px;
-          font-weight: 950;
-        }
-
-        .compositionPlayerPoolGrid {
-          display: grid;
-          grid-template-columns: repeat(auto-fill, minmax(170px, 1fr));
-          gap: 8px;
-        }
-
-        .compositionPlayerPoolGrid small {
-          grid-column: 1 / -1;
-          color: #8d8286;
-          font-size: 10px;
-        }
-
-        .compositionPlayerLabel {
-          display: grid;
-          grid-template-columns: 34px minmax(0, 1fr) 18px;
-          align-items: center;
-          gap: 8px;
-          width: 100%;
-          min-height: 46px;
-          padding: 6px 9px 6px 6px;
-          border: 1px solid #ddd3ce;
-          border-radius: 11px;
-          background: #ffffff;
-          color: #2b2327;
-          box-shadow: 0 4px 10px rgba(45, 20, 28, 0.05);
-          cursor: grab;
-          user-select: none;
-        }
-
-        .compositionPlayerLabel:active {
-          cursor: grabbing;
-        }
-
-        .compositionPlayerInitial {
-          width: 34px;
-          height: 34px;
-          display: grid;
-          place-items: center;
-          border-radius: 50%;
-          background: #171216;
-          color: #d4a24c;
-          font-size: 9px;
-          font-weight: 950;
-        }
-
-        .compositionPlayerLabel strong {
-          min-width: 0;
-          overflow: visible;
-          color: #2b2327;
-          font-size: 11px;
-          white-space: normal;
-          word-break: break-word;
-        }
-
-        .compositionDragHandle {
-          color: #a99fa3;
-          font-size: 15px;
-          text-align: center;
-        }
-
-        .compositionTeams {
-          display: grid;
-          grid-template-columns: repeat(3, minmax(0, 1fr));
-          gap: 12px;
-          margin-top: 14px;
-        }
-
-        .compositionTeam {
-          min-height: 230px;
-          overflow: hidden;
-          padding: 0;
-          border: 1px solid #ded5d0;
-          border-top: 5px solid #cf344b;
-          border-radius: 16px;
-          background: #ffffff;
-          box-shadow: 0 8px 20px rgba(45, 20, 28, 0.045);
-        }
-
-        .compositionTone1 { border-top-color: #cf344b; }
-        .compositionTone2 { border-top-color: #303236; }
-        .compositionTone3 { border-top-color: #d4a24c; }
-        .compositionTone4 { border-top-color: #3b6ea8; }
-        .compositionTone5 { border-top-color: #3b8a68; }
-        .compositionTone6 { border-top-color: #7d5a9a; }
-
-        .teamTitleRow {
-          display: grid;
-          grid-template-columns: 10px minmax(0, 1fr) auto 34px;
-          gap: 8px;
-          align-items: center;
-          padding: 11px;
-          border-bottom: 1px solid #eee7e3;
-          background: #ffffff;
-        }
-
-        .compositionTeamDot {
-          width: 10px;
-          height: 10px;
-          border-radius: 50%;
-          background: #cf344b;
-        }
-
-        .compositionTone2 .compositionTeamDot { background: #303236; }
-        .compositionTone3 .compositionTeamDot { background: #d4a24c; }
-        .compositionTone4 .compositionTeamDot { background: #3b6ea8; }
-        .compositionTone5 .compositionTeamDot { background: #3b8a68; }
-        .compositionTone6 .compositionTeamDot { background: #7d5a9a; }
-
-        .teamTitleRow input {
-          min-width: 0;
-          border: 0;
-          background: transparent;
-          color: #2d2529;
-          font-size: 13px;
-          font-weight: 950;
-        }
-
-        .teamTitleRow > strong {
-          font-size: 11px;
-          font-weight: 950;
-        }
-
-        .compositionCountComplete { color: #21824c; }
-        .compositionCountUnder { color: #c38c25; }
-        .compositionCountOver { color: #d32b42; }
-
-        .teamTitleRow > button {
-          width: 34px;
-          height: 34px;
-          border: 0;
-          border-radius: 9px;
-          background: #fff0f2;
-          color: #c31e35;
-          font-weight: 950;
-          cursor: pointer;
-        }
-
-        .compositionTeamCanvas {
-          min-height: 180px;
-          display: grid;
-          grid-template-columns: 1fr;
-          align-content: flex-start;
-          gap: 8px;
-          padding: 13px;
-          background: #ffffff;
-        }
-
-        .compositionDropHint {
-          min-height: 150px;
-          display: grid;
-          place-items: center;
-          border: 1px dashed #dacfc9;
-          border-radius: 11px;
-          background: #fffdfc;
-          color: #9c9296;
-          font-size: 10px;
-        }
-
-        .compositionPlayerLabel.placed {
-          grid-template-columns: 34px minmax(0, 1fr) 18px 25px;
-          width: 100%;
-          min-height: 48px;
-          border-color: #e1c77d;
-          background: #fff9e8;
-        }
-
-        .compositionPlayerLabel.placed button {
-          width: 25px;
-          height: 25px;
-          display: grid;
-          place-items: center;
-          padding: 0;
-          border: 0;
-          border-radius: 7px;
-          background: #6b1a2c;
-          color: #ffffff;
-          font-size: 11px;
-          font-weight: 950;
-          cursor: pointer;
-        }
-
-        .addTeamCard {
-          min-height: 230px;
-          display: grid;
-          place-items: center;
-          align-content: center;
-          gap: 8px;
-          border: 1px dashed #d9c7bc;
-          border-radius: 16px;
-          background: #fffdfc;
-          color: #6b1a2c;
-          font-weight: 950;
-          cursor: pointer;
-        }
-
-        .addTeamCard span {
-          width: 40px;
-          height: 40px;
-          display: grid;
-          place-items: center;
-          border-radius: 12px;
-          background: #6b1a2c;
-          color: #ffffff;
-          font-size: 20px;
-        }
-
-        @media (max-width: 900px) {
-          .compositionTeams {
-            grid-template-columns: 1fr;
-          }
-
-          .compositionHeader {
-            flex-direction: column;
-          }
-
-          .compositionPresetSelect {
-            min-width: 100%;
-          }
-        }
+        .compositionBuilder{margin-top:22px;padding:18px;border:1px solid #ead8ca;border-radius:18px;background:#fffaf6}
+        .compositionHeader{display:flex;justify-content:space-between;gap:16px;align-items:flex-start}
+        .compositionHeader h3{margin:0;color:#6b1a2c;font-size:18px}
+        .compositionHeader p{margin:5px 0 0;color:#756b6f;font-size:12px}
+        .compositionPresets{display:flex;flex-wrap:wrap;gap:7px}
+        .compositionPresets button,.blockToolbar button{border:0;border-radius:999px;padding:9px 12px;background:#6b1a2c;color:#fff;font-weight:900;cursor:pointer}
+        .compositionBlocks{display:grid;gap:15px;margin-top:16px}
+        .compositionBlock{padding:14px;border:1px solid #eadbd3;border-radius:16px;background:#fff}
+        .blockToolbar{display:flex;flex-wrap:wrap;gap:8px;align-items:end}
+        .blockToolbar>input{min-width:210px;flex:1;font-size:16px;font-weight:900}
+        .blockToolbar label{font-size:10px;font-weight:900;color:#74696d}
+        .blockToolbar label input{display:block;width:86px;margin-top:4px}
+        .blockToolbar .dangerMini{background:#d82f46}
+        .compositionTeams{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;margin-top:12px}
+        .compositionTeam,.addTeamCard{min-height:130px;padding:10px;border:1px dashed #d9bfae;border-radius:14px;background:#fffaf8}
+        .teamTitleRow{display:flex;gap:6px}
+        .teamTitleRow input{min-width:0;flex:1;font-weight:900;color:#6b1a2c}
+        .teamTitleRow button{width:34px;border:0;border-radius:9px;background:#fee9e9;color:#c31e35;font-weight:950}
+        .teamPlayerChoices{display:flex;flex-wrap:wrap;gap:6px;margin-top:9px}
+        .teamPlayerChoices button{border:1px solid #e6dcd6;border-radius:999px;padding:6px 9px;background:#fff;font-size:10px;font-weight:850;cursor:pointer}
+        .teamPlayerChoices button.active{border-color:#d4a24c;background:#fff1ca;color:#6b1a2c}
+        .addTeamCard{display:grid;place-items:center;color:#6b1a2c;font-weight:950;cursor:pointer}
+        @media(max-width:900px){.compositionTeams{grid-template-columns:1fr}.compositionHeader{flex-direction:column}}
 
         .cartPage {
           background: #fff;
@@ -2968,6 +2356,72 @@ setLoading(false);
           color: #7a0d24;
           text-decoration: none;
           font-weight: 900;
+        }
+
+        .sessionContentEditor {
+          margin-top: 14px;
+          padding-top: 14px;
+          border-top: 1px solid rgba(107, 26, 44, 0.12);
+        }
+
+        .myBasketContentChoice {
+          display: inline-flex !important;
+          flex-direction: row !important;
+          align-items: center;
+          gap: 8px;
+          margin-bottom: 12px;
+          font-weight: 800;
+          color: #6b1a2c;
+          cursor: pointer;
+        }
+
+        .myBasketContentChoice input {
+          width: 18px !important;
+          height: 18px;
+          margin: 0;
+          accent-color: #6b1a2c;
+          flex: 0 0 auto;
+        }
+
+        .sessionTextFields {
+          display: grid;
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+          gap: 12px;
+        }
+
+        .sessionTextFields label {
+          display: flex;
+          flex-direction: column;
+          gap: 6px;
+          font-size: 0.78rem;
+          font-weight: 800;
+          color: #6a5b54;
+        }
+
+        .sessionTextFields textarea {
+          width: 100%;
+          min-height: 92px;
+          resize: vertical;
+          box-sizing: border-box;
+          border: 1px solid #ddd;
+          border-radius: 10px;
+          background: #fff;
+          padding: 10px 12px;
+          font: inherit;
+          font-size: 0.9rem;
+          line-height: 1.4;
+          color: #111;
+        }
+
+        .sessionTextFields textarea:focus {
+          outline: 2px solid rgba(107, 26, 44, 0.18);
+          border-color: #6b1a2c;
+        }
+
+        @media (max-width: 700px) {
+          .sessionTextFields {
+            grid-template-columns: 1fr;
+          }
         }
 
         .createSessionBtn {
