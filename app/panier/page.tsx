@@ -87,7 +87,7 @@ const compositionUid = (prefix: string) =>
 function createCompositionBlock(
   title = "3 contre 3",
   playersPerTeam = 3,
-  teamCount = 3,
+  teamCount = 2,
 ): TeamCompositionBlock {
   return {
     id: compositionUid("block"),
@@ -123,11 +123,45 @@ function playerName(player: TeamPlayer) {
 }
 
 function sessionText(value: unknown): string {
+  const clean = (entry: unknown) => {
+    let result = String(entry ?? "").trim();
+
+    // Certaines anciennes fiches contiennent les retours à la ligne sous forme
+    // littérale "\\r\\n", "\\n" ou "\\r". On les transforme en vrais retours.
+    result = result
+      .replace(/\\\\r\\\\n/g, "\n")
+      .replace(/\\\\n/g, "\n")
+      .replace(/\\\\r/g, "\n");
+
+    // Compatibilité avec d'anciennes valeurs stockées comme tableau JSON texte.
+    if (
+      (result.startsWith("[") && result.endsWith("]")) ||
+      (result.startsWith('"') && result.endsWith('"'))
+    ) {
+      try {
+        const parsed = JSON.parse(result);
+        if (Array.isArray(parsed)) {
+          result = parsed.map((item) => String(item ?? "").trim()).filter(Boolean).join("\n");
+        } else if (typeof parsed === "string") {
+          result = parsed;
+        }
+      } catch {
+        // On garde le texte tel quel si ce n'est pas réellement du JSON.
+      }
+    }
+
+    return result
+      .replace(/\r\n/g, "\n")
+      .replace(/\r/g, "\n")
+      .replace(/\n{3,}/g, "\n\n")
+      .trim();
+  };
+
   if (Array.isArray(value)) {
-    return value.map((entry) => String(entry ?? "").trim()).filter(Boolean).join("\n");
+    return value.map(clean).filter(Boolean).join("\n");
   }
 
-  return String(value ?? "").trim();
+  return clean(value);
 }
 
 function coachCode(value: string | null) {
@@ -276,8 +310,9 @@ const subtotal = useMemo(() => {
   }, 0);
 }, [purchaseItems]);
 
-  const tax = subtotal * 0.2;
-  const total = subtotal + tax;
+  // Les prix de la boutique sont TTC : la TVA est incluse dans le sous-total.
+  const tax = subtotal - subtotal / 1.2;
+  const total = subtotal;
 
   useEffect(() => {
     void loadCart();
@@ -692,6 +727,30 @@ setLoading(false);
     ]);
   }
 
+  function changeCompositionFormat(blockId: string, format: string) {
+    const sizeByFormat: Record<string, number> = {
+      "2 contre 2": 2,
+      "3 contre 3": 3,
+      "4 contre 4": 4,
+      "5 contre 5": 5,
+      Libre: 0,
+    };
+
+    setCompositionBlocks((current) =>
+      current.map((block) => {
+        if (block.id !== blockId) return block;
+
+        const playersPerTeam = sizeByFormat[format] ?? 0;
+
+        return {
+          ...block,
+          title: format,
+          playersPerTeam,
+        };
+      }),
+    );
+  }
+
   function updateCompositionBlock(
     blockId: string,
     patch: Partial<TeamCompositionBlock>,
@@ -781,6 +840,66 @@ setLoading(false);
     );
   }
 
+  function placePlayerInComposition(
+    blockId: string,
+    teamId: string,
+    playerId: string,
+  ) {
+    setCompositionBlocks((current) =>
+      current.map((block) => {
+        if (block.id !== blockId) return block;
+
+        return {
+          ...block,
+          teams: block.teams.map((team) => ({
+            ...team,
+            playerIds:
+              team.id === teamId
+                ? team.playerIds.includes(playerId)
+                  ? team.playerIds
+                  : [...team.playerIds, playerId]
+                : team.playerIds.filter((id) => id !== playerId),
+          })),
+        };
+      }),
+    );
+  }
+
+  function removePlayerFromComposition(blockId: string, playerId: string) {
+    setCompositionBlocks((current) =>
+      current.map((block) =>
+        block.id === blockId
+          ? {
+              ...block,
+              teams: block.teams.map((team) => ({
+                ...team,
+                playerIds: team.playerIds.filter((id) => id !== playerId),
+              })),
+            }
+          : block,
+      ),
+    );
+  }
+
+  function compositionDragStart(
+    event: React.DragEvent<HTMLElement>,
+    playerId: string,
+  ) {
+    event.dataTransfer.setData("text/plain", playerId);
+    event.dataTransfer.effectAllowed = "move";
+  }
+
+  function compositionDrop(
+    event: React.DragEvent<HTMLElement>,
+    blockId: string,
+    teamId: string,
+  ) {
+    event.preventDefault();
+    const playerId = event.dataTransfer.getData("text/plain");
+    if (!playerId) return;
+    placePlayerInComposition(blockId, teamId, playerId);
+  }
+
   function togglePlayerInComposition(
     blockId: string,
     teamId: string,
@@ -809,8 +928,12 @@ setLoading(false);
     setCompositionBlocks((current) =>
       current.map((block) => {
         if (block.id !== blockId) return block;
+        const isLibre = block.title === "Libre" || block.playersPerTeam === 0;
         const size = Math.max(1, block.playersPerTeam || 1);
-        const needed = Math.max(1, Math.ceil(allSessionPlayers.length / size));
+        const needed = isLibre
+          ? Math.max(2, block.teams.length)
+          : Math.max(2, Math.ceil(allSessionPlayers.length / size));
+
         const teams: CompositionTeam[] = block.teams
           .slice(0, Math.max(needed, block.teams.length))
           .map((team) => ({ ...team, playerIds: [] }));
@@ -1173,7 +1296,7 @@ setLoading(false);
             </td>
             <td class="explain">
               <strong>${item.title}</strong>
-              <p>${item.description ?? "—"}</p>
+              <p>${formatText(item.session_deroulement ?? "")}</p>
             </td>
             <td class="instructions">
               <p>${formatText(item.session_consignes_variantes ?? "")}</p>
@@ -1784,7 +1907,7 @@ setLoading(false);
             Sous-total <strong>{formatPrice(subtotal)}</strong>
           </p>
           <p>
-            TVA 20% <strong>{formatPrice(tax)}</strong>
+            DONT TVA 20% <strong>{formatPrice(tax)}</strong>
           </p>
           <div className="total">
             TOTAL TTC <strong>{formatPrice(total)}</strong>
@@ -1943,13 +2066,15 @@ setLoading(false);
               <div className="compositionHeader">
                 <div>
                   <h3>COMPOSITIONS D’ÉQUIPES</h3>
-                  <p>Crée autant de blocs que nécessaire : 3x3, 5x5, ateliers…</p>
+                  <p>
+                    Chaque joueur apparaît une seule fois. Glisse-le ensuite dans
+                    l’équipe souhaitée.
+                  </p>
                 </div>
                 <div className="compositionPresets">
-                  <button type="button" onClick={() => addCompositionBlock("3 contre 3", 3, 3)}>+ 3x3</button>
-                  <button type="button" onClick={() => addCompositionBlock("5 contre 5", 5, 2)}>+ 5x5</button>
-                  <button type="button" onClick={() => addCompositionBlock("Ateliers", 0, 3)}>+ Ateliers</button>
-                  <button type="button" onClick={() => addCompositionBlock()}>+ Nouveau bloc</button>
+                  <button type="button" onClick={() => addCompositionBlock("3 contre 3", 3, 2)}>
+                    + Ajouter un bloc composition
+                  </button>
                 </div>
               </div>
 
@@ -1957,28 +2082,22 @@ setLoading(false);
                 {compositionBlocks.map((block, blockIndex) => (
                   <article className="compositionBlock" key={block.id}>
                     <div className="blockToolbar">
-                      <input
-                        value={block.title}
-                        onChange={(event) =>
-                          updateCompositionBlock(block.id, {
-                            title: event.target.value,
-                          })
-                        }
-                      />
-                      <label>
-                        Joueurs / équipe
-                        <input
-                          type="number"
-                          min={0}
-                          max={15}
-                          value={block.playersPerTeam}
+                      <label className="formatSelectLabel">
+                        Format
+                        <select
+                          value={block.title}
                           onChange={(event) =>
-                            updateCompositionBlock(block.id, {
-                              playersPerTeam: Number(event.target.value || 0),
-                            })
+                            changeCompositionFormat(block.id, event.target.value)
                           }
-                        />
+                        >
+                          <option value="2 contre 2">2 contre 2</option>
+                          <option value="3 contre 3">3 contre 3</option>
+                          <option value="4 contre 4">4 contre 4</option>
+                          <option value="5 contre 5">5 contre 5</option>
+                          <option value="Libre">Libre</option>
+                        </select>
                       </label>
+
                       <button type="button" onClick={() => autoDistributeComposition(block.id)}>
                         Répartir automatiquement
                       </button>
@@ -1988,6 +2107,43 @@ setLoading(false);
                       <button type="button" className="dangerMini" onClick={() => removeCompositionBlock(block.id)}>
                         Supprimer
                       </button>
+                    </div>
+
+                    <div className="playersToPlace">
+                      <div className="playersToPlaceTitle">JOUEURS À PLACER</div>
+                      <div className="playersToPlaceList">
+                        {allSessionPlayers
+                          .filter(
+                            (player) =>
+                              !block.teams.some((team) =>
+                                team.playerIds.includes(player.id),
+                              ),
+                          )
+                          .map((player) => (
+                            <button
+                              type="button"
+                              key={player.id}
+                              className="compositionPlayerChip"
+                              draggable
+                              onDragStart={(event) =>
+                                compositionDragStart(event, player.id)
+                              }
+                            >
+                              {playerName(player)}
+                            </button>
+                          ))}
+
+                        {allSessionPlayers.length > 0 &&
+                          allSessionPlayers.every((player) =>
+                            block.teams.some((team) =>
+                              team.playerIds.includes(player.id),
+                            ),
+                          ) && (
+                            <span className="allPlayersPlaced">
+                              Tous les joueurs sont placés.
+                            </span>
+                          )}
+                      </div>
                     </div>
 
                     <div className="compositionTeams">
@@ -2010,27 +2166,43 @@ setLoading(false);
                             </button>
                           </div>
 
-                          <div className="teamPlayerChoices">
-                            {allSessionPlayers.map((player) => {
-                              const active = team.playerIds.includes(player.id);
+                          <div
+                            className="teamPlayerChoices teamDropZone"
+                            onDragOver={(event) => event.preventDefault()}
+                            onDrop={(event) =>
+                              compositionDrop(event, block.id, team.id)
+                            }
+                          >
+                            {team.playerIds.map((playerId) => {
+                              const player = allSessionPlayers.find(
+                                (candidate) => candidate.id === playerId,
+                              );
+                              if (!player) return null;
+
                               return (
                                 <button
                                   type="button"
                                   key={player.id}
-                                  className={active ? "active" : ""}
-                                  onClick={() =>
-                                    togglePlayerInComposition(
-                                      block.id,
-                                      team.id,
-                                      player.id,
-                                    )
+                                  className="compositionPlayerChip assigned"
+                                  draggable
+                                  onDragStart={(event) =>
+                                    compositionDragStart(event, player.id)
                                   }
+                                  onDoubleClick={() =>
+                                    removePlayerFromComposition(block.id, player.id)
+                                  }
+                                  title="Glisser vers une autre équipe · double-clic pour retirer"
                                 >
-                                  {active ? "✓ " : ""}
                                   {playerName(player)}
                                 </button>
                               );
                             })}
+
+                            {team.playerIds.length === 0 && (
+                              <span className="dropHint">
+                                Glisse les joueurs ici
+                              </span>
+                            )}
                           </div>
                         </div>
                       ))}
@@ -2084,6 +2256,15 @@ setLoading(false);
         .blockToolbar label{font-size:10px;font-weight:900;color:#74696d}
         .blockToolbar label input{display:block;width:86px;margin-top:4px}
         .blockToolbar .dangerMini{background:#d82f46}
+        .playersToPlace{margin-top:12px;padding:12px;border:1px solid #eadbd3;border-radius:14px;background:#fffaf8}
+        .playersToPlaceTitle{margin-bottom:9px;color:#6b1a2c;font-size:11px;font-weight:900}
+        .playersToPlaceList{display:flex;flex-wrap:wrap;gap:8px;min-height:38px;align-items:center}
+        .compositionPlayerChip{border:1px solid #e1d5ce;border-radius:999px;background:#fff;padding:7px 10px;color:#211b1d;font-size:12px;font-weight:800;cursor:grab}
+        .compositionPlayerChip:active{cursor:grabbing}
+        .compositionPlayerChip.assigned{background:#fff8e8;border-color:#e1b948}
+        .allPlayersPlaced,.dropHint{color:#887b74;font-size:12px;font-weight:700}
+        .formatSelectLabel{display:flex;align-items:center;gap:8px;font-size:11px;font-weight:900;color:#6b1a2c}
+        .formatSelectLabel select{min-width:170px;border:1px solid #ded4ce;border-radius:9px;padding:8px 10px;background:#fff;color:#111;font-weight:800}
         .compositionTeams{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;margin-top:12px}
         .compositionTeam,.addTeamCard{min-height:130px;padding:10px;border:1px dashed #d9bfae;border-radius:14px;background:#fffaf8}
         .teamTitleRow{display:flex;gap:6px}
