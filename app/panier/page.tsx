@@ -1,192 +1,3220 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
-import { clearSessionBuilderItems, loadSessionBuilderItems } from "@/lib/session-builder";
 
-type Team = { id: string; name: string; club_logo_url?: string | null; gymnasium?: string | null };
-type Player = { id: string; team_id: string; first_name?: string | null; last_name?: string | null; position_primary?: string | null };
-type SessionExercise = { exercise_id: string; title: string; who: string; duration_minutes: number; situation_image_url: string; explanation: string; instructions: string; variants?: string; sort_order: number };
-type CompositionTeam = { id: string; name: string; playerIds: string[] };
-type TeamCompositionBlock = { id: string; title: string; playersPerTeam: number; teams: CompositionTeam[] };
-type DbExercise = Partial<SessionExercise> & { duration_minutes?: number | string | null; sort_order?: number | string | null };
+type CartItem = {
+  id: string;
+  user_id: string;
+  item_type: "product" | "exercise" | "system" | "session" | "subscription";
+  item_id: string | null;
+  title: string;
+  description: string | null;
+  image_url: string | null;
+  price: number | null;
+  quantity: number;
+  duration_minutes: number | null;
+  assigned_to: string | null;
+  sort_order: number;
+  consignes?: string | string[] | null;
+  instructions?: string | string[] | null;
+  variantes?: string | string[] | null;
+  variants?: string | string[] | null;
+  schemaImages?: string[];
+  schema_images?: string[];
 
-type DragPayload = { playerId: string; blockId: string } | null;
-const POSITION_LABELS = ["PG", "SG", "SF", "PF", "C"];
-const uid = (prefix: string) => `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-const defaultBlock = (title = "Équipes de 3", playersPerTeam = 3): TeamCompositionBlock => ({ id: uid("block"), title, playersPerTeam, teams: [1, 2, 3].map((n) => ({ id: uid("team"), name: `Équipe ${n}`, playerIds: [] })) });
-const playerName = (p?: Player) => p ? `${p.first_name ?? ""} ${p.last_name ?? ""}`.trim() || "Joueur" : "Joueur";
-const legacyGroups = (blocks: TeamCompositionBlock[]) => Object.fromEntries((blocks[0]?.teams ?? []).map((team) => [team.name, team.playerIds]));
-function legacyBlocks(groups?: Record<string, string[]> | null): TeamCompositionBlock[] {
-  const teams = Object.entries(groups ?? {}).map(([name, playerIds]) => ({ id: uid("team"), name, playerIds: Array.isArray(playerIds) ? playerIds : [] }));
-  return teams.length ? [{ id: uid("legacy"), title: "Équipes de travail", playersPerTeam: 0, teams }] : [];
+  // Contenu utilisé uniquement pour la fiche séance générée.
+  use_mybasket_content?: boolean;
+  mybasket_deroulement?: string;
+  mybasket_consignes_variantes?: string;
+  session_deroulement?: string;
+  session_consignes_variantes?: string;
+};
+
+type TeamPlayer = {
+  id: string;
+  firstName?: string;
+  lastName?: string;
+  name?: string;
+  poste?: string;
+  position?: string;
+};
+
+type Team = {
+  id: string;
+  name?: string;
+  clubName?: string;
+  category?: string;
+  categorie?: string;
+  logo?: string;
+  logoUrl?: string;
+  logo_url?: string;
+  clubLogo?: string;
+  clubLogoUrl?: string;
+  club_logo_url?: string;
+  club_id?: string | null;
+  players?: TeamPlayer[];
+  effectif?: TeamPlayer[];
+};
+
+type PlayerPosition = "guard" | "forward" | "center";
+type SessionPlayers = Record<PlayerPosition, TeamPlayer[]>;
+
+type CompositionTeam = {
+  id: string;
+  name: string;
+  playerIds: string[];
+};
+
+type TeamCompositionBlock = {
+  id: string;
+  title: string;
+  playersPerTeam: number;
+  teams: CompositionTeam[];
+};
+
+const COACHES = [
+  "Coach principal",
+  "Assistant coach",
+  "Préparateur physique",
+  "Responsable vidéo",
+];
+
+const compositionUid = (prefix: string) =>
+  `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+
+function createCompositionBlock(
+  title = "3 contre 3",
+  playersPerTeam = 3,
+  teamCount = 2,
+): TeamCompositionBlock {
+  return {
+    id: compositionUid("block"),
+    title,
+    playersPerTeam,
+    teams: Array.from({ length: teamCount }, (_, index) => ({
+      id: compositionUid("team"),
+      name: `Équipe ${index + 1}`,
+      playerIds: [],
+    })),
+  };
 }
 
-export default function NouvelleSeancePage() {
-  const supabase = createClient();
-  const [teams, setTeams] = useState<Team[]>([]);
-  const [players, setPlayers] = useState<Player[]>([]);
-  const [teamId, setTeamId] = useState("");
-  const [title, setTitle] = useState("Séance rapide");
-  const [theme, setTheme] = useState("");
-  const [date, setDate] = useState("");
-  const [startTime, setStartTime] = useState("18:00");
-  const [endTime, setEndTime] = useState("19:30");
-  const [location, setLocation] = useState("");
-  const [selectedPlayers, setSelectedPlayers] = useState<string[]>([]);
-  const [blocks, setBlocks] = useState<TeamCompositionBlock[]>([defaultBlock()]);
-  const [exercises, setExercises] = useState<SessionExercise[]>([]);
-  const [editingId, setEditingId] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [saving, setSaving] = useState(false);
-  const [dragged, setDragged] = useState<DragPayload>(null);
-  const [dropTarget, setDropTarget] = useState<string | null>(null);
+const emptyPlayers: SessionPlayers = {
+  guard: [],
+  forward: [],
+  center: [],
+};
 
-  const selectedTeam = teams.find((team) => team.id === teamId);
-  const filteredPlayers = useMemo(() => players.filter((player) => player.team_id === teamId), [players, teamId]);
-  const selectedPlayerRows = useMemo(() => selectedPlayers.map((id) => players.find((player) => player.id === id)).filter((p): p is Player => Boolean(p)), [players, selectedPlayers]);
+function formatPrice(value: number) {
+  return new Intl.NumberFormat("fr-FR", {
+    style: "currency",
+    currency: "EUR",
+  }).format(value);
+}
 
-  useEffect(() => { void load(); }, []);
-  useEffect(() => { if (selectedTeam?.gymnasium && !location) setLocation(selectedTeam.gymnasium); }, [selectedTeam, location]);
+function playerName(player: TeamPlayer) {
+  return (
+    player.name ||
+    `${player.firstName ?? ""} ${player.lastName ?? ""}`.trim() ||
+    "Joueur"
+  );
+}
 
-  async function load() {
-    setLoading(true);
-    const sessionId = new URLSearchParams(window.location.search).get("id");
-    const [{ data: teamRows }, { data: playerRows }] = await Promise.all([
-      supabase.from("teams").select("*").order("name"),
-      supabase.from("players").select("*").order("last_name"),
-    ]);
-    setTeams((teamRows ?? []) as Team[]);
-    setPlayers((playerRows ?? []) as Player[]);
+function sessionText(value: unknown): string {
+  const clean = (entry: unknown) => {
+    let result = String(entry ?? "").trim();
 
-    if (sessionId) {
-      const { data: session, error } = await supabase.from("practice_sessions").select("*").eq("id", sessionId).maybeSingle();
-      if (error || !session) { alert("Séance introuvable."); setLoading(false); return; }
-      setEditingId(sessionId);
-      setTitle(session.title || "Séance rapide"); setTheme(session.theme || ""); setTeamId(session.team_id || "");
-      setDate(session.session_date || ""); setStartTime((session.start_time || "18:00").slice(0, 5)); setEndTime((session.end_time || "19:30").slice(0, 5)); setLocation(session.location || "");
-      const loadedBlocks = Array.isArray(session.team_composition_blocks) && session.team_composition_blocks.length ? session.team_composition_blocks as TeamCompositionBlock[] : legacyBlocks(session.player_groups);
-      setBlocks(loadedBlocks.length ? loadedBlocks : [defaultBlock()]);
-      const [{ data: exerciseRows }, { data: directRows }, { data: attendanceRows }] = await Promise.all([
-        supabase.from("practice_session_exercises").select("*").eq("session_id", sessionId).order("sort_order"),
-        supabase.from("practice_session_players").select("*").eq("session_id", sessionId),
-        supabase.from("practice_session_attendance").select("*").eq("session_id", sessionId),
-      ]);
-      setExercises(((exerciseRows ?? []) as DbExercise[]).map((e, i) => ({
-        exercise_id: String(e.exercise_id || ""), title: String(e.title || "Exercice"), who: String(e.who || "CP"), duration_minutes: Number(e.duration_minutes ?? 10),
-        situation_image_url: String(e.situation_image_url || ""), explanation: String(e.explanation || ""), instructions: String(e.instructions || ""), variants: String(e.variants || ""), sort_order: Number(e.sort_order ?? i),
-      })));
-      const directIds = (directRows ?? []).filter((r: any) => r.selected !== false && !["absent", "injured", "excused"].includes(String(r.status || ""))).map((r: any) => String(r.player_id || r.id || "")).filter(Boolean);
-      const attendanceIds = (attendanceRows ?? []).filter((r: any) => !["absent", "injured", "excused"].includes(String(r.status || "present"))).map((r: any) => String(r.player_id || "")).filter(Boolean);
-      setSelectedPlayers(Array.from(new Set(directIds.length ? directIds : attendanceIds)));
-    } else {
-      const builderItems = await loadSessionBuilderItems();
-      setExercises(builderItems.map((item, index) => ({ exercise_id: item.item_id ?? "", title: item.title, who: item.assigned_to ?? "CP", duration_minutes: item.duration_minutes ?? 10, situation_image_url: item.image_url ?? "", explanation: item.description ?? "", instructions: typeof item.metadata?.instructions === "string" ? item.metadata.instructions : "", variants: typeof item.metadata?.variants === "string" ? item.metadata.variants : "", sort_order: index })));
-    }
-    setLoading(false);
-  }
+    // Certaines anciennes fiches contiennent les retours à la ligne sous forme
+    // littérale "\\r\\n", "\\n" ou "\\r". On les transforme en vrais retours.
+    result = result
+      .replace(/\\\\r\\\\n/g, "\n")
+      .replace(/\\\\n/g, "\n")
+      .replace(/\\\\r/g, "\n");
 
-  function setSelection(ids: string[]) {
-    const unique = Array.from(new Set(ids)); setSelectedPlayers(unique);
-    setBlocks((prev) => prev.map((block) => ({ ...block, teams: block.teams.map((team) => ({ ...team, playerIds: team.playerIds.filter((id) => unique.includes(id)) })) })));
-  }
-  function togglePlayer(id: string) { setSelection(selectedPlayers.includes(id) ? selectedPlayers.filter((x) => x !== id) : [...selectedPlayers, id]); }
-  function updateBlock(blockId: string, patch: Partial<TeamCompositionBlock>) { setBlocks((prev) => prev.map((block) => block.id === blockId ? { ...block, ...patch } : block)); }
-  function addPresetBlock(size: number) { setBlocks((prev) => [...prev, defaultBlock(size === 0 ? "Ateliers" : size === 5 ? "5 contre 5" : `Équipes de ${size}`, size)]); }
-  function duplicateBlock(blockId: string) { setBlocks((prev) => { const source = prev.find((block) => block.id === blockId); return source ? [...prev, { ...source, id: uid("block"), title: `${source.title} — copie`, teams: source.teams.map((team) => ({ ...team, id: uid("team") })) }] : prev; }); }
-  function removeBlock(blockId: string) { if (confirm("Supprimer ce bloc ?")) setBlocks((prev) => prev.filter((block) => block.id !== blockId)); }
-  function addTeam(blockId: string) { setBlocks((prev) => prev.map((block) => block.id === blockId ? { ...block, teams: [...block.teams, { id: uid("team"), name: `Équipe ${block.teams.length + 1}`, playerIds: [] }] } : block)); }
-  function updateTeam(blockId: string, teamIdValue: string, patch: Partial<CompositionTeam>) { setBlocks((prev) => prev.map((block) => block.id === blockId ? { ...block, teams: block.teams.map((team) => team.id === teamIdValue ? { ...team, ...patch } : team) } : block)); }
-  function removeTeam(blockId: string, teamIdValue: string) { setBlocks((prev) => prev.map((block) => block.id === blockId ? { ...block, teams: block.teams.filter((team) => team.id !== teamIdValue) } : block)); }
-  function placePlayer(blockId: string, teamIdValue: string, playerId: string) {
-    if (!selectedPlayers.includes(playerId)) setSelectedPlayers((prev) => [...prev, playerId]);
-    setBlocks((prev) => prev.map((block) => block.id !== blockId ? block : { ...block, teams: block.teams.map((team) => ({ ...team, playerIds: team.id === teamIdValue ? [...team.playerIds.filter((id) => id !== playerId), playerId] : team.playerIds.filter((id) => id !== playerId) })) }));
-  }
-  function removePlayerFromBlock(blockId: string, playerId: string) { setBlocks((prev) => prev.map((block) => block.id !== blockId ? block : { ...block, teams: block.teams.map((team) => ({ ...team, playerIds: team.playerIds.filter((id) => id !== playerId) })) })); }
-  function autoDistribute(blockId: string) {
-    setBlocks((prev) => prev.map((block) => {
-      if (block.id !== blockId) return block;
-      const target = Math.max(1, block.playersPerTeam || 1);
-      const needed = Math.max(1, Math.ceil(selectedPlayers.length / target));
-      const teamsCopy: CompositionTeam[] = block.teams.map((team) => ({
-        ...team,
-        playerIds: [] as string[],
-      }));
-
-      while (teamsCopy.length < needed) {
-        teamsCopy.push({
-          id: uid("team"),
-          name: `Équipe ${teamsCopy.length + 1}`,
-          playerIds: [] as string[],
-        });
+    // Compatibilité avec d'anciennes valeurs stockées comme tableau JSON texte.
+    if (
+      (result.startsWith("[") && result.endsWith("]")) ||
+      (result.startsWith('"') && result.endsWith('"'))
+    ) {
+      try {
+        const parsed = JSON.parse(result);
+        if (Array.isArray(parsed)) {
+          result = parsed.map((item) => String(item ?? "").trim()).filter(Boolean).join("\n");
+        } else if (typeof parsed === "string") {
+          result = parsed;
+        }
+      } catch {
+        // On garde le texte tel quel si ce n'est pas réellement du JSON.
       }
+    }
 
-      selectedPlayers.forEach((playerId, index) => {
-        const targetTeam = teamsCopy[index % Math.min(needed, teamsCopy.length)];
-        if (targetTeam) targetTeam.playerIds.push(playerId);
-      });
+    return result
+      .replace(/\r\n/g, "\n")
+      .replace(/\r/g, "\n")
+      .replace(/\n{3,}/g, "\n\n")
+      .trim();
+  };
 
-      return { ...block, teams: teamsCopy };
+  if (Array.isArray(value)) {
+    return value.map(clean).filter(Boolean).join("\n");
+  }
+
+  return clean(value);
+}
+
+function coachCode(value: string | null) {
+  if (value === "Assistant coach") return "AC";
+  if (value === "Préparateur physique") return "PP";
+  if (value === "Responsable vidéo") return "RV";
+  return "CP";
+}
+
+function formatText(value: unknown) {
+  if (!value) return "—";
+
+  if (Array.isArray(value)) {
+    return value.filter(Boolean).map(String).join("<br />");
+  }
+
+  const text = String(value).trim();
+
+  try {
+    const parsed = JSON.parse(text);
+
+    if (Array.isArray(parsed)) {
+      return parsed.filter(Boolean).map(String).join("<br />");
+    }
+
+    return String(parsed).replace(/\n/g, "<br />");
+  } catch {
+    return text
+      .replace(/^\[/, "")
+      .replace(/\]$/, "")
+      .replace(/^"/, "")
+      .replace(/"$/, "")
+      .replace(/\\"/g, '"')
+      .replace(/\n/g, "<br />");
+  }
+}
+
+function normalizePosition(player: TeamPlayer): PlayerPosition {
+  const raw = String(player.poste ?? player.position ?? "").toLowerCase();
+
+  if (raw.includes("pivot") || raw.includes("center") || raw.includes("5")) {
+    return "center";
+  }
+
+  if (
+    raw.includes("ailier") ||
+    raw.includes("forward") ||
+    raw.includes("3") ||
+    raw.includes("4")
+  ) {
+    return "forward";
+  }
+
+  return "guard";
+}
+
+function readTeamsFromLocalStorage(): Team[] {
+  if (typeof window === "undefined") return [];
+
+  const keys = ["mybasket_equipes", "mybasket_teams", "teams"];
+
+  for (const key of keys) {
+    try {
+      const raw = localStorage.getItem(key);
+      if (!raw) continue;
+
+      const parsed = JSON.parse(raw);
+
+      if (Array.isArray(parsed)) return parsed;
+      if (Array.isArray(parsed?.teams)) return parsed.teams;
+      if (Array.isArray(parsed?.equipes)) return parsed.equipes;
+    } catch {
+      continue;
+    }
+  }
+
+  return [];
+}
+
+function uniqueImages(images: Array<string | null | undefined>) {
+  return Array.from(new Set(images.filter(Boolean) as string[]));
+}
+function subscriptionImage(title: string) {
+  const slug = title.toLowerCase();
+
+  if (slug.includes("basic")) return "/images/abonnement-basic.png";
+  if (slug.includes("pro")) return "/images/abonnement-pro.png";
+  if (slug.includes("premium")) return "/images/abonnement-premium.png";
+
+  if (slug.includes("bronze")) return "/images/club-bronze.png";
+  if (slug.includes("silver")) return "/images/club-silver.png";
+  if (slug.includes("gold")) return "/images/club-gold.png";
+
+  return "/images/abonnement-basic.png";
+}
+function notifyCartUpdated() {
+  if (typeof window === "undefined") return;
+
+  window.dispatchEvent(new Event("cart-updated"));
+}
+export default function PanierPage() {
+  const compositionDraggedPlayerRef = useRef<string | null>(null);
+  const compositionHoveredTargetRef = useRef<{ blockId: string; teamId: string } | null>(null);
+
+  const supabase = createClient();
+
+  const [items, setItems] = useState<CartItem[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  const [sessionModalOpen, setSessionModalOpen] = useState(false);
+  const [savingSession, setSavingSession] = useState(false);
+  const [teams, setTeams] = useState<Team[]>([]);
+  const [selectedTeamId, setSelectedTeamId] = useState("");
+  const [sessionDate, setSessionDate] = useState("");
+  const [sessionStartTime, setSessionStartTime] = useState("");
+  const [sessionEndTime, setSessionEndTime] = useState("");
+  const [sessionTheme, setSessionTheme] = useState("");
+  const [sessionPlayers, setSessionPlayers] =
+    useState<SessionPlayers>(emptyPlayers);
+  const [draggedPlayer, setDraggedPlayer] = useState<{
+    player: TeamPlayer;
+    from: PlayerPosition;
+  } | null>(null);
+  const [compositionBlocks, setCompositionBlocks] = useState<TeamCompositionBlock[]>([
+    createCompositionBlock(),
+  ]);
+
+  const productItems = items.filter((item) => item.item_type === "product");
+  const subscriptionItems = items.filter(
+  (item) => item.item_type === "subscription"
+);
+  const sessionItems = items.filter(
+    (item) =>
+      item.item_type === "exercise" ||
+      item.item_type === "system" ||
+      item.item_type === "session"
+  );
+
+  const selectedTeam = teams.find((team) => team.id === selectedTeamId);
+
+const purchaseItems = useMemo(
+  () => [...productItems, ...subscriptionItems],
+  [productItems, subscriptionItems]
+);
+
+const subtotal = useMemo(() => {
+  return purchaseItems.reduce((total, item) => {
+    return total + Number(item.price ?? 0) * Number(item.quantity ?? 1);
+  }, 0);
+}, [purchaseItems]);
+
+  // Les prix de la boutique sont TTC : la TVA est incluse dans le sous-total.
+  const tax = subtotal - subtotal / 1.2;
+  const total = subtotal;
+
+  useEffect(() => {
+    void loadCart();
+    void loadTeamsAndPlayers();
+  }, []);
+
+  async function loadTeamsAndPlayers() {
+    const { data: teamRows, error: teamError } = await supabase.from("teams").select("*").order("name");
+    if (teamError) { console.error(teamError); setTeams(readTeamsFromLocalStorage()); return; }
+    const rawTeams = (teamRows ?? []) as Array<Record<string, any>>;
+    const teamIds = rawTeams.map((team) => String(team.id || "")).filter(Boolean);
+    const clubIds = Array.from(new Set(rawTeams.map((team) => String(team.club_id || "")).filter(Boolean)));
+    const [{ data: playerRows }, { data: clubRows }] = await Promise.all([
+      teamIds.length ? supabase.from("players").select("*").in("team_id", teamIds) : Promise.resolve({ data: [] as any[] }),
+      clubIds.length ? supabase.from("clubs").select("*").in("id", clubIds) : Promise.resolve({ data: [] as any[] }),
+    ]);
+    const clubs = new Map(((clubRows ?? []) as Array<Record<string, any>>).map((club) => [String(club.id), club]));
+    const playersByTeam = new Map<string, TeamPlayer[]>();
+    for (const row of (playerRows ?? []) as Array<Record<string, any>>) {
+      const key = String(row.team_id || "");
+      const player: TeamPlayer = { id: String(row.id), firstName: String(row.first_name || ""), lastName: String(row.last_name || ""), position: String(row.position_primary || row.position || "") };
+      playersByTeam.set(key, [...(playersByTeam.get(key) || []), player]);
+    }
+    setTeams(rawTeams.map((team) => {
+      const club = clubs.get(String(team.club_id || "")) || {};
+      return { ...team, id: String(team.id), name: String(team.name || team.nom || "Équipe"), clubName: String(club.name || club.nom || ""), club_logo_url: String(team.club_logo_url || team.logo_url || team.logo || club.logo_url || club.club_logo_url || club.logo || club.image_url || club.avatar_url || ""), players: playersByTeam.get(String(team.id)) || [] } as Team;
     }));
   }
-  function moveExercise(index: number, delta: number) { const target = index + delta; if (target < 0 || target >= exercises.length) return; const copy = [...exercises]; [copy[index], copy[target]] = [copy[target], copy[index]]; setExercises(copy.map((exercise, i) => ({ ...exercise, sort_order: i }))); }
-  function updateExercise(index: number, field: keyof SessionExercise, value: string | number) { setExercises((prev) => prev.map((exercise, i) => i === index ? { ...exercise, [field]: value } : exercise)); }
-  async function addMoreExercises() { const { data: { user } } = await supabase.auth.getUser(); if (!user) return alert("Tu dois être connecté."); if (editingId) await supabase.from("profiles").update({ active_practice_session_id: editingId }).eq("id", user.id); window.location.href = editingId ? `/exercices?session=${editingId}` : "/exercices"; }
 
-  async function save() {
-    setSaving(true);
-    const { data: { user }, error: userError } = await supabase.auth.getUser();
-    if (userError || !user) { setSaving(false); return alert("Tu dois être connecté."); }
-    if (!teamId || !date || !theme.trim()) { setSaving(false); return alert("Renseigne l'équipe, la date et le thème."); }
-    if (!exercises.length) { setSaving(false); return alert("Ajoute au moins un exercice."); }
-    const payload = { user_id: user.id, visibility: "private", team_id: teamId, title: title.trim() || "Séance rapide", theme: theme.trim(), session_date: date, start_time: startTime, end_time: endTime, location, club_logo_url: selectedTeam?.club_logo_url ?? null, mybasket_logo_url: "/logo-mybasket02.png", team_composition_blocks: blocks, player_groups: legacyGroups(blocks), pdf_url: null };
-    let sessionId = editingId;
-    if (sessionId) {
-      const { error } = await supabase.from("practice_sessions").update(payload).eq("id", sessionId).eq("user_id", user.id); if (error) { setSaving(false); return alert(error.message); }
-      await Promise.all([supabase.from("practice_session_exercises").delete().eq("session_id", sessionId), supabase.from("practice_session_attendance").delete().eq("session_id", sessionId), supabase.from("practice_session_players").delete().eq("session_id", sessionId)]);
-    } else {
-      const { data, error } = await supabase.from("practice_sessions").insert(payload).select("id").single(); if (error || !data) { setSaving(false); return alert(error?.message || "Erreur création"); } sessionId = data.id;
+  async function loadCart() {
+    setLoading(true);
+
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+
+    if (!user) {
+      setItems([]);
+      setLoading(false);
+      return;
     }
-    const chosen = players.filter((player) => selectedPlayers.includes(player.id));
-    if (chosen.length) {
-      await supabase.from("practice_session_attendance").insert(chosen.map((player) => ({ user_id: user.id, session_id: sessionId, player_id: player.id, first_name: player.first_name, last_name: player.last_name, status: "present", comment: "" })));
-      const snapshot = await supabase.from("practice_session_players").insert(chosen.map((player) => ({ user_id: user.id, session_id: sessionId, player_id: player.id, first_name: player.first_name, last_name: player.last_name, position: player.position_primary ?? null, selected: true, status: "present" })));
-      if (snapshot.error) console.warn("practice_session_players non disponible ou schéma différent", snapshot.error);
+
+    const { data, error } = await supabase
+      .from("cart_items")
+      .select("*")
+      .eq("user_id", user.id)
+      .order("sort_order", { ascending: true })
+      .order("created_at", { ascending: true });
+
+    if (error) {
+      console.error(error);
+      setLoading(false);
+      return;
     }
-    const { error: exerciseError } = await supabase.from("practice_session_exercises").insert(exercises.map((exercise, index) => ({ session_id: sessionId, user_id: user.id, exercise_id: exercise.exercise_id || null, title: exercise.title, who: exercise.who, duration_minutes: exercise.duration_minutes, situation_image_url: exercise.situation_image_url || null, explanation: exercise.explanation || null, instructions: exercise.instructions || null, sort_order: index })));
-    if (exerciseError) { setSaving(false); return alert(exerciseError.message); }
-    const calendar = { user_id: user.id, visibility: "private", event_type: "training", session_id: sessionId, title: `${selectedTeam?.name ?? "Équipe"} • ${theme.trim()}`, description: `${title.trim() || "Séance rapide"} — Ouvrir la fiche séance`, event_date: date, start_time: startTime, end_time: endTime, location, attachment_url: null };
-    const { data: event } = await supabase.from("calendar_events").select("id").eq("session_id", sessionId).maybeSingle(); if (event?.id) await supabase.from("calendar_events").update(calendar).eq("id", event.id); else await supabase.from("calendar_events").insert(calendar);
-    await supabase.from("profiles").update({ active_practice_session_id: null }).eq("id", user.id); await clearSessionBuilderItems(); setSaving(false); window.location.href = `/seances/${sessionId}`;
+
+    const cartItems = (data ?? []) as CartItem[];
+
+    const exerciseIds = cartItems
+      .filter((item) => item.item_type === "exercise" && item.item_id)
+      .map((item) => item.item_id as string);
+
+    let exercisesById: Record<string, any> = {};
+
+    if (exerciseIds.length > 0) {
+      const { data: exercisesData } = await supabase
+        .from("exercises")
+        .select("*")
+        .in("id", exerciseIds);
+
+      exercisesById = Object.fromEntries(
+        ((exercisesData ?? []) as Array<Record<string, any>>).map(
+          (exercise: Record<string, any>) => [String(exercise.id), exercise],
+        )
+      );
+    }
+
+    const enrichedItems = cartItems.map((item) => {
+      if (item.item_type !== "exercise" || !item.item_id) return item;
+
+      const exercise = exercisesById[item.item_id];
+
+      if (!exercise) return item;
+
+      const schemas = uniqueImages([
+        ...(exercise.schema_images ?? []),
+        ...(exercise.schemaImages ?? []),
+      ]);
+
+      const myBasketDeroulement = sessionText(
+        exercise.deroulement ??
+          exercise.description ??
+          exercise.organisation ??
+          item.description ??
+          "",
+      );
+
+      const myBasketConsignes = sessionText(
+        exercise.consignes ?? exercise.instructions ?? item.consignes ?? item.instructions,
+      );
+
+      const myBasketVariantes = sessionText(
+        exercise.variantes ?? exercise.variants ?? item.variantes ?? item.variants,
+      );
+
+      const myBasketConsignesVariantes =
+        myBasketConsignes || myBasketVariantes;
+
+      return {
+        ...item,
+        title: exercise.title ?? item.title,
+        description:
+          exercise.organisation ?? exercise.description ?? item.description,
+        image_url: schemas[0] ?? item.image_url,
+        schema_images: schemas,
+        schemaImages: schemas,
+        consignes:
+          exercise.consignes ??
+          exercise.instructions ??
+          item.consignes ??
+          item.instructions ??
+          null,
+        instructions:
+          exercise.consignes ??
+          exercise.instructions ??
+          item.consignes ??
+          item.instructions ??
+          null,
+        variantes:
+          exercise.variantes ??
+          exercise.variants ??
+          item.variantes ??
+          item.variants ??
+          null,
+        variants:
+          exercise.variantes ??
+          exercise.variants ??
+          item.variantes ??
+          item.variants ??
+          null,
+
+        // Chaque exercice garde son propre choix.
+        use_mybasket_content: true,
+        mybasket_deroulement: myBasketDeroulement,
+        mybasket_consignes_variantes: myBasketConsignesVariantes,
+        session_deroulement: myBasketDeroulement,
+        session_consignes_variantes: myBasketConsignesVariantes,
+      };
+    });
+
+    setItems(enrichedItems);
+
+window.dispatchEvent(
+  new CustomEvent("cart-updated", {
+    detail: {
+      count: enrichedItems.reduce(
+        (sum, item) => sum + (item.quantity ?? 1),
+        0
+      ),
+    },
+  })
+);
+
+setLoading(false);
   }
 
-  if (loading) return <main className="page loading">Chargement du mode Coach…</main>;
-  return <main className="page">
-    <header className="hero"><span>MYBASKET · MODE COACH</span><h1>{editingId ? "MODIFIER LA SÉANCE" : "CONSTRUIRE LA SÉANCE"}</h1><p>Prépare les présents, compose tes groupes et organise ton practice plan.</p></header>
+  async function removeItem(id: string) {
+  setItems((prev) => prev.filter((item) => item.id !== id));
 
-    <section className="panel info"><div className="panelTitle"><span>01</span><div><h2>Informations</h2><p>Cadre général de la séance</p></div></div><div className="infoGrid"><label>Titre<input value={title} onChange={(e) => setTitle(e.target.value)} /></label><label>Équipe<select value={teamId} onChange={(e) => { setTeamId(e.target.value); setSelection([]); }}><option value="">Choisir</option>{teams.map((team) => <option key={team.id} value={team.id}>{team.name}</option>)}</select></label><label>Thème<input value={theme} onChange={(e) => setTheme(e.target.value)} /></label><label>Date<input type="date" value={date} onChange={(e) => setDate(e.target.value)} /></label><label>Début<input type="time" value={startTime} onChange={(e) => setStartTime(e.target.value)} /></label><label>Fin<input type="time" value={endTime} onChange={(e) => setEndTime(e.target.value)} /></label><label className="wide">Lieu<input value={location} onChange={(e) => setLocation(e.target.value)} /></label></div></section>
+  const { error } = await supabase.from("cart_items").delete().eq("id", id);
 
-    <section className="panel coachMode"><div className="panelTitle"><span>02</span><div><h2>Mode Coach</h2><p>Sélectionne puis déplace les joueurs dans chaque composition</p></div></div>
-      <div className="coachLayout">
-        <aside className="presenceRail"><div className="railHeader"><div><strong>JOUEURS PRÉSENTS</strong><small>{selectedPlayers.length} sélectionné{selectedPlayers.length > 1 ? "s" : ""}</small></div><div><button onClick={() => setSelection(filteredPlayers.map((player) => player.id))}>Tout</button><button onClick={() => setSelection([])}>Vider</button></div></div>
-          <div className="roster">{filteredPlayers.map((player) => { const selected = selectedPlayers.includes(player.id); return <button type="button" key={player.id} className={`rosterCard ${selected ? "selected" : ""}`} onClick={() => togglePlayer(player.id)} draggable={selected} onDragStart={() => selected && setDragged({ playerId: player.id, blockId: "pool" })}><span className="check">{selected ? "✓" : "+"}</span><span><b>{playerName(player)}</b><small>{player.position_primary || "Poste non défini"}</small></span></button>; })}</div>
-        </aside>
+  notifyCartUpdated();
 
-        <div className="compositionArea"><div className="compositionToolbar"><div><strong>COMPOSITIONS DYNAMIQUES</strong><small>Un joueur peut être utilisé dans chaque bloc, une seule fois par bloc.</small></div><div className="presetButtons"><button onClick={() => addPresetBlock(3)}>+ 3x3</button><button onClick={() => addPresetBlock(4)}>+ 4x4</button><button onClick={() => addPresetBlock(5)}>+ 5x5</button><button onClick={() => addPresetBlock(0)}>+ Ateliers</button></div></div>
-          {blocks.map((block, blockIndex) => <article className={`compositionBlock tone${blockIndex % 4}`} key={block.id}><div className="blockHeader"><div className="blockIdentity"><span>BLOC {String(blockIndex + 1).padStart(2, "0")}</span><input value={block.title} onChange={(e) => updateBlock(block.id, { title: e.target.value })} /></div><label>Joueurs / équipe<input type="number" min={0} value={block.playersPerTeam} onChange={(e) => updateBlock(block.id, { playersPerTeam: Number(e.target.value) })} /></label><button className="auto" onClick={() => autoDistribute(block.id)}>⚡ Répartir automatiquement</button><button onClick={() => duplicateBlock(block.id)}>Dupliquer</button><button className="iconDanger" onClick={() => removeBlock(block.id)}>×</button></div>
-            <div className="blockPool" onDragOver={(e) => e.preventDefault()} onDrop={() => { if (dragged?.playerId) removePlayerFromBlock(block.id, dragged.playerId); setDragged(null); }}><span>DISPONIBLES POUR CE BLOC</span><div>{selectedPlayerRows.filter((player) => !block.teams.some((team) => team.playerIds.includes(player.id))).map((player) => <div draggable key={player.id} className="miniPlayer" onDragStart={() => setDragged({ playerId: player.id, blockId: block.id })}><b>{playerName(player)}</b><small>{player.position_primary || "—"}</small></div>)}</div></div>
-            <div className="teamGrid">{block.teams.map((team, teamIndex) => { const targetKey = `${block.id}:${team.id}`; const slots = Math.max(block.playersPerTeam || 0, team.playerIds.length, 1); return <section key={team.id} className={`teamCard teamTone${teamIndex % 5} ${dropTarget === targetKey ? "isTarget" : ""}`} onDragOver={(e) => { e.preventDefault(); setDropTarget(targetKey); }} onDragLeave={() => setDropTarget(null)} onDrop={() => { if (dragged?.playerId) placePlayer(block.id, team.id, dragged.playerId); setDragged(null); setDropTarget(null); }}><div className="teamHead"><span>{teamIndex + 1}</span><input value={team.name} onChange={(e) => updateTeam(block.id, team.id, { name: e.target.value })} /><button onClick={() => removeTeam(block.id, team.id)}>×</button></div><div className="slots">{Array.from({ length: slots }).map((_, slotIndex) => { const player = players.find((p) => p.id === team.playerIds[slotIndex]); return <div key={`${team.id}-${slotIndex}`} className={`slot ${player ? "filled" : ""}`}>{player ? <div draggable onDragStart={() => setDragged({ playerId: player.id, blockId: block.id })}><span className="position">{POSITION_LABELS[slotIndex] || `P${slotIndex + 1}`}</span><span><b>{playerName(player)}</b><small>{player.position_primary || "Poste libre"}</small></span><button onClick={() => removePlayerFromBlock(block.id, player.id)}>×</button></div> : <><span className="position">{POSITION_LABELS[slotIndex] || `P${slotIndex + 1}`}</span><em>Déposer un joueur</em></>}</div>; })}</div></section>; })}</div><button className="addTeam" onClick={() => addTeam(block.id)}>+ Ajouter une équipe</button>
-          </article>)}
-        </div>
+  if (error) {
+    console.error("Erreur suppression panier:", error);
+    loadCart();
+    return;
+  }
+
+  loadCart();
+}
+
+  async function updateQuantity(id: string, quantity: number) {
+  const nextQuantity = Math.max(1, Number(quantity) || 1);
+
+  setItems((prev) =>
+    prev.map((item) =>
+      item.id === id ? { ...item, quantity: nextQuantity } : item
+    )
+  );
+
+  const { error } = await supabase
+    .from("cart_items")
+    .update({ quantity: nextQuantity })
+    .eq("id", id);
+
+  notifyCartUpdated();
+
+  if (error) {
+    console.error("Erreur update quantité:", error);
+    loadCart();
+    return;
+  }
+
+  loadCart();
+}
+
+  function toggleMyBasketContent(id: string, checked: boolean) {
+    setItems((prev) =>
+      prev.map((item) => {
+        if (item.id !== id) return item;
+
+        return {
+          ...item,
+          use_mybasket_content: checked,
+          session_deroulement: checked ? item.mybasket_deroulement ?? "" : "",
+          session_consignes_variantes: checked
+            ? item.mybasket_consignes_variantes ?? ""
+            : "",
+        };
+      }),
+    );
+  }
+
+  function updateSessionDeroulement(id: string, value: string) {
+    setItems((prev) =>
+      prev.map((item) =>
+        item.id === id ? { ...item, session_deroulement: value } : item,
+      ),
+    );
+  }
+
+  function updateSessionConsignesVariantes(id: string, value: string) {
+    setItems((prev) =>
+      prev.map((item) =>
+        item.id === id ? { ...item, session_consignes_variantes: value } : item,
+      ),
+    );
+  }
+
+  async function updateDuration(id: string, duration: number) {
+    const nextDuration = Math.max(1, duration || 1);
+
+    setItems((prev) =>
+      prev.map((item) =>
+        item.id === id ? { ...item, duration_minutes: nextDuration } : item
+      )
+    );
+
+    await supabase
+      .from("cart_items")
+      .update({ duration_minutes: nextDuration })
+      .eq("id", id);
+  }
+
+  async function updateAssignedTo(id: string, assignedTo: string) {
+    setItems((prev) =>
+      prev.map((item) =>
+        item.id === id ? { ...item, assigned_to: assignedTo } : item
+      )
+    );
+
+    await supabase
+      .from("cart_items")
+      .update({ assigned_to: assignedTo })
+      .eq("id", id);
+  }
+
+  async function moveSessionItem(id: string, direction: "up" | "down") {
+    const sessionOnly = [...sessionItems].sort(
+      (a, b) => a.sort_order - b.sort_order
+    );
+
+    const index = sessionOnly.findIndex((item) => item.id === id);
+    const targetIndex = direction === "up" ? index - 1 : index + 1;
+
+    if (targetIndex < 0 || targetIndex >= sessionOnly.length) return;
+
+    const current = sessionOnly[index];
+    const target = sessionOnly[targetIndex];
+
+    setItems((prev) =>
+      prev.map((item) => {
+        if (item.id === current.id) {
+          return { ...item, sort_order: target.sort_order };
+        }
+
+        if (item.id === target.id) {
+          return { ...item, sort_order: current.sort_order };
+        }
+
+        return item;
+      })
+    );
+
+    await supabase
+      .from("cart_items")
+      .update({ sort_order: target.sort_order })
+      .eq("id", current.id);
+
+    await supabase
+      .from("cart_items")
+      .update({ sort_order: current.sort_order })
+      .eq("id", target.id);
+  }
+
+  function importPlayersFromSelectedTeam() {
+    if (!selectedTeam) {
+      alert("Sélectionne d'abord une équipe.");
+      return;
+    }
+
+    const players = selectedTeam.players ?? selectedTeam.effectif ?? [];
+
+    const next: SessionPlayers = {
+      guard: [],
+      forward: [],
+      center: [],
+    };
+
+    players.forEach((player) => {
+      next[normalizePosition(player)].push(player);
+    });
+
+    setSessionPlayers(next);
+  }
+
+  function removePlayer(position: PlayerPosition, playerId: string) {
+    setSessionPlayers((prev) => ({
+      ...prev,
+      [position]: prev[position].filter((player) => player.id !== playerId),
+    }));
+  }
+
+  function dropPlayer(to: PlayerPosition) {
+    if (!draggedPlayer) return;
+
+    const { player } = draggedPlayer;
+
+    setSessionPlayers((prev) => {
+      const withoutPlayer = {
+        guard: prev.guard.filter((p) => p.id !== player.id),
+        forward: prev.forward.filter((p) => p.id !== player.id),
+        center: prev.center.filter((p) => p.id !== player.id),
+      };
+
+      return {
+        ...withoutPlayer,
+        [to]: [...withoutPlayer[to], player],
+      };
+    });
+
+    setDraggedPlayer(null);
+  }
+
+  async function createCheckout(provider: "stripe" | "paypal" | "apple_pay") {
+  if (provider !== "stripe") {
+    alert("Ce moyen de paiement arrive bientôt.");
+    return;
+  }
+
+  try {
+    const response = await fetch("/api/checkout/stripe", {
+      method: "POST",
+    });
+
+    const text = await response.text();
+
+    let data: { url?: string; error?: string } = {};
+
+    try {
+      data = JSON.parse(text);
+    } catch {
+      console.error("Réponse non JSON /api/checkout/stripe :", text);
+      alert("Erreur serveur Stripe. Détail affiché dans la console.");
+      return;
+    }
+
+    if (!response.ok) {
+      alert(data.error ?? "Erreur paiement");
+      return;
+    }
+
+    if (!data.url) {
+      alert("Stripe n'a pas renvoyé d'URL de paiement.");
+      return;
+    }
+
+    window.location.href = data.url;
+  } catch (error) {
+    console.error("Erreur checkout:", error);
+    alert("Erreur technique lors du paiement.");
+  }
+}
+
+  const allSessionPlayers = useMemo(
+    () => [
+      ...sessionPlayers.guard,
+      ...sessionPlayers.forward,
+      ...sessionPlayers.center,
+    ],
+    [sessionPlayers],
+  );
+
+  function addCompositionBlock(
+    title = "Nouveau bloc",
+    playersPerTeam = 3,
+    teamCount = 2,
+  ) {
+    setCompositionBlocks((current) => [
+      ...current,
+      createCompositionBlock(title, playersPerTeam, teamCount),
+    ]);
+  }
+
+  function changeCompositionFormat(blockId: string, format: string) {
+    const sizeByFormat: Record<string, number> = {
+      "2 contre 2": 2,
+      "3 contre 3": 3,
+      "4 contre 4": 4,
+      "5 contre 5": 5,
+      Libre: 0,
+    };
+
+    setCompositionBlocks((current) =>
+      current.map((block) => {
+        if (block.id !== blockId) return block;
+
+        const playersPerTeam = sizeByFormat[format] ?? 0;
+
+        return {
+          ...block,
+          title: format,
+          playersPerTeam,
+        };
+      }),
+    );
+  }
+
+  function updateCompositionBlock(
+    blockId: string,
+    patch: Partial<TeamCompositionBlock>,
+  ) {
+    setCompositionBlocks((current) =>
+      current.map((block) =>
+        block.id === blockId ? { ...block, ...patch } : block,
+      ),
+    );
+  }
+
+  function removeCompositionBlock(blockId: string) {
+    setCompositionBlocks((current) =>
+      current.filter((block) => block.id !== blockId),
+    );
+  }
+
+  function duplicateCompositionBlock(blockId: string) {
+    setCompositionBlocks((current) => {
+      const source = current.find((block) => block.id === blockId);
+      if (!source) return current;
+      return [
+        ...current,
+        {
+          ...source,
+          id: compositionUid("block"),
+          title: `${source.title} — copie`,
+          teams: source.teams.map((team) => ({
+            ...team,
+            id: compositionUid("team"),
+            playerIds: [...team.playerIds],
+          })),
+        },
+      ];
+    });
+  }
+
+  function addCompositionTeam(blockId: string) {
+    setCompositionBlocks((current) =>
+      current.map((block) =>
+        block.id === blockId
+          ? {
+              ...block,
+              teams: [
+                ...block.teams,
+                {
+                  id: compositionUid("team"),
+                  name: `Équipe ${block.teams.length + 1}`,
+                  playerIds: [],
+                },
+              ],
+            }
+          : block,
+      ),
+    );
+  }
+
+  function updateCompositionTeam(
+    blockId: string,
+    teamId: string,
+    patch: Partial<CompositionTeam>,
+  ) {
+    setCompositionBlocks((current) =>
+      current.map((block) =>
+        block.id === blockId
+          ? {
+              ...block,
+              teams: block.teams.map((team) =>
+                team.id === teamId ? { ...team, ...patch } : team,
+              ),
+            }
+          : block,
+      ),
+    );
+  }
+
+  function removeCompositionTeam(blockId: string, teamId: string) {
+    setCompositionBlocks((current) =>
+      current.map((block) =>
+        block.id === blockId
+          ? {
+              ...block,
+              teams: block.teams.filter((team) => team.id !== teamId),
+            }
+          : block,
+      ),
+    );
+  }
+
+  function placePlayerInComposition(
+    blockId: string,
+    teamId: string,
+    playerId: string,
+  ) {
+    setCompositionBlocks((current) =>
+      current.map((block) => {
+        if (block.id !== blockId) return block;
+
+        return {
+          ...block,
+          teams: block.teams.map((team) => ({
+            ...team,
+            playerIds:
+              team.id === teamId
+                ? team.playerIds.includes(playerId)
+                  ? team.playerIds
+                  : [...team.playerIds, playerId]
+                : team.playerIds.filter((id) => id !== playerId),
+          })),
+        };
+      }),
+    );
+  }
+
+  function removePlayerFromComposition(blockId: string, playerId: string) {
+    setCompositionBlocks((current) =>
+      current.map((block) =>
+        block.id === blockId
+          ? {
+              ...block,
+              teams: block.teams.map((team) => ({
+                ...team,
+                playerIds: team.playerIds.filter((id) => id !== playerId),
+              })),
+            }
+          : block,
+      ),
+    );
+  }
+
+  function compositionDragStart(
+    event: React.DragEvent<HTMLElement>,
+    playerId: string,
+  ) {
+    compositionDraggedPlayerRef.current = playerId;
+    compositionHoveredTargetRef.current = null;
+
+    event.dataTransfer.setData("application/x-mybasket-player", playerId);
+    event.dataTransfer.setData("text/plain", playerId);
+    event.dataTransfer.effectAllowed = "move";
+
+    requestAnimationFrame(() => {
+      event.currentTarget.classList.add("isDragging");
+    });
+  }
+
+  function compositionDragOver(
+    event: React.DragEvent<HTMLElement>,
+    blockId: string,
+    teamId: string,
+  ) {
+    event.preventDefault();
+    event.stopPropagation();
+    event.dataTransfer.dropEffect = "move";
+
+    compositionHoveredTargetRef.current = { blockId, teamId };
+  }
+
+  function compositionDrop(
+    event: React.DragEvent<HTMLElement>,
+    blockId: string,
+    teamId: string,
+  ) {
+    event.preventDefault();
+    event.stopPropagation();
+
+    const playerId =
+      compositionDraggedPlayerRef.current ||
+      event.dataTransfer.getData("application/x-mybasket-player") ||
+      event.dataTransfer.getData("text/plain");
+
+    if (playerId) {
+      placePlayerInComposition(blockId, teamId, playerId);
+    }
+
+    compositionDraggedPlayerRef.current = null;
+    compositionHoveredTargetRef.current = null;
+  }
+
+  function compositionDragEnd(event: React.DragEvent<HTMLElement>) {
+    event.currentTarget.classList.remove("isDragging");
+
+    const playerId = compositionDraggedPlayerRef.current;
+    if (!playerId) return;
+
+    // Safari peut rater onDrop sur certains enfants. On utilise alors
+    // exactement l'élément situé sous le curseur au relâchement.
+    const elements = document.elementsFromPoint(event.clientX, event.clientY);
+    const dropZone = elements
+      .map((element) => element.closest<HTMLElement>("[data-composition-drop-zone='true']"))
+      .find(Boolean);
+
+    const blockId = dropZone?.dataset.blockId;
+    const teamId = dropZone?.dataset.teamId;
+
+    if (blockId && teamId) {
+      placePlayerInComposition(blockId, teamId, playerId);
+    } else if (compositionHoveredTargetRef.current) {
+      placePlayerInComposition(
+        compositionHoveredTargetRef.current.blockId,
+        compositionHoveredTargetRef.current.teamId,
+        playerId,
+      );
+    }
+
+    compositionDraggedPlayerRef.current = null;
+    compositionHoveredTargetRef.current = null;
+  }
+
+  function togglePlayerInComposition(
+    blockId: string,
+    teamId: string,
+    playerId: string,
+  ) {
+    setCompositionBlocks((current) =>
+      current.map((block) => {
+        if (block.id !== blockId) return block;
+        return {
+          ...block,
+          teams: block.teams.map((team) => ({
+            ...team,
+            playerIds:
+              team.id === teamId
+                ? team.playerIds.includes(playerId)
+                  ? team.playerIds.filter((id) => id !== playerId)
+                  : [...team.playerIds, playerId]
+                : team.playerIds.filter((id) => id !== playerId),
+          })),
+        };
+      }),
+    );
+  }
+
+  function autoDistributeComposition(blockId: string) {
+    setCompositionBlocks((current) =>
+      current.map((block) => {
+        if (block.id !== blockId) return block;
+        const isLibre = block.title === "Libre" || block.playersPerTeam === 0;
+        const size = Math.max(1, block.playersPerTeam || 1);
+        const needed = isLibre
+          ? Math.max(2, block.teams.length)
+          : Math.max(2, Math.ceil(allSessionPlayers.length / size));
+
+        const teams: CompositionTeam[] = block.teams
+          .slice(0, Math.max(needed, block.teams.length))
+          .map((team) => ({ ...team, playerIds: [] }));
+
+        while (teams.length < needed) {
+          teams.push({
+            id: compositionUid("team"),
+            name: `Équipe ${teams.length + 1}`,
+            playerIds: [],
+          });
+        }
+
+        allSessionPlayers.forEach((player, index) => {
+          teams[index % teams.length]?.playerIds.push(player.id);
+        });
+
+        return { ...block, teams };
+      }),
+    );
+  }
+
+  async function saveSessionToCalendar(): Promise<boolean> {
+  const {
+    data: { user },
+    error: userError,
+  } = await supabase.auth.getUser();
+
+  if (userError || !user) {
+    alert("Connecte-toi pour ajouter la séance au calendrier.");
+    return false;
+  }
+
+  const isUuid = (value: string | null | undefined) =>
+    !!value &&
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{12}$/i.test(
+      value
+    );
+
+  const teamName = selectedTeam?.name ?? selectedTeam?.clubName ?? "Équipe";
+
+  // Snapshot exact de la répartition choisie dans la fenêtre.
+  // Cette donnée est sauvegardée avec la séance pour ne jamais dépendre
+  // du poste habituel enregistré sur la fiche du joueur.
+  const positionedPlayers = [
+    ...sessionPlayers.guard.map((player) => ({ player, position: "guard" as const })),
+    ...sessionPlayers.forward.map((player) => ({ player, position: "forward" as const })),
+    ...sessionPlayers.center.map((player) => ({ player, position: "center" as const })),
+  ];
+
+  const playerPositionMap = Object.fromEntries(
+    positionedPlayers.map(({ player, position }) => [String(player.id), position]),
+  );
+
+  let resolvedClubLogo =
+    selectedTeam?.logo ||
+    selectedTeam?.logoUrl ||
+    selectedTeam?.logo_url ||
+    selectedTeam?.clubLogo ||
+    selectedTeam?.clubLogoUrl ||
+    selectedTeam?.club_logo_url ||
+    null;
+
+  // Si le logo n'est pas directement porté par l'équipe chargée dans le panier,
+  // on le récupère depuis le club associé avant de figer la séance.
+  if (!resolvedClubLogo && selectedTeam?.club_id) {
+    const { data: clubRow } = await supabase
+      .from("clubs")
+      .select("*")
+      .eq("id", selectedTeam.club_id)
+      .maybeSingle();
+
+    resolvedClubLogo =
+      clubRow?.logo_url ||
+      clubRow?.club_logo_url ||
+      clubRow?.logo ||
+      clubRow?.image_url ||
+      clubRow?.avatar_url ||
+      null;
+  }
+
+  const { data: createdSession, error: sessionError } = await supabase
+    .from("practice_sessions")
+    .insert({
+      user_id: user.id,
+      owner_id: user.id,
+      team_id: isUuid(selectedTeamId) ? selectedTeamId : null,
+      team_reference_id: selectedTeamId || null,
+      team_name: teamName,
+      team_composition_blocks: compositionBlocks,
+      player_groups: Object.fromEntries(
+        (compositionBlocks[0]?.teams || []).map((team) => [
+          team.name,
+          team.playerIds,
+        ]),
+      ),
+      title: sessionTheme,
+      theme: sessionTheme,
+      session_date: sessionDate,
+      start_time: sessionStartTime,
+      end_time: sessionEndTime,
+      location: teamName,
+      club_logo_url: resolvedClubLogo,
+      mybasket_logo_url: "/logo-mybasket02.png",
+      notes: JSON.stringify({
+        player_positions: playerPositionMap,
+        club_logo_url: resolvedClubLogo,
+        team_reference_id: selectedTeamId || null,
+
+        // Snapshot de secours : le PDF peut récupérer les compositions ici
+        // même si une ancienne version de Supabase / du typage ne restitue
+        // pas correctement team_composition_blocks.
+        team_composition_blocks: compositionBlocks,
+      }),
+      visibility: "private",
+      pdf_generated: true,
+      pdf_generated_at: new Date().toISOString(),
+    })
+    .select("id")
+    .single();
+
+  if (sessionError || !createdSession) {
+    console.error("Erreur création practice_sessions:", {
+      code: sessionError?.code,
+      message: sessionError?.message,
+      details: sessionError?.details,
+      hint: sessionError?.hint,
+    });
+
+    alert(
+      `La fiche est générée, mais la séance Supabase n'a pas été créée : ${sessionError?.message}`
+    );
+
+    return false;
+  }
+
+  const sortedSessionItems = [...sessionItems].sort(
+    (a, b) => a.sort_order - b.sort_order,
+  );
+
+  if (sortedSessionItems.length > 0) {
+    const exerciseRows = sortedSessionItems.map((item, index) => {
+      const finalDeroulement = String(item.session_deroulement ?? "").trim();
+      const finalConsignesVariantes = String(
+        item.session_consignes_variantes ?? "",
+      ).trim();
+
+      return {
+        session_id: createdSession.id,
+        user_id: user.id,
+        exercise_id: item.item_id || null,
+        title: item.title,
+        who: coachCode(item.assigned_to),
+        duration_minutes: Number(item.duration_minutes ?? 15),
+        situation_image_url:
+          item.schemaImages?.[0] ||
+          item.schema_images?.[0] ||
+          item.image_url ||
+          null,
+
+        // Snapshot de la séance : on sauvegarde exactement ce que le coach
+        // a laissé dans les champs au moment de générer la fiche.
+        explanation: finalDeroulement || null,
+        instructions: finalConsignesVariantes || null,
+        variants: null,
+        sort_order: index,
+      };
+    });
+
+    let exerciseInsert = await supabase
+      .from("practice_session_exercises")
+      .insert(exerciseRows);
+
+    // Compatibilité avec une table plus ancienne ne possédant pas variants.
+    if (exerciseInsert.error) {
+      const legacyRows = exerciseRows.map(({ variants: _variants, ...row }) => row);
+      exerciseInsert = await supabase
+        .from("practice_session_exercises")
+        .insert(legacyRows);
+    }
+
+    if (exerciseInsert.error) {
+      console.error("Erreur sauvegarde exercices:", exerciseInsert.error);
+      alert(
+        `La séance a été créée, mais les exercices n'ont pas pu être sauvegardés : ${exerciseInsert.error.message}`,
+      );
+      return false;
+    }
+  }
+
+  if (positionedPlayers.length > 0) {
+    const playerSnapshot = await supabase.from("practice_session_players").insert(
+      positionedPlayers.map(({ player, position }) => ({
+        user_id: user.id,
+        session_id: createdSession.id,
+        player_id: player.id,
+        first_name: player.firstName || player.name || "",
+        last_name: player.lastName || "",
+        position,
+        selected: true,
+        status: "pending",
+      })),
+    );
+
+    if (playerSnapshot.error) {
+      // Le plan de postes reste malgré tout sauvegardé dans practice_sessions.notes.
+      console.warn(
+        "Snapshot practice_session_players non enregistré, utilisation du plan sauvegardé dans la séance :",
+        playerSnapshot.error,
+      );
+    }
+
+    await supabase.from("practice_session_attendance").insert(
+      positionedPlayers.map(({ player }) => ({
+        user_id: user.id,
+        session_id: createdSession.id,
+        player_id: player.id,
+        first_name: player.firstName || player.name || "",
+        last_name: player.lastName || "",
+        selected: true,
+        status: "pending",
+        comment: "",
+      })),
+    );
+  }
+
+  const { error } = await supabase.from("calendar_events").insert({
+    user_id: user.id,
+    owner_id: user.id,
+    team_id: selectedTeamId || null,
+    team_name: teamName,
+    assigned_player_ids: positionedPlayers.map(({ player }) => player.id),
+    title: `${teamName} • ${sessionTheme}`,
+    theme: sessionTheme,
+    description: `Fiche séance : /seances/${createdSession.id}`,
+    event_date: sessionDate,
+    start_time: sessionStartTime,
+    end_time: sessionEndTime,
+    location: teamName,
+    event_type: "training",
+    session_id: createdSession.id,
+    attachment_url: null,
+  });
+
+  if (error) {
+    console.error("Erreur ajout calendrier:", {
+      code: error.code,
+      message: error.message,
+      details: error.details,
+      hint: error.hint,
+    });
+
+    alert(
+      `La fiche est générée, mais l’ajout au calendrier a échoué : ${error.message}`
+    );
+    return false;
+  }
+
+  return true;
+}
+
+  async function resetSessionBuilderAfterGeneration() {
+    const sessionItemIds = sessionItems.map((item) => item.id);
+
+    if (sessionItemIds.length > 0) {
+      const { error } = await supabase
+        .from("cart_items")
+        .delete()
+        .in("id", sessionItemIds);
+
+      if (error) {
+        console.error("Impossible de vider les éléments séance du panier:", error);
+      }
+    }
+
+    setItems((current) =>
+      current.filter(
+        (item) =>
+          item.item_type !== "exercise" &&
+          item.item_type !== "system" &&
+          item.item_type !== "session",
+      ),
+    );
+    setSelectedTeamId("");
+    setSessionDate("");
+    setSessionStartTime("");
+    setSessionEndTime("");
+    setSessionTheme("");
+    setSessionPlayers(emptyPlayers);
+    setCompositionBlocks([createCompositionBlock()]);
+    notifyCartUpdated();
+  }
+
+  async function generateSessionPdf() {
+    if (savingSession) return;
+    setSavingSession(true);
+    if (!sessionDate || !sessionStartTime || !sessionEndTime || !sessionTheme) {
+      alert("Renseigne la date, l'heure de début, l'heure de fin et le thème.");
+      setSavingSession(false);
+      return;
+    }
+
+    if (!selectedTeam) {
+      alert("Sélectionne une équipe associée.");
+      setSavingSession(false);
+      return;
+    }
+
+    const sortedItems = [...sessionItems].sort(
+      (a, b) => a.sort_order - b.sort_order
+    );
+
+    if (sortedItems.length === 0) {
+      alert("Ajoute au moins un exercice ou système dans ta séance.");
+      setSavingSession(false);
+      return;
+    }
+
+    const totalMinutes = sortedItems.reduce(
+      (sum, item) => sum + Number(item.duration_minutes ?? 15),
+      0
+    );
+
+    const myBasketLogo = "/logo-mybasket02.png";
+
+    const logoClub =
+      selectedTeam.logo ||
+      selectedTeam.logoUrl ||
+      selectedTeam.logo_url ||
+      selectedTeam.clubLogo ||
+      selectedTeam.clubLogoUrl ||
+      selectedTeam.club_logo_url ||
+      "";
+
+    const rows = sortedItems
+      .map((item) => {
+        const duration = item.duration_minutes ?? 15;
+
+        const schemas = uniqueImages([
+          ...(item.schemaImages ?? []),
+          ...(item.schema_images ?? []),
+        ]);
+
+        const images =
+          schemas.length > 0 ? schemas : item.image_url ? [item.image_url] : [];
+
+        const situationImages =
+          images.length > 0
+            ? images
+                .map(
+                  (image) => `
+                    <img src="${image}" alt="${item.title}" />
+                  `
+                )
+                .join("")
+            : `<div class="emptySchema">Schéma</div>`;
+
+        const textLength =
+          String(item.session_deroulement ?? "").length +
+          String(item.session_consignes_variantes ?? "").length;
+
+        const densityClass =
+          textLength > 900
+            ? " textVeryDense"
+            : textLength > 550
+              ? " textDense"
+              : textLength > 300
+                ? " textMedium"
+                : "";
+
+        return `
+          <tr class="${densityClass.trim()}">
+            <td class="who">${coachCode(item.assigned_to)}</td>
+            <td class="time">${duration}'</td>
+            <td class="situation">
+              <div class="schemasGrid schemasCount${Math.min(images.length, 6)}">
+                ${situationImages}
+              </div>
+            </td>
+            <td class="explain">
+              <strong>${item.title}</strong>
+              <p>${formatText(item.session_deroulement ?? "")}</p>
+            </td>
+            <td class="instructions">
+              <p>${formatText(item.session_consignes_variantes ?? "")}</p>
+            </td>
+          </tr>
+        `;
+      })
+      .join("");
+
+    const playersColumn = (title: string, players: TeamPlayer[]) => `
+      <div class="playersCol">
+        <h3>${title}</h3>
+        ${players.map((player) => `<p>${playerName(player)}</p>`).join("")}
       </div>
-    </section>
+    `;
 
-    <section className="panel"><div className="panelTitle horizontal"><span>03</span><div><h2>Practice plan</h2><p>Ordre, temps et responsabilité de chaque exercice</p></div><button className="goldButton" onClick={addMoreExercises}>+ Ajouter des exercices</button></div>{exercises.map((exercise, index) => <article className="exercise" key={`${exercise.exercise_id}-${index}`}><div className="exerciseIndex">{String(index + 1).padStart(2, "0")}</div><div className="exerciseContent"><input className="exerciseTitle" value={exercise.title} onChange={(e) => updateExercise(index, "title", e.target.value)} /><div className="exerciseMeta"><label>Qui<select value={exercise.who} onChange={(e) => updateExercise(index, "who", e.target.value)}>{["CP", "AC1", "AC2", "PP", "RV"].map((code) => <option key={code}>{code}</option>)}</select></label><label>Temps<input type="number" min={0} value={exercise.duration_minutes} onChange={(e) => updateExercise(index, "duration_minutes", Number(e.target.value))} /></label></div><textarea value={exercise.explanation} placeholder="Déroulement" onChange={(e) => updateExercise(index, "explanation", e.target.value)} /><textarea value={exercise.instructions} placeholder="Consignes ou variantes" onChange={(e) => updateExercise(index, "instructions", e.target.value)} /></div><div className="exerciseActions"><button disabled={index === 0} onClick={() => moveExercise(index, -1)}>↑</button><button disabled={index === exercises.length - 1} onClick={() => moveExercise(index, 1)}>↓</button><button className="dangerSmall" onClick={() => setExercises((prev) => prev.filter((_, i) => i !== index).map((item, i) => ({ ...item, sort_order: i })))}>Supprimer</button></div></article>)}</section>
+    const clubLogoHtml = logoClub
+      ? `<img src="${logoClub}" />`
+      : `<div class="missingLogo">LOGO CLUB</div>`;
 
-    <div className="saveBar"><div><strong>{selectedPlayers.length} joueurs · {blocks.length} blocs · {exercises.length} exercices</strong><small>Les données sont enregistrées dans Supabase.</small></div><button onClick={save} disabled={saving}>{saving ? "Enregistrement…" : "Enregistrer la séance"}</button></div>
+    const compositionHtml = compositionBlocks
+      .map((block) => {
+        const teamsWithPlayers = (block.teams || [])
+          .map((team) => ({
+            ...team,
+            players: (team.playerIds || [])
+              .map((playerId) =>
+                allSessionPlayers.find(
+                  (player) => String(player.id) === String(playerId),
+                ),
+              )
+              .filter((player): player is TeamPlayer => Boolean(player)),
+          }))
+          .filter((team) => team.players.length > 0);
 
-    <style jsx>{`
-      .page{min-height:100vh;background:#f2f0eb;color:#111;padding:34px 24px 110px}.loading{text-align:center}.hero{max-width:1400px;margin:0 auto 24px;background:#101012;color:white;border-radius:24px;padding:34px 38px;position:relative;overflow:hidden}.hero:after{content:"";position:absolute;width:300px;height:300px;border:70px solid #d4a24c33;border-radius:50%;right:-100px;top:-150px}.hero span{color:#d4a24c;font-size:12px;font-weight:900;letter-spacing:2px}.hero h1{font-size:42px;margin:8px 0 4px}.hero p{color:#bbb;margin:0}.panel{max-width:1400px;margin:18px auto;background:#fff;border-radius:22px;padding:24px;box-shadow:0 18px 50px #0000000c}.panelTitle{display:flex;align-items:center;gap:12px;margin-bottom:20px}.panelTitle>span{width:42px;height:42px;border-radius:14px;background:#111;color:#d4a24c;display:grid;place-items:center;font-weight:900}.panelTitle h2{margin:0;font-size:24px}.panelTitle p{margin:2px 0 0;color:#777}.panelTitle.horizontal .goldButton{margin-left:auto}.infoGrid{display:grid;grid-template-columns:repeat(4,1fr);gap:14px}.infoGrid label,.blockHeader label,.exerciseMeta label{display:flex;flex-direction:column;gap:6px;font-weight:800;font-size:12px}.wide{grid-column:span 2}input,select,textarea{border:1px solid #dedbd5;border-radius:11px;padding:11px 12px;background:white;font:inherit}button{border:0;border-radius:10px;padding:10px 13px;font-weight:900;cursor:pointer}.coachLayout{display:grid;grid-template-columns:280px minmax(0,1fr);gap:18px}.presenceRail{background:#111;color:white;border-radius:18px;padding:16px;align-self:start;position:sticky;top:15px}.railHeader{display:flex;justify-content:space-between;gap:10px;align-items:center;margin-bottom:14px}.railHeader strong,.compositionToolbar strong{display:block;font-size:12px;letter-spacing:1px}.railHeader small,.compositionToolbar small{display:block;color:#999;margin-top:3px}.railHeader button{padding:6px 8px;background:#2a2a2d;color:white}.roster{display:flex;flex-direction:column;gap:8px}.rosterCard{display:flex;align-items:center;text-align:left;gap:10px;background:#1c1c1f;color:white;border:1px solid #333;width:100%;transition:.2s transform,.2s border-color,.2s background}.rosterCard:hover{transform:translateX(3px)}.rosterCard.selected{border-color:#d4a24c;background:#29251e}.rosterCard .check{width:26px;height:26px;border-radius:9px;background:#333;display:grid;place-items:center;color:#d4a24c}.rosterCard b,.rosterCard small{display:block}.rosterCard small{font-size:10px;color:#999;margin-top:2px}.compositionArea{min-width:0}.compositionToolbar{display:flex;justify-content:space-between;gap:12px;align-items:center;margin-bottom:12px}.presetButtons{display:flex;gap:7px;flex-wrap:wrap}.presetButtons button{background:#f0e8d9;color:#6b4a17}.compositionBlock{border:1px solid #e4dfd5;border-radius:18px;padding:16px;margin-bottom:16px;background:linear-gradient(135deg,#fff,#fbfaf7)}.tone1{border-top:4px solid #466a87}.tone2{border-top:4px solid #8a5d72}.tone3{border-top:4px solid #5e7c55}.tone0{border-top:4px solid #d4a24c}.blockHeader{display:flex;align-items:center;gap:9px;flex-wrap:wrap}.blockIdentity{display:flex;flex-direction:column;min-width:230px;margin-right:auto}.blockIdentity span{font-size:10px;font-weight:900;color:#a5782d;letter-spacing:1px}.blockIdentity input{font-size:20px;font-weight:900;border:0;padding:3px 0}.blockHeader label{flex-direction:row;align-items:center}.blockHeader label input{width:64px}.auto{background:#111;color:#d4a24c}.iconDanger{background:#8b1028;color:#fff;font-size:18px}.blockPool{margin:14px 0;padding:11px;border:1px dashed #c8b48e;border-radius:13px;background:#faf5eb}.blockPool>span{font-size:10px;font-weight:900;color:#8a672b}.blockPool>div{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}.miniPlayer{background:white;border:1px solid #ded7ca;border-radius:11px;padding:8px 10px;cursor:grab;box-shadow:0 5px 12px #00000008}.miniPlayer b,.miniPlayer small{display:block}.miniPlayer small{font-size:9px;color:#888}.teamGrid{display:grid;grid-template-columns:repeat(3,minmax(210px,1fr));gap:12px}.teamCard{border:1px solid #dedbd5;border-radius:16px;overflow:hidden;background:#fff;min-height:185px;transition:.2s transform,.2s box-shadow}.teamCard.isTarget{transform:translateY(-4px);box-shadow:0 15px 35px #d4a24c33}.teamHead{display:grid;grid-template-columns:34px 1fr 30px;align-items:center;background:#171719;padding:8px}.teamHead>span{width:25px;height:25px;border-radius:9px;background:#d4a24c;display:grid;place-items:center;font-weight:900}.teamHead input{border:0;background:transparent;color:white;font-weight:900;padding:6px}.teamHead button{background:transparent;color:#aaa;padding:4px}.slots{padding:9px}.slot{display:grid;grid-template-columns:38px 1fr;align-items:center;min-height:44px;border-bottom:1px solid #eee}.slot:last-child{border-bottom:0}.slot>div{grid-column:1/-1;display:grid;grid-template-columns:38px 1fr 25px;align-items:center;cursor:grab;animation:playerIn .25s ease}.slot .position{font-size:11px;font-weight:900;color:#a17226}.slot em{color:#aaa;font-size:11px}.slot b,.slot small{display:block}.slot small{font-size:9px;color:#888}.slot button{background:transparent;color:#999;padding:3px}.teamTone1 .teamHead{background:#284c68}.teamTone2 .teamHead{background:#6b374e}.teamTone3 .teamHead{background:#476040}.teamTone4 .teamHead{background:#5d4a2f}.addTeam{margin-top:11px;background:#eee9df;color:#664b20}.exercise{display:grid;grid-template-columns:55px 1fr auto;gap:14px;border:1px solid #e6e1d8;border-radius:16px;padding:14px;margin-top:11px}.exerciseIndex{font-size:28px;font-weight:900;color:#d4a24c}.exerciseContent{display:grid;grid-template-columns:1fr 180px;gap:10px}.exerciseTitle{font-size:18px;font-weight:900}.exerciseMeta{display:grid;grid-template-columns:1fr 1fr;gap:8px}.exercise textarea{grid-column:1/-1;min-height:72px}.exerciseActions{display:flex;flex-direction:column;gap:6px}.dangerSmall{background:#8b1028;color:#fff}.goldButton{background:#d4a24c}.saveBar{position:fixed;left:50%;bottom:18px;transform:translateX(-50%);width:min(1040px,calc(100% - 32px));background:#111;color:white;border-radius:18px;padding:14px 18px;display:flex;justify-content:space-between;align-items:center;box-shadow:0 18px 45px #0005;z-index:20}.saveBar strong,.saveBar small{display:block}.saveBar small{color:#999;margin-top:3px}.saveBar button{background:#d4a24c;color:#111;padding:14px 22px}@keyframes playerIn{from{opacity:0;transform:scale(.96)}to{opacity:1;transform:scale(1)}}@media(max-width:1100px){.coachLayout{grid-template-columns:1fr}.presenceRail{position:static}.roster{display:grid;grid-template-columns:repeat(3,1fr)}.teamGrid{grid-template-columns:repeat(2,1fr)}}@media(max-width:760px){.page{padding:18px 12px 120px}.hero h1{font-size:30px}.infoGrid,.teamGrid,.roster{grid-template-columns:1fr}.wide{grid-column:auto}.compositionToolbar,.saveBar{align-items:flex-start}.exercise{grid-template-columns:40px 1fr}.exerciseActions{grid-column:2;flex-direction:row}.exerciseContent{grid-template-columns:1fr}.saveBar{flex-direction:column;gap:10px}.saveBar button{width:100%}}
-    `}</style>
-  </main>;
+        if (teamsWithPlayers.length === 0) return "";
+
+        return `
+          <section class="compositionBlock">
+            <div class="compositionFormat">${formatText(block.title || "Composition")}</div>
+            <div class="compositionTeamsPdf">
+              ${teamsWithPlayers
+                .map(
+                  (team) => `
+                    <div class="compositionTeamPdf">
+                      <div class="compositionTeamTitle">${formatText(team.name || "Équipe")}</div>
+                      <div class="compositionTeamPlayers">
+                        ${team.players
+                          .map(
+                            (player) =>
+                              `<div class="compositionPlayerPdf">${formatText(playerName(player))}</div>`,
+                          )
+                          .join("")}
+                      </div>
+                    </div>
+                  `,
+                )
+                .join("")}
+            </div>
+          </section>
+        `;
+      })
+      .filter(Boolean)
+      .join("");
+
+    const html = `
+      <!doctype html>
+      <html>
+        <head>
+          <meta charset="utf-8" />
+          <title>Fiche séance MyBasket</title>
+          <style>
+            * { box-sizing: border-box; }
+
+            body {
+              margin: 0;
+              padding: 0;
+              font-family: Arial, sans-serif;
+              color: #111;
+              background: white;
+            }
+
+            .page {
+              width: 1120px;
+              min-height: 790px;
+              margin: 0 auto;
+              padding: 24px;
+              background: white;
+            }
+
+            .header {
+              display: grid;
+              grid-template-columns: 150px 1fr 150px;
+              align-items: center;
+              border-bottom: 3px solid #111;
+              padding-bottom: 6px;
+            }
+
+            .logoBox {
+              width: 120px;
+              height: 90px;
+              display: grid;
+              place-items: center;
+            }
+
+            .logoBox img {
+              max-width: 120px;
+              max-height: 90px;
+              object-fit: contain;
+            }
+
+            .missingLogo {
+              width: 110px;
+              height: 80px;
+              display: grid;
+              place-items: center;
+              border: 2px dashed #ccc;
+              font-size: 11px;
+              font-weight: 900;
+              color: #999;
+            }
+
+            .title {
+              text-align: center;
+            }
+
+            .title h1 {
+              margin: 0 0 5px;
+              font-size: 24px;
+              letter-spacing: 5px;
+              font-weight: 900;
+            }
+
+            .title p {
+              margin: 2px 0;
+              font-size: 10px;
+              text-transform: uppercase;
+              letter-spacing: .5px;
+              line-height: 1.2;
+            }
+
+            .titleMeta {
+              white-space: nowrap;
+            }
+
+            .titleTheme {
+              margin-top: 3px !important;
+              font-weight: 700;
+            }
+
+            .players {
+              display: grid;
+              grid-template-columns: repeat(3, 1fr);
+              border: 2px solid #111;
+              border-top: 0;
+            }
+
+            .playersCol {
+              min-height: 48px;
+              border-right: 2px solid #111;
+              text-align: center;
+              padding-bottom: 4px;
+            }
+
+            .playersCol:last-child {
+              border-right: 0;
+            }
+
+            .playersCol h3 {
+              margin: 0 0 4px;
+              padding: 4px 6px;
+              border-bottom: 2px solid #111;
+              background: #f3f3f3;
+              font-size: 10px;
+              letter-spacing: 1px;
+            }
+
+            .playersCol p {
+              margin: 1px 0;
+              font-size: 9px;
+              line-height: 1.05;
+              font-weight: 700;
+            }
+
+            table {
+              width: 100%;
+              border-collapse: collapse;
+              margin-top: 8px;
+              border: 2px solid #111;
+            }
+
+            th {
+              height: 34px;
+              border: 2px solid #111;
+              background: #f3f3f3;
+              font-size: 13px;
+              letter-spacing: 2px;
+            }
+
+            td {
+              border: 2px solid #111;
+              vertical-align: middle;
+              padding: 10px;
+            }
+
+            .who {
+              width: 55px;
+              text-align: center;
+              font-size: 18px;
+              font-weight: 900;
+            }
+
+            .time {
+              width: 60px;
+              text-align: center;
+              font-size: 24px;
+              font-weight: 900;
+            }
+
+            .situation {
+              width: 340px;
+              text-align: center;
+            }
+
+            .schemasGrid {
+              display: grid;
+              gap: 6px;
+              justify-items: center;
+              align-items: center;
+            }
+
+            .schemasCount1 {
+              grid-template-columns: 1fr;
+            }
+
+            .schemasCount2,
+            .schemasCount3,
+            .schemasCount4 {
+              grid-template-columns: repeat(2, 1fr);
+            }
+
+            .schemasCount5,
+            .schemasCount6 {
+              grid-template-columns: repeat(3, 1fr);
+            }
+
+            .situation img {
+              width: 125px;
+              height: 90px;
+              object-fit: contain;
+              border: 1px solid #ddd;
+              border-radius: 6px;
+              background: white;
+            }
+
+            .emptySchema {
+              width: 230px;
+              height: 120px;
+              margin: 0 auto;
+              border: 1px solid #ddd;
+              border-radius: 6px;
+              display: grid;
+              place-items: center;
+              color: #aaa;
+            }
+
+            .explain {
+              width: 360px;
+              font-size: 13px;
+            }
+
+            .explain strong {
+              font-size: 15px;
+            }
+
+            .explain p,
+            .instructions p {
+              margin: 5px 0 0;
+              line-height: 1.28;
+            }
+
+            .instructions {
+              width: 300px;
+              color: #555;
+              font-size: 13px;
+            }
+
+            tr.textMedium .explain,
+            tr.textMedium .instructions {
+              font-size: 12px;
+            }
+
+            tr.textMedium .explain strong {
+              font-size: 14px;
+            }
+
+            tr.textDense .explain,
+            tr.textDense .instructions {
+              font-size: 10.5px;
+            }
+
+            tr.textDense .explain strong {
+              font-size: 12.5px;
+            }
+
+            tr.textDense .explain p,
+            tr.textDense .instructions p {
+              line-height: 1.18;
+              margin-top: 3px;
+            }
+
+            tr.textVeryDense .explain,
+            tr.textVeryDense .instructions {
+              font-size: 9px;
+            }
+
+            tr.textVeryDense .explain strong {
+              font-size: 11px;
+            }
+
+            tr.textVeryDense .explain p,
+            tr.textVeryDense .instructions p {
+              line-height: 1.12;
+              margin-top: 2px;
+            }
+
+            .compositionsPdf {
+              margin-top: 10px;
+              border-top: 1px solid #6b1a2c;
+              padding-top: 6px;
+              page-break-inside: avoid;
+              break-inside: avoid;
+            }
+
+            .compositionsPdfTitle {
+              margin: 0 0 6px;
+              text-align: center;
+              color: #6b1a2c;
+              font-size: 13px;
+              font-weight: 900;
+              letter-spacing: 1.5px;
+            }
+
+            .compositionBlock {
+              margin-top: 6px;
+              border: 1px solid #d9c9c1;
+              border-radius: 6px;
+              padding: 6px;
+              page-break-inside: avoid;
+              break-inside: avoid;
+            }
+
+            .compositionFormat {
+              margin-bottom: 5px;
+              color: #6b1a2c;
+              font-size: 11px;
+              font-weight: 900;
+            }
+
+            .compositionTeamsPdf {
+              display: grid;
+              grid-template-columns: repeat(3, minmax(0, 1fr));
+              gap: 5px;
+            }
+
+            .compositionTeamPdf {
+              border: 1px solid #ddd;
+              border-radius: 6px;
+              background: #fff;
+              overflow: hidden;
+            }
+
+            .compositionTeamTitle {
+              padding: 4px 6px;
+              border-bottom: 1px solid #ddd;
+              background: #f8f5f3;
+              color: #111;
+              font-size: 10px;
+              font-weight: 900;
+            }
+
+            .compositionTeamPlayers {
+              display: grid;
+              gap: 2px;
+              padding: 4px;
+            }
+
+            .compositionPlayerPdf {
+              width: 100%;
+              padding: 3px 5px;
+              border: 1px solid #eadfd9;
+              border-radius: 4px;
+              background: white;
+              font-size: 9px;
+              font-weight: 700;
+            }
+
+            .footer {
+              text-align: center;
+              margin-top: 16px;
+              color: #aaa;
+              font-size: 12px;
+              letter-spacing: 1px;
+            }
+
+            @media print {
+              body {
+                -webkit-print-color-adjust: exact;
+                print-color-adjust: exact;
+              }
+
+              .page {
+                width: 100%;
+                margin: 0;
+                padding: 10mm;
+              }
+            }
+          </style>
+        </head>
+
+        <body>
+          <div class="page">
+            <div class="header">
+              <div class="logoBox">
+                <img src="${myBasketLogo}" />
+              </div>
+
+              <div class="title">
+                <h1>PRACTICE PLAN</h1>
+                <p class="titleMeta">
+                  <strong>Date :</strong> ${sessionDate}
+                  &nbsp;&nbsp;•&nbsp;&nbsp;
+                  <strong>Horaire :</strong> ${sessionStartTime} - ${sessionEndTime}
+                  &nbsp;&nbsp;•&nbsp;&nbsp;
+                  <strong>Équipe :</strong> ${
+                    selectedTeam.name ?? selectedTeam.clubName ?? "Équipe"
+                  }
+                </p>
+                <p class="titleTheme"><strong>Thème :</strong> ${sessionTheme}</p>
+              </div>
+
+              <div class="logoBox">
+                ${clubLogoHtml}
+              </div>
+            </div>
+
+            <div class="players">
+              ${playersColumn("GUARD", sessionPlayers.guard)}
+              ${playersColumn("FORWARD", sessionPlayers.forward)}
+              ${playersColumn("CENTER", sessionPlayers.center)}
+            </div>
+
+            <table>
+              <thead>
+                <tr>
+                  <th>QUI</th>
+                  <th>TPS</th>
+                  <th>SITUATIONS</th>
+                  <th>EXPLICATIONS</th>
+                  <th>CONSIGNES</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${rows}
+              </tbody>
+            </table>
+
+            ${
+              compositionHtml
+                ? `
+                  <div class="compositionsPdf">
+                    <div class="compositionsPdfTitle">COMPOSITIONS D’ÉQUIPES</div>
+                    ${compositionHtml}
+                  </div>
+                `
+                : ""
+            }
+
+            <div class="footer">
+              ${
+                selectedTeam.name ?? selectedTeam.clubName ?? "MyBasket"
+              } · Practice Plan · ${sortedItems.length} ateliers · ${totalMinutes} min · MyBasket
+            </div>
+          </div>
+
+          <script>
+            window.onload = function() {
+              setTimeout(function() {
+                window.print();
+              }, 500);
+            };
+          </script>
+        </body>
+      </html>
+    `;
+
+    const printWindow = window.open("", "_blank");
+
+    if (!printWindow) {
+      alert("Autorise les pop-ups pour générer la fiche séance.");
+      setSavingSession(false);
+      return;
+    }
+
+    printWindow.document.open();
+    printWindow.document.write(html);
+    printWindow.document.close();
+
+    const sessionSaved = await saveSessionToCalendar();
+
+    if (sessionSaved) {
+      await resetSessionBuilderAfterGeneration();
+      setSessionModalOpen(false);
+    }
+
+    setSavingSession(false);
+  }
+
+  if (loading) {
+    return (
+      <main className="cartPage">
+        <p>Chargement du panier...</p>
+      </main>
+    );
+  }
+
+  return (
+    <main className="cartPage">
+      <section className="hero">
+        <h1>MON PANIER</h1>
+        <p>Gérez vos achats, vos contenus et construisez votre séance.</p>
+      </section>
+
+      <section className="cartGrid">
+        <div className="panel">
+  <div className="panelTitle">
+    <h2>ACHATS PRODUITS</h2>
+    <span>{productItems.length + subscriptionItems.length}</span>
+  </div>
+
+  {productItems.length === 0 && subscriptionItems.length === 0 ? (
+    <div className="empty">Aucun produit dans le panier.</div>
+  ) : (
+    <>
+      {subscriptionItems.map((item) => (
+        <article className="productCard" key={item.id}>
+          <div className="thumb">
+            <img src={subscriptionImage(item.title)} alt={item.title} />
+          </div>
+
+          <div className="info">
+            <h3>{item.title}</h3>
+            <strong>{formatPrice(Number(item.price ?? 0))}</strong>
+          </div>
+
+          <div className="quantity">
+            <button
+              type="button"
+              onClick={() => updateQuantity(item.id, item.quantity - 1)}
+            >
+              -
+            </button>
+
+            <input
+              type="number"
+              min={1}
+              value={item.quantity}
+              onChange={(e) => updateQuantity(item.id, Number(e.target.value))}
+            />
+
+            <button
+              type="button"
+              onClick={() => updateQuantity(item.id, item.quantity + 1)}
+            >
+              +
+            </button>
+          </div>
+
+          <button
+            type="button"
+            className="delete"
+            onClick={() => removeItem(item.id)}
+          >
+            🗑
+          </button>
+        </article>
+      ))}
+
+      {productItems.map((item) => (
+        <article className="productCard" key={item.id}>
+          <div className="thumb">
+            {item.image_url ? (
+              <img src={item.image_url} alt={item.title} />
+            ) : (
+              "🛍️"
+            )}
+          </div>
+
+          <div className="info">
+            <h3>{item.title}</h3>
+            <strong>{formatPrice(Number(item.price ?? 0))}</strong>
+          </div>
+
+          <div className="quantity">
+            <button
+              type="button"
+              onClick={() => updateQuantity(item.id, item.quantity - 1)}
+            >
+              -
+            </button>
+
+            <input
+              type="number"
+              min={1}
+              value={item.quantity}
+              onChange={(e) => updateQuantity(item.id, Number(e.target.value))}
+            />
+
+            <button
+              type="button"
+              onClick={() => updateQuantity(item.id, item.quantity + 1)}
+            >
+              +
+            </button>
+          </div>
+
+          <button
+            type="button"
+            className="delete"
+            onClick={() => removeItem(item.id)}
+          >
+            🗑
+          </button>
+        </article>
+      ))}
+    </>
+  )}
+
+  <Link href="/boutique" className="outlineBtn">
+    ← Continuer mes achats
+  </Link>
+</div>
+
+        <div className="panel">
+          <div className="panelTitle">
+            <h2>CONSTRUCTION DE LA SÉANCE</h2>
+            <span>{sessionItems.length}</span>
+          </div>
+
+          {sessionItems.length === 0 ? (
+            <div className="empty">Aucun exercice ajouté à ta fiche séance.</div>
+          ) : (
+            <>
+              {sessionItems
+                .sort((a, b) => a.sort_order - b.sort_order)
+                .map((item, index) => (
+                  <article className="sessionCard" key={item.id}>
+                    <div className="order">
+                      <button
+                        type="button"
+                        onClick={() => moveSessionItem(item.id, "up")}
+                      >
+                        ↑
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => moveSessionItem(item.id, "down")}
+                      >
+                        ↓
+                      </button>
+                    </div>
+
+                    <div className="sessionThumb">
+                      {item.image_url ? (
+                        <img src={item.image_url} alt={item.title} />
+                      ) : (
+                        "🏀"
+                      )}
+                    </div>
+
+                    <div className="sessionInfo">
+                      <div className="sessionTop">
+                        <h3>
+                          {index + 1}. {item.title}
+                        </h3>
+
+                        <button
+                          type="button"
+                          onClick={() => removeItem(item.id)}
+                        >
+                          🗑
+                        </button>
+                      </div>
+
+                      <p>{item.description}</p>
+
+                      <div className="settings">
+                        <label>
+                          Temps en minutes
+                          <input
+                            type="number"
+                            min={1}
+                            value={item.duration_minutes ?? ""}
+                            placeholder="Ex : 12"
+                            onChange={(e) =>
+                              updateDuration(item.id, Number(e.target.value))
+                            }
+                          />
+                        </label>
+
+                        <label>
+                          Fait par
+                          <select
+                            value={item.assigned_to ?? "Coach principal"}
+                            onChange={(e) =>
+                              updateAssignedTo(item.id, e.target.value)
+                            }
+                          >
+                            {COACHES.map((coach) => (
+                              <option key={coach} value={coach}>
+                                {coach}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+                      </div>
+
+                      {item.item_type === "exercise" && (
+                        <div className="sessionContentEditor">
+                          <label className="myBasketContentChoice">
+                            <input
+                              type="checkbox"
+                              checked={item.use_mybasket_content !== false}
+                              onChange={(e) =>
+                                toggleMyBasketContent(item.id, e.target.checked)
+                              }
+                            />
+                            <span>Utiliser les informations MyBasket</span>
+                          </label>
+
+                          <div className="sessionTextFields">
+                            <label>
+                              Déroulement
+                              <textarea
+                                value={item.session_deroulement ?? ""}
+                                placeholder="Ajoute ton déroulement pour cette séance…"
+                                onChange={(e) =>
+                                  updateSessionDeroulement(item.id, e.target.value)
+                                }
+                              />
+                            </label>
+
+                            <label>
+                              Consignes / Variantes
+                              <textarea
+                                value={item.session_consignes_variantes ?? ""}
+                                placeholder="Ajoute tes consignes ou variantes pour cette séance…"
+                                onChange={(e) =>
+                                  updateSessionConsignesVariantes(
+                                    item.id,
+                                    e.target.value,
+                                  )
+                                }
+                              />
+                            </label>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  </article>
+                ))}
+
+              <button
+                type="button"
+                className="createSessionBtn"
+                onClick={() => setSessionModalOpen(true)}
+              >
+                🏀 GÉNÉRER MA FICHE SÉANCE
+              </button>
+            </>
+          )}
+        </div>
+      </section>
+
+      <section className="summary">
+        <div>
+          <h2>RÉSUMÉ DE COMMANDE</h2>
+          <p>
+            Sous-total <strong>{formatPrice(subtotal)}</strong>
+          </p>
+          <p>
+            DONT TVA 20% <strong>{formatPrice(tax)}</strong>
+          </p>
+          <div className="total">
+            TOTAL TTC <strong>{formatPrice(total)}</strong>
+          </div>
+        </div>
+
+        <div className="promo">
+          <input placeholder="Code promo" />
+          <button type="button">OK</button>
+        </div>
+
+        <div className="payBox">
+          <button type="button" onClick={() => createCheckout("stripe")}>
+            💳 Carte bancaire
+          </button>
+
+          <button type="button" onClick={() => createCheckout("paypal")}>
+            PayPal
+          </button>
+
+          <button type="button" onClick={() => createCheckout("apple_pay")}>
+             Pay
+          </button>
+        </div>
+      </section>
+
+      {sessionModalOpen && (
+        <div className="modalOverlay">
+          <div className="sessionModal">
+            <button
+              type="button"
+              className="modalClose"
+              onClick={() => setSessionModalOpen(false)}
+            >
+              ×
+            </button>
+
+            <h2>⚙️ Configurer la séance</h2>
+
+            <div className="modalGrid">
+              <label>
+                Date
+                <input
+                  type="date"
+                  value={sessionDate}
+                  onChange={(e) => setSessionDate(e.target.value)}
+                />
+              </label>
+
+              <label>
+                Heure début
+                <input
+                  type="time"
+                  value={sessionStartTime}
+                  onChange={(e) => setSessionStartTime(e.target.value)}
+                />
+              </label>
+
+              <label>
+                Heure fin
+                <input
+                  type="time"
+                  value={sessionEndTime}
+                  onChange={(e) => setSessionEndTime(e.target.value)}
+                />
+              </label>
+
+              <label>
+                Thème
+                <input
+                  value={sessionTheme}
+                  placeholder="Ex : Défense tout-terrain"
+                  onChange={(e) => setSessionTheme(e.target.value)}
+                />
+              </label>
+            </div>
+
+            <label className="fullLabel">
+              Équipe associée
+              <select
+                value={selectedTeamId}
+                onChange={(e) => {
+                  setSelectedTeamId(e.target.value);
+                  setSessionPlayers(emptyPlayers);
+                }}
+              >
+                <option value="">Sélectionner une équipe</option>
+                {teams.map((team) => (
+                  <option key={team.id} value={team.id}>
+                    {team.name ?? team.clubName ?? "Équipe sans nom"}
+                    {team.category || team.categorie
+                      ? ` (${team.category ?? team.categorie})`
+                      : ""}
+                  </option>
+                ))}
+              </select>
+            </label>
+
+            <button
+              type="button"
+              className="importBtn"
+              onClick={importPlayersFromSelectedTeam}
+            >
+              👥 Importer les joueurs de cette équipe
+            </button>
+
+            <p className="help">
+              Tu peux supprimer un joueur ou le glisser dans une autre colonne.
+            </p>
+
+            <div className="playersBoard">
+              {(["guard", "forward", "center"] as PlayerPosition[]).map(
+                (position) => (
+                  <div
+                    key={position}
+                    className="playersColumn"
+                    onDragOver={(e) => e.preventDefault()}
+                    onDrop={() => dropPlayer(position)}
+                  >
+                    <h3>
+                      {position === "guard"
+                        ? "GUARD"
+                        : position === "forward"
+                          ? "FORWARD"
+                          : "CENTER"}
+                    </h3>
+
+                    {sessionPlayers[position].length === 0 ? (
+                      <div className="emptyPlayer">Aucun joueur</div>
+                    ) : (
+                      sessionPlayers[position].map((player) => (
+                        <div
+                          key={player.id}
+                          className="playerChip"
+                          draggable
+                          onDragStart={() =>
+                            setDraggedPlayer({ player, from: position })
+                          }
+                        >
+                          <span>{playerName(player)}</span>
+                          <button
+                            type="button"
+                            onClick={() => removePlayer(position, player.id)}
+                          >
+                            ×
+                          </button>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                )
+              )}
+            </div>
+
+            <section className="compositionBuilder">
+              <div className="compositionHeader">
+                <div>
+                  <h3>COMPOSITIONS D’ÉQUIPES</h3>
+                  <p>
+                    Chaque joueur apparaît une seule fois. Glisse-le ensuite dans
+                    l’équipe souhaitée.
+                  </p>
+                </div>
+                <div className="compositionPresets">
+                  <button type="button" onClick={() => addCompositionBlock("3 contre 3", 3, 2)}>
+                    + Ajouter un bloc composition
+                  </button>
+                </div>
+              </div>
+
+              <div className="compositionBlocks">
+                {compositionBlocks.map((block, blockIndex) => (
+                  <article className="compositionBlock" key={block.id}>
+                    <div className="blockToolbar">
+                      <label className="formatSelectLabel">
+                        Format
+                        <select
+                          value={block.title}
+                          onChange={(event) =>
+                            changeCompositionFormat(block.id, event.target.value)
+                          }
+                        >
+                          <option value="2 contre 2">2 contre 2</option>
+                          <option value="3 contre 3">3 contre 3</option>
+                          <option value="4 contre 4">4 contre 4</option>
+                          <option value="5 contre 5">5 contre 5</option>
+                          <option value="Libre">Libre</option>
+                        </select>
+                      </label>
+
+                      <button type="button" onClick={() => autoDistributeComposition(block.id)}>
+                        Répartir automatiquement
+                      </button>
+                      <button type="button" onClick={() => duplicateCompositionBlock(block.id)}>
+                        Dupliquer
+                      </button>
+                      <button type="button" className="dangerMini" onClick={() => removeCompositionBlock(block.id)}>
+                        Supprimer
+                      </button>
+                    </div>
+
+                    <div className="playersToPlace">
+                      <div className="playersToPlaceTitle">JOUEURS À PLACER</div>
+                      <div className="playersToPlaceList">
+                        {allSessionPlayers
+                          .filter(
+                            (player) =>
+                              !block.teams.some((team) =>
+                                team.playerIds.includes(player.id),
+                              ),
+                          )
+                          .map((player) => (
+                            <button
+                              type="button"
+                              key={player.id}
+                              className="compositionPlayerChip"
+                              draggable
+                              onDragStart={(event) =>
+                                compositionDragStart(event, player.id)
+                              }
+                              onDragEnd={compositionDragEnd}
+                            >
+                              {playerName(player)}
+                            </button>
+                          ))}
+
+                        {allSessionPlayers.length > 0 &&
+                          allSessionPlayers.every((player) =>
+                            block.teams.some((team) =>
+                              team.playerIds.includes(player.id),
+                            ),
+                          ) && (
+                            <span className="allPlayersPlaced">
+                              Tous les joueurs sont placés.
+                            </span>
+                          )}
+                      </div>
+                    </div>
+
+                    <div className="compositionTeams">
+                      {block.teams.map((team) => (
+                        <div className="compositionTeam" key={team.id}>
+                          <div className="teamTitleRow">
+                            <input
+                              value={team.name}
+                              onChange={(event) =>
+                                updateCompositionTeam(block.id, team.id, {
+                                  name: event.target.value,
+                                })
+                              }
+                            />
+                            <button
+                              type="button"
+                              onClick={() => removeCompositionTeam(block.id, team.id)}
+                            >
+                              ×
+                            </button>
+                          </div>
+
+                          <div
+                            className="teamPlayerChoices teamDropZone"
+                            data-composition-drop-zone="true"
+                            data-block-id={block.id}
+                            data-team-id={team.id}
+                            onDragEnter={(event) => {
+                              event.preventDefault();
+                              compositionHoveredTargetRef.current = {
+                                blockId: block.id,
+                                teamId: team.id,
+                              };
+                              event.currentTarget.classList.add("dragOver");
+                            }}
+                            onDragOver={(event) => {
+                              compositionDragOver(event, block.id, team.id);
+                              event.currentTarget.classList.add("dragOver");
+                            }}
+                            onDragLeave={(event) => {
+                              const next = event.relatedTarget as Node | null;
+                              if (!next || !event.currentTarget.contains(next)) {
+                                event.currentTarget.classList.remove("dragOver");
+                              }
+                            }}
+                            onDrop={(event) => {
+                              event.currentTarget.classList.remove("dragOver");
+                              compositionDrop(event, block.id, team.id);
+                            }}
+                          >
+                            {team.playerIds.map((playerId) => {
+                              const player = allSessionPlayers.find(
+                                (candidate) => candidate.id === playerId,
+                              );
+                              if (!player) return null;
+
+                              return (
+                                <button
+                                  type="button"
+                                  key={player.id}
+                                  className="compositionPlayerChip assigned"
+                                  draggable
+                                  onDragStart={(event) =>
+                                    compositionDragStart(event, player.id)
+                                  }
+                                  onDragEnd={compositionDragEnd}
+                                  onDoubleClick={() =>
+                                    removePlayerFromComposition(block.id, player.id)
+                                  }
+                                  title="Glisser vers une autre équipe · double-clic pour retirer"
+                                >
+                                  <span className="compositionPlayerName">
+                                    {playerName(player)}
+                                  </span>
+                                  <span
+                                    className="compositionPlayerRemove"
+                                    role="button"
+                                    aria-label={`Retirer ${playerName(player)} de ${team.name}`}
+                                    title="Retirer le joueur"
+                                    onMouseDown={(event) => event.stopPropagation()}
+                                    onClick={(event) => {
+                                      event.preventDefault();
+                                      event.stopPropagation();
+                                      removePlayerFromComposition(block.id, player.id);
+                                    }}
+                                  >
+                                    ×
+                                  </span>
+                                </button>
+                              );
+                            })}
+
+                            {team.playerIds.length === 0 && (
+                              <span className="dropHint">
+                                Glisse les joueurs ici
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                      ))}
+
+                      <button
+                        type="button"
+                        className="addTeamCard"
+                        onClick={() => addCompositionTeam(block.id)}
+                      >
+                        + Ajouter une équipe
+                      </button>
+                    </div>
+                  </article>
+                ))}
+              </div>
+            </section>
+
+            <div className="modalActions">
+              <button
+                type="button"
+                className="cancelBtn"
+                onClick={() => setSessionModalOpen(false)}
+              >
+                Annuler
+              </button>
+
+              <button
+                type="button"
+                className="saveBtn"
+                onClick={generateSessionPdf}
+                disabled={savingSession}
+              >
+                {savingSession ? "Enregistrement…" : "📄 Générer la fiche PDF"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      <style jsx>{`
+        .compositionBuilder{margin-top:22px;padding:18px;border:1px solid #ead8ca;border-radius:18px;background:#fffaf6}
+        .compositionHeader{display:flex;justify-content:space-between;gap:16px;align-items:flex-start}
+        .compositionHeader h3{margin:0;color:#6b1a2c;font-size:18px}
+        .compositionHeader p{margin:5px 0 0;color:#756b6f;font-size:12px}
+        .compositionPresets{display:flex;flex-wrap:wrap;gap:7px}
+        .compositionPresets button,.blockToolbar button{border:0;border-radius:999px;padding:9px 12px;background:#6b1a2c;color:#fff;font-weight:900;cursor:pointer}
+        .compositionBlocks{display:grid;gap:15px;margin-top:16px}
+        .compositionBlock{padding:14px;border:1px solid #eadbd3;border-radius:16px;background:#fff}
+        .blockToolbar{display:flex;flex-wrap:wrap;gap:8px;align-items:end}
+        .blockToolbar>input{min-width:210px;flex:1;font-size:16px;font-weight:900}
+        .blockToolbar label{font-size:10px;font-weight:900;color:#74696d}
+        .blockToolbar label input{display:block;width:86px;margin-top:4px}
+        .blockToolbar .dangerMini{background:#d82f46}
+        .playersToPlace{margin-top:12px;padding:12px;border:1px solid #eadbd3;border-radius:14px;background:#fffaf8}
+        .playersToPlaceTitle{margin-bottom:9px;color:#6b1a2c;font-size:11px;font-weight:900}
+        .playersToPlaceList{display:grid;grid-template-columns:1fr;gap:7px;min-height:38px;align-items:center}
+        .compositionPlayerChip{width:100%;display:flex;align-items:center;justify-content:flex-start;gap:8px;box-sizing:border-box;border:1px solid #e1d5ce;border-radius:9px;background:#fff;padding:9px 11px;color:#211b1d;font-size:12px;font-weight:800;cursor:grab;text-align:left}
+        .compositionPlayerChip:active{cursor:grabbing}
+        .compositionPlayerChip.isDragging{opacity:.45}
+        .compositionPlayerChip.assigned{background:#fff8e8;border-color:#e1b948}
+        .teamDropZone{min-height:78px;transition:border-color .12s ease,background .12s ease,box-shadow .12s ease}
+        .teamDropZone.dragOver{border-color:#6b1a2c!important;background:#fff4f6!important;box-shadow:inset 0 0 0 2px rgba(107,26,44,.14)}
+        .compositionPlayerName{min-width:0;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+        .compositionPlayerRemove{flex:0 0 20px;width:20px;height:20px;display:grid;place-items:center;border-radius:999px;background:#dc2626;color:#fff;font-size:14px;font-weight:900;line-height:1;cursor:pointer;user-select:none}
+        .compositionPlayerRemove:hover{background:#b91c1c}
+        .allPlayersPlaced,.dropHint{color:#887b74;font-size:12px;font-weight:700}
+        .formatSelectLabel{display:flex;align-items:center;gap:8px;font-size:11px;font-weight:900;color:#6b1a2c}
+        .formatSelectLabel select{min-width:170px;border:1px solid #ded4ce;border-radius:9px;padding:8px 10px;background:#fff;color:#111;font-weight:800}
+        .compositionTeams{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;margin-top:12px}
+        .compositionTeam,.addTeamCard{min-height:130px;padding:10px;border:1px dashed #d9bfae;border-radius:14px;background:#fffaf8}
+        .teamTitleRow{display:flex;gap:6px}
+        .teamTitleRow input{min-width:0;flex:1;font-weight:900;color:#6b1a2c}
+        .teamTitleRow button{width:34px;border:0;border-radius:9px;background:#fee9e9;color:#c31e35;font-weight:950}
+        .teamPlayerChoices{display:flex;flex-wrap:wrap;gap:6px;margin-top:9px}
+        .teamPlayerChoices button{border:1px solid #e6dcd6;border-radius:999px;padding:6px 9px;background:#fff;font-size:10px;font-weight:850;cursor:pointer}
+        .teamPlayerChoices button.active{border-color:#d4a24c;background:#fff1ca;color:#6b1a2c}
+        .addTeamCard{display:grid;place-items:center;color:#6b1a2c;font-weight:950;cursor:pointer}
+        @media(max-width:900px){.compositionTeams{grid-template-columns:1fr}.compositionHeader{flex-direction:column}}
+
+        .cartPage {
+          background: #fff;
+          min-height: 100vh;
+          padding: 42px 56px 70px;
+          color: #111;
+        }
+
+        .hero {
+          text-align: center;
+          margin-bottom: 38px;
+        }
+
+        .hero h1 {
+          margin: 0;
+          color: #7a0d24;
+          font-size: 52px;
+          font-family: Oswald, Roboto, sans-serif;
+          letter-spacing: 1px;
+        }
+
+        .hero p {
+          color: #666;
+        }
+
+        .cartGrid {
+          display: grid;
+          grid-template-columns: 1fr 1fr;
+          gap: 34px;
+        }
+
+        .panel,
+        .summary {
+          background: #fff;
+          border: 1px solid #eee;
+          border-radius: 14px;
+          padding: 22px;
+          box-shadow: 0 10px 28px rgba(0, 0, 0, 0.07);
+        }
+
+        .panelTitle {
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          border-bottom: 2px solid #d4a24c;
+          padding-bottom: 12px;
+          margin-bottom: 18px;
+        }
+
+        .panelTitle h2,
+        .summary h2 {
+          margin: 0;
+          color: #7a0d24;
+          font-family: Oswald, Roboto, sans-serif;
+        }
+
+        .panelTitle span {
+          background: #7a0d24;
+          color: #fff;
+          width: 30px;
+          height: 30px;
+          border-radius: 50%;
+          display: grid;
+          place-items: center;
+          font-weight: 900;
+        }
+
+        .empty {
+          border: 1px dashed #ddd;
+          border-radius: 12px;
+          padding: 38px;
+          text-align: center;
+          color: #777;
+        }
+
+        .productCard {
+          display: grid;
+          grid-template-columns: 108px minmax(0, 1fr) 118px 44px;
+          gap: 18px;
+          align-items: center;
+          border: 1px solid #eadfd9;
+          border-radius: 16px;
+          padding: 14px;
+          margin-bottom: 12px;
+          background: #fff;
+          transition: transform 0.18s ease, box-shadow 0.18s ease;
+        }
+
+        .productCard:hover {
+          transform: translateY(-2px);
+          box-shadow: 0 12px 28px rgba(57, 25, 35, 0.08);
+        }
+
+        .thumb,
+.sessionThumb {
+          background: #f6f3f1;
+          border-radius: 12px;
+          overflow: hidden;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+        }
+
+        .thumb {
+          width: 108px;
+          height: 108px;
+          flex-shrink: 0;
+        }
+
+.sessionThumb {
+  height: 76px;
+}
+
+.thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.sessionThumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.info {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.info h3 {
+  margin: 0;
+  color: #241b1f;
+  font-size: 18px;
+  line-height: 1.2;
+  font-weight: 950;
+}
+
+.info strong {
+  color: #6B1A2C;
+  font-size: 22px;
+  font-weight: 950;
+}
+
+        .quantity {
+          display: flex;
+          border: 1px solid #ddd;
+          border-radius: 8px;
+          overflow: hidden;
+        }
+
+        .quantity button {
+          width: 36px;
+          border: none;
+          background: #f7f7f7;
+          font-weight: 900;
+          cursor: pointer;
+        }
+
+        .quantity input {
+          width: 50px;
+          height: 38px;
+          border: none;
+          text-align: center;
+          font-weight: 800;
+        }
+
+        .delete {
+          border: none;
+          background: transparent;
+          cursor: pointer;
+          font-size: 18px;
+        }
+.quantity {
+  align-items: center;
+  justify-content: center;
+}
+
+.delete {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+        .sessionCard {
+          display: grid;
+          grid-template-columns: 42px 92px 1fr;
+          gap: 16px;
+          border: 1px solid #eee;
+          border-radius: 12px;
+          padding: 12px;
+          margin-bottom: 14px;
+          align-items: center;
+        }
+
+        .order {
+          display: flex;
+          flex-direction: column;
+          gap: 6px;
+        }
+
+        .order button {
+          height: 28px;
+          border: 1px solid #ddd;
+          background: white;
+          border-radius: 6px;
+          color: #7a0d24;
+          font-weight: 900;
+          cursor: pointer;
+        }
+
+        .sessionTop {
+          display: flex;
+          justify-content: space-between;
+          gap: 12px;
+        }
+
+        .sessionTop button {
+          border: none;
+          background: transparent;
+          cursor: pointer;
+        }
+
+        .settings {
+          display: grid;
+          grid-template-columns: 1fr 1fr;
+          gap: 12px;
+        }
+
+        .settings label {
+          display: flex;
+          flex-direction: column;
+          gap: 6px;
+          color: #7a0d24;
+          font-size: 12px;
+          font-weight: 900;
+          text-transform: uppercase;
+        }
+
+        .settings select,
+        .settings input {
+          height: 38px;
+          border: 1px solid #ddd;
+          border-radius: 8px;
+          background: white;
+          padding: 0 10px;
+        }
+
+        .outlineBtn {
+          display: inline-flex;
+          margin-top: 10px;
+          height: 46px;
+          padding: 0 22px;
+          align-items: center;
+          justify-content: center;
+          border: 1px solid #d4a24c;
+          border-radius: 8px;
+          color: #7a0d24;
+          text-decoration: none;
+          font-weight: 900;
+        }
+
+        .sessionContentEditor {
+          margin-top: 14px;
+          padding-top: 14px;
+          border-top: 1px solid rgba(107, 26, 44, 0.12);
+        }
+
+        .myBasketContentChoice {
+          display: inline-flex !important;
+          flex-direction: row !important;
+          align-items: center;
+          gap: 8px;
+          margin-bottom: 12px;
+          font-weight: 800;
+          color: #6b1a2c;
+          cursor: pointer;
+        }
+
+        .myBasketContentChoice input {
+          width: 18px !important;
+          height: 18px;
+          margin: 0;
+          accent-color: #6b1a2c;
+          flex: 0 0 auto;
+        }
+
+        .sessionTextFields {
+          display: grid;
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+          gap: 12px;
+        }
+
+        .sessionTextFields label {
+          display: flex;
+          flex-direction: column;
+          gap: 6px;
+          font-size: 0.78rem;
+          font-weight: 800;
+          color: #6a5b54;
+        }
+
+        .sessionTextFields textarea {
+          width: 100%;
+          min-height: 92px;
+          resize: vertical;
+          box-sizing: border-box;
+          border: 1px solid #ddd;
+          border-radius: 10px;
+          background: #fff;
+          padding: 10px 12px;
+          font: inherit;
+          font-size: 0.9rem;
+          line-height: 1.4;
+          color: #111;
+        }
+
+        .sessionTextFields textarea:focus {
+          outline: 2px solid rgba(107, 26, 44, 0.18);
+          border-color: #6b1a2c;
+        }
+
+        @media (max-width: 700px) {
+          .sessionTextFields {
+            grid-template-columns: 1fr;
+          }
+        }
+
+        .createSessionBtn {
+          width: 100%;
+          height: 58px;
+          background: linear-gradient(90deg, #7a0d24, #9f1738);
+          color: white;
+          border: none;
+          border-radius: 10px;
+          font-weight: 900;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          margin-top: 18px;
+          font-size: 16px;
+          letter-spacing: 0.5px;
+          cursor: pointer;
+        }
+
+        .summary {
+          margin-top: 30px;
+          display: grid;
+          grid-template-columns: 1fr 1fr 1.5fr;
+          gap: 26px;
+          align-items: center;
+        }
+
+        .summary p,
+        .total {
+          display: flex;
+          justify-content: space-between;
+        }
+
+        .total {
+          border-top: 1px solid #ddd;
+          margin-top: 12px;
+          padding-top: 14px;
+          color: #7a0d24;
+          font-size: 20px;
+          font-weight: 900;
+        }
+
+        .promo {
+          display: flex;
+        }
+
+        .promo input {
+          flex: 1;
+          height: 52px;
+          border: 1px solid #ddd;
+          border-radius: 8px 0 0 8px;
+          padding: 0 14px;
+        }
+
+        .promo button {
+          width: 70px;
+          border: none;
+          background: #7a0d24;
+          color: white;
+          font-weight: 900;
+          border-radius: 0 8px 8px 0;
+        }
+
+        .payBox {
+          display: grid;
+          grid-template-columns: 1fr 1fr 1fr;
+          gap: 12px;
+        }
+
+        .payBox button {
+          height: 56px;
+          border: none;
+          border-radius: 8px;
+          font-weight: 900;
+          cursor: pointer;
+        }
+
+        .payBox button:nth-child(1) {
+          background: linear-gradient(90deg, #7a0d24, #a20f36);
+          color: white;
+        }
+
+        .payBox button:nth-child(2) {
+          background: #ffc439;
+          color: #111;
+        }
+
+        .payBox button:nth-child(3) {
+          background: #111;
+          color: white;
+        }
+
+        .modalOverlay {
+          position: fixed;
+          inset: 0;
+          background: rgba(0, 0, 0, 0.62);
+          z-index: 999;
+          display: grid;
+          place-items: center;
+          padding: 24px;
+        }
+
+        .sessionModal {
+          width: min(850px, 100%);
+          max-height: 90vh;
+          overflow: auto;
+          background: white;
+          border-radius: 18px;
+          padding: 34px;
+          position: relative;
+          box-shadow: 0 30px 90px rgba(0, 0, 0, 0.35);
+        }
+
+        .modalClose {
+          position: absolute;
+          top: 20px;
+          right: 24px;
+          width: 38px;
+          height: 38px;
+          border: none;
+          background: transparent;
+          font-size: 36px;
+          cursor: pointer;
+        }
+
+        .sessionModal h2 {
+          margin: 0 0 24px;
+          font-size: 30px;
+          font-family: Oswald, Roboto, sans-serif;
+        }
+
+        .modalGrid {
+          display: grid;
+          grid-template-columns: repeat(4, 1fr);
+          gap: 12px;
+        }
+
+        .modalGrid label,
+        .fullLabel {
+          display: flex;
+          flex-direction: column;
+          gap: 7px;
+          color: #7a0d24;
+          font-size: 12px;
+          font-weight: 900;
+          text-transform: uppercase;
+        }
+
+        .modalGrid input,
+        .fullLabel select {
+          height: 44px;
+          border: 1px solid #ddd;
+          border-radius: 8px;
+          padding: 0 12px;
+          font-size: 14px;
+          color: #111;
+          background: white;
+        }
+
+        .fullLabel {
+          margin-top: 14px;
+        }
+
+        .importBtn {
+          margin-top: 12px;
+          height: 46px;
+          border: 2px solid #111;
+          border-radius: 999px;
+          background: white;
+          font-weight: 900;
+          cursor: pointer;
+          padding: 0 20px;
+        }
+
+        .help {
+          margin: 12px 0 16px;
+          color: #777;
+          font-size: 13px;
+        }
+
+        .playersBoard {
+          display: grid;
+          grid-template-columns: repeat(3, 1fr);
+          gap: 14px;
+        }
+
+        .playersColumn {
+          min-height: 210px;
+          border: 1px solid #ddd;
+          border-radius: 12px;
+          padding: 12px;
+          background: #fafafa;
+        }
+
+        .playersColumn h3 {
+          margin: 0 0 12px;
+          text-align: center;
+          border-bottom: 2px solid #111;
+          padding-bottom: 8px;
+          font-size: 15px;
+          letter-spacing: 1px;
+        }
+
+        .playerChip {
+          min-height: 38px;
+          background: white;
+          border: 1px solid #e4e4e4;
+          border-radius: 8px;
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 10px;
+          padding: 8px 10px;
+          margin-bottom: 8px;
+          cursor: grab;
+          font-weight: 800;
+          font-size: 13px;
+        }
+
+        .playerChip button {
+          border: none;
+          background: #7a0d24;
+          color: white;
+          width: 22px;
+          height: 22px;
+          border-radius: 50%;
+          cursor: pointer;
+        }
+
+        .emptyPlayer {
+          border: 1px dashed #ccc;
+          border-radius: 10px;
+          padding: 20px;
+          text-align: center;
+          color: #999;
+          font-size: 13px;
+        }
+
+        .modalActions {
+          display: flex;
+          justify-content: flex-end;
+          gap: 12px;
+          margin-top: 24px;
+        }
+
+        .cancelBtn,
+        .saveBtn {
+          height: 50px;
+          border-radius: 999px;
+          padding: 0 24px;
+          font-weight: 900;
+          cursor: pointer;
+        }
+
+        .cancelBtn {
+          background: white;
+          border: 2px solid #111;
+        }
+
+        .saveBtn {
+          background: #111;
+          color: white;
+          border: 2px solid #111;
+        }
+
+        @media (max-width: 1100px) {
+          .cartPage {
+            padding: 28px 20px;
+          }
+
+          .cartGrid,
+          .summary,
+          .payBox,
+          .modalGrid,
+          .playersBoard {
+            grid-template-columns: 1fr;
+          }
+
+          .productCard {
+  display: grid;
+  grid-template-columns: 140px 1fr auto auto;
+  gap: 18px;
+  align-items: center;
+
+  padding: 18px;
+  border: 1px solid #ececec;
+  border-radius: 12px;
+  margin-bottom: 12px;
+}
+
+          .quantity,
+          .delete {
+            grid-column: 2;
+          }
+
+          .sessionCard {
+            grid-template-columns: 1fr;
+          }
+
+          .settings {
+            grid-template-columns: 1fr;
+          }
+        }
+      `}</style>
+    </main>
+  );
 }
