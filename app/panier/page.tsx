@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
 
@@ -263,6 +263,9 @@ function notifyCartUpdated() {
   window.dispatchEvent(new Event("cart-updated"));
 }
 export default function PanierPage() {
+  const compositionDraggedPlayerRef = useRef<string | null>(null);
+  const compositionHoveredTargetRef = useRef<{ blockId: string; teamId: string } | null>(null);
+
   const supabase = createClient();
 
   const [items, setItems] = useState<CartItem[]>([]);
@@ -885,9 +888,28 @@ setLoading(false);
     event: React.DragEvent<HTMLElement>,
     playerId: string,
   ) {
+    compositionDraggedPlayerRef.current = playerId;
+    compositionHoveredTargetRef.current = null;
+
     event.dataTransfer.setData("application/x-mybasket-player", playerId);
     event.dataTransfer.setData("text/plain", playerId);
     event.dataTransfer.effectAllowed = "move";
+
+    requestAnimationFrame(() => {
+      event.currentTarget.classList.add("isDragging");
+    });
+  }
+
+  function compositionDragOver(
+    event: React.DragEvent<HTMLElement>,
+    blockId: string,
+    teamId: string,
+  ) {
+    event.preventDefault();
+    event.stopPropagation();
+    event.dataTransfer.dropEffect = "move";
+
+    compositionHoveredTargetRef.current = { blockId, teamId };
   }
 
   function compositionDrop(
@@ -897,11 +919,48 @@ setLoading(false);
   ) {
     event.preventDefault();
     event.stopPropagation();
+
     const playerId =
+      compositionDraggedPlayerRef.current ||
       event.dataTransfer.getData("application/x-mybasket-player") ||
       event.dataTransfer.getData("text/plain");
+
+    if (playerId) {
+      placePlayerInComposition(blockId, teamId, playerId);
+    }
+
+    compositionDraggedPlayerRef.current = null;
+    compositionHoveredTargetRef.current = null;
+  }
+
+  function compositionDragEnd(event: React.DragEvent<HTMLElement>) {
+    event.currentTarget.classList.remove("isDragging");
+
+    const playerId = compositionDraggedPlayerRef.current;
     if (!playerId) return;
-    placePlayerInComposition(blockId, teamId, playerId);
+
+    // Safari peut rater onDrop sur certains enfants. On utilise alors
+    // exactement l'élément situé sous le curseur au relâchement.
+    const elements = document.elementsFromPoint(event.clientX, event.clientY);
+    const dropZone = elements
+      .map((element) => element.closest<HTMLElement>("[data-composition-drop-zone='true']"))
+      .find(Boolean);
+
+    const blockId = dropZone?.dataset.blockId;
+    const teamId = dropZone?.dataset.teamId;
+
+    if (blockId && teamId) {
+      placePlayerInComposition(blockId, teamId, playerId);
+    } else if (compositionHoveredTargetRef.current) {
+      placePlayerInComposition(
+        compositionHoveredTargetRef.current.blockId,
+        compositionHoveredTargetRef.current.teamId,
+        playerId,
+      );
+    }
+
+    compositionDraggedPlayerRef.current = null;
+    compositionHoveredTargetRef.current = null;
   }
 
   function togglePlayerInComposition(
@@ -2317,6 +2376,7 @@ setLoading(false);
                               onDragStart={(event) =>
                                 compositionDragStart(event, player.id)
                               }
+                              onDragEnd={compositionDragEnd}
                             >
                               {playerName(player)}
                             </button>
@@ -2357,14 +2417,31 @@ setLoading(false);
 
                           <div
                             className="teamPlayerChoices teamDropZone"
-                            onDragEnter={(event) => event.preventDefault()}
-                            onDragOver={(event) => {
+                            data-composition-drop-zone="true"
+                            data-block-id={block.id}
+                            data-team-id={team.id}
+                            onDragEnter={(event) => {
                               event.preventDefault();
-                              event.dataTransfer.dropEffect = "move";
+                              compositionHoveredTargetRef.current = {
+                                blockId: block.id,
+                                teamId: team.id,
+                              };
+                              event.currentTarget.classList.add("dragOver");
                             }}
-                            onDrop={(event) =>
-                              compositionDrop(event, block.id, team.id)
-                            }
+                            onDragOver={(event) => {
+                              compositionDragOver(event, block.id, team.id);
+                              event.currentTarget.classList.add("dragOver");
+                            }}
+                            onDragLeave={(event) => {
+                              const next = event.relatedTarget as Node | null;
+                              if (!next || !event.currentTarget.contains(next)) {
+                                event.currentTarget.classList.remove("dragOver");
+                              }
+                            }}
+                            onDrop={(event) => {
+                              event.currentTarget.classList.remove("dragOver");
+                              compositionDrop(event, block.id, team.id);
+                            }}
                           >
                             {team.playerIds.map((playerId) => {
                               const player = allSessionPlayers.find(
@@ -2381,6 +2458,7 @@ setLoading(false);
                                   onDragStart={(event) =>
                                     compositionDragStart(event, player.id)
                                   }
+                                  onDragEnd={compositionDragEnd}
                                   onDoubleClick={() =>
                                     removePlayerFromComposition(block.id, player.id)
                                   }
@@ -2470,7 +2548,10 @@ setLoading(false);
         .playersToPlaceList{display:grid;grid-template-columns:1fr;gap:7px;min-height:38px;align-items:center}
         .compositionPlayerChip{width:100%;display:flex;align-items:center;justify-content:flex-start;gap:8px;box-sizing:border-box;border:1px solid #e1d5ce;border-radius:9px;background:#fff;padding:9px 11px;color:#211b1d;font-size:12px;font-weight:800;cursor:grab;text-align:left}
         .compositionPlayerChip:active{cursor:grabbing}
+        .compositionPlayerChip.isDragging{opacity:.45}
         .compositionPlayerChip.assigned{background:#fff8e8;border-color:#e1b948}
+        .teamDropZone{min-height:78px;transition:border-color .12s ease,background .12s ease,box-shadow .12s ease}
+        .teamDropZone.dragOver{border-color:#6b1a2c!important;background:#fff4f6!important;box-shadow:inset 0 0 0 2px rgba(107,26,44,.14)}
         .compositionPlayerName{min-width:0;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
         .compositionPlayerRemove{flex:0 0 20px;width:20px;height:20px;display:grid;place-items:center;border-radius:999px;background:#dc2626;color:#fff;font-size:14px;font-weight:900;line-height:1;cursor:pointer;user-select:none}
         .compositionPlayerRemove:hover{background:#b91c1c}
