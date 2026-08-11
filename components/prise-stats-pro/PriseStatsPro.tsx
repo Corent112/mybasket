@@ -40,6 +40,7 @@ import {
   resolveActionClipBounds,
   resolveSyncedVideoTime,
   syncToProjectState,
+  formatOffset,
 } from "@/lib/video-sync";
 
 /* Safari/WebKit peut exposer un TimeRanges vide sous le nom interne
@@ -702,6 +703,9 @@ export default function PriseStatsProPage() {
   const [date, setDate] = useState(() => new Date().toISOString().slice(0, 10));
   const [home, setHome] = useState(true);
   const [starters, setStarters] = useState<string[]>([]);
+  // Numéro de maillot propre au match du jour. Ne modifie jamais la fiche joueur Supabase.
+  // playerId -> numéro porté pour CE match (utile aujourd'hui pour le codage, demain pour l'IA vidéo).
+  const [matchJerseyNumbers, setMatchJerseyNumbers] = useState<Record<string, number>>({});
 
   const [roster, setRoster] = useState<Player[]>([]);
   const [teamName, setTeamName] = useState('');
@@ -765,8 +769,15 @@ export default function PriseStatsProPage() {
     videoProviderRef.current = 'local';
     setVideoStatus('ready');
 
-    // La vidéo peut être ajoutée à tout moment. On ne force aucune fenêtre :
-    // le coach choisit lui-même « Repères vidéo » quand il veut la rattacher au codage.
+    // §3/§8 · Vidéo ajoutée APRÈS le codage : si des actions existent déjà et
+    // que la synchro n'a pas encore été validée, on ouvre automatiquement la
+    // fenêtre « Synchroniser la vidéo avec le codage ». Si elle est déjà validée
+    // (réouverture d'un projet), on applique directement le décalage sauvegardé
+    // et on ne redemande rien (bouton « Recalibrer la vidéo » disponible).
+    const already = videoSyncRef.current.validated ?? videoSyncRef.current.mode !== 'native';
+    if (actions.length > 0 && !already) {
+      setTimeout(() => setShowVideoSync(true), 60);
+    }
   };
 
   // Saisie d'un lien YouTube.
@@ -975,6 +986,7 @@ export default function PriseStatsProPage() {
     opponent,
     date,
     home,
+    matchJerseyNumbers,
     q,
     secs,
     perQ,
@@ -1035,7 +1047,14 @@ export default function PriseStatsProPage() {
 
       setActiveTeamId(team.id);
       setTeamId(team.id);
-      setRoster(team.players);
+      const restoredMatchNumbers = (s.matchJerseyNumbers && typeof s.matchJerseyNumbers === 'object')
+        ? s.matchJerseyNumbers as Record<string, number>
+        : {};
+      setMatchJerseyNumbers(restoredMatchNumbers);
+      setRoster(team.players.map((player) => ({
+        ...player,
+        num: Number(restoredMatchNumbers[player.id] ?? player.num),
+      })));
       setTeamName(String(s.teamName || team.name));
       setOpponent(String(s.opponent || ''));
       setDate(String(s.date || date));
@@ -3437,13 +3456,34 @@ export default function PriseStatsProPage() {
   /* -------- création du match -------- */
   const selTeam = teams.find((t) => t.id === teamId);
   const setupRoster = selTeam?.players || [];
-  const canStart = !!date && !!teamId && !!selTeam && !!opponent.trim() && starters.length === 5;
+  const matchNumberOf = (player: Player) => Number(matchJerseyNumbers[player.id] ?? player.num);
+  const matchNumbers = setupRoster.map(matchNumberOf).filter((n) => Number.isFinite(n));
+  const hasDuplicateMatchNumbers = new Set(matchNumbers).size !== matchNumbers.length;
+  const hasInvalidMatchNumbers = matchNumbers.some((n) => n < 0 || n > 99 || !Number.isInteger(n));
+  const canStart = !!date && !!teamId && !!selTeam && !!opponent.trim() && starters.length === 5 && !hasDuplicateMatchNumbers && !hasInvalidMatchNumbers;
   const toggleStarter = (id: string) => setStarters((s) => (s.includes(id) ? s.filter((x) => x !== id) : s.length < 5 ? [...s, id] : s));
+  const setMatchNumber = (playerId: string, raw: string) => {
+    const cleaned = raw.replace(/\D/g, '').slice(0, 2);
+    if (cleaned === '') {
+      setMatchJerseyNumbers((current) => {
+        const next = { ...current };
+        delete next[playerId];
+        return next;
+      });
+      return;
+    }
+    const value = Math.max(0, Math.min(99, Number(cleaned)));
+    setMatchJerseyNumbers((current) => ({ ...current, [playerId]: value }));
+  };
   const startMatch = () => {
-    if (!selTeam) return;
+    if (!selTeam || hasDuplicateMatchNumbers || hasInvalidMatchNumbers) return;
+    const matchRoster = selTeam.players.map((player) => ({
+      ...player,
+      num: matchNumberOf(player),
+    }));
     setActiveTeamId(selTeam.id);
     setTeamId(selTeam.id);
-    setRoster(selTeam.players); setTeamName(selTeam.name); setOnCourt(starters.slice());
+    setRoster(matchRoster); setTeamName(selTeam.name); setOnCourt(starters.slice());
     setActions([]); setMinutesByPlayer({}); setPerQ({ 1: { us: 0, them: 0 } }); setQ(1); setSecs(600); setRunning(false);
     setDraft(emptyDraft()); setStage('context'); setScreen('live');
 
@@ -4273,11 +4313,23 @@ export default function PriseStatsProPage() {
                   const on = starters.includes(p.id);
                   return (
                     <div key={p.id} className={`cm-p ${on ? 'on' : ''}`} onClick={() => toggleStarter(p.id)}>
-                      <div className="cm-p-num">{p.num}</div>
+                      <div className="cm-p-num">{matchNumberOf(p)}</div>
                       <div className="cm-p-ck">{on ? '✓' : '○'}</div>
-                      <div className="cm-p-av"><Av p={p} /></div>
+                      <div className="cm-p-av"><Av p={{ ...p, num: matchNumberOf(p) }} /></div>
                       <div className="cm-p-nm">{p.name}</div>
                       <div className="cm-p-pos">● {p.pos}</div>
+                      <label className="cm-p-jersey" onClick={(event) => event.stopPropagation()}>
+                        <span>N° DU JOUR</span>
+                        <input
+                          type="text"
+                          inputMode="numeric"
+                          maxLength={2}
+                          value={String(matchNumberOf(p))}
+                          onChange={(event) => setMatchNumber(p.id, event.target.value)}
+                          onFocus={(event) => event.currentTarget.select()}
+                          aria-label={`Numéro de maillot du jour de ${p.name}`}
+                        />
+                      </label>
                     </div>
                   );
                 })}
@@ -4290,14 +4342,20 @@ export default function PriseStatsProPage() {
                     <div className="cm-slot" key={i}>
                       <span className="cm-slot-l">TITULAIRE {i + 1}</span>
                       {p
-                        ? <div className="cm-slot-f"><span className="rm" onClick={() => toggleStarter(p.id)}>✕</span><b>{p.num}</b><span>{p.name}</span></div>
+                        ? <div className="cm-slot-f"><span className="rm" onClick={() => toggleStarter(p.id)}>✕</span><b>{matchNumberOf(p)}</b><span>{p.name}</span></div>
                         : <div className="cm-slot-e">＋ Ajouter</div>}
                     </div>
                   );
                 })}
               </div>
-              <div className={`cm-warn ${starters.length === 5 ? 'ok' : ''}`}>
-                {starters.length === 5 ? <><span>✓</span> 5 joueurs sélectionnés — le reste de l'effectif passe automatiquement sur le banc.</> : <><span>⚠</span> Sélectionnez 5 joueurs pour démarrer la saisie des statistiques.</>}
+              <div className={`cm-warn ${starters.length === 5 && !hasDuplicateMatchNumbers && !hasInvalidMatchNumbers ? 'ok' : ''}`}>
+                {hasDuplicateMatchNumbers
+                  ? <><span>⚠</span> Deux joueurs ne peuvent pas porter le même numéro pendant ce match.</>
+                  : hasInvalidMatchNumbers
+                    ? <><span>⚠</span> Les numéros de maillot doivent être compris entre 0 et 99.</>
+                    : starters.length === 5
+                      ? <><span>✓</span> 5 joueurs sélectionnés — les numéros du jour seront utilisés pour tout le match.</>
+                      : <><span>⚠</span> Sélectionnez 5 joueurs pour démarrer la saisie des statistiques.</>}
               </div>
             </div>
           </div>
@@ -4317,7 +4375,7 @@ export default function PriseStatsProPage() {
             </div>
             <div className="cm-start-wrap">
               <button className="cm-start" disabled={!canStart} onClick={startMatch}>▶ Démarrer la saisie</button>
-              <div className="cm-start-hint">{canStart ? 'Tout est prêt — lancez la saisie' : (starters.length < 5 ? 'Complétez votre 5 majeur pour continuer' : 'Renseignez date, équipe et adversaire')}</div>
+              <div className="cm-start-hint">{canStart ? 'Tout est prêt — lancez la saisie' : (hasDuplicateMatchNumbers ? 'Corrigez les numéros de maillot en double' : starters.length < 5 ? 'Complétez votre 5 majeur pour continuer' : 'Renseignez date, équipe et adversaire')}</div>
             </div>
             <div className="cm-start-fixed">
               <button className="cm-start cm-start-main" disabled={!canStart} onClick={startMatch}>▶ DÉMARRER LE MATCH</button>
@@ -4497,21 +4555,26 @@ export default function PriseStatsProPage() {
                 )}
               </div>
 
-              <div className="detacherRow videoToolsRow">
-                <label className="videoToolBtn videoToolPrimary">
-                  <input type="file" accept="video/*" onChange={(e) => onPickVideoFile(e.target.files?.[0] ?? null)} />
-                  🎬 {videoProvider === 'local' && videoUrl ? 'Changer la vidéo' : 'Ajouter une vidéo'}
-                </label>
-                {videoProvider === 'local' && videoUrl && <button className="videoToolBtn" onClick={detachVideo}>↗ Ouvrir la vidéo</button>}
-                {videoProvider === 'local' && videoUrl && <button className="videoToolBtn" onClick={togglePiP} title="Garder la vidéo au-dessus de la fenêtre de codage">▣ Image dans l’image</button>}
-                {videoProvider === 'local' && videoUrl && <button className="videoToolBtn videoToolMarkers" onClick={() => setShowVideoSync(true)}>⚙ Repères vidéo</button>}
-                <label className="rateBox videoRateBox">
+              <div className="detacherRow">
+                <button className="detachBtn" onClick={detachVideo}>↗ Détacher la vidéo</button>
+                {/* AJOUT · Image dans l'image + vitesse de lecture (synchronisée) */}
+                <button className="detachBtn" onClick={togglePiP} title="Garder la vidéo au-dessus de la fenêtre de codage">⧉ Image dans l'image</button>
+                <label className="rateBox">
                   Vitesse
                   <select value={playbackRate} onChange={(e) => setPlaybackRate(Number(e.target.value))}>
                     {[0.25, 0.5, 0.75, 1, 1.25, 1.5, 2].map((r) => <option key={r} value={r}>{r}×</option>)}
                   </select>
                 </label>
-                {videoProvider === 'local' && videoUrl && <span className="videoLinkedBadge">● {videoFilename || 'Vidéo associée'}</span>}
+                {videoProvider === 'local' && videoUrl && (
+                  <button className="detachBtn" onClick={() => setShowVideoSync(true)} title="Ajuster la correspondance vidéo ↔ codage">
+                    🎯 Recalibrer la vidéo
+                  </button>
+                )}
+                {videoSync.mode !== 'native' && (
+                  <span className="syncBadge" title="Décalage vidéo appliqué à la lecture des clips">
+                    Décalage {formatOffset(videoSync.offset)}{videoSync.mode === 'calibrated' ? ` · ${videoSync.rate.toFixed(3)}×` : ''}
+                  </span>
+                )}
                 {videoDetached && <span className="detachState">🎥 Vidéo ouverte dans une fenêtre détachée</span>}
               </div>
 
@@ -4665,18 +4728,7 @@ export default function PriseStatsProPage() {
 
           {showHistoryPanel && (
             <div className="floatingPanel historyPanel">
-              <div className="floatingHead historyHead">
-                <b>📚 Historique des actions</b>
-                <div className="historyVideoTools">
-                  <label className="historyVideoBtn">
-                    <input type="file" accept="video/*" onChange={(e) => onPickVideoFile(e.target.files?.[0] ?? null)} />
-                    🎬 {videoProvider === 'local' && videoUrl ? 'Changer la vidéo' : 'Ajouter une vidéo'}
-                  </label>
-                  {videoProvider === 'local' && videoUrl && <button className="historyVideoBtn markers" onClick={() => setShowVideoSync(true)}>⚙ Repères</button>}
-                  {videoProvider === 'local' && videoUrl && <span className="historyVideoOk">● Vidéo associée</span>}
-                  <button onClick={() => setShowHistoryPanel(false)}>×</button>
-                </div>
-              </div>
+              <div className="floatingHead"><b>📚 Historique des actions</b><button onClick={() => setShowHistoryPanel(false)}>×</button></div>
               <div className="floatingBody">{renderHistoryList()}</div>
             </div>
           )}
@@ -4883,7 +4935,7 @@ export default function PriseStatsProPage() {
           setVideoSync(validated);
           persistProjectState();
           setShowVideoSync(false);
-          flash('Repères vidéo enregistrés ✓');
+          flash('Synchronisation vidéo validée ✓');
         }}
         onClose={() => setShowVideoSync(false)}
       />
@@ -6114,6 +6166,10 @@ function Style() {
       .cm-p-av { width: 56px; height: 56px; border-radius: 50%; overflow: hidden; margin: 6px auto 8px; display: grid; place-items: center; }
       .cm-p-av .av { width: 56px; height: 56px; border-radius: 50%; font-size: 18px; }
       .cm-p-nm { font-size: 12px; font-weight: 800; }
+      .cm-p-jersey { margin-top: 7px; display: flex; align-items: center; justify-content: center; gap: 6px; cursor: default; }
+      .cm-p-jersey span { font-size: 8px; font-weight: 900; letter-spacing: .7px; color: rgba(255,255,255,.5); white-space: nowrap; }
+      .cm-p-jersey input { width: 42px; height: 28px; border: 1px solid rgba(212,162,76,.45); border-radius: 8px; background: rgba(5,8,15,.72); color: var(--gold); text-align: center; font-size: 14px; font-weight: 950; outline: none; }
+      .cm-p-jersey input:focus { border-color: var(--gold); box-shadow: 0 0 0 2px rgba(212,162,76,.14); }
       .cm-p-pos { font-size: 9.5px; font-weight: 800; margin-top: 3px; color: var(--blue); }
       .cm-slots { display: grid; grid-template-columns: repeat(5,1fr); gap: 8px; margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--border); }
       .cm-slot { display: flex; flex-direction: column; gap: 5px; }
@@ -7928,21 +7984,9 @@ function Style() {
       .qstrip { height: 30px; padding: 3px 10px; gap: 8px; justify-content: center; }
       .foulbox { display: inline-flex; gap: 5px; align-items: center; }
       .foulbox::after { content: ''; display: inline-flex; width: 46px; height: 7px; border-radius: 999px; background: repeating-linear-gradient(90deg, rgba(212,162,76,.95) 0 7px, transparent 7px 9px); opacity: .35; }
-      .detacherRow { flex: 0 0 auto; min-height: 42px; display: flex; align-items: center; justify-content: center; gap: 7px; padding: 5px 8px; border-top: 1px solid var(--border); background: rgba(6,9,18,.42); flex-wrap: wrap; }
-      .videoToolBtn { min-height: 31px; display:inline-flex; align-items:center; justify-content:center; gap:6px; border:1px solid #2b3952; background:#141e30; color:#eef3fb; border-radius:9px; padding:0 11px; font-size:10px; font-weight:900; cursor:pointer; transition:.15s ease; }
-      .videoToolBtn:hover { border-color:rgba(212,162,76,.75); background:#1a2740; transform:translateY(-1px); }
-      .videoToolBtn input { display:none; }
-      .videoToolPrimary { border-color:rgba(212,162,76,.55); color:var(--gold); background:rgba(212,162,76,.08); }
-      .videoToolMarkers { border-color:rgba(107,26,44,.8); background:rgba(107,26,44,.22); }
-      .videoRateBox { min-height:31px; border:1px solid #2b3952; border-radius:9px; background:#111a2b; padding:0 8px; color:#8d9ab0; font-size:9px; font-weight:900; }
-      .videoRateBox select { background:#172237; color:#fff; border:0; border-radius:6px; padding:4px 6px; font-weight:900; }
-      .videoLinkedBadge { max-width:190px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:#86efac; font-size:9px; font-weight:850; padding:0 4px; }
-      .historyHead { gap:12px; }
-      .historyVideoTools { margin-left:auto; display:flex; align-items:center; gap:6px; }
-      .historyVideoBtn { min-height:29px; display:inline-flex; align-items:center; justify-content:center; border:1px solid #33435f; border-radius:8px; background:#152035; color:#fff; padding:0 9px; font-size:9px; font-weight:900; cursor:pointer; }
-      .historyVideoBtn input { display:none; }
-      .historyVideoBtn.markers { border-color:rgba(212,162,76,.55); color:var(--gold); background:rgba(212,162,76,.08); }
-      .historyVideoOk { color:#86efac; font-size:9px; font-weight:900; white-space:nowrap; }
+      .detacherRow { flex: 0 0 auto; height: 34px; display: flex; align-items: center; justify-content: center; border-top: 1px solid var(--border); background: rgba(6,9,18,.35); }
+      .detachBtn { border: 1px solid rgba(212,162,76,.65); background: rgba(212,162,76,.12); color: var(--gold); border-radius: 10px; padding: 7px 12px; font-size: 12px; font-weight: 900; cursor: pointer; }
+      .detachBtn:hover { background: rgba(212,162,76,.22); }
       /* AJOUT §5 · Montage plein écran + en-tête à boutons */
       .floatingHeadBtns { display: inline-flex; align-items: center; gap: 8px; }
       .montageExpand { border: 1px solid rgba(212,162,76,.55); background: rgba(212,162,76,.12); color: var(--gold); border-radius: 8px; padding: 4px 10px; font-size: 11px; font-weight: 900; cursor: pointer; }
