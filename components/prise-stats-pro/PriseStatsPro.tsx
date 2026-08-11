@@ -3260,20 +3260,30 @@ export default function PriseStatsProPage() {
       // pas chargées. On applique donc le point de départ seulement quand la vidéo
       // est réellement seekable, puis on restaure lecture/pause.
       const restoreInitialState = () => {
-        try { v.currentTime = Math.max(0, initialTime); } catch {}
-        if (initialPlaying) {
-          const start = () => v.play().catch(()=>{});
-          if (v.readyState >= 2) start();
-          else v.addEventListener('canplay', start, { once: true });
+        const target = Math.max(0, initialTime);
+        try { v.currentTime = target; } catch {}
+
+        const finishRestore = () => {
+          if (initialPlaying) v.play().catch(()=>{});
+          else v.pause();
+
+          channel.postMessage({
+            type:'time',
+            time:Number.isFinite(v.currentTime) ? v.currentTime : target,
+            playing:initialPlaying
+          });
+        };
+
+        if (Math.abs((v.currentTime || 0) - target) < 0.15) {
+          finishRestore();
         } else {
-          v.pause();
+          v.addEventListener('seeked', finishRestore, { once: true });
         }
-        channel.postMessage({type:'time',time:initialTime,playing:initialPlaying});
       };
 
       if (v.readyState >= 1) restoreInitialState();
       else v.addEventListener('loadedmetadata', restoreInitialState, { once: true });
-      v.playbackRate = ${'${playbackRate}'};
+      v.playbackRate = ${playbackRate};
       const sendTime = () => { const now = Date.now(); if(now-lastSent>250){ channel.postMessage({type:'time',time:v.currentTime,playing:!v.paused}); lastSent=now; } };
       // Commandes venues de la fenêtre principale (verrou : on n'y répond pas en boucle).
       channel.onmessage = (ev) => {
