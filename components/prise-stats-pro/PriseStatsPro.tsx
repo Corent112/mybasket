@@ -1312,6 +1312,8 @@ export default function PriseStatsProPage() {
   const [historyScope, setHistoryScope] = useState<'all' | 'attaque' | 'defense' | 'made' | 'missed'>('all');
   const [timelineCompact, setTimelineCompact] = useState(false);
   const [timelineHiddenRows, setTimelineHiddenRows] = useState<Record<string, boolean>>({});
+  // Timeline type Sportscode / LongoMatch : zoom horizontal du canevas.
+  const [timelineZoom, setTimelineZoom] = useState<1 | 2 | 4 | 8>(1);
 
   const assignClipTheme = (action: ClipAction, themeName: string) => {
     if (!action.id) return;
@@ -5291,88 +5293,215 @@ export default function PriseStatsProPage() {
 
   function renderTimeline() {
     const list = mxFiltered();
+
+    const clipStartOf = (a: StatA) =>
+      Math.max(0, Number(a.possessionStart ?? a.clipStart ?? a.videoTime ?? 0) || 0);
+
+    const clipEndOf = (a: StatA) => {
+      const startValue = clipStartOf(a);
+      const raw = Number(a.possessionEnd ?? a.clipEnd ?? startValue + 2);
+      return Math.max(startValue + 0.35, Number.isFinite(raw) ? raw : startValue + 2);
+    };
+
+    const clipDurationOf = (a: StatA) => Math.max(0.35, clipEndOf(a) - clipStartOf(a));
+
     const totalSeconds = Math.max(
       1,
-      ...list.map((a) => Number(a.possessionEnd ?? a.clipEnd ?? a.videoTime ?? 0)),
+      ...list.map((a) => clipEndOf(a)),
     );
+
     const unique = <T,>(values: T[]) => Array.from(new Set(values));
-    const systemValues = unique(list.map((a) => a.systemeName || a.systemeJeu || a.systemeSlot).filter(Boolean) as string[]);
+    const systemValues = unique(
+      list.map((a) => a.systemeName || a.systemeJeu || a.systemeSlot).filter(Boolean) as string[],
+    );
     const tfValues = unique(list.map((a) => a.tempsFort).filter(Boolean) as string[]);
     const actionValues = unique(list.map((a) => a.actionType).filter(Boolean) as string[]);
     const customValues = unique(Object.values(clipThemeAssignments).flat()) as string[];
 
-    const rows: { key: string; label: string; group: string; color: string; test: (a: StatA) => boolean }[] = [
+    type TimelineRow = {
+      key: string;
+      label: string;
+      group: string;
+      color: string;
+      test: (a: StatA) => boolean;
+    };
+
+    const rows: TimelineRow[] = [
+      // Piste maîtresse : tous les clips, exactement comme un outil de tagging vidéo.
+      { key: 'all:clips', label: 'Tous les clips', group: 'Clips', color: '#d4a24c', test: () => true },
       { key: 'ctx:attaque', label: 'Attaque', group: 'Contexte', color: '#ff7a18', test: (a: StatA) => a.context === 'attaque' },
-      { key: 'ctx:defense', label: 'Défense', group: 'Contexte', color: '#32b7ef', test: (a: StatA) => a.context === 'defense' },
-      ...systemValues.map((value) => ({ key: `sys:${value}`, label: value, group: 'Systèmes', color: '#7c5cff', test: (a: StatA) => (a.systemeName || a.systemeJeu || a.systemeSlot) === value })),
-      ...tfValues.map((value) => ({ key: `tf:${value}`, label: tags.label(value), group: 'Temps forts', color: tags.color(value) || '#d4a24c', test: (a: StatA) => a.tempsFort === value })),
-      ...actionValues.map((value) => ({ key: `act:${value}`, label: String(value).replace(/-/g, ' '), group: 'Actions', color: '#d94b71', test: (a: StatA) => a.actionType === value })),
+      { key: 'ctx:defense', label: 'Défense', group: 'Contexte', color: '#168ad4', test: (a: StatA) => a.context === 'defense' },
+      ...systemValues.map((value) => ({
+        key: `sys:${value}`,
+        label: value,
+        group: 'Systèmes',
+        color: '#7c5cff',
+        test: (a: StatA) => (a.systemeName || a.systemeJeu || a.systemeSlot) === value,
+      })),
+      ...tfValues.map((value) => ({
+        key: `tf:${value}`,
+        label: tags.label(value),
+        group: 'Temps forts',
+        color: tags.color(value) || '#d4a24c',
+        test: (a: StatA) => a.tempsFort === value,
+      })),
+      ...actionValues.map((value) => ({
+        key: `act:${value}`,
+        label: String(value).replace(/-/g, ' '),
+        group: 'Actions',
+        color: '#d94b71',
+        test: (a: StatA) => a.actionType === value,
+      })),
       { key: 'res:made', label: 'Tirs marqués', group: 'Résultats', color: '#22c55e', test: (a: StatA) => a.shotResult === 'made' },
       { key: 'res:missed', label: 'Tirs ratés', group: 'Résultats', color: '#ef4444', test: (a: StatA) => a.shotResult === 'missed' },
       { key: 'reb:off', label: 'Rebond offensif', group: 'Conséquences', color: '#f59e0b', test: (a: StatA) => a.reboundType === 'off' },
       { key: 'reb:def', label: 'Rebond défensif', group: 'Conséquences', color: '#06b6d4', test: (a: StatA) => a.reboundType === 'def' },
-      ...customValues.map((value) => ({ key: `custom:${value}`, label: value, group: 'Collections', color: '#d4a24c', test: (a: StatA) => (clipThemeAssignments[a.id] || []).includes(value) })),
+      ...customValues.map((value) => ({
+        key: `custom:${value}`,
+        label: value,
+        group: 'Collections',
+        color: '#d4a24c',
+        test: (a: StatA) => (clipThemeAssignments[a.id] || []).includes(value),
+      })),
     ].filter((row) => list.some(row.test));
 
     const visibleRows = rows.filter((row) => !timelineHiddenRows[row.key]);
     const grouped = unique(rows.map((row) => row.group));
-    const openRowClips = (row: typeof rows[number]) => {
+
+    const openRowClips = (row: TimelineRow) => {
       const clips = list.filter(row.test);
       if (clips.length) openClipModal(row.label, clips, 0);
     };
+
+    const fmtDuration = (seconds: number) =>
+      seconds < 10 ? `${seconds.toFixed(1)}s` : `${Math.round(seconds)}s`;
+
+    const eventLabel = (a: StatA) => {
+      const p = find(a.playerId);
+      if (a.actionType === 'tir') {
+        const result = a.shotResult === 'made' ? '✓' : a.shotResult === 'missed' ? '✕' : '';
+        return `${p ? `#${p.num} ` : ''}${a.shotType || 'Tir'} ${result}`.trim();
+      }
+      if (a.actionType) return `${p ? `#${p.num} ` : ''}${String(a.actionType).replace(/-/g, ' ')}`.trim();
+      return p ? `#${p.num} ${p.name}` : periodLabel(a.q);
+    };
+
+    const rulerTicks = Math.max(7, timelineZoom * 6 + 1);
 
     return (
       <div className={`proTimeline ${timelineCompact ? 'compact' : ''}`}>
         <div className="proTimelineToolbar">
           <div>
-            <b>Timeline d’analyse</b>
-            <span>{visibleRows.length} pistes · {list.length} actions</span>
+            <b>Timeline vidéo</b>
+            <span>{visibleRows.length} pistes · {list.length} clips · {fmt(Math.round(totalSeconds))}</span>
           </div>
+
           <div className="proTimelineTools">
-            <button className={timelineCompact ? 'on' : ''} onClick={() => setTimelineCompact((value) => !value)}>Vue compacte</button>
+            <div className="timelineZoomTools" aria-label="Zoom timeline">
+              <button
+                onClick={() => setTimelineZoom((z) => (z === 8 ? 4 : z === 4 ? 2 : 1))}
+                disabled={timelineZoom === 1}
+                title="Dézoomer"
+              >−</button>
+              <span>{timelineZoom}×</span>
+              <button
+                onClick={() => setTimelineZoom((z) => (z === 1 ? 2 : z === 2 ? 4 : 8))}
+                disabled={timelineZoom === 8}
+                title="Zoomer"
+              >＋</button>
+            </div>
+            <button className={timelineCompact ? 'on' : ''} onClick={() => setTimelineCompact((value) => !value)}>
+              Vue compacte
+            </button>
             <button onClick={() => setTimelineHiddenRows({})}>Tout afficher</button>
           </div>
         </div>
-        <div className="timelineRuler">
-          <div className="timelineRulerLabel">Temps vidéo</div>
-          <div className="timelineRulerTrack">
-            {Array.from({ length: 7 }).map((_, index) => {
-              const value = (totalSeconds * index) / 6;
-              return <span key={index} style={{ left: `${(index / 6) * 100}%` }}>{fmt(Math.round(value))}</span>;
-            })}
-          </div>
-        </div>
-        <div className="timelineMatrix">
-          {grouped.map((group) => (
-            <div className="timelineGroup" key={group}>
-              <div className="timelineGroupTitle">{group}</div>
-              {rows.filter((row) => row.group === group).map((row) => {
-                const hidden = Boolean(timelineHiddenRows[row.key]);
-                const events = list.filter(row.test);
-                return (
-                  <div className={`timelineLane ${hidden ? 'hidden' : ''}`} key={row.key}>
-                    <button className="timelineLaneLabel" onDoubleClick={() => openRowClips(row)} onClick={() => setTimelineHiddenRows((current) => ({ ...current, [row.key]: !current[row.key] }))} title="Cliquer pour masquer/afficher · double-clic pour revoir toute la piste">
-                      <i style={{ background: row.color }} />
-                      <span>{row.label}</span>
-                      <b>{events.length}</b>
-                    </button>
-                    {!hidden && <div className="timelineLaneTrack">
-                      {events.map((a) => {
-                        const start = Number(a.possessionStart ?? a.clipStart ?? a.videoTime ?? 0);
-                        const endValue = Number(a.possessionEnd ?? a.clipEnd ?? start + 2);
-                        const end = Math.max(start + 1, endValue);
-                        const left = Math.max(0, Math.min(99, (start / totalSeconds) * 100));
-                        const width = Math.max(0.7, Math.min(30, ((end - start) / totalSeconds) * 100));
-                        const p = find(a.playerId);
-                        return <button key={`${row.key}:${a.id}`} className="timelineEventBlock" style={{ left: `${left}%`, width: `${width}%`, background: row.color }} onClick={() => openClipModal(row.label, events, events.findIndex((item) => item.id === a.id))} title={`${periodLabel(a.q)} ${a.clock} · ${p ? `#${p.num} ${p.name}` : 'Action'} · ${describe(a, find).t}`}><span>{p ? p.num : ''}</span></button>;
-                      })}
-                    </div>}
-                  </div>
-                );
-              })}
+
+        <div className="timelineHorizontalScroll">
+          <div className="timelineCanvas" style={{ width: `${timelineZoom * 100}%` }}>
+            <div className="timelineRuler">
+              <div className="timelineRulerLabel">Temps vidéo</div>
+              <div className="timelineRulerTrack">
+                {Array.from({ length: rulerTicks }).map((_, index) => {
+                  const value = (totalSeconds * index) / Math.max(1, rulerTicks - 1);
+                  return (
+                    <span key={index} style={{ left: `${(index / Math.max(1, rulerTicks - 1)) * 100}%` }}>
+                      {fmt(Math.round(value))}
+                    </span>
+                  );
+                })}
+              </div>
             </div>
-          ))}
-          {rows.length === 0 && <div className="hist-empty">Aucune piste à afficher.</div>}
+
+            <div className="timelineMatrix">
+              {grouped.map((group) => (
+                <div className="timelineGroup" key={group}>
+                  <div className="timelineGroupTitle">{group}</div>
+
+                  {rows.filter((row) => row.group === group).map((row) => {
+                    const hidden = Boolean(timelineHiddenRows[row.key]);
+                    const events = list.filter(row.test);
+
+                    return (
+                      <div className={`timelineLane ${hidden ? 'hidden' : ''}`} key={row.key}>
+                        <button
+                          className="timelineLaneLabel"
+                          onDoubleClick={() => openRowClips(row)}
+                          onClick={() =>
+                            setTimelineHiddenRows((current) => ({
+                              ...current,
+                              [row.key]: !current[row.key],
+                            }))
+                          }
+                          title="Cliquer pour masquer/afficher · double-clic pour revoir toute la piste"
+                        >
+                          <i style={{ background: row.color }} />
+                          <span>{row.label}</span>
+                          <b>{events.length}</b>
+                        </button>
+
+                        {!hidden && (
+                          <div className="timelineLaneTrack">
+                            {events.map((a) => {
+                              const startValue = clipStartOf(a);
+                              const endValue = clipEndOf(a);
+                              const duration = clipDurationOf(a);
+
+                              const left = Math.max(0, Math.min(99.8, (startValue / totalSeconds) * 100));
+                              // La largeur représente RÉELLEMENT la durée. Le min-width CSS
+                              // garantit seulement que les clips très courts restent cliquables.
+                              const width = Math.max(0.08, ((endValue - startValue) / totalSeconds) * 100);
+                              const p = find(a.playerId);
+                              const listIndex = events.findIndex((item) => item.id === a.id);
+
+                              return (
+                                <button
+                                  key={`${row.key}:${a.id}`}
+                                  className={`timelineEventBlock ${a.context === 'attaque' ? 'attack' : a.context === 'defense' ? 'defense' : ''}`}
+                                  style={{
+                                    left: `${left}%`,
+                                    width: `${width}%`,
+                                    background: row.color,
+                                  }}
+                                  onClick={() => openClipModal(row.label, events, listIndex)}
+                                  title={`${periodLabel(a.q)} ${a.clock} · ${p ? `#${p.num} ${p.name}` : 'Action'} · ${describe(a, find).t} · Clip ${fmtDuration(duration)}`}
+                                >
+                                  <span className="timelineEventText">{eventLabel(a)}</span>
+                                  <span className="timelineDurationPill">{fmtDuration(duration)}</span>
+                                </button>
+                              );
+                            })}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              ))}
+
+              {rows.length === 0 && <div className="hist-empty">Aucun clip à afficher.</div>}
+            </div>
+          </div>
         </div>
       </div>
     );
@@ -8124,15 +8253,240 @@ function Style() {
       .historyActionHeadline { display:flex; gap:10px; align-items:baseline; margin-bottom:7px; }.historyActionHeadline strong{font-size:12px}.historyActionHeadline em{font-size:10px;color:#8490a7;font-style:normal}
       .historyTags { display:flex; flex-wrap:wrap; gap:5px; }.historyTag{font-style:normal;border:1px solid #35415a;border-radius:999px;padding:4px 7px;background:#172238;color:#d8dfec;font-size:9px;font-weight:850;text-transform:capitalize}.historyTag.attaque{background:rgba(255,122,24,.14);border-color:#ff7a18;color:#ffad67}.historyTag.defense{background:rgba(50,183,239,.13);border-color:#32b7ef;color:#79d5fa}.historyTag.system{border-color:#7c5cff}.historyTag.tempo{border-color:#d4a24c;color:#f4c665}.historyTag.made{border-color:#22c55e;color:#6ee7a0}.historyTag.missed{border-color:#ef4444;color:#fb8a8a}.historyTag.custom{border-color:#d4a24c;background:rgba(212,162,76,.12)}
       .historyActionButtons { display:flex; gap:5px; }.historyActionButtons button{width:32px;height:32px;border-radius:8px}
-      .proTimeline { min-width:760px; }.proTimelineToolbar { display:flex;justify-content:space-between;align-items:center;margin-bottom:10px}.proTimelineToolbar b,.proTimelineToolbar span{display:block}.proTimelineToolbar b{color:#fff}.proTimelineToolbar span{font-size:10px;color:#7f8ca3;margin-top:3px}.proTimelineTools{display:flex;gap:6px}
-      .timelineRuler { display:grid;grid-template-columns:150px minmax(0,1fr);margin-bottom:5px}.timelineRulerLabel{font-size:9px;color:#76839b;padding:0 8px}.timelineRulerTrack{position:relative;height:22px;border-bottom:1px solid #2b3549}.timelineRulerTrack span{position:absolute;transform:translateX(-50%);font-size:8px;color:#6e7b92;bottom:4px}
-      .timelineGroup { margin-bottom:8px;border:1px solid #202b3f;border-radius:9px;overflow:hidden}.timelineGroupTitle{padding:5px 9px;background:#101827;color:#d4a24c;font-size:9px;font-weight:900;text-transform:uppercase;letter-spacing:.08em}
-      .timelineLane { display:grid;grid-template-columns:150px minmax(0,1fr);min-height:34px;border-top:1px solid #1e293b}.timelineLane.hidden{min-height:27px;opacity:.55}.timelineLaneLabel{display:grid;grid-template-columns:8px minmax(0,1fr) auto;gap:7px;align-items:center;border:0;border-right:1px solid #273247;background:#0d1524;color:#dbe3ef;text-align:left;padding:0 9px;cursor:pointer}.timelineLaneLabel i{width:8px;height:8px;border-radius:2px}.timelineLaneLabel span{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:10px}.timelineLaneLabel b{font-size:9px;color:#71809a}.timelineLaneTrack{position:relative;min-height:34px;background:repeating-linear-gradient(90deg,transparent 0,transparent calc(10% - 1px),rgba(255,255,255,.025) calc(10% - 1px),rgba(255,255,255,.025) 10%)}
-      .timelineEventBlock{position:absolute;top:7px;height:20px;min-width:7px;border:1px solid rgba(255,255,255,.32);border-radius:4px;opacity:.92;cursor:pointer;padding:0;box-shadow:0 2px 5px rgba(0,0,0,.3)}.timelineEventBlock:hover{transform:translateY(-2px);z-index:3}.timelineEventBlock span{font-size:8px;font-weight:900;color:#fff;text-shadow:0 1px 2px #000}.proTimeline.compact .timelineLane,.proTimeline.compact .timelineLaneTrack{min-height:25px}.proTimeline.compact .timelineEventBlock{top:4px;height:17px}
+      .proTimeline {
+        min-width: 760px;
+        height: 100%;
+        display: flex;
+        flex-direction: column;
+        overflow: hidden;
+        background: #080e19;
+      }
+      .proTimelineToolbar {
+        flex: 0 0 auto;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 12px;
+        padding: 9px 10px;
+        border-bottom: 1px solid #222e42;
+        background: linear-gradient(180deg,#101827,#0b1220);
+      }
+      .proTimelineToolbar b,.proTimelineToolbar span{display:block}
+      .proTimelineToolbar b{color:#fff;font-size:12px}
+      .proTimelineToolbar>div:first-child>span{font-size:9px;color:#7f8ca3;margin-top:3px}
+      .proTimelineTools{display:flex;align-items:center;gap:6px}
+      .proTimelineTools>button,.timelineZoomTools button{
+        border:1px solid #303b52;
+        border-radius:7px;
+        background:#131c2d;
+        color:#aeb9ce;
+        padding:6px 9px;
+        font-size:9px;
+        font-weight:850;
+        cursor:pointer;
+      }
+      .proTimelineTools>button.on{border-color:var(--gold);color:var(--gold);background:rgba(212,162,76,.1)}
+      .proTimelineTools button:disabled{opacity:.35;cursor:not-allowed}
+      .timelineZoomTools{
+        height:29px;
+        display:flex;
+        align-items:center;
+        border:1px solid #303b52;
+        border-radius:8px;
+        overflow:hidden;
+        background:#0d1524;
+      }
+      .timelineZoomTools button{height:27px;min-width:30px;padding:0;border:0;border-radius:0;background:transparent}
+      .timelineZoomTools button:hover:not(:disabled){background:#1a263c;color:#fff}
+      .timelineZoomTools span{min-width:35px;text-align:center;color:var(--gold);font-size:9px;font-weight:950}
+
+      .timelineHorizontalScroll{
+        flex:1;
+        min-height:0;
+        overflow:auto;
+        scrollbar-color:#3b4a65 #0a101c;
+        scrollbar-width:thin;
+      }
+      .timelineCanvas{
+        min-width:100%;
+        transition:width .16s ease;
+      }
+
+      .timelineRuler{
+        position:sticky;
+        top:0;
+        z-index:8;
+        display:grid;
+        grid-template-columns:142px minmax(0,1fr);
+        height:28px;
+        background:#0a111e;
+        border-bottom:1px solid #2b3549;
+      }
+      .timelineRulerLabel{
+        display:flex;
+        align-items:center;
+        padding:0 9px;
+        border-right:1px solid #273247;
+        font-size:8px;
+        font-weight:850;
+        color:#76839b;
+        text-transform:uppercase;
+        letter-spacing:.04em;
+      }
+      .timelineRulerTrack{
+        position:relative;
+        height:28px;
+        background:
+          repeating-linear-gradient(
+            90deg,
+            transparent 0,
+            transparent calc(5% - 1px),
+            rgba(255,255,255,.035) calc(5% - 1px),
+            rgba(255,255,255,.035) 5%
+          );
+      }
+      .timelineRulerTrack span{
+        position:absolute;
+        bottom:5px;
+        transform:translateX(-50%);
+        font-size:7px;
+        color:#748198;
+        font-variant-numeric:tabular-nums;
+        white-space:nowrap;
+      }
+
+      .timelineMatrix{padding-bottom:8px}
+      .timelineGroup{
+        margin:0;
+        border:0;
+        border-bottom:1px solid #202b3f;
+        border-radius:0;
+        overflow:visible;
+      }
+      .timelineGroupTitle{
+        position:sticky;
+        left:0;
+        z-index:6;
+        width:142px;
+        box-sizing:border-box;
+        padding:4px 9px;
+        border-right:1px solid #273247;
+        background:#101827;
+        color:#d4a24c;
+        font-size:8px;
+        font-weight:950;
+        text-transform:uppercase;
+        letter-spacing:.09em;
+      }
+
+      .timelineLane{
+        display:grid;
+        grid-template-columns:142px minmax(0,1fr);
+        min-height:37px;
+        border-top:1px solid #1e293b;
+      }
+      .timelineLane.hidden{min-height:27px;opacity:.5}
+      .timelineLaneLabel{
+        position:sticky;
+        left:0;
+        z-index:5;
+        display:grid;
+        grid-template-columns:8px minmax(0,1fr) auto;
+        gap:7px;
+        align-items:center;
+        border:0;
+        border-right:1px solid #273247;
+        background:#0d1524;
+        color:#dbe3ef;
+        text-align:left;
+        padding:0 9px;
+        cursor:pointer;
+      }
+      .timelineLaneLabel:hover{background:#121d30}
+      .timelineLaneLabel i{width:8px;height:8px;border-radius:2px}
+      .timelineLaneLabel span{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:9px;font-weight:800}
+      .timelineLaneLabel b{font-size:8px;color:#71809a}
+
+      .timelineLaneTrack{
+        position:relative;
+        min-height:37px;
+        overflow:visible;
+        background:
+          repeating-linear-gradient(
+            90deg,
+            transparent 0,
+            transparent calc(5% - 1px),
+            rgba(255,255,255,.025) calc(5% - 1px),
+            rgba(255,255,255,.025) 5%
+          );
+      }
+
+      .timelineEventBlock{
+        position:absolute;
+        top:5px;
+        height:27px;
+        min-width:16px;
+        max-width:none;
+        border:1px solid rgba(255,255,255,.28);
+        border-radius:4px;
+        opacity:.96;
+        cursor:pointer;
+        padding:0 4px;
+        box-shadow:0 1px 4px rgba(0,0,0,.42);
+        overflow:visible;
+        transition:filter .1s ease,transform .1s ease,outline .1s ease;
+      }
+      .timelineEventBlock:hover{
+        filter:brightness(1.18);
+        transform:translateY(-2px);
+        outline:1px solid rgba(255,255,255,.5);
+        z-index:12;
+      }
+      .timelineEventBlock.attack{box-shadow:inset 0 -2px 0 rgba(255,122,24,.8),0 1px 4px rgba(0,0,0,.42)}
+      .timelineEventBlock.defense{box-shadow:inset 0 -2px 0 rgba(50,183,239,.9),0 1px 4px rgba(0,0,0,.42)}
+
+      .timelineEventText{
+        display:block;
+        overflow:hidden;
+        text-overflow:ellipsis;
+        white-space:nowrap;
+        color:#fff;
+        font-size:7px;
+        font-weight:900;
+        text-shadow:0 1px 2px rgba(0,0,0,.9);
+        text-align:left;
+        line-height:25px;
+      }
+      .timelineDurationPill{
+        position:absolute;
+        top:-7px;
+        right:-6px;
+        min-width:26px;
+        height:14px;
+        display:grid;
+        place-items:center;
+        padding:0 4px;
+        border:1px solid rgba(255,255,255,.28);
+        border-radius:999px;
+        background:#060b14;
+        color:#fff;
+        font-size:6.5px;
+        font-weight:950;
+        line-height:1;
+        font-variant-numeric:tabular-nums;
+        box-shadow:0 2px 4px rgba(0,0,0,.45);
+        pointer-events:none;
+      }
+
+      .proTimeline.compact .timelineLane,.proTimeline.compact .timelineLaneTrack{min-height:27px}
+      .proTimeline.compact .timelineEventBlock{top:4px;height:20px}
+      .proTimeline.compact .timelineEventText{line-height:18px}
+      .proTimeline.compact .timelineDurationPill{top:-6px}
+
       @media(max-width:900px){.historyToolbar{grid-template-columns:1fr}.historyActionCard{grid-template-columns:1fr}.historyActionButtons{justify-content:flex-end}}
       .timelinePull { position: fixed; left: 50%; bottom: 12px; transform: translateX(-50%); z-index: 1001; border: 1px solid rgba(212,162,76,.65); background: rgba(10,13,25,.96); color: var(--gold); border-radius: 999px; height: 28px; padding: 0 16px; font-size: 12px; font-weight: 950; cursor: pointer; box-shadow: 0 8px 22px rgba(0,0,0,.35); }
-      .timelinePull.open { bottom: 226px; }
-      .live-strip.timelineOnly { position: fixed; left: 10px; right: 10px; bottom: 8px; z-index: 1000; height: 210px; margin: 0; box-shadow: 0 -18px 40px rgba(0,0,0,.35); animation: slideTimeline .18s ease-out; }
+      .timelinePull.open { bottom: 356px; }
+      .live-strip.timelineOnly { position: fixed; left: 10px; right: 10px; bottom: 8px; z-index: 1000; height: 340px; margin: 0; box-shadow: 0 -18px 40px rgba(0,0,0,.35); animation: slideTimeline .18s ease-out; }
       @keyframes slideTimeline { from { transform: translateY(105%); opacity: .4; } to { transform: translateY(0); opacity: 1; } }
       .floatingPanel { position: fixed; z-index: 1200; right: 14px; top: 88px; width: min(620px, calc(100vw - 28px)); max-height: calc(100vh - 120px); background: rgba(13,17,31,.98); border: 1px solid var(--border); border-radius: 16px; box-shadow: 0 24px 70px rgba(0,0,0,.45); overflow: hidden; display: flex; flex-direction: column; }
       .historyPanel { width: min(840px, calc(100vw - 28px)); }
