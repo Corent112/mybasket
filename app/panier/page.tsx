@@ -1041,6 +1041,11 @@ setLoading(false);
         player_positions: playerPositionMap,
         club_logo_url: resolvedClubLogo,
         team_reference_id: selectedTeamId || null,
+
+        // Snapshot de secours : le PDF peut récupérer les compositions ici
+        // même si une ancienne version de Supabase / du typage ne restitue
+        // pas correctement team_composition_blocks.
+        team_composition_blocks: compositionBlocks,
       }),
       visibility: "private",
       pdf_generated: true,

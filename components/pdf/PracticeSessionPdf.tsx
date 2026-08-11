@@ -18,8 +18,9 @@ type Session = {
   location: string | null;
   club_logo_url: string | null;
   mybasket_logo_url: string | null;
-  team_composition_blocks?: CompositionBlock[] | null;
-  player_groups?: Record<string, string[]> | null;
+  team_composition_blocks?: CompositionBlock[] | string | null;
+  player_groups?: Record<string, string[]> | string | null;
+  notes?: string | Record<string, unknown> | null;
 };
 
 type Player = {
@@ -69,61 +70,92 @@ function playerId(player: Player) {
 }
 
 function compositionBlocks(session: Session): CompositionBlock[] {
-  const cleanBlocks = (blocks: CompositionBlock[]) =>
-    blocks
+  const normalizeBlocks = (raw: unknown): CompositionBlock[] => {
+    let value = raw;
+
+    if (typeof value === "string") {
+      try {
+        value = JSON.parse(value);
+      } catch {
+        return [];
+      }
+    }
+
+    if (!Array.isArray(value)) return [];
+
+    return (value as CompositionBlock[])
       .map((block) => ({
         ...block,
-        teams: (block.teams || []).filter(
-          (team) =>
-            Array.isArray(team.playerIds) &&
-            team.playerIds.some((id) => Boolean(String(id || "").trim())),
-        ),
+        title: String(block?.title || "Composition"),
+        teams: Array.isArray(block?.teams)
+          ? block.teams
+              .map((team) => ({
+                ...team,
+                name: String(team?.name || "Équipe"),
+                playerIds: Array.isArray(team?.playerIds)
+                  ? team.playerIds.map(String).filter(Boolean)
+                  : [],
+              }))
+              .filter((team) => team.playerIds.length > 0)
+          : [],
       }))
       .filter((block) => block.teams.length > 0);
+  };
 
-  let rawBlocks: unknown = session.team_composition_blocks;
+  // 1. Source normale : colonne JSONB practice_sessions.team_composition_blocks.
+  const direct = normalizeBlocks(session.team_composition_blocks);
+  if (direct.length > 0) return direct;
 
-  // Compatibilité : selon l'historique de la base, le JSON peut parfois
-  // revenir sous forme de chaîne. On le reparcourt sans changer les données.
-  if (typeof rawBlocks === "string") {
+  // 2. Snapshot de secours enregistré dans practice_sessions.notes.
+  let notes: unknown = session.notes;
+  if (typeof notes === "string") {
     try {
-      rawBlocks = JSON.parse(rawBlocks);
+      notes = JSON.parse(notes);
     } catch {
-      rawBlocks = [];
+      notes = null;
     }
   }
 
-  if (Array.isArray(rawBlocks) && rawBlocks.length > 0) {
-    return cleanBlocks(rawBlocks as CompositionBlock[]);
+  if (notes && typeof notes === "object" && !Array.isArray(notes)) {
+    const fromNotes = normalizeBlocks(
+      (notes as Record<string, unknown>).team_composition_blocks,
+    );
+    if (fromNotes.length > 0) return fromNotes;
   }
 
-  let rawGroups: unknown = session.player_groups;
+  // 3. Compatibilité avec l'ancien player_groups.
+  let legacyGroups: unknown = session.player_groups;
 
-  if (typeof rawGroups === "string") {
+  if (typeof legacyGroups === "string") {
     try {
-      rawGroups = JSON.parse(rawGroups);
+      legacyGroups = JSON.parse(legacyGroups);
     } catch {
-      rawGroups = {};
+      legacyGroups = {};
     }
   }
 
-  const legacy =
-    rawGroups && typeof rawGroups === "object" && !Array.isArray(rawGroups)
-      ? Object.entries(rawGroups as Record<string, unknown>).map(([name, ids]) => ({
-          name,
-          playerIds: Array.isArray(ids) ? ids.map(String) : [],
-        }))
-      : [];
+  if (
+    legacyGroups &&
+    typeof legacyGroups === "object" &&
+    !Array.isArray(legacyGroups)
+  ) {
+    const teams = Object.entries(
+      legacyGroups as Record<string, unknown>,
+    ).map(([name, ids]) => ({
+      name,
+      playerIds: Array.isArray(ids) ? ids.map(String).filter(Boolean) : [],
+    }));
 
-  return legacy.length
-    ? cleanBlocks([
-        {
-          title: "Équipes de travail",
-          playersPerTeam: 0,
-          teams: legacy,
-        },
-      ])
-    : [];
+    return normalizeBlocks([
+      {
+        title: "Équipes de travail",
+        playersPerTeam: 0,
+        teams,
+      },
+    ]);
+  }
+
+  return [];
 }
 
 export default function PracticeSessionPdf({ session, players, exercises }: Props) {
@@ -254,15 +286,11 @@ export default function PracticeSessionPdf({ session, players, exercises }: Prop
                     return (
                       <View key={team.id || `${team.name}-${teamIndex}`} style={styles.teamCard}>
                         <Text style={styles.teamTitle}>{team.name || `Équipe ${teamIndex + 1}`}</Text>
-                        {teamPlayers.length > 0 ? (
-                          teamPlayers.map((player) => (
-                            <Text key={playerId(player)} style={styles.teamPlayer}>
-                              {playerName(player)}
-                            </Text>
-                          ))
-                        ) : (
-                          <Text style={styles.teamPlayer}>—</Text>
-                        )}
+                        {teamPlayers.map((player) => (
+                          <Text key={playerId(player)} style={styles.teamPlayer}>
+                            {playerName(player)}
+                          </Text>
+                        ))}
                       </View>
                     );
                   })}
