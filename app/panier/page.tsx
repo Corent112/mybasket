@@ -1418,7 +1418,7 @@ setLoading(false);
         return `
           <section class="compositionBlock">
             <div class="compositionFormat">${formatText(block.title || "Composition")}</div>
-            <div class="compositionTeamsPdf">
+            <div class="compositionTeamsPdf teamsCount${Math.min(teamsWithPlayers.length, 5)}">
               ${teamsWithPlayers
                 .map(
                   (team) => `
@@ -1726,12 +1726,35 @@ setLoading(false);
               color: #6b1a2c;
               font-size: 11px;
               font-weight: 900;
+              text-align: center;
             }
 
             .compositionTeamsPdf {
               display: grid;
-              grid-template-columns: repeat(3, minmax(0, 1fr));
               gap: 5px;
+              justify-content: center;
+              margin-left: auto;
+              margin-right: auto;
+            }
+
+            .compositionTeamsPdf.teamsCount1 {
+              grid-template-columns: minmax(0, 33.333%);
+            }
+
+            .compositionTeamsPdf.teamsCount2 {
+              grid-template-columns: repeat(2, minmax(0, 33.333%));
+            }
+
+            .compositionTeamsPdf.teamsCount3 {
+              grid-template-columns: repeat(3, minmax(0, 1fr));
+            }
+
+            .compositionTeamsPdf.teamsCount4 {
+              grid-template-columns: repeat(4, minmax(0, 1fr));
+            }
+
+            .compositionTeamsPdf.teamsCount5 {
+              grid-template-columns: repeat(5, minmax(0, 1fr));
             }
 
             .compositionTeamPdf {
