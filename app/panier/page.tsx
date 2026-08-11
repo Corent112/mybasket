@@ -885,6 +885,7 @@ setLoading(false);
     event: React.DragEvent<HTMLElement>,
     playerId: string,
   ) {
+    event.dataTransfer.setData("application/x-mybasket-player", playerId);
     event.dataTransfer.setData("text/plain", playerId);
     event.dataTransfer.effectAllowed = "move";
   }
@@ -895,7 +896,10 @@ setLoading(false);
     teamId: string,
   ) {
     event.preventDefault();
-    const playerId = event.dataTransfer.getData("text/plain");
+    event.stopPropagation();
+    const playerId =
+      event.dataTransfer.getData("application/x-mybasket-player") ||
+      event.dataTransfer.getData("text/plain");
     if (!playerId) return;
     placePlayerInComposition(blockId, teamId, playerId);
   }
@@ -1290,8 +1294,21 @@ setLoading(false);
                 .join("")
             : `<div class="emptySchema">Schéma</div>`;
 
+        const textLength =
+          String(item.session_deroulement ?? "").length +
+          String(item.session_consignes_variantes ?? "").length;
+
+        const densityClass =
+          textLength > 900
+            ? " textVeryDense"
+            : textLength > 550
+              ? " textDense"
+              : textLength > 300
+                ? " textMedium"
+                : "";
+
         return `
-          <tr>
+          <tr class="${densityClass.trim()}">
             <td class="who">${coachCode(item.assigned_to)}</td>
             <td class="time">${duration}'</td>
             <td class="situation">
@@ -1559,61 +1576,101 @@ setLoading(false);
 
             .explain {
               width: 360px;
-              font-size: 15px;
+              font-size: 13px;
             }
 
             .explain strong {
-              font-size: 17px;
+              font-size: 15px;
             }
 
             .explain p,
             .instructions p {
-              margin: 8px 0 0;
-              line-height: 1.45;
+              margin: 5px 0 0;
+              line-height: 1.28;
             }
 
             .instructions {
               width: 300px;
               color: #555;
+              font-size: 13px;
+            }
+
+            tr.textMedium .explain,
+            tr.textMedium .instructions {
+              font-size: 12px;
+            }
+
+            tr.textMedium .explain strong {
+              font-size: 14px;
+            }
+
+            tr.textDense .explain,
+            tr.textDense .instructions {
+              font-size: 10.5px;
+            }
+
+            tr.textDense .explain strong {
+              font-size: 12.5px;
+            }
+
+            tr.textDense .explain p,
+            tr.textDense .instructions p {
+              line-height: 1.18;
+              margin-top: 3px;
+            }
+
+            tr.textVeryDense .explain,
+            tr.textVeryDense .instructions {
+              font-size: 9px;
+            }
+
+            tr.textVeryDense .explain strong {
+              font-size: 11px;
+            }
+
+            tr.textVeryDense .explain p,
+            tr.textVeryDense .instructions p {
+              line-height: 1.12;
+              margin-top: 2px;
             }
 
             .compositionsPdf {
-              margin-top: 18px;
-              border-top: 2px solid #6b1a2c;
-              padding-top: 10px;
+              margin-top: 10px;
+              border-top: 1px solid #6b1a2c;
+              padding-top: 6px;
               page-break-inside: avoid;
               break-inside: avoid;
             }
 
             .compositionsPdfTitle {
-              margin: 0 0 10px;
+              margin: 0 0 6px;
               text-align: center;
               color: #6b1a2c;
-              font-size: 18px;
+              font-size: 13px;
               font-weight: 900;
               letter-spacing: 1.5px;
             }
 
             .compositionBlock {
-              margin-top: 10px;
+              margin-top: 6px;
               border: 1px solid #d9c9c1;
-              border-radius: 8px;
-              padding: 10px;
+              border-radius: 6px;
+              padding: 6px;
               page-break-inside: avoid;
               break-inside: avoid;
             }
 
             .compositionFormat {
-              margin-bottom: 8px;
+              margin-bottom: 5px;
               color: #6b1a2c;
-              font-size: 15px;
+              font-size: 11px;
               font-weight: 900;
             }
 
             .compositionTeamsPdf {
               display: grid;
               grid-template-columns: repeat(3, minmax(0, 1fr));
-              gap: 8px;
+              gap: 5px;
             }
 
             .compositionTeamPdf {
@@ -1624,27 +1681,27 @@ setLoading(false);
             }
 
             .compositionTeamTitle {
-              padding: 7px 9px;
+              padding: 4px 6px;
               border-bottom: 1px solid #ddd;
               background: #f8f5f3;
               color: #111;
-              font-size: 13px;
+              font-size: 10px;
               font-weight: 900;
             }
 
             .compositionTeamPlayers {
               display: grid;
-              gap: 4px;
-              padding: 7px;
+              gap: 2px;
+              padding: 4px;
             }
 
             .compositionPlayerPdf {
               width: 100%;
-              padding: 6px 8px;
+              padding: 3px 5px;
               border: 1px solid #eadfd9;
-              border-radius: 5px;
+              border-radius: 4px;
               background: white;
-              font-size: 12px;
+              font-size: 9px;
               font-weight: 700;
             }
 
@@ -2300,7 +2357,11 @@ setLoading(false);
 
                           <div
                             className="teamPlayerChoices teamDropZone"
-                            onDragOver={(event) => event.preventDefault()}
+                            onDragEnter={(event) => event.preventDefault()}
+                            onDragOver={(event) => {
+                              event.preventDefault();
+                              event.dataTransfer.dropEffect = "move";
+                            }}
                             onDrop={(event) =>
                               compositionDrop(event, block.id, team.id)
                             }
@@ -2325,7 +2386,23 @@ setLoading(false);
                                   }
                                   title="Glisser vers une autre équipe · double-clic pour retirer"
                                 >
-                                  {playerName(player)}
+                                  <span className="compositionPlayerName">
+                                    {playerName(player)}
+                                  </span>
+                                  <span
+                                    className="compositionPlayerRemove"
+                                    role="button"
+                                    aria-label={`Retirer ${playerName(player)} de ${team.name}`}
+                                    title="Retirer le joueur"
+                                    onMouseDown={(event) => event.stopPropagation()}
+                                    onClick={(event) => {
+                                      event.preventDefault();
+                                      event.stopPropagation();
+                                      removePlayerFromComposition(block.id, player.id);
+                                    }}
+                                  >
+                                    ×
+                                  </span>
                                 </button>
                               );
                             })}
@@ -2391,9 +2468,12 @@ setLoading(false);
         .playersToPlace{margin-top:12px;padding:12px;border:1px solid #eadbd3;border-radius:14px;background:#fffaf8}
         .playersToPlaceTitle{margin-bottom:9px;color:#6b1a2c;font-size:11px;font-weight:900}
         .playersToPlaceList{display:grid;grid-template-columns:1fr;gap:7px;min-height:38px;align-items:center}
-        .compositionPlayerChip{width:100%;display:flex;align-items:center;justify-content:flex-start;box-sizing:border-box;border:1px solid #e1d5ce;border-radius:9px;background:#fff;padding:9px 11px;color:#211b1d;font-size:12px;font-weight:800;cursor:grab;text-align:left}
+        .compositionPlayerChip{width:100%;display:flex;align-items:center;justify-content:flex-start;gap:8px;box-sizing:border-box;border:1px solid #e1d5ce;border-radius:9px;background:#fff;padding:9px 11px;color:#211b1d;font-size:12px;font-weight:800;cursor:grab;text-align:left}
         .compositionPlayerChip:active{cursor:grabbing}
         .compositionPlayerChip.assigned{background:#fff8e8;border-color:#e1b948}
+        .compositionPlayerName{min-width:0;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+        .compositionPlayerRemove{flex:0 0 20px;width:20px;height:20px;display:grid;place-items:center;border-radius:999px;background:#dc2626;color:#fff;font-size:14px;font-weight:900;line-height:1;cursor:pointer;user-select:none}
+        .compositionPlayerRemove:hover{background:#b91c1c}
         .allPlayersPlaced,.dropHint{color:#887b74;font-size:12px;font-weight:700}
         .formatSelectLabel{display:flex;align-items:center;gap:8px;font-size:11px;font-weight:900;color:#6b1a2c}
         .formatSelectLabel select{min-width:170px;border:1px solid #ded4ce;border-radius:9px;padding:8px 10px;background:#fff;color:#111;font-weight:800}
