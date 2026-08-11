@@ -3195,14 +3195,31 @@ export default function PriseStatsProPage() {
         setRunning(false); // sécurité chrono depuis la fenêtre détachée
       }
       if (data.type === 'closed') {
-        detachedTimeRef.current = Number(data.time || detachedTimeRef.current || 0);
-        detachedPlayingRef.current = false;
-        if (videoRef.current) {
-          videoRef.current.currentTime = Number(data.time || videoRef.current.currentTime || 0);
-          if (data.playing) videoRef.current.play().catch(() => {});
+        const returnTime = Number.isFinite(Number(data.time))
+          ? Number(data.time)
+          : detachedTimeRef.current || 0;
+        const returnPlaying =
+          typeof data.playing === 'boolean'
+            ? data.playing
+            : detachedPlayingRef.current;
+
+        detachedTimeRef.current = returnTime;
+        detachedPlayingRef.current = returnPlaying;
+
+        const mainVideo = videoRef.current;
+        if (mainVideo) {
+          try { mainVideo.currentTime = Math.max(0, returnTime); } catch { /* noop */ }
+          if (returnPlaying) {
+            mainVideo.play().catch(() => {});
+          } else {
+            mainVideo.pause();
+          }
         }
+
         detachedVideoWindowRef.current = null;
-        setVideoDetached(false); // AJOUT · le lecteur principal reprend la main
+        detachedVideoChannelRef.current?.close();
+        detachedVideoChannelRef.current = null;
+        setVideoDetached(false); // le lecteur principal reprend exactement au même point
       }
     };
 
@@ -3234,10 +3251,28 @@ export default function PriseStatsProPage() {
       }
       const channel = new BroadcastChannel(${JSON.stringify(channelName)});
       const v = document.getElementById('v');
-      v.currentTime = ${currentTime};
-      ${wasPlaying ? "v.play().catch(()=>{});" : ""}
+      const initialTime = ${currentTime};
+      const initialPlaying = ${wasPlaying ? "true" : "false"};
       let lastSent = 0;
       let clipEnd = null;
+
+      // Le navigateur peut ignorer currentTime tant que les métadonnées ne sont
+      // pas chargées. On applique donc le point de départ seulement quand la vidéo
+      // est réellement seekable, puis on restaure lecture/pause.
+      const restoreInitialState = () => {
+        try { v.currentTime = Math.max(0, initialTime); } catch {}
+        if (initialPlaying) {
+          const start = () => v.play().catch(()=>{});
+          if (v.readyState >= 2) start();
+          else v.addEventListener('canplay', start, { once: true });
+        } else {
+          v.pause();
+        }
+        channel.postMessage({type:'time',time:initialTime,playing:initialPlaying});
+      };
+
+      if (v.readyState >= 1) restoreInitialState();
+      else v.addEventListener('loadedmetadata', restoreInitialState, { once: true });
       v.playbackRate = ${'${playbackRate}'};
       const sendTime = () => { const now = Date.now(); if(now-lastSent>250){ channel.postMessage({type:'time',time:v.currentTime,playing:!v.paused}); lastSent=now; } };
       // Commandes venues de la fenêtre principale (verrou : on n'y répond pas en boucle).
@@ -3255,9 +3290,53 @@ export default function PriseStatsProPage() {
       v.addEventListener('play', ()=>channel.postMessage({type:'play',time:v.currentTime}));
       v.addEventListener('pause', ()=>channel.postMessage({type:'pause',time:v.currentTime}));
       window.addEventListener('keydown', (e)=>{ if(e.code==='Space'){ e.preventDefault(); if(v.paused){v.play()}else{v.pause()} } });
-      window.addEventListener('beforeunload', ()=>channel.postMessage({type:'closed',time:v.currentTime,playing:!v.paused}));
+      let closingSent = false;
+      const sendClosedState = () => {
+        if (closingSent) return;
+        closingSent = true;
+        try {
+          channel.postMessage({
+            type:'closed',
+            time:Number.isFinite(v.currentTime) ? v.currentTime : initialTime,
+            playing:!v.paused
+          });
+        } catch {}
+      };
+      window.addEventListener('pagehide', sendClosedState);
+      window.addEventListener('beforeunload', sendClosedState);
+      window.addEventListener('unload', sendClosedState);
     <\/script></body></html>`);
     w.document.close();
+
+    // Fallback navigateur : certains navigateurs ne laissent pas le message
+    // beforeunload/pagehide partir quand la popup est fermée via la croix.
+    // Le parent surveille donc aussi la fermeture et restaure le dernier timecode
+    // reçu ainsi que l'état lecture/pause.
+    const detachedCloseWatcher = window.setInterval(() => {
+      if (!w.closed) return;
+      window.clearInterval(detachedCloseWatcher);
+
+      if (detachedVideoWindowRef.current !== w) return;
+
+      const returnTime = detachedTimeRef.current || currentTime;
+      const returnPlaying = detachedPlayingRef.current;
+      const mainVideo = videoRef.current;
+
+      if (mainVideo) {
+        try { mainVideo.currentTime = Math.max(0, returnTime); } catch { /* noop */ }
+        if (returnPlaying) {
+          mainVideo.play().catch(() => {});
+        } else {
+          mainVideo.pause();
+        }
+      }
+
+      detachedVideoWindowRef.current = null;
+      detachedVideoChannelRef.current?.close();
+      detachedVideoChannelRef.current = null;
+      setVideoDetached(false);
+    }, 250);
+
     flash('Vidéo détachée au même timecode');
   };
   useEffect(() => {
