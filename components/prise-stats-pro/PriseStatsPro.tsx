@@ -80,6 +80,8 @@ interface Draft {
   opponentPlayerId?: string | null;
   opponentPlayerName?: string | null;
   opponentPlayerNumber?: string | null;
+  // Clip court commun Temps fort / Joueur / Tir.
+  eventClipStart?: number | null;
 }
 interface StatA extends Draft {
   id: string;
@@ -414,7 +416,7 @@ const emptyDraft = (): Draft => ({
   zone: '', courtX: null, courtY: null, reboundType: '', reboundPlayerId: null, assist: null, assistPlayerId: null, foulOutcome: '',
   // AJOUT §2
   playbookId: null, systemeSlot: null, systemeId: null, systemeName: null,
-  possessionStart: null, possessionEnd: null,
+  possessionStart: null, possessionEnd: null, eventClipStart: null,
   opponentPlayerId: null, opponentPlayerName: null, opponentPlayerNumber: null,
 });
 
@@ -1313,6 +1315,9 @@ export default function PriseStatsProPage() {
   const [analysisView, setAnalysisView] = useState<'timeline' | 'history'>('timeline');
   const [historyFiltersOpen, setHistoryFiltersOpen] = useState(false);
   const [historyExpanded, setHistoryExpanded] = useState<Record<string, boolean>>({});
+  const [favoriteClips, setFavoriteClips] = useState<Record<string, boolean>>({});
+  const toggleFavoriteClip = (clipId: string) =>
+    setFavoriteClips((current) => ({ ...current, [clipId]: !current[clipId] }));
   const [historyAdvancedFilters, setHistoryAdvancedFilters] = useState<{
     contexts: string[];
     systems: string[];
@@ -1334,6 +1339,10 @@ export default function PriseStatsProPage() {
     players: [],
     rebounds: [],
   });
+  useEffect(() => {
+    if (showTimelinePanel && analysisView === 'history') pauseVideo();
+  }, [showTimelinePanel, analysisView]);
+
   const [timelineCompact, setTimelineCompact] = useState(false);
   const [timelineHiddenRows, setTimelineHiddenRows] = useState<Record<string, boolean>>({});
   // Timeline type Sportscode / LongoMatch : zoom horizontal du canevas.
@@ -3664,7 +3673,19 @@ export default function PriseStatsProPage() {
       possessionStart: vstamp.clipStart ?? null,
       possessionEnd: vstamp.clipEnd ?? null,
     };
-    const a: StatA = { ...d, ...enrich, id: uid(), clock: fmt(secs), q, lineup: onCourt.slice(), ...vstamp };
+    const a: StatA = {
+      ...d,
+      ...enrich,
+      id: uid(),
+      clock: fmt(secs),
+      q,
+      lineup: onCourt.slice(),
+      ...vstamp,
+      // clipStart/clipEnd = clip court commun Temps fort/Joueur/Tir.
+      // possessionStart/possessionEnd restent la possession entière (Système).
+      clipStart: d.eventClipStart ?? vstamp.clipStart ?? null,
+      clipEnd: vstamp.clipEnd ?? null,
+    };
     setActions((arr) => [...arr, a]);
     setPerQ((p) => { const cur = p[q] || { us: 0, them: 0 }; return { ...p, [q]: { us: cur.us + ptsOf(a), them: cur.them + themPtsOf(a) } }; });
     flash('Enregistré : ' + describe(a, find).t);
@@ -3806,8 +3827,16 @@ export default function PriseStatsProPage() {
     setStage('temps');
   };
   const tempsPick = (id: string) => {
-    if (id === 'autres') markClipStartBefore(5);
-    const d = { ...draft, tempsFort: id, coverage: '' };
+    const now = getRawCodingTime();
+    const possessionStart = possessionStartRef.current ?? 0;
+    // Convention LiveStats MyBasket :
+    // clic utilisateur = événement observé 2 s plus tôt ;
+    // clip court = encore 4 s avant cet événement.
+    // => début commun = clic - 6 s, borné au début de possession.
+    const commonEventStart =
+      draft.eventClipStart ??
+      (now == null ? null : Math.max(possessionStart, now - 6));
+    const d = { ...draft, tempsFort: id, coverage: '', eventClipStart: commonEventStart };
     if (id === 'pick-side' || id === 'pick-top') {
       setDraft(d);
       setStage('coverage');
@@ -3857,8 +3886,6 @@ export default function PriseStatsProPage() {
   }
 };
   const playerPick = (id: string) => {
-  markClipStartBefore(8);
-
   if (draft.context === "defense" && draft.actionType === "faute-commise") {
     setDraft({ ...draft, playerId: id });
     setStage("faute");
@@ -5060,7 +5087,14 @@ export default function PriseStatsProPage() {
                       <span className="htime">{periodLabel(a.q)} {a.clock}</span>
                       <span className="hbody"><b>{p ? `#${p.num} ${p.name}` : '—'}</b><em>{tags.label(a.tempsFort)} · {describe(a, find).t}</em></span>
                       <button className={`hplay ${hasClip ? 'has' : ''}`} title={hasClip ? 'Revoir le clip' : 'Clip à synchroniser'} onClick={() => { const list = actions.slice().reverse(); openClipModal('Historique des actions', list, list.findIndex((x) => x.id === a.id)); }}>▶</button>
-                      <button className="hadd" onClick={() => addToMontage(a)}>⭐</button>
+                      <button
+                      type="button"
+                      className={`hadd ${favoriteClips[`${a.id}::possession`] ? 'favorite' : ''}`}
+                      onClick={() => toggleFavoriteClip(`${a.id}::possession`)}
+                      title="Favori"
+                    >
+                      {favoriteClips[`${a.id}::possession`] ? '★' : '☆'}
+                    </button>
                     </div>
                   );
                 })}
@@ -5356,25 +5390,33 @@ export default function PriseStatsProPage() {
               SYSTEMES_JEU.find((item) => item.id === (a.systemeJeu || a.systemeSlot))?.label ||
               a.systemeSlot;
 
+            const commonShortStart = Math.max(
+              possessionStart,
+              Number(a.clipStart ?? a.possessionStart ?? possessionStart),
+            );
+            const commonShortEnd = possessionEnd;
+
             const eventClips = [
-              systemName ? { key: 'system', label: `Système · ${systemName}`, pre: 6, post: 4 } : null,
-              a.tempsFort ? { key: 'tempo', label: `Temps fort · ${tags.label(a.tempsFort)}`, pre: 6, post: 4 } : null,
-              a.actionType ? { key: 'action', label: `Action · ${String(a.actionType).replaceAll('-', ' ')}`, pre: 5, post: 3 } : null,
+              systemName ? { key: 'system', label: `Système · ${systemName}`, kind: 'system' as const } : null,
+              a.tempsFort ? { key: 'tempo', label: `Temps fort · ${tags.label(a.tempsFort)}`, kind: 'short' as const } : null,
+              a.playerId ? { key: 'player', label: `Joueur · ${p ? `#${p.num} ${p.name}` : a.playerId}`, kind: 'short' as const } : null,
+              (a.actionType === 'tir' || a.shotType) ? { key: 'shot', label: `Tir · ${a.shotType || 'Tir'}`, kind: 'short' as const } : null,
               a.shotResult ? {
                 key: 'result',
                 label: `Résultat · ${a.shotType || 'Tir'} ${a.shotResult === 'made' ? 'marqué' : a.shotResult === 'missed' ? 'raté' : a.shotResult}`,
-                pre: 5,
-                post: 3,
+                kind: 'short' as const,
+              } : null,
+              a.assist && a.assistPlayerId ? {
+                key: 'assist',
+                label: `Passe décisive · ${find(a.assistPlayerId) ? `#${find(a.assistPlayerId)!.num} ${find(a.assistPlayerId)!.name}` : a.assistPlayerId}`,
+                kind: 'short' as const,
               } : null,
               a.reboundType ? {
                 key: 'rebound',
                 label: `Rebond · ${a.reboundType === 'off' ? 'offensif' : a.reboundType === 'def' ? 'défensif' : a.reboundType}`,
-                pre: 3,
-                post: 3,
+                kind: 'short' as const,
               } : null,
-            ].filter(Boolean) as Array<{ key: string; label: string; pre: number; post: number }>;
-
-            const eventAnchor = Number(a.videoTime ?? a.clipEnd ?? a.possessionEnd ?? possessionStart);
+            ].filter(Boolean) as Array<{ key: string; label: string; kind: 'system' | 'short' }>;
 
             return (
               <div className="historyPossessionBlock" key={a.id}>
@@ -5438,17 +5480,15 @@ export default function PriseStatsProPage() {
                     </div>
 
                     {eventClips.map((clip) => {
-                      const miniStart = Math.max(possessionStart, eventAnchor - clip.pre);
-                      const miniEnd = Math.max(
-                        miniStart + 0.25,
-                        Math.min(possessionEnd, eventAnchor + clip.post),
-                      );
+                      const miniStart = clip.kind === 'system' ? possessionStart : commonShortStart;
+                      const miniEnd = Math.max(miniStart + 0.25, commonShortEnd);
                       const duration = Math.max(0.25, miniEnd - miniStart);
+                      const clipId = `${a.id}::${clip.key}`;
 
                       const miniAction: StatA = {
                         ...a,
-                        id: `${a.id}::${clip.key}`,
-                        videoTime: eventAnchor,
+                        id: clipId,
+                        videoTime: miniStart,
                         clipStart: miniStart,
                         clipEnd: miniEnd,
                         possessionStart: miniStart,
@@ -5456,13 +5496,21 @@ export default function PriseStatsProPage() {
                       };
 
                       return (
-                        <div className="historyMiniClip" key={clip.key}>
+                        <div className={`historyMiniClip clip-${clip.key}`} key={clip.key}>
                           <div className="historyMiniClipInfo">
                             <b>{clip.label}</b>
                             <small>{fmt(Math.round(miniStart))} → {fmt(Math.round(miniEnd))}</small>
                           </div>
                           <span className="historyMiniClipDuration">{duration.toFixed(1)}s</span>
-                          <button type="button" onClick={() => openClipModal(clip.label, [miniAction], 0)}>▶</button>
+                          <button type="button" className="miniPlay" onClick={() => openClipModal(clip.label, [miniAction], 0)}>▶</button>
+                          <button
+                            type="button"
+                            className={`miniFavorite ${favoriteClips[clipId] ? 'favorite' : ''}`}
+                            onClick={() => toggleFavoriteClip(clipId)}
+                            title="Favori"
+                          >
+                            {favoriteClips[clipId] ? '★' : '☆'}
+                          </button>
                         </div>
                       );
                     })}
@@ -8708,12 +8756,12 @@ function Style() {
       .historyWrittenList{flex:1;min-height:0;overflow:auto;padding-right:3px}.historyPossessionBlock{margin-bottom:6px;border:1px solid #29344a;border-radius:9px;overflow:hidden;background:#0c1422}.historyPossessionRow{display:grid;grid-template-columns:28px 95px minmax(0,1fr) auto;gap:8px;align-items:center;padding:8px}
       .historyExpand{width:24px;height:24px;border:1px solid #34415a;border-radius:6px;background:#111b2d;color:#d4a24c;font-size:16px;font-weight:900;cursor:pointer}.historyExpand.open{border-color:#d4a24c;background:rgba(212,162,76,.1)}.historyExpand:disabled{opacity:.25;cursor:default}
       .historyActionTime b,.historyActionTime span{display:block}.historyActionTime b{color:#fff;font-size:9px}.historyActionTime span{margin-top:3px;color:#d4a24c;font-size:7px;font-weight:900}
-      .historyActionHeadline{display:flex;align-items:baseline;gap:7px;margin-bottom:5px}.historyActionHeadline strong{font-size:10px}.historyActionHeadline em{color:#8692a8;font-size:8px;font-style:normal}
-      .historyTags{display:flex;gap:4px;flex-wrap:wrap}.historyTag{border:1px solid #35415a;border-radius:999px;padding:3px 6px;background:#172238;color:#d8dfec;font-size:7px;font-weight:850;text-transform:capitalize}.historyTag.attaque{border-color:#ff7a18;color:#ffad67}.historyTag.defense{border-color:#32b7ef;color:#79d5fa}.historyTag.system{border-color:#7c5cff}.historyTag.tempo{border-color:#d4a24c;color:#f4c665}.historyTag.made{border-color:#22c55e;color:#6ee7a0}.historyTag.missed{border-color:#ef4444;color:#fb8a8a}
+      .historyActionHeadline{display:flex;align-items:baseline;justify-content:center;gap:7px;margin-bottom:7px;text-align:center}.historyActionHeadline strong{font-size:10px}.historyActionHeadline em{color:#8692a8;font-size:8px;font-style:normal}
+      .historyTags{display:flex;gap:7px;flex-wrap:wrap;justify-content:center;align-items:center}.historyTag{border:1px solid #35415a;border-radius:999px;padding:3px 6px;background:#172238;color:#d8dfec;font-size:9px;font-weight:900;text-transform:capitalize;padding:5px 9px}.historyTag.attaque{border-color:#ff7a18;color:#ffad67}.historyTag.defense{border-color:#32b7ef;color:#79d5fa}.historyTag.system{border-color:#7c5cff}.historyTag.tempo{border-color:#d4a24c;color:#f4c665}.historyTag.made{border-color:#22c55e;color:#6ee7a0}.historyTag.missed{border-color:#ef4444;color:#fb8a8a}
       .historyActionButtons{display:flex;gap:4px;align-items:center}.historyActionButtons button{height:29px;border-radius:7px}.historyActionButtons .hplay{width:auto;padding:0 8px;display:inline-flex;align-items:center;gap:4px}.historyActionButtons .hplay span{font-size:7px;font-weight:900}
       .historyMiniClips{border-top:1px solid #273247;background:#080f1b;padding:6px 9px 8px 37px}.historyMiniClipsHead{display:flex;align-items:center;justify-content:space-between;margin-bottom:3px;color:#7e8ba1;font-size:7px;text-transform:uppercase;letter-spacing:.05em}.historyMiniClipsHead b{color:#d4a24c}
-      .historyMiniClip{display:grid;grid-template-columns:minmax(0,1fr) 45px 28px;gap:6px;align-items:center;min-height:32px;border-top:1px solid #1d293c;padding:4px 5px}.historyMiniClip:first-of-type{border-top:0}.historyMiniClipInfo{min-width:0}.historyMiniClipInfo b{display:block;color:#dfe6f2;font-size:8px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.historyMiniClipInfo small{display:block;margin-top:2px;color:#65738a;font-size:7px}
-      .historyMiniClipDuration{justify-self:end;border:1px solid #36445e;border-radius:999px;padding:3px 5px;color:#f4c665;background:#101827;font-size:7px;font-weight:900}.historyMiniClip button{width:26px;height:26px;border:1px solid #d4a24c;border-radius:6px;background:rgba(212,162,76,.08);color:#d4a24c;cursor:pointer}
+      .historyMiniClip{display:grid;grid-template-columns:minmax(0,1fr) 45px 28px 28px;gap:6px;align-items:center;min-height:32px;border-top:1px solid #1d293c;padding:4px 5px}.historyMiniClip:first-of-type{border-top:0}.historyMiniClipInfo{min-width:0}.historyMiniClipInfo b{display:block;color:#dfe6f2;font-size:8px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.historyMiniClipInfo small{display:block;margin-top:2px;color:#65738a;font-size:7px}
+      .historyMiniClipDuration{justify-self:end;border:1px solid #36445e;border-radius:999px;padding:3px 5px;color:#f4c665;background:#101827;font-size:7px;font-weight:900}.historyMiniClip button{width:26px;height:26px;border:1px solid #d4a24c;border-radius:6px;background:rgba(212,162,76,.08);color:#d4a24c;cursor:pointer}.historyMiniClip .miniFavorite,.historyActionButtons .hadd{font-size:17px;line-height:1;background:transparent;color:#d4a24c;border:1px solid #596278}.historyMiniClip .miniFavorite.favorite,.historyActionButtons .hadd.favorite{border-color:#d4a24c;color:#d4a24c;background:rgba(212,162,76,.10)}
       .timelinePull { position: fixed; left: 50%; bottom: 12px; transform: translateX(-50%); z-index: 1001; border: 1px solid rgba(212,162,76,.65); background: rgba(10,13,25,.96); color: var(--gold); border-radius: 999px; height: 28px; padding: 0 16px; font-size: 12px; font-weight: 950; cursor: pointer; box-shadow: 0 8px 22px rgba(0,0,0,.35); }
       .timelinePull.open { bottom: 356px; }
       .live-strip.timelineOnly { position: fixed; left: 10px; right: 10px; bottom: 8px; z-index: 1000; height: 340px; margin: 0; box-shadow: 0 -18px 40px rgba(0,0,0,.35); animation: slideTimeline .18s ease-out; }

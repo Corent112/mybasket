@@ -91,6 +91,8 @@ export default function ActionClipsModal(props: ActionClipsModalProps) {
   const [draw, setDraw] = useState(false);
   const [trimStart, setTrimStart] = useState<number | null>(null);
   const [trimEnd, setTrimEnd] = useState<number | null>(null);
+  const [clipPosition, setClipPosition] = useState(0);
+  const [clipPlaying, setClipPlaying] = useState(false);
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const stopRef = useRef<(() => void) | null>(null);
@@ -130,87 +132,30 @@ export default function ActionClipsModal(props: ActionClipsModalProps) {
     const v = videoRef.current;
     const start = syncedStartOf(current);
     const end = syncedEndOf(current);
-
     stopRef.current?.();
     stopRef.current = null;
-
     if (!v || start == null) return;
-
-    const safeStart = Math.max(0, start);
-    const safeEnd =
-      end != null && Number.isFinite(end)
-        ? Math.max(safeStart + 0.05, end)
-        : null;
-
-    let disposed = false;
-
-    const stopAtEnd = () => {
-      if (disposed || safeEnd == null) return;
-      if (v.currentTime >= safeEnd - 0.03) {
-        v.pause();
-        try { v.currentTime = safeEnd; } catch { /* noop */ }
-      }
-    };
-
-    const enforceBoundsOnPlay = () => {
-      if (disposed) return;
-      // Si l'utilisateur relance avec les contrôles natifs alors qu'il est
-      // sorti du clip (ou à sa fin), on repart TOUJOURS du début du clip.
-      if (
-        v.currentTime < safeStart - 0.08 ||
-        (safeEnd != null && v.currentTime >= safeEnd - 0.05)
-      ) {
-        try { v.currentTime = safeStart; } catch { /* noop */ }
-      }
-    };
-
-    const seekAndPlay = () => {
-      if (disposed) return;
-
-      const maxStart =
-        Number.isFinite(v.duration) && v.duration > 0
-          ? Math.min(safeStart, Math.max(0, v.duration - 0.05))
-          : safeStart;
-
-      const startPlayback = () => {
-        if (disposed) return;
-        v.play().catch(() => {});
-      };
-
-      try {
-        // fastSeek est plus fiable pour les gros fichiers quand disponible,
-        // puis currentTime garantit la position exacte.
-        const fastSeek = (v as HTMLVideoElement & { fastSeek?: (time: number) => void }).fastSeek;
-        if (typeof fastSeek === 'function') {
-          try { fastSeek.call(v, maxStart); } catch { /* noop */ }
+    try {
+      v.currentTime = Math.max(0, start);
+      setClipPosition(0);
+      setClipPlaying(true);
+      v.play().catch(() => setClipPlaying(false));
+    } catch { /* noop */ }
+    if (end != null) {
+      const onTick = () => {
+        setClipPosition(Math.max(0, Math.min(end - start, v.currentTime - start)));
+        if (v.currentTime >= end) {
+          v.currentTime = end;
+          v.pause();
+          setClipPlaying(false);
+          setClipPosition(Math.max(0, end - start));
+          v.removeEventListener('timeupdate', onTick);
+          stopRef.current = null;
         }
-        v.currentTime = maxStart;
-      } catch { /* noop */ }
-
-      if (Math.abs(v.currentTime - maxStart) <= 0.12) {
-        startPlayback();
-      } else {
-        v.addEventListener('seeked', startPlayback, { once: true });
-      }
-    };
-
-    v.addEventListener('timeupdate', stopAtEnd);
-    v.addEventListener('play', enforceBoundsOnPlay);
-
-    // Le point important : on ne cherche PAS avant que les métadonnées soient
-    // disponibles. Sinon Safari/Chrome peuvent remettre currentTime à 0.
-    if (v.readyState >= 1) {
-      seekAndPlay();
-    } else {
-      v.addEventListener('loadedmetadata', seekAndPlay, { once: true });
+      };
+      v.addEventListener('timeupdate', onTick);
+      stopRef.current = () => v.removeEventListener('timeupdate', onTick);
     }
-
-    stopRef.current = () => {
-      disposed = true;
-      v.removeEventListener('timeupdate', stopAtEnd);
-      v.removeEventListener('play', enforceBoundsOnPlay);
-      v.removeEventListener('loadedmetadata', seekAndPlay);
-    };
   }, [current, syncedStartOf, syncedEndOf]);
 
   useEffect(() => {
@@ -310,13 +255,17 @@ export default function ActionClipsModal(props: ActionClipsModalProps) {
           <div className="acm-videowrap">
             {hasVideo ? (
               <video
-                key={`${cur.id ?? index}:${syncedStartOf(cur) ?? 'na'}:${syncedEndOf(cur) ?? 'na'}`}
                 ref={videoRef}
                 className="acm-video"
                 src={videoUrl!}
-                controls
                 playsInline
-                preload="metadata"
+                onPlay={() => setClipPlaying(true)}
+                onPause={() => setClipPlaying(false)}
+                onTimeUpdate={(e) => {
+                  const start = syncedStartOf(cur) ?? 0;
+                  const end = syncedEndOf(cur) ?? start;
+                  setClipPosition(Math.max(0, Math.min(Math.max(0, end - start), e.currentTarget.currentTime - start)));
+                }}
               />
             ) : (
               <div className="acm-novideo">
@@ -338,6 +287,46 @@ export default function ActionClipsModal(props: ActionClipsModalProps) {
               />
             )}
           </div>
+
+          {hasVideo && syncedStartOf(cur) != null && syncedEndOf(cur) != null && (
+            <div className="acm-clipbar">
+              <button
+                type="button"
+                className="acm-play"
+                onClick={() => {
+                  const v = videoRef.current;
+                  if (!v) return;
+                  if (!v.paused) { v.pause(); return; }
+                  const start = syncedStartOf(cur) ?? 0;
+                  const end = syncedEndOf(cur) ?? start;
+                  if (v.currentTime >= end - 0.05 || v.currentTime < start) {
+                    applyBoundedPlayback();
+                  } else {
+                    setClipPlaying(true);
+                    v.play().catch(() => setClipPlaying(false));
+                  }
+                }}
+              >
+                {clipPlaying ? '❚❚' : '▶'}
+              </button>
+              <span>{fmt(clipPosition)}</span>
+              <input
+                type="range"
+                min={0}
+                max={Math.max(0.1, (syncedEndOf(cur) ?? 0) - (syncedStartOf(cur) ?? 0))}
+                step={0.05}
+                value={clipPosition}
+                onChange={(e) => {
+                  const rel = Number(e.target.value);
+                  const start = syncedStartOf(cur) ?? 0;
+                  const v = videoRef.current;
+                  setClipPosition(rel);
+                  if (v) v.currentTime = start + rel;
+                }}
+              />
+              <span>{fmt(Math.max(0, (syncedEndOf(cur) ?? 0) - (syncedStartOf(cur) ?? 0)))}</span>
+            </div>
+          )}
 
           <div className="acm-nav">
             <button disabled={index === 0} onClick={() => go(-1)}>← Précédent</button>
@@ -397,6 +386,7 @@ export default function ActionClipsModal(props: ActionClipsModalProps) {
         .acm-card.acm-full .acm-video { max-height: calc(100vh - 320px); }
         .acm-canvas { position: absolute; inset: 0; width: 100%; height: 100%; cursor: crosshair; touch-action: none; }
         .acm-novideo { padding: 28px; text-align: center; color: #8a93a8; background: #0c0f1a; border: 1px dashed #2a3142; border-radius: 10px; font-weight: 700; }
+        .acm-clipbar{display:grid;grid-template-columns:34px 42px minmax(0,1fr) 42px;gap:8px;align-items:center;background:#0c0f1a;border:1px solid #2a3142;border-radius:10px;padding:8px 10px}.acm-clipbar span{font-size:11px;font-weight:900;color:#d7deeb;text-align:center;font-variant-numeric:tabular-nums}.acm-clipbar input{width:100%;accent-color:#D4A24C}.acm-play{width:32px;height:28px;border:1px solid #D4A24C;border-radius:7px;background:rgba(212,162,76,.08);color:#D4A24C;cursor:pointer;font-weight:900}
         .acm-nav { display: flex; gap: 8px; }
         .acm-nav button { flex: 1; border: 1px solid #2a3142; background: #171b29; color: #eef1f7; border-radius: 9px; padding: 9px; font-size: 12.5px; font-weight: 800; cursor: pointer; }
         .acm-nav button:disabled { opacity: .4; cursor: not-allowed; }
