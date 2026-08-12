@@ -62,7 +62,7 @@ type Drawing = {
   end: number;
 };
 
-type MontageItemType = "clip" | "title" | "text" | "image" | "freeze";
+type MontageItemType = "clip" | "title" | "text" | "image" | "freeze" | "audio";
 
 type MontageItem = {
   id?: string;
@@ -80,6 +80,10 @@ type MontageItem = {
   freeze_duration: number | null;
   annotations: Drawing[];
   action?: ActionRow;
+  track?: "video" | "overlay" | "audio";
+  timeline_start?: number;
+  asset_url?: string;
+  volume?: number;
 };
 
 type Props = {
@@ -92,6 +96,8 @@ type Props = {
 
 type LibraryView = "all" | "favorites" | "themes" | "players" | "systems";
 type ClipTheme = { id: string; name: string; actionIds: string[] };
+type PlayerRow = { id: string; name: string | null; first_name?: string | null; last_name?: string | null; jersey_number?: number | null };
+
 
 
 const TF_LABELS: Record<string, string> = {
@@ -220,30 +226,20 @@ export default function MontageStudio({
   const [designUploading, setDesignUploading] = useState(false);
   const clipPreviewVideoRef = useRef<HTMLVideoElement | null>(null);
   const imageInputRef = useRef<HTMLInputElement | null>(null);
+  const audioInputRef = useRef<HTMLInputElement | null>(null);
+  const [players, setPlayers] = useState<PlayerRow[]>([]);
+  const [selectedPlayerFilter, setSelectedPlayerFilter] = useState("");
+  const [selectedSystemFilter, setSelectedSystemFilter] = useState("");
+  const [selectedThemeId, setSelectedThemeId] = useState("");
+  const [playhead, setPlayhead] = useState(0);
+  const [audioUploading, setAudioUploading] = useState(false);
+
 
   const flash = useCallback((message: string) => {
     setToast(message);
     window.setTimeout(() => setToast(""), 2600);
   }, []);
 
-  useEffect(() => {
-    try {
-      const savedFavorites = JSON.parse(localStorage.getItem("mybasket-montage-favorites") || "[]");
-      const savedThemes = JSON.parse(localStorage.getItem("mybasket-montage-themes") || "[]");
-      if (Array.isArray(savedFavorites)) setFavoriteActionIds(savedFavorites.map(String));
-      if (Array.isArray(savedThemes)) setThemes(savedThemes);
-    } catch {
-      // stockage local facultatif
-    }
-  }, []);
-
-  useEffect(() => {
-    localStorage.setItem("mybasket-montage-favorites", JSON.stringify(favoriteActionIds));
-  }, [favoriteActionIds]);
-
-  useEffect(() => {
-    localStorage.setItem("mybasket-montage-themes", JSON.stringify(themes));
-  }, [themes]);
 
   useEffect(() => {
     let active = true;
@@ -269,6 +265,56 @@ export default function MontageStudio({
       active = false;
     };
   }, [flash, supabase, teamId]);
+
+  useEffect(() => {
+    if (!teamId) return;
+    let active = true;
+
+    (async () => {
+      const userResponse = await supabase.auth.getUser();
+      const userId = userResponse.data.user?.id;
+      if (!userId) return;
+
+      const [playersResponse, favoritesResponse, themesResponse] = await Promise.all([
+        supabase
+          .from("players")
+          .select("id,name,first_name,last_name,jersey_number")
+          .eq("team_id", teamId)
+          .order("name"),
+        supabase
+          .from("livestat_clip_favorites")
+          .select("action_id")
+          .eq("user_id", userId)
+          .eq("team_id", teamId),
+        supabase
+          .from("livestat_clip_themes")
+          .select("id,name,livestat_clip_theme_items(action_id)")
+          .eq("user_id", userId)
+          .eq("team_id", teamId)
+          .order("sort_order"),
+      ]);
+
+      if (!active) return;
+
+      if (!playersResponse.error) setPlayers((playersResponse.data ?? []) as PlayerRow[]);
+
+      if (!favoritesResponse.error) {
+        setFavoriteActionIds((favoritesResponse.data ?? []).map((row: any) => String(row.action_id)));
+      }
+
+      if (!themesResponse.error) {
+        setThemes(
+          (themesResponse.data ?? []).map((row: any) => ({
+            id: String(row.id),
+            name: String(row.name),
+            actionIds: (row.livestat_clip_theme_items ?? []).map((item: any) => String(item.action_id)),
+          })),
+        );
+      }
+    })();
+
+    return () => { active = false; };
+  }, [supabase, teamId]);
 
   useEffect(() => {
     if (!teamId) return;
@@ -413,6 +459,10 @@ export default function MontageStudio({
             annotations: Array.isArray(item.annotations)
               ? item.annotations
               : [],
+            track: item.track || (item.item_type === "audio" ? "audio" : item.item_type === "clip" ? "video" : "overlay"),
+            timeline_start: numberValue(item.timeline_start),
+            asset_url: String(item.image_url || ""),
+            volume: item.volume == null ? 1 : numberValue(item.volume),
             action,
           };
         }),
@@ -439,11 +489,9 @@ export default function MontageStudio({
   );
 
   const filteredActions = useMemo(() => {
-    const existing = new Set(items.map((item) => item.action_id));
     const query = search.trim().toLowerCase();
 
     return actions.filter((action) => {
-      if (existing.has(String(action.id))) return false;
       if (filter === "made" && action.shot_result !== "made") return false;
       if (filter === "missed" && action.shot_result !== "missed") return false;
       if (
@@ -457,13 +505,21 @@ export default function MontageStudio({
         return false;
       }
 
+      if (selectedPlayerFilter && String(action.player_id || "") !== selectedPlayerFilter) return false;
+      if (selectedSystemFilter && String(action.temps_fort || "") !== selectedSystemFilter) return false;
+      if (selectedThemeId) {
+        const theme = themes.find((row) => row.id === selectedThemeId);
+        if (theme && !theme.actionIds.includes(String(action.id))) return false;
+      }
+
       if (!query) return true;
 
-      return `${actionLabel(action)} ${actionSub(action, matchMap)}`
+      const player = players.find((row) => String(row.id) === String(action.player_id || ""));
+      return `${actionLabel(action)} ${actionSub(action, matchMap)} ${player?.name || ""}`
         .toLowerCase()
         .includes(query);
     });
-  }, [actions, filter, items, matchMap, search]);
+  }, [actions, filter, matchMap, search, selectedPlayerFilter, selectedSystemFilter, selectedThemeId, themes, players]);
 
   useEffect(() => {
     const video = videoRef.current;
@@ -546,12 +602,16 @@ export default function MontageStudio({
     );
   };
 
+  const insertionIndex = () =>
+    items.length === 0 ? 0 : clamp(selectedIndex + 1, 0, items.length);
+
   const addAction = (action: ActionRow) => {
+    const insertAt = insertionIndex();
     setItems((current) => {
       const next: MontageItem = {
         action_id: String(action.id),
         item_type: "clip",
-        sort_order: current.length,
+        sort_order: insertAt,
         title: action.clip_title || actionLabel(action),
         note: "",
         clip_start: clipStart(action),
@@ -560,10 +620,15 @@ export default function MontageStudio({
         freeze_duration: null,
         annotations: [],
         action,
+        track: "video",
+        timeline_start: playhead,
+        volume: 1,
       };
-      return [...current, next];
+      const rows = [...current];
+      rows.splice(insertAt, 0, next);
+      return rows.map((item, index) => ({ ...item, sort_order: index }));
     });
-    setSelectedIndex(items.length);
+    setSelectedIndex(insertAt);
   };
 
   const removeItem = (index: number) => {
@@ -617,6 +682,7 @@ export default function MontageStudio({
         player_id: playerId || null,
         title: title.trim() || "Nouveau montage",
         type: playerId ? "player" : "team",
+        coach_note: coachNote,
         updated_at: new Date().toISOString(),
       };
 
@@ -659,10 +725,13 @@ export default function MontageStudio({
           sort_order: index,
           title: item.title || null,
           text: item.note || null,
-          image_url: item.image_url || null,
+          image_url: item.image_url || item.asset_url || null,
           clip_start: item.item_type === "clip" ? item.clip_start : null,
           clip_end: item.item_type === "clip" ? item.clip_end : null,
           duration: item.duration ?? Math.max(0.1, item.clip_end - item.clip_start),
+          track: item.track || (item.item_type === "audio" ? "audio" : item.item_type === "clip" ? "video" : "overlay"),
+          timeline_start: item.timeline_start ?? 0,
+          volume: item.volume ?? 1,
           freeze_time: item.freeze_time,
           freeze_duration: item.freeze_duration,
           annotations: item.annotations,
@@ -785,7 +854,7 @@ export default function MontageStudio({
   const itemDuration = (item: MontageItem) =>
     item.item_type === "clip"
       ? Math.max(0.1, item.clip_end - item.clip_start)
-      : Math.max(0.5, item.duration || 4);
+      : Math.max(0.5, item.duration || (item.item_type === "audio" ? item.clip_end - item.clip_start : 4));
 
   const totalDuration = items.reduce((sum, item) => sum + itemDuration(item), 0);
 
@@ -800,21 +869,79 @@ export default function MontageStudio({
   const previewAction =
     clipPreviewIndex == null ? null : previewActions[clipPreviewIndex] || null;
 
-  const toggleFavorite = (actionId: string) => {
+  const toggleFavorite = async (actionId: string) => {
+    const userResponse = await supabase.auth.getUser();
+    const userId = userResponse.data.user?.id;
+    if (!userId || !teamId) return;
+
+    const isFavorite = favoriteActionIds.includes(actionId);
     setFavoriteActionIds((current) =>
-      current.includes(actionId)
-        ? current.filter((id) => id !== actionId)
-        : [...current, actionId],
+      isFavorite ? current.filter((id) => id !== actionId) : [...current, actionId],
     );
+
+    if (isFavorite) {
+      const { error } = await supabase
+        .from("livestat_clip_favorites")
+        .delete()
+        .eq("user_id", userId)
+        .eq("team_id", teamId)
+        .eq("action_id", actionId);
+      if (error) flash(error.message);
+    } else {
+      const { error } = await supabase
+        .from("livestat_clip_favorites")
+        .upsert(
+          { user_id: userId, team_id: teamId, action_id: actionId },
+          { onConflict: "user_id,team_id,action_id" },
+        );
+      if (error) flash(error.message);
+    }
   };
 
-  const createTheme = () => {
+  const createTheme = async () => {
     const name = window.prompt("Nom du thème");
-    if (!name?.trim()) return;
-    setThemes((current) => [...current, { id: uid(), name: name.trim(), actionIds: [] }]);
+    if (!name?.trim() || !teamId) return;
+
+    const userResponse = await supabase.auth.getUser();
+    const userId = userResponse.data.user?.id;
+    if (!userId) return;
+
+    const { data, error } = await supabase
+      .from("livestat_clip_themes")
+      .insert({
+        user_id: userId,
+        team_id: teamId,
+        name: name.trim(),
+        sort_order: themes.length,
+      })
+      .select("id,name")
+      .single();
+
+    if (error || !data) {
+      flash(error?.message || "Création du thème impossible");
+      return;
+    }
+
+    setThemes((current) => [...current, { id: String(data.id), name: String(data.name), actionIds: [] }]);
   };
 
-  const addActionToTheme = (themeId: string, actionId: string) => {
+  const addActionToTheme = async (themeId: string, actionId: string) => {
+    const userResponse = await supabase.auth.getUser();
+    const userId = userResponse.data.user?.id;
+    if (!userId) return;
+
+    const { error } = await supabase
+      .from("livestat_clip_theme_items")
+      .upsert(
+        { theme_id: themeId, user_id: userId, action_id: actionId },
+        { onConflict: "theme_id,action_id" },
+      );
+
+    if (error) {
+      flash(error.message);
+      return;
+    }
+
     setThemes((current) =>
       current.map((theme) =>
         theme.id === themeId && !theme.actionIds.includes(actionId)
@@ -829,11 +956,11 @@ export default function MontageStudio({
     const label = type === "title" ? "Nouveau titre" : "Nouveau texte";
     const value = window.prompt(type === "title" ? "Titre à afficher" : "Texte à afficher", label);
     if (!value?.trim()) return;
-    setItems((current) => [
-      ...current,
-      {
+    const insertAt = insertionIndex();
+    setItems((current) => {
+      const next: MontageItem = {
         action_id: `design:${uid()}`,
-        sort_order: current.length,
+        sort_order: insertAt,
         item_type: type,
         title: type === "title" ? value.trim() : "Texte",
         note: type === "text" ? value.trim() : "",
@@ -844,9 +971,14 @@ export default function MontageStudio({
         freeze_time: null,
         freeze_duration: null,
         annotations: [],
-      },
-    ]);
-    setSelectedIndex(items.length);
+        track: "overlay",
+        timeline_start: playhead,
+      };
+      const rows = [...current];
+      rows.splice(insertAt, 0, next);
+      return rows.map((item, index) => ({ ...item, sort_order: index }));
+    });
+    setSelectedIndex(insertAt);
   };
 
   const uploadImageItem = async (file: File) => {
@@ -886,6 +1018,70 @@ export default function MontageStudio({
     } finally {
       setDesignUploading(false);
       if (imageInputRef.current) imageInputRef.current.value = "";
+    }
+  };
+
+  const uploadAudioItem = async (file: File) => {
+    if (!teamId) return;
+    setAudioUploading(true);
+    try {
+      const { data: authData, error: authError } = await supabase.auth.getUser();
+      if (authError || !authData.user) throw authError || new Error("Utilisateur non connecté");
+
+      const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, "-");
+      const objectPath = `${authData.user.id}/${teamId}/editor/audio/${Date.now()}-${safeName}`;
+
+      const { error: uploadError } = await supabase.storage
+        .from("livestat-montages")
+        .upload(objectPath, file, {
+          upsert: false,
+          contentType: file.type || "audio/mpeg",
+        });
+      if (uploadError) throw uploadError;
+
+      const { data } = supabase.storage.from("livestat-montages").getPublicUrl(objectPath);
+      const assetUrl = data.publicUrl;
+
+      const audio = document.createElement("audio");
+      audio.preload = "metadata";
+      audio.src = assetUrl;
+      const duration = await new Promise<number>((resolve) => {
+        const done = () => resolve(Number.isFinite(audio.duration) ? audio.duration : 10);
+        audio.addEventListener("loadedmetadata", done, { once: true });
+        audio.addEventListener("error", () => resolve(10), { once: true });
+      });
+
+      const insertAt = insertionIndex();
+      setItems((current) => {
+        const next: MontageItem = {
+          action_id: `audio:${uid()}`,
+          sort_order: insertAt,
+          item_type: "audio",
+          title: file.name,
+          note: "",
+          clip_start: 0,
+          clip_end: duration,
+          duration,
+          image_url: assetUrl,
+          asset_url: assetUrl,
+          freeze_time: null,
+          freeze_duration: null,
+          annotations: [],
+          track: "audio",
+          timeline_start: playhead,
+          volume: 1,
+        };
+        const rows = [...current];
+        rows.splice(insertAt, 0, next);
+        return rows.map((item, index) => ({ ...item, sort_order: index }));
+      });
+      setSelectedIndex(insertAt);
+      flash("Audio ajouté au montage");
+    } catch (error) {
+      flash(error instanceof Error ? error.message : "Import audio impossible.");
+    } finally {
+      setAudioUploading(false);
+      if (audioInputRef.current) audioInputRef.current.value = "";
     }
   };
 
@@ -940,6 +1136,9 @@ export default function MontageStudio({
         event.preventDefault();
         addAction(previewAction);
         flash("Clip envoyé dans le montage");
+        if (!event.shiftKey) {
+          setClipPreviewIndex((current) => Math.min(previewActions.length - 1, (current ?? 0) + 1));
+        }
         return;
       }
       if ((event.key === "f" || event.key === "F") && previewAction) {
@@ -1027,6 +1226,31 @@ export default function MontageStudio({
               <button key={key} className={libraryView===key?"on":""} onClick={()=>setLibraryView(key)}>{label}</button>
             ))}
           </div>
+
+          {libraryView === "players" && (
+            <select className="mp-library-select" value={selectedPlayerFilter} onChange={(e) => setSelectedPlayerFilter(e.target.value)}>
+              <option value="">Tous les joueurs</option>
+              {players.map((player) => (
+                <option key={player.id} value={player.id}>{player.name || `${player.first_name || ""} ${player.last_name || ""}`.trim() || player.id}</option>
+              ))}
+            </select>
+          )}
+
+          {libraryView === "systems" && (
+            <select className="mp-library-select" value={selectedSystemFilter} onChange={(e) => setSelectedSystemFilter(e.target.value)}>
+              <option value="">Tous les systèmes / temps forts</option>
+              {Array.from(new Set(actions.map((action) => String(action.temps_fort || "")).filter(Boolean))).map((value) => (
+                <option key={value} value={value}>{tfLabel(value)}</option>
+              ))}
+            </select>
+          )}
+
+          {libraryView === "themes" && (
+            <select className="mp-library-select" value={selectedThemeId} onChange={(e) => setSelectedThemeId(e.target.value)}>
+              <option value="">Tous les thèmes</option>
+              {themes.map((theme) => <option key={theme.id} value={theme.id}>{theme.name}</option>)}
+            </select>
+          )}
 
           <div className="mp-filter-chips">
             <button className={filter==="all"?"on":""} onClick={()=>setFilter("all")}>Tous</button>
@@ -1165,8 +1389,9 @@ export default function MontageStudio({
             <button className={drawMode==="arrow"?"on":""} onClick={()=>setDrawMode("arrow")}>✎ Dessin</button>
             <button className={drawMode==="circle"?"on":""} onClick={()=>setDrawMode("circle")}>◎ Cercle</button>
             <button onClick={addFreezeItem}>◉ Freeze</button>
-            <button disabled>♫ Audio</button>
+            <button onClick={() => audioInputRef.current?.click()} disabled={audioUploading}>♫ {audioUploading ? "Import…" : "Audio"}</button>
             <input ref={imageInputRef} type="file" accept="image/*" hidden onChange={(e)=>{const file=e.target.files?.[0]; if(file) void uploadImageItem(file)}} />
+            <input ref={audioInputRef} type="file" accept="audio/*" hidden onChange={(e)=>{const file=e.target.files?.[0]; if(file) void uploadAudioItem(file)}} />
           </div>
 
           <div className="mp-timeline-head">
@@ -1181,37 +1406,63 @@ export default function MontageStudio({
             </div>
           </div>
 
-          <div className="mp-timeline-scroll">
-            <div className="mp-ruler">
-              {Array.from({length:Math.max(2,Math.ceil(totalDuration/10)+1)}).map((_,i)=><span key={i} style={{left:`${i*10*timelineZoom*8}px`}}>{String(i*10).padStart(2,"0")}:00</span>)}
+          <div
+            className="mp-timeline-scroll"
+            onClick={(event) => {
+              const target = event.currentTarget.querySelector(".mp-ruler") as HTMLElement | null;
+              if (!target) return;
+              const rect = target.getBoundingClientRect();
+              const ratio = clamp((event.clientX - rect.left) / Math.max(1, rect.width), 0, 1);
+              setPlayhead(ratio * Math.max(0.1, totalDuration));
+            }}
+          >
+            <div className="mp-ruler" style={{ minWidth: `${Math.max(1000, totalDuration * 45 * timelineZoom)}px` }}>
+              {Array.from({ length: Math.max(2, Math.ceil(totalDuration / 5) + 1) }).map((_, index) => {
+                const value = Math.min(totalDuration, index * 5);
+                return <span key={index} style={{ left: `${totalDuration ? (value / totalDuration) * 100 : 0}%` }}>{`${String(Math.floor(value / 60)).padStart(2,"0")}:${String(Math.floor(value % 60)).padStart(2,"0")}`}</span>;
+              })}
+              <i className="mp-playhead" style={{ left: `${totalDuration ? (playhead / totalDuration) * 100 : 0}%` }} />
             </div>
-            <div className="mp-track-row">
-              <label>VIDÉO</label>
-              <div className="mp-track">
-                {items.map((item,index)=>{
-                  const duration=itemDuration(item);
-                  const width=clamp(duration*8*timelineZoom,80,340);
-                  return (
-                    <button
-                      key={`${item.action_id}-${index}`}
-                      draggable
-                      className={`mp-timeline-item type-${item.item_type} ${selectedIndex===index?"selected":""}`}
-                      style={{width}}
-                      onDragStart={()=>{dragIndex.current=index}}
-                      onDragOver={(e)=>e.preventDefault()}
-                      onDrop={()=>{if(dragIndex.current!=null){moveItem(dragIndex.current,index);dragIndex.current=null}}}
-                      onClick={()=>setSelectedIndex(index)}
-                    >
-                      <span>{item.item_type==="clip"?"🎬":item.item_type==="image"?"▣":item.item_type==="title"?"T":"✦"}</span>
-                      <strong>{item.title}</strong>
-                      <small>{duration.toFixed(1)}s</small>
-                      <b onClick={(e)=>{e.stopPropagation();removeItem(index)}}>×</b>
-                    </button>
-                  )
-                })}
-                {items.length===0 && <div className="mp-track-empty">Ajoute des clips, titres ou images.</div>}
-              </div>
-            </div>
+
+            {(["video", "overlay", "audio"] as const).map((track) => {
+              const label = track === "video" ? "VIDÉO" : track === "overlay" ? "TITRES / OVERLAYS" : "AUDIO";
+              const trackItems = items.map((item, index) => ({ item, index })).filter(({ item }) => (item.track || (item.item_type === "audio" ? "audio" : item.item_type === "clip" ? "video" : "overlay")) === track);
+              return (
+                <div className={`mp-track-row track-${track}`} key={track}>
+                  <label>{label}</label>
+                  <div className="mp-track" style={{ minWidth: `${Math.max(930, totalDuration * 45 * timelineZoom)}px` }}>
+                    {trackItems.length === 0 ? <div className="mp-track-empty">Aucun élément</div> : trackItems.map(({ item, index }) => {
+                      const duration = itemDuration(item);
+                      const start = item.timeline_start ?? items.slice(0, index).reduce((sum, row) => sum + itemDuration(row), 0);
+                      return (
+                        <button
+                          key={`${item.action_id}:${index}`}
+                          className={`mp-timeline-item type-${item.item_type} ${selectedIndex === index ? "selected" : ""}`}
+                          style={{
+                            position: "absolute",
+                            left: `${start * 45 * timelineZoom}px`,
+                            width: `${Math.max(70, duration * 45 * timelineZoom)}px`,
+                          }}
+                          onClick={(event) => { event.stopPropagation(); setSelectedIndex(index); setPlayhead(start); }}
+                          draggable
+                          onDragStart={() => { dragIndex.current = index; }}
+                          onDragOver={(event) => event.preventDefault()}
+                          onDrop={() => {
+                            if (dragIndex.current != null) moveItem(dragIndex.current, index);
+                            dragIndex.current = null;
+                          }}
+                        >
+                          <strong>{item.title || item.item_type}</strong>
+                          <small>{duration.toFixed(1)}s</small>
+                          {item.item_type === "audio" && <small>♫ {Math.round((item.volume ?? 1) * 100)}%</small>}
+                          <b onClick={(event) => { event.stopPropagation(); removeItem(index); }}>×</b>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              );
+            })}
           </div>
         </section>
 
@@ -1250,6 +1501,24 @@ export default function MontageStudio({
               </>}
 
               <button className="danger" onClick={()=>removeItem(selectedIndex)}>🗑 Retirer de la timeline</button>
+            </div>
+          )}
+
+          {selected?.item_type === "audio" && (
+            <div className="mp-audio-inspector">
+              <strong>Audio</strong>
+              <label>
+                Volume
+                <input
+                  type="range"
+                  min="0"
+                  max="1.5"
+                  step="0.05"
+                  value={selected.volume ?? 1}
+                  onChange={(e) => updateSelected({ volume: Number(e.target.value) })}
+                />
+              </label>
+              <small>{Math.round((selected.volume ?? 1) * 100)}%</small>
             </div>
           )}
 
@@ -1319,13 +1588,17 @@ export default function MontageStudio({
         .montage-pro{--gold:#d4a24c;--bg:#080d16;--panel:#0e1624;--panel2:#121d2f;--line:#27344a;--text:#eef2f8;--muted:#7f8aa0;min-height:100vh;background:var(--bg);color:var(--text);font-family:Inter,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}.montage-pro *{box-sizing:border-box}
         button,input,textarea,select{font:inherit}.mp-header{height:66px;display:grid;grid-template-columns:320px 1fr auto;align-items:center;gap:16px;padding:0 20px;border-bottom:1px solid var(--line);background:#0d1522}.mp-brand{display:flex;align-items:center;gap:9px}.mp-brand span{font-size:21px}.mp-brand strong{font-size:20px}.mp-brand em{font-style:normal;color:var(--gold);font-size:9px;font-weight:900;border:1px solid var(--gold);border-radius:999px;padding:4px 7px}.mp-project-name{text-align:center}.mp-project-name input{border:0;background:transparent;color:#fff;text-align:center;font-size:14px;font-weight:900;max-width:460px;width:100%}.mp-project-name small{display:block;color:var(--muted);font-size:9px}.mp-header-actions{display:flex;gap:8px}.mp-header button,.mp-tools button,.mp-timeline-head button,.mp-inspector button,.mp-modal-actions button,.mp-clip-modal footer button,.mp-share button{border:1px solid var(--line);border-radius:8px;background:#121d2f;color:#eef2f8;padding:8px 11px;font-weight:850;cursor:pointer}.gold{background:var(--gold)!important;color:#17110a!important;border-color:var(--gold)!important}
         .mp-grid{display:grid;grid-template-columns:310px minmax(620px,1fr) 300px;height:calc(100vh - 66px);min-height:720px}.mp-library,.mp-inspector{background:#0b1220;padding:14px;overflow:auto}.mp-library{border-right:1px solid var(--line)}.mp-inspector{border-left:1px solid var(--line)}.mp-section-title{display:flex;justify-content:space-between;align-items:center;margin-bottom:10px}.mp-section-title strong{font-size:11px;letter-spacing:.05em}.mp-section-title span{background:#172238;color:var(--gold);border-radius:999px;padding:4px 8px;font-size:9px;font-weight:900}
-        .mp-search-row{display:grid;grid-template-columns:1fr 34px;gap:6px}.mp-search-row input,.mp-inspector input,.mp-inspector textarea,.mp-share input{width:100%;border:1px solid var(--line);background:#0b1321;color:#fff;border-radius:8px;padding:9px}.mp-search-row button{border:1px solid var(--line);background:#101a2b;color:#fff;border-radius:8px}.mp-tabs{display:flex;overflow:auto;border-bottom:1px solid var(--line);margin:8px 0}.mp-tabs button{border:0;background:transparent;color:#8e9ab0;padding:8px 9px;font-size:9px;white-space:nowrap}.mp-tabs button.on{color:var(--gold);border-bottom:2px solid var(--gold)}.mp-filter-chips{display:flex;gap:4px;overflow:auto;margin-bottom:8px}.mp-filter-chips button{border:1px solid #34415a;background:#111b2d;color:#9aa6bb;border-radius:999px;padding:4px 7px;font-size:8px;white-space:nowrap}.mp-filter-chips button.on{border-color:var(--gold);color:var(--gold)}
+        .mp-search-row{display:grid;grid-template-columns:1fr 34px;gap:6px}.mp-search-row input,.mp-inspector input,.mp-inspector textarea,.mp-share input{width:100%;border:1px solid var(--line);background:#0b1321;color:#fff;border-radius:8px;padding:9px}.mp-search-row button{border:1px solid var(--line);background:#101a2b;color:#fff;border-radius:8px}.mp-tabs{display:flex;overflow:auto;border-bottom:1px solid var(--line);margin:8px 0}.mp-tabs button{border:0;background:transparent;color:#8e9ab0;padding:8px 9px;font-size:9px;white-space:nowrap}.mp-tabs button.on{color:var(--gold);border-bottom:2px solid var(--gold)}.mp-library-select{width:100%;margin:0 0 8px;border:1px solid #34415a;background:#101a2b;color:#fff;border-radius:8px;padding:8px;font-size:9px}
+        .mp-filter-chips{display:flex;gap:4px;overflow:auto;margin-bottom:8px}.mp-filter-chips button{border:1px solid #34415a;background:#111b2d;color:#9aa6bb;border-radius:999px;padding:4px 7px;font-size:8px;white-space:nowrap}.mp-filter-chips button.on{border-color:var(--gold);color:var(--gold)}
         .mp-clips{display:grid;gap:7px;max-height:50vh;overflow:auto;padding-right:2px}.mp-clip-card{display:grid;grid-template-columns:minmax(0,1fr) 30px 30px;gap:4px;border:1px solid #25324a;border-radius:9px;background:#101a2b;padding:6px}.mp-clip-card:hover{border-color:#4c5c78}.mp-clip-open{display:grid;grid-template-columns:62px 1fr;gap:8px;border:0;background:transparent;color:#fff;text-align:left;cursor:pointer;padding:0}.mp-thumb{height:48px;border-radius:6px;background:linear-gradient(135deg,#253653,#101724);position:relative;display:grid;place-items:center}.mp-thumb span{font-size:16px}.mp-thumb small{position:absolute;bottom:3px;right:4px;background:#050910aa;padding:2px 4px;border-radius:4px;font-size:7px}.mp-clip-copy{min-width:0}.mp-clip-copy>small{color:#75849d;font-size:7px}.mp-clip-copy strong{display:block;font-size:9px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin:3px 0}.mp-clip-copy div{display:flex;gap:3px;flex-wrap:wrap}.mp-clip-copy i,.mp-modal-tags i{font-style:normal;font-size:7px;border:1px solid #3b4861;border-radius:999px;padding:2px 5px;color:#aab6c9}.mp-star,.mp-add{width:28px;height:28px;align-self:center;border:1px solid #3a465d;background:#0d1523;color:#d4a24c;border-radius:7px;cursor:pointer}.mp-star{font-size:17px}.mp-star.on{border-color:var(--gold);background:#d4a24c12}.mp-add{font-size:16px}
         .mp-themes{border-top:1px solid var(--line);margin-top:12px;padding-top:10px}.mp-themes-head{display:flex;justify-content:space-between;align-items:center}.mp-themes-head strong{font-size:10px;color:var(--gold)}.mp-themes-head button{font-size:8px;border:1px solid #34415a;background:#111b2d;color:#fff;border-radius:7px;padding:5px 7px}.mp-theme{display:grid;grid-template-columns:22px 1fr auto;gap:6px;align-items:center;margin-top:6px;padding:8px;border:1px solid #22304a;border-radius:7px}.mp-theme strong{font-size:9px}.mp-theme b{font-size:8px;color:#8591a6}.mp-empty{border:1px dashed #34415a;border-radius:8px;padding:14px;text-align:center;color:#78869e;font-size:10px}.mp-empty.small{padding:9px;margin-top:7px;font-size:8px}
         .mp-center{min-width:0;display:grid;grid-template-rows:minmax(300px,1fr) 46px 48px 48px minmax(180px,auto);background:#070c14}.mp-stage{position:relative;display:grid;place-items:center;background:#000;overflow:hidden}.mp-stage video,.mp-stage img{width:100%;height:100%;object-fit:contain}.mp-stage canvas{position:absolute;inset:0;width:100%;height:100%;touch-action:none}.mp-stage-empty{color:#68758c;font-size:11px}.mp-design-preview{width:100%;height:100%;display:grid;place-items:center;background:linear-gradient(145deg,#090d14,#171d2a)}.mp-design-preview strong{font-size:40px;text-align:center;padding:30px}
         .mp-player-bar{display:flex;align-items:center;gap:6px;padding:6px 12px;border-top:1px solid var(--line);border-bottom:1px solid var(--line);background:#0d1522}.mp-player-bar button{width:32px;height:30px;border:1px solid var(--line);background:#142035;color:#fff;border-radius:7px}.mp-time{display:grid;grid-template-columns:50px 1fr 50px;align-items:center;gap:6px;flex:1}.mp-time span{font-size:8px;color:var(--gold);font-weight:900;text-align:center}.mp-time div{height:5px;border-radius:5px;background:#e4e8ef}.mp-time i{display:block;width:20%;height:100%;background:#3d8cff;border-radius:5px}.mp-player-bar select{border:1px solid var(--line);background:#101a2b;color:#fff;border-radius:6px;padding:5px}
         .mp-tools{display:flex;gap:6px;padding:7px 12px;border-bottom:1px solid var(--line);background:#0d1522}.mp-tools button{font-size:9px;padding:6px 9px}.mp-tools button.on{border-color:var(--gold);color:var(--gold)}.mp-timeline-head{display:flex;justify-content:space-between;align-items:center;padding:7px 12px;background:#0b1320}.mp-timeline-head>div:first-child{display:flex;align-items:baseline;gap:8px}.mp-timeline-head strong{font-size:11px}.mp-timeline-head small{font-size:8px;color:#78869e}.mp-timeline-head>div:last-child{display:flex;align-items:center;gap:5px}.mp-timeline-head button{padding:4px 8px;min-width:28px}.mp-timeline-head span{font-size:8px;color:var(--gold)}
-        .mp-timeline-scroll{overflow:auto;background:#08101c;border-top:1px solid var(--line)}.mp-ruler{height:26px;position:relative;margin-left:70px;border-bottom:1px solid #22304a;min-width:1000px}.mp-ruler span{position:absolute;top:7px;font-size:7px;color:#6f7e96;white-space:nowrap}.mp-track-row{display:grid;grid-template-columns:70px minmax(0,1fr);min-height:112px}.mp-track-row>label{padding:12px;color:#8d98ab;font-size:8px;border-right:1px solid #22304a}.mp-track{display:flex;gap:5px;align-items:flex-start;padding:12px;min-width:max-content}.mp-timeline-item{position:relative;height:86px;border:1px solid #33415c;border-radius:8px;background:#121d2f;color:#fff;padding:8px;text-align:left;display:grid;grid-template-columns:auto 1fr;grid-template-rows:auto 1fr auto;gap:4px;cursor:pointer;overflow:hidden}.mp-timeline-item.selected{border-color:var(--gold);box-shadow:0 0 0 1px #d4a24c55}.mp-timeline-item.type-title{background:#2c2250}.mp-timeline-item.type-text{background:#253249}.mp-timeline-item.type-image{background:#27353a}.mp-timeline-item.type-freeze{background:#34402d}.mp-timeline-item strong{grid-column:1/-1;font-size:9px;overflow:hidden}.mp-timeline-item small{font-size:8px;color:#c1cad9}.mp-timeline-item b{position:absolute;right:4px;top:4px;width:18px;height:18px;border-radius:50%;display:grid;place-items:center;background:#8e2438;color:#fff}.mp-track-empty{color:#607087;font-size:9px;padding:25px}
+        .mp-timeline-scroll{overflow:auto;background:#08101c;border-top:1px solid var(--line)}.mp-ruler{height:26px;position:relative;margin-left:110px;border-bottom:1px solid #22304a;min-width:1000px}.mp-ruler span{position:absolute;top:7px;font-size:7px;color:#6f7e96;white-space:nowrap}.mp-track-row{display:grid;grid-template-columns:110px minmax(0,1fr);min-height:92px}.mp-track-row>label{padding:12px;color:#8d98ab;font-size:8px;font-weight:900;border-right:1px solid #22304a;background:#0b1320}.mp-track{position:relative;height:84px;padding:8px;min-width:max-content;background:repeating-linear-gradient(90deg,transparent 0,transparent 224px,rgba(255,255,255,.025) 225px)}.mp-timeline-item{position:absolute;top:8px;height:68px;border:1px solid #33415c;border-radius:8px;background:#121d2f;color:#fff;padding:8px;text-align:left;display:grid;grid-template-columns:auto 1fr;grid-template-rows:auto 1fr auto;gap:4px;cursor:pointer;overflow:hidden}.mp-timeline-item.selected{border-color:var(--gold);box-shadow:0 0 0 1px #d4a24c55}.mp-timeline-item.type-title{background:#2c2250}.mp-timeline-item.type-text{background:#253249}.mp-timeline-item.type-image{background:#27353a}.mp-timeline-item.type-freeze{background:#34402d}.mp-timeline-item strong{grid-column:1/-1;font-size:9px;overflow:hidden}.mp-timeline-item small{font-size:8px;color:#c1cad9}.mp-timeline-item b{position:absolute;right:4px;top:4px;width:18px;height:18px;border-radius:50%;display:grid;place-items:center;background:#8e2438;color:#fff}.mp-track-empty{color:#607087;font-size:9px;padding:25px}
+        .mp-playhead{position:absolute;top:0;bottom:-280px;width:2px;background:#d4a24c;z-index:20;pointer-events:none;box-shadow:0 0 0 1px #0008}
+        .track-audio .mp-timeline-item{background:#253047}.track-overlay .mp-timeline-item{background:#32284a}
+        .mp-audio-inspector{display:grid;gap:8px;border:1px solid #2b3850;border-radius:9px;padding:10px;margin:10px 0}.mp-audio-inspector strong{color:#d4a24c;font-size:10px}.mp-audio-inspector label{display:grid;gap:5px;font-size:9px;color:#8e9ab0}
         .mp-inspector-form{display:grid;gap:10px}.mp-inspector label,.mp-project-note{display:grid;gap:5px;color:#8a96aa;font-size:9px;font-weight:800}.mp-inspector textarea{min-height:80px;resize:vertical}.mp-two{display:grid;grid-template-columns:1fr 1fr;gap:6px}.mp-readonly{border:1px solid var(--line);background:#0c1422;color:#d4a24c;border-radius:8px;padding:9px;text-transform:capitalize}.mp-nudge{display:grid;grid-template-columns:1fr 1fr;gap:5px}.mp-nudge button,.mp-inspector-form>button{font-size:8px}.mp-inspector-tools{display:grid;grid-template-columns:1fr 1fr 1fr 40px;gap:4px}.mp-inspector-tools input{width:40px;height:34px;padding:2px}.danger{border-color:#6d2c3a!important;color:#ff8293!important}.mp-project-note{margin-top:18px}.mp-project-note textarea{min-height:90px}
         .mp-modal-backdrop{position:fixed;inset:0;z-index:10000;background:#02050bc7;display:grid;place-items:center;padding:18px}.mp-clip-modal{width:min(690px,94vw);border:1px solid #34415a;border-radius:14px;background:#0d1522;box-shadow:0 30px 80px #000;overflow:hidden}.mp-clip-modal header{display:flex;justify-content:space-between;align-items:flex-start;padding:12px 14px;border-bottom:1px solid var(--line)}.mp-clip-modal header small{color:#7f8ca2;font-size:8px}.mp-clip-modal h2{margin:3px 0 0;font-size:15px}.mp-clip-modal header button{border:0;background:#172238;color:#fff;border-radius:7px;width:28px;height:28px}.mp-modal-stage{aspect-ratio:16/9;background:#000}.mp-modal-stage video{width:100%;height:100%;object-fit:contain}.mp-modal-tags{display:flex;gap:5px;flex-wrap:wrap;padding:9px 14px}.mp-modal-tags i{font-size:8px;padding:4px 7px}.mp-modal-actions{display:flex;gap:7px;padding:0 14px 10px}.mp-clip-modal footer{display:grid;grid-template-columns:1fr 1.3fr 1fr;gap:7px;padding:10px 14px;border-top:1px solid var(--line)}.mp-clip-modal footer button{font-size:9px}.mp-clip-modal kbd{font-size:7px;color:#7d899d;margin-left:4px}.mp-share{width:min(480px,94vw);padding:18px;border:1px solid var(--line);border-radius:12px;background:#0e1624}.mp-share div{display:flex;gap:7px;margin-top:10px}.mp-toast{position:fixed;right:18px;bottom:18px;z-index:12000;background:#d4a24c;color:#1b150d;border-radius:9px;padding:10px 14px;font-weight:900}
         @media(max-width:1180px){.mp-grid{grid-template-columns:260px minmax(520px,1fr)}.mp-inspector{display:none}.mp-header{grid-template-columns:260px 1fr auto}.mp-header-actions button:nth-child(2){display:none}}@media(max-width:850px){.mp-grid{grid-template-columns:1fr;height:auto}.mp-library{max-height:none}.mp-center{min-height:760px}.mp-header{grid-template-columns:1fr}.mp-project-name,.mp-header-actions{display:none}}

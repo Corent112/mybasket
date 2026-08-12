@@ -1393,6 +1393,9 @@ export default function PriseStatsProPage() {
     if (!items.length) return;
     setClipModal({ title, items, index });
   };
+
+
+
   // V8 · édition de clip locale (hors match_actions) : rognage / note coach / dessins.
   // Clé = id d'action ; stockée séparément, jamais persistée dans match_actions.
   type ClipDraw = { id: string; tool: 'arrow' | 'circle' | 'rect' | 'text'; x1: number; y1: number; x2: number; y2: number; text?: string };
@@ -6209,6 +6212,46 @@ function BoxView({ actions, roster, teamId, videoProvider = 'none', videoUrl = '
     if (items.length === 1) setClipAction(items[0]);
   };
 
+
+  const openShotZoneClips = (
+    clicked: StatA,
+    pool: StatA[],
+    titlePrefix: string,
+  ) => {
+    const zoneId =
+      clicked.zone ||
+      resolveShotZone({
+        zone: clicked.zone,
+        courtX: clicked.courtX,
+        courtY: clicked.courtY,
+      } as any);
+
+    const clips = pool.filter((action) => {
+      if (action.actionType !== 'tir' || action.shotType === 'LF') return false;
+
+      const actionZone =
+        action.zone ||
+        resolveShotZone({
+          zone: action.zone,
+          courtX: action.courtX,
+          courtY: action.courtY,
+        } as any);
+
+      return zoneId ? actionZone === zoneId : action.id === clicked.id;
+    });
+
+    const zoneLabel = zoneId
+      ? (zoneById(zoneId)?.shortLabel || zoneId)
+      : 'zone';
+
+    setClipList({
+      title: `${titlePrefix} · ${zoneLabel} · ${clips.length || 1} tir${(clips.length || 1) > 1 ? 's' : ''}`,
+      items: clips.length ? clips : [clicked],
+    });
+
+    setClipAction(null);
+  };
+
   const actionTitle = (a: StatA) => {
     const p = find(a.playerId);
     return `${periodLabel(a.q)} ${a.clock} · ${p ? `#${p.num} ${p.name}` : a.context === 'defense' ? 'Adversaire' : '—'} · ${tags.label(a.tempsFort)} · ${describe(a, find).t}`;
@@ -6438,11 +6481,39 @@ function BoxView({ actions, roster, teamId, videoProvider = 'none', videoUrl = '
             <div className="shotPair">
               <div className="shotPanel">
                 <div className="boxsec">Shot chart attaque</div>
-                {Ashot.att === 0 ? <div className="tip">Aucun tir attaque.</div> : <ShotChart mode="analysis" size="lg" showPoints showDots shots={attackShots} onShotClick={(a) => setClipAction(a as unknown as StatA)} />}
+                {Ashot.att === 0 ? <div className="tip">Aucun tir attaque.</div> : <ShotChart
+                  mode="analysis"
+                  size="lg"
+                  showPoints
+                  showDots
+                  shots={attackShots}
+                  onShotClick={(a) =>
+                    openShotZoneClips(
+                      a as unknown as StatA,
+                      attackShots,
+                      shotPlayer === 'all'
+                        ? 'Tirs équipe'
+                        : `Tirs ${find(shotPlayer)?.name || 'joueur'}`
+                    )
+                  }
+                />}
               </div>
               <div className="shotPanel">
                 <div className="boxsec">Shot chart défense — tirs concédés</div>
-                {Dshot.att === 0 ? <div className="tip">Aucun tir concédé localisé.</div> : <ShotChart mode="analysis" size="lg" showPoints showDots shots={defenseShots} onShotClick={(a) => setClipAction(a as unknown as StatA)} />}
+                {Dshot.att === 0 ? <div className="tip">Aucun tir concédé localisé.</div> : <ShotChart
+                  mode="analysis"
+                  size="lg"
+                  showPoints
+                  showDots
+                  shots={defenseShots}
+                  onShotClick={(a) =>
+                    openShotZoneClips(
+                      a as unknown as StatA,
+                      defenseShots,
+                      'Tirs concédés'
+                    )
+                  }
+                />}
               </div>
             </div>
           </div>
