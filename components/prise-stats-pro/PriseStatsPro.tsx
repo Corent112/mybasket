@@ -1310,10 +1310,64 @@ export default function PriseStatsProPage() {
   const [clipThemeAssignments, setClipThemeAssignments] = useState<Record<string, string[]>>({});
   const [historySearch, setHistorySearch] = useState('');
   const [historyScope, setHistoryScope] = useState<'all' | 'attaque' | 'defense' | 'made' | 'missed'>('all');
+  const [analysisView, setAnalysisView] = useState<'timeline' | 'history'>('timeline');
+  const [historyFiltersOpen, setHistoryFiltersOpen] = useState(false);
+  const [historyExpanded, setHistoryExpanded] = useState<Record<string, boolean>>({});
+  const [historyAdvancedFilters, setHistoryAdvancedFilters] = useState<{
+    contexts: string[];
+    systems: string[];
+    tempsForts: string[];
+    actions: string[];
+    shotTypes: string[];
+    results: string[];
+    zones: string[];
+    players: string[];
+    rebounds: string[];
+  }>({
+    contexts: [],
+    systems: [],
+    tempsForts: [],
+    actions: [],
+    shotTypes: [],
+    results: [],
+    zones: [],
+    players: [],
+    rebounds: [],
+  });
   const [timelineCompact, setTimelineCompact] = useState(false);
   const [timelineHiddenRows, setTimelineHiddenRows] = useState<Record<string, boolean>>({});
   // Timeline type Sportscode / LongoMatch : zoom horizontal du canevas.
   const [timelineZoom, setTimelineZoom] = useState<1 | 2 | 4 | 8>(1);
+
+  const toggleHistoryFilter = (
+    key: keyof typeof historyAdvancedFilters,
+    value: string,
+  ) => {
+    setHistoryAdvancedFilters((current) => {
+      const values = current[key];
+      const nextValues = values.includes(value)
+        ? values.filter((item) => item !== value)
+        : [...values, value];
+      return { ...current, [key]: nextValues };
+    });
+  };
+
+  const resetHistoryAdvancedFilters = () => {
+    setHistoryAdvancedFilters({
+      contexts: [],
+      systems: [],
+      tempsForts: [],
+      actions: [],
+      shotTypes: [],
+      results: [],
+      zones: [],
+      players: [],
+      rebounds: [],
+    });
+  };
+
+  const historyAdvancedFilterCount = Object.values(historyAdvancedFilters)
+    .reduce((sum, values) => sum + values.length, 0);
 
   const assignClipTheme = (action: ClipAction, themeName: string) => {
     if (!action.id) return;
@@ -4809,11 +4863,17 @@ export default function PriseStatsProPage() {
 
           {/* ============ BAS · TIMELINE REPLIABLE ============ */}
           <button className={`timelinePull ${showTimelinePanel ? 'open' : ''}`} onClick={() => setShowTimelinePanel((v) => !v)}>
-            {showTimelinePanel ? '⌄ Fermer timeline' : '⌃ Timeline'}
+            {showTimelinePanel ? '⌄ Fermer analyse' : '⌃ Analyse'}
           </button>
           {showTimelinePanel && (
             <div className="live-strip timelineOnly">
-              <div className="an-body">{renderTimeline()}</div>
+              <div className="analysisSwitchBar">
+                <button type="button" className={analysisView === 'timeline' ? 'on' : ''} onClick={() => setAnalysisView('timeline')}>Timeline</button>
+                <button type="button" className={analysisView === 'history' ? 'on' : ''} onClick={() => setAnalysisView('history')}>Historique</button>
+              </div>
+              <div className="an-body">
+                {analysisView === 'timeline' ? renderTimeline() : renderHistoryList()}
+              </div>
             </div>
           )}
 
@@ -5094,199 +5154,326 @@ export default function PriseStatsProPage() {
   }
 
   function renderHistoryList() {
-    const normalizedSearch = historySearch.trim().toLowerCase();
-    const filtered = actions.filter((a) => {
+    const base = mxFiltered();
+    const unique = <T,>(values: T[]) => Array.from(new Set(values));
+
+    const systemValueOf = (a: StatA) =>
+      String(a.systemeName || a.systemeJeu || a.systemeSlot || '');
+    const resultValueOf = (a: StatA) => String(a.shotResult || '');
+    const zoneValueOf = (a: StatA) => String(a.zone || '');
+    const reboundValueOf = (a: StatA) => String(a.reboundType || '');
+
+    const filterOptions = {
+      contexts: unique(base.map((a) => a.context).filter(Boolean) as string[]),
+      systems: unique(base.map((a) => systemValueOf(a)).filter(Boolean)),
+      tempsForts: unique(base.map((a) => a.tempsFort).filter(Boolean) as string[]),
+      actions: unique(base.map((a) => a.actionType).filter(Boolean) as string[]),
+      shotTypes: unique(base.map((a) => a.shotType).filter(Boolean) as string[]),
+      results: unique(base.map((a) => resultValueOf(a)).filter(Boolean)),
+      zones: unique(base.map((a) => zoneValueOf(a)).filter(Boolean)),
+      players: unique(base.map((a) => a.playerId).filter(Boolean) as string[]),
+      rebounds: unique(base.map((a) => reboundValueOf(a)).filter(Boolean)),
+    };
+
+    const passesAdvanced = (a: StatA) => {
+      if (historyAdvancedFilters.contexts.length && !historyAdvancedFilters.contexts.includes(String(a.context || ''))) return false;
+      if (historyAdvancedFilters.systems.length && !historyAdvancedFilters.systems.includes(systemValueOf(a))) return false;
+      if (historyAdvancedFilters.tempsForts.length && !historyAdvancedFilters.tempsForts.includes(String(a.tempsFort || ''))) return false;
+      if (historyAdvancedFilters.actions.length && !historyAdvancedFilters.actions.includes(String(a.actionType || ''))) return false;
+      if (historyAdvancedFilters.shotTypes.length && !historyAdvancedFilters.shotTypes.includes(String(a.shotType || ''))) return false;
+      if (historyAdvancedFilters.results.length && !historyAdvancedFilters.results.includes(resultValueOf(a))) return false;
+      if (historyAdvancedFilters.zones.length && !historyAdvancedFilters.zones.includes(zoneValueOf(a))) return false;
+      if (historyAdvancedFilters.players.length && !historyAdvancedFilters.players.includes(String(a.playerId || ''))) return false;
+      if (historyAdvancedFilters.rebounds.length && !historyAdvancedFilters.rebounds.includes(reboundValueOf(a))) return false;
+      return true;
+    };
+
+    const search = historySearch.trim().toLowerCase();
+
+    const filtered = base.filter((a) => {
+      if (!passesAdvanced(a)) return false;
       if (historyScope === 'attaque' && a.context !== 'attaque') return false;
       if (historyScope === 'defense' && a.context !== 'defense') return false;
       if (historyScope === 'made' && a.shotResult !== 'made') return false;
       if (historyScope === 'missed' && a.shotResult !== 'missed') return false;
-      if (!normalizedSearch) return true;
+      if (!search) return true;
+
       const p = find(a.playerId);
       const haystack = [
+        periodLabel(a.q),
+        a.clock,
         a.context,
-        a.systemeName,
-        a.systemeJeu,
-        a.systemeSlot,
-        tags.label(a.tempsFort),
         p?.name,
         p?.num,
+        systemValueOf(a),
+        a.tempsFort ? tags.label(a.tempsFort) : '',
         a.actionType,
         a.shotType,
         a.shotResult,
+        a.zone ? zoneById(a.zone)?.shortLabel || a.zone : '',
         a.reboundType,
-        a.zone,
-        ...(clipThemeAssignments[a.id] || []),
+        describe(a, find).t,
       ].filter(Boolean).join(' ').toLowerCase();
-      return haystack.includes(normalizedSearch);
+
+      return haystack.includes(search);
     });
 
-    const tag = (label: string, kind = '') => <i className={`historyTag ${kind}`}>{label}</i>;
+    const renderFilterGroup = (
+      title: string,
+      key: keyof typeof historyAdvancedFilters,
+      values: string[],
+      labelOf: (value: string) => string = (value) => value.replaceAll('-', ' '),
+    ) => {
+      if (!values.length) return null;
+      return (
+        <div className="historyFilterGroup">
+          <b>{title}</b>
+          <div className="historyFilterChecks">
+            {values.map((value) => {
+              const checked = historyAdvancedFilters[key].includes(value);
+              return (
+                <label key={`${key}:${value}`} className={`historyCheck ${checked ? 'on' : ''}`}>
+                  <input
+                    type="checkbox"
+                    checked={checked}
+                    onChange={() => toggleHistoryFilter(key, value)}
+                  />
+                  <span>{labelOf(value)}</span>
+                </label>
+              );
+            })}
+          </div>
+        </div>
+      );
+    };
+
+    const visible = filtered.slice().reverse();
 
     return (
-      <div className="hist proHistory">
+      <div className="historyWritten">
         <div className="historyToolbar">
-          <input value={historySearch} onChange={(e) => setHistorySearch(e.target.value)} placeholder="Rechercher joueur, système, temps fort, zone…" />
+          <div className="historySearchWrap">
+            <span>⌕</span>
+            <input
+              value={historySearch}
+              onChange={(e) => setHistorySearch(e.target.value)}
+              placeholder="Rechercher joueur, système, action, zone..."
+            />
+          </div>
+
           <div className="historyScopes">
-            {([['all','Tous'],['attaque','Attaque'],['defense','Défense'],['made','Marqués'],['missed','Ratés']] as const).map(([key,label]) => (
-              <button key={key} className={historyScope === key ? 'on' : ''} onClick={() => setHistoryScope(key)}>{label}</button>
+            {[
+              ['all', 'Tous'],
+              ['attaque', 'Attaque'],
+              ['defense', 'Défense'],
+              ['made', 'Marqués'],
+              ['missed', 'Ratés'],
+            ].map(([value, label]) => (
+              <button
+                key={value}
+                type="button"
+                className={historyScope === value ? 'on' : ''}
+                onClick={() => setHistoryScope(value as typeof historyScope)}
+              >
+                {label}
+              </button>
             ))}
           </div>
-          <span className="historyCount">{filtered.length} action{filtered.length > 1 ? 's' : ''}</span>
+
+          <button
+            type="button"
+            className={`historyFilterBtn ${historyFiltersOpen ? 'on' : ''}`}
+            onClick={() => setHistoryFiltersOpen((value) => !value)}
+          >
+            ⚲ Filtres
+            {historyAdvancedFilterCount > 0 && <b>{historyAdvancedFilterCount}</b>}
+          </button>
+
+          <span className="historyCount">{visible.length} clip{visible.length > 1 ? 's' : ''}</span>
         </div>
 
-        <div className="historyShortcutEditor">
-          <div className="historyShortcutTitle">
-            <div>
-              <b>Raccourcis de classement</b>
-              <span>Dans la popup vidéo, appuie sur la touche pour classer immédiatement le clip.</span>
-            </div>
-            <button
-              type="button"
-              onClick={() =>
-                setClipShortcutThemes((current) => [
-                  ...current,
-                  {
-                    key: String.fromCharCode(65 + Math.min(current.length, 25)).toLowerCase(),
-                    name: `Thème ${current.length + 1}`,
-                  },
-                ])
-              }
-            >
-              + Ajouter
-            </button>
-          </div>
-
-          <div className="historyShortcutGrid">
-            {clipShortcutThemes.map((shortcut, index) => (
-              <div className="historyShortcutItem" key={`${shortcut.key}:${index}`}>
-                <input
-                  className="historyShortcutKey"
-                  value={shortcut.key.toUpperCase()}
-                  maxLength={1}
-                  aria-label={`Touche du raccourci ${index + 1}`}
-                  onChange={(event) => {
-                    const key = event.target.value.slice(-1).toLowerCase();
-                    setClipShortcutThemes((current) =>
-                      current.map((item, itemIndex) =>
-                        itemIndex === index ? { ...item, key } : item,
-                      ),
-                    );
-                  }}
-                />
-                <input
-                  value={shortcut.name}
-                  aria-label={`Nom du raccourci ${index + 1}`}
-                  onChange={(event) =>
-                    setClipShortcutThemes((current) =>
-                      current.map((item, itemIndex) =>
-                        itemIndex === index
-                          ? { ...item, name: event.target.value }
-                          : item,
-                      ),
-                    )
-                  }
-                />
-                <button
-                  type="button"
-                  title="Supprimer ce raccourci"
-                  onClick={() =>
-                    setClipShortcutThemes((current) =>
-                      current.filter((_, itemIndex) => itemIndex !== index),
-                    )
-                  }
-                >
-                  ×
-                </button>
+        {historyFiltersOpen && (
+          <div className="historyFilterPanel">
+            <div className="historyFilterPanelHead">
+              <div>
+                <b>Filtrer les clips</b>
+                <span>Les familles cochées se combinent entre elles.</span>
               </div>
-            ))}
+              <button
+                type="button"
+                onClick={resetHistoryAdvancedFilters}
+                disabled={historyAdvancedFilterCount === 0}
+              >
+                Réinitialiser
+              </button>
+            </div>
+
+            <div className="historyFilterGrid">
+              {renderFilterGroup('Contexte', 'contexts', filterOptions.contexts, (value) =>
+                value === 'attaque' ? 'Attaque' : value === 'defense' ? 'Défense' : value
+              )}
+              {renderFilterGroup('Systèmes', 'systems', filterOptions.systems, (value) =>
+                SYSTEMES_JEU.find((item) => item.id === value)?.label ||
+                systemForSlot(value)?.title ||
+                value
+              )}
+              {renderFilterGroup('Temps forts', 'tempsForts', filterOptions.tempsForts, (value) =>
+                tags.label(value)
+              )}
+              {renderFilterGroup('Actions', 'actions', filterOptions.actions)}
+              {renderFilterGroup('Type de tir', 'shotTypes', filterOptions.shotTypes)}
+              {renderFilterGroup('Résultat', 'results', filterOptions.results, (value) =>
+                value === 'made' ? 'Marqué' : value === 'missed' ? 'Raté' : value
+              )}
+              {renderFilterGroup('Zones', 'zones', filterOptions.zones, (value) =>
+                zoneById(value)?.shortLabel || value
+              )}
+              {renderFilterGroup('Joueurs', 'players', filterOptions.players, (value) => {
+                const p = find(value);
+                return p ? `#${p.num} ${p.name}` : value;
+              })}
+              {renderFilterGroup('Rebonds', 'rebounds', filterOptions.rebounds, (value) =>
+                value === 'off' ? 'Offensif' : value === 'def' ? 'Défensif' : value
+              )}
+            </div>
           </div>
+        )}
+
+        <div className="historyWrittenList">
+          {visible.length === 0 && <div className="hist-empty">Aucun clip ne correspond à ces filtres.</div>}
+
+          {visible.map((a) => {
+            const d = describe(a, find);
+            const p = find(a.playerId);
+            const hasClip = a.videoTime != null || a.clipStart != null;
+            const possessionStart = Number(a.possessionStart ?? a.clipStart ?? a.videoTime ?? 0);
+            const possessionEnd = Math.max(possessionStart, Number(a.possessionEnd ?? a.clipEnd ?? possessionStart));
+            const possessionDuration = Math.max(0, possessionEnd - possessionStart);
+            const expanded = Boolean(historyExpanded[a.id]);
+
+            const systemName =
+              a.systemeName ||
+              SYSTEMES_JEU.find((item) => item.id === (a.systemeJeu || a.systemeSlot))?.label ||
+              a.systemeSlot;
+
+            const eventClips = [
+              systemName ? { key: 'system', label: `Système · ${systemName}`, pre: 6, post: 4 } : null,
+              a.tempsFort ? { key: 'tempo', label: `Temps fort · ${tags.label(a.tempsFort)}`, pre: 6, post: 4 } : null,
+              a.actionType ? { key: 'action', label: `Action · ${String(a.actionType).replaceAll('-', ' ')}`, pre: 5, post: 3 } : null,
+              a.shotResult ? {
+                key: 'result',
+                label: `Résultat · ${a.shotType || 'Tir'} ${a.shotResult === 'made' ? 'marqué' : a.shotResult === 'missed' ? 'raté' : a.shotResult}`,
+                pre: 5,
+                post: 3,
+              } : null,
+              a.reboundType ? {
+                key: 'rebound',
+                label: `Rebond · ${a.reboundType === 'off' ? 'offensif' : a.reboundType === 'def' ? 'défensif' : a.reboundType}`,
+                pre: 3,
+                post: 3,
+              } : null,
+            ].filter(Boolean) as Array<{ key: string; label: string; pre: number; post: number }>;
+
+            const eventAnchor = Number(a.videoTime ?? a.clipEnd ?? a.possessionEnd ?? possessionStart);
+
+            return (
+              <div className="historyPossessionBlock" key={a.id}>
+                <div className="historyPossessionRow">
+                  <button
+                    type="button"
+                    className={`historyExpand ${expanded ? 'open' : ''}`}
+                    onClick={() => setHistoryExpanded((current) => ({ ...current, [a.id]: !current[a.id] }))}
+                    disabled={eventClips.length === 0}
+                  >
+                    {expanded ? '⌄' : '›'}
+                  </button>
+
+                  <div className="historyActionTime">
+                    <b>{periodLabel(a.q)} · {a.clock}</b>
+                    <span>{a.context === 'defense' ? 'DÉFENSE' : 'ATTAQUE'}</span>
+                  </div>
+
+                  <div className="historyActionContent">
+                    <div className="historyActionHeadline">
+                      <strong>{p ? `#${p.num} ${p.name}` : a.opponentPlayerName || 'Possession collective'}</strong>
+                      <em>{d.t}</em>
+                    </div>
+                    <div className="historyTags">
+                      <span className={`historyTag ${a.context || ''}`}>
+                        {a.context === 'defense' ? 'Défense' : 'Attaque'}
+                      </span>
+                      {systemName && <span className="historyTag system">{systemName}</span>}
+                      {a.tempsFort && <span className="historyTag tempo">{tags.label(a.tempsFort)}</span>}
+                      {a.actionType && <span className="historyTag action">{String(a.actionType).replaceAll('-', ' ')}</span>}
+                      {a.shotType && <span className="historyTag shot">{a.shotType}</span>}
+                      {a.shotResult && (
+                        <span className={`historyTag ${a.shotResult}`}>
+                          {a.shotResult === 'made' ? 'Marqué' : a.shotResult === 'missed' ? 'Raté' : a.shotResult}
+                        </span>
+                      )}
+                      {a.zone && <span className="historyTag zone">{zoneById(a.zone)?.shortLabel || a.zone}</span>}
+                    </div>
+                  </div>
+
+                  <div className="historyActionButtons">
+                    <button
+                      type="button"
+                      className={`hplay ${hasClip ? 'has' : ''}`}
+                      onClick={() => {
+                        const list = visible;
+                        openClipModal('Possessions', list, list.findIndex((item) => item.id === a.id));
+                      }}
+                    >
+                      ▶ <span>{possessionDuration.toFixed(1)}s</span>
+                    </button>
+                    <button className="hadd" onClick={() => addToMontage(a)}>⭐</button>
+                  </div>
+                </div>
+
+                {expanded && eventClips.length > 0 && (
+                  <div className="historyMiniClips">
+                    <div className="historyMiniClipsHead">
+                      <span>Clips de la possession</span>
+                      <b>{eventClips.length}</b>
+                    </div>
+
+                    {eventClips.map((clip) => {
+                      const miniStart = Math.max(possessionStart, eventAnchor - clip.pre);
+                      const miniEnd = Math.max(
+                        miniStart + 0.25,
+                        Math.min(possessionEnd, eventAnchor + clip.post),
+                      );
+                      const duration = Math.max(0.25, miniEnd - miniStart);
+
+                      const miniAction: StatA = {
+                        ...a,
+                        id: `${a.id}::${clip.key}`,
+                        videoTime: eventAnchor,
+                        clipStart: miniStart,
+                        clipEnd: miniEnd,
+                        possessionStart: miniStart,
+                        possessionEnd: miniEnd,
+                      };
+
+                      return (
+                        <div className="historyMiniClip" key={clip.key}>
+                          <div className="historyMiniClipInfo">
+                            <b>{clip.label}</b>
+                            <small>{fmt(Math.round(miniStart))} → {fmt(Math.round(miniEnd))}</small>
+                          </div>
+                          <span className="historyMiniClipDuration">{duration.toFixed(1)}s</span>
+                          <button type="button" onClick={() => openClipModal(clip.label, [miniAction], 0)}>▶</button>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            );
+          })}
         </div>
-
-        {filtered.length === 0 && <div className="hist-empty">Aucune action correspondant aux filtres.</div>}
-        {filtered.slice().reverse().map((a) => {
-          const d = describe(a, find);
-          const p = find(a.playerId);
-          const rebounder = find(a.reboundPlayerId);
-          const assister = find(a.assistPlayerId);
-          const hasClip = a.videoTime != null || a.clipStart != null;
-          const systemName = a.systemeName || SYSTEMES_JEU.find((item) => item.id === (a.systemeJeu || a.systemeSlot))?.label || a.systemeSlot;
-          const consequence = a.reboundType
-            ? `${a.reboundType === 'off' ? 'Rebond offensif' : a.reboundType === 'def' ? 'Rebond défensif' : a.reboundType}${rebounder ? ` · #${rebounder.num} ${rebounder.name}` : ''}`
-            : a.assist
-              ? `Passe décisive${assister ? ` · #${assister.num} ${assister.name}` : ''}`
-              : a.foulOutcome || '';
-          return (
-            <div className="historyActionCard" key={a.id}>
-              <div className="historyActionTime">
-                <b>{periodLabel(a.q)} · {a.clock}</b>
-                <span>{a.videoTime != null ? '🎬 ' + fmt(Math.round(a.videoTime)) : 'Sans repère vidéo'}</span>
-              </div>
-              <div className="historyActionContent">
-                <div className="historyActionHeadline">
-                  <strong>{p ? `#${p.num} ${p.name}` : a.opponentPlayerName || 'Action collective'}</strong>
-                  <em>{d.t}</em>
-                </div>
-                <div className="historyTags">
-                  {tag(a.context === 'defense' ? 'Défense' : 'Attaque', a.context || '')}
-                  {systemName && tag(systemName, 'system')}
-                  {a.tempsFort && tag(tags.label(a.tempsFort), 'tempo')}
-                  {a.actionType && tag(a.actionType.replaceAll('-', ' '), 'action')}
-                  {a.shotType && tag(a.shotType, 'shot')}
-                  {a.shotResult && tag(a.shotResult === 'made' ? 'Marqué' : a.shotResult === 'missed' ? 'Raté' : a.shotResult, a.shotResult)}
-                  {a.zone && tag(zoneById(a.zone)?.shortLabel || a.zone, 'zone')}
-                  {consequence && tag(consequence, 'consequence')}
-                  {(clipThemeAssignments[a.id] || []).map((theme) => <i className="historyTag custom" key={theme}>🏷 {theme}</i>)}
-                </div>
-              </div>
-              <div className="historyActionButtons">
-                <button className={`hplay ${hasClip ? 'has' : ''}`} title={hasClip ? 'Revoir dans la popup indépendante' : 'Clip à synchroniser'} onClick={() => { const list = filtered.slice().reverse(); openClipModal('Historique des actions', list, list.findIndex((x) => x.id === a.id)); }}>▶</button>
-                <button className="hadd" title="Ajouter au montage" onClick={() => addToMontage(a)}>⭐</button>
-                <button className="hedit" title="Reprendre l’action pour correction" onClick={() => {
-                  setActions((arr) => arr.filter((x) => x.id !== a.id));
-                  subtractActionFromScore(a);
-                  restoreDraftFromAction(a);
-                  flash('Action ouverte en correction');
-                  const mId = liveMatchIdRef.current;
-                  const tId = liveTeamIdRef.current;
-                  if (mId && tId) {
-                    deleteLiveAction({ matchId: mId, clientActionId: a.id }).catch(() => {});
-                    const nextActions = actions.filter((x) => x.id !== a.id);
-                    const cur = perQ[a.q] || { us: 0, them: 0 };
-                    const nextPerQ = { ...perQ, [a.q]: { us: cur.us - ptsOf(a), them: cur.them - themPtsOf(a) } };
-                    syncLiveAggregates(nextActions, onCourt, nextPerQ);
-                  }
-                }}>↩</button>
-                <button className="hdel" title="Supprimer" onClick={() => removeAction(a.id)}>✕</button>
-              </div>
-            </div>
-          );
-        })}
       </div>
     );
-  }
-
-  /* ============ V8 · Timeline Sportscode ============
-     Une piste (row) par catégorie codée effectivement utilisée : les temps
-     forts (via tags) + les contextes attaque/défense. Chaque événement est
-     placé horizontalement selon son chrono dans le quart-temps ; séparateurs
-     verticaux entre QT. Hover = tags ; clic = popup revoir/modifier (evtSel).
-     Lecture seule des `actions` locales : aucun impact moteur. */
-  function evtColor(a: StatA): string {
-    // Bleu = attaque réussie, Rouge = erreur/perte, Vert = positif défensif, Orange = faute
-    if (a.actionType === 'tir' && a.shotResult === 'made') return 'var(--blue)';
-    if (a.actionType === 'perte' || a.actionType === 'perte-adverse') return 'var(--red)';
-    if (a.actionType === 'tir' && a.shotResult === 'missed') return 'var(--red)';
-    if (a.actionType === 'interception' || a.actionType === 'contre') return 'var(--green)';
-    if (a.actionType === 'faute-provoquee' || a.actionType === 'faute-commise') return 'var(--orange)';
-    if (a.context === 'attaque') return 'var(--bordeaux2)';
-    return 'var(--mute)';
-  }
-  // Position horizontale 0..1 d'une action dans son quart-temps (chrono décroissant).
-  function evtX(a: StatA): number {
-    const parts = (a.clock || '00:00').split(':');
-    const rem = (parseInt(parts[0], 10) || 0) * 60 + (parseInt(parts[1], 10) || 0);
-    const dur = periodDuration(a.q);
-    return Math.max(0, Math.min(1, (dur - rem) / dur)); // début QT = 0, fin QT = 1
   }
 
   function renderTimeline() {
@@ -8500,6 +8687,33 @@ function Style() {
       .proTimeline.compact .timelineDurationPill{top:-6px}
 
       @media(max-width:900px){.historyToolbar{grid-template-columns:1fr}.historyActionCard{grid-template-columns:1fr}.historyActionButtons{justify-content:flex-end}}
+
+      .analysisSwitchBar{flex:0 0 auto;height:38px;display:flex;align-items:flex-end;gap:3px;padding:0 10px;border-bottom:1px solid #273247;background:#0a111e}
+      .analysisSwitchBar button{height:31px;min-width:105px;border:1px solid #303b52;border-bottom:0;border-radius:8px 8px 0 0;background:#111a2b;color:#8794aa;font-size:10px;font-weight:900;cursor:pointer}
+      .analysisSwitchBar button.on{background:#172238;color:#f4c665;border-color:#d4a24c}
+      .historyWritten{height:100%;display:flex;flex-direction:column;min-height:0;overflow:hidden;background:#080e19;padding:8px}
+      .historyToolbar{flex:0 0 auto;display:grid;grid-template-columns:minmax(250px,1fr) auto auto auto;gap:7px;align-items:center;margin-bottom:7px}
+      .historySearchWrap{height:34px;display:flex;align-items:center;gap:7px;border:1px solid #2b354b;border-radius:8px;background:#0b1220;padding:0 9px}
+      .historySearchWrap input{width:100%;height:30px;border:0;outline:0;background:transparent;color:#fff;font:inherit;font-size:10px}
+      .historyScopes{display:flex;gap:4px;flex-wrap:nowrap}
+      .historyScopes button,.historyFilterBtn{height:32px;border:1px solid #303b52;border-radius:7px;background:#131c2d;color:#aeb9ce;padding:0 8px;font-size:9px;font-weight:850;cursor:pointer;white-space:nowrap}
+      .historyScopes button.on,.historyFilterBtn.on{border-color:#d4a24c;color:#d4a24c;background:rgba(212,162,76,.09)}
+      .historyFilterBtn{display:inline-flex;align-items:center;gap:5px}.historyFilterBtn b{min-width:16px;height:16px;display:grid;place-items:center;border-radius:999px;background:#d4a24c;color:#16100b;font-size:7px}
+      .historyCount{color:#7f8ca3;font-size:9px;white-space:nowrap}
+      .historyFilterPanel{flex:0 0 auto;max-height:185px;overflow:auto;margin-bottom:8px;border:1px solid #29344a;border-radius:9px;background:#0d1524;padding:8px}
+      .historyFilterPanelHead{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:8px}.historyFilterPanelHead b,.historyFilterPanelHead span{display:block}.historyFilterPanelHead b{color:#fff;font-size:10px}.historyFilterPanelHead span{color:#7e8ba1;font-size:8px;margin-top:2px}
+      .historyFilterPanelHead button{border:1px solid #35415a;border-radius:7px;background:#121d30;color:#aeb9ce;padding:5px 8px;font-size:8px;cursor:pointer}.historyFilterPanelHead button:disabled{opacity:.35}
+      .historyFilterGrid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}.historyFilterGroup{min-width:0;border-top:1px solid #202c40;padding-top:6px}.historyFilterGroup>b{display:block;color:#d4a24c;font-size:8px;margin-bottom:5px;text-transform:uppercase;letter-spacing:.05em}
+      .historyFilterChecks{display:flex;flex-wrap:wrap;gap:4px}.historyCheck{display:inline-flex;align-items:center;gap:4px;border:1px solid #34415a;border-radius:999px;background:#101827;color:#aab5c8;padding:3px 6px;font-size:8px;cursor:pointer}.historyCheck.on{border-color:#d4a24c;background:rgba(212,162,76,.1);color:#f1c66c}.historyCheck input{width:11px;height:11px;margin:0}
+      .historyWrittenList{flex:1;min-height:0;overflow:auto;padding-right:3px}.historyPossessionBlock{margin-bottom:6px;border:1px solid #29344a;border-radius:9px;overflow:hidden;background:#0c1422}.historyPossessionRow{display:grid;grid-template-columns:28px 95px minmax(0,1fr) auto;gap:8px;align-items:center;padding:8px}
+      .historyExpand{width:24px;height:24px;border:1px solid #34415a;border-radius:6px;background:#111b2d;color:#d4a24c;font-size:16px;font-weight:900;cursor:pointer}.historyExpand.open{border-color:#d4a24c;background:rgba(212,162,76,.1)}.historyExpand:disabled{opacity:.25;cursor:default}
+      .historyActionTime b,.historyActionTime span{display:block}.historyActionTime b{color:#fff;font-size:9px}.historyActionTime span{margin-top:3px;color:#d4a24c;font-size:7px;font-weight:900}
+      .historyActionHeadline{display:flex;align-items:baseline;gap:7px;margin-bottom:5px}.historyActionHeadline strong{font-size:10px}.historyActionHeadline em{color:#8692a8;font-size:8px;font-style:normal}
+      .historyTags{display:flex;gap:4px;flex-wrap:wrap}.historyTag{border:1px solid #35415a;border-radius:999px;padding:3px 6px;background:#172238;color:#d8dfec;font-size:7px;font-weight:850;text-transform:capitalize}.historyTag.attaque{border-color:#ff7a18;color:#ffad67}.historyTag.defense{border-color:#32b7ef;color:#79d5fa}.historyTag.system{border-color:#7c5cff}.historyTag.tempo{border-color:#d4a24c;color:#f4c665}.historyTag.made{border-color:#22c55e;color:#6ee7a0}.historyTag.missed{border-color:#ef4444;color:#fb8a8a}
+      .historyActionButtons{display:flex;gap:4px;align-items:center}.historyActionButtons button{height:29px;border-radius:7px}.historyActionButtons .hplay{width:auto;padding:0 8px;display:inline-flex;align-items:center;gap:4px}.historyActionButtons .hplay span{font-size:7px;font-weight:900}
+      .historyMiniClips{border-top:1px solid #273247;background:#080f1b;padding:6px 9px 8px 37px}.historyMiniClipsHead{display:flex;align-items:center;justify-content:space-between;margin-bottom:3px;color:#7e8ba1;font-size:7px;text-transform:uppercase;letter-spacing:.05em}.historyMiniClipsHead b{color:#d4a24c}
+      .historyMiniClip{display:grid;grid-template-columns:minmax(0,1fr) 45px 28px;gap:6px;align-items:center;min-height:32px;border-top:1px solid #1d293c;padding:4px 5px}.historyMiniClip:first-of-type{border-top:0}.historyMiniClipInfo{min-width:0}.historyMiniClipInfo b{display:block;color:#dfe6f2;font-size:8px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.historyMiniClipInfo small{display:block;margin-top:2px;color:#65738a;font-size:7px}
+      .historyMiniClipDuration{justify-self:end;border:1px solid #36445e;border-radius:999px;padding:3px 5px;color:#f4c665;background:#101827;font-size:7px;font-weight:900}.historyMiniClip button{width:26px;height:26px;border:1px solid #d4a24c;border-radius:6px;background:rgba(212,162,76,.08);color:#d4a24c;cursor:pointer}
       .timelinePull { position: fixed; left: 50%; bottom: 12px; transform: translateX(-50%); z-index: 1001; border: 1px solid rgba(212,162,76,.65); background: rgba(10,13,25,.96); color: var(--gold); border-radius: 999px; height: 28px; padding: 0 16px; font-size: 12px; font-weight: 950; cursor: pointer; box-shadow: 0 8px 22px rgba(0,0,0,.35); }
       .timelinePull.open { bottom: 356px; }
       .live-strip.timelineOnly { position: fixed; left: 10px; right: 10px; bottom: 8px; z-index: 1000; height: 340px; margin: 0; box-shadow: 0 -18px 40px rgba(0,0,0,.35); animation: slideTimeline .18s ease-out; }
