@@ -5,15 +5,7 @@ import { useEffect, useMemo, useState } from "react";
 import type { User } from "@supabase/supabase-js";
 import { listExercises } from "@/lib/exercises";
 import { createClient } from "@/lib/supabase/client";
-import {
-  createQuickSession,
-  deleteQuickSession,
-  loadQuickSessions,
-  quickAddExerciseToSession,
-  resetQuickSession,
-  setActiveQuickSession,
-  type QuickPracticeSession,
-} from "@/lib/session-quick-add";
+import { addExerciseToCart } from "@/lib/session-quick-add";
 import type { Exercise } from "@/types/exercise";
 
 type SortKey = "recent" | "alpha";
@@ -42,27 +34,18 @@ function formatDate(date: string | number | undefined) {
   });
 }
 
-function formatSessionDate(date: string | null) {
-  if (!date) return "Date non définie";
-  return new Date(`${date}T12:00:00`).toLocaleDateString("fr-FR", {
-    day: "2-digit",
-    month: "short",
-    year: "numeric",
-  });
-}
-
 function ExerciseCard({
   item,
   isConnected,
   isAdding,
   isAdded,
-  onQuickAdd,
+  onAdd,
 }: {
   item: Exercise;
   isConnected: boolean;
   isAdding: boolean;
   isAdded: boolean;
-  onQuickAdd: (exercise: Exercise) => void;
+  onAdd: (exercise: Exercise) => void;
 }) {
   const thumbnail =
     item.diagrams?.[0]?.imageUrl ||
@@ -99,9 +82,9 @@ function ExerciseCard({
             type="button"
             className={`mb-quick-add ${isAdded ? "is-added" : ""}`}
             disabled={isAdding || isAdded}
-            onClick={() => onQuickAdd(item)}
+            onClick={() => onAdd(item)}
           >
-            {isAdding ? "Ajout..." : isAdded ? "✓ Ajouté" : "+ Ajout rapide"}
+            {isAdding ? "Ajout..." : isAdded ? "✓ Ajouté" : "+ Ajouter"}
           </button>
         )}
 
@@ -127,19 +110,9 @@ export default function ExercicesClient() {
   const [selected, setSelected] = useState<Record<string, string[]>>({});
   const [loading, setLoading] = useState(true);
   const [user, setUser] = useState<User | null>(null);
-  const [sessions, setSessions] = useState<QuickPracticeSession[]>([]);
-  const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
-  const [pendingExercise, setPendingExercise] = useState<Exercise | null>(null);
   const [addingExerciseId, setAddingExerciseId] = useState<string | null>(null);
   const [addedIds, setAddedIds] = useState<Set<string>>(new Set());
   const [toast, setToast] = useState<ToastState>(null);
-  const [newSessionTitle, setNewSessionTitle] = useState("Séance rapide");
-  const [creatingSession, setCreatingSession] = useState(false);
-
-  const activeSession = useMemo(
-    () => sessions.find((session) => session.id === activeSessionId) ?? null,
-    [sessions, activeSessionId]
-  );
 
   useEffect(() => {
     async function load() {
@@ -154,10 +127,12 @@ export default function ExercicesClient() {
         setUser(currentUser);
 
         if (currentUser) {
-          const quickData = await loadQuickSessions(supabase, currentUser);
-          setSessions(quickData.sessions);
-          setActiveSessionId(quickData.activeSessionId);
-        }
+          const { data: cartRows } = await supabase
+            .from("cart_items")
+            .select("item_id")
+            .eq("user_id", currentUser.id)
+            .eq("item_type", "exercise");
+(cartRows ?? []).map((row: { item_id: string | null }) => String(row.item_id || ""))        }
       } catch (error) {
         console.error("Erreur chargement exercices :", error);
         setItems([]);
@@ -240,130 +215,27 @@ export default function ExercicesClient() {
       });
   }, [items, search, sort, selected]);
 
-  async function addToSession(exercise: Exercise, sessionId: string) {
+  async function handleAdd(exercise: Exercise) {
     if (!user) return;
 
     setAddingExerciseId(exercise.id);
-
     try {
-      await setActiveQuickSession(supabase, user.id, sessionId);
-      setActiveSessionId(sessionId);
-
-      const result = await quickAddExerciseToSession(
-        supabase,
-        user,
-        sessionId,
-        exercise
-      );
-
-      setSessions((current) =>
-        current.map((session) =>
-          session.id === sessionId
-            ? { ...session, exerciseCount: result.count }
-            : session
-        )
-      );
-
+      const result = await addExerciseToCart(supabase, user, exercise);
       setAddedIds((current) => new Set(current).add(exercise.id));
-      setPendingExercise(null);
       setToast({
-        message: result.added
-          ? "Exercice ajouté à la séance"
-          : "Cet exercice est déjà dans la séance",
+        message: result.added ? "Exercice ajouté au panier" : "Cet exercice est déjà dans le panier",
         exerciseTitle: exercise.title,
       });
     } catch (error) {
-      console.error("Erreur ajout rapide :", error);
-      alert(
-        error instanceof Error
-          ? error.message
-          : "Impossible d’ajouter l’exercice à la séance."
-      );
+      console.error("Erreur ajout panier :", error);
+      alert(error instanceof Error ? error.message : "Impossible d’ajouter l’exercice au panier.");
     } finally {
       setAddingExerciseId(null);
     }
   }
 
-  async function handleQuickAdd(exercise: Exercise) {
-    if (!user) return;
-
-    if (activeSessionId) {
-      await addToSession(exercise, activeSessionId);
-      return;
-    }
-
-    setPendingExercise(exercise);
-  }
-
-  async function chooseSession(sessionId: string) {
-    if (!pendingExercise) return;
-    await addToSession(pendingExercise, sessionId);
-  }
-
-
-  async function removeSessionFromList(session: QuickPracticeSession) {
-    if (!user) return;
-
-    const ok = window.confirm(
-      `Supprimer « ${session.title} » et tous ses exercices ?`
-    );
-    if (!ok) return;
-
-    try {
-      await deleteQuickSession(supabase, user, session.id);
-      setSessions((current) => current.filter((item) => item.id !== session.id));
-
-      if (activeSessionId === session.id) {
-        setActiveSessionId(null);
-        setAddedIds(new Set());
-      }
-
-      setToast({ message: "Séance supprimée" });
-    } catch (error) {
-      console.error("Erreur suppression séance :", error);
-      alert(error instanceof Error ? error.message : "Suppression impossible.");
-    }
-  }
-
-  async function restartFromZero() {
-    if (!user || !activeSession) return;
-
-    const ok = window.confirm(
-      `Repartir de zéro supprimera « ${activeSession.title} » et tous ses exercices. Continuer ?`
-    );
-    if (!ok) return;
-
-    try {
-      await resetQuickSession(supabase, user, activeSession.id);
-      setSessions((current) => current.filter((session) => session.id !== activeSession.id));
-      setActiveSessionId(null);
-      setAddedIds(new Set());
-      setToast({ message: "Séance rapide supprimée. Tu peux repartir de zéro." });
-    } catch (error) {
-      console.error("Erreur remise à zéro :", error);
-      alert(error instanceof Error ? error.message : "Impossible de repartir de zéro.");
-    }
-  }
-  async function createAndAdd() {
-    if (!user || !pendingExercise) return;
-    setCreatingSession(true);
-
-    try {
-      const session = await createQuickSession(supabase, user, newSessionTitle);
-      setSessions((current) => [session, ...current]);
-      setActiveSessionId(session.id);
-      setNewSessionTitle("Séance rapide");
-      await addToSession(pendingExercise, session.id);
-    } catch (error) {
-      console.error(error);
-      alert(error instanceof Error ? error.message : "Création impossible.");
-    } finally {
-      setCreatingSession(false);
-    }
-  }
-
   return (
-    <main className={activeSession ? "has-session-dock" : ""}>
+    <main>
       <div className="page-banner">
         <img src="/images/bandeau-exercices.png" alt="MyBasket Exercices" />
       </div>
@@ -449,7 +321,7 @@ export default function ExercicesClient() {
                     isConnected={Boolean(user)}
                     isAdding={addingExerciseId === item.id}
                     isAdded={addedIds.has(item.id)}
-                    onQuickAdd={handleQuickAdd}
+                    onAdd={handleAdd}
                   />
                 ))}
               </div>
@@ -458,117 +330,6 @@ export default function ExercicesClient() {
         </div>
       </div>
 
-      {pendingExercise && (
-        <div className="mb-modal-backdrop" onMouseDown={() => setPendingExercise(null)}>
-          <div className="mb-session-modal" onMouseDown={(event) => event.stopPropagation()}>
-            <button
-              type="button"
-              className="mb-modal-close"
-              onClick={() => setPendingExercise(null)}
-              aria-label="Fermer"
-            >
-              ×
-            </button>
-
-            <span className="mb-modal-kicker">AJOUT RAPIDE</span>
-            <h2>Ajouter à une séance</h2>
-            <p>
-              Choisis la séance qui recevra <strong>{pendingExercise.title}</strong>.
-            </p>
-
-            <div className="mb-session-list">
-              {sessions.map((session) => (
-                <div key={session.id} className="mb-session-choice">
-                  <button
-                    type="button"
-                    className="mb-session-add"
-                    onClick={() => chooseSession(session.id)}
-                    disabled={Boolean(addingExerciseId)}
-                  >
-                    <span>
-                      <strong>{session.title}</strong>
-                      <small>
-                        {formatSessionDate(session.session_date)} · {session.exerciseCount} exercice
-                        {session.exerciseCount > 1 ? "s" : ""}
-                      </small>
-                    </span>
-                    <b>Ajouter →</b>
-                  </button>
-
-                  <Link
-                    href={`/seances/nouvelle?id=${session.id}`}
-                    className="mb-session-edit"
-                    onClick={() => {
-                      setPendingExercise(null);
-                      setActiveSessionId(session.id);
-                      if (user) {
-                        void setActiveQuickSession(supabase, user.id, session.id);
-                      }
-                    }}
-                  >
-                    Modifier
-                  </Link>
-
-                  <button
-                    type="button"
-                    className="mb-session-delete"
-                    onClick={() => removeSessionFromList(session)}
-                    aria-label={`Supprimer ${session.title}`}
-                    title="Supprimer la séance"
-                  >
-                    ×
-                  </button>
-                </div>
-              ))}
-
-              {sessions.length === 0 && (
-                <div className="mb-no-session">Aucune séance existante.</div>
-              )}
-            </div>
-
-            <div className="mb-new-session">
-              <label htmlFor="quick-session-title">Créer une nouvelle séance rapide</label>
-              <div>
-                <input
-                  id="quick-session-title"
-                  value={newSessionTitle}
-                  onChange={(event) => setNewSessionTitle(event.target.value)}
-                  placeholder="Séance rapide"
-                />
-                <button
-                  type="button"
-                  onClick={createAndAdd}
-                  disabled={creatingSession || !newSessionTitle.trim()}
-                >
-                  {creatingSession ? "Création..." : "+ Créer et ajouter"}
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {activeSession && (
-        <div className="mb-session-dock">
-          <div className="mb-dock-icon">📝</div>
-          <div className="mb-dock-copy">
-            <span>SÉANCE ACTIVE</span>
-            <strong>{activeSession.title}</strong>
-          </div>
-          <div className="mb-dock-count">
-            <b>{activeSession.exerciseCount}</b>
-            <span>exercice{activeSession.exerciseCount > 1 ? "s" : ""}</span>
-          </div>
-          <Link href={`/seances/nouvelle?id=${activeSession.id}`} className="mb-dock-primary">
-            Configurer / finaliser →
-          </Link>
-          <Link href={`/seances/${activeSession.id}`}>Voir le brouillon</Link>
-          <button type="button" className="mb-dock-reset" onClick={restartFromZero}>
-            Repartir de zéro
-          </button>
-        </div>
-      )}
-
       {toast && (
         <div className="mb-toast">
           <div>✓</div>
@@ -576,7 +337,7 @@ export default function ExercicesClient() {
             <strong>{toast.message}</strong>
             {toast.exerciseTitle && <small>{toast.exerciseTitle}</small>}
           </span>
-          {activeSession && <Link href={`/seances/nouvelle?id=${activeSession.id}`}>Configurer</Link>}
+          <Link href="/panier">Voir le panier</Link>
         </div>
       )}
 

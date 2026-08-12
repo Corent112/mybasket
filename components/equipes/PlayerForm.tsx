@@ -16,6 +16,9 @@ type PlayerExtra = Player & {
   tuteur1Email?: string;
   tuteur2Phone?: string;
   tuteur2Email?: string;
+  nationality?: string;
+  school?: string;
+  className?: string;
 };
 
 export default function PlayerForm({
@@ -37,6 +40,9 @@ export default function PlayerForm({
     tuteur1Email: (initial as PlayerExtra)?.tuteur1Email ?? "",
     tuteur2Phone: (initial as PlayerExtra)?.tuteur2Phone ?? "",
     tuteur2Email: (initial as PlayerExtra)?.tuteur2Email ?? "",
+    nationality: (initial as PlayerExtra)?.nationality ?? "",
+    school: (initial as PlayerExtra)?.school ?? "",
+    className: (initial as PlayerExtra)?.className ?? "",
   });
 
   const fileRef = useRef<HTMLInputElement>(null);
@@ -329,6 +335,18 @@ export default function PlayerForm({
                 onChange={(e) => set("categorie", e.target.value)}
                 placeholder="U15 / U18 / Seniors..."
               />
+            </Field>
+
+            <Field label="Nationalité">
+              <input value={p.nationality ?? ""} onChange={(e) => set("nationality", e.target.value)} placeholder="Française" />
+            </Field>
+
+            <Field label="Établissement">
+              <input value={p.school ?? ""} onChange={(e) => set("school", e.target.value)} placeholder="Nom de l’établissement" />
+            </Field>
+
+            <Field label="Classe">
+              <input value={p.className ?? ""} onChange={(e) => set("className", e.target.value)} placeholder="3e, Seconde..." />
             </Field>
           </div>
         </div>

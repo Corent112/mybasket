@@ -181,6 +181,14 @@ export async function createQuickSession(
   return { ...data, exerciseCount: 0 };
 }
 
+export async function addExerciseToCart(
+  supabase: SupabaseClient,
+  user: User,
+  exercise: Exercise
+): Promise<{ added: boolean; count: number }> {
+  return quickAddExerciseToSession(supabase, user, "", exercise);
+}
+
 export async function quickAddExerciseToSession(
   supabase: SupabaseClient,
   user: User,

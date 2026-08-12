@@ -27,7 +27,7 @@ export default function NouvelleSeancePage() {
   const [teams, setTeams] = useState<Team[]>([]);
   const [players, setPlayers] = useState<Player[]>([]);
   const [teamId, setTeamId] = useState("");
-  const [title, setTitle] = useState("Séance rapide");
+  const [title, setTitle] = useState("");
   const [theme, setTheme] = useState("");
   const [date, setDate] = useState("");
   const [startTime, setStartTime] = useState("18:00");

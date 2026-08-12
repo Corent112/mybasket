@@ -1866,6 +1866,7 @@ function TrainingAnalysisBlock({
       let rows: Record<string, any>[] = [];
 
       const queryAttempts: Array<{ column: string; ids: string[] }> = [
+        { column: "team_reference_id", ids: candidateIds },
         { column: "team_local_id", ids: candidateIds },
         { column: "team_id", ids: uuidCandidateIds },
         { column: "equipe_id", ids: candidateIds },
@@ -1904,11 +1905,13 @@ function TrainingAnalysisBlock({
               const content = readSessionContent(row);
               const possibleIds = compactStrings([
                 row.team_id,
+                row.team_reference_id,
                 row.team_local_id,
                 row.teamId,
                 row.equipe_id,
                 row.equipeId,
                 content?.team_local_id,
+                content?.team_reference_id,
                 content?.team_id,
                 content?.team?.id,
               ]);
@@ -1923,7 +1926,7 @@ function TrainingAnalysisBlock({
       let itemRows: Record<string, any>[] = [];
 
       if (sessionIds.length > 0) {
-        for (const table of ["practice_session_items", "session_items"]) {
+        for (const table of ["practice_session_exercises", "practice_session_items", "session_items"]) {
           const { data, error } = await supabase
             .from(table)
             .select("*")
@@ -1938,6 +1941,26 @@ function TrainingAnalysisBlock({
       }
 
       if (itemRows.length > 0) {
+        const exerciseIds = compactStrings(itemRows.map((item) => item.exercise_id));
+        if (exerciseIds.length > 0) {
+          const { data: exerciseDefinitions } = await supabase
+            .from("exercises")
+            .select("id,title,theme,type,category")
+            .in("id", exerciseIds);
+          const exerciseById = new Map(
+            ((exerciseDefinitions ?? []) as Record<string, any>[]).map((exercise) => [String(exercise.id), exercise]),
+          );
+          itemRows = itemRows.map((item) => {
+            const definition = exerciseById.get(String(item.exercise_id || ""));
+            return {
+              ...item,
+              category: item.category || item.theme || definition?.theme || definition?.type || definition?.category || "Autre",
+              theme: item.theme || definition?.theme || definition?.type || null,
+              title: item.title || definition?.title || "Exercice",
+            };
+          });
+        }
+
         const bySession = itemRows.reduce((acc: Record<string, any[]>, item) => {
           const sessionId = String(item.session_id || item.practice_session_id || "");
           if (!sessionId) return acc;
@@ -1986,6 +2009,7 @@ function TrainingAnalysisBlock({
                 const content = readSessionContent(row) || {};
                 const possibleIds = compactStrings([
                   row.team_id,
+                  row.team_reference_id,
                   row.teamId,
                   row.team_local_id,
                   row.equipe_id,

@@ -118,6 +118,9 @@ export interface Player {
   age: number | null;
   dob: string; // "20/04/2010"
   mainDominante: Main;
+  nationality?: string;
+  school?: string;
+  className?: string;
 
   // --- Carrière / contrat ---
   statut: Statut;
@@ -368,6 +371,9 @@ export function emptyPlayer(): Player {
     age: null,
     dob: "",
     mainDominante: "Droite",
+    nationality: "",
+    school: "",
+    className: "",
     statut: "Disponible",
     potentiel: 3,
     ancienneteLabel: "",
