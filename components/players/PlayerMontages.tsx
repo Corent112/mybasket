@@ -9,7 +9,7 @@ type LinkedMontage = {
   date: string;
   matchId?: string | null;
   clips: number;
-  source: 'montages' | 'legacy';
+  source: 'livestat' | 'legacy';
 };
 
 export default function PlayerMontages({ teamId, playerId, showEmpty = false }: { teamId: string; playerId: string; showEmpty?: boolean }) {
@@ -25,23 +25,40 @@ export default function PlayerMontages({ teamId, playerId, showEmpty = false }: 
       setError('');
 
       const current = await supabase
-        .from('montages')
-        .select('id, title, created_at, updated_at, match_id, player_id, team_id')
+        .from('livestat_montages')
+        .select('id, title, created_at, updated_at, match_id, player_id, team_id, status, export_url')
         .eq('player_id', playerId)
+        .eq('team_id', teamId)
         .order('updated_at', { ascending: false });
 
       let rows: LinkedMontage[] = [];
       if (!current.error) {
-        rows = (current.data ?? [])
-          .filter((m: any) => !m.team_id || String(m.team_id) === String(teamId))
-          .map((m: any) => ({
-            id: String(m.id),
-            title: String(m.title || 'Montage sans titre'),
-            date: String(m.updated_at || m.created_at || ''),
-            matchId: m.match_id ? String(m.match_id) : null,
-            clips: 0,
-            source: 'montages' as const,
-          }));
+        const montageIds = (current.data ?? []).map((m: any) => String(m.id));
+        const counts = new Map<string, number>();
+
+        if (montageIds.length) {
+          const itemsResponse = await supabase
+            .from('livestat_montage_items')
+            .select('montage_id,item_type')
+            .in('montage_id', montageIds);
+
+          if (!itemsResponse.error) {
+            for (const item of itemsResponse.data ?? []) {
+              if (String((item as any).item_type || '') !== 'clip') continue;
+              const montageId = String((item as any).montage_id || '');
+              counts.set(montageId, (counts.get(montageId) || 0) + 1);
+            }
+          }
+        }
+
+        rows = (current.data ?? []).map((m: any) => ({
+          id: String(m.id),
+          title: String(m.title || 'Montage sans titre'),
+          date: String(m.updated_at || m.created_at || ''),
+          matchId: m.match_id ? String(m.match_id) : null,
+          clips: counts.get(String(m.id)) || 0,
+          source: 'livestat' as const,
+        }));
       }
 
       // Compatibilité avec les anciens montages stockés dans project_state.
@@ -93,7 +110,7 @@ export default function PlayerMontages({ teamId, playerId, showEmpty = false }: 
   return (
     <div className="pm-grid">
       {montages.map((m) => {
-        const href = m.source === 'montages'
+        const href = m.source === 'livestat'
           ? `/management/montage?montage=${encodeURIComponent(m.id)}`
           : `/management/live?project=${encodeURIComponent(m.matchId || '')}&mode=montage`;
         return (
