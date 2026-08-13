@@ -422,7 +422,7 @@ export type EnsureLiveMatchPayload = {
   playerIds?: string[];
 
   // Choix vidéo fait sur l'écran de création (structure V5).
-  videoMode?: "later" | "file" | "youtube";
+  videoMode?: "later" | "file" | "drive" | "youtube";
   videoStatus?: string;
   videoProvider?: string;
   videoUrl?: string;

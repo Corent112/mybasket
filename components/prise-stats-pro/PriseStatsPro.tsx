@@ -31,6 +31,12 @@ import {
 import { listPlaybooks, listPlaybookSystems, type Playbook, type PlaybookSystem } from "@/lib/playbook";
 import { useLivestatTags } from "@/lib/livestat-tags";
 import ActionClipsModal, { type ClipAction } from "@/components/prise-stats-pro/ActionClipsModal";
+import GoogleDriveVideoPicker from "@/components/video/GoogleDriveVideoPicker";
+import type { GoogleDrivePickedVideo } from "@/lib/google-drive/client";
+import {
+  googleDriveFileStreamUrl,
+  linkGoogleDriveFileToMatch,
+} from "@/lib/google-drive/client";
 import VideoSyncModal from "@/components/prise-stats-pro/VideoSyncModal";
 import ShotChart, { SHOT_ZONES, zoneById, resolveShotZone } from "@/components/prise-stats-pro/ShotChart";
 import {
@@ -736,11 +742,12 @@ export default function PriseStatsProPage() {
 
   /* -------- V5 · choix vidéo à la création du match (structure + UI) --------
      Aucun upload serveur / ffmpeg ici : on ne prépare que la donnée et l'UI. */
-  const [videoMode, setVideoMode] = useState<'later' | 'file' | 'youtube'>('later');
+  const [videoMode, setVideoMode] = useState<'later' | 'file' | 'drive' | 'youtube'>('later');
   const [videoFile, setVideoFile] = useState<File | null>(null);
+  const [pendingDriveFile, setPendingDriveFile] = useState<GoogleDrivePickedVideo | null>(null);
   const [youtubeUrl, setYoutubeUrl] = useState('');
   const [videoStatus, setVideoStatus] = useState('pending');   // pending | ready | linked
-  const [videoProvider, setVideoProvider] = useState('none');  // none | local | youtube
+  const [videoProvider, setVideoProvider] = useState('none');  // none | local | google_drive | youtube
   const [videoUrl, setVideoUrl] = useState('');                // objectURL local ou lien YouTube
   const [videoFilename, setVideoFilename] = useState('');
 
@@ -755,6 +762,10 @@ export default function PriseStatsProPage() {
   // Accès synchrone dans commit() (le state est async) + base de temps vidéo.
   const videoProviderRef = useRef('none');
   const matchStartAtRef = useRef<number | null>(null);
+  // Sans vidéo uniquement : ESPACE lance une horloge murale continue qui ne s'arrête plus.
+  // B reste réservé au chrono officiel 4x10 et ne tourne que pendant le jeu effectif.
+  const [noVideoMatchClockStarted, setNoVideoMatchClockStarted] = useState(false);
+  const [noVideoElapsedDisplay, setNoVideoElapsedDisplay] = useState(0);
   const VIDEO_PRE_ROLL = 6;   // s avant l'action (préparation du clip)
   const VIDEO_POST_ROLL = 4;  // s après l'action
 
@@ -765,6 +776,7 @@ export default function PriseStatsProPage() {
   const onPickVideoFile = (file: File | null) => {
     if (!file) return;
     setVideoFile(file);
+    setPendingDriveFile(null);
     setVideoFilename(file.name);
     try { setVideoUrl(URL.createObjectURL(file)); } catch { setVideoUrl(''); }
     setVideoProvider('local');
@@ -782,8 +794,30 @@ export default function PriseStatsProPage() {
     }
   };
 
+
+  const onPickGoogleDriveVideo = (file: GoogleDrivePickedVideo) => {
+    const selectedTeamId = String(
+      selTeam?.id || activeTeamId || teamId || '',
+    ).trim();
+
+    if (!isSupabaseUuid(selectedTeamId)) {
+      flash("Choisis d'abord une équipe valide.");
+      return;
+    }
+
+    setPendingDriveFile(file);
+    setVideoFile(null);
+    setYoutubeUrl('');
+    setVideoFilename(file.name);
+    setVideoUrl(googleDriveFileStreamUrl(selectedTeamId, file.id));
+    setVideoProvider('google_drive');
+    videoProviderRef.current = 'google_drive';
+    setVideoStatus('linked');
+  };
+
   // Saisie d'un lien YouTube.
   const onSetYoutube = (url: string) => {
+    setPendingDriveFile(null);
     setYoutubeUrl(url);
     const ok = /youtu\.?be/i.test(url) && url.trim().length > 0;
     setVideoUrl(url.trim());
@@ -791,22 +825,67 @@ export default function PriseStatsProPage() {
     setVideoStatus(ok ? 'linked' : 'pending');
   };
 
-  // Bascule entre les 3 modes (réinitialise proprement les champs liés).
-  const chooseVideoMode = (mode: 'later' | 'file' | 'youtube') => {
+  // Bascule entre les modes vidéo sans toucher aux actions déjà codées.
+  const chooseVideoMode = (mode: 'later' | 'file' | 'drive' | 'youtube') => {
     setVideoMode(mode);
+
     if (mode === 'later') {
-      setVideoFile(null); setVideoFilename(''); setYoutubeUrl('');
-      setVideoUrl(''); setVideoProvider('none'); setVideoStatus('pending');
-    } else if (mode === 'file') {
+      setVideoFile(null);
+      setPendingDriveFile(null);
+      setVideoFilename('');
+      setYoutubeUrl('');
+      setVideoUrl('');
+      setVideoProvider('none');
+      videoProviderRef.current = 'none';
+      setVideoStatus('pending');
+      return;
+    }
+
+    if (mode === 'file') {
+      setPendingDriveFile(null);
       setYoutubeUrl('');
       setVideoProvider(videoFile ? 'local' : 'none');
+      videoProviderRef.current = videoFile ? 'local' : 'none';
       setVideoStatus(videoFile ? 'ready' : 'pending');
-    } else {
-      setVideoFile(null); setVideoFilename('');
-      const ok = /youtu\.?be/i.test(youtubeUrl) && youtubeUrl.trim().length > 0;
-      setVideoProvider(ok ? 'youtube' : 'none');
-      setVideoStatus(ok ? 'linked' : 'pending');
+      return;
     }
+
+    if (mode === 'drive') {
+      setVideoFile(null);
+      setYoutubeUrl('');
+      if (pendingDriveFile) {
+        const selectedTeamId = String(
+          selTeam?.id || activeTeamId || teamId || '',
+        ).trim();
+        if (isSupabaseUuid(selectedTeamId)) {
+          setVideoUrl(
+            googleDriveFileStreamUrl(
+              selectedTeamId,
+              pendingDriveFile.id,
+            ),
+          );
+          setVideoProvider('google_drive');
+          videoProviderRef.current = 'google_drive';
+          setVideoStatus('linked');
+        }
+      } else {
+        setVideoUrl('');
+        setVideoProvider('none');
+        videoProviderRef.current = 'none';
+        setVideoStatus('pending');
+      }
+      return;
+    }
+
+    setVideoFile(null);
+    setPendingDriveFile(null);
+    setVideoFilename('');
+    const ok =
+      /youtu\.?be/i.test(youtubeUrl) &&
+      youtubeUrl.trim().length > 0;
+    setVideoProvider(ok ? 'youtube' : 'none');
+    videoProviderRef.current = ok ? 'youtube' : 'none';
+    setVideoStatus(ok ? 'linked' : 'pending');
   };
 
   // Prépare video_time / clip_start / clip_end au moment d'un commit.
@@ -999,6 +1078,8 @@ export default function PriseStatsProPage() {
     draft,
     videoMode,
     videoProvider,
+    driveFileId: pendingDriveFile?.id ?? null,
+    driveFileName: pendingDriveFile?.name ?? null,
     videoUrl,
     videoFilename,
     youtubeUrl,
@@ -1016,6 +1097,7 @@ export default function PriseStatsProPage() {
     // Permet de reprendre un brouillon codé SANS vidéo sans remettre l'horloge à
     // zéro (les nouvelles actions gardent une chronologie cohérente).
     codingElapsed: matchStartAtRef.current == null ? 0 : (Date.now() - matchStartAtRef.current) / 1000,
+    codingClockStarted: matchStartAtRef.current != null,
     savedAt: new Date().toISOString(),
   });
 
@@ -1080,26 +1162,38 @@ export default function PriseStatsProPage() {
       setOppRoster(Array.isArray(s.oppRoster) ? s.oppRoster : []); // AJOUT §12
       setClipEdits((s.clipEdits && typeof s.clipEdits === 'object') ? s.clipEdits : {}); // §25 · annotations
 
-      // Bloc C · restauration des réglages vidéo. Une URL locale (blob:) n'est
-      // jamais restaurable après rechargement : on force le provider à 'none' et
-      // on prévient l'utilisateur. YouTube, lui, est restaurable.
+      // Restauration vidéo. Local : le blob doit être resélectionné après
+      // rechargement. Google Drive : le fileId durable permet de recréer
+      // immédiatement une URL de lecture sécurisée.
       const provider = String(s.videoProvider || 'none');
       setVideoMode(String(s.videoMode || 'later') as any);
       setVideoFilename(String(s.videoFilename || ''));
       setYoutubeUrl(String(s.youtubeUrl || ''));
 
-      // AJOUT §8 · restauration de la synchro vidéo (colonnes prioritaires, sinon
-      // project_state). Le décalage sauvegardé est réappliqué immédiatement dès
-      // que la vidéo locale sera resélectionnée ; on ne redemande pas la synchro.
       setVideoSync(normalizeSync(res.videoSync ?? s));
 
-      if (provider === 'youtube' && s.youtubeUrl) {
-        setVideoProvider('youtube'); setVideoUrl(String(s.videoUrl || s.youtubeUrl));
+      if (provider === 'google_drive' && s.driveFileId) {
+        const driveFile = {
+          id: String(s.driveFileId),
+          name: String(s.driveFileName || s.videoFilename || 'Vidéo Google Drive'),
+        };
+        setPendingDriveFile(driveFile);
+        setVideoProvider('google_drive');
+        videoProviderRef.current = 'google_drive';
+        setVideoUrl(googleDriveFileStreamUrl(team.id, driveFile.id));
+      } else if (provider === 'youtube' && s.youtubeUrl) {
+        setPendingDriveFile(null);
+        setVideoProvider('youtube');
+        setVideoUrl(String(s.videoUrl || s.youtubeUrl));
         videoProviderRef.current = 'youtube';
       } else {
-        setVideoProvider('none'); setVideoUrl('');
+        setPendingDriveFile(null);
+        setVideoProvider('none');
+        setVideoUrl('');
         videoProviderRef.current = 'none';
-        if (provider === 'local') flash('Projet restauré. Resélectionne le fichier vidéo local — le décalage de synchronisation sera réappliqué automatiquement.');
+        if (provider === 'local') {
+          flash('Projet restauré. Resélectionne le fichier vidéo local — le décalage de synchronisation sera réappliqué automatiquement.');
+        }
       }
 
       // Bloc C · restauration du montage.
@@ -1111,7 +1205,13 @@ export default function PriseStatsProPage() {
       // AJOUT · on NE remet PAS l'horloge source à zéro : on la recale sur le
       // temps de codage déjà écoulé (codingElapsed), pour poursuivre un brouillon
       // codé sans vidéo avec une chronologie source continue.
-      matchStartAtRef.current = Date.now() - Number(s.codingElapsed ?? 0) * 1000;
+      if (s.codingClockStarted || Number(s.codingElapsed ?? 0) > 0) {
+        matchStartAtRef.current = Date.now() - Number(s.codingElapsed ?? 0) * 1000;
+        setNoVideoMatchClockStarted(provider === 'none');
+      } else {
+        matchStartAtRef.current = provider === 'none' ? null : Date.now();
+        setNoVideoMatchClockStarted(false);
+      }
       possessionStartRef.current = null;
 
       // Mode d'ouverture demandé depuis l'Historique.
@@ -1172,7 +1272,7 @@ export default function PriseStatsProPage() {
     const hasVideoPlayer =
       videoDetached ||
       Boolean(clipVideoRef.current) ||
-      (videoProviderRef.current === 'local' && Boolean(videoRef.current));
+      ((videoProviderRef.current === 'local' || videoProviderRef.current === 'google_drive') && Boolean(videoRef.current));
     if (hasVideoPlayer) {
       return Math.max(0, getCurrentVideoTime());
     }
@@ -1270,10 +1370,10 @@ export default function PriseStatsProPage() {
     flash('Clip ' + fmt(Math.round(start)) + (end != null ? ' → ' + fmt(Math.round(end)) : ''));
   };
 
-  const hasLocalVideo = () => (videoProvider === 'local' && !!videoRef.current) || !!clipVideoRef.current;
+  const hasLocalVideo = () => ((videoProvider === 'local' || videoProvider === 'google_drive') && !!videoRef.current) || !!clipVideoRef.current;
   const nudgeVideo = (dir: -1 | 1) => {
     // Priorité à la vidéo du popup clip si elle est ouverte, sinon la vidéo centrale.
-    const v = clipVideoRef.current || (videoProvider === 'local' ? videoRef.current : null);
+    const v = clipVideoRef.current || ((videoProvider === 'local' || videoProvider === 'google_drive') ? videoRef.current : null);
     if (!v) return;
     const dur = Number.isFinite(v.duration) ? v.duration : Infinity;
     v.currentTime = Math.max(0, Math.min(dur, v.currentTime + dir * videoStepSeconds));
@@ -3210,10 +3310,19 @@ export default function PriseStatsProPage() {
     setRunning(true);
   };
 
-  // AJOUT · Barre espace. Sans vidéo → bascule seulement le chrono. Avec vidéo :
-  // vidéo à l'arrêt → on lance la vidéo ; vidéo en lecture → pause + arrêt chrono.
+  // ESPACE. Sans vidéo : démarre UNE SEULE FOIS le temps réel continu du match.
+  // Cette horloge ne s'arrête plus jusqu'à la fin et inclut tous les arrêts de jeu.
+  // Avec vidéo : comportement historique lecture/pause de la vidéo.
   const toggleVideoOnly = () => {
-    if (!hasVideoLoaded()) { setRunning((r) => !r); return; }
+    if (!hasVideoLoaded()) {
+      if (matchStartAtRef.current == null) {
+        matchStartAtRef.current = Date.now();
+        setNoVideoMatchClockStarted(true);
+        setNoVideoElapsedDisplay(0);
+        flash('🏁 Début du match — temps réel lancé');
+      }
+      return;
+    }
     if (isVideoPlaying()) { pauseVideo(); setRunning(false); }
     else playVideo();
   };
@@ -3225,8 +3334,8 @@ export default function PriseStatsProPage() {
     }
 
     const sourceVideo = videoRef.current;
-    if (videoProvider !== 'local' || !videoUrl || !sourceVideo) {
-      flash('Ajoute une vidéo locale avant de la détacher.');
+    if ((videoProvider !== 'local' && videoProvider !== 'google_drive') || !videoUrl || !sourceVideo) {
+      flash('Ajoute une vidéo locale ou Google Drive avant de la détacher.');
       return;
     }
 
@@ -3418,6 +3527,17 @@ export default function PriseStatsProPage() {
     flash('Vidéo détachée au même timecode');
   };
   useEffect(() => {
+    if (videoProvider !== 'none' || !noVideoMatchClockStarted) return;
+    const update = () => {
+      const start = matchStartAtRef.current;
+      setNoVideoElapsedDisplay(start == null ? 0 : Math.max(0, (Date.now() - start) / 1000));
+    };
+    update();
+    const id = window.setInterval(update, 250);
+    return () => window.clearInterval(id);
+  }, [videoProvider, noVideoMatchClockStarted]);
+
+  useEffect(() => {
     const typing = (t: EventTarget | null) => {
       const el = t as HTMLElement | null;
       if (!el) return false;
@@ -3427,7 +3547,7 @@ export default function PriseStatsProPage() {
     const onKeyDown = (e: KeyboardEvent) => {
       if (typing(e.target)) return;
 
-      // ESPACE = play/pause vidéo
+      // ESPACE = vidéo play/pause ; SANS vidéo = départ unique du temps réel continu
       if (e.key === ' ' || e.code === 'Space') { e.preventDefault(); toggleVideoOnly(); return; }
       // B = start/stop du chrono match
       if (e.key === 'b' || e.key === 'B') { e.preventDefault(); toggleClockAndVideo(); return; }
@@ -3649,7 +3769,11 @@ export default function PriseStatsProPage() {
     // Aucune ligne Supabase n'est créée avant le clic sur « Terminer ».
     setLiveMatch(null, null);
     videoProviderRef.current = videoProvider;
-    matchStartAtRef.current = Date.now();
+    // Sans vidéo, le temps réel ne commence PAS à l'ouverture de l'écran :
+    // le codeur le lance exactement au coup d'envoi avec ESPACE.
+    matchStartAtRef.current = videoProvider === 'none' ? null : Date.now();
+    setNoVideoMatchClockStarted(false);
+    setNoVideoElapsedDisplay(0);
     ensuringRef.current = false;
   };
 
@@ -4216,6 +4340,22 @@ export default function PriseStatsProPage() {
       console.log('SAVE RESULT =', res);
 
       if (res.ok) {
+        if (
+          pendingDriveFile &&
+          !String(res.matchId).startsWith('local_')
+        ) {
+          try {
+            await linkGoogleDriveFileToMatch({
+              matchId: String(res.matchId),
+              teamId: activeTeamForWrite,
+              fileId: pendingDriveFile.id,
+            });
+          } catch (driveError) {
+            console.error('Vidéo Google Drive non liée au match :', driveError);
+            flash('Match enregistré, liaison Google Drive à vérifier');
+          }
+        }
+
         flash('Match enregistré ✓');
         setLiveMatch(null, null);
         setScreen('box');
@@ -4342,7 +4482,7 @@ export default function PriseStatsProPage() {
   /* ============================ Rendu ============================ */
   if (screen === 'setup') {
     const startersList = setupRoster.filter((p) => starters.includes(p.id));
-    const videoLabel = videoMode === 'file' ? '📁 Fichier vidéo' : videoMode === 'youtube' ? '▶️ Lien YouTube' : '🏟 Aucune sélection';
+    const videoLabel = videoMode === 'file' ? '📁 Fichier vidéo' : videoMode === 'drive' ? '☁️ Google Drive' : videoMode === 'youtube' ? '▶️ Lien YouTube' : '🏟 Aucune sélection';
     return (
       <div className="ps-root">
         <div id="create-match">
@@ -4458,6 +4598,7 @@ export default function PriseStatsProPage() {
                 <div className="cm-video">
                   <div className={`cm-vid ${videoMode === 'later' ? 'on' : ''}`} onClick={() => chooseVideoMode('later')}>{videoMode === 'later' && <div className="cm-vid-ck">✓</div>}<div className="cm-vid-ic">🎥</div><div className="cm-vid-t">Sans vidéo / plus tard</div><div className="cm-vid-d">Coder maintenant, ajouter la vidéo ensuite.</div></div>
                   <div className={`cm-vid ${videoMode === 'file' ? 'on' : ''}`} onClick={() => chooseVideoMode('file')}>{videoMode === 'file' && <div className="cm-vid-ck">✓</div>}<div className="cm-vid-ic">▶</div><div className="cm-vid-t">Fichier vidéo maintenant</div><div className="cm-vid-d">Sélectionner un fichier vidéo sur votre appareil.</div></div>
+                  <div className={`cm-vid ${videoMode === 'drive' ? 'on' : ''}`} onClick={() => chooseVideoMode('drive')}>{videoMode === 'drive' && <div className="cm-vid-ck">✓</div>}<div className="cm-vid-ic">☁️</div><div className="cm-vid-t">Google Drive</div><div className="cm-vid-d">Recommandé staff : le match reste accessible aux coachs autorisés.</div></div>
                   <div className={`cm-vid ${videoMode === 'youtube' ? 'on' : ''}`} onClick={() => chooseVideoMode('youtube')}>{videoMode === 'youtube' && <div className="cm-vid-ck">✓</div>}<div className="cm-vid-ic">▶</div><div className="cm-vid-t">Lien YouTube</div><div className="cm-vid-d">Coller l'URL d'une vidéo YouTube.</div></div>
                 </div>
                 {videoMode === 'file' && (
@@ -4467,6 +4608,15 @@ export default function PriseStatsProPage() {
                       <span className="vf-btn">📁 Choisir un fichier vidéo</span>
                       <span className="vf-name">{videoFilename || 'Aucun fichier sélectionné'}</span>
                     </label>
+                  </div>
+                )}
+                {videoMode === 'drive' && (
+                  <div className="vid-input">
+                    <GoogleDriveVideoPicker
+                      teamId={String(selTeam?.id || teamId || '')}
+                      selectedName={pendingDriveFile?.name || null}
+                      onPicked={onPickGoogleDriveVideo}
+                    />
                   </div>
                 )}
                 {videoMode === 'youtube' && (
@@ -4615,10 +4765,18 @@ export default function PriseStatsProPage() {
       <header className="h">
         <div className="h-l"><div className="h-ic">📊</div><div><div className="h-tt">PRISE DE STATS LIVE</div><div className="h-sub">{screen === 'box' ? 'Box-score' : NAV[navIdx]}</div></div>
           {screen !== 'box' && (
-            <div className={`vid-badge ${videoProvider === 'local' ? 'is-local' : videoProvider === 'youtube' ? 'is-yt' : 'is-later'}`}>
+            <div className={`vid-badge ${(videoProvider === 'local' || videoProvider === 'google_drive') ? 'is-local' : videoProvider === 'youtube' ? 'is-yt' : 'is-later'}`}>
               {videoProvider === 'local' ? '🎥 Vidéo locale prête'
+                : videoProvider === 'google_drive' ? '☁️ Google Drive lié'
                 : videoProvider === 'youtube' ? '▶️ YouTube lié'
                 : '⏳ Vidéo à ajouter après match'}
+            </div>
+          )}
+          {screen !== 'box' && videoProvider === 'none' && (
+            <div className={`vid-badge ${noVideoMatchClockStarted ? 'is-local' : 'is-later'}`}>
+              {noVideoMatchClockStarted
+                ? `⏱ Temps réel ${fmt(Math.floor(noVideoElapsedDisplay))}`
+                : 'ESPACE = début réel du match'}
             </div>
           )}
         </div>
@@ -4709,7 +4867,7 @@ export default function PriseStatsProPage() {
             {/* ============ GAUCHE · VIDÉO (élément principal) ============ */}
             <section className={`lc lc-video ${workTab === 'center' ? 'mshow' : ''}`}>
               <div className="videoSlot big">
-                {videoProvider === 'local' && videoUrl ? (
+                {(videoProvider === 'local' || videoProvider === 'google_drive') && videoUrl ? (
                   <video ref={videoRef} className="vplayer" src={videoUrl} controls />
                 ) : videoProvider === 'youtube' && videoUrl ? (
                   <div className="vyt">
@@ -4740,7 +4898,7 @@ export default function PriseStatsProPage() {
                     {[0.25, 0.5, 0.75, 1, 1.25, 1.5, 2].map((r) => <option key={r} value={r}>{r}×</option>)}
                   </select>
                 </label>
-                {videoProvider === 'local' && videoUrl && (
+                {(videoProvider === 'local' || videoProvider === 'google_drive') && videoUrl && (
                   <button className="detachBtn" onClick={() => setShowVideoSync(true)} title="Ajuster la correspondance vidéo ↔ codage">
                     🎯 Recalibrer la vidéo
                   </button>
@@ -4753,7 +4911,7 @@ export default function PriseStatsProPage() {
                 {videoDetached && <span className="detachState">🎥 Vidéo ouverte dans une fenêtre détachée</span>}
               </div>
 
-              {videoProvider === 'local' && videoUrl && (
+              {(videoProvider === 'local' || videoProvider === 'google_drive') && videoUrl && (
                 <div className="vbar">
                   <button className="vnav" onClick={() => nudgeVideo(-1)} title="Reculer (Tab + ←)">« −{videoStepSeconds}s</button>
                   <div className="vstep">
@@ -4981,7 +5139,7 @@ export default function PriseStatsProPage() {
 
               {/* Vidéo + calque de dessin */}
               <div className="clip-stage">
-                {videoProvider === 'local' && videoUrl && hasClip ? (
+                {(videoProvider === 'local' || videoProvider === 'google_drive') && videoUrl && hasClip ? (
                   <video
                     className="evt-vplayer"
                     src={videoUrl}
@@ -5112,7 +5270,7 @@ export default function PriseStatsProPage() {
       {/* §3–§6 · Synchronisation d'une vidéo ajoutée APRÈS le codage */}
       <VideoSyncModal
         open={showVideoSync}
-        videoUrl={videoProvider === 'local' ? videoUrl : null}
+        videoUrl={(videoProvider === 'local' || videoProvider === 'google_drive') ? videoUrl : null}
         actions={actions as unknown as LiveMatchAction[]}
         sync={videoSync}
         expectedFilename={videoFilename || null}
@@ -5134,7 +5292,7 @@ export default function PriseStatsProPage() {
         actions={(clipModal?.items ?? []) as unknown as ClipAction[]}
         startIndex={clipModal?.index ?? 0}
         title={clipModal?.title ?? ''}
-        videoUrl={videoProvider === 'local' ? videoUrl : ''}
+        videoUrl={(videoProvider === 'local' || videoProvider === 'google_drive') ? videoUrl : ''}
         sync={videoSync}
         onClose={() => setClipModal(null)}
         onAddToMontage={(a: ClipAction) => addToMontage(a as unknown as StatA)}
@@ -6537,7 +6695,7 @@ function BoxView({ actions, roster, teamId, videoProvider = 'none', videoUrl = '
         open={!!clipList || !!clipAction}
         actions={(clipList ? clipList.items : clipAction ? [clipAction] : []) as unknown as ClipAction[]}
         title={clipList ? clipList.title : clipAction ? 'Séquence codée' : ''}
-        videoUrl={videoProvider === 'local' ? videoUrl : ''}
+        videoUrl={(videoProvider === 'local' || videoProvider === 'google_drive') ? videoUrl : ''}
         sync={sync}
         onClose={() => { setClipList(null); setClipAction(null); }}
         onAddToMontage={onAddToMontage ? (a: ClipAction) => onAddToMontage(a as unknown as StatA) : undefined}

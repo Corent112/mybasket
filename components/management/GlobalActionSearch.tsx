@@ -62,6 +62,23 @@ export default function GlobalActionSearch() {
       const matchIds = Array.from(mi.keys());
       if (!matchIds.length) { if (alive) { setRows([]); setMatchInfo(mi); setLoading(false); } return; }
 
+      const { data: mediaRows } = await supabase
+        .from('match_media_sources')
+        .select('match_id,provider')
+        .in('match_id', matchIds);
+
+      (mediaRows ?? []).forEach((row: any) => {
+        if (row.provider !== 'google_drive') return;
+        const mid = String(row.match_id ?? '');
+        const current = mi.get(mid);
+        if (current) {
+          mi.set(mid, {
+            ...current,
+            video: `/api/media/matches/${encodeURIComponent(mid)}/stream`,
+          });
+        }
+      });
+
       const { data: acts } = await supabase
         .from('match_actions')
         .select('*')
@@ -205,7 +222,17 @@ export default function GlobalActionSearch() {
         actions={(clip?.items ?? []) as ClipAction[]}
         title={clip?.title ?? ''}
         videoUrl={clip?.videoUrl ?? null}
+        videoUrlForAction={(a) =>
+          matchInfo.get(
+            String(a.matchId ?? (a as any).match_id ?? ''),
+          )?.video || null
+        }
         sync={clip?.sync ?? NATIVE_SYNC}
+        syncForAction={(a) =>
+          matchInfo.get(
+            String(a.matchId ?? (a as any).match_id ?? ''),
+          )?.sync ?? NATIVE_SYNC
+        }
         onClose={() => setClip(null)}
         tempsFortLabel={(id: string | null | undefined) => tags.label(id ?? '') || undefined}
         playerName={(id: string | null | undefined) => playerNames.get(String(id ?? '')) || undefined}

@@ -82,6 +82,23 @@ export default function PlaybookProfitability({ playbookId, systems }: { playboo
           date: String(m.match_date ?? ''), opponent: String(m.opponent ?? 'Adversaire'), video: String(m.video_url ?? ''),
           sync: normalizeSync(m),
         }));
+
+        const { data: mediaRows } = await supabase
+          .from('match_media_sources')
+          .select('match_id,provider')
+          .in('match_id', matchIds);
+
+        (mediaRows ?? []).forEach((row: any) => {
+          if (row.provider !== 'google_drive') return;
+          const mid = String(row.match_id ?? '');
+          const current = mi.get(mid);
+          if (current) {
+            mi.set(mid, {
+              ...current,
+              video: `/api/media/matches/${encodeURIComponent(mid)}/stream`,
+            });
+          }
+        });
       }
       if (!alive) return;
       setRows(list);
@@ -167,7 +184,17 @@ export default function PlaybookProfitability({ playbookId, systems }: { playboo
         actions={(clip?.items ?? []) as ClipAction[]}
         title={clip?.title ?? ''}
         videoUrl={clip?.videoUrl ?? null}
+        videoUrlForAction={(a) =>
+          videoByMatch.get(
+            String(a.matchId ?? (a as any).match_id ?? ''),
+          )?.video || null
+        }
         sync={clip?.sync ?? NATIVE_SYNC}
+        syncForAction={(a) =>
+          videoByMatch.get(
+            String(a.matchId ?? (a as any).match_id ?? ''),
+          )?.sync ?? NATIVE_SYNC
+        }
         onClose={() => setClip(null)}
       />
 

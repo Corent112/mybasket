@@ -61,8 +61,12 @@ export type ActionClipsModalProps = {
   actions: ClipAction[];
   title: string;
   videoUrl?: string | null;
+  /** Source vidéo calculée action par action, pour les listes multi-matchs. */
+  videoUrlForAction?: (action: ClipAction) => string | null | undefined;
   /** Synchro vidéo du match auquel appartiennent les clips (défaut : native). */
   sync?: VideoSyncState;
+  /** Synchro calculée action par action pour les listes multi-matchs. */
+  syncForAction?: (action: ClipAction) => VideoSyncState | null | undefined;
   startIndex?: number;
   onClose: () => void;
   onAddToMontage?: (action: ClipAction) => void;
@@ -102,7 +106,15 @@ export default function ActionClipsModal(props: ActionClipsModalProps) {
 
   // Synchro du match : convertit les temps bruts de codage (source) en position
   // réelle dans la vidéo (média). Défaut = native (aucun décalage).
-  const sync = props.sync ?? NATIVE_SYNC;
+  const sync =
+    (current ? props.syncForAction?.(current) : null) ??
+    props.sync ??
+    NATIVE_SYNC;
+
+  const currentVideoUrl =
+    (current ? props.videoUrlForAction?.(current) : null) ??
+    videoUrl ??
+    null;
   // Bornes DÉJÀ synchronisées d'une action (jamais de lecture directe de
   // clipStart/clipEnd sans passer par la synchro).
   const syncedStartOf = useCallback(
@@ -163,7 +175,7 @@ export default function ActionClipsModal(props: ActionClipsModalProps) {
     applyBoundedPlayback();
     return () => { stopRef.current?.(); stopRef.current = null; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, index, current?.id]);
+  }, [open, index, current?.id, current?.matchId, currentVideoUrl]);
 
   const go = useCallback((delta: number) => {
     setIndex((i) => Math.max(0, Math.min(actions.length - 1, i + delta)));
@@ -231,7 +243,7 @@ export default function ActionClipsModal(props: ActionClipsModalProps) {
   };
 
   if (!open || actions.length === 0 || !current) return null;
-  const hasVideo = !!videoUrl;
+  const hasVideo = !!currentVideoUrl;
   const cur = current;
 
   const Info = ({ k, v }: { k: string; v: ReactNode }) =>
@@ -257,7 +269,7 @@ export default function ActionClipsModal(props: ActionClipsModalProps) {
               <video
                 ref={videoRef}
                 className="acm-video"
-                src={videoUrl!}
+                src={currentVideoUrl!}
                 playsInline
                 onPlay={() => setClipPlaying(true)}
                 onPause={() => setClipPlaying(false)}

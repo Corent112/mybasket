@@ -128,6 +128,23 @@ export default function TeamLiveStatsBlock({ teamId }: { teamId: string }) {
       const matchIds = matches.map((m) => String(m.id));
       if (!matchIds.length) { if (alive) { setActions([]); setVideoByMatch(vids); setSyncByMatch(syncs); setLoading(false); } return; }
 
+      // Google Drive devient prioritaire sur l'ancienne colonne video_url.
+      const { data: mediaRows } = await supabase
+        .from('match_media_sources')
+        .select('match_id,provider')
+        .in('match_id', matchIds);
+
+      (mediaRows ?? []).forEach((m: any) => {
+        if (m.provider !== 'google_drive') return;
+        const mid = String(m.match_id ?? '');
+        if (mid) {
+          vids.set(
+            mid,
+            `/api/media/matches/${encodeURIComponent(mid)}/stream`,
+          );
+        }
+      });
+
       // 2) actions complètes.
       const { data: actionData } = await supabase
         .from('match_actions')
@@ -332,7 +349,17 @@ export default function TeamLiveStatsBlock({ teamId }: { teamId: string }) {
         actions={(clip?.items ?? []) as ClipAction[]}
         title={clip?.title ?? ''}
         videoUrl={clipVideoUrl}
+        videoUrlForAction={(a) =>
+          videoByMatch.get(
+            String(a.matchId ?? (a as any).match_id ?? ''),
+          ) ?? null
+        }
         sync={clipSync}
+        syncForAction={(a) =>
+          syncByMatch.get(
+            String(a.matchId ?? (a as any).match_id ?? ''),
+          ) ?? NATIVE_SYNC
+        }
         onClose={() => setClip(null)}
         tempsFortLabel={(id: string | null | undefined) => tags.label(id ?? '') || undefined}
       />

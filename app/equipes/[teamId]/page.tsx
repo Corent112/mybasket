@@ -2,6 +2,7 @@
 
 // app/equipes/[teamId]/page.tsx
 import TeamMatchHistoryBlock from "@/components/equipes/TeamMatchHistoryBlock";
+import TeamGoogleDriveSettings from "@/components/video/TeamGoogleDriveSettings";
 import { use, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
@@ -855,6 +856,7 @@ export default function EquipeDetailPage({
 
         {activeTab === "presentation" && (
           <div className="team-tab-panel">
+            <TeamGoogleDriveSettings teamId={team.id} />
             {/* ---------- TEAM BANNER ---------- */}
             <section className="tl-banner">
               {team.banniere ? (
@@ -1250,6 +1252,47 @@ export default function EquipeDetailPage({
           font-weight: 900;
           text-transform: uppercase;
           letter-spacing: 0.04em;
+        }
+
+        .team-google-drive-settings {
+          display:flex;
+          align-items:center;
+          justify-content:space-between;
+          gap:18px;
+          padding:16px 18px;
+          margin-bottom:18px;
+          border:1px solid #eadfce;
+          border-radius:18px;
+          background:#fffaf2;
+        }
+        .team-google-drive-settings strong { color:#6b1a2c; }
+        .team-google-drive-settings p {
+          margin:5px 0 0;
+          color:#8f8177;
+          font-size:.86rem;
+          font-weight:700;
+          max-width:760px;
+        }
+        .team-google-drive-settings > div:last-child {
+          display:flex;
+          align-items:center;
+          gap:10px;
+          flex-wrap:wrap;
+        }
+        .team-google-drive-settings button {
+          border:0;
+          border-radius:999px;
+          padding:10px 16px;
+          background:#6b1a2c;
+          color:#fff;
+          font-weight:900;
+          cursor:pointer;
+        }
+        @media(max-width:720px){
+          .team-google-drive-settings{
+            align-items:flex-start;
+            flex-direction:column;
+          }
         }
 
         .team-tabs {
