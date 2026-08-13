@@ -1,6 +1,10 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { getLocalMatchVideoUrl } from "@/lib/local-video-registry";
+import useLocalMatchVideoVersion from "@/hooks/useLocalMatchVideoVersion";
+import { exportSequentialClipsLocally, downloadLocalExport, shareLocalExport, type LocalExportResult } from "@/lib/local-montage-export";
+import LocalMatchVideoButton from "@/components/video/LocalMatchVideoButton";
 import { createClient } from "@/lib/supabase/client";
 
 type TeamRow = { id: string; name: string };
@@ -189,6 +193,7 @@ export default function MontageStudio({
   onClose,
   embedded = false,
 }: Props) {
+  useLocalMatchVideoVersion();
   const supabase = useMemo(() => createClient(), []);
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -239,6 +244,8 @@ export default function MontageStudio({
   const [renderProgress, setRenderProgress] = useState(0);
   const [renderStatus, setRenderStatus] = useState("");
   const [renderOutputUrl, setRenderOutputUrl] = useState("");
+  const [localExport, setLocalExport] = useState<LocalExportResult | null>(null);
+  const [localExportProgress, setLocalExportProgress] = useState(0);
   const [montagePlaying, setMontagePlaying] = useState(false);
   const montageAudioRef = useRef<HTMLAudioElement | null>(null);
   const playStartedAtRef = useRef<{ wall: number; timeline: number } | null>(null);
@@ -744,6 +751,42 @@ export default function MontageStudio({
       return next.map((item, index) => ({ ...item, sort_order: index }));
     });
     setSelectedIndex(to);
+  };
+
+  const exportMontageLocally = async () => {
+    const videoItems = items
+      .filter((item) => item.track === "video" && item.action)
+      .sort((a, b) => Number(a.timeline_start || 0) - Number(b.timeline_start || 0));
+
+    const sources = videoItems.map((item) => {
+      const matchId = String(item.action?.match_id || "");
+      const url = getLocalMatchVideoUrl(matchId);
+      if (!url) {
+        throw new Error(`Vidéo locale manquante pour le match ${matchId}. Reconnecte-la avant l'export.`);
+      }
+      return {
+        url,
+        start: item.clip_start,
+        end: item.clip_end,
+      };
+    });
+
+    setRendering(true);
+    setLocalExportProgress(0);
+    try {
+      const result = await exportSequentialClipsLocally(
+        sources,
+        (title || "montage-mybasket").replace(/[^a-zA-Z0-9_-]+/g, "-"),
+        setLocalExportProgress,
+      );
+      setLocalExport(result);
+      downloadLocalExport(result);
+      flash(`Export ${result.extension.toUpperCase()} téléchargé`);
+    } catch (error) {
+      flash(error instanceof Error ? error.message : "Export local impossible");
+    } finally {
+      setRendering(false);
+    }
   };
 
   const saveMontage = async () => {
@@ -1408,7 +1451,7 @@ export default function MontageStudio({
         <div className="mp-header-actions">
           <button onClick={saveMontage} disabled={saving}>💾 {saving ? "Sauvegarde…" : "Sauvegarder"}</button>
           <button onClick={refreshExport}>⬇ Exporter le projet</button>
-          <button className="gold" onClick={renderMontage} disabled={rendering}>🎞 {rendering ? "Rendu…" : "Export vidéo"}</button>
+          <button className="gold" onClick={exportMontageLocally} disabled={rendering}>🎞 {rendering ? "Rendu…" : "Export vidéo"}</button>
         </div>
       </header>
 
