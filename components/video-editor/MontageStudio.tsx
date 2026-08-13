@@ -234,6 +234,7 @@ export default function MontageStudio({
   const [selectedThemeId, setSelectedThemeId] = useState("");
   const [playhead, setPlayhead] = useState(0);
   const [audioUploading, setAudioUploading] = useState(false);
+  const [playbackRate, setPlaybackRate] = useState(1);
   const [montagePlaying, setMontagePlaying] = useState(false);
   const montageAudioRef = useRef<HTMLAudioElement | null>(null);
   const playStartedAtRef = useRef<{ wall: number; timeline: number } | null>(null);
@@ -608,6 +609,60 @@ export default function MontageStudio({
     );
   };
 
+
+  const beginTimelineTrim = (
+    event: import("react").PointerEvent<HTMLSpanElement>,
+    itemIndex: number,
+    edge: "start" | "end",
+  ) => {
+    event.preventDefault();
+    event.stopPropagation();
+
+    const item = items[itemIndex];
+    if (!item || item.item_type !== "clip") return;
+
+    const originX = event.clientX;
+    const originStart = item.clip_start;
+    const originEnd = item.clip_end;
+    const actionStart = item.action ? clipStart(item.action) : 0;
+    const actionEnd = item.action ? clipEnd(item.action) : Number.POSITIVE_INFINITY;
+    const pxPerSecond = 45 * timelineZoom;
+
+    const onMove = (moveEvent: PointerEvent) => {
+      const delta = (moveEvent.clientX - originX) / Math.max(1, pxPerSecond);
+
+      setItems((current) =>
+        current.map((row, index) => {
+          if (index !== itemIndex) return row;
+
+          if (edge === "start") {
+            const nextStart = clamp(
+              originStart + delta,
+              actionStart,
+              Math.min(originEnd - 0.1, actionEnd),
+            );
+            return { ...row, clip_start: nextStart };
+          }
+
+          const nextEnd = clamp(
+            originEnd + delta,
+            Math.max(originStart + 0.1, actionStart + 0.1),
+            actionEnd,
+          );
+          return { ...row, clip_end: nextEnd };
+        }),
+      );
+    };
+
+    const onUp = () => {
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+    };
+
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+  };
+
   const insertionIndex = () =>
     items.length === 0 ? 0 : clamp(selectedIndex + 1, 0, items.length);
 
@@ -774,7 +829,7 @@ export default function MontageStudio({
       const response = await fetch("/api/montages/render", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ montageId }),
+        body: JSON.stringify({ montageId, playbackRate }),
       });
 
       const data = await response.json();
@@ -900,7 +955,7 @@ export default function MontageStudio({
     const tick = (now: number) => {
       const started = playStartedAtRef.current;
       if (!started) return;
-      const next = started.timeline + (now - started.wall) / 1000;
+      const next = started.timeline + ((now - started.wall) / 1000) * playbackRate;
       if (next >= totalDuration) {
         setPlayhead(totalDuration);
         setMontagePlaying(false);
@@ -922,9 +977,10 @@ export default function MontageStudio({
       ? numberValue(item.freeze_time ?? item.clip_start)
       : item.clip_start + Math.max(0, playhead - start);
     if (Math.abs(video.currentTime - target) > 0.35) video.currentTime = target;
+    video.playbackRate = playbackRate;
     if (item.item_type === "freeze") video.pause();
     else if (video.paused) void video.play().catch(() => {});
-  }, [montagePlaying, playhead, activeVideoEntry?.index]);
+  }, [montagePlaying, playhead, activeVideoEntry?.index, playbackRate]);
 
   useEffect(() => {
     const audio = montageAudioRef.current;
@@ -938,10 +994,11 @@ export default function MontageStudio({
     if (!src) return;
     if (audio.src !== src) audio.src = src;
     audio.volume = clamp(item.volume ?? 1, 0, 1);
+    audio.playbackRate = playbackRate;
     const target = Math.max(0, playhead - start);
     if (Math.abs(audio.currentTime - target) > 0.35) audio.currentTime = target;
     if (audio.paused) void audio.play().catch(() => {});
-  }, [montagePlaying, playhead, activeAudioEntry?.index]);
+  }, [montagePlaying, playhead, activeAudioEntry?.index, playbackRate]);
 
   const previewActions = useMemo(() => {
     let source = filteredActions;
@@ -1281,6 +1338,18 @@ export default function MontageStudio({
   const stageItem = stageEntry?.item;
   const stageVideo = actionVideoUrl(stageItem?.action, matchMap);
 
+  const stageSourceTime = stageItem
+    ? stageItem.item_type === "freeze"
+      ? numberValue(stageItem.freeze_time ?? stageItem.clip_start)
+      : stageItem.clip_start + Math.max(0, playhead - (stageEntry?.start ?? 0))
+    : 0;
+
+  const visibleStageDrawings = (stageItem?.annotations || []).filter((drawing) => {
+    const start = numberValue(drawing.start);
+    const end = Math.max(start, numberValue(drawing.end));
+    return stageSourceTime >= start && stageSourceTime <= end;
+  });
+
   return (
     <div className={`montage-pro ${embedded ? "embedded" : ""}`}>
       <header className="mp-header">
@@ -1474,6 +1543,59 @@ export default function MontageStudio({
               }}
             />}
 
+            {visibleStageDrawings.length > 0 && (
+              <svg className="mp-live-drawings" viewBox="0 0 960 540" preserveAspectRatio="none">
+                <defs>
+                  <marker id="mp-arrow-head" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth">
+                    <path d="M0,0 L0,6 L9,3 z" fill="context-stroke" />
+                  </marker>
+                </defs>
+                {visibleStageDrawings.map((drawing) => {
+                  if (drawing.kind === "circle") {
+                    const radius = Math.hypot(drawing.x2 - drawing.x1, drawing.y2 - drawing.y1);
+                    return (
+                      <circle
+                        key={drawing.id}
+                        cx={drawing.x1}
+                        cy={drawing.y1}
+                        r={radius}
+                        fill="none"
+                        stroke={drawing.color}
+                        strokeWidth={drawing.width}
+                      />
+                    );
+                  }
+                  if (drawing.kind === "text") {
+                    return (
+                      <text
+                        key={drawing.id}
+                        x={drawing.x1}
+                        y={drawing.y1}
+                        fill={drawing.color}
+                        fontSize="30"
+                        fontWeight="900"
+                      >
+                        {drawing.text || "Texte"}
+                      </text>
+                    );
+                  }
+                  return (
+                    <line
+                      key={drawing.id}
+                      x1={drawing.x1}
+                      y1={drawing.y1}
+                      x2={drawing.x2}
+                      y2={drawing.y2}
+                      stroke={drawing.color}
+                      strokeWidth={drawing.width}
+                      strokeLinecap="round"
+                      markerEnd={drawing.kind === "arrow" ? "url(#mp-arrow-head)" : undefined}
+                    />
+                  );
+                })}
+              </svg>
+            )}
+
             {montagePlaying && activeOverlayEntries.map(({ item, index }) => (
               <div className={`mp-live-overlay type-${item.item_type}`} key={`${item.action_id}:${index}`}>
                 {item.item_type === "image" && item.image_url ? <img src={item.image_url} alt={item.title} /> : <strong>{item.item_type === "title" ? item.title : item.note || item.title}</strong>}
@@ -1494,7 +1616,14 @@ export default function MontageStudio({
               <div><i /></div>
               <span>{`${String(Math.floor(totalDuration/60)).padStart(2,"0")}:${String(Math.floor(totalDuration%60)).padStart(2,"0")}`}</span>
             </div>
-            <select><option>1x</option><option>0.5x</option><option>1.5x</option><option>2x</option></select>
+            <select value={playbackRate} onChange={(e) => setPlaybackRate(numberValue(e.target.value))}>
+              <option value={0.5}>0.5x</option>
+              <option value={0.75}>0.75x</option>
+              <option value={1}>1x</option>
+              <option value={1.25}>1.25x</option>
+              <option value={1.5}>1.5x</option>
+              <option value={2}>2x</option>
+            </select>
           </div>
 
           <div className="mp-tools">
@@ -1584,6 +1713,20 @@ export default function MontageStudio({
                           <strong>{item.title || item.item_type}</strong>
                           <small>{duration.toFixed(1)}s</small>
                           {item.item_type === "audio" && <small>♫ {Math.round((item.volume ?? 1) * 100)}%</small>}
+                          {item.item_type === "clip" && (
+                            <>
+                              <span
+                                className="mp-trim-handle left"
+                                title="Rogner le début"
+                                onPointerDown={(event) => beginTimelineTrim(event, index, "start")}
+                              />
+                              <span
+                                className="mp-trim-handle right"
+                                title="Rogner la fin"
+                                onPointerDown={(event) => beginTimelineTrim(event, index, "end")}
+                              />
+                            </>
+                          )}
                           <b onClick={(event) => { event.stopPropagation(); removeItem(index); }}>×</b>
                         </button>
                       );
@@ -1635,6 +1778,26 @@ export default function MontageStudio({
               </>}
 
               <button className="danger" onClick={()=>removeItem(selectedIndex)}>🗑 Retirer de la timeline</button>
+            </div>
+          )}
+
+          {selected?.item_type === "freeze" && (
+            <div className="mp-freeze-inspector">
+              <strong>Arrêt sur image</strong>
+              <label>
+                Durée
+                <input
+                  type="number"
+                  min="0.2"
+                  step="0.1"
+                  value={selected.duration ?? selected.freeze_duration ?? 2}
+                  onChange={(e) => {
+                    const duration = Math.max(0.2, numberValue(e.target.value));
+                    updateSelected({ duration, freeze_duration: duration });
+                  }}
+                />
+              </label>
+              <small>Image figée à {`${String(Math.floor(numberValue(selected.freeze_time)/60)).padStart(2,"0")}:${String((numberValue(selected.freeze_time)%60).toFixed(1)).padStart(4,"0")}`}</small>
             </div>
           )}
 
@@ -1731,6 +1894,9 @@ export default function MontageStudio({
         .mp-tools{display:flex;gap:6px;padding:7px 12px;border-bottom:1px solid var(--line);background:#0d1522}.mp-tools button{font-size:9px;padding:6px 9px}.mp-tools button.on{border-color:var(--gold);color:var(--gold)}.mp-timeline-head{display:flex;justify-content:space-between;align-items:center;padding:7px 12px;background:#0b1320}.mp-timeline-head>div:first-child{display:flex;align-items:baseline;gap:8px}.mp-timeline-head strong{font-size:11px}.mp-timeline-head small{font-size:8px;color:#78869e}.mp-timeline-head>div:last-child{display:flex;align-items:center;gap:5px}.mp-timeline-head button{padding:4px 8px;min-width:28px}.mp-timeline-head span{font-size:8px;color:var(--gold)}
         .mp-timeline-scroll{overflow:auto;background:#08101c;border-top:1px solid var(--line)}.mp-ruler{height:26px;position:relative;margin-left:110px;border-bottom:1px solid #22304a;min-width:1000px}.mp-ruler span{position:absolute;top:7px;font-size:7px;color:#6f7e96;white-space:nowrap}.mp-track-row{display:grid;grid-template-columns:110px minmax(0,1fr);min-height:92px}.mp-track-row>label{padding:12px;color:#8d98ab;font-size:8px;font-weight:900;border-right:1px solid #22304a;background:#0b1320}.mp-track{position:relative;height:84px;padding:8px;min-width:max-content;background:repeating-linear-gradient(90deg,transparent 0,transparent 224px,rgba(255,255,255,.025) 225px)}.mp-timeline-item{position:absolute;top:8px;height:68px;border:1px solid #33415c;border-radius:8px;background:#121d2f;color:#fff;padding:8px;text-align:left;display:grid;grid-template-columns:auto 1fr;grid-template-rows:auto 1fr auto;gap:4px;cursor:pointer;overflow:hidden}.mp-timeline-item.selected{border-color:var(--gold);box-shadow:0 0 0 1px #d4a24c55}.mp-timeline-item.type-title{background:#2c2250}.mp-timeline-item.type-text{background:#253249}.mp-timeline-item.type-image{background:#27353a}.mp-timeline-item.type-freeze{background:#34402d}.mp-timeline-item strong{grid-column:1/-1;font-size:9px;overflow:hidden}.mp-timeline-item small{font-size:8px;color:#c1cad9}.mp-timeline-item b{position:absolute;right:4px;top:4px;width:18px;height:18px;border-radius:50%;display:grid;place-items:center;background:#8e2438;color:#fff}.mp-track-empty{color:#607087;font-size:9px;padding:25px}
         .mp-playhead{position:absolute;top:0;bottom:-280px;width:2px;background:#d4a24c;z-index:20;pointer-events:none;box-shadow:0 0 0 1px #0008}
+        .mp-trim-handle{position:absolute;top:0;bottom:0;width:8px;background:#d4a24c;opacity:.8;cursor:ew-resize;z-index:8}.mp-trim-handle.left{left:0;border-radius:7px 0 0 7px}.mp-trim-handle.right{right:0;border-radius:0 7px 7px 0}.mp-timeline-item:hover .mp-trim-handle{opacity:1}
+        .mp-live-drawings{position:absolute;inset:0;width:100%;height:100%;z-index:7;pointer-events:none}
+        .mp-freeze-inspector{display:grid;gap:8px;border:1px solid #425034;border-radius:9px;padding:10px;margin:10px 0;background:#11180f}.mp-freeze-inspector strong{color:#b8d98c;font-size:10px}.mp-freeze-inspector label{display:grid;gap:5px;font-size:9px;color:#9eaf91}.mp-freeze-inspector input{border:1px solid #35462d;background:#0c140b;color:#fff;border-radius:7px;padding:7px}
         .track-audio .mp-timeline-item{background:#253047}.track-overlay .mp-timeline-item{background:#32284a}
         .mp-audio-inspector{display:grid;gap:8px;border:1px solid #2b3850;border-radius:9px;padding:10px;margin:10px 0}.mp-audio-inspector strong{color:#d4a24c;font-size:10px}.mp-audio-inspector label{display:grid;gap:5px;font-size:9px;color:#8e9ab0}
         .mp-inspector-form{display:grid;gap:10px}.mp-inspector label,.mp-project-note{display:grid;gap:5px;color:#8a96aa;font-size:9px;font-weight:800}.mp-inspector textarea{min-height:80px;resize:vertical}.mp-two{display:grid;grid-template-columns:1fr 1fr;gap:6px}.mp-readonly{border:1px solid var(--line);background:#0c1422;color:#d4a24c;border-radius:8px;padding:9px;text-transform:capitalize}.mp-nudge{display:grid;grid-template-columns:1fr 1fr;gap:5px}.mp-nudge button,.mp-inspector-form>button{font-size:8px}.mp-inspector-tools{display:grid;grid-template-columns:1fr 1fr 1fr 40px;gap:4px}.mp-inspector-tools input{width:40px;height:34px;padding:2px}.danger{border-color:#6d2c3a!important;color:#ff8293!important}.mp-project-note{margin-top:18px}.mp-project-note textarea{min-height:90px}
