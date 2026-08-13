@@ -235,6 +235,10 @@ export default function MontageStudio({
   const [playhead, setPlayhead] = useState(0);
   const [audioUploading, setAudioUploading] = useState(false);
   const [playbackRate, setPlaybackRate] = useState(1);
+  const [renderJobId, setRenderJobId] = useState<string | null>(null);
+  const [renderProgress, setRenderProgress] = useState(0);
+  const [renderStatus, setRenderStatus] = useState("");
+  const [renderOutputUrl, setRenderOutputUrl] = useState("");
   const [montagePlaying, setMontagePlaying] = useState(false);
   const montageAudioRef = useRef<HTMLAudioElement | null>(null);
   const playStartedAtRef = useRef<{ wall: number; timeline: number } | null>(null);
@@ -486,6 +490,30 @@ export default function MontageStudio({
     () => new Map(matches.map((match) => [String(match.id), match])),
     [matches],
   );
+
+  useEffect(() => {
+    if (!renderJobId) return;
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const poll = async () => {
+      const { data, error } = await supabase.from("livestat_render_jobs")
+        .select("id,status,progress,output_url,error_message").eq("id", renderJobId).single();
+      if (cancelled) return;
+      if (error) { setRenderStatus("failed"); flash(error.message); return; }
+      const status = String(data?.status || "");
+      setRenderStatus(status);
+      setRenderProgress(Number(data?.progress || 0));
+      setRenderOutputUrl(String(data?.output_url || ""));
+      if (["done","completed","failed","error"].includes(status)) {
+        if (["done","completed"].includes(status)) flash("Export MP4 terminé");
+        else flash(String(data?.error_message || "Échec du rendu"));
+        return;
+      }
+      timer = setTimeout(poll, 1500);
+    };
+    void poll();
+    return () => { cancelled = true; if (timer) clearTimeout(timer); };
+  }, [flash, renderJobId, supabase]);
 
   const selected = items[selectedIndex];
   const selectedAction = selected?.action;
@@ -1638,6 +1666,15 @@ export default function MontageStudio({
             <input ref={audioInputRef} type="file" accept="audio/*" hidden onChange={(e)=>{const file=e.target.files?.[0]; if(file) void uploadAudioItem(file)}} />
           </div>
 
+          {renderJobId && (
+            <div className="mp-render-status">
+              <div><strong>EXPORT MP4</strong><span>{renderStatus === "queued" ? "En attente…" : renderStatus === "rendering" ? "Rendu en cours…" : ["done","completed"].includes(renderStatus) ? "Terminé" : renderStatus}</span></div>
+              <div className="mp-render-progress"><i style={{ width: `${Math.max(0, Math.min(100, renderProgress))}%` }} /></div>
+              <b>{Math.round(renderProgress)}%</b>
+              {renderOutputUrl && <a href={renderOutputUrl} target="_blank" rel="noreferrer">Ouvrir la vidéo</a>}
+            </div>
+          )}
+
           <div className="mp-timeline-head">
             <div>
               <strong>ORDRE DU MONTAGE</strong>
@@ -1893,6 +1930,7 @@ export default function MontageStudio({
         .mp-player-bar{display:flex;align-items:center;gap:6px;padding:6px 12px;border-top:1px solid var(--line);border-bottom:1px solid var(--line);background:#0d1522}.mp-player-bar button{width:32px;height:30px;border:1px solid var(--line);background:#142035;color:#fff;border-radius:7px}.mp-time{display:grid;grid-template-columns:50px 1fr 50px;align-items:center;gap:6px;flex:1}.mp-time span{font-size:8px;color:var(--gold);font-weight:900;text-align:center}.mp-time div{height:5px;border-radius:5px;background:#e4e8ef}.mp-time i{display:block;width:20%;height:100%;background:#3d8cff;border-radius:5px}.mp-player-bar select{border:1px solid var(--line);background:#101a2b;color:#fff;border-radius:6px;padding:5px}
         .mp-tools{display:flex;gap:6px;padding:7px 12px;border-bottom:1px solid var(--line);background:#0d1522}.mp-tools button{font-size:9px;padding:6px 9px}.mp-tools button.on{border-color:var(--gold);color:var(--gold)}.mp-timeline-head{display:flex;justify-content:space-between;align-items:center;padding:7px 12px;background:#0b1320}.mp-timeline-head>div:first-child{display:flex;align-items:baseline;gap:8px}.mp-timeline-head strong{font-size:11px}.mp-timeline-head small{font-size:8px;color:#78869e}.mp-timeline-head>div:last-child{display:flex;align-items:center;gap:5px}.mp-timeline-head button{padding:4px 8px;min-width:28px}.mp-timeline-head span{font-size:8px;color:var(--gold)}
         .mp-timeline-scroll{overflow:auto;background:#08101c;border-top:1px solid var(--line)}.mp-ruler{height:26px;position:relative;margin-left:110px;border-bottom:1px solid #22304a;min-width:1000px}.mp-ruler span{position:absolute;top:7px;font-size:7px;color:#6f7e96;white-space:nowrap}.mp-track-row{display:grid;grid-template-columns:110px minmax(0,1fr);min-height:92px}.mp-track-row>label{padding:12px;color:#8d98ab;font-size:8px;font-weight:900;border-right:1px solid #22304a;background:#0b1320}.mp-track{position:relative;height:84px;padding:8px;min-width:max-content;background:repeating-linear-gradient(90deg,transparent 0,transparent 224px,rgba(255,255,255,.025) 225px)}.mp-timeline-item{position:absolute;top:8px;height:68px;border:1px solid #33415c;border-radius:8px;background:#121d2f;color:#fff;padding:8px;text-align:left;display:grid;grid-template-columns:auto 1fr;grid-template-rows:auto 1fr auto;gap:4px;cursor:pointer;overflow:hidden}.mp-timeline-item.selected{border-color:var(--gold);box-shadow:0 0 0 1px #d4a24c55}.mp-timeline-item.type-title{background:#2c2250}.mp-timeline-item.type-text{background:#253249}.mp-timeline-item.type-image{background:#27353a}.mp-timeline-item.type-freeze{background:#34402d}.mp-timeline-item strong{grid-column:1/-1;font-size:9px;overflow:hidden}.mp-timeline-item small{font-size:8px;color:#c1cad9}.mp-timeline-item b{position:absolute;right:4px;top:4px;width:18px;height:18px;border-radius:50%;display:grid;place-items:center;background:#8e2438;color:#fff}.mp-track-empty{color:#607087;font-size:9px;padding:25px}
+        .mp-render-status{display:grid;grid-template-columns:auto minmax(180px,1fr) auto auto;gap:12px;align-items:center;background:#0b1320;border:1px solid #2b3850;border-radius:10px;padding:10px 12px;margin:8px 0}.mp-render-status>div:first-child{display:grid;gap:2px}.mp-render-status strong{font-size:9px;color:#d4a24c}.mp-render-status span{font-size:8px;color:#9ca9bd}.mp-render-progress{height:7px;background:#1d293c;border-radius:999px;overflow:hidden}.mp-render-progress i{display:block;height:100%;background:#d4a24c;border-radius:999px;transition:width .25s ease}.mp-render-status>b{font-size:9px}.mp-render-status>a{font-size:9px;color:#d4a24c;text-decoration:none;font-weight:900}
         .mp-playhead{position:absolute;top:0;bottom:-280px;width:2px;background:#d4a24c;z-index:20;pointer-events:none;box-shadow:0 0 0 1px #0008}
         .mp-trim-handle{position:absolute;top:0;bottom:0;width:8px;background:#d4a24c;opacity:.8;cursor:ew-resize;z-index:8}.mp-trim-handle.left{left:0;border-radius:7px 0 0 7px}.mp-trim-handle.right{right:0;border-radius:0 7px 7px 0}.mp-timeline-item:hover .mp-trim-handle{opacity:1}
         .mp-live-drawings{position:absolute;inset:0;width:100%;height:100%;z-index:7;pointer-events:none}
