@@ -82,6 +82,9 @@ export default function GoogleDriveVideoPicker({
   onPicked,
 }: Props) {
   const [connected, setConnected] = useState<boolean | null>(null);
+  // Diagnostic renvoyé par /api/google-drive/status : permet d'afficher la
+  // vraie raison au lieu de proposer une connexion qui échouera.
+  const [configIssue, setConfigIssue] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const alive = useRef(true);
 
@@ -96,7 +99,14 @@ export default function GoogleDriveVideoPicker({
           { cache: "no-store" },
         );
         const payload = await response.json();
-        if (alive.current) setConnected(Boolean(payload.connected));
+        if (!alive.current) return;
+
+        setConnected(Boolean(payload.connected));
+        setConfigIssue(
+          payload.configured === false
+            ? String(payload.reason || "Google Drive n'est pas configuré côté serveur.")
+            : null,
+        );
       } catch {
         if (alive.current) setConnected(false);
       }
@@ -120,6 +130,11 @@ export default function GoogleDriveVideoPicker({
 
   const openPicker = async () => {
     if (!teamId || disabled) return;
+
+    if (configIssue) {
+      window.alert(`Google Drive indisponible : ${configIssue}`);
+      return;
+    }
 
     if (!connected) {
       connect();
@@ -218,8 +233,9 @@ export default function GoogleDriveVideoPicker({
       className={className}
       onClick={openPicker}
       disabled={disabled || busy}
+      title={configIssue ?? undefined}
     >
-      ☁️ {text}
+      ☁️ {configIssue ? "Google Drive indisponible" : text}
     </button>
   );
 

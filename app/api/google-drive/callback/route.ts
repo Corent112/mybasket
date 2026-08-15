@@ -3,11 +3,16 @@ import { NextRequest, NextResponse } from "next/server";
 import { createGoogleDriveAdminClient } from "@/lib/google-drive/admin";
 import { encryptGoogleDriveToken } from "@/lib/google-drive/crypto";
 import {
+  GoogleDriveStepError,
   canManageTeamMedia,
+  logGoogleDriveError,
   requireGoogleDriveUser,
 } from "@/lib/google-drive/server";
 
 export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
+
+const ROUTE = "google-drive/callback";
 
 export async function GET(request: NextRequest) {
   const rawReturnTo =
@@ -104,12 +109,16 @@ export async function GET(request: NextRequest) {
     response.cookies.delete("gdrive_return_to");
     return response;
   } catch (error) {
+    logGoogleDriveError(ROUTE, error);
+
     target.searchParams.set("drive", "error");
     target.searchParams.set(
       "message",
-      error instanceof Error
-        ? error.message
-        : "Connexion Google Drive impossible",
+      error instanceof GoogleDriveStepError
+        ? error.publicMessage
+        : error instanceof Error
+          ? error.message
+          : "Connexion Google Drive impossible",
     );
     return NextResponse.redirect(target);
   }

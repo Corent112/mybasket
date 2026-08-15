@@ -3,14 +3,6 @@ import crypto from "node:crypto";
 
 const PREFIX = "mybasket-gdrive-v1";
 
-/**
- * Permet aux routes de vérifier la configuration AVANT de lancer un flux OAuth
- * qui échouerait de toute façon au retour (callback).
- */
-export function isGoogleDriveEncryptionConfigured(): boolean {
-  return /^[0-9a-f]{64}$/i.test(process.env.GOOGLE_DRIVE_TOKEN_ENCRYPTION_KEY || "");
-}
-
 function encryptionKey(): Buffer {
   const raw = process.env.GOOGLE_DRIVE_TOKEN_ENCRYPTION_KEY || "";
   if (!/^[0-9a-f]{64}$/i.test(raw)) {

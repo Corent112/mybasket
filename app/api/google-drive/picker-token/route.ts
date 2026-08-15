@@ -1,12 +1,17 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import {
+  GoogleDriveStepError,
   canManageTeamMedia,
+  logGoogleDriveError,
   refreshTeamGoogleDriveAccessToken,
   requireGoogleDriveUser,
 } from "@/lib/google-drive/server";
 
 export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
+
+const ROUTE = "google-drive/picker-token";
 
 export async function GET(request: NextRequest) {
   try {
@@ -38,11 +43,22 @@ export async function GET(request: NextRequest) {
       appId: process.env.NEXT_PUBLIC_GOOGLE_DRIVE_APP_ID || "",
     });
   } catch (error) {
-    const message =
-      error instanceof Error ? error.message : "Erreur";
+    logGoogleDriveError(ROUTE, error);
+
+    if (error instanceof GoogleDriveStepError) {
+      return NextResponse.json(
+        {
+          error: error.publicMessage,
+          step: error.step,
+          ...(error.missing?.length ? { missing: error.missing } : {}),
+        },
+        { status: error.status },
+      );
+    }
+
     return NextResponse.json(
-      { error: message },
-      { status: message === "UNAUTHENTICATED" ? 401 : 500 },
+      { error: "Google Drive indisponible.", step: "unknown" },
+      { status: 500 },
     );
   }
 }

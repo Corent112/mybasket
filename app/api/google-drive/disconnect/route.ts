@@ -2,11 +2,16 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createGoogleDriveAdminClient } from "@/lib/google-drive/admin";
 import {
+  GoogleDriveStepError,
   canManageTeamMedia,
+  logGoogleDriveError,
   requireGoogleDriveUser,
 } from "@/lib/google-drive/server";
 
 export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
+
+const ROUTE = "google-drive/disconnect";
 
 export async function POST(request: NextRequest) {
   try {
@@ -40,11 +45,21 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json({ ok: true });
   } catch (error) {
+    logGoogleDriveError(ROUTE, error);
+
+    if (error instanceof GoogleDriveStepError) {
+      return NextResponse.json(
+        {
+          error: error.publicMessage,
+          step: error.step,
+          ...(error.missing?.length ? { missing: error.missing } : {}),
+        },
+        { status: error.status },
+      );
+    }
+
     return NextResponse.json(
-      {
-        error:
-          error instanceof Error ? error.message : "Erreur",
-      },
+      { error: "Déconnexion impossible.", step: "unknown" },
       { status: 500 },
     );
   }

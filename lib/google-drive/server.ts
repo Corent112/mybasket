@@ -16,71 +16,244 @@ type TeamDriveConnection = {
   revoked_at: string | null;
 };
 
+/* ------------------------------------------------------------------ */
+/* Diagnostic                                                          */
+/* ------------------------------------------------------------------ */
+
+export type GoogleDriveStep =
+  | "auth"
+  | "params"
+  | "team-access"
+  | "config"
+  | "oauth-url"
+  | "connection"
+  | "token"
+  | "storage";
+
+/**
+ * Erreur portant l'étape exacte du flux Google Drive qui a échoué, plus le
+ * code d'erreur Supabase quand il y en a un. Aucun secret n'y transite : on
+ * n'y met jamais de client secret, de service role, de clé de chiffrement ni
+ * de jeton.
+ */
+export class GoogleDriveStepError extends Error {
+  step: GoogleDriveStep;
+  supabaseCode?: string;
+  supabaseDetails?: string;
+  /** Champs d'environnement absents — noms uniquement, jamais de valeur. */
+  missing?: string[];
+  /** Message affichable à l'utilisateur final. */
+  publicMessage: string;
+  status: number;
+
+  constructor(args: {
+    step: GoogleDriveStep;
+    message: string;
+    publicMessage?: string;
+    status?: number;
+    supabaseCode?: string;
+    supabaseDetails?: string;
+    missing?: string[];
+  }) {
+    super(args.message);
+    this.name = "GoogleDriveStepError";
+    this.step = args.step;
+    this.publicMessage = args.publicMessage || args.message;
+    this.status = args.status ?? 500;
+    this.supabaseCode = args.supabaseCode;
+    this.supabaseDetails = args.supabaseDetails;
+    this.missing = args.missing;
+  }
+}
+
+/** Journalisation serveur : étape, type, message, code. Jamais de secret. */
+export function logGoogleDriveError(route: string, error: unknown) {
+  if (error instanceof GoogleDriveStepError) {
+    console.error(
+      `[${route}] step=${error.step} name=${error.name} message=${error.message}` +
+        (error.supabaseCode ? ` supabaseCode=${error.supabaseCode}` : "") +
+        (error.supabaseDetails ? ` supabaseDetails=${error.supabaseDetails}` : "") +
+        (error.missing?.length ? ` missing=${error.missing.join(",")}` : ""),
+    );
+    return;
+  }
+
+  const name = error instanceof Error ? error.name : typeof error;
+  const message = error instanceof Error ? error.message : String(error);
+  console.error(`[${route}] step=unknown name=${name} message=${message}`);
+}
+
+export function logGoogleDriveStep(route: string, step: GoogleDriveStep) {
+  console.log(`[${route}] step=${step}`);
+}
+
+/* ------------------------------------------------------------------ */
+/* Configuration                                                       */
+/* ------------------------------------------------------------------ */
+
+/**
+ * État de configuration du flux OAuth. Retourne uniquement des NOMS de
+ * variables, jamais leurs valeurs.
+ *
+ * `SUPABASE_SERVICE_ROLE_KEY` n'est PAS requise par /connect : cette route
+ * n'utilise que le client utilisateur. Elle l'est en revanche pour lire et
+ * écrire `team_drive_connections` (status, callback, disconnect, picker-token),
+ * car cette table contient les refresh tokens chiffrés et ne doit jamais être
+ * exposée au navigateur.
+ */
+export function getGoogleDriveConfig(options?: { requireServiceRole?: boolean }) {
+  const missing: string[] = [];
+
+  const clientId = process.env.GOOGLE_DRIVE_CLIENT_ID;
+  const clientSecret = process.env.GOOGLE_DRIVE_CLIENT_SECRET;
+  const redirectUri = process.env.GOOGLE_DRIVE_REDIRECT_URI;
+  const encryptionKey = process.env.GOOGLE_DRIVE_TOKEN_ENCRYPTION_KEY || "";
+
+  if (!clientId) missing.push("GOOGLE_DRIVE_CLIENT_ID");
+  if (!clientSecret) missing.push("GOOGLE_DRIVE_CLIENT_SECRET");
+  if (!redirectUri) missing.push("GOOGLE_DRIVE_REDIRECT_URI");
+  if (!/^[0-9a-f]{64}$/i.test(encryptionKey)) {
+    missing.push("GOOGLE_DRIVE_TOKEN_ENCRYPTION_KEY");
+  }
+
+  if (!process.env.NEXT_PUBLIC_SUPABASE_URL) missing.push("NEXT_PUBLIC_SUPABASE_URL");
+  if (!process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY) {
+    missing.push("NEXT_PUBLIC_SUPABASE_ANON_KEY");
+  }
+  if (options?.requireServiceRole && !process.env.SUPABASE_SERVICE_ROLE_KEY) {
+    missing.push("SUPABASE_SERVICE_ROLE_KEY");
+  }
+
+  // Vérifie que l'URI de redirection pointe bien vers la route réellement
+  // servie par le code. Une incohérence ici produit un échec au retour de
+  // Google, pas au départ — d'où l'intérêt de le détecter tôt.
+  let redirectUriValid = true;
+  let redirectUriReason: string | undefined;
+
+  if (redirectUri) {
+    try {
+      const parsed = new URL(redirectUri);
+      if (parsed.pathname !== "/api/google-drive/callback") {
+        redirectUriValid = false;
+        redirectUriReason =
+          "GOOGLE_DRIVE_REDIRECT_URI doit se terminer par /api/google-drive/callback.";
+      } else if (parsed.protocol !== "https:" && parsed.hostname !== "localhost") {
+        redirectUriValid = false;
+        redirectUriReason = "GOOGLE_DRIVE_REDIRECT_URI doit utiliser https.";
+      }
+    } catch {
+      redirectUriValid = false;
+      redirectUriReason = "GOOGLE_DRIVE_REDIRECT_URI n'est pas une URL valide.";
+    }
+  }
+
+  return {
+    ok: missing.length === 0 && redirectUriValid,
+    missing,
+    redirectUriValid,
+    redirectUriReason,
+    // Hôte seulement : sert à comparer avec le domaine réellement servi.
+    redirectUriHost: (() => {
+      if (!redirectUri) return null;
+      try {
+        return new URL(redirectUri).host;
+      } catch {
+        return null;
+      }
+    })(),
+    clientId,
+    clientSecret,
+    redirectUri,
+  };
+}
+
+/* ------------------------------------------------------------------ */
+/* Authentification                                                    */
+/* ------------------------------------------------------------------ */
+
 export async function requireGoogleDriveUser() {
-  const supabase = await createClient();
-  const {
-    data: { user },
-    error,
-  } = await supabase.auth.getUser();
+  // `createClient()` lève si NEXT_PUBLIC_SUPABASE_URL / ANON_KEY sont absentes
+  // (assertions `!` côté TypeScript, mais erreur réelle à l'exécution).
+  let supabase: Awaited<ReturnType<typeof createClient>>;
 
-  if (error || !user) throw new Error("UNAUTHENTICATED");
-  return { supabase, user };
+  try {
+    supabase = await createClient();
+  } catch (error) {
+    throw new GoogleDriveStepError({
+      step: "config",
+      message:
+        error instanceof Error
+          ? `Client Supabase serveur indisponible : ${error.message}`
+          : "Client Supabase serveur indisponible.",
+      publicMessage: "Configuration serveur incomplète.",
+      missing: getGoogleDriveConfig().missing,
+      status: 500,
+    });
+  }
+
+  const { data, error } = await supabase.auth.getUser();
+
+  if (error || !data?.user) {
+    throw new GoogleDriveStepError({
+      step: "auth",
+      message: error?.message || "Session absente ou expirée.",
+      publicMessage: "Non authentifié.",
+      status: 401,
+    });
+  }
+
+  return { supabase, user: data.user };
+}
+
+/* ------------------------------------------------------------------ */
+/* Droits d'accès à l'équipe                                           */
+/* ------------------------------------------------------------------ */
+
+const UUID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+export function isTeamUuid(value: string): boolean {
+  return UUID_RE.test(value);
 }
 
 /**
- * Vrai si l'erreur PostgREST signale une fonction RPC absente de la base.
- * PGRST202 = fonction introuvable dans le cache de schéma, 42883 = undefined_function.
+ * Appelle la fonction Postgres de contrôle d'accès. Aucune erreur n'est
+ * masquée : si la fonction est absente, mal nommée ou reçoit un mauvais type,
+ * l'erreur Supabase remonte telle quelle, avec son code, dans les logs.
  */
-function isMissingRpc(error: { code?: string; message?: string } | null) {
-  if (!error) return false;
-  const code = String(error.code || "");
-  const message = String(error.message || "").toLowerCase();
-  return (
-    code === "PGRST202" ||
-    code === "42883" ||
-    message.includes("could not find the function") ||
-    message.includes("does not exist")
-  );
-}
-
-/**
- * Repli sans RPC : l'équipe appartient-elle à l'utilisateur authentifié ?
- * `teams.user_id` est la colonne propriétaire du projet (cf. lib/equipes-store.ts).
- */
-async function ownsTeam(
-  supabase: Awaited<ReturnType<typeof requireGoogleDriveUser>>["supabase"],
+async function boolRpc(
+  name: "can_access_team" | "can_manage_team_media",
   teamId: string,
-  userId: string,
 ) {
-  const { data, error } = await supabase
-    .from("teams")
-    .select("id")
-    .eq("id", teamId)
-    .eq("user_id", userId)
-    .maybeSingle();
+  const { supabase } = await requireGoogleDriveUser();
 
-  if (error) throw error;
-  return Boolean(data);
-}
-
-/**
- * Les fonctions `can_access_team` / `can_manage_team_media` ne sont pas
- * versionnées dans le dépôt : si elles sont absentes de la base, PostgREST
- * renvoie une erreur qui remontait en 500 AVANT tout appel à Google.
- * On retombe alors sur le contrôle de propriété, qui suffit au modèle actuel.
- */
-async function boolRpc(name: string, teamId: string) {
-  const { supabase, user } = await requireGoogleDriveUser();
+  // Une équipe locale (id non-uuid) ne peut pas être passée à une fonction
+  // Postgres typée uuid : Postgres répondrait 22P02 et la route renverrait un
+  // 500 trompeur. C'est une validation d'entrée, pas un masquage d'erreur.
+  if (!isTeamUuid(teamId)) {
+    throw new GoogleDriveStepError({
+      step: "params",
+      message: `teamId non-uuid transmis à ${name} : ${teamId}`,
+      publicMessage:
+        "Cette équipe n'est pas enregistrée en base : Google Drive n'est pas disponible pour une équipe locale.",
+      status: 400,
+    });
+  }
 
   const { data, error } = await supabase.rpc(name, { p_team_id: teamId });
-  if (!error) return data === true;
 
-  if (!isMissingRpc(error)) throw error;
+  if (error) {
+    throw new GoogleDriveStepError({
+      step: "team-access",
+      message: `RPC ${name} en échec : ${error.message}`,
+      publicMessage: "Vérification des droits impossible.",
+      supabaseCode: error.code,
+      supabaseDetails: error.hint || error.details || undefined,
+      status: 500,
+    });
+  }
 
-  console.warn(
-    `[google-drive] RPC ${name} absente en base — repli sur le contrôle de propriété de l'équipe.`,
-  );
-  return ownsTeam(supabase, teamId, user.id);
+  return data === true;
 }
 
 export const canAccessTeam = (teamId: string) =>
@@ -89,10 +262,28 @@ export const canAccessTeam = (teamId: string) =>
 export const canManageTeamMedia = (teamId: string) =>
   boolRpc("can_manage_team_media", teamId);
 
+/* ------------------------------------------------------------------ */
+/* Connexion Drive stockée                                             */
+/* ------------------------------------------------------------------ */
+
 export async function getTeamDriveConnection(
   teamId: string,
 ): Promise<TeamDriveConnection | null> {
-  const admin = createGoogleDriveAdminClient();
+  let admin: ReturnType<typeof createGoogleDriveAdminClient>;
+
+  try {
+    admin = createGoogleDriveAdminClient();
+  } catch (error) {
+    throw new GoogleDriveStepError({
+      step: "config",
+      message:
+        error instanceof Error ? error.message : "Client admin Supabase indisponible.",
+      publicMessage: "Configuration serveur incomplète.",
+      missing: getGoogleDriveConfig({ requireServiceRole: true }).missing,
+      status: 500,
+    });
+  }
+
   const { data, error } = await admin
     .from("team_drive_connections")
     .select(
@@ -103,26 +294,49 @@ export async function getTeamDriveConnection(
     .is("revoked_at", null)
     .maybeSingle();
 
-  if (error) throw error;
+  if (error) {
+    throw new GoogleDriveStepError({
+      step: "connection",
+      message: `Lecture team_drive_connections en échec : ${error.message}`,
+      publicMessage: "Connexion Google Drive illisible.",
+      supabaseCode: error.code,
+      supabaseDetails: error.hint || error.details || undefined,
+      status: 500,
+    });
+  }
+
   return (data ?? null) as TeamDriveConnection | null;
 }
 
 export async function refreshTeamGoogleDriveAccessToken(teamId: string) {
   const connection = await getTeamDriveConnection(teamId);
-  if (!connection) throw new Error("GOOGLE_DRIVE_NOT_CONNECTED");
 
-  const clientId = process.env.GOOGLE_DRIVE_CLIENT_ID;
-  const clientSecret = process.env.GOOGLE_DRIVE_CLIENT_SECRET;
-  if (!clientId || !clientSecret) {
-    throw new Error("Configuration OAuth Google Drive manquante.");
+  if (!connection) {
+    throw new GoogleDriveStepError({
+      step: "connection",
+      message: "Aucune connexion Google Drive active pour cette équipe.",
+      publicMessage: "Google Drive n'est pas connecté pour cette équipe.",
+      status: 409,
+    });
+  }
+
+  const config = getGoogleDriveConfig();
+  if (!config.clientId || !config.clientSecret) {
+    throw new GoogleDriveStepError({
+      step: "config",
+      message: "Identifiants OAuth Google Drive absents.",
+      publicMessage: "Configuration Google Drive incomplète.",
+      missing: config.missing,
+      status: 500,
+    });
   }
 
   const response = await fetch("https://oauth2.googleapis.com/token", {
     method: "POST",
     headers: { "content-type": "application/x-www-form-urlencoded" },
     body: new URLSearchParams({
-      client_id: clientId,
-      client_secret: clientSecret,
+      client_id: config.clientId,
+      client_secret: config.clientSecret,
       refresh_token: decryptGoogleDriveToken(
         connection.refresh_token_encrypted,
       ),
@@ -143,11 +357,15 @@ export async function refreshTeamGoogleDriveAccessToken(teamId: string) {
         .eq("provider", "google_drive");
     }
 
-    throw new Error(
-      payload?.error_description ||
+    throw new GoogleDriveStepError({
+      step: "token",
+      message:
+        payload?.error_description ||
         payload?.error ||
-        "Impossible de renouveler l'accès Google Drive.",
-    );
+        "Renouvellement du jeton Google refusé.",
+      publicMessage: "Impossible de renouveler l'accès Google Drive.",
+      status: 502,
+    });
   }
 
   return {
