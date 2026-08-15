@@ -114,6 +114,16 @@ function formatPrice(value: number) {
   }).format(value);
 }
 
+/**
+ * Durée d'un exercice, assainie : une valeur vide, nulle, non numérique ou
+ * négative compte pour 0 plutôt que de produire NaN sur le total.
+ */
+function safeDurationMinutes(value: unknown): number {
+  const minutes = Number(value);
+  if (!Number.isFinite(minutes) || minutes <= 0) return 0;
+  return Math.round(minutes);
+}
+
 function playerName(player: TeamPlayer) {
   return (
     player.name ||
@@ -300,6 +310,15 @@ export default function PanierPage() {
       item.item_type === "session"
   );
 
+  // Temps total de la séance : somme des durées réellement saisies dans les
+  // champs « Temps en minutes ». Aucune nouvelle source de vérité — la valeur
+  // est dérivée de `items`, donc elle se recalcule à chaque ajout, suppression
+  // ou modification de durée. Le réordonnancement ne change pas la somme.
+  const sessionTotalMinutes = sessionItems.reduce(
+    (sum, item) => sum + safeDurationMinutes(item.duration_minutes),
+    0
+  );
+
   const selectedTeam = teams.find((team) => team.id === selectedTeamId);
 
 const purchaseItems = useMemo(
@@ -323,7 +342,10 @@ const subtotal = useMemo(() => {
   }, []);
 
   async function loadTeamsAndPlayers() {
-    const { data: teamRows, error: teamError } = await supabase.from("teams").select("*").order("name");
+    // ISOLATION · espace personnel : uniquement les équipes de l'utilisateur.
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) { setTeams([]); return; }
+    const { data: teamRows, error: teamError } = await supabase.from("teams").select("*").eq("user_id", user.id).order("name");
     if (teamError) { console.error(teamError); setTeams(readTeamsFromLocalStorage()); return; }
     const rawTeams = (teamRows ?? []) as Array<Record<string, any>>;
     const teamIds = rawTeams.map((team) => String(team.id || "")).filter(Boolean);
@@ -2038,7 +2060,15 @@ setLoading(false);
         <div className="panel">
           <div className="panelTitle">
             <h2>CONSTRUCTION DE LA SÉANCE</h2>
-            <span>{sessionItems.length}</span>
+            <div className="panelTitleMeta">
+              <span
+                className="sessionDuration"
+                title="Temps total de la séance, calculé à partir des durées saisies"
+              >
+                ⏱ {sessionTotalMinutes} min
+              </span>
+              <span>{sessionItems.length}</span>
+            </div>
           </div>
 
           {sessionItems.length === 0 ? (
@@ -2662,6 +2692,36 @@ setLoading(false);
           display: grid;
           place-items: center;
           font-weight: 900;
+        }
+
+        .panelTitleMeta {
+          display: flex;
+          align-items: center;
+          gap: 10px;
+          flex: 0 0 auto;
+        }
+
+        /* Temps total : texte bordeaux compact, à gauche du badge rond.
+           Surcharge la règle .panelTitle span (cercle 30x30). */
+        .panelTitle span.sessionDuration {
+          width: auto;
+          height: auto;
+          border-radius: 0;
+          background: none;
+          color: #7a0d24;
+          font-size: 14px;
+          font-weight: 900;
+          line-height: 1;
+          white-space: nowrap;
+          display: inline-flex;
+          align-items: center;
+          gap: 4px;
+        }
+
+        @media (max-width: 520px) {
+          .panelTitle span.sessionDuration {
+            font-size: 12px;
+          }
         }
 
         .empty {
