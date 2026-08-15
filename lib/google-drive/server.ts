@@ -27,11 +27,60 @@ export async function requireGoogleDriveUser() {
   return { supabase, user };
 }
 
-async function boolRpc(name: string, teamId: string) {
-  const { supabase } = await requireGoogleDriveUser();
-  const { data, error } = await supabase.rpc(name, { p_team_id: teamId });
+/**
+ * Vrai si l'erreur PostgREST signale une fonction RPC absente de la base.
+ * PGRST202 = fonction introuvable dans le cache de schéma, 42883 = undefined_function.
+ */
+function isMissingRpc(error: { code?: string; message?: string } | null) {
+  if (!error) return false;
+  const code = String(error.code || "");
+  const message = String(error.message || "").toLowerCase();
+  return (
+    code === "PGRST202" ||
+    code === "42883" ||
+    message.includes("could not find the function") ||
+    message.includes("does not exist")
+  );
+}
+
+/**
+ * Repli sans RPC : l'équipe appartient-elle à l'utilisateur authentifié ?
+ * `teams.user_id` est la colonne propriétaire du projet (cf. lib/equipes-store.ts).
+ */
+async function ownsTeam(
+  supabase: Awaited<ReturnType<typeof requireGoogleDriveUser>>["supabase"],
+  teamId: string,
+  userId: string,
+) {
+  const { data, error } = await supabase
+    .from("teams")
+    .select("id")
+    .eq("id", teamId)
+    .eq("user_id", userId)
+    .maybeSingle();
+
   if (error) throw error;
-  return data === true;
+  return Boolean(data);
+}
+
+/**
+ * Les fonctions `can_access_team` / `can_manage_team_media` ne sont pas
+ * versionnées dans le dépôt : si elles sont absentes de la base, PostgREST
+ * renvoie une erreur qui remontait en 500 AVANT tout appel à Google.
+ * On retombe alors sur le contrôle de propriété, qui suffit au modèle actuel.
+ */
+async function boolRpc(name: string, teamId: string) {
+  const { supabase, user } = await requireGoogleDriveUser();
+
+  const { data, error } = await supabase.rpc(name, { p_team_id: teamId });
+  if (!error) return data === true;
+
+  if (!isMissingRpc(error)) throw error;
+
+  console.warn(
+    `[google-drive] RPC ${name} absente en base — repli sur le contrôle de propriété de l'équipe.`,
+  );
+  return ownsTeam(supabase, teamId, user.id);
 }
 
 export const canAccessTeam = (teamId: string) =>

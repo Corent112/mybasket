@@ -6,6 +6,7 @@ import {
   canManageTeamMedia,
   requireGoogleDriveUser,
 } from "@/lib/google-drive/server";
+import { isGoogleDriveEncryptionConfigured } from "@/lib/google-drive/crypto";
 
 export const runtime = "nodejs";
 
@@ -41,9 +42,23 @@ export async function GET(request: NextRequest) {
 
     const clientId = process.env.GOOGLE_DRIVE_CLIENT_ID;
     const redirectUri = process.env.GOOGLE_DRIVE_REDIRECT_URI;
-    if (!clientId || !redirectUri) {
+
+    // Diagnostic explicite : on nomme la variable manquante plutôt que de
+    // renvoyer un 500 opaque, et on refuse de lancer un OAuth qui échouerait
+    // au retour faute de clé de chiffrement du refresh token.
+    const missing: string[] = [];
+    if (!clientId) missing.push("GOOGLE_DRIVE_CLIENT_ID");
+    if (!redirectUri) missing.push("GOOGLE_DRIVE_REDIRECT_URI");
+    if (!isGoogleDriveEncryptionConfigured()) {
+      missing.push("GOOGLE_DRIVE_TOKEN_ENCRYPTION_KEY");
+    }
+
+    if (missing.length > 0 || !clientId || !redirectUri) {
       return NextResponse.json(
-        { error: "Configuration Google Drive incomplète" },
+        {
+          error: `Configuration Google Drive incomplète : ${missing.join(", ")}`,
+          missing,
+        },
         { status: 500 },
       );
     }

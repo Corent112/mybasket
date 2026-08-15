@@ -16,6 +16,9 @@ type Props = {
   disabled?: boolean;
   compact?: boolean;
   selectedName?: string | null;
+  /** Permet de réutiliser le style des boutons de l'écran appelant. */
+  className?: string;
+  label?: string;
   onPicked: (file: GoogleDrivePickedVideo) => void;
 };
 
@@ -74,6 +77,8 @@ export default function GoogleDriveVideoPicker({
   disabled,
   compact,
   selectedName,
+  className,
+  label,
   onPicked,
 }: Props) {
   const [connected, setConnected] = useState<boolean | null>(null);
@@ -197,21 +202,32 @@ export default function GoogleDriveVideoPicker({
     }
   };
 
+  const text = busy
+    ? "Ouverture…"
+    : label
+      ? label
+      : connected
+        ? "Choisir dans Google Drive"
+        : "Connecter Google Drive";
+
+  // `className` permet au parent d'imposer son propre style de bouton
+  // (ex. `.vbtn` dans LiveStats) sans changer l'apparence existante ailleurs.
+  const button = (
+    <button
+      type="button"
+      className={className}
+      onClick={openPicker}
+      disabled={disabled || busy}
+    >
+      ☁️ {text}
+    </button>
+  );
+
+  if (className) return button;
+
   return (
     <div className={`gdrive-picker ${compact ? "compact" : ""}`}>
-      <button
-        type="button"
-        onClick={openPicker}
-        disabled={disabled || busy}
-      >
-        ☁️{" "}
-        {busy
-          ? "Ouverture…"
-          : connected
-            ? "Choisir dans Google Drive"
-            : "Connecter Google Drive"}
-      </button>
-
+      {button}
       {!compact && selectedName && <span>✓ {selectedName}</span>}
     </div>
   );

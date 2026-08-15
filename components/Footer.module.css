@@ -1,0 +1,199 @@
+/* ============================================================
+   Footer MyBasket — composant serveur + CSS Module (scopé)
+   Charte : bordeaux #6B1A2C / or #D4A24C / fond noir #0F0F12
+   ============================================================ */
+
+.footer {
+  background: var(--noir, #0f0f12);
+  color: #fff;
+  border-top: 4px solid var(--or, #d4a24c);
+}
+
+.inner {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 3rem 1.5rem 1.25rem;
+}
+
+/* ---- Haut : marque + réseaux ---- */
+.top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1.5rem;
+  padding-bottom: 2rem;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 0.9rem;
+  text-decoration: none;
+  color: #fff;
+}
+
+.logo {
+  width: 66px;
+  height: 66px;
+  object-fit: contain;
+}
+
+.brandText {
+  display: flex;
+  flex-direction: column;
+  line-height: 1.15;
+}
+
+.brandName {
+  font-family: var(--varsity, "Alfa Slab One", Arial, sans-serif);
+  font-size: 1.35rem;
+  letter-spacing: 0.02em;
+}
+
+.brandName em {
+  color: var(--or, #d4a24c);
+  font-style: normal;
+}
+
+.tagline {
+  font-size: 0.82rem;
+  color: rgba(255, 255, 255, 0.6);
+  margin-top: 0.15rem;
+}
+
+.socials {
+  display: flex;
+  gap: 0.6rem;
+}
+
+.social {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  border: 1.5px solid var(--or, #d4a24c);
+  color: var(--or, #d4a24c);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition:
+    background 0.18s ease,
+    color 0.18s ease,
+    transform 0.18s ease;
+}
+
+.social svg {
+  width: 18px;
+  height: 18px;
+  display: block;
+}
+
+.social:hover {
+  background: var(--or, #d4a24c);
+  color: var(--noir, #0f0f12);
+  transform: translateY(-2px);
+}
+
+/* ---- Colonnes de liens ---- */
+.cols {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 1.5rem 2rem;
+  padding: 2.25rem 0;
+}
+
+.col h4 {
+  color: var(--or, #d4a24c);
+  font-size: 0.9rem;
+  font-weight: 900;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  margin: 0 0 1rem;
+}
+
+.col ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+
+.col a {
+  color: rgba(255, 255, 255, 0.72);
+  text-decoration: none;
+  font-size: 0.92rem;
+  transition:
+    color 0.16s ease,
+    padding-left 0.16s ease;
+}
+
+.col a:hover {
+  color: var(--or, #d4a24c);
+  padding-left: 4px;
+}
+
+/* ---- Bas de page légal ---- */
+.bottom {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  flex-wrap: wrap;
+  padding-top: 1.25rem;
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.copyright {
+  font-size: 0.82rem;
+  color: rgba(255, 255, 255, 0.55);
+  margin: 0;
+}
+
+.legal {
+  display: flex;
+  gap: 1.25rem;
+  flex-wrap: wrap;
+}
+
+.legal a {
+  color: rgba(255, 255, 255, 0.55);
+  text-decoration: none;
+  font-size: 0.82rem;
+  transition: color 0.16s ease;
+}
+
+.legal a:hover {
+  color: var(--or, #d4a24c);
+}
+
+/* ---- Responsive ---- */
+@media (max-width: 900px) {
+  .cols {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
+@media (max-width: 560px) {
+  .inner {
+    padding: 2.25rem 1.25rem 1.25rem;
+  }
+
+  .top {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 1.25rem;
+  }
+
+  .cols {
+    grid-template-columns: 1fr;
+    gap: 1.75rem;
+    padding: 2rem 0;
+  }
+
+  .bottom {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+}

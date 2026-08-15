@@ -245,6 +245,11 @@ async function resolveClubLogo(
     | Awaited<ReturnType<typeof createClient>>
     | NonNullable<ReturnType<typeof createAdminClient>>,
   session: GenericRow,
+  // ISOLATION · proprietaire de la seance : la resolution d'equipe (notamment
+  // par NOM) doit rester cantonnee a ses propres equipes. Sans ce filtre, deux
+  // clubs ayant une equipe "U15 M" recuperaient le logo l'un de l'autre — et le
+  // client admin (service role) contourne la RLS.
+  scopeOwnerId?: string | null,
 ) {
   const notes = parseSessionNotes(session);
 
@@ -278,11 +283,10 @@ async function resolveClubLogo(
   let team: GenericRow | null = null;
 
   for (const reference of teamReferences) {
-    const { data } = await supabase
-      .from("teams")
-      .select("*")
-      .eq("id", reference)
-      .maybeSingle();
+    let query = supabase.from("teams").select("*").eq("id", reference);
+    if (scopeOwnerId) query = query.eq("user_id", scopeOwnerId);
+
+    const { data } = await query.maybeSingle();
 
     if (data) {
       team = data;
@@ -304,12 +308,20 @@ async function resolveClubLogo(
 
   if (!team) {
     for (const name of teamNames) {
-      const { data } = await supabase
-        .from("teams")
-        .select("*")
-        .or(`name.eq.${name},nom.eq.${name}`)
-        .limit(1)
-        .maybeSingle();
+      // `.or()` avec interpolation brute etait aussi une injection de filtre
+      // PostgREST : on interroge chaque colonne separement, avec parametre.
+      let data: GenericRow | null = null;
+
+      for (const column of ["name", "nom"]) {
+        let query = supabase.from("teams").select("*").eq(column, name);
+        if (scopeOwnerId) query = query.eq("user_id", scopeOwnerId);
+
+        const found = await query.limit(1).maybeSingle();
+        if (found.data) {
+          data = found.data as GenericRow;
+          break;
+        }
+      }
 
       if (data) {
         team = data;
@@ -462,12 +474,18 @@ export async function POST(
   const players = await loadPresentPlayers(supabase, session, id);
   const logoAdmin = createAdminClient();
 
+  const sessionOwnerId = firstString(
+    session.user_id,
+    session.owner_id,
+    session.created_by,
+  );
+
   let clubLogoSource = logoAdmin
-    ? await resolveClubLogo(logoAdmin as any, session)
+    ? await resolveClubLogo(logoAdmin as any, session, sessionOwnerId)
     : null;
 
   if (!clubLogoSource) {
-    clubLogoSource = await resolveClubLogo(supabase, session);
+    clubLogoSource = await resolveClubLogo(supabase, session, sessionOwnerId);
   }
 
   const myBasketLogo = await imageDataUri("/logo-mybasket02.png");

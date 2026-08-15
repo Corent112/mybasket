@@ -27,12 +27,32 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    const connection = await getTeamDriveConnection(teamId);
+    // Un défaut de configuration serveur (clé service role, table absente) ne
+    // doit pas produire un 500 : l'interface a seulement besoin de savoir que
+    // la connexion n'est pas établie, sinon tout le panneau vidéo casse.
+    try {
+      const connection = await getTeamDriveConnection(teamId);
 
-    return NextResponse.json({
-      connected: Boolean(connection),
-      connectedAt: connection?.connected_at || null,
-    });
+      return NextResponse.json({
+        connected: Boolean(connection),
+        connectedAt: connection?.connected_at || null,
+        configured: true,
+      });
+    } catch (connectionError) {
+      const reason =
+        connectionError instanceof Error
+          ? connectionError.message
+          : "Google Drive indisponible.";
+
+      console.error("[google-drive] status", reason);
+
+      return NextResponse.json({
+        connected: false,
+        connectedAt: null,
+        configured: false,
+        reason,
+      });
+    }
   } catch (error) {
     const message =
       error instanceof Error ? error.message : "Erreur";

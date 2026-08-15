@@ -261,9 +261,14 @@ export default function MontageStudio({
     let active = true;
 
     (async () => {
+      // ISOLATION · outil personnel : uniquement les équipes de l'utilisateur.
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) return;
+
       const { data, error } = await supabase
         .from("teams")
         .select("id,name")
+        .eq("user_id", user.id)
         .order("name");
 
       if (!active) return;

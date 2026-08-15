@@ -63,10 +63,15 @@ export async function listMySessions() {
 export async function deleteSession(id: string) {
   const supabase = createClient();
 
+  // ISOLATION · on ne supprime que SA propre seance.
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) throw new Error("Non authentifie.");
+
   const { error } = await supabase
     .from("practice_sessions")
     .delete()
-    .eq("id", id);
+    .eq("id", id)
+    .eq("user_id", user.id);
 
   if (error) throw error;
 }

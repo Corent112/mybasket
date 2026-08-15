@@ -53,15 +53,21 @@ export default function NouvelleSeancePage() {
   async function load() {
     setLoading(true);
     const sessionId = new URLSearchParams(window.location.search).get("id");
+
+    // ISOLATION · outil personnel : on ne charge que les équipes et les joueurs
+    // de l'utilisateur authentifié, y compris pour un compte CEO/superadmin.
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) { setLoading(false); return; }
+
     const [{ data: teamRows }, { data: playerRows }] = await Promise.all([
-      supabase.from("teams").select("*").order("name"),
-      supabase.from("players").select("*").order("last_name"),
+      supabase.from("teams").select("*").eq("user_id", user.id).order("name"),
+      supabase.from("players").select("*").eq("user_id", user.id).order("last_name"),
     ]);
     setTeams((teamRows ?? []) as Team[]);
     setPlayers((playerRows ?? []) as Player[]);
 
     if (sessionId) {
-      const { data: session, error } = await supabase.from("practice_sessions").select("*").eq("id", sessionId).maybeSingle();
+      const { data: session, error } = await supabase.from("practice_sessions").select("*").eq("id", sessionId).eq("user_id", user.id).maybeSingle();
       if (error || !session) { alert("Séance introuvable."); setLoading(false); return; }
       setEditingId(sessionId);
       setTitle(session.theme || session.title || ""); setTheme(session.theme || session.title || ""); setTeamId(session.team_reference_id || session.team_id || "");

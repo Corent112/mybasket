@@ -213,11 +213,19 @@ export default function SessionPreviewPage({ params }: PageProps) {
       setLoading(true);
       setError("");
 
-      const { data, error: loadError } = await supabase
+      // ISOLATION · proprietaire OU seance publique (modeles MyBasket).
+      const { data: { user } } = await supabase.auth.getUser();
+
+      let sessionQuery = supabase
         .from("practice_sessions")
         .select("*")
-        .eq("id", id)
-        .maybeSingle();
+        .eq("id", id);
+
+      sessionQuery = user
+        ? sessionQuery.or(`user_id.eq.${user.id},visibility.eq.public`)
+        : sessionQuery.eq("visibility", "public");
+
+      const { data, error: loadError } = await sessionQuery.maybeSingle();
 
       if (!active) return;
 

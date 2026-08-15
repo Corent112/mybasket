@@ -113,7 +113,10 @@ export default function CodificationPage() {
     (async () => {
       try {
         const supabase = createClient();
-        const { data } = await supabase.from('teams').select('id,name').order('name');
+        // ISOLATION · espace personnel : uniquement les équipes de l'utilisateur.
+        const { data: { user } } = await supabase.auth.getUser();
+        if (!user) return;
+        const { data } = await supabase.from('teams').select('id,name').eq('user_id', user.id).order('name');
         if (!active) return;
         const list = (data ?? []) as Team[];
         setTeams(list);

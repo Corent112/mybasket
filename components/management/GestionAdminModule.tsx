@@ -316,11 +316,20 @@ export default function GestionAdminModule() {
   async function loadEventsForTeam(targetTeamId: string, sourceTeams = teams) {
     const targetTeam = sourceTeams.find((t) => String(t.id) === String(targetTeamId));
 
+    // ISOLATION · calendrier personnel : user_id OU owner_id.
+    const { data: { user: currentUser } } = await supabase.auth.getUser();
+    if (!currentUser) {
+      setEvents([]);
+      setLoading(false);
+      return;
+    }
+
     const [{ data: calendarRows, error: calendarError }, { data: sessionRows, error: sessionsError }] =
       await Promise.all([
         supabase
           .from("calendar_events")
           .select("*")
+          .or(`user_id.eq.${currentUser.id},owner_id.eq.${currentUser.id}`)
           .order("event_date", { ascending: true })
           .order("start_time", { ascending: true }),
 

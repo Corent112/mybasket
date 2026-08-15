@@ -49,9 +49,14 @@ export default function MesPapiers() {
   const loadDocuments = async () => {
     setLoading(true);
 
+    // ISOLATION · documents personnels : strictement ceux de l'utilisateur.
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) { setLoading(false); return; }
+
     const { data, error } = await supabase
       .from('user_documents')
       .select('*')
+      .eq('user_id', user.id)
       .order('created_at', { ascending: false });
 
     if (error) {

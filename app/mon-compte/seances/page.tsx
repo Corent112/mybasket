@@ -55,10 +55,15 @@ export default function MesSeancesPage() {
     const ok = confirm("Supprimer cette séance ?");
     if (!ok) return;
 
+    // ISOLATION · on ne supprime que SA propre seance.
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) return;
+
     const { error } = await supabase
       .from("practice_sessions")
       .delete()
-      .eq("id", id);
+      .eq("id", id)
+      .eq("user_id", user.id);
 
     if (error) {
       console.error(error);

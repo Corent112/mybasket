@@ -45,7 +45,10 @@ export default function FavorisPage() {
   }
 
   async function removeFavorite(id: string) {
-    await supabase.from("favorites").delete().eq("id", id);
+    // ISOLATION · on ne supprime que SES propres favoris.
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) return;
+    await supabase.from("favorites").delete().eq("id", id).eq("user_id", user.id);
     setItems((prev) => prev.filter((item) => item.id !== id));
   }
 

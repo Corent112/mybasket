@@ -111,9 +111,12 @@ export default function PresenceAdminModule() {
       return;
     }
 
+    // ISOLATION · calendrier personnel : user_id OU owner_id (les deux colonnes
+    // sont alimentees a la creation d'un evenement).
     const { data, error } = await supabase
       .from("calendar_events")
       .select("id,title,event_date,start_time,event_type")
+      .or(`user_id.eq.${user.id},owner_id.eq.${user.id}`)
       .order("event_date", { ascending: true })
       .order("start_time", { ascending: true });
 

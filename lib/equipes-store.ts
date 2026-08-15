@@ -1274,6 +1274,30 @@ export async function addStatMatch(
 
   const payload = statMatchPayload(teamId, nextRecord, userId);
 
+  // Le miroir "fiche équipe/joueur" ne doit JAMAIS écraser l'état complet du
+  // match déjà persisté (actions, perQ, q, secs, onCourt, synchro vidéo…).
+  // Sans cette fusion, rouvrir un match terminé le réaffichait en "Q1 0-0"
+  // parce que project_state avait été remplacé par le seul résumé de score.
+  if (payload.id) {
+    const { data: existing } = await supabase
+      .from("match_stats")
+      .select("project_state")
+      .eq("id", payload.id)
+      .maybeSingle();
+
+    const previous =
+      existing?.project_state && typeof existing.project_state === "object"
+        ? (existing.project_state as Record<string, unknown>)
+        : null;
+
+    if (previous) {
+      payload.project_state = {
+        ...previous,
+        ...payload.project_state,
+      } as typeof payload.project_state;
+    }
+  }
+
   const { data, error } = await supabase
     .from("match_stats")
     .upsert(payload, { onConflict: "id" })

@@ -360,6 +360,8 @@ export default function MesEquipesPage() {
         supabase
           .from("teams")
           .select("*")
+          // ISOLATION · espace personnel : uniquement les équipes de l'utilisateur.
+          .eq("user_id", user.id)
           .order("created_at", { ascending: false }),
       ]);
 
@@ -567,8 +569,12 @@ export default function MesEquipesPage() {
     if (!confirm(`Supprimer définitivement l'équipe « ${t.name} » ?`)) return;
 
     try {
-      await supabase.from("players").delete().eq("team_id", t.id);
-      const { error } = await supabase.from("teams").delete().eq("id", t.id);
+      // ISOLATION · on ne supprime que SES propres equipes et joueurs.
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) throw new Error("Non authentifie.");
+
+      await supabase.from("players").delete().eq("team_id", t.id).eq("user_id", user.id);
+      const { error } = await supabase.from("teams").delete().eq("id", t.id).eq("user_id", user.id);
 
       if (error) throw error;
 

@@ -167,9 +167,14 @@ async function readTeams(): Promise<{ id: string; name: string; players: Player[
   try {
     const supabase = createClient();
 
+    // ISOLATION · outil personnel : uniquement les équipes de l'utilisateur.
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) return [];
+
     const { data: teamsData, error: teamsError } = await supabase
       .from('teams')
       .select('*')
+      .eq('user_id', user.id)
       .order('name', { ascending: true });
 
     if (teamsError) {
@@ -1059,6 +1064,10 @@ export default function PriseStatsProPage() {
   const [projects, setProjects] = useState<LiveProjectSummary[]>([]);
   const [projectBusy, setProjectBusy] = useState(false);
   const projectSaveRef = useRef<number | null>(null);
+  /* Vidéo présente dans le projet enregistré mais non rattachable au
+     rechargement (fichier local). Sert uniquement à ne pas écraser
+     l'information en base lors de l'auto-sauvegarde. */
+  const restoredVideoRef = useRef<{ provider: string; filename: string } | null>(null);
 
   const buildProjectState = () => ({
     v: 1,
@@ -1077,11 +1086,17 @@ export default function PriseStatsProPage() {
     stage,
     draft,
     videoMode,
-    videoProvider,
+    // Une vidéo locale restaurée mais non resélectionnée ne doit pas repasser
+    // le projet en "aucune vidéo" de façon définitive.
+    videoProvider:
+      videoProvider === 'none' && restoredVideoRef.current
+        ? restoredVideoRef.current.provider
+        : videoProvider,
     driveFileId: pendingDriveFile?.id ?? null,
     driveFileName: pendingDriveFile?.name ?? null,
     videoUrl,
-    videoFilename,
+    videoFilename:
+      videoFilename || (videoProvider === 'none' ? (restoredVideoRef.current?.filename ?? '') : ''),
     youtubeUrl,
     playbookId,        // AJOUT §8
     playbookName: playbooks.find((pb) => pb.id === playbookId)?.title ?? null, // Bloc C
@@ -1112,6 +1127,14 @@ export default function PriseStatsProPage() {
       videoSync: videoSyncRef.current,        // AJOUT · miroir colonnes video_sync_*
     }).catch(() => {});
   };
+
+  // Référence toujours à jour vers la dernière version de persistProjectState :
+  // permet de débrancher `secs` des dépendances de l'auto-sauvegarde tout en
+  // enregistrant malgré tout la valeur courante du chrono.
+  const persistProjectStateRef = useRef(persistProjectState);
+  useEffect(() => {
+    persistProjectStateRef.current = persistProjectState;
+  });
 
   const refreshProjects = async (tId: string) => {
     if (!isSupabaseUuid(tId)) { setProjects([]); return; }
@@ -1192,6 +1215,13 @@ export default function PriseStatsProPage() {
         setVideoUrl('');
         videoProviderRef.current = 'none';
         if (provider === 'local') {
+          // Le fichier local n'est pas rattachable automatiquement (blob URL
+          // non persistable), mais on MÉMORISE qu'une vidéo locale existait
+          // pour que l'auto-sauvegarde ne l'efface pas définitivement.
+          restoredVideoRef.current = {
+            provider: 'local',
+            filename: String(s.videoFilename || ''),
+          };
           flash('Projet restauré. Resélectionne le fichier vidéo local — le décalage de synchronisation sera réappliqué automatiquement.');
         }
       }
@@ -1239,8 +1269,14 @@ export default function PriseStatsProPage() {
     else if (tab === 'history') setInitialBoxTab('team');
     urlProjectHandled.current = true;
     resumeProject(pid, mode);
-    // Nettoie l'URL pour ne pas rouvrir au prochain render.
-    try { window.history.replaceState({}, '', window.location.pathname); } catch { /* noop */ }
+    // Nettoie l'URL des paramètres d'ouverture MAIS conserve ?project=<id> :
+    // sans lui, un F5 ou un redeploy Vercel repartait sur l'écran de création
+    // au lieu de rouvrir le match en cours.
+    try {
+      const kept = new URLSearchParams();
+      kept.set('project', pid);
+      window.history.replaceState({}, '', `${window.location.pathname}?${kept.toString()}`);
+    } catch { /* noop */ }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [teams]);
 
@@ -3619,10 +3655,28 @@ export default function PriseStatsProPage() {
     if (screen !== 'live') return;
     if (!liveMatchIdRef.current) return;
     if (projectSaveRef.current) window.clearTimeout(projectSaveRef.current);
-    projectSaveRef.current = window.setTimeout(() => { persistProjectState(); }, 1500);
+    projectSaveRef.current = window.setTimeout(() => { persistProjectStateRef.current(); }, 1500);
     return () => { if (projectSaveRef.current) window.clearTimeout(projectSaveRef.current); };
+    // `secs` et `minutesByPlayer` sont volontairement HORS dépendances : ils
+    // changent toutes les secondes (chrono) et relançaient le debounce de
+    // 1,5 s en permanence — la sauvegarde ne partait donc jamais tant que le
+    // chrono tournait. Leur valeur courante est tout de même enregistrée via
+    // persistProjectStateRef.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [actions, perQ, q, secs, onCourt, minutesByPlayer, screen, playbookId, systemMapping, oppRoster, clipEdits]);
+  }, [actions, perQ, q, onCourt, screen, playbookId, systemMapping, oppRoster, clipEdits]);
+
+  /* Filet de sécurité : sauvegarde immédiate au démontage du composant
+     (navigation vers une autre page) pour ne pas perdre les 1,5 dernières
+     secondes de modifications. */
+  useEffect(() => {
+    return () => {
+      if (projectSaveRef.current) {
+        window.clearTimeout(projectSaveRef.current);
+        projectSaveRef.current = null;
+      }
+      if (liveMatchIdRef.current) persistProjectStateRef.current();
+    };
+  }, []);
 
   /* AJOUT · Playbooks disponibles (écran de création). Non bloquant. */
   useEffect(() => {
@@ -3649,7 +3703,9 @@ export default function PriseStatsProPage() {
           .forEach((slot, i) => { if (half[i]) auto[slot] = half[i].id; });
         ['slob-1','slob-2'].forEach((slot, i) => { if (slob[i]) auto[slot] = slob[i].id; });
         ['blob-1','blob-2'].forEach((slot, i) => { if (blob[i]) auto[slot] = blob[i].id; });
-        setSystemMapping(auto);
+        // Le pré-remplissage automatique ne doit PAS écraser un mapping déjà
+        // restauré depuis le projet enregistré (reprise de brouillon).
+        setSystemMapping((prev) => (prev && Object.keys(prev).length > 0 ? prev : auto));
       })
       .catch(() => { if (alive) { setPlaybookSystems([]); setSystemMapping({}); } });
     return () => { alive = false; };
@@ -4881,6 +4937,14 @@ export default function PriseStatsProPage() {
                     <div className="vempty-sub">Le codage fonctionne sans vidéo — synchronisable après le match.</div>
                     <div className="vempty-btns">
                       <label className="vbtn"><input type="file" accept="video/*" onChange={(e) => onPickVideoFile(e.target.files?.[0] ?? null)} />📁 Fichier</label>
+                      {isSupabaseUuid(String(selTeam?.id || activeTeamId || teamId || '').trim()) && (
+                        <GoogleDriveVideoPicker
+                          teamId={String(selTeam?.id || activeTeamId || teamId || '').trim()}
+                          className="vbtn"
+                          label="Google Drive"
+                          onPicked={onPickGoogleDriveVideo}
+                        />
+                      )}
                       <button className="vbtn" onClick={() => { const u = window.prompt('Lien YouTube :', youtubeUrl); if (u != null) onSetYoutube(u); }}>▶️ YouTube</button>
                       <button className="vbtn ghosty" onClick={() => flash('Vidéo à ajouter après le match')}>⏳ Plus tard</button>
                     </div>
