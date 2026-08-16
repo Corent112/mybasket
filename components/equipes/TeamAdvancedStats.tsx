@@ -81,6 +81,11 @@ type Filters = {
   tempo: string;
   action: string;
   shotResult: string;
+  shotType: string;
+  inbound: string;
+  coverage: string;
+  specialCase: string;
+  reboundType: string;
 };
 
 const EMPTY_FILTERS: Filters = {
@@ -91,6 +96,11 @@ const EMPTY_FILTERS: Filters = {
   tempo: "",
   action: "",
   shotResult: "",
+  shotType: "",
+  inbound: "",
+  coverage: "",
+  specialCase: "",
+  reboundType: "",
 };
 
 
@@ -254,6 +264,30 @@ function human(value: string) {
     .replace(/\b\w/g, (m) => m.toUpperCase());
 }
 
+
+function normalizeTagValue(value: unknown) {
+  return String(value || "")
+    .trim()
+    .replace(/\s+/g, " ")
+    .toLocaleLowerCase("fr");
+}
+
+function systemDisplayName(action: ActionRow) {
+  const explicitName = String(action.systeme_name || "").trim();
+  if (explicitName) return explicitName;
+
+  // Only fall back when LiveStats did not store a real system name.
+  const systemId = String(action.systeme_id || "").trim();
+  if (systemId) return systemId;
+
+  const slot = String(action.systeme_slot || "").trim();
+  return slot ? `Système ${slot.replace(/[^0-9A-Za-zÀ-ÿ -]/g, "")}` : "";
+}
+
+function sameTag(a: unknown, b: unknown) {
+  return normalizeTagValue(a) === normalizeTagValue(b);
+}
+
 export default function TeamAdvancedStats({
   teamId,
   team,
@@ -379,12 +413,22 @@ export default function TeamAdvancedStats({
     return actions.filter((a) => {
       if (!selectedMatchIds.has(a.match_id)) return false;
       if (filters.playerId && a.player_id !== filters.playerId) return false;
-      if (filters.context && a.context !== filters.context) return false;
-      const system = a.systeme_name || a.systeme_slot || "";
-      if (filters.system && system !== filters.system) return false;
-      if (filters.tempo && a.temps_fort !== filters.tempo) return false;
-      if (filters.action && a.action_type !== filters.action) return false;
-      if (filters.shotResult && a.shot_result !== filters.shotResult) return false;
+      if (filters.context && !sameTag(a.context, filters.context)) return false;
+
+      // IMPORTANT: a system is grouped by its LiveStats name, never by Système 1/2/3/4.
+      // Example: Match 1 slot 1 = "Corne" and Match 2 slot 4 = "Corne"
+      // are the SAME system in advanced stats.
+      const system = systemDisplayName(a);
+      if (filters.system && !sameTag(system, filters.system)) return false;
+
+      if (filters.tempo && !sameTag(a.temps_fort, filters.tempo)) return false;
+      if (filters.action && !sameTag(a.action_type, filters.action)) return false;
+      if (filters.shotResult && !sameTag(a.shot_result, filters.shotResult)) return false;
+      if (filters.shotType && !sameTag(a.shot_type, filters.shotType)) return false;
+      if (filters.inbound && !sameTag(a.inbound, filters.inbound)) return false;
+      if (filters.coverage && !sameTag(a.coverage, filters.coverage)) return false;
+      if (filters.specialCase && !sameTag(a.special_case, filters.specialCase)) return false;
+      if (filters.reboundType && !sameTag(a.rebound_type, filters.reboundType)) return false;
       return true;
     });
   }, [actions, filters, selectedMatchIds]);
@@ -397,11 +441,50 @@ export default function TeamAdvancedStats({
     });
   }, [filters.playerId, playerStats, selectedMatchIds]);
 
-  const systems = useMemo(() => uniq(actions.map((a) => a.systeme_name || a.systeme_slot)), [actions]);
-  const tempos = useMemo(() => uniq(actions.map((a) => a.temps_fort)), [actions]);
-  const actionTypes = useMemo(() => uniq(actions.map((a) => a.action_type)), [actions]);
-  const contexts = useMemo(() => uniq(actions.map((a) => a.context)), [actions]);
-  const shotResults = useMemo(() => uniq(actions.map((a) => a.shot_result)), [actions]);
+  const liveStatsOptions = useMemo(() => {
+    const canonicalUnique = (values: Array<string | null | undefined>) => {
+      const map = new Map<string, string>();
+
+      for (const raw of values) {
+        const value = String(raw || "").trim();
+        if (!value) continue;
+        const key = normalizeTagValue(value);
+        if (!map.has(key)) map.set(key, value);
+      }
+
+      return Array.from(map.values()).sort((a, b) =>
+        a.localeCompare(b, "fr", { sensitivity: "base" }),
+      );
+    };
+
+    return {
+      // LiveStats system names are canonical across matches.
+      // Slot 1/2/3/4 is deliberately ignored when a name exists.
+      systems: canonicalUnique(actions.map(systemDisplayName)),
+      tempos: canonicalUnique(actions.map((a) => a.temps_fort)),
+      actionTypes: canonicalUnique(actions.map((a) => a.action_type)),
+      contexts: canonicalUnique(actions.map((a) => a.context)),
+      shotResults: canonicalUnique(actions.map((a) => a.shot_result)),
+      shotTypes: canonicalUnique(actions.map((a) => a.shot_type)),
+      inbounds: canonicalUnique(actions.map((a) => a.inbound)),
+      coverages: canonicalUnique(actions.map((a) => a.coverage)),
+      specialCases: canonicalUnique(actions.map((a) => a.special_case)),
+      reboundTypes: canonicalUnique(actions.map((a) => a.rebound_type)),
+    };
+  }, [actions]);
+
+  const {
+    systems,
+    tempos,
+    actionTypes,
+    contexts,
+    shotResults,
+    shotTypes,
+    inbounds,
+    coverages,
+    specialCases,
+    reboundTypes,
+  } = liveStatsOptions;
 
   const systemStats = useMemo(() => {
     const map = new Map<
@@ -417,7 +500,7 @@ export default function TeamAdvancedStats({
     >();
 
     for (const a of filteredActions) {
-      const key = a.systeme_name || a.systeme_slot || "Sans système";
+      const key = systemDisplayName(a) || "Sans système";
       const current = map.get(key) || {
         actions: 0,
         made: 0,
@@ -674,8 +757,8 @@ export default function TeamAdvancedStats({
           <span className="advanced-kicker">ANALYSE LIVE & SAISON</span>
           <h2>Statistiques avancées</h2>
           <p>
-            Systèmes, temps forts, joueurs, actions et shot chart. Tous les blocs
-            réagissent aux filtres.
+            Tous les filtres proviennent directement du codage LiveStats.
+            Les systèmes sont regroupés par leur nom, même si leur numéro de slot change d’un match à l’autre.
           </p>
         </div>
         <div className="advanced-actions">
@@ -824,7 +907,7 @@ export default function TeamAdvancedStats({
                           {action.clock ? ` · ${action.clock}` : ""}
                         </small>
                         <small>
-                          {[action.systeme_name || action.systeme_slot, action.temps_fort]
+                          {[systemDisplayName(action), action.temps_fort]
                             .filter(Boolean)
                             .join(" · ") || "—"}
                         </small>
@@ -889,6 +972,41 @@ export default function TeamAdvancedStats({
           <option value="">Tous les résultats</option>
           {shotResults.map((v) => <option key={v} value={v}>{human(v)}</option>)}
         </Filter>
+
+        {shotTypes.length > 0 ? (
+          <Filter label="Type de tir" value={filters.shotType} onChange={(v) => setFilters((p) => ({ ...p, shotType: v }))}>
+            <option value="">Tous les types de tir</option>
+            {shotTypes.map((v) => <option key={v} value={v}>{human(v)}</option>)}
+          </Filter>
+        ) : null}
+
+        {inbounds.length > 0 ? (
+          <Filter label="Remise en jeu" value={filters.inbound} onChange={(v) => setFilters((p) => ({ ...p, inbound: v }))}>
+            <option value="">Toutes les remises en jeu</option>
+            {inbounds.map((v) => <option key={v} value={v}>{human(v)}</option>)}
+          </Filter>
+        ) : null}
+
+        {coverages.length > 0 ? (
+          <Filter label="Couverture" value={filters.coverage} onChange={(v) => setFilters((p) => ({ ...p, coverage: v }))}>
+            <option value="">Toutes les couvertures</option>
+            {coverages.map((v) => <option key={v} value={v}>{human(v)}</option>)}
+          </Filter>
+        ) : null}
+
+        {specialCases.length > 0 ? (
+          <Filter label="Cas spécial" value={filters.specialCase} onChange={(v) => setFilters((p) => ({ ...p, specialCase: v }))}>
+            <option value="">Tous les cas spéciaux</option>
+            {specialCases.map((v) => <option key={v} value={v}>{human(v)}</option>)}
+          </Filter>
+        ) : null}
+
+        {reboundTypes.length > 0 ? (
+          <Filter label="Type de rebond" value={filters.reboundType} onChange={(v) => setFilters((p) => ({ ...p, reboundType: v }))}>
+            <option value="">Tous les rebonds</option>
+            {reboundTypes.map((v) => <option key={v} value={v}>{human(v)}</option>)}
+          </Filter>
+        ) : null}
       </div>
 
       <div className="summary-grid">
@@ -933,7 +1051,7 @@ export default function TeamAdvancedStats({
               </div>
               {systemStats.map((row) => {
                 const systemPredicate = (a: ActionRow) =>
-                  (a.systeme_name || a.systeme_slot || "Sans système") === row.name;
+                  sameTag(systemDisplayName(a) || "Sans système", row.name);
                 const systemActions = filteredActions.filter(systemPredicate);
 
                 return (
@@ -1381,7 +1499,7 @@ function ClipMeta({
       <strong>{playerName || "Équipe"}</strong>
       <span>{human(String(action.action_type || action.shot_type || "Action"))}</span>
       {action.shot_result ? <span>{human(String(action.shot_result))}</span> : null}
-      {action.systeme_name || action.systeme_slot ? <span>Système : {action.systeme_name || action.systeme_slot}</span> : null}
+      {systemDisplayName(action) ? <span>Système : {systemDisplayName(action)}</span> : null}
       {action.temps_fort ? <span>Temps fort : {human(action.temps_fort)}</span> : null}
       {match?.opponent ? <span>vs {String(match.opponent)}</span> : null}
       {action.quarter ? <span>Q{action.quarter}</span> : null}
