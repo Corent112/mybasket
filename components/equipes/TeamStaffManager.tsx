@@ -44,6 +44,7 @@ type AccessEditor = {
 } | null;
 
 const ROLES = [
+  "Responsable",
   "Entraîneur principal",
   "Assistant",
   "Analyste vidéo",
@@ -76,7 +77,7 @@ const PERMISSION_ROWS: Array<{
   {
     key: "media",
     label: "Médias & Google Drive",
-    hint: "Utiliser les médias et le Drive liés à cette équipe.",
+    hint: "Accéder aux vidéos du Drive de l’équipe et les utiliser dans LiveStats.",
   },
 ];
 
@@ -103,6 +104,16 @@ function cleanEmail(value: unknown) {
 
 function defaultPermissions(role: string): TeamCollaborationPermissions {
   const normalized = role.toLowerCase();
+
+  if (normalized.includes("responsable")) {
+    return {
+      view_team: true,
+      players: true,
+      sessions: true,
+      livestats: true,
+      media: true,
+    };
+  }
 
   if (normalized.includes("entraîneur principal")) {
     return {
@@ -825,7 +836,13 @@ export default function TeamStaffManager({
                   value={accessEditor.role}
                   onChange={(event) =>
                     setAccessEditor((prev) =>
-                      prev ? { ...prev, role: event.target.value } : prev,
+                      prev
+                        ? {
+                            ...prev,
+                            role: event.target.value,
+                            permissions: defaultPermissions(event.target.value),
+                          }
+                        : prev,
                     )
                   }
                 >

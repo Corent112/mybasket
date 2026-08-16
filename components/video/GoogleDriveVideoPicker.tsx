@@ -27,6 +27,14 @@ type FolderLevel = {
   name: string;
 };
 
+type CachedFolder = {
+  files: DriveEntry[];
+  cachedAt: number;
+};
+
+const DRIVE_FOLDER_CACHE = new Map<string, CachedFolder>();
+const DRIVE_FOLDER_CACHE_TTL = 90_000;
+
 function formatSize(raw?: string | null) {
   const bytes = Number(raw || 0);
   if (!Number.isFinite(bytes) || bytes <= 0) return "";
@@ -103,7 +111,18 @@ export default function GoogleDriveVideoPicker({
       `&returnTo=${encodeURIComponent(returnTo)}`;
   };
 
-  const loadFolder = async (folderId: string) => {
+  const loadFolder = async (folderId: string, force = false) => {
+    const cacheKey = `${teamId}:${folderId}`;
+    const cached = DRIVE_FOLDER_CACHE.get(cacheKey);
+
+    if (!force && cached && Date.now() - cached.cachedAt < DRIVE_FOLDER_CACHE_TTL) {
+      setFiles(cached.files);
+      setError("");
+      setLoadingFiles(false);
+      setBusy(false);
+      return;
+    }
+
     setLoadingFiles(true);
     setError("");
 
@@ -128,7 +147,9 @@ export default function GoogleDriveVideoPicker({
         throw new Error(payload?.error || "Impossible de lire Google Drive.");
       }
 
-      setFiles(Array.isArray(payload.files) ? payload.files : []);
+      const nextFiles = Array.isArray(payload.files) ? payload.files : [];
+      DRIVE_FOLDER_CACHE.set(cacheKey, { files: nextFiles, cachedAt: Date.now() });
+      setFiles(nextFiles);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Impossible de lire Google Drive.");
     } finally {
@@ -291,10 +312,18 @@ export default function GoogleDriveVideoPicker({
             </div>
 
             <footer className="browser-footer">
-              <span>🔒 Accès en lecture seule à ton Google Drive</span>
-              <button type="button" onClick={() => setOpen(false)}>
-                Annuler
-              </button>
+              <span>🔒 Accès en lecture seule au Drive connecté à l’équipe</span>
+              <div className="browser-footer-actions">
+                <button
+                  type="button"
+                  onClick={() => void loadFolder(stack[stack.length - 1]?.id || "root", true)}
+                >
+                  ↻ Actualiser
+                </button>
+                <button type="button" onClick={() => setOpen(false)}>
+                  Annuler
+                </button>
+              </div>
             </footer>
           </section>
         </div>
@@ -487,6 +516,12 @@ export default function GoogleDriveVideoPicker({
           background: #fffaf5;
           color: #7e7068;
           font-size: 0.7rem;
+        }
+
+        .browser-footer-actions {
+          display: flex;
+          align-items: center;
+          gap: 8px;
         }
 
         .browser-footer button {

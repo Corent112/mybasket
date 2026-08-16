@@ -783,7 +783,7 @@ export default function EquipeDetailPage({
                 className="tl-btn tl-btn-bx"
                 onClick={() => setEditingTeam(true)}
               >
-                <Ic d={ICONS.pencil} size={16} /> Modifier l'équipe
+                <Ic d={ICONS.pencil} size={16} /> Modifier informations équipe
               </button>
             )}
             {canManagePlayers && (
@@ -923,7 +923,7 @@ export default function EquipeDetailPage({
         {activeTab === "presentation" && (
           <div className="team-tab-panel">
             {canUseMedia ? (
-              <TeamGoogleDriveSettings teamId={team.id} />
+              <TeamGoogleDriveSettings teamId={team.id} isOwner={isOwner} />
             ) : team.isShared ? (
               <div className="shared-access-note">
                 🔒 Les médias et Google Drive ne sont pas autorisés pour ton rôle sur cette équipe.
@@ -1079,16 +1079,6 @@ export default function EquipeDetailPage({
                   icon={ICONS.bars}
                   label="Niveau"
                   value={team.niveau || ""}
-                />
-                <InfoRow
-                  icon={ICONS.user}
-                  label="Entraîneur principal"
-                  value={team.entraineurPrincipal || ""}
-                />
-                <InfoRow
-                  icon={ICONS.users}
-                  label="Assistant"
-                  value={team.assistant || ""}
                 />
                 <InfoRow
                   icon={ICONS.building}

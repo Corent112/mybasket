@@ -19,14 +19,17 @@ function DriveMark() {
 
 export default function TeamGoogleDriveSettings({
   teamId,
+  isOwner = true,
 }: {
   teamId: string;
+  isOwner?: boolean;
 }) {
   const [loading, setLoading] = useState(true);
   const [connected, setConnected] = useState(false);
   const [busy, setBusy] = useState(false);
   const [selectedVideo, setSelectedVideo] = useState<GoogleDrivePickedVideo | null>(null);
   const [showPlayer, setShowPlayer] = useState(false);
+  const [playerExpanded, setPlayerExpanded] = useState(false);
 
   const load = async () => {
     setLoading(true);
@@ -76,6 +79,7 @@ export default function TeamGoogleDriveSettings({
       }
       setSelectedVideo(null);
       setShowPlayer(false);
+      setPlayerExpanded(false);
       await load();
     } catch (error) {
       window.alert(error instanceof Error ? error.message : "Erreur.");
@@ -107,73 +111,101 @@ export default function TeamGoogleDriveSettings({
           <>
             <span className="status connected">
               <i />
-              Google Drive connecté
+              Google Drive équipe connecté
             </span>
-            <GoogleDriveVideoPicker
-              teamId={teamId}
-              compact
-              label={selectedVideo ? "Changer de vidéo" : "Choisir une vidéo"}
-              onPicked={(file) => {
-                setSelectedVideo(file);
-                setShowPlayer(true);
-              }}
-            />
-            <button type="button" className="secondary" onClick={disconnect} disabled={busy}>
-              {busy ? "Déconnexion…" : "Déconnecter"}
-            </button>
+            {isOwner ? (
+              <>
+                <GoogleDriveVideoPicker
+                  teamId={teamId}
+                  compact
+                  label={selectedVideo ? "Changer de vidéo" : "Choisir une vidéo"}
+                  onPicked={(file) => {
+                    setSelectedVideo(file);
+                    setShowPlayer(false);
+                    setPlayerExpanded(false);
+                  }}
+                />
+                <button type="button" className="secondary" onClick={disconnect} disabled={busy}>
+                  {busy ? "Déconnexion…" : "Déconnecter"}
+                </button>
+              </>
+            ) : (
+              <span className="team-drive-note">Disponible dans LiveStats pour cette équipe</span>
+            )}
           </>
-        ) : (
+        ) : isOwner ? (
           <>
             <span className="status neutral">Drive non connecté</span>
             <button type="button" className="primary" onClick={connect}>
               Connecter Google Drive
             </button>
           </>
+        ) : (
+          <span className="status neutral">Drive non connecté par le responsable</span>
         )}
       </div>
 
-      {connected && selectedVideo ? (
-        <div className="drive-video">
+      {connected && selectedVideo && isOwner ? (
+        <div className={`drive-video ${showPlayer ? "open" : ""} ${playerExpanded ? "expanded" : "compact"}`}>
           <div className="drive-video-head">
-            <div>
-              <span className="eyebrow">Vidéo sélectionnée</span>
-              <strong title={selectedVideo.name}>{selectedVideo.name}</strong>
-            </div>
+            <button
+              type="button"
+              className="video-pill"
+              onClick={() => {
+                setShowPlayer((value) => !value);
+                if (showPlayer) setPlayerExpanded(false);
+              }}
+              title={showPlayer ? "Masquer la vidéo" : "Afficher la vidéo"}
+            >
+              <span className="video-pill-icon">🎬</span>
+              <span className="video-pill-copy">
+                <small>Vidéo sélectionnée</small>
+                <strong title={selectedVideo.name}>{selectedVideo.name}</strong>
+              </span>
+              <span className="video-pill-action">{showPlayer ? "Masquer" : "▶ Voir"}</span>
+            </button>
+
             <div className="drive-video-actions">
-              <button
-                type="button"
-                className="secondary"
-                onClick={() => setShowPlayer((value) => !value)}
-              >
-                {showPlayer ? "Masquer" : "▶ Regarder"}
-              </button>
+              {showPlayer ? (
+                <button
+                  type="button"
+                  className="secondary"
+                  onClick={() => setPlayerExpanded((value) => !value)}
+                >
+                  {playerExpanded ? "Réduire" : "Agrandir"}
+                </button>
+              ) : null}
               <button
                 type="button"
                 className="secondary"
                 onClick={() => {
                   setSelectedVideo(null);
                   setShowPlayer(false);
+                  setPlayerExpanded(false);
                 }}
               >
                 Retirer
               </button>
             </div>
           </div>
+
           {showPlayer ? (
-            <video
-              className="drive-player"
-              src={googleDriveFileStreamUrl(teamId, selectedVideo.id)}
-              controls
-              playsInline
-              preload="metadata"
-            />
+            <div className="drive-player-wrap">
+              <video
+                className="drive-player"
+                src={googleDriveFileStreamUrl(teamId, selectedVideo.id)}
+                controls
+                playsInline
+                preload="metadata"
+              />
+            </div>
           ) : null}
         </div>
       ) : null}
 
       <div className="drive-security">
-        <span>🔒 Accès réservé aux membres autorisés de l’équipe</span>
-        <span>Les vidéos restent privées dans Google Drive</span>
+        <span>🔒 Un seul Drive est connecté à l’équipe</span>
+        <span>Les collaborateurs autorisés utilisent les vidéos dans LiveStats sans connecter leur propre Drive</span>
       </div>
 
       <style jsx>{`
@@ -274,9 +306,9 @@ export default function TeamGoogleDriveSettings({
         .drive-video {
           grid-column: 1 / -1;
           min-width: 0;
-          padding: 14px;
+          padding: 8px 10px;
           border: 1px solid #f0e7e1;
-          border-radius: 14px;
+          border-radius: 12px;
           background: #fffaf5;
         }
         .drive-video-head {
@@ -285,14 +317,52 @@ export default function TeamGoogleDriveSettings({
           justify-content: space-between;
           gap: 14px;
         }
-        .drive-video-head > div:first-child {
+        .video-pill {
+          min-width: 0;
+          max-width: 520px;
+          display: grid;
+          grid-template-columns: 30px minmax(0, 1fr) auto;
+          align-items: center;
+          gap: 8px;
+          padding: 5px 9px;
+          border: 1px solid #eadfd5;
+          border-radius: 10px;
+          background: #fff;
+          color: #2c211d;
+          text-align: left;
+          cursor: pointer;
+        }
+        .video-pill-icon {
+          display: grid;
+          place-items: center;
+          width: 28px;
+          height: 28px;
+          border-radius: 8px;
+          background: #f8ecef;
+          font-size: 0.9rem;
+        }
+        .video-pill-copy {
           min-width: 0;
           display: grid;
-          gap: 3px;
+          gap: 1px;
         }
-        .drive-video-head strong {
+        .video-pill-copy small {
+          color: #9a877c;
+          font-size: 0.55rem;
+          font-weight: 900;
+          text-transform: uppercase;
+        }
+        .video-pill-copy strong {
           overflow: hidden;
+          color: #2c211d;
+          font-size: 0.72rem;
           text-overflow: ellipsis;
+          white-space: nowrap;
+        }
+        .video-pill-action {
+          color: #6b1a2c;
+          font-size: 0.65rem;
+          font-weight: 950;
           white-space: nowrap;
         }
         .drive-video-actions {
@@ -300,13 +370,28 @@ export default function TeamGoogleDriveSettings({
           gap: 8px;
           flex: 0 0 auto;
         }
+        .drive-player-wrap {
+          width: min(420px, 100%);
+          margin-top: 9px;
+          transition: width .18s ease;
+        }
+        .drive-video.expanded .drive-player-wrap {
+          width: 100%;
+        }
         .drive-player {
           display: block;
           width: 100%;
-          max-height: 560px;
-          margin-top: 12px;
-          border-radius: 12px;
+          max-height: 250px;
+          border-radius: 10px;
           background: #111;
+        }
+        .drive-video.expanded .drive-player {
+          max-height: 650px;
+        }
+        .team-drive-note {
+          color: #6f625b;
+          font-size: 0.68rem;
+          font-weight: 750;
         }
         .drive-status :global(.gdrive-picker) {
           display: inline-flex;

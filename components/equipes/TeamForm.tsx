@@ -121,7 +121,7 @@ export default function TeamForm({ team, onSave, onClose }: {
       <div onClick={(e)=>e.stopPropagation()} style={{width:"min(820px,calc(100vw - 36px))",maxHeight:"calc(100vh - 36px)",display:"flex",flexDirection:"column",overflow:"hidden",background:"#fff",borderRadius:20,border:"1px solid rgba(122,18,40,.10)",boxShadow:"0 30px 90px rgba(20,13,10,.32)"}}>
         <div style={{display:"flex",alignItems:"center",gap:14,padding:"18px 24px",borderBottom:`1px solid ${LINE}`}}>
           <div style={{width:42,height:42,borderRadius:12,display:"grid",placeItems:"center",background:"#fff5f6",fontSize:21}}>🛡️</div>
-          <div style={{flex:1}}><h3 style={{margin:0,color:INK,fontSize:"1.35rem",fontWeight:950,textTransform:"uppercase"}}>{team ? "Modifier l'équipe" : "Nouvelle équipe"}</h3><div style={{marginTop:5,color:MUTED,fontSize:".82rem"}}>Informations, identité et staff de l'équipe.</div></div>
+          <div style={{flex:1}}><h3 style={{margin:0,color:INK,fontSize:"1.35rem",fontWeight:950,textTransform:"uppercase"}}>{team ? "Modifier les informations équipe" : "Nouvelle équipe"}</h3><div style={{marginTop:5,color:MUTED,fontSize:".82rem"}}>Informations, identité et staff de l'équipe.</div></div>
           <button type="button" onClick={onClose} style={{width:38,height:38,borderRadius:999,border:`1px solid ${LINE}`,background:"#fff",fontSize:22,cursor:"pointer"}}>×</button>
         </div>
 
@@ -189,7 +189,7 @@ export default function TeamForm({ team, onSave, onClose }: {
                 <div><label style={labelStyle}>Prénom *</label><input value={staffDraft.prenom} onChange={(e)=>setStaffDraft((p)=>({...p,prenom:e.target.value}))} style={fieldStyle}/></div>
                 <div><label style={labelStyle}>Nom *</label><input value={staffDraft.nom} onChange={(e)=>setStaffDraft((p)=>({...p,nom:e.target.value}))} style={fieldStyle}/></div>
                 <div><label style={labelStyle}>Rôle *</label><select value={staffDraft.role} onChange={(e)=>setStaffDraft((p)=>({...p,role:e.target.value}))} style={fieldStyle}>
-                  <option>Entraîneur principal</option><option>Entraîneur</option><option>Assistant</option><option>Analyste</option><option>Préparateur physique</option><option>Manager</option><option>Kiné</option><option>Autre</option>
+                  <option>Responsable</option><option>Entraîneur principal</option><option>Entraîneur</option><option>Assistant</option><option>Analyste</option><option>Préparateur physique</option><option>Manager</option><option>Kiné</option><option>Autre</option>
                 </select></div>
                 <div><label style={labelStyle}>E-mail (pour la collaboration)</label><input type="email" value={staffDraft.email || ""} onChange={(e)=>setStaffDraft((p)=>({...p,email:e.target.value}))} placeholder="coach@email.com" style={fieldStyle}/></div>
               </div>
