@@ -562,6 +562,21 @@ export default function EquipeDetailPage({
     [dashboard.statRows],
   );
 
+  const isOwner = team ? team.isShared !== true : false;
+  const canManagePlayers =
+    Boolean(team) &&
+    (isOwner || team?.collaborationPermissions?.players === true);
+  const canUseSessions =
+    Boolean(team) &&
+    (isOwner || team?.collaborationPermissions?.sessions === true);
+  const canUseLiveStats =
+    Boolean(team) &&
+    (isOwner || team?.collaborationPermissions?.livestats === true);
+  const canUseMedia =
+    Boolean(team) &&
+    (isOwner || team?.collaborationPermissions?.media === true);
+  const playerLimitReached = (team?.players.length ?? 0) >= 15;
+
   async function reload() {
     try {
       const data = await getTeam(teamId);
@@ -651,7 +666,7 @@ export default function EquipeDetailPage({
 
 
   async function handleStaffChange(nextStaff: StaffMember[]) {
-    if (!team) return;
+    if (!team || !isOwner) return;
 
     try {
       await saveTeam({ ...team, staff: nextStaff });
@@ -665,6 +680,16 @@ export default function EquipeDetailPage({
   }
 
   async function handleSavePlayer(p: Player) {
+    if (!canManagePlayers) {
+      alert("Tu n’as pas l’autorisation de modifier les joueurs de cette équipe.");
+      return;
+    }
+
+    if (!p.id && playerLimitReached) {
+      alert("Effectif complet : une équipe MyBasket est limitée à 15 joueurs actifs.");
+      return;
+    }
+
     try {
       await upsertPlayer(teamId, p);
       setPlayerForm({ open: false });
@@ -678,6 +703,11 @@ export default function EquipeDetailPage({
 
   async function handleDelete(p: Player, e: React.MouseEvent) {
     e.stopPropagation();
+
+    if (!canManagePlayers) {
+      alert("Tu n’as pas l’autorisation de modifier les joueurs de cette équipe.");
+      return;
+    }
 
     if (!confirm(`Retirer ${p.firstName} ${p.lastName} de l'effectif ?`)) {
       return;
@@ -694,7 +724,7 @@ export default function EquipeDetailPage({
   }
 
   function openPlayer(p: Player) {
-    if (managing) setPlayerForm({ open: true, player: p });
+    if (managing && canManagePlayers) setPlayerForm({ open: true, player: p });
     else router.push(`/equipes/${teamId}/${p.id}`);
   }
 
@@ -747,19 +777,23 @@ export default function EquipeDetailPage({
         {/* ---------- HERO ---------- */}
         <section className="tl-hero team-hero-linked">
           <div className="tl-floating-actions">
-            <button
-              className="tl-btn tl-btn-bx"
-              onClick={() => setEditingTeam(true)}
-            >
-              <Ic d={ICONS.pencil} size={16} /> Modifier l'équipe
-            </button>
-            <button
-              className={`tl-btn ${managing ? "tl-btn-or" : "tl-btn-ghost"}`}
-              onClick={() => setManaging((v) => !v)}
-            >
-              <Ic d={ICONS.manage} size={16} />{" "}
-              {managing ? "Terminer" : "Gérer les joueurs"}
-            </button>
+            {isOwner && (
+              <button
+                className="tl-btn tl-btn-bx"
+                onClick={() => setEditingTeam(true)}
+              >
+                <Ic d={ICONS.pencil} size={16} /> Modifier l'équipe
+              </button>
+            )}
+            {canManagePlayers && (
+              <button
+                className={`tl-btn ${managing ? "tl-btn-or" : "tl-btn-ghost"}`}
+                onClick={() => setManaging((v) => !v)}
+              >
+                <Ic d={ICONS.manage} size={16} />{" "}
+                {managing ? "Terminer" : "Gérer les joueurs"}
+              </button>
+            )}
           </div>
 
           <div className="tl-hero-logo">
@@ -790,20 +824,24 @@ export default function EquipeDetailPage({
                 <path d="M2 12h20M12 2c3.5 3 3.5 17 0 20M12 2c-3.5 3-3.5 17 0 20" />
               </svg>
             )}
-            <button
-              className="tl-cam"
-              title="Changer le logo"
-              onClick={() => logoRef.current?.click()}
-            >
-              <Ic d={ICONS.cam} size={13} />
-            </button>
-            <input
-              ref={logoRef}
-              type="file"
-              accept="image/*"
-              hidden
-              onChange={changeLogo}
-            />
+            {isOwner && (
+              <>
+                <button
+                  className="tl-cam"
+                  title="Changer le logo"
+                  onClick={() => logoRef.current?.click()}
+                >
+                  <Ic d={ICONS.cam} size={13} />
+                </button>
+                <input
+                  ref={logoRef}
+                  type="file"
+                  accept="image/*"
+                  hidden
+                  onChange={changeLogo}
+                />
+              </>
+            )}
           </div>
 
           <div className="tl-hero-content">
@@ -816,6 +854,11 @@ export default function EquipeDetailPage({
                 <span className="dash-loading">Synchronisation...</span>
               )}
             </div>
+            {team.isShared && (
+              <div className="shared-team-badge">
+                Équipe partagée · {team.collaborationRole || "Staff"}
+              </div>
+            )}
             <div className="tl-tags">
               {(team.tags || []).map((tg) => (
                 <span key={tg} className="tl-tag">
@@ -854,25 +897,37 @@ export default function EquipeDetailPage({
           <button
             type="button"
             className={activeTab === "training" ? "active" : ""}
-            onClick={() => setActiveTab("training")}
+            onClick={() => {
+              if (canUseSessions) setActiveTab("training");
+              else alert("Le propriétaire ne t’a pas donné accès aux séances de cette équipe.");
+            }}
           >
             <Ic d={ICONS.cal} size={16} />
-            Entraînements
+            Entraînements {!canUseSessions && team.isShared ? "🔒" : ""}
           </button>
 
           <button
             type="button"
             className={activeTab === "stats" ? "active" : ""}
-            onClick={() => setActiveTab("stats")}
+            onClick={() => {
+              if (canUseLiveStats) setActiveTab("stats");
+              else alert("Le propriétaire ne t’a pas donné accès à LiveStats pour cette équipe.");
+            }}
           >
             <Ic d={ICONS.bars} size={16} />
-            Toutes les stats
+            Toutes les stats {!canUseLiveStats && team.isShared ? "🔒" : ""}
           </button>
         </section>
 
         {activeTab === "presentation" && (
           <div className="team-tab-panel">
-            <TeamGoogleDriveSettings teamId={team.id} />
+            {canUseMedia ? (
+              <TeamGoogleDriveSettings teamId={team.id} />
+            ) : team.isShared ? (
+              <div className="shared-access-note">
+                🔒 Les médias et Google Drive ne sont pas autorisés pour ton rôle sur cette équipe.
+              </div>
+            ) : null}
             {/* ---------- TEAM BANNER ---------- */}
             <section className="tl-banner">
               {team.banniere ? (
@@ -883,20 +938,24 @@ export default function EquipeDetailPage({
                   <div>Ajoute une photo de ton équipe</div>
                 </div>
               )}
-              <button
-                className="tl-cam"
-                title="Changer la photo d'équipe"
-                onClick={() => bannerRef.current?.click()}
-              >
-                <Ic d={ICONS.cam} size={13} />
-              </button>
-              <input
-                ref={bannerRef}
-                type="file"
-                accept="image/*"
-                hidden
-                onChange={changeBanner}
-              />
+              {isOwner && (
+                <>
+                  <button
+                    className="tl-cam"
+                    title="Changer la photo d'équipe"
+                    onClick={() => bannerRef.current?.click()}
+                  >
+                    <Ic d={ICONS.cam} size={13} />
+                  </button>
+                  <input
+                    ref={bannerRef}
+                    type="file"
+                    accept="image/*"
+                    hidden
+                    onChange={changeBanner}
+                  />
+                </>
+              )}
             </section>
 
             {/* ---------- EFFECTIF ---------- */}
@@ -907,7 +966,7 @@ export default function EquipeDetailPage({
                 </span>
                 <h2>Effectif</h2>
                 <span className="right">
-                  {team.players.length} joueur
+                  {team.players.length}/15 joueur
                   {team.players.length > 1 ? "s" : ""}
                 </span>
               </div>
@@ -918,7 +977,7 @@ export default function EquipeDetailPage({
                     className="tl-pcard"
                     onClick={() => openPlayer(p)}
                   >
-                    {managing && (
+                    {managing && canManagePlayers && (
                       <button
                         className="tl-del"
                         title="Retirer"
@@ -946,13 +1005,19 @@ export default function EquipeDetailPage({
                     </div>
                   </div>
                 ))}
-                {managing && (
+                {managing && canManagePlayers && (
                   <div
-                    className="tl-addtile"
-                    onClick={() => setPlayerForm({ open: true })}
+                    className={`tl-addtile ${playerLimitReached ? "disabled" : ""}`}
+                    onClick={() => {
+                      if (playerLimitReached) {
+                        alert("Effectif complet : une équipe MyBasket est limitée à 15 joueurs actifs.");
+                        return;
+                      }
+                      setPlayerForm({ open: true });
+                    }}
                   >
                     <span className="plus">+</span>
-                    Ajouter un joueur
+                    {playerLimitReached ? "Effectif complet (15/15)" : "Ajouter un joueur"}
                   </div>
                 )}
               </div>
@@ -1049,7 +1114,12 @@ export default function EquipeDetailPage({
             </section>
 
             {/* ---------- STAFF ---------- */}
-            <TeamStaffManager staff={team.staff || []} onChange={handleStaffChange} />
+            <TeamStaffManager
+              teamId={team.id}
+              staff={team.staff || []}
+              onChange={handleStaffChange}
+              isOwner={isOwner}
+            />
           </div>
         )}
 
@@ -1094,14 +1164,14 @@ export default function EquipeDetailPage({
         </div>
       </div>
 
-      {editingTeam && (
+      {editingTeam && isOwner && (
         <TeamForm
           team={team}
           onSave={handleSaveTeam}
           onClose={() => setEditingTeam(false)}
         />
       )}
-      {playerForm.open && (
+      {playerForm.open && canManagePlayers && (
         <PlayerForm
           initial={playerForm.player}
           onSave={handleSavePlayer}
@@ -1299,6 +1369,9 @@ export default function EquipeDetailPage({
           white-space: nowrap;
         }
 
+.shared-team-badge{display:inline-flex;margin:8px 0 0;padding:6px 10px;border-radius:999px;background:rgba(255,255,255,.15);border:1px solid rgba(255,255,255,.25);color:#fff;font-size:.72rem;font-weight:900}
+.shared-access-note{margin-bottom:14px;padding:13px 15px;border:1px solid #eadfd5;border-radius:13px;background:#fbf8f5;color:#766a64;font-size:.82rem;font-weight:750}
+.tl-addtile.disabled{opacity:.62;cursor:not-allowed}
         .team-tabs button.active {
           background: #6b1a2c;
           color: #fff;

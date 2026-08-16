@@ -14,6 +14,7 @@
 
 import { type MouseEvent, useEffect, useRef, useState } from 'react';
 import { createClient } from "@/lib/supabase/client";
+import { getTeams } from "@/lib/equipes-store";
 import {
   saveLiveMatch,
   ensureLiveMatch,
@@ -165,117 +166,44 @@ async function readTeams(): Promise<{ id: string; name: string; players: Player[
   if (typeof window === 'undefined') return [];
 
   try {
-    const supabase = createClient();
+    const loadedTeams = await getTeams();
 
-    // ISOLATION · outil personnel : uniquement les équipes de l'utilisateur.
-    const { data: { user } } = await supabase.auth.getUser();
-    if (!user) return [];
-
-    const { data: teamsData, error: teamsError } = await supabase
-      .from('teams')
-      .select('*')
-      .eq('user_id', user.id)
-      .order('name', { ascending: true });
-
-    if (teamsError) {
-      console.error('Erreur chargement équipes Supabase prise stats :', {
-        message: teamsError.message,
-        details: teamsError.details,
-        hint: teamsError.hint,
-        code: teamsError.code,
-        raw: teamsError,
-      });
-
-      return [];
-    }
-
-    const validTeams = (teamsData ?? [])
+    return (loadedTeams ?? [])
+      .filter(
+        (team: any) =>
+          team?.isShared !== true ||
+          team?.collaborationPermissions?.livestats === true,
+      )
       .map((team: any) => ({
-        ...team,
-        id: String(team.id ?? ''),
-      }))
-      .filter((team: any) => team.id && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(team.id));
-
-    const teamIds = validTeams.map((team: any) => team.id);
-
-    if (!teamIds.length) {
-      console.warn('Aucune vraie équipe Supabase trouvée pour la prise de stats.');
-      return [];
-    }
-
-    const { data: playersData, error: playersError } = await supabase
-      .from('players')
-      .select('*')
-      .in('team_id', teamIds);
-
-    if (playersError) {
-      console.error('Erreur chargement joueurs Supabase prise stats :', {
-        message: playersError.message,
-        details: playersError.details,
-        hint: playersError.hint,
-        code: playersError.code,
-        raw: playersError,
-      });
-
-      return validTeams.map((team: any) => ({
-        id: team.id,
+        id: String(team.id || ''),
         name: String(team.name || team.club_name || 'Équipe').toUpperCase(),
-        players: [],
-      }));
-    }
-
-    const playersByTeam: Record<string, Player[]> = {};
-
-    (playersData ?? []).forEach((player: any) => {
-      const currentTeamId = String(player.team_id ?? '');
-      if (!currentTeamId) return;
-
-      if (!playersByTeam[currentTeamId]) playersByTeam[currentTeamId] = [];
-
-      playersByTeam[currentTeamId].push(
-        normalizePlayer({
-          id: player.id,
-          num:
-            player.number_jersey ??
-            player.number ??
-            player.numero ??
-            player.num ??
-            player.jersey_number ??
-            0,
-          first_name: player.first_name,
-          last_name: player.last_name,
-          name:
-            player.name ||
-            [player.first_name, player.last_name].filter(Boolean).join(' ').trim() ||
-            player.full_name ||
-            '',
-          pos: player.position || player.pos || player.poste || '',
-          photo_url: player.photo_url || player.avatar_url || player.photo || '',
-        })
+        players: (team.players || [])
+          .map((player: any) =>
+            normalizePlayer({
+              id: player.id,
+              num: player.num ?? player.number ?? player.jersey_number ?? 0,
+              first_name: player.firstName ?? player.first_name,
+              last_name: player.lastName ?? player.last_name,
+              name:
+                [player.firstName ?? player.first_name, player.lastName ?? player.last_name]
+                  .filter(Boolean)
+                  .join(' ')
+                  .trim(),
+              pos: player.postePrincipal ?? player.position_primary ?? player.position ?? '',
+              photo_url: player.photo ?? player.photo_url ?? player.avatar_url ?? '',
+            }),
+          )
+          .filter((player: Player) => player.id)
+          .sort((a: Player, b: Player) => a.num - b.num),
+      }))
+      .filter(
+        (team: { id: string; players: Player[] }) =>
+          team.id &&
+          /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(team.id) &&
+          team.players.length > 0,
       );
-    });
-
-    Object.keys(playersByTeam).forEach((id) => {
-      playersByTeam[id].sort((a, b) => a.num - b.num);
-    });
-
-    const mapped = validTeams
-      .map((team: any) => {
-        const players = playersByTeam[team.id] ?? [];
-
-        return {
-          id: team.id,
-          name: String(team.name || team.club_name || 'Équipe').toUpperCase(),
-          players,
-        };
-      })
-      .filter((team: { id?: string; players: unknown[] }) => team.id && team.players.length);
-
-    console.log('Équipes Supabase chargées pour prise stats =', mapped);
-
-    return mapped;
   } catch (error) {
-    console.error('Erreur inattendue chargement équipes Supabase prise stats :', error);
+    console.error('Erreur chargement équipes MyBasket prise stats :', error);
     return [];
   }
 }

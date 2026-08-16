@@ -53,6 +53,9 @@ type Team = {
   name: string;
   logoUrl?: string;
   players: Player[];
+  ownerUserId?: string | null;
+  isShared?: boolean;
+  collaborationPermissions?: Record<string, boolean> | null;
 };
 
 type CalendarDbRow = Record<string, unknown>;
@@ -81,6 +84,12 @@ function normalizeTeamForCalendar(team: any): Team {
   return {
     id: String(team.id ?? ""),
     name: String(team.nom || team.name || team.teamName || "Équipe"),
+    ownerUserId: team.ownerUserId || team.user_id || null,
+    isShared: team.isShared === true,
+    collaborationPermissions:
+      team.collaborationPermissions && typeof team.collaborationPermissions === "object"
+        ? team.collaborationPermissions
+        : null,
     logoUrl: String(
       team.logo ||
         team.logoUrl ||
@@ -249,7 +258,11 @@ export default function MonCalendrier() {
       const loadedTeams = await getTeams();
       let normalizedTeams = (loadedTeams ?? [])
         .map(normalizeTeamForCalendar)
-        .filter((team) => team.id);
+        .filter(
+          (team) =>
+            team.id &&
+            (!team.isShared || team.collaborationPermissions?.sessions === true),
+        );
 
       const teamIds = normalizedTeams.map((team) => team.id);
       if (teamIds.length > 0) {
@@ -302,28 +315,59 @@ export default function MonCalendrier() {
       return;
     }
 
-    const { data, error } = await supabase
+    const loadedTeams = await getTeams().catch(() => []);
+    const calendarTeamIds = (loadedTeams ?? [])
+      .filter(
+        (team: any) =>
+          team?.isShared !== true ||
+          team?.collaborationPermissions?.sessions === true,
+      )
+      .map((team: any) => String(team?.id || ""))
+      .filter(Boolean);
+
+    const ownQuery = supabase
       .from("calendar_events")
       .select("*")
       .or(`user_id.eq.${user.id},owner_id.eq.${user.id}`)
       .order("event_date", { ascending: true })
       .order("start_time", { ascending: true });
 
-    if (error) {
-      console.error("Erreur chargement calendrier:", {
-        code: error.code,
-        message: error.message,
-        details: error.details,
-        hint: error.hint,
-      });
+    const [ownResult, teamResult] = await Promise.all([
+      ownQuery,
+      calendarTeamIds.length
+        ? supabase
+            .from("calendar_events")
+            .select("*")
+            .in("team_id", calendarTeamIds)
+            .order("event_date", { ascending: true })
+            .order("start_time", { ascending: true })
+        : Promise.resolve({ data: [], error: null }),
+    ]);
+
+    if (ownResult.error || teamResult.error) {
+      const error = ownResult.error || teamResult.error;
+      console.error("Erreur chargement calendrier:", error);
       setEvents([]);
       setLoading(false);
       return;
     }
 
-    const normalizedEvents: CalEvent[] = ((data ?? []) as CalendarDbRow[]).map(
-      (row) => normalizeCalendarRow(row),
-    );
+    const rowsById = new Map<string, CalendarDbRow>();
+    for (const row of [
+      ...((ownResult.data ?? []) as CalendarDbRow[]),
+      ...((teamResult.data ?? []) as CalendarDbRow[]),
+    ]) {
+      const id = String((row as Record<string, unknown>).id || "");
+      if (id) rowsById.set(id, row);
+    }
+
+    const normalizedEvents: CalEvent[] = Array.from(rowsById.values())
+      .map((row) => normalizeCalendarRow(row))
+      .sort(
+        (a, b) =>
+          a.date.localeCompare(b.date) ||
+          String(a.time || "").localeCompare(String(b.time || "")),
+      );
 
     const sessionIds: string[] = normalizedEvents
       .map((event: CalEvent) => event.sessionId)
@@ -409,10 +453,25 @@ export default function MonCalendrier() {
       return;
     }
 
+    const editingEvent = events.find((event) => event.id === editingId);
+    const targetTeam =
+      teams.find((team) => team.id === fTeam) ||
+      teams.find((team) => team.id === editingEvent?.teamId) ||
+      null;
+    const teamOwnerId = targetTeam?.ownerUserId || user.id;
+
+    if (
+      targetTeam?.isShared &&
+      targetTeam.collaborationPermissions?.sessions !== true
+    ) {
+      window.alert("Tu n’as pas l’autorisation de modifier le calendrier de cette équipe.");
+      return;
+    }
+
     const payload = {
       user_id: user.id,
-      owner_id: user.id,
-      title: `${selectedTeam?.name || events.find((event) => event.id === editingId)?.teamName || "Équipe"} • ${fTitle.trim() || "Entraînement"}`,
+      owner_id: teamOwnerId,
+      title: `${selectedTeam?.name || editingEvent?.teamName || "Équipe"} • ${fTitle.trim() || "Entraînement"}`,
       theme: fTitle.trim() || "Entraînement",
       description: fNotes || null,
       event_date: fDate,
@@ -443,8 +502,7 @@ export default function MonCalendrier() {
       const { error } = await supabase
         .from("calendar_events")
         .update(payload)
-        .eq("id", editingId)
-        .or(`user_id.eq.${user.id},owner_id.eq.${user.id}`);
+        .eq("id", editingId);
 
       if (error) {
         console.error("Erreur modification événement:", {
@@ -555,7 +613,7 @@ export default function MonCalendrier() {
       // Le compte CEO/superadmin ne reçoit aucun passe-droit dans cet espace personnel.
       const { data: linkedSession, error: sessionLookupError } = await supabase
         .from("practice_sessions")
-        .select("id, user_id, owner_id")
+        .select("id, user_id, owner_id, team_id")
         .eq("id", linkedSessionId)
         .maybeSingle();
 
@@ -569,8 +627,20 @@ export default function MonCalendrier() {
         const ownerIds = [linkedSession.user_id, linkedSession.owner_id]
           .map((value) => String(value || ""))
           .filter(Boolean);
+        const isSessionOwner = ownerIds.includes(user.id);
 
-        if (!ownerIds.includes(user.id)) {
+        if (!isSessionOwner && linkedSession.team_id) {
+          const { data: canEditSession, error: permissionError } =
+            await supabase.rpc("team_member_has_permission", {
+              p_team_id: linkedSession.team_id,
+              p_permission: "sessions",
+            });
+
+          if (permissionError || canEditSession !== true) {
+            window.alert("Tu n’as pas l’autorisation de supprimer cette séance.");
+            return;
+          }
+        } else if (!isSessionOwner && !linkedSession.team_id) {
           window.alert("Cette séance ne t’appartient pas.");
           return;
         }
@@ -631,8 +701,7 @@ export default function MonCalendrier() {
       const { error: calendarDeleteError } = await supabase
         .from("calendar_events")
         .delete()
-        .eq("session_id", linkedSessionId)
-        .or(`user_id.eq.${user.id},owner_id.eq.${user.id}`);
+        .eq("session_id", linkedSessionId);
 
       if (calendarDeleteError) {
         console.error("Erreur suppression calendrier séance:", calendarDeleteError);
@@ -679,7 +748,6 @@ export default function MonCalendrier() {
       .from("calendar_events")
       .delete()
       .eq("id", editingId)
-      .or(`user_id.eq.${user.id},owner_id.eq.${user.id}`)
       .select("id");
 
     if (error) {

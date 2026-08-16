@@ -154,15 +154,23 @@ export interface Player {
 }
 
 /** Un membre du staff (entraîneur, assistant, kiné…). */
+export type TeamCollaborationPermissions = {
+  view_team?: boolean;
+  players?: boolean;
+  sessions?: boolean;
+  livestats?: boolean;
+  media?: boolean;
+};
+
 export interface StaffMember {
   id: string;
   prenom: string;
   nom: string;
   role: string; // "Entraîneur", "Assistant"…
   photo?: string | null;
-  /** E-mail conservé pour préparer la future collaboration MyBasket. */
+  /** E-mail utilisé pour les invitations de collaboration MyBasket. */
   email?: string;
-  /** Compte MyBasket lié plus tard au membre du staff. */
+  /** Compte MyBasket lié au membre du staff après acceptation. */
   userId?: string | null;
 }
 
@@ -288,6 +296,14 @@ export interface Team {
   clubId?: string | null;
   /** Saison sportive active. */
   season?: string | null;
+  /** Propriétaire Supabase de l'équipe. */
+  ownerUserId?: string | null;
+  /** Vrai lorsque l'équipe est partagée avec l'utilisateur connecté. */
+  isShared?: boolean;
+  /** Rôle de collaboration de l'utilisateur connecté sur cette équipe. */
+  collaborationRole?: string | null;
+  /** Permissions accordées à l'utilisateur connecté sur cette équipe. */
+  collaborationPermissions?: TeamCollaborationPermissions | null;
 
   name: string; // "PARIS BASKETBALL"
   cat: string; // "U15"

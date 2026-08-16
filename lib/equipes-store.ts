@@ -121,6 +121,10 @@ function normalizeTeamRow(row: any): Team {
     id: row.id,
     supabaseTeamId: row.id,
     supabase_team_id: row.id,
+    ownerUserId: row.user_id ?? data.ownerUserId ?? null,
+    isShared: Boolean(data.isShared),
+    collaborationRole: data.collaborationRole ?? null,
+    collaborationPermissions: data.collaborationPermissions ?? null,
     name: row.name ?? data.name ?? "",
     cat: row.category ?? data.cat ?? data.category ?? "",
     category: row.category ?? data.category ?? data.cat ?? "",
@@ -467,6 +471,45 @@ function findPlayerByAnyId(
   );
 }
 
+
+async function getPersonalTeamVisibilityLimit(
+  supabase: ReturnType<typeof createClient>,
+  userId: string,
+): Promise<number | null> {
+  const { data: profile } = await supabase
+    .from("profiles")
+    .select("platform_role")
+    .eq("id", userId)
+    .maybeSingle();
+
+  const role = String(profile?.platform_role || "").toLowerCase();
+  if (role === "ceo" || role === "superadmin" || role === "admin") {
+    return null;
+  }
+
+  const { data: subscription } = await supabase
+    .from("subscriptions")
+    .select("plan_id")
+    .eq("user_id", userId)
+    .eq("status", "active")
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (!subscription?.plan_id) return 0;
+
+  const { data: plan } = await supabase
+    .from("subscription_plans")
+    .select("max_teams")
+    .eq("id", subscription.plan_id)
+    .maybeSingle();
+
+  if (plan?.max_teams === null || plan?.max_teams === undefined) return null;
+
+  const limit = Number(plan.max_teams);
+  return Number.isFinite(limit) && limit > 0 ? Math.floor(limit) : 0;
+}
+
 /* -------------------------------------------------------------------------- */
 /*                                  ÉQUIPES                                   */
 /* -------------------------------------------------------------------------- */
@@ -474,19 +517,90 @@ function findPlayerByAnyId(
 export async function getTeams(): Promise<Team[]> {
   const supabase = createClient();
   const userId = await getUserId();
+  const personalTeamLimit = await getPersonalTeamVisibilityLimit(supabase, userId);
 
-  const { data: teamsData, error: teamsError } = await supabase
-    .from("teams")
-    .select("*")
-    .eq("user_id", userId)
-    .order("created_at", { ascending: false });
+  let ownedRows: any[] = [];
+  let ownedError: any = null;
 
-  if (teamsError) {
-    logSupabaseError("Erreur chargement teams", teamsError);
-    throw teamsError;
+  if (personalTeamLimit !== 0) {
+    let ownedQuery = supabase
+      .from("teams")
+      .select("*")
+      .eq("user_id", userId)
+      .order("created_at", { ascending: false });
+
+    if (personalTeamLimit !== null) {
+      ownedQuery = ownedQuery.limit(personalTeamLimit);
+    }
+
+    const ownedResult = await ownedQuery;
+    ownedRows = ownedResult.data ?? [];
+    ownedError = ownedResult.error;
   }
 
-  const teams: Team[] = (teamsData ?? []).map(normalizeTeamRow);
+  const { data: membershipRows, error: membershipError } = await supabase
+    .from("team_members")
+    .select("team_id,role,permissions,status")
+    .eq("user_id", userId)
+    .eq("status", "accepted");
+
+  if (ownedError) {
+    logSupabaseError("Erreur chargement teams", ownedError);
+    throw ownedError;
+  }
+
+  if (membershipError) {
+    logSupabaseError("Erreur chargement team_members", membershipError);
+    throw membershipError;
+  }
+
+  const ownedIds = new Set((ownedRows ?? []).map((row: any) => String(row.id)));
+  const sharedMemberships = (membershipRows ?? []).filter(
+    (row: any) => row.team_id && !ownedIds.has(String(row.team_id)),
+  );
+  const sharedIds = sharedMemberships.map((row: any) => String(row.team_id));
+
+  let sharedRows: any[] = [];
+  if (sharedIds.length) {
+    const { data, error } = await supabase
+      .from("teams")
+      .select("*")
+      .in("id", sharedIds)
+      .order("created_at", { ascending: false });
+
+    if (error) {
+      logSupabaseError("Erreur chargement équipes partagées", error);
+      throw error;
+    }
+    sharedRows = data ?? [];
+  }
+
+  const membershipByTeam = new Map<string, any>(
+    sharedMemberships.map((row: any) => [String(row.team_id), row]),
+  );
+
+  const teams: Team[] = [
+    ...(ownedRows ?? []).map((row: any) => ({
+      ...normalizeTeamRow(row),
+      ownerUserId: row.user_id ?? null,
+      isShared: false,
+      collaborationRole: null,
+      collaborationPermissions: null,
+    })),
+    ...sharedRows.map((row: any) => {
+      const membership = membershipByTeam.get(String(row.id));
+      return {
+        ...normalizeTeamRow(row),
+        ownerUserId: row.user_id ?? null,
+        isShared: true,
+        collaborationRole: membership?.role ?? "Staff",
+        collaborationPermissions:
+          membership?.permissions && typeof membership.permissions === "object"
+            ? membership.permissions
+            : {},
+      } as Team;
+    }),
+  ];
 
   if (!teams.length) return [];
 
@@ -513,10 +627,6 @@ export async function getTeams(): Promise<Team[]> {
       .from("match_stats")
       .select("*")
       .in("team_id", teamIds)
-      // AJOUT · un match en cours de codage (projet brouillon) n'alimente PAS
-      // les statistiques officielles de la fiche équipe. Seul « Terminer le
-      // match » le passe en 'completed'. `or` couvre les lignes anciennes
-      // dont project_status est encore null.
       .or("project_status.is.null,project_status.eq.completed")
       .order("match_date", { ascending: true }),
   ]);
@@ -530,21 +640,21 @@ export async function getTeams(): Promise<Team[]> {
   const statsByTeam = new Map<string, MatchRecord[]>();
 
   (playersData ?? []).forEach((row: any) => {
-    const teamId = String(row.team_id);
-    if (!playersByTeam.has(teamId)) playersByTeam.set(teamId, []);
-    playersByTeam.get(teamId)?.push(normalizePlayerRow(row));
+    const currentTeamId = String(row.team_id);
+    if (!playersByTeam.has(currentTeamId)) playersByTeam.set(currentTeamId, []);
+    playersByTeam.get(currentTeamId)?.push(normalizePlayerRow(row));
   });
 
   (matchesData ?? []).forEach((row: any) => {
-    const teamId = String(row.team_id);
-    if (!matchesByTeam.has(teamId)) matchesByTeam.set(teamId, []);
-    matchesByTeam.get(teamId)?.push(normalizeMatchRow(row));
+    const currentTeamId = String(row.team_id);
+    if (!matchesByTeam.has(currentTeamId)) matchesByTeam.set(currentTeamId, []);
+    matchesByTeam.get(currentTeamId)?.push(normalizeMatchRow(row));
   });
 
   (statsData ?? []).forEach((row: any) => {
-    const teamId = String(row.team_id);
-    if (!statsByTeam.has(teamId)) statsByTeam.set(teamId, []);
-    statsByTeam.get(teamId)?.push(normalizeStatMatchRow(row));
+    const currentTeamId = String(row.team_id);
+    if (!statsByTeam.has(currentTeamId)) statsByTeam.set(currentTeamId, []);
+    statsByTeam.get(currentTeamId)?.push(normalizeStatMatchRow(row));
   });
 
   return teams.map((team: Team) => {
@@ -703,13 +813,60 @@ export async function upsertPlayer(
     );
   }
 
-  if (existingTeam.user_id && existingTeam.user_id !== userId) {
-    throw new Error(
-      "Cette équipe n'appartient pas à l'utilisateur connecté."
-    );
+  const isOwner = !existingTeam.user_id || existingTeam.user_id === userId;
+
+  if (!isOwner) {
+    const { data: membership, error: membershipError } = await supabase
+      .from("team_members")
+      .select("permissions,status")
+      .eq("team_id", teamId)
+      .eq("user_id", userId)
+      .eq("status", "accepted")
+      .maybeSingle();
+
+    if (membershipError) {
+      logSupabaseError("Erreur vérification permission joueur", membershipError, {
+        teamId,
+        userId,
+      });
+      throw membershipError;
+    }
+
+    const permissions =
+      membership?.permissions && typeof membership.permissions === "object"
+        ? (membership.permissions as Record<string, unknown>)
+        : {};
+
+    if (permissions.players !== true) {
+      throw new Error(
+        "Tu n'as pas l'autorisation de modifier les joueurs de cette équipe."
+      );
+    }
   }
 
-  const payload = playerPayload(teamId, player, userId);
+  const isNewPlayer = !isUuid(player.id) && !isUuid((player as any).supabasePlayerId);
+  if (isNewPlayer) {
+    const { count, error: countError } = await supabase
+      .from("players")
+      .select("id", { count: "exact", head: true })
+      .eq("team_id", teamId)
+      .not("status", "eq", "Archivé");
+
+    if (countError) {
+      logSupabaseError("Erreur comptage effectif", countError, { teamId });
+      throw countError;
+    }
+
+    if ((count ?? 0) >= 15) {
+      throw new Error(
+        "Effectif complet : une équipe MyBasket est limitée à 15 joueurs actifs."
+      );
+    }
+  }
+
+  // Les données métier restent rattachées au propriétaire de l'équipe,
+  // même lorsqu'un collaborateur réalise l'action.
+  const payload = playerPayload(teamId, player, existingTeam.user_id || userId);
 
   // Pour un nouveau joueur, on laisse PostgreSQL utiliser gen_random_uuid().
   // Pour un joueur existant, on conserve son UUID et on fait l'upsert.
@@ -761,12 +918,45 @@ export async function deletePlayer(
   const supabase = createClient();
   const userId = await getUserId();
 
+  const { data: teamRow, error: teamError } = await supabase
+    .from("teams")
+    .select("id,user_id")
+    .eq("id", teamId)
+    .maybeSingle();
+
+  if (teamError || !teamRow?.id) {
+    if (teamError) logSupabaseError("Erreur vérification équipe", teamError);
+    throw new Error("Équipe introuvable.");
+  }
+
+  if (teamRow.user_id !== userId) {
+    const { data: membership, error: membershipError } = await supabase
+      .from("team_members")
+      .select("permissions,status")
+      .eq("team_id", teamId)
+      .eq("user_id", userId)
+      .eq("status", "accepted")
+      .maybeSingle();
+
+    if (membershipError) throw membershipError;
+
+    const permissions =
+      membership?.permissions && typeof membership.permissions === "object"
+        ? (membership.permissions as Record<string, unknown>)
+        : {};
+
+    if (permissions.players !== true) {
+      throw new Error(
+        "Tu n'as pas l'autorisation de modifier les joueurs de cette équipe."
+      );
+    }
+  }
+
   const { error } = await supabase
     .from("players")
     .delete()
     .eq("id", playerId)
-    .eq("team_id", teamId)
-    .eq("user_id", userId);
+    .eq("team_id", teamId);
 
   if (error) {
     logSupabaseError("Erreur deletePlayer", error);

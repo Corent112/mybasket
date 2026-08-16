@@ -19,7 +19,9 @@ function ConnexionContent() {
   const next = safeNextPath(params.get("next"));
   const supabase = useMemo(() => createClient(), []);
 
-  const [tab, setTab] = useState<"signin" | "signup" | "reset">("signin");
+  const [tab, setTab] = useState<"signin" | "signup" | "reset">(
+    params.get("mode") === "signup" ? "signup" : "signin",
+  );
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [name, setName] = useState("");

@@ -4,7 +4,17 @@ import { useEffect, useMemo, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { clearSessionBuilderItems, loadSessionBuilderItems } from "@/lib/session-builder";
 
-type Team = { id: string; name: string; club_logo_url?: string | null; gymnasium?: string | null };
+type Team = {
+  id: string;
+  name: string;
+  user_id?: string | null;
+  ownerUserId?: string | null;
+  club_logo_url?: string | null;
+  gymnasium?: string | null;
+  metadata?: Record<string, any> | null;
+  isShared?: boolean;
+  collaborationPermissions?: Record<string, boolean> | null;
+};
 type Player = { id: string; team_id: string; first_name?: string | null; last_name?: string | null; position_primary?: string | null };
 type SessionExercise = { exercise_id: string; title: string; who: string; duration_minutes: number; situation_image_url: string; explanation: string; instructions: string; variants?: string; sort_order: number };
 type CompositionTeam = { id: string; name: string; playerIds: string[] };
@@ -54,20 +64,159 @@ export default function NouvelleSeancePage() {
     setLoading(true);
     const sessionId = new URLSearchParams(window.location.search).get("id");
 
-    // ISOLATION · outil personnel : on ne charge que les équipes et les joueurs
-    // de l'utilisateur authentifié, y compris pour un compte CEO/superadmin.
+    // DROITS ÉQUIPES :
+    // - les équipes personnelles visibles sont strictement limitées par le max_teams
+    //   de l'abonnement DU collaborateur ; sans abonnement => 0 équipe personnelle ;
+    // - les équipes partagées ne consomment jamais ce quota et ne sont ajoutées ici
+    //   que si team_members accorde explicitement la permission "sessions".
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) { setLoading(false); return; }
 
-    const [{ data: teamRows }, { data: playerRows }] = await Promise.all([
-      supabase.from("teams").select("*").eq("user_id", user.id).order("name"),
-      supabase.from("players").select("*").eq("user_id", user.id).order("last_name"),
-    ]);
-    setTeams((teamRows ?? []) as Team[]);
-    setPlayers((playerRows ?? []) as Player[]);
+    const { data: profile } = await supabase
+      .from("profiles")
+      .select("platform_role")
+      .eq("id", user.id)
+      .maybeSingle();
+
+    const platformRole = String(profile?.platform_role || "").toLowerCase();
+    const isAdmin =
+      platformRole === "ceo" ||
+      platformRole === "superadmin" ||
+      platformRole === "admin";
+
+    let personalTeamLimit: number | null = isAdmin ? null : 0;
+
+    if (!isAdmin) {
+      const { data: subscription } = await supabase
+        .from("subscriptions")
+        .select("plan_id")
+        .eq("user_id", user.id)
+        .eq("status", "active")
+        .order("created_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      if (subscription?.plan_id) {
+        const { data: plan } = await supabase
+          .from("subscription_plans")
+          .select("max_teams")
+          .eq("id", subscription.plan_id)
+          .maybeSingle();
+
+        if (plan?.max_teams === null || plan?.max_teams === undefined) {
+          personalTeamLimit = null;
+        } else {
+          const parsedLimit = Number(plan.max_teams);
+          personalTeamLimit =
+            Number.isFinite(parsedLimit) && parsedLimit > 0
+              ? Math.floor(parsedLimit)
+              : 0;
+        }
+      }
+    }
+
+    let ownedRows: any[] = [];
+    let ownedError: any = null;
+
+    if (personalTeamLimit !== 0) {
+      let ownedQuery = supabase
+        .from("teams")
+        .select("*")
+        .eq("user_id", user.id)
+        .order("created_at", { ascending: false });
+
+      if (personalTeamLimit !== null) {
+        ownedQuery = ownedQuery.limit(personalTeamLimit);
+      }
+
+      const ownedResult = await ownedQuery;
+      ownedRows = ownedResult.data ?? [];
+      ownedError = ownedResult.error;
+    }
+
+    const { data: membershipRows, error: membershipError } = await supabase
+      .from("team_members")
+      .select("team_id,permissions,status")
+      .eq("user_id", user.id)
+      .eq("status", "accepted");
+
+    if (ownedError || membershipError) {
+      console.error("Erreur chargement équipes séance:", ownedError || membershipError);
+      setLoading(false);
+      return;
+    }
+
+    const sharedMemberships = (membershipRows ?? []).filter((row: any) => {
+      const permissions =
+        row?.permissions && typeof row.permissions === "object"
+          ? row.permissions
+          : {};
+      return permissions.sessions === true;
+    });
+    const ownedIds = new Set((ownedRows ?? []).map((row: any) => String(row.id)));
+    const sharedIds = sharedMemberships
+      .map((row: any) => String(row.team_id || ""))
+      .filter((id: string) => id && !ownedIds.has(id));
+
+    let sharedRows: any[] = [];
+    if (sharedIds.length) {
+      const { data, error } = await supabase
+        .from("teams")
+        .select("*")
+        .in("id", sharedIds)
+        .order("name");
+      if (error) {
+        console.error("Erreur chargement équipes partagées séance:", error);
+      } else {
+        sharedRows = data ?? [];
+      }
+    }
+
+    const membershipByTeam = new Map<string, any>(
+      sharedMemberships.map((row: any) => [String(row.team_id), row]),
+    );
+
+    const accessibleTeams: Team[] = [
+      ...(ownedRows ?? []).map((row: any) => ({
+        ...row,
+        ownerUserId: row.user_id || user.id,
+        isShared: false,
+      })),
+      ...sharedRows.map((row: any) => ({
+        ...row,
+        ownerUserId: row.user_id || null,
+        isShared: true,
+        collaborationPermissions:
+          membershipByTeam.get(String(row.id))?.permissions || {},
+      })),
+    ];
+
+    const accessibleTeamIds = accessibleTeams.map((team) => team.id).filter(Boolean);
+    let playerRows: any[] = [];
+
+    if (accessibleTeamIds.length) {
+      const { data, error } = await supabase
+        .from("players")
+        .select("*")
+        .in("team_id", accessibleTeamIds)
+        .order("last_name");
+
+      if (error) {
+        console.error("Erreur chargement joueurs séance:", error);
+      } else {
+        playerRows = data ?? [];
+      }
+    }
+
+    setTeams(accessibleTeams);
+    setPlayers(playerRows as Player[]);
 
     if (sessionId) {
-      const { data: session, error } = await supabase.from("practice_sessions").select("*").eq("id", sessionId).eq("user_id", user.id).maybeSingle();
+      const { data: session, error } = await supabase
+        .from("practice_sessions")
+        .select("*")
+        .eq("id", sessionId)
+        .maybeSingle();
       if (error || !session) { alert("Séance introuvable."); setLoading(false); return; }
       setEditingId(sessionId);
       setTitle(session.theme || session.title || ""); setTheme(session.theme || session.title || ""); setTeamId(session.team_reference_id || session.team_id || "");
@@ -155,8 +304,11 @@ export default function NouvelleSeancePage() {
     if (userError || !user) { setSaving(false); return alert("Tu dois être connecté."); }
     if (!teamId || !date || !theme.trim()) { setSaving(false); return alert("Renseigne l'équipe, la date et le thème."); }
     if (!exercises.length) { setSaving(false); return alert("Ajoute au moins un exercice."); }
+    const teamOwnerId = selectedTeam?.ownerUserId || selectedTeam?.user_id || user.id;
+
     const payload = {
-      user_id: user.id,
+      user_id: teamOwnerId,
+      owner_id: teamOwnerId,
       visibility: "private",
       team_id: teamId,
       team_reference_id: teamId,
@@ -175,26 +327,26 @@ export default function NouvelleSeancePage() {
     };
     let sessionId = editingId;
     if (sessionId) {
-      const { error } = await supabase.from("practice_sessions").update(payload).eq("id", sessionId).eq("user_id", user.id); if (error) { setSaving(false); return alert(error.message); }
+      const { error } = await supabase.from("practice_sessions").update(payload).eq("id", sessionId); if (error) { setSaving(false); return alert(error.message); }
       await Promise.all([supabase.from("practice_session_exercises").delete().eq("session_id", sessionId), supabase.from("practice_session_attendance").delete().eq("session_id", sessionId), supabase.from("practice_session_players").delete().eq("session_id", sessionId)]);
     } else {
       const { data, error } = await supabase.from("practice_sessions").insert(payload).select("id").single(); if (error || !data) { setSaving(false); return alert(error?.message || "Erreur création"); } sessionId = data.id;
     }
     const chosen = players.filter((player) => selectedPlayers.includes(player.id));
     if (chosen.length) {
-      await supabase.from("practice_session_attendance").insert(chosen.map((player) => ({ user_id: user.id, session_id: sessionId, player_id: player.id, first_name: player.first_name, last_name: player.last_name, status: "pending", comment: "" })));
-      const snapshot = await supabase.from("practice_session_players").insert(chosen.map((player) => ({ user_id: user.id, session_id: sessionId, player_id: player.id, first_name: player.first_name, last_name: player.last_name, position: sessionPositions[player.id] ?? (
+      await supabase.from("practice_session_attendance").insert(chosen.map((player) => ({ user_id: teamOwnerId, session_id: sessionId, player_id: player.id, first_name: player.first_name, last_name: player.last_name, status: "pending", comment: "" })));
+      const snapshot = await supabase.from("practice_session_players").insert(chosen.map((player) => ({ user_id: teamOwnerId, session_id: sessionId, player_id: player.id, first_name: player.first_name, last_name: player.last_name, position: sessionPositions[player.id] ?? (
         String(player.position_primary || "").toLowerCase().includes("center") ? "center" :
         String(player.position_primary || "").toLowerCase().includes("forward") ? "forward" :
         "guard"
       ), selected: true, status: "pending" })));
       if (snapshot.error) console.warn("practice_session_players non disponible ou schéma différent", snapshot.error);
     }
-    const { error: exerciseError } = await supabase.from("practice_session_exercises").insert(exercises.map((exercise, index) => ({ session_id: sessionId, user_id: user.id, exercise_id: exercise.exercise_id || null, title: exercise.title, who: exercise.who, duration_minutes: exercise.duration_minutes, situation_image_url: exercise.situation_image_url || null, explanation: exercise.explanation || null, instructions: exercise.instructions || null, sort_order: index })));
+    const { error: exerciseError } = await supabase.from("practice_session_exercises").insert(exercises.map((exercise, index) => ({ session_id: sessionId, user_id: teamOwnerId, exercise_id: exercise.exercise_id || null, title: exercise.title, who: exercise.who, duration_minutes: exercise.duration_minutes, situation_image_url: exercise.situation_image_url || null, explanation: exercise.explanation || null, instructions: exercise.instructions || null, sort_order: index })));
     if (exerciseError) { setSaving(false); return alert(exerciseError.message); }
     const calendarPayload = {
       user_id: user.id,
-      owner_id: user.id,
+      owner_id: teamOwnerId,
       visibility: "private",
       event_type: "training",
       session_id: sessionId,
@@ -217,7 +369,6 @@ export default function NouvelleSeancePage() {
         .from("calendar_events")
         .select("id, created_at")
         .eq("session_id", sessionId)
-        .or(`user_id.eq.${user.id},owner_id.eq.${user.id}`)
         .order("created_at", { ascending: true });
 
     if (calendarLookupError) {

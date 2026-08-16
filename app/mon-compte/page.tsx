@@ -214,8 +214,7 @@ export default function MonComptePage() {
         .from("calendar_events")
         .select("team_id,event_type")
         .in("team_id", teamIds)
-        .eq("event_type", "game")
-        .or(`user_id.eq.${user.id},owner_id.eq.${user.id}`);
+        .eq("event_type", "game");
 
       if (calendarError) {
         console.error("Erreur chargement matchs calendrier:", calendarError);
@@ -559,6 +558,46 @@ const MENU_ACCESS: Record<string, string> = {
 
 const visibleMenu = MENU;
 
+const hasSharedTeams = teams.some((team) => team.isShared === true);
+const hasSharedSessions = teams.some(
+  (team) =>
+    team.isShared === true &&
+    team.collaborationPermissions?.sessions === true,
+);
+const hasSharedLiveStats = teams.some(
+  (team) =>
+    team.isShared === true &&
+    team.collaborationPermissions?.livestats === true,
+);
+
+const menuAccessKey: Record<string, string | null> = {
+  profil: null,
+  abonnement: null,
+  messagerie: "messagerie",
+  calendrier: "calendrier",
+  exercices: "exercices",
+  playbooks: "playbooks",
+  profilcoach: "coach_space",
+  annonces: "annonces",
+  papiers: "documents",
+  equipes: "equipes",
+  management: "management",
+  club: "club_space",
+};
+
+function canOpenMenuItem(item: MenuItem) {
+  if (item.key === "profil" || item.key === "abonnement") return true;
+
+  if (item.key === "equipes" && hasSharedTeams) return true;
+  if (item.key === "calendrier" && hasSharedSessions) return true;
+  if (item.key === "management" && hasSharedLiveStats) return true;
+
+  const accessKey = menuAccessKey[item.key];
+  if (!accessKey) return true;
+
+  return accessMap[accessKey] === true;
+}
+
 return (
 
     <div className="mc">
@@ -609,7 +648,11 @@ return (
         <aside className="mc-side">
           {visibleMenu.map((item) =>
             item.href ? (
-              <Link key={item.key} href={item.href} className="mc-side-item">
+              <Link
+                key={item.key}
+                href={canOpenMenuItem(item) ? item.href : "/abonnements"}
+                className="mc-side-item"
+              >
                 <span>{item.icon}</span>
                 {item.label}
               </Link>
@@ -618,7 +661,13 @@ return (
                 key={item.key}
                 type="button"
                 className={'mc-side-item' + (active === item.key ? ' on' : '')}
-                onClick={() => setActive(item.key)}
+                onClick={() => {
+                  if (!canOpenMenuItem(item)) {
+                    router.push("/abonnements");
+                    return;
+                  }
+                  setActive(item.key);
+                }}
               >
                 <span>{item.icon}</span>
                 {item.label}
@@ -752,7 +801,16 @@ return (
                   <h2>Mes Équipes</h2>
                   <p>Crée tes équipes, gère leurs effectifs et leurs matchs.</p>
                 </div>
-                <button className="mc-new-team" onClick={() => setTeamForm({ open: true })}>
+                <button
+                  className="mc-new-team"
+                  onClick={() => {
+                    if (!accessMap.equipes) {
+                      router.push("/abonnements");
+                      return;
+                    }
+                    setTeamForm({ open: true });
+                  }}
+                >
                   + Nouvelle équipe
                 </button>
               </div>
@@ -777,6 +835,11 @@ return (
                         <div className="mc-team-banner-copy">
                           <strong>{category}</strong>
                           <span>{level}</span>
+                          {team.isShared && (
+                            <em className="mc-team-shared">
+                              Équipe partagée · {team.collaborationRole || "Staff"}
+                            </em>
+                          )}
                         </div>
                       </div>
 
@@ -794,7 +857,7 @@ return (
                           <div className="mc-team-kpi">
                             <span className="mc-team-kpi-icon">♙</span>
                             <div>
-                              <strong>{team.players.length}</strong>
+                              <strong>{team.players.length}/15</strong>
                               <span>Joueurs</span>
                               <small>Effectif</small>
                             </div>
@@ -823,15 +886,70 @@ return (
                           <button className="main" onClick={() => router.push(`/equipes/${team.id}`)}>
                             Voir la page de l'équipe →
                           </button>
-                          <button type="button" onClick={() => setPlayerFor(team.id)}>+ Joueur</button>
+
                           <button
                             type="button"
-                            onClick={() => router.push(`/equipes/${team.id}?addStaff=1#staff`)}
+                            onClick={() => {
+                              const canEditPlayers =
+                                !team.isShared ||
+                                team.collaborationPermissions?.players === true;
+
+                              if (team.isShared && !canEditPlayers) {
+                                alert("Le propriétaire ne t’a pas donné accès à la gestion des joueurs.");
+                                return;
+                              }
+
+                              if (!team.isShared && !accessMap.equipes) {
+                                router.push("/abonnements");
+                                return;
+                              }
+
+                              if (team.players.length >= 15) {
+                                alert("Effectif complet : une équipe MyBasket est limitée à 15 joueurs actifs.");
+                                return;
+                              }
+
+                              setPlayerFor(team.id);
+                            }}
                           >
-                            + Staff
+                            + Joueur
                           </button>
-                          <button type="button" onClick={() => setTeamForm({ open: true, team })}>Éditer</button>
-                          <button type="button" className="danger" onClick={() => handleDeleteTeam(team)}>🗑️</button>
+
+                          {!team.isShared && (
+                            <>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  if (!accessMap.equipes) {
+                                    router.push("/abonnements");
+                                    return;
+                                  }
+                                  router.push(`/equipes/${team.id}?addStaff=1#staff`);
+                                }}
+                              >
+                                + Staff
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  if (!accessMap.equipes) {
+                                    router.push("/abonnements");
+                                    return;
+                                  }
+                                  setTeamForm({ open: true, team });
+                                }}
+                              >
+                                Éditer
+                              </button>
+                              <button
+                                type="button"
+                                className="danger"
+                                onClick={() => handleDeleteTeam(team)}
+                              >
+                                🗑️
+                              </button>
+                            </>
+                          )}
                         </div>
                       </div>
                     </article>
@@ -2958,6 +3076,8 @@ const CSS = `
 .mc-team-banner-copy{min-width:0;display:flex;flex-direction:column;align-items:flex-start}
 .mc-team-banner-copy strong{font-family:'Oswald',sans-serif;font-size:clamp(2rem,3vw,3.3rem);font-weight:900;line-height:.95;text-transform:uppercase;letter-spacing:-.02em}
 .mc-team-banner-copy span{margin-top:10px;font-size:.92rem;font-weight:900;text-transform:uppercase;letter-spacing:.04em;opacity:.95}
+
+.mc-team-shared{display:inline-flex;margin-top:9px;padding:5px 8px;border-radius:999px;background:rgba(255,255,255,.14);border:1px solid rgba(255,255,255,.22);color:#fff;font-style:normal;font-size:.62rem;font-weight:900;letter-spacing:.03em;white-space:nowrap}
 .mc-team-body{padding:1rem}
 .mc-team-body-horizontal{min-width:0;padding:22px 24px 18px;display:flex;flex-direction:column;justify-content:center}
 .mc-team-kpis{display:grid;grid-template-columns:.85fr .85fr 1fr 1.3fr;align-items:stretch;margin-bottom:22px}
