@@ -17,6 +17,7 @@ import {
 import PlayerForm from "@/components/equipes/PlayerForm";
 import TeamForm from "@/components/equipes/TeamForm";
 import TeamStaffManager from "@/components/equipes/TeamStaffManager";
+import TeamAdvancedStats from "@/components/equipes/TeamAdvancedStats";
 import type { Player, StaffMember, Team, TeamEvent } from "../../../types/player";
 
 /* ---------- Icônes (SVG inline, trait) ---------- */
@@ -69,7 +70,7 @@ const EVENT_EMOJI: Record<string, keyof typeof ICONS> = {
   Autre: "cal",
 };
 
-type TeamMainTab = "presentation" | "training" | "stats";
+type TeamMainTab = "presentation" | "training" | "stats" | "advanced";
 
 type TeamDashboardData = {
   loading: boolean;
@@ -918,6 +919,18 @@ export default function EquipeDetailPage({
             <Ic d={ICONS.bars} size={16} />
             Toutes les stats {!canUseLiveStats && team.isShared ? "🔒" : ""}
           </button>
+
+          <button
+            type="button"
+            className={activeTab === "advanced" ? "active" : ""}
+            onClick={() => {
+              if (canUseLiveStats) setActiveTab("advanced");
+              else alert("Le propriétaire ne t’a pas donné accès aux statistiques avancées de cette équipe.");
+            }}
+          >
+            <Ic d={ICONS.filter} size={16} />
+            Stats avancées {!canUseLiveStats && team.isShared ? "🔒" : ""}
+          </button>
         </section>
 
         {activeTab === "presentation" && (
@@ -1136,6 +1149,15 @@ export default function EquipeDetailPage({
             <TeamLineupsBlock teamId={linkedStatsTeamId} />
             <TeamMatchHistoryBlock teamId={linkedStatsTeamId} />
             <TeamSeasonRecordsBlock teamId={linkedStatsTeamId} />
+          </div>
+        )}
+
+        {activeTab === "advanced" && (
+          <div className="team-tab-panel stats-panel">
+            <TeamAdvancedStats
+              teamId={linkedStatsTeamId}
+              team={team}
+            />
           </div>
         )}
 
