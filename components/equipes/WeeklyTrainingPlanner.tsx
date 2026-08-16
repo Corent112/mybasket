@@ -846,8 +846,8 @@ export default function WeeklyTrainingPlanner({ teamId }: { teamId: string }) {
         }
         .days-grid {
           display: grid;
-          grid-template-columns: repeat(5, minmax(170px, 1fr));
-          min-width: 875px;
+          grid-template-columns: repeat(5, minmax(220px, 1fr));
+          min-width: 1110px;
           min-height: 610px;
           border: 1px solid #eee4dc;
           border-radius: 15px;
@@ -922,15 +922,20 @@ export default function WeeklyTrainingPlanner({ teamId }: { teamId: string }) {
           padding: 8px;
         }
         .planned-block {
+          width: 100%;
+          min-width: 0;
+          box-sizing: border-box;
           padding: 8px;
           border: 1px solid rgba(60, 45, 35, 0.07);
           border-radius: 9px;
           cursor: grab;
         }
         .block-top {
-          display: flex;
+          display: grid;
+          grid-template-columns: 16px minmax(0, 1fr) auto auto;
           align-items: center;
           gap: 5px;
+          min-width: 0;
         }
         .drag-handle {
           color: #756961;
@@ -948,6 +953,7 @@ export default function WeeklyTrainingPlanner({ teamId }: { teamId: string }) {
         }
         .duration-field {
           display: flex;
+          flex: 0 0 auto;
           align-items: center;
           gap: 1px;
           border: 1px solid rgba(90, 65, 50, 0.12);

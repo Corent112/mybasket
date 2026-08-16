@@ -4,7 +4,7 @@ import { createGoogleDriveAdminClient } from "./admin";
 import { decryptGoogleDriveToken } from "./crypto";
 
 export const GOOGLE_DRIVE_SCOPE =
-  "https://www.googleapis.com/auth/drive.file";
+  "https://www.googleapis.com/auth/drive.readonly";
 
 type TeamDriveConnection = {
   team_id: string;
