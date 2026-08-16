@@ -680,7 +680,7 @@ export default function TeamAdvancedStats({
         </div>
         <div className="advanced-actions">
           <button type="button" className="target-button" onClick={() => setBenchmarkOpen(true)}>
-            🎯 Objectifs de tir
+            ➕ Ajouter des critères
           </button>
           <button type="button" className="reset" onClick={reset}>
             Réinitialiser les filtres
@@ -696,8 +696,8 @@ export default function TeamAdvancedStats({
             <div className="benchmark-head">
               <div>
                 <span>OBJECTIFS DE TIR</span>
-                <h3>Définir tes seuils de réussite</h3>
-                <p>Tu choisis toi-même quand une zone devient positive, neutre ou négative.</p>
+                <h3>Définir les critères de couleur</h3>
+                <p>Renseigne les pourcentages qui déterminent quand une zone passe en vert, orange ou rouge.</p>
               </div>
               <button type="button" onClick={() => setBenchmarkOpen(false)}>×</button>
             </div>
@@ -1027,6 +1027,26 @@ export default function TeamAdvancedStats({
         ) : <Empty />}
       </Panel>
 
+      <div className="criteria-toolbar">
+        <div>
+          <span className="criteria-kicker">CRITÈRES DE COULEUR</span>
+          <strong>Shot chart</strong>
+          <small>
+            3PTS : vert ≥ {benchmarks.three.greenFrom}% · orange {benchmarks.three.redBelow}%–{benchmarks.three.greenFrom - 1}% · rouge &lt; {benchmarks.three.redBelow}%
+          </small>
+          <small>
+            2PTS ext. : vert ≥ {benchmarks.twoOutside.greenFrom}% · orange {benchmarks.twoOutside.redBelow}%–{benchmarks.twoOutside.greenFrom - 1}% · rouge &lt; {benchmarks.twoOutside.redBelow}%
+          </small>
+          <small>
+            2PTS int. : vert ≥ {benchmarks.twoInside.greenFrom}% · orange {benchmarks.twoInside.redBelow}%–{benchmarks.twoInside.greenFrom - 1}% · rouge &lt; {benchmarks.twoInside.redBelow}%
+          </small>
+        </div>
+
+        <button type="button" onClick={() => setBenchmarkOpen(true)}>
+          + Ajouter des critères
+        </button>
+      </div>
+
       <div className="shot-layout">
         <Panel title="Shot chart" subtitle={`${madeShots}/${shots.length} tirs réussis · ${pct(madeShots, shots.length)}`}>
           <div className="shot-chart-wrap">
@@ -1124,6 +1144,52 @@ export default function TeamAdvancedStats({
         .player-table td { padding:10px; border-bottom:1px solid #f2e9e3; text-align:center; }
         .player-table td strong { color:#362820; }
         .player-table small { display:block; margin-top:2px; color:#a39086; }
+        .criteria-toolbar {
+          display:flex;
+          align-items:center;
+          justify-content:space-between;
+          gap:18px;
+          padding:14px 16px;
+          border:1px solid #eadfd5;
+          border-radius:16px;
+          background:#fffaf5;
+        }
+        .criteria-toolbar > div {
+          min-width:0;
+          display:grid;
+          gap:3px;
+        }
+        .criteria-kicker {
+          color:#d4a24c;
+          font-size:.6rem;
+          font-weight:950;
+          letter-spacing:.1em;
+        }
+        .criteria-toolbar strong {
+          color:#6b1a2c;
+          font-size:.9rem;
+        }
+        .criteria-toolbar small {
+          color:#8c7d74;
+          font-size:.64rem;
+          line-height:1.35;
+        }
+        .criteria-toolbar > button {
+          flex:0 0 auto;
+          min-height:40px;
+          padding:0 15px;
+          border:1px solid #6b1a2c;
+          border-radius:999px;
+          background:#6b1a2c;
+          color:#fff;
+          font-weight:900;
+          cursor:pointer;
+          white-space:nowrap;
+        }
+        .criteria-toolbar > button:hover {
+          background:#571523;
+        }
+
         .shot-chart-wrap { position:relative; width:100%; max-width:900px; margin:0 auto; }
         .shot-chart-wrap :global(svg text) { display:none !important; }
         .shot-zone-overlay { position:absolute; inset:0; pointer-events:none; overflow:hidden; border-radius:inherit; }
@@ -1207,6 +1273,8 @@ export default function TeamAdvancedStats({
           .filters { grid-template-columns:repeat(2,minmax(0,1fr)); }
           .summary-grid { grid-template-columns:repeat(3,minmax(0,1fr)); }
           .benchmark-grid { grid-template-columns:1fr; }
+          .criteria-toolbar { flex-direction:column; align-items:stretch; }
+          .criteria-toolbar > button { width:100%; }
           .clip-browser-layout { grid-template-columns:1fr; }
           .clip-list { max-height:290px; border-left:0; border-top:1px solid #eadfd7; }
           .two-cols, .shot-layout { grid-template-columns:1fr; }
@@ -1356,11 +1424,11 @@ function BenchmarkEditor({
         <div><input type="number" min="0" max="100" value={value.target} onChange={(e) => set("target", e.target.value)} /><b>%</b></div>
       </label>
       <label className="positive-field">
-        <span>Vert à partir de</span>
+        <span>Vert (positif) à partir de</span>
         <div><input type="number" min="0" max="100" value={value.greenFrom} onChange={(e) => set("greenFrom", e.target.value)} /><b>%</b></div>
       </label>
       <label className="negative-field">
-        <span>Rouge en dessous de</span>
+        <span>Rouge (négatif) en dessous de</span>
         <div><input type="number" min="0" max="100" value={value.redBelow} onChange={(e) => set("redBelow", e.target.value)} /><b>%</b></div>
       </label>
       <p>Orange entre {value.redBelow}% et {value.greenFrom - 1}%.</p>
