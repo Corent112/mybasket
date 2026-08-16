@@ -1,6 +1,11 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import GoogleDriveVideoPicker from "@/components/video/GoogleDriveVideoPicker";
+import {
+  googleDriveFileStreamUrl,
+  type GoogleDrivePickedVideo,
+} from "@/lib/google-drive/client";
 
 function DriveMark() {
   return (
@@ -20,6 +25,8 @@ export default function TeamGoogleDriveSettings({
   const [loading, setLoading] = useState(true);
   const [connected, setConnected] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [selectedVideo, setSelectedVideo] = useState<GoogleDrivePickedVideo | null>(null);
+  const [showPlayer, setShowPlayer] = useState(false);
 
   const load = async () => {
     setLoading(true);
@@ -67,6 +74,8 @@ export default function TeamGoogleDriveSettings({
       if (!response.ok) {
         throw new Error(payload.error || "Déconnexion impossible.");
       }
+      setSelectedVideo(null);
+      setShowPlayer(false);
       await load();
     } catch (error) {
       window.alert(error instanceof Error ? error.message : "Erreur.");
@@ -100,6 +109,15 @@ export default function TeamGoogleDriveSettings({
               <i />
               Google Drive connecté
             </span>
+            <GoogleDriveVideoPicker
+              teamId={teamId}
+              compact
+              label={selectedVideo ? "Changer de vidéo" : "Choisir une vidéo"}
+              onPicked={(file) => {
+                setSelectedVideo(file);
+                setShowPlayer(true);
+              }}
+            />
             <button type="button" className="secondary" onClick={disconnect} disabled={busy}>
               {busy ? "Déconnexion…" : "Déconnecter"}
             </button>
@@ -113,6 +131,45 @@ export default function TeamGoogleDriveSettings({
           </>
         )}
       </div>
+
+      {connected && selectedVideo ? (
+        <div className="drive-video">
+          <div className="drive-video-head">
+            <div>
+              <span className="eyebrow">Vidéo sélectionnée</span>
+              <strong title={selectedVideo.name}>{selectedVideo.name}</strong>
+            </div>
+            <div className="drive-video-actions">
+              <button
+                type="button"
+                className="secondary"
+                onClick={() => setShowPlayer((value) => !value)}
+              >
+                {showPlayer ? "Masquer" : "▶ Regarder"}
+              </button>
+              <button
+                type="button"
+                className="secondary"
+                onClick={() => {
+                  setSelectedVideo(null);
+                  setShowPlayer(false);
+                }}
+              >
+                Retirer
+              </button>
+            </div>
+          </div>
+          {showPlayer ? (
+            <video
+              className="drive-player"
+              src={googleDriveFileStreamUrl(teamId, selectedVideo.id)}
+              controls
+              playsInline
+              preload="metadata"
+            />
+          ) : null}
+        </div>
+      ) : null}
 
       <div className="drive-security">
         <span>🔒 Accès réservé aux membres autorisés de l’équipe</span>
@@ -214,6 +271,56 @@ export default function TeamGoogleDriveSettings({
           opacity: 0.55;
           cursor: default;
         }
+        .drive-video {
+          grid-column: 1 / -1;
+          min-width: 0;
+          padding: 14px;
+          border: 1px solid #f0e7e1;
+          border-radius: 14px;
+          background: #fffaf5;
+        }
+        .drive-video-head {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 14px;
+        }
+        .drive-video-head > div:first-child {
+          min-width: 0;
+          display: grid;
+          gap: 3px;
+        }
+        .drive-video-head strong {
+          overflow: hidden;
+          text-overflow: ellipsis;
+          white-space: nowrap;
+        }
+        .drive-video-actions {
+          display: flex;
+          gap: 8px;
+          flex: 0 0 auto;
+        }
+        .drive-player {
+          display: block;
+          width: 100%;
+          max-height: 560px;
+          margin-top: 12px;
+          border-radius: 12px;
+          background: #111;
+        }
+        .drive-status :global(.gdrive-picker) {
+          display: inline-flex;
+        }
+        .drive-status :global(.gdrive-picker button) {
+          min-height: 36px;
+          border: 1px solid #6b1a2c;
+          border-radius: 999px;
+          padding: 0 14px;
+          background: #6b1a2c;
+          color: #fff;
+          font-weight: 900;
+          cursor: pointer;
+        }
         .drive-security {
           grid-column: 1 / -1;
           display: flex;
@@ -238,6 +345,14 @@ export default function TeamGoogleDriveSettings({
           }
           .drive-status {
             justify-content: flex-start;
+          }
+          .drive-video-head {
+            align-items: flex-start;
+            flex-direction: column;
+          }
+          .drive-video-actions {
+            width: 100%;
+            flex-wrap: wrap;
           }
           .drive-security {
             justify-content: flex-start;
