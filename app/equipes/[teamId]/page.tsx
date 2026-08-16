@@ -3,6 +3,7 @@
 // app/equipes/[teamId]/page.tsx
 import TeamMatchHistoryBlock from "@/components/equipes/TeamMatchHistoryBlock";
 import TeamGoogleDriveSettings from "@/components/video/TeamGoogleDriveSettings";
+import WeeklyTrainingPlanner from "@/components/equipes/WeeklyTrainingPlanner";
 import { use, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
@@ -1125,6 +1126,7 @@ export default function EquipeDetailPage({
 
         {activeTab === "training" && (
           <div className="team-tab-panel training-panel">
+            <WeeklyTrainingPlanner teamId={team.id} />
             <TrainingAnalysisBlock teamId={linkedStatsTeamId} fallbackTeamId={teamId} team={team} />
           </div>
         )}
