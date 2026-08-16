@@ -202,12 +202,10 @@ export async function POST(
       {
         team_id: invitation.team_id,
         user_id: user.id,
-        email: accountEmail,
         role: invitation.role || "Staff",
         permissions: invitation.permissions || { view_team: true },
         status: "accepted",
         invited_by: invitation.invited_by,
-        accepted_at: now,
         updated_at: now,
       },
       { onConflict: "team_id,user_id" },

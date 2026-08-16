@@ -27,6 +27,37 @@ function normalizeEmail(value: unknown) {
   return String(value ?? "").trim().toLowerCase();
 }
 
+async function findAuthUserIdByEmail(
+  admin: NonNullable<ReturnType<typeof createAdminClient>>,
+  email: string,
+) {
+  const target = normalizeEmail(email);
+  if (!target) return null;
+
+  let page = 1;
+  const perPage = 200;
+
+  while (page <= 50) {
+    const { data, error } = await admin.auth.admin.listUsers({
+      page,
+      perPage,
+    });
+
+    if (error) throw error;
+
+    const found = (data?.users ?? []).find(
+      (candidate) => normalizeEmail(candidate.email) === target,
+    );
+
+    if (found?.id) return found.id;
+    if ((data?.users ?? []).length < perPage) break;
+
+    page += 1;
+  }
+
+  return null;
+}
+
 function escapeHtml(value: unknown) {
   return String(value ?? "")
     .replaceAll("&", "&amp;")
@@ -210,7 +241,7 @@ export async function GET(request: NextRequest) {
         .order("created_at", { ascending: false }),
       supabase
         .from("team_members")
-        .select("id,team_id,user_id,email,role,permissions,status,accepted_at,created_at")
+        .select("id,team_id,user_id,role,permissions,status,created_at")
         .eq("team_id", teamId)
         .eq("status", "accepted")
         .order("created_at", { ascending: true }),
@@ -223,9 +254,22 @@ export async function GET(request: NextRequest) {
     );
   }
 
+  const admin = createAdminClient();
+  const enrichedMembers = await Promise.all(
+    (members ?? []).map(async (member) => {
+      if (!admin || !member.user_id) return member;
+
+      const { data } = await admin.auth.admin.getUserById(member.user_id);
+      return {
+        ...member,
+        email: normalizeEmail(data?.user?.email) || null,
+      };
+    }),
+  );
+
   return NextResponse.json({
     invitations: invitations ?? [],
-    members: members ?? [],
+    members: enrichedMembers,
   });
 }
 
@@ -277,19 +321,29 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  const { data: existingMember } = await admin
-    .from("team_members")
-    .select("id,status")
-    .eq("team_id", teamId)
-    .eq("email", email)
-    .eq("status", "accepted")
-    .maybeSingle();
+  let existingUserId: string | null = null;
 
-  if (existingMember?.id) {
-    return NextResponse.json(
-      { error: "Cette personne collabore déjà sur l’équipe." },
-      { status: 409 },
-    );
+  try {
+    existingUserId = await findAuthUserIdByEmail(admin, email);
+  } catch (error) {
+    console.error("Erreur recherche compte invité:", error);
+  }
+
+  if (existingUserId) {
+    const { data: existingMember } = await admin
+      .from("team_members")
+      .select("id,status")
+      .eq("team_id", teamId)
+      .eq("user_id", existingUserId)
+      .eq("status", "accepted")
+      .maybeSingle();
+
+    if (existingMember?.id) {
+      return NextResponse.json(
+        { error: "Cette personne collabore déjà sur l’équipe." },
+        { status: 409 },
+      );
+    }
   }
 
   await admin
