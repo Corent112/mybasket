@@ -2017,32 +2017,9 @@ function TrainingAnalysisBlock({
         });
       }
 
-      if (rows.length === 0 && typeof window !== "undefined") {
-        const keys = ["mybasket_team_practice_sessions", "mybasket_sessions", "mybasket_seances", "practice_sessions"];
-        for (const key of keys) {
-          try {
-            const parsed = JSON.parse(window.localStorage.getItem(key) || "[]");
-            if (Array.isArray(parsed) && parsed.length > 0) {
-              rows = parsed.filter((row: any) => {
-                const content = readSessionContent(row) || {};
-                const possibleIds = compactStrings([
-                  row.team_id,
-                  row.team_reference_id,
-                  row.teamId,
-                  row.team_local_id,
-                  row.equipe_id,
-                  row.equipeId,
-                  content.team_local_id,
-                  content.team_id,
-                  content.team?.id,
-                ]);
-                return possibleIds.some((value) => candidateIds.includes(value));
-              });
-              if (rows.length > 0) break;
-            }
-          } catch {}
-        }
-      }
+      // Source unique : les séances de la fiche équipe proviennent uniquement de Supabase.
+      // Aucun fallback localStorage : une séance supprimée de practice_sessions ne doit jamais
+      // réapparaître dans les analyses / donuts de l’équipe.
 
       setSessions(rows.map(normalizeTrainingSession));
     } catch (error) {

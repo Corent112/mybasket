@@ -528,7 +528,17 @@ export default function MonCalendrier() {
 
   const deleteEvent = async () => {
     if (!editingId) return;
-    if (!window.confirm("Supprimer cet événement ?")) return;
+
+    const eventToDelete = events.find((event) => event.id === editingId);
+    if (!eventToDelete) return;
+
+    const linkedSessionId = eventToDelete.sessionId;
+    const confirmed = window.confirm(
+      linkedSessionId
+        ? "Supprimer définitivement cette séance ? Elle disparaîtra du calendrier, de la fiche équipe et de toutes les statistiques de séance."
+        : "Supprimer cet événement ?",
+    );
+    if (!confirmed) return;
 
     const {
       data: { user },
@@ -540,11 +550,137 @@ export default function MonCalendrier() {
       return;
     }
 
-    const { error } = await supabase
+    if (linkedSessionId) {
+      // Vérifie explicitement que la séance appartient bien à l'utilisateur courant.
+      // Le compte CEO/superadmin ne reçoit aucun passe-droit dans cet espace personnel.
+      const { data: linkedSession, error: sessionLookupError } = await supabase
+        .from("practice_sessions")
+        .select("id, user_id, owner_id")
+        .eq("id", linkedSessionId)
+        .maybeSingle();
+
+      if (sessionLookupError) {
+        console.error("Erreur vérification séance liée:", sessionLookupError);
+        window.alert(`Impossible de vérifier la séance : ${sessionLookupError.message}`);
+        return;
+      }
+
+      if (linkedSession) {
+        const ownerIds = [linkedSession.user_id, linkedSession.owner_id]
+          .map((value) => String(value || ""))
+          .filter(Boolean);
+
+        if (!ownerIds.includes(user.id)) {
+          window.alert("Cette séance ne t’appartient pas.");
+          return;
+        }
+
+        const sessionChildren = [
+          "practice_session_attendance",
+          "practice_session_players",
+          "practice_session_exercises",
+        ];
+
+        for (const table of sessionChildren) {
+          const { error: childError } = await supabase
+            .from(table)
+            .delete()
+            .eq("session_id", linkedSessionId);
+
+          if (childError) {
+            const optionalTableMissing =
+              childError.code === "PGRST204" ||
+              childError.code === "PGRST205" ||
+              childError.message?.includes("schema cache") ||
+              childError.message?.includes("Could not find");
+
+            if (!optionalTableMissing) {
+              console.error(`Erreur suppression ${table}:`, childError);
+              window.alert(
+                `Impossible de supprimer complètement la séance : ${childError.message}`,
+              );
+              return;
+            }
+          }
+        }
+
+        const { data: deletedSessionRows, error: sessionDeleteError } = await supabase
+          .from("practice_sessions")
+          .delete()
+          .eq("id", linkedSessionId)
+          .select("id");
+
+        if (sessionDeleteError) {
+          console.error("Erreur suppression séance liée:", sessionDeleteError);
+          window.alert(
+            `Impossible de supprimer la séance de MyBasket : ${sessionDeleteError.message}`,
+          );
+          return;
+        }
+
+        if (!deletedSessionRows || deletedSessionRows.length === 0) {
+          window.alert(
+            "La séance n’a pas été supprimée. Vérifie les droits Supabase/RLS avant de réessayer.",
+          );
+          return;
+        }
+      }
+
+      // Supprime toutes les représentations calendrier de cette même séance
+      // appartenant à l'utilisateur courant.
+      const { error: calendarDeleteError } = await supabase
+        .from("calendar_events")
+        .delete()
+        .eq("session_id", linkedSessionId)
+        .or(`user_id.eq.${user.id},owner_id.eq.${user.id}`);
+
+      if (calendarDeleteError) {
+        console.error("Erreur suppression calendrier séance:", calendarDeleteError);
+        window.alert(
+          `La séance a été supprimée, mais le calendrier n’a pas pu être nettoyé : ${calendarDeleteError.message}`,
+        );
+        await loadEvents();
+        return;
+      }
+
+      // Nettoyage des anciens caches locaux historiques pour empêcher toute réapparition
+      // d'une séance supprimée sur un navigateur ayant utilisé une ancienne version de MyBasket.
+      if (typeof window !== "undefined") {
+        for (const key of [
+          "mybasket_team_practice_sessions",
+          "mybasket_sessions",
+          "mybasket_seances",
+          "practice_sessions",
+        ]) {
+          try {
+            const parsed = JSON.parse(window.localStorage.getItem(key) || "[]");
+            if (!Array.isArray(parsed)) continue;
+            const cleaned = parsed.filter(
+              (row: Record<string, unknown>) => String(row?.id || "") !== linkedSessionId,
+            );
+            if (cleaned.length !== parsed.length) {
+              window.localStorage.setItem(key, JSON.stringify(cleaned));
+            }
+          } catch {
+            // Ancien cache illisible : on l'ignore, Supabase reste la source unique.
+          }
+        }
+      }
+
+      setEvents((previous) =>
+        previous.filter((event) => event.sessionId !== linkedSessionId),
+      );
+      setOpen(false);
+      return;
+    }
+
+    // Événement simple : on ne touche à aucune séance, aucun match, aucune équipe ni aucun joueur.
+    const { data: deletedEventRows, error } = await supabase
       .from("calendar_events")
       .delete()
       .eq("id", editingId)
-      .or(`user_id.eq.${user.id},owner_id.eq.${user.id}`);
+      .or(`user_id.eq.${user.id},owner_id.eq.${user.id}`)
+      .select("id");
 
     if (error) {
       console.error("Erreur suppression événement:", {
@@ -557,7 +693,12 @@ export default function MonCalendrier() {
       return;
     }
 
-    await loadEvents();
+    if (!deletedEventRows || deletedEventRows.length === 0) {
+      window.alert("L'événement n'a pas été supprimé.");
+      return;
+    }
+
+    setEvents((previous) => previous.filter((event) => event.id !== editingId));
     setOpen(false);
   };
 

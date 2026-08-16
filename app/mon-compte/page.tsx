@@ -19,8 +19,6 @@ import {
   saveTeam,
   deleteTeam,
   upsertPlayer,
-  addMatch,
-  deleteMatch,
 } from '@/lib/equipes-store';
 import {
   listPlaybooks,
@@ -31,7 +29,7 @@ import {
 } from "@/lib/playbook";
 import TeamForm from '@/components/equipes/TeamForm';
 import PlayerForm from '@/components/equipes/PlayerForm';
-import type { Player, Team, TeamMatch } from '@/types/player';
+import type { Player, Team } from '@/types/player';
 import GamePlanModule from "@/components/management/GamePlanModule";
 import GestionAdminModule from "@/components/management/GestionAdminModule";
 
@@ -164,7 +162,7 @@ export default function MonComptePage() {
   const [teams, setTeams] = useState<Team[]>([]);
   const [teamForm, setTeamForm] = useState<{ open: boolean; team?: Team }>({ open: false });
   const [playerFor, setPlayerFor] = useState<string | null>(null);
-  const [matchFor, setMatchFor] = useState<string | null>(null);
+  const [teamCalendarMatchCounts, setTeamCalendarMatchCounts] = useState<Record<string, number>>({});
   const [playbookModalOpen, setPlaybookModalOpen] = useState(false);
   const [playbooks, setPlaybooks] = useState<Playbook[]>([]);
 
@@ -202,9 +200,46 @@ export default function MonComptePage() {
     try {
       const data = await getTeams();
       setTeams(data);
+
+      // Le calendrier est la source unique des événements d'équipe.
+      // Un match créé dans LiveStatsPro crée déjà un calendar_event de type "game".
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user || data.length === 0) {
+        setTeamCalendarMatchCounts({});
+        return;
+      }
+
+      const teamIds = data.map((team) => String(team.id || "")).filter(Boolean);
+      const { data: calendarRows, error: calendarError } = await supabase
+        .from("calendar_events")
+        .select("team_id,event_type")
+        .in("team_id", teamIds)
+        .eq("event_type", "game")
+        .or(`user_id.eq.${user.id},owner_id.eq.${user.id}`);
+
+      if (calendarError) {
+        console.error("Erreur chargement matchs calendrier:", calendarError);
+        setTeamCalendarMatchCounts({});
+        return;
+      }
+
+      const counts: Record<string, number> = (calendarRows ?? []).reduce(
+        (
+          acc: Record<string, number>,
+          row: { team_id?: string | null },
+        ) => {
+          const rowTeamId = String(row.team_id || "");
+          if (rowTeamId) acc[rowTeamId] = (acc[rowTeamId] || 0) + 1;
+          return acc;
+        },
+        {},
+      );
+
+      setTeamCalendarMatchCounts(counts);
     } catch (error) {
       console.error("Erreur chargement équipes:", error);
       setTeams([]);
+      setTeamCalendarMatchCounts({});
     }
   };
   const reloadPlaybooks = async () => {
@@ -423,28 +458,6 @@ export default function MonComptePage() {
     }
   };
 
-  const handleMatchSave = async (teamId: string, match: TeamMatch) => {
-    try {
-      await addMatch(teamId, match);
-      setMatchFor(null);
-      await reloadTeams();
-      showToast("Match ajouté");
-    } catch (error) {
-      console.error("Erreur ajout match:", error);
-      alert("Erreur pendant l'ajout du match.");
-    }
-  };
-
-  const handleMatchDelete = async (teamId: string, matchId: string) => {
-    try {
-      await deleteMatch(teamId, matchId);
-      await reloadTeams();
-      showToast("Match supprimé");
-    } catch (error) {
-      console.error("Erreur suppression match:", error);
-      alert("Erreur pendant la suppression du match.");
-    }
-  };
 const createPlaybook = async () => {
   const title = window.prompt("Nom du playbook ?");
 
@@ -750,7 +763,7 @@ return (
                   const category = team.cat || team.categorieLabel || 'Équipe';
                   const level = team.niveau || 'Niveau non renseigné';
                   const coach = team.entraineurPrincipal || team.coach || 'Non renseigné';
-                  const matchCount = team.kpi?.matchsJoues || team.statsHistory?.length || team.matchs?.filter((match) => match.kind === 'Match').length || 0;
+                  const matchCount = teamCalendarMatchCounts[String(team.id)] || 0;
                   const wins = team.teamStats?.wins ?? team.kpi?.victoires ?? 0;
                   const losses = team.teamStats?.losses ?? team.kpi?.defaites ?? 0;
 
@@ -811,7 +824,6 @@ return (
                             Voir la page de l'équipe →
                           </button>
                           <button type="button" onClick={() => setPlayerFor(team.id)}>+ Joueur</button>
-                          <button type="button" onClick={() => setMatchFor(team.id)}>+ Match / Entraînement</button>
                           <button type="button" onClick={() => setTeamForm({ open: true, team })}>Éditer</button>
                           <button type="button" className="danger" onClick={() => handleDeleteTeam(team)}>🗑️</button>
                         </div>
@@ -1065,12 +1077,6 @@ return (
         />
       )}
 
-      {matchFor && (
-        <MatchForm
-          onSave={(match) => handleMatchSave(matchFor, match)}
-          onClose={() => setMatchFor(null)}
-        />
-      )}
 {playbookModalOpen && (
   <PlaybookCreateModal
     onClose={() => setPlaybookModalOpen(false)}
@@ -2686,74 +2692,6 @@ function AnnoncesSection({ userId }: { userId: string }) {
   );
 }
 
-function MatchForm({
-  onSave,
-  onClose,
-}: {
-  onSave: (match: TeamMatch) => void;
-  onClose: () => void;
-}) {
-  const [match, setMatch] = useState<TeamMatch>({
-    id: '',
-    kind: 'Match',
-    date: '',
-    heure: '',
-    adversaire: '',
-    domicile: true,
-  });
-
-  return (
-    <div className="tl-modal-bg" onClick={onClose}>
-      <div className="tl-modal" onClick={(e) => e.stopPropagation()}>
-        <h3>Match / Entraînement</h3>
-
-        <div className="tl-fields">
-          <label>
-            Type
-            <select value={match.kind} onChange={(e) => setMatch({ ...match, kind: e.target.value as TeamMatch['kind'] })}>
-              <option>Match</option>
-              <option>Entraînement</option>
-            </select>
-          </label>
-
-          <label>
-            Date
-            <input value={match.date} onChange={(e) => setMatch({ ...match, date: e.target.value })} placeholder="30/05/2026" />
-          </label>
-
-          <label>
-            Heure
-            <input value={match.heure} onChange={(e) => setMatch({ ...match, heure: e.target.value })} placeholder="15:30" />
-          </label>
-
-          {match.kind === 'Match' && (
-            <label>
-              Adversaire
-              <input value={match.adversaire} onChange={(e) => setMatch({ ...match, adversaire: e.target.value })} placeholder="Massy" />
-            </label>
-          )}
-        </div>
-
-        <div className="tl-modal-actions">
-          <button type="button" onClick={onClose}>Annuler</button>
-          <button
-            type="button"
-            className="primary"
-            onClick={() => {
-              if (!match.date.trim()) {
-                alert('La date est obligatoire.');
-                return;
-              }
-              onSave(match);
-            }}
-          >
-            Ajouter
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-}
 function PlaybookCreateModal({
   onClose,
   onCreated,
