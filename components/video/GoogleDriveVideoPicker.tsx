@@ -1,4 +1,3 @@
-
 "use client";
 
 import { useEffect, useRef, useState } from "react";
@@ -41,15 +40,13 @@ function loadGooglePicker() {
 
         window.gapi.load("picker", {
           callback: () => resolve(),
-          onerror: () =>
-            reject(new Error("Google Picker indisponible.")),
+          onerror: () => reject(new Error("Google Picker indisponible.")),
         });
       };
 
-      const existing =
-        document.querySelector<HTMLScriptElement>(
-          'script[data-mybasket-google-api="1"]',
-        );
+      const existing = document.querySelector<HTMLScriptElement>(
+        'script[data-mybasket-google-api="1"]',
+      );
 
       if (existing) {
         if (window.gapi) boot();
@@ -82,8 +79,6 @@ export default function GoogleDriveVideoPicker({
   onPicked,
 }: Props) {
   const [connected, setConnected] = useState<boolean | null>(null);
-  // Diagnostic renvoyé par /api/google-drive/status : permet d'afficher la
-  // vraie raison au lieu de proposer une connexion qui échouera.
   const [configIssue, setConfigIssue] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const alive = useRef(true);
@@ -93,18 +88,23 @@ export default function GoogleDriveVideoPicker({
 
     const load = async () => {
       if (!teamId) return;
+
       try {
         const response = await fetch(
           `/api/google-drive/status?teamId=${encodeURIComponent(teamId)}`,
           { cache: "no-store" },
         );
         const payload = await response.json();
+
         if (!alive.current) return;
 
         setConnected(Boolean(payload.connected));
         setConfigIssue(
           payload.configured === false
-            ? String(payload.reason || "Google Drive n'est pas configuré côté serveur.")
+            ? String(
+                payload.reason ||
+                  "Google Drive n'est pas configuré côté serveur.",
+              )
             : null,
         );
       } catch {
@@ -120,8 +120,7 @@ export default function GoogleDriveVideoPicker({
   }, [teamId]);
 
   const connect = () => {
-    const returnTo =
-      window.location.pathname + window.location.search;
+    const returnTo = window.location.pathname + window.location.search;
 
     window.location.href =
       `/api/google-drive/connect?teamId=${encodeURIComponent(teamId)}` +
@@ -129,7 +128,7 @@ export default function GoogleDriveVideoPicker({
   };
 
   const openPicker = async () => {
-    if (!teamId || disabled) return;
+    if (!teamId || disabled || busy) return;
 
     if (configIssue) {
       window.alert(`Google Drive indisponible : ${configIssue}`);
@@ -154,6 +153,16 @@ export default function GoogleDriveVideoPicker({
         throw new Error(token.error || "Google Drive indisponible.");
       }
 
+      if (!token.accessToken) {
+        throw new Error("Jeton Google Drive absent.");
+      }
+
+      if (!token.developerKey) {
+        throw new Error(
+          "Clé Google Picker absente (NEXT_PUBLIC_GOOGLE_DRIVE_PICKER_API_KEY).",
+        );
+      }
+
       await loadGooglePicker();
 
       const google = window.google;
@@ -161,9 +170,7 @@ export default function GoogleDriveVideoPicker({
         throw new Error("Google Picker indisponible.");
       }
 
-      const view = new google.picker.DocsView(
-        google.picker.ViewId.DOCS,
-      );
+      const view = new google.picker.DocsView(google.picker.ViewId.DOCS);
       view.setMimeTypes(
         [
           "video/mp4",
@@ -181,16 +188,16 @@ export default function GoogleDriveVideoPicker({
         .addView(view)
         .setOAuthToken(token.accessToken)
         .setDeveloperKey(token.developerKey)
+        .setOrigin(window.location.origin)
         .setCallback((data: any) => {
           if (data.action === google.picker.Action.PICKED) {
             const doc = data.docs?.[0];
+
             if (doc?.id) {
               onPicked({
                 id: String(doc.id),
                 name: String(doc.name || doc.id),
-                mimeType: doc.mimeType
-                  ? String(doc.mimeType)
-                  : undefined,
+                mimeType: doc.mimeType ? String(doc.mimeType) : undefined,
                 url: doc.url ? String(doc.url) : undefined,
               });
             }
@@ -206,7 +213,8 @@ export default function GoogleDriveVideoPicker({
 
       if (token.appId) builder.setAppId(token.appId);
 
-      builder.build().setVisible(true);
+      const picker = builder.build();
+      picker.setVisible(true);
     } catch (error) {
       setBusy(false);
       window.alert(
@@ -225,8 +233,6 @@ export default function GoogleDriveVideoPicker({
         ? "Choisir dans Google Drive"
         : "Connecter Google Drive";
 
-  // `className` permet au parent d'imposer son propre style de bouton
-  // (ex. `.vbtn` dans LiveStats) sans changer l'apparence existante ailleurs.
   const button = (
     <button
       type="button"
@@ -239,12 +245,51 @@ export default function GoogleDriveVideoPicker({
     </button>
   );
 
-  if (className) return button;
+  if (className) {
+    return (
+      <>
+        {button}
+        <style jsx global>{`
+          .picker-dialog-bg {
+            z-index: 2147483646 !important;
+          }
+
+          .picker-dialog {
+            z-index: 2147483647 !important;
+          }
+
+          .picker-dialog iframe {
+            display: block !important;
+            visibility: visible !important;
+            opacity: 1 !important;
+          }
+        `}</style>
+      </>
+    );
+  }
 
   return (
-    <div className={`gdrive-picker ${compact ? "compact" : ""}`}>
-      {button}
-      {!compact && selectedName && <span>✓ {selectedName}</span>}
-    </div>
+    <>
+      <div className={`gdrive-picker ${compact ? "compact" : ""}`}>
+        {button}
+        {!compact && selectedName && <span>✓ {selectedName}</span>}
+      </div>
+
+      <style jsx global>{`
+        .picker-dialog-bg {
+          z-index: 2147483646 !important;
+        }
+
+        .picker-dialog {
+          z-index: 2147483647 !important;
+        }
+
+        .picker-dialog iframe {
+          display: block !important;
+          visibility: visible !important;
+          opacity: 1 !important;
+        }
+      `}</style>
+    </>
   );
 }
