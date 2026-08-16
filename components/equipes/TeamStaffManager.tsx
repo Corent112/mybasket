@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import type { StaffMember } from "@/types/player";
 
 type StaffDraft = {
@@ -9,6 +9,7 @@ type StaffDraft = {
   nom: string;
   role: string;
   email: string;
+  photo: string | null;
 };
 
 const ROLES = [
@@ -34,6 +35,7 @@ function emptyDraft(): StaffDraft {
     nom: "",
     role: "Assistant",
     email: "",
+    photo: null,
   };
 }
 
@@ -47,6 +49,7 @@ export default function TeamStaffManager({
   const [open, setOpen] = useState(false);
   const [saving, setSaving] = useState(false);
   const [draft, setDraft] = useState<StaffDraft>(emptyDraft());
+  const photoInputRef = useRef<HTMLInputElement>(null);
 
   const normalizedStaff = useMemo(() => staff ?? [], [staff]);
 
@@ -62,8 +65,57 @@ export default function TeamStaffManager({
       nom: member.nom || "",
       role: member.role || "Assistant",
       email: member.email || "",
+      photo: member.photo ?? null,
     });
     setOpen(true);
+  }
+
+  function onPhotoChange(event: React.ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    if (!file.type.startsWith("image/")) {
+      alert("Choisis un fichier image.");
+      event.target.value = "";
+      return;
+    }
+
+    const reader = new FileReader();
+
+    reader.onload = (loadEvent) => {
+      const image = new Image();
+
+      image.onload = () => {
+        const maxSize = 500;
+        const ratio = Math.min(
+          maxSize / image.width,
+          maxSize / image.height,
+          1,
+        );
+
+        const width = Math.max(1, Math.round(image.width * ratio));
+        const height = Math.max(1, Math.round(image.height * ratio));
+
+        const canvas = document.createElement("canvas");
+        canvas.width = width;
+        canvas.height = height;
+
+        const context = canvas.getContext("2d");
+        if (!context) return;
+
+        context.drawImage(image, 0, 0, width, height);
+
+        setDraft((prev) => ({
+          ...prev,
+          photo: canvas.toDataURL("image/jpeg", 0.85),
+        }));
+      };
+
+      image.src = loadEvent.target?.result as string;
+    };
+
+    reader.readAsDataURL(file);
+    event.target.value = "";
   }
 
   async function save() {
@@ -79,16 +131,16 @@ export default function TeamStaffManager({
 
     setSaving(true);
     try {
+      const existing = normalizedStaff.find((item) => item.id === draft.id);
+
       const member: StaffMember = {
         id: draft.id || newId(),
         prenom,
         nom,
         role,
         email: email || undefined,
-        photo:
-          normalizedStaff.find((item) => item.id === draft.id)?.photo ?? null,
-        userId:
-          normalizedStaff.find((item) => item.id === draft.id)?.userId ?? null,
+        photo: draft.photo,
+        userId: existing?.userId ?? null,
       };
 
       const exists = normalizedStaff.some((item) => item.id === member.id);
@@ -214,6 +266,55 @@ export default function TeamStaffManager({
             </div>
 
             <div className="grid">
+              <div className="photoField">
+                <span className="fieldLabel">Photo</span>
+
+                <div className="photoPicker">
+                  <div className="photoPreview">
+                    {draft.photo ? (
+                      <img src={draft.photo} alt="Aperçu du membre du staff" />
+                    ) : (
+                      <span>📷</span>
+                    )}
+                  </div>
+
+                  <div className="photoActions">
+                    <input
+                      ref={photoInputRef}
+                      type="file"
+                      accept="image/*"
+                      hidden
+                      onChange={onPhotoChange}
+                    />
+
+                    <button
+                      type="button"
+                      className="photoButton"
+                      onClick={() => photoInputRef.current?.click()}
+                    >
+                      {draft.photo ? "Changer la photo" : "Ajouter une photo"}
+                    </button>
+
+                    {draft.photo ? (
+                      <button
+                        type="button"
+                        className="removePhotoButton"
+                        onClick={() =>
+                          setDraft((prev) => ({ ...prev, photo: null }))
+                        }
+                      >
+                        Supprimer
+                      </button>
+                    ) : null}
+                  </div>
+                </div>
+
+                <small>
+                  La photo est redimensionnée automatiquement avant
+                  l’enregistrement.
+                </small>
+              </div>
+
               <label>
                 Prénom *
                 <input
@@ -411,7 +512,9 @@ export default function TeamStaffManager({
         }
         .actions button,
         .cancel,
-        .close {
+        .close,
+        .photoButton,
+        .removePhotoButton {
           cursor: pointer;
         }
         .edit,
@@ -441,10 +544,11 @@ export default function TeamStaffManager({
         }
         .modal {
           width: min(620px, 100%);
+          max-height: calc(100vh - 36px);
+          overflow-y: auto;
           background: #fff;
           border-radius: 20px;
           box-shadow: 0 30px 90px rgba(20, 13, 10, 0.3);
-          overflow: hidden;
         }
         .modalHeader {
           display: flex;
@@ -503,6 +607,65 @@ export default function TeamStaffManager({
           text-transform: none;
           letter-spacing: 0;
         }
+        .photoField {
+          grid-column: 1 / -1;
+          display: grid;
+          gap: 9px;
+        }
+        .fieldLabel {
+          color: #766a64;
+          font-size: 0.72rem;
+          font-weight: 900;
+          text-transform: uppercase;
+          letter-spacing: 0.03em;
+        }
+        .photoPicker {
+          display: flex;
+          align-items: center;
+          gap: 16px;
+          padding: 14px;
+          border: 1px solid #eadfd5;
+          border-radius: 14px;
+          background: #fbf8f5;
+        }
+        .photoPreview {
+          width: 82px;
+          height: 82px;
+          flex: 0 0 82px;
+          display: grid;
+          place-items: center;
+          overflow: hidden;
+          border-radius: 50%;
+          border: 2px solid #fff;
+          background: #f0e9e3;
+          box-shadow: 0 2px 8px rgba(48, 28, 20, 0.08);
+          font-size: 1.7rem;
+        }
+        .photoPreview img {
+          width: 100%;
+          height: 100%;
+          object-fit: cover;
+        }
+        .photoActions {
+          display: flex;
+          gap: 8px;
+          flex-wrap: wrap;
+        }
+        .photoButton,
+        .removePhotoButton {
+          border-radius: 999px;
+          padding: 9px 13px;
+          font-weight: 850;
+          background: #fff;
+        }
+        .photoButton {
+          border: 1px solid #d9c7bb;
+          color: #6b1a2c;
+        }
+        .removePhotoButton {
+          border: 1px solid #f0c9cf;
+          color: #a1243b;
+        }
         .modalActions {
           display: flex;
           justify-content: flex-end;
@@ -541,6 +704,13 @@ export default function TeamStaffManager({
           }
           .grid {
             grid-template-columns: 1fr;
+          }
+          .photoField {
+            grid-column: auto;
+          }
+          .photoPicker {
+            align-items: flex-start;
+            flex-direction: column;
           }
         }
       `}</style>

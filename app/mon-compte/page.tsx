@@ -745,74 +745,80 @@ return (
               </div>
 
               <div className="mc-teamgrid">
-                {teams.map((team) => (
-                  <article key={team.id} className="mc-teamcard">
-                    <div className="mc-team-banner">
-                      {team.banniere ? <img src={team.banniere} alt="" /> : <span>🏀</span>}
-                    </div>
+                {teams.map((team) => {
+                  const bandColor = team.couleurs?.[0] || '#6B1A2C';
+                  const category = team.cat || team.categorieLabel || 'Équipe';
+                  const level = team.niveau || 'Niveau non renseigné';
+                  const coach = team.entraineurPrincipal || team.coach || 'Non renseigné';
+                  const matchCount = team.kpi?.matchsJoues || team.statsHistory?.length || team.matchs?.filter((match) => match.kind === 'Match').length || 0;
+                  const wins = team.teamStats?.wins ?? team.kpi?.victoires ?? 0;
+                  const losses = team.teamStats?.losses ?? team.kpi?.defaites ?? 0;
 
-                    <div className="mc-team-body">
-                      <div className="mc-team-title">
-                        <div className="mc-team-logo">
+                  return (
+                    <article key={team.id} className="mc-teamcard mc-teamcard-horizontal">
+                      <div className="mc-team-banner mc-team-banner-horizontal" style={{ backgroundColor: bandColor }}>
+                        <div className="mc-team-banner-lines" aria-hidden="true" />
+                        <div className="mc-team-banner-logo">
                           {team.logo ? <img src={team.logo} alt="" /> : <span>🏀</span>}
                         </div>
-
-                        <div>
-                          <h3>{team.name}</h3>
-                          <p>{team.cat} · {team.players.length} joueur(s)</p>
+                        <div className="mc-team-banner-copy">
+                          <strong>{category}</strong>
+                          <span>{level}</span>
                         </div>
                       </div>
 
-                      {team.players.length > 0 && (
-                        <div className="mc-playerchips">
-                          {team.players.slice(0, 9).map((player) => (
-                            <button
-                              key={player.id}
-                              type="button"
-                              onClick={() => router.push(`/equipes/${team.id}/${player.id}`)}
-                            >
-                              <span>
-                                {player.photo ? <img src={player.photo} alt="" /> : player.firstName?.[0] || '?'}
-                              </span>
-                              {player.firstName} {player.lastName?.[0]}.
-                            </button>
-                          ))}
-                        </div>
-                      )}
-
-                      {team.matchs?.length > 0 && (
-                        <div className="mc-matches">
-                          <div className="mc-matches-title">
-                            Matchs / Entraînements ({team.matchs.length})
+                      <div className="mc-team-body mc-team-body-horizontal">
+                        <div className="mc-team-kpis">
+                          <div className="mc-team-kpi">
+                            <span className="mc-team-kpi-icon">▣</span>
+                            <div>
+                              <strong>{matchCount}</strong>
+                              <span>Matchs</span>
+                              <small>Saison {team.season || '2025-2026'}</small>
+                            </div>
                           </div>
 
-                          {team.matchs.map((match) => (
-                            <div key={match.id} className="mc-match">
-                              <span>{match.kind === 'Match' ? '🏀' : '🏋️'}</span>
-                              <strong>{match.date} {match.heure}</strong>
-                              <em>
-                                {match.kind === 'Match'
-                                  ? `vs ${match.adversaire || '—'}`
-                                  : 'Entraînement'}
-                              </em>
-                              <button type="button" onClick={() => handleMatchDelete(team.id, match.id)}>🗑️</button>
+                          <div className="mc-team-kpi">
+                            <span className="mc-team-kpi-icon">♙</span>
+                            <div>
+                              <strong>{team.players.length}</strong>
+                              <span>Joueurs</span>
+                              <small>Effectif</small>
                             </div>
-                          ))}
-                        </div>
-                      )}
+                          </div>
 
-                      <div className="mc-team-actions">
-                        <button className="main" onClick={() => router.push(`/equipes/${team.id}`)}>
-                          Voir la page de l'équipe
-                        </button>
-                        <button type="button" onClick={() => setPlayerFor(team.id)}>+ Joueur</button>
-                        <button type="button" onClick={() => setMatchFor(team.id)}>+ Match / Entraînement</button>
-                        <button type="button" onClick={() => setTeamForm({ open: true, team })}>Éditer</button>
-                        <button type="button" className="danger" onClick={() => handleDeleteTeam(team)}>🗑️</button>
+                          <div className="mc-team-kpi">
+                            <span className="mc-team-kpi-icon">▥</span>
+                            <div>
+                              <strong>{wins}V - {losses}D</strong>
+                              <span>Bilan</span>
+                              <small>Victoires - Défaites</small>
+                            </div>
+                          </div>
+
+                          <div className="mc-team-kpi mc-team-kpi-coach">
+                            <span className="mc-team-kpi-icon">♙</span>
+                            <div>
+                              <strong>{coach}</strong>
+                              <span>Coach</span>
+                              <small>Entraîneur principal</small>
+                            </div>
+                          </div>
+                        </div>
+
+                        <div className="mc-team-actions mc-team-actions-horizontal">
+                          <button className="main" onClick={() => router.push(`/equipes/${team.id}`)}>
+                            Voir la page de l'équipe →
+                          </button>
+                          <button type="button" onClick={() => setPlayerFor(team.id)}>+ Joueur</button>
+                          <button type="button" onClick={() => setMatchFor(team.id)}>+ Match / Entraînement</button>
+                          <button type="button" onClick={() => setTeamForm({ open: true, team })}>Éditer</button>
+                          <button type="button" className="danger" onClick={() => handleDeleteTeam(team)}>🗑️</button>
+                        </div>
                       </div>
-                    </div>
-                  </article>
-                ))}
+                    </article>
+                  );
+                })}
               </div>
             </div>
           )}
@@ -2995,30 +3001,39 @@ const CSS = `
 .mc-equipes-head h2{font-family:'Oswald',sans-serif;font-size:2rem;text-transform:uppercase;margin:0;color:#0F0F12}
 .mc-equipes-head p{margin:.25rem 0 0;color:#8a7b73;font-weight:500}
 .mc-new-team{background:#FBE9D0;color:#9a5a1a;border:none;border-radius:10px;padding:.65rem 1rem;font-weight:900}
-.mc-teamgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(330px,1fr));gap:1.4rem}
+.mc-teamgrid{display:flex;flex-direction:column;gap:1.15rem}
 .mc-teamcard{background:#fff;border:1px solid #efe6db;border-radius:18px;overflow:hidden;box-shadow:0 8px 24px rgba(60,30,20,.07)}
+.mc-teamcard-horizontal{display:grid;grid-template-columns:minmax(280px,31%) minmax(0,1fr);min-height:178px}
 .mc-team-banner{height:180px;background:linear-gradient(135deg,#2a1418,#6B1A2C);display:flex;align-items:center;justify-content:center;color:#fff;font-size:2.4rem}
 .mc-team-banner img{width:100%;height:100%;object-fit:cover}
+.mc-team-banner-horizontal{height:auto;min-height:178px;position:relative;justify-content:flex-start;gap:22px;padding:24px 28px;overflow:hidden;isolation:isolate}
+.mc-team-banner-horizontal::after{content:'';position:absolute;inset:0;background:linear-gradient(110deg,rgba(0,0,0,.2),rgba(0,0,0,.02));z-index:-1}
+.mc-team-banner-lines{position:absolute;inset:-35px;opacity:.13;background:radial-gradient(circle at 100% 50%,transparent 0 93px,#fff 94px 96px,transparent 97px),linear-gradient(90deg,transparent 49.5%,#fff 50%,transparent 50.5%);z-index:-1;pointer-events:none}
+.mc-team-banner-logo{width:82px;height:82px;border-radius:50%;background:#fff;border:4px solid rgba(255,255,255,.92);box-shadow:0 7px 22px rgba(0,0,0,.18);display:grid;place-items:center;overflow:hidden;flex:0 0 auto;color:#6B1A2C;font-size:1.65rem}
+.mc-team-banner-logo img{width:100%;height:100%;object-fit:contain;background:#fff}
+.mc-team-banner-copy{min-width:0;display:flex;flex-direction:column;align-items:flex-start}
+.mc-team-banner-copy strong{font-family:'Oswald',sans-serif;font-size:clamp(2rem,3vw,3.3rem);font-weight:900;line-height:.95;text-transform:uppercase;letter-spacing:-.02em}
+.mc-team-banner-copy span{margin-top:10px;font-size:.92rem;font-weight:900;text-transform:uppercase;letter-spacing:.04em;opacity:.95}
 .mc-team-body{padding:1rem}
-.mc-team-title{display:flex;align-items:center;gap:.75rem;margin-bottom:.9rem}
-.mc-team-logo{width:44px;height:44px;border-radius:11px;background:#6B1A2C;color:#D4A24C;display:flex;align-items:center;justify-content:center;overflow:hidden;flex:0 0 auto}
-.mc-team-logo img{width:100%;height:100%;object-fit:contain;background:#fff;padding:3px;box-sizing:border-box}
-.mc-team-title h3{font-family:'Oswald',sans-serif;text-transform:uppercase;margin:0;font-size:1.25rem;color:#0F0F12}
-.mc-team-title p{margin:.15rem 0 0;color:#8a7b73;font-size:.86rem;font-weight:700}
-.mc-playerchips{display:grid;grid-template-columns:repeat(3,1fr);gap:.5rem;margin-bottom:1rem}
-.mc-playerchips button{border:none;background:#fff;text-align:left;display:flex;align-items:center;gap:.35rem;font-size:.8rem;font-weight:700;min-width:0}
-.mc-playerchips button span{width:25px;height:25px;border-radius:50%;background:#191919;color:#D4A24C;display:flex;align-items:center;justify-content:center;overflow:hidden;flex:0 0 auto;font-size:.7rem}
-.mc-playerchips img{width:100%;height:100%;object-fit:cover}
-.mc-matches{background:#fff8ed;border:1px solid #f0e2cf;border-radius:13px;padding:.7rem;margin-bottom:1rem}
-.mc-matches-title{text-transform:uppercase;color:#9a5a1a;font-size:.72rem;font-weight:900;letter-spacing:.04em;margin-bottom:.4rem}
-.mc-match{display:flex;align-items:center;gap:.35rem;font-size:.82rem;padding:.2rem 0}
-.mc-match strong{font-weight:900}
-.mc-match em{font-style:normal;color:#8a7b73}
-.mc-match button{margin-left:auto;border:none;background:none}
+.mc-team-body-horizontal{min-width:0;padding:22px 24px 18px;display:flex;flex-direction:column;justify-content:center}
+.mc-team-kpis{display:grid;grid-template-columns:.85fr .85fr 1fr 1.3fr;align-items:stretch;margin-bottom:22px}
+.mc-team-kpi{min-width:0;display:flex;align-items:center;gap:10px;padding:4px 20px;border-right:1px solid #eee4dc}
+.mc-team-kpi:first-child{padding-left:0}
+.mc-team-kpi:last-child{border-right:0;padding-right:0}
+.mc-team-kpi-icon{width:30px;height:30px;display:grid;place-items:center;color:#81736b;font-size:1.05rem;flex:0 0 auto}
+.mc-team-kpi div{min-width:0}
+.mc-team-kpi strong{display:block;color:#0F0F12;font-size:.94rem;font-weight:950;line-height:1.15;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.mc-team-kpi span:not(.mc-team-kpi-icon){display:block;margin-top:2px;color:#0F0F12;font-size:.66rem;font-weight:900;text-transform:uppercase;letter-spacing:.04em}
+.mc-team-kpi small{display:block;margin-top:3px;color:#8a7b73;font-size:.64rem;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .mc-team-actions{display:flex;flex-wrap:wrap;gap:.45rem}
 .mc-team-actions button{border:1px solid #efe6db;background:#fff;border-radius:9px;padding:.48rem .75rem;font-weight:900;font-size:.8rem}
 .mc-team-actions button.main{background:#6B1A2C;color:#fff;border-color:#6B1A2C}
 .mc-team-actions button.danger{background:#c5283d;color:#fff;border-color:#c5283d;margin-left:auto}
+.mc-team-actions-horizontal{align-items:center;gap:.55rem}
+.mc-team-actions-horizontal button{min-height:38px;padding:.52rem .9rem}
+.mc-team-actions-horizontal button.danger{margin-left:auto;width:42px;padding:.52rem 0}
+@media (max-width:1200px){.mc-teamcard-horizontal{grid-template-columns:250px minmax(0,1fr)}.mc-team-banner-horizontal{padding:20px;gap:14px}.mc-team-banner-logo{width:64px;height:64px}.mc-team-kpis{grid-template-columns:repeat(2,1fr);gap:14px 0}.mc-team-kpi:nth-child(2){border-right:0}.mc-team-kpi:nth-child(3){padding-left:0}}
+@media (max-width:760px){.mc-teamcard-horizontal{display:block}.mc-team-banner-horizontal{min-height:145px}.mc-team-body-horizontal{padding:18px}.mc-team-kpis{grid-template-columns:1fr 1fr}.mc-team-kpi{padding:4px 12px}.mc-team-actions-horizontal button{flex:1 1 140px}.mc-team-actions-horizontal button.danger{flex:0 0 42px;margin-left:0}}
 
 .tl-modal-bg,.mbk-modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:5000;display:flex;align-items:flex-start;justify-content:center;padding:2rem 1rem;overflow:auto}
 .tl-modal,.mbk-modal{background:#fff;color:#111;border-radius:18px;width:100%;max-width:640px;padding:1.5rem;box-shadow:0 20px 70px rgba(0,0,0,.3)}
