@@ -15,7 +15,8 @@ import {
 } from "../../../lib/equipes-store";
 import PlayerForm from "@/components/equipes/PlayerForm";
 import TeamForm from "@/components/equipes/TeamForm";
-import type { Player, Team, TeamEvent } from "../../../types/player";
+import TeamStaffManager from "@/components/equipes/TeamStaffManager";
+import type { Player, StaffMember, Team, TeamEvent } from "../../../types/player";
 
 /* ---------- Icônes (SVG inline, trait) ---------- */
 function Ic({ d, size = 18 }: { d: string; size?: number }) {
@@ -648,6 +649,21 @@ export default function EquipeDetailPage({
     }
   }
 
+
+  async function handleStaffChange(nextStaff: StaffMember[]) {
+    if (!team) return;
+
+    try {
+      await saveTeam({ ...team, staff: nextStaff });
+      await reload();
+      flash("Staff mis à jour ✓");
+    } catch (error) {
+      console.error("Erreur mise à jour staff:", error);
+      alert("Impossible de mettre à jour le staff de cette équipe.");
+      throw error;
+    }
+  }
+
   async function handleSavePlayer(p: Player) {
     try {
       await upsertPlayer(teamId, p);
@@ -1033,48 +1049,7 @@ export default function EquipeDetailPage({
             </section>
 
             {/* ---------- STAFF ---------- */}
-            <section className="tl-card">
-              <div className="tl-card-h">
-                <span className="ic">
-                  <Ic d={ICONS.users} />
-                </span>
-                <h2>Staff</h2>
-              </div>
-              {team.staff?.length ? (
-                team.staff.map((s) => (
-                  <div key={s.id} className="tl-staff-item">
-                    <div className="tl-ini">
-                      {s.photo ? (
-                        <img
-                          src={s.photo}
-                          alt=""
-                          style={{
-                            width: "100%",
-                            height: "100%",
-                            borderRadius: "50%",
-                            objectFit: "cover",
-                          }}
-                        />
-                      ) : (
-                        `${s.prenom[0] || ""}${s.nom[0] || ""}`
-                      )}
-                    </div>
-                    <div>
-                      <div className="nm">
-                        {s.prenom} {s.nom}
-                      </div>
-                      <span className="tl-rolepill">{s.role}</span>
-                    </div>
-                    <span className="tl-chev">
-                      <Ic d={ICONS.chev} />
-                    </span>
-                  </div>
-                ))
-              ) : (
-                <p style={{ color: "#9a8a82" }}>Aucun membre du staff.</p>
-              )}
-              <button className="tl-linkbtn">Voir tout le staff</button>
-            </section>
+            <TeamStaffManager staff={team.staff || []} onChange={handleStaffChange} />
           </div>
         )}
 

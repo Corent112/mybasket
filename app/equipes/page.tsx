@@ -187,8 +187,16 @@ function mapTeamRow(row: any): Team {
         : Array.isArray(row.colors) && row.colors.length
           ? row.colors
           : base.couleurs,
-    staff: Array.isArray(row.staff) ? row.staff : [],
-    evenements: Array.isArray(row.evenements) ? row.evenements : [],
+    staff: Array.isArray(row.staff)
+      ? row.staff
+      : Array.isArray(row.metadata?.staff)
+        ? row.metadata.staff
+        : [],
+    evenements: Array.isArray(row.evenements)
+      ? row.evenements
+      : Array.isArray(row.metadata?.evenements)
+        ? row.metadata.evenements
+        : [],
     matchs: [],
     statsHistory: [],
     teamStats: base.teamStats,
@@ -217,6 +225,15 @@ function teamToSupabase(team: Team, userId: string) {
     logo_url: team.logo || null,
     banner_url: team.banniere || null,
     season: team.season || "2025-2026",
+    // La fiche équipe (lib/equipes-store) utilise déjà metadata pour conserver
+    // les données métier non matérialisées. On y conserve aussi le staff afin
+    // qu'il soit disponible partout sans créer une seconde architecture.
+    metadata: {
+      ...team,
+      players: undefined,
+      matchs: undefined,
+      statsHistory: undefined,
+    },
   };
 }
 
@@ -859,110 +876,57 @@ export default function MesEquipesPage() {
           )}
 
           <div className="acc-teamgrid">
-            {teams.map((t) => (
-              <div key={t.id} className="acc-tcard">
-                <div className="acc-tbanner">
-                  {t.banniere ? (
-                    <img src={t.banniere} alt="" />
-                  ) : (
-                    <div className="ph">🏀</div>
-                  )}
-                </div>
+            {teams.map((t) => {
+              const bandColor = t.couleurs?.[0] || "#7a1228";
+              const category = t.cat || t.categorieLabel || "Équipe";
+              const coach = t.entraineurPrincipal || t.coach || "Non renseigné";
 
-                <div className="acc-tbody">
-                  <div className="acc-thead">
+              return (
+                <article key={t.id} className="acc-tcard">
+                  <div className="acc-tbanner" style={{ backgroundColor: bandColor }}>
+                    <div className="acc-tbanner-lines" aria-hidden="true" />
                     <div className="acc-tlogo">
-                      {t.logo ? (
-                        <img src={t.logo} alt="" />
-                      ) : (
-                        <span style={{ fontSize: "1.1rem" }}>🏀</span>
-                      )}
+                      {t.logo ? <img src={t.logo} alt="" /> : <span>🏀</span>}
                     </div>
+                    <div className="acc-band-copy">
+                      <div className="acc-band-category">{category}</div>
+                      <div className="acc-band-level">{t.niveau || "Niveau non renseigné"}</div>
+                    </div>
+                  </div>
 
-                    <div>
-                      <div className="acc-tname">{t.name}</div>
-                      <div className="acc-tmeta">
-                        {t.cat || t.categorieLabel} · {t.players.length} joueur(s)
+                  <div className="acc-tbody">
+                    <div className="acc-team-kpis">
+                      <div className="acc-team-kpi">
+                        <span className="acc-team-kpi-icon">♙</span>
+                        <div><strong>{t.players.length}</strong><span>Joueurs</span></div>
+                      </div>
+                      <div className="acc-team-kpi">
+                        <span className="acc-team-kpi-icon">🏷</span>
+                        <div><strong>{t.niveau || "—"}</strong><span>Niveau</span></div>
+                      </div>
+                      <div className="acc-team-kpi">
+                        <span className="acc-team-kpi-icon">🗓</span>
+                        <div><strong>{t.season || "2025-2026"}</strong><span>Saison</span></div>
+                      </div>
+                      <div className="acc-team-kpi acc-team-kpi-coach">
+                        <span className="acc-team-kpi-icon">♟</span>
+                        <div><strong>{coach}</strong><span>Coach</span></div>
                       </div>
                     </div>
-                  </div>
 
-                  {t.players.length > 0 && (
-                    <div className="acc-players">
-                      {t.players.map((p) => (
-                        <div
-                          key={p.id}
-                          className="acc-chip"
-                          onClick={() => router.push(`/equipes/${t.id}/${p.id}`)}
-                        >
-                          <span className="pp">
-                            {p.photo ? (
-                              <img src={p.photo} alt="" />
-                            ) : (
-                              p.firstName?.[0] || "?"
-                            )}
-                          </span>
-                          <span>
-                            {p.firstName} {p.lastName?.[0]}.
-                          </span>
-                        </div>
-                      ))}
+                    <div className="acc-team-actions">
+                      <button className="acc-b acc-b-bx" onClick={() => router.push(`/equipes/${t.id}`)}>
+                        Voir la page de l'équipe →
+                      </button>
+                      <button className="acc-b acc-b-line" onClick={() => setPlayerFor(t.id)}>+ Joueur</button>
+                      <button className="acc-b acc-b-line" onClick={() => setMatchFor(t.id)}>+ Match / Entraînement</button>
+                      <button className="acc-b acc-b-line" onClick={() => setTeamForm({ open: true, team: t })}>Éditer</button>
+                      <button className="acc-b acc-b-trash" title="Supprimer l'équipe" onClick={() => handleDeleteTeam(t)}>🗑️</button>
                     </div>
-                  )}
-
-                  <div className="acc-actions">
-                    <button
-                      className="acc-b acc-b-bx"
-                      onClick={() => router.push(`/equipes/${t.id}`)}
-                    >
-                      👁️ Voir la page de l'équipe
-                    </button>
-                    <button
-                      className="acc-b acc-b-line"
-                      onClick={() => setPlayerFor(t.id)}
-                    >
-                      + Joueur
-                    </button>
-                    <button
-                      className="acc-b acc-b-cream"
-                      onClick={() => setMatchFor(t.id)}
-                    >
-                      + Match / Entraînement
-                    </button>
                   </div>
-
-                  <div className="acc-row2">
-                    <button
-                      className="acc-b acc-b-line"
-                      onClick={() => setTeamForm({ open: true, team: t })}
-                    >
-                      ✎ Éditer
-                    </button>
-                    <button
-                      className="acc-b acc-b-trash"
-                      title="Supprimer l'équipe"
-                      onClick={() => handleDeleteTeam(t)}
-                    >
-                      🗑️
-                    </button>
-                  </div>
-
-                  {t.players.length > 0 && (
-                    <div className="acc-player-actions">
-                      {t.players.map((p) => (
-                        <button
-                          key={p.id}
-                          type="button"
-                          onClick={() => handlePlayerDelete(t.id, p)}
-                        >
-                          Supprimer {p.firstName}
-                        </button>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              </div>
-            ))}
+                </article>
+              );
+            })}
           </div>
         </main>
       </div>

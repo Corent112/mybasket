@@ -160,6 +160,10 @@ export interface StaffMember {
   nom: string;
   role: string; // "Entraîneur", "Assistant"…
   photo?: string | null;
+  /** E-mail conservé pour préparer la future collaboration MyBasket. */
+  email?: string;
+  /** Compte MyBasket lié plus tard au membre du staff. */
+  userId?: string | null;
 }
 
 export const EVENT_TYPES = [
