@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { StaffMember } from "@/types/player";
 
 type StaffDraft = {
@@ -52,6 +52,21 @@ export default function TeamStaffManager({
   const photoInputRef = useRef<HTMLInputElement>(null);
 
   const normalizedStaff = useMemo(() => staff ?? [], [staff]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("addStaff") !== "1") return;
+
+    setDraft(emptyDraft());
+    setOpen(true);
+
+    params.delete("addStaff");
+    const nextSearch = params.toString();
+    const nextUrl = `${window.location.pathname}${nextSearch ? `?${nextSearch}` : ""}#staff`;
+    window.history.replaceState({}, "", nextUrl);
+  }, []);
 
   function openCreate() {
     setDraft(emptyDraft());
@@ -177,7 +192,7 @@ export default function TeamStaffManager({
 
   return (
     <>
-      <section className="staffCard">
+      <section id="staff" className="staffCard">
         <div className="staffHeader">
           <div>
             <span className="eyebrow">ENCADREMENT</span>

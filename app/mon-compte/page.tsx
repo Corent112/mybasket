@@ -824,6 +824,12 @@ return (
                             Voir la page de l'équipe →
                           </button>
                           <button type="button" onClick={() => setPlayerFor(team.id)}>+ Joueur</button>
+                          <button
+                            type="button"
+                            onClick={() => router.push(`/equipes/${team.id}?addStaff=1#staff`)}
+                          >
+                            + Staff
+                          </button>
                           <button type="button" onClick={() => setTeamForm({ open: true, team })}>Éditer</button>
                           <button type="button" className="danger" onClick={() => handleDeleteTeam(team)}>🗑️</button>
                         </div>
