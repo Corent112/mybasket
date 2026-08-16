@@ -388,7 +388,7 @@ export async function POST(request: NextRequest) {
     "une équipe";
 
   try {
-    await sendTeamInvitation({
+    const delivery = await sendTeamInvitation({
       request,
       to: email,
       token,
@@ -397,6 +397,16 @@ export async function POST(request: NextRequest) {
       inviter,
       permissions,
     });
+
+    if (!delivery?.sent) {
+      throw new Error(
+        delivery?.reason === "missing_api_key"
+          ? "RESEND_API_KEY absente dans Vercel."
+          : delivery?.reason === "missing_from"
+            ? "RESEND_FROM absent dans Vercel."
+            : "Le fournisseur e-mail n’a pas confirmé l’envoi.",
+      );
+    }
 
     await admin
       .from("team_invitations")
@@ -492,7 +502,7 @@ export async function PATCH(request: NextRequest) {
       "une équipe";
 
     try {
-      await sendTeamInvitation({
+      const delivery = await sendTeamInvitation({
         request,
         to: invitation.email,
         token,
@@ -501,6 +511,16 @@ export async function PATCH(request: NextRequest) {
         inviter,
         permissions,
       });
+
+      if (!delivery?.sent) {
+        throw new Error(
+          delivery?.reason === "missing_api_key"
+            ? "RESEND_API_KEY absente dans Vercel."
+            : delivery?.reason === "missing_from"
+              ? "RESEND_FROM absent dans Vercel."
+              : "Le fournisseur e-mail n’a pas confirmé l’envoi.",
+        );
+      }
 
       await admin
         .from("team_invitations")

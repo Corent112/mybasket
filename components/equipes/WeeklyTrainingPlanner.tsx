@@ -977,14 +977,25 @@ export default function WeeklyTrainingPlanner({ teamId }: { teamId: string }) {
           font-weight: 950;
         }
         .remove-block {
-          width: 22px;
-          height: 22px;
-          border: 0;
-          border-radius: 5px;
-          background: transparent;
-          color: #796c65;
+          width: 23px;
+          height: 23px;
+          flex: 0 0 23px;
+          display: grid;
+          place-items: center;
+          border: 1px solid rgba(107, 26, 44, 0.16);
+          border-radius: 50%;
+          background: rgba(255, 255, 255, 0.88);
+          color: #6b1a2c;
           cursor: pointer;
-          font-size: 0.9rem;
+          font-size: 0.88rem;
+          font-weight: 950;
+          line-height: 1;
+          box-shadow: 0 1px 4px rgba(55, 35, 27, 0.06);
+        }
+        .remove-block:hover {
+          background: #6b1a2c;
+          color: #fff;
+          border-color: #6b1a2c;
         }
         .block-note {
           width: 100%;

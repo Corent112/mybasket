@@ -17,9 +17,23 @@ export async function sendTransactionalEmail(input: {
   replyTo?: string | null;
 }) {
   const apiKey = process.env.RESEND_API_KEY;
+  const from = process.env.RESEND_FROM;
+
   if (!apiKey) {
-    console.warn("RESEND_API_KEY absente : email non envoyé", input.subject);
-    return { sent: false, reason: "missing_api_key" };
+    console.error("RESEND_API_KEY absente : email non envoyé", input.subject);
+    return { sent: false as const, reason: "missing_api_key" as const };
+  }
+
+  if (!from) {
+    console.error("RESEND_FROM absent : email non envoyé", input.subject);
+    return { sent: false as const, reason: "missing_from" as const };
+  }
+
+  const recipients = Array.isArray(input.to) ? input.to : [input.to];
+  const cleanRecipients = recipients.map((value) => value.trim()).filter(Boolean);
+
+  if (cleanRecipients.length === 0) {
+    throw new Error("Aucun destinataire e-mail valide.");
   }
 
   const response = await fetch("https://api.resend.com/emails", {
@@ -29,8 +43,8 @@ export async function sendTransactionalEmail(input: {
       "Content-Type": "application/json",
     },
     body: JSON.stringify({
-      from: process.env.RESEND_FROM || "MyBasket <contact@mybasket.fr>",
-      to: Array.isArray(input.to) ? input.to : [input.to],
+      from,
+      to: cleanRecipients,
       subject: input.subject,
       html: input.html,
       reply_to: input.replyTo || undefined,
@@ -38,8 +52,43 @@ export async function sendTransactionalEmail(input: {
   });
 
   const result = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(result?.message || `Email non envoyé (${response.status})`);
-  return { sent: true, result };
+
+  if (!response.ok) {
+    const detail =
+      result?.message ||
+      result?.error ||
+      `Erreur fournisseur e-mail (${response.status})`;
+
+    console.error("Resend a refusé l'e-mail :", {
+      status: response.status,
+      detail,
+      to: cleanRecipients,
+      from,
+      subject: input.subject,
+    });
+
+    throw new Error(String(detail));
+  }
+
+  const providerId = result?.id ? String(result.id) : null;
+
+  if (!providerId) {
+    console.error("Resend n'a pas retourné d'identifiant d'envoi.", result);
+    throw new Error("Le fournisseur e-mail n’a pas confirmé l’envoi.");
+  }
+
+  console.info("E-mail transactionnel envoyé :", {
+    providerId,
+    to: cleanRecipients,
+    subject: input.subject,
+  });
+
+  return {
+    sent: true as const,
+    reason: null,
+    providerId,
+    result,
+  };
 }
 
 export async function notifyAdmin(input: {
