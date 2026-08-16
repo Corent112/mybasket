@@ -1,7 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import {
+  GOOGLE_DRIVE_SCOPE,
   GoogleDriveStepError,
   canManageTeamMedia,
+  getTeamDriveConnection,
   logGoogleDriveError,
   refreshTeamGoogleDriveAccessToken,
   requireGoogleDriveUser,
@@ -26,6 +28,26 @@ export async function GET(request: NextRequest) {
 
     if (!(await canManageTeamMedia(teamId))) {
       return NextResponse.json({ error: "Accès refusé" }, { status: 403 });
+    }
+
+    // Une ancienne connexion MyBasket peut encore avoir le scope drive.file.
+    // Dans ce cas Google répond 200 mais ne retourne que les fichiers déjà
+    // explicitement partagés avec l'app, ce qui donne un faux Drive "vide".
+    // On force donc une réautorisation avec drive.readonly avant de lister.
+    const connection = await getTeamDriveConnection(teamId);
+    const grantedScopes = String(connection?.scope || "")
+      .split(/\s+/)
+      .filter(Boolean);
+
+    if (!connection || !grantedScopes.includes(GOOGLE_DRIVE_SCOPE)) {
+      return NextResponse.json(
+        {
+          error:
+            "Google Drive doit être réautorisé une fois pour afficher tes dossiers et tes vidéos.",
+          code: "scope_upgrade_required",
+        },
+        { status: 409 },
+      );
     }
 
     const { accessToken } = await refreshTeamGoogleDriveAccessToken(teamId);
@@ -56,7 +78,8 @@ export async function GET(request: NextRequest) {
 
     if (!response.ok) {
       const googleMessage =
-        payload?.error?.message || "Google Drive a refusé la lecture des fichiers.";
+        payload?.error?.message ||
+        "Google Drive a refusé la lecture des fichiers.";
 
       const insufficient =
         response.status === 403 &&
@@ -73,7 +96,10 @@ export async function GET(request: NextRequest) {
         );
       }
 
-      return NextResponse.json({ error: googleMessage }, { status: response.status });
+      return NextResponse.json(
+        { error: googleMessage },
+        { status: response.status },
+      );
     }
 
     const rawFiles = Array.isArray(payload?.files) ? payload.files : [];
