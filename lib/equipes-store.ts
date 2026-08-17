@@ -542,7 +542,7 @@ export async function getTeams(): Promise<Team[]> {
     .from("team_members")
     .select("team_id,role,permissions,status")
     .eq("user_id", userId)
-    .eq("status", "accepted");
+    .eq("status", "active");
 
   if (ownedError) {
     logSupabaseError("Erreur chargement teams", ownedError);
@@ -821,7 +821,7 @@ export async function upsertPlayer(
       .select("permissions,status")
       .eq("team_id", teamId)
       .eq("user_id", userId)
-      .eq("status", "accepted")
+      .eq("status", "active")
       .maybeSingle();
 
     if (membershipError) {
@@ -935,7 +935,7 @@ export async function deletePlayer(
       .select("permissions,status")
       .eq("team_id", teamId)
       .eq("user_id", userId)
-      .eq("status", "accepted")
+      .eq("status", "active")
       .maybeSingle();
 
     if (membershipError) throw membershipError;

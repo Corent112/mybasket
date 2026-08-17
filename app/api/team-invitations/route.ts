@@ -75,7 +75,12 @@ function normalizePermissions(value: unknown): PermissionMap {
   return {
     view_team: true,
     players: source.players === true,
-    sessions: source.sessions === true,
+
+    // Le calendrier / les séances font partie du socle commun d'une équipe
+    // collaborative : tout membre actif du staff les voit et peut y ajouter
+    // des événements, quel que soit son rôle.
+    sessions: true,
+
     livestats: source.livestats === true,
     media: source.media === true,
   };
@@ -243,7 +248,7 @@ export async function GET(request: NextRequest) {
         .from("team_members")
         .select("id,team_id,user_id,role,permissions,status,created_at")
         .eq("team_id", teamId)
-        .eq("status", "accepted")
+        .eq("status", "active")
         .order("created_at", { ascending: true }),
     ]);
 
@@ -335,7 +340,7 @@ export async function POST(request: NextRequest) {
       .select("id,status")
       .eq("team_id", teamId)
       .eq("user_id", existingUserId)
-      .eq("status", "accepted")
+      .eq("status", "active")
       .maybeSingle();
 
     if (existingMember?.id) {
@@ -550,7 +555,7 @@ export async function PATCH(request: NextRequest) {
       })
       .eq("id", memberId)
       .eq("team_id", teamId)
-      .eq("status", "accepted");
+      .eq("status", "active");
 
     return error
       ? NextResponse.json({ error: error.message }, { status: 500 })
@@ -559,12 +564,13 @@ export async function PATCH(request: NextRequest) {
 
   if (action === "remove_member") {
     const memberId = String(body?.memberId || "");
+
+    // Seul le propriétaire arrive jusqu'ici grâce à getOwnerContext().
+    // On supprime réellement l'adhésion : l'équipe disparaît donc
+    // immédiatement du compte "Mes Équipes" du collaborateur.
     const { error } = await admin
       .from("team_members")
-      .update({
-        status: "removed",
-        updated_at: new Date().toISOString(),
-      })
+      .delete()
       .eq("id", memberId)
       .eq("team_id", teamId);
 

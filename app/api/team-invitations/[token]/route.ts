@@ -172,7 +172,13 @@ export async function GET(
       expiresAt: invitation.expires_at,
       email: invitation.email,
       role: invitation.role,
-      permissions: invitation.permissions || {},
+      permissions: {
+        ...(invitation.permissions && typeof invitation.permissions === "object"
+          ? invitation.permissions
+          : {}),
+        view_team: true,
+        sessions: true,
+      },
       teamId: invitation.team_id,
       teamName:
         String(team?.metadata?.categorieLabel || "").trim() ||
@@ -284,6 +290,19 @@ export async function POST(
   const now = new Date().toISOString();
   const technicalRole = technicalTeamRole(invitation.role);
 
+  const invitationPermissions =
+    invitation.permissions && typeof invitation.permissions === "object"
+      ? (invitation.permissions as Record<string, boolean>)
+      : {};
+
+  // Calendrier partagé obligatoire pour tous les collaborateurs.
+  // Les autres droits restent ceux choisis par le coach principal.
+  const memberPermissions = {
+    ...invitationPermissions,
+    view_team: true,
+    sessions: true,
+  };
+
   const { error: memberError } = await result.admin
     .from("team_members")
     .upsert(
@@ -291,7 +310,7 @@ export async function POST(
         team_id: invitation.team_id,
         user_id: user.id,
         role: technicalRole,
-        permissions: invitation.permissions || { view_team: true },
+        permissions: memberPermissions,
         status: "active",
         invited_by: invitation.invited_by,
         updated_at: now,
@@ -352,6 +371,6 @@ export async function POST(
     teamId: invitation.team_id,
     role: invitation.role,
     technicalRole,
-    permissions: invitation.permissions || {},
+    permissions: memberPermissions,
   });
 }

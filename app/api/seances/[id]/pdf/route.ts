@@ -432,15 +432,19 @@ export async function POST(
     return NextResponse.json({ error: "Non connecté" }, { status: 401 });
   }
 
+  // RLS autorise :
+  // - le propriétaire de la séance ;
+  // - un collaborateur actif de l'équipe ayant accès aux séances.
+  // On ne filtre donc plus par user_id ici, sinon un assistant ne peut jamais
+  // consulter la fiche d'une séance créée par le coach principal.
   const { data: session, error: sessionError } = await supabase
     .from("practice_sessions")
     .select("*")
     .eq("id", id)
-    .eq("user_id", user.id)
     .maybeSingle();
 
   if (sessionError || !session) {
-    return NextResponse.json({ error: "Séance introuvable" }, { status: 404 });
+    return NextResponse.json({ error: "Séance introuvable ou non autorisée" }, { status: 404 });
   }
 
   const [{ data: exercises }] = await Promise.all([

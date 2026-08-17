@@ -258,11 +258,10 @@ export default function MonCalendrier() {
       const loadedTeams = await getTeams();
       let normalizedTeams = (loadedTeams ?? [])
         .map(normalizeTeamForCalendar)
-        .filter(
-          (team) =>
-            team.id &&
-            (!team.isShared || team.collaborationPermissions?.sessions === true),
-        );
+        // Le calendrier est partagé avec tous les collaborateurs actifs.
+        // Le droit sessions est désormais forcé à true lors de l'invitation,
+        // mais on ne masque pas une équipe partagée ancienne pour autant.
+        .filter((team) => Boolean(team.id));
 
       const teamIds = normalizedTeams.map((team) => team.id);
       if (teamIds.length > 0) {
@@ -317,11 +316,7 @@ export default function MonCalendrier() {
 
     const loadedTeams = await getTeams().catch(() => []);
     const calendarTeamIds = (loadedTeams ?? [])
-      .filter(
-        (team: any) =>
-          team?.isShared !== true ||
-          team?.collaborationPermissions?.sessions === true,
-      )
+      // Toute équipe visible dans "Mes Équipes" alimente le calendrier partagé.
       .map((team: any) => String(team?.id || ""))
       .filter(Boolean);
 
@@ -460,14 +455,8 @@ export default function MonCalendrier() {
       null;
     const teamOwnerId = targetTeam?.ownerUserId || user.id;
 
-    if (
-      targetTeam?.isShared &&
-      targetTeam.collaborationPermissions?.sessions !== true
-    ) {
-      window.alert("Tu n’as pas l’autorisation de modifier le calendrier de cette équipe.");
-      return;
-    }
-
+    // Tous les collaborateurs actifs d'une équipe disposent du calendrier
+    // partagé. Les RLS Supabase vérifient l'appartenance à team_members.
     const payload = {
       user_id: user.id,
       owner_id: teamOwnerId,

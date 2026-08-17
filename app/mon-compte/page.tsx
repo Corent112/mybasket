@@ -570,6 +570,105 @@ const hasSharedLiveStats = teams.some(
     team.collaborationPermissions?.livestats === true,
 );
 
+const collaborationRoleInfo = (roleValue: unknown) => {
+  const role = String(roleValue || "")
+    .trim()
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[_-]+/g, " ")
+    .replace(/\s+/g, " ");
+
+  if (
+    [
+      "head coach",
+      "coach principal",
+      "entraineur principal",
+      "entraîneur principal",
+    ].includes(role)
+  ) {
+    return { initials: "CP", label: "Coach principal", priority: 0 };
+  }
+
+  if (
+    [
+      "manager",
+      "responsable",
+      "responsable equipe",
+      "responsable de l equipe",
+    ].includes(role)
+  ) {
+    return { initials: "RE", label: "Responsable", priority: 1 };
+  }
+
+  if (
+    [
+      "assistant",
+      "assistant coach",
+      "coach assistant",
+      "entraineur assistant",
+    ].includes(role)
+  ) {
+    return { initials: "AC", label: "Assistant Coach", priority: 2 };
+  }
+
+  if (
+    [
+      "physical coach",
+      "physical_coach",
+      "preparateur physique",
+      "prepa physique",
+    ].includes(role)
+  ) {
+    return { initials: "PP", label: "Préparateur physique", priority: 3 };
+  }
+
+  if (
+    [
+      "analyst",
+      "analyste",
+      "analyste video",
+      "video analyst",
+    ].includes(role)
+  ) {
+    return { initials: "AV", label: "Analyste vidéo", priority: 4 };
+  }
+
+  if (["kine", "kinesitherapeute"].includes(role)) {
+    return { initials: "K", label: "Kiné", priority: 5 };
+  }
+
+  if (["viewer", "observateur", "lecture seule"].includes(role)) {
+    return { initials: "OB", label: "Observateur", priority: 7 };
+  }
+
+  return {
+    initials: "CO",
+    label: String(roleValue || "Collaborateur"),
+    priority: 6,
+  };
+};
+
+const sortedTeams = [...teams].sort((a, b) => {
+  // Priorité absolue aux équipes dont l'utilisateur est propriétaire / coach principal.
+  if (a.isShared !== b.isShared) return a.isShared ? 1 : -1;
+
+  // Pour les collaborations : ordre de responsabilité.
+  if (a.isShared && b.isShared) {
+    const aRole = collaborationRoleInfo(a.collaborationRole);
+    const bRole = collaborationRoleInfo(b.collaborationRole);
+
+    if (aRole.priority !== bRole.priority) {
+      return aRole.priority - bRole.priority;
+    }
+  }
+
+  return String(a.cat || a.categorieLabel || a.name || "").localeCompare(
+    String(b.cat || b.categorieLabel || b.name || ""),
+    "fr",
+  );
+});
+
 const menuAccessKey: Record<string, string | null> = {
   profil: null,
   abonnement: null,
@@ -816,7 +915,7 @@ return (
               </div>
 
               <div className="mc-teamgrid">
-                {teams.map((team) => {
+                {sortedTeams.map((team, teamIndex) => {
                   const bandColor = team.couleurs?.[0] || '#6B1A2C';
                   const category = team.cat || team.categorieLabel || 'Équipe';
                   const level = team.niveau || 'Niveau non renseigné';
@@ -824,9 +923,42 @@ return (
                   const matchCount = teamCalendarMatchCounts[String(team.id)] || 0;
                   const wins = team.teamStats?.wins ?? team.kpi?.victoires ?? 0;
                   const losses = team.teamStats?.losses ?? team.kpi?.defaites ?? 0;
+                  const roleInfo = collaborationRoleInfo(team.collaborationRole);
+
+                  const showPrincipalTitle =
+                    !team.isShared &&
+                    (teamIndex === 0 || sortedTeams[teamIndex - 1]?.isShared === true);
+
+                  const showCollaborationTitle =
+                    team.isShared &&
+                    (teamIndex === 0 || sortedTeams[teamIndex - 1]?.isShared !== true);
 
                   return (
-                    <article key={team.id} className="mc-teamcard mc-teamcard-horizontal">
+                    <div key={team.id} className="mc-team-group-item">
+                      {showPrincipalTitle && (
+                        <div className="mc-team-section-title">
+                          <strong>👑 COACH PRINCIPAL</strong>
+                          <span>Équipes dont tu es le coach principal.</span>
+                        </div>
+                      )}
+
+                      {showCollaborationTitle && (
+                        <div className="mc-team-section-title collaboration">
+                          <strong>👥 COLLABORATEUR</strong>
+                          <span>Équipes sur lesquelles tu collabores.</span>
+                        </div>
+                      )}
+
+                    <article className="mc-teamcard mc-teamcard-horizontal">
+                      {team.isShared && (
+                        <div
+                          className="mc-collaboration-role-badge"
+                          title={roleInfo.label}
+                          aria-label={`Rôle : ${roleInfo.label}`}
+                        >
+                          {roleInfo.initials}
+                        </div>
+                      )}
                       <div className="mc-team-banner mc-team-banner-horizontal" style={{ backgroundColor: bandColor }}>
                         <div className="mc-team-banner-lines" aria-hidden="true" />
                         <div className="mc-team-banner-logo">
@@ -837,7 +969,7 @@ return (
                           <span>{level}</span>
                           {team.isShared && (
                             <em className="mc-team-shared">
-                              Équipe partagée · {team.collaborationRole || "Staff"}
+                              {roleInfo.label}
                             </em>
                           )}
                         </div>
@@ -953,6 +1085,7 @@ return (
                         </div>
                       </div>
                     </article>
+                    </div>
                   );
                 })}
               </div>
@@ -3064,7 +3197,14 @@ const CSS = `
 .mc-equipes-head p{margin:.25rem 0 0;color:#8a7b73;font-weight:500}
 .mc-new-team{background:#FBE9D0;color:#9a5a1a;border:none;border-radius:10px;padding:.65rem 1rem;font-weight:900}
 .mc-teamgrid{display:flex;flex-direction:column;gap:1.15rem}
+.mc-team-group-item{display:flex;flex-direction:column;gap:1.15rem;min-width:0}
+.mc-team-section-title{display:flex;flex-direction:column;gap:.2rem;margin:.2rem 0 -.25rem}
+.mc-team-section-title.collaboration{margin-top:1.15rem}
+.mc-team-section-title strong{color:#6B1A2C;font-size:.88rem;font-weight:1000;letter-spacing:.025em}
+.mc-team-section-title span{color:#81736c;font-size:.76rem;font-weight:600}
 .mc-teamcard{background:#fff;border:1px solid #efe6db;border-radius:18px;overflow:hidden;box-shadow:0 8px 24px rgba(60,30,20,.07)}
+.mc-teamcard-horizontal{position:relative}
+.mc-collaboration-role-badge{position:absolute;top:10px;left:10px;z-index:8;width:36px;height:36px;display:grid;place-items:center;border-radius:9px;background:#D4A24C;color:#382304;border:1px solid rgba(255,255,255,.78);box-shadow:0 6px 16px rgba(0,0,0,.17);font-size:.68rem;font-weight:1000;letter-spacing:.04em}
 .mc-teamcard-horizontal{display:grid;grid-template-columns:minmax(280px,31%) minmax(0,1fr);min-height:178px}
 .mc-team-banner{height:180px;background:linear-gradient(135deg,#2a1418,#6B1A2C);display:flex;align-items:center;justify-content:center;color:#fff;font-size:2.4rem}
 .mc-team-banner img{width:100%;height:100%;object-fit:cover}
