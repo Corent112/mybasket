@@ -292,7 +292,7 @@ export async function POST(
         user_id: user.id,
         role: technicalRole,
         permissions: invitation.permissions || { view_team: true },
-        status: "accepted",
+        status: "active",
         invited_by: invitation.invited_by,
         updated_at: now,
       },
