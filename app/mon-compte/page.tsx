@@ -655,8 +655,8 @@ const sortedTeams = [...teams].sort((a, b) => {
 
   // Pour les collaborations : ordre de responsabilité.
   if (a.isShared && b.isShared) {
-    const aRole = collaborationRoleInfo(a.collaborationRole);
-    const bRole = collaborationRoleInfo(b.collaborationRole);
+    const aRole = getCollaborationRoleInfo(a.collaborationRole);
+    const bRole = getCollaborationRoleInfo(b.collaborationRole);
 
     if (aRole.priority !== bRole.priority) {
       return aRole.priority - bRole.priority;
@@ -923,7 +923,7 @@ return (
                   const matchCount = teamCalendarMatchCounts[String(team.id)] || 0;
                   const wins = team.teamStats?.wins ?? team.kpi?.victoires ?? 0;
                   const losses = team.teamStats?.losses ?? team.kpi?.defaites ?? 0;
-                  const roleInfo = collaborationRoleInfo(team.collaborationRole);
+                  const roleInfo = getCollaborationRoleInfo(team.collaborationRole);
 
                   const showPrincipalTitle =
                     !team.isShared &&
@@ -1450,6 +1450,77 @@ type Subscription = {
   current_period_end: string | null;
 };
 
+
+function getCollaborationRoleInfo(roleValue: unknown) {
+  const role = String(roleValue || "")
+    .trim()
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[_-]+/g, " ")
+    .replace(/\s+/g, " ");
+
+  if (
+    [
+      "head coach",
+      "coach principal",
+      "entraineur principal",
+      "entraîneur principal",
+    ].includes(role)
+  ) {
+    return { initials: "CP", label: "Coach principal", priority: 0 };
+  }
+
+  if (
+    [
+      "manager",
+      "responsable",
+      "responsable equipe",
+      "responsable de l equipe",
+    ].includes(role)
+  ) {
+    return { initials: "RE", label: "Responsable", priority: 1 };
+  }
+
+  if (
+    [
+      "assistant",
+      "assistant coach",
+      "coach assistant",
+      "entraineur assistant",
+    ].includes(role)
+  ) {
+    return { initials: "AC", label: "Assistant Coach", priority: 2 };
+  }
+
+  if (
+    [
+      "physical coach",
+      "physical_coach",
+      "preparateur physique",
+      "prepa physique",
+    ].includes(role)
+  ) {
+    return { initials: "PP", label: "Préparateur physique", priority: 3 };
+  }
+
+  if (
+    ["analyst", "analyste", "analyste video", "video analyst"].includes(role)
+  ) {
+    return { initials: "AV", label: "Analyste vidéo", priority: 4 };
+  }
+
+  if (["viewer", "observateur", "lecture seule"].includes(role)) {
+    return { initials: "OB", label: "Observateur", priority: 6 };
+  }
+
+  return {
+    initials: "CO",
+    label: String(roleValue || "Collaborateur"),
+    priority: 5,
+  };
+}
+
 function AbonnementSection({ userId }: { userId: string }) {
   const [loading, setLoading] = useState(true);
   const [plan, setPlan] = useState<
@@ -1457,6 +1528,7 @@ function AbonnementSection({ userId }: { userId: string }) {
   >(null);
   const [subscription, setSubscription] = useState<Subscription | null>(null);
   const [isCeo, setIsCeo] = useState(false);
+  const [collaborations, setCollaborations] = useState<Team[]>([]);
 
   useEffect(() => {
     let mounted = true;
@@ -1475,6 +1547,18 @@ function AbonnementSection({ userId }: { userId: string }) {
       );
 
       if (mounted) setIsCeo(admin);
+
+      try {
+        const loadedTeams = await getTeams();
+        if (mounted) {
+          setCollaborations(
+            (loadedTeams ?? []).filter((team) => team.isShared === true),
+          );
+        }
+      } catch (error) {
+        console.error("Erreur chargement collaborations abonnement:", error);
+        if (mounted) setCollaborations([]);
+      }
 
       if (admin) {
         if (mounted) setLoading(false);
@@ -1537,7 +1621,33 @@ function AbonnementSection({ userId }: { userId: string }) {
     ? "Accès total"
     : subscription?.status === "active"
       ? "Actif"
-      : "Inactif";
+      : "Aucun abonnement actif";
+
+  const permissionLabels: Array<
+    ["players" | "sessions" | "livestats" | "media", string]
+  > = [
+    ["players", "Joueurs"],
+    ["sessions", "Séances & calendrier"],
+    ["livestats", "LiveStats"],
+    ["media", "Médias & Drive"],
+  ];
+
+  const collaborationSummary = collaborations.map((team) => {
+    const roleInfo = getCollaborationRoleInfo(team.collaborationRole);
+    const permissions =
+      team.collaborationPermissions &&
+      typeof team.collaborationPermissions === "object"
+        ? team.collaborationPermissions
+        : {};
+
+    return {
+      team,
+      roleInfo,
+      enabledPermissions: permissionLabels.filter(
+        ([key]) => permissions?.[key] === true,
+      ),
+    };
+  });
 
   return (
     <section className="account-card subscription-card">
@@ -1635,6 +1745,77 @@ function AbonnementSection({ userId }: { userId: string }) {
               </div>
             </div>
           )}
+        </div>
+      </div>
+
+      <div className="collaboration-access-section">
+        <div className="collaboration-access-head">
+          <div>
+            <p className="eyebrow">Accès reçus</p>
+            <h3>Mes collaborations</h3>
+            <p className="muted">
+              Ces accès sont indépendants de ton abonnement personnel. Ils sont
+              définis équipe par équipe par le coach principal.
+            </p>
+          </div>
+          <span className="collaboration-count">{collaborationSummary.length}</span>
+        </div>
+
+        {collaborationSummary.length === 0 ? (
+          <div className="collaboration-empty">
+            <strong>Aucune collaboration active</strong>
+            <span>
+              Si un coach t’invite sur une équipe, elle apparaîtra ici après acceptation.
+            </span>
+          </div>
+        ) : (
+          <div className="collaboration-list">
+            {collaborationSummary.map(({ team, roleInfo, enabledPermissions }) => (
+              <article className="collaboration-row" key={team.id}>
+                <div className="collaboration-role-square">{roleInfo.initials}</div>
+
+                <div className="collaboration-main">
+                  <div className="collaboration-title-line">
+                    <div>
+                      <strong>
+                        {team.cat || team.categorieLabel || team.name || "Équipe"}
+                      </strong>
+                      <span>{roleInfo.label}</span>
+                    </div>
+
+                    <a href={`/equipes/${team.id}`} className="collaboration-open">
+                      Voir l’équipe
+                    </a>
+                  </div>
+
+                  <div className="collaboration-permissions">
+                    <span className="collaboration-pill base">✓ Voir l’équipe</span>
+
+                    {enabledPermissions.map(([key, label]) => (
+                      <span className="collaboration-pill" key={key}>
+                        ✓ {label}
+                      </span>
+                    ))}
+
+                    {enabledPermissions.length === 0 && (
+                      <span className="collaboration-only-view">
+                        Consultation de l’équipe uniquement
+                      </span>
+                    )}
+                  </div>
+                </div>
+              </article>
+            ))}
+          </div>
+        )}
+
+        <div className="access-separation-note">
+          <strong>Abonnement personnel ≠ collaboration</strong>
+          <span>
+            Ton abonnement personnel ne donne jamais automatiquement des droits
+            sur l’équipe d’un autre coach. Sur une équipe partagée, seules les
+            autorisations données par son coach principal s’appliquent.
+          </span>
         </div>
       </div>
 
@@ -1960,6 +2141,179 @@ function AbonnementSection({ userId }: { userId: string }) {
           letter-spacing: 0.08em;
         }
 
+
+        .collaboration-access-section {
+          margin: 0 38px 34px;
+          padding-top: 26px;
+          border-top: 1px solid #eadfd6;
+        }
+
+        .collaboration-access-head {
+          display: flex;
+          justify-content: space-between;
+          gap: 18px;
+          align-items: flex-start;
+          margin-bottom: 16px;
+        }
+
+        .collaboration-access-head h3 {
+          margin: 4px 0 5px;
+          color: #241d1a;
+          font-size: 1.25rem;
+        }
+
+        .collaboration-count {
+          min-width: 36px;
+          height: 36px;
+          padding: 0 10px;
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          border-radius: 11px;
+          background: #6B1A2C;
+          color: #fff;
+          font-weight: 1000;
+        }
+
+        .collaboration-list {
+          display: grid;
+          gap: 11px;
+        }
+
+        .collaboration-row {
+          display: flex;
+          gap: 13px;
+          align-items: flex-start;
+          padding: 15px;
+          border: 1px solid #eadfd6;
+          border-radius: 16px;
+          background: #fffdfb;
+        }
+
+        .collaboration-role-square {
+          width: 42px;
+          height: 42px;
+          flex: 0 0 42px;
+          display: grid;
+          place-items: center;
+          border-radius: 10px;
+          background: #D4A24C;
+          color: #3a2504;
+          font-size: .72rem;
+          font-weight: 1000;
+          letter-spacing: .04em;
+        }
+
+        .collaboration-main {
+          flex: 1;
+          min-width: 0;
+        }
+
+        .collaboration-title-line {
+          display: flex;
+          justify-content: space-between;
+          gap: 14px;
+          align-items: flex-start;
+        }
+
+        .collaboration-title-line strong {
+          display: block;
+          color: #261d1a;
+          font-size: .98rem;
+        }
+
+        .collaboration-title-line span {
+          display: block;
+          margin-top: 2px;
+          color: #86776f;
+          font-size: .77rem;
+          font-weight: 700;
+        }
+
+        .collaboration-open {
+          flex: 0 0 auto;
+          border: 1px solid #dac9be;
+          border-radius: 999px;
+          padding: 7px 11px;
+          color: #6B1A2C !important;
+          text-decoration: none !important;
+          font-size: .72rem;
+          font-weight: 900;
+          background: #fff;
+        }
+
+        .collaboration-permissions {
+          display: flex;
+          flex-wrap: wrap;
+          gap: 6px;
+          margin-top: 10px;
+        }
+
+        .collaboration-pill {
+          display: inline-flex;
+          align-items: center;
+          min-height: 27px;
+          padding: 4px 8px;
+          border-radius: 999px;
+          background: #f6eee8;
+          color: #6B1A2C;
+          font-size: .68rem;
+          font-weight: 850;
+        }
+
+        .collaboration-pill.base {
+          background: #6B1A2C;
+          color: #fff;
+        }
+
+        .collaboration-only-view {
+          display: inline-flex;
+          align-items: center;
+          color: #8c7d75;
+          font-size: .7rem;
+          font-weight: 700;
+        }
+
+        .collaboration-empty {
+          display: grid;
+          gap: 3px;
+          padding: 17px;
+          border: 1px dashed #d9c8bd;
+          border-radius: 15px;
+          background: #fbf8f5;
+        }
+
+        .collaboration-empty strong {
+          color: #3d302a;
+        }
+
+        .collaboration-empty span {
+          color: #887970;
+          font-size: .8rem;
+          line-height: 1.45;
+        }
+
+        .access-separation-note {
+          display: grid;
+          gap: 3px;
+          margin-top: 14px;
+          padding: 13px 15px;
+          border-left: 4px solid #D4A24C;
+          border-radius: 0 12px 12px 0;
+          background: #fbf7ee;
+        }
+
+        .access-separation-note strong {
+          color: #6B1A2C;
+          font-size: .78rem;
+        }
+
+        .access-separation-note span {
+          color: #776a63;
+          font-size: .74rem;
+          line-height: 1.45;
+        }
+
         @media (max-width: 1050px) {
           .subscription-layout {
             grid-template-columns: 1fr;
@@ -1979,6 +2333,19 @@ function AbonnementSection({ userId }: { userId: string }) {
 
           .subscription-head {
             display: grid;
+          }
+
+          .collaboration-access-section {
+            margin-left: 20px;
+            margin-right: 20px;
+          }
+
+          .collaboration-title-line {
+            display: grid;
+          }
+
+          .collaboration-open {
+            justify-self: start;
           }
 
           .primary-btn {
