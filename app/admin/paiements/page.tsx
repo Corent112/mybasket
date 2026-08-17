@@ -2,6 +2,7 @@ import Link from "next/link";
 import { revalidatePath } from "next/cache";
 import styles from "./page.module.css";
 import { requireAdmin } from "@/lib/admin/guard";
+import { createAdminClient } from "@/lib/supabase/admin-server";
 
 type Payment = {
   id: string;
@@ -163,7 +164,49 @@ async function createFreeAccessAction(formData: FormData) {
   const end = new Date();
   end.setDate(end.getDate() + days);
 
-  await supabase.from("free_access_grants").insert({
+  const adminClient = createAdminClient();
+  if (!adminClient) {
+    throw new Error("SUPABASE_SERVICE_ROLE_KEY manquante : impossible de créer l’invitation.");
+  }
+
+  const { data: listedUsers, error: listError } = await adminClient.auth.admin.listUsers({
+    page: 1,
+    perPage: 1000,
+  });
+  if (listError) throw listError;
+
+  let invitedUser = listedUsers.users.find(
+    (candidate) => candidate.email?.trim().toLowerCase() === email,
+  );
+
+  if (!invitedUser) {
+    const siteUrl = (process.env.NEXT_PUBLIC_SITE_URL || "https://mybasket.vercel.app").replace(/\/$/, "");
+    const { data: invitation, error: inviteError } = await adminClient.auth.admin.inviteUserByEmail(
+      email,
+      {
+        redirectTo: `${siteUrl}/auth/callback?next=${encodeURIComponent("/mon-compte")}`,
+        data: { display_name: "" },
+      },
+    );
+
+    if (inviteError) throw inviteError;
+    invitedUser = invitation.user;
+  }
+
+  if (invitedUser) {
+    const { error: profileError } = await adminClient.from("profiles").upsert(
+      {
+        id: invitedUser.id,
+        email,
+        platform_role: "user",
+        status: "active",
+      },
+      { onConflict: "id" },
+    );
+    if (profileError) throw profileError;
+  }
+
+  const { error: grantError } = await supabase.from("free_access_grants").insert({
     user_email: email,
     plan_slug: planSlug,
     status: "active",
@@ -172,9 +215,36 @@ async function createFreeAccessAction(formData: FormData) {
     created_at: new Date().toISOString(),
     updated_at: new Date().toISOString(),
   });
+  if (grantError) throw grantError;
+
+  revalidatePath("/admin");
+  revalidatePath("/admin/utilisateurs");
+  revalidatePath("/admin/paiements");
+}
+
+async function extendFreeAccessAction(formData: FormData) {
+  "use server";
+
+  const { supabase } = await requireAdmin();
+  const id = String(formData.get("id") || "");
+  const endsAt = String(formData.get("ends_at") || "");
+  if (!id || !endsAt) return;
+
+  const end = new Date(`${endsAt}T23:59:59`);
+  if (Number.isNaN(end.getTime())) return;
+
+  await supabase
+    .from("free_access_grants")
+    .update({
+      ends_at: end.toISOString(),
+      status: "active",
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", id);
 
   revalidatePath("/admin");
   revalidatePath("/admin/paiements");
+  revalidatePath("/admin/utilisateurs");
 }
 
 async function disableFreeAccessAction(formData: FormData) {
@@ -556,16 +626,29 @@ export default async function AdminPaiementsPage() {
                         </span>
                       </td>
                       <td>
-                        {grant.status === "active" ? (
-                          <form action={disableFreeAccessAction}>
+                        <div className={styles.actions}>
+                          <form action={extendFreeAccessAction}>
                             <input type="hidden" name="id" value={grant.id} />
-                            <button type="submit" className={styles.dangerBtn}>
-                              Désactiver
-                            </button>
+                            <input
+                              type="date"
+                              name="ends_at"
+                              required
+                              min={new Date().toISOString().slice(0, 10)}
+                              defaultValue={grant.ends_at ? new Date(grant.ends_at).toISOString().slice(0, 10) : ""}
+                              aria-label={`Nouvelle date de fin pour ${grant.user_email || "cet accès"}`}
+                            />
+                            <button type="submit">Prolonger</button>
                           </form>
-                        ) : (
-                          "—"
-                        )}
+
+                          {grant.status === "active" ? (
+                            <form action={disableFreeAccessAction}>
+                              <input type="hidden" name="id" value={grant.id} />
+                              <button type="submit" className={styles.dangerBtn}>
+                                Désactiver
+                              </button>
+                            </form>
+                          ) : null}
+                        </div>
                       </td>
                     </tr>
                   ))}

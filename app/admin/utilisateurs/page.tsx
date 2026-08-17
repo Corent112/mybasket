@@ -1,5 +1,7 @@
 import Link from "next/link";
 import styles from "./page.module.css";
+import { revalidatePath } from "next/cache";
+import DeleteUserButton from "./DeleteUserButton";
 
 import { requireAdmin } from "@/lib/admin/guard";
 import { createAdminClient } from "@/lib/supabase/admin-server";
@@ -62,8 +64,50 @@ function getStatusClass(status: string | null) {
   return styles.inactive;
 }
 
+async function deleteUserAction(formData: FormData) {
+  "use server";
+
+  const { user: currentUser } = await requireAdmin();
+  const userId = String(formData.get("user_id") || "");
+  if (!userId || userId === currentUser.id) return;
+
+  const adminClient = createAdminClient();
+  if (!adminClient) {
+    throw new Error("SUPABASE_SERVICE_ROLE_KEY manquante : suppression impossible.");
+  }
+
+  const { data: targetProfile } = await adminClient
+    .from("profiles")
+    .select("email,platform_role")
+    .eq("id", userId)
+    .maybeSingle();
+
+  if (["ceo", "superadmin"].includes(String(targetProfile?.platform_role || ""))) {
+    return;
+  }
+
+  const email = String(targetProfile?.email || "").trim().toLowerCase();
+
+  // Nettoie uniquement les données d’accès administratives. Les contenus métier
+  // restent gérés par les règles FK/cascade existantes du projet.
+  await adminClient.from("subscriptions").delete().eq("user_id", userId);
+  if (email) {
+    await adminClient.from("free_access_grants").delete().eq("user_email", email);
+  }
+
+  const { error: authError } = await adminClient.auth.admin.deleteUser(userId);
+  if (authError) throw authError;
+
+  // Selon le schéma, profiles peut déjà avoir été supprimé par cascade.
+  await adminClient.from("profiles").delete().eq("id", userId);
+
+  revalidatePath("/admin");
+  revalidatePath("/admin/utilisateurs");
+  revalidatePath("/admin/paiements");
+}
+
 export default async function AdminUtilisateursPage() {
-  const { supabase } = await requireAdmin();
+  const { supabase, user: currentUser } = await requireAdmin();
 
   const { data: profilesData } = await supabase
     .from("profiles")
@@ -287,6 +331,13 @@ export default async function AdminUtilisateursPage() {
                           </Link>
                           <button type="button">Modifier</button>
                           <button type="button">Suspendre</button>
+                          {user.id !== currentUser.id && !["ceo", "superadmin"].includes(user.platform_role || "") ? (
+                            <DeleteUserButton
+                              userId={user.id}
+                              email={user.email || "ce compte"}
+                              action={deleteUserAction}
+                            />
+                          ) : null}
                         </div>
                       </td>
                     </tr>

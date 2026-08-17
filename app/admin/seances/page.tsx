@@ -123,22 +123,25 @@ async function deleteSession(formData: FormData) {
 export default async function AdminSeancesPage() {
   const { supabase } = await requireAdmin();
 
-  const { data } = await supabase
-    .from("practice_sessions")
-    .select("*")
-    .eq("visibility", "public")
-    .order("created_at", { ascending: false });
+  const [{ data }, { data: adminProfiles }] = await Promise.all([
+    supabase.from("practice_sessions").select("*").eq("visibility", "public").order("created_at", { ascending: false }),
+    supabase.from("profiles").select("id").in("platform_role", ["ceo", "superadmin"]),
+  ]);
 
-  const sessions = (data || []) as PracticeSession[];
+  const adminIds = new Set((adminProfiles || []).map((profile) => String(profile.id)));
+  const userSessions = ((data || []) as PracticeSession[]).filter(
+    (session) => !session.user_id || !adminIds.has(String(session.user_id)),
+  );
+  const sessions = userSessions.filter((session) =>
+    ["pending", "submitted", "draft"].includes(getStatus(session)),
+  );
 
-  const total = sessions.length;
-  const pending = sessions.filter((s) =>
-    ["pending", "submitted", "draft"].includes(getStatus(s))
-  ).length;
-  const approved = sessions.filter((s) =>
+  const total = userSessions.length;
+  const pending = sessions.length;
+  const approved = userSessions.filter((s) =>
     ["approved", "published"].includes(getStatus(s))
   ).length;
-  const rejected = sessions.filter((s) => getStatus(s) === "rejected").length;
+  const rejected = userSessions.filter((s) => getStatus(s) === "rejected").length;
 
   return (
     <main className={styles.adminModeration}>
@@ -232,7 +235,7 @@ export default async function AdminSeancesPage() {
         <section className={styles.tableCard}>
           <div className={styles.tableHead}>
             <h2>Séances proposées</h2>
-            <span>{total} séances</span>
+            <span>{pending} séance{pending > 1 ? "s" : ""} en attente</span>
           </div>
 
           <div className={styles.grid}>
@@ -300,7 +303,7 @@ export default async function AdminSeancesPage() {
 
             {sessions.length === 0 && (
               <div className={styles.emptyState}>
-                Aucune séance trouvée.
+                Aucune séance proposée à valider.
               </div>
             )}
           </div>

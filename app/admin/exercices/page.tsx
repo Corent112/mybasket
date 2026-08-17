@@ -82,21 +82,25 @@ async function deleteExercise(formData: FormData) {
 export default async function AdminExercicesPage() {
   const { supabase } = await requireAdmin();
 
-  const { data } = await supabase
-    .from("exercises")
-    .select("*")
-    .order("created_at", { ascending: false });
+  const [{ data }, { data: adminProfiles }] = await Promise.all([
+    supabase.from("exercises").select("*").order("created_at", { ascending: false }),
+    supabase.from("profiles").select("id").in("platform_role", ["ceo", "superadmin"]),
+  ]);
 
-  const exercises = (data || []) as Exercise[];
+  const adminIds = new Set((adminProfiles || []).map((profile) => String(profile.id)));
+  const userExercises = ((data || []) as Exercise[]).filter(
+    (exercise) => !exercise.user_id || !adminIds.has(String(exercise.user_id)),
+  );
+  const exercises = userExercises.filter((exercise) =>
+    ["pending", "submitted", "draft"].includes(getStatus(exercise)),
+  );
 
-  const total = exercises.length;
-  const pending = exercises.filter((e) =>
-    ["pending", "submitted", "draft"].includes(getStatus(e))
-  ).length;
-  const approved = exercises.filter((e) =>
+  const total = userExercises.length;
+  const pending = exercises.length;
+  const approved = userExercises.filter((e) =>
     ["approved", "published"].includes(getStatus(e))
   ).length;
-  const rejected = exercises.filter((e) => getStatus(e) === "rejected").length;
+  const rejected = userExercises.filter((e) => getStatus(e) === "rejected").length;
 
   return (
     <main className={styles.adminModeration}>
@@ -138,7 +142,7 @@ export default async function AdminExercicesPage() {
         <section className={styles.tableCard}>
           <div className={styles.tableHead}>
             <h2>Exercices proposés</h2>
-            <span>{total} exercices</span>
+            <span>{pending} exercice{pending > 1 ? "s" : ""} en attente</span>
           </div>
 
           <div className={styles.grid}>
@@ -204,7 +208,7 @@ export default async function AdminExercicesPage() {
 
             {exercises.length === 0 && (
               <div className={styles.emptyState}>
-                Aucun exercice trouvé.
+                Aucun exercice proposé à valider.
               </div>
             )}
           </div>

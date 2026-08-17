@@ -1,21 +1,35 @@
 import { NextResponse } from "next/server";
+import type { EmailOtpType } from "@supabase/supabase-js";
 import { createClient } from "@/lib/supabase/server";
 
-export async function GET(request: Request) {
-  const { searchParams, origin } = new URL(request.url);
+function safeNextPath(value: string | null) {
+  if (!value || !value.startsWith("/") || value.startsWith("//")) return "/mon-compte";
+  return value;
+}
 
-  const code = searchParams.get("code");
-  const next = searchParams.get("next") ?? "/mon-compte";
+export async function GET(request: Request) {
+  const url = new URL(request.url);
+  const code = url.searchParams.get("code");
+  const tokenHash = url.searchParams.get("token_hash");
+  const type = url.searchParams.get("type") as EmailOtpType | null;
+  const next = safeNextPath(url.searchParams.get("next"));
+  const siteUrl = (process.env.NEXT_PUBLIC_SITE_URL || url.origin).replace(/\/$/, "");
+  const supabase = await createClient();
 
   if (code) {
-    const supabase = await createClient();
-
     const { error } = await supabase.auth.exchangeCodeForSession(code);
-
-    if (!error) {
-      return NextResponse.redirect(`${origin}${next}`);
-    }
+    if (!error) return NextResponse.redirect(`${siteUrl}${next}`);
   }
 
-  return NextResponse.redirect(`${origin}/connexion?error=auth`);
+  if (tokenHash && type) {
+    const { error } = await supabase.auth.verifyOtp({
+      token_hash: tokenHash,
+      type,
+    });
+    if (!error) return NextResponse.redirect(`${siteUrl}${next}`);
+  }
+
+  const errorDescription = url.searchParams.get("error_description");
+  const message = errorDescription ? encodeURIComponent(errorDescription) : "auth";
+  return NextResponse.redirect(`${siteUrl}/connexion?error=${message}`);
 }
