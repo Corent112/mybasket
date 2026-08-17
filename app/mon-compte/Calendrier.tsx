@@ -258,10 +258,17 @@ export default function MonCalendrier() {
       const loadedTeams = await getTeams();
       let normalizedTeams = (loadedTeams ?? [])
         .map(normalizeTeamForCalendar)
-        // Le calendrier est partagé avec tous les collaborateurs actifs.
-        // Le droit sessions est désormais forcé à true lors de l'invitation,
-        // mais on ne masque pas une équipe partagée ancienne pour autant.
-        .filter((team) => Boolean(team.id));
+        .filter(
+          (team) =>
+            Boolean(team.id) &&
+            (
+              // Le coach principal voit toujours le calendrier de son équipe.
+              !team.isShared ||
+              // Un collaborateur ne le voit QUE si la case
+              // "Séances & calendrier" lui a été accordée.
+              team.collaborationPermissions?.sessions === true
+            ),
+        );
 
       const teamIds = normalizedTeams.map((team) => team.id);
       if (teamIds.length > 0) {
@@ -316,7 +323,11 @@ export default function MonCalendrier() {
 
     const loadedTeams = await getTeams().catch(() => []);
     const calendarTeamIds = (loadedTeams ?? [])
-      // Toute équipe visible dans "Mes Équipes" alimente le calendrier partagé.
+      .filter(
+        (team: any) =>
+          team?.isShared !== true ||
+          team?.collaborationPermissions?.sessions === true,
+      )
       .map((team: any) => String(team?.id || ""))
       .filter(Boolean);
 
@@ -455,8 +466,16 @@ export default function MonCalendrier() {
       null;
     const teamOwnerId = targetTeam?.ownerUserId || user.id;
 
-    // Tous les collaborateurs actifs d'une équipe disposent du calendrier
-    // partagé. Les RLS Supabase vérifient l'appartenance à team_members.
+    if (
+      targetTeam?.isShared &&
+      targetTeam.collaborationPermissions?.sessions !== true
+    ) {
+      window.alert(
+        "Le coach principal ne t’a pas donné accès aux séances et au calendrier de cette équipe.",
+      );
+      return;
+    }
+
     const payload = {
       user_id: user.id,
       owner_id: teamOwnerId,

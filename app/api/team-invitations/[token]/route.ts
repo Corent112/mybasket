@@ -176,8 +176,8 @@ export async function GET(
         ...(invitation.permissions && typeof invitation.permissions === "object"
           ? invitation.permissions
           : {}),
+        // Voir la fiche équipe est le seul droit de base automatique.
         view_team: true,
-        sessions: true,
       },
       teamId: invitation.team_id,
       teamName:
@@ -295,12 +295,16 @@ export async function POST(
       ? (invitation.permissions as Record<string, boolean>)
       : {};
 
-  // Calendrier partagé obligatoire pour tous les collaborateurs.
-  // Les autres droits restent ceux choisis par le coach principal.
+  // Le rôle sert à identifier la fonction du collaborateur.
+  // Les CASES cochées par le coach principal pilotent les accès.
+  // Seule la consultation de la fiche équipe est automatique.
   const memberPermissions = {
     ...invitationPermissions,
     view_team: true,
-    sessions: true,
+    players: invitationPermissions.players === true,
+    sessions: invitationPermissions.sessions === true,
+    livestats: invitationPermissions.livestats === true,
+    media: invitationPermissions.media === true,
   };
 
   const { error: memberError } = await result.admin

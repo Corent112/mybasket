@@ -73,14 +73,13 @@ function normalizePermissions(value: unknown): PermissionMap {
       : {};
 
   return {
+    // L'accès de base à la fiche équipe est toujours accordé après acceptation.
     view_team: true,
+
+    // Tous les autres droits correspondent STRICTEMENT aux cases cochées
+    // par le coach principal au moment de l'invitation.
     players: source.players === true,
-
-    // Le calendrier / les séances font partie du socle commun d'une équipe
-    // collaborative : tout membre actif du staff les voit et peut y ajouter
-    // des événements, quel que soit son rôle.
-    sessions: true,
-
+    sessions: source.sessions === true,
     livestats: source.livestats === true,
     media: source.media === true,
   };
