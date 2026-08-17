@@ -1,6 +1,6 @@
 import { createAdminClient } from "@/lib/supabase/admin-server";
 
-export const ADMIN_EMAIL = process.env.MYBASKET_ADMIN_EMAIL || "contact@asket.fr";
+export const ADMIN_EMAIL = process.env.MYBASKET_ADMIN_EMAIL || "contact@mybasket.fr";
 
 function escapeHtml(value: unknown) {
   return String(value ?? "")

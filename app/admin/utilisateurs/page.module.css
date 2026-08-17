@@ -65,7 +65,8 @@
   justify-content: flex-end;
 }
 
-.heroActions button {
+.heroActions button,
+.createUserDetails > summary {
   border: 1px solid rgba(212, 162, 76, 0.6);
   background: rgba(212, 162, 76, 0.12);
   color: #ffd98a;
@@ -73,6 +74,88 @@
   padding: 12px 18px;
   font-weight: 900;
   cursor: pointer;
+  list-style: none;
+}
+
+.createUserDetails > summary::-webkit-details-marker {
+  display: none;
+}
+
+.createUserDetails {
+  position: relative;
+}
+
+.createUserPopover {
+  position: absolute;
+  z-index: 30;
+  top: calc(100% + 12px);
+  right: 0;
+  width: min(440px, calc(100vw - 48px));
+  padding: 18px;
+  border: 1px solid #eadfd7;
+  border-radius: 18px;
+  background: white;
+  color: #2f2520;
+  box-shadow: 0 24px 70px rgba(33, 9, 19, 0.25);
+}
+
+.createUserHead {
+  display: grid;
+  gap: 5px;
+  margin-bottom: 14px;
+}
+
+.createUserHead strong {
+  color: #6b1a2c;
+  font-size: 17px;
+}
+
+.createUserHead span {
+  color: #81736c;
+  font-size: 12px;
+  line-height: 1.45;
+  font-weight: 650;
+}
+
+.createUserForm {
+  display: grid;
+  gap: 11px;
+}
+
+.createUserForm label {
+  display: grid;
+  gap: 5px;
+}
+
+.createUserForm label > span {
+  margin: 0;
+  color: #6b1a2c;
+  font-size: 11px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.createUserForm input,
+.createUserForm select {
+  width: 100%;
+  height: 44px;
+  border: 1px solid #ded7d2;
+  border-radius: 11px;
+  padding: 0 12px;
+  background: white;
+  color: #2f2520;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 750;
+}
+
+.createUserForm button {
+  width: 100%;
+  min-height: 44px;
+  margin-top: 3px;
+  border-color: #6b1a2c;
+  background: #6b1a2c;
+  color: white;
 }
 
 .statsGrid {

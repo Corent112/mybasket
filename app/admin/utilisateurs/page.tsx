@@ -64,6 +64,74 @@ function getStatusClass(status: string | null) {
   return styles.inactive;
 }
 
+async function createUserAction(formData: FormData) {
+  "use server";
+
+  await requireAdmin();
+
+  const email = String(formData.get("email") || "").trim().toLowerCase();
+  const displayName = String(formData.get("display_name") || "").trim();
+  const platformRole = String(formData.get("platform_role") || "user");
+
+  if (!email) return;
+
+  const allowedRoles = new Set(["user", "coach", "club", "admin"]);
+  const role = allowedRoles.has(platformRole) ? platformRole : "user";
+
+  const adminClient = createAdminClient();
+  if (!adminClient) {
+    throw new Error(
+      "SUPABASE_SERVICE_ROLE_KEY manquante : impossible de créer l’utilisateur.",
+    );
+  }
+
+  const { data: usersData, error: listError } =
+    await adminClient.auth.admin.listUsers({ page: 1, perPage: 1000 });
+
+  if (listError) throw listError;
+
+  let authUser = usersData.users.find(
+    (candidate) => candidate.email?.trim().toLowerCase() === email,
+  );
+
+  if (!authUser) {
+    const siteUrl = (
+      process.env.NEXT_PUBLIC_SITE_URL || "https://mybasket.vercel.app"
+    ).replace(/\/$/, "");
+
+    const { data: invited, error: inviteError } =
+      await adminClient.auth.admin.inviteUserByEmail(email, {
+        redirectTo: `${siteUrl}/auth/callback?next=${encodeURIComponent(
+          "/mon-compte",
+        )}`,
+        data: {
+          display_name: displayName,
+        },
+      });
+
+    if (inviteError) throw inviteError;
+    authUser = invited.user;
+  }
+
+  if (!authUser) return;
+
+  const { error: profileError } = await adminClient.from("profiles").upsert(
+    {
+      id: authUser.id,
+      email,
+      display_name: displayName || null,
+      platform_role: role,
+      status: "active",
+    },
+    { onConflict: "id" },
+  );
+
+  if (profileError) throw profileError;
+
+  revalidatePath("/admin");
+  revalidatePath("/admin/utilisateurs");
+}
+
 async function deleteUserAction(formData: FormData) {
   "use server";
 
@@ -191,7 +259,52 @@ export default async function AdminUtilisateursPage() {
           </div>
 
           <div className={styles.heroActions}>
-            <button type="button">+ Créer un utilisateur</button>
+            <details className={styles.createUserDetails}>
+              <summary>+ Créer un utilisateur</summary>
+              <div className={styles.createUserPopover}>
+                <div className={styles.createUserHead}>
+                  <strong>Nouvel utilisateur</strong>
+                  <span>
+                    Une invitation MyBasket est envoyée par e-mail. Aucun mot de passe
+                    n’est créé manuellement.
+                  </span>
+                </div>
+
+                <form action={createUserAction} className={styles.createUserForm}>
+                  <label>
+                    <span>Nom</span>
+                    <input
+                      name="display_name"
+                      type="text"
+                      placeholder="Nom de l’utilisateur"
+                    />
+                  </label>
+
+                  <label>
+                    <span>Email</span>
+                    <input
+                      name="email"
+                      type="email"
+                      placeholder="email@exemple.com"
+                      required
+                    />
+                  </label>
+
+                  <label>
+                    <span>Rôle</span>
+                    <select name="platform_role" defaultValue="user">
+                      <option value="user">Utilisateur</option>
+                      <option value="coach">Coach</option>
+                      <option value="club">Club</option>
+                      <option value="admin">Admin</option>
+                    </select>
+                  </label>
+
+                  <button type="submit">Envoyer l’invitation</button>
+                </form>
+              </div>
+            </details>
+
             <button type="button">Exporter</button>
           </div>
         </section>

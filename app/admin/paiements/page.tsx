@@ -587,83 +587,90 @@ export default async function AdminPaiementsPage() {
             </div>
           </section>
 
-          <section className={styles.tableCard}>
+          <section className={`${styles.tableCard} ${styles.freeAccessCard}`}>
             <div className={styles.tableHead}>
-              <h2>Accès gratuits</h2>
-              <span>{freeAccess.length} accès</span>
+              <div>
+                <h2>Accès gratuits</h2>
+                <span>{freeAccess.length} accès · prolongation et désactivation</span>
+              </div>
             </div>
 
-            <div className={styles.tableWrapper}>
-              <table>
-                <thead>
-                  <tr>
-                    <th>Email</th>
-                    <th>Accès</th>
-                    <th>Validité</th>
-                    <th>Statut</th>
-                    <th>Action</th>
-                  </tr>
-                </thead>
+            <div className={styles.freeAccessList}>
+              {freeAccess.map((grant) => (
+                <article className={styles.freeAccessRow} key={grant.id}>
+                  <div className={styles.freeAccessIdentity}>
+                    <span className={styles.freeAccessAvatar}>
+                      {(grant.user_email || "U").charAt(0).toUpperCase()}
+                    </span>
+                    <div>
+                      <strong>{grant.user_email || "—"}</strong>
+                      <small>Accès offert MyBasket</small>
+                    </div>
+                  </div>
 
-                <tbody>
-                  {freeAccess.map((grant) => (
-                    <tr key={grant.id}>
-                      <td>{grant.user_email || "—"}</td>
-                      <td>
-                        <strong>{grant.plan_slug || "—"}</strong>
-                      </td>
-                      <td>
-                        {formatDate(grant.starts_at)} →{" "}
-                        {formatDate(grant.ends_at)}
-                      </td>
-                      <td>
-                        <span
-                          className={`${styles.statusBadge} ${statusClass(
-                            grant.status
-                          )}`}
-                        >
-                          {statusLabel(grant.status)}
-                        </span>
-                      </td>
-                      <td>
-                        <div className={styles.actions}>
-                          <form action={extendFreeAccessAction}>
-                            <input type="hidden" name="id" value={grant.id} />
-                            <input
-                              type="date"
-                              name="ends_at"
-                              required
-                              min={new Date().toISOString().slice(0, 10)}
-                              defaultValue={grant.ends_at ? new Date(grant.ends_at).toISOString().slice(0, 10) : ""}
-                              aria-label={`Nouvelle date de fin pour ${grant.user_email || "cet accès"}`}
-                            />
-                            <button type="submit">Prolonger</button>
-                          </form>
+                  <div className={styles.freeAccessInfo}>
+                    <span>OFFRE</span>
+                    <strong>{grant.plan_slug || "—"}</strong>
+                  </div>
 
-                          {grant.status === "active" ? (
-                            <form action={disableFreeAccessAction}>
-                              <input type="hidden" name="id" value={grant.id} />
-                              <button type="submit" className={styles.dangerBtn}>
-                                Désactiver
-                              </button>
-                            </form>
-                          ) : null}
-                        </div>
-                      </td>
-                    </tr>
-                  ))}
+                  <div className={styles.freeAccessInfo}>
+                    <span>VALIDITÉ</span>
+                    <strong>
+                      {formatDate(grant.starts_at)} → {formatDate(grant.ends_at)}
+                    </strong>
+                  </div>
 
-                  {freeAccess.length === 0 && (
-                    <tr>
-                      <td colSpan={5}>
-                        <div className={styles.emptyState}>
-                          Aucun accès gratuit.
-                        </div>
-                      </td>
-                    </tr>
-                  )}
-                </tbody>
-              </table>
+                  <div className={styles.freeAccessInfo}>
+                    <span>STATUT</span>
+                    <span
+                      className={`${styles.statusBadge} ${statusClass(
+                        grant.status,
+                      )}`}
+                    >
+                      {statusLabel(grant.status)}
+                    </span>
+                  </div>
+
+                  <div className={styles.freeAccessActions}>
+                    <form action={extendFreeAccessAction}>
+                      <input type="hidden" name="id" value={grant.id} />
+                      <label>
+                        <span>Nouvelle fin</span>
+                        <input
+                          type="date"
+                          name="ends_at"
+                          required
+                          min={new Date().toISOString().slice(0, 10)}
+                          defaultValue={
+                            grant.ends_at
+                              ? new Date(grant.ends_at).toISOString().slice(0, 10)
+                              : ""
+                          }
+                          aria-label={`Nouvelle date de fin pour ${
+                            grant.user_email || "cet accès"
+                          }`}
+                        />
+                      </label>
+                      <button type="submit" className={styles.extendBtn}>
+                        Prolonger
+                      </button>
+                    </form>
+
+                    {grant.status === "active" ? (
+                      <form action={disableFreeAccessAction}>
+                        <input type="hidden" name="id" value={grant.id} />
+                        <button type="submit" className={styles.dangerBtn}>
+                          Désactiver
+                        </button>
+                      </form>
+                    ) : null}
+                  </div>
+                </article>
+              ))}
+
+              {freeAccess.length === 0 ? (
+                <div className={styles.emptyState}>Aucun accès gratuit.</div>
+              ) : null}
             </div>
           </section>
         </section>

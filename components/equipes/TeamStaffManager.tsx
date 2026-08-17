@@ -102,6 +102,11 @@ function cleanEmail(value: unknown) {
   return String(value ?? "").trim().toLowerCase();
 }
 
+function isTeamOwnerStaff(member: StaffMember) {
+  const role = String(member.role || "").trim().toLowerCase();
+  return role === "entraîneur principal" || role === "entraineur principal";
+}
+
 function defaultPermissions(role: string): TeamCollaborationPermissions {
   const normalized = role.toLowerCase();
 
@@ -552,6 +557,7 @@ export default function TeamStaffManager({
                 `${member.prenom?.[0] || ""}${member.nom?.[0] || ""}`.toUpperCase();
               const linked = memberFor(member);
               const pending = pendingInvitationFor(member);
+              const teamOwnerStaff = isTeamOwnerStaff(member);
 
               return (
                 <article className="staffRow" key={member.id}>
@@ -568,11 +574,17 @@ export default function TeamStaffManager({
                       {member.prenom} {member.nom}
                     </strong>
                     <div className="meta">
-                      <span className="role">{member.role}</span>
+                      <span className="role">
+                        {teamOwnerStaff ? "Responsable de l’équipe" : member.role}
+                      </span>
                       {member.email ? <span>{member.email}</span> : null}
                     </div>
 
-                    {linked ? (
+                    {teamOwnerStaff ? (
+                      <span className="collabBadge active">
+                        ● Responsable de l’équipe · accès automatique
+                      </span>
+                    ) : linked ? (
                       <span className="collabBadge active">
                         ● Collaborateur actif
                       </span>
@@ -589,42 +601,44 @@ export default function TeamStaffManager({
 
                   {isOwner && (
                     <div className="actions">
-                      {linked ? (
-                        <button
-                          type="button"
-                          className="access"
-                          onClick={() => beginManage(member, linked)}
-                        >
-                          Gérer les accès
-                        </button>
-                      ) : pending ? (
-                        <>
+                      {!teamOwnerStaff ? (
+                        linked ? (
                           <button
                             type="button"
                             className="access"
-                            disabled={collabBusy}
-                            onClick={() => void resend(pending)}
+                            onClick={() => beginManage(member, linked)}
                           >
-                            Renvoyer
+                            Gérer les accès
                           </button>
+                        ) : pending ? (
+                          <>
+                            <button
+                              type="button"
+                              className="access"
+                              disabled={collabBusy}
+                              onClick={() => void resend(pending)}
+                            >
+                              Renvoyer
+                            </button>
+                            <button
+                              type="button"
+                              className="softDelete"
+                              disabled={collabBusy}
+                              onClick={() => void revoke(pending)}
+                            >
+                              Annuler invitation
+                            </button>
+                          </>
+                        ) : (
                           <button
                             type="button"
-                            className="softDelete"
-                            disabled={collabBusy}
-                            onClick={() => void revoke(pending)}
+                            className="invite"
+                            onClick={() => beginInvite(member)}
                           >
-                            Annuler invitation
+                            Inviter à collaborer
                           </button>
-                        </>
-                      ) : (
-                        <button
-                          type="button"
-                          className="invite"
-                          onClick={() => beginInvite(member)}
-                        >
-                          Inviter à collaborer
-                        </button>
-                      )}
+                        )
+                      ) : null}
 
                       <button
                         type="button"
@@ -633,14 +647,17 @@ export default function TeamStaffManager({
                       >
                         Modifier
                       </button>
-                      <button
-                        type="button"
-                        className="delete"
-                        disabled={saving}
-                        onClick={() => void remove(member)}
-                      >
-                        Retirer
-                      </button>
+
+                      {!teamOwnerStaff ? (
+                        <button
+                          type="button"
+                          className="delete"
+                          disabled={saving}
+                          onClick={() => void remove(member)}
+                        >
+                          Retirer
+                        </button>
+                      ) : null}
                     </div>
                   )}
                 </article>
@@ -778,7 +795,7 @@ export default function TeamStaffManager({
                   }
                 />
                 <small>
-                  Cette adresse servira à envoyer l’invitation de collaboration.
+                  Pour le responsable de l’équipe, aucun e-mail d’invitation n’est nécessaire. Pour les autres membres, cette adresse permet d’envoyer l’accès de collaboration.
                 </small>
               </label>
             </div>

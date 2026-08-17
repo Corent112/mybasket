@@ -359,3 +359,161 @@
   font-size: 12px;
   font-weight: 800;
 }
+
+
+/* Accès gratuits : présentation en cartes lisibles, sans tableau horizontal tronqué. */
+.freeAccessCard {
+  min-width: 0;
+}
+
+.freeAccessList {
+  display: grid;
+}
+
+.freeAccessRow {
+  display: grid;
+  grid-template-columns:
+    minmax(230px, 1.35fr)
+    minmax(120px, 0.65fr)
+    minmax(190px, 0.9fr)
+    minmax(90px, 0.45fr)
+    minmax(260px, 1.2fr);
+  gap: 16px;
+  align-items: center;
+  padding: 15px 18px;
+  border-bottom: 1px solid #eee7e2;
+}
+
+.freeAccessRow:last-child {
+  border-bottom: 0;
+}
+
+.freeAccessRow:hover {
+  background: #fffaf4;
+}
+
+.freeAccessIdentity {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 11px;
+}
+
+.freeAccessAvatar {
+  width: 38px;
+  height: 38px;
+  flex: 0 0 38px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: #6b1a2c;
+  color: white;
+  font-size: 13px;
+  font-weight: 1000;
+}
+
+.freeAccessIdentity > div {
+  min-width: 0;
+}
+
+.freeAccessIdentity strong {
+  display: block;
+  overflow: hidden;
+  color: #2d2521;
+  font-size: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.freeAccessIdentity small {
+  display: block;
+  margin-top: 3px;
+  color: #9a8b82;
+  font-size: 11px;
+}
+
+.freeAccessInfo {
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+}
+
+.freeAccessInfo > span:first-child,
+.freeAccessActions label > span {
+  color: #9a8980;
+  font-size: 10px;
+  font-weight: 1000;
+  letter-spacing: 0.06em;
+}
+
+.freeAccessInfo strong {
+  color: #3b302a;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.freeAccessActions {
+  display: flex;
+  align-items: flex-end;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.freeAccessActions form:first-child {
+  display: flex;
+  align-items: flex-end;
+  gap: 7px;
+}
+
+.freeAccessActions label {
+  display: grid;
+  gap: 4px;
+}
+
+.freeAccessActions input[type="date"] {
+  min-height: 38px;
+  width: 132px;
+  border: 1px solid #ded7d2;
+  border-radius: 10px;
+  padding: 0 8px;
+  background: white;
+  color: #332a25;
+  font: inherit;
+  font-size: 11px;
+  font-weight: 850;
+}
+
+.extendBtn {
+  min-height: 38px;
+  border: 1px solid #d4a24c !important;
+  background: #fff6e5 !important;
+  color: #7b5312 !important;
+}
+
+@media (max-width: 1180px) {
+  .freeAccessRow {
+    grid-template-columns: minmax(220px, 1.3fr) 120px minmax(170px, 0.9fr) 90px;
+  }
+
+  .freeAccessActions {
+    grid-column: 1 / -1;
+    justify-content: flex-start;
+    padding-left: 49px;
+  }
+}
+
+@media (max-width: 760px) {
+  .freeAccessRow {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .freeAccessIdentity,
+  .freeAccessActions {
+    grid-column: 1 / -1;
+  }
+
+  .freeAccessActions {
+    padding-left: 0;
+    flex-wrap: wrap;
+  }
+}

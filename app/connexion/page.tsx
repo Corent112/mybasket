@@ -95,29 +95,28 @@ function ConnexionContent() {
       }
 
       if (tab === "signup") {
-        const { data, error } = await supabase.auth.signUp({
-          email: cleanEmail,
-          password,
-          options: {
-            emailRedirectTo: `${window.location.origin}/auth/callback?next=${encodeURIComponent(next)}`,
-            data: {
-              display_name: cleanName,
-            },
-          },
+        const response = await fetch("/api/auth/signup", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            email: cleanEmail,
+            password,
+            displayName: cleanName,
+            next,
+          }),
         });
 
-        if (error) {
-          setErr(error.message);
+        const payload = await response.json().catch(() => ({}));
+
+        if (!response.ok) {
+          setErr(payload?.error || "Impossible de créer le compte.");
           return;
         }
 
-        if (data.session) {
-          router.replace(next);
-          router.refresh();
-          return;
-        }
-
-        setInfo("Compte créé. Vérifie ta boîte mail pour confirmer ton adresse.");
+        setInfo(
+          payload?.message ||
+            "Compte créé. Vérifie ta boîte mail et clique sur « Confirmer mon inscription ».",
+        );
         return;
       }
 
