@@ -13,6 +13,19 @@ type ToastState = { message: string; exerciseTitle?: string } | null;
 
 const CATEGORY_OPTIONS = ["U9", "U11", "U13", "U15", "U18", "U21", "Senior"];
 
+const THEME_OPTIONS = [
+  "Fondamentaux individuel",
+  "Fondamentaux pré collectif",
+  "Collectif",
+  "Défense",
+  "Surnombre",
+  "Jeu rapide",
+  "Repli",
+  "Rebond",
+  "Physique",
+  "Adresse",
+];
+
 const FILTERS = [
   { key: "theme", label: "THÈMES" },
   { key: "category", label: "CATÉGORIE" },
@@ -167,7 +180,9 @@ export default function ExercicesClient() {
         f.key,
         f.key === "category"
           ? CATEGORY_OPTIONS
-          : Array.from(sets[f.key]).sort((a, b) => a.localeCompare(b, "fr")),
+          : f.key === "theme"
+            ? THEME_OPTIONS
+            : Array.from(sets[f.key]).sort((a, b) => a.localeCompare(b, "fr")),
       ])
     ) as Record<string, string[]>;
   }, [items]);

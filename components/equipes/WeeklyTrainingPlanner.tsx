@@ -947,8 +947,9 @@ export default function WeeklyTrainingPlanner({ teamId }: { teamId: string }) {
           border: 0;
           background: transparent;
           color: #2a211e;
-          font-size: 0.68rem;
+          font-size: 0.56rem;
           font-weight: 900;
+          letter-spacing: -0.01em;
           outline: none;
         }
         .duration-field {

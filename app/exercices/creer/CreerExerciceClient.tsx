@@ -40,16 +40,16 @@ const NIVEAUX = ["Débutant", "Intermédiaire", "Confirmé"];
 const TEMPS = ["5", "10", "15", "20", "25", "30", "40", "45", "60", "75", "90"];
 
 const THEMES = [
-  "Échauffement",
-  "Dribble",
-  "Passe",
+  "Fondamentaux individuel",
+  "Fondamentaux pré collectif",
+  "Collectif",
   "Défense",
-  "Tir",
-  "Pré-co",
   "Surnombre",
-  "Ludique",
-  "Rebonds",
+  "Jeu rapide",
+  "Repli",
+  "Rebond",
   "Physique",
+  "Adresse",
 ];
 
 const toNum = (v: string): number | undefined => {
