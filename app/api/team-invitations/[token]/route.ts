@@ -11,9 +11,86 @@ function normalizeEmail(value: unknown) {
   return String(value ?? "").trim().toLowerCase();
 }
 
+function normalizeRole(value: unknown) {
+  return String(value ?? "")
+    .trim()
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[_-]+/g, " ")
+    .replace(/\s+/g, " ");
+}
+
+function technicalTeamRole(value: unknown) {
+  const role = normalizeRole(value);
+
+  if (
+    [
+      "head coach",
+      "coach principal",
+      "entraineur principal",
+      "responsable equipe",
+      "responsable de l equipe",
+    ].includes(role)
+  ) {
+    return "head_coach";
+  }
+
+  if (
+    [
+      "assistant",
+      "assistant coach",
+      "coach assistant",
+      "entraineur assistant",
+    ].includes(role)
+  ) {
+    return "assistant";
+  }
+
+  if (["analyst", "analyste", "video analyst", "analyste video"].includes(role)) {
+    return "analyst";
+  }
+
+  if (
+    [
+      "physical coach",
+      "preparateur physique",
+      "prepa physique",
+      "preparateur",
+    ].includes(role)
+  ) {
+    return "physical_coach";
+  }
+
+  if (
+    [
+      "manager",
+      "responsable",
+      "team manager",
+      "responsable administratif",
+    ].includes(role)
+  ) {
+    return "manager";
+  }
+
+  if (["viewer", "observateur", "lecture seule"].includes(role)) {
+    return "viewer";
+  }
+
+  // Rôle technique le plus restrictif si un ancien libellé inconnu arrive.
+  // Les permissions de l'invitation restent ensuite la source des droits réels.
+  return "viewer";
+}
+
 async function findInvitation(token: string) {
   const admin = createAdminClient();
-  if (!admin) return { admin: null, invitation: null, error: "SUPABASE_SERVICE_ROLE_KEY manquant." };
+  if (!admin) {
+    return {
+      admin: null,
+      invitation: null,
+      error: "SUPABASE_SERVICE_ROLE_KEY manquant.",
+    };
+  }
 
   const { data, error } = await admin
     .from("team_invitations")
@@ -71,7 +148,10 @@ export async function GET(
     invitation.status = "expired";
   }
 
-  const team = Array.isArray(invitation.teams) ? invitation.teams[0] : invitation.teams;
+  const team = Array.isArray(invitation.teams)
+    ? invitation.teams[0]
+    : invitation.teams;
+
   const { data: inviterProfile } = await result.admin
     .from("profiles")
     .select("display_name,first_name,last_name")
@@ -148,7 +228,10 @@ export async function POST(
       .update({ status: "expired", updated_at: new Date().toISOString() })
       .eq("id", invitation.id);
 
-    return NextResponse.json({ error: "Cette invitation a expiré." }, { status: 410 });
+    return NextResponse.json(
+      { error: "Cette invitation a expiré." },
+      { status: 410 },
+    );
   }
 
   const invitedEmail = normalizeEmail(invitation.email);
@@ -182,7 +265,10 @@ export async function POST(
   );
 
   if (entitlementError) {
-    return NextResponse.json({ error: entitlementError.message }, { status: 500 });
+    return NextResponse.json(
+      { error: entitlementError.message },
+      { status: 500 },
+    );
   }
 
   if (ownerEntitled !== true) {
@@ -196,13 +282,15 @@ export async function POST(
   }
 
   const now = new Date().toISOString();
+  const technicalRole = technicalTeamRole(invitation.role);
+
   const { error: memberError } = await result.admin
     .from("team_members")
     .upsert(
       {
         team_id: invitation.team_id,
         user_id: user.id,
-        role: invitation.role || "Staff",
+        role: technicalRole,
         permissions: invitation.permissions || { view_team: true },
         status: "accepted",
         invited_by: invitation.invited_by,
@@ -236,21 +324,23 @@ export async function POST(
     teamRow?.metadata && typeof teamRow.metadata === "object"
       ? { ...(teamRow.metadata as Record<string, any>) }
       : {};
+
   const staff = Array.isArray(metadata.staff) ? [...metadata.staff] : [];
 
   const linkedStaff = staff.map((member: any) => {
     const sameId =
       invitation.staff_member_id &&
       String(member?.id || "") === String(invitation.staff_member_id);
+
     const sameEmail =
-      invitedEmail &&
-      normalizeEmail(member?.email) === invitedEmail;
+      invitedEmail && normalizeEmail(member?.email) === invitedEmail;
 
     return sameId || sameEmail ? { ...member, userId: user.id } : member;
   });
 
   if (linkedStaff.length) {
     metadata.staff = linkedStaff;
+
     await result.admin
       .from("teams")
       .update({ metadata, updated_at: now })
@@ -261,6 +351,7 @@ export async function POST(
     ok: true,
     teamId: invitation.team_id,
     role: invitation.role,
+    technicalRole,
     permissions: invitation.permissions || {},
   });
 }
