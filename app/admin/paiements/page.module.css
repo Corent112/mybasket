@@ -517,3 +517,44 @@
     flex-wrap: wrap;
   }
 }
+
+
+/* Listes administratives : codes promo puis accès gratuits, pleine largeur. */
+.adminListsStack {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 22px;
+  margin-bottom: 22px;
+}
+
+.adminListsStack > .tableCard {
+  width: 100%;
+  min-width: 0;
+  margin-bottom: 0;
+}
+
+/* Sur toute la largeur, les actions d'accès gratuits restent entièrement visibles. */
+.adminListsStack .freeAccessRow {
+  grid-template-columns:
+    minmax(260px, 1.45fr)
+    minmax(130px, 0.6fr)
+    minmax(210px, 0.9fr)
+    minmax(110px, 0.45fr)
+    minmax(300px, 1.25fr);
+}
+
+@media (max-width: 1100px) {
+  .adminListsStack .freeAccessRow {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .adminListsStack .freeAccessIdentity,
+  .adminListsStack .freeAccessActions {
+    grid-column: 1 / -1;
+  }
+
+  .adminListsStack .freeAccessActions {
+    justify-content: flex-start;
+    padding-left: 49px;
+  }
+}

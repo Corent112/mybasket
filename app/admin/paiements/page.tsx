@@ -490,7 +490,7 @@ export default async function AdminPaiementsPage() {
           </div>
         </section>
 
-        <section className={styles.grid2}>
+        <section className={styles.adminListsStack}>
           <section className={styles.tableCard}>
             <div className={styles.tableHead}>
               <h2>Codes promotionnels</h2>

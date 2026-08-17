@@ -35,13 +35,15 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  const admin = createAdminClient();
-  if (!admin) {
+  const adminClient = createAdminClient();
+  if (!adminClient) {
     return NextResponse.json(
       { error: "Configuration serveur Supabase incomplète." },
       { status: 500 },
     );
   }
+
+  const admin = adminClient;
 
   const siteUrl = (
     process.env.NEXT_PUBLIC_SITE_URL ||
@@ -51,20 +53,68 @@ export async function POST(request: NextRequest) {
 
   const redirectTo = `${siteUrl}/auth/callback?next=${encodeURIComponent(next)}`;
 
-  const { data, error } = await admin.auth.admin.generateLink({
-    type: "signup",
-    email,
-    password,
-    options: {
-      redirectTo,
-      data: {
-        display_name: displayName,
+  async function generateSignupLink() {
+    return admin.auth.admin.generateLink({
+      type: "signup",
+      email,
+      password,
+      options: {
+        redirectTo,
+        data: {
+          display_name: displayName,
+        },
       },
-    },
-  });
+    });
+  }
 
-  if (error || !data?.properties?.hashed_token) {
-    const message = String(error?.message || "");
+  let generated = await generateSignupLink();
+
+  if (generated.error || !generated.data?.properties?.hashed_token) {
+    const message = String(generated.error?.message || "");
+    const alreadyExists =
+      message.toLowerCase().includes("already") ||
+      message.toLowerCase().includes("registered") ||
+      message.toLowerCase().includes("exists");
+
+    if (alreadyExists) {
+      // Un accès gratuit peut avoir créé auparavant un utilisateur Auth "invité"
+      // sans mot de passe et sans confirmation. Dans ce seul cas, on recrée
+      // proprement le compte afin que l'utilisateur puisse s'inscrire lui-même.
+      const { data: listedUsers, error: listError } =
+        await admin.auth.admin.listUsers({ page: 1, perPage: 1000 });
+
+      if (listError) {
+        console.error("Recherche utilisateur Auth impossible :", listError);
+      }
+
+      const existingUser = (listedUsers?.users || []).find(
+        (candidate) =>
+          candidate.email?.trim().toLowerCase() === email,
+      );
+
+      const isUnconfirmed =
+        existingUser &&
+        !existingUser.email_confirmed_at &&
+        !existingUser.confirmed_at;
+
+      if (existingUser?.id && isUnconfirmed) {
+        const { error: deleteError } =
+          await admin.auth.admin.deleteUser(existingUser.id);
+
+        if (deleteError) {
+          console.error(
+            "Suppression du compte invité non confirmé impossible :",
+            deleteError,
+          );
+        } else {
+          generated = await generateSignupLink();
+        }
+      }
+    }
+  }
+
+  if (generated.error || !generated.data?.properties?.hashed_token) {
+    const message = String(generated.error?.message || "");
 
     if (
       message.toLowerCase().includes("already") ||
@@ -74,13 +124,13 @@ export async function POST(request: NextRequest) {
       return NextResponse.json(
         {
           error:
-            "Un compte existe déjà avec cette adresse. Utilise « Connexion » ou « Mot de passe oublié ».",
+            "Un compte confirmé existe déjà avec cette adresse. Utilise « Connexion » ou « Mot de passe oublié ».",
         },
         { status: 409 },
       );
     }
 
-    console.error("Création lien inscription MyBasket impossible :", error);
+    console.error("Création lien inscription MyBasket impossible :", generated.error);
     return NextResponse.json(
       { error: message || "Impossible de créer le compte." },
       { status: 500 },
@@ -89,7 +139,7 @@ export async function POST(request: NextRequest) {
 
   const confirmUrl =
     `${siteUrl}/auth/callback?token_hash=${encodeURIComponent(
-      data.properties.hashed_token,
+      generated.data.properties.hashed_token,
     )}&type=signup&next=${encodeURIComponent(next)}`;
 
   const safeName = escapeHtml(displayName || "Coach");
