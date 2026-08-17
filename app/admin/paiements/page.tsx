@@ -152,86 +152,197 @@ async function deletePromoCodeAction(formData: FormData) {
 async function createFreeAccessAction(formData: FormData) {
   "use server";
 
-  const { supabase } = await requireAdmin();
+  await requireAdmin();
 
   const email = String(formData.get("email") || "").trim().toLowerCase();
-  const planSlug = String(formData.get("plan_slug") || "premium");
+  const planSlug = String(formData.get("plan_slug") || "premium").trim();
   const days = Number(formData.get("days") || 30);
 
-  if (!email || days <= 0) return;
-
-  const start = new Date();
-  const end = new Date();
-  end.setDate(end.getDate() + days);
+  if (!email || !Number.isFinite(days) || days <= 0) return;
 
   const adminClient = createAdminClient();
+
   if (!adminClient) {
-    throw new Error("SUPABASE_SERVICE_ROLE_KEY manquante : impossible de créer l’invitation.");
-  }
-
-  // Recherche l’utilisateur Auth sans supposer qu’il se trouve dans les 1000 premiers comptes.
-  // Supabase Auth est paginé : on parcourt les pages jusqu’à trouver l’adresse.
-  let invitedUser: Awaited<ReturnType<typeof adminClient.auth.admin.listUsers>>["data"]["users"][number] | undefined;
-  let page = 1;
-  const perPage = 200;
-
-  while (!invitedUser) {
-    const { data: listedUsers, error: listError } =
-      await adminClient.auth.admin.listUsers({ page, perPage });
-
-    if (listError) throw listError;
-
-    invitedUser = listedUsers.users.find(
-      (candidate) => candidate.email?.trim().toLowerCase() === email,
+    console.error(
+      "Création accès gratuit impossible : SUPABASE_SERVICE_ROLE_KEY manquante.",
     );
-
-    if (listedUsers.users.length < perPage) break;
-    page += 1;
+    return;
   }
 
-  if (!invitedUser) {
-    const siteUrl = (process.env.NEXT_PUBLIC_SITE_URL || "https://mybasket.vercel.app").replace(/\/$/, "");
-    const { data: invitation, error: inviteError } = await adminClient.auth.admin.inviteUserByEmail(
-      email,
-      {
-        redirectTo: `${siteUrl}/auth/callback?next=${encodeURIComponent("/mon-compte")}`,
-        data: { display_name: "" },
-      },
+  try {
+    const start = new Date();
+    const end = new Date();
+    end.setDate(end.getDate() + days);
+
+    /*
+     * IMPORTANT :
+     * Aucun plafond arbitraire d'utilisateurs.
+     * Supabase Auth est paginé : on avance jusqu'à trouver l'email
+     * ou jusqu'à la dernière page.
+     */
+    let invitedUser:
+      | Awaited<
+          ReturnType<typeof adminClient.auth.admin.listUsers>
+        >["data"]["users"][number]
+      | undefined;
+
+    let page = 1;
+    const perPage = 200;
+
+    while (!invitedUser) {
+      const { data: listedUsers, error: listError } =
+        await adminClient.auth.admin.listUsers({
+          page,
+          perPage,
+        });
+
+      if (listError) {
+        console.error("Recherche utilisateur Auth impossible :", listError.message);
+        break;
+      }
+
+      invitedUser = listedUsers.users.find(
+        (candidate) =>
+          candidate.email?.trim().toLowerCase() === email,
+      );
+
+      if (invitedUser || listedUsers.users.length < perPage) {
+        break;
+      }
+
+      page += 1;
+    }
+
+    /*
+     * Aucun compte Auth : on crée une invitation propre.
+     * Si Supabase répond finalement que le compte existe déjà,
+     * on ne fait PAS planter la page : l'accès gratuit est tout de même créé.
+     */
+    if (!invitedUser) {
+      const siteUrl = (
+        process.env.NEXT_PUBLIC_SITE_URL ||
+        "https://mybasket.vercel.app"
+      ).replace(/\/$/, "");
+
+      const { data: invitation, error: inviteError } =
+        await adminClient.auth.admin.inviteUserByEmail(email, {
+          redirectTo: `${siteUrl}/auth/callback?next=${encodeURIComponent(
+            "/mon-compte",
+          )}`,
+          data: { display_name: "" },
+        });
+
+      if (inviteError) {
+        const message = inviteError.message.toLowerCase();
+
+        if (
+          !message.includes("already") &&
+          !message.includes("registered") &&
+          !message.includes("exists")
+        ) {
+          console.error("Invitation utilisateur impossible :", inviteError.message);
+        }
+      } else {
+        invitedUser = invitation.user;
+      }
+    }
+
+    /*
+     * Si on connaît l'utilisateur Auth, on garantit son profil client.
+     * On ne bloque jamais l'accès gratuit si le profil ne peut pas être enrichi.
+     */
+    if (invitedUser?.id) {
+      const { error: profileError } = await adminClient
+        .from("profiles")
+        .upsert(
+          {
+            id: invitedUser.id,
+            email,
+            platform_role: "user",
+            status: "active",
+          },
+          { onConflict: "id" },
+        );
+
+      if (profileError) {
+        console.error("Création/mise à jour profil impossible :", profileError.message);
+      }
+    }
+
+    /*
+     * Un email peut être réutilisé/prolongé sans provoquer d'erreur de contrainte.
+     * Si un accès pour le même email + la même offre existe déjà, on le réactive
+     * et on remplace sa période. Sinon on crée une nouvelle ligne.
+     */
+    const { data: existingGrants, error: existingGrantError } =
+      await adminClient
+        .from("free_access_grants")
+        .select("id,status,created_at")
+        .ilike("user_email", email)
+        .eq("plan_slug", planSlug)
+        .order("created_at", { ascending: false })
+        .limit(1);
+
+    if (existingGrantError) {
+      console.error(
+        "Recherche accès gratuit existant impossible :",
+        existingGrantError.message,
+      );
+    }
+
+    const existingGrant = existingGrants?.[0];
+
+    if (existingGrant?.id) {
+      const { error: updateGrantError } = await adminClient
+        .from("free_access_grants")
+        .update({
+          status: "active",
+          starts_at: start.toISOString(),
+          ends_at: end.toISOString(),
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", existingGrant.id);
+
+      if (updateGrantError) {
+        console.error(
+          "Réactivation accès gratuit impossible :",
+          updateGrantError.message,
+        );
+        return;
+      }
+    } else {
+      const { error: grantError } = await adminClient
+        .from("free_access_grants")
+        .insert({
+          user_email: email,
+          plan_slug: planSlug,
+          status: "active",
+          starts_at: start.toISOString(),
+          ends_at: end.toISOString(),
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        });
+
+      if (grantError) {
+        console.error("Création accès gratuit impossible :", grantError.message);
+        return;
+      }
+    }
+
+    revalidatePath("/admin");
+    revalidatePath("/admin/utilisateurs");
+    revalidatePath("/admin/paiements");
+    revalidatePath("/mon-compte");
+  } catch (error) {
+    /*
+     * Une erreur d'admin Supabase ne doit JAMAIS transformer /admin/paiements
+     * en page noire "A server error occurred".
+     */
+    console.error(
+      "Erreur inattendue pendant la création d'un accès gratuit :",
+      error,
     );
-
-    if (inviteError) throw inviteError;
-    invitedUser = invitation.user;
   }
-
-  if (invitedUser) {
-    const { error: profileError } = await adminClient.from("profiles").upsert(
-      {
-        id: invitedUser.id,
-        email,
-        platform_role: "user",
-        status: "active",
-      },
-      { onConflict: "id" },
-    );
-    if (profileError) throw profileError;
-  }
-
-  // Écriture admin : cette action est réservée au CEO et ne doit pas dépendre
-  // des policies RLS du client de session.
-  const { error: grantError } = await adminClient.from("free_access_grants").insert({
-    user_email: email,
-    plan_slug: planSlug,
-    status: "active",
-    starts_at: start.toISOString(),
-    ends_at: end.toISOString(),
-    created_at: new Date().toISOString(),
-    updated_at: new Date().toISOString(),
-  });
-  if (grantError) throw grantError;
-
-  revalidatePath("/admin");
-  revalidatePath("/admin/utilisateurs");
-  revalidatePath("/admin/paiements");
 }
 
 async function extendFreeAccessAction(formData: FormData) {
