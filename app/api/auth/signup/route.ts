@@ -97,13 +97,54 @@ export async function POST(request: NextRequest) {
         !existingUser.email_confirmed_at &&
         !existingUser.confirmed_at;
 
-      if (existingUser?.id && isUnconfirmed) {
+      // Les anciens "accès gratuits" ont parfois créé un utilisateur Auth via
+      // inviteUserByEmail. Supabase peut alors considérer l'adresse comme déjà
+      // enregistrée même si la personne n'a jamais réellement créé son compte.
+      // On ne nettoie ce compte fantôme que s'il n'a jamais ouvert de session
+      // ET qu'un accès gratuit actif existe pour cette adresse.
+      let hasActiveFreeGrant = false;
+
+      if (existingUser?.id && !existingUser.last_sign_in_at) {
+        const now = new Date().toISOString();
+        const { data: grants, error: grantsError } = await admin
+          .from("free_access_grants")
+          .select("id,status,starts_at,ends_at")
+          .ilike("user_email", email)
+          .eq("status", "active")
+          .order("created_at", { ascending: false });
+
+        if (grantsError) {
+          console.error(
+            "Vérification de l'accès gratuit impossible :",
+            grantsError.message,
+          );
+        }
+
+        hasActiveFreeGrant = (grants || []).some((grant) => {
+          const startsAt = grant.starts_at
+            ? new Date(grant.starts_at).getTime()
+            : 0;
+          const endsAt = grant.ends_at
+            ? new Date(grant.ends_at).getTime()
+            : Number.POSITIVE_INFINITY;
+          const current = new Date(now).getTime();
+
+          return startsAt <= current && endsAt >= current;
+        });
+      }
+
+      const canRecreateGhostAccount =
+        Boolean(existingUser?.id) &&
+        !existingUser?.last_sign_in_at &&
+        (isUnconfirmed || hasActiveFreeGrant);
+
+      if (existingUser?.id && canRecreateGhostAccount) {
         const { error: deleteError } =
           await admin.auth.admin.deleteUser(existingUser.id);
 
         if (deleteError) {
           console.error(
-            "Suppression du compte invité non confirmé impossible :",
+            "Suppression du compte invité/fantôme impossible :",
             deleteError,
           );
         } else {
