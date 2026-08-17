@@ -287,29 +287,35 @@ export default function MonComptePage() {
     let subscriptionLabel = userIsAdmin ? "Accès total CEO" : "Aucun";
     let userHasClubSubscription = userIsAdmin;
 
-    const { data: subscription } = await supabase
-      .from("subscriptions")
-      .select("plan_id, status")
-      .eq("user_id", user.id)
-      .eq("status", "active")
-      .limit(1)
-      .maybeSingle();
+    // Source unique de vérité pour l'abonnement affiché :
+    // abonnement payé OU accès gratuit CEO encore valide.
+    try {
+      const effectiveSubscriptionRes = await fetch("/api/account/subscription", {
+        cache: "no-store",
+      });
 
-    if (subscription?.plan_id) {
-      const { data: plan } = await supabase
-        .from("subscription_plans")
-        .select("name, slug, target")
-        .eq("id", subscription.plan_id)
-        .maybeSingle();
+      const effectiveSubscription = await effectiveSubscriptionRes.json();
 
-      if (!userIsAdmin) subscriptionLabel = plan?.name || "Aucun";
+      if (!userIsAdmin && effectiveSubscription?.active === true) {
+        subscriptionLabel =
+          effectiveSubscription?.plan?.name ||
+          effectiveSubscription?.plan?.slug ||
+          "Abonnement actif";
+      }
+
+      const effectivePlan = effectiveSubscription?.plan;
 
       userHasClubSubscription =
-        plan?.target === "club" ||
-        plan?.slug === "club-bronze" ||
-        plan?.slug === "club-silver" ||
-        plan?.slug === "club-gold" ||
-        plan?.name?.toLowerCase().includes("club") === true;
+        effectivePlan?.target === "club" ||
+        effectivePlan?.slug === "club-bronze" ||
+        effectivePlan?.slug === "club-silver" ||
+        effectivePlan?.slug === "club-gold" ||
+        effectivePlan?.slug === "club_bronze" ||
+        effectivePlan?.slug === "club_silver" ||
+        effectivePlan?.slug === "club_gold" ||
+        String(effectivePlan?.name || "").toLowerCase().includes("club");
+    } catch (error) {
+      console.error("Erreur chargement abonnement effectif :", error);
     }
 
     setHasClubSubscription(userIsAdmin || userHasClubSubscription);
@@ -1565,34 +1571,45 @@ function AbonnementSection({ userId }: { userId: string }) {
         return;
       }
 
-      const { data: sub } = await supabase
-        .from("subscriptions")
-        .select("plan_id,billing_period,status,current_period_end")
-        .eq("user_id", userId)
-        .eq("status", "active")
-        .order("created_at", { ascending: false })
-        .limit(1)
-        .maybeSingle();
+      try {
+        const response = await fetch("/api/account/subscription", {
+          cache: "no-store",
+        });
 
-      if (sub?.plan_id) {
-        const { data: currentPlan } = await supabase
-          .from("subscription_plans")
-          .select("*")
-          .eq("id", sub.plan_id)
-          .maybeSingle();
+        const effective = await response.json();
 
         if (mounted) {
           setPlan(
-            currentPlan as
-              | (Plan & { image_url?: string | null; slug?: string | null })
-              | null,
+            effective?.active
+              ? ((effective?.plan ?? null) as
+                  | (Plan & { image_url?: string | null; slug?: string | null })
+                  | null)
+              : null,
           );
-        }
-      }
 
-      if (mounted) {
-        setSubscription((sub as Subscription | null) ?? null);
-        setLoading(false);
+          setSubscription(
+            effective?.active
+              ? ({
+                  plan_id: String(effective?.plan?.id || ""),
+                  billing_period:
+                    effective?.subscription?.billing_period ?? null,
+                  status: "active",
+                  current_period_end:
+                    effective?.subscription?.current_period_end ?? null,
+                } as Subscription)
+              : null,
+          );
+
+          setLoading(false);
+        }
+      } catch (error) {
+        console.error("Erreur chargement abonnement effectif :", error);
+
+        if (mounted) {
+          setPlan(null);
+          setSubscription(null);
+          setLoading(false);
+        }
       }
     }
 
@@ -1691,7 +1708,7 @@ function AbonnementSection({ userId }: { userId: string }) {
 
             {!isCeo && formatEndDate(subscription?.current_period_end) && (
               <p>
-                <span>Prochaine échéance</span>
+                <span>Valable jusqu’au</span>
                 <strong>
                   {formatEndDate(subscription?.current_period_end)}
                 </strong>
