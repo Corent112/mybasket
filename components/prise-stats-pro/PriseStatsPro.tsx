@@ -4599,6 +4599,8 @@ export default function PriseStatsProPage() {
                     <GoogleDriveVideoPicker
                       teamId={String(selTeam?.id || teamId || '')}
                       selectedName={pendingDriveFile?.name || null}
+                      className="drive-picker-main-btn"
+                      label={pendingDriveFile?.name ? `✓ ${pendingDriveFile.name} · Changer` : "Choisir une vidéo dans Google Drive"}
                       onPicked={onPickGoogleDriveVideo}
                     />
                   </div>
@@ -7063,6 +7065,24 @@ function Style() {
       .vmode .vm-tt { font-weight: 900; font-size: 13px; }
       .vmode .vm-sub { font-size: 11px; color: var(--mute); }
       .vid-input { margin-top: 10px; display: grid; gap: 6px; }
+      .drive-picker-main-btn {
+        width: 100%;
+        min-height: 48px;
+        border: 1px solid var(--gold);
+        border-radius: 10px;
+        background: var(--gold);
+        color: #11131d;
+        padding: 12px 18px;
+        font: inherit;
+        font-size: 13px;
+        font-weight: 950;
+        letter-spacing: .01em;
+        cursor: pointer;
+        box-shadow: 0 10px 26px rgba(212,162,76,.24);
+        transition: transform .15s ease, box-shadow .15s ease, opacity .15s ease;
+      }
+      .drive-picker-main-btn:hover:not(:disabled) { transform: translateY(-1px); box-shadow: 0 13px 30px rgba(212,162,76,.34); }
+      .drive-picker-main-btn:disabled { opacity: .55; cursor: wait; }
       .vid-file { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; cursor: pointer; }
       .vid-file input[type="file"] { display: none; }
       .vf-btn {
