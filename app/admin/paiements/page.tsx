@@ -169,15 +169,25 @@ async function createFreeAccessAction(formData: FormData) {
     throw new Error("SUPABASE_SERVICE_ROLE_KEY manquante : impossible de créer l’invitation.");
   }
 
-  const { data: listedUsers, error: listError } = await adminClient.auth.admin.listUsers({
-    page: 1,
-    perPage: 1000,
-  });
-  if (listError) throw listError;
+  // Recherche l’utilisateur Auth sans supposer qu’il se trouve dans les 1000 premiers comptes.
+  // Supabase Auth est paginé : on parcourt les pages jusqu’à trouver l’adresse.
+  let invitedUser: Awaited<ReturnType<typeof adminClient.auth.admin.listUsers>>["data"]["users"][number] | undefined;
+  let page = 1;
+  const perPage = 200;
 
-  let invitedUser = listedUsers.users.find(
-    (candidate) => candidate.email?.trim().toLowerCase() === email,
-  );
+  while (!invitedUser) {
+    const { data: listedUsers, error: listError } =
+      await adminClient.auth.admin.listUsers({ page, perPage });
+
+    if (listError) throw listError;
+
+    invitedUser = listedUsers.users.find(
+      (candidate) => candidate.email?.trim().toLowerCase() === email,
+    );
+
+    if (listedUsers.users.length < perPage) break;
+    page += 1;
+  }
 
   if (!invitedUser) {
     const siteUrl = (process.env.NEXT_PUBLIC_SITE_URL || "https://mybasket.vercel.app").replace(/\/$/, "");
@@ -206,7 +216,9 @@ async function createFreeAccessAction(formData: FormData) {
     if (profileError) throw profileError;
   }
 
-  const { error: grantError } = await supabase.from("free_access_grants").insert({
+  // Écriture admin : cette action est réservée au CEO et ne doit pas dépendre
+  // des policies RLS du client de session.
+  const { error: grantError } = await adminClient.from("free_access_grants").insert({
     user_email: email,
     plan_slug: planSlug,
     status: "active",
