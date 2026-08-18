@@ -21,6 +21,7 @@ type CompositionTeam = { id: string; name: string; playerIds: string[] };
 type TeamCompositionBlock = { id: string; title: string; playersPerTeam: number; teams: CompositionTeam[] };
 type DbExercise = Partial<SessionExercise> & { duration_minutes?: number | string | null; sort_order?: number | string | null };
 
+type ReadinessInfo = { level: "normal" | "watch" | "alert"; label: string };
 type DragPayload = { playerId: string; blockId: string } | null;
 const POSITION_LABELS = ["PG", "SG", "SF", "PF", "C"];
 const uid = (prefix: string) => `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
@@ -52,6 +53,7 @@ export default function NouvelleSeancePage() {
   const [saving, setSaving] = useState(false);
   const [dragged, setDragged] = useState<DragPayload>(null);
   const [dropTarget, setDropTarget] = useState<string | null>(null);
+  const [readinessMap, setReadinessMap] = useState<Record<string, ReadinessInfo>>({});
 
   const selectedTeam = teams.find((team) => team.id === teamId);
   const filteredPlayers = useMemo(() => players.filter((player) => player.team_id === teamId), [players, teamId]);
@@ -59,6 +61,105 @@ export default function NouvelleSeancePage() {
 
   useEffect(() => { void load(); }, []);
   useEffect(() => { if (selectedTeam?.gymnasium && !location) setLocation(selectedTeam.gymnasium); }, [selectedTeam, location]);
+  useEffect(() => {
+    if (!teamId) {
+      setReadinessMap({});
+      return;
+    }
+    void loadReadiness(teamId);
+  }, [teamId]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  async function loadReadiness(currentTeamId: string) {
+    const now = new Date().toISOString();
+    const since = new Date(Date.now() - 36 * 60 * 60 * 1000).toISOString();
+
+    const [
+      { data: availabilityRows },
+      { data: responseRows },
+    ] = await Promise.all([
+      supabase
+        .from("player_availability")
+        .select("player_id,status")
+        .eq("team_id", currentTeamId)
+        .lte("starts_at", now)
+        .or(`ends_at.is.null,ends_at.gte.${now}`)
+        .order("starts_at", { ascending: false }),
+
+      supabase
+        .from("player_wellness_responses")
+        .select("player_id,fatigue,soreness,sleep,stress,rpe,created_at")
+        .eq("team_id", currentTeamId)
+        .gte("created_at", since)
+        .order("created_at", { ascending: false }),
+    ]);
+
+    const map: Record<string, ReadinessInfo> = {};
+
+    for (const row of availabilityRows ?? []) {
+      const id = String(row.player_id || "");
+      if (!id || map[id]) continue;
+
+      const playerStatus = String(row.status || "available");
+
+      if (["injured", "unavailable", "absent"].includes(playerStatus)) {
+        map[id] = {
+          level: "alert",
+          label:
+            playerStatus === "injured"
+              ? "Blessé"
+              : playerStatus === "absent"
+                ? "Absent"
+                : "Indisponible",
+        };
+      } else if (["limited", "returning"].includes(playerStatus)) {
+        map[id] = {
+          level: "watch",
+          label: playerStatus === "limited" ? "Limité" : "Reprise",
+        };
+      }
+    }
+
+    const seen = new Set<string>();
+
+    for (const row of responseRows ?? []) {
+      const id = String(row.player_id || "");
+      if (!id || seen.has(id)) continue;
+      seen.add(id);
+
+      const fatigue = Number(row.fatigue || 0);
+      const soreness = Number(row.soreness || 0);
+      const sleep = row.sleep == null ? null : Number(row.sleep);
+      const stress = Number(row.stress || 0);
+      const rpe = Number(row.rpe || 0);
+
+      const red =
+        soreness >= 8 ||
+        fatigue >= 9 ||
+        (sleep != null && sleep <= 3) ||
+        stress >= 9;
+
+      const orange =
+        soreness >= 5 ||
+        fatigue >= 7 ||
+        (sleep != null && sleep <= 5) ||
+        stress >= 7 ||
+        rpe >= 9;
+
+      const current = map[id];
+      if (current?.level === "alert") continue;
+
+      if (red) {
+        map[id] = { level: "alert", label: "Récupération" };
+      } else if (orange) {
+        map[id] = { level: "watch", label: "Vigilance" };
+      } else if (!current) {
+        map[id] = { level: "normal", label: "OK" };
+      }
+    }
+
+    setReadinessMap(map);
+  }
+
 
   async function load() {
     setLoading(true);
@@ -431,7 +532,7 @@ export default function NouvelleSeancePage() {
     <section className="panel coachMode"><div className="panelTitle"><span>02</span><div><h2>Mode Coach</h2><p>Sélectionne puis déplace les joueurs dans chaque composition</p></div></div>
       <div className="coachLayout">
         <aside className="presenceRail"><div className="railHeader"><div><strong>JOUEURS PRÉSENTS</strong><small>{selectedPlayers.length} sélectionné{selectedPlayers.length > 1 ? "s" : ""}</small></div><div><button onClick={() => setSelection(filteredPlayers.map((player) => player.id))}>Tout</button><button onClick={() => setSelection([])}>Vider</button></div></div>
-          <div className="roster">{filteredPlayers.map((player) => { const selected = selectedPlayers.includes(player.id); return <button type="button" key={player.id} className={`rosterCard ${selected ? "selected" : ""}`} onClick={() => togglePlayer(player.id)} draggable={selected} onDragStart={() => selected && setDragged({ playerId: player.id, blockId: "pool" })}><span className="check">{selected ? "✓" : "+"}</span><span><b>{playerName(player)}</b><small>{player.position_primary || "Poste non défini"}</small></span></button>; })}</div>
+          <div className="roster">{filteredPlayers.map((player) => { const selected = selectedPlayers.includes(player.id); const readiness = readinessMap[player.id]; return <button type="button" key={player.id} className={`rosterCard ${selected ? "selected" : ""} ${readiness?.level === "alert" ? "readinessAlert" : readiness?.level === "watch" ? "readinessWatch" : ""}`} onClick={() => togglePlayer(player.id)} draggable={selected} onDragStart={() => selected && setDragged({ playerId: player.id, blockId: "pool" })}><span className="check">{selected ? "✓" : "+"}</span><span><b>{playerName(player)}</b><small>{player.position_primary || "Poste non défini"}</small>{readiness && readiness.level !== "normal" && <em className={`readinessLabel ${readiness.level}`}>{readiness.level === "alert" ? "🔴" : "🟠"} {readiness.label}</em>}</span></button>; })}</div>
         </aside>
 
         <div className="compositionArea"><div className="compositionToolbar"><div><strong>COMPOSITIONS DYNAMIQUES</strong><small>Un joueur peut être utilisé dans chaque bloc, une seule fois par bloc.</small></div><div className="presetButtons"><button onClick={() => addPresetBlock(3)}>+ 3x3</button><button onClick={() => addPresetBlock(4)}>+ 4x4</button><button onClick={() => addPresetBlock(5)}>+ 5x5</button><button onClick={() => addPresetBlock(0)}>+ Ateliers</button></div></div>
@@ -448,7 +549,7 @@ export default function NouvelleSeancePage() {
     <div className="saveBar"><div><strong>{selectedPlayers.length} joueurs · {blocks.length} blocs · {exercises.length} exercices</strong><small>Les données sont enregistrées dans Supabase.</small></div><button onClick={save} disabled={saving}>{saving ? "Enregistrement…" : "Enregistrer la séance"}</button></div>
 
     <style jsx>{`
-      .page{min-height:100vh;background:#f2f0eb;color:#111;padding:34px 24px 110px}.loading{text-align:center}.hero{max-width:1400px;margin:0 auto 24px;background:#101012;color:white;border-radius:24px;padding:34px 38px;position:relative;overflow:hidden}.hero:after{content:"";position:absolute;width:300px;height:300px;border:70px solid #d4a24c33;border-radius:50%;right:-100px;top:-150px}.hero span{color:#d4a24c;font-size:12px;font-weight:900;letter-spacing:2px}.hero h1{font-size:42px;margin:8px 0 4px}.hero p{color:#bbb;margin:0}.panel{max-width:1400px;margin:18px auto;background:#fff;border-radius:22px;padding:24px;box-shadow:0 18px 50px #0000000c}.panelTitle{display:flex;align-items:center;gap:12px;margin-bottom:20px}.panelTitle>span{width:42px;height:42px;border-radius:14px;background:#111;color:#d4a24c;display:grid;place-items:center;font-weight:900}.panelTitle h2{margin:0;font-size:24px}.panelTitle p{margin:2px 0 0;color:#777}.panelTitle.horizontal .goldButton{margin-left:auto}.infoGrid{display:grid;grid-template-columns:repeat(4,1fr);gap:14px}.infoGrid label,.blockHeader label,.exerciseMeta label{display:flex;flex-direction:column;gap:6px;font-weight:800;font-size:12px}.wide{grid-column:span 2}input,select,textarea{border:1px solid #dedbd5;border-radius:11px;padding:11px 12px;background:white;font:inherit}button{border:0;border-radius:10px;padding:10px 13px;font-weight:900;cursor:pointer}.coachLayout{display:grid;grid-template-columns:280px minmax(0,1fr);gap:18px}.presenceRail{background:#111;color:white;border-radius:18px;padding:16px;align-self:start;position:sticky;top:15px}.railHeader{display:flex;justify-content:space-between;gap:10px;align-items:center;margin-bottom:14px}.railHeader strong,.compositionToolbar strong{display:block;font-size:12px;letter-spacing:1px}.railHeader small,.compositionToolbar small{display:block;color:#999;margin-top:3px}.railHeader button{padding:6px 8px;background:#2a2a2d;color:white}.roster{display:flex;flex-direction:column;gap:8px}.rosterCard{display:flex;align-items:center;text-align:left;gap:10px;background:#1c1c1f;color:white;border:1px solid #333;width:100%;transition:.2s transform,.2s border-color,.2s background}.rosterCard:hover{transform:translateX(3px)}.rosterCard.selected{border-color:#d4a24c;background:#29251e}.rosterCard .check{width:26px;height:26px;border-radius:9px;background:#333;display:grid;place-items:center;color:#d4a24c}.rosterCard b,.rosterCard small{display:block}.rosterCard small{font-size:10px;color:#999;margin-top:2px}.compositionArea{min-width:0}.compositionToolbar{display:flex;justify-content:space-between;gap:12px;align-items:center;margin-bottom:12px}.presetButtons{display:flex;gap:7px;flex-wrap:wrap}.presetButtons button{background:#f0e8d9;color:#6b4a17}.compositionBlock{border:1px solid #e4dfd5;border-radius:18px;padding:16px;margin-bottom:16px;background:linear-gradient(135deg,#fff,#fbfaf7)}.tone1{border-top:4px solid #466a87}.tone2{border-top:4px solid #8a5d72}.tone3{border-top:4px solid #5e7c55}.tone0{border-top:4px solid #d4a24c}.blockHeader{display:flex;align-items:center;gap:9px;flex-wrap:wrap}.blockIdentity{display:flex;flex-direction:column;min-width:230px;margin-right:auto}.blockIdentity span{font-size:10px;font-weight:900;color:#a5782d;letter-spacing:1px}.blockIdentity input{font-size:20px;font-weight:900;border:0;padding:3px 0}.blockHeader label{flex-direction:row;align-items:center}.blockHeader label input{width:64px}.auto{background:#111;color:#d4a24c}.iconDanger{background:#8b1028;color:#fff;font-size:18px}.blockPool{margin:14px 0;padding:11px;border:1px dashed #c8b48e;border-radius:13px;background:#faf5eb}.blockPool>span{font-size:10px;font-weight:900;color:#8a672b}.blockPool>div{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}.miniPlayer{background:white;border:1px solid #ded7ca;border-radius:11px;padding:8px 10px;cursor:grab;box-shadow:0 5px 12px #00000008}.miniPlayer b,.miniPlayer small{display:block}.miniPlayer small{font-size:9px;color:#888}.teamGrid{display:grid;grid-template-columns:repeat(3,minmax(210px,1fr));gap:12px}.teamCard{border:1px solid #dedbd5;border-radius:16px;overflow:hidden;background:#fff;min-height:185px;transition:.2s transform,.2s box-shadow}.teamCard.isTarget{transform:translateY(-4px);box-shadow:0 15px 35px #d4a24c33}.teamHead{display:grid;grid-template-columns:34px 1fr 30px;align-items:center;background:#171719;padding:8px}.teamHead>span{width:25px;height:25px;border-radius:9px;background:#d4a24c;display:grid;place-items:center;font-weight:900}.teamHead input{border:0;background:transparent;color:white;font-weight:900;padding:6px}.teamHead button{background:transparent;color:#aaa;padding:4px}.slots{padding:9px}.slot{display:grid;grid-template-columns:38px 1fr;align-items:center;min-height:44px;border-bottom:1px solid #eee}.slot:last-child{border-bottom:0}.slot>div{grid-column:1/-1;display:grid;grid-template-columns:38px 1fr 25px;align-items:center;cursor:grab;animation:playerIn .25s ease}.slot .position{font-size:11px;font-weight:900;color:#a17226}.slot em{color:#aaa;font-size:11px}.slot b,.slot small{display:block}.slot small{font-size:9px;color:#888}.slot button{background:transparent;color:#999;padding:3px}.teamTone1 .teamHead{background:#284c68}.teamTone2 .teamHead{background:#6b374e}.teamTone3 .teamHead{background:#476040}.teamTone4 .teamHead{background:#5d4a2f}.addTeam{margin-top:11px;background:#eee9df;color:#664b20}.exercise{display:grid;grid-template-columns:55px 1fr auto;gap:14px;border:1px solid #e6e1d8;border-radius:16px;padding:14px;margin-top:11px}.exerciseIndex{font-size:28px;font-weight:900;color:#d4a24c}.exerciseContent{display:grid;grid-template-columns:1fr 180px;gap:10px}.exerciseTitle{font-size:18px;font-weight:900}.exerciseMeta{display:grid;grid-template-columns:1fr 1fr;gap:8px}.exercise textarea{grid-column:1/-1;min-height:72px}.exerciseActions{display:flex;flex-direction:column;gap:6px}.dangerSmall{background:#8b1028;color:#fff}.goldButton{background:#d4a24c}.saveBar{position:fixed;left:50%;bottom:18px;transform:translateX(-50%);width:min(1040px,calc(100% - 32px));background:#111;color:white;border-radius:18px;padding:14px 18px;display:flex;justify-content:space-between;align-items:center;box-shadow:0 18px 45px #0005;z-index:20}.saveBar strong,.saveBar small{display:block}.saveBar small{color:#999;margin-top:3px}.saveBar button{background:#d4a24c;color:#111;padding:14px 22px}@keyframes playerIn{from{opacity:0;transform:scale(.96)}to{opacity:1;transform:scale(1)}}@media(max-width:1100px){.coachLayout{grid-template-columns:1fr}.presenceRail{position:static}.roster{display:grid;grid-template-columns:repeat(3,1fr)}.teamGrid{grid-template-columns:repeat(2,1fr)}}@media(max-width:760px){.page{padding:18px 12px 120px}.hero h1{font-size:30px}.infoGrid,.teamGrid,.roster{grid-template-columns:1fr}.wide{grid-column:auto}.compositionToolbar,.saveBar{align-items:flex-start}.exercise{grid-template-columns:40px 1fr}.exerciseActions{grid-column:2;flex-direction:row}.exerciseContent{grid-template-columns:1fr}.saveBar{flex-direction:column;gap:10px}.saveBar button{width:100%}}
+      .page{min-height:100vh;background:#f2f0eb;color:#111;padding:34px 24px 110px}.loading{text-align:center}.hero{max-width:1400px;margin:0 auto 24px;background:#101012;color:white;border-radius:24px;padding:34px 38px;position:relative;overflow:hidden}.hero:after{content:"";position:absolute;width:300px;height:300px;border:70px solid #d4a24c33;border-radius:50%;right:-100px;top:-150px}.hero span{color:#d4a24c;font-size:12px;font-weight:900;letter-spacing:2px}.hero h1{font-size:42px;margin:8px 0 4px}.hero p{color:#bbb;margin:0}.panel{max-width:1400px;margin:18px auto;background:#fff;border-radius:22px;padding:24px;box-shadow:0 18px 50px #0000000c}.panelTitle{display:flex;align-items:center;gap:12px;margin-bottom:20px}.panelTitle>span{width:42px;height:42px;border-radius:14px;background:#111;color:#d4a24c;display:grid;place-items:center;font-weight:900}.panelTitle h2{margin:0;font-size:24px}.panelTitle p{margin:2px 0 0;color:#777}.panelTitle.horizontal .goldButton{margin-left:auto}.infoGrid{display:grid;grid-template-columns:repeat(4,1fr);gap:14px}.infoGrid label,.blockHeader label,.exerciseMeta label{display:flex;flex-direction:column;gap:6px;font-weight:800;font-size:12px}.wide{grid-column:span 2}input,select,textarea{border:1px solid #dedbd5;border-radius:11px;padding:11px 12px;background:white;font:inherit}button{border:0;border-radius:10px;padding:10px 13px;font-weight:900;cursor:pointer}.coachLayout{display:grid;grid-template-columns:280px minmax(0,1fr);gap:18px}.presenceRail{background:#111;color:white;border-radius:18px;padding:16px;align-self:start;position:sticky;top:15px}.railHeader{display:flex;justify-content:space-between;gap:10px;align-items:center;margin-bottom:14px}.railHeader strong,.compositionToolbar strong{display:block;font-size:12px;letter-spacing:1px}.railHeader small,.compositionToolbar small{display:block;color:#999;margin-top:3px}.railHeader button{padding:6px 8px;background:#2a2a2d;color:white}.roster{display:flex;flex-direction:column;gap:8px}.rosterCard{display:flex;align-items:center;text-align:left;gap:10px;background:#1c1c1f;color:white;border:1px solid #333;width:100%;transition:.2s transform,.2s border-color,.2s background}.rosterCard:hover{transform:translateX(3px)}.rosterCard.selected{border-color:#d4a24c;background:#29251e}.rosterCard.readinessAlert{border-color:#d94a40;background:#35191d}.rosterCard.readinessWatch{border-color:#d59a33;background:#332b1d}.readinessLabel{display:inline-block!important;margin-top:5px;padding:3px 6px;border-radius:999px;font-size:9px!important;font-style:normal;font-weight:900}.readinessLabel.alert{background:#5a2022;color:#ffb7b2}.readinessLabel.watch{background:#5b471f;color:#ffe0a3}.rosterCard .check{width:26px;height:26px;border-radius:9px;background:#333;display:grid;place-items:center;color:#d4a24c}.rosterCard b,.rosterCard small{display:block}.rosterCard small{font-size:10px;color:#999;margin-top:2px}.compositionArea{min-width:0}.compositionToolbar{display:flex;justify-content:space-between;gap:12px;align-items:center;margin-bottom:12px}.presetButtons{display:flex;gap:7px;flex-wrap:wrap}.presetButtons button{background:#f0e8d9;color:#6b4a17}.compositionBlock{border:1px solid #e4dfd5;border-radius:18px;padding:16px;margin-bottom:16px;background:linear-gradient(135deg,#fff,#fbfaf7)}.tone1{border-top:4px solid #466a87}.tone2{border-top:4px solid #8a5d72}.tone3{border-top:4px solid #5e7c55}.tone0{border-top:4px solid #d4a24c}.blockHeader{display:flex;align-items:center;gap:9px;flex-wrap:wrap}.blockIdentity{display:flex;flex-direction:column;min-width:230px;margin-right:auto}.blockIdentity span{font-size:10px;font-weight:900;color:#a5782d;letter-spacing:1px}.blockIdentity input{font-size:20px;font-weight:900;border:0;padding:3px 0}.blockHeader label{flex-direction:row;align-items:center}.blockHeader label input{width:64px}.auto{background:#111;color:#d4a24c}.iconDanger{background:#8b1028;color:#fff;font-size:18px}.blockPool{margin:14px 0;padding:11px;border:1px dashed #c8b48e;border-radius:13px;background:#faf5eb}.blockPool>span{font-size:10px;font-weight:900;color:#8a672b}.blockPool>div{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}.miniPlayer{background:white;border:1px solid #ded7ca;border-radius:11px;padding:8px 10px;cursor:grab;box-shadow:0 5px 12px #00000008}.miniPlayer b,.miniPlayer small{display:block}.miniPlayer small{font-size:9px;color:#888}.teamGrid{display:grid;grid-template-columns:repeat(3,minmax(210px,1fr));gap:12px}.teamCard{border:1px solid #dedbd5;border-radius:16px;overflow:hidden;background:#fff;min-height:185px;transition:.2s transform,.2s box-shadow}.teamCard.isTarget{transform:translateY(-4px);box-shadow:0 15px 35px #d4a24c33}.teamHead{display:grid;grid-template-columns:34px 1fr 30px;align-items:center;background:#171719;padding:8px}.teamHead>span{width:25px;height:25px;border-radius:9px;background:#d4a24c;display:grid;place-items:center;font-weight:900}.teamHead input{border:0;background:transparent;color:white;font-weight:900;padding:6px}.teamHead button{background:transparent;color:#aaa;padding:4px}.slots{padding:9px}.slot{display:grid;grid-template-columns:38px 1fr;align-items:center;min-height:44px;border-bottom:1px solid #eee}.slot:last-child{border-bottom:0}.slot>div{grid-column:1/-1;display:grid;grid-template-columns:38px 1fr 25px;align-items:center;cursor:grab;animation:playerIn .25s ease}.slot .position{font-size:11px;font-weight:900;color:#a17226}.slot em{color:#aaa;font-size:11px}.slot b,.slot small{display:block}.slot small{font-size:9px;color:#888}.slot button{background:transparent;color:#999;padding:3px}.teamTone1 .teamHead{background:#284c68}.teamTone2 .teamHead{background:#6b374e}.teamTone3 .teamHead{background:#476040}.teamTone4 .teamHead{background:#5d4a2f}.addTeam{margin-top:11px;background:#eee9df;color:#664b20}.exercise{display:grid;grid-template-columns:55px 1fr auto;gap:14px;border:1px solid #e6e1d8;border-radius:16px;padding:14px;margin-top:11px}.exerciseIndex{font-size:28px;font-weight:900;color:#d4a24c}.exerciseContent{display:grid;grid-template-columns:1fr 180px;gap:10px}.exerciseTitle{font-size:18px;font-weight:900}.exerciseMeta{display:grid;grid-template-columns:1fr 1fr;gap:8px}.exercise textarea{grid-column:1/-1;min-height:72px}.exerciseActions{display:flex;flex-direction:column;gap:6px}.dangerSmall{background:#8b1028;color:#fff}.goldButton{background:#d4a24c}.saveBar{position:fixed;left:50%;bottom:18px;transform:translateX(-50%);width:min(1040px,calc(100% - 32px));background:#111;color:white;border-radius:18px;padding:14px 18px;display:flex;justify-content:space-between;align-items:center;box-shadow:0 18px 45px #0005;z-index:20}.saveBar strong,.saveBar small{display:block}.saveBar small{color:#999;margin-top:3px}.saveBar button{background:#d4a24c;color:#111;padding:14px 22px}@keyframes playerIn{from{opacity:0;transform:scale(.96)}to{opacity:1;transform:scale(1)}}@media(max-width:1100px){.coachLayout{grid-template-columns:1fr}.presenceRail{position:static}.roster{display:grid;grid-template-columns:repeat(3,1fr)}.teamGrid{grid-template-columns:repeat(2,1fr)}}@media(max-width:760px){.page{padding:18px 12px 120px}.hero h1{font-size:30px}.infoGrid,.teamGrid,.roster{grid-template-columns:1fr}.wide{grid-column:auto}.compositionToolbar,.saveBar{align-items:flex-start}.exercise{grid-template-columns:40px 1fr}.exerciseActions{grid-column:2;flex-direction:row}.exerciseContent{grid-template-columns:1fr}.saveBar{flex-direction:column;gap:10px}.saveBar button{width:100%}}
     `}</style>
   </main>;
 }

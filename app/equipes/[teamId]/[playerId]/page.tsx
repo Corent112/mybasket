@@ -15,6 +15,7 @@ import { useLivestatTags } from "@/lib/livestat-tags";
 import PlayerMontages from "@/components/players/PlayerMontages";
 import ShotChart from "@/components/prise-stats-pro/ShotChart";
 import AdvancedVideoEditor from "@/components/video-editor/AdvancedVideoEditor";
+import PlayerLoadMonitoring from "@/components/players/PlayerLoadMonitoring";
 
 type PlayerExtra = Player & {
   licenceNumber?: string;
@@ -33,6 +34,7 @@ const TABS = [
   "Informations",
   "Stats & Vidéo",
   "Tests",
+  "Charge & récup.",
   "Médical",
   "Bilans",
   "Documents",
@@ -1882,6 +1884,10 @@ export default function JoueurDetailPage({
               setTests((prev) => prev.filter((t) => t.id !== id));
             }}
           />
+        )}
+
+        {tab === "Charge & récup." && (
+          <PlayerLoadMonitoring playerId={playerId} teamId={teamId} />
         )}
 
         {tab === "Médical" && (
