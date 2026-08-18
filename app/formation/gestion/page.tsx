@@ -1,0 +1,1 @@
+import TrainingManager from "@/components/formation/TrainingManager";export default function Page(){return <TrainingManager/>}
