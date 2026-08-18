@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
 
-type Target = "individual" | "club";
+type Target = "individual" | "club" | "institution" | "committee" | "league" | "federation" | "pole";
 type Billing = "monthly" | "yearly";
 
 type Plan = {
@@ -155,6 +155,18 @@ export default function AbonnementsPage() {
     [plans]
   );
 
+  const institutionalPlans = useMemo(
+    () =>
+      plans.filter((plan) => {
+        const text = `${plan.target || ""} ${plan.slug || ""} ${plan.name || ""}`.toLowerCase();
+        return (
+          ["institution", "committee", "league", "federation", "pole"].includes(plan.target) ||
+          /comit[eé]|ligue|f[eé]d[eé]ration|ffbb|p[oô]le/.test(text)
+        );
+      }),
+    [plans]
+  );
+
   return (
     <main className="page">
       <section className="hero">
@@ -209,6 +221,16 @@ export default function AbonnementsPage() {
             plans={clubPlans}
             billing={billing}
           />
+
+          {institutionalPlans.length > 0 && (
+            <PlansSection
+              title="Abonnements institutionnels"
+              subtitle="Comité, Ligue ou Fédération : l’accès complet à l’environnement Institutionnel."
+              icon="🏛️"
+              plans={institutionalPlans}
+              billing={billing}
+            />
+          )}
 
           {plans.length === 0 && (
             <div className="empty">

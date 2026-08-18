@@ -1,0 +1,2 @@
+import PlayerSchoolPanel from "@/components/school/PlayerSchoolPanel";
+export default async function Page({params}:{params:Promise<{teamId:string;playerId:string}>}){const{playerId}=await params;return <main style={{minHeight:"100vh",background:"#f6f2ee",padding:"28px 18px 60px"}}><div style={{maxWidth:1100,margin:"0 auto"}}><PlayerSchoolPanel playerId={playerId}/></div></main>}

@@ -78,6 +78,13 @@ const MENU: MenuItem[] = [
   href: '/mon-compte/club',
 },
 
+  {
+    key: 'institutionnel',
+    label: 'Institutionnel',
+    icon: '🏛️',
+    href: '/institutionnel',
+  },
+
   { key: 'abonnement', label: 'Mon Abonnement', icon: '💎' },
   { key: 'calendrier', label: 'Mon Calendrier', icon: '📒' },
 
@@ -144,6 +151,7 @@ export default function MonComptePage() {
   const [uid, setUid] = useState('');
   const [isAdmin, setIsAdmin] = useState(false);
   const [hasClubSubscription, setHasClubSubscription] = useState(false);
+  const [hasInstitutionalAccess, setHasInstitutionalAccess] = useState(false);
   const [accessMap, setAccessMap] = useState<Record<string, boolean>>({});
   const [active, setActive] = useState<string>('profil');
   const [managementView, setManagementView] = useState<
@@ -324,6 +332,15 @@ export default function MonComptePage() {
     const accessData = await accessRes.json();
 
     setAccessMap(accessData);
+
+    try {
+      const institutionalRes = await fetch("/api/institutionnel/access", { cache: "no-store" });
+      const institutionalData = await institutionalRes.json();
+      setHasInstitutionalAccess(institutionalData?.allowed === true);
+    } catch (error) {
+      console.error("Erreur accès Institutionnel :", error);
+      setHasInstitutionalAccess(false);
+    }
 
     const dn = (profile?.display_name || "").trim();
     const displayParts = dn.split(" ").filter(Boolean);
@@ -562,7 +579,7 @@ const MENU_ACCESS: Record<string, string> = {
   club: "club_space",
 };
 
-const visibleMenu = MENU;
+const visibleMenu = MENU.filter((item) => item.key !== "institutionnel" || hasInstitutionalAccess);
 
 const hasSharedTeams = teams.some((team) => team.isShared === true);
 const hasSharedSessions = teams.some(
@@ -692,6 +709,7 @@ const menuAccessKey: Record<string, string | null> = {
 
 function canOpenMenuItem(item: MenuItem) {
   if (item.key === "profil" || item.key === "abonnement") return true;
+  if (item.key === "institutionnel") return hasInstitutionalAccess;
 
   if (item.key === "equipes" && hasSharedTeams) return true;
   if (item.key === "calendrier" && hasSharedSessions) return true;
