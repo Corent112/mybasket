@@ -16,6 +16,7 @@ import PlayerMontages from "@/components/players/PlayerMontages";
 import ShotChart from "@/components/prise-stats-pro/ShotChart";
 import AdvancedVideoEditor from "@/components/video-editor/AdvancedVideoEditor";
 import PlayerLoadMonitoring from "@/components/players/PlayerLoadMonitoring";
+import PlayerShootingGrids from "@/components/players/PlayerShootingGrids";
 
 type PlayerExtra = Player & {
   licenceNumber?: string;
@@ -35,6 +36,7 @@ const TABS = [
   "Stats & Vidéo",
   "Tests",
   "Charge & récup.",
+  "Grilles de tir",
   "Médical",
   "Bilans",
   "Documents",
@@ -1888,6 +1890,10 @@ export default function JoueurDetailPage({
 
         {tab === "Charge & récup." && (
           <PlayerLoadMonitoring playerId={playerId} teamId={teamId} />
+        )}
+
+        {tab === "Grilles de tir" && (
+          <PlayerShootingGrids playerId={playerId} teamId={teamId} />
         )}
 
         {tab === "Médical" && (
