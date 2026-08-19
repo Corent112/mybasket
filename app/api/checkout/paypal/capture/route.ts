@@ -37,15 +37,61 @@ export async function GET(request: Request) {
     const { data: subscriptionItems } = await supabase.from("order_items")
       .select("item_id,assigned_to").eq("order_id", localOrderId).eq("item_type", "subscription");
     if (subscriptionItems?.length) {
-      await supabase.from("subscriptions").update({ status: "canceled", updated_at: now })
-        .eq("user_id", user.id).eq("status", "active");
       for (const item of subscriptionItems) {
         if (!item.item_id) continue;
         const yearly = item.assigned_to === "yearly";
-        const end = new Date(); yearly ? end.setFullYear(end.getFullYear() + 1) : end.setMonth(end.getMonth() + 1);
-        await supabase.from("subscriptions").insert({ user_id: user.id, plan_id: item.item_id,
-          billing_period: yearly ? "yearly" : "monthly", status: "active",
-          current_period_start: now, current_period_end: end.toISOString(), created_at: now, updated_at: now });
+        const nowDate = new Date(now);
+
+        const { data: currentSubscriptions } = await supabase
+          .from("subscriptions")
+          .select("id,plan_id,current_period_end,status")
+          .eq("user_id", user.id)
+          .in("status", ["active", "trialing"])
+          .order("current_period_end", { ascending: false })
+          .limit(10);
+
+        const samePlan = (currentSubscriptions ?? []).find(
+          (row: any) => String(row.plan_id) === String(item.item_id),
+        );
+        const currentEnd = samePlan?.current_period_end
+          ? new Date(samePlan.current_period_end)
+          : null;
+        const periodStart =
+          currentEnd && !Number.isNaN(currentEnd.getTime()) && currentEnd > nowDate
+            ? currentEnd
+            : nowDate;
+        const periodEnd = new Date(periodStart);
+        yearly
+          ? periodEnd.setFullYear(periodEnd.getFullYear() + 1)
+          : periodEnd.setMonth(periodEnd.getMonth() + 1);
+
+        const { data: created, error: subscriptionError } = await supabase
+          .from("subscriptions")
+          .insert({
+            user_id: user.id,
+            plan_id: item.item_id,
+            billing_period: yearly ? "yearly" : "monthly",
+            status: "active",
+            current_period_start: periodStart.toISOString(),
+            current_period_end: periodEnd.toISOString(),
+            created_at: now,
+            updated_at: now,
+          })
+          .select("id")
+          .single();
+
+        if (subscriptionError || !created?.id) {
+          throw subscriptionError || new Error("Création abonnement impossible");
+        }
+
+        // Pas de fenêtre sans accès : l'ancien abonnement n'est annulé
+        // qu'après confirmation de la création du nouveau.
+        await supabase
+          .from("subscriptions")
+          .update({ status: "canceled", updated_at: now })
+          .eq("user_id", user.id)
+          .in("status", ["active", "trialing"])
+          .neq("id", created.id);
       }
     }
     await supabase.from("cart_items").delete().eq("user_id", user.id).in("item_type", ["product", "subscription"]);

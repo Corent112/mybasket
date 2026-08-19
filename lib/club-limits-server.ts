@@ -1,47 +1,41 @@
 import { createClient } from "@/lib/supabase/server";
+import { getEffectiveSubscriptionForUser } from "@/lib/effective-subscription";
 
 export async function getTeamLimit(userId: string): Promise<number | null> {
   const supabase = await createClient();
+  const { data: { user } } = await supabase.auth.getUser();
 
-  const { data, error } = await supabase
-    .from("subscriptions")
-    .select(`
-      plan_id,
-      subscription_plans (
-        team_limit
-      )
-    `)
-    .eq("user_id", userId)
-    .eq("status", "active")
-    .maybeSingle();
+  if (!user || user.id !== userId) return 0;
 
-  if (error) {
-    console.error("Erreur getTeamLimit:", error);
-    return null;
-  }
+  const effective = await getEffectiveSubscriptionForUser({
+    supabase,
+    userId,
+    email: user.email,
+  });
 
-  return (data as any)?.subscription_plans?.team_limit ?? null;
+  if (!effective.active || !effective.plan) return 0;
+
+  const raw = effective.plan.max_teams ?? effective.plan.team_limit ?? null;
+  if (raw === null || raw === undefined) return null;
+
+  const limit = Number(raw);
+  return Number.isFinite(limit) ? limit : null;
 }
 
 export async function canCreateTeam(userId: string): Promise<boolean> {
   const supabase = await createClient();
-
   const limit = await getTeamLimit(userId);
 
-  if (limit === null || limit === undefined) {
-    return true;
-  }
+  if (limit === null) return true;
+  if (limit <= 0) return false;
 
   const { count, error } = await supabase
-    .from("club_teams")
-    .select("*", {
-      count: "exact",
-      head: true,
-    })
-    .eq("owner_id", userId);
+    .from("teams")
+    .select("*", { count: "exact", head: true })
+    .eq("user_id", userId);
 
   if (error) {
-    console.error("Erreur canCreateTeam:", error);
+    console.error("Erreur canCreateTeam:", error.message);
     return false;
   }
 

@@ -1,10 +1,7 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin-server";
-import {
-  getEffectiveSubscriptionForUser,
-  isTotalAccessPlan,
-} from "@/lib/effective-subscription";
+import { getEffectiveSubscriptionForUser } from "@/lib/effective-subscription";
 
 export const dynamic = "force-dynamic";
 
@@ -57,12 +54,9 @@ export async function GET() {
     }),
   ]);
 
-  // CEO/Admin ET Premium = accès total, sans dépendre d'une table
-  // subscription_access éventuellement incomplète.
-  if (
-    isAdminRole(profileResult.data?.platform_role) ||
-    isTotalAccessPlan(effective.plan)
-  ) {
+  // Seuls les rôles plateforme administrateurs contournent la matrice.
+  // Tous les plans clients, y compris Premium, lisent subscription_access.
+  if (isAdminRole(profileResult.data?.platform_role)) {
     return NextResponse.json(accessWithValue(true), {
       headers: { "Cache-Control": "private, no-store, max-age=0" },
     });

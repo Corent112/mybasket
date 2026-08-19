@@ -1,9 +1,6 @@
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin-server";
-import {
-  getEffectiveSubscriptionForUser,
-  isTotalAccessPlan,
-} from "@/lib/effective-subscription";
+import { getEffectiveSubscriptionForUser } from "@/lib/effective-subscription";
 
 type AccessResult = { userId: string | null; allowed: boolean };
 type LimitResult = { userId: string | null; limit: number | null; count: number; canCreate: boolean };
@@ -59,8 +56,7 @@ async function getContext() {
   ]);
 
   const profile = profileResult.data;
-  const totalAccess =
-    isAdminRole(profile?.platform_role) || isTotalAccessPlan(effective.plan);
+  const totalAccess = isAdminRole(profile?.platform_role);
 
   return {
     supabase,
