@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { logActivity } from "@/lib/activity";
 import type { Player } from "@/types/player";
+import TeamWeeklyRpeComparison from "@/components/equipes/TeamWeeklyRpeComparison";
 
 type Status =
   | "available"
@@ -352,6 +353,35 @@ export default function TeamAvailabilityLoad({
     toast("Lien copié ✓");
   }
 
+  async function deleteWellnessResponse(row: WellnessResponse) {
+    const wording =
+      row.response_kind === "post_session" && row.rpe != null
+        ? `Supprimer le RPE ${row.rpe}/10 et la charge associée ?`
+        : "Supprimer cette réponse joueur ?";
+
+    if (!window.confirm(wording)) return;
+
+    const { data, error } = await supabase.rpc(
+      "delete_player_wellness_response",
+      { p_response_id: row.id },
+    );
+
+    if (error) {
+      alert(error.message);
+      return;
+    }
+
+    const result = (data || {}) as { ok?: boolean; message?: string };
+
+    if (result.ok === false) {
+      alert(result.message || "Suppression impossible.");
+      return;
+    }
+
+    await reload();
+    toast("RPE / réponse supprimé(e) ✓");
+  }
+
   const totals = useMemo(() => {
     const map = new Map<
       string,
@@ -650,6 +680,14 @@ export default function TeamAvailabilityLoad({
         )}
       </div>
 
+      <div className="weeklyFull">
+        <TeamWeeklyRpeComparison
+          teamId={teamId}
+          players={players}
+          canEdit={canEdit}
+        />
+      </div>
+
       <div className="card loadCard">
         <div className="cardHead">
           <div>
@@ -818,6 +856,28 @@ export default function TeamAvailabilityLoad({
                   Douleurs <b>{row.soreness ?? "—"}</b>
                 </span>
 
+                {canEdit && (
+                  <span
+                    role="button"
+                    tabIndex={0}
+                    title="Supprimer ce RPE / cette réponse"
+                    className="deleteResponse"
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      void deleteWellnessResponse(row);
+                    }}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter" || event.key === " ") {
+                        event.preventDefault();
+                        event.stopPropagation();
+                        void deleteWellnessResponse(row);
+                      }
+                    }}
+                  >
+                    🗑
+                  </span>
+                )}
+
                 <em className={alertInfo.level}>
                   {alertInfo.level === "alert"
                     ? "🔴"
@@ -848,7 +908,7 @@ const css = `
 .cardHead{display:flex;justify-content:space-between;gap:10px;align-items:flex-start}
 .cardHead p{margin:0;color:#d4a24c;font-weight:1000;letter-spacing:.11em;font-size:.68rem}
 .cardHead h2{margin:4px 0}.cardHead>span{font-size:.7rem;color:#8a7b73}
-.availabilityCard,.linksCard{grid-column:1/-1}
+.availabilityCard,.linksCard,.weeklyFull{grid-column:1/-1}
 .players{display:grid;grid-template-columns:repeat(3,1fr);gap:7px}
 .player{border:1px solid;border-radius:10px;padding:9px;display:grid;grid-template-columns:1fr auto;gap:7px;text-align:left;background:#fff;cursor:pointer}
 .player b,.player span{display:block}.player span{font-size:.72rem;font-weight:900}
@@ -875,9 +935,9 @@ const css = `
 .responseSummary span{font-size:.68rem;color:#84766e}
 .missing{margin-top:8px;background:#fff7e8;border:1px solid #ebd2a7;border-radius:10px;padding:9px;font-size:.72rem}
 .responseTable{display:grid;gap:5px}
-.responseTable>button{display:grid;grid-template-columns:1.5fr repeat(4,.7fr) 30px;align-items:center;gap:6px;width:100%;border:1px solid #eee4df;border-radius:9px;background:#fff;padding:8px;text-align:left;cursor:pointer}
+.responseTable>button{display:grid;grid-template-columns:1.5fr repeat(4,.7fr) 32px 30px;align-items:center;gap:6px;width:100%;border:1px solid #eee4df;border-radius:9px;background:#fff;padding:8px;text-align:left;cursor:pointer}
 .responseTable strong,.responseTable small{display:block}.responseTable small{color:#887a72;font-size:.63rem}
-.responseTable>button>span{font-size:.68rem}.responseTable em{text-align:center;font-style:normal}
+.responseTable>button>span{font-size:.68rem}.responseTable em{text-align:center;font-style:normal}.deleteResponse{width:28px;height:28px;display:grid;place-items:center;border:1px solid #e7c3c0;background:#fff7f6;color:#a92d25;border-radius:8px;cursor:pointer;font-style:normal}
 .empty{padding:12px;color:#8b7d75}
 .toast{position:fixed;top:15px;left:50%;transform:translateX(-50%);z-index:1000;background:#231b18;color:#fff;border-radius:999px;padding:10px 17px;font-weight:900}
 @media(max-width:1000px){.players{grid-template-columns:1fr 1fr}.wrap{grid-template-columns:1fr}.availabilityCard,.linksCard{grid-column:auto}}

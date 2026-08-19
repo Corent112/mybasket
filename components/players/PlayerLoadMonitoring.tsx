@@ -2,17 +2,6 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
-import {
-  CartesianGrid,
-  Legend,
-  Line,
-  LineChart,
-  ReferenceLine,
-  ResponsiveContainer,
-  Tooltip,
-  XAxis,
-  YAxis,
-} from "recharts";
 
 type LoadRow = {
   id: string;
@@ -22,7 +11,10 @@ type LoadRow = {
   actual_load: number;
   planned_load: number;
   load_type: string;
+  wellness_response_id?: string | null;
 };
+
+type TeamPlan = { id: string; plan_date: string; duration_minutes: number; planned_rpe: number; load_type: string; };
 
 type WellnessRow = {
   id: string;
@@ -35,11 +27,19 @@ type WellnessRow = {
   sleep: number | null;
   stress: number | null;
   comment: string | null;
+  computed_load?: number | null;
   created_at: string;
 };
 
 type WarningLevel = "normal" | "watch" | "alert";
 type Warning = { level: WarningLevel; label: string; detail: string };
+
+const BORDEAUX = "#6B1A2C";
+const GOLD = "#D4A24C";
+const TEXT = "#201A18";
+const MUTED = "#786C66";
+const BORDER = "#E8DDD7";
+const SOFT = "#F8F4F1";
 
 const RANGE_OPTIONS = [
   { key: "7", label: "7 jours", days: 7 },
@@ -61,6 +61,205 @@ function dayLabel(value: string) {
   });
 }
 
+function avg(values: number[]) {
+  return values.length ? values.reduce((a, b) => a + b, 0) / values.length : 0;
+}
+
+function MiniLineChart({
+  data,
+  series,
+  min = 0,
+  max,
+  height = 240,
+}: {
+  data: Array<Record<string, string | number | null>>;
+  series: Array<{ key: string; label: string; stroke: string }>;
+  min?: number;
+  max?: number;
+  height?: number;
+}) {
+  const width = 900;
+  const left = 48;
+  const right = 20;
+  const top = 16;
+  const bottom = 34;
+  const innerW = width - left - right;
+  const innerH = height - top - bottom;
+
+  const allValues = data.flatMap((d) =>
+    series
+      .map((s) => d[s.key])
+      .filter((v): v is number => typeof v === "number" && Number.isFinite(v)),
+  );
+
+  const dataMax = allValues.length ? Math.max(...allValues) : 10;
+  const yMax = max ?? Math.max(10, Math.ceil(dataMax * 1.15));
+  const yMin = min;
+  const span = Math.max(1, yMax - yMin);
+
+  const x = (i: number) =>
+    left + (data.length <= 1 ? innerW / 2 : (i / (data.length - 1)) * innerW);
+  const y = (v: number) => top + innerH - ((v - yMin) / span) * innerH;
+
+  const gridValues = [0, 0.25, 0.5, 0.75, 1].map(
+    (r) => yMin + (yMax - yMin) * r,
+  );
+
+  return (
+    <div style={{ width: "100%", overflowX: "auto" }}>
+      <svg
+        viewBox={`0 0 ${width} ${height}`}
+        width="100%"
+        height={height}
+        role="img"
+        aria-label="Graphique de suivi"
+        style={{ display: "block", minWidth: 560 }}
+      >
+        {gridValues.map((v) => (
+          <g key={v}>
+            <line
+              x1={left}
+              y1={y(v)}
+              x2={width - right}
+              y2={y(v)}
+              stroke="#ECE5E0"
+              strokeWidth="1"
+            />
+            <text
+              x={left - 8}
+              y={y(v) + 4}
+              textAnchor="end"
+              fontSize="11"
+              fill="#8A7D77"
+            >
+              {Math.round(v)}
+            </text>
+          </g>
+        ))}
+
+        {series.map((s) => {
+          const points = data
+            .map((d, i) => {
+              const value = d[s.key];
+              return typeof value === "number"
+                ? `${x(i)},${y(value)}`
+                : null;
+            })
+            .filter(Boolean)
+            .join(" ");
+
+          return points ? (
+            <polyline
+              key={s.key}
+              points={points}
+              fill="none"
+              stroke={s.stroke}
+              strokeWidth="3"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            />
+          ) : null;
+        })}
+
+        {data.map((d, i) => {
+          const label = String(d.label || "");
+          const show =
+            data.length <= 12 || i === 0 || i === data.length - 1 || i % 3 === 0;
+          return show ? (
+            <text
+              key={`${label}-${i}`}
+              x={x(i)}
+              y={height - 9}
+              textAnchor="middle"
+              fontSize="10"
+              fill="#8A7D77"
+            >
+              {label}
+            </text>
+          ) : null;
+        })}
+      </svg>
+
+      <div
+        style={{
+          display: "flex",
+          gap: 14,
+          flexWrap: "wrap",
+          marginTop: 4,
+          fontSize: 12,
+          color: MUTED,
+        }}
+      >
+        {series.map((s) => (
+          <span key={s.key} style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+            <i
+              style={{
+                width: 18,
+                height: 3,
+                borderRadius: 999,
+                background: s.stroke,
+                display: "inline-block",
+              }}
+            />
+            {s.label}
+          </span>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function Kpi({
+  label,
+  value,
+  help,
+}: {
+  label: string;
+  value: string | number;
+  help?: string;
+}) {
+  return (
+    <div
+      style={{
+        border: `1px solid ${BORDER}`,
+        background: "#fff",
+        borderRadius: 14,
+        padding: "12px 14px",
+        minWidth: 0,
+      }}
+    >
+      <span
+        style={{
+          display: "block",
+          fontSize: 10,
+          textTransform: "uppercase",
+          fontWeight: 900,
+          letterSpacing: ".08em",
+          color: MUTED,
+        }}
+      >
+        {label}
+      </span>
+      <strong
+        style={{
+          display: "block",
+          marginTop: 4,
+          fontSize: 24,
+          lineHeight: 1.05,
+          color: BORDEAUX,
+        }}
+      >
+        {value}
+      </strong>
+      {help && (
+        <small style={{ display: "block", marginTop: 4, color: "#9B8E87", fontSize: 10 }}>
+          {help}
+        </small>
+      )}
+    </div>
+  );
+}
+
 export default function PlayerLoadMonitoring({
   playerId,
   teamId,
@@ -70,10 +269,18 @@ export default function PlayerLoadMonitoring({
 }) {
   const supabase = useMemo(() => createClient(), []);
   const [loads, setLoads] = useState<LoadRow[]>([]);
+  const [plans, setPlans] = useState<TeamPlan[]>([]);
   const [wellness, setWellness] = useState<WellnessRow[]>([]);
   const [range, setRange] =
     useState<(typeof RANGE_OPTIONS)[number]["key"]>("28");
   const [loading, setLoading] = useState(true);
+  const [deleting, setDeleting] = useState<string | null>(null);
+  const [message, setMessage] = useState("");
+
+  const toast = (text: string) => {
+    setMessage(text);
+    window.setTimeout(() => setMessage(""), 2200);
+  };
 
   async function reload() {
     setLoading(true);
@@ -81,39 +288,81 @@ export default function PlayerLoadMonitoring({
     const [
       { data: loadData, error: loadError },
       { data: wellnessData, error: wellnessError },
+      { data: planData, error: planError },
     ] = await Promise.all([
       supabase
         .from("training_load_entries")
         .select(
-          "id,load_date,duration_minutes,actual_rpe,actual_load,planned_load,load_type",
+          "id,load_date,duration_minutes,actual_rpe,actual_load,planned_load,load_type,wellness_response_id",
         )
         .eq("team_id", teamId)
         .eq("player_id", playerId)
         .order("load_date", { ascending: true })
-        .limit(800),
+        .limit(1000),
 
       supabase
         .from("player_wellness_responses")
         .select(
-          "id,response_date,response_kind,duration_minutes,rpe,fatigue,soreness,sleep,stress,comment,created_at",
+          "id,response_date,response_kind,duration_minutes,rpe,fatigue,soreness,sleep,stress,comment,computed_load,created_at",
         )
         .eq("team_id", teamId)
         .eq("player_id", playerId)
         .order("created_at", { ascending: true })
-        .limit(800),
+        .limit(1000),
+
+      supabase
+        .from("team_load_plans")
+        .select("id,plan_date,duration_minutes,planned_rpe,load_type")
+        .eq("team_id", teamId)
+        .order("plan_date", { ascending: true })
+        .limit(1000),
     ]);
 
     if (loadError) console.error(loadError);
     if (wellnessError) console.error(wellnessError);
+    if (planError) console.error(planError);
 
     setLoads((loadData ?? []) as LoadRow[]);
     setWellness((wellnessData ?? []) as WellnessRow[]);
+    setPlans((planData ?? []) as TeamPlan[]);
     setLoading(false);
   }
 
   useEffect(() => {
     void reload();
   }, [playerId, teamId]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  async function deleteResponse(row: WellnessRow) {
+    const wording =
+      row.response_kind === "post_session" && row.rpe != null
+        ? `Supprimer ce RPE (${row.rpe}/10) et la charge associée ?`
+        : "Supprimer cette réponse de récupération ?";
+
+    if (!window.confirm(wording)) return;
+
+    setDeleting(row.id);
+
+    const { data, error } = await supabase.rpc(
+      "delete_player_wellness_response",
+      { p_response_id: row.id },
+    );
+
+    setDeleting(null);
+
+    if (error) {
+      alert(error.message);
+      return;
+    }
+
+    const result = (data || {}) as { ok?: boolean; message?: string };
+    if (result.ok === false) {
+      alert(result.message || "Suppression impossible.");
+      return;
+    }
+
+    toast("RPE / réponse supprimé(e) ✓");
+    await reload();
+  }
 
   const days =
     RANGE_OPTIONS.find((item) => item.key === range)?.days ?? 28;
@@ -124,6 +373,7 @@ export default function PlayerLoadMonitoring({
       string,
       {
         date: string;
+        label: string;
         charge: number;
         rpe: number | null;
         fatigue: number | null;
@@ -138,6 +388,7 @@ export default function PlayerLoadMonitoring({
 
       const current = byDay.get(row.load_date) ?? {
         date: row.load_date,
+        label: dayLabel(row.load_date),
         charge: 0,
         rpe: null,
         fatigue: null,
@@ -156,6 +407,7 @@ export default function PlayerLoadMonitoring({
 
       const current = byDay.get(row.response_date) ?? {
         date: row.response_date,
+        label: dayLabel(row.response_date),
         charge: 0,
         rpe: null,
         fatigue: null,
@@ -169,14 +421,55 @@ export default function PlayerLoadMonitoring({
       if (row.soreness != null) current.soreness = Number(row.soreness);
       if (row.sleep != null) current.sleep = Number(row.sleep);
       if (row.stress != null) current.stress = Number(row.stress);
-
       byDay.set(row.response_date, current);
     }
 
-    return Array.from(byDay.values())
-      .sort((a, b) => a.date.localeCompare(b.date))
-      .map((item) => ({ ...item, label: dayLabel(item.date) }));
+    return Array.from(byDay.values()).sort((a, b) =>
+      a.date.localeCompare(b.date),
+    );
   }, [loads, wellness, since]);
+
+
+  const rpeComparisonData = useMemo(() => {
+    const planMap = new Map(plans.map((p) => [p.plan_date, p]));
+    const responseByDay = new Map<string, WellnessRow>();
+
+    for (const row of wellness) {
+      if (row.response_date >= since && row.rpe != null) {
+        responseByDay.set(row.response_date, row);
+      }
+    }
+
+    const allDates = Array.from(
+      new Set([
+        ...plans.filter((p) => p.plan_date >= since).map((p) => p.plan_date),
+        ...wellness.filter((w) => w.response_date >= since && w.rpe != null).map((w) => w.response_date),
+      ]),
+    ).sort();
+
+    return allDates.map((date) => ({
+      label: dayLabel(date),
+      planned: planMap.get(date)?.planned_rpe ?? null,
+      actual: responseByDay.get(date)?.rpe ?? null,
+    }));
+  }, [plans, wellness, since]);
+
+  const plannedSummary = useMemo(() => {
+    const filtered = plans.filter((p) => p.plan_date >= since);
+    const actuals = wellness.filter((w) => w.response_date >= since && w.rpe != null);
+    const avgPlanned = filtered.length
+      ? filtered.reduce((sum, p) => sum + Number(p.planned_rpe || 0), 0) / filtered.length
+      : 0;
+    const avgActual = actuals.length
+      ? actuals.reduce((sum, w) => sum + Number(w.rpe || 0), 0) / actuals.length
+      : 0;
+
+    return {
+      avgPlanned,
+      avgActual,
+      delta: avgPlanned && avgActual ? avgActual - avgPlanned : null,
+    };
+  }, [plans, wellness, since]);
 
   const latest = wellness[wellness.length - 1] ?? null;
 
@@ -195,22 +488,14 @@ export default function PlayerLoadMonitoring({
     const previousEnd = isoDaysAgo(7);
 
     let current7 = 0;
-    let previous21 = 0;
-    let previousDays = 0;
+    const previousDaily: number[] = [];
 
     for (const [date, value] of daily) {
       if (date >= recent7Start) current7 += value;
-
-      if (date >= previousStart && date <= previousEnd) {
-        previous21 += value;
-        previousDays += 1;
-      }
+      if (date >= previousStart && date <= previousEnd) previousDaily.push(value);
     }
 
-    const previousWeeklyAverage = previousDays
-      ? (previous21 / Math.max(previousDays, 1)) * 7
-      : 0;
-
+    const previousWeeklyAverage = avg(previousDaily) * 7;
     const ratio =
       previousWeeklyAverage > 0 ? current7 / previousWeeklyAverage : null;
 
@@ -320,255 +605,491 @@ export default function PlayerLoadMonitoring({
       (sum, row) => sum + Number(row.actual_load || 0),
       0,
     );
+    const rpes = filteredLoads
+      .map((row) => row.actual_rpe)
+      .filter((v): v is number => v != null)
+      .map(Number);
 
-    const avgRpeRows = filteredLoads.filter(
-      (row) => row.actual_rpe != null,
-    );
-
-    const avgRpe = avgRpeRows.length
-      ? avgRpeRows.reduce(
-          (sum, row) => sum + Number(row.actual_rpe || 0),
-          0,
-        ) / avgRpeRows.length
-      : 0;
-
-    return { total, sessions: filteredLoads.length, avgRpe };
+    return {
+      total,
+      sessions: filteredLoads.length,
+      avgRpe: avg(rpes),
+    };
   }, [loads, since]);
+
+  const statusStyle =
+    globalLevel === "alert"
+      ? { bg: "#FFF1F0", border: "#D85B52", title: "🔴 Alerte de suivi" }
+      : globalLevel === "watch"
+        ? { bg: "#FFF7EA", border: "#D7A14A", title: "🟠 Vigilance" }
+        : { bg: "#EFFAF2", border: "#6EAF7C", title: "🟢 Situation stable" };
 
   if (loading) {
     return (
-      <section className="monitor card">
+      <div
+        style={{
+          border: `1px solid ${BORDER}`,
+          borderRadius: 16,
+          padding: 24,
+          background: "#fff",
+          color: MUTED,
+        }}
+      >
         Chargement du suivi…
-        <style jsx>{css}</style>
-      </section>
+      </div>
     );
   }
 
   return (
-    <section className="monitor">
-      <div className={`status ${globalLevel}`}>
+    <section style={{ display: "grid", gap: 12, width: "100%", minWidth: 0 }}>
+      {message && (
+        <div
+          style={{
+            position: "fixed",
+            top: 18,
+            left: "50%",
+            transform: "translateX(-50%)",
+            zIndex: 9999,
+            background: "#241B18",
+            color: "#fff",
+            borderRadius: 999,
+            padding: "10px 18px",
+            fontWeight: 900,
+            boxShadow: "0 10px 30px rgba(0,0,0,.18)",
+          }}
+        >
+          {message}
+        </div>
+      )}
+
+      <div
+        style={{
+          display: "flex",
+          justifyContent: "space-between",
+          gap: 18,
+          alignItems: "center",
+          border: `1px solid ${statusStyle.border}`,
+          background: statusStyle.bg,
+          borderRadius: 16,
+          padding: "14px 16px",
+        }}
+      >
         <div>
-          <p>CHARGE & RÉCUPÉRATION</p>
-          <h2>
-            {globalLevel === "alert"
-              ? "🔴 Alerte de suivi"
-              : globalLevel === "watch"
-                ? "🟠 Vigilance"
-                : "🟢 Situation stable"}
+          <div
+            style={{
+              fontSize: 10,
+              fontWeight: 1000,
+              letterSpacing: ".12em",
+              color: GOLD,
+            }}
+          >
+            CHARGE & RÉCUPÉRATION
+          </div>
+          <h2
+            style={{
+              margin: "4px 0 0",
+              fontSize: 19,
+              color: TEXT,
+              lineHeight: 1.15,
+            }}
+          >
+            {statusStyle.title}
           </h2>
         </div>
-        <span>
-          Les alertes signalent des variations ou réponses à surveiller ;
-          elles ne constituent pas un diagnostic.
-        </span>
+        <div
+          style={{
+            maxWidth: 470,
+            textAlign: "right",
+            color: MUTED,
+            fontSize: 11,
+            lineHeight: 1.4,
+          }}
+        >
+          Les alertes signalent des variations à surveiller. Elles ne
+          constituent pas un diagnostic médical.
+        </div>
       </div>
 
-      <div className="toolbar">
+      <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
         {RANGE_OPTIONS.map((item) => (
           <button
+            type="button"
             key={item.key}
-            className={range === item.key ? "active" : ""}
             onClick={() => setRange(item.key)}
+            style={{
+              border: `1px solid ${range === item.key ? BORDEAUX : BORDER}`,
+              background: range === item.key ? BORDEAUX : "#fff",
+              color: range === item.key ? "#fff" : BORDEAUX,
+              borderRadius: 999,
+              padding: "7px 11px",
+              fontSize: 11,
+              fontWeight: 900,
+              cursor: "pointer",
+            }}
           >
             {item.label}
           </button>
         ))}
       </div>
 
-      <div className="kpis">
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: "repeat(auto-fit,minmax(135px,1fr))",
+          gap: 8,
+        }}
+      >
         <Kpi
           label="Charge cumulée"
           value={Math.round(summary.total).toLocaleString("fr-FR")}
+          help="Sur la période"
         />
-        <Kpi label="Séances" value={summary.sessions} />
+        <Kpi label="Séances" value={summary.sessions} help="Charges enregistrées" />
         <Kpi
           label="RPE moyen"
           value={summary.avgRpe ? summary.avgRpe.toFixed(1) : "—"}
+          help="Ressenti moyen"
         />
         <Kpi
           label="Charge 7 jours"
           value={Math.round(workloadStats.current7).toLocaleString("fr-FR")}
+          help="Cumul glissant"
         />
       </div>
 
       {warnings.length > 0 && (
-        <div className="warnings">
+        <div
+          style={{
+            display: "grid",
+            gridTemplateColumns: "repeat(auto-fit,minmax(230px,1fr))",
+            gap: 7,
+          }}
+        >
           {warnings.map((warning, index) => (
             <div
               key={`${warning.label}-${index}`}
-              className={warning.level}
+              style={{
+                border: `1px solid ${
+                  warning.level === "alert" ? "#D8645B" : "#E1B25F"
+                }`,
+                background:
+                  warning.level === "alert" ? "#FFF3F2" : "#FFF9EE",
+                borderRadius: 12,
+                padding: "10px 12px",
+              }}
             >
-              <strong>
+              <strong
+                style={{
+                  display: "block",
+                  color: warning.level === "alert" ? "#A92D25" : "#8B5B0D",
+                  fontSize: 12,
+                }}
+              >
                 {warning.level === "alert" ? "🔴" : "🟠"} {warning.label}
               </strong>
-              <span>{warning.detail}</span>
+              <span style={{ display: "block", marginTop: 3, color: MUTED, fontSize: 11 }}>
+                {warning.detail}
+              </span>
             </div>
           ))}
         </div>
       )}
 
-      <div className="chart card">
-        <div className="head">
+      <div
+        style={{
+          border: `1px solid ${BORDER}`,
+          borderRadius: 16,
+          background: "#fff",
+          padding: "14px 14px 12px",
+          minWidth: 0,
+        }}
+      >
+        <div style={{display:"flex",justifyContent:"space-between",gap:10,alignItems:"end",marginBottom:6}}>
           <div>
-            <p>CHARGE</p>
-            <h3>Évolution de la charge quotidienne</h3>
+            <span style={{display:"block",color:GOLD,fontWeight:1000,fontSize:9,letterSpacing:".12em"}}>
+              RPE PRÉVU / RÉEL
+            </span>
+            <strong style={{display:"block",color:TEXT,marginTop:3}}>
+              Comparaison du ressenti avec l'objectif du staff
+            </strong>
           </div>
-          <span>Durée × RPE</span>
+          <div style={{textAlign:"right",fontSize:10,color:MUTED}}>
+            Prévu moy. <b>{plannedSummary.avgPlanned ? plannedSummary.avgPlanned.toFixed(1) : "—"}</b>
+            {" · "}
+            Réel moy. <b>{plannedSummary.avgActual ? plannedSummary.avgActual.toFixed(1) : "—"}</b>
+            {plannedSummary.delta != null && (
+              <> · Écart <b style={{color:Math.abs(plannedSummary.delta)>=2?"#B42318":BORDEAUX}}>{plannedSummary.delta>0?"+":""}{plannedSummary.delta.toFixed(1)}</b></>
+            )}
+          </div>
         </div>
 
-        <div className="chartBox">
-          <ResponsiveContainer width="100%" height="100%">
-            <LineChart data={chartData}>
-              <CartesianGrid strokeDasharray="3 3" />
-              <XAxis dataKey="label" />
-              <YAxis />
-              <Tooltip />
-              <Legend />
-              <Line
-                type="monotone"
-                dataKey="charge"
-                name="Charge"
-                strokeWidth={3}
-                dot={{ r: 3 }}
-              />
-            </LineChart>
-          </ResponsiveContainer>
+        <MiniLineChart
+          data={rpeComparisonData}
+          min={0}
+          max={10}
+          series={[
+            { key: "planned", label: "RPE prévu", stroke: GOLD },
+            { key: "actual", label: "RPE réel", stroke: BORDEAUX },
+          ]}
+        />
+      </div>
+
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: "repeat(auto-fit,minmax(360px,1fr))",
+          gap: 10,
+        }}
+      >
+        <div
+          style={{
+            border: `1px solid ${BORDER}`,
+            borderRadius: 16,
+            background: "#fff",
+            padding: "14px 14px 12px",
+            minWidth: 0,
+          }}
+        >
+          <div style={{ marginBottom: 6 }}>
+            <span
+              style={{
+                display: "block",
+                color: GOLD,
+                fontWeight: 1000,
+                fontSize: 9,
+                letterSpacing: ".12em",
+              }}
+            >
+              CHARGE
+            </span>
+            <strong style={{ display: "block", color: TEXT, marginTop: 3 }}>
+              Évolution de la charge quotidienne
+            </strong>
+            <small style={{ color: MUTED }}>Durée × RPE</small>
+          </div>
+          <MiniLineChart
+            data={chartData}
+            series={[{ key: "charge", label: "Charge", stroke: BORDEAUX }]}
+          />
+        </div>
+
+        <div
+          style={{
+            border: `1px solid ${BORDER}`,
+            borderRadius: 16,
+            background: "#fff",
+            padding: "14px 14px 12px",
+            minWidth: 0,
+          }}
+        >
+          <div style={{ marginBottom: 6 }}>
+            <span
+              style={{
+                display: "block",
+                color: GOLD,
+                fontWeight: 1000,
+                fontSize: 9,
+                letterSpacing: ".12em",
+              }}
+            >
+              RÉCUPÉRATION
+            </span>
+            <strong style={{ display: "block", color: TEXT, marginTop: 3 }}>
+              Fatigue · sommeil · douleurs · stress
+            </strong>
+            <small style={{ color: MUTED }}>Échelle 1 à 10</small>
+          </div>
+          <MiniLineChart
+            data={chartData}
+            min={0}
+            max={10}
+            series={[
+              { key: "fatigue", label: "Fatigue", stroke: "#C9821C" },
+              { key: "sleep", label: "Sommeil", stroke: "#4B7EBB" },
+              { key: "soreness", label: "Douleurs", stroke: "#B7433B" },
+              { key: "stress", label: "Stress", stroke: "#7B5AA6" },
+            ]}
+          />
         </div>
       </div>
 
-      <div className="chart card">
-        <div className="head">
+      <div
+        style={{
+          border: `1px solid ${BORDER}`,
+          borderRadius: 16,
+          background: "#fff",
+          padding: "14px",
+          minWidth: 0,
+        }}
+      >
+        <div
+          style={{
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "end",
+            gap: 10,
+            marginBottom: 8,
+          }}
+        >
           <div>
-            <p>RÉCUPÉRATION</p>
-            <h3>Fatigue · sommeil · douleurs · stress</h3>
+            <span
+              style={{
+                display: "block",
+                color: GOLD,
+                fontWeight: 1000,
+                fontSize: 9,
+                letterSpacing: ".12em",
+              }}
+            >
+              HISTORIQUE
+            </span>
+            <strong style={{ display: "block", color: TEXT, marginTop: 3 }}>
+              Dernières réponses joueurs
+            </strong>
           </div>
-          <span>Échelle 1 à 10</span>
+          <small style={{ color: MUTED }}>Tu peux supprimer un RPE erroné.</small>
         </div>
 
-        <div className="chartBox">
-          <ResponsiveContainer width="100%" height="100%">
-            <LineChart data={chartData}>
-              <CartesianGrid strokeDasharray="3 3" />
-              <XAxis dataKey="label" />
-              <YAxis domain={[0, 10]} />
-              <Tooltip />
-              <Legend />
-              <ReferenceLine y={7} strokeDasharray="4 4" />
-              <Line
-                type="monotone"
-                dataKey="fatigue"
-                name="Fatigue"
-                strokeWidth={2}
-                connectNulls
-              />
-              <Line
-                type="monotone"
-                dataKey="sleep"
-                name="Sommeil"
-                strokeWidth={2}
-                connectNulls
-              />
-              <Line
-                type="monotone"
-                dataKey="soreness"
-                name="Douleurs"
-                strokeWidth={2}
-                connectNulls
-              />
-              <Line
-                type="monotone"
-                dataKey="stress"
-                name="Stress"
-                strokeWidth={2}
-                connectNulls
-              />
-            </LineChart>
-          </ResponsiveContainer>
-        </div>
-      </div>
+        <div style={{ display: "grid", gap: 6 }}>
+          {wellness
+            .slice()
+            .reverse()
+            .slice(0, 30)
+            .map((row) => {
+              const alert =
+                Number(row.soreness || 0) >= 8 ||
+                Number(row.fatigue || 0) >= 9 ||
+                (row.sleep != null && Number(row.sleep) <= 3);
 
-      <div className="card history">
-        <div className="head">
-          <div>
-            <p>HISTORIQUE</p>
-            <h3>Dernières réponses joueurs</h3>
-          </div>
-        </div>
+              return (
+                <div
+                  key={row.id}
+                  style={{
+                    display: "grid",
+                    gridTemplateColumns: "150px minmax(0,1fr) auto",
+                    gap: 10,
+                    alignItems: "center",
+                    border: `1px solid ${alert ? "#F0C0BC" : BORDER}`,
+                    background: alert ? "#FFF7F6" : "#fff",
+                    borderRadius: 11,
+                    padding: "9px 10px",
+                  }}
+                >
+                  <div>
+                    <strong style={{ display: "block", color: TEXT, fontSize: 11 }}>
+                      {new Date(row.created_at).toLocaleDateString("fr-FR")}
+                    </strong>
+                    <span style={{ display: "block", color: MUTED, fontSize: 10 }}>
+                      {new Date(row.created_at).toLocaleTimeString("fr-FR", {
+                        hour: "2-digit",
+                        minute: "2-digit",
+                      })}{" "}
+                      ·{" "}
+                      {row.response_kind === "post_session"
+                        ? "Après séance"
+                        : "Wellness"}
+                    </span>
+                  </div>
 
-        {wellness
-          .slice()
-          .reverse()
-          .slice(0, 20)
-          .map((row) => (
-            <div className="historyRow" key={row.id}>
-              <div>
-                <strong>
-                  {new Date(row.created_at).toLocaleString("fr-FR")}
-                </strong>
-                <span>
-                  {row.response_kind === "post_session"
-                    ? "Après séance"
-                    : "Wellness"}
-                </span>
-              </div>
+                  <div
+                    style={{
+                      display: "flex",
+                      gap: 5,
+                      flexWrap: "wrap",
+                      minWidth: 0,
+                    }}
+                  >
+                    {row.rpe != null && (
+                      <span style={metricPill}>
+                        RPE <b>{row.rpe}</b>
+                      </span>
+                    )}
+                    {row.duration_minutes != null && (
+                      <span style={metricPill}>
+                        Durée <b>{row.duration_minutes}′</b>
+                      </span>
+                    )}
+                    <span style={metricPill}>
+                      Fatigue <b>{row.fatigue ?? "—"}</b>
+                    </span>
+                    <span style={metricPill}>
+                      Sommeil <b>{row.sleep ?? "—"}</b>
+                    </span>
+                    <span style={metricPill}>
+                      Douleurs <b>{row.soreness ?? "—"}</b>
+                    </span>
+                    <span style={metricPill}>
+                      Stress <b>{row.stress ?? "—"}</b>
+                    </span>
+                    {row.computed_load != null && Number(row.computed_load) > 0 && (
+                      <span style={{ ...metricPill, background: "#FFF7E8", color: "#7B561D" }}>
+                        Charge <b>{Math.round(Number(row.computed_load))}</b>
+                      </span>
+                    )}
+                    {row.comment && (
+                      <span
+                        style={{
+                          flexBasis: "100%",
+                          color: MUTED,
+                          fontSize: 10,
+                          marginTop: 2,
+                        }}
+                      >
+                        💬 {row.comment}
+                      </span>
+                    )}
+                  </div>
 
-              <div className="metrics">
-                <span>RPE <b>{row.rpe ?? "—"}</b></span>
-                <span>Fatigue <b>{row.fatigue ?? "—"}</b></span>
-                <span>Sommeil <b>{row.sleep ?? "—"}</b></span>
-                <span>Douleurs <b>{row.soreness ?? "—"}</b></span>
-              </div>
+                  <button
+                    type="button"
+                    onClick={() => deleteResponse(row)}
+                    disabled={deleting === row.id}
+                    title="Supprimer ce RPE / cette réponse"
+                    style={{
+                      width: 34,
+                      height: 34,
+                      borderRadius: 10,
+                      border: "1px solid #E7C3C0",
+                      background: "#FFF7F6",
+                      color: "#A92D25",
+                      cursor: "pointer",
+                      fontWeight: 900,
+                    }}
+                  >
+                    {deleting === row.id ? "…" : "🗑"}
+                  </button>
+                </div>
+              );
+            })}
 
-              {row.comment && <p>{row.comment}</p>}
+          {!wellness.length && (
+            <div
+              style={{
+                padding: 18,
+                background: SOFT,
+                color: MUTED,
+                textAlign: "center",
+                borderRadius: 12,
+                fontSize: 11,
+              }}
+            >
+              Aucune réponse joueur pour le moment.
             </div>
-          ))}
-
-        {!wellness.length && (
-          <div className="empty">
-            Aucune réponse joueur pour le moment.
-          </div>
-        )}
+          )}
+        </div>
       </div>
-
-      <style jsx>{css}</style>
     </section>
   );
 }
 
-function Kpi({
-  label,
-  value,
-}: {
-  label: string;
-  value: string | number;
-}) {
-  return (
-    <div className="kpi">
-      <span>{label}</span>
-      <strong>{value}</strong>
-    </div>
-  );
-}
-
-const css = `
-.monitor{display:grid;gap:12px}
-.card{background:#fff;border:1px solid #eadfd8;border-radius:16px;padding:15px}
-.status{display:flex;justify-content:space-between;gap:16px;align-items:center;border:1px solid;border-radius:16px;padding:15px}
-.status p,.head p{margin:0;color:#d4a24c;font-weight:1000;letter-spacing:.11em;font-size:.68rem}
-.status h2,.head h3{margin:4px 0}.status>span{max-width:520px;font-size:.75rem;color:#746761}
-.status.normal{border-color:#69a877;background:#f3fff5}.status.watch{border-color:#d49a35;background:#fff8ec}.status.alert{border-color:#ce4e45;background:#fff1f0}
-.toolbar{display:flex;gap:6px;flex-wrap:wrap}.toolbar button{border:1px solid #ddd1ca;background:#fff;border-radius:999px;padding:8px 11px;color:#6b1a2c;font-weight:900}
-.toolbar .active{background:#6b1a2c;color:#fff}
-.kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}.kpi{background:#fff;border:1px solid #eadfd8;border-radius:14px;padding:12px}
-.kpi span{display:block;color:#84766e;font-size:.7rem}.kpi strong{display:block;color:#6b1a2c;font-size:1.45rem;margin-top:4px}
-.warnings{display:grid;grid-template-columns:repeat(2,1fr);gap:7px}.warnings>div{display:grid;gap:3px;border-radius:12px;padding:11px;border:1px solid}
-.warnings .watch{background:#fff8ec;border-color:#e0ae56}.warnings .alert{background:#fff1f0;border-color:#d3645d}.warnings span{font-size:.74rem;color:#746761}
-.head{display:flex;justify-content:space-between;align-items:flex-start}.head>span{color:#897a72;font-size:.72rem}
-.chartBox{height:270px;margin-top:10px}
-.history{display:grid;gap:6px}.historyRow{display:grid;grid-template-columns:180px 1fr;gap:10px;border-top:1px solid #eee4df;padding:9px 0}
-.historyRow>div:first-child strong,.historyRow>div:first-child span{display:block}.historyRow>div:first-child span{font-size:.7rem;color:#8a7b73}
-.metrics{display:flex;gap:6px;flex-wrap:wrap}.metrics span{background:#f7f3ef;border-radius:999px;padding:5px 8px;font-size:.7rem}
-.historyRow p{grid-column:1/-1;margin:0;color:#786a63;font-size:.76rem}.empty{padding:12px;color:#8b7d75}
-@media(max-width:850px){.kpis{grid-template-columns:1fr 1fr}.warnings{grid-template-columns:1fr}.status{align-items:flex-start;flex-direction:column}.historyRow{grid-template-columns:1fr}}
-@media(max-width:520px){.kpis{grid-template-columns:1fr 1fr}.chartBox{height:230px}}
-`;
+const metricPill: React.CSSProperties = {
+  display: "inline-flex",
+  alignItems: "center",
+  gap: 4,
+  padding: "5px 7px",
+  borderRadius: 999,
+  background: SOFT,
+  color: MUTED,
+  fontSize: 10,
+  whiteSpace: "nowrap",
+};
