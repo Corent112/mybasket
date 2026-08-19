@@ -78,15 +78,13 @@ function logSupabaseError(context: string, error: any, payload?: unknown): void 
 async function getUserId(): Promise<string> {
   const supabase = createClient();
 
-  const {
-    data: { user },
-    error,
-  } = await supabase.auth.getUser();
+  // Côté client, la session est déjà locale. getUser() refaisait une requête
+  // réseau à chaque getTeams/saveTeam et ralentissait fortement Mon Compte.
+  const { data: { session } } = await supabase.auth.getSession();
+  if (session?.user?.id) return session.user.id;
 
-  if (error || !user) {
-    throw new Error("Utilisateur non connecté");
-  }
-
+  const { data: { user }, error } = await supabase.auth.getUser();
+  if (error || !user) throw new Error("Utilisateur non connecté");
   return user.id;
 }
 
@@ -472,43 +470,6 @@ function findPlayerByAnyId(
 }
 
 
-async function getPersonalTeamVisibilityLimit(
-  supabase: ReturnType<typeof createClient>,
-  userId: string,
-): Promise<number | null> {
-  const { data: profile } = await supabase
-    .from("profiles")
-    .select("platform_role")
-    .eq("id", userId)
-    .maybeSingle();
-
-  const role = String(profile?.platform_role || "").toLowerCase();
-  if (role === "ceo" || role === "superadmin" || role === "admin") {
-    return null;
-  }
-
-  const { data: subscription } = await supabase
-    .from("subscriptions")
-    .select("plan_id")
-    .eq("user_id", userId)
-    .eq("status", "active")
-    .order("created_at", { ascending: false })
-    .limit(1)
-    .maybeSingle();
-
-  if (!subscription?.plan_id) return 0;
-
-  const { data: plan } = await supabase
-    .from("subscription_plans")
-    .select("max_teams")
-    .eq("id", subscription.plan_id)
-    .maybeSingle();
-
-  if (plan?.max_teams === null || plan?.max_teams === undefined) return null;
-
-  const limit = Number(plan.max_teams);
-  return Number.isFinite(limit) && limit > 0 ? Math.floor(limit) : 0;
-}
 
 /* -------------------------------------------------------------------------- */
 /*                                  ÉQUIPES                                   */
@@ -517,32 +478,27 @@ async function getPersonalTeamVisibilityLimit(
 export async function getTeams(): Promise<Team[]> {
   const supabase = createClient();
   const userId = await getUserId();
-  const personalTeamLimit = await getPersonalTeamVisibilityLimit(supabase, userId);
 
-  let ownedRows: any[] = [];
-  let ownedError: any = null;
-
-  if (personalTeamLimit !== 0) {
-    let ownedQuery = supabase
+  // IMPORTANT : l'abonnement limite la CREATION, jamais la VISIBILITE.
+  // Une équipe enregistrée reste donc toujours visible après renouvellement,
+  // changement de plan ou pendant un délai de synchronisation du paiement.
+  const [ownedResult, membershipResult] = await Promise.all([
+    supabase
       .from("teams")
       .select("*")
       .eq("user_id", userId)
-      .order("created_at", { ascending: false });
+      .order("created_at", { ascending: false }),
+    supabase
+      .from("team_members")
+      .select("team_id,role,permissions,status")
+      .eq("user_id", userId)
+      .eq("status", "active"),
+  ]);
 
-    if (personalTeamLimit !== null) {
-      ownedQuery = ownedQuery.limit(personalTeamLimit);
-    }
-
-    const ownedResult = await ownedQuery;
-    ownedRows = ownedResult.data ?? [];
-    ownedError = ownedResult.error;
-  }
-
-  const { data: membershipRows, error: membershipError } = await supabase
-    .from("team_members")
-    .select("team_id,role,permissions,status")
-    .eq("user_id", userId)
-    .eq("status", "active");
+  const ownedRows = ownedResult.data ?? [];
+  const ownedError = ownedResult.error;
+  const membershipRows = membershipResult.data ?? [];
+  const membershipError = membershipResult.error;
 
   if (ownedError) {
     logSupabaseError("Erreur chargement teams", ownedError);

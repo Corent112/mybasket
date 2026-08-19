@@ -47,7 +47,7 @@ type AdminRow = {
   amount?: string;
 };
 
-type Presence = "present" | "absent";
+type Presence = "present" | "late" | "absent";
 
 type TeamAdmin = {
   cotisations: Record<string, AdminRow>;
@@ -393,7 +393,8 @@ export default function GestionAdminModule() {
     let present = 0;
 
     events.forEach((event) => {
-      if (nextAdmin.presence[event.id]?.[playerId] === "present") {
+      const status = nextAdmin.presence[event.id]?.[playerId];
+      if (status === "present" || status === "late") {
         present += 1;
       }
     });
@@ -463,7 +464,7 @@ export default function GestionAdminModule() {
     setSavingKey(null);
   };
 
-  /* ----- présence : — → présent → absent → — ----- */
+  /* ----- présence : présent → retard → absent → présent ----- */
   const cyclePresence = async (eventId: string, playerId: string) => {
     if (!teamId) return;
 
@@ -475,11 +476,14 @@ export default function GestionAdminModule() {
       nextStatus = "present";
       eventPresence[playerId] = "present";
     } else if (current === "present") {
+      nextStatus = "late";
+      eventPresence[playerId] = "late";
+    } else if (current === "late") {
       nextStatus = "absent";
       eventPresence[playerId] = "absent";
     } else {
-      nextStatus = null;
-      delete eventPresence[playerId];
+      nextStatus = "present";
+      eventPresence[playerId] = "present";
     }
 
     const nextPresence = {
@@ -605,20 +609,27 @@ export default function GestionAdminModule() {
   };
 
   const rateFor = (playerId: string) => {
-    if (!events.length) return { present: 0, total: 0, rate: 0 };
+    if (!events.length) return { present: 0, late: 0, absent: 0, total: 0, rate: 0 };
 
     let present = 0;
+    let late = 0;
+    let absent = 0;
 
     events.forEach((event) => {
-      if (admin.presence[event.id]?.[playerId] === "present") {
-        present += 1;
-      }
+      const status = admin.presence[event.id]?.[playerId];
+      if (status === "present") present += 1;
+      if (status === "late") late += 1;
+      if (status === "absent") absent += 1;
     });
+
+    const attended = present + late;
 
     return {
       present,
+      late,
+      absent,
       total: events.length,
-      rate: Math.round((present / events.length) * 100),
+      rate: Math.round((attended / events.length) * 100),
     };
   };
 
@@ -767,9 +778,10 @@ export default function GestionAdminModule() {
             </button>
 
             <span className="ga-legend">
-              <span className="lg ok">Présent</span>
-              <span className="lg ko">Absent</span>
-              <span className="lg none">Non saisi</span>
+              <span className="lg ok">✓ Présent</span>
+              <span className="lg late">🕒 Retard</span>
+              <span className="lg ko">✕ Absent</span>
+              <span className="lg none">— Non saisi</span>
             </span>
           </div>
 
@@ -795,7 +807,7 @@ export default function GestionAdminModule() {
 
               <tbody>
                 {players.map((p) => {
-                  const { present, total: totalPlayerEvents, rate } = rateFor(p.id);
+                  const { present, late, absent, total: totalPlayerEvents, rate } = rateFor(p.id);
                   const rateColor =
                     rate >= 75 ? "#15803D" : rate >= 50 ? "#6B1A2C" : "#c5283d";
 
@@ -817,8 +829,21 @@ export default function GestionAdminModule() {
                       {events.map((ev) => {
                         const st = admin.presence[ev.id]?.[p.id];
                         const cls =
-                          st === "present" ? "ok" : st === "absent" ? "ko" : "none";
-                        const txt = st === "present" ? "✓" : st === "absent" ? "✕" : "—";
+                          st === "present"
+                            ? "ok"
+                            : st === "late"
+                              ? "late"
+                              : st === "absent"
+                                ? "ko"
+                                : "none";
+                        const txt =
+                          st === "present"
+                            ? "✓"
+                            : st === "late"
+                              ? "🕒"
+                              : st === "absent"
+                                ? "✕"
+                                : "—";
 
                         return (
                           <td key={ev.id} className="cell">
@@ -837,10 +862,17 @@ export default function GestionAdminModule() {
 
                       <td className="total">
                         <span style={{ color: rateColor }}>
-                          {present}/{totalPlayerEvents}
+                          {present + late}/{totalPlayerEvents}
                         </span>
                         <br />
                         <span className="pct">{rate}%</span>
+                        {(late > 0 || absent > 0) && (
+                          <small className="presence-detail">
+                            {late > 0 ? `🕒 ${late}` : ""}
+                            {late > 0 && absent > 0 ? " · " : ""}
+                            {absent > 0 ? `✕ ${absent}` : ""}
+                          </small>
+                        )}
                       </td>
                     </tr>
                   );
@@ -1120,6 +1152,11 @@ const styles = `
     color: #15803D;
   }
 
+  .lg.late {
+    background: #FEF3C7;
+    color: #92400E;
+  }
+
   .lg.ko {
     background: #FEE2E2;
     color: #9F1239;
@@ -1285,9 +1322,23 @@ const styles = `
     color: #15803D;
   }
 
+  .ga-pres.late {
+    background: #FEF3C7;
+    color: #92400E;
+    font-size: 1.05rem;
+  }
+
   .ga-pres.ko {
     background: #FEE2E2;
     color: #9F1239;
+  }
+
+  .presence-detail {
+    display: block;
+    margin-top: 0.15rem;
+    font-size: 0.58rem;
+    color: #8A7C73;
+    white-space: nowrap;
   }
 
   .ga-prestable td.total {

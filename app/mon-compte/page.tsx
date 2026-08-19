@@ -78,13 +78,6 @@ const MENU: MenuItem[] = [
   href: '/mon-compte/club',
 },
 
-  {
-    key: 'institutionnel',
-    label: 'Institutionnel',
-    icon: '🏛️',
-    href: '/institutionnel',
-  },
-
   { key: 'abonnement', label: 'Mon Abonnement', icon: '💎' },
   { key: 'calendrier', label: 'Mon Calendrier', icon: '📒' },
 
@@ -139,7 +132,7 @@ const fmtPhone = (v: string) => {
 export default function MonComptePage() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const supabase = createClient();
+  const supabase = useMemo(() => createClient(), []);
 
   const photoInput = useRef<HTMLInputElement | null>(null);
   const logoInput = useRef<HTMLInputElement | null>(null);
@@ -151,7 +144,6 @@ export default function MonComptePage() {
   const [uid, setUid] = useState('');
   const [isAdmin, setIsAdmin] = useState(false);
   const [hasClubSubscription, setHasClubSubscription] = useState(false);
-  const [hasInstitutionalAccess, setHasInstitutionalAccess] = useState(false);
   const [accessMap, setAccessMap] = useState<Record<string, boolean>>({});
   const [active, setActive] = useState<string>('profil');
   const [managementView, setManagementView] = useState<
@@ -295,14 +287,15 @@ export default function MonComptePage() {
     let subscriptionLabel = userIsAdmin ? "Accès total CEO" : "Aucun";
     let userHasClubSubscription = userIsAdmin;
 
-    // Source unique de vérité pour l'abonnement affiché :
-    // abonnement payé OU accès gratuit CEO encore valide.
-    try {
-      const effectiveSubscriptionRes = await fetch("/api/account/subscription", {
-        cache: "no-store",
-      });
+    // Abonnement et droits sont indépendants : chargement en parallèle pour
+    // éviter deux attentes réseau successives à chaque ouverture de Mon Compte.
+    const [effectiveSubscriptionResult, accessResult] = await Promise.allSettled([
+      fetch("/api/account/subscription", { cache: "no-store" }).then((res) => res.json()),
+      fetch("/api/access", { cache: "no-store" }).then((res) => res.json()),
+    ]);
 
-      const effectiveSubscription = await effectiveSubscriptionRes.json();
+    if (effectiveSubscriptionResult.status === "fulfilled") {
+      const effectiveSubscription = effectiveSubscriptionResult.value;
 
       if (!userIsAdmin && effectiveSubscription?.active === true) {
         subscriptionLabel =
@@ -312,34 +305,25 @@ export default function MonComptePage() {
       }
 
       const effectivePlan = effectiveSubscription?.plan;
+      const planSlug = String(effectivePlan?.slug || "")
+        .toLowerCase()
+        .replace(/_/g, "-");
 
       userHasClubSubscription =
         effectivePlan?.target === "club" ||
-        effectivePlan?.slug === "club-bronze" ||
-        effectivePlan?.slug === "club-silver" ||
-        effectivePlan?.slug === "club-gold" ||
-        effectivePlan?.slug === "club_bronze" ||
-        effectivePlan?.slug === "club_silver" ||
-        effectivePlan?.slug === "club_gold" ||
+        ["club-bronze", "club-silver", "club-gold"].includes(planSlug) ||
         String(effectivePlan?.name || "").toLowerCase().includes("club");
-    } catch (error) {
-      console.error("Erreur chargement abonnement effectif :", error);
+    } else {
+      console.error("Erreur chargement abonnement effectif :", effectiveSubscriptionResult.reason);
     }
 
     setHasClubSubscription(userIsAdmin || userHasClubSubscription);
 
-    const accessRes = await fetch("/api/access");
-    const accessData = await accessRes.json();
-
-    setAccessMap(accessData);
-
-    try {
-      const institutionalRes = await fetch("/api/institutionnel/access", { cache: "no-store" });
-      const institutionalData = await institutionalRes.json();
-      setHasInstitutionalAccess(institutionalData?.allowed === true);
-    } catch (error) {
-      console.error("Erreur accès Institutionnel :", error);
-      setHasInstitutionalAccess(false);
+    if (accessResult.status === "fulfilled") {
+      setAccessMap(accessResult.value || {});
+    } else {
+      console.error("Erreur chargement droits :", accessResult.reason);
+      setAccessMap({});
     }
 
     const dn = (profile?.display_name || "").trim();
@@ -364,8 +348,7 @@ export default function MonComptePage() {
       subscription: subscriptionLabel,
     });
 
-    await reloadTeams();
-    await reloadPlaybooks();
+    await Promise.all([reloadTeams(), reloadPlaybooks()]);
 
     setLoading(false);
   };
@@ -439,9 +422,18 @@ export default function MonComptePage() {
 
   const handleTeamSave = async (team: Team) => {
     try {
-      await saveTeam(team);
+      const savedTeam = await saveTeam(team);
       setTeamForm({ open: false });
-      await reloadTeams();
+
+      // Affichage immédiat : l'utilisateur voit son équipe dès le retour de
+      // l'INSERT Supabase, sans dépendre d'une seconde requête de rechargement.
+      setTeams((current) => {
+        const withoutSaved = current.filter((item) => String(item.id) !== String(savedTeam.id));
+        return [savedTeam, ...withoutSaved];
+      });
+
+      // Puis synchronisation complète (joueurs, matchs, stats, collaborations).
+      void reloadTeams();
       showToast("Équipe enregistrée");
     } catch (error) {
       console.error("Erreur enregistrement équipe:", error);
@@ -579,7 +571,7 @@ const MENU_ACCESS: Record<string, string> = {
   club: "club_space",
 };
 
-const visibleMenu = MENU.filter((item) => item.key !== "institutionnel" || hasInstitutionalAccess);
+const visibleMenu = MENU;
 
 const hasSharedTeams = teams.some((team) => team.isShared === true);
 const hasSharedSessions = teams.some(
@@ -708,8 +700,10 @@ const menuAccessKey: Record<string, string | null> = {
 };
 
 function canOpenMenuItem(item: MenuItem) {
-  if (item.key === "profil" || item.key === "abonnement") return true;
-  if (item.key === "institutionnel") return hasInstitutionalAccess;
+  // Le calendrier personnel appartient au compte : il ne doit jamais renvoyer
+  // un utilisateur connecté vers /abonnements. Les droits d'équipe restent
+  // contrôlés à l'intérieur du calendrier pour les collaborations.
+  if (item.key === "profil" || item.key === "abonnement" || item.key === "calendrier") return true;
 
   if (item.key === "equipes" && hasSharedTeams) return true;
   if (item.key === "calendrier" && hasSharedSessions) return true;

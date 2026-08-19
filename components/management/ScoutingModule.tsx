@@ -52,10 +52,13 @@ type Team = { id: string; name?: string; cat?: string; logo?: string; players?: 
 type ScoutPlayer = {
   id: string; num: string; name: string; poste: string; taille: string; age: string;
   role: "Majeur" | "Rotation"; strongHand: "Droite" | "Gauche" | ""; photo?: string; club?: string;
-  games?: string; pts?: string; reb?: string; ast?: string; stl?: string; to?: string;
+  games?: string; min?: string; pts?: string; reb?: string; orb?: string; ast?: string; stl?: string; to?: string; blk?: string;
   fg3m?: string; fg3a?: string; fg2m?: string; fg2a?: string; ftm?: string; fta?: string;
   off: Record<string, boolean>; def: Record<string, boolean>;
   shotZones?: string; notesOff?: string; notesDef?: string; profil?: string;
+  profileTitle?: string; profileSubtitle?: string;
+  tendency1?: string; tendency2?: string; tendency3?: string;
+  priority?: string;
 };
 type Row3 = { att: string; def: string; vd: string };
 type TeamSheet = {
@@ -68,8 +71,15 @@ type TeamSheet = {
 };
 // schemaImages/schemaDataList renseignés quand le système vient de la plaquette
 type OppPlay = { id: string; title: string; kind: string; category: string; schemaImage: string; description: string; schemaImages?: string[]; schemaDataList?: any[] };
+type ImportantStatRow = { id: string; number: string; player: string; stat: string };
+type ImportantStatTable = { id: string; title: string; rows: ImportantStatRow[] };
+
 type Scouting = {
   team: string; classement: string; bilan: string; serie: string; ptsFor: string; ptsAgainst: string; ortg: string; drtg: string; pace: string;
+  opponentLogo?: string;
+  attackSummary?: string;
+  defenseSummary?: string;
+  importantStats?: ImportantStatTable[];
   mode: "manuel" | "auto"; strengths: string; weaknesses: string;
   sheet: TeamSheet; oppPlays: OppPlay[]; players: ScoutPlayer[];
 };
@@ -77,7 +87,28 @@ type Scouting = {
 const TABLE_ROWS = ["Championnat", "Domicile", "Extérieur", "Victoire", "Défaite"];
 const OFF_TENDENCIES = ["Tireur", "Créateur", "Poste bas", "Transition", "PnR porteur", "PnR poseur", "Coupeur", "Rebond offensif"];
 const DEF_TENDENCIES = ["Change", "Switch", "Hedge", "Drop", "Interceptions", "Contres", "Agressif"];
-const PROFILS = ["Pnr handler", "Driver", "Shooter", "All around", "Physique", "Slasher", "Stretch big", "Glue guy"];
+type ScoutProfileOption = {
+  key: string;
+  label: string;
+  image?: string;
+};
+
+const PROFILE_OPTIONS: ScoutProfileOption[] = [
+  { key: "Energizer", label: "Energizer", image: "/scouting-profiles/energizer.png" },
+  { key: "Floor General", label: "Floor General", image: "/scouting-profiles/floor-general.png" },
+  { key: "Low Post Player", label: "Low Post", image: "/scouting-profiles/low-post-player.png" },
+  { key: "Rebounder", label: "Rebounder", image: "/scouting-profiles/rebounder.png" },
+  { key: "Scorer", label: "Scorer", image: "/scouting-profiles/scorer.png" },
+  { key: "Shooter", label: "Shooter", image: "/scouting-profiles/shooter.png" },
+  { key: "Slasher", label: "Slasher", image: "/scouting-profiles/slasher.png" },
+  { key: "Pnr handler", label: "PNR Handler" },
+  { key: "Driver", label: "Driver" },
+  { key: "All around", label: "All Around" },
+  { key: "Physique", label: "Physique" },
+  { key: "Stretch big", label: "Stretch Big" },
+  { key: "Glue guy", label: "Glue Guy" },
+];
+const PROFILS = PROFILE_OPTIONS.map((p) => p.key);
 const PLAY_KINDS = ["Attaque", "Défense", "Transition", "BLOB", "SLOB", "ATO"];
 const SPECIAL_KINDS = ["BLOB", "SLOB", "ATO"]; // situations spéciales
 
@@ -88,8 +119,15 @@ const EMPTY_SHEET: TeamSheet = {
   resumeDom: "", resumeExt: "", general: "", attaque: "",
   defense: { picks45: "", zone: "", picksAxe: "", presse: "", postup: "" },
 };
+const EMPTY_IMPORTANT_STATS: ImportantStatTable[] = [
+  { id: "offreb", title: "Meilleurs rebondeurs offensifs", rows: Array.from({ length: 5 }, (_, index) => ({ id: `offreb_${index}`, number: "", player: "", stat: "" })) },
+  { id: "shooters", title: "Meilleurs shooteurs à 3pts", rows: Array.from({ length: 5 }, (_, index) => ({ id: `shooters_${index}`, number: "", player: "", stat: "" })) },
+  { id: "latefoul", title: "Fautes fin de match", rows: Array.from({ length: 5 }, (_, index) => ({ id: `latefoul_${index}`, number: "", player: "", stat: "" })) },
+];
+
 const EMPTY: Scouting = {
   team: "", classement: "", bilan: "", serie: "", ptsFor: "", ptsAgainst: "", ortg: "", drtg: "", pace: "",
+  opponentLogo: "", attackSummary: "", defenseSummary: "", importantStats: EMPTY_IMPORTANT_STATS,
   mode: "manuel", strengths: "", weaknesses: "", sheet: EMPTY_SHEET, oppPlays: [], players: [],
 };
 
@@ -108,8 +146,27 @@ async function readTeams(): Promise<Team[]> { try { const r = await getTeams(); 
 function normalizeScout(sc: any): Scouting {
   const s = sc && typeof sc === "object" ? sc : {};
   const sheet: TeamSheet = { ...EMPTY_SHEET, ...(s.sheet || {}), table: { ...EMPTY_SHEET.table, ...((s.sheet || {}).table || {}) }, best: { ...EMPTY_SHEET.best, ...((s.sheet || {}).best || {}) }, defense: { ...EMPTY_SHEET.defense, ...((s.sheet || {}).defense || {}) } };
+  const importantStats: ImportantStatTable[] =
+    Array.isArray(s.importantStats) && s.importantStats.length
+      ? s.importantStats.map((table: any, tableIndex: number) => ({
+          id: String(table?.id || `stat_${tableIndex}`),
+          title: String(table?.title || `Tableau ${tableIndex + 1}`),
+          rows: Array.isArray(table?.rows)
+            ? table.rows.map((row: any, rowIndex: number) => ({
+                id: String(row?.id || `row_${tableIndex}_${rowIndex}`),
+                number: String(row?.number || ""),
+                player: String(row?.player || ""),
+                stat: String(row?.stat || ""),
+              }))
+            : [],
+        }))
+      : EMPTY_IMPORTANT_STATS.map((table: ImportantStatTable) => ({
+          ...table,
+          rows: table.rows.map((row: ImportantStatRow) => ({ ...row })),
+        }));
+
   return {
-    ...EMPTY, ...s, sheet,
+    ...EMPTY, ...s, sheet, importantStats,
     mode: s.mode === "auto" ? "auto" : "manuel",
     oppPlays: Array.isArray(s.oppPlays) ? s.oppPlays : [],
     players: Array.isArray(s.players) ? s.players.map((p: any) => ({ off: {}, def: {}, role: "Rotation", ...p })) : [],
@@ -205,6 +262,10 @@ function PlayCard({ play, onPreview, onEdit, onRemove, onSaveSystem }: { play: O
   );
 }
 
+function BlackSectionTitle({ children }: { children: ReactNode }) {
+  return <div className="sm-black-title">{children}</div>;
+}
+
 /* ============================== Composant ============================ */
 export default function ScoutingModule() {
   const supabase = useMemo(() => createClient(), []);
@@ -212,7 +273,6 @@ export default function ScoutingModule() {
   const [teamId, setTeamId] = useState("");
   const [sc, setSc] = useState<Scouting>(EMPTY);
   const [loading, setLoading] = useState(true);
-  const [autoInfo, setAutoInfo] = useState("");
   const [saved, setSaved] = useState(false);
   const [openPlayer, setOpenPlayer] = useState<string | null>(null);
   const [previewPlay, setPreviewPlay] = useState<OppPlay | null>(null);
@@ -278,9 +338,57 @@ export default function ScoutingModule() {
   const team = useMemo(() => teams.find((t) => t.id === teamId) || null, [teams, teamId]);
   const patch = useCallback((p: Partial<Scouting>) => { dirty.current = true; setSc((s) => ({ ...s, ...p })); }, []);
   const patchSheet = useCallback((p: Partial<TeamSheet>) => { dirty.current = true; setSc((s) => ({ ...s, sheet: { ...s.sheet, ...p } })); }, []);
+
+  const onOpponentLogo = (file?: File) => {
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => patch({ opponentLogo: String(reader.result || "") });
+    reader.readAsDataURL(file);
+  };
   const setTableCell = (row: string, col: keyof Row3, v: string) => { dirty.current = true; setSc((s) => ({ ...s, sheet: { ...s.sheet, table: { ...s.sheet.table, [row]: { ...s.sheet.table[row], [col]: v } } } })); };
   const setBest = (k: keyof TeamSheet["best"], v: string) => { dirty.current = true; setSc((s) => ({ ...s, sheet: { ...s.sheet, best: { ...s.sheet.best, [k]: v } } })); };
   const setDef = (k: keyof TeamSheet["defense"], v: string) => { dirty.current = true; setSc((s) => ({ ...s, sheet: { ...s.sheet, defense: { ...s.sheet.defense, [k]: v } } })); };
+
+  const updateImportantStatTitle = (tableId: string, title: string) => {
+    patch({ importantStats: (sc.importantStats || []).map((table) => table.id === tableId ? { ...table, title } : table) });
+  };
+  const updateImportantStatRow = (tableId: string, rowId: string, field: "number" | "player" | "stat", value: string) => {
+    patch({
+      importantStats: (sc.importantStats || []).map((table) =>
+        table.id === tableId
+          ? { ...table, rows: table.rows.map((row: ImportantStatRow) => row.id === rowId ? { ...row, [field]: value } : row) }
+          : table
+      )
+    });
+  };
+  const addImportantStatRow = (tableId: string) => {
+    patch({
+      importantStats: (sc.importantStats || []).map((table) =>
+        table.id === tableId
+          ? { ...table, rows: [...table.rows, { id: newId(), number: "", player: "", stat: "" }] }
+          : table
+      )
+    });
+  };
+  const removeImportantStatRow = (tableId: string, rowId: string) => {
+    patch({
+      importantStats: (sc.importantStats || []).map((table) =>
+        table.id === tableId
+          ? { ...table, rows: table.rows.filter((row: ImportantStatRow) => row.id !== rowId) }
+          : table
+      )
+    });
+  };
+  const addImportantStatTable = () => {
+    if ((sc.importantStats || []).length >= 3) return;
+    patch({
+      importantStats: [...(sc.importantStats || []), {
+        id: newId(),
+        title: `Tableau ${(sc.importantStats || []).length + 1}`,
+        rows: Array.from({ length: 5 }, () => ({ id: newId(), number: "", player: "", stat: "" })),
+      }],
+    });
+  };
 
   const selectTeam = async (id: string) => { if (dirty.current && teamId) { try { await writeScout(supabase, teamId, scRef.current); } catch {} } setTeamId(id); lsSet(K_SEL, id); dirty.current = false; setSc(await readScout(supabase, id)); };
   const saveNow = async () => { try { if (teamId) { await writeScout(supabase, teamId, scRef.current); dirty.current = false; } flash(); } catch { window.alert("Sauvegarde impossible."); } };
@@ -294,7 +402,7 @@ export default function ScoutingModule() {
     if (!roster.length) { window.alert("Aucun effectif trouvé pour cette équipe."); return; }
     patch({ players: [...sc.players, ...roster] });
   };
-  const autoFill = () => setAutoInfo("Le mode automatique nécessite un connecteur serveur vers une source de données. Tu peux continuer en mode manuel ; aucune donnée saisie ne sera perdue.");
+  const autoFill = () => window.alert("Mode automatique : la récupération effectif/stats depuis des bases publiques nécessite un connecteur serveur (API/fournisseur). L'interface est prête — branche un endpoint et je pré-remplis le scouting.");
 
   // ---------- Playbook adverse (via la VRAIE plaquette) ----------
   const openPlaquette = (opts: { id?: string; title: string; kind: string; asSystem?: boolean; play?: OppPlay }) => {
@@ -302,7 +410,7 @@ export default function ScoutingModule() {
     if (teamId) { writeScout(supabase, teamId, scRef.current).catch(() => {}); }
     lsSet(K_PENDING, { teamId, playId: opts.id || null, title: opts.title || "Système adverse", kind: opts.kind || "Attaque", asSystem: !!opts.asSystem });
     // contexte de retour pour la plaquette (affiche le bouton « Insérer » et nous renvoie ici)
-    try { localStorage.setItem("mb_plaquette_return_to", "/mon-compte?tab=management&module=gameplan&gamePlanTab=scout"); } catch {}
+    try { localStorage.setItem("mb_plaquette_return_to", window.location.pathname + window.location.search); } catch {}
     // on repart propre : pas d'ids exercice/système hérités → la plaquette génère un dossier dédié
     ["mybasket_edit_exercise_id", "mybasket_current_exercise_id", "mybasket_edit_system_id", "mybasket_current_system_id", "mybasket_edit_schema_index", "mybasket_edit_schema_group_id"].forEach(lsDel);
     // réédition : on charge les phases existantes du système
@@ -326,8 +434,8 @@ export default function ScoutingModule() {
   // confirme le brouillon de la mini-modale et part dessiner
   const confirmDraft = () => { if (!draftSys) return; const d = draftSys; setDraftSys(null); openPlaquette({ id: d.id, title: d.title.trim() || "Système adverse", kind: d.kind, play: d.play }); };
 
-  if (loading) return <div className="sm"><div className="sm-empty">Chargement du scouting…</div><style jsx global>{css}</style></div>;
-  if (!team) return <div className="sm"><div className="sm-empty">Crée d'abord une équipe dans « Mes Équipes ».</div><style jsx global>{css}</style></div>;
+  if (loading) return <div className="sm"><div className="sm-empty">Chargement du scouting…</div><style jsx global>{`${css}${scoutingPlayerEditorCss}`}</style></div>;
+  if (!team) return <div className="sm"><div className="sm-empty">Crée d'abord une équipe dans « Mes Équipes ».</div><style jsx global>{`${css}${scoutingPlayerEditorCss}`}</style></div>;
   const editingPlayer = sc.players.find((p) => p.id === openPlayer) || null;
   const sh = sc.sheet;
   const systems = sc.oppPlays.filter((p) => !SPECIAL_KINDS.includes(p.kind));
@@ -341,22 +449,56 @@ export default function ScoutingModule() {
           {teams.length > 1 && <select value={teamId} onChange={(e) => selectTeam(e.target.value)}>{teams.map((t) => <option key={t.id} value={t.id}>{t.name} {t.cat ? `· ${t.cat}` : ""}</option>)}</select>}
           {saved && <span className="sm-saved">✓ Enregistré</span>}
           <button className="sm-btn ghost" onClick={saveNow}>💾 Sauvegarder</button>
-          <button className="sm-btn dark" onClick={async () => {
-            await saveNow();
-            await exportScoutPdf(team, scRef.current, supabase, teamId);
-          }}>📥 Télécharger le scouting</button>
+          <button className="sm-btn dark" onClick={async () => { await saveNow(); exportScoutPdf(team, scRef.current); }}>📄 Export scouting</button>
         </div>
       </div>
 
       {/* ====== Identité + Chiffres clés ====== */}
+      <BlackSectionTitle>Informations de l'équipe</BlackSectionTitle>
       <div className="sm-card">
         <div className="sm-cardh">
           <h3>Équipe — cahier de scouting</h3>
           <div className="sm-mode"><button className={sc.mode === "manuel" ? "on" : ""} onClick={() => patch({ mode: "manuel" })}>Manuel</button><button className={sc.mode === "auto" ? "on" : ""} onClick={() => patch({ mode: "auto" })}>Auto</button></div>
         </div>
-        {sc.mode === "auto" && <><div className="sm-auto"><span>Renseigne équipe + compétition, puis récupère les données publiques.</span><button className="sm-btn dark sm" onClick={autoFill}>⟳ Récupérer</button></div>{autoInfo && <div className="sm-inline-info">{autoInfo}<button type="button" onClick={() => setAutoInfo("")}>Fermer</button></div>}</>}
+        {sc.mode === "auto" && <div className="sm-auto"><span>Renseigne équipe + compétition, puis récupère les données publiques.</span><button className="sm-btn dark sm" onClick={autoFill}>⟳ Récupérer</button></div>}
 
         <Field label="Équipe adverse"><input value={sc.team} onChange={(e) => patch({ team: e.target.value })} placeholder="Ex : Blois" /></Field>
+
+        <div className="sm-opponent-head">
+          <label className="sm-opponent-logo">
+            {sc.opponentLogo ? (
+              <img src={sc.opponentLogo} alt="Logo adversaire" />
+            ) : (
+              <span><b>＋</b> Logo adversaire</span>
+            )}
+            <input
+              type="file"
+              accept="image/*"
+              hidden
+              onChange={(e) => onOpponentLogo(e.target.files?.[0])}
+            />
+          </label>
+
+          <div className="sm-opponent-summaries">
+            <Field label="Attaque — synthèse">
+              <AutoTextarea
+                value={sc.attackSummary || ""}
+                onChange={(v) => patch({ attackSummary: v })}
+                placeholder="Ex : Beaucoup de transition, PNR axe, recherche rapide du cercle..."
+                minRows={3}
+              />
+            </Field>
+
+            <Field label="Défense — synthèse">
+              <AutoTextarea
+                value={sc.defenseSummary || ""}
+                onChange={(v) => patch({ defenseSummary: v })}
+                placeholder="Ex : Drop sur PNR, switch avec le 4, faible repli défensif..."
+                minRows={3}
+              />
+            </Field>
+          </div>
+        </div>
 
         {/* Chiffres clés : encart pleine largeur */}
         <div className="sm-keyswrap">
@@ -421,6 +563,48 @@ export default function ScoutingModule() {
         <Field label="Faiblesses"><AutoTextarea value={sc.weaknesses} onChange={(v) => patch({ weaknesses: v })} placeholder={"Défense PnR\nPertes de balle"} minRows={3} /></Field>
       </div>
 
+
+      <BlackSectionTitle>Statistiques importantes</BlackSectionTitle>
+      <div className="sm-card sm-important-card">
+        <div className="sm-cardh">
+          <div>
+            <h3>📊 Tableaux importants</h3>
+            <p className="sm-muted">3 tableaux maximum · colonnes # / Joueur / Stat</p>
+          </div>
+          {(sc.importantStats || []).length < 3 && (
+            <button className="sm-add" onClick={addImportantStatTable}>＋ Tableau</button>
+          )}
+        </div>
+
+        <div className="sm-important-grid">
+          {(sc.importantStats || []).slice(0, 3).map((table) => (
+            <div className="sm-important-table" key={table.id}>
+              <input
+                className="sm-important-title-input"
+                value={table.title}
+                onChange={(e) => updateImportantStatTitle(table.id, e.target.value)}
+                placeholder="Nom du tableau"
+              />
+              <div className="sm-important-head">
+                <span>#</span><span>Joueur</span><span>Stat</span><span />
+              </div>
+              <div className="sm-important-rows">
+                {table.rows.map((row: ImportantStatRow) => (
+                  <div className="sm-important-row" key={row.id}>
+                    <input value={row.number} onChange={(e) => updateImportantStatRow(table.id, row.id, "number", e.target.value)} placeholder="#24" />
+                    <input value={row.player} onChange={(e) => updateImportantStatRow(table.id, row.id, "player", e.target.value)} placeholder="KAJAMI-KEANE" />
+                    <input value={row.stat} onChange={(e) => updateImportantStatRow(table.id, row.id, "stat", e.target.value)} placeholder="33,9%" />
+                    <button type="button" onClick={() => removeImportantStatRow(table.id, row.id)} title="Supprimer la ligne">×</button>
+                  </div>
+                ))}
+              </div>
+              <button className="sm-add-row" onClick={() => addImportantStatRow(table.id)}>＋ Ligne</button>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <BlackSectionTitle>Systèmes adverses</BlackSectionTitle>
       {/* ====== Playbook adverse (dessiné avec l'outil de dessin) ====== */}
       <div className="sm-card">
         <div className="sm-cardh"><h3>📋 Playbook adverse</h3><button className="sm-btn dark sm" onClick={() => setDraftSys({ title: "", kind: "Attaque" })}>✏️ Dessiner un système</button></div>
@@ -431,7 +615,7 @@ export default function ScoutingModule() {
         ) : <div className="sm-sysempty"><p>Aucun système adverse. Dessine leurs systèmes avec l'outil de dessin — ils apparaîtront en schémas, comme tes systèmes offensifs.</p><button className="sm-add" onClick={() => setDraftSys({ title: "", kind: "Attaque" })}>✏️ Dessiner un système adverse</button></div>}
       </div>
 
-      {/* ====== Situations spéciales (BLOB / SLOB) — comme des systèmes, schémas visibles ====== */}
+      {/* ====== Situations spéciales (BLOB / SLOB / ATO) — comme des systèmes, schémas visibles ====== */}
       <div className="sm-card">
         <div className="sm-cardh"><h3>🎯 Situations spéciales</h3><button className="sm-btn dark sm" onClick={() => setDraftSys({ title: "", kind: "BLOB" })}>✏️ Dessiner une situation</button></div>
         {specials.length ? (
@@ -442,6 +626,7 @@ export default function ScoutingModule() {
       </div>
 
       {/* ====== Effectif + fiches ====== */}
+      <BlackSectionTitle>Joueurs adverses</BlackSectionTitle>
       <div className="sm-card">
         <div className="sm-cardh"><h3>👥 Effectif adverse</h3><div className="sm-row"><button className="sm-add" onClick={importRoster}>⬇ Importer mon effectif</button><button className="sm-btn dark sm" onClick={addPlayer}>＋ Joueur</button></div></div>
         {sc.players.length ? (
@@ -489,7 +674,7 @@ export default function ScoutingModule() {
         </div>
       )}
 
-      <style jsx global>{css}</style>
+      <style jsx global>{`${css}${scoutingPlayerEditorCss}`}</style>
     </div>
   );
 }
@@ -497,196 +682,312 @@ export default function ScoutingModule() {
 /* ============================ Fiche joueur ========================== */
 function PlayerFiche({ player, onClose, onChange, onRemove }: { player: ScoutPlayer; onClose: () => void; onChange: (p: ScoutPlayer) => void; onRemove: () => void }) {
   const up = (p: Partial<ScoutPlayer>) => onChange({ ...player, ...p });
-  const tOff = (k: string) => up({ off: { ...player.off, [k]: !player.off[k] } });
-  const tDef = (k: string) => up({ def: { ...player.def, [k]: !player.def[k] } });
-  const onPhoto = (file?: File) => { if (!file) return; const r = new FileReader(); r.onload = () => up({ photo: String(r.result) }); r.readAsDataURL(file); };
+  const onPhoto = (file?: File) => {
+    if (!file) return;
+    const r = new FileReader();
+    r.onload = () => up({ photo: String(r.result) });
+    r.readAsDataURL(file);
+  };
+  const pctValue = (m?: string, a?: string) => {
+    const mm = Number(String(m || "").replace(",", "."));
+    const aa = Number(String(a || "").replace(",", "."));
+    return Number.isFinite(mm) && Number.isFinite(aa) && aa > 0 ? `${((mm / aa) * 100).toFixed(1)}%` : "";
+  };
+
   return (
     <div className="md-bg" onClick={onClose}>
-      <div className="md wide" onClick={(e) => e.stopPropagation()}>
-        <div className="md-h"><h3>Fiche joueur</h3><button onClick={onClose}>✕</button></div>
-        <div className="pf-top">
-          <label className="pf-photo">{player.photo ? /* eslint-disable-next-line @next/next/no-img-element */ <img src={player.photo} alt="" /> : <span>＋ Photo</span>}<input type="file" accept="image/*" onChange={(e) => onPhoto(e.target.files?.[0])} hidden /></label>
-          <div className="pf-id">
-            <div className="sm-4"><Field label="N°"><input value={player.num} onChange={(e) => up({ num: e.target.value })} /></Field><Field label="Poste"><input value={player.poste} onChange={(e) => up({ poste: e.target.value })} placeholder="1-5" /></Field><Field label="Taille"><input value={player.taille} onChange={(e) => up({ taille: e.target.value })} placeholder="193 cm" /></Field><Field label="Âge"><input value={player.age} onChange={(e) => up({ age: e.target.value })} /></Field></div>
-            <div className="sm-3"><Field label="Nom"><input value={player.name} onChange={(e) => up({ name: e.target.value })} /></Field><Field label="Rôle"><select value={player.role} onChange={(e) => up({ role: e.target.value as any })}><option>Majeur</option><option>Rotation</option></select></Field><Field label="Main forte"><select value={player.strongHand} onChange={(e) => up({ strongHand: e.target.value as any })}><option value="">—</option><option>Droite</option><option>Gauche</option></select></Field></div>
-            <div className="sm-2"><Field label="Club"><input value={player.club || ""} onChange={(e) => up({ club: e.target.value })} placeholder="Blois (espoirs Pro B)" /></Field><Field label="Profil"><select value={player.profil || ""} onChange={(e) => up({ profil: e.target.value })}><option value="">—</option>{PROFILS.map((x) => <option key={x}>{x}</option>)}</select></Field></div>
+      <div className="md wide scout-player-editor" onClick={(e) => e.stopPropagation()}>
+        <div className="md-h">
+          <div>
+            <span className="spe-kicker">SCOUTING ADVERSE</span>
+            <h3>{player.name || "Nouveau joueur"}</h3>
+          </div>
+          <button onClick={onClose}>✕</button>
+        </div>
+
+        <div className="spe-top">
+          <label className="spe-photo">
+            {player.photo ? <img src={player.photo} alt="" /> : <span><b>＋</b> Ajouter<br/>la photo</span>}
+            <input type="file" accept="image/*" onChange={(e) => onPhoto(e.target.files?.[0])} hidden />
+          </label>
+
+          <div className="spe-identity">
+            <div className="spe-grid spe-grid-4">
+              <Field label="N°"><input value={player.num} onChange={(e) => up({ num: e.target.value })} placeholder="24" /></Field>
+              <Field label="Poste"><input value={player.poste} onChange={(e) => up({ poste: e.target.value })} placeholder="1" /></Field>
+              <Field label="Taille"><input value={player.taille} onChange={(e) => up({ taille: e.target.value })} placeholder="1.88m" /></Field>
+              <Field label="Statut"><select value={player.role} onChange={(e) => up({ role: e.target.value as "Majeur" | "Rotation" })}><option>Majeur</option><option>Rotation</option></select></Field>
+            </div>
+            <Field label="Nom du joueur"><input value={player.name} onChange={(e) => up({ name: e.target.value })} placeholder="Kaza Kajami-Keane" /></Field>
           </div>
         </div>
-        <h5 className="pf-sec">Statistiques (par match)</h5>
-        <div className="pf-stats">
-          <Field label="Matchs"><input value={player.games || ""} onChange={(e) => up({ games: e.target.value })} /></Field>
-          <Field label="PTS"><input value={player.pts || ""} onChange={(e) => up({ pts: e.target.value })} /></Field>
-          <Field label="REB"><input value={player.reb || ""} onChange={(e) => up({ reb: e.target.value })} /></Field>
-          <Field label="AST"><input value={player.ast || ""} onChange={(e) => up({ ast: e.target.value })} /></Field>
-          <Field label="STL"><input value={player.stl || ""} onChange={(e) => up({ stl: e.target.value })} /></Field>
-          <Field label="TO"><input value={player.to || ""} onChange={(e) => up({ to: e.target.value })} /></Field>
+
+        <section className="spe-section">
+          <div className="spe-section-title"><b>1</b><span>Choisir son profil</span><small>Un seul profil</small></div>
+          <div className="spe-profiles">
+            {PROFILE_OPTIONS.map((profile) => {
+              const selected = player.profil === profile.key;
+              return (
+                <button key={profile.key} type="button" className={`spe-profile ${selected ? "on" : ""}`} onClick={() => up({ profil: selected ? "" : profile.key })}>
+                  <span className="spe-profile-icon">
+                    {"image" in profile && profile.image ? <img src={profile.image} alt="" /> : <b>{profile.label.slice(0, 2).toUpperCase()}</b>}
+                  </span>
+                  <span>{profile.label}</span>
+                  {selected && <i>✓</i>}
+                </button>
+              );
+            })}
+          </div>
+        </section>
+
+        <section className="spe-section">
+          <div className="spe-section-title"><b>2</b><span>Statistiques</span><small>Ne remplis que ce que tu veux afficher</small></div>
+          <div className="spe-stat-grid">
+            <Field label="PTS"><input value={player.pts || ""} onChange={(e) => up({ pts: e.target.value })} placeholder="14.1" /></Field>
+            <Field label="MIN"><input value={player.min || ""} onChange={(e) => up({ min: e.target.value })} placeholder="29.0" /></Field>
+            <Field label="2PM"><input value={player.fg2m || ""} onChange={(e) => up({ fg2m: e.target.value })} placeholder="2.6" /></Field>
+            <Field label="2PA"><input value={player.fg2a || ""} onChange={(e) => up({ fg2a: e.target.value })} placeholder="4.4" /></Field>
+            <div className="spe-auto"><label>2P%</label><b>{pctValue(player.fg2m, player.fg2a) || "auto"}</b></div>
+            <Field label="3PM"><input value={player.fg3m || ""} onChange={(e) => up({ fg3m: e.target.value })} placeholder="2.2" /></Field>
+            <Field label="3PA"><input value={player.fg3a || ""} onChange={(e) => up({ fg3a: e.target.value })} placeholder="6.6" /></Field>
+            <div className="spe-auto"><label>3P%</label><b>{pctValue(player.fg3m, player.fg3a) || "auto"}</b></div>
+            <Field label="FTM"><input value={player.ftm || ""} onChange={(e) => up({ ftm: e.target.value })} placeholder="2.3" /></Field>
+            <Field label="FTA"><input value={player.fta || ""} onChange={(e) => up({ fta: e.target.value })} placeholder="3.0" /></Field>
+            <div className="spe-auto"><label>FT%</label><b>{pctValue(player.ftm, player.fta) || "auto"}</b></div>
+            <Field label="ORB"><input value={player.orb || ""} onChange={(e) => up({ orb: e.target.value })} placeholder="0.7" /></Field>
+            <Field label="REB"><input value={player.reb || ""} onChange={(e) => up({ reb: e.target.value })} placeholder="3.0" /></Field>
+            <Field label="AST"><input value={player.ast || ""} onChange={(e) => up({ ast: e.target.value })} placeholder="5.3" /></Field>
+            <Field label="TO"><input value={player.to || ""} onChange={(e) => up({ to: e.target.value })} placeholder="2.4" /></Field>
+            <Field label="STL"><input value={player.stl || ""} onChange={(e) => up({ stl: e.target.value })} placeholder="1.1" /></Field>
+            <Field label="BLK"><input value={player.blk || ""} onChange={(e) => up({ blk: e.target.value })} placeholder="0.1" /></Field>
+          </div>
+        </section>
+
+        <section className="spe-section">
+          <div className="spe-section-title"><b>3</b><span>Lecture scouting</span><small>Courte, directe, exploitable</small></div>
+          <div className="spe-grid spe-grid-2">
+            <Field label="Profil / point fort"><input value={player.profileTitle || ""} onChange={(e) => up({ profileTitle: e.target.value })} placeholder="SCORING POINT GUARD - HOT CLOSEOUT" /></Field>
+            <Field label="Complément"><input value={player.profileSubtitle || ""} onChange={(e) => up({ profileSubtitle: e.target.value })} placeholder="Main creator of the team" /></Field>
+          </div>
+          <div className="spe-tendencies">
+            <Field label="Tendance 1"><input value={player.tendency1 || ""} onChange={(e) => up({ tendency1: e.target.value })} placeholder="Très bon pull-up main gauche" /></Field>
+            <Field label="Tendance 2"><input value={player.tendency2 || ""} onChange={(e) => up({ tendency2: e.target.value })} placeholder="Main droite : cherche la finition au cercle" /></Field>
+            <Field label="Tendance 3"><input value={player.tendency3 || ""} onChange={(e) => up({ tendency3: e.target.value })} placeholder="Closeout : très bon catch & shoot" /></Field>
+          </div>
+          <Field label="Consigne prioritaire"><input className="spe-priority-input" value={player.priority || ""} onChange={(e) => up({ priority: e.target.value })} placeholder="Pressure him + run him off the line !" /></Field>
+        </section>
+
+        <div className="spe-preview-note">Le PDF masque automatiquement chaque information laissée vide.</div>
+        <div className="md-act">
+          <button className="sm-del" onClick={onRemove}>🗑 Supprimer</button>
+          <button className="sm-btn dark" onClick={onClose}>✓ Terminer</button>
         </div>
-        <div className="pf-shoot">
-          <div><label>3PT (réussis / tentés)</label><div className="pf-ma"><input value={player.fg3m || ""} onChange={(e) => up({ fg3m: e.target.value })} placeholder="m" /><span>/</span><input value={player.fg3a || ""} onChange={(e) => up({ fg3a: e.target.value })} placeholder="a" /><b>{pct(player.fg3m, player.fg3a)}</b></div></div>
-          <div><label>2PT</label><div className="pf-ma"><input value={player.fg2m || ""} onChange={(e) => up({ fg2m: e.target.value })} placeholder="m" /><span>/</span><input value={player.fg2a || ""} onChange={(e) => up({ fg2a: e.target.value })} placeholder="a" /><b>{pct(player.fg2m, player.fg2a)}</b></div></div>
-          <div><label>LF</label><div className="pf-ma"><input value={player.ftm || ""} onChange={(e) => up({ ftm: e.target.value })} placeholder="m" /><span>/</span><input value={player.fta || ""} onChange={(e) => up({ fta: e.target.value })} placeholder="a" /><b>{pct(player.ftm, player.fta)}</b></div></div>
-        </div>
-        <div className="sm-2"><Checks title="Tendances offensives" list={OFF_TENDENCIES} value={player.off} onToggle={tOff} /><Checks title="Tendances défensives" list={DEF_TENDENCIES} value={player.def} onToggle={tDef} /></div>
-        <h5 className="pf-sec">Zones de tir</h5>
-        <p className="sm-muted sm">Vert = zones fortes · Rouge = faibles · Orange = préférées.</p>
-        <ShotZones value={player.shotZones} onChange={(d) => up({ shotZones: d })} />
-        <div className="sm-2"><Field label="Notes offensives"><AutoTextarea value={player.notesOff || ""} onChange={(v) => up({ notesOff: v })} placeholder="Arrière scoreur, bon créateur, drive…" minRows={3} /></Field><Field label="Notes défensives / à exploiter"><AutoTextarea value={player.notesDef || ""} onChange={(v) => up({ notesDef: v })} placeholder="Ne pas lui laisser 3m, faible aux LF…" minRows={3} /></Field></div>
-        <div className="md-act"><button className="sm-del" onClick={onRemove}>🗑 Supprimer</button><button className="sm-btn dark" onClick={onClose}>Fermer</button></div>
       </div>
     </div>
   );
 }
 
 /* ============================ Export PDF ============================ */
-async function exportScoutPdf(
-  team: Team,
-  sc: Scouting,
-  supabase: ReturnType<typeof createClient>,
-  teamId: string,
-) {
-  const esc = escapeHtml; const sh = sc.sheet;
-  const list = (t: string) => esc(t || "—").split("\n").filter(Boolean).map((x) => `<li>${x}</li>`).join("") || "<li>—</li>";
-  const tableRows = TABLE_ROWS.map((r) => `<tr><td class="rl">${esc(r)}</td><td>${esc(sh.table[r]?.att || "")}</td><td>${esc(sh.table[r]?.def || "")}</td><td>${esc(sh.table[r]?.vd || "")}</td></tr>`).join("");
-  const playCard = (p: OppPlay) => `<div class="sys">${p.schemaImage ? `<img src="${p.schemaImage}"/>` : `<div class="court">SCHÉMA</div>`}<b>${esc(p.title)}</b><span>${esc(p.kind || "")}</span>${p.description ? `<p>${esc(p.description)}</p>` : ""}</div>`;
-  const systems = sc.oppPlays.filter((p) => !SPECIAL_KINDS.includes(p.kind));
-  const specials = sc.oppPlays.filter((p) => SPECIAL_KINDS.includes(p.kind));
-  const playsHtml = systems.map(playCard).join("") || "<div class='box'>—</div>";
-  const specialsHtml = specials.map(playCard).join("") || "<div class='box'>—</div>";
-  const pages = sc.players.map((p) => `
-    <div class="page">
-      <div class="phead"><div class="pphoto">${p.photo ? `<img src="${p.photo}"/>` : ""}</div>
-        <div><h1>${p.num ? "#" + esc(p.num) + " " : ""}${esc(p.name || "Joueur")}</h1>
-        <div class="sub">${[p.poste, p.taille, p.age ? p.age + " ans" : "", p.role, p.profil].filter((v): v is string => Boolean(v)).map(esc).join(" · ")}</div>
-        <div class="sub">${esc(p.club || "")}</div></div></div>
-      <table class="st"><thead><tr><th>Matchs</th><th>PTS</th><th>REB</th><th>AST</th><th>STL</th><th>TO</th><th>3PT</th><th>2PT</th><th>LF</th></tr></thead>
-      <tbody><tr><td>${esc(p.games || "—")}</td><td>${esc(p.pts || "—")}</td><td>${esc(p.reb || "—")}</td><td>${esc(p.ast || "—")}</td><td>${esc(p.stl || "—")}</td><td>${esc(p.to || "—")}</td><td>${pct(p.fg3m, p.fg3a)}</td><td>${pct(p.fg2m, p.fg2a)}</td><td>${pct(p.ftm, p.fta)}</td></tr></tbody></table>
-      <div class="grid2"><div class="box"><b>Tendances offensives</b><p>${Object.keys(p.off || {}).filter((k) => p.off[k]).map(esc).join(", ") || "—"}</p></div><div class="box"><b>Tendances défensives</b><p>${Object.keys(p.def || {}).filter((k) => p.def[k]).map(esc).join(", ") || "—"}</p></div></div>
-      ${p.shotZones ? `<div class="zones"><b>Zones de tir</b><br/><img src="${p.shotZones}"/></div>` : ""}
-      <div class="grid2"><div class="box red"><b>Offensif</b><p>${esc(p.notesOff || "—")}</p></div><div class="box green"><b>À exploiter</b><p>${esc(p.notesDef || "—")}</p></div></div>
-    </div>`).join("");
-  const html = `<!doctype html><html><head><meta charset="utf-8"/><title>Scouting — ${esc(sc.team || team.name || "")}</title><style>
-  @page{size:A4;margin:10mm}*{box-sizing:border-box}body{font-family:Arial,sans-serif;margin:0;color:#1A0F12;font-size:10px;line-height:1.3}
-  .page{min-height:277mm;page-break-after:always}h1{margin:0;color:#6B1A2C;font-size:20px}h2{color:#6B1A2C;font-size:13px;margin:10px 0 5px;border-bottom:1px solid #D4A24C;padding-bottom:2px;text-transform:uppercase}
-  .meta{display:grid;grid-template-columns:repeat(4,1fr);gap:6px;margin-bottom:8px}.meta div,.box{background:#FAF7F0;border-left:3px solid #D4A24C;padding:6px;border-radius:4px}.meta b{display:block;color:#6B1A2C;font-size:8px;text-transform:uppercase}
-  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:8px}.box.red{border-left-color:#dc2626}.box.green{border-left-color:#16a34a}.box b{color:#6B1A2C}
-  table{width:100%;border-collapse:collapse;margin-bottom:8px}th,td{border:1px solid #ccc;padding:3px;text-align:center;font-size:9px}th{background:#111;color:#fff}.rl{background:#f2f2f2;font-weight:700;text-align:left}
-  .systems{display:grid;grid-template-columns:repeat(3,1fr);gap:6px}.sys{border:1px solid #ddd;border-radius:6px;padding:5px}.sys img{width:100%;border-radius:4px}.court{height:60px;background:#E6BE7C;border-radius:4px;display:grid;place-items:center;color:#5a2f00;font-weight:900;font-size:9px;margin-bottom:4px}.sys b{display:block;color:#6B1A2C}.sys span{color:#666;font-size:8px}.sys p{margin:3px 0 0;font-size:8.5px}
-  .st th{background:#6B1A2C}.phead{display:flex;gap:12px;align-items:center;border-bottom:2px solid #6B1A2C;padding-bottom:8px;margin-bottom:8px}.pphoto{width:64px;height:74px;border-radius:6px;overflow:hidden;background:#eee;flex:0 0 auto}.pphoto img{width:100%;height:100%;object-fit:cover}.sub{color:#666;font-size:9px}
-  .zones{margin:8px 0}.zones img{max-width:60%;border:1px solid #ddd;border-radius:6px}ul{margin:4px 0 0 14px;padding:0}
-  </style></head><body>
-  <div class="page"><h1>SCOUTING — ${esc(sc.team || team.name || "Adversaire")}</h1>
-    <h2>Chiffres clés</h2>
-    <div class="meta"><div><b>Classement</b>${esc(sc.classement || "—")}</div><div><b>Bilan</b>${esc(sc.bilan || "—")}</div><div><b>Série</b>${esc(sc.serie || "—")}</div><div><b>Last 4</b>${esc(sh.last4 || "—")}</div></div>
-    <div class="meta"><div><b>Pts pour</b>${esc(sc.ptsFor || "—")}</div><div><b>Pts contre</b>${esc(sc.ptsAgainst || "—")}</div><div><b>Rang ATT</b>${esc(sh.attaqueRank || "—")}</div><div><b>Rang DEF</b>${esc(sh.defenseRank || "—")}</div></div>
-    <div class="meta"><div><b>Pace</b>${esc(sc.pace || "—")}</div><div><b>ORTG</b>${esc(sc.ortg || "—")}</div><div><b>DRTG</b>${esc(sc.drtg || "—")}</div><div></div></div>
-    <table><thead><tr><th></th><th>ATT</th><th>DEF</th><th>V/D</th></tr></thead><tbody>${tableRows}</tbody></table>
-    <table><thead><tr><th colspan="2">Meilleurs joueurs</th></tr></thead><tbody>
-      <tr><td class="rl">3pts</td><td>${esc(sh.best.tirs3 || "—")}</td></tr><tr><td class="rl">LF</td><td>${esc(sh.best.lf || "—")}</td></tr><tr><td class="rl">Rbd Off</td><td>${esc(sh.best.rbdOff || "—")}</td></tr><tr><td class="rl">Int</td><td>${esc(sh.best.int || "—")}</td></tr><tr><td class="rl">Drive</td><td>${esc(sh.best.drive || "—")}</td></tr>
-    </tbody></table>
-    <div class="grid2"><div class="box"><b>Résumé domicile</b><p>${esc(sh.resumeDom || "—")}</p></div><div class="box"><b>Résumé extérieur</b><p>${esc(sh.resumeExt || "—")}</p></div></div>
-    <h2>Général</h2><div class="box">${esc(sh.general || "—")}</div>
-    <h2>Attaque</h2><div class="box">${esc(sh.attaque || "—")}</div>
-    <h2>Défense</h2><div class="meta"><div><b>Picks 45°</b>${esc(sh.defense.picks45 || "—")}</div><div><b>Zone</b>${esc(sh.defense.zone || "—")}</div><div><b>Picks Axe</b>${esc(sh.defense.picksAxe || "—")}</div><div><b>Presse</b>${esc(sh.defense.presse || "—")}</div></div><div class="box"><b>Post-up</b>${esc(sh.defense.postup || "—")}</div>
-    <div class="grid2"><div class="box green"><b>Forces</b><ul>${list(sc.strengths)}</ul></div><div class="box red"><b>Faiblesses</b><ul>${list(sc.weaknesses)}</ul></div></div>
-  </div>
-  ${systems.length ? `<div class="page"><h2>Playbook adverse</h2><div class="systems">${playsHtml}</div></div>` : ""}
-  ${specials.length ? `<div class="page"><h2>Situations spéciales (BLOB / SLOB / ATO)</h2><div class="systems">${specialsHtml}</div></div>` : ""}
-  ${pages}</body></html>`;
-  const host = document.createElement("div");
-  host.setAttribute("aria-hidden", "true");
-  Object.assign(host.style, {
-    position: "fixed",
-    left: "-100000px",
-    top: "0",
-    width: "794px",
-    background: "#ffffff",
-    zIndex: "-1",
-  });
+function exportScoutPdf(team: Team, sc: Scouting) {
+  const esc = (value: unknown) => escapeHtml(String(value ?? ""));
+  const players = [...sc.players]
+    .sort((a, b) => (a.role === b.role ? 0 : a.role === "Majeur" ? -1 : 1))
+    .slice(0, 16);
+
+  const pctText = (m?: string, a?: string) => {
+    const mm = Number(String(m || "").replace(",", "."));
+    const aa = Number(String(a || "").replace(",", "."));
+    if (!Number.isFinite(mm) || !Number.isFinite(aa) || aa <= 0) return "";
+    return `${((mm / aa) * 100).toFixed(1)}%`;
+  };
+  const madeAttempted = (m?: string, a?: string) => m || a ? `${m || "0"}-${a || "0"}` : "";
+  const profileImage = (profil?: string) => PROFILE_OPTIONS.find((p) => p.key === profil)?.image || "";
+  const blackTitle = (title: string) => `<div class="black-title">${esc(title)}</div>`;
+
+  const statCells = (p: ScoutPlayer) => {
+    const stats: Array<[string, string]> = [];
+    const addStat = (label: string, value: unknown) => {
+      const normalized = String(value ?? "").trim();
+      if (normalized) stats.push([label, normalized]);
+    };
+
+    addStat("PTS", p.pts);
+    addStat("MIN", p.min);
+    addStat("2PM-A", madeAttempted(p.fg2m, p.fg2a));
+    addStat("2P%", pctText(p.fg2m, p.fg2a));
+    addStat("3PM-A", madeAttempted(p.fg3m, p.fg3a));
+    addStat("3P%", pctText(p.fg3m, p.fg3a));
+    addStat("FTM-A", madeAttempted(p.ftm, p.fta));
+    addStat("FT%", pctText(p.ftm, p.fta));
+    addStat("ORB", p.orb);
+    addStat("REB", p.reb);
+    addStat("AST", p.ast);
+    addStat("TO", p.to);
+    addStat("STL", p.stl);
+    addStat("BLK", p.blk);
+
+    return stats.length
+      ? `<div class="player-stats">${stats
+          .map(
+            ([label, value]) =>
+              `<div><b>${esc(label)}</b><span>${esc(value)}</span></div>`,
+          )
+          .join("")}</div>`
+      : "";
+  };
+
+  const playerBlock = (p: ScoutPlayer) => {
+    const profileImg = profileImage(p.profil);
+    const tendencies = [p.tendency1, p.tendency2, p.tendency3].filter((v) => String(v || "").trim());
+    return `<article class="player">
+      <div class="photo">${p.photo ? `<img src="${esc(p.photo)}"/>` : `<div class="photo-empty">${p.num ? "#" + esc(p.num) : ""}</div>`}</div>
+      <div class="player-main">
+        <div class="identity">
+          <strong>${p.num ? "#" + esc(p.num) + " • " : ""}${esc(p.name || "Joueur")}</strong>
+          ${p.poste ? `<span>• ${esc(p.poste)}</span>` : ""}
+          ${p.taille ? `<span>• ${esc(p.taille)}</span>` : ""}
+          <em class="${p.role === "Majeur" ? "major" : "rotation"}">${esc(p.role)}</em>
+          ${p.profil ? `<div class="profile">${profileImg ? `<img src="${profileImg}"/>` : ""}<b>${esc(p.profil)}</b></div>` : ""}
+        </div>
+        ${statCells(p)}
+        <div class="notes">
+          ${p.profileTitle ? `<b class="profile-title">${esc(p.profileTitle)}</b>` : ""}
+          ${p.profileSubtitle ? `<strong class="profile-subtitle">${esc(p.profileSubtitle)}</strong>` : ""}
+          ${tendencies.map((t) => `<p>${esc(String(t))}</p>`).join("")}
+          ${p.priority ? `<p class="priority">${esc(p.priority)}</p>` : ""}
+        </div>
+      </div>
+    </article>`;
+  };
+
+  const teamInfo = () => {
+    const attack = String(sc.attackSummary || "").trim();
+    const defense = String(sc.defenseSummary || "").trim();
+    if (!attack && !defense) return "";
+    return `${blackTitle("Informations de l'équipe")}
+      <section class="team-info">
+        ${attack ? `<div><h3>ATTAQUE</h3><p>${esc(sc.attackSummary || "")}</p></div>` : ""}
+        ${defense ? `<div><h3>DÉFENSE</h3><p>${esc(sc.defenseSummary || "")}</p></div>` : ""}
+      </section>`;
+  };
+
+  const importantStats = () => {
+    const tables: ImportantStatTable[] = (sc.importantStats ?? []).map((table: ImportantStatTable) => ({
+      ...table,
+      rows: table.rows.filter((row: ImportantStatRow) => String(row.number || "").trim() || String(row.player || "").trim() || String(row.stat || "").trim()),
+    })).filter((table: ImportantStatTable) => String(table.title || "").trim() && table.rows.length).slice(0, 3);
+    if (!tables.length) return "";
+    return `${blackTitle("Statistiques importantes")}
+      <section class="important-stats">
+        ${tables.map((table: ImportantStatTable) => `<div class="important-table">
+          <h4>${esc(table.title)}</h4>
+          <div class="important-head"><b>#</b><b>JOUEUR</b><b>STAT</b></div>
+          ${table.rows.map((row: ImportantStatRow) => `<div class="important-row"><span>${esc(row.number)}</span><span>${esc(row.player)}</span><span>${esc(row.stat)}</span></div>`).join("")}
+        </div>`).join("")}
+      </section>`;
+  };
+
+  const systemsHtml = () => {
+    const plays = sc.oppPlays.filter((play: OppPlay) => (Array.isArray(play.schemaImages) && play.schemaImages.length) || play.schemaImage);
+    if (!plays.length) return "";
+    return `${blackTitle("Systèmes adverses")}
+      <section class="systems">
+        ${plays.map((play: OppPlay) => {
+          const images = Array.isArray(play.schemaImages) && play.schemaImages.length ? play.schemaImages : [play.schemaImage].filter(Boolean);
+          return `<article class="system">
+            <div class="system-name"><b>${esc(play.title || "Système adverse")}</b>${play.kind ? `<span>${esc(play.kind)}</span>` : ""}</div>
+            <div class="system-schemas">
+              ${images.map((image: string, index: number) => `<div class="schema"><small>${index + 1}</small><img src="${esc(image)}"/></div>`).join("")}
+            </div>
+            ${play.description ? `<p class="system-desc">${esc(play.description)}</p>` : ""}
+          </article>`;
+        }).join("")}
+      </section>`;
+  };
+
+  const pages: string[] = [];
+  const intro = [teamInfo(), importantStats(), systemsHtml()].filter(Boolean).join("");
+  if (intro) pages.push(`<div class="intro">${intro}</div>`);
+
+  for (let i = 0; i < players.length; i += 8) {
+    const chunk = players.slice(i, i + 8);
+    pages.push(`<section class="players-page">${blackTitle("Joueurs adverses")}<div class="players-list">${chunk.map((player: ScoutPlayer) => playerBlock(player)).join("")}</div></section>`);
+  }
+
+  if (!pages.length) {
+    window.alert("Ajoute des informations, systèmes ou joueurs avant l'export.");
+    return;
+  }
+
+  const header = (page: number, total: number) => `<header>
+    <div class="pdf-brand">${sc.opponentLogo ? `<img class="opp-logo" src="${esc(sc.opponentLogo)}"/>` : ""}<div><b>MYBASKET</b><span>SCOUTING ADVERSE</span></div></div>
+    <div class="opponent">${esc(sc.team || team.name || "Adversaire")}</div>
+    <small>${page} / ${total}</small>
+  </header>`;
+
+  const htmlPages = pages.map((content, index) => `<section class="page">${header(index + 1, pages.length)}<main>${content}</main></section>`).join("");
+
+  const html = `<!doctype html><html><head><meta charset="utf-8"/>
+  <title>Scouting adverse — ${esc(sc.team || team.name || "")}</title>
+  <style>
+    @page{size:A4 portrait;margin:7mm}
+    *{box-sizing:border-box}
+    html,body{margin:0;padding:0;font-family:Arial,Helvetica,sans-serif;color:#111;background:#fff}
+    body{font-size:8px}
+    .page{width:196mm;min-height:283mm;page-break-after:always;display:flex;flex-direction:column}
+    .page:last-child{page-break-after:auto}
+    header{min-height:13mm;border-bottom:2px solid #111;display:grid;grid-template-columns:1fr auto 30px;align-items:center;margin-bottom:2mm;padding:1mm 0}
+    .pdf-brand{display:flex;align-items:center;gap:2.5mm}.pdf-brand>div{display:flex;align-items:baseline;gap:7px}
+    .opp-logo{width:10mm;height:10mm;object-fit:contain}
+    header b{font-size:13px;color:#6B1A2C;letter-spacing:.4px}header span{font-weight:900;font-size:9px}
+    header .opponent{font-size:12px;font-weight:900;text-transform:uppercase}header small{text-align:right;color:#777}
+    .black-title{background:#000;color:#fff;text-align:center;font-weight:900;font-size:10px;padding:2.1mm 2mm;margin:0 0 1.5mm;letter-spacing:.15px}
+    .team-info{display:grid;grid-template-columns:1fr 1fr;border:1px solid #777;margin-bottom:3mm}
+    .team-info>div{padding:2mm 2.5mm;min-height:34mm}.team-info>div+div{border-left:1px solid #777}
+    .team-info h3{font-size:7.5px;margin:0 0 1mm;text-decoration:underline}.team-info p{margin:0;white-space:pre-wrap;font-size:7.5px;line-height:1.3}
+    .important-stats{display:grid;grid-template-columns:repeat(3,1fr);border:1px solid #888;margin-bottom:3mm}
+    .important-table+.important-table{border-left:1px solid #888}.important-table h4{font-size:7px;margin:0;padding:1.2mm 1mm;text-align:center;min-height:6mm}
+    .important-head,.important-row{display:grid;grid-template-columns:11mm 1fr 19mm}.important-head{background:#f0f0f0;font-size:5.8px;font-weight:900}
+    .important-head>*{padding:.7mm;border-top:1px solid #aaa}.important-row span{padding:.7mm;border-top:1px solid #ddd;font-size:6.4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+    .important-row span:first-child,.important-row span:last-child{text-align:center}
+    .systems{display:flex;flex-direction:column;gap:2.3mm}.system{border:1px solid #777;break-inside:avoid;padding:1.5mm}
+    .system-name{display:flex;align-items:center;justify-content:center;gap:3mm;border-bottom:1px solid #aaa;padding:0 0 1mm;margin-bottom:1.3mm}
+    .system-name b{font-size:8px}.system-name span{font-size:6px;color:#666;text-transform:uppercase}
+    .system-schemas{display:grid;grid-template-columns:repeat(3,1fr);gap:2mm}.schema{position:relative;min-height:42mm;display:grid;place-items:center;border:1px solid #eee;background:#fff}
+    .schema img{width:100%;height:42mm;object-fit:contain}.schema small{position:absolute;left:1mm;top:1mm;background:#111;color:#fff;width:4mm;height:4mm;border-radius:50%;display:grid;place-items:center;font-size:5px}
+    .system-desc{font-size:6.8px;margin:1.2mm 0 0;white-space:pre-wrap}
+    .players-list{display:flex;flex-direction:column;gap:1.05mm}.player{display:grid;grid-template-columns:29mm 1fr;border:1px solid #555;min-height:29.5mm;break-inside:avoid;background:#fff}
+    .photo{border-right:1px solid #777;overflow:hidden;min-height:29.3mm;background:#f4f1ed;display:grid;place-items:center}.photo img{width:100%;height:100%;object-fit:cover;object-position:center top}
+    .photo-empty{font-size:18px;font-weight:900;color:#bbb}.player-main{min-width:0;position:relative}
+    .identity{height:6.1mm;border-bottom:1px solid #777;display:flex;align-items:center;gap:4px;padding:0 2mm;position:relative;padding-right:29mm;white-space:nowrap}
+    .identity strong{font-size:9.2px}.identity span{font-size:8px}.identity em{font-style:normal;text-transform:uppercase;font-size:6.6px;font-weight:900;padding:1px 4px;border-radius:999px}
+    .identity em.major{background:#D4A24C;color:#23180b}.identity em.rotation{background:#eee;color:#555}
+    .profile{position:absolute;right:1.5mm;top:.5mm;height:5mm;display:flex;align-items:center;gap:2px;max-width:27mm}.profile img{width:5mm;height:5mm;object-fit:contain}.profile b{font-size:6.6px;text-transform:uppercase;overflow:hidden;text-overflow:ellipsis}
+    .player-stats{min-height:7.5mm;border-bottom:1px solid #999;display:flex;align-items:stretch;padding:0 1mm;overflow:hidden}.player-stats>div{min-width:10.2mm;flex:1;display:flex;flex-direction:column;text-align:center;justify-content:center;border-right:1px solid #ddd}.player-stats>div:last-child{border-right:0}
+    .player-stats b{font-size:5.8px;line-height:1.1}.player-stats span{font-size:6.8px;line-height:1.25;margin-top:1px}
+    .notes{padding:1.2mm 2mm 1mm;line-height:1.18;min-height:16mm}.notes .profile-title{display:block;text-transform:uppercase;font-size:7.2px;line-height:1.15}
+    .notes .profile-subtitle{display:block;font-size:7.1px;margin-bottom:.6mm}.notes p{margin:.35mm 0;font-size:7px}.notes .priority{color:#d41414;font-weight:900;margin-top:.8mm}
+    @media print{body{-webkit-print-color-adjust:exact;print-color-adjust:exact}}
+  </style></head><body>${htmlPages}</body></html>`;
 
   try {
-    const styleMatch = html.match(/<style>([\s\S]*?)<\/style>/i);
-    const bodyMatch = html.match(/<body>([\s\S]*?)<\/body>/i);
-    host.innerHTML = `${styleMatch ? `<style>${styleMatch[1]}</style>` : ""}${bodyMatch ? bodyMatch[1] : html}`;
-    document.body.appendChild(host);
-
-    const images = Array.from(host.querySelectorAll("img"));
-    await Promise.all(images.map((img) => new Promise<void>((resolve) => {
-      if (img.complete) return resolve();
-      img.onload = () => resolve();
-      img.onerror = () => resolve();
-    })));
-
-    const [{ default: html2canvas }, { jsPDF }] = await Promise.all([
-      import("html2canvas"),
-      import("jspdf"),
-    ]);
-
-    const pdf = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4", compress: true });
-    const pages = Array.from(host.querySelectorAll<HTMLElement>(".page"));
-
-    for (let index = 0; index < pages.length; index += 1) {
-      const page = pages[index];
-      page.style.width = "794px";
-      page.style.minHeight = "1123px";
-      page.style.padding = "38px";
-      page.style.background = "#ffffff";
-      page.style.pageBreakAfter = "auto";
-
-      const canvas = await html2canvas(page, {
-        scale: 1.8,
-        useCORS: true,
-        allowTaint: false,
-        backgroundColor: "#ffffff",
-        logging: false,
-      });
-
-      if (index > 0) pdf.addPage();
-      const image = canvas.toDataURL("image/jpeg", 0.92);
-      const ratio = Math.min(190 / canvas.width, 277 / canvas.height);
-      const width = canvas.width * ratio;
-      const height = canvas.height * ratio;
-      pdf.addImage(image, "JPEG", (210 - width) / 2, 10, width, height, undefined, "FAST");
-    }
-
-    const safeName = (sc.team || team.name || "adversaire")
-      .normalize("NFD")
-      .replace(/[\u0300-\u036f]/g, "")
-      .replace(/[^a-zA-Z0-9_-]+/g, "-")
-      .replace(/^-+|-+$/g, "")
-      .toLowerCase() || "adversaire";
-    const filename = `scouting-${safeName}-${new Date().toISOString().slice(0, 10)}.pdf`;
-    const blob = pdf.output("blob");
-
-    // Copie durable dans Supabase Storage pour consultation sur un autre appareil.
-    try {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (user && teamId) {
-        const path = `${user.id}/${teamId}/${Date.now()}-${filename}`;
-        const { error: uploadError } = await supabase.storage
-          .from("scouting-exports")
-          .upload(path, blob, { contentType: "application/pdf", upsert: true });
-
-        if (!uploadError) {
-          const { data: publicData } = supabase.storage.from("scouting-exports").getPublicUrl(path);
-          await supabase
-            .from("management_gameplans")
-            .update({ scouting_pdf_url: publicData.publicUrl, updated_at: new Date().toISOString() })
-            .eq("user_id", user.id)
-            .eq("team_id", teamId);
-        } else {
-          console.warn("Archivage du scouting dans Supabase impossible:", uploadError.message);
-        }
-      }
-    } catch (storageError) {
-      console.warn("Archivage du PDF scouting indisponible:", storageError);
-    }
-
-    pdf.save(filename);
-  } catch (error) {
-    console.error("Export scouting:", error);
-    window.alert("Impossible de générer le PDF du scouting. Vérifie les images puis réessaie.");
-  } finally {
-    host.remove();
+    const iframe = document.createElement("iframe");
+    Object.assign(iframe.style, { position: "fixed", right: "0", bottom: "0", width: "0", height: "0", border: "0" } as CSSStyleDeclaration);
+    document.body.appendChild(iframe);
+    const doc = iframe.contentWindow?.document;
+    if (!doc) throw new Error("no doc");
+    doc.open(); doc.write(html); doc.close();
+    const done = () => {
+      try { iframe.contentWindow?.focus(); iframe.contentWindow?.print(); } catch {}
+      window.setTimeout(() => { try { document.body.removeChild(iframe); } catch {} }, 1500);
+    };
+    if (iframe.contentWindow) iframe.contentWindow.onload = done;
+    window.setTimeout(done, 900);
+  } catch {
+    const w = window.open("", "_blank");
+    if (!w) { window.alert("Autorise les popups pour imprimer."); return; }
+    w.document.write(html + "<script>setTimeout(function(){window.print()},500)<\\/script>");
+    w.document.close();
   }
 }
 
@@ -700,6 +1001,50 @@ const modalCss = `
   .md-cat{color:#888;font-size:.82rem;margin:.2rem 0 .5rem}
   .md-act{display:flex;justify-content:space-between;gap:.6rem;margin-top:1rem}.md-act.end{justify-content:flex-end}
   .sm-del{border:1px solid #eee;background:#fff;color:#c0392b;border-radius:8px;cursor:pointer;padding:.45rem .7rem;font-weight:800}
+`;
+
+const scoutingPlayerEditorCss = `
+
+  .sm-black-title{background:#050505;color:#fff;text-align:center;font-size:.86rem;font-weight:1000;letter-spacing:.03em;padding:.72rem 1rem;border-radius:2px;margin:1.15rem 0 .55rem}
+  .sm-important-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:.7rem}
+  .sm-important-table{border:1px solid #e6ddd6;border-radius:12px;background:#fff;overflow:hidden;min-width:0}
+  .sm-important-title-input{width:100%!important;border:0!important;border-bottom:1px solid #e6ddd6!important;border-radius:0!important;text-align:center!important;font-weight:1000!important;color:#31151c!important;padding:.7rem .5rem!important;background:#fffaf5!important}
+  .sm-important-head,.sm-important-row{display:grid;grid-template-columns:54px minmax(0,1fr) 84px 28px;align-items:center}
+  .sm-important-head{background:#f4eee9;color:#6B1A2C;font-size:.61rem;font-weight:1000;text-transform:uppercase}
+  .sm-important-head span{padding:.42rem .3rem;border-right:1px solid #e6ddd6}
+  .sm-important-row{border-top:1px solid #eee6e0}.sm-important-row input{width:100%!important;min-width:0!important;border:0!important;border-radius:0!important;padding:.48rem .36rem!important;font-size:.69rem!important;background:#fff!important}
+  .sm-important-row input+input{border-left:1px solid #eee6e0!important}.sm-important-row button{border:0;background:#fff;color:#a92d25;cursor:pointer;height:100%}
+  .sm-add-row{width:100%;border:0;border-top:1px dashed #dfd2c9;background:#fff;color:#6B1A2C;font-size:.67rem;font-weight:900;padding:.48rem;cursor:pointer}
+  .sm-sysgrid{grid-template-columns:repeat(3,minmax(0,1fr))!important}.sc-img{aspect-ratio:1.28/1!important;object-fit:contain!important;background:#fff!important}
+  @media(max-width:950px){.sm-important-grid{grid-template-columns:1fr 1fr}.sm-sysgrid{grid-template-columns:repeat(2,minmax(0,1fr))!important}}
+  @media(max-width:650px){.sm-important-grid{grid-template-columns:1fr}.sm-sysgrid{grid-template-columns:1fr!important}}
+
+  .sm-opponent-head{display:grid;grid-template-columns:118px 1fr;gap:.8rem;align-items:stretch;margin:.7rem 0 1rem}
+  .sm-opponent-logo{border:1.5px dashed #D4A24C;border-radius:12px;background:#FCFAF7;min-height:120px;display:grid;place-items:center;overflow:hidden;cursor:pointer;color:#806f65;text-align:center;font-size:.7rem;font-weight:900;padding:.5rem}
+  .sm-opponent-logo b{display:block;font-size:1.35rem;color:#6B1A2C;margin-bottom:.25rem}
+  .sm-opponent-logo img{width:100%;height:100%;object-fit:contain;background:#fff}
+  .sm-opponent-summaries{display:grid;grid-template-columns:1fr 1fr;gap:.7rem}
+  .sm-opponent-summaries .sm-field{margin:0}
+  .sm-opponent-summaries textarea{min-height:120px!important;background:#fff!important}
+  @media(max-width:760px){.sm-opponent-head{grid-template-columns:90px 1fr}.sm-opponent-summaries{grid-template-columns:1fr}.sm-opponent-logo{min-height:100px}}
+  .scout-player-editor{max-width:920px!important;padding:1.15rem 1.25rem!important}
+  .spe-kicker{display:block;color:#D4A24C;font-size:.65rem;font-weight:1000;letter-spacing:.12em;margin-bottom:.15rem}
+  .spe-top{display:grid;grid-template-columns:118px 1fr;gap:1rem;padding:.85rem;background:#FCFAF7;border:1px solid #eee3d7;border-radius:14px;margin:.75rem 0}
+  .spe-photo{height:132px;border:1.5px dashed #D4A24C;border-radius:12px;overflow:hidden;background:#fff;display:grid;place-items:center;text-align:center;color:#8a7465;font-size:.75rem;font-weight:800;cursor:pointer}
+  .spe-photo b{font-size:1.4rem;color:#6B1A2C}.spe-photo img{width:100%;height:100%;object-fit:cover;object-position:center top}
+  .spe-identity{min-width:0}.spe-grid{display:grid;gap:.55rem}.spe-grid-4{grid-template-columns:.55fr .7fr .8fr 1fr}.spe-grid-2{grid-template-columns:1fr 1fr}
+  .spe-section{border-top:1px solid #eee3d7;padding-top:.9rem;margin-top:.9rem}
+  .spe-section-title{display:flex;align-items:center;gap:.5rem;margin-bottom:.7rem}.spe-section-title>b{width:22px;height:22px;border-radius:50%;display:grid;place-items:center;background:#6B1A2C;color:#fff;font-size:.7rem}.spe-section-title>span{font-weight:1000;color:#31151c;text-transform:uppercase;font-size:.8rem}.spe-section-title>small{margin-left:auto;color:#998a81;font-size:.68rem}
+  .spe-profiles{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:.45rem}
+  .spe-profile{position:relative;border:1px solid #e8ded5;background:#fff;border-radius:11px;min-height:92px;padding:.45rem .25rem;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:.25rem;cursor:pointer;font-family:inherit;font-size:.63rem;font-weight:900;color:#3b2a25;transition:.15s}
+  .spe-profile:hover{border-color:#D4A24C;transform:translateY(-1px)}.spe-profile.on{border:2px solid #6B1A2C;background:#fff8f0;box-shadow:0 6px 16px rgba(107,26,44,.09)}
+  .spe-profile-icon{height:48px;width:54px;display:grid;place-items:center}.spe-profile-icon img{max-width:100%;max-height:100%;object-fit:contain}.spe-profile-icon>b{font-size:1rem;color:#6B1A2C}
+  .spe-profile>i{position:absolute;right:5px;top:5px;width:17px;height:17px;border-radius:50%;background:#6B1A2C;color:#fff;display:grid;place-items:center;font-style:normal;font-size:.6rem}
+  .spe-stat-grid{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:.45rem}.spe-stat-grid .sm-field{margin:0}.spe-stat-grid input{text-align:center!important;font-weight:800;padding:.5rem .3rem!important}
+  .spe-auto{border:1px solid #e1d8cc;border-radius:10px;min-height:57px;padding:.35rem;display:flex;flex-direction:column;align-items:center;justify-content:center;background:#faf7f3}.spe-auto label{font-size:.62rem;font-weight:900;color:#6B1A2C}.spe-auto b{font-size:.85rem}
+  .spe-tendencies{display:grid;grid-template-columns:1fr 1fr 1fr;gap:.55rem}.spe-priority-input{color:#c11d2f!important;font-weight:900!important}
+  .spe-preview-note{margin-top:.8rem;background:#fff8e8;border:1px solid #eed7a2;color:#6B1A2C;border-radius:9px;padding:.5rem .7rem;font-size:.72rem;font-weight:800}
+  @media(max-width:760px){.spe-top{grid-template-columns:90px 1fr}.spe-photo{height:110px}.spe-grid-4{grid-template-columns:1fr 1fr}.spe-grid-2{grid-template-columns:1fr}.spe-profiles{grid-template-columns:repeat(3,1fr)}.spe-stat-grid{grid-template-columns:repeat(3,1fr)}.spe-tendencies{grid-template-columns:1fr}}
 `;
 const css = `
   .sm{font-family:'Roboto',system-ui,sans-serif;color:#0F0F12;width:100%;min-width:0}
@@ -865,6 +1210,4 @@ const css = `
   @media(max-width:980px){.sm-keys{grid-template-columns:repeat(3,minmax(0,1fr))}.sm-grid2{grid-template-columns:1fr}.sm-bar{position:relative}.sm-barr{justify-content:flex-start}.sm-4{grid-template-columns:repeat(2,minmax(0,1fr))}}
   @media(max-width:620px){.sm{padding:.5rem 0}.sm-card,.sm-bar{border-radius:18px;padding:.85rem}.sm-keys,.sm-2,.sm-3,.sm-4{grid-template-columns:1fr}.pf-top{grid-template-columns:1fr}.pf-photo{width:100%;height:180px}.pf-stats,.pf-shoot{grid-template-columns:repeat(2,1fr)}}
 
-
-.sm-inline-info{display:flex;align-items:center;justify-content:space-between;gap:1rem;margin:.75rem 0 1rem;padding:.9rem 1rem;border:1px solid #e5c882;border-radius:12px;background:#fff8e8;color:#6b1a2c;font-weight:750;line-height:1.45}.sm-inline-info button{border:0;background:#6b1a2c;color:#fff;border-radius:9px;padding:.5rem .75rem;font-weight:900;cursor:pointer;white-space:nowrap}
 `;

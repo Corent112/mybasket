@@ -56,29 +56,62 @@ export async function POST(request: Request) {
 
       if (subscriptionItems?.length) {
         const now = new Date();
-        await supabase
-          .from("subscriptions")
-          .update({ status: "canceled", updated_at: now.toISOString() })
-          .eq("user_id", userId)
-          .eq("status", "active");
 
         for (const item of subscriptionItems) {
           if (!item.item_id) continue;
-          const end = new Date(now);
+
+          // En cas de prolongation, on repart de la fin de l'abonnement actuel
+          // si elle est future. Ainsi le client ne perd pas les jours déjà payés.
+          const { data: currentSubscriptions } = await supabase
+            .from("subscriptions")
+            .select("id,plan_id,current_period_end,status")
+            .eq("user_id", userId)
+            .in("status", ["active", "trialing"])
+            .order("current_period_end", { ascending: false })
+            .limit(10);
+
+          const current = (currentSubscriptions ?? []).find(
+            (row: any) => String(row.plan_id) === String(item.item_id),
+          );
+          const currentEnd = current?.current_period_end
+            ? new Date(current.current_period_end)
+            : null;
+          const periodStart =
+            currentEnd && !Number.isNaN(currentEnd.getTime()) && currentEnd > now
+              ? currentEnd
+              : now;
+          const end = new Date(periodStart);
           const yearly = item.assigned_to === "yearly";
           if (yearly) end.setFullYear(end.getFullYear() + 1);
           else end.setMonth(end.getMonth() + 1);
 
-          await supabase.from("subscriptions").insert({
-            user_id: userId,
-            plan_id: item.item_id,
-            billing_period: yearly ? "yearly" : "monthly",
-            status: "active",
-            current_period_start: now.toISOString(),
-            current_period_end: end.toISOString(),
-            created_at: now.toISOString(),
-            updated_at: now.toISOString(),
-          });
+          // Créer le nouvel abonnement AVANT d'annuler l'ancien évite toute
+          // fenêtre où /api/access ne trouve plus aucun abonnement actif.
+          const { data: created, error: subscriptionError } = await supabase
+            .from("subscriptions")
+            .insert({
+              user_id: userId,
+              plan_id: item.item_id,
+              billing_period: yearly ? "yearly" : "monthly",
+              status: "active",
+              current_period_start: periodStart.toISOString(),
+              current_period_end: end.toISOString(),
+              created_at: now.toISOString(),
+              updated_at: now.toISOString(),
+            })
+            .select("id")
+            .single();
+
+          if (subscriptionError || !created?.id) {
+            throw subscriptionError || new Error("Création abonnement impossible");
+          }
+
+          await supabase
+            .from("subscriptions")
+            .update({ status: "canceled", updated_at: now.toISOString() })
+            .eq("user_id", userId)
+            .in("status", ["active", "trialing"])
+            .neq("id", created.id);
         }
       }
 

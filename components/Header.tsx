@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
 
@@ -10,7 +10,7 @@ type HeaderUser = {
 };
 
 export default function Header() {
-  const supabase = createClient();
+  const supabase = useMemo(() => createClient(), []);
 
   const [user, setUser] = useState<HeaderUser | null>(null);
   const [cartCount, setCartCount] = useState(0);
@@ -22,14 +22,18 @@ export default function Header() {
 
   const loadUser = useCallback(async () => {
     try {
-      const { data: { user }, error } = await supabase.auth.getUser();
-      if (error) {
-        console.warn("Header auth indisponible:", error.message);
-        setUser(null);
-        return null;
+      // Le header est présent partout : utiliser d'abord la session locale évite
+      // une requête auth réseau sur chaque page et à chaque retour de focus.
+      const { data: { session } } = await supabase.auth.getSession();
+      const sessionUser = session?.user ?? null;
+
+      if (sessionUser) {
+        setUser({ id: sessionUser.id, email: sessionUser.email });
+        return sessionUser;
       }
-      setUser(user ? { id: user.id, email: user.email } : null);
-      return user;
+
+      setUser(null);
+      return null;
     } catch (error) {
       console.warn("Header auth indisponible:", error instanceof Error ? error.message : error);
       setUser(null);

@@ -1,4 +1,9 @@
 import { createClient } from "@/lib/supabase/server";
+import { createAdminClient } from "@/lib/supabase/admin-server";
+import {
+  getEffectiveSubscriptionForUser,
+  isTotalAccessPlan,
+} from "@/lib/effective-subscription";
 
 type AccessResult = { userId: string | null; allowed: boolean };
 type LimitResult = { userId: string | null; limit: number | null; count: number; canCreate: boolean };
@@ -32,21 +37,39 @@ const SECTION_ALIASES: Record<string, string[]> = {
 async function getContext() {
   const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();
-  if (!user) return { supabase, user: null, profile: null, subscription: null, plan: null };
-
-  const { data: profile } = await supabase.from("profiles")
-    .select("platform_role,status").eq("id", user.id).maybeSingle();
-  const { data: subscription } = await supabase.from("subscriptions")
-    .select("plan_id,status").eq("user_id", user.id).eq("status", "active")
-    .order("created_at", { ascending: false }).limit(1).maybeSingle();
-  let plan = null;
-  if (subscription?.plan_id) {
-    const { data } = await supabase.from("subscription_plans")
-      .select("id,name,slug,target,max_teams,max_coaches,max_players,max_documents,max_playbooks,storage_gb,coach_limit_label")
-      .eq("id", subscription.plan_id).maybeSingle();
-    plan = data;
+  if (!user) {
+    return {
+      supabase, user: null, profile: null, subscription: null, plan: null,
+      totalAccess: false,
+    };
   }
-  return { supabase, user, profile, subscription, plan };
+
+  // Profil et abonnement effectif sont indépendants : on les charge en parallèle.
+  const [profileResult, effective] = await Promise.all([
+    supabase
+      .from("profiles")
+      .select("platform_role,status")
+      .eq("id", user.id)
+      .maybeSingle(),
+    getEffectiveSubscriptionForUser({
+      supabase,
+      userId: user.id,
+      email: user.email,
+    }),
+  ]);
+
+  const profile = profileResult.data;
+  const totalAccess =
+    isAdminRole(profile?.platform_role) || isTotalAccessPlan(effective.plan);
+
+  return {
+    supabase,
+    user,
+    profile,
+    subscription: effective.subscription,
+    plan: effective.plan,
+    totalAccess,
+  };
 }
 
 function isAdminRole(role: string | null | undefined) {
@@ -54,19 +77,25 @@ function isAdminRole(role: string | null | undefined) {
 }
 
 export async function hasAccess(sectionKey: string): Promise<boolean> {
-  const { supabase, user, profile, subscription } = await getContext();
+  const { supabase, user, profile, subscription, plan, totalAccess } = await getContext();
   if (!user) return false;
-  if (isAdminRole(profile?.platform_role)) return true;
-  if (!subscription?.plan_id) return false;
+  if (totalAccess || isAdminRole(profile?.platform_role)) return true;
+  if (!subscription?.plan_id || !plan) return false;
 
   const aliases = SECTION_ALIASES[sectionKey] ?? [sectionKey];
-  const { data, error } = await supabase.from("subscription_access")
-    .select("section_key,enabled").eq("plan_id", subscription.plan_id)
+  const admin = createAdminClient();
+  const client = admin || supabase;
+  const { data, error } = await client
+    .from("subscription_access")
+    .select("section_key,enabled")
+    .eq("plan_id", subscription.plan_id)
     .in("section_key", aliases);
+
   if (error) {
     console.error("Erreur vérification accès:", error.message);
     return false;
   }
+
   return (data ?? []).some((row: { enabled: boolean | null }) => row.enabled === true);
 }
 
@@ -80,9 +109,19 @@ async function getLimitResult(options: {
   table: string;
   ownerColumn?: string;
 }): Promise<LimitResult> {
-  const { supabase, user, profile, plan } = await getContext();
+  const { supabase, user, profile, plan, totalAccess } = await getContext();
   if (!user) return { userId: null, limit: 0, count: 0, canCreate: false };
-  if (isAdminRole(profile?.platform_role)) return { userId: user.id, limit: null, count: 0, canCreate: true };
+  if (isAdminRole(profile?.platform_role)) {
+    return { userId: user.id, limit: null, count: 0, canCreate: true };
+  }
+  if (totalAccess) {
+    const rawPlanLimit = plan ? Number((plan as Record<string, unknown>)[options.limitKey]) : NaN;
+    const planLimit = Number.isFinite(rawPlanLimit) ? rawPlanLimit : null;
+    // Premium garde les limites configurées si elles existent ; sinon illimité.
+    if (planLimit === null) {
+      return { userId: user.id, limit: null, count: 0, canCreate: true };
+    }
+  }
   if (!plan) return { userId: user.id, limit: 0, count: 0, canCreate: false };
 
   const limit = Number((plan as Record<string, unknown>)[options.limitKey]);

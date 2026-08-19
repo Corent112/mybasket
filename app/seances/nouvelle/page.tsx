@@ -435,7 +435,7 @@ export default function NouvelleSeancePage() {
     }
     const chosen = players.filter((player) => selectedPlayers.includes(player.id));
     if (chosen.length) {
-      await supabase.from("practice_session_attendance").insert(chosen.map((player) => ({ user_id: teamOwnerId, session_id: sessionId, player_id: player.id, first_name: player.first_name, last_name: player.last_name, status: "pending", comment: "" })));
+      await supabase.from("practice_session_attendance").insert(chosen.map((player) => ({ user_id: teamOwnerId, session_id: sessionId, player_id: player.id, first_name: player.first_name, last_name: player.last_name, status: "present", comment: "" })));
       const snapshot = await supabase.from("practice_session_players").insert(chosen.map((player) => ({ user_id: teamOwnerId, session_id: sessionId, player_id: player.id, first_name: player.first_name, last_name: player.last_name, position: sessionPositions[player.id] ?? (
         String(player.position_primary || "").toLowerCase().includes("center") ? "center" :
         String(player.position_primary || "").toLowerCase().includes("forward") ? "forward" :
@@ -484,8 +484,11 @@ export default function NouvelleSeancePage() {
       .map((event: { id?: string | null }) => String(event.id || ""))
       .filter(Boolean);
 
+    let calendarEventId = "";
+
     if (eventIds.length > 0) {
       const [primaryEventId, ...duplicateEventIds] = eventIds;
+      calendarEventId = primaryEventId;
 
       const { error: updateCalendarError } = await supabase
         .from("calendar_events")
@@ -502,14 +505,47 @@ export default function NouvelleSeancePage() {
         await supabase.from("calendar_events").delete().in("id", duplicateEventIds);
       }
     } else {
-      const { error: insertCalendarError } = await supabase
+      const { data: insertedCalendarEvent, error: insertCalendarError } = await supabase
         .from("calendar_events")
-        .insert(calendarPayload);
+        .insert(calendarPayload)
+        .select("id")
+        .single();
 
-      if (insertCalendarError) {
+      if (insertCalendarError || !insertedCalendarEvent?.id) {
         console.error("Erreur création événement calendrier:", insertCalendarError);
         setSaving(false);
         return alert("La séance est enregistrée, mais son événement calendrier n'a pas pu être créé.");
+      }
+
+      calendarEventId = String(insertedCalendarEvent.id);
+    }
+
+    // PRÉSENCE AUTOMATIQUE
+    // - joueur sélectionné dans la séance => présent ✓
+    // - joueur non sélectionné => absent ✕
+    // Le staff peut ensuite transformer ✓ en 🕒 retard depuis Gestion Admin.
+    if (calendarEventId) {
+      const presencePayload = players.map((player) => ({
+        team_id: teamId,
+        event_id: calendarEventId,
+        player_id: player.id,
+        status: selectedPlayers.includes(player.id) ? "present" : "absent",
+        updated_at: new Date().toISOString(),
+      }));
+
+      if (presencePayload.length > 0) {
+        const { error: presenceSyncError } = await supabase
+          .from("player_event_presence")
+          .upsert(presencePayload, {
+            onConflict: "team_id,player_id,event_id",
+          });
+
+        if (presenceSyncError) {
+          console.error(
+            "Séance enregistrée mais présence automatique non synchronisée:",
+            presenceSyncError,
+          );
+        }
       }
     }
 

@@ -91,34 +91,59 @@ async function activateOrder(orderId: string, stripeSession: Stripe.Checkout.Ses
 
   const subscriptionItems = items.filter((item) => item.item_type === "subscription" && item.item_id);
 
-  if (subscriptionItems.length > 0) {
-    await supabase
-      .from("subscriptions")
-      .update({ status: "canceled", updated_at: new Date().toISOString() })
-      .eq("user_id", typedOrder.user_id)
-      .eq("status", "active");
-  }
-
   for (const item of subscriptionItems) {
+    const now = new Date();
     const billing = item.assigned_to === "yearly" ? "yearly" : "monthly";
-    const periodEnd = new Date();
 
-    if (billing === "yearly") {
-      periodEnd.setFullYear(periodEnd.getFullYear() + 1);
-    } else {
-      periodEnd.setMonth(periodEnd.getMonth() + 1);
+    const { data: currentSubscriptions } = await supabase
+      .from("subscriptions")
+      .select("id,plan_id,current_period_end,status")
+      .eq("user_id", typedOrder.user_id)
+      .in("status", ["active", "trialing"])
+      .order("current_period_end", { ascending: false })
+      .limit(10);
+
+    const current = (currentSubscriptions ?? []).find(
+      (row: any) => String(row.plan_id) === String(item.item_id),
+    );
+    const currentEnd = current?.current_period_end
+      ? new Date(current.current_period_end)
+      : null;
+    const periodStart =
+      currentEnd && !Number.isNaN(currentEnd.getTime()) && currentEnd > now
+        ? currentEnd
+        : now;
+    const periodEnd = new Date(periodStart);
+
+    if (billing === "yearly") periodEnd.setFullYear(periodEnd.getFullYear() + 1);
+    else periodEnd.setMonth(periodEnd.getMonth() + 1);
+
+    const { data: created, error: subscriptionError } = await supabase
+      .from("subscriptions")
+      .insert({
+        user_id: typedOrder.user_id,
+        plan_id: item.item_id,
+        billing_period: billing,
+        status: "active",
+        current_period_start: periodStart.toISOString(),
+        current_period_end: periodEnd.toISOString(),
+        created_at: now.toISOString(),
+        updated_at: now.toISOString(),
+      })
+      .select("id")
+      .single();
+
+    if (subscriptionError || !created?.id) {
+      throw subscriptionError || new Error("Création abonnement impossible");
     }
 
-    await supabase.from("subscriptions").insert({
-      user_id: typedOrder.user_id,
-      plan_id: item.item_id,
-      billing_period: billing,
-      status: "active",
-      current_period_start: new Date().toISOString(),
-      current_period_end: periodEnd.toISOString(),
-      created_at: new Date().toISOString(),
-      updated_at: new Date().toISOString(),
-    });
+    // On ne retire l'ancien accès qu'après confirmation du nouveau.
+    await supabase
+      .from("subscriptions")
+      .update({ status: "canceled", updated_at: now.toISOString() })
+      .eq("user_id", typedOrder.user_id)
+      .in("status", ["active", "trialing"])
+      .neq("id", created.id);
   }
 
   await supabase

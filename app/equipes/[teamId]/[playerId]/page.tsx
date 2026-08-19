@@ -196,12 +196,33 @@ type PlayerLiveStats = {
   games: number;
   missedGames: number;
   attendancePct: number;
+  totalMinutes: number;
+  averageMinutes: number;
   totals: PlayerLiveTotals;
   averages: PlayerLiveAverages;
   matches: PlayerLiveMatchLine[];
   evolution: Array<{ label: string; value: number }>;
 };
 
+
+type PlayerAttendanceSummary = {
+  total: number;
+  present: number;
+  late: number;
+  absent: number;
+  rate: number;
+  spark: number[];
+};
+
+type PlayerFatigueSummary = {
+  current: number | null;
+  average7: number | null;
+  previous7: number | null;
+  delta: number | null;
+  level: "low" | "watch" | "high" | "none";
+  count: number;
+  spark: number[];
+};
 
 type TeamPlayerComparisonStat = {
   id: string;
@@ -288,6 +309,8 @@ const EMPTY_LIVE_STATS: PlayerLiveStats = {
   games: 0,
   missedGames: 0,
   attendancePct: 0,
+  totalMinutes: 0,
+  averageMinutes: 0,
   totals: EMPTY_LIVE_TOTALS,
   averages: EMPTY_LIVE_AVERAGES,
   matches: [],
@@ -593,6 +616,26 @@ function percentStat(made: number, attempted: number): number {
   return Math.round((made / attempted) * 1000) / 10;
 }
 
+function statMinutes(value: unknown): number {
+  if (value == null || value === "") return 0;
+  if (typeof value === "number") return Number.isFinite(value) ? value : 0;
+
+  const raw = String(value).trim();
+  if (!raw) return 0;
+
+  if (raw.includes(":")) {
+    const [minutes, seconds = "0"] = raw.split(":");
+    const m = Number(minutes);
+    const s = Number(seconds);
+    if (Number.isFinite(m) && Number.isFinite(s)) {
+      return m + s / 60;
+    }
+  }
+
+  const n = Number(raw.replace(",", "."));
+  return Number.isFinite(n) ? n : 0;
+}
+
 function liveMatchDateLabel(value: string) {
   if (!value) return "—";
   const d = new Date(value);
@@ -670,12 +713,27 @@ function computeLiveStats(rows: any[], matchesById: Map<string, any>): PlayerLiv
 
   matches.sort((a, b) => String(a.date).localeCompare(String(b.date)));
 
+  const totalMinutes = presentRows.reduce(
+    (sum, row) =>
+      sum +
+      statMinutes(
+        row.min ??
+          row.minutes ??
+          row.playing_time ??
+          row.playing_time_minutes ??
+          row.time_played,
+      ),
+    0,
+  );
+
   return {
     hasData: allRows.length > 0,
     totalRows: allRows.length,
     games,
     missedGames,
     attendancePct: allRows.length ? Math.round((games / allRows.length) * 100) : 0,
+    totalMinutes: Math.round(totalMinutes * 10) / 10,
+    averageMinutes: games ? Math.round((totalMinutes / games) * 10) / 10 : 0,
     totals,
     averages: {
       pts: avg(totals.pts),
@@ -861,6 +919,23 @@ export default function JoueurDetailPage({
   const [liveStats, setLiveStats] = useState<PlayerLiveStats>(EMPTY_LIVE_STATS);
   const [playerActions, setPlayerActions] = useState<any[]>([]);
   const [teamPlayersStats, setTeamPlayersStats] = useState<TeamPlayerComparisonStat[]>([]);
+  const [attendanceSummary, setAttendanceSummary] = useState<PlayerAttendanceSummary>({
+    total: 0,
+    present: 0,
+    late: 0,
+    absent: 0,
+    rate: 0,
+    spark: [],
+  });
+  const [fatigueSummary, setFatigueSummary] = useState<PlayerFatigueSummary>({
+    current: null,
+    average7: null,
+    previous7: null,
+    delta: null,
+    level: "none",
+    count: 0,
+    spark: [],
+  });
   const [tab, setTab] = useState<Tab>("Aperçu");
   const [editing, setEditing] = useState(false);
   const [toast, setToast] = useState("");
@@ -1183,6 +1258,134 @@ export default function JoueurDetailPage({
       active = false;
     };
   }, [supabase, teamId, playerId, team?.players]);
+
+  useEffect(() => {
+    let active = true;
+
+    async function loadAttendanceAndFatigue() {
+      try {
+        const fourteenDaysAgo = new Date();
+        fourteenDaysAgo.setDate(fourteenDaysAgo.getDate() - 13);
+        const since = fourteenDaysAgo.toISOString().slice(0, 10);
+
+        const [{ data: presenceRows, error: presenceError }, { data: fatigueRows, error: fatigueError }] =
+          await Promise.all([
+            supabase
+              .from("player_event_presence")
+              .select("status,updated_at,event_id")
+              .eq("team_id", teamId)
+              .eq("player_id", playerId)
+              .order("updated_at", { ascending: true }),
+
+            supabase
+              .from("player_wellness_responses")
+              .select("response_date,fatigue,created_at")
+              .eq("team_id", teamId)
+              .eq("player_id", playerId)
+              .gte("response_date", since)
+              .order("created_at", { ascending: true }),
+          ]);
+
+        if (presenceError) console.error("Erreur présence fiche joueur:", presenceError);
+        if (fatigueError) console.error("Erreur fatigue fiche joueur:", fatigueError);
+        if (!active) return;
+
+        const presence = (presenceRows ?? []) as Array<{
+          status?: string | null;
+          updated_at?: string | null;
+        }>;
+
+        const present = presence.filter((row) => row.status === "present").length;
+        const late = presence.filter((row) => row.status === "late").length;
+        const absent = presence.filter((row) => row.status === "absent").length;
+        const total = presence.filter((row) =>
+          ["present", "late", "absent"].includes(String(row.status || "")),
+        ).length;
+
+        setAttendanceSummary({
+          total,
+          present,
+          late,
+          absent,
+          rate: total ? Math.round(((present + late) / total) * 100) : 0,
+          spark: presence.slice(-7).map((row) =>
+            row.status === "present" ? 100 : row.status === "late" ? 80 : 0,
+          ),
+        });
+
+        const fatigue: Array<{ date: string; value: number }> = (fatigueRows ?? [])
+          .filter((row: any) => row.fatigue != null)
+          .map((row: any) => ({
+            date: String(row.response_date || ""),
+            value: Number(row.fatigue),
+          }))
+          .filter((row: { date: string; value: number }) => Number.isFinite(row.value));
+
+        const today = new Date();
+        const startCurrent = new Date(today);
+        startCurrent.setDate(today.getDate() - 6);
+        const startPrevious = new Date(today);
+        startPrevious.setDate(today.getDate() - 13);
+        const endPrevious = new Date(today);
+        endPrevious.setDate(today.getDate() - 7);
+
+        const currentStartIso = startCurrent.toISOString().slice(0, 10);
+        const previousStartIso = startPrevious.toISOString().slice(0, 10);
+        const previousEndIso = endPrevious.toISOString().slice(0, 10);
+
+        const currentValues = fatigue
+          .filter((row: { date: string; value: number }) => row.date >= currentStartIso)
+          .map((row: { date: string; value: number }) => row.value);
+
+        const previousValues = fatigue
+          .filter(
+            (row: { date: string; value: number }) =>
+              row.date >= previousStartIso && row.date <= previousEndIso,
+          )
+          .map((row: { date: string; value: number }) => row.value);
+
+        const average = (values: number[]) =>
+          values.length
+            ? values.reduce((sum, value) => sum + value, 0) / values.length
+            : null;
+
+        const currentAverage = average(currentValues);
+        const previousAverage = average(previousValues);
+        const latest = fatigue.length ? fatigue[fatigue.length - 1].value : null;
+        const delta =
+          currentAverage != null && previousAverage != null
+            ? currentAverage - previousAverage
+            : null;
+
+        const level: PlayerFatigueSummary["level"] =
+          latest == null
+            ? "none"
+            : latest >= 7
+              ? "high"
+              : latest >= 4
+                ? "watch"
+                : "low";
+
+        setFatigueSummary({
+          current: latest,
+          average7: currentAverage,
+          previous7: previousAverage,
+          delta,
+          level,
+          count: currentValues.length,
+          spark: fatigue.slice(-7).map((row: { date: string; value: number }) => row.value),
+        });
+      } catch (error) {
+        console.error("Erreur chargement présence / fatigue:", error);
+      }
+    }
+
+    void loadAttendanceAndFatigue();
+
+    return () => {
+      active = false;
+    };
+  }, [supabase, teamId, playerId]);
 
   useEffect(() => {
     let active = true;
@@ -1841,6 +2044,9 @@ export default function JoueurDetailPage({
             liveStats={liveStats}
             teamPlayersStats={teamPlayersStats}
             currentPlayerId={String(playerId)}
+            attendanceSummary={attendanceSummary}
+            fatigueSummary={fatigueSummary}
+            onOpenLoad={() => setTab("Charge & récup.")}
           />
         )}
 
@@ -2173,6 +2379,9 @@ function OverviewTab({
   liveStats,
   teamPlayersStats,
   currentPlayerId,
+  attendanceSummary,
+  fatigueSummary,
+  onOpenLoad,
 }: {
   p: any;
   team: Team;
@@ -2186,6 +2395,9 @@ function OverviewTab({
   liveStats: PlayerLiveStats;
   teamPlayersStats: TeamPlayerComparisonStat[];
   currentPlayerId: string;
+  attendanceSummary: PlayerAttendanceSummary;
+  fatigueSummary: PlayerFatigueSummary;
+  onOpenLoad: () => void;
 }) {
   const latestMedical = [...medical].sort((a, b) => b.date.localeCompare(a.date))[0];
   const latestTests = ["Taille", "Poids", "Envergure", "Détente sèche", "VMA"]
@@ -2195,10 +2407,55 @@ function OverviewTab({
   return (
     <>
       <div className="kpi-row-light">
-        <Kpi icon="✅" label="Présence" value={`${liveStats.hasData ? liveStats.attendancePct : p.presencePct || 0}%`} sub={liveStats.hasData ? "Depuis les matchs LiveStats" : "Taux de présence"} spark={[88, 90, 92, 91, 95, 94, 95]} color="#22a06b" />
-        <Kpi icon="⏱" label="Ponctualité" value={`${p.ponctualitePct || 0}%`} sub="Taux de ponctualité" spark={[85, 88, 90, 89, 92, 91, 92]} color="#22a06b" />
-        <Kpi icon="🏀" label="Matchs joués" value={String(tdj.matchsJoues || 0)} sub={`${tdj.matchsManques || 0} manqué${tdj.matchsManques > 1 ? "s" : ""}`} />
-        <Kpi icon="⌛" label="Temps moyen" value={`${tdj.tempsMoyenMatchMin || 0} min`} sub="par match" />
+        <Kpi
+          icon="✅"
+          label="Présence"
+          value={`${attendanceSummary.rate}%`}
+          sub={
+            attendanceSummary.total
+              ? `${attendanceSummary.present} présent${attendanceSummary.present > 1 ? "s" : ""} · ${attendanceSummary.late} retard${attendanceSummary.late > 1 ? "s" : ""} · ${attendanceSummary.absent} absent${attendanceSummary.absent > 1 ? "s" : ""}`
+              : "Aucune séance renseignée"
+          }
+          spark={attendanceSummary.spark.length ? attendanceSummary.spark : undefined}
+          color="#22a06b"
+        />
+
+        <button
+          type="button"
+          className="kpi-button-reset"
+          style={{ display: "block", width: "100%", padding: 0, border: 0, background: "transparent", textAlign: "inherit", cursor: "pointer", font: "inherit", color: "inherit" }}
+          onClick={onOpenLoad}
+          title="Ouvrir Charge & récupération"
+        >
+          <Kpi
+            icon={fatigueSummary.level === "high" ? "🔴" : fatigueSummary.level === "watch" ? "🟠" : fatigueSummary.level === "low" ? "🟢" : "😴"}
+            label="Fatigue"
+            value={fatigueSummary.average7 != null ? `${fatigueSummary.average7.toFixed(1)} / 10` : "—"}
+            sub={
+              fatigueSummary.average7 == null
+                ? "Aucune réponse sur 7 jours"
+                : fatigueSummary.delta == null
+                  ? `${fatigueSummary.count} réponse${fatigueSummary.count > 1 ? "s" : ""} sur 7 jours`
+                  : `${fatigueSummary.delta > 0 ? "↗" : fatigueSummary.delta < 0 ? "↘" : "→"} ${fatigueSummary.delta > 0 ? "+" : ""}${fatigueSummary.delta.toFixed(1)} vs 7 jours précédents`
+            }
+            spark={fatigueSummary.spark.length ? fatigueSummary.spark : undefined}
+            color={fatigueSummary.level === "high" ? "#c5283d" : fatigueSummary.level === "watch" ? "#d4a24c" : "#22a06b"}
+          />
+        </button>
+
+        <Kpi
+          icon="🏀"
+          label="Matchs joués"
+          value={String(liveStats.hasData ? liveStats.games : tdj.matchsJoues || 0)}
+          sub={`${liveStats.hasData ? liveStats.missedGames : tdj.matchsManques || 0} manqué${(liveStats.hasData ? liveStats.missedGames : tdj.matchsManques || 0) > 1 ? "s" : ""}`}
+        />
+
+        <Kpi
+          icon="⌛"
+          label="Temps moyen"
+          value={`${liveStats.hasData ? liveStats.averageMinutes : tdj.tempsMoyenMatchMin || 0} min`}
+          sub={liveStats.hasData ? "Depuis les stats match" : "par match"}
+        />
       </div>
 
       <div className="player-grid three">
