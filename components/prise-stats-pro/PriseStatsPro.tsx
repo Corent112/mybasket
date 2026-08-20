@@ -943,6 +943,8 @@ export default function PriseStatsProPage() {
   // Lecteur vidéo local + saut réglable + Tab+flèches.
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const clipVideoRef = useRef<HTMLVideoElement | null>(null); // vidéo du popup "revoir séquence"
+  // Position conservée pendant la consultation Boxscore / Historique.
+  const inspectionVideoTimeRef = useRef<number | null>(null);
   const detachedVideoWindowRef = useRef<Window | null>(null);
   const detachedVideoChannelRef = useRef<BroadcastChannel | null>(null);
   const [videoStepSeconds, setVideoStepSeconds] = useState(5);
@@ -1404,7 +1406,11 @@ export default function PriseStatsProPage() {
     rebounds: [],
   });
   useEffect(() => {
-    if (showTimelinePanel && analysisView === 'history') pauseVideo();
+    if (showTimelinePanel && analysisView === 'history') {
+      inspectionVideoTimeRef.current = getCurrentVideoTime();
+      pauseVideo();
+      setRunning(false);
+    }
   }, [showTimelinePanel, analysisView]);
 
   const [timelineCompact, setTimelineCompact] = useState(false);
@@ -3854,7 +3860,8 @@ export default function PriseStatsProPage() {
     const fresh = emptyDraft(); fresh.context = next;
     // AJOUT · la possession suivante commence au timecode de bascule du contexte.
     possessionStartRef.current = getRawCodingTime();
-    setDraft(fresh); setStage(inbound ? 'inbound' : 'systeme');
+    setDraft(fresh);
+    setStage(inbound ? 'inbound' : (next === 'defense' ? 'temps' : 'systeme'));
   };
 
   /* -------- routages LF / passe décisive -------- */
@@ -3925,12 +3932,13 @@ export default function PriseStatsProPage() {
     if (c === 'defense') markClipEndNow();
     possessionStartRef.current = getRawCodingTime(); // AJOUT · début de possession (temps source)
     setDraft({ ...draft, context: c, systemeJeu: '', tempsFort: '', coverage: '' });
-    setStage('systeme');
+    // En défense : pas d'étape « Système de jeu », on va directement aux temps forts.
+    setStage(c === 'defense' ? 'temps' : 'systeme');
   };
   const inboundPick = (t: string) => {
     const d = { ...draft, inbound: t };
     if (d.actionType === 'touche') commit(d);
-    else { possessionStartRef.current = getRawCodingTime(); setDraft(d); setStage('systeme'); } // AJOUT
+    else { possessionStartRef.current = getRawCodingTime(); setDraft(d); setStage(d.context === 'defense' ? 'temps' : 'systeme'); } // AJOUT
   };
   const systemePick = (id: string) => {
     if (id === 'libre') markClipStartBefore(3);
@@ -4783,7 +4791,7 @@ export default function PriseStatsProPage() {
         <div className="h-r">
           <button
             className={`ghost ${showHistoryPanel ? 'on' : ''}`}
-            onClick={() => setShowHistoryPanel((v) => !v)}
+            onClick={() => setShowHistoryPanel((v) => { const opening = !v; if (opening) { inspectionVideoTimeRef.current = getCurrentVideoTime(); pauseVideo(); setRunning(false); } return opening; })}
             title="Afficher / masquer l'historique des actions"
           >
             📚 Historique
@@ -4824,7 +4832,7 @@ export default function PriseStatsProPage() {
 
           <button
             className={`ghost ${screen === 'box' ? 'on' : ''}`}
-            onClick={() => setScreen((s) => (s === 'box' ? 'live' : 'box'))}
+            onClick={() => { if (screen === 'box') { setScreen('live'); return; } inspectionVideoTimeRef.current = getCurrentVideoTime(); pauseVideo(); setRunning(false); setScreen('box'); }}
           >
             📊 Box-score
           </button>
@@ -4854,7 +4862,7 @@ export default function PriseStatsProPage() {
             <section className={`lc lc-video ${workTab === 'center' ? 'mshow' : ''}`}>
               <div className="videoSlot big">
                 {(videoProvider === 'local' || videoProvider === 'google_drive') && videoUrl ? (
-                  <video ref={videoRef} className="vplayer" src={videoUrl} controls />
+                  <video ref={videoRef} className="vplayer" src={videoUrl} controls onLoadedMetadata={(e) => { const savedTime = inspectionVideoTimeRef.current; if (savedTime == null) return; try { e.currentTarget.currentTime = Math.max(0, Math.min(Number.isFinite(e.currentTarget.duration) ? e.currentTarget.duration : savedTime, savedTime)); } catch { /* noop */ } inspectionVideoTimeRef.current = null; }} />
                 ) : videoProvider === 'youtube' && videoUrl ? (
                   <div className="vyt">
                     <div className="vyt-ic">▶️</div>
@@ -6639,6 +6647,13 @@ function BoxView({ actions, roster, teamId, videoProvider = 'none', videoUrl = '
                   showPoints
                   showDots
                   shots={attackShots}
+                  onZoneClick={(zoneId) => {
+                    const zoneShots = attackShots.filter((a) => {
+                      const actionZone = a.zone || resolveShotZone({ zone: a.zone, courtX: a.courtX, courtY: a.courtY } as any);
+                      return actionZone === zoneId;
+                    });
+                    if (zoneShots.length) openList(`${shotPlayer === 'all' ? 'Tirs équipe' : `Tirs ${find(shotPlayer)?.name || 'joueur'}`} · ${zoneById(zoneId)?.shortLabel || zoneId}`, zoneShots);
+                  }}
                   onShotClick={(a) =>
                     openShotZoneClips(
                       a as unknown as StatA,
@@ -6658,6 +6673,13 @@ function BoxView({ actions, roster, teamId, videoProvider = 'none', videoUrl = '
                   showPoints
                   showDots
                   shots={defenseShots}
+                  onZoneClick={(zoneId) => {
+                    const zoneShots = defenseShots.filter((a) => {
+                      const actionZone = a.zone || resolveShotZone({ zone: a.zone, courtX: a.courtX, courtY: a.courtY } as any);
+                      return actionZone === zoneId;
+                    });
+                    if (zoneShots.length) openList(`Tirs concédés · ${zoneById(zoneId)?.shortLabel || zoneId}`, zoneShots);
+                  }}
                   onShotClick={(a) =>
                     openShotZoneClips(
                       a as unknown as StatA,

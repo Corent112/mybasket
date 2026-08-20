@@ -128,15 +128,26 @@ function CourtPreview({image}:{image:string|null}){
 }
 
 type ShotGroup = "2PTS"|"3PTS"|"LF"|"AUTRES";
+const SHOT_GROUPS: Array<{value:ShotGroup;label:string}> = [
+  {value:"2PTS",label:"2 points"},
+  {value:"3PTS",label:"3 points"},
+  {value:"LF",label:"Lancers francs"},
+  {value:"AUTRES",label:"Autres / spots"},
+];
 function shotGroup(name:string):ShotGroup{
   const n=name.trim().toUpperCase();
-  if(n==="LF"||n.startsWith("LF ")||n.includes("LANCER")) return "LF";
-  if(n.includes("2PTS")||n.includes("2 PTS")||n.includes("2 POINT")) return "2PTS";
-  if(n.includes("3PTS")||n.includes("3 PTS")||n.includes("3 POINT")) return "3PTS";
+  if(n.startsWith("LF ·")||n==="LF"||n.startsWith("LF ")||n.includes("LANCER")) return "LF";
+  if(n.startsWith("2PTS ·")||n.includes("2PTS")||n.includes("2 PTS")||n.includes("2 POINT")) return "2PTS";
+  if(n.startsWith("3PTS ·")||n.includes("3PTS")||n.includes("3 PTS")||n.includes("3 POINT")) return "3PTS";
+  if(n.startsWith("AUTRES ·")) return "AUTRES";
   return "AUTRES";
 }
 function spotLabel(name:string){
-  return name.replace(/^(2PTS|3PTS)\s*[·:\\-]\s*/i,"").trim();
+  return name.replace(/^(2PTS|3PTS|LF|AUTRES)\s*[·:\\-]\s*/i,"").trim();
+}
+function withShotGroup(name:string,group:ShotGroup){
+  const label=spotLabel(name)||"Nouveau tir";
+  return `${group} · ${label}`;
 }
 function groupRows(rows:GridRow[]){
   const order:ShotGroup[]=["2PTS","3PTS","LF","AUTRES"];
@@ -178,6 +189,7 @@ export default function TeamShootingGrids({
   const [newDate,setNewDate]=useState(new Date().toISOString().slice(0,10));
   const [loading,setLoading]=useState(true);
   const [saving,setSaving]=useState(false);
+  const [shootingView,setShootingView]=useState<"editor"|"library">("editor");
   const [message,setMessage]=useState("");
   const [teamIdentity,setTeamIdentity]=useState<{name:string;logo:string|null}>({name:"Équipe",logo:null});
 
@@ -644,7 +656,29 @@ export default function TeamShootingGrids({
         </div>
       ):(
         <>
-          <div className="shooting-library-bar" style={{...card,padding:"11px 12px"}}>
+          <div style={{...card,padding:"11px 12px",display:"grid",gridTemplateColumns:"minmax(220px,420px) minmax(0,1fr) auto",gap:10,alignItems:"end"}}>
+            <div className="shooting-tabs" style={{display:"flex",gap:7,flexWrap:"wrap",marginBottom:10}}>
+              <button type="button" onClick={()=>setShootingView("editor")} style={{...chip,...(shootingView==="editor"?activeChip:{})}}>✏️ Créer / modifier</button>
+              <button type="button" onClick={()=>setShootingView("library")} style={{...chip,...(shootingView==="library"?activeChip:{})}}>📚 Grilles de tir créées ({grids.length})</button>
+            </div>
+            {shootingView==="library"&&(
+              <div style={{...card,marginBottom:12}}>
+                <span style={eyebrow}>MES GRILLES DE TIR</span>
+                <h3 style={title}>Choisis une grille à consulter ou à utiliser</h3>
+                <div className="shooting-library" style={{display:"grid",gridTemplateColumns:"repeat(3,minmax(0,1fr))",gap:8}}>
+                  {grids.map(g=>(
+                    <button key={g.id} type="button" onClick={()=>{setSelectedGridId(g.id);void loadDetails(g.id);setShootingView("editor")}}
+                      style={{textAlign:"left",border:`1px solid ${g.id===selectedGridId?GOLD:BORDER}`,borderRadius:12,background:g.id===selectedGridId?"#FFF8E9":"#fff",padding:12,cursor:"pointer"}}>
+                      <b style={{display:"block",color:BORDEAUX,fontSize:13}}>{g.name}</b>
+                      <span style={{display:"block",marginTop:4,color:MUTED,fontSize:10,lineHeight:1.35}}>{g.description||"Aucune consigne"}</span>
+                      <span style={{display:"block",marginTop:8,color:TEXT,fontSize:9,fontWeight:900}}>Ouvrir la grille →</span>
+                    </button>
+                  ))}
+                  {!grids.length&&<div style={{color:MUTED,fontSize:11}}>Aucune grille créée.</div>}
+                </div>
+              </div>
+            )}
+            {shootingView==="editor"&&(<>
             <label style={{...field,margin:0}}>
               <span>Choisir une grille de tir</span>
               <select
@@ -663,11 +697,13 @@ export default function TeamShootingGrids({
               <b style={{color:TEXT}}>Bibliothèque de modèles.</b> Chaque grille conserve son nom, ses spots, leur ordre, son mode de saisie et son schéma Plaquette.
             </div>
             {canEdit&&<button onClick={createGrid} disabled={saving} style={primary}>+ Créer une grille</button>}
+            </>)}
           </div>
 
+          {shootingView==="editor"&&(<>
           {grid&&(
             <>
-              <div className="shooting-editor-grid">
+              <div className="shooting-editor-grid" style={{display:"grid",gridTemplateColumns:"minmax(0,1.1fr) minmax(320px,.9fr)",gap:12}}>
                 <div style={card}>
                   <span style={eyebrow}>CRÉATION DU MODÈLE</span>
                   <h3 style={title}>Comment fonctionne cette grille ?</h3>
@@ -675,7 +711,7 @@ export default function TeamShootingGrids({
                   <label style={field}><span>Nom de la grille</span><input value={grid.name} onChange={e=>patchGrid({name:e.target.value})} disabled={!canEdit}/></label>
                   <label style={field}><span>Description / consigne</span><textarea value={grid.description||""} onChange={e=>patchGrid({description:e.target.value})} placeholder="Ex. 5 spots à 3pts, déplacement après chaque série…" disabled={!canEdit}/></label>
 
-                  <div className="shooting-mode-grid">
+                  <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
                     <button type="button" onClick={()=>canEdit&&patchGrid({input_mode:"fixed_attempts"})} style={{...modeCard,...(grid.input_mode==="fixed_attempts"?modeActive:{})}}>
                       <b>🎯 Nombre de tirs imposé</b>
                       <span>Exemple : 10 tirs par spot. Les tentés sont déjà remplis, tu saisis uniquement les marqués.</span>
@@ -697,9 +733,14 @@ export default function TeamShootingGrids({
                       {canEdit&&<button onClick={addRow} style={secondary}>+ Spot</button>}
                     </div>
                     <div style={{display:"grid",gap:5,marginTop:7}}>
-                      {rows.map((row,i)=><div key={row.id} className="shooting-row-editor">
+                      {rows.map((row,i)=><div key={row.id} className="shooting-spot-row" style={{display:"grid",gridTemplateColumns:"32px 112px minmax(0,1fr) 72px 34px",gap:6,alignItems:"center"}}>
                         <span style={{width:28,height:28,borderRadius:8,background:"#FFF4DE",color:BORDEAUX,display:"grid",placeItems:"center",fontWeight:1000}}>{i+1}</span>
-                        <input value={row.name} onChange={e=>setRows(cur=>cur.map(r=>r.id===row.id?{...r,name:e.target.value}:r))} disabled={!canEdit} style={input}/>
+                        <select aria-label={`Catégorie de ${spotLabel(row.name)}`} value={shotGroup(row.name)}
+                          onChange={e=>setRows(cur=>cur.map(r=>r.id===row.id?{...r,name:withShotGroup(r.name,e.target.value as ShotGroup)}:r))}
+                          disabled={!canEdit} style={{...input,padding:"8px 6px",fontSize:10,fontWeight:900,color:BORDEAUX}}>
+                          {SHOT_GROUPS.map(g=><option key={g.value} value={g.value}>{g.label}</option>)}
+                        </select>
+                        <input value={spotLabel(row.name)} onChange={e=>setRows(cur=>cur.map(r=>r.id===row.id?{...r,name:withShotGroup(e.target.value,shotGroup(r.name))}:r))} disabled={!canEdit} style={input}/>
                         {canEdit&&<div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:4}}>
                           <button type="button" title="Monter ce spot" aria-label={`Monter ${row.name}`} disabled={i===0} onClick={()=>void moveRow(row.id,-1)} style={{...orderButton,opacity:i===0?0.35:1}}>↑</button>
                           <button type="button" title="Descendre ce spot" aria-label={`Descendre ${row.name}`} disabled={i===rows.length-1} onClick={()=>void moveRow(row.id,1)} style={{...orderButton,opacity:i===rows.length-1?0.35:1}}>↓</button>
@@ -730,7 +771,7 @@ export default function TeamShootingGrids({
               <div style={card}>
                 <span style={eyebrow}>NOUVELLE SESSION</span>
                 <h3 style={title}>Qui réalise la grille ?</h3>
-                <div className="shooting-session-builder">
+                <div className="shooting-session-grid" style={{display:"grid",gridTemplateColumns:"160px minmax(0,1fr) auto",gap:10,alignItems:"start"}}>
                   <label style={field}><span>Date</span><input type="date" value={newDate} onChange={e=>setNewDate(e.target.value)}/></label>
                   <div>
                     <span style={{...eyebrow,color:MUTED}}>JOUEURS</span>
@@ -749,7 +790,7 @@ export default function TeamShootingGrids({
                 const pids=sessionPlayers[session.id]||[];
                 return (
                   <div key={session.id} style={{...card,padding:0,overflow:"hidden"}}>
-                    <div className="shooting-session-header" style={{padding:"12px 14px",background:"#FFF9F1",borderBottom:`1px solid ${BORDER}`}}>
+                    <div style={{padding:"12px 14px",display:"flex",justifyContent:"space-between",gap:8,alignItems:"center",background:"#FFF9F1",borderBottom:`1px solid ${BORDER}`}}>
                       <div><span style={eyebrow}>SESSION</span><strong style={{display:"block",fontSize:14,color:TEXT,marginTop:3}}>{fmtDate(session.session_date)} · {pids.length} joueur(s)</strong></div>
                       <div style={{display:"flex",gap:6}}>
                         {canEdit&&<button onClick={()=>saveSession(session)} style={primary}>Enregistrer résultats</button>}
@@ -762,7 +803,7 @@ export default function TeamShootingGrids({
                         <thead>
                           <tr>
                             <th rowSpan={3} style={{...th,textAlign:"left",position:"sticky",left:0,zIndex:4,background:BORDEAUX,color:"#fff"}}>JOUEUR</th>
-                            {groupRows(rows).map(block=><th key={block.group} colSpan={block.rows.length*3} style={{...th,background:BORDEAUX,color:"#fff",fontSize:11}}>{block.group==="AUTRES"?"SPOTS":block.group}</th>)}
+                            {groupRows(rows).map(block=><th key={block.group} colSpan={block.rows.length*3} style={{...th,background:"rgba(107,26,44,.88)",color:"#fff",fontSize:11}}>{block.group==="AUTRES"?"SPOTS":block.group==="2PTS"?"2 POINTS":block.group==="3PTS"?"3 POINTS":"LANCERS FRANCS"}</th>)}
                             <th rowSpan={2} colSpan={3} style={{...th,background:BORDEAUX,color:"#fff"}}>TOTAL</th>
                           </tr>
                           <tr>
@@ -837,33 +878,23 @@ export default function TeamShootingGrids({
               )}
             </>
           )}
+          </>)}
         </>
       )}
       <style jsx>{`
-        .shooting-library-bar { display:grid; grid-template-columns:minmax(220px,420px) minmax(0,1fr) auto; gap:10px; align-items:end; }
-        .shooting-editor-grid { display:grid; grid-template-columns:minmax(0,1.1fr) minmax(320px,.9fr); gap:12px; }
-        .shooting-mode-grid { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
-        .shooting-row-editor { display:grid; grid-template-columns:32px minmax(0,1fr) 72px 34px; gap:6px; align-items:center; }
-        .shooting-session-builder { display:grid; grid-template-columns:160px minmax(0,1fr) auto; gap:10px; align-items:start; }
-        .shooting-session-header { display:flex; justify-content:space-between; gap:8px; align-items:center; }
         @media (max-width: 900px) {
-          .shooting-library-bar { grid-template-columns:minmax(0,1fr) auto; }
-          .shooting-library-bar > :nth-child(2) { grid-column:1 / -1; order:3; }
-          .shooting-editor-grid { grid-template-columns:1fr; }
-          .shooting-session-builder { grid-template-columns:140px minmax(0,1fr); }
-          .shooting-session-builder > :last-child { grid-column:1 / -1; width:100%; margin-top:0 !important; }
+          .shooting-editor-grid { grid-template-columns: 1fr !important; }
+          .shooting-session-grid { grid-template-columns: 1fr !important; }
+          .shooting-library { grid-template-columns: repeat(2,minmax(0,1fr)) !important; }
         }
-        @media (max-width: 640px) {
-          .shooting-library-bar { grid-template-columns:1fr; }
-          .shooting-library-bar > :nth-child(2) { grid-column:auto; order:initial; }
-          .shooting-library-bar button { width:100%; }
-          .shooting-mode-grid { grid-template-columns:1fr; }
-          .shooting-row-editor { grid-template-columns:28px minmax(0,1fr) 64px 32px; gap:4px; }
-          .shooting-session-builder { grid-template-columns:1fr; }
-          .shooting-session-builder > :last-child { grid-column:auto; }
-          .shooting-session-header { align-items:flex-start; flex-direction:column; }
-          .shooting-session-header > div:last-child { width:100%; display:flex; flex-wrap:wrap; }
-          .shooting-session-header button { flex:1 1 auto; }
+        @media (max-width: 620px) {
+          .shooting-library { grid-template-columns: 1fr !important; }
+          .shooting-spot-row { grid-template-columns: 30px minmax(0,1fr) 62px 32px !important; }
+          .shooting-spot-row > select { grid-column: 2 / 5; grid-row: 1; }
+          .shooting-spot-row > input { grid-column: 2 / 3; grid-row: 2; }
+          .shooting-spot-row > div { grid-column: 3 / 4; grid-row: 2; }
+          .shooting-spot-row > button { grid-column: 4 / 5; grid-row: 2; }
+          .shooting-tabs button { flex: 1 1 150px; }
         }
       `}</style>
     </section>
