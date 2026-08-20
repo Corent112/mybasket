@@ -15,6 +15,9 @@ export const AI_CHAT_MODEL = process.env.OPENAI_CHAT_MODEL || "gpt-5.6-terra";
 /** Modèle rapide (titres de conversation, reformulations courtes). */
 export const AI_FAST_MODEL = process.env.OPENAI_FAST_MODEL || "gpt-5.6-luna";
 
+/** Modèle vision pour les imports photo. Configurable séparément pour maîtriser les coûts. */
+export const AI_VISION_MODEL = process.env.OPENAI_VISION_MODEL || AI_FAST_MODEL;
+
 /** Modèle d'embedding. Changer ce modèle impose une réindexation complète. */
 export const AI_EMBEDDING_MODEL =
   process.env.OPENAI_EMBEDDING_MODEL || "text-embedding-3-small";

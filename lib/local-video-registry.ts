@@ -27,7 +27,12 @@ export const removeLocalMatchVideo = (matchId: string) => {
 
 export const subscribeLocalVideos = (listener: () => void) => {
   listeners.add(listener);
-  return () => listeners.delete(listener);
+
+  // React useEffect attend une fonction de nettoyage qui retourne void.
+  // Set.delete() retourne un boolean : on l'encapsule donc dans un bloc.
+  return () => {
+    listeners.delete(listener);
+  };
 };
 
 export const connectedMatchIds = () => [...videos.keys()];

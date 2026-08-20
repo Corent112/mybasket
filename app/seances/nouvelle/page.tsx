@@ -3,6 +3,8 @@
 import { useEffect, useMemo, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { clearSessionBuilderItems, loadSessionBuilderItems } from "@/lib/session-builder";
+import SessionPhotoImport from "@/components/ai/SessionPhotoImport";
+import type { AiSessionScan } from "@/lib/import/session-scan-types";
 
 type Team = { id: string; name: string; club_logo_url?: string | null; gymnasium?: string | null };
 type Player = { id: string; team_id: string; first_name?: string | null; last_name?: string | null; position_primary?: string | null };
@@ -241,6 +243,32 @@ export default function NouvelleSeancePage() {
   function updateExercise(index: number, field: keyof SessionExercise, value: string | number) { setExercises((prev) => prev.map((exercise, i) => i === index ? { ...exercise, [field]: value } : exercise)); }
   async function addMoreExercises() { const { data: { user } } = await supabase.auth.getUser(); if (!user) return alert("Tu dois être connecté."); if (editingId) await supabase.from("profiles").update({ active_practice_session_id: editingId }).eq("id", user.id); window.location.href = editingId ? `/exercices?session=${editingId}` : "/exercices"; }
 
+  function applySessionScan(scan: AiSessionScan, mode: "append" | "replace") {
+    if (scan.title.trim()) setTitle(scan.title.trim());
+    if (scan.theme.trim()) setTheme(scan.theme.trim());
+    if (scan.sessionDate) setDate(scan.sessionDate);
+    if (scan.startTime) setStartTime(scan.startTime);
+    if (scan.endTime) setEndTime(scan.endTime);
+    if (scan.location.trim()) setLocation(scan.location.trim());
+
+    const imported: SessionExercise[] = scan.exercises.map((exercise, index) => ({
+      exercise_id: "",
+      title: exercise.title || `Exercice ${index + 1}`,
+      who: exercise.who || "CP",
+      duration_minutes: exercise.durationMinutes ?? 10,
+      situation_image_url: "",
+      explanation: exercise.explanation || "",
+      instructions: [exercise.instructions, exercise.variants].filter(Boolean).join("\n"),
+      variants: exercise.variants || "",
+      sort_order: index,
+    }));
+
+    setExercises((current) => {
+      const next = mode === "replace" ? imported : [...current, ...imported];
+      return next.map((exercise, index) => ({ ...exercise, sort_order: index }));
+    });
+  }
+
   async function save() {
     setSaving(true);
     const { data: { user }, error: userError } = await supabase.auth.getUser();
@@ -327,7 +355,7 @@ export default function NouvelleSeancePage() {
       </div>
     </section>
 
-    <section className="panel"><div className="panelTitle horizontal"><span>03</span><div><h2>Practice plan</h2><p>Ordre, temps et responsabilité de chaque exercice</p></div><button className="goldButton" onClick={addMoreExercises}>+ Ajouter des exercices</button></div>{exercises.map((exercise, index) => <article className="exercise" key={`${exercise.exercise_id}-${index}`}><div className="exerciseIndex">{String(index + 1).padStart(2, "0")}</div><div className="exerciseContent"><input className="exerciseTitle" value={exercise.title} onChange={(e) => updateExercise(index, "title", e.target.value)} /><div className="exerciseMeta"><label>Qui<select value={exercise.who} onChange={(e) => updateExercise(index, "who", e.target.value)}>{["CP", "AC1", "AC2", "PP", "RV"].map((code) => <option key={code}>{code}</option>)}</select></label><label>Temps<input type="number" min={0} value={exercise.duration_minutes} onChange={(e) => updateExercise(index, "duration_minutes", Number(e.target.value))} /></label></div><textarea value={exercise.explanation} placeholder="Déroulement" onChange={(e) => updateExercise(index, "explanation", e.target.value)} /><textarea value={exercise.instructions} placeholder="Consignes ou variantes" onChange={(e) => updateExercise(index, "instructions", e.target.value)} /></div><div className="exerciseActions"><button disabled={index === 0} onClick={() => moveExercise(index, -1)}>↑</button><button disabled={index === exercises.length - 1} onClick={() => moveExercise(index, 1)}>↓</button><button className="dangerSmall" onClick={() => setExercises((prev) => prev.filter((_, i) => i !== index).map((item, i) => ({ ...item, sort_order: i })))}>Supprimer</button></div></article>)}</section>
+    <section className="panel"><div className="panelTitle horizontal"><span>03</span><div><h2>Practice plan</h2><p>Ordre, temps et responsabilité de chaque exercice</p></div><button className="goldButton" onClick={addMoreExercises}>+ Ajouter des exercices</button></div><SessionPhotoImport onApply={applySessionScan} />{exercises.map((exercise, index) => <article className="exercise" key={`${exercise.exercise_id}-${index}`}><div className="exerciseIndex">{String(index + 1).padStart(2, "0")}</div><div className="exerciseContent"><input className="exerciseTitle" value={exercise.title} onChange={(e) => updateExercise(index, "title", e.target.value)} /><div className="exerciseMeta"><label>Qui<select value={exercise.who} onChange={(e) => updateExercise(index, "who", e.target.value)}>{["CP", "AC1", "AC2", "PP", "RV"].map((code) => <option key={code}>{code}</option>)}</select></label><label>Temps<input type="number" min={0} value={exercise.duration_minutes} onChange={(e) => updateExercise(index, "duration_minutes", Number(e.target.value))} /></label></div><textarea value={exercise.explanation} placeholder="Déroulement" onChange={(e) => updateExercise(index, "explanation", e.target.value)} /><textarea value={exercise.instructions} placeholder="Consignes ou variantes" onChange={(e) => updateExercise(index, "instructions", e.target.value)} /></div><div className="exerciseActions"><button disabled={index === 0} onClick={() => moveExercise(index, -1)}>↑</button><button disabled={index === exercises.length - 1} onClick={() => moveExercise(index, 1)}>↓</button><button className="dangerSmall" onClick={() => setExercises((prev) => prev.filter((_, i) => i !== index).map((item, i) => ({ ...item, sort_order: i })))}>Supprimer</button></div></article>)}</section>
 
     <div className="saveBar"><div><strong>{selectedPlayers.length} joueurs · {blocks.length} blocs · {exercises.length} exercices</strong><small>Les données sont enregistrées dans Supabase.</small></div><button onClick={save} disabled={saving}>{saving ? "Enregistrement…" : "Enregistrer la séance"}</button></div>
 

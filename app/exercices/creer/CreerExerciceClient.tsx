@@ -3,6 +3,9 @@
 import { useEffect, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { saveExercise, updateExercise, getExercise } from "@/lib/exercises";
+import ExercisePhotoImport from "@/components/ai/ExercisePhotoImport";
+import type { AiExerciseImport } from "@/lib/import/types";
+import { aiDiagramToPlaquette, renderPlaquettePreview } from "@/lib/import/plaquette-converter";
 
 type Ex = {
   title: string;
@@ -144,6 +147,63 @@ export default function CreerExerciceClient() {
         ? current.themes.filter((item) => item !== theme)
         : [...current.themes, theme],
     }));
+
+  const applyAIImport = async (result: AiExerciseImport) => {
+    const schema = aiDiagramToPlaquette(result);
+    let schemaImage = "";
+    let schemaData: any = null;
+
+    if (schema) {
+      schemaImage = renderPlaquettePreview(schema);
+      schemaData = {
+        ...schema,
+        imageData: schemaImage,
+        phaseImages: schemaImage ? [schemaImage] : [],
+      };
+    }
+
+    setEx((current) => {
+      const nextImages = schemaImage
+        ? [...current.schemaImages, schemaImage].slice(0, 50)
+        : current.schemaImages;
+      const nextData = schemaData
+        ? [...current.schemaDataList, schemaData].slice(0, 50)
+        : current.schemaDataList;
+
+      return {
+        ...current,
+        title: result.title || current.title,
+        organisation: result.organisation || current.organisation,
+        deroulement: result.deroulement?.length
+          ? result.deroulement.join("\n")
+          : current.deroulement,
+        consignes: result.consignes?.length
+          ? result.consignes.join("\n")
+          : current.consignes,
+        variantes: result.variantes?.length
+          ? result.variantes.join("\n")
+          : current.variantes,
+        plots: result.plots !== null ? String(result.plots) : current.plots,
+        ballons: result.ballons !== null ? String(result.ballons) : current.ballons,
+        paniers: result.paniers !== null ? String(result.paniers) : current.paniers,
+        joueurs: result.joueurs !== null ? String(result.joueurs) : current.joueurs,
+        categorie: result.categorie || current.categorie,
+        type: result.type || current.type,
+        niveau: result.niveau || current.niveau,
+        temps: result.temps !== null ? String(result.temps) : current.temps,
+        themes: result.themes?.length ? result.themes : current.themes,
+        schemaImages: nextImages,
+        schemaDataList: syncSchemas(nextImages, nextData),
+      };
+    });
+
+    const lowDiagram = result.diagram.detected && result.confidence.diagram < 0.65;
+    if (lowDiagram || result.warnings.length) {
+      flash("Import terminé — vérifie les éléments signalés par l’IA");
+    } else {
+      flash("Import IA terminé ✅ Vérifie puis sauvegarde");
+    }
+  };
 
   useEffect(() => {
     if (editId) {
@@ -552,7 +612,33 @@ export default function CreerExerciceClient() {
         )
       );
 
-      const cleanSchemaDataList = syncSchemas(ex.schemaImages, ex.schemaDataList);
+      const uploadedSchemaImages = await Promise.all(
+        ex.schemaImages.map((image) =>
+          uploadBase64Image(image, `exercices/${exerciseStorageId}/schemas/imported`)
+        )
+      );
+
+      const cleanSchemaDataList = syncSchemas(ex.schemaImages, ex.schemaDataList).map(
+        (schema, index) => {
+          const imageData =
+            typeof schema?.imageData === "string" && schema.imageData.startsWith("data:image")
+              ? uploadedSchemaImages[index] || schema.imageData
+              : schema?.imageData;
+
+          const phaseImages = Array.isArray(schema?.phaseImages)
+            ? schema.phaseImages.map((image: string, phaseIndex: number) => {
+                if (!image?.startsWith?.("data:image")) return image;
+                return uploadedSchemaImages[index] || image;
+              })
+            : [];
+
+          return {
+            ...schema,
+            imageData,
+            phaseImages,
+          };
+        }
+      );
 
       const payload = {
         title: ex.title.trim(),
@@ -574,7 +660,7 @@ export default function CreerExerciceClient() {
         themes: ex.themes,
         tags: ex.themes,
         images: uploadedImages,
-        schemaImages: ex.schemaImages,
+        schemaImages: uploadedSchemaImages,
         videos: uploadedVideos,
         schemaDataList: cleanSchemaDataList,
       };
@@ -639,6 +725,8 @@ export default function CreerExerciceClient() {
         Renseigne les informations de ton exercice. Il restera privé dans ton compte
         tant que tu ne le proposes pas au CEO.
       </p>
+
+      <ExercisePhotoImport onImported={applyAIImport} />
 
       <div className="ce-grid">
         <div className="ce-card">
@@ -940,6 +1028,8 @@ const CSS = `
 .ce-title h1{font-weight:900;font-size:2.6rem;letter-spacing:.02em;text-align:center}
 .ce-title .dash{height:3px;width:54px;background:#0F0F12;display:inline-block}
 .ce-sub{text-align:center;color:#666;max-width:760px;margin:0 auto 1.6rem}
+.ce-ai-import{margin:0 auto 1.4rem;max-width:980px;border:1px solid #ead7a9;background:linear-gradient(135deg,#fffaf0,#fff);border-radius:16px;padding:1rem 1.1rem;display:grid;grid-template-columns:1fr auto;gap:.8rem 1.2rem;align-items:center;box-shadow:0 3px 14px rgba(0,0,0,.04)}
+.ce-ai-copy{display:flex;align-items:flex-start;gap:.8rem}.ce-ai-copy b{font-size:1rem}.ce-ai-copy p{margin:.22rem 0 0;color:#666;font-size:.9rem;line-height:1.4}.ce-ai-badge{flex:0 0 auto;background:#6B1A2C;color:#fff;border-radius:999px;padding:.28rem .58rem;font-size:.68rem;font-weight:900;letter-spacing:.06em}.ce-ai-btn{border:0;background:#0F0F12;color:#fff;border-radius:999px;padding:.75rem 1.05rem;font-weight:900;white-space:nowrap}.ce-ai-btn:hover{background:#6B1A2C}.ce-ai-btn:disabled{opacity:.55;cursor:wait}.ce-ai-state{grid-column:1/-1;border-top:1px solid #eee1c2;padding-top:.7rem;color:#5f4a20;font-size:.86rem;font-weight:700}.ce-ai-state.error{color:#a12626}
 .ce-grid{display:grid;grid-template-columns:2fr 1fr;gap:1.6rem;align-items:start}
 .ce-card{background:#fff;border:1px solid #e4e4e4;border-radius:18px;padding:1.4rem;box-shadow:0 2px 12px rgba(0,0,0,.04)}
 .ce-lab{display:block;font-weight:900;text-transform:uppercase;font-size:.82rem;letter-spacing:.03em;margin:1rem 0 .4rem}
@@ -983,5 +1073,5 @@ const CSS = `
 .ce-btn.save{background:#0F0F12;color:#fff;letter-spacing:.02em}
 .ce-btn.save:hover{background:#000}
 .ce-toast{position:fixed;bottom:1.2rem;left:50%;transform:translateX(-50%);background:#0F0F12;color:#fff;padding:.6rem 1.1rem;border-radius:10px;font-weight:600;font-size:.9rem;z-index:5000;box-shadow:0 8px 24px rgba(0,0,0,.3)}
-@media (max-width:900px){.ce-grid,.ce-schemas{grid-template-columns:1fr}.ce-title h1{font-size:1.8rem}.ce-title .dash{width:28px}.ce-actions{flex-wrap:wrap}}
+@media (max-width:900px){.ce-ai-import{grid-template-columns:1fr}.ce-ai-btn{width:100%}.ce-grid,.ce-schemas{grid-template-columns:1fr}.ce-title h1{font-size:1.8rem}.ce-title .dash{width:28px}.ce-actions{flex-wrap:wrap}}
 `;

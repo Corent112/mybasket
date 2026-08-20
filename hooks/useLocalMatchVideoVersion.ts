@@ -1,15 +1,13 @@
-import { useSyncExternalStore } from "react";
+"use client";
+
+import { useEffect, useReducer } from "react";
 import { subscribeLocalVideos } from "@/lib/local-video-registry";
 
-let version = 0;
-subscribeLocalVideos(() => {
-  version += 1;
-});
-
+/** Force un re-render des composants quand la vidéo locale liée à un match change. */
 export default function useLocalMatchVideoVersion() {
-  return useSyncExternalStore(
-    subscribeLocalVideos,
-    () => version,
-    () => 0,
-  );
+  const [version, bump] = useReducer((value: number) => value + 1, 0);
+
+  useEffect(() => subscribeLocalVideos(() => bump()), []);
+
+  return version;
 }

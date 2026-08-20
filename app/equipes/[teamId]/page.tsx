@@ -562,6 +562,12 @@ export default function EquipeDetailPage({
   const [editingTeam, setEditingTeam] = useState(false);
   const [managing, setManaging] = useState(false);
   const [activeTab, setActiveTab] = useState<TeamMainTab>("presentation");
+
+  useEffect(()=>{
+    if(typeof window==="undefined")return;
+    const tab=new URL(window.location.href).searchParams.get("tab");
+    if(tab==="shooting") setActiveTab("shooting");
+  },[teamId]);
   const [playerForm, setPlayerForm] = useState<{
     open: boolean;
     player?: Player;

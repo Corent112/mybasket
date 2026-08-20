@@ -32,25 +32,73 @@ export default function PlayerShootingGrids({playerId,teamId}:{playerId:string;t
   const [selectedGridId,setSelectedGridId]=useState("");
 
   async function reload(){
-    const {data:g,error:ge}=await supabase.from("shooting_grids").select("id,name,court_schema_url").eq("team_id",teamId).order("updated_at",{ascending:false});
-    if(ge)return console.error(ge);
+    /**
+     * Source de vérité : shooting_grid_player_results.
+     *
+     * On part d'abord du joueur, puis on remonte session -> grille. Cela évite
+     * qu'une ancienne équipe dont l'id d'URL diffère du team_id Supabase masque
+     * les résultats pourtant bien enregistrés depuis la fiche équipe.
+     */
+    const {data:playerResults,error:playerResultsError}=await supabase
+      .from("shooting_grid_player_results")
+      .select("id,session_id,row_id,player_id,made,attempted")
+      .eq("player_id",playerId);
+
+    if(playerResultsError){
+      console.error(playerResultsError);
+      setGrids([]);setRows([]);setSessions([]);setResults([]);
+      return;
+    }
+
+    const rr=(playerResults||[]) as Result[];
+    setResults(rr);
+
+    if(!rr.length){
+      // On charge tout de même les modèles de l'équipe pour afficher un état
+      // cohérent, mais aucune performance n'est inventée.
+      const {data:g,error:ge}=await supabase
+        .from("shooting_grids")
+        .select("id,name,court_schema_url")
+        .eq("team_id",teamId)
+        .order("updated_at",{ascending:false});
+      if(ge) console.error(ge);
+      setGrids((g||[]) as Grid[]);
+      setRows([]);setSessions([]);
+      setSelectedGridId("");
+      return;
+    }
+
+    const sessionIds=Array.from(new Set(rr.map(x=>String(x.session_id)).filter(Boolean)));
+    const {data:s,error:sessionError}=await supabase
+      .from("shooting_grid_sessions")
+      .select("id,grid_id,session_date")
+      .in("id",sessionIds)
+      .order("session_date",{ascending:true});
+
+    if(sessionError){
+      console.error(sessionError);
+      setGrids([]);setRows([]);setSessions([]);
+      return;
+    }
+
+    const sessionList=(s||[]) as Session[];
+    setSessions(sessionList);
+    const gridIds=Array.from(new Set(sessionList.map(x=>String(x.grid_id)).filter(Boolean)));
+    if(!gridIds.length){setGrids([]);setRows([]);return}
+
+    const [{data:g,error:gridError},{data:r,error:rowError}]=await Promise.all([
+      supabase.from("shooting_grids").select("id,name,court_schema_url").in("id",gridIds).order("updated_at",{ascending:false}),
+      supabase.from("shooting_grid_rows").select("id,grid_id,name,sort_order").in("grid_id",gridIds).order("sort_order",{ascending:true})
+    ]);
+
+    if(gridError) console.error(gridError);
+    if(rowError) console.error(rowError);
+
     const gridList=(g||[]) as Grid[];
     setGrids(gridList);
-    if(!gridList.length){setRows([]);setSessions([]);setResults([]);return}
-    const ids=gridList.map(x=>x.id);
-    const [{data:r},{data:s}]=await Promise.all([
-      supabase.from("shooting_grid_rows").select("id,grid_id,name,sort_order").in("grid_id",ids).order("sort_order"),
-      supabase.from("shooting_grid_sessions").select("id,grid_id,session_date").in("grid_id",ids).order("session_date",{ascending:true})
-    ]);
-    const sessionList=(s||[]) as Session[];
-    setRows((r||[]) as Row[]);setSessions(sessionList);
-    if(!sessionList.length){setResults([]);return}
-    const {data:res,error:re}=await supabase.from("shooting_grid_player_results").select("id,session_id,row_id,player_id,made,attempted").eq("player_id",playerId).in("session_id",sessionList.map(x=>x.id));
-    if(re)return console.error(re);
-    const rr=(res||[]) as Result[];
-    setResults(rr);
-    const resultSessionIds=new Set(rr.map(x=>x.session_id));
-    const firstGrid=sessionList.find(sx=>resultSessionIds.has(sx.id))?.grid_id||gridList[0]?.id||"";
+    setRows((r||[]) as Row[]);
+
+    const firstGrid=sessionList.find(sx=>rr.some(result=>result.session_id===sx.id))?.grid_id||gridList[0]?.id||"";
     setSelectedGridId(cur=>cur&&gridList.some(x=>x.id===cur)?cur:firstGrid);
   }
 
@@ -88,9 +136,12 @@ export default function PlayerShootingGrids({playerId,teamId}:{playerId:string;t
       <p style={{margin:0,color:MUTED,fontSize:11}}>Tous les résultats saisis dans les grilles de l'équipe sont regroupés ici automatiquement.</p>
     </div>
 
-    <div style={{display:"flex",gap:6,overflowX:"auto"}}>
-      {grids.filter(g=>sessions.some(s=>s.grid_id===g.id&&results.some(r=>r.session_id===s.id))).map(g=><button key={g.id} onClick={()=>setSelectedGridId(g.id)} style={{border:`1px solid ${g.id===selectedGridId?BORDEAUX:BORDER}`,background:g.id===selectedGridId?BORDEAUX:"#fff",color:g.id===selectedGridId?"#fff":BORDEAUX,borderRadius:999,padding:"7px 10px",fontWeight:900,whiteSpace:"nowrap"}}>{g.name}</button>)}
-    </div>
+    <label style={{display:"grid",gap:5,maxWidth:420}}>
+      <span style={{fontSize:9,fontWeight:1000,letterSpacing:".08em",color:MUTED,textTransform:"uppercase"}}>Grille suivie</span>
+      <select value={selectedGridId} onChange={e=>setSelectedGridId(e.target.value)} style={{height:40,border:`1px solid ${BORDER}`,borderRadius:11,padding:"0 11px",background:"#fff",color:BORDEAUX,fontWeight:900}}>
+        {grids.filter(g=>sessions.some(s=>s.grid_id===g.id&&results.some(r=>r.session_id===s.id))).map(g=><option key={g.id} value={g.id}>{g.name}</option>)}
+      </select>
+    </label>
 
     {grid&&<>
       <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(150px,1fr))",gap:8}}>
@@ -100,7 +151,7 @@ export default function PlayerShootingGrids({playerId,teamId}:{playerId:string;t
         <K label="% global" value={`${totals.percentage}%`}/>
       </div>
 
-      <div style={{display:"grid",gridTemplateColumns:grid.court_schema_url?"minmax(0,1fr) 280px":"1fr",gap:10}}>
+      <div className={`player-shooting-main ${grid.court_schema_url ? "has-schema" : ""}`}>
         <div style={card}>
           <span style={eye}>ÉVOLUTION</span><h3 style={title}>Pourcentage par session</h3>
           <div style={{overflowX:"auto"}}><ProgressChart data={sessionStats.map(x=>({label:new Date(`${x.session.session_date}T12:00:00`).toLocaleDateString("fr-FR",{day:"2-digit",month:"2-digit"}),value:x.percentage}))}/></div>
@@ -151,6 +202,16 @@ export default function PlayerShootingGrids({playerId,teamId}:{playerId:string;t
         </div>
       </div>
     </>}
+    <style jsx>{`
+      .player-shooting-main { display:grid; grid-template-columns:1fr; gap:10px; }
+      .player-shooting-main.has-schema { grid-template-columns:minmax(0,1fr) 280px; }
+      @media (max-width: 820px) {
+        .player-shooting-main.has-schema { grid-template-columns:1fr; }
+      }
+      @media (max-width: 640px) {
+        :global(.player-shooting-scroll-hint) { font-size:9px; }
+      }
+    `}</style>
   </section>
 }
 
