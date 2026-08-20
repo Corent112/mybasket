@@ -153,6 +153,13 @@ function groupRows(rows:GridRow[]){
   const order:ShotGroup[]=["2PTS","3PTS","LF","AUTRES"];
   return order.map(group=>({group,rows:rows.filter(r=>shotGroup(r.name)===group)})).filter(x=>x.rows.length);
 }
+function orderedShotRows(rows:GridRow[]){
+  // IMPORTANT : un seul ordre de référence pour l'écran ET le PDF.
+  // Sans cela, l'en-tête peut afficher 2PTS/3PTS dans un ordre différent
+  // des colonnes de spots et faire apparaître visuellement un tir à 3 pts
+  // sous le bandeau 2 points.
+  return groupRows(rows).flatMap(block=>block.rows);
+}
 async function imageUrlToDataUrl(url:string|null){
   if(!url)return null;
   try{
@@ -182,6 +189,9 @@ export default function TeamShootingGrids({
   const [grids,setGrids]=useState<Grid[]>([]);
   const [selectedGridId,setSelectedGridId]=useState("");
   const [rows,setRows]=useState<GridRow[]>([]);
+  // Ordre d'affichage garanti : 2PTS puis 3PTS puis LF puis autres.
+  // L'ordre interne de chaque groupe reste celui défini par l'utilisateur.
+  const displayRows=useMemo(()=>orderedShotRows(rows),[rows]);
   const [sessions,setSessions]=useState<Session[]>([]);
   const [sessionPlayers,setSessionPlayers]=useState<Record<string,string[]>>({});
   const [results,setResults]=useState<Record<string,Record<string,Record<string,Result>>>>({});
@@ -424,13 +434,14 @@ export default function TeamShootingGrids({
         }catch{}
       }
 
-      const grouped=groupRows(rows);
+      const displayRows=orderedShotRows(rows);
+      const grouped=groupRows(displayRows);
       const tableX=margin;
       const tableY=schemaData?47:34;
       const playerW=29;
       const totalW=18;
       const usableW=pageW-margin*2-playerW-totalW;
-      const spotW=usableW/Math.max(1,rows.length);
+      const spotW=usableW/Math.max(1,displayRows.length);
       const subW=spotW/3;
       const h1=7,h2=8,h3=6,rowH=7;
       const blankRows=Math.max(8,Math.min(15,players.length||12));
@@ -460,7 +471,7 @@ export default function TeamShootingGrids({
 
       // Spot headers + TM TT %
       x=tableX+playerW;
-      for(const row of rows){
+      for(const row of displayRows){
         fill(x,tableY+h1,spotW,h2,soft);
         pdf.setTextColor(...burgundy);
         const label=pdf.splitTextToSize(spotLabel(row.name),spotW-1.5).slice(0,2);
@@ -486,7 +497,7 @@ export default function TeamShootingGrids({
       line(tableX,tableY,tableX,bodyTop+(blankRows+1)*rowH);
       line(tableX+playerW,tableY,tableX+playerW,bodyTop+(blankRows+1)*rowH);
       x=tableX+playerW;
-      for(const row of rows){
+      for(const row of displayRows){
         line(x,tableY+h1,x,bodyTop+(blankRows+1)*rowH);
         line(x+subW,tableY+h1+h2,x+subW,bodyTop+(blankRows+1)*rowH);
         line(x+subW*2,tableY+h1+h2,x+subW*2,bodyTop+(blankRows+1)*rowH);
@@ -799,18 +810,18 @@ export default function TeamShootingGrids({
                     </div>
 
                     <div style={{overflowX:"auto"}}>
-                      <table style={{borderCollapse:"collapse",width:"100%",minWidth:Math.max(850,180+rows.length*210),fontSize:10}}>
+                      <table style={{borderCollapse:"collapse",width:"100%",minWidth:Math.max(850,180+displayRows.length*210),fontSize:10}}>
                         <thead>
                           <tr>
                             <th rowSpan={3} style={{...th,textAlign:"left",position:"sticky",left:0,zIndex:4,background:BORDEAUX,color:"#fff"}}>JOUEUR</th>
-                            {groupRows(rows).map(block=><th key={block.group} colSpan={block.rows.length*3} style={{...th,background:"rgba(107,26,44,.88)",color:"#fff",fontSize:11}}>{block.group==="AUTRES"?"SPOTS":block.group==="2PTS"?"2 POINTS":block.group==="3PTS"?"3 POINTS":"LANCERS FRANCS"}</th>)}
+                            {groupRows(displayRows).map(block=><th key={block.group} colSpan={block.rows.length*3} style={{...th,background:"rgba(107,26,44,.88)",color:"#fff",fontSize:11}}>{block.group==="AUTRES"?"SPOTS":block.group==="2PTS"?"2 POINTS":block.group==="3PTS"?"3 POINTS":"LANCERS FRANCS"}</th>)}
                             <th rowSpan={2} colSpan={3} style={{...th,background:BORDEAUX,color:"#fff"}}>TOTAL</th>
                           </tr>
                           <tr>
-                            {rows.map(row=><th key={row.id} colSpan={3} style={{...th,background:"#F7F2EE",color:BORDEAUX}}>{spotLabel(row.name)}</th>)}
+                            {displayRows.map(row=><th key={row.id} colSpan={3} style={{...th,background:"#F7F2EE",color:BORDEAUX}}>{spotLabel(row.name)}</th>)}
                           </tr>
                           <tr>
-                            {rows.flatMap(row=>[
+                            {displayRows.flatMap(row=>[
                               <th key={`${row.id}-m`} style={subTh}>TM</th>,
                               <th key={`${row.id}-t`} style={subTh}>TT</th>,
                               <th key={`${row.id}-p`} style={subTh}>%</th>
@@ -822,7 +833,7 @@ export default function TeamShootingGrids({
                           {pids.map(pid=>{
                             const player=players.find(p=>String(p.id)===pid);
                             let tm=0,ta=0;
-                            const cells=rows.map(row=>{
+                            const cells=displayRows.map(row=>{
                               const r=results[session.id]?.[pid]?.[row.id]||{
                                 session_id:session.id,row_id:row.id,player_id:pid,
                                 made:grid.input_mode==="fixed_makes"?grid.fixed_value:0,
@@ -867,7 +878,7 @@ export default function TeamShootingGrids({
                         {Object.entries(aggregate).map(([pid,a])=>{
                           const player=players.find(p=>String(p.id)===pid);
                           return <tr key={pid}><td style={{...td,textAlign:"left",fontWeight:900}}>{player?playerName(player):"Joueur"}</td>
-                            {rows.map(r=>{const x=a.byRow[r.id]||{made:0,attempted:0};return <td key={r.id} style={td}>{x.made}/{x.attempted} · <b>{pct(x.made,x.attempted)}%</b></td>})}
+                            {displayRows.map(r=>{const x=a.byRow[r.id]||{made:0,attempted:0};return <td key={r.id} style={td}>{x.made}/{x.attempted} · <b>{pct(x.made,x.attempted)}%</b></td>})}
                             <td style={td}><b>{a.made}</b></td><td style={td}><b>{a.attempted}</b></td><td style={{...td,color:BORDEAUX,fontWeight:1000}}>{pct(a.made,a.attempted)}%</td>
                           </tr>
                         })}

@@ -67,6 +67,7 @@ if (typeof globalThis !== 'undefined' && !(globalThis as any).EmptyRanges) {
 /* ============================ Types ============================ */
 interface Player { id: string; num: number; name: string; pos: string; photo?: string }
 type Ctx = '' | 'attaque' | 'defense';
+type CodingMode = 'live' | 'post';
 
 interface Draft {
   context: Ctx; systemeJeu: string; inbound: string; tempsFort: string; coverage: string;
@@ -623,6 +624,11 @@ function Av({ p, cls }: { p?: Player; cls?: string }) {
 export default function PriseStatsProPage() {
   const [teams, setTeams] = useState<{ id: string; name: string; players: Player[] }[]>([]);
   const [screen, setScreen] = useState<'setup' | 'live' | 'box'>('setup');
+  // Deux usages volontairement séparés :
+  // - live : codage ultra rapide pendant le match ;
+  // - post : codage vidéo détaillé historique (inchangé).
+  const [codingMode, setCodingMode] = useState<CodingMode>('post');
+  const [importedLiveSource, setImportedLiveSource] = useState<Record<string, any> | null>(null);
   const [teamId, setTeamId] = useState('');
   const [activeTeamId, setActiveTeamId] = useState('');
   const [opponent, setOpponent] = useState('');
@@ -1006,6 +1012,7 @@ export default function PriseStatsProPage() {
     opponent,
     date,
     home,
+    codingMode,
     matchJerseyNumbers,
     q,
     secs,
@@ -1096,6 +1103,7 @@ export default function PriseStatsProPage() {
       setOpponent(String(s.opponent || ''));
       setDate(String(s.date || date));
       setHome(s.home ?? true);
+      setCodingMode(s.codingMode === 'live' ? 'live' : 'post');
       setQ(Number(s.q || 1));
       setSecs(Number(s.secs ?? 600));
       setPerQ(s.perQ || { 1: { us: 0, them: 0 } });
@@ -3750,8 +3758,23 @@ export default function PriseStatsProPage() {
     }));
     setActiveTeamId(selTeam.id);
     setTeamId(selTeam.id);
-    setRoster(matchRoster); setTeamName(selTeam.name); setOnCourt(starters.slice());
-    setActions([]); setMinutesByPlayer({}); setPerQ({ 1: { us: 0, them: 0 } }); setQ(1); setSecs(600); setRunning(false);
+    setRoster(matchRoster); setTeamName(selTeam.name);
+    const source = importedLiveSource;
+    if (source) {
+      const sourceActions = Array.isArray(source.actions) ? source.actions : [];
+      const sourcePerQ = source.perQ && typeof source.perQ === 'object' ? source.perQ : { 1: { us: 0, them: 0 } };
+      const sourceCourt = Array.isArray(source.onCourt) && source.onCourt.length ? source.onCourt : starters.slice();
+      setOnCourt(sourceCourt);
+      setActions(sourceActions);
+      setMinutesByPlayer(source.minutesByPlayer || {});
+      setPerQ(sourcePerQ);
+      setQ(Number(source.q || 1));
+      setSecs(Number(source.secs ?? 600));
+    } else {
+      setOnCourt(starters.slice());
+      setActions([]); setMinutesByPlayer({}); setPerQ({ 1: { us: 0, them: 0 } }); setQ(1); setSecs(600);
+    }
+    setRunning(false);
     setDraft(emptyDraft()); setStage('context'); setScreen('live');
 
 
@@ -3761,10 +3784,16 @@ export default function PriseStatsProPage() {
     videoProviderRef.current = videoProvider;
     // Sans vidéo, le temps réel ne commence PAS à l'ouverture de l'écran :
     // le codeur le lance exactement au coup d'envoi avec ESPACE.
-    matchStartAtRef.current = videoProvider === 'none' ? null : Date.now();
+    matchStartAtRef.current = source ? null : (videoProvider === 'none' ? null : Date.now());
     setNoVideoMatchClockStarted(false);
     setNoVideoElapsedDisplay(0);
     ensuringRef.current = false;
+    if (source && source.actions?.length && videoProvider !== 'none') {
+      // La source Live garde t=0 au coup d'envoi. L'utilisateur pose maintenant
+      // le marqueur « Le match commence ici » dans la vidéo ; VideoSyncModal
+      // recale ensuite tous les clips à partir de ce seul repère.
+      setTimeout(() => setShowVideoSync(true), 120);
+    }
   };
 
   /* -------- horloge / quart-temps -------- */
@@ -3861,13 +3890,22 @@ export default function PriseStatsProPage() {
     // AJOUT · la possession suivante commence au timecode de bascule du contexte.
     possessionStartRef.current = getRawCodingTime();
     setDraft(fresh);
-    setStage(inbound ? 'inbound' : (next === 'defense' ? 'temps' : 'systeme'));
+    setStage(codingMode === 'live'
+      ? (next === 'defense' ? 'temps' : 'systeme')
+      : (inbound ? 'inbound' : (next === 'defense' ? 'temps' : 'systeme')));
   };
 
   /* -------- routages LF / passe décisive -------- */
   const afterFT = (d: Draft) => {
     const anyMade = d.ftMade > 0;
     const lastMiss = d.ftResults[d.ftResults.length - 1] === 'miss';
+
+    // En direct, les LF font partie du seul clic « Résultat » : on enregistre
+    // immédiatement la possession sans demander rebond, passe ou joueur.
+    if (codingMode === 'live') {
+      commit({ ...d, shotResult: anyMade ? 'made' : 'missed' });
+      return;
+    }
 
     if (d.actionType === 'faute-commise') {
       const nd = { ...d, shotResult: anyMade ? 'made' : 'missed' };
@@ -3956,6 +3994,11 @@ export default function PriseStatsProPage() {
       draft.eventClipStart ??
       (now == null ? null : Math.max(possessionStart, now - 6));
     const d = { ...draft, tempsFort: id, coverage: '', eventClipStart: commonEventStart };
+    if (codingMode === 'live') {
+      setDraft(d);
+      setStage('result');
+      return;
+    }
     if (id === 'pick-side' || id === 'pick-top') {
       setDraft(d);
       setStage('coverage');
@@ -4040,6 +4083,11 @@ export default function PriseStatsProPage() {
     markClipStartBefore(5);
     const d = { ...draft, actionType: 'tir', shotType, shotResult };
 
+    if (codingMode === 'live') {
+      commit(d);
+      return;
+    }
+
     // Même logique qu'avant : tout tir extérieur à LF passe par la shot chart,
     // y compris en défense pour localiser le panier concédé.
     setDraft(d);
@@ -4069,7 +4117,7 @@ export default function PriseStatsProPage() {
   const special = (s: string) => {
     markClipStartBefore(5);
     const d = { ...draft, actionType: 'tir', specialCase: s === '2pts1lf' ? '2pts+1lf' : '3pts+1lf', shotType: s === '2pts1lf' ? '2PTS' : '3PTS', shotResult: 'made', ftAttempts: 1, ftMade: 0, ftResults: [] };
-    setDraft(d); setStage('zone');
+    setDraft(d); setStage(codingMode === 'live' ? 'ft' : 'zone');
   };
   const courtClick = (e: MouseEvent<HTMLDivElement>) => {
     if (stage !== 'zone') return;
@@ -4452,8 +4500,12 @@ export default function PriseStatsProPage() {
     const us = sumPerQ('us');
     const them = sumPerQ('them');
     const payload = {
+      format: 'mybasket-livestat-source',
+      version: 1,
+      codingMode,
+      sourceClock: { type: 'match-elapsed-seconds', matchStart: 0 },
       teamId, teamName, opponent: opponent || 'Adversaire', date,
-      home,
+      home, q, secs, onCourt, matchJerseyNumbers,
       score: { us, them }, perQ,
       minutesByPlayer,
       box: computeBox(actions, roster),
@@ -4466,6 +4518,35 @@ export default function PriseStatsProPage() {
       'application/json',
     );
     flash('Export JSON téléchargé ✓');
+  };
+
+  const importLiveSourceFile = async (file: File | null) => {
+    if (!file) return;
+    try {
+      const raw = await file.text();
+      const data = JSON.parse(raw);
+      if (data?.format !== 'mybasket-livestat-source' || !Array.isArray(data?.actions)) {
+        flash('Fichier source LiveStat MyBasket non reconnu');
+        return;
+      }
+      const sourceTeamId = String(data.teamId || '');
+      if (sourceTeamId && teams.some((t) => t.id === sourceTeamId)) {
+        setTeamId(sourceTeamId);
+        setActiveTeamId(sourceTeamId);
+      }
+      setOpponent(String(data.opponent || ''));
+      if (data.date) setDate(String(data.date));
+      setHome(data.home ?? true);
+      if (data.matchJerseyNumbers && typeof data.matchJerseyNumbers === 'object') setMatchJerseyNumbers(data.matchJerseyNumbers);
+      if (Array.isArray(data.onCourt)) setStarters(data.onCourt.slice(0, 5));
+      setImportedLiveSource(data);
+      setCodingMode('post');
+      setVideoSync(NATIVE_SYNC);
+      flash(`Source LiveStat importée · ${data.actions.length} actions`);
+    } catch (error) {
+      console.error('Import LiveStat source:', error);
+      flash('Impossible de lire ce fichier source');
+    }
   };
 
   const scoreUs = sumPerQ('us');
@@ -4494,6 +4575,29 @@ export default function PriseStatsProPage() {
                   <p className="cm-sub">Configurez les informations du match et sélectionnez votre 5 majeur.</p>
                 </div>
               </div>
+
+              <section className="cm-card">
+                <div className="cm-card-t">⚡ MODE DE CODAGE</div>
+                <div className="cm-video">
+                  <div className={`cm-vid ${codingMode === 'live' ? 'on' : ''}`} onClick={() => { setCodingMode('live'); setImportedLiveSource(null); }}>
+                    {codingMode === 'live' && <div className="cm-vid-ck">✓</div>}
+                    <div className="cm-vid-ic">🔴</div><div className="cm-vid-t">En direct</div>
+                    <div className="cm-vid-d">Ultra rapide : Attaque/Défense → Système → Temps fort → Résultat.</div>
+                  </div>
+                  <div className={`cm-vid ${codingMode === 'post' ? 'on' : ''}`} onClick={() => setCodingMode('post')}>
+                    {codingMode === 'post' && <div className="cm-vid-ck">✓</div>}
+                    <div className="cm-vid-ic">🎬</div><div className="cm-vid-t">Après match / vidéo</div>
+                    <div className="cm-vid-d">Codage détaillé actuel : joueurs, actions, zones, rebonds, passes, clips… inchangé.</div>
+                  </div>
+                </div>
+                <div className="vid-input" style={{marginTop:10}}>
+                  <label className="vid-file">
+                    <input type="file" accept="application/json,.json" onChange={(e) => { void importLiveSourceFile(e.target.files?.[0] ?? null); e.currentTarget.value = ''; }} />
+                    <span className="vf-btn">⬆ Importer une source LiveStat</span>
+                    <span className="vf-name">{importedLiveSource ? `✓ ${importedLiveSource.actions?.length || 0} actions prêtes à recaler sur la vidéo` : 'Réutiliser un match codé en direct'}</span>
+                  </label>
+                </div>
+              </section>
 
               {/* AJOUT · Reprise d'un match en cours (projet brouillon Supabase) */}
               {projects.length > 0 && (
@@ -4827,7 +4931,7 @@ export default function PriseStatsProPage() {
             onClick={exportMatchJSON}
             title="Exporter toutes les données du match en JSON"
           >
-            ⬇ JSON
+            {codingMode === 'live' ? '⬇ Source LiveStat' : '⬇ JSON'}
           </button>
 
           <button
@@ -4939,7 +5043,7 @@ export default function PriseStatsProPage() {
                 }}>←</button>
                 <button className="headUndo" onClick={undo}>↺</button>
                 <div className="crumb-mini">
-                  {['Contexte', 'Temps fort', 'Joueur', 'Action', 'Résultat', 'Zone'].map((c, i) => {
+                  {(codingMode === 'live' ? ['Contexte', 'Système', 'Temps fort', 'Résultat'] : ['Contexte', 'Temps fort', 'Joueur', 'Action', 'Résultat', 'Zone']).map((c, i) => {
                     const state = navIdx === i ? 'cur' : navIdx > i ? 'done' : '';
                     return <span key={c} className={`cm ${state}`} title={c}>{c}</span>;
                   })}
@@ -6204,6 +6308,20 @@ export default function PriseStatsProPage() {
               <button className="res made" onClick={() => quickShotResult('3PTS', 'made')}>✓ 3PTS marqué</button>
               <button className="res miss" onClick={() => quickShotResult('3PTS', 'missed')}>✕ 3PTS raté</button>
             </div>
+
+            {codingMode === 'live' && draft.context === 'attaque' && (
+              <>
+                <div className="sublbl">Faute provoquée / remise en jeu</div>
+                <div className="grid c3">
+                  <button className="chip" onClick={() => { setDraft({ ...draft, actionType:'faute-provoquee', foulOutcome:'lf', shotType:'LF', ftAttempts:2, ftResults:[] }); setStage('ft'); }}>2 LF</button>
+                  <button className="chip" onClick={() => { setDraft({ ...draft, actionType:'faute-provoquee', foulOutcome:'lf', shotType:'LF', ftAttempts:3, ftResults:[] }); setStage('ft'); }}>3 LF</button>
+                  <button className="chip" onClick={() => commit({ ...draft, actionType:'faute-provoquee', foulOutcome:'touche', inbound:'blob' })}>Touche BLOB</button>
+                  <button className="chip" onClick={() => commit({ ...draft, actionType:'faute-provoquee', foulOutcome:'touche', inbound:'slob' })}>Touche SLOB</button>
+                  <button className="chip" onClick={() => special('2pts1lf')}>2 + 1 LF</button>
+                  <button className="chip" onClick={() => special('3pts1lf')}>3 + 1 LF</button>
+                </div>
+              </>
+            )}
 
             <div className="sublbl">Lancers francs</div>
             <div className="seg">
