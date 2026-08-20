@@ -5051,11 +5051,33 @@ export default function PriseStatsProPage() {
               </div>
               <div className="lc-body codeDense">
                 {stage !== 'context' && (
-                  <button className="backBtn sm" onClick={() => {
-                    const order = ['context', 'inbound', 'temps', 'coverage', 'player', 'action', 'faute', 'result', 'ft', 'zone', 'rebound', 'assist'];
-                    const currentIndex = order.indexOf(stage);
-                    if (currentIndex > 0) setStage(order[currentIndex - 1]);
-                  }}>← Retour</button>
+                  draft.context ? (
+                    <div
+                      style={{
+                        width: '100%',
+                        minHeight: 58,
+                        borderRadius: 8,
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        background: draft.context === 'attaque' ? '#1565D8' : '#D62839',
+                        color: '#FFFFFF',
+                        fontSize: 20,
+                        fontWeight: 900,
+                        letterSpacing: '0.06em',
+                        textTransform: 'uppercase',
+                        marginBottom: 10,
+                      }}
+                    >
+                      {draft.context === 'attaque' ? 'ATTAQUE' : 'DÉFENSE'}
+                    </div>
+                  ) : (
+                    <button className="backBtn sm" onClick={() => {
+                      const order = ['context', 'inbound', 'temps', 'coverage', 'player', 'action', 'faute', 'result', 'ft', 'zone', 'rebound', 'assist'];
+                      const currentIndex = order.indexOf(stage);
+                      if (currentIndex > 0) setStage(order[currentIndex - 1]);
+                    }}>← Retour</button>
+                  )
                 )}
                 {renderStage()}
               </div>
