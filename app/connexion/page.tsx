@@ -19,15 +19,34 @@ function ConnexionContent() {
   const next = safeNextPath(params.get("next"));
   const supabase = useMemo(() => createClient(), []);
 
-  const [tab, setTab] = useState<"signin" | "signup" | "reset">(
-    params.get("mode") === "signup" ? "signup" : "signin",
+  const requestedMode = params.get("mode");
+  const [tab, setTab] = useState<"signin" | "signup" | "reset" | "update">(
+    requestedMode === "signup"
+      ? "signup"
+      : requestedMode === "reset"
+        ? "reset"
+        : requestedMode === "update-password"
+          ? "update"
+          : "signin",
   );
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [passwordConfirm, setPasswordConfirm] = useState("");
   const [name, setName] = useState("");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
   const [info, setInfo] = useState("");
+
+  useEffect(() => {
+    const callbackError = params.get("error");
+    if (callbackError) {
+      setErr(callbackError);
+    }
+
+    if (params.get("confirmed") === "1") {
+      setInfo("Adresse e-mail confirmée. Tu peux maintenant te connecter.");
+    }
+  }, [params]);
 
   useEffect(() => {
   let alive = true;
@@ -37,7 +56,7 @@ function ConnexionContent() {
 
     if (!alive) return;
 
-    if (result.data.user) {
+    if (result.data.user && tab !== "update") {
       router.replace(next);
     }
   }
@@ -47,7 +66,7 @@ function ConnexionContent() {
   return () => {
     alive = false;
   };
-}, [router, supabase, next]);
+}, [router, supabase, next, tab]);
 
   function resetMessages() {
     setErr("");
@@ -120,16 +139,60 @@ function ConnexionContent() {
         return;
       }
 
-      const { error } = await supabase.auth.resetPasswordForEmail(cleanEmail, {
-        redirectTo: `${window.location.origin}/auth/callback?next=/mon-compte/parametres`,
-      });
+      if (tab === "update") {
+        if (password !== passwordConfirm) {
+          setErr("Les deux mots de passe ne correspondent pas.");
+          return;
+        }
+
+        const { data: userData } = await supabase.auth.getUser();
+        if (!userData.user) {
+          setErr(
+            "Le lien de réinitialisation n’est plus valide. Demande un nouveau lien.",
+          );
+          setTab("reset");
+          return;
+        }
+
+        const { error } = await supabase.auth.updateUser({
+          password,
+        });
+
+        if (error) {
+          setErr(error.message);
+          return;
+        }
+
+        setInfo("Ton mot de passe a été modifié.");
+        window.setTimeout(() => {
+          router.replace("/mon-compte");
+          router.refresh();
+        }, 700);
+        return;
+      }
+
+      const recoveryNext =
+        "/connexion?mode=update-password";
+
+      const { error } =
+        await supabase.auth.resetPasswordForEmail(
+          cleanEmail,
+          {
+            redirectTo:
+              `${window.location.origin}/auth/callback?next=${encodeURIComponent(
+                recoveryNext,
+              )}`,
+          },
+        );
 
       if (error) {
         setErr(error.message);
         return;
       }
 
-      setInfo("Email de réinitialisation envoyé. Vérifie ta boîte mail.");
+      setInfo(
+        "Email de réinitialisation envoyé. Le lien te ramènera directement sur MyBasket.",
+      );
     } finally {
       setBusy(false);
     }
@@ -150,10 +213,12 @@ function ConnexionContent() {
             ? "S’identifier"
             : tab === "signup"
               ? "Créer un compte"
-              : "Mot de passe oublié"}
+              : tab === "update"
+                ? "Nouveau mot de passe"
+                : "Mot de passe oublié"}
         </h1>
 
-        <div className="auth-tabs">
+        {tab !== "update" && <div className="auth-tabs">
           <button
             type="button"
             className={tab === "signin" ? "active" : ""}
@@ -175,7 +240,7 @@ function ConnexionContent() {
           >
             Inscription
           </button>
-        </div>
+        </div>}
 
         {tab === "signup" && (
           <label>
@@ -189,24 +254,41 @@ function ConnexionContent() {
           </label>
         )}
 
-        <label>
-          Email
-          <input
-            type="email"
-            value={email}
-            onChange={(event) => setEmail(event.target.value)}
-            autoComplete="email"
-          />
-        </label>
+        {tab !== "update" && (
+          <label>
+            Email
+            <input
+              type="email"
+              value={email}
+              onChange={(event) => setEmail(event.target.value)}
+              autoComplete="email"
+            />
+          </label>
+        )}
 
         {tab !== "reset" && (
           <label>
-            Mot de passe
+            {tab === "update" ? "Nouveau mot de passe" : "Mot de passe"}
             <input
               type="password"
               value={password}
               onChange={(event) => setPassword(event.target.value)}
               autoComplete={tab === "signin" ? "current-password" : "new-password"}
+              onKeyDown={(event) => {
+                if (event.key === "Enter") void submit();
+              }}
+            />
+          </label>
+        )}
+
+        {tab === "update" && (
+          <label>
+            Confirmer le nouveau mot de passe
+            <input
+              type="password"
+              value={passwordConfirm}
+              onChange={(event) => setPasswordConfirm(event.target.value)}
+              autoComplete="new-password"
               onKeyDown={(event) => {
                 if (event.key === "Enter") void submit();
               }}
@@ -221,7 +303,12 @@ function ConnexionContent() {
           type="button"
           className="auth-submit"
           onClick={() => void submit()}
-          disabled={busy || !email || (tab !== "reset" && !password)}
+          disabled={
+            busy ||
+            (tab !== "update" && !email) ||
+            (tab !== "reset" && !password) ||
+            (tab === "update" && !passwordConfirm)
+          }
         >
           {busy
             ? "Patiente…"
@@ -229,10 +316,12 @@ function ConnexionContent() {
               ? "Se connecter"
               : tab === "signup"
                 ? "Créer mon compte"
-                : "Envoyer le lien"}
+                : tab === "update"
+                  ? "Enregistrer mon nouveau mot de passe"
+                  : "Envoyer le lien"}
         </button>
 
-        {tab === "signin" ? (
+        {tab === "update" ? null : tab === "signin" ? (
           <button
             type="button"
             className="auth-link-btn"

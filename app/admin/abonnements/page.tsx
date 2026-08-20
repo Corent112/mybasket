@@ -78,6 +78,7 @@ const SECTIONS = [
   { key: "gameplan", label: "Game plan" },
   { key: "gestion_administrative", label: "Gestion administrative" },
   { key: "club_space", label: "Espace club" },
+  { key: "institutionnel", label: "Institutionnel" },
 ] as const;
 
 function toFeatureList(value: unknown): string[] {

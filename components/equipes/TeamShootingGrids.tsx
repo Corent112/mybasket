@@ -60,11 +60,17 @@ const SOFT="#FBF7F3";
 const OK="#2E8B57";
 
 const DEFAULT_ROWS=[
-  "Corner gauche 3pts",
-  "Aile gauche 3pts",
-  "Axe 3pts",
-  "Aile droite 3pts",
-  "Corner droite 3pts",
+  "2PTS · Corner droit",
+  "2PTS · Aile droite",
+  "2PTS · Axe",
+  "2PTS · Aile gauche",
+  "2PTS · Corner gauche",
+  "3PTS · Corner droit",
+  "3PTS · Aile droite",
+  "3PTS · Axe",
+  "3PTS · Aile gauche",
+  "3PTS · Corner gauche",
+  "LF",
 ];
 
 function safeInt(v:unknown){const n=Number(v);return Number.isFinite(n)?Math.max(0,Math.floor(n)):0}
@@ -72,43 +78,63 @@ function pct(m:number,a:number){return a?Math.round((m/a)*1000)/10:0}
 function playerName(p:Player){return `${p.firstName||""} ${p.lastName||""}`.trim()||"Joueur"}
 function fmtDate(v:string){return new Date(`${v}T12:00:00`).toLocaleDateString("fr-FR")}
 
-function CourtPreview({
-  image,
-  rows,
-}:{
-  image:string|null;
-  rows:GridRow[];
-}){
+function CourtPreview({image}:{image:string|null}){
   if(image){
-    return <img src={image} alt="Schéma de la grille de tirs" style={{width:"100%",height:300,objectFit:"contain",borderRadius:14,border:`1px solid ${BORDER}`,background:"#fff"}}/>;
+    return (
+      <div style={{display:"grid",gap:8}}>
+        <img
+          src={image}
+          alt="Schéma Plaquette de la grille de tirs"
+          style={{width:"100%",height:300,objectFit:"contain",borderRadius:14,border:`1px solid ${BORDER}`,background:"#fff"}}
+        />
+        <div style={{fontSize:10,color:MUTED}}>
+          Ce schéma vient directement de <b>Plaquette MyBasket</b>.
+        </div>
+      </div>
+    );
   }
 
-  const markerPositions=[
-    [18,76],[28,36],[50,22],[72,36],[82,76],[38,52],[62,52],[50,68]
-  ];
-
   return (
-    <div style={{position:"relative",height:300,border:`1px solid ${BORDER}`,borderRadius:14,overflow:"hidden",background:"#F8F3EE"}}>
-      <svg viewBox="0 0 100 100" width="100%" height="100%" style={{display:"block"}}>
-        <rect x="2" y="2" width="96" height="96" rx="2" fill="#fff" stroke="#D5C8C0"/>
-        <path d="M20 100 A30 30 0 0 1 80 100" fill="none" stroke="#D7CBC4" strokeWidth="1.2"/>
-        <rect x="34" y="68" width="32" height="30" fill="none" stroke="#D7CBC4" strokeWidth="1.2"/>
-        <circle cx="50" cy="68" r="12" fill="none" stroke="#D7CBC4" strokeWidth="1.2"/>
-        <line x1="44" y1="94" x2="56" y2="94" stroke="#6B1A2C" strokeWidth="1.8"/>
-        <circle cx="50" cy="90" r="2.4" fill="none" stroke="#6B1A2C" strokeWidth="1.2"/>
-        {rows.slice(0,8).map((row,i)=>{
-          const pos=markerPositions[i]||[50,50];
-          return <g key={row.id}>
-            <circle cx={pos[0]} cy={pos[1]} r="4.2" fill={GOLD} stroke={BORDEAUX} strokeWidth="1"/>
-            <text x={pos[0]} y={pos[1]+1.3} textAnchor="middle" fontSize="3.1" fontWeight="900" fill="#fff">{i+1}</text>
-          </g>
-        })}
-      </svg>
-      <div style={{position:"absolute",left:12,right:12,bottom:10,background:"rgba(255,255,255,.94)",border:`1px solid ${BORDER}`,borderRadius:10,padding:"8px 10px",fontSize:10,color:MUTED}}>
-        <b style={{color:BORDEAUX}}>Schéma explicatif</b> · Les numéros correspondent aux positions de la grille. Utilise <b>Plaquette</b> pour dessiner exactement les spots, déplacements ou consignes.
+    <div style={{height:300,border:`1px dashed ${GOLD}`,borderRadius:14,background:"#FCF8F3",display:"grid",placeItems:"center",padding:24,textAlign:"center"}}>
+      <div>
+        <div style={{fontSize:36,marginBottom:8}}>🏀</div>
+        <strong style={{display:"block",color:BORDEAUX,fontSize:15}}>Aucun schéma associé</strong>
+        <span style={{display:"block",marginTop:6,color:MUTED,fontSize:11,lineHeight:1.5}}>
+          Clique sur <b>Dessiner dans Plaquette</b>. Le demi-terrain de Plaquette s'ouvre, tu places tes spots puis tu l'insères dans cette grille.
+        </span>
       </div>
     </div>
   );
+}
+
+type ShotGroup = "2PTS"|"3PTS"|"LF"|"AUTRES";
+function shotGroup(name:string):ShotGroup{
+  const n=name.trim().toUpperCase();
+  if(n==="LF"||n.startsWith("LF ")||n.includes("LANCER")) return "LF";
+  if(n.includes("2PTS")||n.includes("2 PTS")||n.includes("2 POINT")) return "2PTS";
+  if(n.includes("3PTS")||n.includes("3 PTS")||n.includes("3 POINT")) return "3PTS";
+  return "AUTRES";
+}
+function spotLabel(name:string){
+  return name.replace(/^(2PTS|3PTS)\s*[·:\\-]\s*/i,"").trim();
+}
+function groupRows(rows:GridRow[]){
+  const order:ShotGroup[]=["2PTS","3PTS","LF","AUTRES"];
+  return order.map(group=>({group,rows:rows.filter(r=>shotGroup(r.name)===group)})).filter(x=>x.rows.length);
+}
+async function imageUrlToDataUrl(url:string|null){
+  if(!url)return null;
+  try{
+    const response=await fetch(url,{cache:"no-store"});
+    if(!response.ok)return null;
+    const blob=await response.blob();
+    return await new Promise<string>((resolve,reject)=>{
+      const reader=new FileReader();
+      reader.onload=()=>resolve(String(reader.result||""));
+      reader.onerror=()=>reject(reader.error);
+      reader.readAsDataURL(blob);
+    });
+  }catch{return null}
 }
 
 export default function TeamShootingGrids({
@@ -133,6 +159,7 @@ export default function TeamShootingGrids({
   const [loading,setLoading]=useState(true);
   const [saving,setSaving]=useState(false);
   const [message,setMessage]=useState("");
+  const [teamIdentity,setTeamIdentity]=useState<{name:string;logo:string|null}>({name:"Équipe",logo:null});
 
   const grid=grids.find(g=>g.id===selectedGridId)||null;
   const toast=(t:string)=>{setMessage(t);window.setTimeout(()=>setMessage(""),2200)};
@@ -173,6 +200,13 @@ export default function TeamShootingGrids({
     const {data:{user}}=await supabase.auth.getUser();
     if(!user)return;
     setUserId(user.id);
+    const {data:teamRow}=await supabase.from("teams").select("name,logo_url").eq("id",teamId).maybeSingle();
+    if(teamRow){
+      setTeamIdentity({
+        name:String((teamRow as {name?:unknown}).name||"Équipe"),
+        logo:typeof (teamRow as {logo_url?:unknown}).logo_url==="string"?String((teamRow as {logo_url?:unknown}).logo_url):null
+      });
+    }
     const {data,error}=await supabase.from("shooting_grids").select("id,team_id,owner_id,name,description,input_mode,fixed_value,court_schema_url,court_schema_data,created_at,updated_at").eq("team_id",teamId).order("updated_at",{ascending:false});
     if(error)throw error;
     const list=(data||[]) as Grid[];
@@ -272,6 +306,154 @@ export default function TeamShootingGrids({
     localStorage.setItem("mb_plaquette_return_to",window.location.pathname);
     localStorage.removeItem("mybasket_plaquette_result");
     window.location.href="/plaquette";
+  }
+
+  async function exportBlankPdf(){
+    if(!grid||!rows.length)return;
+    try{
+      const {jsPDF}=await import("jspdf");
+      const pdf=new jsPDF({orientation:"landscape",unit:"mm",format:"a4"});
+      const pageW=297,pageH=210,margin=9;
+      const burgundy:[number,number,number]=[107,26,44];
+      const gold:[number,number,number]=[212,162,76];
+      const soft:[number,number,number]=[249,246,242];
+
+      const logoData=await imageUrlToDataUrl(teamIdentity.logo);
+      const schemaData=await imageUrlToDataUrl(grid.court_schema_url);
+
+      if(logoData){
+        try{pdf.addImage(logoData,"PNG",margin,7,18,18,undefined,"FAST")}catch{}
+      }
+      pdf.setTextColor(...burgundy);
+      pdf.setFont("helvetica","bold");
+      pdf.setFontSize(15);
+      pdf.text(grid.name||"Grille de tir",logoData?31:margin,13);
+      pdf.setTextColor(90,80,75);
+      pdf.setFont("helvetica","normal");
+      pdf.setFontSize(8);
+      pdf.text(teamIdentity.name||"Équipe",logoData?31:margin,18);
+      if(grid.description){
+        const desc=pdf.splitTextToSize(grid.description,145);
+        pdf.text(desc,logoData?31:margin,22);
+      }
+
+      if(schemaData){
+        try{
+          pdf.setDrawColor(232,221,215);
+          pdf.roundedRect(224,6,64,36,2,2,"S");
+          pdf.addImage(schemaData,"PNG",226,8,60,32,undefined,"FAST");
+        }catch{}
+      }
+
+      const grouped=groupRows(rows);
+      const tableX=margin;
+      const tableY=schemaData?47:34;
+      const playerW=29;
+      const totalW=18;
+      const usableW=pageW-margin*2-playerW-totalW;
+      const spotW=usableW/Math.max(1,rows.length);
+      const subW=spotW/3;
+      const h1=7,h2=8,h3=6,rowH=7;
+      const blankRows=Math.max(8,Math.min(15,players.length||12));
+
+      const line=(x1:number,y1:number,x2:number,y2:number)=>{pdf.setDrawColor(205,196,191);pdf.setLineWidth(.2);pdf.line(x1,y1,x2,y2)};
+      const fill=(x:number,y:number,w:number,h:number,c:[number,number,number])=>{pdf.setFillColor(...c);pdf.rect(x,y,w,h,"F")};
+      const text=(v:string,x:number,y:number,size=6.5,bold=false,align:"left"|"center"|"right"="center")=>{
+        pdf.setFont("helvetica",bold?"bold":"normal");pdf.setFontSize(size);pdf.text(v,x,y,{align});
+      };
+
+      // Group header
+      fill(tableX,tableY,playerW,h1+h2+h3,burgundy);
+      pdf.setTextColor(255,255,255);
+      text("JOUEUR",tableX+playerW/2,tableY+(h1+h2+h3)/2+2,7,true);
+
+      let x=tableX+playerW;
+      for(const block of grouped){
+        const w=block.rows.length*spotW;
+        fill(x,tableY,w,h1,burgundy);
+        pdf.setTextColor(255,255,255);
+        text(block.group==="AUTRES"?"SPOTS":block.group,x+w/2,tableY+4.8,7,true);
+        x+=w;
+      }
+      fill(x,tableY,totalW,h1+h2,burgundy);
+      pdf.setTextColor(255,255,255);
+      text("TOTAL",x+totalW/2,tableY+8,7,true);
+
+      // Spot headers + TM TT %
+      x=tableX+playerW;
+      for(const row of rows){
+        fill(x,tableY+h1,spotW,h2,soft);
+        pdf.setTextColor(...burgundy);
+        const label=pdf.splitTextToSize(spotLabel(row.name),spotW-1.5).slice(0,2);
+        pdf.setFont("helvetica","bold");pdf.setFontSize(5.5);
+        pdf.text(label,x+spotW/2,tableY+h1+3.2,{align:"center"});
+        for(let k=0;k<3;k++){
+          fill(x+k*subW,tableY+h1+h2,subW,h3,[255,255,255]);
+          pdf.setTextColor(...burgundy);
+          text(["TM","TT","%"][k],x+k*subW+subW/2,tableY+h1+h2+4.1,5.8,true);
+        }
+        x+=spotW;
+      }
+      const totalSub=totalW/3;
+      for(let k=0;k<3;k++){
+        fill(x+k*totalSub,tableY+h1+h2,totalSub,h3,[255,255,255]);
+        pdf.setTextColor(...burgundy);
+        text(["TM","TT","%"][k],x+k*totalSub+totalSub/2,tableY+h1+h2+4.1,5.8,true);
+      }
+
+      const bodyTop=tableY+h1+h2+h3;
+      const tableRight=pageW-margin;
+      // vertical lines
+      line(tableX,tableY,tableX,bodyTop+(blankRows+1)*rowH);
+      line(tableX+playerW,tableY,tableX+playerW,bodyTop+(blankRows+1)*rowH);
+      x=tableX+playerW;
+      for(const row of rows){
+        line(x,tableY+h1,x,bodyTop+(blankRows+1)*rowH);
+        line(x+subW,tableY+h1+h2,x+subW,bodyTop+(blankRows+1)*rowH);
+        line(x+subW*2,tableY+h1+h2,x+subW*2,bodyTop+(blankRows+1)*rowH);
+        x+=spotW;
+      }
+      line(x,tableY,x,bodyTop+(blankRows+1)*rowH);
+      line(x+totalSub,tableY+h1+h2,x+totalSub,bodyTop+(blankRows+1)*rowH);
+      line(x+totalSub*2,tableY+h1+h2,x+totalSub*2,bodyTop+(blankRows+1)*rowH);
+      line(tableRight,tableY,tableRight,bodyTop+(blankRows+1)*rowH);
+
+      // horizontal lines
+      line(tableX,tableY,tableRight,tableY);
+      line(tableX+playerW,tableY+h1,tableRight-totalW,tableY+h1);
+      line(tableX+playerW,tableY+h1+h2,tableRight,tableY+h1+h2);
+      line(tableX,bodyTop,tableRight,bodyTop);
+      for(let i=0;i<=blankRows;i++)line(tableX,bodyTop+i*rowH,tableRight,bodyTop+i*rowH);
+
+      // Blank player lines numbered for handwriting
+      pdf.setTextColor(120,110,105);
+      for(let i=0;i<blankRows;i++){
+        pdf.setFont("helvetica","normal");pdf.setFontSize(5.5);
+        pdf.text(`${i+1}.`,tableX+2,bodyTop+i*rowH+4.7);
+      }
+
+      // Total line
+      const totalY=bodyTop+blankRows*rowH;
+      fill(tableX,totalY,tableRight-tableX,rowH,burgundy);
+      pdf.setTextColor(255,255,255);
+      text("TOTAL ÉQUIPE",tableX+playerW/2,totalY+4.7,6.5,true);
+      x=tableX+playerW;
+      for(let i=0;i<rows.length;i++){
+        for(let k=0;k<3;k++) text(["TM","TT","%"][k],x+k*subW+subW/2,totalY+4.7,5.3,true);
+        x+=spotW;
+      }
+      for(let k=0;k<3;k++) text(["TM","TT","%"][k],x+k*totalSub+totalSub/2,totalY+4.7,5.3,true);
+
+      pdf.setTextColor(140,130,125);
+      pdf.setFont("helvetica","normal");pdf.setFontSize(6);
+      pdf.text("TM = tirs marqués   •   TT = tirs tentés   •   % = pourcentage",margin,pageH-5);
+
+      const safeName=(grid.name||"grille-de-tir").normalize("NFD").replace(/[\u0300-\u036f]/g,"").replace(/[^a-zA-Z0-9]+/g,"-").replace(/^-|-$/g,"").toLowerCase();
+      pdf.save(`${safeName||"grille-de-tir"}-vierge.pdf`);
+    }catch(e){
+      console.error(e);
+      alert("Impossible de générer le PDF.");
+    }
   }
 
   async function createSession(){
@@ -383,7 +565,10 @@ export default function TeamShootingGrids({
           <h2 style={{margin:"4px 0",color:BORDEAUX}}>Créer · tester · suivre la progression</h2>
           <p style={{margin:0,color:MUTED,fontSize:11}}>Une grille équipe peut être remplie par plusieurs joueurs et alimente automatiquement leur fiche individuelle.</p>
         </div>
-        {canEdit&&<button onClick={createGrid} disabled={saving} style={primary}>+ Nouvelle grille</button>}
+        <div style={{display:"flex",gap:7,flexWrap:"wrap"}}>
+          {grid&&<button onClick={exportBlankPdf} style={secondary}>📄 Exporter grille vierge A4</button>}
+          {canEdit&&<button onClick={createGrid} disabled={saving} style={primary}>+ Nouvelle grille</button>}
+        </div>
       </div>
 
       {!grids.length?(
@@ -445,12 +630,12 @@ export default function TeamShootingGrids({
 
                 <div style={card}>
                   <div style={{display:"flex",justifyContent:"space-between",gap:8,alignItems:"start"}}>
-                    <div><span style={eyebrow}>SCHÉMA DE LA GRILLE</span><h3 style={title}>{grid.court_schema_url?"Ton schéma Plaquette":"Visualise les spots"}</h3></div>
+                    <div><span style={eyebrow}>SCHÉMA DE LA GRILLE</span><h3 style={title}>{grid.court_schema_url?"Ton schéma Plaquette":"Demi-terrain Plaquette"}</h3></div>
                     {canEdit&&<button onClick={openPlaquette} style={secondary}>✏️ Dessiner dans Plaquette</button>}
                   </div>
-                  <CourtPreview image={grid.court_schema_url} rows={rows}/>
+                  <CourtPreview image={grid.court_schema_url}/>
                   <div style={{marginTop:8,color:MUTED,fontSize:10,lineHeight:1.45}}>
-                    Le bouton ouvre l'outil <b>Plaquette MyBasket</b>. Dessine les spots et les consignes, puis utilise le bouton de retour de la Plaquette : le schéma sera associé à cette grille.
+                    Le bouton ouvre directement <b>Plaquette MyBasket</b>. Place tes spots sur le demi-terrain puis clique sur <b>Insérer dans la grille de tir</b> : le dessin revient ici et reste sauvegardé avec la grille.
                   </div>
                 </div>
               </div>
@@ -489,17 +674,20 @@ export default function TeamShootingGrids({
                       <table style={{borderCollapse:"collapse",width:"100%",minWidth:Math.max(850,180+rows.length*210),fontSize:10}}>
                         <thead>
                           <tr>
-                            <th rowSpan={2} style={{...th,textAlign:"left",position:"sticky",left:0,zIndex:4}}>Joueur</th>
-                            {rows.map((row,i)=><th key={row.id} colSpan={3} style={th}><span style={{color:GOLD}}>{i+1}</span> · {row.name}</th>)}
-                            <th colSpan={3} style={{...th,background:"#F4EBE5"}}>TOTAL</th>
+                            <th rowSpan={3} style={{...th,textAlign:"left",position:"sticky",left:0,zIndex:4,background:BORDEAUX,color:"#fff"}}>JOUEUR</th>
+                            {groupRows(rows).map(block=><th key={block.group} colSpan={block.rows.length*3} style={{...th,background:BORDEAUX,color:"#fff",fontSize:11}}>{block.group==="AUTRES"?"SPOTS":block.group}</th>)}
+                            <th rowSpan={2} colSpan={3} style={{...th,background:BORDEAUX,color:"#fff"}}>TOTAL</th>
+                          </tr>
+                          <tr>
+                            {rows.map(row=><th key={row.id} colSpan={3} style={{...th,background:"#F7F2EE",color:BORDEAUX}}>{spotLabel(row.name)}</th>)}
                           </tr>
                           <tr>
                             {rows.flatMap(row=>[
-                              <th key={`${row.id}-m`} style={subTh}>Marqué</th>,
-                              <th key={`${row.id}-t`} style={subTh}>Tenté</th>,
+                              <th key={`${row.id}-m`} style={subTh}>TM</th>,
+                              <th key={`${row.id}-t`} style={subTh}>TT</th>,
                               <th key={`${row.id}-p`} style={subTh}>%</th>
                             ])}
-                            <th style={subTh}>M</th><th style={subTh}>T</th><th style={subTh}>%</th>
+                            <th style={subTh}>TM</th><th style={subTh}>TT</th><th style={subTh}>%</th>
                           </tr>
                         </thead>
                         <tbody>

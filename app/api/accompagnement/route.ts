@@ -73,6 +73,38 @@ export async function POST(request: Request) {
     const senderName = `${text(body.prenom)} ${text(body.nom)}`.trim() || "Utilisateur";
     const senderEmail = text(body.email);
 
+    const notificationTheme = normalizedPage === "scouting vidéo"
+      ? {
+          eyebrow: "SCOUTING VIDÉO",
+          icon: "🎥",
+          accent: "#6B1A2C",
+          intro: "Une nouvelle demande de scouting vidéo vient d’être envoyée. Les informations utiles sont regroupées ci-dessous pour pouvoir la traiter rapidement.",
+          actionLabel: "Répondre au coach",
+        }
+      : normalizedPage === "direction technique"
+        ? {
+            eyebrow: "DIRECTION TECHNIQUE",
+            icon: "🧠",
+            accent: "#6B1A2C",
+            intro: "Une nouvelle demande d’accompagnement en direction technique vient d’être envoyée depuis MyBasket.",
+            actionLabel: "Répondre au demandeur",
+          }
+        : normalizedPage === "mentorat & formation" || normalizedPage === "formation" || normalizedPage.includes("mentorat")
+          ? {
+              eyebrow: "FORMATION & MENTORAT",
+              icon: "🎓",
+              accent: "#6B1A2C",
+              intro: "Une nouvelle demande de formation ou de mentorat vient d’être envoyée depuis MyBasket.",
+              actionLabel: "Répondre au coach",
+            }
+          : {
+              eyebrow: "ACCOMPAGNEMENT",
+              icon: "🏀",
+              accent: "#6B1A2C",
+              intro: "Une nouvelle demande d’accompagnement vient d’être envoyée depuis MyBasket.",
+              actionLabel: "Répondre au demandeur",
+            };
+
     // Les notifications sont secondaires : la demande reste enregistrée même
     // si Resend ou la messagerie interne sont temporairement indisponibles.
     await Promise.allSettled([
@@ -89,6 +121,7 @@ export async function POST(request: Request) {
           ["Club", text(body.club)],
         ],
         message: text(body.message),
+        theme: notificationTheme,
       }),
       createPlatformConversation({
         type: "accompagnement",

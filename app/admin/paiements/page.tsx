@@ -176,98 +176,15 @@ async function createFreeAccessAction(formData: FormData) {
 
     /*
      * IMPORTANT :
-     * Aucun plafond arbitraire d'utilisateurs.
-     * Supabase Auth est paginé : on avance jusqu'à trouver l'email
-     * ou jusqu'à la dernière page.
+     * Un accès gratuit est un DROIT, pas un compte Auth.
+     *
+     * On ne crée / n'invite plus jamais l'utilisateur ici.
+     * Cela évite qu'une personne recevant Premium gratuitement se retrouve
+     * avec une adresse "déjà enregistrée" lorsqu'elle crée ensuite son compte.
+     *
+     * free_access_grants est lié à l'email ; après inscription normale,
+     * getEffectiveSubscriptionForUser() rattache automatiquement le grant.
      */
-    let invitedUser:
-      | Awaited<
-          ReturnType<typeof adminClient.auth.admin.listUsers>
-        >["data"]["users"][number]
-      | undefined;
-
-    let page = 1;
-    const perPage = 200;
-
-    while (!invitedUser) {
-      const { data: listedUsers, error: listError } =
-        await adminClient.auth.admin.listUsers({
-          page,
-          perPage,
-        });
-
-      if (listError) {
-        console.error("Recherche utilisateur Auth impossible :", listError.message);
-        break;
-      }
-
-      invitedUser = listedUsers.users.find(
-        (candidate) =>
-          candidate.email?.trim().toLowerCase() === email,
-      );
-
-      if (invitedUser || listedUsers.users.length < perPage) {
-        break;
-      }
-
-      page += 1;
-    }
-
-    /*
-     * Aucun compte Auth : on crée une invitation propre.
-     * Si Supabase répond finalement que le compte existe déjà,
-     * on ne fait PAS planter la page : l'accès gratuit est tout de même créé.
-     */
-    if (!invitedUser) {
-      const siteUrl = (
-        process.env.NEXT_PUBLIC_SITE_URL ||
-        "https://mybasket.vercel.app"
-      ).replace(/\/$/, "");
-
-      const { data: invitation, error: inviteError } =
-        await adminClient.auth.admin.inviteUserByEmail(email, {
-          redirectTo: `${siteUrl}/auth/callback?next=${encodeURIComponent(
-            "/mon-compte",
-          )}`,
-          data: { display_name: "" },
-        });
-
-      if (inviteError) {
-        const message = inviteError.message.toLowerCase();
-
-        if (
-          !message.includes("already") &&
-          !message.includes("registered") &&
-          !message.includes("exists")
-        ) {
-          console.error("Invitation utilisateur impossible :", inviteError.message);
-        }
-      } else {
-        invitedUser = invitation.user;
-      }
-    }
-
-    /*
-     * Si on connaît l'utilisateur Auth, on garantit son profil client.
-     * On ne bloque jamais l'accès gratuit si le profil ne peut pas être enrichi.
-     */
-    if (invitedUser?.id) {
-      const { error: profileError } = await adminClient
-        .from("profiles")
-        .upsert(
-          {
-            id: invitedUser.id,
-            email,
-            platform_role: "user",
-            status: "active",
-          },
-          { onConflict: "id" },
-        );
-
-      if (profileError) {
-        console.error("Création/mise à jour profil impossible :", profileError.message);
-      }
-    }
 
     /*
      * Un email peut être réutilisé/prolongé sans provoquer d'erreur de contrainte.

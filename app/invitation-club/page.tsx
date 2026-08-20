@@ -109,23 +109,31 @@ function InvitationClubContent() {
     setError("");
     setMessage("");
 
-    const { error } = await supabase.auth.signUp({
-      email,
-      password,
-      options: {
-        data: {
-          first_name: invitation?.first_name || "",
-          last_name: invitation?.last_name || "",
-        },
-      },
+    const next =
+      `/invitation-club?token=${encodeURIComponent(token)}`;
+
+    const response = await fetch("/api/auth/signup", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        email: email.trim().toLowerCase(),
+        password,
+        displayName:
+          `${invitation?.first_name || ""} ${invitation?.last_name || ""}`.trim(),
+        next,
+      }),
     });
 
-    if (error) {
-      setError(error.message);
+    const payload = await response.json().catch(() => ({}));
+
+    if (!response.ok) {
+      setError(payload?.error || "Impossible de créer le compte.");
       return;
     }
 
-    setMessage("Compte créé. Si Supabase demande une confirmation email, confirme puis reconnecte-toi.");
+    setMessage(
+      "Compte créé. Confirme ton adresse dans l’e-mail MyBasket : le lien te ramènera automatiquement sur cette invitation.",
+    );
     setMode("login");
   }
 

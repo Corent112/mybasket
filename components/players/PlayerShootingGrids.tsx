@@ -117,13 +117,38 @@ export default function PlayerShootingGrids({playerId,teamId}:{playerId:string;t
       </div>
 
       <div style={{...card,padding:0,overflow:"hidden"}}>
-        <div style={{padding:"12px 14px",borderBottom:`1px solid ${BORDER}`}}><span style={eye}>HISTORIQUE</span><h3 style={title}>Toutes les sessions</h3></div>
-        <div style={{overflowX:"auto"}}><table style={{width:"100%",borderCollapse:"collapse",minWidth:760,fontSize:10}}><thead><tr><th style={th}>Date</th>{gridRows.map(r=><th key={r.id} style={th}>{r.name}</th>)}<th style={th}>Total</th></tr></thead><tbody>
-          {sessionStats.slice().reverse().map(x=><tr key={x.session.id}><td style={{...td,fontWeight:900}}>{fmt(x.session.session_date)}</td>
-            {gridRows.map(row=>{const r=results.find(rr=>rr.session_id===x.session.id&&rr.row_id===row.id);return <td key={row.id} style={td}>{r?`${r.made}/${r.attempted} · ${pct(r.made,r.attempted)}%`:"—"}</td>})}
-            <td style={{...td,color:BORDEAUX,fontWeight:1000}}>{x.made}/{x.attempted} · {x.percentage}%</td>
-          </tr>)}
-        </tbody></table></div>
+        <div style={{padding:"12px 14px",borderBottom:`1px solid ${BORDER}`}}>
+          <span style={eye}>SUIVI PAR DATE</span>
+          <h3 style={title}>Les spots en ligne · les dates en colonne</h3>
+        </div>
+        <div style={{overflowX:"auto"}}>
+          <table style={{width:"100%",borderCollapse:"collapse",minWidth:Math.max(760,220+gridSessions.length*120),fontSize:10}}>
+            <thead>
+              <tr>
+                <th style={{...th,textAlign:"left",position:"sticky",left:0,zIndex:3}}>Spot</th>
+                {gridSessions.map(s=><th key={s.id} style={th}>{fmt(s.session_date)}</th>)}
+                <th style={{...th,background:"#F4EBE5"}}>MOYENNE</th>
+              </tr>
+            </thead>
+            <tbody>
+              {gridRows.map(row=>{
+                const rowResults=gridSessions.map(s=>results.find(r=>r.session_id===s.id&&r.row_id===row.id));
+                const made=rowResults.reduce((sum,r)=>sum+Number(r?.made||0),0);
+                const attempted=rowResults.reduce((sum,r)=>sum+Number(r?.attempted||0),0);
+                return <tr key={row.id}>
+                  <td style={{...td,textAlign:"left",fontWeight:900,position:"sticky",left:0,zIndex:2,background:"#fff"}}>{row.name}</td>
+                  {rowResults.map((r,i)=><td key={gridSessions[i].id} style={td}>{r?`${r.made}/${r.attempted} · ${pct(r.made,r.attempted)}%`:"—"}</td>)}
+                  <td style={{...td,color:BORDEAUX,fontWeight:1000,background:"#FCF8F5"}}>{made}/{attempted} · {pct(made,attempted)}%</td>
+                </tr>
+              })}
+              <tr>
+                <td style={{...td,textAlign:"left",fontWeight:1000,position:"sticky",left:0,zIndex:2,background:"#FBF7F3"}}>TOTAL</td>
+                {sessionStats.map(x=><td key={x.session.id} style={{...td,fontWeight:1000,background:"#FBF7F3"}}>{x.made}/{x.attempted} · {x.percentage}%</td>)}
+                <td style={{...td,color:BORDEAUX,fontWeight:1000,background:"#F4EBE5"}}>{totals.made}/{totals.attempted} · {totals.percentage}%</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
       </div>
     </>}
   </section>

@@ -1,12 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin-server";
 import { sendTransactionalEmail } from "@/lib/server-notifications";
-
-function safeNextPath(value: unknown) {
-  const next = String(value || "/mon-compte");
-  if (!next.startsWith("/") || next.startsWith("//")) return "/mon-compte";
-  return next;
-}
+import { getSiteUrl, safeInternalPath } from "@/lib/site-url";
 
 function escapeHtml(value: unknown) {
   return String(value ?? "")
@@ -16,16 +11,28 @@ function escapeHtml(value: unknown) {
     .replaceAll('"', "&quot;");
 }
 
+function looksLikeExistingUserError(message: unknown) {
+  const value = String(message || "").toLowerCase();
+  return (
+    value.includes("already") ||
+    value.includes("registered") ||
+    value.includes("exists")
+  );
+}
+
 export async function POST(request: NextRequest) {
   const body = await request.json().catch(() => ({}));
 
   const email = String(body?.email || "").trim().toLowerCase();
   const password = String(body?.password || "");
   const displayName = String(body?.displayName || "").trim();
-  const next = safeNextPath(body?.next);
+  const next = safeInternalPath(body?.next, "/mon-compte");
 
   if (!email || !email.includes("@")) {
-    return NextResponse.json({ error: "Adresse e-mail invalide." }, { status: 400 });
+    return NextResponse.json(
+      { error: "Adresse e-mail invalide." },
+      { status: 400 },
+    );
   }
 
   if (password.length < 8) {
@@ -35,26 +42,81 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  const adminClient = createAdminClient();
-  if (!adminClient) {
+  const admin = createAdminClient();
+  if (!admin) {
     return NextResponse.json(
       { error: "Configuration serveur Supabase incomplète." },
       { status: 500 },
     );
   }
 
-  const admin = adminClient;
+  // Après ce guard, on utilise une référence non-null stable.
+  // Cela permet à TypeScript de conserver le narrowing dans les fonctions imbriquées.
+  const adminClient = admin;
 
-  const siteUrl = (
-    process.env.NEXT_PUBLIC_SITE_URL ||
-    process.env.NEXT_PUBLIC_APP_URL ||
-    "https://mybasket.vercel.app"
-  ).replace(/\/$/, "");
+  const siteUrl = getSiteUrl(request);
+  const redirectTo =
+    `${siteUrl}/auth/callback?next=${encodeURIComponent(next)}`;
 
-  const redirectTo = `${siteUrl}/auth/callback?next=${encodeURIComponent(next)}`;
+  async function findUserByEmail() {
+    let page = 1;
+    const perPage = 200;
+
+    while (page <= 100) {
+      const { data, error } = await adminClient.auth.admin.listUsers({
+        page,
+        perPage,
+      });
+
+      if (error) {
+        console.error("Recherche utilisateur Auth impossible :", error);
+        return null;
+      }
+
+      const found = (data?.users || []).find(
+        (candidate) =>
+          candidate.email?.trim().toLowerCase() === email,
+      );
+
+      if (found) return found;
+      if ((data?.users || []).length < perPage) return null;
+
+      page += 1;
+    }
+
+    return null;
+  }
+
+  async function hasActiveFreeGrant() {
+    const now = Date.now();
+
+    const { data: grants, error } = await adminClient
+      .from("free_access_grants")
+      .select("id,status,starts_at,ends_at")
+      .ilike("user_email", email)
+      .eq("status", "active")
+      .order("created_at", { ascending: false })
+      .limit(20);
+
+    if (error) {
+      console.error("Vérification accès gratuit impossible :", error.message);
+      return false;
+    }
+
+    return (grants || []).some((grant) => {
+      const start = grant.starts_at
+        ? new Date(grant.starts_at).getTime()
+        : 0;
+      const end = grant.ends_at
+        ? new Date(grant.ends_at).getTime()
+        : Number.POSITIVE_INFINITY;
+
+      return start <= now && end >= now;
+    });
+  }
 
   async function generateSignupLink() {
-    return admin.auth.admin.generateLink({
+    return adminClient.auth.admin.generateLink({
       type: "signup",
       email,
       password,
@@ -69,115 +131,84 @@ export async function POST(request: NextRequest) {
 
   let generated = await generateSignupLink();
 
-  if (generated.error || !generated.data?.properties?.hashed_token) {
-    const message = String(generated.error?.message || "");
-    const alreadyExists =
-      message.toLowerCase().includes("already") ||
-      message.toLowerCase().includes("registered") ||
-      message.toLowerCase().includes("exists");
+  if (
+    generated.error ||
+    !generated.data?.properties?.hashed_token
+  ) {
+    if (looksLikeExistingUserError(generated.error?.message)) {
+      const existingUser = await findUserByEmail();
 
-    if (alreadyExists) {
-      // Un accès gratuit peut avoir créé auparavant un utilisateur Auth "invité"
-      // sans mot de passe et sans confirmation. Dans ce seul cas, on recrée
-      // proprement le compte afin que l'utilisateur puisse s'inscrire lui-même.
-      const { data: listedUsers, error: listError } =
-        await admin.auth.admin.listUsers({ page: 1, perPage: 1000 });
+      if (existingUser) {
+        const isUnconfirmed =
+          !existingUser.email_confirmed_at &&
+          !existingUser.confirmed_at;
+        const neverSignedIn = !existingUser.last_sign_in_at;
+        const freeGrant = await hasActiveFreeGrant();
 
-      if (listError) {
-        console.error("Recherche utilisateur Auth impossible :", listError);
-      }
+        /**
+         * Ancien compte fantôme :
+         * - invitation automatique créée historiquement par un accès gratuit ;
+         * - invitation admin non finalisée ;
+         * - utilisateur jamais connecté.
+         *
+         * On ne supprime JAMAIS un vrai compte déjà utilisé.
+         */
+        const canRecreateGhost =
+          neverSignedIn &&
+          (isUnconfirmed || freeGrant);
 
-      const existingUser = (listedUsers?.users || []).find(
-        (candidate) =>
-          candidate.email?.trim().toLowerCase() === email,
-      );
+        if (canRecreateGhost) {
+          const { error: deleteError } =
+            await adminClient.auth.admin.deleteUser(existingUser.id);
 
-      const isUnconfirmed =
-        existingUser &&
-        !existingUser.email_confirmed_at &&
-        !existingUser.confirmed_at;
-
-      // Les anciens "accès gratuits" ont parfois créé un utilisateur Auth via
-      // inviteUserByEmail. Supabase peut alors considérer l'adresse comme déjà
-      // enregistrée même si la personne n'a jamais réellement créé son compte.
-      // On ne nettoie ce compte fantôme que s'il n'a jamais ouvert de session
-      // ET qu'un accès gratuit actif existe pour cette adresse.
-      let hasActiveFreeGrant = false;
-
-      if (existingUser?.id && !existingUser.last_sign_in_at) {
-        const now = new Date().toISOString();
-        const { data: grants, error: grantsError } = await admin
-          .from("free_access_grants")
-          .select("id,status,starts_at,ends_at")
-          .ilike("user_email", email)
-          .eq("status", "active")
-          .order("created_at", { ascending: false });
-
-        if (grantsError) {
-          console.error(
-            "Vérification de l'accès gratuit impossible :",
-            grantsError.message,
-          );
-        }
-
-        hasActiveFreeGrant = (grants || []).some((grant) => {
-          const startsAt = grant.starts_at
-            ? new Date(grant.starts_at).getTime()
-            : 0;
-          const endsAt = grant.ends_at
-            ? new Date(grant.ends_at).getTime()
-            : Number.POSITIVE_INFINITY;
-          const current = new Date(now).getTime();
-
-          return startsAt <= current && endsAt >= current;
-        });
-      }
-
-      const canRecreateGhostAccount =
-        Boolean(existingUser?.id) &&
-        !existingUser?.last_sign_in_at &&
-        (isUnconfirmed || hasActiveFreeGrant);
-
-      if (existingUser?.id && canRecreateGhostAccount) {
-        const { error: deleteError } =
-          await admin.auth.admin.deleteUser(existingUser.id);
-
-        if (deleteError) {
-          console.error(
-            "Suppression du compte invité/fantôme impossible :",
-            deleteError,
-          );
-        } else {
-          generated = await generateSignupLink();
+          if (deleteError) {
+            console.error(
+              "Suppression ancien compte fantôme impossible :",
+              deleteError,
+            );
+          } else {
+            generated = await generateSignupLink();
+          }
         }
       }
     }
   }
 
-  if (generated.error || !generated.data?.properties?.hashed_token) {
+  if (
+    generated.error ||
+    !generated.data?.properties?.hashed_token
+  ) {
     const message = String(generated.error?.message || "");
 
-    if (
-      message.toLowerCase().includes("already") ||
-      message.toLowerCase().includes("registered") ||
-      message.toLowerCase().includes("exists")
-    ) {
+    if (looksLikeExistingUserError(message)) {
       return NextResponse.json(
         {
           error:
-            "Un compte confirmé existe déjà avec cette adresse. Utilise « Connexion » ou « Mot de passe oublié ».",
+            "Un compte existe déjà avec cette adresse. Utilise « Connexion » ou « Mot de passe oublié ».",
+          code: "ACCOUNT_EXISTS",
         },
         { status: 409 },
       );
     }
 
-    console.error("Création lien inscription MyBasket impossible :", generated.error);
+    console.error(
+      "Création lien inscription MyBasket impossible :",
+      generated.error,
+    );
+
     return NextResponse.json(
-      { error: message || "Impossible de créer le compte." },
+      {
+        error: message || "Impossible de créer le compte.",
+        code: "SIGNUP_FAILED",
+      },
       { status: 500 },
     );
   }
 
+  /**
+   * Le lien contenu dans l'email pointe DIRECTEMENT vers le site MyBasket.
+   * Il ne montre jamais une URL Supabase à l'utilisateur.
+   */
   const confirmUrl =
     `${siteUrl}/auth/callback?token_hash=${encodeURIComponent(
       generated.data.properties.hashed_token,
@@ -188,47 +219,37 @@ export async function POST(request: NextRequest) {
 
   const html = `
     <div style="margin:0;padding:32px 14px;background:#f5f1ed;font-family:Arial,Helvetica,sans-serif;color:#231f20">
-      <div style="max-width:620px;margin:0 auto;background:#ffffff;border-radius:22px;overflow:hidden;box-shadow:0 18px 50px rgba(45,25,20,.12)">
+      <div style="max-width:620px;margin:0 auto;background:#fff;border-radius:22px;overflow:hidden;box-shadow:0 18px 50px rgba(45,25,20,.12)">
         <div style="background:#6B1A2C;padding:30px 32px;text-align:center">
           <div style="color:#D4A24C;font-size:24px;font-weight:900;letter-spacing:1px">MYBASKET</div>
         </div>
         <div style="height:5px;background:#D4A24C"></div>
-
         <div style="padding:34px 38px">
           <div style="color:#D4A24C;font-size:12px;font-weight:800;letter-spacing:1.5px;text-transform:uppercase">
             Confirmation d’inscription
           </div>
-
-          <h1 style="margin:10px 0 14px;font-size:27px;line-height:1.2;color:#241d1a">
+          <h1 style="margin:10px 0 14px;font-size:27px;color:#241d1a">
             Bienvenue ${safeName}
           </h1>
-
           <p style="margin:0 0 20px;color:#6f625c;font-size:15px;line-height:1.65">
             Ton compte MyBasket a été créé avec l’adresse
             <strong style="color:#241d1a">${safeEmail}</strong>.
-            Confirme maintenant ton adresse e-mail pour activer ton compte.
+            Confirme ton adresse pour activer ton compte.
           </p>
-
           <div style="text-align:center;margin:30px 0">
-            <a
-              href="${confirmUrl}"
-              style="display:inline-block;background:#6B1A2C;color:#ffffff;text-decoration:none;padding:15px 30px;border-radius:999px;font-size:15px;font-weight:800"
-            >
+            <a href="${confirmUrl}"
+              style="display:inline-block;background:#6B1A2C;color:#fff;text-decoration:none;padding:15px 30px;border-radius:999px;font-size:15px;font-weight:800">
               Confirmer mon inscription
             </a>
           </div>
-
           <p style="margin:0;color:#8b7d76;font-size:12px;line-height:1.6">
-            Si le bouton ne fonctionne pas, tu peux aussi cliquer sur ce lien :
+            Si le bouton ne fonctionne pas :
             <br />
-            <a href="${confirmUrl}" style="color:#6B1A2C;text-decoration:underline;word-break:break-all">
+            <a href="${confirmUrl}"
+              style="color:#6B1A2C;text-decoration:underline;word-break:break-all">
               ${confirmUrl}
             </a>
           </p>
-        </div>
-
-        <div style="padding:18px 28px 26px;text-align:center;color:#9a8e88;font-size:11px">
-          MyBasket · E-mail automatique de confirmation
         </div>
       </div>
     </div>
@@ -251,11 +272,39 @@ export async function POST(request: NextRequest) {
       );
     }
   } catch (mailError) {
-    console.error("Compte créé mais e-mail de confirmation non envoyé :", mailError);
+    /**
+     * Important :
+     * generateLink() a déjà créé l'utilisateur.
+     * Si notre email échoue, on nettoie uniquement CE nouveau compte
+     * s'il n'a jamais été confirmé/ utilisé, afin qu'il puisse réessayer.
+     */
+    const generatedUser = generated.data?.user;
+    if (
+      generatedUser?.id &&
+      !generatedUser.email_confirmed_at &&
+      !generatedUser.last_sign_in_at
+    ) {
+      const { error: cleanupError } =
+        await adminClient.auth.admin.deleteUser(generatedUser.id);
+
+      if (cleanupError) {
+        console.error(
+          "Nettoyage compte après échec email impossible :",
+          cleanupError,
+        );
+      }
+    }
+
+    console.error(
+      "E-mail de confirmation non envoyé :",
+      mailError,
+    );
+
     return NextResponse.json(
       {
         error:
-          "Le compte a été créé mais l’e-mail de confirmation n’a pas pu être envoyé. Contacte MyBasket.",
+          "L’e-mail de confirmation n’a pas pu être envoyé. Réessaie dans quelques instants.",
+        code: "CONFIRMATION_EMAIL_FAILED",
       },
       { status: 500 },
     );
@@ -264,6 +313,6 @@ export async function POST(request: NextRequest) {
   return NextResponse.json({
     ok: true,
     message:
-      "Compte créé. Un e-mail MyBasket vient de t’être envoyé : clique sur « Confirmer mon inscription ».",
+      "Compte créé. Clique sur « Confirmer mon inscription » dans l’e-mail MyBasket.",
   });
 }

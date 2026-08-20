@@ -122,6 +122,7 @@ useEffect(() => {
   const loadFromSource = async () => {
     try {
       setExoInsertMode(!!localStorage.getItem(RETURN_KEY));
+      setShootingGridPending(!!localStorage.getItem("mybasket_shooting_grid_pending"));
       setScoutingPending(!!localStorage.getItem("mybasket_scouting_pending"));
 
       const params = new URLSearchParams(window.location.search);
@@ -209,6 +210,7 @@ useEffect(() => {
   const [teamPlayers, setTeamPlayers] = useState<TeamPlayer[]>([]);
   const [saveMsg, setSaveMsg] = useState(false);
   const [exoInsertMode, setExoInsertMode] = useState(false);
+  const [shootingGridPending, setShootingGridPending] = useState(false);
   const [scoutingPending, setScoutingPending] = useState(false);
   const [saveOpen, setSaveOpen] = useState(false);
   const [exportOpen, setExportOpen] = useState(false);
@@ -2495,6 +2497,7 @@ const isGamePlanReturnContext = () => {
 useEffect(() => {
   try {
     setExoInsertMode(!!localStorage.getItem(RETURN_KEY));
+    setShootingGridPending(!!localStorage.getItem("mybasket_shooting_grid_pending"));
     setScoutingPending(!!localStorage.getItem("mybasket_scouting_pending"));
 
     const savedPlay = localStorage.getItem(LOAD_KEY);
@@ -3083,7 +3086,7 @@ const exportJson = () => {
           style={{ background: '#D9A441', color: '#1a1208', border: 'none' }}
         >
           <span className="icn">💾</span>
-          <span>{scoutingPending ? 'Insérer au scouting' : 'Insérer'}</span>
+          <span>{shootingGridPending ? 'Insérer dans la grille de tir' : scoutingPending ? 'Insérer au scouting' : 'Insérer'}</span>
         </button>
       )}
 
@@ -3481,7 +3484,7 @@ const exportJson = () => {
                     onClick={saveAndInsertToExo}
                     style={{ padding: '.7rem', borderRadius: 9, border: 'none', background: 'var(--or, #D4A24C)', color: '#0F0F12', fontWeight: 800, fontSize: '.9rem', cursor: saving ? 'wait' : 'pointer' }}
                   >
-                    {scoutingPending ? '💾 Insérer au scouting' : '💾 Insérer dans la fiche en cours'}
+                    {shootingGridPending ? '💾 Insérer dans la grille de tir' : scoutingPending ? '💾 Insérer au scouting' : '💾 Insérer dans la fiche en cours'}
                   </button>
                 )}
 

@@ -5,6 +5,7 @@ import DeleteUserButton from "./DeleteUserButton";
 
 import { requireAdmin } from "@/lib/admin/guard";
 import { createAdminClient } from "@/lib/supabase/admin-server";
+import { getSiteUrl } from "@/lib/site-url";
 type Profile = {
   id: string;
   email: string | null;
@@ -95,9 +96,7 @@ async function createUserAction(formData: FormData) {
   );
 
   if (!authUser) {
-    const siteUrl = (
-      process.env.NEXT_PUBLIC_SITE_URL || "https://mybasket.vercel.app"
-    ).replace(/\/$/, "");
+    const siteUrl = getSiteUrl();
 
     const { data: invited, error: inviteError } =
       await adminClient.auth.admin.inviteUserByEmail(email, {

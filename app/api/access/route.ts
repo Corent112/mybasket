@@ -19,6 +19,7 @@ const SECTION_ALIASES: Record<string, string[]> = {
   management: ["stats_joueur", "stats_jeu", "stats_live", "rotation", "gameplan"],
   coach_space: ["profil_coach"],
   club_space: ["club_space"],
+  institutionnel: ["institutionnel"],
 };
 
 function accessWithValue(value: boolean) {

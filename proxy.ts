@@ -11,6 +11,8 @@ const AUTHENTICATED_ROUTES = [
   "/management",
   "/equipes",
   "/prise-stats-pro",
+  "/institutionnel",
+  "/seances",
 ];
 
 function requiresAuthentication(pathname: string) {
@@ -61,7 +63,7 @@ export async function proxy(request: NextRequest) {
     const loginUrl = request.nextUrl.clone();
     loginUrl.pathname = "/connexion";
     loginUrl.searchParams.set(
-      "redirect",
+      "next",
       `${pathname}${request.nextUrl.search}`
     );
 

@@ -23,10 +23,25 @@ function isAdminPath(pathname: string) {
   return pathname === ADMIN_PREFIX || pathname.startsWith(`${ADMIN_PREFIX}/`);
 }
 
-function redirectTo(pathname: string, request: NextRequest) {
+function redirectTo(
+  pathname: string,
+  request: NextRequest,
+  options?: { preserveNext?: boolean; error?: string },
+) {
   const url = request.nextUrl.clone();
+  const original =
+    `${request.nextUrl.pathname}${request.nextUrl.search}`;
+
   url.pathname = pathname;
   url.search = "";
+
+  if (options?.preserveNext) {
+    url.searchParams.set("next", original);
+  }
+  if (options?.error) {
+    url.searchParams.set("error", options.error);
+  }
+
   return NextResponse.redirect(url);
 }
 
@@ -67,7 +82,9 @@ export async function updateSession(request: NextRequest) {
   } = await supabase.auth.getUser();
 
   if (isPrivatePath(pathname) && !user) {
-    return redirectTo("/connexion", request);
+    return redirectTo("/connexion", request, {
+      preserveNext: true,
+    });
   }
 
   if (!user) {
@@ -81,7 +98,12 @@ export async function updateSession(request: NextRequest) {
     .maybeSingle();
 
   if (profile?.status === "suspended") {
-    return redirectTo("/connexion", request);
+    // Évite une boucle connexion -> page privée -> connexion :
+    // le compte suspendu ne doit pas conserver une session active.
+    await supabase.auth.signOut();
+    return redirectTo("/connexion", request, {
+      error: "Ce compte est suspendu. Contacte MyBasket.",
+    });
   }
 
   if (isAdminPath(pathname)) {

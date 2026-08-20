@@ -96,6 +96,7 @@ const MENU: MenuItem[] = [
   { key: 'annonces', label: 'Mes Annonces', icon: '📣' },
   { key: 'papiers', label: 'Mes Papiers', icon: '📃' },
   { key: 'equipes', label: 'Mes Équipes', icon: '👥' },
+  { key: 'institutionnel', label: 'Institutionnel', icon: '🏛️', href: '/institutionnel' },
   { key: 'management', label: 'Management', icon: '📊' },
 ];
 
@@ -571,7 +572,12 @@ const MENU_ACCESS: Record<string, string> = {
   club: "club_space",
 };
 
-const visibleMenu = MENU;
+const visibleMenu = MENU.filter((item) => {
+  if (item.key === "institutionnel") {
+    return isAdmin || accessMap.institutionnel === true;
+  }
+  return true;
+});
 
 const hasSharedTeams = teams.some((team) => team.isShared === true);
 const hasSharedSessions = teams.some(
@@ -696,6 +702,7 @@ const menuAccessKey: Record<string, string | null> = {
   papiers: "documents",
   equipes: "equipes",
   management: "management",
+  institutionnel: "institutionnel",
   club: "club_space",
 };
 
