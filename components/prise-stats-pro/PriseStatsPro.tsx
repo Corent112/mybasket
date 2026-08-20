@@ -6303,8 +6303,64 @@ export default function PriseStatsProPage() {
       }
       case 'faute':
         return draft.actionType === 'faute-commise'
-          ? <>{head('Faute commise', 'LF concédés, and-one ou touche ?')}<div className="grid c3"><button className="chip" onClick={() => foulPick('touche')}>Touche</button><button className="chip" onClick={() => foulPick('lf2')}>2 LF</button><button className="chip" onClick={() => foulPick('lf3')}>3 LF</button><button className="chip" onClick={() => foulPick('2plus1')}>2 + 1</button><button className="chip" onClick={() => foulPick('3plus1')}>3 + 1</button></div></>
-          : <>{head('Faute provoquée', 'Touche ou lancers francs ?')}<div className="grid c3"><button className="chip" onClick={() => foulPick('touche')}>Touche</button><button className="chip" onClick={() => foulPick('lf2')}>2 LF</button><button className="chip" onClick={() => foulPick('lf3')}>3 LF</button></div></>;
+          ? (
+              <>
+                {head('Faute commise', 'LF concédés, and-one ou touche ?')}
+                <div
+                  style={{
+                    display: 'grid',
+                    gridTemplateColumns: '1fr 1fr',
+                    gap: 8,
+                  }}
+                >
+                  <button
+                    className="chip"
+                    style={{ gridColumn: '1 / -1' }}
+                    onClick={() => foulPick('touche')}
+                  >
+                    Touche
+                  </button>
+
+                  <button
+                    className="chip"
+                    onClick={() => foulPick('lf2')}
+                  >
+                    2 LF
+                  </button>
+
+                  <button
+                    className="chip"
+                    onClick={() => foulPick('2plus1')}
+                  >
+                    2pts + 1LF
+                  </button>
+
+                  <button
+                    className="chip"
+                    onClick={() => foulPick('lf3')}
+                  >
+                    3 LF
+                  </button>
+
+                  <button
+                    className="chip"
+                    onClick={() => foulPick('3plus1')}
+                  >
+                    3pts + 1LF
+                  </button>
+                </div>
+              </>
+            )
+          : (
+              <>
+                {head('Faute provoquée', 'Touche ou lancers francs ?')}
+                <div className="grid c3">
+                  <button className="chip" onClick={() => foulPick('touche')}>Touche</button>
+                  <button className="chip" onClick={() => foulPick('lf2')}>2 LF</button>
+                  <button className="chip" onClick={() => foulPick('lf3')}>3 LF</button>
+                </div>
+              </>
+            );
       case 'result':
         return (
           <>
