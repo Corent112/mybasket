@@ -1004,6 +1004,9 @@ export default function PriseStatsProPage() {
      rechargement (fichier local). Sert uniquement à ne pas écraser
      l'information en base lors de l'auto-sauvegarde. */
   const restoredVideoRef = useRef<{ provider: string; filename: string } | null>(null);
+  // Dernière position de lecture persistée dans le projet. Elle permet de fermer
+  // complètement LiveStat puis de reprendre exactement au même timecode.
+  const lastProjectVideoTimeRef = useRef<number | null>(null);
 
   const buildProjectState = () => ({
     v: 1,
@@ -1050,6 +1053,9 @@ export default function PriseStatsProPage() {
     // zéro (les nouvelles actions gardent une chronologie cohérente).
     codingElapsed: matchStartAtRef.current == null ? 0 : (Date.now() - matchStartAtRef.current) / 1000,
     codingClockStarted: matchStartAtRef.current != null,
+    lastVideoTime: hasVideoLoaded() ? getCurrentVideoTime() : lastProjectVideoTimeRef.current,
+    projectFormat: 'mybasket-livestat-project',
+    projectVersion: 2,
     savedAt: new Date().toISOString(),
   });
 
@@ -1063,6 +1069,40 @@ export default function PriseStatsProPage() {
       systemMapping,                          // AJOUT §8
       videoSync: videoSyncRef.current,        // AJOUT · miroir colonnes video_sync_*
     }).catch(() => {});
+  };
+
+  const saveProjectNow = async (closeAfter = false) => {
+    const matchId = liveMatchIdRef.current;
+    if (!matchId || matchId.startsWith('local_')) {
+      flash('Projet non sauvegardable : connexion Supabase requise');
+      return;
+    }
+    if (projectBusy) return;
+    setProjectBusy(true);
+    try {
+      pauseVideo();
+      setRunning(false);
+      const currentVideoTime = hasVideoLoaded() ? getCurrentVideoTime() : lastProjectVideoTimeRef.current;
+      if (currentVideoTime != null) lastProjectVideoTimeRef.current = currentVideoTime;
+      const res = await saveProjectState({
+        matchId,
+        state: buildProjectState(),
+        playbookId: playbookId || null,
+        systemMapping,
+        videoSync: videoSyncRef.current,
+      });
+      if (!res.ok) { flash('Sauvegarde du projet impossible'); return; }
+      flash(closeAfter ? 'Projet enregistré et fermé ✓' : 'Projet enregistré ✓');
+      if (closeAfter) {
+        const tid = liveTeamIdRef.current || activeTeamId || teamId;
+        setLiveMatch(null, null);
+        setScreen('setup');
+        try { window.history.replaceState({}, '', window.location.pathname); } catch { /* noop */ }
+        if (tid) refreshProjects(tid);
+      }
+    } finally {
+      setProjectBusy(false);
+    }
   };
 
   // Référence toujours à jour vers la dernière version de persistProjectState :
@@ -1079,7 +1119,7 @@ export default function PriseStatsProPage() {
     setProjects(list);
   };
 
-  const resumeProject = async (matchId: string, mode: 'resume' | 'analysis' | 'montage' = 'resume') => {
+  const resumeProject = async (matchId: string, mode: 'resume' | 'analysis' | 'montage' | 'sync' = 'resume') => {
     setProjectBusy(true);
     try {
       const res = await loadProject(matchId);
@@ -1132,6 +1172,7 @@ export default function PriseStatsProPage() {
       setYoutubeUrl(String(s.youtubeUrl || ''));
 
       setVideoSync(normalizeSync(res.videoSync ?? s));
+      lastProjectVideoTimeRef.current = s.lastVideoTime == null ? null : Number(s.lastVideoTime);
 
       if (provider === 'google_drive' && s.driveFileId) {
         const driveFile = {
@@ -1185,6 +1226,7 @@ export default function PriseStatsProPage() {
       // Mode d'ouverture demandé depuis l'Historique.
       if (mode === 'analysis') { setScreen('box'); flash('Projet ouvert en analyse'); }
       else if (mode === 'montage') { setScreen('box'); setShowMontagePanel(true); flash('Montage ouvert'); }
+      else if (mode === 'sync') { setScreen('live'); setTimeout(() => setShowVideoSync(true), 120); flash('Projet ouvert — ajoute ou recale la vidéo'); }
       else { setScreen('live'); flash('Projet rouvert — reprends le codage'); }
     } finally {
       setProjectBusy(false);
@@ -1201,7 +1243,7 @@ export default function PriseStatsProPage() {
     const params = new URLSearchParams(window.location.search);
     const pid = params.get('project');
     if (!pid) return;
-    const mode = (params.get('mode') || 'resume') as 'resume' | 'analysis' | 'montage';
+    const mode = (params.get('mode') || 'resume') as 'resume' | 'analysis' | 'montage' | 'sync';
     const tab = params.get('tab'); // 'history' | 'players' | null
     if (tab === 'players') setInitialBoxTab('box');
     else if (tab === 'history') setInitialBoxTab('team');
@@ -1242,15 +1284,47 @@ export default function PriseStatsProPage() {
   //   - aucune vidéo → temps réel écoulé depuis le coup d'envoi du codage.
   // Renvoie null uniquement si le codage n'a pas encore démarré.
   const getRawCodingTime = (): number | null => {
-    if (matchStartAtRef.current == null) return null;
     const hasVideoPlayer =
       videoDetached ||
       Boolean(clipVideoRef.current) ||
       ((videoProviderRef.current === 'local' || videoProviderRef.current === 'google_drive') && Boolean(videoRef.current));
     if (hasVideoPlayer) {
-      return Math.max(0, getCurrentVideoTime());
+      const mediaTime = Math.max(0, getCurrentVideoTime());
+      const sync = videoSyncRef.current;
+      const marker = sync.periodMarkers?.[String(q)];
+      const rate = Number.isFinite(sync.rate) && sync.rate > 0 ? sync.rate : 1;
+      // Une vidéo ajoutée après le live travaille sur l'échelle MEDIA. Pour
+      // continuer à coder sans casser les anciens événements, on reconvertit
+      // la tête de lecture vers l'échelle SOURCE LiveStat avant d'enregistrer.
+      if (marker?.start != null && marker?.sourceStart != null) {
+        return Math.max(0, Number(marker.sourceStart) + (mediaTime - Number(marker.start)) / rate);
+      }
+      if (sync.mode !== 'native') {
+        return Math.max(0, (mediaTime - (Number.isFinite(sync.offset) ? sync.offset : 0)) / rate);
+      }
+      return mediaTime;
     }
+    if (matchStartAtRef.current == null) return null;
     return Math.max(0, (Date.now() - matchStartAtRef.current) / 1000);
+  };
+
+  // Ancre SOURCE de début de quart-temps. En direct sans vidéo, elle est posée
+  // au premier démarrage du chrono de la période. Plus tard le coach associe
+  // cette ancre au curseur vidéo Q1/Q2/Q3/Q4 dans VideoSyncModal.
+  const markPeriodSourceStart = (period: number, explicitTime?: number) => {
+    const key = String(period);
+    const prev = videoSyncRef.current;
+    if (prev.periodMarkers?.[key]?.sourceStart != null) return;
+    const raw = explicitTime ?? getRawCodingTime();
+    if (raw == null || !Number.isFinite(raw)) return;
+    const next: VideoSyncState = {
+      ...prev,
+      periodMarkers: {
+        ...(prev.periodMarkers ?? {}),
+        [key]: { ...(prev.periodMarkers?.[key] ?? {}), sourceStart: Math.max(0, raw) },
+      },
+    };
+    setVideoSync(next);
   };
 
   const markClipStartBefore = (secondsBefore: number) => {
@@ -3277,8 +3351,16 @@ export default function PriseStatsProPage() {
   // la vidéo après coup. Avec une vidéo, on garde la synchro lecture/pause.
   const toggleClockAndVideo = () => {
     if (!hasVideoLoaded()) {
-      // Sans vidéo : simple bascule du chrono (l'horloge source tourne déjà en
-      // temps réel depuis le coup d'envoi, cf. getRawCodingTime).
+      // Sans vidéo : au premier PLAY du quart-temps, on mémorise son début sur
+      // l'horloge source continue. Ce repère sera associé à la vidéo après coup.
+      if (!running) {
+        if (matchStartAtRef.current == null) {
+          matchStartAtRef.current = Date.now();
+          setNoVideoMatchClockStarted(true);
+          setNoVideoElapsedDisplay(0);
+        }
+        markPeriodSourceStart(q, q === 1 && !videoSyncRef.current.periodMarkers?.['1']?.sourceStart ? 0 : undefined);
+      }
       setRunning((r) => !r);
       return;
     }
@@ -3297,7 +3379,8 @@ export default function PriseStatsProPage() {
         matchStartAtRef.current = Date.now();
         setNoVideoMatchClockStarted(true);
         setNoVideoElapsedDisplay(0);
-        flash('🏁 Début du match — temps réel lancé');
+        markPeriodSourceStart(q, q === 1 ? 0 : undefined);
+        flash(`🏁 Début ${periodLabel(q)} — temps réel lancé`);
       }
       return;
     }
@@ -3750,16 +3833,21 @@ export default function PriseStatsProPage() {
     const value = Math.max(0, Math.min(99, Number(cleaned)));
     setMatchJerseyNumbers((current) => ({ ...current, [playerId]: value }));
   };
-  const startMatch = () => {
-    if (!selTeam || hasDuplicateMatchNumbers || hasInvalidMatchNumbers) return;
+  const startMatch = async () => {
+    if (!selTeam || hasDuplicateMatchNumbers || hasInvalidMatchNumbers || projectBusy) return;
+    setProjectBusy(true);
+
     const matchRoster = selTeam.players.map((player) => ({
       ...player,
       num: matchNumberOf(player),
     }));
+    const source = importedLiveSource;
+
     setActiveTeamId(selTeam.id);
     setTeamId(selTeam.id);
-    setRoster(matchRoster); setTeamName(selTeam.name);
-    const source = importedLiveSource;
+    setRoster(matchRoster);
+    setTeamName(selTeam.name);
+
     if (source) {
       const sourceActions = Array.isArray(source.actions) ? source.actions : [];
       const sourcePerQ = source.perQ && typeof source.perQ === 'object' ? source.perQ : { 1: { us: 0, them: 0 } };
@@ -3770,28 +3858,63 @@ export default function PriseStatsProPage() {
       setPerQ(sourcePerQ);
       setQ(Number(source.q || 1));
       setSecs(Number(source.secs ?? 600));
+      const restoredSync = normalizeSync(source.videoSync ?? source);
+      setVideoSync(restoredSync);
+      lastProjectVideoTimeRef.current = source.lastVideoTime == null ? null : Number(source.lastVideoTime);
     } else {
       setOnCourt(starters.slice());
-      setActions([]); setMinutesByPlayer({}); setPerQ({ 1: { us: 0, them: 0 } }); setQ(1); setSecs(600);
+      setActions([]);
+      setMinutesByPlayer({});
+      setPerQ({ 1: { us: 0, them: 0 } });
+      setQ(1);
+      setSecs(600);
+      setVideoSync(NATIVE_SYNC);
+      lastProjectVideoTimeRef.current = null;
     }
+
     setRunning(false);
-    setDraft(emptyDraft()); setStage('context'); setScreen('live');
-
-
-    // Le match reste uniquement en brouillon local pendant le live.
-    // Aucune ligne Supabase n'est créée avant le clic sur « Terminer ».
-    setLiveMatch(null, null);
+    setDraft(emptyDraft());
+    setStage('context');
     videoProviderRef.current = videoProvider;
-    // Sans vidéo, le temps réel ne commence PAS à l'ouverture de l'écran :
-    // le codeur le lance exactement au coup d'envoi avec ESPACE.
     matchStartAtRef.current = source ? null : (videoProvider === 'none' ? null : Date.now());
     setNoVideoMatchClockStarted(false);
     setNoVideoElapsedDisplay(0);
     ensuringRef.current = false;
+
+    // Un match devient immédiatement un PROJET Supabase en statut draft.
+    // Il est donc sauvegardable/rouvrable, mais n'alimente AUCUNE stat officielle
+    // avant le clic explicite sur « Terminer ».
+    try {
+      const ensured = await ensureLiveMatch({
+        teamId: selTeam.id,
+        opponent: opponent || 'Adversaire',
+        date,
+        home,
+        playerIds: matchRoster.map((player) => player.id),
+        videoMode,
+        videoStatus,
+        videoProvider,
+        videoUrl,
+        videoFilename,
+        youtubeUrl,
+      });
+      if (ensured.ok) {
+        setLiveMatch(ensured.matchId, ensured.teamId);
+      } else {
+        setLiveMatch(null, null);
+        flash('Le match démarre, mais la sauvegarde projet Supabase est indisponible : ' + ensured.error);
+      }
+    } catch (error) {
+      console.error('Création projet LiveStat:', error);
+      setLiveMatch(null, null);
+      flash('Le match démarre en local — sauvegarde projet à vérifier');
+    } finally {
+      setProjectBusy(false);
+    }
+
+    setScreen('live');
+
     if (source && source.actions?.length && videoProvider !== 'none') {
-      // La source Live garde t=0 au coup d'envoi. L'utilisateur pose maintenant
-      // le marqueur « Le match commence ici » dans la vidéo ; VideoSyncModal
-      // recale ensuite tous les clips à partir de ce seul repère.
       setTimeout(() => setShowVideoSync(true), 120);
     }
   };
@@ -3806,6 +3929,11 @@ export default function PriseStatsProPage() {
   /* -------- enregistrement (auto, sans validation) -------- */
   const commit = (d: Draft) => {
     const vstamp = stampVideo();
+    // Filet : si le début de période n'a pas été posé via le chrono, on utilise
+    // le premier événement de cette période comme ancre source approximative.
+    if (videoSyncRef.current.periodMarkers?.[String(q)]?.sourceStart == null && vstamp.videoTime != null) {
+      markPeriodSourceStart(q, q === 1 ? 0 : vstamp.videoTime);
+    }
     possessionEndOverrideRef.current = null;
     // AJOUT §2/§6/§7 · on fige sur l'action les infos système + possession + playbook,
     // pour qu'elles soient identiques partout (state, Supabase, exports, project_state).
@@ -4500,24 +4628,35 @@ export default function PriseStatsProPage() {
     const us = sumPerQ('us');
     const them = sumPerQ('them');
     const payload = {
-      format: 'mybasket-livestat-source',
-      version: 1,
+      format: 'mybasket-livestat-project',
+      version: 2,
       codingMode,
       sourceClock: { type: 'match-elapsed-seconds', matchStart: 0 },
-      teamId, teamName, opponent: opponent || 'Adversaire', date,
-      home, q, secs, onCourt, matchJerseyNumbers,
-      score: { us, them }, perQ,
+      teamId: activeTeamId || teamId,
+      teamName,
+      opponent: opponent || 'Adversaire',
+      date,
+      home,
+      q,
+      secs,
+      onCourt,
+      matchJerseyNumbers,
+      score: { us, them },
+      perQ,
       minutesByPlayer,
       box: computeBox(actions, roster),
       actions,
+      videoSync: videoSyncRef.current,
+      lastVideoTime: hasVideoLoaded() ? getCurrentVideoTime() : lastProjectVideoTimeRef.current,
+      projectState: buildProjectState(),
       exportedAt: new Date().toISOString(),
     };
     triggerDownload(
-      `match_${safeName(teamName)}_${date}.json`,
+      `${safeName(teamName)}_vs_${safeName(opponent || 'Adversaire')}_${date}.mybasket`,
       JSON.stringify(payload, null, 2),
       'application/json',
     );
-    flash('Export JSON téléchargé ✓');
+    flash('Projet MyBasket exporté ✓');
   };
 
   const importLiveSourceFile = async (file: File | null) => {
@@ -4525,8 +4664,8 @@ export default function PriseStatsProPage() {
     try {
       const raw = await file.text();
       const data = JSON.parse(raw);
-      if (data?.format !== 'mybasket-livestat-source' || !Array.isArray(data?.actions)) {
-        flash('Fichier source LiveStat MyBasket non reconnu');
+      if (!['mybasket-livestat-source', 'mybasket-livestat-project'].includes(String(data?.format || '')) || !Array.isArray(data?.actions)) {
+        flash('Fichier projet LiveStat MyBasket non reconnu');
         return;
       }
       const sourceTeamId = String(data.teamId || '');
@@ -4541,7 +4680,7 @@ export default function PriseStatsProPage() {
       if (Array.isArray(data.onCourt)) setStarters(data.onCourt.slice(0, 5));
       setImportedLiveSource(data);
       setCodingMode('post');
-      setVideoSync(NATIVE_SYNC);
+      setVideoSync(normalizeSync(data.videoSync ?? data.projectState ?? data));
       flash(`Source LiveStat importée · ${data.actions.length} actions`);
     } catch (error) {
       console.error('Import LiveStat source:', error);
@@ -4561,7 +4700,7 @@ export default function PriseStatsProPage() {
         <div id="create-match">
           <header className="cm-head">
             <div className="cm-brand"><div className="cm-logo">📊</div><div><div className="cm-t">PRISE DE STATS</div><div className="cm-s">LIVE STATS PRO</div></div></div>
-            <div className="cm-head-r"><button className="cm-ghost" type="button">↺ Historique des matchs</button></div>
+            <div className="cm-head-r"><button className="cm-ghost" type="button" onClick={() => { window.location.href = '/management/historique'; }}>↺ Historique des matchs</button></div>
           </header>
 
           <div className="cm-body">
@@ -4592,9 +4731,9 @@ export default function PriseStatsProPage() {
                 </div>
                 <div className="vid-input" style={{marginTop:10}}>
                   <label className="vid-file">
-                    <input type="file" accept="application/json,.json" onChange={(e) => { void importLiveSourceFile(e.target.files?.[0] ?? null); e.currentTarget.value = ''; }} />
-                    <span className="vf-btn">⬆ Importer une source LiveStat</span>
-                    <span className="vf-name">{importedLiveSource ? `✓ ${importedLiveSource.actions?.length || 0} actions prêtes à recaler sur la vidéo` : 'Réutiliser un match codé en direct'}</span>
+                    <input type="file" accept="application/json,.json,.mybasket" onChange={(e) => { void importLiveSourceFile(e.target.files?.[0] ?? null); e.currentTarget.value = ''; }} />
+                    <span className="vf-btn">⬆ Importer un projet LiveStat</span>
+                    <span className="vf-name">{importedLiveSource ? `✓ ${importedLiveSource.actions?.length || 0} actions prêtes à recaler sur la vidéo` : 'Rouvrir un fichier .mybasket ou JSON'}</span>
                   </label>
                 </div>
               </section>
@@ -4911,6 +5050,24 @@ export default function PriseStatsProPage() {
 
           <button
             className="ghost"
+            onClick={() => { void saveProjectNow(false); }}
+            disabled={projectBusy}
+            title="Sauvegarder le projet sans le terminer"
+          >
+            💾 Enregistrer
+          </button>
+
+          <button
+            className="ghost"
+            onClick={() => { void saveProjectNow(true); }}
+            disabled={projectBusy}
+            title="Sauvegarder le projet et revenir à la liste"
+          >
+            💾 Enregistrer & fermer
+          </button>
+
+          <button
+            className="ghost"
             onClick={finishMatch}
             disabled={saving}
             title="Enregistrer le match dans Supabase"
@@ -4929,9 +5086,9 @@ export default function PriseStatsProPage() {
           <button
             className="ghost"
             onClick={exportMatchJSON}
-            title="Exporter toutes les données du match en JSON"
+            title="Exporter un projet MyBasket réimportable"
           >
-            {codingMode === 'live' ? '⬇ Source LiveStat' : '⬇ JSON'}
+            ⬇ Projet .mybasket
           </button>
 
           <button
@@ -4966,7 +5123,15 @@ export default function PriseStatsProPage() {
             <section className={`lc lc-video ${workTab === 'center' ? 'mshow' : ''}`}>
               <div className="videoSlot big">
                 {(videoProvider === 'local' || videoProvider === 'google_drive') && videoUrl ? (
-                  <video ref={videoRef} className="vplayer" src={videoUrl} controls onLoadedMetadata={(e) => { const savedTime = inspectionVideoTimeRef.current; if (savedTime == null) return; try { e.currentTarget.currentTime = Math.max(0, Math.min(Number.isFinite(e.currentTarget.duration) ? e.currentTarget.duration : savedTime, savedTime)); } catch { /* noop */ } inspectionVideoTimeRef.current = null; }} />
+                  <video ref={videoRef} className="vplayer" src={videoUrl} controls onLoadedMetadata={(e) => {
+                    const savedTime = inspectionVideoTimeRef.current ?? lastProjectVideoTimeRef.current;
+                    if (savedTime == null) return;
+                    try {
+                      const max = Number.isFinite(e.currentTarget.duration) ? e.currentTarget.duration : savedTime;
+                      e.currentTarget.currentTime = Math.max(0, Math.min(max, savedTime));
+                    } catch { /* noop */ }
+                    inspectionVideoTimeRef.current = null;
+                  }} />
                 ) : videoProvider === 'youtube' && videoUrl ? (
                   <div className="vyt">
                     <div className="vyt-ic">▶️</div>
@@ -6366,8 +6531,8 @@ export default function PriseStatsProPage() {
           <>
             {head('Résultat', draft.context === 'defense' ? 'Tir concédé — résultat' : 'Choisis directement le résultat du tir')}
 
-            {/* AJOUT §12 · en défense, attribuer le tir à un joueur adverse (optionnel) */}
-            {draft.context === 'defense' && oppRoster.length > 0 && (
+            {/* En après-match détaillé uniquement : attribution optionnelle du tireur adverse. */}
+            {codingMode !== 'live' && draft.context === 'defense' && oppRoster.length > 0 && (
               <>
                 <div className="sublbl">Joueur adverse (tir concédé)</div>
                 <div className="grid c3">
@@ -6380,51 +6545,151 @@ export default function PriseStatsProPage() {
               </>
             )}
 
-            <div className="grid c2">
+            <div className="grid c2 resultMainGrid">
               <button className="res made" onClick={() => quickShotResult('2PTS', 'made')}>✓ 2PTS marqué</button>
               <button className="res miss" onClick={() => quickShotResult('2PTS', 'missed')}>✕ 2PTS raté</button>
               <button className="res made" onClick={() => quickShotResult('3PTS', 'made')}>✓ 3PTS marqué</button>
               <button className="res miss" onClick={() => quickShotResult('3PTS', 'missed')}>✕ 3PTS raté</button>
             </div>
 
-            {codingMode === 'live' && draft.context === 'attaque' && (
+            {/* Résultat direct de possession : BP en attaque, INT en défense. */}
+            <button
+              className="chip resultPossessionBtn"
+              onClick={() => commit({
+                ...draft,
+                actionType: draft.context === 'defense' ? 'interception' : 'perte',
+              })}
+            >
+              {draft.context === 'defense' ? '🖐 INT · Interception' : '✖ BP · Perte de balle'}
+            </button>
+
+            {codingMode === 'live' ? (
               <>
-                <div className="sublbl">Faute provoquée / remise en jeu</div>
-                <div className="grid c3">
-                  <button className="chip" onClick={() => { setDraft({ ...draft, actionType:'faute-provoquee', foulOutcome:'lf', shotType:'LF', ftAttempts:2, ftResults:[] }); setStage('ft'); }}>2 LF</button>
-                  <button className="chip" onClick={() => { setDraft({ ...draft, actionType:'faute-provoquee', foulOutcome:'lf', shotType:'LF', ftAttempts:3, ftResults:[] }); setStage('ft'); }}>3 LF</button>
-                  <button className="chip" onClick={() => commit({ ...draft, actionType:'faute-provoquee', foulOutcome:'touche', inbound:'blob' })}>Touche BLOB</button>
-                  <button className="chip" onClick={() => commit({ ...draft, actionType:'faute-provoquee', foulOutcome:'touche', inbound:'slob' })}>Touche SLOB</button>
-                  <button className="chip" onClick={() => special('2pts1lf')}>2 + 1 LF</button>
-                  <button className="chip" onClick={() => special('3pts1lf')}>3 + 1 LF</button>
+                <div className="sublbl resultSectionLabel">
+                  {draft.context === 'defense' ? 'Faute commise / remise en jeu' : 'Faute provoquée / remise en jeu'}
+                </div>
+
+                <div className="resultFoulGrid">
+                  <button
+                    className="chip"
+                    onClick={() => commit({
+                      ...draft,
+                      actionType: draft.context === 'defense' ? 'faute-commise' : 'faute-provoquee',
+                      foulOutcome: 'touche',
+                      inbound: 'blob',
+                    })}
+                  >
+                    Touche BLOB
+                  </button>
+                  <button
+                    className="chip"
+                    onClick={() => commit({
+                      ...draft,
+                      actionType: draft.context === 'defense' ? 'faute-commise' : 'faute-provoquee',
+                      foulOutcome: 'touche',
+                      inbound: 'slob',
+                    })}
+                  >
+                    Touche SLOB
+                  </button>
+
+                  <button
+                    className="chip"
+                    onClick={() => {
+                      setDraft({
+                        ...draft,
+                        actionType: draft.context === 'defense' ? 'faute-commise' : 'faute-provoquee',
+                        foulOutcome: 'lf',
+                        shotType: 'LF',
+                        ftAttempts: 2,
+                        ftResults: [],
+                      });
+                      setStage('ft');
+                    }}
+                  >
+                    2 LF
+                  </button>
+                  <button
+                    className="chip"
+                    onClick={() => {
+                      setDraft({
+                        ...draft,
+                        actionType: draft.context === 'defense' ? 'faute-commise' : 'faute-provoquee',
+                        foulOutcome: 'and-one',
+                        specialCase: '2pts+1lf',
+                        shotType: 'LF',
+                        ftAttempts: 1,
+                        ftResults: [],
+                      });
+                      setStage('ft');
+                    }}
+                  >
+                    2 PTS + 1 LF
+                  </button>
+
+                  <button
+                    className="chip"
+                    onClick={() => {
+                      setDraft({
+                        ...draft,
+                        actionType: draft.context === 'defense' ? 'faute-commise' : 'faute-provoquee',
+                        foulOutcome: 'lf',
+                        shotType: 'LF',
+                        ftAttempts: 3,
+                        ftResults: [],
+                      });
+                      setStage('ft');
+                    }}
+                  >
+                    3 LF
+                  </button>
+                  <button
+                    className="chip"
+                    onClick={() => {
+                      setDraft({
+                        ...draft,
+                        actionType: draft.context === 'defense' ? 'faute-commise' : 'faute-provoquee',
+                        foulOutcome: 'and-one',
+                        specialCase: '3pts+1lf',
+                        shotType: 'LF',
+                        ftAttempts: 1,
+                        ftResults: [],
+                      });
+                      setStage('ft');
+                    }}
+                  >
+                    3 PTS + 1 LF
+                  </button>
                 </div>
               </>
-            )}
-
-            <div className="sublbl">Lancers francs</div>
-            <div className="seg">
-              {[1, 2, 3].map((n) => (
-                <button
-                  key={n}
-                  className={`segb ${draft.shotType === 'LF' && draft.ftAttempts === n ? 'active' : ''}`}
-                  onClick={() => {
-                    shotPick('LF');
-                    ftn(n);
-                  }}
-                >
-                  {n} LF
-                </button>
-              ))}
-            </div>
-            {draft.shotType === 'LF' && draft.ftAttempts > 0 && ftSeq()}
-
-            {draft.context !== 'defense' && (
+            ) : (
               <>
-                <div className="sublbl">Situations spéciales</div>
-                <div className="grid c2">
-                  <button className="chip" onClick={() => special('2pts1lf')}>2 PTS + 1 LF</button>
-                  <button className="chip" onClick={() => special('3pts1lf')}>3 PTS + 1 LF</button>
+                <div className="sublbl">Lancers francs</div>
+                <div className="seg">
+                  {[1, 2, 3].map((n) => (
+                    <button
+                      key={n}
+                      className={`segb ${draft.shotType === 'LF' && draft.ftAttempts === n ? 'active' : ''}`}
+                      onClick={() => {
+                        shotPick('LF');
+                        ftn(n);
+                      }}
+                    >
+                      {n} LF
+                    </button>
+                  ))}
                 </div>
+                {draft.shotType === 'LF' && draft.ftAttempts > 0 && ftSeq()}
+
+                {draft.context !== 'defense' && (
+                  <>
+                    <div className="sublbl">Situations spéciales</div>
+                    <div className="grid c2">
+                      <button className="chip" onClick={() => special('2pts1lf')}>2 PTS + 1 LF</button>
+                      <button className="chip" onClick={() => special('3pts1lf')}>3 PTS + 1 LF</button>
+                    </div>
+                  </>
+                )}
               </>
             )}
           </>
@@ -8434,6 +8699,18 @@ function Style() {
         background: var(--bordeaux);
         border-color: var(--bordeaux2);
         color: #fff;
+      }
+      .resultMainGrid { gap: 8px !important; }
+      .resultMainGrid .res { min-height: 58px !important; padding: 10px 12px !important; }
+      .resultPossessionBtn { width: 100%; min-height: 46px !important; margin-top: 8px; text-align: center; }
+      .resultSectionLabel { margin-top: 10px !important; margin-bottom: 6px !important; }
+      .resultFoulGrid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+      .resultFoulGrid .chip { min-height: 48px !important; padding: 9px 10px !important; text-align: center; }
+      @media (max-height: 820px) {
+        .resultMainGrid .res { min-height: 50px !important; }
+        .resultPossessionBtn { min-height: 40px !important; }
+        .resultFoulGrid .chip { min-height: 42px !important; }
+        .resultSectionLabel { margin-top: 7px !important; margin-bottom: 4px !important; }
       }
 
       .sublbl {

@@ -22,7 +22,14 @@
 
 export type VideoSyncMode = 'native' | 'offset' | 'calibrated';
 
-export type PeriodVideoMarkers = Record<string, { start?: number | null; end?: number | null }>;
+export type PeriodVideoMarkers = Record<string, {
+  /** Position vidéo du début de période. */
+  start?: number | null;
+  /** Position vidéo de fin de période (optionnelle). */
+  end?: number | null;
+  /** Temps source LiveStat auquel la période a réellement commencé. */
+  sourceStart?: number | null;
+}>;
 
 /** État de synchro d'un match (persisté dans match_stats + project_state). */
 export type VideoSyncState = {
@@ -136,9 +143,22 @@ export function normalizeSync(
  */
 export function resolveSyncedVideoTime(
   rawTime: number | null | undefined,
-  sync: { mode: VideoSyncMode; offset: number; rate: number }
+  sync: { mode: VideoSyncMode; offset: number; rate: number; periodMarkers?: PeriodVideoMarkers },
+  period?: number | string | null
 ): number | null {
   if (rawTime == null) return null;
+
+  // Priorité aux ancres de début de période. Cela permet de recaler Q1/Q2/Q3/Q4
+  // indépendamment et absorbe les mi-temps, coupures de captation et pauses vidéo.
+  if (period != null) {
+    const marker = sync.periodMarkers?.[String(period)];
+    const mediaStart = marker?.start;
+    const sourceStart = marker?.sourceStart;
+    if (mediaStart != null && sourceStart != null && Number.isFinite(Number(mediaStart)) && Number.isFinite(Number(sourceStart))) {
+      const rate = Number.isFinite(sync.rate) ? sync.rate : 1;
+      return Math.max(0, Number(mediaStart) + (rawTime - Number(sourceStart)) * rate);
+    }
+  }
 
   if (sync.mode === 'native') {
     return Math.max(0, rawTime);
@@ -153,6 +173,7 @@ export function resolveSyncedVideoTime(
 
 /** Forme minimale d'action nécessaire au calcul des bornes de clip. */
 export type SyncableAction = {
+  q?: number | null;
   possessionStart?: number | null;
   possessionEnd?: number | null;
   clipStart?: number | null;
@@ -170,15 +191,15 @@ export type SyncableAction = {
  */
 export function resolveActionClipBounds(
   action: SyncableAction | null | undefined,
-  sync: { mode: VideoSyncMode; offset: number; rate: number }
+  sync: { mode: VideoSyncMode; offset: number; rate: number; periodMarkers?: PeriodVideoMarkers }
 ): { start: number | null; end: number | null } {
   const rawStart =
     action?.possessionStart ?? action?.clipStart ?? action?.videoTime ?? null;
   const rawEnd = action?.possessionEnd ?? action?.clipEnd ?? null;
 
   return {
-    start: resolveSyncedVideoTime(rawStart, sync),
-    end: resolveSyncedVideoTime(rawEnd, sync),
+    start: resolveSyncedVideoTime(rawStart, sync, action?.q ?? null),
+    end: resolveSyncedVideoTime(rawEnd, sync, action?.q ?? null),
   };
 }
 

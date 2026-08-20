@@ -13,7 +13,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useMgmt } from '../../lib/management';
-import { listProjects, deleteProject, type LiveProjectSummary } from '../../lib/stats-supabase';
+import { listProjects, loadProject, deleteProject, type LiveProjectSummary } from '../../lib/stats-supabase';
 
 const isUuid = (id: string) => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id);
 
@@ -71,10 +71,40 @@ export default function LiveProjectsHistory() {
   const shownDrafts = useMemo(() => (fStatus === 'completed' ? [] : applyFilters(drafts)), [fStatus, drafts, applyFilters]);
   const shownCompleted = useMemo(() => (fStatus === 'draft' ? [] : applyFilters(completed)), [fStatus, completed, applyFilters]);
 
-  const open = (id: string, mode: 'resume' | 'analysis' | 'montage', tab?: 'history' | 'players') => {
+  const open = (id: string, mode: 'resume' | 'analysis' | 'montage' | 'sync', tab?: 'history' | 'players') => {
     const params = new URLSearchParams({ project: id, mode });
     if (tab) params.set('tab', tab);
     router.push(`/management/live?${params.toString()}`);
+  };
+
+  const exportProject = async (p: LiveProjectSummary) => {
+    setBusy(p.id);
+    try {
+      const res = await loadProject(p.id);
+      if (!res.ok) { window.alert('Export impossible : ' + res.error); return; }
+      const state = res.state as Record<string, any>;
+      const payload = {
+        format: 'mybasket-livestat-project',
+        version: 2,
+        ...state,
+        videoSync: res.videoSync,
+        projectId: p.id,
+        projectStatus: p.projectStatus,
+        exportedAt: new Date().toISOString(),
+      };
+      const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      const safe = (value: string) => (value || 'match').replace(/[^a-z0-9_-]+/gi, '_');
+      a.href = url;
+      a.download = `${safe(teamName(p.teamId) || p.teamName)}_vs_${safe(p.opponent)}_${p.date}.mybasket`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+    } finally {
+      setBusy(null);
+    }
   };
 
   const remove = async (p: LiveProjectSummary) => {
@@ -134,7 +164,9 @@ export default function LiveProjectsHistory() {
                   {p.updatedAt && <span className="lph-upd">modifié {new Date(p.updatedAt).toLocaleString('fr-FR')}</span>}
                 </div>
                 <div className="lph-actions">
-                  <button className="lph-primary" onClick={() => open(p.id, 'resume')}>▶ Reprendre le codage</button>
+                  <button className="lph-primary" onClick={() => open(p.id, 'resume')}>▶ Ouvrir</button>
+                  <button onClick={() => open(p.id, 'sync')}>🎯 Ajouter / recaler vidéo</button>
+                  <button disabled={busy === p.id} onClick={() => { void exportProject(p); }}>⬇ Exporter projet</button>
                   <button onClick={() => open(p.id, 'analysis')}>📊 Analyse</button>
                   <button onClick={() => open(p.id, 'montage')}>🎬 Montage</button>
                   <button className="lph-del" disabled={busy === p.id} onClick={() => remove(p)}>🗑</button>
