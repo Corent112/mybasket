@@ -329,12 +329,28 @@ function saveLiveMatchMirrorToLocalStore(
 // Ligne match_actions à partir d'une action LiveStat (mapping unique, réutilisé).
 function buildActionRow(
   action: LiveMatchAction,
-  ctx: { userId: string; matchId: string; teamId: string }
+  ctx: {
+    userId: string;
+    matchId: string;
+    teamId: string;
+    /** Utilisateur qui a créé l'action à l'origine. */
+    codedBy?: string | null;
+    /** Dernier utilisateur ayant écrit/corrigé l'action. */
+    updatedBy?: string | null;
+  }
 ) {
   return {
+    // user_id est CONSERVÉ pour compatibilité avec tout le code/RLS historique.
+    // Il représente l'utilisateur qui effectue cette écriture.
     user_id: ctx.userId,
     match_id: ctx.matchId,
     team_id: ctx.teamId,
+
+    // Nouvelles colonnes de traçabilité. Elles ne servent PAS à déterminer
+    // l'appartenance sportive : celle-ci reste team_id / player_id.
+    coded_by: ctx.codedBy ?? ctx.userId,
+    updated_by: ctx.updatedBy ?? ctx.userId,
+
     actor_type: action.playerId ? "player" : "team",
 
     client_action_id: action.id ?? null,
@@ -422,7 +438,7 @@ export type EnsureLiveMatchPayload = {
   playerIds?: string[];
 
   // Choix vidéo fait sur l'écran de création (structure V5).
-  videoMode?: "later" | "file" | "drive" | "youtube";
+  videoMode?: "later" | "file" | "youtube";
   videoStatus?: string;
   videoProvider?: string;
   videoUrl?: string;
@@ -467,8 +483,11 @@ export async function ensureLiveMatch(
     const { data: match, error: matchError } = await supabase
       .from("match_stats")
       .insert({
+        // user_id est conservé pour compatibilité.
         user_id: user.id,
         team_id: realTeamId,
+        created_by: user.id,
+        updated_by: user.id,
         opponent: payload.opponent || "Adversaire",
         match_date: payload.date,
         home: payload.home ?? true,
@@ -546,14 +565,44 @@ export async function persistLiveAction(args: {
     } = await supabase.auth.getUser();
     if (!user) return { ok: false, error: "Utilisateur non connecté" };
 
-    const row = buildActionRow(action, { userId: user.id, matchId, teamId });
+    // Si une action existe déjà, on garde le codeur d'origine.
+    // Le correcteur courant devient uniquement updated_by.
+    let originalCoder: string | null = null;
 
-    // IMPORTANT : ne pas utiliser .upsert(... onConflict: "match_id,client_action_id")
-    // ici, car certaines bases existantes n'ont pas encore de contrainte UNIQUE
-    // sur (match_id, client_action_id). Supabase renvoie alors une erreur au
-    // premier clic. On fait donc un delete ciblé puis un insert : c'est
-    // idempotent côté application, non bloquant, et ça ne dépend d'aucune
-    // contrainte SQL supplémentaire.
+    if (action.id) {
+      const { data: previousRow, error: previousError } = await supabase
+        .from("match_actions")
+        .select("coded_by,user_id")
+        .eq("match_id", matchId)
+        .eq("client_action_id", action.id)
+        .maybeSingle();
+
+      if (!previousError && previousRow) {
+        originalCoder =
+          (previousRow as { coded_by?: string | null; user_id?: string | null }).coded_by ??
+          (previousRow as { coded_by?: string | null; user_id?: string | null }).user_id ??
+          null;
+      }
+
+      if (previousError) {
+        logSupabaseError(
+          "persistLiveAction: lecture codeur initial (non bloquant)",
+          previousError
+        );
+      }
+    }
+
+    const row = buildActionRow(action, {
+      userId: user.id,
+      matchId,
+      teamId,
+      codedBy: originalCoder ?? user.id,
+      updatedBy: user.id,
+    });
+
+    // IMPORTANT : comportement historique CONSERVÉ.
+    // On garde delete + insert pour ne pas dépendre d'une contrainte UNIQUE
+    // qui pourrait manquer sur une ancienne base.
     if (action.id) {
       const { error: deleteError } = await supabase
         .from("match_actions")
@@ -851,6 +900,8 @@ export async function saveLiveMatch(
       user_id: user.id,
       match_id: match.id,
       team_id: realTeamId,
+      coded_by: user.id,
+      updated_by: user.id,
       actor_type: action.playerId ? "player" : "team",
       client_action_id: action.id ?? null,
 
@@ -1164,7 +1215,14 @@ export async function saveProjectState(args: {
       return { ok: false, error: "match local" };
     }
     const supabase = createClient();
-    const patch: Record<string, unknown> = { project_state: args.state };
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+
+    const patch: Record<string, unknown> = {
+      project_state: args.state,
+      ...(user?.id ? { updated_by: user.id } : {}),
+    };
     if (args.playbookId !== undefined) patch.playbook_id = args.playbookId;
     if (args.systemMapping !== undefined) patch.system_mapping = args.systemMapping ?? {};
 
@@ -1185,7 +1243,10 @@ export async function saveProjectState(args: {
     if (args.videoSync !== undefined && args.videoSync !== null) {
       const { error: syncErr } = await supabase
         .from("match_stats")
-        .update(syncToColumns(args.videoSync))
+        .update({
+          ...syncToColumns(args.videoSync),
+          ...(user?.id ? { updated_by: user.id } : {}),
+        })
         .eq("id", args.matchId);
       if (syncErr) logSupabaseError("saveProjectState: colonnes video_sync (non bloquant)", syncErr);
     }
