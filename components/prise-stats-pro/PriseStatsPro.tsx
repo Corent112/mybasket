@@ -6526,25 +6526,51 @@ export default function PriseStatsProPage() {
                 </div>
               </>
             );
-      case 'result':
+      case 'result': {
+        const isDefense = draft.context === 'defense';
+
+        const startFreeThrows = (attempts: number) => {
+          setDraft({
+            ...draft,
+            actionType: 'tir',
+            shotType: 'LF',
+            shotResult: '',
+            specialCase: 'aucun',
+            ftAttempts: attempts,
+            ftMade: 0,
+            ftResults: [],
+          });
+          setStage('ft');
+        };
+
         return (
           <>
-            {head('Résultat', draft.context === 'defense' ? 'Tir concédé — résultat' : 'Choisis directement le résultat du tir')}
+            {head(
+              'Résultat',
+              codingMode === 'live'
+                ? (isDefense ? 'Choisis le résultat défensif' : 'Choisis le résultat offensif')
+                : (isDefense ? 'Tir concédé — résultat' : 'Choisis directement le résultat du tir')
+            )}
 
-            {/* En après-match détaillé uniquement : attribution optionnelle du tireur adverse. */}
-            {codingMode !== 'live' && draft.context === 'defense' && oppRoster.length > 0 && (
+            {codingMode !== 'live' && isDefense && oppRoster.length > 0 && (
               <>
                 <div className="sublbl">Joueur adverse (tir concédé)</div>
                 <div className="grid c3">
                   {oppRoster.map((op) => (
-                    <button key={op.id} className={`bt ${draft.playerId === op.id ? 'active' : ''}`} onClick={() => setDraft({ ...draft, playerId: draft.playerId === op.id ? null : op.id })}>
-                      <span className="ic">#{op.num}</span><span className="lbl">{op.name}</span>
+                    <button
+                      key={op.id}
+                      className={`bt ${draft.playerId === op.id ? 'active' : ''}`}
+                      onClick={() => setDraft({ ...draft, playerId: draft.playerId === op.id ? null : op.id })}
+                    >
+                      <span className="ic">#{op.num}</span>
+                      <span className="lbl">{op.name}</span>
                     </button>
                   ))}
                 </div>
               </>
             )}
 
+            <div className="sublbl resultSectionLabel">Tirs</div>
             <div className="grid c2 resultMainGrid">
               <button className="res made" onClick={() => quickShotResult('2PTS', 'made')}>✓ 2PTS marqué</button>
               <button className="res miss" onClick={() => quickShotResult('2PTS', 'missed')}>✕ 2PTS raté</button>
@@ -6552,113 +6578,33 @@ export default function PriseStatsProPage() {
               <button className="res miss" onClick={() => quickShotResult('3PTS', 'missed')}>✕ 3PTS raté</button>
             </div>
 
-            {/* Résultat direct de possession : BP en attaque, INT en défense. */}
-            <button
-              className="chip resultPossessionBtn"
-              onClick={() => commit({
-                ...draft,
-                actionType: draft.context === 'defense' ? 'interception' : 'perte',
-              })}
-            >
-              {draft.context === 'defense' ? '🖐 INT · Interception' : '✖ BP · Perte de balle'}
-            </button>
-
             {codingMode === 'live' ? (
               <>
-                <div className="sublbl resultSectionLabel">
-                  {draft.context === 'defense' ? 'Faute commise / remise en jeu' : 'Faute provoquée / remise en jeu'}
+                <div className="sublbl resultSectionLabel">Lancers francs / And-one</div>
+                <div className="resultShotsGrid">
+                  <button className="chip" onClick={() => startFreeThrows(1)}>1 LF</button>
+                  <button className="chip" onClick={() => startFreeThrows(2)}>2 LF</button>
+                  <button className="chip" onClick={() => startFreeThrows(3)}>3 LF</button>
+                  <button className="chip" onClick={() => special('2pts1lf')}>2 PTS + 1 LF</button>
+                  <button className="chip" onClick={() => special('3pts1lf')}>3 PTS + 1 LF</button>
                 </div>
 
-                <div className="resultFoulGrid">
-                  <button
-                    className="chip"
-                    onClick={() => commit({
-                      ...draft,
-                      actionType: draft.context === 'defense' ? 'faute-commise' : 'faute-provoquee',
-                      foulOutcome: 'touche',
-                      inbound: 'blob',
-                    })}
-                  >
-                    Touche BLOB
+                <div className="sublbl resultSectionLabel">Autres résultats</div>
+                <div className="resultAllActionsGrid">
+                  <button className="chip resultActionBtn" onClick={() => actionPick('faute-provoquee')}>
+                    🔔 Faute provoquée
+                  </button>
+                  <button className="chip resultActionBtn" onClick={() => actionPick('faute-commise')}>
+                    🟨 Faute commise
+                  </button>
+                  <button className="chip resultActionBtn" onClick={() => actionPick('touche')}>
+                    ⤵ Touche / Sortie
                   </button>
                   <button
-                    className="chip"
-                    onClick={() => commit({
-                      ...draft,
-                      actionType: draft.context === 'defense' ? 'faute-commise' : 'faute-provoquee',
-                      foulOutcome: 'touche',
-                      inbound: 'slob',
-                    })}
+                    className="chip resultActionBtn"
+                    onClick={() => actionPick(isDefense ? 'interception' : 'perte')}
                   >
-                    Touche SLOB
-                  </button>
-
-                  <button
-                    className="chip"
-                    onClick={() => {
-                      setDraft({
-                        ...draft,
-                        actionType: draft.context === 'defense' ? 'faute-commise' : 'faute-provoquee',
-                        foulOutcome: 'lf',
-                        shotType: 'LF',
-                        ftAttempts: 2,
-                        ftResults: [],
-                      });
-                      setStage('ft');
-                    }}
-                  >
-                    2 LF
-                  </button>
-                  <button
-                    className="chip"
-                    onClick={() => {
-                      setDraft({
-                        ...draft,
-                        actionType: draft.context === 'defense' ? 'faute-commise' : 'faute-provoquee',
-                        foulOutcome: 'and-one',
-                        specialCase: '2pts+1lf',
-                        shotType: 'LF',
-                        ftAttempts: 1,
-                        ftResults: [],
-                      });
-                      setStage('ft');
-                    }}
-                  >
-                    2 PTS + 1 LF
-                  </button>
-
-                  <button
-                    className="chip"
-                    onClick={() => {
-                      setDraft({
-                        ...draft,
-                        actionType: draft.context === 'defense' ? 'faute-commise' : 'faute-provoquee',
-                        foulOutcome: 'lf',
-                        shotType: 'LF',
-                        ftAttempts: 3,
-                        ftResults: [],
-                      });
-                      setStage('ft');
-                    }}
-                  >
-                    3 LF
-                  </button>
-                  <button
-                    className="chip"
-                    onClick={() => {
-                      setDraft({
-                        ...draft,
-                        actionType: draft.context === 'defense' ? 'faute-commise' : 'faute-provoquee',
-                        foulOutcome: 'and-one',
-                        specialCase: '3pts+1lf',
-                        shotType: 'LF',
-                        ftAttempts: 1,
-                        ftResults: [],
-                      });
-                      setStage('ft');
-                    }}
-                  >
-                    3 PTS + 1 LF
+                    {isDefense ? '🖐 INT · Interception' : '✖ BP · Perte de balle'}
                   </button>
                 </div>
               </>
@@ -6694,6 +6640,7 @@ export default function PriseStatsProPage() {
             )}
           </>
         );
+      }
       case 'ft':
         return <>{head('Lancers francs', (draft.specialCase === '2pts+1lf' || draft.specialCase === '3pts+1lf') ? 'Lancer franc bonus (and-one)' : draft.actionType === 'faute-commise' ? `${draft.ftAttempts} LF adverses — dans l'ordre` : `${draft.ftAttempts} LF — dans l'ordre`)}{ftSeq()}</>;
       case 'zone':
@@ -8700,17 +8647,19 @@ function Style() {
         border-color: var(--bordeaux2);
         color: #fff;
       }
-      .resultMainGrid { gap: 8px !important; }
-      .resultMainGrid .res { min-height: 58px !important; padding: 10px 12px !important; }
-      .resultPossessionBtn { width: 100%; min-height: 46px !important; margin-top: 8px; text-align: center; }
-      .resultSectionLabel { margin-top: 10px !important; margin-bottom: 6px !important; }
-      .resultFoulGrid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
-      .resultFoulGrid .chip { min-height: 48px !important; padding: 9px 10px !important; text-align: center; }
+      .resultMainGrid { gap: 7px !important; }
+      .resultMainGrid .res { min-height: 50px !important; padding: 8px 10px !important; font-size: 13px !important; }
+      .resultSectionLabel { margin-top: 7px !important; margin-bottom: 4px !important; }
+      .resultShotsGrid { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:7px; }
+      .resultShotsGrid .chip { min-height:40px !important; padding:6px 7px !important; text-align:center; }
+      .resultShotsGrid .chip:nth-child(4),
+      .resultShotsGrid .chip:nth-child(5) { grid-column:span 1; }
+      .resultAllActionsGrid { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 7px; }
+      .resultActionBtn { min-height: 43px !important; padding: 7px 8px !important; display:flex !important; align-items:center; justify-content:center; gap:6px; text-align:center !important; line-height:1.1; }
       @media (max-height: 820px) {
-        .resultMainGrid .res { min-height: 50px !important; }
-        .resultPossessionBtn { min-height: 40px !important; }
-        .resultFoulGrid .chip { min-height: 42px !important; }
-        .resultSectionLabel { margin-top: 7px !important; margin-bottom: 4px !important; }
+        .resultMainGrid .res { min-height: 43px !important; padding: 6px 8px !important; }
+        .resultActionBtn { min-height: 36px !important; padding: 5px 6px !important; font-size: 10.5px !important; }
+        .resultSectionLabel { margin-top: 4px !important; margin-bottom: 3px !important; }
       }
 
       .sublbl {
