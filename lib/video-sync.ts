@@ -29,6 +29,8 @@ export type PeriodVideoMarkers = Record<string, {
   end?: number | null;
   /** Temps source LiveStat auquel la période a réellement commencé. */
   sourceStart?: number | null;
+  /** Temps source LiveStat auquel la période s'est terminée (facultatif). */
+  sourceEnd?: number | null;
 }>;
 
 /** État de synchro d'un match (persisté dans match_stats + project_state). */
@@ -184,18 +186,19 @@ export type SyncableAction = {
 /**
  * Bornes de lecture d'un clip, DÉJÀ synchronisées (position réelle dans la
  * vidéo). Priorité de repli conforme au codage par possession :
- *   début = possessionStart ?? clipStart ?? videoTime
- *   fin   = possessionEnd   ?? clipEnd
- * Les temps bruts de l'action ne sont jamais modifiés : seule la conversion
- * vers l'échelle média est appliquée.
+ *   début = clipStart ?? videoTime ?? possessionStart
+ *   fin   = clipEnd ?? possessionEnd
+ * IMPORTANT : le clip d'un joueur correspond à l'ATTAQUE/ACTION, jamais à
+ * toute la possession. possessionStart/End restent disponibles pour les
+ * analyses collectives et la rentabilité de possession.
  */
 export function resolveActionClipBounds(
   action: SyncableAction | null | undefined,
   sync: { mode: VideoSyncMode; offset: number; rate: number; periodMarkers?: PeriodVideoMarkers }
 ): { start: number | null; end: number | null } {
   const rawStart =
-    action?.possessionStart ?? action?.clipStart ?? action?.videoTime ?? null;
-  const rawEnd = action?.possessionEnd ?? action?.clipEnd ?? null;
+    action?.clipStart ?? action?.videoTime ?? action?.possessionStart ?? null;
+  const rawEnd = action?.clipEnd ?? action?.possessionEnd ?? null;
 
   return {
     start: resolveSyncedVideoTime(rawStart, sync, action?.q ?? null),

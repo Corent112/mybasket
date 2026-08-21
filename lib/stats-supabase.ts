@@ -1199,6 +1199,8 @@ export type LiveProjectSummary = {
   quarter: number | null;
   clock: string | null;
   result: "V" | "N" | "D" | null;
+  codingMode?: "live" | "live-individual" | "post" | null;
+  linkedCollectiveProjectId?: string | null;
 };
 
 /** Sauvegarde l'état complet du projet (brouillon). Non bloquant. */
@@ -1317,6 +1319,8 @@ export async function listProjects(args: {
         quarter: st.q != null ? Number(st.q) : null,
         clock: (st.secs != null ? `${String(Math.floor(Number(st.secs) / 60)).padStart(2, "0")}:${String(Number(st.secs) % 60).padStart(2, "0")}` : null),
         result: (r === "V" || r === "N" || r === "D") ? r as "V" | "N" | "D" : (row.project_status === "completed" ? (us > them ? "V" : us === them ? "N" : "D") : null),
+        codingMode: (st.codingMode === 'live-individual' ? 'live-individual' : st.codingMode === 'live' ? 'live' : st.codingMode === 'post' ? 'post' : null),
+        linkedCollectiveProjectId: st.linkedCollectiveProjectId ? String(st.linkedCollectiveProjectId) : null,
       };
     });
   } catch (error) {

@@ -37,6 +37,29 @@ export default function VideoSyncModal(props: VideoSyncModalProps) {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const [mediaTime, setMediaTime] = useState(0);
   const [duration, setDuration] = useState(0);
+  const scrubAccumRef = useRef(0);
+  const scrubRafRef = useRef<number | null>(null);
+
+  const onTrackpad = (e: any) => {
+    const v = videoRef.current;
+    if (!v) return;
+    if (Math.abs(e.deltaX) < Math.abs(e.deltaY) * 0.65) return;
+
+    // Geste utilisateur : deux doigts vers la droite = avancer,
+    // deux doigts vers la gauche = reculer.
+    const delta = -e.deltaX * 0.010;
+    if (!delta) return;
+    e.preventDefault();
+
+    scrubAccumRef.current += delta;
+    if (scrubRafRef.current != null) return;
+    scrubRafRef.current = window.requestAnimationFrame(() => {
+      scrubRafRef.current = null;
+      const step = Math.max(-0.85, Math.min(0.85, scrubAccumRef.current));
+      scrubAccumRef.current -= step;
+      seek((v.currentTime || 0) + step);
+    });
+  };
 
   const periods = useMemo(() => {
     const maxQ = Math.max(4, ...actions.map((a) => Number(a.q || 0)).filter((n) => Number.isFinite(n)));
@@ -127,7 +150,7 @@ export default function VideoSyncModal(props: VideoSyncModalProps) {
         <div className="vmark-head">
           <div>
             <b>⚙ Synchroniser la vidéo avec le LiveStat</b>
-            <span>Déplace le curseur vidéo puis pose les débuts de Q1, Q2, Q3 et Q4.</span>
+            <span>Déplace le curseur vidéo puis pose Q1, Q2, Q3 et Q4. Le trackpad permet un scrub horizontal fluide.</span>
           </div>
           <button onClick={onClose}>×</button>
         </div>
@@ -145,7 +168,7 @@ export default function VideoSyncModal(props: VideoSyncModalProps) {
             </div>
           ) : (
             <>
-              <video ref={videoRef} src={videoUrl} controls className="vmark-video" />
+              <video ref={videoRef} src={videoUrl} controls className="vmark-video" onWheel={onTrackpad} title="Trackpad : glisse horizontalement pour avancer ou reculer" />
               <div className="vmark-file-name">
                 <span>🟢 {expectedFilename || 'Vidéo associée'}</span>
                 <strong>{fmt(mediaTime)}</strong>
@@ -191,7 +214,7 @@ export default function VideoSyncModal(props: VideoSyncModalProps) {
                     <div className={`vmark-period ${marker?.start != null ? 'set' : ''}`} key={period}>
                       <div className="vmark-q"><b>{period <= 4 ? `Q${period}` : `OT${period - 4}`}</b><small>début de période</small></div>
                       <div className="vmark-time"><small>VIDÉO</small><strong>{fmt(marker?.start)}</strong></div>
-                      <div className="vmark-source"><small>LIVE</small><span>{fmt(sourceStart)}</span></div>
+                      <div className="vmark-source"><small>LIVE</small><span>{fmt(sourceStart)}{marker?.sourceEnd != null ? ` → ${fmt(marker.sourceEnd)}` : ''}</span></div>
                       <button className="place" onClick={() => setPeriodStart(period)}>📍 Placer ici</button>
                       {marker?.start != null && <button className="clear" onClick={() => clearPeriodStart(period)} title="Effacer ce repère">×</button>}
                     </div>

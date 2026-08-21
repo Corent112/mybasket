@@ -71,7 +71,7 @@ export default function LiveProjectsHistory() {
   const shownDrafts = useMemo(() => (fStatus === 'completed' ? [] : applyFilters(drafts)), [fStatus, drafts, applyFilters]);
   const shownCompleted = useMemo(() => (fStatus === 'draft' ? [] : applyFilters(completed)), [fStatus, completed, applyFilters]);
 
-  const open = (id: string, mode: 'resume' | 'analysis' | 'montage' | 'sync', tab?: 'history' | 'players') => {
+  const open = (id: string, mode: 'resume' | 'analysis' | 'montage' | 'sync' | 'associate', tab?: 'history' | 'players') => {
     const params = new URLSearchParams({ project: id, mode });
     if (tab) params.set('tab', tab);
     router.push(`/management/live?${params.toString()}`);
@@ -153,7 +153,7 @@ export default function LiveProjectsHistory() {
               <div className="lph-card draft" key={p.id}>
                 <div className="lph-card-h">
                   <b>{teamName(p.teamId) || p.teamName || 'Équipe'} <span className="lph-vs">vs {p.opponent}</span></b>
-                  <span className="lph-badge draft">Brouillon</span>
+                  <span className="lph-badge draft">{p.codingMode === 'live-individual' ? 'Live individuel' : p.codingMode === 'live' ? 'Live collectif' : 'Brouillon'}</span>
                 </div>
                 <div className="lph-meta">
                   <span>📅 {fmtDate(p.date)}</span>
@@ -161,11 +161,13 @@ export default function LiveProjectsHistory() {
                   <span>⏱ {p.quarter != null ? `Q${p.quarter}` : '—'} {p.clock ?? ''}</span>
                   <span>🎬 {p.actionsCount} action{p.actionsCount > 1 ? 's' : ''}</span>
                   {p.playbookName && <span>📖 {p.playbookName}</span>}
+                  {p.linkedCollectiveProjectId && <span>🔗 Rattaché au projet collectif</span>}
                   {p.updatedAt && <span className="lph-upd">modifié {new Date(p.updatedAt).toLocaleString('fr-FR')}</span>}
                 </div>
                 <div className="lph-actions">
                   <button className="lph-primary" onClick={() => open(p.id, 'resume')}>▶ Ouvrir</button>
                   <button onClick={() => open(p.id, 'sync')}>🎯 Ajouter / recaler vidéo</button>
+                  <button onClick={() => open(p.id, 'associate')}>👥 Associer les joueurs</button>
                   <button disabled={busy === p.id} onClick={() => { void exportProject(p); }}>⬇ Exporter projet</button>
                   <button onClick={() => open(p.id, 'analysis')}>📊 Analyse</button>
                   <button onClick={() => open(p.id, 'montage')}>🎬 Montage</button>
