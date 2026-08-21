@@ -39,7 +39,7 @@ import {
   linkGoogleDriveFileToMatch,
 } from "@/lib/google-drive/client";
 import VideoSyncModal from "@/components/prise-stats-pro/VideoSyncModal";
-import LiveCodingSettingsModal, { DEFAULT_WORKFLOW_PREFS, type LiveWorkflowPrefs } from "@/components/prise-stats-pro/LiveCodingSettingsModal";
+import LiveCodingSettingsModal, { DEFAULT_WORKFLOW_PREFS, type LiveWorkflowPrefs, type LiveCodingProfile, type CodingButtonGroup } from "@/components/prise-stats-pro/LiveCodingSettingsModal";
 import LivePlayerAssociationModal, { type AssociableLiveAction } from "@/components/prise-stats-pro/LivePlayerAssociationModal";
 import ShotChart, { SHOT_ZONES, zoneById, resolveShotZone } from "@/components/prise-stats-pro/ShotChart";
 import {
@@ -330,6 +330,30 @@ const CODING_FALLBACK: Record<string, CodingButtonCfg[]> = {
   'att-action': ATT_ACTIONS.map((o, i) => ({ key: o.id, label: o.label, emoji: o.ic, category: 'att-action', stage: 'action', sort_order: i, is_active: true })),
   'def-action': DEF_ACTIONS.map((o, i) => ({ key: o.id, label: o.label, emoji: o.ic, category: 'def-action', stage: 'action', sort_order: i, is_active: true })),
   'coverage': COVERAGES.map((o, i) => ({ key: o.id, label: o.label, category: 'coverage', stage: 'coverage', sort_order: i, is_active: true })),
+  'result': [
+    { key:'2-made', label:'2PTS marqué', emoji:'✓', category:'result', stage:'result', sort_order:0, is_active:true },
+    { key:'2-missed', label:'2PTS raté', emoji:'✕', category:'result', stage:'result', sort_order:1, is_active:true },
+    { key:'3-made', label:'3PTS marqué', emoji:'✓', category:'result', stage:'result', sort_order:2, is_active:true },
+    { key:'3-missed', label:'3PTS raté', emoji:'✕', category:'result', stage:'result', sort_order:3, is_active:true },
+    { key:'lf1', label:'1 LF', emoji:'1', category:'result', stage:'ft', sort_order:4, is_active:true },
+    { key:'lf2', label:'2 LF', emoji:'2', category:'result', stage:'ft', sort_order:5, is_active:true },
+    { key:'lf3', label:'3 LF', emoji:'3', category:'result', stage:'ft', sort_order:6, is_active:true },
+    { key:'2plus1', label:'2 PTS + 1 LF', emoji:'＋', category:'result', stage:'ft', sort_order:7, is_active:true },
+    { key:'3plus1', label:'3 PTS + 1 LF', emoji:'＋', category:'result', stage:'ft', sort_order:8, is_active:true },
+  ],
+  'foul': [
+    { key:'touche', label:'Touche', category:'foul', stage:'faute', sort_order:0, is_active:true },
+    { key:'lf2', label:'2 LF', category:'foul', stage:'faute', sort_order:1, is_active:true },
+    { key:'2plus1', label:'2pts + 1LF', category:'foul', stage:'faute', sort_order:2, is_active:true },
+    { key:'lf3', label:'3 LF', category:'foul', stage:'faute', sort_order:3, is_active:true },
+    { key:'3plus1', label:'3pts + 1LF', category:'foul', stage:'faute', sort_order:4, is_active:true },
+  ],
+  'rebound': [
+    { key:'off', label:'Rebond offensif', emoji:'🔄', category:'rebound', stage:'rebound', sort_order:0, is_active:true },
+    { key:'def', label:'Rebond défensif', emoji:'🧲', category:'rebound', stage:'rebound', sort_order:1, is_active:true },
+    { key:'touche-pour', label:'Touche pour', emoji:'↪', category:'rebound', stage:'rebound', sort_order:2, is_active:true },
+    { key:'touche-contre', label:'Touche contre', emoji:'↩', category:'rebound', stage:'rebound', sort_order:3, is_active:true },
+  ],
 };
 
 /**
@@ -703,8 +727,56 @@ export default function PriseStatsProPage() {
   const [showCodingSettings, setShowCodingSettings] = useState(false);
   const [codingSettingsTab, setCodingSettingsTab] = useState<'workflow' | 'buttons'>('workflow');
   const [workflowPrefs, setWorkflowPrefs] = useState<LiveWorkflowPrefs>({ ...DEFAULT_WORKFLOW_PREFS });
+  const [codingProfiles, setCodingProfiles] = useState<LiveCodingProfile[]>([]);
+  const [selectedCodingProfileId, setSelectedCodingProfileId] = useState('');
+  const [profileButtonKeys, setProfileButtonKeys] = useState<LiveCodingProfile['activeButtonKeys'] | null>(null);
   const [toast, setToast] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+
+
+  const codingProfilesStorageKey = (tId: string) => `mybasket:livestat-coding-profiles:${tId || 'default'}`;
+  const loadCodingProfiles = (tId: string) => {
+    if (typeof window === 'undefined') return [] as LiveCodingProfile[];
+    try {
+      const raw = window.localStorage.getItem(codingProfilesStorageKey(tId));
+      const parsed = raw ? JSON.parse(raw) : [];
+      return Array.isArray(parsed) ? parsed : [];
+    } catch { return [] as LiveCodingProfile[]; }
+  };
+  const persistCodingProfiles = (tId: string, list: LiveCodingProfile[]) => {
+    setCodingProfiles(list);
+    if (typeof window !== 'undefined') {
+      try { window.localStorage.setItem(codingProfilesStorageKey(tId), JSON.stringify(list)); } catch { /* noop */ }
+    }
+  };
+  const applyCodingProfile = (profile: LiveCodingProfile) => {
+    setSelectedCodingProfileId(profile.id);
+    setWorkflowPrefs({ ...profile.workflow });
+    setProfileButtonKeys(profile.activeButtonKeys || null);
+  };
+  const saveCodingProfile = (profile: LiveCodingProfile) => {
+    const tId = activeTeamId || teamId;
+    const list = loadCodingProfiles(tId);
+    const next = list.some((p) => p.id === profile.id)
+      ? list.map((p) => p.id === profile.id ? profile : p)
+      : [...list, profile];
+    persistCodingProfiles(tId, next);
+    applyCodingProfile(profile);
+  };
+  const deleteCodingProfile = (profileId: string) => {
+    const tId = activeTeamId || teamId;
+    const next = loadCodingProfiles(tId).filter((p) => p.id !== profileId);
+    persistCodingProfiles(tId, next);
+    if (selectedCodingProfileId === profileId) {
+      setSelectedCodingProfileId('');
+      setProfileButtonKeys(null);
+    }
+  };
+  useEffect(() => {
+    const tId = activeTeamId || teamId;
+    if (!tId) { setCodingProfiles([]); return; }
+    setCodingProfiles(loadCodingProfiles(tId));
+  }, [activeTeamId, teamId]);
 
   /* -------- V5 · choix vidéo à la création du match (structure + UI) --------
      Aucun upload serveur / ffmpeg ici : on ne prépare que la donnée et l'UI. */
@@ -950,6 +1022,13 @@ export default function PriseStatsProPage() {
   }, []);
 
   const find = (id: string | null) => roster.find((p) => p.id === id);
+  const profileAllowsButton = (category: string, key: string) => {
+    const allowed = (profileButtonKeys as Partial<Record<string, string[]>> | null)?.[category];
+    return !allowed || allowed.includes(key);
+  };
+  const codingButtonsFor = (category: string) => resolveCodingButtons(category, codingDb).filter((b) => profileAllowsButton(category, b.key));
+  const codingLabel = (category: string, key: string, fallback: string) => codingButtonsFor(category).find((b) => b.key === key)?.label || fallback;
+  const codingButtonEnabled = (category: string, key: string) => codingButtonsFor(category).some((b) => b.key === key);
   const floor = roster.filter((p) => onCourt.includes(p.id));
   const bench = roster.filter((p) => !onCourt.includes(p.id));
 
@@ -962,9 +1041,10 @@ export default function PriseStatsProPage() {
   // intégré dans useLivestatTags → jamais vide, jamais de key brute affichée.
   // Temps forts : dès qu'une équipe possède sa configuration Supabase, elle
   // pilote le wizard. Sinon on conserve exactement la liste historique actuelle.
-  const tempsFortsButtons = tags.source === 'supabase'
+  const tempsFortsButtons = (tags.source === 'supabase'
     ? tags.active.map((t) => ({ id: t.key, label: t.label, ic: t.emoji || '⚡', is_active: t.is_active, sort_order: t.sort_order }))
-    : TEMPS.map((t, i) => ({ id: t.id, label: t.label, ic: t.icon, is_active: true, sort_order: i }));
+    : TEMPS.map((t, i) => ({ id: t.id, label: t.label, ic: t.icon, is_active: true, sort_order: i })))
+    .filter((t) => profileAllowsButton('temps', t.id));
 
   /* ---------------- V7 · ergonomie vidéo + workspace à onglets ---------------- */
   // Onglet de travail visible dans l'écran live (desktop + mobile).
@@ -1151,12 +1231,30 @@ export default function PriseStatsProPage() {
     .filter((row) => row.category === 'system')
     .sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0));
   const activeConfiguredSystems = configuredSystemRows.filter((row) => row.is_active !== false);
-  const systemeButtons = configuredSystemRows.length
+  const systemeButtons = (configuredSystemRows.length
     ? activeConfiguredSystems.map((row) => ({ id: row.key, label: row.label, ic: row.emoji || '🏀' }))
     : SYSTEMES_JEU.map((s) => {
         const mapped = systemForSlot(s.id);
         return { id: s.id, label: mapped ? mapped.title : s.label, ic: s.ic };
-      });
+      })).filter((s) => profileAllowsButton('system', s.id));
+
+
+  const allCodingRowsFor = (category: string): CodingButtonCfg[] => {
+    const configured = (codingDb ?? []).filter((row) => row.category === category);
+    return (configured.length ? configured : (CODING_FALLBACK[category] ?? []))
+      .slice()
+      .sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0));
+  };
+  const codingSettingsGroups: CodingButtonGroup[] = [
+    { key:'system', title:'Système de jeu', icon:'🏀', stage:'systeme', allowAdd:true, rows:(configuredSystemRows.length ? configuredSystemRows : (CODING_FALLBACK.system ?? [])).map((r,i)=>({ key:r.key,label:r.label,emoji:r.emoji,is_active:r.is_active!==false,sort_order:r.sort_order??i })) },
+    { key:'temps', title:'Temps fort', icon:'⚡', stage:'temps', allowAdd:true, rows:(tags.source === 'supabase' ? tags.all.map((x,i)=>({key:x.key,label:x.label,emoji:x.emoji,is_active:x.is_active!==false,sort_order:x.sort_order??i})) : TEMPS.map((x,i)=>({key:x.id,label:x.label,emoji:x.icon,is_active:true,sort_order:i}))) },
+    { key:'att-action', title:'Actions attaque', icon:'🔵', stage:'action', allowAdd:true, rows:allCodingRowsFor('att-action').map((r,i)=>({key:r.key,label:r.label,emoji:r.emoji,is_active:r.is_active!==false,sort_order:r.sort_order??i})) },
+    { key:'def-action', title:'Actions défense', icon:'🔴', stage:'action', allowAdd:true, rows:allCodingRowsFor('def-action').map((r,i)=>({key:r.key,label:r.label,emoji:r.emoji,is_active:r.is_active!==false,sort_order:r.sort_order??i})) },
+    { key:'coverage', title:'Défense sur écran', icon:'🛡️', stage:'coverage', allowAdd:true, rows:allCodingRowsFor('coverage').map((r,i)=>({key:r.key,label:r.label,emoji:r.emoji,is_active:r.is_active!==false,sort_order:r.sort_order??i})) },
+    { key:'result', title:'Résultats tirs', icon:'🎯', stage:'result', allowAdd:false, rows:allCodingRowsFor('result').map((r,i)=>({key:r.key,label:r.label,emoji:r.emoji,is_active:r.is_active!==false,sort_order:r.sort_order??i})) },
+    { key:'foul', title:'Suites de faute', icon:'🟨', stage:'faute', allowAdd:false, rows:allCodingRowsFor('foul').map((r,i)=>({key:r.key,label:r.label,emoji:r.emoji,is_active:r.is_active!==false,sort_order:r.sort_order??i})) },
+    { key:'rebound', title:'Rebonds / possession', icon:'🔄', stage:'rebound', allowAdd:false, rows:allCodingRowsFor('rebound').map((r,i)=>({key:r.key,label:r.label,emoji:r.emoji,is_active:r.is_active!==false,sort_order:r.sort_order??i})) },
+  ];
 
   const [projects, setProjects] = useState<LiveProjectSummary[]>([]);
   const [projectBusy, setProjectBusy] = useState(false);
@@ -1181,6 +1279,8 @@ export default function PriseStatsProPage() {
     home,
     codingMode,
     workflowPrefs,
+    selectedCodingProfileId,
+    profileButtonKeys,
     workspaceLayout: { videoPanePct, rightPanePx },
     linkedCollectiveProjectId: linkedCollectiveProjectId || null,
     matchJerseyNumbers,
@@ -1314,6 +1414,8 @@ export default function PriseStatsProPage() {
       if (s.workflowPrefs && typeof s.workflowPrefs === 'object') {
         setWorkflowPrefs({ ...DEFAULT_WORKFLOW_PREFS, ...s.workflowPrefs });
       }
+      setSelectedCodingProfileId(String(s.selectedCodingProfileId || ''));
+      setProfileButtonKeys(s.profileButtonKeys && typeof s.profileButtonKeys === 'object' ? s.profileButtonKeys : null);
       if (s.workspaceLayout && typeof s.workspaceLayout === 'object') {
         if (Number.isFinite(Number(s.workspaceLayout.videoPanePct))) setVideoPanePct(Math.max(25, Math.min(72, Number(s.workspaceLayout.videoPanePct))));
         if (Number.isFinite(Number(s.workspaceLayout.rightPanePx))) setRightPanePx(Math.max(210, Math.min(520, Number(s.workspaceLayout.rightPanePx))));
@@ -4066,7 +4168,7 @@ export default function PriseStatsProPage() {
 
     setRunning(false);
     setDraft(emptyDraft());
-    setStage(codingMode === 'live-individual' ? 'player' : 'context');
+    setStage('context');
     videoProviderRef.current = videoProvider;
     matchStartAtRef.current = source ? null : (videoProvider === 'none' ? null : Date.now());
     setNoVideoMatchClockStarted(false);
@@ -4129,7 +4231,7 @@ export default function PriseStatsProPage() {
       }
     }
     setQ(nq); setPerQ((p) => (p[nq] ? p : { ...p, [nq]: { us: 0, them: 0 } }));
-    setSecs(periodDuration(nq)); setRunning(false); setDraft(emptyDraft()); setStage(codingMode === 'live-individual' ? 'player' : 'context');
+    setSecs(periodDuration(nq)); setRunning(false); setDraft(emptyDraft()); setStage('context');
   };
 
   /* -------- enregistrement (auto, sans validation) -------- */
@@ -4217,10 +4319,10 @@ export default function PriseStatsProPage() {
 
     let next: Ctx, inbound = false;
     if (a.actionType === 'touche') next = 'attaque';
-    else if (a.actionType === 'faute-commise' && a.context === 'defense') next = 'defense';
-    else if (a.foulOutcome === 'touche') { if (a.context === 'defense') next = 'defense'; else { next = 'attaque'; inbound = true; } }
     else if (a.reboundType === 'touche-pour') { next = 'attaque'; inbound = true; }
     else if (a.reboundType) next = reboundNext(a.context, a.reboundType);
+    else if (a.foulOutcome === 'touche') { if (a.context === 'defense') next = 'defense'; else { next = 'attaque'; inbound = true; } }
+    else if (a.actionType === 'faute-commise' && a.context === 'defense') next = 'attaque';
     else next = POSS(a.context);
     const fresh = emptyDraft(); fresh.context = next;
     // Live collectif : RO / touche conservée = nouvelle ATTAQUE mais même POSSESSION.
@@ -4231,7 +4333,7 @@ export default function PriseStatsProPage() {
     );
     if (!samePossession) possessionStartRef.current = getRawCodingTime();
     setDraft(fresh);
-    if (codingMode === 'live-individual') setStage('player');
+    if (codingMode === 'live-individual') setStage(next === 'attaque' ? 'player' : 'result');
     else setStage(codingMode === 'live'
       ? (next === 'defense' ? 'temps' : 'systeme')
       : (inbound ? 'inbound' : (next === 'defense' ? 'temps' : 'systeme')));
@@ -4243,7 +4345,9 @@ export default function PriseStatsProPage() {
     const lastMiss = d.ftResults[d.ftResults.length - 1] === 'miss';
 
     if (codingMode === 'live-individual') {
-      commit({ ...d, shotResult: anyMade ? 'made' : 'missed' });
+      const nd = { ...d, shotResult: anyMade ? 'made' : 'missed' };
+      if (lastMiss && workflowOn('rebound')) { setDraft(nd); setStage('rebound'); }
+      else commit(nd);
       return;
     }
     if (codingMode === 'live') {
@@ -4285,11 +4389,19 @@ export default function PriseStatsProPage() {
   };
 
   /* -------- navigation dynamique du workflow -------- */
-  const workflowOn = (key: keyof LiveWorkflowPrefs) => codingMode === 'post' ? workflowPrefs[key] : (
-    codingMode === 'live' && (key === 'system' || key === 'temps') ? workflowPrefs[key] : true
-  );
+  const workflowOn = (key: keyof LiveWorkflowPrefs) => {
+    if (codingMode === 'post') return workflowPrefs[key];
+    if (codingMode === 'live') return (key === 'system' || key === 'temps') ? workflowPrefs[key] : true;
+    if (codingMode === 'live-individual') {
+      if (key === 'zone' || key === 'rebound' || key === 'assist') return workflowPrefs[key];
+      if (key === 'player') return true;
+      return false;
+    }
+    return true;
+  };
 
   const stageAfterContext = (c: Ctx): string => {
+    if (codingMode === 'live-individual') return c === 'defense' ? 'result' : 'player';
     if (c === 'defense') {
       if (workflowOn('temps')) return 'temps';
       return codingMode === 'live' ? 'result' : 'action';
@@ -4359,11 +4471,11 @@ export default function PriseStatsProPage() {
   let d = { ...draft, actionType: id };
 
   if (codingMode === 'live-individual') {
-    const defensive = ['interception', 'contre', 'rebond-def', 'faute-commise'].includes(id);
-    d = { ...d, context: defensive ? 'defense' : 'attaque' };
+    d = { ...d, context: draft.context || 'attaque' };
     if (id === 'tir') { setDraft(d); setStage('result'); return; }
+    if (id === 'faute-commise' && d.context === 'defense') { setDraft(d); setStage('player'); return; }
+    if (id === 'interception' || id === 'contre') { setDraft({ ...d, context:'defense' }); setStage('player'); return; }
     if (id === 'faute-provoquee' || id === 'faute-commise') { setDraft(d); setStage('faute'); return; }
-    if (id === 'passe-decisive') { commit(d); return; }
     commit(d);
     return;
   }
@@ -4406,8 +4518,15 @@ export default function PriseStatsProPage() {
 };
   const playerPick = (id: string) => {
   if (codingMode === 'live-individual') {
+    if (draft.actionType) {
+      const d = { ...draft, playerId: id };
+      if (draft.actionType === 'faute-commise' || draft.actionType === 'faute-provoquee') { setDraft(d); setStage('faute'); return; }
+      if (draft.actionType === 'contre') { setDraft(d); setStage('rebound'); return; }
+      commit(d);
+      return;
+    }
     setDraft({ ...emptyDraft(), playerId: id, context: 'attaque' });
-    setStage('action');
+    setStage('result');
     return;
   }
   if (draft.context === "defense" && draft.actionType === "faute-commise") {
@@ -4446,7 +4565,7 @@ export default function PriseStatsProPage() {
     const d = { ...draft, actionType: 'tir', shotType, shotResult };
 
     if (codingMode === 'live-individual') {
-      commit(d);
+      routePostShot(d);
       return;
     }
     if (codingMode === 'live') {
@@ -4979,7 +5098,7 @@ export default function PriseStatsProPage() {
                   <div className={`cm-vid ${codingMode === 'live-individual' ? 'on' : ''}`} onClick={() => { setCodingMode('live-individual'); setImportedLiveSource(null); }}>
                     {codingMode === 'live-individual' && <div className="cm-vid-ck">✓</div>}
                     <div className="cm-vid-ic">👤</div><div className="cm-vid-t">Live individuel</div>
-                    <div className="cm-vid-d">Joueur → Action → Résultat. Sans système ni temps fort, exportable séparément.</div>
+                    <div className="cm-vid-d">Attaque : Joueur → Résultat. Défense : Résultat → joueur seulement si nécessaire. Shot chart / rebond / PD selon ta logique.</div>
                   </div>
                   <div className={`cm-vid ${codingMode === 'post' ? 'on' : ''}`} onClick={() => setCodingMode('post')}>
                     {codingMode === 'post' && <div className="cm-vid-ck">✓</div>}
@@ -4996,6 +5115,40 @@ export default function PriseStatsProPage() {
                     </select>
                   </div>
                 )}
+                <div className="codingLogicSetup">
+                  <div className="codingLogicSetupHead">
+                    <div><b>🧩 LOGIQUE DE CODAGE</b><small>Sélectionne une logique déjà enregistrée ou construis-la avant de démarrer.</small></div>
+                    <button type="button" onClick={() => openCodingSettings('buttons')}>Gérer mes boutons</button>
+                  </div>
+                  <div className="codingLogicSetupRow">
+                    <select
+                      value={selectedCodingProfileId}
+                      onChange={(e) => {
+                        const id = e.target.value;
+                        setSelectedCodingProfileId(id);
+                        if (!id) { setProfileButtonKeys(null); return; }
+                        const profile = codingProfiles.find((p) => p.id === id);
+                        if (profile) applyCodingProfile(profile);
+                      }}
+                    >
+                      <option value="">Configuration actuelle / personnalisée</option>
+                      {codingProfiles.map((profile) => <option key={profile.id} value={profile.id}>{profile.name}</option>)}
+                    </select>
+                    <button type="button" onClick={() => openCodingSettings('workflow')}>⚙ Modifier le chemin</button>
+                  </div>
+                  <div className="codingLogicPath">
+                    {codingMode === 'live-individual' ? (
+                      <>
+                        <span>Attaque : Joueur</span><i>→</i><span>Résultat</span>{workflowPrefs.zone && <><i>→</i><span>Shot chart</span></>}{workflowPrefs.rebound && <><i>→</i><span>Rebond si raté</span></>}{workflowPrefs.assist && <><i>→</i><span>PD / Skip si panier</span></>}
+                        <em>Défense : Résultat → joueur si faute/INT/contre → conséquence</em>
+                      </>
+                    ) : (
+                      <>
+                        <span>Contexte</span>{workflowPrefs.system && <><i>→</i><span>Système</span></>}{workflowPrefs.temps && <><i>→</i><span>Temps fort</span></>}<i>→</i><span>Résultat</span>{codingMode === 'post' && workflowPrefs.zone && <><i>→</i><span>Shot chart</span></>}
+                      </>
+                    )}
+                  </div>
+                </div>
                 <div className="vid-input" style={{marginTop:10}}>
                   <label className="vid-file">
                     <input type="file" accept="application/json,.json,.mybasket" onChange={(e) => { void importLiveSourceFile(e.target.files?.[0] ?? null); e.currentTarget.value = ''; }} />
@@ -5228,8 +5381,12 @@ export default function PriseStatsProPage() {
           initialTab={codingSettingsTab}
           workflow={workflowPrefs}
           onWorkflowChange={setWorkflowPrefs}
-          systems={(configuredSystemRows.length ? configuredSystemRows.map((r, i) => ({ key: r.key, label: r.label, emoji: r.emoji, is_active: r.is_active !== false, sort_order: r.sort_order ?? i })) : systemeButtons.map((s, i) => ({ key: s.id, label: s.label, emoji: s.ic, is_active: true, sort_order: i })))}
-          tempsForts={(tags.source === 'supabase' ? tags.all.map((x, i) => ({ key: x.key, label: x.label, emoji: x.emoji, is_active: x.is_active !== false, sort_order: x.sort_order ?? i })) : tempsFortsButtons.map((x, i) => ({ key: x.id, label: x.label, emoji: x.ic, is_active: x.is_active !== false, sort_order: x.sort_order ?? i })))}
+          groups={codingSettingsGroups}
+          profiles={codingProfiles}
+          selectedProfileId={selectedCodingProfileId}
+          onSaveProfile={saveCodingProfile}
+          onDeleteProfile={deleteCodingProfile}
+          onApplyProfile={applyCodingProfile}
           onChanged={() => { setCodingDbNonce((n) => n + 1); tags.reload(); }}
           onClose={() => setShowCodingSettings(false)}
         />
@@ -5239,22 +5396,27 @@ export default function PriseStatsProPage() {
   }
 
   const liveCourt = stage === 'zone';
-  const navIdx = codingMode === 'live-individual' ? ({ player:0, action:1, faute:1, result:2, ft:2 } as Record<string, number>)[stage] ?? 0 : STAGE_NAV[stage] ?? 0;
+  const navIdx = codingMode === 'live-individual' ? ({ context:0, player:3, result:5, faute:4, ft:5, zone:6, rebound:7, assist:7 } as Record<string, number>)[stage] ?? 0 : STAGE_NAV[stage] ?? 0;
 
   const activeStageOrder = codingMode === 'live-individual'
-    ? ['player', 'action', 'faute', 'result', 'ft']
+    ? ['context', 'player', 'result', 'faute', 'ft', ...(workflowPrefs.zone ? ['zone'] : []), ...(workflowPrefs.rebound ? ['rebound'] : []), ...(workflowPrefs.assist ? ['assist'] : [])]
     : codingMode === 'live'
       ? ['context', ...(workflowPrefs.system ? ['systeme'] : []), ...(workflowPrefs.temps ? ['temps'] : []), 'result', 'ft', 'rebound']
       : ['context', ...(workflowPrefs.system ? ['systeme'] : []), ...(workflowPrefs.temps ? ['temps'] : []), ...(workflowPrefs.coverage ? ['coverage'] : []), ...(workflowPrefs.player ? ['player'] : []), 'action', 'faute', 'result', 'ft', ...(workflowPrefs.zone ? ['zone'] : []), ...(workflowPrefs.rebound ? ['rebound'] : []), ...(workflowPrefs.assist ? ['assist'] : [])];
 
   const activeCrumbs = codingMode === 'live-individual'
-    ? ['Joueur', 'Action', 'Résultat']
+    ? ['Contexte', 'Joueur / Résultat', ...(workflowPrefs.zone ? ['Shot chart'] : []), ...(workflowPrefs.rebound ? ['Rebond'] : []), ...(workflowPrefs.assist ? ['PD'] : [])]
     : codingMode === 'live'
       ? ['Contexte', ...(workflowPrefs.system ? ['Système'] : []), ...(workflowPrefs.temps ? ['Temps fort'] : []), 'Résultat']
       : ['Contexte', ...(workflowPrefs.system ? ['Système'] : []), ...(workflowPrefs.temps ? ['Temps fort'] : []), ...(workflowPrefs.player ? ['Joueur'] : []), 'Action', 'Résultat', ...(workflowPrefs.zone ? ['Shot chart'] : []), ...(workflowPrefs.rebound ? ['Rebond'] : []), ...(workflowPrefs.assist ? ['PD'] : [])];
 
-  const currentCrumbLabel =
-    stage === 'context' ? 'Contexte'
+  const currentCrumbLabel = codingMode === 'live-individual'
+    ? (stage === 'context' ? 'Contexte'
+      : stage === 'zone' ? 'Shot chart'
+        : stage === 'rebound' ? 'Rebond'
+          : stage === 'assist' ? 'PD'
+            : 'Joueur / Résultat')
+    : (stage === 'context' ? 'Contexte'
       : stage === 'systeme' || stage === 'inbound' ? 'Système'
       : stage === 'temps' || stage === 'coverage' ? 'Temps fort'
       : stage === 'player' ? 'Joueur'
@@ -5263,8 +5425,23 @@ export default function PriseStatsProPage() {
       : stage === 'zone' ? 'Shot chart'
       : stage === 'rebound' ? 'Rebond'
       : stage === 'assist' ? 'PD'
-      : activeCrumbs[0];
+      : activeCrumbs[0]);
   const activeCrumbIndex = Math.max(0, activeCrumbs.indexOf(currentCrumbLabel));
+
+  const goBackStage = () => {
+    if (codingMode === 'live-individual') {
+      if (stage === 'player') { setStage(draft.actionType ? 'result' : 'context'); return; }
+      if (stage === 'result') { setStage(draft.context === 'defense' ? 'context' : 'player'); return; }
+      if (stage === 'faute') { setStage(draft.context === 'defense' ? 'player' : 'result'); return; }
+      if (stage === 'ft') { setStage('faute'); return; }
+      if (stage === 'zone') { setStage('result'); return; }
+      if (stage === 'rebound') { setStage(workflowPrefs.zone && draft.actionType === 'tir' ? 'zone' : 'result'); return; }
+      if (stage === 'assist') { setStage(workflowPrefs.zone ? 'zone' : 'result'); return; }
+      return;
+    }
+    const currentIndex = activeStageOrder.indexOf(stage);
+    if (currentIndex > 0) setStage(activeStageOrder[currentIndex - 1]);
+  };
 
   // Stats live pour les cartes joueurs de la colonne droite
   const liveBox = computeBox(actions, roster) as any[];
@@ -5479,10 +5656,7 @@ export default function PriseStatsProPage() {
             {/* ============ CENTRE · CODAGE (wizard) ============ */}
             <aside className={`lc lc-code ${workTab === 'coding' ? 'mshow' : ''}`}>
               <div className="lc-head codeTop">
-                <button className="headBack" disabled={stage === 'context' || (codingMode === 'live-individual' && stage === 'player')} onClick={() => {
-                  const currentIndex = activeStageOrder.indexOf(stage);
-                  if (currentIndex > 0) setStage(activeStageOrder[currentIndex - 1]);
-                }}>←</button>
+                <button className="headBack" disabled={stage === 'context'} onClick={goBackStage}>←</button>
                 <button className="headUndo" onClick={undo}>↺</button>
                 <div className="crumb-mini">
                   {activeCrumbs.map((c, i) => {
@@ -5492,7 +5666,7 @@ export default function PriseStatsProPage() {
                 </div>
               </div>
               <div className="lc-body codeDense">
-                {stage !== 'context' && !(codingMode === 'live-individual' && stage === 'player') && (
+                {stage !== 'context' && (
                   draft.context ? (
                     <div
                       style={{
@@ -5860,8 +6034,12 @@ export default function PriseStatsProPage() {
         initialTab={codingSettingsTab}
         workflow={workflowPrefs}
         onWorkflowChange={setWorkflowPrefs}
-        systems={(configuredSystemRows.length ? configuredSystemRows.map((r, i) => ({ key: r.key, label: r.label, emoji: r.emoji, is_active: r.is_active !== false, sort_order: r.sort_order ?? i })) : systemeButtons.map((s, i) => ({ key: s.id, label: s.label, emoji: s.ic, is_active: true, sort_order: i })))}
-        tempsForts={(tags.source === 'supabase' ? tags.all.map((x, i) => ({ key: x.key, label: x.label, emoji: x.emoji, is_active: x.is_active !== false, sort_order: x.sort_order ?? i })) : tempsFortsButtons.map((x, i) => ({ key: x.id, label: x.label, emoji: x.ic, is_active: x.is_active !== false, sort_order: x.sort_order ?? i })))}
+        groups={codingSettingsGroups}
+        profiles={codingProfiles}
+        selectedProfileId={selectedCodingProfileId}
+        onSaveProfile={saveCodingProfile}
+        onDeleteProfile={deleteCodingProfile}
+        onApplyProfile={applyCodingProfile}
         onChanged={() => { setCodingDbNonce((n) => n + 1); tags.reload(); }}
         onClose={() => setShowCodingSettings(false)}
       />
@@ -6712,7 +6890,7 @@ export default function PriseStatsProPage() {
   function renderStage() {
     switch (stage) {
       case 'context':
-        return <>{head('Contexte de possession', 'Choix uniquement au début du quart-temps')}<div className="grid c2 big">
+        return <>{head(codingMode === 'live-individual' ? 'Phase individuelle' : 'Contexte de possession', codingMode === 'live-individual' ? 'Attaque : choisis d’abord le joueur · Défense : choisis d’abord le résultat' : 'Choix uniquement au début du quart-temps')}<div className="grid c2 big">
           <button className={`bt ${draft.context === 'attaque' ? 'active' : ''}`} onClick={() => ctxPick('attaque')}><span className="ic">↗</span><span className="lbl">ATTAQUE</span></button>
           <button className={`bt def ${draft.context === 'defense' ? 'active' : ''}`} onClick={() => ctxPick('defense')}><span className="ic">🛡</span><span className="lbl">DÉFENSE</span></button>
         </div></>;
@@ -6736,10 +6914,16 @@ export default function PriseStatsProPage() {
       case 'temps':
         return <><div className="stageHeadWithConfig">{head('Temps fort', 'Type de jeu')}<button className="stageConfigBtn" onClick={() => openCodingSettings('buttons')} title="Créer, renommer ou masquer des temps forts">⚙</button></div>{tileGrid(tempsFortsButtons, draft.tempsFort, tempsPick)}</>;
       case 'coverage':
-        return <>{head("Défense sur l'écran", 'Comment défend-on le pick ?')}<div className="grid c3">{resolveCodingButtons('coverage', codingDb).map((c) => <button key={c.key} className={`chip ${draft.coverage === c.key ? 'active' : ''}`} onClick={() => covPick(c.key)}>{c.emoji ? c.emoji + ' ' : ''}{c.label}</button>)}</div></>;
+        return <>{head("Défense sur l'écran", 'Comment défend-on le pick ?')}<div className="grid c3">{codingButtonsFor('coverage').map((c) => <button key={c.key} className={`chip ${draft.coverage === c.key ? 'active' : ''}`} onClick={() => covPick(c.key)}>{c.emoji ? c.emoji + ' ' : ''}{c.label}</button>)}</div></>;
       case "player": {
   if (codingMode === 'live-individual') {
-    return <>{head('Joueur', 'Choisis le joueur concerné par la prochaine action')}{players3(draft.playerId, playerPick)}</>;
+    const title = draft.context === 'defense'
+      ? draft.actionType === 'faute-commise' ? 'Qui commet la faute ?'
+        : draft.actionType === 'interception' ? 'Qui réalise l’interception ?'
+          : draft.actionType === 'contre' ? 'Qui réalise le contre ?'
+            : 'Qui réalise l’action défensive ?'
+      : 'Qui réalise l’action ?';
+    return <>{head('Joueur', title)}{players3(draft.playerId, playerPick)}</>;
   }
   const canSkip =
     draft.context === "defense" &&
@@ -6785,70 +6969,38 @@ export default function PriseStatsProPage() {
           ];
           return <>{head("Action du joueur", 'Pas de système ni de temps fort')}{tileGrid(opts, draft.actionType, actionPick)}</>;
         }
-        const cfg = resolveCodingButtons(draft.context === 'defense' ? 'def-action' : 'att-action', codingDb);
+        const cfg = codingButtonsFor(draft.context === 'defense' ? 'def-action' : 'att-action');
         const opts = cfg.map((b) => ({ id: b.key, label: b.label, ic: b.emoji }));
         return <>{head("Type d'action", draft.context === 'defense' ? 'Action défensive' : 'Action offensive')}{tileGrid(opts, draft.actionType, actionPick)}</>;
       }
-      case 'faute':
+      case 'faute': {
+        const fl = (key: string, fallback: string) => codingLabel('foul', key, fallback);
         return draft.actionType === 'faute-commise'
           ? (
               <>
-                {head('Faute commise', 'LF concédés, and-one ou touche ?')}
-                <div
-                  style={{
-                    display: 'grid',
-                    gridTemplateColumns: '1fr 1fr',
-                    gap: 8,
-                  }}
-                >
-                  <button
-                    className="chip"
-                    style={{ gridColumn: '1 / -1' }}
-                    onClick={() => foulPick('touche')}
-                  >
-                    Touche
-                  </button>
-
-                  <button
-                    className="chip"
-                    onClick={() => foulPick('lf2')}
-                  >
-                    2 LF
-                  </button>
-
-                  <button
-                    className="chip"
-                    onClick={() => foulPick('2plus1')}
-                  >
-                    2pts + 1LF
-                  </button>
-
-                  <button
-                    className="chip"
-                    onClick={() => foulPick('lf3')}
-                  >
-                    3 LF
-                  </button>
-
-                  <button
-                    className="chip"
-                    onClick={() => foulPick('3plus1')}
-                  >
-                    3pts + 1LF
-                  </button>
+                {head('Faute commise', codingMode === 'live-individual' && draft.context === 'defense' ? 'Choisis maintenant la suite de la faute' : 'LF concédés, and-one ou touche ?')}
+                <div className="foulOutcomeGrid">
+                  <button className="chip foulTouch" style={!codingButtonEnabled('foul','touche') ? {display:'none'} : undefined} onClick={() => foulPick('touche')}>{fl('touche','Touche')}</button>
+                  <button className="chip" style={!codingButtonEnabled('foul','lf2') ? {display:'none'} : undefined} onClick={() => foulPick('lf2')}>{fl('lf2','2 LF')}</button>
+                  <button className="chip" style={!codingButtonEnabled('foul','2plus1') ? {display:'none'} : undefined} onClick={() => foulPick('2plus1')}>{fl('2plus1','2pts + 1LF')}</button>
+                  <button className="chip" style={!codingButtonEnabled('foul','lf3') ? {display:'none'} : undefined} onClick={() => foulPick('lf3')}>{fl('lf3','3 LF')}</button>
+                  <button className="chip" style={!codingButtonEnabled('foul','3plus1') ? {display:'none'} : undefined} onClick={() => foulPick('3plus1')}>{fl('3plus1','3pts + 1LF')}</button>
                 </div>
               </>
             )
           : (
               <>
-                {head('Faute provoquée', 'Touche ou lancers francs ?')}
-                <div className="grid c3">
-                  <button className="chip" onClick={() => foulPick('touche')}>Touche</button>
-                  <button className="chip" onClick={() => foulPick('lf2')}>2 LF</button>
-                  <button className="chip" onClick={() => foulPick('lf3')}>3 LF</button>
+                {head('Faute provoquée', 'Touche, lancers francs ou and-one ?')}
+                <div className="foulOutcomeGrid">
+                  <button className="chip foulTouch" style={!codingButtonEnabled('foul','touche') ? {display:'none'} : undefined} onClick={() => foulPick('touche')}>{fl('touche','Touche')}</button>
+                  <button className="chip" style={!codingButtonEnabled('foul','lf2') ? {display:'none'} : undefined} onClick={() => foulPick('lf2')}>{fl('lf2','2 LF')}</button>
+                  <button className="chip" style={!codingButtonEnabled('foul','2plus1') ? {display:'none'} : undefined} onClick={() => foulPick('2plus1')}>{fl('2plus1','2pts + 1LF')}</button>
+                  <button className="chip" style={!codingButtonEnabled('foul','lf3') ? {display:'none'} : undefined} onClick={() => foulPick('lf3')}>{fl('lf3','3 LF')}</button>
+                  <button className="chip" style={!codingButtonEnabled('foul','3plus1') ? {display:'none'} : undefined} onClick={() => foulPick('3plus1')}>{fl('3plus1','3pts + 1LF')}</button>
                 </div>
               </>
             );
+      }
       case 'result': {
         const isDefense = draft.context === 'defense';
 
@@ -6871,11 +7023,11 @@ export default function PriseStatsProPage() {
             {head(
               'Résultat',
               codingMode !== 'post'
-                ? (codingMode === 'live-individual' ? 'Résultat du joueur' : (isDefense ? 'Choisis le résultat défensif' : 'Choisis le résultat offensif'))
+                ? (codingMode === 'live-individual' ? (isDefense ? 'Résultat défensif — le joueur sera demandé seulement si nécessaire' : 'Résultat du joueur sélectionné') : (isDefense ? 'Choisis le résultat défensif' : 'Choisis le résultat offensif'))
                 : (isDefense ? 'Tir concédé — résultat' : 'Choisis directement le résultat du tir')
             )}
 
-            {codingMode !== 'live' && isDefense && oppRoster.length > 0 && (
+            {codingMode === 'post' && isDefense && oppRoster.length > 0 && (
               <>
                 <div className="sublbl">Joueur adverse (tir concédé)</div>
                 <div className="grid c3">
@@ -6895,34 +7047,67 @@ export default function PriseStatsProPage() {
 
             <div className="sublbl resultSectionLabel">Tirs</div>
             <div className="grid c2 resultMainGrid">
-              <button className="res made" onClick={() => quickShotResult('2PTS', 'made')}>✓ 2PTS marqué</button>
-              <button className="res miss" onClick={() => quickShotResult('2PTS', 'missed')}>✕ 2PTS raté</button>
-              <button className="res made" onClick={() => quickShotResult('3PTS', 'made')}>✓ 3PTS marqué</button>
-              <button className="res miss" onClick={() => quickShotResult('3PTS', 'missed')}>✕ 3PTS raté</button>
+              <button className="res made" style={!codingButtonEnabled('result','2-made') ? {display:'none'} : undefined} onClick={() => quickShotResult('2PTS', 'made')}>✓ {codingLabel('result','2-made','2PTS marqué')}</button>
+              <button className="res miss" style={!codingButtonEnabled('result','2-missed') ? {display:'none'} : undefined} onClick={() => quickShotResult('2PTS', 'missed')}>✕ {codingLabel('result','2-missed','2PTS raté')}</button>
+              <button className="res made" style={!codingButtonEnabled('result','3-made') ? {display:'none'} : undefined} onClick={() => quickShotResult('3PTS', 'made')}>✓ {codingLabel('result','3-made','3PTS marqué')}</button>
+              <button className="res miss" style={!codingButtonEnabled('result','3-missed') ? {display:'none'} : undefined} onClick={() => quickShotResult('3PTS', 'missed')}>✕ {codingLabel('result','3-missed','3PTS raté')}</button>
             </div>
 
             {codingMode !== 'post' ? (
               <>
-                <div className="sublbl resultSectionLabel">Lancers francs / And-one</div>
-                <div className="resultShotsGrid">
-                  <button className="chip" onClick={() => startFreeThrows(1)}>1 LF</button>
-                  <button className="chip" onClick={() => startFreeThrows(2)}>2 LF</button>
-                  <button className="chip" onClick={() => startFreeThrows(3)}>3 LF</button>
-                  <button className="chip" onClick={() => special('2pts1lf')}>2 PTS + 1 LF</button>
-                  <button className="chip" onClick={() => special('3pts1lf')}>3 PTS + 1 LF</button>
-                </div>
-
-                {codingMode === 'live' && (<>
-                  <div className="sublbl resultSectionLabel">Autres résultats</div>
-                  <div className="resultAllActionsGrid">
-                    <button className="chip resultActionBtn" onClick={() => actionPick('faute-provoquee')}>🔔 Faute provoquée</button>
-                    <button className="chip resultActionBtn" onClick={() => actionPick('faute-commise')}>🟨 Faute commise</button>
-                    <button className="chip resultActionBtn" onClick={() => actionPick('touche')}>⤵ Touche / Sortie</button>
-                    <button className="chip resultActionBtn" onClick={() => actionPick(isDefense ? 'interception' : 'perte')}>
-                      {isDefense ? '🖐 INT · Interception' : '✖ BP · Perte de balle'}
-                    </button>
-                  </div>
-                </>)}
+                {codingMode === 'live-individual' ? (
+                  <>
+                    {!isDefense && (
+                      <>
+                        <div className="sublbl resultSectionLabel">Lancers francs / And-one</div>
+                        <div className="resultShotsGrid">
+                          <button className="chip" style={!codingButtonEnabled('result','lf1') ? {display:'none'} : undefined} onClick={() => startFreeThrows(1)}>{codingLabel('result','lf1','1 LF')}</button>
+                          <button className="chip" style={!codingButtonEnabled('result','lf2') ? {display:'none'} : undefined} onClick={() => startFreeThrows(2)}>{codingLabel('result','lf2','2 LF')}</button>
+                          <button className="chip" style={!codingButtonEnabled('result','lf3') ? {display:'none'} : undefined} onClick={() => startFreeThrows(3)}>{codingLabel('result','lf3','3 LF')}</button>
+                          <button className="chip" style={!codingButtonEnabled('result','2plus1') ? {display:'none'} : undefined} onClick={() => special('2pts1lf')}>{codingLabel('result','2plus1','2 PTS + 1 LF')}</button>
+                          <button className="chip" style={!codingButtonEnabled('result','3plus1') ? {display:'none'} : undefined} onClick={() => special('3pts1lf')}>{codingLabel('result','3plus1','3 PTS + 1 LF')}</button>
+                        </div>
+                        <div className="sublbl resultSectionLabel">Autres résultats joueur</div>
+                        <div className="resultAllActionsGrid">
+                          <button className="chip resultActionBtn" style={!codingButtonEnabled('att-action','faute-provoquee') ? {display:'none'} : undefined} onClick={() => actionPick('faute-provoquee')}>🔔 {codingLabel('att-action','faute-provoquee','Faute provoquée')}</button>
+                          <button className="chip resultActionBtn" style={!codingButtonEnabled('att-action','faute-commise') ? {display:'none'} : undefined} onClick={() => actionPick('faute-commise')}>🟨 {codingLabel('att-action','faute-commise','Faute commise')}</button>
+                          <button className="chip resultActionBtn" style={!codingButtonEnabled('att-action','perte') ? {display:'none'} : undefined} onClick={() => actionPick('perte')}>✖ {codingLabel('att-action','perte','BP · Perte de balle')}</button>
+                        </div>
+                      </>
+                    )}
+                    {isDefense && (
+                      <>
+                        <div className="sublbl resultSectionLabel">Autres résultats défense</div>
+                        <div className="resultAllActionsGrid">
+                          <button className="chip resultActionBtn" style={!codingButtonEnabled('def-action','faute-commise') ? {display:'none'} : undefined} onClick={() => actionPick('faute-commise')}>🟨 {codingLabel('def-action','faute-commise','Faute commise')}</button>
+                          <button className="chip resultActionBtn" style={!codingButtonEnabled('def-action','interception') ? {display:'none'} : undefined} onClick={() => actionPick('interception')}>🖐 {codingLabel('def-action','interception','INT · Interception')}</button>
+                          <button className="chip resultActionBtn" style={!codingButtonEnabled('def-action','contre') ? {display:'none'} : undefined} onClick={() => actionPick('contre')}>🛑 {codingLabel('def-action','contre','Contre')}</button>
+                        </div>
+                      </>
+                    )}
+                  </>
+                ) : (
+                  <>
+                    <div className="sublbl resultSectionLabel">Lancers francs / And-one</div>
+                    <div className="resultShotsGrid">
+                      <button className="chip" style={!codingButtonEnabled('result','lf1') ? {display:'none'} : undefined} onClick={() => startFreeThrows(1)}>{codingLabel('result','lf1','1 LF')}</button>
+                      <button className="chip" style={!codingButtonEnabled('result','lf2') ? {display:'none'} : undefined} onClick={() => startFreeThrows(2)}>{codingLabel('result','lf2','2 LF')}</button>
+                      <button className="chip" style={!codingButtonEnabled('result','lf3') ? {display:'none'} : undefined} onClick={() => startFreeThrows(3)}>{codingLabel('result','lf3','3 LF')}</button>
+                      <button className="chip" style={!codingButtonEnabled('result','2plus1') ? {display:'none'} : undefined} onClick={() => special('2pts1lf')}>{codingLabel('result','2plus1','2 PTS + 1 LF')}</button>
+                      <button className="chip" style={!codingButtonEnabled('result','3plus1') ? {display:'none'} : undefined} onClick={() => special('3pts1lf')}>{codingLabel('result','3plus1','3 PTS + 1 LF')}</button>
+                    </div>
+                    <div className="sublbl resultSectionLabel">Autres résultats</div>
+                    <div className="resultAllActionsGrid">
+                      {codingButtonsFor(isDefense ? 'def-action' : 'att-action')
+                        .filter((button) => button.key !== 'tir')
+                        .map((button) => (
+                          <button key={button.key} className="chip resultActionBtn" onClick={() => actionPick(button.key)}>
+                            {button.emoji ? `${button.emoji} ` : ''}{button.label}
+                          </button>
+                        ))}
+                    </div>
+                  </>
+                )}
               </>
             ) : (
               <>
@@ -6947,8 +7132,8 @@ export default function PriseStatsProPage() {
                   <>
                     <div className="sublbl">Situations spéciales</div>
                     <div className="grid c2">
-                      <button className="chip" onClick={() => special('2pts1lf')}>2 PTS + 1 LF</button>
-                      <button className="chip" onClick={() => special('3pts1lf')}>3 PTS + 1 LF</button>
+                      <button className="chip" style={!codingButtonEnabled('result','2plus1') ? {display:'none'} : undefined} onClick={() => special('2pts1lf')}>2 PTS + 1 LF</button>
+                      <button className="chip" style={!codingButtonEnabled('result','3plus1') ? {display:'none'} : undefined} onClick={() => special('3pts1lf')}>3 PTS + 1 LF</button>
                     </div>
                   </>
                 )}
@@ -6967,10 +7152,10 @@ export default function PriseStatsProPage() {
         // configurables via livestat_coding_buttons (catégorie 'rebound') : la config
         // par équipe écrase le label par key, sinon on garde les libellés par défaut.
         const rebDefaults: Record<string, string> = { 'off': 'Rebond offensif', 'def': 'Rebond défensif', 'touche-pour': 'Touche pour', 'touche-contre': 'Touche contre' };
-        const rebCfg = resolveCodingButtons('rebound', codingDb);
+        const rebCfg = codingButtonsFor('rebound');
         const rebLabelOf = (id: string) => rebCfg.find((c) => c.key === id)?.label ?? rebDefaults[id];
-        const reb: string[] = ['off', 'def', 'touche-pour', 'touche-contre'];
-        return <>{head('Conséquence', 'Rebond sur tir manqué')}<div className="grid c2">{reb.map((id) => <button key={id} className={`chip ${draft.reboundType === id ? 'active' : ''}`} onClick={() => rebPick(id)}>{rebLabelOf(id)}</button>)}</div>
+        const reb: string[] = (codingMode === 'live-individual' ? ['off', 'def'] : ['off', 'def', 'touche-pour', 'touche-contre']).filter((id) => rebCfg.some((c) => c.key === id));
+        return <>{head('Conséquence', codingMode === 'live-individual' ? (draft.context === 'defense' ? 'Tir adverse raté : RO adverse ou RD pour nous' : 'Tir raté : RO ou RD') : 'Rebond sur tir manqué')}<div className="grid c2">{reb.map((id) => <button key={id} className={`chip ${draft.reboundType === id ? 'active' : ''}`} onClick={() => rebPick(id)}>{rebLabelOf(id)}</button>)}</div>
           {draft.reboundType && isMyRebound(draft.context, draft.reboundType) && <><div className="sublbl">Qui prend le rebond ?</div>{players3(draft.reboundPlayerId, rebWho)}<button className="chip" style={{ marginTop: 8 }} onClick={() => commit(draft)}>Sans précision →</button></>}
         </>;
       }
@@ -6978,7 +7163,7 @@ export default function PriseStatsProPage() {
         const others = floor.filter((p) => p.id !== draft.playerId);
         return <>{head('Passe décisive', draft.actionType === 'faute-provoquee' ? 'Action ayant amené la faute' : 'Panier marqué')}<div className="sublbl">Qui a fait la passe décisive ?</div>
           <div className="grid c3">{others.map((p) => <button key={p.id} className="pl sm" onClick={() => passer(p.id)}><Av p={p} /><span className="num">{p.num}</span><span className="nm">{p.name}</span></button>)}
-            <button className="pl sm" onClick={() => passer('')}><Av /><span className="num">—</span><span className="nm">Personne</span></button></div></>;
+            <button className="pl sm" onClick={() => passer('')}><Av /><span className="num">—</span><span className="nm">Skip / aucune</span></button></div></>;
       }
       default: return null;
     }
@@ -7564,7 +7749,7 @@ function Style() {
       .cm-t { font-size: 13px; font-weight: 900; letter-spacing: .03em; } .cm-s { font-size: 9px; color: var(--mute); font-weight: 800; letter-spacing: .12em; }
       .cm-head-r { display: flex; gap: 10px; align-items: center; }
 
-      .projectMenuWrap{position:relative}.menuDots{min-width:44px;justify-content:center;font-size:16px;letter-spacing:2px}.projectMenu{position:absolute;right:0;top:calc(100% + 8px);z-index:2500;width:280px;padding:8px;border:1px solid var(--border);border-radius:12px;background:#0d1626;box-shadow:0 18px 50px rgba(0,0,0,.45);display:grid;gap:4px}.projectMenu button{width:100%;border:0;border-radius:8px;background:transparent;color:#eef3fb;text-align:left;padding:9px 10px;font-size:11px;font-weight:850;cursor:pointer}.projectMenu button:hover{background:rgba(255,255,255,.07)}.projectMenu .danger{color:#ff8792}.projectMenuSep{height:1px;background:var(--border);margin:4px 2px}.trackpadHint{font-size:10px;color:#9eabc0;border:1px solid var(--border);border-radius:999px;padding:5px 9px}.stageHeadWithConfig{position:relative}.stageHeadWithConfig .stageConfigBtn{position:absolute;right:0;top:0;width:30px;height:30px;border:1px solid var(--border);border-radius:8px;background:rgba(212,162,76,.10);color:var(--gold);font-weight:900;cursor:pointer}.panelResizeHandle{min-width:7px;border-radius:999px;background:linear-gradient(180deg,transparent 8%,rgba(212,162,76,.28) 24%,rgba(212,162,76,.58) 50%,rgba(212,162,76,.28) 76%,transparent 92%);cursor:col-resize;display:flex;align-items:center;justify-content:center;touch-action:none;user-select:none}.panelResizeHandle span{font-size:14px;color:#d4a24c;opacity:.8;writing-mode:vertical-rl}.videoMaximized{grid-template-columns:1fr!important}.videoMaximized>.panelResizeHandle,.videoMaximized>.lc-code,.videoMaximized>.lc-right{display:none!important}.videoMaximized>.lc-video{grid-column:1!important;width:100%;min-width:0}.videoMaximized .videoSlot.big{min-height:0;height:100%}.videoMaximized .vplayer{height:100%;max-height:none}.individualLinkBox{margin-top:10px;border:1px solid var(--border);background:var(--panel);border-radius:10px;padding:10px}.individualLinkBox label{display:block;color:var(--mute);font-size:10px;font-weight:850;margin-bottom:6px}.individualLinkBox select{width:100%;border:1px solid var(--border);border-radius:8px;background:var(--card);color:var(--txt);padding:8px}.cm-video{grid-template-columns:repeat(3,minmax(0,1fr)) !important}
+      .projectMenuWrap{position:relative}.menuDots{min-width:44px;justify-content:center;font-size:16px;letter-spacing:2px}.projectMenu{position:absolute;right:0;top:calc(100% + 8px);z-index:2500;width:280px;padding:8px;border:1px solid var(--border);border-radius:12px;background:#0d1626;box-shadow:0 18px 50px rgba(0,0,0,.45);display:grid;gap:4px}.projectMenu button{width:100%;border:0;border-radius:8px;background:transparent;color:#eef3fb;text-align:left;padding:9px 10px;font-size:11px;font-weight:850;cursor:pointer}.projectMenu button:hover{background:rgba(255,255,255,.07)}.projectMenu .danger{color:#ff8792}.projectMenuSep{height:1px;background:var(--border);margin:4px 2px}.trackpadHint{font-size:10px;color:#9eabc0;border:1px solid var(--border);border-radius:999px;padding:5px 9px}.stageHeadWithConfig{position:relative}.stageHeadWithConfig .stageConfigBtn{position:absolute;right:0;top:0;width:30px;height:30px;border:1px solid var(--border);border-radius:8px;background:rgba(212,162,76,.10);color:var(--gold);font-weight:900;cursor:pointer}.panelResizeHandle{min-width:7px;border-radius:999px;background:linear-gradient(180deg,transparent 8%,rgba(212,162,76,.28) 24%,rgba(212,162,76,.58) 50%,rgba(212,162,76,.28) 76%,transparent 92%);cursor:col-resize;display:flex;align-items:center;justify-content:center;touch-action:none;user-select:none}.panelResizeHandle span{font-size:14px;color:#d4a24c;opacity:.8;writing-mode:vertical-rl}.videoMaximized{grid-template-columns:1fr!important}.videoMaximized>.panelResizeHandle,.videoMaximized>.lc-code,.videoMaximized>.lc-right{display:none!important}.videoMaximized>.lc-video{grid-column:1!important;width:100%;min-width:0}.videoMaximized .videoSlot.big{min-height:0;height:100%}.videoMaximized .vplayer{height:100%;max-height:none}.codingLogicSetup{margin-top:10px;border:1px solid var(--border);border-radius:11px;background:var(--panel);padding:10px;display:grid;gap:8px}.codingLogicSetupHead{display:flex;align-items:center;justify-content:space-between;gap:10px}.codingLogicSetupHead>div{display:grid;gap:2px}.codingLogicSetupHead b{font-size:10px;color:var(--gold)}.codingLogicSetupHead small{font-size:9px;color:var(--mute)}.codingLogicSetupHead button,.codingLogicSetupRow button{border:1px solid var(--gold);border-radius:8px;background:rgba(212,162,76,.1);color:var(--gold);padding:7px 9px;font-size:9px;font-weight:900;cursor:pointer}.codingLogicSetupRow{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:7px}.codingLogicSetupRow select{min-width:0;border:1px solid var(--border);border-radius:8px;background:var(--card);color:var(--txt);padding:8px;font-size:10px}.codingLogicPath{display:flex;align-items:center;gap:4px;flex-wrap:wrap}.codingLogicPath span{border:1px solid #35415a;border-radius:999px;background:#111b2d;color:#c4cedd;padding:4px 7px;font-size:8px;font-weight:850}.codingLogicPath i{font-style:normal;color:#65738b;font-size:8px}.codingLogicPath em{flex-basis:100%;font-style:normal;color:#8794aa;font-size:8px;margin-top:2px}.foulOutcomeGrid{display:grid;grid-template-columns:1fr 1fr;gap:8px}.foulOutcomeGrid .foulTouch{grid-column:1/-1}.foulOutcomeGrid .chip{min-height:44px}.individualDefenseHint{border:1px solid #39465d;border-radius:9px;background:#101a2b;padding:7px 9px;color:#9eabc0;font-size:9px}.individualLinkBox{margin-top:10px;border:1px solid var(--border);background:var(--panel);border-radius:10px;padding:10px}.individualLinkBox label{display:block;color:var(--mute);font-size:10px;font-weight:850;margin-bottom:6px}.individualLinkBox select{width:100%;border:1px solid var(--border);border-radius:8px;background:var(--card);color:var(--txt);padding:8px}.cm-video{grid-template-columns:repeat(3,minmax(0,1fr)) !important}
       @media(max-width:900px){.cm-video{grid-template-columns:1fr !important}.projectMenu{position:fixed;right:12px;top:72px;width:min(300px,calc(100vw - 24px))}.panelResizeHandle{display:none!important}.videoMaximized>.lc-code,.videoMaximized>.lc-right{display:none!important}}
       .cm-ghost { display: flex; align-items: center; gap: 7px; background: var(--panel2); border: 1px solid var(--border); border-radius: 10px; padding: 9px 14px; font-size: 12px; font-weight: 800; color: var(--txt); cursor: pointer; }
       .cm-ghost.sm { padding: 6px 11px; font-size: 11px; }
