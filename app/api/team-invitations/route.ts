@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin-server";
 import { sendTransactionalEmail } from "@/lib/server-notifications";
+import { userHasSubscriptionAccess } from "@/lib/subscription-entitlements";
 
 type PermissionKey = "view_team" | "players" | "sessions" | "livestats" | "media";
 type PermissionMap = Record<PermissionKey, boolean>;
@@ -297,14 +298,12 @@ export async function POST(request: NextRequest) {
 
   const { supabase, user, team } = context;
 
-  const { data: ownerEntitled, error: entitlementError } = await supabase.rpc(
-    "team_owner_has_collaboration_access",
-    { p_team_id: teamId },
-  );
-
-  if (entitlementError) {
-    return NextResponse.json({ error: entitlementError.message }, { status: 500 });
-  }
+  const ownerEntitled = await userHasSubscriptionAccess({
+    supabase,
+    userId: user.id,
+    email: user.email,
+    sectionKey: "collaboration",
+  });
 
   if (ownerEntitled !== true) {
     return NextResponse.json(

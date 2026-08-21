@@ -16,6 +16,7 @@ const SECTION_ALIASES: Record<string, string[]> = {
   annonces: ["annonces", "mes_annonces"],
   documents: ["papiers"],
   equipes: ["equipes"],
+  collaboration: ["collaboration_equipe"],
   management: ["stats_joueur", "stats_jeu", "stats_live", "rotation", "gameplan"],
   coach_space: ["profil_coach"],
   club_space: ["club_space"],

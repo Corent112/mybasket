@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin-server";
+import { userHasSubscriptionAccess } from "@/lib/subscription-entitlements";
 
 function tokenHash(token: string) {
   return createHash("sha256").update(token).digest("hex");
@@ -265,17 +266,17 @@ export async function POST(
     return NextResponse.json({ error: "Action inconnue." }, { status: 400 });
   }
 
-  const { data: ownerEntitled, error: entitlementError } = await supabase.rpc(
-    "team_owner_has_collaboration_access",
-    { p_team_id: invitation.team_id },
-  );
-
-  if (entitlementError) {
-    return NextResponse.json(
-      { error: entitlementError.message },
-      { status: 500 },
-    );
-  }
+  const team = Array.isArray(invitation.teams) ? invitation.teams[0] : invitation.teams;
+  const ownerId = String(team?.user_id || "");
+  const ownerAuth = ownerId ? await result.admin.auth.admin.getUserById(ownerId) : null;
+  const ownerEntitled = ownerId
+    ? await userHasSubscriptionAccess({
+        supabase,
+        userId: ownerId,
+        email: ownerAuth?.data?.user?.email ?? null,
+        sectionKey: "collaboration",
+      })
+    : false;
 
   if (ownerEntitled !== true) {
     return NextResponse.json(

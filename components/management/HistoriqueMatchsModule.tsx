@@ -17,6 +17,8 @@ type MatchRow = {
   them_score: number | null;
   result: string | null;
   home?: boolean | null;
+  project_status?: string | null;
+  finalized_at?: string | null;
 };
 
 type PlayerLine = {
@@ -553,10 +555,13 @@ export default function HistoriqueMatchsModule() {
       return;
     }
 
+    // IMPORTANT : l'historique appartient à l'ÉQUIPE, pas à l'utilisateur qui a codé.
+    // Les RLS Supabase vérifient que le compte connecté est propriétaire de l'équipe
+    // ou collaborateur autorisé LiveStats. Le coach principal voit donc aussi les
+    // matchs codés par ses assistants.
     const { data: matchData, error: matchError } = await supabase
       .from("match_stats")
-      .select("id, team_id, opponent, match_date, us_score, them_score, result, home")
-      .eq("user_id", user.id)
+      .select("id, team_id, opponent, match_date, us_score, them_score, result, home, project_status, finalized_at")
       .order("match_date", { ascending: false });
 
     if (matchError) {
@@ -609,7 +614,37 @@ export default function HistoriqueMatchsModule() {
 
   const visibleMatches = useMemo(() => {
     if (!teamId) return [];
-    return matches.filter((match) => match.team_id === teamId);
+
+    const rows = matches.filter((match) => match.team_id === teamId);
+
+    // Protection visuelle contre les anciens doublons : si une rencontre possède
+    // à la fois un brouillon 0-0 et un match terminé, on affiche le match terminé.
+    // Les nouveaux matchs sont aussi protégés à la création dans ensureLiveMatch().
+    const byFixture = new Map<string, MatchRow>();
+    for (const match of rows) {
+      const key = [
+        String(match.team_id || ""),
+        String(match.match_date || ""),
+        String(match.opponent || "").trim().toLocaleLowerCase("fr"),
+        match.home === false ? "away" : "home",
+      ].join("|");
+      const previous = byFixture.get(key);
+      if (!previous) {
+        byFixture.set(key, match);
+        continue;
+      }
+
+      const score = (m: MatchRow) =>
+        (m.project_status === "completed" ? 1000 : 0) +
+        (m.finalized_at ? 100 : 0) +
+        (safeNumber(m.us_score) !== 0 || safeNumber(m.them_score) !== 0 ? 10 : 0);
+
+      if (score(match) > score(previous)) byFixture.set(key, match);
+    }
+
+    return Array.from(byFixture.values()).sort((a, b) =>
+      String(b.match_date || "").localeCompare(String(a.match_date || "")),
+    );
   }, [matches, teamId]);
 
   const openSheet = async (match: MatchRow) => {
@@ -628,7 +663,7 @@ export default function HistoriqueMatchsModule() {
       .order("pts", { ascending: false });
 
     if (error) {
-      console.error("Erreur chargement feuille de match:", error);
+      console.error("Erreur chargement boxscore complet:", error);
       setSheetLines([]);
       setSheetLoading(false);
       return;
@@ -845,6 +880,20 @@ export default function HistoriqueMatchsModule() {
   };
 
 
+  const playerPlusMinus = useMemo(() => {
+    const result: Record<string, number> = {};
+    sheetActions.forEach((action) => {
+      const lineup = Array.isArray(action.lineup) ? action.lineup.map(String) : [];
+      if (!lineup.length) return;
+      const delta = pointsFromAction(action);
+      if (!delta) return;
+      lineup.forEach((playerId) => {
+        result[playerId] = (result[playerId] || 0) + delta;
+      });
+    });
+    return result;
+  }, [sheetActions]);
+
   const selectedTeamName = selectedMatch?.team_id ? teamNames[selectedMatch.team_id] || "Équipe" : "Équipe";
   const totals = getTotals(sheetLines);
   const totalsAdvanced = getTotalsAdvanced(totals);
@@ -858,7 +907,7 @@ export default function HistoriqueMatchsModule() {
       <div className="hist-head">
         <div>
           <h3>Historique des matchs</h3>
-          <p>Choisis ton équipe, ouvre la feuille de match ou supprime un match.</p>
+          <p>Choisis ton équipe, ouvre la boxscore complet ou supprime un match.</p>
         </div>
 
         <select value={teamId} onChange={(e) => setTeamId(e.target.value)}>
@@ -998,7 +1047,8 @@ export default function HistoriqueMatchsModule() {
                       <th rowSpan={2}>BP</th>
                       <th rowSpan={2}>CTRE</th>
                       <th rowSpan={2}>FP</th>
-                      <th rowSpan={2}>Eval</th>
+                      <th rowSpan={2}>+/-</th>
+                      <th rowSpan={2}>Éval</th>
                     </tr>
 
                     <tr>
@@ -1050,6 +1100,9 @@ export default function HistoriqueMatchsModule() {
                           <td>{s.to}</td>
                           <td>{s.bs}</td>
                           <td>{s.pf}</td>
+                          <td className={(playerPlusMinus[id] || 0) >= 0 ? "positive" : "negative"}>
+                            {(playerPlusMinus[id] || 0) > 0 ? "+" : ""}{playerPlusMinus[id] || 0}
+                          </td>
                           <td>{s.eff}</td>
                         </tr>
                       );
@@ -1078,6 +1131,10 @@ export default function HistoriqueMatchsModule() {
                       <td>{totals.to}</td>
                       <td>{totals.bs}</td>
                       <td>{totals.pf}</td>
+                      <td className={(safeNumber(selectedMatch?.us_score) - safeNumber(selectedMatch?.them_score)) >= 0 ? "positive" : "negative"}>
+                        {(safeNumber(selectedMatch?.us_score) - safeNumber(selectedMatch?.them_score)) > 0 ? "+" : ""}
+                        {safeNumber(selectedMatch?.us_score) - safeNumber(selectedMatch?.them_score)}
+                      </td>
                       <td>{totalsAdvanced.eff}</td>
                     </tr>
                   </tbody>
@@ -1090,7 +1147,7 @@ export default function HistoriqueMatchsModule() {
                 <table>
                   <thead>
                     <tr>
-                      <th>Analyse collective</th>
+                      <th>Analyse</th>
                       <th>Poss</th>
                       <th>eFG%</th>
                       <th>TS%</th>
@@ -1539,31 +1596,6 @@ export default function HistoriqueMatchsModule() {
           width: 420px;
           min-width: 420px;
           max-width: 420px;
-        }
-
-
-        .lineups-table th:first-child {
-          position: sticky;
-          left: 0;
-          z-index: 5;
-          background: #6b1a2c;
-        }
-
-        .lineups-table td:first-child {
-          position: sticky;
-          left: 0;
-          z-index: 2;
-          white-space: normal;
-          line-height: 1.45;
-          padding: 0.9rem 1rem;
-          background: #f4f4f4;
-        }
-
-        .lineups-table thead th {
-          min-height: 54px;
-          padding-top: 0.85rem;
-          padding-bottom: 0.85rem;
-          vertical-align: middle;
         }
 
         .players-table th:not(:first-child),

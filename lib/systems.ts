@@ -45,6 +45,8 @@ export type SystemItem = {
   reviewed_by?: string | null;
   rejection_reason?: string | null;
   original_system_id?: string | null;
+  contributor_name?: string | null;
+  contributor_avatar_url?: string | null;
   createdAt?: string | number;
   updatedAt?: string | number;
 };
@@ -239,6 +241,8 @@ export function rowToSystem(row: any): SystemItem {
     reviewed_by: row.reviewed_by ?? null,
     rejection_reason: row.rejection_reason ?? null,
     original_system_id: row.original_system_id ?? null,
+    contributor_name: null,
+    contributor_avatar_url: null,
     createdAt: row.created_at ?? Date.now(),
     updatedAt: row.updated_at ?? Date.now(),
   };
@@ -292,6 +296,42 @@ function playRowToClient(row: any): PlayItem {
   };
 }
 
+
+async function attachSystemContributors(rows: any[]): Promise<SystemItem[]> {
+  const mapped = rows.map(rowToSystem);
+  const contributorIds = Array.from(new Set(
+    rows
+      .filter((row) => row?.user_id && row?.review_status === 'approved' && row?.submitted_at)
+      .map((row) => String(row.user_id))
+  ));
+
+  if (!contributorIds.length) return mapped;
+
+  const supabase = createClient();
+  const { data: profiles, error } = await supabase
+    .from('profiles')
+    .select('id, display_name, avatar_url')
+    .in('id', contributorIds);
+
+  if (error) {
+    console.warn('Attribution systèmes : profils indisponibles', error);
+    return mapped;
+  }
+
+  const byId = new Map((profiles ?? []).map((profile: any) => [String(profile.id), profile]));
+  return mapped.map((item, index) => {
+    const source = rows[index];
+    if (!source?.submitted_at || source?.review_status !== 'approved') return item;
+    const profile: any = byId.get(String(source.user_id));
+    if (!profile) return item;
+    return {
+      ...item,
+      contributor_name: profile.display_name || 'Utilisateur MyBasket',
+      contributor_avatar_url: profile.avatar_url || null,
+    };
+  });
+}
+
 export async function listSystems(): Promise<SystemItem[]> {
   const supabase = createClient();
 
@@ -307,7 +347,7 @@ export async function listSystems(): Promise<SystemItem[]> {
     return [];
   }
 
-  return (data ?? []).map(rowToSystem);
+  return attachSystemContributors(data ?? []);
 }
 
 export async function listMySystems(): Promise<SystemItem[]> {

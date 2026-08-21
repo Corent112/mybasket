@@ -1,6 +1,6 @@
 import { createClient } from "@/lib/supabase/server";
-import { createAdminClient } from "@/lib/supabase/admin-server";
 import { getEffectiveSubscriptionForUser } from "@/lib/effective-subscription";
+import { userHasSubscriptionAccess } from "@/lib/subscription-entitlements";
 
 type AccessResult = { userId: string | null; allowed: boolean };
 type LimitResult = { userId: string | null; limit: number | null; count: number; canCreate: boolean };
@@ -27,6 +27,7 @@ const SECTION_ALIASES: Record<string, string[]> = {
   plaquette: ["plaquette"], playbooks: ["playbooks"],
   annonces: ["annonces", "mes_annonces"], documents: ["papiers"],
   equipes: ["equipes"],
+  collaboration: ["collaboration_equipe"],
   management: ["stats_joueur", "stats_jeu", "stats_live", "rotation", "gameplan"],
   coach_space: ["profil_coach"], club_space: ["club_space"],
   institutionnel: ["institutionnel"],
@@ -79,21 +80,12 @@ export async function hasAccess(sectionKey: string): Promise<boolean> {
   if (totalAccess || isAdminRole(profile?.platform_role)) return true;
   if (!subscription?.plan_id || !plan) return false;
 
-  const aliases = SECTION_ALIASES[sectionKey] ?? [sectionKey];
-  const admin = createAdminClient();
-  const client = admin || supabase;
-  const { data, error } = await client
-    .from("subscription_access")
-    .select("section_key,enabled")
-    .eq("plan_id", subscription.plan_id)
-    .in("section_key", aliases);
-
-  if (error) {
-    console.error("Erreur vérification accès:", error.message);
-    return false;
-  }
-
-  return (data ?? []).some((row: { enabled: boolean | null }) => row.enabled === true);
+  return userHasSubscriptionAccess({
+    supabase,
+    userId: user.id,
+    email: user.email,
+    sectionKey,
+  });
 }
 
 export async function getAccessResult(sectionKey: string): Promise<AccessResult> {

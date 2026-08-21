@@ -78,6 +78,10 @@ variantes?: string[] | string;
 
   original_exercise_id?: string | null;
 
+  // Attribution publique d'un contenu proposé par un utilisateur puis validé.
+  contributor_name?: string | null;
+  contributor_avatar_url?: string | null;
+
   createdAt?: number;
   updatedAt?: number;
   popularity?: number;

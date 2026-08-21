@@ -37,6 +37,7 @@
  */
 
 import { useEffect, useRef, useState, useCallback } from 'react';
+import jsPDF from 'jspdf';
 import { getTeams } from '@/lib/equipes-store';
 
 /* ──────────────────────────────────────────────────────────── Constantes */
@@ -336,6 +337,7 @@ export default function RotationModule() {
   const [menu, setMenu] = useState<MenuState>(null);
   const [selectedSegId, setSelectedSegId] = useState<string | null>(null);
   const [toast, setToast] = useState<{ msg: string; err?: boolean } | null>(null);
+  const [chairLeadMin, setChairLeadMin] = useState<number>(1);
 
   // Aperçu transitoire du geste en cours (resize / move). Piloté par le state → DOM == state.
   const [drag, setDrag] = useState<DragState>(null);
@@ -521,7 +523,12 @@ export default function RotationModule() {
   const onExport = () => {
     if (!team) return;
     exportCsv(team, rotRef.current);
-    showToast('Rotation exportée ✓');
+    showToast('Rotation CSV exportée ✓');
+  };
+  const onExportPdf = () => {
+    if (!team) return;
+    exportRotationPdf(team, rotRef.current, chairLeadMin);
+    showToast('Plan de rotation PDF exporté ✓');
   };
 
   /* ── Durée d'un QT ── */
@@ -852,6 +859,19 @@ export default function RotationModule() {
         <span className="rsep" />
         <button className="rb" onClick={onSave}>💾 Sauvegarder</button>
         <button className="rb" onClick={onExport}>📥 Export CSV</button>
+        <button className="rb rb-pdf" onClick={onExportPdf}>📄 Export PDF banc</button>
+        <label className="chair-lead" title="Temps avant le changement pour envoyer le joueur à la chaise / table">
+          Chaise
+          <input
+            type="number"
+            min={0}
+            max={5}
+            step={0.5}
+            value={chairLeadMin}
+            onChange={(e) => setChairLeadMin(Math.max(0, Math.min(5, Number(e.target.value) || 0)))}
+          />
+          min avant
+        </label>
         <button className="rb rb-red" onClick={onReset} style={{ marginLeft: 'auto' }}>↺ Reset</button>
       </div>
 
@@ -1480,6 +1500,171 @@ function SegMenu(props: {
   );
 }
 
+
+/* ───────────────────────────────────────────────────────────── Export PDF */
+
+type RotationChange = {
+  qt: number;
+  elapsed: number;
+  chairElapsed: number;
+  ins: Player[];
+  outs: Player[];
+};
+
+function playerLabel(player?: Player | null) {
+  if (!player) return '?';
+  return `${player.num ? '#' + player.num + ' ' : ''}${player.firstName || ''} ${player.lastName || ''}`.trim();
+}
+
+function gameClock(totalSec: number, elapsed: number) {
+  return fmtSec(Math.max(0, totalSec - elapsed));
+}
+
+function playerIdsAt(rot: Rotation, qt: number, elapsed: number) {
+  return new Set(
+    rot.segments
+      .filter((s) => s.qt === qt && s.start <= elapsed && elapsed < s.end)
+      .map((s) => s.playerId)
+  );
+}
+
+function computeRotationChanges(team: Team, rot: Rotation, chairLeadMin: number): RotationChange[] {
+  const changes: RotationChange[] = [];
+  rot.durations.forEach((durationMin, qt) => {
+    const total = durationMin * 60;
+    const times = Array.from(new Set(
+      rot.segments
+        .filter((s) => s.qt === qt)
+        .flatMap((s) => [s.start, s.end])
+        .filter((v) => v > 0 && v < total)
+    )).sort((a, b) => a - b);
+
+    times.forEach((elapsed) => {
+      const before = playerIdsAt(rot, qt, Math.max(0, elapsed - 0.01));
+      const after = playerIdsAt(rot, qt, Math.min(total - 0.01, elapsed + 0.01));
+      const inIds = [...after].filter((id) => !before.has(id));
+      const outIds = [...before].filter((id) => !after.has(id));
+      if (!inIds.length && !outIds.length) return;
+      changes.push({
+        qt,
+        elapsed,
+        chairElapsed: Math.max(0, elapsed - chairLeadMin * 60),
+        ins: inIds.map((id) => team.players.find((p) => p.id === id)).filter(Boolean) as Player[],
+        outs: outIds.map((id) => team.players.find((p) => p.id === id)).filter(Boolean) as Player[],
+      });
+    });
+  });
+  return changes;
+}
+
+function exportRotationPdf(team: Team, rot: Rotation, chairLeadMin: number) {
+  const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' });
+  const today = new Date().toLocaleDateString('fr-FR');
+  const { mins, starters } = computeStats(team, rot);
+  const changes = computeRotationChanges(team, rot, chairLeadMin);
+  const pageW = 297;
+  const pageH = 210;
+  const margin = 12;
+  let y = 14;
+
+  const ensure = (need = 12) => {
+    if (y + need <= pageH - 12) return;
+    doc.addPage('a4', 'landscape');
+    y = 14;
+  };
+  const title = (text: string) => {
+    ensure(12);
+    doc.setFillColor(107, 26, 44);
+    doc.roundedRect(margin, y - 5, pageW - margin * 2, 9, 2, 2, 'F');
+    doc.setTextColor(255, 255, 255);
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(11);
+    doc.text(text, margin + 4, y + 1);
+    doc.setTextColor(20, 20, 20);
+    y += 10;
+  };
+  const row = (cells: string[], widths: number[], header = false) => {
+    const h = 7;
+    ensure(h + 2);
+    let x = margin;
+    doc.setFont('helvetica', header ? 'bold' : 'normal');
+    doc.setFontSize(header ? 8.5 : 8);
+    cells.forEach((cell, i) => {
+      doc.setDrawColor(220, 220, 220);
+      if (header) doc.setFillColor(244, 236, 239);
+      doc.rect(x, y, widths[i], h, header ? 'FD' : 'D');
+      const txt = doc.splitTextToSize(String(cell || '—'), widths[i] - 3)[0] || '';
+      doc.text(txt, x + 1.5, y + 4.6);
+      x += widths[i];
+    });
+    y += h;
+  };
+
+  doc.setTextColor(107, 26, 44);
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(20);
+  doc.text('PLAN DE ROTATION', margin, y);
+  doc.setFontSize(12);
+  doc.setTextColor(35, 35, 35);
+  doc.text(team.name, margin, y + 7);
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(9);
+  doc.text(`Édité le ${today} · Chaise prévue ${min1(chairLeadMin)} min avant chaque changement`, margin, y + 13);
+  doc.text(`5 de départ : ${starters.length ? starters.join(', ') : 'non défini'}`, margin, y + 19);
+  y += 28;
+
+  title('FEUILLE BANC · CHANGEMENTS À PRÉPARER');
+  row(['QT', 'CHAISE À', 'CHANGEMENT À', 'ENTRE', 'SORT'], [18, 28, 32, 95, 100], true);
+  if (!changes.length) {
+    row(['—', '—', '—', 'Aucun changement planifié', '—'], [18, 28, 32, 95, 100]);
+  } else {
+    changes.forEach((change) => {
+      const total = rot.durations[change.qt] * 60;
+      row([
+        `Q${change.qt + 1}`,
+        gameClock(total, change.chairElapsed),
+        gameClock(total, change.elapsed),
+        change.ins.map(playerLabel).join(' · ') || '—',
+        change.outs.map(playerLabel).join(' · ') || '—',
+      ], [18, 28, 32, 95, 100]);
+    });
+  }
+
+  y += 5;
+  title('CARTONS / SEGMENTS PRÉVUS');
+  row(['QT', 'CHRONO', 'POSTE', 'JOUEUR', 'DURÉE'], [18, 48, 32, 135, 40], true);
+  rot.segments
+    .slice()
+    .sort((a, b) => a.qt - b.qt || a.start - b.start || a.pos - b.pos)
+    .forEach((seg) => {
+      const total = rot.durations[seg.qt] * 60;
+      const player = team.players.find((p) => p.id === seg.playerId);
+      row([
+        `Q${seg.qt + 1}`,
+        `${gameClock(total, seg.start)} → ${gameClock(total, seg.end)}`,
+        ROT_POSTES[seg.pos]?.abbr || '?',
+        playerLabel(player),
+        `${min1((seg.end - seg.start) / 60)} min`,
+      ], [18, 48, 32, 135, 40]);
+    });
+
+  y += 5;
+  title('TEMPS DE JEU PRÉVU');
+  row(['N°', 'JOUEUR', 'POSTE', 'MINUTES'], [25, 145, 55, 48], true);
+  team.players
+    .slice()
+    .sort((a, b) => (mins[b.id] || 0) - (mins[a.id] || 0))
+    .forEach((player) => row([
+      player.num ? `#${player.num}` : '—',
+      `${player.firstName || ''} ${player.lastName || ''}`.trim() || '—',
+      player.poste || '—',
+      `${min1(mins[player.id] || 0)} min`,
+    ], [25, 145, 55, 48]));
+
+  const safe = team.name.replace(/[^a-z0-9_-]/gi, '_');
+  doc.save(`rotation_${safe}_${new Date().toISOString().split('T')[0]}.pdf`);
+}
+
 /* ──────────────────────────────────────────────────────────── Export CSV */
 
 function exportCsv(team: Team, rot: Rotation) {
@@ -1557,6 +1742,10 @@ const rotCss = `
     border-radius: 8px;
     padding: 0.55rem 0.75rem;
   }
+
+  .rb-pdf { border-color:#6B1A2C !important; color:#6B1A2C !important; font-weight:800; }
+  .chair-lead { display:flex; align-items:center; gap:5px; padding:0 8px; min-height:34px; border:1px solid #ddd3c7; border-radius:7px; background:#fffaf2; color:#6f655c; font-size:.72rem; font-weight:700; white-space:nowrap; }
+  .chair-lead input { width:48px; border:1px solid #d9d2c7; border-radius:5px; padding:4px 5px; text-align:center; font:inherit; color:#6B1A2C; background:#fff; }
 
   .rb {
     font-size: 0.78rem;

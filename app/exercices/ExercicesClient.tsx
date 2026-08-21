@@ -101,6 +101,17 @@ function ExerciseCard({
           </button>
         )}
 
+        {item.contributor_name && (
+          <div className="mb-contributor" title={`Réalisé par ${item.contributor_name}`}>
+            {item.contributor_avatar_url ? (
+              <img src={item.contributor_avatar_url} alt="" />
+            ) : (
+              <span className="mb-contributor-fallback">{item.contributor_name.slice(0, 1).toUpperCase()}</span>
+            )}
+            <span>Réalisé par <strong>{item.contributor_name}</strong></span>
+          </div>
+        )}
+
         <div className="mb-exercise-foot">
           <span>{formatDate(item.createdAt)}</span>
 
@@ -388,6 +399,10 @@ export default function ExercicesClient() {
         .mb-quick-add { width:100%; min-height:40px; margin-top:14px; border:0; border-radius:9px; background:#6b1a2c; color:#fff; font-weight:900; cursor:pointer; transition:.18s ease; }
         .mb-quick-add:hover:not(:disabled) { transform:translateY(-1px); background:#4b101e; }
         .mb-quick-add.is-added { background:#17834a; }
+        .mb-contributor { display:flex; align-items:center; gap:7px; margin-top:12px; padding-top:10px; border-top:1px solid #eee; min-width:0; color:#555; font-size:.74rem; line-height:1.15; }
+        .mb-contributor img, .mb-contributor-fallback { width:24px; height:24px; border-radius:50%; flex:0 0 24px; object-fit:cover; border:1px solid rgba(107,26,44,.18); background:#f4ecef; color:#6b1a2c; display:flex; align-items:center; justify-content:center; font-weight:900; }
+        .mb-contributor span:last-child { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+        .mb-contributor strong { color:#222; font-weight:850; }
         .mb-quick-add:disabled { cursor:default; opacity:.86; }
         .mb-exercise-foot { margin-top:12px; padding-top:10px; border-top:1px solid #eee; display:flex; justify-content:space-between; align-items:center; gap:12px; font-size:.82rem; color:#777; font-weight:600; }
         .mb-exercise-foot a { color:#666; font-weight:800; text-decoration:none; }

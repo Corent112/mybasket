@@ -71,6 +71,7 @@ const SECTIONS = [
   { key: "mes_annonces", label: "Mes annonces" },
   { key: "papiers", label: "Mes papiers" },
   { key: "equipes", label: "Mes équipes" },
+  { key: "collaboration_equipe", label: "Collaboration équipe / invitations staff" },
   { key: "stats_joueur", label: "Stats joueur" },
   { key: "stats_jeu", label: "Stats jeu" },
   { key: "stats_live", label: "Stats live" },

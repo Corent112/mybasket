@@ -216,6 +216,8 @@ function rowToExercise(row: any): Exercise {
     reviewed_by: row.reviewed_by ?? null,
     rejection_reason: row.rejection_reason ?? null,
     original_exercise_id: row.original_exercise_id ?? null,
+    contributor_name: null,
+    contributor_avatar_url: null,
 
     createdAt: row.created_at ? new Date(row.created_at).getTime() : Date.now(),
     updatedAt: row.updated_at ? new Date(row.updated_at).getTime() : Date.now(),
@@ -306,6 +308,42 @@ async function getExerciseRaw(id: string | null | undefined) {
   return data;
 }
 
+
+async function attachExerciseContributors(rows: any[]): Promise<Exercise[]> {
+  const mapped = rows.map(rowToExercise);
+  const contributorIds = Array.from(new Set(
+    rows
+      .filter((row) => row?.user_id && row?.review_status === 'approved' && row?.submitted_at)
+      .map((row) => String(row.user_id))
+  ));
+
+  if (!contributorIds.length) return mapped;
+
+  const supabase = createClient();
+  const { data: profiles, error } = await supabase
+    .from('profiles')
+    .select('id, display_name, avatar_url')
+    .in('id', contributorIds);
+
+  if (error) {
+    console.warn('Attribution exercices : profils indisponibles', error);
+    return mapped;
+  }
+
+  const byId = new Map((profiles ?? []).map((profile: any) => [String(profile.id), profile]));
+  return mapped.map((item, index) => {
+    const source = rows[index];
+    if (!source?.submitted_at || source?.review_status !== 'approved') return item;
+    const profile: any = byId.get(String(source.user_id));
+    if (!profile) return item;
+    return {
+      ...item,
+      contributor_name: profile.display_name || 'Utilisateur MyBasket',
+      contributor_avatar_url: profile.avatar_url || null,
+    };
+  });
+}
+
 export async function listExercises(): Promise<Exercise[]> {
   const supabase = createClient();
 
@@ -321,7 +359,7 @@ export async function listExercises(): Promise<Exercise[]> {
     return [];
   }
 
-  return (data ?? []).map(rowToExercise);
+  return attachExerciseContributors(data ?? []);
 }
 
 export async function listMyExercises(): Promise<Exercise[]> {

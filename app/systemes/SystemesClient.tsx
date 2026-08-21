@@ -137,6 +137,17 @@ function SystemCard({
           <div>{item.categorie || "Toutes catégories"}</div>
         </div>
 
+        {item.contributor_name && (
+          <div className="mb-system-contributor" title={`Réalisé par ${item.contributor_name}`}>
+            {item.contributor_avatar_url ? (
+              <img src={item.contributor_avatar_url} alt="" />
+            ) : (
+              <span className="mb-system-contributor-fallback">{item.contributor_name.slice(0, 1).toUpperCase()}</span>
+            )}
+            <span>Réalisé par <strong>{item.contributor_name}</strong></span>
+          </div>
+        )}
+
         <div className="mb-system-foot">
           <span>{formatDate(item.createdAt)}</span>
 
@@ -626,6 +637,10 @@ export default function SystemesClient() {
           color: #666;
         }
 
+        .mb-system-contributor { display:flex; align-items:center; gap:7px; margin-top:12px; padding-top:10px; border-top:1px solid #eee; min-width:0; color:#555; font-size:.74rem; line-height:1.15; }
+        .mb-system-contributor img, .mb-system-contributor-fallback { width:24px; height:24px; border-radius:50%; flex:0 0 24px; object-fit:cover; border:1px solid rgba(107,26,44,.18); background:#f4ecef; color:#6b1a2c; display:flex; align-items:center; justify-content:center; font-weight:900; }
+        .mb-system-contributor span:last-child { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+        .mb-system-contributor strong { color:#222; font-weight:850; }
         .mb-system-foot {
           margin-top: 12px;
           padding-top: 10px;

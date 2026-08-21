@@ -4,6 +4,8 @@
 // Inviter des coachs, suivre les invitations, relier un coach à des équipes.
 // Aucune écriture directe dans club_members -> non bloquant.
 import { useEffect, useState, useCallback } from 'react'
+import { createClient } from '@/lib/supabase/client'
+import SelfAvatarButton from '@/components/account/SelfAvatarButton'
 import {
   getClubStaff,
   getClubTeams,
@@ -45,6 +47,7 @@ export default function ClubStaffSection({
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
+  const [currentUserId, setCurrentUserId] = useState<string | null>(null)
 
   // modales
   const [inviteOpen, setInviteOpen] = useState(false)
@@ -53,6 +56,22 @@ export default function ClubStaffSection({
   const [teamsFor, setTeamsFor] = useState<StaffMember | null>(null)
   const [teamSel, setTeamSel] = useState<string[]>([])
   const [copied, setCopied] = useState<string | null>(null)
+
+  useEffect(() => {
+    let mounted = true
+    const supabase = createClient()
+
+    const loadCurrentUser = async () => {
+      const result = await supabase.auth.getUser()
+      if (mounted) setCurrentUserId(result.data.user?.id ?? null)
+    }
+
+    void loadCurrentUser()
+
+    return () => {
+      mounted = false
+    }
+  }, [])
 
   const load = useCallback(async () => {
     setLoading(true); setError(null)
@@ -185,9 +204,18 @@ export default function ClubStaffSection({
                     )}
                   </div>
 
-                  <button onClick={() => openTeams(m)} style={{ ...btnGhost, width: '100%', marginTop: '.6rem' }}>
-                    Gérer les équipes
-                  </button>
+                  <div style={{ display: 'flex', gap: '.45rem', marginTop: '.6rem', flexWrap: 'wrap' }}>
+                    <button onClick={() => openTeams(m)} style={{ ...btnGhost, flex: 1 }}>
+                      Gérer les équipes
+                    </button>
+                    {currentUserId === m.userId && (
+                      <SelfAvatarButton
+                        userId={m.userId}
+                        compact
+                        onSaved={(avatarUrl) => setStaff((items) => items.map((item) => item.userId === m.userId ? { ...item, avatarUrl } : item))}
+                      />
+                    )}
+                  </div>
                 </div>
               ))}
             </div>

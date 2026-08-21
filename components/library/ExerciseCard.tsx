@@ -96,6 +96,17 @@ export default function ExerciseCard({ item }: Props) {
           </div>
         )}
 
+        {item.contributor_name && (
+          <div className="exercise-contributor">
+            {item.contributor_avatar_url ? (
+              <img src={item.contributor_avatar_url} alt="" />
+            ) : (
+              <span>{item.contributor_name.slice(0, 1).toUpperCase()}</span>
+            )}
+            <small>Réalisé par <b>{item.contributor_name}</b></small>
+          </div>
+        )}
+
         <div className="exercise-card-foot">
           <span className="exercise-date">{formatDate(item.createdAt)}</span>
         </div>
@@ -201,6 +212,11 @@ export default function ExerciseCard({ item }: Props) {
           color: #6b1a2c;
         }
 
+
+        .exercise-contributor { margin-top:12px; padding-top:10px; border-top:1px solid #eee; display:flex; align-items:center; gap:7px; min-width:0; color:#555; }
+        .exercise-contributor img, .exercise-contributor > span { width:24px; height:24px; border-radius:50%; object-fit:cover; flex:0 0 24px; display:flex; align-items:center; justify-content:center; background:#f4ecef; color:#6b1a2c; font-size:.7rem; font-weight:900; }
+        .exercise-contributor small { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+        .exercise-contributor b { color:#222; }
         .exercise-card-foot {
           margin-top: 12px;
         }
