@@ -698,10 +698,21 @@ export default function PriseStatsProPage() {
   const removeOppPlayer = (id: string) => setOppRoster((r) => r.filter((p) => p.id !== id));
   const [date, setDate] = useState(() => new Date().toISOString().slice(0, 10));
   const [home, setHome] = useState(true);
+
+  // Effectif officiel du match : de 5 à 12 joueurs choisis parmi l'effectif de l'équipe.
+  // Seuls ces joueurs sont ensuite proposés dans tout le codage et les statistiques.
+  const [matchPlayerIds, setMatchPlayerIds] = useState<string[]>([]);
   const [starters, setStarters] = useState<string[]>([]);
+
   // Numéro de maillot propre au match du jour. Ne modifie jamais la fiche joueur Supabase.
   // playerId -> numéro porté pour CE match (utile aujourd'hui pour le codage, demain pour l'IA vidéo).
   const [matchJerseyNumbers, setMatchJerseyNumbers] = useState<Record<string, number>>({});
+
+  useEffect(() => {
+    setMatchPlayerIds([]);
+    setStarters([]);
+    setMatchJerseyNumbers({});
+  }, [teamId]);
 
   const [roster, setRoster] = useState<Player[]>([]);
   const [teamName, setTeamName] = useState('');
@@ -1296,6 +1307,8 @@ export default function PriseStatsProPage() {
     profileButtonKeys,
     workspaceLayout: { videoPanePct, rightPanePx },
     linkedCollectiveProjectId: linkedCollectiveProjectId || null,
+    matchPlayerIds,
+    starters,
     matchJerseyNumbers,
     q,
     secs,
@@ -1415,10 +1428,52 @@ export default function PriseStatsProPage() {
         ? s.matchJerseyNumbers as Record<string, number>
         : {};
       setMatchJerseyNumbers(restoredMatchNumbers);
-      setRoster(team.players.map((player) => ({
-        ...player,
-        num: Number(restoredMatchNumbers[player.id] ?? player.num),
-      })));
+
+      const restoredMatchPlayerIds = Array.isArray(s.matchPlayerIds)
+        ? s.matchPlayerIds
+            .map(String)
+            .filter((id: string) => team.players.some((player) => player.id === id))
+            .slice(0, 12)
+        : Array.from(new Set([
+            ...(Array.isArray(s.onCourt) ? s.onCourt : []),
+            ...(Array.isArray(s.actions)
+              ? s.actions.flatMap((action: any) => [
+                  action.playerId,
+                  action.assistPlayerId,
+                  ...(Array.isArray(action.lineup) ? action.lineup : []),
+                ])
+              : []),
+          ].filter(Boolean)))
+            .map(String)
+            .filter((id: string) => team.players.some((player) => player.id === id))
+            .slice(0, 12);
+
+      const effectiveMatchPlayerIds = restoredMatchPlayerIds.length >= 5
+        ? restoredMatchPlayerIds
+        : team.players.map((player) => player.id).slice(0, 12);
+
+      const restoredStarters = Array.isArray(s.starters)
+        ? s.starters
+            .map(String)
+            .filter((id: string) => effectiveMatchPlayerIds.includes(id))
+            .slice(0, 5)
+        : (Array.isArray(s.onCourt)
+            ? s.onCourt
+                .map(String)
+                .filter((id: string) => effectiveMatchPlayerIds.includes(id))
+                .slice(0, 5)
+            : []);
+
+      setMatchPlayerIds(effectiveMatchPlayerIds);
+      setStarters(restoredStarters);
+      setRoster(
+        team.players
+          .filter((player) => effectiveMatchPlayerIds.includes(player.id))
+          .map((player) => ({
+            ...player,
+            num: Number(restoredMatchNumbers[player.id] ?? player.num),
+          })),
+      );
       setTeamName(String(s.teamName || team.name));
       setOpponent(String(s.opponent || ''));
       setDate(String(s.date || date));
@@ -4121,12 +4176,50 @@ export default function PriseStatsProPage() {
   /* -------- création du match -------- */
   const selTeam = teams.find((t) => t.id === teamId);
   const setupRoster = selTeam?.players || [];
+  const selectedMatchRoster = setupRoster.filter((player) => matchPlayerIds.includes(player.id));
   const matchNumberOf = (player: Player) => Number(matchJerseyNumbers[player.id] ?? player.num);
-  const matchNumbers = setupRoster.map(matchNumberOf).filter((n) => Number.isFinite(n));
+  const matchNumbers = selectedMatchRoster.map(matchNumberOf).filter((n) => Number.isFinite(n));
   const hasDuplicateMatchNumbers = new Set(matchNumbers).size !== matchNumbers.length;
   const hasInvalidMatchNumbers = matchNumbers.some((n) => n < 0 || n > 99 || !Number.isInteger(n));
-  const canStart = !!date && !!teamId && !!selTeam && !!opponent.trim() && starters.length === 5 && !hasDuplicateMatchNumbers && !hasInvalidMatchNumbers;
-  const toggleStarter = (id: string) => setStarters((s) => (s.includes(id) ? s.filter((x) => x !== id) : s.length < 5 ? [...s, id] : s));
+  const hasValidMatchSquad = matchPlayerIds.length >= 5 && matchPlayerIds.length <= 12;
+  const canStart =
+    !!date &&
+    !!teamId &&
+    !!selTeam &&
+    !!opponent.trim() &&
+    hasValidMatchSquad &&
+    starters.length === 5 &&
+    starters.every((id) => matchPlayerIds.includes(id)) &&
+    !hasDuplicateMatchNumbers &&
+    !hasInvalidMatchNumbers;
+
+  const toggleMatchPlayer = (id: string) => {
+    setMatchPlayerIds((current) => {
+      if (current.includes(id)) {
+        setStarters((selected) => selected.filter((playerId) => playerId !== id));
+        return current.filter((playerId) => playerId !== id);
+      }
+      if (current.length >= 12) {
+        flash('Maximum 12 joueurs pour un match');
+        return current;
+      }
+      return [...current, id];
+    });
+  };
+
+  const toggleStarter = (id: string) => {
+    if (!matchPlayerIds.includes(id)) {
+      flash("Sélectionne d'abord ce joueur dans l'effectif du match");
+      return;
+    }
+    setStarters((current) =>
+      current.includes(id)
+        ? current.filter((playerId) => playerId !== id)
+        : current.length < 5
+          ? [...current, id]
+          : current,
+    );
+  };
   const setMatchNumber = (playerId: string, raw: string) => {
     const cleaned = raw.replace(/\D/g, '').slice(0, 2);
     if (cleaned === '') {
@@ -4144,10 +4237,12 @@ export default function PriseStatsProPage() {
     if (!selTeam || hasDuplicateMatchNumbers || hasInvalidMatchNumbers || projectBusy) return;
     setProjectBusy(true);
 
-    const matchRoster = selTeam.players.map((player) => ({
-      ...player,
-      num: matchNumberOf(player),
-    }));
+    const matchRoster = selTeam.players
+      .filter((player) => matchPlayerIds.includes(player.id))
+      .map((player) => ({
+        ...player,
+        num: matchNumberOf(player),
+      }));
     const source = importedLiveSource;
 
     setActiveTeamId(selTeam.id);
@@ -5046,6 +5141,8 @@ export default function PriseStatsProPage() {
       q,
       secs,
       onCourt,
+      matchPlayerIds,
+      starters,
       matchJerseyNumbers,
       score: { us, them },
       perQ,
@@ -5082,8 +5179,44 @@ export default function PriseStatsProPage() {
       setOpponent(String(data.opponent || ''));
       if (data.date) setDate(String(data.date));
       setHome(data.home ?? true);
-      if (data.matchJerseyNumbers && typeof data.matchJerseyNumbers === 'object') setMatchJerseyNumbers(data.matchJerseyNumbers);
-      if (Array.isArray(data.onCourt)) setStarters(data.onCourt.slice(0, 5));
+      if (data.matchJerseyNumbers && typeof data.matchJerseyNumbers === 'object') {
+        setMatchJerseyNumbers(data.matchJerseyNumbers);
+      }
+
+      const importedMatchPlayerIds = Array.isArray(data.matchPlayerIds)
+        ? data.matchPlayerIds.map(String).slice(0, 12)
+        : Array.from(new Set([
+            ...(Array.isArray(data.playerIds) ? data.playerIds : []),
+            ...(Array.isArray(data.onCourt) ? data.onCourt : []),
+            ...(Array.isArray(data.actions)
+              ? data.actions.flatMap((action: any) => [
+                  action.playerId,
+                  action.assistPlayerId,
+                  ...(Array.isArray(action.lineup) ? action.lineup : []),
+                ])
+              : []),
+          ].filter(Boolean)))
+            .map(String)
+            .slice(0, 12);
+
+      setMatchPlayerIds(importedMatchPlayerIds);
+
+      if (Array.isArray(data.starters)) {
+        setStarters(
+          data.starters
+            .map(String)
+            .filter((id: string) => importedMatchPlayerIds.includes(id))
+            .slice(0, 5),
+        );
+      } else if (Array.isArray(data.onCourt)) {
+        setStarters(
+          data.onCourt
+            .map(String)
+            .filter((id: string) => importedMatchPlayerIds.includes(id))
+            .slice(0, 5),
+        );
+      }
+
       setImportedLiveSource(data);
       setCodingMode('post');
       setVideoSync(normalizeSync(data.videoSync ?? data.projectState ?? data));
@@ -5099,7 +5232,9 @@ export default function PriseStatsProPage() {
 
   /* ============================ Rendu ============================ */
   if (screen === 'setup') {
-    const startersList = setupRoster.filter((p) => starters.includes(p.id));
+    const startersList = starters
+      .map((id) => selectedMatchRoster.find((player) => player.id === id))
+      .filter((player): player is Player => !!player);
     const videoLabel = videoMode === 'file' ? '📁 Fichier vidéo' : videoMode === 'drive' ? '☁️ Google Drive' : videoMode === 'youtube' ? '▶️ Lien YouTube' : '🏟 Aucune sélection';
     return (
       <div className="ps-root">
@@ -5321,39 +5456,109 @@ export default function PriseStatsProPage() {
               </section>
             </div>
 
-            {/* Colonne droite : 5 majeur */}
+            {/* Colonne droite : effectif du match + 5 majeur */}
             <div className="cm-right">
               <div className="cm-right-head">
-                <div className="cm-5t">👥 <b>5 MAJEUR</b> <span className="cm-5c">{starters.length} / 5 SÉLECTIONNÉS</span></div>
-                <button className="cm-ghost sm" type="button" onClick={() => setStarters([])}>Vider la sélection</button>
+                <div className="cm-5t">
+                  🏀 <b>EFFECTIF DU MATCH</b>
+                  <span className={`cm-5c ${matchPlayerIds.length >= 5 ? 'ok' : ''}`}>
+                    {matchPlayerIds.length} / 12 MAX
+                  </span>
+                </div>
+                <button
+                  className="cm-ghost sm"
+                  type="button"
+                  onClick={() => {
+                    setMatchPlayerIds([]);
+                    setStarters([]);
+                  }}
+                >
+                  Vider
+                </button>
               </div>
-              <div className="cm-players">
+
+              <div className="cm-roster-help">
+                Choisis les joueurs présents sur la feuille de match, maximum 12.
+                Seuls eux apparaîtront ensuite dans le codage et le boxscore.
+              </div>
+
+              <div className="cm-players cm-match-roster">
                 {setupRoster.map((p) => {
-                  const on = starters.includes(p.id);
+                  const selected = matchPlayerIds.includes(p.id);
+                  const starter = starters.includes(p.id);
                   return (
-                    <div key={p.id} className={`cm-p ${on ? 'on' : ''}`} onClick={() => toggleStarter(p.id)}>
+                    <div key={p.id} className={`cm-p ${selected ? 'on squad' : ''}`}>
+                      <button
+                        type="button"
+                        className={`cm-squad-toggle ${selected ? 'selected' : ''}`}
+                        onClick={() => toggleMatchPlayer(p.id)}
+                      >
+                        {selected ? '✓' : '+'}
+                      </button>
                       <div className="cm-p-num">{matchNumberOf(p)}</div>
-                      <div className="cm-p-ck">{on ? '✓' : '○'}</div>
                       <div className="cm-p-av"><Av p={{ ...p, num: matchNumberOf(p) }} /></div>
                       <div className="cm-p-nm">{p.name}</div>
-                      <div className="cm-p-pos">● {p.pos}</div>
-                      <label className="cm-p-jersey" onClick={(event) => event.stopPropagation()}>
-                        <span>N° DU JOUR</span>
-                        <input
-                          type="text"
-                          inputMode="numeric"
-                          maxLength={2}
-                          value={String(matchNumberOf(p))}
-                          onChange={(event) => setMatchNumber(p.id, event.target.value)}
-                          onFocus={(event) => event.currentTarget.select()}
-                          aria-label={`Numéro de maillot du jour de ${p.name}`}
-                        />
-                      </label>
+                      <div className="cm-p-pos">
+                        {selected ? (starter ? '★ TITULAIRE' : '● BANC') : 'HORS MATCH'}
+                      </div>
+                      {selected && (
+                        <label className="cm-p-jersey">
+                          <span>N° DU JOUR</span>
+                          <input
+                            type="text"
+                            inputMode="numeric"
+                            maxLength={2}
+                            value={String(matchNumberOf(p))}
+                            onChange={(event) => setMatchNumber(p.id, event.target.value)}
+                            onFocus={(event) => event.currentTarget.select()}
+                            aria-label={`Numéro de maillot du jour de ${p.name}`}
+                          />
+                        </label>
+                      )}
                     </div>
                   );
                 })}
-                {setupRoster.length === 0 && <span className="cnt">Aucun joueur Supabase dans cette équipe.</span>}
+                {setupRoster.length === 0 && (
+                  <span className="cnt">Aucun joueur Supabase dans cette équipe.</span>
+                )}
               </div>
+
+              <div className="cm-starters-head">
+                <div className="cm-5t">
+                  ⭐ <b>5 MAJEUR</b>
+                  <span className={`cm-5c ${starters.length === 5 ? 'ok' : ''}`}>
+                    {starters.length} / 5
+                  </span>
+                </div>
+                <button className="cm-ghost sm" type="button" onClick={() => setStarters([])}>
+                  Vider le 5
+                </button>
+              </div>
+
+              <div className="cm-starter-picker">
+                {selectedMatchRoster.map((p) => {
+                  const on = starters.includes(p.id);
+                  return (
+                    <button
+                      type="button"
+                      key={p.id}
+                      className={`cm-starter-card ${on ? 'on' : ''}`}
+                      onClick={() => toggleStarter(p.id)}
+                    >
+                      <Av p={{ ...p, num: matchNumberOf(p) }} />
+                      <b>#{matchNumberOf(p)}</b>
+                      <span>{p.name}</span>
+                      <small>{on ? '★ TITULAIRE' : 'BANC'}</small>
+                    </button>
+                  );
+                })}
+                {selectedMatchRoster.length === 0 && (
+                  <div className="cm-starter-empty">
+                    Sélectionne d'abord l'effectif du match.
+                  </div>
+                )}
+              </div>
+
               <div className="cm-slots">
                 {[0, 1, 2, 3, 4].map((i) => {
                   const p = startersList[i];
@@ -5361,20 +5566,29 @@ export default function PriseStatsProPage() {
                     <div className="cm-slot" key={i}>
                       <span className="cm-slot-l">TITULAIRE {i + 1}</span>
                       {p
-                        ? <div className="cm-slot-f"><span className="rm" onClick={() => toggleStarter(p.id)}>✕</span><b>{matchNumberOf(p)}</b><span>{p.name}</span></div>
+                        ? (
+                          <div className="cm-slot-f">
+                            <span className="rm" onClick={() => toggleStarter(p.id)}>✕</span>
+                            <b>{matchNumberOf(p)}</b>
+                            <span>{p.name}</span>
+                          </div>
+                        )
                         : <div className="cm-slot-e">＋ Ajouter</div>}
                     </div>
                   );
                 })}
               </div>
-              <div className={`cm-warn ${starters.length === 5 && !hasDuplicateMatchNumbers && !hasInvalidMatchNumbers ? 'ok' : ''}`}>
-                {hasDuplicateMatchNumbers
-                  ? <><span>⚠</span> Deux joueurs ne peuvent pas porter le même numéro pendant ce match.</>
-                  : hasInvalidMatchNumbers
-                    ? <><span>⚠</span> Les numéros de maillot doivent être compris entre 0 et 99.</>
-                    : starters.length === 5
-                      ? <><span>✓</span> 5 joueurs sélectionnés — les numéros du jour seront utilisés pour tout le match.</>
-                      : <><span>⚠</span> Sélectionnez 5 joueurs pour démarrer la saisie des statistiques.</>}
+
+              <div className={`cm-warn ${canStart ? 'ok' : ''}`}>
+                {matchPlayerIds.length < 5
+                  ? <><span>⚠</span> Sélectionne au moins 5 joueurs pour ce match.</>
+                  : hasDuplicateMatchNumbers
+                    ? <><span>⚠</span> Deux joueurs du match ne peuvent pas porter le même numéro.</>
+                    : hasInvalidMatchNumbers
+                      ? <><span>⚠</span> Les numéros de maillot doivent être compris entre 0 et 99.</>
+                      : starters.length === 5
+                        ? <><span>✓</span> Effectif prêt : {matchPlayerIds.length} joueurs, dont 5 titulaires.</>
+                        : <><span>⚠</span> Choisis maintenant les 5 joueurs qui commencent.</>}
               </div>
             </div>
           </div>
@@ -5389,12 +5603,23 @@ export default function PriseStatsProPage() {
                 <div className="cm-sum"><span className="cm-sum-l">ADVERSAIRE</span><span className="cm-sum-v">{opponent.trim() || '-'}</span></div>
                 <div className="cm-sum"><span className="cm-sum-l">LIEU</span><span className="cm-sum-v">{home ? '🏠 DOMICILE' : '🏟 EXTÉRIEUR'}</span></div>
                 <div className="cm-sum"><span className="cm-sum-l">VIDÉO</span><span className="cm-sum-v">{videoLabel}</span></div>
+                <div className="cm-sum"><span className="cm-sum-l">EFFECTIF MATCH</span><span className="cm-sum-v"><b className="gold">{matchPlayerIds.length} / 12</b> joueurs</span></div>
                 <div className="cm-sum"><span className="cm-sum-l">5 MAJEUR</span><span className="cm-sum-v"><b className="gold">{starters.length} / 5</b> sélectionnés</span></div>
               </div>
             </div>
             <div className="cm-start-wrap">
               <button className="cm-start" disabled={!canStart} onClick={startMatch}>▶ Démarrer la saisie</button>
-              <div className="cm-start-hint">{canStart ? 'Tout est prêt — lancez la saisie' : (hasDuplicateMatchNumbers ? 'Corrigez les numéros de maillot en double' : starters.length < 5 ? 'Complétez votre 5 majeur pour continuer' : 'Renseignez date, équipe et adversaire')}</div>
+              <div className="cm-start-hint">
+                {canStart
+                  ? 'Tout est prêt — lancez la saisie'
+                  : matchPlayerIds.length < 5
+                    ? 'Sélectionne au moins 5 joueurs pour le match'
+                    : hasDuplicateMatchNumbers
+                      ? 'Corrige les numéros de maillot en double'
+                      : starters.length < 5
+                        ? 'Complète ton 5 majeur'
+                        : 'Renseigne date, équipe et adversaire'}
+              </div>
             </div>
             <div className="cm-start-fixed">
               <button className="cm-start cm-start-main" disabled={!canStart} onClick={startMatch}>▶ DÉMARRER LE MATCH</button>
@@ -7860,6 +8085,22 @@ function Style() {
       .cm-p-jersey input { width: 42px; height: 28px; border: 1px solid rgba(212,162,76,.45); border-radius: 8px; background: rgba(5,8,15,.72); color: var(--gold); text-align: center; font-size: 14px; font-weight: 950; outline: none; }
       .cm-p-jersey input:focus { border-color: var(--gold); box-shadow: 0 0 0 2px rgba(212,162,76,.14); }
       .cm-p-pos { font-size: 9.5px; font-weight: 800; margin-top: 3px; color: var(--blue); }
+      .cm-roster-help { margin: 8px 0 10px; padding: 9px 11px; border: 1px solid rgba(212,162,76,.22); border-radius: 10px; background: rgba(212,162,76,.06); font-size: 10px; line-height: 1.45; color: #aab5c7; }
+      .cm-match-roster { max-height: 310px; overflow: auto; padding-right: 3px; }
+      .cm-p.squad { border-color: rgba(212,162,76,.58); background: rgba(212,162,76,.08); }
+      .cm-squad-toggle { position: absolute; top: 8px; right: 8px; z-index: 2; width: 28px; height: 28px; border-radius: 8px; border: 1px solid #34435e; background: #121d30; color: #cbd5e1; font-weight: 950; cursor: pointer; }
+      .cm-squad-toggle.selected { border-color: var(--gold); background: var(--gold); color: #10131a; }
+      .cm-starters-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--border); }
+      .cm-starter-picker { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 7px; margin-top: 10px; }
+      .cm-starter-card { min-width: 0; border: 1px solid #2b3850; border-radius: 11px; background: #101827; color: #fff; padding: 8px; display: grid; grid-template-columns: 30px 30px 1fr; align-items: center; gap: 6px; text-align: left; cursor: pointer; }
+      .cm-starter-card.on { border-color: var(--gold); background: rgba(212,162,76,.12); }
+      .cm-starter-card .av { width: 28px !important; height: 28px !important; }
+      .cm-starter-card > b { color: var(--gold); font-size: 11px; }
+      .cm-starter-card > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 10px; font-weight: 850; }
+      .cm-starter-card > small { grid-column: 2 / 4; font-size: 8px; color: #7f8da4; font-weight: 900; }
+      .cm-starter-card.on > small { color: var(--gold); }
+      .cm-starter-empty { grid-column: 1 / -1; padding: 16px; border: 1px dashed #34435e; border-radius: 10px; color: #8290a5; text-align: center; font-size: 10px; }
+      .cm-5c.ok { color: var(--gold); }
       .cm-slots { display: grid; grid-template-columns: repeat(5,1fr); gap: 8px; margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--border); }
       .cm-slot { display: flex; flex-direction: column; gap: 5px; }
       .cm-slot-l { font-size: 9px; font-weight: 800; color: var(--mute); letter-spacing: .04em; text-align: center; }
