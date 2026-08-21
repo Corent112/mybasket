@@ -541,7 +541,9 @@ function computeBox(actions: StatA[], roster: Player[]) {
         L.fta += a.ftAttempts;
         L.ftm += a.ftMade;
       }
-    } else if (a.actionType === "interception" && L) {
+    } else if ((a.actionType === "interception" || a.actionType === "perte-adverse") && L) {
+      // BP adverse attribuée à un joueur = interception créditée au joueur.
+      // Sans playerId, elle reste une statistique ÉQUIPE uniquement.
       L.stl++;
     } else if (a.actionType === "contre" && L) {
       L.blk++;
@@ -6290,7 +6292,7 @@ export default function PriseStatsProPage() {
           style={{ marginTop: 10, width: "100%" }}
           onClick={() => commit({ ...draft, playerId: null })}
         >
-          Sans précision
+          {draft.actionType === "perte-adverse" ? "ÉQUIPE" : "Sans précision"}
         </button>
       )}
     </>
@@ -6408,6 +6410,9 @@ function BoxView({ actions, roster, teamId, videoProvider = 'none', videoUrl = '
   const find = (id: string | null) => roster.find((p) => p.id === id)
     || (id ? oppRoster.filter((o) => o.id === id).map((o) => ({ id: o.id, num: Number(o.num) || 0, name: o.name, pos: 'ADV' } as Player))[0] : undefined);
   const box = computeBox(actions, roster);
+  const teamOnlyStl = actions.filter(
+    (a) => a.context === 'defense' && a.actionType === 'perte-adverse' && !a.playerId
+  ).length;
   const A = computeAnalytics(actions, roster);
   const pts = (l: any) => l.p2m * 2 + l.p3m * 3 + l.ftm;
   const [boxTab, setBoxTab] = useState<'box' | 'team' | 'matrix' | 'systems' | 'search' | 'lineups' | 'shot' | 'video'>('box');
@@ -6614,13 +6619,19 @@ function BoxView({ actions, roster, teamId, videoProvider = 'none', videoUrl = '
                 <td>{l.ast}</td><td>{l.stl}</td><td>{l.blk}</td><td>{l.to}</td><td>{l.pf}</td><td><b>{evalOf(l)}</b></td><td><b style={{ color: plusMinusOf(l.p.id) >= 0 ? 'var(--green)' : 'var(--red)' }}>{plusMinusOf(l.p.id) > 0 ? `+${plusMinusOf(l.p.id)}` : plusMinusOf(l.p.id)}</b></td>
               </tr>
             ))}
-            {box.length === 0 && <tr><td className="l" colSpan={15}>Aucune stat pour le moment.</td></tr>}
-            {box.length > 0 && (
+            <tr className="team-stat-row">
+              <td className="l"><b>ÉQUIPE</b></td>
+              <td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td>
+              <td><b>{teamOnlyStl}</b></td>
+              <td>—</td><td>—</td><td>—</td><td>{teamOnlyStl}</td><td>—</td>
+            </tr>
+            {box.length === 0 && teamOnlyStl === 0 && <tr><td className="l" colSpan={15}>Aucune stat pour le moment.</td></tr>}
+            {(box.length > 0 || teamOnlyStl > 0) && (
               <tr className="tot">
                 <td className="l">TOTAL ÉQUIPE</td><td>{tot.pts || 0}</td>
                 <td>{tot.p2m || 0}/{tot.p2a || 0}</td><td>{tot.p3m || 0}/{tot.p3a || 0}</td><td>{tot.ftm || 0}/{tot.fta || 0}</td>
                 <td>{tot.offReb || 0}</td><td>{tot.defReb || 0}</td><td>{(tot.offReb || 0) + (tot.defReb || 0)}</td>
-                <td>{tot.ast || 0}</td><td>{tot.stl || 0}</td><td>{tot.blk || 0}</td><td>{tot.to || 0}</td><td>{tot.pf || 0}</td><td><b>{teamEval}</b></td><td>—</td>
+                <td>{tot.ast || 0}</td><td>{(tot.stl || 0) + teamOnlyStl}</td><td>{tot.blk || 0}</td><td>{tot.to || 0}</td><td>{tot.pf || 0}</td><td><b>{teamEval + teamOnlyStl}</b></td><td>—</td>
               </tr>
             )}
           </tbody>

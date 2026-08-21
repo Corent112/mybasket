@@ -54,6 +54,7 @@ type MatchActionLine = {
   ft_made: number | null;
   rebound_type: string | null;
   assist_player_id: string | null;
+  player_id: string | null;
   lineup: string[] | null;
 };
 
@@ -695,7 +696,7 @@ export default function HistoriqueMatchsModule() {
     const { data: actionsData, error: actionsError } = await supabase
       .from("match_actions")
       .select(
-        "match_id, quarter, clock, context, action_type, shot_type, shot_result, special_case, ft_attempts, ft_made, rebound_type, assist_player_id, lineup"
+        "match_id, quarter, clock, context, action_type, shot_type, shot_result, special_case, ft_attempts, ft_made, rebound_type, assist_player_id, player_id, lineup"
       )
       .eq("match_id", match.id);
 
@@ -897,6 +898,12 @@ export default function HistoriqueMatchsModule() {
   const selectedTeamName = selectedMatch?.team_id ? teamNames[selectedMatch.team_id] || "Équipe" : "Équipe";
   const totals = getTotals(sheetLines);
   const totalsAdvanced = getTotalsAdvanced(totals);
+  const teamOnlyStl = sheetActions.filter(
+    (action) =>
+      String(action.context || "") === "defense" &&
+      String(action.action_type || "") === "perte-adverse" &&
+      !action.player_id
+  ).length;
   const lineupRows = useMemo(
     () => computeLineupRows(sheetActions, playerNames),
     [sheetActions, playerNames]
@@ -1108,6 +1115,15 @@ export default function HistoriqueMatchsModule() {
                       );
                     })}
 
+                    <tr className="team-stat-row">
+                      <td className="player"><b>ÉQUIPE</b></td>
+                      <td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td>
+                      <td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td>
+                      <td>—</td><td>—</td><td>—</td><td>—</td>
+                      <td><b>{teamOnlyStl}</b></td>
+                      <td>—</td><td>—</td><td>—</td><td>—</td><td>{teamOnlyStl}</td>
+                    </tr>
+
                     <tr className="totals">
                       <td>Totals</td>
                       <td className="pts">{totals.pts}</td>
@@ -1127,7 +1143,7 @@ export default function HistoriqueMatchsModule() {
                       <td>{totals.def}</td>
                       <td>{totals.reb}</td>
                       <td>{totals.ast}</td>
-                      <td>{totals.st}</td>
+                      <td>{totals.st + teamOnlyStl}</td>
                       <td>{totals.to}</td>
                       <td>{totals.bs}</td>
                       <td>{totals.pf}</td>
@@ -1135,7 +1151,7 @@ export default function HistoriqueMatchsModule() {
                         {(safeNumber(selectedMatch?.us_score) - safeNumber(selectedMatch?.them_score)) > 0 ? "+" : ""}
                         {safeNumber(selectedMatch?.us_score) - safeNumber(selectedMatch?.them_score)}
                       </td>
-                      <td>{totalsAdvanced.eff}</td>
+                      <td>{totalsAdvanced.eff + teamOnlyStl}</td>
                     </tr>
                   </tbody>
                 </table>
