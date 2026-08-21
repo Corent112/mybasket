@@ -39,6 +39,8 @@ import {
   linkGoogleDriveFileToMatch,
 } from "@/lib/google-drive/client";
 import VideoSyncModal from "@/components/prise-stats-pro/VideoSyncModal";
+import LiveCodingSettingsModal, { DEFAULT_WORKFLOW_PREFS, type LiveWorkflowPrefs, type LiveCodingProfile, type CodingButtonGroup } from "@/components/prise-stats-pro/LiveCodingSettingsModal";
+import LivePlayerAssociationModal, { type AssociableLiveAction } from "@/components/prise-stats-pro/LivePlayerAssociationModal";
 import ShotChart, { SHOT_ZONES, zoneById, resolveShotZone } from "@/components/prise-stats-pro/ShotChart";
 import {
   type VideoSyncState,
@@ -67,7 +69,7 @@ if (typeof globalThis !== 'undefined' && !(globalThis as any).EmptyRanges) {
 /* ============================ Types ============================ */
 interface Player { id: string; num: number; name: string; pos: string; photo?: string }
 type Ctx = '' | 'attaque' | 'defense';
-type CodingMode = 'live' | 'post';
+type CodingMode = 'live' | 'live-individual' | 'post';
 
 interface Draft {
   context: Ctx; systemeJeu: string; inbound: string; tempsFort: string; coverage: string;
@@ -324,9 +326,34 @@ type CodingButtonCfg = {
 
 // Fallback = constantes actuelles, converties une seule fois au shape config.
 const CODING_FALLBACK: Record<string, CodingButtonCfg[]> = {
+  'system': SYSTEMES_JEU.map((o, i) => ({ key: o.id, label: o.label, emoji: o.ic, category: 'system', stage: 'systeme', sort_order: i, is_active: true })),
   'att-action': ATT_ACTIONS.map((o, i) => ({ key: o.id, label: o.label, emoji: o.ic, category: 'att-action', stage: 'action', sort_order: i, is_active: true })),
   'def-action': DEF_ACTIONS.map((o, i) => ({ key: o.id, label: o.label, emoji: o.ic, category: 'def-action', stage: 'action', sort_order: i, is_active: true })),
   'coverage': COVERAGES.map((o, i) => ({ key: o.id, label: o.label, category: 'coverage', stage: 'coverage', sort_order: i, is_active: true })),
+  'result': [
+    { key:'2-made', label:'2PTS marqué', emoji:'✓', category:'result', stage:'result', sort_order:0, is_active:true },
+    { key:'2-missed', label:'2PTS raté', emoji:'✕', category:'result', stage:'result', sort_order:1, is_active:true },
+    { key:'3-made', label:'3PTS marqué', emoji:'✓', category:'result', stage:'result', sort_order:2, is_active:true },
+    { key:'3-missed', label:'3PTS raté', emoji:'✕', category:'result', stage:'result', sort_order:3, is_active:true },
+    { key:'lf1', label:'1 LF', emoji:'1', category:'result', stage:'ft', sort_order:4, is_active:true },
+    { key:'lf2', label:'2 LF', emoji:'2', category:'result', stage:'ft', sort_order:5, is_active:true },
+    { key:'lf3', label:'3 LF', emoji:'3', category:'result', stage:'ft', sort_order:6, is_active:true },
+    { key:'2plus1', label:'2 PTS + 1 LF', emoji:'＋', category:'result', stage:'ft', sort_order:7, is_active:true },
+    { key:'3plus1', label:'3 PTS + 1 LF', emoji:'＋', category:'result', stage:'ft', sort_order:8, is_active:true },
+  ],
+  'foul': [
+    { key:'touche', label:'Touche', category:'foul', stage:'faute', sort_order:0, is_active:true },
+    { key:'lf2', label:'2 LF', category:'foul', stage:'faute', sort_order:1, is_active:true },
+    { key:'2plus1', label:'2pts + 1LF', category:'foul', stage:'faute', sort_order:2, is_active:true },
+    { key:'lf3', label:'3 LF', category:'foul', stage:'faute', sort_order:3, is_active:true },
+    { key:'3plus1', label:'3pts + 1LF', category:'foul', stage:'faute', sort_order:4, is_active:true },
+  ],
+  'rebound': [
+    { key:'off', label:'Rebond offensif', emoji:'🔄', category:'rebound', stage:'rebound', sort_order:0, is_active:true },
+    { key:'def', label:'Rebond défensif', emoji:'🧲', category:'rebound', stage:'rebound', sort_order:1, is_active:true },
+    { key:'touche-pour', label:'Touche pour', emoji:'↪', category:'rebound', stage:'rebound', sort_order:2, is_active:true },
+    { key:'touche-contre', label:'Touche contre', emoji:'↩', category:'rebound', stage:'rebound', sort_order:3, is_active:true },
+  ],
 };
 
 /**
@@ -340,8 +367,13 @@ function resolveCodingButtons(
   db?: CodingButtonCfg[] | null
 ): CodingButtonCfg[] {
   if (db && db.length) {
-    const rows = db.filter((b) => b.category === category && b.is_active !== false);
-    if (rows.length) return [...rows].sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0));
+    const categoryRows = db.filter((b) => b.category === category);
+    if (categoryRows.length) {
+      return categoryRows
+        .filter((b) => b.is_active !== false)
+        .slice()
+        .sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0));
+    }
   }
   return CODING_FALLBACK[category] ?? [];
 }
@@ -542,15 +574,19 @@ function computeBox(actions: StatA[], roster: Player[]) {
         L.ftm += a.ftMade;
       }
     } else if ((a.actionType === "interception" || a.actionType === "perte-adverse") && L) {
-      // BP adverse attribuée à un joueur = interception créditée au joueur.
-      // Sans playerId, elle reste une statistique ÉQUIPE uniquement.
+      // BP adverse attribuée à un joueur = interception joueur.
+      // Sans playerId, la statistique reste uniquement sur la ligne ÉQUIPE.
       L.stl++;
     } else if (a.actionType === "contre" && L) {
       L.blk++;
     } else if (a.actionType === "perte" && L) {
       L.to++;
+    } else if (a.actionType === "rebond-off" && L) {
+      L.offReb++;
     } else if (a.actionType === "rebond-def" && L) {
       L.defReb++;
+    } else if (a.actionType === "passe-decisive" && L) {
+      L.ast++;
     } else if (a.actionType === "faute-commise" && L) {
       L.pf++;
     } else if (
@@ -600,10 +636,21 @@ function computeBox(actions: StatA[], roster: Player[]) {
     .sort((a: any, b: any) => a.p.num - b.p.num);
 }
 function computeAnalytics(actions: StatA[], roster: Player[]) {
-  let offPoss = 0, defPoss = 0; const defSeq: boolean[] = [];
+  // Une possession peut contenir plusieurs attaques (RO / touche conservée).
+  // On compte donc les possessions par ancre de début et non par nombre d'actions.
+  const offKeys = new Set<string>();
+  const defKeys = new Set<string>();
+  const defSeq: boolean[] = [];
   actions.forEach((a) => {
-    if (a.context === 'attaque') offPoss++;
-    else if (a.context === 'defense') { defPoss++; defSeq.push(themPtsOf(a) === 0); }
+    const key = `${a.context}:${a.possessionStart ?? a.id}`;
+    if (a.context === 'attaque') offKeys.add(key);
+    else if (a.context === 'defense') defKeys.add(key);
+  });
+  const offPoss = offKeys.size;
+  const defPoss = defKeys.size;
+  Array.from(defKeys).forEach((key) => {
+    const list = actions.filter((a) => `${a.context}:${a.possessionStart ?? a.id}` === key);
+    defSeq.push(list.reduce((sum, a) => sum + themPtsOf(a), 0) === 0);
   });
   let maxStreak = 0, cur = 0; defSeq.forEach((stop) => { if (stop) { cur++; maxStreak = Math.max(maxStreak, cur); } else cur = 0; });
   const tfUsed = TEMPS.filter((t) => actions.some((a) => a.tempsFort === t.id));
@@ -678,8 +725,60 @@ export default function PriseStatsProPage() {
      erreur → null → resolveCodingButtons retombe sur les constantes. Un
      changement dans Management se répercute ici (label/emoji/couleur/ordre). */
   const [codingDb, setCodingDb] = useState<CodingButtonCfg[] | null>(null);
+  const [codingDbNonce, setCodingDbNonce] = useState(0);
+  const [showCodingSettings, setShowCodingSettings] = useState(false);
+  const [codingSettingsTab, setCodingSettingsTab] = useState<'workflow' | 'buttons'>('workflow');
+  const [workflowPrefs, setWorkflowPrefs] = useState<LiveWorkflowPrefs>({ ...DEFAULT_WORKFLOW_PREFS });
+  const [codingProfiles, setCodingProfiles] = useState<LiveCodingProfile[]>([]);
+  const [selectedCodingProfileId, setSelectedCodingProfileId] = useState('');
+  const [profileButtonKeys, setProfileButtonKeys] = useState<LiveCodingProfile['activeButtonKeys'] | null>(null);
   const [toast, setToast] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+
+
+  const codingProfilesStorageKey = (tId: string) => `mybasket:livestat-coding-profiles:${tId || 'default'}`;
+  const loadCodingProfiles = (tId: string) => {
+    if (typeof window === 'undefined') return [] as LiveCodingProfile[];
+    try {
+      const raw = window.localStorage.getItem(codingProfilesStorageKey(tId));
+      const parsed = raw ? JSON.parse(raw) : [];
+      return Array.isArray(parsed) ? parsed : [];
+    } catch { return [] as LiveCodingProfile[]; }
+  };
+  const persistCodingProfiles = (tId: string, list: LiveCodingProfile[]) => {
+    setCodingProfiles(list);
+    if (typeof window !== 'undefined') {
+      try { window.localStorage.setItem(codingProfilesStorageKey(tId), JSON.stringify(list)); } catch { /* noop */ }
+    }
+  };
+  const applyCodingProfile = (profile: LiveCodingProfile) => {
+    setSelectedCodingProfileId(profile.id);
+    setWorkflowPrefs({ ...profile.workflow });
+    setProfileButtonKeys(profile.activeButtonKeys || null);
+  };
+  const saveCodingProfile = (profile: LiveCodingProfile) => {
+    const tId = activeTeamId || teamId;
+    const list = loadCodingProfiles(tId);
+    const next = list.some((p) => p.id === profile.id)
+      ? list.map((p) => p.id === profile.id ? profile : p)
+      : [...list, profile];
+    persistCodingProfiles(tId, next);
+    applyCodingProfile(profile);
+  };
+  const deleteCodingProfile = (profileId: string) => {
+    const tId = activeTeamId || teamId;
+    const next = loadCodingProfiles(tId).filter((p) => p.id !== profileId);
+    persistCodingProfiles(tId, next);
+    if (selectedCodingProfileId === profileId) {
+      setSelectedCodingProfileId('');
+      setProfileButtonKeys(null);
+    }
+  };
+  useEffect(() => {
+    const tId = activeTeamId || teamId;
+    if (!tId) { setCodingProfiles([]); return; }
+    setCodingProfiles(loadCodingProfiles(tId));
+  }, [activeTeamId, teamId]);
 
   /* -------- V5 · choix vidéo à la création du match (structure + UI) --------
      Aucun upload serveur / ffmpeg ici : on ne prépare que la donnée et l'UI. */
@@ -699,6 +798,21 @@ export default function PriseStatsProPage() {
   const videoSyncRef = useRef<VideoSyncState>(NATIVE_SYNC);
   const setVideoSync = (s: VideoSyncState) => { videoSyncRef.current = s; setVideoSyncState(s); };
   const [showVideoSync, setShowVideoSync] = useState(false);
+  const openVideoSyncAfterStartRef = useRef(false);
+
+  const requestInitialVideoSync = () => {
+    const alreadyValidated =
+      videoSyncRef.current.validated ??
+      videoSyncRef.current.mode !== 'native';
+
+    if (alreadyValidated) return;
+
+    if (screen === 'live') {
+      window.setTimeout(() => setShowVideoSync(true), 80);
+    } else {
+      openVideoSyncAfterStartRef.current = true;
+    }
+  };
 
   // Accès synchrone dans commit() (le state est async) + base de temps vidéo.
   const videoProviderRef = useRef('none');
@@ -724,15 +838,10 @@ export default function PriseStatsProPage() {
     videoProviderRef.current = 'local';
     setVideoStatus('ready');
 
-    // §3/§8 · Vidéo ajoutée APRÈS le codage : si des actions existent déjà et
-    // que la synchro n'a pas encore été validée, on ouvre automatiquement la
-    // fenêtre « Synchroniser la vidéo avec le codage ». Si elle est déjà validée
-    // (réouverture d'un projet), on applique directement le décalage sauvegardé
-    // et on ne redemande rien (bouton « Recalibrer la vidéo » disponible).
-    const already = videoSyncRef.current.validated ?? videoSyncRef.current.mode !== 'native';
-    if (actions.length > 0 && !already) {
-      setTimeout(() => setShowVideoSync(true), 60);
-    }
+    // Dès qu'une vidéo est insérée, on demande son calage sur le match.
+    // Si elle est choisie dans le setup, la fenêtre s'ouvrira juste après
+    // DÉMARRER LE MATCH.
+    requestInitialVideoSync();
   };
 
 
@@ -754,6 +863,7 @@ export default function PriseStatsProPage() {
     setVideoProvider('google_drive');
     videoProviderRef.current = 'google_drive';
     setVideoStatus('linked');
+    requestInitialVideoSync();
   };
 
   // Saisie d'un lien YouTube.
@@ -925,6 +1035,13 @@ export default function PriseStatsProPage() {
   }, []);
 
   const find = (id: string | null) => roster.find((p) => p.id === id);
+  const profileAllowsButton = (category: string, key: string) => {
+    const allowed = (profileButtonKeys as Partial<Record<string, string[]>> | null)?.[category];
+    return !allowed || allowed.includes(key);
+  };
+  const codingButtonsFor = (category: string) => resolveCodingButtons(category, codingDb).filter((b) => profileAllowsButton(category, b.key));
+  const codingLabel = (category: string, key: string, fallback: string) => codingButtonsFor(category).find((b) => b.key === key)?.label || fallback;
+  const codingButtonEnabled = (category: string, key: string) => codingButtonsFor(category).some((b) => b.key === key);
   const floor = roster.filter((p) => onCourt.includes(p.id));
   const bench = roster.filter((p) => !onCourt.includes(p.id));
 
@@ -935,18 +1052,20 @@ export default function PriseStatsProPage() {
   // (livestat_tags via useLivestatTags). key = id stable ; label/emoji renommables
   // depuis Management > Codification sans casser les stats. Fallback constantes
   // intégré dans useLivestatTags → jamais vide, jamais de key brute affichée.
-  // Temps forts officiels LiveStat : on force la liste fixe demandée ici.
-  // Les anciens tags Supabase peuvent encore exister, mais ne doivent pas
-  // réafficher Fast Break / Transition / Jeu placé dans ce wizard.
-  const tempsFortsButtons = TEMPS.map((t) => ({
-  id: t.id,
-  label: t.label,
-  ic: t.icon,
-}));
+  // Temps forts : dès qu'une équipe possède sa configuration Supabase, elle
+  // pilote le wizard. Sinon on conserve exactement la liste historique actuelle.
+  const tempsFortsButtons = (tags.source === 'supabase'
+    ? tags.active.map((t) => ({ id: t.key, label: t.label, ic: t.emoji || '⚡', is_active: t.is_active, sort_order: t.sort_order }))
+    : TEMPS.map((t, i) => ({ id: t.id, label: t.label, ic: t.icon, is_active: true, sort_order: i })))
+    .filter((t) => profileAllowsButton('temps', t.id));
 
   /* ---------------- V7 · ergonomie vidéo + workspace à onglets ---------------- */
   // Onglet de travail visible dans l'écran live (desktop + mobile).
   const [workTab, setWorkTab] = useState<'coding' | 'center' | 'analysis'>('coding');
+  const liveWorkspaceRef = useRef<HTMLDivElement | null>(null);
+  const [videoPanePct, setVideoPanePct] = useState(48);
+  const [rightPanePx, setRightPanePx] = useState(305);
+  const [videoMaximized, setVideoMaximized] = useState(false);
 
   // Lecteur vidéo local + saut réglable + Tab+flèches.
   const videoRef = useRef<HTMLVideoElement | null>(null);
@@ -956,8 +1075,134 @@ export default function PriseStatsProPage() {
   const detachedVideoWindowRef = useRef<Window | null>(null);
   const detachedVideoChannelRef = useRef<BroadcastChannel | null>(null);
   const [videoStepSeconds, setVideoStepSeconds] = useState(5);
+  const scrubAccumRef = useRef(0);
+  const scrubRafRef = useRef<number | null>(null);
+  const scrubResumeTimerRef = useRef<number | null>(null);
+  const scrubWasPlayingRef = useRef(false);
+
+  const handleTrackpadScrub = (e: any) => {
+    if (!(videoProvider === 'local' || videoProvider === 'google_drive') || !videoUrl) return;
+
+    // Mac trackpad : un geste horizontal vers la DROITE produit généralement
+    // deltaX négatif dans WheelEvent. On inverse donc volontairement le signe
+    // pour respecter le geste utilisateur demandé : droite = avance, gauche = recul.
+    if (Math.abs(e.deltaX) < Math.abs(e.deltaY) * 0.65) return;
+    const gestureSeconds = -e.deltaX * 0.010;
+    if (!gestureSeconds) return;
+
+    e.preventDefault();
+    const v = videoRef.current;
+    if (!v) return;
+
+    if (scrubRafRef.current == null) {
+      scrubWasPlayingRef.current = !v.paused;
+      if (!v.paused) v.pause();
+    }
+
+    // On accumule les micro-mouvements du trackpad et on ne touche au timecode
+    // qu'une fois par frame. Pas de fastSeek : il ferait des bonds entre keyframes.
+    scrubAccumRef.current += gestureSeconds;
+
+    if (scrubRafRef.current == null) {
+      scrubRafRef.current = window.requestAnimationFrame(() => {
+        scrubRafRef.current = null;
+        const delta = Math.max(-0.85, Math.min(0.85, scrubAccumRef.current));
+        scrubAccumRef.current -= delta;
+        const max = Number.isFinite(v.duration) ? v.duration : Infinity;
+        const target = Math.max(0, Math.min(max, v.currentTime + delta));
+        try { v.currentTime = target; } catch { /* noop */ }
+
+        // S'il reste de l'inertie accumulée, la frame suivante continue le scrub.
+        if (Math.abs(scrubAccumRef.current) > 0.002) {
+          scrubRafRef.current = window.requestAnimationFrame(() => {
+            scrubRafRef.current = null;
+            const rest = Math.max(-0.85, Math.min(0.85, scrubAccumRef.current));
+            scrubAccumRef.current -= rest;
+            try {
+              const m = Number.isFinite(v.duration) ? v.duration : Infinity;
+              v.currentTime = Math.max(0, Math.min(m, v.currentTime + rest));
+            } catch { /* noop */ }
+          });
+        }
+      });
+    }
+
+    if (scrubResumeTimerRef.current) window.clearTimeout(scrubResumeTimerRef.current);
+    scrubResumeTimerRef.current = window.setTimeout(() => {
+      if (scrubWasPlayingRef.current) v.play().catch(() => {});
+      scrubWasPlayingRef.current = false;
+    }, 160);
+  };
   const [videoStepCustom, setVideoStepCustom] = useState(false);
   const tabHeldRef = useRef(false);
+
+  const workflowKey = `mybasket-livestat-workflow:${activeTeamId || teamId || 'default'}`;
+  const layoutKey = `mybasket-livestat-layout:${activeTeamId || teamId || 'default'}`;
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    try {
+      const raw = window.localStorage.getItem(workflowKey);
+      setWorkflowPrefs(raw ? { ...DEFAULT_WORKFLOW_PREFS, ...JSON.parse(raw) } : { ...DEFAULT_WORKFLOW_PREFS });
+    } catch {
+      setWorkflowPrefs({ ...DEFAULT_WORKFLOW_PREFS });
+    }
+  }, [workflowKey]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    try { window.localStorage.setItem(workflowKey, JSON.stringify(workflowPrefs)); } catch { /* noop */ }
+  }, [workflowKey, workflowPrefs]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    try {
+      const raw = window.localStorage.getItem(layoutKey);
+      if (!raw) return;
+      const saved = JSON.parse(raw);
+      if (Number.isFinite(saved.videoPanePct)) setVideoPanePct(Math.max(25, Math.min(72, Number(saved.videoPanePct))));
+      if (Number.isFinite(saved.rightPanePx)) setRightPanePx(Math.max(210, Math.min(520, Number(saved.rightPanePx))));
+    } catch { /* noop */ }
+  }, [layoutKey]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    try { window.localStorage.setItem(layoutKey, JSON.stringify({ videoPanePct, rightPanePx })); } catch { /* noop */ }
+  }, [layoutKey, videoPanePct, rightPanePx]);
+
+  const openCodingSettings = (tab: 'workflow' | 'buttons') => {
+    setCodingSettingsTab(tab);
+    setShowCodingSettings(true);
+  };
+
+  const startPanelResize = (kind: 'video' | 'right', e: any) => {
+    e.preventDefault();
+    const host = liveWorkspaceRef.current;
+    if (!host) return;
+    const rect = host.getBoundingClientRect();
+    const move = (ev: PointerEvent) => {
+      if (kind === 'video') {
+        const pct = ((ev.clientX - rect.left) / Math.max(1, rect.width)) * 100;
+        setVideoPanePct(Math.max(25, Math.min(72, pct)));
+      } else {
+        const px = rect.right - ev.clientX;
+        setRightPanePx(Math.max(210, Math.min(520, px)));
+      }
+    };
+    const up = () => {
+      window.removeEventListener('pointermove', move);
+      window.removeEventListener('pointerup', up);
+    };
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', up);
+  };
+
+  const setLayoutPreset = (preset: 'video' | 'balanced' | 'coding') => {
+    setVideoMaximized(false);
+    if (preset === 'video') { setVideoPanePct(64); setRightPanePx(230); }
+    if (preset === 'balanced') { setVideoPanePct(48); setRightPanePx(305); }
+    if (preset === 'coding') { setVideoPanePct(32); setRightPanePx(260); }
+  };
 
   /* ══════════════════ AJOUT · Vidéo détachée : horloge partagée ══════════════════
      Une seule source de vérité pour le timecode : le lecteur détaché quand il est
@@ -993,19 +1238,50 @@ export default function PriseStatsProPage() {
     return sid ? playbookSystems.find((s) => s.id === sid) : undefined;
   };
 
-  // Boutons du wizard : libellé réel si le slot est mappé, sinon libellé par défaut.
-  const systemeButtons = SYSTEMES_JEU.map((s) => {
-    const mapped = systemForSlot(s.id);
-    return { id: s.id, label: mapped ? mapped.title : s.label, ic: s.ic };
-  });
+  // Boutons du wizard : si l'utilisateur a configuré ses systèmes, cette liste
+  // devient la source d'affichage. Sinon on conserve les slots/playbooks historiques.
+  const configuredSystemRows = (codingDb ?? [])
+    .filter((row) => row.category === 'system')
+    .sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0));
+  const activeConfiguredSystems = configuredSystemRows.filter((row) => row.is_active !== false);
+  const systemeButtons = (configuredSystemRows.length
+    ? activeConfiguredSystems.map((row) => ({ id: row.key, label: row.label, ic: row.emoji || '🏀' }))
+    : SYSTEMES_JEU.map((s) => {
+        const mapped = systemForSlot(s.id);
+        return { id: s.id, label: mapped ? mapped.title : s.label, ic: s.ic };
+      })).filter((s) => profileAllowsButton('system', s.id));
+
+
+  const allCodingRowsFor = (category: string): CodingButtonCfg[] => {
+    const configured = (codingDb ?? []).filter((row) => row.category === category);
+    return (configured.length ? configured : (CODING_FALLBACK[category] ?? []))
+      .slice()
+      .sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0));
+  };
+  const codingSettingsGroups: CodingButtonGroup[] = [
+    { key:'system', title:'Système de jeu', icon:'🏀', stage:'systeme', allowAdd:true, rows:(configuredSystemRows.length ? configuredSystemRows : (CODING_FALLBACK.system ?? [])).map((r,i)=>({ key:r.key,label:r.label,emoji:r.emoji,is_active:r.is_active!==false,sort_order:r.sort_order??i })) },
+    { key:'temps', title:'Temps fort', icon:'⚡', stage:'temps', allowAdd:true, rows:(tags.source === 'supabase' ? tags.all.map((x,i)=>({key:x.key,label:x.label,emoji:x.emoji,is_active:x.is_active!==false,sort_order:x.sort_order??i})) : TEMPS.map((x,i)=>({key:x.id,label:x.label,emoji:x.icon,is_active:true,sort_order:i}))) },
+    { key:'att-action', title:'Actions attaque', icon:'🔵', stage:'action', allowAdd:true, rows:allCodingRowsFor('att-action').map((r,i)=>({key:r.key,label:r.label,emoji:r.emoji,is_active:r.is_active!==false,sort_order:r.sort_order??i})) },
+    { key:'def-action', title:'Actions défense', icon:'🔴', stage:'action', allowAdd:true, rows:allCodingRowsFor('def-action').map((r,i)=>({key:r.key,label:r.label,emoji:r.emoji,is_active:r.is_active!==false,sort_order:r.sort_order??i})) },
+    { key:'coverage', title:'Défense sur écran', icon:'🛡️', stage:'coverage', allowAdd:true, rows:allCodingRowsFor('coverage').map((r,i)=>({key:r.key,label:r.label,emoji:r.emoji,is_active:r.is_active!==false,sort_order:r.sort_order??i})) },
+    { key:'result', title:'Résultats tirs', icon:'🎯', stage:'result', allowAdd:false, rows:allCodingRowsFor('result').map((r,i)=>({key:r.key,label:r.label,emoji:r.emoji,is_active:r.is_active!==false,sort_order:r.sort_order??i})) },
+    { key:'foul', title:'Suites de faute', icon:'🟨', stage:'faute', allowAdd:false, rows:allCodingRowsFor('foul').map((r,i)=>({key:r.key,label:r.label,emoji:r.emoji,is_active:r.is_active!==false,sort_order:r.sort_order??i})) },
+    { key:'rebound', title:'Rebonds / possession', icon:'🔄', stage:'rebound', allowAdd:false, rows:allCodingRowsFor('rebound').map((r,i)=>({key:r.key,label:r.label,emoji:r.emoji,is_active:r.is_active!==false,sort_order:r.sort_order??i})) },
+  ];
 
   const [projects, setProjects] = useState<LiveProjectSummary[]>([]);
   const [projectBusy, setProjectBusy] = useState(false);
+  const [showProjectMenu, setShowProjectMenu] = useState(false);
+  const [showPlayerAssociation, setShowPlayerAssociation] = useState(false);
+  const [linkedCollectiveProjectId, setLinkedCollectiveProjectId] = useState('');
   const projectSaveRef = useRef<number | null>(null);
   /* Vidéo présente dans le projet enregistré mais non rattachable au
      rechargement (fichier local). Sert uniquement à ne pas écraser
      l'information en base lors de l'auto-sauvegarde. */
   const restoredVideoRef = useRef<{ provider: string; filename: string } | null>(null);
+  // Dernière position de lecture persistée dans le projet. Elle permet de fermer
+  // complètement LiveStat puis de reprendre exactement au même timecode.
+  const lastProjectVideoTimeRef = useRef<number | null>(null);
 
   const buildProjectState = () => ({
     v: 1,
@@ -1015,6 +1291,11 @@ export default function PriseStatsProPage() {
     date,
     home,
     codingMode,
+    workflowPrefs,
+    selectedCodingProfileId,
+    profileButtonKeys,
+    workspaceLayout: { videoPanePct, rightPanePx },
+    linkedCollectiveProjectId: linkedCollectiveProjectId || null,
     matchJerseyNumbers,
     q,
     secs,
@@ -1052,6 +1333,9 @@ export default function PriseStatsProPage() {
     // zéro (les nouvelles actions gardent une chronologie cohérente).
     codingElapsed: matchStartAtRef.current == null ? 0 : (Date.now() - matchStartAtRef.current) / 1000,
     codingClockStarted: matchStartAtRef.current != null,
+    lastVideoTime: hasVideoLoaded() ? getCurrentVideoTime() : lastProjectVideoTimeRef.current,
+    projectFormat: 'mybasket-livestat-project',
+    projectVersion: 2,
     savedAt: new Date().toISOString(),
   });
 
@@ -1065,6 +1349,40 @@ export default function PriseStatsProPage() {
       systemMapping,                          // AJOUT §8
       videoSync: videoSyncRef.current,        // AJOUT · miroir colonnes video_sync_*
     }).catch(() => {});
+  };
+
+  const saveProjectNow = async (closeAfter = false) => {
+    const matchId = liveMatchIdRef.current;
+    if (!matchId || matchId.startsWith('local_')) {
+      flash('Projet non sauvegardable : connexion Supabase requise');
+      return;
+    }
+    if (projectBusy) return;
+    setProjectBusy(true);
+    try {
+      pauseVideo();
+      setRunning(false);
+      const currentVideoTime = hasVideoLoaded() ? getCurrentVideoTime() : lastProjectVideoTimeRef.current;
+      if (currentVideoTime != null) lastProjectVideoTimeRef.current = currentVideoTime;
+      const res = await saveProjectState({
+        matchId,
+        state: buildProjectState(),
+        playbookId: playbookId || null,
+        systemMapping,
+        videoSync: videoSyncRef.current,
+      });
+      if (!res.ok) { flash('Sauvegarde du projet impossible'); return; }
+      flash(closeAfter ? 'Projet enregistré et fermé ✓' : 'Projet enregistré ✓');
+      if (closeAfter) {
+        const tid = liveTeamIdRef.current || activeTeamId || teamId;
+        setLiveMatch(null, null);
+        setScreen('setup');
+        try { window.history.replaceState({}, '', window.location.pathname); } catch { /* noop */ }
+        if (tid) refreshProjects(tid);
+      }
+    } finally {
+      setProjectBusy(false);
+    }
   };
 
   // Référence toujours à jour vers la dernière version de persistProjectState :
@@ -1081,7 +1399,7 @@ export default function PriseStatsProPage() {
     setProjects(list);
   };
 
-  const resumeProject = async (matchId: string, mode: 'resume' | 'analysis' | 'montage' = 'resume') => {
+  const resumeProject = async (matchId: string, mode: 'resume' | 'analysis' | 'montage' | 'sync' | 'associate' = 'resume') => {
     setProjectBusy(true);
     try {
       const res = await loadProject(matchId);
@@ -1105,7 +1423,17 @@ export default function PriseStatsProPage() {
       setOpponent(String(s.opponent || ''));
       setDate(String(s.date || date));
       setHome(s.home ?? true);
-      setCodingMode(s.codingMode === 'live' ? 'live' : 'post');
+      setCodingMode(s.codingMode === 'live-individual' ? 'live-individual' : s.codingMode === 'live' ? 'live' : 'post');
+      if (s.workflowPrefs && typeof s.workflowPrefs === 'object') {
+        setWorkflowPrefs({ ...DEFAULT_WORKFLOW_PREFS, ...s.workflowPrefs });
+      }
+      setSelectedCodingProfileId(String(s.selectedCodingProfileId || ''));
+      setProfileButtonKeys(s.profileButtonKeys && typeof s.profileButtonKeys === 'object' ? s.profileButtonKeys : null);
+      if (s.workspaceLayout && typeof s.workspaceLayout === 'object') {
+        if (Number.isFinite(Number(s.workspaceLayout.videoPanePct))) setVideoPanePct(Math.max(25, Math.min(72, Number(s.workspaceLayout.videoPanePct))));
+        if (Number.isFinite(Number(s.workspaceLayout.rightPanePx))) setRightPanePx(Math.max(210, Math.min(520, Number(s.workspaceLayout.rightPanePx))));
+      }
+      setLinkedCollectiveProjectId(String(s.linkedCollectiveProjectId || ''));
       setQ(Number(s.q || 1));
       setSecs(Number(s.secs ?? 600));
       setPerQ(s.perQ || { 1: { us: 0, them: 0 } });
@@ -1134,6 +1462,7 @@ export default function PriseStatsProPage() {
       setYoutubeUrl(String(s.youtubeUrl || ''));
 
       setVideoSync(normalizeSync(res.videoSync ?? s));
+      lastProjectVideoTimeRef.current = s.lastVideoTime == null ? null : Number(s.lastVideoTime);
 
       if (provider === 'google_drive' && s.driveFileId) {
         const driveFile = {
@@ -1187,6 +1516,8 @@ export default function PriseStatsProPage() {
       // Mode d'ouverture demandé depuis l'Historique.
       if (mode === 'analysis') { setScreen('box'); flash('Projet ouvert en analyse'); }
       else if (mode === 'montage') { setScreen('box'); setShowMontagePanel(true); flash('Montage ouvert'); }
+      else if (mode === 'sync') { setScreen('live'); setTimeout(() => setShowVideoSync(true), 120); flash('Projet ouvert — ajoute ou recale la vidéo'); }
+      else if (mode === 'associate') { setScreen('live'); setTimeout(() => setShowPlayerAssociation(true), 140); flash('Projet ouvert — associe les joueurs aux actions'); }
       else { setScreen('live'); flash('Projet rouvert — reprends le codage'); }
     } finally {
       setProjectBusy(false);
@@ -1203,7 +1534,7 @@ export default function PriseStatsProPage() {
     const params = new URLSearchParams(window.location.search);
     const pid = params.get('project');
     if (!pid) return;
-    const mode = (params.get('mode') || 'resume') as 'resume' | 'analysis' | 'montage';
+    const mode = (params.get('mode') || 'resume') as 'resume' | 'analysis' | 'montage' | 'sync' | 'associate';
     const tab = params.get('tab'); // 'history' | 'players' | null
     if (tab === 'players') setInitialBoxTab('box');
     else if (tab === 'history') setInitialBoxTab('team');
@@ -1244,15 +1575,63 @@ export default function PriseStatsProPage() {
   //   - aucune vidéo → temps réel écoulé depuis le coup d'envoi du codage.
   // Renvoie null uniquement si le codage n'a pas encore démarré.
   const getRawCodingTime = (): number | null => {
-    if (matchStartAtRef.current == null) return null;
     const hasVideoPlayer =
       videoDetached ||
       Boolean(clipVideoRef.current) ||
       ((videoProviderRef.current === 'local' || videoProviderRef.current === 'google_drive') && Boolean(videoRef.current));
     if (hasVideoPlayer) {
-      return Math.max(0, getCurrentVideoTime());
+      const mediaTime = Math.max(0, getCurrentVideoTime());
+      const sync = videoSyncRef.current;
+      const marker = sync.periodMarkers?.[String(q)];
+      const rate = Number.isFinite(sync.rate) && sync.rate > 0 ? sync.rate : 1;
+      // Une vidéo ajoutée après le live travaille sur l'échelle MEDIA. Pour
+      // continuer à coder sans casser les anciens événements, on reconvertit
+      // la tête de lecture vers l'échelle SOURCE LiveStat avant d'enregistrer.
+      if (marker?.start != null && marker?.sourceStart != null) {
+        return Math.max(0, Number(marker.sourceStart) + (mediaTime - Number(marker.start)) / rate);
+      }
+      if (sync.mode !== 'native') {
+        return Math.max(0, (mediaTime - (Number.isFinite(sync.offset) ? sync.offset : 0)) / rate);
+      }
+      return mediaTime;
     }
+    if (matchStartAtRef.current == null) return null;
     return Math.max(0, (Date.now() - matchStartAtRef.current) / 1000);
+  };
+
+  // Ancre SOURCE de début de quart-temps. En direct sans vidéo, elle est posée
+  // au premier démarrage du chrono de la période. Plus tard le coach associe
+  // cette ancre au curseur vidéo Q1/Q2/Q3/Q4 dans VideoSyncModal.
+  const markPeriodSourceStart = (period: number, explicitTime?: number) => {
+    const key = String(period);
+    const prev = videoSyncRef.current;
+    if (prev.periodMarkers?.[key]?.sourceStart != null) return;
+    const raw = explicitTime ?? getRawCodingTime();
+    if (raw == null || !Number.isFinite(raw)) return;
+    const next: VideoSyncState = {
+      ...prev,
+      periodMarkers: {
+        ...(prev.periodMarkers ?? {}),
+        [key]: { ...(prev.periodMarkers?.[key] ?? {}), sourceStart: Math.max(0, raw) },
+      },
+    };
+    setVideoSync(next);
+  };
+
+  const markPeriodSourceEnd = (period: number) => {
+    const raw = getRawCodingTime();
+    if (raw == null || !Number.isFinite(raw)) return;
+    const key = String(period);
+    const prev = videoSyncRef.current;
+    setVideoSync({
+      ...prev,
+      periodMarkers: {
+        ...(prev.periodMarkers ?? {}),
+        [key]: { ...(prev.periodMarkers?.[key] ?? {}), sourceEnd: Math.max(0, raw) },
+      },
+    });
+    persistProjectStateRef.current?.();
+    flash(`Fin ${periodLabel(period)} repérée`);
   };
 
   const markClipStartBefore = (secondsBefore: number) => {
@@ -3279,8 +3658,16 @@ export default function PriseStatsProPage() {
   // la vidéo après coup. Avec une vidéo, on garde la synchro lecture/pause.
   const toggleClockAndVideo = () => {
     if (!hasVideoLoaded()) {
-      // Sans vidéo : simple bascule du chrono (l'horloge source tourne déjà en
-      // temps réel depuis le coup d'envoi, cf. getRawCodingTime).
+      // Sans vidéo : au premier PLAY du quart-temps, on mémorise son début sur
+      // l'horloge source continue. Ce repère sera associé à la vidéo après coup.
+      if (!running) {
+        if (matchStartAtRef.current == null) {
+          matchStartAtRef.current = Date.now();
+          setNoVideoMatchClockStarted(true);
+          setNoVideoElapsedDisplay(0);
+        }
+        markPeriodSourceStart(q, q === 1 && !videoSyncRef.current.periodMarkers?.['1']?.sourceStart ? 0 : undefined);
+      }
       setRunning((r) => !r);
       return;
     }
@@ -3299,7 +3686,8 @@ export default function PriseStatsProPage() {
         matchStartAtRef.current = Date.now();
         setNoVideoMatchClockStarted(true);
         setNoVideoElapsedDisplay(0);
-        flash('🏁 Début du match — temps réel lancé');
+        markPeriodSourceStart(q, q === 1 ? 0 : undefined);
+        flash(`🏁 Début ${periodLabel(q)} — temps réel lancé`);
       }
       return;
     }
@@ -3567,7 +3955,7 @@ export default function PriseStatsProPage() {
     })();
 
     return () => { active = false; };
-  }, [activeTeamId, teamId]);
+  }, [activeTeamId, teamId, codingDbNonce]);
 
   // Charge la liste des montages sauvegardés quand on ouvre l'onglet Montage.
   useEffect(() => {
@@ -3752,16 +4140,21 @@ export default function PriseStatsProPage() {
     const value = Math.max(0, Math.min(99, Number(cleaned)));
     setMatchJerseyNumbers((current) => ({ ...current, [playerId]: value }));
   };
-  const startMatch = () => {
-    if (!selTeam || hasDuplicateMatchNumbers || hasInvalidMatchNumbers) return;
+  const startMatch = async () => {
+    if (!selTeam || hasDuplicateMatchNumbers || hasInvalidMatchNumbers || projectBusy) return;
+    setProjectBusy(true);
+
     const matchRoster = selTeam.players.map((player) => ({
       ...player,
       num: matchNumberOf(player),
     }));
+    const source = importedLiveSource;
+
     setActiveTeamId(selTeam.id);
     setTeamId(selTeam.id);
-    setRoster(matchRoster); setTeamName(selTeam.name);
-    const source = importedLiveSource;
+    setRoster(matchRoster);
+    setTeamName(selTeam.name);
+
     if (source) {
       const sourceActions = Array.isArray(source.actions) ? source.actions : [];
       const sourcePerQ = source.perQ && typeof source.perQ === 'object' ? source.perQ : { 1: { us: 0, them: 0 } };
@@ -3772,35 +4165,92 @@ export default function PriseStatsProPage() {
       setPerQ(sourcePerQ);
       setQ(Number(source.q || 1));
       setSecs(Number(source.secs ?? 600));
+      const restoredSync = normalizeSync(source.videoSync ?? source);
+      setVideoSync(restoredSync);
+      lastProjectVideoTimeRef.current = source.lastVideoTime == null ? null : Number(source.lastVideoTime);
     } else {
       setOnCourt(starters.slice());
-      setActions([]); setMinutesByPlayer({}); setPerQ({ 1: { us: 0, them: 0 } }); setQ(1); setSecs(600);
+      setActions([]);
+      setMinutesByPlayer({});
+      setPerQ({ 1: { us: 0, them: 0 } });
+      setQ(1);
+      setSecs(600);
+      setVideoSync(NATIVE_SYNC);
+      lastProjectVideoTimeRef.current = null;
     }
+
     setRunning(false);
-    setDraft(emptyDraft()); setStage('context'); setScreen('live');
-
-
-    // Le match reste uniquement en brouillon local pendant le live.
-    // Aucune ligne Supabase n'est créée avant le clic sur « Terminer ».
-    setLiveMatch(null, null);
+    setDraft(emptyDraft());
+    setStage('context');
     videoProviderRef.current = videoProvider;
-    // Sans vidéo, le temps réel ne commence PAS à l'ouverture de l'écran :
-    // le codeur le lance exactement au coup d'envoi avec ESPACE.
     matchStartAtRef.current = source ? null : (videoProvider === 'none' ? null : Date.now());
     setNoVideoMatchClockStarted(false);
     setNoVideoElapsedDisplay(0);
     ensuringRef.current = false;
-    if (source && source.actions?.length && videoProvider !== 'none') {
-      // La source Live garde t=0 au coup d'envoi. L'utilisateur pose maintenant
-      // le marqueur « Le match commence ici » dans la vidéo ; VideoSyncModal
-      // recale ensuite tous les clips à partir de ce seul repère.
-      setTimeout(() => setShowVideoSync(true), 120);
+
+    // Un match devient immédiatement un PROJET Supabase en statut draft.
+    // Il est donc sauvegardable/rouvrable, mais n'alimente AUCUNE stat officielle
+    // avant le clic explicite sur « Terminer ».
+    try {
+      const ensured = await ensureLiveMatch({
+        teamId: selTeam.id,
+        opponent: opponent || 'Adversaire',
+        date,
+        home,
+        playerIds: matchRoster.map((player) => player.id),
+        videoMode,
+        videoStatus,
+        videoProvider,
+        videoUrl,
+        videoFilename,
+        youtubeUrl,
+      });
+      if (ensured.ok) {
+        setLiveMatch(ensured.matchId, ensured.teamId);
+      } else {
+        setLiveMatch(null, null);
+        flash('Le match démarre, mais la sauvegarde projet Supabase est indisponible : ' + ensured.error);
+      }
+    } catch (error) {
+      console.error('Création projet LiveStat:', error);
+      setLiveMatch(null, null);
+      flash('Le match démarre en local — sauvegarde projet à vérifier');
+    } finally {
+      setProjectBusy(false);
+    }
+
+    setScreen('live');
+
+    const mustOpenInitialSync =
+      openVideoSyncAfterStartRef.current ||
+      (
+        videoProvider !== 'none' &&
+        !(videoSyncRef.current.validated ?? videoSyncRef.current.mode !== 'native')
+      );
+
+    if (mustOpenInitialSync) {
+      openVideoSyncAfterStartRef.current = false;
+      window.setTimeout(() => setShowVideoSync(true), 140);
     }
   };
 
   /* -------- horloge / quart-temps -------- */
   const changeQ = (d: number) => {
     const nq = Math.max(1, q + d);
+    if (codingMode === 'live' && d > 0) {
+      const raw = getRawCodingTime();
+      if (raw != null) {
+        const prev = videoSyncRef.current;
+        setVideoSync({
+          ...prev,
+          periodMarkers: {
+            ...(prev.periodMarkers ?? {}),
+            [String(q)]: { ...(prev.periodMarkers?.[String(q)] ?? {}), sourceEnd: raw },
+            [String(nq)]: { ...(prev.periodMarkers?.[String(nq)] ?? {}), sourceStart: raw },
+          },
+        });
+      }
+    }
     setQ(nq); setPerQ((p) => (p[nq] ? p : { ...p, [nq]: { us: 0, them: 0 } }));
     setSecs(periodDuration(nq)); setRunning(false); setDraft(emptyDraft()); setStage('context');
   };
@@ -3808,17 +4258,24 @@ export default function PriseStatsProPage() {
   /* -------- enregistrement (auto, sans validation) -------- */
   const commit = (d: Draft) => {
     const vstamp = stampVideo();
+    // Filet : si le début de période n'a pas été posé via le chrono, on utilise
+    // le premier événement de cette période comme ancre source approximative.
+    if (videoSyncRef.current.periodMarkers?.[String(q)]?.sourceStart == null && vstamp.videoTime != null) {
+      markPeriodSourceStart(q, q === 1 ? 0 : vstamp.videoTime);
+    }
     possessionEndOverrideRef.current = null;
     // AJOUT §2/§6/§7 · on fige sur l'action les infos système + possession + playbook,
     // pour qu'elles soient identiques partout (state, Supabase, exports, project_state).
     const mappedSys = systemForSlot(d.systemeJeu);
+    const configuredSys = (codingDb ?? []).find((row) => row.category === 'system' && row.key === d.systemeJeu);
     const enrich: Partial<StatA> = {
       playbookId: playbookId || null,
       systemeSlot: d.systemeJeu || null,
       systemeId: (systemMapping[d.systemeJeu] as string | undefined) ?? null,
       systemeName: mappedSys?.title
+        ?? configuredSys?.label
         ?? (SYSTEMES_JEU.find((s) => s.id === d.systemeJeu)?.label ?? null),
-      possessionStart: vstamp.clipStart ?? null,
+      possessionStart: possessionStartRef.current ?? vstamp.clipStart ?? null,
       possessionEnd: vstamp.clipEnd ?? null,
     };
     const a: StatA = {
@@ -3883,18 +4340,40 @@ export default function PriseStatsProPage() {
 
     let next: Ctx, inbound = false;
     if (a.actionType === 'touche') next = 'attaque';
-    else if (a.actionType === 'faute-commise' && a.context === 'defense') next = 'defense';
-    else if (a.foulOutcome === 'touche') { if (a.context === 'defense') next = 'defense'; else { next = 'attaque'; inbound = true; } }
     else if (a.reboundType === 'touche-pour') { next = 'attaque'; inbound = true; }
     else if (a.reboundType) next = reboundNext(a.context, a.reboundType);
+    else if (a.foulOutcome === 'touche') { if (a.context === 'defense') next = 'defense'; else { next = 'attaque'; inbound = true; } }
+    else if (a.actionType === 'faute-commise' && a.context === 'defense') next = 'attaque';
     else next = POSS(a.context);
     const fresh = emptyDraft(); fresh.context = next;
-    // AJOUT · la possession suivante commence au timecode de bascule du contexte.
-    possessionStartRef.current = getRawCodingTime();
+    // Live collectif : RO / touche conservée = nouvelle ATTAQUE mais même POSSESSION.
+    const samePossession = codingMode === 'live' && (
+      (a.context === 'attaque' && (a.reboundType === 'off' || a.reboundType === 'touche-pour')) ||
+      (a.context === 'defense' && (a.reboundType === 'off' || a.reboundType === 'touche-contre')) ||
+      (a.context === next && a.foulOutcome === 'touche')
+    );
+    if (!samePossession) possessionStartRef.current = getRawCodingTime();
     setDraft(fresh);
-    setStage(codingMode === 'live'
-      ? (next === 'defense' ? 'temps' : 'systeme')
-      : (inbound ? 'inbound' : (next === 'defense' ? 'temps' : 'systeme')));
+
+    // Routage verrouillé après lancers francs adverses :
+    // si le dernier LF est marqué en DÉFENSE, la possession bascule en ATTAQUE
+    // et on repart TOUJOURS par SYSTÈME (Live collectif + Après match/vidéo).
+    // Le Live individuel conserve son propre chemin joueur/résultat.
+    const defensiveFtFinishedMade =
+      a.context === 'defense' &&
+      a.shotType === 'LF' &&
+      (a.ftResults?.length || 0) > 0 &&
+      a.ftResults[a.ftResults.length - 1] === 'made';
+
+    if (codingMode === 'live-individual') {
+      setStage(next === 'attaque' ? 'player' : 'result');
+    } else if (defensiveFtFinishedMade) {
+      setStage('systeme');
+    } else {
+      setStage(codingMode === 'live'
+        ? (next === 'defense' ? 'temps' : 'systeme')
+        : (inbound ? 'inbound' : (next === 'defense' ? 'temps' : 'systeme')));
+    }
   };
 
   /* -------- routages LF / passe décisive -------- */
@@ -3902,68 +4381,90 @@ export default function PriseStatsProPage() {
     const anyMade = d.ftMade > 0;
     const lastMiss = d.ftResults[d.ftResults.length - 1] === 'miss';
 
-    // En direct, les LF font partie du seul clic « Résultat » : on enregistre
-    // immédiatement la possession sans demander rebond, passe ou joueur.
+    if (codingMode === 'live-individual') {
+      const nd = { ...d, shotResult: anyMade ? 'made' : 'missed' };
+      if (lastMiss && workflowOn('rebound')) { setDraft(nd); setStage('rebound'); }
+      else commit(nd);
+      return;
+    }
     if (codingMode === 'live') {
-      commit({ ...d, shotResult: anyMade ? 'made' : 'missed' });
-      return;
-    }
-
-    if (d.actionType === 'faute-commise') {
       const nd = { ...d, shotResult: anyMade ? 'made' : 'missed' };
-
-      // En défense, si le dernier LF adverse est loupé, on doit choisir le rebond.
-      if (lastMiss) {
-        setDraft(nd);
-        setStage('rebound');
-        return;
-      }
-
-      commit(nd);
-      return;
-    }
-
-    if (d.specialCase === '2pts+1lf' || d.specialCase === '3pts+1lf') {
-      if (lastMiss) {
-        setDraft(d);
-        setStage('rebound');
-      } else {
-        commit(d);
-      }
-      return;
-    }
-
-    if (d.actionType === 'faute-provoquee') {
-      const nd = { ...d, shotResult: anyMade ? 'made' : 'missed' };
-
-      if (anyMade) {
-        setDraft(nd);
-        setStage('assist');
-        return;
-      }
-
-      if (lastMiss) {
-        setDraft(nd);
-        setStage('rebound');
-        return;
-      }
-
-      commit(nd);
+      if (lastMiss) { setDraft(nd); setStage('rebound'); }
+      else commit(nd);
       return;
     }
 
     const nd = { ...d, shotResult: anyMade ? 'made' : 'missed' };
 
-    if (lastMiss) {
-      setDraft(nd);
-      setStage('rebound');
-    } else {
+    if (d.actionType === 'faute-commise') {
+      if (lastMiss && workflowOn('rebound')) { setDraft(nd); setStage('rebound'); return; }
       commit(nd);
+      return;
     }
+
+    if (d.specialCase === '2pts+1lf' || d.specialCase === '3pts+1lf') {
+      if (lastMiss && workflowOn('rebound')) { setDraft(nd); setStage('rebound'); }
+      else commit(nd);
+      return;
+    }
+
+    if (d.actionType === 'faute-provoquee') {
+      if (anyMade && workflowOn('assist')) { setDraft(nd); setStage('assist'); return; }
+      if (lastMiss && workflowOn('rebound')) { setDraft(nd); setStage('rebound'); return; }
+      commit(nd);
+      return;
+    }
+
+    if (lastMiss && workflowOn('rebound')) { setDraft(nd); setStage('rebound'); }
+    else commit(nd);
   };
+
   const afterPD = (d: Draft) => {
     if (d.specialCase === '2pts+1lf' || d.specialCase === '3pts+1lf') { setDraft({ ...d, ftResults: [] }); setStage('ft'); return; }
     if (d.actionType === 'faute-provoquee') { const lastMiss = d.ftResults[d.ftResults.length - 1] === 'miss'; if (lastMiss) { setDraft(d); setStage('rebound'); return; } commit(d); return; }
+    commit(d);
+  };
+
+  /* -------- navigation dynamique du workflow -------- */
+  const workflowOn = (key: keyof LiveWorkflowPrefs) => {
+    if (codingMode === 'post') return workflowPrefs[key];
+    if (codingMode === 'live') return (key === 'system' || key === 'temps') ? workflowPrefs[key] : true;
+    if (codingMode === 'live-individual') {
+      if (key === 'zone' || key === 'rebound' || key === 'assist') return workflowPrefs[key];
+      if (key === 'player') return true;
+      return false;
+    }
+    return true;
+  };
+
+  const stageAfterContext = (c: Ctx): string => {
+    if (codingMode === 'live-individual') return c === 'defense' ? 'result' : 'player';
+    if (c === 'defense') {
+      if (workflowOn('temps')) return 'temps';
+      return codingMode === 'live' ? 'result' : 'action';
+    }
+    if (workflowOn('system')) return 'systeme';
+    if (workflowOn('temps')) return 'temps';
+    if (codingMode === 'live') return 'result';
+    return workflowOn('player') ? 'player' : 'action';
+  };
+
+  const stageAfterSystem = (): string => {
+    if (workflowOn('temps')) return 'temps';
+    if (codingMode === 'live') return 'result';
+    return workflowOn('player') ? 'player' : 'action';
+  };
+
+  const stageAfterTemps = (d: Draft): string => {
+    if (codingMode === 'live') return 'result';
+    if ((d.tempsFort === 'pick-side' || d.tempsFort === 'pick-top') && workflowOn('coverage')) return 'coverage';
+    return workflowOn('player') ? 'player' : 'action';
+  };
+
+  const routePostShot = (d: Draft) => {
+    if (workflowOn('zone')) { setDraft(d); setStage('zone'); return; }
+    if (d.shotResult === 'missed' && workflowOn('rebound')) { setDraft(d); setStage('rebound'); return; }
+    if (d.context !== 'defense' && d.shotResult === 'made' && workflowOn('assist')) { setDraft(d); setStage('assist'); return; }
     commit(d);
   };
 
@@ -3972,18 +4473,17 @@ export default function PriseStatsProPage() {
     if (c === 'defense') markClipEndNow();
     possessionStartRef.current = getRawCodingTime(); // AJOUT · début de possession (temps source)
     setDraft({ ...draft, context: c, systemeJeu: '', tempsFort: '', coverage: '' });
-    // En défense : pas d'étape « Système de jeu », on va directement aux temps forts.
-    setStage(c === 'defense' ? 'temps' : 'systeme');
+    setStage(stageAfterContext(c));
   };
   const inboundPick = (t: string) => {
     const d = { ...draft, inbound: t };
     if (d.actionType === 'touche') commit(d);
-    else { possessionStartRef.current = getRawCodingTime(); setDraft(d); setStage(d.context === 'defense' ? 'temps' : 'systeme'); } // AJOUT
+    else { possessionStartRef.current = getRawCodingTime(); setDraft(d); setStage(stageAfterContext(d.context)); } // AJOUT
   };
   const systemePick = (id: string) => {
     if (id === 'libre') markClipStartBefore(3);
     setDraft({ ...draft, systemeJeu: id, tempsFort: '', coverage: '' });
-    setStage('temps');
+    setStage(stageAfterSystem());
   };
   const tempsPick = (id: string) => {
     const now = getRawCodingTime();
@@ -3996,22 +4496,26 @@ export default function PriseStatsProPage() {
       draft.eventClipStart ??
       (now == null ? null : Math.max(possessionStart, now - 6));
     const d = { ...draft, tempsFort: id, coverage: '', eventClipStart: commonEventStart };
-    if (codingMode === 'live') {
-      setDraft(d);
-      setStage('result');
-      return;
-    }
-    if (id === 'pick-side' || id === 'pick-top') {
-      setDraft(d);
-      setStage('coverage');
-    } else {
-      setDraft(d);
-      setStage(d.context === 'defense' ? 'action' : 'player');
-    }
+    setDraft(d);
+    setStage(stageAfterTemps(d));
   };
-  const covPick = (id: string) => { const d = { ...draft, coverage: id }; setDraft(d); setStage(d.context === 'defense' ? 'action' : 'player'); };
+  const covPick = (id: string) => {
+    const d = { ...draft, coverage: id };
+    setDraft(d);
+    setStage(workflowOn('player') ? 'player' : 'action');
+  };
   const actionPick = (id: string) => {
-  const d = { ...draft, actionType: id };
+  let d = { ...draft, actionType: id };
+
+  if (codingMode === 'live-individual') {
+    d = { ...d, context: draft.context || 'attaque' };
+    if (id === 'tir') { setDraft(d); setStage('result'); return; }
+    if (id === 'faute-commise' && d.context === 'defense') { setDraft(d); setStage('player'); return; }
+    if (id === 'interception' || id === 'contre') { setDraft({ ...d, context:'defense' }); setStage('player'); return; }
+    if (id === 'faute-provoquee' || id === 'faute-commise') { setDraft(d); setStage('faute'); return; }
+    commit(d);
+    return;
+  }
 
   if (d.context === "defense") {
     if (id === "tir") {
@@ -4050,6 +4554,18 @@ export default function PriseStatsProPage() {
   }
 };
   const playerPick = (id: string) => {
+  if (codingMode === 'live-individual') {
+    if (draft.actionType) {
+      const d = { ...draft, playerId: id };
+      if (draft.actionType === 'faute-commise' || draft.actionType === 'faute-provoquee') { setDraft(d); setStage('faute'); return; }
+      if (draft.actionType === 'contre') { setDraft(d); setStage('rebound'); return; }
+      commit(d);
+      return;
+    }
+    setDraft({ ...emptyDraft(), playerId: id, context: 'attaque' });
+    setStage('result');
+    return;
+  }
   if (draft.context === "defense" && draft.actionType === "faute-commise") {
     setDraft({ ...draft, playerId: id });
     setStage("faute");
@@ -4085,47 +4601,46 @@ export default function PriseStatsProPage() {
     markClipStartBefore(5);
     const d = { ...draft, actionType: 'tir', shotType, shotResult };
 
+    if (codingMode === 'live-individual') {
+      routePostShot(d);
+      return;
+    }
     if (codingMode === 'live') {
-      commit(d);
+      if (shotResult === 'missed') { setDraft(d); setStage('rebound'); }
+      else commit(d);
       return;
     }
 
-    // Même logique qu'avant : tout tir extérieur à LF passe par la shot chart,
-    // y compris en défense pour localiser le panier concédé.
-    setDraft(d);
-    setStage('zone');
+    // En mode vidéo, le chemin respecte la configuration utilisateur.
+    routePostShot(d);
   };
 
   const resultPick = (r: string) => {
     markClipStartBefore(5);
     const d = { ...draft, shotResult: r, actionType: 'tir' };
 
-    // En défense aussi, on localise le tir concédé sur la shot chart.
-    // Le point est affiché temporairement pendant l'action puis enregistré
-    // dans le boxscore / shot chart défense.
-    if (d.context === 'defense') {
-      if (d.shotType === 'LF') {
-        if (r === 'made') commit(d);
-        else { setDraft(d); setStage('rebound'); }
-        return;
-      }
-      setDraft(d);
-      setStage('zone');
+    if (d.shotType === 'LF') {
+      if (r === 'missed' && workflowOn('rebound')) { setDraft(d); setStage('rebound'); }
+      else commit(d);
       return;
     }
-
-    setDraft(d); setStage('zone');
+    routePostShot(d);
   };
   const special = (s: string) => {
     markClipStartBefore(5);
     const d = { ...draft, actionType: 'tir', specialCase: s === '2pts1lf' ? '2pts+1lf' : '3pts+1lf', shotType: s === '2pts1lf' ? '2PTS' : '3PTS', shotResult: 'made', ftAttempts: 1, ftMade: 0, ftResults: [] };
-    setDraft(d); setStage(codingMode === 'live' ? 'ft' : 'zone');
+    if (codingMode !== 'post') { setDraft(d); setStage('ft'); return; }
+    if (workflowOn('zone')) { setDraft(d); setStage('zone'); return; }
+    if (workflowOn('assist')) { setDraft(d); setStage('assist'); return; }
+    setDraft(d); setStage('ft');
   };
   const courtClick = (e: MouseEvent<HTMLDivElement>) => {
     if (stage !== 'zone') return;
     const r = (e.currentTarget as HTMLDivElement).getBoundingClientRect();
     const d = { ...draft, courtX: (e.clientX - r.left) / r.width, courtY: (e.clientY - r.top) / r.height };
-    if (d.shotResult === 'missed') { setDraft(d); setStage('rebound'); } else { setDraft(d); setStage('assist'); }
+    if (d.shotResult === 'missed' && workflowOn('rebound')) { setDraft(d); setStage('rebound'); }
+    else if (d.context !== 'defense' && d.shotResult === 'made' && workflowOn('assist')) { setDraft(d); setStage('assist'); }
+    else commit(d);
   };
 
   // V10.8 · sélection par CLIC EXACT sur la shot chart. Écrit shot_zone_id
@@ -4138,24 +4653,41 @@ export default function PriseStatsProPage() {
     const py = point ? point.y : zone.cy;
     const d = { ...draft, zone: zone.id, courtX: px / 100, courtY: py / 100 };
     if (d.context === 'defense') {
-      if (d.shotResult === 'missed') { setDraft(d); setStage('rebound'); }
-      else { commit(d); }
+      if (d.shotResult === 'missed' && workflowOn('rebound')) { setDraft(d); setStage('rebound'); }
+      else commit(d);
       return;
     }
-    if (d.shotResult === 'missed') { setDraft(d); setStage('rebound'); } else { setDraft(d); setStage('assist'); }
+    if (d.shotResult === 'missed' && workflowOn('rebound')) { setDraft(d); setStage('rebound'); }
+    else if (d.shotResult === 'made' && workflowOn('assist')) { setDraft(d); setStage('assist'); }
+    else commit(d);
   };
   const rebPick = (id: string) => {
     markClipEndNow();
     const d = { ...draft, reboundType: id };
-    if (isMyRebound(d.context, id)) {
-      setDraft(d);
-    } else {
+    if (codingMode === 'live') {
       commit(d);
+      return;
     }
+    if (isMyRebound(d.context, id)) setDraft(d);
+    else commit(d);
   };
   const rebWho = (id: string) => commit({ ...draft, reboundPlayerId: id });
   const passer = (id: string) => { if (id) afterPD({ ...draft, assist: true, assistPlayerId: id }); else afterPD({ ...draft, assist: false, assistPlayerId: null }); };
   const themBtn = (d: number) => setPerQ((p) => { const cur = p[q] || { us: 0, them: 0 }; return { ...p, [q]: { ...cur, them: Math.max(0, cur.them + d) } }; });
+
+  const patchActionPlayers = (actionId: string, patch: { playerId?: string | null; assist?: boolean | null; assistPlayerId?: string | null; reboundPlayerId?: string | null }) => {
+    const current = actions.find((a) => a.id === actionId);
+    if (!current) return;
+    const updated: StatA = { ...current, ...patch };
+    setActions((list) => list.map((a) => a.id === actionId ? updated : a));
+    const matchId = liveMatchIdRef.current;
+    const tId = liveTeamIdRef.current;
+    if (matchId && tId) {
+      persistLiveAction({ matchId, teamId: tId, action: updated }).catch(() => {});
+      const next = actions.map((a) => a.id === actionId ? updated : a);
+      syncLiveAggregates(next, onCourt, perQ);
+    }
+  };
 
   const stageForCorrection = (a: Draft) => {
     if (!a.context) return 'context';
@@ -4502,24 +5034,35 @@ export default function PriseStatsProPage() {
     const us = sumPerQ('us');
     const them = sumPerQ('them');
     const payload = {
-      format: 'mybasket-livestat-source',
-      version: 1,
+      format: 'mybasket-livestat-project',
+      version: 2,
       codingMode,
       sourceClock: { type: 'match-elapsed-seconds', matchStart: 0 },
-      teamId, teamName, opponent: opponent || 'Adversaire', date,
-      home, q, secs, onCourt, matchJerseyNumbers,
-      score: { us, them }, perQ,
+      teamId: activeTeamId || teamId,
+      teamName,
+      opponent: opponent || 'Adversaire',
+      date,
+      home,
+      q,
+      secs,
+      onCourt,
+      matchJerseyNumbers,
+      score: { us, them },
+      perQ,
       minutesByPlayer,
       box: computeBox(actions, roster),
       actions,
+      videoSync: videoSyncRef.current,
+      lastVideoTime: hasVideoLoaded() ? getCurrentVideoTime() : lastProjectVideoTimeRef.current,
+      projectState: buildProjectState(),
       exportedAt: new Date().toISOString(),
     };
     triggerDownload(
-      `match_${safeName(teamName)}_${date}.json`,
+      `${safeName(teamName)}_vs_${safeName(opponent || 'Adversaire')}_${date}.mybasket`,
       JSON.stringify(payload, null, 2),
       'application/json',
     );
-    flash('Export JSON téléchargé ✓');
+    flash('Projet MyBasket exporté ✓');
   };
 
   const importLiveSourceFile = async (file: File | null) => {
@@ -4527,8 +5070,8 @@ export default function PriseStatsProPage() {
     try {
       const raw = await file.text();
       const data = JSON.parse(raw);
-      if (data?.format !== 'mybasket-livestat-source' || !Array.isArray(data?.actions)) {
-        flash('Fichier source LiveStat MyBasket non reconnu');
+      if (!['mybasket-livestat-source', 'mybasket-livestat-project'].includes(String(data?.format || '')) || !Array.isArray(data?.actions)) {
+        flash('Fichier projet LiveStat MyBasket non reconnu');
         return;
       }
       const sourceTeamId = String(data.teamId || '');
@@ -4543,7 +5086,7 @@ export default function PriseStatsProPage() {
       if (Array.isArray(data.onCourt)) setStarters(data.onCourt.slice(0, 5));
       setImportedLiveSource(data);
       setCodingMode('post');
-      setVideoSync(NATIVE_SYNC);
+      setVideoSync(normalizeSync(data.videoSync ?? data.projectState ?? data));
       flash(`Source LiveStat importée · ${data.actions.length} actions`);
     } catch (error) {
       console.error('Import LiveStat source:', error);
@@ -4563,7 +5106,10 @@ export default function PriseStatsProPage() {
         <div id="create-match">
           <header className="cm-head">
             <div className="cm-brand"><div className="cm-logo">📊</div><div><div className="cm-t">PRISE DE STATS</div><div className="cm-s">LIVE STATS PRO</div></div></div>
-            <div className="cm-head-r"><button className="cm-ghost" type="button">↺ Historique des matchs</button></div>
+            <div className="cm-head-r">
+              <button className="cm-ghost" type="button" onClick={() => openCodingSettings('workflow')}>⚙ Codification</button>
+              <button className="cm-ghost" type="button" onClick={() => { window.location.href = '/management/historique'; }}>↺ Historique des matchs</button>
+            </div>
           </header>
 
           <div className="cm-body">
@@ -4583,8 +5129,13 @@ export default function PriseStatsProPage() {
                 <div className="cm-video">
                   <div className={`cm-vid ${codingMode === 'live' ? 'on' : ''}`} onClick={() => { setCodingMode('live'); setImportedLiveSource(null); }}>
                     {codingMode === 'live' && <div className="cm-vid-ck">✓</div>}
-                    <div className="cm-vid-ic">🔴</div><div className="cm-vid-t">En direct</div>
-                    <div className="cm-vid-d">Ultra rapide : Attaque/Défense → Système → Temps fort → Résultat.</div>
+                    <div className="cm-vid-ic">🔴</div><div className="cm-vid-t">Live collectif</div>
+                    <div className="cm-vid-d">Attaque/Défense → Système → Temps fort → Résultat. Possessions et attaques séparées.</div>
+                  </div>
+                  <div className={`cm-vid ${codingMode === 'live-individual' ? 'on' : ''}`} onClick={() => { setCodingMode('live-individual'); setImportedLiveSource(null); }}>
+                    {codingMode === 'live-individual' && <div className="cm-vid-ck">✓</div>}
+                    <div className="cm-vid-ic">👤</div><div className="cm-vid-t">Live individuel</div>
+                    <div className="cm-vid-d">Attaque : Joueur → Résultat. Défense : Résultat → joueur seulement si nécessaire. Shot chart / rebond / PD selon ta logique.</div>
                   </div>
                   <div className={`cm-vid ${codingMode === 'post' ? 'on' : ''}`} onClick={() => setCodingMode('post')}>
                     {codingMode === 'post' && <div className="cm-vid-ck">✓</div>}
@@ -4592,11 +5143,54 @@ export default function PriseStatsProPage() {
                     <div className="cm-vid-d">Codage détaillé actuel : joueurs, actions, zones, rebonds, passes, clips… inchangé.</div>
                   </div>
                 </div>
+                {codingMode === 'live-individual' && (
+                  <div className="individualLinkBox">
+                    <label>Rattacher cette fiche individuelle à un projet collectif (optionnel)</label>
+                    <select value={linkedCollectiveProjectId} onChange={(e) => setLinkedCollectiveProjectId(e.target.value)}>
+                      <option value="">Aucun projet — fiche autonome</option>
+                      {projects.map((pr) => <option key={pr.id} value={pr.id}>vs {pr.opponent} · {pr.date}</option>)}
+                    </select>
+                  </div>
+                )}
+                <div className="codingLogicSetup">
+                  <div className="codingLogicSetupHead">
+                    <div><b>🧩 LOGIQUE DE CODAGE</b><small>Sélectionne une logique déjà enregistrée ou construis-la avant de démarrer.</small></div>
+                    <button type="button" onClick={() => openCodingSettings('buttons')}>Gérer mes boutons</button>
+                  </div>
+                  <div className="codingLogicSetupRow">
+                    <select
+                      value={selectedCodingProfileId}
+                      onChange={(e) => {
+                        const id = e.target.value;
+                        setSelectedCodingProfileId(id);
+                        if (!id) { setProfileButtonKeys(null); return; }
+                        const profile = codingProfiles.find((p) => p.id === id);
+                        if (profile) applyCodingProfile(profile);
+                      }}
+                    >
+                      <option value="">Configuration actuelle / personnalisée</option>
+                      {codingProfiles.map((profile) => <option key={profile.id} value={profile.id}>{profile.name}</option>)}
+                    </select>
+                    <button type="button" onClick={() => openCodingSettings('workflow')}>⚙ Modifier le chemin</button>
+                  </div>
+                  <div className="codingLogicPath">
+                    {codingMode === 'live-individual' ? (
+                      <>
+                        <span>Attaque : Joueur</span><i>→</i><span>Résultat</span>{workflowPrefs.zone && <><i>→</i><span>Shot chart</span></>}{workflowPrefs.rebound && <><i>→</i><span>Rebond si raté</span></>}{workflowPrefs.assist && <><i>→</i><span>PD / Skip si panier</span></>}
+                        <em>Défense : Résultat → joueur si faute/INT/contre → conséquence</em>
+                      </>
+                    ) : (
+                      <>
+                        <span>Contexte</span>{workflowPrefs.system && <><i>→</i><span>Système</span></>}{workflowPrefs.temps && <><i>→</i><span>Temps fort</span></>}<i>→</i><span>Résultat</span>{codingMode === 'post' && workflowPrefs.zone && <><i>→</i><span>Shot chart</span></>}
+                      </>
+                    )}
+                  </div>
+                </div>
                 <div className="vid-input" style={{marginTop:10}}>
                   <label className="vid-file">
-                    <input type="file" accept="application/json,.json" onChange={(e) => { void importLiveSourceFile(e.target.files?.[0] ?? null); e.currentTarget.value = ''; }} />
-                    <span className="vf-btn">⬆ Importer une source LiveStat</span>
-                    <span className="vf-name">{importedLiveSource ? `✓ ${importedLiveSource.actions?.length || 0} actions prêtes à recaler sur la vidéo` : 'Réutiliser un match codé en direct'}</span>
+                    <input type="file" accept="application/json,.json,.mybasket" onChange={(e) => { void importLiveSourceFile(e.target.files?.[0] ?? null); e.currentTarget.value = ''; }} />
+                    <span className="vf-btn">⬆ Importer un projet LiveStat</span>
+                    <span className="vf-name">{importedLiveSource ? `✓ ${importedLiveSource.actions?.length || 0} actions prêtes à recaler sur la vidéo` : 'Rouvrir un fichier .mybasket ou JSON'}</span>
                   </label>
                 </div>
               </section>
@@ -4818,13 +5412,73 @@ export default function PriseStatsProPage() {
           ▶ DÉMARRER LE MATCH
         </button>
 
+        <LiveCodingSettingsModal
+          open={showCodingSettings}
+          teamId={activeTeamId || teamId}
+          initialTab={codingSettingsTab}
+          workflow={workflowPrefs}
+          onWorkflowChange={setWorkflowPrefs}
+          groups={codingSettingsGroups}
+          profiles={codingProfiles}
+          selectedProfileId={selectedCodingProfileId}
+          onSaveProfile={saveCodingProfile}
+          onDeleteProfile={deleteCodingProfile}
+          onApplyProfile={applyCodingProfile}
+          onChanged={() => { setCodingDbNonce((n) => n + 1); tags.reload(); }}
+          onClose={() => setShowCodingSettings(false)}
+        />
         <Style />
       </div>
     );
   }
 
   const liveCourt = stage === 'zone';
-  const navIdx = STAGE_NAV[stage] ?? 0;
+  const navIdx = codingMode === 'live-individual' ? ({ context:0, player:3, result:5, faute:4, ft:5, zone:6, rebound:7, assist:7 } as Record<string, number>)[stage] ?? 0 : STAGE_NAV[stage] ?? 0;
+
+  const activeStageOrder = codingMode === 'live-individual'
+    ? ['context', 'player', 'result', 'faute', 'ft', ...(workflowPrefs.zone ? ['zone'] : []), ...(workflowPrefs.rebound ? ['rebound'] : []), ...(workflowPrefs.assist ? ['assist'] : [])]
+    : codingMode === 'live'
+      ? ['context', ...(workflowPrefs.system ? ['systeme'] : []), ...(workflowPrefs.temps ? ['temps'] : []), 'result', 'ft', 'rebound']
+      : ['context', ...(workflowPrefs.system ? ['systeme'] : []), ...(workflowPrefs.temps ? ['temps'] : []), ...(workflowPrefs.coverage ? ['coverage'] : []), ...(workflowPrefs.player ? ['player'] : []), 'action', 'faute', 'result', 'ft', ...(workflowPrefs.zone ? ['zone'] : []), ...(workflowPrefs.rebound ? ['rebound'] : []), ...(workflowPrefs.assist ? ['assist'] : [])];
+
+  const activeCrumbs = codingMode === 'live-individual'
+    ? ['Contexte', 'Joueur / Résultat', ...(workflowPrefs.zone ? ['Shot chart'] : []), ...(workflowPrefs.rebound ? ['Rebond'] : []), ...(workflowPrefs.assist ? ['PD'] : [])]
+    : codingMode === 'live'
+      ? ['Contexte', ...(workflowPrefs.system ? ['Système'] : []), ...(workflowPrefs.temps ? ['Temps fort'] : []), 'Résultat']
+      : ['Contexte', ...(workflowPrefs.system ? ['Système'] : []), ...(workflowPrefs.temps ? ['Temps fort'] : []), ...(workflowPrefs.player ? ['Joueur'] : []), 'Action', 'Résultat', ...(workflowPrefs.zone ? ['Shot chart'] : []), ...(workflowPrefs.rebound ? ['Rebond'] : []), ...(workflowPrefs.assist ? ['PD'] : [])];
+
+  const currentCrumbLabel = codingMode === 'live-individual'
+    ? (stage === 'context' ? 'Contexte'
+      : stage === 'zone' ? 'Shot chart'
+        : stage === 'rebound' ? 'Rebond'
+          : stage === 'assist' ? 'PD'
+            : 'Joueur / Résultat')
+    : (stage === 'context' ? 'Contexte'
+      : stage === 'systeme' || stage === 'inbound' ? 'Système'
+      : stage === 'temps' || stage === 'coverage' ? 'Temps fort'
+      : stage === 'player' ? 'Joueur'
+      : stage === 'action' || stage === 'faute' ? 'Action'
+      : stage === 'result' || stage === 'ft' ? 'Résultat'
+      : stage === 'zone' ? 'Shot chart'
+      : stage === 'rebound' ? 'Rebond'
+      : stage === 'assist' ? 'PD'
+      : activeCrumbs[0]);
+  const activeCrumbIndex = Math.max(0, activeCrumbs.indexOf(currentCrumbLabel));
+
+  const goBackStage = () => {
+    if (codingMode === 'live-individual') {
+      if (stage === 'player') { setStage(draft.actionType ? 'result' : 'context'); return; }
+      if (stage === 'result') { setStage(draft.context === 'defense' ? 'context' : 'player'); return; }
+      if (stage === 'faute') { setStage(draft.context === 'defense' ? 'player' : 'result'); return; }
+      if (stage === 'ft') { setStage('faute'); return; }
+      if (stage === 'zone') { setStage('result'); return; }
+      if (stage === 'rebound') { setStage(workflowPrefs.zone && draft.actionType === 'tir' ? 'zone' : 'result'); return; }
+      if (stage === 'assist') { setStage(workflowPrefs.zone ? 'zone' : 'result'); return; }
+      return;
+    }
+    const currentIndex = activeStageOrder.indexOf(stage);
+    if (currentIndex > 0) setStage(activeStageOrder[currentIndex - 1]);
+  };
 
   // Stats live pour les cartes joueurs de la colonne droite
   const liveBox = computeBox(actions, roster) as any[];
@@ -4898,54 +5552,31 @@ export default function PriseStatsProPage() {
           <button
             className={`ghost ${showHistoryPanel ? 'on' : ''}`}
             onClick={() => setShowHistoryPanel((v) => { const opening = !v; if (opening) { inspectionVideoTimeRef.current = getCurrentVideoTime(); pauseVideo(); setRunning(false); } return opening; })}
-            title="Afficher / masquer l'historique des actions"
-          >
-            📚 Historique
-          </button>
-
-          <button
-            className={`ghost ${showMontagePanel ? 'on' : ''}`}
-            onClick={openMontageWindow}
-            title="Ouvrir le logiciel de montage dans une nouvelle fenêtre"
-          >
-            🎬 Montage
-          </button>
-
-          <button
-            className="ghost"
-            onClick={finishMatch}
-            disabled={saving}
-            title="Enregistrer le match dans Supabase"
-          >
-            {saving ? '⏳ …' : '🏁 Terminer'}
-          </button>
-
-          <button
-            className="ghost"
-            onClick={exportMatchCSV}
-            title="Exporter le box-score en CSV (Excel)"
-          >
-            ⬇ CSV
-          </button>
-
-          <button
-            className="ghost"
-            onClick={exportMatchJSON}
-            title="Exporter toutes les données du match en JSON"
-          >
-            {codingMode === 'live' ? '⬇ Source LiveStat' : '⬇ JSON'}
-          </button>
-
-          <button
-            className={`ghost ${screen === 'box' ? 'on' : ''}`}
-            onClick={() => { if (screen === 'box') { setScreen('live'); return; } inspectionVideoTimeRef.current = getCurrentVideoTime(); pauseVideo(); setRunning(false); setScreen('box'); }}
-          >
-            📊 Box-score
-          </button>
-
-          <button className="ghost" onClick={() => setScreen('setup')}>
-            ⚙ Match
-          </button>
+          >📚 Historique</button>
+          <button className={`ghost ${screen === 'box' ? 'on' : ''}`} onClick={() => { if (screen === 'box') { setScreen('live'); return; } inspectionVideoTimeRef.current = getCurrentVideoTime(); pauseVideo(); setRunning(false); setScreen('box'); }}>📊 Box-score</button>
+          <div className="projectMenuWrap">
+            <button className={`ghost menuDots ${showProjectMenu ? 'on' : ''}`} onClick={() => setShowProjectMenu((v) => !v)} aria-label="Menu projet">•••</button>
+            {showProjectMenu && (
+              <div className="projectMenu">
+                <button onClick={() => { setShowProjectMenu(false); void saveProjectNow(false); }}>💾 Enregistrer</button>
+                <button onClick={() => { setShowProjectMenu(false); void saveProjectNow(true); }}>💾 Enregistrer et fermer</button>
+                <div className="projectMenuSep" />
+                <button onClick={() => { setShowProjectMenu(false); openCodingSettings('workflow'); }}>⚙ Configurer mon codage</button>
+                <button onClick={() => { setShowProjectMenu(false); openCodingSettings('buttons'); }}>🧩 Gérer mes boutons</button>
+                <button onClick={() => { setShowProjectMenu(false); setLayoutPreset('video'); }}>🎥 Disposition : vidéo grande</button>
+                <button onClick={() => { setShowProjectMenu(false); setLayoutPreset('balanced'); }}>⚖ Disposition : équilibrée</button>
+                <button onClick={() => { setShowProjectMenu(false); setLayoutPreset('coding'); }}>⌨ Disposition : codage grand</button>
+                {codingMode === 'live' && <button onClick={() => { setShowProjectMenu(false); setShowPlayerAssociation(true); }}>👥 Associer les joueurs</button>}
+                {(videoProvider === 'local' || videoProvider === 'google_drive') && videoUrl && <button onClick={() => { setShowProjectMenu(false); setShowVideoSync(true); }}>🎯 Recaler la vidéo</button>}
+                {codingMode === 'live' && <button onClick={() => { markPeriodSourceStart(q); flash(`Début ${periodLabel(q)} repéré`); }}>▶ Repérer début {periodLabel(q)}</button>}
+                {codingMode === 'live' && <button onClick={() => markPeriodSourceEnd(q)}>⏹ Repérer fin {periodLabel(q)}</button>}
+                <button onClick={() => { setShowProjectMenu(false); exportMatchJSON(); }}>⬇ Exporter projet .mybasket</button>
+                <button onClick={() => { setShowProjectMenu(false); openMontageWindow(); }}>🎬 Montage</button>
+                <div className="projectMenuSep" />
+                <button className="danger" onClick={() => { setShowProjectMenu(false); void finishMatch(); }}>🏁 Terminer le match</button>
+              </div>
+            )}
+          </div>
         </div>
       </header>
 
@@ -4963,12 +5594,26 @@ export default function PriseStatsProPage() {
       ) : (
         <>
           <VideoReselectBanner />
-          <div className="live3">
+          <div
+            ref={liveWorkspaceRef}
+            className={`live3 ${videoMaximized ? 'videoMaximized' : 'resizableLive3'}`}
+            style={videoMaximized ? undefined : {
+              gridTemplateColumns: `${videoPanePct}% 7px minmax(280px,1fr) 7px ${rightPanePx}px`,
+            }}
+          >
             {/* ============ GAUCHE · VIDÉO (élément principal) ============ */}
             <section className={`lc lc-video ${workTab === 'center' ? 'mshow' : ''}`}>
               <div className="videoSlot big">
                 {(videoProvider === 'local' || videoProvider === 'google_drive') && videoUrl ? (
-                  <video ref={videoRef} className="vplayer" src={videoUrl} controls onLoadedMetadata={(e) => { const savedTime = inspectionVideoTimeRef.current; if (savedTime == null) return; try { e.currentTarget.currentTime = Math.max(0, Math.min(Number.isFinite(e.currentTarget.duration) ? e.currentTarget.duration : savedTime, savedTime)); } catch { /* noop */ } inspectionVideoTimeRef.current = null; }} />
+                  <video ref={videoRef} className="vplayer" src={videoUrl} controls onWheel={handleTrackpadScrub} title="Trackpad : glisse horizontalement pour avancer/reculer avec précision" onLoadedMetadata={(e) => {
+                    const savedTime = inspectionVideoTimeRef.current ?? lastProjectVideoTimeRef.current;
+                    if (savedTime == null) return;
+                    try {
+                      const max = Number.isFinite(e.currentTarget.duration) ? e.currentTarget.duration : savedTime;
+                      e.currentTarget.currentTime = Math.max(0, Math.min(max, savedTime));
+                    } catch { /* noop */ }
+                    inspectionVideoTimeRef.current = null;
+                  }} />
                 ) : videoProvider === 'youtube' && videoUrl ? (
                   <div className="vyt">
                     <div className="vyt-ic">▶️</div>
@@ -4997,6 +5642,10 @@ export default function PriseStatsProPage() {
               </div>
 
               <div className="detacherRow">
+                {(videoProvider === 'local' || videoProvider === 'google_drive') && videoUrl && <span className="trackpadHint">↔ 2 doigts : droite = avancer · gauche = reculer</span>}
+                <button className="detachBtn" onClick={() => setVideoPanePct((v) => Math.max(25, v - 8))} title="Réduire la zone vidéo">− Vidéo</button>
+                <button className="detachBtn" onClick={() => setVideoPanePct((v) => Math.min(72, v + 8))} title="Agrandir la zone vidéo">＋ Vidéo</button>
+                <button className="detachBtn" onClick={() => setVideoMaximized((v) => !v)} title="Afficher uniquement la vidéo ou restaurer les panneaux">{videoMaximized ? '▦ Restaurer' : '⛶ Vidéo'}</button>
                 <button className="detachBtn" onClick={detachVideo}>↗ Détacher la vidéo</button>
                 {/* AJOUT · Image dans l'image + vitesse de lecture (synchronisée) */}
                 <button className="detachBtn" onClick={togglePiP} title="Garder la vidéo au-dessus de la fenêtre de codage">⧉ Image dans l'image</button>
@@ -5035,25 +5684,27 @@ export default function PriseStatsProPage() {
               )}
             </section>
 
+            {!videoMaximized && (
+              <div className="panelResizeHandle" onPointerDown={(e) => startPanelResize('video', e)} title="Glisser pour redimensionner vidéo / codage">
+                <span>⋮</span>
+              </div>
+            )}
+
             {/* ============ CENTRE · CODAGE (wizard) ============ */}
             <aside className={`lc lc-code ${workTab === 'coding' ? 'mshow' : ''}`}>
               <div className="lc-head codeTop">
-                <button className="headBack" disabled={stage === 'context'} onClick={() => {
-                  const order = ['context', 'inbound', 'temps', 'coverage', 'player', 'action', 'faute', 'result', 'ft', 'zone', 'rebound', 'assist'];
-                  const currentIndex = order.indexOf(stage);
-                  if (currentIndex > 0) setStage(order[currentIndex - 1]);
-                }}>←</button>
+                <button className="headBack" disabled={stage === 'context'} onClick={goBackStage}>←</button>
                 <button className="headUndo" onClick={undo}>↺</button>
                 <div className="crumb-mini">
-                  {(codingMode === 'live' ? ['Contexte', 'Système', 'Temps fort', 'Résultat'] : ['Contexte', 'Temps fort', 'Joueur', 'Action', 'Résultat', 'Zone']).map((c, i) => {
-                    const state = navIdx === i ? 'cur' : navIdx > i ? 'done' : '';
-                    return <span key={c} className={`cm ${state}`} title={c}>{c}</span>;
+                  {activeCrumbs.map((c, i) => {
+                    const state = activeCrumbIndex === i ? 'cur' : activeCrumbIndex > i ? 'done' : '';
+                    return <span key={`${c}-${i}`} className={`cm ${state}`} title={c}>{c}</span>;
                   })}
                 </div>
               </div>
               <div className="lc-body codeDense">
                 {stage !== 'context' && (
-                  codingMode === 'live' && draft.context ? (
+                  draft.context ? (
                     <div
                       style={{
                         width: '100%',
@@ -5075,9 +5726,8 @@ export default function PriseStatsProPage() {
                     </div>
                   ) : (
                     <button className="backBtn sm" onClick={() => {
-                      const order = ['context', 'inbound', 'temps', 'coverage', 'player', 'action', 'faute', 'result', 'ft', 'zone', 'rebound', 'assist'];
-                      const currentIndex = order.indexOf(stage);
-                      if (currentIndex > 0) setStage(order[currentIndex - 1]);
+                      const currentIndex = activeStageOrder.indexOf(stage);
+                      if (currentIndex > 0) setStage(activeStageOrder[currentIndex - 1]);
                     }}>← Retour</button>
                   )
                 )}
@@ -5088,6 +5738,12 @@ export default function PriseStatsProPage() {
                 <button className="qbtn sm" onClick={resetDraft}>🗑 Reset</button>
               </div>
             </aside>
+
+            {!videoMaximized && (
+              <div className="panelResizeHandle" onPointerDown={(e) => startPanelResize('right', e)} title="Glisser pour redimensionner codage / joueurs">
+                <span>⋮</span>
+              </div>
+            )}
 
             {/* ============ DROITE · SHOT CHART + JOUEURS / BANC ============ */}
             <aside className={`lc lc-right ${workTab === 'analysis' ? 'mshow' : ''}`}>
@@ -5396,6 +6052,34 @@ export default function PriseStatsProPage() {
       })()}
 
       {toast && <div className="toast show">{toast}</div>}
+
+      {showPlayerAssociation && (
+        <LivePlayerAssociationModal
+          open={showPlayerAssociation}
+          actions={actions as unknown as AssociableLiveAction[]}
+          roster={roster}
+          videoUrl={(videoProvider === 'local' || videoProvider === 'google_drive') ? videoUrl : ''}
+          sync={videoSync}
+          onPatch={patchActionPlayers}
+          onClose={() => setShowPlayerAssociation(false)}
+        />
+      )}
+
+      <LiveCodingSettingsModal
+        open={showCodingSettings}
+        teamId={activeTeamId || teamId}
+        initialTab={codingSettingsTab}
+        workflow={workflowPrefs}
+        onWorkflowChange={setWorkflowPrefs}
+        groups={codingSettingsGroups}
+        profiles={codingProfiles}
+        selectedProfileId={selectedCodingProfileId}
+        onSaveProfile={saveCodingProfile}
+        onDeleteProfile={deleteCodingProfile}
+        onApplyProfile={applyCodingProfile}
+        onChanged={() => { setCodingDbNonce((n) => n + 1); tags.reload(); }}
+        onClose={() => setShowCodingSettings(false)}
+      />
 
       {/* §3–§6 · Synchronisation d'une vidéo ajoutée APRÈS le codage */}
       <VideoSyncModal
@@ -6243,7 +6927,7 @@ export default function PriseStatsProPage() {
   function renderStage() {
     switch (stage) {
       case 'context':
-        return <>{head('Contexte de possession', 'Choix uniquement au début du quart-temps')}<div className="grid c2 big">
+        return <>{head(codingMode === 'live-individual' ? 'Phase individuelle' : 'Contexte de possession', codingMode === 'live-individual' ? 'Attaque : choisis d’abord le joueur · Défense : choisis d’abord le résultat' : 'Choix uniquement au début du quart-temps')}<div className="grid c2 big">
           <button className={`bt ${draft.context === 'attaque' ? 'active' : ''}`} onClick={() => ctxPick('attaque')}><span className="ic">↗</span><span className="lbl">ATTAQUE</span></button>
           <button className={`bt def ${draft.context === 'defense' ? 'active' : ''}`} onClick={() => ctxPick('defense')}><span className="ic">🛡</span><span className="lbl">DÉFENSE</span></button>
         </div></>;
@@ -6256,7 +6940,7 @@ export default function PriseStatsProPage() {
         const firstLine = systemeButtons.filter((item) => item.id === 'contre-attaque' || item.id === 'transition');
         const libre = systemeButtons.find((item) => item.id === 'libre');
         const rest = systemeButtons.filter((item) => !['contre-attaque', 'transition', 'libre'].includes(item.id));
-        return <>{head('Système de jeu', playbookId ? 'Systèmes du playbook associé' : 'Organisation de la possession')}
+        return <><div className="stageHeadWithConfig">{head('Système de jeu', playbookId ? 'Systèmes du playbook associé' : 'Organisation de la possession')}<button className="stageConfigBtn" onClick={() => openCodingSettings('buttons')} title="Créer, renommer ou masquer des systèmes">⚙</button></div>
           <div className="systemChoiceLayout">
             {tileGrid(firstLine, draft.systemeJeu, systemePick)}
             {libre && <div className="systemLibreRow">{tileGrid([libre], draft.systemeJeu, systemePick)}</div>}
@@ -6265,10 +6949,19 @@ export default function PriseStatsProPage() {
         </>;
       }
       case 'temps':
-        return <>{head('Temps fort', 'Type de jeu')}{tileGrid(tempsFortsButtons, draft.tempsFort, tempsPick)}</>;
+        return <><div className="stageHeadWithConfig">{head('Temps fort', 'Type de jeu')}<button className="stageConfigBtn" onClick={() => openCodingSettings('buttons')} title="Créer, renommer ou masquer des temps forts">⚙</button></div>{tileGrid(tempsFortsButtons, draft.tempsFort, tempsPick)}</>;
       case 'coverage':
-        return <>{head("Défense sur l'écran", 'Comment défend-on le pick ?')}<div className="grid c3">{resolveCodingButtons('coverage', codingDb).map((c) => <button key={c.key} className={`chip ${draft.coverage === c.key ? 'active' : ''}`} onClick={() => covPick(c.key)}>{c.emoji ? c.emoji + ' ' : ''}{c.label}</button>)}</div></>;
+        return <>{head("Défense sur l'écran", 'Comment défend-on le pick ?')}<div className="grid c3">{codingButtonsFor('coverage').map((c) => <button key={c.key} className={`chip ${draft.coverage === c.key ? 'active' : ''}`} onClick={() => covPick(c.key)}>{c.emoji ? c.emoji + ' ' : ''}{c.label}</button>)}</div></>;
       case "player": {
+  if (codingMode === 'live-individual') {
+    const title = draft.context === 'defense'
+      ? draft.actionType === 'faute-commise' ? 'Qui commet la faute ?'
+        : draft.actionType === 'interception' ? 'Qui réalise l’interception ?'
+          : draft.actionType === 'contre' ? 'Qui réalise le contre ?'
+            : 'Qui réalise l’action défensive ?'
+      : 'Qui réalise l’action ?';
+    return <>{head('Joueur', title)}{players3(draft.playerId, playerPick)}</>;
+  }
   const canSkip =
     draft.context === "defense" &&
     CAN_TAG_PLAYER_DEF.includes(draft.actionType);
@@ -6299,82 +6992,193 @@ export default function PriseStatsProPage() {
   );
 }
       case 'action': {
-        const cfg = resolveCodingButtons(draft.context === 'defense' ? 'def-action' : 'att-action', codingDb);
+        if (codingMode === 'live-individual') {
+          const opts = [
+            { id:'tir', label:'Tir', ic:'🏀' },
+            { id:'passe-decisive', label:'Passe décisive', ic:'🎯' },
+            { id:'rebond-off', label:'Rebond offensif', ic:'🔄' },
+            { id:'rebond-def', label:'Rebond défensif', ic:'🧲' },
+            { id:'interception', label:'Interception', ic:'🖐' },
+            { id:'perte', label:'Perte de balle', ic:'✖' },
+            { id:'contre', label:'Contre', ic:'🛑' },
+            { id:'faute-provoquee', label:'Faute provoquée', ic:'🔔' },
+            { id:'faute-commise', label:'Faute commise', ic:'🟨' },
+          ];
+          return <>{head("Action du joueur", 'Pas de système ni de temps fort')}{tileGrid(opts, draft.actionType, actionPick)}</>;
+        }
+        const cfg = codingButtonsFor(draft.context === 'defense' ? 'def-action' : 'att-action');
         const opts = cfg.map((b) => ({ id: b.key, label: b.label, ic: b.emoji }));
         return <>{head("Type d'action", draft.context === 'defense' ? 'Action défensive' : 'Action offensive')}{tileGrid(opts, draft.actionType, actionPick)}</>;
       }
-      case 'faute':
+      case 'faute': {
+        const fl = (key: string, fallback: string) => codingLabel('foul', key, fallback);
         return draft.actionType === 'faute-commise'
-          ? <>{head('Faute commise', 'LF concédés, and-one ou touche ?')}<div className="grid c3"><button className="chip" onClick={() => foulPick('touche')}>Touche</button><button className="chip" onClick={() => foulPick('lf2')}>2 LF</button><button className="chip" onClick={() => foulPick('lf3')}>3 LF</button><button className="chip" onClick={() => foulPick('2plus1')}>2 + 1</button><button className="chip" onClick={() => foulPick('3plus1')}>3 + 1</button></div></>
-          : <>{head('Faute provoquée', 'Touche ou lancers francs ?')}<div className="grid c3"><button className="chip" onClick={() => foulPick('touche')}>Touche</button><button className="chip" onClick={() => foulPick('lf2')}>2 LF</button><button className="chip" onClick={() => foulPick('lf3')}>3 LF</button></div></>;
-      case 'result':
+          ? (
+              <>
+                {head('Faute commise', codingMode === 'live-individual' && draft.context === 'defense' ? 'Choisis maintenant la suite de la faute' : 'LF concédés, and-one ou touche ?')}
+                <div className="foulOutcomeGrid">
+                  <button className="chip foulTouch" style={!codingButtonEnabled('foul','touche') ? {display:'none'} : undefined} onClick={() => foulPick('touche')}>{fl('touche','Touche')}</button>
+                  <button className="chip" style={!codingButtonEnabled('foul','lf2') ? {display:'none'} : undefined} onClick={() => foulPick('lf2')}>{fl('lf2','2 LF')}</button>
+                  <button className="chip" style={!codingButtonEnabled('foul','2plus1') ? {display:'none'} : undefined} onClick={() => foulPick('2plus1')}>{fl('2plus1','2pts + 1LF')}</button>
+                  <button className="chip" style={!codingButtonEnabled('foul','lf3') ? {display:'none'} : undefined} onClick={() => foulPick('lf3')}>{fl('lf3','3 LF')}</button>
+                  <button className="chip" style={!codingButtonEnabled('foul','3plus1') ? {display:'none'} : undefined} onClick={() => foulPick('3plus1')}>{fl('3plus1','3pts + 1LF')}</button>
+                </div>
+              </>
+            )
+          : (
+              <>
+                {head('Faute provoquée', 'Touche, lancers francs ou and-one ?')}
+                <div className="foulOutcomeGrid">
+                  <button className="chip foulTouch" style={!codingButtonEnabled('foul','touche') ? {display:'none'} : undefined} onClick={() => foulPick('touche')}>{fl('touche','Touche')}</button>
+                  <button className="chip" style={!codingButtonEnabled('foul','lf2') ? {display:'none'} : undefined} onClick={() => foulPick('lf2')}>{fl('lf2','2 LF')}</button>
+                  <button className="chip" style={!codingButtonEnabled('foul','2plus1') ? {display:'none'} : undefined} onClick={() => foulPick('2plus1')}>{fl('2plus1','2pts + 1LF')}</button>
+                  <button className="chip" style={!codingButtonEnabled('foul','lf3') ? {display:'none'} : undefined} onClick={() => foulPick('lf3')}>{fl('lf3','3 LF')}</button>
+                  <button className="chip" style={!codingButtonEnabled('foul','3plus1') ? {display:'none'} : undefined} onClick={() => foulPick('3plus1')}>{fl('3plus1','3pts + 1LF')}</button>
+                </div>
+              </>
+            );
+      }
+      case 'result': {
+        const isDefense = draft.context === 'defense';
+
+        const startFreeThrows = (attempts: number) => {
+          setDraft({
+            ...draft,
+            actionType: 'tir',
+            shotType: 'LF',
+            shotResult: '',
+            specialCase: 'aucun',
+            ftAttempts: attempts,
+            ftMade: 0,
+            ftResults: [],
+          });
+          setStage('ft');
+        };
+
         return (
           <>
-            {head('Résultat', draft.context === 'defense' ? 'Tir concédé — résultat' : 'Choisis directement le résultat du tir')}
+            {head(
+              'Résultat',
+              codingMode !== 'post'
+                ? (codingMode === 'live-individual' ? (isDefense ? 'Résultat défensif — le joueur sera demandé seulement si nécessaire' : 'Résultat du joueur sélectionné') : (isDefense ? 'Choisis le résultat défensif' : 'Choisis le résultat offensif'))
+                : (isDefense ? 'Tir concédé — résultat' : 'Choisis directement le résultat du tir')
+            )}
 
-            {/* AJOUT §12 · en défense, attribuer le tir à un joueur adverse (optionnel) */}
-            {draft.context === 'defense' && oppRoster.length > 0 && (
+            {codingMode === 'post' && isDefense && oppRoster.length > 0 && (
               <>
                 <div className="sublbl">Joueur adverse (tir concédé)</div>
                 <div className="grid c3">
                   {oppRoster.map((op) => (
-                    <button key={op.id} className={`bt ${draft.playerId === op.id ? 'active' : ''}`} onClick={() => setDraft({ ...draft, playerId: draft.playerId === op.id ? null : op.id })}>
-                      <span className="ic">#{op.num}</span><span className="lbl">{op.name}</span>
+                    <button
+                      key={op.id}
+                      className={`bt ${draft.playerId === op.id ? 'active' : ''}`}
+                      onClick={() => setDraft({ ...draft, playerId: draft.playerId === op.id ? null : op.id })}
+                    >
+                      <span className="ic">#{op.num}</span>
+                      <span className="lbl">{op.name}</span>
                     </button>
                   ))}
                 </div>
               </>
             )}
 
-            <div className="grid c2">
-              <button className="res made" onClick={() => quickShotResult('2PTS', 'made')}>✓ 2PTS marqué</button>
-              <button className="res miss" onClick={() => quickShotResult('2PTS', 'missed')}>✕ 2PTS raté</button>
-              <button className="res made" onClick={() => quickShotResult('3PTS', 'made')}>✓ 3PTS marqué</button>
-              <button className="res miss" onClick={() => quickShotResult('3PTS', 'missed')}>✕ 3PTS raté</button>
+            <div className="sublbl resultSectionLabel">Tirs</div>
+            <div className="grid c2 resultMainGrid">
+              <button className="res made" style={!codingButtonEnabled('result','2-made') ? {display:'none'} : undefined} onClick={() => quickShotResult('2PTS', 'made')}>✓ {codingLabel('result','2-made','2PTS marqué')}</button>
+              <button className="res miss" style={!codingButtonEnabled('result','2-missed') ? {display:'none'} : undefined} onClick={() => quickShotResult('2PTS', 'missed')}>✕ {codingLabel('result','2-missed','2PTS raté')}</button>
+              <button className="res made" style={!codingButtonEnabled('result','3-made') ? {display:'none'} : undefined} onClick={() => quickShotResult('3PTS', 'made')}>✓ {codingLabel('result','3-made','3PTS marqué')}</button>
+              <button className="res miss" style={!codingButtonEnabled('result','3-missed') ? {display:'none'} : undefined} onClick={() => quickShotResult('3PTS', 'missed')}>✕ {codingLabel('result','3-missed','3PTS raté')}</button>
             </div>
 
-            {codingMode === 'live' && draft.context === 'attaque' && (
+            {codingMode !== 'post' ? (
               <>
-                <div className="sublbl">Faute provoquée / remise en jeu</div>
-                <div className="grid c3">
-                  <button className="chip" onClick={() => { setDraft({ ...draft, actionType:'faute-provoquee', foulOutcome:'lf', shotType:'LF', ftAttempts:2, ftResults:[] }); setStage('ft'); }}>2 LF</button>
-                  <button className="chip" onClick={() => { setDraft({ ...draft, actionType:'faute-provoquee', foulOutcome:'lf', shotType:'LF', ftAttempts:3, ftResults:[] }); setStage('ft'); }}>3 LF</button>
-                  <button className="chip" onClick={() => commit({ ...draft, actionType:'faute-provoquee', foulOutcome:'touche', inbound:'blob' })}>Touche BLOB</button>
-                  <button className="chip" onClick={() => commit({ ...draft, actionType:'faute-provoquee', foulOutcome:'touche', inbound:'slob' })}>Touche SLOB</button>
-                  <button className="chip" onClick={() => special('2pts1lf')}>2 + 1 LF</button>
-                  <button className="chip" onClick={() => special('3pts1lf')}>3 + 1 LF</button>
-                </div>
+                {codingMode === 'live-individual' ? (
+                  <>
+                    {!isDefense && (
+                      <>
+                        <div className="sublbl resultSectionLabel">Lancers francs / And-one</div>
+                        <div className="resultShotsGrid">
+                          <button className="chip" style={!codingButtonEnabled('result','lf1') ? {display:'none'} : undefined} onClick={() => startFreeThrows(1)}>{codingLabel('result','lf1','1 LF')}</button>
+                          <button className="chip" style={!codingButtonEnabled('result','lf2') ? {display:'none'} : undefined} onClick={() => startFreeThrows(2)}>{codingLabel('result','lf2','2 LF')}</button>
+                          <button className="chip" style={!codingButtonEnabled('result','lf3') ? {display:'none'} : undefined} onClick={() => startFreeThrows(3)}>{codingLabel('result','lf3','3 LF')}</button>
+                          <button className="chip" style={!codingButtonEnabled('result','2plus1') ? {display:'none'} : undefined} onClick={() => special('2pts1lf')}>{codingLabel('result','2plus1','2 PTS + 1 LF')}</button>
+                          <button className="chip" style={!codingButtonEnabled('result','3plus1') ? {display:'none'} : undefined} onClick={() => special('3pts1lf')}>{codingLabel('result','3plus1','3 PTS + 1 LF')}</button>
+                        </div>
+                        <div className="sublbl resultSectionLabel">Autres résultats joueur</div>
+                        <div className="resultAllActionsGrid">
+                          <button className="chip resultActionBtn" style={!codingButtonEnabled('att-action','faute-provoquee') ? {display:'none'} : undefined} onClick={() => actionPick('faute-provoquee')}>🔔 {codingLabel('att-action','faute-provoquee','Faute provoquée')}</button>
+                          <button className="chip resultActionBtn" style={!codingButtonEnabled('att-action','faute-commise') ? {display:'none'} : undefined} onClick={() => actionPick('faute-commise')}>🟨 {codingLabel('att-action','faute-commise','Faute commise')}</button>
+                          <button className="chip resultActionBtn" style={!codingButtonEnabled('att-action','perte') ? {display:'none'} : undefined} onClick={() => actionPick('perte')}>✖ {codingLabel('att-action','perte','BP · Perte de balle')}</button>
+                        </div>
+                      </>
+                    )}
+                    {isDefense && (
+                      <>
+                        <div className="sublbl resultSectionLabel">Autres résultats défense</div>
+                        <div className="resultAllActionsGrid">
+                          <button className="chip resultActionBtn" style={!codingButtonEnabled('def-action','faute-commise') ? {display:'none'} : undefined} onClick={() => actionPick('faute-commise')}>🟨 {codingLabel('def-action','faute-commise','Faute commise')}</button>
+                          <button className="chip resultActionBtn" style={!codingButtonEnabled('def-action','interception') ? {display:'none'} : undefined} onClick={() => actionPick('interception')}>🖐 {codingLabel('def-action','interception','INT · Interception')}</button>
+                          <button className="chip resultActionBtn" style={!codingButtonEnabled('def-action','contre') ? {display:'none'} : undefined} onClick={() => actionPick('contre')}>🛑 {codingLabel('def-action','contre','Contre')}</button>
+                        </div>
+                      </>
+                    )}
+                  </>
+                ) : (
+                  <>
+                    <div className="sublbl resultSectionLabel">Lancers francs / And-one</div>
+                    <div className="resultShotsGrid">
+                      <button className="chip" style={!codingButtonEnabled('result','lf1') ? {display:'none'} : undefined} onClick={() => startFreeThrows(1)}>{codingLabel('result','lf1','1 LF')}</button>
+                      <button className="chip" style={!codingButtonEnabled('result','lf2') ? {display:'none'} : undefined} onClick={() => startFreeThrows(2)}>{codingLabel('result','lf2','2 LF')}</button>
+                      <button className="chip" style={!codingButtonEnabled('result','lf3') ? {display:'none'} : undefined} onClick={() => startFreeThrows(3)}>{codingLabel('result','lf3','3 LF')}</button>
+                      <button className="chip" style={!codingButtonEnabled('result','2plus1') ? {display:'none'} : undefined} onClick={() => special('2pts1lf')}>{codingLabel('result','2plus1','2 PTS + 1 LF')}</button>
+                      <button className="chip" style={!codingButtonEnabled('result','3plus1') ? {display:'none'} : undefined} onClick={() => special('3pts1lf')}>{codingLabel('result','3plus1','3 PTS + 1 LF')}</button>
+                    </div>
+                    <div className="sublbl resultSectionLabel">Autres résultats</div>
+                    <div className="resultAllActionsGrid">
+                      {codingButtonsFor(isDefense ? 'def-action' : 'att-action')
+                        .filter((button) => button.key !== 'tir')
+                        .map((button) => (
+                          <button key={button.key} className="chip resultActionBtn" onClick={() => actionPick(button.key)}>
+                            {button.emoji ? `${button.emoji} ` : ''}{button.label}
+                          </button>
+                        ))}
+                    </div>
+                  </>
+                )}
               </>
-            )}
-
-            <div className="sublbl">Lancers francs</div>
-            <div className="seg">
-              {[1, 2, 3].map((n) => (
-                <button
-                  key={n}
-                  className={`segb ${draft.shotType === 'LF' && draft.ftAttempts === n ? 'active' : ''}`}
-                  onClick={() => {
-                    shotPick('LF');
-                    ftn(n);
-                  }}
-                >
-                  {n} LF
-                </button>
-              ))}
-            </div>
-            {draft.shotType === 'LF' && draft.ftAttempts > 0 && ftSeq()}
-
-            {draft.context !== 'defense' && (
+            ) : (
               <>
-                <div className="sublbl">Situations spéciales</div>
-                <div className="grid c2">
-                  <button className="chip" onClick={() => special('2pts1lf')}>2 PTS + 1 LF</button>
-                  <button className="chip" onClick={() => special('3pts1lf')}>3 PTS + 1 LF</button>
+                <div className="sublbl">Lancers francs</div>
+                <div className="seg">
+                  {[1, 2, 3].map((n) => (
+                    <button
+                      key={n}
+                      className={`segb ${draft.shotType === 'LF' && draft.ftAttempts === n ? 'active' : ''}`}
+                      onClick={() => {
+                        shotPick('LF');
+                        ftn(n);
+                      }}
+                    >
+                      {n} LF
+                    </button>
+                  ))}
                 </div>
+                {draft.shotType === 'LF' && draft.ftAttempts > 0 && ftSeq()}
+
+                {draft.context !== 'defense' && (
+                  <>
+                    <div className="sublbl">Situations spéciales</div>
+                    <div className="grid c2">
+                      <button className="chip" style={!codingButtonEnabled('result','2plus1') ? {display:'none'} : undefined} onClick={() => special('2pts1lf')}>2 PTS + 1 LF</button>
+                      <button className="chip" style={!codingButtonEnabled('result','3plus1') ? {display:'none'} : undefined} onClick={() => special('3pts1lf')}>3 PTS + 1 LF</button>
+                    </div>
+                  </>
+                )}
               </>
             )}
           </>
         );
+      }
       case 'ft':
         return <>{head('Lancers francs', (draft.specialCase === '2pts+1lf' || draft.specialCase === '3pts+1lf') ? 'Lancer franc bonus (and-one)' : draft.actionType === 'faute-commise' ? `${draft.ftAttempts} LF adverses — dans l'ordre` : `${draft.ftAttempts} LF — dans l'ordre`)}{ftSeq()}</>;
       case 'zone':
@@ -6385,10 +7189,10 @@ export default function PriseStatsProPage() {
         // configurables via livestat_coding_buttons (catégorie 'rebound') : la config
         // par équipe écrase le label par key, sinon on garde les libellés par défaut.
         const rebDefaults: Record<string, string> = { 'off': 'Rebond offensif', 'def': 'Rebond défensif', 'touche-pour': 'Touche pour', 'touche-contre': 'Touche contre' };
-        const rebCfg = resolveCodingButtons('rebound', codingDb);
+        const rebCfg = codingButtonsFor('rebound');
         const rebLabelOf = (id: string) => rebCfg.find((c) => c.key === id)?.label ?? rebDefaults[id];
-        const reb: string[] = ['off', 'def', 'touche-pour', 'touche-contre'];
-        return <>{head('Conséquence', 'Rebond sur tir manqué')}<div className="grid c2">{reb.map((id) => <button key={id} className={`chip ${draft.reboundType === id ? 'active' : ''}`} onClick={() => rebPick(id)}>{rebLabelOf(id)}</button>)}</div>
+        const reb: string[] = (codingMode === 'live-individual' ? ['off', 'def'] : ['off', 'def', 'touche-pour', 'touche-contre']).filter((id) => rebCfg.some((c) => c.key === id));
+        return <>{head('Conséquence', codingMode === 'live-individual' ? (draft.context === 'defense' ? 'Tir adverse raté : RO adverse ou RD pour nous' : 'Tir raté : RO ou RD') : 'Rebond sur tir manqué')}<div className="grid c2">{reb.map((id) => <button key={id} className={`chip ${draft.reboundType === id ? 'active' : ''}`} onClick={() => rebPick(id)}>{rebLabelOf(id)}</button>)}</div>
           {draft.reboundType && isMyRebound(draft.context, draft.reboundType) && <><div className="sublbl">Qui prend le rebond ?</div>{players3(draft.reboundPlayerId, rebWho)}<button className="chip" style={{ marginTop: 8 }} onClick={() => commit(draft)}>Sans précision →</button></>}
         </>;
       }
@@ -6396,7 +7200,7 @@ export default function PriseStatsProPage() {
         const others = floor.filter((p) => p.id !== draft.playerId);
         return <>{head('Passe décisive', draft.actionType === 'faute-provoquee' ? 'Action ayant amené la faute' : 'Panier marqué')}<div className="sublbl">Qui a fait la passe décisive ?</div>
           <div className="grid c3">{others.map((p) => <button key={p.id} className="pl sm" onClick={() => passer(p.id)}><Av p={p} /><span className="num">{p.num}</span><span className="nm">{p.name}</span></button>)}
-            <button className="pl sm" onClick={() => passer('')}><Av /><span className="num">—</span><span className="nm">Personne</span></button></div></>;
+            <button className="pl sm" onClick={() => passer('')}><Av /><span className="num">—</span><span className="nm">Skip / aucune</span></button></div></>;
       }
       default: return null;
     }
@@ -7007,6 +7811,9 @@ function Style() {
       .cm-logo { width: 34px; height: 34px; border-radius: 9px; background: var(--panel2); display: grid; place-items: center; color: var(--gold); font-size: 17px; }
       .cm-t { font-size: 13px; font-weight: 900; letter-spacing: .03em; } .cm-s { font-size: 9px; color: var(--mute); font-weight: 800; letter-spacing: .12em; }
       .cm-head-r { display: flex; gap: 10px; align-items: center; }
+
+      .projectMenuWrap{position:relative}.menuDots{min-width:44px;justify-content:center;font-size:16px;letter-spacing:2px}.projectMenu{position:absolute;right:0;top:calc(100% + 8px);z-index:2500;width:280px;padding:8px;border:1px solid var(--border);border-radius:12px;background:#0d1626;box-shadow:0 18px 50px rgba(0,0,0,.45);display:grid;gap:4px}.projectMenu button{width:100%;border:0;border-radius:8px;background:transparent;color:#eef3fb;text-align:left;padding:9px 10px;font-size:11px;font-weight:850;cursor:pointer}.projectMenu button:hover{background:rgba(255,255,255,.07)}.projectMenu .danger{color:#ff8792}.projectMenuSep{height:1px;background:var(--border);margin:4px 2px}.trackpadHint{font-size:10px;color:#9eabc0;border:1px solid var(--border);border-radius:999px;padding:5px 9px}.stageHeadWithConfig{position:relative}.stageHeadWithConfig .stageConfigBtn{position:absolute;right:0;top:0;width:30px;height:30px;border:1px solid var(--border);border-radius:8px;background:rgba(212,162,76,.10);color:var(--gold);font-weight:900;cursor:pointer}.panelResizeHandle{min-width:7px;border-radius:999px;background:linear-gradient(180deg,transparent 8%,rgba(212,162,76,.28) 24%,rgba(212,162,76,.58) 50%,rgba(212,162,76,.28) 76%,transparent 92%);cursor:col-resize;display:flex;align-items:center;justify-content:center;touch-action:none;user-select:none}.panelResizeHandle span{font-size:14px;color:#d4a24c;opacity:.8;writing-mode:vertical-rl}.videoMaximized{grid-template-columns:1fr!important}.videoMaximized>.panelResizeHandle,.videoMaximized>.lc-code,.videoMaximized>.lc-right{display:none!important}.videoMaximized>.lc-video{grid-column:1!important;width:100%;min-width:0}.videoMaximized .videoSlot.big{min-height:0;height:100%}.videoMaximized .vplayer{height:100%;max-height:none}.codingLogicSetup{margin-top:10px;border:1px solid var(--border);border-radius:11px;background:var(--panel);padding:10px;display:grid;gap:8px}.codingLogicSetupHead{display:flex;align-items:center;justify-content:space-between;gap:10px}.codingLogicSetupHead>div{display:grid;gap:2px}.codingLogicSetupHead b{font-size:10px;color:var(--gold)}.codingLogicSetupHead small{font-size:9px;color:var(--mute)}.codingLogicSetupHead button,.codingLogicSetupRow button{border:1px solid var(--gold);border-radius:8px;background:rgba(212,162,76,.1);color:var(--gold);padding:7px 9px;font-size:9px;font-weight:900;cursor:pointer}.codingLogicSetupRow{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:7px}.codingLogicSetupRow select{min-width:0;border:1px solid var(--border);border-radius:8px;background:var(--card);color:var(--txt);padding:8px;font-size:10px}.codingLogicPath{display:flex;align-items:center;gap:4px;flex-wrap:wrap}.codingLogicPath span{border:1px solid #35415a;border-radius:999px;background:#111b2d;color:#c4cedd;padding:4px 7px;font-size:8px;font-weight:850}.codingLogicPath i{font-style:normal;color:#65738b;font-size:8px}.codingLogicPath em{flex-basis:100%;font-style:normal;color:#8794aa;font-size:8px;margin-top:2px}.foulOutcomeGrid{display:grid;grid-template-columns:1fr 1fr;gap:8px}.foulOutcomeGrid .foulTouch{grid-column:1/-1}.foulOutcomeGrid .chip{min-height:44px}.individualDefenseHint{border:1px solid #39465d;border-radius:9px;background:#101a2b;padding:7px 9px;color:#9eabc0;font-size:9px}.individualLinkBox{margin-top:10px;border:1px solid var(--border);background:var(--panel);border-radius:10px;padding:10px}.individualLinkBox label{display:block;color:var(--mute);font-size:10px;font-weight:850;margin-bottom:6px}.individualLinkBox select{width:100%;border:1px solid var(--border);border-radius:8px;background:var(--card);color:var(--txt);padding:8px}.cm-video{grid-template-columns:repeat(3,minmax(0,1fr)) !important}
+      @media(max-width:900px){.cm-video{grid-template-columns:1fr !important}.projectMenu{position:fixed;right:12px;top:72px;width:min(300px,calc(100vw - 24px))}.panelResizeHandle{display:none!important}.videoMaximized>.lc-code,.videoMaximized>.lc-right{display:none!important}}
       .cm-ghost { display: flex; align-items: center; gap: 7px; background: var(--panel2); border: 1px solid var(--border); border-radius: 10px; padding: 9px 14px; font-size: 12px; font-weight: 800; color: var(--txt); cursor: pointer; }
       .cm-ghost.sm { padding: 6px 11px; font-size: 11px; }
       .cm-body { flex: 1; display: grid; grid-template-columns: 1fr 1fr; gap: 22px; padding: 24px 26px; align-items: start; }
@@ -8406,6 +9213,20 @@ function Style() {
         background: var(--bordeaux);
         border-color: var(--bordeaux2);
         color: #fff;
+      }
+      .resultMainGrid { gap: 7px !important; }
+      .resultMainGrid .res { min-height: 50px !important; padding: 8px 10px !important; font-size: 13px !important; }
+      .resultSectionLabel { margin-top: 7px !important; margin-bottom: 4px !important; }
+      .resultShotsGrid { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:7px; }
+      .resultShotsGrid .chip { min-height:40px !important; padding:6px 7px !important; text-align:center; }
+      .resultShotsGrid .chip:nth-child(4),
+      .resultShotsGrid .chip:nth-child(5) { grid-column:span 1; }
+      .resultAllActionsGrid { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 7px; }
+      .resultActionBtn { min-height: 43px !important; padding: 7px 8px !important; display:flex !important; align-items:center; justify-content:center; gap:6px; text-align:center !important; line-height:1.1; }
+      @media (max-height: 820px) {
+        .resultMainGrid .res { min-height: 43px !important; padding: 6px 8px !important; }
+        .resultActionBtn { min-height: 36px !important; padding: 5px 6px !important; font-size: 10.5px !important; }
+        .resultSectionLabel { margin-top: 4px !important; margin-bottom: 3px !important; }
       }
 
       .sublbl {

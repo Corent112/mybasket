@@ -149,8 +149,8 @@ export default function VideoSyncModal(props: VideoSyncModalProps) {
       <div className="vmark-card" onClick={(e) => e.stopPropagation()}>
         <div className="vmark-head">
           <div>
-            <b>⚙ Synchroniser la vidéo avec le LiveStat</b>
-            <span>Déplace le curseur vidéo puis pose Q1, Q2, Q3 et Q4. Le trackpad permet un scrub horizontal fluide.</span>
+            <b>🎯 Caler la vidéo sur le match</b>
+            <span>Place d’abord « Le match commence ici ». Les débuts Q2, Q3 et Q4 restent disponibles pour affiner le calage.</span>
           </div>
           <button onClick={onClose}>×</button>
         </div>
@@ -203,7 +203,7 @@ export default function VideoSyncModal(props: VideoSyncModalProps) {
               </div>
 
               <div className="vmark-help">
-                Q1 est obligatoire. Les autres repères sont recommandés : ils permettent de recaler chaque quart-temps indépendamment si la vidéo contient une mi-temps, une coupure ou un décalage de captation.
+                Le repère « Le match commence ici » est obligatoire. Q2, Q3 et Q4 sont optionnels mais recommandés si la vidéo contient une mi-temps, une coupure ou un décalage de captation.
               </div>
 
               <div className="vmark-periods">
@@ -212,10 +212,15 @@ export default function VideoSyncModal(props: VideoSyncModalProps) {
                   const sourceStart = sourceStartFor(period);
                   return (
                     <div className={`vmark-period ${marker?.start != null ? 'set' : ''}`} key={period}>
-                      <div className="vmark-q"><b>{period <= 4 ? `Q${period}` : `OT${period - 4}`}</b><small>début de période</small></div>
+                      <div className="vmark-q">
+                        <b>{period === 1 ? 'MATCH' : (period <= 4 ? `Q${period}` : `OT${period - 4}`)}</b>
+                        <small>{period === 1 ? 'début du match' : 'début de période'}</small>
+                      </div>
                       <div className="vmark-time"><small>VIDÉO</small><strong>{fmt(marker?.start)}</strong></div>
                       <div className="vmark-source"><small>LIVE</small><span>{fmt(sourceStart)}{marker?.sourceEnd != null ? ` → ${fmt(marker.sourceEnd)}` : ''}</span></div>
-                      <button className="place" onClick={() => setPeriodStart(period)}>📍 Placer ici</button>
+                      <button className="place" onClick={() => setPeriodStart(period)}>
+                        {period === 1 ? '📍 Le match commence ici' : `📍 Début ${period <= 4 ? `Q${period}` : `OT${period - 4}`}`}
+                      </button>
                       {marker?.start != null && <button className="clear" onClick={() => clearPeriodStart(period)} title="Effacer ce repère">×</button>}
                     </div>
                   );
@@ -227,7 +232,7 @@ export default function VideoSyncModal(props: VideoSyncModalProps) {
 
         <div className="vmark-foot">
           <button className="secondary" onClick={onClose}>Fermer</button>
-          <button className="primary" disabled={!videoUrl || !q1Ready} onClick={onValidate}>✓ Enregistrer les repères et synchroniser</button>
+          <button className="primary" disabled={!videoUrl || !q1Ready} onClick={onValidate}>✓ Valider le calage vidéo</button>
         </div>
       </div>
 

@@ -1,347 +1,319 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { getTeamPlayerStats } from "@/lib/stats-supabase";
 import { createClient } from "@/lib/supabase/client";
 
-type Team = { id: string; name: string };
-type Mode = "total" | "average";
+const LIVE_STATS_KEY = "mybasket_live_stats";
+const TEAMS_KEY = "mybasket_equipes";
 
-type Row = {
-  player_id: string;
-  pts: number | null;
-  p2m: number | null;
-  p2a: number | null;
-  p3m: number | null;
-  p3a: number | null;
-  ftm: number | null;
-  fta: number | null;
-  off_reb: number | null;
-  def_reb: number | null;
-  reb: number | null;
-  ast: number | null;
-  stl: number | null;
-  blk: number | null;
-  turnovers: number | null;
-  pf: number | null;
-  present: boolean | null;
+type Player = {
+  id: string;
+  firstName?: string;
+  lastName?: string;
+  num?: string | number;
+  numero?: string | number;
+  photo?: string;
 };
 
-type PlayerStat = {
-  playerId: string;
+type Team = {
+  id: string;
   name: string;
-  games: number;
-  p2m: number;
-  p2a: number;
-  p3m: number;
-  p3a: number;
+  players: Player[];
+};
+
+type PlayerStats = {
+  playerId: string;
+  fgm: number;
+  fga: number;
+  twoPm: number;
+  twoPa: number;
+  threePm: number;
+  threePa: number;
   ftm: number;
   fta: number;
   off: number;
   def: number;
-  reb: number;
   ast: number;
   st: number;
   to: number;
   bs: number;
   pf: number;
   fpf: number;
-  pts: number;
 };
 
-const n = (v: unknown) => {
-  const x = Number(v);
-  return Number.isFinite(x) ? x : 0;
-};
+const emptyStats = (playerId: string): PlayerStats => ({
+  playerId,
+  fgm: 0,
+  fga: 0,
+  twoPm: 0,
+  twoPa: 0,
+  threePm: 0,
+  threePa: 0,
+  ftm: 0,
+  fta: 0,
+  off: 0,
+  def: 0,
+  ast: 0,
+  st: 0,
+  to: 0,
+  bs: 0,
+  pf: 0,
+  fpf: 0,
+});
 
-const round1 = (v: number) => Math.round(v * 10) / 10;
+function safeParse<T>(raw: string | null, fallback: T): T {
+  if (!raw) return fallback;
 
-const pct = (made: number, att: number) =>
-  att ? `${Math.round((made / att) * 1000) / 10}%` : "0%";
+  try {
+    return JSON.parse(raw) as T;
+  } catch {
+    return fallback;
+  }
+}
 
-const madeAtt = (m: number, a: number) => `${m}-${a}`;
+function readTeams(): Team[] {
+  if (typeof window === "undefined") return [];
 
-const eff = (s: PlayerStat) => {
-  const fgm = s.p2m + s.p3m;
-  const fga = s.p2a + s.p3a;
+  const data = safeParse<any>(localStorage.getItem(TEAMS_KEY), []);
+  const arr = Array.isArray(data) ? data : data?.teams || [];
+
+  return arr.map((team: any, index: number) => ({
+    id: String(team.id ?? `team_${index}`),
+    name: team.name ?? team.nom ?? "Équipe",
+    players: (team.players ?? team.joueurs ?? []).map(
+      (player: any, pIndex: number) => ({
+        id: String(player.id ?? `player_${index}_${pIndex}`),
+        firstName: player.firstName ?? player.prenom ?? "",
+        lastName: player.lastName ?? player.nom ?? "",
+        num: player.num ?? player.numero ?? "",
+        numero: player.numero ?? player.num ?? "",
+        photo: player.photo ?? "",
+      })
+    ),
+  }));
+}
+
+
+function normalizeTeamName(value: unknown) {
+  return String(value || "").trim().toLowerCase();
+}
+
+async function loadAccessibleTeams(): Promise<Team[]> {
+  const localTeams = readTeams();
+
+  try {
+    const supabase = createClient();
+
+    // Les RLS de `teams` définissent les équipes réellement accessibles :
+    // propriétaire + collaborations autorisées.
+    const { data: teamRows, error: teamError } = await supabase
+      .from("teams")
+      .select("*")
+      .order("name", { ascending: true });
+
+    if (teamError || !teamRows?.length) {
+      if (teamError) console.warn("Stats joueurs — équipes Supabase :", teamError);
+      return localTeams;
+    }
+
+    const teamIds = teamRows
+      .map((row: any) => String(row.id || ""))
+      .filter(Boolean);
+
+    let playerRows: any[] = [];
+    if (teamIds.length) {
+      const { data, error } = await supabase
+        .from("players")
+        .select("*")
+        .in("team_id", teamIds);
+
+      if (!error && data) playerRows = data;
+      else if (error) console.warn("Stats joueurs — joueurs Supabase :", error);
+    }
+
+    const playersByTeam = new Map<string, Player[]>();
+    for (const row of playerRows) {
+      const currentTeamId = String(row.team_id || "");
+      if (!currentTeamId) continue;
+
+      const list = playersByTeam.get(currentTeamId) || [];
+      list.push({
+        id: String(row.id || ""),
+        firstName: String(
+          row.first_name ?? row.firstName ?? row.prenom ?? ""
+        ),
+        lastName: String(
+          row.last_name ?? row.lastName ?? row.nom ?? ""
+        ),
+        num:
+          row.number_jersey ??
+          row.jersey_number ??
+          row.number ??
+          row.numero ??
+          row.num ??
+          "",
+        numero:
+          row.number_jersey ??
+          row.jersey_number ??
+          row.number ??
+          row.numero ??
+          row.num ??
+          "",
+        photo: String(
+          row.photo_url ?? row.avatar_url ?? row.photo ?? ""
+        ),
+      });
+      playersByTeam.set(currentTeamId, list);
+    }
+
+    const supabaseTeams: Team[] = teamRows.map((row: any) => {
+      const id = String(row.id || "");
+      return {
+        id,
+        name: String(row.name ?? row.nom ?? row.club_name ?? "Équipe"),
+        players: playersByTeam.get(id) || [],
+      };
+    });
+
+    // Supabase devient la référence. On conserve seulement une éventuelle équipe
+    // locale qui n'existe vraiment pas encore côté Supabase.
+    const supabaseIds = new Set(supabaseTeams.map((team) => team.id));
+    const supabaseNames = new Set(
+      supabaseTeams.map((team) => normalizeTeamName(team.name))
+    );
+
+    const localOnly = localTeams.filter(
+      (team) =>
+        !supabaseIds.has(team.id) &&
+        !supabaseNames.has(normalizeTeamName(team.name))
+    );
+
+    return [...supabaseTeams, ...localOnly];
+  } catch (error) {
+    console.warn("Stats joueurs — chargement équipes accessible impossible :", error);
+    return localTeams;
+  }
+}
+
+function formatMadeAttempt(made: number, attempt: number) {
+  return `${made}-${attempt}`;
+}
+
+function percent(made: number, attempt: number) {
+  if (!attempt) return "0%";
+  return `${Math.round((made / attempt) * 100)}%`;
+}
+
+function efficiency(stat: PlayerStats) {
+  const reb = stat.off + stat.def;
+  const pts = stat.twoPm * 2 + stat.threePm * 3 + stat.ftm;
 
   return (
-    s.pts +
-    s.reb +
-    s.ast +
-    s.st +
-    s.bs +
-    s.fpf -
-    (fga - fgm) -
-    (s.fta - s.ftm) -
-    s.to -
-    s.pf
+    pts +
+    reb +
+    stat.ast +
+    stat.st +
+    stat.bs +
+    stat.fpf -
+    (stat.fga - stat.fgm) -
+    (stat.fta - stat.ftm) -
+    stat.to -
+    stat.pf
   );
-};
-
-function getPlayerName(player: any) {
-  const num = player?.num ?? player?.numero ?? player?.number ?? "";
-  const first = player?.first_name ?? player?.firstName ?? player?.prenom ?? "";
-  const last = player?.last_name ?? player?.lastName ?? player?.nom ?? "";
-  const full = player?.name ?? player?.full_name ?? player?.fullName ?? "";
-
-  return `${num ? `#${num} ` : ""}${
-    full || `${first} ${last}`.trim() || "Joueur"
-  }`;
 }
 
 export default function StatsJoueursModule() {
-  const supabase = createClient();
-
-  const [loading, setLoading] = useState(true);
   const [teams, setTeams] = useState<Team[]>([]);
   const [teamId, setTeamId] = useState("");
-  const [rows, setRows] = useState<PlayerStat[]>([]);
-  const [mode, setMode] = useState<Mode>("total");
+  const [stats, setStats] = useState<Record<string, PlayerStats>>({});
+  const [loading, setLoading] = useState(false);
+  const [loadingTeams, setLoadingTeams] = useState(true);
 
   useEffect(() => {
+    let active = true;
+
     async function loadTeams() {
-      const {
-        data: { user },
-      } = await supabase.auth.getUser();
+      setLoadingTeams(true);
+      const loadedTeams = await loadAccessibleTeams();
+      if (!active) return;
 
-      if (!user) {
-        setLoading(false);
-        return;
-      }
-
-      const { data: matches } = await supabase
-        .from("match_stats")
-        .select("team_id")
-        .eq("user_id", user.id);
-
-      const teamIds = Array.from(
-        new Set((matches ?? []).map((m: { team_id?: string | null }) => m.team_id).filter(Boolean))
-      );
-
-      if (teamIds.length === 0) {
-        setTeams([]);
-        setLoading(false);
-        return;
-      }
-
-      const { data: teamsData } = await supabase
-        .from("teams")
-        .select("*")
-        .in("id", teamIds);
-
-      const options = teamIds.map((id) => {
-        const team = teamsData?.find((t: any) => String(t.id) === String(id));
-
-        return {
-          id: String(id),
-          name:
-            team?.name ||
-            team?.nom ||
-            team?.team_name ||
-            `Équipe ${String(id).slice(0, 8)}`,
-        };
+      setTeams(loadedTeams);
+      setTeamId((current) => {
+        if (current && loadedTeams.some((team) => team.id === current)) {
+          return current;
+        }
+        return loadedTeams[0]?.id || "";
       });
-
-      setTeams(options);
-      setTeamId(options[0]?.id ?? "");
-      setLoading(false);
+      setLoadingTeams(false);
     }
 
     loadTeams();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+
+    return () => {
+      active = false;
+    };
   }, []);
 
-  useEffect(() => {
-    if (!teamId) return;
+  const selectedTeam = useMemo(
+    () => teams.find((team) => team.id === teamId) || null,
+    [teams, teamId]
+  );
 
-    async function loadStats() {
+  useEffect(() => {
+    if (!selectedTeam) return;
+
+    const loadStats = async () => {
       setLoading(true);
 
-      const { data, error } = await supabase
-        .from("match_player_stats")
-        .select(
-          "player_id, pts, p2m, p2a, p3m, p3a, ftm, fta, off_reb, def_reb, reb, ast, stl, blk, turnovers, pf, present"
-        )
-        .eq("team_id", teamId);
+      const supabaseStats = await getTeamPlayerStats(selectedTeam.id);
 
-      if (error) {
-        console.error("Erreur stats joueurs:", error);
-        setRows([]);
-        setLoading(false);
-        return;
-      }
-
-      const statRows = ((data ?? []) as Row[]).filter(
-        (r) => r.present !== false
+      const saved = safeParse<Record<string, Record<string, PlayerStats>>>(
+        localStorage.getItem(LIVE_STATS_KEY),
+        {}
       );
 
-      const playerIds = Array.from(
-        new Set(statRows.map((r) => r.player_id).filter(Boolean))
-      );
+      const localTeamStats = saved[selectedTeam.id] || {};
+      const next: Record<string, PlayerStats> = {};
 
-      const { data: playersData } =
-        playerIds.length > 0
-          ? await supabase.from("players").select("*").in("id", playerIds)
-          : { data: [] as any[] };
-
-      const names: Record<string, string> = {};
-
-      (playersData ?? []).forEach((p: any) => {
-        names[String(p.id)] = getPlayerName(p);
+      selectedTeam.players.forEach((player) => {
+        next[player.id] =
+          supabaseStats[player.id] ||
+          localTeamStats[player.id] ||
+          emptyStats(player.id);
       });
 
-      const map: Record<string, PlayerStat> = {};
-
-      statRows.forEach((r) => {
-        const id = String(r.player_id);
-
-        if (!map[id]) {
-          map[id] = {
-            playerId: id,
-            name: names[id] || `Joueur ${id.slice(0, 8)}`,
-            games: 0,
-            p2m: 0,
-            p2a: 0,
-            p3m: 0,
-            p3a: 0,
-            ftm: 0,
-            fta: 0,
-            off: 0,
-            def: 0,
-            reb: 0,
-            ast: 0,
-            st: 0,
-            to: 0,
-            bs: 0,
-            pf: 0,
-            fpf: 0,
-            pts: 0,
-          };
-        }
-
-        map[id].games += 1;
-        map[id].p2m += n(r.p2m);
-        map[id].p2a += n(r.p2a);
-        map[id].p3m += n(r.p3m);
-        map[id].p3a += n(r.p3a);
-        map[id].ftm += n(r.ftm);
-        map[id].fta += n(r.fta);
-        map[id].off += n(r.off_reb);
-        map[id].def += n(r.def_reb);
-        map[id].reb += n(r.reb) || n(r.off_reb) + n(r.def_reb);
-        map[id].ast += n(r.ast);
-        map[id].st += n(r.stl);
-        map[id].bs += n(r.blk);
-        map[id].to += n(r.turnovers);
-        map[id].pf += n(r.pf);
-        map[id].pts += n(r.pts);
-      });
-
-      setRows(Object.values(map).sort((a, b) => b.pts - a.pts));
+      setStats(next);
       setLoading(false);
-    }
+    };
 
     loadStats();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [teamId]);
+  }, [selectedTeam]);
 
   const totals = useMemo(() => {
-    return rows.reduce(
-      (a, r) => {
-        a.games += r.games;
-        a.p2m += r.p2m;
-        a.p2a += r.p2a;
-        a.p3m += r.p3m;
-        a.p3a += r.p3a;
-        a.ftm += r.ftm;
-        a.fta += r.fta;
-        a.off += r.off;
-        a.def += r.def;
-        a.reb += r.reb;
-        a.ast += r.ast;
-        a.st += r.st;
-        a.to += r.to;
-        a.bs += r.bs;
-        a.pf += r.pf;
-        a.fpf += r.fpf;
-        a.pts += r.pts;
-        return a;
-      },
-      {
-        playerId: "totals",
-        name: "Totals",
-        games: 0,
-        p2m: 0,
-        p2a: 0,
-        p3m: 0,
-        p3a: 0,
-        ftm: 0,
-        fta: 0,
-        off: 0,
-        def: 0,
-        reb: 0,
-        ast: 0,
-        st: 0,
-        to: 0,
-        bs: 0,
-        pf: 0,
-        fpf: 0,
-        pts: 0,
-      }
-    );
-  }, [rows]);
+    const result = emptyStats("totals");
 
-  const teamGames = useMemo(() => {
-    if (rows.length === 0) return 0;
-    return Math.max(...rows.map((r) => r.games));
-  }, [rows]);
+    Object.values(stats).forEach((stat) => {
+      result.fgm += stat.fgm;
+      result.fga += stat.fga;
+      result.twoPm += stat.twoPm;
+      result.twoPa += stat.twoPa;
+      result.threePm += stat.threePm;
+      result.threePa += stat.threePa;
+      result.ftm += stat.ftm;
+      result.fta += stat.fta;
+      result.off += stat.off;
+      result.def += stat.def;
+      result.ast += stat.ast;
+      result.st += stat.st;
+      result.to += stat.to;
+      result.bs += stat.bs;
+      result.pf += stat.pf;
+      result.fpf += stat.fpf;
+    });
 
-  const display = (value: number, games: number) => {
-    if (mode === "total") return value;
-    if (!games) return 0;
-    return round1(value / games);
-  };
-
-  const displayMadeAtt = (made: number, attempted: number, games: number) => {
-    if (mode === "total") return madeAtt(made, attempted);
-    if (!games) return "0-0";
-    return madeAtt(round1(made / games), round1(attempted / games));
-  };
-
-  const renderRow = (r: PlayerStat, isTotal = false) => {
-    const fgm = r.p2m + r.p3m;
-    const fga = r.p2a + r.p3a;
-    const divisor = isTotal ? teamGames : r.games;
-
-    return (
-      <tr key={r.playerId} className={isTotal ? "total-row" : "player-row"}>
-        <td className="player">{r.name}</td>
-        <td>{isTotal ? teamGames : r.games}</td>
-        <td>{displayMadeAtt(fgm, fga, divisor)}</td>
-        <td>{pct(fgm, fga)}</td>
-        <td>{displayMadeAtt(r.p2m, r.p2a, divisor)}</td>
-        <td>{pct(r.p2m, r.p2a)}</td>
-        <td>{displayMadeAtt(r.p3m, r.p3a, divisor)}</td>
-        <td>{pct(r.p3m, r.p3a)}</td>
-        <td>{displayMadeAtt(r.ftm, r.fta, divisor)}</td>
-        <td>{pct(r.ftm, r.fta)}</td>
-        <td>{display(r.off, divisor)}</td>
-        <td>{display(r.def, divisor)}</td>
-        <td>{display(r.reb, divisor)}</td>
-        <td>{display(r.ast, divisor)}</td>
-        <td>{display(r.st, divisor)}</td>
-        <td>{display(r.to, divisor)}</td>
-        <td>{display(r.bs, divisor)}</td>
-        <td>{display(r.pf, divisor)}</td>
-        <td>{display(r.fpf, divisor)}</td>
-        <td>{display(eff(r), divisor)}</td>
-        <td className="pts">{display(r.pts, divisor)}</td>
-      </tr>
-    );
-  };
-
-  const totalFgm = totals.p2m + totals.p3m;
-  const totalFga = totals.p2a + totals.p3a;
+    return result;
+  }, [stats]);
 
   return (
     <div className="sj">
@@ -349,15 +321,20 @@ export default function StatsJoueursModule() {
         <div>
           <h3>Stats joueurs</h3>
           <p>
-            {mode === "total"
-              ? "Stats globales cumulées depuis les matchs enregistrés en live."
-              : "Moyennes par match depuis les matchs enregistrés en live."}
+            Sélectionne une équipe pour charger les joueurs. Les données sont
+            alimentées par la prise de stats live.
           </p>
         </div>
 
-        <select value={teamId} onChange={(e) => setTeamId(e.target.value)}>
-          {teams.length === 0 && <option value="">Aucune équipe</option>}
-
+        <select
+          value={teamId}
+          onChange={(e) => setTeamId(e.target.value)}
+          disabled={loadingTeams}
+        >
+          {loadingTeams && <option value="">Chargement des équipes…</option>}
+          {!loadingTeams && teams.length === 0 && (
+            <option value="">Aucune équipe</option>
+          )}
           {teams.map((team) => (
             <option key={team.id} value={team.id}>
               {team.name}
@@ -366,337 +343,258 @@ export default function StatsJoueursModule() {
         </select>
       </div>
 
-      {loading && <div className="empty">Chargement...</div>}
+      {loading && <div className="sj-empty">Chargement des stats...</div>}
 
-      {!loading && rows.length === 0 && (
-        <div className="empty">Aucune stat trouvée pour cette équipe.</div>
+      {!loadingTeams && !loading && !selectedTeam && (
+        <div className="sj-empty">
+          Aucune équipe trouvée. Crée d’abord une équipe dans “Mes Équipes”.
+        </div>
       )}
 
-      {!loading && rows.length > 0 && (
-        <>
-          <div className="mode-switch">
-            <button
-              type="button"
-              className={mode === "total" ? "on" : ""}
-              onClick={() => setMode("total")}
-            >
-              Stats globales
-            </button>
+      {!loading && selectedTeam && (
+        <div className="sj-table-wrap">
+          <table className="sj-table">
+            <thead>
+              <tr>
+                <th>Player</th>
+                <th>FGM-A</th>
+                <th>2PM-A</th>
+                <th>3PM-A</th>
+                <th>FTM-A</th>
+                <th>OFF</th>
+                <th>DEF</th>
+                <th>TOT</th>
+                <th>AST</th>
+                <th>ST</th>
+                <th>TO</th>
+                <th>BS</th>
+                <th>PF</th>
+                <th>FPF</th>
+                <th>EFF</th>
+                <th>PTS</th>
+              </tr>
+            </thead>
 
-            <button
-              type="button"
-              className={mode === "average" ? "on" : ""}
-              onClick={() => setMode("average")}
-            >
-              Moyenne / match
-            </button>
-          </div>
+            <tbody>
+              {selectedTeam.players.map((player) => {
+                const stat = stats[player.id] || emptyStats(player.id);
+                const reb = stat.off + stat.def;
+                const pts = stat.twoPm * 2 + stat.threePm * 3 + stat.ftm;
 
-          <div className="summary-grid">
-            <div><span>Joueurs</span><strong>{rows.length}</strong></div>
-            <div><span>Matchs</span><strong>{teamGames}</strong></div>
-            <div><span>Points</span><strong>{totals.pts}</strong></div>
-            <div><span>Rebonds</span><strong>{totals.reb}</strong></div>
-            <div><span>Passes</span><strong>{totals.ast}</strong></div>
-            <div><span>Adresse</span><strong>{pct(totalFgm, totalFga)}</strong></div>
-          </div>
+                return (
+                  <tr key={player.id}>
+                    <td className="player">
+                      <span className="avatar">
+                        {player.photo ? (
+                          <img src={player.photo} alt="" />
+                        ) : (
+                          player.firstName?.[0] || "?"
+                        )}
+                      </span>
 
-          <div className="table">
-            <table>
-              <thead>
-                <tr className="group-head">
-                  <th rowSpan={2}>Joueur</th>
-                  <th rowSpan={2}>MJ</th>
-                  <th colSpan={2}>Total tirs</th>
-                  <th colSpan={2}>2 points</th>
-                  <th colSpan={2}>3 points</th>
-                  <th colSpan={2}>L-F</th>
-                  <th colSpan={3}>Rebonds</th>
-                  <th colSpan={4}>Création / Défense</th>
-                  <th colSpan={2}>Fautes</th>
-                  <th colSpan={2}>Impact</th>
-                </tr>
-                <tr className="sub-head">
-                  <th>M-A</th><th>%</th>
-                  <th>M-A</th><th>%</th>
-                  <th>M-A</th><th>%</th>
-                  <th>M-A</th><th>%</th>
-                  <th>OFF</th><th>DEF</th><th>TOT</th>
-                  <th>AST</th><th>ST</th><th>TO</th><th>BS</th>
-                  <th>PF</th><th>FPF</th>
-                  <th>EFF</th><th>PTS</th>
-                </tr>
-              </thead>
+                      <strong>
+                        {player.num || player.numero
+                          ? `#${player.num || player.numero} `
+                          : ""}
+                        {player.firstName} {player.lastName}
+                      </strong>
+                    </td>
 
-              <tbody>
-                {rows.map((r) => renderRow(r))}
-                {renderRow(totals, true)}
-              </tbody>
-            </table>
-          </div>
-        </>
+                    <td>{formatMadeAttempt(stat.fgm, stat.fga)}</td>
+                    <td>{formatMadeAttempt(stat.twoPm, stat.twoPa)}</td>
+                    <td>{formatMadeAttempt(stat.threePm, stat.threePa)}</td>
+                    <td>{formatMadeAttempt(stat.ftm, stat.fta)}</td>
+                    <td>{stat.off}</td>
+                    <td>{stat.def}</td>
+                    <td>{reb}</td>
+                    <td>{stat.ast}</td>
+                    <td>{stat.st}</td>
+                    <td>{stat.to}</td>
+                    <td>{stat.bs}</td>
+                    <td>{stat.pf}</td>
+                    <td>{stat.fpf}</td>
+                    <td>{efficiency(stat)}</td>
+                    <td className="pts">{pts}</td>
+                  </tr>
+                );
+              })}
+
+              <tr className="totals">
+                <td>Totals</td>
+                <td>{formatMadeAttempt(totals.fgm, totals.fga)}</td>
+                <td>{formatMadeAttempt(totals.twoPm, totals.twoPa)}</td>
+                <td>{formatMadeAttempt(totals.threePm, totals.threePa)}</td>
+                <td>{formatMadeAttempt(totals.ftm, totals.fta)}</td>
+                <td>{totals.off}</td>
+                <td>{totals.def}</td>
+                <td>{totals.off + totals.def}</td>
+                <td>{totals.ast}</td>
+                <td>{totals.st}</td>
+                <td>{totals.to}</td>
+                <td>{totals.bs}</td>
+                <td>{totals.pf}</td>
+                <td>{totals.fpf}</td>
+                <td>{efficiency(totals)}</td>
+                <td className="pts">
+                  {totals.twoPm * 2 + totals.threePm * 3 + totals.ftm}
+                </td>
+              </tr>
+
+              <tr className="percentages">
+                <td>Pourcentages</td>
+                <td>{percent(totals.fgm, totals.fga)}</td>
+                <td>{percent(totals.twoPm, totals.twoPa)}</td>
+                <td>{percent(totals.threePm, totals.threePa)}</td>
+                <td>{percent(totals.ftm, totals.fta)}</td>
+                <td colSpan={11}></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
       )}
 
       <style jsx>{`
         .sj {
-          background: #fff;
-          border-radius: 20px;
-          padding: 1.4rem;
+          width: 100%;
+          background: white;
           border: 1px solid #efe6db;
+          border-radius: 18px;
+          padding: 1.2rem;
+          box-shadow: 0 12px 34px rgba(60, 30, 20, 0.06);
         }
 
         .sj-head {
           display: flex;
           justify-content: space-between;
           align-items: flex-start;
-          gap: 1.25rem;
-          margin-bottom: 1.25rem;
+          gap: 1rem;
+          margin-bottom: 1rem;
         }
 
-        h3 {
+        .sj-head h3 {
           margin: 0;
           color: #6b1a2c;
-          font-size: 1.55rem;
+          font-size: 1.5rem;
           font-weight: 900;
         }
 
-        p {
-          margin: 0.35rem 0 0;
+        .sj-head p {
+          margin: 0.25rem 0 0;
           color: #7c7470;
-          line-height: 1.45;
+          font-size: 0.9rem;
         }
 
         select {
           border: 1px solid #eadccc;
-          border-radius: 14px;
-          padding: 0.85rem 1.05rem;
+          border-radius: 10px;
+          padding: 0.65rem 0.9rem;
           font-weight: 900;
           color: #6b1a2c;
-          background: #fff;
-          min-width: 280px;
+          background: white;
+          min-width: 220px;
         }
 
-        .empty {
+        .sj-empty {
           background: #fff8ef;
           border: 1px dashed #d4a24c;
-          border-radius: 16px;
-          padding: 1.15rem;
+          border-radius: 14px;
+          padding: 1.2rem;
           color: #6b1a2c;
           font-weight: 900;
         }
 
-        .mode-switch {
-          display: inline-flex;
-          gap: 0.4rem;
-          background: #fff8ef;
-          border: 1px solid #eadccc;
-          border-radius: 999px;
-          padding: 0.3rem;
-          margin-bottom: 1.15rem;
-        }
-
-        .mode-switch button {
-          border: 0;
-          background: transparent;
-          color: #6b1a2c;
-          padding: 0.65rem 1.05rem;
-          border-radius: 999px;
-          cursor: pointer;
-          font-weight: 900;
-        }
-
-        .mode-switch button.on {
-          background: #6b1a2c;
-          color: #fff;
-        }
-
-        .summary-grid {
-          display: grid;
-          grid-template-columns: repeat(6, minmax(0, 1fr));
-          gap: 0.8rem;
-          margin-bottom: 1.15rem;
-        }
-
-        .summary-grid div {
-          border: 1px solid #eee2d6;
-          border-radius: 16px;
-          padding: 1rem;
-          background: #fffdf9;
-        }
-
-        .summary-grid span {
-          display: block;
-          color: #7c7470;
-          font-size: 0.75rem;
-          font-weight: 900;
-          text-transform: uppercase;
-        }
-
-        .summary-grid strong {
-          display: block;
-          margin-top: 0.35rem;
-          color: #6b1a2c;
-          font-size: 1.45rem;
-          font-weight: 900;
-        }
-
-        .table {
+        .sj-table-wrap {
           width: 100%;
           overflow-x: auto;
-          border-radius: 16px;
-          border: 1px solid #e7e0da;
-          background: #fff;
+          border: 1px solid #e6e1dc;
+          border-radius: 14px;
         }
 
-        table {
+        .sj-table {
           width: 100%;
-          min-width: 1860px;
-          border-collapse: separate;
-          border-spacing: 0;
-          font-size: 0.79rem;
+          min-width: 1180px;
+          border-collapse: collapse;
+          font-size: 0.86rem;
         }
 
         th {
-          background: linear-gradient(#ff402d, #d72718);
-          color: #111;
-          padding: 0.62rem 0.42rem;
+          background: linear-gradient(180deg, #6b1a2c, #49101d);
+          color: white;
+          padding: 0.75rem 0.65rem;
           text-align: center;
-          vertical-align: middle;
-          font-weight: 900;
           white-space: nowrap;
-          border-right: 1px solid rgba(0, 0, 0, 0.35);
-          border-bottom: 1px solid rgba(0, 0, 0, 0.35);
-        }
-
-        thead tr:nth-child(2) th {
-          background: #f6d5d5;
+          font-weight: 900;
         }
 
         th:first-child {
-          width: 135px;
-          min-width: 135px;
-          max-width: 135px;
+          text-align: left;
+          min-width: 230px;
         }
 
-        th:nth-child(2) {
-          width: 54px;
-          min-width: 54px;
-          max-width: 54px;
-        }
-
-        /* Les lignes sont produites par renderRow(), donc elles doivent être globales. */
-        :global(.player-row),
-        :global(.total-row) {
-          height: 52px;
-        }
-
-        :global(.player-row td),
-        :global(.total-row td) {
-          height: 52px;
-          padding: 0.72rem 0.5rem;
-          border-right: 1px solid #d7d7d7;
-          border-bottom: 1px solid #d7d7d7;
+        td {
+          padding: 0.75rem 0.65rem;
+          border-bottom: 1px solid #eee;
           text-align: center;
-          vertical-align: middle;
           white-space: nowrap;
-          color: #111;
-          line-height: 1.25;
         }
 
-        :global(.player-row td) {
-          background: #fff;
-          font-weight: 600;
+        td:first-child {
+          text-align: left;
         }
 
-        :global(.player-row td:first-child),
-        :global(.total-row td:first-child) {
-          width: 135px;
-          min-width: 135px;
-          max-width: 135px;
-          text-align: center;
-          vertical-align: middle;
-          font-weight: 900;
-          background: #efefef;
-          overflow: hidden;
-          text-overflow: ellipsis;
-        }
-
-        :global(.player-row td:nth-child(2)),
-        :global(.total-row td:nth-child(2)) {
-          width: 54px;
-          min-width: 54px;
-          max-width: 54px;
-          padding-left: 0.25rem;
-          padding-right: 0.25rem;
-        }
-
-        :global(.player-row td:not(:first-child)),
-        :global(.total-row td:not(:first-child)) {
-          min-width: 74px;
-          text-align: center;
-          vertical-align: middle;
-        }
-
-        :global(.player-row:nth-child(even) td) {
+        tbody tr:nth-child(even) {
           background: #fafafa;
         }
 
-        :global(.player-row:nth-child(even) td:first-child) {
-          background: #e9e9e9;
+        .player {
+          display: flex;
+          align-items: center;
+          gap: 0.6rem;
         }
 
-        :global(.player-row:hover td) {
-          background: #fff7ec;
+        .avatar {
+          width: 30px;
+          height: 30px;
+          border-radius: 50%;
+          background: #6b1a2c;
+          color: #d4a24c;
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          font-weight: 900;
+          overflow: hidden;
+          flex: 0 0 auto;
         }
 
-        :global(.player-row:hover td:first-child) {
-          background: #e4e4e4;
+        .avatar img {
+          width: 100%;
+          height: 100%;
+          object-fit: cover;
         }
 
-        :global(.total-row td) {
-          background: #f7f7f7;
+        .pts {
+          color: #d4a24c;
           font-weight: 900;
         }
 
-        :global(.total-row td:first-child) {
-          background: #e9e9e9;
-        }
-
-        :global(.pts) {
-          color: #111;
+        .totals {
+          background: #f5efe6 !important;
           font-weight: 900;
         }
 
-        @media (max-width: 1100px) {
-          .summary-grid {
-            grid-template-columns: repeat(3, 1fr);
-          }
+        .percentages {
+          background: #fff8ef !important;
+          color: #6b1a2c;
+          font-weight: 900;
         }
 
-        @media (max-width: 900px) {
-          .sj {
-            padding: 1rem;
-          }
-
+        @media (max-width: 800px) {
           .sj-head {
             flex-direction: column;
           }
 
           select {
             width: 100%;
-            min-width: 0;
-          }
-
-          .mode-switch {
-            width: 100%;
-          }
-
-          .mode-switch button {
-            flex: 1;
-          }
-
-          .summary-grid {
-            grid-template-columns: repeat(2, 1fr);
           }
         }
       `}</style>
