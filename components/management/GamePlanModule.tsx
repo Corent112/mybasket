@@ -36,6 +36,8 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { getTeams } from "@/lib/equipes-store";
 import ScoutingModule from "./ScoutingModule";
+import GamePlanScoutingDataPicker, { type ScoutImportItem } from "./GamePlanScoutingDataPicker";
+import GamePlanMontage, { type GamePlanMontageItem } from "./GamePlanMontage";
 
 /* =============================== Stores ================================ */
 
@@ -94,6 +96,8 @@ type Scouting = {
   keyPlayers: ScoutPlayer[];
   watch: string;
   defensivePlan: string;
+  imports?: ScoutImportItem[];
+  montage?: GamePlanMontageItem[];
 };
 
 type SystemSection = "offensive" | "scout" | "blob" | "slob" | "end";
@@ -160,7 +164,7 @@ const EMPTY_GP: GamePlan = {
   blob: "",
   slob: "",
   endGameSystems: "",
-  scouting: { team: "", coach: "", style: "", strengths: "", weaknesses: "", keyPlayers: [], watch: "", defensivePlan: "" },
+  scouting: { team: "", coach: "", style: "", strengths: "", weaknesses: "", keyPlayers: [], watch: "", defensivePlan: "", imports: [], montage: [] },
   librarySystems: [],
   drawings: { blob: [], slob: [], end: [], scout: [] },
 };
@@ -218,6 +222,8 @@ function normalizeGamePlanRow(row: any): GamePlan {
       ...EMPTY_GP.scouting,
       ...scouting,
       keyPlayers: Array.isArray(scouting.keyPlayers) ? scouting.keyPlayers : [],
+      imports: Array.isArray(scouting.imports) ? scouting.imports : [],
+      montage: Array.isArray(scouting.montage) ? scouting.montage : [],
     },
     librarySystems: Array.isArray(row?.library_systems) ? row.library_systems : [],
     drawings: {
@@ -462,12 +468,13 @@ export default function GamePlanModule() {
   const [savedFlash, setSavedFlash] = useState(false);
   const [loading, setLoading] = useState(true);
   const [rotationTick, setRotationTick] = useState(0);
-  const [activeTab, setActiveTab] = useState<"systems" | "scout" | "rotation">("systems");
+  const [activeTab, setActiveTab] = useState<"systems" | "scout" | "keys" | "montage" | "rotation">("systems");
   const [pendingDraw, setPendingDraw] = useState<{ section: SystemSection; image: string } | null>(null);
+  const [showScoutDataPicker, setShowScoutDataPicker] = useState(false);
 
   useEffect(() => {
     const requestedTab = searchParams.get("gamePlanTab");
-    if (requestedTab === "systems" || requestedTab === "scout" || requestedTab === "rotation") {
+    if (requestedTab === "systems" || requestedTab === "scout" || requestedTab === "keys" || requestedTab === "montage" || requestedTab === "rotation") {
       setActiveTab(requestedTab);
     }
   }, [searchParams]);
@@ -1158,71 +1165,19 @@ export default function GamePlanModule() {
       )}
 
       <div className="gp-tabs">
-        {(["systems", "scout", "rotation"] as const).map((k) => (
+        {(["systems", "scout", "keys", "montage", "rotation"] as const).map((k) => (
           <button key={k} type="button" className={activeTab === k ? "active" : ""} onClick={() => setActiveTab(k)}>
-            {k === "systems" ? "🎯 Systèmes" : k === "scout" ? "🔎 Scout adverse" : "🔁 Rotation"}
+            {k === "systems" ? "🎯 Systèmes" : k === "scout" ? "🔎 Scouting adverse" : k === "keys" ? "🔑 Clés du match" : k === "montage" ? "🎬 Montage vidéo" : "🔁 Rotation"}
           </button>
         ))}
       </div>
 
       <div className="gp-layout">
         <main>
-          {/* Match / calendrier */}
-          <div className="gp-card dark">
-            <div className="gp-cardhead">
-              <h3>📅 Match / calendrier</h3>
-              <span className={`gp-badge ${gp.calendarEventId ? "ok" : "off"}`}>
-                {gp.calendarEventId ? "Lié au calendrier" : "Non lié"}
-              </span>
-            </div>
-            <div className="gp-grid4">
-              <Field label="Adversaire">
-                <input value={gp.opponent} placeholder="Ex : Cholet Basket" onChange={(e) => patch({ opponent: e.target.value })} />
-              </Field>
-              <Field label="Date">
-                <input type="date" value={gp.date} onChange={(e) => patch({ date: e.target.value })} />
-              </Field>
-              <Field label="Heure">
-                <input type="time" value={gp.matchTime} onChange={(e) => patch({ matchTime: e.target.value })} />
-              </Field>
-              <Field label="Compétition">
-                <input value={gp.competition} placeholder="Championnat U18 Élite" onChange={(e) => patch({ competition: e.target.value })} />
-              </Field>
-            </div>
-            <div className="gp-actionline">
-              <button type="button" onClick={linkExistingEvent}>
-                Lier à un événement existant
-              </button>
-              <button type="button" onClick={createMatchEvent}>
-                Créer un nouveau match
-              </button>
-            </div>
-            <div className="gp-match-notes">
-              <Field label="Clé du match" block>
-                <textarea
-                  rows={4}
-                  value={gp.keyPoints}
-                  placeholder={`Contrôler le rebond défensif\nCourir après chaque stop\nLimiter le PNR central adverse`}
-                  onChange={(e) => patch({ keyPoints: e.target.value })}
-                />
-              </Field>
-              <Field label="Clé offensive" block>
-                <textarea
-                  rows={4}
-                  value={gp.attackSchemes}
-                  placeholder="Ex : jouer vite après stop, cibler le mismatch, punir le drop…"
-                  onChange={(e) => patch({ attackSchemes: e.target.value })}
-                />
-              </Field>
-              <Field label="Clé défensive" block>
-                <textarea
-                  rows={4}
-                  value={gp.defenseSchemes}
-                  placeholder="Ex : fermer axe, protéger peinture, switch sur main forte, bloquer rebond…"
-                  onChange={(e) => patch({ defenseSchemes: e.target.value })}
-                />
-              </Field>
-            </div>
+          <div className="gp-matchstrip">
+            <div className="gp-matchidentity"><span className="gp-matchdot">🏀</span><div><small>GAME PLAN</small><strong>{team?.name || "Mon équipe"} <i>vs</i> {gp.opponent || "Adversaire"}</strong><span>{[gp.date ? fmtDateLong(gp.date) : "", gp.matchTime, gp.competition].filter(Boolean).join(" · ") || "Renseigne le match"}</span></div></div>
+            <div className="gp-matchfields"><input value={gp.opponent} placeholder="Adversaire" onChange={(e) => patch({ opponent: e.target.value })} /><input type="date" value={gp.date} onChange={(e) => patch({ date: e.target.value })} /><input type="time" value={gp.matchTime} onChange={(e) => patch({ matchTime: e.target.value })} /><input value={gp.competition} placeholder="Compétition" onChange={(e) => patch({ competition: e.target.value })} /></div>
+            <div className="gp-matchactions"><span className={`gp-badge ${gp.calendarEventId ? "ok" : "off"}`}>{gp.calendarEventId ? "Calendrier ✓" : "Non lié"}</span><button type="button" onClick={linkExistingEvent}>Lier</button><button type="button" className="main" onClick={createMatchEvent}>Créer le match</button></div>
           </div>
 
           {activeTab === "systems" && (
@@ -1382,8 +1337,19 @@ export default function GamePlanModule() {
           )}
 
           {activeTab === "scout" && (
-            <ScoutingModule />
+            <>
+              <div className="gp-scout-intro"><div><small>SCOUTING ADVERSE</small><h3>Construis ton scouting, pas un rapport automatique.</h3><p>Les chiffres viennent de tes matchs codés. Les caractéristiques joueurs, les observations et les clés restent à toi.</p></div><button type="button" onClick={() => setShowScoutDataPicker(true)}>＋ Ajouter depuis mes données</button></div>
+              {(gp.scouting.imports || []).length > 0 && <div className="gp-import-board"><div className="gp-cardhead"><h3>📌 Données retenues pour ce match</h3><span className="gp-sub">{(gp.scouting.imports || []).length} élément{(gp.scouting.imports || []).length > 1 ? "s" : ""}</span></div><div className="gp-import-grid">{(gp.scouting.imports || []).map((item) => <article key={item.id} className={`gp-import ${item.kind}`}><div className="gp-import-icon">{item.kind === "player" ? "👤" : item.kind === "system" ? "🏀" : item.kind === "shot" ? "🎯" : item.kind === "clip" ? "🎬" : "📊"}</div><div className="gp-import-content"><small>{item.subtitle || "Donnée scouting"}</small><h4>{item.title}</h4>{item.lines?.length ? <ul>{item.lines.slice(0, 5).map((line, index) => <li key={index}>{line}</li>)}</ul> : null}</div><div className="gp-import-actions">{item.kind === "clip" && item.videoUrl ? <button type="button" onClick={() => setActiveTab("montage")}>Montage →</button> : null}<button type="button" className="remove" onClick={() => patchScout({ imports: (gp.scouting.imports || []).filter((x) => x.id !== item.id) })}>Retirer</button></div></article>)}</div></div>}
+              <details className="gp-manual-details">
+                <summary><div><b>✍️ Analyse coach & caractéristiques joueurs</b><span>Forces, faiblesses, profils, notes et dessins adverses.</span></div><strong>Ouvrir la fiche complète</strong></summary>
+                <div className="gp-manual-inside"><ScoutingModule /></div>
+              </details>
+            </>
           )}
+
+          {activeTab === "keys" && <div className="gp-keys"><div className="gp-keys-head"><div><small>PRÉPARATION</small><h3>Les clés du match</h3><p>Trois blocs courts, lisibles au vestiaire. Ce sont tes décisions de coach.</p></div><span>Enregistrement automatique</span></div><div className="gp-key-grid"><KeyCard icon="🔑" title="Clés du match" value={gp.keyPoints} placeholder={"Contrôler le rebond\nCourir après chaque stop\nNe pas aider depuis #7"} onChange={(value) => patch({ keyPoints: value })} /><KeyCard icon="⚔️" title="Clés offensives" value={gp.attackSchemes} placeholder={"Jouer vite après stop\nCibler leur #12 sur P&R\nPunir le drop"} onChange={(value) => patch({ attackSchemes: value })} /><KeyCard icon="🛡️" title="Clés défensives" value={gp.defenseSchemes} placeholder={"Fermer l'axe\nICE sur side P&R\nBloquer le rebond"} onChange={(value) => patch({ defenseSchemes: value })} /></div><div className="gp-card gp-objective-light"><div className="gp-cardhead"><h3>🧭 Fil conducteur</h3><span className="gp-sub">Une phrase suffit</span></div><textarea rows={3} value={gp.objective} placeholder="Ex : imposer notre rythme et gagner la bataille du rebond." onChange={(e) => patch({ objective: e.target.value })} /></div></div>}
+
+          {activeTab === "montage" && <GamePlanMontage teamName={team?.name || "Mon équipe"} opponent={gp.opponent} items={gp.scouting.montage || []} onChange={(montage) => patchScout({ montage })} imports={gp.scouting.imports || []} systems={gp.librarySystems.map((system) => ({ id: system.id, title: system.title, schemaImage: system.schemaImage, section: SECTION_LABEL[sysSection(system)] }))} />}
 
           {activeTab === "rotation" && (
             <div className="gp-card">
@@ -1476,6 +1442,8 @@ export default function GamePlanModule() {
           📄 Télécharger le PDF
         </button>
       </div>
+
+      <GamePlanScoutingDataPicker open={showScoutDataPicker} onClose={() => setShowScoutDataPicker(false)} onAdd={(item) => patchScout({ imports: [...(gpRef.current.scouting.imports || []), item] })} />
 
       {drawingFor && (
         <DrawingEditor
@@ -1866,6 +1834,11 @@ function AddSystemModal({
       `}</style>
     </div>
   );
+}
+
+function KeyCard({ icon, title, value, placeholder, onChange }: { icon: string; title: string; value: string; placeholder: string; onChange: (value: string) => void }) {
+  const count = value.split("\n").filter((line) => line.trim()).length;
+  return <article className="gp-keycard"><div className="gp-keycard-head"><span>{icon}</span><div><b>{title}</b><small>{count ? `${count} point${count > 1 ? "s" : ""}` : "À compléter"}</small></div></div><textarea rows={8} value={value} placeholder={placeholder} onChange={(e) => onChange(e.target.value)} /><p>Une idée par ligne.</p></article>;
 }
 
 /* ============================== Export PDF ============================= */
@@ -2272,12 +2245,17 @@ const styles = `
   .de-ghost,.de-black { border-radius:10px; padding:.7rem 1.15rem; font-weight:900; cursor:pointer; }
   .de-ghost { border:1px solid #ddd; background:#fff; }
   .de-black { border:none; background:#6B1A2C; color:#fff; }
-  @media (max-width:1200px){ .gp-layout{ grid-template-columns:1fr; } .gp-preview{ position:static; } .gp-match-notes{grid-template-columns:1fr 1fr;} }
+  .gp-matchstrip{display:grid;grid-template-columns:minmax(250px,.9fr) minmax(420px,1.45fr) auto;gap:12px;align-items:center;background:linear-gradient(180deg,#fff,#fffaf5);border:1px solid #eadfce;border-radius:18px;padding:12px 14px;margin-bottom:1rem;box-shadow:0 10px 26px rgba(60,30,20,.055)}
+  .gp-matchidentity{display:flex;align-items:center;gap:10px;min-width:0}.gp-matchdot{width:42px;height:42px;display:grid;place-items:center;border-radius:12px;background:#6B1A2C;color:#fff;flex:0 0 auto}.gp-matchidentity small,.gp-matchidentity strong,.gp-matchidentity span{display:block}.gp-matchidentity small{color:#D4A24C;font-size:.62rem;font-weight:950;letter-spacing:.08em}.gp-matchidentity strong{color:#2b1d22;font-size:.92rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.gp-matchidentity strong i{color:#a08f88;font-style:normal;font-weight:500;padding:0 3px}.gp-matchidentity span{color:#8a7b73;font-size:.68rem;margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.gp-matchfields{display:grid;grid-template-columns:1.25fr 1fr .8fr 1.25fr;gap:6px}.gp-matchfields input{padding:.55rem .62rem!important;min-width:0;font-size:.78rem!important}.gp-matchactions{display:flex;align-items:center;justify-content:flex-end;gap:5px}.gp-matchactions button{border:1px solid #d7c9bc;background:#fff;color:#6B1A2C;border-radius:9px;padding:7px 9px;font-size:.68rem;font-weight:900;cursor:pointer;white-space:nowrap}.gp-matchactions button.main{border-color:#6B1A2C;background:#6B1A2C;color:#fff}
+  .gp-scout-intro{display:flex;justify-content:space-between;align-items:center;gap:16px;background:linear-gradient(135deg,#6B1A2C,#2b0b13);color:#fff;border-radius:18px;padding:17px 18px;margin-bottom:12px}.gp-scout-intro small{color:#D4A24C;font-size:.66rem;font-weight:950;letter-spacing:.08em}.gp-scout-intro h3{margin:3px 0;font-size:1.05rem}.gp-scout-intro p{margin:0;max-width:650px;color:rgba(255,255,255,.72);font-size:.78rem}.gp-scout-intro button{border:0;background:#D4A24C;color:#241217;border-radius:10px;padding:10px 12px;font-weight:950;cursor:pointer;white-space:nowrap}.gp-import-board{background:#fff;border:1px solid #eadfce;border-radius:18px;padding:14px;margin-bottom:12px}.gp-import-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}.gp-import{display:grid;grid-template-columns:40px minmax(0,1fr);gap:9px;border:1px solid #eee3d6;border-radius:13px;padding:11px;background:#fffaf4;min-width:0}.gp-import.clip{border-color:#dbc7cd;background:#fff7f8}.gp-import-icon{width:40px;height:40px;border-radius:10px;background:#fff;display:grid;place-items:center;font-size:1.15rem;border:1px solid #eee3d6}.gp-import-content small{color:#a18f86;font-size:.63rem;text-transform:uppercase;font-weight:900}.gp-import-content h4{margin:2px 0 4px;color:#6B1A2C;font-size:.88rem}.gp-import-content ul{margin:0;padding-left:15px;color:#5e5652;font-size:.7rem;line-height:1.5}.gp-import-actions{grid-column:1/-1;display:flex;justify-content:flex-end;gap:5px}.gp-import-actions button{border:1px solid #d8ccc0;background:#fff;color:#6B1A2C;border-radius:8px;padding:5px 8px;font-size:.63rem;font-weight:900;cursor:pointer}.gp-import-actions .remove{color:#9e2940}.gp-manual-note{display:flex;gap:10px;align-items:center;padding:10px 12px;border:1px solid #eadfce;border-radius:12px;margin-bottom:12px;background:#fffdf9;color:#6d625d;font-size:.75rem}.gp-manual-note b{color:#6B1A2C;white-space:nowrap}
+  .gp-manual-details{border:1px solid #eadfce;border-radius:16px;background:#fff;overflow:hidden}.gp-manual-details>summary{list-style:none;cursor:pointer;display:flex;align-items:center;justify-content:space-between;gap:12px;padding:13px 15px;background:#fffaf4}.gp-manual-details>summary::-webkit-details-marker{display:none}.gp-manual-details>summary b,.gp-manual-details>summary span{display:block}.gp-manual-details>summary b{color:#6B1A2C}.gp-manual-details>summary span{color:#8a7b73;font-size:.7rem;margin-top:2px}.gp-manual-details>summary strong{color:#6B1A2C;font-size:.7rem;white-space:nowrap}.gp-manual-inside{padding:12px;background:#fff}
+  .gp-keys-head{display:flex;justify-content:space-between;gap:14px;align-items:center;margin-bottom:10px}.gp-keys-head small{color:#D4A24C;font-weight:950;letter-spacing:.08em}.gp-keys-head h3{margin:2px 0;color:#6B1A2C;font-size:1.2rem}.gp-keys-head p{margin:0;color:#8a7b73;font-size:.78rem}.gp-keys-head>span{color:#16a34a;font-size:.7rem;font-weight:900}.gp-key-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;margin-bottom:12px}.gp-keycard{background:linear-gradient(180deg,#fff,#fffaf4);border:1px solid #eadfce;border-radius:17px;padding:13px;box-shadow:0 9px 24px rgba(60,30,20,.05)}.gp-keycard-head{display:flex;align-items:center;gap:8px;margin-bottom:8px}.gp-keycard-head>span{width:36px;height:36px;display:grid;place-items:center;background:#fff4de;border-radius:10px}.gp-keycard-head b,.gp-keycard-head small{display:block}.gp-keycard-head b{color:#6B1A2C}.gp-keycard-head small{color:#998a82;font-size:.65rem;margin-top:2px}.gp-keycard textarea{min-height:185px!important;background:#fff!important}.gp-keycard p{margin:5px 0 0;color:#a08f86;font-size:.64rem}.gp-objective-light{background:#fffdf9}
+  @media (max-width:1200px){ .gp-layout{ grid-template-columns:1fr; } .gp-preview{ position:static; } .gp-match-notes{grid-template-columns:1fr 1fr;} .gp-matchstrip{grid-template-columns:1fr;} .gp-matchactions{justify-content:flex-start;} }
   @media (max-width:760px){
     .gp-hero,.gp-grid2,.gp-grid4,.gp-actioncards,.gp-systemgrid,.gp-systemgrid.small { grid-template-columns:1fr; display:grid; }
     .gp-hero { display:grid; }
     .gp-actions,.gp-actionline { justify-content:stretch; }
     .gp-actions button,.gp-actionline button { width:100%; }
-    .gp-kprow { grid-template-columns:1fr; }
+    .gp-kprow { grid-template-columns:1fr; } .gp-matchfields,.gp-key-grid,.gp-import-grid{grid-template-columns:1fr;} .gp-scout-intro,.gp-keys-head{align-items:flex-start;flex-direction:column;}
   }
 `;
