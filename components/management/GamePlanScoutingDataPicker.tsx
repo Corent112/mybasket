@@ -69,6 +69,14 @@ type ClipRow = {
 const avg = (value: number, count: number) => (count ? Math.round((value / count) * 10) / 10 : 0);
 const pct = (made: number, attempts: number) => (attempts ? `${Math.round((made / attempts) * 100)}%` : "—");
 
+function itemKey(item: ScoutImportItem): string {
+  const source = String(item.sourceTeamId || "");
+  if (item.kind === "player") return `player:${source}:${String(item.playerId || item.title).toLowerCase()}`;
+  if (item.kind === "system") return `system:${source}:${String(item.systemName || item.title).toLowerCase()}`;
+  if (item.kind === "clip") return `clip:${source}:${(item.matchIds || []).join(",")}:${item.clipStart ?? ""}:${item.clipEnd ?? ""}`;
+  return `${item.kind}:${source}:${String(item.title).toLowerCase()}`;
+}
+
 function playerNameFromState(matches: MatchRow[], id: string) {
   for (const match of matches) {
     const state = match.project_state || {};
@@ -83,10 +91,14 @@ export default function GamePlanScoutingDataPicker({
   open,
   onClose,
   onAdd,
+  allowedTeams,
+  existingItems,
 }: {
   open: boolean;
   onClose: () => void;
   onAdd: (item: ScoutImportItem) => void;
+  allowedTeams: Array<{ id: string; name: string }>;
+  existingItems: ScoutImportItem[];
 }) {
   const supabase = useMemo(() => createClient(), []);
   const [matches, setMatches] = useState<MatchRow[]>([]);
@@ -107,9 +119,20 @@ export default function GamePlanScoutingDataPicker({
     setLoading(true);
     const loadMatches = async () => {
       try {
+        const allowedIds = allowedTeams.map((team) => team.id).filter(Boolean);
+        if (!allowedIds.length) {
+          if (alive) {
+            setMatches([]);
+            setTeamId("");
+            setSelectedMatches([]);
+          }
+          return;
+        }
+
         const { data, error } = await supabase
           .from("match_stats")
           .select("id,team_id,opponent,match_date,us_score,them_score,result,project_state")
+          .in("team_id", allowedIds)
           .order("match_date", { ascending: false })
           .limit(250);
 
@@ -135,18 +158,17 @@ export default function GamePlanScoutingDataPicker({
     return () => {
       alive = false;
     };
-  }, [open, supabase]);
+  }, [open, supabase, allowedTeams]);
 
   const teamGroups = useMemo(() => {
-    const map = new Map<string, { id: string; name: string; count: number }>();
-    for (const match of matches) {
-      const state = match.project_state || {};
-      const name = String(state.teamName || state.selectedTeamName || `Équipe ${match.team_id.slice(0, 6)}`);
-      const current = map.get(match.team_id);
-      map.set(match.team_id, { id: match.team_id, name, count: (current?.count || 0) + 1 });
-    }
-    return [...map.values()].sort((a, b) => a.name.localeCompare(b.name, "fr"));
-  }, [matches]);
+    return allowedTeams
+      .map((team) => ({
+        id: team.id,
+        name: team.name,
+        count: matches.filter((match) => match.team_id === team.id).length,
+      }))
+      .filter((team) => team.count > 0);
+  }, [matches, allowedTeams]);
 
   const teamMatches = useMemo(() => matches.filter((m) => m.team_id === teamId), [matches, teamId]);
   const picked = useMemo(() => teamMatches.filter((m) => selectedMatches.includes(m.id)), [teamMatches, selectedMatches]);
@@ -223,16 +245,25 @@ export default function GamePlanScoutingDataPicker({
   };
   const filteredPlayers = players.filter((p) => !query || p.name.toLowerCase().includes(query.toLowerCase()));
   const filteredSystems = systems.filter((s) => !query || s.name.toLowerCase().includes(query.toLowerCase()));
+  const isAdded = (candidate: ScoutImportItem) => existingItems.some((item) => itemKey(item) === itemKey(candidate));
+  const addOnce = (candidate: ScoutImportItem) => {
+    if (isAdded(candidate)) return;
+    onAdd(candidate);
+  };
 
   return (
     <div className="gpd-bg" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
       <div className="gpd-card">
         <header>
-          <div><small>SCOUTING ADVERSE</small><h3>Ajouter depuis mes données</h3><p>Choisis une équipe, les matchs à analyser, puis le tableau ou le clip à ajouter au Game Plan.</p></div>
+          <div><small>SCOUTING ADVERSE</small><h3>Ajouter depuis mes données</h3><p>Choisis uniquement parmi tes équipes scoutées, puis ajoute les données utiles à ce match.</p></div>
           <button onClick={onClose}>×</button>
         </header>
 
-        {loading ? <div className="gpd-empty">Chargement de tes matchs codés…</div> : (
+        {loading ? <div className="gpd-empty">Chargement de tes matchs codés…</div> : !allowedTeams.length ? (
+          <div className="gpd-empty"><b>Aucune équipe scoutée</b><br />Crée l’adversaire dans « Mes équipes → Équipes scoutées » avant d’importer ses données.</div>
+        ) : !teamGroups.length ? (
+          <div className="gpd-empty"><b>Aucun match codé pour tes équipes scoutées.</b><br />Code au moins un match de l’adversaire pour faire apparaître ses statistiques ici.</div>
+        ) : (
           <div className="gpd-body">
             <aside>
               <b>Équipe observée</b>
@@ -263,23 +294,23 @@ export default function GamePlanScoutingDataPicker({
               {detailLoading ? <div className="gpd-empty">Calcul des données…</div> : null}
 
               {!detailLoading && tab === "team" && <div className="gpd-grid">
-                <DataCard title="Vue générale" big={`${wins}-${Math.max(0, games - wins)}`} subtitle={`${avg(us, games)} pts marqués · ${avg(them, games)} encaissés`} onAdd={() => onAdd({ id: crypto.randomUUID(), kind:"team", title:`${selectedTeam?.name || "Équipe"} · Vue générale`, subtitle:`${games} matchs`, lines:[`Bilan ${wins}-${Math.max(0,games-wins)}`, `${avg(us,games)} pts marqués`, `${avg(them,games)} pts encaissés`], sourceTeamId:teamId, matchIds:selectedMatches })} />
-                <DataCard title="Attaque" big={`${avg(us, games)}`} subtitle="points / match" onAdd={() => onAdd({ id:crypto.randomUUID(), kind:"team", title:"Production offensive", subtitle:selectedTeam?.name, lines:[`${avg(us,games)} points / match`, `${games} matchs analysés`], sourceTeamId:teamId, matchIds:selectedMatches })} />
-                <DataCard title="Défense" big={`${avg(them, games)}`} subtitle="points encaissés / match" onAdd={() => onAdd({ id:crypto.randomUUID(), kind:"team", title:"Production adverse", subtitle:selectedTeam?.name, lines:[`${avg(them,games)} points encaissés / match`, `${games} matchs analysés`], sourceTeamId:teamId, matchIds:selectedMatches })} />
+                <DataCard title="Vue générale" big={`${wins}-${Math.max(0, games - wins)}`} subtitle={`${avg(us, games)} pts marqués · ${avg(them, games)} encaissés`} onAdd={() => addOnce({ id: crypto.randomUUID(), kind:"team", title:`${selectedTeam?.name || "Équipe"} · Vue générale`, subtitle:`${games} matchs`, lines:[`Bilan ${wins}-${Math.max(0,games-wins)}`, `${avg(us,games)} pts marqués`, `${avg(them,games)} pts encaissés`], sourceTeamId:teamId, matchIds:selectedMatches })} />
+                <DataCard title="Attaque" big={`${avg(us, games)}`} subtitle="points / match" onAdd={() => addOnce({ id:crypto.randomUUID(), kind:"team", title:"Production offensive", subtitle:selectedTeam?.name, lines:[`${avg(us,games)} points / match`, `${games} matchs analysés`], sourceTeamId:teamId, matchIds:selectedMatches })} />
+                <DataCard title="Défense" big={`${avg(them, games)}`} subtitle="points encaissés / match" onAdd={() => addOnce({ id:crypto.randomUUID(), kind:"team", title:"Production adverse", subtitle:selectedTeam?.name, lines:[`${avg(them,games)} points encaissés / match`, `${games} matchs analysés`], sourceTeamId:teamId, matchIds:selectedMatches })} />
               </div>}
 
               {!detailLoading && tab === "players" && <div className="gpd-list">
-                {filteredPlayers.map((p) => <div className="gpd-row" key={p.id}><div><b>{p.name}</b><span>{p.games} match{p.games>1?"s":""}</span></div><div className="gpd-stats"><strong>{avg(p.pts,p.games)} PTS</strong><span>{avg(p.reb,p.games)} REB</span><span>{avg(p.ast,p.games)} PD</span><span>{pct(p.p3m,p.p3a)} 3PTS</span></div><button onClick={() => onAdd({ id:crypto.randomUUID(), kind:"player", title:p.name, subtitle:"Profil statistique", lines:[`${avg(p.pts,p.games)} pts`, `${avg(p.reb,p.games)} reb`, `${avg(p.ast,p.games)} pd`, `${pct(p.p3m,p.p3a)} à 3pts`], playerId:p.id, sourceTeamId:teamId, matchIds:selectedMatches })}>＋ Ajouter</button></div>)}
+                {filteredPlayers.map((p) => <div className="gpd-row" key={p.id}><div><b>{p.name}</b><span>{p.games} match{p.games>1?"s":""}</span></div><div className="gpd-stats"><strong>{avg(p.pts,p.games)} PTS</strong><span>{avg(p.reb,p.games)} REB</span><span>{avg(p.ast,p.games)} PD</span><span>{pct(p.p3m,p.p3a)} 3PTS</span></div>{(() => { const candidate: ScoutImportItem = { id:`player-${teamId}-${p.id}`, kind:"player", title:p.name, subtitle:"Profil statistique", lines:[`${avg(p.pts,p.games)} pts`, `${avg(p.reb,p.games)} reb`, `${avg(p.ast,p.games)} pd`, `${pct(p.p3m,p.p3a)} à 3pts`], playerId:p.id, sourceTeamId:teamId, matchIds:selectedMatches }; const added = isAdded(candidate); return <button disabled={added} onClick={() => addOnce(candidate)}>{added ? "✓ Ajouté" : "＋ Ajouter"}</button>; })()}</div>)}
                 {!filteredPlayers.length && <div className="gpd-empty">Aucune statistique joueur sur ces matchs.</div>}
               </div>}
 
               {!detailLoading && tab === "systems" && <div className="gpd-list">
-                {filteredSystems.map((s) => <div className="gpd-row" key={s.name}><div><b>{s.name}</b><span>{s.uses} actions codées</span></div><div className="gpd-stats"><strong>{s.uses} UTIL.</strong><span>{pct(s.made,s.shots)} tirs</span><span>{s.turnovers} BP</span></div><button onClick={() => onAdd({ id:crypto.randomUUID(), kind:"system", title:s.name, subtitle:"Système adverse", lines:[`${s.uses} actions codées`, `${pct(s.made,s.shots)} réussite sur tirs`, `${s.turnovers} pertes de balle`], systemName:s.name, sourceTeamId:teamId, matchIds:selectedMatches })}>＋ Ajouter</button></div>)}
+                {filteredSystems.map((s) => <div className="gpd-row" key={s.name}><div><b>{s.name}</b><span>{s.uses} actions codées</span></div><div className="gpd-stats"><strong>{s.uses} UTIL.</strong><span>{pct(s.made,s.shots)} tirs</span><span>{s.turnovers} BP</span></div>{(() => { const candidate: ScoutImportItem = { id:`system-${teamId}-${s.name}`, kind:"system", title:s.name, subtitle:"Système adverse", lines:[`${s.uses} actions codées`, `${pct(s.made,s.shots)} réussite sur tirs`, `${s.turnovers} pertes de balle`], systemName:s.name, sourceTeamId:teamId, matchIds:selectedMatches }; const added = isAdded(candidate); return <button disabled={added} onClick={() => addOnce(candidate)}>{added ? "✓ Ajouté" : "＋ Ajouter"}</button>; })()}</div>)}
                 {!filteredSystems.length && <div className="gpd-empty">Aucun système identifié dans ces matchs.</div>}
               </div>}
 
               {!detailLoading && tab === "shots" && <div className="gpd-grid zones">
-                {zones.map((z) => <DataCard key={z.zone} title={z.zone} big={pct(z.made,z.attempts)} subtitle={`${z.made}/${z.attempts} tirs`} onAdd={() => onAdd({ id:crypto.randomUUID(), kind:"shot", title:`Zone · ${z.zone}`, subtitle:selectedTeam?.name, lines:[`${z.made}/${z.attempts} tirs`, `${pct(z.made,z.attempts)} de réussite`], sourceTeamId:teamId, matchIds:selectedMatches })} />)}
+                {zones.map((z) => <DataCard key={z.zone} title={z.zone} big={pct(z.made,z.attempts)} subtitle={`${z.made}/${z.attempts} tirs`} onAdd={() => addOnce({ id:crypto.randomUUID(), kind:"shot", title:`Zone · ${z.zone}`, subtitle:selectedTeam?.name, lines:[`${z.made}/${z.attempts} tirs`, `${pct(z.made,z.attempts)} de réussite`], sourceTeamId:teamId, matchIds:selectedMatches })} />)}
                 {!zones.length && <div className="gpd-empty">Aucune Shot Chart codée sur ces matchs.</div>}
               </div>}
 
@@ -287,7 +318,7 @@ export default function GamePlanScoutingDataPicker({
                 {clips.map((c, index) => {
                   const url = videoUrlForMatch(c.match_id) || String(selectedState.videoUrl || "");
                   const label = [c.systeme_name, c.temps_fort, c.action_type, c.shot_type, c.shot_result].filter(Boolean).join(" · ") || `Clip ${index + 1}`;
-                  return <div className="gpd-row" key={c.id}><div><b>{label}</b><span>{Number(c.clip_start || 0).toFixed(1)}s → {Number(c.clip_end || 0).toFixed(1)}s</span></div><button disabled={!url} onClick={() => onAdd({ id:crypto.randomUUID(), kind:"clip", title:label, subtitle:"Clip scouting", sourceTeamId:teamId, matchIds:[c.match_id], videoUrl:url, clipStart:Number(c.clip_start || 0), clipEnd:Number(c.clip_end || 0) })}>{url ? "＋ Ajouter" : "Vidéo absente"}</button></div>;
+                  return <div className="gpd-row" key={c.id}><div><b>{label}</b><span>{Number(c.clip_start || 0).toFixed(1)}s → {Number(c.clip_end || 0).toFixed(1)}s</span></div><button disabled={!url} onClick={() => addOnce({ id:crypto.randomUUID(), kind:"clip", title:label, subtitle:"Clip scouting", sourceTeamId:teamId, matchIds:[c.match_id], videoUrl:url, clipStart:Number(c.clip_start || 0), clipEnd:Number(c.clip_end || 0) })}>{url ? "＋ Ajouter" : "Vidéo absente"}</button></div>;
                 })}
                 {!clips.length && <div className="gpd-empty">Aucun clip déjà découpé sur ces matchs.</div>}
               </div>}
