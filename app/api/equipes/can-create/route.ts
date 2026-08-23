@@ -1,8 +1,15 @@
 import { NextResponse } from "next/server";
-import { getTeamLimitForCurrentUser } from "@/lib/access";
+import { getTeamLimitForCurrentUser, hasAccess } from "@/lib/access";
 
 export async function GET() {
-  const access = await getTeamLimitForCurrentUser();
+  const [limit, allowedByMatrix] = await Promise.all([
+    getTeamLimitForCurrentUser(),
+    hasAccess("equipes"),
+  ]);
 
-  return NextResponse.json(access);
+  return NextResponse.json({
+    ...limit,
+    allowedByMatrix,
+    canCreate: allowedByMatrix && limit.canCreate,
+  });
 }

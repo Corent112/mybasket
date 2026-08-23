@@ -1,23 +1,6 @@
 import { createAdminClient } from "@/lib/supabase/admin-server";
 import { getEffectiveSubscriptionForUser } from "@/lib/effective-subscription";
-
-export const SUBSCRIPTION_SECTION_ALIASES: Record<string, string[]> = {
-  messagerie: ["messagerie"],
-  calendrier: ["calendrier"],
-  exercices: ["bibliotheque_exercice", "mes_exercices"],
-  systemes: ["bibliotheque_systeme"],
-  seances: ["bibliotheque_seance"],
-  plaquette: ["plaquette"],
-  playbooks: ["playbooks"],
-  annonces: ["annonces", "mes_annonces"],
-  documents: ["papiers"],
-  equipes: ["equipes"],
-  collaboration: ["collaboration_equipe"],
-  management: ["stats_joueur", "stats_jeu", "stats_live", "rotation", "gameplan"],
-  coach_space: ["profil_coach"],
-  club_space: ["club_space"],
-  institutionnel: ["institutionnel"],
-};
+import { PUBLIC_ACCESS_ALIASES } from "@/lib/subscription-permissions";
 
 function isAdminRole(role: unknown) {
   const normalized = String(role || "").toLowerCase();
@@ -26,8 +9,8 @@ function isAdminRole(role: unknown) {
 
 /**
  * Source unique des droits d'abonnement.
- * Les plans clients lisent TOUJOURS subscription_access (la matrice CEO).
- * Seuls les rôles plateforme admin contournent la matrice.
+ * Tous les plans clients lisent subscription_access.
+ * Seuls les rôles plateforme administrateurs contournent la matrice.
  */
 export async function userHasSubscriptionAccess(options: {
   supabase: any;
@@ -56,7 +39,7 @@ export async function userHasSubscriptionAccess(options: {
   const planId = effective.subscription?.plan_id || effective.plan?.id || null;
   if (!effective.active || !planId) return false;
 
-  const aliases = SUBSCRIPTION_SECTION_ALIASES[options.sectionKey] ?? [options.sectionKey];
+  const aliases = PUBLIC_ACCESS_ALIASES[options.sectionKey] ?? [options.sectionKey as any];
   const { data, error } = await client
     .from("subscription_access")
     .select("section_key,enabled")
@@ -68,5 +51,5 @@ export async function userHasSubscriptionAccess(options: {
     return false;
   }
 
-  return (data ?? []).some((row: any) => row.enabled === true);
+  return (data ?? []).some((row: { enabled?: boolean | null }) => row.enabled === true);
 }

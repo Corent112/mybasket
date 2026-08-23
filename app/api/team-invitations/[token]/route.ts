@@ -3,6 +3,11 @@ import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin-server";
 import { userHasSubscriptionAccess } from "@/lib/subscription-entitlements";
+import {
+  collaborationLimitReached,
+  getAssistantLimitForOwner,
+  getTeamCollaborationUsage,
+} from "@/lib/team-collaboration-limits";
 
 function tokenHash(token: string) {
   return createHash("sha256").update(token).digest("hex");
@@ -271,7 +276,7 @@ export async function POST(
   const ownerAuth = ownerId ? await result.admin.auth.admin.getUserById(ownerId) : null;
   const ownerEntitled = ownerId
     ? await userHasSubscriptionAccess({
-        supabase,
+        supabase: result.admin,
         userId: ownerId,
         email: ownerAuth?.data?.user?.email ?? null,
         sectionKey: "collaboration",
@@ -285,6 +290,35 @@ export async function POST(
           "L’abonnement du propriétaire ne permet pas actuellement d’activer cette équipe partagée.",
       },
       { status: 403 },
+    );
+  }
+
+  const ownerLimit = await getAssistantLimitForOwner({
+    supabase: result.admin,
+    ownerId,
+    ownerEmail: ownerAuth?.data?.user?.email ?? null,
+  });
+  const usageBeforeAccept = await getTeamCollaborationUsage({
+    admin: result.admin,
+    teamId: invitation.team_id,
+    excludeInvitationId: invitation.id,
+  });
+
+  const { data: alreadyMember } = await result.admin
+    .from("team_members")
+    .select("id")
+    .eq("team_id", invitation.team_id)
+    .eq("user_id", user.id)
+    .eq("status", "active")
+    .maybeSingle();
+
+  if (!alreadyMember?.id && collaborationLimitReached(ownerLimit, usageBeforeAccept.used)) {
+    return NextResponse.json(
+      {
+        error: "La limite de collaborateurs de cette équipe a été atteinte. Demande au responsable de l’équipe de libérer une place.",
+        code: "ASSISTANT_LIMIT_REACHED",
+      },
+      { status: 409 },
     );
   }
 

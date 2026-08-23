@@ -20,18 +20,6 @@ type ClubSubscriptionAccess = {
   };
 };
 
-const SECTION_ALIASES: Record<string, string[]> = {
-  messagerie: ["messagerie"], calendrier: ["calendrier"],
-  exercices: ["bibliotheque_exercice", "mes_exercices"],
-  systemes: ["bibliotheque_systeme"], seances: ["bibliotheque_seance"],
-  plaquette: ["plaquette"], playbooks: ["playbooks"],
-  annonces: ["annonces", "mes_annonces"], documents: ["papiers"],
-  equipes: ["equipes"],
-  collaboration: ["collaboration_equipe"],
-  management: ["stats_joueur", "stats_jeu", "stats_live", "rotation", "gameplan"],
-  coach_space: ["profil_coach"], club_space: ["club_space"],
-  institutionnel: ["institutionnel"],
-};
 
 async function getContext() {
   const supabase = await createClient();
@@ -105,7 +93,7 @@ async function getLimitResult(options: {
   }
   if (totalAccess) {
     const rawPlanLimit = plan ? Number((plan as Record<string, unknown>)[options.limitKey]) : NaN;
-    const planLimit = Number.isFinite(rawPlanLimit) ? rawPlanLimit : null;
+    const planLimit = Number.isFinite(rawPlanLimit) ? (rawPlanLimit < 0 ? null : rawPlanLimit) : null;
     // Premium garde les limites configurées si elles existent ; sinon illimité.
     if (planLimit === null) {
       return { userId: user.id, limit: null, count: 0, canCreate: true };
@@ -114,7 +102,7 @@ async function getLimitResult(options: {
   if (!plan) return { userId: user.id, limit: 0, count: 0, canCreate: false };
 
   const limit = Number((plan as Record<string, unknown>)[options.limitKey]);
-  const normalizedLimit = Number.isFinite(limit) ? limit : null;
+  const normalizedLimit = Number.isFinite(limit) ? (limit < 0 ? null : limit) : null;
   const ownerColumn = options.ownerColumn ?? "user_id";
   const { count, error } = await supabase.from(options.table)
     .select("*", { count: "exact", head: true }).eq(ownerColumn, user.id);

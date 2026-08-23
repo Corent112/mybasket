@@ -2,42 +2,46 @@ import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin-server";
 import { getEffectiveSubscriptionForUser } from "@/lib/effective-subscription";
+import {
+  ALL_MATRIX_PERMISSION_KEYS,
+  PUBLIC_ACCESS_ALIASES,
+  SYSTEM_ACCESS,
+} from "@/lib/subscription-permissions";
 
 export const dynamic = "force-dynamic";
-
-const SECTION_ALIASES: Record<string, string[]> = {
-  messagerie: ["messagerie"],
-  calendrier: ["calendrier"],
-  exercices: ["bibliotheque_exercice", "mes_exercices"],
-  systemes: ["bibliotheque_systeme"],
-  seances: ["bibliotheque_seance"],
-  plaquette: ["plaquette"],
-  playbooks: ["playbooks"],
-  annonces: ["annonces", "mes_annonces"],
-  documents: ["papiers"],
-  equipes: ["equipes"],
-  collaboration: ["collaboration_equipe"],
-  management: ["stats_joueur", "stats_jeu", "stats_live", "rotation", "gameplan"],
-  coach_space: ["profil_coach"],
-  club_space: ["club_space"],
-  institutionnel: ["institutionnel"],
-};
-
-function accessWithValue(value: boolean) {
-  return Object.fromEntries(Object.keys(SECTION_ALIASES).map((key) => [key, value]));
-}
 
 function isAdminRole(role: unknown) {
   const normalized = String(role || "").toLowerCase();
   return normalized === "ceo" || normalized === "superadmin" || normalized === "admin";
 }
 
+function buildAccess(enabled: Set<string>, forceAll = false) {
+  const exact = Object.fromEntries(
+    ALL_MATRIX_PERMISSION_KEYS.map((key) => [key, forceAll || enabled.has(key)]),
+  );
+
+  const aliases = Object.fromEntries(
+    Object.entries(PUBLIC_ACCESS_ALIASES).map(([publicKey, keys]) => [
+      publicKey,
+      forceAll || keys.some((key) => enabled.has(key)),
+    ]),
+  );
+
+  return {
+    ...exact,
+    ...aliases,
+    ...SYSTEM_ACCESS,
+  };
+}
+
 export async function GET() {
   const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
 
   if (!user) {
-    return NextResponse.json(accessWithValue(false), {
+    return NextResponse.json(buildAccess(new Set()), {
       status: 401,
       headers: { "Cache-Control": "no-store" },
     });
@@ -56,17 +60,15 @@ export async function GET() {
     }),
   ]);
 
-  // Seuls les rôles plateforme administrateurs contournent la matrice.
-  // Tous les plans clients, y compris Premium, lisent subscription_access.
   if (isAdminRole(profileResult.data?.platform_role)) {
-    return NextResponse.json(accessWithValue(true), {
+    return NextResponse.json(buildAccess(new Set(), true), {
       headers: { "Cache-Control": "private, no-store, max-age=0" },
     });
   }
 
   const planId = effective.subscription?.plan_id || effective.plan?.id || null;
   if (!effective.active || !planId) {
-    return NextResponse.json(accessWithValue(false), {
+    return NextResponse.json(buildAccess(new Set()), {
       headers: { "Cache-Control": "private, no-store, max-age=0" },
     });
   }
@@ -80,23 +82,18 @@ export async function GET() {
 
   if (error) {
     console.error("Lecture droits abonnement impossible :", error.message);
-    return NextResponse.json(accessWithValue(false), {
+    return NextResponse.json(buildAccess(new Set()), {
       headers: { "Cache-Control": "private, no-store, max-age=0" },
     });
   }
 
-  const enabled = new Set(
-    (rows ?? []).filter((row: any) => row.enabled === true).map((row: any) => row.section_key),
+  const enabled = new Set<string>(
+    (rows ?? [])
+      .filter((row: { enabled?: boolean | null }) => row.enabled === true)
+      .map((row: { section_key: string }) => row.section_key),
   );
 
-  const result = Object.fromEntries(
-    Object.entries(SECTION_ALIASES).map(([publicKey, aliases]) => [
-      publicKey,
-      aliases.some((alias) => enabled.has(alias)),
-    ]),
-  );
-
-  return NextResponse.json(result, {
+  return NextResponse.json(buildAccess(enabled), {
     headers: { "Cache-Control": "private, no-store, max-age=0" },
   });
 }

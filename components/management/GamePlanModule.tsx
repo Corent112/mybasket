@@ -37,6 +37,7 @@ import { createClient } from "@/lib/supabase/client";
 import { getTeams } from "@/lib/equipes-store";
 import GamePlanScoutingDataPicker, { type ScoutImportItem } from "./GamePlanScoutingDataPicker";
 import GamePlanMontage, { type GamePlanMontageItem } from "./GamePlanMontage";
+import GamePlanScoutingBoard, { type ScoutBoardValue } from "./GamePlanScoutingBoard";
 
 /* =============================== Stores ================================ */
 
@@ -78,6 +79,9 @@ type Player = {
   num?: string | number;
   poste?: string;
   photo?: string;
+  posteSecondaire?: string;
+  taille?: string;
+  mainDominante?: string;
 };
 type Team = {
   id: string;
@@ -107,6 +111,12 @@ type Scouting = {
   defensivePlan: string;
   imports?: ScoutImportItem[];
   montage?: GamePlanMontageItem[];
+  scoutTeamId?: string;
+  offense?: string;
+  defense?: string;
+  depthChart?: Record<string, string[]>;
+  importantStats?: Array<{ id: string; metric: string; limit: number }>;
+  playerCards?: Array<{ playerId: string; profile: string; notes: string }>;
 };
 
 type SystemSection = "offensive" | "scout" | "blob" | "slob" | "end";
@@ -199,6 +209,9 @@ function normalizeTeam(row: any): Team {
       num: p?.num ?? p?.numero ?? p?.number ?? "",
       poste: p?.poste ?? p?.postePrincipal ?? p?.position ?? "",
       photo: p?.photo ?? p?.photo_url ?? p?.avatar ?? "",
+      posteSecondaire: p?.posteSecondaire ?? p?.position_secondary ?? "",
+      taille: p?.taille ?? p?.height ?? "",
+      mainDominante: p?.mainDominante ?? p?.dominant_hand ?? "Droite",
     })),
   };
 }
@@ -1347,70 +1360,16 @@ export default function GamePlanModule() {
           )}
 
           {activeTab === "scout" && (
-            <div className="gp-scout-page">
-              <div className="gp-scout-head">
-                <div>
-                  <small>SCOUTING ADVERSE</small>
-                  <h3>Construis uniquement ce qui t’aide à préparer le match.</h3>
-                  <p>Les chiffres viennent exclusivement de tes <b>équipes scoutées</b>. Ton équipe actuelle ne peut jamais être utilisée comme adversaire.</p>
-                </div>
-                <button type="button" onClick={() => setShowScoutDataPicker(true)}>＋ Ajouter une donnée</button>
-              </div>
-
-              {!scoutTeams.length && (
-                <div className="gp-scout-empty">
-                  <span>👁️</span>
-                  <div><b>Aucune équipe scoutée disponible</b><p>Crée d’abord l’adversaire dans <strong>Mes équipes → Équipes scoutées</strong>, puis code ses matchs. Il apparaîtra ici automatiquement.</p></div>
-                </div>
-              )}
-
-              {(gp.scouting.imports || []).length > 0 ? (
-                <section className="gp-scout-section">
-                  <div className="gp-section-title"><div><small>DONNÉES RETENUES</small><h4>{(gp.scouting.imports || []).length} élément{(gp.scouting.imports || []).length > 1 ? "s" : ""} dans ce scouting</h4></div><button type="button" onClick={() => setShowScoutDataPicker(true)}>Modifier la sélection</button></div>
-                  <div className="gp-import-grid">
-                    {(gp.scouting.imports || []).map((item) => (
-                      <article key={item.id} className={`gp-import ${item.kind}`}>
-                        <div className="gp-import-icon">{item.kind === "player" ? "👤" : item.kind === "system" ? "🏀" : item.kind === "shot" ? "🎯" : item.kind === "clip" ? "🎬" : "📊"}</div>
-                        <div className="gp-import-content"><small>{item.subtitle || "Donnée scouting"}</small><h4>{item.title}</h4>{item.lines?.length ? <ul>{item.lines.slice(0, 4).map((line, index) => <li key={index}>{line}</li>)}</ul> : null}</div>
-                        <div className="gp-import-actions">{item.kind === "clip" && item.videoUrl ? <button type="button" onClick={() => setActiveTab("montage")}>Montage →</button> : null}<button type="button" className="remove" onClick={() => patchScout({ imports: (gp.scouting.imports || []).filter((x) => x.id !== item.id) })}>Retirer</button></div>
-                      </article>
-                    ))}
-                  </div>
-                </section>
-              ) : scoutTeams.length ? (
-                <button type="button" className="gp-first-import" onClick={() => setShowScoutDataPicker(true)}><span>＋</span><div><b>Ajouter depuis mes données de scouting</b><small>Stats collectives · joueurs · systèmes · tirs · clips</small></div></button>
-              ) : null}
-
-              <section className="gp-coach-analysis">
-                <div className="gp-section-title"><div><small>ANALYSE COACH</small><h4>Ce que les chiffres ne disent pas</h4></div><span>Remplissage manuel</span></div>
-                <div className="gp-analysis-grid">
-                  <label><span>Identité / style de jeu</span><textarea rows={3} value={gp.scouting.style} placeholder="Rythme, philosophie, habitudes…" onChange={(e) => patchScout({ style: e.target.value })} /></label>
-                  <label><span>Forces</span><textarea rows={3} value={gp.scouting.strengths} placeholder="Ce qu’ils font très bien…" onChange={(e) => patchScout({ strengths: e.target.value })} /></label>
-                  <label><span>Faiblesses</span><textarea rows={3} value={gp.scouting.weaknesses} placeholder="Ce qu’on veut exploiter…" onChange={(e) => patchScout({ weaknesses: e.target.value })} /></label>
-                  <label><span>À surveiller</span><textarea rows={3} value={gp.scouting.watch} placeholder="Tendances, détails, situations…" onChange={(e) => patchScout({ watch: e.target.value })} /></label>
-                </div>
-              </section>
-
-              {(gp.scouting.imports || []).some((item) => item.kind === "player") && (
-                <section className="gp-player-notes">
-                  <div className="gp-section-title"><div><small>JOUEURS OBSERVÉS</small><h4>Caractéristiques manuelles</h4></div><span>Pas de doublon : uniquement les joueurs importés</span></div>
-                  <div className="gp-player-note-grid">
-                    {(gp.scouting.imports || []).filter((item) => item.kind === "player").map((item) => {
-                      const idx = gp.scouting.keyPlayers.findIndex((p) => p.name === item.title);
-                      const note = idx >= 0 ? gp.scouting.keyPlayers[idx]?.role || "" : "";
-                      return <article key={`note-${item.id}`}><div><span>👤</span><div><b>{item.title}</b><small>{item.lines?.slice(0,2).join(" · ")}</small></div></div><textarea rows={3} value={note} placeholder="Ex : main droite, shooteur, attaque close-out, à cibler défensivement…" onChange={(e) => {
-                        const next = [...gp.scouting.keyPlayers];
-                        if (idx >= 0) next[idx] = { ...next[idx], role: e.target.value };
-                        else next.push({ name: item.title, role: e.target.value });
-                        patchScout({ keyPlayers: next });
-                      }} /></article>;
-                    })}
-                  </div>
-                </section>
-              )}
-            </div>
+            <GamePlanScoutingBoard
+              value={gp.scouting as ScoutBoardValue}
+              onChange={(next) => patchScout(next as Partial<Scouting>)}
+              scoutTeams={scoutTeams}
+              myTeam={team}
+              date={gp.date}
+              systems={gp.librarySystems.filter((system) => sysSection(system) === "scout")}
+              onAddSystem={() => openAddSystem("scout")}
+            />
           )}
-
 
           {activeTab === "montage" && <GamePlanMontage teamName={team?.name || "Mon équipe"} opponent={gp.opponent} items={gp.scouting.montage || []} onChange={(montage) => patchScout({ montage })} imports={gp.scouting.imports || []} systems={gp.librarySystems.map((system) => ({ id: system.id, title: system.title, schemaImage: system.schemaImage, section: SECTION_LABEL[sysSection(system)] }))} />}
 
@@ -2080,20 +2039,33 @@ async function exportGamePlanPdf(team: Team, gp: GamePlan, rotation: Rotation | 
       y += 3;
     }
 
-    if (hasScoutData(gp)) {
-      doc.addPage();
-      y = M;
-      title("Scouting adverse");
-      box("Équipe adverse", gp.scouting.team || gp.opponent);
-      box("Style de jeu", gp.scouting.style);
-      box("À surveiller", gp.scouting.watch);
-      box("Forces", gp.scouting.strengths);
-      box("Faiblesses", gp.scouting.weaknesses);
-      if (gp.scouting.keyPlayers.length) {
-        title("Joueurs clés");
-        box("Joueurs", gp.scouting.keyPlayers.map((p) => `${p.name}${p.role ? " — " + p.role : ""}`).join("\n"));
-      }
-      box("Plan défensif", gp.scouting.defensivePlan);
+    if (gp.scouting.scoutTeamId || hasScoutData(gp)) {
+      const allTeams = await readTeams();
+      const scoutTeam = allTeams.find((candidate) => candidate.id === gp.scouting.scoutTeamId);
+      doc.addPage(); y = 10;
+      // Header scouting inspiré du document de référence : adversaire à gauche, titre/date au centre, notre club à droite.
+      doc.setFillColor(15,15,18); doc.rect(M, y, W-M*2, 20, "F");
+      const leftLogo = scoutTeam?.logo ? await imageToDataUrl(scoutTeam.logo) : null;
+      const rightLogo = team.logo ? await imageToDataUrl(team.logo) : null;
+      if (leftLogo) doc.addImage(leftLogo, "PNG", M+3, y+2, 16,16);
+      if (rightLogo) doc.addImage(rightLogo, "PNG", W-M-19, y+2, 16,16);
+      doc.setTextColor(255,255,255); doc.setFont("helvetica","bold"); doc.setFontSize(13);
+      doc.text(scoutTeam?.name || gp.opponent || "ADVERSAIRE", W/2, y+8, {align:"center"});
+      doc.setTextColor(...gold); doc.setFontSize(8); doc.text(`SCOUTING ADVERSE${gp.date ? " · "+fmtDateLong(gp.date) : ""}`, W/2, y+14, {align:"center"});
+      y += 25;
+      const scoutPlayers = scoutTeam?.players || [];
+      const depth = gp.scouting.depthChart || {};
+      doc.setFillColor(15,15,18); doc.rect(M,y,W-M*2,7,"F"); doc.setTextColor(255,255,255); doc.setFontSize(9); doc.text("DEPTH CHART",M+3,y+5); y+=8;
+      const cw=(W-M*2)/5; for(let i=0;i<5;i++){const x=M+i*cw;doc.setFillColor(242,242,242);doc.rect(x,y,cw,6,"F");doc.setTextColor(...black);doc.setFontSize(7);doc.text(String(i+1),x+cw/2,y+4,{align:"center"}); const ids=(depth[String(i+1)]||[]).slice(0,3);ids.forEach((id:string,j:number)=>{const p=scoutPlayers.find((q:any)=>q.id===id);if(p)doc.text(`#${p.num ?? "—"} ${playerLabel(p)}`,x+cw/2,y+10+j*5,{align:"center",maxWidth:cw-2})})} y+=27;
+      doc.setFillColor(15,15,18);doc.rect(M,y,W-M*2,7,"F");doc.setTextColor(255,255,255);doc.text("TEAM INFORMATION",W/2,y+5,{align:"center"});y+=9;
+      const half=(W-M*2-3)/2; const infoH=56; doc.setDrawColor(170,170,170);doc.rect(M,y,half,infoH);doc.rect(M+half+3,y,half,infoH);
+      const infoCol=(x:number,label:string,txt:string)=>{doc.setTextColor(...burgundy);doc.setFont("helvetica","bold");doc.setFontSize(8);doc.text(label,x+3,y+6);doc.setTextColor(...black);doc.setFont("helvetica","normal");doc.setFontSize(7.2);doc.text(doc.splitTextToSize(txt||"",half-6).slice(0,13),x+3,y+12)};
+      infoCol(M,"ATTAQUE",gp.scouting.offense || gp.scouting.style || ""); infoCol(M+half+3,"DÉFENSE",gp.scouting.defense || gp.scouting.defensivePlan || ""); y+=infoH+3;
+      if ((gp.scouting.importantStats||[]).length){doc.setFillColor(15,15,18);doc.rect(M,y,W-M*2,7,"F");doc.setTextColor(255,255,255);doc.text("STATS IMPORTANTES",W/2,y+5,{align:"center"});y+=10;doc.setTextColor(...black);doc.setFontSize(7);doc.text("Les tableaux sélectionnés dans MyBasket sont calculés automatiquement depuis les matchs codés.",M,y);y+=7;}
+      const scoutSystems=gp.librarySystems.filter((system)=>sysSection(system)==="scout");
+      if(scoutSystems.length){doc.addPage();y=10;doc.setFillColor(15,15,18);doc.rect(M,y,W-M*2,9,"F");doc.setTextColor(255,255,255);doc.setFontSize(11);doc.text("TOP PLAYS",W/2,y+6,{align:"center"});y+=14;for(const system of scoutSystems){ensure(58);doc.setTextColor(...black);doc.setFont("helvetica","bold");doc.setFontSize(9);doc.text(system.title,W/2,y,{align:"center"});y+=4;const imgs=(system.schemaImages?.length?system.schemaImages:[system.schemaImage]).filter(Boolean).slice(0,3);for(let i=0;i<imgs.length;i++){const im=await imageToDataUrl(String(imgs[i]));if(im)doc.addImage(im,"PNG",M+i*58,y,52,39)}y+=44;}}
+      const cards=gp.scouting.playerCards||[];
+      if(cards.length){doc.addPage();y=10;for(const card of cards){const p=scoutPlayers.find((q:any)=>q.id===card.playerId);if(!p)continue;ensure(47);doc.setDrawColor(30,30,30);doc.rect(M,y,W-M*2,43);if(p.photo){const ph=await imageToDataUrl(p.photo);if(ph)doc.addImage(ph,"JPEG",M+1,y+1,28,41)}doc.setFillColor(75,75,77);doc.rect(M+30,y,W-M*2-30,7,"F");doc.setTextColor(255,255,255);doc.setFont("helvetica","bold");doc.setFontSize(8);doc.text(`#${p.num??"—"} · ${playerLabel(p)} · Poste ${p.poste||"—"} · ${p.taille||"—"} · ${p.mainDominante||""}`,M+33,y+5);doc.setTextColor(...burgundy);doc.setFontSize(8);doc.text(card.profile||"PROFIL",M+33,y+13);doc.setTextColor(...black);doc.setFont("helvetica","normal");doc.setFontSize(7.3);doc.text(doc.splitTextToSize(card.notes||"",W-M*2-38).slice(0,6),M+33,y+19);y+=47;}}
     }
 
     const safeName = `${team.name || "game-plan"}-${gp.opponent || "match"}`.replace(/[^a-z0-9_-]+/gi, "-").replace(/-+/g, "-");
@@ -2282,6 +2254,8 @@ const styles = `
   .gp-scout-intro{display:flex;justify-content:space-between;align-items:center;gap:16px;background:linear-gradient(135deg,#6B1A2C,#2b0b13);color:#fff;border-radius:18px;padding:17px 18px;margin-bottom:12px}.gp-scout-intro small{color:#D4A24C;font-size:.66rem;font-weight:950;letter-spacing:.08em}.gp-scout-intro h3{margin:3px 0;font-size:1.05rem}.gp-scout-intro p{margin:0;max-width:650px;color:rgba(255,255,255,.72);font-size:.78rem}.gp-scout-intro button{border:0;background:#D4A24C;color:#241217;border-radius:10px;padding:10px 12px;font-weight:950;cursor:pointer;white-space:nowrap}.gp-import-board{background:#fff;border:1px solid #eadfce;border-radius:18px;padding:14px;margin-bottom:12px}.gp-import-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}.gp-import{display:grid;grid-template-columns:40px minmax(0,1fr);gap:9px;border:1px solid #eee3d6;border-radius:13px;padding:11px;background:#fffaf4;min-width:0}.gp-import.clip{border-color:#dbc7cd;background:#fff7f8}.gp-import-icon{width:40px;height:40px;border-radius:10px;background:#fff;display:grid;place-items:center;font-size:1.15rem;border:1px solid #eee3d6}.gp-import-content small{color:#a18f86;font-size:.63rem;text-transform:uppercase;font-weight:900}.gp-import-content h4{margin:2px 0 4px;color:#6B1A2C;font-size:.88rem}.gp-import-content ul{margin:0;padding-left:15px;color:#5e5652;font-size:.7rem;line-height:1.5}.gp-import-actions{grid-column:1/-1;display:flex;justify-content:flex-end;gap:5px}.gp-import-actions button{border:1px solid #d8ccc0;background:#fff;color:#6B1A2C;border-radius:8px;padding:5px 8px;font-size:.63rem;font-weight:900;cursor:pointer}.gp-import-actions .remove{color:#9e2940}.gp-manual-note{display:flex;gap:10px;align-items:center;padding:10px 12px;border:1px solid #eadfce;border-radius:12px;margin-bottom:12px;background:#fffdf9;color:#6d625d;font-size:.75rem}.gp-manual-note b{color:#6B1A2C;white-space:nowrap}
   .gp-manual-details{border:1px solid #eadfce;border-radius:16px;background:#fff;overflow:hidden}.gp-manual-details>summary{list-style:none;cursor:pointer;display:flex;align-items:center;justify-content:space-between;gap:12px;padding:13px 15px;background:#fffaf4}.gp-manual-details>summary::-webkit-details-marker{display:none}.gp-manual-details>summary b,.gp-manual-details>summary span{display:block}.gp-manual-details>summary b{color:#6B1A2C}.gp-manual-details>summary span{color:#8a7b73;font-size:.7rem;margin-top:2px}.gp-manual-details>summary strong{color:#6B1A2C;font-size:.7rem;white-space:nowrap}.gp-manual-inside{padding:12px;background:#fff}
   .gp-keys-head{display:flex;justify-content:space-between;gap:14px;align-items:center;margin-bottom:10px}.gp-keys-head small{color:#D4A24C;font-weight:950;letter-spacing:.08em}.gp-keys-head h3{margin:2px 0;color:#6B1A2C;font-size:1.2rem}.gp-keys-head p{margin:0;color:#8a7b73;font-size:.78rem}.gp-keys-head>span{color:#16a34a;font-size:.7rem;font-weight:900}.gp-key-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;margin-bottom:12px}.gp-keycard{background:linear-gradient(180deg,#fff,#fffaf4);border:1px solid #eadfce;border-radius:17px;padding:13px;box-shadow:0 9px 24px rgba(60,30,20,.05)}.gp-keycard-head{display:flex;align-items:center;gap:8px;margin-bottom:8px}.gp-keycard-head>span{width:36px;height:36px;display:grid;place-items:center;background:#fff4de;border-radius:10px}.gp-keycard-head b,.gp-keycard-head small{display:block}.gp-keycard-head b{color:#6B1A2C}.gp-keycard-head small{color:#998a82;font-size:.65rem;margin-top:2px}.gp-keycard textarea{min-height:185px!important;background:#fff!important}.gp-keycard p{margin:5px 0 0;color:#a08f86;font-size:.64rem}.gp-objective-light{background:#fffdf9}
+
+.sb{display:grid;gap:12px}.sb-head{display:grid;grid-template-columns:1fr 1.3fr 1fr;align-items:center;background:#101012;color:#fff;border-radius:14px;overflow:hidden;min-height:78px;border-bottom:6px solid #d4a24c}.sb-club{display:flex;align-items:center;gap:10px;padding:12px 16px;font-size:.85rem}.sb-club.right{justify-content:flex-end}.sb-club img,.sb-club>span{width:48px;height:48px;object-fit:contain;border-radius:50%;background:#fff;display:grid;place-items:center}.sb-title{text-align:center}.sb-title strong,.sb-title small{display:block}.sb-title strong{font-size:1.18rem;letter-spacing:.05em}.sb-title small{color:#d4a24c;margin-top:4px}.sb-team-select{display:grid;grid-template-columns:120px minmax(220px,380px) 1fr;gap:9px;align-items:center;background:#fff7e8;border:1px solid #ead6ad;padding:10px 13px;border-radius:12px}.sb-team-select label{font-weight:950;color:#6b1a2c}.sb-team-select small{color:#8b7a70}.sb select,.sb textarea{border:1px solid #d9cec5;border-radius:8px;background:#fff;padding:8px;font:inherit}.sb-section{border:1px solid #d9d2cb;background:#fff;border-radius:12px;overflow:hidden}.sb-section>h3,.sb-section-head{margin:0;background:#171719;color:#fff;padding:8px 12px;font-size:.82rem;letter-spacing:.04em}.sb-section-head{display:flex;justify-content:space-between;align-items:center}.sb-section-head h3{margin:0;font-size:.82rem}.sb-section-head button,.sb-section-head select{background:#d4a24c;color:#171719;border:0;border-radius:7px;padding:6px 9px;font-weight:900}.sb-depth{display:grid;grid-template-columns:repeat(5,1fr)}.sb-depth>div{min-height:90px;border-right:1px solid #ddd;text-align:center}.sb-depth>div:last-child{border:0}.sb-depth b{display:block;background:#f0f0f0;padding:5px;font-size:.67rem}.sb-depth span{display:block;padding:5px 4px;font-size:.7rem;font-weight:800}.sb-depth select{width:calc(100% - 10px);margin:5px;font-size:.67rem}.sb-two{display:grid;grid-template-columns:1fr 1fr}.sb-two label{padding:10px}.sb-two label+label{border-left:1px solid #bbb}.sb-two b{display:block;color:#6b1a2c;margin-bottom:5px}.sb-two textarea{width:100%;min-height:180px;resize:vertical}.sb-statgrid{display:grid;grid-template-columns:repeat(3,1fr);gap:0;padding:10px}.sb-statgrid article{border-right:1px solid #bbb;padding:0 10px}.sb-statgrid article:last-child{border:0}.sb-statgrid article>div{display:flex}.sb-statgrid article select{flex:1;font-weight:900}.sb-statgrid article button{border:0;background:none;font-size:1.2rem}.sb-statgrid table{width:100%;border-collapse:collapse;font-size:.68rem;margin-top:5px}.sb-statgrid td{padding:4px;border-bottom:1px solid #eee}.sb-statgrid td:last-child{text-align:right}.sb-addstat{grid-column:1/-1;padding:16px;border:1px dashed #d4a24c;background:#fff8e8;border-radius:10px;font-weight:900;color:#6b1a2c}.sb-plays{padding:12px;display:grid;gap:14px}.sb-plays article>b{display:block;text-align:center;margin-bottom:6px}.sb-plays article>div{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}.sb-plays img{width:100%;aspect-ratio:4/3;object-fit:contain;border:1px solid #bbb;background:#fafafa}.sb-plays p{text-align:center;color:#888}.sb-player{display:grid;grid-template-columns:105px minmax(0,1fr) 190px;border-bottom:3px solid #171719;min-height:190px}.sb-player:last-child{border-bottom:0}.sb-player-photo{background:#eee;display:grid;place-items:center;overflow:hidden}.sb-player-photo img{width:100%;height:100%;object-fit:cover}.sb-player-photo span{font-size:2rem;font-weight:950;color:#6b1a2c}.sb-player-main{border-left:1px solid #aaa;border-right:1px solid #aaa}.sb-player-id{display:flex;justify-content:space-between;background:#4b4b4d;color:#fff;padding:6px 8px}.sb-player-id span{font-size:.68rem}.sb-player-stats{display:grid;grid-template-columns:repeat(9,1fr);background:#eee;border-bottom:1px solid #aaa}.sb-player-stats>div{text-align:center;padding:5px 2px;border-right:1px solid #ccc}.sb-player-stats small,.sb-player-stats b{display:block}.sb-player-stats small{font-size:.55rem}.sb-player-stats b{font-size:.72rem}.sb-player-edit{display:grid;grid-template-columns:170px 1fr auto;gap:7px;padding:8px}.sb-player-edit textarea{min-height:78px}.sb-player-edit button{border:0;background:#fff0f0;color:#9b1c2d;font-weight:900}.sb-shot{padding:8px}.sb-shot>b{display:block;text-align:center;font-size:.7rem}.sb-shot>div{display:grid;grid-template-columns:1fr 1fr;gap:4px;margin-top:6px}.sb-shot span{border:1px solid #ddd;border-radius:6px;padding:4px;text-align:center}.sb-shot small,.sb-shot strong,.sb-shot i{display:block;font-size:.55rem}.sb-shot strong{font-size:.78rem;color:#6b1a2c}.sb-shot i{font-style:normal;color:#888}@media(max-width:900px){.sb-head{grid-template-columns:1fr}.sb-club.right{justify-content:flex-start}.sb-title{order:-1;padding-top:10px}.sb-team-select,.sb-two,.sb-statgrid{grid-template-columns:1fr}.sb-depth{grid-template-columns:1fr 1fr}.sb-player{grid-template-columns:80px 1fr}.sb-shot{grid-column:1/-1}.sb-player-stats{grid-template-columns:repeat(5,1fr)}.sb-player-edit{grid-template-columns:1fr}}
 
   /* ===== Game Plan 2026 — version légère ===== */
   .gp-hero{background:#fff;color:#1f171a;border:1px solid #eadfce;border-left:5px solid #6B1A2C;border-radius:16px;padding:1rem 1.15rem;box-shadow:none}

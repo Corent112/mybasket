@@ -4,6 +4,11 @@ import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin-server";
 import { sendTransactionalEmail } from "@/lib/server-notifications";
 import { userHasSubscriptionAccess } from "@/lib/subscription-entitlements";
+import {
+  collaborationLimitReached,
+  getAssistantLimitForOwner,
+  getTeamCollaborationUsage,
+} from "@/lib/team-collaboration-limits";
 
 type PermissionKey = "view_team" | "players" | "sessions" | "livestats" | "media";
 type PermissionMap = Record<PermissionKey, boolean>;
@@ -235,7 +240,7 @@ export async function GET(request: NextRequest) {
   const context = await getOwnerContext(request, teamId);
   if ("error" in context) return context.error;
 
-  const { supabase } = context;
+  const { supabase, user } = context;
 
   const [{ data: invitations, error: invitationError }, { data: members, error: memberError }] =
     await Promise.all([
@@ -272,9 +277,38 @@ export async function GET(request: NextRequest) {
     }),
   );
 
+  let collaboration = null;
+  if (admin) {
+    try {
+      const [limit, usage, entitled] = await Promise.all([
+        getAssistantLimitForOwner({
+          supabase,
+          ownerId: user.id,
+          ownerEmail: user.email,
+        }),
+        getTeamCollaborationUsage({ admin, teamId }),
+        userHasSubscriptionAccess({
+          supabase,
+          userId: user.id,
+          email: user.email,
+          sectionKey: "collaboration",
+        }),
+      ]);
+      collaboration = {
+        limit,
+        ...usage,
+        entitled,
+        canInvite: entitled && !collaborationLimitReached(limit, usage.used),
+      };
+    } catch (error) {
+      console.error("Lecture limite collaboration impossible:", error);
+    }
+  }
+
   return NextResponse.json({
     invitations: invitations ?? [],
     members: enrichedMembers,
+    collaboration,
   });
 }
 
@@ -355,6 +389,31 @@ export async function POST(request: NextRequest) {
     .eq("team_id", teamId)
     .ilike("email", email)
     .eq("status", "pending");
+
+  const [assistantLimit, collaborationUsage] = await Promise.all([
+    getAssistantLimitForOwner({
+      supabase,
+      ownerId: user.id,
+      ownerEmail: user.email,
+    }),
+    getTeamCollaborationUsage({ admin, teamId }),
+  ]);
+
+  if (collaborationLimitReached(assistantLimit, collaborationUsage.used)) {
+    const limitLabel = assistantLimit === null ? "illimité" : String(assistantLimit);
+    return NextResponse.json(
+      {
+        error: `Limite de collaborateurs atteinte (${collaborationUsage.used}/${limitLabel}). Modifie la limite du plan ou libère une invitation en attente.`,
+        code: "ASSISTANT_LIMIT_REACHED",
+        collaboration: {
+          limit: assistantLimit,
+          ...collaborationUsage,
+          canInvite: false,
+        },
+      },
+      { status: 409 },
+    );
+  }
 
   const { token, tokenHash } = createInviteToken();
   const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();

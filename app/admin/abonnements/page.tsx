@@ -1,8 +1,9 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import styles from "./page.module.css";
+import { INDIVIDUAL_PERMISSION_GROUPS } from "@/lib/subscription-permissions";
 
 type Target = "individual" | "club";
 
@@ -16,8 +17,8 @@ type Plan = {
   price_yearly_cents: number | null;
   price_tax_mode: "TTC" | "HT" | null;
   period: string | null;
-  storage_gb: number | null;
   max_teams: number | null;
+  max_assistants_per_team?: number | null;
   max_playbooks: number | null;
   max_documents: number | null;
   max_favorites: number | null;
@@ -41,8 +42,8 @@ type Draft = {
   priceMonthly: string;
   priceYearly: string;
   priceTaxMode: "TTC" | "HT";
-  storageGb: string;
   maxTeams: string;
+  maxAssistantsPerTeam: string;
   maxPlaybooks: string;
   maxDocuments: string;
   maxFavorites: string;
@@ -52,35 +53,7 @@ type Draft = {
   isRecommended: boolean;
 };
 
-const SECTIONS = [
-  { key: "bibliotheque_exercice", label: "Bibliothèque exercice" },
-  { key: "bibliotheque_systeme", label: "Bibliothèque système" },
-  { key: "bibliotheque_seance", label: "Bibliothèque séance" },
-  { key: "plaquette", label: "Plaquettes" },
-  { key: "accompagnement", label: "Accompagnements" },
-  { key: "annonces", label: "Annonces" },
-  { key: "abonnements", label: "Abonnement" },
-  { key: "boutique", label: "Boutique" },
-  { key: "messagerie", label: "Messagerie" },
-  { key: "favoris", label: "Mes favoris" },
-  { key: "reservations", label: "Mes réservations" },
-  { key: "calendrier", label: "Mon calendrier" },
-  { key: "mes_exercices", label: "Mes exercices" },
-  { key: "playbooks", label: "Mes playbooks" },
-  { key: "profil_coach", label: "Mon profil Coach" },
-  { key: "mes_annonces", label: "Mes annonces" },
-  { key: "papiers", label: "Mes papiers" },
-  { key: "equipes", label: "Mes équipes" },
-  { key: "collaboration_equipe", label: "Collaboration équipe / invitations staff" },
-  { key: "stats_joueur", label: "Stats joueur" },
-  { key: "stats_jeu", label: "Stats jeu" },
-  { key: "stats_live", label: "Stats live" },
-  { key: "rotation", label: "Rotation" },
-  { key: "gameplan", label: "Game plan" },
-  { key: "gestion_administrative", label: "Gestion administrative" },
-  { key: "club_space", label: "Espace club" },
-  { key: "institutionnel", label: "Institutionnel" },
-] as const;
+
 
 function toFeatureList(value: unknown): string[] {
   if (Array.isArray(value)) {
@@ -149,8 +122,8 @@ function planToDraft(plan: Plan): Draft {
         (plan.price_monthly_cents ?? plan.price_cents ?? 0) * 10
     ),
     priceTaxMode: plan.price_tax_mode === "HT" ? "HT" : "TTC",
-    storageGb: numberToDraftValue(plan.storage_gb),
     maxTeams: numberToDraftValue(plan.max_teams),
+    maxAssistantsPerTeam: numberToDraftValue(plan.max_assistants_per_team),
     maxPlaybooks: numberToDraftValue(plan.max_playbooks),
     maxDocuments: numberToDraftValue(plan.max_documents),
     maxFavorites: numberToDraftValue(plan.max_favorites),
@@ -183,13 +156,9 @@ export default function AdminAbonnementsPage() {
   const [matrixSaving, setMatrixSaving] = useState(false);
   const [matrixMessage, setMatrixMessage] = useState<string | null>(null);
 
-  const matrixPlans = useMemo(() => {
-    const cleanPlans = dedupePlans(plans);
-    const individual = cleanPlans.filter((plan) => plan.target === "individual");
-    const club = cleanPlans.filter((plan) => plan.target === "club");
-
-    return [...individual, ...club];
-  }, [plans]);
+  const matrixPlans = useMemo(() =>
+    dedupePlans(plans).filter((plan) => plan.target === "individual"),
+  [plans]);
 
   useEffect(() => {
     let active = true;
@@ -277,8 +246,8 @@ export default function AdminAbonnementsPage() {
         price_monthly_cents: monthlyCents,
         price_yearly_cents: yearlyCents,
         price_tax_mode: draft.priceTaxMode,
-        storage_gb: draftValueToNumber(draft.storageGb),
         max_teams: draftValueToNumber(draft.maxTeams),
+        max_assistants_per_team: draftValueToNumber(draft.maxAssistantsPerTeam),
         max_playbooks: draftValueToNumber(draft.maxPlaybooks),
         max_documents: draftValueToNumber(draft.maxDocuments),
         max_favorites: draftValueToNumber(draft.maxFavorites),
@@ -342,11 +311,13 @@ export default function AdminAbonnementsPage() {
       const rows: AccessRow[] = [];
 
       matrixPlans.forEach((plan) => {
-        SECTIONS.forEach((section) => {
-          rows.push({
-            plan_id: plan.id,
-            section_key: section.key,
-            enabled: Boolean(access[accessKey(plan.id, section.key)]),
+        INDIVIDUAL_PERMISSION_GROUPS.forEach((group) => {
+          group.items.forEach((section) => {
+            rows.push({
+              plan_id: plan.id,
+              section_key: section.key,
+              enabled: Boolean(access[accessKey(plan.id, section.key)]),
+            });
           });
         });
       });
@@ -441,9 +412,9 @@ export default function AdminAbonnementsPage() {
       <section className={styles.block}>
         <div className={styles.blockHead}>
           <div>
-            <h2>Matrice d’accès</h2>
+            <h2>Matrice individuelle</h2>
             <p>
-              Coche les accès accordés par chaque abonnement, puis enregistre.
+              Une case = un accès réel. Basic, Pro et Premium sont pilotés ici. Club et Institution restent volontairement séparés.
             </p>
           </div>
 
@@ -471,6 +442,11 @@ export default function AdminAbonnementsPage() {
           </div>
         </div>
 
+        <div className={styles.systemAccessNote}>
+          <strong>Accès système toujours ouverts</strong>
+          <span>Profil · Mon abonnement · Boutique · Calendrier personnel</span>
+        </div>
+
         <div className={styles.matrixWrap}>
           <table className={styles.matrix}>
             <thead>
@@ -489,27 +465,33 @@ export default function AdminAbonnementsPage() {
             </thead>
 
             <tbody>
-              {SECTIONS.map((section, sectionIndex) => (
-                <tr key={`section-row-${section.key}-${sectionIndex}`}>
-                  <th className={styles.matrixFeat}>{section.label}</th>
-
-                  {matrixPlans.map((plan, planIndex) => (
-                    <td
-                      key={`cell-${plan.id}-${section.key}-${planIndex}-${sectionIndex}`}
-                      className={styles.matrixCell}
-                    >
-                      <label className={styles.check}>
-                        <input
-                          type="checkbox"
-                          checked={Boolean(
-                            access[accessKey(plan.id, section.key)]
-                          )}
-                          onChange={() => toggleAccess(plan.id, section.key)}
-                        />
-                      </label>
-                    </td>
+              {INDIVIDUAL_PERMISSION_GROUPS.map((group) => (
+                <Fragment key={group.key}>
+                  <tr className={styles.matrixGroupRow}>
+                    <th className={styles.matrixGroup} colSpan={matrixPlans.length + 1}>
+                      {group.label}
+                    </th>
+                  </tr>
+                  {group.items.map((section) => (
+                    <tr key={`section-row-${section.key}`}>
+                      <th className={styles.matrixFeat}>
+                        <span>{section.label}</span>
+                        {section.hint ? <small>{section.hint}</small> : null}
+                      </th>
+                      {matrixPlans.map((plan) => (
+                        <td key={`cell-${plan.id}-${section.key}`} className={styles.matrixCell}>
+                          <label className={styles.check}>
+                            <input
+                              type="checkbox"
+                              checked={Boolean(access[accessKey(plan.id, section.key)])}
+                              onChange={() => toggleAccess(plan.id, section.key)}
+                            />
+                          </label>
+                        </td>
+                      ))}
+                    </tr>
                   ))}
-                </tr>
+                </Fragment>
               ))}
             </tbody>
           </table>
@@ -532,7 +514,7 @@ function PlanEditor({
   saving: boolean;
   saved: boolean;
   updateDraft: (planId: string, patch: Partial<Draft>) => void;
-  savePlan: (plan: Plan) => void;
+  savePlan: (plan: Plan) => Promise<void>;
 }) {
   if (!draft) return null;
 
@@ -553,29 +535,16 @@ function PlanEditor({
         />
       </label>
 
-      <div className={styles.row2}>
-        <label className={styles.field}>
-          <span>Statut</span>
-          <select
-            value={draft.status}
-            onChange={(e) => updateDraft(plan.id, { status: e.target.value })}
-          >
-            <option value="active">active</option>
-            <option value="inactive">inactive</option>
-          </select>
-        </label>
-
-        <label className={styles.field}>
-          <span>Stockage (Go)</span>
-          <input
-            inputMode="numeric"
-            value={draft.storageGb}
-            onChange={(e) =>
-              updateDraft(plan.id, { storageGb: e.target.value })
-            }
-          />
-        </label>
-      </div>
+      <label className={styles.field}>
+        <span>Statut</span>
+        <select
+          value={draft.status}
+          onChange={(e) => updateDraft(plan.id, { status: e.target.value })}
+        >
+          <option value="active">active</option>
+          <option value="inactive">inactive</option>
+        </select>
+      </label>
 
       <div className={styles.limitBox}>
         <h3>Limites d’usage</h3>
@@ -593,8 +562,20 @@ function PlanEditor({
             />
           </label>
 
-          <label className={styles.field}>
-            <span>Max playbooks</span>
+          {plan.target === "individual" ? (
+            <label className={styles.field}>
+              <span>Assistants / équipe</span>
+              <input
+                inputMode="numeric"
+                value={draft.maxAssistantsPerTeam}
+                onChange={(e) =>
+                  updateDraft(plan.id, { maxAssistantsPerTeam: e.target.value })
+                }
+              />
+            </label>
+          ) : (
+            <label className={styles.field}>
+              <span>Max playbooks</span>
             <input
               inputMode="numeric"
               value={draft.maxPlaybooks}
@@ -602,8 +583,25 @@ function PlanEditor({
                 updateDraft(plan.id, { maxPlaybooks: e.target.value })
               }
             />
-          </label>
+            </label>
+          )}
         </div>
+
+        {plan.target === "individual" && (
+          <div className={styles.row2}>
+            <label className={styles.field}>
+              <span>Max playbooks</span>
+              <input
+                inputMode="numeric"
+                value={draft.maxPlaybooks}
+                onChange={(e) =>
+                  updateDraft(plan.id, { maxPlaybooks: e.target.value })
+                }
+              />
+            </label>
+            <div />
+          </div>
+        )}
 
         <div className={styles.row2}>
           <label className={styles.field}>
