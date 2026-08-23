@@ -304,6 +304,10 @@ export interface Team {
   collaborationRole?: string | null;
   /** Permissions accordées à l'utilisateur connecté sur cette équipe. */
   collaborationPermissions?: TeamCollaborationPermissions | null;
+  /** Nature de l'équipe : une équipe scoutée est une base adverse légère et ne consomme pas max_teams. */
+  teamType?: "coached" | "scout" | string;
+  isScoutTeam?: boolean;
+  scout?: boolean;
 
   name: string; // "PARIS BASKETBALL"
   cat: string; // "U15"

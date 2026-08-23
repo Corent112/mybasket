@@ -29,6 +29,7 @@ import {
 } from "@/lib/playbook";
 import TeamForm from '@/components/equipes/TeamForm';
 import PlayerForm from '@/components/equipes/PlayerForm';
+import ScoutTeamsManager from '@/components/equipes/ScoutTeamsManager';
 import type { Player, Team } from '@/types/player';
 import GamePlanModule from "@/components/management/GamePlanModule";
 import GestionAdminModule from "@/components/management/GestionAdminModule";
@@ -161,6 +162,7 @@ export default function MonComptePage() {
   const [toast, setToast] = useState('');
 
   const [teams, setTeams] = useState<Team[]>([]);
+  const [teamsView, setTeamsView] = useState<"coached" | "scout">("coached");
   const [teamForm, setTeamForm] = useState<{ open: boolean; team?: Team }>({ open: false });
   const [playerFor, setPlayerFor] = useState<string | null>(null);
   const [teamCalendarMatchCounts, setTeamCalendarMatchCounts] = useState<Record<string, number>>({});
@@ -188,6 +190,12 @@ export default function MonComptePage() {
 
     if (requestedModule && allowedManagementViews.has(requestedModule)) {
       setManagementView(requestedModule as typeof managementView);
+    }
+  }, [searchParams]);
+
+  useEffect(() => {
+    if (searchParams.get("teamType") === "scout" || searchParams.get("createScout") === "1") {
+      setTeamsView("scout");
     }
   }, [searchParams]);
 
@@ -670,7 +678,13 @@ const collaborationRoleInfo = (roleValue: unknown) => {
   };
 };
 
-const sortedTeams = [...teams].sort((a, b) => {
+const isScoutTeam = (team: Team) => {
+  const type = String((team as any).teamType ?? (team as any).team_type ?? "").toLowerCase();
+  return (team as any).isScoutTeam === true || (team as any).scout === true || type === "scout" || type === "scouting" || type === "scouted";
+};
+const coachedTeams = teams.filter((team) => !isScoutTeam(team));
+
+const sortedTeams = [...coachedTeams].sort((a, b) => {
   // Priorité absolue aux équipes dont l'utilisateur est propriétaire / coach principal.
   if (a.isShared !== b.isShared) return a.isShared ? 1 : -1;
 
@@ -923,22 +937,24 @@ return (
               <div className="mc-equipes-head">
                 <div>
                   <h2>Mes Équipes</h2>
-                  <p>Crée tes équipes, gère leurs effectifs et leurs matchs.</p>
+                  <p>{teamsView === "coached" ? "Tes équipes coachées et tes collaborations." : "Tes adversaires observés pour préparer les prochains matchs."}</p>
                 </div>
-                <button
-                  className="mc-new-team"
-                  onClick={() => {
-                    if (!accessMap.equipes) {
-                      router.push("/abonnements");
-                      return;
-                    }
+                {teamsView === "coached" && (
+                  <button className="mc-new-team" onClick={() => {
+                    if (!accessMap.equipes) { router.push("/abonnements"); return; }
                     setTeamForm({ open: true });
-                  }}
-                >
-                  + Nouvelle équipe
-                </button>
+                  }}>+ Nouvelle équipe</button>
+                )}
               </div>
 
+              <div className="mc-equipes-tabs">
+                <button type="button" className={teamsView === "coached" ? "active" : ""} onClick={() => setTeamsView("coached")}>🏀 Mes équipes</button>
+                <button type="button" className={teamsView === "scout" ? "active" : ""} onClick={() => setTeamsView("scout")}>👁 Équipes scoutées</button>
+              </div>
+
+              {teamsView === "scout" ? (
+                <ScoutTeamsManager teams={teams} onReload={reloadTeams} />
+              ) : (
               <div className="mc-teamgrid">
                 {sortedTeams.map((team, teamIndex) => {
                   const bandColor = team.couleurs?.[0] || '#6B1A2C';
@@ -1114,6 +1130,7 @@ return (
                   );
                 })}
               </div>
+              )}
             </div>
           )}
 {active === "playbooks" && (
@@ -3620,6 +3637,7 @@ const CSS = `
 .mc-team-banner-copy strong{font-family:'Oswald',sans-serif;font-size:clamp(2rem,3vw,3.3rem);font-weight:900;line-height:.95;text-transform:uppercase;letter-spacing:-.02em}
 .mc-team-banner-copy span{margin-top:10px;font-size:.92rem;font-weight:900;text-transform:uppercase;letter-spacing:.04em;opacity:.95}
 
+.mc-equipes-tabs{display:inline-flex;gap:4px;margin:2px 0 18px;padding:4px;background:#f7f1eb;border:1px solid #eadfd5;border-radius:12px}.mc-equipes-tabs button{border:0;background:transparent;color:#786c65;border-radius:9px;padding:9px 14px;font-weight:900;cursor:pointer}.mc-equipes-tabs button.active{background:#6B1A2C;color:#fff;box-shadow:0 5px 14px rgba(107,26,44,.16)}
 .mc-team-shared{display:inline-flex;margin-top:9px;padding:5px 8px;border-radius:999px;background:rgba(255,255,255,.14);border:1px solid rgba(255,255,255,.22);color:#fff;font-style:normal;font-size:.62rem;font-weight:900;letter-spacing:.03em;white-space:nowrap}
 .mc-team-body{padding:1rem}
 .mc-team-body-horizontal{min-width:0;padding:22px 24px 18px;display:flex;flex-direction:column;justify-content:center}

@@ -112,11 +112,12 @@ type Scouting = {
   imports?: ScoutImportItem[];
   montage?: GamePlanMontageItem[];
   scoutTeamId?: string;
+  identity?: string;
   offense?: string;
   defense?: string;
   depthChart?: Record<string, string[]>;
   importantStats?: Array<{ id: string; metric: string; limit: number }>;
-  playerCards?: Array<{ playerId: string; profile: string; notes: string }>;
+  playerCards?: Array<{ playerId: string; profile: string; profile2?: string; notes: string }>;
 };
 
 type SystemSection = "offensive" | "scout" | "blob" | "slob" | "end";
@@ -507,7 +508,7 @@ export default function GamePlanModule() {
   const [savedFlash, setSavedFlash] = useState(false);
   const [loading, setLoading] = useState(true);
   const [rotationTick, setRotationTick] = useState(0);
-  const [activeTab, setActiveTab] = useState<"systems" | "scout" | "keys" | "montage" | "rotation">("systems");
+  const [activeTab, setActiveTab] = useState<"match" | "systems" | "scout" | "keys" | "montage" | "rotation">("match");
   const [pendingDraw, setPendingDraw] = useState<{ section: SystemSection; image: string } | null>(null);
   const [showScoutDataPicker, setShowScoutDataPicker] = useState(false);
 
@@ -515,7 +516,7 @@ export default function GamePlanModule() {
     const requestedTab = searchParams.get("gamePlanTab");
     if (requestedTab === "keys") {
       setActiveTab("systems");
-    } else if (requestedTab === "systems" || requestedTab === "scout" || requestedTab === "montage" || requestedTab === "rotation") {
+    } else if (requestedTab === "match" || requestedTab === "systems" || requestedTab === "scout" || requestedTab === "montage" || requestedTab === "rotation") {
       setActiveTab(requestedTab);
     }
   }, [searchParams]);
@@ -548,10 +549,11 @@ export default function GamePlanModule() {
     try {
       const t = await readTeams();
       setTeams(t);
+      const coached = t.filter((x) => !isScoutTeam(x));
       let id = lsGet<string>(K_SEL) || "";
       if (typeof id !== "string") id = "";
-      if (!id || !t.some((x) => String(x.id) === String(id))) {
-        id = t[0]?.id ?? "";
+      if (!id || !coached.some((x) => String(x.id) === String(id))) {
+        id = coached[0]?.id ?? "";
         lsSet(K_SEL, id);
       }
       teamIdRef.current = id;
@@ -764,7 +766,7 @@ export default function GamePlanModule() {
   }, [supabase]);
 
   /* --- dérivés --- */
-  const team = useMemo(() => teams.find((t) => t.id === teamId) || null, [teams, teamId]);
+  const team = useMemo(() => teams.find((t) => t.id === teamId && !isScoutTeam(t)) || null, [teams, teamId]);
   const rotation = useMemo(() => (teamId ? readRotation(teamId) : null), [teamId, rotationTick]);
   const hasRotation = !!(rotation && rotation.segments.length);
   const systemsBySection = useMemo(() => {
@@ -989,7 +991,7 @@ export default function GamePlanModule() {
       setPendingDraw(null);
       setAddSysFor(null);
       setDrawingFor(null);
-      setActiveTab("systems");
+      setActiveTab("match");
       flash();
     } catch (e) {
       console.error("Erreur reset Game Plan:", e);
@@ -1140,7 +1142,7 @@ export default function GamePlanModule() {
   if (!team) {
     return (
       <div className="gp">
-        <TeamBar teams={teams} teamId={teamId} onSelect={selectTeam} />
+        <TeamBar teams={teams.filter((t) => !isScoutTeam(t))} teamId={teamId} onSelect={selectTeam} />
         <div className="gp-empty">Crée d'abord une équipe dans « Mes Équipes » pour préparer un Game Plan.</div>
         <style jsx>{styles}</style>
       </div>
@@ -1157,7 +1159,7 @@ export default function GamePlanModule() {
 
   return (
     <div className="gp">
-      <TeamBar teams={teams} teamId={teamId} onSelect={selectTeam} />
+      <TeamBar teams={teams.filter((t) => !isScoutTeam(t))} teamId={teamId} onSelect={selectTeam} />
 
       <div className="gp-hero">
         <div>
@@ -1165,7 +1167,7 @@ export default function GamePlanModule() {
           <h2>
             Game <span>Plan</span>
           </h2>
-          <p>Prépare ton match, lie-le au calendrier, ajoute tes systèmes et ton scouting adverse.</p>
+          <p>Choisis le match, construis ton scouting à partir des données codées, puis prépare notre plan.</p>
         </div>
         <div className="gp-heroactions">
           <button
@@ -1207,16 +1209,22 @@ export default function GamePlanModule() {
         </div>
       )}
 
-      <div className="gp-tabs">
-        {(["systems", "scout", "montage", "rotation"] as const).map((k) => (
+      <div className="gp-tabs gp-mainsteps">
+        {(["match", "scout", "systems"] as const).map((k, index) => (
           <button key={k} type="button" className={activeTab === k ? "active" : ""} onClick={() => setActiveTab(k)}>
-            {k === "systems" ? "🏀 Plan de match" : k === "scout" ? "🔎 Scouting adverse" : k === "montage" ? "🎬 Montage vidéo" : "🔁 Rotation"}
+            <span>{index + 1}</span>{k === "match" ? "Match" : k === "scout" ? "Scouting adverse" : "Notre plan"}
           </button>
         ))}
+      </div>
+      <div className="gp-tools">
+        <span>Outils</span>
+        <button type="button" className={activeTab === "montage" ? "active" : ""} onClick={() => setActiveTab("montage")}>🎬 Montage</button>
+        <button type="button" className={activeTab === "rotation" ? "active" : ""} onClick={() => setActiveTab("rotation")}>🔁 Rotation</button>
       </div>
 
       <div className="gp-layout">
         <main>
+          {activeTab === "match" && (<>
           <section className="gp-matchbar">
             <div className="gp-matchsummary">
               <span className="gp-matchlogo">🏀</span>
@@ -1237,6 +1245,8 @@ export default function GamePlanModule() {
               </div>
             </div>
           </section>
+          <div className="gp-match-next"><div><b>Choisis ton adversaire scouté dans l'étape 2</b><span>Le roster, les matchs codés, les stats et les clips seront disponibles automatiquement.</span></div><button type="button" onClick={() => setActiveTab("scout")}>Continuer →</button></div>
+          </>)}
 
           {activeTab === "systems" && (
             <>
@@ -1362,7 +1372,13 @@ export default function GamePlanModule() {
           {activeTab === "scout" && (
             <GamePlanScoutingBoard
               value={gp.scouting as ScoutBoardValue}
-              onChange={(next) => patchScout(next as Partial<Scouting>)}
+              onChange={(next) => {
+                patchScout(next as Partial<Scouting>);
+                if (next.scoutTeamId) {
+                  const selectedScout = scoutTeams.find((item) => item.id === next.scoutTeamId);
+                  if (selectedScout?.name && selectedScout.name !== gp.opponent) patch({ opponent: selectedScout.name });
+                }
+              }}
               scoutTeams={scoutTeams}
               myTeam={team}
               date={gp.date}
@@ -2146,6 +2162,7 @@ const styles = `
   .gp-mainexport { background:#D4A24C; color:#1A0F12; }
   .gp-reset { background:rgba(255,255,255,.11); color:#fff; border:1px solid rgba(255,255,255,.25); }
   .gp-reset:hover { background:rgba(255,255,255,.18); }
+  .gp-mainsteps{display:grid!important;grid-template-columns:repeat(3,1fr)!important;gap:8px!important;border:0!important;background:#f7f1eb!important;padding:6px!important;border-radius:14px!important}.gp-mainsteps button{display:flex!important;align-items:center!important;justify-content:center!important;gap:8px!important;border:0!important;border-radius:10px!important;padding:11px!important}.gp-mainsteps button>span{width:23px;height:23px;display:grid;place-items:center;border-radius:50%;background:#eadfd5;color:#6B1A2C;font-size:.7rem;font-weight:950}.gp-mainsteps button.active{background:#6B1A2C!important;color:#fff!important;border:0!important}.gp-mainsteps button.active>span{background:#D4A24C;color:#fff}.gp-tools{display:flex;align-items:center;justify-content:flex-end;gap:6px;margin:-6px 0 12px}.gp-tools>span{font-size:.6rem;text-transform:uppercase;color:#9a8d85;font-weight:900;margin-right:3px}.gp-tools button{border:1px solid #e1d6cc;background:#fff;color:#6B1A2C;border-radius:8px;padding:6px 9px;font-size:.65rem;font-weight:850;cursor:pointer}.gp-tools button.active{background:#fff4dc;border-color:#D4A24C}.gp-match-next{display:flex;align-items:center;justify-content:space-between;gap:15px;border:1px solid #eadfce;background:#fffaf2;border-radius:14px;padding:13px 15px;margin-bottom:14px}.gp-match-next b,.gp-match-next span{display:block}.gp-match-next b{color:#6B1A2C}.gp-match-next span{font-size:.7rem;color:#877a72;margin-top:2px}.gp-match-next button{border:0;background:#6B1A2C;color:#fff;border-radius:9px;padding:9px 12px;font-weight:900;cursor:pointer}@media(max-width:650px){.gp-mainsteps{grid-template-columns:1fr!important}.gp-tools{justify-content:flex-start;margin-top:0}.gp-match-next{align-items:flex-start;flex-direction:column}}
   .gp-tabs { display:flex; gap:.55rem; margin-bottom:1rem; padding:.35rem; background:#FFF9F0; border:1px solid #eadfce; border-radius:16px; overflow-x:auto; }
   .gp-tabs button { border:none; background:transparent; padding:.75rem 1rem; cursor:pointer; font-weight:900; color:#7b6f69; border-radius:12px; transition:.18s ease; }
   .gp-tabs button:hover { background:#fff; color:#6B1A2C; }
@@ -2255,7 +2272,7 @@ const styles = `
   .gp-manual-details{border:1px solid #eadfce;border-radius:16px;background:#fff;overflow:hidden}.gp-manual-details>summary{list-style:none;cursor:pointer;display:flex;align-items:center;justify-content:space-between;gap:12px;padding:13px 15px;background:#fffaf4}.gp-manual-details>summary::-webkit-details-marker{display:none}.gp-manual-details>summary b,.gp-manual-details>summary span{display:block}.gp-manual-details>summary b{color:#6B1A2C}.gp-manual-details>summary span{color:#8a7b73;font-size:.7rem;margin-top:2px}.gp-manual-details>summary strong{color:#6B1A2C;font-size:.7rem;white-space:nowrap}.gp-manual-inside{padding:12px;background:#fff}
   .gp-keys-head{display:flex;justify-content:space-between;gap:14px;align-items:center;margin-bottom:10px}.gp-keys-head small{color:#D4A24C;font-weight:950;letter-spacing:.08em}.gp-keys-head h3{margin:2px 0;color:#6B1A2C;font-size:1.2rem}.gp-keys-head p{margin:0;color:#8a7b73;font-size:.78rem}.gp-keys-head>span{color:#16a34a;font-size:.7rem;font-weight:900}.gp-key-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;margin-bottom:12px}.gp-keycard{background:linear-gradient(180deg,#fff,#fffaf4);border:1px solid #eadfce;border-radius:17px;padding:13px;box-shadow:0 9px 24px rgba(60,30,20,.05)}.gp-keycard-head{display:flex;align-items:center;gap:8px;margin-bottom:8px}.gp-keycard-head>span{width:36px;height:36px;display:grid;place-items:center;background:#fff4de;border-radius:10px}.gp-keycard-head b,.gp-keycard-head small{display:block}.gp-keycard-head b{color:#6B1A2C}.gp-keycard-head small{color:#998a82;font-size:.65rem;margin-top:2px}.gp-keycard textarea{min-height:185px!important;background:#fff!important}.gp-keycard p{margin:5px 0 0;color:#a08f86;font-size:.64rem}.gp-objective-light{background:#fffdf9}
 
-.sb{display:grid;gap:12px}.sb-head{display:grid;grid-template-columns:1fr 1.3fr 1fr;align-items:center;background:#101012;color:#fff;border-radius:14px;overflow:hidden;min-height:78px;border-bottom:6px solid #d4a24c}.sb-club{display:flex;align-items:center;gap:10px;padding:12px 16px;font-size:.85rem}.sb-club.right{justify-content:flex-end}.sb-club img,.sb-club>span{width:48px;height:48px;object-fit:contain;border-radius:50%;background:#fff;display:grid;place-items:center}.sb-title{text-align:center}.sb-title strong,.sb-title small{display:block}.sb-title strong{font-size:1.18rem;letter-spacing:.05em}.sb-title small{color:#d4a24c;margin-top:4px}.sb-team-select{display:grid;grid-template-columns:120px minmax(220px,380px) 1fr;gap:9px;align-items:center;background:#fff7e8;border:1px solid #ead6ad;padding:10px 13px;border-radius:12px}.sb-team-select label{font-weight:950;color:#6b1a2c}.sb-team-select small{color:#8b7a70}.sb select,.sb textarea{border:1px solid #d9cec5;border-radius:8px;background:#fff;padding:8px;font:inherit}.sb-section{border:1px solid #d9d2cb;background:#fff;border-radius:12px;overflow:hidden}.sb-section>h3,.sb-section-head{margin:0;background:#171719;color:#fff;padding:8px 12px;font-size:.82rem;letter-spacing:.04em}.sb-section-head{display:flex;justify-content:space-between;align-items:center}.sb-section-head h3{margin:0;font-size:.82rem}.sb-section-head button,.sb-section-head select{background:#d4a24c;color:#171719;border:0;border-radius:7px;padding:6px 9px;font-weight:900}.sb-depth{display:grid;grid-template-columns:repeat(5,1fr)}.sb-depth>div{min-height:90px;border-right:1px solid #ddd;text-align:center}.sb-depth>div:last-child{border:0}.sb-depth b{display:block;background:#f0f0f0;padding:5px;font-size:.67rem}.sb-depth span{display:block;padding:5px 4px;font-size:.7rem;font-weight:800}.sb-depth select{width:calc(100% - 10px);margin:5px;font-size:.67rem}.sb-two{display:grid;grid-template-columns:1fr 1fr}.sb-two label{padding:10px}.sb-two label+label{border-left:1px solid #bbb}.sb-two b{display:block;color:#6b1a2c;margin-bottom:5px}.sb-two textarea{width:100%;min-height:180px;resize:vertical}.sb-statgrid{display:grid;grid-template-columns:repeat(3,1fr);gap:0;padding:10px}.sb-statgrid article{border-right:1px solid #bbb;padding:0 10px}.sb-statgrid article:last-child{border:0}.sb-statgrid article>div{display:flex}.sb-statgrid article select{flex:1;font-weight:900}.sb-statgrid article button{border:0;background:none;font-size:1.2rem}.sb-statgrid table{width:100%;border-collapse:collapse;font-size:.68rem;margin-top:5px}.sb-statgrid td{padding:4px;border-bottom:1px solid #eee}.sb-statgrid td:last-child{text-align:right}.sb-addstat{grid-column:1/-1;padding:16px;border:1px dashed #d4a24c;background:#fff8e8;border-radius:10px;font-weight:900;color:#6b1a2c}.sb-plays{padding:12px;display:grid;gap:14px}.sb-plays article>b{display:block;text-align:center;margin-bottom:6px}.sb-plays article>div{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}.sb-plays img{width:100%;aspect-ratio:4/3;object-fit:contain;border:1px solid #bbb;background:#fafafa}.sb-plays p{text-align:center;color:#888}.sb-player{display:grid;grid-template-columns:105px minmax(0,1fr) 190px;border-bottom:3px solid #171719;min-height:190px}.sb-player:last-child{border-bottom:0}.sb-player-photo{background:#eee;display:grid;place-items:center;overflow:hidden}.sb-player-photo img{width:100%;height:100%;object-fit:cover}.sb-player-photo span{font-size:2rem;font-weight:950;color:#6b1a2c}.sb-player-main{border-left:1px solid #aaa;border-right:1px solid #aaa}.sb-player-id{display:flex;justify-content:space-between;background:#4b4b4d;color:#fff;padding:6px 8px}.sb-player-id span{font-size:.68rem}.sb-player-stats{display:grid;grid-template-columns:repeat(9,1fr);background:#eee;border-bottom:1px solid #aaa}.sb-player-stats>div{text-align:center;padding:5px 2px;border-right:1px solid #ccc}.sb-player-stats small,.sb-player-stats b{display:block}.sb-player-stats small{font-size:.55rem}.sb-player-stats b{font-size:.72rem}.sb-player-edit{display:grid;grid-template-columns:170px 1fr auto;gap:7px;padding:8px}.sb-player-edit textarea{min-height:78px}.sb-player-edit button{border:0;background:#fff0f0;color:#9b1c2d;font-weight:900}.sb-shot{padding:8px}.sb-shot>b{display:block;text-align:center;font-size:.7rem}.sb-shot>div{display:grid;grid-template-columns:1fr 1fr;gap:4px;margin-top:6px}.sb-shot span{border:1px solid #ddd;border-radius:6px;padding:4px;text-align:center}.sb-shot small,.sb-shot strong,.sb-shot i{display:block;font-size:.55rem}.sb-shot strong{font-size:.78rem;color:#6b1a2c}.sb-shot i{font-style:normal;color:#888}@media(max-width:900px){.sb-head{grid-template-columns:1fr}.sb-club.right{justify-content:flex-start}.sb-title{order:-1;padding-top:10px}.sb-team-select,.sb-two,.sb-statgrid{grid-template-columns:1fr}.sb-depth{grid-template-columns:1fr 1fr}.sb-player{grid-template-columns:80px 1fr}.sb-shot{grid-column:1/-1}.sb-player-stats{grid-template-columns:repeat(5,1fr)}.sb-player-edit{grid-template-columns:1fr}}
+.sb{display:grid;gap:12px}.sb-head{display:grid;grid-template-columns:1fr 1.3fr 1fr;align-items:center;background:#101012;color:#fff;border-radius:14px;overflow:hidden;min-height:78px;border-bottom:6px solid #d4a24c}.sb-club{display:flex;align-items:center;gap:10px;padding:12px 16px;font-size:.85rem}.sb-club.right{justify-content:flex-end}.sb-club img,.sb-club>span{width:48px;height:48px;object-fit:contain;border-radius:50%;background:#fff;display:grid;place-items:center}.sb-title{text-align:center}.sb-title strong,.sb-title small{display:block}.sb-title strong{font-size:1.18rem;letter-spacing:.05em}.sb-title small{color:#d4a24c;margin-top:4px}.sb-team-select{display:grid;grid-template-columns:120px minmax(220px,380px) 1fr;gap:9px;align-items:center;background:#fff7e8;border:1px solid #ead6ad;padding:10px 13px;border-radius:12px}.sb-team-select label{font-weight:950;color:#6b1a2c}.sb-team-select small{color:#8b7a70}.sb select,.sb textarea{border:1px solid #d9cec5;border-radius:8px;background:#fff;padding:8px;font:inherit}.sb-section{border:1px solid #d9d2cb;background:#fff;border-radius:12px;overflow:hidden}.sb-section>h3,.sb-section-head{margin:0;background:#171719;color:#fff;padding:8px 12px;font-size:.82rem;letter-spacing:.04em}.sb-section-head{display:flex;justify-content:space-between;align-items:center}.sb-section-head h3{margin:0;font-size:.82rem}.sb-section-head button,.sb-section-head select{background:#d4a24c;color:#171719;border:0;border-radius:7px;padding:6px 9px;font-weight:900}.sb-depth{display:grid;grid-template-columns:repeat(5,1fr)}.sb-depth>div{min-height:90px;border-right:1px solid #ddd;text-align:center}.sb-depth>div:last-child{border:0}.sb-depth b{display:block;background:#f0f0f0;padding:5px;font-size:.67rem}.sb-depth span{display:block;padding:5px 4px;font-size:.7rem;font-weight:800}.sb-depth select{width:calc(100% - 10px);margin:5px;font-size:.67rem}.sb-two{display:grid;grid-template-columns:1fr 1fr}.sb-three{display:grid;grid-template-columns:repeat(3,1fr)}.sb-two label,.sb-three label{padding:10px}.sb-two label+label,.sb-three label+label{border-left:1px solid #bbb}.sb-two b,.sb-three b{display:block;color:#6b1a2c;margin-bottom:5px}.sb-two textarea,.sb-three textarea{width:100%;min-height:160px;resize:vertical;box-sizing:border-box}.sb-statgrid{display:grid;grid-template-columns:repeat(3,1fr);gap:0;padding:10px}.sb-statgrid article{border-right:1px solid #bbb;padding:0 10px}.sb-statgrid article:last-child{border:0}.sb-statgrid article>div{display:grid;grid-template-columns:minmax(0,1fr) 82px 28px;gap:4px}.sb-statgrid article select{min-width:0;font-weight:900}.sb-statgrid article button{border:0;background:none;font-size:1.2rem}.sb-statgrid table{width:100%;border-collapse:collapse;font-size:.68rem;margin-top:5px}.sb-statgrid td{padding:4px;border-bottom:1px solid #eee}.sb-statgrid td:last-child{text-align:right}.sb-addstat{grid-column:1/-1;padding:16px;border:1px dashed #d4a24c;background:#fff8e8;border-radius:10px;font-weight:900;color:#6b1a2c}.sb-plays{padding:12px;display:grid;gap:14px}.sb-plays article>b{display:block;text-align:center;margin-bottom:6px}.sb-plays article>div{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}.sb-plays img{width:100%;aspect-ratio:4/3;object-fit:contain;border:1px solid #bbb;background:#fafafa}.sb-plays p{text-align:center;color:#888}.sb-player{display:grid;grid-template-columns:105px minmax(0,1fr) 190px;border-bottom:3px solid #171719;min-height:190px}.sb-player:last-child{border-bottom:0}.sb-player-photo{background:#eee;display:grid;place-items:center;overflow:hidden}.sb-player-photo img{width:100%;height:100%;object-fit:cover}.sb-player-photo span{font-size:2rem;font-weight:950;color:#6b1a2c}.sb-player-main{border-left:1px solid #aaa;border-right:1px solid #aaa}.sb-player-id{display:flex;justify-content:space-between;background:#4b4b4d;color:#fff;padding:6px 8px}.sb-player-id span{font-size:.68rem}.sb-player-stats{display:grid;grid-template-columns:repeat(9,1fr);background:#eee;border-bottom:1px solid #aaa}.sb-player-stats>div{text-align:center;padding:5px 2px;border-right:1px solid #ccc}.sb-player-stats small,.sb-player-stats b{display:block}.sb-player-stats small{font-size:.55rem}.sb-player-stats b{font-size:.72rem}.sb-player-edit{display:grid;grid-template-columns:230px 1fr auto;gap:7px;padding:8px}.sb-profiles{display:grid;gap:5px}.sb-player-edit textarea{min-height:78px}.sb-player-edit button{border:0;background:#fff0f0;color:#9b1c2d;font-weight:900}.sb-shot{padding:8px}.sb-shot>b{display:block;text-align:center;font-size:.7rem}.sb-shot>div{display:grid;grid-template-columns:1fr 1fr;gap:4px;margin-top:6px}.sb-shot span{border:1px solid #ddd;border-radius:6px;padding:4px;text-align:center}.sb-shot small,.sb-shot strong,.sb-shot i{display:block;font-size:.55rem}.sb-shot strong{font-size:.78rem;color:#6b1a2c}.sb-shot i{font-style:normal;color:#888}@media(max-width:900px){.sb-head{grid-template-columns:1fr}.sb-club.right{justify-content:flex-start}.sb-title{order:-1;padding-top:10px}.sb-team-select,.sb-two,.sb-three,.sb-statgrid{grid-template-columns:1fr}.sb-depth{grid-template-columns:1fr 1fr}.sb-player{grid-template-columns:80px 1fr}.sb-shot{grid-column:1/-1}.sb-player-stats{grid-template-columns:repeat(5,1fr)}.sb-player-edit{grid-template-columns:1fr}}
 
   /* ===== Game Plan 2026 — version légère ===== */
   .gp-hero{background:#fff;color:#1f171a;border:1px solid #eadfce;border-left:5px solid #6B1A2C;border-radius:16px;padding:1rem 1.15rem;box-shadow:none}

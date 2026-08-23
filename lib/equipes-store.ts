@@ -123,6 +123,9 @@ function normalizeTeamRow(row: any): Team {
     isShared: Boolean(data.isShared),
     collaborationRole: data.collaborationRole ?? null,
     collaborationPermissions: data.collaborationPermissions ?? null,
+    teamType: row.team_type ?? data.teamType ?? data.team_type ?? "coached",
+    isScoutTeam: Boolean((row.team_type ?? data.teamType ?? data.team_type) === "scout" || data.isScoutTeam === true || data.scout === true),
+    scout: Boolean((row.team_type ?? data.teamType ?? data.team_type) === "scout" || data.scout === true),
     name: row.name ?? data.name ?? "",
     cat: row.category ?? data.cat ?? data.category ?? "",
     category: row.category ?? data.category ?? data.cat ?? "",
@@ -274,6 +277,7 @@ function teamPayload(team: Team, userId: string) {
   return {
     id: isUuid(team.id) ? team.id : undefined,
     user_id: userId,
+    team_type: String((team as any).teamType ?? (team as any).team_type ?? ((team as any).isScoutTeam || (team as any).scout ? "scout" : "coached")),
     name: team.name ?? "",
     club_name: (team as any).clubName ?? (team as any).club_name ?? team.name ?? "",
     category: (team as any).category ?? (team as any).cat ?? "",

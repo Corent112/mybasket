@@ -112,8 +112,25 @@ async function getLimitResult(options: {
     canCreate: normalizedLimit === null ? true : current < normalizedLimit };
 }
 
-export async function getTeamLimitForCurrentUser() {
-  return getLimitResult({ limitKey: "max_teams", table: "teams", ownerColumn: "user_id" });
+export async function getTeamLimitForCurrentUser(): Promise<LimitResult> {
+  const { supabase, user, profile, plan, totalAccess } = await getContext();
+  if (!user) return { userId: null, limit: 0, count: 0, canCreate: false };
+  if (isAdminRole(profile?.platform_role)) return { userId: user.id, limit: null, count: 0, canCreate: true };
+  if (!plan) return { userId: user.id, limit: 0, count: 0, canCreate: false };
+
+  const raw = Number((plan as Record<string, unknown>).max_teams);
+  const normalizedLimit = Number.isFinite(raw) ? (raw < 0 ? null : raw) : null;
+  if (totalAccess && normalizedLimit === null) return { userId: user.id, limit: null, count: 0, canCreate: true };
+
+  // Les équipes scoutées sont des bases d'adversaires : elles ne consomment jamais max_teams.
+  const { count, error } = await supabase
+    .from("teams")
+    .select("*", { count: "exact", head: true })
+    .eq("user_id", user.id)
+    .neq("team_type", "scout");
+  if (error) return { userId: user.id, limit: normalizedLimit, count: 0, canCreate: false };
+  const current = count ?? 0;
+  return { userId: user.id, limit: normalizedLimit, count: current, canCreate: normalizedLimit === null ? true : current < normalizedLimit };
 }
 export async function canCreateTeam() { return (await getTeamLimitForCurrentUser()).canCreate; }
 export async function getPlaybookLimitForCurrentUser() {

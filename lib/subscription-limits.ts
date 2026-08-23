@@ -32,7 +32,8 @@ export async function canCreateTeam(userId: string) {
   const { count, error } = await supabase
     .from("teams")
     .select("*", { count: "exact", head: true })
-    .eq("user_id", userId);
+    .eq("user_id", userId)
+    .neq("team_type", "scout");
 
   if (error) {
     console.error("Erreur comptage équipes :", error.message);

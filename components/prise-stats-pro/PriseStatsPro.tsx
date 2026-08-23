@@ -14,7 +14,8 @@
 
 import { type MouseEvent, useEffect, useRef, useState } from 'react';
 import { createClient } from "@/lib/supabase/client";
-import { getTeams } from "@/lib/equipes-store";
+import { getTeams, saveTeam } from "@/lib/equipes-store";
+import { emptyTeam } from "@/types/player";
 import {
   saveLiveMatch,
   ensureLiveMatch,
@@ -165,7 +166,7 @@ function readTeamsFromLocalStorage(): { id: string; name: string; players: Playe
   }
 }
 
-async function readTeams(): Promise<{ id: string; name: string; players: Player[] }[]> {
+async function readTeams(): Promise<{ id: string; name: string; players: Player[]; teamType?: string; isScoutTeam?: boolean }[]> {
   if (typeof window === 'undefined') return [];
 
   try {
@@ -180,6 +181,8 @@ async function readTeams(): Promise<{ id: string; name: string; players: Player[
       .map((team: any) => ({
         id: String(team.id || ''),
         name: String(team.name || team.club_name || 'Équipe').toUpperCase(),
+        teamType: String(team.teamType ?? team.team_type ?? ((team.isScoutTeam || team.scout) ? 'scout' : 'coached')),
+        isScoutTeam: Boolean(team.isScoutTeam || team.scout || String(team.teamType ?? team.team_type ?? '').toLowerCase() === 'scout'),
         players: (team.players || [])
           .map((player: any) =>
             normalizePlayer({
@@ -200,10 +203,10 @@ async function readTeams(): Promise<{ id: string; name: string; players: Player[
           .sort((a: Player, b: Player) => a.num - b.num),
       }))
       .filter(
-        (team: { id: string; players: Player[] }) =>
+        (team: { id: string; players: Player[]; teamType?: string; isScoutTeam?: boolean }) =>
           team.id &&
           /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(team.id) &&
-          team.players.length > 0,
+          (team.players.length > 0 || team.isScoutTeam === true || String(team.teamType || '').toLowerCase() === 'scout'),
       );
   } catch (error) {
     console.error('Erreur chargement équipes MyBasket prise stats :', error);
@@ -671,7 +674,26 @@ function Av({ p, cls }: { p?: Player; cls?: string }) {
 
 /* ============================ Composant ============================ */
 export default function PriseStatsProPage() {
-  const [teams, setTeams] = useState<{ id: string; name: string; players: Player[] }[]>([]);
+  const [teams, setTeams] = useState<{ id: string; name: string; players: Player[]; teamType?: string; isScoutTeam?: boolean }[]>([]);
+  const [analysisScope, setAnalysisScope] = useState<'coached' | 'scout'>('coached');
+  const quickCreateScoutTeam = async () => {
+    const name = window.prompt("Nom de l'équipe scoutée (ex : AS Monaco)")?.trim();
+    if (!name) return;
+    const category = window.prompt("Catégorie / niveau (optionnel)", "Senior")?.trim() || "SCOUT";
+    try {
+      const base = emptyTeam();
+      const created = await saveTeam({ ...base, id: '', name, cat: category, categorieLabel: category, teamType: 'scout', isScoutTeam: true, scout: true, players: [] } as any);
+      const loaded = await readTeams();
+      setTeams(loaded);
+      setAnalysisScope('scout');
+      setTeamId(created.id);
+      setStarters([]);
+      flash("Équipe scoutée créée. Ajoute maintenant son effectif dans Mes équipes.");
+    } catch (error) {
+      console.error('Création équipe scoutée LiveStats :', error);
+      flash("Création de l'équipe scoutée impossible");
+    }
+  };
   const [screen, setScreen] = useState<'setup' | 'live' | 'box'>('setup');
   // Deux usages volontairement séparés :
   // - live : codage ultra rapide pendant le match ;
@@ -1299,6 +1321,7 @@ export default function PriseStatsProPage() {
     teamId: activeTeamId || teamId,
     teamName,
     opponent,
+    analysisScope,
     date,
     home,
     codingMode,
@@ -1475,6 +1498,7 @@ export default function PriseStatsProPage() {
           })),
       );
       setTeamName(String(s.teamName || team.name));
+      setAnalysisScope(s.analysisScope === 'scout' || team.isScoutTeam || String(team.teamType || '').toLowerCase() === 'scout' ? 'scout' : 'coached');
       setOpponent(String(s.opponent || ''));
       setDate(String(s.date || date));
       setHome(s.home ?? true);
@@ -3679,16 +3703,27 @@ export default function PriseStatsProPage() {
       active = false;
     };
   }, []);
+  const coachedTeams = teams.filter((team) => !team.isScoutTeam && String(team.teamType || '').toLowerCase() !== 'scout');
+  const scoutTeams = teams.filter((team) => team.isScoutTeam || String(team.teamType || '').toLowerCase() === 'scout');
+  const setupTeams = analysisScope === 'scout' ? scoutTeams : coachedTeams;
+
   useEffect(() => {
     if (!teams.length) return;
+    const params = new URLSearchParams(window.location.search);
+    const requestedScout = params.get('scoutTeamId');
+    if (requestedScout && scoutTeams.some((team) => team.id === requestedScout)) {
+      setAnalysisScope('scout');
+      setTeamId(requestedScout);
+      setStarters([]);
+      return;
+    }
 
-    const currentStillExists = teams.some((team) => team.id === teamId);
-
+    const currentStillExists = setupTeams.some((team) => team.id === teamId);
     if (!teamId || !currentStillExists) {
-      setTeamId(teams[0].id);
+      setTeamId(setupTeams[0]?.id || '');
       setStarters([]);
     }
-  }, [teams, teamId]);
+  }, [teams, teamId, analysisScope]);
 
   // V10 · Raccourcis clavier : ESPACE = play/pause vidéo, B = chrono start/stop,
   // SHIFT + flèche = reculer/avancer la vidéo. (Compat V7 : Tab+flèche marche aussi.)
@@ -4174,7 +4209,7 @@ export default function PriseStatsProPage() {
     Object.values(perQ).reduce((total, item) => total + item[key], 0);
 
   /* -------- création du match -------- */
-  const selTeam = teams.find((t) => t.id === teamId);
+  const selTeam = setupTeams.find((t) => t.id === teamId);
   const setupRoster = selTeam?.players || [];
   const selectedMatchRoster = setupRoster.filter((player) => matchPlayerIds.includes(player.id));
   const matchNumberOf = (player: Player) => Number(matchJerseyNumbers[player.id] ?? player.num);
@@ -5259,6 +5294,21 @@ export default function PriseStatsProPage() {
                 </div>
               </div>
 
+              <section className="cm-card cm-purpose-card">
+                <div className="cm-card-t">🎯 QUE VEUX-TU CODER ?</div>
+                <div className="cm-purpose">
+                  <button type="button" className={analysisScope === 'coached' ? 'on' : ''} onClick={() => { setAnalysisScope('coached'); setTeamId(coachedTeams[0]?.id || ''); setOpponent(''); }}>
+                    <span>🏀</span><b>Mon équipe</b><small>Coder un match de ton équipe.</small>
+                  </button>
+                  <button type="button" className={analysisScope === 'scout' ? 'on scout' : ''} onClick={() => { setAnalysisScope('scout'); setTeamId(scoutTeams[0]?.id || ''); setOpponent(''); }}>
+                    <span>👁️</span><b>Scouting adverse</b><small>Observer une équipe pour préparer un futur match.</small>
+                  </button>
+                </div>
+                {analysisScope === 'scout' && scoutTeams.length === 0 && (
+                  <div className="cm-scout-empty">Aucune équipe scoutée. <button type="button" onClick={quickCreateScoutTeam}>＋ Créer ici</button><button type="button" onClick={() => { window.location.href='/mon-compte?tab=equipes&teamType=scout'; }}>Gérer les équipes scoutées</button></div>
+                )}
+              </section>
+
               <section className="cm-card">
                 <div className="cm-card-t">⚡ MODE DE CODAGE</div>
                 <div className="cm-video">
@@ -5354,16 +5404,16 @@ export default function PriseStatsProPage() {
                 <div className="cm-form">
                   <label className="cm-field">Date du match
                     <div className="cm-input"><span>📅</span><input type="date" value={date} onChange={(e) => setDate(e.target.value)} /></div></label>
-                  <label className="cm-field">Équipe Supabase
+                  <label className="cm-field">{analysisScope === 'scout' ? 'Équipe observée' : 'Équipe Supabase'}
                     <div className="cm-input"><span>🅧</span>
                       <select value={teamId} onChange={(e) => { setTeamId(e.target.value); setStarters([]); }}>
-                        {teams.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
+                        {setupTeams.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
                       </select>
                     </div>
-                    <span className="cm-auto">↳ depuis <b>Mes équipes</b> : joueurs, numéros, postes, photos et staff récupérés automatiquement</span>
+                    <span className="cm-auto">↳ depuis <b>{analysisScope === 'scout' ? 'Équipes scoutées' : 'Mes équipes'}</b> : joueurs, numéros, postes et photos récupérés automatiquement</span>
                   </label>
-                  <label className="cm-field">Adversaire
-                    <div className="cm-input"><input placeholder="Nom de l'adversaire" value={opponent} onChange={(e) => setOpponent(e.target.value)} /></div></label>
+                  <label className="cm-field">{analysisScope === 'scout' ? 'Adversaire du match observé' : 'Adversaire'}
+                    <div className="cm-input"><input placeholder={analysisScope === 'scout' ? "Équipe affrontée par l'adversaire scouté" : "Nom de l'adversaire"} value={opponent} onChange={(e) => setOpponent(e.target.value)} /></div></label>
                   <div className="cm-field">Lieu du match
                     <div className="cm-venue"><button type="button" className={`cm-v ${home ? 'on' : ''}`} onClick={() => setHome(true)}>🏠 DOMICILE</button><button type="button" className={`cm-v ${!home ? 'on' : ''}`} onClick={() => setHome(false)}>🏟 EXTÉRIEUR</button></div></div>
                 </div>
@@ -5519,7 +5569,7 @@ export default function PriseStatsProPage() {
                   );
                 })}
                 {setupRoster.length === 0 && (
-                  <span className="cnt">Aucun joueur Supabase dans cette équipe.</span>
+                  <div className="cm-no-roster"><span className="cnt">Aucun joueur dans cette équipe.</span>{analysisScope === 'scout' && <button type="button" onClick={() => { window.location.href='/mon-compte?tab=equipes&teamType=scout'; }}>＋ Ajouter l'effectif scout</button>}</div>
                 )}
               </div>
 
@@ -8085,6 +8135,8 @@ function Style() {
       .cm-p-jersey input { width: 42px; height: 28px; border: 1px solid rgba(212,162,76,.45); border-radius: 8px; background: rgba(5,8,15,.72); color: var(--gold); text-align: center; font-size: 14px; font-weight: 950; outline: none; }
       .cm-p-jersey input:focus { border-color: var(--gold); box-shadow: 0 0 0 2px rgba(212,162,76,.14); }
       .cm-p-pos { font-size: 9.5px; font-weight: 800; margin-top: 3px; color: var(--blue); }
+.cm-no-roster{grid-column:1/-1;display:flex;align-items:center;justify-content:center;gap:8px;padding:12px}.cm-no-roster button{border:1px solid #D4A24C;background:transparent;color:#D4A24C;border-radius:7px;padding:6px 8px;font-weight:900;cursor:pointer}
+            .cm-purpose{display:grid;grid-template-columns:1fr 1fr;gap:9px}.cm-purpose>button{position:relative;display:grid;grid-template-columns:34px 1fr;column-gap:9px;align-items:center;text-align:left;border:1px solid #2b3850;background:#101827;color:#fff;border-radius:12px;padding:11px;cursor:pointer}.cm-purpose>button>span{grid-row:1/3;font-size:22px}.cm-purpose>button>b{font-size:11px}.cm-purpose>button>small{color:#8190a7;font-size:8px}.cm-purpose>button.on{border-color:#D4A24C;background:rgba(212,162,76,.10)}.cm-purpose>button.scout.on{border-color:#8c5bd9;background:rgba(140,91,217,.10)}.cm-scout-empty{margin-top:9px;padding:10px;border:1px dashed #46536a;border-radius:10px;color:#96a2b4;font-size:9px}.cm-scout-empty button{margin-left:7px;border:0;background:#D4A24C;color:#111827;border-radius:7px;padding:6px 8px;font-weight:900;cursor:pointer}@media(max-width:760px){.cm-purpose{grid-template-columns:1fr}}
       .cm-roster-help { margin: 8px 0 10px; padding: 9px 11px; border: 1px solid rgba(212,162,76,.22); border-radius: 10px; background: rgba(212,162,76,.06); font-size: 10px; line-height: 1.45; color: #aab5c7; }
       .cm-match-roster { max-height: 310px; overflow: auto; padding-right: 3px; }
       .cm-p.squad { border-color: rgba(212,162,76,.58); background: rgba(212,162,76,.08); }
