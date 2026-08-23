@@ -2298,6 +2298,22 @@ const styles = `
   @media(max-width:720px){.gp-matchcontrols,.gp-analysis-grid,.gp-player-note-grid,.gp-import-grid{grid-template-columns:1fr}.gp-plan-toolbar,.gp-scout-head,.gp-section-title{align-items:flex-start;flex-direction:column}.gp-plan-toolbar>div:last-child{width:100%}.gp-plan-toolbar button{flex:1}.gp-thread{grid-template-columns:1fr}.gp-key-grid{grid-template-columns:1fr}}
 
   @media (max-width:1200px){ .gp-layout{ grid-template-columns:1fr; } .gp-preview{ position:static; } .gp-match-notes{grid-template-columns:1fr 1fr;} .gp-matchstrip{grid-template-columns:1fr;} .gp-matchactions{justify-content:flex-start;} }
+  
+  /* 2026-08-24 · champs Game Plan pleine largeur */
+  .gp-field,.gp-field.block,.gp-endblock .gp-field{width:100%;min-width:0}
+  .gp-key-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;align-items:stretch}
+  .gp-keycard{min-width:0;width:100%;display:flex;flex-direction:column;box-sizing:border-box}
+  .gp-keycard :global(textarea){display:block!important;width:100%!important;max-width:none!important;min-width:0!important;min-height:160px!important;flex:1;box-sizing:border-box!important}
+  .gp-endblock{width:100%;box-sizing:border-box}
+  .gp-endblock :global(textarea),.gp-field.block :global(textarea){display:block!important;width:100%!important;max-width:none!important;min-width:0!important;box-sizing:border-box!important}
+  .gp-thread{width:100%}
+  .gp-thread :global(input){width:100%!important;max-width:none!important;box-sizing:border-box!important}
+  .gp-match-notes>*,.gp-plan-objectives>*,.gp-analysis-grid>*{min-width:0}
+  .gp-match-notes :global(textarea),.gp-plan-box :global(textarea),.gp-analysis-grid :global(textarea),.gp-player-note-grid :global(textarea){
+    display:block!important;width:100%!important;max-width:none!important;min-width:0!important;box-sizing:border-box!important;
+  }
+  @media(max-width:900px){.gp-key-grid{grid-template-columns:1fr}}
+
   @media (max-width:760px){
     .gp-hero,.gp-grid2,.gp-grid4,.gp-actioncards,.gp-systemgrid,.gp-systemgrid.small { grid-template-columns:1fr; display:grid; }
     .gp-hero { display:grid; }

@@ -5528,32 +5528,65 @@ export default function PriseStatsProPage() {
               </div>
 
               <div className="cm-roster-help">
-                Choisis les joueurs présents sur la feuille de match, maximum 12.
-                Seuls eux apparaîtront ensuite dans le codage et le boxscore.
+                Coche les joueurs présents sur la feuille de match (12 maximum).
+                Les joueurs cochés apparaissent juste dessous, puis tu choisis le 5 majeur parmi eux.
               </div>
 
-              <div className="cm-players cm-match-roster">
+              <div className="cm-roster-checklist">
                 {setupRoster.map((p) => {
                   const selected = matchPlayerIds.includes(p.id);
-                  const starter = starters.includes(p.id);
                   return (
-                    <div key={p.id} className={`cm-p ${selected ? 'on squad' : ''}`}>
+                    <label key={p.id} className={`cm-roster-line ${selected ? 'on' : ''}`}>
+                      <input
+                        type="checkbox"
+                        checked={selected}
+                        onChange={() => toggleMatchPlayer(p.id)}
+                      />
+                      <span className="cm-roster-line-num">#{matchNumberOf(p)}</span>
+                      <span className="cm-roster-line-name">{p.name}</span>
+                      <span className="cm-roster-line-pos">{p.pos || '—'}</span>
+                    </label>
+                  );
+                })}
+                {setupRoster.length === 0 && (
+                  <div className="cm-no-roster">
+                    <span className="cnt">Aucun joueur dans cette équipe.</span>
+                    {analysisScope === 'scout' && (
                       <button
                         type="button"
-                        className={`cm-squad-toggle ${selected ? 'selected' : ''}`}
-                        onClick={() => toggleMatchPlayer(p.id)}
+                        onClick={() => { window.location.href='/mon-compte?tab=equipes&teamType=scout'; }}
                       >
-                        {selected ? '✓' : '+'}
+                        ＋ Ajouter l'effectif scout
                       </button>
-                      <div className="cm-p-num">{matchNumberOf(p)}</div>
-                      <div className="cm-p-av"><Av p={{ ...p, num: matchNumberOf(p) }} /></div>
-                      <div className="cm-p-nm">{p.name}</div>
-                      <div className="cm-p-pos">
-                        {selected ? (starter ? '★ TITULAIRE' : '● BANC') : 'HORS MATCH'}
-                      </div>
-                      {selected && (
-                        <label className="cm-p-jersey">
-                          <span>N° DU JOUR</span>
+                    )}
+                  </div>
+                )}
+              </div>
+
+              {selectedMatchRoster.length > 0 && (
+                <div className="cm-selected-roster">
+                  <div className="cm-selected-roster-title">
+                    <b>Effectif du match</b>
+                    <span>{selectedMatchRoster.length} / 12</span>
+                  </div>
+                  <div className="cm-selected-roster-cards">
+                    {selectedMatchRoster.map((p) => (
+                      <article key={p.id} className="cm-selected-player">
+                        <button
+                          type="button"
+                          className="cm-selected-remove"
+                          onClick={() => toggleMatchPlayer(p.id)}
+                          aria-label={`Retirer ${p.name}`}
+                        >
+                          ×
+                        </button>
+                        <Av p={{ ...p, num: matchNumberOf(p) }} />
+                        <div>
+                          <b>#{matchNumberOf(p)} {p.name}</b>
+                          <small>{p.pos || 'Poste non renseigné'}</small>
+                        </div>
+                        <label className="cm-selected-number">
+                          <span>N°</span>
                           <input
                             type="text"
                             inputMode="numeric"
@@ -5564,14 +5597,11 @@ export default function PriseStatsProPage() {
                             aria-label={`Numéro de maillot du jour de ${p.name}`}
                           />
                         </label>
-                      )}
-                    </div>
-                  );
-                })}
-                {setupRoster.length === 0 && (
-                  <div className="cm-no-roster"><span className="cnt">Aucun joueur dans cette équipe.</span>{analysisScope === 'scout' && <button type="button" onClick={() => { window.location.href='/mon-compte?tab=equipes&teamType=scout'; }}>＋ Ajouter l'effectif scout</button>}</div>
-                )}
-              </div>
+                      </article>
+                    ))}
+                  </div>
+                </div>
+              )}
 
               <div className="cm-starters-head">
                 <div className="cm-5t">
@@ -8226,6 +8256,16 @@ function Style() {
       .prj-open { border: 1px solid var(--gold); background: rgba(212,162,76,.12); color: var(--gold); border-radius: 8px; padding: 7px 12px; font-size: 12px; font-weight: 900; cursor: pointer; white-space: nowrap; }
       .prj-del { border: 1px solid var(--border); background: var(--panel); color: var(--red); border-radius: 8px; padding: 7px 10px; font-size: 12px; cursor: pointer; }
       .prj-open:disabled, .prj-del:disabled { opacity: .5; cursor: not-allowed; }
+      /* 2026-08-24 · sélection compacte de l'effectif du match */
+      .cm-roster-checklist{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px;max-height:230px;overflow:auto;padding:2px}
+      .cm-roster-line{display:grid;grid-template-columns:22px 48px minmax(0,1fr) 72px;align-items:center;gap:7px;border:1px solid #29364d;background:#101827;border-radius:9px;padding:7px 9px;cursor:pointer;min-width:0}
+      .cm-roster-line:hover{border-color:#465570}.cm-roster-line.on{border-color:rgba(212,162,76,.65);background:rgba(212,162,76,.09)}
+      .cm-roster-line input{width:16px;height:16px;accent-color:var(--gold)}
+      .cm-roster-line-num{color:var(--gold);font-size:10px;font-weight:950}.cm-roster-line-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:10px;font-weight:850}.cm-roster-line-pos{text-align:right;color:#7e8ca3;font-size:9px}
+      .cm-selected-roster{margin-top:12px;border-top:1px solid var(--border);padding-top:12px}.cm-selected-roster-title{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px}.cm-selected-roster-title b{font-size:11px;color:var(--gold);text-transform:uppercase}.cm-selected-roster-title span{font-size:9px;color:#8794a8;font-weight:900}
+      .cm-selected-roster-cards{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:7px}.cm-selected-player{position:relative;display:grid;grid-template-columns:34px minmax(0,1fr) 46px;align-items:center;gap:7px;border:1px solid #2b3850;background:#101827;border-radius:10px;padding:8px;min-width:0}.cm-selected-player>.av{width:32px!important;height:32px!important}.cm-selected-player b,.cm-selected-player small{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.cm-selected-player b{font-size:9.5px}.cm-selected-player small{font-size:8px;color:#77869d;margin-top:2px}.cm-selected-number{display:grid;grid-template-columns:auto 1fr;align-items:center;gap:3px}.cm-selected-number span{font-size:7px;color:#7f8da4;font-weight:900}.cm-selected-number input{width:31px;height:28px;border:1px solid rgba(212,162,76,.45);border-radius:7px;background:#080d17;color:var(--gold);text-align:center;font-weight:950}.cm-selected-remove{position:absolute;top:3px;right:3px;width:18px;height:18px;border:0;border-radius:50%;background:transparent;color:#6f7d91;font-size:13px;cursor:pointer}.cm-selected-remove:hover{background:rgba(239,68,68,.12);color:#f87171}
+      @media(max-width:760px){.cm-roster-checklist{grid-template-columns:1fr}.cm-selected-roster-cards{grid-template-columns:1fr 1fr}}
+
       @media (max-width: 1000px) {
         .cm-body { grid-template-columns: 1fr; }
         .cm-h1 { font-size: 34px; }

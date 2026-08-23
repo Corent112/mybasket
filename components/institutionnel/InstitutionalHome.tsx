@@ -33,6 +33,7 @@ export default function InstitutionalHome() {
   const [access, setAccess] = useState<AccessPayload | null>(null);
   const [loading, setLoading] = useState(true);
   const [creating, setCreating] = useState(false);
+  const [creatingStructure, setCreatingStructure] = useState(false);
   const [form, setForm] = useState({
     structure_type: "committee" as StructureType,
     name: "",
@@ -60,38 +61,77 @@ export default function InstitutionalHome() {
   useEffect(() => { void reload(); }, []);
 
   async function createStructure() {
+    if (creatingStructure) return;
     if (!form.name.trim()) return alert("Le nom officiel est obligatoire.");
-    const { data: { user } } = await supabase.auth.getUser();
-    if (!user) return;
+    setCreatingStructure(true);
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) {
+        alert("Ta session a expiré. Reconnecte-toi puis réessaie.");
+        return;
+      }
 
-    const { data, error } = await supabase
-      .from("institutional_structures")
-      .insert({
-        structure_type: form.structure_type,
-        name: form.name.trim(),
-        short_name: form.short_name.trim() || null,
-        ffbb_code: form.ffbb_code.trim() || null,
-        city: form.city.trim() || null,
-        season_label: form.season_label.trim() || null,
-        email: form.email.trim() || null,
-        phone: form.phone.trim() || null,
+      const { data, error } = await supabase
+        .from("institutional_structures")
+        .insert({
+          structure_type: form.structure_type,
+          name: form.name.trim(),
+          short_name: form.short_name.trim() || null,
+          ffbb_code: form.ffbb_code.trim() || null,
+          city: form.city.trim() || null,
+          season_label: form.season_label.trim() || null,
+          email: form.email.trim() || null,
+          phone: form.phone.trim() || null,
+          created_by: user.id,
+        })
+        .select("id")
+        .single();
+
+      if (error || !data?.id) {
+        alert(error?.message || "Création de la structure impossible.");
+        return;
+      }
+
+      const member = await supabase.from("institutional_members").insert({
+        structure_id: data.id,
+        user_id: user.id,
+        role: "owner",
+        status: "active",
+        permissions: { all: true },
+      });
+      if (member.error) {
+        // La structure reste conservée : aucune suppression automatique de donnée.
+        alert(`Structure créée, mais ton rôle propriétaire n'a pas pu être enregistré : ${member.error.message}`);
+        return;
+      }
+
+      // Prépare immédiatement les documents de départ. Ils restent éditables et
+      // les modèles complets sont générés dans l'onglet Documents.
+      const starterDocuments = [
+        ["player_followup", "Fiche de suivi joueur", "Formation joueur"],
+        ["coach_evaluation", "Fiche d’évaluation cadre", "Formation cadres"],
+        ["parental_authorization", "Autorisation parentale", "Stage / sélection"],
+        ["stage_summary", "Fiche récapitulative stage / sélection", "Stage / sélection"],
+      ].map(([template_key, title, category]) => ({
+        structure_id: data.id,
+        title,
+        document_type: "starter_template",
+        content: {
+          template_key,
+          category,
+          status: "ready_to_fill",
+          prefilled: true,
+        },
         created_by: user.id,
-      })
-      .select("id")
-      .single();
+      }));
 
-    if (error) return alert(error.message);
+      const seed = await supabase.from("institutional_documents").insert(starterDocuments);
+      if (seed.error) console.warn("Documents institutionnels de départ :", seed.error.message);
 
-    const member = await supabase.from("institutional_members").insert({
-      structure_id: data.id,
-      user_id: user.id,
-      role: "owner",
-      status: "active",
-      permissions: { all: true },
-    });
-    if (member.error) return alert(member.error.message);
-
-    window.location.href = `/institutionnel/${data.id}`;
+      window.location.href = `/institutionnel/${data.id}?tab=Documents`;
+    } finally {
+      setCreatingStructure(false);
+    }
   }
 
   if (loading) return <main className="institution-page"><div className="loading">Chargement de l'espace Institutionnel…</div><style jsx>{css}</style></main>;
@@ -126,7 +166,7 @@ export default function InstitutionalHome() {
             <label><span>Email</span><input type="email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} /></label>
             <label><span>Téléphone</span><input value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} /></label>
           </div>
-          <button className="primary" onClick={createStructure}>Créer mon espace</button>
+          <button className="primary" onClick={createStructure} disabled={creatingStructure}>{creatingStructure ? "Création…" : "Créer mon espace"}</button>
         </section>
       )}
 
@@ -143,5 +183,5 @@ export default function InstitutionalHome() {
 }
 
 const css = `
-  :global(body){background:#f6f2ee}.back-link{display:inline-flex;align-items:center;margin:0 0 12px;color:#6b1a2c;text-decoration:none;font-weight:950;font-size:.82rem}.back-link:hover{text-decoration:underline}.institution-page{max-width:1180px;margin:auto;padding:28px 18px 60px}.hero{display:flex;justify-content:space-between;align-items:center;gap:16px;background:linear-gradient(135deg,#6b1a2c,#35101a);color:#fff;border-radius:24px;padding:24px}.hero p,.section-title p{margin:0;color:#d4a24c;font-weight:1000;letter-spacing:.12em;font-size:.7rem}.hero h1{margin:5px 0;font-size:2.3rem}.hero span{opacity:.86}.hero button,.primary{border:0;border-radius:10px;background:#d4a24c;color:#2a1719;font-weight:1000;padding:10px 14px;cursor:pointer}.structure-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin-top:12px}.structure-card,.empty-card,.create-card{background:#fff;border:1px solid #eadfd8;border-radius:16px;padding:16px}.structure-card{display:grid;grid-template-columns:52px 1fr auto;gap:12px;align-items:center;text-decoration:none;color:inherit}.structure-card:hover{border-color:#6b1a2c;transform:translateY(-1px)}.structure-card .icon{width:48px;height:48px;display:grid;place-items:center;border-radius:13px;background:#6b1a2c;color:#fff;font-size:1.45rem}.structure-card small{color:#d4a24c;font-weight:1000}.structure-card h2{margin:3px 0;color:#2d211d}.structure-card p{margin:3px 0;color:#796b64;font-size:.78rem}.structure-card span{font-size:.72rem;color:#91837b}.structure-card>b{color:#6b1a2c;font-size:1.4rem}.create-card{margin-top:12px}.section-title h2{margin:4px 0}.form-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:8px}.form-grid label{display:grid;gap:4px}.form-grid span{font-size:.65rem;text-transform:uppercase;font-weight:900;color:#766860}.form-grid input,.form-grid select{border:1px solid #ddd1ca;border-radius:9px;padding:9px}.wide{grid-column:1/-1}.empty-card{margin-top:12px}.empty-card a{display:inline-block;margin-top:6px;background:#6b1a2c;color:#fff;border-radius:9px;padding:9px 12px;text-decoration:none;font-weight:900}.loading{padding:40px;text-align:center;color:#6b1a2c;font-weight:900}@media(max-width:760px){.hero{align-items:flex-start;flex-direction:column}.structure-grid,.form-grid{grid-template-columns:1fr}.wide{grid-column:auto}}
+  :global(body){background:#f6f2ee}.back-link{display:inline-flex;align-items:center;margin:0 0 12px;color:#6b1a2c;text-decoration:none;font-weight:950;font-size:.82rem}.back-link:hover{text-decoration:underline}.institution-page{max-width:1180px;margin:auto;padding:28px 18px 60px}.hero{display:flex;justify-content:space-between;align-items:center;gap:16px;background:linear-gradient(135deg,#6b1a2c,#35101a);color:#fff;border-radius:24px;padding:24px}.hero p,.section-title p{margin:0;color:#d4a24c;font-weight:1000;letter-spacing:.12em;font-size:.7rem}.hero h1{margin:5px 0;font-size:2.3rem}.hero span{opacity:.86}.hero button,.primary:disabled{opacity:.55;cursor:wait}.primary{border:0;border-radius:10px;background:#d4a24c;color:#2a1719;font-weight:1000;padding:10px 14px;cursor:pointer}.structure-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin-top:12px}.structure-card,.empty-card,.create-card{background:#fff;border:1px solid #eadfd8;border-radius:16px;padding:16px}.structure-card{display:grid;grid-template-columns:52px 1fr auto;gap:12px;align-items:center;text-decoration:none;color:inherit}.structure-card:hover{border-color:#6b1a2c;transform:translateY(-1px)}.structure-card .icon{width:48px;height:48px;display:grid;place-items:center;border-radius:13px;background:#6b1a2c;color:#fff;font-size:1.45rem}.structure-card small{color:#d4a24c;font-weight:1000}.structure-card h2{margin:3px 0;color:#2d211d}.structure-card p{margin:3px 0;color:#796b64;font-size:.78rem}.structure-card span{font-size:.72rem;color:#91837b}.structure-card>b{color:#6b1a2c;font-size:1.4rem}.create-card{margin-top:12px}.section-title h2{margin:4px 0}.form-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:8px}.form-grid label{display:grid;gap:4px}.form-grid span{font-size:.65rem;text-transform:uppercase;font-weight:900;color:#766860}.form-grid input,.form-grid select{border:1px solid #ddd1ca;border-radius:9px;padding:9px}.wide{grid-column:1/-1}.empty-card{margin-top:12px}.empty-card a{display:inline-block;margin-top:6px;background:#6b1a2c;color:#fff;border-radius:9px;padding:9px 12px;text-decoration:none;font-weight:900}.loading{padding:40px;text-align:center;color:#6b1a2c;font-weight:900}@media(max-width:760px){.hero{align-items:flex-start;flex-direction:column}.structure-grid,.form-grid{grid-template-columns:1fr}.wide{grid-column:auto}}
 `;
