@@ -1,0 +1,8 @@
+{
+  "crons": [
+    {
+      "path": "/api/cron/rpe-digest",
+      "schedule": "0 20,21 * * *"
+    }
+  ]
+}
