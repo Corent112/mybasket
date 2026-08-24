@@ -2,11 +2,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import {
   GoogleDriveStepError,
-  canManageTeamMedia,
   logGoogleDriveError,
   refreshTeamGoogleDriveAccessToken,
   requireGoogleDriveUser,
 } from "@/lib/google-drive/server";
+import { canReadTeamMedia } from "@/lib/google-drive/team-access";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -25,7 +25,7 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    if (!(await canManageTeamMedia(teamId))) {
+    if (!(await canReadTeamMedia(teamId))) {
       return NextResponse.json(
         { error: "Accès refusé" },
         { status: 403 },

@@ -4,6 +4,8 @@ import {
   proxyDriveFile,
   requireGoogleDriveUser,
 } from "@/lib/google-drive/server";
+import { createGoogleDriveAdminClient } from "@/lib/google-drive/admin";
+import { canReadTeamMedia } from "@/lib/google-drive/team-access";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -18,10 +20,11 @@ export async function GET(
   context: { params: Promise<{ matchId: string }> },
 ) {
   try {
-    const { supabase } = await requireGoogleDriveUser();
+    await requireGoogleDriveUser();
     const { matchId } = await context.params;
+    const admin = createGoogleDriveAdminClient();
 
-    const { data: media, error } = await supabase
+    const { data: media, error } = await admin
       .from("match_media_sources")
       .select(
         "match_id,team_id,provider,external_file_id,resource_key,file_name,mime_type",
@@ -32,6 +35,9 @@ export async function GET(
     if (error) throw error;
     if (!media) {
       return new Response("Vidéo non liée", { status: 404 });
+    }
+    if (!(await canReadTeamMedia(String(media.team_id)))) {
+      return new Response("Accès refusé", { status: 403 });
     }
     if (
       media.provider !== "google_drive" ||

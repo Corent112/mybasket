@@ -2,10 +2,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createGoogleDriveAdminClient } from "@/lib/google-drive/admin";
 import {
-  canManageTeamMedia,
   getDriveFileMetadata,
   requireGoogleDriveUser,
 } from "@/lib/google-drive/server";
+import { canReadTeamMedia } from "@/lib/google-drive/team-access";
 
 export const runtime = "nodejs";
 
@@ -28,7 +28,7 @@ export async function POST(
       );
     }
 
-    if (!(await canManageTeamMedia(teamId))) {
+    if (!(await canReadTeamMedia(teamId))) {
       return NextResponse.json(
         { error: "Accès refusé" },
         { status: 403 },
@@ -118,10 +118,11 @@ export async function GET(
   context: { params: Promise<{ matchId: string }> },
 ) {
   try {
-    const { supabase } = await requireGoogleDriveUser();
+    await requireGoogleDriveUser();
     const { matchId } = await context.params;
+    const admin = createGoogleDriveAdminClient();
 
-    const { data, error } = await supabase
+    const { data, error } = await admin
       .from("match_media_sources")
       .select(
         "match_id,team_id,provider,external_file_id,file_name,mime_type,file_size,md5_checksum,linked_at,web_view_link",
@@ -130,6 +131,9 @@ export async function GET(
       .maybeSingle();
 
     if (error) throw error;
+    if (data && !(await canReadTeamMedia(String(data.team_id)))) {
+      return NextResponse.json({ error: "Accès refusé" }, { status: 403 });
+    }
 
     return NextResponse.json({
       media: data || null,

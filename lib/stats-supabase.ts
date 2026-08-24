@@ -1357,7 +1357,7 @@ export async function loadProject(matchId: string): Promise<
     const [statsRes, actionsRes] = await Promise.all([
       supabase
         .from("match_stats")
-        .select("project_state,playbook_id,system_mapping,project_status")
+        .select("team_id,opponent,match_date,home,us_score,them_score,project_state,playbook_id,system_mapping,project_status")
         .eq("id", matchId)
         .single(),
       supabase
@@ -1376,7 +1376,15 @@ export async function loadProject(matchId: string): Promise<
 
     const projectState = (data.project_state ?? {}) as Record<string, any>;
     const actionRows = actionsRes.data ?? [];
+    // Compatibilité avec les anciens brouillons : les informations structurantes
+    // de match_stats servent de repli si elles n'étaient pas encore présentes
+    // dans project_state. Cela permet à Historique de rouvrir réellement le projet.
     const state: LiveProjectState = {
+      teamId: projectState.teamId ?? data.team_id ?? null,
+      opponent: projectState.opponent ?? data.opponent ?? "",
+      date: projectState.date ?? data.match_date ?? "",
+      home: projectState.home ?? data.home ?? true,
+      perQ: projectState.perQ ?? { 1: { us: Number(data.us_score ?? 0), them: Number(data.them_score ?? 0) } },
       ...projectState,
       actions: actionRows.length
         ? actionRows.map(mapActionRowToLiveAction)

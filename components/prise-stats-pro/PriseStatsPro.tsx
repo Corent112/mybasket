@@ -719,6 +719,7 @@ export default function PriseStatsProPage() {
   };
   const removeOppPlayer = (id: string) => setOppRoster((r) => r.filter((p) => p.id !== id));
   const [date, setDate] = useState(() => new Date().toISOString().slice(0, 10));
+  const [matchType, setMatchType] = useState<'friendly' | 'league' | 'cup'>('friendly');
   const [home, setHome] = useState(true);
 
   // Effectif officiel du match : de 5 à 12 joueurs choisis parmi l'effectif de l'équipe.
@@ -740,6 +741,25 @@ export default function PriseStatsProPage() {
   const [teamName, setTeamName] = useState('');
   const [onCourt, setOnCourt] = useState<string[]>([]);
   const [stage, setStage] = useState('context');
+  // Navigation du wizard : mémorise le dernier bloc réellement visité.
+  // La flèche ← remonte donc le chemin parcouru, au lieu de recalculer un ordre théorique.
+  const [stageHistory, setStageHistory] = useState<string[]>([]);
+  const previousStageRef = useRef('context');
+  const backNavigationRef = useRef(false);
+
+  useEffect(() => {
+    const previous = previousStageRef.current;
+    if (stage === previous) return;
+
+    if (backNavigationRef.current) {
+      backNavigationRef.current = false;
+    } else {
+      setStageHistory((current) => [...current.slice(-39), previous]);
+    }
+
+    previousStageRef.current = stage;
+  }, [stage]);
+
   const [draft, setDraft] = useState<Draft>(emptyDraft());
   const [actions, setActions] = useState<StatA[]>([]);
   const [q, setQ] = useState(1);
@@ -1006,7 +1026,7 @@ export default function PriseStatsProPage() {
 
   /* -------- Persistance TEMPS RÉEL (match_actions = source unique) -------- */
   // matchId Supabase du match en cours + realTeamId résolu, gardés en state ET
-  // en ref pour un accès synchrone dans commit()/undo() sans attendre un render.
+  // en ref pour un accès synchrone dans commit()/suppression explicite sans attendre un render.
   const [liveMatchId, setLiveMatchId] = useState<string | null>(null);
   const liveMatchIdRef = useRef<string | null>(null);
   const liveTeamIdRef = useRef<string | null>(null);
@@ -1323,6 +1343,7 @@ export default function PriseStatsProPage() {
     opponent,
     analysisScope,
     date,
+    matchType,
     home,
     codingMode,
     workflowPrefs,
@@ -1442,8 +1463,12 @@ export default function PriseStatsProPage() {
       if (!res.ok) { flash('Projet illisible : ' + res.error); return; }
       const s = res.state as Record<string, any>;
       const tId = String(s.teamId || teamId);
-      const team = teams.find((t) => t.id === tId);
-      if (!team) { flash('Équipe du projet introuvable.'); return; }
+      const team = teams.find((t) => t.id === tId)
+        || (s.teamName ? teams.find((t) => String(t.name || '').trim().toLowerCase() === String(s.teamName || '').trim().toLowerCase()) : undefined);
+      if (!team) {
+        flash('Équipe du projet introuvable — recharge la page Historique puis réessaie.');
+        return;
+      }
 
       setActiveTeamId(team.id);
       setTeamId(team.id);
@@ -1501,6 +1526,7 @@ export default function PriseStatsProPage() {
       setAnalysisScope(s.analysisScope === 'scout' || team.isScoutTeam || String(team.teamType || '').toLowerCase() === 'scout' ? 'scout' : 'coached');
       setOpponent(String(s.opponent || ''));
       setDate(String(s.date || date));
+      setMatchType(s.matchType === 'league' || s.matchType === 'cup' ? s.matchType : 'friendly');
       setHome(s.home ?? true);
       setCodingMode(s.codingMode === 'live-individual' ? 'live-individual' : s.codingMode === 'live' ? 'live' : 'post');
       if (s.workflowPrefs && typeof s.workflowPrefs === 'object') {
@@ -4872,27 +4898,6 @@ export default function PriseStatsProPage() {
     });
   };
 
-  const undo = () => {
-    if (!actions.length) return;
-
-    const a = actions[actions.length - 1];
-
-    setActions((arr) => arr.slice(0, -1));
-    subtractActionFromScore(a);
-    restoreDraftFromAction(a);
-    flash('Dernière action annulée et replacée en correction');
-
-    // Correction TEMPS RÉEL (non bloquante) : retire la ligne + resync boxscore.
-    const matchId = liveMatchIdRef.current;
-    const teamId = liveTeamIdRef.current;
-    if (matchId && teamId) {
-      deleteLiveAction({ matchId, clientActionId: a.id }).catch(() => {});
-      const nextActions = actions.filter((x) => x.id !== a.id);
-      const cur = perQ[a.q] || { us: 0, them: 0 };
-      const nextPerQ = { ...perQ, [a.q]: { us: cur.us - ptsOf(a), them: cur.them - themPtsOf(a) } };
-      syncLiveAggregates(nextActions, onCourt, nextPerQ);
-    }
-  };
 
   const removeAction = (id: string) => {
     const a = actions.find((x) => x.id === id);
@@ -5172,6 +5177,7 @@ export default function PriseStatsProPage() {
       teamName,
       opponent: opponent || 'Adversaire',
       date,
+      matchType,
       home,
       q,
       secs,
@@ -5213,6 +5219,7 @@ export default function PriseStatsProPage() {
       }
       setOpponent(String(data.opponent || ''));
       if (data.date) setDate(String(data.date));
+      setMatchType(data.matchType === 'league' || data.matchType === 'cup' ? data.matchType : 'friendly');
       setHome(data.home ?? true);
       if (data.matchJerseyNumbers && typeof data.matchJerseyNumbers === 'object') {
         setMatchJerseyNumbers(data.matchJerseyNumbers);
@@ -5414,27 +5421,23 @@ export default function PriseStatsProPage() {
                   </label>
                   <label className="cm-field">{analysisScope === 'scout' ? 'Adversaire du match observé' : 'Adversaire'}
                     <div className="cm-input"><input placeholder={analysisScope === 'scout' ? "Équipe affrontée par l'adversaire scouté" : "Nom de l'adversaire"} value={opponent} onChange={(e) => setOpponent(e.target.value)} /></div></label>
+                  <label className="cm-field">Type de match
+                    <div className="cm-input"><span>🏆</span>
+                      <select value={matchType} onChange={(e) => setMatchType(e.target.value as 'friendly' | 'league' | 'cup')}>
+                        <option value="friendly">Amical</option>
+                        <option value="league">Championnat</option>
+                        <option value="cup">Coupe</option>
+                      </select>
+                    </div>
+                  </label>
                   <div className="cm-field">Lieu du match
                     <div className="cm-venue"><button type="button" className={`cm-v ${home ? 'on' : ''}`} onClick={() => setHome(true)}>🏠 DOMICILE</button><button type="button" className={`cm-v ${!home ? 'on' : ''}`} onClick={() => setHome(false)}>🏟 EXTÉRIEUR</button></div></div>
                 </div>
               </section>
 
-              {/* AJOUT §12 · Effectif adverse (optionnel) pour attribuer les tirs concédés */}
-              <section className="cm-card">
-                <div className="cm-card-t">🆚 EFFECTIF ADVERSE <span className="cm-opt">OPTIONNEL — POUR NOMMER LES TIRS CONCÉDÉS EN DÉFENSE</span></div>
-                <div className="opp-add">
-                  <input className="opp-num" placeholder="N°" value={oppNumInput} onChange={(e) => setOppNumInput(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); addOppPlayer(); } }} />
-                  <input className="opp-name" placeholder="Nom (optionnel)" value={oppNameInput} onChange={(e) => setOppNameInput(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); addOppPlayer(); } }} />
-                  <button type="button" className="opp-addbtn" onClick={addOppPlayer}>＋ Ajouter</button>
-                </div>
-                {oppRoster.length > 0 && (
-                  <div className="opp-list">
-                    {oppRoster.map((p) => (
-                      <span className="opp-chip" key={p.id}>#{p.num} {p.name}<button type="button" onClick={() => removeOppPlayer(p.id)}>✕</button></span>
-                    ))}
-                  </div>
-                )}
-              </section>
+              {/* L'effectif adverse manuel n'est plus créé ici.
+                  En mode scouting, les joueurs proviennent de l'équipe scoutée.
+                  oppRoster reste conservé dans l'état pour la compatibilité des anciens projets. */}
 
               {/* AJOUT · Playbook associé au match + mapping des slots système (§8) */}
               <section className="cm-card">
@@ -5516,14 +5519,16 @@ export default function PriseStatsProPage() {
                   </span>
                 </div>
                 <button
-                  className="cm-ghost sm"
+                  className="cm-clear-roster"
                   type="button"
                   onClick={() => {
                     setMatchPlayerIds([]);
                     setStarters([]);
                   }}
+                  aria-label="Vider l’effectif du match"
+                  title="Vider l’effectif du match"
                 >
-                  Vider
+                  🗑
                 </button>
               </div>
 
@@ -5573,16 +5578,24 @@ export default function PriseStatsProPage() {
                     {selectedMatchRoster.map((p) => {
                       const starter = starters.includes(p.id);
                       return (
-                        <article key={p.id} className={`cm-selected-player ${starter ? 'starter' : ''}`}>
-                          <button
-                            type="button"
-                            className={`cm-selected-star ${starter ? 'on' : ''}`}
-                            onClick={() => toggleStarter(p.id)}
-                            aria-label={starter ? `Retirer ${p.name} du 5 majeur` : `Ajouter ${p.name} au 5 majeur`}
-                            title={starter ? 'Retirer du 5 majeur' : starters.length >= 5 ? 'Le 5 majeur est complet' : 'Ajouter au 5 majeur'}
-                          >
-                            {starter ? '★' : '☆'}
-                          </button>
+                        <article
+                          key={p.id}
+                          className={`cm-selected-player ${starter ? 'starter' : ''}`}
+                          role="button"
+                          tabIndex={0}
+                          onClick={() => toggleStarter(p.id)}
+                          onKeyDown={(event) => {
+                            if (event.key === 'Enter' || event.key === ' ') {
+                              event.preventDefault();
+                              toggleStarter(p.id);
+                            }
+                          }}
+                          aria-label={starter ? `Retirer ${p.name} du 5 majeur` : `Ajouter ${p.name} au 5 majeur`}
+                          title={starter ? 'Cliquer pour retirer du 5 majeur' : starters.length >= 5 ? 'Le 5 majeur est complet' : 'Cliquer pour ajouter au 5 majeur'}
+                        >
+                          <span className={`cm-selected-star ${starter ? 'on' : ''}`} aria-hidden="true">
+                            {starter ? '★' : ''}
+                          </span>
                           <Av p={{ ...p, num: matchNumberOf(p) }} />
                           <div>
                             <b>#{matchNumberOf(p)} {p.name}</b>
@@ -5603,11 +5616,14 @@ export default function PriseStatsProPage() {
                           <button
                             type="button"
                             className="cm-selected-remove"
-                            onClick={() => toggleMatchPlayer(p.id)}
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              toggleMatchPlayer(p.id);
+                            }}
                             aria-label={`Retirer ${p.name} du match`}
                             title="Retirer du match"
                           >
-                            ×
+                            🗑
                           </button>
                         </article>
                       );
@@ -5644,7 +5660,7 @@ export default function PriseStatsProPage() {
                   </button>
                 ))}
                 {starters.length === 0 && (
-                  <div className="cm-five-empty">Clique sur ☆ dans l'effectif du match pour choisir ton 5 majeur.</div>
+                  <div className="cm-five-empty">Clique directement sur les joueurs de l'effectif du match pour choisir ton 5 majeur.</div>
                 )}
                 {starters.length > 0 && starters.length < 5 && (
                   <div className="cm-five-empty compact">Encore {5 - starters.length} joueur{5 - starters.length > 1 ? 's' : ''} à choisir.</div>
@@ -5763,18 +5779,11 @@ export default function PriseStatsProPage() {
   const activeCrumbIndex = Math.max(0, activeCrumbs.indexOf(currentCrumbLabel));
 
   const goBackStage = () => {
-    if (codingMode === 'live-individual') {
-      if (stage === 'player') { setStage(draft.actionType ? 'result' : 'context'); return; }
-      if (stage === 'result') { setStage(draft.context === 'defense' ? 'context' : 'player'); return; }
-      if (stage === 'faute') { setStage(draft.context === 'defense' ? 'player' : 'result'); return; }
-      if (stage === 'ft') { setStage('faute'); return; }
-      if (stage === 'zone') { setStage('result'); return; }
-      if (stage === 'rebound') { setStage(workflowPrefs.zone && draft.actionType === 'tir' ? 'zone' : 'result'); return; }
-      if (stage === 'assist') { setStage(workflowPrefs.zone ? 'zone' : 'result'); return; }
-      return;
-    }
-    const currentIndex = activeStageOrder.indexOf(stage);
-    if (currentIndex > 0) setStage(activeStageOrder[currentIndex - 1]);
+    const previous = stageHistory[stageHistory.length - 1];
+    if (!previous) return;
+    setStageHistory((current) => current.slice(0, -1));
+    backNavigationRef.current = true;
+    setStage(previous);
   };
 
   // Stats live pour les cartes joueurs de la colonne droite
@@ -5990,8 +5999,7 @@ export default function PriseStatsProPage() {
             {/* ============ CENTRE · CODAGE (wizard) ============ */}
             <aside className={`lc lc-code ${workTab === 'coding' ? 'mshow' : ''}`}>
               <div className="lc-head codeTop">
-                <button className="headBack" disabled={stage === 'context'} onClick={goBackStage}>←</button>
-                <button className="headUndo" onClick={undo}>↺</button>
+                <button className="headBack" disabled={stage === 'context' || stageHistory.length === 0} onClick={goBackStage}>←</button>
                 <div className="crumb-mini">
                   {activeCrumbs.map((c, i) => {
                     const state = activeCrumbIndex === i ? 'cur' : activeCrumbIndex > i ? 'done' : '';
@@ -6022,16 +6030,12 @@ export default function PriseStatsProPage() {
                       {draft.context === 'attaque' ? 'ATTAQUE' : 'DÉFENSE'}
                     </div>
                   ) : (
-                    <button className="backBtn sm" onClick={() => {
-                      const currentIndex = activeStageOrder.indexOf(stage);
-                      if (currentIndex > 0) setStage(activeStageOrder[currentIndex - 1]);
-                    }}>← Retour</button>
+                    <button className="backBtn sm" onClick={goBackStage}>← Retour</button>
                   )
                 )}
                 {renderStage()}
               </div>
               <div className="lc-foot">
-                <button className="qbtn sm" onClick={undo}>↺ Annuler</button>
                 <button className="qbtn sm" onClick={resetDraft}>🗑 Reset</button>
               </div>
             </aside>
@@ -6741,6 +6745,22 @@ export default function PriseStatsProPage() {
                       ▶ <span>{possessionDuration.toFixed(1)}s</span>
                     </button>
                     <button className="hadd" onClick={() => addToMontage(a)}>⭐</button>
+                    <button
+                      type="button"
+                      className="historyEditBtn"
+                      onClick={() => setEvtSel(a.id)}
+                      title="Modifier cette action"
+                    >
+                      Modifier
+                    </button>
+                    <button
+                      type="button"
+                      className="historyDeleteBtn"
+                      onClick={() => removeAction(a.id)}
+                      title="Supprimer cette action"
+                    >
+                      Supprimer
+                    </button>
                   </div>
                 </div>
 
@@ -8175,7 +8195,6 @@ function Style() {
       .cm-starter-card.on > small { color: var(--gold); }
       .cm-starter-empty { grid-column: 1 / -1; padding: 16px; border: 1px dashed #34435e; border-radius: 10px; color: #8290a5; text-align: center; font-size: 10px; }
       .cm-5c.ok { color: var(--gold); }
-      .cm-slots { display: grid; grid-template-columns: repeat(5,1fr); gap: 8px; margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--border); }
       .cm-slot { display: flex; flex-direction: column; gap: 5px; }
       .cm-slot-l { font-size: 9px; font-weight: 800; color: var(--mute); letter-spacing: .04em; text-align: center; }
       .cm-slot-e { border: 1px dashed var(--border); border-radius: 10px; min-height: 54px; display: grid; place-items: center; font-size: 11px; font-weight: 800; color: var(--mute); text-align: center; padding: 4px; }
@@ -8255,12 +8274,12 @@ function Style() {
       .cm-roster-line input{width:16px;height:16px;accent-color:var(--gold)}
       .cm-roster-line-num{color:var(--gold);font-size:10px;font-weight:950}.cm-roster-line-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:10px;font-weight:850}.cm-roster-line-pos{text-align:right;color:#7e8ca3;font-size:9px}
       .cm-selected-roster{margin-top:12px;border-top:1px solid var(--border);padding-top:12px}.cm-selected-roster-title{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px}.cm-selected-roster-title b{font-size:11px;color:var(--gold);text-transform:uppercase}.cm-selected-roster-title span{font-size:9px;color:#8794a8;font-weight:900}
-      .cm-selected-roster-cards{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:7px}.cm-selected-player{position:relative;display:grid;grid-template-columns:34px minmax(0,1fr) 46px;align-items:center;gap:7px;border:1px solid #2b3850;background:#101827;border-radius:10px;padding:8px;min-width:0}.cm-selected-player>.av{width:32px!important;height:32px!important}.cm-selected-player b,.cm-selected-player small{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.cm-selected-player b{font-size:9.5px}.cm-selected-player small{font-size:8px;color:#77869d;margin-top:2px}.cm-selected-number{display:grid;grid-template-columns:auto 1fr;align-items:center;gap:3px}.cm-selected-number span{font-size:7px;color:#7f8da4;font-weight:900}.cm-selected-number input{width:31px;height:28px;border:1px solid rgba(212,162,76,.45);border-radius:7px;background:#080d17;color:var(--gold);text-align:center;font-weight:950}.cm-selected-remove{position:absolute;top:3px;right:3px;width:18px;height:18px;border:0;border-radius:50%;background:transparent;color:#6f7d91;font-size:13px;cursor:pointer}.cm-selected-remove:hover{background:rgba(239,68,68,.12);color:#f87171}
+      .cm-selected-roster-cards{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:7px}.cm-selected-player{position:relative;display:grid;grid-template-columns:34px minmax(0,1fr) 46px;align-items:center;gap:7px;border:1px solid #2b3850;background:#101827;border-radius:10px;padding:8px;min-width:0}.cm-selected-player>.av{width:32px!important;height:32px!important}.cm-selected-player b,.cm-selected-player small{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.cm-selected-player b{font-size:9.5px}.cm-selected-player small{font-size:8px;color:#77869d;margin-top:2px}.cm-selected-number{display:grid;grid-template-columns:auto 1fr;align-items:center;gap:3px}.cm-selected-number span{font-size:7px;color:#7f8da4;font-weight:900}.cm-selected-number input{width:31px;height:28px;border:1px solid rgba(212,162,76,.45);border-radius:7px;background:#080d17;color:var(--gold);text-align:center;font-weight:950}.cm-selected-remove{position:absolute;top:4px;right:4px;width:24px;height:24px;border:1px solid rgba(239,68,68,.18);border-radius:7px;background:rgba(239,68,68,.05);color:#94a3b8;font-size:11px;display:grid;place-items:center;cursor:pointer}.cm-selected-remove:hover{background:rgba(239,68,68,.14);border-color:rgba(239,68,68,.4);color:#f87171}.cm-clear-roster{width:30px;height:30px;padding:0;border:1px solid rgba(239,68,68,.22);border-radius:8px;background:rgba(239,68,68,.06);color:#cbd5e1;display:grid;place-items:center;font-size:12px;cursor:pointer}.cm-clear-roster:hover{background:rgba(239,68,68,.14);border-color:rgba(239,68,68,.45);color:#f87171}
       @media(max-width:760px){.cm-roster-checklist{grid-template-columns:1fr}.cm-selected-roster-cards{grid-template-columns:1fr 1fr}}
 
 
       /* 2026-08-24 · effectif unique + sélection directe du 5 majeur */
-      .cm-selected-player{padding-right:30px}.cm-selected-player.starter{border-color:var(--gold);background:rgba(212,162,76,.10);box-shadow:0 0 0 1px rgba(212,162,76,.20) inset}
+      .cm-selected-player{padding-right:30px}.cm-selected-player{cursor:pointer}.cm-selected-player.starter{border-color:var(--gold);background:rgba(212,162,76,.10);box-shadow:0 0 0 1px rgba(212,162,76,.20) inset}
       .cm-selected-star{position:absolute;top:5px;right:5px;width:23px;height:23px;border:1px solid #40506a;border-radius:7px;background:#121d30;color:#8593a8;font-size:14px;line-height:1;display:grid;place-items:center;cursor:pointer;z-index:2}.cm-selected-star.on{border-color:var(--gold);background:var(--gold);color:#17130d}.cm-selected-star:hover{border-color:var(--gold);color:var(--gold)}.cm-selected-star.on:hover{color:#17130d}
       .cm-selected-remove{top:auto!important;bottom:4px!important;right:6px!important}
       .cm-starting-five-only{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:7px;margin-top:10px}.cm-five-player{min-width:0;border:1px solid var(--gold);border-radius:10px;background:rgba(212,162,76,.10);color:#fff;padding:8px 6px;display:grid;grid-template-columns:28px 30px minmax(0,1fr);align-items:center;gap:5px;text-align:left;cursor:pointer}.cm-five-player .av{width:27px!important;height:27px!important}.cm-five-player>b{color:var(--gold);font-size:9px}.cm-five-player>span{font-size:9px;font-weight:850;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.cm-five-player>small{grid-column:2/4;font-size:7px;color:var(--gold);font-weight:950}.cm-five-empty{grid-column:1/-1;padding:13px;border:1px dashed #34435e;border-radius:9px;color:#8290a5;text-align:center;font-size:9px}.cm-five-empty.compact{padding:7px}
@@ -8275,7 +8294,7 @@ function Style() {
       }
       @media (max-width: 600px) {
         .cm-form { grid-template-columns: 1fr; } .cm-video { grid-template-columns: 1fr; }
-        .cm-players { grid-template-columns: 1fr 1fr; } .cm-slots { grid-template-columns: 1fr 1fr; }
+        .cm-players { grid-template-columns: 1fr 1fr; }
         .cm-hero-ic { width: 64px; height: 64px; font-size: 26px; } .cm-h1 { font-size: 26px; }
         .cm-sum-grid { grid-template-columns: 1fr 1fr; } .cm-start { width: 100%; }
       }
@@ -10053,8 +10072,8 @@ function Style() {
       .rateBox select { border: 1px solid var(--border); background: var(--card); color: var(--txt); border-radius: 7px; padding: 4px 6px; font: inherit; font-size: 11px; }
       .detachState { font-size: 11px; font-weight: 900; color: var(--gold); background: rgba(212,162,76,.12); border: 1px solid rgba(212,162,76,.4); border-radius: 999px; padding: 4px 10px; }
       .syncBadge { font-size: 11px; font-weight: 900; color: #6B1A2C; background: rgba(107,26,44,.08); border: 1px solid rgba(107,26,44,.35); border-radius: 999px; padding: 4px 10px; font-variant-numeric: tabular-nums; }
-      .codeTop { display: grid; grid-template-columns: 30px 30px 1fr; align-items: center; gap: 6px; }
-      .headBack, .headUndo { width: 28px; height: 28px; border-radius: 9px; border: 1px solid var(--border); background: rgba(255,255,255,.05); color: #fff; font-size: 14px; font-weight: 950; cursor: pointer; }
+      .codeTop { display: grid; grid-template-columns: 30px 1fr; align-items: center; gap: 6px; }
+      .headBack { width: 28px; height: 28px; border-radius: 9px; border: 1px solid var(--border); background: rgba(255,255,255,.05); color: #fff; font-size: 14px; font-weight: 950; cursor: pointer; }
       .headBack:disabled { opacity: .25; cursor: not-allowed; }
       .lc-foot { display: none !important; }
       .lc-body { padding: 10px; }
@@ -10344,7 +10363,7 @@ function Style() {
       .historyActionTime b,.historyActionTime span{display:block}.historyActionTime b{color:#fff;font-size:9px}.historyActionTime span{margin-top:3px;color:#d4a24c;font-size:7px;font-weight:900}
       .historyActionHeadline{display:flex;align-items:baseline;justify-content:center;gap:7px;margin-bottom:7px;text-align:center}.historyActionHeadline strong{font-size:10px}.historyActionHeadline em{color:#8692a8;font-size:8px;font-style:normal}
       .historyTags{display:flex;gap:7px;flex-wrap:wrap;justify-content:center;align-items:center}.historyTag{border:1px solid #35415a;border-radius:999px;padding:3px 6px;background:#172238;color:#d8dfec;font-size:9px;font-weight:900;text-transform:capitalize;padding:5px 9px}.historyTag.attaque{border-color:#ff7a18;color:#ffad67}.historyTag.defense{border-color:#32b7ef;color:#79d5fa}.historyTag.system{border-color:#7c5cff}.historyTag.tempo{border-color:#d4a24c;color:#f4c665}.historyTag.made{border-color:#22c55e;color:#6ee7a0}.historyTag.missed{border-color:#ef4444;color:#fb8a8a}
-      .historyActionButtons{display:flex;gap:4px;align-items:center}.historyActionButtons button{height:29px;border-radius:7px}.historyActionButtons .hplay{width:auto;padding:0 8px;display:inline-flex;align-items:center;gap:4px}.historyActionButtons .hplay span{font-size:7px;font-weight:900}
+      .historyActionButtons{display:flex;gap:4px;align-items:center}.historyActionButtons button{height:29px;border-radius:7px}.historyActionButtons .hplay{width:auto;padding:0 8px;display:inline-flex;align-items:center;gap:4px}.historyActionButtons .hplay span{font-size:7px;font-weight:900}.historyActionButtons .historyEditBtn,.historyActionButtons .historyDeleteBtn{width:auto;padding:0 8px;font-size:8px;font-weight:900;white-space:nowrap}.historyActionButtons .historyEditBtn{border:1px solid #596278;background:#121b2a;color:#dce5f3}.historyActionButtons .historyDeleteBtn{border:1px solid rgba(239,68,68,.55);background:rgba(239,68,68,.08);color:#fca5a5}
       .historyMiniClips{border-top:1px solid #273247;background:#080f1b;padding:6px 9px 8px 37px}.historyMiniClipsHead{display:flex;align-items:center;justify-content:space-between;margin-bottom:3px;color:#7e8ba1;font-size:7px;text-transform:uppercase;letter-spacing:.05em}.historyMiniClipsHead b{color:#d4a24c}
       .historyMiniClip{display:grid;grid-template-columns:minmax(0,1fr) 45px 28px 28px;gap:6px;align-items:center;min-height:32px;border-top:1px solid #1d293c;padding:4px 5px}.historyMiniClip:first-of-type{border-top:0}.historyMiniClipInfo{min-width:0}.historyMiniClipInfo b{display:block;color:#dfe6f2;font-size:8px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.historyMiniClipInfo small{display:block;margin-top:2px;color:#65738a;font-size:7px}
       .historyMiniClipDuration{justify-self:end;border:1px solid #36445e;border-radius:999px;padding:3px 5px;color:#f4c665;background:#101827;font-size:7px;font-weight:900}.historyMiniClip button{width:26px;height:26px;border:1px solid #d4a24c;border-radius:6px;background:rgba(212,162,76,.08);color:#d4a24c;cursor:pointer}.historyMiniClip .miniFavorite,.historyActionButtons .hadd{font-size:17px;line-height:1;background:transparent;color:#d4a24c;border:1px solid #596278}.historyMiniClip .miniFavorite.favorite,.historyActionButtons .hadd.favorite{border-color:#d4a24c;color:#d4a24c;background:rgba(212,162,76,.10)}

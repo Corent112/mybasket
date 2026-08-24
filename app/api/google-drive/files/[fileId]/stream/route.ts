@@ -1,10 +1,10 @@
 
 import { NextRequest } from "next/server";
 import {
-  canAccessTeam,
   proxyDriveFile,
   requireGoogleDriveUser,
 } from "@/lib/google-drive/server";
+import { canReadTeamMedia } from "@/lib/google-drive/team-access";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -30,7 +30,7 @@ export async function GET(
       });
     }
 
-    if (!(await canAccessTeam(teamId))) {
+    if (!(await canReadTeamMedia(teamId))) {
       return new Response("Accès refusé", { status: 403 });
     }
 

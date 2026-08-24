@@ -74,7 +74,12 @@ export default function LiveProjectsHistory() {
   const open = (id: string, mode: 'resume' | 'analysis' | 'montage' | 'sync' | 'associate', tab?: 'history' | 'players') => {
     const params = new URLSearchParams({ project: id, mode });
     if (tab) params.set('tab', tab);
-    router.push(`/management/live?${params.toString()}`);
+    const href = `/management/live?${params.toString()}`;
+    // Une reprise de projet doit recréer l'espace LiveStats avec l'identifiant
+    // demandé. Une navigation complète évite qu'un ancien état client/cache de
+    // /management/live conserve le projet précédent.
+    if (typeof window !== 'undefined') window.location.assign(href);
+    else router.push(href);
   };
 
   const exportProject = async (p: LiveProjectSummary) => {
@@ -165,7 +170,7 @@ export default function LiveProjectsHistory() {
                   {p.updatedAt && <span className="lph-upd">modifié {new Date(p.updatedAt).toLocaleString('fr-FR')}</span>}
                 </div>
                 <div className="lph-actions">
-                  <button className="lph-primary" onClick={() => open(p.id, 'resume')}>▶ Ouvrir</button>
+                  <button className="lph-primary" onClick={() => open(p.id, 'resume')}>▶ Reprendre le codage</button>
                   <button onClick={() => open(p.id, 'sync')}>🎯 Ajouter / recaler vidéo</button>
                   <button onClick={() => open(p.id, 'associate')}>👥 Associer les joueurs</button>
                   <button disabled={busy === p.id} onClick={() => { void exportProject(p); }}>⬇ Exporter projet</button>
