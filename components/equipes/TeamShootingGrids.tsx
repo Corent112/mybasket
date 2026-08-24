@@ -668,7 +668,7 @@ export default function TeamShootingGrids({
       ):(
         <>
           <div style={{...card,padding:"11px 12px",display:"grid",gridTemplateColumns:"minmax(220px,420px) minmax(0,1fr) auto",gap:10,alignItems:"end"}}>
-            <div className="shooting-tabs" style={{display:"flex",gap:7,flexWrap:"wrap",marginBottom:10}}>
+            <div className="shooting-tabs" style={{display:"flex",gap:7,flexWrap:"wrap",marginBottom:10,gridColumn:"1 / -1"}}>
               <button type="button" onClick={()=>setShootingView("editor")} style={{...chip,...(shootingView==="editor"?activeChip:{})}}>✏️ Créer / modifier</button>
               <button type="button" onClick={()=>setShootingView("library")} style={{...chip,...(shootingView==="library"?activeChip:{})}}>📚 Grilles de tir créées ({grids.length})</button>
             </div>
