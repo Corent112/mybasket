@@ -1,4 +1,5 @@
 import { createClient } from "@/lib/supabase/server";
+import { createGoogleDriveAdminClient } from "@/lib/google-drive/admin";
 
 type AccessResult = {
   allowed: boolean;
@@ -7,35 +8,43 @@ type AccessResult = {
   userId: string | null;
 };
 
-const ACCEPTED_STATUSES = new Set(["accepted", "active", "actif", "approved", "member", ""]);
+const ACCEPTED_STATUSES = new Set([
+  "accepted",
+  "active",
+  "actif",
+  "approved",
+  "member",
+  "",
+]);
 
 function userIdOf(row: Record<string, any>) {
   return String(
     row.user_id ??
-    row.profile_id ??
-    row.member_id ??
-    row.coach_id ??
-    row.staff_user_id ??
-    "",
+      row.profile_id ??
+      row.member_id ??
+      row.coach_id ??
+      row.staff_user_id ??
+      "",
   );
 }
 
 function statusAllows(row: Record<string, any>) {
   const status = String(
-    row.status ??
-    row.invitation_status ??
-    row.member_status ??
-    "",
+    row.status ?? row.invitation_status ?? row.member_status ?? "",
   ).toLowerCase();
 
   return ACCEPTED_STATUSES.has(status);
 }
 
 /**
- * Lecture média = propriétaire OU membre staff accepté de l'équipe.
- * IMPORTANT : ceci ne donne jamais le token Google au membre staff.
- * Il autorise seulement les routes serveur MyBasket à utiliser la connexion
- * Google Drive enregistrée au niveau de l'équipe.
+ * Source de vérité unique des droits médias d'une équipe.
+ *
+ * - Coach principal / propriétaire : gestion + lecture.
+ * - Personne qui a connecté le Drive de l'équipe : considérée propriétaire
+ *   média de secours. Cela évite qu'une ancienne équipe / migration de colonnes
+ *   fasse perdre l'accès au coach juste après le retour OAuth.
+ * - Staff accepté : lecture uniquement.
+ * - Aucun token Google n'est exposé ici ni au navigateur.
  */
 export async function getTeamMediaAccess(teamId: string): Promise<AccessResult> {
   const supabase = await createClient();
@@ -44,10 +53,36 @@ export async function getTeamMediaAccess(teamId: string): Promise<AccessResult> 
   } = await supabase.auth.getUser();
 
   if (!user || !teamId) {
-    return { allowed: false, owner: false, staff: false, userId: user?.id ?? null };
+    return {
+      allowed: false,
+      owner: false,
+      staff: false,
+      userId: user?.id ?? null,
+    };
   }
 
-  // Propriétaire / coach principal.
+  // 1) Source la plus fiable après une connexion OAuth : la connexion Drive
+  // enregistrée au niveau de l'équipe. Cette table n'est jamais exposée au
+  // navigateur ; on ne lit ici que connected_by, jamais le refresh token.
+  try {
+    const admin = createGoogleDriveAdminClient();
+    const { data: connection } = await admin
+      .from("team_drive_connections")
+      .select("connected_by,revoked_at")
+      .eq("team_id", teamId)
+      .eq("provider", "google_drive")
+      .is("revoked_at", null)
+      .maybeSingle();
+
+    if (connection?.connected_by && String(connection.connected_by) === user.id) {
+      return { allowed: true, owner: true, staff: false, userId: user.id };
+    }
+  } catch {
+    // Si la table/service role n'est pas disponible, on continue avec les
+    // sources d'équipe classiques. L'accès n'est jamais accordé par défaut.
+  }
+
+  // 2) Propriétaire / coach principal depuis la table teams.
   const { data: team } = await supabase
     .from("teams")
     .select("*")
@@ -70,8 +105,8 @@ export async function getTeamMediaAccess(teamId: string): Promise<AccessResult> 
     }
   }
 
-  // Staff équipe. On essaie team_members puis club_members pour rester
-  // compatible avec les deux générations de MyBasket.
+  // 3) Staff accepté de l'équipe : lecture uniquement.
+  // On garde les deux générations de tables MyBasket.
   for (const table of ["team_members", "club_members"]) {
     try {
       const { data: rows, error } = await supabase
