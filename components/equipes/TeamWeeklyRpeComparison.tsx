@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { createClient } from "@/lib/supabase/client";
 import type { Player } from "@/types/player";
 
 type TeamPlan = {
@@ -127,7 +126,6 @@ export default function TeamWeeklyRpeComparison({
   players: Player[];
   canEdit: boolean;
 }) {
-  const supabase = useMemo(() => createClient(), []);
   const [weekStart, setWeekStart] = useState(startOfWeek());
   const [plans, setPlans] = useState<TeamPlan[]>([]);
   const [responses, setResponses] = useState<Wellness[]>([]);
@@ -147,31 +145,18 @@ export default function TeamWeeklyRpeComparison({
   async function reload() {
     const from = iso(weekStart);
     const to = iso(weekEnd);
-
-    const [{ data: planData, error: planError }, { data: responseData, error: responseError }] =
-      await Promise.all([
-        supabase
-          .from("team_load_plans")
-          .select("*")
-          .eq("team_id", teamId)
-          .gte("plan_date", from)
-          .lte("plan_date", to)
-          .order("plan_date"),
-        supabase
-          .from("player_wellness_responses")
-          .select("id,player_id,response_date,rpe,duration_minutes,fatigue,soreness,sleep,stress,comment,created_at")
-          .eq("team_id", teamId)
-          .gte("response_date", from)
-          .lte("response_date", to)
-          .order("created_at", { ascending: true }),
-      ]);
-
-    if (planError) console.error(planError);
-    if (responseError) console.error(responseError);
-    setPlans((planData ?? []) as TeamPlan[]);
-    setResponses((responseData ?? []) as Wellness[]);
+    const response = await fetch(
+      `/api/rpe/team?teamId=${encodeURIComponent(teamId)}&from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`,
+      { cache: "no-store" },
+    );
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      console.error(payload?.error || "Comparaison RPE indisponible.");
+      return;
+    }
+    setPlans((payload.plans ?? []) as TeamPlan[]);
+    setResponses((payload.responses ?? []) as Wellness[]);
   }
-
   useEffect(() => {
     void reload();
   }, [teamId, weekStart]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -184,27 +169,21 @@ export default function TeamWeeklyRpeComparison({
     const rpe = Number(patch.planned_rpe ?? current?.planned_rpe ?? 6);
     const loadType = String(patch.load_type ?? current?.load_type ?? "basket");
 
-    const { data: { user } } = await supabase.auth.getUser();
-    if (!user) return;
-
-    const { error } = await supabase.from("team_load_plans").upsert(
-      {
-        team_id: teamId,
-        plan_date: date,
-        duration_minutes: duration,
-        planned_rpe: rpe,
-        load_type: loadType,
+    const response = await fetch("/api/rpe/team", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        action: "save_plan",
+        teamId,
+        planDate: date,
+        durationMinutes: duration,
+        plannedRpe: rpe,
+        loadType,
         note: current?.note ?? null,
-        created_by: current ? undefined : user.id,
-        updated_at: new Date().toISOString(),
-      },
-      { onConflict: "team_id,plan_date" },
-    );
-
-    if (error) {
-      alert(error.message);
-      return;
-    }
+      }),
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) return alert(payload.error || "RPE théorique impossible à enregistrer.");
 
     await reload();
     toast("RPE théorique mis à jour ✓");
@@ -212,8 +191,13 @@ export default function TeamWeeklyRpeComparison({
 
   async function clearPlan(date: string) {
     if (!canEdit || !window.confirm("Supprimer le RPE théorique de cette journée ?")) return;
-    const { error } = await supabase.from("team_load_plans").delete().eq("team_id", teamId).eq("plan_date", date);
-    if (error) return alert(error.message);
+    const response = await fetch("/api/rpe/team", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "clear_plan", teamId, planDate: date }),
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) return alert(payload.error || "Suppression impossible.");
     await reload();
   }
 

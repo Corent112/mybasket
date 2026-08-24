@@ -5,6 +5,7 @@ import { createClient } from "@/lib/supabase/client";
 import { logActivity } from "@/lib/activity";
 import type { Player } from "@/types/player";
 import TeamWeeklyRpeComparison from "@/components/equipes/TeamWeeklyRpeComparison";
+import RpeAlertsPanel from "@/components/equipes/RpeAlertsPanel";
 
 type Status =
   | "available"
@@ -116,10 +117,18 @@ export default function TeamAvailabilityLoad({
   teamId,
   players,
   canEdit,
+  canViewIndividual = true,
+  canViewGroup = true,
+  canManageTarget = canEdit,
+  canManageQuestionnaires = canEdit,
 }: {
   teamId: string;
   players: Player[];
   canEdit: boolean;
+  canViewIndividual?: boolean;
+  canViewGroup?: boolean;
+  canManageTarget?: boolean;
+  canManageQuestionnaires?: boolean;
 }) {
   const supabase = useMemo(() => createClient(), []);
   const [availability, setAvailability] = useState<
@@ -148,54 +157,25 @@ export default function TeamAvailabilityLoad({
   };
 
   async function reload() {
-    const now = new Date().toISOString();
-
-    const [a, l, linkRows, responseRows] = await Promise.all([
-      supabase
-        .from("player_availability")
-        .select("*")
-        .eq("team_id", teamId)
-        .lte("starts_at", now)
-        .or(`ends_at.is.null,ends_at.gte.${now}`)
-        .order("starts_at", { ascending: false }),
-
-      supabase
-        .from("training_load_entries")
-        .select(
-          "id,player_id,load_date,duration_minutes,planned_rpe,actual_rpe,planned_load,actual_load,load_type",
-        )
-        .eq("team_id", teamId)
-        .order("load_date", { ascending: false })
-        .limit(500),
-
-      supabase
-        .from("team_wellness_links")
-        .select("id,token,response_kind,enabled,title")
-        .eq("team_id", teamId)
-        .order("created_at"),
-
-      supabase
-        .from("player_wellness_responses")
-        .select(
-          "id,player_id,response_kind,response_date,duration_minutes,rpe,fatigue,soreness,sleep,stress,comment,created_at",
-        )
-        .eq("team_id", teamId)
-        .order("created_at", { ascending: false })
-        .limit(500),
-    ]);
+    const response = await fetch(`/api/rpe/team?teamId=${encodeURIComponent(teamId)}`, {
+      cache: "no-store",
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      console.error(payload?.error || "Chargement Charge & RPE impossible.");
+      return;
+    }
 
     const map: Record<string, Availability> = {};
-
-    for (const row of (a.data || []) as Availability[]) {
+    for (const row of (payload.availability || []) as Availability[]) {
       if (!map[row.player_id]) map[row.player_id] = row;
     }
 
     setAvailability(map);
-    setLoads((l.data || []) as LoadEntry[]);
-    setLinks((linkRows.data || []) as WellnessLink[]);
-    setResponses((responseRows.data || []) as WellnessResponse[]);
+    setLoads((payload.loads || []) as LoadEntry[]);
+    setLinks((payload.links || []) as WellnessLink[]);
+    setResponses((payload.responses || []) as WellnessResponse[]);
   }
-
   useEffect(() => {
     void reload();
   }, [teamId]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -241,36 +221,31 @@ export default function TeamAvailabilityLoad({
   }
 
   async function saveLoad() {
-    if (!canEdit) return;
+    if (!canManageTarget) return;
 
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
-
-    if (!user) return;
-
-    const q = await supabase.from("training_load_entries").insert({
-      team_id: teamId,
-      player_id: playerId || null,
-      load_date: loadDate,
-      duration_minutes: duration,
-      planned_rpe: plannedRpe,
-      actual_rpe: actualRpe === "" ? null : actualRpe,
-      load_type: loadType,
-      source: "staff",
-      created_by: user.id,
+    const response = await fetch("/api/rpe/team", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        action: "save_load",
+        teamId,
+        playerId: playerId || null,
+        loadDate,
+        durationMinutes: duration,
+        plannedRpe,
+        actualRpe: actualRpe === "" ? null : actualRpe,
+        loadType,
+      }),
     });
-
-    if (q.error) return alert(q.error.message);
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) return alert(payload.error || "Enregistrement de la charge impossible.");
 
     await logActivity({
       teamId,
       playerId: playerId || null,
       scope: "training",
       actionKey: "load.created",
-      title: `Charge ajoutée · ${duration} min · RPE ${
-        actualRpe === "" ? plannedRpe : actualRpe
-      }`,
+      title: `Charge ajoutée · ${duration} min · RPE ${actualRpe === "" ? plannedRpe : actualRpe}`,
       href: `/equipes/${teamId}`,
     });
 
@@ -278,68 +253,40 @@ export default function TeamAvailabilityLoad({
   }
 
   async function createLink(kind: "post_session" | "wellness") {
-    if (!canEdit) return;
-
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
-
-    if (!user) return;
-
-    const title =
-      kind === "post_session"
-        ? "Questionnaire après séance"
-        : "Questionnaire récupération";
-
-    const { error } = await supabase.from("team_wellness_links").insert({
-      team_id: teamId,
-      response_kind: kind,
-      title,
-      created_by: user.id,
+    if (!canManageQuestionnaires) return;
+    const response = await fetch("/api/rpe/team", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "create_link", teamId, kind }),
     });
-
-    if (error) return alert(error.message);
-
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) return alert(payload.error || "Création du lien impossible.");
     await reload();
     toast("Lien joueur créé ✓");
   }
 
   async function regenerateLink(link: WellnessLink) {
-    if (
-      !canEdit ||
-      !window.confirm(
-        "Regénérer ce lien ? L'ancien lien ne fonctionnera plus.",
-      )
-    ) {
-      return;
-    }
-
-    const { error } = await supabase
-      .from("team_wellness_links")
-      .update({
-        token: crypto.randomUUID(),
-        updated_at: new Date().toISOString(),
-      })
-      .eq("id", link.id);
-
-    if (error) return alert(error.message);
-
+    if (!canManageQuestionnaires || !window.confirm("Regénérer ce lien ? L'ancien lien ne fonctionnera plus.")) return;
+    const response = await fetch("/api/rpe/team", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "regenerate_link", teamId, linkId: link.id }),
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) return alert(payload.error || "Régénération impossible.");
     await reload();
     toast("Nouveau lien créé");
   }
 
   async function toggleLink(link: WellnessLink) {
-    if (!canEdit) return;
-
-    const { error } = await supabase
-      .from("team_wellness_links")
-      .update({
-        enabled: !link.enabled,
-        updated_at: new Date().toISOString(),
-      })
-      .eq("id", link.id);
-
-    if (error) return alert(error.message);
+    if (!canManageQuestionnaires) return;
+    const response = await fetch("/api/rpe/team", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "toggle_link", teamId, linkId: link.id, enabled: !link.enabled }),
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) return alert(payload.error || "Modification du lien impossible.");
     await reload();
   }
 
@@ -358,26 +305,15 @@ export default function TeamAvailabilityLoad({
       row.response_kind === "post_session" && row.rpe != null
         ? `Supprimer le RPE ${row.rpe}/10 et la charge associée ?`
         : "Supprimer cette réponse joueur ?";
-
     if (!window.confirm(wording)) return;
 
-    const { data, error } = await supabase.rpc(
-      "delete_player_wellness_response",
-      { p_response_id: row.id },
-    );
-
-    if (error) {
-      alert(error.message);
-      return;
-    }
-
-    const result = (data || {}) as { ok?: boolean; message?: string };
-
-    if (result.ok === false) {
-      alert(result.message || "Suppression impossible.");
-      return;
-    }
-
+    const response = await fetch("/api/rpe/team", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "delete_response", teamId, responseId: row.id }),
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) return alert(payload.error || "Suppression impossible.");
     await reload();
     toast("RPE / réponse supprimé(e) ✓");
   }
@@ -429,6 +365,8 @@ export default function TeamAvailabilityLoad({
     <section className="wrap">
       {message && <div className="toast">{message}</div>}
 
+      <RpeAlertsPanel teamId={teamId} canViewIndividual={canViewIndividual} />
+
       <div className="card availabilityCard">
         <div className="cardHead">
           <div>
@@ -445,7 +383,7 @@ export default function TeamAvailabilityLoad({
             const currentStatus =
               currentAvailability?.status || "available";
             const alertInfo = responseAlert(
-              latestByPlayer.get(String(player.id)),
+              canViewIndividual ? latestByPlayer.get(String(player.id)) : null,
             );
 
             const hardRed = [
@@ -586,7 +524,7 @@ export default function TeamAvailabilityLoad({
                 <div className="linkBox emptyLink" key={kind}>
                   <strong>{label}</strong>
                   <span>Aucun lien créé</span>
-                  {canEdit && (
+                  {canManageQuestionnaires && (
                     <button onClick={() => createLink(kind)}>
                       + Créer le lien
                     </button>
@@ -636,13 +574,13 @@ export default function TeamAvailabilityLoad({
                     Tester
                   </button>
 
-                  {canEdit && (
+                  {canManageQuestionnaires && (
                     <button onClick={() => toggleLink(link)}>
                       {link.enabled ? "Désactiver" : "Activer"}
                     </button>
                   )}
 
-                  {canEdit && (
+                  {canManageQuestionnaires && (
                     <button
                       className="ghost"
                       onClick={() => regenerateLink(link)}
@@ -667,7 +605,7 @@ export default function TeamAvailabilityLoad({
           </div>
         </div>
 
-        {missingToday.length > 0 && (
+        {canViewIndividual && missingToday.length > 0 && (
           <div className="missing">
             <b>Sans réponse :</b>{" "}
             {missingToday
@@ -680,13 +618,15 @@ export default function TeamAvailabilityLoad({
         )}
       </div>
 
-      <div className="weeklyFull">
-        <TeamWeeklyRpeComparison
-          teamId={teamId}
-          players={players}
-          canEdit={canEdit}
-        />
-      </div>
+      {canViewIndividual && (
+        <div className="weeklyFull">
+          <TeamWeeklyRpeComparison
+            teamId={teamId}
+            players={players}
+            canEdit={canManageTarget}
+          />
+        </div>
+      )}
 
       <div className="card loadCard">
         <div className="cardHead">
@@ -697,7 +637,7 @@ export default function TeamAvailabilityLoad({
           <span>Durée × RPE</span>
         </div>
 
-        {canEdit && (
+        {canManageTarget && (
           <div className="form loadForm">
             <select
               value={playerId}
@@ -813,6 +753,7 @@ export default function TeamAvailabilityLoad({
           <span>automatique</span>
         </div>
 
+        {canViewIndividual ? (
         <div className="responseTable">
           {responses.slice(0, 20).map((row) => {
             const player = players.find(
@@ -895,6 +836,9 @@ export default function TeamAvailabilityLoad({
             </div>
           )}
         </div>
+        ) : (
+          <div className="empty">Les données individuelles ne sont pas autorisées pour ce rôle.</div>
+        )}
       </div>
 
       <style jsx>{css}</style>

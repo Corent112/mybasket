@@ -79,6 +79,56 @@ const PERMISSION_ROWS: Array<{
     label: "Médias & Google Drive",
     hint: "Accéder aux vidéos du Drive de l’équipe et les utiliser dans LiveStats.",
   },
+  {
+    key: "rpe",
+    label: "Charge & RPE",
+    hint: "Accéder au suivi de charge et aux réponses RPE de cette équipe.",
+  },
+  {
+    key: "rpe_individual",
+    label: "Données individuelles RPE",
+    hint: "Voir les réponses et écarts joueur par joueur.",
+  },
+  {
+    key: "rpe_group",
+    label: "Données groupe RPE",
+    hint: "Voir les moyennes et synthèses du groupe.",
+  },
+  {
+    key: "rpe_manage_target",
+    label: "Gérer la charge souhaitée",
+    hint: "Définir le RPE cible et la charge planifiée.",
+  },
+  {
+    key: "rpe_manage_questionnaires",
+    label: "Gérer les questionnaires",
+    hint: "Créer, régénérer, activer ou désactiver les liens RPE / wellness.",
+  },
+  {
+    key: "rpe_receive_digest",
+    label: "Recevoir le récapitulatif RPE",
+    hint: "Recevoir le bilan lorsque toutes les réponses du groupe sont arrivées.",
+  },
+  {
+    key: "rpe_receive_alerts",
+    label: "Recevoir les alertes critiques",
+    hint: "Être destinataire des alertes rouges déclenchées immédiatement.",
+  },
+  {
+    key: "rpe_channel_in_app",
+    label: "Canal · Notification MyBasket",
+    hint: "Recevoir les alertes dans MyBasket.",
+  },
+  {
+    key: "rpe_channel_email",
+    label: "Canal · E-mail",
+    hint: "Recevoir les alertes et récapitulatifs par e-mail.",
+  },
+  {
+    key: "rpe_channel_external",
+    label: "Canal · WhatsApp / SMS",
+    hint: "Canal prêt pour un fournisseur externe ; sans configuration, aucun blocage.",
+  },
 ];
 
 function newId() {
@@ -109,54 +159,64 @@ function isTeamOwnerStaff(member: StaffMember) {
 
 function defaultPermissions(role: string): TeamCollaborationPermissions {
   const normalized = role.toLowerCase();
-
-  if (normalized.includes("responsable")) {
-    return {
-      view_team: true,
-      players: true,
-      sessions: true,
-      livestats: true,
-      media: true,
-    };
-  }
-
-  if (normalized.includes("entraîneur principal")) {
-    return {
-      view_team: true,
-      players: true,
-      sessions: true,
-      livestats: true,
-      media: true,
-    };
-  }
-
-  if (normalized.includes("assistant")) {
-    return {
-      view_team: true,
-      players: true,
-      sessions: true,
-      livestats: true,
-      media: true,
-    };
-  }
-
-  if (normalized.includes("analyste")) {
-    return {
-      view_team: true,
-      players: false,
-      sessions: false,
-      livestats: true,
-      media: true,
-    };
-  }
-
-  return {
+  const base: TeamCollaborationPermissions = {
     view_team: true,
     players: false,
     sessions: false,
     livestats: false,
     media: false,
+    rpe: false,
+    rpe_individual: false,
+    rpe_group: false,
+    rpe_manage_target: false,
+    rpe_manage_questionnaires: false,
+    rpe_receive_digest: false,
+    rpe_receive_alerts: false,
+    rpe_channel_in_app: true,
+    rpe_channel_email: true,
+    rpe_channel_external: false,
   };
+
+  if (normalized.includes("responsable") || normalized.includes("entraîneur principal")) {
+    return {
+      ...base,
+      players: true,
+      sessions: true,
+      livestats: true,
+      media: true,
+      rpe: true,
+      rpe_individual: true,
+      rpe_group: true,
+      rpe_manage_target: true,
+      rpe_manage_questionnaires: true,
+      rpe_receive_digest: true,
+      rpe_receive_alerts: true,
+    };
+  }
+
+  if (normalized.includes("préparateur physique") || normalized.includes("preparateur physique")) {
+    return {
+      ...base,
+      sessions: true,
+      rpe: true,
+      rpe_individual: true,
+      rpe_group: true,
+      rpe_manage_target: true,
+      rpe_manage_questionnaires: true,
+      rpe_receive_digest: true,
+      rpe_receive_alerts: true,
+    };
+  }
+
+  if (normalized.includes("assistant")) {
+    return { ...base, players: true, sessions: true, livestats: true, media: true };
+  }
+
+  if (normalized.includes("analyste")) {
+    return { ...base, livestats: true, media: true };
+  }
+
+  return base;
 }
 
 export default function TeamStaffManager({
@@ -431,6 +491,16 @@ export default function TeamStaffManager({
         sessions: linked.permissions?.sessions === true,
         livestats: linked.permissions?.livestats === true,
         media: linked.permissions?.media === true,
+        rpe: linked.permissions?.rpe === true,
+        rpe_individual: linked.permissions?.rpe_individual === true,
+        rpe_group: linked.permissions?.rpe_group === true,
+        rpe_manage_target: linked.permissions?.rpe_manage_target === true,
+        rpe_manage_questionnaires: linked.permissions?.rpe_manage_questionnaires === true,
+        rpe_receive_digest: linked.permissions?.rpe_receive_digest === true,
+        rpe_receive_alerts: linked.permissions?.rpe_receive_alerts === true,
+        rpe_channel_in_app: linked.permissions?.rpe_channel_in_app !== false,
+        rpe_channel_email: linked.permissions?.rpe_channel_email !== false,
+        rpe_channel_external: linked.permissions?.rpe_channel_external === true,
       },
     });
   }

@@ -567,6 +567,7 @@ export default function EquipeDetailPage({
     if(typeof window==="undefined")return;
     const tab=new URL(window.location.href).searchParams.get("tab");
     if(tab==="shooting") setActiveTab("shooting");
+    if(tab==="load") setActiveTab("load");
   },[teamId]);
   const [playerForm, setPlayerForm] = useState<{
     open: boolean;
@@ -595,6 +596,21 @@ export default function EquipeDetailPage({
   const canUseMedia =
     Boolean(team) &&
     (isOwner || team?.collaborationPermissions?.media === true);
+  const canUseRpe =
+    Boolean(team) &&
+    (isOwner || team?.collaborationPermissions?.rpe === true);
+  const canViewRpeIndividual =
+    Boolean(team) &&
+    (isOwner || team?.collaborationPermissions?.rpe_individual === true);
+  const canViewRpeGroup =
+    Boolean(team) &&
+    (isOwner || team?.collaborationPermissions?.rpe_group === true);
+  const canManageRpeTarget =
+    Boolean(team) &&
+    (isOwner || team?.collaborationPermissions?.rpe_manage_target === true);
+  const canManageRpeQuestionnaires =
+    Boolean(team) &&
+    (isOwner || team?.collaborationPermissions?.rpe_manage_questionnaires === true);
   const playerLimitReached = (team?.players.length ?? 0) >= 15;
 
   async function reload() {
@@ -957,10 +973,13 @@ export default function EquipeDetailPage({
           <button
             type="button"
             className={activeTab === "load" ? "active" : ""}
-            onClick={() => setActiveTab("load")}
+            onClick={() => {
+              if (canUseRpe) setActiveTab("load");
+              else alert("Le propriétaire ne t’a pas donné accès à Charge & RPE pour cette équipe.");
+            }}
           >
             <Ic d={ICONS.trend} size={16} />
-            Charge & disponibilité
+            Charge & RPE {!canUseRpe && team.isShared ? "🔒" : ""}
           </button>
 
           <button
@@ -1223,6 +1242,10 @@ export default function EquipeDetailPage({
               teamId={team.id}
               players={team.players}
               canEdit={canManagePlayers || canUseSessions}
+              canViewIndividual={canViewRpeIndividual}
+              canViewGroup={canViewRpeGroup}
+              canManageTarget={canManageRpeTarget}
+              canManageQuestionnaires={canManageRpeQuestionnaires}
             />
           </div>
         )}

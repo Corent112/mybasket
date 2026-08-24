@@ -160,6 +160,18 @@ export type TeamCollaborationPermissions = {
   sessions?: boolean;
   livestats?: boolean;
   media?: boolean;
+
+  // Charge & RPE : accès et notifications sont volontairement séparés.
+  rpe?: boolean;
+  rpe_individual?: boolean;
+  rpe_group?: boolean;
+  rpe_manage_target?: boolean;
+  rpe_manage_questionnaires?: boolean;
+  rpe_receive_digest?: boolean;
+  rpe_receive_alerts?: boolean;
+  rpe_channel_in_app?: boolean;
+  rpe_channel_email?: boolean;
+  rpe_channel_external?: boolean;
 };
 
 export interface StaffMember {

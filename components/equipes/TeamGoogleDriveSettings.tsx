@@ -17,16 +17,25 @@ function DriveMark() {
   );
 }
 
+function shortName(name: string) {
+  const clean = name.replace(/\.[^/.]+$/, "");
+  return clean.length > 38 ? `${clean.slice(0, 38)}…` : clean;
+}
+
 export default function TeamGoogleDriveSettings({
   teamId,
+  isOwner = false,
 }: {
   teamId: string;
+  isOwner?: boolean;
 }) {
   const [loading, setLoading] = useState(true);
   const [connected, setConnected] = useState(false);
   const [busy, setBusy] = useState(false);
-  const [selectedVideo, setSelectedVideo] = useState<GoogleDrivePickedVideo | null>(null);
-  const [showPlayer, setShowPlayer] = useState(false);
+
+  // Plusieurs vidéos peuvent maintenant être ajoutées.
+  const [videos, setVideos] = useState<GoogleDrivePickedVideo[]>([]);
+  const [playingId, setPlayingId] = useState<string | null>(null);
 
   const load = async () => {
     setLoading(true);
@@ -55,11 +64,7 @@ export default function TeamGoogleDriveSettings({
   };
 
   const disconnect = async () => {
-    if (
-      !window.confirm(
-        "Déconnecter Google Drive ? Les stats, tags et timecodes restent sauvegardés.",
-      )
-    ) {
+    if (!window.confirm("Déconnecter Google Drive ? Les stats, tags et timecodes restent sauvegardés.")) {
       return;
     }
 
@@ -71,11 +76,10 @@ export default function TeamGoogleDriveSettings({
         body: JSON.stringify({ teamId }),
       });
       const payload = await response.json();
-      if (!response.ok) {
-        throw new Error(payload.error || "Déconnexion impossible.");
-      }
-      setSelectedVideo(null);
-      setShowPlayer(false);
+      if (!response.ok) throw new Error(payload.error || "Déconnexion impossible.");
+
+      setVideos([]);
+      setPlayingId(null);
       await load();
     } catch (error) {
       window.alert(error instanceof Error ? error.message : "Erreur.");
@@ -84,279 +88,170 @@ export default function TeamGoogleDriveSettings({
     }
   };
 
+  const addVideo = (file: GoogleDrivePickedVideo) => {
+    setVideos((current) => {
+      if (current.some((video) => video.id === file.id)) return current;
+      return [...current, file];
+    });
+  };
+
+  const removeVideo = (id: string) => {
+    setVideos((current) => current.filter((video) => video.id !== id));
+    setPlayingId((current) => (current === id ? null : current));
+  };
+
+  const playingVideo = videos.find((video) => video.id === playingId) ?? null;
+
   return (
     <section className="drive-card">
-      <div className="drive-intro">
-        <div className="drive-title">
-          <DriveMark />
-          <div>
-            <span className="eyebrow">Médias équipe</span>
-            <strong>Vidéos Google Drive</strong>
-          </div>
-        </div>
-        <p>
-          Ouvre les dossiers de l’équipe et retrouve toutes les vidéos. Le coach principal connecte Drive une seule fois ; le staff autorisé peut ensuite lire les vidéos dans MyBasket.
-        </p>
-      </div>
-
-      <div className="drive-status">
-        {loading ? (
-          <span className="status neutral">Vérification…</span>
-        ) : connected ? (
-          <>
-            <span className="status connected">
-              <i />
-              Google Drive équipe connecté
-            </span>
-            <GoogleDriveVideoPicker
-              teamId={teamId}
-              compact
-              label={selectedVideo ? "Changer de vidéo" : "Parcourir les vidéos de l’équipe"}
-              onPicked={(file) => {
-                setSelectedVideo(file);
-                setShowPlayer(true);
-              }}
-            />
-            <button type="button" className="secondary" onClick={disconnect} disabled={busy}>
-              {busy ? "Déconnexion…" : "Déconnecter"}
-            </button>
-          </>
-        ) : (
-          <>
-            <span className="status neutral">Drive non connecté</span>
-            <button type="button" className="primary" onClick={connect}>
-              Connecter Google Drive
-            </button>
-          </>
-        )}
-      </div>
-
-      {connected && selectedVideo ? (
-        <div className="drive-video">
-          <div className="drive-video-head">
+      <div className="drive-top">
+        <div className="drive-intro">
+          <div className="drive-title">
+            <DriveMark />
             <div>
-              <span className="eyebrow">Vidéo sélectionnée</span>
-              <strong title={selectedVideo.name}>{selectedVideo.name}</strong>
-            </div>
-            <div className="drive-video-actions">
-              <button
-                type="button"
-                className="secondary"
-                onClick={() => setShowPlayer((value) => !value)}
-              >
-                {showPlayer ? "Masquer" : "▶ Regarder"}
-              </button>
-              <button
-                type="button"
-                className="secondary"
-                onClick={() => {
-                  setSelectedVideo(null);
-                  setShowPlayer(false);
-                }}
-              >
-                Retirer
-              </button>
+              <span className="eyebrow">Médias équipe</span>
+              <strong>Vidéos Google Drive</strong>
             </div>
           </div>
-          {showPlayer ? (
-            <video
-              className="drive-player"
-              src={googleDriveFileStreamUrl(teamId, selectedVideo.id)}
-              controls
-              playsInline
-              preload="metadata"
-            />
-          ) : null}
+          <p>
+            Le coach principal connecte le Drive une seule fois. Le staff autorisé
+            retrouve ensuite les vidéos de l’équipe directement dans MyBasket.
+          </p>
+          {connected ? <b className="connected-copy">Google Drive connecté à l’équipe.</b> : null}
+        </div>
+
+        <div className="drive-status">
+          {loading ? (
+            <span className="status neutral">Vérification…</span>
+          ) : connected ? (
+            <>
+              <span className="status connected"><i />Google Drive équipe connecté</span>
+              <GoogleDriveVideoPicker
+                teamId={teamId}
+                compact
+                label={videos.length ? "Ajouter une vidéo" : "Choisir une vidéo"}
+                onPicked={addVideo}
+              />
+              {isOwner ? (
+                <button type="button" className="secondary danger" onClick={disconnect} disabled={busy}>
+                  {busy ? "Déconnexion…" : "Déconnecter"}
+                </button>
+              ) : null}
+            </>
+          ) : (
+            <>
+              <span className="status neutral">Drive non connecté</span>
+              {isOwner ? (
+                <button type="button" className="primary" onClick={connect}>
+                  Connecter Google Drive
+                </button>
+              ) : (
+                <span className="status neutral">Le coach principal doit connecter le Drive</span>
+              )}
+            </>
+          )}
+        </div>
+      </div>
+
+      {connected && videos.length > 0 ? (
+        <div className="video-strip">
+          {videos.map((video) => {
+            const stream = googleDriveFileStreamUrl(teamId, video.id);
+            const active = playingId === video.id;
+
+            return (
+              <article className={`video-tile ${active ? "active" : ""}`} key={video.id}>
+                <button
+                  type="button"
+                  className="thumb-button"
+                  onClick={() => setPlayingId(active ? null : video.id)}
+                  aria-label={`Lire ${video.name}`}
+                >
+                  <video
+                    className="video-thumb"
+                    src={stream}
+                    muted
+                    playsInline
+                    preload="metadata"
+                  />
+                  <span className="play-badge">▶</span>
+                </button>
+
+                <div className="tile-info">
+                  <strong title={video.name}>{shortName(video.name)}</strong>
+                  <div className="tile-bottom">
+                    <span>Google Drive</span>
+                    <button
+                      type="button"
+                      className="more"
+                      onClick={() => removeVideo(video.id)}
+                      title="Retirer la vidéo"
+                      aria-label={`Retirer ${video.name}`}
+                    >
+                      ×
+                    </button>
+                  </div>
+                </div>
+              </article>
+            );
+          })}
+        </div>
+      ) : null}
+
+      {playingVideo ? (
+        <div className="player-wrap">
+          <div className="player-head">
+            <strong>{playingVideo.name}</strong>
+            <button type="button" className="secondary" onClick={() => setPlayingId(null)}>
+              Fermer
+            </button>
+          </div>
+          <video
+            className="drive-player"
+            src={googleDriveFileStreamUrl(teamId, playingVideo.id)}
+            controls
+            autoPlay
+            playsInline
+            preload="metadata"
+          />
         </div>
       ) : null}
 
       <div className="drive-security">
-        <span>🔒 Accès réservé aux membres autorisés de l’équipe</span>
-        <span>Les vidéos restent privées dans Google Drive</span>
+        <span>🔒 Un seul Drive est connecté à l’équipe</span>
+        <span>Le staff autorisé voit les vidéos sans accéder au compte Google ni au token du coach</span>
       </div>
 
       <style jsx>{`
-        .drive-card {
-          display: grid;
-          grid-template-columns: minmax(0, 1fr) auto;
-          align-items: center;
-          gap: 18px 28px;
-          margin-bottom: 20px;
-          padding: 18px 20px 13px;
-          border: 1px solid #eadfd5;
-          border-radius: 18px;
-          background: #fff;
-          box-shadow: 0 10px 26px rgba(50, 31, 23, 0.04);
-        }
-        .drive-intro {
-          min-width: 0;
-        }
-        .drive-title {
-          display: flex;
-          align-items: center;
-          gap: 11px;
-        }
-        .drive-title > div {
-          display: grid;
-          gap: 2px;
-        }
-        .eyebrow {
-          color: #d4a24c;
-          font-size: 0.62rem;
-          font-weight: 950;
-          letter-spacing: 0.11em;
-          text-transform: uppercase;
-        }
-        strong {
-          color: #2c211d;
-          font-size: 1rem;
-        }
-        p {
-          max-width: 690px;
-          margin: 7px 0 0 45px;
-          color: #746761;
-          font-size: 0.76rem;
-          line-height: 1.5;
-        }
-        .drive-status {
-          display: flex;
-          align-items: center;
-          gap: 9px;
-          justify-content: flex-end;
-          flex-wrap: wrap;
-        }
-        .status {
-          display: inline-flex;
-          align-items: center;
-          gap: 6px;
-          min-height: 34px;
-          padding: 0 11px;
-          border-radius: 999px;
-          font-size: 0.7rem;
-          font-weight: 850;
-        }
-        .status.neutral {
-          background: #f7f2ed;
-          color: #81726b;
-        }
-        .status.connected {
-          background: #eef7ef;
-          color: #3d7048;
-        }
-        .status i {
-          width: 7px;
-          height: 7px;
-          border-radius: 50%;
-          background: #4b9a5a;
-        }
-        button {
-          min-height: 36px;
-          border-radius: 999px;
-          padding: 0 14px;
-          font-weight: 900;
-          cursor: pointer;
-        }
-        .primary {
-          border: 1px solid #6b1a2c;
-          background: #6b1a2c;
-          color: #fff;
-        }
-        .secondary {
-          border: 1px solid #dfd3cb;
-          background: #fff;
-          color: #6b1a2c;
-        }
-        button:disabled {
-          opacity: 0.55;
-          cursor: default;
-        }
-        .drive-video {
-          grid-column: 1 / -1;
-          min-width: 0;
-          padding: 14px;
-          border: 1px solid #f0e7e1;
-          border-radius: 14px;
-          background: #fffaf5;
-        }
-        .drive-video-head {
-          display: flex;
-          align-items: center;
-          justify-content: space-between;
-          gap: 14px;
-        }
-        .drive-video-head > div:first-child {
-          min-width: 0;
-          display: grid;
-          gap: 3px;
-        }
-        .drive-video-head strong {
-          overflow: hidden;
-          text-overflow: ellipsis;
-          white-space: nowrap;
-        }
-        .drive-video-actions {
-          display: flex;
-          gap: 8px;
-          flex: 0 0 auto;
-        }
-        .drive-player {
-          display: block;
-          width: 100%;
-          max-height: 560px;
-          margin-top: 12px;
-          border-radius: 12px;
-          background: #111;
-        }
-        .drive-status :global(.gdrive-picker) {
-          display: inline-flex;
-        }
-        .drive-status :global(.gdrive-picker button) {
-          min-height: 36px;
-          border: 1px solid #6b1a2c;
-          border-radius: 999px;
-          padding: 0 14px;
-          background: #6b1a2c;
-          color: #fff;
-          font-weight: 900;
-          cursor: pointer;
-        }
-        .drive-security {
-          grid-column: 1 / -1;
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          gap: 12px 24px;
-          flex-wrap: wrap;
-          margin: 0 -20px -13px;
-          padding: 9px 20px;
-          border-top: 1px solid #f0e7e1;
-          border-radius: 0 0 18px 18px;
-          background: #fffaf5;
-          color: #806e65;
-          font-size: 0.65rem;
-        }
-        @media (max-width: 760px) {
-          .drive-card {
-            grid-template-columns: 1fr;
-          }
-          p {
-            margin-left: 0;
-          }
-          .drive-status {
-            justify-content: flex-start;
-          }
-          .drive-video-head {
-            align-items: flex-start;
-            flex-direction: column;
-          }
-          .drive-video-actions {
-            width: 100%;
-            flex-wrap: wrap;
-          }
-          .drive-security {
-            justify-content: flex-start;
-          }
-        }
+        .drive-card{margin-bottom:20px;border:1px solid #eadfd5;border-radius:18px;background:#fff;box-shadow:0 10px 26px rgba(50,31,23,.04);overflow:hidden}
+        .drive-top{display:flex;align-items:center;justify-content:space-between;gap:22px;padding:18px 20px 14px}
+        .drive-intro{min-width:0}.drive-title{display:flex;align-items:center;gap:11px}.drive-title>div{display:grid;gap:2px}
+        .eyebrow{color:#d4a24c;font-size:.62rem;font-weight:950;letter-spacing:.11em;text-transform:uppercase}
+        strong{color:#2c211d;font-size:.9rem}.drive-intro p{max-width:660px;margin:7px 0 0 45px;color:#746761;font-size:.72rem;line-height:1.5}
+        .connected-copy{display:block;margin:6px 0 0 45px;color:#6b1a2c;font-size:.68rem}
+        .drive-status{display:flex;align-items:center;justify-content:flex-end;gap:9px;flex-wrap:wrap}
+        .status{display:inline-flex;align-items:center;gap:6px;min-height:34px;padding:0 11px;border-radius:999px;font-size:.68rem;font-weight:850}
+        .status.neutral{background:#f7f2ed;color:#81726b}.status.connected{background:#eef7ef;color:#3d7048}.status i{width:7px;height:7px;border-radius:50%;background:#4b9a5a}
+        button{font-family:inherit;cursor:pointer}.primary,.secondary{min-height:36px;border-radius:999px;padding:0 14px;font-weight:900}
+        .primary{border:1px solid #6b1a2c;background:#6b1a2c;color:#fff}.secondary{border:1px solid #dfd3cb;background:#fff;color:#6b1a2c}.danger{color:#a21f32}
+        button:disabled{opacity:.55;cursor:default}
+        .drive-status :global(.gdrive-picker){display:inline-flex}.drive-status :global(.gdrive-picker button){min-height:36px;border:1px solid #dfd3cb;border-radius:999px;padding:0 14px;background:#fff;color:#2c211d;font-weight:900}
+        .video-strip{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;padding:4px 20px 18px}
+        .video-tile{min-width:0;border:1px solid #eee3dc;border-radius:12px;background:#fff;overflow:hidden;transition:transform .15s ease,box-shadow .15s ease,border-color .15s ease}
+        .video-tile:hover{transform:translateY(-2px);box-shadow:0 9px 22px rgba(44,33,29,.09)}.video-tile.active{border-color:#6b1a2c}
+        .thumb-button{position:relative;display:block;width:100%;aspect-ratio:16/9;padding:0;border:0;background:#161616;overflow:hidden}
+        .video-thumb{display:block;width:100%;height:100%;object-fit:cover;pointer-events:none;background:linear-gradient(135deg,#1b1b1b,#3a2529)}
+        .play-badge{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);display:grid;place-items:center;width:36px;height:36px;border-radius:50%;background:rgba(0,0,0,.68);color:#fff;font-size:13px;padding-left:2px;opacity:.9}
+        .tile-info{padding:9px 10px 8px}.tile-info>strong{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:.72rem}
+        .tile-bottom{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-top:5px;color:#8b7c74;font-size:.62rem}
+        .more{display:grid;place-items:center;width:24px;height:24px;border:0;border-radius:50%;background:transparent;color:#6b1a2c;font-size:18px;line-height:1}.more:hover{background:#f7edef}
+        .player-wrap{margin:0 20px 18px;padding:12px;border:1px solid #eee3dc;border-radius:14px;background:#fffaf5}
+        .player-head{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:10px}.player-head strong{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+        .drive-player{display:block;width:100%;max-height:560px;border-radius:11px;background:#111}
+        .drive-security{display:flex;align-items:center;justify-content:center;gap:12px 24px;flex-wrap:wrap;padding:9px 20px;border-top:1px solid #f0e7e1;background:#fffaf5;color:#806e65;font-size:.63rem}
+        @media(max-width:1050px){.video-strip{grid-template-columns:repeat(3,minmax(0,1fr))}}
+        @media(max-width:760px){.drive-top{align-items:flex-start;flex-direction:column}.drive-intro p,.connected-copy{margin-left:0}.drive-status{justify-content:flex-start}.video-strip{grid-template-columns:repeat(2,minmax(0,1fr))}}
+        @media(max-width:480px){.video-strip{grid-template-columns:1fr}.player-head{align-items:flex-start;flex-direction:column}}
       `}</style>
     </section>
   );

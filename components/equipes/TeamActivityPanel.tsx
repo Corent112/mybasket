@@ -2,7 +2,7 @@
 import {useEffect,useMemo,useState} from "react";
 import {createClient} from "@/lib/supabase/client";
 type A={id:string;title:string;description:string|null;created_at:string};
-const events=[["session.created","Nouvelle séance"],["calendar.changed","Calendrier"],["availability.changed","Blessure / indisponibilité"],["document.added","Nouveau document"],["resource.updated","Fiche technique"],["player.updated","Fiche joueur"],["staff.updated","Staff"]];
+const events=[["session.created","Nouvelle séance"],["calendar.changed","Calendrier"],["availability.changed","Blessure / indisponibilité"],["document.added","Nouveau document"],["resource.updated","Fiche technique"],["player.updated","Fiche joueur"],["staff.updated","Staff"],["rpe.alert","Alertes RPE critiques"],["rpe.digest","Récapitulatif RPE"]];
 export default function TeamActivityPanel({teamId}:{teamId:string}){
  const supabase=useMemo(()=>createClient(),[]),[items,setItems]=useState<A[]>([]),[prefs,setPrefs]=useState<Record<string,{in_app:boolean;email:boolean}>>({});
  async function load(){const{data:{user}}=await supabase.auth.getUser();const[a,p]=await Promise.all([supabase.from("activity_log").select("*").eq("team_id",teamId).order("created_at",{ascending:false}).limit(100),user?supabase.from("notification_preferences").select("*").eq("user_id",user.id).eq("team_id",teamId):Promise.resolve({data:[]} as any)]);setItems((a.data||[]) as A[]);const m:Record<string,{in_app:boolean;email:boolean}>={};for(const x of p.data||[])m[x.event_key]={in_app:x.in_app,email:x.email};setPrefs(m)}

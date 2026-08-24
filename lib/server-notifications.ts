@@ -20,9 +20,10 @@ export async function sendTransactionalEmail(input: {
   subject: string;
   html: string;
   replyTo?: string | null;
+  from?: string | null;
 }) {
   const apiKey = process.env.RESEND_API_KEY;
-  const from = process.env.RESEND_FROM;
+  const from = input.from || process.env.RESEND_FROM;
 
   if (!apiKey) {
     console.error("RESEND_API_KEY absente : email non envoyé", input.subject);

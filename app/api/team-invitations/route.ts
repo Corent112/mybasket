@@ -10,7 +10,22 @@ import {
   getTeamCollaborationUsage,
 } from "@/lib/team-collaboration-limits";
 
-type PermissionKey = "view_team" | "players" | "sessions" | "livestats" | "media";
+type PermissionKey =
+  | "view_team"
+  | "players"
+  | "sessions"
+  | "livestats"
+  | "media"
+  | "rpe"
+  | "rpe_individual"
+  | "rpe_group"
+  | "rpe_manage_target"
+  | "rpe_manage_questionnaires"
+  | "rpe_receive_digest"
+  | "rpe_receive_alerts"
+  | "rpe_channel_in_app"
+  | "rpe_channel_email"
+  | "rpe_channel_external";
 type PermissionMap = Record<PermissionKey, boolean>;
 
 const PERMISSION_KEYS: PermissionKey[] = [
@@ -19,6 +34,16 @@ const PERMISSION_KEYS: PermissionKey[] = [
   "sessions",
   "livestats",
   "media",
+  "rpe",
+  "rpe_individual",
+  "rpe_group",
+  "rpe_manage_target",
+  "rpe_manage_questionnaires",
+  "rpe_receive_digest",
+  "rpe_receive_alerts",
+  "rpe_channel_in_app",
+  "rpe_channel_email",
+  "rpe_channel_external",
 ];
 
 const PERMISSION_LABELS: Record<PermissionKey, string> = {
@@ -27,6 +52,16 @@ const PERMISSION_LABELS: Record<PermissionKey, string> = {
   sessions: "Séances & calendrier",
   livestats: "LiveStats",
   media: "Médias & Google Drive",
+  rpe: "Charge & RPE",
+  rpe_individual: "Données RPE individuelles",
+  rpe_group: "Synthèse RPE groupe",
+  rpe_manage_target: "Gérer la charge souhaitée",
+  rpe_manage_questionnaires: "Gérer les questionnaires RPE",
+  rpe_receive_digest: "Récapitulatif RPE",
+  rpe_receive_alerts: "Alertes RPE critiques",
+  rpe_channel_in_app: "Notifications MyBasket",
+  rpe_channel_email: "E-mail RPE",
+  rpe_channel_external: "WhatsApp / SMS",
 };
 
 function normalizeEmail(value: unknown) {
@@ -88,6 +123,16 @@ function normalizePermissions(value: unknown): PermissionMap {
     sessions: source.sessions === true,
     livestats: source.livestats === true,
     media: source.media === true,
+    rpe: source.rpe === true,
+    rpe_individual: source.rpe_individual === true,
+    rpe_group: source.rpe_group === true,
+    rpe_manage_target: source.rpe_manage_target === true,
+    rpe_manage_questionnaires: source.rpe_manage_questionnaires === true,
+    rpe_receive_digest: source.rpe_receive_digest === true,
+    rpe_receive_alerts: source.rpe_receive_alerts === true,
+    rpe_channel_in_app: source.rpe_channel_in_app !== false,
+    rpe_channel_email: source.rpe_channel_email !== false,
+    rpe_channel_external: source.rpe_channel_external === true,
   };
 }
 

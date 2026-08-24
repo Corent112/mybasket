@@ -109,28 +109,31 @@ export default function PublicPlayerLoadForm({ token }: { token: string }) {
     if (!playerId) return alert("Choisis ton nom.");
 
     setSending(true);
-    const { data, error } = await supabase.rpc("submit_team_wellness_response", {
-      p_token: token,
-      p_player_id: playerId,
-      p_duration_minutes: kind === "post_session" ? duration : null,
-      p_rpe: kind === "post_session" ? rpe : null,
-      p_fatigue: fatigue,
-      p_soreness: soreness,
-      p_sleep: sleep,
-      p_stress: stress,
-      p_comment: comment.trim() || null,
-      p_load_type: kind === "post_session" ? loadType : null,
-    });
-    setSending(false);
-
-    if (error) return alert(error.message);
-
-    const result = (data || {}) as { ok?: boolean; message?: string };
-    if (result.ok === false) {
-      return alert(result.message || "Impossible d'enregistrer la réponse.");
+    try {
+      const response = await fetch("/api/rpe/submit", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          token,
+          playerId,
+          duration: kind === "post_session" ? duration : null,
+          rpe: kind === "post_session" ? rpe : null,
+          fatigue,
+          soreness,
+          sleep,
+          stress,
+          comment: comment.trim() || null,
+          loadType: kind === "post_session" ? loadType : null,
+        }),
+      });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok || result.ok === false) {
+        return alert(result.error || result.message || "Impossible d'enregistrer la réponse.");
+      }
+      setDone(true);
+    } finally {
+      setSending(false);
     }
-
-    setDone(true);
   }
 
   if (loading) {
