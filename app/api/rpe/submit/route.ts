@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin-server";
 import { averageOtherPlayers, evaluateRpe } from "@/lib/rpe/engine";
-import { sendCriticalRpeAlert, sendRpeDigestIfComplete } from "@/lib/rpe/notifications";
+import { sendCriticalRpeAlert } from "@/lib/rpe/notifications";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -74,7 +74,7 @@ export async function POST(request: Request) {
           .limit(1)
           .maybeSingle(),
         admin.from("teams").select("id,name").eq("id", link.team_id).maybeSingle(),
-        admin.from("players").select("id,first_name,last_name").eq("id", playerId).maybeSingle(),
+        admin.from("players").select("id,first_name,last_name,photo_url").eq("id", playerId).maybeSingle(),
         admin
           .from("team_load_plans")
           .select("planned_rpe")
@@ -133,16 +133,12 @@ export async function POST(request: Request) {
           playerId,
           playerName:
             [player?.first_name, player?.last_name].filter(Boolean).join(" ") || "Joueur",
+          playerPhoto: player?.photo_url ? String(player.photo_url) : null,
+          responseDate,
           evaluation,
         });
       }
     }
-
-    await sendRpeDigestIfComplete({
-      teamId: String(link.team_id),
-      teamName: String(team?.name || "Équipe"),
-      responseDate,
-    });
 
     return NextResponse.json({ ok: true, evaluation });
   } catch (error) {

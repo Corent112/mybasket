@@ -104,7 +104,7 @@ export async function POST(request: Request) {
   const admin = createAdminClient();
   if (!admin) return NextResponse.json({ error: "Serveur indisponible." }, { status: 500 });
 
-  if (action === "save_plan" || action === "clear_plan" || action === "save_load") {
+  if (["save_plan", "clear_plan", "save_load", "reset_week", "copy_previous_week"].includes(action)) {
     if (!hasRpePermission(access, "rpe_manage_target")) return NextResponse.json({ error: "Droit de gestion de la charge requis." }, { status: 403 });
   }
   if (["create_link", "regenerate_link", "toggle_link"].includes(action)) {
@@ -134,6 +134,83 @@ export async function POST(request: Request) {
   } else if (action === "clear_plan") {
     const { error } = await admin.from("team_load_plans").delete().eq("team_id", teamId).eq("plan_date", String(body?.planDate || ""));
     if (error) return NextResponse.json({ error: error.message }, { status: 400 });
+  } else if (action === "reset_week") {
+    const weekStart = String(body?.weekStart || "");
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(weekStart)) {
+      return NextResponse.json({ error: "Début de semaine invalide." }, { status: 400 });
+    }
+    const start = new Date(`${weekStart}T12:00:00Z`);
+    const end = new Date(start);
+    end.setUTCDate(end.getUTCDate() + 6);
+    const endIso = end.toISOString().slice(0, 10);
+    const { error } = await admin
+      .from("team_load_plans")
+      .delete()
+      .eq("team_id", teamId)
+      .gte("plan_date", weekStart)
+      .lte("plan_date", endIso);
+    if (error) return NextResponse.json({ error: error.message }, { status: 400 });
+  } else if (action === "copy_previous_week") {
+    const weekStart = String(body?.weekStart || "");
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(weekStart)) {
+      return NextResponse.json({ error: "Début de semaine invalide." }, { status: 400 });
+    }
+
+    const currentStart = new Date(`${weekStart}T12:00:00Z`);
+    const currentEnd = new Date(currentStart);
+    currentEnd.setUTCDate(currentEnd.getUTCDate() + 6);
+    const previousStart = new Date(currentStart);
+    previousStart.setUTCDate(previousStart.getUTCDate() - 7);
+    const previousEnd = new Date(currentStart);
+    previousEnd.setUTCDate(previousEnd.getUTCDate() - 1);
+
+    const prevStartIso = previousStart.toISOString().slice(0, 10);
+    const prevEndIso = previousEnd.toISOString().slice(0, 10);
+    const currentEndIso = currentEnd.toISOString().slice(0, 10);
+
+    const { data: previousPlans, error: readError } = await admin
+      .from("team_load_plans")
+      .select("plan_date,duration_minutes,planned_rpe,load_type,note")
+      .eq("team_id", teamId)
+      .gte("plan_date", prevStartIso)
+      .lte("plan_date", prevEndIso)
+      .order("plan_date");
+
+    if (readError) return NextResponse.json({ error: readError.message }, { status: 400 });
+    if (!previousPlans?.length) {
+      return NextResponse.json(
+        { error: "Aucun RPE théorique trouvé sur la semaine précédente." },
+        { status: 404 },
+      );
+    }
+
+    const { error: deleteError } = await admin
+      .from("team_load_plans")
+      .delete()
+      .eq("team_id", teamId)
+      .gte("plan_date", weekStart)
+      .lte("plan_date", currentEndIso);
+    if (deleteError) return NextResponse.json({ error: deleteError.message }, { status: 400 });
+
+    const rows = previousPlans.map((plan: any) => {
+      const source = new Date(`${String(plan.plan_date)}T12:00:00Z`);
+      source.setUTCDate(source.getUTCDate() + 7);
+      return {
+        team_id: teamId,
+        plan_date: source.toISOString().slice(0, 10),
+        duration_minutes: Number(plan.duration_minutes || 0),
+        planned_rpe: Number(plan.planned_rpe || 0),
+        load_type: String(plan.load_type || "basket"),
+        note: plan.note || null,
+        created_by: access.userId,
+        updated_at: new Date().toISOString(),
+      };
+    });
+
+    const { error: copyError } = await admin
+      .from("team_load_plans")
+      .upsert(rows, { onConflict: "team_id,plan_date" });
+    if (copyError) return NextResponse.json({ error: copyError.message }, { status: 400 });
   } else if (action === "save_load") {
     const { error } = await admin.from("training_load_entries").insert({
       team_id: teamId,

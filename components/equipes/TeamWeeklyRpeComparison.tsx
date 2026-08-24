@@ -201,6 +201,50 @@ export default function TeamWeeklyRpeComparison({
     await reload();
   }
 
+  async function resetWeek() {
+    if (!canEdit) return;
+    if (!window.confirm("Réinitialiser tout le RPE théorique de cette semaine ? Les RPE réellement saisis par les joueurs ne seront pas touchés.")) return;
+
+    const response = await fetch("/api/rpe/team", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        action: "reset_week",
+        teamId,
+        weekStart: iso(weekStart),
+      }),
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) return alert(payload.error || "Réinitialisation impossible.");
+
+    await reload();
+    toast("Semaine théorique réinitialisée ✓");
+  }
+
+  async function copyPreviousWeek() {
+    if (!canEdit) return;
+    const hasCurrentValues = plans.length > 0;
+    const message = hasCurrentValues
+      ? "Des valeurs existent déjà cette semaine. Les remplacer par le RPE théorique de la semaine précédente ?"
+      : "Reprendre le RPE théorique de la semaine précédente sur cette semaine ?";
+    if (!window.confirm(message)) return;
+
+    const response = await fetch("/api/rpe/team", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        action: "copy_previous_week",
+        teamId,
+        weekStart: iso(weekStart),
+      }),
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) return alert(payload.error || "Reprise de la semaine précédente impossible.");
+
+    await reload();
+    toast("Semaine précédente reprise ✓");
+  }
+
   const responseMap = useMemo(() => {
     const map = new Map<string, Wellness>();
     for (const row of responses) {
@@ -334,10 +378,30 @@ export default function TeamWeeklyRpeComparison({
       </div>
 
       <div style={{border:`1px solid ${BORDER}`,borderRadius:16,background:"#fff",overflow:"hidden"}}>
-        <div style={{padding:"12px 14px",borderBottom:`1px solid ${BORDER}`}}>
-          <span style={{display:"block",color:GOLD,fontWeight:1000,fontSize:9,letterSpacing:".12em"}}>RPE THÉORIQUE</span>
-          <strong style={{display:"block",marginTop:3,color:TEXT}}>Programme de la semaine</strong>
-          <small style={{color:MUTED}}>Tu renseignes ici la durée et le RPE visé de l'équipe.</small>
+        <div style={{padding:"12px 14px",borderBottom:`1px solid ${BORDER}`,display:"flex",justifyContent:"space-between",gap:12,alignItems:"center",flexWrap:"wrap"}}>
+          <div>
+            <span style={{display:"block",color:GOLD,fontWeight:1000,fontSize:9,letterSpacing:".12em"}}>RPE THÉORIQUE</span>
+            <strong style={{display:"block",marginTop:3,color:TEXT}}>Programme de la semaine</strong>
+            <small style={{color:MUTED}}>Tu renseignes ici la durée et le RPE visé de l'équipe.</small>
+          </div>
+          {canEdit && (
+            <div style={{display:"flex",gap:7,flexWrap:"wrap"}}>
+              <button
+                type="button"
+                onClick={() => void copyPreviousWeek()}
+                style={{...navBtn,borderColor:"#D9C39E",background:"#FFF9EE",color:"#7A5310"}}
+              >
+                ↺ Reprendre semaine précédente
+              </button>
+              <button
+                type="button"
+                onClick={() => void resetWeek()}
+                style={{...navBtn,borderColor:"#E6C8C5",background:"#FFF7F6",color:"#A12A24"}}
+              >
+                🗑 Réinitialiser la semaine
+              </button>
+            </div>
+          )}
         </div>
 
         <div style={{overflowX:"auto"}}>

@@ -13,6 +13,13 @@ function round1(value: number) {
   return Math.round(value * 10) / 10;
 }
 
+/**
+ * Règle MyBasket :
+ * - la charge prévue est toujours la porte d'entrée ;
+ * - < +2 vs prévu => normal, même si le joueur est haut vs groupe ;
+ * - >= +2 vs prévu et < +2 vs groupe => orange / point d'attention ;
+ * - >= +2 vs prévu ET >= +2 vs groupe => rouge / alerte immédiate.
+ */
 export function evaluateRpe(input: {
   rpeValue: number;
   targetRpe: number | null;
@@ -28,8 +35,8 @@ export function evaluateRpe(input: {
   const targetHigh = targetDelta != null && targetDelta >= 2;
   const groupHigh = groupDelta != null && groupDelta >= 2;
 
-  const severity: RpeSeverity =
-    targetHigh && groupHigh ? "alert" : targetHigh || groupHigh ? "watch" : "normal";
+  let severity: RpeSeverity = "normal";
+  if (targetHigh) severity = groupHigh ? "alert" : "watch";
 
   return {
     severity,

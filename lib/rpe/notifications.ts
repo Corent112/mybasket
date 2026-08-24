@@ -1,7 +1,7 @@
 import { createAdminClient } from "@/lib/supabase/admin-server";
 import { sendTransactionalEmail } from "@/lib/server-notifications";
 import { sendRpeExternalMessage } from "@/lib/rpe/external-messaging";
-import type { RpeEvaluation } from "@/lib/rpe/engine";
+import { averageOtherPlayers, evaluateRpe, type RpeEvaluation } from "@/lib/rpe/engine";
 
 type Recipient = {
   userId: string;
@@ -20,6 +20,51 @@ function esc(value: unknown) {
     .replaceAll('"', "&quot;");
 }
 
+function appUrl() {
+  return String(
+    process.env.NEXT_PUBLIC_SITE_URL ||
+      process.env.NEXT_PUBLIC_APP_URL ||
+      "https://mybasket.fr",
+  ).replace(/\/$/, "");
+}
+
+function signed(value: number | null) {
+  if (value == null) return "—";
+  const n = Math.round(value * 10) / 10;
+  return `${n > 0 ? "+" : ""}${n}`;
+}
+
+function frDate(value: string) {
+  try {
+    return new Intl.DateTimeFormat("fr-FR", {
+      weekday: "long",
+      day: "numeric",
+      month: "long",
+      year: "numeric",
+      timeZone: "Europe/Paris",
+    }).format(new Date(`${value}T12:00:00Z`));
+  } catch {
+    return value;
+  }
+}
+
+function initials(name: string) {
+  return name
+    .split(/\s+/)
+    .filter(Boolean)
+    .map((part) => part[0])
+    .slice(0, 2)
+    .join("")
+    .toUpperCase() || "MB";
+}
+
+function playerAvatarHtml(name: string, photo?: string | null) {
+  if (photo && /^https?:\/\//i.test(photo)) {
+    return `<img src="${esc(photo)}" alt="" width="88" height="88" style="display:block;width:88px;height:88px;border-radius:50%;object-fit:cover;border:4px solid #F2E8DF;box-shadow:0 6px 18px rgba(52,25,20,.12)" />`;
+  }
+  return `<div style="width:88px;height:88px;border-radius:50%;background:#F4ECE6;border:4px solid #F2E8DF;color:#6B1A2C;font-size:28px;line-height:88px;text-align:center;font-weight:900">${esc(initials(name))}</div>`;
+}
+
 async function alertRecipients(teamId: string, digest = false): Promise<Recipient[]> {
   const admin = createAdminClient();
   if (!admin) return [];
@@ -34,20 +79,31 @@ async function alertRecipients(teamId: string, digest = false): Promise<Recipien
   ]);
 
   const eligibleMembers = (members || []).filter((member: any) => {
-    const p = member.permissions && typeof member.permissions === "object" ? member.permissions : {};
+    const p =
+      member.permissions && typeof member.permissions === "object"
+        ? member.permissions
+        : {};
     return digest ? p.rpe_receive_digest === true : p.rpe_receive_alerts === true;
   });
 
-  const memberIds = eligibleMembers.map((row: any) => String(row.user_id || "")).filter(Boolean);
+  const memberIds = eligibleMembers
+    .map((row: any) => String(row.user_id || ""))
+    .filter(Boolean);
   const ownerId = team?.user_id ? String(team.user_id) : "";
   const ids = [...new Set([ownerId, ...memberIds].filter(Boolean))];
   if (!ids.length) return [];
 
-  const { data: profiles } = await admin.from("profiles").select("id,email").in("id", ids);
+  const { data: profiles } = await admin
+    .from("profiles")
+    .select("id,email")
+    .in("id", ids);
   const byId = new Map((profiles || []).map((row: any) => [String(row.id), row]));
 
   const memberRecipients = eligibleMembers.map((member: any) => {
-    const p = member.permissions && typeof member.permissions === "object" ? member.permissions : {};
+    const p =
+      member.permissions && typeof member.permissions === "object"
+        ? member.permissions
+        : {};
     const profile: any = byId.get(String(member.user_id));
     return {
       userId: String(member.user_id),
@@ -69,6 +125,7 @@ async function alertRecipients(teamId: string, digest = false): Promise<Recipien
     .eq("team_id", teamId)
     .eq("event_key", eventKey)
     .maybeSingle();
+
   const ownerProfile: any = byId.get(ownerId);
 
   return [
@@ -84,12 +141,99 @@ async function alertRecipients(teamId: string, digest = false): Promise<Recipien
   ];
 }
 
+function immediateAlertHtml(input: {
+  teamId: string;
+  teamName: string;
+  playerId: string;
+  playerName: string;
+  playerPhoto?: string | null;
+  responseDate?: string | null;
+  evaluation: RpeEvaluation;
+}) {
+  const ev = input.evaluation;
+  const href = `${appUrl()}/equipes/${encodeURIComponent(input.teamId)}?tab=load`;
+  const reasonTarget = ev.targetDelta == null
+    ? "La charge prévue n’est pas renseignée."
+    : `Le RPE déclaré est supérieur de <strong style="color:#6B1A2C">${esc(signed(ev.targetDelta))} points</strong> à la charge prévue.`;
+  const reasonGroup = ev.groupDelta == null
+    ? "La moyenne des autres joueurs n’est pas encore disponible."
+    : `Il est également supérieur de <strong style="color:#6B1A2C">${esc(signed(ev.groupDelta))} points</strong> à la moyenne des autres joueurs ayant répondu.`;
+
+  return `<!doctype html>
+<html>
+<body style="margin:0;padding:0;background:#F3EFEC;font-family:Arial,Helvetica,sans-serif;color:#241D1A">
+<table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="background:#F3EFEC">
+<tr><td align="center" style="padding:28px 12px">
+<table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="max-width:680px;background:#FFFFFF;border-radius:22px;overflow:hidden;box-shadow:0 16px 45px rgba(52,25,20,.12)">
+<tr>
+  <td style="background:#6B1A2C;padding:26px 30px">
+    <table role="presentation" width="100%"><tr>
+      <td>
+        <div style="font-size:12px;line-height:16px;font-weight:900;letter-spacing:.14em;color:#E8C681">MYBASKET · CHARGE & RPE</div>
+        <div style="margin-top:8px;font-size:27px;line-height:32px;font-weight:900;color:#FFFFFF">Point d’attention élevé</div>
+        <div style="margin-top:5px;font-size:13px;color:#EBDDE1">${esc(input.teamName)}${input.responseDate ? ` · ${esc(frDate(input.responseDate))}` : ""}</div>
+      </td>
+      <td width="52" align="right" valign="top"><div style="font-size:34px">🔴</div></td>
+    </tr></table>
+  </td>
+</tr>
+<tr><td style="height:5px;background:#D4A24C"></td></tr>
+
+<tr><td align="center" style="padding:26px 26px 8px">
+  ${playerAvatarHtml(input.playerName, input.playerPhoto)}
+  <div style="margin-top:12px;font-size:20px;font-weight:900;color:#241D1A">${esc(input.playerName)}</div>
+  <div style="margin-top:18px;font-size:11px;font-weight:900;letter-spacing:.12em;color:#8A7A72">RPE RESSENTI</div>
+  <div style="margin-top:2px;font-size:52px;line-height:58px;font-weight:900;color:#6B1A2C">${esc(ev.rpeValue)}<span style="font-size:20px;color:#9B8E88"> / 10</span></div>
+  <div style="display:inline-block;margin-top:8px;padding:7px 13px;border-radius:999px;background:#FFF0EF;color:#B42318;font-size:12px;font-weight:900">🔴 ALERTE ÉLEVÉE</div>
+</td></tr>
+
+<tr><td style="padding:18px 22px 6px">
+  <table role="presentation" width="100%" cellspacing="8" cellpadding="0" border="0">
+    <tr>
+      <td width="50%" style="padding:17px;border:1px solid #E9DFD9;border-radius:15px;background:#FBF8F6;text-align:center">
+        <div style="font-size:10px;font-weight:900;letter-spacing:.1em;color:#8B7D76">CHARGE PRÉVUE</div>
+        <div style="margin-top:5px;font-size:24px;font-weight:900;color:#241D1A">${ev.targetRpe ?? "—"}<span style="font-size:13px;color:#8B7D76"> /10</span></div>
+        <div style="margin-top:3px;color:#B42318;font-weight:900">${esc(signed(ev.targetDelta))}</div>
+      </td>
+      <td width="50%" style="padding:17px;border:1px solid #E9DFD9;border-radius:15px;background:#FBF8F6;text-align:center">
+        <div style="font-size:10px;font-weight:900;letter-spacing:.1em;color:#8B7D76">MOYENNE DES AUTRES</div>
+        <div style="margin-top:5px;font-size:24px;font-weight:900;color:#241D1A">${ev.groupAverage ?? "—"}<span style="font-size:13px;color:#8B7D76"> /10</span></div>
+        <div style="margin-top:3px;color:#B42318;font-weight:900">${esc(signed(ev.groupDelta))}</div>
+      </td>
+    </tr>
+  </table>
+</td></tr>
+
+<tr><td style="padding:14px 30px">
+  <div style="padding:20px;border-radius:16px;background:#FFF8F1;border:1px solid #F0DAC0">
+    <div style="font-size:11px;font-weight:900;letter-spacing:.11em;color:#A56300">POURQUOI RECEVEZ-VOUS CE MAIL ?</div>
+    <div style="margin-top:11px;font-size:14px;line-height:22px;color:#4C413C">${reasonTarget}</div>
+    <div style="margin-top:7px;font-size:14px;line-height:22px;color:#4C413C">${reasonGroup}</div>
+    <div style="margin-top:10px;font-size:13px;line-height:20px;color:#756760">Les deux seuils de vigilance définis dans MyBasket sont dépassés. Cette alerte permet au staff de porter son attention sur ce ressenti.</div>
+  </div>
+</td></tr>
+
+<tr><td align="center" style="padding:14px 30px 28px">
+  <a href="${esc(href)}" style="display:inline-block;background:#6B1A2C;color:#FFFFFF;text-decoration:none;border-radius:999px;padding:14px 24px;font-size:13px;font-weight:900">VOIR LE SUIVI DANS MYBASKET →</a>
+</td></tr>
+
+<tr><td style="background:#FBF8F6;padding:18px 28px;text-align:center;border-top:1px solid #EFE6E0">
+  <div style="font-size:12px;font-weight:900;color:#6B1A2C">MYBASKET</div>
+  <div style="margin-top:5px;font-size:11px;line-height:17px;color:#958780">Cette notification présente des indicateurs de suivi de charge. Elle ne constitue pas un diagnostic médical.</div>
+</td></tr>
+</table>
+</td></tr></table>
+</body></html>`;
+}
+
 export async function sendCriticalRpeAlert(input: {
   alertId: string;
   teamId: string;
   teamName: string;
   playerId: string;
   playerName: string;
+  playerPhoto?: string | null;
+  responseDate?: string | null;
   evaluation: RpeEvaluation;
 }) {
   const admin = createAdminClient();
@@ -100,7 +244,7 @@ export async function sendCriticalRpeAlert(input: {
 
   const href = `/equipes/${input.teamId}?tab=load`;
   const title = `ALERTE RPE — ${input.teamName}`;
-  const body = `${input.playerName} · RPE ${input.evaluation.rpeValue}/10 · attendu ${input.evaluation.targetRpe ?? "—"} · groupe ${input.evaluation.groupAverage ?? "—"}`;
+  const body = `${input.playerName} · RPE ${input.evaluation.rpeValue}/10 · prévu ${input.evaluation.targetRpe ?? "—"} · groupe ${input.evaluation.groupAverage ?? "—"}`;
 
   const { data: team } = await admin
     .from("teams")
@@ -147,30 +291,13 @@ export async function sendCriticalRpeAlert(input: {
 
     if (recipient.emailEnabled && recipient.email) {
       try {
-        const ev = input.evaluation;
-        const html = `
-          <div style="font-family:Arial,sans-serif;max-width:680px;margin:auto;color:#261d1a">
-            <div style="background:#6B1A2C;color:white;padding:24px;border-radius:16px 16px 0 0">
-              <small style="color:#D4A24C;font-weight:800">MYBASKET · ALERTE RPE</small>
-              <h1 style="margin:7px 0 0">${esc(input.teamName)}</h1>
-            </div>
-            <div style="border:1px solid #eadfd8;border-top:0;padding:24px;border-radius:0 0 16px 16px">
-              <h2 style="margin-top:0">${esc(input.playerName)} · ${ev.rpeValue}/10</h2>
-              <p>Une valeur anormalement élevée vient d’être enregistrée.</p>
-              <table style="width:100%;border-collapse:collapse">
-                <tr><td style="padding:8px;border-bottom:1px solid #eee">Charge souhaitée</td><td style="text-align:right"><b>${ev.targetRpe ?? "—"}</b>${ev.targetDelta != null ? ` (${ev.targetDelta >= 0 ? "+" : ""}${ev.targetDelta})` : ""}</td></tr>
-                <tr><td style="padding:8px;border-bottom:1px solid #eee">Moyenne des autres joueurs</td><td style="text-align:right"><b>${ev.groupAverage ?? "—"}</b>${ev.groupDelta != null ? ` (${ev.groupDelta >= 0 ? "+" : ""}${ev.groupDelta})` : ""}</td></tr>
-              </table>
-              <p style="color:#786a63;font-size:13px">MyBasket signale uniquement les données et les écarts. Ce message ne constitue pas un diagnostic médical.</p>
-            </div>
-          </div>`;
-        await sendTransactionalEmail({
+        const result = await sendTransactionalEmail({
           to: recipient.email,
           from: "MyBasket <contact@mybasket.fr>",
-          subject: `${title} · ${input.playerName}`,
-          html,
+          subject: `🔴 Point d’attention RPE — ${input.playerName} · ${input.teamName}`,
+          html: immediateAlertHtml(input),
         });
-        anyEmail = true;
+        if (result.sent) anyEmail = true;
       } catch (error) {
         console.error("Email alerte RPE impossible", error);
       }
@@ -195,55 +322,221 @@ export async function sendCriticalRpeAlert(input: {
     .eq("id", input.alertId);
 }
 
-export async function sendRpeDigestIfComplete(input: {
+export async function sendRpeDailyDigest(input: {
   teamId: string;
   teamName: string;
   responseDate: string;
 }) {
   const admin = createAdminClient();
-  if (!admin) return;
+  if (!admin) return { sent: 0, skipped: 0 };
 
-  const [{ data: players }, { data: responses }, { data: plan }] = await Promise.all([
-    admin.from("players").select("id,first_name,last_name").eq("team_id", input.teamId),
-    admin
-      .from("player_wellness_responses")
-      .select("player_id,rpe,created_at")
-      .eq("team_id", input.teamId)
-      .eq("response_kind", "post_session")
-      .eq("response_date", input.responseDate)
-      .not("rpe", "is", null)
-      .order("created_at", { ascending: true }),
-    admin
-      .from("team_load_plans")
-      .select("planned_rpe")
-      .eq("team_id", input.teamId)
-      .eq("plan_date", input.responseDate)
-      .maybeSingle(),
-  ]);
+  const [{ data: players }, { data: responses }, { data: plan }, { data: storedAlerts }] =
+    await Promise.all([
+      admin
+        .from("players")
+        .select("id,first_name,last_name,photo_url")
+        .eq("team_id", input.teamId)
+        .order("last_name"),
+      admin
+        .from("player_wellness_responses")
+        .select("player_id,rpe,fatigue,soreness,sleep,stress,comment,created_at")
+        .eq("team_id", input.teamId)
+        .eq("response_kind", "post_session")
+        .eq("response_date", input.responseDate)
+        .not("rpe", "is", null)
+        .order("created_at", { ascending: true }),
+      admin
+        .from("team_load_plans")
+        .select("planned_rpe")
+        .eq("team_id", input.teamId)
+        .eq("plan_date", input.responseDate)
+        .maybeSingle(),
+      admin
+        .from("rpe_alerts")
+        .select("player_id,severity,email_sent_at,triggered_at")
+        .eq("team_id", input.teamId)
+        .eq("response_date", input.responseDate),
+    ]);
 
-  if (!players?.length) return;
+  if (!players?.length) return { sent: 0, skipped: 0 };
+
   const latest = new Map<string, any>();
   for (const row of responses || []) latest.set(String(row.player_id), row);
-  if (latest.size < players.length) return;
+  if (!latest.size) return { sent: 0, skipped: 0 };
 
   const recipients = await alertRecipients(input.teamId, true);
-  if (!recipients.length) return;
+  if (!recipients.length) return { sent: 0, skipped: 0 };
 
-  const values = Array.from(latest.values()).map((row: any) => Number(row.rpe || 0));
-  const average = Math.round((values.reduce((a, b) => a + b, 0) / values.length) * 10) / 10;
+  const target = plan?.planned_rpe == null ? null : Number(plan.planned_rpe);
   const playerById = new Map(players.map((p: any) => [String(p.id), p]));
+  const allResponses = Array.from(latest.entries()).map(([playerId, row]) => ({
+    player_id: playerId,
+    rpe: Number(row.rpe),
+    created_at: row.created_at,
+  }));
 
-  const rows = Array.from(latest.entries())
-    .map(([playerId, row]: any) => {
-      const player: any = playerById.get(playerId);
-      const target = plan?.planned_rpe == null ? null : Number(plan.planned_rpe);
-      const delta = target == null ? null : Number(row.rpe) - target;
-      return `<tr><td style="padding:7px;border-bottom:1px solid #eee">${esc([player?.first_name, player?.last_name].filter(Boolean).join(" ") || "Joueur")}</td><td style="text-align:center">${target ?? "—"}</td><td style="text-align:center"><b>${row.rpe}</b></td><td style="text-align:center">${delta == null ? "—" : `${delta >= 0 ? "+" : ""}${Math.round(delta * 10) / 10}`}</td></tr>`;
+  const evaluated = Array.from(latest.entries()).map(([playerId, row]) => {
+    const player: any = playerById.get(playerId);
+    const groupAverage = averageOtherPlayers(allResponses, playerId);
+    const evaluation = evaluateRpe({
+      rpeValue: Number(row.rpe),
+      targetRpe: target,
+      groupAverage,
+    });
+    return { playerId, player, row, evaluation };
+  });
+
+  const values = evaluated.map((item) => Number(item.row.rpe || 0));
+  const average =
+    Math.round((values.reduce((a, b) => a + b, 0) / values.length) * 10) / 10;
+  const red = evaluated.filter((item) => item.evaluation.severity === "alert");
+  const orange = evaluated.filter((item) => item.evaluation.severity === "watch");
+  const green = evaluated.filter((item) => item.evaluation.severity === "normal");
+  const missing = (players || []).filter((p: any) => !latest.has(String(p.id)));
+
+  const storedByPlayer = new Map(
+    (storedAlerts || []).map((row: any) => [String(row.player_id), row]),
+  );
+
+  const tableRows = evaluated
+    .map(({ player, row, evaluation }) => {
+      const status =
+        evaluation.severity === "alert"
+          ? "🔴"
+          : evaluation.severity === "watch"
+            ? "🟠"
+            : "🟢";
+      const name =
+        [player?.first_name, player?.last_name].filter(Boolean).join(" ") ||
+        "Joueur";
+      return `<tr>
+        <td style="padding:10px 8px;border-bottom:1px solid #EEE6E1;font-size:13px;font-weight:700">${esc(name)}</td>
+        <td align="center" style="padding:10px 5px;border-bottom:1px solid #EEE6E1;font-size:13px">${target ?? "—"}</td>
+        <td align="center" style="padding:10px 5px;border-bottom:1px solid #EEE6E1;font-size:14px;font-weight:900;color:#6B1A2C">${esc(row.rpe)}</td>
+        <td align="center" style="padding:10px 5px;border-bottom:1px solid #EEE6E1;font-size:13px">${esc(signed(evaluation.targetDelta))}</td>
+        <td align="center" style="padding:10px 5px;border-bottom:1px solid #EEE6E1;font-size:13px">${esc(signed(evaluation.groupDelta))}</td>
+        <td align="center" style="padding:10px 5px;border-bottom:1px solid #EEE6E1;font-size:16px">${status}</td>
+      </tr>`;
     })
     .join("");
 
+  const attentionBlocks = [...red, ...orange]
+    .map(({ playerId, player, row, evaluation }) => {
+      const isRed = evaluation.severity === "alert";
+      const name =
+        [player?.first_name, player?.last_name].filter(Boolean).join(" ") ||
+        "Joueur";
+      const stored: any = storedByPlayer.get(playerId);
+      const sentLabel =
+        isRed && stored?.email_sent_at
+          ? `<div style="margin-top:8px;font-size:11px;font-weight:800;color:#44704D">✓ Alerte immédiate déjà envoyée</div>`
+          : "";
+      const reason = isRed
+        ? `RPE supérieur de ${esc(signed(evaluation.targetDelta))} au prévu et de ${esc(signed(evaluation.groupDelta))} à la moyenne des autres joueurs.`
+        : `RPE supérieur de ${esc(signed(evaluation.targetDelta))} à la charge prévue. L’écart au groupe (${esc(signed(evaluation.groupDelta))}) reste sous le second seuil de +2.`;
+      return `<div style="margin-top:12px;padding:16px;border-radius:15px;border:1px solid ${isRed ? "#F1C7C3" : "#F0D8A9"};background:${isRed ? "#FFF4F3" : "#FFF9ED"}">
+        <table role="presentation" width="100%"><tr>
+          <td valign="top">
+            <div style="font-size:14px;font-weight:900;color:#241D1A">${isRed ? "🔴" : "🟠"} ${esc(name)}</div>
+            <div style="margin-top:4px;font-size:12px;color:#71645E">${esc(reason)}</div>
+            ${sentLabel}
+          </td>
+          <td width="82" align="right" valign="top">
+            <div style="font-size:24px;font-weight:900;color:#6B1A2C">${esc(row.rpe)}<span style="font-size:12px;color:#8E8079">/10</span></div>
+          </td>
+        </tr></table>
+      </div>`;
+    })
+    .join("");
+
+  const missingNames = missing
+    .map((p: any) => [p.first_name, p.last_name].filter(Boolean).join(" "))
+    .filter(Boolean)
+    .join(" · ");
+
+  const href = `${appUrl()}/equipes/${encodeURIComponent(input.teamId)}?tab=load`;
+
+  const digestHtml = `<!doctype html>
+<html>
+<body style="margin:0;padding:0;background:#F3EFEC;font-family:Arial,Helvetica,sans-serif;color:#241D1A">
+<table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="background:#F3EFEC">
+<tr><td align="center" style="padding:28px 12px">
+<table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="max-width:760px;background:#FFFFFF;border-radius:22px;overflow:hidden;box-shadow:0 16px 45px rgba(52,25,20,.10)">
+<tr><td style="background:#6B1A2C;padding:27px 30px">
+  <div style="font-size:12px;font-weight:900;letter-spacing:.14em;color:#E8C681">MYBASKET · CHARGE & RPE</div>
+  <div style="margin-top:8px;font-size:27px;font-weight:900;color:#FFFFFF">Bilan du jour</div>
+  <div style="margin-top:5px;font-size:13px;color:#EBDDE1">${esc(input.teamName)} · ${esc(frDate(input.responseDate))}</div>
+</td></tr>
+<tr><td style="height:5px;background:#D4A24C"></td></tr>
+
+<tr><td style="padding:22px 22px 10px">
+<table role="presentation" width="100%" cellspacing="7">
+<tr>
+<td width="25%" align="center" style="padding:14px 5px;border-radius:13px;background:#FBF8F6;border:1px solid #EDE4DE"><div style="font-size:22px;font-weight:900;color:#6B1A2C">${latest.size}/${players.length}</div><div style="font-size:9px;font-weight:900;color:#8A7C75;letter-spacing:.08em">RÉPONSES</div></td>
+<td width="25%" align="center" style="padding:14px 5px;border-radius:13px;background:#FBF8F6;border:1px solid #EDE4DE"><div style="font-size:22px;font-weight:900;color:#6B1A2C">${average}</div><div style="font-size:9px;font-weight:900;color:#8A7C75;letter-spacing:.08em">RPE MOYEN</div></td>
+<td width="25%" align="center" style="padding:14px 5px;border-radius:13px;background:#FBF8F6;border:1px solid #EDE4DE"><div style="font-size:22px;font-weight:900;color:#6B1A2C">${target ?? "—"}</div><div style="font-size:9px;font-weight:900;color:#8A7C75;letter-spacing:.08em">RPE PRÉVU</div></td>
+<td width="25%" align="center" style="padding:14px 5px;border-radius:13px;background:#FBF8F6;border:1px solid #EDE4DE"><div style="font-size:22px;font-weight:900;color:#6B1A2C">${red.length + orange.length}</div><div style="font-size:9px;font-weight:900;color:#8A7C75;letter-spacing:.08em">ATTENTIONS</div></td>
+</tr>
+</table>
+</td></tr>
+
+<tr><td style="padding:12px 24px">
+  <div style="font-size:11px;font-weight:900;letter-spacing:.1em;color:#D4A24C">TABLEAU ÉQUIPE</div>
+  <table width="100%" cellspacing="0" cellpadding="0" style="margin-top:8px;border-collapse:collapse">
+    <thead><tr style="background:#F7F3F0">
+      <th align="left" style="padding:9px 8px;font-size:10px;color:#766861">Joueur</th>
+      <th style="padding:9px 5px;font-size:10px;color:#766861">Prévu</th>
+      <th style="padding:9px 5px;font-size:10px;color:#766861">RPE</th>
+      <th style="padding:9px 5px;font-size:10px;color:#766861">vs prévu</th>
+      <th style="padding:9px 5px;font-size:10px;color:#766861">vs groupe</th>
+      <th style="padding:9px 5px;font-size:10px;color:#766861">Statut</th>
+    </tr></thead>
+    <tbody>${tableRows}</tbody>
+  </table>
+</td></tr>
+
+<tr><td style="padding:12px 24px 6px">
+  <div style="font-size:11px;font-weight:900;letter-spacing:.1em;color:#D4A24C">POINTS D’ATTENTION</div>
+  ${
+    attentionBlocks ||
+    `<div style="margin-top:10px;padding:15px;border-radius:14px;background:#F2F8F3;color:#477151;font-size:13px;font-weight:700">🟢 Aucun point d’attention aujourd’hui.</div>`
+  }
+</td></tr>
+
+${
+  missing.length
+    ? `<tr><td style="padding:16px 24px 4px"><div style="padding:14px 16px;border-radius:14px;background:#F7F3F0;font-size:12px;color:#746760"><strong style="color:#3D332F">Sans réponse (${missing.length}) :</strong> ${esc(missingNames)}</div></td></tr>`
+    : ""
+}
+
+<tr><td style="padding:20px 24px">
+  <div style="padding:17px;border-radius:15px;background:#FBF8F6;border:1px solid #EDE4DE">
+    <div style="font-size:12px;font-weight:900;color:#241D1A">À retenir</div>
+    <div style="margin-top:8px;font-size:12px;line-height:20px;color:#6F625C">🔴 ${red.length} alerte${red.length > 1 ? "s" : ""} élevée${red.length > 1 ? "s" : ""} · 🟠 ${orange.length} point${orange.length > 1 ? "s" : ""} d’attention · 🟢 ${green.length} dans la zone attendue · ⚪ ${missing.length} sans réponse</div>
+  </div>
+</td></tr>
+
+<tr><td align="center" style="padding:5px 24px 28px">
+  <a href="${esc(href)}" style="display:inline-block;background:#6B1A2C;color:#FFFFFF;text-decoration:none;border-radius:999px;padding:14px 24px;font-size:13px;font-weight:900">OUVRIR LE SUIVI DE CHARGE →</a>
+</td></tr>
+
+<tr><td style="background:#FBF8F6;padding:18px 28px;text-align:center;border-top:1px solid #EFE6E0">
+  <div style="font-size:12px;font-weight:900;color:#6B1A2C">MYBASKET</div>
+  <div style="margin-top:5px;font-size:11px;line-height:17px;color:#958780">Ce rapport présente des indicateurs de suivi de charge et ne constitue pas un diagnostic médical.</div>
+  <div style="margin-top:4px;font-size:10px;line-height:16px;color:#A89C96">Vous recevez cet email car vous êtes configuré pour recevoir le récapitulatif Charge & RPE de cette équipe.</div>
+</td></tr>
+</table>
+</td></tr></table>
+</body></html>`;
+
+  let sent = 0;
+  let skipped = 0;
+
   for (const recipient of recipients) {
-    if (!recipient.emailEnabled || !recipient.email) continue;
+    if (!recipient.emailEnabled || !recipient.email) {
+      skipped += 1;
+      continue;
+    }
 
     const { data: existingDelivery } = await admin
       .from("rpe_digest_deliveries")
@@ -254,7 +547,10 @@ export async function sendRpeDigestIfComplete(input: {
       .eq("user_id", recipient.userId)
       .maybeSingle();
 
-    if (existingDelivery?.status === "sent" || existingDelivery?.status === "pending") continue;
+    if (existingDelivery?.status === "sent" || existingDelivery?.status === "pending") {
+      skipped += 1;
+      continue;
+    }
 
     const delivery = existingDelivery?.id
       ? existingDelivery
@@ -272,31 +568,46 @@ export async function sendRpeDigestIfComplete(input: {
             .maybeSingle()
         ).data;
 
-    if (!delivery?.id) continue;
+    if (!delivery?.id) {
+      skipped += 1;
+      continue;
+    }
 
     if (existingDelivery?.status === "failed") {
       await admin
         .from("rpe_digest_deliveries")
-        .update({ status: "pending", error_message: null, updated_at: new Date().toISOString() })
+        .update({
+          status: "pending",
+          error_message: null,
+          updated_at: new Date().toISOString(),
+        })
         .eq("id", delivery.id);
     }
 
     try {
-      await sendTransactionalEmail({
+      const result = await sendTransactionalEmail({
         to: recipient.email,
         from: "MyBasket <contact@mybasket.fr>",
-        subject: `RPE — ${input.teamName} — ${input.responseDate}`,
-        html: `<div style="font-family:Arial,sans-serif;max-width:720px;margin:auto"><h1 style="color:#6B1A2C">RPE — ${esc(input.teamName)}</h1><p><b>Réponses :</b> ${latest.size}/${players.length} · <b>Moyenne groupe :</b> ${average} · <b>Charge souhaitée :</b> ${plan?.planned_rpe ?? "—"}</p><table style="width:100%;border-collapse:collapse"><thead><tr><th align="left">Joueur</th><th>Attendu</th><th>RPE</th><th>Écart</th></tr></thead><tbody>${rows}</tbody></table></div>`,
+        subject: `RPE — ${input.teamName} — bilan du ${frDate(input.responseDate)}`,
+        html: digestHtml,
       });
+      if (!result.sent) throw new Error(String(result.reason || "Email non envoyé"));
       await admin
         .from("rpe_digest_deliveries")
         .update({ status: "sent", sent_at: new Date().toISOString() })
         .eq("id", delivery.id);
+      sent += 1;
     } catch (error) {
       await admin
         .from("rpe_digest_deliveries")
-        .update({ status: "failed", error_message: error instanceof Error ? error.message : "Erreur" })
+        .update({
+          status: "failed",
+          error_message: error instanceof Error ? error.message : "Erreur",
+          updated_at: new Date().toISOString(),
+        })
         .eq("id", delivery.id);
     }
   }
+
+  return { sent, skipped };
 }
