@@ -1309,62 +1309,60 @@ export default function GamePlanModule() {
                 <label className="gp-thread"><span>Fil conducteur</span><input value={gp.objective} placeholder="Ex : imposer notre rythme et gagner la bataille du rebond." onChange={(e) => patch({ objective: e.target.value })} /></label>
               </div>
 
-              <div className="gp-card">
+              <div className="gp-card gp-special-card">
                 <div className="gp-cardhead">
                   <h3>🏁 Situations spéciales</h3>
                   <span className="gp-sub">BLOB · SLOB · Fin de match</span>
                 </div>
-                {endSections.map(([section, label, key, ph, rows]) => {
-                  const secSys = systemsBySection[section as SystemSection] || [];
-                  return (
-                    <div key={section} className="gp-endblock">
-                      <Field label={label} block>
-                        <textarea
-                          rows={rows}
-                          value={(gp[key] as string) || ""}
-                          placeholder={ph}
-                          onChange={(e) => patch({ [key]: e.target.value } as Partial<GamePlan>)}
-                        />
-                      </Field>
-
-                      {secSys.length > 0 && (
-                        <div className="gp-systemgrid small special">
-                          {secSys.map((s, i) => (
-                            <article key={s.id} className="gp-system mini-card">
-                              <span className="gp-priority">{i + 1}</span>
-                              {s.schemaImage ? (
-                                // eslint-disable-next-line @next/next/no-img-element
-                                <img src={s.schemaImage} alt={s.title} />
-                              ) : (
-                                <div className="gp-schema">Schéma</div>
-                              )}
-                              <h4>{s.title}</h4>
-                              <p>{s.category || SECTION_LABEL[section as SystemSection]}</p>
-                              <div className="gp-systemactions">
-                                <button type="button" onClick={() => navAfterSave(`/systemes/${s.id}`)}>
-                                  Ouvrir
-                                </button>
-                                <button type="button" onClick={() => removeSystem(s.id)}>
-                                  Retirer
-                                </button>
-                              </div>
-                            </article>
-                          ))}
+                <div className="gp-special-grid">
+                  {endSections.map(([section, label]) => {
+                    const secSys = systemsBySection[section as SystemSection] || [];
+                    const secDrawings = gp.drawings[section] || [];
+                    return (
+                      <section key={section} className="gp-special-zone">
+                        <div className="gp-special-zone-head">
+                          <b>{label}</b>
+                          <span>{secSys.length + secDrawings.length} schéma{secSys.length + secDrawings.length > 1 ? "s" : ""}</span>
                         </div>
-                      )}
 
-                      <DrawingList drawings={gp.drawings[section]} section={section} renameDrawing={renameDrawing} removeDrawing={removeDrawing} />
-                      <div className="gp-endactions">
-                        <button type="button" className="gp-add" onClick={() => openAddSystem(section as SystemSection)}>
-                          ＋ Ajouter un système
-                        </button>
-                        <button type="button" className="gp-add" onClick={() => setDrawingFor(section)}>
-                          ✏️ + Ajouter un dessin
-                        </button>
-                      </div>
-                    </div>
-                  );
-                })}
+                        {secSys.length > 0 && (
+                          <div className="gp-special-schemas">
+                            {secSys.map((s, i) => (
+                              <article key={s.id} className="gp-special-schema">
+                                <span className="gp-priority">{i + 1}</span>
+                                {s.schemaImage ? (
+                                  // eslint-disable-next-line @next/next/no-img-element
+                                  <img src={s.schemaImage} alt={s.title} />
+                                ) : (
+                                  <div className="gp-schema">Schéma</div>
+                                )}
+                                <div className="gp-special-schema-foot">
+                                  <b>{s.title}</b>
+                                  <button type="button" onClick={() => removeSystem(s.id)} aria-label={`Retirer ${s.title}`}>×</button>
+                                </div>
+                              </article>
+                            ))}
+                          </div>
+                        )}
+
+                        <DrawingList drawings={secDrawings} section={section} renameDrawing={renameDrawing} removeDrawing={removeDrawing} />
+
+                        {secSys.length === 0 && secDrawings.length === 0 && (
+                          <div className="gp-special-empty">Aucun schéma</div>
+                        )}
+
+                        <div className="gp-special-actions">
+                          <button type="button" className="gp-add" onClick={() => openAddSystem(section as SystemSection)}>
+                            ＋ Ajouter un schéma
+                          </button>
+                          <button type="button" className="gp-add ghost" onClick={() => setDrawingFor(section)}>
+                            ✏️ Dessiner
+                          </button>
+                        </div>
+                      </section>
+                    );
+                  })}
+                </div>
               </div>
             </>
           )}
@@ -2313,6 +2311,17 @@ const styles = `
     display:block!important;width:100%!important;max-width:none!important;min-width:0!important;box-sizing:border-box!important;
   }
   @media(max-width:900px){.gp-key-grid{grid-template-columns:1fr}}
+
+  
+  /* 2026-08-24 · Situations spéciales compactes : schémas uniquement */
+  .gp-special-card{padding:.9rem!important}
+  .gp-special-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}
+  .gp-special-zone{min-width:0;border:1px solid #eadfce;border-radius:13px;background:#fffaf4;padding:10px;display:flex;flex-direction:column;gap:8px}
+  .gp-special-zone-head{display:flex;align-items:center;justify-content:space-between;gap:8px}.gp-special-zone-head>b{font-size:.76rem;color:#6B1A2C;text-transform:uppercase}.gp-special-zone-head>span{font-size:.6rem;color:#95867f;font-weight:800}
+  .gp-special-schemas{display:grid;grid-template-columns:1fr;gap:7px}.gp-special-schema{position:relative;min-width:0;border:1px solid #eadfd5;border-radius:10px;background:#fff;overflow:hidden}.gp-special-schema>img,.gp-special-schema>.gp-schema{width:100%;height:105px;object-fit:cover;margin:0;border-radius:0}.gp-special-schema .gp-priority{top:6px;left:6px;padding:.2rem .38rem;font-size:.65rem}.gp-special-schema-foot{display:flex;align-items:center;justify-content:space-between;gap:6px;padding:6px 7px}.gp-special-schema-foot>b{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:.69rem;color:#6B1A2C}.gp-special-schema-foot>button{border:0;background:transparent;color:#a43b4d;font-size:1rem;font-weight:900;cursor:pointer}
+  .gp-special-zone .gp-drawings{grid-template-columns:1fr;margin:0}.gp-special-zone .gp-drawing{padding:5px}.gp-special-zone .gp-drawing img{max-height:105px;object-fit:cover}.gp-special-empty{min-height:105px;display:grid;place-items:center;border:1px dashed #dbcfc4;border-radius:10px;color:#a09289;font-size:.68rem;background:#fff}
+  .gp-special-actions{display:grid;grid-template-columns:1fr auto;gap:6px;margin-top:auto}.gp-special-actions .gp-add{width:100%;padding:.52rem .65rem;font-size:.68rem}.gp-special-actions .ghost{background:#fffaf4}
+  @media(max-width:900px){.gp-special-grid{grid-template-columns:1fr}.gp-special-schemas{grid-template-columns:repeat(2,minmax(0,1fr))}}
 
   @media (max-width:760px){
     .gp-hero,.gp-grid2,.gp-grid4,.gp-actioncards,.gp-systemgrid,.gp-systemgrid.small { grid-template-columns:1fr; display:grid; }

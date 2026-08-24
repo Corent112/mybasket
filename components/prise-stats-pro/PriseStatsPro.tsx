@@ -5570,35 +5570,48 @@ export default function PriseStatsProPage() {
                     <span>{selectedMatchRoster.length} / 12</span>
                   </div>
                   <div className="cm-selected-roster-cards">
-                    {selectedMatchRoster.map((p) => (
-                      <article key={p.id} className="cm-selected-player">
-                        <button
-                          type="button"
-                          className="cm-selected-remove"
-                          onClick={() => toggleMatchPlayer(p.id)}
-                          aria-label={`Retirer ${p.name}`}
-                        >
-                          ×
-                        </button>
-                        <Av p={{ ...p, num: matchNumberOf(p) }} />
-                        <div>
-                          <b>#{matchNumberOf(p)} {p.name}</b>
-                          <small>{p.pos || 'Poste non renseigné'}</small>
-                        </div>
-                        <label className="cm-selected-number">
-                          <span>N°</span>
-                          <input
-                            type="text"
-                            inputMode="numeric"
-                            maxLength={2}
-                            value={String(matchNumberOf(p))}
-                            onChange={(event) => setMatchNumber(p.id, event.target.value)}
-                            onFocus={(event) => event.currentTarget.select()}
-                            aria-label={`Numéro de maillot du jour de ${p.name}`}
-                          />
-                        </label>
-                      </article>
-                    ))}
+                    {selectedMatchRoster.map((p) => {
+                      const starter = starters.includes(p.id);
+                      return (
+                        <article key={p.id} className={`cm-selected-player ${starter ? 'starter' : ''}`}>
+                          <button
+                            type="button"
+                            className={`cm-selected-star ${starter ? 'on' : ''}`}
+                            onClick={() => toggleStarter(p.id)}
+                            aria-label={starter ? `Retirer ${p.name} du 5 majeur` : `Ajouter ${p.name} au 5 majeur`}
+                            title={starter ? 'Retirer du 5 majeur' : starters.length >= 5 ? 'Le 5 majeur est complet' : 'Ajouter au 5 majeur'}
+                          >
+                            {starter ? '★' : '☆'}
+                          </button>
+                          <Av p={{ ...p, num: matchNumberOf(p) }} />
+                          <div>
+                            <b>#{matchNumberOf(p)} {p.name}</b>
+                            <small>{starter ? '★ 5 MAJEUR' : (p.pos || 'Banc')}</small>
+                          </div>
+                          <label className="cm-selected-number" onClick={(event) => event.stopPropagation()}>
+                            <span>N°</span>
+                            <input
+                              type="text"
+                              inputMode="numeric"
+                              maxLength={2}
+                              value={String(matchNumberOf(p))}
+                              onChange={(event) => setMatchNumber(p.id, event.target.value)}
+                              onFocus={(event) => event.currentTarget.select()}
+                              aria-label={`Numéro de maillot du jour de ${p.name}`}
+                            />
+                          </label>
+                          <button
+                            type="button"
+                            className="cm-selected-remove"
+                            onClick={() => toggleMatchPlayer(p.id)}
+                            aria-label={`Retirer ${p.name} du match`}
+                            title="Retirer du match"
+                          >
+                            ×
+                          </button>
+                        </article>
+                      );
+                    })}
                   </div>
                 </div>
               )}
@@ -5615,48 +5628,27 @@ export default function PriseStatsProPage() {
                 </button>
               </div>
 
-              <div className="cm-starter-picker">
-                {selectedMatchRoster.map((p) => {
-                  const on = starters.includes(p.id);
-                  return (
-                    <button
-                      type="button"
-                      key={p.id}
-                      className={`cm-starter-card ${on ? 'on' : ''}`}
-                      onClick={() => toggleStarter(p.id)}
-                    >
-                      <Av p={{ ...p, num: matchNumberOf(p) }} />
-                      <b>#{matchNumberOf(p)}</b>
-                      <span>{p.name}</span>
-                      <small>{on ? '★ TITULAIRE' : 'BANC'}</small>
-                    </button>
-                  );
-                })}
-                {selectedMatchRoster.length === 0 && (
-                  <div className="cm-starter-empty">
-                    Sélectionne d'abord l'effectif du match.
-                  </div>
+              <div className="cm-starting-five-only">
+                {startersList.map((p) => (
+                  <button
+                    type="button"
+                    key={p.id}
+                    className="cm-five-player"
+                    onClick={() => toggleStarter(p.id)}
+                    title="Cliquer pour retirer du 5 majeur"
+                  >
+                    <Av p={{ ...p, num: matchNumberOf(p) }} />
+                    <b>#{matchNumberOf(p)}</b>
+                    <span>{p.name}</span>
+                    <small>★ TITULAIRE</small>
+                  </button>
+                ))}
+                {starters.length === 0 && (
+                  <div className="cm-five-empty">Clique sur ☆ dans l'effectif du match pour choisir ton 5 majeur.</div>
                 )}
-              </div>
-
-              <div className="cm-slots">
-                {[0, 1, 2, 3, 4].map((i) => {
-                  const p = startersList[i];
-                  return (
-                    <div className="cm-slot" key={i}>
-                      <span className="cm-slot-l">TITULAIRE {i + 1}</span>
-                      {p
-                        ? (
-                          <div className="cm-slot-f">
-                            <span className="rm" onClick={() => toggleStarter(p.id)}>✕</span>
-                            <b>{matchNumberOf(p)}</b>
-                            <span>{p.name}</span>
-                          </div>
-                        )
-                        : <div className="cm-slot-e">＋ Ajouter</div>}
-                    </div>
-                  );
-                })}
+                {starters.length > 0 && starters.length < 5 && (
+                  <div className="cm-five-empty compact">Encore {5 - starters.length} joueur{5 - starters.length > 1 ? 's' : ''} à choisir.</div>
+                )}
               </div>
 
               <div className={`cm-warn ${canStart ? 'ok' : ''}`}>
@@ -8265,6 +8257,15 @@ function Style() {
       .cm-selected-roster{margin-top:12px;border-top:1px solid var(--border);padding-top:12px}.cm-selected-roster-title{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px}.cm-selected-roster-title b{font-size:11px;color:var(--gold);text-transform:uppercase}.cm-selected-roster-title span{font-size:9px;color:#8794a8;font-weight:900}
       .cm-selected-roster-cards{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:7px}.cm-selected-player{position:relative;display:grid;grid-template-columns:34px minmax(0,1fr) 46px;align-items:center;gap:7px;border:1px solid #2b3850;background:#101827;border-radius:10px;padding:8px;min-width:0}.cm-selected-player>.av{width:32px!important;height:32px!important}.cm-selected-player b,.cm-selected-player small{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.cm-selected-player b{font-size:9.5px}.cm-selected-player small{font-size:8px;color:#77869d;margin-top:2px}.cm-selected-number{display:grid;grid-template-columns:auto 1fr;align-items:center;gap:3px}.cm-selected-number span{font-size:7px;color:#7f8da4;font-weight:900}.cm-selected-number input{width:31px;height:28px;border:1px solid rgba(212,162,76,.45);border-radius:7px;background:#080d17;color:var(--gold);text-align:center;font-weight:950}.cm-selected-remove{position:absolute;top:3px;right:3px;width:18px;height:18px;border:0;border-radius:50%;background:transparent;color:#6f7d91;font-size:13px;cursor:pointer}.cm-selected-remove:hover{background:rgba(239,68,68,.12);color:#f87171}
       @media(max-width:760px){.cm-roster-checklist{grid-template-columns:1fr}.cm-selected-roster-cards{grid-template-columns:1fr 1fr}}
+
+
+      /* 2026-08-24 · effectif unique + sélection directe du 5 majeur */
+      .cm-selected-player{padding-right:30px}.cm-selected-player.starter{border-color:var(--gold);background:rgba(212,162,76,.10);box-shadow:0 0 0 1px rgba(212,162,76,.20) inset}
+      .cm-selected-star{position:absolute;top:5px;right:5px;width:23px;height:23px;border:1px solid #40506a;border-radius:7px;background:#121d30;color:#8593a8;font-size:14px;line-height:1;display:grid;place-items:center;cursor:pointer;z-index:2}.cm-selected-star.on{border-color:var(--gold);background:var(--gold);color:#17130d}.cm-selected-star:hover{border-color:var(--gold);color:var(--gold)}.cm-selected-star.on:hover{color:#17130d}
+      .cm-selected-remove{top:auto!important;bottom:4px!important;right:6px!important}
+      .cm-starting-five-only{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:7px;margin-top:10px}.cm-five-player{min-width:0;border:1px solid var(--gold);border-radius:10px;background:rgba(212,162,76,.10);color:#fff;padding:8px 6px;display:grid;grid-template-columns:28px 30px minmax(0,1fr);align-items:center;gap:5px;text-align:left;cursor:pointer}.cm-five-player .av{width:27px!important;height:27px!important}.cm-five-player>b{color:var(--gold);font-size:9px}.cm-five-player>span{font-size:9px;font-weight:850;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.cm-five-player>small{grid-column:2/4;font-size:7px;color:var(--gold);font-weight:950}.cm-five-empty{grid-column:1/-1;padding:13px;border:1px dashed #34435e;border-radius:9px;color:#8290a5;text-align:center;font-size:9px}.cm-five-empty.compact{padding:7px}
+      @media(max-width:900px){.cm-starting-five-only{grid-template-columns:repeat(3,minmax(0,1fr))}}
+      @media(max-width:600px){.cm-starting-five-only{grid-template-columns:1fr 1fr}}
 
       @media (max-width: 1000px) {
         .cm-body { grid-template-columns: 1fr; }
