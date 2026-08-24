@@ -3,10 +3,10 @@ import { createGoogleDriveAdminClient } from "@/lib/google-drive/admin";
 import { encryptGoogleDriveToken } from "@/lib/google-drive/crypto";
 import {
   GoogleDriveStepError,
-  canManageTeamMedia,
   logGoogleDriveError,
   requireGoogleDriveUser,
 } from "@/lib/google-drive/server";
+import { getTeamMediaAccess } from "@/lib/google-drive/team-access";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -34,8 +34,15 @@ export async function GET(request: NextRequest) {
       throw new Error("Réponse OAuth Google invalide.");
     }
 
-    if (!(await canManageTeamMedia(teamId))) {
-      throw new Error("Accès refusé.");
+    // IMPORTANT :
+    // Le départ OAuth utilisait getTeamMediaAccess(), mais l'ancien callback
+    // revenait sur l'ancienne RPC can_manage_team_media. Les deux contrôles
+    // pouvaient donc donner des réponses différentes et produire "Accès refusé"
+    // APRÈS l'autorisation Google. Désormais départ et retour utilisent la même
+    // source de vérité.
+    const access = await getTeamMediaAccess(teamId);
+    if (!access.owner) {
+      throw new Error("Accès refusé : gestion Google Drive réservée au coach principal.");
     }
 
     const clientId = process.env.GOOGLE_DRIVE_CLIENT_ID;
@@ -62,15 +69,14 @@ export async function GET(request: NextRequest) {
     const tokens = await tokenResponse.json();
     if (!tokenResponse.ok) {
       throw new Error(
-        tokens?.error_description || tokens?.error || "Échange OAuth Google impossible.",
+        tokens?.error_description ||
+          tokens?.error ||
+          "Échange OAuth Google impossible.",
       );
     }
 
     const admin = createGoogleDriveAdminClient();
 
-    // Google ne renvoie pas toujours un nouveau refresh_token lorsqu'un compte
-    // a déjà autorisé l'application. Dans ce cas on conserve la connexion
-    // existante au lieu de faire croire que la connexion a échoué.
     const { data: existing, error: existingError } = await admin
       .from("team_drive_connections")
       .select("refresh_token_encrypted")
@@ -124,6 +130,11 @@ export async function GET(request: NextRequest) {
           ? error.message
           : "Connexion Google Drive impossible",
     );
-    return NextResponse.redirect(target);
+
+    const response = NextResponse.redirect(target);
+    response.cookies.delete("gdrive_oauth_state");
+    response.cookies.delete("gdrive_team_id");
+    response.cookies.delete("gdrive_return_to");
+    return response;
   }
 }
