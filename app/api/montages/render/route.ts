@@ -89,7 +89,7 @@ export async function POST(req: NextRequest) {
     );
 
     const manifest = {
-      version: 2,
+      version: 3,
       montage: {
         id: montage.id,
         title: montage.title,
@@ -116,6 +116,10 @@ export async function POST(req: NextRequest) {
           freeze_time: item.freeze_time,
           freeze_duration: item.freeze_duration,
           annotations: item.annotations || [],
+          editor_state: item.editor_state || {},
+          playback_rate: Number(item.editor_state?.playbackRate ?? 1),
+          repeat_count: Math.max(1, Number(item.editor_state?.repeatCount ?? 1)),
+          transition: item.editor_state?.transition || "none",
           clip_start: item.clip_start,
           clip_end: item.clip_end,
           action_id: item.action_id,

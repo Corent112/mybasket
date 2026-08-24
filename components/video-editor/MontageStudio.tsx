@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { getLocalMatchVideoUrl } from "@/lib/local-video-registry";
 import useLocalMatchVideoVersion from "@/hooks/useLocalMatchVideoVersion";
-import { exportSequentialClipsLocally, downloadLocalExport, shareLocalExport, type LocalExportResult } from "@/lib/local-montage-export";
+import { exportTimelineLocally, downloadLocalExport, shareLocalExport, type LocalExportResult, type LocalExportOverlay, type LocalExportSource } from "@/lib/local-montage-export";
 import LocalMatchVideoButton from "@/components/video/LocalMatchVideoButton";
 import { createClient } from "@/lib/supabase/client";
 
@@ -54,7 +54,7 @@ type MontageRow = {
 
 type Drawing = {
   id: string;
-  kind: "arrow" | "line" | "circle" | "text";
+  kind: "arrow" | "line" | "circle" | "zone" | "freehand" | "text" | "tracker";
   x1: number;
   y1: number;
   x2: number;
@@ -62,6 +62,8 @@ type Drawing = {
   color: string;
   width: number;
   text?: string;
+  points?: Array<{ x: number; y: number }>;
+  fillOpacity?: number;
   start: number;
   end: number;
 };
@@ -88,6 +90,22 @@ type MontageItem = {
   timeline_start?: number;
   asset_url?: string;
   volume?: number;
+  x?: number;
+  y?: number;
+  width?: number;
+  height?: number;
+  rotation?: number;
+  opacity?: number;
+  fontSize?: number;
+  fontFamily?: string;
+  fontWeight?: number;
+  textAlign?: "left" | "center" | "right";
+  background?: string;
+  locked?: boolean;
+  hidden?: boolean;
+  playbackRate?: number;
+  repeatCount?: number;
+  transition?: "none" | "fade";
 };
 
 type Props = {
@@ -198,6 +216,7 @@ export default function MontageStudio({
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const dragOrigin = useRef<{ x: number; y: number } | null>(null);
+  const freehandPointsRef = useRef<Array<{ x: number; y: number }>>([]);
   const dragIndex = useRef<number | null>(null);
 
   const [teams, setTeams] = useState<TeamRow[]>([]);
@@ -220,6 +239,7 @@ export default function MontageStudio({
   const [toast, setToast] = useState("");
   const [drawMode, setDrawMode] = useState<Drawing["kind"]>("arrow");
   const [drawColor, setDrawColor] = useState("#ffd34d");
+  const [selectedDrawingId, setSelectedDrawingId] = useState<string | null>(null);
   const [shareOpen, setShareOpen] = useState(false);
   const [recipient, setRecipient] = useState("");
   const [exportUrl, setExportUrl] = useState("");
@@ -249,6 +269,11 @@ export default function MontageStudio({
   const [montagePlaying, setMontagePlaying] = useState(false);
   const montageAudioRef = useRef<HTMLAudioElement | null>(null);
   const playStartedAtRef = useRef<{ wall: number; timeline: number } | null>(null);
+  const hydratedRef = useRef(false);
+  const historyRef = useRef<MontageItem[][]>([]);
+  const historyIndexRef = useRef(-1);
+  const historyApplyingRef = useRef(false);
+  const [saveState, setSaveState] = useState<"idle" | "saving" | "saved" | "error">("idle");
 
 
   const flash = useCallback((message: string) => {
@@ -486,11 +511,13 @@ export default function MontageStudio({
             timeline_start: numberValue(item.timeline_start),
             asset_url: String(item.image_url || ""),
             volume: item.volume == null ? 1 : numberValue(item.volume),
+            ...(item.editor_state && typeof item.editor_state === "object" ? item.editor_state : {}),
             action,
           };
         }),
       );
       setSelectedIndex(0);
+      hydratedRef.current = true;
     })();
 
     return () => {
@@ -608,9 +635,36 @@ export default function MontageStudio({
         return;
       }
 
+      if (drawing.kind === "zone") {
+        ctx.save();
+        ctx.globalAlpha = drawing.fillOpacity ?? 0.18;
+        ctx.fillRect(drawing.x1, drawing.y1, drawing.x2 - drawing.x1, drawing.y2 - drawing.y1);
+        ctx.restore();
+        ctx.strokeRect(drawing.x1, drawing.y1, drawing.x2 - drawing.x1, drawing.y2 - drawing.y1);
+        return;
+      }
+
+      if (drawing.kind === "freehand") {
+        const points = drawing.points || [];
+        if (points.length > 1) {
+          ctx.beginPath();
+          ctx.moveTo(points[0].x, points[0].y);
+          points.slice(1).forEach((point) => ctx.lineTo(point.x, point.y));
+          ctx.stroke();
+        }
+        return;
+      }
+
       if (drawing.kind === "text") {
         ctx.font = "bold 27px Arial";
         ctx.fillText(drawing.text || "Texte", drawing.x1, drawing.y1);
+        return;
+      }
+
+      if (drawing.kind === "tracker") {
+        ctx.beginPath();
+        ctx.arc(drawing.x1, drawing.y1, 40, 0, Math.PI * 2);
+        ctx.stroke();
         return;
       }
 
@@ -647,6 +701,29 @@ export default function MontageStudio({
         index === selectedIndex ? { ...item, ...patch } : item,
       ),
     );
+  };
+
+  const duplicateSelected = () => {
+    if (!selected) return;
+    const copy: MontageItem = { ...selected, id: undefined, action_id: selected.item_type === "clip" ? selected.action_id : `${selected.item_type}:${uid()}`, timeline_start: timelineStartOf(selected, selectedIndex) + 0.35, annotations: selected.annotations.map((a) => ({ ...a, id: uid() })) };
+    setItems((current) => { const next=[...current]; next.splice(selectedIndex+1,0,copy); return next.map((row,index)=>({...row,sort_order:index})); });
+    setSelectedIndex(selectedIndex+1);
+  };
+
+  const resetSelectedTrim = () => {
+    if (!selected?.action || selected.item_type !== "clip") return;
+    updateSelected({ clip_start: clipStart(selected.action), clip_end: clipEnd(selected.action) });
+  };
+
+  const splitSelectedClip = () => {
+    if (!selected || selected.item_type !== "clip") return;
+    const current = numberValue(videoRef.current?.currentTime ?? selected.clip_start);
+    if (current <= selected.clip_start + 0.05 || current >= selected.clip_end - 0.05) { flash("Place la tête de lecture à l’intérieur du clip."); return; }
+    const first = { ...selected, clip_end: current };
+    const second: MontageItem = { ...selected, id: undefined, clip_start: current, timeline_start: timelineStartOf(selected, selectedIndex) + (current-selected.clip_start), annotations: selected.annotations.map(a=>({...a,id:uid()})) };
+    setItems((rows)=>{ const next=[...rows]; next.splice(selectedIndex,1,first,second); return next.map((row,index)=>({...row,sort_order:index})); });
+    setSelectedIndex(selectedIndex+1);
+    flash("Clip scindé ✓");
   };
 
 
@@ -759,34 +836,56 @@ export default function MontageStudio({
   };
 
   const exportMontageLocally = async () => {
-    const videoItems = items
-      .filter((item) => item.track === "video" && item.action)
+    const orderedVideoItems = items
+      .filter((item) => (item.track || (item.item_type === "clip" || item.item_type === "freeze" ? "video" : item.item_type === "audio" ? "audio" : "overlay")) === "video" && item.action)
       .sort((a, b) => Number(a.timeline_start || 0) - Number(b.timeline_start || 0));
 
-    const sources = videoItems.map((item) => {
+    const sources: LocalExportSource[] = orderedVideoItems.map((item) => {
       const matchId = String(item.action?.match_id || "");
       const url = getLocalMatchVideoUrl(matchId);
       if (!url) {
         throw new Error(`Vidéo locale manquante pour le match ${matchId}. Reconnecte-la avant l'export.`);
       }
       return {
+        id: item.id || item.action_id,
+        type: item.item_type === "freeze" ? "freeze" : "clip",
         url,
         start: item.clip_start,
         end: item.clip_end,
+        timelineStart: item.timeline_start ?? 0,
+        duration: item.duration ?? item.freeze_duration ?? undefined,
+        freezeTime: item.freeze_time,
+        playbackRate: item.playbackRate ?? 1,
+        repeatCount: item.repeatCount ?? 1,
+        annotations: item.annotations,
+        transition: item.transition ?? "none",
       };
     });
+
+    const overlays: LocalExportOverlay[] = items
+      .filter((item) => ["title", "text", "image"].includes(item.item_type))
+      .map((item, index) => ({
+        id: item.id || item.action_id,
+        type: item.item_type as "title" | "text" | "image",
+        timelineStart: timelineStartOf(item, index),
+        duration: itemDuration(item),
+        text: item.item_type === "title" ? item.title : item.note,
+        imageUrl: item.image_url || item.asset_url || undefined,
+        x: item.x, y: item.y, width: item.width, height: item.height, rotation: item.rotation, opacity: item.opacity,
+        fontSize: item.fontSize, fontFamily: item.fontFamily, fontWeight: item.fontWeight, textAlign: item.textAlign, background: item.background, hidden: item.hidden,
+      }));
 
     setRendering(true);
     setLocalExportProgress(0);
     try {
-      const result = await exportSequentialClipsLocally(
-        sources,
+      const result = await exportTimelineLocally(
+        sources, overlays,
         (title || "montage-mybasket").replace(/[^a-zA-Z0-9_-]+/g, "-"),
         setLocalExportProgress,
       );
       setLocalExport(result);
       downloadLocalExport(result);
-      flash(`Export ${result.extension.toUpperCase()} téléchargé`);
+      flash(`Export ${result.extension.toUpperCase()} téléchargé avec annotations`);
     } catch (error) {
       flash(error instanceof Error ? error.message : "Export local impossible");
     } finally {
@@ -801,6 +900,7 @@ export default function MontageStudio({
     }
 
     setSaving(true)
+    setSaveState("saving");
 
     try {
       const userResponse = await supabase.auth.getUser();
@@ -872,6 +972,7 @@ export default function MontageStudio({
           freeze_time: item.freeze_time,
           freeze_duration: item.freeze_duration,
           annotations: item.annotations,
+          editor_state: { x:item.x ?? 50, y:item.y ?? 50, width:item.width ?? (item.item_type === "image" ? 30 : 70), height:item.height ?? 20, rotation:item.rotation ?? 0, opacity:item.opacity ?? 1, fontSize:item.fontSize ?? (item.item_type === "title" ? 48 : 30), fontFamily:item.fontFamily ?? "Arial", fontWeight:item.fontWeight ?? 800, textAlign:item.textAlign ?? "center", background:item.background ?? "transparent", locked:item.locked ?? false, hidden:item.hidden ?? false, playbackRate:item.playbackRate ?? 1, repeatCount:item.repeatCount ?? 1, transition:item.transition ?? "none" },
           created_at: new Date().toISOString(),
         }));
 
@@ -882,16 +983,58 @@ export default function MontageStudio({
         if (error) throw error;
       }
 
+      setSaveState("saved");
       flash("Montage enregistré ✓");
     } catch (error) {
       const message =
         error instanceof Error ? error.message : "Enregistrement impossible.";
       console.error("Erreur sauvegarde montage :", error);
+      setSaveState("error");
       flash(message);
     } finally {
       setSaving(false);
     }
   };
+
+  // Historique non destructif + autosave. Chaque mutation de timeline reste réversible.
+  useEffect(() => {
+    if (!hydratedRef.current) return;
+    if (historyApplyingRef.current) { historyApplyingRef.current = false; return; }
+    const snapshot = items.map((row) => ({ ...row, annotations: row.annotations.map((a)=>({...a})) }));
+    const current = historyRef.current[historyIndexRef.current];
+    if (current && JSON.stringify(current) === JSON.stringify(snapshot)) return;
+    historyRef.current = historyRef.current.slice(0, historyIndexRef.current + 1);
+    historyRef.current.push(snapshot);
+    if (historyRef.current.length > 60) historyRef.current.shift();
+    historyIndexRef.current = historyRef.current.length - 1;
+  }, [items]);
+
+  const undoEdit = useCallback(() => {
+    if (historyIndexRef.current <= 0) return;
+    historyIndexRef.current -= 1; historyApplyingRef.current = true;
+    setItems(historyRef.current[historyIndexRef.current].map(row=>({...row,annotations:row.annotations.map(a=>({...a}))})));
+  }, []);
+  const redoEdit = useCallback(() => {
+    if (historyIndexRef.current >= historyRef.current.length - 1) return;
+    historyIndexRef.current += 1; historyApplyingRef.current = true;
+    setItems(historyRef.current[historyIndexRef.current].map(row=>({...row,annotations:row.annotations.map(a=>({...a}))})));
+  }, []);
+
+  useEffect(() => {
+    const onKey=(event:KeyboardEvent)=>{
+      const el=event.target as HTMLElement | null; if(el && ["INPUT","TEXTAREA","SELECT"].includes(el.tagName)) return;
+      if((event.metaKey||event.ctrlKey) && event.key.toLowerCase()==="z"){ event.preventDefault(); event.shiftKey ? redoEdit() : undoEdit(); }
+    };
+    window.addEventListener("keydown",onKey); return()=>window.removeEventListener("keydown",onKey);
+  }, [redoEdit, undoEdit]);
+
+  useEffect(() => {
+    if (!hydratedRef.current || !teamId) return;
+    const timer=window.setTimeout(()=>{ void saveMontage(); }, 900);
+    return()=>window.clearTimeout(timer);
+    // autosave volontairement déclenché par l'état éditable du projet
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [items, title, coachNote, assignedPlayerId, teamId]);
 
   const renderMontage = async () => {
     if (!montageId) {
@@ -988,10 +1131,15 @@ export default function MontageStudio({
     };
   };
 
-  const itemDuration = (item: MontageItem) =>
-    item.item_type === "clip"
-      ? Math.max(0.1, item.clip_end - item.clip_start)
-      : Math.max(0.5, item.duration || (item.item_type === "audio" ? item.clip_end - item.clip_start : 4));
+  const itemDuration = (item: MontageItem) => {
+    if (item.item_type === "clip") {
+      const sourceDuration = Math.max(0.1, item.clip_end - item.clip_start);
+      const rate = clamp(item.playbackRate ?? 1, 0.25, 4);
+      const repeats = Math.max(1, Math.round(item.repeatCount ?? 1));
+      return Math.max(0.1, (sourceDuration / rate) * repeats);
+    }
+    return Math.max(0.5, item.duration || (item.item_type === "audio" ? item.clip_end - item.clip_start : 4));
+  };
 
   const timelineStartOf = (item: MontageItem, index: number) =>
     item.timeline_start ?? items.slice(0, index).reduce((sum, row) => sum + itemDuration(row), 0);
@@ -1049,11 +1197,15 @@ export default function MontageStudio({
     const { item, start } = activeVideoEntry;
     const video = videoRef.current;
     if (!video || !item.action) return;
+    const itemRate = clamp(item.playbackRate ?? 1, 0.25, 4);
+    const sourceDuration = Math.max(0.1, item.clip_end - item.clip_start);
+    const elapsed = Math.max(0, playhead - start);
+    const sourceElapsed = (elapsed * itemRate) % sourceDuration;
     const target = item.item_type === "freeze"
       ? numberValue(item.freeze_time ?? item.clip_start)
-      : item.clip_start + Math.max(0, playhead - start);
+      : item.clip_start + sourceElapsed;
     if (Math.abs(video.currentTime - target) > 0.35) video.currentTime = target;
-    video.playbackRate = playbackRate;
+    video.playbackRate = playbackRate * itemRate;
     if (item.item_type === "freeze") video.pause();
     else if (video.paused) void video.play().catch(() => {});
   }, [montagePlaying, playhead, activeVideoEntry?.index, playbackRate]);
@@ -1417,7 +1569,12 @@ export default function MontageStudio({
   const stageSourceTime = stageItem
     ? stageItem.item_type === "freeze"
       ? numberValue(stageItem.freeze_time ?? stageItem.clip_start)
-      : stageItem.clip_start + Math.max(0, playhead - (stageEntry?.start ?? 0))
+      : (() => {
+          const sourceDuration = Math.max(0.1, stageItem.clip_end - stageItem.clip_start);
+          const rate = clamp(stageItem.playbackRate ?? 1, 0.25, 4);
+          const elapsed = Math.max(0, playhead - (stageEntry?.start ?? 0));
+          return stageItem.clip_start + ((elapsed * rate) % sourceDuration);
+        })()
     : 0;
 
   const visibleStageDrawings = (stageItem?.annotations || []).filter((drawing) => {
@@ -1438,7 +1595,7 @@ export default function MontageStudio({
         <div className="mp-project-name">
           <input value={title} onChange={(e) => setTitle(e.target.value)} />
           <div className="mp-project-meta">
-            <small>{items.length} élément{items.length > 1 ? "s" : ""} · {totalDuration.toFixed(1)} s</small>
+            <small>{items.length} élément{items.length > 1 ? "s" : ""} · {totalDuration.toFixed(1)} s · {saveState === "saving" ? "Sauvegarde…" : saveState === "saved" ? "Sauvegardé ✓" : saveState === "error" ? "Erreur sauvegarde" : ""}</small>
             <label>
               Assigné à
               <select value={assignedPlayerId} onChange={(e) => setAssignedPlayerId(e.target.value)}>
@@ -1454,6 +1611,8 @@ export default function MontageStudio({
         </div>
 
         <div className="mp-header-actions">
+          {montageId && <button onClick={()=>window.open(`/montages/${montageId}/editor`,"_blank","noopener,noreferrer")}>↗ Plein écran</button>}
+          <button onClick={undoEdit} title="Annuler (Cmd/Ctrl+Z)">↶</button><button onClick={redoEdit} title="Rétablir (Cmd/Ctrl+Shift+Z)">↷</button>
           <button onClick={saveMontage} disabled={saving}>💾 {saving ? "Sauvegarde…" : "Sauvegarder"}</button>
           <button onClick={refreshExport}>⬇ Exporter le projet</button>
           <button className="gold" onClick={exportMontageLocally} disabled={rendering}>🎞 {rendering ? "Rendu…" : "Export vidéo"}</button>
@@ -1584,9 +1743,9 @@ export default function MontageStudio({
         <section className="mp-center">
           <div className="mp-stage">
             {stageItem?.item_type === "image" && stageItem.image_url ? (
-              <img src={stageItem.image_url} alt={stageItem.title} />
+              <div className="mp-editable-overlay" style={{left:`${stageItem.x ?? 50}%`,top:`${stageItem.y ?? 50}%`,width:`${stageItem.width ?? 30}%`,opacity:stageItem.opacity ?? 1,transform:`translate(-50%,-50%) rotate(${stageItem.rotation ?? 0}deg)`}} onPointerDown={(e)=>{if(stageItem.locked)return; const box=e.currentTarget.parentElement!.getBoundingClientRect(); const move=(ev:PointerEvent)=>updateSelected({x:clamp(((ev.clientX-box.left)/box.width)*100,0,100),y:clamp(((ev.clientY-box.top)/box.height)*100,0,100)}); const up=()=>{window.removeEventListener("pointermove",move);window.removeEventListener("pointerup",up)};window.addEventListener("pointermove",move);window.addEventListener("pointerup",up)}}><img src={stageItem.image_url} alt={stageItem.title} /></div>
             ) : stageItem?.item_type === "title" || stageItem?.item_type === "text" ? (
-              <div className="mp-design-preview"><strong>{stageItem.item_type === "title" ? stageItem.title : stageItem.note}</strong></div>
+              <div className="mp-design-preview mp-editable-overlay" style={{left:`${stageItem.x ?? 50}%`,top:`${stageItem.y ?? 50}%`,width:`${stageItem.width ?? 70}%`,opacity:stageItem.opacity ?? 1,transform:`translate(-50%,-50%) rotate(${stageItem.rotation ?? 0}deg)`,fontSize:`${stageItem.fontSize ?? (stageItem.item_type === "title" ? 48 : 30)}px`,fontFamily:stageItem.fontFamily ?? "Arial",fontWeight:stageItem.fontWeight ?? 800,textAlign:stageItem.textAlign ?? "center",background:stageItem.background ?? "transparent"}} onPointerDown={(e)=>{if(stageItem.locked)return; const box=e.currentTarget.parentElement!.getBoundingClientRect(); const move=(ev:PointerEvent)=>updateSelected({x:clamp(((ev.clientX-box.left)/box.width)*100,0,100),y:clamp(((ev.clientY-box.top)/box.height)*100,0,100)}); const up=()=>{window.removeEventListener("pointermove",move);window.removeEventListener("pointerup",up)};window.addEventListener("pointermove",move);window.addEventListener("pointerup",up)}}><strong>{stageItem.item_type === "title" ? stageItem.title : stageItem.note}</strong></div>
             ) : stageVideo ? (
               <video
                 ref={videoRef}
@@ -1600,22 +1759,38 @@ export default function MontageStudio({
               <div className="mp-stage-empty">Sélectionne un clip dans la bibliothèque ou dans la timeline.</div>
             )}
 
-            {stageItem?.item_type === "clip" && !montagePlaying && <canvas
+            {(stageItem?.item_type === "clip" || stageItem?.item_type === "freeze") && !montagePlaying && <canvas
               ref={canvasRef}
               width={960}
               height={540}
-              onPointerDown={(event)=>{dragOrigin.current=pointer(event)}}
+              onPointerDown={(event)=>{
+                const point = pointer(event);
+                dragOrigin.current=point;
+                freehandPointsRef.current = drawMode === "freehand" ? [point] : [];
+                event.currentTarget.setPointerCapture?.(event.pointerId);
+              }}
+              onPointerMove={(event)=>{
+                if (drawMode !== "freehand" || !dragOrigin.current) return;
+                freehandPointsRef.current = [...freehandPointsRef.current, pointer(event)];
+              }}
               onPointerUp={(event)=>{
                 if(!selected || !dragOrigin.current) return;
                 const startPoint=dragOrigin.current;
                 const endPoint=pointer(event);
                 dragOrigin.current=null;
-                const currentTime=numberValue(videoRef.current?.currentTime);
+                const currentTime=stageItem?.item_type === "freeze"
+                  ? numberValue(stageItem.freeze_time ?? stageItem.clip_start)
+                  : numberValue(videoRef.current?.currentTime);
                 const drawText=drawMode==="text" ? window.prompt("Texte à afficher") || "Texte" : undefined;
-                updateSelected({annotations:[...selected.annotations,{
+                const drawing: Drawing = {
                   id:uid(),kind:drawMode,x1:startPoint.x,y1:startPoint.y,x2:endPoint.x,y2:endPoint.y,
-                  color:drawColor,width:5,text:drawText,start:currentTime,end:currentTime+3
-                }]});
+                  color:drawColor,width:5,text:drawText,start:currentTime,end:currentTime+3,
+                  points: drawMode === "freehand" ? freehandPointsRef.current : undefined,
+                  fillOpacity: drawMode === "zone" ? 0.18 : undefined,
+                };
+                freehandPointsRef.current = [];
+                updateSelected({annotations:[...selected.annotations,drawing]});
+                setSelectedDrawingId(drawing.id);
               }}
             />}
 
@@ -1640,6 +1815,32 @@ export default function MontageStudio({
                         strokeWidth={drawing.width}
                       />
                     );
+                  }
+                  if (drawing.kind === "zone") {
+                    const x = Math.min(drawing.x1, drawing.x2);
+                    const y = Math.min(drawing.y1, drawing.y2);
+                    const width = Math.abs(drawing.x2 - drawing.x1);
+                    const height = Math.abs(drawing.y2 - drawing.y1);
+                    return (
+                      <rect key={drawing.id} x={x} y={y} width={width} height={height}
+                        fill={drawing.color} fillOpacity={drawing.fillOpacity ?? 0.18}
+                        stroke={drawing.color} strokeWidth={drawing.width} rx="8" />
+                    );
+                  }
+                  if (drawing.kind === "freehand") {
+                    const points = drawing.points || [];
+                    return points.length > 1 ? (
+                      <polyline key={drawing.id} points={points.map((point) => `${point.x},${point.y}`).join(" ")}
+                        fill="none" stroke={drawing.color} strokeWidth={drawing.width} strokeLinecap="round" strokeLinejoin="round" />
+                    ) : null;
+                  }
+                  if (drawing.kind === "tracker") {
+                    const local = Math.max(0, playhead - Number(stageItem?.timeline_start ?? 0));
+                    const span = Math.max(0.001, Number(drawing.end ?? 0) - Number(drawing.start ?? 0));
+                    const t = Math.max(0, Math.min(1, (local - Number(drawing.start ?? 0)) / span));
+                    const cx = drawing.x1 + (drawing.x2 - drawing.x1) * t;
+                    const cy = drawing.y1 + (drawing.y2 - drawing.y1) * t;
+                    return <circle key={drawing.id} cx={cx} cy={cy} r="42" fill="none" stroke={drawing.color} strokeWidth={drawing.width} />;
                   }
                   if (drawing.kind === "text") {
                     return (
@@ -1706,8 +1907,11 @@ export default function MontageStudio({
             <button onClick={()=>addDesignItem("title")}>＋ Titre</button>
             <button onClick={()=>addDesignItem("text")}>＋ Texte</button>
             <button onClick={()=>imageInputRef.current?.click()} disabled={designUploading}>▣ {designUploading ? "Import…" : "Image"}</button>
-            <button className={drawMode==="arrow"?"on":""} onClick={()=>setDrawMode("arrow")}>✎ Dessin</button>
-            <button className={drawMode==="circle"?"on":""} onClick={()=>setDrawMode("circle")}>◎ Cercle</button>
+            <button className={drawMode==="arrow"?"on":""} onClick={()=>setDrawMode("arrow")}>➜</button>
+            <button className={drawMode==="line"?"on":""} onClick={()=>setDrawMode("line")}>／</button>
+            <button className={drawMode==="circle"?"on":""} onClick={()=>setDrawMode("circle")}>◎</button>
+            <button className={drawMode==="zone"?"on":""} onClick={()=>setDrawMode("zone")}>▭</button>
+            <button className={drawMode==="freehand"?"on":""} onClick={()=>setDrawMode("freehand")}>✎</button><button className={drawMode==="tracker"?"on":""} onClick={()=>setDrawMode("tracker" as any)}>◎</button>
             <button onClick={addFreezeItem}>◉ Freeze</button>
             <button onClick={() => audioInputRef.current?.click()} disabled={audioUploading}>♫ {audioUploading ? "Import…" : "Audio"}</button>
             <input ref={imageInputRef} type="file" accept="image/*" hidden onChange={(e)=>{const file=e.target.files?.[0]; if(file) void uploadImageItem(file)}} />
@@ -1846,22 +2050,53 @@ export default function MontageStudio({
                   <button onClick={()=>updateSelected({clip_end:Math.max(selected.clip_start+.1,selected.clip_end-1)})}>−1 fin</button>
                   <button onClick={()=>updateSelected({clip_end:selected.clip_end+1})}>+1 fin</button>
                 </div>
+                <div className="mp-two">
+                  <label>Vitesse<select value={selected.playbackRate ?? 1} onChange={(e)=>updateSelected({playbackRate:numberValue(e.target.value)})}><option value={0.25}>0.25x</option><option value={0.5}>0.5x</option><option value={0.75}>0.75x</option><option value={1}>1x</option><option value={1.25}>1.25x</option><option value={1.5}>1.5x</option><option value={2}>2x</option></select></label>
+                  <label>Répéter<select value={selected.repeatCount ?? 1} onChange={(e)=>updateSelected({repeatCount:Math.max(1,Math.round(numberValue(e.target.value)))})}><option value={1}>1 fois</option><option value={2}>2 fois</option><option value={3}>3 fois</option><option value={4}>4 fois</option></select></label><label>Transition<select value={selected.transition ?? "none"} onChange={(e)=>updateSelected({transition:e.target.value as "none" | "fade"})}><option value="none">Aucune</option><option value="fade">Fondu</option></select></label>
+                </div>
               </> : (
                 <label>Durée<input type="number" min=".5" step=".5" value={selected.duration||4} onChange={(e)=>updateSelected({duration:numberValue(e.target.value)})}/></label>
               )}
 
               <label>Note / texte<textarea value={selected.note} onChange={(e)=>updateSelected({note:e.target.value})}/></label>
 
-              {selected.item_type==="clip" && <>
-                <div className="mp-inspector-tools">
-                  <button onClick={()=>setDrawMode("arrow")}>➜ Flèche</button>
-                  <button onClick={()=>setDrawMode("circle")}>○ Cercle</button>
-                  <button onClick={()=>setDrawMode("text")}>T Texte</button>
+              {(selected.item_type==="clip" || selected.item_type==="freeze") && <>
+                <div className="mp-inspector-tools mp-draw-tools">
+                  <button className={drawMode==="arrow"?"on":""} onClick={()=>setDrawMode("arrow")}>➜ Flèche</button>
+                  <button className={drawMode==="line"?"on":""} onClick={()=>setDrawMode("line")}>／ Ligne</button>
+                  <button className={drawMode==="circle"?"on":""} onClick={()=>setDrawMode("circle")}>○ Cercle</button>
+                  <button className={drawMode==="zone"?"on":""} onClick={()=>setDrawMode("zone")}>▭ Zone</button>
+                  <button className={drawMode==="freehand"?"on":""} onClick={()=>setDrawMode("freehand")}>✎ Libre</button><button className={drawMode==="tracker"?"on":""} onClick={()=>setDrawMode("tracker" as any)}>◎ Suivi</button>
+                  <button className={drawMode==="text"?"on":""} onClick={()=>setDrawMode("text")}>T Texte</button>
                   <input type="color" value={drawColor} onChange={(e)=>setDrawColor(e.target.value)}/>
                 </div>
                 <button onClick={()=>updateSelected({annotations:selected.annotations.slice(0,-1)})}>↶ Annuler le dernier dessin</button>
+                {selected.annotations.length > 0 && <div className="mp-annotation-list">
+                  <strong>Annotations temporelles</strong>
+                  {selected.annotations.map((drawing, drawingIndex) => (
+                    <div key={drawing.id} className={`mp-annotation-row ${selectedDrawingId===drawing.id?"on":""}`}>
+                      <button className="mp-annotation-name" onClick={()=>setSelectedDrawingId(drawing.id)}>
+                        {drawing.kind === "arrow" ? "Flèche" : drawing.kind === "circle" ? "Cercle" : drawing.kind === "line" ? "Ligne" : drawing.kind === "zone" ? "Zone" : drawing.kind === "freehand" ? "Dessin libre" : drawing.kind === "tracker" ? "Suivi joueur" : "Texte"}
+                      </button>
+                      <input type="number" step=".1" value={drawing.start} title="Apparition" onChange={(e)=>{ const value=numberValue(e.target.value); updateSelected({annotations:selected.annotations.map((row,i)=>i===drawingIndex?{...row,start:value,end:Math.max(value,row.end)}:row)}); }}/>
+                      <span>→</span>
+                      <input type="number" step=".1" value={drawing.end} title="Disparition" onChange={(e)=>{ const value=numberValue(e.target.value); updateSelected({annotations:selected.annotations.map((row,i)=>i===drawingIndex?{...row,end:Math.max(row.start,value)}:row)}); }}/>
+                      <button className="danger mini" onClick={()=>updateSelected({annotations:selected.annotations.filter((_,i)=>i!==drawingIndex)})}>×</button>
+                    </div>
+                  ))}
+                  <small>Début et fin sont exprimés dans le temps source du clip. Tu peux donc faire apparaître puis disparaître chaque annotation exactement au bon moment.</small>
+                </div>}
               </>}
 
+              {selected.item_type === "clip" && <div className="mp-inspector-tools"><button onClick={splitSelectedClip}>✂ Scinder ici</button><button onClick={resetSelectedTrim}>↺ Réinitialiser rognage</button></div>}
+              <div className="mp-inspector-tools"><button onClick={duplicateSelected}>⧉ Dupliquer</button></div>
+              {["title","text","image"].includes(selected.item_type) && <>
+                <div className="mp-two"><label>X %<input type="number" value={selected.x ?? 50} onChange={e=>updateSelected({x:numberValue(e.target.value)})}/></label><label>Y %<input type="number" value={selected.y ?? 50} onChange={e=>updateSelected({y:numberValue(e.target.value)})}/></label></div>
+                <div className="mp-two"><label>Largeur %<input type="number" min="5" max="100" value={selected.width ?? (selected.item_type === "image" ? 30 : 70)} onChange={e=>updateSelected({width:numberValue(e.target.value)})}/></label><label>Rotation°<input type="number" value={selected.rotation ?? 0} onChange={e=>updateSelected({rotation:numberValue(e.target.value)})}/></label></div>
+                <label>Opacité<input type="range" min="0" max="1" step=".05" value={selected.opacity ?? 1} onChange={e=>updateSelected({opacity:numberValue(e.target.value)})}/></label>
+                {selected.item_type !== "image" && <><div className="mp-two"><label>Taille texte<input type="number" min="10" max="140" value={selected.fontSize ?? (selected.item_type === "title" ? 48 : 30)} onChange={e=>updateSelected({fontSize:numberValue(e.target.value)})}/></label><label>Police<select value={selected.fontFamily ?? "Arial"} onChange={e=>updateSelected({fontFamily:e.target.value})}><option>Arial</option><option>Roboto</option><option>Georgia</option><option>Impact</option></select></label></div><label>Alignement<select value={selected.textAlign ?? "center"} onChange={e=>updateSelected({textAlign:e.target.value as "left"|"center"|"right"})}><option value="left">Gauche</option><option value="center">Centre</option><option value="right">Droite</option></select></label></>}
+                <label><input type="checkbox" checked={selected.locked ?? false} onChange={e=>updateSelected({locked:e.target.checked})}/> Verrouiller le calque</label>
+              </>}
               <button className="danger" onClick={()=>removeItem(selectedIndex)}>🗑 Retirer de la timeline</button>
             </div>
           )}
@@ -1985,7 +2220,7 @@ export default function MontageStudio({
         .mp-freeze-inspector{display:grid;gap:8px;border:1px solid #425034;border-radius:9px;padding:10px;margin:10px 0;background:#11180f}.mp-freeze-inspector strong{color:#b8d98c;font-size:10px}.mp-freeze-inspector label{display:grid;gap:5px;font-size:9px;color:#9eaf91}.mp-freeze-inspector input{border:1px solid #35462d;background:#0c140b;color:#fff;border-radius:7px;padding:7px}
         .track-audio .mp-timeline-item{background:#253047}.track-overlay .mp-timeline-item{background:#32284a}
         .mp-audio-inspector{display:grid;gap:8px;border:1px solid #2b3850;border-radius:9px;padding:10px;margin:10px 0}.mp-audio-inspector strong{color:#d4a24c;font-size:10px}.mp-audio-inspector label{display:grid;gap:5px;font-size:9px;color:#8e9ab0}
-        .mp-inspector-form{display:grid;gap:10px}.mp-inspector label,.mp-project-note{display:grid;gap:5px;color:#8a96aa;font-size:9px;font-weight:800}.mp-inspector textarea{min-height:80px;resize:vertical}.mp-two{display:grid;grid-template-columns:1fr 1fr;gap:6px}.mp-readonly{border:1px solid var(--line);background:#0c1422;color:#d4a24c;border-radius:8px;padding:9px;text-transform:capitalize}.mp-nudge{display:grid;grid-template-columns:1fr 1fr;gap:5px}.mp-nudge button,.mp-inspector-form>button{font-size:8px}.mp-inspector-tools{display:grid;grid-template-columns:1fr 1fr 1fr 40px;gap:4px}.mp-inspector-tools input{width:40px;height:34px;padding:2px}.danger{border-color:#6d2c3a!important;color:#ff8293!important}.mp-project-note{margin-top:18px}.mp-project-note textarea{min-height:90px}
+        .mp-inspector-form{display:grid;gap:10px}.mp-inspector label,.mp-project-note{display:grid;gap:5px;color:#8a96aa;font-size:9px;font-weight:800}.mp-inspector textarea{min-height:80px;resize:vertical}.mp-two{display:grid;grid-template-columns:1fr 1fr;gap:6px}.mp-readonly{border:1px solid var(--line);background:#0c1422;color:#d4a24c;border-radius:8px;padding:9px;text-transform:capitalize}.mp-nudge{display:grid;grid-template-columns:1fr 1fr;gap:5px}.mp-nudge button,.mp-inspector-form>button{font-size:8px}.mp-inspector-tools{display:grid;grid-template-columns:1fr 1fr 1fr 40px;gap:4px}.mp-inspector-tools input{width:40px;height:34px;padding:2px}.danger{border-color:#6d2c3a!important;color:#ff8293!important}.mp-project-note{margin-top:18px}.mp-project-note textarea{min-height:90px}.mp-draw-tools{grid-template-columns:repeat(3,minmax(0,1fr))}.mp-draw-tools button.on{border-color:var(--gold);color:var(--gold);background:rgba(212,162,76,.10)}.mp-annotation-list{display:grid;gap:6px;padding:9px;border:1px solid var(--line);border-radius:9px;background:#0b1320}.mp-annotation-list>strong{font-size:9px;color:#e8edf5}.mp-annotation-list>small{font-size:8px;line-height:1.35;color:#7f8ba0}.mp-annotation-row{display:grid;grid-template-columns:minmax(70px,1fr) 58px 12px 58px 26px;gap:4px;align-items:center}.mp-annotation-row.on{outline:1px solid rgba(212,162,76,.5);border-radius:7px;padding:3px}.mp-annotation-row input{padding:5px!important;font-size:8px}.mp-annotation-name{padding:5px!important;text-align:left;font-size:8px}.mp-annotation-row .danger.mini{padding:4px!important;min-width:24px}
         .mp-modal-backdrop{position:fixed;inset:0;z-index:10000;background:#02050bc7;display:grid;place-items:center;padding:18px}.mp-clip-modal{width:min(690px,94vw);border:1px solid #34415a;border-radius:14px;background:#0d1522;box-shadow:0 30px 80px #000;overflow:hidden}.mp-clip-modal header{display:flex;justify-content:space-between;align-items:flex-start;padding:12px 14px;border-bottom:1px solid var(--line)}.mp-clip-modal header small{color:#7f8ca2;font-size:8px}.mp-clip-modal h2{margin:3px 0 0;font-size:15px}.mp-clip-modal header button{border:0;background:#172238;color:#fff;border-radius:7px;width:28px;height:28px}.mp-modal-stage{aspect-ratio:16/9;background:#000}.mp-modal-stage video{width:100%;height:100%;object-fit:contain}.mp-modal-tags{display:flex;gap:5px;flex-wrap:wrap;padding:9px 14px}.mp-modal-tags i{font-size:8px;padding:4px 7px}.mp-modal-actions{display:flex;gap:7px;padding:0 14px 10px}.mp-clip-modal footer{display:grid;grid-template-columns:1fr 1.3fr 1fr;gap:7px;padding:10px 14px;border-top:1px solid var(--line)}.mp-clip-modal footer button{font-size:9px}.mp-clip-modal kbd{font-size:7px;color:#7d899d;margin-left:4px}.mp-share{width:min(480px,94vw);padding:18px;border:1px solid var(--line);border-radius:12px;background:#0e1624}.mp-share div{display:flex;gap:7px;margin-top:10px}.mp-toast{position:fixed;right:18px;bottom:18px;z-index:12000;background:#d4a24c;color:#1b150d;border-radius:9px;padding:10px 14px;font-weight:900}
         @media(max-width:1180px){.mp-grid{grid-template-columns:260px minmax(520px,1fr)}.mp-inspector{display:none}.mp-header{grid-template-columns:260px 1fr auto}.mp-header-actions button:nth-child(2){display:none}}@media(max-width:850px){.mp-grid{grid-template-columns:1fr;height:auto}.mp-library{max-height:none}.mp-center{min-height:760px}.mp-header{grid-template-columns:1fr}.mp-project-name,.mp-header-actions{display:none}}
       `}</style>
