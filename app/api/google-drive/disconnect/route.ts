@@ -1,12 +1,11 @@
-
 import { NextRequest, NextResponse } from "next/server";
 import { createGoogleDriveAdminClient } from "@/lib/google-drive/admin";
 import {
   GoogleDriveStepError,
-  canManageTeamMedia,
   logGoogleDriveError,
   requireGoogleDriveUser,
 } from "@/lib/google-drive/server";
+import { getTeamMediaAccess } from "@/lib/google-drive/team-access";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -21,15 +20,15 @@ export async function POST(request: NextRequest) {
     const teamId = String(body?.teamId || "");
 
     if (!teamId) {
-      return NextResponse.json(
-        { error: "teamId manquant" },
-        { status: 400 },
-      );
+      return NextResponse.json({ error: "teamId manquant" }, { status: 400 });
     }
 
-    if (!(await canManageTeamMedia(teamId))) {
+    // Même règle que pour la connexion : seul le coach principal/propriétaire
+    // peut déconnecter le Drive partagé de l'équipe.
+    const access = await getTeamMediaAccess(teamId);
+    if (!access.owner) {
       return NextResponse.json(
-        { error: "Accès refusé" },
+        { error: "Seul le coach principal peut déconnecter Google Drive." },
         { status: 403 },
       );
     }
