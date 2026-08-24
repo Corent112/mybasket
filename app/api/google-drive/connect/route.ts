@@ -1,15 +1,14 @@
-
 import crypto from "node:crypto";
 import { NextRequest, NextResponse } from "next/server";
 import {
   GOOGLE_DRIVE_SCOPE,
   GoogleDriveStepError,
-  canManageTeamMedia,
   getGoogleDriveConfig,
   logGoogleDriveError,
   logGoogleDriveStep,
   requireGoogleDriveUser,
 } from "@/lib/google-drive/server";
+import { getTeamMediaAccess } from "@/lib/google-drive/team-access";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -25,31 +24,29 @@ function safeReturnTo(value: string | null) {
 
 export async function GET(request: NextRequest) {
   try {
-    /* --- 1. Authentification ------------------------------------- */
     logGoogleDriveStep(ROUTE, "auth");
     await requireGoogleDriveUser();
 
-    /* --- 2. Paramètres ------------------------------------------- */
     logGoogleDriveStep(ROUTE, "params");
     const teamId = request.nextUrl.searchParams.get("teamId") || "";
-    const returnTo = safeReturnTo(
-      request.nextUrl.searchParams.get("returnTo"),
-    );
+    const returnTo = safeReturnTo(request.nextUrl.searchParams.get("returnTo"));
 
     if (!teamId) {
       return NextResponse.json({ error: "teamId manquant" }, { status: 400 });
     }
 
-    /* --- 3. Droits sur l'équipe ---------------------------------- */
+    // La connexion Drive appartient à l'équipe. Seul le coach principal /
+    // propriétaire la connecte. Le staff autorisé pourra ensuite consulter les
+    // vidéos via les routes browse/stream sans recevoir le token Google.
     logGoogleDriveStep(ROUTE, "team-access");
-    if (!(await canManageTeamMedia(teamId))) {
-      return NextResponse.json({ error: "Accès refusé" }, { status: 403 });
+    const access = await getTeamMediaAccess(teamId);
+    if (!access.owner) {
+      return NextResponse.json(
+        { error: "Seul le coach principal peut connecter Google Drive." },
+        { status: 403 },
+      );
     }
 
-    /* --- 4. Configuration ---------------------------------------- */
-    // /connect n'a PAS besoin de SUPABASE_SERVICE_ROLE_KEY : seule la lecture
-    // et l'écriture de team_drive_connections (status, callback, disconnect)
-    // en dépendent. On ne crée donc pas cette dépendance ici.
     logGoogleDriveStep(ROUTE, "config");
     const config = getGoogleDriveConfig();
 
@@ -65,7 +62,6 @@ export async function GET(request: NextRequest) {
       });
     }
 
-    /* --- 5. URL OAuth -------------------------------------------- */
     logGoogleDriveStep(ROUTE, "oauth-url");
     const state = crypto.randomBytes(24).toString("base64url");
     const auth = new URL("https://accounts.google.com/o/oauth2/v2/auth");
@@ -79,10 +75,6 @@ export async function GET(request: NextRequest) {
     auth.searchParams.set("prompt", "consent");
     auth.searchParams.set("state", state);
 
-    // Le cookie d'état est posé sur le domaine courant. Si GOOGLE_DRIVE_REDIRECT_URI
-    // pointe vers un AUTRE domaine, Google renverra l'utilisateur là-bas et le
-    // cookie ne sera pas transmis : le callback échouera avec « Réponse OAuth
-    // Google invalide ». On le signale explicitement dans les logs.
     if (config.redirectUriHost && config.redirectUriHost !== request.nextUrl.host) {
       console.warn(
         `[${ROUTE}] step=oauth-url attention: hôte courant=${request.nextUrl.host} ` +
