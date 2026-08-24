@@ -1,6 +1,7 @@
 import { createClient } from "@/lib/supabase/server";
 import { createGoogleDriveAdminClient } from "@/lib/google-drive/admin";
 
+// Redeploy marker 2026-08-24: keep Google Drive team access fix active on Vercel.
 type AccessResult = {
   allowed: boolean;
   owner: boolean;
