@@ -1,4 +1,3 @@
-
 import { NextRequest, NextResponse } from "next/server";
 import { createGoogleDriveAdminClient } from "@/lib/google-drive/admin";
 import { encryptGoogleDriveToken } from "@/lib/google-drive/crypto";
@@ -28,17 +27,10 @@ export async function GET(request: NextRequest) {
 
     const code = request.nextUrl.searchParams.get("code");
     const state = request.nextUrl.searchParams.get("state");
-    const expectedState =
-      request.cookies.get("gdrive_oauth_state")?.value;
+    const expectedState = request.cookies.get("gdrive_oauth_state")?.value;
     const teamId = request.cookies.get("gdrive_team_id")?.value;
 
-    if (
-      !code ||
-      !state ||
-      !expectedState ||
-      state !== expectedState ||
-      !teamId
-    ) {
+    if (!code || !state || !expectedState || state !== expectedState || !teamId) {
       throw new Error("Réponse OAuth Google invalide.");
     }
 
@@ -54,50 +46,62 @@ export async function GET(request: NextRequest) {
       throw new Error("Configuration OAuth Google Drive manquante.");
     }
 
-    const tokenResponse = await fetch(
-      "https://oauth2.googleapis.com/token",
-      {
-        method: "POST",
-        headers: {
-          "content-type": "application/x-www-form-urlencoded",
-        },
-        body: new URLSearchParams({
-          client_id: clientId,
-          client_secret: clientSecret,
-          code,
-          grant_type: "authorization_code",
-          redirect_uri: redirectUri,
-        }),
-        cache: "no-store",
-      },
-    );
+    const tokenResponse = await fetch("https://oauth2.googleapis.com/token", {
+      method: "POST",
+      headers: { "content-type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({
+        client_id: clientId,
+        client_secret: clientSecret,
+        code,
+        grant_type: "authorization_code",
+        redirect_uri: redirectUri,
+      }),
+      cache: "no-store",
+    });
 
     const tokens = await tokenResponse.json();
-
-    if (!tokenResponse.ok || !tokens.refresh_token) {
+    if (!tokenResponse.ok) {
       throw new Error(
-        tokens?.error_description ||
-          "Google n'a pas fourni de refresh token.",
+        tokens?.error_description || tokens?.error || "Échange OAuth Google impossible.",
       );
     }
 
     const admin = createGoogleDriveAdminClient();
-    const { error } = await admin
+
+    // Google ne renvoie pas toujours un nouveau refresh_token lorsqu'un compte
+    // a déjà autorisé l'application. Dans ce cas on conserve la connexion
+    // existante au lieu de faire croire que la connexion a échoué.
+    const { data: existing, error: existingError } = await admin
       .from("team_drive_connections")
-      .upsert(
-        {
-          team_id: teamId,
-          provider: "google_drive",
-          connected_by: user.id,
-          refresh_token_encrypted: encryptGoogleDriveToken(
-            String(tokens.refresh_token),
-          ),
-          scope: String(tokens.scope || ""),
-          connected_at: new Date().toISOString(),
-          revoked_at: null,
-        },
-        { onConflict: "team_id,provider" },
+      .select("refresh_token_encrypted")
+      .eq("team_id", teamId)
+      .eq("provider", "google_drive")
+      .maybeSingle();
+
+    if (existingError) throw existingError;
+
+    const refreshTokenEncrypted = tokens.refresh_token
+      ? encryptGoogleDriveToken(String(tokens.refresh_token))
+      : String(existing?.refresh_token_encrypted || "");
+
+    if (!refreshTokenEncrypted) {
+      throw new Error(
+        "Google n'a pas fourni de refresh token. Révoque l'accès MyBasket dans ton compte Google puis reconnecte le Drive.",
       );
+    }
+
+    const { error } = await admin.from("team_drive_connections").upsert(
+      {
+        team_id: teamId,
+        provider: "google_drive",
+        connected_by: user.id,
+        refresh_token_encrypted: refreshTokenEncrypted,
+        scope: String(tokens.scope || ""),
+        connected_at: new Date().toISOString(),
+        revoked_at: null,
+      },
+      { onConflict: "team_id,provider" },
+    );
 
     if (error) throw error;
 
