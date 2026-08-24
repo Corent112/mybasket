@@ -764,6 +764,25 @@ export default function EquipeDetailPage({
   const KPIS = computeLinkedKpis(team, dashboard);
   const linkedStatsTeamId = dashboard.resolvedTeamId || teamId;
 
+  // Google Drive doit toujours recevoir l'identifiant Supabase réel de l'équipe.
+  // Certaines équipes historiques gardent un id local dans la fiche tandis que
+  // leurs matchs / collaborations utilisent le UUID Supabase.
+  const driveTeamId =
+    compactStrings([
+      (team as any).supabase_team_id,
+      (team as any).supabaseTeamId,
+      (team as any).supabase_id,
+      (team as any).supabaseId,
+      (team as any).db_id,
+      (team as any).dbId,
+      dashboard.resolvedTeamId,
+      team.id,
+      teamId,
+    ]).find((value) => isUuidValue(value)) ||
+    dashboard.resolvedTeamId ||
+    team.id ||
+    teamId;
+
   return (
     <div className="tl-wrap">
       <div className="tl-container">
@@ -990,7 +1009,7 @@ export default function EquipeDetailPage({
         {activeTab === "presentation" && (
           <div className="team-tab-panel">
             {canUseMedia ? (
-              <TeamGoogleDriveSettings teamId={team.id} isOwner={isOwner} />
+              <TeamGoogleDriveSettings teamId={driveTeamId} isOwner={isOwner} />
             ) : team.isShared ? (
               <div className="shared-access-note">
                 🔒 Les médias et Google Drive ne sont pas autorisés pour ton rôle sur cette équipe.
