@@ -1,28 +1,33 @@
 import { createClient } from "@/lib/supabase/server";
 import { createGoogleDriveAdminClient } from "@/lib/google-drive/admin";
 
-type AccessResult = {
+export type TeamMediaAccess = {
   allowed: boolean;
   owner: boolean;
   staff: boolean;
   userId: string | null;
 };
 
-function mediaPermission(value: unknown) {
+function hasMediaPermission(value: unknown) {
   if (!value || typeof value !== "object") return false;
   return (value as Record<string, unknown>).media === true;
 }
 
+function activeMembership(status: unknown) {
+  const value = String(status || "").toLowerCase();
+  return ["active", "accepted", "actif", "approved", "member"].includes(value);
+}
+
 /**
- * Source de vérité Google Drive.
+ * Source de vérité unique des droits Google Drive.
  *
- * - teams.user_id : coach principal / propriétaire => gestion + lecture
- * - team_drive_connections.connected_by : secours pour une équipe migrée
- * - team_members actif + permissions.media === true : lecture uniquement
+ * Auth = session Supabase de l'utilisateur.
+ * Autorisation = lecture serveur via service-role afin que les RLS ne puissent
+ * pas masquer au serveur la ligne teams/team_members de l'utilisateur connecté.
  *
- * Aucun token Google n'est renvoyé au navigateur ou au staff.
+ * Le service-role et les tokens Google ne sont jamais envoyés au navigateur.
  */
-export async function getTeamMediaAccess(teamId: string): Promise<AccessResult> {
+export async function getTeamMediaAccess(teamId: string): Promise<TeamMediaAccess> {
   const supabase = await createClient();
   const {
     data: { user },
@@ -37,49 +42,46 @@ export async function getTeamMediaAccess(teamId: string): Promise<AccessResult> 
     };
   }
 
-  // 1. Même règle propriétaire que /api/team-invitations.
-  const { data: team } = await supabase
+  const admin = createGoogleDriveAdminClient();
+
+  // 1. Coach principal / propriétaire.
+  const { data: team, error: teamError } = await admin
     .from("teams")
     .select("id,user_id")
     .eq("id", teamId)
     .maybeSingle();
 
-  if (team?.user_id && String(team.user_id) === user.id) {
+  if (!teamError && team?.user_id && String(team.user_id) === user.id) {
     return { allowed: true, owner: true, staff: false, userId: user.id };
   }
 
-  // 2. Secours après OAuth pour les équipes historiques/migrées.
-  // La table sensible est lue uniquement côté serveur avec le service role.
-  try {
-    const admin = createGoogleDriveAdminClient();
-    const { data: connection } = await admin
-      .from("team_drive_connections")
-      .select("connected_by,revoked_at")
-      .eq("team_id", teamId)
-      .eq("provider", "google_drive")
-      .is("revoked_at", null)
-      .maybeSingle();
+  // 2. Une connexion Drive déjà créée par cet utilisateur confirme aussi
+  // qu'il est le gestionnaire média de cette équipe (compatibilité migrations).
+  const { data: connection } = await admin
+    .from("team_drive_connections")
+    .select("connected_by,revoked_at")
+    .eq("team_id", teamId)
+    .eq("provider", "google_drive")
+    .is("revoked_at", null)
+    .maybeSingle();
 
-    if (
-      connection?.connected_by &&
-      String(connection.connected_by) === user.id
-    ) {
-      return { allowed: true, owner: true, staff: false, userId: user.id };
-    }
-  } catch {
-    // On ne donne jamais l'accès par défaut si l'admin n'est pas disponible.
+  if (connection?.connected_by && String(connection.connected_by) === user.id) {
+    return { allowed: true, owner: true, staff: false, userId: user.id };
   }
 
-  // 3. Collaboration actuelle MyBasket.
-  const { data: member } = await supabase
+  // 3. Collaborateur actif avec droit médias.
+  const { data: member } = await admin
     .from("team_members")
     .select("user_id,status,permissions")
     .eq("team_id", teamId)
     .eq("user_id", user.id)
-    .eq("status", "active")
     .maybeSingle();
 
-  if (member && mediaPermission(member.permissions)) {
+  if (
+    member &&
+    activeMembership(member.status) &&
+    hasMediaPermission(member.permissions)
+  ) {
     return { allowed: true, owner: false, staff: true, userId: user.id };
   }
 
