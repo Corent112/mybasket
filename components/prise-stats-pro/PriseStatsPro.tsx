@@ -4596,8 +4596,10 @@ export default function PriseStatsProPage() {
   const stageAfterContext = (c: Ctx): string => {
     if (codingMode === 'live-individual') return c === 'defense' ? 'result' : 'player';
     if (c === 'defense') {
+      // DÉFENSE : aucun joueur avant de connaître le résultat.
+      // Chemin attendu : Temps fort → Résultat → Joueur/Équipe seulement si nécessaire.
       if (workflowOn('temps')) return 'temps';
-      return codingMode === 'live' ? 'result' : 'action';
+      return 'result';
     }
     if (workflowOn('system')) return 'systeme';
     if (workflowOn('temps')) return 'temps';
@@ -4612,6 +4614,8 @@ export default function PriseStatsProPage() {
   };
 
   const stageAfterTemps = (d: Draft): string => {
+    // En défense, le temps fort débouche directement sur le résultat.
+    if (d.context === 'defense') return 'result';
     if (codingMode === 'live') return 'result';
     if ((d.tempsFort === 'pick-side' || d.tempsFort === 'pick-top') && workflowOn('coverage')) return 'coverage';
     return workflowOn('player') ? 'player' : 'action';
@@ -4658,7 +4662,7 @@ export default function PriseStatsProPage() {
   const covPick = (id: string) => {
     const d = { ...draft, coverage: id };
     setDraft(d);
-    setStage(workflowOn('player') ? 'player' : 'action');
+    setStage(d.context === 'defense' ? 'result' : (workflowOn('player') ? 'player' : 'action'));
   };
   const actionPick = (id: string) => {
   let d = { ...draft, actionType: id };
@@ -4852,7 +4856,7 @@ export default function PriseStatsProPage() {
     if (a.actionType === 'touche') return 'inbound';
     if (a.actionType) return 'action';
     if (a.playerId) return 'action';
-    if (a.tempsFort) return a.context === 'defense' ? 'action' : 'player';
+    if (a.tempsFort) return a.context === 'defense' ? 'result' : 'player';
     return 'temps';
   };
 
@@ -7378,7 +7382,7 @@ export default function PriseStatsProPage() {
               'Résultat',
               codingMode !== 'post'
                 ? (codingMode === 'live-individual' ? (isDefense ? 'Résultat défensif — le joueur sera demandé seulement si nécessaire' : 'Résultat du joueur sélectionné') : (isDefense ? 'Choisis le résultat défensif' : 'Choisis le résultat offensif'))
-                : (isDefense ? 'Tir concédé — résultat' : 'Choisis directement le résultat du tir')
+                : (isDefense ? 'Choisis le résultat défensif' : 'Choisis directement le résultat du tir')
             )}
 
             {codingMode === 'post' && isDefense && oppRoster.length > 0 && (
@@ -7481,6 +7485,25 @@ export default function PriseStatsProPage() {
                   ))}
                 </div>
                 {draft.shotType === 'LF' && draft.ftAttempts > 0 && ftSeq()}
+
+                {draft.context === 'defense' && (
+                  <>
+                    <div className="sublbl resultSectionLabel">Autres résultats défense</div>
+                    <div className="resultAllActionsGrid">
+                      {codingButtonsFor('def-action')
+                        .filter((button) => button.key !== 'tir')
+                        .map((button) => (
+                          <button
+                            key={button.key}
+                            className="chip resultActionBtn"
+                            onClick={() => actionPick(button.key)}
+                          >
+                            {button.emoji ? `${button.emoji} ` : ''}{button.label}
+                          </button>
+                        ))}
+                    </div>
+                  </>
+                )}
 
                 {draft.context !== 'defense' && (
                   <>
