@@ -1,0 +1,360 @@
+export type InstitutionalAudience = "Comité" | "Ligue" | "Fédération" | "Pôle";
+export type InstitutionalResourceCategory =
+  | "Formation"
+  | "Joueurs"
+  | "Sélection / Stage"
+  | "PPF / Pôle"
+  | "Administration"
+  | "Gouvernance"
+  | "Clubs & Territoires"
+  | "Événementiel";
+
+export type InstitutionalResourceTemplate = {
+  key: string;
+  title: string;
+  category: InstitutionalResourceCategory;
+  audiences: InstitutionalAudience[];
+  description: string;
+  icon: string;
+  bodyHtml: string;
+};
+
+const field = (label: string, token = "") =>
+  `<div class="mb-field"><b>${label}</b><span>${token || "À compléter"}</span></div>`;
+const area = (title: string, text = "Cliquez ici pour compléter ce contenu.") =>
+  `<section class="mb-section"><h2>${title}</h2><div class="mb-area">${text}</div></section>`;
+const rows = (n: number, cells: number) =>
+  Array.from({ length: n }, () => `<tr>${Array.from({ length: cells }, () => "<td>À compléter</td>").join("")}</tr>`).join("");
+const table = (headers: string[], n = 4) =>
+  `<table><thead><tr>${headers.map((h) => `<th>${h}</th>`).join("")}</tr></thead><tbody>${rows(n, headers.length)}</tbody></table>`;
+const identity = () => `<div class="mb-grid mb-grid-2">${field("Nom / prénom", "{{person.full_name}}{{player.full_name}}")} ${field("Email", "{{person.email}}{{player.email}}")} ${field("Téléphone", "{{person.phone}}")} ${field("Structure / club", "{{player.club_name}}")} </div>`;
+
+export const INSTITUTIONAL_RESOURCE_TEMPLATES: InstitutionalResourceTemplate[] = [
+  {
+    key: "fiche_inscription_cadre",
+    title: "Fiche d’inscription cadre",
+    category: "Formation",
+    audiences: ["Comité", "Ligue", "Fédération"],
+    icon: "📝",
+    description: "Inscription préconçue et entièrement éditable pour une formation de cadre.",
+    bodyHtml: `${area("Informations personnelles", identity())}${area("Formation suivie", `<div class="mb-grid mb-grid-2">${field("Intitulé de la formation")}${field("Session / promotion")}${field("Dates")}${field("Lieu")}</div>`)}${area("Structure", `<div class="mb-grid mb-grid-2">${field("Club / employeur", "{{player.club_name}}")} ${field("N° d’affiliation")}${field("Responsable de structure")}${field("Email du responsable")}</div>`)}${area("Autorisations et déclarations", `<p>Je certifie exacts les renseignements renseignés dans ce document.</p><p>J’autorise / je n’autorise pas l’utilisation de mon image dans le cadre des activités de la formation.</p>`)}${area("Signatures", table(["Stagiaire", "Responsable de structure / organisme"], 1))}`,
+  },
+  {
+    key: "scenario_pedagogique",
+    title: "Scénario pédagogique",
+    category: "Formation",
+    audiences: ["Comité", "Ligue", "Fédération", "Pôle"],
+    icon: "🧩",
+    description: "Architecture conservée de votre scénario : durée, objectifs, activités, animation/contenus, supports.",
+    bodyHtml: `<div class="mb-scenario-head"><div class="mb-scenario-level">INTITULÉ / NIVEAU</div><div class="mb-scenario-theme">« Thème de la séquence »</div></div>${table(["Durée", "Objectif(s) pédagogique(s)", "Activités", "Techniques d’animation – contenus clefs", "Supports pédagogiques"], 5)}${area("Informations de session", `<div class="mb-grid mb-grid-3">${field("Formation")}${field("Date")}${field("Formateur", "{{person.full_name}}")} ${field("Lieu")}${field("Public")}${field("Volume total")}</div>`)}`,
+  },
+  {
+    key: "planning_formation",
+    title: "Planning de formation",
+    category: "Formation",
+    audiences: ["Comité", "Ligue", "Fédération", "Pôle"],
+    icon: "📅",
+    description: "Planning imprimable en complément du planning interactif de MyBasket.",
+    bodyHtml: `${area("Formation", `<div class="mb-grid mb-grid-3">${field("Intitulé")}${field("Promotion")}${field("Lieu")}</div>`)}${table(["Jour / date", "Horaires", "Lieu", "Séquence / contenu", "Intervenant", "Ressources"], 8)}`,
+  },
+  {
+    key: "fiche_intervention_formateur",
+    title: "Fiche d’intervention formateur",
+    category: "Formation",
+    audiences: ["Comité", "Ligue", "Fédération"],
+    icon: "🎓",
+    description: "Préparation et bilan d’une intervention pédagogique.",
+    bodyHtml: `${area("Intervenant", identity())}${area("Intervention", `<div class="mb-grid mb-grid-2">${field("Formation")}${field("Date / horaires")}${field("Lieu")}${field("Thématique")}</div>`)}${area("Objectifs pédagogiques")}${area("Déroulé / méthodes d’animation")}${area("Ressources et matériel")}${area("Bilan de l’intervention")}`,
+  },
+  {
+    key: "feuille_emargement",
+    title: "Feuille d’émargement",
+    category: "Formation",
+    audiences: ["Comité", "Ligue", "Fédération", "Pôle"],
+    icon: "✍️",
+    description: "Émargement par demi-journée ou séquence.",
+    bodyHtml: `${area("Session", `<div class="mb-grid mb-grid-3">${field("Formation")}${field("Date")}${field("Lieu")}</div>`)}${table(["Nom / prénom", "Matin – signature", "Après-midi – signature", "Observations"], 12)}${area("Visa formateur", `<p>Nom : {{person.full_name}} &nbsp;&nbsp; Signature :</p>`)}`,
+  },
+  {
+    key: "convocation_formation",
+    title: "Convocation formation",
+    category: "Formation",
+    audiences: ["Comité", "Ligue", "Fédération"],
+    icon: "📨",
+    description: "Convocation individuelle modifiable et préremplissable.",
+    bodyHtml: `${area("Destinataire", identity())}<p>Madame, Monsieur,</p><p>Vous êtes convoqué(e) à la formation <b>Intitulé de la formation</b> organisée par <b>{{structure.name}}</b>.</p><div class="mb-grid mb-grid-2">${field("Date(s)")}${field("Horaires")}${field("Lieu")}${field("Contact", "{{structure.email}}")} </div>${area("Informations pratiques", "Matériel à prévoir, modalités d’accueil, restauration, consignes particulières…")}<p>Nous vous remercions de confirmer votre présence.</p>`,
+  },
+  {
+    key: "attestation_presence",
+    title: "Attestation de présence",
+    category: "Formation",
+    audiences: ["Comité", "Ligue", "Fédération", "Pôle"],
+    icon: "✅",
+    description: "Attestation nominative de présence à une action.",
+    bodyHtml: `<p>Je soussigné(e), représentant(e) de <b>{{structure.name}}</b>, atteste que :</p>${identity()}<p>a participé à l’action / formation <b>Intitulé</b>, du <b>Date de début</b> au <b>Date de fin</b>, pour un volume de <b>Nombre d’heures</b>.</p>${area("Validation", `<p>Fait à {{structure.city}}, le {{today}}</p><p>Nom, qualité, signature et cachet :</p>`)}`,
+  },
+  {
+    key: "attestation_formation",
+    title: "Attestation de formation",
+    category: "Formation",
+    audiences: ["Comité", "Ligue", "Fédération"],
+    icon: "🏅",
+    description: "Attestation de suivi de formation, texte intégralement éditable.",
+    bodyHtml: `<p><b>{{structure.name}}</b> atteste que :</p>${identity()}<p>a suivi la formation <b>Intitulé de la formation</b> et a participé aux séquences prévues au programme.</p><div class="mb-grid mb-grid-2">${field("Dates")}${field("Volume horaire")}${field("Lieu")}${field("Responsable pédagogique")}</div>${area("Validation", `<p>Fait à {{structure.city}}, le {{today}}</p><p>Signature / cachet :</p>`)}`,
+  },
+  {
+    key: "evaluation_cadre",
+    title: "Évaluation d’un cadre",
+    category: "Formation",
+    audiences: ["Comité", "Ligue", "Fédération"],
+    icon: "📊",
+    description: "Grille d’évaluation personnalisable d’un stagiaire ou entraîneur.",
+    bodyHtml: `${identity()}${table(["Compétence / critère", "À développer", "En acquisition", "Acquis", "Maîtrisé", "Observations"], 8)}${area("Points d’appui")}${area("Axes de progression")}${area("Objectifs pour la prochaine période")}`,
+  },
+  {
+    key: "auto_evaluation_cadre",
+    title: "Auto-évaluation cadre",
+    category: "Formation",
+    audiences: ["Comité", "Ligue", "Fédération"],
+    icon: "🪞",
+    description: "Auto-positionnement avant, pendant ou après une formation.",
+    bodyHtml: `${identity()}${table(["Domaine", "Je me situe", "Ce que je maîtrise", "Ce que je veux améliorer", "Action prévue"], 7)}${area("Mon objectif prioritaire")}${area("Bilan personnel")}`,
+  },
+  {
+    key: "bilan_formation",
+    title: "Bilan de formation",
+    category: "Formation",
+    audiences: ["Comité", "Ligue", "Fédération"],
+    icon: "📋",
+    description: "Bilan pédagogique, organisationnel et quantitatif d’une formation.",
+    bodyHtml: `${area("Identification", `<div class="mb-grid mb-grid-3">${field("Formation")}${field("Dates")}${field("Lieu")}${field("Responsable")}${field("Participants prévus")}${field("Participants présents")}</div>`)}${area("Objectifs atteints / écarts")}${area("Contenus réalisés")}${area("Retours des stagiaires")}${area("Points à améliorer")}${area("Suites et décisions")}`,
+  },
+  {
+    key: "compte_rendu_formateur",
+    title: "Compte-rendu formateur",
+    category: "Formation",
+    audiences: ["Comité", "Ligue", "Fédération"],
+    icon: "🗒️",
+    description: "Compte-rendu après une journée ou une séquence de formation.",
+    bodyHtml: `${area("Séquence", `<div class="mb-grid mb-grid-2">${field("Formation")}${field("Date")}${field("Formateur", "{{person.full_name}}")} ${field("Groupe")}</div>`)}${area("Ce qui a été réalisé")}${area("Réussites observées")}${area("Difficultés / ajustements")}${area("À reprendre lors de la prochaine séquence")}`,
+  },
+  {
+    key: "fiche_detection_joueur",
+    title: "Fiche de détection joueur",
+    category: "Sélection / Stage",
+    audiences: ["Comité", "Ligue", "Fédération", "Pôle"],
+    icon: "🔎",
+    description: "Observation d’un joueur lors d’une détection ou d’un rassemblement.",
+    bodyHtml: `${area("Joueur", `<div class="mb-grid mb-grid-3">${field("Nom / prénom", "{{player.full_name}}")} ${field("Date de naissance", "{{player.birthdate}}")} ${field("Club", "{{player.club_name}}")} ${field("Catégorie", "{{player.category}}")} ${field("Taille", "{{player.height_cm}}")} ${field("Années basket", "{{player.years_basket}}")} </div>`)}${table(["Domaine observé", "Repère / note", "Points forts", "Points à développer"], 7)}${area("Avis global")}${area("Décision / statut", "Proposé · Convoqué · Présent · Retenu · Liste d’attente · Non retenu")}`,
+  },
+  {
+    key: "evaluation_joueur",
+    title: "Évaluation individuelle joueur",
+    category: "Joueurs",
+    audiences: ["Comité", "Ligue", "Fédération", "Pôle"],
+    icon: "🏀",
+    description: "Évaluation technique, tactique, physique et comportementale.",
+    bodyHtml: `${identity()}${table(["Domaine", "Critère", "Évaluation", "Observation", "Objectif"], 10)}${area("Synthèse")}${area("Priorités de travail")}`,
+  },
+  {
+    key: "suivi_longitudinal_joueur",
+    title: "Suivi longitudinal joueur",
+    category: "PPF / Pôle",
+    audiences: ["Ligue", "Fédération", "Pôle"],
+    icon: "📈",
+    description: "Historique multi-saisons du développement du joueur.",
+    bodyHtml: `${identity()}${table(["Date", "Structure / équipe", "Taille", "Statut", "Évaluation synthétique", "Objectif suivant"], 8)}${area("Évolution observée")}${area("Alertes / points de vigilance")}${area("Projet joueur")}`,
+  },
+  {
+    key: "bilan_stage_selection",
+    title: "Bilan stage / sélection",
+    category: "Sélection / Stage",
+    audiences: ["Comité", "Ligue", "Fédération", "Pôle"],
+    icon: "🏕️",
+    description: "Bilan complet d’un stage, rassemblement ou sélection.",
+    bodyHtml: `${area("Action", `<div class="mb-grid mb-grid-3">${field("Intitulé")}${field("Dates")}${field("Lieu")}${field("Responsable")}${field("Effectif convoqué")}${field("Effectif présent")}</div>`)}${area("Objectifs")}${area("Contenus / programme")}${area("Bilan sportif")}${area("Bilan comportemental / vie collective")}${area("Décisions / suite du parcours")}`,
+  },
+  {
+    key: "convocation_selection",
+    title: "Convocation sélection / stage",
+    category: "Sélection / Stage",
+    audiences: ["Comité", "Ligue", "Fédération", "Pôle"],
+    icon: "📣",
+    description: "Convocation joueur préremplissable et modifiable.",
+    bodyHtml: `${identity()}<p>Le joueur / la joueuse est convoqué(e) par <b>{{structure.name}}</b> pour participer à l’action suivante :</p><div class="mb-grid mb-grid-2">${field("Intitulé")}${field("Date(s)")}${field("Horaires")}${field("Lieu")}${field("Rendez-vous")}${field("Contact", "{{structure.email}}")} </div>${area("Équipement / documents à prévoir")}${area("Informations complémentaires")}`,
+  },
+  {
+    key: "autorisation_parentale",
+    title: "Autorisation parentale",
+    category: "Sélection / Stage",
+    audiences: ["Comité", "Ligue", "Fédération", "Pôle"],
+    icon: "👨‍👩‍👧",
+    description: "Autorisation générique sans mention d’une structure tierce.",
+    bodyHtml: `<p>Je soussigné(e) <b>Nom du responsable légal</b>, agissant en qualité de <b>père / mère / représentant légal</b>, autorise :</p>${identity()}<p>à participer à <b>Intitulé de l’action</b>, organisée par <b>{{structure.name}}</b>, qui se déroulera <b>Date(s) et lieu</b>.</p>${area("Autorisation complémentaire", "J’autorise / je n’autorise pas les prises de vues photographiques et audiovisuelles dans le cadre de cette action. Le texte peut être adapté librement par la structure.")}${area("Signature", `<p>Fait à {{structure.city}}, le {{today}}</p><p>Signature du responsable légal :</p>`)}`,
+  },
+  {
+    key: "droit_image",
+    title: "Autorisation droit à l’image",
+    category: "Administration",
+    audiences: ["Comité", "Ligue", "Fédération", "Pôle"],
+    icon: "📷",
+    description: "Modèle de consentement éditable, à adapter à la politique de la structure.",
+    bodyHtml: `${identity()}<p>J’autorise / je n’autorise pas <b>{{structure.name}}</b> à capter et utiliser mon image ou celle du mineur dont je suis responsable dans le cadre de ses activités, sur les supports explicitement décrits ci-dessous.</p>${area("Supports et finalités autorisés", "Site internet · réseaux sociaux · documents internes · supports pédagogiques · autres : …")}${area("Durée / retrait du consentement", "Texte à adapter selon les règles et procédures de la structure.")}${area("Signature", `<p>Fait à {{structure.city}}, le {{today}}</p><p>Signature :</p>`)}`,
+  },
+  {
+    key: "liste_selection",
+    title: "Liste de sélection / promotion",
+    category: "Sélection / Stage",
+    audiences: ["Comité", "Ligue", "Fédération", "Pôle"],
+    icon: "📑",
+    description: "Liste nominative avec statut, club, catégorie et informations utiles.",
+    bodyHtml: `${area("Action", `<div class="mb-grid mb-grid-3">${field("Intitulé")}${field("Date")}${field("Catégorie")}</div>`)}${table(["N°", "Nom / prénom", "Naissance", "Club", "Statut", "Contact", "Observation"], 14)}`,
+  },
+  {
+    key: "objectifs_joueur",
+    title: "Plan d’objectifs joueur",
+    category: "Joueurs",
+    audiences: ["Comité", "Ligue", "Fédération", "Pôle"],
+    icon: "🎯",
+    description: "Objectifs de progression et points de contrôle.",
+    bodyHtml: `${identity()}${table(["Objectif", "Pourquoi", "Actions prévues", "Indicateur", "Échéance", "Bilan"], 6)}${area("Priorité de la période")}`,
+  },
+  {
+    key: "suivi_scolaire_pole",
+    title: "Suivi scolaire Pôle",
+    category: "PPF / Pôle",
+    audiences: ["Ligue", "Fédération", "Pôle"],
+    icon: "🎒",
+    description: "Repères scolaires et coordination autour d’un poliste.",
+    bodyHtml: `${identity()}${table(["Période", "Établissement / classe", "Résultats / appréciation", "Absences", "Aménagements", "Action à mener"], 6)}${area("Échanges famille / établissement")}${area("Points de vigilance")}`,
+  },
+  {
+    key: "entretien_individuel_pole",
+    title: "Entretien individuel Pôle",
+    category: "PPF / Pôle",
+    audiences: ["Ligue", "Fédération", "Pôle"],
+    icon: "💬",
+    description: "Trame d’entretien sportif, scolaire et personnel.",
+    bodyHtml: `${identity()}${area("Comment je vis ma période ?")}${area("Basket : satisfaction / difficultés / objectifs")}${area("Scolarité")}${area("Vie personnelle / récupération / organisation")}${area("Décisions et engagements")}`,
+  },
+  {
+    key: "ordre_du_jour",
+    title: "Ordre du jour",
+    category: "Gouvernance",
+    audiences: ["Comité", "Ligue", "Fédération", "Pôle"],
+    icon: "📌",
+    description: "Trame de réunion institutionnelle entièrement éditable.",
+    bodyHtml: `${area("Réunion", `<div class="mb-grid mb-grid-3">${field("Intitulé")}${field("Date / heure")}${field("Lieu / visio")}${field("Animateur")}${field("Secrétaire")}${field("Participants")}</div>`)}${table(["N°", "Sujet", "Objectif / décision attendue", "Pilote", "Temps prévu"], 8)}${area("Documents préparatoires")}`,
+  },
+  {
+    key: "compte_rendu_reunion",
+    title: "Compte-rendu / procès-verbal",
+    category: "Gouvernance",
+    audiences: ["Comité", "Ligue", "Fédération", "Pôle"],
+    icon: "🧾",
+    description: "Compte-rendu structuré avec décisions et responsables.",
+    bodyHtml: `${area("Réunion", `<div class="mb-grid mb-grid-2">${field("Intitulé")}${field("Date")}${field("Présents")}${field("Excusés")}</div>`)}${table(["Sujet", "Échanges / éléments clés", "Décision", "Responsable", "Échéance"], 8)}${area("Prochaine réunion")}`,
+  },
+  {
+    key: "fiche_action",
+    title: "Fiche action",
+    category: "Administration",
+    audiences: ["Comité", "Ligue", "Fédération", "Pôle"],
+    icon: "🚀",
+    description: "Cadrage d’une action, ses objectifs, ressources et indicateurs.",
+    bodyHtml: `${area("Identification", `<div class="mb-grid mb-grid-3">${field("Nom de l’action")}${field("Pilote")}${field("Période")}${field("Public cible")}${field("Territoire")}${field("Budget")}</div>`)}${area("Constat / besoin")}${area("Objectifs")}${area("Plan d’action")}${area("Moyens humains et matériels")}${area("Indicateurs de réussite")}${area("Communication / partenaires")}`,
+  },
+  {
+    key: "bilan_action",
+    title: "Bilan d’action",
+    category: "Administration",
+    audiences: ["Comité", "Ligue", "Fédération", "Pôle"],
+    icon: "📉",
+    description: "Bilan qualitatif, quantitatif, financier et suites.",
+    bodyHtml: `${area("Action", `<div class="mb-grid mb-grid-3">${field("Nom")}${field("Période")}${field("Pilote")}</div>`)}${area("Résultats obtenus")}${area("Indicateurs / chiffres clés")}${area("Budget réalisé")}${area("Points forts")}${area("Difficultés")}${area("Suites / recommandations")}`,
+  },
+  {
+    key: "diagnostic_structure",
+    title: "Diagnostic de structure",
+    category: "Clubs & Territoires",
+    audiences: ["Comité", "Ligue", "Fédération"],
+    icon: "🩺",
+    description: "Diagnostic partagé d’un club ou d’une structure accompagnée.",
+    bodyHtml: `${area("Structure", `<div class="mb-grid mb-grid-3">${field("Nom")}${field("Territoire")}${field("Contact")}${field("Licenciés")}${field("Équipes")}${field("Salariés / bénévoles")}</div>`)}${table(["Thématique", "Situation actuelle", "Forces", "Difficultés", "Priorité"], 8)}${area("Besoins d’accompagnement")}${area("Plan de suivi")}`,
+  },
+  {
+    key: "swot_structure",
+    title: "Matrice SWOT",
+    category: "Clubs & Territoires",
+    audiences: ["Comité", "Ligue", "Fédération"],
+    icon: "🧠",
+    description: "Forces, faiblesses, opportunités et menaces d’un projet ou d’une structure.",
+    bodyHtml: `<div class="mb-swot"><section><h2>Forces</h2><div>À compléter</div></section><section><h2>Faiblesses</h2><div>À compléter</div></section><section><h2>Opportunités</h2><div>À compléter</div></section><section><h2>Menaces</h2><div>À compléter</div></section></div>${area("Priorités issues du diagnostic")}`,
+  },
+  {
+    key: "budget_previsionnel",
+    title: "Budget prévisionnel d’action",
+    category: "Administration",
+    audiences: ["Comité", "Ligue", "Fédération", "Pôle"],
+    icon: "💶",
+    description: "Trame simple de préparation budgétaire.",
+    bodyHtml: `${area("Action", `<div class="mb-grid mb-grid-2">${field("Intitulé")}${field("Période")}</div>`)}<div class="mb-grid mb-grid-2"><section><h2>Dépenses</h2>${table(["Poste", "Montant prévu", "Montant réalisé"], 8)}</section><section><h2>Recettes</h2>${table(["Origine", "Montant prévu", "Montant réalisé"], 8)}</section></div>${area("Commentaires / arbitrages")}`,
+  },
+  {
+    key: "fiche_poste_mission",
+    title: "Fiche de poste / mission",
+    category: "Administration",
+    audiences: ["Comité", "Ligue", "Fédération", "Pôle"],
+    icon: "👤",
+    description: "Description de poste salarié, bénévole ou mission ponctuelle.",
+    bodyHtml: `${area("Identification", `<div class="mb-grid mb-grid-2">${field("Intitulé du poste / mission")}${field("Rattachement")}${field("Lieu")}${field("Temps / durée")}</div>`)}${area("Finalité du poste")}${area("Missions principales")}${area("Activités / tâches")}${area("Compétences attendues")}${area("Relations fonctionnelles")}${area("Indicateurs / objectifs")}`,
+  },
+  {
+    key: "convention_intervenant",
+    title: "Convention / lettre de mission intervenant",
+    category: "Administration",
+    audiences: ["Comité", "Ligue", "Fédération"],
+    icon: "🤝",
+    description: "Base éditable à faire valider juridiquement selon l’usage de la structure.",
+    bodyHtml: `${area("Parties", `<p>Entre <b>{{structure.name}}</b> et <b>{{person.full_name}}</b>.</p>`)}${area("Objet de l’intervention")}${area("Dates, horaires et lieux")}${area("Engagements de l’intervenant")}${area("Engagements de la structure")}${area("Conditions financières / frais")}${area("Assurance, responsabilité, confidentialité", "Texte à adapter et à faire valider selon le contexte juridique de la structure.")}${area("Signatures")}`,
+  },
+  {
+    key: "rapport_activite",
+    title: "Rapport d’activité",
+    category: "Gouvernance",
+    audiences: ["Comité", "Ligue", "Fédération", "Pôle"],
+    icon: "📚",
+    description: "Trame annuelle de synthèse des actions et indicateurs.",
+    bodyHtml: `${area("Période", `<p>Saison : {{structure.season}}</p>`)}${area("Faits marquants")}${area("Actions réalisées")}${area("Formation")}${area("Développement / territoire")}${area("Performance / PPF")}${area("Indicateurs clés")}${area("Partenariats / communication")}${area("Perspectives")}`,
+  },
+  {
+    key: "checklist_evenement",
+    title: "Checklist organisation événement",
+    category: "Événementiel",
+    audiences: ["Comité", "Ligue", "Fédération", "Pôle"],
+    icon: "✅",
+    description: "Préparation opérationnelle d’un stage, tournoi, formation ou événement.",
+    bodyHtml: `${area("Événement", `<div class="mb-grid mb-grid-3">${field("Nom")}${field("Date")}${field("Lieu")}</div>`)}${table(["Fait", "Tâche", "Responsable", "Échéance", "Observation"], 14)}`,
+  },
+  {
+    key: "plan_accompagnement_clubs",
+    title: "Plan d’accompagnement clubs / territoire",
+    category: "Clubs & Territoires",
+    audiences: ["Comité", "Ligue", "Fédération"],
+    icon: "🗺️",
+    description: "Pilotage des besoins et actions d’accompagnement de plusieurs structures.",
+    bodyHtml: `${table(["Club / structure", "Besoin identifié", "Priorité", "Action proposée", "Référent", "Échéance", "État"], 12)}${area("Synthèse territoriale")}${area("Actions mutualisées à proposer")}`,
+  },
+  {
+    key: "fiche_pratique_mybasket",
+    title: "Fiche pratique MyBasket",
+    category: "Clubs & Territoires",
+    audiences: ["Comité", "Ligue", "Fédération", "Pôle"],
+    icon: "🧰",
+    description: "Format court pour mutualiser une bonne pratique dans le réseau.",
+    bodyHtml: `<div class="mb-practical"><h1>Titre de la fiche pratique</h1>${area("Synthèse", "En quelques lignes : ce qu’il faut retenir.")}${area("Pourquoi ?", "Le besoin auquel répond cette pratique.")}${area("Comment ?", "Étapes simples et opérationnelles.")}${area("Checklist", "☐ Étape 1<br>☐ Étape 2<br>☐ Étape 3<br>☐ Étape 4")}${area("Pour aller plus loin", "Liens, contacts, documents ou ressources complémentaires.")}</div>`,
+  },
+];
+
+export const RESOURCE_CATEGORIES = Array.from(new Set(INSTITUTIONAL_RESOURCE_TEMPLATES.map((x) => x.category)));
+export const RESOURCE_AUDIENCES: InstitutionalAudience[] = ["Comité", "Ligue", "Fédération", "Pôle"];

@@ -5,7 +5,7 @@ import { useEffect, useMemo, useState } from "react";
 
 import CreneauxPlanner from "@/components/club/CreneauxPlanner";
 import ClubTeamsActiveSection from "@/components/club/ClubTeamsActiveSection";
-import ClubCoachesActiveSection from "@/components/club/ClubCoachesActiveSection";
+import ClubCoachesSection from "@/components/club/ClubCoachesSection";
 import ClubCalendarEngineSection from "@/components/club/ClubCalendarEngineSection";
 import ClubConvocationsSection from "@/components/club/ClubConvocationsSection";
 import ClubCotisationsSection from "@/components/club/ClubCotisationsSection";
@@ -113,7 +113,7 @@ export default function ClubManagementPro({
         )}
 
         {activeTab === "coachs" && (
-          <ClubCoachesActiveSection clubId={clubId} clubName={safeClubName} />
+          <ClubCoachesSection clubId={clubId} clubName={safeClubName} />
         )}
 
         {activeTab === "planning" && <CreneauxPlanner clubId={clubId} />}
