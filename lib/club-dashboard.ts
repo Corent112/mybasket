@@ -30,14 +30,43 @@ export type MyClub = {
 };
 
 export async function getMyClub(): Promise<MyClub | null> {
+  const supabase = createClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return null;
+
+  const { data: membership, error: membershipError } = await supabase
+    .from("club_members")
+    .select("club_id,role,status")
+    .eq("user_id", user.id)
+    .eq("status", "active")
+    .limit(1)
+    .maybeSingle();
+
+  if (membershipError) {
+    console.error("Erreur getMyClub membership:", membershipError);
+    return null;
+  }
+  if (!membership?.club_id) return null;
+
+  const { data: club, error: clubError } = await supabase
+    .from("clubs")
+    .select("id,name,city,logo_url,banner_url,status")
+    .eq("id", membership.club_id)
+    .maybeSingle();
+
+  if (clubError || !club) {
+    if (clubError) console.error("Erreur getMyClub club:", clubError);
+    return null;
+  }
+
   return {
-    id: "d708e05b-cb8d-43f6-9cbf-b683c3bc2562",
-    name: "MyBasket Club Test",
-    city: "Paris",
-    logo_url: null,
-    banner_url: null,
-    status: "active",
-    role: "owner",
+    id: club.id,
+    name: club.name,
+    city: club.city ?? null,
+    logo_url: club.logo_url ?? null,
+    banner_url: club.banner_url ?? null,
+    status: club.status ?? null,
+    role: (membership.role || "viewer") as ClubRole,
   };
 }
 
