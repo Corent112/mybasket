@@ -16,7 +16,7 @@ import {
 } from "@/lib/club-core";
 import { deleteEntity } from "@/lib/club-crud-actions";
 
-const CATEGORIES = ["U13", "U15", "U18", "U21", "Seniors"];
+const CATEGORIES = ["U5", "U7", "U9", "U11", "U13", "U15", "U18", "U21", "Seniors"];
 const GENDERS = ["Mixte", "M", "F"];
 const LEVELS = ["Départemental", "Régional", "National", "Élite", "Loisirs", "3x3", "Entreprise", "Autre"];
 
