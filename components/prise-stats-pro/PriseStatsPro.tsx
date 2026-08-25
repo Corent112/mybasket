@@ -7678,6 +7678,103 @@ function BoxView({ actions, roster, teamId, videoProvider = 'none', videoUrl = '
     if (items.length === 1) setClipAction(items[0]);
   };
 
+  /* ===== BOXVIEW · chaque statistique joueur ouvre uniquement ses actions ===== */
+  type BoxClipKind = 'all'|'pts'|'2pts'|'3pts'|'lf'|'oreb'|'dreb'|'reb'|'ast'|'stl'|'blk'|'tov'|'pf';
+
+  const uniqActions = (items: StatA[]) => {
+    const seen = new Set<string>();
+    return items.filter((a) => {
+      const key = String(a.id);
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+  };
+
+  const playerBoxClips = (playerId: string, kind: BoxClipKind): StatA[] => {
+    const ownShot = (a: StatA, shotType?: string) =>
+      a.context !== 'defense' &&
+      a.playerId === playerId &&
+      a.actionType === 'tir' &&
+      (!shotType || a.shotType === shotType);
+
+    switch (kind) {
+      case 'all':
+        return uniqActions(actions.filter((a) =>
+          a.playerId === playerId ||
+          a.assistPlayerId === playerId ||
+          a.reboundPlayerId === playerId
+        ));
+      case 'pts':
+        return uniqActions(actions.filter((a) =>
+          (ownShot(a) && (
+            (a.shotType !== 'LF' && a.shotResult === 'made') ||
+            (a.shotType === 'LF' && (a.ftMade || 0) > 0)
+          )) ||
+          (
+            a.context !== 'defense' &&
+            a.playerId === playerId &&
+            a.actionType === 'faute-provoquee' &&
+            a.shotType === 'LF' &&
+            (a.ftMade || 0) > 0
+          )
+        ));
+      case '2pts':
+        return actions.filter((a) => ownShot(a, '2PTS'));
+      case '3pts':
+        return actions.filter((a) => ownShot(a, '3PTS'));
+      case 'lf':
+        return uniqActions(actions.filter((a) =>
+          (
+            a.context !== 'defense' &&
+            a.playerId === playerId &&
+            a.actionType === 'tir' &&
+            (
+              a.shotType === 'LF' ||
+              (a.shotResult === 'made' && a.specialCase !== 'aucun' && (a.ftAttempts || 0) > 0)
+            )
+          ) ||
+          (
+            a.context !== 'defense' &&
+            a.playerId === playerId &&
+            a.actionType === 'faute-provoquee' &&
+            a.shotType === 'LF'
+          )
+        ));
+      case 'oreb':
+        return actions.filter((a) => a.reboundPlayerId === playerId && a.reboundType === 'off');
+      case 'dreb':
+        return uniqActions(actions.filter((a) =>
+          (a.actionType === 'rebond-def' && a.playerId === playerId) ||
+          (a.reboundPlayerId === playerId && a.reboundType === 'def')
+        ));
+      case 'reb':
+        return uniqActions([
+          ...playerBoxClips(playerId, 'oreb'),
+          ...playerBoxClips(playerId, 'dreb'),
+        ]);
+      case 'ast':
+        return actions.filter((a) => a.assist === true && a.assistPlayerId === playerId);
+      case 'stl':
+        return actions.filter((a) => a.actionType === 'interception' && a.playerId === playerId);
+      case 'blk':
+        return actions.filter((a) => a.actionType === 'contre' && a.playerId === playerId);
+      case 'tov':
+        return actions.filter((a) => a.actionType === 'perte' && a.playerId === playerId);
+      case 'pf':
+        return actions.filter((a) => a.actionType === 'faute-commise' && a.playerId === playerId);
+      default:
+        return [];
+    }
+  };
+
+  const openPlayerBoxClips = (player: Player, kind: BoxClipKind, label: string) => {
+    const items = playerBoxClips(player.id, kind);
+    if (!items.length) return;
+    openList(`#${player.num} ${player.name} · ${label}`, items);
+  };
+
+  const stopCell = (event: MouseEvent<HTMLElement>) => event.stopPropagation();
 
   const openShotZoneClips = (
     clicked: StatA,
@@ -7751,16 +7848,25 @@ function BoxView({ actions, roster, teamId, videoProvider = 'none', videoUrl = '
 
       {/* ===== Boxscore joueurs ===== */}
       {boxTab === 'box' && (
-        <table>
+        <table className="boxscoreClipTable">
           <thead><tr><th className="l">Joueur</th><th>PTS</th><th>2PTS</th><th>3PTS</th><th>LF</th><th>RO</th><th>RD</th><th>RT</th><th>PD</th><th>INT</th><th>CT</th><th>BP</th><th>F</th><th>ÉVAL</th><th>+/-</th></tr></thead>
           <tbody>
             {box.map((l: any) => (
-              <tr key={l.p.id} className="clickRow" onClick={() => openList(`#${l.p.num} ${l.p.name}`, actions.filter((a) => a.playerId === l.p.id))}>
-                <td className="l">#{l.p.num} {l.p.name}</td>
-                <td><b>{pts(l)}</b></td>
-                <td>{l.p2m}/{l.p2a}</td><td>{l.p3m}/{l.p3a}</td><td>{l.ftm}/{l.fta}</td>
-                <td>{l.offReb || 0}</td><td>{l.defReb || 0}</td><td>{(l.offReb || 0) + (l.defReb || 0)}</td>
-                <td>{l.ast}</td><td>{l.stl}</td><td>{l.blk}</td><td>{l.to}</td><td>{l.pf}</td><td><b>{evalOf(l)}</b></td><td><b style={{ color: plusMinusOf(l.p.id) >= 0 ? 'var(--green)' : 'var(--red)' }}>{plusMinusOf(l.p.id) > 0 ? `+${plusMinusOf(l.p.id)}` : plusMinusOf(l.p.id)}</b></td>
+              <tr key={l.p.id} className="clickRow" onClick={() => openPlayerBoxClips(l.p, 'all', 'Toutes les actions')}>
+                <td className="l"><button type="button" className="boxStatBtn player" onClick={(e) => { stopCell(e); openPlayerBoxClips(l.p, 'all', 'Toutes les actions'); }}>#{l.p.num} {l.p.name}</button></td>
+                <td><button type="button" className="boxStatBtn" onClick={(e) => { stopCell(e); openPlayerBoxClips(l.p, 'pts', 'Points marqués'); }}><b>{pts(l)}</b></button></td>
+                <td><button type="button" className="boxStatBtn" onClick={(e) => { stopCell(e); openPlayerBoxClips(l.p, '2pts', `2PTS ${l.p2m}/${l.p2a}`); }}>{l.p2m}/{l.p2a}</button></td>
+                <td><button type="button" className="boxStatBtn" onClick={(e) => { stopCell(e); openPlayerBoxClips(l.p, '3pts', `3PTS ${l.p3m}/${l.p3a}`); }}>{l.p3m}/{l.p3a}</button></td>
+                <td><button type="button" className="boxStatBtn" onClick={(e) => { stopCell(e); openPlayerBoxClips(l.p, 'lf', `LF ${l.ftm}/${l.fta}`); }}>{l.ftm}/{l.fta}</button></td>
+                <td><button type="button" className="boxStatBtn" onClick={(e) => { stopCell(e); openPlayerBoxClips(l.p, 'oreb', 'Rebonds offensifs'); }}>{l.offReb || 0}</button></td>
+                <td><button type="button" className="boxStatBtn" onClick={(e) => { stopCell(e); openPlayerBoxClips(l.p, 'dreb', 'Rebonds défensifs'); }}>{l.defReb || 0}</button></td>
+                <td><button type="button" className="boxStatBtn" onClick={(e) => { stopCell(e); openPlayerBoxClips(l.p, 'reb', 'Tous les rebonds'); }}>{(l.offReb || 0) + (l.defReb || 0)}</button></td>
+                <td><button type="button" className="boxStatBtn" onClick={(e) => { stopCell(e); openPlayerBoxClips(l.p, 'ast', 'Passes décisives'); }}>{l.ast}</button></td>
+                <td><button type="button" className="boxStatBtn" onClick={(e) => { stopCell(e); openPlayerBoxClips(l.p, 'stl', 'Interceptions'); }}>{l.stl}</button></td>
+                <td><button type="button" className="boxStatBtn" onClick={(e) => { stopCell(e); openPlayerBoxClips(l.p, 'blk', 'Contres'); }}>{l.blk}</button></td>
+                <td><button type="button" className="boxStatBtn" onClick={(e) => { stopCell(e); openPlayerBoxClips(l.p, 'tov', 'Pertes de balle'); }}>{l.to}</button></td>
+                <td><button type="button" className="boxStatBtn" onClick={(e) => { stopCell(e); openPlayerBoxClips(l.p, 'pf', 'Fautes commises'); }}>{l.pf}</button></td>
+                <td><b>{evalOf(l)}</b></td><td><b style={{ color: plusMinusOf(l.p.id) >= 0 ? 'var(--green)' : 'var(--red)' }}>{plusMinusOf(l.p.id) > 0 ? `+${plusMinusOf(l.p.id)}` : plusMinusOf(l.p.id)}</b></td>
               </tr>
             ))}
             <tr className="team-stat-row">
@@ -9975,6 +10081,15 @@ function Style() {
       .courtbox { max-height: 220px; }
 
       /* ===================== V6/V7.1 · Responsive ===================== */
+
+      .boxscoreClipTable .boxStatBtn {
+        width:100%; min-width:34px; border:0; background:transparent; color:inherit;
+        font:inherit; font-weight:inherit; padding:7px 5px; border-radius:7px;
+        cursor:pointer; transition:background .15s ease,color .15s ease,transform .15s ease;
+      }
+      .boxscoreClipTable .boxStatBtn:hover { background:rgba(212,162,76,.14); color:var(--gold); }
+      .boxscoreClipTable .boxStatBtn:active { transform:scale(.96); }
+      .boxscoreClipTable .boxStatBtn.player { text-align:left; font-weight:850; }
 
       /* PATCH Boxscore cliquable / joueurs droite propres */
       .clickRow { cursor: pointer; }
