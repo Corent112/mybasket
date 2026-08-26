@@ -25,6 +25,15 @@ export type AiDiagramAction = {
   order?: number;
 };
 
+export type AiExerciseDiagram = {
+  detected: boolean;
+  courtType: "half" | "full";
+  players: AiDiagramPlayer[];
+  objects: AiDiagramObject[];
+  actions: AiDiagramAction[];
+  notes: string;
+};
+
 export type AiExerciseImport = {
   title: string;
   organisation: string;
@@ -40,14 +49,9 @@ export type AiExerciseImport = {
   niveau: "Débutant" | "Intermédiaire" | "Confirmé";
   temps: number | null;
   themes: string[];
-  diagram: {
-    detected: boolean;
-    courtType: "half" | "full";
-    players: AiDiagramPlayer[];
-    objects: AiDiagramObject[];
-    actions: AiDiagramAction[];
-    notes: string;
-  };
+  diagram: AiExerciseDiagram;
+  diagrams?: AiExerciseDiagram[];
+  source?: "local" | "ai";
   confidence: {
     text: number;
     diagram: number;

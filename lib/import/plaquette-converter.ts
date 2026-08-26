@@ -1,4 +1,4 @@
-import type { AiExerciseImport, AiPoint, PlaquetteSchemaData } from "./types";
+import type { AiExerciseDiagram, AiExerciseImport, AiPoint, PlaquetteSchemaData } from "./types";
 
 const clamp = (value: unknown, min = 0.02, max = 0.98) => {
   const n = Number(value);
@@ -11,85 +11,57 @@ const point = (p: AiPoint | undefined, half: boolean): AiPoint => ({
   y: clamp(p?.y, 0.02, half ? 0.49 : 0.98),
 });
 
-export function aiDiagramToPlaquette(result: AiExerciseImport): PlaquetteSchemaData | null {
-  if (!result.diagram?.detected) return null;
+function oneDiagramToPlaquette(result: AiExerciseImport, diagram: AiExerciseDiagram, diagramIndex = 0): PlaquetteSchemaData | null {
+  if (!diagram?.detected) return null;
 
-  const half = result.diagram.courtType !== "full";
+  const half = diagram.courtType !== "full";
   const groupId = crypto.randomUUID();
   const playerIds = new Map<string, string>();
 
-  const players = (result.diagram.players || []).map((p, index) => {
+  const players = (diagram.players || []).map((p, index) => {
     const id = crypto.randomUUID();
     playerIds.set(p.key, id);
     return {
-      id,
-      x: clamp(p.x),
-      y: clamp(p.y, 0.02, half ? 0.49 : 0.98),
-      label: String(p.label || index + 1),
-      team: p.team === "def" ? "def" : "att",
-      shape: p.team === "def" ? "square" : "circle",
-      rotation: 0,
-      hasBall: Boolean(p.hasBall),
-      ballCount: p.hasBall ? 1 : 0,
+      id, x: clamp(p.x), y: clamp(p.y, 0.02, half ? 0.49 : 0.98),
+      label: String(p.label || index + 1), team: p.team === "def" ? "def" : "att",
+      shape: p.team === "def" ? "square" : "circle", rotation: 0,
+      hasBall: Boolean(p.hasBall), ballCount: p.hasBall ? 1 : 0,
     };
   });
-
-  const findPlayer = (key?: string) =>
-    key ? players.find((p) => p.id === playerIds.get(key)) : undefined;
-
-  const objects = (result.diagram.objects || []).map((o) => ({
-    id: crypto.randomUUID(),
-    x: clamp(o.x),
-    y: clamp(o.y, 0.02, half ? 0.49 : 0.98),
-    kind: o.kind,
-    text: o.text,
-    rotation: 0,
-    size: 1,
-    color: "#0F0F12",
+  const findPlayer = (key?: string) => key ? players.find((p) => p.id === playerIds.get(key)) : undefined;
+  const objects = (diagram.objects || []).map((o) => ({
+    id: crypto.randomUUID(), x: clamp(o.x), y: clamp(o.y, 0.02, half ? 0.49 : 0.98),
+    kind: o.kind, text: o.text, rotation: 0, size: 1, color: "#0F0F12",
   }));
-
-  const lines = (result.diagram.actions || []).map((a, index) => {
+  const lines = (diagram.actions || []).map((a, index) => {
     const source = findPlayer(a.fromPlayer);
     const target = findPlayer(a.toPlayer);
     const from = source ? { x: source.x, y: source.y } : point(a.from, half);
     const to = target ? { x: target.x, y: target.y } : point(a.to, half);
-
     return {
-      id: crypto.randomUUID(),
-      action: a.action,
-      from,
-      to,
-      rotation: 0,
-      sourcePlayerId: source?.id,
-      targetPlayerId: target?.id,
+      id: crypto.randomUUID(), action: a.action, from, to, rotation: 0,
+      sourcePlayerId: source?.id, targetPlayerId: target?.id,
       order: Number.isFinite(Number(a.order)) ? Number(a.order) : index + 1,
-      startMode: index === 0 ? "withPrevious" : "afterPrevious",
-      duration: 1.2,
+      startMode: index === 0 ? "withPrevious" : "afterPrevious", duration: 1.2,
       target: a.action === "shoot" ? "basket" : undefined,
     };
   });
 
   return {
-    title: result.title || "Schéma IA",
-    schemaGroupId: groupId,
-    phaseIndex: 0,
-    courtType: half ? "half" : "full",
-    phases: [
-      {
-        players,
-        objects,
-        lines,
-        notes: result.diagram.notes || "",
-        duration: 1.5,
-        startMode: "afterPrevious",
-      },
-    ],
-    sheet: null,
-    current: 0,
-    imageData: "",
-    phaseImages: [],
-    editable: true,
+    title: (result.title ? `${result.title}${(result.diagrams?.length || 0) > 1 ? ` — Schéma ${diagramIndex + 1}` : ""}` : `Schéma ${diagramIndex + 1}`),
+    schemaGroupId: groupId, phaseIndex: 0, courtType: half ? "half" : "full",
+    phases: [{ players, objects, lines, notes: diagram.notes || "", duration: 1.5, startMode: "afterPrevious" }],
+    sheet: null, current: 0, imageData: "", phaseImages: [], editable: true,
   };
+}
+
+export function aiDiagramsToPlaquette(result: AiExerciseImport): PlaquetteSchemaData[] {
+  const diagrams = result.diagrams?.length ? result.diagrams : [result.diagram];
+  return diagrams.map((diagram, index) => oneDiagramToPlaquette(result, diagram, index)).filter(Boolean) as PlaquetteSchemaData[];
+}
+
+export function aiDiagramToPlaquette(result: AiExerciseImport): PlaquetteSchemaData | null {
+  return aiDiagramsToPlaquette(result)[0] || null;
 }
 
 function drawArrow(ctx: CanvasRenderingContext2D, from: AiPoint, to: AiPoint, action: string) {

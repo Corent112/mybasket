@@ -5,7 +5,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { saveExercise, updateExercise, getExercise } from "@/lib/exercises";
 import ExercisePhotoImport from "@/components/ai/ExercisePhotoImport";
 import type { AiExerciseImport } from "@/lib/import/types";
-import { aiDiagramToPlaquette, renderPlaquettePreview } from "@/lib/import/plaquette-converter";
+import { aiDiagramsToPlaquette, renderPlaquettePreview } from "@/lib/import/plaquette-converter";
 
 type Ex = {
   title: string;
@@ -149,45 +149,33 @@ export default function CreerExerciceClient() {
     }));
 
   const applyAIImport = async (result: AiExerciseImport) => {
-    const schema = aiDiagramToPlaquette(result);
-    let schemaImage = "";
-    let schemaData: any = null;
-
-    if (schema) {
-      schemaImage = renderPlaquettePreview(schema);
-      schemaData = {
-        ...schema,
-        imageData: schemaImage,
-        phaseImages: schemaImage ? [schemaImage] : [],
+    const schemas = aiDiagramsToPlaquette(result);
+    const imported = schemas.map((schema) => {
+      const image = renderPlaquettePreview(schema);
+      return {
+        image,
+        data: { ...schema, imageData: image, phaseImages: image ? [image] : [] },
       };
-    }
+    });
 
     setEx((current) => {
-      const nextImages = schemaImage
-        ? [...current.schemaImages, schemaImage].slice(0, 50)
-        : current.schemaImages;
-      const nextData = schemaData
-        ? [...current.schemaDataList, schemaData].slice(0, 50)
-        : current.schemaDataList;
+      const newImages = imported.map((item) => item.image).filter(Boolean);
+      const newData = imported.map((item) => item.data);
+      const nextImages = [...current.schemaImages, ...newImages].slice(0, 50);
+      const nextData = [...current.schemaDataList, ...newData].slice(0, 50);
 
       return {
         ...current,
         title: result.title || current.title,
         organisation: result.organisation || current.organisation,
-        deroulement: result.deroulement?.length
-          ? result.deroulement.join("\n")
-          : current.deroulement,
-        consignes: result.consignes?.length
-          ? result.consignes.join("\n")
-          : current.consignes,
-        variantes: result.variantes?.length
-          ? result.variantes.join("\n")
-          : current.variantes,
+        deroulement: result.deroulement?.length ? result.deroulement.join("\n") : current.deroulement,
+        consignes: result.consignes?.length ? result.consignes.join("\n") : current.consignes,
+        variantes: result.variantes?.length ? result.variantes.join("\n") : current.variantes,
         plots: result.plots !== null ? String(result.plots) : current.plots,
         ballons: result.ballons !== null ? String(result.ballons) : current.ballons,
         paniers: result.paniers !== null ? String(result.paniers) : current.paniers,
         joueurs: result.joueurs !== null ? String(result.joueurs) : current.joueurs,
-        categorie: result.categorie || current.categorie,
+        categorie: result.categorie && result.categorie !== "— Choisir —" ? result.categorie : current.categorie,
         type: result.type || current.type,
         niveau: result.niveau || current.niveau,
         temps: result.temps !== null ? String(result.temps) : current.temps,
@@ -197,11 +185,11 @@ export default function CreerExerciceClient() {
       };
     });
 
-    const lowDiagram = result.diagram.detected && result.confidence.diagram < 0.65;
-    if (lowDiagram || result.warnings.length) {
-      flash("Import terminé — vérifie les éléments signalés par l’IA");
+    const count = schemas.length;
+    if (result.warnings.length) {
+      flash(`Import terminé${count ? ` — ${count} schéma${count > 1 ? "s" : ""}` : ""}. Vérifie avant de créer.`);
     } else {
-      flash("Import IA terminé ✅ Vérifie puis sauvegarde");
+      flash("Import terminé ✅ Vérifie puis crée l’exercice");
     }
   };
 
