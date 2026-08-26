@@ -24,7 +24,7 @@ function oneDiagramToPlaquette(result: AiExerciseImport, diagram: AiExerciseDiag
     return {
       id, x: clamp(p.x), y: clamp(p.y, 0.02, half ? 0.49 : 0.98),
       label: String(p.label || index + 1), team: p.team === "def" ? "def" : "att",
-      shape: p.team === "def" ? "square" : "circle", rotation: 0,
+      shape: "circle", rotation: 0, color: p.color,
       hasBall: Boolean(p.hasBall), ballCount: p.hasBall ? 1 : 0,
     };
   });

@@ -8,9 +8,16 @@ import type {
 } from "./types";
 
 type OCRLine = { text: string; x0: number; y0: number; x1: number; y1: number; confidence: number };
+type OCRWord = OCRLine;
+type OCRResult = { text: string; lines: OCRLine[]; words: OCRWord[]; confidence: number };
 type TesseractLike = {
   createWorker: (lang?: string) => Promise<{
-    recognize: (image: HTMLCanvasElement | HTMLImageElement) => Promise<{ data: any }>;
+    recognize: (
+      image: HTMLCanvasElement | HTMLImageElement,
+      options?: Record<string, unknown>,
+      output?: Record<string, boolean>
+    ) => Promise<{ data: any }>;
+    setParameters?: (params: Record<string, string>) => Promise<void>;
     terminate: () => Promise<void>;
   }>;
 };
@@ -163,7 +170,7 @@ function signatureDistance(a: string, b: string) {
   return diff;
 }
 
-async function runOCR(canvas: HTMLCanvasElement): Promise<{ lines: OCRLine[]; confidence: number }> {
+async function runOCR(canvas: HTMLCanvasElement): Promise<OCRResult> {
   const tesseract = await ensureTesseract();
   let worker: Awaited<ReturnType<TesseractLike["createWorker"]>> | null = null;
   try {
@@ -172,30 +179,74 @@ async function runOCR(canvas: HTMLCanvasElement): Promise<{ lines: OCRLine[]; co
     } catch {
       worker = await tesseract.createWorker("eng");
     }
-    const result = await worker.recognize(canvas);
-    const rawLines = Array.isArray(result.data?.lines)
-      ? result.data.lines
-      : Array.isArray(result.data?.blocks)
-      ? result.data.blocks.flatMap((b: any) => b?.paragraphs?.flatMap((p: any) => p?.lines || []) || [])
-      : [];
-    const lines: OCRLine[] = rawLines
-      .map((line: any) => ({
-        text: String(line?.text || "").trim(),
-        x0: Number(line?.bbox?.x0 || 0),
-        y0: Number(line?.bbox?.y0 || 0),
-        x1: Number(line?.bbox?.x1 || 0),
-        y1: Number(line?.bbox?.y1 || 0),
-        confidence: Math.max(0, Math.min(1, Number(line?.confidence || 0) / 100)),
-      }))
-      .filter((line: OCRLine) => line.text.length > 1);
-    const confidence = lines.length ? lines.reduce((s, l) => s + l.confidence, 0) / lines.length : 0;
-    return { lines, confidence };
+
+    // Tesseract.js v6 ne renvoie plus les blocs/boîtes par défaut.
+    // On les réactive explicitement : le texte brut sert au formulaire,
+    // les coordonnées servent à retrouver le schéma et les numéros joueurs.
+    const result = await worker.recognize(canvas, {}, { text: true, blocks: true });
+    const rawText = String(result.data?.text || "").trim();
+    const blocks = Array.isArray(result.data?.blocks) ? result.data.blocks : [];
+    const rawLines = blocks.flatMap((b: any) =>
+      (b?.paragraphs || []).flatMap((p: any) => p?.lines || [])
+    );
+    const rawWords = rawLines.flatMap((line: any) => line?.words || []);
+
+    const makeBox = (item: any): OCRLine => ({
+      text: String(item?.text || "").trim(),
+      x0: Number(item?.bbox?.x0 || 0),
+      y0: Number(item?.bbox?.y0 || 0),
+      x1: Number(item?.bbox?.x1 || 0),
+      y1: Number(item?.bbox?.y1 || 0),
+      confidence: Math.max(0, Math.min(1, Number(item?.confidence || 0) / 100)),
+    });
+
+    const lines: OCRLine[] = rawLines.map(makeBox).filter((line: OCRLine) => line.text.length > 0);
+    const words: OCRWord[] = rawWords.map(makeBox).filter((word: OCRWord) => word.text.length > 0);
+    const confidenceSource: Array<OCRLine | OCRWord> = lines.length ? lines : words;
+    const confidence = confidenceSource.length
+      ? confidenceSource.reduce((sum: number, item: OCRLine | OCRWord) => sum + item.confidence, 0) / confidenceSource.length
+      : rawText ? 0.5 : 0;
+
+    return { text: rawText, lines, words, confidence };
   } finally {
     await worker?.terminate().catch(() => undefined);
   }
 }
 
-function parseText(lines: OCRLine[]) {
+function cleanCapturedSection(value: string) {
+  return value
+    .replace(/\r/g, "")
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line && !/^there are no data$/i.test(line) && !/^update$/i.test(line))
+    .join("\n")
+    .trim();
+}
+
+function rawSection(rawText: string, starts: string[], stops: string[]) {
+  const src = rawText.replace(/\r/g, "\n");
+  const lower = norm(src).replace(/\n/g, " ");
+  // La recherche principale se fait sur le texte original, afin de préserver exactement ce qui a été lu.
+  for (const start of starts) {
+    const startRx = new RegExp(`(?:^|\\n)\\s*[-~—|>]*\\s*${start}\\s*(?:[:\\-–—]|\\n|\\s)+`, "i");
+    const match = startRx.exec(src);
+    if (!match) continue;
+    const from = match.index + match[0].length;
+    let to = src.length;
+    const tail = src.slice(from);
+    for (const stop of stops) {
+      const stopRx = new RegExp(`(?:^|\\n)\\s*[-~—|>]*\\s*${stop}\\b`, "i");
+      const stopMatch = stopRx.exec(tail);
+      if (stopMatch && from + stopMatch.index < to) to = from + stopMatch.index;
+    }
+    const captured = cleanCapturedSection(src.slice(from, to));
+    if (captured) return captured;
+  }
+  void lower;
+  return "";
+}
+
+function parseText(lines: OCRLine[], rawText = "") {
   const sorted = [...lines].sort((a, b) => a.y0 - b.y0 || a.x0 - b.x0);
   const sections: Record<"title" | "organisation" | "deroulement" | "consignes" | "variantes", string[]> = {
     title: [], organisation: [], deroulement: [], consignes: [], variantes: [],
@@ -203,64 +254,95 @@ function parseText(lines: OCRLine[]) {
   const unassigned: string[] = [];
   let active: keyof typeof sections | null = null;
 
-  const hardStops = [
-    "goals", "purpose", "skills", "equipment", "players", "coaches", "age group", "type",
-    "publishing", "author", "variations", "tips", "hints", "emphasis", "default text",
-  ];
+  const stopHeading = /^(goals|purpose|skills|equipment|players|coaches|age group|type|publishing|author|variations|tips|hints|emphasis|default text)/i;
   const identifyHeading = (text: string) => {
     const n = norm(text);
-    for (const item of FIELD_HEADINGS) for (const alias of item.aliases) {
-      const a = norm(alias);
-      if (n === a || n.startsWith(`${a} `) || n.startsWith(`${a}:`) || n.startsWith(`${a}-`)) return { field: item.field, alias: a };
+    for (const item of FIELD_HEADINGS) {
+      for (const alias of item.aliases) {
+        const a = norm(alias);
+        if (n === a || n.startsWith(`${a} `)) return { field: item.field, alias };
+      }
     }
     return null;
   };
-  const valueAfterHeading = (text: string, alias: string) => {
-    const raw = text.trim();
-    const idxColon = raw.search(/[:\-–—]/);
-    if (idxColon >= 0) return raw.slice(idxColon + 1).trim();
-    const words = alias.split(" ").length;
-    return raw.split(/\s+/).slice(words).join(" ").trim();
-  };
 
   for (const line of sorted) {
-    const n = norm(line.text);
-    const heading = identifyHeading(line.text);
+    const text = line.text.trim();
+    if (!text) continue;
+    const heading = identifyHeading(text);
     if (heading) {
       active = heading.field;
-      const rest = valueAfterHeading(line.text, heading.alias);
-      if (rest && norm(rest) !== heading.alias) sections[active].push(rest);
+      const split = text.split(/[:\-–—]/, 2);
+      if (split.length > 1 && split[1].trim()) sections[active].push(split[1].trim());
+      else {
+        const rest = text.slice(heading.alias.length).replace(/^\s*[:\-–—]?\s*/, "").trim();
+        if (rest && norm(rest) !== norm(heading.alias)) sections[active].push(rest);
+      }
       continue;
     }
-    if (hardStops.some((h) => n === h || n.startsWith(`${h} `) || n.startsWith(`${h} /`))) {
+    if (stopHeading.test(norm(text))) {
       active = null;
       continue;
     }
-    if (active) sections[active].push(line.text.trim());
-    else unassigned.push(line.text.trim());
+    if (active) sections[active].push(text);
+    else unassigned.push(text);
   }
 
-  // FIBA Europe / sites structurés : "Title: ..." est prioritaire. À défaut, cherche le nom du drill.
-  if (!sections.title.length) {
-    const explicit = sorted.find((l) => /^\s*(title|titre)\s*[:\-]/i.test(l.text));
-    if (explicit) sections.title.push(explicit.text.replace(/^\s*(title|titre)\s*[:\-]\s*/i, "").trim());
+  // Titre : priorité à "Title:" puis au bandeau DRILL "...".
+  let title = "";
+  const titleMatch = rawText.match(/\b(?:title|titre)\s*[:\-]\s*([^\n]+)/i);
+  if (titleMatch?.[1]) title = titleMatch[1].trim();
+  if (!title) {
+    const drillMatch = rawText.match(/\bdrill\s*["“”']?\s*([^\n"“”']{3,120})/i);
+    if (drillMatch?.[1]) title = drillMatch[1].trim();
   }
-  if (!sections.title.length) {
-    const drill = sorted.find((l) => /\bdrill\b/i.test(l.text) && l.text.length < 140);
-    if (drill) sections.title.push(drill.text.replace(/^.*?drill\s*["“”']?/i, "").replace(/["“”']\s*$/, "").trim());
+  if (!title) title = sections.title.join(" ").trim();
+  if (!title) {
+    const candidate = unassigned.find((line) => line.length >= 3 && line.length <= 100 && !/publishing|created|updated|author|home page|profile/i.test(line));
+    if (candidate) title = candidate;
   }
-  if (!sections.title.length) {
-    const candidate = unassigned.find((line) => line.length >= 3 && line.length <= 100 && !/publishing|created|updated|author/i.test(line));
-    if (candidate) sections.title.push(candidate);
+  title = title.replace(/^[:\-\s]+|["“”']+$/g, "").trim();
+
+  // Déroulement : "Description" est une règle forte. Le texte brut est prioritaire
+  // pour ne pas dépendre du découpage en lignes de Tesseract.
+  const rawDescription = rawSection(
+    rawText,
+    ["description", "déroulement", "deroulement"],
+    ["goals\s*\/\s*purpose\s*\/\s*skills", "goals", "variations", "tips\s*\/\s*hints", "equipment", "players\s*\/\s*coaches", "age group", "type"]
+  );
+  let deroulement = rawDescription || sections.deroulement.join("\n").trim();
+  // Certains sites mettent un sous-titre parasite immédiatement après Description.
+  deroulement = deroulement
+    .split("\n")
+    .filter((line) => !/^default text for your practice plans$/i.test(line.trim()))
+    .join("\n")
+    .trim();
+
+  let organisation = sections.organisation.join("\n").trim();
+  if (!organisation) {
+    organisation = rawSection(
+      rawText,
+      ["organisation", "mise en place", "installation"],
+      ["description", "déroulement", "deroulement", "consignes", "variations", "variantes", "equipment"]
+    );
   }
 
-  // Ne jamais laisser Description vide si elle a été reconnue : elle alimente Déroulement telle quelle.
+  let consignes = sections.consignes.join("\n").trim();
+  if (!consignes) {
+    consignes = rawSection(rawText, ["tips\\s*\\/\\s*hints\\s*\\/\\s*emphasis", "consignes", "tips"], ["equipment", "players", "age group", "type", "variations"]);
+  }
+  if (/^there are no data$/i.test(consignes)) consignes = "";
+
+  let variantes = sections.variantes.join("\n").trim();
+  if (!variantes) variantes = rawSection(rawText, ["variations", "variantes", "évolution", "evolution"], ["tips", "equipment", "players", "age group", "type"]);
+  if (/^there are no data$/i.test(variantes)) variantes = "";
+
   return {
-    title: sections.title.join(" ").replace(/^[:\-\s]+/, "").trim(),
-    organisation: sections.organisation.join("\n").trim(),
-    deroulement: sections.deroulement.filter((x) => x && !/^there are no data$/i.test(x)),
-    consignes: sections.consignes.filter((x) => x && !/^there are no data$/i.test(x)),
-    variantes: sections.variantes.filter((x) => x && !/^there are no data$/i.test(x)),
+    title,
+    organisation,
+    deroulement: deroulement ? deroulement.split("\n").map((x) => x.trim()).filter(Boolean) : [],
+    consignes: consignes ? consignes.split("\n").map((x) => x.trim()).filter(Boolean) : [],
+    variantes: variantes ? variantes.split("\n").map((x) => x.trim()).filter(Boolean) : [],
   };
 }
 
@@ -295,61 +377,255 @@ function detectColorGraphicRegions(canvas: HTMLCanvasElement) {
   return comps.sort((a,b)=>b.score-a.score).slice(0,4);
 }
 
+function mergeGraphicRegions(regions: Array<{x0:number;y0:number;x1:number;y1:number;score?:number}>, W: number, H: number) {
+  const result: Array<{x0:number;y0:number;x1:number;y1:number}> = [];
+  for (const r of regions) {
+    const padded = {
+      x0: Math.max(0, r.x0 - W * 0.012),
+      y0: Math.max(0, r.y0 - H * 0.018),
+      x1: Math.min(W, r.x1 + W * 0.012),
+      y1: Math.min(H, r.y1 + H * 0.018),
+    };
+    let merged = false;
+    for (const current of result) {
+      const overlapX = Math.max(0, Math.min(current.x1, padded.x1) - Math.max(current.x0, padded.x0));
+      const minWidth = Math.min(current.x1-current.x0, padded.x1-padded.x0);
+      const gapY = Math.max(0, Math.max(current.y0, padded.y0) - Math.min(current.y1, padded.y1));
+      if (overlapX > minWidth * 0.45 && gapY < H * 0.06) {
+        current.x0 = Math.min(current.x0, padded.x0); current.y0 = Math.min(current.y0, padded.y0);
+        current.x1 = Math.max(current.x1, padded.x1); current.y1 = Math.max(current.y1, padded.y1);
+        merged = true; break;
+      }
+    }
+    if (!merged) result.push(padded);
+  }
+  return result;
+}
+
+function colorDiversity(canvas: HTMLCanvasElement, r: {x0:number;y0:number;x1:number;y1:number}) {
+  const ctx = canvas.getContext("2d", { willReadFrequently: true })!;
+  const x0=Math.max(0,Math.floor(r.x0)),y0=Math.max(0,Math.floor(r.y0));
+  const w=Math.max(1,Math.floor(r.x1-r.x0)),h=Math.max(1,Math.floor(r.y1-r.y0));
+  const data=ctx.getImageData(x0,y0,w,h).data;
+  const bins=new Set<number>();
+  const stride=Math.max(1,Math.floor(Math.sqrt(w*h/5000)));
+  for(let y=0;y<h;y+=stride)for(let x=0;x<w;x+=stride){const i=(y*w+x)*4;const R=data[i],G=data[i+1],B=data[i+2];if(saturation(R,G,B)<.12)continue;const max=Math.max(R,G,B),min=Math.min(R,G,B);if(max-min<18)continue;let hue=0;if(max===R)hue=(G-B)/(max-min||1);else if(max===G)hue=2+(B-R)/(max-min||1);else hue=4+(R-G)/(max-min||1);hue=((hue*60+360)%360);bins.add(Math.floor(hue/35));}
+  return bins.size;
+}
+
 function detectDiagramRegions(canvas: HTMLCanvasElement, ocrLines: OCRLine[]) {
-  const colored = detectColorGraphicRegions(canvas).filter((r) => r.x1-r.x0 < canvas.width*0.65);
-  if (colored.length) return colored.map(({score, ...r}) => r);
   const W = canvas.width, H = canvas.height;
+  const raw = detectColorGraphicRegions(canvas);
+  const merged = mergeGraphicRegions(raw, W, H)
+    .filter((r) => {
+      const rw=r.x1-r.x0,rh=r.y1-r.y0;
+      return rw>W*.10 && rw<W*.55 && rh>H*.22 && rh<H*.92 && colorDiversity(canvas,r)>=2;
+    })
+    .sort((a,b) => {
+      const score=(r:{x0:number;y0:number;x1:number;y1:number}) => {
+        const rw=r.x1-r.x0,rh=r.y1-r.y0, area=rw*rh;
+        const aspect=rh/Math.max(1,rw);
+        const aspectScore=aspect>.9&&aspect<2.4?2:0;
+        const centerBonus=r.x0>W*.12?1:0;
+        return area/(W*H)+aspectScore+centerBonus+colorDiversity(canvas,r)*.25;
+      };
+      return score(b)-score(a);
+    });
+  if (merged.length) return merged.slice(0, 4);
+
+  // Fallback documents papier : si le texte occupe surtout le haut, le bas est probablement un dessin.
   const maxTextY = ocrLines.reduce((m, l) => Math.max(m, l.y1), 0);
-  if (maxTextY < H * 0.78) return [{ x0: 0, x1: W, y0: Math.max(0, maxTextY + 12), y1: H }];
+  if (maxTextY > 0 && maxTextY < H * 0.76) return [{ x0: 0, x1: W, y0: Math.max(0, maxTextY + 10), y1: H }];
   return [];
 }
 
+function rgbAt(data: Uint8ClampedArray, w:number, x:number, y:number) {
+  const xx=Math.max(0,Math.min(w-1,Math.round(x))), yy=Math.max(0,Math.round(y));
+  const i=(yy*w+xx)*4; return [data[i]||0,data[i+1]||0,data[i+2]||0] as const;
+}
+
+function playerVisual(data: Uint8ClampedArray, w:number, h:number, cx:number, cy:number) {
+  const radius=Math.max(7,Math.min(w,h)*.035);
+  let red=0,blue=0,orange=0;
+  for(let y=Math.max(0,Math.floor(cy-radius));y<Math.min(h,Math.ceil(cy+radius));y++)for(let x=Math.max(0,Math.floor(cx-radius));x<Math.min(w,Math.ceil(cx+radius));x++){
+    if(Math.hypot(x-cx,y-cy)>radius)continue;
+    const [r,g,b]=rgbAt(data,w,x,y); const sat=saturation(r,g,b); if(sat<.22)continue;
+    if(r>b*1.25 && r>g*.95) red++;
+    if(b>r*1.12 && b>g*.85) blue++;
+    if(r>150 && g>65 && g<175 && b<100) orange++;
+  }
+  return { color: blue>red*1.12 ? "#2366A8" : red>blue*1.12 ? "#8B1E3F" : undefined, hasBall: orange>2 };
+}
+
+function connectedInkComponents(data: Uint8ClampedArray, w:number, h:number, excluded:Array<{x:number;y:number;r:number}>) {
+  const scale=Math.max(1,Math.round(Math.min(w,h)/500));
+  const gw=Math.ceil(w/scale), gh=Math.ceil(h/scale), seen=new Uint8Array(gw*gh);
+  const isExcluded=(x:number,y:number)=>excluded.some(e=>Math.hypot(x-e.x,y-e.y)<e.r);
+  const ink=(x:number,y:number)=>{
+    if(isExcluded(x,y))return false;
+    const [r,g,b]=rgbAt(data,w,x,y), gray=(r+g+b)/3, sat=saturation(r,g,b);
+    // On vise les traits de consigne foncés/colorés et on rejette les aplats du terrain.
+    const darkNeutral=gray<82 && sat<.35;
+    const darkColored=gray<155 && sat>.30;
+    return darkNeutral||darkColored;
+  };
+  const comps:Array<Array<{x:number;y:number}>>=[];
+  for(let sy=0;sy<gh;sy++)for(let sx=0;sx<gw;sx++){
+    const idx=sy*gw+sx,x0=sx*scale,y0=sy*scale;if(seen[idx]||!ink(x0,y0))continue;
+    const q:Array<[number,number]>=[[sx,sy]];seen[idx]=1;const pts:Array<{x:number;y:number}>=[];
+    while(q.length&&pts.length<12000){const [gx,gy]=q.pop()!;const x=gx*scale,y=gy*scale;pts.push({x,y});for(const[nx,ny]of[[gx+1,gy],[gx-1,gy],[gx,gy+1],[gx,gy-1]])if(nx>=0&&ny>=0&&nx<gw&&ny<gh){const ni=ny*gw+nx;if(!seen[ni]&&ink(nx*scale,ny*scale)){seen[ni]=1;q.push([nx,ny]);}}}
+    if(pts.length>=2)comps.push(pts);
+  }
+  return comps;
+}
+
+function componentPolyline(points:Array<{x:number;y:number}>, w:number, h:number): AiPoint[] {
+  let minX=Infinity,maxX=-Infinity,minY=Infinity,maxY=-Infinity;
+  for(const p of points){minX=Math.min(minX,p.x);maxX=Math.max(maxX,p.x);minY=Math.min(minY,p.y);maxY=Math.max(maxY,p.y);}
+  const bw=maxX-minX,bh=maxY-minY;
+  if(bw<3&&bh<3)return [];
+  // Pour les petits éléments (ex. tirets), une ligne selon l'axe principal reproduit mieux le visuel qu'un nuage de points.
+  if(points.length<70){
+    const horizontal=bw>=bh;
+    return horizontal
+      ? [{x:minX/w,y:((minY+maxY)/2)/h},{x:maxX/w,y:((minY+maxY)/2)/h}]
+      : [{x:((minX+maxX)/2)/w,y:minY/h},{x:((minX+maxX)/2)/w,y:maxY/h}];
+  }
+  const ordered=[...points].sort((a,b)=>a.y-b.y||a.x-b.x);
+  const stride=Math.max(1,Math.ceil(ordered.length/80));
+  return ordered.filter((_,i)=>i%stride===0).map(p=>({x:p.x/w,y:p.y/h}));
+}
+
+type MarkerCandidate = { x0:number; y0:number; x1:number; y1:number; cx:number; cy:number; points:number };
+
+function markerCandidatesFromImage(data: Uint8ClampedArray, w:number, h:number): MarkerCandidate[] {
+  const comps=connectedInkComponents(data,w,h,[]);
+  const minSide=Math.min(w,h);
+  const raw:MarkerCandidate[]=[];
+  for(const comp of comps){
+    let minX=Infinity,maxX=-Infinity,minY=Infinity,maxY=-Infinity;
+    for(const p of comp){minX=Math.min(minX,p.x);maxX=Math.max(maxX,p.x);minY=Math.min(minY,p.y);maxY=Math.max(maxY,p.y);}
+    const bw=maxX-minX+1,bh=maxY-minY+1,ratio=bw/Math.max(1,bh);
+    if(bw<minSide*.022||bh<minSide*.018||bw>minSide*.13||bh>minSide*.13)continue;
+    if(ratio<.42||ratio>2.5||comp.length<12)continue;
+    const cx=(minX+maxX)/2,cy=(minY+maxY)/2;
+    // Icônes de téléchargement/menu courantes en haut à droite du graphique.
+    if(cx>w*.82&&cy<h*.14)continue;
+    raw.push({x0:minX,y0:minY,x1:maxX,y1:maxY,cx,cy,points:comp.length});
+  }
+  raw.sort((a,b)=>b.points-a.points);
+  const kept:MarkerCandidate[]=[];
+  for(const c of raw){
+    if(kept.some(k=>Math.hypot(k.cx-c.cx,k.cy-c.cy)<minSide*.035))continue;
+    kept.push(c);
+    if(kept.length>=24)break;
+  }
+  return kept;
+}
+
+async function recognizeMarkerLabels(source: HTMLCanvasElement, candidates: MarkerCandidate[]) {
+  if(!candidates.length)return [] as Array<{candidate:MarkerCandidate;label:string}>;
+  const tesseract=await ensureTesseract();
+  let worker: Awaited<ReturnType<TesseractLike["createWorker"]>> | null=null;
+  const found:Array<{candidate:MarkerCandidate;label:string}>=[];
+  try{
+    try{worker=await tesseract.createWorker("eng");}catch{return found;}
+    await worker.setParameters?.({tessedit_char_whitelist:"0123456789",tessedit_pageseg_mode:"10"});
+    const srcCtx=source.getContext("2d",{willReadFrequently:true})!;
+    for(const candidate of candidates.slice(0,18)){
+      const pad=Math.max(5,Math.round(Math.max(candidate.x1-candidate.x0,candidate.y1-candidate.y0)*.42));
+      const x0=Math.max(0,Math.floor(candidate.x0-pad)),y0=Math.max(0,Math.floor(candidate.y0-pad));
+      const x1=Math.min(source.width,Math.ceil(candidate.x1+pad)),y1=Math.min(source.height,Math.ceil(candidate.y1+pad));
+      const patch=document.createElement("canvas");const scale=7;
+      patch.width=Math.max(70,(x1-x0)*scale);patch.height=Math.max(70,(y1-y0)*scale);
+      const pctx=patch.getContext("2d",{willReadFrequently:true})!;
+      pctx.fillStyle="#fff";pctx.fillRect(0,0,patch.width,patch.height);
+      pctx.drawImage(source,x0,y0,x1-x0,y1-y0,0,0,patch.width,patch.height);
+      const res=await worker.recognize(patch,{}, {text:true});
+      const label=String(res.data?.text||"").replace(/\D/g,"").slice(0,2);
+      if(label)found.push({candidate,label});
+    }
+  }finally{await worker?.terminate().catch(()=>undefined);}
+  return found;
+}
+
 async function detectDiagram(canvas: HTMLCanvasElement, region: { x0: number; x1: number; y0: number; y1: number }, index: number): Promise<AiExerciseDiagram> {
-  const src = canvas.getContext("2d", { willReadFrequently: true })!;
-  const w = Math.max(1, Math.round(region.x1-region.x0)), h=Math.max(1,Math.round(region.y1-region.y0));
-  const crop=document.createElement("canvas"); const upscale=Math.min(4, Math.max(2, 1100/Math.max(w,h)));
-  crop.width=Math.round(w*upscale); crop.height=Math.round(h*upscale);
+  const w = Math.max(1, Math.round(region.x1-region.x0));
+  const h = Math.max(1, Math.round(region.y1-region.y0));
+  const sourceCtx=canvas.getContext("2d",{willReadFrequently:true})!;
+  const sourceImage=sourceCtx.getImageData(Math.round(region.x0),Math.round(region.y0),w,h);
+  const sourceCrop=document.createElement("canvas");sourceCrop.width=w;sourceCrop.height=h;
+  sourceCrop.getContext("2d")!.drawImage(canvas,region.x0,region.y0,w,h,0,0,w,h);
+
+  const crop=document.createElement("canvas");
+  const upscale=Math.min(5, Math.max(2.5, 1600/Math.max(w,h)));
+  crop.width=Math.max(1,Math.round(w*upscale)); crop.height=Math.max(1,Math.round(h*upscale));
   crop.getContext("2d")!.drawImage(canvas,region.x0,region.y0,w,h,0,0,crop.width,crop.height);
-  let cropLines: OCRLine[]=[];
-  try { cropLines=(await runOCR(crop)).lines; } catch {}
 
-  const ctx=canvas.getContext("2d",{willReadFrequently:true})!;
-  const img=ctx.getImageData(region.x0,region.y0,w,h); const data=img.data;
-  const gray=(x:number,y:number)=>{const i=(y*w+x)*4;return (data[i]+data[i+1]+data[i+2])/3};
-  const sat=(x:number,y:number)=>{const i=(y*w+x)*4;return saturation(data[i],data[i+1],data[i+2])};
-  const players: AiDiagramPlayer[]=[]; const objects: AiDiagramObject[]=[]; const actions: AiDiagramAction[]=[];
+  let cropOCR: OCRResult={text:"",lines:[],words:[],confidence:0};
+  try { cropOCR=await runOCR(crop); } catch {}
 
-  // Marqueurs joueurs : petits anneaux sombres/rouges/bleus sur le graphique, jamais les grandes lignes du terrain.
-  const step=Math.max(1,Math.round(Math.min(w,h)/650)); const seen=new Uint8Array(w*h); const comps:any[]=[];
-  const ink=(x:number,y:number)=>gray(x,y)<105 || (sat(x,y)>0.42 && gray(x,y)<185);
-  for(let sy=0;sy<h;sy+=step)for(let sx=0;sx<w;sx+=step){const si=sy*w+sx;if(seen[si]||!ink(sx,sy))continue;const q=[[sx,sy]] as Array<[number,number]>;seen[si]=1;let minX=sx,maxX=sx,minY=sy,maxY=sy,count=0;
-    while(q.length&&count<10000){const [x,y]=q.pop()!;count++;minX=Math.min(minX,x);maxX=Math.max(maxX,x);minY=Math.min(minY,y);maxY=Math.max(maxY,y);for(const[nx,ny]of[[x+step,y],[x-step,y],[x,y+step],[x,y-step]])if(nx>=0&&ny>=0&&nx<w&&ny<h){const ni=ny*w+nx;if(!seen[ni]&&ink(nx,ny)){seen[ni]=1;q.push([nx,ny]);}}}
-    const bw=maxX-minX+1,bh=maxY-minY+1,ratio=bw/bh;if(count>3&&bw>4&&bh>4&&bw<Math.min(w,h)*0.12&&bh<Math.min(w,h)*0.12&&ratio>.5&&ratio<1.9)comps.push({minX,maxX,minY,maxY,count});}
+  const players: AiDiagramPlayer[]=[];
+  const objects: AiDiagramObject[]=[];
+  const actions: AiDiagramAction[]=[];
+  const used:Array<{x:number;y:number}>=[];
 
-  const numberLines=cropLines.filter(l=>/^\s*\d{1,2}\s*$/.test(l.text));
-  const markerCandidates=comps.sort((a,b)=>a.minY-b.minY||a.minX-b.minX).slice(0,30);
-  markerCandidates.forEach((c:any,i:number)=>{
-    const cx=(c.minX+c.maxX)/2,cy=(c.minY+c.maxY)/2;
-    let label=""; let best=Infinity;
-    for(const l of numberLines){const lx=((l.x0+l.x1)/2)/upscale,ly=((l.y0+l.y1)/2)/upscale;const d=Math.hypot(lx-cx,ly-cy);if(d<best&&d<Math.max(18,Math.min(w,h)*.08)){best=d;label=l.text.trim();}}
-    if(!label) return; // n'invente plus de numéro : on ne crée que ce qui est réellement lu.
-    players.push({key:`s${index+1}p${players.length+1}`,label,team:"att",x:Math.max(.02,Math.min(.98,cx/w)),y:Math.max(.02,Math.min(.98,cy/h)),hasBall:false});
-  });
-
-  // Trajectoires : conserve les petits segments noirs hors marqueurs comme dessin libre, donc visuellement fidèle et éditable dans Plaquette.
-  const markerBoxes=markerCandidates.map((c:any)=>({x0:c.minX-8,y0:c.minY-8,x1:c.maxX+8,y1:c.maxY+8}));
-  const isMarker=(x:number,y:number)=>markerBoxes.some((b:any)=>x>=b.x0&&x<=b.x1&&y>=b.y0&&y<=b.y1);
-  const sample=3; const pts: AiPoint[]=[];
-  for(let y=0;y<h;y+=sample)for(let x=0;x<w;x+=sample){if(isMarker(x,y))continue; if(gray(x,y)<70 && sat(x,y)<0.28) pts.push({x:x/w,y:y/h});}
-  // Ne garde que des petits groupes de points afin d'éviter de recopier les bordures/traits complets du terrain source.
-  if(pts.length>3 && pts.length<2500){
-    const stride=Math.max(1,Math.ceil(pts.length/350));
-    const reduced=pts.filter((_,i)=>i%stride===0);
-    if(reduced.length>2) actions.push({action:"freedraw" as any,from:reduced[0],to:reduced[reduced.length-1],points:reduced as any,order:1} as any);
+  // Les petits numéros lus DANS la zone graphique deviennent de vrais joueurs Plaquette.
+  const digitWords=cropOCR.words.filter(word=>/^\d{1,2}$/.test(word.text.trim()));
+  for(const word of digitWords){
+    const cx=((word.x0+word.x1)/2)/upscale, cy=((word.y0+word.y1)/2)/upscale;
+    if(cx<2||cy<2||cx>w-2||cy>h-2)continue;
+    if(used.some(p=>Math.hypot(p.x-cx,p.y-cy)<Math.min(w,h)*.025))continue;
+    const visual=playerVisual(sourceImage.data,w,h,cx,cy);
+    players.push({
+      key:`s${index+1}p${players.length+1}`,
+      label:word.text.trim(),
+      team:"att",
+      x:Math.max(.015,Math.min(.985,cx/w)),
+      y:Math.max(.015,Math.min(.985,cy/h)),
+      hasBall:visual.hasBall,
+      color:visual.color,
+    } as AiDiagramPlayer);
+    used.push({x:cx,y:cy});
   }
 
-  const full = h / Math.max(1,w) > 1.15;
-  return {detected:players.length>0||actions.length>0,courtType:full?"full":"half",players,objects,actions,notes:"Import fidèle local — vérifie/modifie dans Plaquette avant création."};
+  // Si l'OCR global rate les très petits numéros (cas fréquent sur les captures FIBA),
+  // on repère les marqueurs graphiques puis on relit chaque marqueur isolément.
+  if(players.length < 2){
+    const candidates=markerCandidatesFromImage(sourceImage.data,w,h);
+    let labels:Array<{candidate:MarkerCandidate;label:string}>=[];
+    try{labels=await recognizeMarkerLabels(sourceCrop,candidates);}catch{}
+    for(const item of labels){
+      const {candidate,label}=item;
+      if(used.some(p=>Math.hypot(p.x-candidate.cx,p.y-candidate.cy)<Math.min(w,h)*.035))continue;
+      const visual=playerVisual(sourceImage.data,w,h,candidate.cx,candidate.cy);
+      players.push({key:`s${index+1}p${players.length+1}`,label,team:"att",x:Math.max(.015,Math.min(.985,candidate.cx/w)),y:Math.max(.015,Math.min(.985,candidate.cy/h)),hasBall:visual.hasBall,color:visual.color} as AiDiagramPlayer);
+      used.push({x:candidate.cx,y:candidate.cy});
+    }
+  }
+
+  const excluded=used.map(p=>({x:p.x,y:p.y,r:Math.max(12,Math.min(w,h)*.045)}));
+  const comps=connectedInkComponents(sourceImage.data,w,h,excluded);
+  for(const comp of comps){
+    let minX=Infinity,maxX=-Infinity,minY=Infinity,maxY=-Infinity;
+    comp.forEach(p=>{minX=Math.min(minX,p.x);maxX=Math.max(maxX,p.x);minY=Math.min(minY,p.y);maxY=Math.max(maxY,p.y);});
+    const bw=maxX-minX,bh=maxY-minY,area=bw*bh;
+    // Rejette les grosses bordures/icônes du terrain source; garde les trajectoires et petits symboles.
+    if(bw>w*.55||bh>h*.30||area>w*h*.08)continue;
+    if((minX<4||maxX>w-5)&&(bh>h*.12||bw>w*.12))continue;
+    const poly=componentPolyline(comp,w,h);
+    if(poly.length<2)continue;
+    actions.push({action:"freedraw",from:poly[0],to:poly[poly.length-1],points:poly,order:actions.length+1});
+    if(actions.length>=80)break;
+  }
+
+  const full = h / Math.max(1,w) > 1.12;
+  return {
+    detected: players.length>0 || actions.length>0,
+    courtType: full ? "full" : "half",
+    players, objects, actions,
+    notes: "Import photo/vidéo — objets reconstruits dans Plaquette. Vérifie puis modifie si nécessaire avant création.",
+  };
 }
 
 function inferMeta(text: string) {
@@ -362,9 +638,9 @@ function inferMeta(text: string) {
   const themes = ALLOWED_THEMES.filter((theme) => n.includes(norm(theme))).slice(0, 5);
   return {
     plots: firstNum(/(\d{1,2})\s*(?:plots?|cones?)/),
-    ballons: firstNum(/(\d{1,2})\s*(?:ballons?|balles?)/),
-    paniers: firstNum(/(\d{1,2})\s*paniers?/),
-    joueurs: firstNum(/(\d{1,2})\s*joueurs?/),
+    ballons: firstNum(/(\d{1,2})\s*(?:ballons?|balles?|balls?)/),
+    paniers: firstNum(/(\d{1,2})\s*(?:paniers?|baskets?)/),
+    joueurs: firstNum(/(\d{1,2})\s*(?:joueurs?|players?)/),
     temps: firstNum(/(\d{1,3})\s*(?:min|minutes?)/),
     categorie: ["U9", "U11", "U13", "U15", "U18", "U21", "SENIOR"].includes(categorie) ? (categorie === "SENIOR" ? "Senior" : categorie) : "— Choisir —",
     themes,
@@ -374,16 +650,16 @@ function inferMeta(text: string) {
 export async function scanExerciseLocally(file: File, onStatus?: (message: string) => void): Promise<AiExerciseImport> {
   onStatus?.(file.type.startsWith("video/") ? "Extraction des vues utiles de la vidéo…" : "Préparation de la photo…");
   const canvases = file.type.startsWith("video/") ? await videoFrames(file) : [await fileToCanvas(file)];
-  const parsedFrames: Array<{ parsed: ReturnType<typeof parseText>; lines: OCRLine[]; confidence: number; canvas: HTMLCanvasElement }> = [];
+  const parsedFrames: Array<{ parsed: ReturnType<typeof parseText>; text: string; lines: OCRLine[]; words: OCRWord[]; confidence: number; canvas: HTMLCanvasElement }> = [];
 
   for (let i = 0; i < canvases.length; i++) {
     onStatus?.(`Lecture gratuite du texte${canvases.length > 1 ? ` — vue ${i + 1}/${canvases.length}` : ""}…`);
     const ocr = await runOCR(canvases[i]);
-    parsedFrames.push({ parsed: parseText(ocr.lines), lines: ocr.lines, confidence: ocr.confidence, canvas: canvases[i] });
+    parsedFrames.push({ parsed: parseText(ocr.lines, ocr.text), text: ocr.text, lines: ocr.lines, words: ocr.words, confidence: ocr.confidence, canvas: canvases[i] });
   }
 
-  const best = [...parsedFrames].sort((a, b) => b.lines.length - a.lines.length || b.confidence - a.confidence)[0];
-  const allText = parsedFrames.flatMap((f) => f.lines.map((l) => l.text)).join("\n");
+  const best = [...parsedFrames].sort((a, b) => (b.text.length + b.lines.length * 30) - (a.text.length + a.lines.length * 30) || b.confidence - a.confidence)[0];
+  const allText = parsedFrames.map((f) => f.text || f.lines.map((l) => l.text).join("\n")).join("\n");
   const meta = inferMeta(allText);
 
   onStatus?.("Reconstruction des schémas dans Plaquette…");
@@ -399,14 +675,20 @@ export async function scanExerciseLocally(file: File, onStatus?: (message: strin
   }
 
   const warnings: string[] = [];
-  if (!best.lines.length) warnings.push("Aucun texte lisible n'a été détecté : complète les champs manuellement.");
+  if (!best.text.trim() && !best.lines.length) warnings.push("Aucun texte lisible n'a été détecté : complète les champs manuellement.");
   if (!diagrams.length) warnings.push("Aucun schéma exploitable n'a été reconnu : tu peux l'ajouter avec Plaquette.");
   else warnings.push("Les schémas ont été reconstruits localement : vérifie positions, joueurs et trajectoires avant de créer l'exercice.");
 
   const diagram = diagrams[0] || { detected: false, courtType: "half" as const, players: [], objects: [], actions: [], notes: "" };
+  const organisationFallback = [
+    meta.ballons !== null ? `${meta.ballons} ballon${meta.ballons > 1 ? "s" : ""}` : "",
+    meta.paniers !== null ? `${meta.paniers} panier${meta.paniers > 1 ? "s" : ""}` : "",
+    meta.plots !== null && meta.plots > 0 ? `${meta.plots} plot${meta.plots > 1 ? "s" : ""}` : "",
+    meta.joueurs !== null ? `${meta.joueurs} joueur${meta.joueurs > 1 ? "s" : ""}` : "",
+  ].filter(Boolean).join("\n");
   return {
     title: best.parsed.title || "",
-    organisation: best.parsed.organisation || "",
+    organisation: best.parsed.organisation || organisationFallback,
     deroulement: best.parsed.deroulement || [],
     consignes: best.parsed.consignes || [],
     variantes: best.parsed.variantes || [],

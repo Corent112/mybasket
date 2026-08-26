@@ -7,6 +7,7 @@ export type AiDiagramPlayer = {
   x: number;
   y: number;
   hasBall?: boolean;
+  color?: string;
 };
 
 export type AiDiagramObject = {
