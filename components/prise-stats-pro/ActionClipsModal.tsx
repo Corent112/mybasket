@@ -61,8 +61,12 @@ export type ActionClipsModalProps = {
   actions: ClipAction[];
   title: string;
   videoUrl?: string | null;
+  /** Source vidéo spécifique à l'action (utile quand une liste contient plusieurs matchs). */
+  videoUrlForAction?: (action: ClipAction) => string | null;
   /** Synchro vidéo du match auquel appartiennent les clips (défaut : native). */
   sync?: VideoSyncState;
+  /** Synchro spécifique à l'action / au match source. */
+  syncForAction?: (action: ClipAction) => VideoSyncState;
   startIndex?: number;
   onClose: () => void;
   onAddToMontage?: (action: ClipAction) => void;
@@ -99,9 +103,17 @@ export default function ActionClipsModal(props: ActionClipsModalProps) {
 
   const current: ClipAction | undefined = actions[index];
 
+  // Une liste peut contenir des actions provenant de plusieurs matchs.
+  // La source et la synchro suivent donc toujours l'action affichée.
+  const currentVideoUrl = current
+    ? (props.videoUrlForAction?.(current) ?? videoUrl ?? null)
+    : (videoUrl ?? null);
+
   // Synchro du match : convertit les temps bruts de codage (source) en position
   // réelle dans la vidéo (média). Défaut = native (aucun décalage).
-  const sync = props.sync ?? NATIVE_SYNC;
+  const sync = current
+    ? (props.syncForAction?.(current) ?? props.sync ?? NATIVE_SYNC)
+    : (props.sync ?? NATIVE_SYNC);
   // Bornes DÉJÀ synchronisées d'une action (jamais de lecture directe de
   // clipStart/clipEnd sans passer par la synchro).
   const syncedStartOf = useCallback(
@@ -149,7 +161,7 @@ export default function ActionClipsModal(props: ActionClipsModalProps) {
     applyBoundedPlayback();
     return () => { stopRef.current?.(); stopRef.current = null; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, index, current?.id]);
+  }, [open, index, current?.id, currentVideoUrl, sync]);
 
   const go = useCallback((delta: number) => {
     setIndex((i) => Math.max(0, Math.min(actions.length - 1, i + delta)));
@@ -230,7 +242,7 @@ export default function ActionClipsModal(props: ActionClipsModalProps) {
   };
 
   if (!open || actions.length === 0 || !current) return null;
-  const hasVideo = !!videoUrl;
+  const hasVideo = !!currentVideoUrl;
   const cur = current;
 
   const Info = ({ k, v }: { k: string; v: ReactNode }) =>
@@ -253,7 +265,13 @@ export default function ActionClipsModal(props: ActionClipsModalProps) {
 
           <div className="acm-videowrap">
             {hasVideo ? (
-              <video ref={videoRef} className="acm-video" src={videoUrl!} controls playsInline
+              <video
+                key={`${String(cur.matchId ?? '')}:${currentVideoUrl ?? ''}`}
+                ref={videoRef}
+                className="acm-video"
+                src={currentVideoUrl!}
+                controls
+                playsInline
                 onLoadedMetadata={(e) => setVideoDuration(Number.isFinite(e.currentTarget.duration) ? e.currentTarget.duration : 0)} />
             ) : (
               <div className="acm-novideo">
