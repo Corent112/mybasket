@@ -422,7 +422,7 @@ export type EnsureLiveMatchPayload = {
   playerIds?: string[];
 
   // Choix vidéo fait sur l'écran de création (structure V5).
-  videoMode?: "later" | "file" | "drive" | "youtube";
+  videoMode?: "later" | "file" | "youtube" | "drive";
   videoStatus?: string;
   videoProvider?: string;
   videoUrl?: string;
@@ -462,31 +462,6 @@ export async function ensureLiveMatch(
     if (!realTeamId) {
       // Pas d'équipe UUID : on continue en local uniquement (le live reste OK).
       return { ok: true, matchId: `local_${Date.now().toString(36)}`, teamId: payload.teamId, localOnly: true };
-    }
-
-    // Un match est une ressource d'ÉQUIPE. Avant de créer une nouvelle ligne,
-    // on recherche un brouillon existant pour la même rencontre, quel que soit
-    // l'utilisateur qui l'a créé. Cela permet à un assistant de reprendre le
-    // projet du coach principal (et inversement) et évite les doublons 0-0/final.
-    const normalizedOpponent = (payload.opponent || "Adversaire").trim();
-    const { data: existingDraft, error: existingDraftError } = await supabase
-      .from("match_stats")
-      .select("id")
-      .eq("team_id", realTeamId)
-      .eq("match_date", payload.date)
-      .eq("home", payload.home ?? true)
-      .eq("project_status", "draft")
-      .ilike("opponent", normalizedOpponent)
-      .order("created_at", { ascending: false })
-      .limit(1)
-      .maybeSingle();
-
-    if (existingDraftError) {
-      logSupabaseError("ensureLiveMatch: recherche brouillon existant (non bloquant)", existingDraftError);
-    }
-
-    if (existingDraft?.id) {
-      return { ok: true, matchId: String(existingDraft.id), teamId: realTeamId };
     }
 
     const { data: match, error: matchError } = await supabase
@@ -892,6 +867,7 @@ export async function saveLiveMatch(
       systeme_slot: action.systemeSlot ?? null,
       systeme_id: action.systemeId ?? null,
       systeme_name: action.systemeName ?? null,
+      playbook_id: action.playbookId ?? null,
       possession_start: action.possessionStart ?? null,
       possession_end: action.possessionEnd ?? null,
       opponent_player_id: action.opponentPlayerId ?? null,
@@ -1345,6 +1321,87 @@ export function mapActionRowToLiveAction(row: Record<string, any>): LiveMatchAct
   };
 }
 
+/**
+ * Une action codée peut exister dans deux sources complémentaires :
+ * - `match_actions` : persistance temps réel ;
+ * - `project_state.actions` : état riche complet du projet.
+ *
+ * On les fusionne pour que toute information réellement codée (système,
+ * temps fort, joueur, zone, vidéo, lineup, etc.) reste disponible pour
+ * alimenter toutes les statistiques.
+ */
+function hasUsefulActionValue(value: unknown): boolean {
+  if (value === null || value === undefined) return false;
+  if (typeof value === "string") return value.trim().length > 0;
+  if (Array.isArray(value)) return value.length > 0;
+  return true; // 0 et false restent des valeurs métier valides.
+}
+
+function actionIdentity(action: Record<string, any>): string {
+  const id = String(action?.id ?? action?.client_action_id ?? "").trim();
+  if (id) return `id:${id}`;
+
+  // Compatibilité anciens projets sans client_action_id.
+  return [
+    "sig",
+    Number(action?.q ?? action?.quarter ?? 0),
+    String(action?.clock ?? ""),
+    String(action?.context ?? ""),
+    String(action?.playerId ?? action?.player_id ?? ""),
+    String(action?.actionType ?? action?.action_type ?? ""),
+    String(action?.shotType ?? action?.shot_type ?? ""),
+    String(action?.shotResult ?? action?.shot_result ?? ""),
+    String(action?.videoTime ?? action?.video_time ?? ""),
+  ].join("|");
+}
+
+function mergeActionValues(
+  projectAction: Record<string, any> | undefined,
+  sqlAction: LiveMatchAction
+): LiveMatchAction {
+  const merged: Record<string, any> = { ...(projectAction ?? {}) };
+
+  Object.entries(sqlAction as Record<string, any>).forEach(([key, value]) => {
+    // Une vraie valeur SQL est prioritaire. En revanche null / "" / []
+    // ne doivent jamais effacer une valeur riche déjà codée dans project_state.
+    if (hasUsefulActionValue(value) || !(key in merged)) {
+      merged[key] = value;
+    }
+  });
+
+  return merged as LiveMatchAction;
+}
+
+function mergeProjectAndSqlActions(
+  projectActions: Record<string, any>[],
+  sqlActions: LiveMatchAction[]
+): LiveMatchAction[] {
+  if (!projectActions.length) return sqlActions;
+  if (!sqlActions.length) return projectActions as LiveMatchAction[];
+
+  const projectByIdentity = new Map<string, Record<string, any>>();
+  projectActions.forEach((action) => {
+    projectByIdentity.set(actionIdentity(action), action);
+  });
+
+  const consumed = new Set<string>();
+
+  const merged = sqlActions.map((sqlAction) => {
+    const key = actionIdentity(sqlAction as Record<string, any>);
+    const projectAction = projectByIdentity.get(key);
+    if (projectAction) consumed.add(key);
+    return mergeActionValues(projectAction, sqlAction);
+  });
+
+  // Si une ancienne action n'existe que dans project_state, on la conserve.
+  projectActions.forEach((projectAction) => {
+    const key = actionIdentity(projectAction);
+    if (!consumed.has(key)) merged.push(projectAction as LiveMatchAction);
+  });
+
+  return merged;
+}
+
 /** Recharge un projet : son état + ses actions RÉELLES depuis match_actions.
  *  La source prioritaire des actions est match_actions ; project_state.actions
  *  ne sert que de repli si aucune ligne n'existe encore en base. */
@@ -1376,19 +1433,24 @@ export async function loadProject(matchId: string): Promise<
 
     const projectState = (data.project_state ?? {}) as Record<string, any>;
     const actionRows = actionsRes.data ?? [];
-    // Compatibilité avec les anciens brouillons : les informations structurantes
-    // de match_stats servent de repli si elles n'étaient pas encore présentes
-    // dans project_state. Cela permet à Historique de rouvrir réellement le projet.
+    const projectActions = Array.isArray(projectState.actions)
+      ? (projectState.actions as Record<string, any>[])
+      : [];
+    const sqlActions = actionRows.map(mapActionRowToLiveAction);
+    const mergedActions = mergeProjectAndSqlActions(projectActions, sqlActions);
+
+    // Les colonnes structurantes de match_stats servent de filet pour les anciens
+    // projets, puis project_state garde la priorité sur les autres champs.
     const state: LiveProjectState = {
       teamId: projectState.teamId ?? data.team_id ?? null,
       opponent: projectState.opponent ?? data.opponent ?? "",
       date: projectState.date ?? data.match_date ?? "",
       home: projectState.home ?? data.home ?? true,
-      perQ: projectState.perQ ?? { 1: { us: Number(data.us_score ?? 0), them: Number(data.them_score ?? 0) } },
+      perQ: projectState.perQ ?? {
+        1: { us: Number(data.us_score ?? 0), them: Number(data.them_score ?? 0) },
+      },
       ...projectState,
-      actions: actionRows.length
-        ? actionRows.map(mapActionRowToLiveAction)
-        : (Array.isArray(projectState.actions) ? projectState.actions : []),
+      actions: mergedActions,
     };
 
     // AJOUT · Synchro vidéo. Source principale : project_state (toujours écrit).
