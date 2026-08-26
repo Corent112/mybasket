@@ -18,6 +18,7 @@ import AdvancedVideoEditor from "@/components/video-editor/AdvancedVideoEditor";
 import PlayerLoadMonitoring from "@/components/players/PlayerLoadMonitoring";
 import PlayerShootingGrids from "@/components/players/PlayerShootingGrids";
 import PoleSportsReportPanel from "@/components/equipes/PoleSportsReportPanel";
+import PolePlayerLongitudinalPanel from "@/components/equipes/PolePlayerLongitudinalPanel";
 
 type PlayerExtra = Player & {
   licenceNumber?: string;
@@ -41,6 +42,7 @@ const TABS = [
   "Médical",
   "Bilans",
   "Bilan sportif",
+  "Suivi Pôle",
   "Documents",
 ] as const;
 
@@ -2163,6 +2165,12 @@ export default function JoueurDetailPage({
               </div>
             </div>
             <PoleSportsReportPanel teamId={String(teamId)} playerId={String(playerId)} />
+          </section>
+        )}
+
+        {tab === "Suivi Pôle" && (
+          <section className="panel">
+            <PolePlayerLongitudinalPanel teamId={String(teamId)} playerId={String(playerId)} />
           </section>
         )}
 

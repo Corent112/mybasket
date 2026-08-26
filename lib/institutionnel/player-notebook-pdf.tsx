@@ -70,7 +70,7 @@ export function PlayerNotebookPdf({snapshot}:{snapshot:PlayerNotebookSnapshot}){
   const seasons:any[]=snapshot.seasons as any[], entries:any[]=snapshot.entries as any[],
     ms:any[]=snapshot.measurements as any[], sessions:any[]=snapshot.attendanceSessions as any[],
     records:any[]=snapshot.attendanceRecords as any[], comments:any[]=snapshot.comments as any[],
-    parent:any=snapshot.parentContext||{};
+    parent:any=snapshot.parentContext||{}, tracking:any=(snapshot as any).poleTracking||null;
   const active=entries.find(e=>e.season_id===snapshot.activeSeasonId)||entries.at(-1)||{};
   const last=[...ms].reverse()[0]||{};
   const presence=seasons.map(season=>{
@@ -156,6 +156,30 @@ export function PlayerNotebookPdf({snapshot}:{snapshot:PlayerNotebookSnapshot}){
       <Text style={s.eyebrow}>BASKET</Text>
       <Text style={s.h1}>Commentaires & axes de travail</Text>
       <Text style={s.muted}>Les observations ci-dessous ont été marquées comme partageables avec le club.</Text>
+      {tracking?<View style={[s.box,{marginTop:12}]}>
+        <Text style={[s.h2,{marginTop:0}]}>Synthèse sportive automatique · Pôle + club</Text>
+        <View style={s.row}>
+          <View style={{flex:1}}><Text style={s.muted}>MATCHS</Text><Text style={{fontFamily:"Helvetica-Bold",color:B,fontSize:13}}>{tracking.games||0}</Text></View>
+          <View style={{flex:1}}><Text style={s.muted}>PTS / MATCH</Text><Text style={{fontFamily:"Helvetica-Bold",color:B,fontSize:13}}>{tracking.games?(tracking.pts/tracking.games).toFixed(1):"—"}</Text></View>
+          <View style={{flex:1}}><Text style={s.muted}>REB / MATCH</Text><Text style={{fontFamily:"Helvetica-Bold",color:B,fontSize:13}}>{tracking.games?(tracking.reb/tracking.games).toFixed(1):"—"}</Text></View>
+          <View style={{flex:1}}><Text style={s.muted}>PD / MATCH</Text><Text style={{fontFamily:"Helvetica-Bold",color:B,fontSize:13}}>{tracking.games?(tracking.ast/tracking.games).toFixed(1):"—"}</Text></View>
+        </View>
+        <View style={[s.row,{marginTop:8}]}>
+          <Text style={s.muted}>Présence : {tracking.presenceRate==null?"—":`${tracking.presenceRate}%`}</Text>
+          <Text style={s.muted}>Charge 7 jours : {tracking.load7||0}</Text>
+          <Text style={s.muted}>Clips liés : {tracking.clips||0}</Text>
+        </View>
+        <Text style={[s.muted,{marginTop:7}]}>Sources : {(tracking.sources||[]).map((x:any)=>`${x.kind==="pole"?"Pôle":"Club"} · ${x.teamName}`).join(" / ")}</Text>
+      </View>:null}
+      {tracking?.reports?.length?<View style={{marginTop:10}}>
+        <Text style={s.h2}>Bilans sportifs Pôle + club</Text>
+        {tracking.reports.slice(0,6).map((r:any)=><View style={s.comment} key={r.id}>
+          <Text style={s.commentTitle}>{fmt(r.report_date)} · {r.author_context==="pole"?"Pôle":"Club"} · {r.report_type==="match"?`Match${r.opponent?` vs ${r.opponent}`:""}`:"Entraînement"}</Text>
+          {r.coach_comment?<Text style={s.bullets}>{r.coach_comment}</Text>:null}
+          {r.positives?<Text style={[s.muted,{marginTop:4}]}>Points positifs : {r.positives}</Text>:null}
+          {r.improvement_areas?<Text style={[s.muted,{marginTop:4}]}>Axes de travail : {r.improvement_areas}</Text>:null}
+        </View>)}
+      </View>:null}
       <View style={{marginTop:12}}>
         {comments.length?comments.map((c:any)=><View style={s.comment} key={c.id}>
           <Text style={s.commentTitle}>{fmt(c.comment_date)} · {seasons.find(x=>x.id===c.season_id)?.season_label||""} · {c.author_name||"Entraîneur"}</Text>

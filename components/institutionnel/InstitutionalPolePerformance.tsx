@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
+import PolePerformanceOverview from "@/components/institutionnel/PolePerformanceOverview";
 
 type TeamKind = "pole" | "partner";
 type Data = {
@@ -98,6 +99,8 @@ export default function InstitutionalPolePerformance({ structureId }: { structur
   if(loading)return <div className="empty">Chargement du Pôle / Performance…</div>;
   return <div className="pole">{message&&<div className="toast">{message}</div>}
     <div className="top"><div><p>PÔLE / PERFORMANCE · LIGUE</p><h2>Équipes Pôle, polistes & clubs partenaires</h2><span>Les équipes et joueurs sont créés ici. Aucune équipe privée d'un autre utilisateur n'est affichée.</span></div><div className="season"><label>Saison</label><input value={season} onChange={e=>setSeason(e.target.value)} placeholder="2026-2027"/></div></div>
+
+    <PolePerformanceOverview structureId={structureId} season={season} />
 
     <section className="section"><div className="sectionHead"><div><h3>⭐ Équipes Pôle</h3><p>Vraies équipes MyBasket gérées par la Ligue.</p></div><button onClick={()=>setCreateKind("pole")}>+ Créer une équipe Pôle</button></div>
       <div className="cards">{poleLinks.map(x=>{const t=teamMap.get(String(x.team_id));const count=data.memberships.filter(m=>String(m.pole_team_id)===String(x.team_id)).length;return <article key={x.id}><div><b>{t?.name||"Équipe Pôle"}</b><span>{t?.category||"—"} · {count} poliste(s)</span></div><div className="actions"><button className="ghost" onClick={()=>setSelectedPoleTeam(String(x.team_id))}>Effectif</button><Link href={`/equipes/${x.team_id}`}>Ouvrir l'équipe →</Link></div></article>})}{!poleLinks.length&&<div className="empty">Aucune équipe Pôle pour {season}.</div>}</div>
