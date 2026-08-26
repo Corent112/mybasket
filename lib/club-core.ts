@@ -105,6 +105,18 @@ function sb() {
   return createClient();
 }
 
+export async function syncClubTeamAccessClient(clubId: string): Promise<void> {
+  const response = await fetch("/api/club/coaches/sync", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ clubId }),
+  });
+  if (!response.ok) {
+    const payload = await response.json().catch(() => ({}));
+    throw new Error(payload?.error || "Synchronisation Club / équipes impossible.");
+  }
+}
+
 function normalizeError(error: any) {
   const details = {
     code: error?.code ?? null,
@@ -350,7 +362,9 @@ export async function createClubTeam(clubId: string, input: Partial<ClubTeam>): 
   }
 
   if (result.error) throw normalizeError(result.error);
-  return rowToTeam(result.data);
+  const saved = rowToTeam(result.data);
+  await syncClubTeamAccessClient(clubId);
+  return saved;
 }
 
 export async function updateClubTeam(teamId: string, patch: Partial<ClubTeam>): Promise<ClubTeam> {
@@ -382,7 +396,9 @@ export async function updateClubTeam(teamId: string, patch: Partial<ClubTeam>): 
     .single();
 
   if (error) throw normalizeError(error);
-  return rowToTeam(data);
+  const saved = rowToTeam(data);
+  await syncClubTeamAccessClient(saved.clubId);
+  return saved;
 }
 
 export async function listClubCoaches(clubId: string): Promise<ClubCoach[]> {

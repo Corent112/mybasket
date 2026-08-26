@@ -8,12 +8,24 @@ import {
   inviteCoachAndSendEmail,
   listClubCoaches,
   listClubTeams,
+  syncClubTeamAccessClient,
 } from "@/lib/club-core";
 import { updateClubCoach } from "@/lib/club-coaches";
 import { deleteEntity } from "@/lib/club-crud-actions";
 import ClubCoachWorkspace from "@/components/club/ClubCoachWorkspace";
 
-const ROLES = ["coach", "assistant", "preparateur_physique", "video", "manager", "direction_technique"];
+const ROLES = [
+  { value: "coach", label: "Entraîneur principal" },
+  { value: "assistant", label: "Assistant" },
+  { value: "preparateur_physique", label: "Préparateur physique" },
+  { value: "video", label: "Analyste vidéo" },
+  { value: "manager", label: "Manager" },
+  { value: "direction_technique", label: "Direction technique" },
+];
+
+function roleLabel(value: string) {
+  return ROLES.find((role) => role.value === value)?.label || value || "Coach";
+}
 
 type CoachForm = {
   firstName: string;
@@ -58,6 +70,7 @@ export default function ClubCoachesSection({
     setError("");
 
     try {
+      await syncClubTeamAccessClient(clubId).catch(() => null);
       const [coachRows, teamRows] = await Promise.all([
         listClubCoaches(clubId),
         listClubTeams(clubId),
@@ -166,6 +179,7 @@ export default function ClubCoachesSection({
 
     try {
       await deleteEntity({ clubId, entityType: "coach", id: coach.id });
+      await syncClubTeamAccessClient(clubId);
       setMessage("Coach supprimé.");
       if (selectedCoachId === coach.id) setSelectedCoachId(null);
       await load();
@@ -207,7 +221,7 @@ export default function ClubCoachesSection({
           <label>Nom<input value={form.lastName} onChange={(e) => setForm({ ...form, lastName: e.target.value })} /></label>
           <label>Email<input value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} /></label>
           <label>Téléphone<input value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} /></label>
-          <label>Rôle<select value={form.role} onChange={(e) => setForm({ ...form, role: e.target.value })}>{ROLES.map((role) => <option key={role}>{role}</option>)}</select></label>
+          <label>Rôle<select value={form.role} onChange={(e) => setForm({ ...form, role: e.target.value })}>{ROLES.map((role) => <option key={role.value} value={role.value}>{role.label}</option>)}</select></label>
 
           {editing && (
             <label>Statut
@@ -263,8 +277,9 @@ export default function ClubCoachesSection({
                   <div className="avatar">{coach.name.slice(0, 2).toUpperCase()}</div>
                   <div>
                     <strong>{coach.name}</strong>
-                    <span>{coach.role} · {coach.status}</span>
+                    <span>{roleLabel(coach.role)} · {coach.status}</span>
                     <small>{coach.email}</small>
+                    <small className={coach.userId ? "linkedAccount" : "pendingAccount"}>{coach.userId ? "✓ Compte MyBasket lié" : "⏳ Invitation / compte non lié"}</small>
                   </div>
 
                   <div className="teamTags">
@@ -297,7 +312,7 @@ export default function ClubCoachesSection({
         button{border:1px solid #eadfd5;background:#6b1a2c;color:white;border-radius:999px;padding:10px 14px;font-weight:900;cursor:pointer}.ghost{background:#fffaf2;color:#6b1a2c}.danger{background:#fff0f0;color:#b91c1c;border-color:#f1d3cf}
         .teamsPick{display:flex;flex-wrap:wrap;gap:8px;margin:14px 0}.teamsPick strong{width:100%;color:#6b1a2c}.teamsPick button{background:#fff;color:#6b1a2c;border-radius:999px}.teamsPick button.selected{background:#6b1a2c;color:white}
         .actions,.cardActions{display:flex;gap:8px;flex-wrap:wrap}.tools{margin-bottom:16px}.tools input{width:100%}
-        .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(270px,1fr));gap:14px}.coachCard{border:1px solid #eadfd5;border-radius:22px;padding:16px;display:grid;gap:12px}.avatar{width:52px;height:52px;border-radius:18px;background:#6b1a2c;color:#d4a24c;display:grid;place-items:center;font-weight:900}.coachCard strong{display:block;color:#6b1a2c}.coachCard span,.coachCard small{display:block;color:#6b7280;font-weight:800}
+        .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(270px,1fr));gap:14px}.coachCard{border:1px solid #eadfd5;border-radius:22px;padding:16px;display:grid;gap:12px}.avatar{width:52px;height:52px;border-radius:18px;background:#6b1a2c;color:#d4a24c;display:grid;place-items:center;font-weight:900}.coachCard strong{display:block;color:#6b1a2c}.coachCard span,.coachCard small{display:block;color:#6b7280;font-weight:800}.coachCard .linkedAccount{color:#15803d;margin-top:4px}.coachCard .pendingAccount{color:#a16207;margin-top:4px}
         .teamTags{display:flex;gap:6px;flex-wrap:wrap}.teamTags button,.teamTags em{font-style:normal;background:#fff8ee;border:1px solid #eadfd5;border-radius:999px;padding:5px 8px;color:#6b1a2c;font-weight:900;font-size:.72rem}
         @media(max-width:980px){.layout{grid-template-columns:1fr}}
       `}</style>

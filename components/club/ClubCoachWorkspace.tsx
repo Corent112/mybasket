@@ -9,7 +9,7 @@ import {
   listClubCoaches,
   listClubPlayers,
   listClubTeams,
-  updateClubTeam,
+  syncClubTeamAccessClient,
 } from "@/lib/club-core";
 import { updateClubCoach } from "@/lib/club-coaches";
 import ClubTeamsSection from "@/components/club/ClubTeamsSection";
@@ -35,6 +35,7 @@ export default function ClubCoachWorkspace({
     setError("");
 
     try {
+      await syncClubTeamAccessClient(clubId).catch(() => null);
       const [coachRows, teamRows, playerRows] = await Promise.all([
         listClubCoaches(clubId),
         listClubTeams(clubId),
@@ -84,10 +85,7 @@ export default function ClubCoachWorkspace({
     try {
       const current = coach.teamIds.includes(teamId) ? coach.teamIds : [...coach.teamIds, teamId];
 
-      await Promise.all([
-        updateClubCoach(coach.id, { teamIds: current }),
-        updateClubTeam(teamId, { coachId: coach.userId || coach.id }),
-      ]);
+      await updateClubCoach(coach.id, { teamIds: current });
 
       setMessage("Équipe attribuée au coach.");
       await load();
@@ -110,11 +108,6 @@ export default function ClubCoachWorkspace({
       await updateClubCoach(coach.id, {
         teamIds: coach.teamIds.filter((id) => id !== team.id),
       });
-
-      const patch: Partial<ClubTeam> = {};
-      if (team.coachId === coach.id || team.coachId === coach.userId) patch.coachId = null;
-      if (team.assistantId === coach.id || team.assistantId === coach.userId) patch.assistantId = null;
-      if (Object.keys(patch).length) await updateClubTeam(team.id, patch);
 
       setMessage("Équipe retirée.");
       await load();
@@ -170,6 +163,7 @@ export default function ClubCoachWorkspace({
           <strong>{coach.name}</strong>
           <span>{coach.email || "Email manquant"}</span>
           <span>{coach.phone || "Téléphone manquant"}</span>
+          <span className={coach.userId ? "accountOk" : "accountPending"}>{coach.userId ? "✓ Compte MyBasket lié" : "⏳ Compte MyBasket en attente"}</span>
         </div>
       </div>
 

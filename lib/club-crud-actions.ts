@@ -86,7 +86,23 @@ export async function deleteClubTeam(params: {
     await updateRows("club_players", { team_id: null }, { club_id: clubId, team_id: teamId });
   }
 
-  await updateRows("club_coaches", { team_ids: [] }, { club_id: clubId });
+  const { data: coaches, error: coachesError } = await sb()
+    .from("club_coaches")
+    .select("id,team_ids")
+    .eq("club_id", clubId);
+  if (coachesError) fail("READ_CLUB_COACHES_BEFORE_TEAM_DELETE", coachesError);
+
+  for (const coach of coaches ?? []) {
+    const current = Array.isArray(coach.team_ids) ? coach.team_ids.map(String) : [];
+    if (!current.includes(teamId)) continue;
+    const { error: coachUpdateError } = await sb()
+      .from("club_coaches")
+      .update({ team_ids: current.filter((id: string) => id !== teamId) })
+      .eq("id", coach.id)
+      .eq("club_id", clubId);
+    if (coachUpdateError) fail("UPDATE_CLUB_COACH_TEAM_IDS_ERROR", coachUpdateError);
+  }
+
   await updateRows("club_documents", { team_id: null }, { club_id: clubId, team_id: teamId });
   await updateRows("club_events", { team_id: null }, { club_id: clubId, team_id: teamId });
   await updateRows("club_training_slots", { team_id: null }, { club_id: clubId, team_id: teamId });

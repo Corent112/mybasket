@@ -1,6 +1,8 @@
 // app/api/club/invitations/accept/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
+import { createAdminClient } from "@/lib/supabase/admin-server";
+import { syncClubTeamAccess } from "@/lib/club-team-sync-server";
 
 export async function POST(request: NextRequest) {
   try {
@@ -52,7 +54,7 @@ export async function POST(request: NextRequest) {
         {
           club_id: invitation.club_id,
           user_id: userData.user.id,
-          role: invitation.role || "coach",
+          role: String(invitation.role || "") === "direction_technique" ? "direction_technique" : "coach",
           status: "active",
         },
         {
@@ -111,6 +113,11 @@ export async function POST(request: NextRequest) {
         status: "unread",
       })
       .then(() => null);
+
+    const admin = createAdminClient();
+    if (admin) {
+      await syncClubTeamAccess(admin, String(invitation.club_id));
+    }
 
     return NextResponse.json({ ok: true });
   } catch (error: any) {

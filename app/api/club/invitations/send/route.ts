@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin-server";
 import { canCreateClubCoach } from "@/lib/access";
+import { syncClubTeamAccess } from "@/lib/club-team-sync-server";
 
 function normalizeEmail(value: unknown) {
   return String(value ?? "").trim().toLowerCase();
@@ -108,7 +109,7 @@ export async function POST(request: NextRequest) {
         {
           club_id: clubId,
           user_id: existingUserId,
-          role: coach.role || "coach",
+          role: String(coach.role || "") === "direction_technique" ? "direction_technique" : "coach",
           status: "active",
         },
         { onConflict: "club_id,user_id" },
@@ -145,6 +146,8 @@ export async function POST(request: NextRequest) {
           sent_at: new Date().toISOString(),
         })
         .eq("id", invitationId);
+
+      await syncClubTeamAccess(admin, String(clubId));
 
       const loginUrl = `${siteUrl(request)}/connexion`;
       if (process.env.RESEND_API_KEY) {

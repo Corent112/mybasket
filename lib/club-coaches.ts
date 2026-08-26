@@ -3,6 +3,7 @@
 
 import { createClient } from "@/lib/supabase/client";
 import type { ClubCoach } from "@/lib/club-core";
+import { syncClubTeamAccessClient } from "@/lib/club-core";
 
 function sb() {
   return createClient();
@@ -55,7 +56,9 @@ export async function updateClubCoach(
     .single();
 
   if (error) throw normalizeError(error);
-  return rowToCoach(data);
+  const updated = rowToCoach(data);
+  await syncClubTeamAccessClient(updated.clubId);
+  return updated;
 }
 
 export async function deleteClubCoachById(coachId: string): Promise<void> {

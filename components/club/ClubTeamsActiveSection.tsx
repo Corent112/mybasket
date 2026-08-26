@@ -11,6 +11,7 @@ import {
   listClubCoaches,
   listClubPlayers,
   listClubTeams,
+  syncClubTeamAccessClient,
   updateClubPlayer,
   updateClubTeam,
 } from "@/lib/club-core";
@@ -149,6 +150,7 @@ export default function ClubTeamsActiveSection({ clubId }: { clubId: string }) {
     setBusy(true);
     setError("");
     try {
+      await syncClubTeamAccessClient(clubId).catch(() => null);
       const [teamRows, playerRows, coachRows] = await Promise.all([
         listClubTeams(clubId),
         listClubPlayers(clubId),
@@ -190,7 +192,7 @@ export default function ClubTeamsActiveSection({ clubId }: { clubId: string }) {
 
   function coachName(id?: string | null) {
     if (!id) return "Non affecté";
-    return coaches.find((coach) => coach.id === id)?.name || "Coach introuvable";
+    return coaches.find((coach) => coach.userId === id || coach.id === id)?.name || "Coach introuvable";
   }
 
   async function saveTeam() {
@@ -422,8 +424,8 @@ export default function ClubTeamsActiveSection({ clubId }: { clubId: string }) {
               <label>Sexe<select value={teamForm.gender} onChange={(e) => setTeamForm({ ...teamForm, gender: e.target.value })}>{GENDERS.map((x) => <option key={x}>{x}</option>)}</select></label>
               <label>Niveau<select value={teamForm.level} onChange={(e) => setTeamForm({ ...teamForm, level: e.target.value })}><option value="">—</option>{LEVELS.map((x) => <option key={x}>{x}</option>)}</select></label>
               <label>Saison<input value={teamForm.season} onChange={(e) => setTeamForm({ ...teamForm, season: e.target.value })} /></label>
-              <label>Coach principal<select value={teamForm.coachId} onChange={(e) => setTeamForm({ ...teamForm, coachId: e.target.value })}><option value="">Non affecté</option>{coaches.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}</select></label>
-              <label>Assistant<select value={teamForm.assistantId} onChange={(e) => setTeamForm({ ...teamForm, assistantId: e.target.value })}><option value="">Non affecté</option>{coaches.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}</select></label>
+              <label>Coach principal<select value={teamForm.coachId} onChange={(e) => setTeamForm({ ...teamForm, coachId: e.target.value })}><option value="">Non affecté</option>{coaches.map((c) => <option key={c.id} value={c.userId || ""} disabled={!c.userId}>{c.name}{!c.userId ? " · invitation en attente" : ""}</option>)}</select></label>
+              <label>Assistant<select value={teamForm.assistantId} onChange={(e) => setTeamForm({ ...teamForm, assistantId: e.target.value })}><option value="">Non affecté</option>{coaches.map((c) => <option key={c.id} value={c.userId || ""} disabled={!c.userId}>{c.name}{!c.userId ? " · invitation en attente" : ""}</option>)}</select></label>
               <label>Statut<select value={teamForm.status} onChange={(e) => setTeamForm({ ...teamForm, status: e.target.value })}><option value="active">Active</option><option value="archived">Archivée</option></select></label>
               <label className="full">Notes<textarea value={teamForm.notes} onChange={(e) => setTeamForm({ ...teamForm, notes: e.target.value })} /></label>
             </div>
