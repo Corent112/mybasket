@@ -673,6 +673,62 @@ function Av({ p, cls }: { p?: Player; cls?: string }) {
 }
 
 /* ============================ Composant ============================ */
+
+/* Vidéo locale persistante : mémorise le FileSystemFileHandle dans IndexedDB
+   quand le navigateur le permet. Le codage et les clips restent indépendants
+   du fichier : si l'accès est perdu, il suffit de reconnecter la vidéo. */
+type MyBasketLocalFileHandle = {
+  name?: string;
+  getFile: () => Promise<File>;
+  queryPermission?: (options?: { mode?: 'read' | 'readwrite' }) => Promise<string>;
+  requestPermission?: (options?: { mode?: 'read' | 'readwrite' }) => Promise<string>;
+};
+const LOCAL_VIDEO_DB = 'mybasket-local-video-handles';
+const LOCAL_VIDEO_STORE = 'handles';
+const localVideoHandleKey = (teamId: string, filename: string) =>
+  `team:${String(teamId || 'unknown')}::${String(filename || '').trim().toLowerCase()}`;
+
+const openLocalVideoHandleDb = (): Promise<IDBDatabase | null> =>
+  new Promise((resolve) => {
+    if (typeof indexedDB === 'undefined') { resolve(null); return; }
+    const req = indexedDB.open(LOCAL_VIDEO_DB, 1);
+    req.onupgradeneeded = () => {
+      const db = req.result;
+      if (!db.objectStoreNames.contains(LOCAL_VIDEO_STORE)) db.createObjectStore(LOCAL_VIDEO_STORE);
+    };
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => resolve(null);
+  });
+
+const saveLocalVideoHandle = async (key: string, handle: MyBasketLocalFileHandle) => {
+  const db = await openLocalVideoHandleDb();
+  if (!db) return;
+  await new Promise<void>((resolve) => {
+    try {
+      const tx = db.transaction(LOCAL_VIDEO_STORE, 'readwrite');
+      tx.objectStore(LOCAL_VIDEO_STORE).put(handle, key);
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => resolve();
+    } catch { resolve(); }
+  });
+  db.close();
+};
+
+const readLocalVideoHandle = async (key: string): Promise<MyBasketLocalFileHandle | null> => {
+  const db = await openLocalVideoHandleDb();
+  if (!db) return null;
+  const value = await new Promise<MyBasketLocalFileHandle | null>((resolve) => {
+    try {
+      const tx = db.transaction(LOCAL_VIDEO_STORE, 'readonly');
+      const req = tx.objectStore(LOCAL_VIDEO_STORE).get(key);
+      req.onsuccess = () => resolve((req.result as MyBasketLocalFileHandle | undefined) ?? null);
+      req.onerror = () => resolve(null);
+    } catch { resolve(null); }
+  });
+  db.close();
+  return value;
+};
+
 export default function PriseStatsProPage() {
   const [teams, setTeams] = useState<{ id: string; name: string; players: Player[]; teamType?: string; isScoutTeam?: boolean }[]>([]);
   const [analysisScope, setAnalysisScope] = useState<'coached' | 'scout'>('coached');
@@ -877,12 +933,7 @@ export default function PriseStatsProPage() {
   const VIDEO_PRE_ROLL = 6;   // s avant l'action (préparation du clip)
   const VIDEO_POST_ROLL = 4;  // s après l'action
 
-  // Sélection d'un fichier vidéo local (objectURL, pas d'upload réel en V5).
-  // Ne réinitialise NI les actions NI les bornes de clips : on ne fait que
-  // rattacher une source vidéo. Sert aussi à re-sélectionner la vidéo d'un
-  // projet rouvert (l'URL blob: d'origine ne survit pas au rechargement).
-  const onPickVideoFile = (file: File | null) => {
-    if (!file) return;
+  const attachLocalVideoFile = (file: File, restored = false) => {
     setVideoFile(file);
     setPendingDriveFile(null);
     setVideoFilename(file.name);
@@ -890,11 +941,61 @@ export default function PriseStatsProPage() {
     setVideoProvider('local');
     videoProviderRef.current = 'local';
     setVideoStatus('ready');
+    restoredVideoRef.current = { provider: 'local', filename: file.name };
+    if (!restored) requestInitialVideoSync();
+  };
 
-    // Dès qu'une vidéo est insérée, on demande son calage sur le match.
-    // Si elle est choisie dans le setup, la fenêtre s'ouvrira juste après
-    // DÉMARRER LE MATCH.
-    requestInitialVideoSync();
+  const onPickVideoFile = (file: File | null) => {
+    if (!file) return;
+    attachLocalVideoFile(file, false);
+  };
+
+  const pickLocalVideoSmart = async () => {
+    const picker = (window as any).showOpenFilePicker as
+      | ((options?: any) => Promise<MyBasketLocalFileHandle[]>)
+      | undefined;
+    if (picker) {
+      try {
+        const [handle] = await picker({
+          multiple: false,
+          types: [{ description: 'Vidéo', accept: { 'video/*': ['.mp4', '.mov', '.m4v', '.webm'] } }],
+        });
+        if (!handle) return;
+        const file = await handle.getFile();
+        await saveLocalVideoHandle(localVideoHandleKey(activeTeamId || teamId || 'setup', file.name), handle);
+        attachLocalVideoFile(file, false);
+        return;
+      } catch (error: any) {
+        if (error?.name === 'AbortError') return;
+      }
+    }
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = 'video/*';
+    input.onchange = () => onPickVideoFile(input.files?.[0] ?? null);
+    input.click();
+  };
+
+  const tryRestoreLocalVideo = async (tId: string, filename: string, askPermission = false) => {
+    if (!filename) return false;
+    const handle = await readLocalVideoHandle(localVideoHandleKey(tId, filename));
+    if (!handle) return false;
+    try {
+      let permission = handle.queryPermission ? await handle.queryPermission({ mode: 'read' }) : 'granted';
+      if (permission !== 'granted' && askPermission && handle.requestPermission) {
+        permission = await handle.requestPermission({ mode: 'read' });
+      }
+      if (permission !== 'granted') return false;
+      const file = await handle.getFile();
+      attachLocalVideoFile(file, true);
+      return true;
+    } catch { return false; }
+  };
+
+  const reconnectLocalVideo = async () => {
+    const restored = await tryRestoreLocalVideo(activeTeamId || teamId || 'setup', videoFilename, true);
+    if (restored) { flash('Vidéo locale retrouvée ✓'); return; }
+    await pickLocalVideoSmart();
   };
 
 
@@ -1589,14 +1690,12 @@ export default function PriseStatsProPage() {
         setVideoUrl('');
         videoProviderRef.current = 'none';
         if (provider === 'local') {
-          // Le fichier local n'est pas rattachable automatiquement (blob URL
-          // non persistable), mais on MÉMORISE qu'une vidéo locale existait
-          // pour que l'auto-sauvegarde ne l'efface pas définitivement.
-          restoredVideoRef.current = {
-            provider: 'local',
-            filename: String(s.videoFilename || ''),
-          };
-          flash('Projet restauré. Resélectionne le fichier vidéo local — le décalage de synchronisation sera réappliqué automatiquement.');
+          const restoredFilename = String(s.videoFilename || '');
+          restoredVideoRef.current = { provider: 'local', filename: restoredFilename };
+          void tryRestoreLocalVideo(team.id, restoredFilename, false).then((found) => {
+            if (found) flash('Projet restauré · vidéo locale retrouvée automatiquement ✓');
+            else flash('Projet restauré · utilise « Retrouver la vidéo » si nécessaire.');
+          });
         }
       }
 
@@ -1991,6 +2090,127 @@ export default function PriseStatsProPage() {
   const [montageId, setMontageId] = useState<string | null>(null);      // montage en cours d'édition (null = nouveau)
   const [savedMontages, setSavedMontages] = useState<{ id: string; title: string; coach_note: string | null }[]>([]);
   const [montageLoading, setMontageLoading] = useState(false);
+  const [montageLibrarySearch, setMontageLibrarySearch] = useState('');
+  const [montageLibrarySide, setMontageLibrarySide] = useState<'all' | 'attaque' | 'defense'>('all');
+  const [montageLibraryPlayer, setMontageLibraryPlayer] = useState('all');
+  const [montageLibrarySystem, setMontageLibrarySystem] = useState('all');
+  const [montageLibraryTf, setMontageLibraryTf] = useState('all');
+  const [montageLibraryResult, setMontageLibraryResult] = useState<'all' | 'made' | 'missed'>('all');
+  const [montageLibraryPct, setMontageLibraryPct] = useState(24);
+  const [montagePropsPct, setMontagePropsPct] = useState(23);
+  const [montagePreviewPct, setMontagePreviewPct] = useState(56);
+  const montagePreviewRef = useRef<HTMLVideoElement | null>(null);
+  const [montageMediaDuration, setMontageMediaDuration] = useState(0);
+  const [montagePlayIndex, setMontagePlayIndex] = useState<number | null>(null);
+  const [montagePlayAll, setMontagePlayAll] = useState(false);
+  const [montagePlayNonce, setMontagePlayNonce] = useState(0);
+
+  const montageActionForItem = (item: { caid: string } | null | undefined) =>
+    item ? actions.find((a) => a.id === item.caid) ?? null : null;
+
+  const beginMontageResize = (side: 'library' | 'props', event: any) => {
+    event.preventDefault();
+    const root = event.currentTarget?.parentElement as HTMLElement | null;
+    if (!root) return;
+    const rect = root.getBoundingClientRect();
+    const startX = Number(event.clientX);
+    const startLibrary = montageLibraryPct;
+    const startProps = montagePropsPct;
+    const onMove = (e: PointerEvent) => {
+      const deltaPct = ((e.clientX - startX) / Math.max(1, rect.width)) * 100;
+      if (side === 'library') setMontageLibraryPct(Math.max(16, Math.min(38, startLibrary + deltaPct)));
+      else setMontagePropsPct(Math.max(17, Math.min(36, startProps - deltaPct)));
+    };
+    const onUp = () => {
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', onUp);
+    };
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('pointerup', onUp);
+  };
+
+  const beginMontageVerticalResize = (event: any) => {
+    event.preventDefault();
+    const root = event.currentTarget?.parentElement as HTMLElement | null;
+    if (!root) return;
+    const rect = root.getBoundingClientRect();
+    const startY = Number(event.clientY);
+    const startPreview = montagePreviewPct;
+
+    const onMove = (e: PointerEvent) => {
+      const deltaPct = ((e.clientY - startY) / Math.max(1, rect.height)) * 100;
+      setMontagePreviewPct(Math.max(34, Math.min(72, startPreview + deltaPct)));
+    };
+
+    const onUp = () => {
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', onUp);
+    };
+
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('pointerup', onUp);
+  };
+
+  const startMontagePlayback = (index: number, all: boolean) => {
+    if (!montageItems[index]) return;
+    setMontageSel(montageItems[index].caid);
+    setMontagePlayIndex(index);
+    setMontagePlayAll(all);
+    setMontagePlayNonce((n) => n + 1);
+  };
+
+  const stopMontagePlayback = () => {
+    montagePreviewRef.current?.pause();
+    setMontagePlayAll(false);
+    setMontagePlayIndex(null);
+  };
+
+  useEffect(() => {
+    if (montagePlayIndex == null) return;
+    const item = montageItems[montagePlayIndex];
+    if (!item) { setMontagePlayAll(false); setMontagePlayIndex(null); return; }
+    setMontageSel(item.caid);
+    const action = montageActionForItem(item);
+
+    if (!action) {
+      if (!montagePlayAll) return;
+      const timer = window.setTimeout(() => {
+        if (montagePlayIndex < montageItems.length - 1) {
+          setMontagePlayIndex((i) => i == null ? null : i + 1);
+          setMontagePlayNonce((n) => n + 1);
+        } else {
+          setMontagePlayAll(false);
+          setMontagePlayIndex(null);
+        }
+      }, 2000);
+      return () => window.clearTimeout(timer);
+    }
+
+    const v = montagePreviewRef.current;
+    if (!v || !videoUrl || (videoProvider !== 'local' && videoProvider !== 'google_drive')) return;
+    const bounds = resolveActionClipBounds(action, videoSyncRef.current);
+    const start = Math.max(0, Number(item.clipStart ?? bounds.start ?? action.videoTime ?? 0));
+    const end = Math.max(start + .1, Number(item.clipEnd ?? bounds.end ?? (start + 4)));
+
+    const onTick = () => {
+      if (v.currentTime < end - .03) return;
+      v.removeEventListener('timeupdate', onTick);
+      if (montagePlayAll && montagePlayIndex < montageItems.length - 1) {
+        setMontagePlayIndex((i) => i == null ? null : i + 1);
+        setMontagePlayNonce((n) => n + 1);
+      } else {
+        v.pause();
+        setMontagePlayAll(false);
+      }
+    };
+    try {
+      v.currentTime = start;
+      v.addEventListener('timeupdate', onTick);
+      v.play().catch(() => {});
+    } catch { /* noop */ }
+    return () => v.removeEventListener('timeupdate', onTick);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [montagePlayNonce, montagePlayIndex, montagePlayAll, videoUrl]);
 
   const addToMontage = (a: StatA) => {
     const p = find(a.playerId);
@@ -5817,10 +6037,9 @@ export default function PriseStatsProPage() {
   const VideoReselectBanner = () => needsLocalVideo ? (
     <div className="vid-reselect">
       <span>🎥 Vidéo requise : <b>{videoFilename}</b></span>
-      <label className="vid-reselect-btn">
-        Resélectionner la vidéo
-        <input type="file" accept="video/*" onChange={(e) => onPickVideoFile(e.target.files?.[0] ?? null)} />
-      </label>
+      <button type="button" className="vid-reselect-btn" onClick={() => void reconnectLocalVideo()}>
+        Retrouver la vidéo
+      </button>
     </div>
   ) : null;
 
@@ -5935,7 +6154,7 @@ export default function PriseStatsProPage() {
                     <div className="vempty-tt">Ajouter une vidéo</div>
                     <div className="vempty-sub">Le codage fonctionne sans vidéo — synchronisable après le match.</div>
                     <div className="vempty-btns">
-                      <label className="vbtn"><input type="file" accept="video/*" onChange={(e) => onPickVideoFile(e.target.files?.[0] ?? null)} />📁 Fichier</label>
+                      <button type="button" className="vbtn" onClick={() => void pickLocalVideoSmart()}>📁 Fichier</button>
                       {isSupabaseUuid(String(selTeam?.id || activeTeamId || teamId || '').trim()) && (
                         <GoogleDriveVideoPicker
                           teamId={String(selTeam?.id || activeTeamId || teamId || '').trim()}
@@ -7144,103 +7363,324 @@ export default function PriseStatsProPage() {
 
   function renderMontage() {
     const sel = montageItems.find((x) => x.caid === montageSel) || null;
+    const selIndex = sel ? montageItems.findIndex((x) => x.caid === sel.caid) : -1;
+    const selAction = montageActionForItem(sel);
     const inMontage = new Set(montageItems.map((x) => x.caid));
-    // Bibliothèque : actions codées disponibles (clip vidéo prioritaire), non déjà ajoutées.
-    const library = actions.filter((a) => !inMontage.has(a.id));
+    const systemOf = (a: StatA) =>
+      String((a as any).systemeName || (a as any).systemeSlot || (a as any).systemeJeu || '').trim();
+
+    const libraryBase = actions.filter((a) => !inMontage.has(a.id));
+    const query = montageLibrarySearch.trim().toLowerCase();
+    const library = libraryBase.filter((a) => {
+      const p = find(a.playerId);
+      const haystack = [p?.name, p?.num, a.clock, periodLabel(a.q), tags.label(a.tempsFort), systemOf(a), describe(a, find).t, a.shotType, a.shotResult]
+        .filter(Boolean).join(' ').toLowerCase();
+      return (!query || haystack.includes(query))
+        && (montageLibrarySide === 'all' || a.context === montageLibrarySide)
+        && (montageLibraryPlayer === 'all' || a.playerId === montageLibraryPlayer)
+        && (montageLibrarySystem === 'all' || systemOf(a) === montageLibrarySystem)
+        && (montageLibraryTf === 'all' || a.tempsFort === montageLibraryTf)
+        && (montageLibraryResult === 'all' || a.shotResult === montageLibraryResult);
+    });
+    const systems = Array.from(new Set(libraryBase.map(systemOf).filter(Boolean))).sort();
+    const tfValues = Array.from(new Set(libraryBase.map((a) => a.tempsFort).filter(Boolean))) as string[];
+
+    const selBounds = selAction ? resolveActionClipBounds(selAction, videoSync) : { start: null, end: null };
+    const selectedStart = Number(sel?.clipStart ?? selBounds.start ?? 0);
+    const selectedEnd = Number(sel?.clipEnd ?? selBounds.end ?? selectedStart + 6);
+    const trimMin = Math.max(0, Math.floor(selectedStart - 15));
+    const trimMax = montageMediaDuration > 0 ? montageMediaDuration : Math.max(selectedEnd + 15, trimMin + 30);
+    const trimSpan = Math.max(0.1, trimMax - trimMin);
+    const trimStartPct = Math.max(0, Math.min(100, ((selectedStart - trimMin) / trimSpan) * 100));
+    const trimEndPct = Math.max(trimStartPct, Math.min(100, ((selectedEnd - trimMin) / trimSpan) * 100));
+    const trimDuration = Math.max(0, selectedEnd - selectedStart);
+
+    const nudgeSelectedTrim = (which: 'start' | 'end', delta: number) => {
+      if (!sel) return;
+      if (which === 'start') {
+        const next = Math.max(trimMin, Math.min(selectedEnd - 0.1, selectedStart + delta));
+        updateMontageItem(sel.caid, { clipStart: next });
+        const v = montagePreviewRef.current;
+        if (v) v.currentTime = next;
+      } else {
+        const next = Math.min(trimMax, Math.max(selectedStart + 0.1, selectedEnd + delta));
+        updateMontageItem(sel.caid, { clipEnd: next });
+        const v = montagePreviewRef.current;
+        if (v) v.currentTime = next;
+      }
+    };
+
+    const beginTrimHandleDrag = (which: 'start' | 'end', event: any) => {
+      if (!sel) return;
+      event.preventDefault();
+      event.stopPropagation();
+
+      const track = event.currentTarget?.parentElement as HTMLElement | null;
+      if (!track) return;
+      const rect = track.getBoundingClientRect();
+
+      const setFromX = (clientX: number) => {
+        const ratio = Math.max(0, Math.min(1, (clientX - rect.left) / Math.max(1, rect.width)));
+        const raw = trimMin + ratio * trimSpan;
+        const value = Math.round(raw * 10) / 10;
+
+        if (which === 'start') {
+          const next = Math.max(trimMin, Math.min(selectedEnd - 0.1, value));
+          updateMontageItem(sel.caid, { clipStart: next });
+          const v = montagePreviewRef.current;
+          if (v) v.currentTime = next;
+        } else {
+          const next = Math.min(trimMax, Math.max(selectedStart + 0.1, value));
+          updateMontageItem(sel.caid, { clipEnd: next });
+          const v = montagePreviewRef.current;
+          if (v) v.currentTime = next;
+        }
+      };
+
+      setFromX(Number(event.clientX));
+
+      const onMove = (e: PointerEvent) => setFromX(e.clientX);
+      const onUp = () => {
+        window.removeEventListener('pointermove', onMove);
+        window.removeEventListener('pointerup', onUp);
+      };
+
+      window.addEventListener('pointermove', onMove);
+      window.addEventListener('pointerup', onUp);
+    };
+
+    const previewItem = montagePlayIndex != null ? (montageItems[montagePlayIndex] ?? sel) : sel;
+    const previewAction = montageActionForItem(previewItem);
+    const canPreview = !!previewAction && !!videoUrl && (videoProvider === 'local' || videoProvider === 'google_drive');
+
     return (
-      <div className="mo3">
-        {/* ---------- GAUCHE · Bibliothèque de clips ---------- */}
-        <div className="mo-col">
-          <div className="mo-col-h">Bibliothèque · {library.length} clip{library.length > 1 ? 's' : ''}</div>
-          <div className="mo-col-b">
-            {library.length === 0
-              ? <div className="hist-empty">Toutes les actions codées sont déjà dans le montage.</div>
-              : library.slice().reverse().map((a) => {
-                const p = find(a.playerId);
-                return (
-                  <div className="mo-lib" key={a.id}>
-                    <div className="mo-lib-tx">
-                      <b>{tags.emoji(a.tempsFort)} {tags.label(a.tempsFort)}</b>
-                      <small>{periodLabel(a.q)} {a.clock}{p ? ` · #${p.num}` : ''} · {describe(a, find).t}</small>
-                    </div>
-                    <button className="mo-lib-add" onClick={() => addToMontage(a)} title="Ajouter au montage">＋</button>
+      <div className="mo-studio" style={{ gridTemplateColumns: `${montageLibraryPct}% 7px minmax(0,1fr) 7px ${montagePropsPct}%` }}>
+        <section className="mo-pane mo-library-pane">
+          <div className="mo-pane-head">
+            <div><b>Bibliothèque</b><span>{library.length} / {libraryBase.length} clips</span></div>
+            <button className="mo-filter-reset" onClick={() => {
+              setMontageLibrarySearch(''); setMontageLibrarySide('all'); setMontageLibraryPlayer('all');
+              setMontageLibrarySystem('all'); setMontageLibraryTf('all'); setMontageLibraryResult('all');
+            }}>Réinitialiser</button>
+          </div>
+          <div className="mo-library-filters">
+            <input className="mo-search" value={montageLibrarySearch} onChange={(e) => setMontageLibrarySearch(e.target.value)} placeholder="🔎 Joueur, système, temps fort…" />
+            <div className="mo-filter-grid">
+              <select value={montageLibrarySide} onChange={(e) => setMontageLibrarySide(e.target.value as any)}>
+                <option value="all">Attaque + Défense</option><option value="attaque">Attaque</option><option value="defense">Défense</option>
+              </select>
+              <select value={montageLibraryPlayer} onChange={(e) => setMontageLibraryPlayer(e.target.value)}>
+                <option value="all">Tous les joueurs</option>
+                {roster.map((p) => <option key={p.id} value={p.id}>#{p.num} {p.name}</option>)}
+              </select>
+              <select value={montageLibrarySystem} onChange={(e) => setMontageLibrarySystem(e.target.value)}>
+                <option value="all">Tous les systèmes</option>{systems.map((v) => <option key={v} value={v}>{v}</option>)}
+              </select>
+              <select value={montageLibraryTf} onChange={(e) => setMontageLibraryTf(e.target.value)}>
+                <option value="all">Tous les temps forts</option>{tfValues.map((v) => <option key={v} value={v}>{tags.label(v)}</option>)}
+              </select>
+              <select value={montageLibraryResult} onChange={(e) => setMontageLibraryResult(e.target.value as any)}>
+                <option value="all">Tous les résultats</option><option value="made">Marqués</option><option value="missed">Ratés</option>
+              </select>
+            </div>
+          </div>
+          <div className="mo-library-list">
+            {library.length === 0 ? <div className="mo-empty">Aucun clip avec ces filtres.</div> : library.slice().reverse().map((a) => {
+              const p = find(a.playerId);
+              const b = resolveActionClipBounds(a, videoSync);
+              const duration = Math.max(0, Number(b.end ?? 0) - Number(b.start ?? 0));
+              return (
+                <article className="mo-clip-card" key={a.id}>
+                  <div className="mo-clip-meta">
+                    <span className={`mo-context ${a.context === 'defense' ? 'def' : 'att'}`}>{a.context === 'defense' ? 'DÉF' : 'ATT'}</span>
+                    <span>{periodLabel(a.q)} · {a.clock}</span>{duration > 0 && <span>{duration.toFixed(1)} s</span>}
                   </div>
-                );
-              })}
+                  <b>{tags.label(a.tempsFort) || describe(a, find).t}</b>
+                  <small>{[systemOf(a), p ? `#${p.num} ${p.name}` : null, describe(a, find).t].filter(Boolean).join(' · ')}</small>
+                  <div className="mo-clip-actions">
+                    <button onClick={() => openClipModal('Aperçu clip', [a], 0)}>▶ Voir</button>
+                    <button className="primary" onClick={() => addToMontage(a)}>＋ Ajouter</button>
+                  </div>
+                </article>
+              );
+            })}
           </div>
-        </div>
+        </section>
 
-        {/* ---------- CENTRE · Storyboard (montage final) ---------- */}
-        <div className="mo-col">
-          <div className="mo-col-h">
-            <select className="mo-pick" value={montageId ?? ''} onChange={(e) => { const v = e.target.value; if (v) loadMontage(v); else newMontage(); }}>
-              <option value="">➕ Nouveau montage</option>
-              {savedMontages.map((m) => <option key={m.id} value={m.id}>{m.title || 'Montage'}</option>)}
-            </select>
-            <button className="mo-new" onClick={newMontage} title="Repartir d'un montage vierge">Nouveau</button>
-            {montageLoading && <span className="mo-badge">⏳</span>}
+        <div className="mo-resizer" onPointerDown={(e) => beginMontageResize('library', e)} />
+
+        <section className="mo-pane mo-center-pane">
+          <div className="mo-center-toolbar">
+            <div className="mo-project-pick">
+              <select value={montageId ?? ''} onChange={(e) => { const v = e.target.value; if (v) loadMontage(v); else newMontage(); }}>
+                <option value="">➕ Nouveau montage</option>{savedMontages.map((m) => <option key={m.id} value={m.id}>{m.title || 'Montage'}</option>)}
+              </select>
+              <button onClick={newMontage}>Nouveau</button>
+            </div>
+            <div className="mo-play-tools">
+              <button disabled={selIndex < 0 || !selAction} onClick={() => selIndex >= 0 && startMontagePlayback(selIndex, false)}>▶ Clip</button>
+              <button className="primary" disabled={!montageItems.length} onClick={() => startMontagePlayback(0, true)}>▶▶ Lire tout le montage</button>
+              <button disabled={montagePlayIndex == null} onClick={stopMontagePlayback}>■ Stop</button>
+            </div>
           </div>
-          <div className="mo-col-b">
-            {montageItems.length === 0
-              ? <div className="hist-empty">Ajoute des clips depuis la bibliothèque (＋), la popup clip (⭐), l'Historique ou la Matrice.</div>
-              : montageItems.map((it, idx) => (
-                <div className={`mo-item ${montageSel === it.caid ? 'sel' : ''}`} key={it.caid} onClick={() => setMontageSel(it.caid)}>
-                  <span className="mo-num">{idx + 1}</span>
-                  <div className="mo-body"><b>{it.label}</b><small>{it.sub}</small></div>
-                  <div className="mo-ctrl">
-                    <button disabled={idx === 0} onClick={(e) => { e.stopPropagation(); moveMontageItem(idx, -1); }}>▲</button>
-                    <button disabled={idx === montageItems.length - 1} onClick={(e) => { e.stopPropagation(); moveMontageItem(idx, 1); }}>▼</button>
-                    <button className="rm" onClick={(e) => { e.stopPropagation(); removeMontageItem(it.caid); if (montageSel === it.caid) setMontageSel(null); }}>✕</button>
+
+          <div className="mo-preview-shell" style={{ flexBasis: `${montagePreviewPct}%` }}>
+            {canPreview ? (
+              <video ref={montagePreviewRef} className="mo-preview-video" src={videoUrl} controls playsInline
+                onLoadedMetadata={(e) => setMontageMediaDuration(Number.isFinite(e.currentTarget.duration) ? e.currentTarget.duration : 0)} />
+            ) : previewItem ? (
+              <div className="mo-preview-placeholder"><strong>{previewItem.label}</strong><span>{previewAction ? 'Retrouve la vidéo source pour lire ce clip.' : 'Élément graphique du montage'}</span></div>
+            ) : (
+              <div className="mo-preview-placeholder"><strong>Sélectionne un élément</strong><span>La vidéo restera toujours entière et s’adaptera à la taille des panneaux.</span></div>
+            )}
+            <div className="mo-preview-status">
+              <span>{montagePlayAll ? '▶ Montage complet' : montagePlayIndex != null ? '▶ Clip' : 'Aperçu'}</span>
+              {previewItem && <b>{previewItem.label}</b>}{montagePlayIndex != null && <em>{montagePlayIndex + 1}/{montageItems.length}</em>}
+            </div>
+          </div>
+
+          <div
+            className="mo-row-resizer"
+            onPointerDown={beginMontageVerticalResize}
+            title="Faire glisser pour agrandir/rétrécir la vidéo"
+          >
+            <span />
+          </div>
+
+          <div className="mo-story-head">
+            <div><b>Storyboard</b><span>{montageItems.length} élément{montageItems.length > 1 ? 's' : ''}</span></div>
+            <div className="mo-add"><button onClick={() => addMontageElement('image')}>🖼 Image</button><button onClick={() => addMontageElement('slide')}>▣ Diapo</button><button onClick={() => addMontageElement('text')}>T Texte</button></div>
+          </div>
+          <div className="mo-storyboard">
+            {montageItems.length === 0 ? <div className="mo-empty">Ajoute des clips depuis la bibliothèque.</div> : montageItems.map((it, idx) => {
+              const action = montageActionForItem(it);
+              return (
+                <div className={`mo-story-item ${montageSel === it.caid ? 'sel' : ''} ${montagePlayIndex === idx ? 'playing' : ''}`} key={it.caid}
+                  onClick={() => { setMontageSel(it.caid); setMontagePlayIndex(null); setMontagePlayAll(false); }}>
+                  <span className="mo-story-num">{idx + 1}</span>
+                  <div className="mo-story-type">{action ? '🎬' : it.caid.startsWith('image_') ? '🖼' : it.caid.startsWith('text_') ? 'T' : '▣'}</div>
+                  <div className="mo-story-body"><b>{it.label}</b><small>{it.sub || 'Élément'}</small></div>
+                  {action && <button className="mo-story-play" onClick={(e) => { e.stopPropagation(); startMontagePlayback(idx, false); }}>▶</button>}
+                  <div className="mo-story-move">
+                    <button disabled={idx === 0} onClick={(e) => { e.stopPropagation(); moveMontageItem(idx, -1); }}>←</button>
+                    <button disabled={idx === montageItems.length - 1} onClick={(e) => { e.stopPropagation(); moveMontageItem(idx, 1); }}>→</button>
+                    <button className="rm" onClick={(e) => { e.stopPropagation(); removeMontageItem(it.caid); if (montageSel === it.caid) setMontageSel(null); }}>×</button>
                   </div>
                 </div>
-              ))}
+              );
+            })}
           </div>
-          <div className="mo-add">
-            <button onClick={() => addMontageElement('image')}>🖼 Image</button>
-            <button onClick={() => addMontageElement('slide')}>🟥 Diapo</button>
-            <button onClick={() => addMontageElement('text')}>✎ Texte</button>
-          </div>
-        </div>
+        </section>
 
-        {/* ---------- DROITE · Propriétés ---------- */}
-        <div className="mo-col mo-props">
-          <div className="mo-col-h">Propriétés</div>
-          <div className="mo-col-b">
-            {/* Propriétés du montage */}
-            <label className="mo-f">Titre du montage
-              <input value={montageTitle} onChange={(e) => setMontageTitle(e.target.value)} placeholder="Thème, joueur, temps fort…" />
-            </label>
-            <label className="mo-f">Note coach (montage)
-              <textarea value={montageNote} onChange={(e) => setMontageNote(e.target.value)} placeholder="Note coach…" />
-            </label>
+        <div className="mo-resizer" onPointerDown={(e) => beginMontageResize('props', e)} />
+
+        <aside className="mo-pane mo-props-pane">
+          <div className="mo-pane-head"><div><b>Propriétés</b><span>Montage & séquence</span></div></div>
+          <div className="mo-props-scroll">
+            <label className="mo-f">Titre du montage<input value={montageTitle} onChange={(e) => setMontageTitle(e.target.value)} /></label>
+            <label className="mo-f">Note coach<textarea value={montageNote} onChange={(e) => setMontageNote(e.target.value)} placeholder="Objectif du montage…" /></label>
             <div className="mo-sep" />
-            {/* Propriétés de l'élément sélectionné */}
-            {sel ? (
-              <>
-                <div className="mo-f-h">Élément sélectionné</div>
-                <label className="mo-f">Titre
-                  <input value={sel.label} onChange={(e) => updateMontageItem(sel.caid, { label: e.target.value })} />
-                </label>
-                <label className="mo-f">Note
-                  <textarea value={sel.note} onChange={(e) => updateMontageItem(sel.caid, { note: e.target.value })} placeholder="Note sur cet élément…" />
-                </label>
-                <div className="mo-frow">
-                  <label className="mo-f">Début (s)
-                    <input type="number" value={sel.clipStart ?? ''} onChange={(e) => updateMontageItem(sel.caid, { clipStart: e.target.value === '' ? null : Number(e.target.value) })} />
-                  </label>
-                  <label className="mo-f">Fin (s)
-                    <input type="number" value={sel.clipEnd ?? ''} onChange={(e) => updateMontageItem(sel.caid, { clipEnd: e.target.value === '' ? null : Number(e.target.value) })} />
-                  </label>
+            {sel ? <>
+              <div className="mo-props-title"><span>Élément sélectionné</span>{selAction && <button onClick={() => openClipModal('Modifier la séquence', [selAction], 0)}>⛶ Ouvrir</button>}</div>
+              <label className="mo-f">Titre<input value={sel.label} onChange={(e) => updateMontageItem(sel.caid, { label: e.target.value })} /></label>
+              <label className="mo-f">Note<textarea value={sel.note} onChange={(e) => updateMontageItem(sel.caid, { note: e.target.value })} /></label>
+              {selAction && <div className="mo-trim-editor">
+                <div className="mo-trim-head">
+                  <b>Plage de la séquence</b>
+                  <span>Fais glisser les crochets jaunes pour choisir exactement ce qui sera gardé.</span>
                 </div>
-              </>
-            ) : <div className="tip">Sélectionne un élément du storyboard pour éditer ses propriétés.</div>}
+
+                <div className="mo-trim-values">
+                  <div><span>Début</span><b>{fmt(Math.round(selectedStart))}</b></div>
+                  <div><span>Fin</span><b>{fmt(Math.round(selectedEnd))}</b></div>
+                  <div><span>Durée</span><b>{trimDuration.toFixed(1)} s</b></div>
+                </div>
+
+                <div className="mo-trim-film" aria-label="Rognage de la séquence">
+                  <div className="mo-trim-filmframes">
+                    {Array.from({ length: 9 }).map((_, index) => (
+                      <span key={index} className="mo-trim-frame">
+                        <i>{index % 3 === 0 ? '🏀' : ''}</i>
+                      </span>
+                    ))}
+                  </div>
+
+                  <div
+                    className="mo-trim-dim left"
+                    style={{ width: `${trimStartPct}%` }}
+                  />
+                  <div
+                    className="mo-trim-selected"
+                    style={{
+                      left: `${trimStartPct}%`,
+                      width: `${Math.max(0, trimEndPct - trimStartPct)}%`,
+                    }}
+                  />
+                  <div
+                    className="mo-trim-dim right"
+                    style={{ left: `${trimEndPct}%` }}
+                  />
+
+                  <button
+                    type="button"
+                    className="mo-trim-handle start"
+                    style={{ left: `${trimStartPct}%` }}
+                    onPointerDown={(e) => beginTrimHandleDrag('start', e)}
+                    title="Début du clip"
+                  >
+                    <span>[</span>
+                  </button>
+                  <button
+                    type="button"
+                    className="mo-trim-handle end"
+                    style={{ left: `${trimEndPct}%` }}
+                    onPointerDown={(e) => beginTrimHandleDrag('end', e)}
+                    title="Fin du clip"
+                  >
+                    <span>]</span>
+                  </button>
+                </div>
+
+                <div className="mo-trim-scale">
+                  <span>{fmt(Math.round(trimMin))}</span>
+                  <span>{fmt(Math.round(trimMax))}</span>
+                </div>
+
+                <div className="mo-trim-nudges">
+                  <div>
+                    <span>Début</span>
+                    <button onClick={() => nudgeSelectedTrim('start', -1)}>−1 s</button>
+                    <button onClick={() => nudgeSelectedTrim('start', -0.1)}>−0,1</button>
+                    <button onClick={() => nudgeSelectedTrim('start', 0.1)}>+0,1</button>
+                    <button onClick={() => nudgeSelectedTrim('start', 1)}>+1 s</button>
+                  </div>
+                  <div>
+                    <span>Fin</span>
+                    <button onClick={() => nudgeSelectedTrim('end', -1)}>−1 s</button>
+                    <button onClick={() => nudgeSelectedTrim('end', -0.1)}>−0,1</button>
+                    <button onClick={() => nudgeSelectedTrim('end', 0.1)}>+0,1</button>
+                    <button onClick={() => nudgeSelectedTrim('end', 1)}>+1 s</button>
+                  </div>
+                </div>
+
+                <div className="mo-trim-actions">
+                  <button onClick={() => updateMontageItem(sel.caid, {
+                    clipStart: selBounds.start ?? sel.clipStart,
+                    clipEnd: selBounds.end ?? sel.clipEnd,
+                  })}>↺ Bornes auto</button>
+                  <button
+                    className="primary"
+                    onClick={() => selIndex >= 0 && startMontagePlayback(selIndex, false)}
+                  >▶ Tester la séquence</button>
+                </div>
+              </div>}
+            </> : <div className="mo-empty compact">Sélectionne un élément du storyboard.</div>}
           </div>
-          <div className="mo-foot">
-            <span className="mo-badge">🎬 {montageItems.length} clip{montageItems.length > 1 ? 's' : ''}</span>
-            <button className="mo-save" disabled={montageSaving || !montageItems.length} onClick={saveMontage}>{montageSaving ? '⏳ …' : (montageId ? '💾 Enregistrer les modifs' : '💾 Enregistrer')}</button>
-            <button className="mo-export" disabled title="Bientôt disponible">⬇ Export vidéo (à venir)</button>
+          <div className="mo-savebar"><span>{montageItems.length} élément{montageItems.length > 1 ? 's' : ''}</span>
+            <button className="primary" disabled={montageSaving || !montageItems.length} onClick={saveMontage}>{montageSaving ? '⏳ …' : '💾 Enregistrer'}</button>
+            <button className="mo-export" disabled>⬇ Export</button>
           </div>
-        </div>
+        </aside>
       </div>
     );
   }
@@ -9205,30 +9645,30 @@ function Style() {
       .mo-ctrl button:disabled { opacity: .35; cursor: not-allowed; }
       .mo-ctrl .rm { color: var(--red); border-color: #e6b9b9; }
 
-      /* Bloc 6 · Montage 3 colonnes (bibliothèque / storyboard / propriétés) */
-      .mo3 { flex: 1; min-height: 0; display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; padding: 8px; overflow: hidden; }
-      .mo-col { min-height: 0; display: flex; flex-direction: column; border: 1px solid var(--border); border-radius: 10px; background: var(--panel); overflow: hidden; }
-      .mo-col-h { flex: 0 0 auto; display: flex; align-items: center; gap: 6px; padding: 7px 9px; border-bottom: 1px solid var(--border); font-size: 11.5px; font-weight: 800; color: var(--mute); }
-      .mo-col-b { flex: 1; min-height: 0; overflow-y: auto; padding: 7px; display: flex; flex-direction: column; gap: 6px; }
-      .mo-lib { display: grid; grid-template-columns: minmax(0,1fr) 30px; align-items: center; gap: 6px; border: 1px solid var(--border); border-radius: 8px; padding: 6px 8px; background: var(--card); }
-      .mo-lib-tx { min-width: 0; display: grid; gap: 2px; }
-      .mo-lib-tx b { font-size: 12px; } .mo-lib-tx small { font-size: 10.5px; color: var(--mute); }
-      .mo-lib-add { width: 28px; height: 28px; border-radius: 7px; border: 1px solid var(--gold); background: rgba(212,162,76,.14); color: var(--gold); font-size: 16px; font-weight: 900; cursor: pointer; }
-      .mo-pick { flex: 1; min-width: 0; border: 1px solid var(--border); border-radius: 8px; padding: 6px 8px; font: inherit; font-size: 12px; background: var(--card); color: var(--txt); }
-      .mo-item { cursor: pointer; }
-      .mo-item.sel { border-color: var(--gold); box-shadow: 0 0 0 1px var(--gold) inset; }
-      .mo-add { flex: 0 0 auto; display: flex; gap: 5px; padding: 7px; border-top: 1px solid var(--border); }
-      .mo-add button { flex: 1; border: 1px solid var(--border); background: var(--card); color: var(--txt); border-radius: 7px; padding: 7px 4px; font-size: 11.5px; font-weight: 800; cursor: pointer; }
-      .mo-props .mo-col-b { gap: 8px; }
-      .mo-f { display: flex; flex-direction: column; gap: 4px; font-size: 10.5px; font-weight: 800; color: var(--mute); }
-      .mo-f input, .mo-f textarea { border: 1px solid var(--border); border-radius: 7px; padding: 6px 8px; font: inherit; font-size: 12.5px; font-weight: 600; background: var(--card); color: var(--txt); }
-      .mo-f textarea { min-height: 44px; resize: vertical; }
-      .mo-f-h { font-size: 11px; font-weight: 800; color: var(--gold); text-transform: uppercase; letter-spacing: .04em; }
-      .mo-frow { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
-      .mo-sep { height: 1px; background: var(--border); margin: 2px 0; }
-      .mo-foot { flex: 0 0 auto; display: flex; align-items: center; gap: 6px; flex-wrap: wrap; padding: 7px; border-top: 1px solid var(--border); }
-      .mo-export { border: 1px solid var(--border); background: var(--panel); color: var(--mute); border-radius: 8px; padding: 7px 10px; font-size: 11.5px; font-weight: 800; opacity: .55; cursor: not-allowed; }
-      @media (max-width: 900px) { .mo3 { grid-template-columns: 1fr; overflow-y: auto; } .mo-col { min-height: 160px; } }
+      /* Montage Studio V2 */
+      .mo-studio{flex:1;min-height:0;display:grid;gap:0;padding:8px;overflow:hidden;background:#090c13}
+      .mo-pane{min-width:0;min-height:0;display:flex;flex-direction:column;background:#111722;border:1px solid #273044;border-radius:12px;overflow:hidden;color:#eef2f8}
+      .mo-resizer{cursor:col-resize;position:relative;touch-action:none}.mo-resizer:after{content:'';position:absolute;top:12px;bottom:12px;left:3px;width:2px;border-radius:9px;background:#3a455d}.mo-resizer:hover:after{background:#d4a24c;width:3px}
+      .mo-pane-head{min-height:52px;padding:10px 12px;border-bottom:1px solid #273044;display:flex;align-items:center;gap:10px;justify-content:space-between;background:#151c29}.mo-pane-head>div{display:grid;gap:2px}.mo-pane-head b{font-size:13px;color:#fff}.mo-pane-head span{font-size:10.5px;color:#8995aa}
+      .mo-filter-reset{border:0;background:transparent;color:#d4a24c;font-size:10.5px;font-weight:800;cursor:pointer}.mo-library-filters{padding:9px;display:grid;gap:7px;border-bottom:1px solid #273044;background:#0e141e}
+      .mo-search,.mo-filter-grid select,.mo-project-pick select{width:100%;border:1px solid #2e394f;border-radius:8px;padding:7px 9px;background:#161e2c;color:#fff;font:inherit;font-size:11.5px}.mo-filter-grid{display:grid;grid-template-columns:1fr 1fr;gap:6px}.mo-filter-grid select:last-child{grid-column:1/-1}
+      .mo-library-list{flex:1;min-height:0;overflow:auto;padding:8px;display:grid;align-content:start;gap:7px}.mo-clip-card{border:1px solid #273044;border-radius:10px;padding:9px;background:linear-gradient(180deg,#171e2b,#131925);display:grid;gap:5px}.mo-clip-card:hover{border-color:#4b5a74}.mo-clip-card>b{font-size:12.5px;color:#fff}.mo-clip-card>small{font-size:10.5px;line-height:1.35;color:#9ca8bb}
+      .mo-clip-meta{display:flex;gap:5px;flex-wrap:wrap;align-items:center;font-size:9.5px;color:#77849a}.mo-context{padding:2px 5px;border-radius:4px;font-weight:900;font-size:8.5px}.mo-context.att{color:#79b8ff;background:#3b82f61f}.mo-context.def{color:#ff9c9c;background:#ef44441f}
+      .mo-clip-actions{display:flex;gap:6px}.mo-clip-actions button,.mo-play-tools button,.mo-project-pick button,.mo-story-play,.mo-story-move button,.mo-trim-actions button,.mo-props-title button,.mo-savebar button{border:1px solid #34415a;background:#182131;color:#e9eef7;border-radius:7px;padding:6px 8px;font-size:10.5px;font-weight:800;cursor:pointer}.mo-clip-actions button{flex:1}.mo-studio button.primary,.mo-savebar button.primary{background:#d4a24c;border-color:#d4a24c;color:#241d13}.mo-studio button:disabled{opacity:.4;cursor:not-allowed}.mo-empty{margin:auto;padding:20px;color:#7f8ba0;text-align:center;font-size:11.5px}.mo-empty.compact{margin:0;padding:12px 2px}
+      .mo-center-pane{background:#0c111a}.mo-center-toolbar{min-height:52px;padding:8px 10px;display:flex;align-items:center;justify-content:space-between;gap:8px;border-bottom:1px solid #273044;background:#151c29}.mo-project-pick{display:flex;gap:6px;min-width:0;flex:1}.mo-project-pick select{max-width:260px}.mo-play-tools{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}
+      .mo-preview-shell{position:relative;flex:0 0 auto;min-height:180px;max-height:72%;background:#000;overflow:hidden;display:flex;align-items:center;justify-content:center}.mo-preview-video{width:100%;height:100%;max-width:100%;max-height:100%;object-fit:contain!important;background:#000;display:block}.mo-preview-placeholder{width:100%;height:100%;min-height:180px;display:grid;place-content:center;text-align:center;gap:5px;background:radial-gradient(circle at 50% 40%,#1c2638,#070a10 65%);color:#fff}.mo-preview-placeholder span{font-size:11px;color:#8793a8}.mo-row-resizer{height:8px;flex:0 0 8px;cursor:row-resize;background:#0b1018;position:relative;touch-action:none}.mo-row-resizer span{position:absolute;left:50%;top:3px;width:64px;height:2px;transform:translateX(-50%);border-radius:8px;background:#3c475d}.mo-row-resizer:hover span{background:#d4a24c;height:3px}
+      .mo-preview-status{position:absolute;left:10px;right:10px;bottom:9px;display:flex;align-items:center;gap:7px;padding:6px 8px;border-radius:7px;background:#05080ec7;pointer-events:none}.mo-preview-status span{color:#d4a24c;font-size:9.5px;font-weight:900}.mo-preview-status b{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:10.5px;color:#fff}.mo-preview-status em{margin-left:auto;color:#aab5c7;font-style:normal;font-size:10px}
+      .mo-story-head{padding:8px 10px;display:flex;align-items:center;justify-content:space-between;gap:8px;border-top:1px solid #273044;border-bottom:1px solid #273044;background:#101722}.mo-story-head>div:first-child{display:grid}.mo-story-head b{font-size:12px}.mo-story-head span{font-size:9.5px;color:#8491a6}.mo-add{display:flex;gap:5px}.mo-add button{border:1px solid #34415a;background:#182131;color:#d9e0ec;border-radius:6px;padding:5px 7px;font-size:10px;cursor:pointer}
+      .mo-storyboard{flex:1;min-height:120px;overflow:auto;padding:8px;display:grid;align-content:start;gap:6px;background:#0d121b}.mo-story-item{display:grid;grid-template-columns:22px 26px minmax(0,1fr) 27px auto;gap:6px;align-items:center;border:1px solid #273044;border-radius:8px;padding:6px 7px;background:#151c28;cursor:pointer}.mo-story-item.sel{border-color:#d4a24c;box-shadow:0 0 0 1px #d4a24c47 inset}.mo-story-item.playing{background:#202818;border-color:#a7c957}.mo-story-num{width:20px;height:20px;display:grid;place-items:center;border-radius:50%;background:#6b1a2c;color:#fff;font-size:9.5px;font-weight:900}.mo-story-type{font-size:14px;text-align:center}.mo-story-body{min-width:0;display:grid}.mo-story-body b,.mo-story-body small{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.mo-story-body b{font-size:11px;color:#fff}.mo-story-body small{font-size:9.5px;color:#8491a6}.mo-story-play{width:25px;height:25px;padding:0!important;color:#d4a24c!important}.mo-story-move{display:flex;gap:3px}.mo-story-move button{width:23px;height:23px;padding:0!important}.mo-story-move .rm{color:#ff8080!important}
+      .mo-props-scroll{flex:1;min-height:0;overflow:auto;padding:10px;display:flex;flex-direction:column;gap:9px}.mo-props-pane .mo-f{display:grid;gap:4px;font-size:10px;font-weight:800;color:#8f9bb0}.mo-props-pane .mo-f input,.mo-props-pane .mo-f textarea{border:1px solid #2e394f;border-radius:8px;background:#161e2c;color:#fff;padding:7px 8px;font:inherit;font-size:11.5px}.mo-props-pane .mo-f textarea{min-height:58px;resize:vertical}.mo-sep{height:1px;background:#273044}.mo-props-title{display:flex;align-items:center;justify-content:space-between;gap:6px;color:#d4a24c;font-size:10px;font-weight:900;text-transform:uppercase}
+      .mo-trim-editor{display:grid;gap:10px;padding:10px;border:1px solid #34415a;border-radius:10px;background:#0e151f}.mo-trim-head{display:grid;gap:2px}.mo-trim-head b{font-size:11px;color:#fff;text-transform:uppercase;letter-spacing:.03em}.mo-trim-head span{font-size:9.5px;color:#8793a8;line-height:1.35}
+      .mo-trim-values{display:grid;grid-template-columns:repeat(3,1fr);gap:6px}.mo-trim-values>div{display:grid;gap:3px;padding:7px;border:1px solid #29354a;border-radius:8px;background:#141c29}.mo-trim-values span{font-size:8.5px;text-transform:uppercase;color:#758299;font-weight:800}.mo-trim-values b{font-size:11px;color:#fff;font-variant-numeric:tabular-nums}
+      .mo-trim-film{position:relative;height:72px;border:1px solid #313d53;border-radius:8px;overflow:visible;background:#090d14;user-select:none}.mo-trim-filmframes{position:absolute;inset:0;display:grid;grid-template-columns:repeat(9,1fr);overflow:hidden;border-radius:7px}.mo-trim-frame{position:relative;border-right:1px solid #283247;background:linear-gradient(145deg,#24334a 0%,#162233 45%,#0c131e 100%)}.mo-trim-frame:nth-child(even){background:linear-gradient(145deg,#1a2a3d,#101b2a)}.mo-trim-frame:before{content:'';position:absolute;left:15%;right:15%;bottom:14%;height:2px;background:#46556c;box-shadow:0 -12px 0 #314159,0 -24px 0 #24364d}.mo-trim-frame i{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);font-style:normal;font-size:12px;opacity:.24}
+      .mo-trim-dim{position:absolute;top:0;bottom:0;background:rgba(2,5,10,.66);pointer-events:none;z-index:2}.mo-trim-dim.left{left:0}.mo-trim-dim.right{right:0}.mo-trim-selected{position:absolute;top:-2px;bottom:-2px;border-top:3px solid #f2b92b;border-bottom:3px solid #f2b92b;background:rgba(242,185,43,.08);pointer-events:none;z-index:3}
+      .mo-trim-handle{position:absolute;top:-7px;bottom:-7px;width:28px;transform:translateX(-50%);padding:0!important;border:0!important;background:transparent!important;color:#f2b92b!important;cursor:ew-resize!important;z-index:5;touch-action:none}.mo-trim-handle span{display:grid;place-items:center;width:100%;height:100%;font-size:58px;line-height:.7;font-family:Arial,sans-serif;font-weight:300;text-shadow:0 0 10px rgba(242,185,43,.25)}.mo-trim-handle.start span{justify-items:start}.mo-trim-handle.end span{justify-items:end}
+      .mo-trim-scale{display:flex;justify-content:space-between;margin-top:-5px;color:#68758a;font-size:8.5px;font-variant-numeric:tabular-nums}.mo-trim-nudges{display:grid;gap:6px}.mo-trim-nudges>div{display:grid;grid-template-columns:38px repeat(4,1fr);gap:4px;align-items:center}.mo-trim-nudges span{font-size:9px;color:#7f8ba0;font-weight:800}.mo-trim-nudges button{border:1px solid #2e3a50;background:#161f2e;color:#dbe3ef;border-radius:6px;padding:5px 3px;font-size:9px;font-weight:800;cursor:pointer}.mo-trim-nudges button:hover{border-color:#d4a24c;color:#d4a24c}.mo-trim-actions{display:flex;gap:6px}.mo-trim-actions button{flex:1}
+      .mo-savebar{padding:8px 10px;border-top:1px solid #273044;display:flex;align-items:center;gap:6px;background:#151c29}.mo-savebar>span{font-size:9.5px;color:#8692a6;margin-right:auto}.mo-export{opacity:.45;cursor:not-allowed!important}
+      @media(max-width:980px){.mo-studio{display:flex!important;flex-direction:column;overflow:auto;gap:8px}.mo-resizer,.mo-row-resizer{display:none}.mo-pane{min-height:300px}.mo-preview-shell{min-height:260px;max-height:none;flex-basis:auto!important}.mo-trim-values{grid-template-columns:1fr 1fr 1fr}}
 
       /* Joueurs (onglet) */
       .pl-wrap { flex: 1; min-height: 0; overflow: auto; padding: 10px; display: flex; flex-direction: column; gap: 12px; }

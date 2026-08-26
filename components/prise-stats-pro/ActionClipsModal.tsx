@@ -61,12 +61,12 @@ export type ActionClipsModalProps = {
   actions: ClipAction[];
   title: string;
   videoUrl?: string | null;
-  /** Source vidéo calculée action par action, pour les listes multi-matchs. */
-  videoUrlForAction?: (action: ClipAction) => string | null | undefined;
+  /** Source vidéo spécifique à chaque action (utile quand la liste mélange plusieurs matchs). */
+  videoUrlForAction?: (action: ClipAction) => string | null;
   /** Synchro vidéo du match auquel appartiennent les clips (défaut : native). */
   sync?: VideoSyncState;
-  /** Synchro calculée action par action pour les listes multi-matchs. */
-  syncForAction?: (action: ClipAction) => VideoSyncState | null | undefined;
+  /** Synchro spécifique à chaque action (utile quand la liste mélange plusieurs matchs). */
+  syncForAction?: (action: ClipAction) => VideoSyncState;
   startIndex?: number;
   onClose: () => void;
   onAddToMontage?: (action: ClipAction) => void;
@@ -95,8 +95,7 @@ export default function ActionClipsModal(props: ActionClipsModalProps) {
   const [draw, setDraw] = useState(false);
   const [trimStart, setTrimStart] = useState<number | null>(null);
   const [trimEnd, setTrimEnd] = useState<number | null>(null);
-  const [clipPosition, setClipPosition] = useState(0);
-  const [clipPlaying, setClipPlaying] = useState(false);
+  const [videoDuration, setVideoDuration] = useState(0);
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const stopRef = useRef<(() => void) | null>(null);
@@ -106,15 +105,8 @@ export default function ActionClipsModal(props: ActionClipsModalProps) {
 
   // Synchro du match : convertit les temps bruts de codage (source) en position
   // réelle dans la vidéo (média). Défaut = native (aucun décalage).
-  const sync =
-    (current ? props.syncForAction?.(current) : null) ??
-    props.sync ??
-    NATIVE_SYNC;
-
-  const currentVideoUrl =
-    (current ? props.videoUrlForAction?.(current) : null) ??
-    videoUrl ??
-    null;
+  const currentVideoUrl = current ? (props.videoUrlForAction?.(current) ?? videoUrl ?? null) : (videoUrl ?? null);
+  const sync = current ? (props.syncForAction?.(current) ?? props.sync ?? NATIVE_SYNC) : (props.sync ?? NATIVE_SYNC);
   // Bornes DÉJÀ synchronisées d'une action (jamais de lecture directe de
   // clipStart/clipEnd sans passer par la synchro).
   const syncedStartOf = useCallback(
@@ -147,23 +139,10 @@ export default function ActionClipsModal(props: ActionClipsModalProps) {
     stopRef.current?.();
     stopRef.current = null;
     if (!v || start == null) return;
-    try {
-      v.currentTime = Math.max(0, start);
-      setClipPosition(0);
-      setClipPlaying(true);
-      v.play().catch(() => setClipPlaying(false));
-    } catch { /* noop */ }
+    try { v.currentTime = Math.max(0, start); v.play().catch(() => {}); } catch { /* noop */ }
     if (end != null) {
       const onTick = () => {
-        setClipPosition(Math.max(0, Math.min(end - start, v.currentTime - start)));
-        if (v.currentTime >= end) {
-          v.currentTime = end;
-          v.pause();
-          setClipPlaying(false);
-          setClipPosition(Math.max(0, end - start));
-          v.removeEventListener('timeupdate', onTick);
-          stopRef.current = null;
-        }
+        if (v.currentTime >= end) { v.pause(); v.removeEventListener('timeupdate', onTick); stopRef.current = null; }
       };
       v.addEventListener('timeupdate', onTick);
       stopRef.current = () => v.removeEventListener('timeupdate', onTick);
@@ -175,7 +154,7 @@ export default function ActionClipsModal(props: ActionClipsModalProps) {
     applyBoundedPlayback();
     return () => { stopRef.current?.(); stopRef.current = null; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, index, current?.id, current?.matchId, currentVideoUrl]);
+  }, [open, index, current?.id]);
 
   const go = useCallback((delta: number) => {
     setIndex((i) => Math.max(0, Math.min(actions.length - 1, i + delta)));
@@ -241,6 +220,19 @@ export default function ActionClipsModal(props: ActionClipsModalProps) {
       onTrim(current, trimStart, trimEnd);
     }
   };
+  const previewEditedTrim = () => {
+    const v = videoRef.current;
+    if (!v || trimStart == null || trimEnd == null || trimEnd <= trimStart) return;
+    stopRef.current?.(); stopRef.current = null;
+    try { v.currentTime = Math.max(0, trimStart); v.play().catch(() => {}); } catch { /* noop */ }
+    const onTick = () => {
+      if (v.currentTime >= trimEnd) {
+        v.currentTime = trimEnd; v.pause(); v.removeEventListener('timeupdate', onTick); stopRef.current = null;
+      }
+    };
+    v.addEventListener('timeupdate', onTick);
+    stopRef.current = () => v.removeEventListener('timeupdate', onTick);
+  };
 
   if (!open || actions.length === 0 || !current) return null;
   const hasVideo = !!currentVideoUrl;
@@ -266,19 +258,8 @@ export default function ActionClipsModal(props: ActionClipsModalProps) {
 
           <div className="acm-videowrap">
             {hasVideo ? (
-              <video
-                ref={videoRef}
-                className="acm-video"
-                src={currentVideoUrl!}
-                playsInline
-                onPlay={() => setClipPlaying(true)}
-                onPause={() => setClipPlaying(false)}
-                onTimeUpdate={(e) => {
-                  const start = syncedStartOf(cur) ?? 0;
-                  const end = syncedEndOf(cur) ?? start;
-                  setClipPosition(Math.max(0, Math.min(Math.max(0, end - start), e.currentTarget.currentTime - start)));
-                }}
-              />
+              <video ref={videoRef} className="acm-video" src={currentVideoUrl!} controls playsInline
+                onLoadedMetadata={(e) => setVideoDuration(Number.isFinite(e.currentTarget.duration) ? e.currentTarget.duration : 0)} />
             ) : (
               <div className="acm-novideo">
                 {syncedStartOf(cur) != null
@@ -299,46 +280,6 @@ export default function ActionClipsModal(props: ActionClipsModalProps) {
               />
             )}
           </div>
-
-          {hasVideo && syncedStartOf(cur) != null && syncedEndOf(cur) != null && (
-            <div className="acm-clipbar">
-              <button
-                type="button"
-                className="acm-play"
-                onClick={() => {
-                  const v = videoRef.current;
-                  if (!v) return;
-                  if (!v.paused) { v.pause(); return; }
-                  const start = syncedStartOf(cur) ?? 0;
-                  const end = syncedEndOf(cur) ?? start;
-                  if (v.currentTime >= end - 0.05 || v.currentTime < start) {
-                    applyBoundedPlayback();
-                  } else {
-                    setClipPlaying(true);
-                    v.play().catch(() => setClipPlaying(false));
-                  }
-                }}
-              >
-                {clipPlaying ? '❚❚' : '▶'}
-              </button>
-              <span>{fmt(clipPosition)}</span>
-              <input
-                type="range"
-                min={0}
-                max={Math.max(0.1, (syncedEndOf(cur) ?? 0) - (syncedStartOf(cur) ?? 0))}
-                step={0.05}
-                value={clipPosition}
-                onChange={(e) => {
-                  const rel = Number(e.target.value);
-                  const start = syncedStartOf(cur) ?? 0;
-                  const v = videoRef.current;
-                  setClipPosition(rel);
-                  if (v) v.currentTime = start + rel;
-                }}
-              />
-              <span>{fmt(Math.max(0, (syncedEndOf(cur) ?? 0) - (syncedStartOf(cur) ?? 0)))}</span>
-            </div>
-          )}
 
           <div className="acm-nav">
             <button disabled={index === 0} onClick={() => go(-1)}>← Précédent</button>
@@ -369,13 +310,34 @@ export default function ActionClipsModal(props: ActionClipsModalProps) {
             {draw && <button onClick={clearDraw}>🧽 Effacer</button>}
           </div>
 
-          {hasVideo && (
-            <div className="acm-trim">
-              <button onClick={() => markTrim('start')}>⏱ Début = {trimStart != null ? fmt(trimStart) : '—'}</button>
-              <button onClick={() => markTrim('end')}>⏱ Fin = {trimEnd != null ? fmt(trimEnd) : '—'}</button>
-              {onTrim && <button className="acm-trim-save" disabled={trimStart == null || trimEnd == null || (trimEnd ?? 0) <= (trimStart ?? 0)} onClick={saveTrim}>✂ Enregistrer le rognage</button>}
-            </div>
-          )}
+          {hasVideo && (() => {
+            const originalStart = syncedStartOf(cur) ?? 0;
+            const originalEnd = syncedEndOf(cur) ?? originalStart + 6;
+            const startValue = trimStart ?? originalStart;
+            const endValue = trimEnd ?? originalEnd;
+            const rangeMin = Math.max(0, Math.floor(Math.min(originalStart, startValue) - 15));
+            const rangeMax = videoDuration > 0 ? videoDuration : Math.max(originalEnd, endValue) + 15;
+            return <div className="acm-trim-editor">
+              <div className="acm-trim-title"><b>✂ Modifier le début et la fin</b><span>Commence plus tôt ou prolonge la séquence en faisant glisser les curseurs.</span></div>
+              <label><span>Début <b>{fmt(startValue)}</b></span>
+                <input type="range" min={rangeMin} max={Math.max(rangeMin + .2, endValue - .1)} step={0.1}
+                  value={Math.max(rangeMin, Math.min(startValue, endValue - .1))}
+                  onChange={(e) => { const value = Math.min(Number(e.target.value), endValue - .1); setTrimStart(value); const v = videoRef.current; if (v) v.currentTime = value; }} />
+              </label>
+              <label><span>Fin <b>{fmt(endValue)}</b></span>
+                <input type="range" min={Math.min(rangeMax - .1, startValue + .1)} max={rangeMax} step={0.1}
+                  value={Math.max(startValue + .1, Math.min(endValue, rangeMax))}
+                  onChange={(e) => setTrimEnd(Math.max(Number(e.target.value), startValue + .1))} />
+              </label>
+              <div className="acm-trim-actions">
+                <button onClick={() => markTrim('start')}>Début = position</button>
+                <button onClick={() => markTrim('end')}>Fin = position</button>
+                <button onClick={() => { setTrimStart(originalStart); setTrimEnd(originalEnd); }}>↺ Auto</button>
+                <button onClick={previewEditedTrim}>▶ Tester</button>
+                {onTrim && <button className="acm-trim-save" disabled={trimStart == null || trimEnd == null || (trimEnd ?? 0) <= (trimStart ?? 0)} onClick={saveTrim}>✓ Enregistrer</button>}
+              </div>
+            </div>;
+          })()}
 
           <textarea className="acm-note" placeholder="Note coach / commentaire…" value={note} onChange={(e) => setNote(e.target.value)} />
           {onSaveNote && <button className="acm-note-save" onClick={() => onSaveNote(cur, note)}>💾 Enregistrer la note</button>}
@@ -398,7 +360,6 @@ export default function ActionClipsModal(props: ActionClipsModalProps) {
         .acm-card.acm-full .acm-video { max-height: calc(100vh - 320px); }
         .acm-canvas { position: absolute; inset: 0; width: 100%; height: 100%; cursor: crosshair; touch-action: none; }
         .acm-novideo { padding: 28px; text-align: center; color: #8a93a8; background: #0c0f1a; border: 1px dashed #2a3142; border-radius: 10px; font-weight: 700; }
-        .acm-clipbar{display:grid;grid-template-columns:34px 42px minmax(0,1fr) 42px;gap:8px;align-items:center;background:#0c0f1a;border:1px solid #2a3142;border-radius:10px;padding:8px 10px}.acm-clipbar span{font-size:11px;font-weight:900;color:#d7deeb;text-align:center;font-variant-numeric:tabular-nums}.acm-clipbar input{width:100%;accent-color:#D4A24C}.acm-play{width:32px;height:28px;border:1px solid #D4A24C;border-radius:7px;background:rgba(212,162,76,.08);color:#D4A24C;cursor:pointer;font-weight:900}
         .acm-nav { display: flex; gap: 8px; }
         .acm-nav button { flex: 1; border: 1px solid #2a3142; background: #171b29; color: #eef1f7; border-radius: 9px; padding: 9px; font-size: 12.5px; font-weight: 800; cursor: pointer; }
         .acm-nav button:disabled { opacity: .4; cursor: not-allowed; }
@@ -406,11 +367,10 @@ export default function ActionClipsModal(props: ActionClipsModalProps) {
         .acm-info { display: flex; flex-direction: column; gap: 1px; }
         .acm-info span { font-size: 10px; color: #8a93a8; text-transform: uppercase; letter-spacing: .04em; }
         .acm-info b { font-size: 12.5px; }
-        .acm-tools, .acm-trim { display: flex; flex-wrap: wrap; gap: 6px; }
-        .acm-tools button, .acm-trim button { border: 1px solid #2a3142; background: #171b29; color: #eef1f7; border-radius: 8px; padding: 7px 11px; font-size: 11.5px; font-weight: 800; cursor: pointer; }
+        .acm-tools { display: flex; flex-wrap: wrap; gap: 6px; }
+        .acm-tools button { border: 1px solid #2a3142; background: #171b29; color: #eef1f7; border-radius: 8px; padding: 7px 11px; font-size: 11.5px; font-weight: 800; cursor: pointer; }
         .acm-tools button.on { border-color: #D4A24C; color: #D4A24C; }
-        .acm-trim-save { border-color: #D4A24C !important; color: #D4A24C !important; }
-        .acm-trim-save:disabled { opacity: .45; cursor: not-allowed; }
+        .acm-trim-editor{display:grid;gap:10px;padding:11px;border:1px solid #2f3a50;background:#0c111b;border-radius:10px}.acm-trim-title{display:grid;gap:2px}.acm-trim-title b{font-size:12px}.acm-trim-title span{color:#8a93a8;font-size:10.5px}.acm-trim-editor label{display:grid;gap:5px}.acm-trim-editor label>span{display:flex;justify-content:space-between;color:#9ba6b9;font-size:10.5px}.acm-trim-editor label>span b{color:#D4A24C}.acm-trim-editor input[type=range]{width:100%;accent-color:#D4A24C}.acm-trim-actions{display:flex;flex-wrap:wrap;gap:6px}.acm-trim-actions button{border:1px solid #2a3142;background:#171b29;color:#eef1f7;border-radius:8px;padding:7px 9px;font-size:10.5px;font-weight:800;cursor:pointer}.acm-trim-save{border-color:#D4A24C!important;background:#D4A24C!important;color:#221c13!important}.acm-trim-save:disabled{opacity:.45;cursor:not-allowed}
         .acm-note { width: 100%; min-height: 56px; resize: vertical; border: 1px solid #2a3142; background: #0c0f1a; color: #eef1f7; border-radius: 9px; padding: 9px 11px; font: inherit; font-size: 12.5px; }
         .acm-note-save { align-self: flex-start; border: 1px solid #2a3142; background: #171b29; color: #eef1f7; border-radius: 8px; padding: 7px 12px; font-size: 11.5px; font-weight: 800; cursor: pointer; }
         @media (max-width: 640px) { .acm-card { width: 100vw; height: 100vh; max-height: none; border-radius: 0; } }
