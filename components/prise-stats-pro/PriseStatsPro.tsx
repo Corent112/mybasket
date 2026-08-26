@@ -7754,7 +7754,15 @@ function BoxView({ actions, roster, teamId, videoProvider = 'none', videoUrl = '
           ...playerBoxClips(playerId, 'dreb'),
         ]);
       case 'ast':
-        return actions.filter((a) => a.assist === true && a.assistPlayerId === playerId);
+        // Une passe décisive a besoin d'un peu plus de contexte que le tir.
+        // On avance UNIQUEMENT la lecture du clip PD de 3 secondes, sans
+        // modifier l'action source ni le clip du marqueur associé au même panier.
+        return actions
+          .filter((a) => a.assist === true && a.assistPlayerId === playerId)
+          .map((a) => ({
+            ...a,
+            clipStart: a.clipStart != null ? Math.max(0, a.clipStart - 3) : a.clipStart,
+          }));
       case 'stl':
         return actions.filter((a) => a.actionType === 'interception' && a.playerId === playerId);
       case 'blk':
