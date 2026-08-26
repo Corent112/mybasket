@@ -19,7 +19,19 @@ import {
   type ClubTeam,
 } from "@/lib/club-core";
 
-const EVENT_TYPES = ["training", "match", "meeting", "stage", "tournament", "video", "other"];
+const EVENT_TYPES = [
+  { value: "training", label: "Entraînement" },
+  { value: "match", label: "Match" },
+  { value: "meeting", label: "Réunion" },
+  { value: "stage", label: "Stage" },
+  { value: "tournament", label: "Tournoi" },
+  { value: "video", label: "Vidéo" },
+  { value: "other", label: "Autre" },
+];
+
+function eventTypeLabel(value: string) {
+  return EVENT_TYPES.find((item) => item.value === value)?.label || value;
+}
 
 function today() {
   return new Date().toISOString().slice(0, 10);
@@ -250,7 +262,7 @@ export default function ClubCalendarEngineSection({ clubId }: { clubId: string }
           <h3>Nouvel événement</h3>
           <label>Type
             <select value={eventType} onChange={(e) => setEventType(e.target.value)}>
-              {EVENT_TYPES.map((type) => <option key={type}>{type}</option>)}
+              {EVENT_TYPES.map((type) => <option key={type.value} value={type.value}>{type.label}</option>)}
             </select>
           </label>
           <label>Titre<input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="U15 - Match vs Versailles" /></label>
@@ -308,7 +320,7 @@ export default function ClubCalendarEngineSection({ clubId }: { clubId: string }
                 <article className="event" key={event.id}>
                   <div>
                     <strong>{event.title}</strong>
-                    <span>{event.eventType} · {toTime(event.startMin)} → {toTime(event.endMin)} · {event.location || "Lieu non renseigné"}</span>
+                    <span>{eventTypeLabel(event.eventType)} · {toTime(event.startMin)} → {toTime(event.endMin)} · {event.location || "Lieu non renseigné"}</span>
                     <small>{teams.find((team) => team.id === event.teamId)?.name || "—"} · {coaches.find((coach) => coach.id === event.coachId)?.name || "—"}</small>
                   </div>
                   <div className="eventActions">
@@ -326,13 +338,13 @@ export default function ClubCalendarEngineSection({ clubId }: { clubId: string }
 
       <style jsx>{`
         .engine{border:1px solid #eadfd5;border-radius:28px;background:#fff;overflow:hidden;box-shadow:0 22px 70px rgba(0,0,0,.06);font-family:Roboto,system-ui,sans-serif}
-        .top{padding:24px;background:linear-gradient(135deg,#fff,#fff5e8);border-bottom:1px solid #eadfd5}.top p{margin:0 0 6px;color:#d4a24c;font-size:.72rem;font-weight:900;letter-spacing:.12em}.top h2{margin:0;color:#6b1a2c;font-family:"Alfa Slab One",serif;font-weight:400}.top span{color:#6b7280;font-weight:700}
+        .top{padding:24px;background:linear-gradient(135deg,#fff,#fff5e8);border-bottom:1px solid #eadfd5}.top p{margin:0 0 6px;color:var(--club-secondary);font-size:.72rem;font-weight:900;letter-spacing:.12em}.top h2{margin:0;color:var(--club-primary);font-family:"Alfa Slab One",serif;font-weight:400}.top span{color:#6b7280;font-weight:700}
         .alert{margin:16px;padding:12px 14px;border-radius:14px;font-weight:900}.alert.error{background:#fff0f0;color:#b91c1c}.alert.ok{background:#f0fff4;color:#15803d}
-        .layout{display:grid;grid-template-columns:360px 1fr;gap:18px;padding:18px}.form,.calendar{border:1px solid #eadfd5;border-radius:24px;padding:18px;background:#fff}.form{background:#fffdf8}.form h3,.day h3{margin:0 0 14px;color:#6b1a2c}
+        .layout{display:grid;grid-template-columns:360px 1fr;gap:18px;padding:18px}.form,.calendar{border:1px solid #eadfd5;border-radius:24px;padding:18px;background:#fff}.form{background:#fffdf8}.form h3,.day h3{margin:0 0 14px;color:var(--club-primary)}
         label{display:grid;gap:6px;margin-bottom:12px;color:#6b7280;font-weight:900;font-size:.78rem}input,select,textarea{border:1px solid #e5e7eb;border-radius:14px;padding:11px 12px;font:inherit}textarea{min-height:90px}.times{display:grid;grid-template-columns:1fr 1fr;gap:10px}
-        button{border:1px solid #eadfd5;background:#6b1a2c;color:white;border-radius:999px;padding:10px 14px;font-weight:900;cursor:pointer}.ghost{background:#fffaf2;color:#6b1a2c}.danger{background:#fff0f0;color:#b91c1c;border-color:#f1d3cf}.calendarTools{margin-bottom:18px}.pickActions{display:flex;gap:8px}
-        .playersPick{display:grid;gap:8px;margin:14px 0}.playersPick strong{color:#6b1a2c}.playersBox{max-height:170px;overflow:auto;border:1px solid #eadfd5;border-radius:16px;padding:10px;background:#fff}.playersBox label{display:flex;gap:8px;align-items:center;margin:0 0 7px}
-        .day{margin-bottom:18px}.event{border:1px solid #eadfd5;border-radius:18px;padding:14px;margin-bottom:10px;display:flex;justify-content:space-between;gap:12px;align-items:center}.event strong{display:block;color:#6b1a2c}.event span,.event small{display:block;color:#6b7280;font-weight:800;margin-top:4px}.eventActions{display:flex;gap:8px;flex-wrap:wrap}.empty{padding:30px;color:#6b7280;font-weight:900;text-align:center}
+        button{border:1px solid #eadfd5;background:var(--club-primary);color:white;border-radius:999px;padding:10px 14px;font-weight:900;cursor:pointer}.ghost{background:#fffaf2;color:var(--club-primary)}.danger{background:#fff0f0;color:#b91c1c;border-color:#f1d3cf}.calendarTools{margin-bottom:18px}.pickActions{display:flex;gap:8px}
+        .playersPick{display:grid;gap:8px;margin:14px 0}.playersPick strong{color:var(--club-primary)}.playersBox{max-height:170px;overflow:auto;border:1px solid #eadfd5;border-radius:16px;padding:10px;background:#fff}.playersBox label{display:flex;gap:8px;align-items:center;margin:0 0 7px}
+        .day{margin-bottom:18px}.event{border:1px solid #eadfd5;border-radius:18px;padding:14px;margin-bottom:10px;display:flex;justify-content:space-between;gap:12px;align-items:center}.event strong{display:block;color:var(--club-primary)}.event span,.event small{display:block;color:#6b7280;font-weight:800;margin-top:4px}.eventActions{display:flex;gap:8px;flex-wrap:wrap}.empty{padding:30px;color:#6b7280;font-weight:900;text-align:center}
         @media(max-width:900px){.layout,.event{grid-template-columns:1fr;display:grid}.times{grid-template-columns:1fr}}
       `}</style>
     </section>

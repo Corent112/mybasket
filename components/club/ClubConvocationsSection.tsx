@@ -187,7 +187,7 @@ export default function ClubConvocationsSection({ clubId }: { clubId: string }) 
                 </div>
                 <div className="actions">
                   <button disabled={saving} onClick={generate}>Générer</button>
-                  <button disabled={saving || !recipients.length} onClick={send}>Marquer envoyé</button>
+                  <button disabled={saving || !recipients.length} onClick={send}>Marquer comme envoyé</button>
                 </div>
               </div>
 
@@ -196,6 +196,7 @@ export default function ClubConvocationsSection({ clubId }: { clubId: string }) 
                 <b>{recipients.length}<small>convoqués</small></b>
                 <b>{attendances.filter((a) => a.status === "present").length}<small>présents</small></b>
                 <b>{attendances.filter((a) => a.status === "absent").length}<small>absents</small></b>
+                <b>{Math.max(0, recipients.length - attendances.length)}<small>sans réponse</small></b>
               </div>
 
               <div className="table">
@@ -250,13 +251,13 @@ export default function ClubConvocationsSection({ clubId }: { clubId: string }) 
 
       <style jsx>{`
         .convoc{border:1px solid #eadfd5;border-radius:28px;background:#fff;overflow:hidden;box-shadow:0 22px 70px rgba(0,0,0,.06);font-family:Roboto,system-ui,sans-serif}
-        .top{padding:24px;background:linear-gradient(135deg,#fff,#fff5e8);border-bottom:1px solid #eadfd5}.top p,.eventHead p{margin:0 0 6px;color:#d4a24c;font-size:.72rem;font-weight:900;letter-spacing:.12em}.top h2{margin:0;color:#6b1a2c;font-family:"Alfa Slab One",serif;font-weight:400}.top span,.eventHead span{color:#6b7280;font-weight:700}
+        .top{padding:24px;background:linear-gradient(135deg,#fff,#fff5e8);border-bottom:1px solid #eadfd5}.top p,.eventHead p{margin:0 0 6px;color:var(--club-secondary);font-size:.72rem;font-weight:900;letter-spacing:.12em}.top h2{margin:0;color:var(--club-primary);font-family:"Alfa Slab One",serif;font-weight:400}.top span,.eventHead span{color:#6b7280;font-weight:700}
         .alert{margin:16px;padding:12px 14px;border-radius:14px;font-weight:900}.alert.error{background:#fff0f0;color:#b91c1c}.alert.ok{background:#f0fff4;color:#15803d}
-        .layout{display:grid;grid-template-columns:300px 1fr;gap:18px;padding:18px}.events,.main{border:1px solid #eadfd5;border-radius:24px;padding:18px;background:#fff}.events{background:#fffdf8}.events h3,.eventHead h3{margin:0 0 14px;color:#6b1a2c}
-        button{border:1px solid #eadfd5;background:#6b1a2c;color:white;border-radius:999px;padding:9px 12px;font-weight:900;cursor:pointer}.events button{width:100%;display:grid;text-align:left;background:#fff;color:#111827;border-radius:16px;margin-bottom:8px}.events button.active{border-color:#6b1a2c;box-shadow:0 0 0 3px rgba(107,26,44,.12)}.events button span{color:#6b7280;font-size:.75rem}
+        .layout{display:grid;grid-template-columns:300px 1fr;gap:18px;padding:18px}.events,.main{border:1px solid #eadfd5;border-radius:24px;padding:18px;background:#fff}.events{background:#fffdf8}.events h3,.eventHead h3{margin:0 0 14px;color:var(--club-primary)}
+        button{border:1px solid #eadfd5;background:var(--club-primary);color:white;border-radius:999px;padding:9px 12px;font-weight:900;cursor:pointer}.events button{width:100%;display:grid;text-align:left;background:#fff;color:#111827;border-radius:16px;margin-bottom:8px}.events button.active{border-color:var(--club-primary);box-shadow:0 0 0 3px rgba(107,26,44,.12)}.events button span{color:#6b7280;font-size:.75rem}
         .eventHead{display:flex;justify-content:space-between;gap:14px;align-items:center}.actions{display:flex;gap:8px;flex-wrap:wrap}
-        .kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin:18px 0}.kpis b{border:1px solid #eadfd5;background:#fff8ee;border-radius:20px;padding:16px;text-align:center;color:#6b1a2c;font-size:1.4rem}.kpis small{display:block;color:#6b7280;font-size:.72rem}
-        .table{border:1px solid #eef2f7;border-radius:18px;overflow:hidden}.row{display:grid;grid-template-columns:1.2fr .8fr .8fr 2fr;border-bottom:1px solid #eef2f7}.row span{padding:12px;font-weight:800}.row.head{background:#f8fafc;color:#6b7280}.buttons{display:flex;gap:6px;flex-wrap:wrap}.buttons button{font-size:.72rem;background:#fffaf2;color:#6b1a2c}.buttons button.selected{background:#6b1a2c;color:white}.empty{padding:40px;text-align:center;color:#6b7280;font-weight:900}
+        .kpis{display:grid;grid-template-columns:repeat(5,1fr);gap:12px;margin:18px 0}.kpis b{border:1px solid #eadfd5;background:#fff8ee;border-radius:20px;padding:16px;text-align:center;color:var(--club-primary);font-size:1.4rem}.kpis small{display:block;color:#6b7280;font-size:.72rem}
+        .table{border:1px solid #eef2f7;border-radius:18px;overflow:hidden}.row{display:grid;grid-template-columns:1.2fr .8fr .8fr 2fr;border-bottom:1px solid #eef2f7}.row span{padding:12px;font-weight:800}.row.head{background:#f8fafc;color:#6b7280}.buttons{display:flex;gap:6px;flex-wrap:wrap}.buttons button{font-size:.72rem;background:#fffaf2;color:var(--club-primary)}.buttons button.selected{background:var(--club-primary);color:white}.empty{padding:40px;text-align:center;color:#6b7280;font-weight:900}
         @media(max-width:980px){.layout{grid-template-columns:1fr}.kpis,.row{grid-template-columns:1fr}.row.head{display:none}}
       `}</style>
     </section>
