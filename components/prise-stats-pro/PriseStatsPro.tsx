@@ -7653,12 +7653,20 @@ function BoxView({ actions, roster, teamId, videoProvider = 'none', videoUrl = '
     const groups = new Map<string, { key: string; label: string; list: StatA[] }>();
     actions.forEach((a) => {
       if (a.context !== side) return;
-      const slot = (a as any).systemeJeu || '';
-      if (!slot) return;
-      const name = (a as any).systemeName as string | undefined;
-      const sys = SYSTEMES_JEU.find((s) => s.id === slot);
-      const key = slot;
-      const label = name || (sys ? sys.label : slot);
+      // Un système peut venir du wizard historique (systemeJeu), du mapping
+      // playbook (systemeSlot/systemeId/systemeName) ou du rechargement SQL.
+      // On accepte toutes ces représentations pour ne perdre aucun système codé.
+      const rawSlot = String(
+        (a as any).systemeJeu ||
+        (a as any).systemeSlot ||
+        (a as any).systemeId ||
+        ''
+      ).trim();
+      const name = String((a as any).systemeName || '').trim();
+      if (!rawSlot && !name) return;
+      const sys = SYSTEMES_JEU.find((s) => s.id === rawSlot);
+      const key = rawSlot || `name:${name}`;
+      const label = name || (sys ? sys.label : rawSlot);
       if (!groups.has(key)) groups.set(key, { key, label, list: [] });
       groups.get(key)!.list.push(a);
     });
@@ -7910,7 +7918,22 @@ function BoxView({ actions, roster, teamId, videoProvider = 'none', videoUrl = '
             <div className="cardrow">
               <button className="boxcard clickable" onClick={() => openList(boxSide === 'attaque' ? 'Toutes les actions attaque' : 'Toutes les actions défense', list)}><div className="bt-lbl2">Actions</div><div className="bt-val">{list.length}</div></button>
               <button className="boxcard clickable" onClick={() => openList('Tirs ' + boxSide, sideShots)}><div className="bt-lbl2">Tirs</div><div className="bt-val">{sideMade}/{sideShots.length}</div></button>
-              <Card t={boxSide === 'attaque' ? 'Points marqués' : 'Points concédés'} v={sidePts} c="var(--gold)" />
+              <button
+                type="button"
+                className="boxcard clickable"
+                onClick={() => {
+                  const madeBaskets = sideShots.filter((a) => a.shotResult === 'made');
+                  openList(
+                    boxSide === 'attaque' ? 'Tous les paniers marqués' : 'Tous les paniers concédés',
+                    madeBaskets
+                  );
+                }}
+                title={boxSide === 'attaque' ? 'Revoir tous les paniers marqués' : 'Revoir tous les paniers concédés'}
+              >
+                <div className="bt-lbl2">{boxSide === 'attaque' ? 'Points marqués' : 'Points concédés'}</div>
+                <div className="bt-val" style={{ color: 'var(--gold)' }}>{sidePts}</div>
+                <div className="bt-review">▶ Revoir {sideMade} panier{sideMade > 1 ? 's' : ''}</div>
+              </button>
               <Card t="Réussite" v={sidePct + '%'} />
               <Card t="Temps forts" v={rows.length} />
               <Card t="PPP" v={list.length ? (sidePts / list.length).toFixed(2) : '0.00'} />
@@ -9994,7 +10017,8 @@ function Style() {
       .srch-reset { border: 1px solid var(--border); background: var(--panel); color: var(--txt); border-radius: 8px; padding: 7px 11px; font-size: 12px; font-weight: 800; cursor: pointer; }
       .srch-count { font-size: 14px; margin: 6px 0 10px; } .srch-count b { color: var(--gold); font-size: 18px; }
       .srch-list { display: flex; flex-direction: column; gap: 5px; }
-      .srch-row { display: grid; grid-template-columns: 90px 130px 1fr; align-items: center; gap: 8px; border: 1px solid var(--border); border-radius: 8px; padding: 7px 10px; background: var(--card); font-size: 12.5px; }
+      .srch-row { display: grid; grid-template-columns: 90px 130px 1fr; align-items: center; gap: 8px; border: 1px solid var(--border); border-radius: 8px; padding: 7px 10px; background: var(--card); color: var(--txt) !important; font-size: 12.5px; }
+      .srch-row .sr-p, .srch-row .sr-d { color: var(--txt) !important; }
       .srch-row .sr-t { color: var(--mute); font-variant-numeric: tabular-nums; }
       .srch-row .sr-p { font-weight: 800; }
       .box-shot { max-width: 680px; margin: 0 auto; }
@@ -10108,6 +10132,8 @@ function Style() {
       .sideSwitch button { border: 0; border-radius: 9px; padding: 8px 14px; background: transparent; color: var(--mute); font-weight: 900; cursor: pointer; }
       .sideSwitch button.on { background: var(--gold); color: #080b17; }
       .boxcard.clickable { border: 1px solid var(--border); cursor: pointer; text-align: left; }
+      .bt-review { margin-top: 3px; color: var(--txt); font-size: 9.5px; font-weight: 800; opacity: .9; }
+
       .cellBtn { min-width: 54px; height: 32px; border-radius: 9px; border: 1px solid var(--border); background: rgba(255,255,255,.05); color: #fff; font-weight: 950; cursor: pointer; }
       .cellBtn.ok { color: var(--green); }
       .cellBtn.ko { color: var(--red); }

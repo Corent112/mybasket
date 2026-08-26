@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import PolePlayerFollowupPanel from "@/components/equipes/PolePlayerFollowupPanel";
 import { useEffect, useMemo, useState } from "react";
 
 type Filter = "all" | "pole" | "club";
@@ -71,6 +72,8 @@ export default function PolePlayerLongitudinalPanel({ teamId, playerId }: { team
     <section className="box"><div className="sectionTitle"><div><p>PRÉSENCE</p><h3>Pôle + club</h3></div></div>{presence.length?presence.map((x:any)=><div className="presenceRow" key={`${x.source.teamId}-${x.source.playerId}`}><div><b>{x.source.kind==="pole"?"🏛":"🏀"} {x.source.teamName}</b><span>{x.present} présent · {x.late} retard · {x.absent} absent</span></div><strong>{x.rate==null?"—":`${x.rate}%`}</strong></div>):<div className="miniEmpty">Aucune présence enregistrée.</div>}</section></div>
 
     <section className="box"><div className="sectionTitle"><div><p>VIDÉO</p><h3>Clips du joueur dans ses deux équipes</h3></div><span>{clips.length} clip(s)</span></div><div className="clipGrid">{clips.slice(0,12).map((c:any)=>{const source=(data.sources||[]).find((s:any)=>String(s.teamId)===String(c.teamId));return <Link key={c.id} href={`/equipes/${c.teamId}/${source?.playerId||c.playerId}`}><b>{source?.kind==="pole"?"🏛":"🏀"} {source?.teamName||"Équipe"}</b><span>{c.title}</span><small>{c.tempsFort?`${c.tempsFort} · `:""}{c.result||"Action vidéo"}</small></Link>})}{!clips.length&&<div className="miniEmpty">Les clips apparaîtront ici dès que LiveStats les associe au joueur.</div>}</div></section>
+
+    <PolePlayerFollowupPanel structureId={data.structureId||data.structure?.id||null} institutionalPlayerId={data.institutionalPlayerId||data.player?.institutionalPlayerId||null} />
 
     <section className="box"><div className="sectionTitle"><div><p>TIMELINE</p><h3>Historique de formation</h3></div></div><div className="timeline">{timeline.slice(0,40).map((e:any,i:number)=><article key={`${e.type}-${e.date}-${i}`}><time>{dateFr(e.date)}</time><span className={`dot ${e.source==="Pôle"?"poleDot":"clubDot"}`}/><div><b>{e.source} · {e.title}</b>{e.detail&&<p>{e.detail}</p>}</div></article>)}{!timeline.length&&<div className="miniEmpty">Aucun événement longitudinal pour le moment.</div>}</div></section>
 

@@ -16,6 +16,10 @@ export type AiDiagramObject = {
   text?: string;
 };
 
+export type AiDiagramStroke = {
+  points: AiPoint[];
+};
+
 export type AiDiagramAction = {
   action: "pass" | "dribble" | "cut" | "screen" | "shoot";
   fromPlayer?: string;
@@ -31,6 +35,7 @@ export type AiExerciseDiagram = {
   players: AiDiagramPlayer[];
   objects: AiDiagramObject[];
   actions: AiDiagramAction[];
+  strokes?: AiDiagramStroke[];
   notes: string;
 };
 

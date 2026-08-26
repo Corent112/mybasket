@@ -40,6 +40,7 @@ export type LiveMatchAction = {
   coverage?: string;
 
   // AJOUT · système de jeu réellement joué (mapping playbook) + bornes de possession
+  systemeJeu?: string | null;    // valeur historique du wizard ('systeme-1', 'transition', etc.)
   systemeSlot?: string | null;   // 'systeme-1' … 'slob-1' (id stable du bouton)
   systemeId?: string | null;     // id du système du playbook, si mappé
   systemeName?: string | null;   // libellé affiché ('Horn 4')
@@ -351,7 +352,7 @@ function buildActionRow(
     coverage: action.coverage || null,
 
     // AJOUT · colonnes créées par migration_livestat_projets.sql
-    systeme_slot: action.systemeSlot ?? null,
+    systeme_slot: action.systemeSlot ?? action.systemeJeu ?? null,
     systeme_id: action.systemeId ?? null,
     systeme_name: action.systemeName ?? null,
     playbook_id: action.playbookId ?? null,
@@ -864,7 +865,7 @@ export async function saveLiveMatch(
       inbound: action.inbound || null,
       temps_fort: action.tempsFort || null,
       // AJOUT · système joué + bornes de possession (sauvegarde en lot)
-      systeme_slot: action.systemeSlot ?? null,
+      systeme_slot: action.systemeSlot ?? action.systemeJeu ?? null,
       systeme_id: action.systemeId ?? null,
       systeme_name: action.systemeName ?? null,
       playbook_id: action.playbookId ?? null,
