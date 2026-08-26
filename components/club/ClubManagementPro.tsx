@@ -17,6 +17,7 @@ import ClubSettingsProSection from "@/components/club/ClubSettingsProSection";
 import ClubFinanceProSection from "@/components/club/ClubFinanceProSection";
 import ClubAuditExportsSection from "@/components/club/ClubAuditExportsSection";
 import ClubDashboardOverviewV2 from "@/components/club/ClubDashboardOverviewV2";
+import ClubSectionPolish from "@/components/club/ClubSectionPolish";
 
 type Props = { clubId:string; clubName?:string|null; logoUrl?:string|null };
 
@@ -59,6 +60,7 @@ export default function ClubManagementPro({ clubId, clubName, logoUrl }: Props) 
 
   return (
     <div className="clubApp" style={{["--club-primary" as any]:colors.primary,["--club-secondary" as any]:colors.secondary}}>
+      <ClubSectionPolish />
       <aside className={mobileMenu?"sidebar open":"sidebar"}>
         <div className="brand"><div className="brandLogo">{logoUrl?<img src={logoUrl} alt=""/>:<span>{name.slice(0,2).toUpperCase()}</span>}</div><strong>{name}</strong></div>
         <nav>{TABS.map((t)=><button key={t.key} className={activeTab===t.key?"active":""} onClick={()=>changeTab(t.key)}><i>{t.icon}</i><span>{t.label}</span></button>)}</nav>
