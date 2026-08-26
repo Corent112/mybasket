@@ -676,6 +676,88 @@ function Av({ p, cls }: { p?: Player; cls?: string }) {
 }
 
 /* ============================ Composant ============================ */
+
+/* ============================================================================
+ * Accès persistant à la vidéo locale
+ * ----------------------------------------------------------------------------
+ * Quand le navigateur supporte File System Access API, on conserve le handle
+ * du fichier dans IndexedDB. À la reprise du projet, MyBasket tente donc de
+ * rouvrir EXACTEMENT le même fichier. Si le fichier a été déplacé/supprimé ou
+ * si l'autorisation a expiré, on revient au bouton « Retrouver la vidéo ».
+ * ========================================================================== */
+type MyBasketLocalVideoHandle = {
+  name?: string;
+  getFile: () => Promise<File>;
+  queryPermission?: (options?: { mode?: 'read' | 'readwrite' }) => Promise<string>;
+  requestPermission?: (options?: { mode?: 'read' | 'readwrite' }) => Promise<string>;
+};
+
+const LOCAL_VIDEO_DB = 'mybasket-local-video-handles';
+const LOCAL_VIDEO_STORE = 'handles';
+
+function localVideoHandleKey(teamId: string, filename: string) {
+  return `team:${String(teamId || 'unknown')}::${String(filename || '').trim().toLowerCase()}`;
+}
+
+function openLocalVideoHandleDb(): Promise<IDBDatabase | null> {
+  return new Promise((resolve) => {
+    if (typeof indexedDB === 'undefined') {
+      resolve(null);
+      return;
+    }
+
+    const req = indexedDB.open(LOCAL_VIDEO_DB, 1);
+
+    req.onupgradeneeded = () => {
+      const db = req.result;
+      if (!db.objectStoreNames.contains(LOCAL_VIDEO_STORE)) {
+        db.createObjectStore(LOCAL_VIDEO_STORE);
+      }
+    };
+
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => resolve(null);
+  });
+}
+
+async function saveLocalVideoHandle(key: string, handle: MyBasketLocalVideoHandle) {
+  const db = await openLocalVideoHandleDb();
+  if (!db) return;
+
+  await new Promise<void>((resolve) => {
+    try {
+      const tx = db.transaction(LOCAL_VIDEO_STORE, 'readwrite');
+      tx.objectStore(LOCAL_VIDEO_STORE).put(handle, key);
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => resolve();
+    } catch {
+      resolve();
+    }
+  });
+
+  db.close();
+}
+
+async function readLocalVideoHandle(key: string): Promise<MyBasketLocalVideoHandle | null> {
+  const db = await openLocalVideoHandleDb();
+  if (!db) return null;
+
+  const value = await new Promise<MyBasketLocalVideoHandle | null>((resolve) => {
+    try {
+      const tx = db.transaction(LOCAL_VIDEO_STORE, 'readonly');
+      const req = tx.objectStore(LOCAL_VIDEO_STORE).get(key);
+      req.onsuccess = () =>
+        resolve((req.result as MyBasketLocalVideoHandle | undefined) ?? null);
+      req.onerror = () => resolve(null);
+    } catch {
+      resolve(null);
+    }
+  });
+
+  db.close();
+  return value;
+}
+
 export default function PriseStatsProPage() {
   const [teams, setTeams] = useState<{ id: string; name: string; players: Player[]; teamType?: string; isScoutTeam?: boolean }[]>([]);
   const [analysisScope, setAnalysisScope] = useState<'coached' | 'scout'>('coached');
@@ -880,12 +962,8 @@ export default function PriseStatsProPage() {
   const VIDEO_PRE_ROLL = 6;   // s avant l'action (préparation du clip)
   const VIDEO_POST_ROLL = 4;  // s après l'action
 
-  // Sélection d'un fichier vidéo local (objectURL, pas d'upload réel en V5).
-  // Ne réinitialise NI les actions NI les bornes de clips : on ne fait que
-  // rattacher une source vidéo. Sert aussi à re-sélectionner la vidéo d'un
-  // projet rouvert (l'URL blob: d'origine ne survit pas au rechargement).
-  const onPickVideoFile = (file: File | null) => {
-    if (!file) return;
+  // Rattache une vidéo locale sans jamais modifier les actions ou les clips.
+  const attachLocalVideoFile = (file: File, restored = false) => {
     setVideoFile(file);
     setPendingDriveFile(null);
     setVideoFilename(file.name);
@@ -893,11 +971,105 @@ export default function PriseStatsProPage() {
     setVideoProvider('local');
     videoProviderRef.current = 'local';
     setVideoStatus('ready');
+    restoredVideoRef.current = { provider: 'local', filename: file.name };
 
-    // Dès qu'une vidéo est insérée, on demande son calage sur le match.
-    // Si elle est choisie dans le setup, la fenêtre s'ouvrira juste après
-    // DÉMARRER LE MATCH.
-    requestInitialVideoSync();
+    // À la reprise, la synchro du projet existe déjà.
+    if (!restored) requestInitialVideoSync();
+  };
+
+  // Fallback classique : utile pour les navigateurs ne permettant pas
+  // de conserver un FileSystemFileHandle.
+  const onPickVideoFile = (file: File | null) => {
+    if (!file) return;
+    attachLocalVideoFile(file, false);
+  };
+
+  // Sélection intelligente : si le navigateur le permet, on mémorise le handle
+  // du fichier afin de rouvrir automatiquement EXACTEMENT ce fichier plus tard.
+  const pickLocalVideoSmart = async () => {
+    const picker = (window as any).showOpenFilePicker as
+      | ((options?: any) => Promise<MyBasketLocalVideoHandle[]>)
+      | undefined;
+
+    if (picker) {
+      try {
+        const [handle] = await picker({
+          multiple: false,
+          types: [
+            {
+              description: 'Vidéo du match',
+              accept: { 'video/*': ['.mp4', '.mov', '.m4v', '.webm'] },
+            },
+          ],
+        });
+
+        if (!handle) return;
+
+        const file = await handle.getFile();
+        const tId = String(selTeam?.id || activeTeamId || teamId || 'setup');
+
+        await saveLocalVideoHandle(localVideoHandleKey(tId, file.name), handle);
+        attachLocalVideoFile(file, false);
+        return;
+      } catch (error: any) {
+        if (error?.name === 'AbortError') return;
+      }
+    }
+
+    // Safari / navigateur sans showOpenFilePicker : le navigateur impose
+    // une nouvelle sélection manuelle après un rechargement de page.
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = 'video/*';
+    input.onchange = () => onPickVideoFile(input.files?.[0] ?? null);
+    input.click();
+  };
+
+  const tryRestoreLocalVideo = async (
+    tId: string,
+    filename: string,
+    askPermission = false,
+  ) => {
+    if (!filename) return false;
+
+    const handle = await readLocalVideoHandle(localVideoHandleKey(tId, filename));
+    if (!handle) return false;
+
+    try {
+      let permission = handle.queryPermission
+        ? await handle.queryPermission({ mode: 'read' })
+        : 'granted';
+
+      if (
+        permission !== 'granted' &&
+        askPermission &&
+        handle.requestPermission
+      ) {
+        permission = await handle.requestPermission({ mode: 'read' });
+      }
+
+      if (permission !== 'granted') return false;
+
+      const file = await handle.getFile();
+
+      // Si le fichier a été supprimé/déplacé, getFile() échoue et on tombera
+      // naturellement sur « Retrouver la vidéo ».
+      attachLocalVideoFile(file, true);
+      return true;
+    } catch {
+      return false;
+    }
+  };
+
+  const reconnectLocalVideo = async () => {
+    const tId = String(selTeam?.id || activeTeamId || teamId || 'setup');
+
+    if (await tryRestoreLocalVideo(tId, videoFilename, true)) {
+      flash('Vidéo locale retrouvée automatiquement ✓');
+      return;
+    }
+
+    await pickLocalVideoSmart();
   };
 
 
@@ -1592,14 +1764,22 @@ export default function PriseStatsProPage() {
         setVideoUrl('');
         videoProviderRef.current = 'none';
         if (provider === 'local') {
-          // Le fichier local n'est pas rattachable automatiquement (blob URL
-          // non persistable), mais on MÉMORISE qu'une vidéo locale existait
-          // pour que l'auto-sauvegarde ne l'efface pas définitivement.
+          const restoredFilename = String(s.videoFilename || '');
+
           restoredVideoRef.current = {
             provider: 'local',
-            filename: String(s.videoFilename || ''),
+            filename: restoredFilename,
           };
-          flash('Projet restauré. Resélectionne le fichier vidéo local — le décalage de synchronisation sera réappliqué automatiquement.');
+
+          // Première action : tenter de rouvrir le fichier ORIGINAL.
+          // Le bouton manuel n'apparaît que si cette tentative échoue.
+          void tryRestoreLocalVideo(team.id, restoredFilename, false).then((found) => {
+            if (found) {
+              flash('Projet restauré · vidéo locale retrouvée automatiquement ✓');
+            } else {
+              flash('Projet restauré · fichier vidéo à reconnecter uniquement si le navigateur n’y a plus accès.');
+            }
+          });
         }
       }
 
@@ -5491,11 +5671,12 @@ export default function PriseStatsProPage() {
                 </div>
                 {videoMode === 'file' && (
                   <div className="vid-input">
-                    <label className="vid-file">
-                      <input type="file" accept="video/*" onChange={(e) => onPickVideoFile(e.target.files?.[0] ?? null)} />
-                      <span className="vf-btn">📁 Choisir un fichier vidéo</span>
+                    <div className="vid-file">
+                      <button type="button" className="vf-btn" onClick={() => void pickLocalVideoSmart()}>
+                        📁 Choisir un fichier vidéo
+                      </button>
                       <span className="vf-name">{videoFilename || 'Aucun fichier sélectionné'}</span>
-                    </label>
+                    </div>
                   </div>
                 )}
                 {videoMode === 'drive' && (
@@ -5821,10 +6002,13 @@ export default function PriseStatsProPage() {
   const VideoReselectBanner = () => needsLocalVideo ? (
     <div className="vid-reselect">
       <span>🎥 Vidéo requise : <b>{videoFilename}</b></span>
-      <label className="vid-reselect-btn">
-        Resélectionner la vidéo
-        <input type="file" accept="video/*" onChange={(e) => onPickVideoFile(e.target.files?.[0] ?? null)} />
-      </label>
+      <button
+        type="button"
+        className="vid-reselect-btn"
+        onClick={() => void reconnectLocalVideo()}
+      >
+        Retrouver la vidéo
+      </button>
     </div>
   ) : null;
 
@@ -5939,7 +6123,7 @@ export default function PriseStatsProPage() {
                     <div className="vempty-tt">Ajouter une vidéo</div>
                     <div className="vempty-sub">Le codage fonctionne sans vidéo — synchronisable après le match.</div>
                     <div className="vempty-btns">
-                      <label className="vbtn"><input type="file" accept="video/*" onChange={(e) => onPickVideoFile(e.target.files?.[0] ?? null)} />📁 Fichier</label>
+                      <button type="button" className="vbtn" onClick={() => void pickLocalVideoSmart()}>📁 Fichier</button>
                       {isSupabaseUuid(String(selTeam?.id || activeTeamId || teamId || '').trim()) && (
                         <GoogleDriveVideoPicker
                           teamId={String(selTeam?.id || activeTeamId || teamId || '').trim()}
