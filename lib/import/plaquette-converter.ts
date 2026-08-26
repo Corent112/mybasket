@@ -33,35 +33,20 @@ function oneDiagramToPlaquette(result: AiExerciseImport, diagram: AiExerciseDiag
     id: crypto.randomUUID(), x: clamp(o.x), y: clamp(o.y, 0.02, half ? 0.49 : 0.98),
     kind: o.kind, text: o.text, rotation: 0, size: 1, color: "#0F0F12",
   }));
-  const tracedLines = (diagram.strokes || [])
-    .filter((stroke) => Array.isArray(stroke.points) && stroke.points.length >= 2)
-    .map((stroke) => ({
-      id: crypto.randomUUID(),
-      action: "freedraw",
-      from: point(stroke.points[0], half),
-      to: point(stroke.points[stroke.points.length - 1], half),
-      points: stroke.points.map((p) => point(p, half)),
-      rotation: 0,
-      order: 0,
-      startMode: "withPrevious",
-      duration: 0,
-    }));
-
-  const actionLines = (diagram.actions || []).map((a, index) => {
+  const lines = (diagram.actions || []).map((a, index) => {
     const source = findPlayer(a.fromPlayer);
     const target = findPlayer(a.toPlayer);
     const from = source ? { x: source.x, y: source.y } : point(a.from, half);
     const to = target ? { x: target.x, y: target.y } : point(a.to, half);
     return {
       id: crypto.randomUUID(), action: a.action, from, to, rotation: 0,
+      points: a.action === "freedraw" && a.points ? a.points.map((p) => point(p, half)) : undefined,
       sourcePlayerId: source?.id, targetPlayerId: target?.id,
       order: Number.isFinite(Number(a.order)) ? Number(a.order) : index + 1,
       startMode: index === 0 ? "withPrevious" : "afterPrevious", duration: 1.2,
       target: a.action === "shoot" ? "basket" : undefined,
     };
   });
-
-  const lines = [...tracedLines, ...actionLines];
 
   return {
     title: (result.title ? `${result.title}${(result.diagrams?.length || 0) > 1 ? ` — Schéma ${diagramIndex + 1}` : ""}` : `Schéma ${diagramIndex + 1}`),
@@ -148,23 +133,21 @@ export function renderPlaquettePreview(schema: PlaquetteSchemaData): string {
   ctx.fillStyle = "#0F0F12";
   ctx.lineWidth = 4;
   for (const line of phase.lines || []) {
-    if (line.action === "freedraw" && Array.isArray(line.points) && line.points.length >= 2) {
+    if (line.action === "freedraw" && Array.isArray(line.points) && line.points.length > 1) {
       ctx.beginPath();
       line.points.forEach((p: AiPoint, index: number) => {
-        const x = sx(p.x);
-        const y = sy(p.y);
-        if (index === 0) ctx.moveTo(x, y);
-        else ctx.lineTo(x, y);
+        const x = sx(p.x), y = sy(p.y);
+        if (index === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
       });
       ctx.stroke();
-      continue;
+    } else {
+      drawArrow(
+        ctx,
+        { x: sx(line.from.x), y: sy(line.from.y) },
+        { x: sx(line.to.x), y: sy(line.to.y) },
+        line.action
+      );
     }
-    drawArrow(
-      ctx,
-      { x: sx(line.from.x), y: sy(line.from.y) },
-      { x: sx(line.to.x), y: sy(line.to.y) },
-      line.action
-    );
   }
 
   for (const obj of phase.objects || []) {
