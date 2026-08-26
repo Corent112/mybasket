@@ -17,6 +17,7 @@ import ShotChart from "@/components/prise-stats-pro/ShotChart";
 import AdvancedVideoEditor from "@/components/video-editor/AdvancedVideoEditor";
 import PlayerLoadMonitoring from "@/components/players/PlayerLoadMonitoring";
 import PlayerShootingGrids from "@/components/players/PlayerShootingGrids";
+import PoleSportsReportPanel from "@/components/equipes/PoleSportsReportPanel";
 
 type PlayerExtra = Player & {
   licenceNumber?: string;
@@ -39,6 +40,7 @@ const TABS = [
   "Grilles de tir",
   "Médical",
   "Bilans",
+  "Bilan sportif",
   "Documents",
 ] as const;
 
@@ -2146,6 +2148,18 @@ export default function JoueurDetailPage({
             }}
             onPdf={generateBilanPdf}
           />
+        )}
+
+        {tab === "Bilan sportif" && (
+          <section className="panel">
+            <div className="section-title">
+              <div>
+                <span className="eyebrow">PÔLE / CLUB</span>
+                <h2>Bilan sportif partagé</h2>
+              </div>
+            </div>
+            <PoleSportsReportPanel teamId={String(teamId)} playerId={String(playerId)} />
+          </section>
         )}
 
         {tab === "Documents" && (
