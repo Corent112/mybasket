@@ -959,6 +959,20 @@ export default function HistoriqueMatchsModule() {
                 </div>
 
                 <div className="card-actions">
+                  <button
+                    type="button"
+                    className="resume"
+                    onClick={() => {
+                      const params = new URLSearchParams({
+                        project: match.id,
+                        mode: "resume",
+                      });
+                      window.location.assign(`/management/live?${params.toString()}`);
+                    }}
+                  >
+                    ▶ Reprendre
+                  </button>
+
                   <button type="button" onClick={() => openSheet(match)}>
                     Boxscore complet
                   </button>
@@ -1393,6 +1407,15 @@ export default function HistoriqueMatchsModule() {
           background: #501020;
         }
 
+        button.resume {
+          background: #d4a24c;
+          color: #321;
+        }
+
+        button.resume:hover {
+          background: #c49340;
+        }
+
         button.danger {
           background: #b3261e;
           width: 46px;
@@ -1653,7 +1676,7 @@ export default function HistoriqueMatchsModule() {
             width: 100%;
           }
 
-          .card-actions button:first-child {
+          .card-actions button:not(.danger) {
             flex: 1;
           }
 
