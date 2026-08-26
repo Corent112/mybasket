@@ -1957,9 +1957,13 @@ export default function JoueurDetailPage({
               ⬇ Exporter le profil
             </button>
 
-            <button className="light-btn primary" onClick={() => setEditing(true)}>
-              ✎ Modifier
-            </button>
+            {(p as any).poleProtected === true && (p as any).secondaryTeam === true ? (
+              <span className="status-pill">🔒 Informations gérées par le Pôle</span>
+            ) : (
+              <button className="light-btn primary" onClick={() => setEditing(true)}>
+                ✎ Modifier
+              </button>
+            )}
           </div>
         </div>
 
