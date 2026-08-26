@@ -255,6 +255,8 @@ export async function POST(request: NextRequest) {
     </div>
   `;
 
+  let customEmailSent = false;
+
   try {
     const delivery = await sendTransactionalEmail({
       to: email,
@@ -262,56 +264,51 @@ export async function POST(request: NextRequest) {
       html,
     });
 
-    if (!delivery?.sent) {
-      throw new Error(
-        delivery?.reason === "missing_api_key"
-          ? "RESEND_API_KEY absente."
-          : delivery?.reason === "missing_from"
-            ? "RESEND_FROM absente."
-            : "L’e-mail n’a pas pu être envoyé.",
-      );
-    }
+    customEmailSent = Boolean(delivery?.sent);
   } catch (mailError) {
-    /**
-     * Important :
-     * generateLink() a déjà créé l'utilisateur.
-     * Si notre email échoue, on nettoie uniquement CE nouveau compte
-     * s'il n'a jamais été confirmé/ utilisé, afin qu'il puisse réessayer.
-     */
-    const generatedUser = generated.data?.user;
-    if (
-      generatedUser?.id &&
-      !generatedUser.email_confirmed_at &&
-      !generatedUser.last_sign_in_at
-    ) {
-      const { error: cleanupError } =
-        await adminClient.auth.admin.deleteUser(generatedUser.id);
-
-      if (cleanupError) {
-        console.error(
-          "Nettoyage compte après échec email impossible :",
-          cleanupError,
-        );
-      }
-    }
-
     console.error(
-      "E-mail de confirmation non envoyé :",
+      "E-mail MyBasket via Resend non envoyé, tentative Supabase :",
       mailError,
     );
+  }
 
-    return NextResponse.json(
-      {
-        error:
-          "L’e-mail de confirmation n’a pas pu être envoyé. Réessaie dans quelques instants.",
-        code: "CONFIRMATION_EMAIL_FAILED",
+  /**
+   * Sécurité importante :
+   * generateLink() a déjà créé l'utilisateur Auth.
+   * On ne supprime PLUS le compte si Resend est mal configuré ou temporairement
+   * indisponible. On tente le système e-mail Supabase comme second canal.
+   */
+  if (!customEmailSent) {
+    const { error: resendError } = await adminClient.auth.resend({
+      type: "signup",
+      email,
+      options: {
+        emailRedirectTo: redirectTo,
       },
-      { status: 500 },
-    );
+    });
+
+    if (resendError) {
+      console.error(
+        "E-mail de confirmation Supabase non envoyé :",
+        resendError.message,
+      );
+
+      return NextResponse.json(
+        {
+          ok: true,
+          confirmationPending: true,
+          message:
+            "Ton compte a bien été créé, mais l’e-mail de confirmation n’a pas pu partir. Ton compte n’a pas été supprimé. Contacte MyBasket ou réessaie la confirmation dans quelques instants.",
+          code: "CONFIRMATION_EMAIL_PENDING",
+        },
+        { status: 202 },
+      );
+    }
   }
 
   return NextResponse.json({
     ok: true,
+    confirmationPending: false,
     message:
       "Compte créé. Clique sur « Confirmer mon inscription » dans l’e-mail MyBasket.",
   });

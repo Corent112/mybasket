@@ -61,12 +61,8 @@ export type ActionClipsModalProps = {
   actions: ClipAction[];
   title: string;
   videoUrl?: string | null;
-  /** Source vidéo spécifique à chaque action (utile quand la liste mélange plusieurs matchs). */
-  videoUrlForAction?: (action: ClipAction) => string | null;
   /** Synchro vidéo du match auquel appartiennent les clips (défaut : native). */
   sync?: VideoSyncState;
-  /** Synchro spécifique à chaque action (utile quand la liste mélange plusieurs matchs). */
-  syncForAction?: (action: ClipAction) => VideoSyncState;
   startIndex?: number;
   onClose: () => void;
   onAddToMontage?: (action: ClipAction) => void;
@@ -105,8 +101,7 @@ export default function ActionClipsModal(props: ActionClipsModalProps) {
 
   // Synchro du match : convertit les temps bruts de codage (source) en position
   // réelle dans la vidéo (média). Défaut = native (aucun décalage).
-  const currentVideoUrl = current ? (props.videoUrlForAction?.(current) ?? videoUrl ?? null) : (videoUrl ?? null);
-  const sync = current ? (props.syncForAction?.(current) ?? props.sync ?? NATIVE_SYNC) : (props.sync ?? NATIVE_SYNC);
+  const sync = props.sync ?? NATIVE_SYNC;
   // Bornes DÉJÀ synchronisées d'une action (jamais de lecture directe de
   // clipStart/clipEnd sans passer par la synchro).
   const syncedStartOf = useCallback(
@@ -235,7 +230,7 @@ export default function ActionClipsModal(props: ActionClipsModalProps) {
   };
 
   if (!open || actions.length === 0 || !current) return null;
-  const hasVideo = !!currentVideoUrl;
+  const hasVideo = !!videoUrl;
   const cur = current;
 
   const Info = ({ k, v }: { k: string; v: ReactNode }) =>
@@ -258,7 +253,7 @@ export default function ActionClipsModal(props: ActionClipsModalProps) {
 
           <div className="acm-videowrap">
             {hasVideo ? (
-              <video ref={videoRef} className="acm-video" src={currentVideoUrl!} controls playsInline
+              <video ref={videoRef} className="acm-video" src={videoUrl!} controls playsInline
                 onLoadedMetadata={(e) => setVideoDuration(Number.isFinite(e.currentTarget.duration) ? e.currentTarget.duration : 0)} />
             ) : (
               <div className="acm-novideo">
