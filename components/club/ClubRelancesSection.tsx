@@ -408,7 +408,7 @@ export default function ClubRelancesSection({
         .top p,
         .panelHead p {
           margin: 0 0 6px;
-          color: #d4a24c;
+          color: var(--club-secondary);
           font-size: 0.72rem;
           font-weight: 900;
           letter-spacing: 0.12em;
@@ -417,7 +417,7 @@ export default function ClubRelancesSection({
 
         .top h2 {
           margin: 0;
-          color: #6b1a2c;
+          color: var(--club-primary);
           font-family: "Alfa Slab One", serif;
           font-weight: 400;
         }
@@ -432,7 +432,7 @@ export default function ClubRelancesSection({
 
         button {
           border: 1px solid #eadfd5;
-          background: #6b1a2c;
+          background: var(--club-primary);
           color: white;
           border-radius: 999px;
           padding: 11px 16px;
@@ -460,7 +460,7 @@ export default function ClubRelancesSection({
 
         .ghost {
           background: #fffaf2;
-          color: #6b1a2c;
+          color: var(--club-primary);
         }
 
         .alert {
@@ -514,7 +514,7 @@ export default function ClubRelancesSection({
         .kpis strong {
           display: block;
           margin: 8px 0 4px;
-          color: #6b1a2c;
+          color: var(--club-primary);
           font-size: 1.5rem;
           line-height: 1;
         }
@@ -578,13 +578,13 @@ export default function ClubRelancesSection({
 
         .panelHead h3 {
           margin: 0;
-          color: #6b1a2c;
+          color: var(--club-primary);
         }
 
         .panelHead > span {
           border-radius: 999px;
           background: #fff7ed;
-          color: #6b1a2c;
+          color: var(--club-primary);
           padding: 7px 10px;
           font-weight: 900;
           font-size: 0.78rem;
@@ -610,7 +610,7 @@ export default function ClubRelancesSection({
         }
 
         .lateCard.selected {
-          border-color: #6b1a2c;
+          border-color: var(--club-primary);
           box-shadow: 0 0 0 3px rgba(107, 26, 44, 0.08);
         }
 
@@ -623,7 +623,7 @@ export default function ClubRelancesSection({
         .selectLine input {
           width: 18px;
           height: 18px;
-          accent-color: #6b1a2c;
+          accent-color: var(--club-primary);
         }
 
         .identity,
@@ -635,7 +635,7 @@ export default function ClubRelancesSection({
 
         .identity strong,
         .card strong {
-          color: #6b1a2c;
+          color: var(--club-primary);
           overflow-wrap: anywhere;
         }
 

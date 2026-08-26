@@ -217,12 +217,12 @@ export default function ClubCotisationsSection({ clubId }: { clubId: string }) {
 
       <style jsx>{`
         .cotis{border:1px solid #eadfd5;border-radius:28px;background:#fff;overflow:hidden;box-shadow:0 22px 70px rgba(0,0,0,.06);font-family:Roboto,system-ui,sans-serif}
-        .top{padding:24px;background:linear-gradient(135deg,#fff,#fff5e8);border-bottom:1px solid #eadfd5}.top p{margin:0 0 6px;color:#d4a24c;font-size:.72rem;font-weight:900;letter-spacing:.12em}.top h2{margin:0;color:#6b1a2c;font-family:"Alfa Slab One",serif;font-weight:400}.top span{color:#6b7280;font-weight:700}
+        .top{padding:24px;background:linear-gradient(135deg,#fff,#fff5e8);border-bottom:1px solid #eadfd5}.top p{margin:0 0 6px;color:var(--club-secondary);font-size:.72rem;font-weight:900;letter-spacing:.12em}.top h2{margin:0;color:var(--club-primary);font-family:"Alfa Slab One",serif;font-weight:400}.top span{color:#6b7280;font-weight:700}
         .alert{margin:16px;padding:12px 14px;border-radius:14px;font-weight:900}.alert.error{background:#fff0f0;color:#b91c1c}.alert.ok{background:#f0fff4;color:#15803d}
-        .layout{display:grid;grid-template-columns:330px 1fr;gap:18px;padding:18px}.side,.main{border:1px solid #eadfd5;border-radius:24px;padding:18px;background:#fff}.side{background:#fffdf8}.side h3{margin:0 0 14px;color:#6b1a2c}
+        .layout{display:grid;grid-template-columns:330px 1fr;gap:18px;padding:18px}.side,.main{border:1px solid #eadfd5;border-radius:24px;padding:18px;background:#fff}.side{background:#fffdf8}.side h3{margin:0 0 14px;color:var(--club-primary)}
         label{display:grid;gap:6px;margin-bottom:12px;color:#6b7280;font-weight:900;font-size:.78rem}input,select{border:1px solid #e5e7eb;border-radius:14px;padding:11px 12px;font:inherit}
-        button{border:1px solid #eadfd5;background:#6b1a2c;color:white;border-radius:999px;padding:9px 12px;font-weight:900;cursor:pointer}hr{border:0;border-top:1px solid #eadfd5;margin:18px 0}
-        .kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:14px}.kpis b{border:1px solid #eadfd5;background:#fff8ee;border-radius:20px;padding:16px;text-align:center;color:#6b1a2c;font-size:1.2rem}.kpis small{display:block;color:#6b7280;font-size:.72rem}
+        button{border:1px solid #eadfd5;background:var(--club-primary);color:white;border-radius:999px;padding:9px 12px;font-weight:900;cursor:pointer}hr{border:0;border-top:1px solid #eadfd5;margin:18px 0}
+        .kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:14px}.kpis b{border:1px solid #eadfd5;background:#fff8ee;border-radius:20px;padding:16px;text-align:center;color:var(--club-primary);font-size:1.2rem}.kpis small{display:block;color:#6b7280;font-size:.72rem}
         .tools{margin-bottom:14px}.tools input{width:100%}.table{border:1px solid #eef2f7;border-radius:18px;overflow:hidden}.row{display:grid;grid-template-columns:1.3fr 1fr .8fr .8fr .8fr .7fr .8fr;border-bottom:1px solid #eef2f7}.row span{padding:12px;font-weight:800}.row.head{background:#f8fafc;color:#6b7280}
         @media(max-width:1050px){.layout,.kpis,.row{grid-template-columns:1fr}.row.head{display:none}}
       `}</style>
