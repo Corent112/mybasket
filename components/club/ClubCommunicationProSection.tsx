@@ -1,6 +1,5 @@
 "use client";
 
-// components/club/ClubCommunicationProSection.tsx
 import { useEffect, useMemo, useState } from "react";
 import type { ClubCoach, ClubPlayer, ClubTeam } from "@/lib/club-core";
 import {
@@ -28,9 +27,54 @@ import {
 } from "@/lib/club-mailing-lists";
 
 const TARGETS = [
-  { value: "players", label: "Joueurs" },
   { value: "parents", label: "Parents" },
+  { value: "players", label: "Joueurs" },
   { value: "coaches", label: "Coachs" },
+] as const;
+
+const QUICK_TEMPLATES = [
+  {
+    key: "licence",
+    icon: "🪪",
+    name: "Licence à finaliser",
+    subject: "Licence à finaliser – {club}",
+    body: "Bonjour,\n\nLe dossier de licence n’est pas encore complet. Merci de vérifier les éléments manquants afin que nous puissions finaliser l’inscription.\n\nSportivement,\n{club}",
+  },
+  {
+    key: "cotisation",
+    icon: "💳",
+    name: "Relance cotisation",
+    subject: "Cotisation – règlement en attente",
+    body: "Bonjour,\n\nSauf erreur de notre part, une partie de la cotisation reste à régler. Merci de régulariser la situation ou de nous contacter si nécessaire.\n\nMerci,\n{club}",
+  },
+  {
+    key: "document",
+    icon: "📄",
+    name: "Document manquant",
+    subject: "Document manquant – dossier club",
+    body: "Bonjour,\n\nUn document est encore manquant dans le dossier. Merci de nous le transmettre dès que possible.\n\nBien cordialement,\n{club}",
+  },
+  {
+    key: "convocation",
+    icon: "📣",
+    name: "Convocation",
+    subject: "Convocation – {club}",
+    body: "Bonjour,\n\nVous êtes convoqué(e) pour le prochain événement de votre équipe. Retrouvez les informations pratiques dans votre espace MyBasket ou contactez le club si nécessaire.\n\nMerci de confirmer votre présence.\n\n{club}",
+  },
+  {
+    key: "horaire",
+    icon: "🕒",
+    name: "Changement d’horaire",
+    subject: "Modification d’horaire – {club}",
+    body: "Bonjour,\n\nAttention, un changement d’horaire ou de lieu concerne votre équipe. Merci de consulter le calendrier du club pour les informations à jour.\n\n{club}",
+  },
+  {
+    key: "general",
+    icon: "✉️",
+    name: "Information générale",
+    subject: "Information {club}",
+    body: "Bonjour,\n\nNous souhaitons vous transmettre l’information suivante :\n\n[Votre message]\n\nSportivement,\n{club}",
+  },
 ] as const;
 
 function emptyFilters(): CommunicationFilters {
@@ -45,9 +89,19 @@ function emptyFilters(): CommunicationFilters {
   };
 }
 
+function errorMessage(error: unknown, fallback: string) {
+  if (error instanceof Error && error.message) return error.message;
+  return fallback;
+}
+
+function replaceClub(text: string, clubName: string) {
+  return text.split("{club}").join(clubName);
+}
+
 function statusLabel(status: string) {
   if (status === "draft") return "Brouillon";
-  if (status.startsWith("sent")) return "Envoyée";
+  if (status === "sent") return "Envoyé";
+  if (status === "sent_with_errors") return "Envoyé avec erreurs";
   return status || "—";
 }
 
@@ -73,26 +127,23 @@ export default function ClubCommunicationProSection({
   const [campaignRecipients, setCampaignRecipients] = useState<CommunicationRecipient[]>([]);
   const [selectedCampaignId, setSelectedCampaignId] = useState("");
   const [editingCampaignId, setEditingCampaignId] = useState<string | null>(null);
+  const [filters, setFilters] = useState<CommunicationFilters>(emptyFilters());
+  const [groupName, setGroupName] = useState("");
+  const [title, setTitle] = useState("Information club");
+  const [subject, setSubject] = useState(`Information ${clubName}`);
+  const [body, setBody] = useState("");
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
   const [sending, setSending] = useState(false);
 
-  const [filters, setFilters] = useState<CommunicationFilters>(emptyFilters());
-  const [groupName, setGroupName] = useState("");
-  const [title, setTitle] = useState("Message club");
-  const [subject, setSubject] = useState(`Information ${clubName}`);
-  const [body, setBody] = useState("");
-
   async function load() {
     setError("");
-
     try {
       const [data, lists, templateRows] = await Promise.all([
         getCommunicationWorkspace(clubId),
         listMailingLists(clubId),
         listMessageTemplates(clubId),
       ]);
-
       setGroups(data.groups);
       setCampaigns(data.campaigns);
       setTeams(data.teams);
@@ -100,17 +151,13 @@ export default function ClubCommunicationProSection({
       setCoaches(data.coaches);
       setMailingLists(lists);
       setTemplates(templateRows);
-
-      if (!templateId && templateRows[0]) {
-        setTemplateId(templateRows[0].id);
-      }
-    } catch (e: any) {
-      setError(e?.message || "Communication impossible à charger.");
+    } catch (e: unknown) {
+      setError(errorMessage(e, "Communication impossible à charger."));
     }
   }
 
   useEffect(() => {
-    load();
+    void load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [clubId]);
 
@@ -119,21 +166,18 @@ export default function ClubCommunicationProSection({
   }, [filters, players, coaches]);
 
   useEffect(() => {
-    async function loadRecipients() {
+    async function loadCampaignRecipients() {
       if (!selectedCampaignId) {
         setCampaignRecipients([]);
         return;
       }
-
       try {
-        const rows = await listCampaignRecipients(clubId, selectedCampaignId);
-        setCampaignRecipients(rows);
+        setCampaignRecipients(await listCampaignRecipients(clubId, selectedCampaignId));
       } catch {
         setCampaignRecipients([]);
       }
     }
-
-    loadRecipients();
+    void loadCampaignRecipients();
   }, [clubId, selectedCampaignId]);
 
   useEffect(() => {
@@ -143,39 +187,34 @@ export default function ClubCommunicationProSection({
         setManualRecipients([]);
         return;
       }
-
-      const rows = await listMailingListMembers(clubId, selectedListId);
-      setListMembers(rows);
-      setManualRecipients(
-        rows.map((row) => ({
-          id: row.id,
-          name: row.displayName,
-          email: row.email,
-          type: row.memberType,
-          playerId: row.playerId,
-          coachId: row.coachId,
-        })) as ResolvedRecipient[],
-      );
+      try {
+        const rows = await listMailingListMembers(clubId, selectedListId);
+        setListMembers(rows);
+        setManualRecipients(
+          rows.map((row) => ({
+            type: row.memberType === "coach" ? "coach" : row.memberType === "player" ? "player" : "parent",
+            playerId: row.playerId,
+            coachId: row.coachId,
+            userId: row.userId,
+            name: row.displayName,
+            email: row.email,
+          })),
+        );
+      } catch {
+        setListMembers([]);
+        setManualRecipients([]);
+      }
     }
-
-    loadList().catch(() => {
-      setListMembers([]);
-      setManualRecipients([]);
-    });
+    void loadList();
   }, [clubId, selectedListId]);
 
-  const categories = useMemo(() => {
-    return Array.from(new Set(players.map((player) => player.category).filter(Boolean)));
-  }, [players]);
-
+  const categories = useMemo(
+    () => Array.from(new Set(players.map((player) => player.category).filter(Boolean))),
+    [players],
+  );
   const finalRecipients = selectedListId ? manualRecipients : recipients;
-
-  const selectedCampaign = useMemo(() => {
-    return campaigns.find((campaign) => campaign.id === selectedCampaignId) || null;
-  }, [campaigns, selectedCampaignId]);
-
-  const draftCampaigns = campaigns.filter((campaign) => campaign.status === "draft").length;
-  const sentCampaigns = campaigns.filter((campaign) => campaign.status.startsWith("sent")).length;
+  const validRecipients = finalRecipients.filter((recipient) => Boolean(recipient.email));
+  const selectedCampaign = campaigns.find((campaign) => campaign.id === selectedCampaignId) || null;
 
   function resetComposer() {
     setEditingCampaignId(null);
@@ -183,32 +222,34 @@ export default function ClubCommunicationProSection({
     setSelectedListId("");
     setTemplateId("");
     setFilters(emptyFilters());
-    setTitle("Message club");
+    setTitle("Information club");
     setSubject(`Information ${clubName}`);
     setBody("");
     setMessage("");
     setError("");
   }
 
-  function applyTemplate(id: string) {
+  function applyDatabaseTemplate(id: string) {
     setTemplateId(id);
     const template = templates.find((item) => item.id === id);
     if (!template) return;
-
-    setSubject(template.subject);
-    setBody(template.body);
     setTitle(template.name);
+    setSubject(replaceClub(template.subject, clubName));
+    setBody(replaceClub(template.body, clubName));
+  }
+
+  function applyQuickTemplate(template: (typeof QUICK_TEMPLATES)[number]) {
+    setTemplateId("");
+    setTitle(template.name);
+    setSubject(replaceClub(template.subject, clubName));
+    setBody(replaceClub(template.body, clubName));
   }
 
   async function saveGroup() {
     if (!groupName.trim()) {
-      setError("Nom de groupe obligatoire.");
+      setError("Nom du groupe obligatoire.");
       return;
     }
-
-    setError("");
-    setMessage("");
-
     try {
       const group = await createCommunicationGroupPro({
         clubId,
@@ -216,12 +257,11 @@ export default function ClubCommunicationProSection({
         description: "Groupe dynamique MyBasket",
         filters,
       });
-
       setGroups((prev) => [group, ...prev]);
       setGroupName("");
-      setMessage("Groupe créé.");
-    } catch (e: any) {
-      setError(e?.message || "Groupe non créé.");
+      setMessage("Groupe enregistré.");
+    } catch (e: unknown) {
+      setError(errorMessage(e, "Groupe non créé."));
     }
   }
 
@@ -230,15 +270,12 @@ export default function ClubCommunicationProSection({
       setError("Sujet et message obligatoires.");
       return;
     }
-
     if (!finalRecipients.length) {
       setError("Aucun destinataire sélectionné.");
       return;
     }
 
     setError("");
-    setMessage("");
-
     try {
       const payload = {
         clubId,
@@ -252,834 +289,199 @@ export default function ClubCommunicationProSection({
       };
 
       if (editingCampaignId) {
-        const updated = await updateCommunicationCampaign({
-          ...payload,
-          campaignId: editingCampaignId,
-        });
-
-        setCampaigns((prev) =>
-          prev.map((campaign) => (campaign.id === updated.id ? updated : campaign)),
-        );
+        const updated = await updateCommunicationCampaign({ ...payload, campaignId: editingCampaignId });
         setSelectedCampaignId(updated.id);
-        setMessage("Campagne modifiée.");
+        setMessage("Brouillon mis à jour.");
       } else {
-        const campaign = await createCommunicationCampaign(payload);
-        setCampaigns((prev) => [campaign, ...prev]);
-        setSelectedCampaignId(campaign.id);
-        setEditingCampaignId(campaign.id);
-        setMessage("Campagne créée en brouillon.");
+        const created = await createCommunicationCampaign(payload);
+        setEditingCampaignId(created.id);
+        setSelectedCampaignId(created.id);
+        setMessage("Brouillon enregistré.");
       }
-
       await load();
-    } catch (e: any) {
-      setError(e?.message || "Campagne non sauvegardée.");
+    } catch (e: unknown) {
+      setError(errorMessage(e, "Campagne non sauvegardée."));
     }
   }
 
   function editCampaign(campaign: CommunicationCampaign) {
     setEditingCampaignId(campaign.id);
     setSelectedCampaignId(campaign.id);
-    setTitle(campaign.title || "Message club");
+    setTitle(campaign.title || "Information club");
     setSubject(campaign.subject || "");
     setBody(campaign.body || "");
-
     const campaignFilters = campaign.filters || emptyFilters();
-
-    if ((campaignFilters as any).mailingListId) {
-      setSelectedListId(String((campaignFilters as any).mailingListId));
+    if (campaignFilters.mailingListId) {
+      setSelectedListId(String(campaignFilters.mailingListId));
     } else {
       setSelectedListId("");
       setFilters(campaignFilters);
     }
-
-    setMessage("");
-    setError("");
   }
 
   async function removeCampaign(campaign: CommunicationCampaign) {
-    const ok = window.confirm(
-      `Supprimer la campagne "${campaign.title}" ?\n\nLes destinataires liés seront aussi supprimés.`,
-    );
-
-    if (!ok) return;
-
-    setError("");
-    setMessage("");
-
+    if (!window.confirm(`Supprimer la campagne « ${campaign.title} » ?`)) return;
     try {
       await deleteCommunicationCampaign(clubId, campaign.id);
-      setCampaigns((prev) => prev.filter((item) => item.id !== campaign.id));
-
-      if (selectedCampaignId === campaign.id) {
-        setSelectedCampaignId("");
-        setCampaignRecipients([]);
-      }
-
-      if (editingCampaignId === campaign.id) {
-        resetComposer();
-      }
-
+      if (selectedCampaignId === campaign.id) setSelectedCampaignId("");
+      if (editingCampaignId === campaign.id) resetComposer();
+      await load();
       setMessage("Campagne supprimée.");
-    } catch (e: any) {
-      setError(e?.message || "Suppression impossible.");
+    } catch (e: unknown) {
+      setError(errorMessage(e, "Suppression impossible."));
     }
   }
 
   async function sendCampaign(campaign: CommunicationCampaign) {
-    const ok = window.confirm(
-      `Envoyer la campagne "${campaign.title}" à ${campaign.recipientsCount} destinataire(s) ?`,
-    );
-
-    if (!ok) return;
-
+    if (!window.confirm(`Envoyer « ${campaign.title} » à ${campaign.recipientsCount} destinataire(s) ?`)) return;
     setSending(true);
     setError("");
-    setMessage("");
-
     try {
       await sendCommunicationCampaign(campaign.id);
       await load();
       setSelectedCampaignId(campaign.id);
       setMessage("Campagne envoyée.");
-    } catch (e: any) {
-      setError(e?.message || "Envoi impossible.");
+    } catch (e: unknown) {
+      setError(errorMessage(e, "Envoi impossible."));
     } finally {
       setSending(false);
     }
   }
 
   return (
-    <section className="communication">
-      <div className="top">
+    <section className="communicationV2">
+      <header className="sectionHeader">
         <div>
-          <p>COMMUNICATION CLUB</p>
-          <h2>Messages & campagnes</h2>
-          <span>
-            Ici, on envoie les messages généraux du club. Les relances financières
-            restent dans l’onglet Relances.
-          </span>
+          <p>COMMUNICATION</p>
+          <h2>Messages du club</h2>
+          <span>Cible les bonnes personnes, utilise un modèle, vérifie l’aperçu puis envoie.</span>
         </div>
+        <button className="primary" type="button" onClick={resetComposer}>+ Nouveau message</button>
+      </header>
 
-        <button className="newBtn" onClick={resetComposer} type="button">
-          + Nouveau message
-        </button>
+      {error && <div className="notice error">{error}</div>}
+      {message && <div className="notice ok">{message}</div>}
+
+      <div className="quickTemplates">
+        {QUICK_TEMPLATES.map((template) => (
+          <button key={template.key} type="button" onClick={() => applyQuickTemplate(template)}>
+            <span>{template.icon}</span><b>{template.name}</b>
+          </button>
+        ))}
       </div>
 
-      {error && <div className="alert error">{error}</div>}
-      {message && <div className="alert ok">{message}</div>}
-
-      <div className="overview">
-        <article>
-          <span>Destinataires actuels</span>
-          <strong>{finalRecipients.length}</strong>
-          <small>{selectedListId ? "liste mailing" : "ciblage dynamique"}</small>
-        </article>
-        <article>
-          <span>Campagnes</span>
-          <strong>{campaigns.length}</strong>
-          <small>total</small>
-        </article>
-        <article>
-          <span>Brouillons</span>
-          <strong>{draftCampaigns}</strong>
-          <small>à envoyer</small>
-        </article>
-        <article>
-          <span>Envoyées</span>
-          <strong>{sentCampaigns}</strong>
-          <small>historique</small>
-        </article>
-      </div>
-
-      <div className="layout">
-        <aside className="filters">
-          <div className="panelHead">
-            <p>Ciblage</p>
-            <h3>Destinataires</h3>
-          </div>
-
-          <label>
-            Liste mailing
+      <div className="workspaceGrid">
+        <aside className="targetPanel panel">
+          <div className="panelTitle"><small>ÉTAPE 1</small><h3>Destinataires</h3></div>
+          <label>Liste mailing
             <select value={selectedListId} onChange={(e) => setSelectedListId(e.target.value)}>
               <option value="">Ciblage dynamique</option>
-              {mailingLists.map((list) => (
-                <option key={list.id} value={list.id}>
-                  {list.name}
-                </option>
-              ))}
+              {mailingLists.map((list) => <option key={list.id} value={list.id}>{list.name}</option>)}
             </select>
           </label>
 
-          {!selectedListId && (
-            <>
-              <label>
-                Public
-                <select
-                  value={filters.target}
-                  onChange={(e) =>
-                    setFilters({
-                      ...filters,
-                      target: e.target.value as CommunicationFilters["target"],
-                    })
-                  }
-                >
-                  {TARGETS.map((target) => (
-                    <option key={target.value} value={target.value}>
-                      {target.label}
-                    </option>
-                  ))}
-                </select>
-              </label>
+          {!selectedListId && <>
+            <label>Public
+              <select value={filters.target} onChange={(e) => setFilters({ ...filters, target: e.target.value as CommunicationFilters["target"] })}>
+                {TARGETS.map((target) => <option key={target.value} value={target.value}>{target.label}</option>)}
+              </select>
+            </label>
+            <label>Équipe
+              <select value={filters.teamId || ""} onChange={(e) => setFilters({ ...filters, teamId: e.target.value || null })}>
+                <option value="">Tout le club</option>
+                {teams.map((team) => <option key={team.id} value={team.id}>{team.name}</option>)}
+              </select>
+            </label>
+            <label>Catégorie
+              <select value={filters.category || ""} onChange={(e) => setFilters({ ...filters, category: e.target.value || null })}>
+                <option value="">Toutes</option>
+                {categories.map((category) => <option key={category}>{category}</option>)}
+              </select>
+            </label>
+            <label>Licence
+              <select value={filters.licenseStatus || ""} onChange={(e) => setFilters({ ...filters, licenseStatus: e.target.value || null })}>
+                <option value="">Toutes</option>
+                <option value="valid">Validée</option>
+                <option value="pending">En attente</option>
+                <option value="missing">Manquante</option>
+              </select>
+            </label>
+            <label className="checkLine">
+              <input type="checkbox" checked={Boolean(filters.medicalOnly)} onChange={(e) => setFilters({ ...filters, medicalOnly: e.target.checked })} />
+              Dossier médical signalé
+            </label>
+          </>}
 
-              <label>
-                Équipe
-                <select
-                  value={filters.teamId || ""}
-                  onChange={(e) => setFilters({ ...filters, teamId: e.target.value || null })}
-                >
-                  <option value="">Tout le club</option>
-                  {teams.map((team) => (
-                    <option key={team.id} value={team.id}>
-                      {team.name}
-                    </option>
-                  ))}
-                </select>
-              </label>
-
-              <label>
-                Catégorie
-                <select
-                  value={filters.category || ""}
-                  onChange={(e) => setFilters({ ...filters, category: e.target.value || null })}
-                >
-                  <option value="">Toutes</option>
-                  {categories.map((cat) => (
-                    <option key={cat}>{cat}</option>
-                  ))}
-                </select>
-              </label>
-
-              <label>
-                Licence
-                <select
-                  value={filters.licenseStatus || ""}
-                  onChange={(e) =>
-                    setFilters({
-                      ...filters,
-                      licenseStatus: e.target.value || null,
-                    })
-                  }
-                >
-                  <option value="">Toutes</option>
-                  <option value="valid">Validée</option>
-                  <option value="pending">En attente</option>
-                  <option value="missing">Manquante</option>
-                </select>
-              </label>
-
-              <label className="checkLine">
-                <input
-                  type="checkbox"
-                  checked={Boolean(filters.medicalOnly)}
-                  onChange={(e) => setFilters({ ...filters, medicalOnly: e.target.checked })}
-                />
-                Dossiers médicaux signalés
-              </label>
-            </>
-          )}
-
-          <div className="recipientBox">
-            <b>{finalRecipients.length}</b>
-            <span>{selectedListId ? "contacts liste" : "destinataires"}</span>
+          <div className="recipientCount"><strong>{finalRecipients.length}</strong><span>destinataires</span><small>{validRecipients.length} avec email</small></div>
+          <div className="recipientPreview">
+            {(selectedListId ? listMembers.map((item) => ({ name: item.displayName, email: item.email })) : finalRecipients).slice(0, 7).map((item, index) => (
+              <div key={`${item.email || item.name}-${index}`}><span>{item.name}</span><small>{item.email || "Email manquant"}</small></div>
+            ))}
+            {finalRecipients.length > 7 && <em>+ {finalRecipients.length - 7} autres</em>}
           </div>
 
-          {selectedListId && (
-            <div className="listPreview">
-              {listMembers.slice(0, 8).map((member) => (
-                <small key={member.id}>
-                  {member.displayName} · {member.email}
-                </small>
-              ))}
-            </div>
-          )}
-
-          {!selectedListId && (
-            <div className="groupBuilder">
-              <input
-                value={groupName}
-                onChange={(e) => setGroupName(e.target.value)}
-                placeholder="Nom du groupe dynamique..."
-              />
-              <button onClick={saveGroup} type="button">
-                Créer groupe
-              </button>
-            </div>
-          )}
-
-          {groups.length > 0 && (
-            <div className="groups">
-              <h4>Groupes créés</h4>
-              {groups.slice(0, 8).map((group) => (
-                <small key={group.id}>{group.name}</small>
-              ))}
-            </div>
-          )}
+          {!selectedListId && <div className="saveTarget"><input value={groupName} onChange={(e) => setGroupName(e.target.value)} placeholder="Nom du groupe..." /><button type="button" onClick={saveGroup}>Enregistrer le ciblage</button></div>}
+          {groups.length > 0 && <div className="savedGroups"><small>Ciblages enregistrés</small>{groups.slice(0, 5).map((group) => <button key={group.id} type="button" onClick={() => setFilters(group.filters)}>{group.name}</button>)}</div>}
         </aside>
 
-        <main className="main">
-          <div className="composer">
-            <div className="composerHead">
-              <div>
-                <p>{editingCampaignId ? "MODIFICATION" : "NOUVEAU MESSAGE"}</p>
-                <h3>{editingCampaignId ? "Modifier la campagne" : "Créer une campagne"}</h3>
-              </div>
-              <div className="recipientBadge">
-                <strong>{finalRecipients.length}</strong>
-                <span>destinataire(s)</span>
-              </div>
-            </div>
-
-            <div className="composerGrid">
-              <label>
-                Modèle
-                <select value={templateId} onChange={(e) => applyTemplate(e.target.value)}>
-                  <option value="">Sans modèle</option>
-                  {templates.map((template) => (
-                    <option key={template.id} value={template.id}>
-                      {template.category} · {template.name}
-                    </option>
-                  ))}
-                </select>
-              </label>
-
-              <label>
-                Titre interne
-                <input
-                  value={title}
-                  onChange={(e) => setTitle(e.target.value)}
-                  placeholder="Ex : Convocation match U15"
-                />
-              </label>
-
-              <label className="wide">
-                Sujet email
-                <input
-                  value={subject}
-                  onChange={(e) => setSubject(e.target.value)}
-                  placeholder="Sujet visible par les destinataires"
-                />
-              </label>
-
-              <label className="wide">
-                Message
-                <textarea
-                  value={body}
-                  onChange={(e) => setBody(e.target.value)}
-                  placeholder="Écris ton message..."
-                />
-              </label>
-            </div>
-
-            <div className="composerFooter">
-              <div className="selectedCount">
-                <strong>{finalRecipients.length}</strong>
-                <span> destinataire(s) sélectionné(s)</span>
-              </div>
-
-              <div className="actions">
-                <button onClick={saveCampaign} type="button">
-                  {editingCampaignId ? "Mettre à jour" : "Créer brouillon"}
-                </button>
-
-                {editingCampaignId && (
-                  <button className="ghost" onClick={resetComposer} type="button">
-                    Annuler
-                  </button>
-                )}
-              </div>
-            </div>
+        <main className="composer panel">
+          <div className="panelTitle"><small>ÉTAPE 2</small><h3>Rédiger le message</h3></div>
+          {templates.length > 0 && <label>Mes modèles enregistrés
+            <select value={templateId} onChange={(e) => applyDatabaseTemplate(e.target.value)}>
+              <option value="">Choisir un modèle...</option>
+              {templates.map((template) => <option key={template.id} value={template.id}>{template.name}</option>)}
+            </select>
+          </label>}
+          <label>Nom interne<input value={title} onChange={(e) => setTitle(e.target.value)} /></label>
+          <label>Objet de l’email<input value={subject} onChange={(e) => setSubject(e.target.value)} /></label>
+          <label>Message<textarea value={body} onChange={(e) => setBody(e.target.value)} placeholder="Écris ton message..." /></label>
+          <div className="composerActions">
+            <button className="ghost" type="button" onClick={resetComposer}>Réinitialiser</button>
+            <button className="primary" type="button" onClick={saveCampaign}>{editingCampaignId ? "Mettre à jour le brouillon" : "Enregistrer le brouillon"}</button>
           </div>
         </main>
 
-        <aside className="history">
-          <div className="historyHead">
-            <div>
-              <p>Historique</p>
-              <h3>Campagnes</h3>
-            </div>
-            <span>{campaigns.length}</span>
+        <aside className="previewPanel panel">
+          <div className="panelTitle"><small>ÉTAPE 3</small><h3>Aperçu du mail</h3></div>
+          <div className="mailPreview">
+            <div className="mailHeader"><div className="logoFallback">{clubName.slice(0, 2).toUpperCase()}</div><strong>{clubName}</strong></div>
+            <div className="goldLine" />
+            <div className="mailBody"><small>{clubName.toUpperCase()}</small><h4>{subject || "Objet de l’email"}</h4><p>Bonjour,</p><div>{body || "Ton message apparaîtra ici."}</div></div>
+            <div className="mailFooter">Message envoyé par {clubName} via MyBasket</div>
           </div>
-
-          {campaigns.length === 0 ? (
-            <div className="empty">Aucune campagne pour le moment.</div>
-          ) : (
-            <div className="campaignList">
-              {campaigns.map((campaign) => (
-                <article
-                  className={`campaign ${selectedCampaignId === campaign.id ? "active" : ""}`}
-                  key={campaign.id}
-                >
-                  <button
-                    className="campaignOpen"
-                    onClick={() => setSelectedCampaignId(campaign.id)}
-                    type="button"
-                  >
-                    <strong>{campaign.title}</strong>
-                    <span>
-                      {statusLabel(campaign.status)} · {campaign.recipientsCount} destinataire(s)
-                    </span>
-                  </button>
-
-                  <div className="campaignActions">
-                    <button className="ghost" onClick={() => editCampaign(campaign)} type="button">
-                      Modifier
-                    </button>
-                    <button
-                      disabled={sending || campaign.status.startsWith("sent")}
-                      onClick={() => sendCampaign(campaign)}
-                      type="button"
-                    >
-                      {campaign.status.startsWith("sent") ? "Envoyée" : "Envoyer"}
-                    </button>
-                    <button className="danger" onClick={() => removeCampaign(campaign)} type="button">
-                      Supprimer
-                    </button>
-                  </div>
-                </article>
-              ))}
-            </div>
-          )}
-
-          {selectedCampaignId && (
-            <div className="recipients">
-              <h4>
-                Destinataires
-                {selectedCampaign && <small> · {selectedCampaign.title}</small>}
-              </h4>
-
-              <div className="recipientList">
-                {campaignRecipients.map((recipient) => (
-                  <div className="recipientRow" key={recipient.id}>
-                    <strong>{recipient.name}</strong>
-                    <span>{recipient.email || "—"}</span>
-                    <small>{recipient.status}</small>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
+          <div className="sendSummary"><span>{validRecipients.length} email(s) prêt(s)</span><span>{finalRecipients.length - validRecipients.length} sans email</span></div>
+          {selectedCampaign && selectedCampaign.status === "draft" && <button className="sendBtn" disabled={sending} type="button" onClick={() => sendCampaign(selectedCampaign)}>{sending ? "Envoi..." : `Envoyer à ${selectedCampaign.recipientsCount} destinataire(s)`}</button>}
         </aside>
       </div>
 
+      <section className="history panel">
+        <div className="historyHead"><div><small>HISTORIQUE</small><h3>Campagnes</h3></div><span>{campaigns.length} campagne(s)</span></div>
+        <div className="campaignRows">
+          {campaigns.map((campaign) => (
+            <article key={campaign.id} className={selectedCampaignId === campaign.id ? "campaignRow selected" : "campaignRow"}>
+              <div className="campaignMain"><strong>{campaign.title}</strong><span>{campaign.subject}</span><small>{campaign.recipientsCount} destinataire(s) · {statusLabel(campaign.status)}</small></div>
+              <div className="statusPill">{campaign.sentCount}/{campaign.recipientsCount}</div>
+              <div className="rowActions">
+                <button type="button" onClick={() => { setSelectedCampaignId(campaign.id); editCampaign(campaign); }}>Modifier</button>
+                {campaign.status === "draft" && <button className="sendSmall" disabled={sending} type="button" onClick={() => sendCampaign(campaign)}>Envoyer</button>}
+                <button className="danger" type="button" onClick={() => removeCampaign(campaign)}>Supprimer</button>
+              </div>
+            </article>
+          ))}
+          {!campaigns.length && <div className="empty">Aucune campagne pour le moment.</div>}
+        </div>
+        {campaignRecipients.length > 0 && <div className="deliveryDetails"><strong>Détail de la campagne sélectionnée</strong><div>{campaignRecipients.slice(0, 12).map((recipient) => <span key={recipient.id}>{recipient.name} · {recipient.status}</span>)}</div></div>}
+      </section>
+
       <style jsx>{`
-        .communication {
-          border: 1px solid #eadfd5;
-          border-radius: 28px;
-          background: #fff;
-          overflow: hidden;
-          box-shadow: 0 22px 70px rgba(0, 0, 0, 0.06);
-          font-family: Roboto, system-ui, sans-serif;
-        }
-
-        .top {
-          display: grid;
-          grid-template-columns: minmax(0, 1fr) auto;
-          gap: 20px;
-          align-items: center;
-          padding: 24px;
-          background: linear-gradient(135deg, #fff, #fff5e8);
-          border-bottom: 1px solid #eadfd5;
-        }
-
-        .top p,
-        .composerHead p,
-        .panelHead p,
-        .historyHead p {
-          margin: 0 0 6px;
-          color: #d4a24c;
-          font-size: 0.72rem;
-          font-weight: 900;
-          letter-spacing: 0.12em;
-          text-transform: uppercase;
-        }
-
-        .top h2 {
-          margin: 0;
-          color: #6b1a2c;
-          font-family: "Alfa Slab One", serif;
-          font-weight: 400;
-        }
-
-        .top span {
-          color: #6b7280;
-          font-weight: 800;
-          line-height: 1.5;
-        }
-
-        .alert {
-          margin: 16px;
-          padding: 14px;
-          border-radius: 14px;
-          font-weight: 800;
-        }
-
-        .alert.ok {
-          background: #ecfdf5;
-          color: #166534;
-        }
-
-        .alert.error {
-          background: #fef2f2;
-          color: #b91c1c;
-        }
-
-        button {
-          border: none;
-          border-radius: 999px;
-          padding: 11px 16px;
-          cursor: pointer;
-          font-weight: 900;
-          transition: 0.18s ease;
-          background: #6b1a2c;
-          color: white;
-          white-space: nowrap;
-        }
-
-        button:hover:not(:disabled) {
-          transform: translateY(-1px);
-          box-shadow: 0 12px 26px rgba(107, 26, 44, 0.18);
-        }
-
-        button:disabled {
-          opacity: 0.45;
-          cursor: not-allowed;
-        }
-
-        .newBtn {
-          min-height: 48px;
-          padding: 0 22px;
-        }
-
-        .ghost {
-          background: #f3f4f6;
-          color: #374151;
-        }
-
-        .danger {
-          background: #fee2e2;
-          color: #991b1b;
-        }
-
-        .overview {
-          display: grid;
-          grid-template-columns: repeat(4, minmax(140px, 1fr));
-          gap: 12px;
-          padding: 18px;
-          border-bottom: 1px solid #f0e7dd;
-          background: #fffdf8;
-        }
-
-        .overview article {
-          border: 1px solid #eadfd5;
-          border-radius: 20px;
-          padding: 16px;
-          background: white;
-        }
-
-        .overview span,
-        .overview small {
-          display: block;
-          color: #8d7d75;
-          font-size: 0.72rem;
-          font-weight: 900;
-          text-transform: uppercase;
-        }
-
-        .overview strong {
-          display: block;
-          margin: 8px 0 4px;
-          color: #6b1a2c;
-          font-size: 1.7rem;
-          line-height: 1;
-        }
-
-        .layout {
-          display: grid;
-          grid-template-columns: minmax(270px, 0.75fr) minmax(420px, 1.35fr) minmax(300px, 0.9fr);
-          gap: 18px;
-          padding: 20px;
-          align-items: start;
-        }
-
-        .filters,
-        .composer,
-        .history {
-          background: white;
-          border: 1px solid #ece8df;
-          border-radius: 24px;
-          padding: 20px;
-          min-width: 0;
-        }
-
-        .filters {
-          background: #fffdf9;
-        }
-
-        .main {
-          min-width: 0;
-        }
-
-        h3,
-        h4 {
-          margin: 0 0 16px;
-          color: #6b1a2c;
-        }
-
-        label {
-          display: flex;
-          flex-direction: column;
-          gap: 6px;
-          margin-bottom: 14px;
-          font-size: 0.82rem;
-          font-weight: 900;
-          color: #6b7280;
-        }
-
-        .checkLine {
-          flex-direction: row;
-          align-items: center;
-          gap: 10px;
-        }
-
-        input,
-        select,
-        textarea {
-          width: 100%;
-          min-width: 0;
-          border: 1px solid #dcdcdc;
-          border-radius: 14px;
-          padding: 12px;
-          font: inherit;
-          transition: 0.18s ease;
-          background: white;
-        }
-
-        input:focus,
-        select:focus,
-        textarea:focus {
-          outline: none;
-          border-color: #6b1a2c;
-          box-shadow: 0 0 0 3px rgba(107, 26, 44, 0.12);
-        }
-
-        textarea {
-          resize: vertical;
-          min-height: 240px;
-          line-height: 1.6;
-        }
-
-        .recipientBox,
-        .recipientBadge {
-          background: linear-gradient(135deg, #fff8ec, #fff);
-          border: 1px solid #eadfd5;
-          border-radius: 18px;
-          padding: 18px;
-          text-align: center;
-          margin: 16px 0;
-        }
-
-        .recipientBox b,
-        .recipientBadge strong {
-          display: block;
-          font-size: 1.8rem;
-          color: #6b1a2c;
-        }
-
-        .recipientBox span,
-        .recipientBadge span {
-          color: #6b7280;
-          font-weight: 800;
-        }
-
-        .groups,
-        .listPreview,
-        .groupBuilder {
-          display: grid;
-          gap: 8px;
-          margin-top: 14px;
-        }
-
-        .groups small,
-        .listPreview small {
-          padding: 8px 10px;
-          background: #fafafa;
-          border-radius: 10px;
-          color: #6b7280;
-          overflow-wrap: anywhere;
-        }
-
-        .composerHead,
-        .composerFooter,
-        .historyHead {
-          display: grid;
-          grid-template-columns: minmax(0, 1fr) auto;
-          gap: 16px;
-          align-items: center;
-          margin-bottom: 18px;
-        }
-
-        .composerGrid {
-          display: grid;
-          grid-template-columns: repeat(2, minmax(0, 1fr));
-          gap: 16px;
-        }
-
-        .wide {
-          grid-column: span 2;
-        }
-
-        .composerFooter {
-          margin-top: 18px;
-          padding-top: 16px;
-          border-top: 1px solid #ececec;
-        }
-
-        .selectedCount {
-          color: #6b7280;
-          font-weight: 800;
-        }
-
-        .selectedCount strong {
-          color: #6b1a2c;
-        }
-
-        .actions,
-        .campaignActions {
-          display: flex;
-          gap: 10px;
-          flex-wrap: wrap;
-          justify-content: flex-end;
-        }
-
-        .campaignList {
-          display: grid;
-          gap: 12px;
-        }
-
-        .campaign {
-          border: 1px solid #ececec;
-          border-radius: 18px;
-          padding: 14px;
-          display: grid;
-          gap: 12px;
-          transition: 0.18s ease;
-        }
-
-        .campaign.active {
-          border-color: #6b1a2c;
-          box-shadow: 0 0 0 3px rgba(107, 26, 44, 0.08);
-        }
-
-        .campaignOpen {
-          background: transparent;
-          color: inherit;
-          padding: 0;
-          text-align: left;
-          white-space: normal;
-        }
-
-        .campaignOpen:hover {
-          transform: none;
-          box-shadow: none;
-        }
-
-        .campaignOpen strong {
-          display: block;
-          color: #6b1a2c;
-          margin-bottom: 6px;
-          overflow-wrap: anywhere;
-        }
-
-        .campaignOpen span {
-          color: #6b7280;
-          font-size: 0.8rem;
-          line-height: 1.4;
-        }
-
-        .recipients {
-          margin-top: 18px;
-          border-top: 1px solid #ececec;
-          padding-top: 18px;
-        }
-
-        .recipientList {
-          display: grid;
-          gap: 8px;
-        }
-
-        .recipientRow {
-          border: 1px solid #f0ece5;
-          border-radius: 14px;
-          padding: 10px;
-          display: grid;
-          gap: 3px;
-          background: #fffdf9;
-        }
-
-        .recipientRow strong,
-        .recipientRow span,
-        .recipientRow small {
-          overflow-wrap: anywhere;
-        }
-
-        .recipientRow strong {
-          color: #6b1a2c;
-        }
-
-        .recipientRow span,
-        .recipientRow small {
-          color: #6b7280;
-          font-weight: 800;
-        }
-
-        .empty {
-          text-align: center;
-          padding: 30px;
-          color: #9ca3af;
-          border: 2px dashed #ececec;
-          border-radius: 18px;
-        }
-
-        @media (max-width: 1250px) {
-          .layout {
-            grid-template-columns: 320px minmax(0, 1fr);
-          }
-
-          .history {
-            grid-column: 1 / -1;
-          }
-        }
-
-        @media (max-width: 900px) {
-          .top,
-          .layout,
-          .overview,
-          .composerGrid,
-          .composerHead,
-          .composerFooter,
-          .historyHead {
-            grid-template-columns: 1fr;
-          }
-
-          .wide {
-            grid-column: span 1;
-          }
-
-          .actions,
-          .campaignActions {
-            justify-content: flex-start;
-          }
-        }
+        .communicationV2{display:grid;gap:16px;min-width:0}.sectionHeader{display:flex;justify-content:space-between;gap:18px;align-items:center;background:#fff;border:1px solid #e7e0d9;border-radius:16px;padding:20px}.sectionHeader p,.panelTitle small,.historyHead small{margin:0;color:var(--club-secondary);font-size:.68rem;letter-spacing:.13em;font-weight:1000}.sectionHeader h2,.panelTitle h3,.historyHead h3{margin:4px 0}.sectionHeader span{color:#6b7280;font-weight:700}.primary,.sendBtn{border:0;background:var(--club-secondary);color:#fff;border-radius:10px;padding:11px 15px;font-weight:900;cursor:pointer}.notice{padding:11px 13px;border-radius:10px;font-weight:850}.notice.error{background:#fff1f0;color:#b42318}.notice.ok{background:#effaf2;color:#18864b}
+        .quickTemplates{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:9px;min-width:0}.quickTemplates button{min-width:0;border:1px solid #e7e0d9;background:#fff;border-radius:13px;padding:12px 9px;display:grid;gap:5px;place-items:center;text-align:center;cursor:pointer}.quickTemplates span{font-size:1.25rem}.quickTemplates b{font-size:.72rem;overflow-wrap:anywhere}
+        .workspaceGrid{display:grid;grid-template-columns:minmax(240px,.8fr) minmax(320px,1.2fr) minmax(280px,1fr);gap:14px;align-items:start;min-width:0}.panel{min-width:0;background:#fff;border:1px solid #e7e0d9;border-radius:16px;padding:17px}.panelTitle{margin-bottom:14px}.panel label{display:grid;gap:6px;margin-bottom:11px;color:#6b7280;font-weight:850;font-size:.76rem}.panel input,.panel select,.panel textarea{width:100%;min-width:0;border:1px solid #e1ddd8;border-radius:9px;padding:10px 11px;background:#fff;font:inherit}.panel textarea{min-height:250px;resize:vertical;line-height:1.55}.checkLine{display:flex!important;grid-template-columns:auto 1fr!important;align-items:center;gap:8px!important}.checkLine input{width:auto!important}.recipientCount{border-radius:13px;background:color-mix(in srgb,var(--club-secondary) 10%,white);padding:13px;display:grid;grid-template-columns:auto 1fr;gap:0 8px}.recipientCount strong{grid-row:1/3;font-size:2rem;color:var(--club-secondary)}.recipientCount span{font-weight:900}.recipientCount small{color:#777}.recipientPreview{display:grid;gap:5px;margin-top:12px;max-height:190px;overflow:auto}.recipientPreview div{min-width:0;border-bottom:1px solid #f1ede9;padding:6px 0}.recipientPreview span,.recipientPreview small{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.recipientPreview span{font-size:.76rem;font-weight:850}.recipientPreview small{font-size:.66rem;color:#888}.recipientPreview em{font-size:.7rem;color:#777}.saveTarget{display:grid;gap:7px;margin-top:12px}.saveTarget button,.savedGroups button{border:1px solid #e7e0d9;background:#fff;border-radius:8px;padding:8px;font-weight:850;cursor:pointer}.savedGroups{display:flex;flex-wrap:wrap;gap:6px;margin-top:12px}.savedGroups small{width:100%;color:#777}.savedGroups button{font-size:.68rem}.composerActions{display:flex;justify-content:flex-end;gap:8px;flex-wrap:wrap}.ghost{border:1px solid #e7e0d9;background:#fff;border-radius:10px;padding:10px 13px;font-weight:850;cursor:pointer}
+        .mailPreview{border:1px solid #ddd6cf;border-radius:15px;overflow:hidden;background:#f6f2ed}.mailHeader{background:var(--club-primary);padding:18px;display:flex;gap:10px;align-items:center;color:#fff;min-height:74px}.logoFallback{width:42px;height:42px;border-radius:50%;background:#fff;color:var(--club-primary);display:grid;place-items:center;font-weight:1000}.mailHeader strong{overflow-wrap:anywhere}.goldLine{height:4px;background:var(--club-secondary)}.mailBody{background:#fff;padding:20px;min-height:275px}.mailBody small{color:var(--club-secondary);font-weight:900;letter-spacing:.1em}.mailBody h4{margin:6px 0 16px;color:var(--club-primary);font-size:1.05rem;overflow-wrap:anywhere}.mailBody p{font-size:.78rem}.mailBody div{font-size:.75rem;line-height:1.55;white-space:pre-wrap;overflow-wrap:anywhere}.mailFooter{text-align:center;padding:10px;font-size:.59rem;color:#888}.sendSummary{display:flex;justify-content:space-between;gap:8px;font-size:.68rem;color:#777;margin:10px 0}.sendBtn{width:100%}
+        .history{padding:0;overflow:hidden}.historyHead{padding:16px 18px;display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid #eee}.historyHead span{font-size:.72rem;color:#777}.campaignRows{display:grid}.campaignRow{min-width:0;display:grid;grid-template-columns:minmax(0,1fr) auto auto;gap:12px;align-items:center;padding:13px 18px;border-bottom:1px solid #f0ece8}.campaignRow.selected{background:color-mix(in srgb,var(--club-secondary) 6%,white)}.campaignMain{min-width:0}.campaignMain strong,.campaignMain span,.campaignMain small{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.campaignMain span{font-size:.75rem;color:#555;margin-top:2px}.campaignMain small{font-size:.66rem;color:#888;margin-top:4px}.statusPill{background:#f5f1ed;border-radius:999px;padding:7px 9px;font-size:.69rem;font-weight:900}.rowActions{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}.rowActions button{border:1px solid #e7e0d9;background:#fff;border-radius:8px;padding:7px 9px;font-weight:850;cursor:pointer;font-size:.7rem}.rowActions .sendSmall{background:var(--club-secondary);border-color:var(--club-secondary);color:#fff}.rowActions .danger{color:#b42318;background:#fff3f2;border-color:#f2cbc6}.deliveryDetails{padding:14px 18px}.deliveryDetails>div{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px}.deliveryDetails span{font-size:.65rem;background:#f5f1ed;padding:5px 7px;border-radius:999px}.empty{padding:28px;text-align:center;color:#888;font-weight:800}
+        @media(max-width:1220px){.quickTemplates{grid-template-columns:repeat(3,minmax(0,1fr))}.workspaceGrid{grid-template-columns:minmax(230px,.8fr) minmax(0,1.4fr)}.previewPanel{grid-column:1/-1}.mailPreview{max-width:680px;margin:auto}.sendBtn{max-width:680px;display:block;margin:10px auto 0}}
+        @media(max-width:800px){.workspaceGrid{grid-template-columns:1fr}.previewPanel{grid-column:auto}.quickTemplates{grid-template-columns:repeat(2,minmax(0,1fr))}.campaignRow{grid-template-columns:minmax(0,1fr) auto}.rowActions{grid-column:1/-1;justify-content:flex-start}.sectionHeader{align-items:flex-start}.sectionHeader .primary{flex:0 0 auto}}
+        @media(max-width:520px){.sectionHeader{display:grid}.sectionHeader .primary{width:100%}.quickTemplates{grid-template-columns:1fr 1fr}.campaignRow{grid-template-columns:1fr}.statusPill{width:max-content}.composerActions{display:grid}.composerActions button{width:100%}.sendSummary{display:grid}.panel{padding:14px}}
       `}</style>
     </section>
   );
