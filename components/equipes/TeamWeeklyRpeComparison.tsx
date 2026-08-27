@@ -13,6 +13,7 @@ type TeamPlan = {
 };
 
 type Wellness = {
+  is_injured?: boolean;
   id: string;
   player_id: string;
   response_date: string;
@@ -261,7 +262,7 @@ export default function TeamWeeklyRpeComparison({
       const dateIso = iso(date);
       const plan = planMap.get(dateIso);
       const actuals = players
-        .map((p) => responseMap.get(`${String(p.id)}|${dateIso}`)?.rpe)
+        .map((p) => { const r=responseMap.get(`${String(p.id)}|${dateIso}`); return r?.is_injured ? null : r?.rpe; })
         .filter((v): v is number => v != null)
         .map(Number);
 
@@ -283,11 +284,11 @@ export default function TeamWeeklyRpeComparison({
         const plan = planMap.get(dateIso);
         const response = responseMap.get(`${String(player.id)}|${dateIso}`) ?? null;
         if (plan) plannedLoad += loadValue(plan.duration_minutes, plan.planned_rpe);
-        if (response?.rpe != null) {
+        if (response?.rpe != null && !response.is_injured) {
           actualLoad += loadValue(response.duration_minutes ?? plan?.duration_minutes ?? 0, response.rpe);
           responsesCount += 1;
         }
-        const delta = plan?.planned_rpe != null && response?.rpe != null
+        const delta = plan?.planned_rpe != null && response?.rpe != null && !response.is_injured
           ? Number(response.rpe) - Number(plan.planned_rpe)
           : null;
 
@@ -308,13 +309,14 @@ export default function TeamWeeklyRpeComparison({
     }, 0);
 
     const actual = weeklyRows.reduce((sum, row) => sum + row.actualLoad, 0);
-    const responsesCount = responses.filter((r) => r.rpe != null).length;
+    const validResponses = responses.filter((r) => r.rpe != null && !r.is_injured);
+    const responsesCount = validResponses.length;
     const expected = plans.length * players.length;
 
-    const avgFatigue = responses.filter(r=>r.fatigue!=null).map(r=>Number(r.fatigue));
-    const avgSleep = responses.filter(r=>r.sleep!=null).map(r=>Number(r.sleep));
-    const avgSoreness = responses.filter(r=>r.soreness!=null).map(r=>Number(r.soreness));
-    const avgStress = responses.filter(r=>r.stress!=null).map(r=>Number(r.stress));
+    const avgFatigue = validResponses.filter(r=>r.fatigue!=null).map(r=>Number(r.fatigue));
+    const avgSleep = validResponses.filter(r=>r.sleep!=null).map(r=>Number(r.sleep));
+    const avgSoreness = validResponses.filter(r=>r.soreness!=null).map(r=>Number(r.soreness));
+    const avgStress = validResponses.filter(r=>r.stress!=null).map(r=>Number(r.stress));
 
     const mean = (arr:number[]) => arr.length ? arr.reduce((a,b)=>a+b,0)/arr.length : 0;
 

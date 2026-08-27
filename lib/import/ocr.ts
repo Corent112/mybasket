@@ -43,7 +43,33 @@ type AnyWorker = {
   terminate: () => Promise<void>;
 };
 
-type WorkerFactory = (lang?: string | string[]) => Promise<AnyWorker>;
+type WorkerFactory = (
+  lang?: string | string[],
+  oem?: number,
+  options?: Record<string, unknown>
+) => Promise<AnyWorker>;
+
+/**
+ * Point d'injection facultatif pour auto-héberger Tesseract.
+ *
+ * Par défaut, tesseract.js va chercher son worker, son cœur WASM et les données
+ * de langue sur un CDN. Sur un réseau fermé (ou pour éviter tout appel externe),
+ * il suffit de définir avant l'import :
+ *
+ *   window.__MB_TESSERACT_OPTIONS__ = {
+ *     workerPath: "/tesseract/worker.min.js",
+ *     corePath:   "/tesseract/",
+ *     langPath:   "/tessdata",
+ *   };
+ *
+ * C'est également ce que le harnais de test utilise pour tourner hors ligne.
+ */
+function tesseractOptions(): Record<string, unknown> | undefined {
+  if (typeof window === "undefined") return undefined;
+  const options = (window as unknown as { __MB_TESSERACT_OPTIONS__?: Record<string, unknown> })
+    .__MB_TESSERACT_OPTIONS__;
+  return options && typeof options === "object" ? options : undefined;
+}
 
 const TESSERACT_CDN = "https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js";
 
@@ -96,13 +122,14 @@ async function getTextWorker(): Promise<AnyWorker> {
   if (textWorker) return textWorker;
   textWorker = (async () => {
     const createWorker = await getFactory();
+    const options = tesseractOptions();
     try {
-      return await createWorker(["fra", "eng"]);
+      return await createWorker(["fra", "eng"], undefined, options);
     } catch {
       try {
-        return await createWorker("fra");
+        return await createWorker("fra", undefined, options);
       } catch {
-        return await createWorker("eng");
+        return await createWorker("eng", undefined, options);
       }
     }
   })();
@@ -113,7 +140,7 @@ async function getDigitWorker(): Promise<AnyWorker> {
   if (digitWorker) return digitWorker;
   digitWorker = (async () => {
     const createWorker = await getFactory();
-    const worker = await createWorker("eng");
+    const worker = await createWorker("eng", undefined, tesseractOptions());
     await worker.setParameters?.({
       tessedit_char_whitelist: "0123456789XxCÉ",
       tessedit_pageseg_mode: "10",

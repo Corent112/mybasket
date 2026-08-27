@@ -81,6 +81,7 @@ export default function PublicPlayerLoadForm({ token }: { token: string }) {
   const [stress, setStress] = useState(3);
   const [comment, setComment] = useState("");
   const [loadType, setLoadType] = useState("basket");
+  const [injured, setInjured] = useState(false);
 
   useEffect(() => {
     void (async () => {
@@ -124,6 +125,7 @@ export default function PublicPlayerLoadForm({ token }: { token: string }) {
           stress,
           comment: comment.trim() || null,
           loadType: kind === "post_session" ? loadType : null,
+          injured,
         }),
       });
       const result = await response.json().catch(() => ({}));
@@ -239,6 +241,8 @@ export default function PublicPlayerLoadForm({ token }: { token: string }) {
           </>
         )}
 
+        <label className="injuryCheck"><input type="checkbox" checked={injured} onChange={(e)=>setInjured(e.target.checked)}/><span><b>Je suis blessé(e)</b><small>Ma réponse est enregistrée pour le staff, mais elle n'entre pas dans les moyennes RPE / récupération du groupe.</small></span></label>
+
         <Question title="Fatigue" subtitle="Comment te sens-tu physiquement ?">
           <Scale value={fatigue} onChange={setFatigue} />
         </Question>
@@ -311,7 +315,7 @@ const css = `
 .loadPreview{display:grid;grid-template-columns:1fr auto;align-items:center;background:#fff7e8;border:1px solid #ebd2a7;border-radius:12px;padding:11px;margin-bottom:4px}
 .loadPreview strong{font-size:1.5rem;color:#6b1a2c}.loadPreview small{grid-column:1/-1;font-size:.7rem;color:#897a71}
 .send{width:100%;border:0;border-radius:12px;background:#6b1a2c;color:#fff;padding:14px;font-size:1rem;font-weight:1000}.send:disabled{opacity:.55}
-.privacy{font-size:.68rem;color:#8c7f78;line-height:1.45;margin:10px 2px 0}
+.injuryCheck{display:flex;gap:10px;align-items:flex-start;background:#fff3f3;border:1px solid #e6c4c8;border-radius:12px;padding:12px;margin:12px 0}.injuryCheck input{margin-top:3px}.injuryCheck span{display:grid;gap:3px}.injuryCheck b{color:#8b2638}.injuryCheck small{color:#7c696d;line-height:1.4}.privacy{font-size:.68rem;color:#8c7f78;line-height:1.45;margin:10px 2px 0}
 .success{text-align:center;margin-top:50px}.success>div{width:60px;height:60px;border-radius:50%;display:grid;place-items:center;margin:auto;background:#eaf8ee;color:#13803d;font-size:2rem}
 .success h1{color:#6b1a2c}.success button{border:0;border-radius:10px;background:#6b1a2c;color:white;padding:10px 14px;font-weight:900}
 .loading{text-align:center;padding:60px;color:#6b1a2c;font-weight:900}

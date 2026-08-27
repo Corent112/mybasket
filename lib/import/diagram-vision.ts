@@ -139,6 +139,37 @@ function makeInkContext(canvas: HTMLCanvasElement, kind: "half" | "full"): InkCo
   };
 }
 
+/** Teinte 0..360 d'un pixel, -1 si trop peu saturé pour être fiable. */
+function hueAt(ctx: InkContext, x: number, y: number): number {
+  const [r, g, b] = pixelAt(ctx.px, x, y);
+  const mx = Math.max(r, g, b);
+  const mn = Math.min(r, g, b);
+  if (mx === 0 || (mx - mn) / mx < 0.25 || mx < 60) return -1;
+  const d = mx - mn;
+  let h: number;
+  if (mx === r) h = ((g - b) / d) % 6;
+  else if (mx === g) h = (b - r) / d + 2;
+  else h = (r - g) / d + 4;
+  h *= 60;
+  return (h + 360) % 360;
+}
+
+/**
+ * Deux pixels d'encre appartiennent au même élément seulement si leur teinte
+ * est compatible. Sans cela, un arc ROUGE tracé contre un jeton NOIR fusionne
+ * avec lui : le blob devient trop gros pour être un joueur et finit classé en
+ * trajectoire. C'est exactement ce qui faisait chuter le nombre de joueurs
+ * détectés sur une fiche où chaque joueur est doublé d'un arc de couleur.
+ */
+function sameElement(ctx: InkContext, ax: number, ay: number, bx: number, by: number): boolean {
+  const ha = hueAt(ctx, ax, ay);
+  const hb = hueAt(ctx, bx, by);
+  if (ha < 0 && hb < 0) return true; // deux neutres (noir / gris)
+  if (ha < 0 || hb < 0) return false; // neutre vs coloré : éléments distincts
+  const delta = Math.abs(ha - hb);
+  return Math.min(delta, 360 - delta) < 45;
+}
+
 function isInk(ctx: InkContext, x: number, y: number): boolean {
   const xx = Math.round(x);
   const yy = Math.round(y);
@@ -206,8 +237,10 @@ function extractComponents(ctx: InkContext, limit = 900): Component[] {
           if (nx < 0 || ny < 0 || nx >= gw || ny >= gh) continue;
           const ni = ny * gw + nx;
           if (seen[ni]) continue;
+          if (!isInk(ctx, nx * step, ny * step)) { seen[ni] = 1; continue; }
+          if (!sameElement(ctx, x, y, nx * step, ny * step)) continue;
           seen[ni] = 1;
-          if (isInk(ctx, nx * step, ny * step)) stack.push([nx, ny]);
+          stack.push([nx, ny]);
         }
       }
 

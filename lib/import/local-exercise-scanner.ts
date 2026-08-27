@@ -39,6 +39,7 @@ import {
 } from "./document-layout";
 import {
   classifyCourt,
+  detectCourtCandidates,
   detectCourtRect,
   regionSignature,
   signatureDistance,
@@ -180,85 +181,21 @@ function graphicRegions(layout: DocumentLayout, width: number, height: number): 
   });
 }
 
-/** Repli : aucune étiquette Graphic (photo d'une feuille, capture partielle). */
-function fallbackGraphicRegions(canvas: HTMLCanvasElement, layout: DocumentLayout): AiRect[] {
-  const W = canvas.width;
-  const H = canvas.height;
-  const ctx = canvas.getContext("2d", { willReadFrequently: true });
-  if (!ctx) return [];
-
-  const step = Math.max(3, Math.round(Math.min(W, H) / 260));
-  const gw = Math.ceil(W / step);
-  const gh = Math.ceil(H / step);
-  const data = ctx.getImageData(0, 0, W, H).data;
-  const mask = new Uint8Array(gw * gh);
-  const seen = new Uint8Array(gw * gh);
-
-  for (let gy = 0; gy < gh; gy += 1) {
-    for (let gx = 0; gx < gw; gx += 1) {
-      const x = Math.min(W - 1, gx * step);
-      const y = Math.min(H - 1, gy * step);
-      const i = (y * W + x) * 4;
-      const luminance = (data[i] + data[i + 1] + data[i + 2]) / 3;
-      if (luminance < 236) mask[gy * gw + gx] = 1;
-    }
+/**
+ * Repli VISUEL : aucune étiquette « Graphic » n'a été lue (photo, capture
+ * recadrée, fiche sans libellé). On ne dépend donc pas de l'OCR pour trouver le
+ * dessin : detectCourtCandidates() propose des régions par analyse d'image.
+ */
+function fallbackGraphicRegions(canvas: HTMLCanvasElement, debug: ImportDebugCollector): AiRect[] {
+  const candidates = detectCourtCandidates(canvas);
+  for (const candidate of candidates) {
+    debug.reject({
+      stage: "zone Graphic",
+      what: `candidat visuel (${candidate.from})`,
+      why: `ratio ${candidate.ratio.toFixed(2)} · remplissage ${candidate.fill.toFixed(2)} — proposé, validé ou non par la détection d'éléments`,
+    });
   }
-
-  const boxes: AiRect[] = [];
-  for (let sy = 0; sy < gh; sy += 1) {
-    for (let sx = 0; sx < gw; sx += 1) {
-      const index = sy * gw + sx;
-      if (!mask[index] || seen[index]) continue;
-      seen[index] = 1;
-      const stack: Array<[number, number]> = [[sx, sy]];
-      let minX = sx;
-      let maxX = sx;
-      let minY = sy;
-      let maxY = sy;
-      let count = 0;
-      while (stack.length) {
-        const [x, y] = stack.pop()!;
-        count += 1;
-        if (x < minX) minX = x;
-        if (x > maxX) maxX = x;
-        if (y < minY) minY = y;
-        if (y > maxY) maxY = y;
-        for (const [nx, ny] of [
-          [x + 1, y],
-          [x - 1, y],
-          [x, y + 1],
-          [x, y - 1],
-        ]) {
-          if (nx < 0 || ny < 0 || nx >= gw || ny >= gh) continue;
-          const ni = ny * gw + nx;
-          if (mask[ni] && !seen[ni]) {
-            seen[ni] = 1;
-            stack.push([nx, ny]);
-          }
-        }
-      }
-      const w = (maxX - minX + 1) * step;
-      const h = (maxY - minY + 1) * step;
-      if (count < 60 || w < W * 0.16 || h < H * 0.16) continue;
-      const ratio = Math.max(w, h) / Math.max(1, Math.min(w, h));
-      if (ratio > 2.8) continue;
-      boxes.push({ x0: minX * step, y0: minY * step, x1: Math.min(W, (maxX + 1) * step), y1: Math.min(H, (maxY + 1) * step) });
-    }
-  }
-
-  const bounds = layout.textBounds;
-  const overlapsText = (rect: AiRect) => {
-    if (!bounds) return false;
-    const overlapX = Math.max(0, Math.min(rect.x1, bounds.x1) - Math.max(rect.x0, bounds.x0));
-    const overlapY = Math.max(0, Math.min(rect.y1, bounds.y1) - Math.max(rect.y0, bounds.y0));
-    const area = Math.max(1, (rect.x1 - rect.x0) * (rect.y1 - rect.y0));
-    return (overlapX * overlapY) / area > 0.72;
-  };
-
-  return boxes
-    .filter((rect) => !overlapsText(rect))
-    .sort((a, b) => (b.x1 - b.x0) * (b.y1 - b.y0) - (a.x1 - a.x0) * (a.y1 - a.y0))
-    .slice(0, 3);
+  return candidates.map((candidate) => candidate.rect);
 }
 
 /* -------------------------------------------------------------------------- */
@@ -314,9 +251,35 @@ async function readZones(
 }
 
 /**
+ * Un titre doit RESSEMBLER à du texte. Sans ce garde-fou, une photo sans aucun
+ * texte produit un titre fait de bruit OCR (« | T | 0) au, E | FE »), ce qui
+ * est pire qu'un champ vide.
+ */
+export function looksLikeRealText(value: string, minWords = 1): boolean {
+  const text = value.trim();
+  if (text.length < 4 || text.length > 120) return false;
+
+  // Proportion de caractères « propres » (lettres, chiffres, ponctuation utile).
+  const clean = text.replace(/[^\p{L}\p{N}\s'’\-/().,:]/gu, "");
+  if (clean.length / text.length < 0.75) return false;
+
+  // Au moins un mot alphabétique de 3 lettres, et assez de mots crédibles.
+  const words = clean.split(/[\s/.,:()\-]+/u).filter(Boolean);
+  const realWords = words.filter((word) => /^[\p{L}][\p{L}'’]{2,}$/u.test(word));
+  if (!realWords.length) return false;
+  if (realWords.length + words.filter((w) => /^\d{1,3}$/.test(w)).length < minWords) return false;
+
+  // Le bruit OCR est saturé de séparateurs isolés.
+  const isolated = words.filter((word) => word.length === 1).length;
+  if (isolated > words.length * 0.5) return false;
+
+  return true;
+}
+
+/**
  * Titre de repli quand le document ne porte pas de libellé « Title ».
  * On prend la ligne la PLUS GRANDE du haut de page, en excluant le chrome du
- * site et toute ligne qui est elle-même un en-tête de section.
+ * site, les en-têtes de section, et tout ce qui ne ressemble pas à du texte.
  */
 function fallbackTitle(ocr: OcrResult, layout: DocumentLayout, height: number): string {
   const labelTexts = new Set(layout.zones.map((zone) => zone.label.toLowerCase()));
@@ -324,12 +287,12 @@ function fallbackTitle(ocr: OcrResult, layout: DocumentLayout, height: number): 
 
   const candidates = ocr.lines
     .filter((line) => line.y0 < height * 0.4)
+    .filter((line) => line.confidence >= 0.6)
     .map((line) => ({ line, text: line.text.trim() }))
-    .filter(({ text }) => text.length >= 4 && text.length <= 90)
-    .filter(({ text }) => /[a-zA-ZÀ-ÿ]/.test(text))
     .filter(({ text }) => !chrome.has(text.toLowerCase()))
     .filter(({ text }) => !labelTexts.has(text.toLowerCase()))
     .filter(({ text }) => !isChromeLine(text))
+    .filter(({ text }) => looksLikeRealText(text, 2))
     .sort((a, b) => b.line.y1 - b.line.y0 - (a.line.y1 - a.line.y0));
 
   return candidates[0]?.text || "";
@@ -393,7 +356,7 @@ export async function scanExerciseLocally(
 
       onStatus?.(`Reconstruction des schémas dans Plaquette${suffix}…`);
       const labelled = graphicRegions(layout, canvas.width, canvas.height);
-      const regions = labelled.length ? labelled : fallbackGraphicRegions(canvas, layout);
+      const regions = labelled.length ? labelled : fallbackGraphicRegions(canvas, debug);
 
       if (!regions.length) {
         debug.reject({ stage: "schéma", what: "zone Graphic", why: "aucune zone graphique identifiée sur cette vue" });
@@ -454,7 +417,8 @@ export async function scanExerciseLocally(
 
     /* ------------------------------------------------------------ champs */
 
-    const title = (bestZones.title || "").split("\n")[0].trim();
+    const titleRaw = (bestZones.title || "").split("\n")[0].trim();
+    const title = looksLikeRealText(titleRaw, 1) ? titleRaw : "";
     const deroulement = toLines(bestZones.description || "");
     const consignes = toLines(bestZones.tips || "");
     const organisation = (bestZones.organisation || "").trim();

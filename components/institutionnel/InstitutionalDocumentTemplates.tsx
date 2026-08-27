@@ -111,29 +111,22 @@ function rows(items: string[], cols: number) {
 
 function baseStyles() {
   return `
-    @page{size:A4 landscape;margin:12mm}
-    *{box-sizing:border-box} body{font-family:Arial,Helvetica,sans-serif;color:#171717;margin:0;font-size:12px}
-    h1{font-size:20px;margin:0 0 4px;color:#6B1A2C} h2{font-size:15px;margin:18px 0 8px;color:#6B1A2C}
-    .meta{display:grid;grid-template-columns:1fr 1fr;gap:3px 20px;margin:10px 0 14px}.muted{color:#666}
-    table{width:100%;border-collapse:collapse;margin-top:8px}th,td{border:1px solid #444;padding:6px;vertical-align:middle}
-    th{background:#6B1A2C;color:#fff;font-weight:700;text-align:center}.gold th,.gold{background:#D4A24C!important;color:#111!important}
-    .sign{height:42px}.big{height:72px}.box{border:1px solid #bbb;padding:10px;border-radius:6px;margin:8px 0;min-height:60px}
-    .grid2{display:grid;grid-template-columns:1fr 1fr;gap:12px}.line{border-bottom:1px solid #777;display:inline-block;min-width:180px;height:18px}
-    .footer{margin-top:12px;display:flex;justify-content:space-between;gap:20px}.right{text-align:right}
+    @page{size:A4;margin:0}
+    *{box-sizing:border-box}body{font-family:Arial,Helvetica,sans-serif;color:#241b1e;margin:0;font-size:11px;padding:34mm 15mm 20mm;position:relative;background:#fff;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+    body:before{content:"";position:fixed;left:-10%;right:-10%;top:-28mm;height:58mm;background:#6B1A2C;border-radius:0 0 48% 52%/0 0 32% 36%;transform:rotate(-1deg);z-index:-1}body:after{content:"";position:fixed;left:-5%;right:-5%;top:29mm;height:2mm;background:#D4A24C;border-radius:50%;transform:rotate(-1deg);z-index:-1}
+    .hero{position:fixed;top:10mm;left:15mm;right:15mm;color:#fff;display:flex;justify-content:space-between;align-items:flex-start}.hero .brand{font-weight:900;font-size:15px;letter-spacing:.04em}.hero .org{text-align:right;color:#f3dfe3;font-size:9px;line-height:1.45}.hero .org b{display:block;color:#fff;font-size:11px}
+    h1{font-size:25px;letter-spacing:-.025em;margin:5mm 0 2mm;color:#4D101D}h2{font-size:12px;letter-spacing:.05em;text-transform:uppercase;margin:7mm 0 3mm;color:#6B1A2C;border-left:4px solid #D4A24C;padding-left:8px}.subtitle{color:#77696d;margin-bottom:7mm}.meta{display:grid;grid-template-columns:repeat(3,1fr);gap:3mm 7mm;margin:5mm 0 7mm}.meta>div{border-bottom:1px solid #d4c6ca;padding:2mm 0}.meta b{display:block;font-size:7px;color:#8a777d;text-transform:uppercase;letter-spacing:.07em;margin-bottom:1mm}
+    table{width:100%;border-collapse:separate;border-spacing:0;margin-top:3mm;border:1px solid #e3d5d8;border-radius:4mm;overflow:hidden;table-layout:fixed}th,td{border:0;border-bottom:1px solid #eadfe2;padding:2.3mm;vertical-align:middle;overflow-wrap:anywhere}th{background:#6B1A2C;color:#fff;font-weight:700;text-align:center;font-size:7.5px;text-transform:uppercase;letter-spacing:.03em}tbody tr:nth-child(even) td{background:#fbf7f8}tbody tr:last-child td{border-bottom:0}
+    .sign{height:12mm}.big{height:22mm}.box{border:0;border-left:4px solid #D4A24C;background:#fbf7f8;padding:4mm;border-radius:0 4mm 4mm 0;margin:3mm 0;min-height:18mm}.grid2{display:grid;grid-template-columns:1fr 1fr;gap:5mm}.line{border-bottom:1px solid #a9949a;display:inline-block;min-width:45mm;height:5mm}.footer{margin-top:7mm;display:flex;justify-content:space-between;gap:8mm}.right{text-align:right}.section{margin:7mm 0}.fieldrow{display:grid;grid-template-columns:1fr 1fr;gap:5mm 8mm}.field{padding:2mm 0 3mm;border-bottom:1px solid #d4c6ca}.field small{display:block;color:#8a777d;text-transform:uppercase;letter-spacing:.07em;font-weight:700;font-size:7px;margin-bottom:1.5mm}.structure-card{display:grid;grid-template-columns:1.4fr 1fr;gap:5mm;background:linear-gradient(120deg,#f8f0f2,#fff);border-left:5px solid #D4A24C;padding:4mm 5mm;border-radius:0 5mm 5mm 0;margin:4mm 0 7mm}.structure-card strong{font-size:14px;color:#6B1A2C}.structure-card span{display:block;color:#77696d;margin-top:1mm}.doc-footer{position:fixed;left:15mm;right:15mm;bottom:7mm;border-top:1px solid #eadfe2;padding-top:2mm;color:#8a777d;font-size:7px;display:flex;justify-content:space-between}
   `;
 }
 
 function shell(structure: Structure, title: string, body: string) {
   return `<!doctype html><html><head><meta charset="utf-8"><title>${escapeHtml(title)}</title><style>${baseStyles()}</style></head><body>
-    <h1>${escapeHtml(title)}</h1>
-    <div class="meta">
-      <div><b>Organisme :</b> ${escapeHtml(structure.name)}</div>
-      <div><b>Saison :</b> ${escapeHtml(structure.season_label || "")}</div>
-      <div><b>Type :</b> ${escapeHtml(structure.structure_type)}</div>
-      <div><b>Ville :</b> ${escapeHtml(structure.city || "")}</div>
-      <div><b>Email :</b> ${escapeHtml(structure.email || "")}</div>
-      <div><b>Téléphone :</b> ${escapeHtml(structure.phone || "")}</div>
-    </div>${body}
+    <header class="hero"><div class="brand">MYBASKET</div><div class="org"><b>${escapeHtml(structure.name)}</b>${escapeHtml(structure.season_label || "")}${structure.city ? ` · ${escapeHtml(structure.city)}` : ""}</div></header>
+    <h1>${escapeHtml(title)}</h1><div class="subtitle">Document institutionnel MyBasket · modifiable, enregistrable et imprimable</div>
+    <section class="structure-card"><div><strong>${escapeHtml(structure.name)}</strong><span>${escapeHtml(structure.structure_type)}${structure.city ? ` · ${escapeHtml(structure.city)}` : ""}</span></div><div><span>${escapeHtml(structure.email || "")}</span><span>${escapeHtml(structure.phone || "")}</span><span>Saison ${escapeHtml(structure.season_label || "")}</span></div></section>
+    ${body}<footer class="doc-footer"><span>MYBASKET · ${escapeHtml(structure.name)}</span><span>${escapeHtml(structure.season_label || "")}</span></footer>
   </body></html>`;
 }
 
@@ -165,7 +158,7 @@ function buildDocument(key: TemplateKey, structure: Structure, people: Person[],
   }
 
   if (key === "registration") {
-    return shell(structure, "Fiche d’inscription formation", `<div class="grid2"><div class="box"><b>Nom :</b> <span class="line"></span><br><br><b>Prénom :</b> <span class="line"></span><br><br><b>Date de naissance :</b> <span class="line"></span></div><div class="box"><b>Email :</b> <span class="line"></span><br><br><b>Téléphone :</b> <span class="line"></span><br><br><b>Club / structure :</b> <span class="line"></span></div></div><h2>Formation</h2><div class="box"><b>Intitulé :</b> <span class="line"></span><br><br><b>Dates :</b> <span class="line"></span><br><br><b>Motivation / attentes :</b><div class="box big"></div></div><div class="footer"><div>Fait à <span class="line"></span>, le <span class="line"></span></div><div>Signature : <span class="line"></span></div></div>`);
+    return shell(structure, "Fiche d’inscription formation", `<h2>Identité</h2><div class="fieldrow"><div class="field"><small>Nom</small>&nbsp;</div><div class="field"><small>Prénom</small>&nbsp;</div><div class="field"><small>Date de naissance</small>&nbsp;</div><div class="field"><small>Email</small>&nbsp;</div><div class="field"><small>Téléphone</small>&nbsp;</div><div class="field"><small>Adresse</small>&nbsp;</div></div><h2>Structure du participant</h2><div class="fieldrow"><div class="field"><small>Club / structure</small>&nbsp;</div><div class="field"><small>N° affiliation / identifiant</small>&nbsp;</div><div class="field"><small>Fonction dans la structure</small>&nbsp;</div><div class="field"><small>Responsable / référent</small>&nbsp;</div><div class="field"><small>Email du responsable</small>&nbsp;</div><div class="field"><small>Téléphone du responsable</small>&nbsp;</div></div><h2>Formation</h2><div class="fieldrow"><div class="field"><small>Intitulé</small>&nbsp;</div><div class="field"><small>Session / promotion</small>&nbsp;</div><div class="field"><small>Dates</small>&nbsp;</div><div class="field"><small>Lieu</small>&nbsp;</div></div><h2>Motivation & attentes</h2><div class="box big"></div><div class="footer"><div>Fait à <span class="line"></span>, le <span class="line"></span></div><div>Signature : <span class="line"></span></div></div>`);
   }
 
   if (key === "attendance_certificate" || key === "training_certificate") {

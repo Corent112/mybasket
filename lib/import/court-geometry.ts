@@ -180,6 +180,245 @@ export function detectCourtRect(canvas: HTMLCanvasElement, region: AiRect): AiRe
   };
 }
 
+
+/* -------------------------------------------------------------------------- */
+/* 1bis. Détection VISUELLE d'un terrain, sans dépendre de l'OCR              */
+/* -------------------------------------------------------------------------- */
+/**
+ * Repli indispensable : sur une photo, l'étiquette « Graphic N° » n'existe pas.
+ * On propose alors des régions candidates de façon PERMISSIVE, et c'est la
+ * détection d'éléments (diagram-vision) qui tranche : une région sans joueur ni
+ * tracé est rejetée en aval. C'est plus robuste qu'un détecteur strict qui
+ * laisserait passer zéro terrain.
+ *
+ * Méthode : un dessin d'exercice est presque toujours une SURFACE de jeu posée
+ * sur un fond de couleur différente (bandeau bleu, fond bordeaux, page…). On
+ * cherche donc les grands aplats colorés, puis, à l'intérieur, les régions qui
+ * ne sont PAS de cette couleur : ce sont les terrains.
+ */
+
+type Mask = { data: Uint8Array; w: number; h: number };
+
+const makeMask = (w: number, h: number): Mask => ({ data: new Uint8Array(w * h), w, h });
+
+function dilate(mask: Mask, radius: number): Mask {
+  const out = makeMask(mask.w, mask.h);
+  for (let y = 0; y < mask.h; y += 1) {
+    for (let x = 0; x < mask.w; x += 1) {
+      if (!mask.data[y * mask.w + x]) continue;
+      for (let dy = -radius; dy <= radius; dy += 1) {
+        const yy = y + dy;
+        if (yy < 0 || yy >= mask.h) continue;
+        for (let dx = -radius; dx <= radius; dx += 1) {
+          const xx = x + dx;
+          if (xx < 0 || xx >= mask.w) continue;
+          out.data[yy * mask.w + xx] = 1;
+        }
+      }
+    }
+  }
+  return out;
+}
+
+function erode(mask: Mask, radius: number): Mask {
+  const out = makeMask(mask.w, mask.h);
+  for (let y = 0; y < mask.h; y += 1) {
+    for (let x = 0; x < mask.w; x += 1) {
+      let keep = 1;
+      for (let dy = -radius; dy <= radius && keep; dy += 1) {
+        const yy = y + dy;
+        if (yy < 0 || yy >= mask.h) { keep = 0; break; }
+        for (let dx = -radius; dx <= radius; dx += 1) {
+          const xx = x + dx;
+          if (xx < 0 || xx >= mask.w || !mask.data[yy * mask.w + xx]) { keep = 0; break; }
+        }
+      }
+      out.data[y * mask.w + x] = keep;
+    }
+  }
+  return out;
+}
+
+const close = (m: Mask, r = 2) => erode(dilate(m, r), r);
+const open = (m: Mask, r = 1) => dilate(erode(m, r), r);
+
+type Blob = { x0: number; y0: number; x1: number; y1: number; area: number };
+
+/** Composantes connexes 4-voisins d'un masque. */
+function blobs(mask: Mask, minArea: number): Blob[] {
+  const seen = new Uint8Array(mask.w * mask.h);
+  const out: Blob[] = [];
+  const stack: number[] = [];
+  for (let start = 0; start < mask.data.length; start += 1) {
+    if (!mask.data[start] || seen[start]) continue;
+    seen[start] = 1;
+    stack.length = 0;
+    stack.push(start);
+    let x0 = mask.w;
+    let x1 = -1;
+    let y0 = mask.h;
+    let y1 = -1;
+    let area = 0;
+    while (stack.length) {
+      const p = stack.pop()!;
+      const x = p % mask.w;
+      const y = (p / mask.w) | 0;
+      area += 1;
+      if (x < x0) x0 = x;
+      if (x > x1) x1 = x;
+      if (y < y0) y0 = y;
+      if (y > y1) y1 = y;
+      if (x > 0 && mask.data[p - 1] && !seen[p - 1]) { seen[p - 1] = 1; stack.push(p - 1); }
+      if (x < mask.w - 1 && mask.data[p + 1] && !seen[p + 1]) { seen[p + 1] = 1; stack.push(p + 1); }
+      if (y > 0 && mask.data[p - mask.w] && !seen[p - mask.w]) { seen[p - mask.w] = 1; stack.push(p - mask.w); }
+      if (y < mask.h - 1 && mask.data[p + mask.w] && !seen[p + mask.w]) { seen[p + mask.w] = 1; stack.push(p + mask.w); }
+    }
+    if (area >= minArea) out.push({ x0, y0, x1: x1 + 1, y1: y1 + 1, area });
+  }
+  return out;
+}
+
+export type CourtCandidate = {
+  /** Rectangle dans les pixels de l'image SOURCE. */
+  rect: AiRect;
+  area: number;
+  fill: number;
+  ratio: number;
+  /** Origine de la proposition, pour le panneau de debug. */
+  from: string;
+};
+
+const WORK_W = 400;
+
+/**
+ * Propose les régions susceptibles de contenir un terrain de basket.
+ * Permissif par construction : le tri final est fait par la détection
+ * d'éléments, qui rejette toute région sans joueur ni tracé.
+ */
+export function detectCourtCandidates(canvas: HTMLCanvasElement, limit = 6): CourtCandidate[] {
+  const scale = Math.min(1, WORK_W / canvas.width);
+  const w = Math.max(1, Math.round(canvas.width * scale));
+  const h = Math.max(1, Math.round(canvas.height * scale));
+
+  const small = document.createElement("canvas");
+  small.width = w;
+  small.height = h;
+  const sctx = small.getContext("2d", { willReadFrequently: true });
+  if (!sctx) return [];
+  sctx.imageSmoothingQuality = "high";
+  sctx.drawImage(canvas, 0, 0, w, h);
+  const px = sctx.getImageData(0, 0, w, h).data;
+
+  const at = (i: number) => [px[i * 4], px[i * 4 + 1], px[i * 4 + 2]] as const;
+
+  // 1. aplats colorés = « panneaux » (bandeau bleu, fond bordeaux, page teintée…)
+  const colored = makeMask(w, h);
+  for (let i = 0; i < w * h; i += 1) {
+    const [r, g, b] = at(i);
+    const mx = Math.max(r, g, b);
+    const mn = Math.min(r, g, b);
+    const sat = mx === 0 ? 0 : (mx - mn) / mx;
+    if (sat > 0.2 && mx > 38) colored.data[i] = 1;
+  }
+  const panels = blobs(close(colored, 1), Math.round(0.05 * w * h))
+    .sort((a, b) => b.area - a.area)
+    .slice(0, 2);
+
+  const proposals: CourtCandidate[] = [];
+  const inv = 1 / scale;
+  const pushBlob = (blob: Blob, from: string) => {
+    const bw = blob.x1 - blob.x0;
+    const bh = blob.y1 - blob.y0;
+    if (bw < 4 || bh < 4) return;
+    const fill = blob.area / (bw * bh);
+    const ratio = Math.max(bw, bh) / Math.max(1, Math.min(bw, bh));
+    if (blob.area < 0.03 * w * h) return;
+    if (ratio > 3 || fill < 0.5) return;
+    proposals.push({
+      rect: { x0: blob.x0 * inv, y0: blob.y0 * inv, x1: blob.x1 * inv, y1: blob.y1 * inv },
+      area: blob.area,
+      fill,
+      ratio,
+      from,
+    });
+  };
+
+  // 2. dans chaque panneau, ce qui n'est PAS la couleur du panneau = surface de jeu
+  for (const panel of panels) {
+    let sr = 0;
+    let sg = 0;
+    let sb = 0;
+    let n = 0;
+    for (let y = panel.y0; y < panel.y1; y += 1) {
+      for (let x = panel.x0; x < panel.x1; x += 1) {
+        const i = y * w + x;
+        if (!colored.data[i]) continue;
+        const [r, g, b] = at(i);
+        sr += r; sg += g; sb += b; n += 1;
+      }
+    }
+    if (!n) continue;
+    const pr = sr / n;
+    const pg = sg / n;
+    const pb = sb / n;
+
+    const surface = makeMask(w, h);
+    for (let y = panel.y0; y < panel.y1; y += 1) {
+      for (let x = panel.x0; x < panel.x1; x += 1) {
+        const i = y * w + x;
+        const [r, g, b] = at(i);
+        const d = Math.sqrt((r - pr) ** 2 + (g - pg) ** 2 + (b - pb) ** 2);
+        const mx = Math.max(r, g, b);
+        if (d > 70 && mx > 64) surface.data[i] = 1;
+      }
+    }
+    for (const blob of blobs(open(close(surface, 2), 1), Math.round(0.03 * w * h))) {
+      pushBlob(blob, "surface");
+    }
+    // le panneau lui-même peut être le terrain (terrain colorié plein cadre)
+    pushBlob(panel, "panneau");
+  }
+
+  // 3. repli : encre sur fond clair (feuille papier, capture recadrée)
+  if (!proposals.length) {
+    const ink = makeMask(w, h);
+    for (let i = 0; i < w * h; i += 1) {
+      const [r, g, b] = at(i);
+      if ((r + g + b) / 3 < 236) ink.data[i] = 1;
+    }
+    for (const blob of blobs(close(ink, 2), Math.round(0.05 * w * h))) pushBlob(blob, "encre");
+  }
+
+  // 4. dernier repli : l'image entière est le terrain (photo déjà recadrée)
+  if (!proposals.length) {
+    proposals.push({
+      rect: { x0: 0, y0: 0, x1: canvas.width, y1: canvas.height },
+      area: w * h,
+      fill: 1,
+      ratio: Math.max(w, h) / Math.min(w, h),
+      from: "image entière",
+    });
+  }
+
+  proposals.sort((a, b) => b.area - a.area);
+  const kept: CourtCandidate[] = [];
+  for (const p of proposals) {
+    const overlap = kept.some((k) => {
+      const ix = Math.max(0, Math.min(p.rect.x1, k.rect.x1) - Math.max(p.rect.x0, k.rect.x0));
+      const iy = Math.max(0, Math.min(p.rect.y1, k.rect.y1) - Math.max(p.rect.y0, k.rect.y0));
+      const inter = ix * iy;
+      const ua =
+        (p.rect.x1 - p.rect.x0) * (p.rect.y1 - p.rect.y0) +
+        (k.rect.x1 - k.rect.x0) * (k.rect.y1 - k.rect.y0) -
+        inter;
+      return ua > 0 && inter / ua > 0.3;
+    });
+    if (!overlap) kept.push(p);
+    if (kept.length >= limit) break;
+  }
+  return kept;
+}
+
 /* -------------------------------------------------------------------------- */
 /* 2 & 3. Classification demi / complet et orientation                        */
 /* -------------------------------------------------------------------------- */
@@ -221,6 +460,86 @@ function mirrorScore(px: Pixels, vertical: boolean): number {
     if (Math.abs(r1 - r2) < 40 && Math.abs(g1 - g2) < 40 && Math.abs(b1 - b2) < 40) agree += 1;
   }
   return total ? agree / total : 0;
+}
+
+
+/**
+ * Cherche la RAQUETTE : un bloc compact de couleur nettement différente du
+ * reste du terrain, centré sur un axe et collé à l'un des bords. C'est le
+ * repère d'orientation le plus fiable d'un demi-terrain (la Plaquette place
+ * toujours le panier en haut).
+ */
+function findKeyBlock(px: Pixels): { side: "top" | "bottom" | "left" | "right" } | null {
+  const step = Math.max(1, Math.round(Math.min(px.w, px.h) / 160));
+  const gw = Math.ceil(px.w / step);
+  const gh = Math.ceil(px.h / step);
+
+  // couleur médiane approximative du terrain
+  const samples: number[][] = [];
+  for (let gy = 0; gy < gh; gy += 2) {
+    for (let gx = 0; gx < gw; gx += 2) {
+      samples.push([...pixelAt(px, gx * step, gy * step)]);
+    }
+  }
+  if (!samples.length) return null;
+  const med = [0, 1, 2].map((c) => {
+    const v = samples.map((s) => s[c]).sort((a, b) => a - b);
+    return v[Math.floor(v.length / 2)];
+  });
+
+  const mask = new Uint8Array(gw * gh);
+  for (let gy = 0; gy < gh; gy += 1) {
+    for (let gx = 0; gx < gw; gx += 1) {
+      const [r, g, b] = pixelAt(px, gx * step, gy * step);
+      const d = Math.sqrt((r - med[0]) ** 2 + (g - med[1]) ** 2 + (b - med[2]) ** 2);
+      if (d > 90) mask[gy * gw + gx] = 1;
+    }
+  }
+
+  const seen = new Uint8Array(gw * gh);
+  let best: { area: number; x0: number; y0: number; x1: number; y1: number } | null = null;
+  for (let s0 = 0; s0 < mask.length; s0 += 1) {
+    if (!mask[s0] || seen[s0]) continue;
+    seen[s0] = 1;
+    const stack = [s0];
+    let x0 = gw;
+    let x1 = -1;
+    let y0 = gh;
+    let y1 = -1;
+    let area = 0;
+    while (stack.length) {
+      const p = stack.pop()!;
+      const x = p % gw;
+      const y = (p / gw) | 0;
+      area += 1;
+      if (x < x0) x0 = x;
+      if (x > x1) x1 = x;
+      if (y < y0) y0 = y;
+      if (y > y1) y1 = y;
+      for (const q of [p - 1, p + 1, p - gw, p + gw]) {
+        if (q < 0 || q >= mask.length || seen[q] || !mask[q]) continue;
+        if ((q === p - 1 && x === 0) || (q === p + 1 && x === gw - 1)) continue;
+        seen[q] = 1;
+        stack.push(q);
+      }
+    }
+    const bw = x1 - x0 + 1;
+    const bh = y1 - y0 + 1;
+    const frac = area / (gw * gh);
+    if (frac < 0.02 || frac > 0.30) continue;
+    if (area / (bw * bh) < 0.55) continue;
+    if (!best || area > best.area) best = { area, x0, y0, x1, y1 };
+  }
+  if (!best) return null;
+
+  const cx = (best.x0 + best.x1) / 2 / gw;
+  const cy = (best.y0 + best.y1) / 2 / gh;
+  const near = 0.30;
+  if (Math.abs(cx - 0.5) < 0.22 && best.y0 / gh < near) return { side: "top" };
+  if (Math.abs(cx - 0.5) < 0.22 && best.y1 / gh > 1 - near) return { side: "bottom" };
+  if (Math.abs(cy - 0.5) < 0.22 && best.x0 / gw < near) return { side: "left" };
+  if (Math.abs(cy - 0.5) < 0.22 && best.x1 / gw > 1 - near) return { side: "right" };
+  return null;
 }
 
 export function classifyCourt(canvas: HTMLCanvasElement, rect: AiRect): CourtGeometry {
@@ -271,15 +590,26 @@ export function classifyCourt(canvas: HTMLCanvasElement, rect: AiRect): CourtGeo
     const left = bandDensity(px, fill, { x0: 0, y0: 0, x1: px.w * bandFrac, y1: px.h });
     const right = bandDensity(px, fill, { x0: px.w * (1 - bandFrac), y0: 0, x1: px.w, y1: px.h });
 
-    const best = Math.max(top, bottom, left, right);
-    if (best === top) orientation = "identity";
-    else if (best === bottom) orientation = "rot180";
-    else if (best === left) orientation = "rot90cw";
-    else orientation = "rot90ccw";
-
-    reasons.push(
-      `densité panier h=${top.toFixed(2)} b=${bottom.toFixed(2)} g=${left.toFixed(2)} d=${right.toFixed(2)} → ${orientation}`
-    );
+    // La RAQUETTE est un repère bien plus fiable que la densité de marquage :
+    // c'est un bloc de couleur distincte, centré sur l'axe court et collé au
+    // fond de terrain. On la cherche d'abord ; la densité ne sert que de repli.
+    const key = findKeyBlock(px);
+    if (key) {
+      orientation = key.side === "top" ? "identity"
+        : key.side === "bottom" ? "rot180"
+        : key.side === "left" ? "rot90cw"
+        : "rot90ccw";
+      reasons.push(`raquette détectée côté ${key.side} → ${orientation}`);
+    } else {
+      const best = Math.max(top, bottom, left, right);
+      if (best === top) orientation = "identity";
+      else if (best === bottom) orientation = "rot180";
+      else if (best === left) orientation = "rot90cw";
+      else orientation = "rot90ccw";
+      reasons.push(
+        `pas de raquette ; densité h=${top.toFixed(2)} b=${bottom.toFixed(2)} g=${left.toFixed(2)} d=${right.toFixed(2)} → ${orientation}`
+      );
+    }
   }
 
   return { rect, kind, orientation, confidence: Math.max(0.2, Math.min(1, confidence)), reasons };
