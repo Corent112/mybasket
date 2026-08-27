@@ -64,6 +64,20 @@ type WorkerFactory = (
  *
  * C'est également ce que le harnais de test utilise pour tourner hors ligne.
  */
+/**
+ * OEM 1 = LSTM uniquement (le moteur moderne de Tesseract).
+ *
+ * Ce n'est pas un détail de performance : tesseract.js choisit le jeu de
+ * données selon l'OEM. Par défaut il télécharge les données « legacy + LSTM »
+ * (fra 6 Mo + eng 11 Mo). En LSTM seul, il prend `4.0.0_best_int` :
+ * fra 0,7 Mo + eng 2,9 Mo, et un cœur WASM de 2,8 Mo au lieu de 3,3 Mo.
+ *
+ * Premier import : ~6,5 Mo au lieu de ~21 Mo, sans perte de qualité — le
+ * moteur legacy ne sert qu'aux polices anciennes que nous ne visons pas.
+ * Ensuite tout est mis en cache par le navigateur (IndexedDB).
+ */
+const OEM_LSTM_ONLY = 1;
+
 function tesseractOptions(): Record<string, unknown> | undefined {
   if (typeof window === "undefined") return undefined;
   const options = (window as unknown as { __MB_TESSERACT_OPTIONS__?: Record<string, unknown> })
@@ -124,12 +138,12 @@ async function getTextWorker(): Promise<AnyWorker> {
     const createWorker = await getFactory();
     const options = tesseractOptions();
     try {
-      return await createWorker(["fra", "eng"], undefined, options);
+      return await createWorker(["fra", "eng"], OEM_LSTM_ONLY, options);
     } catch {
       try {
-        return await createWorker("fra", undefined, options);
+        return await createWorker("fra", OEM_LSTM_ONLY, options);
       } catch {
-        return await createWorker("eng", undefined, options);
+        return await createWorker("eng", OEM_LSTM_ONLY, options);
       }
     }
   })();
@@ -140,7 +154,7 @@ async function getDigitWorker(): Promise<AnyWorker> {
   if (digitWorker) return digitWorker;
   digitWorker = (async () => {
     const createWorker = await getFactory();
-    const worker = await createWorker("eng", undefined, tesseractOptions());
+    const worker = await createWorker("eng", OEM_LSTM_ONLY, tesseractOptions());
     await worker.setParameters?.({
       tessedit_char_whitelist: "0123456789XxCÉ",
       tessedit_pageseg_mode: "10",

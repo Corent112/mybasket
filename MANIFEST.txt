@@ -1,0 +1,12 @@
+app/exercices/creer/CreerExerciceClient.tsx
+components/ai/ExercisePhotoImport.tsx
+lib/import/court-geometry.ts
+lib/import/debug.ts
+lib/import/diagram-vision.ts
+lib/import/document-layout.ts
+lib/import/local-exercise-scanner.ts
+lib/import/ocr.ts
+lib/import/plaquette-converter.ts
+lib/import/types.ts
+package-lock.json
+package.json
