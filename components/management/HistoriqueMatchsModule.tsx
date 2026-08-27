@@ -880,6 +880,195 @@ export default function HistoriqueMatchsModule() {
     window.setTimeout(() => URL.revokeObjectURL(url), 1000);
   };
 
+  const downloadSheetPDF = async () => {
+    if (!selectedMatch || sheetLines.length === 0) return;
+
+    const table = document.querySelector(".players-table table") as HTMLTableElement | null;
+    if (!table) {
+      window.alert("Ouvre l'onglet Joueurs avant d'exporter le PDF.");
+      return;
+    }
+
+    try {
+      const [{ default: html2canvas }, { jsPDF }] = await Promise.all([
+        import("html2canvas"),
+        import("jspdf"),
+      ]);
+
+      // On construit une feuille indépendante de la modale :
+      // aucun bouton / aucune barre de navigation n'apparaît dans le PDF.
+      const exportRoot = document.createElement("div");
+      exportRoot.style.position = "fixed";
+      exportRoot.style.left = "-100000px";
+      exportRoot.style.top = "0";
+      exportRoot.style.width = "1500px";
+      exportRoot.style.background = "#ffffff";
+      exportRoot.style.padding = "24px";
+      exportRoot.style.fontFamily = "Arial, Helvetica, sans-serif";
+      exportRoot.style.color = "#191919";
+      exportRoot.setAttribute("aria-hidden", "true");
+
+      const header = document.createElement("div");
+      header.style.display = "flex";
+      header.style.alignItems = "flex-start";
+      header.style.justifyContent = "space-between";
+      header.style.gap = "24px";
+      header.style.marginBottom = "16px";
+      header.style.padding = "14px 16px";
+      header.style.borderRadius = "10px";
+      header.style.background = "#101014";
+      header.style.color = "#ffffff";
+
+      const titleWrap = document.createElement("div");
+
+      const date = document.createElement("div");
+      date.textContent = formatDate(selectedMatch.match_date);
+      date.style.fontSize = "12px";
+      date.style.fontWeight = "800";
+      date.style.color = "#d4a24c";
+      date.style.marginBottom = "5px";
+
+      const title = document.createElement("div");
+      title.textContent = `Boxscore complet — ${selectedTeamName} vs ${selectedMatch.opponent || "Adversaire"}`;
+      title.style.fontSize = "19px";
+      title.style.fontWeight = "900";
+      title.style.color = "#ffffff";
+
+      const meta = document.createElement("div");
+      meta.textContent =
+        `Score : ${safeNumber(selectedMatch.us_score)} - ${safeNumber(selectedMatch.them_score)} · ` +
+        `${selectedMatch.home === false ? "Extérieur" : "Domicile"}`;
+      meta.style.marginTop = "6px";
+      meta.style.fontSize = "12px";
+      meta.style.color = "#d2d2d7";
+
+      titleWrap.appendChild(date);
+      titleWrap.appendChild(title);
+      titleWrap.appendChild(meta);
+      header.appendChild(titleWrap);
+
+      const brand = document.createElement("div");
+      brand.textContent = "MyBasket";
+      brand.style.color = "#d4a24c";
+      brand.style.fontWeight = "900";
+      brand.style.fontSize = "16px";
+      header.appendChild(brand);
+
+      const clonedTable = table.cloneNode(true) as HTMLTableElement;
+      clonedTable.style.width = "100%";
+      clonedTable.style.tableLayout = "fixed";
+      clonedTable.style.borderCollapse = "collapse";
+      clonedTable.style.fontSize = "10px";
+
+      clonedTable.querySelectorAll("th, td").forEach((cell) => {
+        const el = cell as HTMLElement;
+        el.style.position = "static";
+        el.style.left = "auto";
+        el.style.minWidth = "0";
+        el.style.maxWidth = "none";
+        el.style.height = "28px";
+        el.style.padding = "4px 3px";
+        el.style.border = "1px solid #dddddd";
+        el.style.textAlign = cell === clonedTable.rows[0]?.cells[0] ? "left" : "center";
+        el.style.whiteSpace = "nowrap";
+        el.style.overflow = "hidden";
+        el.style.textOverflow = "ellipsis";
+      });
+
+      clonedTable.querySelectorAll("thead th").forEach((cell) => {
+        const el = cell as HTMLElement;
+        el.style.background = "#6b1a2c";
+        el.style.color = "#ffffff";
+        el.style.fontWeight = "900";
+      });
+
+      // Sous-entête TR / TT / % plus clair, comme à l'écran.
+      const secondHeader = clonedTable.tHead?.rows?.[1];
+      if (secondHeader) {
+        Array.from(secondHeader.cells).forEach((cell) => {
+          const el = cell as HTMLElement;
+          el.style.background = "#f3dfe4";
+          el.style.color = "#4c1723";
+        });
+      }
+
+      clonedTable.querySelectorAll("tbody tr").forEach((row, index) => {
+        Array.from(row.children).forEach((cell) => {
+          (cell as HTMLElement).style.background =
+            index === clonedTable.tBodies[0].rows.length - 1
+              ? "#fff7e9"
+              : index % 2 === 0
+                ? "#ffffff"
+                : "#f7f7f7";
+        });
+      });
+
+      // La colonne Joueur garde un peu plus de place ; les autres restent compactes.
+      clonedTable.querySelectorAll("tr").forEach((row) => {
+        const first = row.children[0] as HTMLElement | undefined;
+        if (first) {
+          first.style.width = "180px";
+          first.style.textAlign = "left";
+          first.style.fontWeight = "800";
+        }
+      });
+
+      exportRoot.appendChild(header);
+      exportRoot.appendChild(clonedTable);
+      document.body.appendChild(exportRoot);
+
+      const canvas = await html2canvas(exportRoot, {
+        backgroundColor: "#ffffff",
+        scale: 2,
+        useCORS: true,
+        logging: false,
+      });
+
+      exportRoot.remove();
+
+      // A4 paysage. Le tableau est mis à l'échelle pour tenir sur UNE page.
+      const pdf = new jsPDF({
+        orientation: "landscape",
+        unit: "mm",
+        format: "a4",
+        compress: true,
+      });
+
+      const pageWidth = pdf.internal.pageSize.getWidth();
+      const pageHeight = pdf.internal.pageSize.getHeight();
+      const margin = 6;
+      const maxWidth = pageWidth - margin * 2;
+      const maxHeight = pageHeight - margin * 2;
+
+      const ratio = Math.min(maxWidth / canvas.width, maxHeight / canvas.height);
+      const drawWidth = canvas.width * ratio;
+      const drawHeight = canvas.height * ratio;
+      const x = (pageWidth - drawWidth) / 2;
+      const y = (pageHeight - drawHeight) / 2;
+
+      pdf.addImage(
+        canvas.toDataURL("image/jpeg", 0.95),
+        "JPEG",
+        x,
+        y,
+        drawWidth,
+        drawHeight,
+        undefined,
+        "FAST"
+      );
+
+      const opponent = (selectedMatch.opponent || "adversaire")
+        .replace(/[^a-z0-9_-]+/gi, "_");
+      const matchDate = (selectedMatch.match_date || "match")
+        .replace(/[^a-z0-9_-]+/gi, "_");
+
+      pdf.save(`boxscore_${opponent}_${matchDate}.pdf`);
+    } catch (error) {
+      console.error("Erreur export PDF boxscore :", error);
+      window.alert("Impossible de générer le PDF.");
+    }
+  };
+
 
   const playerPlusMinus = useMemo(() => {
     const result: Record<string, number> = {};
@@ -1009,8 +1198,18 @@ export default function HistoriqueMatchsModule() {
               </div>
 
               <div className="modal-actions">
+                <button
+                  type="button"
+                  className="download-btn pdf-btn"
+                  onClick={downloadSheetPDF}
+                  disabled={sheetLoading || sheetLines.length === 0}
+                  title="Télécharger le boxscore en PDF A4 paysage"
+                >
+                  ↓ PDF
+                </button>
+
                 <button type="button" className="download-btn" onClick={downloadSheetCSV}>
-                  ⬇ CSV
+                  ↓ CSV
                 </button>
 
                 <button type="button" className="close-btn" onClick={() => setSelectedMatch(null)}>
@@ -1076,14 +1275,14 @@ export default function HistoriqueMatchsModule() {
                       <th>TR</th>
                       <th>TT</th>
                       <th>%</th>
-                      <th>TT</th>
                       <th>TR</th>
+                      <th>TT</th>
                       <th>%</th>
-                      <th>TT</th>
                       <th>TR</th>
+                      <th>TT</th>
                       <th>%</th>
-                      <th>TT</th>
                       <th>TR</th>
+                      <th>TT</th>
                       <th>%</th>
                       <th>RO</th>
                       <th>RD</th>
@@ -1104,14 +1303,14 @@ export default function HistoriqueMatchsModule() {
                           <td>{s.fgm}</td>
                           <td>{s.fga}</td>
                           <td>{pct(s.fgm, s.fga)}</td>
-                          <td>{s.p2a}</td>
                           <td>{s.p2m}</td>
+                          <td>{s.p2a}</td>
                           <td>{pct(s.p2m, s.p2a)}</td>
-                          <td>{s.p3a}</td>
                           <td>{s.p3m}</td>
+                          <td>{s.p3a}</td>
                           <td>{pct(s.p3m, s.p3a)}</td>
-                          <td>{s.fta}</td>
                           <td>{s.ftm}</td>
+                          <td>{s.fta}</td>
                           <td>{pct(s.ftm, s.fta)}</td>
                           <td>{s.off}</td>
                           <td>{s.def}</td>
@@ -1144,14 +1343,14 @@ export default function HistoriqueMatchsModule() {
                       <td>{totals.fgm}</td>
                       <td>{totals.fga}</td>
                       <td>{pct(totals.fgm, totals.fga)}</td>
-                      <td>{totals.p2a}</td>
                       <td>{totals.p2m}</td>
+                      <td>{totals.p2a}</td>
                       <td>{pct(totals.p2m, totals.p2a)}</td>
-                      <td>{totals.p3a}</td>
                       <td>{totals.p3m}</td>
+                      <td>{totals.p3a}</td>
                       <td>{pct(totals.p3m, totals.p3a)}</td>
-                      <td>{totals.fta}</td>
                       <td>{totals.ftm}</td>
+                      <td>{totals.fta}</td>
                       <td>{pct(totals.ftm, totals.fta)}</td>
                       <td>{totals.off}</td>
                       <td>{totals.def}</td>
@@ -1568,8 +1767,8 @@ export default function HistoriqueMatchsModule() {
           border-right: 1px solid #e4c9d0;
         }
 
-        .sheet-table th:first-child,
-        .sheet-table td:first-child {
+        .sheet-table thead tr:first-child th:first-child,
+        .sheet-table tbody td:first-child {
           position: sticky;
           left: 0;
           z-index: 3;
@@ -1579,7 +1778,7 @@ export default function HistoriqueMatchsModule() {
           text-align: left;
         }
 
-        .sheet-table th:first-child {
+        .sheet-table thead tr:first-child th:first-child {
           background: #6b1a2c;
         }
 
@@ -1593,7 +1792,7 @@ export default function HistoriqueMatchsModule() {
           min-width: 48px;
         }
 
-        .sheet-table td:first-child {
+        .sheet-table tbody td:first-child {
           background: #f4f4f4;
         }
 
