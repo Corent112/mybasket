@@ -3,7 +3,8 @@
 // app/equipes/[teamId]/page.tsx
 import TeamMatchHistoryBlock from "@/components/equipes/TeamMatchHistoryBlock";
 import TeamGoogleDriveSettings from "@/components/video/TeamGoogleDriveSettings";
-import WeeklyTrainingPlanner from "@/components/equipes/WeeklyTrainingPlanner";
+import TeamProfilingTab from "@/components/equipes/TeamProfilingTab";
+import TeamSelfEvaluationsTab from "@/components/equipes/TeamSelfEvaluationsTab";
 import { use, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
@@ -16,13 +17,7 @@ import {
 } from "../../../lib/equipes-store";
 import PlayerForm from "@/components/equipes/PlayerForm";
 import TeamForm from "@/components/equipes/TeamForm";
-import TeamStaffManager from "@/components/equipes/TeamStaffManager";
-import TeamAdvancedStats from "@/components/equipes/TeamAdvancedStats";
-import TeamShootingGrids from "@/components/equipes/TeamShootingGrids";
-import TeamAvailabilityLoad from "@/components/equipes/TeamAvailabilityLoad";
-import TeamResourcesPanel from "@/components/equipes/TeamResourcesPanel";
-import TeamActivityPanel from "@/components/equipes/TeamActivityPanel";
-import type { Player, StaffMember, Team, TeamEvent } from "../../../types/player";
+import type { Player, Team, TeamEvent } from "../../../types/player";
 
 /* ---------- Icônes (SVG inline, trait) ---------- */
 function Ic({ d, size = 18 }: { d: string; size?: number }) {
@@ -74,15 +69,7 @@ const EVENT_EMOJI: Record<string, keyof typeof ICONS> = {
   Autre: "cal",
 };
 
-type TeamMainTab =
-  | "presentation"
-  | "training"
-  | "shooting"
-  | "load"
-  | "resources"
-  | "activity"
-  | "stats"
-  | "advanced";
+type TeamMainTab = "presentation" | "training" | "profiling" | "self-evaluations" | "stats";
 
 type TeamDashboardData = {
   loading: boolean;
@@ -562,13 +549,6 @@ export default function EquipeDetailPage({
   const [editingTeam, setEditingTeam] = useState(false);
   const [managing, setManaging] = useState(false);
   const [activeTab, setActiveTab] = useState<TeamMainTab>("presentation");
-
-  useEffect(()=>{
-    if(typeof window==="undefined")return;
-    const tab=new URL(window.location.href).searchParams.get("tab");
-    if(tab==="shooting") setActiveTab("shooting");
-    if(tab==="load") setActiveTab("load");
-  },[teamId]);
   const [playerForm, setPlayerForm] = useState<{
     open: boolean;
     player?: Player;
@@ -582,36 +562,6 @@ export default function EquipeDetailPage({
     () => buildPlayerLiveAverages(dashboard.statRows),
     [dashboard.statRows],
   );
-
-  const isOwner = team ? team.isShared !== true : false;
-  const canManagePlayers =
-    Boolean(team) &&
-    (isOwner || team?.collaborationPermissions?.players === true);
-  const canUseSessions =
-    Boolean(team) &&
-    (isOwner || team?.collaborationPermissions?.sessions === true);
-  const canUseLiveStats =
-    Boolean(team) &&
-    (isOwner || team?.collaborationPermissions?.livestats === true);
-  const canUseMedia =
-    Boolean(team) &&
-    (isOwner || team?.collaborationPermissions?.media === true);
-  const canUseRpe =
-    Boolean(team) &&
-    (isOwner || team?.collaborationPermissions?.rpe === true);
-  const canViewRpeIndividual =
-    Boolean(team) &&
-    (isOwner || team?.collaborationPermissions?.rpe_individual === true);
-  const canViewRpeGroup =
-    Boolean(team) &&
-    (isOwner || team?.collaborationPermissions?.rpe_group === true);
-  const canManageRpeTarget =
-    Boolean(team) &&
-    (isOwner || team?.collaborationPermissions?.rpe_manage_target === true);
-  const canManageRpeQuestionnaires =
-    Boolean(team) &&
-    (isOwner || team?.collaborationPermissions?.rpe_manage_questionnaires === true);
-  const playerLimitReached = (team?.players.length ?? 0) >= 15;
 
   async function reload() {
     try {
@@ -700,32 +650,7 @@ export default function EquipeDetailPage({
     }
   }
 
-
-  async function handleStaffChange(nextStaff: StaffMember[]) {
-    if (!team || !isOwner) return;
-
-    try {
-      await saveTeam({ ...team, staff: nextStaff });
-      await reload();
-      flash("Staff mis à jour ✓");
-    } catch (error) {
-      console.error("Erreur mise à jour staff:", error);
-      alert("Impossible de mettre à jour le staff de cette équipe.");
-      throw error;
-    }
-  }
-
   async function handleSavePlayer(p: Player) {
-    if (!canManagePlayers) {
-      alert("Tu n’as pas l’autorisation de modifier les joueurs de cette équipe.");
-      return;
-    }
-
-    if (!p.id && playerLimitReached) {
-      alert("Effectif complet : une équipe MyBasket est limitée à 15 joueurs actifs.");
-      return;
-    }
-
     try {
       await upsertPlayer(teamId, p);
       setPlayerForm({ open: false });
@@ -739,11 +664,6 @@ export default function EquipeDetailPage({
 
   async function handleDelete(p: Player, e: React.MouseEvent) {
     e.stopPropagation();
-
-    if (!canManagePlayers) {
-      alert("Tu n’as pas l’autorisation de modifier les joueurs de cette équipe.");
-      return;
-    }
 
     if (!confirm(`Retirer ${p.firstName} ${p.lastName} de l'effectif ?`)) {
       return;
@@ -760,7 +680,7 @@ export default function EquipeDetailPage({
   }
 
   function openPlayer(p: Player) {
-    if (managing && canManagePlayers) setPlayerForm({ open: true, player: p });
+    if (managing) setPlayerForm({ open: true, player: p });
     else router.push(`/equipes/${teamId}/${p.id}`);
   }
 
@@ -779,25 +699,6 @@ export default function EquipeDetailPage({
     : ["#7a1228", "#e0a82e"];
   const KPIS = computeLinkedKpis(team, dashboard);
   const linkedStatsTeamId = dashboard.resolvedTeamId || teamId;
-
-  // Google Drive doit toujours recevoir l'identifiant Supabase réel de l'équipe.
-  // Certaines équipes historiques gardent un id local dans la fiche tandis que
-  // leurs matchs / collaborations utilisent le UUID Supabase.
-  const driveTeamId =
-    compactStrings([
-      (team as any).supabase_team_id,
-      (team as any).supabaseTeamId,
-      (team as any).supabase_id,
-      (team as any).supabaseId,
-      (team as any).db_id,
-      (team as any).dbId,
-      dashboard.resolvedTeamId,
-      team.id,
-      teamId,
-    ]).find((value) => isUuidValue(value)) ||
-    dashboard.resolvedTeamId ||
-    team.id ||
-    teamId;
 
   return (
     <div className="tl-wrap">
@@ -832,23 +733,19 @@ export default function EquipeDetailPage({
         {/* ---------- HERO ---------- */}
         <section className="tl-hero team-hero-linked">
           <div className="tl-floating-actions">
-            {isOwner && (
-              <button
-                className="tl-btn tl-btn-bx"
-                onClick={() => setEditingTeam(true)}
-              >
-                <Ic d={ICONS.pencil} size={16} /> Modifier informations équipe
-              </button>
-            )}
-            {canManagePlayers && (
-              <button
-                className={`tl-btn ${managing ? "tl-btn-or" : "tl-btn-ghost"}`}
-                onClick={() => setManaging((v) => !v)}
-              >
-                <Ic d={ICONS.manage} size={16} />{" "}
-                {managing ? "Terminer" : "Gérer les joueurs"}
-              </button>
-            )}
+            <button
+              className="tl-btn tl-btn-bx"
+              onClick={() => setEditingTeam(true)}
+            >
+              <Ic d={ICONS.pencil} size={16} /> Modifier l'équipe
+            </button>
+            <button
+              className={`tl-btn ${managing ? "tl-btn-or" : "tl-btn-ghost"}`}
+              onClick={() => setManaging((v) => !v)}
+            >
+              <Ic d={ICONS.manage} size={16} />{" "}
+              {managing ? "Terminer" : "Gérer les joueurs"}
+            </button>
           </div>
 
           <div className="tl-hero-logo">
@@ -879,24 +776,20 @@ export default function EquipeDetailPage({
                 <path d="M2 12h20M12 2c3.5 3 3.5 17 0 20M12 2c-3.5 3-3.5 17 0 20" />
               </svg>
             )}
-            {isOwner && (
-              <>
-                <button
-                  className="tl-cam"
-                  title="Changer le logo"
-                  onClick={() => logoRef.current?.click()}
-                >
-                  <Ic d={ICONS.cam} size={13} />
-                </button>
-                <input
-                  ref={logoRef}
-                  type="file"
-                  accept="image/*"
-                  hidden
-                  onChange={changeLogo}
-                />
-              </>
-            )}
+            <button
+              className="tl-cam"
+              title="Changer le logo"
+              onClick={() => logoRef.current?.click()}
+            >
+              <Ic d={ICONS.cam} size={13} />
+            </button>
+            <input
+              ref={logoRef}
+              type="file"
+              accept="image/*"
+              hidden
+              onChange={changeLogo}
+            />
           </div>
 
           <div className="tl-hero-content">
@@ -909,11 +802,6 @@ export default function EquipeDetailPage({
                 <span className="dash-loading">Synchronisation...</span>
               )}
             </div>
-            {team.isShared && (
-              <div className="shared-team-badge">
-                Équipe partagée · {team.collaborationRole || "Staff"}
-              </div>
-            )}
             <div className="tl-tags">
               {(team.tags || []).map((tg) => (
                 <span key={tg} className="tl-tag">
@@ -952,88 +840,33 @@ export default function EquipeDetailPage({
           <button
             type="button"
             className={activeTab === "training" ? "active" : ""}
-            onClick={() => {
-              if (canUseSessions) setActiveTab("training");
-              else alert("Le propriétaire ne t’a pas donné accès aux séances de cette équipe.");
-            }}
+            onClick={() => setActiveTab("training")}
           >
             <Ic d={ICONS.cal} size={16} />
-            Entraînements {!canUseSessions && team.isShared ? "🔒" : ""}
+            Entraînements
           </button>
 
-          <button
-            type="button"
-            className={activeTab === "shooting" ? "active" : ""}
-            onClick={() => setActiveTab("shooting")}
-          >
-            <Ic d={ICONS.trophy} size={16} />
-            Grilles de tirs
+          <button type="button" className={activeTab === "profiling" ? "active" : ""} onClick={() => setActiveTab("profiling")}>
+            <Ic d={ICONS.user} size={16} /> Profilage
           </button>
 
-          <button
-            type="button"
-            className={activeTab === "load" ? "active" : ""}
-            onClick={() => {
-              if (canUseRpe) setActiveTab("load");
-              else alert("Le propriétaire ne t’a pas donné accès à Charge & RPE pour cette équipe.");
-            }}
-          >
-            <Ic d={ICONS.trend} size={16} />
-            Charge & RPE {!canUseRpe && team.isShared ? "🔒" : ""}
-          </button>
-
-          <button
-            type="button"
-            className={activeTab === "resources" ? "active" : ""}
-            onClick={() => setActiveTab("resources")}
-          >
-            <Ic d={ICONS.info} size={16} />
-            Documents & ressources
-          </button>
-
-          <button
-            type="button"
-            className={activeTab === "activity" ? "active" : ""}
-            onClick={() => setActiveTab("activity")}
-          >
-            <Ic d={ICONS.cal} size={16} />
-            Activité
+          <button type="button" className={activeTab === "self-evaluations" ? "active" : ""} onClick={() => setActiveTab("self-evaluations")}>
+            <Ic d={ICONS.cal} size={16} /> Auto-évaluations
           </button>
 
           <button
             type="button"
             className={activeTab === "stats" ? "active" : ""}
-            onClick={() => {
-              if (canUseLiveStats) setActiveTab("stats");
-              else alert("Le propriétaire ne t’a pas donné accès à LiveStats pour cette équipe.");
-            }}
+            onClick={() => setActiveTab("stats")}
           >
             <Ic d={ICONS.bars} size={16} />
-            Toutes les stats {!canUseLiveStats && team.isShared ? "🔒" : ""}
-          </button>
-
-          <button
-            type="button"
-            className={activeTab === "advanced" ? "active" : ""}
-            onClick={() => {
-              if (canUseLiveStats) setActiveTab("advanced");
-              else alert("Le propriétaire ne t’a pas donné accès aux statistiques avancées de cette équipe.");
-            }}
-          >
-            <Ic d={ICONS.filter} size={16} />
-            Stats avancées {!canUseLiveStats && team.isShared ? "🔒" : ""}
+            Toutes les stats
           </button>
         </section>
 
         {activeTab === "presentation" && (
           <div className="team-tab-panel">
-            {canUseMedia ? (
-              <TeamGoogleDriveSettings teamId={driveTeamId} isOwner={isOwner} />
-            ) : team.isShared ? (
-              <div className="shared-access-note">
-                🔒 Les médias et Google Drive ne sont pas autorisés pour ton rôle sur cette équipe.
-              </div>
-            ) : null}
+            <TeamGoogleDriveSettings teamId={team.id} />
             {/* ---------- TEAM BANNER ---------- */}
             <section className="tl-banner">
               {team.banniere ? (
@@ -1044,24 +877,20 @@ export default function EquipeDetailPage({
                   <div>Ajoute une photo de ton équipe</div>
                 </div>
               )}
-              {isOwner && (
-                <>
-                  <button
-                    className="tl-cam"
-                    title="Changer la photo d'équipe"
-                    onClick={() => bannerRef.current?.click()}
-                  >
-                    <Ic d={ICONS.cam} size={13} />
-                  </button>
-                  <input
-                    ref={bannerRef}
-                    type="file"
-                    accept="image/*"
-                    hidden
-                    onChange={changeBanner}
-                  />
-                </>
-              )}
+              <button
+                className="tl-cam"
+                title="Changer la photo d'équipe"
+                onClick={() => bannerRef.current?.click()}
+              >
+                <Ic d={ICONS.cam} size={13} />
+              </button>
+              <input
+                ref={bannerRef}
+                type="file"
+                accept="image/*"
+                hidden
+                onChange={changeBanner}
+              />
             </section>
 
             {/* ---------- EFFECTIF ---------- */}
@@ -1072,7 +901,7 @@ export default function EquipeDetailPage({
                 </span>
                 <h2>Effectif</h2>
                 <span className="right">
-                  {team.players.length}/15 joueur
+                  {team.players.length} joueur
                   {team.players.length > 1 ? "s" : ""}
                 </span>
               </div>
@@ -1083,7 +912,7 @@ export default function EquipeDetailPage({
                     className="tl-pcard"
                     onClick={() => openPlayer(p)}
                   >
-                    {managing && canManagePlayers && (
+                    {managing && (
                       <button
                         className="tl-del"
                         title="Retirer"
@@ -1111,19 +940,13 @@ export default function EquipeDetailPage({
                     </div>
                   </div>
                 ))}
-                {managing && canManagePlayers && (
+                {managing && (
                   <div
-                    className={`tl-addtile ${playerLimitReached ? "disabled" : ""}`}
-                    onClick={() => {
-                      if (playerLimitReached) {
-                        alert("Effectif complet : une équipe MyBasket est limitée à 15 joueurs actifs.");
-                        return;
-                      }
-                      setPlayerForm({ open: true });
-                    }}
+                    className="tl-addtile"
+                    onClick={() => setPlayerForm({ open: true })}
                   >
                     <span className="plus">+</span>
-                    {playerLimitReached ? "Effectif complet (15/15)" : "Ajouter un joueur"}
+                    Ajouter un joueur
                   </div>
                 )}
               </div>
@@ -1186,6 +1009,16 @@ export default function EquipeDetailPage({
                   value={team.niveau || ""}
                 />
                 <InfoRow
+                  icon={ICONS.user}
+                  label="Entraîneur principal"
+                  value={team.entraineurPrincipal || ""}
+                />
+                <InfoRow
+                  icon={ICONS.users}
+                  label="Assistant"
+                  value={team.assistant || ""}
+                />
+                <InfoRow
                   icon={ICONS.building}
                   label="Salle principale"
                   value={team.sallePrincipale || ""}
@@ -1210,59 +1043,63 @@ export default function EquipeDetailPage({
             </section>
 
             {/* ---------- STAFF ---------- */}
-            <TeamStaffManager
-              teamId={team.id}
-              staff={team.staff || []}
-              onChange={handleStaffChange}
-              isOwner={isOwner}
-            />
+            <section className="tl-card">
+              <div className="tl-card-h">
+                <span className="ic">
+                  <Ic d={ICONS.users} />
+                </span>
+                <h2>Staff</h2>
+              </div>
+              {team.staff?.length ? (
+                team.staff.map((s) => (
+                  <div key={s.id} className="tl-staff-item">
+                    <div className="tl-ini">
+                      {s.photo ? (
+                        <img
+                          src={s.photo}
+                          alt=""
+                          style={{
+                            width: "100%",
+                            height: "100%",
+                            borderRadius: "50%",
+                            objectFit: "cover",
+                          }}
+                        />
+                      ) : (
+                        `${s.prenom[0] || ""}${s.nom[0] || ""}`
+                      )}
+                    </div>
+                    <div>
+                      <div className="nm">
+                        {s.prenom} {s.nom}
+                      </div>
+                      <span className="tl-rolepill">{s.role}</span>
+                    </div>
+                    <span className="tl-chev">
+                      <Ic d={ICONS.chev} />
+                    </span>
+                  </div>
+                ))
+              ) : (
+                <p style={{ color: "#9a8a82" }}>Aucun membre du staff.</p>
+              )}
+              <button className="tl-linkbtn">Voir tout le staff</button>
+            </section>
           </div>
         )}
 
         {activeTab === "training" && (
           <div className="team-tab-panel training-panel">
-            <WeeklyTrainingPlanner teamId={team.id} />
             <TrainingAnalysisBlock teamId={linkedStatsTeamId} fallbackTeamId={teamId} team={team} />
           </div>
         )}
 
-        {activeTab === "shooting" && (
-          <div className="team-tab-panel">
-            <TeamShootingGrids
-              teamId={team.id}
-              players={team.players}
-              canEdit={canManagePlayers}
-            />
-          </div>
+        {activeTab === "profiling" && (
+          <div className="team-tab-panel"><TeamProfilingTab teamId={String(teamId)} /></div>
         )}
 
-        {activeTab === "load" && (
-          <div className="team-tab-panel">
-            <TeamAvailabilityLoad
-              teamId={team.id}
-              players={team.players}
-              canEdit={canManagePlayers || canUseSessions}
-              canViewIndividual={canViewRpeIndividual}
-              canViewGroup={canViewRpeGroup}
-              canManageTarget={canManageRpeTarget}
-              canManageQuestionnaires={canManageRpeQuestionnaires}
-            />
-          </div>
-        )}
-
-        {activeTab === "resources" && (
-          <div className="team-tab-panel">
-            <TeamResourcesPanel
-              teamId={team.id}
-              canEdit={isOwner || canUseMedia}
-            />
-          </div>
-        )}
-
-        {activeTab === "activity" && (
-          <div className="team-tab-panel">
-            <TeamActivityPanel teamId={team.id} />
-          </div>
+        {activeTab === "self-evaluations" && (
+          <div className="team-tab-panel"><TeamSelfEvaluationsTab teamId={String(teamId)} /></div>
         )}
 
         {activeTab === "stats" && (
@@ -1283,15 +1120,6 @@ export default function EquipeDetailPage({
           </div>
         )}
 
-        {activeTab === "advanced" && (
-          <div className="team-tab-panel stats-panel">
-            <TeamAdvancedStats
-              teamId={linkedStatsTeamId}
-              team={team}
-            />
-          </div>
-        )}
-
         <div className="tl-foot">
           <hr />
           <svg
@@ -1309,14 +1137,14 @@ export default function EquipeDetailPage({
         </div>
       </div>
 
-      {editingTeam && isOwner && (
+      {editingTeam && (
         <TeamForm
           team={team}
           onSave={handleSaveTeam}
           onClose={() => setEditingTeam(false)}
         />
       )}
-      {playerForm.open && canManagePlayers && (
+      {playerForm.open && (
         <PlayerForm
           initial={playerForm.player}
           onSave={handleSavePlayer}
@@ -1494,10 +1322,8 @@ export default function EquipeDetailPage({
           border: 1px solid #efe6db;
           border-radius: 999px;
           background: #fff8ef;
-          width: 100%;
+          width: fit-content;
           max-width: 100%;
-          overflow-x: auto;
-          scrollbar-width: thin;
           box-shadow: 0 12px 28px rgba(60, 30, 20, 0.05);
         }
 
@@ -1516,9 +1342,6 @@ export default function EquipeDetailPage({
           white-space: nowrap;
         }
 
-.shared-team-badge{display:inline-flex;margin:8px 0 0;padding:6px 10px;border-radius:999px;background:rgba(255,255,255,.15);border:1px solid rgba(255,255,255,.25);color:#fff;font-size:.72rem;font-weight:900}
-.shared-access-note{margin-bottom:14px;padding:13px 15px;border:1px solid #eadfd5;border-radius:13px;background:#fbf8f5;color:#766a64;font-size:.82rem;font-weight:750}
-.tl-addtile.disabled{opacity:.62;cursor:not-allowed}
         .team-tabs button.active {
           background: #6b1a2c;
           color: #fff;
@@ -2237,9 +2060,32 @@ function TrainingAnalysisBlock({
         });
       }
 
-      // Source unique : les séances de la fiche équipe proviennent uniquement de Supabase.
-      // Aucun fallback localStorage : une séance supprimée de practice_sessions ne doit jamais
-      // réapparaître dans les analyses / donuts de l’équipe.
+      if (rows.length === 0 && typeof window !== "undefined") {
+        const keys = ["mybasket_team_practice_sessions", "mybasket_sessions", "mybasket_seances", "practice_sessions"];
+        for (const key of keys) {
+          try {
+            const parsed = JSON.parse(window.localStorage.getItem(key) || "[]");
+            if (Array.isArray(parsed) && parsed.length > 0) {
+              rows = parsed.filter((row: any) => {
+                const content = readSessionContent(row) || {};
+                const possibleIds = compactStrings([
+                  row.team_id,
+                  row.team_reference_id,
+                  row.teamId,
+                  row.team_local_id,
+                  row.equipe_id,
+                  row.equipeId,
+                  content.team_local_id,
+                  content.team_id,
+                  content.team?.id,
+                ]);
+                return possibleIds.some((value) => candidateIds.includes(value));
+              });
+              if (rows.length > 0) break;
+            }
+          } catch {}
+        }
+      }
 
       setSessions(rows.map(normalizeTrainingSession));
     } catch (error) {

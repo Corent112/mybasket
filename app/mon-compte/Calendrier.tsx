@@ -786,28 +786,21 @@ export default function MonCalendrier() {
               <div className="cal-fld">
                 <label>Fiche séance</label>
                 {editingId && events.find((event) => event.id === editingId)?.sessionId ? (
-                  <>
-                    <button
-                      type="button"
-                      className="cal-open-session"
-                      onClick={() => {
-                        if (editingId) void consultSessionPdf(editingId);
-                      }}
-                    >
+                  <div className="cal-session-actions">
+                    <button type="button" className="cal-open-session" onClick={() => { if (editingId) void consultSessionPdf(editingId); }}>
                       Consulter la fiche séance
                     </button>
                     <button
                       type="button"
-                      className="cal-open-session cal-review-session"
+                      className="cal-self-review"
                       onClick={() => {
-                        const event = events.find((item) => item.id === editingId);
-                        if (!event?.sessionId) return;
-                        window.location.assign(`/seances/${event.sessionId}/evaluation?calendarEventId=${event.id}`);
+                        const sid = editingId ? events.find((event) => event.id === editingId)?.sessionId : undefined;
+                        if (sid) window.location.href = `/seances/${sid}/bilan`;
                       }}
                     >
-                      ✅ Auto-évaluation
+                      ✓ Auto-évaluation
                     </button>
-                  </>
+                  </div>
                 ) : (
                   <div className="cal-attach">
                     <label className="cal-attach-btn">📎 Ajouter une pièce jointe<input type="file" accept=".pdf,image/*,.doc,.docx,.txt" hidden onChange={(e) => onAttach(e.target.files?.[0])} /></label>
@@ -937,6 +930,7 @@ export default function MonCalendrier() {
         .cal-del:hover{text-decoration:underline}
 
         /* Modale de prévisualisation */
+        .cal-session-actions{display:flex;gap:.55rem;flex-wrap:wrap}.cal-self-review{border:1px solid #d4a24c;background:#fff8ef;color:#6b1a2c;border-radius:10px;padding:.7rem .9rem;font-weight:950;cursor:pointer}.cal-self-review:hover{background:#d4a24c;color:#2e1b10}
         .cal-preview{width:760px;max-width:96vw;max-height:92vh;display:flex;flex-direction:column;background:#fff;border-radius:16px;box-shadow:0 24px 60px rgba(0,0,0,.45);overflow:hidden}
         .cal-preview-body{flex:1;min-height:0;overflow:auto;background:#f2f2f2;display:flex;align-items:center;justify-content:center;padding:1rem}
         .cal-preview-body img{max-width:100%;max-height:74vh;object-fit:contain;border-radius:6px;box-shadow:0 4px 16px rgba(0,0,0,.2)}
