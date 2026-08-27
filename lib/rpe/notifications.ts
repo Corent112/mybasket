@@ -755,10 +755,9 @@ ${
       .eq("user_id", recipient.userId)
       .maybeSingle();
 
-    if (
-      existingDelivery?.status === "sent" ||
-      existingDelivery?.status === "pending"
-    ) {
+    // Seul un envoi réellement terminé est terminal.
+    // Un "pending" laissé par une exécution interrompue doit pouvoir être repris.
+    if (existingDelivery?.status === "sent") {
       skipped += 1;
       continue;
     }
@@ -784,7 +783,7 @@ ${
       continue;
     }
 
-    if (existingDelivery?.status === "failed") {
+    if (existingDelivery?.status === "failed" || existingDelivery?.status === "pending") {
       await admin
         .from("rpe_digest_deliveries")
         .update({

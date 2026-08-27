@@ -28,10 +28,10 @@ export async function GET(request: NextRequest) {
   }
 
   const paris = parisParts();
-  // Deux déclenchements UTC sont déclarés pour couvrir heure d'été / heure d'hiver.
-  // Seul celui correspondant réellement à 22h à Paris exécute les envois.
-  if (paris.hour !== 22) {
-    return NextResponse.json({ ok: true, skipped: true, reason: "outside_22h_paris" });
+  // 22h = envoi normal. 23h = fenêtre de rattrapage (Vercel Hobby / Run manuel).
+  // Deux horaires UTC couvrent été/hiver. Les livraisons déjà "sent" empêchent tout doublon.
+  if (paris.hour !== 22 && paris.hour !== 23) {
+    return NextResponse.json({ ok: true, skipped: true, reason: "outside_rpe_digest_window", paris });
   }
 
   const admin = createAdminClient();

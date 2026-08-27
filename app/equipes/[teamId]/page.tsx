@@ -1248,6 +1248,18 @@ export default function EquipeDetailPage({
           </div>
         )}
 
+        {activeTab === "profiling" && (
+          <div className="team-tab-panel">
+            <TeamProfilingTab teamId={team.id} />
+          </div>
+        )}
+
+        {activeTab === "self-evaluations" && (
+          <div className="team-tab-panel">
+            <TeamSelfEvaluationsTab teamId={team.id} />
+          </div>
+        )}
+
         {activeTab === "shooting" && (
           <div className="team-tab-panel">
             <TeamShootingGrids
