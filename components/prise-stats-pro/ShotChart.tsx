@@ -395,7 +395,7 @@ export default function ShotChart(props: ShotChartProps) {
         .sc { --gold:#d4a24c; width: 100%; }
         .sc-sm { max-width: 340px; }
         .sc-md { max-width: 520px; }
-        .sc-lg { max-width: 760px; }
+        .sc-lg { max-width: none; }
         .sc-svg { width: 100%; aspect-ratio: ${COURT_W} / ${COURT_H}; display: block; }
         .sc-zone { fill: transparent; stroke: none; transition: fill .12s, opacity .12s; }
         .sc-zone.act { fill: rgba(255,255,255,0.04); cursor: pointer; }
