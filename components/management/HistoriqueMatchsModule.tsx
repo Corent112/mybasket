@@ -821,6 +821,40 @@ export default function HistoriqueMatchsModule() {
     const adv = getTotalsAdvanced(totals);
 
     rows.push([
+      "ADVERSAIRE",
+      opponentStats.pts,
+      opponentStats.fgm,
+      opponentStats.fga,
+      pct(opponentStats.fgm, opponentStats.fga),
+      opponentStats.p2a,
+      opponentStats.p2m,
+      pct(opponentStats.p2m, opponentStats.p2a),
+      opponentStats.p3a,
+      opponentStats.p3m,
+      pct(opponentStats.p3m, opponentStats.p3a),
+      opponentStats.fta,
+      opponentStats.ftm,
+      pct(opponentStats.ftm, opponentStats.fta),
+      opponentStats.off,
+      opponentStats.def,
+      opponentStats.reb,
+      "",
+      "",
+      opponentStats.to,
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+    ]);
+
+    rows.push([
       "Totals",
       totals.pts,
       totals.fgm,
@@ -1093,6 +1127,68 @@ export default function HistoriqueMatchsModule() {
       String(action.action_type || "") === "perte-adverse" &&
       !action.player_id
   ).length;
+
+  const opponentStats = useMemo(() => {
+    const stats = {
+      p2m: 0, p2a: 0, p3m: 0, p3a: 0,
+      ftm: 0, fta: 0,
+      off: 0, def: 0, reb: 0,
+      to: 0, pts: 0, fgm: 0, fga: 0,
+    };
+
+    sheetActions.forEach((action) => {
+      const context = String(action.context || "");
+      const actionType = String(action.action_type || "");
+      const shotType = String(action.shot_type || "");
+      const shotResult = String(action.shot_result || "");
+      const reboundType = String(action.rebound_type || "");
+
+      if (context === "defense" && actionType === "tir") {
+        if (shotType === "2PTS") {
+          stats.p2a += 1;
+          if (shotResult === "made") stats.p2m += 1;
+        } else if (shotType === "3PTS") {
+          stats.p3a += 1;
+          if (shotResult === "made") stats.p3m += 1;
+        } else if (shotType === "LF") {
+          const attempts = Math.max(
+            safeNumber(action.ft_attempts),
+            safeNumber(action.ft_made),
+            1
+          );
+          stats.fta += attempts;
+          stats.ftm += Math.min(attempts, safeNumber(action.ft_made));
+        }
+      }
+
+      if (
+        context === "defense" &&
+        actionType === "faute-commise" &&
+        safeNumber(action.ft_attempts) > 0
+      ) {
+        const attempts = safeNumber(action.ft_attempts);
+        stats.fta += attempts;
+        stats.ftm += Math.min(attempts, safeNumber(action.ft_made));
+      }
+
+      if (context === "defense" && reboundType === "off") stats.off += 1;
+      if (context === "attaque" && reboundType === "def") stats.def += 1;
+
+      if (
+        context === "defense" &&
+        (actionType === "interception" || actionType === "perte-adverse")
+      ) {
+        stats.to += 1;
+      }
+    });
+
+    stats.fgm = stats.p2m + stats.p3m;
+    stats.fga = stats.p2a + stats.p3a;
+    stats.reb = stats.off + stats.def;
+    stats.pts = stats.p2m * 2 + stats.p3m * 3 + stats.ftm;
+
+    return stats;
+  }, [sheetActions]);
   const lineupRows = useMemo(
     () => computeLineupRows(sheetActions, playerNames),
     [sheetActions, playerNames]
@@ -1257,11 +1353,11 @@ export default function HistoriqueMatchsModule() {
                     <tr>
                       <th rowSpan={2}>Joueur</th>
                       <th rowSpan={2}>PTS</th>
-                      <th colSpan={3}>Total</th>
-                      <th colSpan={3}>2 points</th>
-                      <th colSpan={3}>3 points</th>
-                      <th colSpan={3}>L-F</th>
-                      <th colSpan={3}>Rebonds</th>
+                      <th colSpan={3} className="group-title">Total</th>
+                      <th colSpan={3} className="group-title">2 points</th>
+                      <th colSpan={3} className="group-title">3 points</th>
+                      <th colSpan={3} className="group-title">L-F</th>
+                      <th colSpan={3} className="group-title">Rebonds</th>
                       <th rowSpan={2}>PD</th>
                       <th rowSpan={2}>INT</th>
                       <th rowSpan={2}>BP</th>
@@ -1335,6 +1431,29 @@ export default function HistoriqueMatchsModule() {
                       <td>—</td><td>—</td><td>—</td><td>—</td>
                       <td><b>{teamOnlyStl}</b></td>
                       <td>—</td><td>—</td><td>—</td><td>—</td><td>{teamOnlyStl}</td>
+                    </tr>
+
+                    <tr className="opponent-row">
+                      <td className="player"><b>ADVERSAIRE</b></td>
+                      <td className="pts">{opponentStats.pts}</td>
+                      <td>{opponentStats.fgm}</td>
+                      <td>{opponentStats.fga}</td>
+                      <td>{pct(opponentStats.fgm, opponentStats.fga)}</td>
+                      <td>{opponentStats.p2m}</td>
+                      <td>{opponentStats.p2a}</td>
+                      <td>{pct(opponentStats.p2m, opponentStats.p2a)}</td>
+                      <td>{opponentStats.p3m}</td>
+                      <td>{opponentStats.p3a}</td>
+                      <td>{pct(opponentStats.p3m, opponentStats.p3a)}</td>
+                      <td>{opponentStats.ftm}</td>
+                      <td>{opponentStats.fta}</td>
+                      <td>{pct(opponentStats.ftm, opponentStats.fta)}</td>
+                      <td>{opponentStats.off}</td>
+                      <td>{opponentStats.def}</td>
+                      <td>{opponentStats.reb}</td>
+                      <td>—</td><td>—</td>
+                      <td><b>{opponentStats.to}</b></td>
+                      <td>—</td><td>—</td><td>—</td><td>—</td>
                     </tr>
 
                     <tr className="totals">
@@ -1767,6 +1886,13 @@ export default function HistoriqueMatchsModule() {
           border-right: 1px solid #e4c9d0;
         }
 
+        .sheet-table thead tr:first-child th.group-title {
+          text-align: center !important;
+          vertical-align: middle;
+          padding-left: 0 !important;
+          padding-right: 0 !important;
+        }
+
         .sheet-table thead tr:first-child th:first-child,
         .sheet-table tbody td:first-child {
           position: sticky;
@@ -1822,6 +1948,18 @@ export default function HistoriqueMatchsModule() {
         .sheet-table .pts {
           color: #d4a24c;
           font-weight: 900;
+        }
+
+        .sheet-table .opponent-row td {
+          background: #f3e8eb !important;
+          color: #4b0f1d;
+          font-weight: 800;
+          border-top: 2px solid #6b1a2c;
+        }
+
+        .sheet-table .opponent-row td:first-child {
+          background: #ead9de !important;
+          color: #6b1a2c;
         }
 
         .sheet-table .totals td {
