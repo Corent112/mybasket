@@ -27,7 +27,9 @@ export function getSiteUrl(request?: NextRequest | Request | null) {
     }
   }
 
-  return "https://mybasket.vercel.app";
+  // Domaine public MyBasket. On évite volontairement le domaine technique
+  // Vercel dans les e-mails d'authentification pour améliorer la délivrabilité.
+  return "https://mybasket.fr";
 }
 
 export function safeInternalPath(

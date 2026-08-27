@@ -36,6 +36,8 @@ function ConnexionContent() {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
   const [info, setInfo] = useState("");
+  const [confirmationEmail, setConfirmationEmail] = useState("");
+  const [resendingConfirmation, setResendingConfirmation] = useState(false);
 
   useEffect(() => {
     const callbackError = params.get("error");
@@ -73,6 +75,47 @@ function ConnexionContent() {
     setInfo("");
   }
 
+  async function resendConfirmation() {
+    const cleanEmail =
+      (confirmationEmail || email).trim().toLowerCase();
+
+    if (!cleanEmail || resendingConfirmation) return;
+
+    setResendingConfirmation(true);
+    setErr("");
+
+    try {
+      const response = await fetch(
+        "/api/auth/resend-confirmation",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            email: cleanEmail,
+            next,
+          }),
+        },
+      );
+
+      const payload = await response.json().catch(() => ({}));
+
+      if (!response.ok) {
+        setErr(
+          payload?.error ||
+            "Impossible de renvoyer l’e-mail pour le moment.",
+        );
+        return;
+      }
+
+      setInfo(
+        payload?.message ||
+          "Si ton compte est en attente, un nouvel e-mail vient d’être envoyé.",
+      );
+    } finally {
+      setResendingConfirmation(false);
+    }
+  }
+
   async function submit() {
     if (busy) return;
 
@@ -101,9 +144,12 @@ function ConnexionContent() {
         });
 
         if (error) {
-          const message = error.message.toLowerCase().includes("email not confirmed")
-            ? "Ton email n’est pas encore confirmé. Vérifie ta boîte mail."
+          const unconfirmed =
+            error.message.toLowerCase().includes("email not confirmed");
+          const message = unconfirmed
+            ? "Ton email n’est pas encore confirmé. Tu peux renvoyer le lien ci-dessous."
             : "Identifiants incorrects ou compte non confirmé.";
+          if (unconfirmed) setConfirmationEmail(cleanEmail);
           setErr(message);
           return;
         }
@@ -132,6 +178,7 @@ function ConnexionContent() {
           return;
         }
 
+        setConfirmationEmail(cleanEmail);
         setInfo(
           payload?.message ||
             "Compte créé. Vérifie ta boîte mail et clique sur « Confirmer mon inscription ».",
@@ -201,6 +248,21 @@ function ConnexionContent() {
   return (
     <main className="auth-page">
       <style>{CSS}</style>
+      <style>{`
+        .confirmation-help{
+          display:grid;
+          gap:7px;
+          margin:4px 0 10px;
+          padding:12px 14px;
+          border:1px solid #eadfd8;
+          border-radius:12px;
+          background:#fffaf4;
+          min-width:0;
+        }
+        .confirmation-help strong{font-size:.86rem;color:#2b211e}
+        .confirmation-help span{font-size:.76rem;line-height:1.45;color:#756861;overflow-wrap:anywhere}
+        .confirmation-help .auth-link-btn{margin:2px 0 0}
+      `}</style>
 
       <section className="auth-card">
         <Link href="/" className="auth-logo">
@@ -298,6 +360,25 @@ function ConnexionContent() {
 
         {err && <p className="auth-error">{err}</p>}
         {info && <p className="auth-info">{info}</p>}
+
+        {confirmationEmail && tab !== "update" && tab !== "reset" && (
+          <div className="confirmation-help">
+            <strong>Tu n’as rien reçu ?</strong>
+            <span>
+              Vérifie les indésirables puis renvoie le message sans recréer ton compte.
+            </span>
+            <button
+              type="button"
+              className="auth-link-btn"
+              disabled={resendingConfirmation}
+              onClick={() => void resendConfirmation()}
+            >
+              {resendingConfirmation
+                ? "Renvoi en cours…"
+                : "Renvoyer l’e-mail de confirmation"}
+            </button>
+          </div>
+        )}
 
         <button
           type="button"

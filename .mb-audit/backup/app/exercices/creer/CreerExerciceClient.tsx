@@ -5,7 +5,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { saveExercise, updateExercise, getExercise } from "@/lib/exercises";
 import ExercisePhotoImport from "@/components/ai/ExercisePhotoImport";
 import type { AiExerciseImport } from "@/lib/import/types";
-import { importToPlaquetteSchema, renderSchemaPreviews } from "@/lib/import/plaquette-converter";
+import { aiDiagramsToPlaquette, renderPlaquettePreview } from "@/lib/import/plaquette-converter";
 
 type Ex = {
   title: string;
@@ -34,7 +34,6 @@ const LOAD_KEY = "mybasket_plaquette_load";
 const RESULT_KEY = "mybasket_plaquette_result";
 const EDIT_INDEX_KEY = "mybasket_edit_schema_index";
 const EDIT_EXERCISE_ID_KEY = "mybasket_edit_exercise_id";
-const EDIT_SCHEMA_GROUP_KEY = "mybasket_edit_schema_group_id";
 
 const NUM = (n: number) => Array.from({ length: n + 1 }, (_, i) => String(i));
 
@@ -91,8 +90,7 @@ const blank = (): Ex => ({
   schemaDataList: [],
 });
 
-/** Exporté pour les tests de non-régression — comportement inchangé. */
-export function normalizeSchemaData(schema: any, index: number, image = "") {
+function normalizeSchemaData(schema: any, index: number, image = "") {
   return {
     title: schema?.title ?? `Schéma ${index + 1}`,
     schemaGroupId: schema?.schemaGroupId ?? crypto.randomUUID(),
@@ -111,8 +109,7 @@ export function normalizeSchemaData(schema: any, index: number, image = "") {
   };
 }
 
-/** Exporté pour les tests de non-régression — comportement inchangé. */
-export function syncSchemas(images: string[], dataList: any[]) {
+function syncSchemas(images: string[], dataList: any[]) {
   // Un schéma Plaquette natif ne doit jamais disparaître simplement parce que
   // sa miniature n'a pas pu être générée. L'ancien code itérait uniquement
   // sur `images`, ce qui supprimait silencieusement les imports dont les
@@ -121,45 +118,6 @@ export function syncSchemas(images: string[], dataList: any[]) {
   return Array.from({ length: count }, (_, index) =>
     normalizeSchemaData(dataList[index], index, images[index] || dataList[index]?.imageData || "")
   );
-}
-
-/**
- * Où insérer/remplacer les vignettes qui reviennent de la Plaquette.
- *
- * Règle historique conservée : sans schemaGroupId exploitable, on remplace
- * exactement UNE vignette à `editIndex` (comportement d'avant), et sans
- * editIndex on ajoute à la fin.
- *
- * Règle ajoutée : quand la Plaquette renvoie le schemaGroupId d'un schéma déjà
- * présent, on remplace TOUT le groupe. Sans cela, un schéma à N phases occupant
- * N vignettes voyait 1 vignette remplacée par N à chaque modification.
- *
- * Exporté pour être testable isolément.
- */
-export function resolveSchemaReplacement(
-  existing: any[],
-  incomingGroupId: string | null,
-  editIndex: number | null,
-  existingCount: number
-): { at: number; count: number } {
-  const groupStart = incomingGroupId
-    ? existing.findIndex((schema) => schema?.schemaGroupId === incomingGroupId)
-    : -1;
-
-  if (groupStart >= 0) {
-    const groupCount = existing.filter(
-      (schema) => schema?.schemaGroupId === incomingGroupId
-    ).length;
-    return { at: groupStart, count: groupCount };
-  }
-
-  const usable =
-    editIndex !== null &&
-    Number.isFinite(editIndex) &&
-    editIndex >= 0 &&
-    editIndex < existingCount;
-
-  return usable ? { at: editIndex as number, count: 1 } : { at: -1, count: 0 };
 }
 
 export default function CreerExerciceClient() {
@@ -195,65 +153,48 @@ export default function CreerExerciceClient() {
         : [...current.themes, theme],
     }));
 
-  /**
-   * Numérisation d'une fiche → préremplissage du formulaire.
-   *
-   * RÈGLES :
-   *  - rien n'est enregistré ici : seul le bouton « Sauvegarder l'exercice »
-   *    écrit en base ;
-   *  - une zone absente du document laisse le champ INCHANGÉ (jamais écrasé
-   *    par du vide, jamais rempli par une valeur inventée) ;
-   *  - les schémas détectés forment UN schéma Plaquette de N phases, avec la
-   *    même structure qu'un schéma multi-phases dessiné à la main : N entrées
-   *    schemaImages / schemaDataList partageant un même schemaGroupId et un
-   *    même tableau `phases`.
-   */
   const applyAIImport = async (result: AiExerciseImport) => {
-    const imported = importToPlaquetteSchema(result);
-    const previews = imported ? renderSchemaPreviews(imported) : [];
-
-    setEx((current) => {
-      const next: Ex = { ...current };
-
-      if (result.title) next.title = result.title;
-      if (result.organisation) next.organisation = result.organisation;
-      if (result.deroulement.length) next.deroulement = result.deroulement.join("\n");
-      if (result.consignes.length) next.consignes = result.consignes.join("\n");
-      if (result.variantes.length) next.variantes = result.variantes.join("\n");
-      if (result.plots !== null) next.plots = String(result.plots);
-      if (result.ballons !== null) next.ballons = String(result.ballons);
-      if (result.paniers !== null) next.paniers = String(result.paniers);
-      if (result.joueurs !== null) next.joueurs = String(result.joueurs);
-      if (result.categorie && result.categorie !== "— Choisir —") next.categorie = result.categorie;
-      if (result.temps !== null) next.temps = String(result.temps);
-      if (result.themes.length) next.themes = result.themes;
-
-      if (imported) {
-        const images = imported.entries.map((_entry, index) => previews[index] || "");
-
-        const dataList = imported.entries.map((entry, index) => ({
-          ...entry,
-          imageData: images[index],
-          phaseImages: images,
-        }));
-
-        const nextImages = [...current.schemaImages, ...images].slice(0, 50);
-        const nextData = [...current.schemaDataList, ...dataList].slice(0, 50);
-
-        next.schemaImages = nextImages;
-        next.schemaDataList = syncSchemas(nextImages, nextData);
-      }
-
-      return next;
+    const schemas = aiDiagramsToPlaquette(result);
+    const imported = schemas.map((schema) => {
+      const image = renderPlaquettePreview(schema);
+      return {
+        image,
+        data: { ...schema, imageData: image, phaseImages: image ? [image] : [] },
+      };
     });
 
-    if (imported) {
-      const count = imported.phases.length;
-      flash(
-        `Import terminé — ${count} phase${count > 1 ? "s" : ""} reconstruite${count > 1 ? "s" : ""}. Vérifie puis sauvegarde.`
-      );
+    setEx((current) => {
+      const newImages = imported.map((item) => item.image).filter(Boolean);
+      const newData = imported.map((item) => item.data);
+      const nextImages = [...current.schemaImages, ...newImages].slice(0, 50);
+      const nextData = [...current.schemaDataList, ...newData].slice(0, 50);
+
+      return {
+        ...current,
+        title: result.title || current.title,
+        organisation: result.organisation || current.organisation,
+        deroulement: result.deroulement?.length ? result.deroulement.join("\n") : current.deroulement,
+        consignes: result.consignes?.length ? result.consignes.join("\n") : current.consignes,
+        variantes: result.variantes?.length ? result.variantes.join("\n") : current.variantes,
+        plots: result.plots !== null ? String(result.plots) : current.plots,
+        ballons: result.ballons !== null ? String(result.ballons) : current.ballons,
+        paniers: result.paniers !== null ? String(result.paniers) : current.paniers,
+        joueurs: result.joueurs !== null ? String(result.joueurs) : current.joueurs,
+        categorie: result.categorie && result.categorie !== "— Choisir —" ? result.categorie : current.categorie,
+        type: result.type || current.type,
+        niveau: result.niveau || current.niveau,
+        temps: result.temps !== null ? String(result.temps) : current.temps,
+        themes: result.themes?.length ? result.themes : current.themes,
+        schemaImages: nextImages,
+        schemaDataList: syncSchemas(nextImages, nextData),
+      };
+    });
+
+    const count = schemas.length;
+    if (result.warnings.length) {
+      flash(`Import terminé${count ? ` — ${count} schéma${count > 1 ? "s" : ""}` : ""}. Vérifie avant de créer.`);
     } else {
-      flash("Import terminé — aucun schéma reconnu. Vérifie le texte puis sauvegarde.");
+      flash("Import terminé ✅ Vérifie puis crée l’exercice");
     }
   };
 
@@ -356,32 +297,19 @@ export default function CreerExerciceClient() {
             const nextImages = [...base.schemaImages];
             const nextData = [...base.schemaDataList];
 
-            // Un schéma à N phases occupe N vignettes qui partagent le même
-            // schemaGroupId. Au retour de la Plaquette il faut donc remplacer
-            // TOUT le groupe, sinon on remplaçait 1 vignette par N et les
-            // schémas multi-phases se dupliquaient à chaque modification.
-            // Repli intégral sur l'ancien comportement quand le groupe est
-            // inconnu (schémas enregistrés avant cette version).
-            const incomingGroupId =
-              typeof result.schemaGroupId === "string" && result.schemaGroupId
-                ? result.schemaGroupId
-                : null;
-
-            const { at: replaceAt, count: replaceCount } = resolveSchemaReplacement(
-              nextData,
-              incomingGroupId,
-              editIndex,
-              nextImages.length
-            );
-
-            if (replaceAt >= 0) {
-              nextImages.splice(replaceAt, replaceCount, ...incomingImages);
+            if (
+              editIndex !== null &&
+              Number.isFinite(editIndex) &&
+              editIndex >= 0 &&
+              editIndex < nextImages.length
+            ) {
+              nextImages.splice(editIndex, 1, ...incomingImages);
 
               nextData.splice(
-                replaceAt,
-                replaceCount,
+                editIndex,
+                1,
                 ...incomingImages.map((image, index) =>
-                  normalizeSchemaData(incomingData[index], replaceAt + index, image)
+                  normalizeSchemaData(incomingData[index], editIndex + index, image)
                 )
               );
             } else {
@@ -411,7 +339,7 @@ export default function CreerExerciceClient() {
           localStorage.removeItem(LOAD_KEY);
           localStorage.removeItem(RETURN_KEY);
           localStorage.removeItem(EDIT_EXERCISE_ID_KEY);
-          localStorage.removeItem(EDIT_SCHEMA_GROUP_KEY);
+          localStorage.removeItem("mybasket_edit_schema_group_id");
         }
 
         setEx({
@@ -459,7 +387,7 @@ export default function CreerExerciceClient() {
 
       localStorage.removeItem(LOAD_KEY);
       localStorage.removeItem(RESULT_KEY);
-      localStorage.removeItem(EDIT_SCHEMA_GROUP_KEY);
+      localStorage.removeItem("mybasket_edit_schema_group_id");
 
       if (typeof index === "number") {
         localStorage.setItem(EDIT_INDEX_KEY, String(index));
@@ -467,17 +395,10 @@ export default function CreerExerciceClient() {
         const schemaData = cleanDataList[index];
         const schemaImage = ex.schemaImages[index];
 
-        const schemaGroupId = schemaData?.schemaGroupId || crypto.randomUUID();
-
-        // On transmet le schemaGroupId à la Plaquette pour qu'elle le réutilise
-        // au retour : c'est ce qui permet de remplacer proprement TOUT le
-        // schéma (toutes ses phases) au lieu d'en dupliquer les vignettes.
-        localStorage.setItem(EDIT_SCHEMA_GROUP_KEY, schemaGroupId);
-
         const loadPayload = {
           title: schemaData?.title || `Schéma ${index + 1}`,
           editIndex: index,
-          schemaGroupId,
+          schemaGroupId: schemaData?.schemaGroupId || crypto.randomUUID(),
           courtType: schemaData?.courtType || "half",
           phases: Array.isArray(schemaData?.phases) ? schemaData.phases : [],
           sheet: schemaData?.sheet ?? null,
@@ -512,9 +433,6 @@ export default function CreerExerciceClient() {
     }
   };
 
-  // Comportement historique conservé à l'identique : on retire UNIQUEMENT la
-  // vignette ciblée, jamais le groupe. Les schémas multi-phases (natifs comme
-  // importés) se comportent donc exactement comme avant.
   const removeSchema = (index: number) =>
     setEx((current) => {
       const nextImages = current.schemaImages.filter(
@@ -700,15 +618,9 @@ export default function CreerExerciceClient() {
               ? uploadedSchemaImages[index] || schema.imageData
               : schema?.imageData;
 
-          // Les miniatures d'import sont en base64 : on les remplace par leur
-          // URL Storage en respectant l'ordre des phases du schéma.
           const phaseImages = Array.isArray(schema?.phaseImages)
-            ? schema.phaseImages.map((image: string) => {
+            ? schema.phaseImages.map((image: string, phaseIndex: number) => {
                 if (!image?.startsWith?.("data:image")) return image;
-                const globalIndex = ex.schemaImages.indexOf(image);
-                if (globalIndex >= 0 && uploadedSchemaImages[globalIndex]) {
-                  return uploadedSchemaImages[globalIndex];
-                }
                 return uploadedSchemaImages[index] || image;
               })
             : [];
@@ -761,7 +673,7 @@ export default function CreerExerciceClient() {
       localStorage.removeItem(LOAD_KEY);
       localStorage.removeItem(RETURN_KEY);
       localStorage.removeItem(EDIT_EXERCISE_ID_KEY);
-      localStorage.removeItem(EDIT_SCHEMA_GROUP_KEY);
+      localStorage.removeItem("mybasket_edit_schema_group_id");
       localStorage.removeItem("mybasket_current_exercise_id");
       localStorage.removeItem(`${draftKey}_storage_id`);
 
@@ -1111,14 +1023,6 @@ const CSS = `
 .ce-sub{text-align:center;color:#666;max-width:760px;margin:0 auto 1.6rem}
 .ce-ai-import{margin:0 auto 1.4rem;max-width:980px;border:1px solid #ead7a9;background:linear-gradient(135deg,#fffaf0,#fff);border-radius:16px;padding:1rem 1.1rem;display:grid;grid-template-columns:1fr auto;gap:.8rem 1.2rem;align-items:center;box-shadow:0 3px 14px rgba(0,0,0,.04)}
 .ce-ai-copy{display:flex;align-items:flex-start;gap:.8rem}.ce-ai-copy b{font-size:1rem}.ce-ai-copy p{margin:.22rem 0 0;color:#666;font-size:.9rem;line-height:1.4}.ce-ai-badge{flex:0 0 auto;background:#6B1A2C;color:#fff;border-radius:999px;padding:.28rem .58rem;font-size:.68rem;font-weight:900;letter-spacing:.06em}.ce-ai-btn{border:0;background:#0F0F12;color:#fff;border-radius:999px;padding:.75rem 1.05rem;font-weight:900;white-space:nowrap}.ce-ai-btn:hover{background:#6B1A2C}.ce-ai-btn:disabled{opacity:.55;cursor:wait}.ce-ai-state{grid-column:1/-1;border-top:1px solid #eee1c2;padding-top:.7rem;color:#5f4a20;font-size:.86rem;font-weight:700}.ce-ai-state.error{color:#a12626}
-.ce-ai-warn{grid-column:1/-1;margin:.2rem 0 0;padding-left:1.1rem;color:#6b5a33;font-size:.83rem;line-height:1.5}
-.ce-ai-warn li{margin:.1rem 0}
-.ce-ai-debug{grid-column:1/-1;border-top:1px dashed #d9c79a;padding-top:.6rem}
-.ce-ai-debug-toggle{border:1px solid #d9c79a;background:#fffdf7;border-radius:8px;padding:.3rem .6rem;font-size:.76rem;font-weight:800;color:#6b5a33}
-.ce-ai-debug-body{margin-top:.6rem;font-size:.78rem;color:#3d3d3d;max-height:420px;overflow:auto;background:#fcfaf5;border:1px solid #eee1c2;border-radius:10px;padding:.6rem .8rem}
-.ce-ai-debug-body summary{cursor:pointer;font-weight:800;margin:.35rem 0}
-.ce-ai-debug-body pre{white-space:pre-wrap;word-break:break-word;background:#fff;border:1px solid #eee;border-radius:6px;padding:.4rem .5rem;font-size:.72rem;max-height:220px;overflow:auto}
-.ce-ai-debug-body ul{padding-left:1.1rem;margin:.2rem 0}
 .ce-grid{display:grid;grid-template-columns:2fr 1fr;gap:1.6rem;align-items:start}
 .ce-card{background:#fff;border:1px solid #e4e4e4;border-radius:18px;padding:1.4rem;box-shadow:0 2px 12px rgba(0,0,0,.04)}
 .ce-lab{display:block;font-weight:900;text-transform:uppercase;font-size:.82rem;letter-spacing:.03em;margin:1rem 0 .4rem}

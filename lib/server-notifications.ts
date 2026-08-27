@@ -19,6 +19,7 @@ export async function sendTransactionalEmail(input: {
   to: string | string[];
   subject: string;
   html: string;
+  text?: string | null;
   replyTo?: string | null;
   from?: string | null;
 }) {
@@ -53,6 +54,7 @@ export async function sendTransactionalEmail(input: {
       to: cleanRecipients,
       subject: input.subject,
       html: input.html,
+      text: input.text || undefined,
       reply_to: input.replyTo || undefined,
     }),
   });

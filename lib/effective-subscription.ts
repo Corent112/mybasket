@@ -88,9 +88,12 @@ export async function getEffectiveSubscriptionForUser(options: {
   // encore utilisable au lieu de faire tomber l'utilisateur sur /abonnements.
   const { data: subscriptions, error: subscriptionsError } = await client
     .from("subscriptions")
-    .select(
-      "id,plan_id,billing_period,status,current_period_start,current_period_end,created_at,updated_at",
-    )
+    // Important : ne pas sélectionner ici une liste de colonnes optionnelles.
+    // Les schémas historiques de MyBasket ne possèdent pas tous
+    // current_period_start/current_period_end. select("*") garde le resolver
+    // compatible avec ces bases, tandis que subscriptionIsUsable() sait déjà
+    // traiter proprement l'absence de ces dates.
+    .select("*")
     .eq("user_id", options.userId)
     .in("status", ["active", "trialing"])
     .order("created_at", { ascending: false })

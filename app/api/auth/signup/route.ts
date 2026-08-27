@@ -87,34 +87,6 @@ export async function POST(request: NextRequest) {
     return null;
   }
 
-  async function hasActiveFreeGrant() {
-    const now = Date.now();
-
-    const { data: grants, error } = await adminClient
-      .from("free_access_grants")
-      .select("id,status,starts_at,ends_at")
-      .ilike("user_email", email)
-      .eq("status", "active")
-      .order("created_at", { ascending: false })
-      .limit(20);
-
-    if (error) {
-      console.error("Vérification accès gratuit impossible :", error.message);
-      return false;
-    }
-
-    return (grants || []).some((grant) => {
-      const start = grant.starts_at
-        ? new Date(grant.starts_at).getTime()
-        : 0;
-      const end = grant.ends_at
-        ? new Date(grant.ends_at).getTime()
-        : Number.POSITIVE_INFINITY;
-
-      return start <= now && end >= now;
-    });
-  }
-
   async function generateSignupLink() {
     return adminClient.auth.admin.generateLink({
       type: "signup",
@@ -129,7 +101,39 @@ export async function POST(request: NextRequest) {
     });
   }
 
+  async function generateExistingUserConfirmationLink(userId: string) {
+    /**
+     * Un compte peut exister sans jamais avoir été confirmé (ancien e-mail perdu,
+     * antispam, invitation incomplète...). On ne le supprime jamais.
+     *
+     * On met à jour le mot de passe seulement pour un compte NON confirmé et
+     * jamais connecté, puis on génère un magic-link MyBasket. Le clic prouve
+     * l'accès à la boîte e-mail et crée la session.
+     */
+    const { error: updateError } =
+      await adminClient.auth.admin.updateUserById(userId, {
+        password,
+        user_metadata: {
+          display_name: displayName,
+        },
+      });
+
+    if (updateError) {
+      throw new Error(updateError.message);
+    }
+
+    return adminClient.auth.admin.generateLink({
+      type: "magiclink",
+      email,
+      options: {
+        redirectTo,
+      },
+    });
+  }
+
   let generated = await generateSignupLink();
+  let verificationType: "signup" | "magiclink" = "signup";
+  let accountWasAlreadyPending = false;
 
   if (
     generated.error ||
@@ -143,31 +147,18 @@ export async function POST(request: NextRequest) {
           !existingUser.email_confirmed_at &&
           !existingUser.confirmed_at;
         const neverSignedIn = !existingUser.last_sign_in_at;
-        const freeGrant = await hasActiveFreeGrant();
 
-        /**
-         * Ancien compte fantôme :
-         * - invitation automatique créée historiquement par un accès gratuit ;
-         * - invitation admin non finalisée ;
-         * - utilisateur jamais connecté.
-         *
-         * On ne supprime JAMAIS un vrai compte déjà utilisé.
-         */
-        const canRecreateGhost =
-          neverSignedIn &&
-          (isUnconfirmed || freeGrant);
-
-        if (canRecreateGhost) {
-          const { error: deleteError } =
-            await adminClient.auth.admin.deleteUser(existingUser.id);
-
-          if (deleteError) {
+        if (isUnconfirmed && neverSignedIn) {
+          try {
+            generated =
+              await generateExistingUserConfirmationLink(existingUser.id);
+            verificationType = "magiclink";
+            accountWasAlreadyPending = true;
+          } catch (existingError) {
             console.error(
-              "Suppression ancien compte fantôme impossible :",
-              deleteError,
+              "Régénération confirmation compte en attente impossible :",
+              existingError,
             );
-          } else {
-            generated = await generateSignupLink();
           }
         }
       }
@@ -184,7 +175,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json(
         {
           error:
-            "Un compte existe déjà avec cette adresse. Utilise « Connexion » ou « Mot de passe oublié ».",
+            "Un compte confirmé existe déjà avec cette adresse. Utilise « Connexion » ou « Mot de passe oublié ».",
           code: "ACCOUNT_EXISTS",
         },
         { status: 409 },
@@ -198,7 +189,7 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json(
       {
-        error: message || "Impossible de créer le compte.",
+        error: message || "Impossible de créer ou récupérer le compte.",
         code: "SIGNUP_FAILED",
       },
       { status: 500 },
@@ -212,10 +203,24 @@ export async function POST(request: NextRequest) {
   const confirmUrl =
     `${siteUrl}/auth/callback?token_hash=${encodeURIComponent(
       generated.data.properties.hashed_token,
-    )}&type=signup&next=${encodeURIComponent(next)}`;
+    )}&type=${verificationType}&next=${encodeURIComponent(next)}`;
 
   const safeName = escapeHtml(displayName || "Coach");
   const safeEmail = escapeHtml(email);
+
+  const plainText = [
+    `Bienvenue ${displayName || "Coach"} sur MyBasket.`,
+    "",
+    `Ton compte utilise l'adresse ${email}.`,
+    accountWasAlreadyPending
+      ? "Ton compte existait déjà mais n'avait pas encore été confirmé. Voici un nouveau lien."
+      : "Confirme ton adresse pour activer ton compte.",
+    "",
+    "Confirmer mon inscription :",
+    confirmUrl,
+    "",
+    "Si tu n'es pas à l'origine de cette demande, ignore cet e-mail.",
+  ].join("\n");
 
   const html = `
     <div style="margin:0;padding:32px 14px;background:#f5f1ed;font-family:Arial,Helvetica,sans-serif;color:#231f20">
@@ -255,61 +260,55 @@ export async function POST(request: NextRequest) {
     </div>
   `;
 
-  let customEmailSent = false;
-
   try {
     const delivery = await sendTransactionalEmail({
       to: email,
       subject: "Confirme ton inscription MyBasket",
       html,
+      text: plainText,
     });
 
-    customEmailSent = Boolean(delivery?.sent);
-  } catch (mailError) {
-    console.error(
-      "E-mail MyBasket via Resend non envoyé, tentative Supabase :",
-      mailError,
-    );
-  }
-
-  /**
-   * Sécurité importante :
-   * generateLink() a déjà créé l'utilisateur Auth.
-   * On ne supprime PLUS le compte si Resend est mal configuré ou temporairement
-   * indisponible. On tente le système e-mail Supabase comme second canal.
-   */
-  if (!customEmailSent) {
-    const { error: resendError } = await adminClient.auth.resend({
-      type: "signup",
-      email,
-      options: {
-        emailRedirectTo: redirectTo,
-      },
-    });
-
-    if (resendError) {
-      console.error(
-        "E-mail de confirmation Supabase non envoyé :",
-        resendError.message,
-      );
-
+    if (!delivery?.sent) {
+      console.error("E-mail de confirmation non envoyé :", delivery);
       return NextResponse.json(
         {
           ok: true,
           confirmationPending: true,
+          email,
           message:
-            "Ton compte a bien été créé, mais l’e-mail de confirmation n’a pas pu partir. Ton compte n’a pas été supprimé. Contacte MyBasket ou réessaie la confirmation dans quelques instants.",
+            "Ton compte est créé, mais l'e-mail n'a pas pu partir immédiatement. Utilise « Renvoyer l'e-mail » sans recréer ton compte.",
           code: "CONFIRMATION_EMAIL_PENDING",
         },
         { status: 202 },
       );
     }
+  } catch (mailError) {
+    /**
+     * JAMAIS de suppression du compte ici.
+     * Un incident e-mail ne doit jamais détruire une inscription.
+     */
+    console.error("E-mail de confirmation non envoyé :", mailError);
+
+    return NextResponse.json(
+      {
+        ok: true,
+        confirmationPending: true,
+        email,
+        message:
+          "Ton compte est créé. L'envoi de confirmation rencontre un problème temporaire : utilise « Renvoyer l'e-mail ».",
+        code: "CONFIRMATION_EMAIL_PENDING",
+      },
+      { status: 202 },
+    );
   }
 
   return NextResponse.json({
     ok: true,
     confirmationPending: false,
-    message:
-      "Compte créé. Clique sur « Confirmer mon inscription » dans l’e-mail MyBasket.",
+    email,
+    resentExistingAccount: accountWasAlreadyPending,
+    message: accountWasAlreadyPending
+      ? "Ton compte existait déjà mais n’était pas confirmé. Un nouveau lien vient d’être envoyé."
+      : "Compte créé. Clique sur « Confirmer mon inscription » dans l’e-mail MyBasket.",
   });
 }
