@@ -52,6 +52,17 @@ import {
   syncToProjectState,
   formatOffset,
 } from "@/lib/video-sync";
+import {
+  fingerprintVideo,
+  restorePersistentVideo,
+  savePersistentFileHandle,
+} from "@/lib/local-match-project";
+import {
+  fingerprintFromRow,
+  loadMatchLocalMedia,
+  saveMatchLocalMedia,
+} from "@/lib/local-match-project-supabase";
+import { setLocalMatchVideo } from "@/lib/local-video-registry";
 
 /* Safari/WebKit peut exposer un TimeRanges vide sous le nom interne
  * `EmptyRanges`. Certaines opérations vidéo détachées peuvent alors tenter
@@ -922,6 +933,9 @@ export default function PriseStatsProPage() {
      Aucun upload serveur / ffmpeg ici : on ne prépare que la donnée et l'UI. */
   const [videoMode, setVideoMode] = useState<'later' | 'file' | 'drive' | 'youtube'>('later');
   const [videoFile, setVideoFile] = useState<File | null>(null);
+  // Handle durable du fichier choisi : il sera enregistré sous le matchId
+  // dès que le projet Supabase est créé.
+  const pendingLocalFileHandleRef = useRef<FileSystemFileHandle | null>(null);
   const [pendingDriveFile, setPendingDriveFile] = useState<GoogleDrivePickedVideo | null>(null);
   const [youtubeUrl, setYoutubeUrl] = useState('');
   const [videoStatus, setVideoStatus] = useState('pending');   // pending | ready | linked
@@ -1008,6 +1022,8 @@ export default function PriseStatsProPage() {
         const file = await handle.getFile();
         const tId = String(selTeam?.id || activeTeamId || teamId || 'setup');
 
+        pendingLocalFileHandleRef.current = handle as FileSystemFileHandle;
+        // Ancien registre conservé en compatibilité.
         await saveLocalVideoHandle(localVideoHandleKey(tId, file.name), handle);
         attachLocalVideoFile(file, false);
         return;
@@ -1021,7 +1037,10 @@ export default function PriseStatsProPage() {
     const input = document.createElement('input');
     input.type = 'file';
     input.accept = 'video/*';
-    input.onchange = () => onPickVideoFile(input.files?.[0] ?? null);
+    input.onchange = () => {
+      pendingLocalFileHandleRef.current = null;
+      onPickVideoFile(input.files?.[0] ?? null);
+    };
     input.click();
   };
 
@@ -1072,6 +1091,40 @@ export default function PriseStatsProPage() {
     await pickLocalVideoSmart();
   };
 
+
+  const registerLocalVideoForMatch = async (
+    matchId: string,
+    tId: string,
+    file: File,
+    handle: FileSystemFileHandle | null = pendingLocalFileHandleRef.current,
+  ) => {
+    try {
+      const fingerprint = await fingerprintVideo(file);
+      const supabase = createClient();
+
+      await saveMatchLocalMedia(supabase, {
+        matchId,
+        teamId: tId,
+        fingerprint,
+      });
+
+      if (handle) {
+        await savePersistentFileHandle(matchId, handle);
+      }
+
+      // Même registre utilisé par la fiche joueur / montage / navigateur de clips.
+      const existingUrl = videoUrl && videoFile === file ? videoUrl : URL.createObjectURL(file);
+      setLocalMatchVideo({
+        matchId,
+        file,
+        url: existingUrl,
+        fingerprint,
+      });
+    } catch (error) {
+      // Non bloquant pour le codage : la vidéo reste utilisable dans LiveStat.
+      console.warn('Enregistrement vidéo locale du projet :', error);
+    }
+  };
 
   const onPickGoogleDriveVideo = (file: GoogleDrivePickedVideo) => {
     const selectedTeamId = String(
@@ -1771,15 +1824,41 @@ export default function PriseStatsProPage() {
             filename: restoredFilename,
           };
 
-          // Première action : tenter de rouvrir le fichier ORIGINAL.
-          // Le bouton manuel n'apparaît que si cette tentative échoue.
-          void tryRestoreLocalVideo(team.id, restoredFilename, false).then((found) => {
-            if (found) {
-              flash('Projet restauré · vidéo locale retrouvée automatiquement ✓');
-            } else {
-              flash('Projet restauré · fichier vidéo à reconnecter uniquement si le navigateur n’y a plus accès.');
+          // Première action : retrouver la vidéo par le matchId, exactement
+          // comme la fiche joueur. Le helper sait aussi migrer l'ancien registre
+          // équipe + nom de fichier utilisé par les projets déjà existants.
+          void (async () => {
+            try {
+              const supabase = createClient();
+              const mediaRow = await loadMatchLocalMedia(supabase, matchId).catch(() => null);
+              const restored = await restorePersistentVideo(
+                matchId,
+                fingerprintFromRow(mediaRow),
+                team.id,
+              );
+
+              if (restored) {
+                setLocalMatchVideo(restored);
+                attachLocalVideoFile(restored.file, true);
+                flash('Projet restauré · vidéo locale retrouvée automatiquement ✓');
+                return;
+              }
+
+              // Repli sur l'ancien mécanisme pour les très anciens projets.
+              const foundLegacy = await tryRestoreLocalVideo(team.id, restoredFilename, false);
+              if (foundLegacy) {
+                const currentFile = videoFile;
+                if (currentFile) {
+                  void registerLocalVideoForMatch(matchId, team.id, currentFile);
+                }
+                flash('Projet restauré · vidéo locale retrouvée automatiquement ✓');
+              } else {
+                flash('Projet restauré · fichier vidéo à reconnecter uniquement s’il a été déplacé ou si le navigateur a perdu son autorisation.');
+              }
+            } catch {
+              flash('Projet restauré · fichier vidéo à reconnecter si nécessaire.');
             }
-          });
+          })();
         }
       }
 
@@ -4546,6 +4625,17 @@ export default function PriseStatsProPage() {
       });
       if (ensured.ok) {
         setLiveMatch(ensured.matchId, ensured.teamId);
+
+        // Le fichier local sélectionné AVANT la création du projet reçoit
+        // maintenant sa clé durable matchId. La fiche joueur retrouvera donc
+        // exactement la même vidéo sans nouvelle sélection.
+        if (videoProviderRef.current === 'local' && videoFile) {
+          void registerLocalVideoForMatch(
+            String(ensured.matchId),
+            String(ensured.teamId),
+            videoFile,
+          );
+        }
       } else {
         setLiveMatch(null, null);
         flash('Le match démarre, mais la sauvegarde projet Supabase est indisponible : ' + ensured.error);

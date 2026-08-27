@@ -31,6 +31,11 @@ const DB_VERSION = 1;
 const HANDLE_STORE = "file-handles";
 const META_STORE = "project-meta";
 
+// Ancien registre utilisé par PriseStatsPro avant l'unification.
+// On le lit encore pour migrer automatiquement les projets déjà créés.
+const LEGACY_DB_NAME = "mybasket-local-video-handles";
+const LEGACY_STORE = "handles";
+
 const openDb = (): Promise<IDBDatabase> =>
   new Promise((resolve, reject) => {
     const req = indexedDB.open(DB_NAME, DB_VERSION);
@@ -177,15 +182,115 @@ export const savePersistentFileHandle = async (matchId: string, handle: FileSyst
   }
 };
 
+const openLegacyDb = (): Promise<IDBDatabase | null> =>
+  new Promise((resolve) => {
+    try {
+      const req = indexedDB.open(LEGACY_DB_NAME);
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => resolve(null);
+      req.onupgradeneeded = () => {
+        // Ne crée rien volontairement : une DB absente signifie simplement
+        // qu'aucun ancien handle n'est disponible.
+      };
+    } catch {
+      resolve(null);
+    }
+  });
+
+const findLegacyHandle = async (
+  expected?: MatchProjectFingerprint | null,
+  teamId?: string | null,
+): Promise<FileSystemFileHandle | null> => {
+  if (typeof indexedDB === "undefined") return null;
+  const db = await openLegacyDb();
+  if (!db || !db.objectStoreNames.contains(LEGACY_STORE)) {
+    db?.close();
+    return null;
+  }
+
+  const fileName = String(expected?.name || "").trim().toLowerCase();
+  const exactKey =
+    teamId && fileName
+      ? `team:${String(teamId)}::${fileName}`
+      : null;
+
+  try {
+    const result = await new Promise<FileSystemFileHandle | null>((resolve) => {
+      const tx = db.transaction(LEGACY_STORE, "readonly");
+      const store = tx.objectStore(LEGACY_STORE);
+
+      if (exactKey) {
+        const exact = store.get(exactKey);
+        exact.onsuccess = () => {
+          if (exact.result) {
+            resolve(exact.result as FileSystemFileHandle);
+            return;
+          }
+
+          const all = store.getAll();
+          all.onsuccess = () => {
+            const handles = (all.result ?? []) as FileSystemFileHandle[];
+            resolve(
+              handles.find(
+                (handle) =>
+                  !fileName ||
+                  String((handle as any)?.name || "").trim().toLowerCase() === fileName,
+              ) ?? null,
+            );
+          };
+          all.onerror = () => resolve(null);
+        };
+        exact.onerror = () => resolve(null);
+        return;
+      }
+
+      const all = store.getAll();
+      all.onsuccess = () => {
+        const handles = (all.result ?? []) as FileSystemFileHandle[];
+        resolve(
+          handles.find(
+            (handle) =>
+              !fileName ||
+              String((handle as any)?.name || "").trim().toLowerCase() === fileName,
+          ) ?? null,
+        );
+      };
+      all.onerror = () => resolve(null);
+    });
+
+    db.close();
+    return result;
+  } catch {
+    db.close();
+    return null;
+  }
+};
+
 export const restorePersistentVideo = async (
   matchId: string,
   expected?: MatchProjectFingerprint | null,
+  teamId?: string | null,
 ): Promise<LocalMatchVideo | null> => {
-  const handle = await idbGet<FileSystemFileHandle>(HANDLE_STORE, matchId);
+  // 1. Nouveau registre : clé durable = matchId.
+  let handle = await idbGet<FileSystemFileHandle>(HANDLE_STORE, matchId);
+
+  // 2. Compatibilité projets existants : ancien registre PriseStatsPro
+  //    clé = équipe + nom du fichier. Si trouvé, on le migre immédiatement.
+  if (!handle) {
+    handle = await findLegacyHandle(expected, teamId);
+    if (handle) {
+      await savePersistentFileHandle(matchId, handle);
+    }
+  }
+
   if (!handle) return null;
 
   try {
     let permission = await (handle as any).queryPermission?.({ mode: "read" });
+
+    // Certains navigateurs renvoient "prompt". requestPermission peut nécessiter
+    // un geste utilisateur ; si le navigateur l'autorise ici, on restaure sans
+    // demander de rechoisir le fichier.
     if (permission !== "granted") {
       permission = await (handle as any).requestPermission?.({ mode: "read" });
     }

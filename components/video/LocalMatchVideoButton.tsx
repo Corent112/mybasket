@@ -55,7 +55,7 @@ export default function LocalMatchVideoButton({
         setExpected(fp);
 
         if (!getLocalMatchVideo(matchId)) {
-          const restored = await restorePersistentVideo(matchId, fp);
+          const restored = await restorePersistentVideo(matchId, fp, teamId);
           if (restored && active) {
             setLocalMatchVideo(restored);
             onConnected?.(restored.url);

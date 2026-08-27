@@ -17,6 +17,9 @@ type Clip = {
   possessionEnd?: number | null;
   video_time?: number | null;
   videoTime?: number | null;
+  /** Bornes média déjà converties avec la synchro du match. */
+  resolved_clip_start?: number | null;
+  resolved_clip_end?: number | null;
 };
 
 type Props = {
@@ -27,11 +30,12 @@ type Props = {
 
 const startOf = (clip: Clip) =>
   Number(
-    clip.possessionStart ??
+    clip.resolved_clip_start ??
       clip.clip_start ??
       clip.clipStart ??
       clip.video_time ??
       clip.videoTime ??
+      clip.possessionStart ??
       0,
   );
 
@@ -39,7 +43,13 @@ const endOf = (clip: Clip) => {
   const start = startOf(clip);
   return Math.max(
     start + 0.1,
-    Number(clip.possessionEnd ?? clip.clip_end ?? clip.clipEnd ?? start + 4),
+    Number(
+      clip.resolved_clip_end ??
+        clip.clip_end ??
+        clip.clipEnd ??
+        clip.possessionEnd ??
+        start + 4,
+    ),
   );
 };
 
