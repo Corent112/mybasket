@@ -1,6970 +1,5901 @@
-// app/equipes/[teamId]/[playerId]/page.tsx
 "use client";
 
+// app/equipes/[teamId]/page.tsx
+import TeamMatchHistoryBlock from "@/components/equipes/TeamMatchHistoryBlock";
+import TeamGoogleDriveSettings from "@/components/video/TeamGoogleDriveSettings";
+import TeamProfilingPanel from "@/components/development/TeamProfilingPanel";
+import TeamSelfEvaluationsPanel from "@/components/development/TeamSelfEvaluationsPanel";
 import { use, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { getPlayer, getTeam, upsertPlayer } from "../../../../lib/equipes-store";
-import PlayerForm from "../../../../components/equipes/PlayerForm";
-import RadarChart from "../../../../components/equipes/RadarChart";
-import DonutChart from "../../../../components/equipes/DonutChart";
-import LineChart from "../../../../components/equipes/LineChart";
-import { Jersey, Sparkline } from "../../../../components/equipes/Sparkline";
-import type { Player, Team } from "../../../../types/player";
 import { createClient } from "@/lib/supabase/client";
-import { useLivestatTags } from "@/lib/livestat-tags";
-import PlayerMontages from "@/components/players/PlayerMontages";
-import ShotChart from "@/components/prise-stats-pro/ShotChart";
-import AdvancedVideoEditor from "@/components/video-editor/AdvancedVideoEditor";
-import PlayerLoadMonitoring from "@/components/players/PlayerLoadMonitoring";
-import PlayerShootingGrids from "@/components/players/PlayerShootingGrids";
-import PoleSportsReportPanel from "@/components/equipes/PoleSportsReportPanel";
-import PolePlayerLongitudinalPanel from "@/components/equipes/PolePlayerLongitudinalPanel";
-import LocalClipPlayer from "@/components/video/LocalClipPlayer";
-import { normalizeSync, resolveActionClipBounds } from "@/lib/video-sync";
+import {
+  getTeam,
+  saveTeam,
+  upsertPlayer,
+  deletePlayer,
+  computeTeamKpis,
+} from "../../../../lib/equipes-store";
+import PlayerForm from "@/components/equipes/PlayerForm";
+import TeamForm from "@/components/equipes/TeamForm";
+import type { Player, Team, TeamEvent } from "@/types/player";
 
-type PlayerExtra = Player & {
-  licenceNumber?: string;
-  tuteur1Phone?: string;
-  tuteur1Email?: string;
-  tuteur2Phone?: string;
-  tuteur2Email?: string;
-  school?: string;
-  className?: string;
-  nationality?: string;
-  emergencyContact?: string;
+/* ---------- Icônes (SVG inline, trait) ---------- */
+function Ic({ d, size = 18 }: { d: string; size?: number }) {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.8"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      {d.split("|").map((p, i) => (
+        <path key={i} d={p} />
+      ))}
+    </svg>
+  );
+}
+const ICONS = {
+  users:
+    "M17 20v-2a4 4 0 0 0-3-3.87|M7 20v-2a4 4 0 0 1 3-3.87|M12 7a3 3 0 1 0 0 6 3 3 0 0 0 0-6Z",
+  bars: "M4 20V10|M10 20V4|M16 20v-7|M22 20H2",
+  shirt: "M8 3l4 2 4-2 4 3-3 3v10H7V9L4 6z",
+  trophy:
+    "M8 4h8v4a4 4 0 0 1-8 0V4Z|M8 6H5a2 2 0 0 0 2 3|M16 6h3a2 2 0 0 1-2 3|M10 14h4M9 20h6M12 14v6",
+  star: "M12 3l2.6 5.3 5.9.9-4.3 4.1 1 5.8L12 16.9 6.8 19l1-5.8L3.5 9.1l5.9-.9L12 3Z",
+  trend: "M3 17l6-6 4 4 8-8|M21 7h-4M21 7v4",
+  cal: "M4 5h16v15H4zM4 9h16M8 3v4M16 3v4",
+  info: "M12 22a10 10 0 1 0 0-20 10 10 0 0 0 0 20Z|M12 11v5M12 8h.01",
+  user: "M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8Z|M4 21v-1a6 6 0 0 1 6-6h4a6 6 0 0 1 6 6v1",
+  building: "M4 21V5l8-3 8 3v16|M9 9h.01M15 9h.01M9 13h.01M15 13h.01M9 17h6",
+  palette: "M12 21a9 9 0 1 1 9-9c0 2-2 3-4 3h-1a2 2 0 0 0-1 4 1 1 0 0 1-2 2Z",
+  chev: "M9 6l6 6-6 6",
+  filter: "M3 5h18M6 12h12M10 19h4",
+  cam: "M4 7h3l2-2h6l2 2h3v12H4zM12 16a3 3 0 1 0 0-6 3 3 0 0 0 0 6Z",
+  pencil: "M4 20h4L18.5 9.5a2.1 2.1 0 0 0-3-3L5 17z",
+  manage:
+    "M17 20v-2a4 4 0 0 0-3-3.87|M7 20v-2a4 4 0 0 1 3-3.87|M12 7a3 3 0 1 0 0 6 3 3 0 0 0 0-6Z",
 };
 
-const TABS = [
-  "Aperçu",
-  "Informations",
-  "Stats & Vidéo",
-  "Tests",
-  "Charge & récup.",
-  "Grilles de tir",
-  "Médical",
-  "Bilans",
-  "Bilan sportif",
-  "Suivi Pôle",
-  "Documents",
-] as const;
-
-type Tab = (typeof TABS)[number];
-
-type TestCategory = "Anthropométrie" | "Athlétique" | "Endurance" | "Force" | "Mobilité";
-
-type PlayerTest = {
-  id: string;
-  date: string;
-  category: TestCategory;
-  label: string;
-  value: number;
-  unit: string;
-  notes?: string;
+const EVENT_EMOJI: Record<string, keyof typeof ICONS> = {
+  Entraînement: "bars",
+  Championnat: "trophy",
+  Réunion: "users",
+  Tournoi: "trophy",
+  "Match amical": "trophy",
+  Autre: "cal",
 };
 
-type GrowthProfile = {
-  sex: "garcon" | "fille";
-  fatherHeightCm: number | "";
-  motherHeightCm: number | "";
-  boneAge?: number | "";
-  sittingHeightCm?: number | "";
-  wingspanCm?: number | "";
+type TeamMainTab = "presentation" | "training" | "profiling" | "self-evaluations" | "stats";
+
+type TeamDashboardData = {
+  loading: boolean;
+  resolvedTeamId: string;
+  matches: SupaMatchRow[];
+  statRows: SupaStatRow[];
+  actionRows: GameActionRow[];
+  attendanceRows: Array<Record<string, unknown>>;
 };
 
-type MedicalStatus = "Disponible" | "Blessé" | "Reprise" | "Aménagé" | "Absent";
+function compactStrings(values: unknown[]) {
+  return Array.from(
+    new Set(values.map((value) => String(value || "").trim()).filter(Boolean)),
+  );
+}
 
-type MedicalEntry = {
-  id: string;
-  date: string;
-  status: MedicalStatus;
-  zone: string;
-  injury: string;
-  severity: "Faible" | "Moyenne" | "Élevée";
-  daysOff: number;
-  notes: string;
-};
+function getTeamIdCandidates(teamId: string, team: Team | undefined) {
+  const t = (team || {}) as Record<string, unknown>;
 
-type PlayerDocument = {
-  id: string;
-  date: string;
-  title: string;
-  category: "Administratif" | "Performance" | "Scolarité" | "Vidéo" | "Contrat" | "Autre";
-  url?: string;
-  notes?: string;
-};
+  return compactStrings([
+    teamId,
+    t.id,
+    t.team_id,
+    t.supabase_team_id,
+    t.supabaseTeamId,
+    t.supabase_id,
+    t.supabaseId,
+    t.db_id,
+    t.dbId,
+  ]);
+}
 
-type RatingBlock = {
-  physique: number;
-  technique: number;
-  tactique: number;
-  mental: number;
-  relationnel: number;
-};
+function mostCommon(values: string[]) {
+  const counts = values.reduce((acc: Record<string, number>, value) => {
+    if (!value) return acc;
+    acc[value] = (acc[value] || 0) + 1;
+    return acc;
+  }, {});
 
-type PlayerBilan = {
-  id: string;
-  date: string;
-  type: "Début de saison" | "Mi-saison" | "Fin de saison" | "Bilan libre";
-  evaluator: string;
-  seasonTeamNote: number;
-  seasonTeamWhy: string;
-  individualNote: number;
-  individualWhy: string;
-  playerRatings: RatingBlock;
-  coachRatings: RatingBlock;
-  strengthsPhysical: string;
-  improvementsPhysical: string;
-  strengthsTechnical: string;
-  improvementsTechnical: string;
-  strengthsTactical: string;
-  improvementsTactical: string;
-  strengthsMental: string;
-  improvementsMental: string;
-  strengthsRelational: string;
-  improvementsRelational: string;
-  keepAtClub: string;
-  magicStructure: string;
-  magicBasket: string;
-  objectives: string;
-  method: string;
-  expectedRole: string;
-  boardingPartner: string;
-  familySummary: string;
-  schoolReview: string;
-  examsPreparation: string;
-  orientationChoices: string;
-  holidayPlanning: string;
-  offseasonPriority: string;
-  actionPlan1: string;
-  actionPlan2: string;
-  actionPlan3: string;
-  coachConclusion: string;
-};
+  return Object.entries(counts).sort((a, b) => b[1] - a[1])[0]?.[0] || "";
+}
+
+function useTeamDashboardData(
+  teamId: string,
+  team: Team | undefined,
+): TeamDashboardData {
+  const supabase = createClient();
+  const [loading, setLoading] = useState(true);
+  const [resolvedTeamId, setResolvedTeamId] = useState(teamId);
+  const [matches, setMatches] = useState<SupaMatchRow[]>([]);
+  const [statRows, setStatRows] = useState<SupaStatRow[]>([]);
+  const [actionRows, setActionRows] = useState<GameActionRow[]>([]);
+  const [attendanceRows, setAttendanceRows] = useState<
+    Array<Record<string, unknown>>
+  >([]);
+
+  useEffect(() => {
+    let active = true;
+
+    async function load() {
+      setLoading(true);
+
+      const candidateTeamIds = getTeamIdCandidates(teamId, team);
+      const playerIds = compactStrings((team?.players || []).map((p) => p.id));
+
+      try {
+        let matchRows: SupaMatchRow[] = [];
+        let playerRows: SupaStatRow[] = [];
+        let linkedTeamId = candidateTeamIds[0] || teamId;
+
+        if (candidateTeamIds.length > 0) {
+          const { data: matchData, error: matchError } = await supabase
+            .from("match_stats")
+            .select(
+              "id, team_id, opponent, match_date, us_score, them_score, result, home",
+            )
+            .in("team_id", candidateTeamIds)
+            .order("match_date", { ascending: true });
+
+          if (!matchError && matchData && matchData.length > 0) {
+            matchRows = matchData as SupaMatchRow[];
+            linkedTeamId = String(matchRows[0].team_id || linkedTeamId);
+          }
+        }
+
+        const matchIdsFromMatches = matchRows
+          .map((match) => match.id)
+          .filter(Boolean);
+
+        if (matchIdsFromMatches.length > 0) {
+          const { data: playerDataByMatch, error: playerErrorByMatch } =
+            await supabase
+              .from("match_player_stats")
+              .select(
+                "team_id, player_id, match_id, pts, p2m, p2a, p3m, p3a, ftm, fta, off_reb, def_reb, reb, ast, stl, blk, turnovers, pf, present",
+              )
+              .in("match_id", matchIdsFromMatches);
+
+          if (!playerErrorByMatch && playerDataByMatch) {
+            playerRows = playerDataByMatch as SupaStatRow[];
+          }
+        }
+
+        // Fallback important : si match_stats n'utilise pas le même team_id que la fiche,
+        // on repart des joueurs de l'effectif. C'est souvent le cas après une migration localStorage -> Supabase.
+        if (playerRows.length === 0 && playerIds.length > 0) {
+          const { data: playerDataByPlayers, error: playerErrorByPlayers } =
+            await supabase
+              .from("match_player_stats")
+              .select(
+                "team_id, player_id, match_id, pts, p2m, p2a, p3m, p3a, ftm, fta, off_reb, def_reb, reb, ast, stl, blk, turnovers, pf, present",
+              )
+              .in("player_id", playerIds);
+
+          if (
+            !playerErrorByPlayers &&
+            playerDataByPlayers &&
+            playerDataByPlayers.length > 0
+          ) {
+            playerRows = playerDataByPlayers as SupaStatRow[];
+            const foundTeamId = mostCommon(
+              playerRows
+                .map((row) => String(row.team_id || ""))
+                .filter(Boolean),
+            );
+            if (foundTeamId) linkedTeamId = foundTeamId;
+          }
+        }
+
+        // Dernier fallback : si on a trouvé un vrai team_id via les joueurs, on recharge les matchs avec cet id.
+        if (matchRows.length === 0 && linkedTeamId) {
+          const { data: matchDataByResolved, error: matchErrorByResolved } =
+            await supabase
+              .from("match_stats")
+              .select(
+                "id, team_id, opponent, match_date, us_score, them_score, result, home",
+              )
+              .eq("team_id", linkedTeamId)
+              .order("match_date", { ascending: true });
+
+          if (!matchErrorByResolved && matchDataByResolved) {
+            matchRows = matchDataByResolved as SupaMatchRow[];
+          }
+        }
 
 
-type PlayerLiveMatchLine = {
-  matchId: string;
-  date: string;
-  opponent: string;
-  result: string;
-  usScore: number;
-  themScore: number;
-  present: boolean;
-  pts: number;
-  reb: number;
-  ast: number;
-  stl: number;
-  blk: number;
-  to: number;
-  pf: number;
-  p2m: number;
-  p2a: number;
-  p3m: number;
-  p3a: number;
-  ftm: number;
-  fta: number;
-};
+        // Fallback local : les stats live sont aussi copiées dans team.statsHistory.
+        // Cela alimente la fiche même si Supabase bloque les IDs UUID ou les RLS.
+        if (playerRows.length === 0 && team?.statsHistory?.length) {
+          linkedTeamId = teamId;
+          matchRows = team.statsHistory.map((match, index) => ({
+            id: String(match.id || `local_match_${index}`),
+            team_id: teamId,
+            opponent: match.opponent || "Adversaire",
+            match_date: match.date || null,
+            us_score: safeNum(match.scoreUs),
+            them_score: safeNum(match.scoreThem),
+            result:
+              safeNum(match.scoreUs) > safeNum(match.scoreThem)
+                ? "V"
+                : safeNum(match.scoreUs) < safeNum(match.scoreThem)
+                  ? "D"
+                  : "N",
+            home: true,
+          }));
 
-type PlayerLiveTotals = {
-  pts: number;
-  p2m: number;
-  p2a: number;
-  p3m: number;
-  p3a: number;
-  ftm: number;
-  fta: number;
-  offReb: number;
-  defReb: number;
-  reb: number;
-  ast: number;
-  stl: number;
-  blk: number;
-  to: number;
-  pf: number;
-};
+          playerRows = team.statsHistory.flatMap((match, index) =>
+            (match.players || []).map((line) => {
+              const p2m = safeNum(line.pts2made ?? line.fg2m);
+              const p2a = safeNum(line.fg2a ?? p2m + safeNum(line.pts2miss));
+              const p3m = safeNum(line.pts3made ?? line.fg3m);
+              const p3a = safeNum(line.fg3a ?? p3m + safeNum(line.pts3miss));
+              const ftm = safeNum(line.ftMade ?? line.ftm);
+              const fta = safeNum(line.fta ?? ftm + safeNum(line.ftMiss));
+              const off = safeNum(line.rebOff);
+              const def = safeNum(line.rebDef);
+              return {
+                team_id: teamId,
+                player_id: String(line.playerId),
+                match_id: String(match.id || `local_match_${index}`),
+                pts: safeNum(line.pts) || p2m * 2 + p3m * 3 + ftm,
+                p2m,
+                p2a,
+                p3m,
+                p3a,
+                ftm,
+                fta,
+                off_reb: off,
+                def_reb: def,
+                reb: safeNum(line.reb) || off + def,
+                ast: safeNum(line.ast),
+                stl: safeNum(line.stl),
+                blk: safeNum(line.blk),
+                turnovers: safeNum(line.to),
+                pf: 0,
+                present: line.played !== false,
+              } as SupaStatRow;
+            }),
+          );
+        }
 
-type PlayerLiveAverages = {
-  pts: number;
-  reb: number;
-  ast: number;
-  stl: number;
-  blk: number;
-  to: number;
-  pf: number;
-  pctTir: number;
-  pct3pts: number;
-  pctLf: number;
-};
+        const matchIds = compactStrings([
+          ...matchRows.map((match) => match.id),
+          ...playerRows.map((row) => row.match_id),
+        ]);
 
-type PlayerLiveStats = {
-  hasData: boolean;
-  totalRows: number;
+        // Si on a des matchs mais pas encore les lignes joueurs, recharge par match_id.
+        if (playerRows.length === 0 && matchIds.length > 0) {
+          const { data: playerDataByMatch, error: playerErrorByMatch } =
+            await supabase
+              .from("match_player_stats")
+              .select(
+                "team_id, player_id, match_id, pts, p2m, p2a, p3m, p3a, ftm, fta, off_reb, def_reb, reb, ast, stl, blk, turnovers, pf, present",
+              )
+              .in("match_id", matchIds);
+
+          if (!playerErrorByMatch && playerDataByMatch) {
+            playerRows = playerDataByMatch as SupaStatRow[];
+          }
+        }
+
+        if (!active) return;
+        setResolvedTeamId(linkedTeamId || teamId);
+        setMatches(matchRows);
+        setStatRows(playerRows.filter((row) => row.present !== false));
+
+        if (matchIds.length > 0) {
+          const { data: actionData, error: actionError } = await supabase
+            .from("match_actions")
+            .select(
+              "match_id, context, inbound, temps_fort, action_type, shot_type, shot_result, special_case, ft_attempts, ft_made, assist_player_id",
+            )
+            .in("match_id", matchIds);
+
+          if (!active) return;
+          setActionRows(
+            actionError ? [] : ((actionData ?? []) as GameActionRow[]),
+          );
+        } else {
+          setActionRows([]);
+        }
+
+        const attendanceSources = [
+          "training_attendance",
+          "practice_attendance",
+          "event_attendance",
+        ];
+        let attendance: Array<Record<string, unknown>> = [];
+
+        for (const source of attendanceSources) {
+          const { data, error } = await supabase
+            .from(source)
+            .select("*")
+            .in("team_id", compactStrings([linkedTeamId, ...candidateTeamIds]));
+
+          if (!error && data && data.length > 0) {
+            attendance = data as Array<Record<string, unknown>>;
+            break;
+          }
+        }
+
+        if (attendance.length === 0 && typeof window !== "undefined") {
+          try {
+            const adminMap = JSON.parse(window.localStorage.getItem("mybasket_management_admin") || "{}");
+            const admin = adminMap?.[teamId] || adminMap?.[linkedTeamId];
+            const presence = admin?.presence || {};
+            attendance = Object.entries(presence).flatMap(([eventId, rows]) =>
+              Object.entries((rows || {}) as Record<string, unknown>).map(([playerId, status]) => ({
+                event_id: eventId,
+                player_id: playerId,
+                team_id: teamId,
+                status,
+              })),
+            );
+          } catch {
+            attendance = [];
+          }
+        }
+
+        if (!active) return;
+        setAttendanceRows(attendance);
+      } catch (error) {
+        console.error("Erreur dashboard équipe :", error);
+        if (!active) return;
+        setResolvedTeamId(teamId);
+        setMatches([]);
+        setStatRows([]);
+        setActionRows([]);
+        setAttendanceRows([]);
+      } finally {
+        if (active) setLoading(false);
+      }
+    }
+
+    load();
+
+    return () => {
+      active = false;
+    };
+  }, [supabase, teamId, team?.id, team?.players]);
+
+  return {
+    loading,
+    resolvedTeamId,
+    matches,
+    statRows,
+    actionRows,
+    attendanceRows,
+  };
+}
+
+function getAttendancePct(
+  team: Team,
+  attendanceRows: Array<Record<string, unknown>>,
+) {
+  if (attendanceRows.length > 0) {
+    const total = attendanceRows.length;
+    const present = attendanceRows.filter((row) => {
+      const status = String(row.status ?? row.presence ?? "").toLowerCase();
+      const isPresentBoolean = row.present === true;
+      return (
+        isPresentBoolean ||
+        status === "present" ||
+        status === "présent" ||
+        status === "p"
+      );
+    }).length;
+
+    return total ? Math.round((present / total) * 100) : 0;
+  }
+
+  if (team.players.length > 0) {
+    const total = team.players.reduce(
+      (sum, player) => sum + safeNum(player.presencePct),
+      0,
+    );
+    return Math.round(total / team.players.length);
+  }
+
+  return 0;
+}
+
+function computeLinkedKpis(team: Team, dashboard: TeamDashboardData) {
+  const local = computeTeamKpis(team);
+  const matches = dashboard.matches;
+  const statRows = dashboard.statRows;
+  const games = matches.length || local.matchsJoues;
+  const wins = matches.length ? matches.filter(isWin).length : local.victoires;
+  const losses = matches.length
+    ? matches.filter(isLoss).length
+    : local.defaites;
+  const pointsAverage = matches.length
+    ? Math.round(
+        matches.reduce((sum, match) => sum + safeNum(match.us_score), 0) /
+          matches.length,
+      )
+    : local.pointsMoyenne;
+
+  let progression = local.progressionPct;
+
+  if (matches.length >= 2) {
+    const middle = Math.max(1, Math.floor(matches.length / 2));
+    const first = matches.slice(0, middle);
+    const last = matches.slice(middle);
+    const avg = (rows: SupaMatchRow[]) =>
+      rows.length
+        ? rows.reduce(
+            (sum, match) =>
+              sum + safeNum(match.us_score) - safeNum(match.them_score),
+            0,
+          ) / rows.length
+        : 0;
+    progression = Math.round(avg(last) - avg(first));
+  }
+
+  return [
+    {
+      ic: "users",
+      val: String(team.players.length),
+      lbl: "Joueurs",
+      hint: "Effectif",
+    },
+    {
+      ic: "bars",
+      val: `${getAttendancePct(team, dashboard.attendanceRows)}%`,
+      lbl: "Présence moy.",
+      hint: "Entraînements",
+    },
+    {
+      ic: "shirt",
+      val: String(games),
+      lbl: "Matchs joués",
+      hint: dashboard.matches.length ? "Supabase" : "Local",
+    },
+    {
+      ic: "trophy",
+      val: `${wins} / ${losses}`,
+      lbl: "V / D",
+      hint: "Résultats",
+    },
+    {
+      ic: "star",
+      val: String(pointsAverage),
+      lbl: "Points moy.",
+      hint: statRows.length ? "Live stats" : "Score",
+    },
+    {
+      ic: "trend",
+      val: `${progression >= 0 ? "+" : ""}${progression}`,
+      lbl: "Progression",
+      hint: "Diff. points",
+    },
+  ] as const;
+}
+
+type LivePlayerAverage = {
   games: number;
-  missedGames: number;
-  attendancePct: number;
-  totalMinutes: number;
-  averageMinutes: number;
-  totals: PlayerLiveTotals;
-  averages: PlayerLiveAverages;
-  matches: PlayerLiveMatchLine[];
-  evolution: Array<{ label: string; value: number }>;
-};
-
-
-type PlayerAttendanceSummary = {
-  total: number;
-  present: number;
-  late: number;
-  absent: number;
-  rate: number;
-  spark: number[];
-};
-
-type PlayerFatigueSummary = {
-  current: number | null;
-  average7: number | null;
-  previous7: number | null;
-  delta: number | null;
-  level: "low" | "watch" | "high" | "none";
-  count: number;
-  spark: number[];
-};
-
-type TeamPlayerComparisonStat = {
-  id: string;
-  player_id: string;
-  first_name: string | null;
-  last_name: string | null;
-  position: string | null;
   pts: number;
   reb: number;
   ast: number;
   stl: number;
-  blk: number;
-  turnovers: number;
-  plus_minus: number;
 };
 
+function buildPlayerLiveAverages(statRows: SupaStatRow[]) {
+  const grouped: Record<string, LivePlayerAverage> = {};
 
-const TEST_CATALOG: Array<{ category: TestCategory; label: string; unit: string }> = [
-  { category: "Anthropométrie", label: "Taille", unit: "cm" },
-  { category: "Anthropométrie", label: "Poids", unit: "kg" },
-  { category: "Anthropométrie", label: "Envergure", unit: "cm" },
-  { category: "Anthropométrie", label: "Taille assise", unit: "cm" },
-  { category: "Anthropométrie", label: "Longueur main", unit: "cm" },
-  { category: "Anthropométrie", label: "Largeur main", unit: "cm" },
-  { category: "Athlétique", label: "Sprint 5m", unit: "s" },
-  { category: "Athlétique", label: "Sprint 10m", unit: "s" },
-  { category: "Athlétique", label: "Sprint 20m", unit: "s" },
-  { category: "Athlétique", label: "Détente sèche", unit: "cm" },
-  { category: "Athlétique", label: "Détente avec élan", unit: "cm" },
-  { category: "Athlétique", label: "Lane Agility", unit: "s" },
-  { category: "Athlétique", label: "T-Test", unit: "s" },
-  { category: "Endurance", label: "VMA", unit: "km/h" },
-  { category: "Endurance", label: "Yo-Yo IR1", unit: "m" },
-  { category: "Endurance", label: "Yo-Yo IR2", unit: "m" },
-  { category: "Endurance", label: "Luc Léger", unit: "palier" },
-  { category: "Force", label: "Trap Bar", unit: "kg" },
-  { category: "Force", label: "Squat", unit: "kg" },
-  { category: "Force", label: "Développé couché", unit: "kg" },
+  statRows.forEach((row) => {
+    const playerId = String(row.player_id || "");
+    if (!playerId || row.present === false) return;
+
+    if (!grouped[playerId]) {
+      grouped[playerId] = { games: 0, pts: 0, reb: 0, ast: 0, stl: 0 };
+    }
+
+    grouped[playerId].games += 1;
+    grouped[playerId].pts += safeNum(row.pts);
+    grouped[playerId].reb +=
+      safeNum(row.reb) || safeNum(row.off_reb) + safeNum(row.def_reb);
+    grouped[playerId].ast += safeNum(row.ast);
+    grouped[playerId].stl += safeNum(row.stl);
+  });
+
+  Object.keys(grouped).forEach((playerId) => {
+    const line = grouped[playerId];
+    if (!line.games) return;
+
+    line.pts = r1(line.pts / line.games);
+    line.reb = r1(line.reb / line.games);
+    line.ast = r1(line.ast / line.games);
+    line.stl = r1(line.stl / line.games);
+  });
+
+  return grouped;
+}
+
+function getLivePlayerLabel(
+  player: Player,
+  averages: Record<string, LivePlayerAverage>,
+) {
+  const live = averages[String(player.id)];
+
+  if (live) {
+    return `${live.pts} pts · ${live.reb} reb · ${live.ast} pd`;
+  }
+
+  return `${player.presencePct}% · ${player.stats.pts} pts`;
+}
+
+export default function EquipeDetailPage({
+  params,
+}: {
+  params: Promise<{ teamId: string }>;
+}) {
+  const { teamId } = use(params);
+  const router = useRouter();
+  const [team, setTeam] = useState<Team | undefined>();
+  const [editingTeam, setEditingTeam] = useState(false);
+  const [managing, setManaging] = useState(false);
+  const [activeTab, setActiveTab] = useState<TeamMainTab>("presentation");
+  const [playerForm, setPlayerForm] = useState<{
+    open: boolean;
+    player?: Player;
+  }>({ open: false });
+  const [toast, setToast] = useState("");
+  const logoRef = useRef<HTMLInputElement>(null);
+  const bannerRef = useRef<HTMLInputElement>(null);
+
+  const dashboard = useTeamDashboardData(teamId, team);
+  const livePlayerAverages = useMemo(
+    () => buildPlayerLiveAverages(dashboard.statRows),
+    [dashboard.statRows],
+  );
+
+  async function reload() {
+    try {
+      const data = await getTeam(teamId);
+      setTeam(data);
+    } catch (error) {
+      console.error("Erreur chargement équipe:", error);
+      setTeam(undefined);
+    }
+  }
+
+  useEffect(() => {
+    reload();
+  }, [teamId]);
+
+  function flash(m: string) {
+    setToast(m);
+    setTimeout(() => setToast(""), 2200);
+  }
+
+  function compress(
+    file: File,
+    max: number,
+    preserveTransparency = false,
+  ): Promise<string> {
+    return new Promise((resolve, reject) => {
+      const r = new FileReader();
+      r.onload = () => {
+        const img = new Image();
+        img.onload = () => {
+          const s = Math.min(1, max / Math.max(img.width, img.height));
+          const c = document.createElement("canvas");
+          c.width = Math.round(img.width * s);
+          c.height = Math.round(img.height * s);
+
+          const ctx = c.getContext("2d");
+          if (!ctx) {
+            reject(new Error("Canvas indisponible"));
+            return;
+          }
+
+          ctx.clearRect(0, 0, c.width, c.height);
+          ctx.drawImage(img, 0, 0, c.width, c.height);
+
+          resolve(
+            preserveTransparency
+              ? c.toDataURL("image/png")
+              : c.toDataURL("image/jpeg", 0.85),
+          );
+        };
+        img.onerror = reject;
+        img.src = r.result as string;
+      };
+      r.onerror = reject;
+      r.readAsDataURL(file);
+    });
+  }
+
+  async function changeLogo(e: React.ChangeEvent<HTMLInputElement>) {
+    const f = e.target.files?.[0];
+    if (!f || !team) return;
+    const logo = await compress(f, 400, true);
+    await saveTeam({ ...team, logo });
+    await reload();
+    flash("Logo mis à jour ✓");
+  }
+
+  async function changeBanner(e: React.ChangeEvent<HTMLInputElement>) {
+    const f = e.target.files?.[0];
+    if (!f || !team) return;
+    const banniere = await compress(f, 1400);
+    await saveTeam({ ...team, banniere });
+    await reload();
+    flash("Photo d'équipe mise à jour ✓");
+  }
+
+  async function handleSaveTeam(t: Team) {
+    try {
+      await saveTeam(t);
+      setEditingTeam(false);
+      await reload();
+      flash("Équipe mise à jour ✓");
+    } catch (error) {
+      console.error("Erreur mise à jour équipe:", error);
+      alert("Erreur pendant la mise à jour de l'équipe.");
+    }
+  }
+
+  async function handleSavePlayer(p: Player) {
+    try {
+      await upsertPlayer(teamId, p);
+      setPlayerForm({ open: false });
+      await reload();
+      flash(p.id ? "Joueur enregistré ✓" : "Joueur ajouté ✓");
+    } catch (error) {
+      console.error("Erreur enregistrement joueur:", error);
+      alert("Erreur pendant l'enregistrement du joueur.");
+    }
+  }
+
+  async function handleDelete(p: Player, e: React.MouseEvent) {
+    e.stopPropagation();
+
+    if (!confirm(`Retirer ${p.firstName} ${p.lastName} de l'effectif ?`)) {
+      return;
+    }
+
+    try {
+      await deletePlayer(teamId, p.id);
+      await reload();
+      flash("Joueur retiré");
+    } catch (error) {
+      console.error("Erreur suppression joueur:", error);
+      alert("Erreur pendant la suppression du joueur.");
+    }
+  }
+
+  function openPlayer(p: Player) {
+    if (managing) setPlayerForm({ open: true, player: p });
+    else router.push(`/equipes/${teamId}/${p.id}`);
+  }
+
+  if (!team) {
+    return (
+      <div className="tl-wrap">
+        <div className="tl-container" style={{ color: "#9a8a82" }}>
+          Chargement…
+        </div>
+      </div>
+    );
+  }
+
+  const couleurs = team.couleurs?.length
+    ? team.couleurs
+    : ["#7a1228", "#e0a82e"];
+  const KPIS = computeLinkedKpis(team, dashboard);
+  const linkedStatsTeamId = dashboard.resolvedTeamId || teamId;
+
+  return (
+    <div className="tl-wrap">
+      <div className="tl-container">
+        {/* ---------- HEADER ---------- */}
+        <header className="tl-appbar">
+          <div className="tl-logo">
+            <svg
+              width="30"
+              height="30"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="#e0a82e"
+              strokeWidth="1.7"
+            >
+              <circle cx="12" cy="12" r="10" />
+              <path d="M2 12h20M12 2c3.5 3 3.5 17 0 20M12 2c-3.5 3-3.5 17 0 20" />
+            </svg>
+            <span>
+              <span className="my">My</span>
+              <span className="basket">Basket</span>
+            </span>
+          </div>
+
+          <div className="tl-appbar-right only-season">
+            <span className="tl-season">
+              <Ic d={ICONS.cal} size={16} /> Saison 2025/2026
+            </span>
+          </div>
+        </header>
+
+        {/* ---------- HERO ---------- */}
+        <section className="tl-hero team-hero-linked">
+          <div className="tl-floating-actions">
+            <button
+              className="tl-btn tl-btn-bx"
+              onClick={() => setEditingTeam(true)}
+            >
+              <Ic d={ICONS.pencil} size={16} /> Modifier l'équipe
+            </button>
+            <button
+              className={`tl-btn ${managing ? "tl-btn-or" : "tl-btn-ghost"}`}
+              onClick={() => setManaging((v) => !v)}
+            >
+              <Ic d={ICONS.manage} size={16} />{" "}
+              {managing ? "Terminer" : "Gérer les joueurs"}
+            </button>
+          </div>
+
+          <div className="tl-hero-logo">
+            {team.logo ? (
+              <img
+                src={team.logo}
+                alt=""
+                style={{
+                  width: "100%",
+                  height: "100%",
+                  objectFit: "contain",
+                  objectPosition: "center",
+                  background: "transparent",
+                  display: "block",
+                }}
+              />
+            ) : (
+              <svg
+                className="ball"
+                width="56"
+                height="56"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.4"
+              >
+                <circle cx="12" cy="12" r="10" />
+                <path d="M2 12h20M12 2c3.5 3 3.5 17 0 20M12 2c-3.5 3-3.5 17 0 20" />
+              </svg>
+            )}
+            <button
+              className="tl-cam"
+              title="Changer le logo"
+              onClick={() => logoRef.current?.click()}
+            >
+              <Ic d={ICONS.cam} size={13} />
+            </button>
+            <input
+              ref={logoRef}
+              type="file"
+              accept="image/*"
+              hidden
+              onChange={changeLogo}
+            />
+          </div>
+
+          <div className="tl-hero-content">
+            <h1 className="tl-hero-name">{team.name}</h1>
+            <div className="tl-hero-sub">
+              {team.categorieLabel || `${team.cat}`}
+              <span className="dot" style={{ background: couleurs[1] }} />
+              {team.players.length} joueur{team.players.length > 1 ? "s" : ""}
+              {dashboard.loading && (
+                <span className="dash-loading">Synchronisation...</span>
+              )}
+            </div>
+            <div className="tl-tags">
+              {(team.tags || []).map((tg) => (
+                <span key={tg} className="tl-tag">
+                  {tg}
+                </span>
+              ))}
+            </div>
+          </div>
+        </section>
+
+        {/* ---------- KPI ROW : toujours visible sur tous les onglets ---------- */}
+        <section className="tl-kpi-row linked-kpis">
+          {KPIS.map((kpi) => (
+            <div key={kpi.lbl} className="tl-kpi">
+              <div className="ic">
+                <Ic d={ICONS[kpi.ic]} size={22} />
+              </div>
+              <div className="val">{kpi.val}</div>
+              <div className="lbl">{kpi.lbl}</div>
+              <small>{kpi.hint}</small>
+            </div>
+          ))}
+        </section>
+
+        {/* ---------- ONGLETS ---------- */}
+        <section className="team-tabs" aria-label="Navigation fiche équipe">
+          <button
+            type="button"
+            className={activeTab === "presentation" ? "active" : ""}
+            onClick={() => setActiveTab("presentation")}
+          >
+            <Ic d={ICONS.users} size={16} />
+            Présentation équipe
+          </button>
+
+          <button
+            type="button"
+            className={activeTab === "training" ? "active" : ""}
+            onClick={() => setActiveTab("training")}
+          >
+            <Ic d={ICONS.cal} size={16} />
+            Entraînements
+          </button>
+
+          <button
+            type="button"
+            className={activeTab === "profiling" ? "active" : ""}
+            onClick={() => setActiveTab("profiling")}
+          >
+            <Ic d={ICONS.star} size={16} />
+            Profilage
+          </button>
+
+          <button
+            type="button"
+            className={activeTab === "self-evaluations" ? "active" : ""}
+            onClick={() => setActiveTab("self-evaluations")}
+          >
+            <Ic d={ICONS.cal} size={16} />
+            Auto-évaluations
+          </button>
+
+          <button
+            type="button"
+            className={activeTab === "stats" ? "active" : ""}
+            onClick={() => setActiveTab("stats")}
+          >
+            <Ic d={ICONS.bars} size={16} />
+            Toutes les stats
+          </button>
+        </section>
+
+        {activeTab === "presentation" && (
+          <div className="team-tab-panel">
+            <TeamGoogleDriveSettings teamId={team.id} />
+            {/* ---------- TEAM BANNER ---------- */}
+            <section className="tl-banner">
+              {team.banniere ? (
+                <img src={team.banniere} alt="Photo de l'équipe" />
+              ) : (
+                <div className="tl-banner-empty">
+                  <div className="big">📸</div>
+                  <div>Ajoute une photo de ton équipe</div>
+                </div>
+              )}
+              <button
+                className="tl-cam"
+                title="Changer la photo d'équipe"
+                onClick={() => bannerRef.current?.click()}
+              >
+                <Ic d={ICONS.cam} size={13} />
+              </button>
+              <input
+                ref={bannerRef}
+                type="file"
+                accept="image/*"
+                hidden
+                onChange={changeBanner}
+              />
+            </section>
+
+            {/* ---------- EFFECTIF ---------- */}
+            <section className={`tl-card ${managing ? "tl-managing" : ""}`}>
+              <div className="tl-card-h">
+                <span className="ic">
+                  <Ic d={ICONS.users} />
+                </span>
+                <h2>Effectif</h2>
+                <span className="right">
+                  {team.players.length} joueur
+                  {team.players.length > 1 ? "s" : ""}
+                </span>
+              </div>
+              <div className="tl-roster">
+                {team.players.map((p) => (
+                  <div
+                    key={p.id}
+                    className="tl-pcard"
+                    onClick={() => openPlayer(p)}
+                  >
+                    {managing && (
+                      <button
+                        className="tl-del"
+                        title="Retirer"
+                        onClick={(e) => handleDelete(p, e)}
+                      >
+                        ×
+                      </button>
+                    )}
+                    {p.num != null && <div className="tl-pnum">#{p.num}</div>}
+                    <div className="tl-pphoto">
+                      {p.photo ? (
+                        <img src={p.photo} alt="" />
+                      ) : (
+                        (p.firstName || "?").charAt(0).toUpperCase()
+                      )}
+                    </div>
+                    <div className="tl-pname">
+                      {p.firstName}
+                      <br />
+                      {p.lastName}
+                    </div>
+                    <div className="tl-pposte">{p.postePrincipal}</div>
+                    <div className="tl-pstat">
+                      {getLivePlayerLabel(p, livePlayerAverages)}
+                    </div>
+                  </div>
+                ))}
+                {managing && (
+                  <div
+                    className="tl-addtile"
+                    onClick={() => setPlayerForm({ open: true })}
+                  >
+                    <span className="plus">+</span>
+                    Ajouter un joueur
+                  </div>
+                )}
+              </div>
+            </section>
+
+            {/* ---------- ÉVÉNEMENTS + INFOS ---------- */}
+            <section className="tl-2col">
+              <div className="tl-card">
+                <div className="tl-card-h">
+                  <span className="ic">
+                    <Ic d={ICONS.cal} />
+                  </span>
+                  <h2>Prochains événements</h2>
+                </div>
+                {team.evenements?.length ? (
+                  team.evenements.map((ev: TeamEvent) => (
+                    <div key={ev.id} className="tl-event">
+                      <div className="tl-evic">
+                        <Ic
+                          d={ICONS[EVENT_EMOJI[ev.type] || "cal"]}
+                          size={20}
+                        />
+                      </div>
+                      <div style={{ flex: 1 }}>
+                        <div className="ttl">{ev.titre}</div>
+                        <div className="meta">
+                          {ev.date}
+                          {ev.heure ? ` • ${ev.heure}` : ""}
+                        </div>
+                        {ev.lieu && <div className="lieu">{ev.lieu}</div>}
+                      </div>
+                      <span className="tl-chev">
+                        <Ic d={ICONS.chev} />
+                      </span>
+                    </div>
+                  ))
+                ) : (
+                  <p style={{ color: "#9a8a82" }}>Aucun événement à venir.</p>
+                )}
+                <button className="tl-linkbtn">
+                  <Ic d={ICONS.filter} size={16} /> Voir tous les événements
+                </button>
+              </div>
+
+              <div className="tl-card">
+                <div className="tl-card-h">
+                  <span className="ic">
+                    <Ic d={ICONS.info} />
+                  </span>
+                  <h2>Informations équipe</h2>
+                </div>
+                <InfoRow
+                  icon={ICONS.shirt}
+                  label="Catégorie"
+                  value={team.categorieLabel || team.cat || ""}
+                />
+                <InfoRow
+                  icon={ICONS.bars}
+                  label="Niveau"
+                  value={team.niveau || ""}
+                />
+                <InfoRow
+                  icon={ICONS.user}
+                  label="Entraîneur principal"
+                  value={team.entraineurPrincipal || ""}
+                />
+                <InfoRow
+                  icon={ICONS.users}
+                  label="Assistant"
+                  value={team.assistant || ""}
+                />
+                <InfoRow
+                  icon={ICONS.building}
+                  label="Salle principale"
+                  value={team.sallePrincipale || ""}
+                />
+                <InfoRow
+                  icon={ICONS.cal}
+                  label="Création de l'équipe"
+                  value={team.dateCreation || ""}
+                />
+                <div className="tl-info-row">
+                  <span className="ic">
+                    <Ic d={ICONS.palette} />
+                  </span>
+                  <span className="lbl">Couleurs</span>
+                  <span className="tl-colordots">
+                    {couleurs.map((c, i) => (
+                      <span key={i} style={{ background: c }} />
+                    ))}
+                  </span>
+                </div>
+              </div>
+            </section>
+
+            {/* ---------- STAFF ---------- */}
+            <section className="tl-card">
+              <div className="tl-card-h">
+                <span className="ic">
+                  <Ic d={ICONS.users} />
+                </span>
+                <h2>Staff</h2>
+              </div>
+              {team.staff?.length ? (
+                team.staff.map((s) => (
+                  <div key={s.id} className="tl-staff-item">
+                    <div className="tl-ini">
+                      {s.photo ? (
+                        <img
+                          src={s.photo}
+                          alt=""
+                          style={{
+                            width: "100%",
+                            height: "100%",
+                            borderRadius: "50%",
+                            objectFit: "cover",
+                          }}
+                        />
+                      ) : (
+                        `${s.prenom[0] || ""}${s.nom[0] || ""}`
+                      )}
+                    </div>
+                    <div>
+                      <div className="nm">
+                        {s.prenom} {s.nom}
+                      </div>
+                      <span className="tl-rolepill">{s.role}</span>
+                    </div>
+                    <span className="tl-chev">
+                      <Ic d={ICONS.chev} />
+                    </span>
+                  </div>
+                ))
+              ) : (
+                <p style={{ color: "#9a8a82" }}>Aucun membre du staff.</p>
+              )}
+              <button className="tl-linkbtn">Voir tout le staff</button>
+            </section>
+          </div>
+        )}
+
+        {activeTab === "training" && (
+          <div className="team-tab-panel training-panel">
+            <TrainingAnalysisBlock teamId={linkedStatsTeamId} fallbackTeamId={teamId} team={team} />
+          </div>
+        )}
+
+        {activeTab === "profiling" && (
+          <div className="team-tab-panel">
+            <TeamProfilingPanel
+              teamId={String(teamId)}
+              players={(team.players || []).map((player) => ({
+                id: String(player.id),
+                firstName: player.firstName,
+                lastName: player.lastName,
+              }))}
+            />
+          </div>
+        )}
+
+        {activeTab === "self-evaluations" && (
+          <div className="team-tab-panel">
+            <TeamSelfEvaluationsPanel teamId={String(teamId)} />
+          </div>
+        )}
+
+        {activeTab === "stats" && (
+          <div className="team-tab-panel stats-panel">
+            <LiveStatsSourceBanner dashboard={dashboard} />
+            {dashboard.statRows.length === 0 && (team.statsHistory || []).length > 0 && (
+              <LocalStatsFallbackPanel team={team} />
+            )}
+            <TeamLeadersBlock
+              teamId={linkedStatsTeamId}
+              players={team.players}
+            />
+            <TeamMatchStatsBlock teamId={linkedStatsTeamId} />
+            <TeamGameStatsBlock teamId={linkedStatsTeamId} />
+            <TeamLineupsBlock teamId={linkedStatsTeamId} />
+            <TeamMatchHistoryBlock teamId={linkedStatsTeamId} />
+            <TeamSeasonRecordsBlock teamId={linkedStatsTeamId} />
+          </div>
+        )}
+
+        <div className="tl-foot">
+          <hr />
+          <svg
+            width="22"
+            height="22"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.5"
+          >
+            <circle cx="12" cy="12" r="10" />
+            <path d="M2 12h20M12 2c3.5 3 3.5 17 0 20M12 2c-3.5 3-3.5 17 0 20" />
+          </svg>
+          <hr />
+        </div>
+      </div>
+
+      {editingTeam && (
+        <TeamForm
+          team={team}
+          onSave={handleSaveTeam}
+          onClose={() => setEditingTeam(false)}
+        />
+      )}
+      {playerForm.open && (
+        <PlayerForm
+          initial={playerForm.player}
+          onSave={handleSavePlayer}
+          onClose={() => setPlayerForm({ open: false })}
+        />
+      )}
+      {toast && <div className="tl-toast">{toast}</div>}
+
+
+      <style jsx>{`
+        .tl-hero-logo {
+          background: transparent !important;
+          overflow: hidden;
+        }
+
+        .tl-hero-logo > img {
+          width: 100%;
+          height: 100%;
+          object-fit: contain;
+          object-position: center;
+          background: transparent;
+        }
+
+        .team-hero-linked {
+          position: relative;
+          padding-right: 470px;
+          overflow: visible;
+        }
+
+        .tl-floating-actions {
+          position: absolute;
+          top: 20px;
+          right: 20px;
+          z-index: 30;
+          display: flex;
+          align-items: center;
+          justify-content: flex-end;
+          gap: 12px;
+          flex-wrap: nowrap;
+          width: 450px;
+          max-width: calc(100% - 40px);
+        }
+
+        .tl-floating-actions :global(.tl-btn),
+        .tl-btn {
+          min-width: 205px;
+          min-height: 54px;
+          padding: 0 24px;
+          border-radius: 999px;
+          font-size: 0.92rem;
+          font-weight: 950;
+          line-height: 1;
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          gap: 10px;
+          white-space: nowrap;
+          overflow: hidden;
+          text-overflow: ellipsis;
+          cursor: pointer;
+          transition:
+            transform 0.18s ease,
+            box-shadow 0.18s ease;
+        }
+
+        .tl-floating-actions .tl-btn:hover {
+          transform: translateY(-1px);
+        }
+
+        .tl-btn-bx {
+          border: 1px solid rgba(107, 26, 44, 0.18);
+          background: #6b1a2c;
+          color: #fff;
+          box-shadow: 0 12px 28px rgba(107, 26, 44, 0.24);
+        }
+
+        .tl-btn-ghost {
+          border: 1px solid rgba(107, 26, 44, 0.18);
+          background: rgba(255, 255, 255, 0.94);
+          color: #6b1a2c;
+          box-shadow: 0 12px 28px rgba(60, 30, 20, 0.12);
+          backdrop-filter: blur(10px);
+        }
+
+        .tl-btn-or {
+          border: 1px solid rgba(212, 162, 76, 0.35);
+          background: #d4a24c;
+          color: #fff;
+          box-shadow: 0 12px 28px rgba(212, 162, 76, 0.24);
+        }
+
+        .only-season {
+          margin-left: auto;
+        }
+
+        .dash-loading {
+          display: inline-flex;
+          align-items: center;
+          border-radius: 999px;
+          padding: 0.25rem 0.55rem;
+          background: #fff8ef;
+          color: #6b1a2c;
+          font-size: 0.72rem;
+          font-weight: 900;
+        }
+
+        .linked-kpis {
+          position: sticky;
+          top: 0;
+          z-index: 15;
+          background: rgba(255, 255, 255, 0.86);
+          backdrop-filter: blur(12px);
+          padding-top: 0.8rem;
+          padding-bottom: 0.8rem;
+          border-radius: 0 0 24px 24px;
+        }
+
+        .linked-kpis .tl-kpi small {
+          display: block;
+          margin-top: 0.25rem;
+          color: #b3a49c;
+          font-size: 0.68rem;
+          font-weight: 900;
+          text-transform: uppercase;
+          letter-spacing: 0.04em;
+        }
+
+        .team-google-drive-settings {
+          display:flex;
+          align-items:center;
+          justify-content:space-between;
+          gap:18px;
+          padding:16px 18px;
+          margin-bottom:18px;
+          border:1px solid #eadfce;
+          border-radius:18px;
+          background:#fffaf2;
+        }
+        .team-google-drive-settings strong { color:#6b1a2c; }
+        .team-google-drive-settings p {
+          margin:5px 0 0;
+          color:#8f8177;
+          font-size:.86rem;
+          font-weight:700;
+          max-width:760px;
+        }
+        .team-google-drive-settings > div:last-child {
+          display:flex;
+          align-items:center;
+          gap:10px;
+          flex-wrap:wrap;
+        }
+        .team-google-drive-settings button {
+          border:0;
+          border-radius:999px;
+          padding:10px 16px;
+          background:#6b1a2c;
+          color:#fff;
+          font-weight:900;
+          cursor:pointer;
+        }
+        @media(max-width:720px){
+          .team-google-drive-settings{
+            align-items:flex-start;
+            flex-direction:column;
+          }
+        }
+
+        .team-tabs {
+          display: flex;
+          align-items: center;
+          gap: 12px;
+          margin: 22px 0 18px;
+          padding: 8px;
+          border: 1px solid #efe6db;
+          border-radius: 999px;
+          background: #fff8ef;
+          width: fit-content;
+          max-width: 100%;
+          box-shadow: 0 12px 28px rgba(60, 30, 20, 0.05);
+        }
+
+        .team-tabs button {
+          border: 0;
+          border-radius: 999px;
+          background: transparent;
+          color: #6b1a2c;
+          padding: 0.8rem 1.1rem;
+          font-weight: 950;
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          gap: 0.45rem;
+          cursor: pointer;
+          white-space: nowrap;
+        }
+
+        .team-tabs button.active {
+          background: #6b1a2c;
+          color: #fff;
+          box-shadow: 0 10px 22px rgba(107, 26, 44, 0.22);
+        }
+
+        .team-tab-panel {
+          animation: tabIn 0.18s ease both;
+        }
+
+        .stats-panel :global(.leaders-card) {
+          margin-top: 0;
+        }
+
+        @keyframes tabIn {
+          from {
+            opacity: 0;
+            transform: translateY(5px);
+          }
+          to {
+            opacity: 1;
+            transform: translateY(0);
+          }
+        }
+
+        @media (max-width: 980px) {
+          .team-hero-linked {
+            padding-right: 0;
+            padding-top: 86px;
+          }
+
+          .tl-floating-actions {
+            top: 16px;
+            left: 16px;
+            right: 16px;
+            width: auto;
+            max-width: none;
+            justify-content: flex-start;
+            flex-wrap: wrap;
+          }
+
+          .tl-floating-actions :global(.tl-btn),
+          .tl-btn {
+            min-width: 210px;
+          }
+
+          .team-tabs {
+            width: 100%;
+            border-radius: 22px;
+          }
+
+          .team-tabs button {
+            flex: 1;
+          }
+        }
+
+        @media (max-width: 640px) {
+          .tl-floating-actions {
+            position: static;
+            margin-bottom: 1rem;
+          }
+
+          .team-hero-linked {
+            padding-top: 1rem;
+          }
+
+          .team-tabs {
+            flex-direction: column;
+            border-radius: 18px;
+          }
+
+          .team-tabs button {
+            width: 100%;
+          }
+        }
+      `}</style>
+    </div>
+  );
+}
+
+
+/* ---------- ANALYSE DES ENTRAÎNEMENTS : liée aux séances de l'équipe ---------- */
+
+type TrainingPeriod = "week" | "month" | "year";
+
+type TrainingSessionItem = {
+  id: string;
+  category: string;
+  title: string;
+  minutes: number;
+};
+
+type TrainingSession = {
+  id: string;
+  title: string;
+  date: string;
+  duration: number;
+  raw: Record<string, any>;
+  items: TrainingSessionItem[];
+};
+
+type TrainingCategorySummary = {
+  category: string;
+  minutes: number;
+  pct: number;
+  sessions: number;
+};
+
+const TRAINING_CATEGORY_COLORS = [
+  "#6b1a2c",
+  "#d4a24c",
+  "#111827",
+  "#7f8c8d",
+  "#ef4444",
+  "#22a06b",
+  "#1f6fb2",
+  "#7c4dff",
+  "#f47b20",
 ];
 
-const DEFAULT_GROWTH: GrowthProfile = {
-  sex: "garcon",
-  fatherHeightCm: "",
-  motherHeightCm: "",
-  boneAge: "",
-  sittingHeightCm: "",
-  wingspanCm: "",
-};
-
-const EMPTY_LIVE_TOTALS: PlayerLiveTotals = {
-  pts: 0,
-  p2m: 0,
-  p2a: 0,
-  p3m: 0,
-  p3a: 0,
-  ftm: 0,
-  fta: 0,
-  offReb: 0,
-  defReb: 0,
-  reb: 0,
-  ast: 0,
-  stl: 0,
-  blk: 0,
-  to: 0,
-  pf: 0,
-};
-
-const EMPTY_LIVE_AVERAGES: PlayerLiveAverages = {
-  pts: 0,
-  reb: 0,
-  ast: 0,
-  stl: 0,
-  blk: 0,
-  to: 0,
-  pf: 0,
-  pctTir: 0,
-  pct3pts: 0,
-  pctLf: 0,
-};
-
-const EMPTY_LIVE_STATS: PlayerLiveStats = {
-  hasData: false,
-  totalRows: 0,
-  games: 0,
-  missedGames: 0,
-  attendancePct: 0,
-  totalMinutes: 0,
-  averageMinutes: 0,
-  totals: EMPTY_LIVE_TOTALS,
-  averages: EMPTY_LIVE_AVERAGES,
-  matches: [],
-  evolution: [],
-};
-
-
-const emptyBilan = (): PlayerBilan => ({
-  id: uid(),
-  date: new Date().toISOString().slice(0, 10),
-  type: "Fin de saison",
-  evaluator: "",
-  seasonTeamNote: 5,
-  seasonTeamWhy: "",
-  individualNote: 5,
-  individualWhy: "",
-  playerRatings: { physique: 5, technique: 5, tactique: 5, mental: 5, relationnel: 5 },
-  coachRatings: { physique: 5, technique: 5, tactique: 5, mental: 5, relationnel: 5 },
-  strengthsPhysical: "",
-  improvementsPhysical: "",
-  strengthsTechnical: "",
-  improvementsTechnical: "",
-  strengthsTactical: "",
-  improvementsTactical: "",
-  strengthsMental: "",
-  improvementsMental: "",
-  strengthsRelational: "",
-  improvementsRelational: "",
-  keepAtClub: "",
-  magicStructure: "",
-  magicBasket: "",
-  objectives: "",
-  method: "",
-  expectedRole: "",
-  boardingPartner: "",
-  familySummary: "",
-  schoolReview: "",
-  examsPreparation: "",
-  orientationChoices: "",
-  holidayPlanning: "",
-  offseasonPriority: "",
-  actionPlan1: "",
-  actionPlan2: "",
-  actionPlan3: "",
-  coachConclusion: "",
-});
-
-function uid() {
-  if (typeof crypto !== "undefined" && "randomUUID" in crypto) return crypto.randomUUID();
-  return `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+function startOfWeek(date: Date) {
+  const d = new Date(date);
+  const day = d.getDay() || 7;
+  d.setHours(0, 0, 0, 0);
+  d.setDate(d.getDate() - day + 1);
+  return d;
 }
 
-function storageKey(teamId: string, playerId: string, key: string) {
-  return `mybasket_player_${teamId}_${playerId}_${key}`;
+function endOfWeek(date: Date) {
+  const d = startOfWeek(date);
+  d.setDate(d.getDate() + 6);
+  d.setHours(23, 59, 59, 999);
+  return d;
 }
 
-function safeRead<T>(key: string, fallback: T): T {
-  if (typeof window === "undefined") return fallback;
+function getPeriodRange(period: TrainingPeriod, anchorDate: Date) {
+  const d = new Date(anchorDate);
+
+  if (period === "week") {
+    return { start: startOfWeek(d), end: endOfWeek(d) };
+  }
+
+  if (period === "month") {
+    return {
+      start: new Date(d.getFullYear(), d.getMonth(), 1, 0, 0, 0, 0),
+      end: new Date(d.getFullYear(), d.getMonth() + 1, 0, 23, 59, 59, 999),
+    };
+  }
+
+  return {
+    start: new Date(d.getFullYear(), 0, 1, 0, 0, 0, 0),
+    end: new Date(d.getFullYear(), 11, 31, 23, 59, 59, 999),
+  };
+}
+
+function addPeriod(anchorDate: Date, period: TrainingPeriod, amount: number) {
+  const d = new Date(anchorDate);
+
+  if (period === "week") d.setDate(d.getDate() + amount * 7);
+  if (period === "month") d.setMonth(d.getMonth() + amount);
+  if (period === "year") d.setFullYear(d.getFullYear() + amount);
+
+  return d;
+}
+
+function formatPeriodLabel(period: TrainingPeriod, anchorDate: Date) {
+  const { start, end } = getPeriodRange(period, anchorDate);
+
+  if (period === "week") {
+    return `${start.toLocaleDateString("fr-FR", { day: "2-digit", month: "short" })} – ${end.toLocaleDateString("fr-FR", { day: "2-digit", month: "short", year: "numeric" })}`;
+  }
+
+  if (period === "month") {
+    return anchorDate.toLocaleDateString("fr-FR", { month: "long", year: "numeric" });
+  }
+
+  return anchorDate.toLocaleDateString("fr-FR", { year: "numeric" });
+}
+
+function minutesToLabel(minutes: number) {
+  const total = Math.max(0, Math.round(minutes));
+  const h = Math.floor(total / 60);
+  const m = total % 60;
+
+  if (h && m) return `${h}h ${String(m).padStart(2, "0")}`;
+  if (h) return `${h}h`;
+  return `${m}min`;
+}
+
+function parseTrainingDate(row: Record<string, any>) {
+  return String(
+    row.session_date ||
+      row.event_date ||
+      row.date ||
+      row.scheduled_at ||
+      row.created_at ||
+      "",
+  );
+}
+
+function normalizeTrainingCategory(value: unknown) {
+  const raw = String(value || "").trim();
+  if (!raw) return "Autre";
+
+  const lower = raw.toLowerCase();
+  if (lower.includes("surnombre")) return "Surnombre";
+  if (lower.includes("pré") || lower.includes("pre") || lower.includes("collect")) return "Pré-collectif";
+  if (lower.includes("tir")) return "Tirs";
+  if (lower.includes("déf") || lower.includes("def")) return "Défense";
+  if (lower.includes("transition") || lower.includes("jeu rapide")) return "Transition / Jeu rapide";
+  if (lower.includes("1c1") || lower.includes("1v1") || lower.includes("situation")) return "1c1 / Situations";
+  if (lower.includes("dribble")) return "Dribble";
+  if (lower.includes("passe")) return "Passe";
+  if (lower.includes("phys")) return "Physique";
+  if (lower.includes("échauff") || lower.includes("echauff")) return "Échauffement";
+
+  return raw.charAt(0).toUpperCase() + raw.slice(1);
+}
+
+function parseTrainingMinutes(value: unknown) {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (!value) return 0;
+
+  const text = String(value).toLowerCase().replace(",", ".");
+  const hourMatch = text.match(/(\d+(?:\.\d+)?)\s*h/);
+  const minuteMatch = text.match(/(\d+(?:\.\d+)?)\s*(min|mn|minutes?)/);
+
+  if (hourMatch || minuteMatch) {
+    return Math.round((Number(hourMatch?.[1] || 0) * 60) + Number(minuteMatch?.[1] || 0));
+  }
+
+  const n = Number(text.replace(/[^\d.]/g, ""));
+  return Number.isFinite(n) ? n : 0;
+}
+
+function getTrainingSessionTitle(row: Record<string, any>) {
+  const content = readSessionContent(row);
+  return String(row.title || row.titre || row.name || row.theme || row.objectif || content?.theme || "Séance");
+}
+
+function extractTrainingItems(row: Record<string, any>) {
+  const content = readSessionContent(row);
+  const rawItems =
+    row.items ||
+    row.session_items ||
+    row.practice_session_items ||
+    row.exercices ||
+    row.exercises ||
+    row.blocks ||
+    content?.items ||
+    content?.session_items ||
+    [];
+
+  if (Array.isArray(rawItems) && rawItems.length > 0) {
+    return rawItems.map((item: any, index: number) => ({
+      id: String(item?.id || `${row.id || "session"}_item_${index}`),
+      category: normalizeTrainingCategory(
+        item?.category ||
+          item?.categorie ||
+          item?.theme ||
+          item?.type ||
+          item?.tag ||
+          item?.title ||
+          item?.titre,
+      ),
+      title: String(item?.title || item?.titre || item?.name || `Bloc ${index + 1}`),
+      minutes: parseTrainingMinutes(
+        item?.duration_minutes || item?.minutes || item?.duration || item?.temps || item?.time,
+      ),
+    }));
+  }
+
+  const themes = Array.isArray(row.themes)
+    ? row.themes
+    : Array.isArray(row.tags)
+      ? row.tags
+      : Array.isArray(content?.themes)
+        ? content.themes
+        : [];
+
+  if (themes.length > 0) {
+    const total = parseTrainingMinutes(row.duration_minutes || row.duration || row.temps || row.total_minutes || content?.total_minutes || content?.duration_minutes);
+    const split = total ? Math.round(total / themes.length) : 0;
+
+    return themes.map((theme: unknown, index: number) => ({
+      id: `${row.id || "session"}_theme_${index}`,
+      category: normalizeTrainingCategory(theme),
+      title: String(theme || `Bloc ${index + 1}`),
+      minutes: split,
+    }));
+  }
+
+  const category = normalizeTrainingCategory(row.category || row.categorie || row.theme || row.type || row.objectif || content?.theme);
+
+  return [
+    {
+      id: `${row.id || "session"}_main`,
+      category,
+      title: getTrainingSessionTitle(row),
+      minutes: parseTrainingMinutes(row.duration_minutes || row.duration || row.temps || row.total_minutes || content?.total_minutes || content?.duration_minutes),
+    },
+  ];
+}
+
+function normalizeTrainingSession(row: Record<string, any>): TrainingSession {
+  const content = readSessionContent(row);
+  const items = extractTrainingItems(row);
+  const rawDuration = parseTrainingMinutes(row.duration_minutes || row.duration || row.temps || row.total_minutes || content?.total_minutes || content?.duration_minutes);
+  const itemsDuration = items.reduce(
+    (sum: number, item: TrainingSessionItem) => sum + item.minutes,
+    0
+  );
+  const duration = rawDuration || itemsDuration;
+
+  const finalItems = items.map((item: TrainingSessionItem) => ({
+    ...item,
+    minutes: item.minutes || (items.length ? Math.round(duration / items.length) : duration),
+  }));
+
+  return {
+    id: String(row.id || crypto.randomUUID()),
+    title: getTrainingSessionTitle(row),
+    date: parseTrainingDate(row),
+    duration,
+    raw: row,
+    items: finalItems,
+  };
+}
+
+function sessionIsInRange(session: TrainingSession, start: Date, end: Date) {
+  const d = new Date(session.date);
+  if (Number.isNaN(d.getTime())) return false;
+  return d >= start && d <= end;
+}
+
+function buildTrainingSummary(sessions: TrainingSession[]) {
+  const totalMinutes = sessions.reduce((sum, session) => sum + session.duration, 0);
+  const categoryMap = new Map<string, { minutes: number; sessionIds: Set<string> }>();
+
+  sessions.forEach((session) => {
+    session.items.forEach((item) => {
+      const category = normalizeTrainingCategory(item.category);
+      if (!categoryMap.has(category)) {
+        categoryMap.set(category, { minutes: 0, sessionIds: new Set() });
+      }
+      const entry = categoryMap.get(category)!;
+      entry.minutes += item.minutes;
+      entry.sessionIds.add(session.id);
+    });
+  });
+
+  return Array.from(categoryMap.entries())
+    .map<TrainingCategorySummary>(([category, entry]) => ({
+      category,
+      minutes: Math.round(entry.minutes),
+      pct: totalMinutes ? Math.round((entry.minutes / totalMinutes) * 1000) / 10 : 0,
+      sessions: entry.sessionIds.size,
+    }))
+    .sort((a, b) => b.minutes - a.minutes);
+}
+
+function TrainingDonut({ rows, totalMinutes }: { rows: TrainingCategorySummary[]; totalMinutes: number }) {
+  let offset = 0;
+  const radius = 48;
+  const circumference = 2 * Math.PI * radius;
+
+  return (
+    <div className="training-donut-wrap">
+      <svg viewBox="0 0 140 140" className="training-donut" aria-label="Répartition des entraînements">
+        <circle cx="70" cy="70" r={radius} fill="none" stroke="#f1e8dd" strokeWidth="22" />
+        {rows.map((row, index) => {
+          const dash = totalMinutes ? (row.minutes / totalMinutes) * circumference : 0;
+          const strokeDasharray = `${dash} ${circumference - dash}`;
+          const strokeDashoffset = -offset;
+          offset += dash;
+
+          return (
+            <circle
+              key={row.category}
+              cx="70"
+              cy="70"
+              r={radius}
+              fill="none"
+              stroke={TRAINING_CATEGORY_COLORS[index % TRAINING_CATEGORY_COLORS.length]}
+              strokeWidth="22"
+              strokeDasharray={strokeDasharray}
+              strokeDashoffset={strokeDashoffset}
+              strokeLinecap="butt"
+              transform="rotate(-90 70 70)"
+            />
+          );
+        })}
+      </svg>
+
+      <div className="training-donut-center">
+        <strong>{minutesToLabel(totalMinutes)}</strong>
+        <span>Total</span>
+      </div>
+    </div>
+  );
+}
+
+function isUuidValue(value: string | null | undefined) {
+  return (
+    !!value &&
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value)
+  );
+}
+
+function readSessionContent(row: Record<string, any>) {
+  const direct = row.session_content || row.content_json || row.content;
+
+  if (!direct) {
+    try {
+      const parsedNotes = typeof row.notes === "string" ? JSON.parse(row.notes) : row.notes;
+      return parsedNotes && typeof parsedNotes === "object" ? parsedNotes : null;
+    } catch {
+      return null;
+    }
+  }
+
+  if (typeof direct === "string") {
+    try {
+      return JSON.parse(direct);
+    } catch {
+      return null;
+    }
+  }
+
+  return direct;
+}
+
+
+function getSessionSavedHtml(session: TrainingSession) {
+  const raw = session.raw || {};
+  const content = readSessionContent(raw) || {};
+  return String(raw.pdf_html || raw.pdfHtml || content.pdf_html || content.pdfHtml || "");
+}
+
+type Html2PdfWorker = {
+  set: (options: Record<string, unknown>) => Html2PdfWorker;
+  from: (source: HTMLElement | string) => Html2PdfWorker;
+  outputPdf: (type: "blob") => Promise<Blob>;
+  save: (filename?: string) => Promise<void>;
+};
+
+type Html2PdfFactory = () => Html2PdfWorker;
+
+declare global {
+  interface Window {
+    html2pdf?: Html2PdfFactory;
+  }
+}
+
+function safeFileName(value: string) {
+  return String(value || "fiche-seance")
+    .normalize("NFD")
+    .replace(/[̀-ͯ]/g, "")
+    .replace(/[^a-zA-Z0-9-_]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .toLowerCase();
+}
+
+function htmlForPdf(html: string) {
+  return html
+    .replace(/<script[\s\S]*?<\/script>/gi, "")
+    .replace(/window\.print\(\)/g, "");
+}
+
+function htmlForPreview(html: string) {
+  const extra = `
+    <style>
+      html,body{max-width:100%!important;overflow-x:hidden!important;background:#fff!important;}
+      .page{width:100%!important;max-width:1120px!important;min-height:auto!important;margin:0 auto!important;}
+      img{max-width:100%;}
+    </style>
+  `;
+
+  if (html.includes("</head>")) return html.replace("</head>", `${extra}</head>`);
+  return `${extra}${html}`;
+}
+
+async function loadHtml2Pdf() {
+  if (typeof window === "undefined") {
+    throw new Error("Génération PDF disponible uniquement dans le navigateur.");
+  }
+
+  if (window.html2pdf) return window.html2pdf;
+
+  await new Promise<void>((resolve, reject) => {
+    const existing = document.querySelector<HTMLScriptElement>("script[data-html2pdf]");
+
+    if (existing) {
+      existing.addEventListener("load", () => resolve(), { once: true });
+      existing.addEventListener("error", () => reject(new Error("Chargement html2pdf impossible.")), { once: true });
+      return;
+    }
+
+    const script = document.createElement("script");
+    script.src = "https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js";
+    script.async = true;
+    script.dataset.html2pdf = "true";
+    script.onload = () => resolve();
+    script.onerror = () => reject(new Error("Chargement html2pdf impossible."));
+    document.head.appendChild(script);
+  });
+
+  if (!window.html2pdf) throw new Error("html2pdf n'est pas disponible.");
+  return window.html2pdf;
+}
+
+async function createPdfBlobFromHtml(html: string) {
+  const html2pdf = await loadHtml2Pdf();
+  const holder = document.createElement("div");
+  holder.style.position = "fixed";
+  holder.style.left = "-10000px";
+  holder.style.top = "0";
+  holder.style.width = "1120px";
+  holder.innerHTML = htmlForPdf(html);
+  document.body.appendChild(holder);
 
   try {
-    const raw = window.localStorage.getItem(key);
-    if (!raw) return fallback;
-    return JSON.parse(raw) as T;
-  } catch {
-    return fallback;
+    const page = holder.querySelector<HTMLElement>(".page") || holder;
+    return await html2pdf()
+      .set({
+        margin: 0,
+        filename: "fiche-seance.pdf",
+        image: { type: "jpeg", quality: 0.98 },
+        html2canvas: { scale: 2, useCORS: true, backgroundColor: "#ffffff" },
+        jsPDF: { unit: "px", format: [1120, 790], orientation: "landscape" },
+        pagebreak: { mode: ["avoid-all", "css", "legacy"] },
+      })
+      .from(page)
+      .outputPdf("blob");
+  } finally {
+    holder.remove();
   }
 }
 
-function safeWrite<T>(key: string, value: T) {
-  if (typeof window === "undefined") return;
+function downloadBlob(filename: string, blob: Blob) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
 
-  try {
-    window.localStorage.setItem(key, JSON.stringify(value));
-  } catch {
-    // no-op
+async function downloadFileFromUrl(url: string, filename: string) {
+  const response = await fetch(url);
+  if (!response.ok) throw new Error("Téléchargement impossible.");
+  const blob = await response.blob();
+  downloadBlob(filename, blob);
+}
+
+function TrainingAnalysisBlock({
+  teamId,
+  fallbackTeamId,
+  team,
+}: {
+  teamId: string;
+  fallbackTeamId: string;
+  team: Team;
+}) {
+  const supabase = createClient();
+  const [period, setPeriod] = useState<TrainingPeriod>("week");
+  const [anchorDate, setAnchorDate] = useState(new Date());
+  const [loading, setLoading] = useState(true);
+  const [sessions, setSessions] = useState<TrainingSession[]>([]);
+  const [selectedSession, setSelectedSession] = useState<TrainingSession | null>(null);
+  const [sessionPreviewHtml, setSessionPreviewHtml] = useState<string | null>(null);
+
+  const teamIdCandidates = useMemo(() => getTeamIdCandidates(fallbackTeamId, team), [fallbackTeamId, team]);
+
+  async function loadSessions() {
+    setLoading(true);
+
+    try {
+      const candidateIds = compactStrings([teamId, fallbackTeamId, ...teamIdCandidates]);
+      const uuidCandidateIds = candidateIds.filter(isUuidValue);
+      let rows: Record<string, any>[] = [];
+
+      const queryAttempts: Array<{ column: string; ids: string[] }> = [
+        { column: "team_reference_id", ids: candidateIds },
+        { column: "team_local_id", ids: candidateIds },
+        { column: "team_id", ids: uuidCandidateIds },
+        { column: "equipe_id", ids: candidateIds },
+        { column: "associated_team_id", ids: candidateIds },
+        { column: "club_team_id", ids: candidateIds },
+      ].filter((attempt) => attempt.ids.length > 0);
+
+      for (const attempt of queryAttempts) {
+        const { data, error } = await supabase
+          .from("practice_sessions")
+          .select("*")
+          .in(attempt.column, attempt.ids)
+          .order("session_date", { ascending: false });
+
+        if (!error && data && data.length > 0) {
+          rows = data as Record<string, any>[];
+          break;
+        }
+      }
+
+      // Fallback owner : récupère les séances privées du coach puis filtre côté client
+      // avec team_local_id, team_id, notes JSON ou session_content.
+      if (rows.length === 0) {
+        const { data: userData } = await supabase.auth.getUser();
+        const ownerId = userData.user?.id;
+
+        if (ownerId) {
+          const { data, error } = await supabase
+            .from("practice_sessions")
+            .select("*")
+            .or(`owner_id.eq.${ownerId},user_id.eq.${ownerId}`)
+            .order("session_date", { ascending: false });
+
+          if (!error && data) {
+            rows = (data as Record<string, any>[]).filter((row) => {
+              const content = readSessionContent(row);
+              const possibleIds = compactStrings([
+                row.team_id,
+                row.team_reference_id,
+                row.team_local_id,
+                row.teamId,
+                row.equipe_id,
+                row.equipeId,
+                content?.team_local_id,
+                content?.team_reference_id,
+                content?.team_id,
+                content?.team?.id,
+              ]);
+
+              return possibleIds.some((value) => candidateIds.includes(value));
+            });
+          }
+        }
+      }
+
+      const sessionIds = rows.map((row) => String(row.id || "")).filter(Boolean);
+      let itemRows: Record<string, any>[] = [];
+
+      if (sessionIds.length > 0) {
+        for (const table of ["practice_session_exercises", "practice_session_items", "session_items"]) {
+          const { data, error } = await supabase
+            .from(table)
+            .select("*")
+            .in("session_id", sessionIds)
+            .order("sort_order", { ascending: true });
+
+          if (!error && data && data.length > 0) {
+            itemRows = data as Record<string, any>[];
+            break;
+          }
+        }
+      }
+
+      if (itemRows.length > 0) {
+        const exerciseIds = compactStrings(itemRows.map((item) => item.exercise_id));
+        if (exerciseIds.length > 0) {
+          const { data: exerciseDefinitions } = await supabase
+            .from("exercises")
+            .select("id,title,theme,type,category")
+            .in("id", exerciseIds);
+          const exerciseById = new Map(
+            ((exerciseDefinitions ?? []) as Record<string, any>[]).map((exercise) => [String(exercise.id), exercise]),
+          );
+          itemRows = itemRows.map((item) => {
+            const definition = exerciseById.get(String(item.exercise_id || ""));
+            return {
+              ...item,
+              category: item.category || item.theme || definition?.theme || definition?.type || definition?.category || "Autre",
+              theme: item.theme || definition?.theme || definition?.type || null,
+              title: item.title || definition?.title || "Exercice",
+            };
+          });
+        }
+
+        const bySession = itemRows.reduce((acc: Record<string, any[]>, item) => {
+          const sessionId = String(item.session_id || item.practice_session_id || "");
+          if (!sessionId) return acc;
+          if (!acc[sessionId]) acc[sessionId] = [];
+          acc[sessionId].push(item);
+          return acc;
+        }, {});
+
+        rows = rows.map((row) => {
+          const content = readSessionContent(row);
+
+          return {
+            ...row,
+            session_content: content || row.session_content,
+            items:
+              bySession[String(row.id)] ||
+              row.items ||
+              content?.items ||
+              content?.session_items ||
+              [],
+          };
+        });
+      } else {
+        rows = rows.map((row) => {
+          const content = readSessionContent(row);
+          return {
+            ...row,
+            session_content: content || row.session_content,
+            items: row.items || content?.items || content?.session_items || [],
+            duration_minutes:
+              row.duration_minutes ||
+              row.total_minutes ||
+              content?.total_minutes ||
+              content?.duration_minutes,
+          };
+        });
+      }
+
+      if (rows.length === 0 && typeof window !== "undefined") {
+        const keys = ["mybasket_team_practice_sessions", "mybasket_sessions", "mybasket_seances", "practice_sessions"];
+        for (const key of keys) {
+          try {
+            const parsed = JSON.parse(window.localStorage.getItem(key) || "[]");
+            if (Array.isArray(parsed) && parsed.length > 0) {
+              rows = parsed.filter((row: any) => {
+                const content = readSessionContent(row) || {};
+                const possibleIds = compactStrings([
+                  row.team_id,
+                  row.team_reference_id,
+                  row.teamId,
+                  row.team_local_id,
+                  row.equipe_id,
+                  row.equipeId,
+                  content.team_local_id,
+                  content.team_id,
+                  content.team?.id,
+                ]);
+                return possibleIds.some((value) => candidateIds.includes(value));
+              });
+              if (rows.length > 0) break;
+            }
+          } catch {}
+        }
+      }
+
+      setSessions(rows.map(normalizeTrainingSession));
+    } catch (error) {
+      console.error("Erreur chargement séances équipe :", error);
+      setSessions([]);
+    } finally {
+      setLoading(false);
+    }
   }
-}
 
-function stars(n: number) {
-  const full = Math.floor(n || 0);
-  const half = (n || 0) - full >= 0.5;
-  return "★".repeat(full) + (half ? "½" : "") + "☆".repeat(5 - full - (half ? 1 : 0));
-}
+  useEffect(() => {
+    loadSessions();
+  }, [teamId, fallbackTeamId, teamIdCandidates.join("|")]);
 
-function fmtDate(iso: string) {
-  const d = new Date(iso);
-  if (isNaN(+d)) return iso;
-  return d.toLocaleDateString("fr-FR", { day: "2-digit", month: "short", year: "numeric" });
-}
+  const range = useMemo(() => getPeriodRange(period, anchorDate), [period, anchorDate]);
+  const periodSessions = useMemo(
+    () => sessions.filter((session) => sessionIsInRange(session, range.start, range.end)),
+    [sessions, range.start, range.end],
+  );
+  const totalMinutes = useMemo(
+    () => periodSessions.reduce((sum, session) => sum + session.duration, 0),
+    [periodSessions],
+  );
+  const summary = useMemo(() => buildTrainingSummary(periodSessions), [periodSessions]);
 
-function parseBirthDate(value: string | null | undefined): Date | null {
-  const raw = String(value ?? "").trim();
-  if (!raw) return null;
+  async function deleteSession(session: TrainingSession) {
+    if (!confirm(`Supprimer la séance "${session.title}" ?`)) return;
 
-  let year: number;
-  let month: number;
-  let day: number;
+    const { error } = await supabase.from("practice_sessions").delete().eq("id", session.id);
 
-  const iso = raw.match(/^(\d{4})-(\d{2})-(\d{2})$/);
-  const fr = raw.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+    if (error) {
+      console.error("Erreur suppression séance :", error);
+      alert("Impossible de supprimer cette séance. Vérifie les droits Supabase/RLS.");
+      return;
+    }
 
-  if (iso) {
-    year = Number(iso[1]);
-    month = Number(iso[2]);
-    day = Number(iso[3]);
-  } else if (fr) {
-    day = Number(fr[1]);
-    month = Number(fr[2]);
-    year = Number(fr[3]);
-  } else {
-    return null;
+    setSessions((prev) => prev.filter((item) => item.id !== session.id));
+    setSelectedSession(null);
   }
 
-  const date = new Date(year, month - 1, day, 12, 0, 0, 0);
+  function buildSessionDocumentHtml(session: TrainingSession, shouldPrint = false) {
+    const savedHtml = getSessionSavedHtml(session);
+    if (savedHtml) {
+      if (!shouldPrint) return savedHtml;
+      return savedHtml.includes("</body>")
+        ? savedHtml.replace("</body>", `<script>window.onload=function(){setTimeout(function(){window.print()},400)}</script></body>`)
+        : `${savedHtml}<script>window.onload=function(){setTimeout(function(){window.print()},400)}</script>`;
+    }
 
-  if (
-    date.getFullYear() !== year ||
-    date.getMonth() !== month - 1 ||
-    date.getDate() !== day
-  ) {
-    return null;
+    const itemsRows = session.items
+      .map(
+        (item) => `
+          <tr>
+            <td>${item.category}</td>
+            <td><strong>${item.title}</strong></td>
+            <td>${minutesToLabel(item.minutes)}</td>
+          </tr>
+        `,
+      )
+      .join("");
+
+    return `
+      <!doctype html>
+      <html>
+        <head>
+          <meta charset="utf-8" />
+          <title>${session.title}</title>
+          <style>
+            *{box-sizing:border-box}
+            body{margin:0;background:#f7f2eb;font-family:Arial,sans-serif;color:#1f171a}
+            .page{width:1120px;min-height:790px;margin:0 auto;background:white;padding:28px}
+            .header{display:grid;grid-template-columns:120px 1fr 120px;align-items:center;border-bottom:3px solid #111;padding-bottom:18px}
+            .logo{width:96px;height:74px;display:grid;place-items:center;border:2px solid #eadccc;border-radius:16px;color:#6b1a2c;font-weight:900}
+            .title{text-align:center}.title h1{margin:0 0 10px;color:#6b1a2c;font-size:40px;letter-spacing:4px;text-transform:uppercase}.title p{margin:4px 0;color:#6f625d;text-transform:uppercase;font-weight:800;font-size:13px}
+            .summary{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin:22px 0}.box{border:1px solid #eadccc;border-radius:16px;padding:14px;background:#fff8ef}.box span{display:block;color:#9a8a82;text-transform:uppercase;font-size:11px;font-weight:900}.box b{display:block;color:#1f171a;font-size:20px;margin-top:4px}
+            table{width:100%;border-collapse:collapse;border:2px solid #111;margin-top:18px}th{background:#f8f1e8;color:#6b1a2c;text-transform:uppercase;font-size:12px;letter-spacing:1px}th,td{border:1px solid #e4d7c7;padding:13px;text-align:left}td:nth-child(3){font-weight:900;color:#6b1a2c}
+            .footer{margin-top:18px;text-align:center;color:#9a8a82;font-size:12px;text-transform:uppercase;letter-spacing:1px}
+            .actions{position:sticky;top:0;background:#fff;padding:12px;text-align:right;border-bottom:1px solid #eadccc}.actions button{border:0;border-radius:999px;background:#6b1a2c;color:white;font-weight:900;padding:12px 18px;cursor:pointer;margin-left:8px}
+            @media print{body{background:#fff;-webkit-print-color-adjust:exact;print-color-adjust:exact}.actions{display:none}.page{width:100%;margin:0;padding:10mm}}
+          </style>
+        </head>
+        <body>
+          <div class="actions"><button onclick="window.print()">Télécharger / imprimer en PDF</button></div>
+          <div class="page">
+            <div class="header">
+              <div class="logo">MyBasket</div>
+              <div class="title">
+                <h1>Practice Plan</h1>
+                <p><strong>Équipe :</strong> ${team.name}</p>
+                <p><strong>Date :</strong> ${formatMatchDate(session.date)}</p>
+              </div>
+              <div class="logo">Club</div>
+            </div>
+            <div class="summary">
+              <div class="box"><span>Séance</span><b>${session.title}</b></div>
+              <div class="box"><span>Durée totale</span><b>${minutesToLabel(session.duration)}</b></div>
+              <div class="box"><span>Blocs</span><b>${session.items.length}</b></div>
+              <div class="box"><span>Date</span><b>${formatMatchDate(session.date)}</b></div>
+            </div>
+            <table>
+              <thead><tr><th>Catégorie</th><th>Bloc travaillé</th><th>Durée</th></tr></thead>
+              <tbody>${itemsRows}</tbody>
+            </table>
+            <div class="footer">${team.name} · Fiche séance générée avec MyBasket</div>
+          </div>
+          ${shouldPrint ? `<script>window.onload=function(){setTimeout(function(){window.print()},400)}</script>` : ""}
+        </body>
+      </html>
+    `;
   }
 
-  return date;
+  function printHtmlWithoutPopup(html: string) {
+    const iframe = document.createElement("iframe");
+    iframe.style.position = "fixed";
+    iframe.style.right = "0";
+    iframe.style.bottom = "0";
+    iframe.style.width = "0";
+    iframe.style.height = "0";
+    iframe.style.border = "0";
+    document.body.appendChild(iframe);
+
+    const doc = iframe.contentWindow?.document;
+    if (!doc) return;
+
+    doc.open();
+    doc.write(html);
+    doc.close();
+
+    setTimeout(() => {
+      iframe.contentWindow?.focus();
+      iframe.contentWindow?.print();
+      setTimeout(() => iframe.remove(), 1200);
+    }, 350);
+  }
+
+  function openSessionDocument(session: TrainingSession, shouldPrint = false) {
+    const pdfUrl = String(session.raw?.pdf_url || session.raw?.pdfUrl || "");
+    const html = buildSessionDocumentHtml(session, shouldPrint);
+
+    if (pdfUrl && !shouldPrint) {
+      setSessionPreviewHtml(`<iframe src="${pdfUrl}" style="width:100%;height:100%;border:0"></iframe>`);
+      return;
+    }
+
+    if (shouldPrint) {
+      printHtmlWithoutPopup(html);
+      return;
+    }
+
+    setSessionPreviewHtml(htmlForPreview(html));
+  }
+
+  function viewSession(session: TrainingSession) {
+    if (typeof window === "undefined") return;
+
+    const url = `/seances/apercu/${encodeURIComponent(session.id)}`;
+    window.open(url, "_blank", "noopener,noreferrer");
+  }
+
+  async function downloadSession(session: TrainingSession) {
+    const pdfUrl = String(session.raw?.pdf_url || session.raw?.pdfUrl || session.raw?.attachment_url || "");
+    const filename = `${safeFileName(`${team.name}-${session.title}`)}.pdf`;
+
+    try {
+      if (pdfUrl) {
+        await downloadFileFromUrl(pdfUrl, filename);
+        return;
+      }
+
+      const html = buildSessionDocumentHtml(session, false);
+      const pdfBlob = await createPdfBlobFromHtml(html);
+      downloadBlob(filename, pdfBlob);
+    } catch (error) {
+      console.error("Téléchargement PDF séance impossible:", error);
+      alert("Impossible de télécharger le PDF. Essaie avec le bouton Imprimer > Enregistrer en PDF.");
+    }
+  }
+
+  function printSession(session: TrainingSession) {
+    openSessionDocument(session, true);
+  }
+
+  return (
+    <section className="tl-card training-card">
+      <div className="training-head">
+        <div>
+          <p className="eyebrow">Suivi automatique</p>
+          <h2>Analyse des entraînements</h2>
+          <p className="muted">Toutes les données sont calculées depuis les séances générées et liées à cette équipe.</p>
+        </div>
+        <button className="tl-btn tl-btn-bx training-refresh-btn" type="button" onClick={loadSessions}>↻ Actualiser</button>
+      </div>
+
+      <div className="training-periodbar">
+        <div className="period-buttons">
+          <button className={period === "week" ? "on" : ""} onClick={() => setPeriod("week")}>Semaine</button>
+          <button className={period === "month" ? "on" : ""} onClick={() => setPeriod("month")}>Mois</button>
+          <button className={period === "year" ? "on" : ""} onClick={() => setPeriod("year")}>Année</button>
+        </div>
+        <div className="period-nav">
+          <button onClick={() => setAnchorDate((d) => addPeriod(d, period, -1))}>‹</button>
+          <strong>{formatPeriodLabel(period, anchorDate)}</strong>
+          <button onClick={() => setAnchorDate((d) => addPeriod(d, period, 1))}>›</button>
+        </div>
+        <div className="training-total">
+          <span>Durée totale</span>
+          <b>{minutesToLabel(totalMinutes)}</b>
+          <em>{periodSessions.length} séance{periodSessions.length > 1 ? "s" : ""}</em>
+        </div>
+      </div>
+
+      {loading ? (
+        <div className="empty">Chargement des séances...</div>
+      ) : periodSessions.length === 0 ? (
+        <div className="empty">Aucune séance liée à cette équipe sur cette période.</div>
+      ) : (
+        <>
+          <div className="training-grid">
+            <div className="training-donut-card">
+              <h3>Répartition par catégorie</h3>
+              <div className="training-donut-layout">
+                <TrainingDonut rows={summary} totalMinutes={totalMinutes} />
+                <div className="training-legend">
+                  {summary.map((row, index) => (
+                    <div key={row.category} className="legend-line">
+                      <span style={{ background: TRAINING_CATEGORY_COLORS[index % TRAINING_CATEGORY_COLORS.length] }} />
+                      <strong>{row.category}</strong>
+                      <b>{row.pct}%</b>
+                      <em>{minutesToLabel(row.minutes)}</em>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+
+            <div className="training-sessions-card">
+              <h3>Séances de la période</h3>
+              <div className="training-session-list">
+                {periodSessions.map((session) => (
+                  <button key={session.id} className="training-session-row" onClick={() => setSelectedSession(session)}>
+                    <span>{formatMatchDate(session.date)}</span>
+                    <strong>{session.title}</strong>
+                    <em>{minutesToLabel(session.duration)}</em>
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+
+          <div className="training-table-wrap">
+            <h3>Récapitulatif détaillé</h3>
+            <table className="training-table">
+              <thead>
+                <tr>
+                  <th>Catégorie</th>
+                  <th>Durée</th>
+                  <th>Pourcentage</th>
+                  <th>Nombre de séances</th>
+                  <th>Durée moyenne / séance</th>
+                </tr>
+              </thead>
+              <tbody>
+                {summary.map((row, index) => (
+                  <tr key={row.category}>
+                    <td><span className="dot" style={{ background: TRAINING_CATEGORY_COLORS[index % TRAINING_CATEGORY_COLORS.length] }} />{row.category}</td>
+                    <td>{minutesToLabel(row.minutes)}</td>
+                    <td><span className="bar"><i style={{ width: `${Math.min(100, row.pct)}%`, background: TRAINING_CATEGORY_COLORS[index % TRAINING_CATEGORY_COLORS.length] }} /></span>{row.pct}%</td>
+                    <td>{row.sessions}</td>
+                    <td>{minutesToLabel(row.sessions ? row.minutes / row.sessions : 0)}</td>
+                  </tr>
+                ))}
+                <tr className="total-row">
+                  <td>Total</td>
+                  <td>{minutesToLabel(totalMinutes)}</td>
+                  <td>100%</td>
+                  <td>{periodSessions.length}</td>
+                  <td>—</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </>
+      )}
+
+      {selectedSession && (
+        <div className="training-modal-backdrop" onClick={() => setSelectedSession(null)}>
+          <div className="training-modal" onClick={(e) => e.stopPropagation()}>
+            <div className="training-modal-head">
+              <div>
+                <h3>{selectedSession.title}</h3>
+                <p>{formatMatchDate(selectedSession.date)} · {minutesToLabel(selectedSession.duration)}</p>
+              </div>
+              <button onClick={() => setSelectedSession(null)}>×</button>
+            </div>
+
+            <table className="training-table compact">
+              <thead><tr><th>Catégorie</th><th>Bloc</th><th>Durée</th></tr></thead>
+              <tbody>
+                {selectedSession.items.map((item) => (
+                  <tr key={item.id}><td>{item.category}</td><td>{item.title}</td><td>{minutesToLabel(item.minutes)}</td></tr>
+                ))}
+              </tbody>
+            </table>
+
+            <div className="training-modal-actions">
+              <button onClick={() => viewSession(selectedSession)}>Visualiser</button>
+              <button onClick={() => downloadSession(selectedSession)}>Télécharger PDF</button>
+              <button onClick={() => printSession(selectedSession)}>Imprimer</button>
+              <button className="danger" onClick={() => deleteSession(selectedSession)}>Supprimer</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {sessionPreviewHtml && (
+        <div className="training-modal-backdrop" onClick={() => setSessionPreviewHtml(null)}>
+          <div className="training-preview-modal" onClick={(e) => e.stopPropagation()}>
+            <div className="training-modal-head">
+              <div>
+                <h3>Fiche séance</h3>
+                <p>Visualisation complète sans popup</p>
+              </div>
+              <button onClick={() => setSessionPreviewHtml(null)}>×</button>
+            </div>
+            <iframe title="Fiche séance" srcDoc={sessionPreviewHtml} />
+          </div>
+        </div>
+      )}
+
+
+      <style jsx>{`
+        .training-card{margin-top:1.2rem}.training-refresh-btn{min-width:205px!important;min-height:54px!important;padding:0 24px!important;font-size:.92rem!important;box-shadow:0 12px 28px rgba(107,26,44,.24)!important}.training-head{display:flex;justify-content:space-between;gap:1rem;align-items:flex-start;margin-bottom:1rem}.eyebrow{margin:0;color:#d4a24c;font-size:.78rem;font-weight:900;text-transform:uppercase;letter-spacing:.06em}h2{margin:.15rem 0 0;color:#6b1a2c;font-size:1.55rem;font-weight:950}.muted{margin:.25rem 0 0;color:#9a8a82;font-weight:700}.training-periodbar{display:grid;grid-template-columns:auto 1fr auto;gap:1rem;align-items:center;border:1px solid #efe6db;background:#fff8ef;border-radius:22px;padding:.9rem;margin-bottom:1rem}.period-buttons{display:flex;gap:.45rem}.period-buttons button,.period-nav button{border:1px solid #eadccc;background:#fff;color:#6b1a2c;border-radius:12px;padding:.65rem .9rem;font-weight:950;cursor:pointer}.period-buttons button.on{background:#6b1a2c;color:#fff;border-color:#6b1a2c}.period-nav{display:flex;align-items:center;justify-content:center;gap:.65rem;color:#24171b}.period-nav strong{text-transform:capitalize}.training-total{display:flex;flex-direction:column;align-items:flex-end}.training-total span,.training-total em{color:#9a8a82;font-size:.8rem;font-weight:900;text-transform:uppercase}.training-total b{font-size:1.35rem;color:#1f171a}.training-grid{display:grid;grid-template-columns:1.25fr .85fr;gap:1rem}.training-donut-card,.training-sessions-card,.training-table-wrap{border:1px solid #efe6db;border-radius:20px;background:#fff;padding:1rem;box-shadow:0 10px 24px rgba(60,30,20,.045)}.training-donut-card h3,.training-sessions-card h3,.training-table-wrap h3{margin:0 0 .9rem;color:#6b1a2c}.training-donut-layout{display:grid;grid-template-columns:280px 1fr;gap:1rem;align-items:center}.training-donut-wrap{position:relative;width:260px;height:260px;display:grid;place-items:center}.training-donut{width:260px;height:260px}.training-donut-center{position:absolute;text-align:center}.training-donut-center strong{display:block;color:#1f171a;font-size:1.7rem}.training-donut-center span{color:#9a8a82;font-weight:900}.training-legend{display:flex;flex-direction:column;gap:.55rem}.legend-line{display:grid;grid-template-columns:12px 1fr auto auto;gap:.65rem;align-items:center;padding:.55rem 0;border-bottom:1px solid #f0e7dc}.legend-line span,.training-table .dot{width:10px;height:10px;border-radius:999px;display:inline-block}.legend-line strong{color:#1f171a}.legend-line b{color:#6b1a2c}.legend-line em{color:#9a8a82;font-style:normal;font-weight:800}.training-session-list{display:flex;flex-direction:column;gap:.5rem;max-height:320px;overflow:auto}.training-session-row{display:grid;grid-template-columns:90px 1fr auto;gap:.65rem;align-items:center;text-align:left;border:1px solid #efe6db;background:#fff;border-radius:14px;padding:.75rem;cursor:pointer}.training-session-row:hover{border-color:#d4a24c;box-shadow:0 8px 18px rgba(60,30,20,.06)}.training-session-row span{color:#9a8a82;font-weight:900}.training-session-row strong{color:#1f171a}.training-session-row em{font-style:normal;color:#6b1a2c;font-weight:950}.training-table-wrap{margin-top:1rem;overflow:auto}.training-table{width:100%;border-collapse:collapse;font-size:.9rem}.training-table th{background:#fff8ef;color:#6b1a2c;text-align:left;font-size:.78rem;text-transform:uppercase;letter-spacing:.04em}.training-table th,.training-table td{padding:.8rem;border-bottom:1px solid #f0e7dc}.training-table td:first-child{font-weight:900;color:#1f171a}.training-table .dot{margin-right:.5rem;vertical-align:middle}.bar{display:inline-flex;width:88px;height:8px;border-radius:999px;background:#f1e8dd;margin-right:.55rem;overflow:hidden}.bar i{display:block;height:100%;border-radius:999px}.total-row td{font-weight:950;background:#fffdf9}.empty{padding:1.2rem;border:1px dashed #eadccc;border-radius:18px;background:#fffdf9;color:#9a8a82;font-weight:900}.training-modal-backdrop{position:fixed;inset:0;z-index:1000;background:rgba(17,24,39,.45);display:grid;place-items:center;padding:1rem}.training-modal{width:min(760px,96vw);max-height:90vh;overflow:auto;background:#fff;border-radius:24px;padding:1.2rem;box-shadow:0 24px 80px rgba(0,0,0,.3)}.training-preview-modal{width:min(1240px,96vw);height:92vh;background:#fff;border-radius:24px;padding:1.2rem;box-shadow:0 24px 80px rgba(0,0,0,.3);display:flex;flex-direction:column}.training-preview-modal iframe{flex:1;width:100%;border:1px solid #eadccc;border-radius:16px;background:#fff;min-height:0} .training-modal-head{display:flex;justify-content:space-between;gap:1rem;align-items:flex-start;margin-bottom:1rem}.training-modal-head h3{margin:0;color:#6b1a2c;font-size:1.4rem}.training-modal-head p{margin:.2rem 0 0;color:#9a8a82;font-weight:800}.training-modal-head button{border:0;background:#6b1a2c;color:#fff;width:34px;height:34px;border-radius:999px;font-size:1.3rem;cursor:pointer}.training-table.compact th,.training-table.compact td{padding:.65rem}.training-modal-actions{display:flex;justify-content:flex-end;gap:.6rem;margin-top:1rem}.training-modal-actions button{border:1px solid #eadccc;background:#fff;color:#6b1a2c;border-radius:999px;padding:.7rem 1rem;font-weight:950;cursor:pointer}.training-modal-actions .danger{background:#fee2e2;border-color:#fecaca;color:#b91c1c}@media(max-width:1050px){.training-periodbar,.training-grid,.training-donut-layout{grid-template-columns:1fr}.training-total{align-items:flex-start}.training-donut-wrap{margin:auto}}@media(max-width:640px){.training-head{flex-direction:column}.period-buttons{flex-wrap:wrap}.training-session-row{grid-template-columns:1fr}.training-modal-actions{flex-direction:column}.training-modal-actions button{width:100%}}
+      `}</style>
+    </section>
+  );
 }
 
-function formatBirthDate(value: string | null | undefined): string {
-  const date = parseBirthDate(value);
-  if (!date) return value ? String(value) : "—";
+/* ---------- BLOCS STATS FICHE ÉQUIPE : intégrés dans ce fichier pour éviter les erreurs d'import ---------- */
 
-  return date.toLocaleDateString("fr-FR", {
+type SupaStatRow = {
+  team_id?: string | null;
+  player_id?: string | null;
+  match_id?: string | null;
+  pts?: number | null;
+  p2m?: number | null;
+  p2a?: number | null;
+  p3m?: number | null;
+  p3a?: number | null;
+  ftm?: number | null;
+  fta?: number | null;
+  off_reb?: number | null;
+  def_reb?: number | null;
+  reb?: number | null;
+  ast?: number | null;
+  stl?: number | null;
+  blk?: number | null;
+  turnovers?: number | null;
+  pf?: number | null;
+  present?: boolean | null;
+};
+
+type SupaMatchRow = {
+  id: string;
+  team_id?: string | null;
+  opponent: string | null;
+  match_date: string | null;
+  us_score: number | null;
+  them_score: number | null;
+  result?: string | null;
+  home: boolean | null;
+};
+
+function downloadText(filename: string, text: string, type = "text/plain") {
+  const blob = new Blob([text], { type });
+  const a = document.createElement("a");
+
+  a.href = URL.createObjectURL(blob);
+  a.download = filename;
+  a.click();
+
+  URL.revokeObjectURL(a.href);
+}
+
+const safeNum = (value: unknown) => {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : 0;
+};
+
+const r1 = (value: number) => Math.round(value * 10) / 10;
+
+const pctText = (made: number, attempted: number) =>
+  attempted ? `${r1((made / attempted) * 100)}%` : "0%";
+
+function formatMatchDate(value: string | null) {
+  if (!value) return "—";
+
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return value;
+
+  return d.toLocaleDateString("fr-FR", {
     day: "2-digit",
     month: "2-digit",
     year: "numeric",
   });
 }
 
-function exactAgeLabel(value: string | null | undefined): string {
-  const birthDate = parseBirthDate(value);
-  if (!birthDate) return "—";
+/* ---------- 1. LEADERS ---------- */
 
-  const now = new Date();
-  const today = new Date(
-    now.getFullYear(),
-    now.getMonth(),
-    now.getDate(),
-    12,
-    0,
-    0,
-    0,
+type LeaderLine = {
+  playerId: string;
+  name: string;
+  games: number;
+  pts: number;
+  ast: number;
+  reb: number;
+  stl: number;
+  p3m: number;
+  p3a: number;
+};
+
+type LeaderCategory = {
+  key: "pts" | "ast" | "reb" | "p3pct" | "stl";
+  title: string;
+  icon: string;
+  suffix?: string;
+  type: "average" | "percent";
+};
+
+const LEADER_CATEGORIES: LeaderCategory[] = [
+  { key: "pts", title: "Points", icon: "🏀", type: "average" },
+  { key: "ast", title: "Passes", icon: "🎯", type: "average" },
+  { key: "reb", title: "Rebonds", icon: "💪", type: "average" },
+  { key: "p3pct", title: "% 3PTS", icon: "🔥", type: "percent", suffix: "%" },
+  { key: "stl", title: "Interceptions", icon: "🖐️", type: "average" },
+];
+
+function playerDisplayName(player: Player) {
+  const num = player.num != null ? `#${player.num} ` : "";
+  return (
+    `${num}${player.firstName || ""} ${player.lastName || ""}`.trim() ||
+    "Joueur"
   );
-
-  if (birthDate > today) return "—";
-
-  let years = today.getFullYear() - birthDate.getFullYear();
-
-  let lastBirthday = new Date(
-    today.getFullYear(),
-    birthDate.getMonth(),
-    birthDate.getDate(),
-    12,
-    0,
-    0,
-    0,
-  );
-
-  if (lastBirthday > today) {
-    years -= 1;
-    lastBirthday = new Date(
-      today.getFullYear() - 1,
-      birthDate.getMonth(),
-      birthDate.getDate(),
-      12,
-      0,
-      0,
-      0,
-    );
-  }
-
-  const days = Math.floor(
-    (today.getTime() - lastBirthday.getTime()) / (24 * 60 * 60 * 1000),
-  );
-
-  return `${years} an${years > 1 ? "s" : ""} et ${days} jour${days > 1 ? "s" : ""}`;
 }
 
-function statusClass(s: string) {
-  return s === "Disponible" ? "dispo" : s === "Blessé" ? "blesse" : (s || "").toLowerCase();
-}
-
-function numberFromText(value: string | number | undefined | null) {
-  if (typeof value === "number") return value;
-  if (!value) return 0;
-  const n = Number(String(value).replace(",", ".").replace(/[^\d.]/g, ""));
-  return Number.isFinite(n) ? n : 0;
-}
-
-function parseCm(value: string | number | undefined | null) {
-  const n = numberFromText(value);
-  if (!n) return 0;
-  if (n < 3) return Math.round(n * 100);
-  return Math.round(n);
-}
-
-function midParentTargetHeight(growth: GrowthProfile) {
-  const father = Number(growth.fatherHeightCm);
-  const mother = Number(growth.motherHeightCm);
-
-  if (!father || !mother) return null;
-
-  const target =
-    growth.sex === "garcon"
-      ? (father + mother + 13) / 2
-      : (father + mother - 13) / 2;
-
-  return Math.round(target * 10) / 10;
-}
-
-function predictedHeightRange(growth: GrowthProfile, currentHeightCm: number) {
-  const target = midParentTargetHeight(growth);
-
-  if (!target) {
-    return {
-      target: null,
-      low: null,
-      high: null,
-      probable: currentHeightCm || null,
-      confidence: "Renseigne la taille des deux parents.",
-      method: "Taille cible parentale",
-    };
-  }
-
-  const boneAge = Number(growth.boneAge || 0);
-  let probable = target;
-  let margin = 8.5;
-  let method = "Taille cible parentale";
-
-  if (boneAge > 0 && currentHeightCm > 0) {
-    method = "Taille cible parentale + âge osseux";
-    margin = 4;
-
-    if (boneAge < 14 && growth.sex === "garcon") probable = Math.max(target, currentHeightCm + 6);
-    if (boneAge >= 16 && growth.sex === "garcon") probable = Math.max(currentHeightCm, Math.min(target, currentHeightCm + 3));
-    if (boneAge < 12 && growth.sex === "fille") probable = Math.max(target, currentHeightCm + 4);
-    if (boneAge >= 14 && growth.sex === "fille") probable = Math.max(currentHeightCm, Math.min(target, currentHeightCm + 2));
-  }
-
-  return {
-    target,
-    low: Math.round((probable - margin) * 10) / 10,
-    high: Math.round((probable + margin) * 10) / 10,
-    probable: Math.round(probable * 10) / 10,
-    confidence:
-      boneAge > 0
-        ? "Estimation améliorée : l'âge osseux réduit l'incertitude, mais ne remplace pas un avis médical."
-        : "Estimation génétique large : ajoute l'âge osseux pour une projection plus fine.",
-    method,
-  };
-}
-
-function ratingAverage(r: RatingBlock) {
-  return Math.round(((r.physique + r.technique + r.tactique + r.mental + r.relationnel) / 5) * 10) / 10;
-}
-
-function latestByLabel(tests: PlayerTest[], label: string) {
-  return [...tests]
-    .filter((t) => t.label === label)
-    .sort((a, b) => b.date.localeCompare(a.date))[0];
-}
-
-function trendByLabel(tests: PlayerTest[], label: string) {
-  const rows = [...tests].filter((t) => t.label === label).sort((a, b) => a.date.localeCompare(b.date));
-  if (rows.length < 2) return null;
-  const first = rows[0];
-  const last = rows[rows.length - 1];
-  return {
-    first,
-    last,
-    diff: Math.round((last.value - first.value) * 10) / 10,
-  };
-}
-
-function downloadText(filename: string, text: string, type = "text/plain") {
-  const blob = new Blob([text], { type });
-  const a = document.createElement("a");
-  a.href = URL.createObjectURL(blob);
-  a.download = filename;
-  a.click();
-  URL.revokeObjectURL(a.href);
-}
-
-function statNumber(value: unknown): number {
-  const n = Number(value);
-  return Number.isFinite(n) ? n : 0;
-}
-
-function roundStat(value: number): number {
-  return Math.round(value * 10) / 10;
-}
-
-function percentStat(made: number, attempted: number): number {
-  if (!attempted) return 0;
-  return Math.round((made / attempted) * 1000) / 10;
-}
-
-function statMinutes(value: unknown): number {
-  if (value == null || value === "") return 0;
-  if (typeof value === "number") return Number.isFinite(value) ? value : 0;
-
-  const raw = String(value).trim();
-  if (!raw) return 0;
-
-  if (raw.includes(":")) {
-    const [minutes, seconds = "0"] = raw.split(":");
-    const m = Number(minutes);
-    const s = Number(seconds);
-    if (Number.isFinite(m) && Number.isFinite(s)) {
-      return m + s / 60;
-    }
-  }
-
-  const n = Number(raw.replace(",", "."));
-  return Number.isFinite(n) ? n : 0;
-}
-
-function liveMatchDateLabel(value: string) {
-  if (!value) return "—";
-  const d = new Date(value);
-  if (Number.isNaN(d.getTime())) return value;
-  return d.toLocaleDateString("fr-FR", { day: "2-digit", month: "short" });
-}
-
-function computeLiveStats(rows: any[], matchesById: Map<string, any>): PlayerLiveStats {
-  const allRows = rows ?? [];
-  const presentRows = allRows.filter((row) => row.present !== false);
-  const games = presentRows.length;
-  const missedGames = Math.max(0, allRows.length - games);
-
-  if (!allRows.length) {
-    return EMPTY_LIVE_STATS;
-  }
-
-  const totals = presentRows.reduce<PlayerLiveTotals>(
-    (acc, row) => {
-      const offReb = statNumber(row.off_reb);
-      const defReb = statNumber(row.def_reb);
-
-      acc.pts += statNumber(row.pts);
-      acc.p2m += statNumber(row.p2m);
-      acc.p2a += statNumber(row.p2a);
-      acc.p3m += statNumber(row.p3m);
-      acc.p3a += statNumber(row.p3a);
-      acc.ftm += statNumber(row.ftm);
-      acc.fta += statNumber(row.fta);
-      acc.offReb += offReb;
-      acc.defReb += defReb;
-      acc.reb += statNumber(row.reb) || offReb + defReb;
-      acc.ast += statNumber(row.ast);
-      acc.stl += statNumber(row.stl);
-      acc.blk += statNumber(row.blk);
-      acc.to += statNumber(row.turnovers);
-      acc.pf += statNumber(row.pf);
-
-      return acc;
-    },
-    { ...EMPTY_LIVE_TOTALS }
-  );
-
-  const avg = (value: number) => (games ? roundStat(value / games) : 0);
-
-  const matches = allRows.map<PlayerLiveMatchLine>((row) => {
-    const matchId = String(row.match_id ?? "");
-    const match = matchesById.get(matchId);
-    const offReb = statNumber(row.off_reb);
-    const defReb = statNumber(row.def_reb);
-
-    return {
-      matchId,
-      date: match?.match_date ?? row.created_at ?? "",
-      opponent: match?.opponent ?? "Adversaire",
-      result: match?.result ?? "",
-      usScore: statNumber(match?.us_score),
-      themScore: statNumber(match?.them_score),
-      present: row.present !== false,
-      pts: statNumber(row.pts),
-      reb: statNumber(row.reb) || offReb + defReb,
-      ast: statNumber(row.ast),
-      stl: statNumber(row.stl),
-      blk: statNumber(row.blk),
-      to: statNumber(row.turnovers),
-      pf: statNumber(row.pf),
-      p2m: statNumber(row.p2m),
-      p2a: statNumber(row.p2a),
-      p3m: statNumber(row.p3m),
-      p3a: statNumber(row.p3a),
-      ftm: statNumber(row.ftm),
-      fta: statNumber(row.fta),
-    };
-  });
-
-  matches.sort((a, b) => String(a.date).localeCompare(String(b.date)));
-
-  const totalMinutes = presentRows.reduce(
-    (sum, row) =>
-      sum +
-      statMinutes(
-        row.min ??
-          row.minutes ??
-          row.playing_time ??
-          row.playing_time_minutes ??
-          row.time_played,
-      ),
-    0,
-  );
-
-  return {
-    hasData: allRows.length > 0,
-    totalRows: allRows.length,
-    games,
-    missedGames,
-    attendancePct: allRows.length ? Math.round((games / allRows.length) * 100) : 0,
-    totalMinutes: Math.round(totalMinutes * 10) / 10,
-    averageMinutes: games ? Math.round((totalMinutes / games) * 10) / 10 : 0,
-    totals,
-    averages: {
-      pts: avg(totals.pts),
-      reb: avg(totals.reb),
-      ast: avg(totals.ast),
-      stl: avg(totals.stl),
-      blk: avg(totals.blk),
-      to: avg(totals.to),
-      pf: avg(totals.pf),
-      pctTir: percentStat(totals.p2m + totals.p3m, totals.p2a + totals.p3a),
-      pct3pts: percentStat(totals.p3m, totals.p3a),
-      pctLf: percentStat(totals.ftm, totals.fta),
-    },
-    matches,
-    evolution: matches
-      .filter((match) => match.present)
-      .map((match) => ({
-        label: liveMatchDateLabel(match.date),
-        value: match.pts,
-      })),
-  };
-}
-
-
-function getPlayerFirstName(player: any): string | null {
-  return player?.first_name ?? player?.firstName ?? null;
-}
-
-function getPlayerLastName(player: any): string | null {
-  return player?.last_name ?? player?.lastName ?? null;
-}
-
-function getPlayerPosition(player: any): string | null {
-  return player?.position ?? player?.postePrincipal ?? null;
-}
-
-function computeTeamPlayersComparisonStats(
-  rows: any[],
-  players: any[]
-): TeamPlayerComparisonStat[] {
-  const rowsByPlayer = new Map<string, any[]>();
-
-  for (const row of rows ?? []) {
-    const statPlayerId = String(row.player_id ?? "");
-    if (!statPlayerId) continue;
-
-    if (!rowsByPlayer.has(statPlayerId)) {
-      rowsByPlayer.set(statPlayerId, []);
-    }
-
-    rowsByPlayer.get(statPlayerId)?.push(row);
-  }
-
-  const knownPlayers = (players ?? []).map((player) => ({
-    id: String(player.id ?? player.player_id ?? ""),
-    first_name: getPlayerFirstName(player),
-    last_name: getPlayerLastName(player),
-    position: getPlayerPosition(player),
+function fallbackLeaders(players: Player[]): LeaderLine[] {
+  return players.map((player) => ({
+    playerId: String(player.id),
+    name: playerDisplayName(player),
+    games: 1,
+    pts: safeNum(player.stats?.pts),
+    ast: safeNum(player.stats?.ast),
+    reb: safeNum(player.stats?.reb),
+    stl: safeNum(player.stats?.stl),
+    p3m: safeNum(player.stats?.pct3pts),
+    p3a: safeNum(player.stats?.pct3pts) > 0 ? 100 : 0,
   }));
+}
 
-  const missingPlayersFromStats = Array.from(rowsByPlayer.keys())
-    .filter((statPlayerId) => !knownPlayers.some((player) => player.id === statPlayerId))
-    .map((statPlayerId) => ({
-      id: statPlayerId,
-      first_name: null,
-      last_name: null,
-      position: null,
-    }));
+function aggregateLeaderRows(
+  rows: SupaStatRow[],
+  names: Record<string, string>,
+): LeaderLine[] {
+  const map: Record<string, LeaderLine> = {};
 
-  return [...knownPlayers, ...missingPlayersFromStats]
-    .filter((player) => Boolean(player.id))
-    .map((player) => {
-      const playerRows = rowsByPlayer.get(player.id) ?? [];
-      const presentRows = playerRows.filter((row) => row.present !== false);
-      const games = presentRows.length || 1;
+  rows
+    .filter((row) => row.present !== false)
+    .forEach((row) => {
+      const id = String(row.player_id || "");
+      if (!id) return;
 
-      const totals = presentRows.reduce(
-        (acc, row) => {
-          const offReb = statNumber(row.off_reb);
-          const defReb = statNumber(row.def_reb);
-
-          acc.pts += statNumber(row.pts);
-          acc.reb += statNumber(row.reb) || offReb + defReb;
-          acc.ast += statNumber(row.ast);
-          acc.stl += statNumber(row.stl);
-          acc.blk += statNumber(row.blk);
-          acc.turnovers += statNumber(row.turnovers);
-          acc.plus_minus += statNumber(row.plus_minus);
-
-          return acc;
-        },
-        {
+      if (!map[id]) {
+        map[id] = {
+          playerId: id,
+          name: names[id] || `Joueur ${id.slice(0, 8)}`,
+          games: 0,
           pts: 0,
-          reb: 0,
           ast: 0,
+          reb: 0,
           stl: 0,
-          blk: 0,
-          turnovers: 0,
-          plus_minus: 0,
-        }
-      );
+          p3m: 0,
+          p3a: 0,
+        };
+      }
 
-      return {
-        id: player.id,
-        player_id: player.id,
-        first_name: player.first_name,
-        last_name: player.last_name,
-        position: player.position,
-        pts: roundStat(totals.pts / games),
-        reb: roundStat(totals.reb / games),
-        ast: roundStat(totals.ast / games),
-        stl: roundStat(totals.stl / games),
-        blk: roundStat(totals.blk / games),
-        turnovers: roundStat(totals.turnovers / games),
-        plus_minus: roundStat(totals.plus_minus / games),
-      };
+      map[id].games += 1;
+      map[id].pts +=
+        safeNum(row.pts) ||
+        safeNum(row.p2m) * 2 + safeNum(row.p3m) * 3 + safeNum(row.ftm);
+      map[id].ast += safeNum(row.ast);
+      map[id].reb +=
+        safeNum(row.reb) || safeNum(row.off_reb) + safeNum(row.def_reb);
+      map[id].stl += safeNum(row.stl);
+      map[id].p3m += safeNum(row.p3m);
+      map[id].p3a += safeNum(row.p3a);
     });
+
+  return Object.values(map);
 }
 
-/* ============================================================
- * LiveStat — rentabilité par temps fort (lecture match_actions)
- * Ajout non intrusif : ne touche pas aux stats existantes.
- * ============================================================ */
-function matchActionPoints(a: any): number {
-  if (a.context === "defense") return 0;
-  const shotType = a.shot_type;
-  const made = a.shot_result === "made";
-  const ftMade = statNumber(a.ft_made);
-  let p = 0;
-  if (shotType === "LF") p += ftMade;
-  else if (a.action_type === "tir" && made) {
-    if (shotType === "2PTS") p = 2;
-    else if (shotType === "3PTS") p = 3;
+function leaderMetric(line: LeaderLine, category: LeaderCategory) {
+  if (category.key === "p3pct") {
+    return line.p3a > 0 ? (line.p3m / line.p3a) * 100 : 0;
   }
-  if (a.action_type === "tir" && shotType !== "LF" && made && a.special_case && a.special_case !== "aucun") {
-    p += ftMade;
-  }
-  return p;
+
+  const value = line[category.key];
+  return line.games ? value / line.games : 0;
 }
 
-type PlayerTfRow = { key: string; actions: number; points: number; ppa: number; clips: number };
-
-function computePlayerTempsFortRentability(actions: any[]): PlayerTfRow[] {
-  const map = new Map<string, { actions: number; points: number; clips: number }>();
-
-  for (const a of actions ?? []) {
-    const key = a.temps_fort;
-    if (!key) continue;
-
-    if (!map.has(key)) map.set(key, { actions: 0, points: 0, clips: 0 });
-    const row = map.get(key)!;
-
-    row.actions += 1;
-    row.points += matchActionPoints(a);
-    if (a.clip_start != null || a.video_time != null) row.clips += 1;
-  }
-
-  return Array.from(map.entries())
-    .map(([key, v]) => ({
-      key,
-      actions: v.actions,
-      points: v.points,
-      ppa: v.actions ? roundStat(v.points / v.actions) : 0,
-      clips: v.clips,
-    }))
-    .sort((a, b) => b.points - a.points);
+function getTop3(lines: LeaderLine[], category: LeaderCategory) {
+  return [...lines]
+    .filter((line) => category.key !== "p3pct" || line.p3a >= 3)
+    .sort((a, b) => leaderMetric(b, category) - leaderMetric(a, category))
+    .slice(0, 3);
 }
 
-export default function JoueurDetailPage({
-  params,
+function TeamLeadersBlock({
+  teamId,
+  players,
 }: {
-  params: Promise<{ teamId: string; playerId: string }>;
+  teamId: string;
+  players: Player[];
 }) {
-  const { teamId, playerId } = use(params);
-  const router = useRouter();
   const supabase = createClient();
 
-  const tags = useLivestatTags(teamId);
-
-  const [player, setPlayer] = useState<PlayerExtra | undefined>();
-  const [team, setTeam] = useState<Team | undefined>();
-  const [identityLoading, setIdentityLoading] = useState(true);
-  const [liveStats, setLiveStats] = useState<PlayerLiveStats>(EMPTY_LIVE_STATS);
-  const [playerActions, setPlayerActions] = useState<any[]>([]);
-  const [teamPlayersStats, setTeamPlayersStats] = useState<TeamPlayerComparisonStat[]>([]);
-  const [attendanceSummary, setAttendanceSummary] = useState<PlayerAttendanceSummary>({
-    total: 0,
-    present: 0,
-    late: 0,
-    absent: 0,
-    rate: 0,
-    spark: [],
-  });
-  const [fatigueSummary, setFatigueSummary] = useState<PlayerFatigueSummary>({
-    current: null,
-    average7: null,
-    previous7: null,
-    delta: null,
-    level: "none",
-    count: 0,
-    spark: [],
-  });
-  const [tab, setTab] = useState<Tab>("Aperçu");
-  const [editing, setEditing] = useState(false);
-  const [toast, setToast] = useState("");
-
-  const [tests, setTests] = useState<PlayerTest[]>([]);
-  const [growth, setGrowth] = useState<GrowthProfile>(DEFAULT_GROWTH);
-  const [medical, setMedical] = useState<MedicalEntry[]>([]);
-  const [documents, setDocuments] = useState<PlayerDocument[]>([]);
-  const [bilans, setBilans] = useState<PlayerBilan[]>([]);
-
-  const [testModal, setTestModal] = useState(false);
-  const [medicalModal, setMedicalModal] = useState(false);
-  const [docModal, setDocModal] = useState(false);
-  const [docUploading, setDocUploading] = useState(false);
-  const [docUploadName, setDocUploadName] = useState("");
-  const [bilanModal, setBilanModal] = useState<PlayerBilan | null>(null);
-
-  const [testDraft, setTestDraft] = useState<PlayerTest>({
-    id: uid(),
-    date: new Date().toISOString().slice(0, 10),
-    category: "Anthropométrie",
-    label: "Taille",
-    value: 0,
-    unit: "cm",
-    notes: "",
-  });
-
-  const [medicalDraft, setMedicalDraft] = useState<MedicalEntry>({
-    id: uid(),
-    date: new Date().toISOString().slice(0, 10),
-    status: "Disponible",
-    zone: "",
-    injury: "",
-    severity: "Faible",
-    daysOff: 0,
-    notes: "",
-  });
-
-  const [docDraft, setDocDraft] = useState<PlayerDocument>({
-    id: uid(),
-    date: new Date().toISOString().slice(0, 10),
-    title: "",
-    category: "Administratif",
-    url: "",
-    notes: "",
-  });
-
-  const printRef = useRef<HTMLDivElement | null>(null);
-
-  async function reload() {
-    setIdentityLoading(true);
-    try {
-      const [playerData, teamData] = await Promise.all([
-        getPlayer(teamId, playerId),
-        getTeam(teamId),
-      ]);
-
-      setPlayer(playerData as PlayerExtra | undefined);
-      setTeam(teamData);
-    } catch (error) {
-      console.error("Erreur chargement joueur:", error);
-      setPlayer(undefined);
-      setTeam(undefined);
-    } finally {
-      setIdentityLoading(false);
-    }
-  }
-
-  useEffect(() => {
-    reload();
-  }, [teamId, playerId]);
+  const [loading, setLoading] = useState(true);
+  const [leaders, setLeaders] = useState<LeaderLine[]>([]);
 
   useEffect(() => {
     let active = true;
 
-    async function loadPlayerSupabaseData() {
-      try {
-        const [
-          testsRes,
-          growthRes,
-          medicalRes,
-          documentsRes,
-          bilansRes,
-        ] = await Promise.all([
-          supabase
-            .from("player_tests")
-            .select("*")
-            .eq("team_id", teamId)
-            .eq("player_id", playerId)
-            .order("date", { ascending: true }),
+    async function load() {
+      setLoading(true);
 
-          supabase
-            .from("player_growth_profiles")
-            .select("*")
-            .eq("team_id", teamId)
-            .eq("player_id", playerId)
-            .maybeSingle(),
+      const localNames = players.reduce(
+        (acc: Record<string, string>, player) => {
+          acc[String(player.id)] = playerDisplayName(player);
+          return acc;
+        },
+        {},
+      );
 
-          supabase
-            .from("player_medical_entries")
-            .select("*")
-            .eq("team_id", teamId)
-            .eq("player_id", playerId)
-            .order("date", { ascending: false }),
+      const { data: matchData } = await supabase
+        .from("match_stats")
+        .select("id")
+        .eq("team_id", teamId);
 
-          supabase
-            .from("player_documents")
-            .select("*")
-            .eq("team_id", teamId)
-            .eq("player_id", playerId)
-            .order("date", { ascending: false }),
+      const matchIds = ((matchData ?? []) as Array<{ id: string }>).map(
+        (match) => match.id,
+      );
 
-          supabase
-            .from("player_bilans")
-            .select("*")
-            .eq("team_id", teamId)
-            .eq("player_id", playerId)
-            .order("date", { ascending: false }),
-        ]);
+      let rows: SupaStatRow[] = [];
 
-        if (!active) return;
-
-        if (testsRes.error) console.error("Erreur chargement tests joueur :", testsRes.error);
-        if (growthRes.error) console.error("Erreur chargement projection joueur :", growthRes.error);
-        if (medicalRes.error) console.error("Erreur chargement médical joueur :", medicalRes.error);
-        if (documentsRes.error) console.error("Erreur chargement documents joueur :", documentsRes.error);
-        if (bilansRes.error) console.error("Erreur chargement bilans joueur :", bilansRes.error);
-
-        setTests(
-          ((testsRes.data ?? []) as any[]).map((row) => ({
-            id: row.id,
-            date: row.date,
-            category: row.category,
-            label: row.label,
-            value: Number(row.value ?? 0),
-            unit: row.unit,
-            notes: row.notes ?? "",
-          }))
-        );
-
-        if (growthRes.data) {
-          const row: any = growthRes.data;
-
-          setGrowth({
-            sex: row.sex ?? "garcon",
-            fatherHeightCm: row.father_height_cm ?? "",
-            motherHeightCm: row.mother_height_cm ?? "",
-            boneAge: row.bone_age ?? "",
-            sittingHeightCm: row.sitting_height_cm ?? "",
-            wingspanCm: row.wingspan_cm ?? "",
-          });
-        } else {
-          setGrowth(DEFAULT_GROWTH);
-        }
-
-        setMedical(
-          ((medicalRes.data ?? []) as any[]).map((row) => ({
-            id: row.id,
-            date: row.date,
-            status: row.status,
-            zone: row.zone ?? "",
-            injury: row.injury ?? "",
-            severity: row.severity ?? "Faible",
-            daysOff: Number(row.days_off ?? 0),
-            notes: row.notes ?? "",
-          }))
-        );
-
-        setDocuments(
-          ((documentsRes.data ?? []) as any[]).map((row) => ({
-            id: row.id,
-            date: row.date,
-            title: row.title,
-            category: row.category,
-            url: row.url ?? "",
-            notes: row.notes ?? "",
-          }))
-        );
-
-        setBilans(
-          ((bilansRes.data ?? []) as any[]).map((row) => ({
-            ...emptyBilan(),
-            id: row.id,
-            date: row.date,
-            type: row.type,
-            evaluator: row.evaluator ?? "",
-            seasonTeamNote: Number(row.season_team_note ?? 5),
-            seasonTeamWhy: row.season_team_why ?? "",
-            individualNote: Number(row.individual_note ?? 5),
-            individualWhy: row.individual_why ?? "",
-            playerRatings: row.player_ratings ?? { physique: 5, technique: 5, tactique: 5, mental: 5, relationnel: 5 },
-            coachRatings: row.coach_ratings ?? { physique: 5, technique: 5, tactique: 5, mental: 5, relationnel: 5 },
-            strengthsPhysical: row.strengths_physical ?? "",
-            improvementsPhysical: row.improvements_physical ?? "",
-            strengthsTechnical: row.strengths_technical ?? "",
-            improvementsTechnical: row.improvements_technical ?? "",
-            strengthsTactical: row.strengths_tactical ?? "",
-            improvementsTactical: row.improvements_tactical ?? "",
-            strengthsMental: row.strengths_mental ?? "",
-            improvementsMental: row.improvements_mental ?? "",
-            strengthsRelational: row.strengths_relational ?? "",
-            improvementsRelational: row.improvements_relational ?? "",
-            keepAtClub: row.keep_at_club ?? "",
-            magicStructure: row.magic_structure ?? "",
-            magicBasket: row.magic_basket ?? "",
-            objectives: row.objectives ?? "",
-            method: row.method ?? "",
-            expectedRole: row.expected_role ?? "",
-            boardingPartner: row.boarding_partner ?? "",
-            familySummary: row.family_summary ?? "",
-            schoolReview: row.school_review ?? "",
-            examsPreparation: row.exams_preparation ?? "",
-            orientationChoices: row.orientation_choices ?? "",
-            holidayPlanning: row.holiday_planning ?? "",
-            offseasonPriority: row.offseason_priority ?? "",
-            actionPlan1: row.action_plan_1 ?? "",
-            actionPlan2: row.action_plan_2 ?? "",
-            actionPlan3: row.action_plan_3 ?? "",
-            coachConclusion: row.coach_conclusion ?? "",
-          }))
-        );
-      } catch (error) {
-        console.error("Erreur chargement données joueur Supabase :", error);
-        if (!active) return;
-        setTests([]);
-        setGrowth(DEFAULT_GROWTH);
-        setMedical([]);
-        setDocuments([]);
-        setBilans([]);
-      }
-    }
-
-    loadPlayerSupabaseData();
-
-    return () => {
-      active = false;
-    };
-  }, [supabase, teamId, playerId]);
-
-  useEffect(() => {
-    let active = true;
-
-    async function loadSupabaseStats() {
-      setLiveStats(EMPTY_LIVE_STATS);
-      setTeamPlayersStats([]);
-
-      try {
-        const { data: rows, error: rowsError } = await supabase
+      if (matchIds.length > 0) {
+        const { data: byMatch } = await supabase
           .from("match_player_stats")
-          .select("*")
+          .select(
+            "player_id, match_id, pts, p2m, p3m, ftm, p3a, off_reb, def_reb, reb, ast, stl, present",
+          )
+          .in("match_id", matchIds);
+
+        rows = (byMatch ?? []) as SupaStatRow[];
+      }
+
+      if (rows.length === 0) {
+        const { data: byTeam } = await supabase
+          .from("match_player_stats")
+          .select(
+            "player_id, match_id, pts, p2m, p3m, ftm, p3a, off_reb, def_reb, reb, ast, stl, present",
+          )
           .eq("team_id", teamId);
 
-        if (rowsError) throw rowsError;
-        if (!active) return;
-
-        const allTeamRows = (rows ?? []) as any[];
-
-        // §23 · le classement / la comparaison ne doivent compter que les matchs
-        // TERMINÉS. On récupère le statut de tous les matchs de l'équipe et on
-        // écarte les lignes rattachées à un brouillon (project_status = 'draft').
-        const allMatchIds = Array.from(new Set(allTeamRows.map((r) => String(r.match_id ?? "")).filter(Boolean)));
-        const draftMatchIds = new Set<string>();
-        if (allMatchIds.length > 0) {
-          const { data: statusRows } = await supabase
-            .from("match_stats")
-            .select("id, project_status")
-            .in("id", allMatchIds);
-          (statusRows ?? []).forEach((m: any) => { if (m.project_status === "draft") draftMatchIds.add(String(m.id)); });
-        }
-        const completedTeamRows = allTeamRows.filter((r) => !draftMatchIds.has(String(r.match_id ?? "")));
-
-        const currentPlayerRows = completedTeamRows.filter(
-          (row) => String(row.player_id ?? "") === String(playerId)
-        );
-
-        const matchIds = Array.from(
-          new Set(
-            currentPlayerRows
-              .map((row) => String(row.match_id ?? ""))
-              .filter(Boolean)
-          )
-        );
-
-        let matchesById = new Map<string, any>();
-
-        if (matchIds.length > 0) {
-          const { data: matches, error: matchError } = await supabase
-            .from("match_stats")
-            .select("id, opponent, match_date, us_score, them_score, result")
-            .in("id", matchIds);
-
-          if (matchError) {
-            console.error("Erreur chargement matchs pour fiche joueur :", matchError);
-          }
-
-          matchesById = new Map(
-            ((matches ?? []) as any[]).map((match) => [String(match.id), match])
-          );
-        }
-
-        if (!active) return;
-
-        setLiveStats(computeLiveStats(currentPlayerRows, matchesById));
-        setTeamPlayersStats(
-          computeTeamPlayersComparisonStats(completedTeamRows, team?.players ?? [])
-        );
-      } catch (error) {
-        console.error("Erreur chargement stats joueur Supabase :", error);
-
-        if (active) {
-          setLiveStats(EMPTY_LIVE_STATS);
-          setTeamPlayersStats([]);
-        }
+        rows = (byTeam ?? []) as SupaStatRow[];
       }
-    }
 
-    loadSupabaseStats();
+      if (!active) return;
 
-    return () => {
-      active = false;
-    };
-  }, [supabase, teamId, playerId, team?.players]);
-
-  useEffect(() => {
-    let active = true;
-
-    async function loadAttendanceAndFatigue() {
-      try {
-        const fourteenDaysAgo = new Date();
-        fourteenDaysAgo.setDate(fourteenDaysAgo.getDate() - 13);
-        const since = fourteenDaysAgo.toISOString().slice(0, 10);
-
-        const [{ data: presenceRows, error: presenceError }, { data: fatigueRows, error: fatigueError }] =
-          await Promise.all([
-            supabase
-              .from("player_event_presence")
-              .select("status,updated_at,event_id")
-              .eq("team_id", teamId)
-              .eq("player_id", playerId)
-              .order("updated_at", { ascending: true }),
-
-            supabase
-              .from("player_wellness_responses")
-              .select("response_date,fatigue,created_at")
-              .eq("team_id", teamId)
-              .eq("player_id", playerId)
-              .gte("response_date", since)
-              .order("created_at", { ascending: true }),
-          ]);
-
-        if (presenceError) console.error("Erreur présence fiche joueur:", presenceError);
-        if (fatigueError) console.error("Erreur fatigue fiche joueur:", fatigueError);
-        if (!active) return;
-
-        const presence = (presenceRows ?? []) as Array<{
-          status?: string | null;
-          updated_at?: string | null;
-        }>;
-
-        const present = presence.filter((row) => row.status === "present").length;
-        const late = presence.filter((row) => row.status === "late").length;
-        const absent = presence.filter((row) => row.status === "absent").length;
-        const total = presence.filter((row) =>
-          ["present", "late", "absent"].includes(String(row.status || "")),
-        ).length;
-
-        setAttendanceSummary({
-          total,
-          present,
-          late,
-          absent,
-          rate: total ? Math.round(((present + late) / total) * 100) : 0,
-          spark: presence.slice(-7).map((row) =>
-            row.status === "present" ? 100 : row.status === "late" ? 80 : 0,
-          ),
-        });
-
-        const fatigue: Array<{ date: string; value: number }> = (fatigueRows ?? [])
-          .filter((row: any) => row.fatigue != null)
-          .map((row: any) => ({
-            date: String(row.response_date || ""),
-            value: Number(row.fatigue),
-          }))
-          .filter((row: { date: string; value: number }) => Number.isFinite(row.value));
-
-        const today = new Date();
-        const startCurrent = new Date(today);
-        startCurrent.setDate(today.getDate() - 6);
-        const startPrevious = new Date(today);
-        startPrevious.setDate(today.getDate() - 13);
-        const endPrevious = new Date(today);
-        endPrevious.setDate(today.getDate() - 7);
-
-        const currentStartIso = startCurrent.toISOString().slice(0, 10);
-        const previousStartIso = startPrevious.toISOString().slice(0, 10);
-        const previousEndIso = endPrevious.toISOString().slice(0, 10);
-
-        const currentValues = fatigue
-          .filter((row: { date: string; value: number }) => row.date >= currentStartIso)
-          .map((row: { date: string; value: number }) => row.value);
-
-        const previousValues = fatigue
-          .filter(
-            (row: { date: string; value: number }) =>
-              row.date >= previousStartIso && row.date <= previousEndIso,
-          )
-          .map((row: { date: string; value: number }) => row.value);
-
-        const average = (values: number[]) =>
-          values.length
-            ? values.reduce((sum, value) => sum + value, 0) / values.length
-            : null;
-
-        const currentAverage = average(currentValues);
-        const previousAverage = average(previousValues);
-        const latest = fatigue.length ? fatigue[fatigue.length - 1].value : null;
-        const delta =
-          currentAverage != null && previousAverage != null
-            ? currentAverage - previousAverage
-            : null;
-
-        const level: PlayerFatigueSummary["level"] =
-          latest == null
-            ? "none"
-            : latest >= 7
-              ? "high"
-              : latest >= 4
-                ? "watch"
-                : "low";
-
-        setFatigueSummary({
-          current: latest,
-          average7: currentAverage,
-          previous7: previousAverage,
-          delta,
-          level,
-          count: currentValues.length,
-          spark: fatigue.slice(-7).map((row: { date: string; value: number }) => row.value),
-        });
-      } catch (error) {
-        console.error("Erreur chargement présence / fatigue:", error);
-      }
-    }
-
-    void loadAttendanceAndFatigue();
-
-    return () => {
-      active = false;
-    };
-  }, [supabase, teamId, playerId]);
-
-  useEffect(() => {
-    let active = true;
-
-    async function loadPlayerActions() {
-      try {
-        const { data, error } = await supabase
-          .from("match_actions")
-          .select("*")
-          .eq("team_id", teamId)
-          .or(
-            `player_id.eq.${playerId},assist_player_id.eq.${playerId},rebound_player_id.eq.${playerId}`
-          );
-
-        if (error) throw error;
-        if (!active) return;
-
-        const rawActions = (data ?? []) as any[];
-        const matchIds = Array.from(
-          new Set(rawActions.map((action) => String(action.match_id ?? "")).filter(Boolean)),
-        );
-
-        let projectStateByMatch = new Map<string, any>();
-
-        if (matchIds.length) {
-          const { data: matchRows, error: matchError } = await supabase
-            .from("match_stats")
-            .select("id, project_state")
-            .in("id", matchIds);
-
-          if (!matchError) {
-            projectStateByMatch = new Map(
-              (matchRows ?? []).map((row: any) => [
-                String(row.id),
-                row.project_state ?? {},
-              ]),
-            );
-          }
-        }
-
-        const enriched = rawActions.map((action) => {
-          const state = projectStateByMatch.get(String(action.match_id ?? "")) ?? {};
-          const sync = normalizeSync(state);
-          const bounds = resolveActionClipBounds(
-            {
-              q: action.quarter ?? null,
-              clipStart: action.clip_start ?? null,
-              clipEnd: action.clip_end ?? null,
-              videoTime: action.video_time ?? null,
-              possessionStart: action.possession_start ?? null,
-              possessionEnd: action.possession_end ?? null,
-            },
-            sync,
-          );
-
-          return {
-            ...action,
-            resolved_clip_start: bounds.start,
-            resolved_clip_end: bounds.end,
-          };
-        });
-
-        setPlayerActions(enriched);
-      } catch (error) {
-        console.error("Erreur chargement match_actions joueur :", error);
-        if (active) setPlayerActions([]);
-      }
-    }
-
-    loadPlayerActions();
-
-    return () => {
-      active = false;
-    };
-  }, [supabase, teamId, playerId]);
-
-  const tfRentability = useMemo(
-    () => computePlayerTempsFortRentability(playerActions),
-    [playerActions]
-  );
-
-  async function requestActionExport(actionId: string) {
-    if (!actionId) return;
-    // Best-effort : nécessite les colonnes export_status / export_requested_at
-    // (voir migration SQL). Non bloquant si absentes.
-    try {
-      const { error } = await supabase
-        .from("match_actions")
-        .update({
-          export_status: "requested",
-          export_requested_at: new Date().toISOString(),
-        })
-        .eq("id", actionId);
-
-      if (error) {
-        console.error("Demande d'export MP4 non enregistrée (non bloquant) :", error);
+      if (rows.length === 0) {
+        setLeaders(fallbackLeaders(players));
+        setLoading(false);
         return;
       }
 
-      setPlayerActions((prev) =>
-        prev.map((a) =>
-          String(a.id) === String(actionId) ? { ...a, export_status: "requested" } : a
-        )
-      );
-    } catch (error) {
-      console.error("Demande d'export MP4 impossible (non bloquant) :", error);
+      setLeaders(aggregateLeaderRows(rows, localNames));
+      setLoading(false);
     }
-  }
 
-  async function handleSave(p: Player) {
-    try {
-      await upsertPlayer(teamId, p);
-      setEditing(false);
-      await reload();
-      flash("Fiche mise à jour ✓");
-    } catch (error) {
-      console.error("Erreur mise à jour joueur:", error);
-      alert("Erreur pendant la mise à jour du joueur.");
-    }
-  }
+    load();
 
-  function flash(message: string) {
-    setToast(message);
-    setTimeout(() => setToast(""), 2200);
-  }
-
-  async function saveGrowthProfile(nextGrowth: GrowthProfile) {
-    setGrowth(nextGrowth);
-
-    const payload = {
-      team_id: teamId,
-      player_id: playerId,
-      sex: nextGrowth.sex,
-      father_height_cm: nextGrowth.fatherHeightCm === "" ? null : Number(nextGrowth.fatherHeightCm),
-      mother_height_cm: nextGrowth.motherHeightCm === "" ? null : Number(nextGrowth.motherHeightCm),
-      bone_age: nextGrowth.boneAge === "" ? null : Number(nextGrowth.boneAge || 0),
-      sitting_height_cm: nextGrowth.sittingHeightCm === "" ? null : Number(nextGrowth.sittingHeightCm || 0),
-      wingspan_cm: nextGrowth.wingspanCm === "" ? null : Number(nextGrowth.wingspanCm || 0),
-      updated_at: new Date().toISOString(),
+    return () => {
+      active = false;
     };
+  }, [players, supabase, teamId]);
 
-    const { error } = await supabase
-      .from("player_growth_profiles")
-      .upsert(payload, { onConflict: "team_id,player_id" });
-
-    if (error) {
-      console.error("Erreur sauvegarde projection taille :", error);
-    }
-  }
-
-  function exportProfile() {
-    if (!player) return;
-
-    downloadText(
-      `${player.firstName}-${player.lastName}.json`,
-      JSON.stringify({ player, liveStats, tests, growth, medical, documents, bilans }, null, 2),
-      "application/json"
-    );
-  }
-
-  function openNewTest() {
-    setTestDraft({
-      id: uid(),
-      date: new Date().toISOString().slice(0, 10),
-      category: "Anthropométrie",
-      label: "Taille",
-      value: 0,
-      unit: "cm",
-      notes: "",
-    });
-    setTestModal(true);
-  }
-
-  async function saveTest() {
-    if (!testDraft.date || !testDraft.label || !testDraft.value) {
-      alert("Date, test et valeur sont obligatoires.");
-      return;
-    }
-
-    const payload = {
-      id: testDraft.id || uid(),
-      team_id: teamId,
-      player_id: playerId,
-      date: testDraft.date,
-      category: testDraft.category,
-      label: testDraft.label,
-      value: Number(testDraft.value),
-      unit: testDraft.unit,
-      notes: testDraft.notes || null,
-    };
-
-    const { data, error } = await supabase
-      .from("player_tests")
-      .insert(payload)
-      .select("*")
-      .single();
-
-    if (error) {
-      console.error("Erreur ajout test joueur :", error);
-      alert("Impossible d'enregistrer le test.");
-      return;
-    }
-
-    const row: any = data;
-
-    setTests((prev) => [
-      ...prev,
-      {
-        id: row.id,
-        date: row.date,
-        category: row.category,
-        label: row.label,
-        value: Number(row.value ?? 0),
-        unit: row.unit,
-        notes: row.notes ?? "",
-      },
-    ]);
-
-    setTestModal(false);
-    flash("Test ajouté ✓");
-  }
-
-  async function saveMedical() {
-    if (!medicalDraft.date || !medicalDraft.status) {
-      alert("Date et statut sont obligatoires.");
-      return;
-    }
-
-    const payload = {
-      id: medicalDraft.id || uid(),
-      team_id: teamId,
-      player_id: playerId,
-      date: medicalDraft.date,
-      status: medicalDraft.status,
-      zone: medicalDraft.zone || null,
-      injury: medicalDraft.injury || null,
-      severity: medicalDraft.severity,
-      days_off: Number(medicalDraft.daysOff || 0),
-      notes: medicalDraft.notes || null,
-    };
-
-    const { data, error } = await supabase
-      .from("player_medical_entries")
-      .insert(payload)
-      .select("*")
-      .single();
-
-    if (error) {
-      console.error("Erreur ajout médical joueur :", error);
-      alert("Impossible d'enregistrer le suivi médical.");
-      return;
-    }
-
-    const row: any = data;
-
-    setMedical((prev) => [
-      {
-        id: row.id,
-        date: row.date,
-        status: row.status,
-        zone: row.zone ?? "",
-        injury: row.injury ?? "",
-        severity: row.severity ?? "Faible",
-        daysOff: Number(row.days_off ?? 0),
-        notes: row.notes ?? "",
-      },
-      ...prev,
-    ]);
-
-    setMedicalModal(false);
-    flash("Suivi médical ajouté ✓");
-  }
-
-  async function uploadPlayerDocument(file: File) {
-    const allowed = [
-      "application/pdf",
-      "image/jpeg",
-      "image/png",
-      "image/webp",
-      "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-    ];
-
-    if (!allowed.includes(file.type)) {
-      alert("Formats acceptés : PDF, JPEG, PNG, WEBP et DOCX.");
-      return;
-    }
-
-    if (file.size > 25 * 1024 * 1024) {
-      alert("Le fichier ne doit pas dépasser 25 Mo.");
-      return;
-    }
-
-    setDocUploading(true);
-    try {
-      const { data: authData, error: authError } = await supabase.auth.getUser();
-      if (authError || !authData.user) throw new Error("Utilisateur non connecté.");
-
-      const safeName = file.name.normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-zA-Z0-9._-]/g, "-");
-      const path = `${authData.user.id}/${teamId}/${playerId}/${Date.now()}-${safeName}`;
-      const { error: uploadError } = await supabase.storage
-        .from("player-documents")
-        .upload(path, file, { cacheControl: "3600", upsert: false });
-
-      if (uploadError) throw uploadError;
-
-      const { data: publicData } = supabase.storage.from("player-documents").getPublicUrl(path);
-      setDocDraft((current) => ({
-        ...current,
-        title: current.title.trim() || file.name.replace(/\.[^.]+$/, ""),
-        url: publicData.publicUrl,
-      }));
-      setDocUploadName(file.name);
-      flash("Document envoyé dans Supabase ✓");
-    } catch (error) {
-      console.error("Erreur upload document joueur :", error);
-      alert(error instanceof Error ? error.message : "Impossible d'envoyer le document.");
-    } finally {
-      setDocUploading(false);
-    }
-  }
-
-  async function saveDocument() {
-    if (!docDraft.title.trim()) {
-      alert("Le titre du document est obligatoire.");
-      return;
-    }
-
-    const payload = {
-      id: docDraft.id || uid(),
-      team_id: teamId,
-      player_id: playerId,
-      date: docDraft.date,
-      title: docDraft.title.trim(),
-      category: docDraft.category,
-      url: docDraft.url || null,
-      notes: docDraft.notes || null,
-    };
-
-    const { data, error } = await supabase
-      .from("player_documents")
-      .insert(payload)
-      .select("*")
-      .single();
-
-    if (error) {
-      console.error("Erreur ajout document joueur :", error);
-      alert("Impossible d'enregistrer le document.");
-      return;
-    }
-
-    const row: any = data;
-
-    setDocuments((prev) => [
-      {
-        id: row.id,
-        date: row.date,
-        title: row.title,
-        category: row.category,
-        url: row.url ?? "",
-        notes: row.notes ?? "",
-      },
-      ...prev,
-    ]);
-
-    setDocModal(false);
-    setDocUploadName("");
-    setDocDraft({
-      id: uid(),
-      date: new Date().toISOString().slice(0, 10),
-      title: "",
-      category: "Administratif",
-      url: "",
-      notes: "",
-    });
-    flash("Document ajouté ✓");
-  }
-
-  async function saveBilan() {
-    if (!bilanModal) return;
-
-    const payload = {
-      id: bilanModal.id || uid(),
-      team_id: teamId,
-      player_id: playerId,
-      date: bilanModal.date,
-      type: bilanModal.type,
-      evaluator: bilanModal.evaluator || null,
-      season_team_note: bilanModal.seasonTeamNote,
-      season_team_why: bilanModal.seasonTeamWhy || null,
-      individual_note: bilanModal.individualNote,
-      individual_why: bilanModal.individualWhy || null,
-      player_ratings: bilanModal.playerRatings,
-      coach_ratings: bilanModal.coachRatings,
-      strengths_physical: bilanModal.strengthsPhysical || null,
-      improvements_physical: bilanModal.improvementsPhysical || null,
-      strengths_technical: bilanModal.strengthsTechnical || null,
-      improvements_technical: bilanModal.improvementsTechnical || null,
-      strengths_tactical: bilanModal.strengthsTactical || null,
-      improvements_tactical: bilanModal.improvementsTactical || null,
-      strengths_mental: bilanModal.strengthsMental || null,
-      improvements_mental: bilanModal.improvementsMental || null,
-      strengths_relational: bilanModal.strengthsRelational || null,
-      improvements_relational: bilanModal.improvementsRelational || null,
-      keep_at_club: bilanModal.keepAtClub || null,
-      magic_structure: bilanModal.magicStructure || null,
-      magic_basket: bilanModal.magicBasket || null,
-      objectives: bilanModal.objectives || null,
-      method: bilanModal.method || null,
-      expected_role: bilanModal.expectedRole || null,
-      boarding_partner: bilanModal.boardingPartner || null,
-      family_summary: bilanModal.familySummary || null,
-      school_review: bilanModal.schoolReview || null,
-      exams_preparation: bilanModal.examsPreparation || null,
-      orientation_choices: bilanModal.orientationChoices || null,
-      holiday_planning: bilanModal.holidayPlanning || null,
-      offseason_priority: bilanModal.offseasonPriority || null,
-      action_plan_1: bilanModal.actionPlan1 || null,
-      action_plan_2: bilanModal.actionPlan2 || null,
-      action_plan_3: bilanModal.actionPlan3 || null,
-      coach_conclusion: bilanModal.coachConclusion || null,
-    };
-
-    const { data, error } = await supabase
-      .from("player_bilans")
-      .upsert(payload)
-      .select("*")
-      .single();
-
-    if (error) {
-      console.error("Erreur enregistrement bilan joueur :", error);
-      alert("Impossible d'enregistrer le bilan.");
-      return;
-    }
-
-    const saved: PlayerBilan = {
-      ...bilanModal,
-      id: String((data as any).id),
-    };
-
-    setBilans((prev) => {
-      const exists = prev.some((b) => b.id === saved.id);
-      if (exists) return prev.map((b) => (b.id === saved.id ? saved : b));
-      return [saved, ...prev];
-    });
-
-    setBilanModal(null);
-    flash("Bilan enregistré ✓");
-  }
-
-  function generateBilanPdf(bilan: PlayerBilan) {
-    if (!player || !team) return;
-
-    const html = bilanHtml(player, team, bilan, tests, medical, growth);
-    const blob = new Blob([html], { type: "text/html;charset=utf-8" });
-    const url = URL.createObjectURL(blob);
-    const iframe = document.createElement("iframe");
-    iframe.style.position = "fixed";
-    iframe.style.width = "1px";
-    iframe.style.height = "1px";
-    iframe.style.right = "0";
-    iframe.style.bottom = "0";
-    iframe.style.border = "0";
-    iframe.style.opacity = "0";
-    iframe.src = url;
-    iframe.onload = () => {
-      window.setTimeout(() => {
-        iframe.contentWindow?.focus();
-        iframe.contentWindow?.print();
-        window.setTimeout(() => {
-          URL.revokeObjectURL(url);
-          iframe.remove();
-        }, 1500);
-      }, 350);
-    };
-    document.body.appendChild(iframe);
-  }
-
-  if (identityLoading) {
-    return (
-      <div className="player-page-light">
-        <style jsx global>{PLAYER_PAGE_CSS}</style>
-        <aside className="player-list-side"><div className="player-list-brand">🏀 MyBasket</div></aside>
-        <main className="player-main"><p className="empty-player">Chargement de la fiche joueur…</p></main>
-      </div>
-    );
-  }
-
-  if (!player || !team) {
-    return (
-      <div className="player-page-light">
-        <style jsx global>{PLAYER_PAGE_CSS}</style>
-        <aside className="player-list-side"><div className="player-list-brand">🏀 MyBasket</div></aside>
-        <main className="player-main">
-          <p className="empty-player">Joueur introuvable.</p>
-          <button className="back-btn" onClick={() => router.push(`/equipes/${teamId}`)}>Retour à l’équipe</button>
-        </main>
-      </div>
-    );
-  }
-
-  const basePlayer: any = player;
-
-  const p: any = {
-    ...basePlayer,
-    stats: liveStats.hasData
-      ? {
-          ...(basePlayer.stats ?? {}),
-          pts: liveStats.averages.pts,
-          reb: liveStats.averages.reb,
-          ast: liveStats.averages.ast,
-          stl: liveStats.averages.stl,
-          blk: liveStats.averages.blk,
-          to: liveStats.averages.to,
-          pf: liveStats.averages.pf,
-          pctTir: liveStats.averages.pctTir,
-          pct3pts: liveStats.averages.pct3pts,
-          pctLf: liveStats.averages.pctLf,
-        }
-      : basePlayer.stats,
-    presencePct: liveStats.hasData ? liveStats.attendancePct : basePlayer.presencePct,
-    evolution: liveStats.evolution.length ? liveStats.evolution : basePlayer.evolution,
-  };
-
-  const tdj = liveStats.hasData
-    ? {
-        ...(basePlayer.tempsDeJeu || {}),
-        matchsJoues: liveStats.games,
-        matchsManques: liveStats.missedGames,
-        tempsMoyenMatchMin: basePlayer.tempsDeJeu?.tempsMoyenMatchMin || 0,
-        tempsTotalLabel: basePlayer.tempsDeJeu?.tempsTotalLabel || "—",
-      }
-    : basePlayer.tempsDeJeu || {
-        matchsJoues: 0,
-        matchsManques: 0,
-        tempsMoyenMatchMin: 0,
-        tempsTotalLabel: "—",
-      };
-
-  const tdjPct =
-    tdj.matchsJoues + tdj.matchsManques > 0
-      ? Math.round((tdj.matchsJoues / (tdj.matchsJoues + tdj.matchsManques)) * 100)
-      : 0;
-
-  const cmp = p.comparaison || {
-    pointsRang: 0,
-    passesRang: 0,
-    presencesRang: 0,
-    noteCoachRang: 0,
-    tempsJeuRang: 0,
-    effectif: team.players?.length || 0,
-  };
-
-  const players = team.players || [];
-
-  const latestHeight = latestByLabel(tests, "Taille");
-  const latestWeight = latestByLabel(tests, "Poids");
-  const latestWingspan = latestByLabel(tests, "Envergure");
-  const currentHeightCm = latestHeight?.value || parseCm(p.taille);
-  const growthPrediction = predictedHeightRange(growth, currentHeightCm);
-
-  const latestBilan = [...bilans].sort((a, b) => b.date.localeCompare(a.date))[0];
+  const cards = useMemo(
+    () =>
+      LEADER_CATEGORIES.map((category) => ({
+        category,
+        rows: getTop3(leaders, category),
+      })),
+    [leaders],
+  );
 
   return (
-    <div className="player-page-light">
-      <style jsx global>{PLAYER_PAGE_CSS}</style>
-
-      <aside className="player-list-side">
-        <button className="player-back" onClick={() => router.push(`/equipes/${teamId}`)}>
-          ← Retour équipe
-        </button>
-
-        <div className="player-list-brand">🏀 MyBasket</div>
-
-        <div className="player-list-title">
-          <strong>{team.name}</strong>
-          <span>
-            {players.length} joueur{players.length > 1 ? "s" : ""}
-          </span>
+    <section className="tl-card leaders-card">
+      <div className="leaders-head">
+        <div>
+          <p className="eyebrow">Performance</p>
+          <h2>Leaders de l'équipe</h2>
+          <p className="muted">
+            Top 3 par catégorie, calculé sur les matchs enregistrés.
+          </p>
         </div>
 
-        <div className="player-list">
-          {players.map((jp: any) => (
-            <button
-              key={jp.id}
-              className={`player-list-item ${jp.id === playerId ? "active" : ""}`}
-              onClick={() => router.push(`/equipes/${teamId}/${jp.id}`)}
-            >
-              <span className="mini-photo">
-                {jp.photo ? <img src={jp.photo} alt="" /> : jp.firstName?.[0] || "?"}
-              </span>
+        {loading && <span className="loading-pill">Chargement...</span>}
+      </div>
 
-              <span className="mini-info">
-                <strong>
-                  {jp.firstName} {jp.lastName}
-                </strong>
-                <em>
-                  #{jp.num ?? "—"} · {jp.postePrincipal}
-                </em>
-              </span>
-            </button>
-          ))}
+      <div className="leaders-grid">
+        {cards.map(({ category, rows }) => (
+          <article key={category.key} className="leader-box">
+            <div className="leader-title">
+              <span>{category.icon}</span>
+              <strong>{category.title}</strong>
+            </div>
+
+            {rows.length === 0 && (
+              <div className="leader-empty">Pas encore assez de données.</div>
+            )}
+
+            {rows.map((line, index) => {
+              const value = leaderMetric(line, category);
+              const displayed =
+                category.type === "percent"
+                  ? `${r1(value)}${category.suffix || ""}`
+                  : r1(value);
+
+              return (
+                <div key={line.playerId} className="leader-row">
+                  <span className={`rank rank-${index + 1}`}>{index + 1}</span>
+
+                  <div className="identity">
+                    <strong>{line.name}</strong>
+                    <small>
+                      {line.games} match{line.games > 1 ? "s" : ""}
+                      {category.key === "p3pct"
+                        ? ` · ${line.p3m}/${line.p3a}`
+                        : ""}
+                    </small>
+                  </div>
+
+                  <span className="value">{displayed}</span>
+                </div>
+              );
+            })}
+          </article>
+        ))}
+      </div>
+
+      <style jsx>{`
+        .leaders-card {
+          margin-top: 1.2rem;
+        }
+        .leaders-head {
+          display: flex;
+          justify-content: space-between;
+          align-items: flex-start;
+          gap: 1rem;
+          margin-bottom: 1rem;
+        }
+        .eyebrow {
+          margin: 0;
+          color: #d4a24c;
+          font-size: 0.78rem;
+          font-weight: 900;
+          text-transform: uppercase;
+          letter-spacing: 0.06em;
+        }
+        h2 {
+          margin: 0.2rem 0 0;
+          color: #6b1a2c;
+          font-size: 1.45rem;
+          font-weight: 900;
+        }
+        .muted {
+          margin: 0.25rem 0 0;
+          color: #9a8a82;
+          font-size: 0.92rem;
+        }
+        .loading-pill {
+          display: inline-flex;
+          border-radius: 999px;
+          background: #fff8ef;
+          border: 1px solid #eadccc;
+          color: #6b1a2c;
+          padding: 0.45rem 0.75rem;
+          font-weight: 900;
+          font-size: 0.8rem;
+        }
+        .leaders-grid {
+          display: grid;
+          grid-template-columns: repeat(5, minmax(0, 1fr));
+          gap: 0.85rem;
+        }
+        .leader-box {
+          border: 1px solid #efe6db;
+          border-radius: 18px;
+          background: linear-gradient(180deg, #fffdf9, #fff);
+          padding: 0.9rem;
+          min-height: 205px;
+          box-shadow: 0 10px 24px rgba(60, 30, 20, 0.045);
+        }
+        .leader-title {
+          display: flex;
+          align-items: center;
+          gap: 0.45rem;
+          color: #6b1a2c;
+          margin-bottom: 0.8rem;
+        }
+        .leader-row {
+          display: grid;
+          grid-template-columns: 28px 1fr auto;
+          align-items: center;
+          gap: 0.55rem;
+          padding: 0.55rem 0;
+          border-top: 1px solid #f0e7dc;
+        }
+        .leader-row:first-of-type {
+          border-top: 0;
+        }
+        .rank {
+          width: 26px;
+          height: 26px;
+          border-radius: 50%;
+          display: grid;
+          place-items: center;
+          background: #f5efe6;
+          color: #6b1a2c;
+          font-weight: 900;
+          font-size: 0.82rem;
+        }
+        .rank-1 {
+          background: #fff0c8;
+          color: #7a4f00;
+        }
+        .rank-2 {
+          background: #f1f2f5;
+          color: #525866;
+        }
+        .rank-3 {
+          background: #f5e7dc;
+          color: #7a3e1d;
+        }
+        .identity {
+          min-width: 0;
+        }
+        .identity strong {
+          display: block;
+          color: #1f171a;
+          font-size: 0.88rem;
+          font-weight: 900;
+          white-space: nowrap;
+          overflow: hidden;
+          text-overflow: ellipsis;
+        }
+        .identity small {
+          display: block;
+          margin-top: 0.12rem;
+          color: #9a8a82;
+          font-size: 0.72rem;
+          font-weight: 800;
+        }
+        .value {
+          color: #d4a24c;
+          font-size: 1.05rem;
+          font-weight: 900;
+        }
+        .leader-empty {
+          border-top: 1px solid #f0e7dc;
+          padding-top: 0.75rem;
+          color: #9a8a82;
+          font-weight: 800;
+          font-size: 0.85rem;
+        }
+        @media (max-width: 1200px) {
+          .leaders-grid {
+            grid-template-columns: repeat(3, minmax(0, 1fr));
+          }
+        }
+        @media (max-width: 760px) {
+          .leaders-head {
+            flex-direction: column;
+          }
+          .leaders-grid {
+            grid-template-columns: 1fr;
+          }
+        }
+      `}</style>
+    </section>
+  );
+}
+
+/* ---------- 2. STATS ÉQUIPE ---------- */
+
+type TeamStats = {
+  games: number;
+  wins: number;
+  losses: number;
+  draws: number;
+  pointsFor: number;
+  pointsAgainst: number;
+  p2m: number;
+  p2a: number;
+  p3m: number;
+  p3a: number;
+  ftm: number;
+  fta: number;
+  off: number;
+  def: number;
+  reb: number;
+  ast: number;
+  st: number;
+  to: number;
+  bs: number;
+  pf: number;
+  pts: number;
+};
+
+type SplitKey =
+  | "total"
+  | "home_win"
+  | "home_loss"
+  | "away_win"
+  | "away_loss"
+  | "home"
+  | "away"
+  | "win"
+  | "loss";
+
+const STAT_SPLITS: Array<{ key: SplitKey; label: string }> = [
+  { key: "total", label: "TOTAL" },
+  { key: "home_win", label: "Domicile/Victoire" },
+  { key: "home_loss", label: "Domicile/Défaite" },
+  { key: "away_win", label: "Extérieur/Victoire" },
+  { key: "away_loss", label: "Extérieur/Défaite" },
+  { key: "home", label: "Domicile" },
+  { key: "away", label: "Extérieur" },
+  { key: "win", label: "Victoire" },
+  { key: "loss", label: "Défaite" },
+];
+
+function emptyTeamStats(): TeamStats {
+  return {
+    games: 0,
+    wins: 0,
+    losses: 0,
+    draws: 0,
+    pointsFor: 0,
+    pointsAgainst: 0,
+    p2m: 0,
+    p2a: 0,
+    p3m: 0,
+    p3a: 0,
+    ftm: 0,
+    fta: 0,
+    off: 0,
+    def: 0,
+    reb: 0,
+    ast: 0,
+    st: 0,
+    to: 0,
+    bs: 0,
+    pf: 0,
+    pts: 0,
+  };
+}
+
+function isHome(match: SupaMatchRow) {
+  return match.home !== false;
+}
+
+function isWin(match: SupaMatchRow) {
+  return safeNum(match.us_score) > safeNum(match.them_score);
+}
+
+function isLoss(match: SupaMatchRow) {
+  return safeNum(match.us_score) < safeNum(match.them_score);
+}
+
+function matchPassesSplit(match: SupaMatchRow, split: SplitKey) {
+  const home = isHome(match);
+
+  if (split === "total") return true;
+  if (split === "home") return home;
+  if (split === "away") return !home;
+  if (split === "win") return isWin(match);
+  if (split === "loss") return isLoss(match);
+  if (split === "home_win") return home && isWin(match);
+  if (split === "home_loss") return home && isLoss(match);
+  if (split === "away_win") return !home && isWin(match);
+  if (split === "away_loss") return !home && isLoss(match);
+
+  return true;
+}
+
+function addMatchToTeamStats(stats: TeamStats, match: SupaMatchRow) {
+  const us = safeNum(match.us_score);
+  const them = safeNum(match.them_score);
+
+  stats.games += 1;
+  stats.pointsFor += us;
+  stats.pointsAgainst += them;
+
+  if (us > them) stats.wins += 1;
+  else if (us < them) stats.losses += 1;
+  else stats.draws += 1;
+}
+
+function addLineToTeamStats(stats: TeamStats, row: SupaStatRow) {
+  stats.p2m += safeNum(row.p2m);
+  stats.p2a += safeNum(row.p2a);
+  stats.p3m += safeNum(row.p3m);
+  stats.p3a += safeNum(row.p3a);
+  stats.ftm += safeNum(row.ftm);
+  stats.fta += safeNum(row.fta);
+  stats.off += safeNum(row.off_reb);
+  stats.def += safeNum(row.def_reb);
+  stats.reb += safeNum(row.reb) || safeNum(row.off_reb) + safeNum(row.def_reb);
+  stats.ast += safeNum(row.ast);
+  stats.st += safeNum(row.stl);
+  stats.bs += safeNum(row.blk);
+  stats.to += safeNum(row.turnovers);
+  stats.pf += safeNum(row.pf);
+  stats.pts += safeNum(row.pts);
+}
+
+function teamAdvanced(stats: TeamStats) {
+  const fgm = stats.p2m + stats.p3m;
+  const fga = stats.p2a + stats.p3a;
+  const poss = fga + 0.44 * stats.fta + stats.to - stats.off;
+
+  const eff =
+    stats.pts +
+    stats.reb +
+    stats.ast +
+    stats.st +
+    stats.bs -
+    (fga - fgm) -
+    (stats.fta - stats.ftm) -
+    stats.to -
+    stats.pf;
+
+  const efg = fga ? ((fgm + 0.5 * stats.p3m) / fga) * 100 : 0;
+  const ts =
+    fga + 0.44 * stats.fta
+      ? (stats.pointsFor / (2 * (fga + 0.44 * stats.fta))) * 100
+      : 0;
+  const astPct = fgm ? (stats.ast / fgm) * 100 : 0;
+  const tovPct = poss ? (stats.to / poss) * 100 : 0;
+  const shot2Rep = fga ? (stats.p2a / fga) * 100 : 0;
+  const shot3Rep = fga ? (stats.p3a / fga) * 100 : 0;
+
+  return { fgm, fga, poss, eff, efg, ts, astPct, tovPct, shot2Rep, shot3Rep };
+}
+
+function TeamMatchStatsBlock({ teamId }: { teamId: string }) {
+  const supabase = createClient();
+
+  const [loading, setLoading] = useState(true);
+  const [mode, setMode] = useState<"total" | "average">("average");
+  const [matches, setMatches] = useState<SupaMatchRow[]>([]);
+  const [statsRows, setStatsRows] = useState<SupaStatRow[]>([]);
+
+  useEffect(() => {
+    let active = true;
+
+    async function load() {
+      setLoading(true);
+
+      const { data: matchData, error: matchError } = await supabase
+        .from("match_stats")
+        .select(
+          "id, team_id, opponent, match_date, us_score, them_score, result, home",
+        )
+        .eq("team_id", teamId)
+        .order("match_date", { ascending: false });
+
+      if (!active) return;
+
+      if (matchError) {
+        console.error("Erreur stats équipe fiche :", matchError);
+        setMatches([]);
+        setStatsRows([]);
+        setLoading(false);
+        return;
+      }
+
+      const matchRows = (matchData ?? []) as SupaMatchRow[];
+      setMatches(matchRows);
+
+      const matchIds = matchRows.map((m) => m.id);
+
+      if (matchIds.length === 0) {
+        setStatsRows([]);
+        setLoading(false);
+        return;
+      }
+
+      const { data: playerData, error: playerError } = await supabase
+        .from("match_player_stats")
+        .select(
+          "team_id, match_id, pts, p2m, p2a, p3m, p3a, ftm, fta, off_reb, def_reb, reb, ast, stl, blk, turnovers, pf, present",
+        )
+        .in("match_id", matchIds);
+
+      if (!active) return;
+
+      if (playerError) {
+        console.error("Erreur lignes stats équipe fiche :", playerError);
+        setStatsRows([]);
+      } else {
+        setStatsRows(
+          ((playerData ?? []) as SupaStatRow[]).filter(
+            (r) => r.present !== false,
+          ),
+        );
+      }
+
+      setLoading(false);
+    }
+
+    load();
+
+    return () => {
+      active = false;
+    };
+  }, [supabase, teamId]);
+
+  const splitRows = useMemo(() => {
+    const rowsByMatch = statsRows.reduce(
+      (acc, row) => {
+        const id = String(row.match_id || "");
+        if (!id) return acc;
+        if (!acc[id]) acc[id] = [];
+        acc[id].push(row);
+        return acc;
+      },
+      {} as Record<string, SupaStatRow[]>,
+    );
+
+    return STAT_SPLITS.map((split) => {
+      const sourceMatches = matches.filter((match) =>
+        matchPassesSplit(match, split.key),
+      );
+      const stats = emptyTeamStats();
+
+      sourceMatches.forEach((match) => {
+        addMatchToTeamStats(stats, match);
+        (rowsByMatch[match.id] || []).forEach((row) =>
+          addLineToTeamStats(stats, row),
+        );
+      });
+
+      return {
+        key: split.key,
+        label: split.label,
+        stats,
+      };
+    });
+  }, [matches, statsRows]);
+
+  const total =
+    splitRows.find((row) => row.key === "total")?.stats || emptyTeamStats();
+
+  const value = (x: number, games: number) => {
+    if (mode === "total") return r1(x);
+    return games ? r1(x / games) : 0;
+  };
+
+  return (
+    <section className="tl-card team-match-stats">
+      <div className="block-head">
+        <div>
+          <p className="eyebrow">Matchs</p>
+          <h2>Stats équipe</h2>
+          <p className="muted">Synthèse liée aux matchs enregistrés en live.</p>
         </div>
-      </aside>
 
-      <main className="player-main">
-        <div className="player-topbar">
-          <button className="player-back-inline" onClick={() => router.push(`/equipes/${teamId}`)}>
-            ← Retour à l'équipe
+        <div className="mode-switch">
+          <button
+            type="button"
+            className={mode === "total" ? "on" : ""}
+            onClick={() => setMode("total")}
+          >
+            Total
           </button>
-
-          <div className="player-actions">
-            <button className="light-btn outline" onClick={exportProfile}>
-              ⬇ Exporter le profil
-            </button>
-
-            {(p as any).poleProtected === true && (p as any).secondaryTeam === true ? (
-              <span className="status-pill">🔒 Informations gérées par le Pôle</span>
-            ) : (
-              <button className="light-btn primary" onClick={() => setEditing(true)}>
-                ✎ Modifier
-              </button>
-            )}
-          </div>
+          <button
+            type="button"
+            className={mode === "average" ? "on" : ""}
+            onClick={() => setMode("average")}
+          >
+            Moyenne
+          </button>
         </div>
+      </div>
 
-        <section className="player-hero">
-          <div className="player-photo">
-            {p.num != null && <div className="player-num">#{p.num}</div>}
+      {loading && <div className="empty">Chargement des stats...</div>}
 
-            {p.photo ? (
-              <img src={p.photo} alt="" />
-            ) : (
-              <span>{(p.firstName || "?").charAt(0).toUpperCase()}</span>
-            )}
+      {!loading && matches.length === 0 && (
+        <div className="empty">Aucun match enregistré pour cette équipe.</div>
+      )}
+
+      {!loading && matches.length > 0 && (
+        <>
+          <div className="quick-kpis">
+            <MiniKpi label="Matchs" value={total.games} />
+            <MiniKpi label="Victoires" value={total.wins} />
+            <MiniKpi label="Défaites" value={total.losses} />
+            <MiniKpi
+              label="Pts marqués"
+              value={value(total.pointsFor, total.games)}
+            />
+            <MiniKpi
+              label="Pts encaissés"
+              value={value(total.pointsAgainst, total.games)}
+            />
+            <MiniKpi
+              label="Diff."
+              value={value(total.pointsFor - total.pointsAgainst, total.games)}
+            />
           </div>
 
-          <div className="player-identity">
-            <span className="player-club">🏀 {p.club || team.name}</span>
+          <div className="stats-table">
+            <table>
+              <thead>
+                <tr>
+                  <th>Filtre</th>
+                  <th>MJ</th>
+                  <th>PTS M</th>
+                  <th>PTS E</th>
+                  <th>FG</th>
+                  <th>%</th>
+                  <th>2PTS</th>
+                  <th>%</th>
+                  <th>3PTS</th>
+                  <th>%</th>
+                  <th>LF</th>
+                  <th>%</th>
+                  <th>RO</th>
+                  <th>RD</th>
+                  <th>REB</th>
+                  <th>PD</th>
+                  <th>INT</th>
+                  <th>BP</th>
+                  <th>CTRE</th>
+                  <th>FP</th>
+                  <th>Eval</th>
+                  <th>Poss</th>
+                  <th>eFG%</th>
+                  <th>TS%</th>
+                  <th>%PD</th>
+                  <th>%BP</th>
+                  <th>2PTS Rep</th>
+                  <th>3PTS Rep</th>
+                </tr>
+              </thead>
 
-            <h1>
-              {p.firstName} {p.lastName}
-            </h1>
+              <tbody>
+                {splitRows.map((row) => {
+                  const s = row.stats;
+                  const a = teamAdvanced(s);
+                  const games = s.games;
 
-            <div className="player-cat">
-              <b>Catégorie</b> {p.categorie || "—"}
-            </div>
-
-            <div className="player-attr-grid">
-              <Attr label="Poste principal" value={p.postePrincipal || "—"} />
-              <Attr label="Poste secondaire" value={p.posteSecondaire || "—"} />
-              <Attr label="Taille" value={latestHeight ? `${latestHeight.value} cm` : p.taille || "—"} />
-              <Attr label="Poids" value={latestWeight ? `${latestWeight.value} kg` : p.poids || "—"} />
-              <Attr label="Âge" value={exactAgeLabel(p.dob)} />
-              <Attr label="Date de naissance" value={formatBirthDate(p.dob)} />
-              <Attr label="Main dominante" value={p.mainDominante || "—"} />
-              <Attr label="Numéro" value={p.num != null ? String(p.num) : "—"} />
-            </div>
-
-            <div className="player-hero-bottom">
-              <span className={`status-pill ${statusClass(p.statut || "Disponible")}`}>
-                {p.statut || "Disponible"}
-              </span>
-
-              <span className="stars-line">
-                Potentiel <span>{stars(p.potentiel || 0)}</span>
-              </span>
-            </div>
+                  return (
+                    <tr key={row.key} className={`row-${row.key}`}>
+                      <td className="label">{row.label}</td>
+                      <td>{s.games}</td>
+                      <td>{value(s.pointsFor, games)}</td>
+                      <td>{value(s.pointsAgainst, games)}</td>
+                      <td>
+                        {value(a.fgm, games)}-{value(a.fga, games)}
+                      </td>
+                      <td>{pctText(a.fgm, a.fga)}</td>
+                      <td>
+                        {value(s.p2m, games)}-{value(s.p2a, games)}
+                      </td>
+                      <td>{pctText(s.p2m, s.p2a)}</td>
+                      <td>
+                        {value(s.p3m, games)}-{value(s.p3a, games)}
+                      </td>
+                      <td>{pctText(s.p3m, s.p3a)}</td>
+                      <td>
+                        {value(s.ftm, games)}-{value(s.fta, games)}
+                      </td>
+                      <td>{pctText(s.ftm, s.fta)}</td>
+                      <td>{value(s.off, games)}</td>
+                      <td>{value(s.def, games)}</td>
+                      <td>{value(s.reb, games)}</td>
+                      <td>{value(s.ast, games)}</td>
+                      <td>{value(s.st, games)}</td>
+                      <td>{value(s.to, games)}</td>
+                      <td>{value(s.bs, games)}</td>
+                      <td>{value(s.pf, games)}</td>
+                      <td>{value(a.eff, games)}</td>
+                      <td>{value(a.poss, games)}</td>
+                      <td>{r1(a.efg)}%</td>
+                      <td>{r1(a.ts)}%</td>
+                      <td>{r1(a.astPct)}%</td>
+                      <td>{r1(a.tovPct)}%</td>
+                      <td>{r1(a.shot2Rep)}%</td>
+                      <td>{r1(a.shot3Rep)}%</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
           </div>
+        </>
+      )}
 
-          <div className="jersey-card-light">
-            <Jersey name={p.lastName} num={p.num} />
+      <style jsx>{`
+        .team-match-stats {
+          margin-top: 1.2rem;
+        }
+        .block-head {
+          display: flex;
+          justify-content: space-between;
+          align-items: flex-start;
+          gap: 1rem;
+          margin-bottom: 1rem;
+        }
+        .eyebrow {
+          margin: 0;
+          color: #d4a24c;
+          font-size: 0.78rem;
+          font-weight: 900;
+          text-transform: uppercase;
+          letter-spacing: 0.06em;
+        }
+        h2 {
+          margin: 0.2rem 0 0;
+          color: #6b1a2c;
+          font-size: 1.45rem;
+          font-weight: 900;
+        }
+        .muted {
+          margin: 0.25rem 0 0;
+          color: #9a8a82;
+          font-size: 0.92rem;
+        }
+        .mode-switch {
+          display: inline-flex;
+          gap: 0.25rem;
+          border-radius: 999px;
+          background: #fff8ef;
+          border: 1px solid #eadccc;
+          padding: 0.25rem;
+        }
+        .mode-switch button {
+          border: 0;
+          background: transparent;
+          border-radius: 999px;
+          color: #6b1a2c;
+          padding: 0.55rem 0.9rem;
+          font-weight: 900;
+          cursor: pointer;
+        }
+        .mode-switch button.on {
+          background: #6b1a2c;
+          color: #fff;
+        }
+        .empty {
+          background: #fff8ef;
+          border: 1px dashed #d4a24c;
+          border-radius: 14px;
+          padding: 1rem;
+          color: #6b1a2c;
+          font-weight: 900;
+        }
+        .quick-kpis {
+          display: grid;
+          grid-template-columns: repeat(6, minmax(0, 1fr));
+          gap: 0.75rem;
+          margin-bottom: 1rem;
+        }
+        .kpi {
+          border: 1px solid #efe6db;
+          border-radius: 14px;
+          background: #fffdf9;
+          padding: 0.85rem;
+        }
+        .kpi span {
+          display: block;
+          color: #9a8a82;
+          font-size: 0.72rem;
+          font-weight: 900;
+          text-transform: uppercase;
+        }
+        .kpi strong {
+          display: block;
+          margin-top: 0.25rem;
+          color: #6b1a2c;
+          font-size: 1.35rem;
+          font-weight: 900;
+        }
+        .stats-table {
+          width: 100%;
+          overflow-x: auto;
+          border: 1px solid #efe6db;
+          border-radius: 16px;
+        }
+        table {
+          width: max-content;
+          min-width: 100%;
+          border-collapse: separate;
+          border-spacing: 0;
+          font-size: 0.78rem;
+        }
+        th {
+          background: linear-gradient(#6b1a2c, #49101d);
+          color: white;
+          padding: 0.65rem 0.55rem;
+          text-align: center;
+          white-space: nowrap;
+          font-weight: 900;
+        }
+        th:first-child,
+        td:first-child {
+          position: sticky;
+          left: 0;
+          z-index: 2;
+          min-width: 155px;
+          text-align: left;
+        }
+        th:first-child {
+          background: #6b1a2c;
+        }
+        td:first-child {
+          background: #f8f8f8;
+        }
+        td {
+          border-bottom: 1px solid #eee;
+          border-right: 1px solid #eee;
+          padding: 0.62rem 0.55rem;
+          text-align: center;
+          white-space: nowrap;
+          background: white;
+          font-weight: 800;
+        }
+        .label {
+          color: #6b1a2c;
+          font-weight: 900;
+        }
+        .row-total td {
+          background: #fff7ec;
+          font-weight: 900;
+        }
+        .row-home_win td:first-child,
+        .row-away_win td:first-child,
+        .row-win td:first-child {
+          background: #eef9f1;
+          color: #2f6b41;
+        }
+        .row-home_loss td:first-child,
+        .row-away_loss td:first-child,
+        .row-loss td:first-child {
+          background: #fdf1ef;
+          color: #8f3c34;
+        }
+        .row-home td:first-child {
+          background: #fff8ea;
+          color: #8a6a1f;
+        }
+        .row-away td:first-child {
+          background: #f1f6ff;
+          color: #355c96;
+        }
+        @media (max-width: 900px) {
+          .block-head {
+            flex-direction: column;
+          }
+          .quick-kpis {
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+          }
+        }
+      `}</style>
+    </section>
+  );
+}
 
-            <div className="jersey-meta-light">
-              <div>
-                Ancienneté au club
-                <b>{p.ancienneteLabel || "—"}</b>
-              </div>
-
-              <div>
-                Contrat jusqu'au
-                <b>{p.contratJusquau || "—"}</b>
-              </div>
-            </div>
-          </div>
-        </section>
-
-        <div className="player-tabs">
-          {TABS.map((t) => (
-            <button key={t} className={tab === t ? "active" : ""} onClick={() => setTab(t)}>
-              {t}
-            </button>
-          ))}
-        </div>
-
-        {tab === "Aperçu" && (
-          <OverviewTab
-            p={p}
-            team={team}
-            tdj={tdj}
-            tdjPct={tdjPct}
-            cmp={cmp}
-            tests={tests}
-            medical={medical}
-            latestBilan={latestBilan}
-            prediction={growthPrediction}
-            liveStats={liveStats}
-            teamPlayersStats={teamPlayersStats}
-            currentPlayerId={String(playerId)}
-            attendanceSummary={attendanceSummary}
-            fatigueSummary={fatigueSummary}
-            onOpenLoad={() => setTab("Charge & récup.")}
-          />
-        )}
-
-        {tab === "Informations" && (
-          <InformationTab p={p} team={team} latestHeight={latestHeight} latestWeight={latestWeight} latestWingspan={latestWingspan} />
-        )}
-
-        {tab === "Stats & Vidéo" && (
-          <VideoRentabilityTab
-            actions={playerActions}
-            tags={tags}
-            teamId={String(teamId)}
-            playerId={String(playerId)}
-            playerName={`${p.firstName ?? ""} ${p.lastName ?? ""}`.trim() || "Joueur"}
-            matches={liveStats.matches}
-            onRequestExport={requestActionExport}
-            onOpenMontageStudio={(montageId) => {
-              const params = new URLSearchParams({
-                teamId: String(teamId),
-                playerId: String(playerId),
-              });
-              if (montageId) params.set("montageId", montageId);
-              router.push(`/management/montage?${params.toString()}`);
-            }}
-          />
-        )}
-
-        {tab === "Tests" && (
-          <TestsTab
-            tests={tests}
-            growth={growth}
-            setGrowth={saveGrowthProfile}
-            currentHeightCm={currentHeightCm}
-            prediction={growthPrediction}
-            onAddTest={openNewTest}
-            onDeleteTest={async (id) => {
-              const { error } = await supabase.from("player_tests").delete().eq("id", id);
-              if (error) {
-                console.error("Erreur suppression test joueur :", error);
-                alert("Impossible de supprimer le test.");
-                return;
-              }
-              setTests((prev) => prev.filter((t) => t.id !== id));
-            }}
-          />
-        )}
-
-        {tab === "Charge & récup." && (
-          <PlayerLoadMonitoring playerId={playerId} teamId={teamId} />
-        )}
-
-        {tab === "Grilles de tir" && (
-          <PlayerShootingGrids playerId={playerId} teamId={teamId} />
-        )}
-
-        {tab === "Médical" && (
-          <MedicalTab
-            entries={medical}
-            onAdd={() => {
-              setMedicalDraft({
-                id: uid(),
-                date: new Date().toISOString().slice(0, 10),
-                status: "Disponible",
-                zone: "",
-                injury: "",
-                severity: "Faible",
-                daysOff: 0,
-                notes: "",
-              });
-              setMedicalModal(true);
-            }}
-            onDelete={async (id) => {
-              const { error } = await supabase.from("player_medical_entries").delete().eq("id", id);
-              if (error) {
-                console.error("Erreur suppression médical joueur :", error);
-                alert("Impossible de supprimer le suivi médical.");
-                return;
-              }
-              setMedical((prev) => prev.filter((m) => m.id !== id));
-            }}
-          />
-        )}
-
-        {tab === "Bilans" && (
-          <BilansTab
-            bilans={bilans}
-            onNew={() => setBilanModal(emptyBilan())}
-            onEdit={(bilan) => setBilanModal(bilan)}
-            onDelete={async (id) => {
-              const { error } = await supabase.from("player_bilans").delete().eq("id", id);
-              if (error) {
-                console.error("Erreur suppression bilan joueur :", error);
-                alert("Impossible de supprimer le bilan.");
-                return;
-              }
-              setBilans((prev) => prev.filter((b) => b.id !== id));
-            }}
-            onPdf={generateBilanPdf}
-          />
-        )}
-
-        {tab === "Bilan sportif" && (
-          <section className="panel">
-            <div className="section-title">
-              <div>
-                <span className="eyebrow">PÔLE / CLUB</span>
-                <h2>Bilan sportif partagé</h2>
-              </div>
-            </div>
-            <PoleSportsReportPanel teamId={String(teamId)} playerId={String(playerId)} />
-          </section>
-        )}
-
-        {tab === "Suivi Pôle" && (
-          <section className="panel">
-            <PolePlayerLongitudinalPanel teamId={String(teamId)} playerId={String(playerId)} />
-          </section>
-        )}
-
-        {tab === "Documents" && (
-          <DocumentsTab
-            documents={documents}
-            onAdd={() => {
-              setDocDraft({
-                id: uid(),
-                date: new Date().toISOString().slice(0, 10),
-                title: "",
-                category: "Administratif",
-                url: "",
-                notes: "",
-              });
-              setDocModal(true);
-            }}
-            onDelete={async (id) => {
-              const { error } = await supabase.from("player_documents").delete().eq("id", id);
-              if (error) {
-                console.error("Erreur suppression document joueur :", error);
-                alert("Impossible de supprimer le document.");
-                return;
-              }
-              setDocuments((prev) => prev.filter((d) => d.id !== id));
-            }}
-          />
-        )}
-
-        {editing && <PlayerForm initial={p} onSave={handleSave} onClose={() => setEditing(false)} />}
-
-        {testModal && (
-          <Modal title="Ajouter un test" onClose={() => setTestModal(false)}>
-            <div className="modal-grid">
-              <Field label="Date">
-                <input type="date" value={testDraft.date} onChange={(e) => setTestDraft({ ...testDraft, date: e.target.value })} />
-              </Field>
-
-              <Field label="Catégorie">
-                <select
-                  value={testDraft.category}
-                  onChange={(e) => {
-                    const category = e.target.value as TestCategory;
-                    const first = TEST_CATALOG.find((t) => t.category === category) || TEST_CATALOG[0];
-
-                    setTestDraft({
-                      ...testDraft,
-                      category,
-                      label: first.label,
-                      unit: first.unit,
-                    });
-                  }}
-                >
-                  {Array.from(new Set(TEST_CATALOG.map((t) => t.category))).map((cat) => (
-                    <option key={cat}>{cat}</option>
-                  ))}
-                </select>
-              </Field>
-
-              <Field label="Test">
-                <select
-                  value={testDraft.label}
-                  onChange={(e) => {
-                    const selected = TEST_CATALOG.find((t) => t.label === e.target.value);
-
-                    setTestDraft({
-                      ...testDraft,
-                      label: e.target.value,
-                      unit: selected?.unit || testDraft.unit,
-                    });
-                  }}
-                >
-                  {TEST_CATALOG.filter((t) => t.category === testDraft.category).map((test) => (
-                    <option key={test.label}>{test.label}</option>
-                  ))}
-                </select>
-              </Field>
-
-              <Field label="Valeur">
-                <input
-                  type="number"
-                  step="0.01"
-                  value={testDraft.value || ""}
-                  onChange={(e) => setTestDraft({ ...testDraft, value: Number(e.target.value) })}
-                />
-              </Field>
-
-              <Field label="Unité">
-                <input value={testDraft.unit} onChange={(e) => setTestDraft({ ...testDraft, unit: e.target.value })} />
-              </Field>
-
-              <Field label="Notes">
-                <textarea value={testDraft.notes || ""} onChange={(e) => setTestDraft({ ...testDraft, notes: e.target.value })} />
-              </Field>
-            </div>
-
-            <div className="modal-actions">
-              <button className="light-btn outline" onClick={() => setTestModal(false)}>Annuler</button>
-              <button className="light-btn primary" onClick={saveTest}>Enregistrer</button>
-            </div>
-          </Modal>
-        )}
-
-        {medicalModal && (
-          <Modal title="Ajouter un suivi médical" onClose={() => setMedicalModal(false)}>
-            <div className="modal-grid">
-              <Field label="Date">
-                <input type="date" value={medicalDraft.date} onChange={(e) => setMedicalDraft({ ...medicalDraft, date: e.target.value })} />
-              </Field>
-
-              <Field label="Statut">
-                <select value={medicalDraft.status} onChange={(e) => setMedicalDraft({ ...medicalDraft, status: e.target.value as MedicalStatus })}>
-                  <option>Disponible</option>
-                  <option>Blessé</option>
-                  <option>Reprise</option>
-                  <option>Aménagé</option>
-                  <option>Absent</option>
-                </select>
-              </Field>
-
-              <Field label="Zone">
-                <input value={medicalDraft.zone} placeholder="Cheville, genou..." onChange={(e) => setMedicalDraft({ ...medicalDraft, zone: e.target.value })} />
-              </Field>
-
-              <Field label="Blessure / motif">
-                <input value={medicalDraft.injury} onChange={(e) => setMedicalDraft({ ...medicalDraft, injury: e.target.value })} />
-              </Field>
-
-              <Field label="Gravité">
-                <select value={medicalDraft.severity} onChange={(e) => setMedicalDraft({ ...medicalDraft, severity: e.target.value as MedicalEntry["severity"] })}>
-                  <option>Faible</option>
-                  <option>Moyenne</option>
-                  <option>Élevée</option>
-                </select>
-              </Field>
-
-              <Field label="Jours d'arrêt">
-                <input type="number" value={medicalDraft.daysOff} onChange={(e) => setMedicalDraft({ ...medicalDraft, daysOff: Number(e.target.value) })} />
-              </Field>
-
-              <Field label="Notes">
-                <textarea value={medicalDraft.notes} onChange={(e) => setMedicalDraft({ ...medicalDraft, notes: e.target.value })} />
-              </Field>
-            </div>
-
-            <div className="modal-actions">
-              <button className="light-btn outline" onClick={() => setMedicalModal(false)}>Annuler</button>
-              <button className="light-btn primary" onClick={saveMedical}>Enregistrer</button>
-            </div>
-          </Modal>
-        )}
-
-        {docModal && (
-          <Modal title="Ajouter un document" onClose={() => setDocModal(false)}>
-            <div className="modal-grid">
-              <Field label="Date">
-                <input type="date" value={docDraft.date} onChange={(e) => setDocDraft({ ...docDraft, date: e.target.value })} />
-              </Field>
-
-              <Field label="Titre">
-                <input value={docDraft.title} onChange={(e) => setDocDraft({ ...docDraft, title: e.target.value })} />
-              </Field>
-
-              <Field label="Catégorie">
-                <select value={docDraft.category} onChange={(e) => setDocDraft({ ...docDraft, category: e.target.value as PlayerDocument["category"] })}>
-                  <option>Administratif</option>
-                  <option>Performance</option>
-                  <option>Scolarité</option>
-                  <option>Vidéo</option>
-                  <option>Contrat</option>
-                  <option>Autre</option>
-                </select>
-              </Field>
-
-              <Field label="Fichier (PDF, JPEG, PNG, WEBP, DOCX)">
-                <input
-                  type="file"
-                  accept=".pdf,.jpg,.jpeg,.png,.webp,.docx,application/pdf,image/jpeg,image/png,image/webp,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-                  disabled={docUploading}
-                  onChange={(e) => {
-                    const file = e.target.files?.[0];
-                    if (file) void uploadPlayerDocument(file);
-                    e.currentTarget.value = "";
-                  }}
-                />
-                {docUploading && <small>Envoi vers Supabase…</small>}
-                {!docUploading && docUploadName && <small>Fichier prêt : {docUploadName}</small>}
-              </Field>
-
-              <Field label="Ou lien / URL">
-                <input value={docDraft.url || ""} onChange={(e) => setDocDraft({ ...docDraft, url: e.target.value })} />
-              </Field>
-
-              <Field label="Notes">
-                <textarea value={docDraft.notes || ""} onChange={(e) => setDocDraft({ ...docDraft, notes: e.target.value })} />
-              </Field>
-            </div>
-
-            <div className="modal-actions">
-              <button className="light-btn outline" onClick={() => setDocModal(false)}>Annuler</button>
-              <button className="light-btn primary" onClick={saveDocument}>Enregistrer</button>
-            </div>
-          </Modal>
-        )}
-
-        {bilanModal && (
-          <BilanModal
-            bilan={bilanModal}
-            setBilan={setBilanModal}
-            onClose={() => setBilanModal(null)}
-            onSave={saveBilan}
-          />
-        )}
-
-        {toast && <div className="toast-light">{toast}</div>}
-        <div ref={printRef} />
-      </main>
+function MiniKpi({ label, value }: { label: string; value: string | number }) {
+  return (
+    <div className="kpi">
+      <span>{label}</span>
+      <strong>{value}</strong>
     </div>
   );
 }
 
-function OverviewTab({
-  p,
-  team,
-  tdj,
-  tdjPct,
-  cmp,
-  tests,
-  medical,
-  latestBilan,
-  prediction,
-  liveStats,
-  teamPlayersStats,
-  currentPlayerId,
-  attendanceSummary,
-  fatigueSummary,
-  onOpenLoad,
-}: {
-  p: any;
-  team: Team;
-  tdj: any;
-  tdjPct: number;
-  cmp: any;
-  tests: PlayerTest[];
-  medical: MedicalEntry[];
-  latestBilan?: PlayerBilan;
-  prediction: ReturnType<typeof predictedHeightRange>;
-  liveStats: PlayerLiveStats;
-  teamPlayersStats: TeamPlayerComparisonStat[];
-  currentPlayerId: string;
-  attendanceSummary: PlayerAttendanceSummary;
-  fatigueSummary: PlayerFatigueSummary;
-  onOpenLoad: () => void;
-}) {
-  const latestMedical = [...medical].sort((a, b) => b.date.localeCompare(a.date))[0];
-  const latestTests = ["Taille", "Poids", "Envergure", "Détente sèche", "VMA"]
-    .map((label) => latestByLabel(tests, label))
-    .filter(Boolean) as PlayerTest[];
+/* ---------- 5. STATS JEU / TEMPS FORTS ---------- */
 
-  return (
-    <>
-      <div className="kpi-row-light">
-        <Kpi
-          icon="✅"
-          label="Présence"
-          value={`${attendanceSummary.rate}%`}
-          sub={
-            attendanceSummary.total
-              ? `${attendanceSummary.present} présent${attendanceSummary.present > 1 ? "s" : ""} · ${attendanceSummary.late} retard${attendanceSummary.late > 1 ? "s" : ""} · ${attendanceSummary.absent} absent${attendanceSummary.absent > 1 ? "s" : ""}`
-              : "Aucune séance renseignée"
-          }
-          spark={attendanceSummary.spark.length ? attendanceSummary.spark : undefined}
-          color="#22a06b"
-        />
+type GameSplitKey = "total" | "win" | "loss";
 
-        <button
-          type="button"
-          className="kpi-button-reset"
-          style={{ display: "block", width: "100%", padding: 0, border: 0, background: "transparent", textAlign: "inherit", cursor: "pointer", font: "inherit", color: "inherit" }}
-          onClick={onOpenLoad}
-          title="Ouvrir Charge & récupération"
-        >
-          <Kpi
-            icon={fatigueSummary.level === "high" ? "🔴" : fatigueSummary.level === "watch" ? "🟠" : fatigueSummary.level === "low" ? "🟢" : "😴"}
-            label="Fatigue"
-            value={fatigueSummary.average7 != null ? `${fatigueSummary.average7.toFixed(1)} / 10` : "—"}
-            sub={
-              fatigueSummary.average7 == null
-                ? "Aucune réponse sur 7 jours"
-                : fatigueSummary.delta == null
-                  ? `${fatigueSummary.count} réponse${fatigueSummary.count > 1 ? "s" : ""} sur 7 jours`
-                  : `${fatigueSummary.delta > 0 ? "↗" : fatigueSummary.delta < 0 ? "↘" : "→"} ${fatigueSummary.delta > 0 ? "+" : ""}${fatigueSummary.delta.toFixed(1)} vs 7 jours précédents`
-            }
-            spark={fatigueSummary.spark.length ? fatigueSummary.spark : undefined}
-            color={fatigueSummary.level === "high" ? "#c5283d" : fatigueSummary.level === "watch" ? "#d4a24c" : "#22a06b"}
-          />
-        </button>
+type GameActionRow = {
+  match_id: string | null;
+  context: string | null;
+  inbound: string | null;
+  temps_fort: string | null;
+  action_type: string | null;
+  shot_type: string | null;
+  shot_result: string | null;
+  special_case: string | null;
+  ft_attempts: number | null;
+  ft_made: number | null;
+  assist_player_id: string | null;
+};
 
-        <Kpi
-          icon="🏀"
-          label="Matchs joués"
-          value={String(liveStats.hasData ? liveStats.games : tdj.matchsJoues || 0)}
-          sub={`${liveStats.hasData ? liveStats.missedGames : tdj.matchsManques || 0} manqué${(liveStats.hasData ? liveStats.missedGames : tdj.matchsManques || 0) > 1 ? "s" : ""}`}
-        />
-
-        <Kpi
-          icon="⌛"
-          label="Temps moyen"
-          value={`${liveStats.hasData ? liveStats.averageMinutes : tdj.tempsMoyenMatchMin || 0} min`}
-          sub={liveStats.hasData ? "Depuis les stats match" : "par match"}
-        />
-      </div>
-
-      <div className="player-grid three">
-        <div className="light-card">
-          <h3>Radar de compétences</h3>
-          <p className="muted">Évaluation coach</p>
-          <RadarChart data={p.radar} />
-        </div>
-
-        <div className="light-card">
-          <h3>Stats match <span>(moyennes)</span></h3>
-
-          <div className="stats-grid-light">
-            <StatCell n={p.stats?.pts || 0} l="Pts" />
-            <StatCell n={p.stats?.reb || 0} l="Reb" />
-            <StatCell n={p.stats?.ast || 0} l="Ast" />
-            <StatCell n={p.stats?.stl || 0} l="Stl" />
-            <StatCell n={p.stats?.blk || 0} l="Blk" />
-            <StatCell n={p.stats?.to || 0} l="To" />
-          </div>
-
-          <div className="pct-row-light">
-            <StatCell n={`${p.stats?.pctTir || 0}%`} l="% Tir" small />
-            <StatCell n={`${p.stats?.pct3pts || 0}%`} l="% 3pts" small />
-            <StatCell n={`${p.stats?.pctLf || 0}%`} l="% LF" small />
-          </div>
-        </div>
-
-        <div className="light-card">
-          <h3>Bilan rapide</h3>
-
-          <div className="summary-list">
-            <SummaryLine label="Statut médical" value={latestMedical?.status || p.statut || "Disponible"} />
-            <SummaryLine label="Taille prédite" value={prediction.probable ? `${prediction.probable} cm` : "À renseigner"} />
-            <SummaryLine label="Dernier bilan" value={latestBilan ? `${latestBilan.type} · ${fmtDate(latestBilan.date)}` : "Aucun bilan"} />
-            <SummaryLine label="Note coach" value={latestBilan ? `${ratingAverage(latestBilan.coachRatings)}/10` : "—"} />
-          </div>
-        </div>
-      </div>
-
-      <div className="player-grid two">
-        <div className="light-card">
-          <h3>Temps de jeu</h3>
-
-          <div className="temps-row">
-            <DonutChart pct={tdjPct} centerTop="Temps de jeu" centerBottom="moyen" />
-
-            <div className="legend-list">
-              <Legend color="#1f6fb2" label="Temps moyen / match" value={`${tdj.tempsMoyenMatchMin || 0} min`} />
-              <Legend color="#f47b20" label="Temps total" value={tdj.tempsTotalLabel || "—"} />
-              <Legend color="#22a06b" label="Matchs joués" value={String(tdj.matchsJoues || 0)} />
-              <Legend color="#e4564f" label="Matchs manqués" value={String(tdj.matchsManques || 0)} />
-            </div>
-          </div>
-        </div>
-
-        <div className="light-card">
-          <h3>Derniers tests</h3>
-
-          {latestTests.length === 0 ? (
-            <p className="empty-small">Aucun test renseigné.</p>
-          ) : (
-            <table className="phys-light">
-              <thead>
-                <tr>
-                  <th>Test</th>
-                  <th>Résultat</th>
-                  <th>Date</th>
-                </tr>
-              </thead>
-
-              <tbody>
-                {latestTests.map((test) => (
-                  <tr key={test.id}>
-                    <td>{test.label}</td>
-                    <td>{test.value} {test.unit}</td>
-                    <td>{fmtDate(test.date)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          )}
-        </div>
-      </div>
-
-      <ModernPlayerComparisonSection
-        team={team}
-        p={p}
-        liveStats={liveStats}
-        teamPlayersStats={teamPlayersStats}
-        currentPlayerId={currentPlayerId}
-      />
-    </>
-  );
-}
-
-function InformationTab({
-  p,
-  team,
-  latestHeight,
-  latestWeight,
-  latestWingspan,
-}: {
-  p: any;
-  team: Team;
-  latestHeight?: PlayerTest;
-  latestWeight?: PlayerTest;
-  latestWingspan?: PlayerTest;
-}) {
-  return (
-    <>
-      <section className="light-card admin-card">
-        <h3>Informations joueur</h3>
-
-        <div className="admin-grid">
-          <Attr label="Club" value={p.club || team.name || "—"} />
-          <Attr label="Catégorie" value={p.categorie || "—"} />
-          <Attr label="Poste principal" value={p.postePrincipal || "—"} />
-          <Attr label="Poste secondaire" value={p.posteSecondaire || "—"} />
-          <Attr label="Nationalité" value={p.nationality || "—"} />
-          <Attr label="Taille" value={latestHeight ? `${latestHeight.value} cm` : p.taille || "—"} />
-          <Attr label="Poids" value={latestWeight ? `${latestWeight.value} kg` : p.poids || "—"} />
-          <Attr label="Envergure" value={latestWingspan ? `${latestWingspan.value} cm` : "—"} />
-          <Attr label="Âge" value={exactAgeLabel(p.dob)} />
-          <Attr label="Date de naissance" value={formatBirthDate(p.dob)} />
-          <Attr label="Main dominante" value={p.mainDominante || "—"} />
-          <Attr label="Numéro" value={p.num != null ? String(p.num) : "—"} />
-        </div>
-      </section>
-
-      <section className="light-card admin-card">
-        <h3>Informations administratives</h3>
-
-        <div className="admin-grid">
-          <Attr label="Numéro de licence" value={p.licenceNumber || "—"} />
-          <Attr label="Téléphone tuteur 1" value={p.tuteur1Phone || "—"} />
-          <Attr label="Email tuteur 1" value={p.tuteur1Email || "—"} />
-          <Attr label="Téléphone tuteur 2" value={p.tuteur2Phone || "—"} />
-          <Attr label="Email tuteur 2" value={p.tuteur2Email || "—"} />
-          <Attr label="Contact urgence" value={p.emergencyContact || "—"} />
-          <Attr label="Établissement" value={p.school || "—"} />
-          <Attr label="Classe" value={p.className || "—"} />
-        </div>
-      </section>
-    </>
-  );
-}
-
-function StatsTab({
-  p,
-  tdj,
-  tdjPct,
-  cmp,
-  team,
-  liveStats,
-  teamPlayersStats,
-  currentPlayerId,
-}: {
-  p: any;
-  tdj: any;
-  tdjPct: number;
-  cmp: any;
-  team: Team;
-  liveStats: PlayerLiveStats;
-  teamPlayersStats: TeamPlayerComparisonStat[];
-  currentPlayerId: string;
-}) {
-  const hasLiveStats = liveStats.hasData;
-  const totals = liveStats.totals;
-  const averages = liveStats.averages;
-
-  return (
-    <>
-      {!hasLiveStats && (
-        <div className="light-card" style={{ marginBottom: 18 }}>
-          <h3>Stats LiveStats</h3>
-          <p className="empty-small">
-            Aucune ligne trouvée dans Supabase pour ce joueur. Les prochaines prises de stats
-            alimenteront automatiquement cette fiche via <b>match_player_stats.player_id</b>.
-          </p>
-        </div>
-      )}
-
-      <div className="player-grid three">
-        <div className="light-card">
-          <h3>Stats match <span>(moyennes LiveStats)</span></h3>
-
-          <div className="stats-grid-light">
-            <StatCell n={hasLiveStats ? averages.pts : p.stats?.pts || 0} l="Pts" />
-            <StatCell n={hasLiveStats ? averages.reb : p.stats?.reb || 0} l="Reb" />
-            <StatCell n={hasLiveStats ? averages.ast : p.stats?.ast || 0} l="Ast" />
-            <StatCell n={hasLiveStats ? averages.stl : p.stats?.stl || 0} l="Stl" />
-            <StatCell n={hasLiveStats ? averages.blk : p.stats?.blk || 0} l="Blk" />
-            <StatCell n={hasLiveStats ? averages.to : p.stats?.to || 0} l="To" />
-          </div>
-
-          <div className="pct-row-light">
-            <StatCell n={`${hasLiveStats ? averages.pctTir : p.stats?.pctTir || 0}%`} l="% Tir" small />
-            <StatCell n={`${hasLiveStats ? averages.pct3pts : p.stats?.pct3pts || 0}%`} l="% 3pts" small />
-            <StatCell n={`${hasLiveStats ? averages.pctLf : p.stats?.pctLf || 0}%`} l="% LF" small />
-          </div>
-        </div>
-
-        <div className="light-card">
-          <h3>Totaux saison</h3>
-
-          <div className="stats-grid-light">
-            <StatCell n={totals.pts} l="Pts" />
-            <StatCell n={totals.reb} l="Reb" />
-            <StatCell n={totals.ast} l="Ast" />
-            <StatCell n={totals.stl} l="Stl" />
-            <StatCell n={totals.blk} l="Blk" />
-            <StatCell n={totals.to} l="BP" />
-          </div>
-
-          <div className="pct-row-light">
-            <StatCell n={`${totals.p2m}/${totals.p2a}`} l="2PTS" small />
-            <StatCell n={`${totals.p3m}/${totals.p3a}`} l="3PTS" small />
-            <StatCell n={`${totals.ftm}/${totals.fta}`} l="LF" small />
-          </div>
-        </div>
-
-        <div className="light-card">
-          <h3>Présence & matchs</h3>
-
-          <div className="temps-row">
-            <DonutChart
-              pct={hasLiveStats ? liveStats.attendancePct : tdjPct}
-              centerTop="Présence"
-              centerBottom="match"
-            />
-
-            <div className="legend-list">
-              <Legend color="#22a06b" label="Matchs joués" value={String(hasLiveStats ? liveStats.games : tdj.matchsJoues || 0)} />
-              <Legend color="#e4564f" label="Matchs manqués" value={String(hasLiveStats ? liveStats.missedGames : tdj.matchsManques || 0)} />
-              <Legend color="#1f6fb2" label="Lignes LiveStats" value={String(liveStats.totalRows)} />
-              <Legend color="#f47b20" label="Présence" value={`${hasLiveStats ? liveStats.attendancePct : tdjPct}%`} />
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <div className="player-grid two">
-        <div className="light-card">
-          <h3>Évolution des points</h3>
-          <LineChart data={liveStats.evolution.length ? liveStats.evolution : p.evolution || []} />
-        </div>
-
-        <div className="light-card">
-          <h3>Détail par match</h3>
-
-          {liveStats.matches.length === 0 ? (
-            <p className="empty-small">Aucun match enregistré pour ce joueur.</p>
-          ) : (
-            <table className="phys-light">
-              <thead>
-                <tr>
-                  <th>Date</th>
-                  <th>Adversaire</th>
-                  <th>Prés.</th>
-                  <th>PTS</th>
-                  <th>REB</th>
-                  <th>AST</th>
-                  <th>INT</th>
-                  <th>CTR</th>
-                  <th>BP</th>
-                </tr>
-              </thead>
-
-              <tbody>
-                {[...liveStats.matches].reverse().map((match) => (
-                  <tr key={match.matchId || `${match.date}-${match.opponent}`}>
-                    <td>{fmtDate(match.date)}</td>
-                    <td>{match.opponent || "—"}</td>
-                    <td>{match.present ? "Oui" : "Non"}</td>
-                    <td>{match.pts}</td>
-                    <td>{match.reb}</td>
-                    <td>{match.ast}</td>
-                    <td>{match.stl}</td>
-                    <td>{match.blk}</td>
-                    <td>{match.to}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          )}
-        </div>
-      </div>
-
-      <ModernPlayerComparisonSection
-        team={team}
-        p={p}
-        liveStats={liveStats}
-        teamPlayersStats={teamPlayersStats}
-        currentPlayerId={currentPlayerId}
-      />
-    </>
-  );
-}
-
-
-/* ======================================================================
-   Onglet Vidéo & Rentabilité — helpers de classification (match_actions)
-   Vocabulaire réel du wizard : action_type ∈ tir/faute-provoquee/touche/
-   perte/faute-commise (att) + interception/perte-adverse/contre (def) ;
-   shot_type 2PTS/3PTS/LF ; shot_result made/missed ; rebound_type off/def/
-   touche-pour/touche-contre ; special_case aucun/2pts+1lf/3pts+1lf.
-   On stocke la key temps_fort ; on affiche via tags.label(key).
-====================================================================== */
-
-const low = (v: unknown) => String(v ?? "").toLowerCase().trim();
-
-function isActorRow(a: any, playerId: string) {
-  return String(a.player_id ?? "") === String(playerId);
-}
-function isFieldShot(a: any) {
-  return low(a.action_type) === "tir" && (a.shot_type === "2PTS" || a.shot_type === "3PTS");
-}
-function shotIsMade(a: any) {
-  return low(a.shot_result) === "made";
-}
-function shotIsMissed(a: any) {
-  return low(a.shot_result) === "missed";
-}
-function actionHasClip(a: any) {
-  return a.clip_start != null || a.video_time != null;
-}
-function actionVideoUrl(a: any): string | null {
-  return a.video_url ?? a.clip_url ?? a.source_url ?? null;
-}
-function actionIsYoutube(a: any) {
-  const u = low(actionVideoUrl(a) || a.video_provider);
-  return u.includes("youtube") || u.includes("youtu.be");
-}
-function actionIsPlayable(a: any) {
-  return actionHasClip(a) && !!actionVideoUrl(a) && !actionIsYoutube(a);
-}
-function exportEligibility(a: any): { ok: boolean; reason: string } {
-  if (!actionHasClip(a)) return { ok: false, reason: "Vidéo non synchronisée" };
-  if (actionIsYoutube(a)) return { ok: false, reason: "Source YouTube non exportable" };
-  if (!actionVideoUrl(a)) return { ok: false, reason: "Source vidéo locale requise" };
-  return { ok: true, reason: "" };
-}
-
-function shotZone(a: any): { id: string; label: string } {
-  const x = Number(a.court_x);
-  const y = Number(a.court_y);
-  const side = x < 0.38 ? "G" : x > 0.62 ? "D" : "C";
-  const sideLabel = side === "G" ? "gauche" : side === "D" ? "droite" : "axe";
-  if (a.shot_type === "3PTS") return { id: `3-${side}`, label: `3PTS ${sideLabel}` };
-  if (Number.isFinite(y) && y < 0.28) return { id: "paint", label: "Près du panier" };
-  return { id: `mid-${side}`, label: `Mi-distance ${sideLabel}` };
-}
-const ZONE_ORDER = ["paint", "mid-G", "mid-C", "mid-D", "3-G", "3-C", "3-D"];
-
-type MtxBucket = {
+type GameCellStats = {
   key: string;
-  actor: any[];
-  assist: any[];
-  reboff: any[];
-  rebdef: any[];
-  all: any[];
-  points: number;
-};
-
-function buildTempsFortBuckets(actions: any[], playerId: string): Map<string, MtxBucket> {
-  const map = new Map<string, MtxBucket>();
-  const ensure = (key: string) => {
-    if (!map.has(key)) {
-      map.set(key, { key, actor: [], assist: [], reboff: [], rebdef: [], all: [], points: 0 });
-    }
-    return map.get(key)!;
-  };
-
-  for (const a of actions ?? []) {
-    const key = a.temps_fort;
-    if (!key) continue;
-    const b = ensure(key);
-    b.all.push(a);
-
-    if (isActorRow(a, playerId)) {
-      b.actor.push(a);
-      b.points += matchActionPoints(a);
-    }
-    if (String(a.assist_player_id ?? "") === String(playerId)) b.assist.push(a);
-    if (String(a.rebound_player_id ?? "") === String(playerId)) {
-      if (low(a.rebound_type) === "off") b.reboff.push(a);
-      else if (low(a.rebound_type) === "def") b.rebdef.push(a);
-    }
-  }
-
-  return map;
-}
-
-type MtxCol = {
-  id: string;
   label: string;
-  value: (b: MtxBucket) => number;
-  list: (b: MtxBucket) => any[];
-  ratio?: boolean;
+  poss: number;
+  pts: number;
+  p2m: number;
+  p2a: number;
+  p3m: number;
+  p3a: number;
+  ftm: number;
+  fta: number;
+  turnovers: number;
+  assists: number;
 };
 
-const MATRIX_COLUMNS: MtxCol[] = [
-  { id: "actions", label: "Actions", value: (b) => b.actor.length, list: (b) => b.actor },
-  { id: "points", label: "Points", value: (b) => b.points, list: (b) => b.actor.filter((a) => matchActionPoints(a) > 0) },
-  { id: "ppa", label: "Pts/action", value: (b) => (b.actor.length ? roundStat(b.points / b.actor.length) : 0), list: (b) => b.actor, ratio: true },
-  { id: "p2m", label: "2PTS M", value: (b) => b.actor.filter((a) => a.shot_type === "2PTS" && shotIsMade(a)).length, list: (b) => b.actor.filter((a) => a.shot_type === "2PTS" && shotIsMade(a)) },
-  { id: "p2r", label: "2PTS R", value: (b) => b.actor.filter((a) => a.shot_type === "2PTS" && shotIsMissed(a)).length, list: (b) => b.actor.filter((a) => a.shot_type === "2PTS" && shotIsMissed(a)) },
-  { id: "p3m", label: "3PTS M", value: (b) => b.actor.filter((a) => a.shot_type === "3PTS" && shotIsMade(a)).length, list: (b) => b.actor.filter((a) => a.shot_type === "3PTS" && shotIsMade(a)) },
-  { id: "p3r", label: "3PTS R", value: (b) => b.actor.filter((a) => a.shot_type === "3PTS" && shotIsMissed(a)).length, list: (b) => b.actor.filter((a) => a.shot_type === "3PTS" && shotIsMissed(a)) },
-  { id: "lfm", label: "LF M", value: (b) => b.actor.filter((a) => a.shot_type === "LF").reduce((s, a) => s + statNumber(a.ft_made), 0), list: (b) => b.actor.filter((a) => a.shot_type === "LF" && statNumber(a.ft_made) > 0) },
-  { id: "lfr", label: "LF R", value: (b) => b.actor.filter((a) => a.shot_type === "LF").reduce((s, a) => s + Math.max(0, statNumber(a.ft_attempts) - statNumber(a.ft_made)), 0), list: (b) => b.actor.filter((a) => a.shot_type === "LF" && statNumber(a.ft_attempts) - statNumber(a.ft_made) > 0) },
-  { id: "ast", label: "Passes déc.", value: (b) => b.assist.length, list: (b) => b.assist },
-  { id: "roff", label: "Reb off.", value: (b) => b.reboff.length, list: (b) => b.reboff },
-  { id: "rdef", label: "Reb déf.", value: (b) => b.rebdef.length, list: (b) => b.rebdef },
-  { id: "to", label: "Pertes", value: (b) => b.actor.filter((a) => low(a.action_type) === "perte").length, list: (b) => b.actor.filter((a) => low(a.action_type) === "perte") },
-  { id: "stl", label: "Interceptions", value: (b) => b.actor.filter((a) => low(a.action_type) === "interception").length, list: (b) => b.actor.filter((a) => low(a.action_type) === "interception") },
-  { id: "blk", label: "Contres", value: (b) => b.actor.filter((a) => low(a.action_type) === "contre").length, list: (b) => b.actor.filter((a) => low(a.action_type) === "contre") },
-  { id: "fd", label: "Fautes prov.", value: (b) => b.actor.filter((a) => low(a.action_type) === "faute-provoquee").length, list: (b) => b.actor.filter((a) => low(a.action_type) === "faute-provoquee") },
-  { id: "fc", label: "Fautes com.", value: (b) => b.actor.filter((a) => low(a.action_type) === "faute-commise").length, list: (b) => b.actor.filter((a) => low(a.action_type) === "faute-commise") },
-  { id: "clips", label: "Clips", value: (b) => b.all.filter(actionHasClip).length, list: (b) => b.all.filter(actionHasClip) },
+const GAME_HIGHLIGHTS = [
+  { key: "fast-break", label: "Fast Break" },
+  { key: "transition", label: "Transition" },
+  { key: "jeu-place", label: "Jeu placé" },
+  { key: "pick-top", label: "Pick Top" },
+  { key: "pick-side", label: "Pick Side" },
+  { key: "hand-off", label: "Hand Off" },
+  { key: "1v1", label: "1v1" },
+  { key: "drive-kick", label: "Drive & Kick" },
+  { key: "stagger", label: "Stagger" },
+  { key: "jeu-sans-ballon", label: "Sans ballon" },
+  { key: "off-rebound", label: "Rebond off" },
+  { key: "blob", label: "BLOB" },
+  { key: "slob", label: "SLOB" },
 ];
 
-function quarterLabel(q: unknown): string {
-  const n = Number(q);
-  if (!Number.isFinite(n) || n <= 0) return "—";
-  return n <= 4 ? `Q${n}` : `OT${n - 4}`;
+function emptyGameCell(item: { key: string; label: string }): GameCellStats {
+  return {
+    key: item.key,
+    label: item.label,
+    poss: 0,
+    pts: 0,
+    p2m: 0,
+    p2a: 0,
+    p3m: 0,
+    p3a: 0,
+    ftm: 0,
+    fta: 0,
+    turnovers: 0,
+    assists: 0,
+  };
 }
 
-/* ======================================================================
-   Onglet Vidéo & Rentabilité (joueur) — dashboard pro façon Hudl/Synergy,
-   identité MyBasket. Tout est calculé côté client depuis match_actions.
-   Réutilise les helpers module : low, isActorRow, buildTempsFortBuckets,
-   shotZone, matchActionPoints, exportEligibility, actionHasClip,
-   actionVideoUrl, actionIsYoutube, actionIsPlayable, quarterLabel.
-====================================================================== */
+function normalizeGameHighlight(action: GameActionRow) {
+  const inbound = String(action.inbound || "").toLowerCase();
+  const tempsFort = String(action.temps_fort || "").toLowerCase();
 
-function actionResultCategory(a: any): "made" | "missed" | "fauteProv" | "intercept" | "perte" | "autre" {
-  const at = low(a.action_type);
-  if (at === "tir") {
-    if (a.shot_type === "LF") {
-      if (statNumber(a.ft_made) > 0) return "made";
-      if (statNumber(a.ft_attempts) > 0) return "missed";
-      return "autre";
+  if (inbound === "blob") return "blob";
+  if (inbound === "slob") return "slob";
+
+  if (tempsFort === "fast_break" || tempsFort === "fast-break")
+    return "fast-break";
+  if (tempsFort === "transition" || tempsFort === "early_offense")
+    return "transition";
+  if (
+    tempsFort === "pnp_top" ||
+    tempsFort === "pick_top" ||
+    tempsFort === "pick-top"
+  )
+    return "pick-top";
+  if (
+    tempsFort === "pnp_side" ||
+    tempsFort === "pick_side" ||
+    tempsFort === "pick-side"
+  )
+    return "pick-side";
+  if (
+    tempsFort === "handoff" ||
+    tempsFort === "hand_off" ||
+    tempsFort === "hand-off"
+  )
+    return "hand-off";
+  if (tempsFort === "isolation" || tempsFort === "iso" || tempsFort === "1v1")
+    return "1v1";
+  if (tempsFort === "drive_kick" || tempsFort === "drive-kick")
+    return "drive-kick";
+  if (tempsFort === "stagger") return "stagger";
+  if (tempsFort === "jeu_sans_ballon" || tempsFort === "sans_ballon")
+    return "jeu-sans-ballon";
+  if (
+    tempsFort === "rebond_off" ||
+    tempsFort === "off_rebound" ||
+    tempsFort === "off-rebound"
+  )
+    return "off-rebound";
+  if (tempsFort === "blob") return "blob";
+  if (tempsFort === "slob") return "slob";
+
+  return tempsFort || "jeu-place";
+}
+
+function gameActionPoints(action: GameActionRow) {
+  const context = String(action.context || "");
+  const actionType = String(action.action_type || "");
+  const shotType = String(action.shot_type || "");
+  const shotResult = String(action.shot_result || "");
+  const specialCase = String(action.special_case || "");
+
+  if (context !== "attaque") return 0;
+
+  if (actionType === "tir") {
+    if (shotType === "LF") return safeNum(action.ft_made);
+
+    let pts = 0;
+
+    if (shotResult === "made") {
+      if (shotType === "2PTS") pts += 2;
+      if (shotType === "3PTS") pts += 3;
     }
-    if (shotIsMade(a)) return "made";
-    if (shotIsMissed(a)) return "missed";
-    return "autre";
+
+    if (shotResult === "made" && specialCase !== "aucun") {
+      pts += safeNum(action.ft_made);
+    }
+
+    return pts;
   }
-  if (at === "faute-provoquee") return "fauteProv";
-  if (at === "interception") return "intercept";
-  if (at === "perte") return "perte";
-  return "autre";
+
+  if (actionType === "faute-provoquee") {
+    return safeNum(action.ft_made);
+  }
+
+  return 0;
 }
 
-const RESULT_KEYS = ["made", "missed", "fauteProv", "intercept", "perte"] as const;
-type ResultKey = (typeof RESULT_KEYS)[number];
+function addGameAction(cell: GameCellStats, action: GameActionRow) {
+  const context = String(action.context || "");
+  const actionType = String(action.action_type || "");
+  const shotType = String(action.shot_type || "");
+  const shotResult = String(action.shot_result || "");
 
-type VideoFilters = {
-  match: string;
-  quarter: string;
-  tf: string;
-  side: string;
-  results: Record<ResultKey, boolean>;
-  shots: { p2: boolean; p3: boolean; lf: boolean };
-};
+  if (context !== "attaque") return;
 
-const DEFAULT_VIDEO_FILTERS: VideoFilters = {
-  match: "all",
-  quarter: "all",
-  tf: "all",
-  side: "all",
-  results: { made: true, missed: true, fauteProv: true, intercept: true, perte: true },
-  shots: { p2: true, p3: true, lf: true },
-};
+  cell.poss += 1;
+  cell.pts += gameActionPoints(action);
 
-function filterVideoActions(actions: any[], f: VideoFilters): any[] {
-  const allResult = RESULT_KEYS.every((k) => f.results[k]);
-  const allShot = f.shots.p2 && f.shots.p3 && f.shots.lf;
-  return (actions ?? []).filter((a) => {
-    if (f.match !== "all" && String(a.match_id ?? "") !== f.match) return false;
-    if (f.quarter !== "all" && String(a.quarter ?? "") !== f.quarter) return false;
-    if (f.tf !== "all" && String(a.temps_fort ?? "") !== f.tf) return false;
-    if (f.side !== "all" && low(a.context) !== f.side) return false;
-    if (!allResult) {
-      const cat = actionResultCategory(a);
-      if (cat === "autre" || !f.results[cat as ResultKey]) return false;
+  if (actionType === "tir") {
+    if (shotType === "2PTS") {
+      cell.p2a += 1;
+      if (shotResult === "made") cell.p2m += 1;
     }
-    if (!allShot && low(a.action_type) === "tir") {
-      const st = a.shot_type;
-      const ok =
-        (st === "2PTS" && f.shots.p2) ||
-        (st === "3PTS" && f.shots.p3) ||
-        (st === "LF" && f.shots.lf);
-      if (!ok) return false;
+
+    if (shotType === "3PTS") {
+      cell.p3a += 1;
+      if (shotResult === "made") cell.p3m += 1;
     }
+
+    if (shotType === "LF") {
+      cell.fta += safeNum(action.ft_attempts);
+      cell.ftm += safeNum(action.ft_made);
+    }
+
+    if (
+      shotType !== "LF" &&
+      shotResult === "made" &&
+      action.special_case !== "aucun"
+    ) {
+      cell.fta += safeNum(action.ft_attempts);
+      cell.ftm += safeNum(action.ft_made);
+    }
+  }
+
+  if (actionType === "faute-provoquee") {
+    cell.fta += safeNum(action.ft_attempts);
+    cell.ftm += safeNum(action.ft_made);
+  }
+
+  if (actionType === "perte") {
+    cell.turnovers += 1;
+  }
+
+  if (action.assist_player_id) {
+    cell.assists += 1;
+  }
+}
+
+function gameAdvanced(cell: GameCellStats) {
+  const fgm = cell.p2m + cell.p3m;
+  const fga = cell.p2a + cell.p3a;
+
+  const ppp = cell.poss ? cell.pts / cell.poss : 0;
+  const efg = fga ? ((fgm + 0.5 * cell.p3m) / fga) * 100 : 0;
+  const ts =
+    fga + 0.44 * cell.fta
+      ? (cell.pts / (2 * (fga + 0.44 * cell.fta))) * 100
+      : 0;
+  const astPct = fgm ? (cell.assists / fgm) * 100 : 0;
+  const tovPct = cell.poss ? (cell.turnovers / cell.poss) * 100 : 0;
+  const ftr = fga ? cell.fta / fga : 0;
+
+  return {
+    fgm,
+    fga,
+    ppp,
+    efg,
+    ts,
+    astPct,
+    tovPct,
+    ftr,
+  };
+}
+
+function buildGameCells(actions: GameActionRow[]) {
+  const cells = GAME_HIGHLIGHTS.reduce(
+    (acc, item) => {
+      acc[item.key] = emptyGameCell(item);
+      return acc;
+    },
+    {} as Record<string, GameCellStats>,
+  );
+
+  actions.forEach((action) => {
+    if (String(action.context || "") !== "attaque") return;
+
+    const key = normalizeGameHighlight(action);
+    const item =
+      GAME_HIGHLIGHTS.find((highlight) => highlight.key === key) ||
+      GAME_HIGHLIGHTS.find((highlight) => highlight.key === "jeu-place")!;
+
+    addGameAction(cells[item.key], action);
+  });
+
+  return cells;
+}
+
+function aggregateGameTotal(cells: Record<string, GameCellStats>) {
+  const total = emptyGameCell({ key: "total", label: "TOTAL" });
+
+  Object.values(cells).forEach((cell) => {
+    total.poss += cell.poss;
+    total.pts += cell.pts;
+    total.p2m += cell.p2m;
+    total.p2a += cell.p2a;
+    total.p3m += cell.p3m;
+    total.p3a += cell.p3a;
+    total.ftm += cell.ftm;
+    total.fta += cell.fta;
+    total.turnovers += cell.turnovers;
+    total.assists += cell.assists;
+  });
+
+  return total;
+}
+
+function splitGameMatches(matches: SupaMatchRow[], split: GameSplitKey) {
+  if (split === "total") return matches;
+
+  return matches.filter((match) => {
+    const us = safeNum(match.us_score);
+    const them = safeNum(match.them_score);
+
+    if (split === "win") return us > them;
+    if (split === "loss") return us < them;
+
     return true;
   });
 }
 
-/* ------- Matrice de rentabilité (temps fort × résultat) ------- */
-type RentabRow = {
-  key: string;
-  made: { n: number; pts: number; list: any[] };
-  missed: { n: number; pts: number; list: any[] };
-  fauteProv: { n: number; pts: number; list: any[] };
-  intercept: { n: number; pts: number; list: any[] };
-  perte: { n: number; pts: number; list: any[] };
-  total: { n: number; pts: number; list: any[] };
-  ppa: number;
-};
+function TeamGameStatsBlock({ teamId }: { teamId: string }) {
+  const supabase = createClient();
 
-function computeTempsFortMatrix(
-  buckets: Map<string, MtxBucket>,
-  orderedKeys: string[]
-): RentabRow[] {
-  const cell = (list: any[]) => ({
-    n: list.length,
-    pts: list.reduce((s, a) => s + matchActionPoints(a), 0),
-    list,
-  });
-  return orderedKeys.map((key) => {
-    const b = buckets.get(key)!;
-    const actor = b.actor;
-    const made = actor.filter((a) => actionResultCategory(a) === "made");
-    const missed = actor.filter((a) => actionResultCategory(a) === "missed");
-    const fauteProv = actor.filter((a) => actionResultCategory(a) === "fauteProv");
-    const intercept = actor.filter((a) => actionResultCategory(a) === "intercept");
-    const perte = actor.filter((a) => actionResultCategory(a) === "perte");
-    const total = cell(actor);
-    return {
-      key,
-      made: cell(made),
-      missed: cell(missed),
-      fauteProv: cell(fauteProv),
-      intercept: cell(intercept),
-      perte: cell(perte),
-      total,
-      ppa: total.n ? roundStat(total.pts / total.n) : 0,
-    };
-  });
-}
-
-const RENTAB_COLS: { id: keyof RentabRow; label: string; icon: string; tint: string }[] = [
-  { id: "made", label: "Marqué", icon: "✅", tint: "green" },
-  { id: "missed", label: "Manqué", icon: "❌", tint: "red" },
-  { id: "fauteProv", label: "Faute provoquée", icon: "🔔", tint: "amber" },
-  { id: "intercept", label: "Intercepté", icon: "🖐", tint: "violet" },
-  { id: "perte", label: "Perte", icon: "↩️", tint: "grey" },
-  { id: "total", label: "Total", icon: "", tint: "neutral" },
-];
-
-function ppaClass(ppa: number): string {
-  if (ppa >= 1.2) return "ppa-good";
-  if (ppa >= 0.8) return "ppa-mid";
-  if (ppa > 0) return "ppa-low";
-  return "ppa-zero";
-}
-
-/* ------- Shot chart zones ------- */
-const ZONE_LABELS: Record<string, string> = {
-  paint: "Près du panier",
-  "mid-G": "Mi-distance gauche",
-  "mid-C": "Mi-distance axe",
-  "mid-D": "Mi-distance droite",
-  "3-G": "3PTS gauche",
-  "3-C": "3PTS axe",
-  "3-D": "3PTS droite",
-};
-const ZONE_LAYOUT: Record<string, { l: number; t: number; w: number; h: number }> = {
-  "3-G": { l: 3, t: 5, w: 25, h: 30 },
-  "3-C": { l: 30, t: 3, w: 40, h: 24 },
-  "3-D": { l: 72, t: 5, w: 25, h: 30 },
-  "mid-G": { l: 6, t: 40, w: 25, h: 30 },
-  "mid-C": { l: 33, t: 31, w: 34, h: 26 },
-  "mid-D": { l: 69, t: 40, w: 25, h: 30 },
-  paint: { l: 33, t: 61, w: 34, h: 33 },
-};
-
-type ZoneStat = { id: string; label: string; made: number; att: number; pts: number; shots: any[] };
-
-function computeShotZones(fieldShots: any[]): ZoneStat[] {
-  const m = new Map<string, ZoneStat>();
-  for (const a of fieldShots) {
-    if (a.court_x == null || a.court_y == null) continue;
-    const z = shotZone(a);
-    if (!m.has(z.id)) m.set(z.id, { id: z.id, label: ZONE_LABELS[z.id] || z.label, made: 0, att: 0, pts: 0, shots: [] });
-    const zs = m.get(z.id)!;
-    zs.att += 1;
-    if (shotIsMade(a)) {
-      zs.made += 1;
-      zs.pts += matchActionPoints(a);
-    }
-    zs.shots.push(a);
-  }
-  return ZONE_ORDER.map((id) => m.get(id)).filter(Boolean) as ZoneStat[];
-}
-function zoneColor(pct: number): string {
-  if (pct >= 60) return "#2f9e6a";
-  if (pct >= 45) return "#8fce9f";
-  if (pct >= 30) return "#e4b64c";
-  return "#e0645c";
-}
-
-function clipDurationLabel(a: any): string {
-  const start = a.clip_start;
-  const end = a.clip_end;
-  if (start != null && end != null) {
-    const d = Math.max(0, Math.round(Number(end) - Number(start)));
-    return `00:${String(d).padStart(2, "0")}`;
-  }
-  return "—";
-}
-function matchTimeLabel(a: any): string {
-  if (a.clock) return String(a.clock);
-  if (a.video_time != null) {
-    const s = Math.max(0, Math.round(Number(a.video_time)));
-    return `${String(Math.floor(s / 60)).padStart(2, "0")}:${String(s % 60).padStart(2, "0")}`;
-  }
-  return "—";
-}
-function actionTypeLabel(a: any): string {
-  const at = low(a.action_type);
-  if (at === "tir") return a.shot_type || "Tir";
-  if (at === "faute-provoquee") return "Faute provoquée";
-  if (at === "faute-commise") return "Faute commise";
-  if (at === "interception") return "Interception";
-  if (at === "perte") return "Perte";
-  if (at === "contre") return "Contre";
-  if (at === "touche") return "Touche";
-  return a.action_type || "Action";
-}
-
-/* ------- V4 · intelligence vidéo / scouting (tout côté client) ------- */
-
-type VideoProfile = {
-  style: { icon: string; label: string };
-  bestWeapon: { key: string; ppa: number; actions: number } | null;
-  weakness: { key: string; ppa: number; losses: number } | null;
-};
-
-function computeVideoProfile(
-  actorActions: any[],
-  buckets: Map<string, MtxBucket>,
-  matrix: RentabRow[]
-): VideoProfile {
-  const transitionPts = actorActions
-    .filter((a) => a.temps_fort === "transition" || a.temps_fort === "fast-break")
-    .reduce((s, a) => s + matchActionPoints(a), 0);
-  const threeVol = actorActions.filter((a) => a.shot_type === "3PTS").length;
-  const paintMade = actorActions.filter(
-    (a) => isFieldShot(a) && a.shot_type === "2PTS" && shotIsMade(a) && shotZone(a).id === "paint"
-  ).length;
-
-  let assists = 0;
-  let rebDef = 0;
-  buckets.forEach((b) => {
-    assists += b.assist.length;
-    rebDef += b.rebdef.length;
-  });
-  const steals = actorActions.filter((a) => low(a.action_type) === "interception").length;
-  const blocks = actorActions.filter((a) => low(a.action_type) === "contre").length;
-
-  const scored = [
-    { icon: "⚡", label: "Transition scorer", score: transitionPts },
-    { icon: "🎯", label: "Shooter", score: threeVol * 1.2 },
-    { icon: "🧱", label: "Finisseur intérieur", score: paintMade * 1.3 },
-    { icon: "🧠", label: "Créateur", score: assists * 1.6 },
-    { icon: "🛡", label: "Défenseur impact", score: (steals + blocks) * 1.5 + rebDef * 0.6 },
-  ].sort((a, b) => b.score - a.score);
-
-  const style =
-    scored[0] && scored[0].score > 0
-      ? { icon: scored[0].icon, label: scored[0].label }
-      : { icon: "🏀", label: "Joueur polyvalent" };
-
-  const MIN = 4;
-  const eligible = matrix.filter((r) => r.total.n >= MIN);
-  let bestWeapon: VideoProfile["bestWeapon"] = null;
-  let weakness: VideoProfile["weakness"] = null;
-  if (eligible.length) {
-    const best = [...eligible].sort((a, b) => b.ppa - a.ppa)[0];
-    const worst = [...eligible].sort((a, b) => a.ppa - b.ppa)[0];
-    bestWeapon = { key: best.key, ppa: best.ppa, actions: best.total.n };
-    weakness = { key: worst.key, ppa: worst.ppa, losses: worst.perte.n };
-  }
-  return { style, bestWeapon, weakness };
-}
-
-type ScoutRow = {
-  key: string;
-  positive: any[];
-  negative: any[];
-  creation: any[];
-  defense: any[];
-  neutre: any[];
-  score: number;
-};
-
-function computeScoutMatrix(buckets: Map<string, MtxBucket>, orderedKeys: string[]): ScoutRow[] {
-  return orderedKeys.map((key) => {
-    const b = buckets.get(key)!;
-    const made = b.actor.filter((a) => actionResultCategory(a) === "made");
-    const missed = b.actor.filter((a) => actionResultCategory(a) === "missed");
-    const perte = b.actor.filter((a) => low(a.action_type) === "perte");
-    const fCom = b.actor.filter((a) => low(a.action_type) === "faute-commise");
-    const fProv = b.actor.filter((a) => low(a.action_type) === "faute-provoquee");
-    const steals = b.actor.filter((a) => low(a.action_type) === "interception");
-    const blocks = b.actor.filter((a) => low(a.action_type) === "contre");
-    const driveKick = b.actor.filter((a) => a.temps_fort === "drive-kick");
-
-    const positive = [...made, ...b.assist, ...fProv, ...b.reboff];
-    const negative = [...missed, ...perte, ...fCom];
-    const creation = [...b.assist, ...fProv, ...driveKick];
-    const defense = [...steals, ...blocks, ...b.rebdef];
-    const counted = new Set<any>([...positive, ...negative, ...creation, ...defense]);
-    const neutre = b.actor.filter((a) => !counted.has(a));
-
-    return { key, positive, negative, creation, defense, neutre, score: positive.length - negative.length };
-  });
-}
-
-const SCOUT_COLS: { id: keyof ScoutRow; label: string; icon: string; cls: string }[] = [
-  { id: "positive", label: "Positives", icon: "🟢", cls: "sc-pos" },
-  { id: "negative", label: "Négatives", icon: "🔴", cls: "sc-neg" },
-  { id: "creation", label: "Création", icon: "🎯", cls: "sc-cre" },
-  { id: "defense", label: "Défense", icon: "🛡", cls: "sc-def" },
-  { id: "neutre", label: "Neutre", icon: "⚪", cls: "sc-neu" },
-];
-
-type TLEvent = { a: any; icon: string; cat: string };
-
-function timelineCategory(a: any, playerId: string): { icon: string; cat: string } {
-  if (String(a.assist_player_id ?? "") === String(playerId) && !isActorRow(a, playerId))
-    return { icon: "🎯", cat: "Passe décisive" };
-  if (
-    String(a.rebound_player_id ?? "") === String(playerId) &&
-    low(a.rebound_type) === "def" &&
-    !isActorRow(a, playerId)
-  )
-    return { icon: "🛡", cat: "Rebond défensif" };
-  const at = low(a.action_type);
-  if (at === "interception") return { icon: "🛡", cat: "Interception" };
-  if (at === "contre") return { icon: "🛡", cat: "Contre" };
-  const rc = actionResultCategory(a);
-  if (rc === "made") return { icon: "🔥", cat: "Marqué" };
-  if (rc === "missed") return { icon: "❌", cat: "Manqué" };
-  if (rc === "perte") return { icon: "❌", cat: "Perte" };
-  if (at === "faute-commise") return { icon: "❌", cat: "Faute commise" };
-  return { icon: "•", cat: actionTypeLabel(a) };
-}
-
-function computeTimeline(actions: any[], playerId: string): { quarter: number; events: TLEvent[] }[] {
-  const byQ = new Map<number, TLEvent[]>();
-  for (const a of actions ?? []) {
-    const q = Number(a.quarter) || 0;
-    if (!byQ.has(q)) byQ.set(q, []);
-    const { icon, cat } = timelineCategory(a, playerId);
-    byQ.get(q)!.push({ a, icon, cat });
-  }
-  return Array.from(byQ.entries())
-    .sort((x, y) => x[0] - y[0])
-    .map(([quarter, events]) => ({ quarter, events }));
-}
-
-type SmartPlaylist = { id: string; icon: string; name: string; actions: any[]; best: any | null };
-
-function computeSmartPlaylists(actions: any[], playerId: string): SmartPlaylist[] {
-  const actor = actions.filter((a) => isActorRow(a, playerId));
-  const assists = actions.filter(
-    (a) => String(a.assist_player_id ?? "") === String(playerId) && !isActorRow(a, playerId)
-  );
-  const rebDef = actions.filter(
-    (a) =>
-      String(a.rebound_player_id ?? "") === String(playerId) &&
-      low(a.rebound_type) === "def" &&
-      !isActorRow(a, playerId)
-  );
-  const made = actor.filter((a) => actionResultCategory(a) === "made");
-  const missed = actor.filter((a) => actionResultCategory(a) === "missed");
-  const perte = actor.filter((a) => low(a.action_type) === "perte");
-  const fCom = actor.filter((a) => low(a.action_type) === "faute-commise");
-  const fProv = actor.filter((a) => low(a.action_type) === "faute-provoquee");
-  const steals = actor.filter((a) => low(a.action_type) === "interception");
-  const blocks = actor.filter((a) => low(a.action_type) === "contre");
-  const shots = actor.filter((a) => low(a.action_type) === "tir");
-  const driveKick = actor.filter((a) => a.temps_fort === "drive-kick");
-
-  const best = (list: any[]) =>
-    list.length ? [...list].sort((a, b) => matchActionPoints(b) - matchActionPoints(a))[0] : null;
-  const pl = (id: string, icon: string, name: string, list: any[]): SmartPlaylist => ({
-    id,
-    icon,
-    name,
-    actions: list,
-    best: best(list),
-  });
-
-  return [
-    pl("highlights", "🔥", "Highlights", [...made, ...assists, ...steals, ...blocks]),
-    pl("corrections", "⚠️", "Corrections", [...perte, ...missed, ...fCom]),
-    pl("shooting", "🎯", "Shooting", shots),
-    pl("creation", "🧠", "Création", [...assists, ...driveKick, ...fProv]),
-    pl("defense", "🛡", "Défense", [...steals, ...blocks, ...rebDef]),
-  ];
-}
-
-// Qualité de tir : dépend d'un champ optionnel (absent aujourd'hui → seule l'option "Tous")
-function actionShotQuality(a: any): string | null {
-  const q = a.shot_quality ?? a.quality ?? a.catch_shoot ?? null;
-  return q != null && q !== "" ? String(q) : null;
-}
-
-/* ------- V4.1 · structures préparées pour une future persistance Supabase -------
-   Future tables : video_notes, video_tags, video_highlights.
-   (Aucune table créée, aucune écriture DB — state local uniquement pour l'instant.) */
-type VideoNote = { action_id: string; note: string; type: string; created_at: string };
-type VideoCustomTag = { action_id: string; tags: string[] };
-type HighlightClip = { action_id: string; temps_fort: string; label: string; added_at: string };
-type MontageDesignItem = {
-  id: string;
-  item_type: "title" | "text" | "image";
-  title: string;
-  text: string;
-  image_url: string;
-  background_url: string;
-  font_family: string;
-  font_size: number;
-  font_color: string;
-  placement: "intro" | "outro";
-};
-type SavedMontage = {
-  id: string;
-  title: string | null;
-  match_id: string | null;
-  created_at: string;
-  updated_at: string;
-};
-
-const NOTE_TYPES = ["Correction", "Positif", "Question joueur", "Objectif travail"];
-const QUICK_TAGS = ["🔥 Excellent", "⚠️ À corriger", "👀 À revoir", "⭐ Exemple équipe"];
-
-/* ------- V4.1 · comparateur avant / après (créé depuis created_at) ------- */
-type EvoBucket = { n: number; ppa: number; success: number; positives: number; negatives: number };
-type VideoEvolution = { early: EvoBucket; recent: EvoBucket } | null;
-
-function evoBucket(list: any[]): EvoBucket {
-  const n = list.length;
-  const points = list.reduce((s, a) => s + matchActionPoints(a), 0);
-  const shots = list.filter((a) => low(a.action_type) === "tir");
-  const madeShots = shots.filter((a) => actionResultCategory(a) === "made");
-  const positives = list.filter((a) => {
-    const c = actionResultCategory(a);
-    return c === "made" || c === "fauteProv";
-  }).length;
-  const negatives = list.filter((a) => {
-    const c = actionResultCategory(a);
-    return c === "missed" || c === "perte" || low(a.action_type) === "faute-commise";
-  }).length;
-  return {
-    n,
-    ppa: n ? roundStat(points / n) : 0,
-    success: shots.length ? Math.round((madeShots.length / shots.length) * 100) : 0,
-    positives,
-    negatives,
-  };
-}
-
-function computeVideoEvolution(actorActions: any[]): VideoEvolution {
-  const MIN_EACH = 5;
-  const now = Date.now();
-  const cutoff = now - 30 * 24 * 60 * 60 * 1000;
-  const dated = actorActions.filter((a) => a.created_at && !Number.isNaN(new Date(a.created_at).getTime()));
-  if (dated.length < MIN_EACH * 2) return null;
-  const recent = dated.filter((a) => new Date(a.created_at).getTime() >= cutoff);
-  const early = dated.filter((a) => new Date(a.created_at).getTime() < cutoff);
-  if (recent.length < MIN_EACH || early.length < MIN_EACH) return null;
-  return { early: evoBucket(early), recent: evoBucket(recent) };
-}
-
-/* ------- V4.1 · insights automatiques (aucune IA externe) ------- */
-function tfVolumeTrend(actorActions: any[]): { key: string; delta: number } | null {
-  const now = Date.now();
-  const cutoff = now - 30 * 24 * 60 * 60 * 1000;
-  const dated = actorActions.filter((a) => a.created_at && !Number.isNaN(new Date(a.created_at).getTime()) && a.temps_fort);
-  if (dated.length < 10) return null;
-  const delta = new Map<string, number>();
-  for (const a of dated) {
-    const recent = new Date(a.created_at).getTime() >= cutoff;
-    delta.set(a.temps_fort, (delta.get(a.temps_fort) || 0) + (recent ? 1 : -1));
-  }
-  let best: { key: string; delta: number } | null = null;
-  delta.forEach((d, key) => {
-    if (d > 0 && (!best || d > best.delta)) best = { key, delta: d };
-  });
-  return best;
-}
-
-function computeAutoInsights(
-  matrix: RentabRow[],
-  actorActions: any[],
-  label: (k: string) => string
-): string[] {
-  const insights: string[] = [];
-  const elig = matrix.filter((r) => r.total.n >= 4);
-
-  if (elig.length) {
-    const best = [...elig].sort((a, b) => b.ppa - a.ppa)[0];
-    if (best.ppa >= 1.0) insights.push(`Très efficace sur ${label(best.key)} avec ${best.ppa.toFixed(2)} pts/action.`);
-  }
-
-  const trend = tfVolumeTrend(actorActions);
-  if (trend && trend.delta > 0) {
-    insights.push(`Le volume de ${label(trend.key)} augmente sur les 30 derniers jours.`);
-  } else {
-    const topVol = [...matrix].sort((a, b) => b.total.n - a.total.n)[0];
-    if (topVol && topVol.total.n > 0) insights.push(`Temps fort le plus utilisé : ${label(topVol.key)} (${topVol.total.n} actions).`);
-  }
-
-  const mostTO = [...matrix].sort((a, b) => b.perte.n - a.perte.n)[0];
-  const worst = elig.length ? [...elig].sort((a, b) => a.ppa - b.ppa)[0] : null;
-  if (mostTO && mostTO.perte.n >= 2) {
-    insights.push(`Attention aux pertes de balle sur ${label(mostTO.key)} (${mostTO.perte.n}).`);
-  } else if (worst && worst.ppa < 0.9) {
-    insights.push(`Point à travailler : ${label(worst.key)} à ${worst.ppa.toFixed(2)} pts/action.`);
-  }
-
-  if (!insights.length) insights.push("Pas encore assez d'actions pour générer une analyse.");
-  return insights.slice(0, 3);
-}
-
-function VideoRentabilityTab({
-  actions,
-  tags,
-  teamId,
-  playerId,
-  playerName,
-  matches,
-  onRequestExport,
-  onOpenMontageStudio,
-}: {
-  actions: any[];
-  tags: ReturnType<typeof useLivestatTags>;
-  teamId: string;
-  playerId: string;
-  playerName: string;
-  matches: PlayerLiveMatchLine[];
-  onRequestExport: (actionId: string) => void;
-  onOpenMontageStudio: (montageId?: string) => void;
-}) {
-  const [section, setSection] = useState<"overview" | "shots" | "temps-forts" | "actions" | "montage">("overview");
-  const [shotFilter, setShotFilter] = useState<"all" | "2PTS" | "3PTS">("all");
-  const [shotResultFilter, setShotResultFilter] = useState<"all" | "made" | "missed">("all");
-  const [matchFilter, setMatchFilter] = useState("all");
-  const [popup, setPopup] = useState<{ title: string; actions: any[]; index?: number } | null>(null);
-  const [highlightQueue, setHighlightQueue] = useState<HighlightClip[]>([]);
-  const [montageDesignItems, setMontageDesignItems] = useState<MontageDesignItem[]>([]);
-  const [savedMontages, setSavedMontages] = useState<SavedMontage[]>([]);
-  const [activeMontageId, setActiveMontageId] = useState<string>("");
-  const [montageTitle, setMontageTitle] = useState(`Montage ${playerName}`);
-  const [montageBusy, setMontageBusy] = useState(false);
-  const [montageMessage, setMontageMessage] = useState("");
-  const montageSupabase = useMemo(() => createClient(), []);
-  const montageStorageKey = `mybasket_player_montage_${playerId}`;
-  const montageDesignStorageKey = `mybasket_player_montage_design_${playerId}`;
-
-  useEffect(() => {
-    try {
-      const saved = window.localStorage.getItem(montageStorageKey);
-      if (saved) setHighlightQueue(JSON.parse(saved));
-    } catch {
-      setHighlightQueue([]);
-    }
-  }, [montageStorageKey]);
-
-  useEffect(() => {
-    try {
-      window.localStorage.setItem(montageStorageKey, JSON.stringify(highlightQueue));
-    } catch {
-      // Le montage reste utilisable pendant la session.
-    }
-  }, [highlightQueue, montageStorageKey]);
-
-  useEffect(() => {
-    try {
-      const saved = window.localStorage.getItem(montageDesignStorageKey);
-      if (saved) setMontageDesignItems(JSON.parse(saved));
-    } catch {
-      setMontageDesignItems([]);
-    }
-  }, [montageDesignStorageKey]);
-
-  useEffect(() => {
-    try {
-      window.localStorage.setItem(montageDesignStorageKey, JSON.stringify(montageDesignItems));
-    } catch {
-      // Le montage reste utilisable pendant la session.
-    }
-  }, [montageDesignItems, montageDesignStorageKey]);
-
-  const flashMontage = (message: string) => {
-    setMontageMessage(message);
-    window.setTimeout(() => setMontageMessage(""), 2400);
-  };
-
-  const refreshSavedMontages = async () => {
-    const { data, error } = await montageSupabase
-      .from("livestat_montages")
-      .select("id,title,match_id,created_at,updated_at")
-      .eq("team_id", teamId)
-      .eq("player_id", playerId)
-      .order("updated_at", { ascending: false });
-
-    if (error) {
-      console.error("Erreur chargement montages joueur :", error);
-      return [];
-    }
-
-    const rows = (data ?? []) as SavedMontage[];
-    setSavedMontages(rows);
-    return rows;
-  };
-
-  const loadSavedMontage = async (montageId: string) => {
-    if (!montageId) return;
-    setMontageBusy(true);
-
-    try {
-      const montage = savedMontages.find((row) => row.id === montageId);
-      const { data: items, error } = await montageSupabase
-        .from("livestat_montage_items")
-        .select("id,item_type,action_id,title,text,image_url,background_url,font_family,font_size,font_color,sort_order,created_at")
-        .eq("montage_id", montageId)
-        .order("sort_order", { ascending: true });
-
-      if (error) throw error;
-
-      setActiveMontageId(montageId);
-      setMontageTitle(montage?.title || `Montage ${playerName}`);
-      const itemRows = ((items ?? []) as any[]);
-      setHighlightQueue(
-        itemRows
-          .filter((item) => item.item_type === "clip" && item.action_id)
-          .map((item) => ({
-            action_id: String(item.action_id),
-            temps_fort: "",
-            label: String(item.title ?? "Clip"),
-            added_at: String(item.created_at ?? new Date().toISOString()),
-          }))
-      );
-      setMontageDesignItems(
-        itemRows
-          .filter((item) => ["title", "text", "image"].includes(String(item.item_type)))
-          .map((item) => ({
-            id: String(item.id),
-            item_type: item.item_type as MontageDesignItem["item_type"],
-            title: String(item.title ?? ""),
-            text: String(item.text ?? ""),
-            image_url: String(item.image_url ?? ""),
-            background_url: String(item.background_url ?? ""),
-            font_family: String(item.font_family ?? "Inter"),
-            font_size: Number(item.font_size ?? 38),
-            font_color: String(item.font_color ?? "#ffffff"),
-            placement: Number(item.sort_order ?? 0) < 0 ? "intro" : "outro",
-          }))
-      );
-      flashMontage("Montage chargé ✓");
-    } catch (error) {
-      console.error("Erreur chargement montage :", error);
-      flashMontage("Impossible de charger le montage");
-    } finally {
-      setMontageBusy(false);
-    }
-  };
+  const [loading, setLoading] = useState(true);
+  const [matches, setMatches] = useState<SupaMatchRow[]>([]);
+  const [actions, setActions] = useState<GameActionRow[]>([]);
 
   useEffect(() => {
     let active = true;
 
-    (async () => {
-      const rows = await refreshSavedMontages();
-      if (!active || !rows.length) return;
+    async function load() {
+      setLoading(true);
 
-      let hasLocalDraft = false;
-      try {
-        const local = window.localStorage.getItem(montageStorageKey);
-        hasLocalDraft = Boolean(local && JSON.parse(local)?.length);
-      } catch {
-        hasLocalDraft = false;
+      const { data: matchData, error: matchError } = await supabase
+        .from("match_stats")
+        .select(
+          "id, team_id, opponent, match_date, us_score, them_score, result, home",
+        )
+        .eq("team_id", teamId)
+        .order("match_date", { ascending: false });
+
+      if (!active) return;
+
+      if (matchError) {
+        console.error("Erreur chargement stats jeu fiche équipe :", matchError);
+        setMatches([]);
+        setActions([]);
+        setLoading(false);
+        return;
       }
 
-      if (!hasLocalDraft) {
-        await loadSavedMontage(rows[0].id);
+      const matchRows = (matchData ?? []) as SupaMatchRow[];
+      setMatches(matchRows);
+
+      const matchIds = matchRows.map((match) => match.id);
+
+      if (matchIds.length === 0) {
+        setActions([]);
+        setLoading(false);
+        return;
       }
-    })();
+
+      const { data: actionData, error: actionError } = await supabase
+        .from("match_actions")
+        .select(
+          "match_id, context, inbound, temps_fort, action_type, shot_type, shot_result, special_case, ft_attempts, ft_made, assist_player_id",
+        )
+        .in("match_id", matchIds);
+
+      if (!active) return;
+
+      if (actionError) {
+        console.error("Erreur chargement actions fiche équipe :", actionError);
+        setActions([]);
+      } else {
+        setActions((actionData ?? []) as GameActionRow[]);
+      }
+
+      setLoading(false);
+    }
+
+    load();
 
     return () => {
       active = false;
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [teamId, playerId]);
+  }, [supabase, teamId]);
 
-  const toggleHighlight = (action: any) => {
-    const actionId = String(action?.id ?? "");
-    if (!actionId) return;
+  const actionsByMatch = useMemo(() => {
+    return actions.reduce(
+      (acc, action) => {
+        const matchId = String(action.match_id || "");
+        if (!matchId) return acc;
 
-    setHighlightQueue((current) => {
-      if (current.some((clip) => clip.action_id === actionId)) {
-        return current.filter((clip) => clip.action_id !== actionId);
-      }
+        if (!acc[matchId]) acc[matchId] = [];
+        acc[matchId].push(action);
 
-      return [
-        ...current,
-        {
-          action_id: actionId,
-          temps_fort: String(action.temps_fort ?? ""),
-          label: actionTypeLabel(action),
-          added_at: new Date().toISOString(),
-        },
-      ];
-    });
-  };
-
-  const removeHighlight = (actionId: string) =>
-    setHighlightQueue((current) => current.filter((clip) => clip.action_id !== actionId));
-
-  const clearHighlights = () => setHighlightQueue([]);
-
-  const newMontage = () => {
-    setActiveMontageId("");
-    setMontageTitle(`Montage ${playerName}`);
-    setHighlightQueue([]);
-    setMontageDesignItems([]);
-    flashMontage("Nouveau montage local");
-  };
-
-  const saveMontageToSupabase = async () => {
-    if (!highlightQueue.length && !montageDesignItems.length) {
-      flashMontage("Ajoute au moins un clip, un titre, un texte ou une image");
-      return;
-    }
-
-    setMontageBusy(true);
-
-    try {
-      const { data: authData, error: authError } = await montageSupabase.auth.getUser();
-      if (authError || !authData.user) throw authError || new Error("Utilisateur non connecté");
-
-      const now = new Date().toISOString();
-      const matchIds = Array.from(
-        new Set(
-          highlightQueue
-            .map((clip) => (actions ?? []).find((action) => String(action.id) === clip.action_id)?.match_id)
-            .filter(Boolean)
-            .map(String)
-        )
-      );
-
-      const payload: any = {
-        user_id: authData.user.id,
-        team_id: teamId,
-        player_id: playerId,
-        match_id: matchIds.length === 1 ? matchIds[0] : null,
-        title: montageTitle.trim() || `Montage ${playerName}`,
-        type: "player",
-        updated_at: now,
-      };
-
-      let montageId = activeMontageId;
-
-      if (montageId) {
-        const { error } = await montageSupabase
-          .from("livestat_montages")
-          .update(payload)
-          .eq("id", montageId);
-        if (error) throw error;
-      } else {
-        const { data, error } = await montageSupabase
-          .from("livestat_montages")
-          .insert(payload)
-          .select("id")
-          .single();
-        if (error) throw error;
-        montageId = String(data.id);
-        setActiveMontageId(montageId);
-      }
-
-      const { error: deleteError } = await montageSupabase
-        .from("livestat_montage_items")
-        .delete()
-        .eq("montage_id", montageId);
-      if (deleteError) throw deleteError;
-
-      const actionById = new Map((actions ?? []).map((action) => [String(action.id ?? ""), action]));
-      const introItems = montageDesignItems.filter((item) => item.placement === "intro");
-      const outroItems = montageDesignItems.filter((item) => item.placement === "outro");
-      const designPayload = (item: MontageDesignItem, sortOrder: number) => ({
-        montage_id: montageId,
-        user_id: authData.user.id,
-        item_type: item.item_type,
-        action_id: null,
-        clip_id: null,
-        title: item.title || null,
-        text: item.text || null,
-        image_url: item.image_url || null,
-        background_url: item.background_url || null,
-        font_family: item.font_family || "Inter",
-        font_size: Number(item.font_size || 38),
-        font_color: item.font_color || "#ffffff",
-        sort_order: sortOrder,
-        position: sortOrder,
-        duration: item.item_type === "image" ? 4 : 3,
-      });
-
-      const clipItems = highlightQueue.map((clip, index) => {
-        const action = actionById.get(clip.action_id) as any;
-        const clipStart = action?.edited_clip_start ?? action?.clip_start ?? action?.video_time ?? null;
-        const clipEnd = action?.edited_clip_end ?? action?.clip_end ?? null;
-
-        return {
-          montage_id: montageId,
-          user_id: authData.user.id,
-          item_type: "clip",
-          action_id: clip.action_id,
-          clip_id: action?.clip_id ?? null,
-          title: clip.label || actionTypeLabel(action || {}),
-          sort_order: introItems.length + index,
-          position: introItems.length + index,
-          clip_start: clipStart,
-          clip_end: clipEnd,
-          duration:
-            clipStart != null && clipEnd != null
-              ? Math.max(0, Number(clipEnd) - Number(clipStart))
-              : null,
-        };
-      });
-
-      const items = [
-        ...introItems.map((item, index) => designPayload(item, index)),
-        ...clipItems,
-        ...outroItems.map((item, index) =>
-          designPayload(item, introItems.length + clipItems.length + index)
-        ),
-      ];
-
-      const { error: insertError } = await montageSupabase
-        .from("livestat_montage_items")
-        .insert(items);
-      if (insertError) throw insertError;
-
-      await refreshSavedMontages();
-      flashMontage("Montage enregistré dans Supabase ✓");
-    } catch (error: any) {
-      console.error("Erreur sauvegarde montage Supabase :", error);
-      flashMontage(error?.message || "Impossible d'enregistrer le montage");
-    } finally {
-      setMontageBusy(false);
-    }
-  };
-
-  const deleteSavedMontage = async () => {
-    if (!activeMontageId) return;
-    if (!window.confirm("Supprimer définitivement ce montage ?")) return;
-
-    setMontageBusy(true);
-    try {
-      const { error } = await montageSupabase
-        .from("livestat_montages")
-        .delete()
-        .eq("id", activeMontageId);
-      if (error) throw error;
-      newMontage();
-      await refreshSavedMontages();
-      flashMontage("Montage supprimé");
-    } catch (error) {
-      console.error("Erreur suppression montage :", error);
-      flashMontage("Impossible de supprimer le montage");
-    } finally {
-      setMontageBusy(false);
-    }
-  };
-
-  const matchLabelOf = useMemo(() => {
-    const labels = new Map<string, string>();
-    for (const row of matches ?? []) {
-      labels.set(
-        String(row.matchId),
-        `${row.opponent || "Adversaire"}${row.date ? ` · ${fmtDate(row.date)}` : ""}`
-      );
-    }
-    return (id: unknown) => labels.get(String(id ?? "")) || "Match";
-  }, [matches]);
-
-  // Données strictement individuelles : aucune action d'un autre joueur.
-  const playerActionsOnly = useMemo(
-    () =>
-      (actions ?? []).filter((a) => {
-        const id = String(playerId);
-        return (
-          String(a.player_id ?? "") === id ||
-          String(a.assist_player_id ?? "") === id ||
-          String(a.rebound_player_id ?? "") === id
-        );
-      }),
-    [actions, playerId]
-  );
-
-  const montageActions = useMemo(() => {
-    const byId = new Map(playerActionsOnly.map((action) => [String(action.id ?? ""), action]));
-    return highlightQueue
-      .map((clip) => byId.get(clip.action_id))
-      .filter((action): action is any => Boolean(action));
-  }, [playerActionsOnly, highlightQueue]);
-
-  const matchOptions = useMemo(
-    () =>
-      Array.from(
-        new Set(playerActionsOnly.map((a) => String(a.match_id ?? "")).filter(Boolean))
-      ),
-    [playerActionsOnly]
-  );
-
-  const filteredActions = useMemo(
-    () =>
-      playerActionsOnly.filter(
-        (a) => matchFilter === "all" || String(a.match_id ?? "") === matchFilter
-      ),
-    [playerActionsOnly, matchFilter]
-  );
-
-  // La shot chart ne prend que les tirs dont ce joueur est le tireur.
-  const playerShots = useMemo(() => {
-    return filteredActions.filter(
-      (a) =>
-        String(a.player_id ?? "") === String(playerId) &&
-        isFieldShot(a) &&
-        (shotFilter === "all" || a.shot_type === shotFilter) &&
-        (
-          shotResultFilter === "all" ||
-          (shotResultFilter === "made" && shotIsMade(a)) ||
-          (shotResultFilter === "missed" && shotIsMissed(a))
-        )
+        return acc;
+      },
+      {} as Record<string, GameActionRow[]>,
     );
-  }, [filteredActions, playerId, shotFilter, shotResultFilter]);
+  }, [actions]);
 
-  const locatedShots = useMemo(
-    () =>
-      playerShots.filter(
-        (a) => Number.isFinite(Number(a.court_x)) && Number.isFinite(Number(a.court_y))
-      ),
-    [playerShots]
-  );
+  const totalCells = useMemo(() => {
+    const allActions = matches.flatMap(
+      (match) => actionsByMatch[match.id] || [],
+    );
+    return buildGameCells(allActions);
+  }, [actionsByMatch, matches]);
 
-  const shots2 = playerShots.filter((a) => a.shot_type === "2PTS");
-  const shots3 = playerShots.filter((a) => a.shot_type === "3PTS");
-  const made2 = shots2.filter(shotIsMade).length;
-  const made3 = shots3.filter(shotIsMade).length;
-  const made = playerShots.filter(shotIsMade).length;
-  const pct = playerShots.length ? Math.round((made / playerShots.length) * 100) : 0;
-  const totalPoints = filteredActions.reduce((sum, action) => {
-    if (String(action.player_id ?? "") !== String(playerId)) return sum;
-    return sum + matchActionPoints(action);
-  }, 0);
-  const clips = filteredActions.filter(actionHasClip);
-  const zones = computeShotZones(playerShots);
-  const ppa = filteredActions.length
-    ? roundStat(totalPoints / filteredActions.length)
-    : 0;
+  const totalGame = aggregateGameTotal(totalCells);
+  const totalGameAdv = gameAdvanced(totalGame);
 
-  const recentActions = [...filteredActions].reverse().slice(0, 8);
-  const recentClips = [...clips].reverse().slice(0, 6);
+  const performanceRows = useMemo(() => {
+    const globalPoss = totalGame.poss;
 
-  // Rentabilité strictement calculée sur les actions dont CE joueur est l'acteur.
-  // Les passes décisives et rebonds où il est seulement associé restent visibles
-  // dans la liste générale, mais ne faussent pas les possessions ni le PPP.
-  const playerActorActions = useMemo(
-    () =>
-      filteredActions.filter(
-        (action) => String(action.player_id ?? "") === String(playerId)
-      ),
-    [filteredActions, playerId]
-  );
+    return GAME_HIGHLIGHTS.map((item) => {
+      const cell = totalCells[item.key] || emptyGameCell(item);
+      const adv = gameAdvanced(cell);
 
-  const tempsFortRows = useMemo(() => {
-    const grouped = new Map<string, any[]>();
+      return {
+        ...cell,
+        usage: globalPoss ? (cell.poss / globalPoss) * 100 : 0,
+        ...adv,
+      };
+    })
+      .filter((row) => row.poss > 0)
+      .sort((a, b) => b.ppp - a.ppp);
+  }, [totalCells, totalGame.poss]);
 
-    for (const action of playerActorActions) {
-      const key = String(action.temps_fort ?? "").trim() || "sans_temps_fort";
-      if (!grouped.has(key)) grouped.set(key, []);
-      grouped.get(key)!.push(action);
-    }
+  const winLossRows = useMemo(() => {
+    const build = (split: GameSplitKey) => {
+      const sourceMatches = splitGameMatches(matches, split);
+      const splitActions = sourceMatches.flatMap(
+        (match) => actionsByMatch[match.id] || [],
+      );
+      const cells = buildGameCells(splitActions);
+      const total = aggregateGameTotal(cells);
 
-    return Array.from(grouped.entries())
-      .map(([key, list]) => {
-        const points = list.reduce((sum, action) => sum + matchActionPoints(action), 0);
-        const madeActions = list.filter((action) => actionResultCategory(action) === "made");
-        const missedActions = list.filter((action) => actionResultCategory(action) === "missed");
-        const foulActions = list.filter((action) => actionResultCategory(action) === "fauteProv");
-        const turnoverActions = list.filter((action) => actionResultCategory(action) === "perte");
-        const stealActions = list.filter((action) => actionResultCategory(action) === "intercept");
-        const otherActions = list.filter((action) => actionResultCategory(action) === "autre");
-        const made = madeActions.length;
-        const missed = missedActions.length;
-        const foulsDrawn = foulActions.length;
-        const turnovers = turnoverActions.length;
-        const steals = stealActions.length;
-        const attempts = made + missed;
-        const clipsCount = list.filter(actionHasClip).length;
+      return { cells, total };
+    };
 
-        return {
-          key,
-          label: key === "sans_temps_fort" ? "Sans temps fort" : tags.label(key),
-          actions: list,
-          madeActions,
-          missedActions,
-          foulActions,
-          turnoverActions,
-          stealActions,
-          otherActions,
-          possessions: list.length,
-          points,
-          ppp: list.length ? roundStat(points / list.length) : 0,
-          made,
-          missed,
-          foulsDrawn,
-          turnovers,
-          steals,
-          successPct: attempts ? Math.round((made / attempts) * 100) : 0,
-          clipsCount,
-        };
-      })
-      .sort((a, b) => b.possessions - a.possessions || b.ppp - a.ppp);
-  }, [playerActorActions, tags]);
+    const win = build("win");
+    const loss = build("loss");
 
-  const totalTempsFortPossessions = tempsFortRows.reduce((sum, row) => sum + row.possessions, 0);
-  const totalTempsFortPoints = tempsFortRows.reduce((sum, row) => sum + row.points, 0);
-  const globalTempsFortPpp = totalTempsFortPossessions
-    ? roundStat(totalTempsFortPoints / totalTempsFortPossessions)
-    : 0;
+    return GAME_HIGHLIGHTS.map((item) => {
+      const winCell = win.cells[item.key] || emptyGameCell(item);
+      const lossCell = loss.cells[item.key] || emptyGameCell(item);
 
-  const openPopup = (title: string, list: any[], index = 0) => {
-    if (!list.length) return;
-    setPopup({ title, actions: list, index });
-  };
+      const winAdv = gameAdvanced(winCell);
+      const lossAdv = gameAdvanced(lossCell);
+
+      return {
+        key: item.key,
+        label: item.label,
+        winPoss: winCell.poss,
+        lossPoss: lossCell.poss,
+        winPts: winCell.pts,
+        lossPts: lossCell.pts,
+        winPpp: winAdv.ppp,
+        lossPpp: lossAdv.ppp,
+        diff: winAdv.ppp - lossAdv.ppp,
+        winUsage: win.total.poss ? (winCell.poss / win.total.poss) * 100 : 0,
+        lossUsage: loss.total.poss
+          ? (lossCell.poss / loss.total.poss) * 100
+          : 0,
+      };
+    })
+      .filter((row) => row.winPoss + row.lossPoss > 0)
+      .sort((a, b) => Math.abs(b.diff) - Math.abs(a.diff));
+  }, [actionsByMatch, matches]);
+
+  const insights = useMemo(() => {
+    const mostEfficient = [...performanceRows].sort((a, b) => b.ppp - a.ppp)[0];
+    const mostUsed = [...performanceRows].sort((a, b) => b.poss - a.poss)[0];
+    const biggestDiff = [...winLossRows].sort(
+      (a, b) => Math.abs(b.diff) - Math.abs(a.diff),
+    )[0];
+    const mostTurnovers = [...performanceRows].sort(
+      (a, b) => b.tovPct - a.tovPct,
+    )[0];
+
+    return {
+      mostEfficient,
+      mostUsed,
+      biggestDiff,
+      mostTurnovers,
+    };
+  }, [performanceRows, winLossRows]);
 
   return (
-    <section className="pa-shell">
-      <div className="pa-head">
+    <section className="tl-card game-stats-card">
+      <div className="block-head">
         <div>
-          <span className="pa-eyebrow">Analyse individuelle</span>
-          <h2>Stats & vidéo — {playerName}</h2>
-          <p>Uniquement les actions et les tirs de ce joueur.</p>
-        </div>
-
-        <div className="pa-head-actions">
-          <input
-            className="pa-montage-title"
-            value={montageTitle}
-            onChange={(e) => setMontageTitle(e.target.value)}
-            placeholder="Nom du montage"
-          />
-          <select
-            className="pa-montage-select"
-            value={activeMontageId}
-            onChange={(e) => e.target.value ? loadSavedMontage(e.target.value) : newMontage()}
-          >
-            <option value="">Nouveau montage</option>
-            {savedMontages.map((montage) => (
-              <option key={montage.id} value={montage.id}>
-                {montage.title || "Montage sans titre"}
-              </option>
-            ))}
-          </select>
-          <button type="button" className="pa-montage-secondary" onClick={newMontage}>＋ Nouveau</button>
-          <button
-            type="button"
-            className="pa-montage-save"
-            disabled={montageBusy || !highlightQueue.length}
-            onClick={saveMontageToSupabase}
-          >
-            {montageBusy ? "Enregistrement…" : "☁ Enregistrer"}
-          </button>
-          {activeMontageId && (
-            <button type="button" className="pa-montage-delete" disabled={montageBusy} onClick={deleteSavedMontage}>Supprimer</button>
-          )}
-          <button
-            type="button"
-            className="pa-montage-launch"
-            disabled={!montageActions.length}
-            onClick={() => onOpenMontageStudio(activeMontageId || undefined)}
-          >
-            🎬 Ouvrir <b>{highlightQueue.length}</b>
-          </button>
-          <select value={matchFilter} onChange={(e) => setMatchFilter(e.target.value)}>
-            <option value="all">Tous les matchs</option>
-            {matchOptions.map((id) => (
-              <option key={id} value={id}>{matchLabelOf(id)}</option>
-            ))}
-          </select>
+          <p className="eyebrow">Analyse jeu</p>
+          <h2>Stats jeu par temps fort</h2>
+          <p className="muted">
+            Performance globale, impact victoire/défaite et insights
+            automatiques.
+          </p>
         </div>
       </div>
 
-      {montageMessage && <div className="pa-montage-message">{montageMessage}</div>}
+      {loading && <div className="empty">Chargement des stats jeu...</div>}
 
-      <div className="pa-kpis">
-        <div><span>Actions</span><strong>{filteredActions.length}</strong></div>
-        <div><span>Points générés</span><strong>{totalPoints}</strong></div>
-        <div><span>Réussite</span><strong>{pct}%</strong></div>
-        <div><span>Clips</span><strong>{clips.length}</strong></div>
-      </div>
+      {!loading && matches.length === 0 && (
+        <div className="empty">Aucun match enregistré pour cette équipe.</div>
+      )}
 
-      <div className="pa-tabs">
-        <button className={section === "overview" ? "active" : ""} onClick={() => setSection("overview")}>Vue d'ensemble</button>
-        <button className={section === "shots" ? "active" : ""} onClick={() => setSection("shots")}>Shot chart</button>
-        <button className={section === "temps-forts" ? "active" : ""} onClick={() => setSection("temps-forts")}>Temps forts</button>
-        <button className={section === "actions" ? "active" : ""} onClick={() => setSection("actions")}>Actions</button>
-        <button className={section === "montage" ? "active" : ""} onClick={() => setSection("montage")}>Montage</button>
-      </div>
-
-      {(section === "overview" || section === "shots") && (
-        <div className="pa-main-grid">
-          <div className="pa-court-card">
-            <div className="pa-card-title">
-              <div>
-                <h3>Shot chart personnelle</h3>
-                <p>{playerShots.length} tir{playerShots.length > 1 ? "s" : ""} affiché{playerShots.length > 1 ? "s" : ""}</p>
-              </div>
-              <div className="pa-shot-filters">
-                <div className="pa-shot-switch">
-                  {(["all", "2PTS", "3PTS"] as const).map((value) => (
-                    <button
-                      key={value}
-                      className={shotFilter === value ? "active" : ""}
-                      onClick={() => setShotFilter(value)}
-                    >
-                      {value === "all" ? "Tous" : value}
-                    </button>
-                  ))}
-                </div>
-
-                <div className="pa-shot-switch result">
-                  {(["all", "made", "missed"] as const).map((value) => (
-                    <button
-                      key={value}
-                      className={shotResultFilter === value ? "active" : ""}
-                      onClick={() => setShotResultFilter(value)}
-                    >
-                      {value === "all" ? "Tous" : value === "made" ? "Marqués" : "Ratés"}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            </div>
-
-            <div className="pa-court pa-court-live">
-              <ShotChart
-                mode="analysis"
-                size="lg"
-                showPoints
-                showDots
-                showStats
-                showLabels={false}
-                shots={playerShots}
-                onShotClick={(shot) => {
-                  const index = playerShots.findIndex((item) => item === shot);
-                  openPopup("Tir du joueur", playerShots, Math.max(0, index));
-                }}
-                onZoneClick={(zoneId) => openPopup(`Zone ${zoneId}`, playerShots.filter((shot) => (shot.shot_zone_id ?? shot.zone) === zoneId))}
-              />
-            </div>
-
-            <div className="pa-legend">
-              <span><i className="made" /> Tir réussi</span>
-              <span><i className="missed" /> Tir manqué</span>
-              {locatedShots.length !== playerShots.length && (
-                <em>{playerShots.length - locatedShots.length} tir(s) sans position</em>
-              )}
-            </div>
-          </div>
-
-          <aside className="pa-summary-card">
-            <h3>Résumé tir</h3>
-            <div className="pa-big-rate"><strong>{pct}%</strong><span>{made}/{playerShots.length}</span></div>
-            <div className="pa-summary-row"><span>2 points</span><b>{made2}/{shots2.length}</b><em>{shots2.length ? Math.round((made2 / shots2.length) * 100) : 0}%</em></div>
-            <div className="pa-summary-row"><span>3 points</span><b>{made3}/{shots3.length}</b><em>{shots3.length ? Math.round((made3 / shots3.length) * 100) : 0}%</em></div>
-            <div className="pa-summary-row"><span>Pts / action</span><b>{ppa.toFixed(2)}</b><em>PPP</em></div>
-            <div className="pa-summary-row"><span>Réussis</span><b className="green">{made}</b><em>tirs</em></div>
-            <div className="pa-summary-row"><span>Manqués</span><b className="red">{Math.max(0, playerShots.length - made)}</b><em>tirs</em></div>
-          </aside>
+      {!loading && matches.length > 0 && actions.length === 0 && (
+        <div className="empty">
+          Aucune action enregistrée dans match_actions pour cette équipe.
         </div>
       )}
 
-      {section === "temps-forts" && (
-        <div className="pa-tf-card">
-          <div className="pa-card-title pa-tf-head">
-            <div>
-              <h3>Rentabilité par temps fort</h3>
-              <p>Lecture par temps fort : volume, efficacité, résultats et clips associés.</p>
-            </div>
-            <div className="pa-tf-global">
-              <span>PPP global</span>
-              <strong>{globalTempsFortPpp.toFixed(2)}</strong>
-              <em>{totalTempsFortPoints} pts · {totalTempsFortPossessions} possessions</em>
-            </div>
+      {!loading && matches.length > 0 && actions.length > 0 && (
+        <>
+          <div className="game-kpis">
+            <MiniKpi label="Possessions" value={totalGame.poss} />
+            <MiniKpi label="Points" value={totalGame.pts} />
+            <MiniKpi label="PPP" value={r1(totalGameAdv.ppp)} />
+            <MiniKpi label="eFG%" value={`${r1(totalGameAdv.efg)}%`} />
+            <MiniKpi label="TS%" value={`${r1(totalGameAdv.ts)}%`} />
+            <MiniKpi label="TO%" value={`${r1(totalGameAdv.tovPct)}%`} />
           </div>
 
-          {tempsFortRows.length === 0 ? (
-            <p className="empty-small">Aucune action avec un temps fort pour ce joueur.</p>
-          ) : (
-            <div className="pa-tf-table-wrap">
-              <table className="pa-tf-table">
+          <div className="insights-grid">
+            <InsightCard
+              label="Temps fort le plus rentable"
+              title={insights.mostEfficient?.label || "—"}
+              value={
+                insights.mostEfficient
+                  ? `${r1(insights.mostEfficient.ppp)} PPP`
+                  : "—"
+              }
+              tone="good"
+            />
+
+            <InsightCard
+              label="Temps fort le plus utilisé"
+              title={insights.mostUsed?.label || "—"}
+              value={insights.mostUsed ? `${insights.mostUsed.poss} poss` : "—"}
+              tone="neutral"
+            />
+
+            <InsightCard
+              label="Plus gros écart V/D"
+              title={insights.biggestDiff?.label || "—"}
+              value={
+                insights.biggestDiff
+                  ? `${insights.biggestDiff.diff >= 0 ? "+" : ""}${r1(insights.biggestDiff.diff)} PPP`
+                  : "—"
+              }
+              tone={
+                insights.biggestDiff && insights.biggestDiff.diff < 0
+                  ? "bad"
+                  : "good"
+              }
+            />
+
+            <InsightCard
+              label="Plus gros TO%"
+              title={insights.mostTurnovers?.label || "—"}
+              value={
+                insights.mostTurnovers
+                  ? `${r1(insights.mostTurnovers.tovPct)}%`
+                  : "—"
+              }
+              tone="bad"
+            />
+          </div>
+
+          <div className="sub-block">
+            <div className="sub-head">
+              <h3>Performance par temps fort</h3>
+              <p>Quel temps fort est le plus rentable et le plus utilisé ?</p>
+            </div>
+
+            <div className="game-table-wrap">
+              <table>
                 <thead>
                   <tr>
                     <th>Temps fort</th>
-                    <th>Poss.</th>
-                    <th>Points</th>
+                    <th>Poss</th>
+                    <th>% Util</th>
+                    <th>PTS</th>
                     <th>PPP</th>
-                    <th>Réussite</th>
-                    <th>Résultats</th>
-                    <th>Clips</th>
-                    <th />
+                    <th>2PT%</th>
+                    <th>3PT%</th>
+                    <th>LF%</th>
+                    <th>eFG%</th>
+                    <th>TS%</th>
+                    <th>AST%</th>
+                    <th>TO%</th>
+                    <th>FTr</th>
                   </tr>
                 </thead>
+
                 <tbody>
-                  {tempsFortRows.map((row) => (
+                  {performanceRows.map((row) => (
                     <tr key={row.key}>
-                      <td>
-                        <button
-                          className="pa-tf-name"
-                          onClick={() => openPopup(row.label, row.actions)}
-                        >
-                          <strong>{row.label}</strong>
-                          <span>{row.actions.length} action{row.actions.length > 1 ? "s" : ""}</span>
-                        </button>
+                      <td className="label">{row.label}</td>
+                      <td>{row.poss}</td>
+                      <td>{r1(row.usage)}%</td>
+                      <td className="pts">{row.pts}</td>
+                      <td
+                        className={
+                          row.ppp >= 1.1 ? "good" : row.ppp < 0.85 ? "bad" : ""
+                        }
+                      >
+                        {r1(row.ppp)}
                       </td>
-                      <td><b>{row.possessions}</b></td>
-                      <td><b>{row.points}</b></td>
-                      <td>
-                        <span className={`pa-ppp ${row.ppp >= 1.2 ? "good" : row.ppp >= 0.8 ? "mid" : "low"}`}>
-                          {row.ppp.toFixed(2)}
-                        </span>
-                      </td>
-                      <td>
-                        <b>{row.successPct}%</b>
-                        <small>{row.made}/{row.made + row.missed}</small>
-                      </td>
-                      <td>
-                        <div className="pa-tf-results">
-                          <button
-                            className="made"
-                            disabled={!row.made}
-                            title="Revoir les actions marquées"
-                            onClick={() => openPopup(`${row.label} · Marqué`, row.madeActions)}
-                          >
-                            ✓ Marqué <b>{row.made}</b>
-                          </button>
-                          <button
-                            className="missed"
-                            disabled={!row.missed}
-                            title="Revoir les tirs manqués"
-                            onClick={() => openPopup(`${row.label} · Loupé`, row.missedActions)}
-                          >
-                            × Loupé <b>{row.missed}</b>
-                          </button>
-                          <button
-                            className="turnover"
-                            disabled={!row.turnovers}
-                            title="Revoir les balles perdues"
-                            onClick={() => openPopup(`${row.label} · Balle perdue`, row.turnoverActions)}
-                          >
-                            BP <span>Balle perdue</span> <b>{row.turnovers}</b>
-                          </button>
-                          <button
-                            className="foul"
-                            disabled={!row.foulsDrawn}
-                            title="Revoir les fautes provoquées"
-                            onClick={() => openPopup(`${row.label} · Faute provoquée`, row.foulActions)}
-                          >
-                            F <span>Faute provoquée</span> <b>{row.foulsDrawn}</b>
-                          </button>
-                          {row.steals > 0 && (
-                            <button
-                              className="steal"
-                              title="Revoir les interceptions"
-                              onClick={() => openPopup(`${row.label} · Interception`, row.stealActions)}
-                            >
-                              INT <span>Interception</span> <b>{row.steals}</b>
-                            </button>
-                          )}
-                          {row.otherActions.length > 0 && (
-                            <button
-                              className="other"
-                              title="Revoir les autres résultats"
-                              onClick={() => openPopup(`${row.label} · Autres actions`, row.otherActions)}
-                            >
-                              Autres <b>{row.otherActions.length}</b>
-                            </button>
-                          )}
-                        </div>
-                      </td>
-                      <td><b>{row.clipsCount}</b></td>
-                      <td>
-                        <button className="pa-tf-open" onClick={() => openPopup(row.label, row.actions)}>
-                          Revoir →
-                        </button>
-                      </td>
+                      <td>{pctText(row.p2m, row.p2a)}</td>
+                      <td>{pctText(row.p3m, row.p3a)}</td>
+                      <td>{pctText(row.ftm, row.fta)}</td>
+                      <td>{r1(row.efg)}%</td>
+                      <td>{r1(row.ts)}%</td>
+                      <td>{r1(row.astPct)}%</td>
+                      <td>{r1(row.tovPct)}%</td>
+                      <td>{r1(row.ftr)}</td>
                     </tr>
                   ))}
                 </tbody>
               </table>
             </div>
-          )}
-
-          <div className="pa-tf-note">
-            <b>PPP</b> = points marqués ÷ possessions codées pour ce temps fort.
-            Clique sur <b>Marqué</b>, <b>Loupé</b>, <b>Balle perdue</b> ou un autre résultat pour revoir uniquement ces actions.
-            Les actions d'autres joueurs ne sont jamais intégrées.
-          </div>
-        </div>
-      )}
-
-      {section === "overview" && (
-        <div className="pa-bottom-grid">
-          <div className="pa-list-card">
-            <div className="pa-card-title"><div><h3>Dernières actions</h3><p>Actions individuelles récentes</p></div></div>
-            {recentActions.length === 0 ? <p className="empty-small">Aucune action.</p> : recentActions.map((action, index) => (
-              <button className="pa-action-row" key={action.id ?? index} onClick={() => openPopup(actionTypeLabel(action), recentActions, index)}>
-                <span className={`pa-result-dot ${actionResultCategory(action)}`} />
-                <span className="pa-action-main"><b>{actionTypeLabel(action)}</b><em>{tags.label(action.temps_fort)}</em></span>
-                <span>{quarterLabel(action.quarter)}</span>
-                <span>{matchActionPoints(action)} pt</span>
-                <span>{actionHasClip(action) ? "▶" : "—"}</span>
-              </button>
-            ))}
           </div>
 
-          <div className="pa-list-card">
-            <div className="pa-card-title"><div><h3>Clips clés</h3><p>Accès rapide aux séquences du joueur</p></div></div>
-            {recentClips.length === 0 ? <p className="empty-small">Aucun clip synchronisé.</p> : recentClips.map((action, index) => (
-              <button className="pa-clip-row" key={action.id ?? index} onClick={() => openPopup(actionTypeLabel(action), recentClips, index)}>
-                <span className="pa-play">▶</span>
-                <span><b>{actionTypeLabel(action)}</b><em>{matchLabelOf(action.match_id)} · {quarterLabel(action.quarter)}</em></span>
-                <small>{matchTimeLabel(action)}</small>
-              </button>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {section === "shots" && (
-        <div className="pa-zones-card">
-          <div className="pa-card-title"><div><h3>Répartition par zone</h3><p>Clique une zone pour voir ses tirs</p></div></div>
-          <div className="pa-zone-grid">
-            {zones.length === 0 ? <p className="empty-small">Aucune zone disponible.</p> : zones.map((zone) => {
-              const zPct = zone.att ? Math.round((zone.made / zone.att) * 100) : 0;
-              return (
-                <button key={zone.id} onClick={() => openPopup(zone.label, zone.shots)}>
-                  <span>{zone.label}</span><strong>{zPct}%</strong><em>{zone.made}/{zone.att}</em>
-                </button>
-              );
-            })}
-          </div>
-        </div>
-      )}
-
-      {section === "actions" && (
-        <div className="pa-list-card pa-full-list">
-          <div className="pa-card-title"><div><h3>Toutes les actions du joueur</h3><p>{filteredActions.length} action(s)</p></div></div>
-          {[...filteredActions].reverse().map((action, index, list) => (
-            <button className="pa-action-row" key={action.id ?? index} onClick={() => openPopup(actionTypeLabel(action), list, index)}>
-              <span className={`pa-result-dot ${actionResultCategory(action)}`} />
-              <span className="pa-action-main"><b>{actionTypeLabel(action)}</b><em>{tags.label(action.temps_fort)} · {matchLabelOf(action.match_id)}</em></span>
-              <span>{quarterLabel(action.quarter)}</span>
-              <span>{matchActionPoints(action)} pt</span>
-              <span>{actionHasClip(action) ? "▶" : "—"}</span>
-            </button>
-          ))}
-        </div>
-      )}
-
-      {section === "montage" && (
-        <div className="pa-montages-section">
-          <div className="pa-card-title">
-            <div><h3>Montages assignés au joueur</h3><p>Tous les montages enregistrés avec ce joueur.</p></div>
-          </div>
-          <PlayerMontages teamId={teamId} playerId={playerId} showEmpty />
-        </div>
-      )}
-
-      {popup && (
-        <VideoModal
-          title={popup.title}
-          actions={popup.actions}
-          startIndex={popup.index || 0}
-          tags={tags}
-          playerName={playerName}
-          matchLabelOf={matchLabelOf}
-          onRequestExport={onRequestExport}
-          highlightQueue={highlightQueue}
-          onToggleHighlight={toggleHighlight}
-          onRemoveHighlight={removeHighlight}
-          onClearHighlights={clearHighlights}
-          onSaveMontage={saveMontageToSupabase}
-          montageBusy={montageBusy}
-          montageTitle={montageTitle}
-          montageId={activeMontageId}
-          teamId={teamId}
-          playerId={playerId}
-          montageDesignItems={montageDesignItems}
-          onChangeMontageDesignItems={setMontageDesignItems}
-          coachNotes={[]}
-          onSaveNote={() => undefined}
-          customTags={[]}
-          onSaveTags={() => undefined}
-          onClose={() => setPopup(null)}
-        />
-      )}
-    </section>
-  );
-}
-
-
-function PlayerCourt() {
-  return (
-    <svg viewBox="0 0 400 280" preserveAspectRatio="xMidYMid meet" aria-hidden="true">
-      <defs>
-        <linearGradient id="vrwood" x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0" stopColor="#caa06a" />
-          <stop offset="1" stopColor="#b07f3e" />
-        </linearGradient>
-      </defs>
-      <rect width="400" height="280" fill="url(#vrwood)" />
-      <g stroke="#fff" strokeWidth="2" fill="none" opacity=".92">
-        <rect x="8" y="8" width="384" height="264" rx="4" />
-        <rect x="150" y="8" width="100" height="104" fill="rgba(158,27,50,.40)" />
-        <circle cx="200" cy="112" r="36" />
-        <path d="M40 8 L40 64 A170 170 0 0 0 360 64 L360 8" />
-        <circle cx="200" cy="34" r="9" stroke="#ff5a3c" strokeWidth="3" />
-        <line x1="172" y1="20" x2="228" y2="20" strokeWidth="3" />
-        <circle cx="200" cy="272" r="30" />
-      </g>
-    </svg>
-  );
-}
-
-function VideoModal({
-  title,
-  actions,
-  startIndex,
-  tags,
-  playerName,
-  matchLabelOf,
-  onRequestExport,
-  highlightQueue,
-  onToggleHighlight,
-  onRemoveHighlight,
-  onClearHighlights,
-  onSaveMontage,
-  montageBusy,
-  montageTitle,
-  montageId,
-  teamId,
-  playerId,
-  montageDesignItems,
-  onChangeMontageDesignItems,
-  coachNotes,
-  onSaveNote,
-  customTags,
-  onSaveTags,
-  onClose,
-}: {
-  title: string;
-  actions: any[];
-  startIndex: number;
-  tags: ReturnType<typeof useLivestatTags>;
-  playerName: string;
-  matchLabelOf: (id: unknown) => string;
-  onRequestExport: (actionId: string) => void;
-  highlightQueue: HighlightClip[];
-  onToggleHighlight: (a: any) => void;
-  onRemoveHighlight: (id: string) => void;
-  onClearHighlights: () => void;
-  onSaveMontage: () => void;
-  montageBusy: boolean;
-  montageTitle: string;
-  montageId: string;
-  teamId: string;
-  playerId: string;
-  montageDesignItems: MontageDesignItem[];
-  onChangeMontageDesignItems: (items: MontageDesignItem[]) => void;
-  coachNotes: VideoNote[];
-  onSaveNote: (n: VideoNote) => void;
-  customTags: VideoCustomTag[];
-  onSaveTags: (t: VideoCustomTag) => void;
-  onClose: () => void;
-}) {
-  const [pf, setPf] = useState({ result: "all", shot: "all", tf: "all", quarter: "all", match: "all" });
-  const [idx, setIdx] = useState(startIndex || 0);
-  const [panel, setPanel] = useState<"" | "note" | "tag" | "montage">("");
-  const [noteText, setNoteText] = useState("");
-  const [noteType, setNoteType] = useState(NOTE_TYPES[0]);
-  const [tagDraft, setTagDraft] = useState<string[]>([]);
-  const [tagFree, setTagFree] = useState("");
-  const [designType, setDesignType] = useState<MontageDesignItem["item_type"]>("title");
-  const [designTitle, setDesignTitle] = useState("");
-  const [designText, setDesignText] = useState("");
-  const [designImage, setDesignImage] = useState("");
-  const [designBackground, setDesignBackground] = useState("");
-  const [designFont, setDesignFont] = useState("Inter");
-  const [designSize, setDesignSize] = useState(38);
-  const [designColor, setDesignColor] = useState("#ffffff");
-  const [designPlacement, setDesignPlacement] = useState<"intro" | "outro">("intro");
-  const [designUploading, setDesignUploading] = useState(false);
-  const [advancedEditorOpen, setAdvancedEditorOpen] = useState(false);
-  const modalSupabase = useMemo(() => createClient(), []);
-  const stageRef = useRef<HTMLDivElement | null>(null);
-  const videoRef = useRef<HTMLVideoElement | null>(null);
-
-  const tfKeys = useMemo(() => Array.from(new Set(actions.map((a) => String(a.temps_fort ?? "")).filter(Boolean))), [actions]);
-  const quarters = useMemo(() => Array.from(new Set(actions.map((a) => String(a.quarter ?? "")).filter(Boolean))).sort((a, b) => Number(a) - Number(b)), [actions]);
-  const matchIds = useMemo(() => Array.from(new Set(actions.map((a) => String(a.match_id ?? "")).filter(Boolean))), [actions]);
-  const hasLF = useMemo(() => actions.some((a) => a.shot_type === "LF"), [actions]);
-
-  const list = useMemo(() => {
-    return actions.filter((a) => {
-      if (pf.result !== "all") {
-        const cat = actionResultCategory(a);
-        if (pf.result === "made" && cat !== "made") return false;
-        if (pf.result === "missed" && cat !== "missed") return false;
-        if (pf.result === "perte" && cat !== "perte") return false;
-        if (pf.result === "passe" && String(a.assist_player_id ?? "") === "") return false;
-        if (pf.result === "defense" && low(a.context) !== "defense") return false;
-      }
-      if (pf.shot !== "all" && a.shot_type !== pf.shot) return false;
-      if (pf.tf !== "all" && String(a.temps_fort ?? "") !== pf.tf) return false;
-      if (pf.quarter !== "all" && String(a.quarter ?? "") !== pf.quarter) return false;
-      if (pf.match !== "all" && String(a.match_id ?? "") !== pf.match) return false;
-      return true;
-    });
-  }, [actions, pf]);
-
-  const safeIdx = list.length ? Math.min(idx, list.length - 1) : 0;
-  const current = list[safeIdx];
-
-  useEffect(() => { setIdx(startIndex || 0); }, [startIndex]);
-  useEffect(() => { setIdx(0); }, [pf]);
-  useEffect(() => {
-    if (current && actionIsPlayable(current) && videoRef.current && current.clip_start != null) {
-      try { videoRef.current.currentTime = Number(current.clip_start) || 0; } catch { /* no-op */ }
-    }
-  }, [current]);
-
-  useEffect(() => {
-    const handleKey = (event: KeyboardEvent) => {
-      if (event.key === "ArrowLeft") setIdx((i) => Math.max(0, i - 1));
-      if (event.key === "ArrowRight") setIdx((i) => Math.min(list.length - 1, i + 1));
-      if (event.key === "Escape") onClose();
-    };
-    window.addEventListener("keydown", handleKey);
-    return () => window.removeEventListener("keydown", handleKey);
-  }, [list.length, onClose]);
-
-  const goPrev = () => setIdx((i) => Math.max(0, (list.length ? Math.min(i, list.length - 1) : 0) - 1));
-  const goNext = () => setIdx((i) => Math.min(list.length - 1, (list.length ? Math.min(i, list.length - 1) : 0) + 1));
-  const goFullscreen = () => {
-    const el = stageRef.current as any;
-    if (el?.requestFullscreen) el.requestFullscreen();
-    else if (el?.webkitRequestFullscreen) el.webkitRequestFullscreen();
-  };
-
-  const elig = current ? exportEligibility(current) : { ok: false, reason: "Aucune action" };
-  const playable = current ? actionIsPlayable(current) : false;
-  const url = current ? actionVideoUrl(current) : null;
-  const cat = current ? actionResultCategory(current) : "autre";
-  const catLabel = cat === "made" ? "Marqué" : cat === "missed" ? "Manqué" : cat === "fauteProv" ? "Faute provoquée" : cat === "intercept" ? "Intercepté" : cat === "perte" ? "Perte" : actionTypeLabel(current || {});
-
-  const currentId = current ? String(current.id ?? "") : "";
-  const isQueued = !!currentId && highlightQueue.some((c) => c.action_id === currentId);
-  const existingNote = coachNotes.find((n) => n.action_id === currentId) || null;
-  const existingTags = customTags.find((t) => t.action_id === currentId)?.tags || [];
-
-  useEffect(() => {
-    setNoteText(existingNote?.note || "");
-    setNoteType(existingNote?.type || NOTE_TYPES[0]);
-    setTagDraft(existingTags);
-    setTagFree("");
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [currentId]);
-
-  const toggleTagDraft = (t: string) =>
-    setTagDraft((d) => (d.includes(t) ? d.filter((x) => x !== t) : [...d, t]));
-  const submitNote = () => {
-    if (!current) return;
-    onSaveNote({ action_id: currentId, note: noteText.trim(), type: noteType, created_at: new Date().toISOString() });
-    setPanel("");
-  };
-  const submitTags = () => {
-    if (!current) return;
-    const all = Array.from(new Set([...tagDraft, ...(tagFree.trim() ? [tagFree.trim()] : [])]));
-    onSaveTags({ action_id: currentId, tags: all });
-    setTagFree("");
-    setPanel("");
-  };
-
-  const uploadMontageImage = async (file: File) => {
-    setDesignUploading(true);
-    try {
-      const { data: authData, error: authError } = await modalSupabase.auth.getUser();
-      if (authError || !authData.user) throw authError || new Error("Utilisateur non connecté");
-      const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, "-");
-      const objectPath = `${authData.user.id}/${teamId}/${playerId}/${Date.now()}-${safeName}`;
-      const { error: uploadError } = await modalSupabase.storage
-        .from("livestat-montages")
-        .upload(objectPath, file, { upsert: false, contentType: file.type || undefined });
-      if (uploadError) throw uploadError;
-      const { data } = modalSupabase.storage.from("livestat-montages").getPublicUrl(objectPath);
-      setDesignImage(data.publicUrl);
-    } catch (error: any) {
-      console.error("Erreur upload image montage :", error);
-      alert(error?.message || "Impossible d'envoyer l'image. Vérifie le bucket livestat-montages.");
-    } finally {
-      setDesignUploading(false);
-    }
-  };
-
-  const addDesignItem = () => {
-    if (designType === "image" && !designImage.trim()) return;
-    if (designType !== "image" && !designTitle.trim() && !designText.trim()) return;
-    const next: MontageDesignItem = {
-      id: uid(),
-      item_type: designType,
-      title: designTitle.trim(),
-      text: designText.trim(),
-      image_url: designImage.trim(),
-      background_url: designBackground.trim(),
-      font_family: designFont,
-      font_size: Number(designSize || 38),
-      font_color: designColor,
-      placement: designPlacement,
-    };
-    onChangeMontageDesignItems([...montageDesignItems, next]);
-    setDesignTitle("");
-    setDesignText("");
-    setDesignImage("");
-    setDesignBackground("");
-  };
-  const removeDesignItem = (id: string) =>
-    onChangeMontageDesignItems(montageDesignItems.filter((item) => item.id !== id));
-  const moveDesignItem = (id: string, dir: -1 | 1) => {
-    const index = montageDesignItems.findIndex((item) => item.id === id);
-    const target = index + dir;
-    if (index < 0 || target < 0 || target >= montageDesignItems.length) return;
-    const copy = [...montageDesignItems];
-    [copy[index], copy[target]] = [copy[target], copy[index]];
-    onChangeMontageDesignItems(copy);
-  };
-
-  return (
-    <div className="modal-bg" onClick={onClose}>
-      <div className="vr-modal" onClick={(e) => e.stopPropagation()}>
-        <div className="vr-modal-head">
-          <h2>{current ? `${tags.label(current.temps_fort)} - ${actionTypeLabel(current)} ${cat === "made" ? "marqué" : cat === "missed" ? "manqué" : ""}` : title}</h2>
-          <div className="vr-head-right">
-            <button className={`vr-montage-count ${panel === "montage" ? "on" : ""}`} onClick={() => setPanel((p) => (p === "montage" ? "" : "montage"))}>
-              🎬 Montage ({highlightQueue.length})
-            </button>
-            <button className="vr-modal-x" onClick={onClose}>×</button>
-          </div>
-        </div>
-
-        {panel === "montage" && (
-          <div className="vr-montage-panel">
-            <div className="vr-montage-head">
-              <strong>{montageTitle || "Mon montage"} · {highlightQueue.length} clip{highlightQueue.length > 1 ? "s" : ""}</strong>
-              <div className="vr-montage-actions">
-                <button className="vr-montage-save" onClick={onSaveMontage} disabled={montageBusy || !highlightQueue.length}>
-                  {montageBusy ? "Enregistrement…" : "☁ Enregistrer"}
-                </button>
-                <button className="vr-montage-clear" onClick={onClearHighlights} disabled={!highlightQueue.length}>Vider</button>
-              </div>
+          <div className="sub-block">
+            <div className="sub-head">
+              <h3>Impact victoire / défaite</h3>
+              <p>
+                Ce tableau montre ce qui change vraiment entre les matchs gagnés
+                et perdus.
+              </p>
             </div>
-            {highlightQueue.length === 0 ? (
-              <p className="vr-montage-empty">Aucun clip sélectionné. Utilise ⭐ Highlight sur une action.</p>
-            ) : (
-              <ul className="vr-montage-list">
-                {highlightQueue.map((c) => (
-                  <li key={c.action_id}>
-                    <span style={{ color: tags.color(c.temps_fort) }}>{tags.emoji(c.temps_fort)} {tags.label(c.temps_fort)}</span>
-                    <button onClick={() => onRemoveHighlight(c.action_id)} title="Retirer">✕</button>
-                  </li>
-                ))}
-              </ul>
-            )}
-            <div className="vr-montage-editor">
-              <div className="vr-editor-head"><strong>Habillage du montage</strong><span>Titre, texte ou image</span></div>
-              <div className="vr-editor-grid">
-                <select value={designType} onChange={(e) => setDesignType(e.target.value as MontageDesignItem["item_type"])}>
-                  <option value="title">Titre</option><option value="text">Texte</option><option value="image">Image</option>
-                </select>
-                <select value={designPlacement} onChange={(e) => setDesignPlacement(e.target.value as "intro" | "outro")}>
-                  <option value="intro">Avant les clips</option><option value="outro">Après les clips</option>
-                </select>
-                <input placeholder="Titre" value={designTitle} onChange={(e) => setDesignTitle(e.target.value)} />
-                <input placeholder="Texte / sous-titre" value={designText} onChange={(e) => setDesignText(e.target.value)} />
-                <input placeholder="URL image" value={designImage} onChange={(e) => setDesignImage(e.target.value)} />
-                <label className="vr-file-field">{designUploading ? "Envoi…" : "Importer une image"}<input type="file" accept="image/*" disabled={designUploading} onChange={(e) => { const file = e.target.files?.[0]; if (file) uploadMontageImage(file); e.currentTarget.value = ""; }} /></label>
-                <input placeholder="URL image de fond" value={designBackground} onChange={(e) => setDesignBackground(e.target.value)} />
-                <select value={designFont} onChange={(e) => setDesignFont(e.target.value)}>
-                  <option>Inter</option><option>Roboto</option><option>Arial</option><option>Georgia</option><option>Impact</option>
-                </select>
-                <input type="number" min="14" max="120" value={designSize} onChange={(e) => setDesignSize(Number(e.target.value))} />
-                <label className="vr-color-field">Couleur <input type="color" value={designColor} onChange={(e) => setDesignColor(e.target.value)} /></label>
-                <button className="vr-add-design" onClick={addDesignItem}>＋ Ajouter</button>
-              </div>
-              {montageDesignItems.length > 0 && (
-                <div className="vr-design-list">
-                  {montageDesignItems.map((item, index) => (
-                    <div className="vr-design-item" key={item.id}>
-                      <div className="vr-design-preview" style={{ backgroundImage: item.background_url ? `linear-gradient(rgba(0,0,0,.38),rgba(0,0,0,.38)),url(${item.background_url})` : undefined }}>
-                        {item.item_type === "image" && item.image_url ? <img src={item.image_url} alt="" /> : <span style={{ fontFamily: item.font_family, fontSize: Math.min(item.font_size, 22), color: item.font_color }}>{item.title || item.text || item.item_type}</span>}
-                      </div>
-                      <div><b>{item.item_type === "title" ? "Titre" : item.item_type === "text" ? "Texte" : "Image"}</b><small>{item.placement === "intro" ? "Avant les clips" : "Après les clips"}</small></div>
-                      <div className="vr-design-actions"><button onClick={() => moveDesignItem(item.id, -1)} disabled={index === 0}>↑</button><button onClick={() => moveDesignItem(item.id, 1)} disabled={index === montageDesignItems.length - 1}>↓</button><button className="danger" onClick={() => removeDesignItem(item.id)}>✕</button></div>
-                    </div>
+
+            <div className="game-table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Temps fort</th>
+                    <th>PPP Victoire</th>
+                    <th>PPP Défaite</th>
+                    <th>Diff PPP</th>
+                    <th>Util. Victoire</th>
+                    <th>Util. Défaite</th>
+                    <th>Poss V</th>
+                    <th>Poss D</th>
+                    <th>PTS V</th>
+                    <th>PTS D</th>
+                  </tr>
+                </thead>
+
+                <tbody>
+                  {winLossRows.map((row) => (
+                    <tr key={row.key}>
+                      <td className="label">{row.label}</td>
+                      <td>{r1(row.winPpp)}</td>
+                      <td>{r1(row.lossPpp)}</td>
+                      <td className={row.diff >= 0 ? "good" : "bad"}>
+                        {row.diff >= 0 ? "+" : ""}
+                        {r1(row.diff)}
+                      </td>
+                      <td>{r1(row.winUsage)}%</td>
+                      <td>{r1(row.lossUsage)}%</td>
+                      <td>{row.winPoss}</td>
+                      <td>{row.lossPoss}</td>
+                      <td>{row.winPts}</td>
+                      <td>{row.lossPts}</td>
+                    </tr>
                   ))}
-                </div>
-              )}
-            </div>
-            <p className="vr-montage-note">Les titres, textes et images seront enregistrés dans Supabase avec le montage.</p>
-          </div>
-        )}
-
-        <div className="vr-modal-body">
-          <div className="vr-modal-stage" ref={stageRef}>
-            <button className="vr-stage-arrow prev" onClick={goPrev} disabled={safeIdx <= 0} aria-label="Clip précédent">‹</button>
-            <button className="vr-stage-arrow next" onClick={goNext} disabled={safeIdx >= list.length - 1} aria-label="Clip suivant">›</button>
-            {current && actionHasClip(current) && current.match_id ? (
-              <LocalClipPlayer
-                clip={current}
-                teamId={teamId}
-                autoPlay
-              />
-            ) : current && playable && url ? (
-              <video ref={videoRef} src={url} controls playsInline className="vr-modal-video" />
-            ) : (
-              <div className="vr-modal-empty">
-                <span>🎬 Aucune borne vidéo pour cette action</span>
-                <small>
-                  {current
-                    ? "Cette action ne possède pas encore de repère vidéo."
-                    : "Aucune action."}
-                </small>
-              </div>
-            )}
-          </div>
-
-          <div className="vr-modal-meta">
-            <div className="vr-meta-row"><span>⚡ Temps fort</span><b style={{ color: current ? tags.color(current.temps_fort) : undefined }}>{current ? tags.label(current.temps_fort) : "—"}</b></div>
-            <div className="vr-meta-row"><span>✔ Résultat</span><b className={`vr-res ${cat}`}>{catLabel}</b></div>
-            <div className="vr-meta-row"><span>🎯 Type de tir</span><b>{current?.shot_type || actionTypeLabel(current || {})}</b></div>
-            <div className="vr-meta-row"><span>🏀 Points</span><b>{current ? matchActionPoints(current) : 0}</b></div>
-            <div className="vr-meta-row"><span>⏱ Période</span><b>{current ? quarterLabel(current.quarter) : "—"}</b></div>
-            <div className="vr-meta-row"><span>🎬 Match</span><b>{current ? matchLabelOf(current.match_id) : "—"}</b></div>
-            <div className="vr-meta-row"><span>🕑 Temps match</span><b>{current ? matchTimeLabel(current) : "—"}</b></div>
-            {current && (current.score || current.us_score != null) && (
-              <div className="vr-meta-row"><span>🔢 Score</span><b>{current.score ?? `${current.us_score}-${current.them_score}`}</b></div>
-            )}
-            <div className="vr-meta-row"><span>👤 Joueur</span><b>{playerName}</b></div>
-
-            <div className="vr-modal-tools">
-              <button className={`vr-tool ${isQueued ? "on" : ""}`} disabled={!current} onClick={() => current && onToggleHighlight(current)} title="Ajouter au highlight">
-                {isQueued ? "✓ Dans le montage" : "+ Ajouter au montage"}
-              </button>
-              <button className={`vr-tool ${panel === "note" ? "on" : ""} ${existingNote ? "has" : ""}`} disabled={!current} onClick={() => setPanel((p) => (p === "note" ? "" : "note"))} title="Note coach">📝 Note{existingNote ? " •" : ""}</button>
-              <button className={`vr-tool ${panel === "tag" ? "on" : ""} ${existingTags.length ? "has" : ""}`} disabled={!current} onClick={() => setPanel((p) => (p === "tag" ? "" : "tag"))} title="Tag perso">🏷 Tag{existingTags.length ? ` (${existingTags.length})` : ""}</button>
-            </div>
-
-            {panel === "note" && current && (
-              <div className="vr-subpanel">
-                <strong className="vr-subpanel-title">Note coach</strong>
-                <select value={noteType} onChange={(e) => setNoteType(e.target.value)}>
-                  {NOTE_TYPES.map((t) => (<option key={t} value={t}>{t}</option>))}
-                </select>
-                <textarea placeholder="Commentaire…" value={noteText} onChange={(e) => setNoteText(e.target.value)} />
-                <div className="vr-subpanel-actions">
-                  <button className="ghost" onClick={() => setPanel("")}>Annuler</button>
-                  <button className="solid" onClick={submitNote}>Enregistrer</button>
-                </div>
-              </div>
-            )}
-
-            {panel === "tag" && current && (
-              <div className="vr-subpanel">
-                <strong className="vr-subpanel-title">Tags coach</strong>
-                <div className="vr-quicktags">
-                  {QUICK_TAGS.map((t) => (
-                    <button key={t} className={`vr-qtag ${tagDraft.includes(t) ? "on" : ""}`} onClick={() => toggleTagDraft(t)}>{t}</button>
-                  ))}
-                </div>
-                <input placeholder="Tag libre…" value={tagFree} onChange={(e) => setTagFree(e.target.value)} />
-                <div className="vr-subpanel-actions">
-                  <button className="ghost" onClick={() => setPanel("")}>Annuler</button>
-                  <button className="solid" onClick={submitTags}>Enregistrer</button>
-                </div>
-              </div>
-            )}
-
-            <button className="vr-tool vr-advanced-edit" disabled={!current || !playable} onClick={() => setAdvancedEditorOpen(true)}>
-              ✂ Éditer la vidéo
-            </button>
-            <button
-              className="vr-export-btn"
-              disabled={!elig.ok}
-              title={elig.ok ? "Préparer l'export MP4" : elig.reason}
-              onClick={() => current && elig.ok && onRequestExport(String(current.id))}
-            >
-              ⬇ Exporter en MP4
-            </button>
-            <div className={`vr-export-status ${elig.ok ? "ok" : "ko"}`}>
-              {elig.ok ? "✔ Export possible · vidéo locale synchronisée" : `⚠ ${elig.reason}`}
+                </tbody>
+              </table>
             </div>
           </div>
-        </div>
-
-        <AdvancedVideoEditor
-          open={advancedEditorOpen}
-          onClose={() => setAdvancedEditorOpen(false)}
-          action={current}
-          videoUrl={url}
-          montageId={montageId}
-          teamId={teamId}
-          playerId={playerId}
-          montageTitle={montageTitle}
-        />
-
-        <div className="vr-modal-filters">
-          <select value={pf.result} onChange={(e) => setPf({ ...pf, result: e.target.value })}>
-            <option value="all">Tous</option>
-            <option value="made">Marqués</option>
-            <option value="missed">Ratés</option>
-            <option value="perte">Perte</option>
-            <option value="passe">Passe</option>
-            <option value="defense">Défense</option>
-          </select>
-          <select value={pf.shot} onChange={(e) => setPf({ ...pf, shot: e.target.value })}>
-            <option value="all">2PTS & 3PTS</option>
-            <option value="2PTS">2PTS</option>
-            <option value="3PTS">3PTS</option>
-            {hasLF && <option value="LF">LF</option>}
-          </select>
-          <select value={pf.tf} onChange={(e) => setPf({ ...pf, tf: e.target.value })}>
-            <option value="all">Tous temps forts</option>
-            {tfKeys.map((k) => (<option key={k} value={k}>{tags.label(k)}</option>))}
-          </select>
-          <select value={pf.quarter} onChange={(e) => setPf({ ...pf, quarter: e.target.value })}>
-            <option value="all">Toutes périodes</option>
-            {quarters.map((q) => (<option key={q} value={q}>{quarterLabel(q)}</option>))}
-          </select>
-          <select value={pf.match} onChange={(e) => setPf({ ...pf, match: e.target.value })}>
-            <option value="all">Tous les matchs</option>
-            {matchIds.map((id) => (<option key={id} value={id}>{matchLabelOf(id)}</option>))}
-          </select>
-        </div>
-
-        <div className="vr-modal-nav">
-          <button className="light-btn outline" onClick={goPrev} disabled={safeIdx <= 0}>‹ Précédent</button>
-          <span className="vr-counter">{list.length ? safeIdx + 1 : 0} / {list.length}</span>
-          <button className="light-btn outline" onClick={goNext} disabled={safeIdx >= list.length - 1}>Suivant ›</button>
-          <button className="light-btn outline" onClick={goFullscreen} disabled={!playable}>⛶</button>
-        </div>
-      </div>
+        </>
+      )}
 
       <style jsx>{`
-        .modal-bg { position: fixed; inset: 0; display: grid; place-items: center; padding: 24px; background: rgba(22, 14, 15, .58); backdrop-filter: blur(5px); z-index: 1299; }
-        .vr-modal { position: relative; width: min(920px, 94vw); max-height: min(88vh, 820px); overflow: auto; background: #14100f; color: #f4efe8; border: 1px solid rgba(255,255,255,.11); border-radius: 18px; box-shadow: 0 30px 90px rgba(0,0,0,.62); z-index: 1300; }
-        .vr-modal-head { display: flex; align-items: center; justify-content: space-between; gap: 1rem; padding: .8rem 1rem; border-bottom: 1px solid rgba(255,255,255,.08); }
-        .vr-modal-head h2 { font-size: .95rem; margin: 0; font-weight: 800; color: #fff; }
-        .vr-head-right { display: flex; align-items: center; gap: .5rem; }
-        .vr-modal-x { width: 30px; height: 30px; border-radius: 999px; border: 0; background: rgba(255,255,255,.12); color: #fff; font-size: 1.1rem; cursor: pointer; }
-        .vr-montage-count { border: 1px solid #d4a24c; background: rgba(212,162,76,.16); color: #f4c56a; border-radius: 999px; padding: .3rem .6rem; font-weight: 900; font-size: .74rem; cursor: pointer; white-space: nowrap; }
-        .vr-montage-count.on { background: #d4a24c; color: #201b19; }
-        .vr-montage-panel { margin: 0 1rem .4rem; background: rgba(255,255,255,.05); border: 1px solid rgba(255,255,255,.1); border-radius: 10px; padding: .6rem .7rem; }
-        .vr-montage-head { display: flex; align-items: center; justify-content: space-between; gap: 1rem; margin-bottom: .4rem; }.vr-montage-actions{display:flex;align-items:center;gap:.4rem}.vr-montage-save{background:#d4a24c;border:1px solid #d4a24c;color:#201b19;border-radius:6px;padding:.25rem .55rem;font-size:.7rem;font-weight:900;cursor:pointer}.vr-montage-save:disabled{opacity:.4;cursor:not-allowed}
-        .vr-montage-head strong { color: #f4c56a; font-size: .8rem; }
-        .vr-montage-clear { background: none; border: 1px solid rgba(255,255,255,.2); color: #f4efe8; border-radius: 6px; padding: .2rem .5rem; font-size: .7rem; font-weight: 800; cursor: pointer; }
-        .vr-montage-clear:disabled { opacity: .4; cursor: not-allowed; }
-        .vr-montage-empty, .vr-montage-note { color: #b9aca4; font-size: .72rem; margin: .2rem 0 0; }
-        .vr-montage-list { list-style: none; margin: 0; padding: 0; display: grid; gap: .25rem; max-height: 130px; overflow: auto; }
-        .vr-montage-list li { display: flex; align-items: center; justify-content: space-between; gap: .5rem; background: rgba(255,255,255,.05); border-radius: 6px; padding: .25rem .5rem; font-size: .76rem; font-weight: 700; }
-        .vr-montage-list li button { background: none; border: 0; color: #ff8a80; cursor: pointer; font-weight: 900; }
-        .vr-montage-editor{margin-top:.65rem;padding-top:.65rem;border-top:1px solid rgba(255,255,255,.1)}.vr-editor-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:.45rem}.vr-editor-head strong{color:#f4c56a;font-size:.78rem}.vr-editor-head span{color:#9f9290;font-size:.66rem}.vr-editor-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:.38rem}.vr-editor-grid input,.vr-editor-grid select{width:100%;min-width:0;background:#171313;border:1px solid rgba(255,255,255,.14);color:#f7f0ea;border-radius:7px;padding:.42rem .5rem;font-size:.7rem}.vr-color-field{display:flex;align-items:center;justify-content:space-between;background:#171313;border:1px solid rgba(255,255,255,.14);border-radius:7px;padding:.28rem .45rem;color:#b9aca4;font-size:.68rem}.vr-color-field input{width:34px;height:24px;padding:0;border:0;background:transparent}.vr-add-design{border:1px solid #d4a24c;background:#d4a24c;color:#211b18;border-radius:7px;font-size:.7rem;font-weight:900;cursor:pointer}.vr-design-list{display:grid;gap:.35rem;margin-top:.5rem;max-height:155px;overflow:auto}.vr-design-item{display:grid;grid-template-columns:78px minmax(0,1fr) auto;gap:.45rem;align-items:center;background:rgba(255,255,255,.045);border:1px solid rgba(255,255,255,.08);border-radius:8px;padding:.35rem}.vr-design-preview{height:46px;border-radius:6px;background:#251e1d center/cover no-repeat;display:grid;place-items:center;overflow:hidden;text-align:center;padding:.25rem}.vr-design-preview img{width:100%;height:100%;object-fit:cover}.vr-design-item b,.vr-design-item small{display:block}.vr-design-item b{font-size:.7rem;color:#f4efe8}.vr-design-item small{font-size:.62rem;color:#9f9290}.vr-design-actions{display:flex;gap:.22rem}.vr-design-actions button{width:26px;height:26px;border-radius:6px;border:1px solid rgba(255,255,255,.14);background:#201a19;color:#f4efe8;cursor:pointer}.vr-design-actions button:disabled{opacity:.3;cursor:default}.vr-design-actions button.danger{color:#ff8a80}.vr-file-field{display:flex;align-items:center;justify-content:center;border:1px dashed rgba(212,162,76,.65);color:#f4c56a;border-radius:7px;font-size:.68rem;font-weight:900;cursor:pointer;min-height:32px}.vr-file-field input{display:none}
-        .vr-modal-body { display: grid; grid-template-columns: minmax(0, 1.5fr) minmax(0, 1fr); gap: .8rem; padding: .9rem 1rem; }
-        .vr-modal-stage { position: relative; background: #000; border-radius: 10px; overflow: hidden; min-height: 260px; display: grid; }
-        .vr-stage-arrow { position: absolute; top: 50%; transform: translateY(-50%); z-index: 5; width: 42px; height: 42px; border-radius: 50%; border: 1px solid rgba(255,255,255,.35); background: rgba(12,8,8,.72); color: #fff; font-size: 28px; line-height: 1; cursor: pointer; box-shadow: 0 8px 22px rgba(0,0,0,.35); }
-        .vr-stage-arrow.prev { left: 12px; }
-        .vr-stage-arrow.next { right: 12px; }
-        .vr-stage-arrow:disabled { opacity: .22; cursor: default; }
-        .vr-modal-video { width: 100%; display: block; max-height: 300px; }
-        .vr-modal-empty { display: grid; place-items: center; gap: .3rem; text-align: center; padding: 1rem; }
-        .vr-modal-empty span { font-weight: 900; }
-        .vr-modal-empty small { color: #b9aca4; font-size: .72rem; line-height: 1.35; }
-        .vr-modal-meta { display: grid; gap: .3rem; align-content: start; }
-        .vr-meta-row { display: flex; align-items: center; justify-content: space-between; gap: .5rem; font-size: .74rem; border-bottom: 1px solid rgba(255,255,255,.06); padding: .18rem 0; }
-        .vr-meta-row span { color: #b9aca4; }
-        .vr-meta-row b { color: #fff; font-weight: 800; text-align: right; }
-        .vr-meta-row .vr-res.made { color: #6ee7a0; } .vr-meta-row .vr-res.missed { color: #ff8a80; }
-        .vr-export-btn { margin-top: .5rem; width: 100%; border: 0; border-radius: 8px; padding: .5rem; font-weight: 900; background: #c0392b; color: #fff; cursor: pointer; }
-        .vr-modal-tools { display: flex; gap: .35rem; margin-top: .5rem; flex-wrap: wrap; }
-        .vr-tool { flex: 1; min-width: 74px; border: 1px solid rgba(255,255,255,.16); background: rgba(255,255,255,.06); color: #f4efe8; border-radius: 7px; padding: .35rem .3rem; font-size: .68rem; font-weight: 800; cursor: pointer; }
-        .vr-tool:disabled { opacity: .4; cursor: not-allowed; }
-        .vr-tool.on { background: #d4a24c; color: #201b19; border-color: #d4a24c; }
-        .vr-tool.has { border-color: #d4a24c; }
-        .vr-subpanel { margin-top: .5rem; background: rgba(255,255,255,.05); border: 1px solid rgba(255,255,255,.1); border-radius: 8px; padding: .6rem; display: grid; gap: .4rem; }
-        .vr-subpanel-title { color: #f4c56a; font-size: .74rem; }
-        .vr-subpanel select, .vr-subpanel textarea, .vr-subpanel input { background: #201b19; color: #f4efe8; border: 1px solid rgba(255,255,255,.14); border-radius: 7px; padding: .4rem .5rem; font: inherit; font-size: .76rem; width: 100%; }
-        .vr-subpanel textarea { min-height: 56px; resize: vertical; }
-        .vr-quicktags { display: flex; flex-wrap: wrap; gap: .3rem; }
-        .vr-qtag { border: 1px solid rgba(255,255,255,.16); background: rgba(255,255,255,.06); color: #f4efe8; border-radius: 999px; padding: .25rem .5rem; font-size: .7rem; font-weight: 800; cursor: pointer; }
-        .vr-qtag.on { background: #d4a24c; color: #201b19; border-color: #d4a24c; }
-        .vr-subpanel-actions { display: flex; justify-content: flex-end; gap: .4rem; }
-        .vr-subpanel-actions button { border-radius: 7px; padding: .35rem .8rem; font-weight: 800; font-size: .74rem; cursor: pointer; border: 1px solid rgba(255,255,255,.18); }
-        .vr-subpanel-actions .ghost { background: transparent; color: #f4efe8; }
-        .vr-subpanel-actions .solid { background: #d4a24c; color: #201b19; border-color: #d4a24c; }
-        .vr-export-btn:disabled { background: #5a4a48; color: #cbbcb8; cursor: not-allowed; }
-        .vr-export-status { margin-top: .35rem; font-size: .66rem; border-radius: 6px; padding: .3rem .4rem; text-align: center; }
-        .vr-export-status.ok { background: rgba(212,162,76,.16); color: #f4c56a; }
-        .vr-export-status.ko { background: rgba(255,255,255,.06); color: #d9b7b2; }
-        .vr-modal-filters { display: flex; flex-wrap: wrap; gap: .4rem; padding: 0 1rem .3rem; }
-        .vr-modal-filters select { background: #201b19; color: #f4efe8; border: 1px solid rgba(255,255,255,.12); border-radius: 6px; padding: .3rem .4rem; font: inherit; font-size: .72rem; }
-        .vr-modal-nav { display: flex; align-items: center; gap: .5rem; padding: .5rem 1rem .9rem; }
-        .vr-modal-nav .light-btn { background: rgba(255,255,255,.1); color: #fff; border-color: rgba(255,255,255,.15); }
-        .vr-modal-nav .light-btn:disabled { opacity: .4; cursor: not-allowed; }
-        .vr-counter { color: #b9aca4; font-weight: 900; font-size: .8rem; margin: 0 auto; }
-        @media (max-width: 560px) {
-          .modal-bg { padding: 8px; }
-          .vr-modal { width: 100%; max-height: 94vh; }
-          .vr-modal-body { grid-template-columns: 1fr; }
+        .game-stats-card {
+          margin-top: 1.4rem;
+          padding: 1.45rem;
+          border: 1px solid #eadfd5;
+          border-radius: 22px;
+          background: #fff;
+          box-shadow: 0 14px 34px rgba(62, 31, 22, 0.055);
+        }
+
+        .block-head {
+          display: flex;
+          justify-content: space-between;
+          align-items: flex-start;
+          gap: 1rem;
+          margin-bottom: 1.25rem;
+        }
+
+        .eyebrow {
+          margin: 0;
+          color: #d4a24c;
+          font-size: 0.78rem;
+          font-weight: 950;
+          text-transform: uppercase;
+          letter-spacing: 0.08em;
+        }
+
+        h2 {
+          margin: 0.25rem 0 0;
+          color: #6b1a2c;
+          font-size: 1.65rem;
+          line-height: 1.1;
+          font-weight: 950;
+        }
+
+        .muted {
+          margin: 0.45rem 0 0;
+          color: #8f817b;
+          font-size: 0.95rem;
+          line-height: 1.5;
+        }
+
+        .empty {
+          background: #fff8ef;
+          border: 1px dashed #d4a24c;
+          border-radius: 16px;
+          padding: 1.1rem;
+          color: #6b1a2c;
+          font-weight: 900;
+        }
+
+        .game-kpis {
+          display: grid;
+          grid-template-columns: repeat(6, minmax(0, 1fr));
+          gap: 0.85rem;
+          margin-bottom: 1rem;
+        }
+
+        .game-kpis :global(.kpi) {
+          min-height: 102px;
+          border: 1px solid #eadfd5;
+          border-radius: 17px;
+          background: #fffaf4;
+          padding: 1rem 1.05rem;
+          display: flex;
+          flex-direction: column;
+          justify-content: center;
+        }
+
+        .game-kpis :global(.kpi span) {
+          color: #8b7f79;
+          font-size: 0.73rem;
+          font-weight: 950;
+          text-transform: uppercase;
+          letter-spacing: 0.05em;
+        }
+
+        .game-kpis :global(.kpi strong) {
+          display: block;
+          margin-top: 0.35rem;
+          color: #6b1a2c;
+          font-size: 1.45rem;
+          line-height: 1;
+          font-weight: 950;
+        }
+
+        .insights-grid {
+          display: grid;
+          grid-template-columns: repeat(4, minmax(0, 1fr));
+          border-top: 1px solid #ece4dd;
+          border-bottom: 1px solid #ece4dd;
+          margin: 0 0 1.25rem;
+          background: #fff;
+        }
+
+        .insights-grid :global(.insight-card) {
+          min-height: 126px;
+          padding: 1rem 1.1rem;
+          display: flex;
+          flex-direction: column;
+          justify-content: flex-start;
+          background: #fff;
+        }
+
+        .insights-grid :global(.insight-card + .insight-card) {
+          border-left: 1px solid #ece4dd;
+        }
+
+        .insights-grid :global(.insight-label) {
+          color: #5c5451;
+          font-size: 0.82rem;
+          font-weight: 750;
+          line-height: 1.3;
+          margin-bottom: 0.55rem;
+        }
+
+        .insights-grid :global(.insight-title) {
+          color: #201b1d;
+          font-size: 1.06rem;
+          font-weight: 950;
+          line-height: 1.2;
+          overflow-wrap: anywhere;
+        }
+
+        .insights-grid :global(.insight-value) {
+          margin-top: 0.35rem;
+          color: #6b1a2c;
+          font-size: 0.95rem;
+          font-style: italic;
+          font-weight: 900;
+        }
+
+        .insights-grid :global(.insight-card.good .insight-value) {
+          color: #177245;
+        }
+
+        .insights-grid :global(.insight-card.bad .insight-value) {
+          color: #b42318;
+        }
+
+        .sub-block {
+          margin-top: 1.15rem;
+          border: 1px solid #eadfd5;
+          border-radius: 18px;
+          overflow: hidden;
+          background: #fff;
+        }
+
+        .sub-head {
+          padding: 1.05rem 1.2rem;
+          background: #fff8ef;
+          border-bottom: 1px solid #eadfd5;
+        }
+
+        .sub-head h3 {
+          margin: 0;
+          color: #6b1a2c;
+          font-size: 1.12rem;
+          font-weight: 950;
+        }
+
+        .sub-head p {
+          margin: 0.3rem 0 0;
+          color: #887a75;
+          font-weight: 750;
+          font-size: 0.86rem;
+        }
+
+        .game-table-wrap {
+          width: 100%;
+          overflow-x: auto;
+          background: #fff;
+        }
+
+        table {
+          width: 100%;
+          min-width: 1080px;
+          border-collapse: separate;
+          border-spacing: 0;
+          table-layout: auto;
+          font-size: 0.82rem;
+        }
+
+        th {
+          background: linear-gradient(180deg, #7a1c32, #5a1325);
+          color: #fff;
+          min-height: 50px;
+          padding: 0.85rem 0.65rem;
+          text-align: center;
+          vertical-align: middle;
+          white-space: nowrap;
+          font-weight: 950;
+          border-right: 1px solid rgba(255, 255, 255, 0.14);
+        }
+
+        th:first-child,
+        td:first-child {
+          position: sticky;
+          left: 0;
+          z-index: 2;
+          width: 190px;
+          min-width: 190px;
+          max-width: 190px;
+          text-align: left;
+        }
+
+        th:first-child {
+          z-index: 4;
+          background: #65162a;
+          padding-left: 1rem;
+        }
+
+        td {
+          height: 54px;
+          padding: 0.8rem 0.65rem;
+          border-right: 1px solid #e8e3df;
+          border-bottom: 1px solid #e8e3df;
+          text-align: center;
+          vertical-align: middle;
+          white-space: nowrap;
+          background: #fff;
+          color: #211d1e;
+          font-weight: 750;
+        }
+
+        td:first-child {
+          background: #f7f7f7;
+          padding-left: 1rem;
+        }
+
+        tbody tr:nth-child(even) td:not(:first-child) {
+          background: #fcfaf9;
+        }
+
+        tbody tr:hover td {
+          background: #fff7ea;
+        }
+
+        tbody tr:hover td:first-child {
+          background: #f3e8df;
+        }
+
+        .label {
+          color: #6b1a2c;
+          font-weight: 950;
+        }
+
+        .pts {
+          color: #d19b36;
+          font-weight: 950;
+        }
+
+        .good {
+          color: #177245;
+          font-weight: 950;
+        }
+
+        .bad {
+          color: #b42318;
+          font-weight: 950;
+        }
+
+        @media (max-width: 1100px) {
+          .game-kpis {
+            grid-template-columns: repeat(3, minmax(0, 1fr));
+          }
+
+          .insights-grid {
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+          }
+
+          .insights-grid :global(.insight-card:nth-child(3)) {
+            border-left: 0;
+            border-top: 1px solid #ece4dd;
+          }
+
+          .insights-grid :global(.insight-card:nth-child(4)) {
+            border-top: 1px solid #ece4dd;
+          }
+        }
+
+        @media (max-width: 700px) {
+          .game-stats-card {
+            padding: 1rem;
+          }
+
+          .game-kpis,
+          .insights-grid {
+            grid-template-columns: 1fr;
+          }
+
+          .insights-grid :global(.insight-card + .insight-card) {
+            border-left: 0;
+            border-top: 1px solid #ece4dd;
+          }
         }
       `}</style>
-    </div>
-  );
-}
-
-
-function ModernPlayerComparisonSection({
-  team,
-  p,
-  liveStats,
-  teamPlayersStats,
-  currentPlayerId,
-}: {
-  team: Team;
-  p: any;
-  liveStats: PlayerLiveStats;
-  teamPlayersStats: TeamPlayerComparisonStat[];
-  currentPlayerId: string;
-}) {
-  const fallbackCurrent: TeamPlayerComparisonStat = {
-    id: currentPlayerId,
-    player_id: currentPlayerId,
-    first_name: p.firstName ?? p.first_name ?? null,
-    last_name: p.lastName ?? p.last_name ?? null,
-    position: p.postePrincipal ?? p.position ?? null,
-    pts: liveStats.hasData ? liveStats.averages.pts : statNumber(p.stats?.pts),
-    reb: liveStats.hasData ? liveStats.averages.reb : statNumber(p.stats?.reb),
-    ast: liveStats.hasData ? liveStats.averages.ast : statNumber(p.stats?.ast),
-    stl: liveStats.hasData ? liveStats.averages.stl : statNumber(p.stats?.stl),
-    blk: liveStats.hasData ? liveStats.averages.blk : statNumber(p.stats?.blk),
-    turnovers: liveStats.hasData ? liveStats.averages.to : statNumber(p.stats?.to),
-    plus_minus: statNumber(p.stats?.plusMinus ?? p.stats?.plus_minus),
-  };
-
-  const effectif = Math.max(team.players?.length || 0, teamPlayersStats.length || 0, 1);
-  const rows = teamPlayersStats.length ? teamPlayersStats : [fallbackCurrent];
-  const normalizedRows = rows.map((row) =>
-    String(row.player_id || row.id) === currentPlayerId
-      ? { ...row, ...fallbackCurrent }
-      : row
-  );
-
-  const playerRow =
-    normalizedRows.find((row) => String(row.player_id || row.id) === currentPlayerId) ||
-    fallbackCurrent;
-
-  const metrics: Array<{
-    key: keyof Pick<TeamPlayerComparisonStat, "pts" | "reb" | "ast" | "stl" | "blk" | "turnovers" | "plus_minus">;
-    label: string;
-    short: string;
-    icon: string;
-    unit: string;
-    lowerIsBetter?: boolean;
-  }> = [
-    { key: "pts", label: "Points", short: "POINTS", icon: "🏀", unit: "pts" },
-    { key: "reb", label: "Rebonds", short: "REBONDS", icon: "🧺", unit: "reb" },
-    { key: "ast", label: "Passes", short: "PASSES", icon: "🎯", unit: "ast" },
-    { key: "stl", label: "Interceptions", short: "INTERCEPTIONS", icon: "✋", unit: "int" },
-    { key: "blk", label: "Contres", short: "CONTRES", icon: "🛡️", unit: "ctr" },
-    { key: "turnovers", label: "Balles perdues", short: "BALLES PERDUES", icon: "🏀", unit: "bp", lowerIsBetter: true },
-    { key: "plus_minus", label: "+/-", short: "+/-", icon: "✚", unit: "+/-" },
-  ];
-
-  function metricValue(row: TeamPlayerComparisonStat, key: typeof metrics[number]["key"]) {
-    return roundStat(statNumber(row[key]));
-  }
-
-  function averageFor(key: typeof metrics[number]["key"]) {
-    const source = normalizedRows.filter((row) => row.player_id || row.id);
-    if (!source.length) return 0;
-    return roundStat(source.reduce((sum, row) => sum + metricValue(row, key), 0) / source.length);
-  }
-
-  function rankFor(key: typeof metrics[number]["key"], lowerIsBetter?: boolean): number | null {
-    const current = metricValue(playerRow, key);
-    const sorted = [...normalizedRows]
-      .filter((row) => row.player_id || row.id)
-      .sort((a, b) => {
-        const av = metricValue(a, key);
-        const bv = metricValue(b, key);
-        return lowerIsBetter ? av - bv : bv - av;
-      });
-
-    // §23 · si personne n'a de valeur sur cette métrique (tous à zéro), aucun
-    // classement pertinent : on renvoie null → affichage "Pas encore classé".
-    const anyNonZero = sorted.some((row) => metricValue(row, key) !== 0) || current !== 0;
-    if (!anyNonZero) return null;
-
-    const index = sorted.findIndex((row) => String(row.player_id || row.id) === currentPlayerId);
-    if (index >= 0) return index + 1;
-
-    const better = sorted.filter((row) => {
-      const value = metricValue(row, key);
-      return lowerIsBetter ? value < current : value > current;
-    }).length;
-
-    return better + 1;
-  }
-
-  function medal(rank: number | null) {
-    if (rank == null) return "";
-    if (rank === 1) return "🥇";
-    if (rank === 2) return "🥈";
-    if (rank === 3) return "🥉";
-    return "🏅";
-  }
-
-  const comparisonRows = metrics.map((metric) => {
-    const value = metricValue(playerRow, metric.key);
-    const avg = averageFor(metric.key);
-    const rank = rankFor(metric.key, metric.lowerIsBetter);
-    const diff = roundStat(value - avg);
-    const isGood = metric.lowerIsBetter ? diff <= 0 : diff >= 0;
-    const max = Math.max(Math.abs(value), Math.abs(avg), 1);
-    const playerPct = Math.min(100, Math.max(1, (Math.abs(value) / max) * 100));
-    const teamPct = Math.min(100, Math.max(1, (Math.abs(avg) / max) * 100));
-
-    return { metric, value, avg, rank, diff, isGood, playerPct, teamPct };
-  });
-
-  return (
-    <section className="mb-compare-modern">
-      <div className="mb-compare-heading">
-        <h2>Classement & comparaison</h2>
-        <span />
-        <p>Analysez vos performances et comparez-vous à votre équipe.</p>
-      </div>
-
-      <div className="mb-rank-card">
-        <h3><span>🏀</span> Classement dans l'équipe</h3>
-        <div className="mb-rank-grid">
-          {comparisonRows.map((row) => (
-            <article key={row.metric.key} className="mb-rank-tile">
-              <div className="mb-rank-icon">{row.metric.icon}</div>
-              <strong>{row.metric.short}</strong>
-              <b>{row.value}</b>
-              <small>moy. équipe {row.avg}</small>
-              <em>{row.rank == null ? 'Pas encore classé' : `${medal(row.rank)} ${row.rank}/${effectif}`}</em>
-            </article>
-          ))}
-        </div>
-      </div>
-
-      <div className="mb-average-card">
-        <div className="mb-average-head">
-          <h3><span>📊</span> Comparaison avec la moyenne</h3>
-          <div className="mb-legend-modern">
-            <i className="player" /> Joueur
-            <i className="team" /> Équipe
-            <i className="diff" /> Différence
-          </div>
-        </div>
-
-        <div className="mb-average-list">
-          {comparisonRows.map((row) => (
-            <article key={row.metric.key} className="mb-average-row">
-              <div className="mb-average-label">
-                <span>{row.metric.icon}</span>
-                <div>
-                  <strong>{row.metric.short}</strong>
-                  <b className={row.isGood ? "good" : "bad"}>{row.diff > 0 ? "+" : ""}{row.diff}</b>
-                </div>
-              </div>
-
-              <div className="mb-bars-side">
-                <div className="mb-bar-line">
-                  <div className="mb-bar-meta"><span>Joueur</span><b>{row.value}</b></div>
-                  <div className="mb-bar-track"><i className="player" style={{ width: `${row.playerPct}%` }} /></div>
-                </div>
-
-                <div className="mb-bar-line">
-                  <div className="mb-bar-meta"><span>Équipe</span><b>{row.avg}</b></div>
-                  <div className="mb-bar-track"><i className="team" style={{ width: `${row.teamPct}%` }} /></div>
-                </div>
-              </div>
-
-              <div className={`mb-diff ${row.isGood ? "good" : "bad"}`}>
-                <span>Différence</span>
-                <strong>{row.diff > 0 ? "+" : ""}{row.diff}</strong>
-              </div>
-            </article>
-          ))}
-        </div>
-      </div>
-
-      <style jsx>{`
-        .mb-compare-modern{margin-top:28px}.mb-compare-heading h2{margin:0;color:#111;font-size:2rem;font-weight:950;text-transform:uppercase;letter-spacing:.01em}.mb-compare-heading span{display:block;width:108px;height:7px;border-radius:999px;background:linear-gradient(90deg,#6b1a2c 0 55%,#d4a24c 55%);margin:.55rem 0 .7rem}.mb-compare-heading p{margin:0 0 1.2rem;color:#6f625d;font-weight:800}.mb-rank-card,.mb-average-card{border:1px solid #eadfd6;border-radius:18px;background:#fff;box-shadow:0 18px 40px rgba(60,30,20,.08);padding:1.35rem;margin-bottom:1.35rem}.mb-rank-card h3,.mb-average-card h3{margin:0;color:#6b1a2c;font-size:1.35rem;text-transform:uppercase;font-weight:950;display:flex;align-items:center;gap:.55rem}.mb-rank-grid{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:1rem;margin-top:1.25rem}.mb-rank-tile{min-height:190px;border:1px solid #eadfd6;border-radius:16px;background:linear-gradient(180deg,#fff,#fffdf9);display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;padding:1rem;box-shadow:0 8px 20px rgba(60,30,20,.045)}.mb-rank-icon{width:54px;height:54px;border-radius:999px;background:radial-gradient(circle at 30% 20%,#b51d3a,#6b1a2c 72%);color:white;display:grid;place-items:center;font-size:1.45rem;box-shadow:0 8px 18px rgba(107,26,44,.25);margin-bottom:.7rem}.mb-rank-tile strong{font-size:.82rem;color:#24171b;text-transform:uppercase}.mb-rank-tile b{font-size:1.65rem;color:#111;margin:.35rem 0 .15rem}.mb-rank-tile small{color:#6f625d;font-weight:800}.mb-rank-tile em{font-style:normal;margin-top:.65rem;color:#111;font-weight:950;font-size:1.1rem}.mb-average-head{display:flex;align-items:center;justify-content:space-between;gap:1rem;margin-bottom:1.2rem}.mb-legend-modern{display:flex;align-items:center;gap:.7rem;color:#6f625d;font-weight:900;font-size:.82rem;text-transform:uppercase}.mb-legend-modern i{width:12px;height:12px;border-radius:999px;display:inline-block}.mb-legend-modern .player{background:#6b1a2c}.mb-legend-modern .team{background:#d4a24c}.mb-legend-modern .diff{background:#b7b7b7}.mb-average-list{display:flex;flex-direction:column;gap:.55rem}.mb-average-row{display:grid;grid-template-columns:260px 1fr 135px;align-items:center;gap:1.3rem;border:1px solid #eadfd6;border-radius:14px;background:#fff;padding:.9rem 1rem}.mb-average-label{display:flex;align-items:center;gap:1rem}.mb-average-label>span{width:42px;height:42px;border-radius:999px;background:#6b1a2c;color:#fff;display:grid;place-items:center;font-size:1.15rem}.mb-average-label strong{display:block;color:#111;font-weight:950;text-transform:uppercase}.mb-average-label b{display:block;margin-top:.2rem;font-size:1.05rem}.good{color:#17803a!important}.bad{color:#c02626!important}.mb-bars-side{display:grid;grid-template-columns:1fr 1fr;gap:1.6rem}.mb-bar-meta{display:flex;justify-content:space-between;align-items:flex-end;margin-bottom:.35rem}.mb-bar-meta span{color:#6f625d;text-transform:uppercase;font-size:.72rem;font-weight:950}.mb-bar-meta b{font-size:1.15rem;color:#6b1a2c}.mb-bar-track{height:9px;border-radius:999px;background:#f0ece8;overflow:hidden}.mb-bar-track i{display:block;height:100%;border-radius:999px}.mb-bar-track .player{background:#6b1a2c}.mb-bar-track .team{background:#d4a24c}.mb-diff{text-align:center}.mb-diff span{display:block;color:#6f625d;text-transform:uppercase;font-size:.72rem;font-weight:950}.mb-diff strong{display:block;margin-top:.35rem;font-size:1.2rem}@media(max-width:1180px){.mb-rank-grid{grid-template-columns:repeat(3,1fr)}.mb-average-row{grid-template-columns:1fr}.mb-bars-side{grid-template-columns:1fr}}@media(max-width:700px){.mb-rank-grid{grid-template-columns:1fr}.mb-average-head{align-items:flex-start;flex-direction:column}.mb-legend-modern{flex-wrap:wrap}}
-      `}</style>
-
-      {/* §22 · Montages liés à ce joueur */}
-
     </section>
   );
 }
 
-function TestsTab({
-  tests,
-  growth,
-  setGrowth,
-  currentHeightCm,
-  prediction,
-  onAddTest,
-  onDeleteTest,
+function InsightCard({
+  label,
+  title,
+  value,
+  tone,
 }: {
-  tests: PlayerTest[];
-  growth: GrowthProfile;
-  setGrowth: (g: GrowthProfile) => void;
-  currentHeightCm: number;
-  prediction: ReturnType<typeof predictedHeightRange>;
-  onAddTest: () => void;
-  onDeleteTest: (id: string) => void;
+  label: string;
+  title: string;
+  value: string;
+  tone: "good" | "bad" | "neutral";
 }) {
-  const labels = Array.from(new Set(tests.map((t) => t.label)));
-  const defaultLabels = ["Taille", "Poids", "Envergure", "Détente sèche", "VMA"];
-  const chartLabels = labels.length ? labels : defaultLabels;
+  return (
+    <article className={`insight-card ${tone}`}>
+      <div className="insight-label">{label}</div>
+      <div className="insight-title">{title}</div>
+      <div className="insight-value">{value}</div>
+    </article>
+  );
+}
+
+/* ---------- 6. LINEUPS / 5 MAJEURS ---------- */
+
+type LineupActionRow = {
+  match_id: string | null;
+  context: string | null;
+  action_type: string | null;
+  shot_type: string | null;
+  shot_result: string | null;
+  special_case: string | null;
+  ft_attempts: number | null;
+  ft_made: number | null;
+  assist_player_id: string | null;
+  lineup: string[] | null;
+};
+
+type LineupRow = {
+  ids: string[];
+  label: string;
+  actions: number;
+  poss: number;
+  ptsFor: number;
+  ptsAgainst: number;
+  plusMinus: number;
+  p2m: number;
+  p2a: number;
+  p3m: number;
+  p3a: number;
+  ftm: number;
+  fta: number;
+  ast: number;
+  to: number;
+  stops: number;
+  fgm: number;
+  fga: number;
+  ppp: number;
+  offRtg: number;
+  efg: number;
+  ts: number;
+  astPct: number;
+  tovPct: number;
+  stopPct: number;
+};
+
+function lineupActionPoints(action: LineupActionRow) {
+  const context = String(action.context || "");
+  const actionType = String(action.action_type || "");
+  const shotType = String(action.shot_type || "");
+  const shotResult = String(action.shot_result || "");
+  const specialCase = String(action.special_case || "");
+
+  if (context === "attaque") {
+    if (actionType === "tir") {
+      if (shotType === "LF") return safeNum(action.ft_made);
+
+      let pts = 0;
+
+      if (shotResult === "made") {
+        if (shotType === "2PTS") pts += 2;
+        if (shotType === "3PTS") pts += 3;
+      }
+
+      if (shotResult === "made" && specialCase !== "aucun") {
+        pts += safeNum(action.ft_made);
+      }
+
+      return pts;
+    }
+
+    if (actionType === "faute-provoquee") {
+      return safeNum(action.ft_made);
+    }
+  }
+
+  if (context === "defense" && actionType === "tir" && shotResult === "made") {
+    if (shotType === "3PTS") return -3;
+    if (shotType === "2PTS") return -2;
+    if (shotType === "LF") return -safeNum(action.ft_made);
+  }
+
+  if (context === "defense" && actionType === "faute-commise") {
+    return -safeNum(action.ft_made);
+  }
+
+  return 0;
+}
+
+function lineupPossession(action: LineupActionRow) {
+  const context = String(action.context || "");
+  const actionType = String(action.action_type || "");
+  const shotType = String(action.shot_type || "");
+
+  if (context !== "attaque") return 0;
+
+  if (actionType === "tir" && (shotType === "2PTS" || shotType === "3PTS"))
+    return 1;
+  if (actionType === "tir" && shotType === "LF")
+    return 0.44 * safeNum(action.ft_attempts);
+  if (actionType === "faute-provoquee")
+    return 0.44 * safeNum(action.ft_attempts);
+  if (actionType === "perte") return 1;
+
+  return 0;
+}
+
+function lineupLabel(ids: string[], names: Record<string, string>) {
+  return ids
+    .map((id) => {
+      const name = names[id] || `Joueur ${id.slice(0, 4)}`;
+      return name.replace(/^#/, "");
+    })
+    .join(" · ");
+}
+
+function computeLineups(
+  actions: LineupActionRow[],
+  names: Record<string, string>,
+): LineupRow[] {
+  const map: Record<
+    string,
+    Omit<
+      LineupRow,
+      | "fgm"
+      | "fga"
+      | "ppp"
+      | "offRtg"
+      | "efg"
+      | "ts"
+      | "astPct"
+      | "tovPct"
+      | "stopPct"
+    >
+  > = {};
+
+  actions.forEach((action) => {
+    const ids = Array.isArray(action.lineup)
+      ? action.lineup.filter(Boolean).map(String)
+      : [];
+
+    if (ids.length === 0) return;
+
+    const key = ids.slice().sort().join("|");
+
+    if (!map[key]) {
+      map[key] = {
+        ids,
+        label: lineupLabel(ids, names),
+        actions: 0,
+        poss: 0,
+        ptsFor: 0,
+        ptsAgainst: 0,
+        plusMinus: 0,
+        p2m: 0,
+        p2a: 0,
+        p3m: 0,
+        p3a: 0,
+        ftm: 0,
+        fta: 0,
+        ast: 0,
+        to: 0,
+        stops: 0,
+      };
+    }
+
+    const row = map[key];
+    const context = String(action.context || "");
+    const actionType = String(action.action_type || "");
+    const shotType = String(action.shot_type || "");
+    const shotResult = String(action.shot_result || "");
+
+    row.actions += 1;
+
+    const pts = lineupActionPoints(action);
+    if (pts > 0) row.ptsFor += pts;
+    if (pts < 0) row.ptsAgainst += Math.abs(pts);
+    row.plusMinus += pts;
+    row.poss += lineupPossession(action);
+
+    if (context === "attaque" && actionType === "tir") {
+      if (shotType === "2PTS") {
+        row.p2a += 1;
+        if (shotResult === "made") row.p2m += 1;
+      }
+
+      if (shotType === "3PTS") {
+        row.p3a += 1;
+        if (shotResult === "made") row.p3m += 1;
+      }
+
+      if (shotType === "LF") {
+        row.fta += safeNum(action.ft_attempts);
+        row.ftm += safeNum(action.ft_made);
+      }
+
+      if (
+        shotType !== "LF" &&
+        shotResult === "made" &&
+        action.special_case !== "aucun"
+      ) {
+        row.fta += safeNum(action.ft_attempts);
+        row.ftm += safeNum(action.ft_made);
+      }
+    }
+
+    if (context === "attaque" && action.assist_player_id) row.ast += 1;
+    if (context === "attaque" && actionType === "perte") row.to += 1;
+
+    if (context === "defense" && pts >= 0) {
+      row.stops += 1;
+    }
+  });
+
+  return Object.values(map)
+    .map((row) => {
+      const fgm = row.p2m + row.p3m;
+      const fga = row.p2a + row.p3a;
+      const ppp = row.poss ? row.ptsFor / row.poss : 0;
+      const offRtg = row.poss ? (row.ptsFor / row.poss) * 100 : 0;
+      const efg = fga ? ((fgm + 0.5 * row.p3m) / fga) * 100 : 0;
+      const ts =
+        fga + 0.44 * row.fta
+          ? (row.ptsFor / (2 * (fga + 0.44 * row.fta))) * 100
+          : 0;
+      const astPct = fgm ? (row.ast / fgm) * 100 : 0;
+      const tovPct = row.poss ? (row.to / row.poss) * 100 : 0;
+      const stopPct = row.actions ? (row.stops / row.actions) * 100 : 0;
+
+      return {
+        ...row,
+        fgm,
+        fga,
+        ppp,
+        offRtg,
+        efg,
+        ts,
+        astPct,
+        tovPct,
+        stopPct,
+      };
+    })
+    .sort((a, b) => b.plusMinus - a.plusMinus);
+}
+
+function getPlayerNameFromAny(row: any) {
+  const num = row?.num ?? row?.numero ?? row?.number ?? "";
+  const first = row?.first_name ?? row?.firstName ?? row?.prenom ?? "";
+  const last = row?.last_name ?? row?.lastName ?? row?.nom ?? "";
+  const full = row?.name ?? row?.full_name ?? row?.fullName ?? "";
+  const name = full || `${first} ${last}`.trim() || "Joueur";
+
+  return `${num ? `#${num} ` : ""}${name}`;
+}
+
+function TeamLineupsBlock({ teamId }: { teamId: string }) {
+  const supabase = createClient();
+
+  const [loading, setLoading] = useState(true);
+  const [matches, setMatches] = useState<SupaMatchRow[]>([]);
+  const [actions, setActions] = useState<LineupActionRow[]>([]);
+  const [names, setNames] = useState<Record<string, string>>({});
+
+  useEffect(() => {
+    let active = true;
+
+    async function load() {
+      setLoading(true);
+
+      const { data: matchData, error: matchError } = await supabase
+        .from("match_stats")
+        .select(
+          "id, team_id, opponent, match_date, us_score, them_score, result, home",
+        )
+        .eq("team_id", teamId)
+        .order("match_date", { ascending: false });
+
+      if (!active) return;
+
+      if (matchError) {
+        console.error("Erreur chargement lineups matchs :", matchError);
+        setMatches([]);
+        setActions([]);
+        setLoading(false);
+        return;
+      }
+
+      const matchRows = (matchData ?? []) as SupaMatchRow[];
+      setMatches(matchRows);
+
+      const matchIds = matchRows.map((match) => match.id);
+
+      if (matchIds.length === 0) {
+        setActions([]);
+        setLoading(false);
+        return;
+      }
+
+      const { data: actionData, error: actionError } = await supabase
+        .from("match_actions")
+        .select(
+          "match_id, context, action_type, shot_type, shot_result, special_case, ft_attempts, ft_made, assist_player_id, lineup",
+        )
+        .in("match_id", matchIds);
+
+      if (!active) return;
+
+      if (actionError) {
+        console.error("Erreur chargement actions lineups :", actionError);
+        setActions([]);
+        setLoading(false);
+        return;
+      }
+
+      const actionRows = (actionData ?? []) as LineupActionRow[];
+      setActions(actionRows);
+
+      const playerIds = Array.from(
+        new Set(
+          actionRows
+            .flatMap((action) =>
+              Array.isArray(action.lineup) ? action.lineup : [],
+            )
+            .filter(Boolean)
+            .map(String),
+        ),
+      );
+
+      if (playerIds.length > 0) {
+        const { data: playersData } = await supabase
+          .from("players")
+          .select("*")
+          .in("id", playerIds);
+
+        if (playersData) {
+          setNames(
+            playersData.reduce((acc: Record<string, string>, player: any) => {
+              acc[String(player.id)] = getPlayerNameFromAny(player);
+              return acc;
+            }, {}),
+          );
+        }
+      }
+
+      setLoading(false);
+    }
+
+    load();
+
+    return () => {
+      active = false;
+    };
+  }, [supabase, teamId]);
+
+  const rows = useMemo(() => computeLineups(actions, names), [actions, names]);
+  const topRows = rows.slice(0, 12);
+
+  const best = topRows[0];
+  const mostUsed = [...rows].sort((a, b) => b.poss - a.poss)[0];
 
   return (
-    <>
-      <div className="section-head">
+    <section className="tl-card lineups-card">
+      <div className="block-head">
         <div>
-          <h2>Tests & développement</h2>
-          <p>Chaque test alimente automatiquement les graphiques d’évolution.</p>
+          <p className="eyebrow">Lineups</p>
+          <h2>5 majeurs / combinaisons</h2>
+          <p className="muted">
+            Analyse des 5 présents sur le terrain : +/-, PPP, OffRtg, eFG%, TS%,
+            pertes et stops.
+          </p>
         </div>
-
-        <button className="light-btn primary" onClick={onAddTest}>+ Ajouter un test</button>
       </div>
 
-      <div className="player-grid two">
-        <div className="light-card">
-          <h3>Projection taille</h3>
+      {loading && <div className="empty">Chargement des lineups...</div>}
 
-          <div className="projection-grid">
-            <ProjectionBox label="Taille actuelle" value={currentHeightCm ? `${currentHeightCm} cm` : "—"} />
-            <ProjectionBox label="Taille cible" value={prediction.target ? `${prediction.target} cm` : "—"} />
-            <ProjectionBox label="Projection probable" value={prediction.probable ? `${prediction.probable} cm` : "—"} />
-            <ProjectionBox label="Fourchette" value={prediction.low ? `${prediction.low} - ${prediction.high} cm` : "—"} />
-          </div>
+      {!loading && matches.length === 0 && (
+        <div className="empty">Aucun match enregistré pour cette équipe.</div>
+      )}
 
-          <p className="method-note">
-            Méthode : {prediction.method}. {prediction.confidence}
-          </p>
-
-          <div className="form-mini">
-            <label>
-              Sexe
-              <select value={growth.sex} onChange={(e) => setGrowth({ ...growth, sex: e.target.value as "garcon" | "fille" })}>
-                <option value="garcon">Garçon</option>
-                <option value="fille">Fille</option>
-              </select>
-            </label>
-
-            <label>
-              Taille père (cm)
-              <input type="number" value={growth.fatherHeightCm} onChange={(e) => setGrowth({ ...growth, fatherHeightCm: e.target.value ? Number(e.target.value) : "" })} />
-            </label>
-
-            <label>
-              Taille mère (cm)
-              <input type="number" value={growth.motherHeightCm} onChange={(e) => setGrowth({ ...growth, motherHeightCm: e.target.value ? Number(e.target.value) : "" })} />
-            </label>
-
-            <label>
-              Âge osseux (optionnel)
-              <input type="number" step="0.1" value={growth.boneAge || ""} onChange={(e) => setGrowth({ ...growth, boneAge: e.target.value ? Number(e.target.value) : "" })} />
-            </label>
-          </div>
+      {!loading && matches.length > 0 && rows.length === 0 && (
+        <div className="empty">
+          Aucun lineup exploitable pour l’instant. Il faut enregistrer le champ{" "}
+          <strong>lineup</strong> dans match_actions à chaque action.
         </div>
+      )}
 
-        <div className="light-card">
-          <h3>Tests récents</h3>
+      {!loading && rows.length > 0 && (
+        <>
+          <div className="lineup-insights">
+            <InsightCard
+              label="Meilleur 5"
+              title={best?.label || "—"}
+              value={
+                best
+                  ? `${best.plusMinus >= 0 ? "+" : ""}${best.plusMinus} +/-`
+                  : "—"
+              }
+              tone={best && best.plusMinus < 0 ? "bad" : "good"}
+            />
 
-          {tests.length === 0 ? (
-            <p className="empty-small">Aucun test pour le moment.</p>
-          ) : (
-            <table className="phys-light">
+            <InsightCard
+              label="5 le plus utilisé"
+              title={mostUsed?.label || "—"}
+              value={mostUsed ? `${r1(mostUsed.poss)} poss` : "—"}
+              tone="neutral"
+            />
+
+            <InsightCard
+              label="Meilleur OffRtg"
+              title={
+                [...rows].sort((a, b) => b.offRtg - a.offRtg)[0]?.label || "—"
+              }
+              value={
+                rows.length > 0
+                  ? `${r1([...rows].sort((a, b) => b.offRtg - a.offRtg)[0].offRtg)}`
+                  : "—"
+              }
+              tone="good"
+            />
+
+            <InsightCard
+              label="Plus de stops"
+              title={
+                [...rows].sort((a, b) => b.stopPct - a.stopPct)[0]?.label || "—"
+              }
+              value={
+                rows.length > 0
+                  ? `${r1([...rows].sort((a, b) => b.stopPct - a.stopPct)[0].stopPct)}%`
+                  : "—"
+              }
+              tone="good"
+            />
+          </div>
+
+          <div className="lineup-table-wrap">
+            <table>
               <thead>
                 <tr>
-                  <th>Date</th>
-                  <th>Test</th>
-                  <th>Résultat</th>
-                  <th></th>
+                  <th>5 sur le terrain</th>
+                  <th>Actions</th>
+                  <th>Poss</th>
+                  <th>PTS +</th>
+                  <th>PTS -</th>
+                  <th>+/-</th>
+                  <th>PPP</th>
+                  <th>OffRtg</th>
+                  <th>FG</th>
+                  <th>2PTS</th>
+                  <th>3PTS</th>
+                  <th>LF</th>
+                  <th>eFG%</th>
+                  <th>TS%</th>
+                  <th>AST%</th>
+                  <th>TO%</th>
+                  <th>Stops</th>
+                  <th>Stop%</th>
                 </tr>
               </thead>
 
               <tbody>
-                {[...tests].sort((a, b) => b.date.localeCompare(a.date)).slice(0, 8).map((test) => (
-                  <tr key={test.id}>
-                    <td>{fmtDate(test.date)}</td>
-                    <td>{test.label}</td>
-                    <td>{test.value} {test.unit}</td>
-                    <td>
-                      <button className="icon-btn" onClick={() => onDeleteTest(test.id)}>🗑️</button>
+                {topRows.map((row) => (
+                  <tr key={row.ids.join("|")}>
+                    <td className="lineup-label">{row.label}</td>
+                    <td>{row.actions}</td>
+                    <td>{r1(row.poss)}</td>
+                    <td>{row.ptsFor}</td>
+                    <td>{row.ptsAgainst}</td>
+                    <td className={row.plusMinus >= 0 ? "good" : "bad"}>
+                      {row.plusMinus > 0 ? "+" : ""}
+                      {row.plusMinus}
                     </td>
+                    <td>{r1(row.ppp)}</td>
+                    <td>{r1(row.offRtg)}</td>
+                    <td>
+                      {row.fgm}-{row.fga}
+                    </td>
+                    <td>
+                      {row.p2m}-{row.p2a}
+                    </td>
+                    <td>
+                      {row.p3m}-{row.p3a}
+                    </td>
+                    <td>
+                      {row.ftm}-{row.fta}
+                    </td>
+                    <td>{r1(row.efg)}%</td>
+                    <td>{r1(row.ts)}%</td>
+                    <td>{r1(row.astPct)}%</td>
+                    <td>{r1(row.tovPct)}%</td>
+                    <td>{row.stops}</td>
+                    <td>{r1(row.stopPct)}%</td>
                   </tr>
                 ))}
               </tbody>
             </table>
-          )}
-        </div>
-      </div>
-
-      <div className="charts-stack">
-        {chartLabels.map((label) => (
-          <EvolutionChart key={label} title={`Évolution ${label}`} tests={tests.filter((t) => t.label === label)} />
-        ))}
-      </div>
-    </>
-  );
-}
-
-function MedicalTab({
-  entries,
-  onAdd,
-  onDelete,
-}: {
-  entries: MedicalEntry[];
-  onAdd: () => void;
-  onDelete: (id: string) => void;
-}) {
-  const latest = [...entries].sort((a, b) => b.date.localeCompare(a.date))[0];
-  const totalDays = entries.reduce((sum, e) => sum + (e.daysOff || 0), 0);
-  const injuries = entries.filter((e) => e.status === "Blessé").length;
-
-  return (
-    <>
-      <div className="section-head">
-        <div>
-          <h2>Médical</h2>
-          <p>Disponibilité, blessures, reprise et historique des indisponibilités.</p>
-        </div>
-
-        <button className="light-btn primary" onClick={onAdd}>+ Ajouter un suivi</button>
-      </div>
-
-      <div className="kpi-row-light">
-        <Kpi icon="🩺" label="Statut actuel" value={latest?.status || "Disponible"} sub="Dernier suivi" />
-        <Kpi icon="⏳" label="Jours d'arrêt" value={String(totalDays)} sub="Cumul historique" />
-        <Kpi icon="⚠️" label="Blessures" value={String(injuries)} sub="Nombre d'alertes" />
-        <Kpi icon="✅" label="Disponibilité" value={latest?.status === "Blessé" ? "Non" : "Oui"} sub="Aujourd'hui" />
-      </div>
-
-      <div className="light-card">
-        <h3>Historique médical</h3>
-
-        {entries.length === 0 ? (
-          <p className="empty-small">Aucune entrée médicale.</p>
-        ) : (
-          <table className="phys-light">
-            <thead>
-              <tr>
-                <th>Date</th>
-                <th>Statut</th>
-                <th>Zone</th>
-                <th>Blessure</th>
-                <th>Arrêt</th>
-                <th>Gravité</th>
-                <th></th>
-              </tr>
-            </thead>
-
-            <tbody>
-              {[...entries].sort((a, b) => b.date.localeCompare(a.date)).map((entry) => (
-                <tr key={entry.id}>
-                  <td>{fmtDate(entry.date)}</td>
-                  <td>{entry.status}</td>
-                  <td>{entry.zone || "—"}</td>
-                  <td>{entry.injury || "—"}</td>
-                  <td>{entry.daysOff} j</td>
-                  <td>{entry.severity}</td>
-                  <td>
-                    <button className="icon-btn" onClick={() => onDelete(entry.id)}>🗑️</button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        )}
-      </div>
-    </>
-  );
-}
-
-function BilansTab({
-  bilans,
-  onNew,
-  onEdit,
-  onDelete,
-  onPdf,
-}: {
-  bilans: PlayerBilan[];
-  onNew: () => void;
-  onEdit: (bilan: PlayerBilan) => void;
-  onDelete: (id: string) => void;
-  onPdf: (bilan: PlayerBilan) => void;
-}) {
-  return (
-    <>
-      <div className="section-head">
-        <div>
-          <h2>Bilans</h2>
-          <p>Entretiens individuels, auto-évaluation, évaluation coach et plan d’action.</p>
-        </div>
-
-        <button className="light-btn primary" onClick={onNew}>+ Nouveau bilan</button>
-      </div>
-
-      {bilans.length === 0 ? (
-        <div className="light-card empty-card">
-          <h3>Aucun bilan</h3>
-          <p>Crée un premier bilan pour suivre l’évolution du joueur sur la saison.</p>
-          <button className="light-btn primary" onClick={onNew}>Créer un bilan</button>
-        </div>
-      ) : (
-        <div className="bilan-grid">
-          {[...bilans].sort((a, b) => b.date.localeCompare(a.date)).map((bilan) => (
-            <article key={bilan.id} className="bilan-card">
-              <div className="bilan-top">
-                <span>{bilan.type}</span>
-                <strong>{fmtDate(bilan.date)}</strong>
-              </div>
-
-              <div className="bilan-scores">
-                <ScorePill label="Joueur" value={`${ratingAverage(bilan.playerRatings)}/10`} />
-                <ScorePill label="Coach" value={`${ratingAverage(bilan.coachRatings)}/10`} />
-                <ScorePill label="Indiv." value={`${bilan.individualNote}/10`} />
-              </div>
-
-              <p>{bilan.coachConclusion || bilan.objectives || "Bilan enregistré."}</p>
-
-              <div className="bilan-actions">
-                <button onClick={() => onEdit(bilan)}>Modifier</button>
-                <button onClick={() => onPdf(bilan)}>PDF</button>
-                <button className="danger" onClick={() => onDelete(bilan.id)}>🗑️</button>
-              </div>
-            </article>
-          ))}
-        </div>
-      )}
-    </>
-  );
-}
-
-function DocumentsTab({
-  documents,
-  onAdd,
-  onDelete,
-}: {
-  documents: PlayerDocument[];
-  onAdd: () => void;
-  onDelete: (id: string) => void;
-}) {
-  return (
-    <>
-      <div className="section-head">
-        <div>
-          <h2>Documents</h2>
-          <p>Administratif, performance, scolarité, vidéo et contrats.</p>
-        </div>
-
-        <button className="light-btn primary" onClick={onAdd}>+ Ajouter un document</button>
-      </div>
-
-      {documents.length === 0 ? (
-        <div className="light-card empty-card">
-          <h3>Aucun document</h3>
-          <p>Ajoute les licences, certificats, bilans, vidéos ou documents scolaires.</p>
-        </div>
-      ) : (
-        <div className="doc-grid">
-          {[...documents].sort((a, b) => b.date.localeCompare(a.date)).map((doc) => (
-            <article key={doc.id} className="doc-card">
-              <span>{doc.category}</span>
-              <h3>{doc.title}</h3>
-              <p>{fmtDate(doc.date)}</p>
-              {doc.notes && <small>{doc.notes}</small>}
-
-              <div className="bilan-actions">
-                {doc.url && (
-                  <a href={doc.url} target="_blank" rel="noreferrer">Ouvrir</a>
-                )}
-                <button className="danger" onClick={() => onDelete(doc.id)}>🗑️</button>
-              </div>
-            </article>
-          ))}
-        </div>
-      )}
-    </>
-  );
-}
-
-function EvolutionChart({ title, tests }: { title: string; tests: PlayerTest[] }) {
-  const rows = [...tests].sort((a, b) => a.date.localeCompare(b.date));
-  const max = Math.max(...rows.map((r) => r.value), 1);
-  const min = Math.min(...rows.map((r) => r.value), 0);
-  const range = max - min || 1;
-  const points = rows.map((row, index) => {
-    const x = rows.length === 1 ? 50 : (index / (rows.length - 1)) * 100;
-    const y = 100 - ((row.value - min) / range) * 80 - 10;
-    return { x, y, row };
-  });
-
-  const path = points.map((p, i) => `${i === 0 ? "M" : "L"} ${p.x} ${p.y}`).join(" ");
-  const trend = tests.length >= 2 ? trendByLabel(tests, tests[0]?.label || "") : null;
-
-  return (
-    <div className="chart-card">
-      <div className="chart-head">
-        <div>
-          <h3>{title}</h3>
-          <p>{rows.length} mesure{rows.length > 1 ? "s" : ""}</p>
-        </div>
-
-        {trend && (
-          <strong className={trend.diff >= 0 ? "green" : "red"}>
-            {trend.diff >= 0 ? "+" : ""}{trend.diff} {trend.last.unit}
-          </strong>
-        )}
-      </div>
-
-      {rows.length === 0 ? (
-        <div className="empty-graph">Aucune donnée</div>
-      ) : (
-        <svg viewBox="0 0 100 100" className="line-evolution" preserveAspectRatio="none">
-          <line x1="0" y1="90" x2="100" y2="90" />
-          <line x1="0" y1="10" x2="0" y2="90" />
-          <path d={path} />
-          {points.map((point) => (
-            <circle key={point.row.id} cx={point.x} cy={point.y} r="2.4" />
-          ))}
-        </svg>
+          </div>
+        </>
       )}
 
-      {rows.length > 0 && (
-        <div className="chart-values">
-          <span>{fmtDate(rows[0].date)} · {rows[0].value}{rows[0].unit}</span>
-          <span>{fmtDate(rows[rows.length - 1].date)} · {rows[rows.length - 1].value}{rows[rows.length - 1].unit}</span>
-        </div>
-      )}
-    </div>
-  );
-}
+      <style jsx>{`
+        .lineups-card {
+          margin-top: 1.4rem;
+          padding: 1.45rem;
+          border: 1px solid #eadfd5;
+          border-radius: 22px;
+          background: #fff;
+          box-shadow: 0 14px 34px rgba(62, 31, 22, 0.055);
+        }
 
-function BilanModal({
-  bilan,
-  setBilan,
-  onClose,
-  onSave,
-}: {
-  bilan: PlayerBilan;
-  setBilan: (bilan: PlayerBilan) => void;
-  onClose: () => void;
-  onSave: () => void;
-}) {
-  const patch = (p: Partial<PlayerBilan>) => setBilan({ ...bilan, ...p });
-  const patchRating = (key: "playerRatings" | "coachRatings", rating: Partial<RatingBlock>) =>
-    setBilan({ ...bilan, [key]: { ...bilan[key], ...rating } });
+        .block-head {
+          display: flex;
+          justify-content: space-between;
+          align-items: flex-start;
+          gap: 1rem;
+          margin-bottom: 1.2rem;
+        }
 
-  return (
-    <Modal title="Bilan joueur" onClose={onClose} wide>
-      <div className="modal-grid">
-        <Field label="Type de bilan">
-          <select value={bilan.type} onChange={(e) => patch({ type: e.target.value as PlayerBilan["type"] })}>
-            <option>Début de saison</option>
-            <option>Mi-saison</option>
-            <option>Fin de saison</option>
-            <option>Bilan libre</option>
-          </select>
-        </Field>
+        .eyebrow {
+          margin: 0;
+          color: #d4a24c;
+          font-size: 0.78rem;
+          font-weight: 950;
+          text-transform: uppercase;
+          letter-spacing: 0.08em;
+        }
 
-        <Field label="Date">
-          <input type="date" value={bilan.date} onChange={(e) => patch({ date: e.target.value })} />
-        </Field>
+        h2 {
+          margin: 0.25rem 0 0;
+          color: #6b1a2c;
+          font-size: 1.65rem;
+          line-height: 1.1;
+          font-weight: 950;
+        }
 
-        <Field label="Évaluateur">
-          <input value={bilan.evaluator} onChange={(e) => patch({ evaluator: e.target.value })} />
-        </Field>
-      </div>
+        .muted {
+          margin: 0.45rem 0 0;
+          color: #8f817b;
+          font-size: 0.95rem;
+          line-height: 1.5;
+        }
 
-      <div className="bilan-form-grid">
-        <FormBlock title="1. Notes générales">
-          <Field label="Note saison équipe">
-            <input type="number" min="0" max="10" value={bilan.seasonTeamNote} onChange={(e) => patch({ seasonTeamNote: Number(e.target.value) })} />
-          </Field>
+        .empty {
+          background: #fff8ef;
+          border: 1px dashed #d4a24c;
+          border-radius: 16px;
+          padding: 1.1rem;
+          color: #6b1a2c;
+          font-weight: 900;
+        }
 
-          <Field label="Pourquoi ?">
-            <textarea value={bilan.seasonTeamWhy} onChange={(e) => patch({ seasonTeamWhy: e.target.value })} />
-          </Field>
+        .lineup-insights {
+          display: grid;
+          grid-template-columns: repeat(4, minmax(0, 1fr));
+          border-top: 1px solid #ece4dd;
+          border-bottom: 1px solid #ece4dd;
+          margin-bottom: 1.2rem;
+          background: #fff;
+        }
 
-          <Field label="Note saison individuelle">
-            <input type="number" min="0" max="10" value={bilan.individualNote} onChange={(e) => patch({ individualNote: Number(e.target.value) })} />
-          </Field>
+        .lineup-insights :global(.insight-card) {
+          min-height: 148px;
+          padding: 1rem 1.1rem;
+          display: flex;
+          flex-direction: column;
+          justify-content: flex-start;
+          overflow: hidden;
+          background: #fff;
+        }
 
-          <Field label="Pourquoi ?">
-            <textarea value={bilan.individualWhy} onChange={(e) => patch({ individualWhy: e.target.value })} />
-          </Field>
-        </FormBlock>
+        .lineup-insights :global(.insight-card + .insight-card) {
+          border-left: 1px solid #ece4dd;
+        }
 
-        <FormBlock title="2. Évaluation joueur / coach">
-          <RatingEditor title="Auto-évaluation joueur" value={bilan.playerRatings} onChange={(rating) => patchRating("playerRatings", rating)} />
-          <RatingEditor title="Évaluation coach" value={bilan.coachRatings} onChange={(rating) => patchRating("coachRatings", rating)} />
-        </FormBlock>
+        .lineup-insights :global(.insight-label) {
+          color: #5c5451;
+          font-size: 0.82rem;
+          font-weight: 750;
+          line-height: 1.3;
+          margin-bottom: 0.55rem;
+        }
 
-        <FormBlock title="3. Progression individuelle">
-          <TwoText label="Physique" left={bilan.strengthsPhysical} right={bilan.improvementsPhysical} onLeft={(v) => patch({ strengthsPhysical: v })} onRight={(v) => patch({ improvementsPhysical: v })} />
-          <TwoText label="Technique" left={bilan.strengthsTechnical} right={bilan.improvementsTechnical} onLeft={(v) => patch({ strengthsTechnical: v })} onRight={(v) => patch({ improvementsTechnical: v })} />
-          <TwoText label="Tactique" left={bilan.strengthsTactical} right={bilan.improvementsTactical} onLeft={(v) => patch({ strengthsTactical: v })} onRight={(v) => patch({ improvementsTactical: v })} />
-          <TwoText label="Mental" left={bilan.strengthsMental} right={bilan.improvementsMental} onLeft={(v) => patch({ strengthsMental: v })} onRight={(v) => patch({ improvementsMental: v })} />
-          <TwoText label="Relationnel" left={bilan.strengthsRelational} right={bilan.improvementsRelational} onLeft={(v) => patch({ strengthsRelational: v })} onRight={(v) => patch({ improvementsRelational: v })} />
-        </FormBlock>
+        .lineup-insights :global(.insight-title) {
+          display: -webkit-box;
+          -webkit-line-clamp: 3;
+          -webkit-box-orient: vertical;
+          overflow: hidden;
+          color: #211d1e;
+          font-size: 0.98rem;
+          line-height: 1.38;
+          font-weight: 950;
+          overflow-wrap: anywhere;
+        }
 
-        <FormBlock title="4. Projet / intersaison">
-          <Field label="Ce qui te plaît au club, ce qu'il faut garder">
-            <textarea value={bilan.keepAtClub} onChange={(e) => patch({ keepAtClub: e.target.value })} />
-          </Field>
+        .lineup-insights :global(.insight-value) {
+          margin-top: auto;
+          padding-top: 0.6rem;
+          color: #6b1a2c;
+          font-size: 0.98rem;
+          font-style: italic;
+          font-weight: 950;
+        }
 
-          <Field label="Baguette magique : élément structurel à améliorer">
-            <textarea value={bilan.magicStructure} onChange={(e) => patch({ magicStructure: e.target.value })} />
-          </Field>
+        .lineup-insights :global(.insight-card.good .insight-value) {
+          color: #177245;
+        }
 
-          <Field label="Baguette magique : élément basket à améliorer">
-            <textarea value={bilan.magicBasket} onChange={(e) => patch({ magicBasket: e.target.value })} />
-          </Field>
+        .lineup-insights :global(.insight-card.bad .insight-value) {
+          color: #b42318;
+        }
 
-          <Field label="Objectifs saison prochaine">
-            <textarea value={bilan.objectives} onChange={(e) => patch({ objectives: e.target.value })} />
-          </Field>
+        .lineup-table-wrap {
+          width: 100%;
+          overflow-x: auto;
+          border: 1px solid #eadfd5;
+          border-radius: 18px;
+          background: #fff;
+        }
 
-          <Field label="Comment t'y prendre ?">
-            <textarea value={bilan.method} onChange={(e) => patch({ method: e.target.value })} />
-          </Field>
+        table {
+          width: 100%;
+          min-width: 1540px;
+          border-collapse: separate;
+          border-spacing: 0;
+          font-size: 0.82rem;
+        }
 
-          <Field label="Rôle attendu">
-            <textarea value={bilan.expectedRole} onChange={(e) => patch({ expectedRole: e.target.value })} />
-          </Field>
+        th {
+          position: sticky;
+          top: 0;
+          z-index: 3;
+          min-height: 50px;
+          background: linear-gradient(180deg, #7a1c32, #5a1325);
+          color: #fff;
+          padding: 0.85rem 0.65rem;
+          text-align: center;
+          vertical-align: middle;
+          white-space: nowrap;
+          font-weight: 950;
+          border-right: 1px solid rgba(255, 255, 255, 0.14);
+        }
 
-          <Field label="Partenaire d'internat envisagé">
-            <input value={bilan.boardingPartner} onChange={(e) => patch({ boardingPartner: e.target.value })} />
-          </Field>
-        </FormBlock>
+        th:first-child,
+        td:first-child {
+          position: sticky;
+          left: 0;
+          width: 270px;
+          min-width: 270px;
+          max-width: 270px;
+          text-align: left;
+        }
 
-        <FormBlock title="5. Famille / scolarité">
-          <Field label="Retranscription entretien joueur/famille">
-            <textarea value={bilan.familySummary} onChange={(e) => patch({ familySummary: e.target.value })} />
-          </Field>
+        th:first-child {
+          z-index: 5;
+          background: #65162a;
+          padding-left: 1rem;
+        }
 
-          <Field label="Bilan scolaire">
-            <textarea value={bilan.schoolReview} onChange={(e) => patch({ schoolReview: e.target.value })} />
-          </Field>
+        td {
+          height: 58px;
+          padding: 0.82rem 0.65rem;
+          border-right: 1px solid #e8e3df;
+          border-bottom: 1px solid #e8e3df;
+          text-align: center;
+          vertical-align: middle;
+          white-space: nowrap;
+          background: #fff;
+          color: #211d1e;
+          font-weight: 750;
+        }
 
-          <Field label="Préparation examens">
-            <textarea value={bilan.examsPreparation} onChange={(e) => patch({ examsPreparation: e.target.value })} />
-          </Field>
+        td:first-child {
+          z-index: 2;
+          background: #f7f7f7;
+          padding-left: 1rem;
+        }
 
-          <Field label="Options / spécialités / orientation">
-            <textarea value={bilan.orientationChoices} onChange={(e) => patch({ orientationChoices: e.target.value })} />
-          </Field>
-        </FormBlock>
+        tbody tr:nth-child(even) td:not(:first-child) {
+          background: #fcfaf9;
+        }
 
-        <FormBlock title="6. Plan d'action">
-          <Field label="Planning vacances">
-            <textarea value={bilan.holidayPlanning} onChange={(e) => patch({ holidayPlanning: e.target.value })} />
-          </Field>
+        tbody tr:hover td {
+          background: #fff7ea;
+        }
 
-          <Field label="La photo de toi qui va changer : priorité intersaison">
-            <textarea value={bilan.offseasonPriority} onChange={(e) => patch({ offseasonPriority: e.target.value })} />
-          </Field>
+        tbody tr:hover td:first-child {
+          background: #f3e8df;
+        }
 
-          <Field label="Objectif n°1 + actions">
-            <textarea value={bilan.actionPlan1} onChange={(e) => patch({ actionPlan1: e.target.value })} />
-          </Field>
+        .lineup-label {
+          color: #6b1a2c;
+          font-weight: 950;
+          white-space: normal !important;
+          line-height: 1.42;
+          overflow-wrap: anywhere;
+        }
 
-          <Field label="Objectif n°2 + actions">
-            <textarea value={bilan.actionPlan2} onChange={(e) => patch({ actionPlan2: e.target.value })} />
-          </Field>
+        .good {
+          color: #177245;
+          font-weight: 950;
+        }
 
-          <Field label="Objectif n°3 + actions">
-            <textarea value={bilan.actionPlan3} onChange={(e) => patch({ actionPlan3: e.target.value })} />
-          </Field>
+        .bad {
+          color: #b42318;
+          font-weight: 950;
+        }
 
-          <Field label="Conclusion coach">
-            <textarea value={bilan.coachConclusion} onChange={(e) => patch({ coachConclusion: e.target.value })} />
-          </Field>
-        </FormBlock>
-      </div>
+        @media (max-width: 1100px) {
+          .lineup-insights {
+            grid-template-columns: repeat(2, 1fr);
+          }
 
-      <div className="modal-actions">
-        <button className="light-btn outline" onClick={onClose}>Annuler</button>
-        <button className="light-btn primary" onClick={onSave}>Enregistrer le bilan</button>
-      </div>
-    </Modal>
-  );
-}
+          .lineup-insights :global(.insight-card:nth-child(3)) {
+            border-left: 0;
+            border-top: 1px solid #ece4dd;
+          }
 
-function RatingEditor({ title, value, onChange }: { title: string; value: RatingBlock; onChange: (v: Partial<RatingBlock>) => void }) {
-  return (
-    <div className="rating-editor">
-      <h4>{title}</h4>
-      {(["physique", "technique", "tactique", "mental", "relationnel"] as Array<keyof RatingBlock>).map((key) => (
-        <label key={key}>
-          <span>{key}</span>
-          <input type="range" min="0" max="10" value={value[key]} onChange={(e) => onChange({ [key]: Number(e.target.value) })} />
-          <b>{value[key]}/10</b>
-        </label>
-      ))}
-    </div>
-  );
-}
+          .lineup-insights :global(.insight-card:nth-child(4)) {
+            border-top: 1px solid #ece4dd;
+          }
+        }
 
-function TwoText({
-  label,
-  left,
-  right,
-  onLeft,
-  onRight,
-}: {
-  label: string;
-  left: string;
-  right: string;
-  onLeft: (v: string) => void;
-  onRight: (v: string) => void;
-}) {
-  return (
-    <div className="two-text">
-      <h4>{label}</h4>
-      <textarea placeholder="3 points forts" value={left} onChange={(e) => onLeft(e.target.value)} />
-      <textarea placeholder="3 axes d'amélioration" value={right} onChange={(e) => onRight(e.target.value)} />
-    </div>
-  );
-}
+        @media (max-width: 700px) {
+          .lineups-card {
+            padding: 1rem;
+          }
 
-function FormBlock({ title, children }: { title: string; children: React.ReactNode }) {
-  return (
-    <section className="form-block">
-      <h3>{title}</h3>
-      {children}
+          .lineup-insights {
+            grid-template-columns: 1fr;
+          }
+
+          .lineup-insights :global(.insight-card + .insight-card) {
+            border-left: 0;
+            border-top: 1px solid #ece4dd;
+          }
+
+          th:first-child,
+          td:first-child {
+            width: 220px;
+            min-width: 220px;
+            max-width: 220px;
+          }
+        }
+      `}</style>
     </section>
   );
 }
 
-function Modal({ title, children, onClose, wide }: { title: string; children: React.ReactNode; onClose: () => void; wide?: boolean }) {
+
+
+
+/* ---------- 4. RECORDS ---------- */
+
+type RecordLine = {
+  label: string;
+  value: number;
+  opponent: string;
+};
+
+function TeamSeasonRecordsBlock({ teamId }: { teamId: string }) {
+  const supabase = createClient();
+
+  const [loading, setLoading] = useState(true);
+  const [matches, setMatches] = useState<SupaMatchRow[]>([]);
+  const [rows, setRows] = useState<SupaStatRow[]>([]);
+
+  useEffect(() => {
+    let active = true;
+
+    async function load() {
+      setLoading(true);
+
+      const { data: matchData, error: matchError } = await supabase
+        .from("match_stats")
+        .select("id, opponent, match_date, us_score, them_score, home")
+        .eq("team_id", teamId)
+        .order("match_date", { ascending: false });
+
+      if (!active) return;
+
+      if (matchError) {
+        console.error("Erreur records matchs :", matchError);
+        setMatches([]);
+        setRows([]);
+        setLoading(false);
+        return;
+      }
+
+      const matchRows = (matchData ?? []) as SupaMatchRow[];
+      setMatches(matchRows);
+
+      const matchIds = matchRows.map((m) => m.id);
+
+      if (matchIds.length === 0) {
+        setRows([]);
+        setLoading(false);
+        return;
+      }
+
+      const { data: statData, error: statError } = await supabase
+        .from("match_player_stats")
+        .select("match_id, p3m, off_reb, def_reb, reb, ast, stl, present")
+        .in("match_id", matchIds);
+
+      if (!active) return;
+
+      if (statError) {
+        console.error("Erreur records stats :", statError);
+        setRows([]);
+      } else {
+        setRows(
+          ((statData ?? []) as SupaStatRow[]).filter(
+            (r) => r.present !== false,
+          ),
+        );
+      }
+
+      setLoading(false);
+    }
+
+    load();
+
+    return () => {
+      active = false;
+    };
+  }, [supabase, teamId]);
+
+  const records = useMemo(() => {
+    const byMatch = matches.reduce(
+      (acc, match) => {
+        acc[match.id] = {
+          match,
+          pts: safeNum(match.us_score),
+          diff: safeNum(match.us_score) - safeNum(match.them_score),
+          reb: 0,
+          ast: 0,
+          p3m: 0,
+          stl: 0,
+        };
+
+        return acc;
+      },
+      {} as Record<
+        string,
+        {
+          match: SupaMatchRow;
+          pts: number;
+          diff: number;
+          reb: number;
+          ast: number;
+          p3m: number;
+          stl: number;
+        }
+      >,
+    );
+
+    rows.forEach((row) => {
+      const matchId = String(row.match_id || "");
+      const box = byMatch[matchId];
+      if (!box) return;
+
+      box.reb +=
+        safeNum(row.reb) || safeNum(row.off_reb) + safeNum(row.def_reb);
+      box.ast += safeNum(row.ast);
+      box.p3m += safeNum(row.p3m);
+      box.stl += safeNum(row.stl);
+    });
+
+    const list = Object.values(byMatch);
+
+    const best = (
+      label: string,
+      getter: (row: (typeof list)[number]) => number,
+    ): RecordLine => {
+      const sorted = [...list].sort((a, b) => getter(b) - getter(a));
+      const top = sorted[0];
+
+      if (!top) return { label, value: 0, opponent: "—" };
+
+      return {
+        label,
+        value: getter(top),
+        opponent: top.match.opponent || "Adversaire",
+      };
+    };
+
+    return [
+      best("Meilleur score", (row) => row.pts),
+      best("Plus gros écart", (row) => row.diff),
+      best("Plus de rebonds", (row) => row.reb),
+      best("Plus de passes", (row) => row.ast),
+      best("Plus de 3PTS", (row) => row.p3m),
+      best("Plus d'interceptions", (row) => row.stl),
+    ];
+  }, [matches, rows]);
+
   return (
-    <div className="modal-bg" onClick={onClose}>
-      <div className={`modal ${wide ? "wide" : ""}`} onClick={(e) => e.stopPropagation()}>
-        <div className="modal-head">
-          <h2>{title}</h2>
-          <button onClick={onClose}>×</button>
+    <section className="tl-card records-card">
+      <div className="block-head">
+        <div>
+          <p className="eyebrow">Records</p>
+          <h2>Records de la saison</h2>
+          <p className="muted">Les meilleures performances collectives.</p>
         </div>
-
-        {children}
       </div>
-    </div>
+
+      {loading && <div className="empty">Chargement...</div>}
+
+      {!loading && matches.length === 0 && (
+        <div className="empty">Aucun record disponible pour le moment.</div>
+      )}
+
+      {!loading && matches.length > 0 && (
+        <div className="records-grid">
+          {records.map((record) => (
+            <article key={record.label} className="record-box">
+              <span>{record.label}</span>
+              <strong>{record.value}</strong>
+              <small>vs {record.opponent}</small>
+            </article>
+          ))}
+        </div>
+      )}
+
+      <style jsx>{`
+        .records-card {
+          margin-top: 1.2rem;
+        }
+        .block-head {
+          margin-bottom: 1rem;
+        }
+        .eyebrow {
+          margin: 0;
+          color: #d4a24c;
+          font-size: 0.78rem;
+          font-weight: 900;
+          text-transform: uppercase;
+          letter-spacing: 0.06em;
+        }
+        h2 {
+          margin: 0.2rem 0 0;
+          color: #6b1a2c;
+          font-size: 1.45rem;
+          font-weight: 900;
+        }
+        .muted {
+          margin: 0.25rem 0 0;
+          color: #9a8a82;
+          font-size: 0.92rem;
+        }
+        .empty {
+          background: #fff8ef;
+          border: 1px dashed #d4a24c;
+          border-radius: 14px;
+          padding: 1rem;
+          color: #6b1a2c;
+          font-weight: 900;
+        }
+        .records-grid {
+          display: grid;
+          grid-template-columns: repeat(6, minmax(0, 1fr));
+          gap: 0.75rem;
+        }
+        .record-box {
+          border: 1px solid #efe6db;
+          border-radius: 16px;
+          background: linear-gradient(180deg, #fffdf9, #fff);
+          padding: 0.95rem;
+          min-height: 118px;
+        }
+        .record-box span {
+          display: block;
+          color: #9a8a82;
+          font-size: 0.72rem;
+          font-weight: 900;
+          text-transform: uppercase;
+        }
+        .record-box strong {
+          display: block;
+          color: #6b1a2c;
+          font-size: 1.7rem;
+          font-weight: 900;
+          margin-top: 0.35rem;
+        }
+        .record-box small {
+          display: block;
+          color: #d4a24c;
+          font-weight: 900;
+          margin-top: 0.25rem;
+        }
+        @media (max-width: 1200px) {
+          .records-grid {
+            grid-template-columns: repeat(3, minmax(0, 1fr));
+          }
+        }
+        @media (max-width: 700px) {
+          .records-grid {
+            grid-template-columns: 1fr;
+          }
+        }
+      `}</style>
+    </section>
   );
 }
 
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
+
+function LinkedDashboardStatsBlock({
+  dashboard,
+  players,
+}: {
+  dashboard: TeamDashboardData;
+  players: Player[];
+}) {
+  type StatTotals = {
+    pts: number;
+    reb: number;
+    ast: number;
+    stl: number;
+    blk: number;
+    turnovers: number;
+  };
+
+  const totals = dashboard.statRows.reduce<StatTotals>(
+    (acc, row) => {
+      const pts =
+        safeNum(row.pts) ||
+        safeNum(row.p2m) * 2 + safeNum(row.p3m) * 3 + safeNum(row.ftm);
+
+      const reb = safeNum(row.reb) || safeNum(row.off_reb) + safeNum(row.def_reb);
+
+      acc.pts += pts;
+      acc.reb += reb;
+      acc.ast += safeNum(row.ast);
+      acc.stl += safeNum(row.stl);
+      acc.blk += safeNum(row.blk);
+      acc.turnovers += safeNum(row.turnovers);
+
+      return acc;
+    },
+    {
+      pts: 0,
+      reb: 0,
+      ast: 0,
+      stl: 0,
+      blk: 0,
+      turnovers: 0,
+    }
+  );
+
+  const games = Math.max(1, dashboard.matches.length);
+
+  const byPlayer = dashboard.statRows.reduce<
+    Record<string, { games: number; pts: number; reb: number; ast: number }>
+  >((acc, row) => {
+    const id = String(row.player_id || "");
+
+    if (!id) return acc;
+
+    if (!acc[id]) {
+      acc[id] = { games: 0, pts: 0, reb: 0, ast: 0 };
+    }
+
+    const pts =
+      safeNum(row.pts) ||
+      safeNum(row.p2m) * 2 + safeNum(row.p3m) * 3 + safeNum(row.ftm);
+
+    const reb = safeNum(row.reb) || safeNum(row.off_reb) + safeNum(row.def_reb);
+
+    acc[id].games += 1;
+    acc[id].pts += pts;
+    acc[id].reb += reb;
+    acc[id].ast += safeNum(row.ast);
+
+    return acc;
+  }, {});
+
+  const leaders = Object.entries(byPlayer)
+    .map(([playerId, row]) => {
+      const player = players.find((p) => String(p.id) === String(playerId));
+
+      return {
+        playerId,
+        name: player
+          ? `${player.firstName ?? ""} ${player.lastName ?? ""}`.trim()
+          : playerId,
+        pts: row.games ? r1(row.pts / row.games) : 0,
+        reb: row.games ? r1(row.reb / row.games) : 0,
+        ast: row.games ? r1(row.ast / row.games) : 0,
+      };
+    })
+    .sort((a, b) => b.pts - a.pts)
+    .slice(0, 6);
+
   return (
-    <label className="field">
-      <span>{label}</span>
-      {children}
-    </label>
+    <section className="tl-card linked-dashboard-block">
+      <div className="block-head">
+        <div>
+          <p className="eyebrow">Synthèse liée</p>
+          <h2>Stats importées Live Stats</h2>
+          <p className="muted">
+            Ces données viennent de Supabase ou du miroir local créé au moment où
+            tu termines un match live.
+          </p>
+        </div>
+      </div>
+
+      <div className="quick-kpis">
+        <MiniKpi label="Matchs" value={dashboard.matches.length} />
+        <MiniKpi label="PTS moy." value={r1(totals.pts / games)} />
+        <MiniKpi label="REB moy." value={r1(totals.reb / games)} />
+        <MiniKpi label="PD moy." value={r1(totals.ast / games)} />
+        <MiniKpi label="INT total" value={totals.stl} />
+        <MiniKpi label="BP total" value={totals.turnovers} />
+      </div>
+
+      <div className="stats-table">
+        <table>
+          <thead>
+            <tr>
+              <th>Joueur</th>
+              <th>PTS</th>
+              <th>REB</th>
+              <th>PD</th>
+            </tr>
+          </thead>
+
+          <tbody>
+            {leaders.length ? (
+              leaders.map((row) => (
+                <tr key={row.playerId}>
+                  <td className="label">{row.name}</td>
+                  <td>{row.pts}</td>
+                  <td>{row.reb}</td>
+                  <td>{row.ast}</td>
+                </tr>
+              ))
+            ) : (
+              <tr>
+                <td colSpan={4}>Aucune statistique liée pour le moment.</td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+
+      <style jsx>{`
+        .linked-dashboard-block {
+          margin-top: 1.2rem;
+        }
+
+        .block-head {
+          margin-bottom: 1rem;
+        }
+
+        .eyebrow {
+          margin: 0;
+          color: #d4a24c;
+          font-size: 0.78rem;
+          font-weight: 900;
+          text-transform: uppercase;
+        }
+
+        h2 {
+          margin: 0.2rem 0 0;
+          color: #6b1a2c;
+          font-size: 1.45rem;
+          font-weight: 900;
+        }
+
+        .muted {
+          margin: 0.25rem 0 0;
+          color: #9a8a82;
+          font-size: 0.92rem;
+        }
+
+        .quick-kpis {
+          display: grid;
+          grid-template-columns: repeat(6, minmax(0, 1fr));
+          gap: 0.75rem;
+          margin-bottom: 1rem;
+        }
+
+        .stats-table {
+          width: 100%;
+          overflow-x: auto;
+          border: 1px solid #efe6db;
+          border-radius: 16px;
+        }
+
+        table {
+          width: 100%;
+          border-collapse: collapse;
+          font-size: 0.86rem;
+        }
+
+        th {
+          background: #6b1a2c;
+          color: #fff;
+          padding: 0.7rem;
+          text-align: left;
+        }
+
+        td {
+          border-top: 1px solid #eee;
+          padding: 0.7rem;
+          font-weight: 800;
+        }
+
+        .label {
+          color: #6b1a2c;
+          font-weight: 900;
+        }
+
+        @media (max-width: 900px) {
+          .quick-kpis {
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+          }
+        }
+      `}</style>
+    </section>
   );
 }
 
-function Attr({ label, value }: { label: string; value: string }) {
+function LiveStatsSourceBanner({
+  dashboard,
+}: {
+  dashboard: TeamDashboardData;
+}) {
   return (
-    <div className="attr-light">
-      <label>{label}</label>
-      <span>{value}</span>
-    </div>
+    <section className="tl-card live-source-card">
+      <div>
+        <p className="eyebrow">Source des données</p>
+        <h2>Live Stats Supabase</h2>
+        <p className="muted">
+          Cette fiche est reliée aux matchs enregistrés depuis la prise de stats
+          live : table match_stats pour les résultats, match_player_stats pour
+          les boxscores joueurs et match_actions pour les temps forts de jeu.
+        </p>
+      </div>
+
+      <div className="live-source-grid">
+        <MiniKpi label="Matchs liés" value={dashboard.matches.length} />
+        <MiniKpi label="Lignes joueurs" value={dashboard.statRows.length} />
+        <MiniKpi label="Actions jeu" value={dashboard.actionRows.length} />
+        <MiniKpi label="Présences" value={dashboard.attendanceRows.length} />
+      </div>
+
+      <style jsx>{`
+        .live-source-card {
+          margin-top: 1.2rem;
+          display: grid;
+          grid-template-columns: 1.3fr 1fr;
+          gap: 1rem;
+          align-items: center;
+        }
+        .eyebrow {
+          margin: 0;
+          color: #d4a24c;
+          font-size: 0.78rem;
+          font-weight: 900;
+          text-transform: uppercase;
+          letter-spacing: 0.06em;
+        }
+        h2 {
+          margin: 0.2rem 0 0;
+          color: #6b1a2c;
+          font-size: 1.45rem;
+          font-weight: 900;
+        }
+        .muted {
+          margin: 0.25rem 0 0;
+          color: #9a8a82;
+          font-size: 0.92rem;
+          line-height: 1.45;
+        }
+        .live-source-grid {
+          display: grid;
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+          gap: 0.65rem;
+        }
+        @media (max-width: 900px) {
+          .live-source-card {
+            grid-template-columns: 1fr;
+          }
+        }
+      `}</style>
+    </section>
   );
 }
 
-function Kpi({
+
+function localMatchLinePoints(line: any) {
+  return safeNum(line.pts) || safeNum(line.pts2made) * 2 + safeNum(line.pts3made) * 3 + safeNum(line.ftMade ?? line.ftm);
+}
+
+function LocalStatsFallbackPanel({ team }: { team: Team }) {
+  const records = team.statsHistory || [];
+  const playersById = (team.players || []).reduce((acc: Record<string, Player>, player) => {
+    acc[String(player.id)] = player;
+    return acc;
+  }, {});
+
+  const playerRows = useMemo(() => {
+    const grouped: Record<string, any> = {};
+
+    records.forEach((match: any) => {
+      (match.players || []).forEach((line: any) => {
+        if (!line.played) return;
+        const id = String(line.playerId || "");
+        if (!id) return;
+        const player = playersById[id];
+        if (!grouped[id]) {
+          grouped[id] = {
+            id,
+            name: player ? `${player.firstName} ${player.lastName}` : id,
+            games: 0,
+            pts: 0,
+            reb: 0,
+            ast: 0,
+            stl: 0,
+            blk: 0,
+          };
+        }
+        grouped[id].games += 1;
+        grouped[id].pts += localMatchLinePoints(line);
+        grouped[id].reb += safeNum(line.reb) || safeNum(line.rebOff) + safeNum(line.rebDef);
+        grouped[id].ast += safeNum(line.ast);
+        grouped[id].stl += safeNum(line.stl);
+        grouped[id].blk += safeNum(line.blk);
+      });
+    });
+
+    return Object.values(grouped)
+      .map((row: any) => ({
+        ...row,
+        ptsAvg: row.games ? r1(row.pts / row.games) : 0,
+        rebAvg: row.games ? r1(row.reb / row.games) : 0,
+        astAvg: row.games ? r1(row.ast / row.games) : 0,
+        stlAvg: row.games ? r1(row.stl / row.games) : 0,
+      }))
+      .sort((a: any, b: any) => b.ptsAvg - a.ptsAvg);
+  }, [records, playersById]);
+
+  const teamTotals = useMemo(() => {
+    const games = records.length;
+    const wins = records.filter((m: any) => safeNum(m.scoreUs) > safeNum(m.scoreThem)).length;
+    const losses = records.filter((m: any) => safeNum(m.scoreUs) < safeNum(m.scoreThem)).length;
+    const ptsFor = records.reduce((sum: number, m: any) => sum + safeNum(m.scoreUs), 0);
+    const ptsAgainst = records.reduce((sum: number, m: any) => sum + safeNum(m.scoreThem), 0);
+    return { games, wins, losses, ptsFor, ptsAgainst };
+  }, [records]);
+
+  if (records.length === 0) return null;
+
+  return (
+    <section className="tl-card local-stats-fallback">
+      <div className="local-head">
+        <div>
+          <p className="eyebrow">Stats importées</p>
+          <h2>Stats Live reliées à l'équipe</h2>
+          <p className="muted">
+            Affichage depuis l'historique local alimenté automatiquement après l'enregistrement Live Stats.
+          </p>
+        </div>
+      </div>
+
+      <div className="quick-kpis local-kpis">
+        <MiniKpi label="Matchs" value={teamTotals.games} />
+        <MiniKpi label="Victoires" value={teamTotals.wins} />
+        <MiniKpi label="Défaites" value={teamTotals.losses} />
+        <MiniKpi label="Pts marqués" value={teamTotals.games ? r1(teamTotals.ptsFor / teamTotals.games) : 0} />
+        <MiniKpi label="Pts encaissés" value={teamTotals.games ? r1(teamTotals.ptsAgainst / teamTotals.games) : 0} />
+        <MiniKpi label="Diff." value={teamTotals.games ? r1((teamTotals.ptsFor - teamTotals.ptsAgainst) / teamTotals.games) : 0} />
+      </div>
+
+      <div className="local-table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Joueur</th>
+              <th>MJ</th>
+              <th>PTS</th>
+              <th>REB</th>
+              <th>PD</th>
+              <th>INT</th>
+              <th>CTR</th>
+            </tr>
+          </thead>
+          <tbody>
+            {playerRows.map((row: any) => (
+              <tr key={row.id}>
+                <td className="name">{row.name}</td>
+                <td>{row.games}</td>
+                <td>{row.ptsAvg}</td>
+                <td>{row.rebAvg}</td>
+                <td>{row.astAvg}</td>
+                <td>{row.stlAvg}</td>
+                <td>{r1(row.blk / Math.max(1, row.games))}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      <style jsx>{`
+        .local-stats-fallback { margin-top: 1.2rem; border: 1px solid rgba(212, 162, 76, 0.45); }
+        .local-head { display: flex; justify-content: space-between; gap: 1rem; margin-bottom: 1rem; }
+        .eyebrow { margin: 0; color: #d4a24c; font-size: 0.78rem; font-weight: 900; text-transform: uppercase; letter-spacing: 0.06em; }
+        h2 { margin: 0.2rem 0 0; color: #6b1a2c; font-size: 1.45rem; font-weight: 900; }
+        .muted { margin: 0.25rem 0 0; color: #9a8a82; font-size: 0.92rem; }
+        .local-kpis { margin-bottom: 1rem; }
+        .local-table-wrap { overflow-x: auto; border: 1px solid #efe6db; border-radius: 16px; }
+        table { width: 100%; border-collapse: collapse; min-width: 720px; }
+        th { background: #6b1a2c; color: #fff; padding: 0.75rem; text-align: center; font-weight: 900; }
+        td { border-bottom: 1px solid #eee; padding: 0.75rem; text-align: center; font-weight: 800; }
+        td.name { text-align: left; color: #6b1a2c; font-weight: 900; }
+      `}</style>
+    </section>
+  );
+}
+
+function InfoRow({
   icon,
   label,
   value,
-  sub,
-  spark,
-  color,
 }: {
   icon: string;
   label: string;
   value: string;
-  sub: string;
-  spark?: number[];
-  color?: string;
 }) {
   return (
-    <div className="kpi-light">
-      <div className="head">
-        {icon} {label}
-      </div>
-      <div className="val">{value}</div>
-      <div className="sub">{sub}</div>
-
-      {spark && (
-        <div className="spark">
-          <Sparkline values={spark} color={color} />
-        </div>
-      )}
+    <div className="tl-info-row">
+      <span className="ic">
+        <Ic d={icon} />
+      </span>
+      <span className="lbl">{label}</span>
+      <span className="val">{value || "—"}</span>
     </div>
   );
 }
-
-function StatCell({ n, l, small }: { n: number | string; l: string; small?: boolean }) {
-  return (
-    <div className="stat-cell-light">
-      <div className="n" style={{ fontSize: small ? "1.2rem" : undefined }}>
-        {n}
-      </div>
-      <div className="l">{l}</div>
-    </div>
-  );
-}
-
-function Legend({ color, label, value }: { color: string; label: string; value: string }) {
-  return (
-    <div className="legend-light">
-      <span style={{ background: color }} />
-      <em>{label}</em>
-      <b>{value}</b>
-    </div>
-  );
-}
-
-function Compare({
-  icon,
-  bg,
-  label,
-  rang,
-  eff,
-  sub,
-}: {
-  icon: string;
-  bg: string;
-  label: string;
-  rang: number;
-  eff: number;
-  sub: string;
-}) {
-  return (
-    <div className="compare-item-light">
-      <div className="icon" style={{ background: bg }}>
-        {icon}
-      </div>
-
-      <div>
-        <div className="l">{label}</div>
-        <div className="rang">
-          #{rang} <small>/ {eff}</small>
-        </div>
-        <div className="sub">{sub}</div>
-      </div>
-    </div>
-  );
-}
-
-function SummaryLine({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="summary-line">
-      <span>{label}</span>
-      <strong>{value}</strong>
-    </div>
-  );
-}
-
-function ProjectionBox({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="projection-box">
-      <span>{label}</span>
-      <strong>{value}</strong>
-    </div>
-  );
-}
-
-function ScorePill({ label, value }: { label: string; value: string }) {
-  return (
-    <span className="score-pill">
-      {label} <b>{value}</b>
-    </span>
-  );
-}
-
-function bilanHtml(
-  player: PlayerExtra,
-  team: Team,
-  bilan: PlayerBilan,
-  tests: PlayerTest[],
-  medical: MedicalEntry[],
-  growth: GrowthProfile
-) {
-  const p: any = player;
-  const height = latestByLabel(tests, "Taille")?.value || parseCm(p.taille);
-  const projection = predictedHeightRange(growth, height);
-  const medicalStatus = [...medical].sort((a, b) => b.date.localeCompare(a.date))[0]?.status || p.statut || "Disponible";
-
-  const esc = (v: unknown) =>
-    String(v ?? "")
-      .replace(/&/g, "&amp;")
-      .replace(/</g, "&lt;")
-      .replace(/>/g, "&gt;");
-
-  return `<!doctype html>
-<html>
-<head>
-<meta charset="utf-8" />
-<title>Bilan ${esc(p.firstName)} ${esc(p.lastName)}</title>
-<style>
-  body { font-family: Arial, sans-serif; color: #171717; margin: 32px; }
-  h1 { color: #6b1a2c; margin-bottom: 4px; text-transform: uppercase; }
-  h2 { color: #6b1a2c; border-bottom: 2px solid #6b1a2c; padding-bottom: 6px; margin-top: 28px; }
-  .meta { display: grid; grid-template-columns: repeat(4,1fr); gap: 10px; margin: 18px 0; }
-  .box { border: 1px solid #ddd; border-radius: 10px; padding: 12px; }
-  .box span { display: block; color: #777; font-size: 12px; text-transform: uppercase; }
-  .box strong { display: block; margin-top: 4px; font-size: 18px; }
-  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
-  p { white-space: pre-wrap; line-height: 1.45; }
-  table { width: 100%; border-collapse: collapse; margin-top: 10px; }
-  th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
-  th { background: #f7f1ea; }
-  @media print { body { margin: 18mm; } button { display:none; } }
-</style>
-</head>
-<body>
-  <h1>Bilan joueur — ${esc(p.firstName)} ${esc(p.lastName)}</h1>
-  <div>${esc(team.name)} · ${esc(bilan.type)} · ${esc(fmtDate(bilan.date))}</div>
-
-  <div class="meta">
-    <div class="box"><span>Poste</span><strong>${esc(p.postePrincipal || "—")}</strong></div>
-    <div class="box"><span>Taille</span><strong>${height ? `${height} cm` : "—"}</strong></div>
-    <div class="box"><span>Médical</span><strong>${esc(medicalStatus)}</strong></div>
-    <div class="box"><span>Projection taille</span><strong>${projection.probable ? `${projection.probable} cm` : "—"}</strong></div>
-  </div>
-
-  <h2>Notes générales</h2>
-  <div class="grid">
-    <div class="box"><span>Note équipe</span><strong>${bilan.seasonTeamNote}/10</strong><p>${esc(bilan.seasonTeamWhy)}</p></div>
-    <div class="box"><span>Note individuelle</span><strong>${bilan.individualNote}/10</strong><p>${esc(bilan.individualWhy)}</p></div>
-  </div>
-
-  <h2>Évaluations</h2>
-  <table>
-    <tr><th>Domaine</th><th>Joueur</th><th>Coach</th></tr>
-    <tr><td>Physique</td><td>${bilan.playerRatings.physique}/10</td><td>${bilan.coachRatings.physique}/10</td></tr>
-    <tr><td>Technique</td><td>${bilan.playerRatings.technique}/10</td><td>${bilan.coachRatings.technique}/10</td></tr>
-    <tr><td>Tactique</td><td>${bilan.playerRatings.tactique}/10</td><td>${bilan.coachRatings.tactique}/10</td></tr>
-    <tr><td>Mental</td><td>${bilan.playerRatings.mental}/10</td><td>${bilan.coachRatings.mental}/10</td></tr>
-    <tr><td>Relationnel</td><td>${bilan.playerRatings.relationnel}/10</td><td>${bilan.coachRatings.relationnel}/10</td></tr>
-  </table>
-
-  <h2>Progression individuelle</h2>
-  <table>
-    <tr><th>Domaine</th><th>Points forts</th><th>Axes d'amélioration</th></tr>
-    <tr><td>Physique</td><td>${esc(bilan.strengthsPhysical)}</td><td>${esc(bilan.improvementsPhysical)}</td></tr>
-    <tr><td>Technique</td><td>${esc(bilan.strengthsTechnical)}</td><td>${esc(bilan.improvementsTechnical)}</td></tr>
-    <tr><td>Tactique</td><td>${esc(bilan.strengthsTactical)}</td><td>${esc(bilan.improvementsTactical)}</td></tr>
-    <tr><td>Mental</td><td>${esc(bilan.strengthsMental)}</td><td>${esc(bilan.improvementsMental)}</td></tr>
-    <tr><td>Relationnel</td><td>${esc(bilan.strengthsRelational)}</td><td>${esc(bilan.improvementsRelational)}</td></tr>
-  </table>
-
-  <h2>Projet & intersaison</h2>
-  <p><strong>Ce qu'il faut garder :</strong><br/>${esc(bilan.keepAtClub)}</p>
-  <p><strong>Objectifs :</strong><br/>${esc(bilan.objectives)}</p>
-  <p><strong>Méthode :</strong><br/>${esc(bilan.method)}</p>
-  <p><strong>Priorité intersaison :</strong><br/>${esc(bilan.offseasonPriority)}</p>
-
-  <h2>Famille & scolarité</h2>
-  <p><strong>Famille :</strong><br/>${esc(bilan.familySummary)}</p>
-  <p><strong>Scolarité :</strong><br/>${esc(bilan.schoolReview)}</p>
-  <p><strong>Orientation :</strong><br/>${esc(bilan.orientationChoices)}</p>
-
-  <h2>Plan d'action</h2>
-  <p>${esc(bilan.actionPlan1)}</p>
-  <p>${esc(bilan.actionPlan2)}</p>
-  <p>${esc(bilan.actionPlan3)}</p>
-
-  <h2>Conclusion coach</h2>
-  <p>${esc(bilan.coachConclusion)}</p>
-</body>
-</html>`;
-}
-
-const PLAYER_PAGE_CSS = `
-@import url("https://fonts.googleapis.com/css2?family=Oswald:wght@500;600;700;800;900&family=Roboto:wght@400;500;700;800;900&display=swap");
-
-html,
-body {
-  background: #ffffff !important;
-}
-
-.player-page-light {
-  min-height: 100vh;
-  background: #ffffff !important;
-  color: #171717;
-  display: grid;
-  grid-template-columns: 260px 1fr;
-  font-family: "Roboto", system-ui, sans-serif;
-}
-
-.player-page-light * {
-  box-sizing: border-box;
-}
-
-.player-page-light button {
-  font-family: inherit;
-  cursor: pointer;
-}
-
-.player-list-side {
-  background: #ffffff;
-  border-right: 1px solid #e8e2da;
-  min-height: 100vh;
-  padding: 1rem .9rem;
-  position: sticky;
-  top: 0;
-  color: #171717;
-}
-
-.player-list-brand {
-  font-family: "Oswald", system-ui, sans-serif;
-  color: #7a1228;
-  font-weight: 800;
-  font-size: 1.08rem;
-  margin-bottom: 1.2rem;
-  text-transform: uppercase;
-}
-
-.player-back {
-  width: 100%;
-  border: 1px solid #7a1228;
-  background: #fff;
-  color: #7a1228;
-  border-radius: 999px;
-  padding: .48rem .7rem;
-  font-weight: 800;
-  margin-bottom: 1rem;
-}
-
-.player-list-title {
-  border-top: 1px solid #eee;
-  border-bottom: 1px solid #eee;
-  padding: .85rem 0;
-  margin-bottom: .85rem;
-  display: flex;
-  flex-direction: column;
-  gap: .2rem;
-}
-
-.player-list-title strong {
-  color: #111;
-  font-weight: 900;
-}
-
-.player-list-title span {
-  color: #8a7b73;
-  font-size: .8rem;
-  font-weight: 700;
-}
-
-.player-list {
-  display: flex;
-  flex-direction: column;
-  gap: .4rem;
-}
-
-.player-list-item {
-  border: 1px solid transparent;
-  background: #fff;
-  color: #111;
-  display: flex;
-  align-items: center;
-  gap: .6rem;
-  text-align: left;
-  border-radius: 12px;
-  padding: .55rem;
-  width: 100%;
-}
-
-.player-list-item:hover {
-  background: #fbf6ef;
-}
-
-.player-list-item.active {
-  background: #fdeef0;
-  border-color: #f0d2d9;
-}
-
-.mini-photo {
-  width: 38px;
-  height: 38px;
-  border-radius: 50%;
-  background: #7a1228;
-  color: #fff;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  overflow: hidden;
-  font-weight: 900;
-  flex: 0 0 auto;
-}
-
-.mini-photo img {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-}
-
-.mini-info {
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  gap: .1rem;
-}
-
-.mini-info strong {
-  font-size: .84rem;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.mini-info em {
-  font-style: normal;
-  color: #8a7b73;
-  font-size: .72rem;
-  font-weight: 700;
-}
-
-.player-main {
-  background: #ffffff !important;
-  min-height: 100vh;
-  padding: 1.4rem 1.8rem 3rem;
-  max-width: 1180px;
-}
-
-.empty-player,
-.empty-small {
-  color: #8a7b73;
-  padding: 1rem 0;
-  font-weight: 800;
-}
-
-.player-topbar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 1rem;
-  margin-bottom: 1.4rem;
-  flex-wrap: wrap;
-}
-
-.player-back-inline {
-  background: #fff;
-  color: #7a1228;
-  border: 1px solid #7a1228;
-  border-radius: 999px;
-  padding: .45rem .9rem;
-  font-weight: 800;
-}
-
-.player-actions {
-  display: flex;
-  gap: .6rem;
-}
-
-.light-btn {
-  border-radius: 10px;
-  padding: .55rem .95rem;
-  font-size: .86rem;
-  font-weight: 900;
-  border: 1px solid #e8e2da;
-  background: #fff;
-  text-decoration: none;
-  color: #171717;
-}
-
-.light-btn.primary {
-  background: #f47b20;
-  color: #111;
-  border-color: #f47b20;
-}
-
-.light-btn.outline {
-  color: #7a1228;
-}
-
-.player-hero {
-  display: grid;
-  grid-template-columns: 180px minmax(0, 1fr) 210px;
-  gap: 1.2rem;
-  align-items: stretch;
-  margin-bottom: 1.2rem;
-}
-
-.player-photo {
-  position: relative;
-  width: 180px;
-  height: 230px;
-  border-radius: 16px;
-  overflow: hidden;
-  background: #f4efe8;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border: 1px solid #e8e2da;
-  color: #7a1228;
-  font-family: "Oswald", sans-serif;
-  font-size: 4rem;
-  font-weight: 900;
-  flex-shrink: 0;
-}
-
-.player-photo img {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-}
-
-.player-num {
-  position: absolute;
-  top: 10px;
-  left: 10px;
-  background: #7a1228;
-  color: #fff;
-  border-radius: 999px;
-  padding: .25rem .55rem;
-  font-size: .8rem;
-  font-weight: 900;
-  z-index: 2;
-}
-
-.player-identity {
-  min-width: 0;
-  padding-left: 0.5rem;
-}
-
-.player-club {
-  color: #7a1228;
-  font-weight: 900;
-}
-
-.player-identity h1 {
-  font-family: "Oswald", sans-serif;
-  font-size: clamp(2rem, 4vw, 2.9rem);
-  text-transform: uppercase;
-  margin: .3rem 0 .2rem;
-  line-height: 1;
-  color: #151515;
-  word-break: normal;
-  overflow-wrap: anywhere;
-}
-
-.player-cat {
-  color: #8a7b73;
-  font-size: .9rem;
-  margin-bottom: .9rem;
-}
-
-.player-cat b {
-  color: #f47b20;
-  text-transform: uppercase;
-  font-size: .75rem;
-  letter-spacing: .05em;
-}
-
-.player-attr-grid,
-.admin-grid {
-  display: grid;
-  grid-template-columns: repeat(4, 1fr);
-  gap: .8rem 1.2rem;
-  padding: .9rem 0;
-  border-top: 1px solid #e8e2da;
-  border-bottom: 1px solid #e8e2da;
-}
-
-.admin-grid {
-  grid-template-columns: repeat(4, 1fr);
-  border: 0;
-  padding: 0;
-}
-
-.attr-light label {
-  display: block;
-  color: #8a7b73;
-  text-transform: uppercase;
-  font-size: .68rem;
-  letter-spacing: .05em;
-  font-weight: 900;
-  margin-bottom: .2rem;
-}
-
-.attr-light span {
-  color: #171717;
-  font-size: .9rem;
-  font-weight: 800;
-}
-
-.player-hero-bottom {
-  display: flex;
-  align-items: center;
-  gap: 1rem;
-  margin-top: .9rem;
-  flex-wrap: wrap;
-}
-
-.status-pill {
-  border-radius: 999px;
-  padding: .3rem .65rem;
-  font-size: .78rem;
-  font-weight: 900;
-  background: #e8f7ef;
-  color: #168653;
-}
-
-.status-pill.blesse {
-  background: #ffe8e8;
-  color: #c5283d;
-}
-
-.stars-line {
-  color: #8a7b73;
-  font-size: .85rem;
-}
-
-.stars-line span {
-  color: #f47b20;
-  font-size: 1rem;
-}
-
-.jersey-card-light,
-.light-card,
-.kpi-light,
-.compare-item-light,
-.chart-card,
-.bilan-card,
-.doc-card {
-  background: #ffffff;
-  border: 1px solid #e8e2da;
-  border-radius: 16px;
-  box-shadow: 0 8px 22px rgba(60, 30, 20, .06);
-}
-
-.jersey-card-light {
-  padding: 1rem;
-}
-
-.jersey-meta-light {
-  border-top: 1px solid #e8e2da;
-  margin-top: .8rem;
-  padding-top: .8rem;
-  color: #8a7b73;
-  font-size: .82rem;
-  display: grid;
-  gap: .5rem;
-}
-
-.jersey-meta-light b {
-  display: block;
-  color: #171717;
-  margin-top: .15rem;
-}
-
-.light-card {
-  padding: 1.1rem 1.2rem;
-  margin-bottom: 1.2rem;
-}
-
-.light-card h3,
-.compare-title-light,
-.section-head h2 {
-  font-family: "Oswald", sans-serif;
-  text-transform: uppercase;
-  color: #7a1228;
-  margin: 0 0 .9rem;
-  font-size: 1rem;
-  letter-spacing: .04em;
-}
-
-.section-head h2 {
-  font-size: 1.35rem;
-  margin-bottom: .1rem;
-}
-
-.light-card h3 span,
-.compare-title-light span {
-  color: #8a7b73;
-  font-family: "Roboto", sans-serif;
-  font-size: .75rem;
-  text-transform: none;
-  font-weight: 500;
-}
-
-.muted,
-.section-head p,
-.method-note {
-  color: #8a7b73;
-  font-size: .85rem;
-  margin: 0;
-}
-
-.admin-card {
-  margin-bottom: 1.2rem;
-}
-
-.player-tabs {
-  display: flex;
-  gap: 1rem;
-  border-bottom: 1px solid #e8e2da;
-  margin: 1.2rem 0 1rem;
-  overflow-x: auto;
-}
-
-.player-tabs button {
-  border: 0;
-  background: none;
-  color: #8a7b73;
-  font-weight: 900;
-  text-transform: uppercase;
-  font-size: .75rem;
-  padding: .8rem 0;
-  white-space: nowrap;
-}
-
-.player-tabs button.active {
-  color: #f47b20;
-  border-bottom: 2px solid #f47b20;
-}
-
-.kpi-row-light {
-  display: grid;
-  grid-template-columns: repeat(4, 1fr);
-  gap: .9rem;
-  margin-bottom: 1.2rem;
-}
-
-.kpi-light {
-  padding: 1rem;
-}
-
-.kpi-light .head {
-  color: #8a7b73;
-  font-size: .8rem;
-  font-weight: 900;
-  text-transform: uppercase;
-}
-
-.kpi-light .val {
-  font-family: "Oswald", sans-serif;
-  font-size: 2rem;
-  color: #171717;
-  font-weight: 900;
-  line-height: 1;
-  margin-top: .4rem;
-}
-
-.kpi-light .sub {
-  color: #8a7b73;
-  font-size: .8rem;
-}
-
-.player-grid {
-  display: grid;
-  gap: 1rem;
-  margin-bottom: 1.2rem;
-}
-
-.player-grid.three {
-  grid-template-columns: 1fr 1fr 1.3fr;
-}
-
-.player-grid.two {
-  grid-template-columns: 1fr 1fr;
-}
-
-.stats-grid-light {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: .8rem;
-  margin-top: 1rem;
-}
-
-.pct-row-light {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: .8rem;
-  border-top: 1px solid #e8e2da;
-  margin-top: 1rem;
-  padding-top: 1rem;
-}
-
-.stat-cell-light {
-  text-align: center;
-}
-
-.stat-cell-light .n {
-  font-family: "Oswald", sans-serif;
-  color: #7a1228;
-  font-size: 1.8rem;
-  font-weight: 900;
-}
-
-.stat-cell-light .l {
-  color: #8a7b73;
-  text-transform: uppercase;
-  font-size: .7rem;
-  font-weight: 900;
-}
-
-.temps-row {
-  display: flex;
-  gap: 1.2rem;
-  align-items: center;
-  flex-wrap: wrap;
-}
-
-.legend-list {
-  display: flex;
-  flex-direction: column;
-  gap: .5rem;
-  font-size: .85rem;
-}
-
-.legend-light {
-  display: flex;
-  align-items: center;
-  gap: .5rem;
-}
-
-.legend-light span {
-  width: 10px;
-  height: 10px;
-  border-radius: 3px;
-}
-
-.legend-light em {
-  color: #8a7b73;
-  font-style: normal;
-}
-
-.legend-light b {
-  margin-left: auto;
-  padding-left: .5rem;
-  color: #171717;
-}
-
-.phys-light {
-  width: 100%;
-  border-collapse: collapse;
-  font-size: .88rem;
-}
-
-.phys-light th {
-  text-align: left;
-  color: #8a7b73;
-  text-transform: uppercase;
-  font-size: .7rem;
-  padding-bottom: .5rem;
-}
-
-.phys-light td {
-  border-top: 1px solid #e8e2da;
-  padding: .65rem .25rem;
-  color: #171717;
-  font-weight: 700;
-}
-
-.compare-light {
-  display: grid;
-  grid-template-columns: repeat(5, 1fr);
-  gap: .8rem;
-  margin-bottom: 2rem;
-}
-
-.compare-item-light {
-  display: flex;
-  gap: .7rem;
-  padding: .9rem;
-  align-items: center;
-}
-
-.compare-item-light .icon {
-  width: 38px;
-  height: 38px;
-  border-radius: 12px;
-  color: #fff;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  flex: 0 0 auto;
-}
-
-.compare-item-light .l {
-  color: #8a7b73;
-  font-size: .75rem;
-  font-weight: 900;
-  text-transform: uppercase;
-}
-
-.compare-item-light .rang {
-  color: #171717;
-  font-weight: 900;
-  font-size: 1.2rem;
-}
-
-.compare-item-light .rang small,
-.compare-item-light .sub {
-  color: #8a7b73;
-}
-
-.compare-item-light .sub {
-  font-size: .75rem;
-}
-
-.section-head {
-  display: flex;
-  justify-content: space-between;
-  gap: 1rem;
-  align-items: flex-start;
-  margin-bottom: 1rem;
-  flex-wrap: wrap;
-}
-
-.summary-list {
-  display: grid;
-  gap: .65rem;
-}
-
-.summary-line {
-  display: flex;
-  justify-content: space-between;
-  gap: 1rem;
-  border-bottom: 1px solid #e8e2da;
-  padding-bottom: .55rem;
-}
-
-.summary-line span {
-  color: #8a7b73;
-  font-weight: 800;
-}
-
-.summary-line strong {
-  color: #171717;
-}
-
-.projection-grid {
-  display: grid;
-  grid-template-columns: repeat(2, 1fr);
-  gap: .7rem;
-  margin-bottom: .8rem;
-}
-
-.projection-box {
-  border-radius: 14px;
-  background: #fbf6ef;
-  padding: .8rem;
-  border: 1px solid #efe4da;
-}
-
-.projection-box span {
-  display: block;
-  color: #8a7b73;
-  font-size: .7rem;
-  font-weight: 900;
-  text-transform: uppercase;
-}
-
-.projection-box strong {
-  display: block;
-  color: #7a1228;
-  font-family: "Oswald", sans-serif;
-  font-size: 1.45rem;
-  margin-top: .2rem;
-}
-
-.form-mini {
-  display: grid;
-  grid-template-columns: repeat(2, 1fr);
-  gap: .7rem;
-  margin-top: 1rem;
-}
-
-.form-mini label,
-.field {
-  display: grid;
-  gap: .35rem;
-  color: #8a7b73;
-  font-size: .75rem;
-  font-weight: 900;
-  text-transform: uppercase;
-}
-
-.form-mini input,
-.form-mini select,
-.field input,
-.field select,
-.field textarea,
-.two-text textarea {
-  border: 1px solid #e8e2da;
-  border-radius: 10px;
-  padding: .65rem .75rem;
-  background: #fff;
-  color: #171717;
-  font: inherit;
-  font-size: .9rem;
-  text-transform: none;
-}
-
-.field textarea,
-.two-text textarea {
-  min-height: 90px;
-  resize: vertical;
-}
-
-.charts-stack {
-  display: grid;
-  grid-template-columns: repeat(2, 1fr);
-  gap: 1rem;
-}
-
-.chart-card {
-  padding: 1rem;
-}
-
-.chart-head {
-  display: flex;
-  justify-content: space-between;
-  gap: 1rem;
-  margin-bottom: .7rem;
-}
-
-.chart-head h3 {
-  color: #7a1228;
-  font-family: "Oswald", sans-serif;
-  margin: 0;
-  text-transform: uppercase;
-}
-
-.chart-head p {
-  color: #8a7b73;
-  margin: 0;
-  font-size: .8rem;
-}
-
-.green {
-  color: #168653;
-}
-
-.red {
-  color: #c5283d;
-}
-
-.line-evolution {
-  width: 100%;
-  height: 180px;
-  display: block;
-  overflow: visible;
-}
-
-.line-evolution line {
-  stroke: #e8e2da;
-  stroke-width: .8;
-}
-
-.line-evolution path {
-  fill: none;
-  stroke: #7a1228;
-  stroke-width: 2.2;
-  vector-effect: non-scaling-stroke;
-}
-
-.line-evolution circle {
-  fill: #f47b20;
-  vector-effect: non-scaling-stroke;
-}
-
-.chart-values {
-  display: flex;
-  justify-content: space-between;
-  color: #8a7b73;
-  font-size: .78rem;
-  font-weight: 800;
-}
-
-.empty-graph {
-  height: 180px;
-  border: 1px dashed #e8e2da;
-  border-radius: 14px;
-  display: grid;
-  place-items: center;
-  color: #8a7b73;
-  font-weight: 900;
-}
-
-.icon-btn {
-  border: 0;
-  background: transparent;
-}
-
-.bilan-grid,
-.doc-grid {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 1rem;
-}
-
-.bilan-card,
-.doc-card {
-  padding: 1rem;
-}
-
-.bilan-top {
-  display: flex;
-  justify-content: space-between;
-  gap: .6rem;
-  margin-bottom: .8rem;
-}
-
-.bilan-top span,
-.doc-card span {
-  color: #f47b20;
-  font-weight: 900;
-  text-transform: uppercase;
-  font-size: .72rem;
-}
-
-.bilan-top strong {
-  color: #7a1228;
-}
-
-.bilan-scores {
-  display: flex;
-  flex-wrap: wrap;
-  gap: .4rem;
-  margin-bottom: .75rem;
-}
-
-.score-pill {
-  background: #fbf6ef;
-  color: #8a7b73;
-  border-radius: 999px;
-  padding: .28rem .55rem;
-  font-size: .75rem;
-  font-weight: 900;
-}
-
-.score-pill b {
-  color: #7a1228;
-}
-
-.bilan-card p,
-.doc-card p,
-.doc-card small,
-.empty-card p {
-  color: #8a7b73;
-  line-height: 1.45;
-}
-
-.bilan-actions {
-  display: flex;
-  gap: .5rem;
-  flex-wrap: wrap;
-  margin-top: 1rem;
-}
-
-.bilan-actions button,
-.bilan-actions a {
-  border: 1px solid #e8e2da;
-  background: #fff;
-  color: #7a1228;
-  border-radius: 999px;
-  padding: .4rem .7rem;
-  text-decoration: none;
-  font-weight: 900;
-}
-
-.bilan-actions .danger {
-  color: #c5283d;
-}
-
-.doc-card h3 {
-  font-family: "Oswald", sans-serif;
-  color: #7a1228;
-  margin: .3rem 0;
-  text-transform: uppercase;
-}
-
-.empty-card {
-  text-align: center;
-}
-
-.modal-bg {
-  position: fixed;
-  inset: 0;
-  background: rgba(10, 8, 8, .55);
-  z-index: 1000;
-  display: grid;
-  place-items: center;
-  padding: 1rem;
-}
-
-.modal {
-  background: #fff;
-  border-radius: 18px;
-  width: min(720px, 96vw);
-  max-height: 92vh;
-  overflow: auto;
-  padding: 1rem;
-  border: 1px solid #e8e2da;
-}
-
-.modal.wide {
-  width: min(1120px, 96vw);
-}
-
-.modal-head {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  gap: 1rem;
-  margin-bottom: 1rem;
-}
-
-.modal-head h2 {
-  font-family: "Oswald", sans-serif;
-  color: #7a1228;
-  text-transform: uppercase;
-  margin: 0;
-}
-
-.modal-head button {
-  width: 36px;
-  height: 36px;
-  border-radius: 999px;
-  border: 0;
-  background: #7a1228;
-  color: #fff;
-  font-size: 1.3rem;
-}
-
-.modal-grid {
-  display: grid;
-  grid-template-columns: repeat(2, 1fr);
-  gap: .8rem;
-}
-
-.modal-actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: .7rem;
-  margin-top: 1rem;
-}
-
-.bilan-form-grid {
-  display: grid;
-  gap: 1rem;
-}
-
-.form-block {
-  border: 1px solid #e8e2da;
-  border-radius: 16px;
-  padding: 1rem;
-}
-
-.form-block h3 {
-  margin: 0 0 .8rem;
-  color: #7a1228;
-  font-family: "Oswald", sans-serif;
-  text-transform: uppercase;
-}
-
-.rating-editor {
-  display: grid;
-  gap: .5rem;
-  margin-bottom: 1rem;
-}
-
-.rating-editor h4,
-.two-text h4 {
-  margin: .3rem 0;
-  color: #171717;
-}
-
-.rating-editor label {
-  display: grid;
-  grid-template-columns: 110px 1fr 46px;
-  align-items: center;
-  gap: .6rem;
-  color: #8a7b73;
-  font-weight: 900;
-  text-transform: capitalize;
-}
-
-.two-text {
-  display: grid;
-  grid-template-columns: 120px 1fr 1fr;
-  gap: .7rem;
-  align-items: start;
-  margin-bottom: .8rem;
-}
-
-.toast-light {
-  position: fixed;
-  bottom: 1.2rem;
-  left: 50%;
-  transform: translateX(-50%);
-  background: #7a1228;
-  color: #fff;
-  padding: .7rem 1rem;
-  border-radius: 999px;
-  font-weight: 900;
-  z-index: 1200;
-  box-shadow: 0 8px 24px rgba(0,0,0,.2);
-}
-
-@media (max-width: 1180px) {
-  .player-page-light {
-    grid-template-columns: 1fr;
-  }
-
-  .player-list-side {
-    position: relative;
-    min-height: auto;
-    border-right: 0;
-    border-bottom: 1px solid #e8e2da;
-  }
-
-  .player-list {
-    display: grid;
-    grid-template-columns: repeat(3, 1fr);
-  }
-
-  .player-main {
-    max-width: none;
-  }
-}
-
-@media (max-width: 960px) {
-  .player-hero,
-  .player-grid.three,
-  .player-grid.two,
-  .charts-stack,
-  .bilan-grid,
-  .doc-grid {
-    grid-template-columns: 1fr;
-  }
-
-  .player-photo {
-    width: 100%;
-    height: 280px;
-  }
-
-  .jersey-card-light {
-    display: none;
-  }
-
-  .player-attr-grid,
-  .admin-grid,
-  .kpi-row-light,
-  .compare-light,
-  .form-mini,
-  .modal-grid,
-  .projection-grid {
-    grid-template-columns: repeat(2, 1fr);
-  }
-
-  .two-text {
-    grid-template-columns: 1fr;
-  }
-}
-
-@media (max-width: 640px) {
-  .player-main {
-    padding: 1rem;
-  }
-
-  .player-list {
-    grid-template-columns: 1fr;
-  }
-
-  .player-attr-grid,
-  .admin-grid,
-  .kpi-row-light,
-  .compare-light,
-  .form-mini,
-  .modal-grid,
-  .projection-grid {
-    grid-template-columns: 1fr;
-  }
-
-  .player-actions {
-    width: 100%;
-  }
-
-  .light-btn {
-    flex: 1;
-  }
-}
-.pa-shell{padding:24px 0 40px;color:#211c1d}.pa-montage-title{min-width:190px;border:1px solid #e8ded9;background:#fff;border-radius:12px;padding:10px 12px;font-weight:750;color:#352e30}.pa-montage-select{min-width:190px!important}.pa-montage-secondary,.pa-montage-save,.pa-montage-delete{border-radius:11px;padding:10px 12px;font-weight:900;cursor:pointer;white-space:nowrap}.pa-montage-secondary{border:1px solid #dfd1cb;background:#fff;color:#574b4e}.pa-montage-save{border:1px solid #8d1531;background:#8d1531;color:#fff}.pa-montage-delete{border:1px solid #efc8c8;background:#fff5f5;color:#b42318}.pa-montage-save:disabled,.pa-montage-delete:disabled{opacity:.45;cursor:not-allowed}.pa-montage-message{margin:-6px 0 14px;padding:10px 13px;border:1px solid #d8eadf;background:#f1faf4;color:#187746;border-radius:11px;font-size:12px;font-weight:800}.pa-head{display:flex;align-items:flex-end;justify-content:space-between;gap:20px;margin-bottom:18px}.pa-eyebrow{display:block;color:#8d1531;font-size:11px;font-weight:900;text-transform:uppercase;letter-spacing:.14em;margin-bottom:5px}.pa-head h2{margin:0;font-size:27px;letter-spacing:-.03em;color:#211c1d}.pa-head p{margin:6px 0 0;color:#83787a;font-size:13px}.pa-head-actions{display:flex;align-items:center;gap:9px;flex-wrap:wrap}.pa-head-actions select{min-width:210px;border:1px solid #e8ded9;background:#fff;border-radius:12px;padding:11px 36px 11px 13px;font-weight:700;color:#352e30}.pa-montage-launch{border:1px solid #d7a84f;background:#201b19;color:#f4c56a;border-radius:12px;padding:10px 13px;font-weight:900;cursor:pointer;white-space:nowrap}.pa-montage-launch b{display:inline-grid;place-items:center;min-width:22px;height:22px;margin-left:6px;border-radius:999px;background:#d4a24c;color:#201b19}.pa-montage-launch:disabled{opacity:.45;cursor:not-allowed}.pa-kpis{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin-bottom:18px}.pa-kpis>div{background:#fff;border:1px solid #eadfda;border-radius:15px;padding:15px 17px;box-shadow:0 7px 20px rgba(58,35,28,.04)}.pa-kpis span{display:block;color:#918486;font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:.06em}.pa-kpis strong{display:block;margin-top:5px;font-size:26px;color:#8d1531}.pa-tabs{display:flex;gap:6px;border-bottom:1px solid #eadfda;margin-bottom:16px}.pa-tabs button{border:0;background:transparent;padding:11px 14px;color:#8b7f81;font-weight:800;cursor:pointer;border-bottom:3px solid transparent}.pa-tabs button.active{color:#8d1531;border-bottom-color:#f0823f}.pa-main-grid{display:grid;grid-template-columns:1fr;gap:10px;align-items:start}.pa-court-card,.pa-summary-card,.pa-list-card,.pa-zones-card{background:#fff;border:1px solid #eadfda;border-radius:16px;box-shadow:0 8px 26px rgba(60,38,31,.045)}.pa-court-card{padding:10px}.pa-card-title{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:8px}.pa-card-title h3{margin:0;font-size:16px;color:#292224}.pa-card-title p{margin:3px 0 0;font-size:12px;color:#938789}.pa-shot-filters{display:flex;align-items:center;justify-content:flex-end;gap:7px;flex-wrap:wrap}.pa-shot-switch{display:flex;padding:3px;background:#f5efec;border-radius:10px}.pa-shot-switch.result{background:#f8f2e8}.pa-shot-switch button{border:0;background:transparent;border-radius:8px;padding:7px 11px;font-size:11px;font-weight:900;color:#786d6f;cursor:pointer}.pa-shot-switch button.active{background:#8d1531;color:#fff}.pa-shot-switch.result button.active{background:#d4a24c;color:#332414}.pa-court{position:relative;width:100%;aspect-ratio:1577/997;overflow:hidden;border-radius:8px;background:#bd8f56;display:flex;align-items:stretch}.pa-court :global(.sc),.pa-court :global(.sc-lg){width:100%!important;max-width:none!important}.pa-court :global(.sc-svg){width:100%!important;height:auto!important;aspect-ratio:1577/997}.pa-court>svg{width:100%;height:100%;display:block}.pa-shot{position:absolute;z-index:3;transform:translate(-50%,-50%);width:22px;height:22px;border-radius:50%;border:2px solid #fff;display:grid;place-items:center;color:#fff;font-size:14px;font-weight:1000;box-shadow:0 2px 7px rgba(0,0,0,.36);cursor:pointer;transition:.16s ease}.pa-shot:hover{transform:translate(-50%,-50%) scale(1.25);z-index:5}.pa-shot.made{background:#1f9d55}.pa-shot.missed{background:#df342c}.pa-legend{display:flex;align-items:center;gap:16px;padding-top:7px;color:#655a5c;font-size:12px;font-weight:700}.pa-legend span{display:flex;align-items:center;gap:7px}.pa-legend i{width:11px;height:11px;border-radius:50%;display:inline-block}.pa-legend i.made{background:#1f9d55}.pa-legend i.missed{background:#df342c}.pa-legend em{margin-left:auto;color:#9a8d90;font-style:normal}.pa-summary-card{padding:10px 12px;display:grid;grid-template-columns:150px repeat(5,minmax(0,1fr));gap:8px;align-items:stretch}.pa-summary-card h3{grid-column:1/-1;margin:0 0 2px;font-size:14px}.pa-big-rate{display:flex;align-items:center;justify-content:center;gap:7px;padding:10px;border-radius:11px;background:#8d1531;color:#fff;margin:0;min-height:58px}.pa-big-rate strong{font-size:28px;line-height:1}.pa-big-rate span{font-size:11px;font-weight:800;opacity:.82;padding:0}.pa-summary-row{display:grid;grid-template-columns:1fr auto;gap:1px 6px;padding:8px 9px;border:1px solid #f0e7e3;border-radius:10px;background:#fff;min-height:58px;align-content:center}.pa-summary-row span{font-size:12px;color:#776b6d;font-weight:700}.pa-summary-row b{font-size:16px;color:#2c2527}.pa-summary-row em{grid-column:2;font-size:10px;color:#9b8e90;font-style:normal;text-align:right}.pa-summary-row b.green{color:#1f9d55}.pa-summary-row b.red{color:#df342c}.pa-bottom-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-top:14px}.pa-list-card{padding:15px}.pa-action-row,.pa-clip-row{width:100%;display:grid;align-items:center;border:0;border-top:1px solid #f0e8e4;background:transparent;padding:11px 4px;text-align:left;cursor:pointer;color:#403638}.pa-action-row{grid-template-columns:12px minmax(0,1fr) 45px 45px 28px;gap:9px}.pa-action-row:hover,.pa-clip-row:hover{background:#fbf7f5}.pa-action-main,.pa-clip-row>span:nth-child(2){min-width:0}.pa-action-main b,.pa-clip-row b{display:block;font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.pa-action-main em,.pa-clip-row em,.pa-clip-row small{display:block;color:#998c8e;font-size:10px;font-style:normal;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.pa-result-dot{width:9px;height:9px;border-radius:50%;background:#aaa}.pa-result-dot.made{background:#1f9d55}.pa-result-dot.missed,.pa-result-dot.perte{background:#df342c}.pa-result-dot.intercept,.pa-result-dot.fauteProv{background:#e6a21a}.pa-clip-row{grid-template-columns:34px minmax(0,1fr) auto;gap:10px}.pa-play{width:30px;height:30px;border-radius:50%;display:grid;place-items:center;background:#f8e9df;color:#8d1531;font-size:10px}.pa-zones-card{padding:15px;margin-top:14px}.pa-zone-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:9px}.pa-zone-grid button{border:1px solid #eee2dd;background:#fcf9f7;border-radius:12px;padding:13px;text-align:left;cursor:pointer}.pa-zone-grid button:hover{border-color:#c9977c;background:#fff}.pa-zone-grid span{display:block;color:#817476;font-size:10px;font-weight:800}.pa-zone-grid strong{display:block;font-size:23px;color:#8d1531;margin-top:4px}.pa-zone-grid em{font-style:normal;font-size:11px;color:#998d8f}.pa-full-list{margin-top:2px}.pa-tf-card{background:#fff;border:1px solid #eadfda;border-radius:16px;padding:18px;box-shadow:0 8px 26px rgba(60,38,31,.045)}.pa-tf-head{align-items:flex-start}.pa-tf-global{min-width:185px;background:#8d1531;color:#fff;border-radius:14px;padding:12px 15px;text-align:right}.pa-tf-global span,.pa-tf-global em{display:block}.pa-tf-global span{font-size:10px;font-weight:900;text-transform:uppercase;letter-spacing:.08em;opacity:.78}.pa-tf-global strong{display:block;font-size:31px;line-height:1.05;margin:3px 0}.pa-tf-global em{font-size:10px;font-style:normal;opacity:.78}.pa-tf-table-wrap{overflow:auto;border:1px solid #eee3de;border-radius:13px}.pa-tf-table{width:100%;border-collapse:collapse;min-width:890px}.pa-tf-table th{background:#f8f3f0;color:#87797c;font-size:10px;text-transform:uppercase;letter-spacing:.06em;text-align:left;padding:11px 10px;border-bottom:1px solid #eadfda}.pa-tf-table td{padding:12px 10px;border-bottom:1px solid #f1e9e5;color:#3e3537;font-size:12px;vertical-align:middle}.pa-tf-table tbody tr:last-child td{border-bottom:0}.pa-tf-table tbody tr:hover{background:#fcf8f6}.pa-tf-name{border:0;background:transparent;padding:0;text-align:left;cursor:pointer;color:#2f282a}.pa-tf-name strong,.pa-tf-name span{display:block}.pa-tf-name strong{font-size:13px}.pa-tf-name span{font-size:10px;color:#9a8c8f;margin-top:2px}.pa-ppp{display:inline-flex;min-width:48px;justify-content:center;border-radius:999px;padding:5px 8px;font-weight:900}.pa-ppp.good{background:#e5f6eb;color:#167a43}.pa-ppp.mid{background:#fff3d9;color:#9a6700}.pa-ppp.low{background:#fde8e5;color:#bd2d25}.pa-tf-table td small{display:block;color:#9a8d90;margin-top:2px}.pa-tf-results{display:flex;flex-wrap:wrap;gap:6px}.pa-tf-results button{display:inline-flex;align-items:center;gap:4px;border:1px solid transparent;border-radius:999px;padding:5px 8px;font-size:10px;font-weight:900;cursor:pointer;transition:.15s ease}.pa-tf-results button span{font-weight:800}.pa-tf-results button b{font-size:10px}.pa-tf-results button:hover:not(:disabled){transform:translateY(-1px);filter:brightness(.97);box-shadow:0 3px 8px rgba(45,28,25,.10)}.pa-tf-results button:disabled{opacity:.35;cursor:default}.pa-tf-results .made{background:#e5f6eb;color:#167a43;border-color:#c9ead5}.pa-tf-results .missed{background:#fde8e5;color:#bd2d25;border-color:#f5cfca}.pa-tf-results .foul{background:#fff3d9;color:#9a6700;border-color:#f4dfaa}.pa-tf-results .turnover{background:#eee9f7;color:#624596;border-color:#ddd2ee}.pa-tf-results .steal{background:#e6f1fb;color:#216aa2;border-color:#cbdff2}.pa-tf-results .other{background:#f2eeec;color:#6f6466;border-color:#e4dcda}.pa-tf-open{border:1px solid #dfcfc7;background:#fff;color:#8d1531;border-radius:9px;padding:7px 10px;font-weight:900;font-size:10px;cursor:pointer;white-space:nowrap}.pa-tf-open:hover{background:#8d1531;color:#fff;border-color:#8d1531}.pa-tf-note{margin-top:11px;color:#8a7d80;font-size:11px}.pa-tf-note b{color:#8d1531}.pa-clips-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:13px}.pa-clip-card{border:1px solid #eadfda;background:#fff;border-radius:15px;padding:0;overflow:hidden;text-align:left;cursor:pointer}.pa-clip-cover{height:108px;background:linear-gradient(135deg,#281f21,#8d1531);display:grid;place-items:center}.pa-clip-cover i{width:42px;height:42px;border-radius:50%;display:grid;place-items:center;background:#fff;color:#8d1531;font-style:normal}.pa-clip-info{display:block;padding:13px}.pa-clip-info b,.pa-clip-info em,.pa-clip-info small{display:block}.pa-clip-info b{font-size:13px}.pa-clip-info em{font-style:normal;color:#8d1531;font-size:11px;font-weight:800;margin-top:3px}.pa-clip-info small{color:#95888a;margin-top:6px}.pa-main-grid{grid-template-columns:1fr}.pa-court-card,.pa-summary-card,.pa-tf-card{border-color:#eadfd8;box-shadow:0 10px 28px rgba(60,30,20,.06)}.pa-court{background:#b98b54;max-height:none}.pa-court :global(text){display:none!important}.pa-tf-table th{background:#6b1a2c;color:#fff;padding:13px 11px}.pa-tf-table th:first-child{background:#561421}.pa-tf-table td{padding:13px 11px}.pa-tf-table tbody tr:nth-child(even){background:#fcfaf9}.pa-tf-name strong{color:#6b1a2c}.pa-kpis>div{min-height:92px}.pa-tabs button{font-size:12px}.pa-montage-message{font-size:13px}.pa-shell .empty-small{border:1px dashed #d4a24c;border-radius:14px;background:#fff8ef;padding:18px;color:#6b1a2c;font-weight:800}@media(max-width:1050px){.pa-main-grid{grid-template-columns:1fr}.pa-summary-card{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}.pa-summary-card h3{grid-column:1/-1}.pa-big-rate{grid-row:2/4}.pa-kpis{grid-template-columns:repeat(2,1fr)}}@media(max-width:760px){.pa-tf-head{flex-direction:column}.pa-tf-global{width:100%;text-align:left}.pa-head{align-items:flex-start;flex-direction:column}.pa-head-actions,.pa-head-actions select{width:100%}.pa-bottom-grid,.pa-clips-grid{grid-template-columns:1fr}.pa-zone-grid{grid-template-columns:repeat(2,1fr)}.pa-summary-card{display:block}.pa-kpis{grid-template-columns:1fr 1fr}.pa-tabs{overflow:auto}.pa-tabs button{white-space:nowrap}.pa-card-title{align-items:flex-start;flex-wrap:wrap}.pa-shot-filters{width:100%;justify-content:flex-start}.pa-court{aspect-ratio:1577/997}}
-
-`;
-

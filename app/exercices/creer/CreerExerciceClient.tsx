@@ -210,7 +210,7 @@ export default function CreerExerciceClient() {
    */
   const applyAIImport = async (result: AiExerciseImport) => {
     const imported = importToPlaquetteSchema(result);
-    const previews = imported ? renderSchemaPreviews(imported) : [];
+    const previews = imported ? await renderSchemaPreviews(imported) : [];
 
     setEx((current) => {
       const next: Ex = { ...current };

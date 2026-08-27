@@ -139,37 +139,6 @@ function makeInkContext(canvas: HTMLCanvasElement, kind: "half" | "full"): InkCo
   };
 }
 
-/** Teinte 0..360 d'un pixel, -1 si trop peu saturé pour être fiable. */
-function hueAt(ctx: InkContext, x: number, y: number): number {
-  const [r, g, b] = pixelAt(ctx.px, x, y);
-  const mx = Math.max(r, g, b);
-  const mn = Math.min(r, g, b);
-  if (mx === 0 || (mx - mn) / mx < 0.25 || mx < 60) return -1;
-  const d = mx - mn;
-  let h: number;
-  if (mx === r) h = ((g - b) / d) % 6;
-  else if (mx === g) h = (b - r) / d + 2;
-  else h = (r - g) / d + 4;
-  h *= 60;
-  return (h + 360) % 360;
-}
-
-/**
- * Deux pixels d'encre appartiennent au même élément seulement si leur teinte
- * est compatible. Sans cela, un arc ROUGE tracé contre un jeton NOIR fusionne
- * avec lui : le blob devient trop gros pour être un joueur et finit classé en
- * trajectoire. C'est exactement ce qui faisait chuter le nombre de joueurs
- * détectés sur une fiche où chaque joueur est doublé d'un arc de couleur.
- */
-function sameElement(ctx: InkContext, ax: number, ay: number, bx: number, by: number): boolean {
-  const ha = hueAt(ctx, ax, ay);
-  const hb = hueAt(ctx, bx, by);
-  if (ha < 0 && hb < 0) return true; // deux neutres (noir / gris)
-  if (ha < 0 || hb < 0) return false; // neutre vs coloré : éléments distincts
-  const delta = Math.abs(ha - hb);
-  return Math.min(delta, 360 - delta) < 45;
-}
-
 function isInk(ctx: InkContext, x: number, y: number): boolean {
   const xx = Math.round(x);
   const yy = Math.round(y);
@@ -237,10 +206,8 @@ function extractComponents(ctx: InkContext, limit = 900): Component[] {
           if (nx < 0 || ny < 0 || nx >= gw || ny >= gh) continue;
           const ni = ny * gw + nx;
           if (seen[ni]) continue;
-          if (!isInk(ctx, nx * step, ny * step)) { seen[ni] = 1; continue; }
-          if (!sameElement(ctx, x, y, nx * step, ny * step)) continue;
           seen[ni] = 1;
-          stack.push([nx, ny]);
+          if (isInk(ctx, nx * step, ny * step)) stack.push([nx, ny]);
         }
       }
 
@@ -347,7 +314,81 @@ function componentPolyline(component: Component, buckets = 22): Polyline | null 
 const isOrange = (r: number, g: number, b: number) =>
   r > 120 && r > b * 1.5 && g > b && g < r * 0.92 && saturationOf(r, g, b) > 0.35;
 
+const isDefenseRed = (r: number, g: number, b: number) =>
+  r > 115 && r > g * 1.28 && r > b * 1.22 && saturationOf(r, g, b) > 0.28;
+
 const dist = (a: { x: number; y: number }, b: { x: number; y: number }) => Math.hypot(a.x - b.x, a.y - b.y);
+
+function hasDefenseArc(ctx: InkContext, candidate: Component): boolean {
+  const padX = Math.max(3, candidate.bw * 0.7);
+  const x0 = Math.max(0, Math.floor(candidate.x0 - padX));
+  const x1 = Math.min(ctx.px.w - 1, Math.ceil(candidate.x1 + padX));
+  const y0 = Math.max(0, Math.floor(candidate.y0 - candidate.bh * 0.95));
+  const y1 = Math.min(ctx.px.h - 1, Math.ceil(candidate.y0 + candidate.bh * 0.55));
+  const step = Math.max(1, ctx.step);
+
+  let red = 0;
+  let redAbove = 0;
+  let sampled = 0;
+  let left = false;
+  let right = false;
+  const centerX = candidate.cx;
+  const topGate = candidate.cy - candidate.bh * 0.05;
+
+  for (let y = y0; y <= y1; y += step) {
+    for (let x = x0; x <= x1; x += step) {
+      const [r, g, b] = pixelAt(ctx.px, x, y);
+      sampled += 1;
+      if (!isDefenseRed(r, g, b)) continue;
+      red += 1;
+      if (y < topGate) {
+        redAbove += 1;
+        if (x < centerX - candidate.bw * 0.18) left = true;
+        if (x > centerX + candidate.bw * 0.18) right = true;
+      }
+    }
+  }
+
+  // Le symbole défense FIBA entoure le numéro d'un arc rouge : on exige du
+  // rouge au-dessus ET des deux côtés. Cela évite de classer un simple chiffre
+  // rouge ou un plot comme défenseur.
+  return sampled > 0 && red >= 5 && redAbove >= 4 && left && right;
+}
+
+type OrangeKind = "ball" | "cone" | "unknown";
+
+function classifyOrange(component: Component): OrangeKind {
+  const ratio = component.bh / Math.max(1, component.bw);
+  const inverse = component.bw / Math.max(1, component.bh);
+
+  // Mesure la silhouette : un plot est nettement plus large à sa base qu'à
+  // son sommet ; un ballon reste à peu près rond.
+  const topLimit = component.y0 + component.bh * 0.38;
+  const bottomLimit = component.y0 + component.bh * 0.68;
+  const topXs = component.points.filter((p) => p.y <= topLimit).map((p) => p.x);
+  const bottomXs = component.points.filter((p) => p.y >= bottomLimit).map((p) => p.x);
+  const width = (xs: number[]) => xs.length ? Math.max(...xs) - Math.min(...xs) : 0;
+  const topW = width(topXs);
+  const bottomW = width(bottomXs);
+  const triangular = bottomW > Math.max(2, topW * 1.35) && ratio > 0.75;
+
+  if (triangular) return "cone";
+  if (ratio > 0.72 && ratio < 1.38 && inverse < 1.38 && component.fillRatio > 0.16) return "ball";
+  return "unknown";
+}
+
+function arrowEvidence(poly: Polyline): { hasArrow: boolean; reverse: boolean } {
+  if (poly.density.length < 4) return { hasArrow: false, reverse: false };
+  const d = poly.density;
+  const middle = d.slice(Math.max(1, Math.floor(d.length * 0.25)), Math.max(2, Math.ceil(d.length * 0.75)));
+  const sorted = [...middle].sort((a, b) => a - b);
+  const baseline = sorted[Math.floor(sorted.length / 2)] || 1;
+  const headSpan = Math.max(...d.slice(0, Math.min(3, d.length)));
+  const tailSpan = Math.max(...d.slice(Math.max(0, d.length - 3)));
+  const firstStrong = headSpan >= Math.max(3, baseline * 1.55) && headSpan >= tailSpan * 1.18;
+  const lastStrong = tailSpan >= Math.max(3, baseline * 1.55) && tailSpan >= headSpan * 1.18;
+  return { hasArrow: firstStrong || lastStrong, reverse: firstStrong && !lastStrong };
+}
 
 export async function analyseGraphic(
   source: HTMLCanvasElement,
@@ -439,7 +480,9 @@ export async function analyseGraphic(
     });
 
     const raw = read?.text ?? "";
-    const isDefense = /x/i.test(raw);
+    // Les fiches FIBA utilisées ici codent les défenseurs par un arc rouge
+    // autour/au-dessus du numéro. L'OCR d'un X reste un signal secondaire.
+    const isDefense = hasDefenseArc(ink, candidate) || /x/i.test(raw);
     const digits = raw.replace(/\D/g, "").slice(0, 2);
 
     let label: string;
@@ -458,18 +501,13 @@ export async function analyseGraphic(
       reject("numéro de joueur", "chiffre illisible → numéro provisoire à corriger");
     }
 
-    // Forme : un carré remplit ses coins, pas un rond.
-    const corners = [
-      { x: candidate.x0 + candidate.bw * 0.12, y: candidate.y0 + candidate.bh * 0.12 },
-      { x: candidate.x1 - candidate.bw * 0.12, y: candidate.y0 + candidate.bh * 0.12 },
-      { x: candidate.x0 + candidate.bw * 0.12, y: candidate.y1 - candidate.bh * 0.12 },
-      { x: candidate.x1 - candidate.bw * 0.12, y: candidate.y1 - candidate.bh * 0.12 },
-    ];
-    const filledCorners = corners.filter((corner) => isInk(ink, corner.x, corner.y)).length;
-
-    const nearOrange = orangeCandidates.some(
-      (orange) => Math.hypot(orange.cx - candidate.cx, orange.cy - candidate.cy) < Math.max(candidate.bw, candidate.bh) * 1.3
-    );
+    // Règle produit MyBasket : tous les attaquants importés sont des ronds.
+    // Les défenseurs utilisent aussi le shape circle ; leur rendu spécifique est
+    // déterminé par team='def' dans PlaquetteClient.tsx.
+    const nearBall = orangeCandidates.some((orange) => {
+      if (classifyOrange(orange) !== "ball") return false;
+      return Math.hypot(orange.cx - candidate.cx, orange.cy - candidate.cy) < Math.max(candidate.bw, candidate.bh) * 1.75;
+    });
 
     const key = `${keyPrefix}p${players.length + 1}`;
     players.push({
@@ -478,8 +516,8 @@ export async function analyseGraphic(
       team: isDefense ? "def" : "att",
       x: candidatePoint.x,
       y: candidatePoint.y,
-      shape: filledCorners >= 3 ? "square" : "circle",
-      hasBall: nearOrange,
+      shape: "circle",
+      hasBall: nearBall,
       labelConfident,
     });
     playerPixel.push({ key, x: candidate.cx, y: candidate.cy });
@@ -490,16 +528,20 @@ export async function analyseGraphic(
   for (const candidate of orangeCandidates) {
     if (objects.length >= MAX_OBJECTS) break;
     const point = norm(candidate.cx, candidate.cy);
-    const attached = players.some((player) => dist({ x: player.x, y: player.y }, point) < 0.03 && player.hasBall);
-    if (attached) continue; // le ballon est déjà porté par le joueur
+    const kind = classifyOrange(candidate);
+    if (kind === "unknown") {
+      reject("objet orange", "forme trop ambiguë pour décider ballon ou plot");
+      continue;
+    }
 
-    const ratio = candidate.bh / Math.max(1, candidate.bw);
-    // Un cône est un triangle plus haut que large, un ballon est rond.
-    objects.push({
-      kind: ratio > 1.15 && candidate.fillRatio < 0.7 ? "cone" : "ball",
-      x: point.x,
-      y: point.y,
-    });
+    if (kind === "ball") {
+      const attached = players.some(
+        (player) => player.hasBall && dist({ x: player.x, y: player.y }, point) < 0.045
+      );
+      if (attached) continue; // le ballon est porté par le joueur, pas dupliqué en objet
+    }
+
+    objects.push({ kind, x: point.x, y: point.y });
   }
 
   /* ------------------------------------------------------------- textes */
@@ -621,17 +663,25 @@ export async function analyseGraphic(
       reject("trajectoire", `limite de ${MAX_LINES} tracés par schéma atteinte`);
       return;
     }
+
+    const arrow = arrowEvidence(poly);
+    // Ne jamais inventer une trajectoire : cut/pass/dribble/shoot exigent une
+    // vraie pointe de flèche détectée. Un écran est la seule exception car son
+    // symbole natif se termine par un T et non par une flèche.
+    if (kind !== "screen" && !arrow.hasArrow) {
+      reject("trajectoire", "aucune pointe de flèche fiable détectée");
+      return;
+    }
+
     let ordered = poly.points;
-    // L'extrémité la plus « épaisse » porte la pointe de flèche : c'est l'arrivée.
-    const head = poly.density[0] || 1;
-    const tail = poly.density[poly.density.length - 1] || 1;
-    if (head > tail * 1.5) ordered = [...ordered].reverse();
+    if (arrow.reverse) ordered = [...ordered].reverse();
 
     const start = ordered[0];
     const end = ordered[ordered.length - 1];
     const fromPlayer = nearestPlayer(start, unit * 0.13);
     const toPlayer = kind === "pass" ? nearestPlayer(end, unit * 0.11) : undefined;
 
+    void freeform;
     actions.push({
       action: kind,
       fromPlayer,
@@ -639,7 +689,8 @@ export async function analyseGraphic(
       from: norm(start.x, start.y),
       to: norm(end.x, end.y),
       order: actions.length + 1,
-      points: freeform ? ordered.map((p) => norm(p.x, p.y)) : undefined,
+      // Conserver la géométrie source pour que Plaquette puisse recréer la courbe.
+      points: ordered.map((p) => norm(p.x, p.y)),
     });
   };
 

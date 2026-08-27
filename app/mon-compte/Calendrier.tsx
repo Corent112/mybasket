@@ -53,9 +53,6 @@ type Team = {
   name: string;
   logoUrl?: string;
   players: Player[];
-  ownerUserId?: string | null;
-  isShared?: boolean;
-  collaborationPermissions?: Record<string, boolean> | null;
 };
 
 type CalendarDbRow = Record<string, unknown>;
@@ -84,12 +81,6 @@ function normalizeTeamForCalendar(team: any): Team {
   return {
     id: String(team.id ?? ""),
     name: String(team.nom || team.name || team.teamName || "Équipe"),
-    ownerUserId: team.ownerUserId || team.user_id || null,
-    isShared: team.isShared === true,
-    collaborationPermissions:
-      team.collaborationPermissions && typeof team.collaborationPermissions === "object"
-        ? team.collaborationPermissions
-        : null,
     logoUrl: String(
       team.logo ||
         team.logoUrl ||
@@ -258,17 +249,7 @@ export default function MonCalendrier() {
       const loadedTeams = await getTeams();
       let normalizedTeams = (loadedTeams ?? [])
         .map(normalizeTeamForCalendar)
-        .filter(
-          (team) =>
-            Boolean(team.id) &&
-            (
-              // Le coach principal voit toujours le calendrier de son équipe.
-              !team.isShared ||
-              // Un collaborateur ne le voit QUE si la case
-              // "Séances & calendrier" lui a été accordée.
-              team.collaborationPermissions?.sessions === true
-            ),
-        );
+        .filter((team) => team.id);
 
       const teamIds = normalizedTeams.map((team) => team.id);
       if (teamIds.length > 0) {
@@ -321,59 +302,28 @@ export default function MonCalendrier() {
       return;
     }
 
-    const loadedTeams = await getTeams().catch(() => []);
-    const calendarTeamIds = (loadedTeams ?? [])
-      .filter(
-        (team: any) =>
-          team?.isShared !== true ||
-          team?.collaborationPermissions?.sessions === true,
-      )
-      .map((team: any) => String(team?.id || ""))
-      .filter(Boolean);
-
-    const ownQuery = supabase
+    const { data, error } = await supabase
       .from("calendar_events")
       .select("*")
       .or(`user_id.eq.${user.id},owner_id.eq.${user.id}`)
       .order("event_date", { ascending: true })
       .order("start_time", { ascending: true });
 
-    const [ownResult, teamResult] = await Promise.all([
-      ownQuery,
-      calendarTeamIds.length
-        ? supabase
-            .from("calendar_events")
-            .select("*")
-            .in("team_id", calendarTeamIds)
-            .order("event_date", { ascending: true })
-            .order("start_time", { ascending: true })
-        : Promise.resolve({ data: [], error: null }),
-    ]);
-
-    if (ownResult.error || teamResult.error) {
-      const error = ownResult.error || teamResult.error;
-      console.error("Erreur chargement calendrier:", error);
+    if (error) {
+      console.error("Erreur chargement calendrier:", {
+        code: error.code,
+        message: error.message,
+        details: error.details,
+        hint: error.hint,
+      });
       setEvents([]);
       setLoading(false);
       return;
     }
 
-    const rowsById = new Map<string, CalendarDbRow>();
-    for (const row of [
-      ...((ownResult.data ?? []) as CalendarDbRow[]),
-      ...((teamResult.data ?? []) as CalendarDbRow[]),
-    ]) {
-      const id = String((row as Record<string, unknown>).id || "");
-      if (id) rowsById.set(id, row);
-    }
-
-    const normalizedEvents: CalEvent[] = Array.from(rowsById.values())
-      .map((row) => normalizeCalendarRow(row))
-      .sort(
-        (a, b) =>
-          a.date.localeCompare(b.date) ||
-          String(a.time || "").localeCompare(String(b.time || "")),
-      );
+    const normalizedEvents: CalEvent[] = ((data ?? []) as CalendarDbRow[]).map(
+      (row) => normalizeCalendarRow(row),
+    );
 
     const sessionIds: string[] = normalizedEvents
       .map((event: CalEvent) => event.sessionId)
@@ -459,27 +409,10 @@ export default function MonCalendrier() {
       return;
     }
 
-    const editingEvent = events.find((event) => event.id === editingId);
-    const targetTeam =
-      teams.find((team) => team.id === fTeam) ||
-      teams.find((team) => team.id === editingEvent?.teamId) ||
-      null;
-    const teamOwnerId = targetTeam?.ownerUserId || user.id;
-
-    if (
-      targetTeam?.isShared &&
-      targetTeam.collaborationPermissions?.sessions !== true
-    ) {
-      window.alert(
-        "Le coach principal ne t’a pas donné accès aux séances et au calendrier de cette équipe.",
-      );
-      return;
-    }
-
     const payload = {
       user_id: user.id,
-      owner_id: teamOwnerId,
-      title: `${selectedTeam?.name || editingEvent?.teamName || "Équipe"} • ${fTitle.trim() || "Entraînement"}`,
+      owner_id: user.id,
+      title: `${selectedTeam?.name || events.find((event) => event.id === editingId)?.teamName || "Équipe"} • ${fTitle.trim() || "Entraînement"}`,
       theme: fTitle.trim() || "Entraînement",
       description: fNotes || null,
       event_date: fDate,
@@ -510,7 +443,8 @@ export default function MonCalendrier() {
       const { error } = await supabase
         .from("calendar_events")
         .update(payload)
-        .eq("id", editingId);
+        .eq("id", editingId)
+        .or(`user_id.eq.${user.id},owner_id.eq.${user.id}`);
 
       if (error) {
         console.error("Erreur modification événement:", {
@@ -594,17 +528,7 @@ export default function MonCalendrier() {
 
   const deleteEvent = async () => {
     if (!editingId) return;
-
-    const eventToDelete = events.find((event) => event.id === editingId);
-    if (!eventToDelete) return;
-
-    const linkedSessionId = eventToDelete.sessionId;
-    const confirmed = window.confirm(
-      linkedSessionId
-        ? "Supprimer définitivement cette séance ? Elle disparaîtra du calendrier, de la fiche équipe et de toutes les statistiques de séance."
-        : "Supprimer cet événement ?",
-    );
-    if (!confirmed) return;
+    if (!window.confirm("Supprimer cet événement ?")) return;
 
     const {
       data: { user },
@@ -616,147 +540,11 @@ export default function MonCalendrier() {
       return;
     }
 
-    if (linkedSessionId) {
-      // Vérifie explicitement que la séance appartient bien à l'utilisateur courant.
-      // Le compte CEO/superadmin ne reçoit aucun passe-droit dans cet espace personnel.
-      const { data: linkedSession, error: sessionLookupError } = await supabase
-        .from("practice_sessions")
-        .select("id, user_id, owner_id, team_id")
-        .eq("id", linkedSessionId)
-        .maybeSingle();
-
-      if (sessionLookupError) {
-        console.error("Erreur vérification séance liée:", sessionLookupError);
-        window.alert(`Impossible de vérifier la séance : ${sessionLookupError.message}`);
-        return;
-      }
-
-      if (linkedSession) {
-        const ownerIds = [linkedSession.user_id, linkedSession.owner_id]
-          .map((value) => String(value || ""))
-          .filter(Boolean);
-        const isSessionOwner = ownerIds.includes(user.id);
-
-        if (!isSessionOwner && linkedSession.team_id) {
-          const { data: canEditSession, error: permissionError } =
-            await supabase.rpc("team_member_has_permission", {
-              p_team_id: linkedSession.team_id,
-              p_permission: "sessions",
-            });
-
-          if (permissionError || canEditSession !== true) {
-            window.alert("Tu n’as pas l’autorisation de supprimer cette séance.");
-            return;
-          }
-        } else if (!isSessionOwner && !linkedSession.team_id) {
-          window.alert("Cette séance ne t’appartient pas.");
-          return;
-        }
-
-        const sessionChildren = [
-          "practice_session_attendance",
-          "practice_session_players",
-          "practice_session_exercises",
-        ];
-
-        for (const table of sessionChildren) {
-          const { error: childError } = await supabase
-            .from(table)
-            .delete()
-            .eq("session_id", linkedSessionId);
-
-          if (childError) {
-            const optionalTableMissing =
-              childError.code === "PGRST204" ||
-              childError.code === "PGRST205" ||
-              childError.message?.includes("schema cache") ||
-              childError.message?.includes("Could not find");
-
-            if (!optionalTableMissing) {
-              console.error(`Erreur suppression ${table}:`, childError);
-              window.alert(
-                `Impossible de supprimer complètement la séance : ${childError.message}`,
-              );
-              return;
-            }
-          }
-        }
-
-        const { data: deletedSessionRows, error: sessionDeleteError } = await supabase
-          .from("practice_sessions")
-          .delete()
-          .eq("id", linkedSessionId)
-          .select("id");
-
-        if (sessionDeleteError) {
-          console.error("Erreur suppression séance liée:", sessionDeleteError);
-          window.alert(
-            `Impossible de supprimer la séance de MyBasket : ${sessionDeleteError.message}`,
-          );
-          return;
-        }
-
-        if (!deletedSessionRows || deletedSessionRows.length === 0) {
-          window.alert(
-            "La séance n’a pas été supprimée. Vérifie les droits Supabase/RLS avant de réessayer.",
-          );
-          return;
-        }
-      }
-
-      // Supprime toutes les représentations calendrier de cette même séance
-      // appartenant à l'utilisateur courant.
-      const { error: calendarDeleteError } = await supabase
-        .from("calendar_events")
-        .delete()
-        .eq("session_id", linkedSessionId);
-
-      if (calendarDeleteError) {
-        console.error("Erreur suppression calendrier séance:", calendarDeleteError);
-        window.alert(
-          `La séance a été supprimée, mais le calendrier n’a pas pu être nettoyé : ${calendarDeleteError.message}`,
-        );
-        await loadEvents();
-        return;
-      }
-
-      // Nettoyage des anciens caches locaux historiques pour empêcher toute réapparition
-      // d'une séance supprimée sur un navigateur ayant utilisé une ancienne version de MyBasket.
-      if (typeof window !== "undefined") {
-        for (const key of [
-          "mybasket_team_practice_sessions",
-          "mybasket_sessions",
-          "mybasket_seances",
-          "practice_sessions",
-        ]) {
-          try {
-            const parsed = JSON.parse(window.localStorage.getItem(key) || "[]");
-            if (!Array.isArray(parsed)) continue;
-            const cleaned = parsed.filter(
-              (row: Record<string, unknown>) => String(row?.id || "") !== linkedSessionId,
-            );
-            if (cleaned.length !== parsed.length) {
-              window.localStorage.setItem(key, JSON.stringify(cleaned));
-            }
-          } catch {
-            // Ancien cache illisible : on l'ignore, Supabase reste la source unique.
-          }
-        }
-      }
-
-      setEvents((previous) =>
-        previous.filter((event) => event.sessionId !== linkedSessionId),
-      );
-      setOpen(false);
-      return;
-    }
-
-    // Événement simple : on ne touche à aucune séance, aucun match, aucune équipe ni aucun joueur.
-    const { data: deletedEventRows, error } = await supabase
+    const { error } = await supabase
       .from("calendar_events")
       .delete()
       .eq("id", editingId)
-      .select("id");
+      .or(`user_id.eq.${user.id},owner_id.eq.${user.id}`);
 
     if (error) {
       console.error("Erreur suppression événement:", {
@@ -769,12 +557,7 @@ export default function MonCalendrier() {
       return;
     }
 
-    if (!deletedEventRows || deletedEventRows.length === 0) {
-      window.alert("L'événement n'a pas été supprimé.");
-      return;
-    }
-
-    setEvents((previous) => previous.filter((event) => event.id !== editingId));
+    await loadEvents();
     setOpen(false);
   };
 
@@ -1003,15 +786,28 @@ export default function MonCalendrier() {
               <div className="cal-fld">
                 <label>Fiche séance</label>
                 {editingId && events.find((event) => event.id === editingId)?.sessionId ? (
-                  <button
-                    type="button"
-                    className="cal-open-session"
-                    onClick={() => {
-                      if (editingId) void consultSessionPdf(editingId);
-                    }}
-                  >
-                    Consulter la fiche séance
-                  </button>
+                  <>
+                    <button
+                      type="button"
+                      className="cal-open-session"
+                      onClick={() => {
+                        if (editingId) void consultSessionPdf(editingId);
+                      }}
+                    >
+                      Consulter la fiche séance
+                    </button>
+                    <button
+                      type="button"
+                      className="cal-open-session cal-review-session"
+                      onClick={() => {
+                        const event = events.find((item) => item.id === editingId);
+                        if (!event?.sessionId) return;
+                        window.location.assign(`/seances/${event.sessionId}/evaluation?calendarEventId=${event.id}`);
+                      }}
+                    >
+                      ✅ Auto-évaluation
+                    </button>
+                  </>
                 ) : (
                   <div className="cal-attach">
                     <label className="cal-attach-btn">📎 Ajouter une pièce jointe<input type="file" accept=".pdf,image/*,.doc,.docx,.txt" hidden onChange={(e) => onAttach(e.target.files?.[0])} /></label>

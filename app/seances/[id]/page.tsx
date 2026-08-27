@@ -137,20 +137,11 @@ export default function SeanceDetailPage() {
   async function loadSession(sessionId: string) {
     setReady(false);
 
-    // ISOLATION · une seance privee n'est lisible que par son proprietaire.
-    // Les seances publiques (modeles MyBasket) restent accessibles a tous.
-    const { data: { user } } = await supabase.auth.getUser();
-
-    let sessionQuery = supabase
+    const { data: sessionData, error: sessionError } = await supabase
       .from("practice_sessions")
       .select("*")
-      .eq("id", sessionId);
-
-    sessionQuery = user
-      ? sessionQuery.or(`user_id.eq.${user.id},visibility.eq.public`)
-      : sessionQuery.eq("visibility", "public");
-
-    const { data: sessionData, error: sessionError } = await sessionQuery.maybeSingle();
+      .eq("id", sessionId)
+      .maybeSingle();
 
     if (sessionError) {
       console.error(sessionError);
@@ -397,6 +388,10 @@ export default function SeanceDetailPage() {
         <div className="topbar-actions">
           <button onClick={() => router.push(`/seances/${id}/bilan`)}>
             📊 Bilan séance
+          </button>
+
+          <button onClick={() => router.push(`/seances/${id}/evaluation`)}>
+            ✅ Auto-évaluation
           </button>
 
           <button onClick={generatePdf} disabled={generatingPdf}>
