@@ -5011,7 +5011,18 @@ export default function PriseStatsProPage() {
     (NEEDS_PLAYER_DEF.includes(draft.actionType) ||
       CAN_TAG_PLAYER_DEF.includes(draft.actionType))
   ) {
-    commit({ ...draft, playerId: id });
+    const d = { ...draft, playerId: id };
+
+    // CONTRE : on ne valide pas immédiatement.
+    // On demande d'abord si le ballon part en touche ou si l'adversaire
+    // récupère la balle. Dans les deux cas il conserve la possession.
+    if (draft.actionType === "contre") {
+      setDraft(d);
+      setStage("rebound");
+      return;
+    }
+
+    commit(d);
     return;
   }
 
@@ -5098,6 +5109,15 @@ export default function PriseStatsProPage() {
   const rebPick = (id: string) => {
     markClipEndNow();
     const d = { ...draft, reboundType: id };
+
+    // Après un contre, "Touche" et "Récupération adverse" terminent l'action
+    // contre tout en conservant la possession adverse. reboundNext() garde donc
+    // le contexte en DÉFENSE, puis commit() reprend le workflow normal.
+    if (d.actionType === 'contre' && d.context === 'defense') {
+      commit(d);
+      return;
+    }
+
     if (codingMode === 'live') {
       commit(d);
       return;
@@ -7816,6 +7836,35 @@ export default function PriseStatsProPage() {
       case 'zone':
         return <>{head('Où ?', 'Cliquez directement sur le terrain (shot chart)')}<div className="tip">Pas d'étiquette de zone : cliquez l'emplacement exact du tir sur le terrain à droite.</div></>;
       case 'rebound': {
+        // CONTRE : conséquence spécifique.
+        // On réutilise les ids stables du moteur afin de ne changer ni le schéma
+        // Supabase ni les calculs de possession :
+        // - touche-contre = touche, ballon toujours adverse
+        // - off = récupération adverse, ballon toujours adverse
+        if (draft.actionType === 'contre' && draft.context === 'defense') {
+          const blockConsequences = [
+            { id: 'touche-contre', label: '↩ Touche' },
+            { id: 'off', label: '🏀 Récupération adverse' },
+          ];
+
+          return (
+            <>
+              {head('Conséquence du contre', 'Que devient le ballon après le contre ?')}
+              <div className="grid c2">
+                {blockConsequences.map((item) => (
+                  <button
+                    key={item.id}
+                    className={`chip ${draft.reboundType === item.id ? 'active' : ''}`}
+                    onClick={() => rebPick(item.id)}
+                  >
+                    {item.label}
+                  </button>
+                ))}
+              </div>
+            </>
+          );
+        }
+
         // Rebonds : ids STABLES (off/def/touche-pour/touche-contre) utilisés par le
         // moteur (isMyRebound/reboundNext) — jamais modifiés. Seuls les LIBELLÉS sont
         // configurables via livestat_coding_buttons (catégorie 'rebound') : la config
