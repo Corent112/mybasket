@@ -231,6 +231,7 @@ export default function MonCalendrier() {
   // Modales de prévisualisation
   const [preview, setPreview] = useState<Attachment | null>(null);
   const [sessionPreviewId, setSessionPreviewId] = useState<string | null>(null);
+  const [eventSelfReview, setEventSelfReview] = useState<any | null>(null);
 
   const togglePlayer = (pid: string) =>
     setFPlayers((p) => (p.includes(pid) ? p.filter((x) => x !== pid) : [...p, pid]));
@@ -439,6 +440,17 @@ export default function MonCalendrier() {
   };
   const openEdit = (id: string) => {
     const e = events.find((x) => x.id === id); if (!e) return;
+    setEventSelfReview(null);
+    if (e.sessionId) {
+      void supabase
+        .from("practice_session_self_reviews")
+        .select("objectives_rating,clarity_rating,adaptation_rating,rhythm_rating,relevance_rating,takeaways,generated_summary,generated_advice,updated_at")
+        .eq("session_id", e.sessionId)
+        .order("updated_at", { ascending: false })
+        .limit(1)
+        .maybeSingle()
+        .then((result: { data: any | null }) => setEventSelfReview(result.data ?? null));
+    }
     setEditingId(id);
     setFTitle(e.theme || e.title); setFDate(e.date); setFTime(e.time || ""); setFType(e.type);
     setFVenue(e.venue || "home"); setFOpp(e.opponent || ""); setFLoc(e.loc || "");
@@ -1003,29 +1015,52 @@ export default function MonCalendrier() {
               <div className="cal-fld">
                 <label>Fiche séance</label>
                 {editingId && events.find((event) => event.id === editingId)?.sessionId ? (
-                  <div className="cal-session-actions">
-                    <button
-                      type="button"
-                      className="cal-open-session"
-                      onClick={() => {
-                        if (editingId) void consultSessionPdf(editingId);
-                      }}
-                    >
-                      Consulter la fiche séance
-                    </button>
-                    <button
-                      type="button"
-                      className="cal-self-review"
-                      onClick={() => {
-                        const sid = editingId
-                          ? events.find((event) => event.id === editingId)?.sessionId
-                          : undefined;
-                        if (sid) window.location.href = `/seances/${sid}/bilan`;
-                      }}
-                    >
-                      ✓ Auto-évaluation
-                    </button>
-                  </div>
+                  <>
+                    <div className="cal-session-actions">
+                      <button
+                        type="button"
+                        className="cal-open-session"
+                        onClick={() => {
+                          if (editingId) void consultSessionPdf(editingId);
+                        }}
+                      >
+                        Consulter la fiche séance
+                      </button>
+                      <button
+                        type="button"
+                        className="cal-self-review"
+                        onClick={() => {
+                          const sid = editingId
+                            ? events.find((event) => event.id === editingId)?.sessionId
+                            : undefined;
+                          if (sid) window.location.href = `/seances/${sid}/bilan`;
+                        }}
+                      >
+                        Auto-évaluation
+                      </button>
+                    </div>
+                    {eventSelfReview ? (
+                      <div className="cal-review-summary">
+                        <div className="cal-review-title">
+                          <strong>Compte rendu de séance</strong>
+                          <b>{(
+                            (
+                              Number(eventSelfReview.objectives_rating || 0) +
+                              Number(eventSelfReview.rhythm_rating || 0) +
+                              Number(eventSelfReview.clarity_rating || 0) +
+                              Number(eventSelfReview.adaptation_rating || 0) +
+                              Number(eventSelfReview.relevance_rating || 0)
+                            ) / 5
+                          ).toFixed(1)}/5</b>
+                        </div>
+                        <p>{eventSelfReview.generated_summary || "Auto-évaluation enregistrée."}</p>
+                        {eventSelfReview.takeaways ? <p><strong>Remarques :</strong> {eventSelfReview.takeaways}</p> : null}
+                        <p><strong>Prochaine séance :</strong> {eventSelfReview.generated_advice || "—"}</p>
+                      </div>
+                    ) : (
+                      <div className="cal-review-empty">Auto-évaluation non renseignée pour cette séance.</div>
+                    )}
+                  </>
                 ) : (
                   <div className="cal-attach">
                     <label className="cal-attach-btn">📎 Ajouter une pièce jointe<input type="file" accept=".pdf,image/*,.doc,.docx,.txt" hidden onChange={(e) => onAttach(e.target.files?.[0])} /></label>
@@ -1151,6 +1186,7 @@ export default function MonCalendrier() {
 
         .cal-modal-actions{display:flex;align-items:center;gap:.6rem;padding:1rem 1.4rem 1.4rem}
         .cal-modal-actions .spacer{flex:1}
+        .cal-review-summary,.cal-review-empty{margin-top:.65rem;border:1px solid #eadccc;border-radius:12px;padding:.85rem;background:#fff8ef}.cal-review-title{display:flex;align-items:center;justify-content:space-between;gap:1rem;color:#6b1a2c}.cal-review-title b{font-size:1rem}.cal-review-summary p{margin:.45rem 0 0;color:#665b57;line-height:1.45}.cal-review-empty{color:#887a72}
         .cal-del{border:none;background:none;color:var(--rouge);font-weight:600;font-size:.82rem;cursor:pointer;padding:.3rem .2rem}
         .cal-del:hover{text-decoration:underline}
 
