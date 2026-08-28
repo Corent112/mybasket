@@ -11,6 +11,7 @@ export async function POST(request: Request) {
     const body = await request.json().catch(() => ({}));
     const token = String(body?.token || "");
     const playerId = String(body?.playerId || "");
+    const injured = body?.injured === true;
 
     if (!token || !playerId) {
       return NextResponse.json({ error: "Questionnaire ou joueur manquant." }, { status: 400 });
@@ -57,22 +58,46 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: rpcResult.message || "Réponse non enregistrée." }, { status: 400 });
     }
 
-    if (responseKind !== "post_session") {
-      return NextResponse.json({ ok: true });
+    // La RPC existante reste inchangée pour éviter toute cassure.
+    // On marque simplement la réponse qu'elle vient d'enregistrer.
+    const { data: savedResponse, error: savedResponseError } = await admin
+      .from("player_wellness_responses")
+      .select("id,team_id,player_id,response_date,response_kind,rpe,created_at,is_injured")
+      .eq("team_id", link.team_id)
+      .eq("player_id", playerId)
+      .eq("response_kind", responseKind)
+      .eq("response_date", responseDate)
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    if (savedResponseError) {
+      return NextResponse.json({ error: savedResponseError.message }, { status: 400 });
     }
 
-    const [{ data: response }, { data: team }, { data: player }, { data: plan }, { data: dayResponses }] =
+    if (savedResponse?.id) {
+      const { error: injuredError } = await admin
+        .from("player_wellness_responses")
+        .update({ is_injured: injured })
+        .eq("id", savedResponse.id);
+
+      if (injuredError) {
+        return NextResponse.json({ error: injuredError.message }, { status: 400 });
+      }
+    }
+
+    if (responseKind !== "post_session") {
+      return NextResponse.json({ ok: true, injured });
+    }
+
+    // Un joueur blessé reste visible dans le récapitulatif, mais sa réponse
+    // ne participe ni aux moyennes groupe ni aux alertes RPE comparatives.
+    if (injured || !savedResponse?.id || savedResponse.rpe == null) {
+      return NextResponse.json({ ok: true, injured, excludedFromGroupAverages: injured });
+    }
+
+    const [{ data: team }, { data: player }, { data: plan }, { data: dayResponses }] =
       await Promise.all([
-        admin
-          .from("player_wellness_responses")
-          .select("id,team_id,player_id,response_date,rpe,created_at")
-          .eq("team_id", link.team_id)
-          .eq("player_id", playerId)
-          .eq("response_kind", "post_session")
-          .eq("response_date", responseDate)
-          .order("created_at", { ascending: false })
-          .limit(1)
-          .maybeSingle(),
         admin.from("teams").select("id,name").eq("id", link.team_id).maybeSingle(),
         admin.from("players").select("id,first_name,last_name,photo_url").eq("id", playerId).maybeSingle(),
         admin
@@ -83,22 +108,19 @@ export async function POST(request: Request) {
           .maybeSingle(),
         admin
           .from("player_wellness_responses")
-          .select("player_id,rpe,created_at")
+          .select("player_id,rpe,created_at,is_injured")
           .eq("team_id", link.team_id)
           .eq("response_kind", "post_session")
           .eq("response_date", responseDate)
+          .eq("is_injured", false)
           .not("rpe", "is", null)
           .order("created_at", { ascending: true }),
       ]);
 
-    if (!response?.id || response.rpe == null) {
-      return NextResponse.json({ ok: true });
-    }
-
     const groupAverage = averageOtherPlayers((dayResponses || []) as any[], playerId);
     const targetRpe = plan?.planned_rpe == null ? null : Number(plan.planned_rpe);
     const evaluation = evaluateRpe({
-      rpeValue: Number(response.rpe),
+      rpeValue: Number(savedResponse.rpe),
       targetRpe,
       groupAverage,
     });
@@ -110,7 +132,7 @@ export async function POST(request: Request) {
           {
             team_id: link.team_id,
             player_id: playerId,
-            response_id: response.id,
+            response_id: savedResponse.id,
             response_date: responseDate,
             rpe_value: evaluation.rpeValue,
             target_rpe: evaluation.targetRpe,
@@ -140,7 +162,7 @@ export async function POST(request: Request) {
       }
     }
 
-    return NextResponse.json({ ok: true, evaluation });
+    return NextResponse.json({ ok: true, evaluation, injured: false });
   } catch (error) {
     console.error("RPE submit:", error);
     return NextResponse.json(

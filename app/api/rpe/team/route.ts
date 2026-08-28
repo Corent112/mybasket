@@ -50,7 +50,7 @@ export async function GET(request: NextRequest) {
 
   let responseQuery = admin
     .from("player_wellness_responses")
-    .select("id,player_id,response_kind,response_date,duration_minutes,rpe,fatigue,soreness,sleep,stress,comment,created_at")
+    .select("id,player_id,response_kind,response_date,duration_minutes,rpe,fatigue,soreness,sleep,stress,comment,created_at,is_injured")
     .eq("team_id", teamId)
     .order("created_at", { ascending: false })
     .limit(500);
