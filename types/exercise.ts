@@ -84,6 +84,11 @@ variantes?: string[] | string;
   contributor_avatar_url?: string | null;
   published_at?: string | null;
 
+  // Métadonnées de la proposition côté administration.
+  proposer_name?: string | null;
+  proposer_avatar_url?: string | null;
+  published_exercise_id?: string | null;
+
   createdAt?: number;
   updatedAt?: number;
   popularity?: number;

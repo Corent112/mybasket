@@ -417,6 +417,105 @@ export async function listSubmittedExercisesForCeo(): Promise<Exercise[]> {
   return (data ?? []).map(rowToExercise);
 }
 
+/**
+ * Historique permanent des propositions utilisateur.
+ * Une proposition reste visible après validation/refus et est reliée, quand
+ * elle existe, à sa copie publique dans la bibliothèque.
+ */
+export async function listExerciseProposalsForCeo(): Promise<Exercise[]> {
+  const supabase = createClient();
+  const ceo = await isCeoUser();
+
+  if (!ceo) return [];
+
+  const { data: proposalRows, error } = await supabase
+    .from("exercises")
+    .select("*")
+    .not("submitted_at", "is", null)
+    .in("review_status", ["submitted", "approved", "rejected"])
+    .order("submitted_at", { ascending: false });
+
+  if (error) {
+    showSupabaseError("Erreur Supabase listExerciseProposalsForCeo:", error);
+    return [];
+  }
+
+  // Les copies publiques créées par le workflow moderne héritent de
+  // submitted_at : on les exclut du tableau pour ne garder qu'UNE ligne par
+  // proposition. Un ancien exercice directement publié (sans
+  // original_exercise_id) reste en revanche visible comme proposition source.
+  const rows = (proposalRows ?? []).filter(
+    (row: any) =>
+      !(
+        row.visibility === "public" &&
+        row.review_status === "approved" &&
+        row.original_exercise_id
+      )
+  );
+  if (!rows.length) return [];
+
+  const sourceIds = rows.map((row: any) => String(row.id));
+  const proposerIds = Array.from(
+    new Set(rows.map((row: any) => row.user_id).filter(Boolean).map(String))
+  );
+
+  const [{ data: publishedRows, error: publishedError }, { data: profiles, error: profilesError }] =
+    await Promise.all([
+      supabase
+        .from("exercises")
+        .select("id, original_exercise_id")
+        .in("original_exercise_id", sourceIds)
+        .eq("visibility", "public")
+        .eq("review_status", "approved"),
+      proposerIds.length
+        ? supabase
+            .from("profiles")
+            .select("id, display_name, avatar_url")
+            .in("id", proposerIds)
+        : Promise.resolve({ data: [], error: null } as any),
+    ]);
+
+  if (publishedError) {
+    console.warn("Historique propositions : copies publiques indisponibles", publishedError);
+  }
+  if (profilesError) {
+    console.warn("Historique propositions : profils indisponibles", profilesError);
+  }
+
+  const publishedBySource = new Map<string, string>();
+  for (const row of publishedRows ?? []) {
+    if (row.original_exercise_id && row.id) {
+      publishedBySource.set(String(row.original_exercise_id), String(row.id));
+    }
+  }
+
+  const profileById = new Map<string, any>();
+  for (const profile of profiles ?? []) {
+    profileById.set(String(profile.id), profile);
+  }
+
+  return rows.map((row: any) => {
+    const exercise = rowToExercise(row);
+    const profile = row.user_id ? profileById.get(String(row.user_id)) : null;
+
+    // Ancien workflow : certaines propositions approuvées pouvaient être
+    // directement publiques sans copie séparée. Dans ce cas la ligne elle-même
+    // est l'exercice de bibliothèque à modifier dans Plaquette.
+    const publishedId =
+      publishedBySource.get(String(row.id)) ??
+      (row.visibility === "public" && row.review_status === "approved"
+        ? String(row.id)
+        : null);
+
+    return {
+      ...exercise,
+      proposer_name: profile?.display_name || "Utilisateur MyBasket",
+      proposer_avatar_url: profile?.avatar_url || null,
+      published_exercise_id: publishedId,
+    };
+  });
+}
+
 export async function getExercise(
   id: string | null | undefined
 ): Promise<Exercise | null> {
@@ -733,6 +832,61 @@ export async function approveExerciseForLibrary(id: string): Promise<boolean> {
   }
 
   return true;
+}
+
+/**
+ * S'assure qu'une proposition déjà approuvée possède bien une version
+ * publique, puis renvoie l'id à ouvrir dans l'éditeur/Plaquette.
+ * Sert notamment à réparer les validations créées avec l'ancien workflow.
+ */
+export async function ensureApprovedProposalPublished(
+  proposalId: string
+): Promise<string | null> {
+  if (!proposalId) return null;
+
+  const supabase = createClient();
+  const ceo = await isCeoUser();
+  if (!ceo) return null;
+
+  const source = await getExerciseRaw(proposalId);
+  if (!source) return null;
+
+  if (source.visibility === "public" && source.review_status === "approved") {
+    return String(source.id);
+  }
+
+  const { data: existingPublished, error: lookupError } = await supabase
+    .from("exercises")
+    .select("id")
+    .eq("original_exercise_id", proposalId)
+    .eq("visibility", "public")
+    .eq("review_status", "approved")
+    .maybeSingle();
+
+  if (lookupError) {
+    showSupabaseError("Erreur recherche publication proposition:", lookupError);
+    return null;
+  }
+
+  if (existingPublished?.id) return String(existingPublished.id);
+
+  const ok = await approveExerciseForLibrary(proposalId);
+  if (!ok) return null;
+
+  const { data: created, error: createdError } = await supabase
+    .from("exercises")
+    .select("id")
+    .eq("original_exercise_id", proposalId)
+    .eq("visibility", "public")
+    .eq("review_status", "approved")
+    .maybeSingle();
+
+  if (createdError) {
+    showSupabaseError("Erreur récupération exercice publié:", createdError);
+    return null;
+  }
+
+  return created?.id ? String(created.id) : null;
 }
 
 export async function rejectExerciseForLibrary(
