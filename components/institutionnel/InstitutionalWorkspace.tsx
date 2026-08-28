@@ -29,15 +29,15 @@ type Structure={
 };
 
 const TABS=[
- {key:"Dashboard",label:"Dashboard",icon:"▦"},
- {key:"Joueurs",label:"Joueurs",icon:"◉"},
- {key:"Formation des cadres",label:"Formation des cadres",icon:"◆"},
- {key:"Calendrier",label:"Calendrier",icon:"▦"},
- {key:"Documents",label:"Documents",icon:"▤"},
- {key:"Communication",label:"Communication",icon:"✉"},
- {key:"Ressources",label:"Ressources",icon:"◇"},
- {key:"Membres & droits",label:"Membres & droits",icon:"♙"},
- {key:"Paramètres",label:"Paramètres",icon:"⚙"},
+ {key:"Dashboard",label:"Dashboard",icon:"📊"},
+ {key:"Joueurs",label:"Joueurs",icon:"🏀"},
+ {key:"Formation des cadres",label:"Formation des cadres",icon:"🎓"},
+ {key:"Calendrier",label:"Calendrier",icon:"📅"},
+ {key:"Documents",label:"Documents",icon:"📁"},
+ {key:"Communication",label:"Communication",icon:"💬"},
+ {key:"Ressources",label:"Ressources",icon:"📚"},
+ {key:"Membres & droits",label:"Membres & droits",icon:"👥"},
+ {key:"Paramètres",label:"Paramètres",icon:"⚙️"},
 ] as const;
 
 type Tab=(typeof TABS)[number]["key"];
@@ -94,13 +94,9 @@ export default function InstitutionalWorkspace({structureId}:{structureId:string
   >
     <aside className={mobileMenu?"sidebar open":"sidebar"}>
       <div className="brand">
-        <div className="brandLogo">
-          {structure.logo_url?<img src={structure.logo_url} alt=""/>:<span>🏀</span>}
-        </div>
-        <div className="brandText">
-          <strong>MYBASKET</strong>
-          <span>INSTITUTION</span>
-        </div>
+        <div className="brandLogo">{structure.logo_url?<img src={structure.logo_url} alt=""/>:<span>🏀</span>}</div>
+        <div className="brandTitle">MYBASKET</div>
+        <div className="brandSub">INSTITUTION</div>
       </div>
 
       <div className="context">
@@ -243,35 +239,31 @@ export default function InstitutionalWorkspace({structureId}:{structureId:string
       :global(body){background:#f8f5f1}
       .institutionApp{
         min-height:100vh;background:#f8f5f1;color:#2d2528;
-        display:grid;grid-template-columns:248px minmax(0,1fr);
+        display:grid;grid-template-columns:278px minmax(0,1fr);
         font-family:Roboto,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif
       }
       .sidebar{
         background:#fff;color:#2b2426;min-height:100vh;position:sticky;top:0;height:100vh;
-        display:grid;grid-template-rows:auto auto minmax(0,1fr) auto;padding:22px 14px 18px;
+        display:grid;grid-template-rows:auto auto minmax(0,1fr) auto;padding:28px 18px;
         z-index:50;overflow-y:auto;border-right:1px solid #eadfd8;box-shadow:8px 0 28px rgba(56,31,23,.035)
       }
-      .brand{display:flex;gap:11px;align-items:center;padding:0 8px 19px;border-bottom:1px solid #eee5df}
-      .brandLogo{
-        width:48px;height:48px;border-radius:50%;display:grid;place-items:center;overflow:hidden;
-        border:1px solid #eadfd8;background:#fff8ef;color:var(--inst-primary);font-weight:1000;flex:0 0 auto
-      }
+      .brand{text-align:center;padding-bottom:20px;border-bottom:1px solid rgba(107,26,44,.10)}
+      .brandLogo{width:58px;height:58px;margin:0 auto 5px;border-radius:50%;display:grid;place-items:center;overflow:hidden;background:transparent;color:var(--inst-primary);font-weight:1000}
       .brandLogo img{width:100%;height:100%;object-fit:contain;padding:3px}
-      .brandLogo span{font-size:1.45rem}
-      .brandText strong{display:block;color:var(--inst-primary);font-size:1.12rem;line-height:1;font-weight:1000}
-      .brandText span{display:block;color:var(--inst-secondary);font-size:.58rem;letter-spacing:.24em;font-weight:1000;margin-top:5px}
-      .context{padding:15px 10px 10px}
+      .brandLogo span{font-size:38px}
+      .brandTitle{font-size:28px;font-weight:1000;color:var(--inst-primary);letter-spacing:-.03em;line-height:1}.brandSub{color:var(--inst-secondary);letter-spacing:5px;font-weight:900;font-size:12px;margin-top:6px}
+      .context{padding:18px 10px 10px}
       .context small{display:block;color:#aa989e;font-size:.59rem;font-weight:1000;letter-spacing:.12em}
       .context b{display:block;color:#4d1420;font-size:.82rem;margin-top:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-      nav{display:grid;align-content:start;gap:3px;padding-top:4px}
+      nav{display:flex;flex-direction:column;gap:6px;overflow:auto;padding:4px 4px 0 0}
       nav button{
-        width:100%;min-width:0;border:0;background:transparent;color:#42393c;border-radius:8px;
-        padding:10px 11px;display:grid;grid-template-columns:25px minmax(0,1fr);gap:9px;
-        align-items:center;text-align:left;font-size:.82rem;font-weight:900;cursor:pointer;transition:.15s
+        width:100%;min-width:0;border:0;background:transparent;color:#42393c;border-radius:12px;
+        min-height:42px;padding:0 14px;display:flex;gap:12px;
+        align-items:center;text-align:left;font-size:14px;font-weight:800;cursor:pointer;transition:.18s ease
       }
       nav button:hover{background:#fbf4f0;color:var(--inst-primary)}
-      nav button i{font-style:normal;text-align:center;color:#75696d;font-size:.94rem}
-      nav button.active{background:var(--inst-primary);color:#fff;box-shadow:0 5px 14px color-mix(in srgb,var(--inst-primary) 18%,transparent)}
+      nav button i{font-style:normal;text-align:center;color:inherit;font-size:16px;width:18px;flex:0 0 18px}
+      nav button.active{background:linear-gradient(135deg,#8b1232,var(--inst-primary));color:#fff;box-shadow:0 12px 24px rgba(107,26,44,.18)}
       nav button.active i{color:var(--inst-secondary)}
       .sideBottom{border-top:1px solid #eee5df;padding:16px 7px 0;display:flex;gap:10px;align-items:center}
       .profileDot,.account{width:38px;height:38px;border-radius:50%;display:grid;place-items:center;background:var(--inst-primary);color:#fff;font-weight:1000;flex:0 0 auto}
@@ -299,7 +291,7 @@ export default function InstitutionalWorkspace({structureId}:{structureId:string
       .related{margin-top:16px;padding-top:14px;border-top:1px solid #eee4df}.related h3{color:#4d1420}.separator{height:1px;background:#eadfd8;margin:20px 0}
       .overlay{display:none}.loading{padding:40px}
       @media(max-width:980px){
-        .institutionApp{grid-template-columns:1fr}.sidebar{position:fixed;left:0;top:0;width:260px;transform:translateX(-105%);transition:.2s}
+        .institutionApp{grid-template-columns:1fr}.sidebar{position:fixed;left:0;top:0;width:278px;transform:translateX(-105%);transition:.2s}
         .sidebar.open{transform:translateX(0)}.overlay{display:block;position:fixed;inset:0;background:rgba(0,0,0,.38);z-index:40;border:0}
         .topbar{padding:0 16px}.page{padding:20px 16px 36px}
       }

@@ -19,7 +19,7 @@ export default function TeamUnifiedChrome({children}:{children:ReactNode}){
         .teamUnifiedChrome .tl-wrap{
           background:var(--team-ui-bg)!important;
           min-height:100vh!important;
-          padding-left:248px!important;
+          padding-left:278px!important;
         }
 
         .teamUnifiedChrome .tl-container{
@@ -69,11 +69,11 @@ export default function TeamUnifiedChrome({children}:{children:ReactNode}){
           left:0!important;
           top:0!important;
           bottom:0!important;
-          width:248px!important;
+          width:278px!important;
           height:100vh!important;
           z-index:45!important;
           margin:0!important;
-          padding:118px 14px 86px!important;
+          padding:130px 18px 86px!important;
           border:0!important;
           border-right:1px solid var(--team-ui-border)!important;
           border-radius:0!important;
@@ -82,17 +82,17 @@ export default function TeamUnifiedChrome({children}:{children:ReactNode}){
           display:flex!important;
           flex-direction:column!important;
           align-items:stretch!important;
-          gap:3px!important;
+          gap:6px!important;
           overflow-y:auto!important;
         }
 
         .teamUnifiedChrome .team-tabs::before{
           content:"MYBASKET";
           position:absolute;
-          top:28px;
-          left:23px;
+          top:30px;
+          left:46px;
           color:var(--team-ui-primary);
-          font-size:1.12rem;
+          font-size:28px;
           line-height:1;
           font-weight:1000;
           letter-spacing:.01em;
@@ -101,29 +101,29 @@ export default function TeamUnifiedChrome({children}:{children:ReactNode}){
         .teamUnifiedChrome .team-tabs::after{
           content:"ÉQUIPE";
           position:absolute;
-          top:49px;
-          left:24px;
+          top:66px;
+          left:72px;
           color:var(--team-ui-secondary);
-          font-size:.61rem;
+          font-size:14px;
           line-height:1;
           font-weight:1000;
-          letter-spacing:.30em;
+          letter-spacing:8px;
         }
 
         .teamUnifiedChrome .team-tabs button{
           width:100%!important;
-          min-height:39px!important;
+          min-height:42px!important;
           flex:0 0 auto!important;
           justify-content:flex-start!important;
           gap:9px!important;
           margin:0!important;
-          padding:10px 11px!important;
+          padding:0 14px!important;
           border:0!important;
-          border-radius:8px!important;
+          border-radius:12px!important;
           background:transparent!important;
           color:#42393c!important;
-          font-size:.80rem!important;
-          font-weight:900!important;
+          font-size:14px!important;
+          font-weight:800!important;
           white-space:normal!important;
           text-align:left!important;
           box-shadow:none!important;
@@ -144,6 +144,19 @@ export default function TeamUnifiedChrome({children}:{children:ReactNode}){
           flex:0 0 auto!important;
           color:currentColor!important;
         }
+
+        .teamUnifiedChrome .team-tabs button svg{display:none!important}
+        .teamUnifiedChrome .team-tabs button::before{width:18px;flex:0 0 18px;text-align:center;font-size:16px}
+        .teamUnifiedChrome .team-tabs button:nth-child(1)::before{content:"👥"}
+        .teamUnifiedChrome .team-tabs button:nth-child(2)::before{content:"🗓️"}
+        .teamUnifiedChrome .team-tabs button:nth-child(3)::before{content:"🧑"}
+        .teamUnifiedChrome .team-tabs button:nth-child(4)::before{content:"📝"}
+        .teamUnifiedChrome .team-tabs button:nth-child(5)::before{content:"🏀"}
+        .teamUnifiedChrome .team-tabs button:nth-child(6)::before{content:"📈"}
+        .teamUnifiedChrome .team-tabs button:nth-child(7)::before{content:"📁"}
+        .teamUnifiedChrome .team-tabs button:nth-child(8)::before{content:"📅"}
+        .teamUnifiedChrome .team-tabs button:nth-child(9)::before{content:"📊"}
+        .teamUnifiedChrome .team-tabs button:nth-child(10)::before{content:"📋"}
 
         .teamUnifiedChrome .tl-hero{
           border-radius:14px!important;

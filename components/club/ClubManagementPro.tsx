@@ -22,21 +22,21 @@ import ClubSectionPolish from "@/components/club/ClubSectionPolish";
 type Props = { clubId:string; clubName?:string|null; logoUrl?:string|null };
 
 const TABS = [
-  { key:"intelligence", label:"Dashboard", icon:"▦" },
-  { key:"equipes", label:"Équipes", icon:"◉" },
-  { key:"coachs", label:"Coachs", icon:"♙" },
-  { key:"planning", label:"Créneaux", icon:"▣" },
-  { key:"calendrier", label:"Calendrier", icon:"▦" },
-  { key:"convocations", label:"Convocations", icon:"♧" },
-  { key:"drive", label:"Documents", icon:"▤" },
-  { key:"communication", label:"Communication", icon:"✉" },
-  { key:"mailing", label:"Mailings", icon:"✉" },
-  { key:"cotisations", label:"Cotisations", icon:"▧" },
-  { key:"relances", label:"Relances", icon:"!" },
-  { key:"finance", label:"Finance", icon:"▥" },
-  { key:"performance", label:"Performance", icon:"↗" },
-  { key:"audit", label:"Exports", icon:"⇧" },
-  { key:"parametres", label:"Paramètres", icon:"⚙" },
+  { key:"intelligence", label:"Dashboard", icon:"📊" },
+  { key:"equipes", label:"Équipes", icon:"🏀" },
+  { key:"coachs", label:"Coachs", icon:"🧑‍🏫" },
+  { key:"planning", label:"Créneaux", icon:"🗓️" },
+  { key:"calendrier", label:"Calendrier", icon:"📅" },
+  { key:"convocations", label:"Convocations", icon:"📣" },
+  { key:"drive", label:"Documents", icon:"📁" },
+  { key:"communication", label:"Communication", icon:"💬" },
+  { key:"mailing", label:"Mailings", icon:"✉️" },
+  { key:"cotisations", label:"Cotisations", icon:"💳" },
+  { key:"relances", label:"Relances", icon:"🚨" },
+  { key:"finance", label:"Finance", icon:"💰" },
+  { key:"performance", label:"Performance", icon:"📈" },
+  { key:"audit", label:"Exports", icon:"📤" },
+  { key:"parametres", label:"Paramètres", icon:"⚙️" },
 ] as const;
 
 type TabKey = typeof TABS[number]["key"];
@@ -86,13 +86,9 @@ export default function ClubManagementPro({ clubId, clubName, logoUrl }: Props) 
 
       <aside className={mobileMenu?"sidebar open":"sidebar"}>
         <div className="brand">
-          <div className="brandLogo">
-            {logoUrl?<img src={logoUrl} alt=""/>:<span>🏀</span>}
-          </div>
-          <div className="brandText">
-            <strong>MYBASKET</strong>
-            <span>CLUB</span>
-          </div>
+          <div className="brandLogo">{logoUrl?<img src={logoUrl} alt=""/>:<span>🏀</span>}</div>
+          <div className="brandTitle">MYBASKET</div>
+          <div className="brandSub">CLUB</div>
         </div>
 
         <div className="context">
@@ -177,7 +173,7 @@ export default function ClubManagementPro({ clubId, clubName, logoUrl }: Props) 
           color:#201a1c;
           font-family:Roboto,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
           display:grid;
-          grid-template-columns:248px minmax(0,1fr);
+          grid-template-columns:278px minmax(0,1fr);
         }
         .sidebar{
           background:#fff;
@@ -188,34 +184,30 @@ export default function ClubManagementPro({ clubId, clubName, logoUrl }: Props) 
           height:100vh;
           display:grid;
           grid-template-rows:auto auto minmax(0,1fr) auto;
-          padding:22px 14px 18px;
+          padding:28px 18px;
           z-index:50;
           overflow-y:auto;
           border-right:1px solid #eadfd8;
           box-shadow:8px 0 28px rgba(56,31,23,.035);
         }
-        .brand{display:flex;gap:11px;align-items:center;padding:0 8px 19px;border-bottom:1px solid #eee5df}
-        .brandLogo{
-          width:48px;height:48px;border-radius:50%;display:grid;place-items:center;overflow:hidden;
-          border:1px solid #eadfd8;background:#fff8ef;color:var(--club-primary);font-weight:1000;flex:0 0 auto
-        }
+        .brand{text-align:center;padding-bottom:20px;border-bottom:1px solid rgba(107,26,44,.10)}
+        .brandLogo{width:58px;height:58px;margin:0 auto 5px;border-radius:50%;display:grid;place-items:center;overflow:hidden;background:transparent;color:var(--club-primary);font-weight:1000}
         .brandLogo img{width:100%;height:100%;object-fit:contain;padding:3px}
-        .brandLogo span{font-size:1.45rem}
-        .brandText strong{display:block;color:var(--club-primary);font-size:1.12rem;line-height:1;font-weight:1000}
-        .brandText span{display:block;color:var(--club-secondary);font-size:.64rem;letter-spacing:.34em;font-weight:1000;margin-top:5px}
-        .context{padding:15px 10px 10px}
+        .brandLogo span{font-size:38px}
+        .brandTitle{font-size:28px;font-weight:1000;color:var(--club-primary);letter-spacing:-.03em;line-height:1}.brandSub{color:var(--club-secondary);letter-spacing:8px;font-weight:900;font-size:14px;margin-top:5px}
+        .context{padding:18px 10px 10px}
         .context small{display:block;color:#aa989e;font-size:.59rem;font-weight:1000;letter-spacing:.12em}
         .context b{display:block;color:#4d1420;font-size:.82rem;margin-top:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-        nav{display:grid;align-content:start;gap:3px;padding-top:4px}
+        nav{display:flex;flex-direction:column;gap:6px;overflow:auto;padding:4px 4px 0 0}
         nav button{
-          width:100%;min-width:0;border:0;background:transparent;color:#42393c;border-radius:8px;
-          padding:10px 11px;display:grid;grid-template-columns:25px minmax(0,1fr);gap:9px;
-          align-items:center;text-align:left;font-size:.82rem;font-weight:900;cursor:pointer;transition:.15s
+          width:100%;min-width:0;border:0;background:transparent;color:#42393c;border-radius:12px;
+          min-height:42px;padding:0 14px;display:flex;gap:12px;
+          align-items:center;text-align:left;font-size:14px;font-weight:800;cursor:pointer;transition:.18s ease
         }
         nav button:hover{background:#fbf4f0;color:var(--club-primary)}
-        nav button i{font-style:normal;text-align:center;color:#75696d;font-size:.94rem}
+        nav button i{font-style:normal;text-align:center;color:inherit;font-size:16px;width:18px;flex:0 0 18px}
         nav button span{min-width:0;overflow:hidden;text-overflow:ellipsis}
-        nav button.active{background:var(--club-primary);color:#fff;box-shadow:0 5px 14px color-mix(in srgb,var(--club-primary) 18%,transparent)}
+        nav button.active{background:linear-gradient(135deg,#8b1232,var(--club-primary));color:#fff;box-shadow:0 12px 24px rgba(107,26,44,.18)}
         nav button.active i{color:var(--club-secondary)}
         .sideBottom{border-top:1px solid #eee5df;padding:16px 7px 0;display:flex;gap:10px;align-items:center}
         .profileDot,.account{
@@ -242,10 +234,10 @@ export default function ClubManagementPro({ clubId, clubName, logoUrl }: Props) 
         .pageTitle p{margin:0;color:var(--club-secondary);font-size:.64rem;font-weight:1000;letter-spacing:.11em}
         .pageTitle h1{margin:3px 0;color:#4d1420;font-size:1.75rem}
         .pageTitle span{font-size:.74rem;color:#8e7e83}
-        .backDashboard{border:1px solid #e6d9d3;background:#fff;color:var(--club-primary);border-radius:8px;padding:8px 10px;font-weight:900;cursor:pointer}
+        .backDashboard{border:1px solid #e6d9d3;background:#fff;color:var(--club-primary);border-radius:12px;padding:8px 10px;font-weight:900;cursor:pointer}
         .overlay{display:none}
         @media(max-width:980px){
-          .clubApp{grid-template-columns:1fr}.sidebar{position:fixed;left:0;top:0;width:260px;transform:translateX(-105%);transition:.2s}
+          .clubApp{grid-template-columns:1fr}.sidebar{position:fixed;left:0;top:0;width:278px;transform:translateX(-105%);transition:.2s}
           .sidebar.open{transform:translateX(0)}.overlay{display:block;position:fixed;inset:0;background:rgba(0,0,0,.38);z-index:40;border:0}
           .topbar{padding:0 16px}.clubContent{padding:20px 16px 32px}
         }

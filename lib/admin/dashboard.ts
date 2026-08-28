@@ -93,6 +93,14 @@ export async function getAdminDashboardData(): Promise<AdminDashboardData> {
   const pendingFilter = (q: any) =>
     q.or("status.eq.pending,status.eq.submitted,review_status.eq.pending,review_status.eq.submitted");
 
+  // Les propositions d’exercices utilisent une définition plus stricte :
+  // uniquement les exercices réellement envoyés par un utilisateur au CEO.
+  // Cela évite de compter les brouillons/anciens statuts comme « en attente ».
+  const exerciseProposalPendingFilter = (q: any) =>
+    q.eq("review_status", "submitted")
+      .not("submitted_at", "is", null)
+      .is("original_exercise_id", null);
+
   const admin = createAdminClient();
   const authUsersPromise = admin
     ? admin.auth.admin.listUsers({ page: 1, perPage: 1000 }).then(({ data, error }: { data: { users: unknown[] }; error: unknown }) => error ? null : data.users.length).catch(() => null)
@@ -126,7 +134,7 @@ export async function getAdminDashboardData(): Promise<AdminDashboardData> {
     countFirstExisting(supabase, ["coach_profiles", "coachs", "coaches"]),
 
     countFirstExisting(supabase, ["exercises", "exercices"]),
-    countFirstExisting(supabase, ["exercises", "exercices"], pendingFilter),
+    countFirstExisting(supabase, ["exercises", "exercices"], exerciseProposalPendingFilter),
 
     countFirstExisting(supabase, ["systems", "systemes"]),
     countFirstExisting(supabase, ["systems", "systemes"], pendingFilter),

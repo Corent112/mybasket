@@ -1,12 +1,13 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { useParams, useRouter } from "next/navigation";
+import { useParams, useRouter, useSearchParams } from "next/navigation";
 import type { Exercise, Diagram } from "@/types/exercise";
 import { getExercise, updateExercise, consumeHandoff } from "@/lib/exercises";
 
 export default function ModifierExercicePage() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const params = useParams<{ id: string }>();
   const id = params?.id as string;
 
@@ -71,6 +72,22 @@ export default function ModifierExercicePage() {
   useEffect(() => {
     if (ready && ex) saveDraft(ex);
   }, [ex, ready]);
+
+  // Depuis le tableau CEO, ?plaquette=1 ouvre directement l’éditeur Plaquette
+  // avec le bon exercice et conserve le retour vers cette fiche.
+  useEffect(() => {
+    if (!ready || !ex || searchParams.get("plaquette") !== "1") return;
+
+    saveDraft(ex);
+    try {
+      sessionStorage.setItem(
+        "mb_plaquette_return_to",
+        `/exercices/${id}/modifier`
+      );
+    } catch {}
+
+    window.location.replace("/plaquette?mode=exercise");
+  }, [ready, ex?.id, id, searchParams]);
 
   if (!ready) return null;
 
