@@ -6,6 +6,7 @@ import { saveExercise, updateExercise, getExercise } from "@/lib/exercises";
 import ExercisePhotoImport from "@/components/ai/ExercisePhotoImport";
 import type { AiExerciseImport } from "@/lib/import/types";
 import { importToPlaquetteSchema, renderSchemaPreviews } from "@/lib/import/plaquette-converter";
+import { getPlaquetteTransfer, setPlaquetteTransfer, removePlaquetteTransfer } from "@/lib/plaquette-transfer";
 
 type Ex = {
   title: string;
@@ -281,13 +282,13 @@ export default function CreerExerciceClient() {
       let base = blank();
 
       try {
-        const resultRaw = localStorage.getItem(RESULT_KEY);
-        const draftRaw = localStorage.getItem(draftKey);
+        const resultStored = await getPlaquetteTransfer<any>(RESULT_KEY);
+        const draftStored = await getPlaquetteTransfer<Partial<Ex>>(draftKey);
 
-        if (draftRaw) {
+        if (draftStored) {
           base = {
             ...base,
-            ...JSON.parse(draftRaw),
+            ...draftStored,
           };
         }
 
@@ -328,8 +329,8 @@ export default function CreerExerciceClient() {
           }
         }
 
-        if (resultRaw) {
-          const result = JSON.parse(resultRaw);
+        if (resultStored) {
+          const result = resultStored;
 
           const incomingImages: string[] = Array.isArray(result.schemaImages)
             ? result.schemaImages.filter(Boolean)
@@ -406,9 +407,9 @@ export default function CreerExerciceClient() {
             };
           }
 
-          localStorage.removeItem(RESULT_KEY);
+          await removePlaquetteTransfer(RESULT_KEY);
           localStorage.removeItem(EDIT_INDEX_KEY);
-          localStorage.removeItem(LOAD_KEY);
+          await removePlaquetteTransfer(LOAD_KEY);
           localStorage.removeItem(RETURN_KEY);
           localStorage.removeItem(EDIT_EXERCISE_ID_KEY);
           localStorage.removeItem(EDIT_SCHEMA_GROUP_KEY);
@@ -428,9 +429,12 @@ export default function CreerExerciceClient() {
   }, [editId, draftKey]);
 
   useEffect(() => {
-    try {
-      localStorage.setItem(draftKey, JSON.stringify(ex));
-    } catch {}
+    const timer = window.setTimeout(() => {
+      void setPlaquetteTransfer(draftKey, ex).catch((error) => {
+        console.warn("Sauvegarde brouillon exercice impossible", error);
+      });
+    }, 120);
+    return () => window.clearTimeout(timer);
   }, [draftKey, ex]);
 
   const openDraw = async (index?: number) => {
@@ -444,21 +448,29 @@ export default function CreerExerciceClient() {
       return;
     }
 
+    // On pose le contexte de retour en premier : le bouton Insérer ne doit
+    // jamais dépendre du stockage d'un gros schéma.
+    if (editId) {
+      localStorage.setItem(EDIT_EXERCISE_ID_KEY, editId);
+      localStorage.setItem(RETURN_KEY, `/exercices/creer?id=${editId}`);
+    } else {
+      localStorage.removeItem(EDIT_EXERCISE_ID_KEY);
+      localStorage.setItem(RETURN_KEY, "/exercices/creer");
+    }
+    localStorage.setItem("mybasket_current_exercise_id", exerciseStorageId);
+
     try {
       const cleanDataList = syncSchemas(ex.schemaImages, ex.schemaDataList);
 
-      localStorage.setItem(
-        draftKey,
-        JSON.stringify({
-          ...ex,
-          schemaDataList: cleanDataList,
-        })
-      );
+      // IndexedDB remplace localStorage pour les payloads volumineux
+      // (images base64, phases, schémas) afin d'éviter QuotaExceededError.
+      await setPlaquetteTransfer(draftKey, {
+        ...ex,
+        schemaDataList: cleanDataList,
+      });
 
-      localStorage.setItem("mybasket_current_exercise_id", exerciseStorageId);
-
-      localStorage.removeItem(LOAD_KEY);
-      localStorage.removeItem(RESULT_KEY);
+      await removePlaquetteTransfer(LOAD_KEY);
+      await removePlaquetteTransfer(RESULT_KEY);
       localStorage.removeItem(EDIT_SCHEMA_GROUP_KEY);
 
       if (typeof index === "number") {
@@ -466,12 +478,7 @@ export default function CreerExerciceClient() {
 
         const schemaData = cleanDataList[index];
         const schemaImage = ex.schemaImages[index];
-
         const schemaGroupId = schemaData?.schemaGroupId || crypto.randomUUID();
-
-        // On transmet le schemaGroupId à la Plaquette pour qu'elle le réutilise
-        // au retour : c'est ce qui permet de remplacer proprement TOUT le
-        // schéma (toutes ses phases) au lieu d'en dupliquer les vignettes.
         localStorage.setItem(EDIT_SCHEMA_GROUP_KEY, schemaGroupId);
 
         const loadPayload = {
@@ -490,21 +497,16 @@ export default function CreerExerciceClient() {
             : [],
         };
 
-        localStorage.setItem(LOAD_KEY, JSON.stringify(loadPayload));
+        await setPlaquetteTransfer(LOAD_KEY, loadPayload);
       } else {
         localStorage.removeItem(EDIT_INDEX_KEY);
-      }
-
-      if (editId) {
-        localStorage.setItem(EDIT_EXERCISE_ID_KEY, editId);
-        localStorage.setItem(RETURN_KEY, `/exercices/creer?id=${editId}`);
-      } else {
-        localStorage.removeItem(EDIT_EXERCISE_ID_KEY);
-        localStorage.setItem(RETURN_KEY, "/exercices/creer");
+        localStorage.removeItem(EDIT_SCHEMA_GROUP_KEY);
       }
 
       router.push(
-        typeof index === "number" ? "/plaquette?mode=edit" : "/plaquette?mode=new"
+        typeof index === "number"
+          ? "/plaquette?mode=edit&return=exercise"
+          : "/plaquette?mode=new&return=exercise"
       );
     } catch (error) {
       console.error(error);
@@ -512,9 +514,6 @@ export default function CreerExerciceClient() {
     }
   };
 
-  // Comportement historique conservé à l'identique : on retire UNIQUEMENT la
-  // vignette ciblée, jamais le groupe. Les schémas multi-phases (natifs comme
-  // importés) se comportent donc exactement comme avant.
   const removeSchema = (index: number) =>
     setEx((current) => {
       const nextImages = current.schemaImages.filter(
@@ -755,10 +754,10 @@ export default function CreerExerciceClient() {
         return;
       }
 
-      localStorage.removeItem(draftKey);
-      localStorage.removeItem(RESULT_KEY);
+      await removePlaquetteTransfer(draftKey);
+      await removePlaquetteTransfer(RESULT_KEY);
       localStorage.removeItem(EDIT_INDEX_KEY);
-      localStorage.removeItem(LOAD_KEY);
+      await removePlaquetteTransfer(LOAD_KEY);
       localStorage.removeItem(RETURN_KEY);
       localStorage.removeItem(EDIT_EXERCISE_ID_KEY);
       localStorage.removeItem(EDIT_SCHEMA_GROUP_KEY);
