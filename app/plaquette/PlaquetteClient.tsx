@@ -77,7 +77,7 @@ const EDIT_EXERCISE_ID_KEY = "mybasket_edit_exercise_id";
   type Pt = { x: number; y: number };
   type Player = { id: string; x: number; y: number; label: string; team: 'att' | 'def'; shape: 'circle' | 'square'; coach?: boolean; rotation?: number; name?: string; color?: string; size?: number; photo?: string; hasBall?: boolean; ballCount?: number; linkedPlayerId?: string; linkedPlayerName?: string; linkedTeamId?: string; linkedTeamName?: string };
   type Obj = { id: string; x: number; y: number; kind: string; text?: string; rotation?: number; size?: number; scaleX?: number; scaleY?: number; points?: Pt[]; color?: string; sourcePlayerId?: string; targetPlayerId?: string };
-  type Line = { id: string; action: string; from: Pt; to: Pt; ctrls?: Pt[]; ctrl?: Pt; points?: Pt[]; rotation?: number; target?: 'basket'; sourcePlayerId?: string; targetPlayerId?: string; order?: number; startMode?: 'withPrevious' | 'afterPrevious'; duration?: number; targetMode?: 'player' | 'playerCurrentPoint'; createdTargetPoint?: Pt };
+  type Line = { id: string; action: string; from: Pt; to: Pt; ctrls?: Pt[]; ctrl?: Pt; points?: Pt[]; rotation?: number; target?: 'basket'; targetBasketId?: string; sourcePlayerId?: string; targetPlayerId?: string; order?: number; startMode?: 'withPrevious' | 'afterPrevious'; duration?: number; targetMode?: 'player' | 'playerCurrentPoint'; createdTargetPoint?: Pt };
   type ActSched = { line: Line; start: number; dur: number; end: number };
   type Sched = { idx: number; start: number; span: number; end: number; actSched: ActSched[] };
   type Phase = { players: Player[]; objects: Obj[]; lines: Line[]; notes: string; duration?: number; startMode?: 'withPrevious' | 'afterPrevious' };
@@ -270,7 +270,7 @@ const currentRef = useRef(current);
   const lastNowRef = useRef(0);
   const scheduleRef = useRef<Sched[]>([]);
   const totalMsRef = useRef(0);
-  const ballEventsRef = useRef<{ src: string | null; target: string | null; shoot: boolean; wStart: number; wEnd: number; from?: Pt; to?: Pt; tMode?: 'player' | 'playerCurrentPoint'; createdPt?: Pt }[]>([]);
+  const ballEventsRef = useRef<{ src: string | null; target: string | null; shoot: boolean; wStart: number; wEnd: number; from?: Pt; to?: Pt; tMode?: 'player' | 'playerCurrentPoint'; createdPt?: Pt; basketPt?: Pt }[]>([]);
   const carrier0Ref = useRef<string | null>(null);
   const rosterRef = useRef<Player[]>([]);
   const onAnimEndRef = useRef<(() => void) | null>(null); // callback fin d'animation (utilisé par l'export vidéo)
@@ -366,6 +366,15 @@ const currentRef = useRef(current);
   const FULL_BASKET_BOT: Pt = { x: 0.5, y: 0.91 };
   const basketFor = (ct: 'half' | 'full', from: Pt): Pt =>
     ct === 'half' ? HALF_BASKET : (from.y < 0.5 ? FULL_BASKET_TOP : FULL_BASKET_BOT);
+
+  // Panier latéral : objet libre. Un tir peut le viser sans modifier la logique historique
+  // du panier principal. Si aucun targetBasketId n'est défini, basketFor() reste la référence.
+  const lateralBasketPoint = (phase: Phase | undefined, basketId?: string): Pt | null => {
+    if (!phase || !basketId) return null;
+    const basket = phase.objects.find((o) => o.id === basketId && o.kind === 'lateralBasket');
+    return basket ? { x: basket.x, y: basket.y } : null;
+  };
+
 
   // ----- Rectangle RÉEL de l'image du terrain dans le canvas (avec marges/centrage) -----
   // Les positions sont stockées relativement au terrain affiché (0..1, centre = 0.5), pas au canvas brut.
@@ -584,7 +593,10 @@ const currentRef = useRef(current);
   };
   // point d'arrivée effectif : tir → panier ; passe → cible explicite ; sinon point libre
   const resolveTo = (l: Line): Pt => {
-    if (l.action === 'shoot' && l.target === 'basket') return basketFor(courtRef.current, resolveFrom(l));
+    if (l.action === 'shoot' && l.target === 'basket') {
+      const phase = phasesRef.current[currentRef.current];
+      return lateralBasketPoint(phase, l.targetBasketId) || basketFor(courtRef.current, resolveFrom(l));
+    }
     if (l.action === 'pass' && l.targetPlayerId) return passTargetPointN(l);
     return l.to;
   };
@@ -803,10 +815,27 @@ const currentRef = useRef(current);
         ctx.beginPath(); ctx.arc(0, 0, s, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
         ctx.beginPath(); ctx.moveTo(-s, 0); ctx.lineTo(s, 0); ctx.moveTo(0, -s); ctx.lineTo(0, s); ctx.stroke();
         break;
-      case 'cone':
-        ctx.fillStyle = o.color || '#E87722';
-        ctx.beginPath(); ctx.moveTo(0, -s * 1.2); ctx.lineTo(s, s); ctx.lineTo(-s, s); ctx.closePath(); ctx.fill();
+      case 'cone': {
+        // Plot d'entraînement : silhouette de cône orange avec bandes blanches.
+        const orange = o.color || '#F05A16';
+        ctx.fillStyle = orange; ctx.strokeStyle = '#C9470E';
+        ctx.beginPath(); ctx.roundRect(-s * 1.05, s * 0.82, s * 2.1, s * 0.38, s * 0.12); ctx.fill(); ctx.stroke();
+        ctx.beginPath(); ctx.moveTo(0, -s * 1.45); ctx.lineTo(s * 0.72, s * 0.86); ctx.lineTo(-s * 0.72, s * 0.86); ctx.closePath(); ctx.fill(); ctx.stroke();
+        ctx.fillStyle = '#FFFFFF';
+        ctx.beginPath(); ctx.moveTo(-s * 0.25, -s * 0.62); ctx.lineTo(s * 0.25, -s * 0.62); ctx.lineTo(s * 0.38, -s * 0.20); ctx.lineTo(-s * 0.38, -s * 0.20); ctx.closePath(); ctx.fill();
+        ctx.beginPath(); ctx.moveTo(-s * 0.50, s * 0.20); ctx.lineTo(s * 0.50, s * 0.20); ctx.lineTo(s * 0.62, s * 0.58); ctx.lineTo(-s * 0.62, s * 0.58); ctx.closePath(); ctx.fill();
         break;
+      }
+      case 'lateralBasket': {
+        // Vue du dessus : panneau (trait) + cercle. La rotation de l'objet est déjà appliquée.
+        ctx.strokeStyle = o.color || '#111111';
+        ctx.fillStyle = '#FFFFFF';
+        ctx.lineWidth = Math.max(2.2, s * 0.18);
+        ctx.lineCap = 'round';
+        ctx.beginPath(); ctx.moveTo(-s * 1.65, -s * 0.28); ctx.lineTo(s * 1.65, -s * 0.28); ctx.stroke();
+        ctx.beginPath(); ctx.arc(0, s * 0.18, s * 0.62, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+        break;
+      }
       case 'triangle': {
         const shapeColor = o.color || '#0F0F12';
         ctx.strokeStyle = shapeColor;
@@ -995,8 +1024,10 @@ const currentRef = useRef(current);
       if (!o) return null;
       const c = toPx(canvas, { x: o.x, y: o.y });
       const base = scale * 0.018 * (o.size || 1);
-      const halfW = base * (o.scaleX || 1) * 1.25;
-      const halfH = base * (o.scaleY || 1) * 1.25;
+      const objectFactorX = o.kind === 'lateralBasket' ? 1.9 : 1.25;
+      const objectFactorY = o.kind === 'lateralBasket' ? 1.05 : 1.25;
+      const halfW = base * (o.scaleX || 1) * objectFactorX;
+      const halfH = base * (o.scaleY || 1) * objectFactorY;
       return {
         cx: c.x,
         cy: c.y,
@@ -1440,6 +1471,7 @@ if (anim && anim.balls) {
       to?: Pt;
       tMode?: 'player' | 'playerCurrentPoint';
       createdPt?: Pt;
+      basketPt?: Pt;
     }[] = [];
 
     sched.forEach((s) =>
@@ -1456,6 +1488,9 @@ if (anim && anim.balls) {
           to: a.line.to,
           tMode: a.line.targetMode,
           createdPt: a.line.createdTargetPoint,
+          basketPt: a.line.action === 'shoot'
+            ? lateralBasketPoint(phasesRef.current[s.idx], a.line.targetBasketId) || undefined
+            : undefined,
         });
       })
     );
@@ -1544,7 +1579,7 @@ if (anim && anim.balls) {
       let target: Pt;
 
       if (active.shoot) {
-        target = basketFor(courtRef.current, from);
+        target = active.basketPt || basketFor(courtRef.current, from);
       } else if (active.target) {
         target =
           playerPosAtClock(sched, active.target, clock) ||
@@ -1888,8 +1923,8 @@ animPosRef.current = { players, balls };
       const localX = dx * Math.cos(rotation) - dy * Math.sin(rotation);
       const localY = dx * Math.sin(rotation) + dy * Math.cos(rotation);
       const base = scale * 0.018 * (o.size || 1);
-      const halfW = base * (o.scaleX || 1) * 1.55;
-      const halfH = base * (o.scaleY || 1) * 1.55;
+      const halfW = base * (o.scaleX || 1) * (o.kind === 'lateralBasket' ? 2.15 : 1.55);
+      const halfH = base * (o.scaleY || 1) * (o.kind === 'lateralBasket' ? 1.35 : 1.55);
       if (Math.abs(localX) <= halfW && Math.abs(localY) <= halfH) {
         return { type: 'object', id: o.id };
       }
@@ -2320,7 +2355,7 @@ animPosRef.current = { players, balls };
     render();
   };
 
-  const onPointerUp = () => {
+  const onPointerUp = (e?: React.PointerEvent) => {
     if (pressTimerRef.current) { window.clearTimeout(pressTimerRef.current); pressTimerRef.current = null; }
     pressRef.current = null;
     if (lineDragRef.current) { lineDragRef.current = null; return; }
@@ -2345,8 +2380,24 @@ animPosRef.current = { players, balls };
           updatePhase((p) => ({ ...p, lines: [...p.lines, { ...d, to: tgt, targetPlayerId: targetId, targetMode: 'player', createdTargetPoint: tgt }] }));
         }
       } else {
-        const ok = d.action === 'freedraw' ? (d.points!.length > 1) : d.action === 'shoot' ? true : (Math.hypot(d.to.x - d.from.x, d.to.y - d.from.y) > 0.01);
-        if (ok) { pushHistory(); updatePhase((p) => ({ ...p, lines: [...p.lines, d] })); }
+        if (d.action === 'shoot' && ph) {
+          // Si le geste est relâché sur un panier latéral, ce panier devient uniquement la cible
+          // de CE tir. Sinon le comportement historique vers le panier du terrain est conservé.
+          const canvas = canvasRef.current;
+          const releaseHit = canvas && e ? hitTest(canvas, getPx(e)) : null;
+          const targetObject = releaseHit?.type === 'object'
+            ? ph.objects.find((o) => o.id === releaseHit.id && o.kind === 'lateralBasket')
+            : null;
+          const shot = targetObject
+            ? { ...d, target: 'basket' as const, targetBasketId: targetObject.id, to: { x: targetObject.x, y: targetObject.y } }
+            : { ...d, target: 'basket' as const, targetBasketId: undefined, to: basketFor(courtType, d.from) };
+          pushHistory();
+          updatePhase((p) => ({ ...p, lines: [...p.lines, shot] }));
+          if (targetObject) showHint('Tir dirigé vers le panier latéral');
+        } else {
+          const ok = d.action === 'freedraw' ? (d.points!.length > 1) : (Math.hypot(d.to.x - d.from.x, d.to.y - d.from.y) > 0.01);
+          if (ok) { pushHistory(); updatePhase((p) => ({ ...p, lines: [...p.lines, d] })); }
+        }
       }
     }
     drawingRef.current = false; dragRef.current = null; render();
@@ -3334,7 +3385,7 @@ const exportJson = () => {
 
             {/* -------- DROITE -------- */}
             <aside className="ed-right">
-              <div className="ed-hint">💡 Place joueurs/objets au clic, trace les actions au glisser. Triangle et carré : chaque poignée bleue est un vrai sommet indépendant. Pose chaque coin exactement où tu veux. Un <b>H placé entre deux joueurs</b> signifie main à main et transfère automatiquement le ballon au second joueur.</div>
+              <div className="ed-hint">💡 Place joueurs/objets au clic, trace les actions au glisser. Triangle et carré : chaque poignée bleue est un vrai sommet indépendant. Pose chaque coin exactement où tu veux. Le <b>panier latéral</b> se déplace et se tourne comme les autres objets ; avec l'outil Tir, relâche le geste dessus pour le viser. Un <b>H placé entre deux joueurs</b> signifie main à main et transfère automatiquement le ballon au second joueur.</div>
 
               <div className="sec-lab">ACTIONS</div>
               <div className="actions-grid">
@@ -3374,7 +3425,8 @@ const exportJson = () => {
               <div className="sec-lab" style={{ marginTop: '.85rem' }}>OUTILS</div>
               <div className="misc-grid">
                 <div className={'misc-btn' + (isObj('ball') ? ' active' : '')} id="addBallBtn" title="Ballon" onClick={() => pick({ kind: 'object', obj: 'ball' })}>🏀</div>
-                <div className={'misc-btn' + (isObj('cone') ? ' active' : '')} data-misc="cone" title="Cône" style={{ color: '#E87722', fontSize: '1.1rem' }} onClick={() => pick({ kind: 'object', obj: 'cone' })}>▲</div>
+                <div className={'misc-btn' + (isObj('cone') ? ' active' : '')} data-misc="cone" title="Plot" onClick={() => pick({ kind: 'object', obj: 'cone' })}><img src="/plaquette/plot.svg" alt="Plot" style={{ width: 26, height: 26, objectFit: 'contain' }} /></div>
+                <div className={'misc-btn' + (isObj('lateralBasket') ? ' active' : '')} data-misc="lateralBasket" title="Panier latéral" onClick={() => pick({ kind: 'object', obj: 'lateralBasket' })}><img src="/plaquette/panier-lateral.svg" alt="Panier latéral" style={{ width: 32, height: 26, objectFit: 'contain' }} /></div>
                 <div className={'misc-btn' + (isObj('triangle') ? ' active' : '')} data-misc="triangle" title="Triangle" onClick={() => pick({ kind: 'object', obj: 'triangle' })}>△</div>
                 <div className={'misc-btn' + (isObj('square') ? ' active' : '')} data-misc="square" title="Carré" onClick={() => pick({ kind: 'object', obj: 'square' })}>■</div>
                 <div className={'misc-btn' + (isObj('circle') ? ' active' : '')} data-misc="circle" title="Rond" onClick={() => pick({ kind: 'object', obj: 'circle' })}>●</div>
