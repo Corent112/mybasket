@@ -239,6 +239,14 @@ export default function ClubSpace() {
             <KpiChip label="Coachs" value={kpi.coachs} />
             <KpiChip label="Équipes" value={kpi.equipes} />
             <KpiChip label="Créneaux" value={kpi.creneaux} />
+            <button
+              type="button"
+              className="club-switch"
+              onClick={() => { window.location.href = "/club/choisir"; }}
+              title="Changer de club"
+            >
+              ⇄ Changer de club
+            </button>
           </div>
         </header>
 
@@ -1097,9 +1105,11 @@ function Styles() {
       .kchip-v { font-family: "Alfa Slab One", sans-serif; font-size: 22px; color: var(--or); line-height: 1; }
       .kchip-l { font-size: 11px; color: #cfc9c2; margin-top: 4px; text-transform: uppercase; letter-spacing: .4px; }
 
+      .club-switch { border: 1px solid #d7c4b9; background: #fff; color: var(--bordeaux); border-radius: 12px; padding: 9px 13px; font-size: 13px; font-weight: 800; cursor: pointer; white-space: nowrap; }
+      .club-switch:hover { background: #f8f0ed; border-color: var(--bordeaux); }
       .club-tabs { display: flex; gap: 6px; overflow-x: auto; padding: 12px 20px; background: #fff; border-bottom: 1px solid var(--line); position: sticky; top: 0; z-index: 5; }
-      .club-tab { white-space: nowrap; border: 1px solid transparent; background: transparent; cursor: pointer; padding: 9px 14px; border-radius: 999px; font-size: 14px; color: var(--gris); font-weight: 600; display: flex; align-items: center; gap: 7px; transition: .15s; }
-      .club-tab .ico { font-size: 15px; }
+      .club-tab { white-space: nowrap; border: 1px solid transparent; background: transparent; cursor: pointer; padding: 10px 15px; border-radius: 999px; font-size: 16px; color: var(--gris); font-weight: 600; display: flex; align-items: center; gap: 7px; transition: .15s; }
+      .club-tab .ico { font-size: 17px; }
       .club-tab:hover { background: #f3eee9; color: var(--noir); }
       .club-tab.on { background: var(--bordeaux); color: #fff; border-color: var(--bordeaux); }
 
