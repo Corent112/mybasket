@@ -82,8 +82,8 @@ export default function PropositionsExercicesPage() {
               </p>
 
               <div className="actions">
-                <Link href={`/exercices/${exercise.id}`}>
-                  Voir
+                <Link href={`/exercices/creer?id=${exercise.id}`}>
+                  ✏️ Contrôler / modifier
                 </Link>
 
                 <button

@@ -53,12 +53,14 @@ function ExerciseCard({
   isAdding,
   isAdded,
   onAdd,
+  canManageLibrary,
 }: {
   item: Exercise;
   isConnected: boolean;
   isAdding: boolean;
   isAdded: boolean;
   onAdd: (exercise: Exercise) => void;
+  canManageLibrary: boolean;
 }) {
   const thumbnail =
     item.diagrams?.[0]?.imageUrl ||
@@ -101,25 +103,36 @@ function ExerciseCard({
           </button>
         )}
 
-        {item.contributor_name && (
-          <div className="mb-contributor" title={`Réalisé par ${item.contributor_name}`}>
-            {item.contributor_avatar_url ? (
-              <img src={item.contributor_avatar_url} alt="" />
-            ) : (
-              <span className="mb-contributor-fallback">{item.contributor_name.slice(0, 1).toUpperCase()}</span>
-            )}
-            <span>Réalisé par <strong>{item.contributor_name}</strong></span>
-          </div>
-        )}
-
         <div className="mb-exercise-foot">
-          <span>{formatDate(item.createdAt)}</span>
+          <div className="mb-publication">
+            <span className="mb-publication-date">
+              {formatDate(item.published_at || item.reviewed_at || item.createdAt)}
+            </span>
 
-          {isConnected ? (
+            {item.contributor_name && (
+              <div
+                className="mb-contributor"
+                title={`Publié par ${item.contributor_name}`}
+              >
+                {item.contributor_avatar_url ? (
+                  <img src={item.contributor_avatar_url} alt="" />
+                ) : (
+                  <span className="mb-contributor-fallback">
+                    {item.contributor_name.slice(0, 1).toUpperCase()}
+                  </span>
+                )}
+                <span>
+                  Publié par <strong>{item.contributor_name}</strong>
+                </span>
+              </div>
+            )}
+          </div>
+
+          {canManageLibrary ? (
             <Link href={`/exercices/creer?id=${item.id}`}>Modifier</Link>
-          ) : (
+          ) : !isConnected ? (
             <Link href="/abonnements">Débloquer</Link>
-          )}
+          ) : null}
         </div>
       </div>
     </article>
@@ -134,6 +147,7 @@ export default function ExercicesClient() {
   const [selected, setSelected] = useState<Record<string, string[]>>({});
   const [loading, setLoading] = useState(true);
   const [user, setUser] = useState<User | null>(null);
+  const [canManageLibrary, setCanManageLibrary] = useState(false);
   const [addingExerciseId, setAddingExerciseId] = useState<string | null>(null);
   const [addedIds, setAddedIds] = useState<Set<string>>(new Set());
   const [toast, setToast] = useState<ToastState>(null);
@@ -151,6 +165,17 @@ export default function ExercicesClient() {
         setUser(currentUser);
 
         if (currentUser) {
+          const { data: profile } = await supabase
+            .from("profiles")
+            .select("platform_role")
+            .eq("id", currentUser.id)
+            .maybeSingle();
+
+          setCanManageLibrary(
+            profile?.platform_role === "ceo" ||
+              profile?.platform_role === "superadmin"
+          );
+
           const { data: cartRows } = await supabase
             .from("cart_items")
             .select("item_id")
@@ -348,6 +373,7 @@ export default function ExercicesClient() {
                     isAdding={addingExerciseId === item.id}
                     isAdded={addedIds.has(item.id)}
                     onAdd={handleAdd}
+                    canManageLibrary={canManageLibrary}
                   />
                 ))}
               </div>
@@ -463,6 +489,47 @@ export default function ExercicesClient() {
         .mb-dock-reset:hover { background:#fff0f2!important; }
 
         .mb-toast { left:14px; right:14px; bottom:125px; min-width:0; }
+        }
+
+        .mb-publication {
+          min-width: 0;
+          display: grid;
+          gap: 7px;
+        }
+
+        .mb-publication-date {
+          color: #555;
+          font-size: 0.85rem;
+        }
+
+        .mb-contributor {
+          display: flex;
+          align-items: center;
+          gap: 7px;
+          min-width: 0;
+          color: #666;
+          font-size: 0.78rem;
+        }
+
+        .mb-contributor img,
+        .mb-contributor-fallback {
+          width: 24px;
+          height: 24px;
+          border-radius: 999px;
+          object-fit: cover;
+          flex: 0 0 24px;
+        }
+
+        .mb-contributor-fallback {
+          display: grid;
+          place-items: center;
+          background: #f4ecef;
+          color: #6b1a2c;
+          font-weight: 900;
+        }
+
+        .mb-contributor strong {
+          color: #222;
         }
       `}</style>
     </main>

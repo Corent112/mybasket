@@ -4,6 +4,10 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
+import {
+  approveExerciseForLibrary,
+  rejectExerciseForLibrary,
+} from "@/lib/exercises";
 
 type ExerciseDraft = {
   id: string;
@@ -105,14 +109,9 @@ export default function AdminExerciseEditPage() {
     try {
       setSaving(true);
 
-      const nextStatus = status ?? exercise.status;
-      const nextReviewStatus =
-        status === "approved"
-          ? "approved"
-          : status === "rejected"
-            ? "rejected"
-            : exercise.review_status || "pending";
-
+      // On enregistre d’abord toutes les corrections de la fiche source.
+      // La publication/refus passe ensuite par les fonctions centrales afin
+      // que tous les boutons admin produisent exactement le même résultat.
       const { error } = await supabase
         .from("exercises")
         .update({
@@ -133,19 +132,29 @@ export default function AdminExerciseEditPage() {
             .split("\n")
             .map((line) => line.trim())
             .filter(Boolean),
-          status: nextStatus,
-          review_status: nextReviewStatus,
-          visibility: status === "approved" ? "public" : undefined,
           updated_at: new Date().toISOString(),
         })
         .eq("id", id);
 
       if (error) throw error;
 
-      router.push("/admin/exercices");
+      if (status === "approved") {
+        const published = await approveExerciseForLibrary(id);
+        if (!published) throw new Error("La publication dans la bibliothèque a échoué.");
+      } else if (status === "rejected") {
+        const reason = prompt("Motif du refus ?") || "";
+        const rejected = await rejectExerciseForLibrary(id, reason);
+        if (!rejected) throw new Error("Le refus de la proposition a échoué.");
+      }
+
+      router.push("/admin/exercices/propositions");
     } catch (error) {
       console.error("Erreur sauvegarde exercice :", error);
-      alert("Impossible d’enregistrer l’exercice.");
+      alert(
+        error instanceof Error
+          ? error.message
+          : "Impossible d’enregistrer l’exercice."
+      );
     } finally {
       setSaving(false);
     }
@@ -180,6 +189,16 @@ export default function AdminExerciseEditPage() {
       </section>
 
       <section className="card">
+        <div className="fullEditorCallout">
+          <div>
+            <strong>Éditeur complet de l’exercice</strong>
+            <span>Modifie la fiche, les schémas et les phases dans la Plaquette avant validation.</span>
+          </div>
+          <Link href={`/exercices/creer?id=${id}`} className="fullEditorButton">
+            🏀 Modifier fiche + schémas
+          </Link>
+        </div>
+
         <div className="grid">
           <label>
             Titre
@@ -292,6 +311,34 @@ export default function AdminExerciseEditPage() {
 }
 
 const CSS = `
+
+.fullEditorCallout {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  padding: 16px 18px;
+  margin-bottom: 22px;
+  border: 1px solid #ead8b7;
+  border-radius: 16px;
+  background: #fff8e9;
+}
+.fullEditorCallout div { display: grid; gap: 4px; }
+.fullEditorCallout strong { color: #6b1a2c; }
+.fullEditorCallout span { color: #666; font-size: 14px; }
+.fullEditorButton {
+  flex: 0 0 auto;
+  border-radius: 12px;
+  padding: 12px 16px;
+  background: #111;
+  color: #fff;
+  font-weight: 900;
+  text-decoration: none;
+}
+@media (max-width: 720px) {
+  .fullEditorCallout { align-items: stretch; flex-direction: column; }
+  .fullEditorButton { text-align: center; }
+}
 .page {
   min-height: 100vh;
   background: #f7f3ed;

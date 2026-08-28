@@ -216,8 +216,10 @@ function rowToExercise(row: any): Exercise {
     reviewed_by: row.reviewed_by ?? null,
     rejection_reason: row.rejection_reason ?? null,
     original_exercise_id: row.original_exercise_id ?? null,
+    contributor_user_id: row.contributor_user_id ?? null,
     contributor_name: null,
     contributor_avatar_url: null,
+    published_at: row.published_at ?? null,
 
     createdAt: row.created_at ? new Date(row.created_at).getTime() : Date.now(),
     updatedAt: row.updated_at ? new Date(row.updated_at).getTime() : Date.now(),
@@ -244,6 +246,8 @@ function exerciseToRow(ex: any, userId: string) {
     review_status: (ex.review_status ?? "draft") as ReviewStatus,
 
     original_exercise_id: ex.original_exercise_id ?? null,
+    contributor_user_id: ex.contributor_user_id ?? null,
+    published_at: ex.published_at ?? null,
 
     title: ex.title ?? "",
 
@@ -311,34 +315,44 @@ async function getExerciseRaw(id: string | null | undefined) {
 
 async function attachExerciseContributors(rows: any[]): Promise<Exercise[]> {
   const mapped = rows.map(rowToExercise);
-  const contributorIds = Array.from(new Set(
-    rows
-      .filter((row) => row?.user_id && row?.review_status === 'approved' && row?.submitted_at)
-      .map((row) => String(row.user_id))
-  ));
+
+  const contributorIds = Array.from(
+    new Set(
+      rows
+        .map((row) => row?.contributor_user_id)
+        .filter(Boolean)
+        .map((id) => String(id))
+    )
+  );
 
   if (!contributorIds.length) return mapped;
 
   const supabase = createClient();
   const { data: profiles, error } = await supabase
-    .from('profiles')
-    .select('id, display_name, avatar_url')
-    .in('id', contributorIds);
+    .from("profiles")
+    .select("id, display_name, avatar_url")
+    .in("id", contributorIds);
 
   if (error) {
-    console.warn('Attribution exercices : profils indisponibles', error);
+    console.warn("Attribution exercices : profils indisponibles", error);
     return mapped;
   }
 
-  const byId = new Map((profiles ?? []).map((profile: any) => [String(profile.id), profile]));
+  const byId = new Map(
+    (profiles ?? []).map((profile: any) => [String(profile.id), profile])
+  );
+
   return mapped.map((item, index) => {
     const source = rows[index];
-    if (!source?.submitted_at || source?.review_status !== 'approved') return item;
-    const profile: any = byId.get(String(source.user_id));
+    const contributorId = source?.contributor_user_id;
+    if (!contributorId) return item;
+
+    const profile: any = byId.get(String(contributorId));
     if (!profile) return item;
+
     return {
       ...item,
-      contributor_name: profile.display_name || 'Utilisateur MyBasket',
+      contributor_name: profile.display_name || "Utilisateur MyBasket",
       contributor_avatar_url: profile.avatar_url || null,
     };
   });
@@ -627,8 +641,9 @@ export async function approveExerciseForLibrary(id: string): Promise<boolean> {
   }
 
   const existing = await getExerciseRaw(id);
-
   if (!existing) return false;
+
+  const now = new Date().toISOString();
 
   const officialCopy = exerciseToInsertRow(
     {
@@ -638,17 +653,63 @@ export async function approveExerciseForLibrary(id: string): Promise<boolean> {
       visibility: "public",
       review_status: "approved",
       original_exercise_id: existing.id,
+      contributor_user_id: existing.user_id,
+      published_at: now,
     },
     user.id
   );
 
-  const { error: insertError } = await supabase
-    .from("exercises")
-    .insert(officialCopy);
+  officialCopy.contributor_user_id = existing.user_id ?? null;
+  officialCopy.published_at = now;
+  officialCopy.submitted_at = existing.submitted_at ?? now;
+  officialCopy.reviewed_at = now;
+  officialCopy.reviewed_by = user.id;
+  officialCopy.rejection_reason = null;
 
-  if (insertError) {
-    showSupabaseError("Erreur Supabase approveExerciseForLibrary insert:", insertError);
+  const { data: alreadyPublished, error: lookupError } = await supabase
+    .from("exercises")
+    .select("id")
+    .eq("original_exercise_id", existing.id)
+    .eq("visibility", "public")
+    .eq("review_status", "approved")
+    .maybeSingle();
+
+  if (lookupError) {
+    showSupabaseError(
+      "Erreur Supabase approveExerciseForLibrary lookup:",
+      lookupError
+    );
     return false;
+  }
+
+  if (alreadyPublished?.id) {
+    const { id: _ignoredId, created_at: _ignoredCreatedAt, ...updatePayload } =
+      officialCopy;
+
+    const { error: updateOfficialError } = await supabase
+      .from("exercises")
+      .update(updatePayload)
+      .eq("id", alreadyPublished.id);
+
+    if (updateOfficialError) {
+      showSupabaseError(
+        "Erreur Supabase approveExerciseForLibrary update official:",
+        updateOfficialError
+      );
+      return false;
+    }
+  } else {
+    const { error: insertError } = await supabase
+      .from("exercises")
+      .insert(officialCopy);
+
+    if (insertError) {
+      showSupabaseError(
+        "Erreur Supabase approveExerciseForLibrary insert:",
+        insertError
+      );
+      return false;
+    }
   }
 
   const { error: updateError } = await supabase
@@ -656,15 +717,18 @@ export async function approveExerciseForLibrary(id: string): Promise<boolean> {
     .update({
       visibility: "private",
       review_status: "approved",
-      reviewed_at: new Date().toISOString(),
+      reviewed_at: now,
       reviewed_by: user.id,
       rejection_reason: null,
-      updated_at: new Date().toISOString(),
+      updated_at: now,
     })
     .eq("id", existing.id);
 
   if (updateError) {
-    showSupabaseError("Erreur Supabase approveExerciseForLibrary update:", updateError);
+    showSupabaseError(
+      "Erreur Supabase approveExerciseForLibrary update source:",
+      updateError
+    );
     return false;
   }
 
