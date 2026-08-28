@@ -24,6 +24,8 @@ import TeamShootingGrids from "@/components/equipes/TeamShootingGrids";
 import TeamAvailabilityLoad from "@/components/equipes/TeamAvailabilityLoad";
 import TeamResourcesPanel from "@/components/equipes/TeamResourcesPanel";
 import TeamActivityPanel from "@/components/equipes/TeamActivityPanel";
+import ActionClipsModal, { type ClipAction } from "@/components/prise-stats-pro/ActionClipsModal";
+import { type VideoSyncState, NATIVE_SYNC, normalizeSync } from "@/lib/video-sync";
 import type { Player, StaffMember, Team, TeamEvent } from "../../../types/player";
 
 /* ---------- Icônes (SVG inline, trait) ---------- */
@@ -4633,8 +4635,14 @@ function InsightCard({
 /* ---------- 6. LINEUPS / 5 MAJEURS ---------- */
 
 type LineupActionRow = {
+  id?: string | null;
+  client_action_id?: string | null;
   match_id: string | null;
+  quarter?: number | null;
+  clock?: string | null;
   context: string | null;
+  player_id?: string | null;
+  rebound_player_id?: string | null;
   action_type: string | null;
   shot_type: string | null;
   shot_result: string | null;
@@ -4643,6 +4651,12 @@ type LineupActionRow = {
   ft_made: number | null;
   assist_player_id: string | null;
   lineup: string[] | null;
+  shot_zone_id?: string | null;
+  clip_start?: number | null;
+  clip_end?: number | null;
+  video_time?: number | null;
+  possession_start?: number | null;
+  possession_end?: number | null;
 };
 
 type LineupRow = {
@@ -4882,6 +4896,70 @@ function getPlayerNameFromAny(row: any) {
   return `${num ? `#${num} ` : ""}${name}`;
 }
 
+type LineupPlayerVisual = {
+  id: string;
+  name: string;
+  photo: string | null;
+  initials: string;
+};
+
+function getPlayerPhotoFromAny(row: any): string | null {
+  const value =
+    row?.photo ??
+    row?.avatar_url ??
+    row?.avatarUrl ??
+    row?.photo_url ??
+    row?.photoUrl ??
+    null;
+  return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+function getPlayerInitialsFromAny(row: any) {
+  const first = String(row?.first_name ?? row?.firstName ?? row?.prenom ?? "").trim();
+  const last = String(row?.last_name ?? row?.lastName ?? row?.nom ?? "").trim();
+  const full = String(row?.name ?? row?.full_name ?? row?.fullName ?? "").trim();
+  const parts = (first || last ? [first, last] : full.split(/\s+/)).filter(Boolean);
+  const initials = parts.slice(0, 2).map((part) => part[0]?.toUpperCase() || "").join("");
+  return initials || "J";
+}
+
+function sameLineup(action: LineupActionRow, ids: string[]) {
+  const actionIds = Array.isArray(action.lineup)
+    ? action.lineup.filter(Boolean).map(String).sort()
+    : [];
+  const rowIds = ids.map(String).sort();
+  return actionIds.length === rowIds.length && actionIds.every((id, index) => id === rowIds[index]);
+}
+
+function lineupClipAction(
+  action: LineupActionRow,
+  matchInfo: Map<string, { date: string; opponent: string }>,
+): ClipAction & LineupActionRow {
+  const matchId = String(action.match_id || "");
+  const info = matchInfo.get(matchId);
+  return {
+    ...action,
+    id: action.client_action_id ?? action.id ?? undefined,
+    matchId: action.match_id ?? null,
+    matchLabel: info ? `vs ${info.opponent}` : null,
+    date: info?.date ?? null,
+    opponent: info?.opponent ?? null,
+    q: Number(action.quarter ?? 0) || undefined,
+    clock: String(action.clock ?? ""),
+    context: action.context ?? "",
+    playerId: action.player_id ?? null,
+    actionType: action.action_type ?? null,
+    shotType: action.shot_type ?? null,
+    shotResult: action.shot_result ?? null,
+    zone: action.shot_zone_id ?? null,
+    clipStart: action.clip_start ?? null,
+    clipEnd: action.clip_end ?? null,
+    videoTime: action.video_time ?? null,
+    possessionStart: action.possession_start ?? null,
+    possessionEnd: action.possession_end ?? null,
+  };
+}
+
 function TeamLineupsBlock({ teamId }: { teamId: string }) {
   const supabase = createClient();
 
@@ -4889,6 +4967,11 @@ function TeamLineupsBlock({ teamId }: { teamId: string }) {
   const [matches, setMatches] = useState<SupaMatchRow[]>([]);
   const [actions, setActions] = useState<LineupActionRow[]>([]);
   const [names, setNames] = useState<Record<string, string>>({});
+  const [playersById, setPlayersById] = useState<Record<string, LineupPlayerVisual>>({});
+  const [matchInfo, setMatchInfo] = useState<Map<string, { date: string; opponent: string }>>(new Map());
+  const [videoByMatch, setVideoByMatch] = useState<Map<string, string>>(new Map());
+  const [syncByMatch, setSyncByMatch] = useState<Map<string, VideoSyncState>>(new Map());
+  const [clip, setClip] = useState<{ title: string; items: (ClipAction & LineupActionRow)[] } | null>(null);
 
   useEffect(() => {
     let active = true;
@@ -4899,7 +4982,7 @@ function TeamLineupsBlock({ teamId }: { teamId: string }) {
       const { data: matchData, error: matchError } = await supabase
         .from("match_stats")
         .select(
-          "id, team_id, opponent, match_date, us_score, them_score, result, home",
+          "id, team_id, opponent, match_date, us_score, them_score, result, home, video_url, video_sync_mode, video_sync_offset, video_sync_rate",
         )
         .eq("team_id", teamId)
         .order("match_date", { ascending: false });
@@ -4917,7 +5000,43 @@ function TeamLineupsBlock({ teamId }: { teamId: string }) {
       const matchRows = (matchData ?? []) as SupaMatchRow[];
       setMatches(matchRows);
 
+      const info = new Map<string, { date: string; opponent: string }>();
+      const videos = new Map<string, string>();
+      const syncs = new Map<string, VideoSyncState>();
+
+      (matchData ?? []).forEach((match: any) => {
+        const matchId = String(match.id);
+        info.set(matchId, {
+          date: String(match.match_date ?? ""),
+          opponent: String(match.opponent ?? "Adversaire"),
+        });
+        if (match.video_url) videos.set(matchId, String(match.video_url));
+        syncs.set(matchId, normalizeSync(match));
+      });
+
       const matchIds = matchRows.map((match) => match.id);
+
+      if (matchIds.length > 0) {
+        const { data: mediaRows } = await supabase
+          .from("match_media_sources")
+          .select("match_id,provider")
+          .in("match_id", matchIds);
+
+        (mediaRows ?? []).forEach((media: any) => {
+          if (media.provider !== "google_drive") return;
+          const matchId = String(media.match_id ?? "");
+          if (matchId) {
+            videos.set(
+              matchId,
+              `/api/media/matches/${encodeURIComponent(matchId)}/stream`,
+            );
+          }
+        });
+      }
+
+      setMatchInfo(info);
+      setVideoByMatch(videos);
+      setSyncByMatch(syncs);
 
       if (matchIds.length === 0) {
         setActions([]);
@@ -4928,7 +5047,7 @@ function TeamLineupsBlock({ teamId }: { teamId: string }) {
       const { data: actionData, error: actionError } = await supabase
         .from("match_actions")
         .select(
-          "match_id, context, action_type, shot_type, shot_result, special_case, ft_attempts, ft_made, assist_player_id, lineup",
+          "id, client_action_id, match_id, quarter, clock, context, player_id, rebound_player_id, action_type, shot_type, shot_result, special_case, ft_attempts, ft_made, assist_player_id, lineup, shot_zone_id, clip_start, clip_end, video_time, possession_start, possession_end",
         )
         .in("match_id", matchIds);
 
@@ -4968,6 +5087,19 @@ function TeamLineupsBlock({ teamId }: { teamId: string }) {
               return acc;
             }, {}),
           );
+
+          setPlayersById(
+            playersData.reduce((acc: Record<string, LineupPlayerVisual>, player: any) => {
+              const id = String(player.id);
+              acc[id] = {
+                id,
+                name: getPlayerNameFromAny(player),
+                photo: getPlayerPhotoFromAny(player),
+                initials: getPlayerInitialsFromAny(player),
+              };
+              return acc;
+            }, {}),
+          );
         }
       }
 
@@ -4986,6 +5118,57 @@ function TeamLineupsBlock({ teamId }: { teamId: string }) {
 
   const best = topRows[0];
   const mostUsed = [...rows].sort((a, b) => b.poss - a.poss)[0];
+
+  const clipsForLineup = (row: LineupRow, kind: "all" | "fg" | "2pts" | "3pts" | "ft" | "ast" | "to" | "stops") => {
+    const lineupActions = actions.filter((action) => sameLineup(action, row.ids));
+
+    const filtered = lineupActions.filter((action) => {
+      const context = String(action.context || "");
+      const actionType = String(action.action_type || "");
+      const shotType = String(action.shot_type || "");
+      const shotResult = String(action.shot_result || "");
+
+      if (kind === "all") return true;
+      if (kind === "fg") return context === "attaque" && actionType === "tir" && (shotType === "2PTS" || shotType === "3PTS");
+      if (kind === "2pts") return context === "attaque" && actionType === "tir" && shotType === "2PTS";
+      if (kind === "3pts") return context === "attaque" && actionType === "tir" && shotType === "3PTS";
+      if (kind === "ft") return context === "attaque" && ((actionType === "tir" && shotType === "LF") || actionType === "faute-provoquee");
+      if (kind === "ast") return context === "attaque" && !!action.assist_player_id;
+      if (kind === "to") return context === "attaque" && actionType === "perte";
+      if (kind === "stops") return context === "defense" && lineupActionPoints(action) >= 0;
+
+      return false;
+    });
+
+    return filtered.map((action) => lineupClipAction(action, matchInfo));
+  };
+
+  const openLineupClips = (
+    row: LineupRow,
+    kind: "all" | "fg" | "2pts" | "3pts" | "ft" | "ast" | "to" | "stops",
+    label: string,
+  ) => {
+    const items = clipsForLineup(row, kind);
+    if (!items.length) return;
+    setClip({ title: `Lineup · ${label}`, items });
+  };
+
+  const clickableCell = (
+    row: LineupRow,
+    kind: "all" | "fg" | "2pts" | "3pts" | "ft" | "ast" | "to" | "stops",
+    label: string,
+    content: any,
+  ) => {
+    const hasItems = clipsForLineup(row, kind).length > 0;
+    return (
+      <td
+        className={hasItems ? "lineup-video-cell" : undefined}
+        onClick={hasItems ? () => openLineupClips(row, kind, label) : undefined}
+      >
+        {content}
+      </td>
+    );
+  };
 
   return (
     <section className="tl-card lineups-card">
@@ -5089,8 +5272,23 @@ function TeamLineupsBlock({ teamId }: { teamId: string }) {
               <tbody>
                 {topRows.map((row) => (
                   <tr key={row.ids.join("|")}>
-                    <td className="lineup-label">{row.label}</td>
-                    <td>{row.actions}</td>
+                    <td className="lineup-label">
+                      <div className="lineup-avatars" aria-label="5 joueurs du lineup">
+                        {row.ids.slice(0, 5).map((playerId) => {
+                          const player = playersById[playerId];
+                          return (
+                            <span key={playerId} className="lineup-avatar">
+                              {player?.photo ? (
+                                <img src={player.photo} alt="" />
+                              ) : (
+                                <span>{player?.initials || "J"}</span>
+                              )}
+                            </span>
+                          );
+                        })}
+                      </div>
+                    </td>
+                    {clickableCell(row, "all", "Toutes les actions", row.actions)}
                     <td>{r1(row.poss)}</td>
                     <td>{row.ptsFor}</td>
                     <td>{row.ptsAgainst}</td>
@@ -5100,23 +5298,15 @@ function TeamLineupsBlock({ teamId }: { teamId: string }) {
                     </td>
                     <td>{r1(row.ppp)}</td>
                     <td>{r1(row.offRtg)}</td>
-                    <td>
-                      {row.fgm}-{row.fga}
-                    </td>
-                    <td>
-                      {row.p2m}-{row.p2a}
-                    </td>
-                    <td>
-                      {row.p3m}-{row.p3a}
-                    </td>
-                    <td>
-                      {row.ftm}-{row.fta}
-                    </td>
+                    {clickableCell(row, "fg", "FG", `${row.fgm}-${row.fga}`)}
+                    {clickableCell(row, "2pts", "2PTS", `${row.p2m}-${row.p2a}`)}
+                    {clickableCell(row, "3pts", "3PTS", `${row.p3m}-${row.p3a}`)}
+                    {clickableCell(row, "ft", "LF", `${row.ftm}-${row.fta}`)}
                     <td>{r1(row.efg)}%</td>
                     <td>{r1(row.ts)}%</td>
-                    <td>{r1(row.astPct)}%</td>
-                    <td>{r1(row.tovPct)}%</td>
-                    <td>{row.stops}</td>
+                    {clickableCell(row, "ast", "Passes décisives", `${r1(row.astPct)}%`)}
+                    {clickableCell(row, "to", "Balles perdues", `${r1(row.tovPct)}%`)}
+                    {clickableCell(row, "stops", "Stops défensifs", row.stops)}
                     <td>{r1(row.stopPct)}%</td>
                   </tr>
                 ))}
@@ -5125,6 +5315,20 @@ function TeamLineupsBlock({ teamId }: { teamId: string }) {
           </div>
         </>
       )}
+
+      <ActionClipsModal
+        open={!!clip}
+        actions={(clip?.items ?? []) as ClipAction[]}
+        title={clip?.title ?? ""}
+        videoUrlForAction={(action) =>
+          videoByMatch.get(String(action.matchId ?? (action as any).match_id ?? "")) ?? null
+        }
+        syncForAction={(action) =>
+          syncByMatch.get(String(action.matchId ?? (action as any).match_id ?? "")) ?? NATIVE_SYNC
+        }
+        onClose={() => setClip(null)}
+        playerName={(id) => names[String(id ?? "")] || undefined}
+      />
 
       <style jsx>{`
         .lineups-card {
@@ -5322,6 +5526,50 @@ function TeamLineupsBlock({ teamId }: { teamId: string }) {
           line-height: 1.42;
           overflow-wrap: anywhere;
         }
+
+        .lineup-avatars {
+          display: flex;
+          align-items: center;
+          gap: 4px;
+          min-width: 142px;
+          height: 28px;
+          white-space: nowrap;
+        }
+
+        .lineup-avatar {
+          width: 26px;
+          height: 26px;
+          flex: 0 0 26px;
+          border-radius: 999px;
+          overflow: hidden;
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          background: #f3ece4;
+          border: 1px solid #e2d5c6;
+          color: #6b1a2c;
+          font-size: 8px;
+          font-weight: 900;
+          line-height: 1;
+        }
+
+        .lineup-avatar img {
+          width: 100%;
+          height: 100%;
+          display: block;
+          object-fit: cover;
+        }
+
+        td.lineup-video-cell {
+          cursor: pointer;
+          transition: background 0.15s ease, color 0.15s ease;
+        }
+
+        td.lineup-video-cell:hover {
+          background: #fff4dc;
+          color: #6b1a2c;
+        }
+
 
         .good {
           color: #177245;
