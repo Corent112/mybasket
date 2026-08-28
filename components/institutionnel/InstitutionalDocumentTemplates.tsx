@@ -13,6 +13,8 @@ type Structure = {
   email: string | null;
   phone?: string | null;
   logo_url?: string | null;
+  document_primary_color?: string | null;
+  document_secondary_color?: string | null;
 };
 
 type Person = {
@@ -109,24 +111,35 @@ function rows(items: string[], cols: number) {
     .join("");
 }
 
-function baseStyles() {
+function templateHex(value:string|null|undefined,fallback:string){return /^#[0-9a-fA-F]{6}$/.test(String(value||""))?String(value).toUpperCase():fallback;}
+function templatePrimary(s:Structure){return templateHex(s.document_primary_color,"#6B1A2C");}
+function templateSecondary(s:Structure){return templateHex(s.document_secondary_color,"#D4A24C");}
+
+function baseStyles(structure: Structure) {
+  const primary=templatePrimary(structure), secondary=templateSecondary(structure);
   return `
     @page{size:A4;margin:0}
-    *{box-sizing:border-box}body{font-family:Arial,Helvetica,sans-serif;color:#241b1e;margin:0;font-size:11px;padding:34mm 15mm 20mm;position:relative;background:#fff;-webkit-print-color-adjust:exact;print-color-adjust:exact}
-    body:before{content:"";position:fixed;left:-10%;right:-10%;top:-28mm;height:58mm;background:#6B1A2C;border-radius:0 0 48% 52%/0 0 32% 36%;transform:rotate(-1deg);z-index:-1}body:after{content:"";position:fixed;left:-5%;right:-5%;top:29mm;height:2mm;background:#D4A24C;border-radius:50%;transform:rotate(-1deg);z-index:-1}
-    .hero{position:fixed;top:10mm;left:15mm;right:15mm;color:#fff;display:flex;justify-content:space-between;align-items:flex-start}.hero .brand{font-weight:900;font-size:15px;letter-spacing:.04em}.hero .org{text-align:right;color:#f3dfe3;font-size:9px;line-height:1.45}.hero .org b{display:block;color:#fff;font-size:11px}
-    h1{font-size:25px;letter-spacing:-.025em;margin:5mm 0 2mm;color:#4D101D}h2{font-size:12px;letter-spacing:.05em;text-transform:uppercase;margin:7mm 0 3mm;color:#6B1A2C;border-left:4px solid #D4A24C;padding-left:8px}.subtitle{color:#77696d;margin-bottom:7mm}.meta{display:grid;grid-template-columns:repeat(3,1fr);gap:3mm 7mm;margin:5mm 0 7mm}.meta>div{border-bottom:1px solid #d4c6ca;padding:2mm 0}.meta b{display:block;font-size:7px;color:#8a777d;text-transform:uppercase;letter-spacing:.07em;margin-bottom:1mm}
-    table{width:100%;border-collapse:separate;border-spacing:0;margin-top:3mm;border:1px solid #e3d5d8;border-radius:4mm;overflow:hidden;table-layout:fixed}th,td{border:0;border-bottom:1px solid #eadfe2;padding:2.3mm;vertical-align:middle;overflow-wrap:anywhere}th{background:#6B1A2C;color:#fff;font-weight:700;text-align:center;font-size:7.5px;text-transform:uppercase;letter-spacing:.03em}tbody tr:nth-child(even) td{background:#fbf7f8}tbody tr:last-child td{border-bottom:0}
-    .sign{height:12mm}.big{height:22mm}.box{border:0;border-left:4px solid #D4A24C;background:#fbf7f8;padding:4mm;border-radius:0 4mm 4mm 0;margin:3mm 0;min-height:18mm}.grid2{display:grid;grid-template-columns:1fr 1fr;gap:5mm}.line{border-bottom:1px solid #a9949a;display:inline-block;min-width:45mm;height:5mm}.footer{margin-top:7mm;display:flex;justify-content:space-between;gap:8mm}.right{text-align:right}.section{margin:7mm 0}.fieldrow{display:grid;grid-template-columns:1fr 1fr;gap:5mm 8mm}.field{padding:2mm 0 3mm;border-bottom:1px solid #d4c6ca}.field small{display:block;color:#8a777d;text-transform:uppercase;letter-spacing:.07em;font-weight:700;font-size:7px;margin-bottom:1.5mm}.structure-card{display:grid;grid-template-columns:1.4fr 1fr;gap:5mm;background:linear-gradient(120deg,#f8f0f2,#fff);border-left:5px solid #D4A24C;padding:4mm 5mm;border-radius:0 5mm 5mm 0;margin:4mm 0 7mm}.structure-card strong{font-size:14px;color:#6B1A2C}.structure-card span{display:block;color:#77696d;margin-top:1mm}.doc-footer{position:fixed;left:15mm;right:15mm;bottom:7mm;border-top:1px solid #eadfe2;padding-top:2mm;color:#8a777d;font-size:7px;display:flex;justify-content:space-between}
+    *{box-sizing:border-box;max-width:100%}html,body{width:210mm;margin:0}body{font-family:Arial,Helvetica,sans-serif;color:#241b1e;font-size:8px;padding:29mm 12mm 12mm;position:relative;background:#fff;-webkit-print-color-adjust:exact;print-color-adjust:exact;overflow-x:hidden}
+    body:before{content:"";position:absolute;left:-10%;right:-10%;top:-26mm;height:51mm;background:${primary};border-radius:0 0 48% 52%/0 0 32% 36%;transform:rotate(-1deg);z-index:-1}body:after{content:"";position:absolute;left:-5%;right:-5%;top:25mm;height:1.5mm;background:${secondary};border-radius:50%;transform:rotate(-1deg);z-index:-1}
+    .hero{position:absolute;top:7mm;left:12mm;right:12mm;height:14mm;color:#fff;display:flex;justify-content:space-between;align-items:flex-start;gap:8mm}.hero .brand{font-weight:900;font-size:11px;letter-spacing:.04em}.hero .logo{max-width:30mm;max-height:12mm;object-fit:contain;background:#fff;border-radius:1.5mm;padding:1mm}.hero .org{text-align:right;color:#f5ecef;font-size:7px;line-height:1.3;min-width:0}.hero .org b{display:block;color:#fff;font-size:8.5px}
+    .editbar{position:fixed;z-index:9999;top:4mm;left:50%;transform:translateX(-50%);background:#fff;border:1px solid #ddd;border-radius:6px;padding:4px 8px;box-shadow:0 4px 18px rgba(0,0,0,.15)}.editbar button{border:0;border-radius:5px;background:${primary};color:#fff;padding:6px 10px;font-weight:800;cursor:pointer}
+    main[contenteditable=true]:focus{outline:2px dashed ${secondary};outline-offset:2mm}
+    h1{font-size:18px;letter-spacing:-.02em;margin:2mm 0 1mm;color:${primary}}h2{font-size:8.5px;letter-spacing:.04em;text-transform:uppercase;margin:3mm 0 1.5mm;color:${primary};border-left:.8mm solid ${secondary};padding-left:2mm}.subtitle{color:#77696d;margin-bottom:3mm}.meta{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:1.5mm 4mm;margin:2mm 0 3mm}.meta>div{min-width:0;border-bottom:.25mm solid #d4c6ca;padding:1mm 0}.meta b{display:block;font-size:5.8px;color:#8a777d;text-transform:uppercase;letter-spacing:.05em;margin-bottom:.5mm}
+    table{display:table!important;width:100%!important;max-width:100%!important;border-collapse:separate;border-spacing:0;margin:2mm 0 3mm;border:.25mm solid #e3d5d8;border-radius:2mm;overflow:hidden;table-layout:fixed!important}th,td{border:0;border-bottom:.25mm solid #eadfe2;padding:1mm .65mm;vertical-align:middle;font-size:6.2px;line-height:1.15;overflow-wrap:anywhere!important;word-break:break-word!important;white-space:normal!important;min-width:0!important}th{background:${primary};color:#fff;font-weight:700;text-align:center;font-size:5.5px;text-transform:uppercase;letter-spacing:.01em}tbody tr:nth-child(even) td{background:#fbf7f8}tbody tr:last-child td{border-bottom:0}
+    .sign{height:7mm}.big{height:12mm}.box{border:0;border-left:.8mm solid ${secondary};background:#fbf7f8;padding:2mm;border-radius:0 2mm 2mm 0;margin:1.5mm 0;min-height:9mm}.grid2{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:3mm}.line{border-bottom:.25mm solid #a9949a;display:inline-block;max-width:100%;min-width:25mm;height:3mm}.footer{margin-top:3mm;display:grid;grid-template-columns:1fr 1fr;gap:4mm}.right{text-align:right}.section{margin:3mm 0}.fieldrow{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:2mm 5mm}.field{min-width:0;padding:1mm 0 1.5mm;border-bottom:.25mm solid #d4c6ca}.field small{display:block;color:#8a777d;text-transform:uppercase;letter-spacing:.05em;font-weight:700;font-size:5.8px;margin-bottom:.5mm}.structure-card{display:grid;grid-template-columns:1.4fr 1fr;gap:3mm;background:linear-gradient(120deg,#f8f0f2,#fff);border-left:1mm solid ${secondary};padding:2mm 3mm;border-radius:0 2mm 2mm 0;margin:2mm 0 3mm}.structure-card strong{font-size:10px;color:${primary}}.structure-card span{display:block;color:#77696d;margin-top:.5mm}.doc-footer{position:absolute;left:12mm;right:12mm;bottom:4mm;border-top:.25mm solid #eadfe2;padding-top:1mm;color:#8a777d;font-size:5.7px;display:flex;justify-content:space-between}
+    .consent{display:flex;gap:2mm;align-items:flex-start;margin:1.5mm 0}.consent .boxcheck{width:4mm;height:4mm;border:.35mm solid ${primary};border-radius:.5mm;flex:0 0 4mm}
+    @media print{.editbar{display:none!important}main[contenteditable=true]:focus{outline:none}body{overflow:visible}}
   `;
 }
 
 function shell(structure: Structure, title: string, body: string) {
-  return `<!doctype html><html><head><meta charset="utf-8"><title>${escapeHtml(title)}</title><style>${baseStyles()}</style></head><body>
-    <header class="hero"><div class="brand">MYBASKET</div><div class="org"><b>${escapeHtml(structure.name)}</b>${escapeHtml(structure.season_label || "")}${structure.city ? ` · ${escapeHtml(structure.city)}` : ""}</div></header>
-    <h1>${escapeHtml(title)}</h1><div class="subtitle">Document institutionnel MyBasket · modifiable, enregistrable et imprimable</div>
+  const brand=structure.logo_url?`<img class="logo" src="${escapeHtml(structure.logo_url)}" alt="Logo">`:`<div class="brand">MYBASKET</div>`;
+  return `<!doctype html><html><head><meta charset="utf-8"><title>${escapeHtml(title)}</title><style>${baseStyles(structure)}</style></head><body>
+    <div class="editbar no-print"><button type="button" onclick="window.print()">Imprimer / PDF</button></div>
+    <header class="hero"><div>${brand}</div><div class="org"><b>${escapeHtml(structure.name)}</b>${escapeHtml(structure.season_label || "")}${structure.city ? ` · ${escapeHtml(structure.city)}` : ""}</div></header>
+    <main contenteditable="true"><h1>${escapeHtml(title)}</h1><div class="subtitle">Document institutionnel · contenu entièrement modifiable avant impression</div>
     <section class="structure-card"><div><strong>${escapeHtml(structure.name)}</strong><span>${escapeHtml(structure.structure_type)}${structure.city ? ` · ${escapeHtml(structure.city)}` : ""}</span></div><div><span>${escapeHtml(structure.email || "")}</span><span>${escapeHtml(structure.phone || "")}</span><span>Saison ${escapeHtml(structure.season_label || "")}</span></div></section>
-    ${body}<footer class="doc-footer"><span>MYBASKET · ${escapeHtml(structure.name)}</span><span>${escapeHtml(structure.season_label || "")}</span></footer>
+    ${body}</main><footer class="doc-footer"><span>${escapeHtml(structure.name)}</span><span>${escapeHtml(structure.season_label || "")}</span></footer>
   </body></html>`;
 }
 
@@ -172,7 +185,7 @@ function buildDocument(key: TemplateKey, structure: Structure, people: Person[],
   }
 
   if (key === "parental_authorization") {
-    return shell(structure, "Autorisation parentale", `<div style="line-height:2"><p>Je soussigné(e) <span class="line" style="min-width:300px"></span>, responsable légal de <span class="line" style="min-width:300px"></span>, autorise sa participation au stage / rassemblement organisé par <b>${escapeHtml(structure.name)}</b>.</p><p>Intitulé : <span class="line" style="min-width:420px"></span></p><p>Date(s) : <span class="line"></span> &nbsp; Lieu : <span class="line"></span></p><p>Téléphone à joindre en cas de besoin : <span class="line" style="min-width:260px"></span></p></div><div class="footer" style="margin-top:50px"><div>Fait à <span class="line"></span>, le <span class="line"></span></div><div>Signature du responsable légal : <div class="box big" style="width:280px"></div></div></div>`);
+    return shell(structure, "Autorisation parentale", `<div style="line-height:1.55"><p>Je soussigné(e) <span class="line"></span>, responsable légal de <span class="line"></span>, autorise sa participation au stage / rassemblement organisé par <b>${escapeHtml(structure.name)}</b>.</p><p>Intitulé : <span class="line"></span></p><p>Date(s) : <span class="line"></span> &nbsp; Lieu : <span class="line"></span></p><p>Téléphone à joindre en cas de besoin : <span class="line"></span></p></div><h2>Autorisations</h2><div class="consent"><span class="boxcheck"></span><span>J’autorise la participation de mon enfant à l’action indiquée ci-dessus.</span></div><div class="consent"><span class="boxcheck"></span><span>J’autorise les prises de vues photographiques et audiovisuelles dans le cadre des activités de l’institution.</span></div><div class="consent"><span class="boxcheck"></span><span>J’autorise la diffusion non commerciale de ces images sur les supports de l’institution.</span></div><div class="footer"><div>Fait à <span class="line"></span>, le <span class="line"></span></div><div>Signature du responsable légal : <div class="box big"></div></div></div>`);
   }
 
   if (key === "training_report" || key === "stage_summary") {
@@ -222,7 +235,6 @@ export default function InstitutionalDocumentTemplates({ structureId }: { struct
     win.document.open();
     win.document.write(html);
     win.document.close();
-    window.setTimeout(() => win.print(), 250);
   }
 
   async function saveTemplate(template: Template) {
