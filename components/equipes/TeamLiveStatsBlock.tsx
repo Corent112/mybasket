@@ -345,6 +345,7 @@ export default function TeamLiveStatsBlock({ teamId }: { teamId: string }) {
       )}
 
       <ActionClipsModal
+        teamId={teamId}
         open={!!clip}
         actions={(clip?.items ?? []) as ClipAction[]}
         title={clip?.title ?? ''}

@@ -6,7 +6,7 @@ import ActionClipsModal, { type ClipAction } from "@/components/prise-stats-pro/
 import { NATIVE_SYNC, normalizeSync, type VideoSyncState } from "@/lib/video-sync";
 import { getLocalMatchVideoUrl } from "@/lib/local-video-registry";
 import useLocalMatchVideoVersion from "@/hooks/useLocalMatchVideoVersion";
-import { relinkMatchVideo, restoreMatchVideoForClip } from "@/lib/video/match-video-resolver";
+import { relinkMatchVideo } from "@/lib/video/match-video-resolver";
 
 type Props = {
   teamId: string;
@@ -161,10 +161,9 @@ export default function PlayerAllProjectClips({ teamId, playerId, playerName }: 
     setReconnecting(matchId);
 
     try {
-      const restored = await restoreMatchVideoForClip(matchId, teamId);
-      if (restored.video) return;
-
-      await relinkMatchVideo(matchId, teamId, restored.expected);
+      // Le picker doit partir directement du clic utilisateur. Le resolver
+      // recharge lui-même le fingerprint attendu après l'ouverture du picker.
+      await relinkMatchVideo(matchId, teamId);
     } catch (error: any) {
       if (error?.name !== "AbortError") {
         console.error("Reconnexion vidéo joueur:", error);
@@ -301,13 +300,6 @@ export default function PlayerAllProjectClips({ teamId, playerId, playerName }: 
         setSources(sourceMap);
         setActions(finalActions);
 
-        // Tentative silencieuse via la source vidéo UNIQUE du match.
-        // Aucun registre propre à la fiche joueur n'est créé.
-        Object.values(sourceMap).forEach((source) => {
-          if (source.provider === "local" || source.filename) {
-            void restoreMatchVideoForClip(source.matchId, teamId);
-          }
-        });
       } catch (e: any) {
         console.error("PlayerAllProjectClips:", e);
         if (active) {
@@ -513,15 +505,9 @@ export default function PlayerAllProjectClips({ teamId, playerId, playerName }: 
                 ].filter(Boolean).join(" · ")}
               </small>
               <div className="papc-card-actions">
-                {!connected ? (
-                  <button onClick={() => void reconnectSource(a.matchId)}>
-                    📁 Retrouver la vidéo du match
-                  </button>
-                ) : (
-                  <button className="primary" onClick={() => openAt(a)}>
-                    ▶ Revoir la séquence
-                  </button>
-                )}
+                <button className="primary" onClick={() => openAt(a)}>
+                  ▶ {connected ? "Revoir la séquence" : "Ouvrir la séquence"}
+                </button>
               </div>
             </article>
           );
@@ -530,6 +516,7 @@ export default function PlayerAllProjectClips({ teamId, playerId, playerName }: 
 
       {modal && (
         <ActionClipsModal
+          teamId={teamId}
           open
           actions={modal.items}
           title={modal.title}

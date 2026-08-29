@@ -25,6 +25,8 @@ type RestoreResult = {
   expected: MatchProjectFingerprint | null;
 };
 
+const restoreInFlight = new Map<string, Promise<RestoreResult>>();
+
 function supabaseClient() {
   return createBrowserClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -33,51 +35,9 @@ function supabaseClient() {
 }
 
 /**
- * Résolveur UNIQUE pour une vidéo locale de match.
- *
- * Règle :
- * matchId -> métadonnées Supabase -> handle local IndexedDB -> fichier.
- *
- * Le fichier vidéo lui-même n'est jamais uploadé.
- * Si le handle est encore valable, la vidéo est remise dans le registre mémoire.
- * Les fiches joueur / équipe / clips retrouvent donc la même source par matchId.
- */
-export async function restoreMatchVideoForClip(
-  matchId: string,
-  teamId?: string | null,
-): Promise<RestoreResult> {
-  if (!matchId) return { video: null, expected: null };
-
-  const already = getLocalMatchVideo(matchId);
-  if (already) {
-    return { video: already, expected: already.fingerprint };
-  }
-
-  const supabase = supabaseClient();
-
-  let expected: MatchProjectFingerprint | null = null;
-  try {
-    const row = await loadMatchLocalMedia(supabase, matchId);
-    expected = fingerprintFromRow(row);
-  } catch {
-    // Les métadonnées peuvent manquer sur un ancien match.
-    // On tente quand même le handle local lié au matchId.
-  }
-
-  const restored = await restorePersistentVideo(matchId, expected, teamId);
-  if (restored) {
-    setLocalMatchVideo(restored);
-    return { video: restored, expected };
-  }
-
-  return { video: null, expected };
-}
-
-/**
- * Enregistre/rattache un fichier déjà sélectionné à la source vidéo UNIQUE du match.
- * Cette fonction centralise le fingerprint, les métadonnées Supabase, le handle
- * persistant (quand le navigateur en fournit un) et le registre mémoire.
- * Elle ne touche jamais aux actions, clips, stats ou timecodes.
+ * Enregistre la copie locale de CE navigateur pour un match commun au staff.
+ * Les métadonnées/fingerprint sont partagées via Supabase ; le FileSystemHandle
+ * reste volontairement dans IndexedDB, donc propre à cet ordinateur.
  */
 export async function attachMatchVideoFile(
   matchId: string,
@@ -87,8 +47,8 @@ export async function attachMatchVideoFile(
 ): Promise<LocalMatchVideo> {
   if (!matchId) throw new Error("matchId manquant pour rattacher la vidéo.");
 
-  const supabase = supabaseClient();
   const fingerprint = await fingerprintVideo(file);
+  const supabase = supabaseClient();
 
   await saveMatchLocalMedia(supabase, {
     matchId,
@@ -96,9 +56,7 @@ export async function attachMatchVideoFile(
     fingerprint,
   });
 
-  if (handle) {
-    await savePersistentFileHandle(matchId, handle);
-  }
+  if (handle) await savePersistentFileHandle(matchId, handle);
 
   const video: LocalMatchVideo = {
     matchId,
@@ -112,9 +70,59 @@ export async function attachMatchVideoFile(
 }
 
 /**
- * Relocalise UNE FOIS la vidéo d'un match.
- * Une fois le bon fichier choisi, le nouveau handle est mémorisé sous le même
- * matchId : toutes les actions/clips déjà codés restent valables.
+ * Résolveur UNIQUE de la vidéo locale d'un match.
+ *
+ * Ordre :
+ * 1. registre mémoire de la session (instantané),
+ * 2. métadonnées communes Supabase,
+ * 3. handle local IndexedDB de CET ordinateur,
+ * 4. réinjection dans le registre mémoire.
+ *
+ * Les appels concurrents pour le même match sont dédupliqués afin qu'une fiche
+ * joueur/équipe ne relise pas plusieurs fois le même gros fichier.
+ */
+export async function restoreMatchVideoForClip(
+  matchId: string,
+  teamId?: string | null,
+): Promise<RestoreResult> {
+  if (!matchId) return { video: null, expected: null };
+
+  const already = getLocalMatchVideo(matchId);
+  if (already) return { video: already, expected: already.fingerprint };
+
+  const running = restoreInFlight.get(matchId);
+  if (running) return running;
+
+  const task = (async (): Promise<RestoreResult> => {
+    const supabase = supabaseClient();
+    let expected: MatchProjectFingerprint | null = null;
+
+    try {
+      const row = await loadMatchLocalMedia(supabase, matchId);
+      expected = fingerprintFromRow(row);
+    } catch {
+      // Ancien match : restorePersistentVideo sait encore migrer le registre
+      // historique équipe + nom de fichier lorsqu'il dispose des métadonnées.
+    }
+
+    const restored = await restorePersistentVideo(matchId, expected, teamId);
+    if (!restored) return { video: null, expected };
+
+    setLocalMatchVideo(restored);
+    return { video: restored, expected };
+  })();
+
+  restoreInFlight.set(matchId, task);
+  try {
+    return await task;
+  } finally {
+    restoreInFlight.delete(matchId);
+  }
+}
+
+/**
+ * Relocalisation manuelle. Le picker DOIT être la toute première opération
+ * asynchrone appelée depuis le clic : Chrome exige encore l'activation utilisateur.
  */
 export async function relinkMatchVideo(
   matchId: string,
@@ -123,18 +131,46 @@ export async function relinkMatchVideo(
 ): Promise<LocalMatchVideo | null> {
   if (!matchId) return null;
 
+  // IMPORTANT : aucun await IndexedDB/Supabase avant cette ligne.
   const picked = await pickVideoFile();
-  const fingerprint = await fingerprintVideo(picked.file);
 
-  if (expected && !fingerprintsMatch(expected, fingerprint)) {
+  let expectedFingerprint = expected ?? null;
+  if (!expectedFingerprint) {
+    try {
+      const row = await loadMatchLocalMedia(supabaseClient(), matchId);
+      expectedFingerprint = fingerprintFromRow(row);
+    } catch {
+      // Premier rattachement / ancien match sans métadonnées.
+    }
+  }
+
+  const fingerprint = await fingerprintVideo(picked.file);
+  if (expectedFingerprint && !fingerprintsMatch(expectedFingerprint, fingerprint)) {
     const ok = window.confirm(
       `Ce fichier ne semble pas être la vidéo liée à ce match.\n\n` +
-      `Attendu : ${expected.name}\n` +
+      `Attendu : ${expectedFingerprint.name}\n` +
       `Sélectionné : ${fingerprint.name}\n\n` +
       `Utiliser quand même ce fichier ?`,
     );
     if (!ok) return null;
   }
 
-  return attachMatchVideoFile(matchId, teamId, picked.file, picked.handle ?? null);
+  const supabase = supabaseClient();
+  await saveMatchLocalMedia(supabase, {
+    matchId,
+    teamId,
+    fingerprint,
+  });
+
+  if (picked.handle) await savePersistentFileHandle(matchId, picked.handle);
+
+  const video: LocalMatchVideo = {
+    matchId,
+    file: picked.file,
+    url: URL.createObjectURL(picked.file),
+    fingerprint,
+  };
+
+  setLocalMatchVideo(video);
+  return video;
 }

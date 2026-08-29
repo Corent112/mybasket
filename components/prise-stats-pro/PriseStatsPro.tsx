@@ -1078,18 +1078,13 @@ export default function PriseStatsProPage() {
     const tId = String(selTeam?.id || activeTeamId || teamId || 'setup');
     const currentMatchId = String(liveMatchIdRef.current || '');
 
-    // Dès qu'un matchId existe, toutes les reconnexions passent par le resolver
-    // commun utilisé par les fiches joueur / équipe / clips / montages.
+    // Si la restauration automatique a échoué et que l'utilisateur clique
+    // « Retrouver la vidéo », on ouvre le picker IMMÉDIATEMENT.
+    // Ne pas faire d'await avant relinkMatchVideo : Chrome perdrait l'activation
+    // utilisateur nécessaire à showOpenFilePicker().
     if (currentMatchId && !currentMatchId.startsWith('local_')) {
       try {
-        const restored = await restoreMatchVideoForClip(currentMatchId, tId);
-        if (restored.video) {
-          attachLocalVideoFile(restored.video.file, true);
-          flash('Vidéo locale retrouvée automatiquement ✓');
-          return;
-        }
-
-        const relinked = await relinkMatchVideo(currentMatchId, tId, restored.expected);
+        const relinked = await relinkMatchVideo(currentMatchId, tId);
         if (relinked) {
           attachLocalVideoFile(relinked.file, true);
           flash('Vidéo locale reconnectée au projet ✓');
@@ -1097,6 +1092,7 @@ export default function PriseStatsProPage() {
         return;
       } catch (error: any) {
         if (error?.name === 'AbortError') return;
+        console.error('Reconnexion vidéo locale:', error);
       }
     }
 
@@ -1822,30 +1818,27 @@ export default function PriseStatsProPage() {
             filename: restoredFilename,
           };
 
-          // Première action : retrouver la vidéo par le matchId avec le resolver
-          // UNIQUE. Il sait aussi migrer l'ancien registre équipe + nom de fichier.
-          void (async () => {
-            try {
-              const restored = await restoreMatchVideoForClip(matchId, team.id);
+          // La vidéo locale fait partie de l'ouverture du projet : on attend sa
+          // résolution AVANT d'afficher l'espace de travail. Si ce navigateur a
+          // encore accès au fichier, le lecteur arrive donc déjà alimenté.
+          try {
+            const restored = await restoreMatchVideoForClip(matchId, team.id);
 
-              if (restored.video) {
-                attachLocalVideoFile(restored.video.file, true);
-                flash('Projet restauré · vidéo locale retrouvée automatiquement ✓');
-                return;
-              }
-
-              // Repli strictement conservé pour les très anciens projets dont
-              // aucun handle matchId n'a encore pu être migré.
+            if (restored.video) {
+              attachLocalVideoFile(restored.video.file, true);
+              flash('Projet restauré · vidéo locale retrouvée automatiquement ✓');
+            } else {
+              // Compatibilité stricte avec les très anciens projets.
               const foundLegacy = await tryRestoreLocalVideo(team.id, restoredFilename, false);
               if (foundLegacy) {
                 flash('Projet restauré · vidéo locale retrouvée automatiquement ✓');
               } else {
-                flash('Projet restauré · fichier vidéo à reconnecter uniquement s’il a été déplacé ou si le navigateur a perdu son autorisation.');
+                flash('Projet restauré · fichier vidéo à reconnecter sur cet ordinateur.');
               }
-            } catch {
-              flash('Projet restauré · fichier vidéo à reconnecter si nécessaire.');
             }
-          })();
+          } catch {
+            flash('Projet restauré · fichier vidéo à reconnecter sur cet ordinateur.');
+          }
         }
       }
 
@@ -6200,7 +6193,7 @@ export default function PriseStatsProPage() {
             <section className={`lc lc-video ${workTab === 'center' ? 'mshow' : ''}`}>
               <div className="videoSlot big">
                 {(videoProvider === 'local' || videoProvider === 'google_drive') && videoUrl ? (
-                  <video ref={videoRef} className="vplayer" src={videoUrl} controls onWheel={handleTrackpadScrub} title="Trackpad : glisse horizontalement pour avancer/reculer avec précision" onLoadedMetadata={(e) => {
+                  <video ref={videoRef} className="vplayer" src={videoUrl} controls preload="auto" onWheel={handleTrackpadScrub} title="Trackpad : glisse horizontalement pour avancer/reculer avec précision" onLoadedMetadata={(e) => {
                     const savedTime = inspectionVideoTimeRef.current ?? lastProjectVideoTimeRef.current;
                     if (savedTime == null) return;
                     try {

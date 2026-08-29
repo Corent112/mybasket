@@ -297,7 +297,22 @@ export const restorePersistentVideo = async (
     if (permission !== "granted") return null;
 
     const file = await handle.getFile();
-    const fingerprint = await fingerprintVideo(file);
+
+    // Chemin RAPIDE à la réouverture : si le navigateur nous rend exactement
+    // le même fichier (nom + taille + date de modification), on réutilise
+    // l'empreinte déjà enregistrée sans relire la vidéo ni recalculer le hash.
+    // C'est ce qui évite plusieurs secondes d'attente sur les gros matchs.
+    const exactSameFile = Boolean(
+      expected &&
+      String(expected.name || '') === String(file.name || '') &&
+      Number(expected.size || 0) === Number(file.size || 0) &&
+      Number(expected.lastModified || 0) === Number(file.lastModified || 0)
+    );
+
+    const fingerprint = exactSameFile && expected
+      ? expected
+      : await fingerprintVideo(file);
+
     if (!fingerprintsMatch(expected, fingerprint)) return null;
 
     return {

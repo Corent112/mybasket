@@ -22,11 +22,16 @@
 
 import { type PointerEvent as ReactPointerEvent, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { type VideoSyncState, NATIVE_SYNC, resolveActionClipBounds } from '@/lib/video-sync';
+import { getLocalMatchVideoUrl } from '@/lib/local-video-registry';
+import useLocalMatchVideoVersion from '@/hooks/useLocalMatchVideoVersion';
+import { restoreMatchVideoForClip } from '@/lib/video/match-video-resolver';
+import LocalMatchVideoButton from '@/components/video/LocalMatchVideoButton';
 
 /** Forme d'une action lisible en clip (compatible LiveMatchAction / StatA). */
 export type ClipAction = {
   id?: string;
   matchId?: string | null;
+  match_id?: string | null;
   matchLabel?: string | null;
   date?: string | null;
   opponent?: string | null;
@@ -60,6 +65,8 @@ export type ActionClipsModalProps = {
   open: boolean;
   actions: ClipAction[];
   title: string;
+  /** Équipe utilisée pour résoudre la copie vidéo locale de cet ordinateur. */
+  teamId?: string;
   videoUrl?: string | null;
   /** Source vidéo spécifique à l'action (utile quand une liste contient plusieurs matchs). */
   videoUrlForAction?: (action: ClipAction) => string | null;
@@ -88,6 +95,7 @@ const systemLabelOf = (a?: ClipAction): string =>
   (a?.systemeName ?? a?.systemeSlot ?? a?.systemeJeu ?? '') as string;
 
 export default function ActionClipsModal(props: ActionClipsModalProps) {
+  useLocalMatchVideoVersion();
   const { open, actions, title, videoUrl, onClose, onAddToMontage, onSaveNote, onTrim } = props;
   const [index, setIndex] = useState(props.startIndex ?? 0);
   const [full, setFull] = useState(false);
@@ -104,10 +112,20 @@ export default function ActionClipsModal(props: ActionClipsModalProps) {
   const current: ClipAction | undefined = actions[index];
 
   // Une liste peut contenir des actions provenant de plusieurs matchs.
-  // La source et la synchro suivent donc toujours l'action affichée.
+  // Priorité absolue à la copie LOCALE de cet ordinateur ; Google Drive / URL
+  // distante reste un fallback sans être cassé.
+  const currentMatchId = current
+    ? String(current.matchId ?? current.match_id ?? '')
+    : '';
+  const localVideoUrl = getLocalMatchVideoUrl(currentMatchId);
   const currentVideoUrl = current
-    ? (props.videoUrlForAction?.(current) ?? videoUrl ?? null)
+    ? (localVideoUrl ?? props.videoUrlForAction?.(current) ?? videoUrl ?? null)
     : (videoUrl ?? null);
+
+  useEffect(() => {
+    if (!open || !currentMatchId || !props.teamId || localVideoUrl) return;
+    void restoreMatchVideoForClip(currentMatchId, props.teamId).catch(() => null);
+  }, [open, currentMatchId, props.teamId, localVideoUrl]);
 
   // Synchro du match : convertit les temps bruts de codage (source) en position
   // réelle dans la vidéo (média). Défaut = native (aucun décalage).
@@ -275,9 +293,18 @@ export default function ActionClipsModal(props: ActionClipsModalProps) {
                 onLoadedMetadata={(e) => setVideoDuration(Number.isFinite(e.currentTarget.duration) ? e.currentTarget.duration : 0)} />
             ) : (
               <div className="acm-novideo">
-                {syncedStartOf(cur) != null
-                  ? `Clip enregistré · ${fmt(syncedStartOf(cur)!)}${syncedEndOf(cur) != null ? ` → ${fmt(syncedEndOf(cur)!)}` : ''}`
-                  : 'Repère vidéo indisponible'}
+                <div>
+                  {syncedStartOf(cur) != null
+                    ? `Clip enregistré · ${fmt(syncedStartOf(cur)!)}${syncedEndOf(cur) != null ? ` → ${fmt(syncedEndOf(cur)!)}` : ''}`
+                    : 'Repère vidéo indisponible'}
+                </div>
+                {currentMatchId && props.teamId && (
+                  <LocalMatchVideoButton
+                    matchId={currentMatchId}
+                    teamId={props.teamId}
+                    compact
+                  />
+                )}
               </div>
             )}
             {hasVideo && draw && (
@@ -372,7 +399,7 @@ export default function ActionClipsModal(props: ActionClipsModalProps) {
         .acm-video { width: 100%; max-height: 58vh; background: #000; border-radius: 10px; display: block; }
         .acm-card.acm-full .acm-video { max-height: calc(100vh - 320px); }
         .acm-canvas { position: absolute; inset: 0; width: 100%; height: 100%; cursor: crosshair; touch-action: none; }
-        .acm-novideo { padding: 28px; text-align: center; color: #8a93a8; background: #0c0f1a; border: 1px dashed #2a3142; border-radius: 10px; font-weight: 700; }
+        .acm-novideo { padding: 28px; text-align: center; color: #8a93a8; background: #0c0f1a; border: 1px dashed #2a3142; border-radius: 10px; font-weight: 700; display: grid; gap: 12px; justify-items: center; }
         .acm-nav { display: flex; gap: 8px; }
         .acm-nav button { flex: 1; border: 1px solid #2a3142; background: #171b29; color: #eef1f7; border-radius: 9px; padding: 9px; font-size: 12.5px; font-weight: 800; cursor: pointer; }
         .acm-nav button:disabled { opacity: .4; cursor: not-allowed; }
