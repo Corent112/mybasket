@@ -14,13 +14,15 @@ import InstitutionalResources from "@/components/institutionnel/InstitutionalRes
 import InstitutionalMembers from "@/components/institutionnel/InstitutionalMembers";
 import InstitutionalFormBuilder from "@/components/institutionnel/InstitutionalFormBuilder";
 import InstitutionalBrandingSettings from "@/components/institutionnel/InstitutionalBrandingSettings";
+import PoleExitDossiers from "@/components/institutionnel/PoleExitDossiers";
 
 type Structure={id:string;structure_type:"committee"|"league"|"federation"|"pole";name:string;short_name:string|null;season_label:string|null;city:string|null;email:string|null;logo_url?:string|null;document_primary_color?:string|null;document_secondary_color?:string|null};
-const TABS=["Dashboard","Joueurs","Formation des cadres","Calendrier","Documents","Communication","Ressources","Membres & droits","Paramètres"] as const;
+const TABS=["Dashboard","Joueurs","Dossiers de sortie","Formation des cadres","Calendrier","Documents","Communication","Ressources","Membres & droits","Paramètres"] as const;
 type Tab=(typeof TABS)[number];
 const META:Record<Tab,{icon:string;title:string;subtitle:string}>={
  Dashboard:{icon:"▦",title:"Dashboard",subtitle:"Pilote l’activité de ton Institution depuis un seul espace."},
  Joueurs:{icon:"♙",title:"Joueurs",subtitle:"Effectif, convocations, présences, détection et parcours longitudinal."},
+ "Dossiers de sortie":{icon:"⇧",title:"Dossiers de sortie",subtitle:"Sélectionne les joueurs, compose les PDF et envoie les dossiers de fin de parcours."},
  "Formation des cadres":{icon:"⌂",title:"Formation des cadres",subtitle:"Promotions, inscrits, présence, documents et évaluations."},
  Calendrier:{icon:"▣",title:"Calendrier",subtitle:"Planning de la saison et rendez-vous de la structure."},
  Documents:{icon:"▤",title:"Documents",subtitle:"Documents générés, modèles et dossiers de la structure."},
@@ -42,7 +44,7 @@ export default function InstitutionalWorkspace({structureId}:{structureId:string
  return <main className="institutionShell" style={{"--inst-primary":primary,"--inst-secondary":secondary} as CSSProperties}>
    <aside className={menuOpen?"sidebar open":"sidebar"}>
     <div className="brand"><strong>MYBASKET</strong><span>INSTITUTION</span></div>
-    <nav className="sideNav" aria-label="Navigation Institution">{TABS.map(t=><button key={t} className={tab===t?"on":""} onClick={()=>go(t)}><i>{META[t].icon}</i><span>{t}</span></button>)}</nav>
+    <nav className="sideNav" aria-label="Navigation Institution">{TABS.filter(t=>t!=="Dossiers de sortie"||structure.structure_type==="pole").map(t=><button key={t} className={tab===t?"on":""} onClick={()=>go(t)}><i>{META[t].icon}</i><span>{t}</span></button>)}</nav>
     <div className="sideIdentity"><button className="logoButton" onClick={()=>go("Paramètres")} title="Modifier le logo">{structure.logo_url?<img src={structure.logo_url} alt={structure.name}/>:<span>{(structure.short_name||structure.name).slice(0,2).toUpperCase()}</span>}</button><div><b>{structure.short_name||structure.name}</b><small>{typeLabel(structure.structure_type)}</small></div></div>
     <button className="backAccount" onClick={()=>{location.href="/mon-compte"}}>↪ Mon compte</button>
    </aside>
@@ -53,6 +55,7 @@ export default function InstitutionalWorkspace({structureId}:{structureId:string
      <div className="pageTitle"><p>ESPACE {typeLabel(structure.structure_type).toUpperCase()}</p><h1>{meta.title}</h1><span>{meta.subtitle}</span></div>
      {tab==="Dashboard"&&<InstitutionalDashboardConnected structureId={structureId} go={go}/>} 
      {tab==="Joueurs"&&<section className="surface"><InstitutionalPlayersHub structureId={structureId} structureType={structure.structure_type}/><div className="related"><h3>Ressources liées au parcours joueur</h3><InstitutionalResources structureId={structureId} compact categories={["Joueurs","PPF / Pôle","Sélection / Stage"]}/></div></section>}
+     {tab==="Dossiers de sortie"&&structure.structure_type==="pole"&&<section className="surface"><PoleExitDossiers structureId={structureId}/></section>}
      {tab==="Formation des cadres"&&<section className="surface"><div className="sectionHead"><div><p>FORMATION DES CADRES</p><h2>Formations, inscrits et dossiers</h2><span>La promotion est la source unique : dossier, cotisation, présence, documents, évaluation et communications.</span></div><Link href="/formation/gestion">Vue plein écran →</Link></div><TrainingManager institutionId={structureId}/></section>}
      {tab==="Calendrier"&&<InstitutionalCalendarHub structureId={structureId} onGoTraining={()=>go("Formation des cadres")} onGoPlayers={()=>go("Joueurs")}/>} 
      {tab==="Documents"&&<InstitutionalDocumentCenter structureId={structureId} go={go}/>} 

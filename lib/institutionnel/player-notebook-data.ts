@@ -56,8 +56,8 @@ export async function buildPlayerNotebookSnapshot(input:{
       .select("id,name,short_name,structure_type,season_label,city,email,logo_url")
       .eq("id",structureId).single(),
     db.from("institutional_players")
-      .select("id,first_name,last_name,birthdate,club_name,category,height_cm,father_height_cm,mother_height_cm,email,phone,sex,photo_url")
-      .eq("id",playerId).eq("structure_id",structureId).single(),
+      .select("id,structure_id,first_name,last_name,birthdate,club_name,category,height_cm,father_height_cm,mother_height_cm,email,phone,sex,photo_url")
+      .eq("id",playerId).single(),
     db.from("institutional_player_tracking_seasons")
       .select("id,season_label,start_date,end_date")
       .eq("structure_id",structureId).order("start_date"),
@@ -80,6 +80,13 @@ export async function buildPlayerNotebookSnapshot(input:{
   const error=structure.error||player.error||seasons.error||entries.error||
     measurements.error||attendanceSessions.error||attendanceRecords.error||comments.error;
   if(error) throw new Error(error.message);
+
+  // Un joueur peut provenir d'un Comité/Ligue et être partagé au Pôle.
+  // On accepte la fiche si elle appartient à la structure OU si un partage actif existe.
+  if(String((player.data as any)?.structure_id||"")!==structureId){
+    const share=await db.from("institutional_player_shares").select("id").eq("player_id",playerId).eq("target_structure_id",structureId).is("revoked_at",null).maybeSingle();
+    if(share.error||!share.data) throw new Error("Ce joueur n'est pas accessible depuis cette Institution.");
+  }
 
   const poleTracking=await buildPoleTracking(db,structureId,playerId);
 
