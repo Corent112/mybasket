@@ -1,9 +1,10 @@
- "use client";
+"use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import LocalMatchVideoButton from "./LocalMatchVideoButton";
 import { getLocalMatchVideoUrl } from "@/lib/local-video-registry";
 import useLocalMatchVideoVersion from "@/hooks/useLocalMatchVideoVersion";
+import { restoreMatchVideoForClip } from "@/lib/video/match-video-resolver";
 
 type Clip = {
   id?: string;
@@ -55,8 +56,12 @@ const endOf = (clip: Clip) => {
 
 export default function LocalClipPlayer({ clip, teamId, autoPlay = true }: Props) {
   useLocalMatchVideoVersion();
+
   const videoRef = useRef<HTMLVideoElement | null>(null);
+  const restoreKeyRef = useRef("");
   const [relative, setRelative] = useState(0);
+  const [restoring, setRestoring] = useState(false);
+  const [restoreDone, setRestoreDone] = useState(false);
 
   const matchId = String(clip.match_id ?? clip.matchId ?? "");
   const source = getLocalMatchVideoUrl(matchId);
@@ -64,56 +69,140 @@ export default function LocalClipPlayer({ clip, teamId, autoPlay = true }: Props
   const end = endOf(clip);
   const duration = Math.max(0.1, end - start);
 
+  /**
+   * Point important :
+   * la fiche joueur ne doit pas attendre que l'utilisateur retourne dans
+   * LiveStats. Dès que le clip s'ouvre, on résout sa vidéo par matchId.
+   */
+  useEffect(() => {
+    if (!matchId || source) {
+      setRestoreDone(true);
+      return;
+    }
+
+    const key = `${matchId}:${teamId}`;
+    if (restoreKeyRef.current === key) return;
+    restoreKeyRef.current = key;
+
+    let active = true;
+    setRestoring(true);
+    setRestoreDone(false);
+
+    void restoreMatchVideoForClip(matchId, teamId)
+      .catch(() => null)
+      .finally(() => {
+        if (!active) return;
+        setRestoring(false);
+        setRestoreDone(true);
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [matchId, teamId, source]);
+
+  /**
+   * Dès que la source est retrouvée, le lecteur se place DIRECTEMENT sur les
+   * bornes de l'action et lance le clip. Pas le match depuis le début.
+   */
   useEffect(() => {
     const video = videoRef.current;
     if (!video || !source) return;
 
-    const seek = () => {
-      video.currentTime = start;
+    let disposed = false;
+
+    const seekAndPlay = () => {
+      if (disposed) return;
+      try {
+        video.currentTime = start;
+      } catch {
+        return;
+      }
       setRelative(0);
-      if (autoPlay) video.play().catch(() => {});
+      if (autoPlay) {
+        void video.play().catch(() => {
+          // Certains navigateurs peuvent bloquer l'autoplay avec son.
+          // Le clip est malgré tout déjà positionné au bon timecode.
+        });
+      }
     };
 
-    if (video.readyState >= 1) seek();
-    else video.addEventListener("loadedmetadata", seek, { once: true });
+    if (video.readyState >= 1) seekAndPlay();
+    else video.addEventListener("loadedmetadata", seekAndPlay, { once: true });
 
     const onTime = () => {
       const value = Math.max(0, Math.min(duration, video.currentTime - start));
       setRelative(value);
+
       if (video.currentTime >= end - 0.03) {
         video.pause();
-        video.currentTime = end;
+        try {
+          video.currentTime = end;
+        } catch {}
         setRelative(duration);
       }
     };
 
     video.addEventListener("timeupdate", onTime);
-    return () => video.removeEventListener("timeupdate", onTime);
+
+    return () => {
+      disposed = true;
+      video.removeEventListener("loadedmetadata", seekAndPlay);
+      video.removeEventListener("timeupdate", onTime);
+    };
   }, [source, start, end, duration, autoPlay]);
 
   if (!matchId) return <div>Clip sans match lié.</div>;
 
+  if (!source && restoring) {
+    return (
+      <div className="local-clip-missing">
+        <strong>🎬 Ouverture du clip…</strong>
+        <span>MyBasket recherche automatiquement la vidéo liée à ce match.</span>
+      </div>
+    );
+  }
+
+  if (!source && restoreDone) {
+    return (
+      <div className="local-clip-missing">
+        <strong>Vidéo du match introuvable à son emplacement mémorisé</strong>
+        <span>
+          Les actions et les clips sont conservés. Resélectionne uniquement le
+          fichier vidéo lié à ce match.
+        </span>
+        <LocalMatchVideoButton matchId={matchId} teamId={teamId} />
+      </div>
+    );
+  }
+
   if (!source) {
     return (
       <div className="local-clip-missing">
-        <strong>Vidéo locale non connectée</strong>
-        <LocalMatchVideoButton matchId={matchId} teamId={teamId} />
+        <strong>🎬 Préparation du clip…</strong>
       </div>
     );
   }
 
   return (
     <div className="local-clip-player">
-      <video ref={videoRef} src={source} playsInline preload="metadata" />
+      <video
+        ref={videoRef}
+        src={source}
+        controls
+        playsInline
+        preload="metadata"
+      />
       <div className="local-clip-controls">
         <button
           type="button"
           onClick={() => {
             const video = videoRef.current;
             if (!video) return;
+
             if (video.paused) {
               if (video.currentTime >= end - 0.05) video.currentTime = start;
-              video.play().catch(() => {});
+              void video.play().catch(() => {});
             } else {
               video.pause();
             }
@@ -121,19 +210,24 @@ export default function LocalClipPlayer({ clip, teamId, autoPlay = true }: Props
         >
           ▶ / ❚❚
         </button>
+
         <span>{relative.toFixed(1)}s</span>
+
         <input
           type="range"
           min={0}
           max={duration}
           step={0.05}
           value={relative}
-          onChange={(e) => {
-            const next = Number(e.target.value);
+          onChange={(event) => {
+            const next = Number(event.target.value);
             setRelative(next);
-            if (videoRef.current) videoRef.current.currentTime = start + next;
+            if (videoRef.current) {
+              videoRef.current.currentTime = start + next;
+            }
           }}
         />
+
         <span>{duration.toFixed(1)}s</span>
       </div>
     </div>

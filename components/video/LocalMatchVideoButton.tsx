@@ -1,25 +1,15 @@
- "use client";
+"use client";
 
 import { useEffect, useState } from "react";
-import { createBrowserClient } from "@supabase/ssr";
-import {
-  fingerprintVideo,
-  fingerprintsMatch,
-  pickVideoFile,
-  restorePersistentVideo,
-  savePersistentFileHandle,
-  type MatchProjectFingerprint,
-} from "@/lib/local-match-project";
+import type { MatchProjectFingerprint } from "@/lib/local-match-project";
 import {
   getLocalMatchVideo,
-  setLocalMatchVideo,
 } from "@/lib/local-video-registry";
-import {
-  fingerprintFromRow,
-  loadMatchLocalMedia,
-  saveMatchLocalMedia,
-} from "@/lib/local-match-project-supabase";
 import useLocalMatchVideoVersion from "@/hooks/useLocalMatchVideoVersion";
+import {
+  relinkMatchVideo,
+  restoreMatchVideoForClip,
+} from "@/lib/video/match-video-resolver";
 
 type Props = {
   matchId: string;
@@ -36,74 +26,53 @@ export default function LocalMatchVideoButton({
 }: Props) {
   useLocalMatchVideoVersion();
 
-  const supabase = createBrowserClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-  );
-
   const [expected, setExpected] = useState<MatchProjectFingerprint | null>(null);
   const [busy, setBusy] = useState(false);
+  const [autoTried, setAutoTried] = useState(false);
   const connected = getLocalMatchVideo(matchId);
 
   useEffect(() => {
     let active = true;
-    (async () => {
-      try {
-        const row = await loadMatchLocalMedia(supabase, matchId);
-        if (!active) return;
-        const fp = fingerprintFromRow(row);
-        setExpected(fp);
 
-        if (!getLocalMatchVideo(matchId)) {
-          const restored = await restorePersistentVideo(matchId, fp, teamId);
-          if (restored && active) {
-            setLocalMatchVideo(restored);
-            onConnected?.(restored.url);
-          }
-        }
+    (async () => {
+      if (!matchId || getLocalMatchVideo(matchId)) {
+        setAutoTried(true);
+        return;
+      }
+
+      try {
+        const result = await restoreMatchVideoForClip(matchId, teamId);
+        if (!active) return;
+
+        setExpected(result.expected);
+        if (result.video) onConnected?.(result.video.url);
       } catch {
-        // The button remains usable even if metadata is unavailable.
+        // Aucun popup d'erreur ici : si le fichier a bougé, le bouton de
+        // relocalisation reste disponible.
+      } finally {
+        if (active) setAutoTried(true);
       }
     })();
 
     return () => {
       active = false;
     };
-  }, [matchId]);
+  }, [matchId, teamId, onConnected]);
 
   const connect = async () => {
     setBusy(true);
     try {
-      const picked = await pickVideoFile();
-      const fingerprint = await fingerprintVideo(picked.file);
-
-      if (expected && !fingerprintsMatch(expected, fingerprint)) {
-        const ok = window.confirm(
-          `Ce fichier ne semble pas être la vidéo liée à ce match.\n\nAttendu : ${expected.name}\nSélectionné : ${fingerprint.name}\n\nUtiliser quand même ce fichier ?`,
-        );
-        if (!ok) return;
-      }
-
-      await saveMatchLocalMedia(supabase, {
-        matchId,
-        teamId,
-        fingerprint,
-      });
-
-      if (picked.handle) await savePersistentFileHandle(matchId, picked.handle);
-
-      const url = URL.createObjectURL(picked.file);
-      setLocalMatchVideo({
-        matchId,
-        file: picked.file,
-        url,
-        fingerprint,
-      });
-      setExpected(fingerprint);
-      onConnected?.(url);
+      const result = await relinkMatchVideo(matchId, teamId, expected);
+      if (!result) return;
+      setExpected(result.fingerprint);
+      onConnected?.(result.url);
     } catch (error) {
       if (error instanceof DOMException && error.name === "AbortError") return;
-      window.alert(error instanceof Error ? error.message : "Impossible de connecter la vidéo.");
+      window.alert(
+        error instanceof Error
+          ? error.message
+          : "Impossible de reconnecter la vidéo.",
+      );
     } finally {
       setBusy(false);
     }
@@ -126,10 +95,17 @@ export default function LocalMatchVideoButton({
     <button
       type="button"
       onClick={connect}
-      disabled={busy}
+      disabled={busy || !autoTried}
       className="local-video-reconnect"
     >
-      🎥 {busy ? "Connexion…" : expected ? "Relocaliser la vidéo" : "Connecter la vidéo"}
+      🎥{" "}
+      {busy
+        ? "Relocalisation…"
+        : !autoTried
+          ? "Recherche de la vidéo…"
+          : expected
+            ? `Resélectionner ${expected.name}`
+            : "Relier la vidéo du match"}
     </button>
   );
 }
