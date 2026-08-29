@@ -53,16 +53,10 @@ import {
   formatOffset,
 } from "@/lib/video-sync";
 import {
-  fingerprintVideo,
-  restorePersistentVideo,
-  savePersistentFileHandle,
-} from "@/lib/local-match-project";
-import {
-  fingerprintFromRow,
-  loadMatchLocalMedia,
-  saveMatchLocalMedia,
-} from "@/lib/local-match-project-supabase";
-import { setLocalMatchVideo } from "@/lib/local-video-registry";
+  attachMatchVideoFile,
+  relinkMatchVideo,
+  restoreMatchVideoForClip,
+} from "@/lib/video/match-video-resolver";
 
 /* Safari/WebKit peut exposer un TimeRanges vide sous le nom interne
  * `EmptyRanges`. Certaines opérations vidéo détachées peuvent alors tenter
@@ -1082,7 +1076,31 @@ export default function PriseStatsProPage() {
 
   const reconnectLocalVideo = async () => {
     const tId = String(selTeam?.id || activeTeamId || teamId || 'setup');
+    const currentMatchId = String(liveMatchIdRef.current || '');
 
+    // Dès qu'un matchId existe, toutes les reconnexions passent par le resolver
+    // commun utilisé par les fiches joueur / équipe / clips / montages.
+    if (currentMatchId && !currentMatchId.startsWith('local_')) {
+      try {
+        const restored = await restoreMatchVideoForClip(currentMatchId, tId);
+        if (restored.video) {
+          attachLocalVideoFile(restored.video.file, true);
+          flash('Vidéo locale retrouvée automatiquement ✓');
+          return;
+        }
+
+        const relinked = await relinkMatchVideo(currentMatchId, tId, restored.expected);
+        if (relinked) {
+          attachLocalVideoFile(relinked.file, true);
+          flash('Vidéo locale reconnectée au projet ✓');
+        }
+        return;
+      } catch (error: any) {
+        if (error?.name === 'AbortError') return;
+      }
+    }
+
+    // Compatibilité avant création du matchId / très anciens projets.
     if (await tryRestoreLocalVideo(tId, videoFilename, true)) {
       flash('Vidéo locale retrouvée automatiquement ✓');
       return;
@@ -1099,27 +1117,7 @@ export default function PriseStatsProPage() {
     handle: FileSystemFileHandle | null = pendingLocalFileHandleRef.current,
   ) => {
     try {
-      const fingerprint = await fingerprintVideo(file);
-      const supabase = createClient();
-
-      await saveMatchLocalMedia(supabase, {
-        matchId,
-        teamId: tId,
-        fingerprint,
-      });
-
-      if (handle) {
-        await savePersistentFileHandle(matchId, handle);
-      }
-
-      // Même registre utilisé par la fiche joueur / montage / navigateur de clips.
-      const existingUrl = videoUrl && videoFile === file ? videoUrl : URL.createObjectURL(file);
-      setLocalMatchVideo({
-        matchId,
-        file,
-        url: existingUrl,
-        fingerprint,
-      });
+      await attachMatchVideoFile(matchId, tId, file, handle);
     } catch (error) {
       // Non bloquant pour le codage : la vidéo reste utilisable dans LiveStat.
       console.warn('Enregistrement vidéo locale du projet :', error);
@@ -1824,33 +1822,22 @@ export default function PriseStatsProPage() {
             filename: restoredFilename,
           };
 
-          // Première action : retrouver la vidéo par le matchId, exactement
-          // comme la fiche joueur. Le helper sait aussi migrer l'ancien registre
-          // équipe + nom de fichier utilisé par les projets déjà existants.
+          // Première action : retrouver la vidéo par le matchId avec le resolver
+          // UNIQUE. Il sait aussi migrer l'ancien registre équipe + nom de fichier.
           void (async () => {
             try {
-              const supabase = createClient();
-              const mediaRow = await loadMatchLocalMedia(supabase, matchId).catch(() => null);
-              const restored = await restorePersistentVideo(
-                matchId,
-                fingerprintFromRow(mediaRow),
-                team.id,
-              );
+              const restored = await restoreMatchVideoForClip(matchId, team.id);
 
-              if (restored) {
-                setLocalMatchVideo(restored);
-                attachLocalVideoFile(restored.file, true);
+              if (restored.video) {
+                attachLocalVideoFile(restored.video.file, true);
                 flash('Projet restauré · vidéo locale retrouvée automatiquement ✓');
                 return;
               }
 
-              // Repli sur l'ancien mécanisme pour les très anciens projets.
+              // Repli strictement conservé pour les très anciens projets dont
+              // aucun handle matchId n'a encore pu être migré.
               const foundLegacy = await tryRestoreLocalVideo(team.id, restoredFilename, false);
               if (foundLegacy) {
-                const currentFile = videoFile;
-                if (currentFile) {
-                  void registerLocalVideoForMatch(matchId, team.id, currentFile);
-                }
                 flash('Projet restauré · vidéo locale retrouvée automatiquement ✓');
               } else {
                 flash('Projet restauré · fichier vidéo à reconnecter uniquement s’il a été déplacé ou si le navigateur a perdu son autorisation.');

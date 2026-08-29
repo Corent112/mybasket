@@ -1,9 +1,12 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import ActionClipsModal, { type ClipAction } from "@/components/prise-stats-pro/ActionClipsModal";
 import { NATIVE_SYNC, normalizeSync, type VideoSyncState } from "@/lib/video-sync";
+import { getLocalMatchVideoUrl } from "@/lib/local-video-registry";
+import useLocalMatchVideoVersion from "@/hooks/useLocalMatchVideoVersion";
+import { relinkMatchVideo, restoreMatchVideoForClip } from "@/lib/video/match-video-resolver";
 
 type Props = {
   teamId: string;
@@ -33,74 +36,6 @@ type PlayerProjectAction = ClipAction & {
   specialCase?: string | null;
   role?: "acteur" | "passeur" | "rebondeur";
 };
-
-type LocalHandle = {
-  name?: string;
-  getFile: () => Promise<File>;
-  queryPermission?: (options?: { mode?: "read" | "readwrite" }) => Promise<string>;
-  requestPermission?: (options?: { mode?: "read" | "readwrite" }) => Promise<string>;
-};
-
-const LOCAL_VIDEO_DB = "mybasket-local-video-handles";
-const LOCAL_VIDEO_STORE = "handles";
-
-const teamFilenameKey = (teamId: string, filename: string) =>
-  `team:${String(teamId || "unknown")}::${String(filename || "").trim().toLowerCase()}`;
-
-const matchHandleKey = (matchId: string) => `match:${matchId}`;
-
-function openHandleDb(): Promise<IDBDatabase | null> {
-  return new Promise((resolve) => {
-    if (typeof indexedDB === "undefined") {
-      resolve(null);
-      return;
-    }
-    const req = indexedDB.open(LOCAL_VIDEO_DB, 1);
-    req.onupgradeneeded = () => {
-      const db = req.result;
-      if (!db.objectStoreNames.contains(LOCAL_VIDEO_STORE)) {
-        db.createObjectStore(LOCAL_VIDEO_STORE);
-      }
-    };
-    req.onsuccess = () => resolve(req.result);
-    req.onerror = () => resolve(null);
-  });
-}
-
-async function saveHandle(key: string, handle: LocalHandle) {
-  const db = await openHandleDb();
-  if (!db) return;
-  await new Promise<void>((resolve) => {
-    try {
-      const tx = db.transaction(LOCAL_VIDEO_STORE, "readwrite");
-      tx.objectStore(LOCAL_VIDEO_STORE).put(handle, key);
-      tx.oncomplete = () => resolve();
-      tx.onerror = () => resolve();
-    } catch {
-      resolve();
-    }
-  });
-  db.close();
-}
-
-async function readHandle(key: string): Promise<LocalHandle | null> {
-  const db = await openHandleDb();
-  if (!db) return null;
-
-  const value = await new Promise<LocalHandle | null>((resolve) => {
-    try {
-      const tx = db.transaction(LOCAL_VIDEO_STORE, "readonly");
-      const req = tx.objectStore(LOCAL_VIDEO_STORE).get(key);
-      req.onsuccess = () => resolve((req.result as LocalHandle | undefined) ?? null);
-      req.onerror = () => resolve(null);
-    } catch {
-      resolve(null);
-    }
-  });
-
-  db.close();
-  return value;
-}
 
 function useful(value: unknown) {
   if (value == null) return false;
@@ -205,10 +140,9 @@ export default function PlayerAllProjectClips({ teamId, playerId, playerName }: 
   const supabase = useMemo(() => createClient(), []);
   const [actions, setActions] = useState<PlayerProjectAction[]>([]);
   const [sources, setSources] = useState<Record<string, MatchSource>>({});
-  const [urls, setUrls] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
-  const objectUrlsRef = useRef<string[]>([]);
+  useLocalMatchVideoVersion();
 
   const [search, setSearch] = useState("");
   const [fMatch, setFMatch] = useState("all");
@@ -221,85 +155,20 @@ export default function PlayerAllProjectClips({ teamId, playerId, playerName }: 
   const [modal, setModal] = useState<{ items: PlayerProjectAction[]; index: number; title: string } | null>(null);
   const [reconnecting, setReconnecting] = useState<string | null>(null);
 
-  const attachFile = (matchId: string, file: File) => {
-    const url = URL.createObjectURL(file);
-    objectUrlsRef.current.push(url);
-    setUrls((current) => ({ ...current, [matchId]: url }));
-  };
-
-  const tryRestoreSource = async (source: MatchSource, askPermission = false) => {
-    let handle = await readHandle(matchHandleKey(source.matchId));
-    if (!handle && source.filename) {
-      handle = await readHandle(teamFilenameKey(teamId, source.filename));
-    }
-    if (!handle) return false;
-
-    try {
-      let permission = handle.queryPermission
-        ? await handle.queryPermission({ mode: "read" })
-        : "granted";
-
-      if (permission !== "granted" && askPermission && handle.requestPermission) {
-        permission = await handle.requestPermission({ mode: "read" });
-      }
-      if (permission !== "granted") return false;
-
-      const file = await handle.getFile();
-      attachFile(source.matchId, file);
-      await saveHandle(matchHandleKey(source.matchId), handle);
-      if (source.filename) await saveHandle(teamFilenameKey(teamId, source.filename), handle);
-      return true;
-    } catch {
-      return false;
-    }
-  };
-
   const reconnectSource = async (matchId: string) => {
     const source = sources[matchId];
     if (!source) return;
     setReconnecting(matchId);
 
     try {
-      if (await tryRestoreSource(source, true)) return;
+      const restored = await restoreMatchVideoForClip(matchId, teamId);
+      if (restored.video) return;
 
-      const picker = (window as any).showOpenFilePicker as
-        | ((options?: any) => Promise<LocalHandle[]>)
-        | undefined;
-
-      if (picker) {
-        try {
-          const [handle] = await picker({
-            multiple: false,
-            types: [{
-              description: "Vidéo du match",
-              accept: { "video/*": [".mp4", ".mov", ".m4v", ".webm"] },
-            }],
-          });
-          if (!handle) return;
-          const file = await handle.getFile();
-          attachFile(matchId, file);
-          await saveHandle(matchHandleKey(matchId), handle);
-          await saveHandle(teamFilenameKey(teamId, file.name), handle);
-          if (source.filename) await saveHandle(teamFilenameKey(teamId, source.filename), handle);
-          return;
-        } catch (e: any) {
-          if (e?.name === "AbortError") return;
-        }
+      await relinkMatchVideo(matchId, teamId, restored.expected);
+    } catch (error: any) {
+      if (error?.name !== "AbortError") {
+        console.error("Reconnexion vidéo joueur:", error);
       }
-
-      // Safari / navigateur sans File System Access API.
-      await new Promise<void>((resolve) => {
-        const input = document.createElement("input");
-        input.type = "file";
-        input.accept = "video/*";
-        input.onchange = () => {
-          const file = input.files?.[0];
-          if (file) attachFile(matchId, file);
-          resolve();
-        };
-        input.oncancel = () => resolve();
-        input.click();
-      });
     } finally {
       setReconnecting(null);
     }
@@ -432,10 +301,12 @@ export default function PlayerAllProjectClips({ teamId, playerId, playerName }: 
         setSources(sourceMap);
         setActions(finalActions);
 
-        // Tentative silencieuse : reconnecte automatiquement toutes les sources
-        // pour lesquelles le navigateur possède encore un handle autorisé.
+        // Tentative silencieuse via la source vidéo UNIQUE du match.
+        // Aucun registre propre à la fiche joueur n'est créé.
         Object.values(sourceMap).forEach((source) => {
-          void tryRestoreSource(source, false);
+          if (source.provider === "local" || source.filename) {
+            void restoreMatchVideoForClip(source.matchId, teamId);
+          }
         });
       } catch (e: any) {
         console.error("PlayerAllProjectClips:", e);
@@ -457,14 +328,6 @@ export default function PlayerAllProjectClips({ teamId, playerId, playerName }: 
     // teamId / playerId suffisent : le composant agrège toute la base à chaque changement.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [teamId, playerId]);
-
-  useEffect(() => {
-    return () => {
-      objectUrlsRef.current.forEach((url) => {
-        try { URL.revokeObjectURL(url); } catch { /* noop */ }
-      });
-    };
-  }, []);
 
   const matches = useMemo(
     () => Array.from(new Set(actions.map((a) => a.matchId))).map((id) => sources[id]).filter(Boolean),
@@ -521,7 +384,7 @@ export default function PlayerAllProjectClips({ teamId, playerId, playerName }: 
 
   const codedClips = actions.filter(clipReady).length;
   const filteredClips = filtered.filter(clipReady).length;
-  const connectedMatches = Object.keys(urls).filter((id) => urls[id]).length;
+  const connectedMatches = matches.filter((m) => Boolean(getLocalMatchVideoUrl(m.matchId))).length;
 
   const openAt = (action: PlayerProjectAction) => {
     const pool = filtered.filter(clipReady);
@@ -604,7 +467,7 @@ export default function PlayerAllProjectClips({ teamId, playerId, playerName }: 
         {matches.map((m) => {
           const count = actions.filter((a) => a.matchId === m.matchId && clipReady(a)).length;
           if (!count) return null;
-          const connected = Boolean(urls[m.matchId]);
+          const connected = Boolean(getLocalMatchVideoUrl(m.matchId));
 
           return (
             <div className={`papc-source ${connected ? "connected" : ""}`} key={m.matchId}>
@@ -632,7 +495,7 @@ export default function PlayerAllProjectClips({ teamId, playerId, playerName }: 
           <div className="papc-empty">Aucune séquence avec ces filtres.</div>
         ) : filtered.filter(clipReady).map((a) => {
           const source = sources[a.matchId];
-          const connected = Boolean(urls[a.matchId]);
+          const connected = Boolean(getLocalMatchVideoUrl(a.matchId));
 
           return (
             <article className="papc-card" key={`${a.matchId}:${a.id}`}>
@@ -672,7 +535,7 @@ export default function PlayerAllProjectClips({ teamId, playerId, playerName }: 
           title={modal.title}
           startIndex={modal.index}
           onClose={() => setModal(null)}
-          videoUrlForAction={(a) => urls[String(a.matchId ?? "")] ?? null}
+          videoUrlForAction={(a) => getLocalMatchVideoUrl(String(a.matchId ?? ""))}
           syncForAction={(a) => sources[String(a.matchId ?? "")]?.sync ?? NATIVE_SYNC}
           playerName={(id) => String(id ?? "") === playerId ? playerName : undefined}
           describe={(a) => actionLabel(a as PlayerProjectAction)}

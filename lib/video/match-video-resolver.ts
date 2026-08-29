@@ -74,6 +74,44 @@ export async function restoreMatchVideoForClip(
 }
 
 /**
+ * Enregistre/rattache un fichier déjà sélectionné à la source vidéo UNIQUE du match.
+ * Cette fonction centralise le fingerprint, les métadonnées Supabase, le handle
+ * persistant (quand le navigateur en fournit un) et le registre mémoire.
+ * Elle ne touche jamais aux actions, clips, stats ou timecodes.
+ */
+export async function attachMatchVideoFile(
+  matchId: string,
+  teamId: string,
+  file: File,
+  handle?: FileSystemFileHandle | null,
+): Promise<LocalMatchVideo> {
+  if (!matchId) throw new Error("matchId manquant pour rattacher la vidéo.");
+
+  const supabase = supabaseClient();
+  const fingerprint = await fingerprintVideo(file);
+
+  await saveMatchLocalMedia(supabase, {
+    matchId,
+    teamId,
+    fingerprint,
+  });
+
+  if (handle) {
+    await savePersistentFileHandle(matchId, handle);
+  }
+
+  const video: LocalMatchVideo = {
+    matchId,
+    file,
+    url: URL.createObjectURL(file),
+    fingerprint,
+  };
+
+  setLocalMatchVideo(video);
+  return video;
+}
+
+/**
  * Relocalise UNE FOIS la vidéo d'un match.
  * Une fois le bon fichier choisi, le nouveau handle est mémorisé sous le même
  * matchId : toutes les actions/clips déjà codés restent valables.
@@ -85,7 +123,6 @@ export async function relinkMatchVideo(
 ): Promise<LocalMatchVideo | null> {
   if (!matchId) return null;
 
-  const supabase = supabaseClient();
   const picked = await pickVideoFile();
   const fingerprint = await fingerprintVideo(picked.file);
 
@@ -99,23 +136,5 @@ export async function relinkMatchVideo(
     if (!ok) return null;
   }
 
-  await saveMatchLocalMedia(supabase, {
-    matchId,
-    teamId,
-    fingerprint,
-  });
-
-  if (picked.handle) {
-    await savePersistentFileHandle(matchId, picked.handle);
-  }
-
-  const video: LocalMatchVideo = {
-    matchId,
-    file: picked.file,
-    url: URL.createObjectURL(picked.file),
-    fingerprint,
-  };
-
-  setLocalMatchVideo(video);
-  return video;
+  return attachMatchVideoFile(matchId, teamId, picked.file, picked.handle ?? null);
 }
