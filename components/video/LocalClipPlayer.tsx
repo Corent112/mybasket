@@ -5,6 +5,7 @@ import LocalMatchVideoButton from "./LocalMatchVideoButton";
 import { getLocalMatchVideoUrl } from "@/lib/local-video-registry";
 import useLocalMatchVideoVersion from "@/hooks/useLocalMatchVideoVersion";
 import { restoreMatchVideoForClip } from "@/lib/video/match-video-resolver";
+import VideoLibraryButton from "@/components/video/VideoLibraryButton";
 
 type Clip = {
   id?: string;
@@ -168,9 +169,26 @@ export default function LocalClipPlayer({ clip, teamId, autoPlay = true }: Props
       <div className="local-clip-missing">
         <strong>Vidéo du match introuvable à son emplacement mémorisé</strong>
         <span>
-          Les actions et les clips sont conservés. Resélectionne uniquement le
-          fichier vidéo lié à ce match.
+          Les actions et les clips sont conservés. Autorise ton dossier vidéos
+          une fois : tous tes projets la retrouveront ensuite automatiquement.
         </span>
+
+        {/* Chemin recommandé : un dossier autorisé couvre tous les matchs. */}
+        <VideoLibraryButton
+          onReconnected={() => {
+            restoreKeyRef.current = "";
+            setRestoreDone(false);
+            setRestoring(true);
+            void restoreMatchVideoForClip(matchId, teamId, { interactive: true })
+              .catch(() => null)
+              .finally(() => {
+                setRestoring(false);
+                setRestoreDone(true);
+              });
+          }}
+        />
+
+        {/* Repli historique : sélection du fichier de CE match uniquement. */}
         <LocalMatchVideoButton matchId={matchId} teamId={teamId} />
       </div>
     );

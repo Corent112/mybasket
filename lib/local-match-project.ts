@@ -1,3 +1,5 @@
+import { findVideoInLibrary } from "@/lib/video/video-library";
+
 export type MatchProjectFingerprint = {
   name: string;
   size: number;
@@ -266,10 +268,23 @@ const findLegacyHandle = async (
   }
 };
 
+export type RestoreVideoOptions = {
+  /**
+   * true UNIQUEMENT depuis un gestionnaire de clic. Chrome exige une
+   * activation utilisateur pour requestPermission() : appelé depuis un
+   * useEffect, l'appel échoue et la vidéo reste introuvable. En mode non
+   * interactif on se contente donc d'interroger la permission.
+   */
+  interactive?: boolean;
+  /** Compte MyBasket propriétaire de la bibliothèque de dossiers. */
+  ownerId?: string | null;
+};
+
 export const restorePersistentVideo = async (
   matchId: string,
   expected?: MatchProjectFingerprint | null,
   teamId?: string | null,
+  options?: RestoreVideoOptions,
 ): Promise<LocalMatchVideo | null> => {
   // 1. Nouveau registre : clé durable = matchId.
   let handle = await idbGet<FileSystemFileHandle>(HANDLE_STORE, matchId);
@@ -283,15 +298,31 @@ export const restorePersistentVideo = async (
     }
   }
 
+  // 3. BIBLIOTHÈQUE DE DOSSIERS : c'est le chemin qui fonctionne à la
+  //    réouverture d'un projet. Le handle par fichier perd sa permission au
+  //    redémarrage du navigateur ; un dossier déjà autorisé, lui, reste
+  //    lisible sans aucun clic. On le tente avant d'abandonner.
+  const fromLibrary = await findVideoInLibrary(expected, options?.ownerId).catch(() => null);
+  if (fromLibrary) {
+    const fingerprint = await fingerprintVideo(fromLibrary);
+    if (fingerprintsMatch(expected, fingerprint)) {
+      return {
+        matchId,
+        file: fromLibrary,
+        fingerprint,
+        url: URL.createObjectURL(fromLibrary),
+      };
+    }
+  }
+
   if (!handle) return null;
 
   try {
     let permission = await (handle as any).queryPermission?.({ mode: "read" });
 
-    // Certains navigateurs renvoient "prompt". requestPermission peut nécessiter
-    // un geste utilisateur ; si le navigateur l'autorise ici, on restaure sans
-    // demander de rechoisir le fichier.
-    if (permission !== "granted") {
+    // requestPermission() exige une activation utilisateur : on ne l'appelle
+    // que si l'on vient bien d'un clic (options.interactive).
+    if (permission !== "granted" && options?.interactive) {
       permission = await (handle as any).requestPermission?.({ mode: "read" });
     }
     if (permission !== "granted") return null;

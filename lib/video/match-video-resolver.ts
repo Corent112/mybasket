@@ -27,6 +27,28 @@ type RestoreResult = {
 
 const restoreInFlight = new Map<string, Promise<RestoreResult>>();
 
+/**
+ * Id du compte connecté, mémorisé pour la session.
+ * La bibliothèque de dossiers vidéo est cloisonnée par utilisateur : sur un
+ * ordinateur partagé, chaque coach ne voit que ses propres dossiers.
+ */
+let ownerIdPromise: Promise<string | null> | null = null;
+
+function currentOwnerId(): Promise<string | null> {
+  if (!ownerIdPromise) {
+    ownerIdPromise = supabaseClient()
+      .auth.getUser()
+      .then(({ data }) => data?.user?.id ?? null)
+      .catch(() => null);
+  }
+  return ownerIdPromise;
+}
+
+/** À appeler à la déconnexion pour ne pas garder l'id du compte précédent. */
+export function resetVideoLibraryOwner() {
+  ownerIdPromise = null;
+}
+
 function supabaseClient() {
   return createBrowserClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -84,6 +106,7 @@ export async function attachMatchVideoFile(
 export async function restoreMatchVideoForClip(
   matchId: string,
   teamId?: string | null,
+  options?: { interactive?: boolean },
 ): Promise<RestoreResult> {
   if (!matchId) return { video: null, expected: null };
 
@@ -105,7 +128,10 @@ export async function restoreMatchVideoForClip(
       // historique équipe + nom de fichier lorsqu'il dispose des métadonnées.
     }
 
-    const restored = await restorePersistentVideo(matchId, expected, teamId);
+    const restored = await restorePersistentVideo(matchId, expected, teamId, {
+      interactive: options?.interactive === true,
+      ownerId: await currentOwnerId(),
+    });
     if (!restored) return { video: null, expected };
 
     setLocalMatchVideo(restored);
