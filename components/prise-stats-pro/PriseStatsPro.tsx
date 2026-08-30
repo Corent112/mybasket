@@ -276,6 +276,11 @@ const TEMPS = [
     icon: "✂️",
   },
   {
+    id: "passing",
+    label: "Passing",
+    icon: "🔁",
+  },
+  {
     id: "rebond_offensif",
     label: "Rebond offensif",
     icon: "🔄",
