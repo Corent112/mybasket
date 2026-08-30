@@ -7,6 +7,7 @@ import Header from "@/components/Header";
 import Footer from "@/components/Footer";
 import LegacyBusinessStateMigration from "@/components/LegacyBusinessStateMigration";
 import EmptyRangesPolyfill from "@/components/EmptyRangesPolyfill";
+import UnifiedBackofficeSkin from "@/components/UnifiedBackofficeSkin";
 
 const roboto = Roboto({
   weight: ["400", "500", "700", "900"],
@@ -41,6 +42,7 @@ export default function RootLayout({
       <body>
         <LegacyBusinessStateMigration />
         <EmptyRangesPolyfill />
+        <UnifiedBackofficeSkin />
         <div className="app-shell">
           <Header />
 
