@@ -1,11 +1,8 @@
 /**
  * Catalogue unique des permissions commerciales MyBasket.
  *
- * Important :
- * - Les clés ci-dessous sont les seules clés éditables dans la matrice CEO.
- * - Une case cochée correspond à UNE permission précise.
- * - Les regroupements (ex: management) ne sont que des vues dérivées et ne
- *   doivent jamais être enregistrés comme des droits autonomes.
+ * La matrice CEO est la source de vérité : les presets de l'interface ne font
+ * que cocher/décocher ces permissions, ils ne créent aucune logique parallèle.
  */
 
 export type SubscriptionPermissionKey =
@@ -25,6 +22,8 @@ export type SubscriptionPermissionKey =
   | "stats_joueur"
   | "stats_jeu"
   | "stats_live"
+  | "video_tool"
+  | "offline_mode"
   | "rotation"
   | "gameplan"
   | "gestion_administrative"
@@ -41,11 +40,13 @@ export type PermissionDefinition = {
   hint?: string;
 };
 
-export const INDIVIDUAL_PERMISSION_GROUPS: Array<{
+export type PermissionGroup = {
   key: string;
   label: string;
   items: PermissionDefinition[];
-}> = [
+};
+
+export const INDIVIDUAL_PERMISSION_GROUPS: PermissionGroup[] = [
   {
     key: "starter",
     label: "Starter Pack",
@@ -58,16 +59,8 @@ export const INDIVIDUAL_PERMISSION_GROUPS: Array<{
       },
       { key: "plaquette", label: "Plaquette tactique", group: "Starter Pack" },
       { key: "accompagnement", label: "Accompagnement", group: "Starter Pack" },
-      {
-        key: "annonces",
-        label: "Annonces · consultation",
-        group: "Starter Pack",
-      },
-      {
-        key: "annonces_submit",
-        label: "Annonces · proposer",
-        group: "Starter Pack",
-      },
+      { key: "annonces", label: "Annonces · consultation", group: "Starter Pack" },
+      { key: "annonces_submit", label: "Annonces · proposer", group: "Starter Pack" },
     ],
   },
   {
@@ -97,46 +90,93 @@ export const INDIVIDUAL_PERMISSION_GROUPS: Array<{
   },
   {
     key: "performance",
-    label: "Management & performance",
+    label: "LiveStats & performance",
     items: [
-      { key: "stats_joueur", label: "Stats joueurs / équipe", group: "Management & performance" },
-      { key: "stats_jeu", label: "Stats jeu / systèmes", group: "Management & performance" },
-      { key: "stats_live", label: "LiveStats", group: "Management & performance" },
-      { key: "rotation", label: "Rotation", group: "Management & performance" },
-      { key: "gameplan", label: "Game Plan", group: "Management & performance" },
+      {
+        key: "stats_jeu",
+        label: "LiveStats · collectif",
+        group: "LiveStats & performance",
+        hint: "Statistiques équipe, systèmes, temps forts et résultats.",
+      },
+      {
+        key: "stats_joueur",
+        label: "LiveStats · individuel",
+        group: "LiveStats & performance",
+        hint: "Statistiques et fiches individuelles des joueurs.",
+      },
+      {
+        key: "stats_live",
+        label: "Outil de prise de stats LiveStats",
+        group: "LiveStats & performance",
+        hint: "Prise de stats connectée. Ce droit n'accorde pas le mode hors ligne.",
+      },
+      { key: "rotation", label: "Rotation", group: "LiveStats & performance" },
+      { key: "gameplan", label: "Game Plan", group: "LiveStats & performance" },
+    ],
+  },
+  {
+    key: "video",
+    label: "Vidéo & hors ligne",
+    items: [
+      {
+        key: "video_tool",
+        label: "Outil vidéo / codage",
+        group: "Vidéo & hors ligne",
+        hint: "Analyse vidéo, clips, montage et codification.",
+      },
+      {
+        key: "offline_mode",
+        label: "Mode hors ligne",
+        group: "Vidéo & hors ligne",
+        hint: "Utilisation locale de l'outil vidéo sans connexion Internet.",
+      },
     ],
   },
 ];
 
-/**
- * Permissions conservées hors matrice individuelle pour les autres univers.
- * Club et Institution restent volontairement séparés de l'offre individuelle.
- */
-export const OTHER_PERMISSION_GROUPS: Array<{
-  key: string;
-  label: string;
-  items: PermissionDefinition[];
-}> = [
+export const CLUB_PERMISSION_GROUPS: PermissionGroup[] = [
+  ...INDIVIDUAL_PERMISSION_GROUPS,
+  {
+    key: "club",
+    label: "Espace Club",
+    items: [
+      {
+        key: "club_space",
+        label: "Espace Club",
+        group: "Espace Club",
+        hint: "Accès au dashboard et aux fonctions propres au club.",
+      },
+      {
+        key: "gestion_administrative",
+        label: "Gestion administrative",
+        group: "Espace Club",
+        hint: "Licenciés, documents et fonctions administratives du club.",
+      },
+    ],
+  },
+];
+
+export const OTHER_PERMISSION_GROUPS: PermissionGroup[] = [
   {
     key: "other",
     label: "Autres espaces",
     items: [
       { key: "gestion_administrative", label: "Gestion administrative", group: "Autres espaces" },
       { key: "club_space", label: "Espace club", group: "Autres espaces" },
-      { key: "institutionnel", label: "Institutionnel", group: "Autres espaces" },
+      { key: "institutionnel", label: "Institution", group: "Autres espaces" },
     ],
   },
 ];
 
-export const ALL_MATRIX_PERMISSION_KEYS = [
-  ...INDIVIDUAL_PERMISSION_GROUPS.flatMap((group) => group.items.map((item) => item.key)),
-  ...OTHER_PERMISSION_GROUPS.flatMap((group) => group.items.map((item) => item.key)),
-] as SubscriptionPermissionKey[];
+export const ALL_MATRIX_PERMISSION_KEYS = Array.from(
+  new Set<SubscriptionPermissionKey>([
+    ...INDIVIDUAL_PERMISSION_GROUPS.flatMap((group) => group.items.map((item) => item.key)),
+    ...CLUB_PERMISSION_GROUPS.flatMap((group) => group.items.map((item) => item.key)),
+    ...OTHER_PERMISSION_GROUPS.flatMap((group) => group.items.map((item) => item.key)),
+  ]),
+);
 
-/**
- * Alias de compatibilité pour le code historique. Ils ne sont PAS affichés
- * dans la matrice et permettent une migration sans casse.
- */
+/** Alias de compatibilité pour tout le code historique. */
 export const PUBLIC_ACCESS_ALIASES: Record<string, SubscriptionPermissionKey[]> = {
   messagerie: ["messagerie"],
   calendrier: ["calendrier"],
@@ -155,16 +195,21 @@ export const PUBLIC_ACCESS_ALIASES: Record<string, SubscriptionPermissionKey[]> 
   equipes: ["equipes"],
   collaboration: ["collaboration_equipe"],
   stats_joueur: ["stats_joueur"],
+  stats_individuel: ["stats_joueur"],
   stats_jeu: ["stats_jeu"],
+  stats_collectif: ["stats_jeu"],
   stats_live: ["stats_live"],
+  livestats: ["stats_live"],
+  video_tool: ["video_tool"],
+  video_analysis: ["video_tool"],
+  offline_mode: ["offline_mode"],
+  offline_video: ["offline_mode"],
   rotation: ["rotation"],
   gameplan: ["gameplan"],
   gestion_administrative: ["gestion_administrative"],
   club_space: ["club_space"],
   institutionnel: ["institutionnel"],
-  // Agrégat d'affichage uniquement : il ouvre le menu Management si au moins
-  // une sous-fonction est autorisée, mais n'accorde jamais les autres droits.
-  management: ["stats_joueur", "stats_jeu", "stats_live", "rotation", "gameplan"],
+  management: ["stats_joueur", "stats_jeu", "stats_live", "rotation", "gameplan", "video_tool"],
 };
 
 export const SYSTEM_ACCESS = {
