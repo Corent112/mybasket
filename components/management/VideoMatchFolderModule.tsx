@@ -2,11 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
-import {
-  getVideoRootFolder,
-  readCachedVideoRootFolder,
-  setVideoRootFolder,
-} from "@/lib/video/video-root-folder";
+import { setVideoRootFolder } from "@/lib/video/video-root-folder";
 import {
   addVideoFolder,
   forgetVideoFolder,
@@ -17,18 +13,13 @@ import {
   type VideoLibraryStatus,
 } from "@/lib/video/video-library";
 
-const PLACEHOLDER = "~/Movies/MyBasket";
-
 export default function VideoMatchFolderModule() {
   const [ownerId, setOwnerId] = useState<string | null>(null);
-  const [rootFolder, setRootFolder] = useState(readCachedVideoRootFolder());
   const [status, setStatus] = useState<VideoLibraryStatus | null>(null);
   const [busy, setBusy] = useState(false);
-  const [saving, setSaving] = useState(false);
-  const [saved, setSaved] = useState<"idle" | "ok" | "error">("idle");
 
   const connected = status?.state === "granted";
-  const knownFolderName = useMemo(() => {
+  const folderName = useMemo(() => {
     if (!status || !("folders" in status) || !status.folders.length) return "";
     return status.folders[0]?.name || "";
   }, [status]);
@@ -42,6 +33,7 @@ export default function VideoMatchFolderModule() {
 
     void (async () => {
       let id: string | null = null;
+
       try {
         const { data } = await createClient().auth.getUser();
         id = data?.user?.id ?? null;
@@ -51,53 +43,40 @@ export default function VideoMatchFolderModule() {
 
       if (!active) return;
       setOwnerId(id);
-
-      const [folder, currentStatus] = await Promise.all([
-        getVideoRootFolder(),
-        videoLibraryStatus(id),
-      ]);
-
-      if (!active) return;
-      if (folder) setRootFolder(folder);
-      setStatus(currentStatus);
+      await refreshStatus(id);
     })();
 
     return () => {
       active = false;
     };
-  }, []);
+  }, [refreshStatus]);
 
-  const saveReference = async () => {
-    setSaving(true);
-    setSaved("idle");
-    const ok = await setVideoRootFolder(rootFolder);
-    setSaving(false);
-    setSaved(ok ? "ok" : "error");
-    window.setTimeout(() => setSaved("idle"), 2200);
-  };
-
-  const chooseFolder = async () => {
+  const chooseRootFolder = async () => {
     setBusy(true);
-    try {
-      const added = await addVideoFolder(ownerId);
-      if (!added) return;
 
-      // Le vrai nom du dossier choisi devient aussi la référence affichée si
-      // l'utilisateur n'avait rien renseigné jusque-là.
-      if (!rootFolder.trim()) {
-        setRootFolder(added.name);
-        await setVideoRootFolder(added.name);
+    try {
+      // Un seul dossier racine par utilisateur/navigateur.
+      if (status && "folders" in status) {
+        await Promise.all(status.folders.map((folder) => forgetVideoFolder(folder.id)));
       }
 
-      refreshVideoLibraryIndex();
+      const added = await addVideoFolder(ownerId);
+
+      if (added) {
+        // Le nom du vrai dossier choisi devient aussi la référence du compte.
+        await setVideoRootFolder(added.name);
+        refreshVideoLibraryIndex();
+      }
+
       await refreshStatus(ownerId);
     } finally {
       setBusy(false);
     }
   };
 
-  const reconnectFolder = async () => {
+  const reconnectRootFolder = async () => {
     setBusy(true);
+
     try {
       const ok = await grantVideoLibraryAccess(ownerId);
       if (ok) refreshVideoLibraryIndex();
@@ -107,105 +86,93 @@ export default function VideoMatchFolderModule() {
     }
   };
 
-  const changeFolder = async () => {
-    setBusy(true);
-    try {
-      if (status && "folders" in status) {
-        await Promise.all(status.folders.map((folder) => forgetVideoFolder(folder.id)));
-      }
-
-      const added = await addVideoFolder(ownerId);
-      if (added) {
-        refreshVideoLibraryIndex();
-        await refreshStatus(ownerId);
-      } else {
-        await refreshStatus(ownerId);
-      }
-    } finally {
-      setBusy(false);
+  const mainAction = async () => {
+    if (status?.state === "prompt") {
+      await reconnectRootFolder();
+      return;
     }
+
+    await chooseRootFolder();
   };
 
-  const action = async () => {
-    if (status?.state === "prompt") return reconnectFolder();
-    if (status?.state === "granted") return changeFolder();
-    return chooseFolder();
-  };
-
-  const buttonLabel =
-    status?.state === "granted"
-      ? "📁 Changer de dossier"
-      : status?.state === "prompt"
-        ? "🔓 Reconnecter le dossier"
-        : "📁 Choisir mon dossier de matchs";
+  const actionLabel =
+    status?.state === "prompt"
+      ? "🔓 Reconnecter le dossier"
+      : connected
+        ? "📁 Changer le dossier racine"
+        : "📁 Choisir le dossier racine";
 
   return (
-    <section className="vmf-card" aria-label="Dossier des vidéos de matchs">
-      <div className="vmf-title-row">
+    <section className="vmf-card" aria-label="Dossier racine des matchs">
+      <div className="vmf-head">
         <div>
           <h3>📁 Dossier des vidéos de matchs</h3>
           <p>
-            MyBasket utilise ce dossier pour retrouver automatiquement les vidéos
-            lorsque tu ouvres un match ou un clip.
+            Choisis une seule fois le dossier principal dans lequel tu ranges tes vidéos de matchs.
           </p>
         </div>
 
-        {status?.state === "granted" && <span className="vmf-badge ok">Connecté</span>}
+        {connected && <span className="vmf-badge ok">Connecté</span>}
         {status?.state === "prompt" && <span className="vmf-badge warn">À reconnecter</span>}
-        {status?.state === "empty" && <span className="vmf-badge">Non connecté</span>}
       </div>
 
-      <div className="vmf-reference">
-        <label htmlFor="vmf-root-folder">Dossier racine déclaré</label>
-        <div className="vmf-reference-row">
-          <span className="vmf-folder-icon" aria-hidden="true">📁</span>
-          <input
-            id="vmf-root-folder"
-            value={rootFolder}
-            placeholder={PLACEHOLDER}
-            onChange={(event) => setRootFolder(event.target.value)}
-            spellCheck={false}
-          />
-          <button type="button" onClick={saveReference} disabled={saving}>
-            {saving ? "…" : "Enregistrer"}
-          </button>
-        </div>
-        {saved === "ok" && <small className="vmf-save-state ok">✓ Enregistré sur ton compte MyBasket.</small>}
-        {saved === "error" && <small className="vmf-save-state err">Enregistrement impossible.</small>}
-      </div>
-
-      <div className="vmf-bottom">
-        <div className="vmf-status-line">
-          <span className={connected ? "vmf-dot connected" : "vmf-dot"} />
+      <div className={`vmf-root ${connected ? "connected" : ""}`}>
+        <div className="vmf-root-left">
+          <span className="vmf-folder">📁</span>
           <div>
+            <span>Dossier racine</span>
             <strong>
-              {connected
-                ? `Dossier autorisé${knownFolderName ? ` : ${knownFolderName}` : ""}`
-                : status?.state === "prompt"
-                  ? "Le dossier est mémorisé mais doit être reconnecté"
-                  : status?.state === "unsupported"
-                    ? "Accès automatique au dossier non disponible dans ce navigateur"
-                    : "Aucun dossier local autorisé sur ce navigateur"}
+              {folderName ||
+                (status?.state === "prompt"
+                  ? "Dossier mémorisé"
+                  : "Aucun dossier choisi")}
             </strong>
-            <span>
-              Les vidéos restent sur ton ordinateur : aucun fichier vidéo n’est envoyé dans Supabase.
-            </span>
           </div>
         </div>
 
+        {connected && <span className="vmf-check">✓</span>}
+      </div>
+
+      <div className="vmf-bottom">
+        <div className="vmf-info">
+          {connected ? (
+            <>
+              <strong>✓ MyBasket cherchera automatiquement les vidéos ici.</strong>
+              <span>Tu peux créer autant de sous-dossiers que tu veux à l’intérieur.</span>
+            </>
+          ) : status?.state === "prompt" ? (
+            <>
+              <strong>Le dossier est mémorisé.</strong>
+              <span>Un clic suffit pour redonner l’accès à MyBasket.</span>
+            </>
+          ) : status?.state === "unsupported" ? (
+            <>
+              <strong>Accès automatique non disponible dans ce navigateur.</strong>
+              <span>La vidéo pourra toujours être sélectionnée manuellement.</span>
+            </>
+          ) : (
+            <>
+              <strong>Aucun dossier racine défini.</strong>
+              <span>Choisis le dossier qui contient tes matchs.</span>
+            </>
+          )}
+        </div>
+
         {supportsVideoLibrary() && status?.state !== "unsupported" && (
-          <button type="button" className="vmf-action" onClick={action} disabled={busy}>
-            {busy ? "…" : buttonLabel}
+          <button
+            type="button"
+            className="vmf-action"
+            onClick={mainAction}
+            disabled={busy}
+          >
+            {busy ? "…" : actionLabel}
           </button>
         )}
       </div>
 
-      {status?.state === "unsupported" && (
-        <p className="vmf-browser-note">
-          Le dossier déclaré reste enregistré sur ton compte. Sur ce navigateur,
-          MyBasket utilisera la sélection manuelle du fichier lorsque nécessaire.
-        </p>
-      )}
+      <small className="vmf-privacy">
+        Les vidéos restent sur ton ordinateur. Elles ne sont pas envoyées dans Supabase.
+      </small>
 
       <style jsx>{`
         .vmf-card {
@@ -219,14 +186,14 @@ export default function VideoMatchFolderModule() {
           color: #231f20;
         }
 
-        .vmf-title-row {
+        .vmf-head {
           display: flex;
           align-items: flex-start;
           justify-content: space-between;
           gap: 16px;
         }
 
-        .vmf-title-row h3 {
+        .vmf-head h3 {
           margin: 0;
           font-size: 20px;
           line-height: 1.25;
@@ -234,20 +201,18 @@ export default function VideoMatchFolderModule() {
           color: #241f20;
         }
 
-        .vmf-title-row p {
+        .vmf-head p {
           margin: 7px 0 0;
-          max-width: 580px;
+          max-width: 590px;
           color: #6f6869;
           font-size: 13px;
-          line-height: 1.55;
+          line-height: 1.5;
         }
 
         .vmf-badge {
           flex: 0 0 auto;
-          padding: 5px 9px;
+          padding: 5px 10px;
           border-radius: 999px;
-          background: #f0f0f0;
-          color: #6d6768;
           font-size: 11px;
           font-weight: 900;
         }
@@ -258,163 +223,140 @@ export default function VideoMatchFolderModule() {
         }
 
         .vmf-badge.warn {
-          background: #fff1cf;
-          color: #8a6418;
+          background: #fff2d7;
+          color: #9a6612;
         }
 
-        .vmf-reference {
-          margin-top: 17px;
-        }
-
-        .vmf-reference label {
-          display: block;
-          margin: 0 0 6px;
-          font-size: 11px;
-          font-weight: 900;
-          text-transform: uppercase;
-          letter-spacing: 0.04em;
-          color: #6b1a2c;
-        }
-
-        .vmf-reference-row {
+        .vmf-root {
+          margin-top: 18px;
+          min-height: 64px;
+          padding: 12px 15px;
           display: flex;
           align-items: center;
-          gap: 9px;
-          min-height: 48px;
-          padding: 7px 8px 7px 12px;
-          border: 1px solid #ded9d8;
+          justify-content: space-between;
+          gap: 14px;
+          border: 1px solid #e8e3e1;
           border-radius: 11px;
           background: #fafafa;
         }
 
-        .vmf-folder-icon {
-          font-size: 18px;
+        .vmf-root.connected {
+          background: #fbfdfb;
         }
 
-        .vmf-reference-row input {
-          flex: 1;
-          min-width: 120px;
-          border: 0;
-          outline: 0;
-          background: transparent;
-          color: #272223;
-          font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-          font-size: 13px;
+        .vmf-root-left {
+          display: flex;
+          align-items: center;
+          gap: 12px;
+          min-width: 0;
+        }
+
+        .vmf-folder {
+          font-size: 20px;
+        }
+
+        .vmf-root-left div {
+          min-width: 0;
+          display: flex;
+          flex-direction: column;
+          gap: 3px;
+        }
+
+        .vmf-root-left span:not(.vmf-folder) {
+          color: #817a7b;
+          font-size: 11px;
           font-weight: 700;
         }
 
-        .vmf-reference-row button,
-        .vmf-action {
-          border: 1px solid #6b1a2c;
-          border-radius: 9px;
-          background: #fff;
-          color: #6b1a2c;
-          padding: 9px 13px;
-          font-size: 12px;
-          font-weight: 900;
-          cursor: pointer;
+        .vmf-root-left strong {
+          overflow: hidden;
+          text-overflow: ellipsis;
           white-space: nowrap;
+          color: #2e292a;
+          font-size: 14px;
+          font-weight: 900;
         }
 
-        .vmf-reference-row button:hover:not(:disabled),
-        .vmf-action:hover:not(:disabled) {
-          background: #6b1a2c;
-          color: #fff;
+        .vmf-check {
+          flex: 0 0 auto;
+          width: 25px;
+          height: 25px;
+          display: grid;
+          place-items: center;
+          border-radius: 50%;
+          background: #dff4e6;
+          color: #188246;
+          font-size: 14px;
+          font-weight: 1000;
         }
-
-        button:disabled {
-          opacity: 0.55;
-          cursor: wait;
-        }
-
-        .vmf-save-state {
-          display: block;
-          margin-top: 6px;
-          font-size: 11px;
-          font-weight: 800;
-        }
-
-        .vmf-save-state.ok { color: #267946; }
-        .vmf-save-state.err { color: #a12d35; }
 
         .vmf-bottom {
+          margin-top: 16px;
           display: flex;
           align-items: center;
           justify-content: space-between;
           gap: 18px;
-          margin-top: 16px;
-          padding-top: 15px;
-          border-top: 1px solid #eee8e6;
         }
 
-        .vmf-status-line {
-          display: flex;
-          align-items: flex-start;
-          gap: 9px;
+        .vmf-info {
           min-width: 0;
+          display: flex;
+          flex-direction: column;
+          gap: 3px;
         }
 
-        .vmf-dot {
-          flex: 0 0 auto;
-          width: 9px;
-          height: 9px;
-          margin-top: 4px;
-          border-radius: 50%;
-          background: #b9b5b5;
-        }
-
-        .vmf-dot.connected {
-          background: #32a45d;
-          box-shadow: 0 0 0 3px #e1f4e7;
-        }
-
-        .vmf-status-line strong,
-        .vmf-status-line span {
-          display: block;
-        }
-
-        .vmf-status-line strong {
-          color: #393334;
+        .vmf-info strong {
+          color: #423b3d;
           font-size: 12px;
-          line-height: 1.35;
+          font-weight: 850;
         }
 
-        .vmf-status-line span {
-          margin-top: 3px;
-          color: #777071;
+        .vmf-info span {
+          color: #827a7b;
           font-size: 11px;
-          line-height: 1.45;
         }
 
-        .vmf-browser-note {
-          margin: 13px 0 0;
-          padding: 10px 12px;
+        .vmf-action {
+          flex: 0 0 auto;
+          min-height: 38px;
+          padding: 0 14px;
+          border: 1px solid #cdb8b9;
           border-radius: 9px;
-          background: #f7f4f3;
-          color: #686162;
-          font-size: 11px;
-          line-height: 1.5;
+          background: #fff;
+          color: #7d1428;
+          font-size: 12px;
+          font-weight: 900;
+          cursor: pointer;
         }
 
-        @media (max-width: 700px) {
+        .vmf-action:hover {
+          background: #fff7f8;
+        }
+
+        .vmf-action:disabled {
+          opacity: 0.55;
+          cursor: wait;
+        }
+
+        .vmf-privacy {
+          display: block;
+          margin-top: 14px;
+          padding-top: 12px;
+          border-top: 1px solid #f0ecea;
+          color: #8c8586;
+          font-size: 10px;
+        }
+
+        @media (max-width: 720px) {
           .vmf-card {
             padding: 18px;
           }
 
-          .vmf-title-row,
           .vmf-bottom {
+            align-items: stretch;
             flex-direction: column;
           }
 
-          .vmf-reference-row {
-            flex-wrap: wrap;
-          }
-
-          .vmf-reference-row input {
-            flex-basis: calc(100% - 34px);
-          }
-
-          .vmf-reference-row button,
           .vmf-action {
             width: 100%;
           }
