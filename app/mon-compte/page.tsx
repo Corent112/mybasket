@@ -33,6 +33,7 @@ import ScoutTeamsManager from '@/components/equipes/ScoutTeamsManager';
 import type { Player, Team } from '@/types/player';
 import GamePlanModule from "@/components/management/GamePlanModule";
 import GestionAdminModule from "@/components/management/GestionAdminModule";
+import VideoMatchFolderModule from "@/components/management/VideoMatchFolderModule";
 
 
 type Form = {
@@ -1328,6 +1329,7 @@ return (
 </button>
   </div>
 )}
+{managementView === "live" && <VideoMatchFolderModule />}
 {managementView === "historique" && <HistoriqueMatchsModule />}
 
       {managementView === "rotation" && <RotationModule />}
