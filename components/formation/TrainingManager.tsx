@@ -97,8 +97,11 @@ export default function TrainingManager({ institutionId }: { institutionId?: str
   const [filter, setFilter] = useState("all");
   const [showCandidate, setShowCandidate] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [creatingFormation, setCreatingFormation] = useState(false);
+  const [formationError, setFormationError] = useState("");
 
   const [newProgram, setNewProgram] = useState("BFA");
+  const [selectedProgramId, setSelectedProgramId] = useState("");
   const [newCohort, setNewCohort] = useState("Promotion 2026/2027");
   const [candidateEmail, setCandidateEmail] = useState("");
   const [reqTitle, setReqTitle] = useState("");
@@ -143,7 +146,16 @@ export default function TrainingManager({ institutionId }: { institutionId?: str
       cq = cq.eq("institution_id", institutionId);
     }
     const [p, c] = await Promise.all([pq, cq]);
-    setPrograms((p.data || []) as Program[]);
+    if (p.error || c.error) {
+      setFormationError(p.error?.message || c.error?.message || "Impossible de charger les formations.");
+    }
+    const loadedPrograms = (p.data || []) as Program[];
+    setPrograms(loadedPrograms);
+    setSelectedProgramId((current) =>
+      current && loadedPrograms.some((program) => program.id === current)
+        ? current
+        : loadedPrograms[0]?.id || ""
+    );
     setCohorts((c.data || []) as unknown as Cohort[]);
     const next = preferred || cohortId || c.data?.[0]?.id || "";
     setCohortId(next);
@@ -210,16 +222,86 @@ export default function TrainingManager({ institutionId }: { institutionId?: str
   }), [candidates, requirements, submissions, payments, cohort]); // eslint-disable-line react-hooks/exhaustive-deps
 
   async function createProgram() {
-    const { data: { user } } = await supabase.auth.getUser();
-    if (!user || !newProgram.trim()) return;
-    const q = await supabase.from("training_programs").insert({ name: newProgram.trim(), code: newProgram.trim(), created_by: user.id, institution_id: institutionId || null }).select("*").single();
-    if (q.error) return alert(q.error.message);
-    setPrograms((items) => [q.data as Program, ...items]);
+    const name = newProgram.trim();
+    if (!name) {
+      setFormationError("Renseigne d’abord le type / diplôme.");
+      return;
+    }
+
+    const existing = programs.find((program) =>
+      program.name.trim().toLowerCase() === name.toLowerCase() ||
+      program.code?.trim().toLowerCase() === name.toLowerCase()
+    );
+    if (existing) {
+      setSelectedProgramId(existing.id);
+      setFormationError("");
+      return;
+    }
+
+    setCreatingFormation(true);
+    setFormationError("");
+    const { data: { user }, error: userError } = await supabase.auth.getUser();
+    if (userError || !user) {
+      setCreatingFormation(false);
+      setFormationError(userError?.message || "Session utilisateur introuvable. Reconnecte-toi puis réessaie.");
+      return;
+    }
+
+    const q = await supabase
+      .from("training_programs")
+      .insert({
+        name,
+        code: name,
+        created_by: user.id,
+        institution_id: institutionId || null,
+      })
+      .select("*")
+      .single();
+
+    setCreatingFormation(false);
+    if (q.error || !q.data) {
+      setFormationError(q.error?.message || "Impossible de créer le type de formation.");
+      return;
+    }
+
+    const created = q.data as Program;
+    setPrograms((items) => [created, ...items.filter((item) => item.id !== created.id)]);
+    setSelectedProgramId(created.id);
+    setFormationError("");
   }
+
   async function createCohort() {
-    if (!programs[0]) return alert("Crée d’abord un type de formation.");
-    const q = await supabase.from("training_cohorts").insert({ program_id: programs[0].id, name: newCohort.trim(), status: "active", institution_id: institutionId || null }).select("id").single();
-    if (q.error) return alert(q.error.message);
+    const name = newCohort.trim();
+    if (!selectedProgramId) {
+      setFormationError("Crée ou sélectionne d’abord un type de formation.");
+      return;
+    }
+    if (!name) {
+      setFormationError("Renseigne le nom de la promotion.");
+      return;
+    }
+
+    setCreatingFormation(true);
+    setFormationError("");
+    const q = await supabase
+      .from("training_cohorts")
+      .insert({
+        program_id: selectedProgramId,
+        name,
+        status: "active",
+        institution_id: institutionId || null,
+      })
+      .select("id")
+      .single();
+
+    setCreatingFormation(false);
+    if (q.error || !q.data) {
+      setFormationError(q.error?.message || "Impossible de créer la promotion.");
+      return;
+    }
+
+    setFormationError("");
+    setTab("registered");
     await reload(q.data.id);
   }
   async function addCandidate() {
@@ -326,7 +408,7 @@ export default function TrainingManager({ institutionId }: { institutionId?: str
       <div className="formation-title"><div><p>FORMATION DES CADRES</p><h2>Gestion des formations & des inscrits</h2><span>Une formation centralise dossier, cotisation, présence, documents, évaluations et communications.</span></div>{cohort && <div className="cohort-score"><b>{kpis.ready}/{kpis.total}</b><small>prêts administrativement</small></div>}</div>
       <div className="switch-row">
         <select value={cohortId} onChange={async (e) => { setCohortId(e.target.value); setTab("registered"); await loadCohort(e.target.value); }}><option value="">Choisir une formation</option>{cohorts.map((c) => <option key={c.id} value={c.id}>{c.training_programs?.name ? `${c.training_programs.name} · ` : ""}{c.name}</option>)}</select>
-        <details><summary>+ Créer une formation</summary><div className="create-pop"><label>Type / diplôme<input value={newProgram} onChange={(e) => setNewProgram(e.target.value)} /></label><button onClick={createProgram}>Créer le type</button><label>Promotion<input value={newCohort} onChange={(e) => setNewCohort(e.target.value)} /></label><button onClick={createCohort}>Créer la promotion</button></div></details>
+        <details><summary>+ Créer une formation</summary><div className="create-pop"><label>Type / diplôme<input value={newProgram} onChange={(e) => { setNewProgram(e.target.value); setFormationError(""); }} /></label><button disabled={creatingFormation || !newProgram.trim()} onClick={() => void createProgram()}>{creatingFormation ? "Création…" : "Créer le type"}</button>{programs.length > 0 && <label>Type sélectionné<select value={selectedProgramId} onChange={(e) => { setSelectedProgramId(e.target.value); setFormationError(""); }}><option value="">Choisir un type</option>{programs.map((program) => <option key={program.id} value={program.id}>{program.name}{program.code && program.code !== program.name ? ` (${program.code})` : ""}</option>)}</select></label>}<label>Promotion<input value={newCohort} onChange={(e) => { setNewCohort(e.target.value); setFormationError(""); }} /></label><button disabled={creatingFormation || !selectedProgramId || !newCohort.trim()} onClick={() => void createCohort()}>{creatingFormation ? "Création…" : "Créer la promotion"}</button>{formationError && <p className="create-error">{formationError}</p>}</div></details>
       </div>
     </section>
 
@@ -372,7 +454,7 @@ export default function TrainingManager({ institutionId }: { institutionId?: str
     </section></div>}
 
     <style jsx>{`
-      :global(body){background:#f6f2ee}.training-root{display:grid;gap:10px;color:#302328}.formation-switcher,.panel,.table-card,.embedded{background:#fff;border:1px solid #eadfd8;border-radius:16px}.formation-switcher{padding:16px}.formation-title,.switch-row,.panel-head,.bulk,.actions,.payment-line{display:flex;justify-content:space-between;gap:12px;align-items:center}.formation-title p,.panel-head p,.drawer-head p{margin:0;color:#b37a20;font-size:.68rem;font-weight:1000;letter-spacing:.1em}.formation-title h2,.panel-head h3,.drawer-head h3{margin:3px 0;color:#4d1420}.formation-title span,.panel-head span{font-size:.76rem;color:#7d6f73}.cohort-score{text-align:center;background:#f8eff1;border-radius:12px;padding:8px 14px}.cohort-score b{display:block;color:#6b1a2c;font-size:1.2rem}.cohort-score small{font-size:.66rem}.switch-row{margin-top:12px;justify-content:flex-start}.switch-row>select{min-width:360px}.switch-row details{position:relative}.switch-row summary{list-style:none;background:#6b1a2c;color:#fff;border-radius:9px;padding:9px 12px;font-weight:900;cursor:pointer}.create-pop{position:absolute;z-index:10;top:42px;left:0;width:300px;background:#fff;border:1px solid #dacbc5;border-radius:12px;padding:12px;box-shadow:0 12px 30px #4d142022;display:grid;gap:7px}.training-tabs{display:flex;gap:5px;overflow:auto;padding:2px}.training-tabs button{white-space:nowrap;background:#fff;color:#5f4e53;border:1px solid #dfd3ce}.training-tabs button.active{background:#6b1a2c;color:#fff;border-color:#6b1a2c}.kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}.kpis article{background:#fff;border:1px solid #eadfd8;border-radius:13px;padding:12px}.kpis b{font-size:1.45rem;color:#6b1a2c;display:block}.kpis span{font-size:.7rem;color:#7d6f73}.toolbar{display:grid;grid-template-columns:minmax(260px,1fr) minmax(220px,.8fr) 190px auto auto;gap:7px}.add-candidate{display:flex;gap:6px}.add-candidate input{flex:1}.bulk{background:#fff4df;border:1px solid #e7c680;border-radius:12px;padding:9px 12px;justify-content:flex-start}.table-card{overflow:hidden}.table-scroll{overflow:auto}table{border-collapse:collapse;width:100%;min-width:980px}th,td{padding:9px 8px;border-bottom:1px solid #eee5e1;text-align:left;font-size:.74rem;vertical-align:middle}th{background:#faf7f5;color:#695b5f;font-size:.64rem;text-transform:uppercase;letter-spacing:.04em;position:sticky;top:0;z-index:1}th small,td small{display:block;font-size:.62rem;color:#88797d;margin-top:2px}.selected-row{background:#fff9ed}.person{display:flex;align-items:center;gap:8px;background:transparent!important;color:#33272a!important;padding:0!important;text-align:left}.person b,.person small{display:block}.avatar{width:30px;height:30px;border-radius:50%;background:#6b1a2c;color:#fff;display:grid;place-items:center;font-size:.62rem;font-weight:1000;flex:0 0 auto}.avatar.large{width:46px;height:46px;font-size:.78rem}.pill{display:inline-flex;align-items:center;border-radius:999px;padding:4px 8px;font-weight:900;font-size:.65rem}.pill.ok{background:#e9f6ed;color:#24633a}.pill.warn{background:#fff3dc;color:#8c5a00}.pill.neutral{background:#f1eff0;color:#6f6165}.cell-button{background:transparent!important;padding:0!important;color:inherit!important}.ok-text{color:#25703d!important}.danger-text{color:#a62d35!important}.open{padding:6px 8px}.panel{padding:14px}.session-create,.requirement-create{display:grid;grid-template-columns:1.5fr 150px 110px 110px auto auto;gap:6px}.requirement-create{grid-template-columns:1.2fr 1.6fr 160px auto;margin-top:12px}.requirements{display:grid;gap:6px;margin-top:10px}.requirements article{display:flex;justify-content:space-between;gap:10px;border:1px solid #eadfd8;border-radius:10px;padding:9px}.requirements small{display:block;color:#827479;margin-top:3px}.embedded{padding:8px}.communication{display:grid;gap:12px}.message-grid,.settings-grid,.fields,.evaluation-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px}.message-grid label,.settings-grid label,.fields label,.evaluation-grid label{display:grid;gap:5px;font-size:.67rem;font-weight:900;color:#75666b}.wide{grid-column:1/-1}.actions{justify-content:flex-end}.secondary{background:#d4a24c!important;color:#2c2023!important}.ghost{background:#fff!important;color:#6b1a2c!important;border:1px solid #d7bcc3!important}.empty-state{text-align:center;padding:28px;color:#87777b;background:#fff;border:1px dashed #d8c8c2;border-radius:14px}.drawer-backdrop{position:fixed;inset:0;background:#21161a80;z-index:1000;display:flex;justify-content:flex-end}.drawer{height:100%;width:min(720px,94vw);background:#f7f3f0;overflow:auto;padding:16px;box-shadow:-12px 0 30px #0002}.drawer-head{display:flex;justify-content:space-between;align-items:center;background:#fff;border:1px solid #eadfd8;border-radius:15px;padding:12px}.person-title{display:flex;gap:10px;align-items:center}.close{font-size:1.4rem;background:#eee6e3!important;color:#4d1420!important}.drawer-summary{display:grid;grid-template-columns:repeat(5,1fr);gap:7px;margin:8px 0}.drawer-summary span{background:#fff;border:1px solid #eadfd8;border-radius:10px;padding:8px;text-align:center}.drawer-summary b,.drawer-summary small{display:block}.drawer-summary b{color:#5c1c29}.drawer-summary small{font-size:.61rem;color:#82757a}.drawer-summary .ok-card{background:#eff8f2}.drawer-summary .warn-card{background:#fff8e8}.drawer-section{background:#fff;border:1px solid #eadfd8;border-radius:14px;padding:12px;margin-bottom:8px}.drawer-section h4{margin:0 0 9px;color:#4d1420}.candidate-docs{display:grid;gap:6px}.candidate-docs>div{display:flex;justify-content:space-between;gap:10px;align-items:center;padding:7px;border:1px solid #eee5e1;border-radius:9px}.candidate-docs small{display:block;color:#84767a}.candidate-docs select{width:150px}.payment-line{background:#faf7f5;border-radius:9px;padding:8px}.payment-line span{font-size:.7rem}.payment-line b{display:block;color:#6b1a2c}.checkline{display:flex!important;align-items:center;gap:7px;margin:8px 0;font-size:.75rem!important}.checkline input{width:auto}.payment-form{display:grid;grid-template-columns:130px 140px 1fr auto;gap:6px}.payment-history{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}.payment-history small{background:#f3eeeb;border-radius:999px;padding:5px 8px}.muted{font-size:.75rem;color:#887a7e}input,select,textarea{box-sizing:border-box;width:100%;border:1px solid #ddd1ca;border-radius:8px;padding:8px;background:#fff;color:#2d2023;font:inherit}button{border:0;border-radius:8px;padding:8px 10px;background:#6b1a2c;color:#fff;font-weight:900;cursor:pointer}button:disabled{opacity:.45;cursor:not-allowed}
+      :global(body){background:#f6f2ee}.training-root{display:grid;gap:10px;color:#302328}.formation-switcher,.panel,.table-card,.embedded{background:#fff;border:1px solid #eadfd8;border-radius:16px}.formation-switcher{padding:16px}.formation-title,.switch-row,.panel-head,.bulk,.actions,.payment-line{display:flex;justify-content:space-between;gap:12px;align-items:center}.formation-title p,.panel-head p,.drawer-head p{margin:0;color:#b37a20;font-size:.68rem;font-weight:1000;letter-spacing:.1em}.formation-title h2,.panel-head h3,.drawer-head h3{margin:3px 0;color:#4d1420}.formation-title span,.panel-head span{font-size:.76rem;color:#7d6f73}.cohort-score{text-align:center;background:#f8eff1;border-radius:12px;padding:8px 14px}.cohort-score b{display:block;color:#6b1a2c;font-size:1.2rem}.cohort-score small{font-size:.66rem}.switch-row{margin-top:12px;justify-content:flex-start}.switch-row>select{min-width:360px}.switch-row details{position:relative}.switch-row summary{list-style:none;background:#6b1a2c;color:#fff;border-radius:9px;padding:9px 12px;font-weight:900;cursor:pointer}.create-pop{position:absolute;z-index:10;top:42px;left:0;width:320px;background:#fff;border:1px solid #dacbc5;border-radius:12px;padding:12px;box-shadow:0 12px 30px #4d142022;display:grid;gap:7px}.create-error{margin:2px 0 0;padding:8px 9px;border-radius:8px;background:#fff0f1;color:#9d2634;font-size:.7rem;font-weight:800;line-height:1.35}.training-tabs{display:flex;gap:5px;overflow:auto;padding:2px}.training-tabs button{white-space:nowrap;background:#fff;color:#5f4e53;border:1px solid #dfd3ce}.training-tabs button.active{background:#6b1a2c;color:#fff;border-color:#6b1a2c}.kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}.kpis article{background:#fff;border:1px solid #eadfd8;border-radius:13px;padding:12px}.kpis b{font-size:1.45rem;color:#6b1a2c;display:block}.kpis span{font-size:.7rem;color:#7d6f73}.toolbar{display:grid;grid-template-columns:minmax(260px,1fr) minmax(220px,.8fr) 190px auto auto;gap:7px}.add-candidate{display:flex;gap:6px}.add-candidate input{flex:1}.bulk{background:#fff4df;border:1px solid #e7c680;border-radius:12px;padding:9px 12px;justify-content:flex-start}.table-card{overflow:hidden}.table-scroll{overflow:auto}table{border-collapse:collapse;width:100%;min-width:980px}th,td{padding:9px 8px;border-bottom:1px solid #eee5e1;text-align:left;font-size:.74rem;vertical-align:middle}th{background:#faf7f5;color:#695b5f;font-size:.64rem;text-transform:uppercase;letter-spacing:.04em;position:sticky;top:0;z-index:1}th small,td small{display:block;font-size:.62rem;color:#88797d;margin-top:2px}.selected-row{background:#fff9ed}.person{display:flex;align-items:center;gap:8px;background:transparent!important;color:#33272a!important;padding:0!important;text-align:left}.person b,.person small{display:block}.avatar{width:30px;height:30px;border-radius:50%;background:#6b1a2c;color:#fff;display:grid;place-items:center;font-size:.62rem;font-weight:1000;flex:0 0 auto}.avatar.large{width:46px;height:46px;font-size:.78rem}.pill{display:inline-flex;align-items:center;border-radius:999px;padding:4px 8px;font-weight:900;font-size:.65rem}.pill.ok{background:#e9f6ed;color:#24633a}.pill.warn{background:#fff3dc;color:#8c5a00}.pill.neutral{background:#f1eff0;color:#6f6165}.cell-button{background:transparent!important;padding:0!important;color:inherit!important}.ok-text{color:#25703d!important}.danger-text{color:#a62d35!important}.open{padding:6px 8px}.panel{padding:14px}.session-create,.requirement-create{display:grid;grid-template-columns:1.5fr 150px 110px 110px auto auto;gap:6px}.requirement-create{grid-template-columns:1.2fr 1.6fr 160px auto;margin-top:12px}.requirements{display:grid;gap:6px;margin-top:10px}.requirements article{display:flex;justify-content:space-between;gap:10px;border:1px solid #eadfd8;border-radius:10px;padding:9px}.requirements small{display:block;color:#827479;margin-top:3px}.embedded{padding:8px}.communication{display:grid;gap:12px}.message-grid,.settings-grid,.fields,.evaluation-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px}.message-grid label,.settings-grid label,.fields label,.evaluation-grid label{display:grid;gap:5px;font-size:.67rem;font-weight:900;color:#75666b}.wide{grid-column:1/-1}.actions{justify-content:flex-end}.secondary{background:#d4a24c!important;color:#2c2023!important}.ghost{background:#fff!important;color:#6b1a2c!important;border:1px solid #d7bcc3!important}.empty-state{text-align:center;padding:28px;color:#87777b;background:#fff;border:1px dashed #d8c8c2;border-radius:14px}.drawer-backdrop{position:fixed;inset:0;background:#21161a80;z-index:1000;display:flex;justify-content:flex-end}.drawer{height:100%;width:min(720px,94vw);background:#f7f3f0;overflow:auto;padding:16px;box-shadow:-12px 0 30px #0002}.drawer-head{display:flex;justify-content:space-between;align-items:center;background:#fff;border:1px solid #eadfd8;border-radius:15px;padding:12px}.person-title{display:flex;gap:10px;align-items:center}.close{font-size:1.4rem;background:#eee6e3!important;color:#4d1420!important}.drawer-summary{display:grid;grid-template-columns:repeat(5,1fr);gap:7px;margin:8px 0}.drawer-summary span{background:#fff;border:1px solid #eadfd8;border-radius:10px;padding:8px;text-align:center}.drawer-summary b,.drawer-summary small{display:block}.drawer-summary b{color:#5c1c29}.drawer-summary small{font-size:.61rem;color:#82757a}.drawer-summary .ok-card{background:#eff8f2}.drawer-summary .warn-card{background:#fff8e8}.drawer-section{background:#fff;border:1px solid #eadfd8;border-radius:14px;padding:12px;margin-bottom:8px}.drawer-section h4{margin:0 0 9px;color:#4d1420}.candidate-docs{display:grid;gap:6px}.candidate-docs>div{display:flex;justify-content:space-between;gap:10px;align-items:center;padding:7px;border:1px solid #eee5e1;border-radius:9px}.candidate-docs small{display:block;color:#84767a}.candidate-docs select{width:150px}.payment-line{background:#faf7f5;border-radius:9px;padding:8px}.payment-line span{font-size:.7rem}.payment-line b{display:block;color:#6b1a2c}.checkline{display:flex!important;align-items:center;gap:7px;margin:8px 0;font-size:.75rem!important}.checkline input{width:auto}.payment-form{display:grid;grid-template-columns:130px 140px 1fr auto;gap:6px}.payment-history{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}.payment-history small{background:#f3eeeb;border-radius:999px;padding:5px 8px}.muted{font-size:.75rem;color:#887a7e}input,select,textarea{box-sizing:border-box;width:100%;border:1px solid #ddd1ca;border-radius:8px;padding:8px;background:#fff;color:#2d2023;font:inherit}button{border:0;border-radius:8px;padding:8px 10px;background:#6b1a2c;color:#fff;font-weight:900;cursor:pointer}button:disabled{opacity:.45;cursor:not-allowed}
       @media(max-width:1050px){.toolbar{grid-template-columns:1fr 1fr}.session-create,.requirement-create{grid-template-columns:1fr 1fr}.drawer-summary{grid-template-columns:repeat(3,1fr)}}
       @media(max-width:700px){.formation-title,.switch-row,.panel-head{align-items:flex-start;flex-direction:column}.switch-row>select{min-width:0;width:100%}.kpis{grid-template-columns:1fr 1fr}.toolbar,.session-create,.requirement-create,.message-grid,.settings-grid,.fields,.evaluation-grid,.payment-form{grid-template-columns:1fr}.wide{grid-column:auto}.drawer-summary{grid-template-columns:1fr 1fr}.actions,.bulk{align-items:stretch;flex-direction:column}}
     `}</style>
