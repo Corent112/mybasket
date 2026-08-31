@@ -318,21 +318,14 @@ export const restorePersistentVideo = async (
   if (!handle) return null;
 
   try {
-    // Safari n'implémente pas queryPermission/requestPermission. Exiger la
-    // permission ferait échouer un handle pourtant parfaitement lisible : on
-    // ne passe par le portillon que si l'API existe.
-    const hasPermissionApi = typeof (handle as any).queryPermission === "function";
+    let permission = await (handle as any).queryPermission?.({ mode: "read" });
 
-    if (hasPermissionApi) {
-      let permission = await (handle as any).queryPermission({ mode: "read" });
-
-      // requestPermission() exige une activation utilisateur : on ne l'appelle
-      // que si l'on vient bien d'un clic (options.interactive).
-      if (permission !== "granted" && options?.interactive) {
-        permission = await (handle as any).requestPermission?.({ mode: "read" });
-      }
-      if (permission !== "granted") return null;
+    // requestPermission() exige une activation utilisateur : on ne l'appelle
+    // que si l'on vient bien d'un clic (options.interactive).
+    if (permission !== "granted" && options?.interactive) {
+      permission = await (handle as any).requestPermission?.({ mode: "read" });
     }
+    if (permission !== "granted") return null;
 
     const file = await handle.getFile();
 

@@ -1,0 +1,6 @@
+{ "extends": "./tsconfig.json",
+  "compilerOptions": { "incremental": false, "noEmit": true },
+  "include": ["next-env.d.ts","types/**/*.ts",
+    "lib/video/**/*.ts","lib/local-match-project.ts","lib/local-video-registry.ts","lib/local-match-project-supabase.ts",
+    "components/video/**/*.tsx","components/management/VideoMatchFolderModule.tsx",
+    "app/mon-compte/parametres/page.tsx"] }

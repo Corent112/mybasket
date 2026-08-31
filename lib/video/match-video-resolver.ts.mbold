@@ -19,7 +19,6 @@ import {
   getLocalMatchVideo,
   setLocalMatchVideo,
 } from "@/lib/local-video-registry";
-import { rememberSessionVideos } from "@/lib/video/video-library";
 
 type RestoreResult = {
   video: LocalMatchVideo | null;
@@ -80,11 +79,6 @@ export async function attachMatchVideoFile(
   });
 
   if (handle) await savePersistentFileHandle(matchId, handle);
-
-  // Navigateurs sans handle persistant (Safari, Firefox) : la vidéo choisie
-  // alimente la bibliothèque de session, donc les autres projets, la fiche
-  // équipe et la fiche individuelle la retrouvent sans nouvelle sélection.
-  rememberSessionVideos([file]);
 
   const video: LocalMatchVideo = {
     matchId,
@@ -195,9 +189,6 @@ export async function relinkMatchVideo(
   });
 
   if (picked.handle) await savePersistentFileHandle(matchId, picked.handle);
-
-  // Idem : une seule sélection manuelle suffit pour toute la session.
-  rememberSessionVideos([picked.file]);
 
   const video: LocalMatchVideo = {
     matchId,
