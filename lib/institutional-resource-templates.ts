@@ -7,7 +7,8 @@ export type InstitutionalResourceCategory =
   | "Administration"
   | "Gouvernance"
   | "Clubs & Territoires"
-  | "Événementiel";
+  | "Événementiel"
+  | "Communication";
 
 export type InstitutionalResourceTemplate = {
   key: string;
@@ -17,6 +18,7 @@ export type InstitutionalResourceTemplate = {
   description: string;
   icon: string;
   bodyHtml: string;
+  layout?: "portrait" | "landscape" | "presentation";
 };
 
 const field = (label: string, token = "") =>
@@ -30,6 +32,15 @@ const table = (headers: string[], n = 4) =>
 const identity = () => `<div class="mb-grid mb-grid-2">${field("Nom / prénom", "{{person.full_name}}{{player.full_name}}")} ${field("Email", "{{person.email}}{{player.email}}")} ${field("Téléphone", "{{person.phone}}")} ${field("Structure / club", "{{player.club_name}}")} </div>`;
 
 export const INSTITUTIONAL_RESOURCE_TEMPLATES: InstitutionalResourceTemplate[] = [
+  {
+    key: "note_institutionnelle",
+    title: "Note institutionnelle",
+    category: "Communication",
+    audiences: ["Comité", "Ligue", "Fédération", "Pôle"],
+    icon: "📣",
+    description: "Crée une note libre aux couleurs et avec le logo de votre Institution.",
+    bodyHtml: `${area("Informations", `<div class="mb-grid mb-grid-3">${field("Destinataires")}${field("Date", "{{today}}")} ${field("Importance", "Information / Moyenne / Haute")}</div>`)}${area("Objet / titre", "Titre de la note")}${area("Message", "Rédigez librement votre communication ici.")}${area("Informations pratiques", `<div class="mb-grid mb-grid-2">${field("Date / horaires")}${field("Lieu")}${field("Contact", "{{structure.email}}")} ${field("Référence")}</div>`)}${area("Validation", table(["Rédacteur", "Vérificateur", "Approbateur"], 1))}`,
+  },
   {
     key: "fiche_inscription_cadre",
     title: "Fiche d’inscription cadre",
@@ -283,15 +294,6 @@ export const INSTITUTIONAL_RESOURCE_TEMPLATES: InstitutionalResourceTemplate[] =
     bodyHtml: `${area("Structure", `<div class="mb-grid mb-grid-3">${field("Nom")}${field("Territoire")}${field("Contact")}${field("Licenciés")}${field("Équipes")}${field("Salariés / bénévoles")}</div>`)}${table(["Thématique", "Situation actuelle", "Forces", "Difficultés", "Priorité"], 8)}${area("Besoins d’accompagnement")}${area("Plan de suivi")}`,
   },
   {
-    key: "swot_structure",
-    title: "Matrice SWOT",
-    category: "Clubs & Territoires",
-    audiences: ["Comité", "Ligue", "Fédération"],
-    icon: "🧠",
-    description: "Forces, faiblesses, opportunités et menaces d’un projet ou d’une structure.",
-    bodyHtml: `<div class="mb-swot"><section><h2>Forces</h2><div>À compléter</div></section><section><h2>Faiblesses</h2><div>À compléter</div></section><section><h2>Opportunités</h2><div>À compléter</div></section><section><h2>Menaces</h2><div>À compléter</div></section></div>${area("Priorités issues du diagnostic")}`,
-  },
-  {
     key: "budget_previsionnel",
     title: "Budget prévisionnel d’action",
     category: "Administration",
@@ -354,6 +356,72 @@ export const INSTITUTIONAL_RESOURCE_TEMPLATES: InstitutionalResourceTemplate[] =
     description: "Format court pour mutualiser une bonne pratique dans le réseau.",
     bodyHtml: `<div class="mb-practical"><h1>Titre de la fiche pratique</h1>${area("Synthèse", "En quelques lignes : ce qu’il faut retenir.")}${area("Pourquoi ?", "Le besoin auquel répond cette pratique.")}${area("Comment ?", "Étapes simples et opérationnelles.")}${area("Checklist", "☐ Étape 1<br>☐ Étape 2<br>☐ Étape 3<br>☐ Étape 4")}${area("Pour aller plus loin", "Liens, contacts, documents ou ressources complémentaires.")}</div>`,
   },
+  {
+    key: "presentation_institutionnelle",
+    title: "Présentation",
+    category: "Communication",
+    audiences: ["Comité", "Ligue", "Fédération", "Pôle"],
+    icon: "🖥️",
+    description: "Présentation visuelle libre aux couleurs de l’Institution : contexte, objectifs, messages clés et conclusion.",
+    layout: "presentation",
+    bodyHtml: `<div class="mb-presentation-cover"><div class="mb-presentation-kicker">PRÉSENTATION</div><h1>Titre de la présentation</h1><p>Sous-titre · saison {{structure.season}}</p></div>${area("Contexte / pourquoi ?")}${area("Objectifs", "• Objectif 1<br>• Objectif 2<br>• Objectif 3")}${area("Messages clés", table(["Message", "Élément concret / chiffre", "À retenir"], 4))}${area("Contenu / plan", "Ajoutez ici les sections, textes, images et informations utiles.")}${area("Intervenants / contacts", `<div class="mb-grid mb-grid-2">${field("Intervenant")}${field("Fonction")}${field("Contact", "{{structure.email}}")}${field("Date")}</div>`)}${area("Conclusion / prochaines étapes")}`,
+  },
+  {
+    key: "certificat_validation_formation",
+    title: "Certificat / validation de formation",
+    category: "Formation",
+    audiences: ["Comité", "Ligue", "Fédération"],
+    icon: "🎓",
+    description: "Document nominatif de validation, décision ou réussite d’une formation.",
+    bodyHtml: `<div class="mb-certificate"><p>{{structure.name}} certifie que</p><h1>Nom et prénom du stagiaire</h1><p>a satisfait aux conditions de validation de la formation :</p><h2>Intitulé de la formation</h2></div><div class="mb-grid mb-grid-2">${field("Promotion")}${field("Dates")}${field("Volume horaire")}${field("Lieu")}${field("Décision", "Validé / Non validé / En cours")}${field("Référence")}</div>${area("Mention / compétences validées")}${area("Validation", `<p>Fait à {{structure.city}}, le {{today}}</p><p>Nom, fonction, signature et cachet :</p>`)}`,
+  },
+  {
+    key: "feuille_presence_libre",
+    title: "Feuille de présence",
+    category: "Administration",
+    audiences: ["Comité", "Ligue", "Fédération", "Pôle"],
+    icon: "☑️",
+    description: "Feuille de présence générique pour réunion, événement, stage ou action hors formation.",
+    layout: "landscape",
+    bodyHtml: `${area("Action / événement", `<div class="mb-grid mb-grid-3">${field("Titre")}${field("Date")}${field("Lieu")}${field("Horaires")}${field("Responsable")}${field("Public")}</div>`)}${table(["N°", "Nom / prénom", "Structure / club", "Fonction", "Présent", "Signature", "Observation"], 16)}`,
+  },
+  {
+    key: "fiche_evenement",
+    title: "Fiche événement",
+    category: "Événementiel",
+    audiences: ["Comité", "Ligue", "Fédération", "Pôle"],
+    icon: "🎟️",
+    description: "Cadrage simple d’un événement avec organisation, programme, publics, moyens et contacts.",
+    bodyHtml: `${area("Événement", `<div class="mb-grid mb-grid-3">${field("Titre")}${field("Date")}${field("Lieu")}${field("Horaires")}${field("Responsable")}${field("Public / capacité")}</div>`)}${area("Objectif / présentation")}${area("Programme", table(["Horaire", "Séquence / activité", "Intervenant", "Lieu / espace"], 6))}${area("Organisation / besoins")}${area("Communication / inscriptions")}${area("Contacts utiles")}`,
+  },
+  {
+    key: "compte_rendu_evaluation",
+    title: "Compte-rendu d’évaluation",
+    category: "Formation",
+    audiences: ["Comité", "Ligue", "Fédération", "Pôle"],
+    icon: "🧪",
+    description: "Synthèse libre d’une évaluation individuelle ou collective et des suites à donner.",
+    bodyHtml: `${area("Évaluation", `<div class="mb-grid mb-grid-3">${field("Personne / groupe")}${field("Date")}${field("Lieu")}${field("Évaluateur(s)")}${field("Formation / action")}${field("Décision")}</div>`)}${area("Éléments observés")}${area("Points d’appui")}${area("Axes de progression")}${area("Décision / résultat")}${area("Suites / actions à mener")}${area("Signatures / validation")}`,
+  },
+  {
+    key: "courrier_libre",
+    title: "Courrier libre",
+    category: "Communication",
+    audiences: ["Comité", "Ligue", "Fédération", "Pôle"],
+    icon: "✉️",
+    description: "Courrier institutionnel libre avec destinataire, objet, corps de texte et signature.",
+    bodyHtml: `${area("Destinataire", `<div class="mb-grid mb-grid-2">${field("Nom / structure")}${field("Adresse / email")}</div>`)}${area("Références", `<div class="mb-grid mb-grid-2">${field("Date", "{{today}}")}${field("Objet")}</div>`)}<p>Madame, Monsieur,</p>${area("Courrier", "Rédigez votre courrier ici.")}${area("Signature", `<p>Nom et fonction</p><p>{{structure.name}}</p>`)}`,
+  },
+  {
+    key: "modele_vierge_personnalise",
+    title: "Modèle vierge personnalisé",
+    category: "Administration",
+    audiences: ["Comité", "Ligue", "Fédération", "Pôle"],
+    icon: "➕",
+    description: "Page institutionnelle totalement libre pour créer un document qui n’existe pas encore dans la bibliothèque.",
+    bodyHtml: `${area("Titre de section", "Cliquez ici et remplacez ce contenu.")}${area("Deuxième section", "Ajoutez du texte, des informations, un tableau ou une consigne.")}${area("Validation / signature", "Zone facultative à modifier ou supprimer.")}`,
+  },
+
 ];
 
 export const RESOURCE_CATEGORIES = Array.from(new Set(INSTITUTIONAL_RESOURCE_TEMPLATES.map((x) => x.category)));
