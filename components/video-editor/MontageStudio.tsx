@@ -5,6 +5,7 @@ import { getLocalMatchVideoUrl } from "@/lib/local-video-registry";
 import useLocalMatchVideoVersion from "@/hooks/useLocalMatchVideoVersion";
 import { exportTimelineLocally, downloadLocalExport, shareLocalExport, type LocalExportResult, type LocalExportOverlay, type LocalExportSource } from "@/lib/local-montage-export";
 import LocalMatchVideoButton from "@/components/video/LocalMatchVideoButton";
+import { restoreMatchVideoForClip } from "@/lib/video/match-video-resolver";
 import { createClient } from "@/lib/supabase/client";
 
 type TeamRow = { id: string; name: string };
@@ -264,7 +265,7 @@ export default function MontageStudio({
   const imageInputRef = useRef<HTMLInputElement | null>(null);
   const audioInputRef = useRef<HTMLInputElement | null>(null);
   const [players, setPlayers] = useState<PlayerRow[]>([]);
-  const [selectedPlayerFilter, setSelectedPlayerFilter] = useState("");
+  const [selectedPlayerFilter, setSelectedPlayerFilter] = useState(initialPlayerId || "");
   const [selectedSystemFilter, setSelectedSystemFilter] = useState("");
   const [selectedThemeId, setSelectedThemeId] = useState("");
   const [playhead, setPlayhead] = useState(0);
@@ -412,13 +413,10 @@ export default function MontageStudio({
         ? []
         : ((actionResponse.data ?? []) as ActionRow[]);
 
-      setActions(
-        playerId
-          ? actionRows.filter(
-              (action) => String(action.player_id || "") === String(playerId),
-            )
-          : actionRows,
-      );
+      // Conserve toutes les actions de l'équipe en mémoire : un montage peut
+      // contenir plusieurs joueurs. Le filtre joueur reste purement visuel dans
+      // la bibliothèque et ne doit jamais casser la réouverture d'un montage.
+      setActions(actionRows);
 
       const montageRows = montageResponse.error
         ? []
@@ -536,6 +534,34 @@ export default function MontageStudio({
       active = false;
     };
   }, [actions, flash, montageId, supabase]);
+
+  // À la réouverture d'un montage, restaure UNE fois chaque source locale
+  // nécessaire, par matchId. Un montage de 20 clips issus de 3 matchs ne doit
+  // donc jamais demander 20 reconnexions. Les sources encore autorisées par
+  // Chrome réapparaissent automatiquement ; les autres restent reconnectables
+  // via le bouton du lecteur sans perdre le montage ni ses trims.
+  useEffect(() => {
+    if (!teamId || !items.length) return;
+    const matchIds = Array.from(new Set(items
+      .map((item) => String(item.action?.match_id || ""))
+      .filter(Boolean)));
+    if (!matchIds.length) return;
+    let cancelled = false;
+    void (async () => {
+      let restored = 0;
+      for (const matchId of matchIds) {
+        if (cancelled || getLocalMatchVideoUrl(matchId)) continue;
+        try {
+          const result = await restoreMatchVideoForClip(matchId, teamId);
+          if (result.video) restored += 1;
+        } catch {
+          // Pas de popup : le bouton de reconnexion du match reste disponible.
+        }
+      }
+      if (!cancelled && restored > 0) flash(`${restored} source${restored > 1 ? "s" : ""} vidéo restaurée${restored > 1 ? "s" : ""} automatiquement ✓`);
+    })();
+    return () => { cancelled = true; };
+  }, [items, teamId, flash]);
 
   const matchMap = useMemo(
     () => new Map(matches.map((match) => [String(match.id), match])),
@@ -852,11 +878,19 @@ export default function MontageStudio({
       .filter((item) => (item.track || (item.item_type === "clip" || item.item_type === "freeze" ? "video" : item.item_type === "audio" ? "audio" : "overlay")) === "video" && item.action)
       .sort((a, b) => Number(a.timeline_start || 0) - Number(b.timeline_start || 0));
 
+    // Préflight : tente d'abord la restauration automatique de chaque match
+    // nécessaire à l'export avant de déclarer une source manquante.
+    const neededMatchIds = Array.from(new Set(orderedVideoItems.map((item) => String(item.action?.match_id || "")).filter(Boolean)));
+    for (const matchId of neededMatchIds) {
+      if (getLocalMatchVideoUrl(matchId)) continue;
+      try { await restoreMatchVideoForClip(matchId, teamId); } catch {}
+    }
+
     const sources: LocalExportSource[] = orderedVideoItems.map((item) => {
       const matchId = String(item.action?.match_id || "");
       const url = getLocalMatchVideoUrl(matchId);
       if (!url) {
-        throw new Error(`Vidéo locale manquante pour le match ${matchId}. Reconnecte-la avant l'export.`);
+        throw new Error(`Vidéo locale manquante pour le match ${matchId}. Reconnecte ce match une seule fois avant l'export.`);
       }
       return {
         id: item.id || item.action_id,

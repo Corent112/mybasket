@@ -8108,6 +8108,60 @@ function BoxView({ actions, roster, teamId, videoProvider = 'none', videoUrl = '
     openList(`#${player.num} ${player.name} · ${label}`, items);
   };
 
+  type TeamClipKind = 'all'|'pts'|'2pts'|'3pts'|'lf'|'oreb'|'dreb'|'reb'|'ast'|'stl'|'blk'|'tov'|'pf';
+  const teamBoxClips = (kind: TeamClipKind): StatA[] => {
+    const attack = actions.filter((a) => a.context !== 'defense');
+    switch (kind) {
+      case 'all': return uniqActions(attack);
+      case 'pts': return uniqActions(attack.filter((a) => ptsOf(a) > 0));
+      case '2pts': return attack.filter((a) => a.actionType === 'tir' && a.shotType === '2PTS');
+      case '3pts': return attack.filter((a) => a.actionType === 'tir' && a.shotType === '3PTS');
+      case 'lf': return attack.filter((a) => a.shotType === 'LF' || (a.ftAttempts || 0) > 0);
+      case 'oreb': return attack.filter((a) => a.reboundType === 'off');
+      case 'dreb': return actions.filter((a) => a.context === 'defense' && a.reboundType === 'def');
+      case 'reb': return uniqActions([...teamBoxClips('oreb'), ...teamBoxClips('dreb')]);
+      case 'ast': return attack.filter((a) => a.assist === true || a.actionType === 'passe-decisive');
+      case 'stl': return actions.filter((a) => a.context === 'defense' && (a.actionType === 'interception' || a.actionType === 'perte-adverse'));
+      case 'blk': return actions.filter((a) => a.context === 'defense' && a.actionType === 'contre');
+      case 'tov': return attack.filter((a) => a.actionType === 'perte' || (a.actionType === 'faute-commise' && a.context === 'attaque'));
+      case 'pf': return actions.filter((a) => a.actionType === 'faute-commise' && a.context !== 'defense');
+      default: return [];
+    }
+  };
+  const opponentBoxClips = (kind: TeamClipKind): StatA[] => {
+    const defense = actions.filter((a) => a.context === 'defense');
+    switch (kind) {
+      case 'all': return uniqActions(defense);
+      case 'pts': return uniqActions(defense.filter((a) => themPtsOf(a) > 0));
+      case '2pts': return defense.filter((a) => a.actionType === 'tir' && a.shotType === '2PTS');
+      case '3pts': return defense.filter((a) => a.actionType === 'tir' && a.shotType === '3PTS');
+      case 'lf': return defense.filter((a) => a.shotType === 'LF' || (a.ftAttempts || 0) > 0);
+      case 'oreb': return defense.filter((a) => a.reboundType === 'off');
+      case 'dreb': return actions.filter((a) => a.context === 'attaque' && a.reboundType === 'def');
+      case 'reb': return uniqActions([...opponentBoxClips('oreb'), ...opponentBoxClips('dreb')]);
+      case 'tov': return defense.filter((a) => a.actionType === 'perte-adverse');
+      case 'pf': return defense.filter((a) => a.actionType === 'faute-provoquee');
+      default: return [];
+    }
+  };
+  const openTeamBoxClips = (side: 'team'|'opponent', kind: TeamClipKind, label: string) => {
+    const items = side === 'team' ? teamBoxClips(kind) : opponentBoxClips(kind);
+    if (!items.length) return;
+    openList(`${side === 'team' ? 'Équipe' : 'Équipe adverse'} · ${label}`, items);
+  };
+  const oppShots2 = opponentBoxClips('2pts');
+  const oppShots3 = opponentBoxClips('3pts');
+  const oppLf = opponentBoxClips('lf');
+  const oppPts = opponentBoxClips('pts').reduce((sum, a) => sum + themPtsOf(a), 0);
+  const opp2m = oppShots2.filter((a) => a.shotResult === 'made').length;
+  const opp3m = oppShots3.filter((a) => a.shotResult === 'made').length;
+  const oppFtm = oppLf.reduce((sum, a) => sum + (a.ftMade || (a.shotType === 'LF' && a.shotResult === 'made' ? 1 : 0)), 0);
+  const oppFta = oppLf.reduce((sum, a) => sum + (a.ftAttempts || (a.shotType === 'LF' ? 1 : 0)), 0);
+  const oppOreb = opponentBoxClips('oreb').length;
+  const oppDreb = opponentBoxClips('dreb').length;
+  const oppTov = opponentBoxClips('tov').length;
+  const oppPf = opponentBoxClips('pf').length;
+
   const stopCell = (event: MouseEvent<HTMLElement>) => event.stopPropagation();
 
   const openShotZoneClips = (
@@ -8162,8 +8216,10 @@ function BoxView({ actions, roster, teamId, videoProvider = 'none', videoUrl = '
   );
 
   const Sec = ({ t }: { t: string }) => <div className="boxsec">{t}</div>;
-  const Card = ({ t, v, c }: { t: string; v: any; c?: string }) => (
-    <div className="boxcard"><div className="bt-lbl2">{t}</div><div className="bt-val" style={{ color: c || 'var(--txt)' }}>{v}</div></div>
+  const Card = ({ t, v, c, onClick }: { t: string; v: any; c?: string; onClick?: () => void }) => (
+    onClick
+      ? <button type="button" className="boxcard clickable" onClick={onClick}><div className="bt-lbl2">{t}</div><div className="bt-val" style={{ color: c || 'var(--txt)' }}>{v}</div></button>
+      : <div className="boxcard"><div className="bt-lbl2">{t}</div><div className="bt-val" style={{ color: c || 'var(--txt)' }}>{v}</div></div>
   );
 
   const TABS: [typeof boxTab, string][] = [
@@ -8200,14 +8256,37 @@ function BoxView({ actions, roster, teamId, videoProvider = 'none', videoUrl = '
                 <td><button type="button" className="boxStatBtn" onClick={(e) => { stopCell(e); openPlayerBoxClips(l.p, 'blk', 'Contres'); }}>{l.blk}</button></td>
                 <td><button type="button" className="boxStatBtn" onClick={(e) => { stopCell(e); openPlayerBoxClips(l.p, 'tov', 'Pertes de balle'); }}>{l.to}</button></td>
                 <td><button type="button" className="boxStatBtn" onClick={(e) => { stopCell(e); openPlayerBoxClips(l.p, 'pf', 'Fautes commises'); }}>{l.pf}</button></td>
-                <td><b>{evalOf(l)}</b></td><td><b style={{ color: plusMinusOf(l.p.id) >= 0 ? 'var(--green)' : 'var(--red)' }}>{plusMinusOf(l.p.id) > 0 ? `+${plusMinusOf(l.p.id)}` : plusMinusOf(l.p.id)}</b></td>
+                <td><button type="button" className="boxStatBtn" onClick={(e) => { stopCell(e); openPlayerBoxClips(l.p, 'all', 'Actions utilisées pour l’évaluation'); }}><b>{evalOf(l)}</b></button></td><td><button type="button" className="boxStatBtn" onClick={(e) => { stopCell(e); openList(`#${l.p.num} ${l.p.name} · Actions du +/-`, actions.filter((a) => Array.isArray(a.lineup) && a.lineup.includes(l.p.id))); }}><b style={{ color: plusMinusOf(l.p.id) >= 0 ? 'var(--green)' : 'var(--red)' }}>{plusMinusOf(l.p.id) > 0 ? `+${plusMinusOf(l.p.id)}` : plusMinusOf(l.p.id)}</b></button></td>
               </tr>
             ))}
             <tr className="team-stat-row">
-              <td className="l"><b>ÉQUIPE</b></td>
-              <td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td>
-              <td><b>{teamOnlyStl}</b></td>
-              <td>—</td><td>—</td><td>—</td><td>{teamOnlyStl}</td><td>—</td>
+              <td className="l"><button type="button" className="boxStatBtn player" onClick={(e) => { stopCell(e); openTeamBoxClips('team', 'all', 'Toutes les actions'); }}><b>ÉQUIPE</b></button></td>
+              <td><button type="button" className="boxStatBtn" onClick={(e) => { stopCell(e); openTeamBoxClips('team', 'pts', 'Points marqués'); }}><b>{tot.pts || 0}</b></button></td>
+              <td><button type="button" className="boxStatBtn" onClick={(e) => { stopCell(e); openTeamBoxClips('team', '2pts', '2PTS'); }}>{tot.p2m || 0}/{tot.p2a || 0}</button></td>
+              <td><button type="button" className="boxStatBtn" onClick={(e) => { stopCell(e); openTeamBoxClips('team', '3pts', '3PTS'); }}>{tot.p3m || 0}/{tot.p3a || 0}</button></td>
+              <td><button type="button" className="boxStatBtn" onClick={(e) => { stopCell(e); openTeamBoxClips('team', 'lf', 'Lancers francs'); }}>{tot.ftm || 0}/{tot.fta || 0}</button></td>
+              <td><button type="button" className="boxStatBtn" onClick={(e) => { stopCell(e); openTeamBoxClips('team', 'oreb', 'Rebonds offensifs'); }}>{tot.offReb || 0}</button></td>
+              <td><button type="button" className="boxStatBtn" onClick={(e) => { stopCell(e); openTeamBoxClips('team', 'dreb', 'Rebonds défensifs'); }}>{tot.defReb || 0}</button></td>
+              <td><button type="button" className="boxStatBtn" onClick={(e) => { stopCell(e); openTeamBoxClips('team', 'reb', 'Tous les rebonds'); }}>{(tot.offReb || 0) + (tot.defReb || 0)}</button></td>
+              <td><button type="button" className="boxStatBtn" onClick={(e) => { stopCell(e); openTeamBoxClips('team', 'ast', 'Passes décisives'); }}>{tot.ast || 0}</button></td>
+              <td><button type="button" className="boxStatBtn" onClick={(e) => { stopCell(e); openTeamBoxClips('team', 'stl', 'Interceptions'); }}>{(tot.stl || 0) + teamOnlyStl}</button></td>
+              <td><button type="button" className="boxStatBtn" onClick={(e) => { stopCell(e); openTeamBoxClips('team', 'blk', 'Contres'); }}>{tot.blk || 0}</button></td>
+              <td><button type="button" className="boxStatBtn" onClick={(e) => { stopCell(e); openTeamBoxClips('team', 'tov', 'Pertes de balle'); }}>{tot.to || 0}</button></td>
+              <td><button type="button" className="boxStatBtn" onClick={(e) => { stopCell(e); openTeamBoxClips('team', 'pf', 'Fautes'); }}>{tot.pf || 0}</button></td>
+              <td><button type="button" className="boxStatBtn" onClick={(e) => { stopCell(e); openTeamBoxClips('team', 'all', 'Évaluation collective'); }}>{teamEval + teamOnlyStl}</button></td><td>—</td>
+            </tr>
+            <tr className="team-stat-row opponent-stat-row">
+              <td className="l"><button type="button" className="boxStatBtn player" onClick={(e) => { stopCell(e); openTeamBoxClips('opponent', 'all', 'Toutes les actions'); }}><b>ÉQUIPE ADVERSE</b></button></td>
+              <td><button type="button" className="boxStatBtn" onClick={(e) => { stopCell(e); openTeamBoxClips('opponent', 'pts', 'Points'); }}><b>{oppPts}</b></button></td>
+              <td><button type="button" className="boxStatBtn" onClick={(e) => { stopCell(e); openTeamBoxClips('opponent', '2pts', '2PTS'); }}>{opp2m}/{oppShots2.length}</button></td>
+              <td><button type="button" className="boxStatBtn" onClick={(e) => { stopCell(e); openTeamBoxClips('opponent', '3pts', '3PTS'); }}>{opp3m}/{oppShots3.length}</button></td>
+              <td><button type="button" className="boxStatBtn" onClick={(e) => { stopCell(e); openTeamBoxClips('opponent', 'lf', 'Lancers francs'); }}>{oppFtm}/{oppFta}</button></td>
+              <td><button type="button" className="boxStatBtn" onClick={(e) => { stopCell(e); openTeamBoxClips('opponent', 'oreb', 'Rebonds offensifs'); }}>{oppOreb}</button></td>
+              <td><button type="button" className="boxStatBtn" onClick={(e) => { stopCell(e); openTeamBoxClips('opponent', 'dreb', 'Rebonds défensifs'); }}>{oppDreb}</button></td>
+              <td><button type="button" className="boxStatBtn" onClick={(e) => { stopCell(e); openTeamBoxClips('opponent', 'reb', 'Tous les rebonds'); }}>{oppOreb + oppDreb}</button></td>
+              <td>—</td><td>—</td><td>—</td>
+              <td><button type="button" className="boxStatBtn" onClick={(e) => { stopCell(e); openTeamBoxClips('opponent', 'tov', 'Pertes de balle'); }}>{oppTov}</button></td>
+              <td><button type="button" className="boxStatBtn" onClick={(e) => { stopCell(e); openTeamBoxClips('opponent', 'pf', 'Fautes'); }}>{oppPf}</button></td><td>—</td><td>—</td>
             </tr>
             {box.length === 0 && teamOnlyStl === 0 && <tr><td className="l" colSpan={15}>Aucune stat pour le moment.</td></tr>}
             {(box.length > 0 || teamOnlyStl > 0) && (
@@ -8236,10 +8315,10 @@ function BoxView({ actions, roster, teamId, videoProvider = 'none', videoUrl = '
             <div className="cardrow">
               <button className="boxcard clickable" onClick={() => openList(boxSide === 'attaque' ? 'Toutes les actions attaque' : 'Toutes les actions défense', list)}><div className="bt-lbl2">Actions</div><div className="bt-val">{list.length}</div></button>
               <button className="boxcard clickable" onClick={() => openList('Tirs ' + boxSide, sideShots)}><div className="bt-lbl2">Tirs</div><div className="bt-val">{sideMade}/{sideShots.length}</div></button>
-              <Card t={boxSide === 'attaque' ? 'Points marqués' : 'Points concédés'} v={sidePts} c="var(--gold)" />
-              <Card t="Réussite" v={sidePct + '%'} />
-              <Card t="Temps forts" v={rows.length} />
-              <Card t="PPP" v={list.length ? (sidePts / list.length).toFixed(2) : '0.00'} />
+              <Card t={boxSide === 'attaque' ? 'Points marqués' : 'Points concédés'} v={sidePts} c="var(--gold)" onClick={() => openList(boxSide === 'attaque' ? 'Actions ayant marqué des points' : 'Actions ayant concédé des points', list.filter((a) => boxSide === 'attaque' ? ptsOf(a) > 0 : themPtsOf(a) > 0))} />
+              <Card t="Réussite" v={sidePct + '%'} onClick={() => openList(`Tirs ${boxSide}`, sideShots)} />
+              <Card t="Temps forts" v={rows.length} onClick={() => openList(`Actions avec temps fort · ${boxSide}`, list.filter((a) => Boolean(a.tempsFort)))} />
+              <Card t="PPP" v={list.length ? (sidePts / list.length).toFixed(2) : '0.00'} onClick={() => openList(`Possessions · ${boxSide}`, list)} />
             </div>
             <Sec t={boxSide === 'attaque' ? 'Temps forts offensifs' : 'Temps forts défensifs'} />
             {rows.length ? (
@@ -10424,6 +10503,8 @@ function Style() {
       .boxscoreClipTable .boxStatBtn:hover { background:rgba(212,162,76,.14); color:var(--gold); }
       .boxscoreClipTable .boxStatBtn:active { transform:scale(.96); }
       .boxscoreClipTable .boxStatBtn.player { text-align:left; font-weight:850; }
+      .boxscoreClipTable .opponent-stat-row td { background:rgba(107,26,44,.055); }
+      .boxscoreClipTable .opponent-stat-row .boxStatBtn { color:var(--wine); }
 
       /* PATCH Boxscore cliquable / joueurs droite propres */
       .clickRow { cursor: pointer; }
