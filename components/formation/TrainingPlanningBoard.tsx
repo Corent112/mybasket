@@ -68,6 +68,8 @@ export default function TrainingPlanningBoard({ cohortId }: { cohortId: string }
   const [assets, setAssets] = useState<Asset[]>([]);
   const [selectedBlockId, setSelectedBlockId] = useState("");
   const [message, setMessage] = useState("");
+  const [planningTitle, setPlanningTitle] = useState("");
+  const [exporting, setExporting] = useState(false);
 
   const [form, setForm] = useState({
     training_day: new Date().toISOString().slice(0, 10),
@@ -89,7 +91,7 @@ export default function TrainingPlanningBoard({ cohortId }: { cohortId: string }
   };
 
   async function reload() {
-    const [{ data: blockData, error: blockError }, { data: scenarioData, error: scenarioError }] =
+    const [{ data: blockData, error: blockError }, { data: scenarioData, error: scenarioError }, { data: cohortData }] =
       await Promise.all([
         supabase
           .from("training_schedule_blocks")
@@ -102,6 +104,7 @@ export default function TrainingPlanningBoard({ cohortId }: { cohortId: string }
           .select("*")
           .eq("cohort_id", cohortId)
           .order("updated_at", { ascending: false }),
+        supabase.from("training_cohorts").select("name,planning_title").eq("id", cohortId).maybeSingle(),
       ]);
 
     if (blockError) console.error(blockError);
@@ -110,6 +113,7 @@ export default function TrainingPlanningBoard({ cohortId }: { cohortId: string }
     const nextBlocks = (blockData ?? []) as PlanningBlock[];
     setBlocks(nextBlocks);
     setScenarios((scenarioData ?? []) as Scenario[]);
+    setPlanningTitle(String((cohortData as any)?.planning_title || (cohortData as any)?.name || "Planning de formation"));
 
     if (nextBlocks.length) {
       const { data: assetData } = await supabase
@@ -242,6 +246,28 @@ export default function TrainingPlanningBoard({ cohortId }: { cohortId: string }
     toast("Support ajouté à l’intervention.");
   }
 
+  async function savePlanningTitle() {
+    const title = planningTitle.trim();
+    if (!title) return toast("Donne un titre au planning.");
+    const { error } = await supabase.from("training_cohorts").update({ planning_title: title }).eq("id", cohortId);
+    if (error) return toast(error.message);
+    toast("Titre du planning enregistré.");
+  }
+
+  async function exportPlanning() {
+    if (!planningTitle.trim()) return toast("Donne un titre au planning avant l’export.");
+    setExporting(true);
+    try {
+      await savePlanningTitle();
+      const response = await fetch("/api/institutionnel/training/planning-pdf", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ cohortId, title: planningTitle.trim() }) });
+      if (!response.ok) { const json = await response.json().catch(() => ({})); return toast(json.error || "Export impossible"); }
+      const blob = await response.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a"); a.href = url; a.download = `Planning - ${planningTitle.trim()}.pdf`; a.click(); URL.revokeObjectURL(url);
+      toast("PDF exporté et enregistré dans Documents.");
+    } finally { setExporting(false); }
+  }
+
   const days = useMemo(() => {
     return Array.from(new Set(blocks.map((block) => block.training_day))).sort();
   }, [blocks]);
@@ -268,9 +294,11 @@ export default function TrainingPlanningBoard({ cohortId }: { cohortId: string }
         <div>
           <p>PLANNING FORMATION</p>
           <h1>Organisation pédagogique</h1>
-          <span>
-            Inspiré de ton planning DETB : jour, horaire, formation, intervenant, salle/terrain, scénario et supports.
-          </span>
+          <span>Chaque bloc alimente automatiquement le calendrier de l’Institution.</span>
+        </div>
+        <div className="planning-actions">
+          <label><span>Titre du planning</span><input value={planningTitle} onChange={(e)=>setPlanningTitle(e.target.value)} onBlur={()=>void savePlanningTitle()} placeholder="Ex. Kick Off 2026-2027" /></label>
+          <button className="secondary" disabled={exporting} onClick={()=>void exportPlanning()}>{exporting?"Export…":"Exporter PDF + Documents"}</button>
         </div>
       </div>
 
@@ -454,7 +482,7 @@ export default function TrainingPlanningBoard({ cohortId }: { cohortId: string }
       )}
 
       <style jsx>{`
-        .planning{display:grid;gap:14px}.hero{background:linear-gradient(135deg,#6b1a2c,#35101a);color:#fff;border-radius:23px;padding:22px}.hero p,.board-head p,.detail-head p{margin:0;color:#d4a24c;font-weight:1000;letter-spacing:.12em;font-size:.68rem}.hero h1,.board-head h2,.detail-head h2{margin:5px 0}.create-card,.board-card,.detail-card{background:#fff;border:1px solid #eadfd8;border-radius:16px;padding:16px}.form-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}.form-grid label,.detail-grid label{display:grid;gap:4px}.form-grid label span,.detail-grid label span{font-size:.65rem;text-transform:uppercase;font-weight:900;color:#7c6d65}.form-grid input,.form-grid select,.form-grid textarea,.detail-grid select{border:1px solid #ddd1ca;border-radius:8px;padding:8px;width:100%}.wide{grid-column:1/-1}.primary,.upload{display:inline-block;margin-top:10px;background:#6b1a2c;color:#fff;border:0;border-radius:9px;padding:9px 12px;font-weight:950;cursor:pointer}.board-head,.detail-head{display:flex;justify-content:space-between;gap:12px;align-items:flex-start}.board-head>span,.detail-head>div>span{color:#85766e;font-size:.77rem}.table-scroll{overflow:auto;margin-top:12px}.planning-grid{display:grid;grid-auto-rows:42px;min-width:max-content;border:1px solid #ded4cd}.corner,.day-head,.time-cell,.slot,.block{border-right:1px solid #ded4cd;border-bottom:1px solid #ded4cd}.day-head{display:flex;align-items:center;justify-content:center;background:#2e2826;color:#fff;font-weight:950;text-transform:capitalize}.time-cell{display:flex;align-items:flex-start;justify-content:center;padding-top:4px;background:#f2efec;font-size:.72rem;font-weight:800}.slot{background:#fff;min-width:245px}.block{display:grid;align-content:start;gap:3px;text-align:left;padding:7px;background:#fff;border-top:0;border-left:0;cursor:pointer;overflow:hidden}.block small{font-weight:900}.block em{font-style:normal;color:#4b8b24;font-size:.68rem;font-weight:950}.block strong{color:#2d211d}.block span{font-size:.67rem;color:#74665f}.type-court{background:#fff9f7}.type-meeting{background:#f8f4ff}.type-meal{background:#ededed}.type-assessment{background:#fff4e8}.detail-grid{display:grid;grid-template-columns:1fr auto;gap:9px;align-items:end}.danger{border:1px solid #b42318;background:#fff;color:#b42318;border-radius:9px;padding:8px 10px;font-weight:900}.assets{display:grid;grid-template-columns:repeat(3,1fr);gap:7px;margin-top:12px}.assets a{display:flex;gap:8px;align-items:center;border:1px solid #eee4df;border-radius:9px;padding:9px;text-decoration:none;color:#6b1a2c}.empty{color:#897b73;padding:12px}.toast{position:fixed;top:15px;left:50%;transform:translateX(-50%);z-index:100;background:#231b18;color:#fff;border-radius:999px;padding:10px 17px;font-weight:900}@media(max-width:900px){.form-grid{grid-template-columns:1fr 1fr}.assets{grid-template-columns:1fr}.detail-grid{grid-template-columns:1fr}}@media(max-width:600px){.form-grid{grid-template-columns:1fr}.wide{grid-column:auto}}
+        .planning{display:grid;gap:14px}.planning-actions{display:grid;grid-template-columns:minmax(260px,1fr) auto;gap:8px;align-items:end}.planning-actions label{display:grid;gap:4px;font-size:.72rem;font-weight:900;color:#6b1a2c}.planning-actions input{border:1px solid #d8c9c2;border-radius:9px;padding:9px;background:#fff}.secondary{background:#fff!important;color:#6b1a2c!important;border:1px solid #d8bbc2!important}.hero{background:linear-gradient(135deg,#6b1a2c,#35101a);color:#fff;border-radius:23px;padding:22px}.hero p,.board-head p,.detail-head p{margin:0;color:#d4a24c;font-weight:1000;letter-spacing:.12em;font-size:.68rem}.hero h1,.board-head h2,.detail-head h2{margin:5px 0}.create-card,.board-card,.detail-card{background:#fff;border:1px solid #eadfd8;border-radius:16px;padding:16px}.form-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}.form-grid label,.detail-grid label{display:grid;gap:4px}.form-grid label span,.detail-grid label span{font-size:.65rem;text-transform:uppercase;font-weight:900;color:#7c6d65}.form-grid input,.form-grid select,.form-grid textarea,.detail-grid select{border:1px solid #ddd1ca;border-radius:8px;padding:8px;width:100%}.wide{grid-column:1/-1}.primary,.upload{display:inline-block;margin-top:10px;background:#6b1a2c;color:#fff;border:0;border-radius:9px;padding:9px 12px;font-weight:950;cursor:pointer}.board-head,.detail-head{display:flex;justify-content:space-between;gap:12px;align-items:flex-start}.board-head>span,.detail-head>div>span{color:#85766e;font-size:.77rem}.table-scroll{overflow:auto;margin-top:12px}.planning-grid{display:grid;grid-auto-rows:42px;min-width:max-content;border:1px solid #ded4cd}.corner,.day-head,.time-cell,.slot,.block{border-right:1px solid #ded4cd;border-bottom:1px solid #ded4cd}.day-head{display:flex;align-items:center;justify-content:center;background:#2e2826;color:#fff;font-weight:950;text-transform:capitalize}.time-cell{display:flex;align-items:flex-start;justify-content:center;padding-top:4px;background:#f2efec;font-size:.72rem;font-weight:800}.slot{background:#fff;min-width:245px}.block{display:grid;align-content:start;gap:3px;text-align:left;padding:7px;background:#fff;border-top:0;border-left:0;cursor:pointer;overflow:hidden}.block small{font-weight:900}.block em{font-style:normal;color:#4b8b24;font-size:.68rem;font-weight:950}.block strong{color:#2d211d}.block span{font-size:.67rem;color:#74665f}.type-court{background:#fff9f7}.type-meeting{background:#f8f4ff}.type-meal{background:#ededed}.type-assessment{background:#fff4e8}.detail-grid{display:grid;grid-template-columns:1fr auto;gap:9px;align-items:end}.danger{border:1px solid #b42318;background:#fff;color:#b42318;border-radius:9px;padding:8px 10px;font-weight:900}.assets{display:grid;grid-template-columns:repeat(3,1fr);gap:7px;margin-top:12px}.assets a{display:flex;gap:8px;align-items:center;border:1px solid #eee4df;border-radius:9px;padding:9px;text-decoration:none;color:#6b1a2c}.empty{color:#897b73;padding:12px}.toast{position:fixed;top:15px;left:50%;transform:translateX(-50%);z-index:100;background:#231b18;color:#fff;border-radius:999px;padding:10px 17px;font-weight:900}@media(max-width:900px){.form-grid{grid-template-columns:1fr 1fr}.assets{grid-template-columns:1fr}.detail-grid{grid-template-columns:1fr}}@media(max-width:600px){.form-grid{grid-template-columns:1fr}.wide{grid-column:auto}}
       `}</style>
     </section>
   );
