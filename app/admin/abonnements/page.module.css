@@ -57,3 +57,42 @@
 .matrixContext span {
   color: #8a817c;
 }
+
+/* Force l'interactivité des contrôles du back-office abonnements. */
+.aba input,
+.aba select,
+.aba textarea,
+.aba button,
+.aba summary,
+.aba label {
+  pointer-events: auto !important;
+  position: relative;
+  z-index: 2;
+}
+
+.aba input,
+.aba select,
+.aba textarea {
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+.aba input:not([type="checkbox"]),
+.aba select,
+.aba textarea {
+  cursor: text;
+}
+
+.aba select,
+.aba input[type="checkbox"],
+.aba button,
+.aba summary,
+.aba label {
+  cursor: pointer;
+}
+
+.aba input:not([type="checkbox"]):hover,
+.aba select:hover,
+.aba textarea:hover {
+  border-color: #b88994;
+}

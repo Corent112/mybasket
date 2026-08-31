@@ -190,8 +190,18 @@ export default function AdminAbonnementsPage() {
         is_recommended: draft.isRecommended,
         updated_at: new Date().toISOString(),
       };
-      const { error: saveError } = await supabase.from("subscription_plans").update(payload).eq("id", plan.id);
+
+      const { data: savedRows, error: saveError } = await supabase
+        .from("subscription_plans")
+        .update(payload)
+        .eq("id", plan.id)
+        .select("id");
+
       if (saveError) throw saveError;
+      if (!savedRows?.length) {
+        throw new Error("Aucune ligne n'a été modifiée. Vérifie les droits d'écriture admin/RLS sur subscription_plans.");
+      }
+
       setPlans((current) => current.map((item) => item.id === plan.id ? { ...item, ...payload } : item));
       setSavedPlanId(plan.id);
       window.setTimeout(() => setSavedPlanId((id) => id === plan.id ? null : id), 2200);
@@ -238,8 +248,17 @@ export default function AdminAbonnementsPage() {
         rows.push({ plan_id: plan.id, section_key: section.key, enabled: Boolean(access[accessKey(plan.id, section.key)]) });
       })));
       const supabase = createClient();
-      const { error: saveError } = await supabase.from("subscription_access").upsert(rows, { onConflict: "plan_id,section_key" });
+
+      const { data: savedRows, error: saveError } = await supabase
+        .from("subscription_access")
+        .upsert(rows, { onConflict: "plan_id,section_key" })
+        .select("plan_id,section_key");
+
       if (saveError) throw saveError;
+      if (!savedRows || savedRows.length !== rows.length) {
+        throw new Error("La matrice n'a pas été entièrement enregistrée. Vérifie les droits d'écriture admin/RLS sur subscription_access.");
+      }
+
       setMatrixMessage(`Matrice ${activeTarget === "club" ? "Club" : "Individuelle"} enregistrée ✅`);
       window.setTimeout(() => setMatrixMessage(null), 2400);
     } catch (err) {
