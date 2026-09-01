@@ -6154,6 +6154,9 @@ export default function PriseStatsProPage() {
                 <button onClick={() => { setShowProjectMenu(false); void saveProjectNow(false); }}>💾 Enregistrer</button>
                 <button onClick={() => { setShowProjectMenu(false); void saveProjectNow(true); }}>💾 Enregistrer et fermer</button>
                 <div className="projectMenuSep" />
+                <button onClick={() => { setShowProjectMenu(false); void pickLocalVideoSmart(); }}>
+                  {(videoProvider === 'local' && videoUrl) ? '📁 Changer la vidéo locale' : '📁 Ajouter une vidéo locale'}
+                </button>
                 <button onClick={() => { setShowProjectMenu(false); openCodingSettings('workflow'); }}>⚙ Configurer mon codage</button>
                 <button onClick={() => { setShowProjectMenu(false); openCodingSettings('buttons'); }}>🧩 Gérer mes boutons</button>
                 <button onClick={() => { setShowProjectMenu(false); setLayoutPreset('video'); }}>🎥 Disposition : vidéo grande</button>
