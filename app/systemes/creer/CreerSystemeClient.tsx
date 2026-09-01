@@ -77,7 +77,6 @@ const DEFAULT_TAGS = [
   "zone",
 ];
 
-
 const blank = (): Systeme => ({
   title: "",
   objectif: "",
@@ -197,7 +196,6 @@ export default function SystemesClient() {
     });
   };
 
-
   useEffect(() => {
     if (editId) {
       setSystemStorageId(editId);
@@ -218,8 +216,6 @@ export default function SystemesClient() {
   }, [editId, draftKey]);
 
   useEffect(() => {
-    // Ne jamais écrire le formulaire vide au premier rendu.
-    // Les schémas/images peuvent être volumineux : même stockage que les exercices.
     if (!draftReady) return;
 
     const timer = window.setTimeout(() => {
@@ -275,8 +271,6 @@ export default function SystemesClient() {
           if (existing) {
             base = systemToForm(existing);
 
-            // Comme pour les exercices, le brouillon local doit rester prioritaire
-            // au retour de la plaquette afin de ne pas perdre les champs saisis.
             if (draftStored) {
               base = {
                 ...base,
@@ -290,7 +284,7 @@ export default function SystemesClient() {
             }
 
             if (!DEFAULT_TYPES.includes(base.type)) {
-              base.type = "Attaque demi-terrain Homme à homme";
+              base.type = "Homme à Homme demi terrain";
             }
           } else {
             flash("Système introuvable");
@@ -402,8 +396,6 @@ export default function SystemesClient() {
       return;
     }
 
-    // Poser le contexte de retour AVANT le transfert des gros payloads.
-    // C'est la même logique que pour les exercices.
     if (editId) {
       localStorage.setItem(EDIT_SYSTEM_ID_KEY, editId);
       localStorage.setItem(RETURN_KEY, `/systemes/creer?id=${editId}`);
@@ -420,8 +412,6 @@ export default function SystemesClient() {
         systeme.schemaDataList
       );
 
-      // IndexedDB via plaquette-transfer : évite QuotaExceededError quand
-      // la fiche contient déjà une ou plusieurs images/schémas base64.
       await setPlaquetteTransfer(draftKey, {
         ...systeme,
         schemaDataList: cleanDataList,
@@ -540,9 +530,58 @@ export default function SystemesClient() {
     }));
   };
 
+  async function uploadBase64Video(base64: string, folder = "videos") {
+    if (!base64.startsWith("data:video")) return base64;
+
+    const { createClient } = await import("@/lib/supabase/client");
+    const supabase = createClient();
+
+    const {
+      data: { user },
+      error: userError,
+    } = await supabase.auth.getUser();
+
+    if (userError || !user) {
+      throw new Error("Utilisateur non connecté");
+    }
+
+    const response = await fetch(base64);
+    const blob = await response.blob();
+
+    const extension = blob.type.includes("quicktime")
+      ? "mov"
+      : blob.type.includes("webm")
+      ? "webm"
+      : "mp4";
+
+    const fileName = `${user.id}/${folder}/${Date.now()}-${Math.random()
+      .toString(36)
+      .slice(2)}.${extension}`;
+
+    const { error } = await supabase.storage
+      .from("exercise-videos")
+      .upload(fileName, blob, {
+        contentType: blob.type || "video/mp4",
+        upsert: false,
+      });
+
+    if (error) throw error;
+
+    const { data } = supabase.storage
+      .from("exercise-videos")
+      .getPublicUrl(fileName);
+
+    return data.publicUrl;
+  }
+
   const save = async () => {
     if (!systeme.title.trim()) {
       flash("Ajoute un titre à ton système");
+      return;
+    }
+
+    if (!systemStorageId) {
+      flash("Chargement du système en cours, réessaie dans une seconde");
       return;
     }
 
@@ -552,32 +591,77 @@ export default function SystemesClient() {
 
     try {
       const uploadedImages = await Promise.all(
-        systeme.images.map(async (img) => {
-          if (img.startsWith("http")) return img;
-          return uploadSchemaImage(img, "systemes-images");
-        })
+        systeme.images.map((image) =>
+          uploadSchemaImage(
+            image,
+            `exercices/systemes-${systemStorageId}/images`
+          )
+        )
+      );
+
+      const uploadedVideos = await Promise.all(
+        systeme.videos.map((video) =>
+          uploadBase64Video(
+            video,
+            `exercices/systemes-${systemStorageId}/videos`
+          )
+        )
+      );
+
+      const uploadedSchemaImages = await Promise.all(
+        systeme.schemaImages.map((image) =>
+          uploadSchemaImage(
+            image,
+            `exercices/systemes-${systemStorageId}/schemas/imported`
+          )
+        )
       );
 
       const cleanSchemaDataList = syncSchemas(
         systeme.schemaImages,
         systeme.schemaDataList
-      );
+      ).map((schema, index) => {
+        const imageData =
+          typeof schema?.imageData === "string" &&
+          schema.imageData.startsWith("data:image")
+            ? uploadedSchemaImages[index] || schema.imageData
+            : schema?.imageData;
+
+        const phaseImages = Array.isArray(schema?.phaseImages)
+          ? schema.phaseImages.map((image: string) => {
+              if (!image?.startsWith?.("data:image")) return image;
+
+              const globalIndex = systeme.schemaImages.indexOf(image);
+              if (globalIndex >= 0 && uploadedSchemaImages[globalIndex]) {
+                return uploadedSchemaImages[globalIndex];
+              }
+
+              return uploadedSchemaImages[index] || image;
+            })
+          : [];
+
+        return {
+          ...schema,
+          imageData,
+          phaseImages,
+        };
+      });
 
       const payload: Systeme = {
         ...systeme,
         id,
         title: systeme.title.trim(),
         images: uploadedImages,
-        schemaImages: systeme.schemaImages,
+        videos: uploadedVideos,
+        schemaImages: uploadedSchemaImages,
         schemaDataList: cleanSchemaDataList,
       };
 
-      const saved =
-        editId || systeme.id
-          ? await updateSystem(id, payload)
-          : await saveSystem(payload);
-
-      setLoading(false);
+      const saved = editId
+        ? await updateSystem(editId, payload)
+        : systeme.id
+        ? await updateSystem(id, payload)
+        : await saveSystem(payload);
 
       if (!saved) {
         flash("Erreur lors de la sauvegarde");
@@ -592,16 +676,20 @@ export default function SystemesClient() {
       localStorage.removeItem(EDIT_SCHEMA_GROUP_KEY);
       localStorage.removeItem(EDIT_SYSTEM_ID_KEY);
       localStorage.removeItem(CURRENT_SYSTEM_ID_KEY);
+      localStorage.removeItem(`${draftKey}_storage_id`);
 
       flash(editId ? "Système mis à jour ✅" : "Système enregistré ✅");
 
+      const goId = saved.id || editId || id;
+
       setTimeout(() => {
-        router.push(`/systemes/${saved.id}`);
+        router.push(`/systemes/${goId}`);
       }, 600);
     } catch (error) {
-      console.error(error);
-      setLoading(false);
+      console.error("Erreur sauvegarde système :", error);
       flash("Erreur lors de la sauvegarde");
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -823,8 +911,6 @@ export default function SystemesClient() {
               </label>
             ))}
           </div>
-
-
 
           <small className="cs-help">
             Sélectionne uniquement la base, la catégorie et les temps forts du système.
