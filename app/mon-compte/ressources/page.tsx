@@ -1,1 +1,0 @@
-import Link from "next/link";export default function Page(){return <main style={{padding:32,background:"#f6f2ee",minHeight:"100vh"}}><Link href="/mon-compte">← Mon compte</Link><h1>Centre de ressources</h1><p>Les fiches techniques et exercices de référence sont disponibles dans la fiche équipe, onglet Documents & Ressources.</p></main>}

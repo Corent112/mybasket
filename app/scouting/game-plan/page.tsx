@@ -1,1 +1,0 @@
-import ScoutingGamePlanBuilder from "@/components/scouting/ScoutingGamePlanBuilder";export default function Page(){return <ScoutingGamePlanBuilder/>}

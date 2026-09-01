@@ -1,5 +1,0 @@
-{
-  "scripts": {
-    "import:exercices": "node scripts/import-exercises-beta-v1.mjs"
-  }
-}

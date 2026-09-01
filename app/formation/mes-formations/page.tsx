@@ -1,1 +1,0 @@
-import CandidateTrainingPortal from "@/components/formation/CandidateTrainingPortal";export default function Page(){return <CandidateTrainingPortal/>}
