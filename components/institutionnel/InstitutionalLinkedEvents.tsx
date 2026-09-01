@@ -7,7 +7,7 @@ import InstitutionalResources from "@/components/institutionnel/InstitutionalRes
 type Scope = "training" | "player";
 type EventRow = {
   id:string; title:string; event_date:string; start_time:string|null; end_time:string|null;
-  location:string|null; event_type:string; description:string|null; cohort_id:string|null;
+  location:string|null; event_type:string; event_domain:"training"|"player"; description:string|null; cohort_id:string|null;
 };
 type Resource = { id:string; event_id:string; title:string; resource_type:string; completed:boolean };
 
@@ -15,7 +15,6 @@ type Props = { structureId:string; scope:Scope; cohortId?:string|null };
 
 const today=()=>new Date().toISOString().slice(0,10);
 const fmt=(d:string)=>new Date(`${d}T12:00:00`).toLocaleDateString("fr-FR",{weekday:"short",day:"2-digit",month:"short",year:"numeric"});
-const playerTypes=["detection","selection","stage","player"];
 
 export default function InstitutionalLinkedEvents({structureId,scope,cohortId}:Props){
   const sb=useMemo(()=>createClient(),[]);
@@ -27,9 +26,8 @@ export default function InstitutionalLinkedEvents({structureId,scope,cohortId}:P
   const [form,setForm]=useState({title:"",event_date:today(),start_time:"09:00",end_time:"17:00",location:"",event_type:scope==="training"?"formation":"stage",description:""});
 
   async function load(){
-    let q=sb.from("institutional_events").select("id,title,event_date,start_time,end_time,location,event_type,description,cohort_id").eq("structure_id",structureId).eq("archived",false).order("event_date");
-    if(scope==="training") q=cohortId?q.eq("event_type","formation").eq("cohort_id",cohortId):q.eq("event_type","formation");
-    else q=q.in("event_type",playerTypes);
+    let q=sb.from("institutional_events").select("id,title,event_date,start_time,end_time,location,event_type,event_domain,description,cohort_id").eq("structure_id",structureId).eq("archived",false).order("event_date");
+    q=q.eq("event_domain",scope);
     const [e,r]=await Promise.all([q,sb.from("institutional_event_resources").select("id,event_id,title,resource_type,completed").eq("structure_id",structureId)]);
     setEvents((e.data||[]) as EventRow[]); setResources((r.data||[]) as Resource[]);
     const rows=(e.data||[]) as EventRow[];
@@ -48,7 +46,7 @@ export default function InstitutionalLinkedEvents({structureId,scope,cohortId}:P
     const q=await sb.from("institutional_events").insert({
       structure_id:structureId, title:form.title.trim(), event_date:form.event_date,
       start_time:form.start_time||null,end_time:form.end_time||null,location:form.location.trim()||null,
-      event_type:scope==="training"?"formation":form.event_type, description:form.description.trim()||null,
+      event_type:scope==="training"?"formation":form.event_type, event_domain:scope, description:form.description.trim()||null,
       cohort_id:scope==="training"?(cohortId||null):null, created_by:user.id
     }).select("id").single();
     setBusy(false); if(q.error)return alert(q.error.message);
