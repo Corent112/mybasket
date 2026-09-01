@@ -10,6 +10,11 @@ import {
   type SystemItem,
 } from "@/lib/systems";
 import { uploadSchemaImage } from "@/lib/supabase/upload-schema";
+import {
+  getPlaquetteTransfer,
+  setPlaquetteTransfer,
+  removePlaquetteTransfer,
+} from "@/lib/plaquette-transfer";
 
 type Systeme = {
   id?: string;
@@ -111,8 +116,14 @@ function normalizeSchemaData(schema: any, index: number, image = "") {
 }
 
 function syncSchemas(images: string[], dataList: any[]) {
-  return images.map((image, index) =>
-    normalizeSchemaData(dataList[index], index, image)
+  const count = Math.max(images.length, dataList.length);
+
+  return Array.from({ length: count }, (_, index) =>
+    normalizeSchemaData(
+      dataList[index],
+      index,
+      images[index] || dataList[index]?.imageData || ""
+    )
   );
 }
 
@@ -208,12 +219,16 @@ export default function SystemesClient() {
 
   useEffect(() => {
     // Ne jamais écrire le formulaire vide au premier rendu.
-    // On attend d'avoir chargé soit la fiche Supabase, soit le brouillon réel.
+    // Les schémas/images peuvent être volumineux : même stockage que les exercices.
     if (!draftReady) return;
 
-    try {
-      localStorage.setItem(draftKey, JSON.stringify(systeme));
-    } catch {}
+    const timer = window.setTimeout(() => {
+      void setPlaquetteTransfer(draftKey, systeme).catch((error) => {
+        console.warn("Sauvegarde brouillon système impossible", error);
+      });
+    }, 120);
+
+    return () => window.clearTimeout(timer);
   }, [draftKey, systeme, draftReady]);
 
   useEffect(() => {
@@ -222,27 +237,26 @@ export default function SystemesClient() {
       let base = blank();
 
       try {
-        const resultRaw = localStorage.getItem(RESULT_KEY);
-        const draftRaw = localStorage.getItem(draftKey);
+        const resultStored = await getPlaquetteTransfer<any>(RESULT_KEY);
+        const draftStored =
+          await getPlaquetteTransfer<Partial<Systeme>>(draftKey);
 
-        if (draftRaw) {
-          try {
-            base = {
-              ...base,
-              ...JSON.parse(draftRaw),
-            };
-          } catch {}
+        if (draftStored) {
+          base = {
+            ...base,
+            ...draftStored,
+          };
         }
 
         if (isNew) {
           localStorage.removeItem(RETURN_KEY);
-          localStorage.removeItem(LOAD_KEY);
-          localStorage.removeItem(RESULT_KEY);
+          await removePlaquetteTransfer(LOAD_KEY);
+          await removePlaquetteTransfer(RESULT_KEY);
           localStorage.removeItem(EDIT_INDEX_KEY);
           localStorage.removeItem(EDIT_SCHEMA_GROUP_KEY);
           localStorage.removeItem(EDIT_SYSTEM_ID_KEY);
           localStorage.removeItem(CURRENT_SYSTEM_ID_KEY);
-          localStorage.removeItem(draftKey);
+          await removePlaquetteTransfer(draftKey);
           localStorage.removeItem(`${draftKey}_storage_id`);
 
           const temporaryDraftId = crypto.randomUUID();
@@ -263,14 +277,12 @@ export default function SystemesClient() {
 
             // Comme pour les exercices, le brouillon local doit rester prioritaire
             // au retour de la plaquette afin de ne pas perdre les champs saisis.
-            if (draftRaw) {
-              try {
-                base = {
-                  ...base,
-                  ...JSON.parse(draftRaw),
-                  id: existing.id,
-                };
-              } catch {}
+            if (draftStored) {
+              base = {
+                ...base,
+                ...draftStored,
+                id: existing.id,
+              };
             }
 
             if (!DEFAULT_CATEGORIES.includes(base.categorie)) {
@@ -287,8 +299,8 @@ export default function SystemesClient() {
           setLoading(false);
         }
 
-        if (resultRaw) {
-          const result = JSON.parse(resultRaw);
+        if (resultStored) {
+          const result = resultStored;
 
           const incomingImages: string[] = Array.isArray(result.schemaImages)
             ? result.schemaImages.filter(Boolean)
@@ -352,9 +364,9 @@ export default function SystemesClient() {
             };
           }
 
-          localStorage.removeItem(RESULT_KEY);
+          await removePlaquetteTransfer(RESULT_KEY);
           localStorage.removeItem(EDIT_INDEX_KEY);
-          localStorage.removeItem(LOAD_KEY);
+          await removePlaquetteTransfer(LOAD_KEY);
           localStorage.removeItem(RETURN_KEY);
           localStorage.removeItem(EDIT_SYSTEM_ID_KEY);
           localStorage.removeItem(CURRENT_SYSTEM_ID_KEY);
@@ -390,27 +402,33 @@ export default function SystemesClient() {
       return;
     }
 
+    // Poser le contexte de retour AVANT le transfert des gros payloads.
+    // C'est la même logique que pour les exercices.
+    if (editId) {
+      localStorage.setItem(EDIT_SYSTEM_ID_KEY, editId);
+      localStorage.setItem(RETURN_KEY, `/systemes/creer?id=${editId}`);
+    } else {
+      localStorage.removeItem(EDIT_SYSTEM_ID_KEY);
+      localStorage.setItem(RETURN_KEY, "/systemes/creer");
+    }
+
+    localStorage.setItem(CURRENT_SYSTEM_ID_KEY, systemStorageId);
+
     try {
       const cleanDataList = syncSchemas(
         systeme.schemaImages,
         systeme.schemaDataList
       );
 
-      // Exactement comme pour les exercices : on conserve le formulaire en
-      // brouillon local et on ouvre immédiatement la plaquette.
-      // Aucune sauvegarde Supabase n'est imposée avant de dessiner.
-      localStorage.setItem(
-        draftKey,
-        JSON.stringify({
-          ...systeme,
-          schemaDataList: cleanDataList,
-        })
-      );
+      // IndexedDB via plaquette-transfer : évite QuotaExceededError quand
+      // la fiche contient déjà une ou plusieurs images/schémas base64.
+      await setPlaquetteTransfer(draftKey, {
+        ...systeme,
+        schemaDataList: cleanDataList,
+      });
 
-      localStorage.setItem(CURRENT_SYSTEM_ID_KEY, systemStorageId);
-
-      localStorage.removeItem(LOAD_KEY);
-      localStorage.removeItem(RESULT_KEY);
+      await removePlaquetteTransfer(LOAD_KEY);
+      await removePlaquetteTransfer(RESULT_KEY);
       localStorage.removeItem(EDIT_SCHEMA_GROUP_KEY);
 
       if (typeof index === "number") {
@@ -418,11 +436,15 @@ export default function SystemesClient() {
 
         const schemaData = cleanDataList[index];
         const schemaImage = systeme.schemaImages[index];
+        const schemaGroupId =
+          schemaData?.schemaGroupId || crypto.randomUUID();
+
+        localStorage.setItem(EDIT_SCHEMA_GROUP_KEY, schemaGroupId);
 
         const loadPayload = {
           title: schemaData?.title || `Schéma ${index + 1}`,
           editIndex: index,
-          schemaGroupId: schemaData?.schemaGroupId || crypto.randomUUID(),
+          schemaGroupId,
           courtType: schemaData?.courtType || "half",
           phases: Array.isArray(schemaData?.phases) ? schemaData.phases : [],
           sheet: schemaData?.sheet ?? null,
@@ -436,26 +458,19 @@ export default function SystemesClient() {
             : [],
         };
 
-        localStorage.setItem(LOAD_KEY, JSON.stringify(loadPayload));
+        await setPlaquetteTransfer(LOAD_KEY, loadPayload);
       } else {
         localStorage.removeItem(EDIT_INDEX_KEY);
-      }
-
-      if (editId) {
-        localStorage.setItem(EDIT_SYSTEM_ID_KEY, editId);
-        localStorage.setItem(RETURN_KEY, `/systemes/creer?id=${editId}`);
-      } else {
-        localStorage.removeItem(EDIT_SYSTEM_ID_KEY);
-        localStorage.setItem(RETURN_KEY, "/systemes/creer");
+        localStorage.removeItem(EDIT_SCHEMA_GROUP_KEY);
       }
 
       router.push(
         typeof index === "number"
-          ? "/plaquette?type=systeme&mode=edit"
-          : "/plaquette?type=systeme&mode=new"
+          ? "/plaquette?mode=edit&return=systeme"
+          : "/plaquette?mode=new&return=systeme"
       );
     } catch (error) {
-      console.error(error);
+      console.error("Ouverture Plaquette système impossible :", error);
       flash("Erreur avant ouverture de la plaquette");
     }
   };
@@ -570,8 +585,9 @@ export default function SystemesClient() {
       }
 
       localStorage.removeItem(RETURN_KEY);
-      localStorage.removeItem(LOAD_KEY);
-      localStorage.removeItem(RESULT_KEY);
+      await removePlaquetteTransfer(LOAD_KEY);
+      await removePlaquetteTransfer(RESULT_KEY);
+      await removePlaquetteTransfer(draftKey);
       localStorage.removeItem(EDIT_INDEX_KEY);
       localStorage.removeItem(EDIT_SCHEMA_GROUP_KEY);
       localStorage.removeItem(EDIT_SYSTEM_ID_KEY);
