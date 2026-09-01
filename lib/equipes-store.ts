@@ -129,7 +129,20 @@ function normalizeTeamRow(row: any): Team {
     name: row.name ?? data.name ?? "",
     cat: row.category ?? data.cat ?? data.category ?? "",
     category: row.category ?? data.category ?? data.cat ?? "",
-    coach: row.coach_name ?? row.coach ?? data.coach ?? data.coach_name ?? "",
+    coach:
+      row.coach_name ??
+      row.coach ??
+      data.coach ??
+      data.coach_name ??
+      data.entraineurPrincipal ??
+      "",
+    entraineurPrincipal:
+      data.entraineurPrincipal ??
+      row.coach_name ??
+      row.coach ??
+      data.coach ??
+      data.coach_name ??
+      "",
     logo:
       row.club_logo_url ??
       row.logo_url ??
@@ -281,7 +294,11 @@ function teamPayload(team: Team, userId: string) {
     name: team.name ?? "",
     club_name: (team as any).clubName ?? (team as any).club_name ?? team.name ?? "",
     category: (team as any).category ?? (team as any).cat ?? "",
-    coach_name: team.coach ?? (team as any).coach_name ?? "",
+    coach_name:
+      team.entraineurPrincipal ??
+      team.coach ??
+      (team as any).coach_name ??
+      "",
     club_logo_url: team.logo ?? (team as any).club_logo_url ?? null,
     banner_url: (team as any).banniere ?? (team as any).banner_url ?? null,
     wins: (team as any).teamStats?.wins ?? 0,

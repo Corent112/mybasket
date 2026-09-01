@@ -211,31 +211,42 @@ export default function MonComptePage() {
       const data = await getTeams();
       setTeams(data);
 
-      // Le calendrier est la source unique des événements d'équipe.
-      // Un match créé dans LiveStatsPro crée déjà un calendar_event de type "game".
+      // La carte "Mes équipes" compte uniquement les matchs encore présents
+      // dans match_stats. Un ancien calendar_event peut rester après suppression
+      // et ne doit jamais gonfler le compteur.
       const { data: { user } } = await supabase.auth.getUser();
       if (!user || data.length === 0) {
         setTeamCalendarMatchCounts({});
         return;
       }
 
-      const teamIds = data.map((team) => String(team.id || "")).filter(Boolean);
-      const { data: calendarRows, error: calendarError } = await supabase
-        .from("calendar_events")
-        .select("team_id,event_type")
-        .in("team_id", teamIds)
-        .eq("event_type", "game");
+      const teamIds = Array.from(
+        new Set(
+          data
+            .flatMap((team) => [
+              String(team.id || ""),
+              String((team as any).supabaseTeamId || ""),
+              String((team as any).supabase_team_id || ""),
+            ])
+            .filter(Boolean),
+        ),
+      );
 
-      if (calendarError) {
-        console.error("Erreur chargement matchs calendrier:", calendarError);
+      const { data: matchRows, error: matchError } = await supabase
+        .from("match_stats")
+        .select("team_id,id")
+        .in("team_id", teamIds);
+
+      if (matchError) {
+        console.error("Erreur chargement matchs Supabase:", matchError);
         setTeamCalendarMatchCounts({});
         return;
       }
 
-      const counts: Record<string, number> = (calendarRows ?? []).reduce(
+      const counts: Record<string, number> = (matchRows ?? []).reduce(
         (
           acc: Record<string, number>,
-          row: { team_id?: string | null },
+          row: { team_id?: string | null; id?: string | null },
         ) => {
           const rowTeamId = String(row.team_id || "");
           if (rowTeamId) acc[rowTeamId] = (acc[rowTeamId] || 0) + 1;
@@ -244,7 +255,25 @@ export default function MonComptePage() {
         {},
       );
 
-      setTeamCalendarMatchCounts(counts);
+      const normalizedCounts: Record<string, number> = {};
+      data.forEach((team) => {
+        const aliases = [
+          String(team.id || ""),
+          String((team as any).supabaseTeamId || ""),
+          String((team as any).supabase_team_id || ""),
+        ].filter(Boolean);
+
+        const count = aliases.reduce(
+          (max, alias) => Math.max(max, counts[alias] || 0),
+          0,
+        );
+
+        aliases.forEach((alias) => {
+          normalizedCounts[alias] = count;
+        });
+      });
+
+      setTeamCalendarMatchCounts(normalizedCounts);
     } catch (error) {
       console.error("Erreur chargement équipes:", error);
       setTeams([]);
@@ -683,6 +712,45 @@ const isScoutTeam = (team: Team) => {
   const type = String((team as any).teamType ?? (team as any).team_type ?? "").toLowerCase();
   return (team as any).isScoutTeam === true || (team as any).scout === true || type === "scout" || type === "scouting" || type === "scouted";
 };
+
+const getTeamCoachName = (team: Team) => {
+  const direct = [
+    team.entraineurPrincipal,
+    team.coach,
+    (team as any).coach_name,
+    (team as any).headCoach,
+    (team as any).head_coach,
+  ]
+    .map((value) => String(value || "").trim())
+    .find(Boolean);
+
+  if (direct) return direct;
+
+  const staff = Array.isArray(team.staff) ? team.staff : [];
+  const normalizeRole = (value: unknown) =>
+    String(value || "")
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .toLowerCase();
+
+  const head =
+    staff.find((member) => {
+      const role = normalizeRole(member.role);
+      return (
+        role.includes("entraineur principal") ||
+        role.includes("head coach") ||
+        role.includes("coach principal")
+      );
+    }) ||
+    staff.find((member) => {
+      const role = normalizeRole(member.role);
+      return role.includes("entraineur") || role.includes("coach");
+    }) ||
+    staff.find((member) => normalizeRole(member.role).includes("responsable"));
+
+  if (!head) return "Non renseigné";
+  return `${head.prenom || ""} ${head.nom || ""}`.trim() || "Non renseigné";
+};
 const coachedTeams = teams.filter((team) => !isScoutTeam(team));
 
 const sortedTeams = [...coachedTeams].sort((a, b) => {
@@ -961,7 +1029,7 @@ return (
                   const bandColor = team.couleurs?.[0] || '#6B1A2C';
                   const category = team.cat || team.categorieLabel || 'Équipe';
                   const level = team.niveau || 'Niveau non renseigné';
-                  const coach = team.entraineurPrincipal || team.coach || 'Non renseigné';
+                  const coach = getTeamCoachName(team);
                   const matchCount = teamCalendarMatchCounts[String(team.id)] || 0;
                   const wins = team.teamStats?.wins ?? team.kpi?.victoires ?? 0;
                   const losses = team.teamStats?.losses ?? team.kpi?.defaites ?? 0;
