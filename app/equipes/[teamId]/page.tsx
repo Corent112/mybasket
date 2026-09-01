@@ -3,6 +3,9 @@
 // app/equipes/[teamId]/page.tsx
 import TeamMatchHistoryBlock from "@/components/equipes/TeamMatchHistoryBlock";
 import TeamGoogleDriveSettings from "@/components/video/TeamGoogleDriveSettings";
+import TeamProfilingTab from "@/components/equipes/TeamProfilingTab";
+import TeamSelfEvaluationsTab from "@/components/equipes/TeamSelfEvaluationsTab";
+import WeeklyTrainingPlanner from "@/components/equipes/WeeklyTrainingPlanner";
 import { use, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
@@ -15,7 +18,15 @@ import {
 } from "../../../lib/equipes-store";
 import PlayerForm from "@/components/equipes/PlayerForm";
 import TeamForm from "@/components/equipes/TeamForm";
-import type { Player, Team, TeamEvent } from "../../../types/player";
+import TeamStaffManager from "@/components/equipes/TeamStaffManager";
+import TeamAdvancedStats from "@/components/equipes/TeamAdvancedStats";
+import TeamShootingGrids from "@/components/equipes/TeamShootingGrids";
+import TeamAvailabilityLoad from "@/components/equipes/TeamAvailabilityLoad";
+import TeamResourcesPanel from "@/components/equipes/TeamResourcesPanel";
+import TeamActivityPanel from "@/components/equipes/TeamActivityPanel";
+import ActionClipsModal, { type ClipAction } from "@/components/prise-stats-pro/ActionClipsModal";
+import { type VideoSyncState, NATIVE_SYNC, normalizeSync } from "@/lib/video-sync";
+import type { Player, StaffMember, Team, TeamEvent } from "../../../types/player";
 
 /* ---------- Icônes (SVG inline, trait) ---------- */
 function Ic({ d, size = 18 }: { d: string; size?: number }) {
@@ -67,7 +78,17 @@ const EVENT_EMOJI: Record<string, keyof typeof ICONS> = {
   Autre: "cal",
 };
 
-type TeamMainTab = "presentation" | "training" | "stats";
+type TeamMainTab =
+  | "presentation"
+  | "training"
+  | "profiling"
+  | "self-evaluations"
+  | "shooting"
+  | "load"
+  | "resources"
+  | "activity"
+  | "stats"
+  | "advanced";
 
 type TeamDashboardData = {
   loading: boolean;
@@ -214,9 +235,9 @@ function useTeamDashboardData(
         }
 
 
-        // Fallback local : uniquement si Supabase ne retourne AUCUN match.
-        // Important : ne jamais remplacer des matchs Supabase encore présents par
-        // team.statsHistory, qui peut contenir d'anciens matchs supprimés.
+        // Fallback local uniquement si aucune donnée de match n'est disponible.
+        // On évite ainsi de faire réapparaître dans la fiche équipe des matchs
+        // supprimés de match_stats mais encore présents dans un ancien statsHistory.
         if (
           matchRows.length === 0 &&
           playerRows.length === 0 &&
@@ -274,9 +295,9 @@ function useTeamDashboardData(
           );
         }
 
-        // Dès que match_stats a répondu, il devient la source de vérité.
-        // Les éventuelles lignes orphelines de match_player_stats ne doivent pas
-        // ressusciter un match supprimé dans la fiche équipe.
+        // Dès que match_stats contient les matchs encore existants, il devient
+        // la source de vérité. Les lignes orphelines de match_player_stats ne
+        // doivent pas ressusciter un match supprimé.
         const matchIds = compactStrings(
           matchRows.length > 0
             ? matchRows.map((match) => match.id)
@@ -303,9 +324,11 @@ function useTeamDashboardData(
         setMatches(matchRows);
         const validMatchIds = new Set(matchRows.map((match) => String(match.id)));
         setStatRows(
-          playerRows.filter((row) =>
-            row.present !== false &&
-            (validMatchIds.size === 0 || validMatchIds.has(String(row.match_id))),
+          playerRows.filter(
+            (row) =>
+              row.present !== false &&
+              (validMatchIds.size === 0 ||
+                validMatchIds.has(String(row.match_id))),
           ),
         );
 
@@ -429,9 +452,8 @@ function computeLinkedKpis(team: Team, dashboard: TeamDashboardData) {
   const local = computeTeamKpis(team);
   const matches = dashboard.matches;
   const statRows = dashboard.statRows;
-  // Une fois le chargement Supabase terminé, les matchs présents dans
-  // match_stats sont la source de vérité. Un match supprimé ne doit jamais
-  // continuer à être compté via l'ancien statsHistory local.
+  // Après le chargement Supabase, seuls les matchs encore présents dans
+  // match_stats sont comptés. Un ancien match supprimé ne doit plus compter.
   const games = dashboard.loading ? local.matchsJoues : matches.length;
   const wins = dashboard.loading
     ? local.victoires
@@ -569,6 +591,13 @@ export default function EquipeDetailPage({
   const [editingTeam, setEditingTeam] = useState(false);
   const [managing, setManaging] = useState(false);
   const [activeTab, setActiveTab] = useState<TeamMainTab>("presentation");
+
+  useEffect(()=>{
+    if(typeof window==="undefined")return;
+    const tab=new URL(window.location.href).searchParams.get("tab");
+    if(tab==="shooting") setActiveTab("shooting");
+    if(tab==="load") setActiveTab("load");
+  },[teamId]);
   const [playerForm, setPlayerForm] = useState<{
     open: boolean;
     player?: Player;
@@ -582,6 +611,36 @@ export default function EquipeDetailPage({
     () => buildPlayerLiveAverages(dashboard.statRows),
     [dashboard.statRows],
   );
+
+  const isOwner = team ? team.isShared !== true : false;
+  const canManagePlayers =
+    Boolean(team) &&
+    (isOwner || team?.collaborationPermissions?.players === true);
+  const canUseSessions =
+    Boolean(team) &&
+    (isOwner || team?.collaborationPermissions?.sessions === true);
+  const canUseLiveStats =
+    Boolean(team) &&
+    (isOwner || team?.collaborationPermissions?.livestats === true);
+  const canUseMedia =
+    Boolean(team) &&
+    (isOwner || team?.collaborationPermissions?.media === true);
+  const canUseRpe =
+    Boolean(team) &&
+    (isOwner || team?.collaborationPermissions?.rpe === true);
+  const canViewRpeIndividual =
+    Boolean(team) &&
+    (isOwner || team?.collaborationPermissions?.rpe_individual === true);
+  const canViewRpeGroup =
+    Boolean(team) &&
+    (isOwner || team?.collaborationPermissions?.rpe_group === true);
+  const canManageRpeTarget =
+    Boolean(team) &&
+    (isOwner || team?.collaborationPermissions?.rpe_manage_target === true);
+  const canManageRpeQuestionnaires =
+    Boolean(team) &&
+    (isOwner || team?.collaborationPermissions?.rpe_manage_questionnaires === true);
+  const playerLimitReached = (team?.players.length ?? 0) >= 15;
 
   async function reload() {
     try {
@@ -670,7 +729,32 @@ export default function EquipeDetailPage({
     }
   }
 
+
+  async function handleStaffChange(nextStaff: StaffMember[]) {
+    if (!team || !isOwner) return;
+
+    try {
+      await saveTeam({ ...team, staff: nextStaff });
+      await reload();
+      flash("Staff mis à jour ✓");
+    } catch (error) {
+      console.error("Erreur mise à jour staff:", error);
+      alert("Impossible de mettre à jour le staff de cette équipe.");
+      throw error;
+    }
+  }
+
   async function handleSavePlayer(p: Player) {
+    if (!canManagePlayers) {
+      alert("Tu n’as pas l’autorisation de modifier les joueurs de cette équipe.");
+      return;
+    }
+
+    if (!p.id && playerLimitReached) {
+      alert("Effectif complet : une équipe MyBasket est limitée à 15 joueurs actifs.");
+      return;
+    }
+
     try {
       await upsertPlayer(teamId, p);
       setPlayerForm({ open: false });
@@ -684,6 +768,11 @@ export default function EquipeDetailPage({
 
   async function handleDelete(p: Player, e: React.MouseEvent) {
     e.stopPropagation();
+
+    if (!canManagePlayers) {
+      alert("Tu n’as pas l’autorisation de modifier les joueurs de cette équipe.");
+      return;
+    }
 
     if (!confirm(`Retirer ${p.firstName} ${p.lastName} de l'effectif ?`)) {
       return;
@@ -700,7 +789,7 @@ export default function EquipeDetailPage({
   }
 
   function openPlayer(p: Player) {
-    if (managing) setPlayerForm({ open: true, player: p });
+    if (managing && canManagePlayers) setPlayerForm({ open: true, player: p });
     else router.push(`/equipes/${teamId}/${p.id}`);
   }
 
@@ -719,6 +808,25 @@ export default function EquipeDetailPage({
     : ["#7a1228", "#e0a82e"];
   const KPIS = computeLinkedKpis(team, dashboard);
   const linkedStatsTeamId = dashboard.resolvedTeamId || teamId;
+
+  // Google Drive doit toujours recevoir l'identifiant Supabase réel de l'équipe.
+  // Certaines équipes historiques gardent un id local dans la fiche tandis que
+  // leurs matchs / collaborations utilisent le UUID Supabase.
+  const driveTeamId =
+    compactStrings([
+      (team as any).supabase_team_id,
+      (team as any).supabaseTeamId,
+      (team as any).supabase_id,
+      (team as any).supabaseId,
+      (team as any).db_id,
+      (team as any).dbId,
+      dashboard.resolvedTeamId,
+      team.id,
+      teamId,
+    ]).find((value) => isUuidValue(value)) ||
+    dashboard.resolvedTeamId ||
+    team.id ||
+    teamId;
 
   return (
     <div className="tl-wrap">
@@ -753,19 +861,23 @@ export default function EquipeDetailPage({
         {/* ---------- HERO ---------- */}
         <section className="tl-hero team-hero-linked">
           <div className="tl-floating-actions">
-            <button
-              className="tl-btn tl-btn-bx"
-              onClick={() => setEditingTeam(true)}
-            >
-              <Ic d={ICONS.pencil} size={16} /> Modifier l'équipe
-            </button>
-            <button
-              className={`tl-btn ${managing ? "tl-btn-or" : "tl-btn-ghost"}`}
-              onClick={() => setManaging((v) => !v)}
-            >
-              <Ic d={ICONS.manage} size={16} />{" "}
-              {managing ? "Terminer" : "Gérer les joueurs"}
-            </button>
+            {isOwner && (
+              <button
+                className="tl-btn tl-btn-bx"
+                onClick={() => setEditingTeam(true)}
+              >
+                <Ic d={ICONS.pencil} size={16} /> Modifier informations équipe
+              </button>
+            )}
+            {canManagePlayers && (
+              <button
+                className={`tl-btn ${managing ? "tl-btn-or" : "tl-btn-ghost"}`}
+                onClick={() => setManaging((v) => !v)}
+              >
+                <Ic d={ICONS.manage} size={16} />{" "}
+                {managing ? "Terminer" : "Gérer les joueurs"}
+              </button>
+            )}
           </div>
 
           <div className="tl-hero-logo">
@@ -796,20 +908,24 @@ export default function EquipeDetailPage({
                 <path d="M2 12h20M12 2c3.5 3 3.5 17 0 20M12 2c-3.5 3-3.5 17 0 20" />
               </svg>
             )}
-            <button
-              className="tl-cam"
-              title="Changer le logo"
-              onClick={() => logoRef.current?.click()}
-            >
-              <Ic d={ICONS.cam} size={13} />
-            </button>
-            <input
-              ref={logoRef}
-              type="file"
-              accept="image/*"
-              hidden
-              onChange={changeLogo}
-            />
+            {isOwner && (
+              <>
+                <button
+                  className="tl-cam"
+                  title="Changer le logo"
+                  onClick={() => logoRef.current?.click()}
+                >
+                  <Ic d={ICONS.cam} size={13} />
+                </button>
+                <input
+                  ref={logoRef}
+                  type="file"
+                  accept="image/*"
+                  hidden
+                  onChange={changeLogo}
+                />
+              </>
+            )}
           </div>
 
           <div className="tl-hero-content">
@@ -822,6 +938,11 @@ export default function EquipeDetailPage({
                 <span className="dash-loading">Synchronisation...</span>
               )}
             </div>
+            {team.isShared && (
+              <div className="shared-team-badge">
+                Équipe partagée · {team.collaborationRole || "Staff"}
+              </div>
+            )}
             <div className="tl-tags">
               {(team.tags || []).map((tg) => (
                 <span key={tg} className="tl-tag">
@@ -846,20 +967,18 @@ export default function EquipeDetailPage({
           ))}
         </section>
 
-        {/* ---------- NAVIGATION ÉQUIPE ---------- */}
-        <div className="team-navigation-block">
+        {/* ---------- ONGLETS ---------- */}
+        <section className="team-tabs" aria-label="Navigation fiche équipe">
           <button
             type="button"
-            className="team-back-button"
+            className="team-back-tab"
             onClick={() => router.push("/equipes")}
-            aria-label="Retour à mes équipes"
+            aria-label="Retour aux équipes"
           >
-            <span aria-hidden="true">←</span>
+            <span className="team-back-arrow" aria-hidden="true">←</span>
             Retour aux équipes
           </button>
 
-          {/* ---------- ONGLETS ---------- */}
-          <section className="team-tabs" aria-label="Navigation fiche équipe">
           <button
             type="button"
             className={activeTab === "presentation" ? "active" : ""}
@@ -872,26 +991,106 @@ export default function EquipeDetailPage({
           <button
             type="button"
             className={activeTab === "training" ? "active" : ""}
-            onClick={() => setActiveTab("training")}
+            onClick={() => {
+              if (canUseSessions) setActiveTab("training");
+              else alert("Le propriétaire ne t’a pas donné accès aux séances de cette équipe.");
+            }}
           >
             <Ic d={ICONS.cal} size={16} />
-            Entraînements
+            Entraînements {!canUseSessions && team.isShared ? "🔒" : ""}
+          </button>
+
+          <button
+            type="button"
+            className={activeTab === "profiling" ? "active" : ""}
+            onClick={() => setActiveTab("profiling")}
+          >
+            <Ic d={ICONS.user} size={16} />
+            Profilage
+          </button>
+
+          <button
+            type="button"
+            className={activeTab === "self-evaluations" ? "active" : ""}
+            onClick={() => setActiveTab("self-evaluations")}
+          >
+            <Ic d={ICONS.cal} size={16} />
+            Auto-évaluations
+          </button>
+
+          <button
+            type="button"
+            className={activeTab === "shooting" ? "active" : ""}
+            onClick={() => setActiveTab("shooting")}
+          >
+            <Ic d={ICONS.trophy} size={16} />
+            Grilles de tirs
+          </button>
+
+          <button
+            type="button"
+            className={activeTab === "load" ? "active" : ""}
+            onClick={() => {
+              if (canUseRpe) setActiveTab("load");
+              else alert("Le propriétaire ne t’a pas donné accès à Charge & RPE pour cette équipe.");
+            }}
+          >
+            <Ic d={ICONS.trend} size={16} />
+            Charge & RPE {!canUseRpe && team.isShared ? "🔒" : ""}
+          </button>
+
+          <button
+            type="button"
+            className={activeTab === "resources" ? "active" : ""}
+            onClick={() => setActiveTab("resources")}
+          >
+            <Ic d={ICONS.info} size={16} />
+            Documents & ressources
+          </button>
+
+          <button
+            type="button"
+            className={activeTab === "activity" ? "active" : ""}
+            onClick={() => setActiveTab("activity")}
+          >
+            <Ic d={ICONS.cal} size={16} />
+            Activité
           </button>
 
           <button
             type="button"
             className={activeTab === "stats" ? "active" : ""}
-            onClick={() => setActiveTab("stats")}
+            onClick={() => {
+              if (canUseLiveStats) setActiveTab("stats");
+              else alert("Le propriétaire ne t’a pas donné accès à LiveStats pour cette équipe.");
+            }}
           >
             <Ic d={ICONS.bars} size={16} />
-            Toutes les stats
+            Toutes les stats {!canUseLiveStats && team.isShared ? "🔒" : ""}
           </button>
-          </section>
-        </div>
+
+          <button
+            type="button"
+            className={activeTab === "advanced" ? "active" : ""}
+            onClick={() => {
+              if (canUseLiveStats) setActiveTab("advanced");
+              else alert("Le propriétaire ne t’a pas donné accès aux statistiques avancées de cette équipe.");
+            }}
+          >
+            <Ic d={ICONS.filter} size={16} />
+            Stats avancées {!canUseLiveStats && team.isShared ? "🔒" : ""}
+          </button>
+        </section>
 
         {activeTab === "presentation" && (
           <div className="team-tab-panel">
-            <TeamGoogleDriveSettings teamId={team.id} />
+            {canUseMedia ? (
+              <TeamGoogleDriveSettings teamId={driveTeamId} isOwner={isOwner} />
+            ) : team.isShared ? (
+              <div className="shared-access-note">
+                🔒 Les médias et Google Drive ne sont pas autorisés pour ton rôle sur cette équipe.
+              </div>
+            ) : null}
             {/* ---------- TEAM BANNER ---------- */}
             <section className="tl-banner">
               {team.banniere ? (
@@ -902,20 +1101,24 @@ export default function EquipeDetailPage({
                   <div>Ajoute une photo de ton équipe</div>
                 </div>
               )}
-              <button
-                className="tl-cam"
-                title="Changer la photo d'équipe"
-                onClick={() => bannerRef.current?.click()}
-              >
-                <Ic d={ICONS.cam} size={13} />
-              </button>
-              <input
-                ref={bannerRef}
-                type="file"
-                accept="image/*"
-                hidden
-                onChange={changeBanner}
-              />
+              {isOwner && (
+                <>
+                  <button
+                    className="tl-cam"
+                    title="Changer la photo d'équipe"
+                    onClick={() => bannerRef.current?.click()}
+                  >
+                    <Ic d={ICONS.cam} size={13} />
+                  </button>
+                  <input
+                    ref={bannerRef}
+                    type="file"
+                    accept="image/*"
+                    hidden
+                    onChange={changeBanner}
+                  />
+                </>
+              )}
             </section>
 
             {/* ---------- EFFECTIF ---------- */}
@@ -926,7 +1129,7 @@ export default function EquipeDetailPage({
                 </span>
                 <h2>Effectif</h2>
                 <span className="right">
-                  {team.players.length} joueur
+                  {team.players.length}/15 joueur
                   {team.players.length > 1 ? "s" : ""}
                 </span>
               </div>
@@ -937,7 +1140,7 @@ export default function EquipeDetailPage({
                     className="tl-pcard"
                     onClick={() => openPlayer(p)}
                   >
-                    {managing && (
+                    {managing && canManagePlayers && (
                       <button
                         className="tl-del"
                         title="Retirer"
@@ -965,13 +1168,19 @@ export default function EquipeDetailPage({
                     </div>
                   </div>
                 ))}
-                {managing && (
+                {managing && canManagePlayers && (
                   <div
-                    className="tl-addtile"
-                    onClick={() => setPlayerForm({ open: true })}
+                    className={`tl-addtile ${playerLimitReached ? "disabled" : ""}`}
+                    onClick={() => {
+                      if (playerLimitReached) {
+                        alert("Effectif complet : une équipe MyBasket est limitée à 15 joueurs actifs.");
+                        return;
+                      }
+                      setPlayerForm({ open: true });
+                    }}
                   >
                     <span className="plus">+</span>
-                    Ajouter un joueur
+                    {playerLimitReached ? "Effectif complet (15/15)" : "Ajouter un joueur"}
                   </div>
                 )}
               </div>
@@ -1034,16 +1243,6 @@ export default function EquipeDetailPage({
                   value={team.niveau || ""}
                 />
                 <InfoRow
-                  icon={ICONS.user}
-                  label="Entraîneur principal"
-                  value={team.entraineurPrincipal || ""}
-                />
-                <InfoRow
-                  icon={ICONS.users}
-                  label="Assistant"
-                  value={team.assistant || ""}
-                />
-                <InfoRow
                   icon={ICONS.building}
                   label="Salle principale"
                   value={team.sallePrincipale || ""}
@@ -1068,54 +1267,70 @@ export default function EquipeDetailPage({
             </section>
 
             {/* ---------- STAFF ---------- */}
-            <section className="tl-card">
-              <div className="tl-card-h">
-                <span className="ic">
-                  <Ic d={ICONS.users} />
-                </span>
-                <h2>Staff</h2>
-              </div>
-              {team.staff?.length ? (
-                team.staff.map((s) => (
-                  <div key={s.id} className="tl-staff-item">
-                    <div className="tl-ini">
-                      {s.photo ? (
-                        <img
-                          src={s.photo}
-                          alt=""
-                          style={{
-                            width: "100%",
-                            height: "100%",
-                            borderRadius: "50%",
-                            objectFit: "cover",
-                          }}
-                        />
-                      ) : (
-                        `${s.prenom[0] || ""}${s.nom[0] || ""}`
-                      )}
-                    </div>
-                    <div>
-                      <div className="nm">
-                        {s.prenom} {s.nom}
-                      </div>
-                      <span className="tl-rolepill">{s.role}</span>
-                    </div>
-                    <span className="tl-chev">
-                      <Ic d={ICONS.chev} />
-                    </span>
-                  </div>
-                ))
-              ) : (
-                <p style={{ color: "#9a8a82" }}>Aucun membre du staff.</p>
-              )}
-              <button className="tl-linkbtn">Voir tout le staff</button>
-            </section>
+            <TeamStaffManager
+              teamId={team.id}
+              staff={team.staff || []}
+              onChange={handleStaffChange}
+              isOwner={isOwner}
+            />
           </div>
         )}
 
         {activeTab === "training" && (
           <div className="team-tab-panel training-panel">
+            <WeeklyTrainingPlanner teamId={team.id} />
             <TrainingAnalysisBlock teamId={linkedStatsTeamId} fallbackTeamId={teamId} team={team} />
+          </div>
+        )}
+
+        {activeTab === "profiling" && (
+          <div className="team-tab-panel">
+            <TeamProfilingTab teamId={team.id} />
+          </div>
+        )}
+
+        {activeTab === "self-evaluations" && (
+          <div className="team-tab-panel">
+            <TeamSelfEvaluationsTab teamId={team.id} />
+          </div>
+        )}
+
+        {activeTab === "shooting" && (
+          <div className="team-tab-panel">
+            <TeamShootingGrids
+              teamId={team.id}
+              players={team.players}
+              canEdit={canManagePlayers}
+            />
+          </div>
+        )}
+
+        {activeTab === "load" && (
+          <div className="team-tab-panel">
+            <TeamAvailabilityLoad
+              teamId={team.id}
+              players={team.players}
+              canEdit={canManagePlayers || canUseSessions}
+              canViewIndividual={canViewRpeIndividual}
+              canViewGroup={canViewRpeGroup}
+              canManageTarget={canManageRpeTarget}
+              canManageQuestionnaires={canManageRpeQuestionnaires}
+            />
+          </div>
+        )}
+
+        {activeTab === "resources" && (
+          <div className="team-tab-panel">
+            <TeamResourcesPanel
+              teamId={team.id}
+              canEdit={isOwner || canUseMedia}
+            />
+          </div>
+        )}
+
+        {activeTab === "activity" && (
+          <div className="team-tab-panel">
+            <TeamActivityPanel teamId={team.id} />
           </div>
         )}
 
@@ -1137,6 +1352,15 @@ export default function EquipeDetailPage({
           </div>
         )}
 
+        {activeTab === "advanced" && (
+          <div className="team-tab-panel stats-panel">
+            <TeamAdvancedStats
+              teamId={linkedStatsTeamId}
+              team={team}
+            />
+          </div>
+        )}
+
         <div className="tl-foot">
           <hr />
           <svg
@@ -1154,14 +1378,14 @@ export default function EquipeDetailPage({
         </div>
       </div>
 
-      {editingTeam && (
+      {editingTeam && isOwner && (
         <TeamForm
           team={team}
           onSave={handleSaveTeam}
           onClose={() => setEditingTeam(false)}
         />
       )}
-      {playerForm.open && (
+      {playerForm.open && canManagePlayers && (
         <PlayerForm
           initial={playerForm.player}
           onSave={handleSavePlayer}
@@ -1330,53 +1554,38 @@ export default function EquipeDetailPage({
           }
         }
 
-        .team-navigation-block {
-          margin-top: 34px;
-          margin-bottom: 18px;
-        }
-
-        .team-back-button {
-          display: inline-flex;
-          align-items: center;
-          justify-content: center;
-          gap: 9px;
-          min-height: 42px;
-          margin: 0 0 14px 2px;
-          padding: 0 16px;
-          border: 1px solid rgba(107, 26, 44, 0.16);
-          border-radius: 999px;
-          background: rgba(255, 255, 255, 0.96);
-          color: #6b1a2c;
-          box-shadow: 0 8px 22px rgba(60, 30, 20, 0.07);
-          font-size: 0.82rem;
-          font-weight: 950;
-          cursor: pointer;
-          transition: transform 0.18s ease, box-shadow 0.18s ease, background 0.18s ease;
-        }
-
-        .team-back-button:hover {
-          transform: translateY(-1px);
-          background: #fff8ef;
-          box-shadow: 0 10px 24px rgba(60, 30, 20, 0.1);
-        }
-
-        .team-back-button span {
-          font-size: 1.08rem;
-          line-height: 1;
-        }
-
         .team-tabs {
           display: flex;
           align-items: center;
           gap: 12px;
-          margin: 0;
+          margin: 22px 0 18px;
           padding: 8px;
           border: 1px solid #efe6db;
           border-radius: 999px;
           background: #fff8ef;
-          width: fit-content;
+          width: 100%;
           max-width: 100%;
+          overflow-x: auto;
+          scrollbar-width: thin;
           box-shadow: 0 12px 28px rgba(60, 30, 20, 0.05);
+        }
+
+        .team-back-tab {
+          border: 1px solid rgba(107, 26, 44, 0.14) !important;
+          background: #ffffff !important;
+          color: #6b1a2c !important;
+          box-shadow: 0 7px 18px rgba(60, 30, 20, 0.07) !important;
+          margin-bottom: 10px !important;
+        }
+
+        .team-back-tab:hover {
+          background: #fff4e5 !important;
+        }
+
+        .team-back-arrow {
+          font-size: 1.05rem;
+          line-height: 1;
+          font-weight: 900;
         }
 
         .team-tabs button {
@@ -1394,6 +1603,9 @@ export default function EquipeDetailPage({
           white-space: nowrap;
         }
 
+.shared-team-badge{display:inline-flex;margin:8px 0 0;padding:6px 10px;border-radius:999px;background:rgba(255,255,255,.15);border:1px solid rgba(255,255,255,.25);color:#fff;font-size:.72rem;font-weight:900}
+.shared-access-note{margin-bottom:14px;padding:13px 15px;border:1px solid #eadfd5;border-radius:13px;background:#fbf8f5;color:#766a64;font-size:.82rem;font-weight:750}
+.tl-addtile.disabled{opacity:.62;cursor:not-allowed}
         .team-tabs button.active {
           background: #6b1a2c;
           color: #fff;
@@ -1458,16 +1670,6 @@ export default function EquipeDetailPage({
 
           .team-hero-linked {
             padding-top: 1rem;
-          }
-
-          .team-navigation-block {
-            margin-top: 24px;
-          }
-
-          .team-back-button {
-            width: 100%;
-            justify-content: flex-start;
-            margin-left: 0;
           }
 
           .team-tabs {
@@ -2122,32 +2324,9 @@ function TrainingAnalysisBlock({
         });
       }
 
-      if (rows.length === 0 && typeof window !== "undefined") {
-        const keys = ["mybasket_team_practice_sessions", "mybasket_sessions", "mybasket_seances", "practice_sessions"];
-        for (const key of keys) {
-          try {
-            const parsed = JSON.parse(window.localStorage.getItem(key) || "[]");
-            if (Array.isArray(parsed) && parsed.length > 0) {
-              rows = parsed.filter((row: any) => {
-                const content = readSessionContent(row) || {};
-                const possibleIds = compactStrings([
-                  row.team_id,
-                  row.team_reference_id,
-                  row.teamId,
-                  row.team_local_id,
-                  row.equipe_id,
-                  row.equipeId,
-                  content.team_local_id,
-                  content.team_id,
-                  content.team?.id,
-                ]);
-                return possibleIds.some((value) => candidateIds.includes(value));
-              });
-              if (rows.length > 0) break;
-            }
-          } catch {}
-        }
-      }
+      // Source unique : les séances de la fiche équipe proviennent uniquement de Supabase.
+      // Aucun fallback localStorage : une séance supprimée de practice_sessions ne doit jamais
+      // réapparaître dans les analyses / donuts de l’équipe.
 
       setSessions(rows.map(normalizeTrainingSession));
     } catch (error) {
@@ -4507,8 +4686,14 @@ function InsightCard({
 /* ---------- 6. LINEUPS / 5 MAJEURS ---------- */
 
 type LineupActionRow = {
+  id?: string | null;
+  client_action_id?: string | null;
   match_id: string | null;
+  quarter?: number | null;
+  clock?: string | null;
   context: string | null;
+  player_id?: string | null;
+  rebound_player_id?: string | null;
   action_type: string | null;
   shot_type: string | null;
   shot_result: string | null;
@@ -4517,6 +4702,12 @@ type LineupActionRow = {
   ft_made: number | null;
   assist_player_id: string | null;
   lineup: string[] | null;
+  shot_zone_id?: string | null;
+  clip_start?: number | null;
+  clip_end?: number | null;
+  video_time?: number | null;
+  possession_start?: number | null;
+  possession_end?: number | null;
 };
 
 type LineupRow = {
@@ -4756,6 +4947,70 @@ function getPlayerNameFromAny(row: any) {
   return `${num ? `#${num} ` : ""}${name}`;
 }
 
+type LineupPlayerVisual = {
+  id: string;
+  name: string;
+  photo: string | null;
+  initials: string;
+};
+
+function getPlayerPhotoFromAny(row: any): string | null {
+  const value =
+    row?.photo ??
+    row?.avatar_url ??
+    row?.avatarUrl ??
+    row?.photo_url ??
+    row?.photoUrl ??
+    null;
+  return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+function getPlayerInitialsFromAny(row: any) {
+  const first = String(row?.first_name ?? row?.firstName ?? row?.prenom ?? "").trim();
+  const last = String(row?.last_name ?? row?.lastName ?? row?.nom ?? "").trim();
+  const full = String(row?.name ?? row?.full_name ?? row?.fullName ?? "").trim();
+  const parts = (first || last ? [first, last] : full.split(/\s+/)).filter(Boolean);
+  const initials = parts.slice(0, 2).map((part) => part[0]?.toUpperCase() || "").join("");
+  return initials || "J";
+}
+
+function sameLineup(action: LineupActionRow, ids: string[]) {
+  const actionIds = Array.isArray(action.lineup)
+    ? action.lineup.filter(Boolean).map(String).sort()
+    : [];
+  const rowIds = ids.map(String).sort();
+  return actionIds.length === rowIds.length && actionIds.every((id, index) => id === rowIds[index]);
+}
+
+function lineupClipAction(
+  action: LineupActionRow,
+  matchInfo: Map<string, { date: string; opponent: string }>,
+): ClipAction & LineupActionRow {
+  const matchId = String(action.match_id || "");
+  const info = matchInfo.get(matchId);
+  return {
+    ...action,
+    id: action.client_action_id ?? action.id ?? undefined,
+    matchId: action.match_id ?? null,
+    matchLabel: info ? `vs ${info.opponent}` : null,
+    date: info?.date ?? null,
+    opponent: info?.opponent ?? null,
+    q: Number(action.quarter ?? 0) || undefined,
+    clock: String(action.clock ?? ""),
+    context: action.context ?? "",
+    playerId: action.player_id ?? null,
+    actionType: action.action_type ?? null,
+    shotType: action.shot_type ?? null,
+    shotResult: action.shot_result ?? null,
+    zone: action.shot_zone_id ?? null,
+    clipStart: action.clip_start ?? null,
+    clipEnd: action.clip_end ?? null,
+    videoTime: action.video_time ?? null,
+    possessionStart: action.possession_start ?? null,
+    possessionEnd: action.possession_end ?? null,
+  };
+}
+
 function TeamLineupsBlock({ teamId }: { teamId: string }) {
   const supabase = createClient();
 
@@ -4763,6 +5018,11 @@ function TeamLineupsBlock({ teamId }: { teamId: string }) {
   const [matches, setMatches] = useState<SupaMatchRow[]>([]);
   const [actions, setActions] = useState<LineupActionRow[]>([]);
   const [names, setNames] = useState<Record<string, string>>({});
+  const [playersById, setPlayersById] = useState<Record<string, LineupPlayerVisual>>({});
+  const [matchInfo, setMatchInfo] = useState<Map<string, { date: string; opponent: string }>>(new Map());
+  const [videoByMatch, setVideoByMatch] = useState<Map<string, string>>(new Map());
+  const [syncByMatch, setSyncByMatch] = useState<Map<string, VideoSyncState>>(new Map());
+  const [clip, setClip] = useState<{ title: string; items: (ClipAction & LineupActionRow)[] } | null>(null);
 
   useEffect(() => {
     let active = true;
@@ -4773,7 +5033,7 @@ function TeamLineupsBlock({ teamId }: { teamId: string }) {
       const { data: matchData, error: matchError } = await supabase
         .from("match_stats")
         .select(
-          "id, team_id, opponent, match_date, us_score, them_score, result, home",
+          "id, team_id, opponent, match_date, us_score, them_score, result, home, video_url, video_sync_mode, video_sync_offset, video_sync_rate",
         )
         .eq("team_id", teamId)
         .order("match_date", { ascending: false });
@@ -4791,7 +5051,43 @@ function TeamLineupsBlock({ teamId }: { teamId: string }) {
       const matchRows = (matchData ?? []) as SupaMatchRow[];
       setMatches(matchRows);
 
+      const info = new Map<string, { date: string; opponent: string }>();
+      const videos = new Map<string, string>();
+      const syncs = new Map<string, VideoSyncState>();
+
+      (matchData ?? []).forEach((match: any) => {
+        const matchId = String(match.id);
+        info.set(matchId, {
+          date: String(match.match_date ?? ""),
+          opponent: String(match.opponent ?? "Adversaire"),
+        });
+        if (match.video_url) videos.set(matchId, String(match.video_url));
+        syncs.set(matchId, normalizeSync(match));
+      });
+
       const matchIds = matchRows.map((match) => match.id);
+
+      if (matchIds.length > 0) {
+        const { data: mediaRows } = await supabase
+          .from("match_media_sources")
+          .select("match_id,provider")
+          .in("match_id", matchIds);
+
+        (mediaRows ?? []).forEach((media: any) => {
+          if (media.provider !== "google_drive") return;
+          const matchId = String(media.match_id ?? "");
+          if (matchId) {
+            videos.set(
+              matchId,
+              `/api/media/matches/${encodeURIComponent(matchId)}/stream`,
+            );
+          }
+        });
+      }
+
+      setMatchInfo(info);
+      setVideoByMatch(videos);
+      setSyncByMatch(syncs);
 
       if (matchIds.length === 0) {
         setActions([]);
@@ -4802,7 +5098,7 @@ function TeamLineupsBlock({ teamId }: { teamId: string }) {
       const { data: actionData, error: actionError } = await supabase
         .from("match_actions")
         .select(
-          "match_id, context, action_type, shot_type, shot_result, special_case, ft_attempts, ft_made, assist_player_id, lineup",
+          "id, client_action_id, match_id, quarter, clock, context, player_id, rebound_player_id, action_type, shot_type, shot_result, special_case, ft_attempts, ft_made, assist_player_id, lineup, shot_zone_id, clip_start, clip_end, video_time, possession_start, possession_end",
         )
         .in("match_id", matchIds);
 
@@ -4842,6 +5138,19 @@ function TeamLineupsBlock({ teamId }: { teamId: string }) {
               return acc;
             }, {}),
           );
+
+          setPlayersById(
+            playersData.reduce((acc: Record<string, LineupPlayerVisual>, player: any) => {
+              const id = String(player.id);
+              acc[id] = {
+                id,
+                name: getPlayerNameFromAny(player),
+                photo: getPlayerPhotoFromAny(player),
+                initials: getPlayerInitialsFromAny(player),
+              };
+              return acc;
+            }, {}),
+          );
         }
       }
 
@@ -4860,6 +5169,57 @@ function TeamLineupsBlock({ teamId }: { teamId: string }) {
 
   const best = topRows[0];
   const mostUsed = [...rows].sort((a, b) => b.poss - a.poss)[0];
+
+  const clipsForLineup = (row: LineupRow, kind: "all" | "fg" | "2pts" | "3pts" | "ft" | "ast" | "to" | "stops") => {
+    const lineupActions = actions.filter((action) => sameLineup(action, row.ids));
+
+    const filtered = lineupActions.filter((action) => {
+      const context = String(action.context || "");
+      const actionType = String(action.action_type || "");
+      const shotType = String(action.shot_type || "");
+      const shotResult = String(action.shot_result || "");
+
+      if (kind === "all") return true;
+      if (kind === "fg") return context === "attaque" && actionType === "tir" && (shotType === "2PTS" || shotType === "3PTS");
+      if (kind === "2pts") return context === "attaque" && actionType === "tir" && shotType === "2PTS";
+      if (kind === "3pts") return context === "attaque" && actionType === "tir" && shotType === "3PTS";
+      if (kind === "ft") return context === "attaque" && ((actionType === "tir" && shotType === "LF") || actionType === "faute-provoquee");
+      if (kind === "ast") return context === "attaque" && !!action.assist_player_id;
+      if (kind === "to") return context === "attaque" && actionType === "perte";
+      if (kind === "stops") return context === "defense" && lineupActionPoints(action) >= 0;
+
+      return false;
+    });
+
+    return filtered.map((action) => lineupClipAction(action, matchInfo));
+  };
+
+  const openLineupClips = (
+    row: LineupRow,
+    kind: "all" | "fg" | "2pts" | "3pts" | "ft" | "ast" | "to" | "stops",
+    label: string,
+  ) => {
+    const items = clipsForLineup(row, kind);
+    if (!items.length) return;
+    setClip({ title: `Lineup · ${label}`, items });
+  };
+
+  const clickableCell = (
+    row: LineupRow,
+    kind: "all" | "fg" | "2pts" | "3pts" | "ft" | "ast" | "to" | "stops",
+    label: string,
+    content: any,
+  ) => {
+    const hasItems = clipsForLineup(row, kind).length > 0;
+    return (
+      <td
+        className={hasItems ? "lineup-video-cell" : undefined}
+        onClick={hasItems ? () => openLineupClips(row, kind, label) : undefined}
+      >
+        {content}
+      </td>
+    );
+  };
 
   return (
     <section className="tl-card lineups-card">
@@ -4963,8 +5323,23 @@ function TeamLineupsBlock({ teamId }: { teamId: string }) {
               <tbody>
                 {topRows.map((row) => (
                   <tr key={row.ids.join("|")}>
-                    <td className="lineup-label">{row.label}</td>
-                    <td>{row.actions}</td>
+                    <td className="lineup-label">
+                      <div className="lineup-avatars" aria-label="5 joueurs du lineup">
+                        {row.ids.slice(0, 5).map((playerId) => {
+                          const player = playersById[playerId];
+                          return (
+                            <span key={playerId} className="lineup-avatar">
+                              {player?.photo ? (
+                                <img src={player.photo} alt="" />
+                              ) : (
+                                <span>{player?.initials || "J"}</span>
+                              )}
+                            </span>
+                          );
+                        })}
+                      </div>
+                    </td>
+                    {clickableCell(row, "all", "Toutes les actions", row.actions)}
                     <td>{r1(row.poss)}</td>
                     <td>{row.ptsFor}</td>
                     <td>{row.ptsAgainst}</td>
@@ -4974,23 +5349,15 @@ function TeamLineupsBlock({ teamId }: { teamId: string }) {
                     </td>
                     <td>{r1(row.ppp)}</td>
                     <td>{r1(row.offRtg)}</td>
-                    <td>
-                      {row.fgm}-{row.fga}
-                    </td>
-                    <td>
-                      {row.p2m}-{row.p2a}
-                    </td>
-                    <td>
-                      {row.p3m}-{row.p3a}
-                    </td>
-                    <td>
-                      {row.ftm}-{row.fta}
-                    </td>
+                    {clickableCell(row, "fg", "FG", `${row.fgm}-${row.fga}`)}
+                    {clickableCell(row, "2pts", "2PTS", `${row.p2m}-${row.p2a}`)}
+                    {clickableCell(row, "3pts", "3PTS", `${row.p3m}-${row.p3a}`)}
+                    {clickableCell(row, "ft", "LF", `${row.ftm}-${row.fta}`)}
                     <td>{r1(row.efg)}%</td>
                     <td>{r1(row.ts)}%</td>
-                    <td>{r1(row.astPct)}%</td>
-                    <td>{r1(row.tovPct)}%</td>
-                    <td>{row.stops}</td>
+                    {clickableCell(row, "ast", "Passes décisives", `${r1(row.astPct)}%`)}
+                    {clickableCell(row, "to", "Balles perdues", `${r1(row.tovPct)}%`)}
+                    {clickableCell(row, "stops", "Stops défensifs", row.stops)}
                     <td>{r1(row.stopPct)}%</td>
                   </tr>
                 ))}
@@ -4999,6 +5366,21 @@ function TeamLineupsBlock({ teamId }: { teamId: string }) {
           </div>
         </>
       )}
+
+      <ActionClipsModal
+        teamId={teamId}
+        open={!!clip}
+        actions={(clip?.items ?? []) as ClipAction[]}
+        title={clip?.title ?? ""}
+        videoUrlForAction={(action) =>
+          videoByMatch.get(String(action.matchId ?? (action as any).match_id ?? "")) ?? null
+        }
+        syncForAction={(action) =>
+          syncByMatch.get(String(action.matchId ?? (action as any).match_id ?? "")) ?? NATIVE_SYNC
+        }
+        onClose={() => setClip(null)}
+        playerName={(id) => names[String(id ?? "")] || undefined}
+      />
 
       <style jsx>{`
         .lineups-card {
@@ -5196,6 +5578,50 @@ function TeamLineupsBlock({ teamId }: { teamId: string }) {
           line-height: 1.42;
           overflow-wrap: anywhere;
         }
+
+        .lineup-avatars {
+          display: flex;
+          align-items: center;
+          gap: 4px;
+          min-width: 142px;
+          height: 28px;
+          white-space: nowrap;
+        }
+
+        .lineup-avatar {
+          width: 26px;
+          height: 26px;
+          flex: 0 0 26px;
+          border-radius: 999px;
+          overflow: hidden;
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          background: #f3ece4;
+          border: 1px solid #e2d5c6;
+          color: #6b1a2c;
+          font-size: 8px;
+          font-weight: 900;
+          line-height: 1;
+        }
+
+        .lineup-avatar img {
+          width: 100%;
+          height: 100%;
+          display: block;
+          object-fit: cover;
+        }
+
+        td.lineup-video-cell {
+          cursor: pointer;
+          transition: background 0.15s ease, color 0.15s ease;
+        }
+
+        td.lineup-video-cell:hover {
+          background: #fff4dc;
+          color: #6b1a2c;
+        }
+
 
         .good {
           color: #177245;

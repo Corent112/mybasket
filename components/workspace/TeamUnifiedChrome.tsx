@@ -129,6 +129,24 @@ export default function TeamUnifiedChrome({children}:{children:ReactNode}){
           box-shadow:none!important;
         }
 
+        .teamUnifiedChrome .team-tabs .team-back-tab{
+          min-height:38px!important;
+          margin:0 0 18px!important;
+          border:1px solid rgba(107,26,44,.12)!important;
+          background:#fffaf6!important;
+          color:var(--team-ui-primary)!important;
+          font-size:12px!important;
+          font-weight:900!important;
+        }
+
+        .teamUnifiedChrome .team-tabs .team-back-tab:hover{
+          background:#fbf0ea!important;
+        }
+
+        .teamUnifiedChrome .team-tabs .team-back-tab .team-back-arrow{
+          display:none!important;
+        }
+
         .teamUnifiedChrome .team-tabs button:hover{
           background:#fbf4f0!important;
           color:var(--team-ui-primary)!important;
@@ -147,16 +165,17 @@ export default function TeamUnifiedChrome({children}:{children:ReactNode}){
 
         .teamUnifiedChrome .team-tabs button svg{display:none!important}
         .teamUnifiedChrome .team-tabs button::before{width:18px;flex:0 0 18px;text-align:center;font-size:16px}
-        .teamUnifiedChrome .team-tabs button:nth-child(1)::before{content:"👥"}
-        .teamUnifiedChrome .team-tabs button:nth-child(2)::before{content:"🗓️"}
-        .teamUnifiedChrome .team-tabs button:nth-child(3)::before{content:"🧑"}
-        .teamUnifiedChrome .team-tabs button:nth-child(4)::before{content:"📝"}
-        .teamUnifiedChrome .team-tabs button:nth-child(5)::before{content:"🏀"}
-        .teamUnifiedChrome .team-tabs button:nth-child(6)::before{content:"📈"}
-        .teamUnifiedChrome .team-tabs button:nth-child(7)::before{content:"📁"}
-        .teamUnifiedChrome .team-tabs button:nth-child(8)::before{content:"📅"}
-        .teamUnifiedChrome .team-tabs button:nth-child(9)::before{content:"📊"}
-        .teamUnifiedChrome .team-tabs button:nth-child(10)::before{content:"📋"}
+        .teamUnifiedChrome .team-tabs .team-back-tab::before{content:"←";font-size:18px;font-weight:1000}
+        .teamUnifiedChrome .team-tabs button:nth-child(2)::before{content:"👥"}
+        .teamUnifiedChrome .team-tabs button:nth-child(3)::before{content:"🗓️"}
+        .teamUnifiedChrome .team-tabs button:nth-child(4)::before{content:"🧑"}
+        .teamUnifiedChrome .team-tabs button:nth-child(5)::before{content:"📝"}
+        .teamUnifiedChrome .team-tabs button:nth-child(6)::before{content:"🏀"}
+        .teamUnifiedChrome .team-tabs button:nth-child(7)::before{content:"📈"}
+        .teamUnifiedChrome .team-tabs button:nth-child(8)::before{content:"📁"}
+        .teamUnifiedChrome .team-tabs button:nth-child(9)::before{content:"📅"}
+        .teamUnifiedChrome .team-tabs button:nth-child(10)::before{content:"📊"}
+        .teamUnifiedChrome .team-tabs button:nth-child(11)::before{content:"📋"}
 
         .teamUnifiedChrome .tl-hero{
           border-radius:14px!important;
