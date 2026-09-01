@@ -972,7 +972,7 @@ export default function EquipeDetailPage({
           <button
             type="button"
             className="team-back-tab"
-            onClick={() => router.push("/equipes")}
+            onClick={() => router.push("/mon-compte?tab=equipes")}
             aria-label="Retour aux équipes"
           >
             <span className="team-back-arrow" aria-hidden="true">←</span>
