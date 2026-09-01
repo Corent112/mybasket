@@ -31,7 +31,72 @@ const table = (headers: string[], n = 4) =>
   `<table><thead><tr>${headers.map((h) => `<th>${h}</th>`).join("")}</tr></thead><tbody>${rows(n, headers.length)}</tbody></table>`;
 const identity = () => `<div class="mb-grid mb-grid-2">${field("Nom / prénom", "{{person.full_name}}{{player.full_name}}")} ${field("Email", "{{person.email}}{{player.email}}")} ${field("Téléphone", "{{person.phone}}")} ${field("Structure / club", "{{player.club_name}}")} </div>`;
 
+
+const smartHeader = (audience = "Candidats") => `${area("Informations", `<div class="mb-grid mb-grid-3">${field("Destinataires", audience)}${field("Date", "{{today}}")}${field("Importance", "Information / Moyenne / Haute")}</div>`)}`;
+const eventDetails = () => `${area("Détail de l’action", `<div class="mb-grid mb-grid-2">${field("Date", "{{event.date}}")}${field("Horaires", "{{event.hours}}")}${field("Lieu", "{{event.location}}")}${field("Contact", "{{structure.email}}")}</div>`)}`;
+const validationBlock = () => `${area("Validation", table(["Rédacteur", "Vérificateur", "Approbateur"], 1))}`;
+const trainingClosing = () => `<p>En cas de besoin, merci de contacter l’Institution à l’adresse : <b>{{structure.email}}</b>.</p><p>Sportivement,</p><p><b>{{structure.name}}</b></p>`;
+
+const SMART_NOTE_TEMPLATES: InstitutionalResourceTemplate[] = [
+  {
+    key: "convocation_formation_premiere_journee", title: "Convocation · première journée", category: "Formation", audiences: ["Comité","Ligue","Fédération"], icon: "1️⃣",
+    description: "Préremplit la convocation de démarrage d’une formation à partir de l’événement.",
+    bodyHtml: `${smartHeader()}<p>Cher(e) candidat(e),</p><p>Nous avons le plaisir de vous informer que la formation <b>{{event.training}}</b> mise en place par <b>{{structure.name}}</b> débute prochainement.</p>${eventDetails()}<p>Merci d’apporter une tenue de sport si nécessaire pour les séquences pratiques.</p>${trainingClosing()}${validationBlock()}`,
+  },
+  {
+    key: "convocation_formation_journee_suivante", title: "Convocation · journée suivante", category: "Formation", audiences: ["Comité","Ligue","Fédération"], icon: "➡️",
+    description: "Convocation préremplie pour une deuxième, troisième ou autre journée de formation.",
+    bodyHtml: `${smartHeader()}<p>Cher(e) candidat(e),</p><p>Nous avons le plaisir de vous informer que la prochaine journée de la formation <b>{{event.training}}</b> mise en place par <b>{{structure.name}}</b> aura lieu prochainement.</p>${eventDetails()}<p>Merci d’apporter une tenue de sport si nécessaire pour les séquences pratiques.</p>${trainingClosing()}${validationBlock()}`,
+  },
+  {
+    key: "convocation_formation_derniere_journee", title: "Convocation · dernière journée", category: "Formation", audiences: ["Comité","Ligue","Fédération"], icon: "🏁",
+    description: "Préremplit la convocation de la dernière journée d’une formation.",
+    bodyHtml: `${smartHeader()}<p>Cher(e) candidat(e),</p><p>Nous avons le plaisir de vous informer que la dernière journée de la formation <b>{{event.training}}</b> mise en place par <b>{{structure.name}}</b> aura lieu prochainement.</p>${eventDetails()}<p>Merci d’apporter une tenue de sport si nécessaire pour les séquences pratiques.</p>${trainingClosing()}${validationBlock()}`,
+  },
+  {
+    key: "convocation_stage_plusieurs_jours", title: "Convocation · stage plusieurs jours", category: "Formation", audiences: ["Comité","Ligue","Fédération"], icon: "🗓️",
+    description: "Convocation pour une action ou formation organisée sur plusieurs journées.",
+    bodyHtml: `${smartHeader()}<p>Cher(e) candidat(e),</p><p>Nous avons le plaisir de vous informer que la formation <b>{{event.training}}</b> organisée par <b>{{structure.name}}</b> aura lieu prochainement.</p>${eventDetails()}${area("Programme / journées", "Complétez ici les différentes journées, horaires ou séquences.")}${trainingClosing()}${validationBlock()}`,
+  },
+  {
+    key: "note_kick_off", title: "Note · Kick Off", category: "Communication", audiences: ["Comité","Ligue","Fédération","Pôle"], icon: "🚀",
+    description: "Note Kick Off inspirée de vos documents habituels, avec les données de l’événement.",
+    bodyHtml: `${smartHeader()}<p>Cher(e) candidat(e),</p><p>Nous avons le plaisir de vous informer que <b>{{structure.name}}</b> organise son Kick Off dans le cadre des formations de cadres.</p>${eventDetails()}${area("Programme", "Ajoutez ici l’accueil, les interventions, pauses et horaires de clôture.")}${trainingClosing()}${validationBlock()}`,
+  },
+  {
+    key: "convocation_colloque", title: "Convocation · colloque", category: "Formation", audiences: ["Comité","Ligue","Fédération"], icon: "🎤",
+    description: "Convocation préremplie pour colloque ou formation continue.",
+    bodyHtml: `${smartHeader()}<p>Cher(e) candidat(e),</p><p>Nous avons le plaisir de vous informer que <b>{{structure.name}}</b> organise le colloque <b>{{event.title}}</b> dans le cadre de ses actions de formation.</p>${eventDetails()}${trainingClosing()}${validationBlock()}`,
+  },
+  {
+    key: "note_stage_selection", title: "Note · stage de sélection", category: "Sélection / Stage", audiences: ["Comité","Ligue","Fédération"], icon: "🏀",
+    description: "Annonce d’un rassemblement ou stage avec liste des joueurs/joueuses sélectionnés.",
+    bodyHtml: `${smartHeader("Clubs / destinataires")}<p>Bonjour à toutes et à tous,</p><p>Nous avons le plaisir de vous annoncer que le stage / rassemblement <b>{{event.title}}</b> aura lieu prochainement.</p>${eventDetails()}<p>Les joueurs et joueuses devront apporter leur gourde et arriver 15 minutes avant le début de l’entraînement.</p>${area("Objectif", "Cette action a pour but d’accompagner la sélection et la préparation des joueurs et joueuses concernés.")}${area("Liste des sélectionnés", "{{recipients.list}}")}${trainingClosing()}${validationBlock()}`,
+  },
+  {
+    key: "note_premier_stage_selection", title: "Note · premier stage de sélection", category: "Sélection / Stage", audiences: ["Comité","Ligue","Fédération"], icon: "🥇",
+    description: "Premier rassemblement d’une campagne de sélection, prérempli depuis le calendrier.",
+    bodyHtml: `${smartHeader("Clubs / destinataires")}<p>Bonjour à toutes et à tous,</p><p>Le premier stage de sélection <b>{{event.title}}</b> aura lieu prochainement.</p>${eventDetails()}<p>Les joueurs et joueuses devront apporter leur gourde et arriver 15 minutes avant le début de l’entraînement.</p>${area("Objectif de la sélection")}${area("Liste des sélectionnés", "{{recipients.list}}")}${trainingClosing()}${validationBlock()}`,
+  },
+  {
+    key: "note_stage_selection_suivant", title: "Note · stage de sélection suivant", category: "Sélection / Stage", audiences: ["Comité","Ligue","Fédération"], icon: "🔁",
+    description: "Deuxième stage ou rassemblement suivant avec liste préremplissable.",
+    bodyHtml: `${smartHeader("Clubs / destinataires")}<p>Bonjour à toutes et à tous,</p><p>Le prochain stage de sélection <b>{{event.title}}</b> aura lieu prochainement.</p>${eventDetails()}<p>Les joueurs et joueuses devront apporter leur gourde et arriver 15 minutes avant le début de l’entraînement.</p>${area("Objectif / compétition préparée")}${area("Liste des sélectionnés", "{{recipients.list}}")}${trainingClosing()}${validationBlock()}`,
+  },
+  {
+    key: "resultat_selection_retenu", title: "Résultat sélection · retenu", category: "Sélection / Stage", audiences: ["Comité","Ligue","Fédération"], icon: "✅",
+    description: "Courrier individuel annonçant qu’un joueur ou une joueuse est retenu(e).",
+    bodyHtml: `${smartHeader("Parents / joueur")}<p>Chers parents,</p><p>Nous vous remercions pour l’engagement et les efforts montrés tout au long des sélections.</p><p>Nous avons le plaisir de vous informer que votre enfant <b>a été retenu(e)</b> pour la suite de la sélection / compétition <b>{{event.title}}</b>.</p>${area("Informations pour la suite", "Précisez ici la prochaine date, les horaires, le lieu et les consignes.")}${trainingClosing()}`,
+  },
+  {
+    key: "resultat_selection_non_retenu", title: "Résultat sélection · non retenu", category: "Sélection / Stage", audiences: ["Comité","Ligue","Fédération"], icon: "💬",
+    description: "Courrier individuel de non-sélection, dans le ton encourageant de vos modèles.",
+    bodyHtml: `${smartHeader("Parents / joueur")}<p>Chers parents,</p><p>Nous tenons à vous remercier pour l’engagement et les efforts que votre enfant a montrés tout au long des sélections.</p><p>À l’issue de cette étape, votre enfant <b>n’a pas été retenu(e)</b> pour la compétition / suite de la sélection <b>{{event.title}}</b>.</p><p>Il ne s’agit pas d’une fin en soi. Cette étape s’inscrit dans un parcours de progression et d’autres opportunités se présenteront.</p><p>Nous continuerons à suivre son évolution et espérons le/la retrouver lors de prochains rassemblements.</p><p>Merci pour votre confiance.</p>${trainingClosing()}`,
+  },
+];
+
 export const INSTITUTIONAL_RESOURCE_TEMPLATES: InstitutionalResourceTemplate[] = [
+  ...SMART_NOTE_TEMPLATES,
   {
     key: "note_institutionnelle",
     title: "Note institutionnelle",

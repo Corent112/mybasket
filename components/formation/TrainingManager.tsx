@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import TrainingPlanningBoard from "@/components/formation/TrainingPlanningBoard";
 import PedagogicalScenarioEditor from "@/components/formation/PedagogicalScenarioEditor";
+import InstitutionalLinkedEvents from "@/components/institutionnel/InstitutionalLinkedEvents";
 
 type Program = { id: string; name: string; code: string | null };
 type Cohort = {
@@ -46,7 +47,7 @@ type AttendanceSession = { id: string; cohort_id: string; title: string; session
 type Attendance = { id: string; session_id: string; candidate_id: string; status: string; notes?: string | null };
 type Evaluation = { id: string; candidate_id: string; status: string; score?: number | null; result?: string | null; strengths?: string | null; development_areas?: string | null; notes?: string | null };
 
-type Tab = "registered" | "attendance" | "documents" | "planning" | "scenario" | "communication" | "settings";
+type Tab = "registered" | "attendance" | "documents" | "planning" | "events" | "scenario" | "communication" | "settings";
 
 const ADMIN_STATUS: Record<string, string> = {
   invited: "Invité",
@@ -417,7 +418,7 @@ export default function TrainingManager({ institutionId }: { institutionId?: str
 
     {!cohort ? <div className="empty-state">Crée ou sélectionne une formation pour commencer.</div> : <>
       <nav className="training-tabs">
-        {([['registered','Inscrits'],['attendance','Présences'],['documents','Dossier & pièces'],['planning','Planning'],['scenario','Scénario pédagogique'],['communication','Communication'],['settings','Paramètres']] as [Tab,string][]).map(([key,label]) => <button key={key} onClick={() => setTab(key)} className={tab === key ? "active" : ""}>{label}</button>)}
+        {([['registered','Inscrits'],['attendance','Présences'],['documents','Dossier & pièces'],['planning','Planning'],['events','Événements'],['scenario','Scénario pédagogique'],['communication','Communication'],['settings','Paramètres']] as [Tab,string][]).map(([key,label]) => <button key={key} onClick={() => setTab(key)} className={tab === key ? "active" : ""}>{label}</button>)}
       </nav>
 
       {tab === "registered" && <>
@@ -448,6 +449,7 @@ export default function TrainingManager({ institutionId }: { institutionId?: str
       </section>}
 
       {tab === "planning" && <section className="embedded"><TrainingPlanningBoard cohortId={cohortId} /></section>}
+      {tab === "events" && institutionId && <InstitutionalLinkedEvents structureId={institutionId} scope="training" cohortId={cohortId} />}
       {tab === "scenario" && <section className="embedded"><PedagogicalScenarioEditor cohortId={cohortId} /></section>}
 
       {tab === "communication" && <section className="panel communication"><div className="panel-head"><div><p>COMMUNICATION</p><h3>Écrire depuis la vraie liste d’inscrits</h3><span>{checked.size ? `${checked.size} candidat(s) sélectionné(s)` : "Aucune sélection : tu peux envoyer à toute la promotion."}</span></div></div><div className="message-grid"><label>Type<select value={messageForm.type} onChange={(e) => setMessageForm({ ...messageForm, type: e.target.value })}><option value="message">Message</option><option value="convocation">Convocation</option><option value="reminder">Rappel</option></select></label><label>Sujet<input value={messageForm.subject} onChange={(e) => setMessageForm({ ...messageForm, subject: e.target.value })} /></label><label className="wide">Message<textarea value={messageForm.body} onChange={(e) => setMessageForm({ ...messageForm, body: e.target.value })} rows={6} /></label></div><div className="actions"><button disabled={checked.size === 0} onClick={() => void sendMessage("selected")}>Envoyer aux sélectionnés</button><button className="secondary" onClick={() => void sendMessage("all")}>Envoyer à toute la promotion</button><button className="ghost" disabled={checked.size === 0} onClick={() => void sendMessage("missing_documents")}>Relancer les pièces manquantes</button></div></section>}
