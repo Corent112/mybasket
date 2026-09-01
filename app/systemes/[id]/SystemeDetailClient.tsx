@@ -151,6 +151,20 @@ export default function SystemeDetailClient() {
   }
 
   function goEdit() {
+    // Reprendre la fiche réellement enregistrée, comme pour "Modifier fiche"
+    // sur les exercices. On ne laisse aucun ancien brouillon masquer Supabase.
+    try {
+      localStorage.removeItem(`mybasket_systeme_draft_${id}`);
+      localStorage.removeItem(`mybasket_systeme_draft_${id}_storage_id`);
+      localStorage.removeItem("mybasket_plaquette_load");
+      localStorage.removeItem("mybasket_plaquette_result");
+      localStorage.removeItem("mybasket_edit_schema_index");
+      localStorage.removeItem("mybasket_edit_schema_group_id");
+      localStorage.removeItem("mb_plaquette_return_to");
+      localStorage.removeItem("mybasket_edit_system_id");
+      localStorage.removeItem("mybasket_current_system_id");
+    } catch {}
+
     router.push(`/systemes/creer?id=${id}`);
   }
 
@@ -211,7 +225,7 @@ export default function SystemeDetailClient() {
 
         <div className="ed-top-actions">
           <button className="ed-btn ghost" onClick={goEdit}>
-            Modifier
+            Modifier la fiche
           </button>
 
           <button className="ed-btn danger" onClick={remove} disabled={deleting}>
@@ -251,7 +265,7 @@ export default function SystemeDetailClient() {
             </button>
 
             <button type="button" onClick={goEdit}>
-              Modifier
+              Modifier la fiche
             </button>
           </div>
         </div>

@@ -156,6 +156,7 @@ export default function SystemesClient() {
   const [systeme, setSysteme] = useState<Systeme>(blank());
   const [toast, setToast] = useState("");
   const [loading, setLoading] = useState(false);
+  const [draftReady, setDraftReady] = useState(false);
   const [systemStorageId, setSystemStorageId] = useState<string>(editId || "");
 
   const tempsFortsOptions = DEFAULT_TEMPS_FORTS;
@@ -206,13 +207,18 @@ export default function SystemesClient() {
   }, [editId, draftKey]);
 
   useEffect(() => {
+    // Ne jamais écrire le formulaire vide au premier rendu.
+    // On attend d'avoir chargé soit la fiche Supabase, soit le brouillon réel.
+    if (!draftReady) return;
+
     try {
       localStorage.setItem(draftKey, JSON.stringify(systeme));
     } catch {}
-  }, [draftKey, systeme]);
+  }, [draftKey, systeme, draftReady]);
 
   useEffect(() => {
     const load = async () => {
+      setDraftReady(false);
       let base = blank();
 
       try {
@@ -243,6 +249,7 @@ export default function SystemesClient() {
           localStorage.setItem(`${DRAFT_KEY}_storage_id`, temporaryDraftId);
           setSystemStorageId(temporaryDraftId);
           setSysteme(blank());
+          setDraftReady(true);
           return;
         }
 
@@ -360,9 +367,11 @@ export default function SystemesClient() {
           ...base,
           schemaDataList: syncSchemas(base.schemaImages, base.schemaDataList),
         });
+        setDraftReady(true);
       } catch (error) {
         console.error(error);
         setLoading(false);
+        setDraftReady(true);
         flash("Erreur lors du chargement");
       }
     };
