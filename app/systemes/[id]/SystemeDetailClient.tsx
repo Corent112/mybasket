@@ -9,7 +9,7 @@ import {
   type Playbook,
   type PlaybookCategory,
 } from "@/lib/playbook";
-import { getSystem, deleteSystem, type SystemItem } from "@/lib/systems";
+import { getSystem, type SystemItem } from "@/lib/systems";
 
 function normalizeList(value: unknown): string[] {
   if (Array.isArray(value)) {
@@ -44,7 +44,6 @@ export default function SystemeDetailClient() {
 
   const [systeme, setSysteme] = useState<SystemItem | null>(null);
   const [ready, setReady] = useState(false);
-  const [deleting, setDeleting] = useState(false);
   const [currentImage, setCurrentImage] = useState(0);
 
   const [playbooks, setPlaybooks] = useState<Playbook[]>([]);
@@ -83,19 +82,6 @@ export default function SystemeDetailClient() {
 
     load();
   }, [id, router]);
-
-  async function remove() {
-    if (!id) return;
-
-    const ok = window.confirm("Supprimer définitivement ce système ?");
-    if (!ok) return;
-
-    setDeleting(true);
-    await deleteSystem(id);
-    setDeleting(false);
-
-    router.push("/systemes");
-  }
 
   async function openPlaybookModal() {
     const supabase = createClient();
@@ -151,8 +137,6 @@ export default function SystemeDetailClient() {
   }
 
   function goEdit() {
-    // Reprendre la fiche réellement enregistrée, comme pour "Modifier fiche"
-    // sur les exercices. On ne laisse aucun ancien brouillon masquer Supabase.
     try {
       localStorage.removeItem(`mybasket_systeme_draft_${id}`);
       localStorage.removeItem(`mybasket_systeme_draft_${id}_storage_id`);
@@ -222,16 +206,6 @@ export default function SystemeDetailClient() {
         <button className="ed-back" onClick={() => router.push("/systemes")}>
           ← Retour aux systèmes
         </button>
-
-        <div className="ed-top-actions">
-          <button className="ed-btn ghost" onClick={goEdit}>
-            Modifier la fiche
-          </button>
-
-          <button className="ed-btn danger" onClick={remove} disabled={deleting}>
-            {deleting ? "Suppression..." : "Supprimer"}
-          </button>
-        </div>
       </div>
 
       <section className="ed-hero">
@@ -560,11 +534,6 @@ const CSS = `
   margin-bottom:22px;
 }
 
-.ed-top-actions{
-  display:flex;
-  gap:10px;
-}
-
 .ed-back,
 .ed-btn,
 .ed-big{
@@ -579,16 +548,6 @@ const CSS = `
 .ed-btn.ghost{
   background:#f1f1f1;
   color:#111;
-}
-
-.ed-btn.danger{
-  background:#c0392b;
-  color:white;
-}
-
-.ed-btn:disabled{
-  opacity:.6;
-  cursor:not-allowed;
 }
 
 .ed-hero{
