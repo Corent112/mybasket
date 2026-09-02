@@ -233,11 +233,7 @@ export default function SystemesWorkspace() {
 
       <style jsx global>{`
         .sw-switch-wrap {
-          max-width: 1280px;
-          margin: 18px auto 0;
-          padding: 0 24px;
-          position: relative;
-          z-index: 2;
+          display: none !important;
         }
         .sw-switch {
           display: inline-flex;
