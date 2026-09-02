@@ -3,17 +3,38 @@ import { revalidatePath } from "next/cache";
 import styles from "./page.module.css";
 import { requireAdmin } from "@/lib/admin/guard";
 
-type System = {
+type SystemProposal = {
   id: string;
+  user_id: string | null;
   title: string | null;
   objectif: string | null;
   organisation: string | null;
-  type: string | null;
+  deroulement: string | null;
+  consignes: string | null;
+  variantes: string | null;
+  famille: string | null;
   categorie: string | null;
+  type: string | null;
+  temps_forts: string[] | null;
+  tags: string[] | null;
+  images: string[] | null;
+  videos: string[] | null;
+  schema_image: string | null;
+  schema_images: string[] | null;
+  schema_video: string | null;
+  schema_data: unknown;
+  schema_data_list: unknown;
+  play_ids: string[] | null;
   status: string | null;
   review_status: string | null;
+  visibility: string | null;
+  submitted_at: string | null;
+  reviewed_at: string | null;
+  reviewed_by: string | null;
+  rejection_reason: string | null;
+  original_system_id: string | null;
   created_at: string | null;
-  user_id: string | null;
+  updated_at: string | null;
 };
 
 function formatDate(value: string | null) {
@@ -21,8 +42,8 @@ function formatDate(value: string | null) {
   return new Date(value).toLocaleDateString("fr-FR");
 }
 
-function getStatus(row: System) {
-  return row.review_status || row.status || "pending";
+function getStatus(row: SystemProposal) {
+  return row.review_status || row.status || "submitted";
 }
 
 function statusLabel(status: string) {
@@ -39,59 +60,181 @@ function statusClass(status: string) {
   return styles.pending;
 }
 
-async function updateSystemStatus(formData: FormData) {
-  "use server";
-
-  const { supabase } = await requireAdmin();
-
-  const id = String(formData.get("id") || "");
-  const status = String(formData.get("status") || "pending");
-
-  if (!id) return;
-
-  await supabase
-    .from("systems")
-    .update({
-      status,
-      review_status: status,
-      updated_at: new Date().toISOString(),
-    })
-    .eq("id", id);
-
+function revalidateSystemPages() {
   revalidatePath("/admin");
   revalidatePath("/admin/systemes");
   revalidatePath("/systemes");
 }
 
-async function deleteSystem(formData: FormData) {
+async function approveSystemProposal(formData: FormData) {
+  "use server";
+
+  const { supabase, user } = await requireAdmin();
+  const id = String(formData.get("id") || "");
+
+  if (!id) return;
+
+  const { data, error } = await supabase
+    .from("systems")
+    .select("*")
+    .eq("id", id)
+    .maybeSingle();
+
+  if (error || !data) {
+    console.error("Proposition système introuvable", error);
+    return;
+  }
+
+  const proposal = data as SystemProposal;
+
+  if (proposal.review_status !== "submitted") {
+    revalidateSystemPages();
+    return;
+  }
+
+  const { data: officialExisting, error: officialLookupError } = await supabase
+    .from("systems")
+    .select("id")
+    .eq("original_system_id", proposal.id)
+    .eq("visibility", "public")
+    .eq("review_status", "approved")
+    .maybeSingle();
+
+  if (officialLookupError) {
+    console.error("Recherche copie officielle système impossible", officialLookupError);
+    return;
+  }
+
+  const now = new Date().toISOString();
+
+  if (!officialExisting) {
+    const { error: insertError } = await supabase.from("systems").insert({
+      id: crypto.randomUUID(),
+      user_id: user.id,
+      title: proposal.title ?? "",
+      objectif: proposal.objectif ?? "",
+      organisation: proposal.organisation ?? "",
+      deroulement: proposal.deroulement ?? "",
+      consignes: proposal.consignes ?? "",
+      variantes: proposal.variantes ?? "",
+      famille: proposal.famille ?? "",
+      categorie: proposal.categorie ?? "",
+      type: proposal.type ?? "",
+      temps_forts: proposal.temps_forts ?? [],
+      tags: proposal.tags ?? [],
+      images: proposal.images ?? [],
+      videos: proposal.videos ?? [],
+      schema_image: proposal.schema_image ?? "",
+      schema_images: proposal.schema_images ?? [],
+      schema_video: proposal.schema_video ?? "",
+      schema_data: proposal.schema_data ?? null,
+      schema_data_list: proposal.schema_data_list ?? [],
+      play_ids: [],
+      visibility: "public",
+      status: "approved",
+      review_status: "approved",
+      original_system_id: proposal.id,
+      submitted_at: null,
+      reviewed_at: now,
+      reviewed_by: user.id,
+      rejection_reason: null,
+      created_at: now,
+      updated_at: now,
+    });
+
+    if (insertError) {
+      console.error("Publication système MyBasket impossible", insertError);
+      return;
+    }
+  }
+
+  const { error: updateError } = await supabase
+    .from("systems")
+    .update({
+      visibility: "private",
+      status: "approved",
+      review_status: "approved",
+      reviewed_at: now,
+      reviewed_by: user.id,
+      rejection_reason: null,
+      updated_at: now,
+    })
+    .eq("id", proposal.id);
+
+  if (updateError) {
+    console.error("Validation proposition système impossible", updateError);
+    return;
+  }
+
+  revalidateSystemPages();
+}
+
+async function rejectSystemProposal(formData: FormData) {
+  "use server";
+
+  const { supabase, user } = await requireAdmin();
+  const id = String(formData.get("id") || "");
+  const reason = String(formData.get("reason") || "").trim();
+
+  if (!id) return;
+
+  const now = new Date().toISOString();
+  const { error } = await supabase
+    .from("systems")
+    .update({
+      visibility: "private",
+      status: "rejected",
+      review_status: "rejected",
+      reviewed_at: now,
+      reviewed_by: user.id,
+      rejection_reason: reason || null,
+      updated_at: now,
+    })
+    .eq("id", id);
+
+  if (error) {
+    console.error("Refus proposition système impossible", error);
+    return;
+  }
+
+  revalidateSystemPages();
+}
+
+async function deleteSystemProposal(formData: FormData) {
   "use server";
 
   const { supabase } = await requireAdmin();
-
   const id = String(formData.get("id") || "");
+
   if (!id) return;
 
-  await supabase.from("systems").delete().eq("id", id);
+  const { error } = await supabase.from("systems").delete().eq("id", id);
 
-  revalidatePath("/admin");
-  revalidatePath("/admin/systemes");
-  revalidatePath("/systemes");
+  if (error) {
+    console.error("Suppression proposition système impossible", error);
+    return;
+  }
+
+  revalidateSystemPages();
 }
 
 export default async function AdminSystemesPage() {
   const { supabase } = await requireAdmin();
 
-  const { data } = await supabase
+  const { data, error } = await supabase
     .from("systems")
     .select("*")
-    .order("created_at", { ascending: false });
+    .not("submitted_at", "is", null)
+    .order("submitted_at", { ascending: false });
 
-  const systems = (data || []) as System[];
+  if (error) {
+    console.error("Chargement propositions systèmes impossible", error);
+  }
+
+  const systems = (data || []) as SystemProposal[];
 
   const total = systems.length;
-  const pending = systems.filter((s) =>
-    ["pending", "submitted", "draft"].includes(getStatus(s))
-  ).length;
+  const pending = systems.filter((s) => getStatus(s) === "submitted").length;
   const approved = systems.filter((s) =>
     ["approved", "published"].includes(getStatus(s))
   ).length;
@@ -109,8 +252,8 @@ export default async function AdminSystemesPage() {
             <p>Modération bibliothèque</p>
             <h1>Systèmes</h1>
             <span>
-              Valide ou refuse les systèmes proposés avant intégration dans le
-              playbook public MyBasket.
+              Revois les systèmes proposés par les utilisateurs, corrige-les si
+              besoin puis valide leur publication dans la bibliothèque MyBasket.
             </span>
           </div>
         </section>
@@ -118,7 +261,7 @@ export default async function AdminSystemesPage() {
         <section className={styles.statsGrid}>
           <div className={styles.statCard}>
             <strong>{total}</strong>
-            <span>Total</span>
+            <span>Propositions</span>
           </div>
           <div className={`${styles.statCard} ${styles.orange}`}>
             <strong>{pending}</strong>
@@ -126,18 +269,18 @@ export default async function AdminSystemesPage() {
           </div>
           <div className={`${styles.statCard} ${styles.green}`}>
             <strong>{approved}</strong>
-            <span>Validés</span>
+            <span>Validées</span>
           </div>
           <div className={`${styles.statCard} ${styles.red}`}>
             <strong>{rejected}</strong>
-            <span>Refusés</span>
+            <span>Refusées</span>
           </div>
         </section>
 
         <section className={styles.tableCard}>
           <div className={styles.tableHead}>
             <h2>Systèmes proposés</h2>
-            <span>{total} systèmes</span>
+            <span>{total} proposition{total > 1 ? "s" : ""}</span>
           </div>
 
           <div className={styles.grid}>
@@ -153,7 +296,7 @@ export default async function AdminSystemesPage() {
                       {statusLabel(status)}
                     </span>
                     <span className={styles.date}>
-                      {formatDate(system.created_at)}
+                      {formatDate(system.submitted_at || system.created_at)}
                     </span>
                   </div>
 
@@ -171,25 +314,41 @@ export default async function AdminSystemesPage() {
                     </p>
                   )}
 
+                  {system.rejection_reason && status === "rejected" && (
+                    <p className={styles.desc}>
+                      Motif du refus : {system.rejection_reason}
+                    </p>
+                  )}
+
                   <div className={styles.actions}>
                     <Link href={`/systemes/${system.id}`}>Voir</Link>
-                    <Link href={`/admin/systemes/${system.id}`}>
-                      Contrôler
-                    </Link>
 
-                    <form action={updateSystemStatus}>
-                      <input type="hidden" name="id" value={system.id} />
-                      <input type="hidden" name="status" value="approved" />
-                      <button type="submit">Valider</button>
-                    </form>
+                    {status === "submitted" && (
+                      <Link href={`/systemes/creer?id=${system.id}`}>
+                        Revoir / modifier
+                      </Link>
+                    )}
 
-                    <form action={updateSystemStatus}>
-                      <input type="hidden" name="id" value={system.id} />
-                      <input type="hidden" name="status" value="rejected" />
-                      <button type="submit">Refuser</button>
-                    </form>
+                    {status === "submitted" && (
+                      <form action={approveSystemProposal}>
+                        <input type="hidden" name="id" value={system.id} />
+                        <button type="submit">Valider / Publier</button>
+                      </form>
+                    )}
 
-                    <form action={deleteSystem}>
+                    {status === "submitted" && (
+                      <form action={rejectSystemProposal}>
+                        <input type="hidden" name="id" value={system.id} />
+                        <input
+                          type="text"
+                          name="reason"
+                          placeholder="Motif du refus (facultatif)"
+                        />
+                        <button type="submit">Refuser</button>
+                      </form>
+                    )}
+
+                    <form action={deleteSystemProposal}>
                       <input type="hidden" name="id" value={system.id} />
                       <button type="submit" className={styles.dangerBtn}>
                         Supprimer
@@ -202,7 +361,7 @@ export default async function AdminSystemesPage() {
 
             {systems.length === 0 && (
               <div className={styles.emptyState}>
-                Aucun système trouvé.
+                Aucune proposition de système pour le moment.
               </div>
             )}
           </div>
