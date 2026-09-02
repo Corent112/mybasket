@@ -558,17 +558,48 @@ export default function SystemesClient() {
         })
       );
 
+      const uploadedSchemaImages = await Promise.all(
+        systeme.schemaImages.map((image) =>
+          uploadSchemaImage(image, `systemes/${systemStorageId || id}/schemas`)
+        )
+      );
+
       const cleanSchemaDataList = syncSchemas(
         systeme.schemaImages,
         systeme.schemaDataList
-      );
+      ).map((schema, index) => {
+        const imageData =
+          typeof schema?.imageData === "string" &&
+          schema.imageData.startsWith("data:image")
+            ? uploadedSchemaImages[index] || schema.imageData
+            : schema?.imageData;
+
+        const phaseImages = Array.isArray(schema?.phaseImages)
+          ? schema.phaseImages.map((image: string) => {
+              if (!image?.startsWith?.("data:image")) return image;
+
+              const globalIndex = systeme.schemaImages.indexOf(image);
+              if (globalIndex >= 0 && uploadedSchemaImages[globalIndex]) {
+                return uploadedSchemaImages[globalIndex];
+              }
+
+              return uploadedSchemaImages[index] || image;
+            })
+          : [];
+
+        return {
+          ...schema,
+          imageData,
+          phaseImages,
+        };
+      });
 
       const payload: Systeme = {
         ...systeme,
         id,
         title: systeme.title.trim(),
         images: uploadedImages,
-        schemaImages: systeme.schemaImages,
+        schemaImages: uploadedSchemaImages,
         schemaDataList: cleanSchemaDataList,
       };
 
