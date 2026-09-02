@@ -82,45 +82,42 @@ function normalizePlayIds(source: any): string[] {
 }
 
 function normalizeSchemaImages(source: any): string[] {
-  const fromSchemaImages = cleanStringArray(source?.schemaImages);
-  const fromSnakeSchemaImages = cleanStringArray(source?.schema_images);
-  const fromImages = cleanStringArray(source?.images);
+  if (Array.isArray(source?.schemaImages)) {
+    return cleanStringArray(source.schemaImages);
+  }
+
+  if (Array.isArray(source?.schema_images)) {
+    return cleanStringArray(source.schema_images);
+  }
 
   const singleSchemaImage =
     typeof source?.schemaImage === "string" && source.schemaImage.trim()
       ? source.schemaImage.trim()
-      : "";
-
-  const singleSnakeSchemaImage =
-    typeof source?.schema_image === "string" && source.schema_image.trim()
+      : typeof source?.schema_image === "string" && source.schema_image.trim()
       ? source.schema_image.trim()
       : "";
 
-  const merged = [
-    ...fromSchemaImages,
-    ...fromSnakeSchemaImages,
-    singleSchemaImage,
-    singleSnakeSchemaImage,
-    ...fromImages,
-  ].filter(Boolean);
-
-  return Array.from(new Set(merged));
+  return singleSchemaImage ? [singleSchemaImage] : [];
 }
 
 function normalizeSchemaDataList(source: any): unknown[] {
-  const fromSchemaDataList = cleanUnknownArray(source?.schemaDataList);
-  const fromSnakeSchemaDataList = cleanUnknownArray(source?.schema_data_list);
+  if (Array.isArray(source?.schemaDataList)) {
+    return cleanUnknownArray(source.schemaDataList);
+  }
 
-  const hasSchemaData = source?.schemaData !== undefined && source.schemaData !== null;
-  const hasSnakeSchemaData =
-    source?.schema_data !== undefined && source?.schema_data !== null;
+  if (Array.isArray(source?.schema_data_list)) {
+    return cleanUnknownArray(source.schema_data_list);
+  }
 
-  return [
-    ...fromSchemaDataList,
-    ...fromSnakeSchemaDataList,
-    ...(hasSchemaData ? [source.schemaData] : []),
-    ...(hasSnakeSchemaData ? [source.schema_data] : []),
-  ];
+  if (source?.schemaData !== undefined && source.schemaData !== null) {
+    return [source.schemaData];
+  }
+
+  if (source?.schema_data !== undefined && source.schema_data !== null) {
+    return [source.schema_data];
+  }
+
+  return [];
 }
 
 function showSupabaseError(label: string, error: any) {
@@ -299,34 +296,56 @@ function playRowToClient(row: any): PlayItem {
 
 async function attachSystemContributors(rows: any[]): Promise<SystemItem[]> {
   const mapped = rows.map(rowToSystem);
-  const contributorIds = Array.from(new Set(
-    rows
-      .filter((row) => row?.user_id && row?.review_status === 'approved' && row?.submitted_at)
-      .map((row) => String(row.user_id))
-  ));
+
+  const contributorIds = Array.from(
+    new Set(
+      rows
+        .filter(
+          (row) =>
+            row?.user_id &&
+            row?.review_status === "approved" &&
+            row?.submitted_at,
+        )
+        .map((row) => String(row.user_id)),
+    ),
+  );
 
   if (!contributorIds.length) return mapped;
 
   const supabase = createClient();
+
   const { data: profiles, error } = await supabase
-    .from('profiles')
-    .select('id, display_name, avatar_url')
-    .in('id', contributorIds);
+    .from("profiles")
+    .select("id, display_name, avatar_url")
+    .in("id", contributorIds);
 
   if (error) {
-    console.warn('Attribution systèmes : profils indisponibles', error);
+    console.warn("Attribution systèmes : profils indisponibles", error);
     return mapped;
   }
 
-  const byId = new Map((profiles ?? []).map((profile: any) => [String(profile.id), profile]));
+  const byId = new Map(
+    (profiles ?? []).map((profile: any) => [String(profile.id), profile]),
+  );
+
   return mapped.map((item, index) => {
     const source = rows[index];
-    if (!source?.submitted_at || source?.review_status !== 'approved') return item;
+
+    if (
+      !source?.submitted_at ||
+      source?.review_status !== "approved"
+    ) {
+      return item;
+    }
+
     const profile: any = byId.get(String(source.user_id));
+
     if (!profile) return item;
+
     return {
       ...item,
-      contributor_name: profile.display_name || 'Utilisateur MyBasket',
+      contributor_name:
+        profile.display_name || "Utilisateur MyBasket",
       contributor_avatar_url: profile.avatar_url || null,
     };
   });
@@ -620,6 +639,88 @@ export async function saveSystem(system: any): Promise<SystemItem | null> {
   }
 
   return rowToSystem(data);
+}
+
+export type EditableSystemResult = {
+  system: SystemItem;
+  cloned: boolean;
+};
+
+export async function ensureEditableSystem(
+  id: string | null | undefined
+): Promise<EditableSystemResult | null> {
+  if (!isUuid(id)) {
+    console.warn("ensureEditableSystem ignoré, id invalide :", id);
+    return null;
+  }
+
+  const supabase = createClient();
+  const user = await getCurrentUser();
+
+  if (!user) return null;
+
+  const existingRow = await getSystemRaw(id);
+
+  if (!existingRow) {
+    if (isBrowser()) alert("Système introuvable.");
+    return null;
+  }
+
+  const ceo = await isCeoUser();
+  const isMine = existingRow.user_id === user.id;
+
+  // Le propriétaire ou un CEO modifie directement l'original.
+  if (ceo || isMine) {
+    return {
+      system: rowToSystem(existingRow),
+      cloned: false,
+    };
+  }
+
+  // Pour un système public appartenant à un autre utilisateur, on crée une
+  // copie privée. On ne modifie jamais l'original.
+  const existing = rowToSystem(existingRow);
+  const copyId = crypto.randomUUID();
+
+  const copyRow = systemToRow(
+    {
+      ...existing,
+      id: copyId,
+      user_id: user.id,
+      visibility: "private",
+      review_status: "draft",
+      original_system_id:
+        existing.original_system_id ?? existing.id,
+      // Les schémas/images sont copiés, mais pas les références de plays
+      // afin qu'une édition ultérieure ne touche jamais aux plays de l'auteur.
+      playIds: [],
+      play_ids: [],
+      submitted_at: null,
+      reviewed_at: null,
+      reviewed_by: null,
+      rejection_reason: null,
+    },
+    user.id
+  );
+
+  const { data, error } = await supabase
+    .from("systems")
+    .insert({
+      ...copyRow,
+      created_at: new Date().toISOString(),
+    })
+    .select("*")
+    .maybeSingle();
+
+  if (error || !data) {
+    showSupabaseError("Erreur Supabase copie système pour édition:", error);
+    return null;
+  }
+
+  return {
+    system: rowToSystem(data),
+    cloned: true,
+  };
 }
 
 export async function updateSystem(
