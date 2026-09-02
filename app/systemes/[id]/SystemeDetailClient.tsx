@@ -18,7 +18,7 @@ function normalizeList(value: unknown): string[] {
 
   if (typeof value === "string") {
     return value
-      .split("\n")
+      .split(/\n|,/)
       .map((x) => x.trim())
       .filter(Boolean);
   }
@@ -35,6 +35,13 @@ function systemCategoryToPlaybookCategory(
   if (v.includes("SLOB")) return "SLOB";
 
   return "Système demi-terrain";
+}
+
+function statusLabel(status?: string | null) {
+  if (status === "submitted") return "Soumis à MyBasket";
+  if (status === "approved") return "Validé";
+  if (status === "rejected") return "Refusé";
+  return "Brouillon privé";
 }
 
 export default function SystemeDetailClient() {
@@ -137,8 +144,6 @@ export default function SystemeDetailClient() {
   }
 
   function goEdit() {
-    // Reprendre la fiche réellement enregistrée, comme pour "Modifier fiche"
-    // sur les exercices. On ne laisse aucun ancien brouillon masquer Supabase.
     try {
       localStorage.removeItem(`mybasket_systeme_draft_${id}`);
       localStorage.removeItem(`mybasket_systeme_draft_${id}_storage_id`);
@@ -158,27 +163,37 @@ export default function SystemeDetailClient() {
   const consignes = useMemo(() => normalizeList(systeme?.consignes), [systeme]);
   const variantes = useMemo(() => normalizeList(systeme?.variantes), [systeme]);
 
-  const sliderItems = useMemo(() => {
+  const images = useMemo(() => {
     if (!systeme) return [];
 
-    const images = [
+    return [
       ...((systeme.schemaImages || []) as string[]),
       ...((systeme.images || []) as string[]),
     ].filter(Boolean);
-
-    const videos = ((systeme.videos || []) as string[]).filter(Boolean);
-
-    return [
-      ...images.map((src) => ({ type: "image" as const, src })),
-      ...videos.map((src) => ({ type: "video" as const, src })),
-    ];
   }, [systeme]);
 
+  const videos = useMemo(
+    () => ((systeme?.videos || []) as string[]).filter(Boolean),
+    [systeme]
+  );
+
   useEffect(() => {
-    if (currentImage >= sliderItems.length) {
+    if (currentImage >= images.length) {
       setCurrentImage(0);
     }
-  }, [currentImage, sliderItems.length]);
+  }, [currentImage, images.length]);
+
+  function prevImage() {
+    setCurrentImage((value) =>
+      value <= 0 ? Math.max(images.length - 1, 0) : value - 1
+    );
+  }
+
+  function nextImage() {
+    setCurrentImage((value) =>
+      value >= images.length - 1 ? 0 : value + 1
+    );
+  }
 
   if (!ready) {
     return <main className="ed-page">Chargement...</main>;
@@ -187,35 +202,35 @@ export default function SystemeDetailClient() {
   if (!systeme) {
     return (
       <main className="ed-page">
-        <p>Système introuvable.</p>
-
-        <button className="ed-btn ghost" onClick={() => router.push("/systemes")}>
-          ← Retour aux systèmes
-        </button>
-
+        <section className="ed-not-found">
+          <h1>Système introuvable</h1>
+          <p>
+            Ce système est privé, supprimé, ou tu n’as pas les droits pour le consulter.
+          </p>
+          <button type="button" onClick={() => router.push("/systemes")}>
+            ← Retour aux systèmes
+          </button>
+        </section>
         <style jsx>{CSS}</style>
       </main>
     );
   }
 
-  const videos = (systeme.videos || []) as string[];
   const tags = (systeme.tags || []) as string[];
   const tempsForts = (systeme.tempsForts || []) as string[];
 
   return (
     <main className="ed-page">
       <div className="ed-top">
-        <button className="ed-back" onClick={() => router.push("/systemes")}>
+        <button type="button" onClick={() => router.push("/systemes")}>
           ← Retour aux systèmes
         </button>
       </div>
 
       <section className="ed-hero">
         <div>
-          <div className="ed-kicker">SYSTÈME BASKETBALL</div>
-
+          <p className="ed-kicker">SYSTÈME BASKETBALL</p>
           <h1>{systeme.title || "Système sans titre"}</h1>
-
           <p>
             {systeme.objectif ||
               systeme.organisation ||
@@ -223,12 +238,23 @@ export default function SystemeDetailClient() {
           </p>
 
           <div className="ed-badges">
-            <span>Public</span>
-            <span>Validé</span>
+            <span>{systeme.visibility === "public" ? "Public" : "Privé"}</span>
+            <span>{statusLabel(systeme.review_status)}</span>
           </div>
 
+          {systeme.review_status === "rejected" &&
+            systeme.rejection_reason && (
+              <div className="ed-reject-box">
+                Motif du refus : {systeme.rejection_reason}
+              </div>
+            )}
+
           <div className="ed-main-actions">
-            <button type="button" className="primary" onClick={openPlaybookModal}>
+            <button
+              type="button"
+              className="primary"
+              onClick={openPlaybookModal}
+            >
               Ajouter à mon playbook
             </button>
 
@@ -240,8 +266,8 @@ export default function SystemeDetailClient() {
               Ajouter aux favoris
             </button>
 
-            <button type="button" onClick={goEdit}>
-              Modifier la fiche
+            <button type="button" className="dark" onClick={goEdit}>
+              Modifier fiche
             </button>
           </div>
         </div>
@@ -249,223 +275,209 @@ export default function SystemeDetailClient() {
         <div className="ed-hero-info">
           <div>
             <span>FAMILLE</span>
-            <b>{systeme.famille || "—"}</b>
+            <strong>{systeme.famille || "—"}</strong>
           </div>
 
           <div>
             <span>TYPE</span>
-            <b>{systeme.type || "—"}</b>
+            <strong>{systeme.type || "—"}</strong>
           </div>
 
           <div>
             <span>CATÉGORIE</span>
-            <b>{systeme.categorie || "—"}</b>
+            <strong>{systeme.categorie || "—"}</strong>
           </div>
         </div>
       </section>
 
-      <section className="ed-layout">
-        <div className="ed-main">
-          <div className="ed-card">
+      <div className="ed-layout">
+        <section className="ed-main">
+          <article className="ed-card">
             <h2>DESSIN DU SYSTÈME</h2>
 
-            {sliderItems.length > 0 ? (
-              <div className="ed-slider">
-                {sliderItems.length > 1 && (
-                  <button
-                    className="slider-btn"
-                    onClick={() =>
-                      setCurrentImage(
-                        currentImage === 0
-                          ? sliderItems.length - 1
-                          : currentImage - 1
-                      )
-                    }
-                  >
-                    ‹
-                  </button>
-                )}
-
-                {sliderItems[currentImage]?.type === "video" ? (
-                  <video
-                    className="ed-schema"
-                    src={sliderItems[currentImage].src}
-                    controls
-                  />
-                ) : (
-                  <img
-                    className="ed-schema"
-                    src={sliderItems[currentImage]?.src}
-                    alt="Schéma du système"
-                  />
-                )}
-
-                {sliderItems.length > 1 && (
-                  <button
-                    className="slider-btn"
-                    onClick={() =>
-                      setCurrentImage(
-                        currentImage === sliderItems.length - 1
-                          ? 0
-                          : currentImage + 1
-                      )
-                    }
-                  >
-                    ›
-                  </button>
-                )}
-              </div>
-            ) : (
-              <div className="ed-empty">Aucun schéma</div>
-            )}
-          </div>
-
-          {sliderItems.length > 1 && (
-            <div className="ed-thumbs">
-              {sliderItems.map((item, index) => (
-                <button
-                  key={index}
-                  className={
-                    currentImage === index ? "ed-thumb active" : "ed-thumb"
-                  }
-                  onClick={() => setCurrentImage(index)}
-                >
-                  {item.type === "video" ? (
-                    <div className="video-thumb">▶</div>
-                  ) : (
-                    <img src={item.src} alt="" />
+            {images.length > 0 ? (
+              <>
+                <div className="ed-image-wrap">
+                  {images.length > 1 && (
+                    <button
+                      type="button"
+                      className="ed-arrow left"
+                      onClick={prevImage}
+                    >
+                      ‹
+                    </button>
                   )}
-                </button>
-              ))}
-            </div>
+
+                  <img
+                    src={images[currentImage]}
+                    alt={systeme.title || "Système"}
+                  />
+
+                  {images.length > 1 && (
+                    <button
+                      type="button"
+                      className="ed-arrow right"
+                      onClick={nextImage}
+                    >
+                      ›
+                    </button>
+                  )}
+                </div>
+
+                {images.length > 1 && (
+                  <div className="ed-thumbs">
+                    {images.map((src, index) => (
+                      <button
+                        key={`${src}-${index}`}
+                        type="button"
+                        className={index === currentImage ? "active" : ""}
+                        onClick={() => setCurrentImage(index)}
+                      >
+                        <img src={src} alt={`Phase ${index + 1}`} />
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </>
+            ) : (
+              <div className="ed-empty">
+                <p>Aucun schéma.</p>
+              </div>
+            )}
+          </article>
+
+          {videos.length > 0 && (
+            <article className="ed-card">
+              <h2>VIDÉO / ANIMATION</h2>
+              <div className="ed-video-list">
+                {videos.map((src, index) => (
+                  <video
+                    key={`${src}-${index}`}
+                    src={src}
+                    controls
+                    playsInline
+                    className="ed-video"
+                  />
+                ))}
+              </div>
+            </article>
           )}
 
-          <div className="ed-card">
+          <article className="ed-card">
             <h2>OBJECTIF</h2>
             <p>{systeme.objectif || "—"}</p>
-          </div>
+          </article>
 
-          <div className="ed-card">
+          <article className="ed-card">
             <h2>ORGANISATION</h2>
             <p>{systeme.organisation || "—"}</p>
-          </div>
+          </article>
 
-          <div className="ed-card">
+          <article className="ed-card">
             <h2>DÉROULEMENT</h2>
             {steps.length > 0 ? (
-              <ol className="ed-steps">
+              <ol>
                 {steps.map((step, index) => (
-                  <li key={index}>{step}</li>
+                  <li key={`${step}-${index}`}>{step}</li>
                 ))}
               </ol>
             ) : (
               <p>—</p>
             )}
-          </div>
+          </article>
 
-          <div className="ed-card">
-            <h2>CONSIGNES TECHNIQUES</h2>
+          <article className="ed-card">
+            <h2>CONSIGNES</h2>
             {consignes.length > 0 ? (
-              <ul className="ed-list">
+              <ul>
                 {consignes.map((item, index) => (
-                  <li key={index}>{item}</li>
+                  <li key={`${item}-${index}`}>{item}</li>
                 ))}
               </ul>
             ) : (
               <p>—</p>
             )}
-          </div>
+          </article>
 
-          <div className="ed-card">
-            <h2>ÉVOLUTION / VARIANTES</h2>
+          <article className="ed-card">
+            <h2>VARIANTES</h2>
             {variantes.length > 0 ? (
-              <ul className="ed-list orange">
+              <ul>
                 {variantes.map((item, index) => (
-                  <li key={index}>{item}</li>
+                  <li key={`${item}-${index}`}>{item}</li>
                 ))}
               </ul>
             ) : (
               <p>—</p>
             )}
-          </div>
-
-          <div className="ed-media-grid">
-            <div className="ed-card">
-              <h2>VIDÉO / ANIMATION</h2>
-
-              {videos[0] ? (
-                <video src={videos[0]} controls className="ed-video" />
-              ) : (
-                <div className="ed-empty small">Aucune vidéo</div>
-              )}
-            </div>
-
-            <div className="ed-card">
-              <h2>IMAGES / SCHÉMAS</h2>
-
-              {sliderItems.filter((item) => item.type === "image").length > 0 ? (
-                <div className="ed-gallery">
-                  {sliderItems
-                    .filter((item) => item.type === "image")
-                    .slice(0, 4)
-                    .map((item, index) => (
-                      <img key={index} src={item.src} alt="" />
-                    ))}
-                </div>
-              ) : (
-                <div className="ed-empty small">Aucune image</div>
-              )}
-            </div>
-          </div>
-        </div>
+          </article>
+        </section>
 
         <aside className="ed-side">
-          <div className="ed-card sticky">
+          <article className="ed-card ed-criteria">
             <h2>CRITÈRES</h2>
 
-            <div className="ed-criteria">
-              <Row label="Famille" value={systeme.famille} />
-              <Row label="Catégorie" value={systeme.categorie} />
-              <Row label="Type" value={systeme.type} badge />
-              <Row
-                label="Schémas"
-                value={String(systeme.schemaImages?.length || 0)}
-              />
-              <Row label="Vidéos" value={String(systeme.videos?.length || 0)} />
+            <div className="ed-crit-row">
+              <span>FAMILLE</span>
+              <strong>{systeme.famille || "—"}</strong>
             </div>
 
-            <h3>TEMPS FORTS</h3>
+            <div className="ed-crit-row">
+              <span>CATÉGORIE</span>
+              <strong>{systeme.categorie || "—"}</strong>
+            </div>
 
-            {tempsForts.length > 0 ? (
-              <div className="ed-themes">
-                {tempsForts.map((item) => (
-                  <span key={item}>✓ {item}</span>
-                ))}
-              </div>
-            ) : (
-              <p className="ed-muted">Aucun temps fort.</p>
-            )}
+            <div className="ed-crit-row">
+              <span>TYPE</span>
+              <strong className="ed-pill">{systeme.type || "—"}</strong>
+            </div>
 
-            <h3>TAGS</h3>
+            <div className="ed-crit-row">
+              <span>PHASES</span>
+              <strong>{systeme.schemaImages?.length || 0}</strong>
+            </div>
 
-            {tags.length > 0 ? (
-              <div className="ed-themes">
-                {tags.map((tag) => (
-                  <span key={tag}>#{tag}</span>
-                ))}
-              </div>
-            ) : (
-              <p className="ed-muted">Aucun tag.</p>
-            )}
-          </div>
+            <div className="ed-crit-row">
+              <span>VIDÉOS</span>
+              <strong>{videos.length}</strong>
+            </div>
+
+            <div className="ed-side-section">
+              <h3>TEMPS FORTS</h3>
+              {tempsForts.length ? (
+                <div className="ed-tags">
+                  {tempsForts.map((item) => (
+                    <span key={item}>✓ {item}</span>
+                  ))}
+                </div>
+              ) : (
+                <p>Aucun temps fort.</p>
+              )}
+            </div>
+
+            <div className="ed-side-section">
+              <h3>TAGS</h3>
+              {tags.length ? (
+                <div className="ed-tags">
+                  {tags.map((tag) => (
+                    <span key={tag}>#{tag}</span>
+                  ))}
+                </div>
+              ) : (
+                <p>Aucun tag.</p>
+              )}
+            </div>
+          </article>
         </aside>
-      </section>
+      </div>
 
       {playbookModalOpen && (
-        <div className="pb-modal-bg" onClick={() => setPlaybookModalOpen(false)}>
+        <div
+          className="pb-modal-bg"
+          onClick={() => setPlaybookModalOpen(false)}
+        >
           <div className="pb-modal" onClick={(e) => e.stopPropagation()}>
             <h3>Ajouter au playbook</h3>
-
             <label>Choisir un playbook</label>
 
             <select
@@ -480,7 +492,10 @@ export default function SystemeDetailClient() {
             </select>
 
             <div className="pb-modal-actions">
-              <button type="button" onClick={() => setPlaybookModalOpen(false)}>
+              <button
+                type="button"
+                onClick={() => setPlaybookModalOpen(false)}
+              >
                 Annuler
               </button>
 
@@ -502,451 +517,314 @@ export default function SystemeDetailClient() {
   );
 }
 
-function Row({
-  label,
-  value,
-  badge = false,
-}: {
-  label: string;
-  value?: string | number;
-  badge?: boolean;
-}) {
-  return (
-    <div className="ed-row">
-      <span>{label}</span>
-      <b className={badge ? "badge" : ""}>{value || "—"}</b>
-    </div>
-  );
-}
-
 const CSS = `
 .ed-page{
-  background:#fff;
-  color:#111;
-  max-width:1280px;
+  max-width:1180px;
   margin:0 auto;
-  padding:28px;
+  padding:28px 20px 70px;
+  color:#111;
   font-family:Roboto,system-ui,sans-serif;
 }
-
 .ed-top{
   display:flex;
   justify-content:space-between;
   align-items:center;
-  margin-bottom:22px;
+  margin-bottom:20px;
+  gap:12px;
 }
-
-.ed-back,
-.ed-btn,
-.ed-big{
-  border:none;
-  border-radius:999px;
-  padding:11px 18px;
-  font-weight:900;
+.ed-page button{
+  border:0;
   cursor:pointer;
-}
-
-.ed-back,
-.ed-btn.ghost{
-  background:#f1f1f1;
+  font-weight:900;
+  border-radius:999px;
+  padding:10px 14px;
+  background:#f2f2f2;
   color:#111;
+  font-family:inherit;
 }
-
-.ed-btn:disabled{
-  opacity:.6;
+.ed-page button:disabled{
+  opacity:.65;
   cursor:not-allowed;
 }
-
 .ed-hero{
   display:grid;
-  grid-template-columns:1fr 280px;
-  gap:24px;
-  align-items:center;
-  border:1px solid #eee;
-  border-radius:24px;
+  grid-template-columns:1fr 300px;
+  gap:28px;
+  border:1px solid #e6e6e6;
+  border-radius:20px;
   padding:34px;
   margin-bottom:24px;
-  background:linear-gradient(135deg,#fff,#f7f7f7);
-  box-shadow:0 10px 30px rgba(0,0,0,.06);
+  background:#fff;
+  box-shadow:0 10px 28px rgba(0,0,0,.04);
 }
-
 .ed-kicker{
-  color:#f58213;
-  font-weight:900;
+  color:#f47b20!important;
+  font-weight:900!important;
   letter-spacing:.08em;
-  margin-bottom:8px;
+  font-size:.78rem!important;
+  margin:0 0 8px!important;
 }
-
 .ed-hero h1{
-  font-size:3.3rem;
+  font-size:clamp(2.1rem,5vw,4rem);
   line-height:.95;
-  margin:0;
+  margin:0 0 16px;
   font-weight:1000;
   text-transform:uppercase;
   font-style:italic;
 }
-
 .ed-hero p{
+  margin:0;
   color:#555;
-  font-size:1.1rem;
-  margin-top:18px;
-  line-height:1.5;
 }
-
 .ed-badges{
   display:flex;
-  gap:10px;
-  margin-top:18px;
+  flex-wrap:wrap;
+  gap:8px;
+  margin-top:12px;
 }
-
 .ed-badges span{
-  background:#fff0dc;
+  background:#fff4dd;
   color:#6b1a2c;
   border-radius:999px;
-  padding:8px 14px;
+  padding:7px 11px;
+  font-size:12px;
   font-weight:900;
-  font-size:.8rem;
 }
-
+.ed-reject-box{
+  margin-top:14px;
+  background:#ffe8ec;
+  color:#c5283d;
+  border-radius:12px;
+  padding:10px 12px;
+  font-weight:800;
+  font-size:13px;
+}
 .ed-main-actions{
   display:flex;
-  gap:12px;
-  margin-top:20px;
   flex-wrap:wrap;
+  gap:12px;
+  margin-top:22px;
 }
-
 .ed-main-actions button{
-  border:0;
-  border-radius:999px;
-  padding:13px 20px;
-  font-weight:1000;
-  cursor:pointer;
+  padding:13px 18px;
+  transition:transform .18s ease,box-shadow .18s ease;
 }
-
+.ed-main-actions button:hover:not(:disabled){
+  transform:translateY(-2px);
+  box-shadow:0 10px 22px rgba(0,0,0,.14);
+}
 .ed-main-actions .primary{
   background:#6b1a2c;
   color:#fff;
 }
-
 .ed-main-actions .gold{
   background:#d4a24c;
   color:#111;
 }
-
+.ed-main-actions .dark{
+  background:#111;
+  color:#fff;
+}
 .ed-hero-info{
   border-left:1px solid #ddd;
-  padding-left:24px;
+  padding-left:28px;
   display:flex;
   flex-direction:column;
   gap:18px;
 }
-
-.ed-hero-info span{
+.ed-hero-info span,
+.ed-crit-row span{
   display:block;
   font-size:.72rem;
   color:#777;
   font-weight:900;
   text-transform:uppercase;
 }
-
-.ed-hero-info b{
-  font-size:1rem;
+.ed-hero-info strong,
+.ed-crit-row strong{
+  font-size:.9rem;
   text-transform:uppercase;
 }
-
 .ed-layout{
   display:grid;
-  grid-template-columns:1fr 340px;
+  grid-template-columns:1fr 300px;
   gap:22px;
   align-items:start;
 }
-
-.ed-main{
-  display:flex;
-  flex-direction:column;
-  gap:14px;
-}
-
+.ed-main,
 .ed-side{
   display:flex;
   flex-direction:column;
-  gap:18px;
+  gap:16px;
 }
-
 .ed-card{
+  background:#fff;
   border:1px solid #e6e6e6;
   border-radius:18px;
-  background:#fff;
   padding:22px;
-  box-shadow:0 8px 24px rgba(0,0,0,.045);
+  box-shadow:0 8px 24px rgba(0,0,0,.04);
 }
-
 .ed-card h2{
-  margin:0 0 16px;
-  font-size:1.05rem;
+  margin:0 0 18px;
+  font-size:.95rem;
   font-weight:1000;
   text-transform:uppercase;
 }
-
-.ed-card h2:after{
+.ed-card h2::after{
   content:"";
   display:block;
-  width:52px;
-  height:3px;
-  background:#f58213;
-  margin-top:8px;
-}
-
-.ed-card p{
-  white-space:pre-line;
-  line-height:1.65;
-  color:#333;
-}
-
-.ed-slider{
-  width:100%;
-  display:flex;
-  align-items:center;
-  justify-content:center;
-  gap:20px;
-  margin-top:20px;
-}
-
-.ed-schema{
-  width:100%;
-  max-width:760px;
-  height:500px;
-  object-fit:contain;
-  display:block;
-  margin:auto;
-}
-
-.slider-btn{
   width:42px;
-  height:42px;
-  border:none;
-  border-radius:50%;
-  background:#f58213;
-  color:white;
-  font-size:30px;
-  line-height:1;
-  cursor:pointer;
-  font-weight:900;
-  flex:0 0 auto;
+  height:3px;
+  margin-top:8px;
+  background:#f47b20;
 }
-
-.slider-btn:hover{
-  opacity:.9;
+.ed-card p,
+.ed-card li{
+  color:#555;
+  line-height:1.6;
+  font-size:.95rem;
 }
-
-.ed-empty{
-  height:280px;
-  border:2px dashed #ddd;
-  border-radius:14px;
-  display:flex;
-  align-items:center;
-  justify-content:center;
-  color:#999;
-  font-weight:800;
-}
-
-.ed-empty.small{
-  height:150px;
-}
-
-.ed-steps{
-  list-style:none;
-  counter-reset:step;
-  padding:0;
-  margin:0;
-  display:flex;
-  flex-direction:column;
-  gap:14px;
-}
-
-.ed-steps li{
-  counter-increment:step;
-  display:flex;
-  gap:12px;
-  line-height:1.55;
-}
-
-.ed-steps li:before{
-  content:counter(step);
-  width:25px;
-  height:25px;
-  border-radius:50%;
-  background:#f58213;
-  color:white;
-  display:inline-flex;
-  align-items:center;
-  justify-content:center;
-  font-size:.8rem;
-  font-weight:900;
-  flex:0 0 auto;
-}
-
-.ed-list{
+.ed-card ol,
+.ed-card ul{
   margin:0;
   padding-left:20px;
-  line-height:1.75;
 }
-
-.ed-list li::marker{
-  color:#f58213;
-}
-
-.ed-media-grid{
-  display:grid;
-  grid-template-columns:1fr 1fr;
-  gap:14px;
-}
-
-.ed-video{
-  width:100%;
-  border-radius:12px;
-  background:#000;
-}
-
-.ed-gallery{
-  display:grid;
-  grid-template-columns:repeat(2,1fr);
-  gap:10px;
-}
-
-.ed-gallery img{
-  width:100%;
-  height:120px;
-  object-fit:cover;
-  border-radius:12px;
-  border:1px solid #ddd;
-}
-
-.sticky{
-  position:sticky;
-  top:20px;
-}
-
-.ed-criteria{
-  display:flex;
-  flex-direction:column;
-}
-
-.ed-row{
-  display:flex;
-  justify-content:space-between;
-  gap:16px;
-  border-bottom:1px solid #eee;
-  padding:14px 0;
-}
-
-.ed-row span{
-  text-transform:uppercase;
-  font-weight:900;
-  color:#333;
-  font-size:.85rem;
-}
-
-.ed-row b{
-  text-align:right;
-  font-size:.9rem;
-}
-
-.badge{
-  background:#f58213;
-  color:white;
-  padding:6px 14px;
-  border-radius:8px;
-}
-
-.ed-card h3{
-  margin:22px 0 12px;
-  text-transform:uppercase;
-  font-size:1rem;
-}
-
-.ed-themes{
-  display:grid;
-  grid-template-columns:1fr 1fr;
-  gap:8px;
-}
-
-.ed-themes span{
-  border:1px solid #f58213;
-  border-radius:8px;
-  padding:10px;
-  font-weight:900;
-  color:#f58213;
-  font-size:.85rem;
-}
-
-.ed-muted{
-  color:#888;
-}
-
-.ed-actions{
-  display:grid;
-  grid-template-columns:1.4fr 1fr 1fr 1fr;
-  gap:14px;
-  margin-top:24px;
-}
-
-.ed-big{
-  background:#111;
-  color:#fff;
-  border-radius:12px;
-  padding:18px;
-}
-
-.ed-big.orange{
-  background:#f58213;
-}
-
-.ed-big.playbook{
-  background:#6b1a2c;
-}
-
-.ed-thumbs{
-  display:flex;
-  justify-content:center;
-  gap:12px;
-  margin-top:20px;
-  flex-wrap:wrap;
-}
-
-.ed-thumb{
-  width:90px;
-  height:90px;
-  border:2px solid transparent;
-  border-radius:10px;
-  overflow:hidden;
-  background:#fff;
-  cursor:pointer;
-  padding:0;
-}
-
-.ed-thumb.active{
-  border-color:#f58213;
-}
-
-.ed-thumb img{
-  width:100%;
-  height:100%;
-  object-fit:cover;
-}
-
-.video-thumb{
-  width:100%;
-  height:100%;
+.ed-image-wrap{
+  position:relative;
   display:flex;
   align-items:center;
   justify-content:center;
-  background:#111;
-  color:#f58213;
-  font-size:28px;
+  min-height:430px;
+  background:#fff;
+}
+.ed-image-wrap img{
+  max-width:100%;
+  max-height:460px;
+  object-fit:contain;
+}
+.ed-arrow{
+  position:absolute;
+  top:50%;
+  transform:translateY(-50%);
+  width:36px;
+  height:36px;
+  padding:0!important;
+  background:#f47b20!important;
+  color:#fff!important;
+  font-size:2rem;
+  line-height:1;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  z-index:2;
+}
+.ed-arrow.left{left:0}
+.ed-arrow.right{right:0}
+.ed-thumbs{
+  display:flex;
+  gap:10px;
+  justify-content:center;
+  margin-top:18px;
+  flex-wrap:wrap;
+}
+.ed-thumbs button{
+  width:70px;
+  height:58px;
+  border-radius:8px;
+  padding:0;
+  overflow:hidden;
+  border:2px solid transparent;
+  background:#eee;
+  position:relative;
+}
+.ed-thumbs button.active{
+  border-color:#f47b20;
+}
+.ed-thumbs img{
+  width:100%;
+  height:100%;
+  object-fit:contain;
+  background:#6b1a2c;
+}
+.ed-video-list{
+  display:flex;
+  flex-direction:column;
+  gap:14px;
+}
+.ed-video{
+  width:100%;
+  max-height:480px;
+  border-radius:14px;
+  background:#000;
+  display:block;
+}
+.ed-empty{
+  min-height:260px;
+  display:flex;
+  flex-direction:column;
+  gap:14px;
+  align-items:center;
+  justify-content:center;
+  color:#888;
+  background:#f6f6f6;
+  border-radius:14px;
+  font-weight:800;
+}
+.ed-criteria{
+  position:sticky;
+  top:24px;
+}
+.ed-crit-row{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:16px;
+  padding:13px 0;
+  border-bottom:1px solid #eee;
+}
+.ed-pill{
+  background:#f47b20;
+  color:#fff;
+  border-radius:999px;
+  padding:6px 10px;
+  font-size:.72rem!important;
+  text-align:right;
+}
+.ed-side-section{
+  margin-top:20px;
+}
+.ed-side-section h3{
+  font-size:.8rem;
+  text-transform:uppercase;
+  margin:0 0 8px;
+}
+.ed-tags{
+  display:flex;
+  flex-wrap:wrap;
+  gap:8px;
+}
+.ed-tags span{
+  background:#f6eadc;
+  color:#6b1a2c;
+  border-radius:999px;
+  padding:6px 9px;
+  font-size:.75rem;
   font-weight:900;
 }
-
+.ed-not-found{
+  border:1px solid #eee;
+  border-radius:20px;
+  padding:34px;
+  text-align:center;
+}
+.ed-not-found h1{
+  color:#6b1a2c;
+  margin:0 0 12px;
+}
+.ed-not-found p{
+  color:#666;
+  margin-bottom:20px;
+}
 .pb-modal-bg{
   position:fixed;
   inset:0;
@@ -957,7 +835,6 @@ const CSS = `
   justify-content:center;
   padding:20px;
 }
-
 .pb-modal{
   width:100%;
   max-width:430px;
@@ -965,14 +842,12 @@ const CSS = `
   border-radius:18px;
   padding:24px;
 }
-
 .pb-modal h3{
   margin:0 0 18px;
   color:#6b1a2c;
   font-size:1.4rem;
   font-weight:1000;
 }
-
 .pb-modal label{
   display:block;
   margin:12px 0 6px;
@@ -980,7 +855,6 @@ const CSS = `
   font-weight:900;
   text-transform:uppercase;
 }
-
 .pb-modal select{
   width:100%;
   height:44px;
@@ -988,59 +862,29 @@ const CSS = `
   border-radius:10px;
   padding:0 12px;
 }
-
 .pb-modal-actions{
   display:flex;
   justify-content:flex-end;
   gap:10px;
   margin-top:20px;
 }
-
-.pb-modal-actions button{
-  border:1px solid #ddd;
-  background:#fff;
-  border-radius:999px;
-  padding:10px 16px;
-  font-weight:900;
-}
-
 .pb-modal-actions .main{
   background:#6b1a2c;
   color:#fff;
-  border-color:#6b1a2c;
 }
-
 @media(max-width:900px){
-  .ed-page{
-    padding:18px;
-  }
-
   .ed-hero,
-  .ed-layout,
-  .ed-media-grid,
-  .ed-actions{
+  .ed-layout{
     grid-template-columns:1fr;
   }
-
-  .ed-hero h1{
-    font-size:2.1rem;
-  }
-
   .ed-hero-info{
-    border-left:none;
+    border-left:0;
     border-top:1px solid #ddd;
     padding-left:0;
-    padding-top:18px;
+    padding-top:20px;
   }
-
-  .ed-slider{
-    gap:6px;
-  }
-
-  .slider-btn{
-    width:34px;
-    height:34px;
-    font-size:24px;
+  .ed-criteria{
+    position:static;
   }
 }
 `;
