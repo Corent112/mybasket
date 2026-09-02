@@ -1,5 +1,5 @@
 import { Suspense } from "react";
-import SystemesClient from "./SystemesClient";
+import SystemesWorkspace from "./SystemesWorkspace";
 
 export default function Page() {
   return (
@@ -10,7 +10,7 @@ export default function Page() {
         </main>
       }
     >
-      <SystemesClient />
+      <SystemesWorkspace />
     </Suspense>
   );
 }

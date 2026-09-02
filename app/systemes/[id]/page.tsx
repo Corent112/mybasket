@@ -1,8 +1,8 @@
 import { requireAccess } from "@/lib/require-access";
-import SystemeDetailClient from "./SystemeDetailClient";
+import SystemeDetailPermissions from "./SystemeDetailPermissions";
 
 export default async function SystemeDetailPage() {
   await requireAccess("systemes");
 
-  return <SystemeDetailClient />;
+  return <SystemeDetailPermissions />;
 }
