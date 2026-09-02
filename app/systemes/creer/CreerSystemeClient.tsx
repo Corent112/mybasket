@@ -9,7 +9,6 @@ import {
   newSystemId,
   type SystemItem,
 } from "@/lib/systems";
-import { uploadSchemaImage } from "@/lib/supabase/upload-schema";
 import {
   getPlaquetteTransfer,
   setPlaquetteTransfer,
@@ -540,9 +539,96 @@ export default function SystemesClient() {
     }));
   };
 
+  async function uploadBase64Image(base64: string, folder = "schemas") {
+    if (!base64.startsWith("data:image")) return base64;
+
+    const { createClient } = await import("@/lib/supabase/client");
+    const supabase = createClient();
+
+    const {
+      data: { user },
+      error: userError,
+    } = await supabase.auth.getUser();
+
+    if (userError || !user) {
+      throw new Error("Utilisateur non connecté");
+    }
+
+    const res = await fetch(base64);
+    const blob = await res.blob();
+
+    const fileName = `${user.id}/${folder}/${Date.now()}-${Math.random()
+      .toString(36)
+      .slice(2)}.png`;
+
+    const { error } = await supabase.storage
+      .from("exercise-schemas")
+      .upload(fileName, blob, {
+        contentType: "image/png",
+        upsert: false,
+      });
+
+    if (error) throw error;
+
+    const { data } = supabase.storage
+      .from("exercise-schemas")
+      .getPublicUrl(fileName);
+
+    return data.publicUrl;
+  }
+
+  async function uploadBase64Video(base64: string, folder = "videos") {
+    if (!base64.startsWith("data:video")) return base64;
+
+    const { createClient } = await import("@/lib/supabase/client");
+    const supabase = createClient();
+
+    const {
+      data: { user },
+      error: userError,
+    } = await supabase.auth.getUser();
+
+    if (userError || !user) {
+      throw new Error("Utilisateur non connecté");
+    }
+
+    const res = await fetch(base64);
+    const blob = await res.blob();
+
+    const extension = blob.type.includes("quicktime")
+      ? "mov"
+      : blob.type.includes("webm")
+      ? "webm"
+      : "mp4";
+
+    const fileName = `${user.id}/${folder}/${Date.now()}-${Math.random()
+      .toString(36)
+      .slice(2)}.${extension}`;
+
+    const { error } = await supabase.storage
+      .from("exercise-videos")
+      .upload(fileName, blob, {
+        contentType: blob.type || "video/mp4",
+        upsert: false,
+      });
+
+    if (error) throw error;
+
+    const { data } = supabase.storage
+      .from("exercise-videos")
+      .getPublicUrl(fileName);
+
+    return data.publicUrl;
+  }
+
   const save = async () => {
     if (!systeme.title.trim()) {
       flash("Ajoute un titre à ton système");
+      return;
+    }
+
+    if (!systemStorageId) {
+      flash("Chargement du système en cours, réessaie dans une seconde");
       return;
     }
 
@@ -552,15 +638,23 @@ export default function SystemesClient() {
 
     try {
       const uploadedImages = await Promise.all(
-        systeme.images.map(async (img) => {
-          if (img.startsWith("http")) return img;
-          return uploadSchemaImage(img, "systemes-images");
-        })
+        systeme.images.map((image) =>
+          uploadBase64Image(image, `systemes/${systemStorageId}/images`)
+        )
+      );
+
+      const uploadedVideos = await Promise.all(
+        systeme.videos.map((video) =>
+          uploadBase64Video(video, `systemes/${systemStorageId}/videos`)
+        )
       );
 
       const uploadedSchemaImages = await Promise.all(
         systeme.schemaImages.map((image) =>
-          uploadSchemaImage(image, `systemes/${systemStorageId || id}/schemas`)
+          uploadBase64Image(
+            image,
+            `systemes/${systemStorageId}/schemas/imported`
+          )
         )
       );
 
@@ -599,6 +693,7 @@ export default function SystemesClient() {
         id,
         title: systeme.title.trim(),
         images: uploadedImages,
+        videos: uploadedVideos,
         schemaImages: uploadedSchemaImages,
         schemaDataList: cleanSchemaDataList,
       };
@@ -630,7 +725,7 @@ export default function SystemesClient() {
         router.push(`/systemes/${saved.id}`);
       }, 600);
     } catch (error) {
-      console.error(error);
+      console.error("Erreur sauvegarde système :", error);
       setLoading(false);
       flash("Erreur lors de la sauvegarde");
     }
