@@ -1227,9 +1227,16 @@ const currentRef = useRef(current);
       ...line,
       from: toNc(canvas, remaining[0]),
       to: toNc(canvas, remaining[remaining.length - 1]),
-      points: remaining.map((point) => toNc(canvas, point)),
-      ctrls: [],
+      // Pour les actions classiques, drawLine() reconstruit la courbe à partir
+      // de ctrls. On réutilise donc la portion exacte déjà échantillonnée.
+      ctrls: remaining
+        .slice(1, -1)
+        .map((point) => toNc(canvas, point)),
       ctrl: undefined,
+      points:
+        line.action === 'freedraw'
+          ? remaining.map((point) => toNc(canvas, point))
+          : undefined,
     };
 
     drawLine(ctx, canvas, remainingLine);
@@ -1265,7 +1272,23 @@ const currentRef = useRef(current);
       drawActionNumber(ctx, m.x, m.y, i + 1);
     });
 
-    ph.objects.forEach((o) => drawObject(ctx, canvas, o));
+    ph.objects.forEach((o) => {
+      if (anim && o.kind === 'handoff') {
+        const source = o.sourcePlayerId ? anim.players[o.sourcePlayerId] : null;
+        const target = o.targetPlayerId ? anim.players[o.targetPlayerId] : null;
+
+        // Un ancien H déjà consommé dans une phase précédente n'est pas rejoué.
+        if (!source || !target) return;
+
+        const HANDOFF_NEAR_N = 0.085;
+        const sourceNear = Math.hypot(source.x - o.x, source.y - o.y) <= HANDOFF_NEAR_N;
+        const targetNear = Math.hypot(target.x - o.x, target.y - o.y) <= HANDOFF_NEAR_N;
+
+        if (!sourceNear || !targetNear) return;
+      }
+
+      drawObject(ctx, canvas, o);
+    });
     const roster = anim ? rosterRef.current : ph.players;
     roster.forEach((p) => {
   const ap = anim ? anim.players[p.id] : null;
@@ -1385,19 +1408,53 @@ if (anim && anim.balls) {
 
   const actionDurationMs = (l: Line) => (typeof l.duration === 'number' && l.duration > 0 ? l.duration : 1) * 1000;
 
-  // planning des actions d'une phase (relatif au début de la phase), séquencé action par action.
-  // "withPrevious" => même start que l'action précédente ; sinon démarre après la précédente.
+  // Planning des actions d'une phase (relatif au début de la phase).
+  // "withPrevious" conserve les simultanéités. Ensuite, tout le planning est
+  // étiré/réduit proportionnellement pour respecter EXACTEMENT ph.duration.
   const buildPhaseActionSched = (phaseIdx: number): ActSched[] => {
     const ph = phasesRef.current[phaseIdx]; if (!ph) return [];
-    const res: ActSched[] = [];
-    let prevStart = 0, prevDur = 0;
+
+    const raw: ActSched[] = [];
+    let prevStart = 0;
+    let prevDur = 0;
+
     orderedActions(ph).forEach((l, j) => {
       const dur = actionDurationMs(l);
-      const start = j === 0 ? 0 : (l.startMode === 'withPrevious' ? prevStart : prevStart + prevDur);
-      res.push({ line: l, start, dur, end: start + dur });
-      prevStart = start; prevDur = dur;
+      const start =
+        j === 0
+          ? 0
+          : l.startMode === 'withPrevious'
+          ? prevStart
+          : prevStart + prevDur;
+
+      raw.push({ line: l, start, dur, end: start + dur });
+      prevStart = start;
+      prevDur = dur;
     });
-    return res;
+
+    if (!raw.length) return raw;
+
+    const rawSpan = raw.reduce(
+      (maxEnd, action) => Math.max(maxEnd, action.end),
+      0
+    );
+    const targetSpan = phaseDuration(ph) * 1000;
+
+    if (rawSpan <= 0 || targetSpan <= 0) return raw;
+
+    const scale = targetSpan / rawSpan;
+
+    return raw.map((action) => {
+      const start = action.start * scale;
+      const dur = action.dur * scale;
+
+      return {
+        ...action,
+        start,
+        dur,
+        end: start + dur,
+      };
+    });
   };
   const phaseSpanMs = (phaseIdx: number, actSched: ActSched[]): number =>
     (actSched.length ? actSched.reduce((mx, a) => Math.max(mx, a.end), 0) : phaseDuration(phasesRef.current[phaseIdx]) * 1000);
@@ -2089,8 +2146,8 @@ animPosRef.current = { players, balls };
         }
 
         // Un H placé entre deux attaquants représente un main à main.
-        // On relie automatiquement les deux joueurs les plus proches du symbole et
-        // on transfère le ballon du porteur vers son partenaire.
+        // Il mémorise les deux joueurs concernés mais NE change pas la possession
+        // dans le schéma courant. Le transfert sera appliqué uniquement au Next.
         const nearest = ph.players
           .filter((player) => player.team === 'att' && !player.coach)
           .map((player) => ({ player, distance: Math.hypot(player.x - n.x, player.y - n.y) }))
@@ -2100,7 +2157,6 @@ animPosRef.current = { players, balls };
 
         let sourcePlayerId: string | undefined;
         let targetPlayerId: string | undefined;
-        let nextPlayers = ph.players;
 
         if (nearest.length === 2) {
           const [first, second] = nearest;
@@ -2108,23 +2164,17 @@ animPosRef.current = { players, balls };
           const secondHasBall = playerBallCount(second) > 0;
           const source = firstHasBall ? first : secondHasBall ? second : first;
           const target = source.id === first.id ? second : first;
+
           sourcePlayerId = source.id;
           targetPlayerId = target.id;
 
-          nextPlayers = ph.players.map((player) => {
-            if (player.id === source.id) return { ...player, hasBall: false, ballCount: 0 };
-            if (player.id === target.id) return { ...player, hasBall: true, ballCount: Math.max(1, playerBallCount(player)) };
-            return player;
-          });
-
-          showHint(`Main à main : ballon transféré de ${source.label} vers ${target.label}`);
+          showHint(`Main à main : ${source.label} donnera le ballon à ${target.label} au schéma suivant`);
         } else {
           showHint('Place le H entre deux attaquants pour créer le main à main');
         }
 
         return {
           ...ph,
-          players: nextPlayers,
           objects: [...ph.objects, { id: uid(), x: n.x, y: n.y, kind: 'handoff', rotation: 0, size: 1, color: '#0F0F12', sourcePlayerId, targetPlayerId }],
         };
       });
@@ -3046,6 +3096,26 @@ const exportJson = () => {
     }
   }
 
+  // Un main à main est un transfert d'état entre deux schémas :
+  // pendant cette phase, le ballon reste au porteur ; ici seulement,
+  // on prépare le porteur qui apparaîtra dans la phase créée par Next.
+  ph.objects
+    .filter(
+      (o) =>
+        o.kind === 'handoff' &&
+        !!o.sourcePlayerId &&
+        !!o.targetPlayerId
+    )
+    .forEach((o) => {
+      const sourceId = o.sourcePlayerId!;
+      const targetId = o.targetPlayerId!;
+
+      if ((owners.get(sourceId) || 0) <= 0) return;
+
+      removeOwnerBall(owners, sourceId, 1);
+      addOwnerBall(owners, targetId, 1);
+    });
+
   const players = ph.players.map((p) => {
     const pos = phasePlayerPosAt(s, p.id, span) || { x: p.x, y: p.y };
 
@@ -3076,7 +3146,18 @@ const exportJson = () => {
     const cur = phasesRef.current[idx];
     const fin = cur ? computePhaseFinalState(idx) : null;
     const newPhase: Phase = fin
-      ? { players: fin.players, objects: cur!.objects.map((o) => ({ ...o })), lines: [], notes: '', duration: 1.5, startMode: 'afterPrevious' }
+      ? {
+          players: fin.players,
+          objects: cur!.objects.map((o) =>
+            o.kind === 'handoff'
+              ? { ...o, sourcePlayerId: undefined, targetPlayerId: undefined }
+              : { ...o }
+          ),
+          lines: [],
+          notes: '',
+          duration: 1.5,
+          startMode: 'afterPrevious',
+        }
       : emptyPhase();
     setPhases((prev) => { const np = [...prev]; np.splice(idx + 1, 0, newPhase); return np; });
     setCurrent((c) => c + 1); setSelection([]); setEditingId(null);
@@ -3395,7 +3476,7 @@ const exportJson = () => {
 
             {/* -------- DROITE -------- */}
             <aside className="ed-right">
-              <div className="ed-hint">💡 Place joueurs/objets au clic, trace les actions au glisser. Triangle et carré : chaque poignée bleue est un vrai sommet indépendant. Pose chaque coin exactement où tu veux. Le <b>panier latéral</b> se déplace et se tourne comme les autres objets ; avec l'outil Tir, relâche le geste dessus pour le viser. Un <b>H placé entre deux joueurs</b> signifie main à main et transfère automatiquement le ballon au second joueur.</div>
+              <div className="ed-hint">💡 Place joueurs/objets au clic, trace les actions au glisser. Triangle et carré : chaque poignée bleue est un vrai sommet indépendant. Pose chaque coin exactement où tu veux. Le <b>panier latéral</b> se déplace et se tourne comme les autres objets ; avec l'outil Tir, relâche le geste dessus pour le viser. Un <b>H placé entre deux joueurs</b> signifie main à main ; le ballon passe au second joueur sur le schéma suivant.</div>
 
               <div className="sec-lab">ACTIONS</div>
               <div className="actions-grid">
@@ -3441,7 +3522,7 @@ const exportJson = () => {
                 <div className={'misc-btn' + (isObj('square') ? ' active' : '')} data-misc="square" title="Carré" onClick={() => pick({ kind: 'object', obj: 'square' })}>■</div>
                 <div className={'misc-btn' + (isObj('circle') ? ' active' : '')} data-misc="circle" title="Rond" onClick={() => pick({ kind: 'object', obj: 'circle' })}>●</div>
                 <div className={'misc-btn' + (isObj('text') ? ' active' : '')} data-misc="text" title="Texte" onClick={() => pick({ kind: 'object', obj: 'text' })}>T</div>
-                <div className={'misc-btn' + (isObj('handoff') ? ' active' : '')} data-misc="handoff" title="Main à main : place le H entre deux joueurs pour changer le porteur" style={{ fontFamily: 'Arial,sans-serif', fontWeight: 900 }} onClick={() => pick({ kind: 'object', obj: 'handoff' })}>H</div>
+                <div className={'misc-btn' + (isObj('handoff') ? ' active' : '')} data-misc="handoff" title="Main à main : le changement de porteur s’applique au schéma suivant" style={{ fontFamily: 'Arial,sans-serif', fontWeight: 900 }} onClick={() => pick({ kind: 'object', obj: 'handoff' })}>H</div>
                 <div className={'misc-btn' + (isObj('freedraw') ? ' active' : '')} data-misc="freedraw" title="Dessin libre" onClick={() => pick({ kind: 'object', obj: 'freedraw' })}>✎</div>
               </div>
 
