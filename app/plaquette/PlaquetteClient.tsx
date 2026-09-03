@@ -272,6 +272,7 @@ const currentRef = useRef(current);
   const scheduleRef = useRef<Sched[]>([]);
   const totalMsRef = useRef(0);
   const ballEventsRef = useRef<{ src: string | null; target: string | null; shoot: boolean; wStart: number; wEnd: number; from?: Pt; to?: Pt; tMode?: 'player' | 'playerCurrentPoint'; createdPt?: Pt; basketPt?: Pt }[]>([]);
+  const handoffEventsRef = useRef<{ src: string; target: string; wTime: number }[]>([]);
   const carrier0Ref = useRef<string | null>(null);
   const rosterRef = useRef<Player[]>([]);
   const onAnimEndRef = useRef<(() => void) | null>(null); // callback fin d'animation (utilisé par l'export vidéo)
@@ -1557,6 +1558,65 @@ if (anim && anim.balls) {
     return evs;
   };
 
+  // Évènements de main à main sur la timeline globale.
+  // Le ballon change de joueur au même moment que l'apparition du H :
+  // dès que les deux joueurs liés arrivent dans la zone du symbole.
+  const buildHandoffEvents = (
+    sched: Sched[]
+  ): { src: string; target: string; wTime: number }[] => {
+    const HANDOFF_NEAR_N = 0.085;
+    const events: { src: string; target: string; wTime: number }[] = [];
+
+    sched.forEach((s) => {
+      const ph = phasesRef.current[s.idx];
+      if (!ph) return;
+
+      ph.objects
+        .filter(
+          (o) =>
+            o.kind === 'handoff' &&
+            !!o.sourcePlayerId &&
+            !!o.targetPlayerId
+        )
+        .forEach((o) => {
+          const src = o.sourcePlayerId!;
+          const target = o.targetPlayerId!;
+
+          // Recherche du premier instant où les deux joueurs sont dans la zone.
+          // 80 pas suffisent largement pour une animation fluide tout en restant léger,
+          // et ce calcul n'est fait qu'une fois au démarrage de l'animation.
+          const steps = 80;
+          let localTime = s.span;
+
+          for (let step = 0; step <= steps; step += 1) {
+            const t = (s.span * step) / steps;
+            const sourcePos = phasePlayerPosAt(s, src, t);
+            const targetPos = phasePlayerPosAt(s, target, t);
+
+            if (!sourcePos || !targetPos) continue;
+
+            const sourceNear =
+              Math.hypot(sourcePos.x - o.x, sourcePos.y - o.y) <= HANDOFF_NEAR_N;
+            const targetNear =
+              Math.hypot(targetPos.x - o.x, targetPos.y - o.y) <= HANDOFF_NEAR_N;
+
+            if (sourceNear && targetNear) {
+              localTime = t;
+              break;
+            }
+          }
+
+          events.push({
+            src,
+            target,
+            wTime: s.start + localTime,
+          });
+        });
+    });
+
+    return events.sort((a, b) => a.wTime - b.wTime);
+  };
+
   const initialCarrier = (sched: Sched[]): string | null => {
     const firstStart = sched.length ? Math.min(...sched.map((s) => s.start)) : 0;
 
@@ -1602,13 +1662,44 @@ if (anim && anim.balls) {
 
     const activeEvents = evs.filter((e) => clock >= e.wStart && clock < e.wEnd);
     const endedEvents = evs.filter((e) => e.wEnd <= clock);
+    const endedHandoffs = handoffEventsRef.current.filter(
+      (event) => event.wTime <= clock
+    );
 
-    // Applique tous les transferts terminés avant l'instant courant.
-    endedEvents.forEach((e) => {
-      if (e.src) removeOwnerBall(owners, e.src);
+    // Rejoue dans l'ordre chronologique tous les changements de possession
+    // déjà terminés : passes / tirs + mains à main.
+    const possessionEvents = [
+      ...endedEvents.map((event) => ({
+        time: event.wEnd,
+        kind: 'ball' as const,
+        event,
+      })),
+      ...endedHandoffs.map((event) => ({
+        time: event.wTime,
+        kind: 'handoff' as const,
+        event,
+      })),
+    ].sort((a, b) => a.time - b.time);
 
-      if (!e.shoot && e.target) {
-        addOwnerBall(owners, e.target);
+    possessionEvents.forEach((item) => {
+      if (item.kind === 'handoff') {
+        const event = item.event;
+
+        // Le donneur perd son ballon exactement au moment du main à main
+        // et le receveur le récupère immédiatement.
+        if ((owners.get(event.src) || 0) > 0) {
+          removeOwnerBall(owners, event.src, 1);
+          addOwnerBall(owners, event.target, 1);
+        }
+        return;
+      }
+
+      const event = item.event;
+
+      if (event.src) removeOwnerBall(owners, event.src);
+
+      if (!event.shoot && event.target) {
+        addOwnerBall(owners, event.target);
       }
     });
 
@@ -1706,6 +1797,7 @@ animPosRef.current = { players, balls };
     totalMsRef.current = sched.reduce((mx, s) => Math.max(mx, s.end), 0);
     rosterRef.current = buildRoster(sched);
     ballEventsRef.current = buildBallEvents(sched);
+    handoffEventsRef.current = buildHandoffEvents(sched);
     carrier0Ref.current = initialCarrier(sched);
     clockRef.current = 0; lastNowRef.current = performance.now();
     setSelection([]); setEditingId(null);
@@ -1731,6 +1823,7 @@ animPosRef.current = { players, balls };
     playingRef.current = false; setIsPlaying(false);
     if (rafRef.current) { cancelAnimationFrame(rafRef.current); rafRef.current = null; }
     animPosRef.current = null; clockRef.current = 0;
+    handoffEventsRef.current = [];
     if (tlBarRef.current) tlBarRef.current.style.width = '0%';
     render();
   };
