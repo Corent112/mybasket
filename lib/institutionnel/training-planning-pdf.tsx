@@ -361,16 +361,20 @@ function Header({
       <View style={styles.topTitle}>
         <Text style={styles.topTitleText}>
           {(() => {
-            const promotionName = String(cohort.name || "").trim();
+            const cohortYear = String(cohort.name || "")
+              .replace(/promotion/gi, "")
+              .replace(/\s+/g, " ")
+              .trim()
+              .replace(/(\d{4})\s*[\/–—-]\s*(\d{4})/, "$1-$2");
             const formationName =
               unique(blocks.map((block) => block.formation_name))[0] || "";
             const planningTitle = String(title || "").trim();
 
-            if (formationName && promotionName) {
-              return `${formationName} - ${promotionName}`;
+            if (formationName && cohortYear) {
+              return `${formationName} ${cohortYear}`;
             }
 
-            return formationName || promotionName || planningTitle || "Planning de formation";
+            return formationName || cohortYear || planningTitle || "Planning de formation";
           })()}
         </Text>
       </View>
