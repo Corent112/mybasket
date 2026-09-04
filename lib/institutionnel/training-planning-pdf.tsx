@@ -360,7 +360,18 @@ function Header({
     <View>
       <View style={styles.topTitle}>
         <Text style={styles.topTitleText}>
-          {title || cohort.name || "Planning de formation"}
+          {(() => {
+            const promotionName = String(cohort.name || "").trim();
+            const formationName =
+              unique(blocks.map((block) => block.formation_name))[0] || "";
+            const planningTitle = String(title || "").trim();
+
+            if (formationName && promotionName) {
+              return `${formationName} - ${promotionName}`;
+            }
+
+            return formationName || promotionName || planningTitle || "Planning de formation";
+          })()}
         </Text>
       </View>
 
