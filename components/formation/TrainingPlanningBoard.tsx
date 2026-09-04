@@ -450,7 +450,7 @@ export default function TrainingPlanningBoard({ cohortId }: { cohortId: string }
       marks.add(timeToMinutes(block.end_time));
     });
 
-    const PIXELS_PER_MINUTE = 2.05;
+    const PIXELS_PER_MINUTE = 2.55;
 
     return {
       start,
@@ -781,53 +781,52 @@ export default function TrainingPlanningBoard({ cohortId }: { cohortId: string }
                           className={`block type-${block.block_type} ${selectedBlockId === block.id ? "selected" : ""}`}
                           style={{
                             top,
-                            height: Math.max(38, bottom - top),
+                            height: Math.max(46, bottom - top),
                           }}
                           onClick={() => setSelectedBlockId(block.id)}
                         >
-                          <div className="block-top">
-                            <span className="block-time">
-                              {block.start_time.slice(0, 5)} → {block.end_time.slice(0, 5)}
-                              <small className="block-duration">
+                          <div className="block-headline">
+                            <div className="block-headline-main">
+                              <span className="block-time">
+                                {block.start_time.slice(0, 5)} → {block.end_time.slice(0, 5)}
+                              </span>
+                              <span className="block-duration">
                                 {timeToMinutes(block.end_time) - timeToMinutes(block.start_time)} min
-                              </small>
-                            </span>
+                              </span>
+                              {block.formation_name && (
+                                <span className="block-formation">{block.formation_name}</span>
+                              )}
+                            </div>
                             <span className="block-type">
                               {blockTypeLabel(block.block_type)}
                             </span>
                           </div>
 
-                          <div className="block-content">
-                            {block.formation_name && (
-                              <span className="block-formation">{block.formation_name}</span>
-                            )}
+                          <div className="block-mainline">
                             <strong className="block-title">{block.title}</strong>
-                            {block.description && (
-                              <span className="block-description">{block.description}</span>
-                            )}
                           </div>
 
-                          <div className="block-meta">
-                            {block.instructor_name && (
-                              <span title="Intervenant">👤 {block.instructor_name}</span>
-                            )}
-                            {block.room_name && (
-                              <span title="Salle / terrain">📍 {block.room_name}</span>
-                            )}
-                          </div>
+                          <div className="block-bottomline">
+                            <div className="block-meta">
+                              {block.instructor_name && (
+                                <span title="Intervenant">👤 {block.instructor_name}</span>
+                              )}
+                              {block.room_name && (
+                                <span title="Salle / terrain">📍 {block.room_name}</span>
+                              )}
+                            </div>
 
-                          {(block.pedagogical_scenario_id || blockAssetCount > 0) && (
-                            <div className="block-footer">
+                            <div className="block-flags">
                               {block.pedagogical_scenario_id && (
-                                <span className="block-badge">📘 Scénario</span>
+                                <span title="Scénario pédagogique lié">📘</span>
                               )}
                               {blockAssetCount > 0 && (
-                                <span className="block-badge">
-                                  📎 {blockAssetCount} fichier{blockAssetCount > 1 ? "s" : ""}
+                                <span title={`${blockAssetCount} pièce(s) jointe(s)`}>
+                                  📎 {blockAssetCount}
                                 </span>
                               )}
                             </div>
-                          )}
+                          </div>
                         </button>
                       );
                     })}
@@ -846,9 +845,7 @@ export default function TrainingPlanningBoard({ cohortId }: { cohortId: string }
               <p>BLOC SÉLECTIONNÉ</p>
               <h2>{selectedBlock.title}</h2>
               <span>
-                {selectedBlock.start_time.slice(0, 5)} →{" "}
-                {selectedBlock.end_time.slice(0, 5)} ·{" "}
-                {formatDay(selectedBlock.training_day)}
+                {formatDay(selectedBlock.training_day)} · {selectedBlock.start_time.slice(0, 5)} → {selectedBlock.end_time.slice(0, 5)}
               </span>
             </div>
 
@@ -858,6 +855,19 @@ export default function TrainingPlanningBoard({ cohortId }: { cohortId: string }
             >
               Supprimer
             </button>
+          </div>
+
+          <div className="selected-summary">
+            <div><small>Formation</small><strong>{selectedBlock.formation_name || "—"}</strong></div>
+            <div><small>Type</small><strong>{blockTypeLabel(selectedBlock.block_type)}</strong></div>
+            <div><small>Intervenant</small><strong>{selectedBlock.instructor_name || "—"}</strong></div>
+            <div><small>Salle / terrain</small><strong>{selectedBlock.room_name || "—"}</strong></div>
+            {selectedBlock.description && (
+              <div className="selected-description">
+                <small>Description / consigne</small>
+                <strong>{selectedBlock.description}</strong>
+              </div>
+            )}
           </div>
 
           <div className="detail-grid">
@@ -1142,7 +1152,7 @@ export default function TrainingPlanningBoard({ cohortId }: { cohortId: string }
         }
         .day-column {
           position: relative;
-          min-width: 245px;
+          min-width: 270px;
           border-right: 2px solid #cdbfba;
           overflow: hidden;
           background:
@@ -1165,23 +1175,24 @@ export default function TrainingPlanningBoard({ cohortId }: { cohortId: string }
         }
         .block {
           position: absolute;
-          left: 10px;
-          right: 10px;
+          left: 7px;
+          right: 7px;
           display: flex;
           flex-direction: column;
-          gap: 6px;
+          justify-content: space-between;
+          gap: 4px;
           text-align: left;
-          padding: 9px 10px;
+          padding: 7px 9px;
           background: #fff;
           border: 1px solid #dbc9c3;
           border-left: 4px solid #6b1a2c;
-          border-radius: 8px;
+          border-radius: 7px;
           cursor: pointer;
           overflow: hidden;
-          min-height: 38px;
+          min-height: 46px;
           box-sizing: border-box;
           box-shadow: 0 1px 3px rgba(49,31,36,.07);
-          transition: background .15s ease, box-shadow .15s ease, transform .15s ease;
+          transition: background .15s ease, box-shadow .15s ease;
         }
         .block:hover {
           background: #fffaf7;
@@ -1194,25 +1205,45 @@ export default function TrainingPlanningBoard({ cohortId }: { cohortId: string }
           box-shadow: 0 0 0 2px rgba(107,26,44,.14);
           z-index: 3;
         }
-        .block-top {
+        .block-headline,
+        .block-bottomline {
           display: flex;
           align-items: center;
           justify-content: space-between;
           gap: 8px;
           min-width: 0;
         }
+        .block-headline-main {
+          display: flex;
+          align-items: center;
+          gap: 6px;
+          min-width: 0;
+          overflow: hidden;
+        }
         .block-time {
+          flex: 0 0 auto;
           color: #3a2b2e !important;
-          font-size: .65rem !important;
+          font-size: .63rem !important;
           font-weight: 1000;
           white-space: nowrap;
-          letter-spacing: .01em;
         }
         .block-duration {
-          margin-left: 6px;
-          color: #8b7b7e;
-          font-size: .54rem;
+          flex: 0 0 auto;
+          color: #8b7b7e !important;
+          font-size: .53rem !important;
           font-weight: 900;
+          white-space: nowrap;
+        }
+        .block-formation {
+          min-width: 0;
+          color: #8a5b12 !important;
+          font-size: .58rem !important;
+          font-weight: 1000;
+          text-transform: uppercase;
+          letter-spacing: .03em;
+          overflow: hidden;
+          text-overflow: ellipsis;
+          white-space: nowrap;
         }
         .block-type {
           flex: 0 0 auto;
@@ -1220,78 +1251,54 @@ export default function TrainingPlanningBoard({ cohortId }: { cohortId: string }
           border-radius: 999px;
           background: #f3ece8;
           color: #78676a !important;
-          font-size: .56rem !important;
+          font-size: .53rem !important;
           font-weight: 950;
           text-transform: uppercase;
-          letter-spacing: .04em;
+          letter-spacing: .03em;
+          white-space: nowrap;
         }
-        .block-content {
-          display: grid;
-          gap: 2px;
+        .block-mainline {
+          display: flex;
           min-width: 0;
+          width: 100%;
         }
-        .block-formation {
-          color: #8a5b12 !important;
-          font-size: .62rem !important;
+        .block-title {
+          width: 100%;
+          color: #321f24;
+          font-size: .76rem;
+          line-height: 1.08;
           font-weight: 1000;
-          text-transform: uppercase;
-          letter-spacing: .04em;
           overflow: hidden;
           text-overflow: ellipsis;
           white-space: nowrap;
         }
-        .block-title {
-          color: #321f24;
-          font-size: .8rem;
-          line-height: 1.12;
-          font-weight: 1000;
-          overflow: hidden;
-          display: -webkit-box;
-          -webkit-line-clamp: 2;
-          -webkit-box-orient: vertical;
-        }
-        .block-description {
-          color: #7a6c6f !important;
-          font-size: .61rem !important;
-          line-height: 1.2;
-          overflow: hidden;
-          display: -webkit-box;
-          -webkit-line-clamp: 1;
-          -webkit-box-orient: vertical;
-        }
         .block-meta {
           display: flex;
-          flex-wrap: wrap;
-          gap: 3px 8px;
+          align-items: center;
+          gap: 9px;
           min-width: 0;
-          padding-top: 4px;
-          border-top: 1px solid #eee3df;
+          overflow: hidden;
+          padding: 0;
+          border: 0;
         }
         .block-meta span {
+          min-width: 0;
           color: #62575a !important;
-          font-size: .61rem !important;
+          font-size: .57rem !important;
           font-weight: 750;
           overflow: hidden;
           text-overflow: ellipsis;
           white-space: nowrap;
-          max-width: 100%;
         }
-        .block-footer {
+        .block-flags {
           display: flex;
-          flex-wrap: wrap;
-          gap: 4px;
-          margin-top: auto;
-          padding-top: 2px;
-        }
-        .block-badge {
-          display: inline-flex;
           align-items: center;
-          border: 1px solid #e3d7d2;
-          background: #fff;
+          gap: 5px;
+          flex: 0 0 auto;
+        }
+        .block-flags span {
           color: #6b1a2c !important;
-          border-radius: 999px;
-          padding: 2px 6px;
-          font-size: .57rem !important;
+          font-size: .56rem !important;
           font-weight: 900;
           white-space: nowrap;
         }
@@ -1318,11 +1325,46 @@ export default function TrainingPlanningBoard({ cohortId }: { cohortId: string }
         .type-other {
           border-left-color: #80726f;
         }
+        .selected-summary {
+          display: grid;
+          grid-template-columns: repeat(4, minmax(0, 1fr));
+          gap: 8px;
+          margin-top: 12px;
+          padding: 10px;
+          border: 1px solid #eee3df;
+          border-radius: 10px;
+          background: #fbf8f6;
+        }
+        .selected-summary > div {
+          min-width: 0;
+        }
+        .selected-summary small,
+        .selected-summary strong {
+          display: block;
+        }
+        .selected-summary small {
+          margin-bottom: 3px;
+          color: #8a7770;
+          font-size: .58rem;
+          font-weight: 900;
+          text-transform: uppercase;
+        }
+        .selected-summary strong {
+          color: #3b2a2d;
+          font-size: .72rem;
+          line-height: 1.25;
+        }
+        .selected-description {
+          grid-column: 1 / -1;
+          padding-top: 7px;
+          border-top: 1px solid #eadfda;
+        }
         .detail-grid {
           display: grid;
           grid-template-columns: 1fr auto;
           gap: 9px;
           align-items: end;
+          margin-top: 10px;
         }
         .danger {
           border: 1px solid #b42318;
@@ -1408,6 +1450,9 @@ export default function TrainingPlanningBoard({ cohortId }: { cohortId: string }
           }
           .attachment-create {
             grid-template-columns: 1fr;
+          }
+          .selected-summary {
+            grid-template-columns: 1fr 1fr;
           }
           .attachment-picker {
             max-width: none;
