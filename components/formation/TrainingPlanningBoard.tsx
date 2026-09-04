@@ -68,6 +68,10 @@ function assetIcon(asset: Asset) {
   return "📎";
 }
 
+function blockTypeLabel(value: string) {
+  return BLOCK_TYPES.find(([key]) => key === value)?.[1] || "Bloc";
+}
+
 export default function TrainingPlanningBoard({ cohortId }: { cohortId: string }) {
   const supabase = useMemo(() => createClient(), []);
   const [blocks, setBlocks] = useState<PlanningBlock[]>([]);
@@ -416,25 +420,50 @@ export default function TrainingPlanningBoard({ cohortId }: { cohortId: string }
     ).sort();
   }, [blocks]);
 
-  const hours = useMemo(() => {
-    if (!blocks.length) return [];
-
-    const min = Math.min(
-      ...blocks.map((b) => timeToMinutes(b.start_time)),
-    );
-    const max = Math.max(
-      ...blocks.map((b) => timeToMinutes(b.end_time)),
-    );
-    const start = Math.floor(min / 30) * 30;
-    const end = Math.ceil(max / 30) * 30;
-    const values: number[] = [];
-
-    for (let value = start; value <= end; value += 30) {
-      values.push(value);
+  const timeline = useMemo(() => {
+    if (!blocks.length) {
+      return {
+        start: 8 * 60,
+        end: 18 * 60,
+        marks: [] as number[],
+        height: 0,
+      };
     }
 
-    return values;
+    const starts = blocks.map((block) => timeToMinutes(block.start_time));
+    const ends = blocks.map((block) => timeToMinutes(block.end_time));
+
+    // Le planning s'adapte réellement aux horaires saisis.
+    // On garde seulement 15 minutes de marge visuelle avant/après.
+    const start = Math.floor((Math.min(...starts) - 15) / 15) * 15;
+    const end = Math.ceil((Math.max(...ends) + 15) / 15) * 15;
+
+    const marks = new Set<number>();
+    for (let value = start; value <= end; value += 15) {
+      marks.add(value);
+    }
+
+    // Les horaires exacts saisis sont toujours affichés, même s'ils ne
+    // tombent pas sur un quart d'heure (ex. 09:10, 09:45, 10:05).
+    blocks.forEach((block) => {
+      marks.add(timeToMinutes(block.start_time));
+      marks.add(timeToMinutes(block.end_time));
+    });
+
+    const PIXELS_PER_MINUTE = 1.55;
+
+    return {
+      start,
+      end,
+      marks: Array.from(marks).sort((a, b) => a - b),
+      height: Math.max(180, (end - start) * PIXELS_PER_MINUTE),
+    };
   }, [blocks]);
+
+  const minuteToTop = (minute: number) => {
+    if (timeline.end <= timeline.start) return 0;
+    return ((minute - timeline.start) / (timeline.end - timeline.start)) * timeline.height;
+  };
 
   const selectedBlock =
     blocks.find((block) => block.id === selectedBlockId) ?? null;
@@ -689,7 +718,7 @@ export default function TrainingPlanningBoard({ cohortId }: { cohortId: string }
         ) : (
           <div className="table-scroll">
             <div
-              className="planning-grid"
+              className="timeline-board"
               style={{
                 gridTemplateColumns: `82px repeat(${days.length}, minmax(245px, 1fr))`,
               }}
@@ -701,80 +730,106 @@ export default function TrainingPlanningBoard({ cohortId }: { cohortId: string }
                 </div>
               ))}
 
-              {hours.map((minute) => {
-                const hh = String(
-                  Math.floor(minute / 60),
-                ).padStart(2, "0");
-                const mm = String(minute % 60).padStart(2, "0");
+              <div className="time-axis" style={{ height: timeline.height }}>
+                {timeline.marks.map((minute) => {
+                  const hh = String(Math.floor(minute / 60)).padStart(2, "0");
+                  const mm = String(minute % 60).padStart(2, "0");
 
-                return [
-                  <div className="time-cell" key={`time-${minute}`}>
-                    {hh}:{mm}
-                  </div>,
-                  ...days.map((day) => {
-                    const block = blocks.find(
-                      (item) =>
-                        item.training_day === day &&
-                        timeToMinutes(item.start_time) === minute,
-                    );
+                  return (
+                    <span
+                      className="time-mark"
+                      key={`time-${minute}`}
+                      style={{ top: minuteToTop(minute) }}
+                    >
+                      {hh}:{mm}
+                    </span>
+                  );
+                })}
+              </div>
 
-                    if (!block) {
+              {days.map((day) => {
+                const dayBlocks = blocks.filter(
+                  (block) => block.training_day === day,
+                );
+
+                return (
+                  <div
+                    className="day-column"
+                    key={`column-${day}`}
+                    style={{ height: timeline.height }}
+                  >
+                    {timeline.marks.map((minute) => (
+                      <span
+                        className="timeline-line"
+                        key={`${day}-line-${minute}`}
+                        style={{ top: minuteToTop(minute) }}
+                      />
+                    ))}
+
+                    {dayBlocks.map((block) => {
+                      const startMinute = timeToMinutes(block.start_time);
+                      const endMinute = timeToMinutes(block.end_time);
+                      const top = minuteToTop(startMinute);
+                      const bottom = minuteToTop(endMinute);
+                      const blockAssetCount = assets.filter(
+                        (asset) => asset.block_id === block.id,
+                      ).length;
+
                       return (
-                        <div
-                          className="slot"
-                          key={`${day}-${minute}`}
-                        />
+                        <button
+                          key={block.id}
+                          className={`block type-${block.block_type} ${selectedBlockId === block.id ? "selected" : ""}`}
+                          style={{
+                            top,
+                            height: Math.max(38, bottom - top),
+                          }}
+                          onClick={() => setSelectedBlockId(block.id)}
+                        >
+                          <div className="block-top">
+                            <span className="block-time">
+                              {block.start_time.slice(0, 5)} → {block.end_time.slice(0, 5)}
+                            </span>
+                            <span className="block-type">
+                              {blockTypeLabel(block.block_type)}
+                            </span>
+                          </div>
+
+                          <div className="block-content">
+                            {block.formation_name && (
+                              <span className="block-formation">{block.formation_name}</span>
+                            )}
+                            <strong className="block-title">{block.title}</strong>
+                            {block.description && (
+                              <span className="block-description">{block.description}</span>
+                            )}
+                          </div>
+
+                          <div className="block-meta">
+                            {block.instructor_name && (
+                              <span title="Intervenant">👤 {block.instructor_name}</span>
+                            )}
+                            {block.room_name && (
+                              <span title="Salle / terrain">📍 {block.room_name}</span>
+                            )}
+                          </div>
+
+                          {(block.pedagogical_scenario_id || blockAssetCount > 0) && (
+                            <div className="block-footer">
+                              {block.pedagogical_scenario_id && (
+                                <span className="block-badge">📘 Scénario</span>
+                              )}
+                              {blockAssetCount > 0 && (
+                                <span className="block-badge">
+                                  📎 {blockAssetCount} fichier{blockAssetCount > 1 ? "s" : ""}
+                                </span>
+                              )}
+                            </div>
+                          )}
+                        </button>
                       );
-                    }
-
-                    const span = Math.max(
-                      1,
-                      Math.round(
-                        (timeToMinutes(block.end_time) -
-                          timeToMinutes(block.start_time)) /
-                          30,
-                      ),
-                    );
-
-                    const blockAssetCount = assets.filter(
-                      (asset) => asset.block_id === block.id,
-                    ).length;
-
-                    return (
-                      <button
-                        key={`${day}-${minute}`}
-                        className={`block type-${block.block_type}`}
-                        style={{ gridRow: `span ${span}` }}
-                        onClick={() => setSelectedBlockId(block.id)}
-                      >
-                        <small>
-                          {block.start_time.slice(0, 5)} -{" "}
-                          {block.end_time.slice(0, 5)}
-                        </small>
-                        {block.formation_name && (
-                          <em>{block.formation_name}</em>
-                        )}
-                        <strong>{block.title}</strong>
-                        {block.instructor_name && (
-                          <span>👤 {block.instructor_name}</span>
-                        )}
-                        {block.room_name && (
-                          <span>📍 {block.room_name}</span>
-                        )}
-                        {block.pedagogical_scenario_id && (
-                          <span>📘 Scénario lié</span>
-                        )}
-                        {blockAssetCount > 0 && (
-                          <span>
-                            📎 {blockAssetCount} pièce
-                            {blockAssetCount > 1 ? "s" : ""} jointe
-                            {blockAssetCount > 1 ? "s" : ""}
-                          </span>
-                        )}
-                      </button>
-                    );
-                  }),
-                ];
+                    })}
+                  </div>
+                );
               })}
             </div>
           </div>
@@ -1043,19 +1098,20 @@ export default function TrainingPlanningBoard({ cohortId }: { cohortId: string }
           overflow: auto;
           margin-top: 12px;
         }
-        .planning-grid {
+        .timeline-board {
           display: grid;
-          grid-auto-rows: 42px;
           min-width: max-content;
           border: 1px solid #ded4cd;
+          background: #fff;
         }
         .corner,
-        .day-head,
-        .time-cell,
-        .slot,
-        .block {
+        .day-head {
+          min-height: 38px;
           border-right: 1px solid #ded4cd;
           border-bottom: 1px solid #ded4cd;
+        }
+        .corner {
+          background: #f2efec;
         }
         .day-head {
           display: flex;
@@ -1066,58 +1122,179 @@ export default function TrainingPlanningBoard({ cohortId }: { cohortId: string }
           font-weight: 950;
           text-transform: capitalize;
         }
-        .time-cell {
-          display: flex;
-          align-items: flex-start;
-          justify-content: center;
-          padding-top: 4px;
-          background: #f2efec;
-          font-size: 0.72rem;
-          font-weight: 800;
+        .time-axis {
+          position: relative;
+          background: #f6f3f1;
+          border-right: 1px solid #ded4cd;
+          min-width: 82px;
         }
-        .slot {
-          background: #fff;
+        .time-mark {
+          position: absolute;
+          right: 8px;
+          transform: translateY(-50%);
+          color: #5d5154;
+          font-size: .64rem;
+          font-weight: 900;
+          white-space: nowrap;
+        }
+        .day-column {
+          position: relative;
           min-width: 245px;
+          border-right: 1px solid #ded4cd;
+          overflow: hidden;
+          background: #fff;
+        }
+        .timeline-line {
+          position: absolute;
+          left: 0;
+          right: 0;
+          height: 1px;
+          background: #eee7e3;
+          pointer-events: none;
         }
         .block {
-          display: grid;
-          align-content: start;
-          gap: 3px;
+          position: absolute;
+          left: 4px;
+          right: 4px;
+          display: flex;
+          flex-direction: column;
+          gap: 7px;
           text-align: left;
-          padding: 7px;
+          padding: 9px 10px;
           background: #fff;
           border-top: 0;
-          border-left: 0;
+          border-left: 3px solid #6b1a2c;
           cursor: pointer;
           overflow: hidden;
+          min-height: 38px;
+          box-sizing: border-box;
+          transition: background .15s ease, box-shadow .15s ease, transform .15s ease;
         }
-        .block small {
-          font-weight: 900;
+        .block:hover {
+          background: #fffaf7;
+          box-shadow: inset 0 0 0 1px #d8b9bf;
+          z-index: 2;
         }
-        .block em {
-          font-style: normal;
-          color: #4b8b24;
-          font-size: 0.68rem;
+        .block.selected {
+          background: #fff7f2;
+          box-shadow: inset 0 0 0 2px #6b1a2c;
+          z-index: 3;
+        }
+        .block-top {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 8px;
+          min-width: 0;
+        }
+        .block-time {
+          color: #3a2b2e !important;
+          font-size: .65rem !important;
+          font-weight: 1000;
+          white-space: nowrap;
+          letter-spacing: .01em;
+        }
+        .block-type {
+          flex: 0 0 auto;
+          padding: 2px 6px;
+          border-radius: 999px;
+          background: #f3ece8;
+          color: #78676a !important;
+          font-size: .56rem !important;
           font-weight: 950;
+          text-transform: uppercase;
+          letter-spacing: .04em;
         }
-        .block strong {
-          color: #2d211d;
+        .block-content {
+          display: grid;
+          gap: 2px;
+          min-width: 0;
         }
-        .block span {
-          font-size: 0.67rem;
-          color: #74665f;
+        .block-formation {
+          color: #8a5b12 !important;
+          font-size: .62rem !important;
+          font-weight: 1000;
+          text-transform: uppercase;
+          letter-spacing: .04em;
+          overflow: hidden;
+          text-overflow: ellipsis;
+          white-space: nowrap;
+        }
+        .block-title {
+          color: #321f24;
+          font-size: .77rem;
+          line-height: 1.15;
+          font-weight: 1000;
+          overflow: hidden;
+          display: -webkit-box;
+          -webkit-line-clamp: 2;
+          -webkit-box-orient: vertical;
+        }
+        .block-description {
+          color: #7a6c6f !important;
+          font-size: .61rem !important;
+          line-height: 1.2;
+          overflow: hidden;
+          display: -webkit-box;
+          -webkit-line-clamp: 1;
+          -webkit-box-orient: vertical;
+        }
+        .block-meta {
+          display: flex;
+          flex-wrap: wrap;
+          gap: 3px 8px;
+          min-width: 0;
+        }
+        .block-meta span {
+          color: #62575a !important;
+          font-size: .61rem !important;
+          font-weight: 750;
+          overflow: hidden;
+          text-overflow: ellipsis;
+          white-space: nowrap;
+          max-width: 100%;
+        }
+        .block-footer {
+          display: flex;
+          flex-wrap: wrap;
+          gap: 4px;
+          margin-top: auto;
+          padding-top: 2px;
+        }
+        .block-badge {
+          display: inline-flex;
+          align-items: center;
+          border: 1px solid #e3d7d2;
+          background: #fff;
+          color: #6b1a2c !important;
+          border-radius: 999px;
+          padding: 2px 6px;
+          font-size: .57rem !important;
+          font-weight: 900;
+          white-space: nowrap;
         }
         .type-court {
           background: #fff9f7;
+          border-left-color: #ba4e3d;
         }
         .type-meeting {
           background: #f8f4ff;
+          border-left-color: #7962aa;
         }
         .type-meal {
-          background: #ededed;
+          background: #f3f1ef;
+          border-left-color: #8a8179;
         }
         .type-assessment {
           background: #fff4e8;
+          border-left-color: #d9902f;
+        }
+        .type-break {
+          background: #f8f8f8;
+          border-left-color: #a49a95;
+        }
+        .type-other {
+          border-left-color: #80726f;
         }
         .detail-grid {
           display: grid;
