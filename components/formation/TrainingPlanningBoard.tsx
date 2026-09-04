@@ -35,6 +35,7 @@ type Asset = {
   title: string;
   asset_type: string;
   file_url: string;
+  storage_path?: string | null;
   original_filename: string | null;
 };
 
@@ -61,6 +62,12 @@ function formatDay(value: string) {
   });
 }
 
+function assetIcon(asset: Asset) {
+  if (asset.asset_type === "presentation") return "🖥️";
+  if (asset.asset_type === "pdf") return "📄";
+  return "📎";
+}
+
 export default function TrainingPlanningBoard({ cohortId }: { cohortId: string }) {
   const supabase = useMemo(() => createClient(), []);
   const [blocks, setBlocks] = useState<PlanningBlock[]>([]);
@@ -70,6 +77,8 @@ export default function TrainingPlanningBoard({ cohortId }: { cohortId: string }
   const [message, setMessage] = useState("");
   const [planningTitle, setPlanningTitle] = useState("");
   const [exporting, setExporting] = useState(false);
+  const [pendingAsset, setPendingAsset] = useState<File | null>(null);
+  const [uploadingAsset, setUploadingAsset] = useState(false);
 
   const [form, setForm] = useState({
     training_day: new Date().toISOString().slice(0, 10),
@@ -91,21 +100,28 @@ export default function TrainingPlanningBoard({ cohortId }: { cohortId: string }
   };
 
   async function reload() {
-    const [{ data: blockData, error: blockError }, { data: scenarioData, error: scenarioError }, { data: cohortData }] =
-      await Promise.all([
-        supabase
-          .from("training_schedule_blocks")
-          .select("*")
-          .eq("cohort_id", cohortId)
-          .order("training_day")
-          .order("start_time"),
-        supabase
-          .from("pedagogical_scenarios")
-          .select("*")
-          .eq("cohort_id", cohortId)
-          .order("updated_at", { ascending: false }),
-        supabase.from("training_cohorts").select("name,planning_title").eq("id", cohortId).maybeSingle(),
-      ]);
+    const [
+      { data: blockData, error: blockError },
+      { data: scenarioData, error: scenarioError },
+      { data: cohortData },
+    ] = await Promise.all([
+      supabase
+        .from("training_schedule_blocks")
+        .select("*")
+        .eq("cohort_id", cohortId)
+        .order("training_day")
+        .order("start_time"),
+      supabase
+        .from("pedagogical_scenarios")
+        .select("*")
+        .eq("cohort_id", cohortId)
+        .order("updated_at", { ascending: false }),
+      supabase
+        .from("training_cohorts")
+        .select("name,planning_title")
+        .eq("id", cohortId)
+        .maybeSingle(),
+    ]);
 
     if (blockError) console.error(blockError);
     if (scenarioError) console.error(scenarioError);
@@ -113,13 +129,22 @@ export default function TrainingPlanningBoard({ cohortId }: { cohortId: string }
     const nextBlocks = (blockData ?? []) as PlanningBlock[];
     setBlocks(nextBlocks);
     setScenarios((scenarioData ?? []) as Scenario[]);
-    setPlanningTitle(String((cohortData as any)?.planning_title || (cohortData as any)?.name || "Planning de formation"));
+    setPlanningTitle(
+      String(
+        (cohortData as any)?.planning_title ||
+          (cohortData as any)?.name ||
+          "Planning de formation",
+      ),
+    );
 
     if (nextBlocks.length) {
       const { data: assetData } = await supabase
         .from("training_schedule_assets")
         .select("*")
-        .in("block_id", nextBlocks.map((block) => block.id));
+        .in(
+          "block_id",
+          nextBlocks.map((block) => block.id),
+        );
       setAssets((assetData ?? []) as Asset[]);
     } else {
       setAssets([]);
@@ -129,6 +154,67 @@ export default function TrainingPlanningBoard({ cohortId }: { cohortId: string }
   useEffect(() => {
     void reload();
   }, [cohortId]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  async function uploadAsset(
+    blockId: string,
+    file: File,
+    options?: { reloadAfter?: boolean; notify?: boolean },
+  ) {
+    const reloadAfter = options?.reloadAfter ?? true;
+    const notify = options?.notify ?? true;
+
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+    if (!user) return false;
+
+    const lower = file.name.toLowerCase();
+    let assetType = "document";
+    if (lower.endsWith(".pdf")) assetType = "pdf";
+    if (
+      lower.endsWith(".ppt") ||
+      lower.endsWith(".pptx") ||
+      lower.endsWith(".key")
+    ) {
+      assetType = "presentation";
+    }
+
+    const clean = file.name.replace(/[^a-zA-Z0-9._-]/g, "-");
+    const storagePath = `${cohortId}/${blockId}/${crypto.randomUUID()}-${clean}`;
+
+    const upload = await supabase.storage
+      .from("training-assets")
+      .upload(storagePath, file);
+
+    if (upload.error) {
+      toast(upload.error.message);
+      return false;
+    }
+
+    const fileUrl = supabase.storage
+      .from("training-assets")
+      .getPublicUrl(storagePath).data.publicUrl;
+
+    const { error } = await supabase.from("training_schedule_assets").insert({
+      block_id: blockId,
+      title: file.name,
+      asset_type: assetType,
+      storage_path: storagePath,
+      file_url: fileUrl,
+      original_filename: file.name,
+      uploaded_by: user.id,
+    });
+
+    if (error) {
+      await supabase.storage.from("training-assets").remove([storagePath]);
+      toast(error.message);
+      return false;
+    }
+
+    if (reloadAfter) await reload();
+    if (notify) toast("Pièce jointe ajoutée.");
+    return true;
+  }
 
   async function createBlock() {
     if (!form.title.trim()) {
@@ -146,48 +232,81 @@ export default function TrainingPlanningBoard({ cohortId }: { cohortId: string }
     } = await supabase.auth.getUser();
     if (!user) return;
 
-    const { error } = await supabase.from("training_schedule_blocks").insert({
-      cohort_id: cohortId,
-      training_day: form.training_day,
-      start_time: form.start_time,
-      end_time: form.end_time,
-      title: form.title.trim(),
-      formation_name: form.formation_name.trim() || null,
-      instructor_name: form.instructor_name.trim() || null,
-      room_name: form.room_name.trim() || null,
-      location_type: form.location_type || null,
-      block_type: form.block_type,
-      description: form.description.trim() || null,
-      pedagogical_scenario_id: form.pedagogical_scenario_id || null,
-      created_by: user.id,
-    });
+    setUploadingAsset(true);
+    try {
+      const { data: createdBlock, error } = await supabase
+        .from("training_schedule_blocks")
+        .insert({
+          cohort_id: cohortId,
+          training_day: form.training_day,
+          start_time: form.start_time,
+          end_time: form.end_time,
+          title: form.title.trim(),
+          formation_name: form.formation_name.trim() || null,
+          instructor_name: form.instructor_name.trim() || null,
+          room_name: form.room_name.trim() || null,
+          location_type: form.location_type || null,
+          block_type: form.block_type,
+          description: form.description.trim() || null,
+          pedagogical_scenario_id: form.pedagogical_scenario_id || null,
+          created_by: user.id,
+        })
+        .select("id")
+        .single();
 
-    if (error) {
-      console.error(error);
-      toast(error.message);
-      return;
+      if (error || !createdBlock?.id) {
+        console.error(error);
+        toast(error?.message || "Création du bloc impossible.");
+        return;
+      }
+
+      if (pendingAsset) {
+        const uploaded = await uploadAsset(createdBlock.id, pendingAsset, {
+          reloadAfter: false,
+          notify: false,
+        });
+        if (!uploaded) {
+          await reload();
+          setSelectedBlockId(createdBlock.id);
+          toast("Bloc créé, mais la pièce jointe n’a pas pu être ajoutée.");
+          return;
+        }
+      }
+
+      setForm((current) => ({
+        ...current,
+        title: "",
+        instructor_name: "",
+        room_name: "",
+        description: "",
+        pedagogical_scenario_id: "",
+      }));
+      setPendingAsset(null);
+
+      await reload();
+      setSelectedBlockId(createdBlock.id);
+      toast(
+        pendingAsset
+          ? "Bloc et pièce jointe ajoutés au planning."
+          : "Bloc ajouté au planning.",
+      );
+    } finally {
+      setUploadingAsset(false);
     }
-
-    setForm((current) => ({
-      ...current,
-      title: "",
-      instructor_name: "",
-      room_name: "",
-      description: "",
-      pedagogical_scenario_id: "",
-    }));
-
-    await reload();
-    toast("Bloc ajouté au planning.");
   }
 
   async function deleteBlock(blockId: string) {
     if (!window.confirm("Supprimer ce bloc du planning ?")) return;
-    const { error } = await supabase.from("training_schedule_blocks").delete().eq("id", blockId);
+    const { error } = await supabase
+      .from("training_schedule_blocks")
+      .delete()
+      .eq("id", blockId);
+
     if (error) {
       toast(error.message);
       return;
     }
+
     if (selectedBlockId === blockId) setSelectedBlockId("");
     await reload();
   }
@@ -202,89 +321,126 @@ export default function TrainingPlanningBoard({ cohortId }: { cohortId: string }
       toast(error.message);
       return;
     }
+
     await reload();
     toast("Scénario pédagogique lié.");
   }
 
-  async function uploadAsset(blockId: string, file: File) {
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
-    if (!user) return;
+  async function downloadAsset(asset: Asset) {
+    try {
+      let blob: Blob | null = null;
 
-    const lower = file.name.toLowerCase();
-    let assetType = "document";
-    if (lower.endsWith(".pdf")) assetType = "pdf";
-    if (lower.endsWith(".ppt") || lower.endsWith(".pptx") || lower.endsWith(".key")) assetType = "presentation";
+      if (asset.storage_path) {
+        const { data, error } = await supabase.storage
+          .from("training-assets")
+          .download(asset.storage_path);
 
-    const clean = file.name.replace(/[^a-zA-Z0-9._-]/g, "-");
-    const path = `${cohortId}/${blockId}/${crypto.randomUUID()}-${clean}`;
+        if (!error && data) blob = data;
+      }
 
-    const upload = await supabase.storage.from("training-assets").upload(path, file);
-    if (upload.error) {
-      toast(upload.error.message);
-      return;
+      if (!blob) {
+        const response = await fetch(asset.file_url);
+        if (!response.ok) throw new Error("Téléchargement impossible.");
+        blob = await response.blob();
+      }
+
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download =
+        asset.original_filename || asset.title || "piece-jointe";
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } catch (error) {
+      console.error(error);
+      toast("Téléchargement impossible.");
     }
-
-    const fileUrl = supabase.storage.from("training-assets").getPublicUrl(path).data.publicUrl;
-    const { error } = await supabase.from("training_schedule_assets").insert({
-      block_id: blockId,
-      title: file.name,
-      asset_type: assetType,
-      storage_path: path,
-      file_url: fileUrl,
-      original_filename: file.name,
-      uploaded_by: user.id,
-    });
-
-    if (error) {
-      toast(error.message);
-      return;
-    }
-
-    await reload();
-    toast("Support ajouté à l’intervention.");
   }
 
   async function savePlanningTitle() {
     const title = planningTitle.trim();
     if (!title) return toast("Donne un titre au planning.");
-    const { error } = await supabase.from("training_cohorts").update({ planning_title: title }).eq("id", cohortId);
+
+    const { error } = await supabase
+      .from("training_cohorts")
+      .update({ planning_title: title })
+      .eq("id", cohortId);
+
     if (error) return toast(error.message);
     toast("Titre du planning enregistré.");
   }
 
   async function exportPlanning() {
-    if (!planningTitle.trim()) return toast("Donne un titre au planning avant l’export.");
+    if (!planningTitle.trim()) {
+      return toast("Donne un titre au planning avant l’export.");
+    }
+
     setExporting(true);
     try {
       await savePlanningTitle();
-      const response = await fetch("/api/institutionnel/training/planning-pdf", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ cohortId, title: planningTitle.trim() }) });
-      if (!response.ok) { const json = await response.json().catch(() => ({})); return toast(json.error || "Export impossible"); }
+      const response = await fetch(
+        "/api/institutionnel/training/planning-pdf",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            cohortId,
+            title: planningTitle.trim(),
+          }),
+        },
+      );
+
+      if (!response.ok) {
+        const json = await response.json().catch(() => ({}));
+        return toast(json.error || "Export impossible");
+      }
+
       const blob = await response.blob();
       const url = URL.createObjectURL(blob);
-      const a = document.createElement("a"); a.href = url; a.download = `Planning - ${planningTitle.trim()}.pdf`; a.click(); URL.revokeObjectURL(url);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `Planning - ${planningTitle.trim()}.pdf`;
+      a.click();
+      URL.revokeObjectURL(url);
       toast("PDF exporté et enregistré dans Documents.");
-    } finally { setExporting(false); }
+    } finally {
+      setExporting(false);
+    }
   }
 
   const days = useMemo(() => {
-    return Array.from(new Set(blocks.map((block) => block.training_day))).sort();
+    return Array.from(
+      new Set(blocks.map((block) => block.training_day)),
+    ).sort();
   }, [blocks]);
 
   const hours = useMemo(() => {
     if (!blocks.length) return [];
-    const min = Math.min(...blocks.map((b) => timeToMinutes(b.start_time)));
-    const max = Math.max(...blocks.map((b) => timeToMinutes(b.end_time)));
+
+    const min = Math.min(
+      ...blocks.map((b) => timeToMinutes(b.start_time)),
+    );
+    const max = Math.max(
+      ...blocks.map((b) => timeToMinutes(b.end_time)),
+    );
     const start = Math.floor(min / 30) * 30;
     const end = Math.ceil(max / 30) * 30;
     const values: number[] = [];
-    for (let value = start; value <= end; value += 30) values.push(value);
+
+    for (let value = start; value <= end; value += 30) {
+      values.push(value);
+    }
+
     return values;
   }, [blocks]);
 
-  const selectedBlock = blocks.find((block) => block.id === selectedBlockId) ?? null;
-  const selectedAssets = selectedBlock ? assets.filter((asset) => asset.block_id === selectedBlock.id) : [];
+  const selectedBlock =
+    blocks.find((block) => block.id === selectedBlockId) ?? null;
+  const selectedAssets = selectedBlock
+    ? assets.filter((asset) => asset.block_id === selectedBlock.id)
+    : [];
 
   return (
     <section className="planning">
@@ -294,11 +450,30 @@ export default function TrainingPlanningBoard({ cohortId }: { cohortId: string }
         <div>
           <p>PLANNING FORMATION</p>
           <h1>Organisation pédagogique</h1>
-          <span>Chaque bloc alimente automatiquement le calendrier de l’Institution.</span>
+          <span>
+            Chaque bloc alimente automatiquement le calendrier de
+            l’Institution.
+          </span>
         </div>
+
         <div className="planning-actions">
-          <label><span>Titre du planning</span><input value={planningTitle} onChange={(e)=>setPlanningTitle(e.target.value)} onBlur={()=>void savePlanningTitle()} placeholder="Ex. Kick Off 2026-2027" /></label>
-          <button className="secondary" disabled={exporting} onClick={()=>void exportPlanning()}>{exporting?"Export…":"Exporter PDF + Documents"}</button>
+          <label>
+            <span>Titre du planning</span>
+            <input
+              value={planningTitle}
+              onChange={(e) => setPlanningTitle(e.target.value)}
+              onBlur={() => void savePlanningTitle()}
+              placeholder="Ex. Kick Off 2026-2027"
+            />
+          </label>
+
+          <button
+            className="secondary"
+            disabled={exporting}
+            onClick={() => void exportPlanning()}
+          >
+            {exporting ? "Export…" : "Exporter PDF + Documents"}
+          </button>
         </div>
       </div>
 
@@ -308,61 +483,191 @@ export default function TrainingPlanningBoard({ cohortId }: { cohortId: string }
         <div className="form-grid">
           <label>
             <span>Date</span>
-            <input type="date" value={form.training_day} onChange={(e) => setForm({ ...form, training_day: e.target.value })} />
+            <input
+              type="date"
+              value={form.training_day}
+              onChange={(e) =>
+                setForm({ ...form, training_day: e.target.value })
+              }
+            />
           </label>
+
           <label>
             <span>Début</span>
-            <input type="time" value={form.start_time} onChange={(e) => setForm({ ...form, start_time: e.target.value })} />
+            <input
+              type="time"
+              value={form.start_time}
+              onChange={(e) =>
+                setForm({ ...form, start_time: e.target.value })
+              }
+            />
           </label>
+
           <label>
             <span>Fin</span>
-            <input type="time" value={form.end_time} onChange={(e) => setForm({ ...form, end_time: e.target.value })} />
+            <input
+              type="time"
+              value={form.end_time}
+              onChange={(e) =>
+                setForm({ ...form, end_time: e.target.value })
+              }
+            />
           </label>
+
           <label>
             <span>Type</span>
-            <select value={form.block_type} onChange={(e) => setForm({ ...form, block_type: e.target.value })}>
-              {BLOCK_TYPES.map(([value, label]) => <option value={value} key={value}>{label}</option>)}
+            <select
+              value={form.block_type}
+              onChange={(e) =>
+                setForm({ ...form, block_type: e.target.value })
+              }
+            >
+              {BLOCK_TYPES.map(([value, label]) => (
+                <option value={value} key={value}>
+                  {label}
+                </option>
+              ))}
             </select>
           </label>
+
           <label>
             <span>Nom de la formation</span>
-            <input value={form.formation_name} onChange={(e) => setForm({ ...form, formation_name: e.target.value })} placeholder="DETB CS1" />
+            <input
+              value={form.formation_name}
+              onChange={(e) =>
+                setForm({ ...form, formation_name: e.target.value })
+              }
+              placeholder="DETB CS1"
+            />
           </label>
+
           <label>
             <span>Intervenant</span>
-            <input value={form.instructor_name} onChange={(e) => setForm({ ...form, instructor_name: e.target.value })} placeholder="Nom / prénom" />
+            <input
+              value={form.instructor_name}
+              onChange={(e) =>
+                setForm({ ...form, instructor_name: e.target.value })
+              }
+              placeholder="Nom / prénom"
+            />
           </label>
+
           <label>
             <span>Salle / terrain</span>
-            <input value={form.room_name} onChange={(e) => setForm({ ...form, room_name: e.target.value })} placeholder="Annexe 3 / Terrain / Salle fédérale..." />
+            <input
+              value={form.room_name}
+              onChange={(e) =>
+                setForm({ ...form, room_name: e.target.value })
+              }
+              placeholder="Annexe 3 / Terrain / Salle fédérale..."
+            />
           </label>
+
           <label>
             <span>Lieu</span>
-            <select value={form.location_type} onChange={(e) => setForm({ ...form, location_type: e.target.value })}>
+            <select
+              value={form.location_type}
+              onChange={(e) =>
+                setForm({ ...form, location_type: e.target.value })
+              }
+            >
               <option value="salle">Salle</option>
               <option value="terrain">Terrain</option>
               <option value="visio">Visio</option>
               <option value="autre">Autre</option>
             </select>
           </label>
+
           <label className="wide">
             <span>Titre / contenu</span>
-            <input value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} placeholder="Être capable de déterminer les éléments clefs du tir..." />
+            <input
+              value={form.title}
+              onChange={(e) =>
+                setForm({ ...form, title: e.target.value })
+              }
+              placeholder="Être capable de déterminer les éléments clefs du tir..."
+            />
           </label>
+
           <label className="wide">
             <span>Description / consigne</span>
-            <textarea value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} />
+            <textarea
+              value={form.description}
+              onChange={(e) =>
+                setForm({ ...form, description: e.target.value })
+              }
+            />
           </label>
+
           <label className="wide">
             <span>Scénario pédagogique</span>
-            <select value={form.pedagogical_scenario_id} onChange={(e) => setForm({ ...form, pedagogical_scenario_id: e.target.value })}>
+            <select
+              value={form.pedagogical_scenario_id}
+              onChange={(e) =>
+                setForm({
+                  ...form,
+                  pedagogical_scenario_id: e.target.value,
+                })
+              }
+            >
               <option value="">Aucun</option>
-              {scenarios.map((scenario) => <option value={scenario.id} key={scenario.id}>{scenario.title}</option>)}
+              {scenarios.map((scenario) => (
+                <option value={scenario.id} key={scenario.id}>
+                  {scenario.title}
+                </option>
+              ))}
             </select>
           </label>
+
+          <div className="wide attachment-create">
+            <div>
+              <span className="field-label">Pièce jointe</span>
+              <small>
+                PDF, PowerPoint, Keynote, Word… La pièce sera liée au
+                bloc dès sa création.
+              </small>
+            </div>
+
+            <label className="attachment-picker">
+              <span>
+                {pendingAsset
+                  ? `📎 ${pendingAsset.name}`
+                  : "+ Choisir une pièce jointe"}
+              </span>
+              <input
+                hidden
+                type="file"
+                accept=".pdf,.ppt,.pptx,.key,.doc,.docx"
+                onChange={(e) => {
+                  setPendingAsset(e.target.files?.[0] ?? null);
+                  e.currentTarget.value = "";
+                }}
+              />
+            </label>
+
+            {pendingAsset && (
+              <button
+                type="button"
+                className="remove-pending"
+                onClick={() => setPendingAsset(null)}
+              >
+                Retirer
+              </button>
+            )}
+          </div>
         </div>
 
-        <button className="primary" onClick={createBlock}>+ Ajouter au planning</button>
+        <button
+          className="primary"
+          disabled={uploadingAsset}
+          onClick={() => void createBlock()}
+        >
+          {uploadingAsset
+            ? "Ajout…"
+            : pendingAsset
+              ? "+ Ajouter au planning avec la pièce jointe"
+              : "+ Ajouter au planning"}
+        </button>
       </div>
 
       <div className="board-card">
@@ -371,11 +676,16 @@ export default function TrainingPlanningBoard({ cohortId }: { cohortId: string }
             <p>VUE SEMAINE / SESSION</p>
             <h2>Planning</h2>
           </div>
-          <span>Clique sur un bloc pour joindre PDF/PPT/Keynote ou changer son scénario.</span>
+          <span>
+            Clique sur un bloc pour ouvrir, télécharger ou ajouter ses
+            pièces jointes.
+          </span>
         </div>
 
         {!days.length ? (
-          <div className="empty">Aucun bloc pour cette promotion.</div>
+          <div className="empty">
+            Aucun bloc pour cette promotion.
+          </div>
         ) : (
           <div className="table-scroll">
             <div
@@ -385,13 +695,22 @@ export default function TrainingPlanningBoard({ cohortId }: { cohortId: string }
               }}
             >
               <div className="corner" />
-              {days.map((day) => <div className="day-head" key={day}>{formatDay(day)}</div>)}
+              {days.map((day) => (
+                <div className="day-head" key={day}>
+                  {formatDay(day)}
+                </div>
+              ))}
 
               {hours.map((minute) => {
-                const hh = String(Math.floor(minute / 60)).padStart(2, "0");
+                const hh = String(
+                  Math.floor(minute / 60),
+                ).padStart(2, "0");
                 const mm = String(minute % 60).padStart(2, "0");
+
                 return [
-                  <div className="time-cell" key={`time-${minute}`}>{hh}:{mm}</div>,
+                  <div className="time-cell" key={`time-${minute}`}>
+                    {hh}:{mm}
+                  </div>,
                   ...days.map((day) => {
                     const block = blocks.find(
                       (item) =>
@@ -399,14 +718,27 @@ export default function TrainingPlanningBoard({ cohortId }: { cohortId: string }
                         timeToMinutes(item.start_time) === minute,
                     );
 
-                    if (!block) return <div className="slot" key={`${day}-${minute}`} />;
+                    if (!block) {
+                      return (
+                        <div
+                          className="slot"
+                          key={`${day}-${minute}`}
+                        />
+                      );
+                    }
 
                     const span = Math.max(
                       1,
                       Math.round(
-                        (timeToMinutes(block.end_time) - timeToMinutes(block.start_time)) / 30,
+                        (timeToMinutes(block.end_time) -
+                          timeToMinutes(block.start_time)) /
+                          30,
                       ),
                     );
+
+                    const blockAssetCount = assets.filter(
+                      (asset) => asset.block_id === block.id,
+                    ).length;
 
                     return (
                       <button
@@ -415,12 +747,30 @@ export default function TrainingPlanningBoard({ cohortId }: { cohortId: string }
                         style={{ gridRow: `span ${span}` }}
                         onClick={() => setSelectedBlockId(block.id)}
                       >
-                        <small>{block.start_time.slice(0, 5)} - {block.end_time.slice(0, 5)}</small>
-                        {block.formation_name && <em>{block.formation_name}</em>}
+                        <small>
+                          {block.start_time.slice(0, 5)} -{" "}
+                          {block.end_time.slice(0, 5)}
+                        </small>
+                        {block.formation_name && (
+                          <em>{block.formation_name}</em>
+                        )}
                         <strong>{block.title}</strong>
-                        {block.instructor_name && <span>👤 {block.instructor_name}</span>}
-                        {block.room_name && <span>📍 {block.room_name}</span>}
-                        {block.pedagogical_scenario_id && <span>📘 Scénario lié</span>}
+                        {block.instructor_name && (
+                          <span>👤 {block.instructor_name}</span>
+                        )}
+                        {block.room_name && (
+                          <span>📍 {block.room_name}</span>
+                        )}
+                        {block.pedagogical_scenario_id && (
+                          <span>📘 Scénario lié</span>
+                        )}
+                        {blockAssetCount > 0 && (
+                          <span>
+                            📎 {blockAssetCount} pièce
+                            {blockAssetCount > 1 ? "s" : ""} jointe
+                            {blockAssetCount > 1 ? "s" : ""}
+                          </span>
+                        )}
                       </button>
                     );
                   }),
@@ -437,32 +787,58 @@ export default function TrainingPlanningBoard({ cohortId }: { cohortId: string }
             <div>
               <p>BLOC SÉLECTIONNÉ</p>
               <h2>{selectedBlock.title}</h2>
-              <span>{selectedBlock.start_time.slice(0,5)} → {selectedBlock.end_time.slice(0,5)} · {formatDay(selectedBlock.training_day)}</span>
+              <span>
+                {selectedBlock.start_time.slice(0, 5)} →{" "}
+                {selectedBlock.end_time.slice(0, 5)} ·{" "}
+                {formatDay(selectedBlock.training_day)}
+              </span>
             </div>
-            <button className="danger" onClick={() => deleteBlock(selectedBlock.id)}>Supprimer</button>
+
+            <button
+              className="danger"
+              onClick={() => void deleteBlock(selectedBlock.id)}
+            >
+              Supprimer
+            </button>
           </div>
 
           <div className="detail-grid">
             <label>
               <span>Scénario pédagogique</span>
               <select
-                value={selectedBlock.pedagogical_scenario_id ?? ""}
-                onChange={(e) => attachScenario(selectedBlock.id, e.target.value)}
+                value={
+                  selectedBlock.pedagogical_scenario_id ?? ""
+                }
+                onChange={(e) =>
+                  void attachScenario(
+                    selectedBlock.id,
+                    e.target.value,
+                  )
+                }
               >
                 <option value="">Aucun</option>
-                {scenarios.map((scenario) => <option key={scenario.id} value={scenario.id}>{scenario.title}</option>)}
+                {scenarios.map((scenario) => (
+                  <option
+                    key={scenario.id}
+                    value={scenario.id}
+                  >
+                    {scenario.title}
+                  </option>
+                ))}
               </select>
             </label>
 
             <label className="upload">
-              + Ajouter PDF / PPT / PPTX / Keynote
+              + Ajouter une pièce jointe
               <input
                 hidden
                 type="file"
                 accept=".pdf,.ppt,.pptx,.key,.doc,.docx"
                 onChange={(e) => {
                   const file = e.target.files?.[0];
-                  if (file) void uploadAsset(selectedBlock.id, file);
+                  if (file) {
+                    void uploadAsset(selectedBlock.id, file);
+                  }
                   e.currentTarget.value = "";
                 }}
               />
@@ -471,18 +847,381 @@ export default function TrainingPlanningBoard({ cohortId }: { cohortId: string }
 
           <div className="assets">
             {selectedAssets.map((asset) => (
-              <a href={asset.file_url} target="_blank" rel="noreferrer" key={asset.id}>
-                <span>{asset.asset_type === "presentation" ? "🖥️" : asset.asset_type === "pdf" ? "📄" : "📎"}</span>
-                <strong>{asset.title}</strong>
-              </a>
+              <article className="asset-card" key={asset.id}>
+                <div className="asset-name">
+                  <span>{assetIcon(asset)}</span>
+                  <strong>{asset.title}</strong>
+                </div>
+
+                <div className="asset-actions">
+                  <a
+                    href={asset.file_url}
+                    target="_blank"
+                    rel="noreferrer"
+                  >
+                    Ouvrir
+                  </a>
+                  <button
+                    type="button"
+                    onClick={() => void downloadAsset(asset)}
+                  >
+                    Télécharger
+                  </button>
+                </div>
+              </article>
             ))}
-            {!selectedAssets.length && <div className="empty">Aucun support joint à cette intervention.</div>}
+
+            {!selectedAssets.length && (
+              <div className="empty">
+                Aucune pièce jointe à cette intervention.
+              </div>
+            )}
           </div>
         </div>
       )}
 
       <style jsx>{`
-        .planning{display:grid;gap:14px}.planning-actions{display:grid;grid-template-columns:minmax(260px,1fr) auto;gap:8px;align-items:end}.planning-actions label{display:grid;gap:4px;font-size:.72rem;font-weight:900;color:#6b1a2c}.planning-actions input{border:1px solid #d8c9c2;border-radius:9px;padding:9px;background:#fff}.secondary{background:#fff!important;color:#6b1a2c!important;border:1px solid #d8bbc2!important}.hero{background:linear-gradient(135deg,#6b1a2c,#35101a);color:#fff;border-radius:23px;padding:22px}.hero p,.board-head p,.detail-head p{margin:0;color:#d4a24c;font-weight:1000;letter-spacing:.12em;font-size:.68rem}.hero h1,.board-head h2,.detail-head h2{margin:5px 0}.create-card,.board-card,.detail-card{background:#fff;border:1px solid #eadfd8;border-radius:16px;padding:16px}.form-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}.form-grid label,.detail-grid label{display:grid;gap:4px}.form-grid label span,.detail-grid label span{font-size:.65rem;text-transform:uppercase;font-weight:900;color:#7c6d65}.form-grid input,.form-grid select,.form-grid textarea,.detail-grid select{border:1px solid #ddd1ca;border-radius:8px;padding:8px;width:100%}.wide{grid-column:1/-1}.primary,.upload{display:inline-block;margin-top:10px;background:#6b1a2c;color:#fff;border:0;border-radius:9px;padding:9px 12px;font-weight:950;cursor:pointer}.board-head,.detail-head{display:flex;justify-content:space-between;gap:12px;align-items:flex-start}.board-head>span,.detail-head>div>span{color:#85766e;font-size:.77rem}.table-scroll{overflow:auto;margin-top:12px}.planning-grid{display:grid;grid-auto-rows:42px;min-width:max-content;border:1px solid #ded4cd}.corner,.day-head,.time-cell,.slot,.block{border-right:1px solid #ded4cd;border-bottom:1px solid #ded4cd}.day-head{display:flex;align-items:center;justify-content:center;background:#2e2826;color:#fff;font-weight:950;text-transform:capitalize}.time-cell{display:flex;align-items:flex-start;justify-content:center;padding-top:4px;background:#f2efec;font-size:.72rem;font-weight:800}.slot{background:#fff;min-width:245px}.block{display:grid;align-content:start;gap:3px;text-align:left;padding:7px;background:#fff;border-top:0;border-left:0;cursor:pointer;overflow:hidden}.block small{font-weight:900}.block em{font-style:normal;color:#4b8b24;font-size:.68rem;font-weight:950}.block strong{color:#2d211d}.block span{font-size:.67rem;color:#74665f}.type-court{background:#fff9f7}.type-meeting{background:#f8f4ff}.type-meal{background:#ededed}.type-assessment{background:#fff4e8}.detail-grid{display:grid;grid-template-columns:1fr auto;gap:9px;align-items:end}.danger{border:1px solid #b42318;background:#fff;color:#b42318;border-radius:9px;padding:8px 10px;font-weight:900}.assets{display:grid;grid-template-columns:repeat(3,1fr);gap:7px;margin-top:12px}.assets a{display:flex;gap:8px;align-items:center;border:1px solid #eee4df;border-radius:9px;padding:9px;text-decoration:none;color:#6b1a2c}.empty{color:#897b73;padding:12px}.toast{position:fixed;top:15px;left:50%;transform:translateX(-50%);z-index:100;background:#231b18;color:#fff;border-radius:999px;padding:10px 17px;font-weight:900}@media(max-width:900px){.form-grid{grid-template-columns:1fr 1fr}.assets{grid-template-columns:1fr}.detail-grid{grid-template-columns:1fr}}@media(max-width:600px){.form-grid{grid-template-columns:1fr}.wide{grid-column:auto}}
+        .planning {
+          display: grid;
+          gap: 14px;
+        }
+        .planning-actions {
+          display: grid;
+          grid-template-columns: minmax(260px, 1fr) auto;
+          gap: 8px;
+          align-items: end;
+        }
+        .planning-actions label {
+          display: grid;
+          gap: 4px;
+          font-size: 0.72rem;
+          font-weight: 900;
+          color: #6b1a2c;
+        }
+        .planning-actions input {
+          border: 1px solid #d8c9c2;
+          border-radius: 9px;
+          padding: 9px;
+          background: #fff;
+        }
+        .secondary {
+          background: #fff !important;
+          color: #6b1a2c !important;
+          border: 1px solid #d8bbc2 !important;
+        }
+        .hero {
+          background: linear-gradient(135deg, #6b1a2c, #35101a);
+          color: #fff;
+          border-radius: 23px;
+          padding: 22px;
+        }
+        .hero p,
+        .board-head p,
+        .detail-head p {
+          margin: 0;
+          color: #d4a24c;
+          font-weight: 1000;
+          letter-spacing: 0.12em;
+          font-size: 0.68rem;
+        }
+        .hero h1,
+        .board-head h2,
+        .detail-head h2 {
+          margin: 5px 0;
+        }
+        .create-card,
+        .board-card,
+        .detail-card {
+          background: #fff;
+          border: 1px solid #eadfd8;
+          border-radius: 16px;
+          padding: 16px;
+        }
+        .form-grid {
+          display: grid;
+          grid-template-columns: repeat(4, 1fr);
+          gap: 8px;
+        }
+        .form-grid label,
+        .detail-grid label {
+          display: grid;
+          gap: 4px;
+        }
+        .form-grid label span,
+        .detail-grid label span,
+        .field-label {
+          font-size: 0.65rem;
+          text-transform: uppercase;
+          font-weight: 900;
+          color: #7c6d65;
+        }
+        .form-grid input,
+        .form-grid select,
+        .form-grid textarea,
+        .detail-grid select {
+          border: 1px solid #ddd1ca;
+          border-radius: 8px;
+          padding: 8px;
+          width: 100%;
+        }
+        .wide {
+          grid-column: 1/-1;
+        }
+        .attachment-create {
+          display: grid;
+          grid-template-columns: minmax(180px, 1fr) auto auto;
+          gap: 10px;
+          align-items: center;
+          border: 1px dashed #d7c5be;
+          background: #faf7f5;
+          border-radius: 10px;
+          padding: 10px;
+        }
+        .attachment-create small {
+          display: block;
+          margin-top: 3px;
+          color: #887a74;
+          font-size: 0.68rem;
+        }
+        .attachment-picker {
+          display: inline-flex !important;
+          align-items: center;
+          justify-content: center;
+          min-height: 36px;
+          padding: 8px 11px;
+          border-radius: 8px;
+          border: 1px solid #d7bbc2;
+          background: #fff;
+          color: #6b1a2c;
+          cursor: pointer;
+          font-weight: 900;
+          max-width: 360px;
+        }
+        .attachment-picker span {
+          color: #6b1a2c !important;
+          text-transform: none !important;
+          overflow: hidden;
+          text-overflow: ellipsis;
+          white-space: nowrap;
+        }
+        .remove-pending {
+          background: transparent;
+          color: #9d2731;
+          border: 0;
+          cursor: pointer;
+          font-weight: 900;
+        }
+        .primary,
+        .upload {
+          display: inline-block;
+          margin-top: 10px;
+          background: #6b1a2c;
+          color: #fff;
+          border: 0;
+          border-radius: 9px;
+          padding: 9px 12px;
+          font-weight: 950;
+          cursor: pointer;
+        }
+        .primary:disabled {
+          opacity: 0.55;
+          cursor: wait;
+        }
+        .board-head,
+        .detail-head {
+          display: flex;
+          justify-content: space-between;
+          gap: 12px;
+          align-items: flex-start;
+        }
+        .board-head > span,
+        .detail-head > div > span {
+          color: #85766e;
+          font-size: 0.77rem;
+        }
+        .table-scroll {
+          overflow: auto;
+          margin-top: 12px;
+        }
+        .planning-grid {
+          display: grid;
+          grid-auto-rows: 42px;
+          min-width: max-content;
+          border: 1px solid #ded4cd;
+        }
+        .corner,
+        .day-head,
+        .time-cell,
+        .slot,
+        .block {
+          border-right: 1px solid #ded4cd;
+          border-bottom: 1px solid #ded4cd;
+        }
+        .day-head {
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          background: #2e2826;
+          color: #fff;
+          font-weight: 950;
+          text-transform: capitalize;
+        }
+        .time-cell {
+          display: flex;
+          align-items: flex-start;
+          justify-content: center;
+          padding-top: 4px;
+          background: #f2efec;
+          font-size: 0.72rem;
+          font-weight: 800;
+        }
+        .slot {
+          background: #fff;
+          min-width: 245px;
+        }
+        .block {
+          display: grid;
+          align-content: start;
+          gap: 3px;
+          text-align: left;
+          padding: 7px;
+          background: #fff;
+          border-top: 0;
+          border-left: 0;
+          cursor: pointer;
+          overflow: hidden;
+        }
+        .block small {
+          font-weight: 900;
+        }
+        .block em {
+          font-style: normal;
+          color: #4b8b24;
+          font-size: 0.68rem;
+          font-weight: 950;
+        }
+        .block strong {
+          color: #2d211d;
+        }
+        .block span {
+          font-size: 0.67rem;
+          color: #74665f;
+        }
+        .type-court {
+          background: #fff9f7;
+        }
+        .type-meeting {
+          background: #f8f4ff;
+        }
+        .type-meal {
+          background: #ededed;
+        }
+        .type-assessment {
+          background: #fff4e8;
+        }
+        .detail-grid {
+          display: grid;
+          grid-template-columns: 1fr auto;
+          gap: 9px;
+          align-items: end;
+        }
+        .danger {
+          border: 1px solid #b42318;
+          background: #fff;
+          color: #b42318;
+          border-radius: 9px;
+          padding: 8px 10px;
+          font-weight: 900;
+        }
+        .assets {
+          display: grid;
+          grid-template-columns: repeat(3, 1fr);
+          gap: 7px;
+          margin-top: 12px;
+        }
+        .asset-card {
+          display: grid;
+          gap: 9px;
+          border: 1px solid #eee4df;
+          border-radius: 10px;
+          padding: 10px;
+          min-width: 0;
+        }
+        .asset-name {
+          display: flex;
+          gap: 8px;
+          align-items: center;
+          min-width: 0;
+          color: #6b1a2c;
+        }
+        .asset-name strong {
+          overflow: hidden;
+          text-overflow: ellipsis;
+          white-space: nowrap;
+        }
+        .asset-actions {
+          display: grid;
+          grid-template-columns: 1fr 1fr;
+          gap: 6px;
+        }
+        .asset-actions a,
+        .asset-actions button {
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          min-height: 34px;
+          border: 1px solid #d9c8c2;
+          border-radius: 8px;
+          padding: 6px 8px;
+          text-decoration: none;
+          background: #fff;
+          color: #6b1a2c;
+          font: inherit;
+          font-size: 0.72rem;
+          font-weight: 900;
+          cursor: pointer;
+        }
+        .empty {
+          color: #897b73;
+          padding: 12px;
+        }
+        .toast {
+          position: fixed;
+          top: 15px;
+          left: 50%;
+          transform: translateX(-50%);
+          z-index: 100;
+          background: #231b18;
+          color: #fff;
+          border-radius: 999px;
+          padding: 10px 17px;
+          font-weight: 900;
+        }
+        @media (max-width: 900px) {
+          .form-grid {
+            grid-template-columns: 1fr 1fr;
+          }
+          .assets {
+            grid-template-columns: 1fr;
+          }
+          .detail-grid {
+            grid-template-columns: 1fr;
+          }
+          .attachment-create {
+            grid-template-columns: 1fr;
+          }
+          .attachment-picker {
+            max-width: none;
+          }
+        }
+        @media (max-width: 600px) {
+          .form-grid {
+            grid-template-columns: 1fr;
+          }
+          .wide {
+            grid-column: auto;
+          }
+        }
       `}</style>
     </section>
   );
