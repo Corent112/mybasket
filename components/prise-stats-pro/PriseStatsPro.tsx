@@ -7571,13 +7571,16 @@ export default function PriseStatsProPage() {
       <>
         {head('Joueur', title)}
         {players3(draft.playerId, playerPick)}
-        {draft.context === 'defense' && draft.actionType === 'perte-adverse' && (
+        {draft.context === 'defense' &&
+          (draft.actionType === 'perte-adverse' || draft.actionType === 'interception') && (
           <button
             className="chip"
             style={{ marginTop: 10, width: "100%" }}
             onClick={() => commit({ ...draft, playerId: null })}
           >
-            🏀 ÉQUIPE · BP adverse sans interception
+            {draft.actionType === 'interception'
+              ? '🏀 ÉQUIPE'
+              : '🏀 ÉQUIPE · BP adverse sans interception'}
           </button>
         )}
       </>
@@ -7606,7 +7609,9 @@ export default function PriseStatsProPage() {
           style={{ marginTop: 10, width: "100%" }}
           onClick={() => commit({ ...draft, playerId: null })}
         >
-          {draft.actionType === "perte-adverse" ? "🏀 ÉQUIPE · BP adverse sans interception" : "Sans précision"}
+          {draft.actionType === "perte-adverse"
+            ? "🏀 ÉQUIPE · BP adverse sans interception"
+            : "🏀 ÉQUIPE"}
         </button>
       )}
     </>
