@@ -856,7 +856,7 @@ export default function TrainingPlanningBoard({
                           className={`block type-${block.block_type} ${selectedBlockId === block.id ? "selected" : ""}`}
                           style={{
                             top,
-                            height: Math.max(46, bottom - top),
+                            height: Math.max(1, bottom - top),
                           }}
                           onClick={() => setSelectedBlockId(block.id)}
                         >
@@ -1264,7 +1264,6 @@ export default function TrainingPlanningBoard({
           border-radius: 7px;
           cursor: pointer;
           overflow: hidden;
-          min-height: 46px;
           box-sizing: border-box;
           box-shadow: 0 1px 3px rgba(49,31,36,.07);
           transition: background .15s ease, box-shadow .15s ease;
