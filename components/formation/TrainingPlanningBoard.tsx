@@ -72,7 +72,13 @@ function blockTypeLabel(value: string) {
   return BLOCK_TYPES.find(([key]) => key === value)?.[1] || "Bloc";
 }
 
-export default function TrainingPlanningBoard({ cohortId }: { cohortId: string }) {
+export default function TrainingPlanningBoard({
+  cohortId,
+  onAttendanceChanged,
+}: {
+  cohortId: string;
+  onAttendanceChanged?: () => void;
+}) {
   const supabase = useMemo(() => createClient(), []);
   const [blocks, setBlocks] = useState<PlanningBlock[]>([]);
   const [scenarios, setScenarios] = useState<Scenario[]>([]);
@@ -81,6 +87,7 @@ export default function TrainingPlanningBoard({ cohortId }: { cohortId: string }
   const [message, setMessage] = useState("");
   const [planningTitle, setPlanningTitle] = useState("");
   const [exporting, setExporting] = useState(false);
+  const [savingPlanning, setSavingPlanning] = useState(false);
   const [pendingAsset, setPendingAsset] = useState<File | null>(null);
   const [uploadingAsset, setUploadingAsset] = useState(false);
 
@@ -289,6 +296,7 @@ export default function TrainingPlanningBoard({ cohortId }: { cohortId: string }
 
       await reload();
       setSelectedBlockId(createdBlock.id);
+      await syncAttendanceFromPlanning(false);
       toast(
         pendingAsset
           ? "Bloc et pièce jointe ajoutés au planning."
@@ -313,6 +321,7 @@ export default function TrainingPlanningBoard({ cohortId }: { cohortId: string }
 
     if (selectedBlockId === blockId) setSelectedBlockId("");
     await reload();
+    await syncAttendanceFromPlanning(false);
   }
 
   async function attachScenario(blockId: string, scenarioId: string) {
@@ -363,17 +372,72 @@ export default function TrainingPlanningBoard({ cohortId }: { cohortId: string }
     }
   }
 
-  async function savePlanningTitle() {
+  async function savePlanningTitle(notify = true) {
     const title = planningTitle.trim();
-    if (!title) return toast("Donne un titre au planning.");
+    if (!title) {
+      if (notify) toast("Donne un titre au planning.");
+      return false;
+    }
 
     const { error } = await supabase
       .from("training_cohorts")
       .update({ planning_title: title })
       .eq("id", cohortId);
 
-    if (error) return toast(error.message);
-    toast("Titre du planning enregistré.");
+    if (error) {
+      toast(error.message);
+      return false;
+    }
+
+    if (notify) toast("Titre du planning enregistré.");
+    return true;
+  }
+
+  async function syncAttendanceFromPlanning(notify = false) {
+    const response = await fetch(
+      "/api/institutionnel/training/sync-planning-attendance",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ cohortId }),
+      },
+    );
+
+    const json = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      toast(json.error || "Synchronisation des présences impossible.");
+      return false;
+    }
+
+    onAttendanceChanged?.();
+
+    if (notify) {
+      toast(
+        `${json.sessions ?? 0} demi-journée(s) de présence synchronisée(s).`,
+      );
+    }
+
+    return true;
+  }
+
+  async function savePlanning() {
+    if (!planningTitle.trim()) {
+      return toast("Donne un titre au planning.");
+    }
+
+    setSavingPlanning(true);
+    try {
+      const titleSaved = await savePlanningTitle(false);
+      if (!titleSaved) return;
+
+      const attendanceSynced = await syncAttendanceFromPlanning(false);
+      if (!attendanceSynced) return;
+
+      await reload();
+      toast("Planning sauvegardé et présences mises à jour.");
+    } finally {
+      setSavingPlanning(false);
+    }
   }
 
   async function exportPlanning() {
@@ -383,7 +447,11 @@ export default function TrainingPlanningBoard({ cohortId }: { cohortId: string }
 
     setExporting(true);
     try {
-      await savePlanningTitle();
+      const titleSaved = await savePlanningTitle(false);
+      if (!titleSaved) return;
+      const attendanceSynced = await syncAttendanceFromPlanning(false);
+      if (!attendanceSynced) return;
+
       const response = await fetch(
         "/api/institutionnel/training/planning-pdf",
         {
@@ -480,8 +548,8 @@ export default function TrainingPlanningBoard({ cohortId }: { cohortId: string }
           <p>PLANNING FORMATION</p>
           <h1>Organisation pédagogique</h1>
           <span>
-            Chaque bloc alimente automatiquement le calendrier de
-            l’Institution.
+            Chaque bloc alimente automatiquement le planning et les
+            demi-journées de présence.
           </span>
         </div>
 
@@ -497,8 +565,15 @@ export default function TrainingPlanningBoard({ cohortId }: { cohortId: string }
           </label>
 
           <button
+            disabled={savingPlanning}
+            onClick={() => void savePlanning()}
+          >
+            {savingPlanning ? "Sauvegarde…" : "Sauvegarder le planning"}
+          </button>
+
+          <button
             className="secondary"
-            disabled={exporting}
+            disabled={exporting || savingPlanning}
             onClick={() => void exportPlanning()}
           >
             {exporting ? "Export…" : "Exporter PDF + Documents"}

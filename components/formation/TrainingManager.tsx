@@ -1056,7 +1056,7 @@ export default function TrainingManager({ institutionId }: { institutionId?: str
           {tab === "attendance" && (
             <section className="panel">
               <div className="panel-head">
-                <div><p>PRÉSENCES</p><h3>Journées de formation</h3><span>Ajoute Journée 1, Journée 2, Journée 3… puis coche simplement les stagiaires présents.</span></div>
+                <div><p>PRÉSENCES</p><h3>Journées de formation</h3><span>Les demi-journées sont créées automatiquement depuis le planning : matin et après-midi selon les blocs saisis. Tu peux ensuite cocher les stagiaires présents.</span></div>
               </div>
 
               <div className="session-create simple-session">
@@ -1171,7 +1171,7 @@ export default function TrainingManager({ institutionId }: { institutionId?: str
             </section>
           )}
 
-          {tab === "planning" && <section className="embedded"><TrainingPlanningBoard cohortId={cohortId} /></section>}
+          {tab === "planning" && <section className="embedded"><TrainingPlanningBoard cohortId={cohortId} onAttendanceChanged={() => void loadCohort(cohortId)} /></section>}
           {tab === "events" && institutionId && <InstitutionalLinkedEvents structureId={institutionId} scope="training" cohortId={cohortId} />}
           {tab === "scenario" && <section className="embedded"><PedagogicalScenarioEditor cohortId={cohortId} /></section>}
 
