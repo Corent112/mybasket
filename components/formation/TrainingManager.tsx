@@ -105,6 +105,17 @@ type Tab =
   | "communication"
   | "settings";
 
+const TRAINING_TABS: Tab[] = [
+  "registered",
+  "attendance",
+  "documents",
+  "planning",
+  "events",
+  "scenario",
+  "communication",
+  "settings",
+];
+
 const ADMIN_STATUS: Record<string, string> = {
   invited: "Invité",
   in_progress: "Dossier en cours",
@@ -299,7 +310,27 @@ export default function TrainingManager({ institutionId }: { institutionId?: str
   }
 
   useEffect(() => {
-    void reload();
+    let preferredCohort: string | undefined;
+
+    if (typeof window !== "undefined") {
+      const url = new URL(window.location.href);
+      preferredCohort = url.searchParams.get("trainingCohort") || undefined;
+      const requestedTab = url.searchParams.get("trainingTab") as Tab | null;
+
+      if (requestedTab && TRAINING_TABS.includes(requestedTab)) {
+        setTab(requestedTab);
+      }
+
+      // Les paramètres servent seulement au saut Calendrier -> Formation.
+      // Une fois lus, on les retire pour ne pas forcer ce choix plus tard.
+      if (preferredCohort || requestedTab) {
+        url.searchParams.delete("trainingCohort");
+        url.searchParams.delete("trainingTab");
+        window.history.replaceState({}, "", url.toString());
+      }
+    }
+
+    void reload(preferredCohort);
   }, [institutionId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   function submissionFor(candidateId: string, requestId: string) {

@@ -81,7 +81,7 @@ const TEMPLATES: Template[] = [
   { key: "player_info", category: "Joueurs", title: "Fiche de renseignements joueur", description: "Identité, club, catégorie et informations sportives utiles." },
   { key: "player_evaluation", category: "Évaluation", title: "Fiche d’évaluation joueur", description: "Support d’évaluation et objectifs de progression." },
   { key: "coach_evaluation", category: "Évaluation", title: "Fiche d’évaluation cadre", description: "Observation, points d’appui, axes de progrès et objectifs." },
-  { key: "parental_authorization", category: "Stage / sélection", title: "Autorisation parentale", description: "Modèle pour les participants mineurs." },
+  { key: "parental_authorization", category: "Stage / sélection", title: "Autorisation parentale", description: "Autorisation de participation, droit à l’image et signature du responsable légal." },
   { key: "stage_summary", category: "Stage / sélection", title: "Fiche récapitulative stage / sélection", description: "Dates, lieux, joueurs, staff et programme." },
 ];
 
@@ -107,16 +107,31 @@ function displayName(person: Pick<Person, "first_name" | "last_name">) {
 function rows(items: string[], cols: number) {
   const empty = Array.from({ length: Math.max(0, 14 - items.length) }, () => "");
   return [...items, ...empty]
-    .map((name) => `<tr><td>${escapeHtml(name)}</td>${Array.from({ length: cols - 1 }, () => "<td>&nbsp;</td>").join("")}</tr>`)
+    .map(
+      (name) =>
+        `<tr><td>${escapeHtml(name)}</td>${Array.from(
+          { length: cols - 1 },
+          () => "<td>&nbsp;</td>",
+        ).join("")}</tr>`,
+    )
     .join("");
 }
 
-function templateHex(value:string|null|undefined,fallback:string){return /^#[0-9a-fA-F]{6}$/.test(String(value||""))?String(value).toUpperCase():fallback;}
-function templatePrimary(s:Structure){return templateHex(s.document_primary_color,"#6B1A2C");}
-function templateSecondary(s:Structure){return templateHex(s.document_secondary_color,"#D4A24C");}
+function templateHex(value: string | null | undefined, fallback: string) {
+  return /^#[0-9a-fA-F]{6}$/.test(String(value || ""))
+    ? String(value).toUpperCase()
+    : fallback;
+}
+function templatePrimary(s: Structure) {
+  return templateHex(s.document_primary_color, "#6B1A2C");
+}
+function templateSecondary(s: Structure) {
+  return templateHex(s.document_secondary_color, "#D4A24C");
+}
 
 function baseStyles(structure: Structure) {
-  const primary=templatePrimary(structure), secondary=templateSecondary(structure);
+  const primary = templatePrimary(structure);
+  const secondary = templateSecondary(structure);
   return `
     @page{size:A4;margin:0}
     *{box-sizing:border-box;max-width:100%}html,body{width:210mm;margin:0}body{font-family:Arial,Helvetica,sans-serif;color:#241b1e;font-size:8px;padding:29mm 12mm 12mm;position:relative;background:#fff;-webkit-print-color-adjust:exact;print-color-adjust:exact;overflow-x:hidden}
@@ -128,75 +143,246 @@ function baseStyles(structure: Structure) {
     table{display:table!important;width:100%!important;max-width:100%!important;border-collapse:separate;border-spacing:0;margin:2mm 0 3mm;border:.25mm solid #e3d5d8;border-radius:2mm;overflow:hidden;table-layout:fixed!important}th,td{border:0;border-bottom:.25mm solid #eadfe2;padding:1mm .65mm;vertical-align:middle;font-size:6.2px;line-height:1.15;overflow-wrap:anywhere!important;word-break:break-word!important;white-space:normal!important;min-width:0!important}th{background:${primary};color:#fff;font-weight:700;text-align:center;font-size:5.5px;text-transform:uppercase;letter-spacing:.01em}tbody tr:nth-child(even) td{background:#fbf7f8}tbody tr:last-child td{border-bottom:0}
     .sign{height:7mm}.big{height:12mm}.box{border:0;border-left:.8mm solid ${secondary};background:#fbf7f8;padding:2mm;border-radius:0 2mm 2mm 0;margin:1.5mm 0;min-height:9mm}.grid2{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:3mm}.line{border-bottom:.25mm solid #a9949a;display:inline-block;max-width:100%;min-width:25mm;height:3mm}.footer{margin-top:3mm;display:grid;grid-template-columns:1fr 1fr;gap:4mm}.right{text-align:right}.section{margin:3mm 0}.fieldrow{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:2mm 5mm}.field{min-width:0;padding:1mm 0 1.5mm;border-bottom:.25mm solid #d4c6ca}.field small{display:block;color:#8a777d;text-transform:uppercase;letter-spacing:.05em;font-weight:700;font-size:5.8px;margin-bottom:.5mm}.structure-card{display:grid;grid-template-columns:1.4fr 1fr;gap:3mm;background:linear-gradient(120deg,#f8f0f2,#fff);border-left:1mm solid ${secondary};padding:2mm 3mm;border-radius:0 2mm 2mm 0;margin:2mm 0 3mm}.structure-card strong{font-size:10px;color:${primary}}.structure-card span{display:block;color:#77696d;margin-top:.5mm}.doc-footer{position:absolute;left:12mm;right:12mm;bottom:4mm;border-top:.25mm solid #eadfe2;padding-top:1mm;color:#8a777d;font-size:5.7px;display:flex;justify-content:space-between}
     .consent{display:flex;gap:2mm;align-items:flex-start;margin:1.5mm 0}.consent .boxcheck{width:4mm;height:4mm;border:.35mm solid ${primary};border-radius:.5mm;flex:0 0 4mm}
+    .parental{font-size:9.1px;line-height:1.55;margin-top:4mm}.parental p{margin:0 0 4mm}.parental .fill{display:inline-block;border-bottom:.25mm dotted #55464b;min-width:72mm;height:4mm;vertical-align:bottom}.parental .fill.long{min-width:128mm}.parental .fill.address{display:block;width:100%;margin-top:2mm}.parental .legal{margin-top:5mm}.parental .signature{margin-top:7mm}.parental .signature-label{font-weight:700;margin-top:5mm}.parental .signature-space{height:24mm;width:70mm;margin-left:auto;border-bottom:.25mm solid #d9cbc5}
     @media print{.editbar{display:none!important}main[contenteditable=true]:focus{outline:none}body{overflow:visible}}
   `;
 }
 
 function shell(structure: Structure, title: string, body: string) {
-  const brand=structure.logo_url?`<img class="logo" src="${escapeHtml(structure.logo_url)}" alt="Logo">`:`<div class="brand">MYBASKET</div>`;
-  return `<!doctype html><html><head><meta charset="utf-8"><title>${escapeHtml(title)}</title><style>${baseStyles(structure)}</style></head><body>
+  const brand = structure.logo_url
+    ? `<img class="logo" src="${escapeHtml(structure.logo_url)}" alt="Logo">`
+    : `<div class="brand">MYBASKET</div>`;
+  return `<!doctype html><html><head><meta charset="utf-8"><title>${escapeHtml(
+    title,
+  )}</title><style>${baseStyles(structure)}</style></head><body>
     <div class="editbar no-print"><button type="button" onclick="window.print()">Imprimer / PDF</button></div>
-    <header class="hero"><div>${brand}</div><div class="org"><b>${escapeHtml(structure.name)}</b>${escapeHtml(structure.season_label || "")}${structure.city ? ` · ${escapeHtml(structure.city)}` : ""}</div></header>
-    <main contenteditable="true"><h1>${escapeHtml(title)}</h1><div class="subtitle">Document institutionnel · contenu entièrement modifiable avant impression</div>
-    <section class="structure-card"><div><strong>${escapeHtml(structure.name)}</strong><span>${escapeHtml(structure.structure_type)}${structure.city ? ` · ${escapeHtml(structure.city)}` : ""}</span></div><div><span>${escapeHtml(structure.email || "")}</span><span>${escapeHtml(structure.phone || "")}</span><span>Saison ${escapeHtml(structure.season_label || "")}</span></div></section>
-    ${body}</main><footer class="doc-footer"><span>${escapeHtml(structure.name)}</span><span>${escapeHtml(structure.season_label || "")}</span></footer>
+    <header class="hero"><div>${brand}</div><div class="org"><b>${escapeHtml(
+      structure.name,
+    )}</b>${escapeHtml(structure.season_label || "")}${
+      structure.city ? ` · ${escapeHtml(structure.city)}` : ""
+    }</div></header>
+    <main contenteditable="true"><h1>${escapeHtml(
+      title,
+    )}</h1><div class="subtitle">Document institutionnel · contenu entièrement modifiable avant impression</div>
+    <section class="structure-card"><div><strong>${escapeHtml(
+      structure.name,
+    )}</strong><span>${escapeHtml(structure.structure_type)}${
+      structure.city ? ` · ${escapeHtml(structure.city)}` : ""
+    }</span></div><div><span>${escapeHtml(
+      structure.email || "",
+    )}</span><span>${escapeHtml(
+      structure.phone || "",
+    )}</span><span>Saison ${escapeHtml(
+      structure.season_label || "",
+    )}</span></div></section>
+    ${body}</main><footer class="doc-footer"><span>${escapeHtml(
+      structure.name,
+    )}</span><span>${escapeHtml(
+      structure.season_label || "",
+    )}</span></footer>
   </body></html>`;
 }
 
-function buildDocument(key: TemplateKey, structure: Structure, people: Person[], players: Player[], events: EventRow[]) {
-  const eventRows = events.slice(0, 30).map((e) => `
-    <tr><td>${escapeHtml(frDate(e.event_date))}</td><td>${escapeHtml(e.start_time || "")}</td><td>${escapeHtml(e.end_time || "")}</td><td>${escapeHtml(e.title)}</td><td>${escapeHtml(e.location || "")}</td><td>${escapeHtml(e.intervenant || "")}</td></tr>`).join("");
+function buildDocument(
+  key: TemplateKey,
+  structure: Structure,
+  people: Person[],
+  players: Player[],
+  events: EventRow[],
+) {
+  const eventRows = events
+    .slice(0, 30)
+    .map(
+      (e) => `
+    <tr><td>${escapeHtml(frDate(e.event_date))}</td><td>${escapeHtml(
+      e.start_time || "",
+    )}</td><td>${escapeHtml(e.end_time || "")}</td><td>${escapeHtml(
+      e.title,
+    )}</td><td>${escapeHtml(e.location || "")}</td><td>${escapeHtml(
+      e.intervenant || "",
+    )}</td></tr>`,
+    )
+    .join("");
   const participantNames = people.map(displayName).filter(Boolean);
   const playerNames = players.map((p) => `${p.first_name} ${p.last_name}`.trim());
 
   if (key === "attendance") {
     const dates = Array.from(new Set(events.map((e) => e.event_date))).slice(0, 3);
     const headers = dates.length ? dates : ["Date 1", "Date 2", "Date 3"];
-    return shell(structure, "Feuille d’émargement", `
-      <table><thead><tr><th>Nom et prénom des stagiaires</th>${headers.map((d) => `<th>${escapeHtml(frDate(d))}<br>Matin</th><th>${escapeHtml(frDate(d))}<br>Après-midi</th>`).join("")}<th>Nombre d’heures total</th></tr></thead>
-      <tbody>${rows(participantNames, 2 * headers.length + 2)}</tbody></table>
-      <div class="footer"><div><b>Signature du formateur :</b><div class="box big"></div></div><div><b>Cachet de l’organisme :</b><div class="box big"></div></div></div>`);
+    return shell(
+      structure,
+      "Feuille d’émargement",
+      `<table><thead><tr><th>Nom et prénom des stagiaires</th>${headers
+        .map(
+          (d) =>
+            `<th>${escapeHtml(frDate(d))}<br>Matin</th><th>${escapeHtml(
+              frDate(d),
+            )}<br>Après-midi</th>`,
+        )
+        .join(
+          "",
+        )}<th>Nombre d’heures total</th></tr></thead><tbody>${rows(
+        participantNames,
+        2 * headers.length + 2,
+      )}</tbody></table><div class="footer"><div><b>Signature du formateur :</b><div class="box big"></div></div><div><b>Cachet de l’organisme :</b><div class="box big"></div></div></div>`,
+    );
   }
 
   if (key === "schedule") {
-    return shell(structure, "Planning de formation / stage", `<table><thead><tr><th>Date</th><th>Début</th><th>Fin</th><th>Contenu</th><th>Lieu</th><th>Intervenant</th></tr></thead><tbody>${eventRows || rows([], 6)}</tbody></table>`);
+    return shell(
+      structure,
+      "Planning de formation / stage",
+      `<table><thead><tr><th>Date</th><th>Début</th><th>Fin</th><th>Contenu</th><th>Lieu</th><th>Intervenant</th></tr></thead><tbody>${
+        eventRows || rows([], 6)
+      }</tbody></table>`,
+    );
   }
 
   if (key === "participants") {
-    return shell(structure, "Liste des participants", `<table><thead><tr><th>#</th><th>Nom et prénom</th><th>Email</th><th>Téléphone</th><th>Rôle / statut</th></tr></thead><tbody>${people.map((p, i) => `<tr><td>${i + 1}</td><td>${escapeHtml(displayName(p))}</td><td>${escapeHtml(p.email || "")}</td><td>${escapeHtml(p.phone || "")}</td><td>${escapeHtml(p.role_label || "")}</td></tr>`).join("") || rows([], 5)}</tbody></table>`);
+    return shell(
+      structure,
+      "Liste des participants",
+      `<table><thead><tr><th>#</th><th>Nom et prénom</th><th>Email</th><th>Téléphone</th><th>Rôle / statut</th></tr></thead><tbody>${
+        people
+          .map(
+            (p, i) =>
+              `<tr><td>${i + 1}</td><td>${escapeHtml(
+                displayName(p),
+              )}</td><td>${escapeHtml(p.email || "")}</td><td>${escapeHtml(
+                p.phone || "",
+              )}</td><td>${escapeHtml(p.role_label || "")}</td></tr>`,
+          )
+          .join("") || rows([], 5)
+      }</tbody></table>`,
+    );
   }
 
   if (key === "player_info") {
-    return shell(structure, "Fiche de renseignements joueur", `<table><thead><tr><th>Nom / prénom</th><th>Naissance</th><th>Club</th><th>Catégorie</th><th>Années basket</th><th>Taille</th><th>Email</th></tr></thead><tbody>${players.map((p) => `<tr><td>${escapeHtml(`${p.first_name} ${p.last_name}`)}</td><td>${escapeHtml(frDate(p.birthdate))}</td><td>${escapeHtml(p.club_name || "")}</td><td>${escapeHtml(p.category || "")}</td><td>${escapeHtml(p.years_basket ?? "")}</td><td>${escapeHtml(p.height_cm ? `${p.height_cm} cm` : "")}</td><td>${escapeHtml(p.email || "")}</td></tr>`).join("") || rows(playerNames, 7)}</tbody></table><p class="muted">Seules les informations nécessaires au dispositif doivent être demandées et conservées.</p>`);
+    return shell(
+      structure,
+      "Fiche de renseignements joueur",
+      `<table><thead><tr><th>Nom / prénom</th><th>Naissance</th><th>Club</th><th>Catégorie</th><th>Années basket</th><th>Taille</th><th>Email</th></tr></thead><tbody>${
+        players
+          .map(
+            (p) =>
+              `<tr><td>${escapeHtml(`${p.first_name} ${p.last_name}`)}</td><td>${escapeHtml(
+                frDate(p.birthdate),
+              )}</td><td>${escapeHtml(p.club_name || "")}</td><td>${escapeHtml(
+                p.category || "",
+              )}</td><td>${escapeHtml(p.years_basket ?? "")}</td><td>${escapeHtml(
+                p.height_cm ? `${p.height_cm} cm` : "",
+              )}</td><td>${escapeHtml(p.email || "")}</td></tr>`,
+          )
+          .join("") || rows(playerNames, 7)
+      }</tbody></table><p class="muted">Seules les informations nécessaires au dispositif doivent être demandées et conservées.</p>`,
+    );
   }
 
   if (key === "registration") {
-    return shell(structure, "Fiche d’inscription formation", `<h2>Identité</h2><div class="fieldrow"><div class="field"><small>Nom</small>&nbsp;</div><div class="field"><small>Prénom</small>&nbsp;</div><div class="field"><small>Date de naissance</small>&nbsp;</div><div class="field"><small>Email</small>&nbsp;</div><div class="field"><small>Téléphone</small>&nbsp;</div><div class="field"><small>Adresse</small>&nbsp;</div></div><h2>Structure du participant</h2><div class="fieldrow"><div class="field"><small>Club / structure</small>&nbsp;</div><div class="field"><small>N° affiliation / identifiant</small>&nbsp;</div><div class="field"><small>Fonction dans la structure</small>&nbsp;</div><div class="field"><small>Responsable / référent</small>&nbsp;</div><div class="field"><small>Email du responsable</small>&nbsp;</div><div class="field"><small>Téléphone du responsable</small>&nbsp;</div></div><h2>Formation</h2><div class="fieldrow"><div class="field"><small>Intitulé</small>&nbsp;</div><div class="field"><small>Session / promotion</small>&nbsp;</div><div class="field"><small>Dates</small>&nbsp;</div><div class="field"><small>Lieu</small>&nbsp;</div></div><h2>Motivation & attentes</h2><div class="box big"></div><div class="footer"><div>Fait à <span class="line"></span>, le <span class="line"></span></div><div>Signature : <span class="line"></span></div></div>`);
+    return shell(
+      structure,
+      "Fiche d’inscription formation",
+      `<h2>Identité</h2><div class="fieldrow"><div class="field"><small>Nom</small>&nbsp;</div><div class="field"><small>Prénom</small>&nbsp;</div><div class="field"><small>Date de naissance</small>&nbsp;</div><div class="field"><small>Email</small>&nbsp;</div><div class="field"><small>Téléphone</small>&nbsp;</div><div class="field"><small>Adresse</small>&nbsp;</div></div><h2>Structure du participant</h2><div class="fieldrow"><div class="field"><small>Club / structure</small>&nbsp;</div><div class="field"><small>N° affiliation / identifiant</small>&nbsp;</div><div class="field"><small>Fonction dans la structure</small>&nbsp;</div><div class="field"><small>Responsable / référent</small>&nbsp;</div><div class="field"><small>Email du responsable</small>&nbsp;</div><div class="field"><small>Téléphone du responsable</small>&nbsp;</div></div><h2>Formation</h2><div class="fieldrow"><div class="field"><small>Intitulé</small>&nbsp;</div><div class="field"><small>Session / promotion</small>&nbsp;</div><div class="field"><small>Dates</small>&nbsp;</div><div class="field"><small>Lieu</small>&nbsp;</div></div><h2>Motivation & attentes</h2><div class="box big"></div><div class="footer"><div>Fait à <span class="line"></span>, le <span class="line"></span></div><div>Signature : <span class="line"></span></div></div>`,
+    );
   }
 
   if (key === "attendance_certificate" || key === "training_certificate") {
-    const label = key === "attendance_certificate" ? "Attestation de présence" : "Attestation de formation";
-    return shell(structure, label, `<div style="margin-top:35px;font-size:16px;line-height:2"><p>Je soussigné(e), représentant(e) de <b>${escapeHtml(structure.name)}</b>, atteste que :</p><p><b>Madame / Monsieur :</b> <span class="line" style="min-width:360px"></span></p><p>a ${key === "attendance_certificate" ? "participé à" : "suivi"} la formation : <span class="line" style="min-width:360px"></span></p><p>du <span class="line"></span> au <span class="line"></span>, pour un volume total de <span class="line"></span> heures.</p></div><div class="footer" style="margin-top:70px"><div>Fait à ${escapeHtml(structure.city || "")}, le <span class="line"></span></div><div class="right"><b>Signature et cachet</b><div class="box big" style="width:260px"></div></div></div>`);
+    const label =
+      key === "attendance_certificate"
+        ? "Attestation de présence"
+        : "Attestation de formation";
+    return shell(
+      structure,
+      label,
+      `<div style="margin-top:35px;font-size:16px;line-height:2"><p>Je soussigné(e), représentant(e) de <b>${escapeHtml(
+        structure.name,
+      )}</b>, atteste que :</p><p><b>Madame / Monsieur :</b> <span class="line" style="min-width:360px"></span></p><p>a ${
+        key === "attendance_certificate" ? "participé à" : "suivi"
+      } la formation : <span class="line" style="min-width:360px"></span></p><p>du <span class="line"></span> au <span class="line"></span>, pour un volume total de <span class="line"></span> heures.</p></div><div class="footer" style="margin-top:70px"><div>Fait à ${escapeHtml(
+        structure.city || "",
+      )}, le <span class="line"></span></div><div class="right"><b>Signature et cachet</b><div class="box big" style="width:260px"></div></div></div>`,
+    );
   }
 
   if (key === "player_evaluation" || key === "coach_evaluation") {
     const who = key === "player_evaluation" ? "joueur" : "cadre";
-    return shell(structure, `Fiche d’évaluation ${who}`, `<div class="grid2"><div class="box"><b>Nom / prénom :</b> <span class="line"></span><br><br><b>Dispositif :</b> <span class="line"></span></div><div class="box"><b>Évaluateur :</b> <span class="line"></span><br><br><b>Date :</b> <span class="line"></span></div></div><table><thead><tr><th>Compétence / domaine</th><th>À développer</th><th>En acquisition</th><th>Acquis</th><th>Maîtrisé</th><th>Observations</th></tr></thead><tbody>${rows([], 6)}</tbody></table><h2>Points d’appui</h2><div class="box big"></div><h2>Axes de progression / objectifs</h2><div class="box big"></div>`);
+    return shell(
+      structure,
+      `Fiche d’évaluation ${who}`,
+      `<div class="grid2"><div class="box"><b>Nom / prénom :</b> <span class="line"></span><br><br><b>Dispositif :</b> <span class="line"></span></div><div class="box"><b>Évaluateur :</b> <span class="line"></span><br><br><b>Date :</b> <span class="line"></span></div></div><table><thead><tr><th>Compétence / domaine</th><th>À développer</th><th>En acquisition</th><th>Acquis</th><th>Maîtrisé</th><th>Observations</th></tr></thead><tbody>${rows(
+        [],
+        6,
+      )}</tbody></table><h2>Points d’appui</h2><div class="box big"></div><h2>Axes de progression / objectifs</h2><div class="box big"></div>`,
+    );
   }
 
   if (key === "parental_authorization") {
-    return shell(structure, "Autorisation parentale", `<div style="line-height:1.55"><p>Je soussigné(e) <span class="line"></span>, responsable légal de <span class="line"></span>, autorise sa participation au stage / rassemblement organisé par <b>${escapeHtml(structure.name)}</b>.</p><p>Intitulé : <span class="line"></span></p><p>Date(s) : <span class="line"></span> &nbsp; Lieu : <span class="line"></span></p><p>Téléphone à joindre en cas de besoin : <span class="line"></span></p></div><h2>Autorisations</h2><div class="consent"><span class="boxcheck"></span><span>J’autorise la participation de mon enfant à l’action indiquée ci-dessus.</span></div><div class="consent"><span class="boxcheck"></span><span>J’autorise les prises de vues photographiques et audiovisuelles dans le cadre des activités de l’institution.</span></div><div class="consent"><span class="boxcheck"></span><span>J’autorise la diffusion non commerciale de ces images sur les supports de l’institution.</span></div><div class="footer"><div>Fait à <span class="line"></span>, le <span class="line"></span></div><div>Signature du responsable légal : <div class="box big"></div></div></div>`);
+    const institution = escapeHtml(structure.name);
+    return shell(
+      structure,
+      "Autorisation parentale",
+      `<div class="parental">
+        <p>Je soussigné(e) Monsieur (ou Madame) <span class="fill"></span></p>
+        <p>Demeurant au <span class="fill address"></span></p>
+        <p>et agissant en qualité de père - mère, autorise mon fils - ma fille</p>
+        <p>à participer <span class="fill long"></span></p>
+        <p>qui se déroulera <span class="fill long"></span></p>
+
+        <div class="legal">
+          <p>Nous accordons aussi l’autorisation à <b>${institution}</b> à des prises de vues photographiques et des enregistrements audiovisuels sur lesquels notre enfant pourrait apparaître.</p>
+          <p>Nous accordons à <b>${institution}</b> l’autorisation de diffuser les images captées, fixées et enregistrées sur un réseau filaire ou sans fils, de quelque nature que ce soit (Internet, réseau, local).</p>
+          <p>Nous accordons cette autorisation à titre gracieux.</p>
+          <p>La présente autorisation est consentie sans limitation de durée.</p>
+          <p>Nous n’autorisons pas l’exploitation commerciale.</p>
+          <p>Toute autre exploitation que celle indiquée dans la présente donnera lieu à nouvelle autorisation.</p>
+          <p>Nous n’autorisons pas <b>${institution}</b> à céder les clichés représentant notre enfant à un tiers.</p>
+          <p>Ces dispositions sont portées à notre connaissance, dans le cadre de l’application de la législation relative au respect du droit à l’image et au respect de la vie privée.</p>
+          <p><b>Je certifie avoir l’autorité parentale sur cet enfant.</b></p>
+        </div>
+
+        <div class="signature">
+          <p>Fait à <span class="fill"></span> le <span class="fill"></span></p>
+          <p class="signature-label">Signature du responsable légal</p>
+          <div class="signature-space"></div>
+        </div>
+      </div>`,
+    );
   }
 
   if (key === "training_report" || key === "stage_summary") {
-    const title = key === "training_report" ? "Bilan de formation" : "Fiche récapitulative stage / sélection";
-    return shell(structure, title, `<div class="grid2"><div class="box"><b>Intitulé :</b><br><br><b>Date(s) :</b><br><br><b>Lieu :</b></div><div class="box"><b>Responsable :</b><br><br><b>Nombre de participants :</b> ${key === "training_report" ? participantNames.length : playerNames.length}<br><br><b>Nombre d’intervenants :</b></div></div><h2>Programme</h2><table><thead><tr><th>Date</th><th>Horaires</th><th>Contenu</th><th>Lieu</th><th>Intervenant</th></tr></thead><tbody>${events.slice(0, 15).map((e) => `<tr><td>${escapeHtml(frDate(e.event_date))}</td><td>${escapeHtml(`${e.start_time || ""} - ${e.end_time || ""}`)}</td><td>${escapeHtml(e.title)}</td><td>${escapeHtml(e.location || "")}</td><td>${escapeHtml(e.intervenant || "")}</td></tr>`).join("") || rows([], 5)}</tbody></table><h2>Observations / bilan</h2><div class="box big"></div><h2>Suites / actions à mener</h2><div class="box big"></div>`);
+    const title =
+      key === "training_report"
+        ? "Bilan de formation"
+        : "Fiche récapitulative stage / sélection";
+    return shell(
+      structure,
+      title,
+      `<div class="grid2"><div class="box"><b>Intitulé :</b><br><br><b>Date(s) :</b><br><br><b>Lieu :</b></div><div class="box"><b>Responsable :</b><br><br><b>Nombre de participants :</b> ${
+        key === "training_report" ? participantNames.length : playerNames.length
+      }<br><br><b>Nombre d’intervenants :</b></div></div><h2>Programme</h2><table><thead><tr><th>Date</th><th>Horaires</th><th>Contenu</th><th>Lieu</th><th>Intervenant</th></tr></thead><tbody>${
+        events
+          .slice(0, 15)
+          .map(
+            (e) =>
+              `<tr><td>${escapeHtml(frDate(e.event_date))}</td><td>${escapeHtml(
+                `${e.start_time || ""} - ${e.end_time || ""}`,
+              )}</td><td>${escapeHtml(e.title)}</td><td>${escapeHtml(
+                e.location || "",
+              )}</td><td>${escapeHtml(e.intervenant || "")}</td></tr>`,
+          )
+          .join("") || rows([], 5)
+      }</tbody></table><h2>Observations / bilan</h2><div class="box big"></div><h2>Suites / actions à mener</h2><div class="box big"></div>`,
+    );
   }
 
   return shell(structure, "Document MyBasket", "");
 }
 
-export default function InstitutionalDocumentTemplates({ structureId }: { structureId: string }) {
+export default function InstitutionalDocumentTemplates({
+  structureId,
+}: {
+  structureId: string;
+}) {
   const supabase = useMemo(() => createClient(), []);
   const [structure, setStructure] = useState<Structure | null>(null);
   const [people, setPeople] = useState<Person[]>([]);
@@ -209,10 +395,33 @@ export default function InstitutionalDocumentTemplates({ structureId }: { struct
   useEffect(() => {
     async function load() {
       const [a, b, c, d] = await Promise.all([
-        supabase.from("institutional_structures").select("*").eq("id", structureId).single(),
-        supabase.from("institutional_people").select("id,first_name,last_name,email,phone,role_label").eq("structure_id", structureId).eq("archived", false).order("last_name"),
-        supabase.from("institutional_players").select("id,first_name,last_name,birthdate,club_name,category,email,height_cm,years_basket").eq("structure_id", structureId).eq("archived", false).order("last_name"),
-        supabase.from("institutional_events").select("id,event_date,start_time,end_time,title,event_type,location,intervenant").eq("structure_id", structureId).eq("archived", false).order("event_date"),
+        supabase
+          .from("institutional_structures")
+          .select("*")
+          .eq("id", structureId)
+          .single(),
+        supabase
+          .from("institutional_people")
+          .select("id,first_name,last_name,email,phone,role_label")
+          .eq("structure_id", structureId)
+          .eq("archived", false)
+          .order("last_name"),
+        supabase
+          .from("institutional_players")
+          .select(
+            "id,first_name,last_name,birthdate,club_name,category,email,height_cm,years_basket",
+          )
+          .eq("structure_id", structureId)
+          .eq("archived", false)
+          .order("last_name"),
+        supabase
+          .from("institutional_events")
+          .select(
+            "id,event_date,start_time,end_time,title,event_type,location,intervenant",
+          )
+          .eq("structure_id", structureId)
+          .eq("archived", false)
+          .order("event_date"),
       ]);
       if (a.data) setStructure(a.data as Structure);
       setPeople((b.data || []) as Person[]);
@@ -224,14 +433,18 @@ export default function InstitutionalDocumentTemplates({ structureId }: { struct
 
   const visible = TEMPLATES.filter((t) => {
     const q = query.trim().toLowerCase();
-    return (category === "Tous" || t.category === category) && (!q || `${t.title} ${t.description}`.toLowerCase().includes(q));
+    return (
+      (category === "Tous" || t.category === category) &&
+      (!q || `${t.title} ${t.description}`.toLowerCase().includes(q))
+    );
   });
 
   function preview(template: Template) {
     if (!structure) return;
     const html = buildDocument(template.key, structure, people, players, events);
     const win = window.open("", "_blank");
-    if (!win) return alert("Autorise les fenêtres pop-up pour prévisualiser le document.");
+    if (!win)
+      return alert("Autorise les fenêtres pop-up pour prévisualiser le document.");
     win.document.open();
     win.document.write(html);
     win.document.close();
@@ -241,7 +454,9 @@ export default function InstitutionalDocumentTemplates({ structureId }: { struct
     if (!structure) return;
     setBusy(template.key);
     try {
-      const { data: { user } } = await supabase.auth.getUser();
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
       if (!user) return;
       const html = buildDocument(template.key, structure, people, players, events);
       const { error } = await supabase.from("institutional_documents").insert({
@@ -259,7 +474,11 @@ export default function InstitutionalDocumentTemplates({ structureId }: { struct
       if (error) throw error;
       alert("Document prérempli enregistré dans Documents.");
     } catch (error) {
-      alert(error instanceof Error ? error.message : "Impossible d’enregistrer le document.");
+      alert(
+        error instanceof Error
+          ? error.message
+          : "Impossible d’enregistrer le document.",
+      );
     } finally {
       setBusy(null);
     }
@@ -268,12 +487,24 @@ export default function InstitutionalDocumentTemplates({ structureId }: { struct
   return (
     <div className="templates">
       <div className="toolbar">
-        <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Rechercher un modèle…" />
+        <input
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          placeholder="Rechercher un modèle…"
+        />
         <select value={category} onChange={(e) => setCategory(e.target.value)}>
-          <option>Tous</option><option>Formation</option><option>Joueurs</option><option>Stage / sélection</option><option>Évaluation</option>
+          <option>Tous</option>
+          <option>Formation</option>
+          <option>Joueurs</option>
+          <option>Stage / sélection</option>
+          <option>Évaluation</option>
         </select>
       </div>
-      <div className="info"><b>Préremplissage automatique :</b> organisme, saison, contacts, participants, joueurs et planning sont repris depuis l’espace Institution. Tu gardes toujours la possibilité de compléter le document avant signature.</div>
+      <div className="info">
+        <b>Préremplissage automatique :</b> organisme, saison, contacts,
+        participants, joueurs et planning sont repris depuis l’espace Institution.
+        Tu gardes toujours la possibilité de compléter le document avant signature.
+      </div>
       <div className="grid">
         {visible.map((template) => (
           <article key={template.key}>
@@ -281,8 +512,17 @@ export default function InstitutionalDocumentTemplates({ structureId }: { struct
             <h3>{template.title}</h3>
             <p>{template.description}</p>
             <div className="actions">
-              <button className="secondary" onClick={() => preview(template)}>Prévisualiser / PDF</button>
-              <button onClick={() => void saveTemplate(template)} disabled={busy === template.key}>{busy === template.key ? "Enregistrement…" : "Enregistrer prérempli"}</button>
+              <button className="secondary" onClick={() => preview(template)}>
+                Prévisualiser / PDF
+              </button>
+              <button
+                onClick={() => void saveTemplate(template)}
+                disabled={busy === template.key}
+              >
+                {busy === template.key
+                  ? "Enregistrement…"
+                  : "Enregistrer prérempli"}
+              </button>
             </div>
           </article>
         ))}
