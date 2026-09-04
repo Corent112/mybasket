@@ -450,7 +450,7 @@ export default function TrainingPlanningBoard({ cohortId }: { cohortId: string }
       marks.add(timeToMinutes(block.end_time));
     });
 
-    const PIXELS_PER_MINUTE = 1.55;
+    const PIXELS_PER_MINUTE = 2.05;
 
     return {
       start,
@@ -788,6 +788,9 @@ export default function TrainingPlanningBoard({ cohortId }: { cohortId: string }
                           <div className="block-top">
                             <span className="block-time">
                               {block.start_time.slice(0, 5)} → {block.end_time.slice(0, 5)}
+                              <small className="block-duration">
+                                {timeToMinutes(block.end_time) - timeToMinutes(block.start_time)} min
+                              </small>
                             </span>
                             <span className="block-type">
                               {blockTypeLabel(block.block_type)}
@@ -1140,44 +1143,55 @@ export default function TrainingPlanningBoard({ cohortId }: { cohortId: string }
         .day-column {
           position: relative;
           min-width: 245px;
-          border-right: 1px solid #ded4cd;
+          border-right: 2px solid #cdbfba;
           overflow: hidden;
-          background: #fff;
+          background:
+            linear-gradient(
+              to right,
+              #faf7f5 0,
+              #faf7f5 8px,
+              #fff 8px,
+              #fff calc(100% - 8px),
+              #faf7f5 calc(100% - 8px)
+            );
         }
         .timeline-line {
           position: absolute;
-          left: 0;
-          right: 0;
+          left: 8px;
+          right: 8px;
           height: 1px;
           background: #eee7e3;
           pointer-events: none;
         }
         .block {
           position: absolute;
-          left: 4px;
-          right: 4px;
+          left: 10px;
+          right: 10px;
           display: flex;
           flex-direction: column;
-          gap: 7px;
+          gap: 6px;
           text-align: left;
           padding: 9px 10px;
           background: #fff;
-          border-top: 0;
-          border-left: 3px solid #6b1a2c;
+          border: 1px solid #dbc9c3;
+          border-left: 4px solid #6b1a2c;
+          border-radius: 8px;
           cursor: pointer;
           overflow: hidden;
           min-height: 38px;
           box-sizing: border-box;
+          box-shadow: 0 1px 3px rgba(49,31,36,.07);
           transition: background .15s ease, box-shadow .15s ease, transform .15s ease;
         }
         .block:hover {
           background: #fffaf7;
-          box-shadow: inset 0 0 0 1px #d8b9bf;
+          box-shadow: 0 3px 8px rgba(49,31,36,.13);
           z-index: 2;
         }
         .block.selected {
           background: #fff7f2;
-          box-shadow: inset 0 0 0 2px #6b1a2c;
+          border-color: #6b1a2c;
+          box-shadow: 0 0 0 2px rgba(107,26,44,.14);
           z-index: 3;
         }
         .block-top {
@@ -1193,6 +1207,12 @@ export default function TrainingPlanningBoard({ cohortId }: { cohortId: string }
           font-weight: 1000;
           white-space: nowrap;
           letter-spacing: .01em;
+        }
+        .block-duration {
+          margin-left: 6px;
+          color: #8b7b7e;
+          font-size: .54rem;
+          font-weight: 900;
         }
         .block-type {
           flex: 0 0 auto;
@@ -1222,8 +1242,8 @@ export default function TrainingPlanningBoard({ cohortId }: { cohortId: string }
         }
         .block-title {
           color: #321f24;
-          font-size: .77rem;
-          line-height: 1.15;
+          font-size: .8rem;
+          line-height: 1.12;
           font-weight: 1000;
           overflow: hidden;
           display: -webkit-box;
@@ -1244,6 +1264,8 @@ export default function TrainingPlanningBoard({ cohortId }: { cohortId: string }
           flex-wrap: wrap;
           gap: 3px 8px;
           min-width: 0;
+          padding-top: 4px;
+          border-top: 1px solid #eee3df;
         }
         .block-meta span {
           color: #62575a !important;
