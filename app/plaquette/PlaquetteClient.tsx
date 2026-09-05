@@ -1246,6 +1246,14 @@ const currentRef = useRef(current);
       ...line,
       from: toNc(canvas, remaining[0]),
       to: toNc(canvas, remaining[remaining.length - 1]),
+
+      // IMPORTANT :
+      // drawLine() passe par resolveFrom(). Si sourcePlayerId reste présent,
+      // resolveFrom() remet le départ d'origine du joueur et annule visuellement
+      // l'effacement progressif. On détache donc uniquement la copie utilisée
+      // pour le rendu animé. La vraie action sauvegardée n'est jamais modifiée.
+      sourcePlayerId: undefined,
+
       // Pour les actions classiques, drawLine() reconstruit la courbe à partir
       // de ctrls. On réutilise donc la portion exacte déjà échantillonnée.
       ctrls: remaining
