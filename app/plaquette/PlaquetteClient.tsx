@@ -79,7 +79,7 @@ const EDIT_EXERCISE_ID_KEY = "mybasket_edit_exercise_id";
   type Player = { id: string; x: number; y: number; label: string; team: 'att' | 'def'; shape: 'circle' | 'square'; coach?: boolean; rotation?: number; name?: string; color?: string; size?: number; photo?: string; hasBall?: boolean; ballCount?: number; linkedPlayerId?: string; linkedPlayerName?: string; linkedTeamId?: string; linkedTeamName?: string };
   type Obj = { id: string; x: number; y: number; kind: string; text?: string; rotation?: number; size?: number; scaleX?: number; scaleY?: number; points?: Pt[]; color?: string; sourcePlayerId?: string; targetPlayerId?: string };
   type Line = { id: string; action: string; from: Pt; to: Pt; ctrls?: Pt[]; ctrl?: Pt; points?: Pt[]; rotation?: number; target?: 'basket'; targetBasketId?: string; sourcePlayerId?: string; targetPlayerId?: string; order?: number; startMode?: 'withPrevious' | 'afterPrevious'; duration?: number; targetMode?: 'player' | 'playerCurrentPoint'; createdTargetPoint?: Pt };
-  type ActSched = { line: Line; start: number; dur: number; end: number; handoff?: { objectId: string; src: string; target: string } };
+  type ActSched = { line: Line; start: number; dur: number; end: number };
   type Sched = { idx: number; start: number; span: number; end: number; actSched: ActSched[] };
   type Phase = { players: Player[]; objects: Obj[]; lines: Line[]; notes: string; duration?: number; startMode?: 'withPrevious' | 'afterPrevious' };
   type Tool =
@@ -272,7 +272,7 @@ const currentRef = useRef(current);
   const scheduleRef = useRef<Sched[]>([]);
   const totalMsRef = useRef(0);
   const ballEventsRef = useRef<{ src: string | null; target: string | null; shoot: boolean; wStart: number; wEnd: number; from?: Pt; to?: Pt; tMode?: 'player' | 'playerCurrentPoint'; createdPt?: Pt; basketPt?: Pt }[]>([]);
-  const handoffEventsRef = useRef<{ src: string; target: string; wTime: number }[]>([]);
+  const handoffEventsRef = useRef<{ objectId: string; src: string; target: string; wTime: number }[]>([]);
   const carrier0Ref = useRef<string | null>(null);
   const rosterRef = useRef<Player[]>([]);
   const onAnimEndRef = useRef<(() => void) | null>(null); // callback fin d'animation (utilisé par l'export vidéo)
@@ -1305,7 +1305,7 @@ const currentRef = useRef(current);
 
         // Même horloge pour le symbole H et le transfert du ballon.
         const event = handoffEventsRef.current.find(
-          (e) => e.src === o.sourcePlayerId && e.target === o.targetPlayerId
+          (e) => e.objectId === o.id
         );
         if (!event || clockRef.current < event.wTime) return;
       }
@@ -1441,10 +1441,10 @@ if (anim && anim.balls) {
     let prevStart = 0;
     let prevDur = 0;
 
-    orderedActions(ph).forEach((l, actionIndex) => {
+    orderedActions(ph).forEach((l, j) => {
       const dur = actionDurationMs(l);
       const start =
-        actionIndex === 0
+        j === 0
           ? 0
           : l.startMode === 'withPrevious'
           ? prevStart
@@ -1455,90 +1455,29 @@ if (anim && anim.balls) {
       prevDur = dur;
     });
 
-    // MAIN À MAIN :
-    // le H devient une étape virtuelle de la timeline. Il ne modifie pas le
-    // schéma sauvegardé, mais il possède désormais un instant précis comme
-    // une passe, un dribble ou un déplacement.
-    const handoffs = ph.objects.filter(
-      (o) => o.kind === 'handoff' && !!o.sourcePlayerId && !!o.targetPlayerId
-    );
-
-    handoffs.forEach((o, handoffIndex) => {
-      const src = o.sourcePlayerId!;
-      const target = o.targetPlayerId!;
-      const naturalSpan = raw.length
-        ? raw.reduce((mx, a) => Math.max(mx, a.end), 0)
-        : phaseDuration(ph) * 1000;
-
-      let bestTime = naturalSpan;
-      let bestScore = Number.POSITIVE_INFINITY;
-
-      // Cherche l'instant réel où les deux joueurs passent au H.
-      // On prend le meilleur point commun des deux trajectoires plutôt qu'une
-      // petite zone obligatoire qui pouvait rater le transfert.
-      if (naturalSpan > 0) {
-        const probeSched: Sched = {
-          idx: phaseIdx,
-          start: 0,
-          span: naturalSpan,
-          end: naturalSpan,
-          actSched: raw,
-        };
-
-        for (let k = 0; k <= 160; k++) {
-          const t = naturalSpan * (k / 160);
-          const sourcePos = phasePlayerPosAt(probeSched, src, t);
-          const targetPos = phasePlayerPosAt(probeSched, target, t);
-          if (!sourcePos || !targetPos) continue;
-
-          const dSource = Math.hypot(sourcePos.x - o.x, sourcePos.y - o.y);
-          const dTarget = Math.hypot(targetPos.x - o.x, targetPos.y - o.y);
-          const score = Math.max(dSource, dTarget) + Math.abs(dSource - dTarget) * 0.25;
-
-          if (score < bestScore) {
-            bestScore = score;
-            bestTime = t;
-          }
-        }
-      }
-
-      // Si le H est réellement rencontré, changement de porteur à cet instant.
-      // Sinon, le changement est garanti à la fin de la phase et sera donc
-      // visible sur le schéma suivant.
-      const HANDOFF_CONTACT_N = 0.12;
-      const handoffTime = bestScore <= HANDOFF_CONTACT_N ? bestTime : naturalSpan;
-
-      raw.push({
-        line: {
-          id: `handoff-action-${o.id}`,
-          action: 'handoff',
-          from: { x: o.x, y: o.y },
-          to: { x: o.x, y: o.y },
-          duration: 0.001,
-          order: Number.MAX_SAFE_INTEGER - handoffs.length + handoffIndex,
-        },
-        start: handoffTime,
-        dur: 1,
-        end: handoffTime + 1,
-        handoff: { objectId: o.id, src, target },
-      });
-    });
-
-    raw.sort((a, b) => a.start - b.start || a.end - b.end);
-
     if (!raw.length) return raw;
 
-    const configured = Math.max(0.1, phaseDuration(ph)) * 1000;
-    const natural = raw.reduce((mx, a) => Math.max(mx, a.end), 0);
-    if (natural <= 0) return raw;
+    const rawSpan = raw.reduce(
+      (maxEnd, action) => Math.max(maxEnd, action.end),
+      0
+    );
+    const targetSpan = phaseDuration(ph) * 1000;
 
-    const scale = configured / natural;
-    return raw.map((a) => ({
-      ...a,
-      start: a.start * scale,
-      dur: a.dur * scale,
-      end: a.end * scale,
-    }));
+    if (rawSpan <= 0 || targetSpan <= 0) return raw;
+
+    const scale = targetSpan / rawSpan;
+
+    return raw.map((action) => {
+      const start = action.start * scale;
+      const dur = action.dur * scale;
+
+      return {
+        ...action,
+        start,
+        dur,
+        end: start + dur,
+      };
+    });
   };
   const phaseSpanMs = (phaseIdx: number, actSched: ActSched[]): number =>
     (actSched.length ? actSched.reduce((mx, a) => Math.max(mx, a.end), 0) : phaseDuration(phasesRef.current[phaseIdx]) * 1000);
@@ -1644,20 +1583,76 @@ if (anim && anim.balls) {
   // Évènements de main à main sur la timeline globale.
   // Le ballon change de joueur au même moment que l'apparition du H :
   // dès que les deux joueurs liés arrivent dans la zone du symbole.
+  // Main à main = évènement de possession dans la timeline.
+  // IMPORTANT : il utilise le timing des actions existantes mais n'entre jamais
+  // dans actSched, donc il ne peut pas ralentir, déplacer ou rescaler les joueurs.
+  //
+  // Si les deux joueurs passent réellement au H, le ballon change à cet instant.
+  // Si le H n'est pas rencontré pendant cette phase, le transfert est placé à la
+  // FIN de la phase : le schéma suivant démarre alors avec le bon porteur.
   const buildHandoffEvents = (
     sched: Sched[]
-  ): { src: string; target: string; wTime: number }[] => {
-    const events: { src: string; target: string; wTime: number }[] = [];
+  ): { objectId: string; src: string; target: string; wTime: number }[] => {
+    const events: { objectId: string; src: string; target: string; wTime: number }[] = [];
+    const HANDOFF_CONTACT_N = 0.12;
 
     sched.forEach((s) => {
-      s.actSched.forEach((a) => {
-        if (!a.handoff) return;
-        events.push({
-          src: a.handoff.src,
-          target: a.handoff.target,
-          wTime: s.start + a.start,
+      const ph = phasesRef.current[s.idx];
+      if (!ph) return;
+
+      ph.objects
+        .filter(
+          (o) =>
+            o.kind === 'handoff' &&
+            !!o.sourcePlayerId &&
+            !!o.targetPlayerId
+        )
+        .forEach((o) => {
+          const src = o.sourcePlayerId!;
+          const target = o.targetPlayerId!;
+
+          let bestTime = s.span;
+          let bestMaxDistance = Number.POSITIVE_INFINITY;
+          let bestBalance = Number.POSITIVE_INFINITY;
+
+          // L'instant du H est calculé à partir du VRAI planning des actions.
+          // On cherche le moment où les deux joueurs sont ensemble au plus près
+          // du symbole, sans modifier une seule durée d'action.
+          const samples = Math.max(80, Math.min(240, Math.ceil(s.span / 12)));
+
+          for (let k = 0; k <= samples; k += 1) {
+            const local = s.span * (k / samples);
+            const sourcePos = phasePlayerPosAt(s, src, local);
+            const targetPos = phasePlayerPosAt(s, target, local);
+            if (!sourcePos || !targetPos) continue;
+
+            const dSource = Math.hypot(sourcePos.x - o.x, sourcePos.y - o.y);
+            const dTarget = Math.hypot(targetPos.x - o.x, targetPos.y - o.y);
+            const maxDistance = Math.max(dSource, dTarget);
+            const balance = Math.abs(dSource - dTarget);
+
+            if (
+              maxDistance < bestMaxDistance ||
+              (Math.abs(maxDistance - bestMaxDistance) < 0.0001 && balance < bestBalance)
+            ) {
+              bestMaxDistance = maxDistance;
+              bestBalance = balance;
+              bestTime = local;
+            }
+          }
+
+          const localTime =
+            bestMaxDistance <= HANDOFF_CONTACT_N
+              ? bestTime
+              : s.span;
+
+          events.push({
+            objectId: o.id,
+            src,
+            target,
+            wTime: s.start + localTime,
+          });
         });
-      });
     });
 
     return events.sort((a, b) => a.wTime - b.wTime);
