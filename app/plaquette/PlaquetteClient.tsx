@@ -1583,6 +1583,83 @@ if (anim && anim.balls) {
   // Évènements de main à main sur la timeline globale.
   // Le ballon change de joueur au même moment que l'apparition du H :
   // dès que les deux joueurs liés arrivent dans la zone du symbole.
+  // Choisit le receveur logique d'un main à main.
+  // Le porteur est imposé séparément. Pour le receveur, on privilégie le joueur
+  // dont UNE TRAJECTOIRE de déplacement passe réellement par le H.
+  // Ainsi un joueur statique simplement plus proche (ex. le 2) ne vole plus le
+  // main à main au joueur qui coupe réellement vers le H (ex. le 3).
+  const resolveHandoffTarget = (
+    ph: Phase,
+    sourceId: string,
+    handoffPoint: Pt
+  ): string | null => {
+    const candidates = ph.players.filter(
+      (player) =>
+        player.team === 'att' &&
+        !player.coach &&
+        player.id !== sourceId
+    );
+
+    if (!candidates.length) return null;
+
+    const scored = candidates.map((player) => {
+      const movementLines = ph.lines.filter(
+        (line) =>
+          MOVE_KINDS.includes(line.action) &&
+          line.sourcePlayerId === player.id
+      );
+
+      let pathDistance = Number.POSITIVE_INFINITY;
+
+      movementLines.forEach((line) => {
+        const pts = [line.from, ...lineCtrls(line), line.to];
+        const poly = catmullRom(pts, 32);
+
+        poly.forEach((point) => {
+          pathDistance = Math.min(
+            pathDistance,
+            Math.hypot(point.x - handoffPoint.x, point.y - handoffPoint.y)
+          );
+        });
+      });
+
+      return {
+        player,
+        hasMovement: movementLines.length > 0,
+        pathDistance,
+        staticDistance: Math.hypot(
+          player.x - handoffPoint.x,
+          player.y - handoffPoint.y
+        ),
+      };
+    });
+
+    // Une trajectoire qui passe près du H est prioritaire sur un joueur statique.
+    const HANDOFF_PATH_N = 0.14;
+    const movingThroughH = scored
+      .filter(
+        (entry) =>
+          entry.hasMovement &&
+          Number.isFinite(entry.pathDistance) &&
+          entry.pathDistance <= HANDOFF_PATH_N
+      )
+      .sort(
+        (a, b) =>
+          a.pathDistance - b.pathDistance ||
+          a.staticDistance - b.staticDistance
+      );
+
+    if (movingThroughH.length) {
+      return movingThroughH[0].player.id;
+    }
+
+    // Fallback : si aucune trajectoire ne rejoint le H, on garde le joueur
+    // physiquement le plus proche.
+    return scored.sort(
+      (a, b) => a.staticDistance - b.staticDistance
+    )[0]?.player.id || null;
+  };
+
   // Main à main = évènement de possession dans la timeline.
   // IMPORTANT : il utilise le timing des actions existantes mais n'entre jamais
   // dans actSched, donc il ne peut pas ralentir, déplacer ou rescaler les joueurs.
@@ -1609,7 +1686,9 @@ if (anim && anim.balls) {
         )
         .forEach((o) => {
           const src = o.sourcePlayerId!;
-          const target = o.targetPlayerId!;
+          const target =
+            resolveHandoffTarget(ph, src, { x: o.x, y: o.y }) ||
+            o.targetPlayerId!;
 
           let bestTime = s.span;
           let bestMaxDistance = Number.POSITIVE_INFINITY;
@@ -2305,13 +2384,14 @@ animPosRef.current = { players, balls };
           const source = ballCarriers[0]?.player;
 
           if (source) {
-            const target = attackers
-              .filter((player) => player.id !== source.id)
-              .map((player) => ({
-                player,
-                distance: Math.hypot(player.x - n.x, player.y - n.y),
-              }))
-              .sort((a, b) => a.distance - b.distance)[0]?.player;
+            const resolvedTargetId = resolveHandoffTarget(
+              ph,
+              source.id,
+              n
+            );
+            const target = resolvedTargetId
+              ? attackers.find((player) => player.id === resolvedTargetId)
+              : undefined;
 
             if (target) {
               sourcePlayerId = source.id;
@@ -3282,7 +3362,9 @@ const exportJson = () => {
     )
     .forEach((o) => {
       const sourceId = o.sourcePlayerId!;
-      const targetId = o.targetPlayerId!;
+      const targetId =
+        resolveHandoffTarget(ph, sourceId, { x: o.x, y: o.y }) ||
+        o.targetPlayerId!;
 
       if ((owners.get(sourceId) || 0) <= 0) return;
 
