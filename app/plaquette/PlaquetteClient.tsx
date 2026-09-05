@@ -2278,32 +2278,73 @@ animPosRef.current = { players, balls };
           return { ...ph, objects: [...ph.objects, { id: uid(), x: n.x, y: n.y, kind: tool.obj, rotation: 0, size: 1, color: '#0F0F12' }] };
         }
 
-        // Un H placé entre deux attaquants représente un main à main.
-        // Il mémorise les deux joueurs concernés mais NE change pas la possession
-        // dans le schéma courant. Le transfert sera appliqué uniquement au Next.
-        const nearest = ph.players
-          .filter((player) => player.team === 'att' && !player.coach)
-          .map((player) => ({ player, distance: Math.hypot(player.x - n.x, player.y - n.y) }))
-          .sort((a, b) => a.distance - b.distance)
-          .slice(0, 2)
-          .map((entry) => entry.player);
+        // Un H représente un main à main entre le PORTEUR DU BALLON et
+        // le joueur qui vient le plus près du H.
+        //
+        // IMPORTANT : on ne choisit plus simplement les deux joueurs les plus
+        // proches de la position du H. Cette ancienne logique pouvait annoncer
+        // « 2 donne à 3 » alors que le ballon était réellement sur le joueur 4.
+        const attackers = ph.players.filter(
+          (player) => player.team === 'att' && !player.coach
+        );
+
+        const ballCarriers = attackers
+          .filter((player) => playerBallCount(player) > 0)
+          .map((player) => ({
+            player,
+            distance: Math.hypot(player.x - n.x, player.y - n.y),
+          }))
+          .sort((a, b) => a.distance - b.distance);
 
         let sourcePlayerId: string | undefined;
         let targetPlayerId: string | undefined;
 
-        if (nearest.length === 2) {
-          const [first, second] = nearest;
-          const firstHasBall = playerBallCount(first) > 0;
-          const secondHasBall = playerBallCount(second) > 0;
-          const source = firstHasBall ? first : secondHasBall ? second : first;
-          const target = source.id === first.id ? second : first;
+        if (attackers.length >= 2) {
+          // Priorité absolue au vrai porteur du ballon.
+          // En cas de multi-ballons, on prend le porteur le plus proche du H.
+          const source = ballCarriers[0]?.player;
 
-          sourcePlayerId = source.id;
-          targetPlayerId = target.id;
+          if (source) {
+            const target = attackers
+              .filter((player) => player.id !== source.id)
+              .map((player) => ({
+                player,
+                distance: Math.hypot(player.x - n.x, player.y - n.y),
+              }))
+              .sort((a, b) => a.distance - b.distance)[0]?.player;
 
-          showHint(`Main à main : ${source.label} donnera le ballon à ${target.label} au schéma suivant`);
-        } else {
-          showHint('Place le H entre deux attaquants pour créer le main à main');
+            if (target) {
+              sourcePlayerId = source.id;
+              targetPlayerId = target.id;
+              showHint(
+                `Main à main : ${source.label} donnera le ballon à ${target.label}`
+              );
+            }
+          } else {
+            // Aucun ballon présent dans le schéma : on garde un fallback visuel
+            // basé sur les deux joueurs les plus proches, mais sans inventer
+            // qu'un joueur est porteur.
+            const nearest = attackers
+              .map((player) => ({
+                player,
+                distance: Math.hypot(player.x - n.x, player.y - n.y),
+              }))
+              .sort((a, b) => a.distance - b.distance)
+              .slice(0, 2)
+              .map((entry) => entry.player);
+
+            if (nearest.length === 2) {
+              sourcePlayerId = nearest[0].id;
+              targetPlayerId = nearest[1].id;
+              showHint(
+                `Main à main : aucun porteur détecté — ${nearest[0].label} → ${nearest[1].label}`
+              );
+            }
+          }
+        }
+
+        if (!sourcePlayerId || !targetPlayerId) {
+          showHint('Place le H avec un porteur de ballon et un autre attaquant');
         }
 
         return {
