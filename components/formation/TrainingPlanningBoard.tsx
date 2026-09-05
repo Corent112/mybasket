@@ -41,9 +41,10 @@ type Asset = {
 
 const BLOCK_TYPES = [
   ["training", "Intervention"],
+  ["observation", "Observation"],
   ["court", "Terrain"],
   ["meeting", "Réunion"],
-  ["meal", "Déjeuner"],
+  ["meal", "Pause déjeuner"],
   ["assessment", "Évaluation"],
   ["break", "Pause"],
   ["other", "Autre"],
@@ -1647,6 +1648,10 @@ export default function TrainingPlanningBoard({
           font-size: .56rem !important;
           font-weight: 900;
           white-space: nowrap;
+        }
+        .type-observation {
+          background: #fff8e7;
+          border-left-color: #d69b2d;
         }
         .type-court {
           background: #fff9f7;

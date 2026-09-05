@@ -1,0 +1,75 @@
+.exercisesWidePage {
+  width: 100%;
+  min-width: 0;
+}
+
+/*
+ * On utilise davantage la largeur disponible sans modifier le design,
+ * la largeur interne ni les proportions des cartes d'exercices.
+ */
+.exercisesWidePage :global(.container) {
+  width: min(1540px, calc(100% - 40px));
+  max-width: none;
+  margin-inline: auto;
+  padding-inline: 0;
+  box-sizing: border-box;
+}
+
+.exercisesWidePage :global(.list-layout) {
+  grid-template-columns: 220px minmax(0, 1fr);
+  gap: 18px;
+  align-items: start;
+}
+
+.exercisesWidePage :global(.list-layout > section) {
+  min-width: 0;
+}
+
+.exercisesWidePage :global(.filters) {
+  width: 220px;
+  max-width: 220px;
+  justify-self: start;
+}
+
+.exercisesWidePage :global(.mb-exercises-grid) {
+  justify-content: start;
+  align-content: start;
+}
+
+/* Sur très grands écrans, on réduit encore la marge perdue. */
+@media (min-width: 1500px) {
+  .exercisesWidePage :global(.container) {
+    width: min(1600px, calc(100% - 28px));
+  }
+}
+
+@media (max-width: 1100px) {
+  .exercisesWidePage :global(.container) {
+    width: min(100% - 28px, 1200px);
+  }
+
+  .exercisesWidePage :global(.list-layout) {
+    grid-template-columns: 210px minmax(0, 1fr);
+    gap: 14px;
+  }
+
+  .exercisesWidePage :global(.filters) {
+    width: 210px;
+    max-width: 210px;
+  }
+}
+
+@media (max-width: 760px) {
+  .exercisesWidePage :global(.container) {
+    width: min(100% - 20px, 760px);
+  }
+
+  .exercisesWidePage :global(.list-layout) {
+    grid-template-columns: 1fr;
+  }
+
+  .exercisesWidePage :global(.filters) {
+    width: 100%;
+    max-width: none;
+  }
+}

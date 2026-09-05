@@ -208,7 +208,16 @@ const styles = StyleSheet.create({
     backgroundColor: "#F7F2FA",
   },
   blockCourt: {
-    backgroundColor: "#F7FBF4",
+    backgroundColor: "#EAF6EA",
+  },
+  blockRoom: {
+    backgroundColor: "#EDF5FF",
+  },
+  blockObservation: {
+    backgroundColor: "#FFF3D8",
+  },
+  blockVisio: {
+    backgroundColor: "#F1EEFF",
   },
   blockTime: {
     fontFamily: "Helvetica-Bold",
@@ -324,12 +333,21 @@ function chunk<T>(items: T[], size: number) {
   return result;
 }
 
-function getBlockStyle(type?: string | null) {
-  if (type === "meal") return styles.blockMeal;
-  if (type === "break") return styles.blockBreak;
+function getBlockStyle(block: PlanningPdfBlock) {
+  const type = String(block.block_type || "");
+  const locationType = String(block.location_type || "");
+
+  // Les séquences particulières gardent leur couleur propre.
+  if (type === "meal" || type === "break") return styles.blockMeal;
+  if (type === "observation") return styles.blockObservation;
   if (type === "assessment") return styles.blockAssessment;
   if (type === "meeting") return styles.blockMeeting;
-  if (type === "court") return styles.blockCourt;
+
+  // Pour les autres blocs, la couleur suit le lieu sélectionné.
+  if (locationType === "terrain" || type === "court") return styles.blockCourt;
+  if (locationType === "salle") return styles.blockRoom;
+  if (locationType === "visio") return styles.blockVisio;
+
   return {};
 }
 
@@ -445,7 +463,9 @@ function Header({
                   case "meeting":
                     return "Réunion";
                   case "meal":
-                    return "Repas";
+                    return "Pause déjeuner";
+                  case "observation":
+                    return "Observation";
                   case "assessment":
                     return "Évaluation";
                   case "break":
@@ -553,6 +573,10 @@ function SchedulePage({
     marks.push(minute);
   }
 
+  // La dernière graduation correspond au bord inférieur du planning :
+  // on garde sa ligne mais pas son libellé pour éviter qu'il soit rogné.
+  const labelMarks = marks.filter((minute) => minute < endMinute);
+
   return (
     <Page size="A4" orientation="landscape" style={styles.page}>
       <Header
@@ -583,7 +607,7 @@ function SchedulePage({
 
         <View style={[styles.timelineBody, { height: timelineHeight }]}>
           <View style={[styles.timeAxis, { height: timelineHeight }]}>
-            {marks.map((minute) => (
+            {labelMarks.map((minute) => (
               <Text
                 key={`time-${minute}`}
                 style={[
@@ -642,7 +666,7 @@ function SchedulePage({
                       key={block.id}
                       style={[
                         styles.block,
-                        getBlockStyle(block.block_type),
+                        getBlockStyle(block),
                         {
                           top,
                           height: rawHeight,
