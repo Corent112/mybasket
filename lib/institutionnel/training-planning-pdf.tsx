@@ -77,7 +77,7 @@ const styles = StyleSheet.create({
     borderRightWidth: 1,
     borderBottomWidth: 1,
     borderColor: "#111111",
-    minHeight: 54,
+    height: 54,
   },
   summaryCell: {
     padding: 5,
@@ -98,9 +98,21 @@ const styles = StyleSheet.create({
     fontSize: 6.4,
     lineHeight: 1.22,
   },
+  instructorGrid: {
+    flexDirection: "row",
+    gap: 8,
+  },
+  instructorColumn: {
+    flex: 1,
+    minWidth: 0,
+  },
+  instructorItem: {
+    fontSize: 6.2,
+    lineHeight: 1.18,
+  },
 
   schedule: {
-    marginTop: 10,
+    marginTop: 6,
     borderWidth: 1,
     borderColor: "#111111",
   },
@@ -458,11 +470,30 @@ function Header({
           ]}
         >
           <Text style={styles.summaryHeading}>Intervenants</Text>
-          <Text style={styles.summaryText}>
-            {instructors.length
-              ? instructors.map((item) => `• ${item}`).join("\n")
-              : "—"}
-          </Text>
+          {instructors.length ? (
+            <View style={styles.instructorGrid}>
+              <View style={styles.instructorColumn}>
+                {instructors
+                  .filter((_, index) => index % 2 === 0)
+                  .map((item) => (
+                    <Text key={`instructor-left-${item}`} style={styles.instructorItem}>
+                      {`• ${item}`}
+                    </Text>
+                  ))}
+              </View>
+              <View style={styles.instructorColumn}>
+                {instructors
+                  .filter((_, index) => index % 2 === 1)
+                  .map((item) => (
+                    <Text key={`instructor-right-${item}`} style={styles.instructorItem}>
+                      {`• ${item}`}
+                    </Text>
+                  ))}
+              </View>
+            </View>
+          ) : (
+            <Text style={styles.summaryText}>—</Text>
+          )}
         </View>
       </View>
     </View>
@@ -508,7 +539,7 @@ function SchedulePage({
     HEADER_H -
     DAY_HEADER_H -
     FOOTER_H -
-    18;
+    10;
 
   const totalSpan = Math.max(60, endMinute - startMinute);
   const minuteToY = (minute: number) =>
@@ -532,7 +563,7 @@ function SchedulePage({
         dates={allDays}
       />
 
-      <View style={styles.schedule}>
+      <View style={styles.schedule} wrap={false}>
         <View style={styles.daysHeader}>
           <View style={styles.blankDayHeader} />
 
