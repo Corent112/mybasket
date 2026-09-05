@@ -1117,7 +1117,9 @@ const currentRef = useRef(current);
 
   // Lignes visibles à l'écran.
   // En mode édition : on affiche tout.
-  // En animation : on affiche uniquement l'action en cours, puis elle disparaît.
+  // En animation : on affiche uniquement l'action en cours.
+  // Pour un déplacement joueur (cut / dribble / screen), la portion déjà parcourue
+  // est effacée progressivement juste derrière le joueur.
   const lineRenderEntries = (
     ph: Phase
   ): { line: Line; opacity: number; eraseProgress: number }[] => {
@@ -1158,14 +1160,30 @@ const currentRef = useRef(current);
           Math.min(1, (local - a.start) / Math.max(1, a.dur))
         );
 
+        // Le joueur se déplace avec la même courbe d'easing que phasePlayerPosAt().
+        // On efface donc la trajectoire avec cette progression réelle, et non avec
+        // une progression linéaire, afin que le trait disparaisse au bon endroit.
+        //
+        // TRAIL_FRACTION laisse volontairement quelques pixels de trajectoire
+        // derrière le joueur pour que le déplacement reste lisible.
+        const TRAIL_FRACTION = 0.025;
+        const isPlayerMove = MOVE_KINDS.includes(a.line.action);
+        const travelled = isPlayerMove ? ease(progress) : 0;
+        const eraseProgress = isPlayerMove
+          ? Math.max(0, travelled - TRAIL_FRACTION)
+          : 0;
+
         return {
           line: a.line,
           opacity: 1,
-          eraseProgress: progress,
+          eraseProgress,
         };
       });
   };
 
+  // Dessine uniquement la portion de trajectoire qu'il reste à parcourir.
+  // La géométrie passe par linePoly(), donc les courbes et points de contrôle
+  // sont respectés : aucune conversion artificielle en simple ligne droite.
   const drawLineProgressiveErase = (
     ctx: CanvasRenderingContext2D,
     canvas: HTMLCanvasElement,
