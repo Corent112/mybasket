@@ -72,6 +72,11 @@ function blockTypeLabel(value: string) {
   return BLOCK_TYPES.find(([key]) => key === value)?.[1] || "Bloc";
 }
 
+function formatShortDate(value: string) {
+  if (!value) return "—";
+  return new Date(`${value}T12:00:00`).toLocaleDateString("fr-FR");
+}
+
 export default function TrainingPlanningBoard({
   cohortId,
   onAttendanceChanged,
@@ -86,6 +91,11 @@ export default function TrainingPlanningBoard({
   const [selectedBlockId, setSelectedBlockId] = useState("");
   const [message, setMessage] = useState("");
   const [planningTitle, setPlanningTitle] = useState("");
+  const [cohortMeta, setCohortMeta] = useState({
+    start_date: "",
+    end_date: "",
+    location: "",
+  });
   const [exporting, setExporting] = useState(false);
   const [savingPlanning, setSavingPlanning] = useState(false);
   const [pendingAsset, setPendingAsset] = useState<File | null>(null);
@@ -129,7 +139,7 @@ export default function TrainingPlanningBoard({
         .order("updated_at", { ascending: false }),
       supabase
         .from("training_cohorts")
-        .select("name,planning_title")
+        .select("name,planning_title,start_date,end_date,location")
         .eq("id", cohortId)
         .maybeSingle(),
     ]);
@@ -140,13 +150,36 @@ export default function TrainingPlanningBoard({
     const nextBlocks = (blockData ?? []) as PlanningBlock[];
     setBlocks(nextBlocks);
     setScenarios((scenarioData ?? []) as Scenario[]);
+    const rawCohortName = String((cohortData as any)?.name || "").trim();
+    const cohortYear = rawCohortName
+      .replace(/promotion/gi, "")
+      .replace(/\s+/g, " ")
+      .trim()
+      .replace(/(\d{4})\s*[\/–—-]\s*(\d{4})/, "$1-$2");
+
+    const formationName =
+      nextBlocks
+        .map((block) => String(block.formation_name || "").trim())
+        .find(Boolean) || "";
+
+    const storedTitle = String((cohortData as any)?.planning_title || "").trim();
+    const storedTitleIsLegacy =
+      !storedTitle ||
+      /promotion/i.test(storedTitle) ||
+      storedTitle === rawCohortName;
+
     setPlanningTitle(
-      String(
-        (cohortData as any)?.planning_title ||
-          (cohortData as any)?.name ||
-          "Planning de formation",
-      ),
+      storedTitleIsLegacy
+        ? [formationName, cohortYear].filter(Boolean).join(" ") ||
+            "Planning de formation"
+        : storedTitle,
     );
+
+    setCohortMeta({
+      start_date: String((cohortData as any)?.start_date || ""),
+      end_date: String((cohortData as any)?.end_date || ""),
+      location: String((cohortData as any)?.location || ""),
+    });
 
     if (nextBlocks.length) {
       const { data: assetData } = await supabase
@@ -539,45 +572,131 @@ export default function TrainingPlanningBoard({
     ? assets.filter((asset) => asset.block_id === selectedBlock.id)
     : [];
 
+  const planningDates = days;
+  const firstPlanningDate = cohortMeta.start_date || planningDates[0] || "";
+  const lastPlanningDate =
+    cohortMeta.end_date || planningDates[planningDates.length - 1] || "";
+
+  const trainingMinutes = blocks
+    .filter(
+      (block) =>
+        block.block_type !== "meal" && block.block_type !== "break",
+    )
+    .reduce(
+      (sum, block) =>
+        sum +
+        Math.max(
+          0,
+          timeToMinutes(block.end_time) -
+            timeToMinutes(block.start_time),
+        ),
+      0,
+    );
+
+  const trainingHoursLabel = `${Math.floor(trainingMinutes / 60)} h${
+    trainingMinutes % 60 ? ` ${trainingMinutes % 60} min` : ""
+  }`;
+
   return (
     <section className="planning">
       {message && <div className="toast">{message}</div>}
 
       <div className="hero">
-        <div>
-          <p>PLANNING FORMATION</p>
-          <h1>Organisation pédagogique</h1>
-          <span>
-            Chaque bloc alimente automatiquement le planning et les
-            demi-journées de présence.
-          </span>
+        <div className="hero-top">
+          <div className="hero-copy">
+            <p>PLANNING FORMATION</p>
+            <h1>Organisation pédagogique</h1>
+            <span>
+              Chaque bloc alimente automatiquement le planning et les
+              demi-journées de présence.
+            </span>
+          </div>
+
+          <div className="hero-actions">
+            <button
+              className="hero-action hero-export"
+              disabled={exporting || savingPlanning}
+              onClick={() => void exportPlanning()}
+            >
+              <span className="hero-action-icon">⇩</span>
+              <span className="hero-action-text">
+                <strong>
+                  {exporting ? "Export…" : "Exporter PDF + Documents"}
+                </strong>
+                <small>Planning, feuilles de présence, etc.</small>
+              </span>
+            </button>
+
+            <button
+              className="hero-action hero-save"
+              disabled={savingPlanning}
+              onClick={() => void savePlanning()}
+            >
+              <span className="hero-action-icon">▣</span>
+              <span className="hero-action-text">
+                <strong>
+                  {savingPlanning
+                    ? "Sauvegarde…"
+                    : "Sauvegarder le planning"}
+                </strong>
+                <small>Enregistrer les modifications</small>
+              </span>
+            </button>
+          </div>
         </div>
 
-        <div className="planning-actions">
-          <label>
-            <span>Titre du planning</span>
+        <div className="hero-title-row">
+          <label className="hero-title-field">
+            <span className="hero-title-icon">🎓</span>
             <input
               value={planningTitle}
               onChange={(e) => setPlanningTitle(e.target.value)}
               onBlur={() => void savePlanningTitle()}
-              placeholder="Ex. Kick Off 2026-2027"
+              placeholder="Ex. DETB 2026-2027"
             />
+            <span className="hero-title-edit">✎</span>
           </label>
+        </div>
 
-          <button
-            disabled={savingPlanning}
-            onClick={() => void savePlanning()}
-          >
-            {savingPlanning ? "Sauvegarde…" : "Sauvegarder le planning"}
-          </button>
+        <div className="hero-stats">
+          <div className="hero-stat">
+            <span className="hero-stat-icon">▦</span>
+            <div>
+              <small>Période</small>
+              <strong>
+                {firstPlanningDate && lastPlanningDate
+                  ? `du ${formatShortDate(firstPlanningDate)} au ${formatShortDate(lastPlanningDate)}`
+                  : "À définir"}
+              </strong>
+            </div>
+          </div>
 
-          <button
-            className="secondary"
-            disabled={exporting || savingPlanning}
-            onClick={() => void exportPlanning()}
-          >
-            {exporting ? "Export…" : "Exporter PDF + Documents"}
-          </button>
+          <div className="hero-stat">
+            <span className="hero-stat-icon">◷</span>
+            <div>
+              <small>Volume horaire</small>
+              <strong>{trainingHoursLabel}</strong>
+            </div>
+          </div>
+
+          <div className="hero-stat">
+            <span className="hero-stat-icon">▣</span>
+            <div>
+              <small>Nombre de jours</small>
+              <strong>
+                {planningDates.length} jour
+                {planningDates.length > 1 ? "s" : ""}
+              </strong>
+            </div>
+          </div>
+
+          <div className="hero-stat">
+            <span className="hero-stat-icon">⌖</span>
+            <div>
+              <small>Lieu</small>
+              <strong>{cohortMeta.location || "À définir"}</strong>
+            </div>
+          </div>
         </div>
       </div>
 
@@ -1027,25 +1146,11 @@ export default function TrainingPlanningBoard({
         .planning {
           display: grid;
           gap: 14px;
-        }
-        .planning-actions {
-          display: grid;
-          grid-template-columns: minmax(260px, 1fr) auto;
-          gap: 8px;
-          align-items: end;
-        }
-        .planning-actions label {
-          display: grid;
-          gap: 4px;
-          font-size: 0.72rem;
-          font-weight: 900;
-          color: #6b1a2c;
-        }
-        .planning-actions input {
-          border: 1px solid #d8c9c2;
-          border-radius: 9px;
-          padding: 9px;
-          background: #fff;
+          width: 100%;
+          max-width: 100%;
+          min-width: 0;
+          overflow-x: hidden;
+          box-sizing: border-box;
         }
         .secondary {
           background: #fff !important;
@@ -1053,12 +1158,176 @@ export default function TrainingPlanningBoard({
           border: 1px solid #d8bbc2 !important;
         }
         .hero {
-          background: linear-gradient(135deg, #6b1a2c, #35101a);
+          position: relative;
+          width: 100%;
+          max-width: 100%;
+          min-width: 0;
+          box-sizing: border-box;
+          background: linear-gradient(135deg, #8b1837 0%, #6b1a2c 52%, #3b0f1b 100%);
           color: #fff;
           border-radius: 23px;
-          padding: 22px;
+          padding: 24px 28px 20px;
+          overflow: hidden;
+          box-shadow: 0 10px 28px rgba(78,20,35,.18);
         }
-        .hero p,
+        .hero-top {
+          display: grid;
+          grid-template-columns: minmax(0, 1fr) minmax(0, 520px);
+          gap: 24px;
+          align-items: center;
+          width: 100%;
+          max-width: 100%;
+          min-width: 0;
+        }
+        .hero-copy p {
+          margin: 0;
+          color: #f2c35b;
+          font-weight: 1000;
+          letter-spacing: .12em;
+          font-size: .68rem;
+        }
+        .hero-copy h1 {
+          margin: 8px 0 6px;
+          font-size: clamp(1.65rem, 2.2vw, 2.35rem);
+          line-height: 1.02;
+        }
+        .hero-copy > span {
+          color: rgba(255,255,255,.88);
+          font-size: .83rem;
+        }
+        .hero-actions {
+          display: grid;
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+          gap: 12px;
+          width: 100%;
+          max-width: 100%;
+          min-width: 0;
+        }
+        .hero-action {
+          min-width: 0;
+          width: 100%;
+          max-width: 100%;
+          min-height: 78px;
+          box-sizing: border-box;
+          display: flex;
+          align-items: center;
+          gap: 12px;
+          border-radius: 14px;
+          padding: 14px 16px;
+          border: 1px solid rgba(255,255,255,.2);
+          cursor: pointer;
+          text-align: left;
+          overflow: hidden;
+          box-shadow: 0 6px 18px rgba(26,7,13,.12);
+        }
+        .hero-export {
+          background: #fff;
+          color: #6b1a2c;
+        }
+        .hero-save {
+          background: linear-gradient(180deg, #f6c85d, #dfa93a);
+          color: #35101a;
+        }
+        .hero-action-icon {
+          width: 40px;
+          height: 40px;
+          border-radius: 50%;
+          display: grid;
+          place-items: center;
+          background: rgba(107,26,44,.08);
+          font-size: 1.35rem;
+          font-weight: 1000;
+          flex: 0 0 auto;
+        }
+        .hero-action-text {
+          display: grid;
+          gap: 4px;
+          min-width: 0;
+          overflow: hidden;
+        }
+        .hero-action-text strong {
+          font-size: .88rem;
+          line-height: 1.15;
+          white-space: normal;
+          overflow-wrap: anywhere;
+        }
+        .hero-action-text small {
+          font-size: .67rem;
+          opacity: .74;
+        }
+        .hero-title-row {
+          margin-top: 18px;
+          width: min(520px, 100%);
+          max-width: 100%;
+          min-width: 0;
+        }
+        .hero-title-field {
+          height: 46px;
+          display: grid;
+          grid-template-columns: 38px minmax(0, 1fr) 36px;
+          align-items: center;
+          background: rgba(255,255,255,.96);
+          border-radius: 12px;
+          overflow: hidden;
+        }
+        .hero-title-field input {
+          width: 100%;
+          min-width: 0;
+          border: 0;
+          outline: 0;
+          background: transparent;
+          color: #35101a;
+          font: inherit;
+          font-size: .9rem;
+          font-weight: 1000;
+        }
+        .hero-title-icon,
+        .hero-title-edit {
+          display: grid;
+          place-items: center;
+          color: #6b1a2c;
+          font-weight: 1000;
+        }
+        .hero-title-edit {
+          width: 30px;
+          height: 30px;
+          border-radius: 50%;
+          background: #f2e8eb;
+          justify-self: center;
+        }
+        .hero-stats {
+          display: grid;
+          grid-template-columns: 1.45fr 1fr 1fr 1fr;
+          gap: 20px;
+          margin-top: 18px;
+          padding-top: 16px;
+          border-top: 1px solid rgba(255,255,255,.12);
+        }
+        .hero-stat {
+          display: flex;
+          gap: 10px;
+          align-items: center;
+        }
+        .hero-stat > div {
+          display: grid;
+          gap: 2px;
+        }
+        .hero-stat small {
+          color: rgba(255,255,255,.72);
+          font-size: .63rem;
+        }
+        .hero-stat strong {
+          color: #fff;
+          font-size: .73rem;
+        }
+        .hero-stat-icon {
+          width: 30px;
+          height: 30px;
+          display: grid;
+          place-items: center;
+          font-size: 1.05rem;
+          font-weight: 1000;
+        }
         .board-head p,
         .detail-head p {
           margin: 0;
@@ -1067,7 +1336,6 @@ export default function TrainingPlanningBoard({
           letter-spacing: 0.12em;
           font-size: 0.68rem;
         }
-        .hero h1,
         .board-head h2,
         .detail-head h2 {
           margin: 5px 0;
@@ -1075,6 +1343,10 @@ export default function TrainingPlanningBoard({
         .create-card,
         .board-card,
         .detail-card {
+          width: 100%;
+          max-width: 100%;
+          min-width: 0;
+          box-sizing: border-box;
           background: #fff;
           border: 1px solid #eadfd8;
           border-radius: 16px;
@@ -1513,6 +1785,12 @@ export default function TrainingPlanningBoard({
           font-weight: 900;
         }
         @media (max-width: 900px) {
+          .planning-buttons {
+            justify-content: stretch;
+          }
+          .planning-buttons button {
+            flex: 1 1 220px;
+          }
           .form-grid {
             grid-template-columns: 1fr 1fr;
           }
@@ -1533,6 +1811,13 @@ export default function TrainingPlanningBoard({
           }
         }
         @media (max-width: 600px) {
+          .hero {
+            padding: 20px 18px;
+          }
+          .hero-stats {
+            grid-template-columns: 1fr;
+            gap: 12px;
+          }
           .form-grid {
             grid-template-columns: 1fr;
           }
