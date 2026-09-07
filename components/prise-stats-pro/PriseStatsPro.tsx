@@ -298,6 +298,7 @@ const COVERAGES = [
 const ATT_ACTIONS = [
   { id: 'tir', label: 'Tir', ic: '🏀' }, { id: 'faute-provoquee', label: 'Faute provoquée', ic: '🔔' },
   { id: 'touche', label: 'Touche / Sortie', ic: '⤵' }, { id: 'perte', label: 'Perte de balle', ic: '✖' },
+  { id: 'contre', label: 'Contre', ic: '🛑' },
   { id: 'faute-commise', label: 'Faute commise', ic: '🟨' },
 ];
 const DEF_ACTIONS = [
@@ -1083,13 +1084,27 @@ export default function PriseStatsProPage() {
     const tId = String(selTeam?.id || activeTeamId || teamId || 'setup');
     const currentMatchId = String(liveMatchIdRef.current || '');
 
-    // Si la restauration automatique a échoué et que l'utilisateur clique
-    // « Retrouver la vidéo », on ouvre le picker IMMÉDIATEMENT.
-    // Ne pas faire d'await avant relinkMatchVideo : Chrome perdrait l'activation
-    // utilisateur nécessaire à showOpenFilePicker().
+    // Depuis ce clic, on tente d'abord le handle déjà mémorisé pour le match.
+    // Si Chrome est simplement revenu à « prompt », requestPermission() peut
+    // réautoriser la vidéo sans demander de retrouver le fichier sur le disque.
     if (currentMatchId && !currentMatchId.startsWith('local_')) {
       try {
-        const relinked = await relinkMatchVideo(currentMatchId, tId);
+        const restored = await restoreMatchVideoForClip(currentMatchId, tId, {
+          interactive: true,
+        });
+        if (restored.video) {
+          attachLocalVideoFile(restored.video.file, true);
+          flash('Vidéo locale retrouvée automatiquement ✓');
+          return;
+        }
+
+        // Seulement si le handle ne permet réellement plus d'ouvrir la vidéo,
+        // on demande à l'utilisateur de la relocaliser.
+        const relinked = await relinkMatchVideo(
+          currentMatchId,
+          tId,
+          restored.expected,
+        );
         if (relinked) {
           attachLocalVideoFile(relinked.file, true);
           flash('Vidéo locale reconnectée au projet ✓');
@@ -1319,7 +1334,25 @@ export default function PriseStatsProPage() {
     const allowed = (profileButtonKeys as Partial<Record<string, string[]>> | null)?.[category];
     return !allowed || allowed.includes(key);
   };
-  const codingButtonsFor = (category: string) => resolveCodingButtons(category, codingDb).filter((b) => profileAllowsButton(category, b.key));
+  const codingButtonsFor = (category: string) => {
+    const resolved = resolveCodingButtons(category, codingDb)
+      .filter((b) => profileAllowsButton(category, b.key));
+
+    // Compatibilité : les configurations déjà enregistrées avant l'ajout de
+    // "Contre" en ATTAQUE n'ont forcément aucune ligne correspondante.
+    // Dans ce seul cas, on ajoute le nouveau bouton sans réactiver les autres
+    // boutons que l'utilisateur aurait volontairement désactivés.
+    if (
+      category === 'att-action' &&
+      !codingDb?.some((b) => b.category === 'att-action' && b.key === 'contre') &&
+      !resolved.some((b) => b.key === 'contre')
+    ) {
+      const blockButton = CODING_FALLBACK['att-action']?.find((b) => b.key === 'contre');
+      if (blockButton) return [...resolved, blockButton];
+    }
+
+    return resolved;
+  };
   const codingLabel = (category: string, key: string, fallback: string) => codingButtonsFor(category).find((b) => b.key === key)?.label || fallback;
   const codingButtonEnabled = (category: string, key: string) => codingButtonsFor(category).some((b) => b.key === key);
   const floor = roster.filter((p) => onCourt.includes(p.id));
@@ -4968,6 +5001,12 @@ export default function PriseStatsProPage() {
   } else if (id === "touche") {
     setDraft(d);
     setStage("inbound");
+  } else if (id === "contre") {
+    // CONTRE subi en attaque : la possession ne bascule pas encore.
+    // La conséquence décide : touche = on garde la balle,
+    // récupération adverse = passage en défense.
+    setDraft(d);
+    setStage("rebound");
   } else {
     commit(d);
   }
@@ -4999,8 +5038,8 @@ export default function PriseStatsProPage() {
     const d = { ...draft, playerId: id };
 
     // CONTRE : on ne valide pas immédiatement.
-    // On demande d'abord si le ballon part en touche ou si l'adversaire
-    // récupère la balle. Dans les deux cas il conserve la possession.
+    // On demande la conséquence : touche = l'adversaire conserve,
+    // récupération de notre équipe = passage en attaque.
     if (draft.actionType === "contre") {
       setDraft(d);
       setStage("rebound");
@@ -5095,10 +5134,12 @@ export default function PriseStatsProPage() {
     markClipEndNow();
     const d = { ...draft, reboundType: id };
 
-    // Après un contre, "Touche" et "Récupération adverse" terminent l'action
-    // contre tout en conservant la possession adverse. reboundNext() garde donc
-    // le contexte en DÉFENSE, puis commit() reprend le workflow normal.
-    if (d.actionType === 'contre' && d.context === 'defense') {
+    // Après un contre, la conséquence choisie décide seule de la possession :
+    // ATTAQUE  + touche               -> reste ATTAQUE
+    // ATTAQUE  + récupération adverse -> passe DÉFENSE
+    // DÉFENSE  + touche               -> reste DÉFENSE
+    // DÉFENSE  + récupération de nous -> passe ATTAQUE
+    if (d.actionType === 'contre') {
       commit(d);
       return;
     }
@@ -7829,16 +7870,28 @@ export default function PriseStatsProPage() {
       case 'zone':
         return <>{head('Où ?', 'Cliquez directement sur le terrain (shot chart)')}<div className="tip">Pas d'étiquette de zone : cliquez l'emplacement exact du tir sur le terrain à droite.</div></>;
       case 'rebound': {
-        // CONTRE : conséquence spécifique.
-        // On réutilise les ids stables du moteur afin de ne changer ni le schéma
-        // Supabase ni les calculs de possession :
-        // - touche-contre = touche, ballon toujours adverse
-        // - off = récupération adverse, ballon toujours adverse
-        if (draft.actionType === 'contre' && draft.context === 'defense') {
-          const blockConsequences = [
-            { id: 'touche-contre', label: '↩ Touche' },
-            { id: 'off', label: '🏀 Récupération adverse' },
-          ];
+        // CONTRE : conséquence spécifique selon le contexte.
+        // On réutilise uniquement les ids stables déjà compris par reboundNext()
+        // afin de ne changer ni le schéma Supabase ni les statistiques existantes.
+        //
+        // En ATTAQUE :
+        // - touche-pour = ballon pour nous -> reste ATTAQUE
+        // - def         = récupération adverse -> passe DÉFENSE
+        //
+        // En DÉFENSE :
+        // - touche-contre = ballon pour l'adversaire -> reste DÉFENSE
+        // - def           = récupération de notre équipe -> passe ATTAQUE
+        if (draft.actionType === 'contre') {
+          const blockConsequences =
+            draft.context === 'attaque'
+              ? [
+                  { id: 'touche-pour', label: '↪ Touche' },
+                  { id: 'def', label: '🏀 Récupération adverse' },
+                ]
+              : [
+                  { id: 'touche-contre', label: '↩ Touche' },
+                  { id: 'def', label: '🏀 Récupération de mon équipe' },
+                ];
 
           return (
             <>
