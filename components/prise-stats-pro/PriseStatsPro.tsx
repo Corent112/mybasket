@@ -416,6 +416,15 @@ const reboundNext = (c: Ctx, t: string): Ctx =>
 
 function ptsOf(a: Draft) {
   if (a.context === 'defense') return 0;
+
+  // Faute provoquée sur panier marqué :
+  // 2+1 = 2 points déjà marqués + 1 LF éventuel
+  // 3+1 = 3 points déjà marqués + 1 LF éventuel
+  if (a.actionType === 'faute-provoquee') {
+    if (a.specialCase === '2pts+1lf') return 2 + (a.ftMade || 0);
+    if (a.specialCase === '3pts+1lf') return 3 + (a.ftMade || 0);
+  }
+
   let p = 0;
   if (a.shotType === 'LF') p += a.ftMade || 0;
   else if (a.actionType === 'tir' && a.shotResult === 'made') { if (a.shotType === '2PTS') p = 2; else if (a.shotType === '3PTS') p = 3; }
@@ -606,13 +615,23 @@ function computeBox(actions: StatA[], roster: Player[]) {
       // Faute commise alors que nous sommes en attaque = faute offensive :
       // elle compte aussi comme perte de balle pour le joueur.
       if (a.context === "attaque") L.to++;
-    } else if (
-      a.actionType === "faute-provoquee" &&
-      L &&
-      a.shotType === "LF"
-    ) {
-      L.fta += a.ftAttempts;
-      L.ftm += a.ftMade;
+    } else if (a.actionType === "faute-provoquee" && L) {
+      // Faute provoquée classique : uniquement les LF.
+      // And-one : le panier marqué compte aussi dans les tirs du joueur.
+      if (a.specialCase === "2pts+1lf") {
+        L.p2a++;
+        L.p2m++;
+        L.fta += 1;
+        L.ftm += a.ftMade || 0;
+      } else if (a.specialCase === "3pts+1lf") {
+        L.p3a++;
+        L.p3m++;
+        L.fta += 1;
+        L.ftm += a.ftMade || 0;
+      } else {
+        L.fta += a.ftAttempts;
+        L.ftm += a.ftMade;
+      }
     }
 
     if (a.assist && a.assistPlayerId) {
@@ -4789,6 +4808,19 @@ export default function PriseStatsProPage() {
     if (a.actionType === 'touche') next = 'attaque';
     else if (a.reboundType === 'touche-pour') { next = 'attaque'; inbound = true; }
     else if (a.reboundType) next = reboundNext(a.context, a.reboundType);
+    // Faute au rebond après un tir manqué.
+    // La faute reste une conséquence du tir afin de conserver le tir raté dans
+    // l'action codée, mais elle décide explicitement de la possession suivante.
+    else if (a.foulOutcome === 'rebound-foul-committed') {
+      // Attaque + faute commise -> Défense
+      // Défense + faute commise -> reste Défense
+      next = 'defense';
+    }
+    else if (a.foulOutcome === 'rebound-foul-drawn') {
+      // Attaque + faute provoquée -> reste Attaque
+      // Défense + faute provoquée -> Attaque
+      next = 'attaque';
+    }
     else if (a.foulOutcome === 'touche') { if (a.context === 'defense') next = 'defense'; else { next = 'attaque'; inbound = true; } }
     else if (a.actionType === 'faute-commise' && a.context === 'defense') next = 'attaque';
     else if (a.actionType === 'faute-commise' && a.context === 'attaque') next = 'defense';
@@ -4798,7 +4830,11 @@ export default function PriseStatsProPage() {
     const samePossession = codingMode === 'live' && (
       (a.context === 'attaque' && (a.reboundType === 'off' || a.reboundType === 'touche-pour')) ||
       (a.context === 'defense' && (a.reboundType === 'off' || a.reboundType === 'touche-contre')) ||
-      (a.context === next && a.foulOutcome === 'touche')
+      (a.context === next && (
+        a.foulOutcome === 'touche' ||
+        a.foulOutcome === 'rebound-foul-committed' ||
+        a.foulOutcome === 'rebound-foul-drawn'
+      ))
     );
     if (!samePossession) possessionStartRef.current = getRawCodingTime();
     setDraft(fresh);
@@ -4828,6 +4864,20 @@ export default function PriseStatsProPage() {
   const afterFT = (d: Draft) => {
     const anyMade = d.ftMade > 0;
     const lastMiss = d.ftResults[d.ftResults.length - 1] === 'miss';
+    const isAndOne = d.specialCase === '2pts+1lf' || d.specialCase === '3pts+1lf';
+
+    // Sur un 2+1 / 3+1, le panier est acquis AVANT le LF.
+    // Un LF raté ne doit donc jamais transformer le panier en tir raté.
+    if (isAndOne) {
+      const nd = { ...d, shotResult: 'made' };
+      if (lastMiss && workflowOn('rebound')) {
+        setDraft(nd);
+        setStage('rebound');
+      } else {
+        commit(nd);
+      }
+      return;
+    }
 
     if (codingMode === 'live-individual') {
       const nd = { ...d, shotResult: anyMade ? 'made' : 'missed' };
@@ -4847,12 +4897,6 @@ export default function PriseStatsProPage() {
     if (d.actionType === 'faute-commise') {
       if (lastMiss && workflowOn('rebound')) { setDraft(nd); setStage('rebound'); return; }
       commit(nd);
-      return;
-    }
-
-    if (d.specialCase === '2pts+1lf' || d.specialCase === '3pts+1lf') {
-      if (lastMiss && workflowOn('rebound')) { setDraft(nd); setStage('rebound'); }
-      else commit(nd);
       return;
     }
 
@@ -5055,7 +5099,22 @@ export default function PriseStatsProPage() {
 };
   const foulPick = (o: string) => {
     if (o === 'touche') { commit({ ...draft, foulOutcome: 'touche' }); return; }
-    if (o === '2plus1' || o === '3plus1') { setDraft({ ...draft, foulOutcome: 'and-one', specialCase: o === '2plus1' ? '2pts+1lf' : '3pts+1lf', shotType: 'LF', ftAttempts: 1, ftResults: [] }); setStage('ft'); return; }
+    if (o === '2plus1' || o === '3plus1') {
+      const isTwoPlusOne = o === '2plus1';
+      setDraft({
+        ...draft,
+        foulOutcome: 'and-one',
+        specialCase: isTwoPlusOne ? '2pts+1lf' : '3pts+1lf',
+        // Le panier est DÉJÀ marqué. Le LF qui suit vaut au maximum +1.
+        shotType: isTwoPlusOne ? '2PTS' : '3PTS',
+        shotResult: 'made',
+        ftAttempts: 1,
+        ftMade: 0,
+        ftResults: [],
+      });
+      setStage('ft');
+      return;
+    }
     setDraft({ ...draft, foulOutcome: 'lf', shotType: 'LF', ftAttempts: o === 'lf2' ? 2 : 3, ftResults: [] }); setStage('ft');
   };
   const shotPick = (t: string) => { const d = { ...draft, shotType: t, actionType: 'tir' }; if (t === 'LF') { d.ftAttempts = d.ftAttempts || 2; d.ftResults = []; } setDraft(d); };
@@ -5150,6 +5209,17 @@ export default function PriseStatsProPage() {
     }
     if (isMyRebound(d.context, id)) setDraft(d);
     else commit(d);
+  };
+  const reboundFoulPick = (kind: 'committed' | 'drawn') => {
+    markClipEndNow();
+    commit({
+      ...draft,
+      reboundType: '',
+      reboundPlayerId: null,
+      foulOutcome: kind === 'committed'
+        ? 'rebound-foul-committed'
+        : 'rebound-foul-drawn',
+    });
   };
   const rebWho = (id: string) => commit({ ...draft, reboundPlayerId: id });
   const passer = (id: string) => { if (id) afterPD({ ...draft, assist: true, assistPlayerId: id }); else afterPD({ ...draft, assist: false, assistPlayerId: null }); };
@@ -7920,6 +7990,11 @@ export default function PriseStatsProPage() {
         const rebLabelOf = (id: string) => rebCfg.find((c) => c.key === id)?.label ?? rebDefaults[id];
         const reb: string[] = (codingMode === 'live-individual' ? ['off', 'def'] : ['off', 'def', 'touche-pour', 'touche-contre']).filter((id) => rebCfg.some((c) => c.key === id));
         return <>{head('Conséquence', codingMode === 'live-individual' ? (draft.context === 'defense' ? 'Tir adverse raté : RO adverse ou RD pour nous' : 'Tir raté : RO ou RD') : 'Rebond sur tir manqué')}<div className="grid c2">{reb.map((id) => <button key={id} className={`chip ${draft.reboundType === id ? 'active' : ''}`} onClick={() => rebPick(id)}>{rebLabelOf(id)}</button>)}</div>
+          <div className="sublbl">Faute au rebond</div>
+          <div className="grid c2">
+            <button className="chip" onClick={() => reboundFoulPick('drawn')}>🔔 Faute provoquée</button>
+            <button className="chip" onClick={() => reboundFoulPick('committed')}>🟨 Faute commise</button>
+          </div>
           {draft.reboundType && isMyRebound(draft.context, draft.reboundType) && <><div className="sublbl">Qui prend le rebond ?</div>{players3(draft.reboundPlayerId, rebWho)}<button className="chip" style={{ marginTop: 8 }} onClick={() => commit(draft)}>Sans précision →</button></>}
         </>;
       }
