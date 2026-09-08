@@ -22,11 +22,11 @@ export type InstitutionalResourceTemplate = {
 };
 
 const field = (label: string, token = "") =>
-  `<div class="mb-field"><b>${label}</b><span>${token || "À compléter"}</span></div>`;
-const area = (title: string, text = "Cliquez ici pour compléter ce contenu.") =>
+  `<div class="mb-field"><b>${label}</b><span>${token || "&nbsp;"}</span></div>`;
+const area = (title: string, text = "<br><br>") =>
   `<section class="mb-section"><h2>${title}</h2><div class="mb-area">${text}</div></section>`;
 const rows = (n: number, cells: number) =>
-  Array.from({ length: n }, () => `<tr>${Array.from({ length: cells }, () => "<td>À compléter</td>").join("")}</tr>`).join("");
+  Array.from({ length: n }, () => `<tr>${Array.from({ length: cells }, () => "<td>&nbsp;</td>").join("")}</tr>`).join("");
 const table = (headers: string[], n = 4) =>
   `<table><thead><tr>${headers.map((h) => `<th>${h}</th>`).join("")}</tr></thead><tbody>${rows(n, headers.length)}</tbody></table>`;
 const identity = () => `<div class="mb-grid mb-grid-2">${field("Nom / prénom", "{{person.full_name}}{{player.full_name}}")} ${field("Email", "{{person.email}}{{player.email}}")} ${field("Téléphone", "{{person.phone}}")} ${field("Structure / club", "{{player.club_name}}")} </div>`;
@@ -266,7 +266,7 @@ export const INSTITUTIONAL_RESOURCE_TEMPLATES: InstitutionalResourceTemplate[] =
     audiences: ["Comité", "Ligue", "Fédération", "Pôle"],
     icon: "👨‍👩‍👧",
     description: "Autorisation générique sans mention d’une structure tierce.",
-    bodyHtml: `<p>Je soussigné(e) <b>Nom du responsable légal</b>, agissant en qualité de <b>père / mère / représentant légal</b>, autorise :</p>${identity()}<p>à participer à <b>Intitulé de l’action</b>, organisée par <b>{{structure.name}}</b>, qui se déroulera <b>Date(s) et lieu</b>.</p>${area("Autorisation complémentaire", "J’autorise / je n’autorise pas les prises de vues photographiques et audiovisuelles dans le cadre de cette action. Le texte peut être adapté librement par la structure.")}${area("Signature", `<p>Fait à {{structure.city}}, le {{today}}</p><p>Signature du responsable légal :</p>`)}`,
+    bodyHtml: `<p>Je soussigné(e) : ............................................................................................................................</p><p>Agissant en qualité de : ☐ Père &nbsp;&nbsp; ☐ Mère &nbsp;&nbsp; ☐ Représentant légal &nbsp;&nbsp; ☐ Autre : ............................</p>${area("Joueur / joueuse", `<div class="mb-grid mb-grid-2">${field("Nom / prénom")}${field("Date de naissance")}${field("Club")}${field("Catégorie")}</div>`)}<p>autorise le/la joueur(se) désigné(e) ci-dessus à participer à l’action : ....................................................................................</p><p>Date(s) : ........................................................ &nbsp;&nbsp; Lieu : ....................................................................................</p>${area("Autorisations", `<p>☐ J’autorise la participation à l’action.</p><p>☐ J’autorise les prises de vues photographiques et audiovisuelles.</p><p>☐ Je n’autorise pas les prises de vues photographiques et audiovisuelles.</p>`)}${area("Signature", `<p>Fait à : ........................................................ &nbsp;&nbsp; Le : ........................................................</p><p>Signature du responsable légal :</p><br><br>`)}`,
   },
   {
     key: "droit_image",
