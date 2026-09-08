@@ -1,5 +1,11 @@
+import DeleteExerciseButton from "./DeleteExerciseButton";
 import ExerciceDetailClient from "./ExerciceDetailClient";
 
 export default function ExerciceDetailPage() {
-  return <ExerciceDetailClient />;
+  return (
+    <>
+      <DeleteExerciseButton />
+      <ExerciceDetailClient />
+    </>
+  );
 }
