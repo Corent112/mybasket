@@ -4,32 +4,61 @@ import {
   institutionalSportActor,
 } from "@/lib/institutionnel/sport-access-server";
 
+function toIsoDate(value: unknown) {
+  const raw = String(value || "").trim();
+  if (!raw) return null;
+  if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) return raw;
+  const match = raw.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+  if (!match) return null;
+  const [, day, month, year] = match;
+  return `${year}-${month.padStart(2, "0")}-${day.padStart(2, "0")}`;
+}
+
 async function createTeamPlayer(
   admin: any,
   {
     teamId,
     ownerId,
     player,
+    canonicalPlayerId,
   }: {
     teamId: string;
     ownerId: string;
     player: any;
+    canonicalPlayerId: string;
   }
 ) {
   const row = {
     id: crypto.randomUUID(),
     user_id: ownerId,
     team_id: teamId,
-    first_name: player.first_name || "",
-    last_name: player.last_name || "",
-    birth_date: player.birthdate || null,
-    photo_url: player.photo_url || null,
-    status: "Disponible",
+    first_name: player.firstName || player.first_name || "",
+    last_name: player.lastName || player.last_name || "",
+    number: player.num ?? null,
+    photo_url: player.photo ?? player.photo_url ?? null,
+    position_primary: player.postePrincipal || "",
+    position_secondary: player.posteSecondaire || "",
+    birth_date: toIsoDate(player.dob || player.birthdate),
+    age: player.age ?? null,
+    height: player.taille || "",
+    weight: player.poids || "",
+    dominant_hand: player.mainDominante || "Droite",
+    status: player.statut || "Disponible",
+    license_number: player.licenceNumber || player.licenseNumber || null,
+    tutor1_phone: player.tuteur1Phone || null,
+    tutor1_email: player.tuteur1Email || null,
+    tutor2_phone: player.tuteur2Phone || null,
+    tutor2_email: player.tuteur2Email || null,
+    presence_pct: player.presencePct ?? 0,
+    punctuality_pct: player.ponctualitePct ?? 0,
+    potential: player.potentiel ?? null,
+    notes: player.notes || "",
     metadata: {
-      institutionCentralPlayerId: player.id,
+      ...player,
+      institutionCentralPlayerId: canonicalPlayerId,
       institutionManaged: true,
-      clubName: player.club_name || null,
-      category: player.category || null,
+      clubName: player.club || player.club_name || null,
+      category: player.categorie || player.category || null,
     },
     updated_at: new Date().toISOString(),
   };
@@ -63,7 +92,7 @@ export async function GET(req: Request) {
   const { data, error } = await ctx.admin
     .from("institutional_players")
     .select(
-      "id,first_name,last_name,birthdate,sex,email,phone,photo_url,club_name,category,status,linked_user_id"
+      "id,first_name,last_name,birthdate,sex,email,phone,photo_url,club_name,category,status,linked_user_id,profile_data"
     )
     .eq("structure_id", structureId)
     .eq("archived", false)
@@ -92,13 +121,14 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Droits insuffisants" }, { status: 403 });
   }
 
-  if (mode === "create") {
-    const firstName = String(body.firstName || "").trim();
-    const lastName = String(body.lastName || "").trim();
+  if (mode === "create_full") {
+    const playerData = body.playerData || {};
+    const firstName = String(playerData.firstName || "").trim();
+    const lastName = String(playerData.lastName || "").trim();
 
-    if (!firstName || !lastName) {
+    if (!firstName) {
       return NextResponse.json(
-        { error: "Prénom et nom obligatoires" },
+        { error: "Prénom obligatoire" },
         { status: 400 }
       );
     }
@@ -109,12 +139,13 @@ export async function POST(req: Request) {
         structure_id: structureId,
         first_name: firstName,
         last_name: lastName,
-        birthdate: body.birthdate || null,
-        sex: body.sex || null,
-        club_name: body.clubName || null,
-        category: body.category || null,
+        birthdate: toIsoDate(playerData.dob),
+        photo_url: playerData.photo || null,
+        club_name: playerData.club || null,
+        category: playerData.categorie || null,
         status: "followed",
         archived: false,
+        profile_data: playerData,
         created_by: ctx.user.id,
       })
       .select("*")
@@ -127,64 +158,82 @@ export async function POST(req: Request) {
       );
     }
 
-    const player = playerWrite.data;
+    const canonicalPlayer = playerWrite.data;
+    const selectionId = String(body.selectionId || "");
 
-    if (body.selectionId) {
-      const { data: selection } = await ctx.admin
-        .from("institutional_selections")
-        .select("id,team_id")
-        .eq("id", String(body.selectionId))
-        .eq("structure_id", structureId)
-        .maybeSingle();
+    if (!selectionId) {
+      return NextResponse.json({ ok: true, player: canonicalPlayer });
+    }
 
-      if (!selection?.team_id) {
-        return NextResponse.json(
-          { error: "Sélection introuvable" },
-          { status: 404 }
-        );
-      }
+    const { data: selection } = await ctx.admin
+      .from("institutional_selections")
+      .select("id,team_id")
+      .eq("id", selectionId)
+      .eq("structure_id", structureId)
+      .maybeSingle();
 
-      try {
-        const ownerId = await getTeamOwner(
-          ctx.admin,
-          String(selection.team_id),
-          ctx.user.id
-        );
-        const teamPlayerId = await createTeamPlayer(ctx.admin, {
-          teamId: String(selection.team_id),
-          ownerId,
-          player,
-        });
+    if (!selection?.team_id) {
+      return NextResponse.json(
+        { error: "Sélection introuvable" },
+        { status: 404 }
+      );
+    }
 
-        await ctx.admin.from("institutional_player_team_links").insert({
+    try {
+      const ownerId = await getTeamOwner(
+        ctx.admin,
+        String(selection.team_id),
+        ctx.user.id
+      );
+
+      const teamPlayerId = await createTeamPlayer(ctx.admin, {
+        teamId: String(selection.team_id),
+        ownerId,
+        player: playerData,
+        canonicalPlayerId: String(canonicalPlayer.id),
+      });
+
+      const linkWrite = await ctx.admin
+        .from("institutional_player_team_links")
+        .insert({
           structure_id: structureId,
-          player_id: player.id,
+          player_id: canonicalPlayer.id,
           team_id: selection.team_id,
           team_player_id: teamPlayerId,
           relation_type: "selection",
           created_by: ctx.user.id,
         });
 
-        const memberWrite = await ctx.admin
-          .from("institutional_selection_players")
-          .insert({
-            selection_id: selection.id,
-            player_id: player.id,
-            team_player_id: teamPlayerId,
-            status: "active",
-            created_by: ctx.user.id,
-          });
+      if (linkWrite.error) throw new Error(linkWrite.error.message);
 
-        if (memberWrite.error) throw new Error(memberWrite.error.message);
-      } catch (error: any) {
-        return NextResponse.json(
-          { error: error?.message || "Association à la sélection impossible" },
-          { status: 400 }
-        );
-      }
+      const memberWrite = await ctx.admin
+        .from("institutional_selection_players")
+        .insert({
+          selection_id: selection.id,
+          player_id: canonicalPlayer.id,
+          team_player_id: teamPlayerId,
+          status: "active",
+          created_by: ctx.user.id,
+        });
+
+      if (memberWrite.error) throw new Error(memberWrite.error.message);
+
+      return NextResponse.json({
+        ok: true,
+        player: canonicalPlayer,
+        teamId: selection.team_id,
+        teamPlayerId,
+      });
+    } catch (error: any) {
+      return NextResponse.json(
+        {
+          error:
+            error?.message ||
+            "Création de la fiche sportive MyBasket impossible",
+        },
+        { status: 400 }
+      );
     }
-
-    return NextResponse.json({ ok: true, player });
   }
 
   if (mode === "attach") {
@@ -230,20 +279,35 @@ export async function POST(req: Request) {
         String(selection.team_id),
         ctx.user.id
       );
+
+      const playerData = player.profile_data || {
+        firstName: player.first_name,
+        lastName: player.last_name,
+        dob: player.birthdate || "",
+        photo: player.photo_url || null,
+        club: player.club_name || "",
+        categorie: player.category || "",
+      };
+
       const teamPlayerId = await createTeamPlayer(ctx.admin, {
         teamId: String(selection.team_id),
         ownerId,
-        player,
+        player: playerData,
+        canonicalPlayerId: playerId,
       });
 
-      await ctx.admin.from("institutional_player_team_links").insert({
-        structure_id: structureId,
-        player_id: playerId,
-        team_id: selection.team_id,
-        team_player_id: teamPlayerId,
-        relation_type: "selection",
-        created_by: ctx.user.id,
-      });
+      const linkWrite = await ctx.admin
+        .from("institutional_player_team_links")
+        .insert({
+          structure_id: structureId,
+          player_id: playerId,
+          team_id: selection.team_id,
+          team_player_id: teamPlayerId,
+          relation_type: "selection",
+          created_by: ctx.user.id,
+        });
+
+      if (linkWrite.error) throw new Error(linkWrite.error.message);
 
       const write = await ctx.admin.from("institutional_selection_players").insert({
         selection_id: selectionId,
@@ -255,7 +319,11 @@ export async function POST(req: Request) {
 
       if (write.error) throw new Error(write.error.message);
 
-      return NextResponse.json({ ok: true, teamPlayerId });
+      return NextResponse.json({
+        ok: true,
+        teamId: selection.team_id,
+        teamPlayerId,
+      });
     } catch (error: any) {
       return NextResponse.json(
         { error: error?.message || "Ajout impossible" },
@@ -316,10 +384,21 @@ export async function POST(req: Request) {
           secondaryTeamId,
           ctx.user.id
         );
+
+        const playerData = player.profile_data || {
+          firstName: player.first_name,
+          lastName: player.last_name,
+          dob: player.birthdate || "",
+          photo: player.photo_url || null,
+          club: player.club_name || "",
+          categorie: player.category || "",
+        };
+
         secondaryTeamPlayerId = await createTeamPlayer(ctx.admin, {
           teamId: secondaryTeamId,
           ownerId,
-          player,
+          player: playerData,
+          canonicalPlayerId: playerId,
         });
 
         const linkWrite = await ctx.admin

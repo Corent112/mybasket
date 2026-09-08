@@ -1,8 +1,10 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import PlayerForm from "@/components/equipes/PlayerForm";
+import type { Player as MyBasketPlayer } from "@/types/player";
 
-type Player = {
+type InstitutionalPlayer = {
   id: string;
   first_name: string;
   last_name: string;
@@ -10,6 +12,8 @@ type Player = {
   club_name: string | null;
   category: string | null;
   linked_user_id: string | null;
+  photo_url?: string | null;
+  profile_data?: Record<string, unknown> | null;
 };
 
 type SecondaryTeam = {
@@ -25,7 +29,7 @@ type SelectionPlayer = {
   team_player_id: string | null;
   secondary_team_id: string | null;
   secondary_team_player_id: string | null;
-  player?: Player | null;
+  player?: InstitutionalPlayer | null;
 };
 
 type Selection = {
@@ -50,30 +54,33 @@ type Props = {
   structureType: "committee" | "league" | "federation" | "pole";
 };
 
+type ShareState = {
+  playerId: string;
+  playerName: string;
+  email: string;
+  label: string;
+  message: string;
+  accessLevel: "viewer" | "editor" | "manager";
+} | null;
+
 export default function InstitutionalSelectionsManager({
   structureId,
   structureType,
 }: Props) {
   const [rows, setRows] = useState<Selection[]>([]);
-  const [allPlayers, setAllPlayers] = useState<Player[]>([]);
+  const [allPlayers, setAllPlayers] = useState<InstitutionalPlayer[]>([]);
   const [secondaryTeams, setSecondaryTeams] = useState<SecondaryTeam[]>([]);
   const [opened, setOpened] = useState("");
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
   const [showCreate, setShowCreate] = useState(false);
+  const [showPlayerForm, setShowPlayerForm] = useState(false);
+  const [share, setShare] = useState<ShareState>(null);
   const [form, setForm] = useState({
     name: structureType === "federation" ? "Équipe de France U16" : "Sélection U13",
     category: structureType === "federation" ? "U16" : "U13",
     seasonLabel: "2026-2027",
     gender: "",
-  });
-  const [newPlayer, setNewPlayer] = useState({
-    firstName: "",
-    lastName: "",
-    birthdate: "",
-    sex: "",
-    clubName: "",
-    category: "",
   });
   const [existingPlayer, setExistingPlayer] = useState("");
   const [staffEmail, setStaffEmail] = useState("");
@@ -114,13 +121,17 @@ export default function InstitutionalSelectionsManager({
       teamRes.json().catch(() => ({})),
     ]);
 
-    if (!selectionRes.ok)
-      return setMessage(selectionJson.error || "Chargement impossible.");
+    if (!selectionRes.ok) {
+      setMessage(selectionJson.error || "Chargement impossible.");
+      return;
+    }
 
     setRows(selectionJson.selections || []);
     setAllPlayers(playerJson.players || []);
     setSecondaryTeams(
-      (teamJson.teams || []).filter((row: SecondaryTeam) => row.kind === "secondary")
+      (teamJson.teams || []).filter(
+        (row: SecondaryTeam) => row.kind === "secondary"
+      )
     );
   }
 
@@ -130,6 +141,7 @@ export default function InstitutionalSelectionsManager({
 
   async function createSelection() {
     if (!form.name.trim()) return alert("Nom obligatoire.");
+
     setBusy(true);
     const response = await fetch("/api/institutionnel/sport/selections", {
       method: "POST",
@@ -138,19 +150,18 @@ export default function InstitutionalSelectionsManager({
     });
     const json = await response.json().catch(() => ({}));
     setBusy(false);
+
     if (!response.ok) return alert(json.error || "Création impossible.");
 
     setShowCreate(false);
-    setMessage("Sélection créée avec son équipe MyBasket associée.");
+    setMessage("Sélection créée avec son équipe MyBasket complète.");
     await load();
+
     if (json.selection?.id) setOpened(json.selection.id);
   }
 
-  async function createPlayer() {
+  async function createPlayer(player: MyBasketPlayer) {
     if (!current) return;
-    if (!newPlayer.firstName.trim() || !newPlayer.lastName.trim()) {
-      return alert("Prénom et nom obligatoires.");
-    }
 
     setBusy(true);
     const response = await fetch("/api/institutionnel/sport/players", {
@@ -158,30 +169,32 @@ export default function InstitutionalSelectionsManager({
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         structureId,
-        mode: "create",
+        mode: "create_full",
         selectionId: current.id,
-        firstName: newPlayer.firstName.trim(),
-        lastName: newPlayer.lastName.trim(),
-        birthdate: newPlayer.birthdate || null,
-        sex: newPlayer.sex || null,
-        clubName: newPlayer.clubName.trim() || null,
-        category: newPlayer.category.trim() || current.category || null,
+        playerData: {
+          ...player,
+          club: player.club || "",
+          categorie: player.categorie || current.category || "",
+        },
       }),
     });
     const json = await response.json().catch(() => ({}));
     setBusy(false);
-    if (!response.ok) return alert(json.error || "Création du joueur impossible.");
 
-    setNewPlayer({
-      firstName: "",
-      lastName: "",
-      birthdate: "",
-      sex: "",
-      clubName: "",
-      category: "",
-    });
-    setMessage("Joueur créé et ajouté à la sélection.");
+    if (!response.ok) {
+      alert(json.error || "Création du joueur impossible.");
+      return;
+    }
+
+    setShowPlayerForm(false);
+    setMessage(
+      "Joueur créé avec la fiche MyBasket complète : photo, identité, RPE, charge, entraînements, grille de tir, stats, vidéo et suivi."
+    );
     await load();
+
+    if (json.teamId && json.teamPlayerId) {
+      window.location.href = `/equipes/${json.teamId}/${json.teamPlayerId}`;
+    }
   }
 
   async function addExistingPlayer() {
@@ -200,10 +213,13 @@ export default function InstitutionalSelectionsManager({
     });
     const json = await response.json().catch(() => ({}));
     setBusy(false);
+
     if (!response.ok) return alert(json.error || "Ajout impossible.");
 
     setExistingPlayer("");
-    setMessage("Joueur existant ajouté à la sélection sans dupliquer son identité.");
+    setMessage(
+      "Joueur existant ajouté à la sélection sans créer une nouvelle identité."
+    );
     await load();
   }
 
@@ -225,12 +241,13 @@ export default function InstitutionalSelectionsManager({
     });
     const json = await response.json().catch(() => ({}));
     setBusy(false);
+
     if (!response.ok) return alert(json.error || "Accès impossible.");
 
     setStaffEmail("");
     setMessage(
       json.invited
-        ? "Responsable invité. La sélection apparaîtra dans Mes équipes après activation."
+        ? "Responsable invité par email. La sélection apparaîtra dans Mes équipes après activation."
         : "Responsable ajouté à la sélection."
     );
     await load();
@@ -238,6 +255,7 @@ export default function InstitutionalSelectionsManager({
 
   async function associateSecondary(playerId: string) {
     if (!current) return;
+
     const secondaryTeamId = teamChoice[playerId];
     if (!secondaryTeamId) return alert("Choisis une équipe secondaire.");
 
@@ -255,10 +273,11 @@ export default function InstitutionalSelectionsManager({
     });
     const json = await response.json().catch(() => ({}));
     setBusy(false);
+
     if (!response.ok) return alert(json.error || "Association impossible.");
 
     setMessage(
-      "Joueur associé à l’équipe secondaire. Sa même identité institutionnelle relie désormais les deux contextes."
+      "Joueur associé à l’équipe secondaire. La même identité institutionnelle relie maintenant les deux contextes."
     );
     await load();
   }
@@ -280,15 +299,47 @@ export default function InstitutionalSelectionsManager({
     });
     const json = await response.json().catch(() => ({}));
     setBusy(false);
+
     if (!response.ok) return alert(json.error || "Association impossible.");
 
     setLinkUserEmail((v) => ({ ...v, [playerId]: "" }));
     setMessage(
       json.invited
-        ? "Compte joueur invité et associé à la fiche."
+        ? "Compte utilisateur invité et associé à la fiche joueur."
         : "Compte utilisateur associé à la fiche joueur."
     );
     await load();
+  }
+
+  async function sendShare() {
+    if (!share) return;
+    if (!share.email.includes("@")) return alert("Email destinataire invalide.");
+
+    setBusy(true);
+    const response = await fetch("/api/institutionnel/player-transfers", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        structureId,
+        playerIds: [share.playerId],
+        target_email: share.email.trim().toLowerCase(),
+        target_label: share.label.trim() || "Club / Institution destinataire",
+        access_level: share.accessLevel,
+        message: share.message.trim(),
+      }),
+    });
+    const json = await response.json().catch(() => ({}));
+    setBusy(false);
+
+    if (!response.ok) {
+      alert(json.error || "Envoi impossible.");
+      return;
+    }
+
+    setShare(null);
+    setMessage(
+      "Fiche envoyée par email. Le destinataire reçoit un lien sécurisé MyBasket pour consulter ou reprendre le suivi selon le droit choisi."
+    );
   }
 
   return (
@@ -298,12 +349,13 @@ export default function InstitutionalSelectionsManager({
       <div className="head">
         <div>
           <small>SÉLECTIONS</small>
-          <h3>Groupes de suivi institutionnels</h3>
+          <h3>La même logique joueur que dans Mes équipes</h3>
           <p>
-            Comité, Ligue, Pôle ou Fédération : une sélection possède son
-            effectif, ses responsables et une équipe MyBasket complète pour les
-            stats, la vidéo, le LiveStat, la grille de tir et les autres outils
-            Premium.
+            Une sélection est une vraie équipe MyBasket. La création d’un joueur
+            utilise exactement le formulaire joueur existant : photo, identité,
+            licence, postes, taille, poids, tuteurs et informations sportives.
+            Ensuite la fiche complète donne accès au RPE, à la charge,
+            aux entraînements, à la grille de tir, aux stats, à la vidéo et au suivi.
           </p>
         </div>
         <button className="primary" onClick={() => setShowCreate((v) => !v)}>
@@ -362,9 +414,7 @@ export default function InstitutionalSelectionsManager({
             </small>
           </button>
         ))}
-        {!rows.length && (
-          <div className="empty">Aucune sélection créée.</div>
-        )}
+        {!rows.length && <div className="empty">Aucune sélection créée.</div>}
       </div>
 
       {current && (
@@ -378,18 +428,20 @@ export default function InstitutionalSelectionsManager({
               </p>
             </div>
             <div className="detailActions">
-              <a href={`/equipes/${current.team_id}`}>Ouvrir l’équipe complète →</a>
-              <button
-                type="button"
-                onClick={() =>
-                  alert(
-                    "Emplacement réservé : export PDF de la fiche joueur et envoi depuis l’Institution. Le moteur PDF sera raccordé dans l’étape suivante."
-                  )
-                }
-              >
-                PDF / Envoyer des fiches
+              <button className="primary" onClick={() => setShowPlayerForm(true)}>
+                + Créer un joueur
               </button>
+              <a href={`/equipes/${current.team_id}`}>Ouvrir l’équipe complète →</a>
             </div>
+          </div>
+
+          <div className="featureStrip">
+            <span><b>📷 Photo</b>Upload direct</span>
+            <span><b>♥ RPE</b>Suivi individuel</span>
+            <span><b>↗ Charge</b>Charge d’entraînement</span>
+            <span><b>▦ Entraînements</b>Historique & présence</span>
+            <span><b>◎ Grille de tir</b>Shot chart</span>
+            <span><b>▶ Vidéo</b>Clips & stats</span>
           </div>
 
           <div className="twoCols">
@@ -397,7 +449,7 @@ export default function InstitutionalSelectionsManager({
               <h4>Responsables de la sélection</h4>
               <p>
                 Ils obtiennent un accès Premium à cette sélection et la voient
-                dans leur onglet Mes équipes.
+                dans leur espace Mes équipes.
               </p>
               <div className="inline">
                 <input
@@ -411,11 +463,7 @@ export default function InstitutionalSelectionsManager({
                   value={staffRole}
                   onChange={(e) => setStaffRole(e.target.value)}
                 />
-                <button
-                  className="primary"
-                  disabled={busy}
-                  onClick={addSelectionStaff}
-                >
+                <button className="primary" disabled={busy} onClick={addSelectionStaff}>
                   Ajouter
                 </button>
               </div>
@@ -431,8 +479,8 @@ export default function InstitutionalSelectionsManager({
             <div className="panel">
               <h4>Ajouter un joueur existant</h4>
               <p>
-                La fiche centrale n’est pas dupliquée : on ajoute seulement un
-                nouveau contexte de sélection.
+                On rattache son identité existante à la sélection sans recréer
+                une deuxième fiche institutionnelle.
               </p>
               <div className="inline">
                 <select
@@ -457,66 +505,11 @@ export default function InstitutionalSelectionsManager({
             </div>
           </div>
 
-          <div className="panel">
-            <h4>Créer un nouveau joueur</h4>
-            <div className="newPlayer">
-              <input
-                placeholder="Prénom"
-                value={newPlayer.firstName}
-                onChange={(e) =>
-                  setNewPlayer((v) => ({ ...v, firstName: e.target.value }))
-                }
-              />
-              <input
-                placeholder="Nom"
-                value={newPlayer.lastName}
-                onChange={(e) =>
-                  setNewPlayer((v) => ({ ...v, lastName: e.target.value }))
-                }
-              />
-              <input
-                type="date"
-                value={newPlayer.birthdate}
-                onChange={(e) =>
-                  setNewPlayer((v) => ({ ...v, birthdate: e.target.value }))
-                }
-              />
-              <select
-                value={newPlayer.sex}
-                onChange={(e) =>
-                  setNewPlayer((v) => ({ ...v, sex: e.target.value }))
-                }
-              >
-                <option value="">Sexe</option>
-                <option value="M">Masculin</option>
-                <option value="F">Féminin</option>
-              </select>
-              <input
-                placeholder="Club actuel"
-                value={newPlayer.clubName}
-                onChange={(e) =>
-                  setNewPlayer((v) => ({ ...v, clubName: e.target.value }))
-                }
-              />
-              <input
-                placeholder="Catégorie"
-                value={newPlayer.category}
-                onChange={(e) =>
-                  setNewPlayer((v) => ({ ...v, category: e.target.value }))
-                }
-              />
-              <button className="primary" disabled={busy} onClick={createPlayer}>
-                Créer et ajouter
-              </button>
-            </div>
-          </div>
-
           <div className="roster">
             <div className="rosterHead">
-              <b>Effectif</b>
+              <b>Effectif & accès</b>
               <span>
-                Même joueur = une identité centrale, reliée aux contextes
-                sélection / équipe secondaire.
+                Chaque ligne ouvre la vraie fiche MyBasket complète.
               </span>
             </div>
 
@@ -527,9 +520,16 @@ export default function InstitutionalSelectionsManager({
               return (
                 <article key={entry.id}>
                   <div className="avatar">
-                    {player.first_name?.[0]}
-                    {player.last_name?.[0]}
+                    {player.photo_url ? (
+                      <img src={player.photo_url} alt="" />
+                    ) : (
+                      <>
+                        {player.first_name?.[0]}
+                        {player.last_name?.[0]}
+                      </>
+                    )}
                   </div>
+
                   <div className="identity">
                     <b>
                       {player.first_name} {player.last_name}
@@ -541,14 +541,18 @@ export default function InstitutionalSelectionsManager({
                     <small>
                       {player.linked_user_id
                         ? "Compte utilisateur associé"
-                        : "Aucun compte joueur associé"}
+                        : "Aucun compte utilisateur associé"}
                     </small>
                   </div>
 
                   <div className="context">
-                    <label>Équipe secondaire</label>
+                    <label>Équipe secondaire / club suivi</label>
                     <select
-                      value={teamChoice[player.id] || entry.secondary_team_id || ""}
+                      value={
+                        teamChoice[player.id] ||
+                        entry.secondary_team_id ||
+                        ""
+                      }
                       onChange={(e) =>
                         setTeamChoice((v) => ({
                           ...v,
@@ -563,16 +567,13 @@ export default function InstitutionalSelectionsManager({
                         </option>
                       ))}
                     </select>
-                    <button
-                      disabled={busy}
-                      onClick={() => associateSecondary(player.id)}
-                    >
+                    <button disabled={busy} onClick={() => associateSecondary(player.id)}>
                       Associer
                     </button>
                   </div>
 
                   <div className="userLink">
-                    <label>Compte du joueur</label>
+                    <label>Associer au compte du joueur</label>
                     <input
                       type="email"
                       placeholder="joueur@email.fr"
@@ -592,17 +593,23 @@ export default function InstitutionalSelectionsManager({
                   <div className="openLinks">
                     {entry.team_player_id && (
                       <a href={`/equipes/${current.team_id}/${entry.team_player_id}`}>
-                        Fiche sélection
+                        Ouvrir la fiche complète
                       </a>
                     )}
-                    {entry.secondary_team_id &&
-                      entry.secondary_team_player_id && (
-                        <a
-                          href={`/equipes/${entry.secondary_team_id}/${entry.secondary_team_player_id}`}
-                        >
-                          Fiche équipe secondaire
-                        </a>
-                      )}
+                    <button
+                      onClick={() =>
+                        setShare({
+                          playerId: player.id,
+                          playerName: `${player.first_name} ${player.last_name}`,
+                          email: "",
+                          label: player.club_name || "",
+                          message: "",
+                          accessLevel: "editor",
+                        })
+                      }
+                    >
+                      ✉ Envoyer / partager
+                    </button>
                   </div>
                 </article>
               );
@@ -615,304 +622,142 @@ export default function InstitutionalSelectionsManager({
         </section>
       )}
 
+      {showPlayerForm && current && (
+        <PlayerForm
+          onClose={() => setShowPlayerForm(false)}
+          onSave={(player) => void createPlayer(player)}
+        />
+      )}
+
+      {share && (
+        <div className="shareOverlay" onClick={() => setShare(null)}>
+          <div className="shareModal" onClick={(e) => e.stopPropagation()}>
+            <small>PARTAGER UNE FICHE JOUEUR</small>
+            <h3>{share.playerName}</h3>
+            <p>
+              Envoie la fiche à une autre Institution, un club ou un coach par
+              email. Le destinataire reçoit un lien sécurisé MyBasket.
+            </p>
+
+            <label>
+              Destinataire / organisation
+              <input
+                placeholder="AS Monaco, Dijon, Ligue..."
+                value={share.label}
+                onChange={(e) =>
+                  setShare((s) => (s ? { ...s, label: e.target.value } : s))
+                }
+              />
+            </label>
+
+            <label>
+              Email
+              <input
+                type="email"
+                placeholder="coach@club.fr"
+                value={share.email}
+                onChange={(e) =>
+                  setShare((s) => (s ? { ...s, email: e.target.value } : s))
+                }
+              />
+            </label>
+
+            <label>
+              Droit accordé
+              <select
+                value={share.accessLevel}
+                onChange={(e) =>
+                  setShare((s) =>
+                    s
+                      ? {
+                          ...s,
+                          accessLevel: e.target.value as
+                            | "viewer"
+                            | "editor"
+                            | "manager",
+                        }
+                      : s
+                  )
+                }
+              >
+                <option value="viewer">Lecture</option>
+                <option value="editor">Contribuer / remplir les informations</option>
+                <option value="manager">Responsable du suivi</option>
+              </select>
+            </label>
+
+            <label>
+              Message
+              <textarea
+                rows={4}
+                placeholder="Message accompagnant le partage..."
+                value={share.message}
+                onChange={(e) =>
+                  setShare((s) => (s ? { ...s, message: e.target.value } : s))
+                }
+              />
+            </label>
+
+            <div className="shareActions">
+              <button onClick={() => setShare(null)}>Annuler</button>
+              <button className="primary" disabled={busy} onClick={sendShare}>
+                {busy ? "Envoi…" : "Envoyer la fiche"}
+              </button>
+            </div>
+
+            <div className="pdfNote">
+              <b>PDF</b>
+              <span>
+                L’export PDF complet restera branché ici ensuite : fiche unique
+                ou sélection multiple, logo/couleurs de l’Institution et envoi email.
+              </span>
+            </div>
+          </div>
+        </div>
+      )}
+
       <style jsx>{`
-        .selections {
-          display: grid;
-          gap: 14px;
-        }
-        .notice {
-          padding: 10px 12px;
-          border-radius: 10px;
-          border: 1px solid #c9e2cf;
-          background: #eef8f1;
-          color: #27623a;
-          font-weight: 900;
-        }
-        .head,
-        .detailHead {
-          display: flex;
-          justify-content: space-between;
-          gap: 16px;
-          align-items: flex-start;
-        }
-        .head small,
-        .detailHead small {
-          color: #b17a21;
-          font-weight: 1000;
-          letter-spacing: 0.12em;
-        }
-        .head h3,
-        .detailHead h3 {
-          margin: 4px 0;
-          color: #4d1420;
-        }
-        .head p,
-        .detailHead p,
-        .panel p {
-          margin: 0;
-          color: #7d6e66;
-          line-height: 1.45;
-        }
-        button,
-        input,
-        select {
-          font: inherit;
-        }
-        .primary {
-          border: 0;
-          border-radius: 10px;
-          background: #6b1a2c;
-          color: #fff;
-          font-weight: 900;
-          padding: 10px 14px;
-          cursor: pointer;
-        }
-        .createSelection,
-        .newPlayer {
-          display: grid;
-          grid-template-columns: 2fr 120px 140px 150px auto;
-          gap: 7px;
-          border: 1px solid #ead7b2;
-          background: #fffaf0;
-          border-radius: 13px;
-          padding: 12px;
-        }
-        .newPlayer {
-          grid-template-columns: repeat(6, minmax(0, 1fr)) auto;
-          border: 0;
-          background: transparent;
-          padding: 0;
-        }
-        input,
-        select {
-          min-width: 0;
-          border: 1px solid #ddcfc8;
-          border-radius: 9px;
-          padding: 9px 10px;
-          background: #fff;
-        }
-        .selectionGrid {
-          display: grid;
-          grid-template-columns: repeat(3, minmax(0, 1fr));
-          gap: 8px;
-        }
-        .selectionCard {
-          border: 1px solid #e5d9d3;
-          border-radius: 12px;
-          background: #fff;
-          text-align: left;
-          padding: 13px;
-          cursor: pointer;
-          display: grid;
-          gap: 3px;
-        }
-        .selectionCard b {
-          color: #3c292d;
-        }
-        .selectionCard span {
-          color: #786b65;
-          font-size: 0.76rem;
-        }
-        .selectionCard small {
-          color: #b17a21;
-          font-weight: 900;
-        }
-        .selectionCard.on {
-          border-color: #6b1a2c;
-          box-shadow: inset 0 0 0 1px #6b1a2c;
-          background: #fff8fa;
-        }
-        .detail {
-          display: grid;
-          gap: 12px;
-          border-top: 1px solid #eadfd8;
-          padding-top: 14px;
-        }
-        .detailActions {
-          display: flex;
-          gap: 7px;
-          flex-wrap: wrap;
-        }
-        .detailActions a,
-        .detailActions button {
-          text-decoration: none;
-          border: 1px solid #d9cbc5;
-          border-radius: 9px;
-          background: #fff;
-          color: #6b1a2c;
-          font-weight: 900;
-          padding: 9px 12px;
-          cursor: pointer;
-        }
-        .twoCols {
-          display: grid;
-          grid-template-columns: 1fr 1fr;
-          gap: 9px;
-        }
-        .panel {
-          border: 1px solid #eadfd8;
-          border-radius: 12px;
-          padding: 13px;
-          background: #fff;
-        }
-        .panel h4 {
-          margin: 0 0 4px;
-          color: #4d1420;
-        }
-        .panel p {
-          font-size: 0.76rem;
-          margin-bottom: 9px;
-        }
-        .inline {
-          display: flex;
-          gap: 7px;
-        }
-        .inline > input,
-        .inline > select {
-          flex: 1;
-        }
-        .chips {
-          display: flex;
-          flex-wrap: wrap;
-          gap: 5px;
-          margin-top: 8px;
-        }
-        .chips span {
-          border-radius: 999px;
-          background: #f7edda;
-          color: #6b1a2c;
-          padding: 5px 8px;
-          font-size: 0.68rem;
-          font-weight: 900;
-        }
-        .roster {
-          display: grid;
-          gap: 7px;
-        }
-        .rosterHead {
-          display: flex;
-          justify-content: space-between;
-          gap: 12px;
-          color: #6b1a2c;
-        }
-        .rosterHead span {
-          color: #7a6c66;
-          font-size: 0.72rem;
-        }
-        .roster article {
-          display: grid;
-          grid-template-columns: 46px minmax(150px, 1fr) minmax(220px, 1fr) minmax(220px, 1fr) auto;
-          gap: 10px;
-          align-items: center;
-          border: 1px solid #eadfd8;
-          border-radius: 12px;
-          padding: 11px;
-          background: #fff;
-        }
-        .avatar {
-          width: 46px;
-          height: 46px;
-          border-radius: 50%;
-          background: #6b1a2c;
-          color: #fff;
-          display: grid;
-          place-items: center;
-          font-weight: 1000;
-        }
-        .identity {
-          display: grid;
-          gap: 2px;
-        }
-        .identity b {
-          color: #35272a;
-        }
-        .identity span {
-          color: #796c66;
-          font-size: 0.72rem;
-        }
-        .identity small {
-          color: #b17a21;
-          font-weight: 900;
-        }
-        .context,
-        .userLink {
-          display: grid;
-          grid-template-columns: 1fr auto;
-          gap: 5px;
-        }
-        .context label,
-        .userLink label {
-          grid-column: 1 / -1;
-          color: #7d6d66;
-          font-size: 0.64rem;
-          font-weight: 900;
-        }
-        .context button,
-        .userLink button {
-          border: 1px solid #d9cbc5;
-          border-radius: 8px;
-          background: #fff;
-          color: #6b1a2c;
-          font-weight: 900;
-          cursor: pointer;
-        }
-        .openLinks {
-          display: grid;
-          gap: 5px;
-        }
-        .openLinks a {
-          white-space: nowrap;
-          text-decoration: none;
-          border-radius: 8px;
-          background: #6b1a2c;
-          color: #fff;
-          padding: 7px 9px;
-          font-size: 0.7rem;
-          font-weight: 900;
-          text-align: center;
-        }
-        .empty {
-          border: 1px dashed #ddcfc8;
-          border-radius: 12px;
-          padding: 20px;
-          text-align: center;
-          color: #897a73;
-        }
-        @media (max-width: 1100px) {
-          .selectionGrid {
-            grid-template-columns: repeat(2, minmax(0, 1fr));
-          }
-          .roster article {
-            grid-template-columns: 46px 1fr 1fr;
-          }
-          .userLink,
-          .openLinks {
-            grid-column: 2 / -1;
-          }
-        }
-        @media (max-width: 800px) {
-          .head,
-          .detailHead {
-            flex-direction: column;
-          }
-          .createSelection,
-          .newPlayer,
-          .selectionGrid,
-          .twoCols {
-            grid-template-columns: 1fr;
-          }
-          .inline {
-            flex-direction: column;
-          }
-          .roster article {
-            grid-template-columns: 46px 1fr;
-          }
-          .context,
-          .userLink,
-          .openLinks {
-            grid-column: 1 / -1;
-          }
-        }
+        .selections{display:grid;gap:14px}
+        .notice{padding:10px 12px;border-radius:10px;border:1px solid #c9e2cf;background:#eef8f1;color:#27623a;font-weight:900}
+        .head,.detailHead{display:flex;justify-content:space-between;gap:16px;align-items:flex-start}
+        .head small,.detailHead small,.shareModal small{color:#b17a21;font-weight:1000;letter-spacing:.12em}
+        .head h3,.detailHead h3,.shareModal h3{margin:4px 0;color:#4d1420}
+        .head p,.detailHead p,.panel p,.shareModal p{margin:0;color:#7d6e66;line-height:1.45}
+        button,input,select,textarea{font:inherit}
+        button{cursor:pointer}
+        .primary{border:0;border-radius:10px;background:#6b1a2c;color:#fff;font-weight:900;padding:10px 14px}
+        .createSelection{display:grid;grid-template-columns:2fr 120px 140px 150px auto;gap:7px;border:1px solid #ead7b2;background:#fffaf0;border-radius:13px;padding:12px}
+        input,select,textarea{min-width:0;border:1px solid #ddcfc8;border-radius:9px;padding:9px 10px;background:#fff}
+        .selectionGrid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}
+        .selectionCard{border:1px solid #e5d9d3;border-radius:12px;background:#fff;text-align:left;padding:13px;display:grid;gap:3px}
+        .selectionCard b{color:#3c292d}.selectionCard span{color:#786b65;font-size:.76rem}.selectionCard small{color:#b17a21;font-weight:900}
+        .selectionCard.on{border-color:#6b1a2c;box-shadow:inset 0 0 0 1px #6b1a2c;background:#fff8fa}
+        .detail{display:grid;gap:12px;border-top:1px solid #eadfd8;padding-top:14px}
+        .detailActions{display:flex;gap:7px;flex-wrap:wrap}
+        .detailActions a{border-radius:9px;background:#fff;color:#6b1a2c;border:1px solid #d9cbc5;text-decoration:none;font-weight:900;padding:9px 12px}
+        .featureStrip{display:grid;grid-template-columns:repeat(6,1fr);gap:6px}
+        .featureStrip span{border:1px solid #eadfd8;border-radius:10px;padding:9px;background:#fff;color:#796a64;font-size:.67rem}
+        .featureStrip b{display:block;color:#6b1a2c;font-size:.72rem}
+        .twoCols{display:grid;grid-template-columns:1fr 1fr;gap:9px}
+        .panel{border:1px solid #eadfd8;border-radius:12px;padding:13px;background:#fff}
+        .panel h4{margin:0 0 4px;color:#4d1420}.panel p{font-size:.76rem;margin-bottom:9px}
+        .inline{display:flex;gap:7px}.inline>input,.inline>select{flex:1}
+        .chips{display:flex;flex-wrap:wrap;gap:5px;margin-top:8px}.chips span{border-radius:999px;background:#f7edda;color:#6b1a2c;padding:5px 8px;font-size:.68rem;font-weight:900}
+        .roster{display:grid;gap:7px}.rosterHead{display:flex;justify-content:space-between;gap:12px;color:#6b1a2c}.rosterHead span{color:#7a6c66;font-size:.72rem}
+        .roster article{display:grid;grid-template-columns:52px minmax(150px,1fr) minmax(220px,1fr) minmax(220px,1fr) auto;gap:10px;align-items:center;border:1px solid #eadfd8;border-radius:12px;padding:11px;background:#fff}
+        .avatar{width:52px;height:52px;border-radius:50%;background:#6b1a2c;color:#fff;display:grid;place-items:center;font-weight:1000;overflow:hidden}.avatar img{width:100%;height:100%;object-fit:cover}
+        .identity{display:grid;gap:2px}.identity b{color:#35272a}.identity span{color:#796c66;font-size:.72rem}.identity small{color:#b17a21;font-weight:900}
+        .context,.userLink{display:grid;grid-template-columns:1fr auto;gap:5px}.context label,.userLink label{grid-column:1/-1;color:#7d6d66;font-size:.64rem;font-weight:900}
+        .context button,.userLink button,.openLinks button{border:1px solid #d9cbc5;border-radius:8px;background:#fff;color:#6b1a2c;font-weight:900}
+        .openLinks{display:grid;gap:5px}.openLinks a{white-space:nowrap;text-decoration:none;border-radius:8px;background:#6b1a2c;color:#fff;padding:7px 9px;font-size:.7rem;font-weight:900;text-align:center}.openLinks button{padding:7px 9px;font-size:.7rem}
+        .empty{border:1px dashed #ddcfc8;border-radius:12px;padding:20px;text-align:center;color:#897a73}
+        .shareOverlay{position:fixed;inset:0;background:rgba(30,18,21,.48);z-index:200;display:grid;place-items:center;padding:20px}
+        .shareModal{width:min(560px,100%);background:#fff;border-radius:16px;padding:20px;box-shadow:0 24px 70px rgba(0,0,0,.25);display:grid;gap:10px}
+        .shareModal label{display:grid;gap:5px;color:#6f6059;font-size:.74rem;font-weight:900}
+        .shareActions{display:flex;justify-content:flex-end;gap:7px}.shareActions>button:not(.primary){border:1px solid #ddcfc8;border-radius:9px;background:#fff;color:#6b1a2c;font-weight:900;padding:9px 12px}
+        .pdfNote{border-left:4px solid #d4a24c;background:#fff9ec;border-radius:8px;padding:10px 12px;display:grid;gap:2px}.pdfNote b{color:#6b1a2c}.pdfNote span{font-size:.72rem;color:#766961}
+        @media(max-width:1100px){.featureStrip{grid-template-columns:repeat(3,1fr)}.selectionGrid{grid-template-columns:repeat(2,minmax(0,1fr))}.roster article{grid-template-columns:52px 1fr 1fr}.userLink,.openLinks{grid-column:2/-1}}
+        @media(max-width:800px){.head,.detailHead{flex-direction:column}.createSelection,.selectionGrid,.twoCols{grid-template-columns:1fr}.featureStrip{grid-template-columns:repeat(2,1fr)}.inline{flex-direction:column}.roster article{grid-template-columns:52px 1fr}.context,.userLink,.openLinks{grid-column:1/-1}}
       `}</style>
     </div>
   );
