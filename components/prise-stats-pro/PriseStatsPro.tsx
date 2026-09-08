@@ -84,6 +84,8 @@ interface Draft {
   ftAttempts: number; ftMade: number; ftResults: string[];
   zone: string; courtX: number | null; courtY: number | null;
   reboundType: string; reboundPlayerId: string | null;
+  // Joueur impliqué dans une faute au rebond, sans écraser le tireur.
+  reboundFoulPlayerId?: string | null;
   assist: boolean | null; assistPlayerId: string | null;
   foulOutcome: string;
   // AJOUT §2 · playbook, système mappé, bornes de possession, joueur adverse
@@ -306,6 +308,7 @@ const DEF_ACTIONS = [
   { id: 'interception', label: 'Interception / récupération', ic: '🖐' },
   { id: 'perte-adverse', label: 'BP adverse', ic: '✖' },
   { id: 'contre', label: 'Contre', ic: '🛑' },
+  { id: 'touche', label: 'Touche', ic: '⤵' },
   { id: 'faute-provoquee', label: 'Faute provoquée', ic: '🔔' },
   { id: 'faute-commise', label: 'Faute commise', ic: '🟨' },
 ];
@@ -399,7 +402,7 @@ const STAGE_NAV: Record<string, number> = {
 const emptyDraft = (): Draft => ({
   context: '', systemeJeu: '', inbound: '', tempsFort: '', coverage: '', playerId: null, actionType: '',
   shotType: '', shotResult: '', specialCase: 'aucun', ftAttempts: 0, ftMade: 0, ftResults: [],
-  zone: '', courtX: null, courtY: null, reboundType: '', reboundPlayerId: null, assist: null, assistPlayerId: null, foulOutcome: '',
+  zone: '', courtX: null, courtY: null, reboundType: '', reboundPlayerId: null, reboundFoulPlayerId: null, assist: null, assistPlayerId: null, foulOutcome: '',
   // AJOUT §2
   playbookId: null, systemeSlot: null, systemeId: null, systemeName: null,
   possessionStart: null, possessionEnd: null, eventClipStart: null,
@@ -575,6 +578,12 @@ function computeBox(actions: StatA[], roster: Player[]) {
 
   actions.forEach((a) => {
     const L = ens(a.playerId);
+
+    // Faute commise au rebond : +1 faute personnelle au joueur choisi.
+    if (a.foulOutcome === "rebound-foul-committed" && a.reboundFoulPlayerId) {
+      const foulPlayer = ens(a.reboundFoulPlayerId);
+      if (foulPlayer) foulPlayer.pf++;
+    }
 
     if (a.actionType === "tir" && L && a.context !== "defense") {
       if (a.shotType === "2PTS") {
@@ -876,6 +885,11 @@ export default function PriseStatsProPage() {
   }, [stage]);
 
   const [draft, setDraft] = useState<Draft>(emptyDraft());
+
+  // Correction depuis l'historique : on garde l'action d'origine pour pouvoir
+  // la remplacer sans créer de doublon et sans perdre son clip / horloge.
+  const editingActionRef = useRef<StatA | null>(null);
+
   const [actions, setActions] = useState<StatA[]>([]);
   const [q, setQ] = useState(1);
   const [secs, setSecs] = useState(600);
@@ -1367,7 +1381,17 @@ export default function PriseStatsProPage() {
       !resolved.some((b) => b.key === 'contre')
     ) {
       const blockButton = CODING_FALLBACK['att-action']?.find((b) => b.key === 'contre');
-      if (blockButton) return [...resolved, blockButton];
+      if (blockButton) resolved.push(blockButton);
+    }
+
+    // Même compatibilité pour le nouveau bouton TOUCHE en défense.
+    if (
+      category === 'def-action' &&
+      !codingDb?.some((b) => b.category === 'def-action' && b.key === 'touche') &&
+      !resolved.some((b) => b.key === 'touche')
+    ) {
+      const touchButton = CODING_FALLBACK['def-action']?.find((b) => b.key === 'touche');
+      if (touchButton) resolved.push(touchButton);
     }
 
     return resolved;
@@ -4328,6 +4352,15 @@ export default function PriseStatsProPage() {
       return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || el.isContentEditable;
     };
     const onKeyDown = (e: KeyboardEvent) => {
+      // ÉCHAP doit fonctionner partout, même si un champ / select a encore le focus.
+      // On le traite donc avant le filtre "typing".
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        e.stopPropagation();
+        resetDraft();
+        return;
+      }
+
       if (typing(e.target)) return;
 
       // ESPACE = vidéo play/pause ; SANS vidéo = départ unique du temps réel continu
@@ -4341,9 +4374,12 @@ export default function PriseStatsProPage() {
       if (e.key === 'ArrowLeft' && (e.shiftKey || tabHeldRef.current)) { e.preventDefault(); nudgeVideo(-1); return; }
     };
     const onKeyUp = (e: KeyboardEvent) => { if (e.key === 'Tab') tabHeldRef.current = false; };
-    window.addEventListener('keydown', onKeyDown);
-    window.addEventListener('keyup', onKeyUp);
-    return () => { window.removeEventListener('keydown', onKeyDown); window.removeEventListener('keyup', onKeyUp); };
+    window.addEventListener('keydown', onKeyDown, true);
+    window.addEventListener('keyup', onKeyUp, true);
+    return () => {
+      window.removeEventListener('keydown', onKeyDown, true);
+      window.removeEventListener('keyup', onKeyUp, true);
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [videoProvider, videoStepSeconds]);
 
@@ -4744,22 +4780,50 @@ export default function PriseStatsProPage() {
       possessionStart: possessionStartRef.current ?? vstamp.clipStart ?? null,
       possessionEnd: vstamp.clipEnd ?? null,
     };
-    const a: StatA = {
-      ...d,
-      ...enrich,
-      id: uid(),
-      clock: fmt(secs),
-      q,
-      lineup: onCourt.slice(),
-      ...vstamp,
-      // clipStart/clipEnd = clip court commun Temps fort/Joueur/Tir.
-      // possessionStart/possessionEnd restent la possession entière (Système).
-      clipStart: d.eventClipStart ?? vstamp.clipStart ?? null,
-      clipEnd: vstamp.clipEnd ?? null,
-    };
-    setActions((arr) => [...arr, a]);
-    setPerQ((p) => { const cur = p[q] || { us: 0, them: 0 }; return { ...p, [q]: { us: cur.us + ptsOf(a), them: cur.them + themPtsOf(a) } }; });
-    flash('Enregistré : ' + describe(a, find).t);
+    const editingOriginal = editingActionRef.current;
+    const a: StatA = editingOriginal
+      ? {
+          ...editingOriginal,
+          ...d,
+          ...enrich,
+          // Une correction change les tags/statistiques, jamais l'identité ni
+          // les bornes du clip déjà décodé.
+          id: editingOriginal.id,
+          clock: editingOriginal.clock,
+          q: editingOriginal.q,
+          lineup: editingOriginal.lineup,
+          videoTime: editingOriginal.videoTime ?? null,
+          clipStart: editingOriginal.clipStart ?? null,
+          clipEnd: editingOriginal.clipEnd ?? null,
+          possessionStart: editingOriginal.possessionStart ?? editingOriginal.clipStart ?? null,
+          possessionEnd: editingOriginal.possessionEnd ?? editingOriginal.clipEnd ?? null,
+          syncStatus: editingOriginal.syncStatus ?? null,
+        }
+      : {
+          ...d,
+          ...enrich,
+          id: uid(),
+          clock: fmt(secs),
+          q,
+          lineup: onCourt.slice(),
+          ...vstamp,
+          // clipStart/clipEnd = clip court commun Temps fort/Joueur/Tir.
+          // possessionStart/possessionEnd restent la possession entière (Système).
+          clipStart: d.eventClipStart ?? vstamp.clipStart ?? null,
+          clipEnd: vstamp.clipEnd ?? null,
+        };
+
+    if (editingOriginal) {
+      setActions((arr) => arr.map((item) => item.id === a.id ? a : item));
+    } else {
+      setActions((arr) => [...arr, a]);
+    }
+
+    setPerQ((p) => {
+      const cur = p[a.q] || { us: 0, them: 0 };
+      return { ...p, [a.q]: { us: cur.us + ptsOf(a), them: cur.them + themPtsOf(a) } };
+    });
+    flash((editingOriginal ? 'Corrigé : ' : 'Enregistré : ') + describe(a, find).t);
 
     /* --- Écriture TEMPS RÉEL (non bloquante) : match_actions + boxscore ---
        Le state React se met à jour de façon asynchrone : on calcule donc
@@ -4798,14 +4862,31 @@ export default function PriseStatsProPage() {
         },
       }).catch(() => {});
 
-      const nextActions = [...actions, a];
-      const cur = perQ[q] || { us: 0, them: 0 };
-      const nextPerQ = { ...perQ, [q]: { us: cur.us + ptsOf(a), them: cur.them + themPtsOf(a) } };
+      const nextActions = editingOriginal
+        ? actions.map((item) => item.id === a.id ? a : item)
+        : [...actions, a];
+      const cur = perQ[a.q] || { us: 0, them: 0 };
+      const nextPerQ = { ...perQ, [a.q]: { us: cur.us + ptsOf(a), them: cur.them + themPtsOf(a) } };
       syncLiveAggregates(nextActions, onCourt, nextPerQ);
     }
 
+    // Une correction historique ne doit jamais modifier la possession LIVE
+    // courante. On enregistre la nouvelle version puis on revient au choix
+    // Attaque / Défense.
+    if (editingOriginal) {
+      editingActionRef.current = null;
+      setDraft(emptyDraft());
+      setStageHistory([]);
+      setStage('context');
+      return;
+    }
+
     let next: Ctx, inbound = false;
-    if (a.actionType === 'touche') next = 'attaque';
+    if (a.actionType === 'touche') {
+      // Touche en ATTAQUE : ballon pour nous.
+      // Touche en DÉFENSE : l'adversaire garde la balle, on repart au Temps fort.
+      next = a.context === 'defense' ? 'defense' : 'attaque';
+    }
     else if (a.reboundType === 'touche-pour') { next = 'attaque'; inbound = true; }
     else if (a.reboundType) next = reboundNext(a.context, a.reboundType);
     // Faute au rebond après un tir manqué.
@@ -5026,6 +5107,11 @@ export default function PriseStatsProPage() {
       return;
     }
 
+    if (id === "touche") {
+      commit(d);
+      return;
+    }
+
     if (NEEDS_PLAYER_DEF.includes(id) || CAN_TAG_PLAYER_DEF.includes(id)) {
       setDraft(d);
       setStage("player");
@@ -5212,20 +5298,23 @@ export default function PriseStatsProPage() {
   };
   const reboundFoulPick = (kind: 'committed' | 'drawn') => {
     markClipEndNow();
-    commit({
+    setDraft({
       ...draft,
       reboundType: '',
       reboundPlayerId: null,
+      reboundFoulPlayerId: null,
       foulOutcome: kind === 'committed'
         ? 'rebound-foul-committed'
         : 'rebound-foul-drawn',
     });
+    setStage('rebound-foul-player');
   };
+  const reboundFoulPlayerPick = (id: string) => commit({ ...draft, reboundFoulPlayerId: id });
   const rebWho = (id: string) => commit({ ...draft, reboundPlayerId: id });
   const passer = (id: string) => { if (id) afterPD({ ...draft, assist: true, assistPlayerId: id }); else afterPD({ ...draft, assist: false, assistPlayerId: null }); };
   const themBtn = (d: number) => setPerQ((p) => { const cur = p[q] || { us: 0, them: 0 }; return { ...p, [q]: { ...cur, them: Math.max(0, cur.them + d) } }; });
 
-  const patchActionPlayers = (actionId: string, patch: { playerId?: string | null; assist?: boolean | null; assistPlayerId?: string | null; reboundPlayerId?: string | null }) => {
+  const patchActionPlayers = (actionId: string, patch: { playerId?: string | null; assist?: boolean | null; assistPlayerId?: string | null; reboundPlayerId?: string | null; reboundFoulPlayerId?: string | null }) => {
     const current = actions.find((a) => a.id === actionId);
     if (!current) return;
     const updated: StatA = { ...current, ...patch };
@@ -5240,6 +5329,7 @@ export default function PriseStatsProPage() {
   };
 
   const stageForCorrection = (a: Draft) => {
+    if (a.foulOutcome === 'rebound-foul-committed' || a.foulOutcome === 'rebound-foul-drawn') return 'rebound-foul-player';
     if (!a.context) return 'context';
     if (a.actionType === 'tir') return a.shotType ? 'result' : 'action';
     if (a.actionType === 'faute-commise' || a.actionType === 'faute-provoquee') return 'faute';
@@ -5270,6 +5360,7 @@ export default function PriseStatsProPage() {
       courtY: a.courtY,
       reboundType: a.reboundType,
       reboundPlayerId: a.reboundPlayerId,
+      reboundFoulPlayerId: a.reboundFoulPlayerId ?? null,
       assist: a.assist,
       assistPlayerId: a.assistPlayerId,
       foulOutcome: a.foulOutcome,
@@ -5312,9 +5403,70 @@ export default function PriseStatsProPage() {
       syncLiveAggregates(nextActions, onCourt, nextPerQ);
     }
   };
+  const beginHistoryCorrection = (a: StatA, targetStage: string) => {
+    // Si une autre correction était ouverte, on restitue d'abord son score.
+    const previous = editingActionRef.current;
+    if (previous && previous.id !== a.id) {
+      setPerQ((p) => {
+        const cur = p[previous.q] || { us: 0, them: 0 };
+        return {
+          ...p,
+          [previous.q]: {
+            us: cur.us + ptsOf(previous),
+            them: cur.them + themPtsOf(previous),
+          },
+        };
+      });
+    }
+
+    editingActionRef.current = a;
+    subtractActionFromScore(a);
+    restoreDraftFromAction(a);
+    setStageHistory([]);
+    setStage(targetStage);
+    setEvtSel(null);
+    setShowHistoryPanel(false);
+    setShowTimelinePanel(false);
+    setWorkTab('coding');
+    flash('Correction ouverte · reclique le bon choix');
+  };
+
   const resetDraft = () => {
+    // ÉCHAP pendant une correction = annuler la correction et restituer le score
+    // d'origine, puisque l'action historique n'a pas encore été remplacée.
+    const editingOriginal = editingActionRef.current;
+    if (editingOriginal) {
+      setPerQ((p) => {
+        const cur = p[editingOriginal.q] || { us: 0, them: 0 };
+        return {
+          ...p,
+          [editingOriginal.q]: {
+            us: cur.us + ptsOf(editingOriginal),
+            them: cur.them + themPtsOf(editingOriginal),
+          },
+        };
+      });
+      editingActionRef.current = null;
+    }
+
     setDraft(emptyDraft());
+    setStageHistory([]);
+
+    // Reset complet de la navigation : Échap = toujours écran initial
+    // ATTAQUE / DÉFENSE, sans possibilité qu'un ancien stage soit réinjecté.
+    previousStageRef.current = 'context';
+    backNavigationRef.current = true;
     setStage('context');
+
+    setEvtSel(null);
+    setShowHistoryPanel(false);
+    setShowTimelinePanel(false);
+    setWorkTab('coding');
+
+    // Retire également le focus d'un champ/bouton qui aurait consommé Échap.
+    if (typeof document !== 'undefined') {
+      (document.activeElement as HTMLElement | null)?.blur?.();
+    }
   };
 
   const swap = (outId: string) => {
@@ -7118,19 +7270,25 @@ export default function PriseStatsProPage() {
                       <em>{d.t}</em>
                     </div>
                     <div className="historyTags">
-                      <span className={`historyTag ${a.context || ''}`}>
+                      <button type="button" className={`historyTag historyTagEdit ${a.context || ''}`} onClick={() => beginHistoryCorrection(a, 'context')} title="Changer Attaque / Défense">
                         {a.context === 'defense' ? 'Défense' : 'Attaque'}
-                      </span>
-                      {systemName && <span className="historyTag system">{systemName}</span>}
-                      {a.tempsFort && <span className="historyTag tempo">{tags.label(a.tempsFort)}</span>}
-                      {a.actionType && <span className="historyTag action">{String(a.actionType).replaceAll('-', ' ')}</span>}
-                      {a.shotType && <span className="historyTag shot">{a.shotType}</span>}
+                      </button>
+                      {systemName && <button type="button" className="historyTag historyTagEdit system" onClick={() => beginHistoryCorrection(a, 'systeme')} title="Changer le système">{systemName}</button>}
+                      {a.tempsFort && <button type="button" className="historyTag historyTagEdit tempo" onClick={() => beginHistoryCorrection(a, 'temps')} title="Changer le temps fort">{tags.label(a.tempsFort)}</button>}
+                      {a.actionType && <button type="button" className="historyTag historyTagEdit action" onClick={() => beginHistoryCorrection(a, 'action')} title="Changer l'action">{String(a.actionType).replaceAll('-', ' ')}</button>}
+                      {a.shotType && <button type="button" className="historyTag historyTagEdit shot" onClick={() => beginHistoryCorrection(a, 'result')} title="Changer le tir">{a.shotType}</button>}
                       {a.shotResult && (
-                        <span className={`historyTag ${a.shotResult}`}>
+                        <button type="button" className={`historyTag historyTagEdit ${a.shotResult}`} onClick={() => beginHistoryCorrection(a, 'result')} title="Changer le résultat">
                           {a.shotResult === 'made' ? 'Marqué' : a.shotResult === 'missed' ? 'Raté' : a.shotResult}
-                        </span>
+                        </button>
                       )}
-                      {a.zone && <span className="historyTag zone">{zoneById(a.zone)?.shortLabel || a.zone}</span>}
+                      {a.zone && <button type="button" className="historyTag historyTagEdit zone" onClick={() => beginHistoryCorrection(a, 'zone')} title="Changer la zone">{zoneById(a.zone)?.shortLabel || a.zone}</button>}
+                      {a.reboundFoulPlayerId && (
+                        <button type="button" className="historyTag historyTagEdit action" onClick={() => beginHistoryCorrection(a, 'rebound-foul-player')}>
+                          {a.foulOutcome === 'rebound-foul-committed' ? '🟨 ' : '🔔 '}
+                          {find(a.reboundFoulPlayerId)?.name || 'Joueur'}
+                        </button>
+                      )}
                     </div>
                   </div>
 
@@ -7149,8 +7307,8 @@ export default function PriseStatsProPage() {
                     <button
                       type="button"
                       className="historyEditBtn"
-                      onClick={() => setEvtSel(a.id)}
-                      title="Modifier cette action"
+                      onClick={() => beginHistoryCorrection(a, stageForCorrection(a))}
+                      title="Recoder cette action sans perdre son clip"
                     >
                       Modifier
                     </button>
@@ -7996,6 +8154,16 @@ export default function PriseStatsProPage() {
             <button className="chip" onClick={() => reboundFoulPick('committed')}>🟨 Faute commise</button>
           </div>
           {draft.reboundType && isMyRebound(draft.context, draft.reboundType) && <><div className="sublbl">Qui prend le rebond ?</div>{players3(draft.reboundPlayerId, rebWho)}<button className="chip" style={{ marginTop: 8 }} onClick={() => commit(draft)}>Sans précision →</button></>}
+        </>;
+      }
+      case 'rebound-foul-player': {
+        const committed = draft.foulOutcome === 'rebound-foul-committed';
+        return <>
+          {head(
+            committed ? 'Faute commise au rebond' : 'Faute provoquée au rebond',
+            committed ? 'Qui a commis la faute ?' : 'Qui a provoqué la faute ?'
+          )}
+          {players3(draft.reboundFoulPlayerId ?? null, reboundFoulPlayerPick)}
         </>;
       }
       case 'assist': {
@@ -10796,7 +10964,8 @@ function Style() {
       .historyActionCard { display:grid; grid-template-columns:105px minmax(0,1fr) auto; gap:12px; align-items:center; padding:12px; margin-bottom:8px; border:1px solid #29344a; border-radius:11px; background:linear-gradient(135deg,#121a2a,#0d1422); }
       .historyActionTime b,.historyActionTime span { display:block; }.historyActionTime b{font-size:12px;color:#fff}.historyActionTime span{font-size:10px;color:var(--gold);margin-top:5px}
       .historyActionHeadline { display:flex; gap:10px; align-items:baseline; margin-bottom:7px; }.historyActionHeadline strong{font-size:12px}.historyActionHeadline em{font-size:10px;color:#8490a7;font-style:normal}
-      .historyTags { display:flex; flex-wrap:wrap; gap:5px; }.historyTag{font-style:normal;border:1px solid #35415a;border-radius:999px;padding:4px 7px;background:#172238;color:#d8dfec;font-size:9px;font-weight:850;text-transform:capitalize}.historyTag.attaque{background:rgba(255,122,24,.14);border-color:#ff7a18;color:#ffad67}.historyTag.defense{background:rgba(50,183,239,.13);border-color:#32b7ef;color:#79d5fa}.historyTag.system{border-color:#7c5cff}.historyTag.tempo{border-color:#d4a24c;color:#f4c665}.historyTag.made{border-color:#22c55e;color:#6ee7a0}.historyTag.missed{border-color:#ef4444;color:#fb8a8a}.historyTag.custom{border-color:#d4a24c;background:rgba(212,162,76,.12)}
+      .historyTags { display:flex; flex-wrap:wrap; gap:5px; }.historyTagEdit{font:inherit;cursor:pointer;text-align:left}
+.historyTag{font-style:normal;border:1px solid #35415a;border-radius:999px;padding:4px 7px;background:#172238;color:#d8dfec;font-size:9px;font-weight:850;text-transform:capitalize}.historyTag.attaque{background:rgba(255,122,24,.14);border-color:#ff7a18;color:#ffad67}.historyTag.defense{background:rgba(50,183,239,.13);border-color:#32b7ef;color:#79d5fa}.historyTag.system{border-color:#7c5cff}.historyTag.tempo{border-color:#d4a24c;color:#f4c665}.historyTag.made{border-color:#22c55e;color:#6ee7a0}.historyTag.missed{border-color:#ef4444;color:#fb8a8a}.historyTag.custom{border-color:#d4a24c;background:rgba(212,162,76,.12)}
       .historyActionButtons { display:flex; gap:5px; }.historyActionButtons button{width:32px;height:32px;border-radius:8px}
       .proTimeline {
         min-width: 760px;
