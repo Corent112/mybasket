@@ -119,7 +119,11 @@ export async function restoreMatchVideoForClip(
   const already = getLocalMatchVideo(matchId);
   if (already) return { video: already, expected: already.fingerprint };
 
-  const running = restoreInFlight.get(matchId);
+  // Une tentative interactive ne doit jamais rester bloquée derrière une
+  // restauration automatique : cette dernière n'a pas le droit d'appeler
+  // requestPermission(). On sépare donc les deux vols.
+  const restoreKey = `${matchId}:${options?.interactive === true ? "interactive" : "auto"}`;
+  const running = restoreInFlight.get(restoreKey);
   if (running) return running;
 
   const task = (async (): Promise<RestoreResult> => {
@@ -144,11 +148,11 @@ export async function restoreMatchVideoForClip(
     return { video: restored, expected };
   })();
 
-  restoreInFlight.set(matchId, task);
+  restoreInFlight.set(restoreKey, task);
   try {
     return await task;
   } finally {
-    restoreInFlight.delete(matchId);
+    restoreInFlight.delete(restoreKey);
   }
 }
 

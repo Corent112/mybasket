@@ -62,7 +62,25 @@ export default function LocalMatchVideoButton({
   const connect = async () => {
     setBusy(true);
     try {
-      const result = await relinkMatchVideo(matchId, teamId, expected);
+      // Depuis un clic utilisateur, on tente d'abord de réutiliser le handle
+      // déjà mémorisé dans IndexedDB. Chrome peut alors redemander uniquement
+      // l'autorisation, sans obliger le coach à retrouver le fichier.
+      const restored = await restoreMatchVideoForClip(matchId, teamId, {
+        interactive: true,
+      });
+      if (restored.video) {
+        setExpected(restored.video.fingerprint);
+        onConnected?.(restored.video.url);
+        return;
+      }
+
+      // Le picker n'est plus qu'un dernier recours : handle absent, fichier
+      // déplacé/supprimé ou permission définitivement refusée.
+      const result = await relinkMatchVideo(
+        matchId,
+        teamId,
+        restored.expected ?? expected,
+      );
       if (!result) return;
       setExpected(result.fingerprint);
       onConnected?.(result.url);
