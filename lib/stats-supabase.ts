@@ -56,7 +56,6 @@ export type LiveMatchAction = {
   actionType?: string;
   shotType?: string;
   shotResult?: string;
-  shotRange?: string | null;
   specialCase?: string;
 
   ftAttempts?: number;
@@ -365,7 +364,6 @@ function buildActionRow(
     action_type: action.actionType || null,
     shot_type: action.shotType || null,
     shot_result: action.shotResult || null,
-    shot_range: action.shotRange || null,
     special_case: action.specialCase || null,
 
     ft_attempts: safeNumber(action.ftAttempts),
@@ -438,6 +436,85 @@ export type EnsureLiveMatchResponse =
   | { ok: false; error: string };
 
 /**
+ * Synchronise le calendrier avec un match TERMINÉ.
+ * Idempotent : si un événement existe déjà pour ce match_id, on le met à jour.
+ * Il n'est donc jamais recréé à chaque sauvegarde/reprise du Live.
+ */
+async function syncFinishedMatchCalendarEvent(args: {
+  supabase: ReturnType<typeof createClient>;
+  userId: string;
+  matchId: string;
+  teamId: string;
+  opponent: string;
+  date: string;
+  home?: boolean;
+}) {
+  const { supabase, userId, matchId, teamId, opponent, date, home } = args;
+
+  const { data: existingRows, error: lookupError } = await supabase
+    .from("calendar_events")
+    .select("id")
+    .eq("match_id", matchId)
+    .order("id", { ascending: true });
+
+  if (lookupError) {
+    logSupabaseError("Calendrier: recherche événement match", lookupError);
+    return;
+  }
+
+  const payload = {
+    user_id: userId,
+    title: `Match vs ${opponent || "Adversaire"}`,
+    description: "Match terminé — boxscores, matrice et résumé accessibles depuis l'évènement.",
+    event_date: date,
+    start_time: null,
+    end_time: null,
+    location: null,
+    event_type: "game",
+    session_id: null,
+    attachment_url: null,
+    visibility: "private",
+    match_id: matchId,
+    team_id: teamId,
+    // Conservé dans la description du match_stats ; le calendrier peut ensuite
+    // retrouver domicile/extérieur depuis match_stats sans créer un autre event.
+  };
+
+  const firstId = existingRows?.[0]?.id ? String(existingRows[0].id) : "";
+
+  if (firstId) {
+    const { error: updateError } = await supabase
+      .from("calendar_events")
+      .update(payload)
+      .eq("id", firstId);
+
+    if (updateError) {
+      logSupabaseError("Calendrier: mise à jour événement match", updateError);
+      return;
+    }
+
+    // Filet de sécurité pour les anciens doublons déjà présents.
+    const duplicateIds = (existingRows ?? []).slice(1).map((row: any) => String(row.id)).filter(Boolean);
+    if (duplicateIds.length) {
+      const { error: cleanupError } = await supabase
+        .from("calendar_events")
+        .delete()
+        .in("id", duplicateIds);
+      if (cleanupError) logSupabaseError("Calendrier: nettoyage doublons", cleanupError);
+    }
+    return;
+  }
+
+  const { error: insertError } = await supabase
+    .from("calendar_events")
+    .insert(payload);
+
+  if (insertError) {
+    logSupabaseError("Calendrier: création événement match terminé", insertError);
+  }
+}
+
+/**
  * Crée (ou prépare) la ligne match_stats au DÉMARRAGE du match, statut 'live'.
  * Retourne le matchId + le realTeamId à réutiliser pour toutes les écritures
  * incrémentales. À appeler UNE fois (le composant garde le matchId en state).
@@ -501,25 +578,7 @@ export async function ensureLiveMatch(
     }
     if (!match?.id) return { ok: false, error: "Match créé sans identifiant" };
 
-    const { error: calendarError } = await supabase.from("calendar_events").insert({
-      user_id: user.id,
-      title: `Match vs ${payload.opponent || "Adversaire"}`,
-      description: "Match LiveStats — boxscores, matrice et résumé accessibles depuis l'évènement.",
-      event_date: payload.date,
-      start_time: null,
-      end_time: null,
-      location: null,
-      event_type: "game",
-      session_id: null,
-      attachment_url: null,
-      visibility: "private",
-      match_id: String(match.id),
-      team_id: realTeamId,
-    });
-
-    if (calendarError) {
-      logSupabaseError("ensureLiveMatch: création calendrier", calendarError);
-    }
+    // Aucun événement calendrier au démarrage : seul un match finalisé y apparaît.
 
     return { ok: true, matchId: String(match.id), teamId: realTeamId };
   } catch (error: any) {
@@ -722,6 +781,17 @@ export async function finalizeLiveMatch(args: {
       if (linesError) logSupabaseError("finalizeLiveMatch: upsert match_player_stats (non bloquant)", linesError);
     }
 
+    // 3) Le calendrier ne reçoit le match qu'ici, une fois le match terminé.
+    await syncFinishedMatchCalendarEvent({
+      supabase,
+      userId: user.id,
+      matchId,
+      teamId,
+      opponent: payload.opponent,
+      date: payload.date,
+      home: payload.home,
+    });
+
     // NB : on NE réécrit PAS match_actions (déjà en base au fil de l'eau).
     return { ok: true, matchId };
   } catch (error: any) {
@@ -916,6 +986,16 @@ export async function saveLiveMatch(
           supabaseErrorMessage(actionsError);
       }
     }
+
+    await syncFinishedMatchCalendarEvent({
+      supabase,
+      userId: user.id,
+      matchId: String(match.id),
+      teamId: realTeamId,
+      opponent: payload.opponent,
+      date: payload.date,
+      home: payload.home,
+    });
 
     return { ok: true, matchId: match.id, warning };
   } catch (error: any) {
