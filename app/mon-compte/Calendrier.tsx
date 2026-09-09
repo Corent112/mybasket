@@ -332,6 +332,9 @@ export default function MonCalendrier() {
       .map((team: any) => String(team?.id || ""))
       .filter(Boolean);
 
+    // Les événements ordinaires restent dans calendar_events.
+    // IMPORTANT : les anciennes lignes "game/match" sont volontairement ignorées.
+    // Pour les matchs, match_stats terminé est désormais la source unique.
     const ownQuery = supabase
       .from("calendar_events")
       .select("*")
@@ -364,17 +367,121 @@ export default function MonCalendrier() {
       ...((ownResult.data ?? []) as CalendarDbRow[]),
       ...((teamResult.data ?? []) as CalendarDbRow[]),
     ]) {
-      const id = String((row as Record<string, unknown>).id || "");
+      const value = row as Record<string, any>;
+      const dbType = String(value.event_type || "").toLowerCase();
+
+      // Empêche définitivement les 10/20/40 représentations d'un même Live
+      // enregistrées historiquement dans calendar_events.
+      if (dbType === "game" || dbType === "match") continue;
+
+      const id = String(value.id || "");
       if (id) rowsById.set(id, row);
     }
 
     const normalizedEvents: CalEvent[] = Array.from(rowsById.values())
-      .map((row) => normalizeCalendarRow(row))
-      .sort(
-        (a, b) =>
-          a.date.localeCompare(b.date) ||
-          String(a.time || "").localeCompare(String(b.time || "")),
+      .map((row) => normalizeCalendarRow(row));
+
+    // Matchs : uniquement match_stats finalisés.
+    // Une seule ligne par ID de match, quelle que soit la quantité de sauvegardes Live.
+    let finishedMatches: any[] = [];
+
+    if (calendarTeamIds.length > 0) {
+      const { data: matchRows, error: matchError } = await supabase
+        .from("match_stats")
+        .select("*")
+        .in("team_id", calendarTeamIds)
+        .order("date", { ascending: true });
+
+      if (matchError) {
+        console.error("Erreur chargement matchs terminés du calendrier:", matchError);
+      } else {
+        finishedMatches = matchRows ?? [];
+      }
+    }
+
+    const matchesById = new Map<string, CalEvent>();
+
+    for (const row of finishedMatches) {
+      const status = String(row.status || row.project_status || "").toLowerCase();
+      const isFinished =
+        status === "finished" ||
+        status === "completed" ||
+        status === "complete" ||
+        status === "final" ||
+        status === "termine" ||
+        status === "terminé";
+
+      if (!isFinished) continue;
+
+      const matchId = String(row.id || "");
+      if (!matchId || matchesById.has(matchId)) continue;
+
+      const matchDate = String(
+        row.date ||
+        row.match_date ||
+        row.played_at ||
+        row.created_at ||
+        "",
+      ).slice(0, 10);
+
+      if (!matchDate) continue;
+
+      const opponent = String(
+        row.opponent ||
+        row.opponent_name ||
+        row.adversaire ||
+        "Adversaire",
       );
+
+      const homeValue =
+        row.home ??
+        row.is_home ??
+        row.home_game ??
+        row.venue;
+
+      let venue: Venue = "";
+      if (
+        homeValue === true ||
+        homeValue === "home" ||
+        homeValue === "domicile" ||
+        homeValue === "HOME"
+      ) {
+        venue = "home";
+      } else if (
+        homeValue === false ||
+        homeValue === "away" ||
+        homeValue === "extérieur" ||
+        homeValue === "exterieur" ||
+        homeValue === "AWAY"
+      ) {
+        venue = "away";
+      }
+
+      const teamId = String(row.team_id || "");
+      const teamName =
+        teams.find((team) => team.id === teamId)?.name ||
+        String(row.team_name || "");
+
+      matchesById.set(matchId, {
+        id: `match:${matchId}`,
+        date: matchDate,
+        title: `Match vs ${opponent}`,
+        type: "match",
+        venue,
+        opponent,
+        teamId: teamId || undefined,
+        teamName: teamName || undefined,
+        notes: "Match terminé",
+      });
+    }
+
+    normalizedEvents.push(...matchesById.values());
+
+    normalizedEvents.sort(
+      (a, b) =>
+        a.date.localeCompare(b.date) ||
+        String(a.time || "").localeCompare(String(b.time || "")),
+    );
 
     const sessionIds: string[] = normalizedEvents
       .map((event: CalEvent) => event.sessionId)
@@ -440,6 +547,10 @@ export default function MonCalendrier() {
   };
   const openEdit = (id: string) => {
     const e = events.find((x) => x.id === id); if (!e) return;
+
+    // Un match finalisé provient directement de match_stats.
+    // On ne l'édite donc pas comme un calendar_event.
+    if (id.startsWith("match:")) return;
     setEventSelfReview(null);
     if (e.sessionId) {
       void supabase
