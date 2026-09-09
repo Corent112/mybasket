@@ -56,6 +56,7 @@ export type LiveMatchAction = {
   actionType?: string;
   shotType?: string;
   shotResult?: string;
+  shotRange?: string | null;
   specialCase?: string;
 
   ftAttempts?: number;
@@ -364,6 +365,7 @@ function buildActionRow(
     action_type: action.actionType || null,
     shot_type: action.shotType || null,
     shot_result: action.shotResult || null,
+    shot_range: action.shotRange || null,
     special_case: action.specialCase || null,
 
     ft_attempts: safeNumber(action.ftAttempts),

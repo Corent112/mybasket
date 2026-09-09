@@ -82,7 +82,7 @@ type CodingMode = 'live' | 'live-individual' | 'post';
 interface Draft {
   context: Ctx; systemeJeu: string; inbound: string; tempsFort: string; coverage: string;
   playerId: string | null; actionType: string;
-  shotType: string; shotResult: string; specialCase: string;
+  shotType: string; shotResult: string; shotRange?: 'interior' | 'exterior' | 'three' | null; specialCase: string;
   ftAttempts: number; ftMade: number; ftResults: string[];
   zone: string; courtX: number | null; courtY: number | null;
   reboundType: string; reboundPlayerId: string | null;
@@ -400,7 +400,7 @@ const STAGE_NAV: Record<string, number> = {
 };
 const emptyDraft = (): Draft => ({
   context: '', systemeJeu: '', inbound: '', tempsFort: '', coverage: '', playerId: null, actionType: '',
-  shotType: '', shotResult: '', specialCase: 'aucun', ftAttempts: 0, ftMade: 0, ftResults: [],
+  shotType: '', shotResult: '', shotRange: null, specialCase: 'aucun', ftAttempts: 0, ftMade: 0, ftResults: [],
   zone: '', courtX: null, courtY: null, reboundType: '', reboundPlayerId: null, reboundFoulPlayerId: null, assist: null, assistPlayerId: null, foulOutcome: '',
   // AJOUT §2
   playbookId: null, systemeSlot: null, systemeId: null, systemeName: null,
@@ -912,6 +912,19 @@ export default function PriseStatsProPage() {
   const [showCodingSettings, setShowCodingSettings] = useState(false);
   const [codingSettingsTab, setCodingSettingsTab] = useState<'workflow' | 'buttons'>('workflow');
   const [workflowPrefs, setWorkflowPrefs] = useState<LiveWorkflowPrefs>({ ...DEFAULT_WORKFLOW_PREFS });
+  const [isOffline, setIsOffline] = useState(false);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const syncOnlineState = () => setIsOffline(!window.navigator.onLine);
+    syncOnlineState();
+    window.addEventListener('online', syncOnlineState);
+    window.addEventListener('offline', syncOnlineState);
+    return () => {
+      window.removeEventListener('online', syncOnlineState);
+      window.removeEventListener('offline', syncOnlineState);
+    };
+  }, []);
   const [codingProfiles, setCodingProfiles] = useState<LiveCodingProfile[]>([]);
   const [selectedCodingProfileId, setSelectedCodingProfileId] = useState('');
   const [profileButtonKeys, setProfileButtonKeys] = useState<LiveCodingProfile['activeButtonKeys'] | null>(null);
@@ -5056,8 +5069,15 @@ export default function PriseStatsProPage() {
   };
 
   const routePostShot = (d: Draft) => {
-    // La shot chart ne sert qu'à nos tirs. En défense on enchaîne directement.
-    if (d.context !== 'defense' && workflowOn('zone')) { setDraft(d); setStage('zone'); return; }
+    // Post-match et hors ligne : localisation obligatoire.
+    // Live : localisation seulement si la Shot chart est activée.
+    const forceShotChart = codingMode === 'post' || isOffline;
+    const wantsLiveShotChart = codingMode !== 'post' && workflowOn('zone');
+    if (d.shotType !== 'LF' && (forceShotChart || wantsLiveShotChart)) {
+      setDraft(d);
+      setStage('zone');
+      return;
+    }
     if (d.shotResult === 'missed' && workflowOn('rebound')) { setDraft(d); setStage('rebound'); return; }
     if (d.context !== 'defense' && d.shotResult === 'made' && workflowOn('assist')) { setDraft(d); setStage('assist'); return; }
     commit(d);
@@ -5274,21 +5294,22 @@ export default function PriseStatsProPage() {
     const d = { ...draft, ftResults: res };
     if (res.length >= draft.ftAttempts) { d.ftMade = res.filter((r) => r === 'made').length; afterFT(d); } else setDraft(d);
   };
-  const quickShotResult = (shotType: '2PTS' | '3PTS', shotResult: 'made' | 'missed') => {
+  const quickShotResult = (
+    shotType: '2PTS' | '3PTS',
+    shotResult: 'made' | 'missed',
+    shotRange: 'interior' | 'exterior' | 'three',
+  ) => {
     markClipStartBefore(5);
-    const d = { ...draft, actionType: 'tir', shotType, shotResult };
-
-    if (codingMode === 'live-individual') {
-      routePostShot(d);
-      return;
-    }
-    if (codingMode === 'live') {
-      if (shotResult === 'missed') { setDraft(d); setStage('rebound'); }
-      else commit(d);
-      return;
-    }
-
-    // En mode vidéo, le chemin respecte la configuration utilisateur.
+    const d: Draft = {
+      ...draft,
+      actionType: 'tir',
+      shotType,
+      shotResult,
+      shotRange,
+      zone: '',
+      courtX: null,
+      courtY: null,
+    };
     routePostShot(d);
   };
 
@@ -6668,11 +6689,26 @@ export default function PriseStatsProPage() {
               <div className="scZone">
                 {liveCourt ? (
                   <div className="scZone-live">
-                    <div className="courtSlotHead"><span>🎯 Choisis la zone du tir ({draft.shotType || '2PTS'})</span></div>
+                    <div className="courtSlotHead">
+                      <span>🎯 Choisis la zone · {draft.shotRange === 'interior' ? '2 PTS intérieur' : draft.shotRange === 'exterior' ? '2 PTS extérieur' : draft.shotType || 'Tir'}</span>
+                      {draft.context === 'defense' && codingMode !== 'post' && !isOffline && (
+                        <button type="button" className="chip" onClick={() => {
+                          const d: Draft = { ...draft, zone: '', courtX: null, courtY: null };
+                          if (d.shotResult === 'missed' && workflowOn('rebound')) { setDraft(d); setStage('rebound'); }
+                          else commit(d);
+                        }}>Passer la zone</button>
+                      )}
+                    </div>
                     <ShotChart
                       mode="pick"
                       size="sm"
                       shotType={draft.shotType === '3PTS' ? '3PTS' : '2PTS'}
+                      allowedZoneIds={
+                        draft.shotRange === 'interior' ? ['z1','z2','z3','z4']
+                        : draft.shotRange === 'exterior' ? ['z5','z6','z7','z8','z9']
+                        : draft.shotRange === 'three' ? ['z10','z11','z12','z13','z14','z15','z16']
+                        : undefined
+                      }
                       selectedZone={draft.zone || null}
                       shotResult={draft.shotResult === 'made' ? 'made' : draft.shotResult === 'missed' ? 'missed' : null}
                       pendingPoint={draft.courtX != null && draft.courtY != null ? { x: draft.courtX * 100, y: draft.courtY * 100 } : null}
@@ -8064,12 +8100,20 @@ export default function PriseStatsProPage() {
               </>
             )}
 
-            <div className="sublbl resultSectionLabel">Tirs</div>
+            <div className="sublbl resultSectionLabel">2 PTS · INTÉRIEUR</div>
             <div className="grid c2 resultMainGrid">
-              <button className="res made" style={!codingButtonEnabled('result','2-made') ? {display:'none'} : undefined} onClick={() => quickShotResult('2PTS', 'made')}>✓ {codingLabel('result','2-made','2PTS marqué')}</button>
-              <button className="res miss" style={!codingButtonEnabled('result','2-missed') ? {display:'none'} : undefined} onClick={() => quickShotResult('2PTS', 'missed')}>✕ {codingLabel('result','2-missed','2PTS raté')}</button>
-              <button className="res made" style={!codingButtonEnabled('result','3-made') ? {display:'none'} : undefined} onClick={() => quickShotResult('3PTS', 'made')}>✓ {codingLabel('result','3-made','3PTS marqué')}</button>
-              <button className="res miss" style={!codingButtonEnabled('result','3-missed') ? {display:'none'} : undefined} onClick={() => quickShotResult('3PTS', 'missed')}>✕ {codingLabel('result','3-missed','3PTS raté')}</button>
+              <button className="res made" style={!codingButtonEnabled('result','2-made') ? {display:'none'} : undefined} onClick={() => quickShotResult('2PTS', 'made', 'interior')}>✓ Marqué</button>
+              <button className="res miss" style={!codingButtonEnabled('result','2-missed') ? {display:'none'} : undefined} onClick={() => quickShotResult('2PTS', 'missed', 'interior')}>✕ Loupé</button>
+            </div>
+            <div className="sublbl resultSectionLabel">2 PTS · EXTÉRIEUR</div>
+            <div className="grid c2 resultMainGrid">
+              <button className="res made" style={!codingButtonEnabled('result','2-made') ? {display:'none'} : undefined} onClick={() => quickShotResult('2PTS', 'made', 'exterior')}>✓ Marqué</button>
+              <button className="res miss" style={!codingButtonEnabled('result','2-missed') ? {display:'none'} : undefined} onClick={() => quickShotResult('2PTS', 'missed', 'exterior')}>✕ Loupé</button>
+            </div>
+            <div className="sublbl resultSectionLabel">3 PTS</div>
+            <div className="grid c2 resultMainGrid">
+              <button className="res made" style={!codingButtonEnabled('result','3-made') ? {display:'none'} : undefined} onClick={() => quickShotResult('3PTS', 'made', 'three')}>✓ Marqué</button>
+              <button className="res miss" style={!codingButtonEnabled('result','3-missed') ? {display:'none'} : undefined} onClick={() => quickShotResult('3PTS', 'missed', 'three')}>✕ Loupé</button>
             </div>
 
             {codingMode !== 'post' ? (

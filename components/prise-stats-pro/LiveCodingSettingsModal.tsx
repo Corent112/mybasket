@@ -391,7 +391,7 @@ export default function LiveCodingSettingsModal({
     ['temps', 'Temps fort', 'Alimente analyses, filtres et clips.'],
     ['player', 'Joueur', 'Facultatif en collectif, obligatoire quand le mode individuel l’exige.'],
     ['coverage', 'Défense sur écran', 'Étape spécifique aux pick & roll.'],
-    ['zone', 'Shot chart', 'Facultative, y compris en Live individuel.'],
+    ['zone', 'Shot chart en Live', 'Si activée : type/résultat puis zone. En post-match et hors ligne, la Shot chart reste obligatoire.'],
     ['rebound', 'Rebond', 'Après un tir raté, demande RO/RD si activé.'],
     ['assist', 'Passe décisive', 'Après panier marqué, joueurs ou Skip.'],
   ];

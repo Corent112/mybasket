@@ -229,6 +229,8 @@ type PickProps = CommonProps & {
   shots?: ShotLike[];
   /** false = aucun libellé de zone affiché pendant le codage. */
   showLabels?: boolean;
+  /** Limite le clic aux zones compatibles avec le type de tir déjà choisi. */
+  allowedZoneIds?: string[];
   /** Reçoit la zone ET le point exact cliqué (repère 0..100). */
   onPick: (zone: ShotZone, point: { x: number; y: number }) => void;
 };
@@ -290,7 +292,8 @@ export default function ShotChart(props: ShotChartProps) {
         {/* Calque des zones : contours calqués sur les traits noirs */}
         {SHOT_ZONES.map((z) => {
           if (props.mode === 'pick') {
-            const active = !locked && z.type === props.shotType;
+            const active = !locked && z.type === props.shotType &&
+              (!props.allowedZoneIds?.length || props.allowedZoneIds.includes(z.id));
             const sel = props.selectedZone === z.id;
             return (
               <path
@@ -327,7 +330,8 @@ export default function ShotChart(props: ShotChartProps) {
         {SHOT_ZONES.map((z) => {
           if (props.mode === 'pick') {
             if (props.showLabels === false) return null;
-            const active = !locked && z.type === props.shotType;
+            const active = !locked && z.type === props.shotType &&
+              (!props.allowedZoneIds?.length || props.allowedZoneIds.includes(z.id));
             return (
               <text key={z.id} x={z.px} y={z.py} className={`sc-lbl ${active ? '' : 'dim'}`} textAnchor="middle">
                 {z.shortLabel}
