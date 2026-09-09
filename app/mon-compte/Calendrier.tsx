@@ -3,6 +3,10 @@
 import { useEffect, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { getTeams } from "@/lib/equipes-store";
+import {
+  listProjects,
+  type LiveProjectSummary,
+} from "@/lib/stats-supabase";
 
 /* =====================================================================
  * MonCalendrier — transposition fidèle du calendrier de mybasket-app_24.html
@@ -37,6 +41,10 @@ type CalEvent = {
   assignedPlayers?: string[];
   notes?: string;
   attachment?: Attachment;
+
+  // Match LiveStats provenant de la même source que Management > Historique.
+  projectId?: string;
+  projectStatus?: "draft" | "completed";
 };
 
 type Player = {
@@ -76,6 +84,8 @@ const DAYS = ["L", "M", "M", "J", "V", "S", "D"];
 
 const uid = () => Math.random().toString(36).slice(2, 9);
 const pad = (n: number) => String(n).padStart(2, "0");
+const isUuid = (id: string) =>
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id);
 const isPdf = (a: Attachment) => a.type === "application/pdf" || a.name.toLowerCase().endsWith(".pdf");
 const isImage = (a: Attachment) => a.type.startsWith("image/");
 
@@ -323,18 +333,29 @@ export default function MonCalendrier() {
     }
 
     const loadedTeams = await getTeams().catch(() => []);
-    const calendarTeamIds = (loadedTeams ?? [])
-      .filter(
-        (team: any) =>
-          team?.isShared !== true ||
-          team?.collaborationPermissions?.sessions === true,
-      )
-      .map((team: any) => String(team?.id || ""))
-      .filter(Boolean);
+    const visibleTeams = (loadedTeams ?? []).filter(
+      (team: any) =>
+        team?.isShared !== true ||
+        team?.collaborationPermissions?.sessions === true,
+    );
 
-    // Les événements ordinaires restent dans calendar_events.
-    // IMPORTANT : les anciennes lignes "game/match" sont volontairement ignorées.
-    // Pour les matchs, match_stats terminé est désormais la source unique.
+    const calendarTeamIds = visibleTeams
+      .map((team: any) => String(team?.id || ""))
+      .filter((id: string) => Boolean(id));
+
+    const livestatTeamIds = calendarTeamIds.filter(isUuid);
+
+    /*
+     * ÉVÉNEMENTS CLASSIQUES
+     * ------------------------------------------------------------
+     * calendar_events reste la source des entraînements, formations,
+     * tournois et événements manuels.
+     *
+     * Les anciennes lignes game/match sont volontairement ignorées :
+     * elles ont pu être créées plusieurs fois par les anciennes versions
+     * du LiveStats. Les matchs visibles ci-dessous viennent uniquement
+     * de listProjects(), exactement comme Management > Historique.
+     */
     const ownQuery = supabase
       .from("calendar_events")
       .select("*")
@@ -363,6 +384,7 @@ export default function MonCalendrier() {
     }
 
     const rowsById = new Map<string, CalendarDbRow>();
+
     for (const row of [
       ...((ownResult.data ?? []) as CalendarDbRow[]),
       ...((teamResult.data ?? []) as CalendarDbRow[]),
@@ -370,112 +392,88 @@ export default function MonCalendrier() {
       const value = row as Record<string, any>;
       const dbType = String(value.event_type || "").toLowerCase();
 
-      // Empêche définitivement les 10/20/40 représentations d'un même Live
-      // enregistrées historiquement dans calendar_events.
+      // Ne jamais réafficher les vieux doublons LiveStats de calendar_events.
       if (dbType === "game" || dbType === "match") continue;
 
       const id = String(value.id || "");
       if (id) rowsById.set(id, row);
     }
 
-    const normalizedEvents: CalEvent[] = Array.from(rowsById.values())
-      .map((row) => normalizeCalendarRow(row));
+    const normalizedEvents: CalEvent[] = Array.from(rowsById.values()).map(
+      (row) => normalizeCalendarRow(row),
+    );
 
-    // Matchs : uniquement match_stats finalisés.
-    // Une seule ligne par ID de match, quelle que soit la quantité de sauvegardes Live.
-    let finishedMatches: any[] = [];
+    /*
+     * MATCHS / PROJETS LIVESTATS
+     * ------------------------------------------------------------
+     * Source IDENTIQUE à Management > Historique :
+     *   listProjects({ teamId, status: "draft" })
+     *   listProjects({ teamId, status: "completed" })
+     *
+     * Donc :
+     * - projet réellement en cours dans Historique  => calendrier
+     * - projet terminé/validé dans Historique       => calendrier
+     * - brouillon fantôme / ancien calendar_event   => jamais affiché
+     */
+    let historyProjects: LiveProjectSummary[] = [];
 
-    if (calendarTeamIds.length > 0) {
-      const { data: matchRows, error: matchError } = await supabase
-        .from("match_stats")
-        .select("*")
-        .in("team_id", calendarTeamIds)
-        .order("date", { ascending: true });
+    if (livestatTeamIds.length > 0) {
+      try {
+        const lists = await Promise.all(
+          livestatTeamIds.flatMap((teamId) => [
+            listProjects({ teamId, status: "draft" }),
+            listProjects({ teamId, status: "completed" }),
+          ]),
+        );
 
-      if (matchError) {
-        console.error("Erreur chargement matchs terminés du calendrier:", matchError);
-      } else {
-        finishedMatches = matchRows ?? [];
+        historyProjects = lists.flat();
+      } catch (error) {
+        console.error("Erreur chargement projets LiveStats du calendrier:", error);
       }
     }
 
-    const matchesById = new Map<string, CalEvent>();
+    // Un projet Historique = exactement un événement calendrier.
+    const projectsById = new Map<string, LiveProjectSummary>();
+    for (const project of historyProjects) {
+      const id = String(project.id || "");
+      if (!id) continue;
+      projectsById.set(id, project);
+    }
 
-    for (const row of finishedMatches) {
-      const status = String(row.status || row.project_status || "").toLowerCase();
-      const isFinished =
-        status === "finished" ||
-        status === "completed" ||
-        status === "complete" ||
-        status === "final" ||
-        status === "termine" ||
-        status === "terminé";
+    for (const project of projectsById.values()) {
+      const projectDate = String(project.date || "").slice(0, 10);
+      if (!projectDate) continue;
 
-      if (!isFinished) continue;
-
-      const matchId = String(row.id || "");
-      if (!matchId || matchesById.has(matchId)) continue;
-
-      const matchDate = String(
-        row.date ||
-        row.match_date ||
-        row.played_at ||
-        row.created_at ||
-        "",
-      ).slice(0, 10);
-
-      if (!matchDate) continue;
-
-      const opponent = String(
-        row.opponent ||
-        row.opponent_name ||
-        row.adversaire ||
-        "Adversaire",
+      const teamId = String(project.teamId || "");
+      const teamFromStore = visibleTeams.find(
+        (team: any) => String(team?.id || "") === teamId,
       );
 
-      const homeValue =
-        row.home ??
-        row.is_home ??
-        row.home_game ??
-        row.venue;
+      const teamName = String(
+        project.teamName ||
+          teamFromStore?.name ||
+          "",
+      );
 
-      let venue: Venue = "";
-      if (
-        homeValue === true ||
-        homeValue === "home" ||
-        homeValue === "domicile" ||
-        homeValue === "HOME"
-      ) {
-        venue = "home";
-      } else if (
-        homeValue === false ||
-        homeValue === "away" ||
-        homeValue === "extérieur" ||
-        homeValue === "exterieur" ||
-        homeValue === "AWAY"
-      ) {
-        venue = "away";
-      }
+      const opponent = String(project.opponent || "Adversaire");
+      const isDraft = project.projectStatus === "draft";
 
-      const teamId = String(row.team_id || "");
-      const teamName =
-        teams.find((team) => team.id === teamId)?.name ||
-        String(row.team_name || "");
-
-      matchesById.set(matchId, {
-        id: `match:${matchId}`,
-        date: matchDate,
+      normalizedEvents.push({
+        id: `livestat-project:${project.id}`,
+        date: projectDate,
         title: `Match vs ${opponent}`,
         type: "match",
-        venue,
+        venue: project.home ? "home" : "away",
         opponent,
         teamId: teamId || undefined,
         teamName: teamName || undefined,
-        notes: "Match terminé",
+        notes: isDraft
+          ? "Projet LiveStats en cours"
+          : `Match terminé${project.result ? ` · ${project.result}` : ""} · ${project.us}-${project.them}`,
+        projectId: String(project.id),
+        projectStatus: project.projectStatus,
       });
     }
-
-    normalizedEvents.push(...matchesById.values());
 
     normalizedEvents.sort(
       (a, b) =>
@@ -485,7 +483,9 @@ export default function MonCalendrier() {
 
     const sessionIds: string[] = normalizedEvents
       .map((event: CalEvent) => event.sessionId)
-      .filter((value: string | undefined): value is string => Boolean(value));
+      .filter(
+        (value: string | undefined): value is string => Boolean(value),
+      );
 
     if (sessionIds.length > 0) {
       const { data: sessionRows } = await supabase
@@ -503,16 +503,29 @@ export default function MonCalendrier() {
 
       for (const event of normalizedEvents) {
         if (!event.sessionId) continue;
+
         const relatedSession = sessionsById.get(event.sessionId);
         if (!relatedSession) continue;
 
-        event.teamId = event.teamId || String(relatedSession.team_reference_id || relatedSession.team_id || "");
+        event.teamId =
+          event.teamId ||
+          String(
+            relatedSession.team_reference_id ||
+              relatedSession.team_id ||
+              "",
+          );
+
         event.teamName =
           event.teamName ||
           String(relatedSession.team_name || "") ||
-          teams.find((team) => team.id === event.teamId)?.name ||
+          visibleTeams.find(
+            (team: any) => String(team?.id || "") === event.teamId,
+          )?.name ||
           String(relatedSession.title || "");
-        event.theme = event.theme || String(relatedSession.theme || relatedSession.title || "");
+
+        event.theme =
+          event.theme ||
+          String(relatedSession.theme || relatedSession.title || "");
 
         if (!event.attachment && relatedSession.pdf_url) {
           event.attachment = {
@@ -548,9 +561,19 @@ export default function MonCalendrier() {
   const openEdit = (id: string) => {
     const e = events.find((x) => x.id === id); if (!e) return;
 
-    // Un match finalisé provient directement de match_stats.
-    // On ne l'édite donc pas comme un calendar_event.
-    if (id.startsWith("match:")) return;
+    if (e.projectId) {
+      const params = new URLSearchParams({
+        project: e.projectId,
+        mode: e.projectStatus === "draft" ? "resume" : "analysis",
+      });
+
+      if (e.projectStatus === "completed") {
+        params.set("tab", "history");
+      }
+
+      window.location.href = `/management/live?${params.toString()}`;
+      return;
+    }
     setEventSelfReview(null);
     if (e.sessionId) {
       void supabase
