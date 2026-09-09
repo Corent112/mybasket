@@ -1,360 +1,65 @@
-import { NextResponse } from "next/server";
-import { createClient } from "@/lib/supabase/server";
-import { createAdminClient } from "@/lib/supabase/admin-server";
+import {NextResponse} from "next/server";
+import {createClient} from "@/lib/supabase/server";
+import {createAdminClient} from "@/lib/supabase/admin-server";
 
-type Ctx = { user: any; db: any; structure: any };
+export const runtime="nodejs";
+const n=(v:any)=>Number(v||0)||0;
+async function rows(q:any){try{const r=await q;return r?.error?[]:(r?.data||[])}catch{return []}}
+async function one(q:any){try{const r=await q;return r?.error?null:(r?.data||null)}catch{return null}}
+async function allowed(db:any,userId:string,structureId:string){
+ const member=await one(db.from("institutional_members").select("id").eq("structure_id",structureId).eq("user_id",userId).eq("status","active").maybeSingle());
+ if(member)return true;
+ const structure=await one(db.from("institutional_structures").select("created_by").eq("id",structureId).maybeSingle());
+ return String(structure?.created_by||"")===userId;
+}
+function add(t:any,r:any){t.games++;t.minutes+=n(r.minutes??r.min);t.pts+=n(r.pts);t.reb+=n(r.reb)||n(r.off_reb)+n(r.def_reb);t.ast+=n(r.ast);t.stl+=n(r.stl);t.blk+=n(r.blk);t.turnovers+=n(r.turnovers??r.to);t.p2m+=n(r.p2m);t.p2a+=n(r.p2a);t.p3m+=n(r.p3m);t.p3a+=n(r.p3a);t.ftm+=n(r.ftm);t.fta+=n(r.fta)}
+const blank=()=>({games:0,minutes:0,pts:0,reb:0,ast:0,stl:0,blk:0,turnovers:0,p2m:0,p2a:0,p3m:0,p3a:0,ftm:0,fta:0});
 
-async function getCtx(structureId: string): Promise<Ctx | null> {
-  const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
-  if (!user) return null;
-  const db = createAdminClient() || supabase;
-  const [membership, structure] = await Promise.all([
-    db.from("institutional_members").select("id,role,permissions").eq("structure_id", structureId).eq("user_id", user.id).eq("status", "active").maybeSingle(),
-    db.from("institutional_structures").select("id,name,structure_type,season_label").eq("id", structureId).maybeSingle(),
-  ]);
-  if (!membership.data || !structure.data || structure.data.structure_type !== "league") return null;
-  return { user, db, structure: structure.data };
+export async function GET(req:Request){
+ const sb=await createClient();const{data:{user}}=await sb.auth.getUser();if(!user)return NextResponse.json({error:"Non connecté."},{status:401});
+ const u=new URL(req.url),structureId=u.searchParams.get("structureId")||"",playerId=u.searchParams.get("playerId")||"";
+ if(!structureId||!playerId)return NextResponse.json({error:"Structure ou joueur manquant."},{status:400});
+ const db=createAdminClient()||sb;if(!(await allowed(db,user.id,structureId)))return NextResponse.json({error:"Accès refusé."},{status:403});
+
+ const [memberships,links,selections]=await Promise.all([
+  rows(db.from("institutional_pole_player_memberships").select("pole_team_id,pole_player_id").eq("structure_id",structureId).eq("institutional_player_id",playerId).eq("active",true)),
+  rows(db.from("institutional_pole_player_team_links").select("partner_team_id,partner_player_id").eq("structure_id",structureId).eq("institutional_player_id",playerId).eq("active",true)),
+  rows(db.from("institutional_player_selection_links").select("*").eq("structure_id",structureId).eq("institutional_player_id",playerId).eq("active",true)),
+ ]);
+ const raw=[
+  ...memberships.map((x:any)=>({context:"pole",teamId:String(x.pole_team_id),playerId:String(x.pole_player_id),selectionLevel:null})),
+  ...links.map((x:any)=>({context:"club",teamId:String(x.partner_team_id),playerId:String(x.partner_player_id),selectionLevel:null})),
+  ...selections.map((x:any)=>({context:"selection",teamId:String(x.team_id),playerId:String(x.roster_player_id),selectionLevel:x.selection_level,label:x.label||null})),
+ ].filter((x:any)=>x.teamId&&x.playerId);
+ const uniq=new Map(raw.map((x:any)=>[`${x.context}|${x.teamId}|${x.playerId}`,x]));const sources0=[...uniq.values()] as any[];
+ const teamIds=[...new Set(sources0.map(x=>x.teamId))],playerIds=[...new Set(sources0.map(x=>x.playerId))];
+ const teams=teamIds.length?await rows(db.from("teams").select("id,name,club_name").in("id",teamIds)):[];
+ const tm=new Map<string, any>(teams.map((x:any)=>[String(x.id),x]));
+ const sources=sources0.map(x=>({...x,teamName:x.label||tm.get(x.teamId)?.name||tm.get(x.teamId)?.club_name||(x.context==="pole"?"Équipe Pôle":x.context==="club"?"Club partenaire":"Sélection")}));
+ const combo=new Map<string, any>(sources.map((x:any)=>[`${x.teamId}|${x.playerId}`,x]));
+ const statRows=playerIds.length?await rows(db.from("match_player_stats").select("*").in("player_id",playerIds).limit(10000)):[];
+ const validStats=statRows.filter((r:any)=>combo.has(`${String(r.team_id)}|${String(r.player_id)}`));
+ const matchIds=[...new Set(validStats.map((r:any)=>String(r.match_id||"")).filter(Boolean))];
+ const matches=matchIds.length?await rows(db.from("match_stats").select("id,match_date,opponent,project_status").in("id",matchIds)):[];
+ const mm=new Map<string, any>(matches.map((m:any)=>[String(m.id),m]));
+ const totals:any={all:blank(),club:blank(),pole:blank(),selection:blank()};const out:any[]=[];
+ for(const r of validStats){
+  const m=mm.get(String(r.match_id));if(m?.project_status==="draft")continue;
+  const source:any=combo.get(`${String(r.team_id)}|${String(r.player_id)}`);if(!source)continue;
+  add(totals[source.context],r);add(totals.all,r);
+  out.push({id:String(r.match_id),date:String(m?.match_date||"").slice(0,10),opponent:String(m?.opponent||""),teamName:source.teamName,context:source.context,selectionLevel:source.selectionLevel,pts:n(r.pts),reb:n(r.reb)||n(r.off_reb)+n(r.def_reb),ast:n(r.ast),minutes:n(r.minutes??r.min)});
+ }
+ out.sort((a,b)=>String(b.date).localeCompare(String(a.date)));
+ return NextResponse.json({totals,matches:out,sources});
 }
 
-async function ensureSeason(db: any, structureId: string, seasonLabel: string, userId: string) {
-  const existing = await db.from("institutional_player_tracking_seasons").select("id,season_label").eq("structure_id", structureId).eq("season_label", seasonLabel).maybeSingle();
-  if (existing.data) return existing.data;
-  const created = await db.from("institutional_player_tracking_seasons").insert({ structure_id: structureId, season_label: seasonLabel, created_by: userId }).select("id,season_label").single();
-  if (created.error) throw new Error(created.error.message);
-  return created.data;
-}
-
-async function teamRowsForLinks(db: any, links: any[]) {
-  const ids = Array.from(new Set((links || []).map((x: any) => String(x.team_id || "")).filter(Boolean)));
-  if (!ids.length) return [];
-  const q = await db.from("teams").select("id,name,club_name,category,coach_name,user_id,club_logo_url,metadata,created_at").in("id", ids).order("created_at", { ascending: false });
-  if (q.error) throw new Error(q.error.message);
-  return q.data || [];
-}
-
-function cleanNumber(value: unknown) {
-  const n = Number(value);
-  return Number.isFinite(n) && n > 0 ? n : null;
-}
-
-export async function GET(req: Request) {
-  const url = new URL(req.url);
-  const structureId = url.searchParams.get("structureId") || "";
-  const ctx = await getCtx(structureId);
-  if (!ctx) return NextResponse.json({ error: "Pôle / Performance est réservé aux Ligues." }, { status: 403 });
-
-  try {
-    const [links, seasons, memberships, playerLinks, grants, invitations] = await Promise.all([
-      ctx.db.from("institutional_pole_teams").select("*").eq("structure_id", structureId).eq("active", true).order("created_at", { ascending: false }),
-      ctx.db.from("institutional_player_tracking_seasons").select("id,season_label,start_date,end_date").eq("structure_id", structureId).eq("archived", false).order("season_label", { ascending: false }),
-      ctx.db.from("institutional_pole_player_memberships").select("*,institutional_players(*)").eq("structure_id", structureId).eq("active", true).order("created_at"),
-      ctx.db.from("institutional_pole_player_team_links").select("*").eq("structure_id", structureId).eq("active", true),
-      ctx.db.from("institutional_pole_partner_grants").select("*").eq("structure_id", structureId).order("created_at", { ascending: false }),
-      ctx.db.from("institutional_pole_partner_invitations").select("id,team_id,coach_email,coach_first_name,coach_last_name,status,expires_at,created_at").eq("structure_id", structureId).order("created_at", { ascending: false }),
-    ]);
-    const err = links.error || seasons.error || memberships.error || playerLinks.error || grants.error || invitations.error;
-    if (err) throw new Error(err.message);
-    const teams = await teamRowsForLinks(ctx.db, links.data || []);
-    return NextResponse.json({
-      structure: ctx.structure,
-      links: links.data || [],
-      teams,
-      seasons: seasons.data || [],
-      memberships: memberships.data || [],
-      playerLinks: playerLinks.data || [],
-      grants: grants.data || [],
-      invitations: invitations.data || [],
-    });
-  } catch (error: any) {
-    return NextResponse.json({ error: error?.message || "Chargement impossible." }, { status: 400 });
-  }
-}
-
-export async function POST(req: Request) {
-  const body = await req.json().catch(() => ({}));
-  const structureId = String(body.structureId || "");
-  const ctx = await getCtx(structureId);
-  if (!ctx) return NextResponse.json({ error: "Pôle / Performance est réservé aux Ligues." }, { status: 403 });
-
-  try {
-    if (body.action === "createTeam") {
-      const teamKind = String(body.teamKind || "");
-      const name = String(body.name || "").trim();
-      const clubName = String(body.clubName || name).trim();
-      const category = String(body.category || "").trim();
-      const seasonLabel = String(body.seasonLabel || ctx.structure.season_label || "").trim();
-      if (!name || !seasonLabel || !["pole", "partner"].includes(teamKind)) throw new Error("Nom, saison et type d'équipe obligatoires.");
-      await ensureSeason(ctx.db, structureId, seasonLabel, ctx.user.id);
-
-      const created = await ctx.db.from("teams").insert({
-        user_id: ctx.user.id,
-        team_type: "coached",
-        name,
-        club_name: clubName || name,
-        category: category || null,
-        coach_name: teamKind === "pole" ? ctx.structure.name : "Coach principal à inviter",
-        metadata: {
-          institutionalStructureId: structureId,
-          institutionalTeamKind: teamKind,
-          institutionalSupervisor: ctx.user.id,
-          seasonLabel,
-          createdFrom: "league_pole_performance",
-        },
-      }).select("id,name,category").single();
-      if (created.error) throw new Error(created.error.message);
-
-      const link = await ctx.db.from("institutional_pole_teams").insert({
-        structure_id: structureId,
-        team_id: created.data.id,
-        team_kind: teamKind,
-        season_label: seasonLabel,
-        active: true,
-        created_by: ctx.user.id,
-      });
-      if (link.error) {
-        await ctx.db.from("teams").delete().eq("id", created.data.id);
-        throw new Error(link.error.message);
-      }
-
-      if (teamKind === "partner") {
-        await ctx.db.from("team_members").upsert({
-          team_id: created.data.id,
-          user_id: ctx.user.id,
-          role: "institution_supervisor",
-          status: "active",
-          permissions: {
-            view_team: true,
-            players: false,
-            sessions: false,
-            livestats: false,
-            media: false,
-            rpe: false,
-            rpe_individual: true,
-            rpe_group: true,
-            institution_supervisor: true,
-          },
-          invited_by: ctx.user.id,
-          updated_at: new Date().toISOString(),
-        }, { onConflict: "team_id,user_id" });
-      }
-      return NextResponse.json({ ok: true, teamId: created.data.id });
-    }
-
-    if (body.action === "createPlayer") {
-      const poleTeamId = String(body.poleTeamId || "");
-      const seasonLabel = String(body.seasonLabel || ctx.structure.season_label || "").trim();
-      const firstName = String(body.firstName || "").trim();
-      const lastName = String(body.lastName || "").trim();
-      if (!poleTeamId || !seasonLabel || !firstName || !lastName) throw new Error("Équipe Pôle, saison, prénom et nom sont obligatoires.");
-      const poleLink = await ctx.db.from("institutional_pole_teams").select("id").eq("structure_id", structureId).eq("team_id", poleTeamId).eq("team_kind", "pole").eq("active", true).maybeSingle();
-      if (!poleLink.data) throw new Error("Équipe Pôle invalide.");
-      const season = await ensureSeason(ctx.db, structureId, seasonLabel, ctx.user.id);
-      const team = await ctx.db.from("teams").select("id,user_id").eq("id", poleTeamId).single();
-      if (team.error) throw new Error(team.error.message);
-
-      const playerPayload: any = {
-        structure_id: structureId,
-        first_name: firstName,
-        last_name: lastName,
-        birthdate: body.birthdate || null,
-        sex: body.sex || null,
-        email: body.email || null,
-        phone: body.phone || null,
-        photo_url: body.photoUrl || null,
-        club_name: body.clubName || null,
-        category: body.category || null,
-        years_basket: cleanNumber(body.yearsBasket),
-        height_cm: cleanNumber(body.heightCm),
-        weight_kg: cleanNumber(body.weightKg),
-        wingspan_cm: cleanNumber(body.wingspanCm),
-        father_height_cm: cleanNumber(body.fatherHeightCm),
-        mother_height_cm: cleanNumber(body.motherHeightCm),
-        position_primary: body.positionPrimary || null,
-        position_secondary: body.positionSecondary || null,
-        dominant_hand: body.dominantHand || null,
-        license_number: body.licenseNumber || null,
-        school: body.school || null,
-        class_name: body.className || null,
-        address: body.address || null,
-        postal_code: body.postalCode || null,
-        city: body.city || null,
-        tutor1_name: body.tutor1Name || null,
-        tutor1_email: body.tutor1Email || null,
-        tutor1_phone: body.tutor1Phone || null,
-        tutor2_name: body.tutor2Name || null,
-        tutor2_email: body.tutor2Email || null,
-        tutor2_phone: body.tutor2Phone || null,
-        status: "followed",
-        archived: false,
-        created_by: ctx.user.id,
-      };
-      const ip = await ctx.db.from("institutional_players").insert(playerPayload).select("*").single();
-      if (ip.error) throw new Error(ip.error.message);
-
-      const roster = await ctx.db.from("players").insert({
-        user_id: team.data.user_id,
-        team_id: poleTeamId,
-        first_name: firstName,
-        last_name: lastName,
-        birth_date: body.birthdate || null,
-        photo_url: body.photoUrl || null,
-        position_primary: body.positionPrimary || "",
-        position_secondary: body.positionSecondary || "",
-        height: body.heightCm ? String(body.heightCm) : "",
-        weight: body.weightKg ? String(body.weightKg) : "",
-        dominant_hand: body.dominantHand || "",
-        status: "Disponible",
-        license_number: body.licenseNumber || null,
-        tutor1_phone: body.tutor1Phone || null,
-        tutor1_email: body.tutor1Email || null,
-        tutor2_phone: body.tutor2Phone || null,
-        tutor2_email: body.tutor2Email || null,
-        presence_pct: 0,
-        punctuality_pct: 0,
-        metadata: {
-          institutionalPolePlayerId: ip.data.id,
-          polePlayer: true,
-          poleProtected: true,
-          sex: body.sex || null,
-          school: body.school || "",
-          className: body.className || "",
-          club: body.clubName || "",
-          category: body.category || "",
-          wingspanCm: cleanNumber(body.wingspanCm),
-        },
-      }).select("id").single();
-      if (roster.error) {
-        await ctx.db.from("institutional_players").delete().eq("id", ip.data.id);
-        throw new Error(roster.error.message);
-      }
-
-      const membership = await ctx.db.from("institutional_pole_player_memberships").insert({
-        structure_id: structureId,
-        institutional_player_id: ip.data.id,
-        season_id: season.id,
-        pole_team_id: poleTeamId,
-        pole_player_id: roster.data.id,
-        active: true,
-        created_by: ctx.user.id,
-      });
-      if (membership.error) throw new Error(membership.error.message);
-
-      if (cleanNumber(body.heightCm) || cleanNumber(body.weightKg) || cleanNumber(body.wingspanCm)) {
-        await ctx.db.from("institutional_player_measurements").insert({
-          structure_id: structureId,
-          player_id: ip.data.id,
-          season_id: season.id,
-          measured_at: body.measuredAt || new Date().toISOString().slice(0, 10),
-          height_cm: cleanNumber(body.heightCm),
-          weight_kg: cleanNumber(body.weightKg),
-          wingspan_cm: cleanNumber(body.wingspanCm),
-          created_by: ctx.user.id,
-        });
-      }
-      return NextResponse.json({ ok: true, institutionalPlayerId: ip.data.id, playerId: roster.data.id });
-    }
-
-    if (body.action === "assignPlayer") {
-      const membershipId = String(body.membershipId || "");
-      const partnerTeamId = String(body.partnerTeamId || "");
-      const membership = await ctx.db.from("institutional_pole_player_memberships").select("*,institutional_players(*)").eq("id", membershipId).eq("structure_id", structureId).eq("active", true).single();
-      if (membership.error) throw new Error(membership.error.message);
-      const partnerLink = await ctx.db.from("institutional_pole_teams").select("id,season_label").eq("structure_id", structureId).eq("team_id", partnerTeamId).eq("team_kind", "partner").eq("active", true).maybeSingle();
-      if (!partnerLink.data) throw new Error("Équipe partenaire invalide.");
-      const team = await ctx.db.from("teams").select("id,user_id").eq("id", partnerTeamId).single();
-      if (team.error) throw new Error(team.error.message);
-      const x: any = membership.data.institutional_players;
-      let existing = await ctx.db.from("institutional_pole_player_team_links").select("id,partner_player_id").eq("institutional_player_id", x.id).eq("partner_team_id", partnerTeamId).eq("season_id", membership.data.season_id).maybeSingle();
-      let partnerPlayerId = existing.data?.partner_player_id as string | undefined;
-      if (!partnerPlayerId) {
-        const pp = await ctx.db.from("players").insert({
-          user_id: team.data.user_id,
-          team_id: partnerTeamId,
-          first_name: x.first_name,
-          last_name: x.last_name,
-          birth_date: x.birthdate,
-          photo_url: x.photo_url,
-          position_primary: x.position_primary || "",
-          position_secondary: x.position_secondary || "",
-          height: x.height_cm ? String(x.height_cm) : "",
-          weight: x.weight_kg ? String(x.weight_kg) : "",
-          dominant_hand: x.dominant_hand || "",
-          status: "Disponible",
-          license_number: x.license_number || null,
-          tutor1_phone: x.tutor1_phone || null,
-          tutor1_email: x.tutor1_email || null,
-          tutor2_phone: x.tutor2_phone || null,
-          tutor2_email: x.tutor2_email || null,
-          presence_pct: 0,
-          punctuality_pct: 0,
-          metadata: {
-            institutionalPolePlayerId: x.id,
-            poleProtected: true,
-            secondaryTeam: true,
-            sex: x.sex || null,
-            school: x.school || "",
-            className: x.class_name || "",
-            club: x.club_name || "",
-            category: x.category || "",
-            wingspanCm: x.wingspan_cm || null,
-          },
-        }).select("id").single();
-        if (pp.error) throw new Error(pp.error.message);
-        partnerPlayerId = pp.data.id;
-        const link = await ctx.db.from("institutional_pole_player_team_links").insert({
-          structure_id: structureId,
-          institutional_player_id: x.id,
-          season_id: membership.data.season_id,
-          pole_team_id: membership.data.pole_team_id,
-          pole_player_id: membership.data.pole_player_id,
-          partner_team_id: partnerTeamId,
-          partner_player_id: partnerPlayerId,
-          active: true,
-          created_by: ctx.user.id,
-        });
-        if (link.error) throw new Error(link.error.message);
-      }
-      return NextResponse.json({ ok: true, partnerPlayerId });
-    }
-
-    if (body.action === "importPlayers") {
-      const sourcePoleTeamId = String(body.sourcePoleTeamId || "");
-      const targetPoleTeamId = String(body.targetPoleTeamId || "");
-      const ids = Array.isArray(body.institutionalPlayerIds) ? body.institutionalPlayerIds.map(String) : [];
-      const targetLink = await ctx.db.from("institutional_pole_teams").select("season_label").eq("structure_id", structureId).eq("team_id", targetPoleTeamId).eq("team_kind", "pole").single();
-      if (targetLink.error) throw new Error(targetLink.error.message);
-      const season = await ensureSeason(ctx.db, structureId, targetLink.data.season_label, ctx.user.id);
-      const targetTeam = await ctx.db.from("teams").select("id,user_id").eq("id", targetPoleTeamId).single();
-      if (targetTeam.error) throw new Error(targetTeam.error.message);
-      const source = await ctx.db.from("institutional_pole_player_memberships").select("institutional_player_id,institutional_players(*)").eq("structure_id", structureId).eq("pole_team_id", sourcePoleTeamId).eq("active", true).in("institutional_player_id", ids);
-      if (source.error) throw new Error(source.error.message);
-      let imported = 0;
-      for (const row of source.data || []) {
-        const x: any = row.institutional_players;
-        const already = await ctx.db.from("institutional_pole_player_memberships").select("id").eq("institutional_player_id", x.id).eq("pole_team_id", targetPoleTeamId).eq("season_id", season.id).maybeSingle();
-        if (already.data) continue;
-        const roster = await ctx.db.from("players").insert({
-          user_id: targetTeam.data.user_id, team_id: targetPoleTeamId,
-          first_name: x.first_name, last_name: x.last_name, birth_date: x.birthdate, photo_url: x.photo_url,
-          position_primary: x.position_primary || "", position_secondary: x.position_secondary || "",
-          height: x.height_cm ? String(x.height_cm) : "", weight: x.weight_kg ? String(x.weight_kg) : "",
-          dominant_hand: x.dominant_hand || "", status: "Disponible", license_number: x.license_number || null,
-          tutor1_phone: x.tutor1_phone || null, tutor1_email: x.tutor1_email || null,
-          tutor2_phone: x.tutor2_phone || null, tutor2_email: x.tutor2_email || null,
-          presence_pct: 0, punctuality_pct: 0,
-          metadata: { institutionalPolePlayerId: x.id, polePlayer: true, poleProtected: true, sex: x.sex || null, school: x.school || "", className: x.class_name || "", club: x.club_name || "", category: x.category || "", wingspanCm: x.wingspan_cm || null },
-        }).select("id").single();
-        if (roster.error) throw new Error(roster.error.message);
-        const mem = await ctx.db.from("institutional_pole_player_memberships").insert({ structure_id: structureId, institutional_player_id: x.id, season_id: season.id, pole_team_id: targetPoleTeamId, pole_player_id: roster.data.id, active: true, created_by: ctx.user.id });
-        if (mem.error) throw new Error(mem.error.message);
-        imported += 1;
-      }
-      return NextResponse.json({ ok: true, imported });
-    }
-
-    return NextResponse.json({ error: "Action inconnue." }, { status: 400 });
-  } catch (error: any) {
-    return NextResponse.json({ error: error?.message || "Opération impossible." }, { status: 400 });
-  }
+export async function POST(req:Request){
+ const sb=await createClient();const{data:{user}}=await sb.auth.getUser();if(!user)return NextResponse.json({error:"Non connecté."},{status:401});
+ const body=await req.json().catch(()=>({}));const structureId=String(body.structureId||""),playerId=String(body.playerId||""),teamId=String(body.teamId||""),rosterPlayerId=String(body.rosterPlayerId||"");
+ if(!structureId||!playerId||!teamId||!rosterPlayerId)return NextResponse.json({error:"Informations incomplètes."},{status:400});
+ const db=createAdminClient()||sb;if(!(await allowed(db,user.id,structureId)))return NextResponse.json({error:"Accès refusé."},{status:403});
+ const level=["departmental","regional","national","other"].includes(String(body.selectionLevel))?String(body.selectionLevel):"other";
+ const q=await db.from("institutional_player_selection_links").upsert({structure_id:structureId,institutional_player_id:playerId,team_id:teamId,roster_player_id:rosterPlayerId,selection_level:level,label:String(body.label||"").trim()||null,active:true,created_by:user.id},{onConflict:"structure_id,institutional_player_id,team_id,roster_player_id"}).select("id").single();
+ if(q.error)return NextResponse.json({error:q.error.message},{status:400});
+ return NextResponse.json({ok:true,id:q.data.id});
 }

@@ -2,6 +2,7 @@
 import {useEffect,useMemo,useState} from "react";
 import {createClient} from "@/lib/supabase/client";
 import LeagueSelectionPipeline from "./LeagueSelectionPipeline";
+import InstitutionalPlayerPerformance from "@/components/institutionnel/InstitutionalPlayerPerformance";
 
 type P={id:string;first_name:string;last_name:string;birthdate:string|null;email:string|null;phone:string|null;sex:string|null;photo_url:string|null;father_height_cm:number|null;mother_height_cm:number|null};
 type S={id:string;season_label:string};
@@ -186,6 +187,7 @@ export default function InstitutionalPlayerNotebook({structureId}:{structureId:s
 
     <h3>Commentaires basket</h3><div className="commentGrid"><textarea placeholder="Profil" value={comment.profile_text} onChange={e=>setComment({...comment,profile_text:e.target.value})}/><textarea placeholder="Points forts" value={comment.strengths_text} onChange={e=>setComment({...comment,strengths_text:e.target.value})}/><textarea placeholder="Axes de travail" value={comment.improvement_text} onChange={e=>setComment({...comment,improvement_text:e.target.value})}/><textarea placeholder="Projection" value={comment.projection_text} onChange={e=>setComment({...comment,projection_text:e.target.value})}/><textarea className="wide" placeholder="Commentaire libre" value={comment.free_comment} onChange={e=>setComment({...comment,free_comment:e.target.value})}/></div><label className="share"><input type="checkbox" checked={comment.share_with_club} onChange={e=>setComment({...comment,share_with_club:e.target.checked})}/> Visible dans le cahier envoyé au club</label><button onClick={addComment}>Ajouter l'observation</button>
     <div className="comments">{playerComments.map(c=><article key={c.id}><b>{fmt(c.comment_date)} · {c.author_name||"Entraîneur"} {c.share_with_club?"· Club":"· Interne"}</b><p>{[c.profile_text,c.strengths_text,c.improvement_text,c.projection_text,c.free_comment].filter(Boolean).join("\n\n")}</p></article>)}</div>
+    <InstitutionalPlayerPerformance structureId={structureId} player={{id:player.id,first_name:player.first_name,last_name:player.last_name,photo_url:player.photo_url}}/>
    </section>}
 
    <section className="card attendanceCard"><div className="title"><div><p>PRÉSENCES</p><h3>Feuilles de présence de la saison</h3><span>Une feuille correspond à une convocation : sélectionne d’abord les joueurs dans l’effectif.</span></div><span>{seasonSessions.length} feuille{seasonSessions.length>1?"s":""}</span></div>

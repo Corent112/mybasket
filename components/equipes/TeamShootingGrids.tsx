@@ -179,12 +179,32 @@ export default function TeamShootingGrids({
   teamId,
   players,
   canEdit,
+  scopeType="team",
+  scopeId,
+  scopeLabel,
 }:{
   teamId:string;
   players:Player[];
   canEdit:boolean;
+  scopeType?:"team"|"institution";
+  scopeId?:string;
+  scopeLabel?:string;
 }){
   const supabase=useMemo(()=>createClient(),[]);
+  const effectiveScopeId=scopeType==="institution"?(scopeId||teamId):teamId;
+  const tables=scopeType==="institution"?{
+    grids:"institutional_shooting_grids",
+    rows:"institutional_shooting_grid_rows",
+    sessions:"institutional_shooting_grid_sessions",
+    sessionPlayers:"institutional_shooting_grid_session_players",
+    results:"institutional_shooting_grid_player_results",
+  }:{
+    grids:"shooting_grids",
+    rows:"shooting_grid_rows",
+    sessions:"shooting_grid_sessions",
+    sessionPlayers:"shooting_grid_session_players",
+    results:"shooting_grid_player_results",
+  };
   const [userId,setUserId]=useState("");
   const [grids,setGrids]=useState<Grid[]>([]);
   const [selectedGridId,setSelectedGridId]=useState("");
@@ -210,8 +230,8 @@ export default function TeamShootingGrids({
     if(!gridId){setRows([]);setSessions([]);setSessionPlayers({});setResults({});return}
 
     const [{data:r,error:re},{data:s,error:se}]=await Promise.all([
-      supabase.from("shooting_grid_rows").select("id,grid_id,name,sort_order").eq("grid_id",gridId).order("sort_order"),
-      supabase.from("shooting_grid_sessions").select("id,grid_id,owner_id,session_date,notes,created_at").eq("grid_id",gridId).order("session_date",{ascending:false}).order("created_at",{ascending:false})
+      supabase.from(tables.rows).select("id,grid_id,name,sort_order").eq("grid_id",gridId).order("sort_order"),
+      supabase.from(tables.sessions).select("id,grid_id,owner_id,session_date,notes,created_at").eq("grid_id",gridId).order("session_date",{ascending:false}).order("created_at",{ascending:false})
     ]);
     if(re) throw re;if(se) throw se;
 
@@ -222,8 +242,8 @@ export default function TeamShootingGrids({
     if(!nextSessions.length){setSessionPlayers({});setResults({});return}
     const sessionIds=nextSessions.map(x=>x.id);
     const [{data:sp,error:spe},{data:res,error:rse}]=await Promise.all([
-      supabase.from("shooting_grid_session_players").select("id,session_id,player_id").in("session_id",sessionIds),
-      supabase.from("shooting_grid_player_results").select("id,session_id,row_id,player_id,made,attempted").in("session_id",sessionIds)
+      supabase.from(tables.sessionPlayers).select("id,session_id,player_id").in("session_id",sessionIds),
+      supabase.from(tables.results).select("id,session_id,row_id,player_id,made,attempted").in("session_id",sessionIds)
     ]);
     if(spe) throw spe;if(rse) throw rse;
 
@@ -249,14 +269,17 @@ export default function TeamShootingGrids({
         logo:typeof (teamRow as {logo_url?:unknown}).logo_url==="string"?String((teamRow as {logo_url?:unknown}).logo_url):null
       });
     }
-    const {data,error}=await supabase.from("shooting_grids").select("id,team_id,owner_id,name,description,input_mode,fixed_value,court_schema_url,court_schema_data,created_at,updated_at").eq("team_id",teamId).order("updated_at",{ascending:false});
+    const gridQuery=scopeType==="institution"
+      ? supabase.from(tables.grids).select("id,structure_id,owner_id,name,description,input_mode,fixed_value,court_schema_url,court_schema_data,created_at,updated_at").eq("structure_id",effectiveScopeId)
+      : supabase.from(tables.grids).select("id,team_id,owner_id,name,description,input_mode,fixed_value,court_schema_url,court_schema_data,created_at,updated_at").eq("team_id",teamId);
+    const {data,error}=await gridQuery.order("updated_at",{ascending:false});
     if(error)throw error;
     const list=(data||[]) as Grid[];
     setGrids(list);
     const id=preferred&&list.some(g=>g.id===preferred)?preferred:(list.some(g=>g.id===selectedGridId)?selectedGridId:list[0]?.id||"");
     setSelectedGridId(id);
     await loadDetails(id);
-  },[loadDetails,selectedGridId,supabase,teamId]);
+  },[loadDetails,selectedGridId,supabase,teamId,scopeType,effectiveScopeId]);
 
   useEffect(()=>{void (async()=>{
     try{
@@ -272,7 +295,7 @@ export default function TeamShootingGrids({
     }finally{
       setLoading(false);
     }
-  })()},[teamId]); // eslint-disable-line
+  })()},[teamId,scopeType,effectiveScopeId]); // eslint-disable-line
 
   useEffect(()=>{
     if(typeof window==="undefined") return;
@@ -285,11 +308,12 @@ export default function TeamShootingGrids({
         const parsed=JSON.parse(raw);
         const image=Array.isArray(parsed?.schemaImages)?parsed.schemaImages[0]:null;
         if(!image)return;
-        const {error}=await supabase.from("shooting_grids").update({
+        const {error}=await supabase.from(tables.grids).update({
           court_schema_url:image,
           court_schema_data:parsed,
           updated_at:new Date().toISOString()
-        }).eq("id",pending).eq("team_id",teamId);
+        }) .eq("id",pending)
+        .eq(scopeType==="institution"?"structure_id":"team_id",effectiveScopeId);
         if(error)throw error;
         localStorage.removeItem("mybasket_shooting_grid_pending");
         localStorage.removeItem("mybasket_plaquette_result");
@@ -298,18 +322,18 @@ export default function TeamShootingGrids({
         toast("Schéma Plaquette ajouté à la grille ✓");
       }catch(e){console.error(e)}
     })();
-  },[loadGrids,supabase,teamId]);
+  },[loadGrids,supabase,teamId,scopeType,effectiveScopeId]);
 
   async function createGrid(){
     if(!canEdit||!userId)return;
     setSaving(true);
     try{
-      const {data:g,error}=await supabase.from("shooting_grids").insert({
-        team_id:teamId,owner_id:userId,name:"Nouvelle grille de tir",description:"",
+      const {data:g,error}=await supabase.from(tables.grids).insert({
+        ...(scopeType==="institution"?{structure_id:effectiveScopeId}:{team_id:teamId}),owner_id:userId,name:"Nouvelle grille de tir",description:"",
         input_mode:"fixed_attempts",fixed_value:10
       }).select("*").single();
       if(error)throw error;
-      const {error:rowError}=await supabase.from("shooting_grid_rows").insert(DEFAULT_ROWS.map((name,i)=>({grid_id:g.id,name,sort_order:i,target_attempts:10})));
+      const {error:rowError}=await supabase.from(tables.rows).insert(DEFAULT_ROWS.map((name,i)=>({grid_id:g.id,name,sort_order:i,target_attempts:10})));
       if(rowError)throw rowError;
       await loadGrids(g.id);toast("Grille créée.");
     }catch(e){console.error(e);toast("Impossible de créer la grille.")}finally{setSaving(false)}
@@ -324,7 +348,7 @@ export default function TeamShootingGrids({
     if(!grid||!canEdit)return;
     setSaving(true);
     try{
-      const {error}=await supabase.from("shooting_grids").update({
+      const {error}=await supabase.from(tables.grids).update({
         name:grid.name.trim()||"Grille de tir",
         description:grid.description?.trim()||null,
         input_mode:grid.input_mode,
@@ -335,7 +359,7 @@ export default function TeamShootingGrids({
 
       for(let i=0;i<rows.length;i++){
         const row=rows[i];
-        const {error:re}=await supabase.from("shooting_grid_rows").update({name:row.name.trim()||`Position ${i+1}`,sort_order:i}).eq("id",row.id);
+        const {error:re}=await supabase.from(tables.rows).update({name:row.name.trim()||`Position ${i+1}`,sort_order:i}).eq("id",row.id);
         if(re)throw re;
       }
       await loadGrids(grid.id);toast("Modèle enregistré ✓");
@@ -344,7 +368,7 @@ export default function TeamShootingGrids({
 
   async function addRow(){
     if(!grid||!canEdit)return;
-    const {data,error}=await supabase.from("shooting_grid_rows").insert({grid_id:grid.id,name:`Position ${rows.length+1}`,sort_order:rows.length,target_attempts:grid.fixed_value}).select("id,grid_id,name,sort_order").single();
+    const {data,error}=await supabase.from(tables.rows).insert({grid_id:grid.id,name:`Position ${rows.length+1}`,sort_order:rows.length,target_attempts:grid.fixed_value}).select("id,grid_id,name,sort_order").single();
     if(error)return alert(error.message);
     setRows(cur=>[...cur,data as GridRow]);
   }
@@ -352,7 +376,7 @@ export default function TeamShootingGrids({
   async function removeRow(id:string){
     if(!canEdit||rows.length<=1)return;
     if(!window.confirm("Supprimer ce spot et tous ses résultats ?"))return;
-    const {error}=await supabase.from("shooting_grid_rows").delete().eq("id",id);
+    const {error}=await supabase.from(tables.rows).delete().eq("id",id);
     if(error)return alert(error.message);
     setRows(cur=>cur.filter(r=>r.id!==id));
   }
@@ -369,7 +393,7 @@ export default function TeamShootingGrids({
     setRows(reordered);
 
     const responses=await Promise.all(
-      reordered.map(row=>supabase.from("shooting_grid_rows").update({sort_order:row.sort_order}).eq("id",row.id))
+      reordered.map(row=>supabase.from(tables.rows).update({sort_order:row.sort_order}).eq("id",row.id))
     );
     const error=responses.find(r=>r.error)?.error;
     if(error){
@@ -550,9 +574,9 @@ export default function TeamShootingGrids({
     if(!grid||!userId||!newDate||!selectedPlayers.length)return;
     setSaving(true);
     try{
-      const {data:s,error}=await supabase.from("shooting_grid_sessions").insert({grid_id:grid.id,owner_id:userId,session_date:newDate}).select("*").single();
+      const {data:s,error}=await supabase.from(tables.sessions).insert({grid_id:grid.id,owner_id:userId,session_date:newDate}).select("*").single();
       if(error)throw error;
-      const {error:pe}=await supabase.from("shooting_grid_session_players").insert(selectedPlayers.map(pid=>({session_id:s.id,player_id:pid})));
+      const {error:pe}=await supabase.from(tables.sessionPlayers).insert(selectedPlayers.map(pid=>({session_id:s.id,player_id:pid})));
       if(pe)throw pe;
 
       const seed:Result[]=[];
@@ -566,7 +590,7 @@ export default function TeamShootingGrids({
         }
       }
       if(seed.length){
-        const {error:re}=await supabase.from("shooting_grid_player_results").insert(seed);
+        const {error:re}=await supabase.from(tables.results).insert(seed);
         if(re)throw re;
       }
 
@@ -604,7 +628,7 @@ export default function TeamShootingGrids({
           });
         }
       }
-      const {error}=await supabase.from("shooting_grid_player_results").upsert(rowsToSave,{onConflict:"session_id,row_id,player_id"});
+      const {error}=await supabase.from(tables.results).upsert(rowsToSave,{onConflict:"session_id,row_id,player_id"});
       if(error)throw error;
       toast("Résultats enregistrés ✓");
       await loadDetails(grid.id);
@@ -613,14 +637,14 @@ export default function TeamShootingGrids({
 
   async function deleteSession(session:Session){
     if(!canEdit||!window.confirm(`Supprimer la session du ${fmtDate(session.session_date)} ?`))return;
-    const {error}=await supabase.from("shooting_grid_sessions").delete().eq("id",session.id);
+    const {error}=await supabase.from(tables.sessions).delete().eq("id",session.id);
     if(error)return alert(error.message);
     if(grid)await loadDetails(grid.id);
   }
 
   async function deleteGrid(){
     if(!grid||!canEdit||!window.confirm(`Supprimer "${grid.name}" ?`))return;
-    const {error}=await supabase.from("shooting_grids").delete().eq("id",grid.id);
+    const {error}=await supabase.from(tables.grids).delete().eq("id",grid.id);
     if(error)return alert(error.message);
     await loadGrids();
   }
