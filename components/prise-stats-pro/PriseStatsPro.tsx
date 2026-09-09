@@ -1,5 +1,7 @@
 'use client';
 
+// MYBASKET LIVESTAT V11.0 — live individuel / technique / touche / shot chart
+
 /**
  * Prise de stats LIVE — wizard une-étape-à-la-fois (Sportscode / FIBA LiveStats)
  * Intégré au Management ("Stats Live"). Choix de l'équipe depuis les vraies équipes Supabase.
@@ -302,6 +304,7 @@ const ATT_ACTIONS = [
   { id: 'touche', label: 'Touche / Sortie', ic: '⤵' }, { id: 'perte', label: 'Perte de balle', ic: '✖' },
   { id: 'contre', label: 'Contre', ic: '🛑' },
   { id: 'faute-commise', label: 'Faute commise', ic: '🟨' },
+  { id: 'faute-technique', label: 'Faute technique', ic: '🟪' },
 ];
 const DEF_ACTIONS = [
   { id: 'tir', label: 'Tir adverse', ic: '🏀' },
@@ -311,6 +314,7 @@ const DEF_ACTIONS = [
   { id: 'touche', label: 'Touche', ic: '⤵' },
   { id: 'faute-provoquee', label: 'Faute provoquée', ic: '🔔' },
   { id: 'faute-commise', label: 'Faute commise', ic: '🟨' },
+  { id: 'faute-technique', label: 'Faute technique', ic: '🟪' },
 ];
 const NEEDS_PLAYER_DEF = ["contre"];
 const CAN_TAG_PLAYER_DEF = ["interception", "perte-adverse"];
@@ -352,11 +356,6 @@ const CODING_FALLBACK: Record<string, CodingButtonCfg[]> = {
     { key:'2-missed', label:'2PTS raté', emoji:'✕', category:'result', stage:'result', sort_order:1, is_active:true },
     { key:'3-made', label:'3PTS marqué', emoji:'✓', category:'result', stage:'result', sort_order:2, is_active:true },
     { key:'3-missed', label:'3PTS raté', emoji:'✕', category:'result', stage:'result', sort_order:3, is_active:true },
-    { key:'lf1', label:'1 LF', emoji:'1', category:'result', stage:'ft', sort_order:4, is_active:true },
-    { key:'lf2', label:'2 LF', emoji:'2', category:'result', stage:'ft', sort_order:5, is_active:true },
-    { key:'lf3', label:'3 LF', emoji:'3', category:'result', stage:'ft', sort_order:6, is_active:true },
-    { key:'2plus1', label:'2 PTS + 1 LF', emoji:'＋', category:'result', stage:'ft', sort_order:7, is_active:true },
-    { key:'3plus1', label:'3 PTS + 1 LF', emoji:'＋', category:'result', stage:'ft', sort_order:8, is_active:true },
   ],
   'foul': [
     { key:'touche', label:'Touche', category:'foul', stage:'faute', sort_order:0, is_active:true },
@@ -368,8 +367,8 @@ const CODING_FALLBACK: Record<string, CodingButtonCfg[]> = {
   'rebound': [
     { key:'off', label:'Rebond offensif', emoji:'🔄', category:'rebound', stage:'rebound', sort_order:0, is_active:true },
     { key:'def', label:'Rebond défensif', emoji:'🧲', category:'rebound', stage:'rebound', sort_order:1, is_active:true },
-    { key:'touche-pour', label:'Touche pour', emoji:'↪', category:'rebound', stage:'rebound', sort_order:2, is_active:true },
-    { key:'touche-contre', label:'Touche contre', emoji:'↩', category:'rebound', stage:'rebound', sort_order:3, is_active:true },
+    { key:'touche-pour', label:'Touche / sortie pour moi', emoji:'↪', category:'rebound', stage:'rebound', sort_order:2, is_active:true },
+    { key:'touche-contre', label:'Touche / sortie contre moi', emoji:'↩', category:'rebound', stage:'rebound', sort_order:3, is_active:true },
   ],
 };
 
@@ -418,6 +417,7 @@ const reboundNext = (c: Ctx, t: string): Ctx =>
       : t === 'touche-pour' ? 'attaque' : t === 'touche-contre' ? 'defense' : POSS(c);
 
 function ptsOf(a: Draft) {
+  if (a.actionType === 'faute-technique' && a.foulOutcome === 'technical-for') return a.ftMade || 0;
   if (a.context === 'defense') return 0;
 
   // Faute provoquée sur panier marqué :
@@ -435,6 +435,7 @@ function ptsOf(a: Draft) {
   return p;
 }
 function themPtsOf(a: Draft) {
+  if (a.actionType === 'faute-technique' && a.foulOutcome === 'technical-against') return a.ftMade || 0;
   if (a.context === 'defense' && a.actionType === 'tir' && a.shotResult === 'made')
     return a.shotType === '3PTS' ? 3 : a.shotType === 'LF' ? 1 : 2;
   if (a.context === 'defense' && a.actionType === 'faute-commise') {
@@ -4882,7 +4883,15 @@ export default function PriseStatsProPage() {
     }
 
     let next: Ctx, inbound = false;
-    if (a.actionType === 'touche') {
+    if (a.actionType === 'faute-technique') {
+      // FIBA : le LF technique ne change pas à lui seul la possession en cours.
+      next = a.context;
+    }
+    else if (a.actionType === 'touche' && a.reboundType) {
+      next = reboundNext(a.context, a.reboundType);
+      inbound = a.reboundType === 'touche-pour';
+    }
+    else if (a.actionType === 'touche') {
       // Touche en ATTAQUE : ballon pour nous.
       // Touche en DÉFENSE : l'adversaire garde la balle, on repart au Temps fort.
       next = a.context === 'defense' ? 'defense' : 'attaque';
@@ -4947,6 +4956,11 @@ export default function PriseStatsProPage() {
     const lastMiss = d.ftResults[d.ftResults.length - 1] === 'miss';
     const isAndOne = d.specialCase === '2pts+1lf' || d.specialCase === '3pts+1lf';
 
+    if (d.actionType === 'faute-technique') {
+      commit({ ...d, shotResult: anyMade ? 'made' : 'missed' });
+      return;
+    }
+
     // Sur un 2+1 / 3+1, le panier est acquis AVANT le LF.
     // Un LF raté ne doit donc jamais transformer le panier en tir raté.
     if (isAndOne) {
@@ -5001,7 +5015,10 @@ export default function PriseStatsProPage() {
   /* -------- navigation dynamique du workflow -------- */
   const workflowOn = (key: keyof LiveWorkflowPrefs) => {
     if (codingMode === 'post') return workflowPrefs[key];
-    if (codingMode === 'live') return (key === 'system' || key === 'temps') ? workflowPrefs[key] : true;
+    if (codingMode === 'live') {
+      if (key === 'system' || key === 'temps' || key === 'zone') return workflowPrefs[key];
+      return true;
+    }
     if (codingMode === 'live-individual') {
       if (key === 'zone' || key === 'rebound' || key === 'assist') return workflowPrefs[key];
       if (key === 'player') return true;
@@ -5039,7 +5056,8 @@ export default function PriseStatsProPage() {
   };
 
   const routePostShot = (d: Draft) => {
-    if (workflowOn('zone')) { setDraft(d); setStage('zone'); return; }
+    // La shot chart ne sert qu'à nos tirs. En défense on enchaîne directement.
+    if (d.context !== 'defense' && workflowOn('zone')) { setDraft(d); setStage('zone'); return; }
     if (d.shotResult === 'missed' && workflowOn('rebound')) { setDraft(d); setStage('rebound'); return; }
     if (d.context !== 'defense' && d.shotResult === 'made' && workflowOn('assist')) { setDraft(d); setStage('assist'); return; }
     commit(d);
@@ -5087,10 +5105,35 @@ export default function PriseStatsProPage() {
   if (codingMode === 'live-individual') {
     d = { ...d, context: draft.context || 'attaque' };
     if (id === 'tir') { setDraft(d); setStage('result'); return; }
+
+    // Faute offensive : faute personnelle + balle perdue, puis on passe en défense.
+    if (id === 'faute-commise' && d.context === 'attaque') {
+      const offensiveFoul = { ...d, foulOutcome: 'offensive' };
+      if (!offensiveFoul.playerId) { setDraft(offensiveFoul); setStage('player'); return; }
+      commit(offensiveFoul);
+      return;
+    }
+
     if (id === 'faute-commise' && d.context === 'defense') { setDraft(d); setStage('player'); return; }
+
+    // En défense, la faute provoquée appartient à un de nos joueurs :
+    // on demande donc le joueur avant la suite de faute.
+    if (id === 'faute-provoquee' && d.context === 'defense') { setDraft(d); setStage('player'); return; }
+
     if (id === 'interception' || id === 'contre') { setDraft({ ...d, context:'defense' }); setStage('player'); return; }
-    if (id === 'faute-provoquee' || id === 'faute-commise') { setDraft(d); setStage('faute'); return; }
+    if (id === 'faute-provoquee') { setDraft(d); setStage('faute'); return; }
+
+    // La faute technique est volontairement une action d'équipe :
+    // l'écran suivant demande uniquement qui bénéficie du LF.
+    if (id === 'faute-technique') { setDraft(d); setStage('faute'); return; }
+
     commit(d);
+    return;
+  }
+
+  if (id === 'faute-technique') {
+    setDraft(d);
+    setStage('faute');
     return;
   }
 
@@ -5145,6 +5188,12 @@ export default function PriseStatsProPage() {
   if (codingMode === 'live-individual') {
     if (draft.actionType) {
       const d = { ...draft, playerId: id };
+      // Faute offensive : dès que le joueur est choisi, on valide PF + BP
+      // et la possession bascule automatiquement en défense.
+      if (draft.actionType === 'faute-commise' && draft.context === 'attaque') {
+        commit({ ...d, foulOutcome: 'offensive' });
+        return;
+      }
       if (draft.actionType === 'faute-commise' || draft.actionType === 'faute-provoquee') { setDraft(d); setStage('faute'); return; }
       if (draft.actionType === 'contre') { setDraft(d); setStage('rebound'); return; }
       commit(d);
@@ -5184,6 +5233,20 @@ export default function PriseStatsProPage() {
   setStage("action");
 };
   const foulPick = (o: string) => {
+    if (o === 'technical-for' || o === 'technical-against') {
+      setDraft({
+        ...draft,
+        foulOutcome: o,
+        shotType: 'LF',
+        shotResult: '',
+        specialCase: 'technical',
+        ftAttempts: 1,
+        ftMade: 0,
+        ftResults: [],
+      });
+      setStage('ft');
+      return;
+    }
     if (o === 'touche') { commit({ ...draft, foulOutcome: 'touche' }); return; }
     if (o === '2plus1' || o === '3plus1') {
       const isTwoPlusOne = o === '2plus1';
@@ -5332,7 +5395,7 @@ export default function PriseStatsProPage() {
     if (a.foulOutcome === 'rebound-foul-committed' || a.foulOutcome === 'rebound-foul-drawn') return 'rebound-foul-player';
     if (!a.context) return 'context';
     if (a.actionType === 'tir') return a.shotType ? 'result' : 'action';
-    if (a.actionType === 'faute-commise' || a.actionType === 'faute-provoquee') return 'faute';
+    if (a.actionType === 'faute-commise' || a.actionType === 'faute-provoquee' || a.actionType === 'faute-technique') return 'faute';
     if (a.actionType === 'touche') return 'inbound';
     if (a.actionType) return 'action';
     if (a.playerId) return 'action';
@@ -7808,9 +7871,10 @@ export default function PriseStatsProPage() {
           <button className={`bt def ${draft.context === 'defense' ? 'active' : ''}`} onClick={() => ctxPick('defense')}><span className="ic">🛡</span><span className="lbl">DÉFENSE</span></button>
         </div></>;
       case 'inbound':
-        return <>{head('Remise en jeu', 'Sortie de balle / faute → on remet en jeu')}<div className="grid c2 big">
+        return <>{head('Remise en jeu', 'Sortie / touche → choisis uniquement le type de remise en jeu')}<div className="grid c3 big">
           <button className={`bt ${draft.inbound === 'slob' ? 'active' : ''}`} onClick={() => inboundPick('slob')}><span className="ic">↔</span><span className="lbl">SLOB<br /><small className="mut">Côté</small></span></button>
           <button className={`bt ${draft.inbound === 'blob' ? 'active' : ''}`} onClick={() => inboundPick('blob')}><span className="ic">⎯</span><span className="lbl">BLOB<br /><small className="mut">Ligne de fond</small></span></button>
+          <button className={`bt ${draft.inbound === 'premiere-moitie' ? 'active' : ''}`} onClick={() => inboundPick('premiere-moitie')}><span className="ic">◐</span><span className="lbl">PREMIÈRE MOITIÉ DE TERRAIN<br /><small className="mut">Aucun système associé</small></span></button>
         </div></>;
       case 'systeme': {
         const firstLine = systemeButtons.filter((item) => item.id === 'contre-attaque' || item.id === 'transition');
@@ -7840,6 +7904,16 @@ export default function PriseStatsProPage() {
       <>
         {head('Joueur', title)}
         {players3(draft.playerId, playerPick)}
+        {codingMode === 'live-individual' &&
+          draft.context === 'attaque' &&
+          draft.actionType === 'perte' && (
+            <button
+              className="chip"
+              onClick={() => commit({ ...draft, playerId: null, actionType: 'perte' })}
+            >
+              👥 ÉQUIPE · balle perdue
+            </button>
+          )}
         {draft.context === 'defense' &&
           (draft.actionType === 'perte-adverse' || draft.actionType === 'interception') && (
           <button
@@ -7907,6 +7981,19 @@ export default function PriseStatsProPage() {
       }
       case 'faute': {
         const fl = (key: string, fallback: string) => codingLabel('foul', key, fallback);
+
+        if (draft.actionType === 'faute-technique') {
+          return (
+            <>
+              {head('Faute technique', '1 LF pour l’équipe qui n’a pas pris la faute technique')}
+              <div className="foulOutcomeGrid">
+                <button className="chip" onClick={() => foulPick('technical-for')}>🟢 1 LF POUR MOI</button>
+                <button className="chip" onClick={() => foulPick('technical-against')}>🔴 1 LF ADVERSE</button>
+              </div>
+            </>
+          );
+        }
+
         return draft.actionType === 'faute-commise'
           ? (
               <>
@@ -7991,14 +8078,6 @@ export default function PriseStatsProPage() {
                   <>
                     {!isDefense && (
                       <>
-                        <div className="sublbl resultSectionLabel">Lancers francs / And-one</div>
-                        <div className="resultShotsGrid">
-                          <button className="chip" style={!codingButtonEnabled('result','lf1') ? {display:'none'} : undefined} onClick={() => startFreeThrows(1)}>{codingLabel('result','lf1','1 LF')}</button>
-                          <button className="chip" style={!codingButtonEnabled('result','lf2') ? {display:'none'} : undefined} onClick={() => startFreeThrows(2)}>{codingLabel('result','lf2','2 LF')}</button>
-                          <button className="chip" style={!codingButtonEnabled('result','lf3') ? {display:'none'} : undefined} onClick={() => startFreeThrows(3)}>{codingLabel('result','lf3','3 LF')}</button>
-                          <button className="chip" style={!codingButtonEnabled('result','2plus1') ? {display:'none'} : undefined} onClick={() => special('2pts1lf')}>{codingLabel('result','2plus1','2 PTS + 1 LF')}</button>
-                          <button className="chip" style={!codingButtonEnabled('result','3plus1') ? {display:'none'} : undefined} onClick={() => special('3pts1lf')}>{codingLabel('result','3plus1','3 PTS + 1 LF')}</button>
-                        </div>
                         <div className="sublbl resultSectionLabel">Autres résultats joueur</div>
                         <div className="resultAllActionsGrid">
                           <button className="chip resultActionBtn" style={!codingButtonEnabled('att-action','faute-provoquee') ? {display:'none'} : undefined} onClick={() => actionPick('faute-provoquee')}>🔔 {codingLabel('att-action','faute-provoquee','Faute provoquée')}</button>
@@ -8020,14 +8099,6 @@ export default function PriseStatsProPage() {
                   </>
                 ) : (
                   <>
-                    <div className="sublbl resultSectionLabel">Lancers francs / And-one</div>
-                    <div className="resultShotsGrid">
-                      <button className="chip" style={!codingButtonEnabled('result','lf1') ? {display:'none'} : undefined} onClick={() => startFreeThrows(1)}>{codingLabel('result','lf1','1 LF')}</button>
-                      <button className="chip" style={!codingButtonEnabled('result','lf2') ? {display:'none'} : undefined} onClick={() => startFreeThrows(2)}>{codingLabel('result','lf2','2 LF')}</button>
-                      <button className="chip" style={!codingButtonEnabled('result','lf3') ? {display:'none'} : undefined} onClick={() => startFreeThrows(3)}>{codingLabel('result','lf3','3 LF')}</button>
-                      <button className="chip" style={!codingButtonEnabled('result','2plus1') ? {display:'none'} : undefined} onClick={() => special('2pts1lf')}>{codingLabel('result','2plus1','2 PTS + 1 LF')}</button>
-                      <button className="chip" style={!codingButtonEnabled('result','3plus1') ? {display:'none'} : undefined} onClick={() => special('3pts1lf')}>{codingLabel('result','3plus1','3 PTS + 1 LF')}</button>
-                    </div>
                     <div className="sublbl resultSectionLabel">Autres résultats</div>
                     <div className="resultAllActionsGrid">
                       {codingButtonsFor(isDefense ? 'def-action' : 'att-action')
@@ -8094,7 +8165,16 @@ export default function PriseStatsProPage() {
         );
       }
       case 'ft':
-        return <>{head('Lancers francs', (draft.specialCase === '2pts+1lf' || draft.specialCase === '3pts+1lf') ? 'Lancer franc bonus (and-one)' : draft.actionType === 'faute-commise' ? `${draft.ftAttempts} LF adverses — dans l'ordre` : `${draft.ftAttempts} LF — dans l'ordre`)}{ftSeq()}</>;
+        return <>{head(
+          'Lancers francs',
+          draft.actionType === 'faute-technique'
+            ? (draft.foulOutcome === 'technical-for' ? '1 LF technique pour nous' : '1 LF technique adverse')
+            : (draft.specialCase === '2pts+1lf' || draft.specialCase === '3pts+1lf')
+              ? 'Lancer franc bonus (and-one)'
+              : draft.actionType === 'faute-commise'
+                ? `${draft.ftAttempts} LF adverses — dans l'ordre`
+                : `${draft.ftAttempts} LF — dans l'ordre`
+        )}{ftSeq()}</>;
       case 'zone':
         return <>{head('Où ?', 'Cliquez directement sur le terrain (shot chart)')}<div className="tip">Pas d'étiquette de zone : cliquez l'emplacement exact du tir sur le terrain à droite.</div></>;
       case 'rebound': {
@@ -8117,8 +8197,9 @@ export default function PriseStatsProPage() {
                   { id: 'def', label: '🏀 Récupération adverse' },
                 ]
               : [
-                  { id: 'touche-contre', label: '↩ Touche' },
-                  { id: 'def', label: '🏀 Récupération de mon équipe' },
+                  { id: 'touche-contre', label: '↩ Touche / sortie' },
+                  { id: 'off', label: '🔴 Récupération adverse' },
+                  { id: 'def', label: '🟢 Récupération de mon équipe' },
                 ];
 
           return (
@@ -8143,7 +8224,7 @@ export default function PriseStatsProPage() {
         // moteur (isMyRebound/reboundNext) — jamais modifiés. Seuls les LIBELLÉS sont
         // configurables via livestat_coding_buttons (catégorie 'rebound') : la config
         // par équipe écrase le label par key, sinon on garde les libellés par défaut.
-        const rebDefaults: Record<string, string> = { 'off': 'Rebond offensif', 'def': 'Rebond défensif', 'touche-pour': 'Touche pour', 'touche-contre': 'Touche contre' };
+        const rebDefaults: Record<string, string> = { 'off': 'Rebond offensif', 'def': 'Rebond défensif', 'touche-pour': 'Touche / sortie pour moi', 'touche-contre': 'Touche / sortie contre moi' };
         const rebCfg = codingButtonsFor('rebound');
         const rebLabelOf = (id: string) => rebCfg.find((c) => c.key === id)?.label ?? rebDefaults[id];
         const reb: string[] = (codingMode === 'live-individual' ? ['off', 'def'] : ['off', 'def', 'touche-pour', 'touche-contre']).filter((id) => rebCfg.some((c) => c.key === id));
