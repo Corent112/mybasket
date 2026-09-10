@@ -32,6 +32,18 @@ type CourtStyle = {
   brandingColor: string;
 };
 
+type CourtBranding = {
+  text: string;
+  logoDataUrl: string | null;
+  useCustomBranding: boolean;
+};
+
+const DEFAULT_COURT_BRANDING: CourtBranding = {
+  text: 'MYBASKET.FR',
+  logoDataUrl: null,
+  useCustomBranding: false,
+};
+
 const DEFAULT_COURT_STYLE: CourtStyle = {
   floorColor: '#F2B55F',
   paintColor: '#6B1A2C',
@@ -90,6 +102,15 @@ const normalizeCourtStyle = (value: unknown): CourtStyle => {
     lineColor: safeHex(v.lineColor, DEFAULT_COURT_STYLE.lineColor),
     borderColor: safeHex(v.borderColor, DEFAULT_COURT_STYLE.borderColor),
     brandingColor: safeHex(v.brandingColor, DEFAULT_COURT_STYLE.brandingColor),
+  };
+};
+
+const normalizeCourtBranding = (value: unknown): CourtBranding => {
+  const v = (value && typeof value === 'object' ? value : {}) as Partial<CourtBranding>;
+  return {
+    text: typeof v.text === 'string' ? v.text.slice(0, 40) : DEFAULT_COURT_BRANDING.text,
+    logoDataUrl: typeof v.logoDataUrl === 'string' && v.logoDataUrl.startsWith('data:image/') ? v.logoDataUrl : null,
+    useCustomBranding: v.useCustomBranding === true,
   };
 };
 
@@ -199,11 +220,30 @@ const resetPlaquette = () => {
   const [courtStyle, setCourtStyle] = useState<CourtStyle>(DEFAULT_COURT_STYLE);
   const [courtStyleOpen, setCourtStyleOpen] = useState(false);
   const [phaseCourtThumbnailUrl, setPhaseCourtThumbnailUrl] = useState(MYBASKET_DEMI_URL);
+  const [courtBranding, setCourtBranding] = useState<CourtBranding>(DEFAULT_COURT_BRANDING);
+  const [courtBrandingOpen, setCourtBrandingOpen] = useState(false);
+  const courtBrandingRef = useRef<CourtBranding>(DEFAULT_COURT_BRANDING);
+  const courtBrandingLogoRef = useRef<HTMLImageElement | null>(null);
   const courtStyleRef = useRef<CourtStyle>(DEFAULT_COURT_STYLE);
   const courtTextureRef = useRef<Record<'half' | 'full', { key: string; canvas: HTMLCanvasElement } | null>>({
     half: null,
     full: null,
   });
+
+  const applyCourtBranding = (value: unknown) => {
+    const next = normalizeCourtBranding(value);
+    courtBrandingRef.current = next;
+    courtTextureRef.current = { half: null, full: null };
+    setCourtBranding(next);
+    if (next.logoDataUrl) {
+      const logo = new Image();
+      logo.onload = () => { courtBrandingLogoRef.current = logo; courtTextureRef.current = { half: null, full: null }; render(); };
+      logo.src = next.logoDataUrl;
+      courtBrandingLogoRef.current = logo;
+    } else {
+      courtBrandingLogoRef.current = null;
+    }
+  };
 
   const applyCourtStyle = (value: unknown) => {
     const next = normalizeCourtStyle(value);
@@ -301,6 +341,9 @@ useEffect(() => {
 
       if (schemaData.courtStyle) {
         applyCourtStyle(schemaData.courtStyle);
+      }
+      if (schemaData.courtBranding) {
+        applyCourtBranding(schemaData.courtBranding);
       }
 
       if (typeof schemaData.current === "number") {
@@ -536,7 +579,7 @@ const currentRef = useRef(current);
           inPaint =
             u >= 0.382 && u <= 0.618 &&
             v >= 0.128 && v <= 0.49;
-          // Le rond central du demi-terrain est partiellement visible en bas.
+          // Le rond central reste sur le parquet : seule sa ligne change de couleur.
           inCenter =
             u >= 0.37 && u <= 0.63 &&
             v >= 0.835;
@@ -556,8 +599,8 @@ const currentRef = useRef(current);
           continue;
         }
 
-        // Raquette + rond central : même famille de couleurs.
-        if ((inPaint || inCenter) && burgundy) {
+        // La raquette prend la couleur dédiée. Le rond central reste parquet.
+        if (inPaint && burgundy) {
           applySolid(idx, paint);
           continue;
         }
@@ -570,14 +613,13 @@ const currentRef = useRef(current);
 
         // Parquet : teinte la texture sans la transformer en aplat.
         // On conserve les variations de luminosité du bois d'origine.
+        // Tout l’intérieur du terrain hors raquette est du parquet.
+        // On ne dépend plus uniquement de la couleur du JPEG d’origine : cela
+        // couvre aussi les zones du logo/rond central qui restaient orange/blanches.
         const floorPixel =
           inCourt &&
           !inPaint &&
-          !inCenter &&
-          r > 150 &&
-          g > 85 &&
-          b < 190 &&
-          r > b * 1.15;
+          !white;
 
         if (floorPixel) {
           const lum = (r * 0.299 + g * 0.587 + b * 0.114) / 255;
@@ -590,6 +632,69 @@ const currentRef = useRef(current);
     }
 
     ox.putImageData(image, 0, 0);
+
+    // Rond central : on suit la référence terrain fournie. Son intérieur est du
+    // parquet (jamais la couleur de la raquette) et seul son tracé prend lineColor.
+    // Cette correction efface également le cartouche/logo central du JPEG source.
+    const drawCenterCircle = (cx: number, cy: number, radius: number, clipTop?: number) => {
+      ox.save();
+      if (typeof clipTop === 'number') {
+        ox.beginPath();
+        ox.rect(0, clipTop, out.width, out.height - clipTop);
+        ox.clip();
+      }
+      ox.fillStyle = style.floorColor;
+      ox.beginPath();
+      ox.arc(cx, cy, radius + Math.max(3, out.width * 0.006), 0, Math.PI * 2);
+      ox.fill();
+      ox.strokeStyle = style.lineColor;
+      ox.lineWidth = Math.max(3, out.width * 0.006);
+      ox.beginPath();
+      ox.arc(cx, cy, radius, 0, Math.PI * 2);
+      ox.stroke();
+      ox.restore();
+    };
+
+    if (ct === 'half') {
+      drawCenterCircle(out.width * 0.5, out.height * 1.005, out.width * 0.105, out.height * 0.835);
+    } else {
+      drawCenterCircle(out.width * 0.5, out.height * 0.5, out.width * 0.0835);
+    }
+
+    const branding = courtBrandingRef.current;
+    if (branding.useCustomBranding) {
+      const drawBrand = (cx: number, cy: number, maxW: number, maxH: number) => {
+        ox.fillStyle = style.borderColor;
+        ox.fillRect(cx - maxW / 2, cy - maxH / 2, maxW, maxH);
+        const logo = courtBrandingLogoRef.current;
+        const hasLogo = !!(logo && logo.complete && logo.naturalWidth > 0);
+        const text = branding.text.trim();
+        let x = cx - maxW * 0.42;
+        if (hasLogo && logo) {
+          const lh = maxH * 0.62;
+          const lw = Math.min(maxW * 0.22, lh * (logo.naturalWidth / logo.naturalHeight));
+          ox.drawImage(logo, x, cy - lh / 2, lw, lh);
+          x += lw + maxW * 0.035;
+        }
+        if (text) {
+          ox.fillStyle = style.brandingColor;
+          ox.font = `900 ${Math.max(12, Math.round(maxH * 0.42))}px Arial, sans-serif`;
+          ox.textBaseline = 'middle';
+          ox.textAlign = 'left';
+          ox.fillText(text, x, cy, maxW * 0.78);
+        }
+      };
+      if (ct === 'half') {
+        drawBrand(out.width * 0.5, out.height * 0.067, out.width * 0.68, out.height * 0.11);
+      } else {
+        drawBrand(out.width * 0.035, out.height * 0.5, out.width * 0.055, out.height * 0.62);
+        ox.save();
+        ox.translate(out.width, out.height);
+        ox.rotate(Math.PI);
+        drawBrand(out.width * 0.035, out.height * 0.5, out.width * 0.055, out.height * 0.62);
+        ox.restore();
+      }
+    }
     return out;
   };
 
@@ -601,7 +706,7 @@ const currentRef = useRef(current);
 
     // Garantie importante : sans personnalisation, on dessine l'image originale
     // elle-même. Taille, proportions, cadrage et rendu historique restent inchangés.
-    if (isDefaultCourtStyle(style)) return img;
+    if (isDefaultCourtStyle(style) && !courtBrandingRef.current.useCustomBranding) return img;
 
     const key = [
       style.floorColor,
@@ -611,6 +716,9 @@ const currentRef = useRef(current);
       style.brandingColor,
       img.naturalWidth,
       img.naturalHeight,
+      courtBrandingRef.current.useCustomBranding ? 'custom' : 'original',
+      courtBrandingRef.current.text,
+      courtBrandingRef.current.logoDataUrl || '',
     ].join('|');
 
     const cached = courtTextureRef.current[ct];
@@ -626,7 +734,7 @@ const currentRef = useRef(current);
 
     // Les miniatures historiques utilisent le demi-terrain. On conserve exactement
     // cette géométrie, mais on leur applique la même texture colorée que le canvas.
-    if (!img || !readyRef.current.demi || isDefaultCourtStyle(courtStyleRef.current)) {
+    if (!img || !readyRef.current.demi || (isDefaultCourtStyle(courtStyleRef.current) && !courtBrandingRef.current.useCustomBranding)) {
       setPhaseCourtThumbnailUrl(MYBASKET_DEMI_URL);
       return;
     }
@@ -2078,11 +2186,12 @@ animPosRef.current = { players, balls };
     courtRef.current = courtType;
     selectionRef.current = selection;
     courtStyleRef.current = courtStyle;
+    courtBrandingRef.current = courtBranding;
     courtTextureRef.current = { half: null, full: null };
     refreshPhaseCourtThumbnail();
     render();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [phases, current, courtType, selection, courtStyle]);
+  }, [phases, current, courtType, selection, courtStyle, courtBranding]);
 
   // Raccourcis clavier : Undo/Redo, suppression, rotation (r / Shift+r), z-order ( [ ] et Shift pour 1er/arrière-plan )
   useEffect(() => {
@@ -2958,6 +3067,7 @@ useEffect(() => {
       }
       if (data.sheet) setSheet(data.sheet);
       if (data.courtStyle) applyCourtStyle(data.courtStyle);
+      if (data.courtBranding) applyCourtBranding(data.courtBranding);
       if (loadedPhases.length > 0) {
         phasesRef.current = loadedPhases;
         setPhases(loadedPhases);
@@ -3028,6 +3138,7 @@ const buildPlaquetteResult = async (opts: {
     phaseIndex,
     courtType: courtRef.current,
     courtStyle: courtStyleRef.current,
+    courtBranding: courtBrandingRef.current,
     phases: fullPhases,
     sheet,
     current: phaseIndex,
@@ -3044,6 +3155,7 @@ const buildPlaquetteResult = async (opts: {
     title: title || "",
     courtType: courtRef.current,
     courtStyle: courtStyleRef.current,
+    courtBranding: courtBrandingRef.current,
     schemaImages: uploadedUrls,
     schemaDataList,
   };
@@ -3209,7 +3321,7 @@ const saveAndGoCreate = async (kind: "systeme" | "exercice") => {
 };
 
 const exportJson = () => {
-  const data = JSON.stringify({ title, courtType, courtStyle: courtStyleRef.current, phases, sheet }, null, 2);
+  const data = JSON.stringify({ title, courtType, courtStyle: courtStyleRef.current, courtBranding: courtBrandingRef.current, phases, sheet }, null, 2);
   const blob = new Blob([data], { type: 'application/json' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
@@ -3333,10 +3445,11 @@ const exportJson = () => {
       id: 'dg_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
       title: title || 'Schéma',
       imageUrl,
-      playData: JSON.stringify({ title, courtType, courtStyle: courtStyleRef.current, phases, sheet }),
+      playData: JSON.stringify({ title, courtType, courtStyle: courtStyleRef.current, courtBranding: courtBrandingRef.current, phases, sheet }),
       phases: JSON.parse(JSON.stringify(phases)),
       courtType,
       courtStyle: courtStyleRef.current,
+      courtBranding: courtBrandingRef.current,
       notes: (phases[current] && phases[current].notes) || '',
       createdAt: Date.now(),
     };
@@ -3865,6 +3978,15 @@ const exportJson = () => {
                   🎨 Couleurs du terrain
                 </button>
 
+                <button
+                  className="btn btn-outline btn-block btn-small"
+                  id="courtBrandingBtn"
+                  style={{ textAlign: 'center', fontWeight: 700, borderColor: 'var(--or, #D4A24C)' }}
+                  onClick={() => setCourtBrandingOpen(true)}
+                >
+                  ✨ Personnaliser le terrain
+                </button>
+
                 <button className="btn btn-red btn-block btn-small" id="delSelectedBtn" onClick={deleteSelected}>🗑 Supprimer sélection</button>
                 <button className="btn btn-outline btn-block btn-small" id="dupSelectedBtn" onClick={duplicateSelected}>⎘ Dupliquer</button>
                 <label style={{ fontSize: '.72rem', color: 'var(--gris-text)', textTransform: 'uppercase', letterSpacing: '.04em', marginTop: '.25rem' }}>Couleur de la sélection</label>
@@ -4111,6 +4233,32 @@ const exportJson = () => {
           </div>
         )}
 
+
+
+        {courtBrandingOpen && (
+          <div onClick={() => setCourtBrandingOpen(false)} style={{ position:'fixed', inset:0, background:'rgba(15,15,18,.56)', display:'flex', alignItems:'center', justifyContent:'center', zIndex:4200, padding:'1rem' }}>
+            <div onClick={(e) => e.stopPropagation()} style={{ width:520, maxWidth:'96vw', background:'#fff', borderRadius:14, boxShadow:'0 18px 60px rgba(0,0,0,.36)', padding:'1rem 1.1rem 1.1rem' }}>
+              <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', gap:'.8rem', marginBottom:'.8rem' }}>
+                <div style={{ fontWeight:900, fontSize:'1.05rem', color:'#1f1f1f' }}>✨ Personnaliser le terrain</div>
+                <button type="button" onClick={() => setCourtBrandingOpen(false)} style={{ border:0, background:'transparent', fontSize:'1.35rem', cursor:'pointer' }}>×</button>
+              </div>
+              <label style={{ display:'block', fontSize:'.78rem', fontWeight:800, marginBottom:'.35rem' }}>Texte affiché sur le terrain</label>
+              <input value={courtBranding.text} maxLength={40} onChange={(e) => applyCourtBranding({ ...courtBrandingRef.current, text:e.target.value, useCustomBranding:true })} placeholder="MYBASKET.FR" style={{ width:'100%', boxSizing:'border-box', height:38, border:'1px solid #D9D9D9', borderRadius:8, padding:'0 .7rem', marginBottom:'.85rem' }} />
+              <label style={{ display:'block', fontSize:'.78rem', fontWeight:800, marginBottom:'.35rem' }}>Logo</label>
+              <input type="file" accept="image/png,image/jpeg,image/webp" onChange={(e) => {
+                const file=e.target.files?.[0]; if(!file) return;
+                const reader=new FileReader();
+                reader.onload=()=>{ const src=String(reader.result||''); const img=new Image(); img.onload=()=>{ const max=512; const scale=Math.min(1,max/Math.max(img.naturalWidth,img.naturalHeight)); const c=document.createElement('canvas'); c.width=Math.max(1,Math.round(img.naturalWidth*scale)); c.height=Math.max(1,Math.round(img.naturalHeight*scale)); c.getContext('2d')?.drawImage(img,0,0,c.width,c.height); applyCourtBranding({ ...courtBrandingRef.current, logoDataUrl:c.toDataURL('image/png'), useCustomBranding:true }); }; img.src=src; }; reader.readAsDataURL(file);
+              }} style={{ width:'100%', marginBottom:'.85rem' }} />
+              {courtBranding.logoDataUrl && <div style={{ display:'flex', alignItems:'center', gap:'.7rem', marginBottom:'.85rem' }}><img src={courtBranding.logoDataUrl} alt="Logo personnalisé" style={{ width:64, height:64, objectFit:'contain', border:'1px solid #eee', borderRadius:8 }} /><button type="button" className="btn btn-outline btn-small" onClick={() => applyCourtBranding({ ...courtBrandingRef.current, logoDataUrl:null, useCustomBranding:true })}>Retirer le logo</button></div>}
+              <div style={{ display:'flex', gap:'.55rem', marginTop:'.7rem' }}>
+                <button type="button" className="btn btn-outline" style={{ flex:1 }} onClick={() => applyCourtBranding(DEFAULT_COURT_BRANDING)}>↺ Logo / texte original</button>
+                <button type="button" className="btn" style={{ flex:1, background:'var(--or, #D4A24C)', color:'#20160A', fontWeight:800 }} onClick={() => setCourtBrandingOpen(false)}>Fermer</button>
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* ----- Personnalisation des couleurs du terrain ----- */}
         {courtStyleOpen && (
           <div
@@ -4152,12 +4300,12 @@ const exportJson = () => {
               </div>
 
               <div style={{ fontSize: '.76rem', color: '#6b6b6b', marginBottom: '.9rem', lineHeight: 1.35 }}>
-                La taille, le cadrage et les repères du terrain restent strictement identiques. Le rond central reprend automatiquement les couleurs de la raquette et des lignes.
+                La taille, le cadrage et les repères du terrain restent strictement identiques. Le rond central reste sur le parquet et sa ligne reprend la couleur des lignes du terrain.
               </div>
 
               {([
                 ['floorColor', 'Parquet'],
-                ['paintColor', 'Raquette / rond central'],
+                ['paintColor', 'Raquette'],
                 ['lineColor', 'Lignes'],
                 ['borderColor', 'Contour du terrain'],
                 ['brandingColor', 'Texte MYBASKET'],
