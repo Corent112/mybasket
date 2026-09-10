@@ -618,18 +618,24 @@ const currentRef = useRef(current);
 
         if (ct === 'full') {
           inCourt = u >= 0.064 && u <= 0.936 && v >= 0.135 && v <= 0.865;
+          // Bornes calées sur les bords réels des deux raquettes dans l'image
+          // source 1024×658. On reste volontairement à l'intérieur du trait pour
+          // qu'aucune couleur de raquette ne déborde sur le parquet.
           inPaint =
-            (u >= 0.064 && u <= 0.245 && v >= 0.382 && v <= 0.618) ||
-            (u >= 0.755 && u <= 0.936 && v >= 0.382 && v <= 0.618);
+            (u >= 71 / 1024 && u <= 244 / 1024 && v >= 256 / 658 && v <= 401 / 658) ||
+            (u >= 779 / 1024 && u <= 952 / 1024 && v >= 256 / 658 && v <= 401 / 658);
           inCenter =
             u >= 0.423 && u <= 0.577 &&
             v >= 0.382 && v <= 0.618;
           inBrandArea = !inCourt && (u < 0.075 || u > 0.925);
         } else {
           inCourt = u >= 0.133 && u <= 0.867 && v >= 0.128;
+          // Demi-terrain source 746×584 : mêmes bornes précises que le
+          // rectangle de raquette visible. Cela évite les fines bandes de couleur
+          // qui pouvaient apparaître à gauche, à droite ou sous la raquette.
           inPaint =
-            u >= 0.382 && u <= 0.618 &&
-            v >= 0.128 && v <= 0.49;
+            u >= 291 / 746 && u <= 456 / 746 &&
+            v >= 80 / 584 && v <= 277 / 584;
           // Le rond central reste sur le parquet : seule sa ligne change de couleur.
           inCenter =
             u >= 0.37 && u <= 0.63 &&
@@ -765,11 +771,11 @@ const currentRef = useRef(current);
         ox.fillStyle = style.borderColor;
         ox.fillRect(cx - maxW / 2, cy - maxH / 2, maxW, maxH);
 
-        // Le terrain complet est stocké horizontalement puis tourné de +90° à l'écran.
-        // On dessine donc le branding à -90° dans la source afin que le texte
-        // reste parfaitement à l'endroit une fois le terrain affiché.
+        // Le terrain complet est stocké horizontalement puis tourné à l'écran.
+        // Son branding doit donc être dessiné verticalement dans la source pour
+        // apparaître horizontal, net et à la bonne taille après rotation.
         ox.translate(cx, cy);
-        if (rotateForFull) ox.rotate(-Math.PI / 2);
+        if (rotateForFull) ox.rotate(Math.PI / 2);
 
         const contentW = rotateForFull ? maxH : maxW;
         const contentH = rotateForFull ? maxW : maxH;
@@ -789,13 +795,15 @@ const currentRef = useRef(current);
         const selectedFont = branding.fontFamily === 'custom' && branding.customFontDataUrl
           ? '"MyBasketCourtCustomFont"'
           : `"${branding.fontFamily || 'Arial'}"`;
-        let fontSize = Math.max(12, Math.round(contentH * 0.46 * branding.textScale));
+        // Sur le terrain complet, la bande de branding est visuellement plus fine
+        // après rotation : on augmente la taille de base pour retrouver la présence
+        // du MYBASKET.FR historique. Le curseur utilisateur reste ensuite multiplicatif.
+        const baseTextRatio = rotateForFull ? 0.72 : 0.46;
+        let fontSize = Math.max(12, Math.round(contentH * baseTextRatio * branding.textScale));
         const gap = hasLogo && text ? contentW * 0.026 : 0;
-        // Le texte reste centré sur l'axe exact du terrain. Le logo se place à
-        // sa gauche sans jamais décaler le texte. On réduit seulement la police
-        // si l'ensemble ne tient plus dans la zone de branding.
-        const reservedLeft = hasLogo ? (logoW + gap) : 0;
-        const maxTextW = Math.max(1, contentW * 0.94 - reservedLeft * 2);
+        // Le TEXTE est centré sur l'axe du terrain. Le logo vit à sa gauche et ne
+        // participe jamais au calcul du centrage du texte.
+        const maxTextW = Math.max(1, contentW * (rotateForFull ? 0.82 : 0.86));
         ox.font = `900 ${fontSize}px ${selectedFont}, Arial, sans-serif`;
         if (text) {
           while (fontSize > 9 && ox.measureText(text).width > maxTextW) {
@@ -804,12 +812,14 @@ const currentRef = useRef(current);
           }
         }
         const textW = text ? ox.measureText(text).width : 0;
+        const textCenterX = bx;
+        const textLeft = textCenterX - textW / 2;
 
         ox.imageSmoothingEnabled = true;
         ox.imageSmoothingQuality = 'high';
         if (hasLogo && logo) {
           const logoX = text
-            ? bx - textW / 2 - gap - logoW
+            ? textLeft - gap - logoW
             : bx - logoW / 2;
           ox.drawImage(logo, logoX, by - logoH / 2, logoW, logoH);
         }
@@ -817,18 +827,19 @@ const currentRef = useRef(current);
           ox.fillStyle = style.brandingColor;
           ox.textBaseline = 'middle';
           ox.textAlign = 'center';
-          ox.fillText(text, bx, by);
+          ox.fillText(text, textCenterX, by);
         }
         ox.restore();
       };
       if (ct === 'half') {
         drawBrand(out.width * 0.5, out.height * 0.067, out.width * 0.72, out.height * 0.115);
       } else {
-        // Dans la source horizontale, le bord gauche devient le haut à l'écran
-        // et le bord droit devient le bas. Les deux utilisent la même correction
-        // d'orientation afin que les deux textes soient lisibles à l'endroit.
         drawBrand(out.width * 0.035, out.height * 0.5, out.width * 0.06, out.height * 0.64, true);
-        drawBrand(out.width * 0.965, out.height * 0.5, out.width * 0.06, out.height * 0.64, true);
+        ox.save();
+        ox.translate(out.width, out.height);
+        ox.rotate(Math.PI);
+        drawBrand(out.width * 0.035, out.height * 0.5, out.width * 0.06, out.height * 0.64, true);
+        ox.restore();
       }
     }
     return out;
