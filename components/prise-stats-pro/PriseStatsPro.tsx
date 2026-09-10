@@ -912,6 +912,11 @@ export default function PriseStatsProPage() {
   const [perQ, setPerQ] = useState<Record<number, { us: number; them: number }>>({ 1: { us: 0, them: 0 } });
   const [subSel, setSubSel] = useState<string | null>(null);
 
+  // LF technique en interruption : on mémorise le codage courant, on saisit le LF,
+  // puis on revient exactement au bloc où l'on était sans changer la possession.
+  const technicalFtReturnRef = useRef<{ stage: string; draft: Draft; history: string[]; wasRunning: boolean } | null>(null);
+  const [showTechnicalFtChoice, setShowTechnicalFtChoice] = useState(false);
+
   /* V6→final · boutons de codification configurables (Management).
      Chargés depuis livestat_coding_buttons pour l'équipe active ; si vide ou
      erreur → null → resolveCodingButtons retombe sur les constantes. Un
@@ -4144,6 +4149,47 @@ export default function PriseStatsProPage() {
     setRunning(true);
   };
 
+
+  const beginTechnicalFtInterruption = (side: 'us' | 'them') => {
+    if (!technicalFtReturnRef.current) {
+      technicalFtReturnRef.current = {
+        stage,
+        draft: { ...draft, ftResults: [...(draft.ftResults || [])] },
+        history: [...stageHistory],
+        wasRunning: running,
+      };
+    }
+    pauseVideo();
+    setRunning(false);
+    setShowTechnicalFtChoice(false);
+    const technicalDraft = emptyDraft();
+    technicalDraft.context = draft.context || 'attaque';
+    technicalDraft.actionType = 'faute-technique';
+    technicalDraft.foulOutcome = side === 'us' ? 'technical-for' : 'technical-against';
+    technicalDraft.shotType = 'LF';
+    technicalDraft.shotResult = '';
+    technicalDraft.specialCase = 'technical';
+    technicalDraft.ftAttempts = 1;
+    technicalDraft.ftMade = 0;
+    technicalDraft.ftResults = [];
+    setDraft(technicalDraft);
+    setStage('ft');
+  };
+
+  const cancelTechnicalFtInterruption = () => {
+    const snap = technicalFtReturnRef.current;
+    technicalFtReturnRef.current = null;
+    setShowTechnicalFtChoice(false);
+    if (!snap) return;
+    setDraft(snap.draft);
+    setStageHistory(snap.history);
+    setStage(snap.stage);
+    if (snap.wasRunning) {
+      if (hasVideoLoaded()) playVideo();
+      setRunning(true);
+    }
+  };
+
   // ESPACE. Sans vidéo : démarre UNE SEULE FOIS le temps réel continu du match.
   // Cette horloge ne s'arrête plus jusqu'à la fin et inclut tous les arrêts de jeu.
   // Avec vidéo : comportement historique lecture/pause de la vidéo.
@@ -4896,6 +4942,23 @@ export default function PriseStatsProPage() {
       const cur = perQ[a.q] || { us: 0, them: 0 };
       const nextPerQ = { ...perQ, [a.q]: { us: cur.us + ptsOf(a), them: cur.them + themPtsOf(a) } };
       syncLiveAggregates(nextActions, onCourt, nextPerQ);
+    }
+
+    // LF technique saisi depuis le panneau Live : c'est une interruption du codage
+    // courant, pas une nouvelle possession. Après l'enregistrement du LF, on restaure
+    // exactement le draft, l'étape et l'historique précédents.
+    if (!editingOriginal && a.actionType === 'faute-technique' && technicalFtReturnRef.current) {
+      const snap = technicalFtReturnRef.current;
+      technicalFtReturnRef.current = null;
+      setShowTechnicalFtChoice(false);
+      setDraft(snap.draft);
+      setStageHistory(snap.history);
+      setStage(snap.stage);
+      if (snap.wasRunning) {
+        if (hasVideoLoaded()) playVideo();
+        setRunning(true);
+      }
+      return;
     }
 
     // Une correction historique ne doit jamais modifier la possession LIVE
@@ -6491,7 +6554,7 @@ export default function PriseStatsProPage() {
             </div>
           )}
         </div>
-        {!(codingMode === 'live-individual' && showVideoPanel) && <div className="h-c compactScore">
+        {!(codingMode === 'live-individual' || codingMode === 'live') && <div className="h-c compactScore">
           <div className="team"><div className="logo">{teamName.slice(0, 2)}</div><span>{teamName}</span></div>
           <div className="score us">{scoreUs}</div>
           <div className="clockbox">
@@ -6518,8 +6581,8 @@ export default function PriseStatsProPage() {
                 <button onClick={() => { setShowProjectMenu(false); void saveProjectNow(false); }}>💾 Enregistrer</button>
                 <button onClick={() => { setShowProjectMenu(false); void saveProjectNow(true); }}>💾 Enregistrer et fermer</button>
                 <div className="projectMenuSep" />
-                <button onClick={() => { setShowProjectMenu(false); setVideoMaximized(false); setShowVideoPanel(true); }}>🎥 Ajouter une vidéo</button>
-                {showVideoPanel && <button onClick={() => { setShowProjectMenu(false); setVideoMaximized(false); setShowVideoPanel(false); if (workTab === 'center') setWorkTab('coding'); }}>✕ Masquer le bloc vidéo</button>}
+                <button onClick={() => { setShowProjectMenu(false); setVideoMaximized(false); setShowVideoPanel(true); setWorkTab('center'); }}>🎥 Ajouter une vidéo</button>
+                {showVideoPanel && <button onClick={() => { setShowProjectMenu(false); setVideoMaximized(false); setShowVideoPanel(false); if (workTab === 'center') setWorkTab('coding'); }}>✕ Masquer la vidéo</button>}
                 {showVideoPanel && videoProvider === 'local' && videoUrl && <button onClick={() => { setShowProjectMenu(false); void pickLocalVideoSmart(); }}>📁 Changer la vidéo locale</button>}
                 {codingMode === 'live-individual' && (
                   <button onClick={() => { setShowProjectMenu(false); setWorkflowPrefs((current) => ({ ...current, zone: !current.zone })); }}>
@@ -6545,7 +6608,7 @@ export default function PriseStatsProPage() {
         </div>
       </header>
 
-      {!(codingMode === 'live-individual' && showVideoPanel) && <div className="qstrip">
+      {!(codingMode === 'live-individual' || codingMode === 'live') && <div className="qstrip">
         {Object.keys(perQ).map((k) => <span key={k} className={`qbox ${+k === q ? 'cur' : ''}`}>{periodLabel(+k)} <b>{perQ[+k].us}-{perQ[+k].them}</b></span>)}
         <span className="foulbox usf">Fautes équipe {teamName || 'Nous'} <b>{usTeamFouls}</b></span>
         <span className="foulbox themf">Fautes adv. <b>{themTeamFouls}</b></span>
@@ -6563,13 +6626,13 @@ export default function PriseStatsProPage() {
             ref={liveWorkspaceRef}
             className={`live3 ${videoMaximized ? 'videoMaximized' : 'resizableLive3'} ${showVideoPanel ? '' : 'videoPanelHidden'}`}
             style={videoMaximized ? undefined : {
-              gridTemplateColumns: showVideoPanel ? `${videoPanePct}% 7px minmax(280px,1fr) 7px ${rightPanePx}px` : `minmax(280px,1fr) 7px ${rightPanePx}px`,
+              gridTemplateColumns: `${videoPanePct}% 7px minmax(280px,1fr) 7px ${rightPanePx}px`,
             }}
           >
-            {/* ============ GAUCHE · VIDÉO (optionnelle) ============ */}
-            {showVideoPanel && (<>
-            <section className={`lc lc-video ${workTab === 'center' ? 'mshow' : ''}`}>
-              <div className="videoSlot big">
+            {/* ============ GAUCHE · PILOTAGE LIVE / VIDÉO OPTIONNELLE ============ */}
+            <>
+            <section className={`lc lc-video liveControlPane ${workTab === 'center' ? 'mshow' : ''}`}>
+              {showVideoPanel && <div className="videoSlot big">
                 {(videoProvider === 'local' || videoProvider === 'google_drive') && videoUrl ? (
                   <video ref={videoRef} className="vplayer" src={videoUrl} controls preload="auto" onWheel={handleTrackpadScrub} title="Trackpad : glisse horizontalement pour avancer/reculer avec précision" onLoadedMetadata={(e) => {
                     const savedTime = inspectionVideoTimeRef.current ?? lastProjectVideoTimeRef.current;
@@ -6605,10 +6668,11 @@ export default function PriseStatsProPage() {
                     </div>
                   </div>
                 )}
-              </div>
+              </div>}
 
-              {codingMode === 'live-individual' && (
-                <div className="videoMatchControl">
+              {(codingMode === 'live-individual' || codingMode === 'live') && (
+                <div className={`videoMatchControl ${showVideoPanel ? 'withVideo' : 'withoutVideo'}`}>
+                  {!showVideoPanel && <div className="vmcPanelTitle">PILOTAGE DU MATCH</div>}
                   <div className="vmcTop">
                     <div className="vmcTeam"><b>{teamName || 'NOUS'}</b><strong>{scoreUs}</strong><small>Fautes {usTeamFouls}</small></div>
                     <div className="vmcClock">
@@ -6624,13 +6688,23 @@ export default function PriseStatsProPage() {
                     <button onClick={() => setPerQ((p) => { const cur = p[q] || { us: 0, them: 0 }; return { ...p, [q]: { ...cur, them: Math.max(0, cur.them - 1) } }; })}>− ADV</button>
                     <button onClick={() => setPerQ((p) => { const cur = p[q] || { us: 0, them: 0 }; return { ...p, [q]: { ...cur, them: cur.them + 1 } }; })}>+ ADV</button>
                   </div>
+                  <div className="vmcInterruptRow">
+                    <button className={`vmcFtInterrupt ${showTechnicalFtChoice ? 'on' : ''}`} onClick={() => setShowTechnicalFtChoice((v) => !v)}>⏸ LF TECH.</button>
+                    {showTechnicalFtChoice && (
+                      <div className="vmcFtChoice">
+                        <button onClick={() => beginTechnicalFtInterruption('us')}>1 LF POUR NOUS</button>
+                        <button onClick={() => beginTechnicalFtInterruption('them')}>1 LF ADVERSE</button>
+                        <button className="ghosty" onClick={cancelTechnicalFtInterruption}>Annuler</button>
+                      </div>
+                    )}
+                  </div>
                   <button className="vmcNextQuarter" onClick={() => changeQ(1)}>
                     QT SUIVANT <span>➜</span>
                   </button>
                 </div>
               )}
 
-              <div className="detacherRow">
+              {showVideoPanel && <div className="detacherRow">
                 {(videoProvider === 'local' || videoProvider === 'google_drive') && videoUrl && <span className="trackpadHint">↔ 2 doigts : droite = avancer · gauche = reculer</span>}
                 <button className="detachBtn" onClick={() => setVideoPanePct((v) => Math.max(25, v - 8))} title="Réduire la zone vidéo">− Vidéo</button>
                 <button className="detachBtn" onClick={() => setVideoPanePct((v) => Math.min(72, v + 8))} title="Agrandir la zone vidéo">＋ Vidéo</button>
@@ -6656,9 +6730,9 @@ export default function PriseStatsProPage() {
                   </span>
                 )}
                 {videoDetached && <span className="detachState">🎥 Vidéo ouverte dans une fenêtre détachée</span>}
-              </div>
+              </div>}
 
-              {(videoProvider === 'local' || videoProvider === 'google_drive') && videoUrl && (
+              {showVideoPanel && (videoProvider === 'local' || videoProvider === 'google_drive') && videoUrl && (
                 <div className="vbar">
                   <button className="vnav" onClick={() => nudgeVideo(-1)} title="Reculer (Tab + ←)">« −{videoStepSeconds}s</button>
                   <div className="vstep">
@@ -6675,11 +6749,11 @@ export default function PriseStatsProPage() {
             </section>
 
             {!videoMaximized && (
-              <div className="panelResizeHandle" onPointerDown={(e) => startPanelResize('video', e)} title="Glisser pour redimensionner vidéo / codage">
+              <div className="panelResizeHandle" onPointerDown={(e) => startPanelResize('video', e)} title="Glisser pour redimensionner panneau Live / codage">
                 <span>⋮</span>
               </div>
             )}
-            </>)}
+            </>
 
             {/* ============ CENTRE · CODAGE (wizard) ============ */}
             <aside className={`lc lc-code ${workTab === 'coding' ? 'mshow' : ''}`}>
@@ -9799,7 +9873,10 @@ function Style() {
       }
 
 
+      .liveControlPane { padding: 10px; }
       .videoMatchControl { margin: 10px 0 8px; padding: 12px; border: 1px solid rgba(255,255,255,.13); border-radius: 14px; background: rgba(10,10,12,.72); }
+      .videoMatchControl.withoutVideo { margin: 0; min-height: calc(100% - 2px); display:flex; flex-direction:column; justify-content:center; }
+      .vmcPanelTitle { text-align:center; font-size:12px; font-weight:950; letter-spacing:.12em; opacity:.72; margin-bottom:12px; }
       .vmcTop { display:grid; grid-template-columns:1fr 150px 1fr; gap:10px; align-items:stretch; }
       .vmcTeam { display:flex; flex-direction:column; align-items:center; justify-content:center; gap:3px; min-width:0; }
       .vmcTeam b { max-width:100%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:12px; }
@@ -9811,6 +9888,12 @@ function Style() {
       .vmcStart { width:100%; border:0; border-radius:9px; padding:8px 10px; font-weight:900; cursor:pointer; }
       .vmcScoreAdjust { display:grid; grid-template-columns:repeat(4,1fr); gap:6px; margin-top:8px; }
       .vmcScoreAdjust button { border:1px solid rgba(255,255,255,.14); border-radius:8px; padding:7px 5px; background:rgba(255,255,255,.05); color:inherit; font-weight:800; cursor:pointer; }
+      .vmcInterruptRow { position:relative; margin-top:8px; }
+      .vmcFtInterrupt { width:100%; border:1px solid rgba(255,255,255,.16); border-radius:9px; padding:9px 10px; background:rgba(255,255,255,.06); color:inherit; font-weight:950; cursor:pointer; }
+      .vmcFtInterrupt.on { border-color:var(--gold); color:var(--gold); }
+      .vmcFtChoice { display:grid; grid-template-columns:1fr 1fr; gap:6px; margin-top:6px; }
+      .vmcFtChoice button { border:1px solid rgba(255,255,255,.14); border-radius:8px; padding:8px 6px; background:rgba(255,255,255,.05); color:inherit; font-size:11px; font-weight:900; cursor:pointer; }
+      .vmcFtChoice .ghosty { grid-column:1 / -1; opacity:.75; }
       .vmcNextQuarter { width:100%; margin-top:9px; border:0; border-radius:11px; padding:11px 14px; font-size:15px; font-weight:950; cursor:pointer; display:flex; justify-content:center; align-items:center; gap:12px; }
       .vmcNextQuarter span { font-size:28px; line-height:.7; }
       .qstrip {
