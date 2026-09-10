@@ -274,6 +274,11 @@ const resetPlaquette = () => {
     setCourtStyle(next);
   };
 
+  const resetCourtAppearance = () => {
+    applyCourtStyle(DEFAULT_COURT_STYLE);
+    applyCourtBranding(DEFAULT_COURT_BRANDING);
+  };
+
   const setCourtStyleField = (key: keyof CourtStyle, value: string) => {
     const next = normalizeCourtStyle({ ...courtStyleRef.current, [key]: value });
     courtStyleRef.current = next;
@@ -621,8 +626,12 @@ const currentRef = useRef(current);
           continue;
         }
 
-        // La raquette prend la couleur dédiée. Le rond central reste parquet.
-        if (inPaint && burgundy) {
+        // Zone de raquette : on applique la couleur sur TOUTE la surface géométrique
+        // de la raquette, pas uniquement sur les pixels bordeaux du JPEG d'origine.
+        // Les lignes restent indépendantes grâce au test `white` juste après.
+        // C'est volontairement calé sur les zones simples des terrains de référence
+        // (photo 4 / photo 5) pour éviter les bandes orange ou les trous de couleur.
+        if (inPaint && !white) {
           applySolid(idx, paint);
           continue;
         }
@@ -740,13 +749,13 @@ const currentRef = useRef(current);
         const baseLogoH = maxH * 0.72 * branding.logoScale;
         const logoH = Math.min(maxH * 0.92, baseLogoH);
         const logoW = hasLogo && logo
-          ? Math.min(maxW * 0.32, logoH * (logo.naturalWidth / logo.naturalHeight))
+          ? Math.min(maxW * 0.38, logoH * (logo.naturalWidth / logo.naturalHeight))
           : 0;
 
         const fontSize = Math.max(12, Math.round(maxH * 0.46 * branding.textScale));
         ox.font = `900 ${fontSize}px Arial, sans-serif`;
         const textW = text ? Math.min(maxW * 0.72, ox.measureText(text).width) : 0;
-        const gap = hasLogo && text ? maxW * 0.035 : 0;
+        const gap = hasLogo && text ? maxW * 0.028 : 0;
         const totalW = logoW + gap + textW;
         let x = bx - totalW / 2;
 
@@ -4070,6 +4079,17 @@ const exportJson = () => {
                   ✨ Personnaliser le terrain
                 </button>
 
+                <button
+                  type="button"
+                  className="btn btn-outline btn-block btn-small"
+                  id="courtResetBtn"
+                  style={{ textAlign: 'center', fontWeight: 700 }}
+                  onClick={resetCourtAppearance}
+                  title="Restaurer les couleurs, le logo et le texte d'origine du terrain"
+                >
+                  ↺ Réinitialiser le terrain
+                </button>
+
                 <button className="btn btn-red btn-block btn-small" id="delSelectedBtn" onClick={deleteSelected}>🗑 Supprimer sélection</button>
                 <button className="btn btn-outline btn-block btn-small" id="dupSelectedBtn" onClick={duplicateSelected}>⎘ Dupliquer</button>
                 <label style={{ fontSize: '.72rem', color: 'var(--gris-text)', textTransform: 'uppercase', letterSpacing: '.04em', marginTop: '.25rem' }}>Couleur de la sélection</label>
@@ -4331,11 +4351,67 @@ const exportJson = () => {
               </div>
               <label style={{ display:'block', fontSize:'.78rem', fontWeight:800, marginBottom:'.35rem' }}>Texte affiché sur le terrain</label>
               <input value={courtBranding.text} maxLength={40} onChange={(e) => applyCourtBranding({ ...courtBrandingRef.current, text:e.target.value, useCustomBranding:true })} placeholder="MYBASKET.FR" style={{ width:'100%', boxSizing:'border-box', height:38, border:'1px solid #D9D9D9', borderRadius:8, padding:'0 .7rem', marginBottom:'.7rem' }} />
-              <label style={{ display:'block', fontSize:'.78rem', fontWeight:800, marginBottom:'.35rem' }}>Logo (PNG transparent recommandé)</label>
+              <label style={{ display:'block', fontSize:'.78rem', fontWeight:800, marginBottom:'.35rem' }}>Logo du club</label>
+              <div style={{ fontSize:'.7rem', color:'#777', marginBottom:'.45rem' }}>Le fond blanc relié aux bords est supprimé automatiquement et le logo est recadré au plus près.</div>
               <input type="file" accept="image/png,image/jpeg,image/webp" onChange={(e) => {
                 const file=e.target.files?.[0]; if(!file) return;
                 const reader=new FileReader();
-                reader.onload=()=>{ const src=String(reader.result||''); const img=new Image(); img.onload=()=>{ const max=512; const scale=Math.min(1,max/Math.max(img.naturalWidth,img.naturalHeight)); const c=document.createElement('canvas'); c.width=Math.max(1,Math.round(img.naturalWidth*scale)); c.height=Math.max(1,Math.round(img.naturalHeight*scale)); c.getContext('2d')?.drawImage(img,0,0,c.width,c.height); applyCourtBranding({ ...courtBrandingRef.current, logoDataUrl:c.toDataURL('image/png'), showLogo:true, useCustomBranding:true }); }; img.src=src; }; reader.readAsDataURL(file);
+                reader.onload=()=>{
+                  const src=String(reader.result||'');
+                  const img=new Image();
+                  img.onload=()=>{
+                    const max=700;
+                    const scale=Math.min(1,max/Math.max(img.naturalWidth,img.naturalHeight));
+                    const work=document.createElement('canvas');
+                    work.width=Math.max(1,Math.round(img.naturalWidth*scale));
+                    work.height=Math.max(1,Math.round(img.naturalHeight*scale));
+                    const wctx=work.getContext('2d',{ willReadFrequently:true });
+                    if(!wctx) return;
+                    wctx.drawImage(img,0,0,work.width,work.height);
+                    const imageData=wctx.getImageData(0,0,work.width,work.height);
+                    const data=imageData.data;
+                    const W=work.width,H=work.height;
+                    const seen=new Uint8Array(W*H);
+                    const queue=new Int32Array(W*H);
+                    let head=0,tail=0;
+                    const isNearWhite=(pos:number)=>{
+                      const i=pos*4;
+                      const r=data[i],g=data[i+1],b=data[i+2],a=data[i+3];
+                      return a>0 && r>=238 && g>=238 && b>=238 && Math.max(r,g,b)-Math.min(r,g,b)<=18;
+                    };
+                    const push=(pos:number)=>{ if(pos<0||pos>=W*H||seen[pos]||!isNearWhite(pos)) return; seen[pos]=1; queue[tail++]=pos; };
+                    for(let x=0;x<W;x++){ push(x); push((H-1)*W+x); }
+                    for(let y=0;y<H;y++){ push(y*W); push(y*W+W-1); }
+                    while(head<tail){
+                      const pos=queue[head++];
+                      const x=pos%W,y=Math.floor(pos/W);
+                      if(x>0) push(pos-1); if(x<W-1) push(pos+1);
+                      if(y>0) push(pos-W); if(y<H-1) push(pos+W);
+                    }
+                    for(let pos=0;pos<W*H;pos++){ if(seen[pos]) data[pos*4+3]=0; }
+                    wctx.putImageData(imageData,0,0);
+                    let minX=W,minY=H,maxX=-1,maxY=-1;
+                    const cleaned=wctx.getImageData(0,0,W,H).data;
+                    for(let y=0;y<H;y++){
+                      for(let x=0;x<W;x++){
+                        const a=cleaned[(y*W+x)*4+3];
+                        if(a>8){ if(x<minX)minX=x; if(x>maxX)maxX=x; if(y<minY)minY=y; if(y>maxY)maxY=y; }
+                      }
+                    }
+                    if(maxX<minX||maxY<minY) return;
+                    const pad=Math.max(2,Math.round(Math.max(W,H)*0.015));
+                    minX=Math.max(0,minX-pad); minY=Math.max(0,minY-pad);
+                    maxX=Math.min(W-1,maxX+pad); maxY=Math.min(H-1,maxY+pad);
+                    const out=document.createElement('canvas');
+                    out.width=maxX-minX+1; out.height=maxY-minY+1;
+                    const octx=out.getContext('2d');
+                    if(!octx) return;
+                    octx.drawImage(work,minX,minY,out.width,out.height,0,0,out.width,out.height);
+                    applyCourtBranding({ ...courtBrandingRef.current, logoDataUrl:out.toDataURL('image/png'), showLogo:true, useCustomBranding:true });
+                  };
+                  img.src=src;
+                };
+                reader.readAsDataURL(file);
               }} style={{ width:'100%', marginBottom:'.65rem' }} />
               {courtBranding.logoDataUrl && <div style={{ display:'flex', alignItems:'center', gap:'.7rem', marginBottom:'.75rem' }}><img src={courtBranding.logoDataUrl} alt="Logo personnalisé" style={{ width:64, height:64, objectFit:'contain', border:'1px solid #eee', borderRadius:8 }} /><button type="button" className="btn btn-outline btn-small" onClick={() => applyCourtBranding({ ...courtBrandingRef.current, logoDataUrl:null, showLogo:false, useCustomBranding:true })}>Retirer le logo</button></div>}
               <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:'.7rem', marginTop:'.4rem' }}>
