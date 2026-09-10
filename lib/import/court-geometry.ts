@@ -6,6 +6,7 @@
  *
  * Ce module :
  *   1. isole le rectangle du terrain dans la zone Graphic ;
+ *   1bis. isole l'AIRE DE JEU à l'intérieur (les lignes de touche / de fond) ;
  *   2. détermine s'il s'agit d'un demi-terrain ou d'un terrain complet ;
  *   3. détermine son orientation (côté du panier) ;
  *   4. construit un MASQUE des lignes de terrain (touche, fond, médiane,
@@ -18,6 +19,21 @@
  * Repère canonique Plaquette (cf. app/plaquette/PlaquetteClient.tsx) :
  *   x ∈ [0,1], y ∈ [0,1] en plein terrain, y = 0.5 = ligne médiane,
  *   un demi-terrain n'utilise que y ∈ [0, 0.5], panier haut vers y ≈ 0.10.
+ *
+ * ---------------------------------------------------------------------------
+ * NOTE DE CORRECTION (import v2)
+ * Le pipeline confondait trois rectangles distincts :
+ *   (1) la zone graphique,
+ *   (2) l'IMAGE du terrain (bois + cadre + bandeau/filigrane),
+ *   (3) l'AIRE DE JEU (l'intérieur des lignes blanches).
+ * Toute la conversion en canonique suppose (3). Quand on lui donnait (1) ou
+ * (2), le masque des lignes tombait à côté, le panier était mal placé, et tout
+ * ce qui se trouvait dans la marge se retrouvait ÉCRASÉ sur le bord par le
+ * clamp — d'où les amas de pastilles sur la ligne de fond.
+ *
+ * `detectPlayingArea()` isole désormais (3). Il est volontairement conservateur :
+ * chaque côté non trouvé retombe sur le bord du rectangle fourni, donc au pire
+ * on retrouve exactement le comportement précédent.
  */
 
 import type { AiPoint, AiRect } from "./types";
@@ -26,8 +42,19 @@ export type CourtKind = "half" | "full";
 export type CourtOrientation = "identity" | "rot180" | "rot90cw" | "rot90ccw";
 
 export type CourtGeometry = {
-  /** Rectangle du terrain dans les pixels de l'image source. */
+  /** Rectangle du terrain dans les pixels de l'image source (bois + marges). */
   rect: AiRect;
+  /**
+   * Aire de jeu (intérieur des lignes de touche / de fond) dans les pixels de
+   * l'image source. C'est LE repère de conversion. Toujours inclus dans `rect`.
+   * Optionnel pour ne casser aucun appelant existant : absent, les consommateurs
+   * retombent sur `rect` (comportement historique).
+   */
+  play?: AiRect;
+  /** true si l'aire de jeu a été détectée, false si elle retombe sur `rect`. */
+  playDetected?: boolean;
+  /** Nombre de côtés du terrain réellement trouvés (0..4). */
+  playSides?: number;
   kind: CourtKind;
   orientation: CourtOrientation;
   /** Confiance de la classification demi / complet (0..1). */
@@ -84,6 +111,20 @@ export const saturationOf = (r: number, g: number, b: number): number => {
   const max = Math.max(r, g, b);
   const min = Math.min(r, g, b);
   return max === 0 ? 0 : (max - min) / max;
+};
+
+/** Teinte 0..360. Utile pour distinguer un ballon orange d'un jeton bordeaux. */
+export const hueOf = (r: number, g: number, b: number): number => {
+  const max = Math.max(r, g, b);
+  const min = Math.min(r, g, b);
+  const d = max - min;
+  if (d === 0) return 0;
+  let h: number;
+  if (max === r) h = ((g - b) / d) % 6;
+  else if (max === g) h = (b - r) / d + 2;
+  else h = (r - g) / d + 4;
+  h *= 60;
+  return h < 0 ? h + 360 : h;
 };
 
 export type Pixels = { data: Uint8ClampedArray; w: number; h: number };
@@ -180,6 +221,116 @@ export function detectCourtRect(canvas: HTMLCanvasElement, region: AiRect): AiRe
   };
 }
 
+/* -------------------------------------------------------------------------- */
+/* 1ter. Isolation de l'AIRE DE JEU (lignes de touche et de fond)             */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Cherche, dans les 32 % extérieurs de chaque côté, la première LIGNE DROITE
+ * continue : c'est une ligne de touche ou de fond.
+ *
+ * On raisonne sur le plus long segment CONTINU et non sur un simple comptage :
+ * un filigrane (« MYBASKET.FR »), un titre ou une légende occupent beaucoup de
+ * pixels clairs sur une ligne, mais jamais de façon continue.
+ *
+ * Conservateur par construction : chaque côté non trouvé retombe sur le bord
+ * du rectangle fourni, donc au pire on retrouve le comportement précédent.
+ */
+export function detectPlayingArea(
+  canvas: HTMLCanvasElement,
+  rect: AiRect
+): { rect: AiRect; found: boolean; sides: number; reason: string } {
+  const fallback = { rect: { ...rect }, found: false, sides: 0, reason: "aire de jeu non détectée" };
+  const px = readPixels(canvas, rect);
+  if (px.w < 24 || px.h < 24) return fallback;
+
+  const step = Math.max(1, Math.round(Math.min(px.w, px.h) / 300));
+
+  // Régime clair (feuille de papier) ou terrain colorié ?
+  let bright = 0;
+  let total = 0;
+  for (let y = 0; y < px.h; y += step * 3) {
+    for (let x = 0; x < px.w; x += step * 3) {
+      const [r, g, b] = pixelAt(px, x, y);
+      total += 1;
+      if ((r + g + b) / 3 > 205) bright += 1;
+    }
+  }
+  const paper = total > 0 && bright / total > 0.55;
+
+  const isLine = (x: number, y: number): boolean => {
+    const [r, g, b] = pixelAt(px, x, y);
+    const avg = (r + g + b) / 3;
+    return paper ? avg < 130 : avg > 176 && saturationOf(r, g, b) < 0.3;
+  };
+
+  /** Plus long segment continu (tolérance de 2 échantillons pour l'anticrénelage). */
+  const runScore = (fixed: number, horizontal: boolean): number => {
+    const length = horizontal ? px.w : px.h;
+    let best = 0;
+    let current = 0;
+    let gap = 0;
+    for (let i = 0; i < length; i += step) {
+      const on = horizontal ? isLine(i, fixed) : isLine(fixed, i);
+      if (on) {
+        current += gap + 1;
+        gap = 0;
+        if (current > best) best = current;
+      } else if (current > 0 && gap < 2) {
+        gap += 1;
+      } else {
+        current = 0;
+        gap = 0;
+      }
+    }
+    return (best * step) / length;
+  };
+
+  const THRESHOLD = 0.55;
+  const band = 0.32;
+
+  const scanRows = (from: number, to: number, direction: 1 | -1): number | null => {
+    for (let y = from; direction > 0 ? y <= to : y >= to; y += direction * step) {
+      if (runScore(y, true) >= THRESHOLD) return y;
+    }
+    return null;
+  };
+  const scanCols = (from: number, to: number, direction: 1 | -1): number | null => {
+    for (let x = from; direction > 0 ? x <= to : x >= to; x += direction * step) {
+      if (runScore(x, false) >= THRESHOLD) return x;
+    }
+    return null;
+  };
+
+  const top = scanRows(0, Math.floor(px.h * band), 1);
+  const bottom = scanRows(px.h - 1, Math.ceil(px.h * (1 - band)), -1);
+  const left = scanCols(0, Math.floor(px.w * band), 1);
+  const right = scanCols(px.w - 1, Math.ceil(px.w * (1 - band)), -1);
+
+  const sides = [top, bottom, left, right].filter((value) => value !== null).length;
+  if (sides < 2) return fallback;
+
+  const y0 = top ?? 0;
+  const y1 = bottom ?? px.h - 1;
+  const x0 = left ?? 0;
+  const x1 = right ?? px.w - 1;
+
+  // Garde-fou : une aire de jeu qui ne couvre presque rien est une erreur de
+  // détection (un trait isolé, une légende soulignée…).
+  if (x1 - x0 < px.w * 0.4 || y1 - y0 < px.h * 0.35) return fallback;
+
+  return {
+    rect: {
+      x0: rect.x0 + x0,
+      y0: rect.y0 + y0,
+      x1: rect.x0 + x1 + 1,
+      y1: rect.y0 + y1 + 1,
+    },
+    found: true,
+    sides,
+    reason: `aire de jeu : ${sides}/4 côtés détectés (${paper ? "trait sombre" : "ligne claire"})`,
+  };
+}
 
 /* -------------------------------------------------------------------------- */
 /* 1bis. Détection VISUELLE d'un terrain, sans dépendre de l'OCR              */
@@ -462,14 +613,16 @@ function mirrorScore(px: Pixels, vertical: boolean): number {
   return total ? agree / total : 0;
 }
 
+type PaintSide = "top" | "bottom" | "left" | "right";
 
 /**
- * Cherche la RAQUETTE : un bloc compact de couleur nettement différente du
- * reste du terrain, centré sur un axe et collé à l'un des bords. C'est le
- * repère d'orientation le plus fiable d'un demi-terrain (la Plaquette place
- * toujours le panier en haut).
+ * Cherche les RAQUETTES : des blocs compacts de couleur nettement différente du
+ * reste du terrain, centrés sur un axe et collés à un bord. C'est le repère le
+ * plus fiable, à la fois pour l'orientation d'un demi-terrain (la Plaquette
+ * place toujours le panier en haut) et pour la distinction demi / complet :
+ * DEUX raquettes opposées ⇒ terrain complet.
  */
-function findKeyBlock(px: Pixels): { side: "top" | "bottom" | "left" | "right" } | null {
+function findPaintSides(px: Pixels): PaintSide[] {
   const step = Math.max(1, Math.round(Math.min(px.w, px.h) / 160));
   const gw = Math.ceil(px.w / step);
   const gh = Math.ceil(px.h / step);
@@ -481,23 +634,32 @@ function findKeyBlock(px: Pixels): { side: "top" | "bottom" | "left" | "right" }
       samples.push([...pixelAt(px, gx * step, gy * step)]);
     }
   }
-  if (!samples.length) return null;
+  if (!samples.length) return [];
   const med = [0, 1, 2].map((c) => {
     const v = samples.map((s) => s[c]).sort((a, b) => a - b);
     return v[Math.floor(v.length / 2)];
   });
 
+  // Sur un terrain colorié, les LIGNES peintes (claires et désaturées) forment
+  // un réseau connexe qui relie la raquette au reste du marquage : la raquette
+  // disparaissait alors dans un blob géant, rejeté pour cause de remplissage
+  // trop faible. On les écarte du masque : une raquette est un APLAT DE COULEUR.
+  const paper = (med[0] + med[1] + med[2]) / 3 > 200;
+  const isPaintedLine = (r: number, g: number, b: number) =>
+    !paper && (r + g + b) / 3 > 190 && saturationOf(r, g, b) < 0.35;
+
   const mask = new Uint8Array(gw * gh);
   for (let gy = 0; gy < gh; gy += 1) {
     for (let gx = 0; gx < gw; gx += 1) {
       const [r, g, b] = pixelAt(px, gx * step, gy * step);
+      if (isPaintedLine(r, g, b)) continue;
       const d = Math.sqrt((r - med[0]) ** 2 + (g - med[1]) ** 2 + (b - med[2]) ** 2);
       if (d > 90) mask[gy * gw + gx] = 1;
     }
   }
 
   const seen = new Uint8Array(gw * gh);
-  let best: { area: number; x0: number; y0: number; x1: number; y1: number } | null = null;
+  const found: Array<{ side: PaintSide; area: number }> = [];
   for (let s0 = 0; s0 < mask.length; s0 += 1) {
     if (!mask[s0] || seen[s0]) continue;
     seen[s0] = 1;
@@ -526,30 +688,56 @@ function findKeyBlock(px: Pixels): { side: "top" | "bottom" | "left" | "right" }
     const bw = x1 - x0 + 1;
     const bh = y1 - y0 + 1;
     const frac = area / (gw * gh);
-    if (frac < 0.02 || frac > 0.30) continue;
+    if (frac < 0.015 || frac > 0.30) continue;
     if (area / (bw * bh) < 0.55) continue;
-    if (!best || area > best.area) best = { area, x0, y0, x1, y1 };
-  }
-  if (!best) return null;
 
-  const cx = (best.x0 + best.x1) / 2 / gw;
-  const cy = (best.y0 + best.y1) / 2 / gh;
-  const near = 0.30;
-  if (Math.abs(cx - 0.5) < 0.22 && best.y0 / gh < near) return { side: "top" };
-  if (Math.abs(cx - 0.5) < 0.22 && best.y1 / gh > 1 - near) return { side: "bottom" };
-  if (Math.abs(cy - 0.5) < 0.22 && best.x0 / gw < near) return { side: "left" };
-  if (Math.abs(cy - 0.5) < 0.22 && best.x1 / gw > 1 - near) return { side: "right" };
-  return null;
+    // Une raquette FIBA mesure 4,9 × 5,8 m : elle occupe environ un tiers de la
+    // largeur du terrain et deux cinquièmes de sa longueur. Sans ces bornes, un
+    // bandeau décoratif collé au bord (le logo du gabarit MyBasket sur le cercle
+    // central, par exemple) passait pour une raquette et RETOURNAIT le terrain.
+    const fw = bw / gw;
+    const fh = bh / gh;
+    const cx = (x0 + x1) / 2 / gw;
+    const cy = (y0 + y1) / 2 / gh;
+    const near = 0.14;
+
+    let side: PaintSide | null = null;
+    const horizontalOk = fw > 0.15 && fw < 0.62 && fh > 0.15 && fh < 0.68;
+    const verticalOk = fh > 0.15 && fh < 0.62 && fw > 0.15 && fw < 0.68;
+    if (horizontalOk && Math.abs(cx - 0.5) < 0.22 && y0 / gh < near) side = "top";
+    else if (horizontalOk && Math.abs(cx - 0.5) < 0.22 && y1 / gh > 1 - near) side = "bottom";
+    else if (verticalOk && Math.abs(cy - 0.5) < 0.22 && x0 / gw < near) side = "left";
+    else if (verticalOk && Math.abs(cy - 0.5) < 0.22 && x1 / gw > 1 - near) side = "right";
+    if (side) found.push({ side, area });
+  }
+
+  found.sort((a, b) => b.area - a.area);
+  const sides: PaintSide[] = [];
+  for (const item of found) if (!sides.includes(item.side)) sides.push(item.side);
+  return sides;
+}
+
+/** @deprecated conservé pour compatibilité — utiliser findPaintSides(). */
+function findKeyBlock(px: Pixels): { side: PaintSide } | null {
+  const sides = findPaintSides(px);
+  return sides.length ? { side: sides[0] } : null;
 }
 
 export function classifyCourt(canvas: HTMLCanvasElement, rect: AiRect): CourtGeometry {
-  const px = readPixels(canvas, rect);
-  const palette = dominantColors(px, 3);
-  const fill = palette[0] && palette[0].share > 0.18 ? palette[0] : null;
   const reasons: string[] = [];
 
-  const w = rect.x1 - rect.x0;
-  const h = rect.y1 - rect.y0;
+  // L'aire de jeu est le SEUL repère fiable : la bbox du bois inclut les marges,
+  // le cadre et le filigrane, ce qui fausse à la fois le ratio et la conversion.
+  const area = detectPlayingArea(canvas, rect);
+  const play = area.rect;
+  reasons.push(area.reason);
+
+  const px = readPixels(canvas, play);
+  const palette = dominantColors(px, 3);
+  const fill = palette[0] && palette[0].share > 0.18 ? palette[0] : null;
+
+  const w = play.x1 - play.x0;
+  const h = play.y1 - play.y0;
   const longSide = Math.max(w, h);
   const shortSide = Math.max(1, Math.min(w, h));
   const ratio = longSide / shortSide;
@@ -560,19 +748,36 @@ export function classifyCourt(canvas: HTMLCanvasElement, rect: AiRect): CourtGeo
   let confidence = Math.min(1, Math.abs(ratio - 1.45) / 0.45 + 0.35);
   reasons.push(`ratio ${ratio.toFixed(2)} → ${kind}`);
 
-  // Vérification par symétrie : un terrain complet est symétrique par rapport
-  // à sa ligne médiane, pas un demi-terrain.
-  const symmetry = mirrorScore(px, vertical);
-  if (kind === "half" && symmetry > 0.9 && ratio > 1.25) {
+  const paintSides = findPaintSides(px);
+  const opposite =
+    (paintSides.includes("top") && paintSides.includes("bottom")) ||
+    (paintSides.includes("left") && paintSides.includes("right"));
+
+  if (opposite && ratio > 1.3) {
     kind = "full";
-    confidence = 0.6;
-    reasons.push(`symétrie ${symmetry.toFixed(2)} → requalifié en terrain complet`);
-  } else if (kind === "full" && symmetry < 0.6) {
+    confidence = 0.9;
+    reasons.push(`deux raquettes opposées (${paintSides.join("+")}) → terrain complet`);
+  } else if (paintSides.length === 1 && ratio < 1.6) {
     kind = "half";
-    confidence = 0.55;
-    reasons.push(`symétrie ${symmetry.toFixed(2)} trop faible → requalifié en demi-terrain`);
+    confidence = 0.85;
+    reasons.push(`une seule raquette (${paintSides[0]}) → demi-terrain`);
   } else {
-    reasons.push(`symétrie ${symmetry.toFixed(2)}`);
+    // Repli historique par symétrie. ATTENTION : un demi-terrain en paysage est
+    // lui aussi symétrique selon son axe long (la largeur de 15 m EST son axe de
+    // symétrie). Le test ne discrimine donc rien en dessous de 1.55 — d'où le
+    // seuil relevé, sans quoi un demi-terrain à 1.27 basculait en « complet ».
+    const symmetry = mirrorScore(px, vertical);
+    if (kind === "half" && symmetry > 0.9 && ratio > 1.55) {
+      kind = "full";
+      confidence = 0.6;
+      reasons.push(`symétrie ${symmetry.toFixed(2)} + ratio ${ratio.toFixed(2)} → requalifié en terrain complet`);
+    } else if (kind === "full" && symmetry < 0.6) {
+      kind = "half";
+      confidence = 0.55;
+      reasons.push(`symétrie ${symmetry.toFixed(2)} trop faible → requalifié en demi-terrain`);
+    } else {
+      reasons.push(`symétrie ${symmetry.toFixed(2)}`);
+    }
   }
 
   let orientation: CourtOrientation = "identity";
@@ -582,18 +787,8 @@ export function classifyCourt(canvas: HTMLCanvasElement, rect: AiRect): CourtGeo
     orientation = vertical ? "identity" : "rot90cw";
     reasons.push(vertical ? "terrain déjà vertical" : "terrain horizontal → rotation 90°");
   } else {
-    // Demi-terrain : on cherche le côté du panier (raquette + cercles = forte
-    // densité de marquage) et on le ramène en haut, comme dans la Plaquette.
-    const bandFrac = 0.26;
-    const top = bandDensity(px, fill, { x0: 0, y0: 0, x1: px.w, y1: px.h * bandFrac });
-    const bottom = bandDensity(px, fill, { x0: 0, y0: px.h * (1 - bandFrac), x1: px.w, y1: px.h });
-    const left = bandDensity(px, fill, { x0: 0, y0: 0, x1: px.w * bandFrac, y1: px.h });
-    const right = bandDensity(px, fill, { x0: px.w * (1 - bandFrac), y0: 0, x1: px.w, y1: px.h });
-
-    // La RAQUETTE est un repère bien plus fiable que la densité de marquage :
-    // c'est un bloc de couleur distincte, centré sur l'axe court et collé au
-    // fond de terrain. On la cherche d'abord ; la densité ne sert que de repli.
-    const key = findKeyBlock(px);
+    // Demi-terrain : on cherche le côté du panier et on le ramène en haut.
+    const key = paintSides.length ? { side: paintSides[0] } : findKeyBlock(px);
     if (key) {
       orientation = key.side === "top" ? "identity"
         : key.side === "bottom" ? "rot180"
@@ -601,6 +796,11 @@ export function classifyCourt(canvas: HTMLCanvasElement, rect: AiRect): CourtGeo
         : "rot90ccw";
       reasons.push(`raquette détectée côté ${key.side} → ${orientation}`);
     } else {
+      const bandFrac = 0.26;
+      const top = bandDensity(px, fill, { x0: 0, y0: 0, x1: px.w, y1: px.h * bandFrac });
+      const bottom = bandDensity(px, fill, { x0: 0, y0: px.h * (1 - bandFrac), x1: px.w, y1: px.h });
+      const left = bandDensity(px, fill, { x0: 0, y0: 0, x1: px.w * bandFrac, y1: px.h });
+      const right = bandDensity(px, fill, { x0: px.w * (1 - bandFrac), y0: 0, x1: px.w, y1: px.h });
       const best = Math.max(top, bottom, left, right);
       if (best === top) orientation = "identity";
       else if (best === bottom) orientation = "rot180";
@@ -612,7 +812,16 @@ export function classifyCourt(canvas: HTMLCanvasElement, rect: AiRect): CourtGeo
     }
   }
 
-  return { rect, kind, orientation, confidence: Math.max(0.2, Math.min(1, confidence)), reasons };
+  return {
+    rect,
+    play,
+    playDetected: area.found,
+    playSides: area.sides,
+    kind,
+    orientation,
+    confidence: Math.max(0.2, Math.min(1, confidence)),
+    reasons,
+  };
 }
 
 /* -------------------------------------------------------------------------- */
@@ -625,6 +834,9 @@ const METRICS: Record<CourtKind, CourtMetrics> = {
   half: { widthM: 15, lengthM: 14 },
   full: { widthM: 15, lengthM: 28 },
 };
+
+/** Longueur du terrain en mètres, selon le type. Utile hors de ce module. */
+export const courtLengthM = (kind: CourtKind): number => METRICS[kind].lengthM;
 
 /**
  * Trace les lignes officielles du terrain (repère normalisé, panier en haut).
@@ -726,10 +938,24 @@ export function strokeCourtLines(
 
 /**
  * Masque booléen (1 = appartient au fond géométrique du terrain).
+ *
  * `w` / `h` sont les dimensions de l'image de travail, déjà orientée
  * « panier en haut » pour un demi-terrain, « vertical » pour un complet.
+ *
+ * `play` situe l'AIRE DE JEU dans cette image de travail. Omis, il retombe sur
+ * l'image entière — c'est-à-dire le comportement historique.
+ *
+ * L'épaisseur par défaut est passée de 0.024 à 0.012 de la largeur du terrain :
+ * à 0.024 le masque faisait 22 px sur un canvas de 900 et effaçait les tracés
+ * du coach qui longent une ligne.
  */
-export function buildCourtLineMask(w: number, h: number, kind: CourtKind, tolerance = 0.024): Uint8Array {
+export function buildCourtLineMask(
+  w: number,
+  h: number,
+  kind: CourtKind,
+  play?: AiRect,
+  tolerance = 0.012
+): Uint8Array {
   const mask = new Uint8Array(w * h);
   const canvas = document.createElement("canvas");
   canvas.width = w;
@@ -737,8 +963,15 @@ export function buildCourtLineMask(w: number, h: number, kind: CourtKind, tolera
   const ctx = canvas.getContext("2d", { willReadFrequently: true });
   if (!ctx) return mask;
 
+  const area: AiRect = play ?? { x0: 0, y0: 0, x1: w, y1: h };
+  const aw = Math.max(1, area.x1 - area.x0);
+  const ah = Math.max(1, area.y1 - area.y0);
+
   ctx.clearRect(0, 0, w, h);
-  strokeCourtLines(ctx, w, h, kind, Math.max(3, tolerance * w));
+  ctx.save();
+  ctx.translate(area.x0, area.y0);
+  strokeCourtLines(ctx, aw, ah, kind, Math.max(2, tolerance * aw));
+  ctx.restore();
 
   const image = ctx.getImageData(0, 0, w, h).data;
   for (let i = 0, p = 3; i < mask.length; i += 1, p += 4) {
@@ -790,6 +1023,12 @@ export function courtToCanonical(point: AiPoint, kind: CourtKind): AiPoint {
     y: clamp01(displayY * 0.5, 0.005, 0.495),
   };
 }
+
+/** Bornes canoniques atteintes par le clamp — sert à repérer les artefacts. */
+export const canonicalBounds = (kind: CourtKind) =>
+  kind === "full"
+    ? { xMin: 0.01, xMax: 0.99, yMin: 0.01, yMax: 0.99 }
+    : { xMin: 0.01, xMax: 0.99, yMin: 0.005, yMax: 0.495 };
 
 /** Position du panier dans le repère canonique, utile pour classer les tirs. */
 export const canonicalBasket = (kind: CourtKind): AiPoint =>

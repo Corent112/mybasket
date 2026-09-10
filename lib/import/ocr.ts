@@ -11,8 +11,21 @@
  *
  * Deux workers distincts sont utilisés :
  *   - `text`   : lecture des zones de texte (français puis anglais) ;
- *   - `digits` : lecture d'un jeton joueur isolé (chiffres + X, PSM 10).
+ *   - `digits` : lecture d'un jeton joueur isolé (chiffres + X, PSM 8).
  * Les paramètres restrictifs du second ne polluent donc jamais le premier.
+ *
+ * ---------------------------------------------------------------------------
+ * NOTE DE CORRECTION (import v2) — lecture des dossards
+ *
+ * 1. PSM 10 signifie « un seul caractère ». Un dossard à deux chiffres était
+ *    donc illisible par construction, alors que le code fait bien `slice(0, 2)`.
+ *    On passe en PSM 8 (« un seul mot »).
+ * 2. Aucun prétraitement n'était appliqué. Les jetons MyBasket sont OR SUR
+ *    BORDEAUX : Tesseract LSTM est mauvais sur du clair-sur-foncé. On binarise
+ *    désormais le disque (Otsu) en ramenant systématiquement le chiffre en NOIR
+ *    sur BLANC, et on efface tout ce qui déborde du jeton (bras du symbole
+ *    défenseur, tracés qui passent à côté).
+ * Le canvas brut reste tenté en second recours : aucune régression possible.
  */
 
 import type { AiRect } from "./types";
@@ -157,7 +170,9 @@ async function getDigitWorker(): Promise<AnyWorker> {
     const worker = await createWorker("eng", OEM_LSTM_ONLY, tesseractOptions());
     await worker.setParameters?.({
       tessedit_char_whitelist: "0123456789XxCÉ",
-      tessedit_pageseg_mode: "10",
+      // PSM 8 = un seul MOT. PSM 10 (un seul caractère) rendait tout dossard à
+      // deux chiffres illisible.
+      tessedit_pageseg_mode: "8",
     });
     return worker;
   })();
@@ -291,9 +306,118 @@ export async function ocrRegion(
   };
 }
 
+/* -------------------------------------------------------------------------- */
+/* Prétraitement d'un jeton                                                   */
+/* -------------------------------------------------------------------------- */
+
+/** Seuil d'Otsu sur un histogramme de luminances 0..255. */
+function otsuThreshold(values: number[]): number {
+  const histogram = new Array<number>(256).fill(0);
+  for (const value of values) histogram[Math.max(0, Math.min(255, Math.round(value)))] += 1;
+
+  const total = values.length;
+  let sum = 0;
+  for (let i = 0; i < 256; i += 1) sum += i * histogram[i];
+
+  let sumB = 0;
+  let weightB = 0;
+  let best = 0;
+  let threshold = 128;
+  for (let i = 0; i < 256; i += 1) {
+    weightB += histogram[i];
+    if (!weightB) continue;
+    const weightF = total - weightB;
+    if (!weightF) break;
+    sumB += i * histogram[i];
+    const meanB = sumB / weightB;
+    const meanF = (sum - sumB) / weightF;
+    const between = weightB * weightF * (meanB - meanF) * (meanB - meanF);
+    if (between > best) {
+      best = between;
+      threshold = i;
+    }
+  }
+  return threshold;
+}
+
 /**
- * Lecture d'un jeton joueur isolé : chiffres et X uniquement, un seul
- * caractère attendu (PSM 10). Renvoie null si rien de lisible.
+ * Ramène un jeton à du NOIR SUR BLANC, quelle que soit sa polarité d'origine :
+ *   - on ne garde que le disque central (le reste devient blanc) ;
+ *   - on binarise par Otsu ;
+ *   - la classe MINORITAIRE devient noire — c'est le chiffre, qu'il soit or sur
+ *     bordeaux ou noir sur papier.
+ */
+function binarizeToken(source: HTMLCanvasElement): HTMLCanvasElement {
+  const ctx = source.getContext("2d", { willReadFrequently: true });
+  if (!ctx) return source;
+
+  const w = source.width;
+  const h = source.height;
+  if (w < 8 || h < 8) return source;
+
+  const image = ctx.getImageData(0, 0, w, h).data;
+  const cx = w / 2;
+  const cy = h / 2;
+  const radius = Math.min(w, h) * 0.42;
+  const radius2 = radius * radius;
+
+  const inside = new Uint8Array(w * h);
+  const luminance = new Float32Array(w * h);
+  const sample: number[] = [];
+
+  for (let y = 0; y < h; y += 1) {
+    for (let x = 0; x < w; x += 1) {
+      const i = y * w + x;
+      const l = 0.299 * image[i * 4] + 0.587 * image[i * 4 + 1] + 0.114 * image[i * 4 + 2];
+      luminance[i] = l;
+      const dx = x - cx;
+      const dy = y - cy;
+      if (dx * dx + dy * dy <= radius2) {
+        inside[i] = 1;
+        sample.push(l);
+      }
+    }
+  }
+  if (sample.length < 32) return source;
+
+  const threshold = otsuThreshold(sample);
+  let dark = 0;
+  for (const value of sample) if (value <= threshold) dark += 1;
+  // La classe minoritaire porte le chiffre.
+  const inkIsDark = dark <= sample.length / 2;
+
+  const out = document.createElement("canvas");
+  out.width = w;
+  out.height = h;
+  const octx = out.getContext("2d", { willReadFrequently: true });
+  if (!octx) return source;
+
+  const target = octx.createImageData(w, h);
+  for (let i = 0; i < w * h; i += 1) {
+    let value = 255;
+    if (inside[i]) value = (luminance[i] <= threshold) === inkIsDark ? 0 : 255;
+    target.data[i * 4] = value;
+    target.data[i * 4 + 1] = value;
+    target.data[i * 4 + 2] = value;
+    target.data[i * 4 + 3] = 255;
+  }
+  octx.putImageData(target, 0, 0);
+  return out;
+}
+
+async function recognizeToken(canvas: HTMLCanvasElement): Promise<{ text: string; confidence: number } | null> {
+  const worker = await getDigitWorker();
+  const result = await worker.recognize(canvas, {}, { text: true });
+  const text = String(result?.data?.text ?? "")
+    .replace(/[^0-9Xx]/g, "")
+    .slice(0, 2);
+  const confidence = Math.max(0, Math.min(1, Number(result?.data?.confidence ?? 0) / 100));
+  return text ? { text, confidence } : null;
+}
+
+/**
+ * Lecture d'un jeton joueur isolé : chiffres et X uniquement.
+ * Renvoie null si rien de lisible.
  */
 export async function ocrToken(
   source: HTMLCanvasElement,
@@ -306,18 +430,14 @@ export async function ocrToken(
     x1: rect.x1 + pad,
     y1: rect.y1 + pad,
   };
-  const cropped = cropToCanvas(source, padded, 220);
+  const cropped = cropToCanvas(source, padded, 260);
   if (!cropped) return null;
 
   try {
-    const worker = await getDigitWorker();
-    const result = await worker.recognize(cropped.canvas, {}, { text: true });
-    const text = String(result?.data?.text ?? "")
-      .replace(/[^0-9Xx]/g, "")
-      .slice(0, 2);
-    const confidence = Math.max(0, Math.min(1, Number(result?.data?.confidence ?? 0) / 100));
-    if (!text) return null;
-    return { text, confidence };
+    const binarized = await recognizeToken(binarizeToken(cropped.canvas));
+    if (binarized) return binarized;
+    // Filet de sécurité : l'image brute, comme avant.
+    return await recognizeToken(cropped.canvas);
   } catch {
     return null;
   }

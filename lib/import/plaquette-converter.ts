@@ -64,6 +64,25 @@ const clampPoint = (point: AiPoint | undefined, courtType: "half" | "full"): AiP
   y: clampY(point?.y ?? (courtType === "half" ? 0.25 : 0.5), courtType),
 });
 
+/**
+ * Points de contrôle d'une courbe : au plus 5, répartis régulièrement entre les
+ * deux extrémités (qui, elles, sont `from` et `to` et ne sont pas des ctrls).
+ *
+ * L'ancienne formule utilisait `i % Math.max(1, Math.floor(arr.length / 5))` :
+ * dès que le tracé comptait moins de 5 points intermédiaires, le pas valait 1 et
+ * TOUS les points étaient conservés — d'où des courbes qui gondolent sur les
+ * tracés courts.
+ */
+function pickControlPoints(points: AiPoint[], max = 5): AiPoint[] {
+  const middle = points.slice(1, -1);
+  if (middle.length <= max) return middle;
+  const out: AiPoint[] = [];
+  for (let i = 0; i < max; i += 1) {
+    out.push(middle[Math.round((i * (middle.length - 1)) / (max - 1))]);
+  }
+  return out;
+}
+
 /** Un diagramme détecté → une Phase Plaquette native. */
 function diagramToPhase(diagram: AiExerciseDiagram, courtType: "half" | "full"): PlaquettePhase {
   const idByKey = new Map<string, string>();
@@ -85,6 +104,26 @@ function diagramToPhase(diagram: AiExerciseDiagram, courtType: "half" | "full"):
       ...(player.color ? { color: player.color } : {}),
       hasBall: Boolean(player.hasBall),
       ballCount: player.hasBall ? 1 : 0,
+      // --- Métadonnées d'import (V3) ---------------------------------------
+      // Elles ne changent rien au rendu : elles permettent à l'interface de
+      // proposer la correction manuelle — surligner les éléments douteux,
+      // demander « attaquant ou défenseur ? », laisser déplacer ou supprimer.
+      // Un schéma dessiné à la main n'en porte aucune : le rendu est identique.
+      ...(player.type ? { importType: player.type } : {}),
+      ...(player.confidence !== undefined ? { importConfidence: player.confidence } : {}),
+      ...(player.typeConfidence !== undefined ? { importTypeConfidence: player.typeConfidence } : {}),
+      ...(player.source ? { importSource: player.source } : {}),
+      // `needsReview` signale ce qui peut être FAUX : un type incertain, une
+      // détection fragile. Un numéro illisible n'entre pas dans ce drapeau —
+      // sinon, quand l'OCR échoue en bloc, tout le schéma clignote en rouge et
+      // le signal ne veut plus rien dire. Le cas est porté à part, et le nombre
+      // de dossards illisibles figure déjà dans les avertissements.
+      ...(player.labelConfident === false ? { importLabelConfident: false } : {}),
+      ...(player.type === "unknown" ||
+      (player.typeConfidence ?? 1) < 0.5 ||
+      (player.confidence ?? 1) < 0.5
+        ? { needsReview: true }
+        : {}),
     };
   });
 
@@ -97,6 +136,9 @@ function diagramToPhase(diagram: AiExerciseDiagram, courtType: "half" | "full"):
     rotation: 0,
     size: 1,
     color: object.color || "#0F0F12",
+    ...(object.confidence !== undefined ? { importConfidence: object.confidence } : {}),
+    ...(object.source ? { importSource: object.source } : {}),
+    ...((object.confidence ?? 1) < 0.5 ? { needsReview: true } : {}),
   }));
 
   const lines = diagram.actions.map((action, index) => {
@@ -118,12 +160,7 @@ function diagramToPhase(diagram: AiExerciseDiagram, courtType: "half" | "full"):
       ...(action.action === "freedraw" && action.points?.length
         ? { points: action.points.map((point) => clampPoint(point, courtType)) }
         : action.points && action.points.length > 2
-        ? {
-            ctrls: action.points
-              .slice(1, -1)
-              .filter((_point, i, arr) => i === 0 || i === arr.length - 1 || i % Math.max(1, Math.floor(arr.length / 5)) === 0)
-              .map((point) => clampPoint(point, courtType)),
-          }
+        ? { ctrls: pickControlPoints(action.points).map((point) => clampPoint(point, courtType)) }
         : {}),
       ...(sourcePlayerId ? { sourcePlayerId } : {}),
       ...(targetPlayerId ? { targetPlayerId } : {}),
@@ -131,6 +168,9 @@ function diagramToPhase(diagram: AiExerciseDiagram, courtType: "half" | "full"):
       order: index + 1,
       startMode: "afterPrevious" as const,
       duration: 1,
+      ...(action.confidence !== undefined ? { importConfidence: action.confidence } : {}),
+      ...(action.source ? { importSource: action.source } : {}),
+      ...((action.confidence ?? 1) < 0.5 ? { needsReview: true } : {}),
     };
   });
 
@@ -199,10 +239,75 @@ export function aiDiagramToPlaquette(result: AiExerciseImport): PlaquetteSchemaD
 /* Miniatures : rendu sur LES VRAIS TERRAINS MyBasket                         */
 /* -------------------------------------------------------------------------- */
 
+/**
+ * Fond de terrain des miniatures.
+ *
+ * La Plaquette accepte une surcharge par variable globale (`MYBASKET_DEMI_URL`
+ * / `MYBASKET_FULL_URL`) ; on l'utilise en priorité pour que la miniature d'un
+ * schéma importé soit rigoureusement le même fond que celui de l'éditeur.
+ * À défaut, on tente l'image publique ; à défaut encore, le terrain est TRACÉ
+ * (`strokeCourtLines`, la même géométrie que celle du masque d'import) plutôt
+ * que remplacé par un aplat : une miniature illisible serait pire qu'un tracé.
+ */
 const COURT_ASSETS = {
   half: "/plaquette/half-court.jpg",
   full: "/plaquette/full-court.jpg",
 } as const;
+
+const COURT_GLOBALS = {
+  half: "MYBASKET_DEMI_URL",
+  full: "MYBASKET_FULL_URL",
+} as const;
+
+/** Couleurs du repli tracé, alignées sur la charte de la Plaquette. */
+const FALLBACK_COURT = {
+  floor: "#F3E4CC",
+  line: "#6B1A2C",
+};
+
+async function loadCourtImage(courtType: "half" | "full"): Promise<HTMLImageElement | null> {
+  const sources: string[] = [];
+  if (typeof window !== "undefined") {
+    const overrides = window as unknown as Record<string, string | undefined>;
+    const override = overrides[COURT_GLOBALS[courtType]];
+    if (override) sources.push(override);
+  }
+  sources.push(COURT_ASSETS[courtType]);
+
+  for (const source of sources) {
+    try {
+      return await loadImage(source);
+    } catch {
+      // source suivante
+    }
+  }
+  return null;
+}
+
+/** Terrain tracé, utilisé quand aucune image de fond n'est disponible. */
+function drawFallbackCourt(ctx: CanvasRenderingContext2D, canvas: HTMLCanvasElement, courtType: "half" | "full") {
+  const W = canvas.width;
+  const H = canvas.height;
+  ctx.fillStyle = FALLBACK_COURT.floor;
+  ctx.fillRect(0, 0, W, H);
+
+  const bounds =
+    courtType === "full"
+      ? { x0: FULL_COURT_LEFT, x1: FULL_COURT_RIGHT, y0: FULL_COURT_TOP, y1: FULL_COURT_BOTTOM }
+      : { x0: HALF_COURT_LEFT, x1: HALF_COURT_RIGHT, y0: HALF_COURT_TOP, y1: HALF_COURT_BOTTOM };
+
+  const px = bounds.x0 * W;
+  const py = bounds.y0 * H;
+  const pw = (bounds.x1 - bounds.x0) * W;
+  const ph = (bounds.y1 - bounds.y0) * H;
+
+  ctx.save();
+  ctx.translate(px, py);
+  ctx.strokeStyle = FALLBACK_COURT.line;
+  ctx.fillStyle = FALLBACK_COURT.line;
+  strokeCourtLines(ctx, pw, ph, courtType, Math.max(1.5, pw * 0.004));
+  ctx.restore();
+}
 
 const PREVIEW = {
   half: { w: 900, h: 704 },
@@ -398,11 +503,15 @@ export async function renderPlaquettePhasePreview(courtType: "half" | "full", ph
   const size = PREVIEW[courtType];
   const canvas = document.createElement("canvas"); canvas.width = size.w; canvas.height = size.h;
   const ctx = canvas.getContext("2d"); if (!ctx) return "";
-  let img: HTMLImageElement;
-  try { img = await loadImage(COURT_ASSETS[courtType]); }
-  catch { ctx.fillStyle = COLORS.bord; ctx.fillRect(0, 0, canvas.width, canvas.height); return canvas.toDataURL("image/png"); }
-  drawCourtBackground(ctx, canvas, courtType, img);
-  const rect = getCourtDrawRect(canvas, courtType, img);
+  const img = await loadCourtImage(courtType);
+  let rect: { x: number; y: number; w: number; h: number };
+  if (img) {
+    drawCourtBackground(ctx, canvas, courtType, img);
+    rect = getCourtDrawRect(canvas, courtType, img);
+  } else {
+    drawFallbackCourt(ctx, canvas, courtType);
+    rect = { x: 0, y: 0, w: canvas.width, h: canvas.height };
+  }
   const toPx = (p: AiPoint) => nativeToPx(p, rect, courtType);
   for (const line of phase.lines || []) drawLineNative(ctx, line, toPx, rect.w);
   for (const object of phase.objects || []) { const p = toPx(object); drawObjectNative(ctx, object, p.x, p.y, rect.w); }

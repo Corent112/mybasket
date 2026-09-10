@@ -20,6 +20,29 @@
 
 export type AiPoint = { x: number; y: number };
 
+/* -------------------------------------------------------------------------- */
+/* Confiance et traçabilité (V3)                                              */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Nature d'un jeton. `unknown` est une VALEUR DE PLEIN DROIT : on ne force
+ * jamais attaquant ou défenseur quand les indices sont faibles. L'interface
+ * demandera à l'utilisateur de trancher, ce qui coûte un clic — bien moins
+ * qu'une erreur silencieuse à retrouver.
+ *
+ * `team` reste renseigné pour ne rien casser en aval (la Plaquette ne connaît
+ * que att / def) : un `unknown` est stocké en `att` ET marqué à revoir.
+ */
+export type AiDetectionType = "attacker" | "defender" | "unknown";
+
+/** Toute détection porte son niveau de certitude et la raison qui l'a produite. */
+export type AiEvidence = {
+  /** 0..1. En dessous de 0.5, l'élément doit être présenté comme à confirmer. */
+  confidence: number;
+  /** Ce qui a déclenché la détection : lisible dans le panneau de debug. */
+  source?: string;
+};
+
 export type AiRect = { x0: number; y0: number; x1: number; y1: number };
 
 export type AiDiagramPlayer = {
@@ -35,6 +58,14 @@ export type AiDiagramPlayer = {
   coach?: boolean;
   /** false quand le numéro n'a pas pu être lu de façon fiable. */
   labelConfident?: boolean;
+  /** Nature détectée, `unknown` compris (V3). Champ optionnel : `team` fait foi. */
+  type?: AiDetectionType;
+  /** Confiance de la DÉTECTION du jeton (est-ce bien un joueur ?). */
+  confidence?: number;
+  /** Confiance de la CLASSIFICATION attaquant / défenseur. */
+  typeConfidence?: number;
+  /** Ce qui a produit la détection, pour le debug. */
+  source?: string;
 };
 
 /** Uniquement les kinds réellement gérés par la Plaquette. */
@@ -54,6 +85,9 @@ export type AiDiagramObject = {
   y: number;
   text?: string;
   color?: string;
+  /** V3 — confiance et origine de la détection. */
+  confidence?: number;
+  source?: string;
 };
 
 /** Uniquement les actions réellement gérées par la Plaquette. */
@@ -75,6 +109,9 @@ export type AiDiagramAction = {
   to: AiPoint;
   order?: number;
   points?: AiPoint[];
+  /** V3 — confiance et origine de la détection. */
+  confidence?: number;
+  source?: string;
 };
 
 export type AiExerciseDiagram = {
@@ -86,6 +123,10 @@ export type AiExerciseDiagram = {
   notes: string;
   /** Libellé « Graphic N°x » lu sur le document, quand il existe. */
   sourceLabel?: string;
+  /** true si ce schéma vient d'un terrain redressé par homographie. */
+  rectified?: boolean;
+  /** Score du redressement (marquages officiels retrouvés), quand applicable. */
+  rectifyScore?: number;
   /** Empreinte visuelle du graphique, utilisée pour dédoublonner les vidéos. */
   signature?: string;
   confidence?: number;
@@ -109,6 +150,20 @@ export type AiExerciseImport = {
   diagram: AiExerciseDiagram;
   diagrams?: AiExerciseDiagram[];
   source?: "local" | "ai";
+  /**
+   * Terrain REDRESSÉ (vue de dessus, perspective annulée), en data URL.
+   * Renseigné dès que le redressement a réussi, même si aucun élément n'a pu
+   * être reconnu ensuite : l'utilisateur a toujours de quoi partir — calque à
+   * décalquer dans Plaquette, ou image jointe à l'exercice.
+   * Champ OPTIONNEL : aucun consommateur existant n'est impacté.
+   */
+  rectifiedImage?: string;
+  /**
+   * Confiance GLOBALE de l'import (0..1), agrégée depuis la géométrie, l'OCR et
+   * les éléments détectés. Sert à choisir le ton de l'aperçu : « prêt à
+   * vérifier » vs « à reprendre largement ».
+   */
+  importConfidence?: number;
   confidence: {
     text: number;
     diagram: number;

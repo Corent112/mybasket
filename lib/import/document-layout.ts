@@ -52,7 +52,8 @@ export type DocumentLayout = {
 };
 
 const ZONE_PATTERNS: Array<{ key: ZoneKey; rx: RegExp }> = [
-  { key: "graphic", rx: /^graphic\s*(?:n\s*[°ºo]?\s*[:.]?\s*\d{0,2})?\b/i },
+  // Les fiches françaises n'écrivent jamais « Graphic ».
+  { key: "graphic", rx: /^(?:graphic|sch[ée]ma|diagramme|figure)\s*(?:n\s*[°ºo]?\s*[:.]?\s*\d{0,2})?\b/i },
   { key: "title", rx: /^(?:title|titre|drill\s*name|nom\s*(?:de\s*l['’]exercice|exercice))\b/i },
   {
     key: "organisation",
@@ -134,6 +135,41 @@ const CHROME_PATTERNS: RegExp[] = [
   /^page\s*\d+(?:\s*\/\s*\d+)?$/i,
   /^there\s+are\s+no\s+data$/i,
   /^\d{1,2}[/-]\d{1,2}[/-]\d{2,4}$/,
+  // Chrome francophone : les patterns ci-dessus ne couvraient que l'anglais, si
+  // bien qu'une capture d'un site français y laissait toute sa navigation.
+  /^accueil$/i,
+  /^connexion$/i,
+  /^d[ée]connexion$/i,
+  /^se\s*(?:connecter|d[ée]connecter)$/i,
+  /^s['’]?inscrire$/i,
+  /^mon\s*compte$/i,
+  /^mon\s*profil$/i,
+  /^rechercher$/i,
+  /^retour$/i,
+  /^suivant$/i,
+  /^pr[ée]c[ée]dent$/i,
+  /^imprimer$/i,
+  /^t[ée]l[ée]charger$/i,
+  /^enregistrer$/i,
+  /^sauvegarder$/i,
+  /^modifier$/i,
+  /^supprimer$/i,
+  /^partager$/i,
+  /^ajouter$/i,
+  /^fermer$/i,
+  /^annuler$/i,
+  /^valider$/i,
+  /^param[èe]tres?$/i,
+  /^biblioth[èe]que$/i,
+  /^favoris$/i,
+  /^boutique$/i,
+  /^abonnements?$/i,
+  /^annonces?$/i,
+  /^accompagnement$/i,
+  /^mentions\s*l[ée]gales$/i,
+  /^tous\s*droits\s*r[ée]serv[ée]s/i,
+  /^confidentialit[ée]$/i,
+  /^cgu(?:\s*\/\s*cgv)?$/i,
 ];
 
 const stripLeading = (value: string) => value.replace(/^[\s|>~•●▪■►*·.\-–—_]+/, "").trim();
@@ -327,7 +363,13 @@ export function parseEquipment(text: string): {
 /** « Players / Coaches : 3 » → nombre de joueurs. */
 export function parsePlayers(text: string): number | null {
   const flat = normalize(text).toLowerCase();
-  const match = /(?:(\d{1,2})\s*(?:players?|joueurs?)|(?:players?|joueurs?)\s*[:=]?\s*(\d{1,2}))/.exec(flat);
+  // Le libellé FIBA est « Players / Coaches : 6 » : le nombre ne suit pas
+  // immédiatement le mot-clé. Sans tolérer ce qui s'intercale, la zone la plus
+  // fréquente des fiches anglaises n'était jamais lue.
+  const match =
+    /(?:(\d{1,2})\s*(?:players?|joueurs?)|(?:players?|joueurs?)(?:\s*[/&+]\s*(?:coach(?:es)?|entraineurs?|staff))?\s*[:=]?\s*(\d{1,2}))/.exec(
+      flat
+    );
   const direct = /^\s*(\d{1,2})\s*$/.exec(flat);
   const value = Number(match?.[1] ?? match?.[2] ?? direct?.[1]);
   return Number.isFinite(value) ? Math.max(1, Math.min(30, value)) : null;
