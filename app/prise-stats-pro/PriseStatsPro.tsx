@@ -6619,10 +6619,10 @@ export default function PriseStatsProPage() {
                     <div className="vmcTeam opponent"><b>{opponent || 'ADVERSAIRE'}</b><strong>{scoreThem}</strong><small>Fautes {themTeamFouls}</small></div>
                   </div>
                   <div className="vmcScoreAdjust">
-                    <button onClick={() => setPerQ((p) => { const cur = p[q] || { us: 0, them: 0 }; return { ...p, [q]: { ...cur, us: Math.max(0, cur.us - 1) } }; })}>− NOUS</button>
-                    <button onClick={() => setPerQ((p) => { const cur = p[q] || { us: 0, them: 0 }; return { ...p, [q]: { ...cur, us: cur.us + 1 } }; })}>+ NOUS</button>
-                    <button onClick={() => setPerQ((p) => { const cur = p[q] || { us: 0, them: 0 }; return { ...p, [q]: { ...cur, them: Math.max(0, cur.them - 1) } }; })}>− ADV</button>
-                    <button onClick={() => setPerQ((p) => { const cur = p[q] || { us: 0, them: 0 }; return { ...p, [q]: { ...cur, them: cur.them + 1 } }; })}>+ ADV</button>
+                    <button onClick={() => usBtn(-1)}>− NOUS</button>
+                    <button onClick={() => usBtn(1)}>+ NOUS</button>
+                    <button onClick={() => themBtn(-1)}>− ADV</button>
+                    <button onClick={() => themBtn(1)}>+ ADV</button>
                   </div>
                   <button className="vmcNextQuarter" onClick={() => changeQ(1)}>
                     QT SUIVANT <span>➜</span>

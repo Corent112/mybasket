@@ -924,10 +924,10 @@ const currentRef = useRef(current);
         // Son branding doit donc être dessiné verticalement dans la source pour
         // apparaître horizontal, net et à la bonne taille après rotation.
         ox.translate(cx, cy);
-        if (rotateForFull) ox.rotate(Math.PI / 2);
-        // Sur le terrain complet, le branding du bord haut doit être retourné
-        // dans la source afin d'apparaître à l'endroit après la rotation du terrain.
-        if (flip180) ox.rotate(Math.PI);
+        // Le bord gauche de l'image source devient le HAUT du terrain après la
+        // rotation +90° appliquée à l'affichage. Pour que le branding du haut
+        // reste lisible, on le pré-tourne donc à -90° dans la source.
+        if (rotateForFull) ox.rotate(flip180 ? Math.PI / 2 : -Math.PI / 2);
 
         const contentW = rotateForFull ? maxH : maxW;
         const contentH = rotateForFull ? maxW : maxH;
@@ -992,11 +992,23 @@ const currentRef = useRef(current);
         ox.restore();
         drawBrand(out.width * 0.5, out.height * 0.067, out.width * 0.72, out.height * 0.115);
       } else {
-        drawBrand(out.width * 0.035, out.height * 0.5, out.width * 0.06, out.height * 0.64, true);
+        // Nettoie entièrement les deux bandes extérieures du terrain complet.
+        // Cela supprime tout reliquat blanc de l'ancien logo/texte sans toucher
+        // aux lignes ni à la géométrie du terrain (qui commencent après la bande).
+        ox.save();
+        ox.fillStyle = style.borderColor;
+        ox.fillRect(0, 0, out.width * 0.064, out.height);
+        ox.fillRect(out.width * 0.936, 0, out.width * 0.064, out.height);
+        ox.restore();
+
+        // Bord gauche de la source = branding du HAUT à l'écran.
+        drawBrand(out.width * 0.035, out.height * 0.5, out.width * 0.06, out.height * 0.64, true, false);
+
+        // Bord opposé : on conserve l'orientation qui est déjà correcte en bas.
         ox.save();
         ox.translate(out.width, out.height);
         ox.rotate(Math.PI);
-        drawBrand(out.width * 0.035, out.height * 0.5, out.width * 0.06, out.height * 0.64, true);
+        drawBrand(out.width * 0.035, out.height * 0.5, out.width * 0.06, out.height * 0.64, true, true);
         ox.restore();
       }
     }
