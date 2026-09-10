@@ -765,11 +765,11 @@ const currentRef = useRef(current);
         ox.fillStyle = style.borderColor;
         ox.fillRect(cx - maxW / 2, cy - maxH / 2, maxW, maxH);
 
-        // Le terrain complet est stocké horizontalement puis tourné à l'écran.
-        // Son branding doit donc être dessiné verticalement dans la source pour
-        // apparaître horizontal, net et à la bonne taille après rotation.
+        // Le terrain complet est stocké horizontalement puis tourné de +90° à l'écran.
+        // On dessine donc le branding à -90° dans la source afin que le texte
+        // reste parfaitement à l'endroit une fois le terrain affiché.
         ox.translate(cx, cy);
-        if (rotateForFull) ox.rotate(Math.PI / 2);
+        if (rotateForFull) ox.rotate(-Math.PI / 2);
 
         const contentW = rotateForFull ? maxH : maxW;
         const contentH = rotateForFull ? maxW : maxH;
@@ -791,7 +791,11 @@ const currentRef = useRef(current);
           : `"${branding.fontFamily || 'Arial'}"`;
         let fontSize = Math.max(12, Math.round(contentH * 0.46 * branding.textScale));
         const gap = hasLogo && text ? contentW * 0.026 : 0;
-        const maxTextW = Math.max(1, contentW * 0.94 - logoW - gap);
+        // Le texte reste centré sur l'axe exact du terrain. Le logo se place à
+        // sa gauche sans jamais décaler le texte. On réduit seulement la police
+        // si l'ensemble ne tient plus dans la zone de branding.
+        const reservedLeft = hasLogo ? (logoW + gap) : 0;
+        const maxTextW = Math.max(1, contentW * 0.94 - reservedLeft * 2);
         ox.font = `900 ${fontSize}px ${selectedFont}, Arial, sans-serif`;
         if (text) {
           while (fontSize > 9 && ox.measureText(text).width > maxTextW) {
@@ -800,32 +804,31 @@ const currentRef = useRef(current);
           }
         }
         const textW = text ? ox.measureText(text).width : 0;
-        const totalW = logoW + gap + textW;
-        let x = bx - totalW / 2;
 
         ox.imageSmoothingEnabled = true;
         ox.imageSmoothingQuality = 'high';
         if (hasLogo && logo) {
-          ox.drawImage(logo, x, by - logoH / 2, logoW, logoH);
-          x += logoW + gap;
+          const logoX = text
+            ? bx - textW / 2 - gap - logoW
+            : bx - logoW / 2;
+          ox.drawImage(logo, logoX, by - logoH / 2, logoW, logoH);
         }
         if (text) {
           ox.fillStyle = style.brandingColor;
           ox.textBaseline = 'middle';
-          ox.textAlign = 'left';
-          ox.fillText(text, x, by);
+          ox.textAlign = 'center';
+          ox.fillText(text, bx, by);
         }
         ox.restore();
       };
       if (ct === 'half') {
         drawBrand(out.width * 0.5, out.height * 0.067, out.width * 0.72, out.height * 0.115);
       } else {
+        // Dans la source horizontale, le bord gauche devient le haut à l'écran
+        // et le bord droit devient le bas. Les deux utilisent la même correction
+        // d'orientation afin que les deux textes soient lisibles à l'endroit.
         drawBrand(out.width * 0.035, out.height * 0.5, out.width * 0.06, out.height * 0.64, true);
-        ox.save();
-        ox.translate(out.width, out.height);
-        ox.rotate(Math.PI);
-        drawBrand(out.width * 0.035, out.height * 0.5, out.width * 0.06, out.height * 0.64, true);
-        ox.restore();
+        drawBrand(out.width * 0.965, out.height * 0.5, out.width * 0.06, out.height * 0.64, true);
       }
     }
     return out;
