@@ -198,6 +198,7 @@ const resetPlaquette = () => {
   const [notesOpen, setNotesOpen] = useState(false);
   const [courtStyle, setCourtStyle] = useState<CourtStyle>(DEFAULT_COURT_STYLE);
   const [courtStyleOpen, setCourtStyleOpen] = useState(false);
+  const [phaseCourtThumbnailUrl, setPhaseCourtThumbnailUrl] = useState(MYBASKET_DEMI_URL);
   const courtStyleRef = useRef<CourtStyle>(DEFAULT_COURT_STYLE);
   const courtTextureRef = useRef<Record<'half' | 'full', { key: string; canvas: HTMLCanvasElement } | null>>({
     half: null,
@@ -618,6 +619,29 @@ const currentRef = useRef(current);
     const styled = buildStyledCourtCanvas(img, ct, style);
     courtTextureRef.current[ct] = { key, canvas: styled };
     return styled;
+  };
+
+  const refreshPhaseCourtThumbnail = () => {
+    const img = demiImgRef.current;
+
+    // Les miniatures historiques utilisent le demi-terrain. On conserve exactement
+    // cette géométrie, mais on leur applique la même texture colorée que le canvas.
+    if (!img || !readyRef.current.demi || isDefaultCourtStyle(courtStyleRef.current)) {
+      setPhaseCourtThumbnailUrl(MYBASKET_DEMI_URL);
+      return;
+    }
+
+    const source = getStyledCourtSource(img, 'half');
+    if (source instanceof HTMLCanvasElement) {
+      try {
+        setPhaseCourtThumbnailUrl(source.toDataURL('image/png'));
+        return;
+      } catch {
+        // En cas de restriction navigateur, on garde au minimum le terrain original.
+      }
+    }
+
+    setPhaseCourtThumbnailUrl(MYBASKET_DEMI_URL);
   };
 
   const drawBackground = (ctx: CanvasRenderingContext2D, canvas: HTMLCanvasElement) => {
@@ -2039,7 +2063,7 @@ animPosRef.current = { players, balls };
     const demiUrl = MYBASKET_DEMI_URL || w.MYBASKET_DEMI_URL || '';
     const fullUrl = MYBASKET_FULL_URL || w.MYBASKET_FULL_URL || '';
     const demi = new Image();
-    demi.onload = () => { readyRef.current.demi = true; render(); };
+    demi.onload = () => { readyRef.current.demi = true; refreshPhaseCourtThumbnail(); render(); };
     demi.src = demiUrl; demiImgRef.current = demi;
     const full = new Image();
     full.onload = () => { readyRef.current.full = true; render(); };
@@ -2055,6 +2079,7 @@ animPosRef.current = { players, balls };
     selectionRef.current = selection;
     courtStyleRef.current = courtStyle;
     courtTextureRef.current = { half: null, full: null };
+    refreshPhaseCourtThumbnail();
     render();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [phases, current, courtType, selection, courtStyle]);
@@ -3184,7 +3209,7 @@ const saveAndGoCreate = async (kind: "systeme" | "exercice") => {
 };
 
 const exportJson = () => {
-  const data = JSON.stringify({ title, courtType, phases, sheet }, null, 2);
+  const data = JSON.stringify({ title, courtType, courtStyle: courtStyleRef.current, phases, sheet }, null, 2);
   const blob = new Blob([data], { type: 'application/json' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
@@ -3308,9 +3333,10 @@ const exportJson = () => {
       id: 'dg_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
       title: title || 'Schéma',
       imageUrl,
-      playData: JSON.stringify({ title, courtType, phases, sheet }),
+      playData: JSON.stringify({ title, courtType, courtStyle: courtStyleRef.current, phases, sheet }),
       phases: JSON.parse(JSON.stringify(phases)),
       courtType,
+      courtStyle: courtStyleRef.current,
       notes: (phases[current] && phases[current].notes) || '',
       createdAt: Date.now(),
     };
@@ -3666,7 +3692,7 @@ const exportJson = () => {
                       key={i}
                       className={'ph-thumb' + (i === current ? ' active' : '')}
                       onClick={() => { setCurrent(i); setSelection([]); }}
-                      style={MYBASKET_DEMI_URL ? { backgroundImage: `url(${MYBASKET_DEMI_URL})` } : undefined}
+                      style={phaseCourtThumbnailUrl ? { backgroundImage: `url(${phaseCourtThumbnailUrl})` } : undefined}
                     >
                       {p.players.map((pl) => (
                         <span key={pl.id} style={{ position: 'absolute', left: `${pl.x * 100}%`, top: `${(pl.y / 0.5) * 100}%`, width: 7, height: 7, marginLeft: -3.5, marginTop: -3.5, borderRadius: pl.shape === 'square' ? 1 : '50%', background: pl.team === 'def' ? '#D62828' : '#D4A24C', border: '1px solid #0F0F12' }} />
