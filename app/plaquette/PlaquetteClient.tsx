@@ -930,7 +930,7 @@ const currentRef = useRef(current);
       if (ct === 'half') {
         drawBrand(out.width * 0.5, out.height * 0.067, out.width * 0.72, out.height * 0.115);
       } else {
-        drawBrand(out.width * 0.035, out.height * 0.5, out.width * 0.06, out.height * 0.64, true, true);
+        drawBrand(out.width * 0.035, out.height * 0.5, out.width * 0.06, out.height * 0.64, true);
         ox.save();
         ox.translate(out.width, out.height);
         ox.rotate(Math.PI);
