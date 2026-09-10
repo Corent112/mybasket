@@ -759,31 +759,40 @@ const currentRef = useRef(current);
 
     const branding = courtBrandingRef.current;
     if (branding.useCustomBranding) {
-      const drawBrand = (cx: number, cy: number, maxW: number, maxH: number) => {
-        const bx = cx + branding.offsetX * maxW;
-        const by = cy + branding.offsetY * maxH;
+      const drawBrand = (cx: number, cy: number, maxW: number, maxH: number, rotateForFull = false) => {
+        ox.save();
+        // On nettoie d'abord la zone de branding dans son orientation réelle.
         ox.fillStyle = style.borderColor;
         ox.fillRect(cx - maxW / 2, cy - maxH / 2, maxW, maxH);
+
+        // Le terrain complet est stocké horizontalement puis tourné à l'écran.
+        // Son branding doit donc être dessiné verticalement dans la source pour
+        // apparaître horizontal, net et à la bonne taille après rotation.
+        ox.translate(cx, cy);
+        if (rotateForFull) ox.rotate(Math.PI / 2);
+
+        const contentW = rotateForFull ? maxH : maxW;
+        const contentH = rotateForFull ? maxW : maxH;
+        const bx = branding.offsetX * contentW;
+        const by = branding.offsetY * contentH;
 
         const logo = courtBrandingLogoRef.current;
         const hasLogo = branding.showLogo && !!(logo && logo.complete && logo.naturalWidth > 0);
         const text = branding.showText ? branding.text.trim() : '';
 
-        const baseLogoH = maxH * 0.72 * branding.logoScale;
-        const logoH = Math.min(maxH * 0.92, baseLogoH);
+        const baseLogoH = contentH * 0.72 * branding.logoScale;
+        const logoH = Math.min(contentH * 0.92, baseLogoH);
         const logoW = hasLogo && logo
-          ? Math.min(maxW * 0.38, logoH * (logo.naturalWidth / logo.naturalHeight))
+          ? Math.min(contentW * 0.28, logoH * (logo.naturalWidth / logo.naturalHeight))
           : 0;
 
         const selectedFont = branding.fontFamily === 'custom' && branding.customFontDataUrl
           ? '"MyBasketCourtCustomFont"'
           : `"${branding.fontFamily || 'Arial'}"`;
-        let fontSize = Math.max(12, Math.round(maxH * 0.46 * branding.textScale));
-        const gap = hasLogo && text ? maxW * 0.032 : 0;
-        const maxTextW = Math.max(1, maxW * 0.94 - logoW - gap);
+        let fontSize = Math.max(12, Math.round(contentH * 0.46 * branding.textScale));
+        const gap = hasLogo && text ? contentW * 0.026 : 0;
+        const maxTextW = Math.max(1, contentW * 0.94 - logoW - gap);
         ox.font = `900 ${fontSize}px ${selectedFont}, Arial, sans-serif`;
-        // On réduit réellement la taille de police si nécessaire. On n'utilise plus
-        // le paramètre maxWidth de fillText qui écrasait horizontalement le texte.
         if (text) {
           while (fontSize > 9 && ox.measureText(text).width > maxTextW) {
             fontSize -= 1;
@@ -794,6 +803,8 @@ const currentRef = useRef(current);
         const totalW = logoW + gap + textW;
         let x = bx - totalW / 2;
 
+        ox.imageSmoothingEnabled = true;
+        ox.imageSmoothingQuality = 'high';
         if (hasLogo && logo) {
           ox.drawImage(logo, x, by - logoH / 2, logoW, logoH);
           x += logoW + gap;
@@ -804,15 +815,16 @@ const currentRef = useRef(current);
           ox.textAlign = 'left';
           ox.fillText(text, x, by);
         }
+        ox.restore();
       };
       if (ct === 'half') {
         drawBrand(out.width * 0.5, out.height * 0.067, out.width * 0.72, out.height * 0.115);
       } else {
-        drawBrand(out.width * 0.035, out.height * 0.5, out.width * 0.06, out.height * 0.64);
+        drawBrand(out.width * 0.035, out.height * 0.5, out.width * 0.06, out.height * 0.64, true);
         ox.save();
         ox.translate(out.width, out.height);
         ox.rotate(Math.PI);
-        drawBrand(out.width * 0.035, out.height * 0.5, out.width * 0.06, out.height * 0.64);
+        drawBrand(out.width * 0.035, out.height * 0.5, out.width * 0.06, out.height * 0.64, true);
         ox.restore();
       }
     }
@@ -4412,21 +4424,29 @@ const exportJson = () => {
                 e.currentTarget.value='';
               }} style={{ width:'100%', marginBottom:'.75rem' }} />
               <label style={{ display:'block', fontSize:'.78rem', fontWeight:800, marginBottom:'.35rem' }}>Logo du club</label>
-              <div style={{ fontSize:'.7rem', color:'#777', marginBottom:'.45rem' }}>Le fond blanc relié aux bords est supprimé automatiquement et le logo est recadré au plus près.</div>
-              <input type="file" accept="image/png,image/jpeg,image/webp" onChange={(e) => {
+              <div style={{ fontSize:'.7rem', color:'#777', marginBottom:'.45rem' }}>PNG/JPG/WebP : fond blanc relié aux bords supprimé et recadrage automatique. SVG conseillé pour une qualité parfaite.</div>
+              <input type="file" accept="image/png,image/jpeg,image/webp,image/svg+xml,.svg" onChange={(e) => {
                 const file=e.target.files?.[0]; if(!file) return;
                 const reader=new FileReader();
                 reader.onload=()=>{
                   const src=String(reader.result||'');
+                  // Un SVG reste vectoriel : on le conserve tel quel pour un rendu net
+                  // quelle que soit la taille d'affichage sur le terrain.
+                  if (file.type === 'image/svg+xml' || /\.svg$/i.test(file.name)) {
+                    applyCourtBranding({ ...courtBrandingRef.current, logoDataUrl:src, showLogo:true, useCustomBranding:true });
+                    return;
+                  }
                   const img=new Image();
                   img.onload=()=>{
-                    const max=700;
+                    const max=1800;
                     const scale=Math.min(1,max/Math.max(img.naturalWidth,img.naturalHeight));
                     const work=document.createElement('canvas');
                     work.width=Math.max(1,Math.round(img.naturalWidth*scale));
                     work.height=Math.max(1,Math.round(img.naturalHeight*scale));
                     const wctx=work.getContext('2d',{ willReadFrequently:true });
                     if(!wctx) return;
+                    wctx.imageSmoothingEnabled = true;
+                    wctx.imageSmoothingQuality = 'high';
                     wctx.drawImage(img,0,0,work.width,work.height);
                     const imageData=wctx.getImageData(0,0,work.width,work.height);
                     const data=imageData.data;
