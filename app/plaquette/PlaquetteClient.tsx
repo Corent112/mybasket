@@ -55,8 +55,6 @@ type SavedCourtPreset = {
   createdAt: number;
 };
 
-const SAVED_COURTS_STORAGE_KEY = 'mybasket_plaquette_saved_courts_v1';
-
 
 const BUILTIN_COURT_FONTS = [
   { id: 'Police 1', label: 'Police 1', family: 'MyBasketCourtPolice1', url: '/fonts/SfBigWhiskey-mZ4m.ttf' },
@@ -278,6 +276,7 @@ const resetPlaquette = () => {
   const [courtBranding, setCourtBranding] = useState<CourtBranding>(DEFAULT_COURT_BRANDING);
   const [courtBrandingOpen, setCourtBrandingOpen] = useState(false);
   const [savedCourtPresets, setSavedCourtPresets] = useState<SavedCourtPreset[]>([]);
+  const [savedCourtPresetsLoading, setSavedCourtPresetsLoading] = useState(false);
   const courtBrandingRef = useRef<CourtBranding>(DEFAULT_COURT_BRANDING);
   const courtBrandingLogoRef = useRef<HTMLImageElement | null>(null);
   const courtStyleRef = useRef<CourtStyle>(DEFAULT_COURT_STYLE);
@@ -287,46 +286,90 @@ const resetPlaquette = () => {
   });
 
   useEffect(() => {
-    try {
-      const raw = localStorage.getItem(SAVED_COURTS_STORAGE_KEY);
-      if (!raw) return;
-      const parsed = JSON.parse(raw);
-      if (!Array.isArray(parsed)) return;
-      const clean = parsed.slice(0, 12).map((item: any): SavedCourtPreset => ({
-        id: typeof item?.id === 'string' ? item.id : `${Date.now()}-${Math.random()}`,
-        name: typeof item?.name === 'string' && item.name.trim() ? item.name.trim().slice(0, 40) : 'Terrain personnalisé',
-        style: normalizeCourtStyle(item?.style),
-        branding: normalizeCourtBranding(item?.branding),
-        createdAt: Number.isFinite(Number(item?.createdAt)) ? Number(item.createdAt) : Date.now(),
-      }));
-      setSavedCourtPresets(clean);
-    } catch (error) {
-      console.warn('Terrains sauvegardés illisibles :', error);
-    }
+    let cancelled = false;
+
+    const loadSavedCourtPresetsFromDatabase = async () => {
+      setSavedCourtPresetsLoading(true);
+      try {
+        const { data: { user } } = await supabase.auth.getUser();
+        if (!user) {
+          if (!cancelled) setSavedCourtPresets([]);
+          return;
+        }
+
+        const { data, error } = await supabase
+          .from('plaquette_court_presets')
+          .select('id, name, style, branding, created_at')
+          .eq('user_id', user.id)
+          .order('created_at', { ascending: false })
+          .limit(3);
+
+        if (error) throw error;
+        if (cancelled) return;
+
+        const clean = (Array.isArray(data) ? data : []).map((item: any): SavedCourtPreset => ({
+          id: String(item.id),
+          name: typeof item?.name === 'string' && item.name.trim() ? item.name.trim().slice(0, 40) : 'Terrain personnalisé',
+          style: normalizeCourtStyle(item?.style),
+          branding: normalizeCourtBranding(item?.branding),
+          createdAt: item?.created_at ? new Date(item.created_at).getTime() : Date.now(),
+        }));
+        setSavedCourtPresets(clean);
+      } catch (error) {
+        console.warn('Chargement des terrains personnels impossible :', error);
+      } finally {
+        if (!cancelled) setSavedCourtPresetsLoading(false);
+      }
+    };
+
+    void loadSavedCourtPresetsFromDatabase();
+    return () => { cancelled = true; };
   }, []);
 
-  const persistSavedCourtPresets = (items: SavedCourtPreset[]) => {
-    setSavedCourtPresets(items);
-    try {
-      localStorage.setItem(SAVED_COURTS_STORAGE_KEY, JSON.stringify(items));
-    } catch (error) {
-      console.warn('Sauvegarde terrain impossible :', error);
-      alert('Impossible de sauvegarder ce terrain dans ce navigateur. Essaie de supprimer un ancien terrain sauvegardé.');
+  const saveCurrentCourtPreset = async () => {
+    if (savedCourtPresets.length >= 3) {
+      alert('Tu peux sauvegarder jusqu’à 3 terrains personnels. Supprime-en un pour en enregistrer un nouveau.');
+      return;
     }
-  };
 
-  const saveCurrentCourtPreset = () => {
     const proposed = window.prompt('Nom du terrain à sauvegarder :', `Mon terrain ${savedCourtPresets.length + 1}`);
     const name = proposed?.trim();
     if (!name) return;
-    const preset: SavedCourtPreset = {
-      id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-      name: name.slice(0, 40),
-      style: normalizeCourtStyle(courtStyleRef.current),
-      branding: normalizeCourtBranding(courtBrandingRef.current),
-      createdAt: Date.now(),
-    };
-    persistSavedCourtPresets([preset, ...savedCourtPresets].slice(0, 12));
+
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) {
+        alert('Connecte-toi à ton compte MyBasket pour sauvegarder ce terrain.');
+        return;
+      }
+
+      const style = normalizeCourtStyle(courtStyleRef.current);
+      const branding = normalizeCourtBranding(courtBrandingRef.current);
+      const { data, error } = await supabase
+        .from('plaquette_court_presets')
+        .insert({
+          user_id: user.id,
+          name: name.slice(0, 40),
+          style,
+          branding,
+        })
+        .select('id, name, style, branding, created_at')
+        .single();
+
+      if (error) throw error;
+
+      const preset: SavedCourtPreset = {
+        id: String(data.id),
+        name: String(data.name || name).slice(0, 40),
+        style: normalizeCourtStyle(data.style),
+        branding: normalizeCourtBranding(data.branding),
+        createdAt: data.created_at ? new Date(data.created_at).getTime() : Date.now(),
+      };
+      setSavedCourtPresets((currentItems) => [preset, ...currentItems].slice(0, 3));
+    } catch (error) {
+      console.warn('Sauvegarde du terrain en base impossible :', error);
+      alert('Impossible de sauvegarder ce terrain sur ton compte. Vérifie que la migration Supabase des terrains personnels a bien été exécutée.');
+    }
   };
 
   const applyCourtBranding = (value: unknown) => {
@@ -387,8 +430,21 @@ const resetPlaquette = () => {
     applyCourtBranding(preset.branding);
   };
 
-  const deleteSavedCourtPreset = (id: string) => {
-    persistSavedCourtPresets(savedCourtPresets.filter((preset) => preset.id !== id));
+  const deleteSavedCourtPreset = async (id: string) => {
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) return;
+      const { error } = await supabase
+        .from('plaquette_court_presets')
+        .delete()
+        .eq('id', id)
+        .eq('user_id', user.id);
+      if (error) throw error;
+      setSavedCourtPresets((currentItems) => currentItems.filter((preset) => preset.id !== id));
+    } catch (error) {
+      console.warn('Suppression du terrain personnel impossible :', error);
+      alert('Impossible de supprimer ce terrain pour le moment.');
+    }
   };
 
   const resetCourtAppearance = () => {
@@ -928,6 +984,12 @@ const currentRef = useRef(current);
         ox.restore();
       };
       if (ct === 'half') {
+        // Efface complètement l'ancien branding source jusque sur le bord haut.
+        // Cela supprime le petit reliquat blanc qui pouvait rester au centre au-dessus du logo.
+        ox.save();
+        ox.fillStyle = style.borderColor;
+        ox.fillRect(out.width * 0.1, 0, out.width * 0.8, out.height * 0.126);
+        ox.restore();
         drawBrand(out.width * 0.5, out.height * 0.067, out.width * 0.72, out.height * 0.115);
       } else {
         drawBrand(out.width * 0.035, out.height * 0.5, out.width * 0.06, out.height * 0.64, true);
@@ -4790,11 +4852,15 @@ const exportJson = () => {
                   onClick={saveCurrentCourtPreset}
                   style={{ width: '100%', background: 'var(--bordeaux, #6B1A2C)', color: '#fff', fontWeight: 900 }}
                 >
-                  💾 Sauvegarder ce terrain
+                  💾 Sauvegarder ce terrain ({savedCourtPresets.length}/3)
                 </button>
                 <div style={{ fontSize: '.7rem', color: '#777', marginTop: '.35rem', lineHeight: 1.35 }}>
-                  Sauvegarde personnelle dans ce navigateur (couleurs, logo, texte et police).
+                  Sauvegarde sur ton compte MyBasket (maximum 3 terrains : couleurs, logo, texte et police).
                 </div>
+
+                {savedCourtPresetsLoading && (
+                  <div style={{ fontSize: '.7rem', color: '#777', marginTop: '.55rem' }}>Chargement de mes terrains…</div>
+                )}
 
                 {savedCourtPresets.length > 0 && (
                   <div style={{ marginTop: '.8rem' }}>
