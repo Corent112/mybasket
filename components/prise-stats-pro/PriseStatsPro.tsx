@@ -4437,9 +4437,10 @@ export default function PriseStatsProPage() {
 
       if (typing(e.target)) return;
 
-      // ESPACE = vidéo play/pause ; SANS vidéo = départ unique du temps réel continu
-      if (e.key === ' ' || e.code === 'Space') { e.preventDefault(); toggleVideoOnly(); return; }
-      // B = start/stop du chrono match
+      // LIVE : ESPACE = START / STOP du chrono match. Si une vidéo est chargée,
+      // elle suit le même état pour rester synchronisée avec le chrono.
+      if (e.key === ' ' || e.code === 'Space') { e.preventDefault(); toggleClockAndVideo(); return; }
+      // B reste disponible comme raccourci secondaire / compatibilité.
       if (e.key === 'b' || e.key === 'B') { e.preventDefault(); toggleClockAndVideo(); return; }
 
       // SHIFT + flèche = seek vidéo (ou Tab maintenu + flèche, compat V7)
@@ -5175,11 +5176,21 @@ export default function PriseStatsProPage() {
     else { possessionStartRef.current = getRawCodingTime(); setDraft(d); setStage(stageAfterContext(d.context)); } // AJOUT
   };
   const systemePick = (id: string) => {
+    // Verrou Live individuel : Système et Temps fort n'appartiennent jamais
+    // au parcours individuel, même si une ancienne configuration tente d'y router.
+    if (codingMode === 'live-individual') {
+      setStage(draft.context === 'defense' ? 'result' : (draft.playerId ? 'result' : 'player'));
+      return;
+    }
     if (id === 'libre') markClipStartBefore(3);
     setDraft({ ...draft, systemeJeu: id, tempsFort: '', coverage: '' });
     setStage(stageAfterSystem());
   };
   const tempsPick = (id: string) => {
+    if (codingMode === 'live-individual') {
+      setStage(draft.context === 'defense' ? 'result' : (draft.playerId ? 'result' : 'player'));
+      return;
+    }
     const now = getRawCodingTime();
     const possessionStart = possessionStartRef.current ?? 0;
     // Convention LiveStats MyBasket :
@@ -5378,6 +5389,12 @@ export default function PriseStatsProPage() {
     shotResult: 'made' | 'missed',
     shotRange: 'interior' | 'exterior' | 'three',
   ) => {
+    // En attaque Live individuel, aucun tir ne peut être enregistré sans joueur.
+    if (codingMode === 'live-individual' && draft.context === 'attaque' && !draft.playerId) {
+      setStage('player');
+      flash('Choisis d’abord le joueur qui réalise l’action');
+      return;
+    }
     markClipStartBefore(5);
     const d: Draft = {
       ...draft,
@@ -5393,6 +5410,11 @@ export default function PriseStatsProPage() {
   };
 
   const resultPick = (r: string) => {
+    if (codingMode === 'live-individual' && draft.context === 'attaque' && !draft.playerId) {
+      setStage('player');
+      flash('Choisis d’abord le joueur qui réalise l’action');
+      return;
+    }
     markClipStartBefore(5);
     const d = { ...draft, shotResult: r, actionType: 'tir' };
 
@@ -5474,7 +5496,15 @@ export default function PriseStatsProPage() {
   };
   const reboundFoulPlayerPick = (id: string) => commit({ ...draft, reboundFoulPlayerId: id });
   const rebWho = (id: string) => commit({ ...draft, reboundPlayerId: id });
-  const passer = (id: string) => { if (id) afterPD({ ...draft, assist: true, assistPlayerId: id }); else afterPD({ ...draft, assist: false, assistPlayerId: null }); };
+  const passer = (id: string) => {
+    // Filet de sécurité : le marqueur ne peut jamais être crédité de sa propre PD.
+    if (id && id === draft.playerId) {
+      flash('La passe décisive doit être attribuée à un autre joueur');
+      return;
+    }
+    if (id) afterPD({ ...draft, assist: true, assistPlayerId: id });
+    else afterPD({ ...draft, assist: false, assistPlayerId: null });
+  };
   const usBtn = (d: number) => setPerQ((p) => { const cur = p[q] || { us: 0, them: 0 }; return { ...p, [q]: { ...cur, us: Math.max(0, cur.us + d) } }; });
   const themBtn = (d: number) => setPerQ((p) => { const cur = p[q] || { us: 0, them: 0 }; return { ...p, [q]: { ...cur, them: Math.max(0, cur.them + d) } }; });
 
@@ -6037,7 +6067,7 @@ export default function PriseStatsProPage() {
                   <div className={`cm-vid ${codingMode === 'live-individual' ? 'on' : ''}`} onClick={() => { setCodingMode('live-individual'); setImportedLiveSource(null); }}>
                     {codingMode === 'live-individual' && <div className="cm-vid-ck">✓</div>}
                     <div className="cm-vid-ic">👤</div><div className="cm-vid-t">Live individuel</div>
-                    <div className="cm-vid-d">Attaque : Joueur → Résultat. Défense : Résultat → joueur seulement si nécessaire. Shot chart / rebond / PD selon ta logique.</div>
+                    <div className="cm-vid-d">Attaque : Qui réalise → Résultat → PD si panier → conséquence. Défense : Résultat directement → joueur de mon équipe seulement pour attribuer rebond, faute, contre, interception… Aucun Système / Temps fort.</div>
                   </div>
                   <div className={`cm-vid ${codingMode === 'post' ? 'on' : ''}`} onClick={() => setCodingMode('post')}>
                     {codingMode === 'post' && <div className="cm-vid-ck">✓</div>}
@@ -8400,7 +8430,7 @@ export default function PriseStatsProPage() {
             <button className="chip" onClick={() => reboundFoulPick('drawn')}>🔔 Faute provoquée</button>
             <button className="chip" onClick={() => reboundFoulPick('committed')}>🟨 Faute commise</button>
           </div>
-          {draft.reboundType && isMyRebound(draft.context, draft.reboundType) && <><div className="sublbl">Qui prend le rebond ?</div>{players3(draft.reboundPlayerId, rebWho)}<button className="chip" style={{ marginTop: 8 }} onClick={() => commit(draft)}>Sans précision →</button></>}
+          {draft.reboundType && isMyRebound(draft.context, draft.reboundType) && <><div className="sublbl">Qui prend le rebond ?</div>{players3(draft.reboundPlayerId, rebWho)}{codingMode !== 'live-individual' && <button className="chip" style={{ marginTop: 8 }} onClick={() => commit(draft)}>Sans précision →</button>}</>}
         </>;
       }
       case 'rebound-foul-player': {
