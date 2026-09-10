@@ -42,6 +42,9 @@ type CourtBranding = {
   textScale: number;
   offsetX: number;
   offsetY: number;
+  fontFamily: string;
+  customFontName: string;
+  customFontDataUrl: string | null;
 };
 
 const DEFAULT_COURT_BRANDING: CourtBranding = {
@@ -54,6 +57,9 @@ const DEFAULT_COURT_BRANDING: CourtBranding = {
   textScale: 1,
   offsetX: 0,
   offsetY: 0,
+  fontFamily: 'Arial',
+  customFontName: '',
+  customFontDataUrl: null,
 };
 
 const DEFAULT_COURT_STYLE: CourtStyle = {
@@ -133,6 +139,9 @@ const normalizeCourtBranding = (value: unknown): CourtBranding => {
     textScale: clampNumber(v.textScale, 1, 0.55, 1.8),
     offsetX: clampNumber(v.offsetX, 0, -0.3, 0.3),
     offsetY: clampNumber(v.offsetY, 0, -0.3, 0.3),
+    fontFamily: typeof v.fontFamily === 'string' && v.fontFamily.trim() ? v.fontFamily.slice(0, 80) : DEFAULT_COURT_BRANDING.fontFamily,
+    customFontName: typeof v.customFontName === 'string' ? v.customFontName.slice(0, 120) : '',
+    customFontDataUrl: typeof v.customFontDataUrl === 'string' && /^data:(font\/|application\/(x-font-|font-|octet-stream)|application\/vnd\.ms-fontobject)/i.test(v.customFontDataUrl) ? v.customFontDataUrl : null,
   };
 };
 
@@ -266,6 +275,21 @@ const resetPlaquette = () => {
       courtBrandingLogoRef.current = null;
     }
   };
+
+  useEffect(() => {
+    const dataUrl = courtBranding.customFontDataUrl;
+    if (!dataUrl || typeof FontFace === 'undefined') return;
+    let cancelled = false;
+    const face = new FontFace('MyBasketCourtCustomFont', `url(${dataUrl})`);
+    face.load().then((loaded) => {
+      if (cancelled) return;
+      document.fonts.add(loaded);
+      courtTextureRef.current = { half: null, full: null };
+      render();
+      refreshPhaseCourtThumbnail();
+    }).catch((error) => console.warn('Police locale terrain non chargée :', error));
+    return () => { cancelled = true; };
+  }, [courtBranding.customFontDataUrl]);
 
   const applyCourtStyle = (value: unknown) => {
     const next = normalizeCourtStyle(value);
@@ -664,45 +688,33 @@ const currentRef = useRef(current);
 
     ox.putImageData(image, 0, 0);
 
-    // Nettoyage précis du marquage central historique : on recrée du parquet
-    // texturé à partir d'une zone saine du terrain puis on redessine uniquement
-    // le cercle. Cela évite le rectangle/halo orange ou bleu autour du rond central.
-    const paintParquetPatch = (cx: number, cy: number, radius: number, sampleY: number, clipTop?: number) => {
+    // Le rond central est traité comme une vraie zone géométrique, comme sur les
+    // terrains de référence bleu/blanc : intérieur = parquet, contour = couleur des lignes.
+    // On nettoie toute la boîte du rond avant de le redessiner afin qu'aucun ancien
+    // halo, logo ou pixel du JPEG ne puisse rester visible.
+    const paintParquetRect = (left: number, top: number, width: number, height: number, sampleY: number) => {
       const floorRgb = hexToRgb(style.floorColor);
-      const sourceData = ox.getImageData(0, Math.max(0, Math.min(out.height - 1, Math.round(sampleY))), out.width, 1).data;
-      ox.save();
-      if (typeof clipTop === 'number') {
-        ox.beginPath();
-        ox.rect(0, clipTop, out.width, out.height - clipTop);
-        ox.clip();
-      }
-      ox.beginPath();
-      ox.arc(cx, cy, radius, 0, Math.PI * 2);
-      ox.clip();
-      const patchHeight = Math.max(1, Math.ceil(radius * 2 + 8));
-      const patchCanvas = document.createElement('canvas');
-      patchCanvas.width = out.width;
-      patchCanvas.height = patchHeight;
-      const patchCtx = patchCanvas.getContext('2d');
-      if (patchCtx) {
-        const patch = patchCtx.createImageData(out.width, patchHeight);
-        const top = Math.round(cy - radius - 4);
-        for (let py = 0; py < patch.height; py += 1) {
-          for (let x = 0; x < out.width; x += 1) {
-            const si = x * 4;
-            const lum = (sourceData[si] * 0.299 + sourceData[si + 1] * 0.587 + sourceData[si + 2] * 0.114) / 255;
-            const factor = Math.max(0.84, Math.min(1.14, lum / 0.72));
-            const i = (py * out.width + x) * 4;
-            patch.data[i] = Math.min(255, Math.round(floorRgb.r * factor));
-            patch.data[i + 1] = Math.min(255, Math.round(floorRgb.g * factor));
-            patch.data[i + 2] = Math.min(255, Math.round(floorRgb.b * factor));
-            patch.data[i + 3] = 255;
-          }
+      const safeTop = Math.max(0, Math.round(top));
+      const safeLeft = Math.max(0, Math.round(left));
+      const safeWidth = Math.max(1, Math.min(out.width - safeLeft, Math.round(width)));
+      const safeHeight = Math.max(1, Math.min(out.height - safeTop, Math.round(height)));
+      const sampleRow = Math.max(0, Math.min(out.height - 1, Math.round(sampleY)));
+      const sourceData = ox.getImageData(0, sampleRow, out.width, 1).data;
+      const patch = ox.createImageData(safeWidth, safeHeight);
+      for (let py = 0; py < safeHeight; py += 1) {
+        for (let pxX = 0; pxX < safeWidth; pxX += 1) {
+          const sourceX = Math.max(0, Math.min(out.width - 1, safeLeft + pxX));
+          const si = sourceX * 4;
+          const lum = (sourceData[si] * 0.299 + sourceData[si + 1] * 0.587 + sourceData[si + 2] * 0.114) / 255;
+          const factor = Math.max(0.84, Math.min(1.14, lum / 0.72));
+          const i = (py * safeWidth + pxX) * 4;
+          patch.data[i] = Math.min(255, Math.round(floorRgb.r * factor));
+          patch.data[i + 1] = Math.min(255, Math.round(floorRgb.g * factor));
+          patch.data[i + 2] = Math.min(255, Math.round(floorRgb.b * factor));
+          patch.data[i + 3] = 255;
         }
-        patchCtx.putImageData(patch, 0, 0);
-        ox.drawImage(patchCanvas, 0, top);
       }
-      ox.restore();
+      ox.putImageData(patch, safeLeft, safeTop);
     };
 
     const drawCenterCircle = (cx: number, cy: number, radius: number, clipTop?: number) => {
@@ -724,14 +736,25 @@ const currentRef = useRef(current);
       const cx = out.width * 0.5;
       const cy = out.height * 1.005;
       const radius = out.width * 0.105;
-      paintParquetPatch(cx, cy, radius + out.width * 0.012, out.height * 0.74, out.height * 0.835);
-      drawCenterCircle(cx, cy, radius, out.height * 0.835);
+      // Toute la zone centrale visible est remise en parquet avant de redessiner le demi-rond.
+      paintParquetRect(out.width * 0.34, out.height * 0.79, out.width * 0.32, out.height * 0.21, out.height * 0.74);
+      drawCenterCircle(cx, cy, radius, out.height * 0.79);
     } else {
       const cx = out.width * 0.5;
       const cy = out.height * 0.5;
       const radius = out.width * 0.0835;
-      paintParquetPatch(cx, cy, radius + out.width * 0.01, out.height * 0.29);
+      paintParquetRect(out.width * 0.395, out.height * 0.34, out.width * 0.21, out.height * 0.32, out.height * 0.29);
       drawCenterCircle(cx, cy, radius);
+      // Le terrain complet source est horizontal avant sa rotation à l'écran :
+      // sa ligne médiane traverse donc verticalement le rond central.
+      ox.save();
+      ox.strokeStyle = style.lineColor;
+      ox.lineWidth = Math.max(3, out.width * 0.0052);
+      ox.beginPath();
+      ox.moveTo(cx, out.height * 0.34);
+      ox.lineTo(cx, out.height * 0.66);
+      ox.stroke();
+      ox.restore();
     }
 
     const branding = courtBrandingRef.current;
@@ -752,10 +775,22 @@ const currentRef = useRef(current);
           ? Math.min(maxW * 0.38, logoH * (logo.naturalWidth / logo.naturalHeight))
           : 0;
 
-        const fontSize = Math.max(12, Math.round(maxH * 0.46 * branding.textScale));
-        ox.font = `900 ${fontSize}px Arial, sans-serif`;
-        const textW = text ? Math.min(maxW * 0.72, ox.measureText(text).width) : 0;
-        const gap = hasLogo && text ? maxW * 0.028 : 0;
+        const selectedFont = branding.fontFamily === 'custom' && branding.customFontDataUrl
+          ? '"MyBasketCourtCustomFont"'
+          : `"${branding.fontFamily || 'Arial'}"`;
+        let fontSize = Math.max(12, Math.round(maxH * 0.46 * branding.textScale));
+        const gap = hasLogo && text ? maxW * 0.032 : 0;
+        const maxTextW = Math.max(1, maxW * 0.94 - logoW - gap);
+        ox.font = `900 ${fontSize}px ${selectedFont}, Arial, sans-serif`;
+        // On réduit réellement la taille de police si nécessaire. On n'utilise plus
+        // le paramètre maxWidth de fillText qui écrasait horizontalement le texte.
+        if (text) {
+          while (fontSize > 9 && ox.measureText(text).width > maxTextW) {
+            fontSize -= 1;
+            ox.font = `900 ${fontSize}px ${selectedFont}, Arial, sans-serif`;
+          }
+        }
+        const textW = text ? ox.measureText(text).width : 0;
         const totalW = logoW + gap + textW;
         let x = bx - totalW / 2;
 
@@ -767,7 +802,7 @@ const currentRef = useRef(current);
           ox.fillStyle = style.brandingColor;
           ox.textBaseline = 'middle';
           ox.textAlign = 'left';
-          ox.fillText(text, x, by, Math.max(1, maxW - (x - (cx - maxW / 2)) - maxW * 0.03));
+          ox.fillText(text, x, by);
         }
       };
       if (ct === 'half') {
@@ -811,6 +846,9 @@ const currentRef = useRef(current);
       courtBrandingRef.current.textScale,
       courtBrandingRef.current.offsetX,
       courtBrandingRef.current.offsetY,
+      courtBrandingRef.current.fontFamily,
+      courtBrandingRef.current.customFontName,
+      courtBrandingRef.current.customFontDataUrl || '',
     ].join('|');
 
     const cached = courtTextureRef.current[ct];
@@ -4351,6 +4389,28 @@ const exportJson = () => {
               </div>
               <label style={{ display:'block', fontSize:'.78rem', fontWeight:800, marginBottom:'.35rem' }}>Texte affiché sur le terrain</label>
               <input value={courtBranding.text} maxLength={40} onChange={(e) => applyCourtBranding({ ...courtBrandingRef.current, text:e.target.value, useCustomBranding:true })} placeholder="MYBASKET.FR" style={{ width:'100%', boxSizing:'border-box', height:38, border:'1px solid #D9D9D9', borderRadius:8, padding:'0 .7rem', marginBottom:'.7rem' }} />
+              <label style={{ display:'block', fontSize:'.78rem', fontWeight:800, marginBottom:'.35rem' }}>Police du texte</label>
+              <select value={courtBranding.fontFamily} onChange={(e) => applyCourtBranding({ ...courtBrandingRef.current, fontFamily:e.target.value, useCustomBranding:true })} style={{ width:'100%', boxSizing:'border-box', height:38, border:'1px solid #D9D9D9', borderRadius:8, padding:'0 .65rem', background:'#fff', marginBottom:'.5rem' }}>
+                <option value="Arial">Arial</option>
+                <option value="Times New Roman">Times New Roman</option>
+                <option value="Calibri">Calibri</option>
+                <option value="Georgia">Georgia</option>
+                <option value="Verdana">Verdana</option>
+                <option value="Trebuchet MS">Trebuchet MS</option>
+                {courtBranding.customFontDataUrl && <option value="custom">{courtBranding.customFontName || 'Police locale importée'}</option>}
+              </select>
+              <div style={{ fontSize:'.7rem', color:'#777', marginBottom:'.35rem' }}>Tu peux aussi importer directement une police locale TTF, OTF, WOFF ou WOFF2. Elle sera utilisée dans le terrain et conservée avec la personnalisation.</div>
+              <input type="file" accept=".ttf,.otf,.woff,.woff2,font/ttf,font/otf,font/woff,font/woff2" onChange={(e) => {
+                const file=e.target.files?.[0]; if(!file) return;
+                if(file.size > 1024 * 1024){ alert('Police trop lourde : maximum 1 Mo.'); e.currentTarget.value=''; return; }
+                const reader=new FileReader();
+                reader.onload=()=>{
+                  const dataUrl=String(reader.result||'');
+                  applyCourtBranding({ ...courtBrandingRef.current, fontFamily:'custom', customFontName:file.name.replace(/\.(ttf|otf|woff2?)$/i,''), customFontDataUrl:dataUrl, useCustomBranding:true });
+                };
+                reader.readAsDataURL(file);
+                e.currentTarget.value='';
+              }} style={{ width:'100%', marginBottom:'.75rem' }} />
               <label style={{ display:'block', fontSize:'.78rem', fontWeight:800, marginBottom:'.35rem' }}>Logo du club</label>
               <div style={{ fontSize:'.7rem', color:'#777', marginBottom:'.45rem' }}>Le fond blanc relié aux bords est supprimé automatiquement et le logo est recadré au plus près.</div>
               <input type="file" accept="image/png,image/jpeg,image/webp" onChange={(e) => {
