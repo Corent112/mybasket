@@ -47,6 +47,30 @@ type CourtBranding = {
   customFontDataUrl: string | null;
 };
 
+type SavedCourtPreset = {
+  id: string;
+  name: string;
+  style: CourtStyle;
+  branding: CourtBranding;
+  createdAt: number;
+};
+
+const SAVED_COURTS_STORAGE_KEY = 'mybasket_plaquette_saved_courts_v1';
+
+
+const BUILTIN_COURT_FONTS = [
+  { id: 'Police 1', label: 'Police 1', family: 'MyBasketCourtPolice1', url: '/fonts/SfBigWhiskey-mZ4m.ttf' },
+  { id: 'Police 2', label: 'Police 2', family: 'MyBasketCourtPolice2', url: '/fonts/OLD_SPORT_01_COLLEGE_NCV.ttf' },
+  { id: 'Police 3', label: 'Police 3', family: 'MyBasketCourtPolice3', url: '/fonts/OLD_SPORT_02_ATHLETIC_NCV.ttf' },
+  { id: 'Police 4', label: 'Police 4', family: 'MyBasketCourtPolice4', url: '/fonts/Raleway-Bold.ttf' },
+  { id: 'Police 5', label: 'Police 5', family: 'MyBasketCourtPolice5', url: '/fonts/Raleway-ExtraBoldItalic.ttf' },
+  { id: 'Police 6', label: 'Police 6', family: 'MyBasketCourtPolice6', url: '/fonts/SfBigWhiskeyExtended-PZad.ttf' },
+  { id: 'Police 7', label: 'Police 7', family: 'MyBasketCourtPolice7', url: '/fonts/SfBigWhiskeyExtendedBold-XXlP.ttf' },
+  { id: 'Police 8', label: 'Police 8', family: 'MyBasketCourtPolice8', url: '/fonts/police-ParisBasketball-Regular.otf' },
+] as const;
+
+const getCourtFontFamily = (fontId: string) => BUILTIN_COURT_FONTS.find((font) => font.id === fontId)?.family || fontId || 'Arial';
+
 const DEFAULT_COURT_BRANDING: CourtBranding = {
   text: 'MYBASKET.FR',
   logoDataUrl: null,
@@ -253,6 +277,7 @@ const resetPlaquette = () => {
   const [phaseCourtThumbnailUrl, setPhaseCourtThumbnailUrl] = useState(MYBASKET_DEMI_URL);
   const [courtBranding, setCourtBranding] = useState<CourtBranding>(DEFAULT_COURT_BRANDING);
   const [courtBrandingOpen, setCourtBrandingOpen] = useState(false);
+  const [savedCourtPresets, setSavedCourtPresets] = useState<SavedCourtPreset[]>([]);
   const courtBrandingRef = useRef<CourtBranding>(DEFAULT_COURT_BRANDING);
   const courtBrandingLogoRef = useRef<HTMLImageElement | null>(null);
   const courtStyleRef = useRef<CourtStyle>(DEFAULT_COURT_STYLE);
@@ -260,6 +285,49 @@ const resetPlaquette = () => {
     half: null,
     full: null,
   });
+
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(SAVED_COURTS_STORAGE_KEY);
+      if (!raw) return;
+      const parsed = JSON.parse(raw);
+      if (!Array.isArray(parsed)) return;
+      const clean = parsed.slice(0, 12).map((item: any): SavedCourtPreset => ({
+        id: typeof item?.id === 'string' ? item.id : `${Date.now()}-${Math.random()}`,
+        name: typeof item?.name === 'string' && item.name.trim() ? item.name.trim().slice(0, 40) : 'Terrain personnalisé',
+        style: normalizeCourtStyle(item?.style),
+        branding: normalizeCourtBranding(item?.branding),
+        createdAt: Number.isFinite(Number(item?.createdAt)) ? Number(item.createdAt) : Date.now(),
+      }));
+      setSavedCourtPresets(clean);
+    } catch (error) {
+      console.warn('Terrains sauvegardés illisibles :', error);
+    }
+  }, []);
+
+  const persistSavedCourtPresets = (items: SavedCourtPreset[]) => {
+    setSavedCourtPresets(items);
+    try {
+      localStorage.setItem(SAVED_COURTS_STORAGE_KEY, JSON.stringify(items));
+    } catch (error) {
+      console.warn('Sauvegarde terrain impossible :', error);
+      alert('Impossible de sauvegarder ce terrain dans ce navigateur. Essaie de supprimer un ancien terrain sauvegardé.');
+    }
+  };
+
+  const saveCurrentCourtPreset = () => {
+    const proposed = window.prompt('Nom du terrain à sauvegarder :', `Mon terrain ${savedCourtPresets.length + 1}`);
+    const name = proposed?.trim();
+    if (!name) return;
+    const preset: SavedCourtPreset = {
+      id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      name: name.slice(0, 40),
+      style: normalizeCourtStyle(courtStyleRef.current),
+      branding: normalizeCourtBranding(courtBrandingRef.current),
+      createdAt: Date.now(),
+    };
+    persistSavedCourtPresets([preset, ...savedCourtPresets].slice(0, 12));
+  };
 
   const applyCourtBranding = (value: unknown) => {
     const next = normalizeCourtBranding(value);
@@ -275,6 +343,22 @@ const resetPlaquette = () => {
       courtBrandingLogoRef.current = null;
     }
   };
+
+  useEffect(() => {
+    if (typeof FontFace === 'undefined') return;
+    let cancelled = false;
+    Promise.allSettled(BUILTIN_COURT_FONTS.map(async (font) => {
+      const face = new FontFace(font.family, `url(${font.url})`);
+      const loaded = await face.load();
+      if (!cancelled) document.fonts.add(loaded);
+    })).then(() => {
+      if (cancelled) return;
+      courtTextureRef.current = { half: null, full: null };
+      render();
+      refreshPhaseCourtThumbnail();
+    });
+    return () => { cancelled = true; };
+  }, []);
 
   useEffect(() => {
     const dataUrl = courtBranding.customFontDataUrl;
@@ -296,6 +380,15 @@ const resetPlaquette = () => {
     courtStyleRef.current = next;
     courtTextureRef.current = { half: null, full: null };
     setCourtStyle(next);
+  };
+
+  const loadSavedCourtPreset = (preset: SavedCourtPreset) => {
+    applyCourtStyle(preset.style);
+    applyCourtBranding(preset.branding);
+  };
+
+  const deleteSavedCourtPreset = (id: string) => {
+    persistSavedCourtPresets(savedCourtPresets.filter((preset) => preset.id !== id));
   };
 
   const resetCourtAppearance = () => {
@@ -765,7 +858,7 @@ const currentRef = useRef(current);
 
     const branding = courtBrandingRef.current;
     if (branding.useCustomBranding) {
-      const drawBrand = (cx: number, cy: number, maxW: number, maxH: number, rotateForFull = false) => {
+      const drawBrand = (cx: number, cy: number, maxW: number, maxH: number, rotateForFull = false, flip180 = false) => {
         ox.save();
         // On nettoie d'abord la zone de branding dans son orientation réelle.
         ox.fillStyle = style.borderColor;
@@ -776,6 +869,9 @@ const currentRef = useRef(current);
         // apparaître horizontal, net et à la bonne taille après rotation.
         ox.translate(cx, cy);
         if (rotateForFull) ox.rotate(Math.PI / 2);
+        // Sur le terrain complet, le branding du bord haut doit être retourné
+        // dans la source afin d'apparaître à l'endroit après la rotation du terrain.
+        if (flip180) ox.rotate(Math.PI);
 
         const contentW = rotateForFull ? maxH : maxW;
         const contentH = rotateForFull ? maxW : maxH;
@@ -794,7 +890,7 @@ const currentRef = useRef(current);
 
         const selectedFont = branding.fontFamily === 'custom' && branding.customFontDataUrl
           ? '"MyBasketCourtCustomFont"'
-          : `"${branding.fontFamily || 'Arial'}"`;
+          : `"${getCourtFontFamily(branding.fontFamily)}"`;
         // Sur le terrain complet, la bande de branding est visuellement plus fine
         // après rotation : on augmente la taille de base pour retrouver la présence
         // du MYBASKET.FR historique. Le curseur utilisateur reste ensuite multiplicatif.
@@ -834,7 +930,7 @@ const currentRef = useRef(current);
       if (ct === 'half') {
         drawBrand(out.width * 0.5, out.height * 0.067, out.width * 0.72, out.height * 0.115);
       } else {
-        drawBrand(out.width * 0.035, out.height * 0.5, out.width * 0.06, out.height * 0.64, true);
+        drawBrand(out.width * 0.035, out.height * 0.5, out.width * 0.06, out.height * 0.64, true, true);
         ox.save();
         ox.translate(out.width, out.height);
         ox.rotate(Math.PI);
@@ -4423,6 +4519,7 @@ const exportJson = () => {
                 <option value="Georgia">Georgia</option>
                 <option value="Verdana">Verdana</option>
                 <option value="Trebuchet MS">Trebuchet MS</option>
+                {BUILTIN_COURT_FONTS.map((font) => <option key={font.id} value={font.id}>{font.label}</option>)}
                 {courtBranding.customFontDataUrl && <option value="custom">{courtBranding.customFontName || 'Police locale importée'}</option>}
               </select>
               <div style={{ fontSize:'.7rem', color:'#777', marginBottom:'.35rem' }}>Tu peux aussi importer directement une police locale TTF, OTF, WOFF ou WOFF2. Elle sera utilisée dans le terrain et conservée avec la personnalisation.</div>
@@ -4684,6 +4781,50 @@ const exportJson = () => {
                     </button>
                   ))}
                 </div>
+              </div>
+
+              <div style={{ marginTop: '1rem', paddingTop: '.85rem', borderTop: '1px solid #ECECEC' }}>
+                <button
+                  type="button"
+                  className="btn"
+                  onClick={saveCurrentCourtPreset}
+                  style={{ width: '100%', background: 'var(--bordeaux, #6B1A2C)', color: '#fff', fontWeight: 900 }}
+                >
+                  💾 Sauvegarder ce terrain
+                </button>
+                <div style={{ fontSize: '.7rem', color: '#777', marginTop: '.35rem', lineHeight: 1.35 }}>
+                  Sauvegarde personnelle dans ce navigateur (couleurs, logo, texte et police).
+                </div>
+
+                {savedCourtPresets.length > 0 && (
+                  <div style={{ marginTop: '.8rem' }}>
+                    <div style={{ fontSize: '.72rem', fontWeight: 800, color: '#555', textTransform: 'uppercase', letterSpacing: '.04em', marginBottom: '.4rem' }}>
+                      Mes terrains sauvegardés
+                    </div>
+                    <div style={{ display: 'grid', gap: '.38rem' }}>
+                      {savedCourtPresets.map((preset) => (
+                        <div key={preset.id} style={{ display: 'grid', gridTemplateColumns: '1fr 38px', gap: '.4rem' }}>
+                          <button
+                            type="button"
+                            onClick={() => loadSavedCourtPreset(preset)}
+                            style={{ border: '1px solid #DDD', borderRadius: 8, background: '#fff', padding: '.48rem .6rem', cursor: 'pointer', textAlign: 'left', fontWeight: 800, fontSize: '.76rem' }}
+                          >
+                            {preset.name}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => deleteSavedCourtPreset(preset.id)}
+                            title={`Supprimer ${preset.name}`}
+                            aria-label={`Supprimer ${preset.name}`}
+                            style={{ border: '1px solid #E5C6CB', borderRadius: 8, background: '#fff', color: '#9F1F37', cursor: 'pointer', fontWeight: 900 }}
+                          >
+                            ×
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
               </div>
 
               <div style={{ display: 'flex', gap: '.55rem', marginTop: '1rem' }}>
