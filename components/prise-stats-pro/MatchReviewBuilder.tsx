@@ -15,10 +15,9 @@ export type MatchReviewFlowStepType =
   | 'block'
   | 'control'
   | 'player'
-  | 'action-player'
-  | 'pass-player'
-  | 'receiver-player'
-  | 'opponent-player'
+  | 'passer'
+  | 'receiver'
+  | 'opponent'
   | 'team'
   | 'value'
   | 'comment'
@@ -38,6 +37,8 @@ export type MatchReviewControl = {
   preRoll?: number;
   postRoll?: number;
   options?: string[];
+  /** Logique exécutée après le clic sur ce bouton. */
+  logic?: MatchReviewFlowStep[];
 };
 
 export type MatchReviewBlock = {
@@ -85,7 +86,6 @@ export type MatchReviewEvent = {
   value: string | number | null;
   playerId: string | null;
   playerName: string | null;
-  participants?: Record<string, { id: string | null; name: string | null }>;
   comment: string;
   createClip: boolean;
   preRoll: number;
@@ -138,7 +138,7 @@ const blankTemplate = (): MatchReviewTemplate => ({
   flow: [
     { id: uid(), type: 'block', required: true },
     { id: uid(), type: 'control', required: true },
-    { id: uid(), type: 'action-player', required: false },
+    { id: uid(), type: 'player', required: false },
     { id: uid(), type: 'value', required: false },
     { id: uid(), type: 'comment', required: false },
     { id: uid(), type: 'clip', required: false },
@@ -157,61 +157,16 @@ const blankTemplate = (): MatchReviewTemplate => ({
 const stepLabels: Record<MatchReviewFlowStepType, string> = {
   block: 'Bloc',
   control: 'Bouton / action',
-  player: 'Joueur libre',
-  'action-player': "Joueur qui réalise l’action",
-  'pass-player': 'Joueur qui réalise la passe',
-  'receiver-player': 'Joueur qui reçoit',
-  'opponent-player': 'Joueur adverse concerné',
+  player: "Qui réalise l’action",
+  passer: 'Qui réalise la passe',
+  receiver: 'Qui reçoit',
+  opponent: 'Joueur adverse concerné',
   team: 'Équipe / collectif',
-  value: 'Valeur / + −',
+  value: 'Résultat / valeur',
   comment: 'Commentaire',
   clip: 'Clip vidéo',
   save: 'Enregistrer',
 };
-
-
-const playerStepTypes: MatchReviewFlowStepType[] = ['player', 'action-player', 'pass-player', 'receiver-player', 'opponent-player'];
-
-const flowPresets: { type: MatchReviewFlowStepType; label: string; required?: boolean }[] = [
-  { type: 'action-player', label: 'Qui réalise l’action', required: true },
-  { type: 'pass-player', label: 'Qui réalise la passe' },
-  { type: 'receiver-player', label: 'Qui reçoit' },
-  { type: 'opponent-player', label: 'Joueur adverse concerné' },
-  { type: 'team', label: 'Équipe / collectif' },
-  { type: 'block', label: 'Choisir le bloc', required: true },
-  { type: 'control', label: 'Choisir l’action', required: true },
-  { type: 'value', label: 'Valeur / + −' },
-  { type: 'comment', label: 'Commentaire' },
-  { type: 'clip', label: 'Créer un clip' },
-  { type: 'save', label: 'Enregistrer', required: true },
-];
-
-type ControlPreset = Omit<MatchReviewControl, 'id'>;
-const controlPresets: { label: string; control: ControlPreset }[] = [
-  { label: '＋ Positif', control: { label: 'Positif', type: 'button', color: '#2E7D32', value: 1, createClip: true, preRoll: 4, postRoll: 4 } },
-  { label: '− Négatif', control: { label: 'Négatif', type: 'button', color: '#B3261E', value: -1, createClip: true, preRoll: 4, postRoll: 4 } },
-  { label: '＋ / −', control: { label: 'Évaluation', type: 'plus-minus', color: '#D4A24C', createClip: true, preRoll: 4, postRoll: 4 } },
-  { label: 'Bonne décision', control: { label: 'Bonne décision', type: 'button', color: '#2E7D32', value: 1, createClip: true, preRoll: 4, postRoll: 4 } },
-  { label: 'Mauvaise décision', control: { label: 'Mauvaise décision', type: 'button', color: '#B3261E', value: -1, createClip: true, preRoll: 4, postRoll: 4 } },
-  { label: 'Tir marqué', control: { label: 'Tir marqué', type: 'button', color: '#2E7D32', value: 1, createClip: true, preRoll: 4, postRoll: 3 } },
-  { label: 'Tir loupé', control: { label: 'Tir loupé', type: 'button', color: '#B3261E', value: 0, createClip: true, preRoll: 4, postRoll: 3 } },
-  { label: 'Passe décisive', control: { label: 'Passe décisive', type: 'button', color: '#1E5A8A', value: 1, createClip: true, preRoll: 5, postRoll: 3 } },
-  { label: 'Perte de balle', control: { label: 'Perte de balle', type: 'button', color: '#B3261E', value: -1, createClip: true, preRoll: 5, postRoll: 3 } },
-  { label: 'Rebond offensif', control: { label: 'Rebond offensif', type: 'button', color: '#6B1A2C', value: 1, createClip: true, preRoll: 4, postRoll: 3 } },
-  { label: 'Rebond défensif', control: { label: 'Rebond défensif', type: 'button', color: '#6B1A2C', value: 1, createClip: true, preRoll: 4, postRoll: 3 } },
-  { label: 'Faute provoquée', control: { label: 'Faute provoquée', type: 'button', color: '#D4A24C', value: 1, createClip: true, preRoll: 4, postRoll: 3 } },
-  { label: 'Faute personnelle', control: { label: 'Faute personnelle', type: 'button', color: '#B3261E', value: -1, createClip: true, preRoll: 4, postRoll: 3 } },
-];
-
-const blockPresets: { title: string; subtitle: string; color: string }[] = [
-  { title: 'Attaque', subtitle: 'Actions offensives', color: '#6B1A2C' },
-  { title: 'Défense', subtitle: 'Actions défensives', color: '#1E5A8A' },
-  { title: 'Transition', subtitle: 'Jeu rapide et repli', color: '#8A5A1E' },
-  { title: 'Passe', subtitle: 'Création et circulation', color: '#5A3E8A' },
-  { title: 'Tir', subtitle: 'Sélection et réussite', color: '#2E7D32' },
-  { title: 'Rebond', subtitle: 'Offensif et défensif', color: '#6B1A2C' },
-  { title: 'Attitude', subtitle: 'Communication et engagement', color: '#4F5968' },
-];
 
 const typeLabels: Record<MatchReviewControlType, string> = {
   button: 'Bouton simple',
@@ -221,6 +176,104 @@ const typeLabels: Record<MatchReviewControlType, string> = {
   choice: 'Choix multiple',
   text: 'Texte / commentaire',
 };
+
+type PresetControl = Omit<MatchReviewControl, 'id' | 'logic'> & {
+  logic?: MatchReviewFlowStepType[];
+};
+
+type PresetBlock = {
+  key: string;
+  label: string;
+  icon: string;
+  color: string;
+  controls: PresetControl[];
+};
+
+const logic = (...types: MatchReviewFlowStepType[]): MatchReviewFlowStep[] =>
+  types.map((type) => ({ id: uid(), type, required: !['comment', 'clip'].includes(type) }));
+
+const PRESET_BLOCKS: PresetBlock[] = [
+  {
+    key: 'systeme', label: 'Système de jeu', icon: '🏀', color: '#D4A24C',
+    controls: ['Contre attaque', 'Transition', 'Libre', 'Système 1', 'Système 2', 'Système 3', 'Système 4', 'Système 5', 'Système 6', 'Système 7', 'Système 8', 'SLOB 1', 'SLOB 2', 'BLOB 1', 'BLOB 2'].map((label) => ({
+      label, type: 'button' as const, color: '#D4A24C', value: 1, createClip: true, preRoll: 4, postRoll: 4,
+      logic: ['player', 'value', 'clip', 'save'] as MatchReviewFlowStepType[],
+    })),
+  },
+  {
+    key: 'temps-fort', label: 'Temps fort', icon: '⚡', color: '#D4A24C',
+    controls: ['1v1', 'Hand Off', 'Drive & Kick', 'Jeu sans ballon', 'Passing', 'Rebond offensif', 'Autres'].map((label) => ({
+      label, type: 'button' as const, color: '#D4A24C', value: 1, createClip: true, preRoll: 4, postRoll: 4,
+      logic: label === 'Passing' ? ['passer', 'receiver', 'value', 'clip', 'save'] as MatchReviewFlowStepType[] : ['player', 'value', 'clip', 'save'] as MatchReviewFlowStepType[],
+    })),
+  },
+  {
+    key: 'attaque', label: 'Actions attaque', icon: '🔵', color: '#3B82F6',
+    controls: ['Tir', 'Faute provoquée', 'Touche / Sortie', 'Perte de balle', 'Contre', 'Faute commise', 'Faute technique'].map((label) => ({
+      label, type: 'button' as const, color: '#3B82F6', value: 1, createClip: true, preRoll: 4, postRoll: 4,
+      logic: ['player', 'value', 'clip', 'save'] as MatchReviewFlowStepType[],
+    })),
+  },
+  {
+    key: 'defense', label: 'Actions défense', icon: '🔴', color: '#EF4444',
+    controls: ['Tir adverse', 'Interception / récupération', 'BP adverse', 'Contre', 'Touche', 'Faute provoquée', 'Faute commise', 'Faute technique'].map((label) => ({
+      label, type: 'button' as const, color: '#EF4444', value: 1, createClip: true, preRoll: 4, postRoll: 4,
+      logic: ['player', 'opponent', 'value', 'clip', 'save'] as MatchReviewFlowStepType[],
+    })),
+  },
+  {
+    key: 'transition', label: 'Transition', icon: '🏃', color: '#84CC16',
+    controls: ['Montée de balle', 'Fast break', 'Repli défensif', 'Retour défense'].map((label) => ({
+      label, type: 'button' as const, color: '#84CC16', value: 1, createClip: true, preRoll: 4, postRoll: 4,
+      logic: ['player', 'value', 'clip', 'save'] as MatchReviewFlowStepType[],
+    })),
+  },
+  {
+    key: 'individuel', label: 'Individuel', icon: '🧍', color: '#A855F7',
+    controls: [
+      { label: '+ (positif)', type: 'button', color: '#22C55E', value: 1, createClip: true, preRoll: 4, postRoll: 4, logic: ['player', 'clip', 'save'] },
+      { label: '− (négatif)', type: 'button', color: '#EF4444', value: -1, createClip: true, preRoll: 4, postRoll: 4, logic: ['player', 'clip', 'save'] },
+      { label: 'Bonne décision', type: 'button', color: '#22C55E', value: 1, createClip: true, preRoll: 4, postRoll: 4, logic: ['player', 'clip', 'save'] },
+      { label: 'Mauvaise décision', type: 'button', color: '#EF4444', value: -1, createClip: true, preRoll: 4, postRoll: 4, logic: ['player', 'clip', 'save'] },
+    ],
+  },
+  {
+    key: 'collectif', label: 'Collectif', icon: '👥', color: '#22D3EE',
+    controls: ['Espacement', 'Circulation', 'Lecture jeu', 'Discipline'].map((label) => ({
+      label, type: 'button' as const, color: '#22D3EE', value: 1, createClip: true, preRoll: 4, postRoll: 4,
+      logic: ['team', 'value', 'clip', 'save'] as MatchReviewFlowStepType[],
+    })),
+  },
+  {
+    key: 'rebond', label: 'Rebond', icon: '↔', color: '#10B981',
+    controls: ['Rebond offensif', 'Rebond défensif', 'Box out +', 'Box out −'].map((label) => ({
+      label, type: 'button' as const, color: '#10B981', value: label.endsWith('−') ? -1 : 1, createClip: true, preRoll: 4, postRoll: 4,
+      logic: ['player', 'value', 'clip', 'save'] as MatchReviewFlowStepType[],
+    })),
+  },
+  {
+    key: 'faute', label: 'Faute', icon: '❌', color: '#F97316',
+    controls: ['Faute provoquée', 'Faute personnelle', 'Faute technique'].map((label) => ({
+      label, type: 'button' as const, color: '#F97316', value: 1, createClip: true, preRoll: 4, postRoll: 4,
+      logic: ['player', 'opponent', 'clip', 'save'] as MatchReviewFlowStepType[],
+    })),
+  },
+  {
+    key: 'autres', label: 'Autres', icon: '＋', color: '#94A3B8',
+    controls: ['Commentaire', 'Créer un clip', 'Temps mort', 'Autre'].map((label) => ({
+      label,
+      type: label === 'Commentaire' ? 'text' as const : 'button' as const,
+      color: '#94A3B8', value: 1, createClip: label !== 'Commentaire', preRoll: 4, postRoll: 4,
+      logic: label === 'Commentaire' ? ['comment', 'save'] as MatchReviewFlowStepType[] : ['player', 'clip', 'save'] as MatchReviewFlowStepType[],
+    })),
+  },
+];
+
+const clonePresetControl = (control: PresetControl): MatchReviewControl => ({
+  ...control,
+  id: uid(),
+  logic: logic(...(control.logic || ['player', 'clip', 'save'])),
+});
 
 const safeParseTemplates = (): MatchReviewTemplate[] => {
   if (typeof window === 'undefined') return [];
@@ -245,6 +298,8 @@ export default function MatchReviewBuilder({
   const [templates, setTemplates] = useState<MatchReviewTemplate[]>([]);
   const [activeId, setActiveId] = useState('');
   const [editorOpen, setEditorOpen] = useState(initialEditorOpen);
+  const [editorTab, setEditorTab] = useState<'logic' | 'blocks'>('blocks');
+  const [insertIndex, setInsertIndex] = useState<number | null>(null);
   const [selectedBlockId, setSelectedBlockId] = useState<string | null>(null);
   const [selectedControlId, setSelectedControlId] = useState<string | null>(null);
   const [events, setEvents] = useState<MatchReviewEvent[]>([]);
@@ -253,16 +308,27 @@ export default function MatchReviewBuilder({
   const [pendingComment, setPendingComment] = useState('');
   const [pendingValue, setPendingValue] = useState<string | number>('');
   const [runtimePlayerId, setRuntimePlayerId] = useState('');
-  const [pendingParticipants, setPendingParticipants] = useState<Record<string, string>>({});
 
   useEffect(() => {
     const stored = safeParseTemplates();
-    const next = stored.length ? stored : [blankTemplate()];
+    const source = stored.length ? stored : [blankTemplate()];
+    // Migration douce des modèles créés avec les premières versions du constructeur :
+    // chaque ancien bouton reçoit une logique modifiable par défaut.
+    const next = source.map((template) => ({
+      ...template,
+      blocks: (template.blocks || []).map((block) => ({
+        ...block,
+        controls: (block.controls || []).map((control) => ({
+          ...control,
+          logic: control.logic?.length ? control.logic : logic('player', 'clip', 'save'),
+        })),
+      })),
+    }));
     const storedActive = storageGet(ACTIVE_TEMPLATE_STORAGE) || '';
     const resolved = next.some((template) => template.id === storedActive) ? storedActive : next[0].id;
     setTemplates(next);
     setActiveId(resolved);
-    if (!stored.length) storageSet(TEMPLATE_STORAGE, JSON.stringify(next));
+    storageSet(TEMPLATE_STORAGE, JSON.stringify(next));
   }, []);
 
   useEffect(() => {
@@ -340,19 +406,34 @@ export default function MatchReviewBuilder({
     setActiveTemplateId(next[0].id);
   };
 
-  const addBlock = () => {
-    const block: MatchReviewBlock = {
+  const insertBlockAt = (index: number, preset?: PresetBlock) => {
+    const block: MatchReviewBlock = preset ? {
       id: uid(),
-      title: `Bloc ${active ? active.blocks.length + 1 : 1}`,
+      title: preset.label,
+      subtitle: 'Bloc prédéfini — entièrement modifiable',
+      color: preset.color,
+      columns: 2,
+      controls: preset.controls.map(clonePresetControl),
+    } : {
+      id: uid(),
+      title: 'Nouveau bloc',
       subtitle: '',
       color: '#6B1A2C',
       columns: 2,
       controls: [],
     };
-    updateActive((template) => ({ ...template, blocks: [...template.blocks, block] }));
+    updateActive((template) => {
+      const blocks = template.blocks.slice();
+      blocks.splice(Math.max(0, Math.min(index, blocks.length)), 0, block);
+      return { ...template, blocks };
+    });
     setSelectedBlockId(block.id);
     setSelectedControlId(null);
+    setEditorTab('blocks');
   };
+
+  const addBlock = () => { insertBlockAt(insertIndex ?? (active?.blocks.length || 0)); setInsertIndex(null); };
+  const addPresetBlock = (preset: PresetBlock) => { insertBlockAt(insertIndex ?? (active?.blocks.length || 0), preset); setInsertIndex(null); };
 
   const updateBlock = (blockId: string, patch: Partial<MatchReviewBlock>) => {
     updateActive((template) => ({
@@ -392,6 +473,7 @@ export default function MatchReviewBuilder({
       preRoll: 4,
       postRoll: 4,
       options: ['Option 1', 'Option 2'],
+      logic: logic('player', 'clip', 'save'),
     };
     updateActive((template) => ({
       ...template,
@@ -411,6 +493,28 @@ export default function MatchReviewBuilder({
         controls: block.controls.map((control) => control.id === controlId ? { ...control, ...patch } : control),
       } : block),
     }));
+  };
+
+  const updateControlLogic = (blockId: string, controlId: string, updater: (steps: MatchReviewFlowStep[]) => MatchReviewFlowStep[]) => {
+    const block = active?.blocks.find((item) => item.id === blockId);
+    const control = block?.controls.find((item) => item.id === controlId);
+    if (!block || !control) return;
+    updateControl(blockId, controlId, { logic: updater(control.logic || logic('player', 'clip', 'save')) });
+  };
+
+  const addControlLogicStep = (blockId: string, controlId: string) => {
+    updateControlLogic(blockId, controlId, (steps) => [...steps, { id: uid(), type: 'comment', required: false }]);
+  };
+
+  const moveControlLogicStep = (blockId: string, controlId: string, stepId: string, delta: -1 | 1) => {
+    updateControlLogic(blockId, controlId, (steps) => {
+      const index = steps.findIndex((step) => step.id === stepId);
+      const target = index + delta;
+      if (index < 0 || target < 0 || target >= steps.length) return steps;
+      const next = steps.slice();
+      [next[index], next[target]] = [next[target], next[index]];
+      return next;
+    });
   };
 
   const deleteControl = (blockId: string, controlId: string) => {
@@ -435,28 +539,11 @@ export default function MatchReviewBuilder({
     updateBlock(blockId, { controls });
   };
 
-  const addFlowStep = (type: MatchReviewFlowStepType = 'comment', required = false) => {
+  const addFlowStep = () => {
     updateActive((template) => ({
       ...template,
-      flow: [...template.flow, { id: uid(), type, required }],
+      flow: [...template.flow, { id: uid(), type: 'comment', required: false }],
     }));
-  };
-
-  const addPresetBlock = (preset: typeof blockPresets[number]) => {
-    const block: MatchReviewBlock = { id: uid(), title: preset.title, subtitle: preset.subtitle, color: preset.color, columns: 2, controls: [] };
-    updateActive((template) => ({ ...template, blocks: [...template.blocks, block] }));
-    setSelectedBlockId(block.id);
-    setSelectedControlId(null);
-  };
-
-  const addPresetControl = (blockId: string, preset: ControlPreset) => {
-    const control: MatchReviewControl = { id: uid(), requirePlayer: false, requireComment: false, options: ['Option 1', 'Option 2'], ...preset };
-    updateActive((template) => ({
-      ...template,
-      blocks: template.blocks.map((block) => block.id === blockId ? { ...block, controls: [...block.controls, control] } : block),
-    }));
-    setSelectedBlockId(blockId);
-    setSelectedControlId(control.id);
   };
 
   const updateFlowStep = (stepId: string, patch: Partial<MatchReviewFlowStep>) => {
@@ -483,12 +570,6 @@ export default function MatchReviewBuilder({
   const beginControl = (block: MatchReviewBlock, control: MatchReviewControl, forcedValue?: string | number) => {
     setPending({ block, control });
     setPendingPlayerId(runtimePlayerId);
-    const seededParticipants: Record<string, string> = {};
-    if (runtimePlayerId) {
-      const primary = active?.flow.find((step) => playerStepTypes.includes(step.type));
-      if (primary) seededParticipants[primary.type] = runtimePlayerId;
-    }
-    setPendingParticipants(seededParticipants);
     setPendingComment('');
     if (forcedValue != null) setPendingValue(forcedValue);
     else if (control.type === 'button' || control.type === 'counter') setPendingValue(control.value ?? 1);
@@ -499,19 +580,10 @@ export default function MatchReviewBuilder({
   const saveEvent = () => {
     if (!active || !pending) return;
     const { block, control } = pending;
-    if (control.requirePlayer && !pendingPlayerId && !pendingParticipants['action-player'] && !pendingParticipants.player) return;
-    const missingRequiredParticipant = active.flow.some((step) => playerStepTypes.includes(step.type) && step.required && !pendingParticipants[step.type]);
-    if (missingRequiredParticipant) return;
+    if (control.requirePlayer && !pendingPlayerId) return;
     if (control.requireComment && !pendingComment.trim()) return;
     if ((control.type === 'choice' || control.type === 'plus-minus' || control.type === 'rating') && pendingValue === '') return;
-    const participantEntries = Object.fromEntries(
-      Object.entries(pendingParticipants).map(([role, id]) => {
-        const found = players.find((item) => item.id === id) || null;
-        return [role, { id: found?.id || null, name: found?.name || null }];
-      }),
-    );
-    const primaryId = pendingParticipants['action-player'] || pendingParticipants.player || pendingPlayerId || '';
-    const player = players.find((item) => item.id === primaryId) || null;
+    const player = players.find((item) => item.id === pendingPlayerId) || null;
     const event: MatchReviewEvent = {
       id: uid(),
       templateId: active.id,
@@ -524,7 +596,6 @@ export default function MatchReviewBuilder({
       value: pendingValue === '' ? null : pendingValue,
       playerId: player?.id || null,
       playerName: player?.name || null,
-      participants: participantEntries,
       comment: pendingComment.trim(),
       createClip: !!control.createClip,
       preRoll: Math.max(0, Number(control.preRoll || 0)),
@@ -642,16 +713,8 @@ export default function MatchReviewBuilder({
         <div className={styles.pendingOverlay} onMouseDown={(event) => { if (event.currentTarget === event.target) setPending(null); }}>
           <div className={styles.pendingCard}>
             <header><div><b>{pending.block.title}</b><span>{pending.control.label}</span></div><button type="button" onClick={() => setPending(null)}>×</button></header>
-            {active.flow.filter((step) => playerStepTypes.includes(step.type)).map((step) => (
-              <label key={step.id}>{stepLabels[step.type]}{step.required ? ' *' : ''}
-                <select value={pendingParticipants[step.type] || ''} onChange={(event) => setPendingParticipants((current) => ({ ...current, [step.type]: event.target.value }))}>
-                  <option value="">— Choisir —</option>
-                  {players.map((player) => <option key={player.id} value={player.id}>{player.num != null ? `#${player.num} · ` : ''}{player.name}</option>)}
-                </select>
-              </label>
-            ))}
-            {pending.control.requirePlayer && !active.flow.some((step) => playerStepTypes.includes(step.type)) && (
-              <label>Joueur *
+            {(pending.control.requirePlayer || active.flow.some((step) => step.type === 'player' && step.required)) && (
+              <label>Joueur
                 <select value={pendingPlayerId} onChange={(event) => setPendingPlayerId(event.target.value)}>
                   <option value="">— Choisir —</option>
                   {players.map((player) => <option key={player.id} value={player.id}>{player.num != null ? `#${player.num} · ` : ''}{player.name}</option>)}
@@ -671,121 +734,156 @@ export default function MatchReviewBuilder({
         <div className={styles.editorOverlay}>
           <div className={styles.editor}>
             <header className={styles.editorHead}>
-              <div><b>CONSTRUCTEUR · RETOUR DE MATCH</b><span>Tout est personnalisable : blocs, boutons, ordre, logique, valeurs et comportement.</span></div>
-              <button type="button" onClick={() => { setEditorOpen(false); if (!embedded) onClose?.(); }}>×</button>
+              <div>
+                <b>◉ CONSTRUCTEUR · RETOUR DE MATCH</b>
+                <span>Reprends les blocs déjà connus de LiveStats, insère-les dans l’ordre que tu veux et modifie chaque bouton.</span>
+              </div>
+              <button type="button" className={styles.editorClose} aria-label="Fermer" onClick={() => setEditorOpen(false)}>×</button>
             </header>
 
-            <div className={styles.templateBar}>
-              <select value={active.id} onChange={(event) => setActiveTemplateId(event.target.value)}>{templates.map((template) => <option key={template.id} value={template.id}>{template.name}</option>)}</select>
-              <button type="button" onClick={addTemplate}>＋ Nouveau</button>
-              <button type="button" onClick={duplicateTemplate}>⧉ Dupliquer</button>
-              <button type="button" className={styles.danger} onClick={deleteTemplate}>Supprimer</button>
+            <div className={styles.builderTabs}>
+              <button type="button" className={editorTab === 'logic' ? styles.tabOn : ''} onClick={() => setEditorTab('logic')}>◉ Logique & chemin</button>
+              <button type="button" className={editorTab === 'blocks' ? styles.tabOn : ''} onClick={() => setEditorTab('blocks')}>🧩 Boutons par bloc</button>
+              <div className={styles.templateMini}>
+                <select value={active.id} onChange={(event) => setActiveTemplateId(event.target.value)}>{templates.map((template) => <option key={template.id} value={template.id}>{template.name}</option>)}</select>
+                <button type="button" onClick={addTemplate}>＋</button>
+                <button type="button" onClick={duplicateTemplate}>⧉</button>
+              </div>
             </div>
 
-            <div className={styles.editorGrid}>
-              <aside className={styles.builderSidebar}>
-                <section>
-                  <h3>Modèle</h3>
-                  <label>Nom<input value={active.name} onChange={(event) => updateActive((template) => ({ ...template, name: event.target.value }))} /></label>
-                  <label>Description<textarea value={active.description} onChange={(event) => updateActive((template) => ({ ...template, description: event.target.value }))} /></label>
-                </section>
-                <section>
-                  <h3>Disposition</h3>
-                  <label>Colonnes principales<select value={active.layout.columns} onChange={(event) => updateActive((template) => ({ ...template, layout: { ...template.layout, columns: Number(event.target.value) as 1|2|3 } }))}><option value={1}>1</option><option value={2}>2</option><option value={3}>3</option></select></label>
-                  <label className={styles.check}><input type="checkbox" checked={active.layout.compact} onChange={(event) => updateActive((template) => ({ ...template, layout: { ...template.layout, compact: event.target.checked } }))} /> Mode compact</label>
-                  <label className={styles.check}><input type="checkbox" checked={active.layout.showPlayerPanel} onChange={(event) => updateActive((template) => ({ ...template, layout: { ...template.layout, showPlayerPanel: event.target.checked } }))} /> Afficher joueurs</label>
-                  <label className={styles.check}><input type="checkbox" checked={active.layout.showVideo} onChange={(event) => updateActive((template) => ({ ...template, layout: { ...template.layout, showVideo: event.target.checked } }))} /> Afficher vidéo</label>
-                  <label className={styles.check}><input type="checkbox" checked={active.layout.showHistory} onChange={(event) => updateActive((template) => ({ ...template, layout: { ...template.layout, showHistory: event.target.checked } }))} /> Historique</label>
-                </section>
-              </aside>
+            {editorTab === 'blocks' ? (
+              <>
+                <div className={styles.builderNotice}>
+                  <span>Chaque bloc garde la même présentation pendant le codage. Les blocs prédéfinis créent automatiquement leurs boutons et leur logique, mais tout reste modifiable.</span>
+                  <button type="button" onClick={() => setInsertIndex(active.blocks.length)}>＋ Insérer un bloc</button>
+                </div>
 
-              <main className={styles.builderMain}>
-                <section className={styles.flowEditor}>
-                  <div className={styles.sectionHead}><div><b>1. LOGIQUE / ORDRE DE CODAGE</b><span>Ajoute des étapes pré-conçues puis place-les dans l’ordre que tu veux.</span></div><button type="button" onClick={() => addFlowStep()}>＋ Étape libre</button></div>
-                  <div className={styles.presetPalette}>
-                    {flowPresets.map((preset) => <button key={preset.type} type="button" onClick={() => addFlowStep(preset.type, !!preset.required)}>＋ {preset.label}</button>)}
-                  </div>
-                  <div className={styles.flowRows}>
-                    {active.flow.map((step, index) => (
-                      <div key={step.id} className={styles.flowRow}>
-                        <b>{index + 1}</b>
-                        <select value={step.type} onChange={(event) => updateFlowStep(step.id, { type: event.target.value as MatchReviewFlowStepType })}>{Object.entries(stepLabels).map(([value,label]) => <option key={value} value={value}>{label}</option>)}</select>
-                        <label className={styles.check}><input type="checkbox" checked={step.required} onChange={(event) => updateFlowStep(step.id, { required: event.target.checked })} /> Obligatoire</label>
-                        <button type="button" disabled={index === 0} onClick={() => moveFlowStep(step.id, -1)}>↑</button><button type="button" disabled={index === active.flow.length - 1} onClick={() => moveFlowStep(step.id, 1)}>↓</button><button type="button" onClick={() => removeFlowStep(step.id)}>×</button>
-                      </div>
+                <div className={styles.visualBuilderGrid}>
+                  <aside className={styles.presetLibrary}>
+                    <h3>BLOCS PRÉDÉFINIS</h3>
+                    <p>Clique sur un bloc pour l’ajouter {insertIndex != null ? `en position ${insertIndex + 1}` : 'à la fin'}.</p>
+                    {PRESET_BLOCKS.map((preset) => (
+                      <button key={preset.key} type="button" onClick={() => addPresetBlock(preset)}>
+                        <span>{preset.icon}</span><b>{preset.label}</b>
+                      </button>
                     ))}
-                  </div>
-                </section>
+                    <button type="button" className={styles.blankPreset} onClick={addBlock}><span>＋</span><b>Bloc vide</b></button>
+                    {insertIndex != null && <button type="button" className={styles.cancelInsert} onClick={() => setInsertIndex(null)}>Annuler l’insertion</button>}
+                  </aside>
 
-                <section>
-                  <div className={styles.sectionHead}><div><b>2. BLOCS ET BOUTONS</b><span>Pars de boutons déjà prêts, puis renomme/modifie tout librement.</span></div><button type="button" onClick={addBlock}>＋ Bloc vide</button></div>
-                  <div className={styles.presetGroup}><b>Blocs pré-conçus</b><div className={styles.presetPalette}>{blockPresets.map((preset) => <button key={preset.title} type="button" onClick={() => addPresetBlock(preset)}>＋ {preset.title}</button>)}</div></div>
-                  <div className={styles.blockEditorList}>
-                    {active.blocks.map((block, blockIndex) => (
-                      <div key={block.id} className={`${styles.blockEditor} ${selectedBlockId === block.id ? styles.selected : ''}`}>
-                        <div className={styles.blockTitleRow} onClick={() => { setSelectedBlockId(block.id); setSelectedControlId(null); }}>
-                          <span className={styles.colorDot} style={{ background: normalizeHex(block.color) }} />
-                          <b>{block.title}</b><small>{block.controls.length} bouton{block.controls.length > 1 ? 's' : ''}</small>
-                          <button type="button" disabled={blockIndex === 0} onClick={(event) => { event.stopPropagation(); moveBlock(block.id, -1); }}>↑</button>
-                          <button type="button" disabled={blockIndex === active.blocks.length - 1} onClick={(event) => { event.stopPropagation(); moveBlock(block.id, 1); }}>↓</button>
-                          <button type="button" onClick={(event) => { event.stopPropagation(); deleteBlock(block.id); }}>×</button>
-                        </div>
-                        <div className={styles.quickControlBar}>
-                          <span>Boutons prêts :</span>
-                          {controlPresets.slice(0, 7).map((preset) => <button key={preset.label} type="button" onClick={() => addPresetControl(block.id, preset.control)}>{preset.label}</button>)}
-                        </div>
-                        <div className={styles.controlList}>
-                          {block.controls.map((control, controlIndex) => (
-                            <button key={control.id} type="button" className={selectedControlId === control.id ? styles.selectedControl : ''} onClick={() => { setSelectedBlockId(block.id); setSelectedControlId(control.id); }}>
-                              <span style={{ background: normalizeHex(control.color, '#D4A24C') }} />
-                              <b>{control.label}</b><small>{typeLabels[control.type]}</small>
-                              <i onClick={(event) => { event.stopPropagation(); moveControl(block.id, control.id, -1); }} className={controlIndex === 0 ? styles.disabled : ''}>↑</i>
-                              <i onClick={(event) => { event.stopPropagation(); moveControl(block.id, control.id, 1); }} className={controlIndex === block.controls.length - 1 ? styles.disabled : ''}>↓</i>
-                            </button>
+                  <main className={styles.organisationArea}>
+                    <div className={styles.organisationHead}>
+                      <b>ORGANISATION DES BLOCS</b>
+                      <span>{active.blocks.length} bloc{active.blocks.length > 1 ? 's' : ''} au total</span>
+                    </div>
+
+                    {active.blocks.length === 0 ? (
+                      <button type="button" className={styles.emptyBuilder} onClick={() => setInsertIndex(0)}>＋ Ajouter ton premier bloc</button>
+                    ) : (
+                      <div className={styles.visualBlocks}>
+                        {active.blocks.map((block, blockIndex) => (
+                          <section key={block.id} className={`${styles.visualBlock} ${selectedBlockId === block.id ? styles.visualBlockSelected : ''}`}>
+                            <header onClick={() => { setSelectedBlockId(block.id); setSelectedControlId(null); }}>
+                              <div className={styles.blockIdentity}>
+                                <span className={styles.blockDot} style={{ background: normalizeHex(block.color) }} />
+                                <div><b>Bloc {blockIndex + 1}</b><small>{block.title}</small></div>
+                              </div>
+                              <div className={styles.blockActions}>
+                                <button type="button" onClick={(event) => { event.stopPropagation(); addControl(block.id); }}>＋ Bouton</button>
+                                <button type="button" title="Monter" disabled={blockIndex === 0} onClick={(event) => { event.stopPropagation(); moveBlock(block.id, -1); }}>←</button>
+                                <button type="button" title="Descendre" disabled={blockIndex === active.blocks.length - 1} onClick={(event) => { event.stopPropagation(); moveBlock(block.id, 1); }}>→</button>
+                                <button type="button" className={styles.iconDanger} title="Supprimer" onClick={(event) => { event.stopPropagation(); deleteBlock(block.id); }}>×</button>
+                              </div>
+                            </header>
+
+                            <div className={styles.visualControlList}>
+                              {block.controls.map((control, controlIndex) => (
+                                <div key={control.id} className={`${styles.visualControl} ${selectedControlId === control.id ? styles.visualControlSelected : ''}`} onClick={() => { setSelectedBlockId(block.id); setSelectedControlId(control.id); }}>
+                                  <span className={styles.dragHandle}>⠿</span>
+                                  <b>{control.label}</b>
+                                  <button type="button" title="Modifier" onClick={(event) => { event.stopPropagation(); setSelectedBlockId(block.id); setSelectedControlId(control.id); }}>✎</button>
+                                  <button type="button" title="Monter" disabled={controlIndex === 0} onClick={(event) => { event.stopPropagation(); moveControl(block.id, control.id, -1); }}>↑</button>
+                                  <button type="button" title="Descendre" disabled={controlIndex === block.controls.length - 1} onClick={(event) => { event.stopPropagation(); moveControl(block.id, control.id, 1); }}>↓</button>
+                                  <button type="button" className={styles.iconDanger} title="Supprimer" onClick={(event) => { event.stopPropagation(); deleteControl(block.id, control.id); }}>×</button>
+                                </div>
+                              ))}
+                              <button type="button" className={styles.addVisualControl} onClick={() => addControl(block.id)}>＋ Ajouter un bouton</button>
+                            </div>
+
+                            <button type="button" className={styles.insertHere} onClick={() => setInsertIndex(blockIndex + 1)}>＋ Insérer un bloc ici</button>
+                          </section>
+                        ))}
+                      </div>
+                    )}
+                  </main>
+
+                  <aside className={styles.visualProperties}>
+                    <h3>MODIFIER</h3>
+                    {selectedBlock && !selectedControl && (
+                      <>
+                        <b>Bloc {Math.max(1, active.blocks.findIndex((block) => block.id === selectedBlock.id) + 1)}</b>
+                        <label>Nom du bloc<input value={selectedBlock.title} onChange={(event) => updateBlock(selectedBlock.id, { title: event.target.value })} /></label>
+                        <label>Sous-titre<input value={selectedBlock.subtitle || ''} onChange={(event) => updateBlock(selectedBlock.id, { subtitle: event.target.value })} /></label>
+                        <label>Couleur<input type="color" value={normalizeHex(selectedBlock.color)} onChange={(event) => updateBlock(selectedBlock.id, { color: event.target.value })} /></label>
+                        <label>Colonnes<select value={selectedBlock.columns} onChange={(event) => updateBlock(selectedBlock.id, { columns: Number(event.target.value) as 1|2|3|4 })}><option value={1}>1</option><option value={2}>2</option><option value={3}>3</option><option value={4}>4</option></select></label>
+                      </>
+                    )}
+                    {selectedBlock && selectedControl && (
+                      <>
+                        <b>{selectedControl.label}</b>
+                        <label>Nom du bouton<input value={selectedControl.label} onChange={(event) => updateControl(selectedBlock.id, selectedControl.id, { label: event.target.value })} /></label>
+                        <label>Type<select value={selectedControl.type} onChange={(event) => updateControl(selectedBlock.id, selectedControl.id, { type: event.target.value as MatchReviewControlType })}>{Object.entries(typeLabels).map(([value,label]) => <option key={value} value={value}>{label}</option>)}</select></label>
+                        <label>Couleur<input type="color" value={normalizeHex(selectedControl.color, '#D4A24C')} onChange={(event) => updateControl(selectedBlock.id, selectedControl.id, { color: event.target.value })} /></label>
+                        <label className={styles.check}><input type="checkbox" checked={!!selectedControl.createClip} onChange={(event) => updateControl(selectedBlock.id, selectedControl.id, { createClip: event.target.checked })} /> Créer un clip</label>
+                        <div className={styles.logicMiniTitle}>LOGIQUE DU BOUTON</div>
+                        <div className={styles.logicMiniList}>
+                          {(selectedControl.logic || []).map((step, index) => (
+                            <div key={step.id}>
+                              <span>{index + 1}</span>
+                              <select value={step.type} onChange={(event) => updateControlLogic(selectedBlock.id, selectedControl.id, (steps) => steps.map((item) => item.id === step.id ? { ...item, type: event.target.value as MatchReviewFlowStepType } : item))}>{Object.entries(stepLabels).map(([value,label]) => <option key={value} value={value}>{label}</option>)}</select>
+                              <button type="button" disabled={index === 0} onClick={() => moveControlLogicStep(selectedBlock.id, selectedControl.id, step.id, -1)}>↑</button>
+                              <button type="button" disabled={index === (selectedControl.logic || []).length - 1} onClick={() => moveControlLogicStep(selectedBlock.id, selectedControl.id, step.id, 1)}>↓</button>
+                              <button type="button" onClick={() => updateControlLogic(selectedBlock.id, selectedControl.id, (steps) => steps.filter((item) => item.id !== step.id))}>×</button>
+                            </div>
                           ))}
-                          <button type="button" className={styles.addControl} onClick={() => addControl(block.id)}>＋ Ajouter un bouton</button>
+                          <button type="button" onClick={() => addControlLogicStep(selectedBlock.id, selectedControl.id)}>＋ Étape</button>
                         </div>
-                      </div>
-                    ))}
-                    {active.blocks.length === 0 && <button type="button" className={styles.emptyBuilder} onClick={addBlock}>＋ Créer le premier bloc</button>}
-                  </div>
-                </section>
-              </main>
-
-              <aside className={styles.properties}>
-                <h3>PROPRIÉTÉS</h3>
-                {selectedBlock && !selectedControl && (
-                  <>
-                    <b>Bloc</b>
-                    <label>Nom<input value={selectedBlock.title} onChange={(event) => updateBlock(selectedBlock.id, { title: event.target.value })} /></label>
-                    <label>Sous-titre<input value={selectedBlock.subtitle || ''} onChange={(event) => updateBlock(selectedBlock.id, { subtitle: event.target.value })} /></label>
-                    <label>Couleur<input type="color" value={normalizeHex(selectedBlock.color)} onChange={(event) => updateBlock(selectedBlock.id, { color: event.target.value })} /></label>
-                    <label>Colonnes<select value={selectedBlock.columns} onChange={(event) => updateBlock(selectedBlock.id, { columns: Number(event.target.value) as 1|2|3|4 })}><option value={1}>1</option><option value={2}>2</option><option value={3}>3</option><option value={4}>4</option></select></label>
-                  </>
-                )}
-                {selectedBlock && selectedControl && (
-                  <>
-                    <b>Bouton / contrôle</b>
-                    <label>Libellé<input value={selectedControl.label} onChange={(event) => updateControl(selectedBlock.id, selectedControl.id, { label: event.target.value })} /></label>
-                    <label>Type<select value={selectedControl.type} onChange={(event) => updateControl(selectedBlock.id, selectedControl.id, { type: event.target.value as MatchReviewControlType })}>{Object.entries(typeLabels).map(([value,label]) => <option key={value} value={value}>{label}</option>)}</select></label>
-                    <label>Couleur<input type="color" value={normalizeHex(selectedControl.color, '#D4A24C')} onChange={(event) => updateControl(selectedBlock.id, selectedControl.id, { color: event.target.value })} /></label>
-                    {(selectedControl.type === 'button' || selectedControl.type === 'counter') && <label>Valeur<input type="number" value={selectedControl.value ?? 1} onChange={(event) => updateControl(selectedBlock.id, selectedControl.id, { value: Number(event.target.value) })} /></label>}
-                    {selectedControl.type === 'choice' && <label>Options<textarea value={(selectedControl.options || []).join('\n')} onChange={(event) => updateControl(selectedBlock.id, selectedControl.id, { options: event.target.value.split('\n').map((value) => value.trim()).filter(Boolean) })} placeholder="Une option par ligne" /></label>}
-                    <label>Raccourci<input value={selectedControl.shortcut || ''} onChange={(event) => updateControl(selectedBlock.id, selectedControl.id, { shortcut: event.target.value.slice(0, 20) })} /></label>
-                    <label className={styles.check}><input type="checkbox" checked={!!selectedControl.requirePlayer} onChange={(event) => updateControl(selectedBlock.id, selectedControl.id, { requirePlayer: event.target.checked })} /> Demander un joueur</label>
-                    <label className={styles.check}><input type="checkbox" checked={!!selectedControl.requireComment} onChange={(event) => updateControl(selectedBlock.id, selectedControl.id, { requireComment: event.target.checked })} /> Demander un commentaire</label>
-                    <label className={styles.check}><input type="checkbox" checked={!!selectedControl.createClip} onChange={(event) => updateControl(selectedBlock.id, selectedControl.id, { createClip: event.target.checked })} /> Créer un clip</label>
-                    {selectedControl.createClip && <div className={styles.twoCols}><label>Avant (s)<input type="number" min={0} value={selectedControl.preRoll ?? 0} onChange={(event) => updateControl(selectedBlock.id, selectedControl.id, { preRoll: Math.max(0, Number(event.target.value)) })} /></label><label>Après (s)<input type="number" min={0} value={selectedControl.postRoll ?? 0} onChange={(event) => updateControl(selectedBlock.id, selectedControl.id, { postRoll: Math.max(0, Number(event.target.value)) })} /></label></div>}
-                    <button type="button" className={styles.dangerWide} onClick={() => deleteControl(selectedBlock.id, selectedControl.id)}>Supprimer ce bouton</button>
-                  </>
-                )}
-                {!selectedBlock && <p>Sélectionne un bloc ou un bouton pour modifier tous ses paramètres.</p>}
-              </aside>
-            </div>
+                      </>
+                    )}
+                    {!selectedBlock && <p>Sélectionne un bloc ou un bouton pour le modifier.</p>}
+                  </aside>
+                </div>
+              </>
+            ) : (
+              <div className={styles.logicScreen}>
+                <div className={styles.logicScreenHead}>
+                  <div><b>LOGIQUE GÉNÉRÉE</b><span>Chaque bloc prédéfini a déjà sa logique. Tu peux ensuite la modifier bouton par bouton dans « Boutons par bloc ».</span></div>
+                  <button type="button" onClick={() => setEditorTab('blocks')}>Modifier les blocs</button>
+                </div>
+                <div className={styles.logicBlocks}>
+                  {active.blocks.map((block, blockIndex) => (
+                    <section key={block.id}>
+                      <header><b>Bloc {blockIndex + 1}</b><span>{block.title}</span></header>
+                      {block.controls.map((control) => (
+                        <div key={control.id} className={styles.logicButtonRow}>
+                          <strong>{control.label}</strong>
+                          <div>{(control.logic || logic('player', 'clip', 'save')).map((step, index) => <span key={step.id}>{index > 0 && <i>→</i>}{stepLabels[step.type]}</span>)}</div>
+                          <button type="button" onClick={() => { setSelectedBlockId(block.id); setSelectedControlId(control.id); setEditorTab('blocks'); }}>Modifier</button>
+                        </div>
+                      ))}
+                    </section>
+                  ))}
+                  {active.blocks.length === 0 && <div className={styles.emptyLogic}>Ajoute un bloc prédéfini : sa logique apparaîtra automatiquement ici.</div>}
+                </div>
+              </div>
+            )}
 
             <footer className={styles.editorFoot}>
-              <span>✓ Sauvegarde automatique dans ce navigateur</span>
-              <button type="button" onClick={() => setEditorOpen(false)}>Voir le mode codage</button>
+              <div className={styles.modelQuickEdit}>
+                <input value={active.name} onChange={(event) => updateActive((template) => ({ ...template, name: event.target.value }))} aria-label="Nom de la configuration" />
+                <button type="button" className={styles.danger} onClick={deleteTemplate}>Supprimer le modèle</button>
+              </div>
+              <div><button type="button" onClick={() => setEditorOpen(false)}>💾 Enregistrer la configuration</button></div>
             </footer>
           </div>
         </div>
