@@ -656,7 +656,7 @@ export default function StatsEquipeModule() {
                 <tr>
                   <th rowSpan={2}>Matchs</th>
                   <th colSpan={4}>Résultat</th>
-                  <th colSpan={4}>Total</th>
+                  <th colSpan={3}>Total</th>
                   <th colSpan={3}>2 points</th>
                   <th colSpan={3}>3 points</th>
                   <th colSpan={3}>L-F</th>
@@ -679,7 +679,6 @@ export default function StatsEquipeModule() {
                   <th>TR</th>
                   <th>TT</th>
                   <th>%</th>
-                  <th>RT</th>
                   <th>TT</th>
                   <th>TR</th>
                   <th>%</th>
@@ -765,7 +764,6 @@ export default function StatsEquipeModule() {
                       <td>{display(a.fgm, s.games, useAverage)}</td>
                       <td>{display(a.fga, s.games, useAverage)}</td>
                       <td>{pct(a.fgm, a.fga)}</td>
-                      <td>{display(s.reb, s.games, useAverage)}</td>
                       <td>{display(s.p2a, s.games, useAverage)}</td>
                       <td>{display(s.p2m, s.games, useAverage)}</td>
                       <td>{pct(s.p2m, s.p2a)}</td>

@@ -15,6 +15,7 @@
  */
 
 import { type MouseEvent, useEffect, useRef, useState } from 'react';
+import { CODING_MODES, type CodingMode, isPostLikeCodingMode } from '@/components/prise-stats-pro/coding-modes';
 import { createClient } from "@/lib/supabase/client";
 import { getTeams, saveTeam } from "@/lib/equipes-store";
 import { emptyTeam } from "@/types/player";
@@ -44,6 +45,7 @@ import {
 import VideoSyncModal from "@/components/prise-stats-pro/VideoSyncModal";
 import LiveCodingSettingsModal, { DEFAULT_WORKFLOW_PREFS, type LiveWorkflowPrefs, type LiveCodingProfile, type CodingButtonGroup } from "@/components/prise-stats-pro/LiveCodingSettingsModal";
 import LivePlayerAssociationModal, { type AssociableLiveAction } from "@/components/prise-stats-pro/LivePlayerAssociationModal";
+import MatchReviewBuilder, { type MatchReviewEvent, type MatchReviewLayout } from "@/components/prise-stats-pro/MatchReviewBuilder";
 import ShotChart, { SHOT_ZONES, zoneById, resolveShotZone } from "@/components/prise-stats-pro/ShotChart";
 import {
   type VideoSyncState,
@@ -77,7 +79,6 @@ if (typeof globalThis !== 'undefined' && !(globalThis as any).EmptyRanges) {
 /* ============================ Types ============================ */
 interface Player { id: string; num: number; name: string; pos: string; photo?: string }
 type Ctx = '' | 'attaque' | 'defense';
-type CodingMode = 'live' | 'live-individual' | 'post';
 
 interface Draft {
   context: Ctx; systemeJeu: string; inbound: string; tempsFort: string; coverage: string;
@@ -396,7 +397,7 @@ function resolveCodingButtons(
 
 const NAV = ['Contexte', 'Système de jeu', 'Temps fort', 'Joueur', "Type d'action", 'Résultat', 'Où ?', 'Conséquence'];
 const STAGE_NAV: Record<string, number> = {
-  context: 0, inbound: 1, systeme: 1, temps: 2, coverage: 2, player: 3, action: 4, faute: 4, result: 5, ft: 5, zone: 6, rebound: 7, assist: 7,
+  context: 0, inbound: 1, systeme: 1, temps: 2, coverage: 2, player: 3, action: 4, faute: 4, 'technical-foul-target': 4, result: 5, ft: 5, zone: 6, rebound: 7, assist: 7,
 };
 const emptyDraft = (): Draft => ({
   context: '', systemeJeu: '', inbound: '', tempsFort: '', coverage: '', playerId: null, actionType: '',
@@ -924,6 +925,8 @@ export default function PriseStatsProPage() {
   const [codingDb, setCodingDb] = useState<CodingButtonCfg[] | null>(null);
   const [codingDbNonce, setCodingDbNonce] = useState(0);
   const [showCodingSettings, setShowCodingSettings] = useState(false);
+  const [showMatchReviewBuilder, setShowMatchReviewBuilder] = useState(false);
+  const [matchReviewLayout, setMatchReviewLayout] = useState<MatchReviewLayout>({ columns: 2, compact: false, showPlayerPanel: true, showVideo: true, showHistory: true });
   const [codingSettingsTab, setCodingSettingsTab] = useState<'workflow' | 'buttons'>('workflow');
   const [workflowPrefs, setWorkflowPrefs] = useState<LiveWorkflowPrefs>({ ...DEFAULT_WORKFLOW_PREFS });
   const [isOffline, setIsOffline] = useState(false);
@@ -1148,27 +1151,13 @@ export default function PriseStatsProPage() {
     const tId = String(selTeam?.id || activeTeamId || teamId || 'setup');
     const currentMatchId = String(liveMatchIdRef.current || '');
 
-    // Depuis ce clic, on tente d'abord le handle déjà mémorisé pour le match.
-    // Si Chrome est simplement revenu à « prompt », requestPermission() peut
-    // réautoriser la vidéo sans demander de retrouver le fichier sur le disque.
+    // IMPORTANT : le bouton « Retrouver la vidéo » doit ouvrir le sélecteur
+    // immédiatement. Les navigateurs (notamment Chrome) peuvent perdre
+    // l'activation utilisateur si l'on attend d'abord IndexedDB/Supabase, ce
+    // qui donnait l'impression que le bouton ne faisait rien.
     if (currentMatchId && !currentMatchId.startsWith('local_')) {
       try {
-        const restored = await restoreMatchVideoForClip(currentMatchId, tId, {
-          interactive: true,
-        });
-        if (restored.video) {
-          attachLocalVideoFile(restored.video.file, true);
-          flash('Vidéo locale retrouvée automatiquement ✓');
-          return;
-        }
-
-        // Seulement si le handle ne permet réellement plus d'ouvrir la vidéo,
-        // on demande à l'utilisateur de la relocaliser.
-        const relinked = await relinkMatchVideo(
-          currentMatchId,
-          tId,
-          restored.expected,
-        );
+        const relinked = await relinkMatchVideo(currentMatchId, tId, null);
         if (relinked) {
           attachLocalVideoFile(relinked.file, true);
           flash('Vidéo locale reconnectée au projet ✓');
@@ -1181,11 +1170,6 @@ export default function PriseStatsProPage() {
     }
 
     // Compatibilité avant création du matchId / très anciens projets.
-    if (await tryRestoreLocalVideo(tId, videoFilename, true)) {
-      flash('Vidéo locale retrouvée automatiquement ✓');
-      return;
-    }
-
     await pickLocalVideoSmart();
   };
 
@@ -1588,9 +1572,9 @@ export default function PriseStatsProPage() {
 
   const setLayoutPreset = (preset: 'video' | 'balanced' | 'coding') => {
     setVideoMaximized(false);
-    if (preset === 'video') { setShowVideoPanel(true); setVideoPanePct(64); setRightPanePx(230); }
-    if (preset === 'balanced') { setVideoPanePct(48); setRightPanePx(305); }
-    if (preset === 'coding') { setVideoPanePct(32); setRightPanePx(260); }
+    if (preset === 'video') { setShowVideoPanel(true); setVideoPanePct(64); setRightPanePx(230); return; }
+    if (preset === 'balanced') { setLayoutMode('balanced'); setVideoPanePct(48); setRightPanePx(305); return; }
+    setLayoutMode('coding'); setVideoPanePct(32); setRightPanePx(260);
   };
 
   /* ══════════════════ AJOUT · Vidéo détachée : horloge partagée ══════════════════
@@ -1661,6 +1645,8 @@ export default function PriseStatsProPage() {
   const [projects, setProjects] = useState<LiveProjectSummary[]>([]);
   const [projectBusy, setProjectBusy] = useState(false);
   const [showProjectMenu, setShowProjectMenu] = useState(false);
+  const [showMatchInfo, setShowMatchInfo] = useState(false);
+  const [layoutMode, setLayoutMode] = useState<'balanced' | 'coding'>('balanced');
   const [showPlayerAssociation, setShowPlayerAssociation] = useState(false);
   const [linkedCollectiveProjectId, setLinkedCollectiveProjectId] = useState('');
   const projectSaveRef = useRef<number | null>(null);
@@ -1685,7 +1671,7 @@ export default function PriseStatsProPage() {
     workflowPrefs,
     selectedCodingProfileId,
     profileButtonKeys,
-    workspaceLayout: { videoPanePct, rightPanePx },
+    workspaceLayout: { videoPanePct, rightPanePx, mode: layoutMode },
     linkedCollectiveProjectId: linkedCollectiveProjectId || null,
     matchPlayerIds,
     starters,
@@ -1864,7 +1850,7 @@ export default function PriseStatsProPage() {
       setDate(String(s.date || date));
       setMatchType(s.matchType === 'league' || s.matchType === 'cup' ? s.matchType : 'friendly');
       setHome(s.home ?? true);
-      setCodingMode(s.codingMode === 'live-individual' ? 'live-individual' : s.codingMode === 'live' ? 'live' : 'post');
+      setCodingMode(s.codingMode === 'match-review' ? 'match-review' : s.codingMode === 'live-individual' ? 'live-individual' : s.codingMode === 'live' ? 'live' : 'post');
       if (s.workflowPrefs && typeof s.workflowPrefs === 'object') {
         setWorkflowPrefs({ ...DEFAULT_WORKFLOW_PREFS, ...s.workflowPrefs });
       }
@@ -1873,6 +1859,7 @@ export default function PriseStatsProPage() {
       if (s.workspaceLayout && typeof s.workspaceLayout === 'object') {
         if (Number.isFinite(Number(s.workspaceLayout.videoPanePct))) setVideoPanePct(Math.max(25, Math.min(72, Number(s.workspaceLayout.videoPanePct))));
         if (Number.isFinite(Number(s.workspaceLayout.rightPanePx))) setRightPanePx(Math.max(210, Math.min(520, Number(s.workspaceLayout.rightPanePx))));
+        if (s.workspaceLayout.mode === 'coding' || s.workspaceLayout.mode === 'balanced') setLayoutMode(s.workspaceLayout.mode);
       }
       setLinkedCollectiveProjectId(String(s.linkedCollectiveProjectId || ''));
       setQ(Number(s.q || 1));
@@ -5105,7 +5092,7 @@ export default function PriseStatsProPage() {
 
   /* -------- navigation dynamique du workflow -------- */
   const workflowOn = (key: keyof LiveWorkflowPrefs) => {
-    if (codingMode === 'post') return workflowPrefs[key];
+    if (isPostLikeCodingMode(codingMode)) return workflowPrefs[key];
     if (codingMode === 'live') {
       if (key === 'system' || key === 'temps' || key === 'zone') return workflowPrefs[key];
       return true;
@@ -5151,8 +5138,8 @@ export default function PriseStatsProPage() {
     // Live : localisation seulement si la Shot chart est activée.
     // Après-match : localisation toujours obligatoire. En LIVE (même hors-ligne),
     // la Shot Chart reste un choix utilisateur via workflowPrefs.zone.
-    const forceShotChart = codingMode === 'post';
-    const wantsLiveShotChart = codingMode !== 'post' && workflowOn('zone');
+    const forceShotChart = isPostLikeCodingMode(codingMode);
+    const wantsLiveShotChart = !isPostLikeCodingMode(codingMode) && workflowOn('zone');
     if (d.shotType !== 'LF' && (forceShotChart || wantsLiveShotChart)) {
       setDraft(d);
       setStage('zone');
@@ -5230,7 +5217,20 @@ export default function PriseStatsProPage() {
     // on demande donc le joueur avant la suite de faute.
     if (id === 'faute-provoquee' && d.context === 'defense') { setDraft(d); setStage('player'); return; }
 
-    if (id === 'interception' || id === 'contre') { setDraft({ ...d, context:'defense' }); setStage('player'); return; }
+    if (id === 'contre') {
+      if (d.context === 'attaque') {
+        // Contre subi : le joueur offensif est déjà connu. On demande
+        // directement ce que devient le ballon sans transformer l'action
+        // en contre défensif de notre équipe.
+        setDraft(d);
+        setStage('rebound');
+        return;
+      }
+      setDraft({ ...d, context: 'defense' });
+      setStage('player');
+      return;
+    }
+    if (id === 'interception') { setDraft({ ...d, context:'defense' }); setStage('player'); return; }
     if (id === 'faute-provoquee') { setDraft(d); setStage('faute'); return; }
 
     // La faute technique est volontairement une action d'équipe :
@@ -5344,7 +5344,7 @@ export default function PriseStatsProPage() {
 };
   const foulPick = (o: string) => {
     if (o === 'technical-for' || o === 'technical-against') {
-      setDraft({
+      const technicalDraft: Draft = {
         ...draft,
         foulOutcome: o,
         shotType: 'LF',
@@ -5353,8 +5353,15 @@ export default function PriseStatsProPage() {
         ftAttempts: 1,
         ftMade: 0,
         ftResults: [],
-      });
-      setStage('ft');
+        opponentPlayerId: null,
+        opponentPlayerName: null,
+        opponentPlayerNumber: null,
+      };
+      setDraft(technicalDraft);
+      // Si le LF est pour nous, on attribue d'abord la faute technique
+      // à un joueur adverse ou à l'équipe. Si le LF est adverse, cette
+      // attribution n'est pas nécessaire.
+      setStage(o === 'technical-for' ? 'technical-foul-target' : 'ft');
       return;
     }
     if (o === 'touche') { commit({ ...draft, foulOutcome: 'touche' }); return; }
@@ -5387,7 +5394,7 @@ export default function PriseStatsProPage() {
   const quickShotResult = (
     shotType: '2PTS' | '3PTS',
     shotResult: 'made' | 'missed',
-    shotRange: 'interior' | 'exterior' | 'three',
+    shotRange: 'interior' | 'exterior' | 'three' | null,
   ) => {
     // En attaque Live individuel, aucun tir ne peut être enregistré sans joueur.
     if (codingMode === 'live-individual' && draft.context === 'attaque' && !draft.playerId) {
@@ -5428,7 +5435,7 @@ export default function PriseStatsProPage() {
   const special = (s: string) => {
     markClipStartBefore(5);
     const d = { ...draft, actionType: 'tir', specialCase: s === '2pts1lf' ? '2pts+1lf' : '3pts+1lf', shotType: s === '2pts1lf' ? '2PTS' : '3PTS', shotResult: 'made', ftAttempts: 1, ftMade: 0, ftResults: [] };
-    if (codingMode !== 'post') { setDraft(d); setStage('ft'); return; }
+    if (!isPostLikeCodingMode(codingMode)) { setDraft(d); setStage('ft'); return; }
     if (workflowOn('zone')) { setDraft(d); setStage('zone'); return; }
     if (workflowOn('assist')) { setDraft(d); setStage('assist'); return; }
     setDraft(d); setStage('ft');
@@ -5450,7 +5457,12 @@ export default function PriseStatsProPage() {
     if (stage !== 'zone') return;
     const px = point ? point.x : zone.cx;
     const py = point ? point.y : zone.cy;
-    const d = { ...draft, zone: zone.id, courtX: px / 100, courtY: py / 100 };
+    const inferredRange: Draft['shotRange'] = draft.shotType === '3PTS'
+      ? 'three'
+      : ['z1', 'z2', 'z3', 'z4'].includes(zone.id)
+        ? 'interior'
+        : 'exterior';
+    const d = { ...draft, zone: zone.id, courtX: px / 100, courtY: py / 100, shotRange: inferredRange };
     if (d.context === 'defense') {
       if (d.shotResult === 'missed' && workflowOn('rebound')) { setDraft(d); setStage('rebound'); }
       else commit(d);
@@ -6059,21 +6071,19 @@ export default function PriseStatsProPage() {
               <section className="cm-card">
                 <div className="cm-card-t">⚡ MODE DE CODAGE</div>
                 <div className="cm-video">
-                  <div className={`cm-vid ${codingMode === 'live' ? 'on' : ''}`} onClick={() => { setCodingMode('live'); setImportedLiveSource(null); }}>
-                    {codingMode === 'live' && <div className="cm-vid-ck">✓</div>}
-                    <div className="cm-vid-ic">🔴</div><div className="cm-vid-t">Live collectif</div>
-                    <div className="cm-vid-d">Attaque/Défense → Système → Temps fort → Résultat. Possessions et attaques séparées.</div>
-                  </div>
-                  <div className={`cm-vid ${codingMode === 'live-individual' ? 'on' : ''}`} onClick={() => { setCodingMode('live-individual'); setImportedLiveSource(null); }}>
-                    {codingMode === 'live-individual' && <div className="cm-vid-ck">✓</div>}
-                    <div className="cm-vid-ic">👤</div><div className="cm-vid-t">Live individuel</div>
-                    <div className="cm-vid-d">Attaque : Qui réalise → Résultat → PD si panier → conséquence. Défense : Résultat directement → joueur de mon équipe seulement pour attribuer rebond, faute, contre, interception… Aucun Système / Temps fort.</div>
-                  </div>
-                  <div className={`cm-vid ${codingMode === 'post' ? 'on' : ''}`} onClick={() => setCodingMode('post')}>
-                    {codingMode === 'post' && <div className="cm-vid-ck">✓</div>}
-                    <div className="cm-vid-ic">🎬</div><div className="cm-vid-t">Après match / vidéo</div>
-                    <div className="cm-vid-d">Codage détaillé actuel : joueurs, actions, zones, rebonds, passes, clips… inchangé.</div>
-                  </div>
+                  {CODING_MODES.map((mode) => (
+                    <div
+                      key={mode.id}
+                      className={`cm-vid ${codingMode === mode.id ? 'on' : ''}`}
+                      onClick={() => { setCodingMode(mode.id); if (mode.id !== 'post' && mode.id !== 'match-review') setImportedLiveSource(null); }}
+                    >
+                      {codingMode === mode.id && <div className="cm-vid-ck">✓</div>}
+                      <div className="cm-vid-ic">{mode.icon}</div>
+                      <div className="cm-vid-t">{mode.label}</div>
+                      <div className="cm-vid-d">{mode.description}</div>
+                      {mode.id === 'match-review' && <div className="cm-vid-note">100 % personnalisable · blocs · boutons · ordre · logique</div>}
+                    </div>
+                  ))}
                 </div>
                 {codingMode === 'live-individual' && (
                   <div className="individualLinkBox">
@@ -6084,6 +6094,18 @@ export default function PriseStatsProPage() {
                     </select>
                   </div>
                 )}
+                {codingMode === 'match-review' ? (
+                  <div className="codingLogicSetup matchReviewSetup">
+                    <div className="codingLogicSetupHead">
+                      <div><b>🧱 CONSTRUCTEUR RETOUR DE MATCH</b><small>Tout est libre : crée tes blocs, tes boutons, leur ordre, le parcours, les + / −, les valeurs et les règles.</small></div>
+                      <button type="button" onClick={() => setShowMatchReviewBuilder(true)}>Ouvrir le constructeur</button>
+                    </div>
+                    <div className="codingLogicPath">
+                      <span>Blocs libres</span><i>→</i><span>Boutons libres</span><i>→</i><span>Ordre libre</span><i>→</i><span>Logique libre</span>
+                      <em>Aucune étape n’est imposée par MyBasket. Le modèle est enregistré et réutilisable.</em>
+                    </div>
+                  </div>
+                ) : (
                 <div className="codingLogicSetup">
                   <div className="codingLogicSetupHead">
                     <div><b>🧩 LOGIQUE DE CODAGE</b><small>Sélectionne une logique déjà enregistrée ou construis-la avant de démarrer.</small></div>
@@ -6113,11 +6135,12 @@ export default function PriseStatsProPage() {
                       </>
                     ) : (
                       <>
-                        <span>Contexte</span>{workflowPrefs.system && <><i>→</i><span>Système</span></>}{workflowPrefs.temps && <><i>→</i><span>Temps fort</span></>}<i>→</i><span>Résultat</span>{codingMode === 'post' && workflowPrefs.zone && <><i>→</i><span>Shot chart</span></>}
+                        <span>Contexte</span>{workflowPrefs.system && <><i>→</i><span>Système</span></>}{workflowPrefs.temps && <><i>→</i><span>Temps fort</span></>}<i>→</i><span>Résultat</span>{isPostLikeCodingMode(codingMode) && <><i>→</i><span>Shot chart obligatoire</span></>}
                       </>
                     )}
                   </div>
                 </div>
+                )}
                 <div className="vid-input" style={{marginTop:10}}>
                   <label className="vid-file">
                     <input type="file" accept="application/json,.json,.mybasket" onChange={(e) => { void importLiveSourceFile(e.target.files?.[0] ?? null); e.currentTarget.value = ''; }} />
@@ -6481,6 +6504,14 @@ export default function PriseStatsProPage() {
           onChanged={() => { setCodingDbNonce((n) => n + 1); tags.reload(); }}
           onClose={() => setShowCodingSettings(false)}
         />
+        {showMatchReviewBuilder && (
+          <MatchReviewBuilder
+            players={setupRoster.map((player) => ({ id: player.id, name: player.name, num: player.num }))}
+            initialEditorOpen
+            onLayoutChange={setMatchReviewLayout}
+            onClose={() => setShowMatchReviewBuilder(false)}
+          />
+        )}
         <Style />
       </div>
     );
@@ -6619,11 +6650,23 @@ export default function PriseStatsProPage() {
                     {workflowPrefs.zone ? '✓ Shot chart Live individuel : activée' : '○ Shot chart Live individuel : désactivée'}
                   </button>
                 )}
-                <button onClick={() => { setShowProjectMenu(false); openCodingSettings('workflow'); }}>⚙ Configurer mon codage</button>
-                <button onClick={() => { setShowProjectMenu(false); openCodingSettings('buttons'); }}>🧩 Gérer mes boutons</button>
+                {codingMode === 'match-review' && <button onClick={() => { setShowProjectMenu(false); setShowMatchReviewBuilder(true); }}>🧱 Configurer Retour de match</button>}
+                {codingMode !== 'match-review' && <button onClick={() => { setShowProjectMenu(false); openCodingSettings('workflow'); }}>⚙ Configurer mon codage</button>}
+                <button onClick={() => { setShowProjectMenu(false); setShowMatchInfo(true); }}>ℹ Informations du match</button>
+                {codingMode !== 'match-review' && <button onClick={() => { setShowProjectMenu(false); openCodingSettings('buttons'); }}>🧩 Gérer mes boutons</button>}
                 <button onClick={() => { setShowProjectMenu(false); setLayoutPreset('video'); }}>🎥 Disposition : vidéo grande</button>
-                <button onClick={() => { setShowProjectMenu(false); setLayoutPreset('balanced'); }}>⚖ Disposition : équilibrée</button>
-                <button onClick={() => { setShowProjectMenu(false); setLayoutPreset('coding'); }}>⌨ Disposition : codage grand</button>
+                <div className="layoutToggleRow">
+                  <span className={layoutMode === 'balanced' ? 'on' : ''}>Équilibré</span>
+                  <button
+                    type="button"
+                    className={`layoutToggle ${layoutMode === 'coding' ? 'coding' : ''}`}
+                    onClick={() => setLayoutPreset(layoutMode === 'balanced' ? 'coding' : 'balanced')}
+                    aria-label="Basculer entre disposition équilibrée et codage grand"
+                  >
+                    <i />
+                  </button>
+                  <span className={layoutMode === 'coding' ? 'on' : ''}>Codage grand</span>
+                </div>
                 {codingMode === 'live' && <button onClick={() => { setShowProjectMenu(false); setShowPlayerAssociation(true); }}>👥 Associer les joueurs</button>}
                 {(videoProvider === 'local' || videoProvider === 'google_drive') && videoUrl && <button onClick={() => { setShowProjectMenu(false); setShowVideoSync(true); }}>🎯 Recaler la vidéo</button>}
                 {codingMode === 'live' && <button onClick={() => { markPeriodSourceStart(q); flash(`Début ${periodLabel(q)} repéré`); }}>▶ Repérer début {periodLabel(q)}</button>}
@@ -6656,7 +6699,9 @@ export default function PriseStatsProPage() {
             ref={liveWorkspaceRef}
             className={`live3 ${videoMaximized ? 'videoMaximized' : 'resizableLive3'} ${showVideoPanel ? '' : 'videoPanelHidden'}`}
             style={videoMaximized ? undefined : {
-              gridTemplateColumns: `${videoPanePct}% 7px minmax(280px,1fr) 7px ${rightPanePx}px`,
+              gridTemplateColumns: codingMode === 'match-review'
+                ? (matchReviewLayout.showVideo ? `${videoPanePct}% 7px minmax(360px,1fr) 0px 0px` : `0px 0px minmax(360px,1fr) 0px 0px`)
+                : `${videoPanePct}% 7px minmax(280px,1fr) 7px ${rightPanePx}px`,
             }}
           >
             {/* ============ GAUCHE · PILOTAGE LIVE / VIDÉO OPTIONNELLE ============ */}
@@ -6778,7 +6823,7 @@ export default function PriseStatsProPage() {
               )}
             </section>
 
-            {!videoMaximized && (
+            {!videoMaximized && (codingMode !== 'match-review' || matchReviewLayout.showVideo) && (
               <div className="panelResizeHandle" onPointerDown={(e) => startPanelResize('video', e)} title="Glisser pour redimensionner panneau Live / codage">
                 <span>⋮</span>
               </div>
@@ -6787,55 +6832,72 @@ export default function PriseStatsProPage() {
 
             {/* ============ CENTRE · CODAGE (wizard) ============ */}
             <aside className={`lc lc-code ${workTab === 'coding' ? 'mshow' : ''}`}>
-              <div className="lc-head codeTop">
-                <button className="headBack" disabled={stage === 'context' || stageHistory.length === 0} onClick={goBackStage}>←</button>
-                <div className="crumb-mini">
-                  {activeCrumbs.map((c, i) => {
-                    const state = activeCrumbIndex === i ? 'cur' : activeCrumbIndex > i ? 'done' : '';
-                    return <span key={`${c}-${i}`} className={`cm ${state}`} title={c}>{c}</span>;
-                  })}
-                </div>
-              </div>
-              <div className="lc-body codeDense">
-                {stage !== 'context' && (
-                  draft.context ? (
-                    <div
-                      style={{
-                        width: '100%',
-                        minHeight: 58,
-                        borderRadius: 8,
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        background: draft.context === 'attaque' ? '#1565D8' : '#D62839',
-                        color: '#FFFFFF',
-                        fontSize: 20,
-                        fontWeight: 900,
-                        letterSpacing: '0.06em',
-                        textTransform: 'uppercase',
-                        marginBottom: 10,
-                      }}
-                    >
-                      {draft.context === 'attaque' ? 'ATTAQUE' : 'DÉFENSE'}
+              {codingMode === 'match-review' ? (
+                <MatchReviewBuilder
+                  embedded
+                  projectId={String(liveMatchId || `draft_${teamId}_${date}`)}
+                  players={roster.map((player) => ({ id: player.id, name: player.name, num: player.num }))}
+                  getVideoTime={getCurrentVideoTime}
+                  onLayoutChange={setMatchReviewLayout}
+                  onRecord={(event: MatchReviewEvent) => {
+                    const who = event.playerName ? ` · ${event.playerName}` : '';
+                    flash(`${event.controlLabel}${who} enregistré ✓`);
+                  }}
+                />
+              ) : (
+                <>
+                  <div className="lc-head codeTop">
+                    <button className="headBack" disabled={stage === 'context' || stageHistory.length === 0} onClick={goBackStage}>←</button>
+                    <div className="crumb-mini">
+                      {activeCrumbs.map((c, i) => {
+                        const state = activeCrumbIndex === i ? 'cur' : activeCrumbIndex > i ? 'done' : '';
+                        return <span key={`${c}-${i}`} className={`cm ${state}`} title={c}>{c}</span>;
+                      })}
                     </div>
-                  ) : (
-                    <button className="backBtn sm" onClick={goBackStage}>← Retour</button>
-                  )
-                )}
-                {renderStage()}
-              </div>
-              <div className="lc-foot">
-                <button className="qbtn sm" onClick={resetDraft}>🗑 Reset</button>
-              </div>
+                  </div>
+                  <div className="lc-body codeDense">
+                    {stage !== 'context' && (
+                      draft.context ? (
+                        <div
+                          style={{
+                            width: '100%',
+                            minHeight: 58,
+                            borderRadius: 8,
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            background: draft.context === 'attaque' ? '#1565D8' : '#D62839',
+                            color: '#FFFFFF',
+                            fontSize: 20,
+                            fontWeight: 900,
+                            letterSpacing: '0.06em',
+                            textTransform: 'uppercase',
+                            marginBottom: 10,
+                          }}
+                        >
+                          {draft.context === 'attaque' ? 'ATTAQUE' : 'DÉFENSE'}
+                        </div>
+                      ) : (
+                        <button className="backBtn sm" onClick={goBackStage}>← Retour</button>
+                      )
+                    )}
+                    {renderStage()}
+                  </div>
+                  <div className="lc-foot">
+                    <button className="qbtn sm" onClick={resetDraft}>🗑 Reset</button>
+                  </div>
+                </>
+              )}
             </aside>
 
-            {!videoMaximized && (
+            {!videoMaximized && codingMode !== 'match-review' && (
               <div className="panelResizeHandle" onPointerDown={(e) => startPanelResize('right', e)} title="Glisser pour redimensionner codage / joueurs">
                 <span>⋮</span>
               </div>
             )}
 
             {/* ============ DROITE · SHOT CHART + JOUEURS / BANC ============ */}
+            {codingMode !== 'match-review' && (
             <aside className={`lc lc-right ${workTab === 'analysis' ? 'mshow' : ''}`}>
               {/* Shot chart PAR ZONES pro — pick à l'étape zone, analyse sinon */}
               <div className="scZone">
@@ -6843,7 +6905,7 @@ export default function PriseStatsProPage() {
                   <div className="scZone-live">
                     <div className="courtSlotHead">
                       <span>🎯 Choisis la zone · {draft.shotRange === 'interior' ? '2 PTS intérieur' : draft.shotRange === 'exterior' ? '2 PTS extérieur' : draft.shotType || 'Tir'}</span>
-                      {draft.context === 'defense' && codingMode !== 'post' && !isOffline && (
+                      {draft.context === 'defense' && !isPostLikeCodingMode(codingMode) && !isOffline && (
                         <button type="button" className="chip" onClick={() => {
                           const d: Draft = { ...draft, zone: '', courtX: null, courtY: null };
                           if (d.shotResult === 'missed' && workflowOn('rebound')) { setDraft(d); setStage('rebound'); }
@@ -6938,6 +7000,7 @@ export default function PriseStatsProPage() {
                 </div>
               </div>
             </aside>
+            )}
           </div>
 
           {/* ============ BAS · TIMELINE REPLIABLE ============ */}
@@ -7156,6 +7219,35 @@ export default function PriseStatsProPage() {
         );
       })()}
 
+      {showMatchInfo && (
+        <div className="matchInfoOverlay" onClick={() => setShowMatchInfo(false)}>
+          <div className="matchInfoCard" onClick={(e) => e.stopPropagation()}>
+            <div className="matchInfoHead"><b>ℹ Informations du match</b><button onClick={() => setShowMatchInfo(false)}>×</button></div>
+            <div className="matchInfoGrid">
+              <label>Date<input type="date" value={date} onChange={(e) => setDate(e.target.value)} /></label>
+              <label>Adversaire<input value={opponent} onChange={(e) => setOpponent(e.target.value)} placeholder="Nom de l’adversaire" /></label>
+              <label>Type de match
+                <select value={matchType} onChange={(e) => setMatchType(e.target.value as typeof matchType)}>
+                  <option value="friendly">Amical</option>
+                  <option value="league">Championnat</option>
+                  <option value="cup">Coupe</option>
+                </select>
+              </label>
+              <label>Lieu
+                <select value={home ? 'home' : 'away'} onChange={(e) => setHome(e.target.value === 'home')}>
+                  <option value="home">Domicile</option>
+                  <option value="away">Extérieur</option>
+                </select>
+              </label>
+            </div>
+            <div className="matchInfoFoot">
+              <button className="ghost" onClick={() => setShowMatchInfo(false)}>Annuler</button>
+              <button className="matchInfoSave" onClick={() => { persistProjectState(); setShowMatchInfo(false); flash('Informations du match mises à jour ✓'); }}>Enregistrer</button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {toast && <div className="toast show">{toast}</div>}
 
       {showPlayerAssociation && (
@@ -7185,6 +7277,21 @@ export default function PriseStatsProPage() {
         onChanged={() => { setCodingDbNonce((n) => n + 1); tags.reload(); }}
         onClose={() => setShowCodingSettings(false)}
       />
+
+      {showMatchReviewBuilder && (
+        <MatchReviewBuilder
+          projectId={String(liveMatchId || `draft_${teamId}_${date}`)}
+          players={roster.map((player) => ({ id: player.id, name: player.name, num: player.num }))}
+          getVideoTime={getCurrentVideoTime}
+          onLayoutChange={setMatchReviewLayout}
+          initialEditorOpen
+          onClose={() => setShowMatchReviewBuilder(false)}
+          onRecord={(event: MatchReviewEvent) => {
+            const who = event.playerName ? ` · ${event.playerName}` : '';
+            flash(`${event.controlLabel}${who} enregistré ✓`);
+          }}
+        />
+      )}
 
       {/* §3–§6 · Synchronisation d'une vidéo ajoutée APRÈS le codage */}
       <VideoSyncModal
@@ -8208,6 +8315,47 @@ export default function PriseStatsProPage() {
               </>
             );
       }
+      case 'technical-foul-target': {
+        return (
+          <>
+            {head('À qui attribuer la faute technique ?', 'Le lancer franc est pour nous : indique qui a reçu la technique avant de saisir le LF.')}
+            <div className="grid c2">
+              <button
+                className="chip"
+                onClick={() => {
+                  setDraft({ ...draft, opponentPlayerId: null, opponentPlayerName: 'Équipe adverse', opponentPlayerNumber: null });
+                  setStage('ft');
+                }}
+              >
+                🏀 Technique équipe adverse
+              </button>
+              {oppRoster.length === 0 && (
+                <div className="tip">Aucun joueur adverse n'est renseigné sur ce projet. Tu peux attribuer la technique à l'équipe, ou ajouter l'effectif adverse avant le match pour choisir un joueur.</div>
+              )}
+            </div>
+            {oppRoster.length > 0 && (
+              <>
+                <div className="sublbl">Ou choisir le joueur adverse sanctionné</div>
+                <div className="grid c3">
+                  {oppRoster.map((op) => (
+                    <button
+                      key={op.id}
+                      className="bt"
+                      onClick={() => {
+                        setDraft({ ...draft, opponentPlayerId: op.id, opponentPlayerName: op.name, opponentPlayerNumber: op.num });
+                        setStage('ft');
+                      }}
+                    >
+                      <span className="ic">#{op.num}</span>
+                      <span className="lbl">{op.name}</span>
+                    </button>
+                  ))}
+                </div>
+              </>
+            )}
+          </>
+        );
+      }
       case 'result': {
         const isDefense = draft.context === 'defense';
 
@@ -8229,12 +8377,12 @@ export default function PriseStatsProPage() {
           <>
             {head(
               'Résultat',
-              codingMode !== 'post'
+              !isPostLikeCodingMode(codingMode)
                 ? (codingMode === 'live-individual' ? (isDefense ? 'Résultat défensif — le joueur sera demandé seulement si nécessaire' : 'Résultat du joueur sélectionné') : (isDefense ? 'Choisis le résultat défensif' : 'Choisis le résultat offensif'))
                 : (isDefense ? 'Choisis le résultat défensif' : 'Choisis directement le résultat du tir')
             )}
 
-            {codingMode === 'post' && isDefense && oppRoster.length > 0 && (
+            {isPostLikeCodingMode(codingMode) && isDefense && oppRoster.length > 0 && (
               <>
                 <div className="sublbl">Joueur adverse (tir concédé)</div>
                 <div className="grid c3">
@@ -8252,23 +8400,36 @@ export default function PriseStatsProPage() {
               </>
             )}
 
-            <div className="sublbl resultSectionLabel">2 PTS · INTÉRIEUR</div>
-            <div className="grid c2 resultMainGrid">
-              <button className="res made" style={!codingButtonEnabled('result','2-made') ? {display:'none'} : undefined} onClick={() => quickShotResult('2PTS', 'made', 'interior')}>✓ Marqué</button>
-              <button className="res miss" style={!codingButtonEnabled('result','2-missed') ? {display:'none'} : undefined} onClick={() => quickShotResult('2PTS', 'missed', 'interior')}>✕ Loupé</button>
-            </div>
-            <div className="sublbl resultSectionLabel">2 PTS · EXTÉRIEUR</div>
-            <div className="grid c2 resultMainGrid">
-              <button className="res made" style={!codingButtonEnabled('result','2-made') ? {display:'none'} : undefined} onClick={() => quickShotResult('2PTS', 'made', 'exterior')}>✓ Marqué</button>
-              <button className="res miss" style={!codingButtonEnabled('result','2-missed') ? {display:'none'} : undefined} onClick={() => quickShotResult('2PTS', 'missed', 'exterior')}>✕ Loupé</button>
-            </div>
+            {isPostLikeCodingMode(codingMode) ? (
+              <>
+                <div className="sublbl resultSectionLabel">2 PTS</div>
+                <div className="grid c2 resultMainGrid">
+                  <button className="res made" style={!codingButtonEnabled('result','2-made') ? {display:'none'} : undefined} onClick={() => quickShotResult('2PTS', 'made', null)}>✓ Marqué</button>
+                  <button className="res miss" style={!codingButtonEnabled('result','2-missed') ? {display:'none'} : undefined} onClick={() => quickShotResult('2PTS', 'missed', null)}>✕ Loupé</button>
+                </div>
+                <div className="postShotHint">La Shot Chart est obligatoire : intérieur / extérieur est calculé automatiquement à partir de la zone cliquée.</div>
+              </>
+            ) : (
+              <>
+                <div className="sublbl resultSectionLabel">2 PTS · INTÉRIEUR</div>
+                <div className="grid c2 resultMainGrid">
+                  <button className="res made" style={!codingButtonEnabled('result','2-made') ? {display:'none'} : undefined} onClick={() => quickShotResult('2PTS', 'made', 'interior')}>✓ Marqué</button>
+                  <button className="res miss" style={!codingButtonEnabled('result','2-missed') ? {display:'none'} : undefined} onClick={() => quickShotResult('2PTS', 'missed', 'interior')}>✕ Loupé</button>
+                </div>
+                <div className="sublbl resultSectionLabel">2 PTS · EXTÉRIEUR</div>
+                <div className="grid c2 resultMainGrid">
+                  <button className="res made" style={!codingButtonEnabled('result','2-made') ? {display:'none'} : undefined} onClick={() => quickShotResult('2PTS', 'made', 'exterior')}>✓ Marqué</button>
+                  <button className="res miss" style={!codingButtonEnabled('result','2-missed') ? {display:'none'} : undefined} onClick={() => quickShotResult('2PTS', 'missed', 'exterior')}>✕ Loupé</button>
+                </div>
+              </>
+            )}
             <div className="sublbl resultSectionLabel">3 PTS</div>
             <div className="grid c2 resultMainGrid">
               <button className="res made" style={!codingButtonEnabled('result','3-made') ? {display:'none'} : undefined} onClick={() => quickShotResult('3PTS', 'made', 'three')}>✓ Marqué</button>
               <button className="res miss" style={!codingButtonEnabled('result','3-missed') ? {display:'none'} : undefined} onClick={() => quickShotResult('3PTS', 'missed', 'three')}>✕ Loupé</button>
             </div>
 
-            {codingMode !== 'post' ? (
+            {!isPostLikeCodingMode(codingMode) ? (
               <>
                 {codingMode === 'live-individual' ? (
                   <>
@@ -8279,6 +8440,7 @@ export default function PriseStatsProPage() {
                           <button className="chip resultActionBtn" style={!codingButtonEnabled('att-action','faute-provoquee') ? {display:'none'} : undefined} onClick={() => actionPick('faute-provoquee')}>🔔 {codingLabel('att-action','faute-provoquee','Faute provoquée')}</button>
                           <button className="chip resultActionBtn" style={!codingButtonEnabled('att-action','faute-commise') ? {display:'none'} : undefined} onClick={() => actionPick('faute-commise')}>🟨 {codingLabel('att-action','faute-commise','Faute commise')}</button>
                           <button className="chip resultActionBtn" style={!codingButtonEnabled('att-action','perte') ? {display:'none'} : undefined} onClick={() => actionPick('perte')}>✖ {codingLabel('att-action','perte','BP · Perte de balle')}</button>
+                          <button className="chip resultActionBtn" style={!codingButtonEnabled('att-action','contre') ? {display:'none'} : undefined} onClick={() => actionPick('contre')}>🛑 Contré</button>
                         </div>
                       </>
                     )}
@@ -8389,8 +8551,10 @@ export default function PriseStatsProPage() {
           const blockConsequences =
             draft.context === 'attaque'
               ? [
-                  { id: 'touche-pour', label: '↪ Touche' },
-                  { id: 'def', label: '🏀 Récupération adverse' },
+                  { id: 'touche-pour', label: '↪ Touche pour nous' },
+                  { id: 'touche-contre', label: '↩ Touche pour l’adversaire' },
+                  { id: 'off', label: '🟢 Récupération par nous' },
+                  { id: 'def', label: '🔴 Récupération par l’adversaire' },
                 ]
               : [
                   { id: 'touche-contre', label: '↩ Touche / sortie' },
@@ -8466,7 +8630,7 @@ function BoxView({ actions, roster, teamId, videoProvider = 'none', videoUrl = '
   ).length;
   const A = computeAnalytics(actions, roster);
   const pts = (l: any) => l.p2m * 2 + l.p3m * 3 + l.ftm;
-  const [boxTab, setBoxTab] = useState<'box' | 'team' | 'matrix' | 'systems' | 'search' | 'lineups' | 'shot' | 'video'>('box');
+  const [boxTab, setBoxTab] = useState<'box' | 'box-advanced' | 'team' | 'matrix' | 'systems' | 'search' | 'lineups' | 'shot' | 'video'>('box');
   // Bloc C · onglet initial demandé depuis l'Historique (tab=history → Collectif, tab=players → Boxscore).
   useEffect(() => { if (initialTab) setBoxTab(initialTab); }, [initialTab]);
   const [boxSide, setBoxSide] = useState<'attaque' | 'defense'>('attaque');
@@ -8810,7 +8974,7 @@ function BoxView({ actions, roster, teamId, videoProvider = 'none', videoUrl = '
   );
 
   const TABS: [typeof boxTab, string][] = [
-    ['box', 'Boxscore joueurs'], ['team', 'Collectif'], ['matrix', 'Matrice'],
+    ['box', 'Boxscore joueurs'], ['box-advanced', 'Boxscore joueur avancé'], ['team', 'Collectif'], ['matrix', 'Matrice'],
     ['systems', 'Systèmes'],
     ['search', 'Recherche avancée'], ['lineups', 'Lineups'], ['shot', 'Shot chart'], ['video', 'Vidéo'],
   ];
@@ -8826,7 +8990,7 @@ function BoxView({ actions, roster, teamId, videoProvider = 'none', videoUrl = '
       {/* ===== Boxscore joueurs ===== */}
       {boxTab === 'box' && (
         <table className="boxscoreClipTable">
-          <thead><tr><th className="l">Joueur</th><th>PTS</th><th>2PTS</th><th>3PTS</th><th>LF</th><th>RO</th><th>RD</th><th>RT</th><th>PD</th><th>INT</th><th>CT</th><th>BP</th><th>FP</th><th>F</th><th>ÉVAL</th><th>+/-</th></tr></thead>
+          <thead><tr><th className="l">Joueur</th><th>PTS</th><th>2PTS</th><th>3PTS</th><th>LF</th><th>RO</th><th>RD</th><th>RT</th><th>PD</th><th>INT</th><th>CT</th><th>BP</th><th>FPRO</th><th>FPER</th><th>ÉVAL</th><th>+/-</th></tr></thead>
           <tbody>
             {box.map((l: any) => (
               <tr key={l.p.id} className="clickRow" onClick={() => openPlayerBoxClips(l.p, 'all', 'Toutes les actions')}>
@@ -8887,6 +9051,39 @@ function BoxView({ actions, roster, teamId, videoProvider = 'none', videoUrl = '
                 <td>{tot.ast || 0}</td><td>{(tot.stl || 0) + teamOnlyStl}</td><td>{tot.blk || 0}</td><td>{tot.to || 0}</td><td>{tot.fd || 0}</td><td>{tot.pf || 0}</td><td><b>{teamEval + teamOnlyStl}</b></td><td>—</td>
               </tr>
             )}
+          </tbody>
+        </table>
+      )}
+
+      {/* ===== Boxscore joueur avancé : 2PTS intérieur / extérieur via Shot Chart ===== */}
+      {boxTab === 'box-advanced' && (
+        <table className="boxscoreClipTable advancedBoxscoreTable">
+          <thead>
+            <tr>
+              <th className="l">Joueur</th><th>PTS</th><th>2PTS INT</th><th>2PTS EXT</th><th>3PTS</th><th>LF</th>
+              <th>RO</th><th>RD</th><th>RT</th><th>PD</th><th>INT</th><th>CT</th><th>BP</th><th>FPRO</th><th>FPER</th><th>ÉVAL</th><th>+/-</th>
+            </tr>
+          </thead>
+          <tbody>
+            {box.map((l: any) => {
+              const twoShots = actions.filter((a) => a.context !== 'defense' && a.playerId === l.p.id && a.actionType === 'tir' && a.shotType === '2PTS');
+              const rangeOf = (a: StatA) => a.shotRange || (['z1','z2','z3','z4'].includes(String(a.zone || '')) ? 'interior' : 'exterior');
+              const inside = twoShots.filter((a) => rangeOf(a) === 'interior');
+              const outside = twoShots.filter((a) => rangeOf(a) === 'exterior');
+              const inMade = inside.filter((a) => a.shotResult === 'made').length;
+              const outMade = outside.filter((a) => a.shotResult === 'made').length;
+              return (
+                <tr key={`advanced:${l.p.id}`} className="clickRow" onClick={() => openPlayerBoxClips(l.p, 'all', 'Toutes les actions')}>
+                  <td className="l"><button type="button" className="boxStatBtn player" onClick={(e) => { stopCell(e); openPlayerBoxClips(l.p, 'all', 'Toutes les actions'); }}>#{l.p.num} {l.p.name}</button></td>
+                  <td><b>{pts(l)}</b></td>
+                  <td><button type="button" className="boxStatBtn" onClick={(e) => { stopCell(e); openList(`#${l.p.num} ${l.p.name} · 2PTS intérieur`, inside); }}>{inMade}/{inside.length}</button></td>
+                  <td><button type="button" className="boxStatBtn" onClick={(e) => { stopCell(e); openList(`#${l.p.num} ${l.p.name} · 2PTS extérieur`, outside); }}>{outMade}/{outside.length}</button></td>
+                  <td>{l.p3m}/{l.p3a}</td><td>{l.ftm}/{l.fta}</td><td>{l.offReb || 0}</td><td>{l.defReb || 0}</td><td>{(l.offReb || 0) + (l.defReb || 0)}</td>
+                  <td>{l.ast}</td><td>{l.stl}</td><td>{l.blk}</td><td>{l.to}</td><td>{l.fd || 0}</td><td>{l.pf}</td><td><b>{evalOf(l)}</b></td>
+                  <td><b style={{ color: plusMinusOf(l.p.id) >= 0 ? 'var(--green)' : 'var(--red)' }}>{plusMinusOf(l.p.id) > 0 ? `+${plusMinusOf(l.p.id)}` : plusMinusOf(l.p.id)}</b></td>
+                </tr>
+              );
+            })}
           </tbody>
         </table>
       )}
@@ -9068,6 +9265,7 @@ function BoxView({ actions, roster, teamId, videoProvider = 'none', videoUrl = '
                   size="lg"
                   showPoints
                   showDots
+                  showLabels={false}
                   shots={attackShots}
                   onZoneClick={(zoneId) => {
                     const zoneShots = attackShots.filter((a) => {
@@ -9076,15 +9274,10 @@ function BoxView({ actions, roster, teamId, videoProvider = 'none', videoUrl = '
                     });
                     if (zoneShots.length) openList(`${shotPlayer === 'all' ? 'Tirs équipe' : `Tirs ${find(shotPlayer)?.name || 'joueur'}`} · ${zoneById(zoneId)?.shortLabel || zoneId}`, zoneShots);
                   }}
-                  onShotClick={(a) =>
-                    openShotZoneClips(
-                      a as unknown as StatA,
-                      attackShots,
-                      shotPlayer === 'all'
-                        ? 'Tirs équipe'
-                        : `Tirs ${find(shotPlayer)?.name || 'joueur'}`
-                    )
-                  }
+                  onShotClick={(a) => {
+                    const shot = a as unknown as StatA;
+                    openList(`${shotPlayer === 'all' ? 'Tir équipe' : `Tir ${find(shotPlayer)?.name || 'joueur'}`} · ${periodLabel(shot.q)} ${shot.clock}`, [shot]);
+                  }}
                 />}
               </div>
               <div className="shotPanel">
@@ -9094,6 +9287,7 @@ function BoxView({ actions, roster, teamId, videoProvider = 'none', videoUrl = '
                   size="lg"
                   showPoints
                   showDots
+                  showLabels={false}
                   shots={defenseShots}
                   onZoneClick={(zoneId) => {
                     const zoneShots = defenseShots.filter((a) => {
@@ -9102,13 +9296,10 @@ function BoxView({ actions, roster, teamId, videoProvider = 'none', videoUrl = '
                     });
                     if (zoneShots.length) openList(`Tirs concédés · ${zoneById(zoneId)?.shortLabel || zoneId}`, zoneShots);
                   }}
-                  onShotClick={(a) =>
-                    openShotZoneClips(
-                      a as unknown as StatA,
-                      defenseShots,
-                      'Tirs concédés'
-                    )
-                  }
+                  onShotClick={(a) => {
+                    const shot = a as unknown as StatA;
+                    openList(`Tir concédé · ${periodLabel(shot.q)} ${shot.clock}`, [shot]);
+                  }}
                 />}
               </div>
             </div>
@@ -9262,7 +9453,7 @@ function Style() {
       .cm-t { font-size: 13px; font-weight: 900; letter-spacing: .03em; } .cm-s { font-size: 9px; color: var(--mute); font-weight: 800; letter-spacing: .12em; }
       .cm-head-r { display: flex; gap: 10px; align-items: center; }
 
-      .projectMenuWrap{position:relative}.menuDots{min-width:44px;justify-content:center;font-size:16px;letter-spacing:2px}.projectMenu{position:absolute;right:0;top:calc(100% + 8px);z-index:2500;width:280px;padding:8px;border:1px solid var(--border);border-radius:12px;background:#0d1626;box-shadow:0 18px 50px rgba(0,0,0,.45);display:grid;gap:4px}.projectMenu button{width:100%;border:0;border-radius:8px;background:transparent;color:#eef3fb;text-align:left;padding:9px 10px;font-size:11px;font-weight:850;cursor:pointer}.projectMenu button:hover{background:rgba(255,255,255,.07)}.projectMenu .danger{color:#ff8792}.projectMenuSep{height:1px;background:var(--border);margin:4px 2px}.trackpadHint{font-size:10px;color:#9eabc0;border:1px solid var(--border);border-radius:999px;padding:5px 9px}.stageHeadWithConfig{position:relative}.stageHeadWithConfig .stageConfigBtn{position:absolute;right:0;top:0;width:30px;height:30px;border:1px solid var(--border);border-radius:8px;background:rgba(212,162,76,.10);color:var(--gold);font-weight:900;cursor:pointer}.panelResizeHandle{min-width:7px;border-radius:999px;background:linear-gradient(180deg,transparent 8%,rgba(212,162,76,.28) 24%,rgba(212,162,76,.58) 50%,rgba(212,162,76,.28) 76%,transparent 92%);cursor:col-resize;display:flex;align-items:center;justify-content:center;touch-action:none;user-select:none}.panelResizeHandle span{font-size:14px;color:#d4a24c;opacity:.8;writing-mode:vertical-rl}.videoMaximized{grid-template-columns:1fr!important}.videoMaximized>.panelResizeHandle,.videoMaximized>.lc-code,.videoMaximized>.lc-right{display:none!important}.videoMaximized>.lc-video{grid-column:1!important;width:100%;min-width:0}.videoMaximized .videoSlot.big{min-height:0;height:100%}.videoMaximized .vplayer{height:100%;max-height:none}.codingLogicSetup{margin-top:10px;border:1px solid var(--border);border-radius:11px;background:var(--panel);padding:10px;display:grid;gap:8px}.codingLogicSetupHead{display:flex;align-items:center;justify-content:space-between;gap:10px}.codingLogicSetupHead>div{display:grid;gap:2px}.codingLogicSetupHead b{font-size:10px;color:var(--gold)}.codingLogicSetupHead small{font-size:9px;color:var(--mute)}.codingLogicSetupHead button,.codingLogicSetupRow button{border:1px solid var(--gold);border-radius:8px;background:rgba(212,162,76,.1);color:var(--gold);padding:7px 9px;font-size:9px;font-weight:900;cursor:pointer}.codingLogicSetupRow{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:7px}.codingLogicSetupRow select{min-width:0;border:1px solid var(--border);border-radius:8px;background:var(--card);color:var(--txt);padding:8px;font-size:10px}.codingLogicPath{display:flex;align-items:center;gap:4px;flex-wrap:wrap}.codingLogicPath span{border:1px solid #35415a;border-radius:999px;background:#111b2d;color:#c4cedd;padding:4px 7px;font-size:8px;font-weight:850}.codingLogicPath i{font-style:normal;color:#65738b;font-size:8px}.codingLogicPath em{flex-basis:100%;font-style:normal;color:#8794aa;font-size:8px;margin-top:2px}.foulOutcomeGrid{display:grid;grid-template-columns:1fr 1fr;gap:8px}.foulOutcomeGrid .foulTouch{grid-column:1/-1}.foulOutcomeGrid .chip{min-height:44px}.individualDefenseHint{border:1px solid #39465d;border-radius:9px;background:#101a2b;padding:7px 9px;color:#9eabc0;font-size:9px}.individualLinkBox{margin-top:10px;border:1px solid var(--border);background:var(--panel);border-radius:10px;padding:10px}.individualLinkBox label{display:block;color:var(--mute);font-size:10px;font-weight:850;margin-bottom:6px}.individualLinkBox select{width:100%;border:1px solid var(--border);border-radius:8px;background:var(--card);color:var(--txt);padding:8px}.cm-video{grid-template-columns:repeat(3,minmax(0,1fr)) !important}
+      .projectMenuWrap{position:relative}.menuDots{min-width:44px;justify-content:center;font-size:16px;letter-spacing:2px}.projectMenu{position:absolute;right:0;top:calc(100% + 8px);z-index:2500;width:280px;padding:8px;border:1px solid var(--border);border-radius:12px;background:#0d1626;box-shadow:0 18px 50px rgba(0,0,0,.45);display:grid;gap:4px}.projectMenu button{width:100%;border:0;border-radius:8px;background:transparent;color:#eef3fb;text-align:left;padding:9px 10px;font-size:11px;font-weight:850;cursor:pointer}.projectMenu button:hover{background:rgba(255,255,255,.07)}.projectMenu .danger{color:#ff8792}.layoutToggleRow{display:grid;grid-template-columns:1fr auto 1fr;align-items:center;gap:8px;padding:8px 10px;border-radius:8px;background:rgba(255,255,255,.04);color:#8f9bb0;font-size:10px;font-weight:850}.layoutToggleRow span:last-child{text-align:right}.layoutToggleRow span.on{color:#fff}.layoutToggle{position:relative!important;width:42px!important;height:22px!important;padding:0!important;border:1px solid var(--gold)!important;border-radius:999px!important;background:#111b2d!important}.layoutToggle i{position:absolute;top:3px;left:3px;width:14px;height:14px;border-radius:50%;background:var(--gold);transition:transform .18s ease}.layoutToggle.coding i{transform:translateX(20px)}.projectMenuSep{height:1px;background:var(--border);margin:4px 2px}.trackpadHint{font-size:10px;color:#9eabc0;border:1px solid var(--border);border-radius:999px;padding:5px 9px}.stageHeadWithConfig{position:relative}.stageHeadWithConfig .stageConfigBtn{position:absolute;right:0;top:0;width:30px;height:30px;border:1px solid var(--border);border-radius:8px;background:rgba(212,162,76,.10);color:var(--gold);font-weight:900;cursor:pointer}.panelResizeHandle{min-width:7px;border-radius:999px;background:linear-gradient(180deg,transparent 8%,rgba(212,162,76,.28) 24%,rgba(212,162,76,.58) 50%,rgba(212,162,76,.28) 76%,transparent 92%);cursor:col-resize;display:flex;align-items:center;justify-content:center;touch-action:none;user-select:none}.panelResizeHandle span{font-size:14px;color:#d4a24c;opacity:.8;writing-mode:vertical-rl}.videoMaximized{grid-template-columns:1fr!important}.videoMaximized>.panelResizeHandle,.videoMaximized>.lc-code,.videoMaximized>.lc-right{display:none!important}.videoMaximized>.lc-video{grid-column:1!important;width:100%;min-width:0}.videoMaximized .videoSlot.big{min-height:0;height:100%}.videoMaximized .vplayer{height:100%;max-height:none}.codingLogicSetup{margin-top:10px;border:1px solid var(--border);border-radius:11px;background:var(--panel);padding:10px;display:grid;gap:8px}.codingLogicSetupHead{display:flex;align-items:center;justify-content:space-between;gap:10px}.codingLogicSetupHead>div{display:grid;gap:2px}.codingLogicSetupHead b{font-size:10px;color:var(--gold)}.codingLogicSetupHead small{font-size:9px;color:var(--mute)}.codingLogicSetupHead button,.codingLogicSetupRow button{border:1px solid var(--gold);border-radius:8px;background:rgba(212,162,76,.1);color:var(--gold);padding:7px 9px;font-size:9px;font-weight:900;cursor:pointer}.codingLogicSetupRow{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:7px}.codingLogicSetupRow select{min-width:0;border:1px solid var(--border);border-radius:8px;background:var(--card);color:var(--txt);padding:8px;font-size:10px}.codingLogicPath{display:flex;align-items:center;gap:4px;flex-wrap:wrap}.codingLogicPath span{border:1px solid #35415a;border-radius:999px;background:#111b2d;color:#c4cedd;padding:4px 7px;font-size:8px;font-weight:850}.codingLogicPath i{font-style:normal;color:#65738b;font-size:8px}.codingLogicPath em{flex-basis:100%;font-style:normal;color:#8794aa;font-size:8px;margin-top:2px}.foulOutcomeGrid{display:grid;grid-template-columns:1fr 1fr;gap:8px}.foulOutcomeGrid .foulTouch{grid-column:1/-1}.foulOutcomeGrid .chip{min-height:44px}.individualDefenseHint{border:1px solid #39465d;border-radius:9px;background:#101a2b;padding:7px 9px;color:#9eabc0;font-size:9px}.individualLinkBox{margin-top:10px;border:1px solid var(--border);background:var(--panel);border-radius:10px;padding:10px}.individualLinkBox label{display:block;color:var(--mute);font-size:10px;font-weight:850;margin-bottom:6px}.individualLinkBox select{width:100%;border:1px solid var(--border);border-radius:8px;background:var(--card);color:var(--txt);padding:8px}.cm-video{grid-template-columns:repeat(4,minmax(0,1fr)) !important}.cm-vid-note{margin-top:6px;font-size:8px;font-weight:850;color:var(--gold)}
       @media(max-width:900px){.cm-video{grid-template-columns:1fr !important}.projectMenu{position:fixed;right:12px;top:72px;width:min(300px,calc(100vw - 24px))}.panelResizeHandle{display:none!important}.videoMaximized>.lc-code,.videoMaximized>.lc-right{display:none!important}}
       .cm-ghost { display: flex; align-items: center; gap: 7px; background: var(--panel2); border: 1px solid var(--border); border-radius: 10px; padding: 9px 14px; font-size: 12px; font-weight: 800; color: var(--txt); cursor: pointer; }
       .cm-ghost.sm { padding: 6px 11px; font-size: 11px; }
@@ -11010,7 +11201,8 @@ function Style() {
       .box-tab.on { background: var(--card); color: var(--txt); border-color: var(--gold); }
       /* Recherche avancée */
       .srch-filters { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }
-      .srch-filters select { border: 1px solid var(--border); background: var(--card); color: var(--txt); border-radius: 8px; padding: 7px 9px; font: inherit; font-size: 12px; }
+      .srch-filters select { border: 1px solid var(--border); background: var(--card); color: #fff; border-radius: 8px; padding: 7px 9px; font: inherit; font-size: 12px; }
+      .srch-filters select option,.srch-row,.srch-row *,.srch-count{color:#fff!important}
       .srch-reset { border: 1px solid var(--border); background: var(--panel); color: var(--txt); border-radius: 8px; padding: 7px 11px; font-size: 12px; font-weight: 800; cursor: pointer; }
       .srch-count { font-size: 14px; margin: 6px 0 10px; } .srch-count b { color: var(--gold); font-size: 18px; }
       .srch-list { display: flex; flex-direction: column; gap: 5px; }
@@ -11093,6 +11285,8 @@ function Style() {
         font-weight: 800;
       }
 
+      .matchInfoOverlay{position:fixed;inset:0;z-index:3200;background:rgba(0,0,0,.68);display:grid;place-items:center;padding:18px}.matchInfoCard{width:min(620px,96vw);background:#101827;border:1px solid var(--border);border-radius:16px;box-shadow:0 30px 100px rgba(0,0,0,.5);overflow:hidden}.matchInfoHead{display:flex;align-items:center;justify-content:space-between;padding:14px 16px;border-bottom:1px solid var(--border);color:#fff}.matchInfoHead button{border:0;background:transparent;color:#fff;font-size:22px;cursor:pointer}.matchInfoGrid{display:grid;grid-template-columns:1fr 1fr;gap:12px;padding:16px}.matchInfoGrid label{display:grid;gap:6px;color:#fff;font-size:11px;font-weight:850}.matchInfoGrid input,.matchInfoGrid select{border:1px solid var(--border);border-radius:9px;background:var(--card);color:#fff;padding:10px;font:inherit}.matchInfoFoot{display:flex;justify-content:flex-end;gap:8px;padding:0 16px 16px}.matchInfoSave{border:1px solid var(--gold);border-radius:9px;background:var(--gold);color:#10131f;padding:9px 14px;font-weight:950;cursor:pointer}.postShotHint{margin:6px 0 10px;padding:7px 9px;border:1px solid rgba(212,162,76,.35);border-radius:8px;background:rgba(212,162,76,.08);color:#d9c18c;font-size:9px}
+
       .toast {
         position: fixed;
         bottom: 14px;
@@ -11118,8 +11312,10 @@ function Style() {
       .boxscoreClipTable .boxStatBtn:hover { background:rgba(212,162,76,.14); color:var(--gold); }
       .boxscoreClipTable .boxStatBtn:active { transform:scale(.96); }
       .boxscoreClipTable .boxStatBtn.player { text-align:left; font-weight:850; }
-      .boxscoreClipTable .opponent-stat-row td { background:rgba(107,26,44,.055); }
-      .boxscoreClipTable .opponent-stat-row .boxStatBtn { color:var(--wine); }
+      .boxscoreClipTable .team-stat-row td{background:rgba(212,162,76,.08);border-top:2px solid rgba(212,162,76,.5)}
+      .boxscoreClipTable .opponent-stat-row td { background:rgba(107,26,44,.24);border-top:3px solid var(--wine);border-bottom:2px solid rgba(107,26,44,.7) }
+      .boxscoreClipTable .opponent-stat-row .boxStatBtn { color:#fff; }
+      .advancedBoxscoreTable{min-width:1250px}
 
       /* PATCH Boxscore cliquable / joueurs droite propres */
       .clickRow { cursor: pointer; }
@@ -11129,7 +11325,8 @@ function Style() {
       .sideSwitch { display: inline-flex; gap: 8px; padding: 4px; border: 1px solid var(--border); border-radius: 12px; background: rgba(255,255,255,.04); margin: 0 0 10px; }
       .sideSwitch button { border: 0; border-radius: 9px; padding: 8px 14px; background: transparent; color: var(--mute); font-weight: 900; cursor: pointer; }
       .sideSwitch button.on { background: var(--gold); color: #080b17; }
-      .boxcard.clickable { border: 1px solid var(--border); cursor: pointer; text-align: left; }
+      .boxcard.clickable { border: 1px solid var(--border); cursor: pointer; text-align: left; color:#fff; }
+      .boxcard.clickable .bt-lbl2,.boxcard.clickable .bt-val{color:#fff!important}
       .cellBtn { min-width: 54px; height: 32px; border-radius: 9px; border: 1px solid var(--border); background: rgba(255,255,255,.05); color: #fff; font-weight: 950; cursor: pointer; }
       .cellBtn.ok { color: var(--green); }
       .cellBtn.ko { color: var(--red); }

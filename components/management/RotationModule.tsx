@@ -504,11 +504,24 @@ export default function RotationModule() {
       } else if ((e.ctrlKey || e.metaKey) && (e.key.toLowerCase() === 'y' || (e.key.toLowerCase() === 'z' && e.shiftKey))) {
         e.preventDefault();
         redo();
+      } else if ((e.key === 'Delete' || e.key === 'Backspace') && selectedSegId) {
+        const target = e.target as HTMLElement | null;
+        const isTyping = target?.matches('input, textarea, select, [contenteditable=\"true\"]');
+        if (isTyping) return;
+
+        e.preventDefault();
+        mutate((d) => {
+          d.segments = d.segments.filter((s) => s.id !== selectedSegId);
+          return d;
+        });
+        showToast('Segment supprimé');
+        setMenu(null);
+        setSelectedSegId(null);
       }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [undo, redo]);
+  }, [undo, redo, selectedSegId, mutate]);
 
   /* ── Barre d'outils ── */
   const onSave = () => {
