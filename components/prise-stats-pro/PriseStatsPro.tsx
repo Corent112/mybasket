@@ -3057,7 +3057,8 @@ export default function PriseStatsProPage() {
         grid-template-columns: 260px minmax(0,1fr) 290px;
       }
     }
-  </style>
+  
+</style>
 </head>
 <body>
   <header class="topbar">
@@ -6095,15 +6096,28 @@ export default function PriseStatsProPage() {
                   </div>
                 )}
                 {codingMode === 'match-review' ? (
-                  <div className="codingLogicSetup matchReviewSetup">
-                    <div className="codingLogicSetupHead">
-                      <div><b>🧱 CONSTRUCTEUR RETOUR DE MATCH</b><small>Tout est libre : crée tes blocs, tes boutons, leur ordre, le parcours, les + / −, les valeurs et les règles.</small></div>
-                      <button type="button" onClick={() => setShowMatchReviewBuilder(true)}>Ouvrir le constructeur</button>
+                  <div className="matchReviewConstructorCard">
+                    <div className="matchReviewConstructorTop">
+                      <div className="matchReviewConstructorIcon">🧱</div>
+                      <div>
+                        <b>CONSTRUCTEUR · RETOUR DE MATCH</b>
+                        <small>Pars d'une page vide et construis exactement ta logique de retour de match.</small>
+                      </div>
+                      <button type="button" onClick={() => setShowMatchReviewBuilder(true)}>Créer / modifier</button>
                     </div>
-                    <div className="codingLogicPath">
-                      <span>Blocs libres</span><i>→</i><span>Boutons libres</span><i>→</i><span>Ordre libre</span><i>→</i><span>Logique libre</span>
-                      <em>Aucune étape n’est imposée par MyBasket. Le modèle est enregistré et réutilisable.</em>
+
+                    <div className="matchReviewConstructorGrid">
+                      <div><strong>01</strong><b>Blocs</b><span>Crée autant de blocs que tu veux, nomme-les, colore-les et choisis leur ordre.</span></div>
+                      <div><strong>02</strong><b>Boutons</b><span>Bouton simple, + / −, compteur, note, choix multiple ou texte.</span></div>
+                      <div><strong>03</strong><b>Ordre</b><span>Réorganise librement les blocs, les boutons et les étapes de saisie.</span></div>
+                      <div><strong>04</strong><b>Logique</b><span>Choisis ce qui est obligatoire, le joueur, le commentaire, le clip et l'enregistrement.</span></div>
                     </div>
+
+                    <div className="matchReviewConstructorFlow">
+                      <span>Exemple libre</span>
+                      <b>Joueur</b><i>→</i><b>Bloc</b><i>→</i><b>Action</b><i>→</i><b>+ / −</b><i>→</i><b>Clip</b><i>→</i><b>Enregistrer</b>
+                    </div>
+                    <p className="matchReviewConstructorNote">Rien n'est imposé : cet ordre est seulement un exemple. Chaque modèle peut avoir sa propre structure et son propre parcours.</p>
                   </div>
                 ) : (
                 <div className="codingLogicSetup">
@@ -9372,6 +9386,19 @@ function Court() {
 function Style() {
   return (
     <style jsx global>{`
+        .matchReviewConstructorCard{margin-top:12px;border:1px solid rgba(212,162,76,.42);border-radius:16px;background:linear-gradient(180deg,rgba(212,162,76,.08),rgba(107,26,44,.05));padding:14px;display:grid;gap:12px;box-shadow:inset 0 1px 0 rgba(255,255,255,.025)}
+        .matchReviewConstructorTop{display:grid;grid-template-columns:auto minmax(0,1fr) auto;gap:11px;align-items:center}
+        .matchReviewConstructorIcon{width:42px;height:42px;border-radius:12px;display:grid;place-items:center;background:rgba(212,162,76,.12);border:1px solid rgba(212,162,76,.28);font-size:20px}
+        .matchReviewConstructorTop>div:nth-child(2){display:grid;gap:3px}.matchReviewConstructorTop b{font-size:11px;color:#d4a24c;letter-spacing:.04em}.matchReviewConstructorTop small{font-size:9px;color:#9eacc0;line-height:1.45}
+        .matchReviewConstructorTop>button{border:1px solid #d4a24c;border-radius:9px;background:#6b1a2c;color:#fff;padding:9px 12px;font-weight:900;cursor:pointer;white-space:nowrap}
+        .matchReviewConstructorGrid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px}
+        .matchReviewConstructorGrid>div{min-height:92px;border:1px solid #2a3850;border-radius:11px;background:#0f1929;padding:10px;display:grid;align-content:start;gap:4px}
+        .matchReviewConstructorGrid strong{font-size:9px;color:#d4a24c}.matchReviewConstructorGrid b{font-size:10px;color:#fff}.matchReviewConstructorGrid span{font-size:8px;line-height:1.45;color:#8f9db2}
+        .matchReviewConstructorFlow{display:flex;align-items:center;gap:5px;flex-wrap:wrap;padding:8px 10px;border:1px dashed #33415a;border-radius:10px;background:#0b1422}.matchReviewConstructorFlow>span{font-size:8px;color:#78869b;margin-right:3px}.matchReviewConstructorFlow b{font-size:8px;color:#fff;border:1px solid #344159;border-radius:999px;padding:4px 7px;background:#111c2e}.matchReviewConstructorFlow i{font-style:normal;color:#d4a24c;font-size:9px}.matchReviewConstructorNote{margin:0;font-size:8px;color:#7f8ca0}
+
+        @media(max-width:900px){.matchReviewConstructorGrid{grid-template-columns:1fr 1fr}.matchReviewConstructorTop{grid-template-columns:auto 1fr}.matchReviewConstructorTop>button{grid-column:1/-1;width:100%}}
+        @media(max-width:560px){.matchReviewConstructorGrid{grid-template-columns:1fr}}
+
       html,
       body,
       body > div:first-child {

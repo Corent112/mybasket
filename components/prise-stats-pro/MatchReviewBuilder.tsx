@@ -105,6 +105,21 @@ const TEMPLATE_STORAGE = 'mybasket.match-review.templates.v2';
 const ACTIVE_TEMPLATE_STORAGE = 'mybasket.match-review.active-template.v2';
 const EVENT_STORAGE_PREFIX = 'mybasket.match-review.events.v2.';
 
+const storageGet = (key: string): string | null => {
+  if (typeof window === 'undefined') return null;
+  try { return window.localStorage.getItem(key); } catch { return null; }
+};
+
+const storageSet = (key: string, value: string) => {
+  if (typeof window === 'undefined') return;
+  try { window.localStorage.setItem(key, value); } catch { /* Safari/private mode: keep working in memory */ }
+};
+
+const storageRemove = (key: string) => {
+  if (typeof window === 'undefined') return;
+  try { window.localStorage.removeItem(key); } catch { /* noop */ }
+};
+
 const uid = () => {
   try { return crypto.randomUUID(); } catch { return `${Date.now()}_${Math.random().toString(36).slice(2)}`; }
 };
@@ -155,7 +170,7 @@ const typeLabels: Record<MatchReviewControlType, string> = {
 const safeParseTemplates = (): MatchReviewTemplate[] => {
   if (typeof window === 'undefined') return [];
   try {
-    const parsed = JSON.parse(localStorage.getItem(TEMPLATE_STORAGE) || '[]');
+    const parsed = JSON.parse(storageGet(TEMPLATE_STORAGE) || '[]');
     return Array.isArray(parsed) ? parsed : [];
   } catch { return []; }
 };
@@ -187,17 +202,17 @@ export default function MatchReviewBuilder({
   useEffect(() => {
     const stored = safeParseTemplates();
     const next = stored.length ? stored : [blankTemplate()];
-    const storedActive = localStorage.getItem(ACTIVE_TEMPLATE_STORAGE) || '';
+    const storedActive = storageGet(ACTIVE_TEMPLATE_STORAGE) || '';
     const resolved = next.some((template) => template.id === storedActive) ? storedActive : next[0].id;
     setTemplates(next);
     setActiveId(resolved);
-    if (!stored.length) localStorage.setItem(TEMPLATE_STORAGE, JSON.stringify(next));
+    if (!stored.length) storageSet(TEMPLATE_STORAGE, JSON.stringify(next));
   }, []);
 
   useEffect(() => {
     if (!projectId || typeof window === 'undefined') return;
     try {
-      const parsed = JSON.parse(localStorage.getItem(`${EVENT_STORAGE_PREFIX}${projectId}`) || '[]');
+      const parsed = JSON.parse(storageGet(`${EVENT_STORAGE_PREFIX}${projectId}`) || '[]');
       setEvents(Array.isArray(parsed) ? parsed : []);
     } catch { setEvents([]); }
   }, [projectId]);
@@ -213,12 +228,12 @@ export default function MatchReviewBuilder({
 
   const persistTemplates = (next: MatchReviewTemplate[]) => {
     setTemplates(next);
-    if (typeof window !== 'undefined') localStorage.setItem(TEMPLATE_STORAGE, JSON.stringify(next));
+    storageSet(TEMPLATE_STORAGE, JSON.stringify(next));
   };
 
   const setActiveTemplateId = (id: string) => {
     setActiveId(id);
-    if (typeof window !== 'undefined') localStorage.setItem(ACTIVE_TEMPLATE_STORAGE, id);
+    storageSet(ACTIVE_TEMPLATE_STORAGE, id);
     setSelectedBlockId(null);
     setSelectedControlId(null);
   };
@@ -430,7 +445,7 @@ export default function MatchReviewBuilder({
     };
     const next = [event, ...events];
     setEvents(next);
-    if (projectId && typeof window !== 'undefined') localStorage.setItem(`${EVENT_STORAGE_PREFIX}${projectId}`, JSON.stringify(next));
+    if (projectId) storageSet(`${EVENT_STORAGE_PREFIX}${projectId}`, JSON.stringify(next));
     onRecord?.(event);
     setPending(null);
   };
@@ -523,7 +538,7 @@ export default function MatchReviewBuilder({
       )}
       {active.layout.showHistory && events.length > 0 && (
         <div className={styles.history}>
-          <div className={styles.historyHead}><b>Dernières saisies</b><button type="button" onClick={() => { setEvents([]); if (projectId) localStorage.removeItem(`${EVENT_STORAGE_PREFIX}${projectId}`); }}>Vider</button></div>
+          <div className={styles.historyHead}><b>Dernières saisies</b><button type="button" onClick={() => { setEvents([]); if (projectId) storageRemove(`${EVENT_STORAGE_PREFIX}${projectId}`); }}>Vider</button></div>
           {events.slice(0, 8).map((event) => <div key={event.id}><span>{event.blockTitle} · {event.controlLabel}</span><b>{event.value ?? ''}</b><small>{event.playerName || ''}{event.comment ? ` · ${event.comment}` : ''}</small></div>)}
         </div>
       )}
