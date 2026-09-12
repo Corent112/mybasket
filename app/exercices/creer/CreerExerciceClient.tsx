@@ -37,6 +37,10 @@ const EDIT_INDEX_KEY = "mybasket_edit_schema_index";
 const EDIT_EXERCISE_ID_KEY = "mybasket_edit_exercise_id";
 const EDIT_SCHEMA_GROUP_KEY = "mybasket_edit_schema_group_id";
 
+/** Message affiché sous le champ Titre tant qu'il est vide. */
+const TITRE_OBLIGATOIRE =
+  "Le titre est obligatoire : l'import ne l'a pas trouvé sur le document. Saisis-le, puis enregistre une fois le reste vérifié.";
+
 const NUM = (n: number) => Array.from({ length: n + 1 }, (_, i) => String(i));
 
 const CATS = ["— Choisir —", "U9", "U11", "U13", "U15", "U18", "U21", "Senior"];
@@ -176,6 +180,11 @@ export default function CreerExerciceClient() {
   const [ex, setEx] = useState<Ex>(blank());
   const [toast, setToast] = useState("");
   const [exerciseStorageId, setExerciseStorageId] = useState<string>(editId || "");
+  /** Passe à vrai dès qu'on a exigé un titre (fin d'import, ou tentative
+   *  d'enregistrement). L'erreur est ensuite DÉDUITE du champ : elle
+   *  disparaît d'elle-même à la première lettre tapée. */
+  const [titreVerifie, setTitreVerifie] = useState(false);
+  const titleRef = useRef<HTMLInputElement | null>(null);
 
   const toastT = useRef<number | null>(null);
 
@@ -247,6 +256,12 @@ export default function CreerExerciceClient() {
 
       return next;
     });
+
+    // L'import ne lit pas toujours un titre (une photo de deux schémas sans
+    // texte n'en contient aucun). Ce n'est pas un avertissement parmi
+    // d'autres : c'est ce qui bloquera l'enregistrement. On le signale donc
+    // dès la fin de l'analyse, sur le champ concerné.
+    setTitreVerifie(true);
 
     if (imported) {
       const count = imported.phases.length;
@@ -664,7 +679,13 @@ export default function CreerExerciceClient() {
 
   const save = async () => {
     if (!ex.title.trim()) {
-      flash("Ajoute un titre à ton exercice");
+      // Le titre est le seul champ obligatoire. Un toast de 2,6 s disparaît
+      // avant que l'utilisateur ait compris ce qu'on lui demande : on marque
+      // le champ en erreur, on l'y amène, et le message reste tant que le
+      // titre n'est pas saisi.
+      setTitreVerifie(true);
+      titleRef.current?.focus();
+      titleRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
       return;
     }
 
@@ -778,6 +799,11 @@ export default function CreerExerciceClient() {
     }
   };
 
+  /** Le titre est le SEUL champ obligatoire côté base : sans lui, `save()`
+   *  refuse d'écrire. L'erreur est dérivée plutôt que stockée, pour qu'elle
+   *  s'efface toute seule dès que le champ est rempli. */
+  const titreManquant = titreVerifie && !ex.title.trim();
+
   return (
     <div className="ce">
       <style>{CSS}</style>
@@ -815,10 +841,19 @@ export default function CreerExerciceClient() {
           </label>
 
           <input
-            className="ce-input"
+            ref={titleRef}
+            className={`ce-input${titreManquant ? " err" : ""}`}
             value={ex.title}
+            aria-invalid={titreManquant}
+            aria-describedby={titreManquant ? "ce-erreur-titre" : undefined}
             onChange={(event) => set("title", event.target.value)}
           />
+
+          {titreManquant && (
+            <span className="ce-err" id="ce-erreur-titre" role="alert">
+              {TITRE_OBLIGATOIRE}
+            </span>
+          )}
 
           <label className="ce-lab">Organisation</label>
 
@@ -1126,6 +1161,9 @@ const CSS = `
 .req{color:#C0392B}
 .ce-input,.ce-area,.ce-select{width:100%;border:1px solid #d6d6d6;border-radius:10px;padding:.7rem .9rem;font-size:.95rem;font-family:inherit;background:#fff}
 .ce-input:focus,.ce-area:focus,.ce-select:focus{outline:2px solid #6B1A2C;border-color:#6B1A2C}
+.ce-input.err{border-color:#C0392B;background:#fff7f6}
+.ce-input.err:focus{outline:2px solid #C0392B;border-color:#C0392B}
+.ce-err{display:block;margin:.4rem 0 0;color:#C0392B;font-size:.84rem;font-weight:700;line-height:1.35}
 .ce-area{min-height:110px;resize:vertical}
 .ce-schemas{display:grid;grid-template-columns:repeat(2,1fr);gap:.8rem}
 .ce-draw{min-height:170px;width:100%;border:2px dashed #cfcfcf;background:#f6f6f6;border-radius:14px;padding:1.2rem;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:.3rem}

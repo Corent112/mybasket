@@ -55,6 +55,10 @@ export type CourtGeometry = {
   playDetected?: boolean;
   /** Nombre de côtés du terrain réellement trouvés (0..4). */
   playSides?: number;
+  /** Côtés réellement vus, par opposition à un repli sur le bord de l'image. */
+  playEdges?: { top: boolean; bottom: boolean; left: boolean; right: boolean };
+  /** true si l'aire de jeu déduite dépasse l'image : le terrain est coupé. */
+  playCropped?: boolean;
   kind: CourtKind;
   orientation: CourtOrientation;
   /** Confiance de la classification demi / complet (0..1). */
@@ -236,11 +240,23 @@ export function detectCourtRect(canvas: HTMLCanvasElement, region: AiRect): AiRe
  * Conservateur par construction : chaque côté non trouvé retombe sur le bord
  * du rectangle fourni, donc au pire on retrouve le comportement précédent.
  */
-export function detectPlayingArea(
-  canvas: HTMLCanvasElement,
-  rect: AiRect
-): { rect: AiRect; found: boolean; sides: number; reason: string } {
-  const fallback = { rect: { ...rect }, found: false, sides: 0, reason: "aire de jeu non détectée" };
+export type PlayingArea = {
+  rect: AiRect;
+  found: boolean;
+  sides: number;
+  /** Côtés réellement vus (par opposition à un repli sur le bord de l'image). */
+  edges: { top: boolean; bottom: boolean; left: boolean; right: boolean };
+  reason: string;
+};
+
+export function detectPlayingArea(canvas: HTMLCanvasElement, rect: AiRect): PlayingArea {
+  const fallback: PlayingArea = {
+    rect: { ...rect },
+    found: false,
+    sides: 0,
+    edges: { top: false, bottom: false, left: false, right: false },
+    reason: "aire de jeu non détectée",
+  };
   const px = readPixels(canvas, rect);
   if (px.w < 24 || px.h < 24) return fallback;
 
@@ -264,15 +280,47 @@ export function detectPlayingArea(
     return paper ? avg < 130 : avg > 176 && saturationOf(r, g, b) < 0.3;
   };
 
-  /** Plus long segment continu (tolérance de 2 échantillons pour l'anticrénelage). */
+  /**
+   * Note « c'est une ligne de bord » pour une rangée ou une colonne.
+   *
+   * Deux mesures, on garde la meilleure :
+   *
+   *  1. le PLUS LONG SEGMENT CONTINU (tolérance de 2 échantillons pour
+   *     l'anticrénelage) — le cas simple, une ligne tracée d'un bord à l'autre ;
+   *
+   *  2. la PORTÉE × REMPLISSAGE : distance du premier au dernier pixel de ligne,
+   *     retenue seulement si la majeure partie de cette portée est effectivement
+   *     tracée.
+   *
+   * La deuxième mesure existe parce qu'une raquette PEINTE posée sur la ligne de
+   * fond coupe celle-ci en deux tronçons. Chaque tronçon fait environ un quart de
+   * la largeur du terrain : avec le seul critère du plus long segment, la ligne de
+   * fond devient invisible et l'aire de jeu part du bord de l'image. C'est le cas
+   * de tous les graphiques de terrain à raquette pleine — la majorité des dessins
+   * de coach, et le gabarit de MyBasket lui-même.
+   *
+   * Une ligne de bord reste une ligne de bord quand un aplat la traverse ; en
+   * revanche une rangée qui traverse trois objets épars a une portée large mais un
+   * remplissage faible, et reste écartée.
+   */
+  const SPAN_FILL = 0.6;
+
   const runScore = (fixed: number, horizontal: boolean): number => {
     const length = horizontal ? px.w : px.h;
     let best = 0;
     let current = 0;
     let gap = 0;
+    let first = -1;
+    let last = -1;
+    let covered = 0;
+    let samples = 0;
     for (let i = 0; i < length; i += step) {
       const on = horizontal ? isLine(i, fixed) : isLine(fixed, i);
+      samples += 1;
       if (on) {
+        covered += 1;
+        if (first < 0) first = i;
+        last = i;
         current += gap + 1;
         gap = 0;
         if (current > best) best = current;
@@ -283,7 +331,17 @@ export function detectPlayingArea(
         gap = 0;
       }
     }
-    return (best * step) / length;
+    void samples;
+
+    const longest = (best * step) / length;
+    if (first < 0 || last <= first) return longest;
+
+    const spanPx = last - first + step;
+    const spanSamples = Math.max(1, Math.round(spanPx / step));
+    const fill = covered / spanSamples;
+    const span = fill >= SPAN_FILL ? spanPx / length : 0;
+
+    return Math.max(longest, span);
   };
 
   const THRESHOLD = 0.55;
@@ -327,6 +385,15 @@ export function detectPlayingArea(
       y1: rect.y0 + y1 + 1,
     },
     found: true,
+    // Quel côté a été VU, et lequel n'est qu'un repli sur le bord de l'image.
+    // Sans cette distinction, on ne peut pas savoir si la longueur mesurée est
+    // une mesure ou un artefact de cadrage.
+    edges: {
+      top: top !== null,
+      bottom: bottom !== null,
+      left: left !== null,
+      right: right !== null,
+    },
     sides,
     reason: `aire de jeu : ${sides}/4 côtés détectés (${paper ? "trait sombre" : "ligne claire"})`,
   };
@@ -622,7 +689,13 @@ type PaintSide = "top" | "bottom" | "left" | "right";
  * place toujours le panier en haut) et pour la distinction demi / complet :
  * DEUX raquettes opposées ⇒ terrain complet.
  */
-function findPaintSides(px: Pixels): PaintSide[] {
+/**
+ * Côtés du terrain portant une RAQUETTE peinte (aplat de couleur différente du
+ * sol, aux proportions d'une raquette). Un demi-terrain en a une, un terrain
+ * complet en a deux, opposées. C'est le seul indice indépendant de la géométrie
+ * des lignes — donc le seul capable de contredire un gabarit qui « colle » bien.
+ */
+export function findPaintSides(px: Pixels): PaintSide[] {
   const step = Math.max(1, Math.round(Math.min(px.w, px.h) / 160));
   const gw = Math.ceil(px.w / step);
   const gh = Math.ceil(px.h / step);
@@ -812,11 +885,65 @@ export function classifyCourt(canvas: HTMLCanvasElement, rect: AiRect): CourtGeo
     }
   }
 
+  /* ------------------------------------------------------------------------ */
+  /* Longueur DÉDUITE de la largeur                                           */
+  /* ------------------------------------------------------------------------ */
+  /**
+   * Les proportions d'un terrain sont fixes : 15 × 14 m en demi-terrain,
+   * 15 × 28 m en terrain complet. Dès que la ligne de fond et les deux lignes de
+   * touche sont vues, la longueur SE CALCULE — il n'est jamais nécessaire de voir
+   * la ligne médiane.
+   *
+   * C'est indispensable parce qu'un dessin de coach est très souvent COUPÉ : il
+   * montre la moitié utile du demi-terrain et s'arrête. Sans cette déduction, le
+   * moteur étire les 14 m sur ce qui n'en fait que 11 ou 12, et tout ce qui est
+   * dessiné se retrouve poussé vers la ligne médiane de plusieurs mètres.
+   *
+   * On ne remplace la longueur QUE si le côté opposé à la ligne de fond n'a pas
+   * été réellement vu : quand les quatre côtés sont là, on garde la mesure.
+   * L'aire de jeu peut alors dépasser l'image — c'est normal, et c'est même
+   * l'information utile : le terrain est coupé.
+   */
+  const finalPlay = { ...play };
+  let cropped = false;
+
+  if (area.found && area.edges.left && area.edges.right) {
+    const widthPx = finalPlay.x1 - finalPlay.x0;
+    const heightPx = finalPlay.y1 - finalPlay.y0;
+    const expected = (widthPx / METRICS[kind].widthM) * METRICS[kind].lengthM;
+    const verticalCourt = heightPx >= widthPx || kind === "half";
+
+    // Uniquement pour un terrain déjà « debout » dans l'image : sur un terrain
+    // couché, largeur et longueur sont échangées et la déduction se ferait à
+    // l'envers. La rotation est appliquée plus loin, pas ici.
+    if (verticalCourt && expected > 4) {
+      const baselineSeen = orientation === "rot180" ? area.edges.bottom : area.edges.top;
+
+      // On déduit MÊME si une ligne a été trouvée en face : sur un dessin coupé,
+      // cette « ligne » est le bord de l'image, la ligne des 3 points ou une
+      // table de marque, jamais la ligne médiane. Les deux lignes de touche, elles,
+      // sont longues, franches et rarement fausses : la largeur est la mesure sûre,
+      // et les proportions du terrain font le reste.
+      if (baselineSeen && Math.abs(expected - heightPx) / expected > 0.06) {
+        if (orientation === "rot180") finalPlay.y0 = finalPlay.y1 - expected;
+        else finalPlay.y1 = finalPlay.y0 + expected;
+        cropped = finalPlay.y1 > canvas.height || finalPlay.y0 < 0;
+        reasons.push(
+          `longueur déduite de la largeur (${METRICS[kind].widthM} × ${METRICS[kind].lengthM} m) : ` +
+            `${Math.round(heightPx)} px mesurés → ${Math.round(expected)} px` +
+            (cropped ? " ; le terrain est coupé par le bord de l'image" : "")
+        );
+      }
+    }
+  }
+
   return {
     rect,
-    play,
+    play: finalPlay,
     playDetected: area.found,
     playSides: area.sides,
+    playEdges: area.edges,
+    playCropped: cropped,
     kind,
     orientation,
     confidence: Math.max(0.2, Math.min(1, confidence)),
@@ -843,13 +970,32 @@ export const courtLengthM = (kind: CourtKind): number => METRICS[kind].lengthM;
  * Sert exclusivement à construire un masque : ces lignes ne deviennent JAMAIS
  * des objets Plaquette.
  */
+/**
+ * Quels marquages tracer.
+ *
+ * `keepThinStrokes` ne traite pas les droites et les courbes de la même façon :
+ * mesuré sur le second terrain du cas 02, l'amincissement fait passer le cercle
+ * restrictif de 91 % à 0 % de marquages retrouvés et la raquette de 88 % à
+ * 39 %, tandis que l'arc à 3 points reste à 48 % dans les deux cas. Il faut
+ * donc pouvoir noter les deux familles sur des cartes différentes, et c'est la
+ * même géométrie qui doit produire les deux gabarits — pas une copie.
+ */
+export type CourtMarkingFamily = "all" | "straight" | "curved" | "key";
+
 export function strokeCourtLines(
   ctx: CanvasRenderingContext2D,
   w: number,
   h: number,
   kind: CourtKind,
-  lineWidth: number
+  lineWidth: number,
+  only: CourtMarkingFamily = "all"
 ) {
+  const wantStraight = only === "all" || only === "straight";
+  const wantCurved = only === "all" || only === "curved";
+  // La RAQUETTE seule : c'est le marquage le plus distinctif d'un demi-terrain,
+  // et le seul qui survive au moiré sur une photo d'écran. Elle sert de preuve
+  // structurelle au second chemin d'acceptation (voir court-rectify.ts).
+  const onlyKey = only === "key";
   const { widthM, lengthM } = METRICS[kind];
   const X = (m: number) => (m / widthM) * w;
   const Y = (m: number) => (m / lengthM) * h;
@@ -862,7 +1008,7 @@ export function strokeCourtLines(
   ctx.strokeStyle = "#fff";
 
   // Limites du terrain
-  ctx.strokeRect(0, 0, w, h);
+  if (wantStraight && !onlyKey) ctx.strokeRect(0, 0, w, h);
 
   const halfEnd = (baseY: number, direction: 1 | -1) => {
     const y = (m: number) => baseY + direction * Y(m);
@@ -870,69 +1016,89 @@ export function strokeCourtLines(
     const hoopY = y(1.575);
 
     // Planche
-    ctx.beginPath();
-    ctx.moveTo(X(7.5 - 0.9), y(1.2));
-    ctx.lineTo(X(7.5 + 0.9), y(1.2));
-    ctx.stroke();
+    if (wantStraight && !onlyKey) {
+      ctx.beginPath();
+      ctx.moveTo(X(7.5 - 0.9), y(1.2));
+      ctx.lineTo(X(7.5 + 0.9), y(1.2));
+      ctx.stroke();
+    }
 
     // Cercle du panier
-    ctx.beginPath();
-    ctx.ellipse(cx, hoopY, RX(0.225), RY(0.225), 0, 0, Math.PI * 2);
-    ctx.stroke();
+    if (wantCurved) {
+      ctx.beginPath();
+      ctx.ellipse(cx, hoopY, RX(0.225), RY(0.225), 0, 0, Math.PI * 2);
+      ctx.stroke();
+    }
 
     // Raquette
-    ctx.beginPath();
-    ctx.rect(X(7.5 - 2.45), baseY, X(4.9), direction * Y(5.8));
-    ctx.stroke();
+    if (wantStraight || onlyKey) {
+      ctx.beginPath();
+      ctx.rect(X(7.5 - 2.45), baseY, X(4.9), direction * Y(5.8));
+      ctx.stroke();
+    }
 
     // Cercle des lancers francs
-    ctx.beginPath();
-    ctx.ellipse(cx, y(5.8), RX(1.8), RY(1.8), 0, 0, Math.PI * 2);
-    ctx.stroke();
+    if (wantCurved) {
+      ctx.beginPath();
+      ctx.ellipse(cx, y(5.8), RX(1.8), RY(1.8), 0, 0, Math.PI * 2);
+      ctx.stroke();
+    }
 
     // Zone de non-charge
-    ctx.beginPath();
-    ctx.ellipse(cx, hoopY, RX(1.25), RY(1.25), 0, 0, Math.PI * 2);
-    ctx.stroke();
+    if (wantCurved) {
+      ctx.beginPath();
+      ctx.ellipse(cx, hoopY, RX(1.25), RY(1.25), 0, 0, Math.PI * 2);
+      ctx.stroke();
+    }
 
     // Ligne à 3 points : deux segments droits + arc de 6,75 m
     const straightEndM = 1.575 + Math.sqrt(6.75 * 6.75 - 6.6 * 6.6);
-    ctx.beginPath();
-    ctx.moveTo(X(0.9), baseY);
-    ctx.lineTo(X(0.9), y(straightEndM));
-    ctx.stroke();
-    ctx.beginPath();
-    ctx.moveTo(X(14.1), baseY);
-    ctx.lineTo(X(14.1), y(straightEndM));
-    ctx.stroke();
+    if (wantStraight && !onlyKey) {
+      ctx.beginPath();
+      ctx.moveTo(X(0.9), baseY);
+      ctx.lineTo(X(0.9), y(straightEndM));
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.moveTo(X(14.1), baseY);
+      ctx.lineTo(X(14.1), y(straightEndM));
+      ctx.stroke();
+    }
 
-    ctx.save();
-    ctx.translate(cx, hoopY);
-    ctx.scale(1, direction);
-    ctx.beginPath();
-    ctx.ellipse(0, 0, RX(6.75), RY(6.75), 0, 0.12, Math.PI - 0.12);
-    ctx.stroke();
-    ctx.restore();
+    if (wantCurved) {
+      ctx.save();
+      ctx.translate(cx, hoopY);
+      ctx.scale(1, direction);
+      ctx.beginPath();
+      ctx.ellipse(0, 0, RX(6.75), RY(6.75), 0, 0.12, Math.PI - 0.12);
+      ctx.stroke();
+      ctx.restore();
+    }
   };
 
   if (kind === "half") {
     halfEnd(0, 1);
     // Cercle central : seule sa moitié basse est visible sur un demi-terrain.
-    ctx.beginPath();
-    ctx.ellipse(X(7.5), h, RX(1.8), RY(1.8), 0, 0, Math.PI * 2);
-    ctx.stroke();
+    if (wantCurved) {
+      ctx.beginPath();
+      ctx.ellipse(X(7.5), h, RX(1.8), RY(1.8), 0, 0, Math.PI * 2);
+      ctx.stroke();
+    }
   } else {
     halfEnd(0, 1);
     halfEnd(h, -1);
     // Ligne médiane
-    ctx.beginPath();
-    ctx.moveTo(0, Y(14));
-    ctx.lineTo(w, Y(14));
-    ctx.stroke();
+    if (wantStraight && !onlyKey) {
+      ctx.beginPath();
+      ctx.moveTo(0, Y(14));
+      ctx.lineTo(w, Y(14));
+      ctx.stroke();
+    }
     // Cercle central
-    ctx.beginPath();
-    ctx.ellipse(X(7.5), Y(14), RX(1.8), RY(1.8), 0, 0, Math.PI * 2);
-    ctx.stroke();
+    if (wantCurved) {
+      ctx.beginPath();
+      ctx.ellipse(X(7.5), Y(14), RX(1.8), RY(1.8), 0, 0, Math.PI * 2);
+      ctx.stroke();
+    }
   }
 }
 
@@ -1010,14 +1176,29 @@ const clamp01 = (value: number, min = 0, max = 1) => Math.min(max, Math.max(min,
  * C'est LE point de conversion unique du pipeline d'import.
  */
 export function courtToCanonical(point: AiPoint, kind: CourtKind): AiPoint {
+  // HORS TERRAIN N'EST PAS UNE ERREUR.
+  //
+  // La coordonnée reçue est relative à l'AIRE DE JEU : 0 = ligne de touche
+  // gauche, 1 = ligne de touche droite. Elle était bornée à [0, 1] AVANT la
+  // conversion, donc tout ce qui était dessiné à côté du terrain — une file
+  // d'attente, un joueur en sortie de touche, un plot posé derrière la ligne de
+  // fond — était écrasé sur la bordure. C'est exactement l'amas de pastilles
+  // alignées sur la ligne que produisait l'import.
+  //
+  // Or un coach dessine ses files À CÔTÉ du terrain, et le repère de la
+  // Plaquette va de 0 à 1 alors que le terrain n'occupe que 0,14 à 0,86 : il y a
+  // toute la place pour poser ces éléments là où ils sont vraiment. On ne borne
+  // donc plus que sur le CANEVAS, pour rester affichable.
+  const span = (value: number, min: number, max: number) => min + value * (max - min);
+
   if (kind === "full") {
-    const x = FULL_COURT_LEFT + clamp01(point.x) * (FULL_COURT_RIGHT - FULL_COURT_LEFT);
-    const y = FULL_COURT_TOP + clamp01(point.y) * (FULL_COURT_BOTTOM - FULL_COURT_TOP);
+    const x = span(point.x, FULL_COURT_LEFT, FULL_COURT_RIGHT);
+    const y = span(point.y, FULL_COURT_TOP, FULL_COURT_BOTTOM);
     return { x: clamp01(x, 0.01, 0.99), y: clamp01(y, 0.01, 0.99) };
   }
   // Demi-terrain : coordonnée d'affichage puis passage en canonique (× 0.5).
-  const displayX = HALF_COURT_LEFT + clamp01(point.x) * (HALF_COURT_RIGHT - HALF_COURT_LEFT);
-  const displayY = HALF_COURT_TOP + clamp01(point.y) * (HALF_COURT_BOTTOM - HALF_COURT_TOP);
+  const displayX = span(point.x, HALF_COURT_LEFT, HALF_COURT_RIGHT);
+  const displayY = span(point.y, HALF_COURT_TOP, HALF_COURT_BOTTOM);
   return {
     x: clamp01(displayX, 0.01, 0.99),
     y: clamp01(displayY * 0.5, 0.005, 0.495),

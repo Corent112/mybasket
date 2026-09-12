@@ -58,15 +58,20 @@ export default function InstitutionalPlayersHub({
             <button className={view === "selections" ? "on" : ""} onClick={() => setView("selections")}>
               Sélections
             </button>
+            <button className={view === "workflow" ? "on" : ""} onClick={() => setView("workflow")}>
+              Joueurs
+            </button>
             <button className={view === "notebook" ? "on" : ""} onClick={() => setView("notebook")}>
-              Joueurs / Cahier
+              Cahier de suivi
             </button>
           </>
         )}
 
-        <button className={view === "workflow" ? "on" : ""} onClick={() => setView("workflow")}>
-          Détection & passations
-        </button>
+        {isPoleContext && (
+          <button className={view === "workflow" ? "on" : ""} onClick={() => setView("workflow")}>
+            Joueurs · Détection & passations
+          </button>
+        )}
         <button className={view === "events" ? "on" : ""} onClick={() => setView("events")}>
           Événements & stages
         </button>

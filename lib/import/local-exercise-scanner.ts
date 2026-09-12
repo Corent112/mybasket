@@ -162,6 +162,52 @@ async function fileToCanvas(file: File): Promise<HTMLCanvasElement> {
   }
 }
 
+/**
+ * Plus grande bande de l'image qui ne recouvre aucun terrain déjà retenu.
+ *
+ * On découpe l'image en quatre bandes autour de l'emprise des terrains connus
+ * (au-dessus, en dessous, à gauche, à droite) et on garde la plus grande. C'est
+ * volontairement simple : sur une page, les dessins sont empilés ou côte à
+ * côte, et une bande suffit à isoler le suivant.
+ */
+function residualRegion(canvas: HTMLCanvasElement, quads: Point[][]): AiRect | null {
+  let x0 = canvas.width;
+  let y0 = canvas.height;
+  let x1 = 0;
+  let y1 = 0;
+  for (const quad of quads) {
+    for (const point of quad) {
+      if (point.x < x0) x0 = point.x;
+      if (point.x > x1) x1 = point.x;
+      if (point.y < y0) y0 = point.y;
+      if (point.y > y1) y1 = point.y;
+    }
+  }
+  if (x1 <= x0 || y1 <= y0) return null;
+
+  const bands: AiRect[] = [
+    { x0: 0, y0: 0, x1: canvas.width, y1: Math.max(0, y0 - 2) },
+    { x0: 0, y0: Math.min(canvas.height, y1 + 2), x1: canvas.width, y1: canvas.height },
+    { x0: 0, y0: 0, x1: Math.max(0, x0 - 2), y1: canvas.height },
+    { x0: Math.min(canvas.width, x1 + 2), y0: 0, x1: canvas.width, y1: canvas.height },
+  ];
+  let best: AiRect | null = null;
+  let bestArea = 0;
+  for (const band of bands) {
+    const w = band.x1 - band.x0;
+    const h = band.y1 - band.y0;
+    if (w < 80 || h < 80) continue;
+    const area = w * h;
+    if (area > bestArea) {
+      bestArea = area;
+      best = band;
+    }
+  }
+  // Une bande minuscule ne contient pas un terrain : autant s'arrêter.
+  if (!best || bestArea < canvas.width * canvas.height * 0.08) return null;
+  return best;
+}
+
 function frameSignature(canvas: HTMLCanvasElement): string {
   return regionSignature(canvas, { x0: 0, y0: 0, x1: canvas.width, y1: canvas.height });
 }
@@ -456,6 +502,21 @@ export async function analyseRegion(
   });
 
   const courtRect = rectified ? region : detectCourtRect(canvas, region);
+
+  /*
+   * Le moteur CLASSIQUE doit chercher son terrain lui-même.
+   *
+   * Quand un redressement existe, `courtRect` est le cadre redressé. Le lui
+   * donner enfermait l'ancien moteur dans l'erreur du nouveau : sur le cas 01,
+   * dont le terrain est coupé en bas, le redressement proposait un cadre
+   * décalé, l'ancien moteur était confiné dedans, et son excellente détection
+   * (0,026 m d'erreur sur les touches, 4 côtés sur 4) devenait impossible —
+   * l'erreur montait à 1,9 m quand bien même l'arbitrage le désignait vainqueur.
+   *
+   * Les deux candidats doivent être comparables : chacun part donc de sa propre
+   * lecture de l'image.
+   */
+  const classicRect = detectCourtRect(canvas, region);
   const attempts: Attempt[] = [];
 
   if (rectified) {
@@ -484,7 +545,7 @@ export async function analyseRegion(
   const needsClassic = !rectified || rectified.level === "moyenne" || !first || first.score <= 0;
   if (needsClassic) {
     try {
-      const geometry = classifyCourt(canvas, courtRect);
+      const geometry = classifyCourt(canvas, classicRect);
       const analysis = await debug.time(`vision-classique-${keyPrefix}`, () =>
         analyseGraphic(canvas, geometry, keyPrefix)
       );
@@ -499,10 +560,170 @@ export async function analyseRegion(
     return null;
   }
 
+  /* ------------------------------------------------------------------------ */
+  /* ARBITRAGE GÉOMÉTRIQUE                                                     */
+  /* ------------------------------------------------------------------------ */
+  /**
+   * Une solution RAFFINÉE ne doit jamais remplacer une solution classique déjà
+   * forte et géométriquement cohérente.
+   *
+   * Comparer les deux sur la seule RICHESSE — le nombre d'éléments trouvés — a
+   * un défaut mesuré : un cadre faux trouve souvent PLUS d'éléments qu'un cadre
+   * juste, parce qu'il ramasse aussi ce qui est en dehors du terrain. Et depuis
+   * que le redressement sait affiner son hypothèse, il peut faire monter sa note
+   * de marquages sans que sa géométrie s'améliore.
+   *
+   * On regarde donc d'abord si le candidat CLASSIQUE est FORT, sur des critères
+   * qui ne dépendent d'aucune vérité terrain :
+   *
+   *   - ses quatre côtés ont été réellement détectés (pas un repli sur le bord
+   *     de l'image) ;
+   *   - sa confiance de classification est haute ;
+   *   - ses proportions sont celles d'un terrain : la profondeur constatée
+   *     correspond à celle qu'on déduit de la largeur.
+   *
+   * Relevé sur les trois situations réelles, et la séparation est franche :
+   *
+   *   situation              côtés   aplatissement   écart de longueur   confiance
+   *   ---------------------------------------------------------------------------
+   *   cas 01, classique       4/4        1,000             0,0 %           0,850
+   *   cas 02 nº 1, classique  0/4        1,429            40,0 %           0,609
+   *
+   * Face à un classique fort, le redressement doit démontrer un gain sur
+   * PLUSIEURS critères communs, pas sur un seul score : plus riche ET nettement
+   * meilleur en marquages. Sinon, le classique est conservé.
+   *
+   * RÉSULTAT MESURÉ — la règle n'est PAS retenue (ARBITRATION_ENABLED = false).
+   *
+   *   telle quelle                     : 12 régressions synthétiques. Sur ces
+   *     scènes le classique est fort AUSSI, donc la règle se déclenche partout
+   *     et écarte un redressement qui, lui, est exact.
+   *   + critère de désaccord des cadres : toujours 12 régressions. L'écart entre
+   *     le cadre classique et le cadre redressé dépasse 5 % de la largeur même
+   *     sur les scènes synthétiques propres — l'hypothèse « quand les deux
+   *     moteurs voient le même terrain, ils s'accordent au pixel » est fausse,
+   *     et c'était mon hypothèse, pas une mesure.
+   *
+   * Ce qu'il faudrait pour aboutir : un critère qui sépare « cadre redressé
+   * FAUX » de « cadre redressé simplement DIFFÉRENT », et aucun des critères
+   * calculables sans vérité terrain ne l'a fait jusqu'ici. Le relevé manuel des
+   * positions du cas 02 donnerait cette vérité.
+   */
+  /*
+   * ARBITRAGE — implémenté, mesuré, NON RETENU. Voir le bilan chiffré plus bas.
+   * `node tests/debug-arbitrage.cjs` affiche les critères communs des deux
+   * candidats sur les cas réels.
+   */
+  const ARBITRATION_ENABLED = false;
+  const classicAttempt = attempts.find((item) => item.path === "classique");
+  const rectifiedAttempt = attempts.find((item) => item.path === "redressé");
+  let arbitration: string | null = null;
+
+  if (ARBITRATION_ENABLED && classicAttempt && rectifiedAttempt && rectified) {
+    const geometry = classicAttempt.geometry;
+    const play = geometry.play ?? geometry.rect;
+    const width = Math.max(1, play.x1 - play.x0);
+    const depth = play.y1 - play.y0;
+    const expectedDepth = (width / 15) * (geometry.kind === "full" ? 28 : 14);
+    const lengthGap = Math.abs(depth - expectedDepth) / width;
+
+    const classicStrong =
+      (geometry.playSides ?? 0) >= 4 &&
+      geometry.confidence >= 0.8 &&
+      lengthGap <= 0.1;
+
+    /*
+     * DÉSACCORD entre les deux cadres.
+     *
+     * Quand les deux moteurs voient le même terrain, peu importe lequel gagne :
+     * arbitrer là n'apporte rien et casse tout — mesuré, arbitrer sans ce
+     * critère faisait régresser douze scènes synthétiques, où le redressement
+     * est exact et doit l'emporter.
+     *
+     * L'arbitrage ne se justifie que lorsque les deux solutions décrivent des
+     * terrains DIFFÉRENTS. On mesure l'écart des bords, rapporté à la largeur du
+     * terrain classique.
+     */
+    const bounds = quadBounds(rectified.quad);
+    const disagreement =
+      Math.max(
+        Math.abs(bounds.x0 - play.x0),
+        Math.abs(bounds.x1 - play.x1),
+        Math.abs(bounds.y0 - play.y0)
+      ) / width;
+
+    if (classicStrong && disagreement > 0.05) {
+      // Gain EXIGÉ, sur deux critères à la fois.
+      const richer = rectifiedAttempt.score > classicAttempt.score;
+      const betterMarkings = rectified.markings >= courtMarkingScore(canvas, play, geometry.kind) + 0.1;
+      if (!richer || !betterMarkings) {
+        arbitration =
+          `classique conservé : ${geometry.playSides}/4 côtés, confiance ` +
+          `${geometry.confidence.toFixed(2)}, écart de longueur ${(lengthGap * 100).toFixed(1)} %, ` +
+          `désaccord des cadres ${(disagreement * 100).toFixed(0)} % — ` +
+          `le redressement n'apporte pas de gain démontré ` +
+          `(richesse ${rectifiedAttempt.score.toFixed(2)} vs ${classicAttempt.score.toFixed(2)}, ` +
+          `marquages ${(rectified.markings * 100).toFixed(0)} %)`;
+      }
+    }
+  }
+
+  /* ------------------------------------------------------------------------ */
+  /* RECEVABILITÉ — la richesse ne départage que des candidats comparables     */
+  /* ------------------------------------------------------------------------ */
+  /**
+   * La richesse compte les éléments trouvés. C'est un bon départage entre deux
+   * lectures PLAUSIBLES du même dessin ; ça n'en est pas un entre une lecture
+   * plausible et une lecture qui n'a pas de terrain du tout.
+   *
+   * Un candidat est RECEVABLE quand il repose sur une aire de jeu réellement
+   * détectée. Mesuré sur le second terrain du cas 02 :
+   *
+   *   redressé   aire de jeu détectée (quadrilatère à 4 côtés) · richesse 8,75
+   *   classique  AUCUNE aire de jeu · 0/4 côtés                · richesse 9,02
+   *
+   * Le classique l'emportait pour 0,27 point de richesse, puis le schéma était
+   * rejeté quelques lignes plus bas faute de terrain validé — le second schéma
+   * de la page était donc perdu au profit d'un candidat qui ne menait à rien.
+   *
+   * La règle est SYMÉTRIQUE et structurelle : elle ne dit pas que le
+   * redressement gagne, ni qu'une note élevée gagne. Elle dit qu'un candidat
+   * sans aire de jeu ne peut pas arbitrer contre un candidat qui en a une, quel
+   * que soit le chemin de l'un ou de l'autre.
+   */
+  const recevable = (attempt: Attempt): boolean => {
+    const geometry = attempt.geometry;
+    if (geometry.playDetected !== true) return false;
+    // Un quadrilatère redressé a ses quatre côtés par construction : la
+    // détection de côtés ne s'applique qu'au chemin classique, qui les compte.
+    return (geometry.playSides ?? 4) >= 3;
+  };
+
+  const recevables = attempts.filter(recevable);
+  if (recevables.length && recevables.length < attempts.length) {
+    const ecartes = attempts.filter((item) => !recevable(item));
+    debug.note(
+      `région ${Math.round(region.x0)},${Math.round(region.y0)} — ` +
+        ecartes
+          .map(
+            (item) =>
+              `${item.path} écarté de l'arbitrage : ${
+                item.geometry.playDetected === true
+                  ? `${item.geometry.playSides ?? 0}/4 côtés`
+                  : "aucune aire de jeu"
+              }`
+          )
+          .join(" · ")
+    );
+    attempts.length = 0;
+    attempts.push(...recevables);
+  }
+
   // À égalité, on privilégie le redressement : ses coordonnées sont métriques,
   // donc plus fiables même à nombre d'éléments égal.
   attempts.sort((a, b) => b.score - a.score || (a.path === "redressé" ? -1 : 1));
-  const chosen = attempts[0];
+  const chosen = arbitration && classicAttempt ? classicAttempt : attempts[0];
+  if (arbitration) debug.note(arbitration);
   if (attempts.length > 1) {
     debug.note(
       `région ${Math.round(region.x0)},${Math.round(region.y0)} — ` +
@@ -820,8 +1041,29 @@ export async function scanExerciseLocally(
         if (state.diagrams.length >= MAX_GRAPHICS) break;
         let steps: string[] = [];
         let found: Rectified | null = null;
+        /*
+         * RECONSTRUCTION INDÉPENDANTE DU SCHÉMA SUIVANT.
+         *
+         * Effacer les lignes du terrain déjà retenu ne suffit pas : la carte des
+         * lignes reste calculée sur la page entière, la transformée de Hough n'y
+         * garde qu'un nombre limité de droites, et celles du second dessin —
+         * plus courtes, plus loin du centre — n'y figurent plus. Mesuré : le
+         * second demi-terrain d'une page sortait à 37 % pour 42 % requis, avec
+         * un quadrilatère de travers.
+         *
+         * On repart donc de la BANDE RESTANTE : la plus grande zone de l'image
+         * qui ne recouvre pas les terrains déjà retenus. La carte des lignes y
+         * est reconstruite entièrement, les droites y sont redétectées, et le
+         * second terrain y est cherché pour lui-même — sans réutiliser aucune
+         * droite du premier.
+         */
+        const searchRegion = excluded.length ? residualRegion(canvas, excluded) : undefined;
+        if (excluded.length && !searchRegion) {
+          debug.note(`passage ${pass + 1} : plus de zone libre exploitable`);
+          break;
+        }
         try {
-          found = rectifyCourt(canvas, undefined, (reasons) => {
+          found = rectifyCourt(canvas, searchRegion ?? undefined, (reasons) => {
             steps = reasons;
           }, excluded.length ? excluded : undefined);
         } catch (error) {
