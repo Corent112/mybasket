@@ -2915,7 +2915,8 @@ animPosRef.current = { players, balls };
       pushHistory();
       updatePhase((ph) => {
         if (tool.obj !== 'handoff') {
-          return { ...ph, objects: [...ph.objects, { id: uid(), x: n.x, y: n.y, kind: tool.obj, rotation: 0, size: 1, color: '#0F0F12' }] };
+          const defaultObjectColor = tool.obj === 'ball' ? '#E8743C' : tool.obj === 'cone' ? '#F05A16' : '#0F0F12';
+          return { ...ph, objects: [...ph.objects, { id: uid(), x: n.x, y: n.y, kind: tool.obj, rotation: 0, size: 1, color: defaultObjectColor }] };
         }
 
         // Un H placé entre deux attaquants représente un main à main.
