@@ -227,7 +227,7 @@ const EDIT_EXERCISE_ID_KEY = "mybasket_edit_exercise_id";
   type Pt = { x: number; y: number };
   type Player = { id: string; x: number; y: number; label: string; team: 'att' | 'def'; shape: 'circle' | 'square'; coach?: boolean; rotation?: number; name?: string; color?: string; size?: number; photo?: string; hasBall?: boolean; ballCount?: number; linkedPlayerId?: string; linkedPlayerName?: string; linkedTeamId?: string; linkedTeamName?: string };
   type Obj = { id: string; x: number; y: number; kind: string; text?: string; rotation?: number; size?: number; scaleX?: number; scaleY?: number; points?: Pt[]; color?: string; sourcePlayerId?: string; targetPlayerId?: string };
-  type Line = { id: string; action: string; from: Pt; to: Pt; ctrls?: Pt[]; ctrl?: Pt; points?: Pt[]; rotation?: number; target?: 'basket'; targetBasketId?: string; sourcePlayerId?: string; targetPlayerId?: string; order?: number; startMode?: 'withPrevious' | 'afterPrevious'; duration?: number; targetMode?: 'player' | 'playerCurrentPoint'; createdTargetPoint?: Pt };
+  type Line = { id: string; action: string; from: Pt; to: Pt; ctrls?: Pt[]; ctrl?: Pt; points?: Pt[]; rotation?: number; color?: string; target?: 'basket'; targetBasketId?: string; sourcePlayerId?: string; targetPlayerId?: string; order?: number; startMode?: 'withPrevious' | 'afterPrevious'; duration?: number; targetMode?: 'player' | 'playerCurrentPoint'; createdTargetPoint?: Pt };
   type ActSched = { line: Line; start: number; dur: number; end: number };
   type Sched = { idx: number; start: number; span: number; end: number; actSched: ActSched[] };
   type Phase = { players: Player[]; objects: Obj[]; lines: Line[]; notes: string; duration?: number; startMode?: 'withPrevious' | 'afterPrevious' };
@@ -587,6 +587,8 @@ useEffect(() => {
   const [shootingGridPending, setShootingGridPending] = useState(false);
   const [scoutingPending, setScoutingPending] = useState(false);
   const [saveOpen, setSaveOpen] = useState(false);
+  const [terrainPanelOpen, setTerrainPanelOpen] = useState(true);
+  const [selectionPanelOpen, setSelectionPanelOpen] = useState(true);
   const [exportOpen, setExportOpen] = useState(false);
   const [saving, setSaving] = useState<null | 'systeme' | 'exercice'>(null);
 
@@ -1426,7 +1428,8 @@ const currentRef = useRef(current);
 
   const drawLine = (ctx: CanvasRenderingContext2D, canvas: HTMLCanvasElement, l: Line) => {
     const w = Math.max(2, cs(canvas) * 0.0035);
-    ctx.lineWidth = w; ctx.strokeStyle = '#0F0F12'; ctx.fillStyle = '#0F0F12'; ctx.setLineDash([]);
+    const actionColor = l.color || '#0F0F12';
+    ctx.lineWidth = w; ctx.strokeStyle = actionColor; ctx.fillStyle = actionColor; ctx.setLineDash([]);
     ctx.lineCap = 'round'; ctx.lineJoin = 'round';
     if (l.action === 'freedraw' && l.points) {
       ctx.beginPath();
@@ -1560,11 +1563,25 @@ const currentRef = useRef(current);
     ctx.lineWidth = Math.max(2, cs(canvas) * 0.003) / Math.max(scaleX, scaleY);
     ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
     switch (o.kind) {
-      case 'ball':
-        ctx.fillStyle = o.color || '#E8743C'; ctx.strokeStyle = o.color || '#7a3a10';
+      case 'ball': {
+        const ballFill = o.color || '#E8743C';
+        const seam = '#6B2E12';
+        ctx.fillStyle = ballFill;
+        ctx.strokeStyle = seam;
+        ctx.lineWidth = Math.max(1.6, s * 0.14);
         ctx.beginPath(); ctx.arc(0, 0, s, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
-        ctx.beginPath(); ctx.moveTo(-s, 0); ctx.lineTo(s, 0); ctx.moveTo(0, -s); ctx.lineTo(0, s); ctx.stroke();
+        ctx.beginPath();
+        ctx.moveTo(-s, 0); ctx.lineTo(s, 0);
+        ctx.moveTo(0, -s); ctx.lineTo(0, s);
+        ctx.stroke();
+        ctx.beginPath();
+        ctx.arc(-s * 0.72, 0, s * 0.88, -Math.PI / 2, Math.PI / 2);
+        ctx.stroke();
+        ctx.beginPath();
+        ctx.arc(s * 0.72, 0, s * 0.88, Math.PI / 2, Math.PI * 1.5);
+        ctx.stroke();
         break;
+      }
       case 'cone': {
         // Plot d'entraînement : silhouette de cône orange avec bandes blanches.
         const orange = o.color || '#F05A16';
@@ -2804,8 +2821,8 @@ animPosRef.current = { players, balls };
       pushHistory();
       const num = (placeIdx % 5) + 1;
       const pl: Player = placeMode === 'att'
-        ? { id: uid(), x: n.x, y: n.y, label: String(num), team: 'att', shape: 'circle', rotation: 0 }
-        : { id: uid(), x: n.x, y: n.y, label: 'X' + num, team: 'def', shape: 'circle', rotation: 0 };
+        ? { id: uid(), x: n.x, y: n.y, label: String(num), team: 'att', shape: 'circle', rotation: 0, size: 1 }
+        : { id: uid(), x: n.x, y: n.y, label: 'X' + num, team: 'def', shape: 'circle', rotation: 0, size: 0.72 };
       updatePhase((ph) => ({ ...ph, players: [...ph.players, pl] }));
       setPlaceIdx((i) => i + 1);
       return;
@@ -2882,7 +2899,7 @@ animPosRef.current = { players, balls };
 
     if (tool.kind === 'player') {
       pushHistory();
-      updatePhase((ph) => ({ ...ph, players: [...ph.players, { id: uid(), x: n.x, y: n.y, label: tool.label, team: tool.team, shape: tool.shape, coach: tool.coach, rotation: 0 }] }));
+      updatePhase((ph) => ({ ...ph, players: [...ph.players, { id: uid(), x: n.x, y: n.y, label: tool.label, team: tool.team, shape: tool.shape, coach: tool.coach, rotation: 0, size: tool.team === 'def' ? 0.72 : 1 }] }));
       return;
     }
     if (tool.kind === 'object') {
@@ -3958,21 +3975,28 @@ const exportJson = () => {
   const cw = courtType === 'full' ? 704 : 900;
   const chh = courtType === 'full' ? 1100 : 704;
 
-  const selectedObjectId =
-    selection.length === 1 && selection[0].type === 'object'
-      ? selection[0].id
-      : '';
+  const selectedItem = selection.length === 1 ? selection[0] : null;
 
-  const selectedObjectColor = (() => {
-    if (!selectedObjectId) return '#0F0F12';
+  const selectedItemColor = (() => {
+    if (!selectedItem) return '#0F0F12';
     const phase = phases[current];
-    const color = phase?.objects.find(
-      (object) => object.id === selectedObjectId
-    )?.color;
-    return typeof color === 'string' && /^#[0-9a-fA-F]{6}$/.test(color)
-      ? color
-      : '#0F0F12';
+    if (!phase) return '#0F0F12';
+    if (selectedItem.type === 'player') {
+      const color = phase.players.find((item) => item.id === selectedItem.id)?.color;
+      return typeof color === 'string' && /^#[0-9a-fA-F]{6}$/.test(color) ? color : '#6B1A2C';
+    }
+    if (selectedItem.type === 'object') {
+      const item = phase.objects.find((object) => object.id === selectedItem.id);
+      if (!item) return '#0F0F12';
+      const color = item.color;
+      if (typeof color === 'string' && /^#[0-9a-fA-F]{6}$/.test(color)) return color;
+      return item.kind === 'ball' ? '#E8743C' : '#0F0F12';
+    }
+    const color = phase.lines.find((line) => line.id === selectedItem.id)?.color;
+    return typeof color === 'string' && /^#[0-9a-fA-F]{6}$/.test(color) ? color : '#0F0F12';
   })();
+
+  const hasResizableSelection = selection.some((item) => item.type === 'object' || item.type === 'player');
 
   return (
     <div className="mb-screen">
@@ -4221,6 +4245,11 @@ const exportJson = () => {
 
             {/* -------- TERRAIN -------- */}
             <div className="ed-canvas-wrap" style={{ position: 'relative' }}>
+              <div className="court-view-switch">
+                <button type="button" className="court-view-switch-btn" id="courtToggleBtn" onClick={toggleCourt}>
+                  🏟 Terrain : {courtType === 'half' ? 'Demi' : 'Complet'}
+                </button>
+              </div>
               {hint && (
                 <div style={{ position: 'absolute', top: 10, left: '50%', transform: 'translateX(-50%)', zIndex: 5, background: 'rgba(15,15,18,0.92)', color: '#fff', padding: '.5rem .85rem', borderRadius: 8, fontSize: '.82rem', fontWeight: 600, pointerEvents: 'none', whiteSpace: 'nowrap' }}>{hint}</div>
               )}
@@ -4301,61 +4330,83 @@ const exportJson = () => {
               </div>
 
               <div className="right-card right-card-settings">
-                <div className="right-card-title"><span>⚙️</span> Terrain & sélection</div>
-                <div className="right-settings-stack">
-                  <button className="btn btn-outline btn-block btn-small" id="courtToggleBtn" onClick={toggleCourt}>🏟 Terrain : {courtType === 'half' ? 'Demi' : 'Complet'}</button>
-                  <button className="btn btn-outline btn-block btn-small" id="courtColorsBtn" onClick={() => setCourtStyleOpen(true)}>🎨 Couleurs du terrain</button>
-                  <button className="btn btn-outline btn-block btn-small" id="courtBrandingBtn" onClick={() => setCourtBrandingOpen(true)}>✨ Personnaliser le terrain</button>
-                  <button type="button" className="btn btn-outline btn-block btn-small" id="courtResetBtn" onClick={resetCourtAppearance} title="Restaurer les couleurs, le logo et le texte d'origine du terrain">↺ Réinitialiser le terrain</button>
-                  <div className="selection-actions-row">
-                    <button className="btn btn-red btn-small" id="delSelectedBtn" onClick={deleteSelected}>🗑 Supprimer</button>
-                    <button className="btn btn-outline btn-small" id="dupSelectedBtn" onClick={duplicateSelected}>⎘ Dupliquer</button>
+                <button type="button" className="right-card-title right-card-toggle" onClick={() => setTerrainPanelOpen((open) => !open)}>
+                  <span><span>🏟</span> Terrain</span><span className="panel-chevron">{terrainPanelOpen ? '⌃' : '⌄'}</span>
+                </button>
+                {terrainPanelOpen && (
+                  <div className="right-settings-stack">
+                    <button className="btn btn-outline btn-block btn-small" id="courtColorsBtn" onClick={() => setCourtStyleOpen(true)}>🎨 Couleurs du terrain</button>
+                    <button className="btn btn-outline btn-block btn-small" id="courtBrandingBtn" onClick={() => setCourtBrandingOpen(true)}>✨ Personnaliser le terrain</button>
+                    <button type="button" className="btn btn-outline btn-block btn-small" id="courtResetBtn" onClick={resetCourtAppearance} title="Restaurer les couleurs, le logo et le texte d'origine du terrain">↺ Réinitialiser le terrain</button>
                   </div>
-                  <label className="settings-label">Couleur de la sélection</label>
-                  <input
-                    key={`shape-color-${current}-${selectedObjectId}-${selectedObjectColor}`}
-                    type="color"
-                    id="colorPicker"
-                    defaultValue={selectedObjectColor}
-                    disabled={!selectedObjectId}
-                    onChange={(e) => {
-                      const c = e.target.value;
-                      if (!selection.length) return;
-                      pushHistory();
-                      const has = (t: string, id: string) => selection.some((s) => s.type === t && s.id === id);
-                      setPhases((prev) => prev.map((p, i) => (i === current ? {
-                        ...p,
-                        players: p.players.map((z) => (has('player', z.id) ? { ...z, color: c } : z)),
-                        objects: p.objects.map((z) => (has('object', z.id) ? { ...z, color: c } : z)),
-                      } : p)));
-                    }}
-                    style={{ width: '100%', height: 40, cursor: selectedObjectId ? 'pointer' : 'not-allowed', opacity: selectedObjectId ? 1 : 0.45 }}
-                  />
-                  <label className="settings-label">Taille des formes sélectionnées</label>
-                  <input
-                    type="range"
-                    min="0.05"
-                    max="10"
-                    step="0.05"
-                    defaultValue="1"
-                    disabled={!selection.some((s) => s.type === 'object')}
-                    onChange={(e) => {
-                      const size = Number(e.target.value);
-                      if (!selection.some((s) => s.type === 'object')) return;
-                      const has = (id: string) => selection.some((s) => s.type === 'object' && s.id === id);
-                      setPhases((prev) => prev.map((p, i) => (i === current ? {
-                        ...p,
-                        objects: p.objects.map((z) => (has(z.id) ? { ...z, size } : z)),
-                      } : p)));
-                    }}
-                    onPointerDown={() => pushHistory()}
-                    style={{ width: '100%', cursor: selection.some((s) => s.type === 'object') ? 'pointer' : 'not-allowed' }}
-                  />
-                  <div className="selection-actions-row">
-                    <button className="btn btn-outline btn-small" onClick={() => rotateSelected(-15)}>↺ -15°</button>
-                    <button className="btn btn-outline btn-small" onClick={() => rotateSelected(15)}>↻ +15°</button>
+                )}
+              </div>
+
+              <div className={'right-card right-card-settings' + (selection.length ? ' has-selection' : '')}>
+                <button type="button" className="right-card-title right-card-toggle" onClick={() => setSelectionPanelOpen((open) => !open)}>
+                  <span><span>🎯</span> Sélection</span><span className="panel-chevron">{selectionPanelOpen ? '⌃' : '⌄'}</span>
+                </button>
+                {selectionPanelOpen && (
+                  <div className="right-settings-stack">
+                    {!selection.length ? (
+                      <div className="selection-empty-hint">Sélectionne un joueur, une forme ou une action pour modifier ses propriétés.</div>
+                    ) : (
+                      <>
+                        <label className="settings-label">Couleur de la sélection</label>
+                        <input
+                          key={`selection-color-${current}-${selectedItem?.type || 'none'}-${selectedItem?.id || 'none'}-${selectedItemColor}`}
+                          type="color"
+                          id="colorPicker"
+                          value={selectedItemColor}
+                          onChange={(e) => {
+                            const c = e.target.value;
+                            if (!selection.length) return;
+                            pushHistory();
+                            const has = (t: string, id: string) => selection.some((item) => item.type === t && item.id === id);
+                            setPhases((prev) => prev.map((phase, i) => (i === current ? {
+                              ...phase,
+                              players: phase.players.map((item) => (has('player', item.id) ? { ...item, color: c } : item)),
+                              objects: phase.objects.map((item) => (has('object', item.id) ? { ...item, color: c } : item)),
+                              lines: phase.lines.map((item) => (has('line', item.id) ? { ...item, color: c } : item)),
+                            } : phase)));
+                          }}
+                          style={{ width: '100%', height: 40, cursor: 'pointer' }}
+                        />
+
+                        <label className="settings-label">Taille</label>
+                        <input
+                          type="range"
+                          min="0.4"
+                          max="3"
+                          step="0.05"
+                          defaultValue="1"
+                          disabled={!hasResizableSelection}
+                          onChange={(e) => {
+                            const size = Number(e.target.value);
+                            if (!hasResizableSelection) return;
+                            const has = (t: string, id: string) => selection.some((item) => item.type === t && item.id === id);
+                            setPhases((prev) => prev.map((phase, i) => (i === current ? {
+                              ...phase,
+                              players: phase.players.map((item) => (has('player', item.id) ? { ...item, size } : item)),
+                              objects: phase.objects.map((item) => (has('object', item.id) ? { ...item, size } : item)),
+                            } : phase)));
+                          }}
+                          onPointerDown={() => pushHistory()}
+                          style={{ width: '100%', cursor: hasResizableSelection ? 'pointer' : 'not-allowed', opacity: hasResizableSelection ? 1 : 0.45 }}
+                        />
+
+                        <div className="selection-actions-row">
+                          <button className="btn btn-outline btn-small" onClick={() => rotateSelected(-15)}>↺ -15°</button>
+                          <button className="btn btn-outline btn-small" onClick={() => rotateSelected(15)}>↻ +15°</button>
+                        </div>
+                        <div className="selection-actions-row">
+                          <button className="btn btn-red btn-small" id="delSelectedBtn" onClick={deleteSelected}>🗑 Supprimer</button>
+                          <button className="btn btn-outline btn-small" id="dupSelectedBtn" onClick={duplicateSelected}>⎘ Dupliquer</button>
+                        </div>
+                      </>
+                    )}
                   </div>
-                </div>
+                )}
               </div>
             </aside>
           </div>
@@ -5125,6 +5176,25 @@ html{font-size:15px}
 .settings-label{font-size:.7rem;color:var(--gris-text);text-transform:uppercase;letter-spacing:.04em;margin-top:.15rem;font-weight:700}
 .ed-canvas-wrap{padding:1rem 1.25rem;background:#f2eee8}
 #playCanvas[data-court="full"]{max-width:500px}
+
+.court-view-switch{width:100%;display:flex;justify-content:center;margin-bottom:.65rem}
+.court-view-switch-btn{border:1.5px solid #d8d1ca;background:#fff;color:#1d1d1d;border-radius:999px;padding:.48rem 1rem;font-size:.78rem;font-weight:800;cursor:pointer;box-shadow:0 2px 8px rgba(15,15,18,.05)}
+.court-view-switch-btn:hover{border-color:var(--bordeaux);color:var(--bordeaux)}
+.right-card-toggle{width:100%;border:0;background:transparent;padding:0;cursor:pointer;justify-content:space-between;text-align:left;margin-bottom:0}
+.right-card-toggle>span:first-child{display:flex;align-items:center;gap:.45rem}
+.panel-chevron{font-size:1rem;color:#686868;line-height:1}
+.right-card-toggle + .right-settings-stack{margin-top:.7rem}
+.selection-empty-hint{font-size:.73rem;line-height:1.4;color:#7a7470;background:#f7f4f0;border:1px dashed #ddd4ca;border-radius:9px;padding:.65rem}
+.right-card.has-selection{border-color:rgba(107,26,44,.3)}
+.players-row-main{justify-content:start}
+.players-row-main .pl-btn{min-height:32px;max-width:34px;font-size:.7rem;border-width:1.5px}
+.player-mode-row{gap:.35rem;margin-top:.5rem}
+.player-role-btn{min-height:44px;font-size:.66rem;border-radius:9px;flex-direction:row;gap:.3rem;padding:.25rem .35rem}
+.player-role-icon{font-size:1.05rem}
+.player-role-def{font-size:1.15rem}
+.coach-avatar{width:22px;height:22px}
+.coach-head{font-size:1rem}
+.coach-cap{font-size:.76rem;top:0;right:2px}
 @media (min-width:1400px){
   .ed-layout{grid-template-columns:220px minmax(0,1fr) 360px}
   #playCanvas[data-court="full"]{max-width:540px}
