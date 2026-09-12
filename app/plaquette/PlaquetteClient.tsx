@@ -4240,141 +4240,121 @@ const exportJson = () => {
 
             {/* -------- DROITE -------- */}
             <aside className="ed-right">
-              <div className="ed-hint">💡 Place joueurs/objets au clic, trace les actions au glisser. Triangle et carré : chaque poignée bleue est un vrai sommet indépendant. Pose chaque coin exactement où tu veux. Le <b>panier latéral</b> se déplace et se tourne comme les autres objets ; avec l'outil Tir, relâche le geste dessus pour le viser. Un <b>H placé entre deux joueurs</b> signifie main à main ; le ballon passe au second joueur sur le schéma suivant.</div>
+              <div className="right-card right-card-players">
+                <div className="right-card-title"><span>👤</span> Joueurs</div>
 
-              <div className="sec-lab">ACTIONS</div>
-              <div className="actions-grid">
-                <div className={'act-btn' + (isAction('select') ? ' active' : '')} data-action="select" style={isAction('select') ? undefined : { background: 'var(--bordeaux-d)' }} onClick={() => pick({ kind: 'action', action: 'select' })}><span className="icn">↖</span>Sélection</div>
-                <div className={'act-btn' + (isAction('dribble') ? ' active' : '')} data-action="dribble" onClick={() => pick({ kind: 'action', action: 'dribble' })}><span className="icn">∿</span>Dribble</div>
-                <div className={'act-btn' + (isAction('pass') ? ' active' : '')} data-action="pass" onClick={() => pick({ kind: 'action', action: 'pass' })}><span className="icn">{'-->'}</span>Passe</div>
-                <div className={'act-btn' + (isAction('cut') ? ' active' : '')} data-action="cut" onClick={() => pick({ kind: 'action', action: 'cut' })}><span className="icn">→</span>Cut</div>
-                <div className={'act-btn' + (isAction('screen') ? ' active' : '')} data-action="screen" onClick={() => pick({ kind: 'action', action: 'screen' })}><span className="icn">⊺</span>Écran</div>
-                <div className={'act-btn' + (isAction('shoot') ? ' active' : '')} data-action="shoot" onClick={() => pick({ kind: 'action', action: 'shoot' })}><span className="icn">⊕</span>Tir</div>
-                <div className={'act-btn' + (isAction('giveball') ? ' active' : '')} data-action="giveball" style={isAction('giveball') ? undefined : { background: '#C0501A' }} onClick={() => pick({ kind: 'action', action: 'giveball' })}><span className="icn">🏀</span>Donner ballon</div>
+                <div className="players-row players-row-main" id="row-circle">
+                  {[1, 2, 3, 4, 5].map((i) => (
+                    <div key={i} className={'pl-btn s-circle' + (isPlayer(String(i), 'att', 'circle') ? ' active' : '')} onClick={() => pick({ kind: 'player', label: String(i), team: 'att', shape: 'circle' })}>{i}</div>
+                  ))}
+                </div>
+                <div className="players-row players-row-main" id="row-square">
+                  {[1, 2, 3, 4, 5].map((i) => (
+                    <div key={i} className={'pl-btn s-square' + (isPlayer(String(i), 'att', 'square') ? ' active' : '')} onClick={() => pick({ kind: 'player', label: String(i), team: 'att', shape: 'square' })}>{i}</div>
+                  ))}
+                </div>
+                <div className="players-row players-row-main" id="row-defense">
+                  {[1, 2, 3, 4, 5].map((i) => (
+                    <div key={i} className={'pl-btn s-defense' + (isPlayer('X' + i, 'def', 'circle') ? ' active' : '')} onClick={() => pick({ kind: 'player', label: 'X' + i, team: 'def', shape: 'circle' })}>X{i}</div>
+                  ))}
+                </div>
+
+                <div className="player-mode-row">
+                  <button className={'player-role-btn' + (placeMode === 'att' ? ' mode-on' : '')} id="placeAttBtn" onClick={() => { setTool({ kind: 'none' }); setSelection([]); setPlaceIdx(0); setPlaceMode((m) => (m === 'att' ? null : 'att')); }}>
+                    <span className="player-role-icon player-role-att">●</span><span>Attaquant</span>
+                  </button>
+                  <button className={'player-role-btn' + (placeMode === 'def' ? ' mode-on' : '')} id="placeDefBtn" onClick={() => { setTool({ kind: 'none' }); setSelection([]); setPlaceIdx(0); setPlaceMode((m) => (m === 'def' ? null : 'def')); }}>
+                    <span className="player-role-icon player-role-def">○</span><span>Défenseur</span>
+                  </button>
+                  <button className={'player-role-btn coach-role-btn' + (isPlayer('C', 'att', 'circle', true) ? ' active' : '')} title="Coach" onClick={() => pick({ kind: 'player', label: 'C', team: 'att', shape: 'circle', coach: true })}>
+                    <span className="coach-avatar" aria-hidden="true"><span className="coach-cap">▰</span><span className="coach-head">●</span></span><span>Coach</span>
+                  </button>
+                </div>
               </div>
 
-              <div className="sec-lab">AJOUTER JOUEURS <span className="help" title="Mode att./déf. = chaque clic place le joueur suivant (1→5 ou X1→X5)">?</span></div>
-              <div style={{ display: 'flex', gap: '.3rem', marginBottom: '.5rem' }}>
-                <button className={'btn btn-outline btn-small' + (placeMode === 'att' ? ' mode-on' : '')} id="placeAttBtn" style={{ flex: 1, fontSize: '.72rem' }} onClick={() => { setTool({ kind: 'none' }); setSelection([]); setPlaceIdx(0); setPlaceMode((m) => (m === 'att' ? null : 'att')); }}>⊕ Mode att.</button>
-                <button className={'btn btn-outline btn-small' + (placeMode === 'def' ? ' mode-on' : '')} id="placeDefBtn" style={{ flex: 1, fontSize: '.72rem' }} onClick={() => { setTool({ kind: 'none' }); setSelection([]); setPlaceIdx(0); setPlaceMode((m) => (m === 'def' ? null : 'def')); }}>⊖ Mode déf.</button>
-              </div>
-              <div className="players-row" id="row-circle">
-                {[1, 2, 3, 4, 5].map((i) => (
-                  <div key={i} className={'pl-btn s-circle' + (isPlayer(String(i), 'att', 'circle') ? ' active' : '')} onClick={() => pick({ kind: 'player', label: String(i), team: 'att', shape: 'circle' })}>{i}</div>
-                ))}
-              </div>
-              <div className="players-row" id="row-square">
-                {[1, 2, 3, 4, 5].map((i) => (
-                  <div key={i} className={'pl-btn s-square' + (isPlayer(String(i), 'att', 'square') ? ' active' : '')} onClick={() => pick({ kind: 'player', label: String(i), team: 'att', shape: 'square' })}>{i}</div>
-                ))}
-              </div>
-              <div className="players-row" id="row-defense">
-                {[1, 2, 3, 4, 5].map((i) => (
-                  <div key={i} className={'pl-btn s-defense' + (isPlayer('X' + i, 'def', 'circle') ? ' active' : '')} onClick={() => pick({ kind: 'player', label: 'X' + i, team: 'def', shape: 'circle' })}>X{i}</div>
-                ))}
-              </div>
-              <div className="players-row" id="row-coach">
-                <div className={'pl-btn s-coach' + (isPlayer('C', 'att', 'circle', true) ? ' active' : '')} onClick={() => pick({ kind: 'player', label: 'C', team: 'att', shape: 'circle', coach: true })}>C</div>
+              <div className="right-card">
+                <div className="right-card-title"><span>⚡</span> Actions</div>
+                <div className="actions-grid actions-grid-large">
+                  <div className={'act-btn' + (isAction('select') ? ' active' : '')} data-action="select" onClick={() => pick({ kind: 'action', action: 'select' })}><span className="icn">↖</span><span>Sélection</span></div>
+                  <div className={'act-btn' + (isAction('dribble') ? ' active' : '')} data-action="dribble" onClick={() => pick({ kind: 'action', action: 'dribble' })}><span className="icn">∿</span><span>Dribble</span></div>
+                  <div className={'act-btn' + (isAction('pass') ? ' active' : '')} data-action="pass" onClick={() => pick({ kind: 'action', action: 'pass' })}><span className="icn">{'-->'}</span><span>Passe</span></div>
+                  <div className={'act-btn' + (isAction('cut') ? ' active' : '')} data-action="cut" onClick={() => pick({ kind: 'action', action: 'cut' })}><span className="icn">→</span><span>Cut</span></div>
+                  <div className={'act-btn' + (isAction('screen') ? ' active' : '')} data-action="screen" onClick={() => pick({ kind: 'action', action: 'screen' })}><span className="icn">⊺</span><span>Écran</span></div>
+                  <div className={'act-btn' + (isAction('shoot') ? ' active' : '')} data-action="shoot" onClick={() => pick({ kind: 'action', action: 'shoot' })}><span className="icn">⊕</span><span>Tir</span></div>
+                  <div className={'act-btn' + (isAction('giveball') ? ' active' : '')} data-action="giveball" onClick={() => pick({ kind: 'action', action: 'giveball' })}><span className="icn">🏀</span><span>Donner ballon</span></div>
+                </div>
               </div>
 
-              <div className="sec-lab" style={{ marginTop: '.85rem' }}>OUTILS</div>
-              <div className="misc-grid">
-                <div className={'misc-btn' + (isObj('ball') ? ' active' : '')} id="addBallBtn" title="Ballon" onClick={() => pick({ kind: 'object', obj: 'ball' })}>🏀</div>
-                <div className={'misc-btn' + (isObj('cone') ? ' active' : '')} data-misc="cone" title="Plot" onClick={() => pick({ kind: 'object', obj: 'cone' })}><img src="/plaquette/plot.svg" alt="Plot" style={{ width: 26, height: 26, objectFit: 'contain' }} /></div>
-                <div className={'misc-btn' + (isObj('lateralBasket') ? ' active' : '')} data-misc="lateralBasket" title="Panier latéral" onClick={() => pick({ kind: 'object', obj: 'lateralBasket' })}><img src="/plaquette/panier-lateral.svg" alt="Panier latéral" style={{ width: 32, height: 26, objectFit: 'contain' }} /></div>
-                <div className={'misc-btn' + (isObj('triangle') ? ' active' : '')} data-misc="triangle" title="Triangle" onClick={() => pick({ kind: 'object', obj: 'triangle' })}>△</div>
-                <div className={'misc-btn' + (isObj('square') ? ' active' : '')} data-misc="square" title="Carré" onClick={() => pick({ kind: 'object', obj: 'square' })}>■</div>
-                <div className={'misc-btn' + (isObj('circle') ? ' active' : '')} data-misc="circle" title="Rond" onClick={() => pick({ kind: 'object', obj: 'circle' })}>●</div>
-                <div className={'misc-btn' + (isObj('text') ? ' active' : '')} data-misc="text" title="Texte" onClick={() => pick({ kind: 'object', obj: 'text' })}>T</div>
-                <div className={'misc-btn' + (isObj('handoff') ? ' active' : '')} data-misc="handoff" title="Main à main : le changement de porteur s’applique au schéma suivant" style={{ fontFamily: 'Arial,sans-serif', fontWeight: 900 }} onClick={() => pick({ kind: 'object', obj: 'handoff' })}>H</div>
-                <div className={'misc-btn' + (isObj('freedraw') ? ' active' : '')} data-misc="freedraw" title="Dessin libre" onClick={() => pick({ kind: 'object', obj: 'freedraw' })}>✎</div>
+              <div className="right-card">
+                <div className="right-card-title"><span>🧰</span> Outils</div>
+                <div className="misc-grid misc-grid-large">
+                  <div className={'misc-btn' + (isObj('ball') ? ' active' : '')} id="addBallBtn" title="Ballon" onClick={() => pick({ kind: 'object', obj: 'ball' })}>🏀</div>
+                  <div className={'misc-btn' + (isObj('cone') ? ' active' : '')} data-misc="cone" title="Plot" onClick={() => pick({ kind: 'object', obj: 'cone' })}><img src="/plaquette/plot.svg" alt="Plot" style={{ width: 30, height: 30, objectFit: 'contain' }} /></div>
+                  <div className={'misc-btn' + (isObj('lateralBasket') ? ' active' : '')} data-misc="lateralBasket" title="Panier latéral" onClick={() => pick({ kind: 'object', obj: 'lateralBasket' })}><img src="/plaquette/panier-lateral.svg" alt="Panier latéral" style={{ width: 36, height: 30, objectFit: 'contain' }} /></div>
+                  <div className={'misc-btn' + (isObj('triangle') ? ' active' : '')} data-misc="triangle" title="Triangle" onClick={() => pick({ kind: 'object', obj: 'triangle' })}>△</div>
+                  <div className={'misc-btn' + (isObj('square') ? ' active' : '')} data-misc="square" title="Carré" onClick={() => pick({ kind: 'object', obj: 'square' })}>■</div>
+                  <div className={'misc-btn' + (isObj('circle') ? ' active' : '')} data-misc="circle" title="Rond" onClick={() => pick({ kind: 'object', obj: 'circle' })}>●</div>
+                  <div className={'misc-btn' + (isObj('text') ? ' active' : '')} data-misc="text" title="Texte" onClick={() => pick({ kind: 'object', obj: 'text' })}>T</div>
+                  <div className={'misc-btn' + (isObj('handoff') ? ' active' : '')} data-misc="handoff" title="Main à main : le changement de porteur s’applique au schéma suivant" style={{ fontFamily: 'Arial,sans-serif', fontWeight: 900 }} onClick={() => pick({ kind: 'object', obj: 'handoff' })}>H</div>
+                  <div className={'misc-btn' + (isObj('freedraw') ? ' active' : '')} data-misc="freedraw" title="Dessin libre" onClick={() => pick({ kind: 'object', obj: 'freedraw' })}>✎</div>
+                </div>
               </div>
 
-              <div style={{ marginTop: '.85rem', display: 'flex', flexDirection: 'column', gap: '.4rem' }}>
-                <button className="btn btn-outline btn-block btn-small" id="courtToggleBtn" style={{ textAlign: 'center', fontWeight: 600 }} onClick={toggleCourt}>
-                  🏟 Terrain : {courtType === 'half' ? 'Demi' : 'Complet'}
-                </button>
-
-                <button
-                  className="btn btn-outline btn-block btn-small"
-                  id="courtColorsBtn"
-                  style={{ textAlign: 'center', fontWeight: 700, borderColor: 'var(--or, #D4A24C)' }}
-                  onClick={() => setCourtStyleOpen(true)}
-                >
-                  🎨 Couleurs du terrain
-                </button>
-
-                <button
-                  className="btn btn-outline btn-block btn-small"
-                  id="courtBrandingBtn"
-                  style={{ textAlign: 'center', fontWeight: 700, borderColor: 'var(--or, #D4A24C)' }}
-                  onClick={() => setCourtBrandingOpen(true)}
-                >
-                  ✨ Personnaliser le terrain
-                </button>
-
-                <button
-                  type="button"
-                  className="btn btn-outline btn-block btn-small"
-                  id="courtResetBtn"
-                  style={{ textAlign: 'center', fontWeight: 700 }}
-                  onClick={resetCourtAppearance}
-                  title="Restaurer les couleurs, le logo et le texte d'origine du terrain"
-                >
-                  ↺ Réinitialiser le terrain
-                </button>
-
-                <button className="btn btn-red btn-block btn-small" id="delSelectedBtn" onClick={deleteSelected}>🗑 Supprimer sélection</button>
-                <button className="btn btn-outline btn-block btn-small" id="dupSelectedBtn" onClick={duplicateSelected}>⎘ Dupliquer</button>
-                <label style={{ fontSize: '.72rem', color: 'var(--gris-text)', textTransform: 'uppercase', letterSpacing: '.04em', marginTop: '.25rem' }}>Couleur de la sélection</label>
-                <input
-                  key={`shape-color-${current}-${selectedObjectId}-${selectedObjectColor}`}
-                  type="color"
-                  id="colorPicker"
-                  defaultValue={selectedObjectColor}
-                  disabled={!selectedObjectId}
-                  onChange={(e) => {
-                    const c = e.target.value;
-                    if (!selection.length) return;
-                    pushHistory();
-                    const has = (t: string, id: string) => selection.some((s) => s.type === t && s.id === id);
-                    setPhases((prev) => prev.map((p, i) => (i === current ? {
-                      ...p,
-                      players: p.players.map((z) => (has('player', z.id) ? { ...z, color: c } : z)),
-                      objects: p.objects.map((z) => (has('object', z.id) ? { ...z, color: c } : z)),
-                    } : p)));
-                  }}
-                  style={{
-                    width: '100%',
-                    height: 32,
-                    cursor: selectedObjectId ? 'pointer' : 'not-allowed',
-                    opacity: selectedObjectId ? 1 : 0.45,
-                  }}
-                />
-
-                <label style={{ fontSize: '.72rem', color: 'var(--gris-text)', textTransform: 'uppercase', letterSpacing: '.04em', marginTop: '.25rem' }}>Taille des formes sélectionnées</label>
-                <input
-                  type="range"
-                  min="0.05"
-                  max="10"
-                  step="0.05"
-                  defaultValue="1"
-                  disabled={!selection.some((s) => s.type === 'object')}
-                  onChange={(e) => {
-                    const size = Number(e.target.value);
-                    if (!selection.some((s) => s.type === 'object')) return;
-                    const has = (id: string) => selection.some((s) => s.type === 'object' && s.id === id);
-                    setPhases((prev) => prev.map((p, i) => (i === current ? {
-                      ...p,
-                      objects: p.objects.map((z) => (has(z.id) ? { ...z, size } : z)),
-                    } : p)));
-                  }}
-                  onPointerDown={() => pushHistory()}
-                  style={{ width: '100%', cursor: selection.some((s) => s.type === 'object') ? 'pointer' : 'not-allowed' }}
-                />
-                <div style={{ display: 'flex', gap: '.35rem' }}>
-                  <button className="btn btn-outline btn-small" style={{ flex: 1 }} onClick={() => rotateSelected(-15)}>↺ -15°</button>
-                  <button className="btn btn-outline btn-small" style={{ flex: 1 }} onClick={() => rotateSelected(15)}>↻ +15°</button>
+              <div className="right-card right-card-settings">
+                <div className="right-card-title"><span>⚙️</span> Terrain & sélection</div>
+                <div className="right-settings-stack">
+                  <button className="btn btn-outline btn-block btn-small" id="courtToggleBtn" onClick={toggleCourt}>🏟 Terrain : {courtType === 'half' ? 'Demi' : 'Complet'}</button>
+                  <button className="btn btn-outline btn-block btn-small" id="courtColorsBtn" onClick={() => setCourtStyleOpen(true)}>🎨 Couleurs du terrain</button>
+                  <button className="btn btn-outline btn-block btn-small" id="courtBrandingBtn" onClick={() => setCourtBrandingOpen(true)}>✨ Personnaliser le terrain</button>
+                  <button type="button" className="btn btn-outline btn-block btn-small" id="courtResetBtn" onClick={resetCourtAppearance} title="Restaurer les couleurs, le logo et le texte d'origine du terrain">↺ Réinitialiser le terrain</button>
+                  <div className="selection-actions-row">
+                    <button className="btn btn-red btn-small" id="delSelectedBtn" onClick={deleteSelected}>🗑 Supprimer</button>
+                    <button className="btn btn-outline btn-small" id="dupSelectedBtn" onClick={duplicateSelected}>⎘ Dupliquer</button>
+                  </div>
+                  <label className="settings-label">Couleur de la sélection</label>
+                  <input
+                    key={`shape-color-${current}-${selectedObjectId}-${selectedObjectColor}`}
+                    type="color"
+                    id="colorPicker"
+                    defaultValue={selectedObjectColor}
+                    disabled={!selectedObjectId}
+                    onChange={(e) => {
+                      const c = e.target.value;
+                      if (!selection.length) return;
+                      pushHistory();
+                      const has = (t: string, id: string) => selection.some((s) => s.type === t && s.id === id);
+                      setPhases((prev) => prev.map((p, i) => (i === current ? {
+                        ...p,
+                        players: p.players.map((z) => (has('player', z.id) ? { ...z, color: c } : z)),
+                        objects: p.objects.map((z) => (has('object', z.id) ? { ...z, color: c } : z)),
+                      } : p)));
+                    }}
+                    style={{ width: '100%', height: 40, cursor: selectedObjectId ? 'pointer' : 'not-allowed', opacity: selectedObjectId ? 1 : 0.45 }}
+                  />
+                  <label className="settings-label">Taille des formes sélectionnées</label>
+                  <input
+                    type="range"
+                    min="0.05"
+                    max="10"
+                    step="0.05"
+                    defaultValue="1"
+                    disabled={!selection.some((s) => s.type === 'object')}
+                    onChange={(e) => {
+                      const size = Number(e.target.value);
+                      if (!selection.some((s) => s.type === 'object')) return;
+                      const has = (id: string) => selection.some((s) => s.type === 'object' && s.id === id);
+                      setPhases((prev) => prev.map((p, i) => (i === current ? {
+                        ...p,
+                        objects: p.objects.map((z) => (has(z.id) ? { ...z, size } : z)),
+                      } : p)));
+                    }}
+                    onPointerDown={() => pushHistory()}
+                    style={{ width: '100%', cursor: selection.some((s) => s.type === 'object') ? 'pointer' : 'not-allowed' }}
+                  />
+                  <div className="selection-actions-row">
+                    <button className="btn btn-outline btn-small" onClick={() => rotateSelected(-15)}>↺ -15°</button>
+                    <button className="btn btn-outline btn-small" onClick={() => rotateSelected(15)}>↻ +15°</button>
+                  </div>
                 </div>
               </div>
             </aside>
@@ -5060,10 +5040,10 @@ html{font-size:15px}
 .ed-icn-btn:hover{background:rgba(255,255,255,.1)}
 .ed-save{background:var(--or);color:var(--bordeaux-d);padding:.45rem 1.1rem;border-radius:6px;font-weight:700;font-size:.85rem;display:flex;align-items:center;gap:.4rem;cursor:pointer}
 .ed-save:hover{background:var(--or-l)}
-.ed-layout{display:grid;grid-template-columns:minmax(170px,200px) minmax(0,1fr) minmax(200px,240px);min-height:calc(100vh - 180px)}
-.ed-left,.ed-right{background:var(--blanc);padding:.7rem;overflow-y:auto;max-height:calc(100vh - 160px);min-width:0}
+.ed-layout{display:grid;grid-template-columns:minmax(190px,220px) minmax(0,1fr) minmax(310px,350px);min-height:calc(100vh - 180px);gap:0}
+.ed-left,.ed-right{background:#f8f5f0;padding:.8rem;overflow-y:auto;max-height:calc(100vh - 160px);min-width:0}
 .ed-left{border-right:1px solid var(--gris-med)}
-.ed-right{border-left:1px solid var(--gris-med)}
+.ed-right{border-left:1px solid #e4ddd5;display:flex;flex-direction:column;gap:.75rem}
 .ed-tabs{display:flex;border-bottom:2px solid var(--gris-med);margin-bottom:.7rem}
 .ed-tab{padding:.4rem .7rem;font-weight:700;font-size:.82rem;color:var(--gris-text);cursor:pointer;border-bottom:3px solid transparent;margin-bottom:-2px}
 .ed-tab.active{color:var(--bordeaux);border-bottom-color:var(--bordeaux)}
@@ -5112,6 +5092,43 @@ html{font-size:15px}
 .tl-progress-bar{height:100%;background:var(--or);border-radius:4px;width:0;transition:width .1s linear}
 .tl-status{font-size:.78rem;opacity:.85;font-family:monospace;min-width:90px;text-align:right}
 .ed-hint{font-size:.7rem;color:var(--gris-text);margin-bottom:.85rem;padding:.4rem .55rem;background:var(--gris-bg);border-radius:4px;line-height:1.4}
+
+
+/* ---------- Refonte visuelle intérieure Plaquette ---------- */
+.right-card{background:#fff;border:1px solid #e7e0d8;border-radius:14px;padding:.75rem;box-shadow:0 4px 14px rgba(15,15,18,.055)}
+.right-card-title{display:flex;align-items:center;gap:.45rem;font-weight:900;font-size:.9rem;margin-bottom:.7rem;color:#191919}
+.right-card-title>span{font-size:1rem}
+.players-row-main{grid-template-columns:repeat(5,1fr);gap:.45rem;margin-bottom:.45rem}
+.players-row-main .pl-btn{min-height:43px;font-size:.82rem;border-width:1.5px}
+.player-mode-row{display:grid;grid-template-columns:1fr 1fr 1fr;gap:.4rem;margin-top:.65rem}
+.player-role-btn{min-height:54px;border:1.5px solid #ddd7d0;background:#fff;border-radius:10px;display:flex;align-items:center;justify-content:center;gap:.35rem;flex-direction:column;font-size:.72rem;font-weight:800;cursor:pointer;transition:.15s;color:#222}
+.player-role-btn:hover{border-color:var(--bordeaux);transform:translateY(-1px)}
+.player-role-btn.active{border-color:var(--or);box-shadow:0 0 0 2px rgba(212,162,76,.28)}
+.player-role-icon{font-size:1.45rem;line-height:1}
+.player-role-att{color:var(--bordeaux)}
+.player-role-def{color:#148aac;font-size:1.6rem}
+.coach-avatar{position:relative;width:28px;height:28px;display:inline-flex;align-items:flex-end;justify-content:center;color:#111}
+.coach-head{font-size:1.35rem;line-height:1;position:absolute;bottom:0}
+.coach-cap{font-size:1rem;line-height:1;position:absolute;top:-1px;right:1px;transform:rotate(-8deg);z-index:2}
+.actions-grid-large{grid-template-columns:repeat(3,1fr);gap:.45rem;margin-bottom:0}
+.actions-grid-large .act-btn{min-height:64px;border:1.5px solid #ded8d2;background:#fff!important;color:#161616;border-radius:10px;padding:.45rem;display:flex;flex-direction:column;justify-content:center;gap:.25rem;font-size:.7rem;font-weight:700;text-align:center}
+.actions-grid-large .act-btn:hover{border-color:var(--bordeaux);background:rgba(107,26,44,.04)!important}
+.actions-grid-large .act-btn.active{background:rgba(212,162,76,.18)!important;border-color:var(--or);color:#161616;box-shadow:0 0 0 2px rgba(212,162,76,.22)}
+.actions-grid-large .act-btn .icn{font-size:1.35rem;color:#111;line-height:1.05}
+.misc-grid-large{grid-template-columns:repeat(4,1fr);gap:.45rem}
+.misc-grid-large .misc-btn{min-height:58px;aspect-ratio:auto;border-radius:10px;font-size:1.25rem;background:#fff;border-color:#ded8d2}
+.misc-grid-large .misc-btn:hover{border-color:var(--bordeaux);transform:translateY(-1px)}
+.misc-grid-large .misc-btn.active{background:rgba(212,162,76,.18);border-color:var(--or);box-shadow:0 0 0 2px rgba(212,162,76,.18)}
+.right-settings-stack{display:flex;flex-direction:column;gap:.45rem}
+.right-settings-stack .btn{min-height:40px;border-radius:10px;font-weight:700;font-size:.76rem}
+.selection-actions-row{display:grid;grid-template-columns:1fr 1fr;gap:.4rem}
+.settings-label{font-size:.7rem;color:var(--gris-text);text-transform:uppercase;letter-spacing:.04em;margin-top:.15rem;font-weight:700}
+.ed-canvas-wrap{padding:1rem 1.25rem;background:#f2eee8}
+#playCanvas[data-court="full"]{max-width:500px}
+@media (min-width:1400px){
+  .ed-layout{grid-template-columns:220px minmax(0,1fr) 360px}
+  #playCanvas[data-court="full"]{max-width:540px}
+}
 
 @media (max-width:900px){
   .ed-layout{grid-template-columns:1fr}
