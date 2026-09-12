@@ -5,7 +5,7 @@ import {
 } from "@/lib/institutionnel/sport-access-server";
 
 const PLAYER_SELECT =
-  "id,structure_id,first_name,last_name,birthdate,sex,email,phone,photo_url,club_name,category,status,archived,height_cm,profile_data,updated_at";
+  "id,structure_id,first_name,last_name,birthdate,sex,email,phone,photo_url,club_name,category,status,archived,height_cm,weight_kg,wingspan_cm,father_height_cm,mother_height_cm,school,class_name,position_primary,position_secondary,dominant_hand,license_number,tutor1_phone,tutor1_email,tutor2_phone,tutor2_email,profile_data,updated_at";
 
 function clean(value: unknown) {
   const text = String(value ?? "").trim();
@@ -86,11 +86,45 @@ export async function POST(req: Request) {
   const ctx = await actor(structureId);
   if ("error" in ctx) return ctx.error;
 
-  if (action === "convert_referral") {
+  if (action === "mark_referral_reviewing") {
     const referralId = String(body.referralId || "");
-    if (!referralId) {
-      return NextResponse.json({ error: "Signalement manquant" }, { status: 400 });
-    }
+    const q = await ctx.admin
+      .from("institutional_player_referrals")
+      .update({ status: "reviewing", updated_at: new Date().toISOString() })
+      .eq("id", referralId)
+      .eq("structure_id", structureId)
+      .is("converted_player_id", null);
+    if (q.error) return NextResponse.json({ error: q.error.message }, { status: 400 });
+    return NextResponse.json({ ok: true });
+  }
+
+  if (action === "reject_referral" || action === "dismiss_referral") {
+    const referralId = String(body.referralId || "");
+    const q = await ctx.admin
+      .from("institutional_player_referrals")
+      .update({ status: "rejected", updated_at: new Date().toISOString() })
+      .eq("id", referralId)
+      .eq("structure_id", structureId)
+      .is("converted_player_id", null);
+    if (q.error) return NextResponse.json({ error: q.error.message }, { status: 400 });
+    return NextResponse.json({ ok: true });
+  }
+
+  if (action === "restore_referral") {
+    const referralId = String(body.referralId || "");
+    const q = await ctx.admin
+      .from("institutional_player_referrals")
+      .update({ status: "reviewing", updated_at: new Date().toISOString() })
+      .eq("id", referralId)
+      .eq("structure_id", structureId)
+      .is("converted_player_id", null);
+    if (q.error) return NextResponse.json({ error: q.error.message }, { status: 400 });
+    return NextResponse.json({ ok: true });
+  }
+
+  if (action === "validate_referral" || action === "convert_referral") {
+    const referralId = String(body.referralId || "");
+    if (!referralId) return NextResponse.json({ error: "Signalement manquant" }, { status: 400 });
 
     const { data: referral, error: referralError } = await ctx.admin
       .from("institutional_player_referrals")
@@ -100,12 +134,10 @@ export async function POST(req: Request) {
       .maybeSingle();
 
     if (referralError || !referral) {
-      return NextResponse.json(
-        { error: referralError?.message || "Signalement introuvable" },
-        { status: 404 }
-      );
+      return NextResponse.json({ error: referralError?.message || "Signalement introuvable" }, { status: 404 });
     }
 
+    // Un signalement validé ne crée jamais deux fiches.
     if (referral.converted_player_id) {
       const existing = await ctx.admin
         .from("institutional_players")
@@ -113,9 +145,7 @@ export async function POST(req: Request) {
         .eq("id", referral.converted_player_id)
         .eq("structure_id", structureId)
         .maybeSingle();
-      if (existing.data) {
-        return NextResponse.json({ ok: true, player: existing.data, reused: true });
-      }
+      if (existing.data) return NextResponse.json({ ok: true, player: existing.data, reused: true });
     }
 
     const duplicate = await ctx.admin
@@ -129,38 +159,41 @@ export async function POST(req: Request) {
     if (duplicate.data) {
       await ctx.admin
         .from("institutional_player_referrals")
-        .update({
-          status: "converted",
-          converted_player_id: duplicate.data.id,
-          updated_at: new Date().toISOString(),
-        })
+        .update({ status: "validated", converted_player_id: duplicate.data.id, updated_at: new Date().toISOString() })
         .eq("id", referralId);
       return NextResponse.json({ ok: true, player: duplicate.data, reused: true });
     }
 
     const firstName = clean(referral.first_name) || "À identifier";
-    const lastName =
-      clean(referral.last_name) ||
-      (clean(referral.jersey_number)
-        ? `Joueur #${clean(referral.jersey_number)}`
-        : "Joueur signalé");
-
+    const lastName = clean(referral.last_name) || (clean(referral.jersey_number) ? `Joueur #${clean(referral.jersey_number)}` : "Joueur signalé");
     const profileData = {
       sourceReferralId: referral.id,
       origin: "referral",
       lifecycle: {
-        workflowStatus: "reviewing",
-        createdFromReferralAt: new Date().toISOString(),
+        workflowStatus: "validated",
+        validatedAt: new Date().toISOString(),
+        validatedBy: ctx.user.id,
       },
+      // Même socle d'informations que la création d'un joueur dans Mes équipes.
       position: null,
+      secondaryPosition: null,
       jerseyNumber: referral.jersey_number || null,
       jerseyColor: referral.jersey_color || null,
+      licenseNumber: null,
+      nationality: null,
+      school: null,
+      className: null,
+      weight: null,
+      dominantHand: null,
+      guardian1Phone: null,
+      guardian1Email: null,
+      guardian2Phone: null,
+      guardian2Email: null,
       observations: referral.reason || null,
+      provenance: `Signalement du ${new Date(referral.created_at).toLocaleDateString("fr-FR")}`,
       referralSnapshot: referral,
     };
 
-    // Une fiche « À étudier » est déjà la vraie ligne joueur. Elle reste masquée
-    // des autres modules grâce à archived=true jusqu'à validation.
     const created = await ctx.admin
       .from("institutional_players")
       .insert({
@@ -171,24 +204,28 @@ export async function POST(req: Request) {
         club_name: referral.club_name || null,
         category: referral.category || null,
         status: "followed",
-        archived: true,
+        archived: false,
+        position_primary: null,
+        position_secondary: null,
+        dominant_hand: null,
+        license_number: null,
+        school: null,
+        class_name: null,
+        tutor1_phone: null,
+        tutor1_email: null,
+        tutor2_phone: null,
+        tutor2_email: null,
         profile_data: profileData,
         created_by: ctx.user.id,
       })
       .select(PLAYER_SELECT)
       .single();
 
-    if (created.error) {
-      return NextResponse.json({ error: created.error.message }, { status: 400 });
-    }
+    if (created.error) return NextResponse.json({ error: created.error.message }, { status: 400 });
 
     const linked = await ctx.admin
       .from("institutional_player_referrals")
-      .update({
-        status: "converted",
-        converted_player_id: created.data.id,
-        updated_at: new Date().toISOString(),
-      })
+      .update({ status: "validated", converted_player_id: created.data.id, updated_at: new Date().toISOString() })
       .eq("id", referral.id);
 
     if (linked.error) {
@@ -197,17 +234,6 @@ export async function POST(req: Request) {
     }
 
     return NextResponse.json({ ok: true, player: created.data });
-  }
-
-  if (action === "dismiss_referral") {
-    const referralId = String(body.referralId || "");
-    const q = await ctx.admin
-      .from("institutional_player_referrals")
-      .update({ status: "dismissed", updated_at: new Date().toISOString() })
-      .eq("id", referralId)
-      .eq("structure_id", structureId);
-    if (q.error) return NextResponse.json({ error: q.error.message }, { status: 400 });
-    return NextResponse.json({ ok: true });
   }
 
   const playerId = String(body.playerId || "");
@@ -235,12 +261,25 @@ export async function POST(req: Request) {
     const patch = body.player || {};
     const previousStatus = lifecycle(oldProfile, Boolean(current.data.archived));
     const nextStatus = action === "validate_player" ? "validated" : previousStatus;
+    const profileExtra = patch.profile_extra && typeof patch.profile_extra === "object" ? patch.profile_extra : {};
     const nextProfile = {
       ...oldProfile,
-      position: clean(patch.position),
-      jerseyNumber: clean(patch.jersey_number),
-      jerseyColor: clean(patch.jersey_color),
-      observations: clean(patch.observations),
+      ...profileExtra,
+      position: clean(patch.position) ?? oldProfile.position ?? null,
+      secondaryPosition: clean(patch.secondary_position) ?? oldProfile.secondaryPosition ?? null,
+      jerseyNumber: clean(patch.jersey_number) ?? oldProfile.jerseyNumber ?? null,
+      jerseyColor: clean(patch.jersey_color) ?? oldProfile.jerseyColor ?? null,
+      licenseNumber: clean(patch.license_number) ?? oldProfile.licenseNumber ?? null,
+      nationality: clean(patch.nationality) ?? oldProfile.nationality ?? null,
+      school: clean(patch.school) ?? oldProfile.school ?? null,
+      className: clean(patch.class_name) ?? oldProfile.className ?? null,
+      weight: clean(patch.weight_kg ?? patch.weight) ?? oldProfile.weight ?? null,
+      dominantHand: clean(patch.dominant_hand) ?? oldProfile.dominantHand ?? null,
+      guardian1Phone: clean(patch.tutor1_phone ?? patch.guardian1_phone) ?? oldProfile.guardian1Phone ?? null,
+      guardian1Email: clean(patch.tutor1_email ?? patch.guardian1_email) ?? oldProfile.guardian1Email ?? null,
+      guardian2Phone: clean(patch.tutor2_phone ?? patch.guardian2_phone) ?? oldProfile.guardian2Phone ?? null,
+      guardian2Email: clean(patch.tutor2_email ?? patch.guardian2_email) ?? oldProfile.guardian2Email ?? null,
+      observations: clean(patch.observations) ?? oldProfile.observations ?? null,
       provenance: clean(patch.provenance) || oldProfile.provenance || null,
       lifecycle: {
         ...(oldProfile.lifecycle || {}),
@@ -268,6 +307,20 @@ export async function POST(req: Request) {
         sex: clean(patch.sex),
         photo_url: clean(patch.photo_url),
         height_cm: numberOrNull(patch.height_cm),
+        weight_kg: numberOrNull(patch.weight_kg ?? patch.weight),
+        wingspan_cm: numberOrNull(patch.wingspan_cm),
+        father_height_cm: numberOrNull(patch.father_height_cm),
+        mother_height_cm: numberOrNull(patch.mother_height_cm),
+        school: clean(patch.school),
+        class_name: clean(patch.class_name),
+        position_primary: clean(patch.position),
+        position_secondary: clean(patch.secondary_position),
+        dominant_hand: clean(patch.dominant_hand),
+        license_number: clean(patch.license_number),
+        tutor1_phone: clean(patch.tutor1_phone ?? patch.guardian1_phone),
+        tutor1_email: clean(patch.tutor1_email ?? patch.guardian1_email),
+        tutor2_phone: clean(patch.tutor2_phone ?? patch.guardian2_phone),
+        tutor2_email: clean(patch.tutor2_email ?? patch.guardian2_email),
         profile_data: nextProfile,
         archived: action === "validate_player" ? false : current.data.archived,
         updated_at: new Date().toISOString(),

@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import PlayerForm from "@/components/equipes/PlayerForm";
 import type { Player as MyBasketPlayer } from "@/types/player";
+import InstitutionalSelectionOperations from "@/components/institutionnel/InstitutionalSelectionOperations";
 
 type InstitutionalPlayer = {
   id: string;
@@ -14,6 +15,9 @@ type InstitutionalPlayer = {
   linked_user_id: string | null;
   photo_url?: string | null;
   profile_data?: Record<string, unknown> | null;
+  email?: string | null;
+  tutor1_email?: string | null;
+  tutor2_email?: string | null;
 };
 
 type SecondaryTeam = {
@@ -619,6 +623,8 @@ export default function InstitutionalSelectionsManager({
               <div className="empty">Aucun joueur dans cette sélection.</div>
             )}
           </div>
+
+          <InstitutionalSelectionOperations structureId={structureId} selection={current} />
         </section>
       )}
 

@@ -17,14 +17,14 @@ import InstitutionalBrandingSettings from "@/components/institutionnel/Instituti
 import PoleExitDossiers from "@/components/institutionnel/PoleExitDossiers";
 
 type Structure={id:string;structure_type:"committee"|"league"|"federation"|"pole";name:string;short_name:string|null;season_label:string|null;city:string|null;email:string|null;logo_url?:string|null;document_primary_color?:string|null;document_secondary_color?:string|null};
-const TABS=["Dashboard","Joueurs","Dossiers de sortie","Formation des cadres","Calendrier","Documents","Communication","Ressources","Membres & droits","Paramètres"] as const;
+const TABS=["Dashboard","Joueurs","Dossiers de sortie","Formation des cadres","Mon calendrier","Documents","Communication","Ressources","Membres & droits","Paramètres"] as const;
 type Tab=(typeof TABS)[number];
 const META:Record<Tab,{icon:string;title:string;subtitle:string}>={
  Dashboard:{icon:"▦",title:"Dashboard",subtitle:"Pilote l’activité de ton Institution depuis un seul espace."},
  Joueurs:{icon:"♙",title:"Joueurs",subtitle:"Effectif, convocations, présences, détection et parcours longitudinal."},
  "Dossiers de sortie":{icon:"⇧",title:"Dossiers de sortie",subtitle:"Sélectionne les joueurs, compose les PDF et envoie les dossiers de fin de parcours."},
  "Formation des cadres":{icon:"⌂",title:"Formation des cadres",subtitle:"Promotions, inscrits, présence, documents et évaluations."},
- Calendrier:{icon:"▣",title:"Calendrier",subtitle:"Planning de la saison et rendez-vous de la structure."},
+ "Mon calendrier":{icon:"▣",title:"Mon calendrier",subtitle:"Tous les événements de l’Institution, avec catégories, couleurs, sélections et suivi."},
  Documents:{icon:"▤",title:"Documents",subtitle:"Documents générés, modèles et dossiers de la structure."},
  Communication:{icon:"✉",title:"Communication",subtitle:"Contacts et communications vers tous les publics."},
  Ressources:{icon:"◇",title:"Ressources",subtitle:"Bibliothèque de modèles et ressources de l’Institution."},
@@ -57,7 +57,7 @@ export default function InstitutionalWorkspace({structureId}:{structureId:string
      {tab==="Joueurs"&&<section className="surface"><InstitutionalPlayersHub structureId={structureId} structureType={structure.structure_type}/><div className="related"><h3>Ressources liées au parcours joueur</h3><InstitutionalResources structureId={structureId} compact categories={["Joueurs","PPF / Pôle","Sélection / Stage"]}/></div></section>}
      {tab==="Dossiers de sortie"&&structure.structure_type==="pole"&&<section className="surface"><PoleExitDossiers structureId={structureId}/></section>}
      {tab==="Formation des cadres"&&<section className="surface"><div className="sectionHead"><div><p>FORMATION DES CADRES</p><h2>Formations, inscrits et dossiers</h2><span>La promotion est la source unique : dossier, cotisation, présence, documents, évaluation et communications.</span></div><Link href="/formation/gestion">Vue plein écran →</Link></div><TrainingManager institutionId={structureId}/></section>}
-     {tab==="Calendrier"&&<InstitutionalCalendarHub structureId={structureId} onGoTraining={()=>go("Formation des cadres")} onGoPlayers={()=>go("Joueurs")}/>} 
+     {tab==="Mon calendrier"&&<InstitutionalCalendarHub structureId={structureId} onGoTraining={()=>go("Formation des cadres")} onGoPlayers={()=>go("Joueurs")}/>} 
      {tab==="Documents"&&<InstitutionalDocumentCenter structureId={structureId} go={go}/>} 
      {tab==="Communication"&&<section className="surface"><div className="sectionHead"><div><p>COMMUNICATION</p><h2>Tous les publics au même endroit</h2><span>Annuaire, joueurs et candidats de formation sont récupérés automatiquement.</span></div></div><InstitutionalCommunicationCenter structureId={structureId}/></section>}
      {tab==="Ressources"&&<section className="surface"><div className="sectionHead"><div><p>CENTRE DE RESSOURCES</p><h2>Bibliothèque de modèles Institution</h2><span>Les modèles sont réutilisables ; les documents nominatifs sont générés depuis le joueur ou la formation.</span></div></div><InstitutionalResources structureId={structureId}/></section>}

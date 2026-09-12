@@ -102,14 +102,15 @@ export default function InstitutionalPlayersHub({
       )}
 
       <style jsx>{`
-        .iph{display:grid;gap:12px}
-        .iphHead{display:flex;justify-content:space-between;gap:12px;align-items:flex-start}
-        .iphHead p{margin:0;color:#d4a24c;font-size:.68rem;font-weight:1000;letter-spacing:.12em}
-        .iphHead h2{margin:3px 0;color:#251a1b}
-        .iphHead span{color:#7f7169}
-        .iphTabs{display:flex;gap:6px;overflow:auto;border-bottom:1px solid #eadfd8;padding-bottom:8px}
-        .iphTabs button{white-space:nowrap;border:1px solid #e1d4cd;background:#fff;color:#6b1a2c;border-radius:999px;padding:8px 12px;font-weight:900;cursor:pointer}
-        .iphTabs button.on{background:#6b1a2c;color:#fff;border-color:#6b1a2c}
+        .iph{display:grid;gap:22px;padding-bottom:30px}
+        .iphHead{display:flex;justify-content:space-between;gap:18px;align-items:flex-start;padding:24px 26px;background:linear-gradient(135deg,#fff,#fff9f3);border:1px solid #eadfd8;border-radius:22px;box-shadow:0 10px 28px rgba(64,28,37,.035)}
+        .iphHead p{margin:0;color:#d4a24c;font-size:.69rem;font-weight:1000;letter-spacing:.13em}
+        .iphHead h2{margin:5px 0 7px;color:#4d1420;font-size:1.45rem}
+        .iphHead span{color:#7f7169;line-height:1.55;max-width:900px;display:block}
+        .iphTabs{display:flex;gap:8px;overflow:auto;padding:4px 2px 12px;border-bottom:1px solid #eadfd8}
+        .iphTabs button{white-space:nowrap;border:1px solid #e1d4cd;background:#fff;color:#6b1a2c;border-radius:999px;padding:10px 15px;font-weight:950;cursor:pointer;transition:.15s}
+        .iphTabs button:hover{border-color:#c99eaa;background:#fff8fa}
+        .iphTabs button.on{background:#6b1a2c;color:#fff;border-color:#6b1a2c;box-shadow:0 7px 17px rgba(107,26,44,.16)}
       `}</style>
     </div>
   );

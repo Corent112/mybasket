@@ -92,7 +92,7 @@ export async function GET(req: Request) {
   const { data, error } = await ctx.admin
     .from("institutional_players")
     .select(
-      "id,first_name,last_name,birthdate,sex,email,phone,photo_url,club_name,category,status,linked_user_id,profile_data"
+      "id,first_name,last_name,birthdate,sex,email,phone,photo_url,club_name,category,status,linked_user_id,tutor1_email,tutor2_email,profile_data"
     )
     .eq("structure_id", structureId)
     .eq("archived", false)

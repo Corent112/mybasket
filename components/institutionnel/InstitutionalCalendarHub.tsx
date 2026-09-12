@@ -18,6 +18,8 @@ type EventRow = {
   description?: string | null;
   source_type?: string | null;
   cohort_id?: string | null;
+  category_id?: string | null;
+  selection_id?: string | null;
 };
 
 type Cohort = {
@@ -43,6 +45,32 @@ type TrainingRange = {
   end: string;
   location: string | null;
 };
+
+type CalendarCategory = {
+  id: string;
+  name: string;
+  color: string;
+  description: string | null;
+  event_types: string[];
+};
+
+const CATEGORY_EVENT_TYPES = [
+  "Formation des cadres",
+  "Formation joueurs",
+  "Entraînement sélection",
+  "Stage",
+  "Match",
+  "Détection",
+  "Rassemblement",
+  "Réunion",
+  "Commission technique",
+  "Commission sportive",
+  "Commission MiniBasket",
+  "Arbitrage",
+  "3x3",
+  "Inclusion / ParaBasket",
+  "Autre",
+];
 
 type ResourceType =
   | "file"
@@ -81,6 +109,7 @@ type EventForm = {
   intervenant: string;
   description: string;
   cohort_id: string;
+  category_id: string;
 };
 
 const MONTHS = [
@@ -117,6 +146,7 @@ const blankEvent = (date: string): EventForm => ({
   intervenant: "",
   description: "",
   cohort_id: "",
+  category_id: "",
 });
 
 const RESOURCE_OPTIONS: {
@@ -211,14 +241,17 @@ export default function InstitutionalCalendarHub({
   const [resourceNote, setResourceNote] = useState("");
   const [resourceBusy, setResourceBusy] = useState(false);
   const [showPast, setShowPast] = useState(false);
+  const [categories, setCategories] = useState<CalendarCategory[]>([]);
+  const [showCategorySettings, setShowCategorySettings] = useState(false);
+  const [categoryForm, setCategoryForm] = useState({ name: "", color: "#D4A24C", description: "", event_types: [] as string[] });
 
   async function load() {
     setLoading(true);
-    const [a, b, c] = await Promise.all([
+    const [a, b, c, d] = await Promise.all([
       sb
         .from("institutional_events")
         .select(
-          "id,event_date,start_time,end_time,title,event_type,event_domain,location,intervenant,description,source_type,cohort_id",
+          "id,event_date,start_time,end_time,title,event_type,event_domain,location,intervenant,description,source_type,cohort_id,category_id,selection_id",
         )
         .eq("structure_id", structureId)
         .eq("archived", false)
@@ -238,6 +271,12 @@ export default function InstitutionalCalendarHub({
         )
         .eq("structure_id", structureId)
         .order("created_at"),
+      sb
+        .from("institutional_calendar_categories")
+        .select("id,name,color,description,event_types")
+        .eq("structure_id", structureId)
+        .eq("archived", false)
+        .order("name"),
     ]);
 
     if (a.error) console.error(a.error);
@@ -252,6 +291,7 @@ export default function InstitutionalCalendarHub({
     setEvents((a.data || []) as EventRow[]);
     setCohorts(loadedCohorts);
     setResources((c.data || []) as EventResource[]);
+    if (!d.error) setCategories(((d.data || []) as any[]).map((row) => ({ ...row, event_types: Array.isArray(row.event_types) ? row.event_types : [] })) as CalendarCategory[]);
 
     const cohortIds = loadedCohorts.map((item) => item.id);
     if (cohortIds.length) {
@@ -378,6 +418,7 @@ export default function InstitutionalCalendarHub({
       intervenant: e.intervenant || "",
       description: e.description || "",
       cohort_id: e.cohort_id || "",
+      category_id: e.category_id || "",
     });
   }
 
@@ -403,6 +444,7 @@ export default function InstitutionalCalendarHub({
         eventForm.event_domain === "training"
           ? eventForm.cohort_id || null
           : null,
+      category_id: eventForm.category_id || null,
       updated_at: new Date().toISOString(),
     };
     const q = eventForm.id
@@ -433,6 +475,34 @@ export default function InstitutionalCalendarHub({
     if (q.error) return alert(q.error.message);
     if (selectedEventId === e.id) setSelectedEventId(null);
     await load();
+  }
+
+  async function saveCategory() {
+    if (!categoryForm.name.trim()) return alert("Donne un nom à la catégorie.");
+    const { data: { user } } = await sb.auth.getUser();
+    if (!user) return;
+    const q = await sb.from("institutional_calendar_categories").insert({
+      structure_id: structureId,
+      name: categoryForm.name.trim(),
+      color: categoryForm.color,
+      description: categoryForm.description.trim() || null,
+      event_types: categoryForm.event_types,
+      created_by: user.id,
+    });
+    if (q.error) return alert(q.error.message);
+    setCategoryForm({ name: "", color: "#D4A24C", description: "", event_types: [] });
+    await load();
+  }
+
+  async function archiveCategory(id: string) {
+    if (!confirm("Retirer cette catégorie du calendrier ? Les événements existants restent conservés.")) return;
+    const q = await sb.from("institutional_calendar_categories").update({ archived: true, updated_at: new Date().toISOString() }).eq("id", id);
+    if (q.error) return alert(q.error.message);
+    await load();
+  }
+
+  function toggleCategoryType(type: string) {
+    setCategoryForm((v) => ({ ...v, event_types: v.event_types.includes(type) ? v.event_types.filter((x) => x !== type) : [...v.event_types, type] }));
   }
 
   function changeResourceType(type: ResourceType) {
@@ -627,19 +697,15 @@ export default function InstitutionalCalendarHub({
         </div>
 
         <div className="legend">
-          <span>
-            <i style={{ background: "#D4A24C" }} /> Formation globale
-          </span>
-          <span>
-            <i style={{ background: "#6B1A2C" }} /> Détection / sélection
-          </span>
-          <span>
-            <i style={{ background: "#2563EB" }} /> Réunion
-          </span>
-          <span>
-            <i style={{ background: "#64748B" }} /> Autre
-          </span>
+          <span><i style={{ background: "#D4A24C" }} /> Formation globale</span>
+          {categories.map((category) => <span key={category.id}><i style={{ background: category.color }} /> {category.name}</span>)}
+          <button className="categorySettingsButton" onClick={() => setShowCategorySettings((v) => !v)}>⚙ Couleurs & catégories</button>
         </div>
+
+        {showCategorySettings && <section className="categorySettings">
+          <div className="categoryIntro"><div><p>CATÉGORIES DU CALENDRIER</p><h4>Une couleur = une activité identifiable</h4><span>Crée par exemple Commission technique en jaune, puis coche Formation des cadres, Réunion technique… Tous les événements rattachés reprennent cette couleur.</span></div></div>
+          <div className="categoryColumns"><div className="categoryForm"><label>Nom<input placeholder="Commission technique" value={categoryForm.name} onChange={(e) => setCategoryForm((v) => ({ ...v, name: e.target.value }))} /></label><label>Couleur<div className="colorLine"><input type="color" value={categoryForm.color} onChange={(e) => setCategoryForm((v) => ({ ...v, color: e.target.value }))} /><input value={categoryForm.color} onChange={(e) => setCategoryForm((v) => ({ ...v, color: e.target.value }))} /></div></label><label>Description<textarea rows={3} placeholder="Ce qui correspond à cette catégorie…" value={categoryForm.description} onChange={(e) => setCategoryForm((v) => ({ ...v, description: e.target.value }))} /></label><div className="typeChoices"><b>Ce qui correspond à cette couleur</b>{CATEGORY_EVENT_TYPES.map((type) => <label key={type}><input type="checkbox" checked={categoryForm.event_types.includes(type)} onChange={() => toggleCategoryType(type)} /> {type}</label>)}</div><button className="primary" onClick={() => void saveCategory()}>+ Créer la catégorie</button></div><div className="categoryList">{categories.map((category) => <article key={category.id}><i style={{ background: category.color }} /><div><b>{category.name}</b><span>{category.description || "Sans description"}</span><small>{category.event_types.length ? category.event_types.join(" · ") : "Aucun type associé"}</small></div><button onClick={() => void archiveCategory(category.id)}>Retirer</button></article>)}{!categories.length && <div className="empty">Aucune catégorie personnalisée.</div>}</div></div>
+        </section>}
 
         {loading ? (
           <div className="empty">Chargement…</div>
@@ -704,7 +770,9 @@ export default function InstitutionalCalendarHub({
 
                   <div className="dayEvents">
                     {dayEvents.map((e) => {
-                      const c = color(e.event_type);
+                      const category = categories.find((x) => x.id === e.category_id);
+                      const fallback = color(e.event_type);
+                      const c = category ? { bg: category.color, fg: "#fff" } : fallback;
                       return (
                         <button
                           key={e.id}
@@ -1155,6 +1223,18 @@ export default function InstitutionalCalendarHub({
                 />
               </label>
               <label>
+                Catégorie / couleur
+                <select
+                  value={eventForm.category_id}
+                  onChange={(e) => setEventForm({ ...eventForm, category_id: e.target.value })}
+                >
+                  <option value="">Sans catégorie</option>
+                  {categories.map((category) => (
+                    <option key={category.id} value={category.id}>{category.name}</option>
+                  ))}
+                </select>
+              </label>
+              <label>
                 Lieu{" "}
                 <small style={{ fontWeight: 700, color: "#9a7d72" }}>
                   (facultatif)
@@ -1233,6 +1313,7 @@ export default function InstitutionalCalendarHub({
 
       <style jsx>{`
         .hub{display:grid;gap:14px}.createEventBar{display:flex;align-items:center;justify-content:space-between;gap:14px;background:#fff;border:1px solid #eadfd8;border-radius:16px;padding:12px 14px;box-shadow:0 8px 24px rgba(70,30,38,.05)}.createEventBar>div{display:grid;gap:2px}.createEventBar b{color:#4d1420;font-size:.9rem}.createEventBar span{color:#817379;font-size:.72rem}.createEventButton{font-size:.8rem;padding:11px 15px!important;white-space:nowrap}.eventSectionActions{display:flex;align-items:center;gap:10px;flex-wrap:wrap;justify-content:flex-end}.hub>section,.general{background:#fff;border:1px solid #eadfd8;border-radius:16px;padding:14px}.calHead,.sectionHead{display:flex;justify-content:space-between;gap:12px;align-items:flex-start}.calHead p,.sectionHead p{margin:0;color:#d4a24c;font-size:.66rem;font-weight:1000;letter-spacing:.12em}.calHead h3,.sectionHead h3{margin:3px 0;color:#4d1420}.calHead span,.sectionHead span{color:#817379;font-size:.76rem}.calActions{display:flex;gap:5px;flex-wrap:wrap;justify-content:flex-end}.ghost,.sectionHead button,.eventQuick button,.linked article>button{border:1px solid #d9c9c4;border-radius:9px;background:#fff;color:#6b1a2c;padding:8px 10px;font-weight:900;cursor:pointer}.primary{border:0!important;background:#6b1a2c!important;color:#fff!important;border-radius:9px;padding:9px 11px;font-weight:900;cursor:pointer}.legend{display:flex;gap:14px;flex-wrap:wrap;margin:12px 0 8px;font-size:.7rem;color:#74676b}.legend span{display:flex;align-items:center;gap:5px}.legend i{width:9px;height:9px;border-radius:50%}.calGrid{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:1px;background:#e8dfda;border:1px solid #e8dfda;border-radius:11px;overflow:hidden}.dow{background:#f7f2ef;text-align:center;padding:8px;font-size:.67rem;font-weight:1000;color:#6b1a2c}.cell{background:#fff;min-height:118px;padding:7px;min-width:0;overflow:visible}.cell.muted{background:#faf8f7}.cell.today{box-shadow:inset 0 0 0 2px #d4a24c}.cellTop{display:flex;justify-content:space-between;align-items:center;margin-bottom:5px}.cellTop>b{font-size:.72rem;color:#55464b}.cellTop button{border:0;background:transparent;color:#a68b82;font-size:1rem;cursor:pointer;padding:0 3px}.trainingBands{display:grid;gap:3px;margin-bottom:3px}.trainingBand{height:21px;border:0;background:#D4A24C;color:#2B2119;margin-left:-8px;margin-right:-8px;width:calc(100% + 16px);border-radius:0;padding:3px 7px;text-align:left;cursor:pointer;overflow:hidden;position:relative;z-index:2}.trainingBand span{display:block;font-size:.62rem;font-weight:1000;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.trainingBand.bandStart{margin-left:0;width:calc(100% + 8px);border-radius:7px 0 0 7px}.trainingBand.bandEnd{margin-right:0;width:calc(100% + 8px);border-radius:0 7px 7px 0}.trainingBand.bandStart.bandEnd{width:100%;margin:0;border-radius:7px}.dayEvents{display:grid;gap:3px}.event{border:0;border-radius:6px;padding:4px 5px;display:grid;grid-template-columns:32px minmax(0,1fr);gap:3px;text-align:left;cursor:pointer;min-width:0}.event small{font-size:.57rem;font-weight:1000}.event span{font-size:.61rem;font-weight:800;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.pastToggle{font-size:.72rem;font-weight:800;color:#6b1a2c;display:flex;align-items:center;gap:6px}.eventList{display:grid;gap:8px;margin-top:12px}.eventList>article{border:1px solid #eadfd8;border-radius:12px;display:grid;grid-template-columns:1fr auto;align-items:center;overflow:hidden;background:#fff}.eventList>article.trainingRow{border-color:#e2c17d;background:#fffdf8}.eventList>article.selected{border-color:#d4a24c;box-shadow:0 0 0 2px rgba(212,162,76,.12)}.eventMain{border:0;background:transparent;text-align:left;display:grid;grid-template-columns:56px minmax(0,1fr) 62px;gap:10px;align-items:center;padding:10px;cursor:pointer}.dateBox{width:52px;height:52px;border-radius:11px;background:#f8f1e8;display:grid;place-items:center;align-content:center;color:#6b1a2c}.trainingDateBox{background:#f7e9c8;color:#5b4218}.dateBox b{font-size:1.2rem;line-height:1}.dateBox span{text-transform:uppercase;font-size:.58rem;font-weight:1000;margin-top:3px}.eventCopy small,.eventCopy strong,.eventCopy span{display:block}.eventCopy small{color:#9a7d72;font-size:.66rem;font-weight:800;text-transform:capitalize}.eventCopy strong{color:#42131e;font-size:.9rem;margin:2px 0}.eventCopy span{color:#75676b;font-size:.7rem}.ready{text-align:center}.ready b{display:block;color:#6b1a2c}.ready small{font-size:.6rem;color:#8a787e}.openFormation b{font-size:1.2rem}.eventQuick{display:flex;gap:5px;padding-right:10px}.eventQuick .danger{color:#a02e43}.prepSection{border-color:#dbc9a4!important;background:linear-gradient(180deg,#fff,#fffcf7)!important}.eventDocsBuilder{margin-top:14px;border-top:1px solid #eadfd8;padding-top:14px;display:grid;gap:12px}.prepGrid{display:grid;grid-template-columns:minmax(280px,.8fr) 1.4fr;gap:12px;margin-top:12px}.addResource,.checklist{border:1px solid #eadfd8;border-radius:13px;padding:12px;background:#fff}.addResource h4,.checklist h4{margin:0 0 10px;color:#4d1420}.resourceTypes{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px}.resourceTypes button{display:flex;align-items:center;gap:6px;border:1px solid #e3d6d0;background:#fff;color:#5e4e53;border-radius:9px;padding:8px;text-align:left;font-weight:800;font-size:.7rem;cursor:pointer}.resourceTypes button.active{border-color:#6b1a2c;background:#fff5f7;color:#6b1a2c}.resourceTypes span{font-size:1rem}.addResource label{display:grid;gap:4px;margin-top:9px;font-size:.7rem;font-weight:900;color:#6b1a2c}.addResource input,.addResource textarea{border:1px solid #d9cbc5;border-radius:9px;padding:9px;font:inherit}.addResource textarea{min-height:86px;resize:vertical}.addActions{display:flex;gap:7px;justify-content:flex-end;margin-top:10px}.addActions button,.uploadBtn{border:0;border-radius:9px;background:#6b1a2c;color:#fff;padding:9px 10px;font-weight:900;font-size:.72rem;cursor:pointer}.uploadBtn{background:#fff;color:#6b1a2c;border:1px solid #d9c2c8}.checklist{display:grid;gap:7px;align-content:start}.checklist>article{display:grid;grid-template-columns:28px 36px minmax(0,1fr) auto 28px;gap:8px;align-items:center;border:1px solid #e9ded8;border-radius:10px;padding:8px}.checklist>article.done{background:#f4faf5;opacity:.78}.check{width:26px;height:26px;border:2px solid #cabcb6;background:#fff;border-radius:7px;color:#24653a;font-weight:1000;cursor:pointer}.done .check{background:#e3f4e7;border-color:#73a97f}.resIcon{width:34px;height:34px;border-radius:8px;background:#faf3ed;display:grid;place-items:center}.checklist b,.checklist small{display:block}.checklist b{font-size:.78rem;color:#4e2029}.checklist small{font-size:.65rem;color:#827378;margin-top:2px}.saved{font-size:.6rem;color:#44704f;font-weight:900}.open{border:0;background:#f5ecef;color:#6b1a2c;border-radius:7px;padding:6px 8px;font-size:.65rem;font-weight:900;cursor:pointer}.remove{border:0;background:transparent;color:#a43c4e;font-size:1.1rem;cursor:pointer}.linked{display:grid;gap:6px;margin-top:10px}.linked article{display:grid;grid-template-columns:210px minmax(0,1fr) auto;gap:10px;padding:9px;border:1px solid #eee3de;border-radius:10px;align-items:center}.linked time{font-weight:900;color:#6b1a2c}.linked b,.linked small{display:block}.linked small,.empty{color:#817379;font-size:.72rem}.advancedDetails{background:#fff;border:1px solid #eadfd8;border-radius:16px;overflow:hidden}.advancedDetails>summary{cursor:pointer;padding:13px 15px;color:#6b1a2c;font-weight:900;font-size:.78rem}.advancedDetails[open]>summary{border-bottom:1px solid #eadfd8}.advancedDetails .general{border:0;border-radius:0}.modal{position:fixed;inset:0;z-index:9999;background:rgba(27,13,17,.56);display:grid;place-items:center;padding:20px}.modal form{width:min(720px,100%);max-height:90vh;overflow:auto;background:#fff;border-radius:16px;padding:16px;box-shadow:0 25px 80px rgba(0,0,0,.25)}.modalHead{display:flex;justify-content:space-between;align-items:flex-start}.modalHead small{color:#b37a20;font-weight:1000;letter-spacing:.1em}.modalHead h3{margin:3px 0;color:#4d1420}.modalHead>button{border:1px solid #ddcfca;background:#fff;color:#6b1a2c;border-radius:8px;width:34px;height:34px;font-size:1.2rem;cursor:pointer}.fields{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:14px}.fields label{display:grid;gap:4px;font-size:.72rem;font-weight:900;color:#6b1a2c}.fields .wide{grid-column:1/-1}.fields input,.fields select,.fields textarea{border:1px solid #d8c9c2;border-radius:9px;padding:9px 10px;font:inherit;background:#fff}.fields textarea{min-height:90px;resize:vertical}.locationWarning{margin-top:12px;border:1px solid #efb5bd;background:#fff4f6;color:#9d1e34;border-radius:9px;padding:9px 11px;font-size:.72rem;font-weight:800}.modalActions{display:flex;justify-content:flex-end;gap:8px;margin-top:14px}.modalActions .ghost{padding:9px 11px}@media(max-width:900px){.prepGrid{grid-template-columns:1fr}.eventList>article{grid-template-columns:1fr}.eventQuick{padding:0 10px 10px;justify-content:flex-end}.linked article{grid-template-columns:1fr auto}.linked time{grid-column:1/-1}}@media(max-width:800px){.createEventBar{align-items:stretch;flex-direction:column}.createEventButton{width:100%}.eventSectionActions{justify-content:flex-start}.cell{min-height:92px;padding:4px}.trainingBand{margin-left:-5px;margin-right:-5px;width:calc(100% + 10px)}.trainingBand.bandStart,.trainingBand.bandEnd{width:calc(100% + 5px)}.event{grid-template-columns:1fr}.event small{display:none}.calHead,.sectionHead{flex-direction:column}.calActions{justify-content:flex-start}}@media(max-width:650px){.fields{grid-template-columns:1fr}.fields .wide{grid-column:auto}.eventMain{grid-template-columns:48px minmax(0,1fr)}.ready{display:none}.resourceTypes{grid-template-columns:1fr}.checklist>article{grid-template-columns:28px 34px minmax(0,1fr) 26px}.checklist .open,.checklist .saved{grid-column:3}.calGrid{overflow:auto;grid-template-columns:repeat(7,minmax(86px,1fr))}.calendarCard{overflow:hidden}.linked article{grid-template-columns:1fr}}
+        .categorySettingsButton{margin-left:auto;border:1px solid #daccc6;background:#fff;color:#6b1a2c;border-radius:999px;padding:7px 10px;font-weight:900;cursor:pointer}.categorySettings{margin:0 0 16px;border:1px solid #eadfd8;border-radius:16px;background:#fff;padding:16px}.categoryIntro p{margin:0;color:#b17a21;font-size:.68rem;font-weight:1000;letter-spacing:.12em}.categoryIntro h4{margin:3px 0;color:#4d1420}.categoryIntro span{color:#7d6e66;font-size:.76rem}.categoryColumns{display:grid;grid-template-columns:.9fr 1.1fr;gap:14px;margin-top:14px}.categoryForm{display:grid;gap:9px;padding:13px;border:1px solid #eadfd8;border-radius:13px;background:#faf8f6}.categoryForm>label{display:grid;gap:5px;color:#6b1a2c;font-weight:900;font-size:.72rem}.categoryForm input,.categoryForm textarea{border:1px solid #d9cbc5;border-radius:9px;padding:9px;font:inherit;min-width:0;background:#fff}.colorLine{display:grid;grid-template-columns:54px 1fr;gap:7px}.colorLine input[type=color]{padding:3px;height:42px}.typeChoices{display:grid;grid-template-columns:1fr 1fr;gap:5px;padding:10px;background:#fff;border:1px solid #e9dfda;border-radius:10px}.typeChoices>b{grid-column:1/-1;color:#4d1420;font-size:.74rem}.typeChoices label{display:flex;gap:6px;align-items:center;font-size:.7rem;color:#6f625d}.categoryList{display:grid;align-content:start;gap:7px}.categoryList article{display:grid;grid-template-columns:16px 1fr auto;gap:10px;align-items:start;padding:11px;border:1px solid #eadfd8;border-radius:12px}.categoryList article>i{width:16px;height:52px;border-radius:8px}.categoryList b,.categoryList span,.categoryList small{display:block}.categoryList b{color:#4d1420}.categoryList span{color:#766a65;font-size:.72rem;margin:2px 0}.categoryList small{color:#9b7a37;font-size:.67rem}.categoryList button{border:1px solid #e3c8c8;background:#fff;color:#9b2732;border-radius:8px;padding:6px 8px;font-weight:900}@media(max-width:850px){.categoryColumns{grid-template-columns:1fr}.typeChoices{grid-template-columns:1fr}}
       `}</style>
     </div>
   );
