@@ -5196,6 +5196,47 @@ html{font-size:15px}
 .coach-avatar{width:22px;height:22px}
 .coach-head{font-size:1rem}
 .coach-cap{font-size:.76rem;top:0;right:2px}
+
+/* ---------- Bloc Joueurs compact ---------- */
+.right-card-players{padding:.62rem .68rem}
+.right-card-players .right-card-title{margin-bottom:.48rem}
+.right-card-players .players-row-main{
+  display:grid;
+  grid-template-columns:repeat(5,32px);
+  gap:6px;
+  justify-content:start;
+  margin-bottom:6px;
+}
+.right-card-players .players-row-main .pl-btn{
+  width:32px;
+  height:32px;
+  min-height:32px;
+  max-width:32px;
+  font-size:.68rem;
+  border-width:1.5px;
+}
+.right-card-players #row-defense .pl-btn{font-size:.64rem}
+.right-card-players .player-mode-row{
+  display:grid;
+  grid-template-columns:repeat(3,minmax(0,1fr));
+  gap:6px;
+  margin-top:8px;
+}
+.right-card-players .player-role-btn{
+  min-height:34px;
+  padding:.2rem .3rem;
+  border-radius:8px;
+  flex-direction:row;
+  gap:.24rem;
+  font-size:.62rem;
+  white-space:nowrap;
+}
+.right-card-players .player-role-icon{font-size:.92rem}
+.right-card-players .player-role-def{font-size:1rem}
+.right-card-players .coach-avatar{width:18px;height:18px}
+.right-card-players .coach-head{font-size:.86rem}
+.right-card-players .coach-cap{font-size:.64rem;top:0;right:1px}
+
 @media (min-width:1400px){
   .ed-layout{grid-template-columns:220px minmax(0,1fr) 360px}
   #playCanvas[data-court="full"]{max-width:540px}
