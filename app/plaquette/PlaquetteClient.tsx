@@ -1646,13 +1646,7 @@ const currentRef = useRef(current);
       }
       case 'handoff': {
         const handoffColor = o.color || '#0F0F12';
-        // Le cercle est la vraie zone de déclenchement du main à main :
-        // les 2 attaquants qui entrent dans cette zone sont les 2 joueurs concernés.
-        ctx.strokeStyle = handoffColor;
-        ctx.lineWidth = Math.max(2, cs(canvas) * 0.003);
-        ctx.beginPath();
-        ctx.arc(0, 0, s * 2.65, 0, Math.PI * 2);
-        ctx.stroke();
+        // La zone de déclenchement reste volontairement invisible : seul le H est affiché.
         ctx.fillStyle = handoffColor;
         ctx.font = '700 ' + Math.round(s * 1.9) + "px Arial, sans-serif";
         ctx.fillText('H', 0, 0);
@@ -2291,7 +2285,9 @@ if (anim && anim.balls) {
     return phasePlayerPosAt(chosen, playerId, clock - chosen.start);
   };
 
-  // évènements ballon (passe/tir) sur la timeline globale, avec fenêtres absolues (action par action)
+  // évènements ballon (passe/tir/main à main) sur la timeline globale.
+  // Le main à main transfère réellement la possession au moment où les 2 attaquants
+  // entrent dans la zone logique (invisible) du H.
   const buildBallEvents = (sched: Sched[]) => {
     const evs: {
       src: string | null;
@@ -2327,6 +2323,97 @@ if (anim && anim.balls) {
       })
     );
 
+    const HANDOFF_NEAR_N = 0.085;
+    const handoffCandidates: { time: number; pair: [string, string] }[] = [];
+
+    sched.forEach((s) => {
+      const ph = phasesRef.current[s.idx];
+      if (!ph) return;
+      const attackers = ph.players.filter((p) => p.team === 'att' && !p.coach);
+
+      ph.objects
+        .filter((o) => o.kind === 'handoff')
+        .forEach((o) => {
+          // Recherche du premier instant où 2 attaquants sont simultanément dans la zone du H.
+          // 120 pas donnent un déclenchement fluide sans alourdir l'animation.
+          const steps = 120;
+          for (let step = 0; step <= steps; step += 1) {
+            const local = s.span * (step / steps);
+            const inside = attackers
+              .map((player) => {
+                const pos = phasePlayerPosAt(s, player.id, local) || { x: player.x, y: player.y };
+                return { id: player.id, distance: Math.hypot(pos.x - o.x, pos.y - o.y) };
+              })
+              .filter((entry) => entry.distance <= HANDOFF_NEAR_N)
+              .sort((a, b) => a.distance - b.distance);
+
+            if (inside.length >= 2) {
+              handoffCandidates.push({
+                time: s.start + local,
+                pair: [inside[0].id, inside[1].id],
+              });
+              break;
+            }
+          }
+        });
+    });
+
+    evs.sort((a, b) => a.wStart - b.wStart || a.wEnd - b.wEnd);
+    handoffCandidates.sort((a, b) => a.time - b.time);
+
+    // Porteurs au démarrage de la lecture. Ensuite on rejoue les passes/tirs déjà terminés
+    // et les main-à-main déjà déclenchés pour savoir QUI possède vraiment le ballon
+    // au moment de chaque rencontre autour du H.
+    const ownersAtStart = new Map<string, number>();
+    if (sched.length) {
+      const firstStart = Math.min(...sched.map((s) => s.start));
+      sched.forEach((s) => {
+        if (s.start !== firstStart) return;
+        phasesRef.current[s.idx].players.forEach((p) => {
+          const count = playerBallCount(p);
+          if (count > 0) ownersAtStart.set(p.id, Math.min(2, Math.max(ownersAtStart.get(p.id) || 0, count)));
+        });
+      });
+    }
+
+    const handoffEvents: typeof evs = [];
+
+    handoffCandidates.forEach((candidate) => {
+      const owners = new Map(ownersAtStart);
+
+      evs.forEach((e) => {
+        if (e.wEnd <= candidate.time) {
+          if (e.src) removeOwnerBall(owners, e.src);
+          if (!e.shoot && e.target) addOwnerBall(owners, e.target);
+        } else if (e.wStart <= candidate.time && candidate.time < e.wEnd) {
+          if (e.src) removeOwnerBall(owners, e.src);
+        }
+      });
+
+      handoffEvents.forEach((e) => {
+        if (e.wEnd <= candidate.time) {
+          if (e.src) removeOwnerBall(owners, e.src);
+          if (e.target) addOwnerBall(owners, e.target);
+        }
+      });
+
+      const [a, b] = candidate.pair;
+      const src = (owners.get(a) || 0) > 0 ? a : (owners.get(b) || 0) > 0 ? b : null;
+      if (!src) return;
+      const target = src === a ? b : a;
+
+      // Evènement instantané : dès la rencontre, le ballon quitte l'ancien porteur
+      // et apparaît uniquement sur le nouveau. Aucun ancien porteur ne le conserve.
+      handoffEvents.push({
+        src,
+        target,
+        shoot: false,
+        wStart: candidate.time,
+        wEnd: candidate.time,
+      });
+    });
+
+    evs.push(...handoffEvents);
     evs.sort((a, b) => a.wStart - b.wStart || a.wEnd - b.wEnd);
     return evs;
   };
@@ -3925,11 +4012,11 @@ const exportJson = () => {
     const newPhase: Phase = fin
       ? {
           players: fin.players,
-          objects: cur!.objects.map((o) =>
-            o.kind === 'handoff'
-              ? { ...o, sourcePlayerId: undefined, targetPlayerId: undefined }
-              : { ...o }
-          ),
+          // Le H et les textes sont propres au schéma courant : ils ne sont jamais
+          // recopiés automatiquement dans le schéma suivant.
+          objects: cur!.objects
+            .filter((o) => o.kind !== 'handoff' && o.kind !== 'text')
+            .map((o) => ({ ...o })),
           lines: [],
           notes: '',
           duration: 1.5,
