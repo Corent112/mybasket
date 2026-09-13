@@ -190,7 +190,7 @@ export default function Header() {
             </div>
 
             <Link href="/plaquette?new=1" onClick={resetPlaquette}>
-              PLAQUETTE
+              DESSIN
             </Link>
 
             <div className="nav-item">
