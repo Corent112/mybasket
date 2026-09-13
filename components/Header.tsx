@@ -1,7 +1,7 @@
 "use client";
 
-import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
 
 type HeaderUser = {
@@ -9,32 +9,41 @@ type HeaderUser = {
   email?: string | null;
 };
 
-const MAIN_LINKS = [
-  { href: "/annonces", label: "ANNONCES" },
-  { href: "/abonnements", label: "ABONNEMENTS" },
-  { href: "/boutique", label: "BOUTIQUE" },
-];
-
 export default function Header() {
   const supabase = useMemo(() => createClient(), []);
+
   const [user, setUser] = useState<HeaderUser | null>(null);
   const [cartCount, setCartCount] = useState(0);
   const [cartPulse, setCartPulse] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
+
   const previousCountRef = useRef(0);
   const pulseTimeoutRef = useRef<number | null>(null);
 
   const loadUser = useCallback(async () => {
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
+    try {
+      // Le header est présent partout : utiliser d'abord la session locale évite
+      // une requête auth réseau sur chaque page et à chaque retour de focus.
+      const { data: { session } } = await supabase.auth.getSession();
+      const sessionUser = session?.user ?? null;
 
-    setUser(user ? { id: user.id, email: user.email } : null);
-    return user;
+      if (sessionUser) {
+        setUser({ id: sessionUser.id, email: sessionUser.email });
+        return sessionUser;
+      }
+
+      setUser(null);
+      return null;
+    } catch (error) {
+      console.warn("Header auth indisponible:", error instanceof Error ? error.message : error);
+      setUser(null);
+      return null;
+    }
   }, [supabase]);
 
   const loadCartCount = useCallback(async () => {
-    const currentUser = await loadUser();
+    try {
+      const currentUser = await loadUser();
 
     if (!currentUser) {
       setCartCount(0);
@@ -50,6 +59,7 @@ export default function Header() {
 
     if (error) {
       console.error("Erreur chargement compteur panier:", error);
+      setCartCount(0);
       return;
     }
 
@@ -66,32 +76,46 @@ export default function Header() {
         window.clearTimeout(pulseTimeoutRef.current);
       }
 
-      pulseTimeoutRef.current = window.setTimeout(
-        () => setCartPulse(false),
-        650,
-      );
+      pulseTimeoutRef.current = window.setTimeout(() => {
+        setCartPulse(false);
+      }, 650);
     }
 
-    previousCountRef.current = total;
-    setCartCount(total);
+      previousCountRef.current = total;
+      setCartCount(total);
+    } catch (error) {
+      console.warn("Compteur panier indisponible:", error instanceof Error ? error.message : error);
+      setCartCount(0);
+    }
   }, [loadUser, supabase]);
 
   async function signOut() {
-    await supabase.auth.signOut();
-    window.location.href = "/";
+    try {
+      await supabase.auth.signOut();
+    } catch (error) {
+      console.warn("Déconnexion Supabase indisponible:", error instanceof Error ? error.message : error);
+    } finally {
+      setUser(null);
+      setCartCount(0);
+      window.location.href = "/";
+    }
   }
 
   useEffect(() => {
-    loadCartCount();
+    void loadCartCount();
 
-    const { data } = supabase.auth.onAuthStateChange(() => loadCartCount());
-    window.addEventListener("cart-updated", loadCartCount);
-    window.addEventListener("focus", loadCartCount);
+    const { data } = supabase.auth.onAuthStateChange(() => {
+      void loadCartCount();
+    });
+
+    const refreshCart = () => { void loadCartCount(); };
+    window.addEventListener("cart-updated", refreshCart);
+    window.addEventListener("focus", refreshCart);
 
     return () => {
       data.subscription.unsubscribe();
-      window.removeEventListener("cart-updated", loadCartCount);
-      window.removeEventListener("focus", loadCartCount);
+      window.removeEventListener("cart-updated", refreshCart);
+      window.removeEventListener("focus", refreshCart);
 
       if (pulseTimeoutRef.current) {
         window.clearTimeout(pulseTimeoutRef.current);
@@ -99,705 +123,765 @@ export default function Header() {
     };
   }, [loadCartCount, supabase]);
 
-  const resetPlaquette = () => {
-    [
-      "mybasket_plaquette_load",
-      "mybasket_plaquette_result",
-      "mybasket_plaquette_mode",
-      "mybasket_plaquette_return",
-      "mb_plaquette_return_to",
-      "mybasket_edit_exercise_id",
-      "mybasket_edit_schema_index",
-    ].forEach((key) => localStorage.removeItem(key));
-  };
+  useEffect(() => {
+    if (!mobileOpen) return;
+
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setMobileOpen(false);
+    };
+
+    window.addEventListener("keydown", onKeyDown);
+
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      window.removeEventListener("keydown", onKeyDown);
+    };
+  }, [mobileOpen]);
 
   const closeMobile = () => setMobileOpen(false);
 
+  const resetPlaquette = () => {
+    localStorage.removeItem("mybasket_plaquette_load");
+    localStorage.removeItem("mybasket_plaquette_result");
+    localStorage.removeItem("mybasket_plaquette_mode");
+    localStorage.removeItem("mybasket_plaquette_return");
+    localStorage.removeItem("mb_plaquette_return_to");
+    localStorage.removeItem("mybasket_edit_exercise_id");
+    localStorage.removeItem("mybasket_edit_schema_index");
+  };
+
   return (
     <>
-      <header className="siteHeader">
-        <div className="headerInner">
-          <Link href="/" className="logoLink" onClick={closeMobile}>
+      <header className="site-header">
+        <div className="site-header-inner">
+          <Link href="/" className="site-logo">
             <img
-              src="/logo-mybasket-header.png"
+              src="/logo-mybasket02.png"
               alt="MyBasket"
-              className="logoImage"
+              className="site-logo-img"
             />
           </Link>
 
-          <nav
-            className={`desktopNav ${mobileOpen ? "mobileVisible" : ""}`}
-            aria-label="Navigation principale"
+          <button
+            type="button"
+            className={`mobile-menu-toggle ${mobileOpen ? "open" : ""}`}
+            onClick={() => setMobileOpen((value) => !value)}
+            aria-expanded={mobileOpen}
+            aria-controls="mybasket-mobile-navigation"
+            aria-label={mobileOpen ? "Fermer le menu" : "Ouvrir le menu"}
           >
-            <div className="navGroup">
-              <Link href="/bibliotheque" className="navLink" onClick={closeMobile}>
-                BIBLIOTHÈQUE
-              </Link>
+            <span />
+            <span />
+            <span />
+          </button>
 
-              <div className="dropdownMenu">
-                <Link href="/exercices" className="dropdownItem" onClick={closeMobile}>
-                  <span>EXERCICES</span>
-                  <small>Consulter les exercices</small>
-                </Link>
+          <nav className="site-nav">
+            <div className="nav-item">
+              <Link href="/bibliotheque">BIBLIOTHÈQUE</Link>
 
-                <Link href="/systemes" className="dropdownItem" onClick={closeMobile}>
-                  <span>SYSTÈMES</span>
-                  <small>Accéder aux systèmes</small>
-                </Link>
-
-                <Link href="/seances" className="dropdownItem" onClick={closeMobile}>
-                  <span>SÉANCES</span>
-                  <small>Voir les séances prêtes</small>
-                </Link>
+              <div className="dropdown">
+                <Link href="/exercices">EXERCICES</Link>
+                <Link href="/systemes">SYSTÈMES</Link>
+                <Link href="/seances">SÉANCES</Link>
               </div>
             </div>
 
-            <Link
-              href="/plaquette?new=1"
-              className="navLink"
-              onClick={() => {
-                resetPlaquette();
-                closeMobile();
-              }}
-            >
-              DESSIN
+            <Link href="/plaquette?new=1" onClick={resetPlaquette}>
+              PLAQUETTE
             </Link>
 
-            <div className="navGroup">
-              <Link href="/accompagnement" className="navLink" onClick={closeMobile}>
-                ACCOMPAGNEMENT
-              </Link>
+            <div className="nav-item">
+              <Link href="/accompagnement">ACCOMPAGNEMENT</Link>
 
-              <div className="dropdownMenu dropdownMenuWide">
-                <Link
-                  href="/accompagnement/direction-technique"
-                  className="dropdownItem"
-                  onClick={closeMobile}
-                >
-                  <span>DIRECTION TECHNIQUE</span>
-                  <small>Structurer et développer votre projet</small>
+              <div className="dropdown">
+                <Link href="/accompagnement/direction-technique">
+                  DIRECTION TECHNIQUE
                 </Link>
-
-                <Link
-                  href="/accompagnement/formation"
-                  className="dropdownItem"
-                  onClick={closeMobile}
-                >
-                  <span>FORMATION</span>
-                  <small>Faire progresser les entraîneurs</small>
-                </Link>
-
-                <Link
-                  href="/accompagnement/scouting-video"
-                  className="dropdownItem"
-                  onClick={closeMobile}
-                >
-                  <span>SCOUTING VIDÉO</span>
-                  <small>Analyser vos matchs et adversaires</small>
+                <Link href="/accompagnement/formation">FORMATION</Link>
+                <Link href="/accompagnement/scouting-video">
+                  SCOUTING VIDEO
                 </Link>
               </div>
             </div>
 
-            {MAIN_LINKS.map((link) => (
-              <Link
-                key={link.href}
-                href={link.href}
-                className="navLink"
-                onClick={closeMobile}
-              >
-                {link.label}
-              </Link>
-            ))}
-
-            <div className="mobileAccountLinks">
-              {user ? (
-                <>
-                  <Link href="/mon-compte" onClick={closeMobile}>
-                    MON PROFIL
-                  </Link>
-                  <Link href="/mon-compte?tab=equipes" onClick={closeMobile}>
-                    MES ÉQUIPES
-                  </Link>
-                  <Link href="/management" onClick={closeMobile}>
-                    MANAGEMENT
-                  </Link>
-                  <button type="button" onClick={signOut}>
-                    DÉCONNEXION
-                  </button>
-                </>
-              ) : (
-                <Link href="/connexion" onClick={closeMobile}>
-                  S&apos;IDENTIFIER
-                </Link>
-              )}
-            </div>
+            <Link href="/annonces">ANNONCES</Link>
+            <Link href="/abonnements">ABONNEMENTS</Link>
+            <Link href="/boutique">BOUTIQUE</Link>
           </nav>
 
-          <div className="headerActions">
+          <div className="site-actions">
             {user ? (
-              <div className="accountMenu">
-                <Link href="/mon-compte" className="accountTrigger">
-                  MON COMPTE
-                  <span className="accountDot" aria-hidden="true" />
+              <div className="account-menu">
+                <Link href="/mon-compte" className="login-link account-trigger">
+                  MON COMPTE 👤
                 </Link>
 
-                <div className="accountDropdown">
-                  <Link href="/mon-compte" className="accountDropdownItem">
-                    MON PROFIL
-                  </Link>
-                  <Link
-                    href="/mon-compte?tab=equipes"
-                    className="accountDropdownItem"
-                  >
-                    MES ÉQUIPES
-                  </Link>
-                  <Link href="/management" className="accountDropdownItem">
-                    MANAGEMENT
-                  </Link>
-                  <button
-                    type="button"
-                    onClick={signOut}
-                    className="accountDropdownItem"
-                  >
+                <div className="account-dropdown">
+                  <Link href="/mon-compte?tab=profil">MON PROFIL</Link>
+                  <Link href="/mon-compte?tab=equipes">MES ÉQUIPES</Link>
+                  <Link href="/mon-compte?tab=management">MANAGEMENT</Link>
+                  <button type="button" onClick={signOut}>
                     DÉCONNEXION
                   </button>
                 </div>
               </div>
             ) : (
-              <Link href="/connexion" className="accountTrigger">
-                S&apos;IDENTIFIER
-                <span className="accountDot" aria-hidden="true" />
+              <Link href="/connexion" className="login-link">
+                S&apos;IDENTIFIER 👤
               </Link>
             )}
-
-            <button
-              type="button"
-              className={`mobileToggle ${mobileOpen ? "open" : ""}`}
-              onClick={() => setMobileOpen((value) => !value)}
-              aria-label={mobileOpen ? "Fermer le menu" : "Ouvrir le menu"}
-              aria-expanded={mobileOpen}
-            >
-              <span />
-              <span />
-              <span />
-            </button>
           </div>
         </div>
+
+        <div
+          id="mybasket-mobile-navigation"
+          className={`mobile-drawer ${mobileOpen ? "open" : ""}`}
+          aria-hidden={!mobileOpen}
+        >
+          <div className="mobile-drawer-head">
+            <img src="/logo-mybasket02.png" alt="MyBasket" />
+            <button type="button" onClick={closeMobile} aria-label="Fermer le menu">×</button>
+          </div>
+
+          <div className="mobile-drawer-scroll">
+            <Link href="/bibliotheque" onClick={closeMobile}>BIBLIOTHÈQUE</Link>
+            <div className="mobile-subnav">
+              <Link href="/exercices" onClick={closeMobile}>Exercices</Link>
+              <Link href="/systemes" onClick={closeMobile}>Systèmes</Link>
+              <Link href="/seances" onClick={closeMobile}>Séances</Link>
+            </div>
+
+            <Link href="/plaquette?new=1" onClick={() => { resetPlaquette(); closeMobile(); }}>DESSIN</Link>
+            <Link href="/accompagnement" onClick={closeMobile}>ACCOMPAGNEMENT</Link>
+            <div className="mobile-subnav">
+              <Link href="/accompagnement/direction-technique" onClick={closeMobile}>Direction technique</Link>
+              <Link href="/accompagnement/formation" onClick={closeMobile}>Formation</Link>
+              <Link href="/accompagnement/scouting-video" onClick={closeMobile}>Scouting vidéo</Link>
+            </div>
+
+            <Link href="/annonces" onClick={closeMobile}>ANNONCES</Link>
+            <Link href="/abonnements" onClick={closeMobile}>ABONNEMENTS</Link>
+            <Link href="/boutique" onClick={closeMobile}>BOUTIQUE</Link>
+
+            <div className="mobile-divider" />
+
+            {user ? (
+              <>
+                <Link href="/mon-compte?tab=profil" onClick={closeMobile}>MON PROFIL</Link>
+                <Link href="/mon-compte?tab=equipes" onClick={closeMobile}>MES ÉQUIPES</Link>
+                <Link href="/mon-compte?tab=management" onClick={closeMobile}>MANAGEMENT</Link>
+                <button type="button" className="mobile-signout" onClick={signOut}>DÉCONNEXION</button>
+              </>
+            ) : (
+              <Link href="/connexion" onClick={closeMobile}>S&apos;IDENTIFIER</Link>
+            )}
+          </div>
+        </div>
+
+        <button
+          type="button"
+          className={`mobile-backdrop ${mobileOpen ? "open" : ""}`}
+          onClick={closeMobile}
+          aria-label="Fermer le menu"
+          tabIndex={mobileOpen ? 0 : -1}
+        />
       </header>
 
-      <div className="blackBar">
-        <div className="blackBarInner">
+      <div className="blackbar">
+        <div className="icons">
+          <Link
+            href="/mon-compte/favoris"
+            className="icon-link"
+            aria-label="Favoris"
+          >
+            ♥
+          </Link>
+
           <Link
             href="/panier"
-            className={`cartLink ${cartPulse ? "pulse" : ""}`}
-            aria-label={`Ouvrir le panier, ${cartCount} produit${cartCount > 1 ? "s" : ""}`}
+            className={`cart-link ${cartPulse ? "pulse" : ""}`}
+            aria-label={`Ouvrir le panier, ${cartCount} produit${
+              cartCount > 1 ? "s" : ""
+            }`}
           >
-            <span className="cartIcon" aria-hidden="true">
-              <svg viewBox="0 0 64 54">
-                <path d="M8 8h9l5 24c.7 3.4 3.6 6 7.1 6h16.2c3.4 0 6.4-2.4 7.2-5.7L56 18H20" />
-                <circle cx="30" cy="47" r="4" />
-                <circle cx="47" cy="47" r="4" />
-              </svg>
-            </span>
+            <svg
+              className="cart-svg"
+              viewBox="0 0 64 54"
+              fill="none"
+              aria-hidden="true"
+            >
+              <path
+                d="M10 8H17L22 32C22.7 35.4 25.6 38 29.1 38H45.3C48.7 38 51.7 35.6 52.5 32.3L56 18H20"
+                stroke="white"
+                strokeWidth="5"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              />
 
-            <span className="cartLabel">PANIER</span>
+              <circle cx="30" cy="47" r="4" fill="white" />
+              <circle cx="47" cy="47" r="4" fill="white" />
 
-            <span className="cartBadge">
-              {cartCount > 99 ? "99+" : cartCount}
+              {cartCount > 0 && (
+                <g className="badge-group">
+                  <circle
+                    cx="51"
+                    cy="12"
+                    r="10"
+                    fill="#d4a24c"
+                    stroke="#000"
+                    strokeWidth="3"
+                  />
+                  <text
+                    x="51"
+                    y="16"
+                    textAnchor="middle"
+                    fontSize="12"
+                    fontWeight="900"
+                    fill="#111"
+                  >
+                    {cartCount > 99 ? "99" : cartCount}
+                  </text>
+                </g>
+              )}
+            </svg>
+
+            <span className="mini-cart">
+              <strong>Panier</strong>
+              <small>
+                {cartCount} produit{cartCount > 1 ? "s" : ""}
+              </small>
+              <span>Voir mon panier →</span>
             </span>
           </Link>
         </div>
       </div>
 
       <style jsx>{`
-        .siteHeader {
+        .site-header {
+          width: 100%;
+          height: 76px;
+          background: #fff;
+          border-bottom: 1px solid #eee;
           position: relative;
           z-index: 1000;
-          width: 100%;
-          height: 96px;
-          background: #ffffff;
-          border-bottom: 1px solid #eeeeee;
-          font-family: var(--font-roboto), Roboto, Arial, sans-serif;
         }
 
-        .headerInner {
-          width: min(1440px, calc(100% - 64px));
-          height: 100%;
+        .site-header-inner {
+          max-width: 1400px;
+          height: 76px;
           margin: 0 auto;
+          padding: 0 20px;
           display: grid;
-          grid-template-columns: 180px minmax(0, 1fr) 190px;
+          grid-template-columns: 120px 1fr 220px;
           align-items: center;
-          column-gap: 28px;
+          gap: 20px;
         }
 
-        .logoLink {
-          height: 100%;
+        .site-logo {
           display: flex;
           align-items: center;
-          justify-content: flex-start;
-          text-decoration: none;
         }
 
-        .logoImage {
-          display: block;
-          width: 126px;
-          height: 74px;
+        .site-logo-img {
+          width: 76px;
+          height: 76px;
           object-fit: contain;
-          object-position: left center;
         }
 
-        .desktopNav {
-          min-width: 0;
-          height: 100%;
+        .site-nav {
           display: flex;
-          align-items: center;
           justify-content: center;
-          gap: clamp(20px, 2vw, 34px);
-        }
-
-        .navLink,
-        .accountTrigger,
-        .mobileAccountLinks a,
-        .mobileAccountLinks button {
-          color: #111111;
-          text-decoration: none;
-          font-family: var(--font-roboto), Roboto, Arial, sans-serif;
-          font-size: 13px;
-          line-height: 1;
-          font-weight: 700;
-          letter-spacing: 0.025em;
-          white-space: nowrap;
-          transition:
-            color 0.2s ease,
-            opacity 0.2s ease;
-        }
-
-        .navLink:hover,
-        .accountTrigger:hover {
-          color: #6b1a2c;
-        }
-
-        .navGroup,
-        .accountMenu {
-          position: relative;
-          height: 100%;
-          display: flex;
           align-items: center;
+          gap: 28px;
         }
 
-        .navGroup::after,
-        .accountMenu::after {
-          content: "";
-          position: absolute;
-          left: 0;
-          right: 0;
-          bottom: -10px;
-          height: 14px;
-        }
-
-        .dropdownMenu,
-        .accountDropdown {
-          position: absolute;
-          top: calc(100% - 4px);
-          z-index: 1200;
-          visibility: hidden;
-          opacity: 0;
-          transform: translateY(8px);
-          pointer-events: none;
-          background: #ffffff;
-          border: 1px solid #e8e8e8;
-          border-radius: 14px;
-          box-shadow: 0 18px 42px rgba(0, 0, 0, 0.16);
-          transition:
-            opacity 0.18s ease,
-            transform 0.18s ease,
-            visibility 0.18s ease;
-        }
-
-        .dropdownMenu {
-          left: -16px;
-          width: 270px;
-          padding: 10px;
-        }
-
-        .dropdownMenuWide {
-          width: 310px;
-        }
-
-        .accountDropdown {
-          right: 0;
-          width: 220px;
-          padding: 10px;
-        }
-
-        .navGroup:hover .dropdownMenu,
-        .navGroup:focus-within .dropdownMenu,
-        .accountMenu:hover .accountDropdown,
-        .accountMenu:focus-within .accountDropdown {
-          visibility: visible;
-          opacity: 1;
-          transform: translateY(0);
-          pointer-events: auto;
-        }
-
-        .dropdownItem,
-        .accountDropdownItem {
-          width: 100%;
-          box-sizing: border-box;
-          border: 0;
-          border-radius: 9px;
-          background: transparent;
-          color: #171717;
-          text-align: left;
+        .site-nav > :global(a),
+        .nav-item > :global(a),
+        .site-actions :global(a),
+        .login-link {
           text-decoration: none;
-          font-family: var(--font-roboto), Roboto, Arial, sans-serif;
-          cursor: pointer;
-          transition:
-            background 0.18s ease,
-            color 0.18s ease,
-            transform 0.18s ease;
-        }
-
-        .dropdownItem {
-          display: grid;
-          gap: 5px;
-          padding: 13px 14px;
-        }
-
-        .dropdownItem + .dropdownItem,
-        .accountDropdownItem + .accountDropdownItem {
-          margin-top: 3px;
-        }
-
-        .dropdownItem span,
-        .accountDropdownItem {
-          font-size: 12px;
-          line-height: 1.2;
-          font-weight: 800;
-          letter-spacing: 0.025em;
-        }
-
-        .dropdownItem small {
-          color: #6b6b6b;
-          font-size: 11px;
-          line-height: 1.35;
-          font-weight: 500;
+          color: #111;
+          text-transform: uppercase;
+          font-family: Arial, Roboto, sans-serif;
+          font-size: 16px;
+          font-weight: 900;
           letter-spacing: 0;
+          line-height: 1;
+          white-space: nowrap;
         }
 
-        .accountDropdownItem {
+        .site-nav > :global(a:hover),
+        .nav-item > :global(a:hover),
+        .site-actions :global(a:hover) {
+          color: #6b1a2c;
+        }
+
+        .nav-item,
+        .account-menu {
+          position: relative;
+          height: 76px;
           display: flex;
           align-items: center;
-          min-height: 42px;
-          padding: 0 13px;
         }
 
-        .dropdownItem:hover,
-        .accountDropdownItem:hover {
-          background: #f6efe8;
+        .dropdown,
+        .account-dropdown {
+          display: none;
+          position: absolute;
+          top: 76px;
+          left: 50%;
+          transform: translateX(-50%);
+          min-width: 230px;
+          background: #fff;
+          border-top: 3px solid #c9a227;
+          box-shadow: 0 12px 30px rgba(0, 0, 0, 0.16);
+          border-radius: 0 0 10px 10px;
+          overflow: hidden;
+          z-index: 2000;
+        }
+
+        .account-dropdown {
+          right: 0;
+          left: auto;
+          transform: none;
+          min-width: 220px;
+        }
+
+        .dropdown :global(a),
+        .account-dropdown :global(a),
+        .account-dropdown button {
+          display: block;
+          width: 100%;
+          padding: 16px 18px;
+          color: #111;
+          background: #fff;
+          border: 0;
+          text-align: left;
+          text-transform: uppercase;
+          text-decoration: none;
+          font-family: Arial, Roboto, sans-serif;
+          font-size: 14px;
+          font-weight: 900;
+          line-height: 1.2;
+          white-space: nowrap;
+          cursor: pointer;
+        }
+
+        .dropdown :global(a:hover),
+        .account-dropdown :global(a:hover),
+        .account-dropdown button:hover {
+          background: #f5f2eb;
           color: #6b1a2c;
-          transform: translateX(2px);
         }
 
-        .headerActions {
+        .nav-item:hover .dropdown,
+        .account-menu:hover .account-dropdown {
+          display: block;
+        }
+
+        .site-actions {
+          display: flex;
+          justify-content: flex-end;
+          align-items: center;
+          gap: 12px;
+        }
+
+        .blackbar {
+          height: 62px;
+          background: linear-gradient(180deg, #111 0%, #000 100%);
+          border-top: 3px solid #c9a227;
           display: flex;
           align-items: center;
           justify-content: flex-end;
-          gap: 16px;
+          padding: 0 40px;
+          position: relative;
+          z-index: 900;
         }
 
-        .accountTrigger {
-          min-height: 42px;
-          display: inline-flex;
+        .icons {
+          display: flex;
           align-items: center;
-          gap: 7px;
+          gap: 22px;
+          position: relative;
         }
 
-        .accountDot {
-          width: 6px;
-          height: 6px;
-          border-radius: 999px;
-          background: #d4a24c;
-          flex: 0 0 auto;
+        .icon-link {
+          width: 34px;
+          height: 34px;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          background: transparent;
+          border: none;
+          color: #c9a227;
+          font-size: 23px;
+          cursor: pointer;
+          text-decoration: none;
+          line-height: 1;
+          transition:
+            transform 0.2s ease,
+            color 0.2s ease;
         }
 
-        .mobileToggle,
-        .mobileAccountLinks {
+        .cart-link {
+          width: 64px;
+          height: 54px;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          text-decoration: none;
+          color: #fff;
+          overflow: visible;
+          position: relative;
+          transition: transform 0.2s ease;
+        }
+
+        .cart-svg {
+          width: 64px;
+          height: 54px;
+          display: block;
+          overflow: visible;
+          filter: drop-shadow(0 0 4px rgba(255, 255, 255, 0.18));
+          transition:
+            transform 0.2s ease,
+            filter 0.2s ease;
+        }
+
+        .cart-link:hover .cart-svg {
+          transform: scale(1.06);
+          filter: drop-shadow(0 0 8px rgba(255, 255, 255, 0.28));
+        }
+
+        .cart-link.pulse .cart-svg {
+          animation: cartBounce 0.62s ease;
+        }
+
+        .cart-link.pulse .badge-group {
+          transform-origin: 51px 12px;
+          animation: badgePop 0.62s ease;
+        }
+
+        .mini-cart {
+          position: absolute;
+          top: 58px;
+          right: 0;
+          width: 190px;
+          padding: 14px 16px;
+          border-radius: 14px;
+          background: #fff;
+          color: #111;
+          border: 1px solid rgba(212, 162, 76, 0.45);
+          box-shadow: 0 18px 40px rgba(0, 0, 0, 0.22);
+          opacity: 0;
+          pointer-events: none;
+          transform: translateY(8px);
+          transition:
+            opacity 0.2s ease,
+            transform 0.2s ease;
+          z-index: 3000;
+          font-family: Arial, Roboto, sans-serif;
+        }
+
+        .mini-cart::before {
+          content: "";
+          position: absolute;
+          top: -7px;
+          right: 22px;
+          width: 14px;
+          height: 14px;
+          background: #fff;
+          border-left: 1px solid rgba(212, 162, 76, 0.45);
+          border-top: 1px solid rgba(212, 162, 76, 0.45);
+          transform: rotate(45deg);
+        }
+
+        .mini-cart strong {
+          display: block;
+          color: #6b1a2c;
+          font-size: 14px;
+          font-weight: 900;
+          text-transform: uppercase;
+          margin-bottom: 5px;
+        }
+
+        .mini-cart small {
+          display: block;
+          color: #555;
+          font-size: 12px;
+          font-weight: 800;
+          margin-bottom: 8px;
+        }
+
+        .mini-cart span {
+          display: block;
+          color: #d4a24c;
+          font-size: 12px;
+          font-weight: 900;
+          text-transform: uppercase;
+        }
+
+        .cart-link:hover .mini-cart {
+          opacity: 1;
+          pointer-events: auto;
+          transform: translateY(0);
+        }
+
+        .icon-link:hover,
+        .cart-link:hover {
+          transform: translateY(-2px);
+        }
+
+        @keyframes cartBounce {
+          0% {
+            transform: scale(1);
+          }
+          30% {
+            transform: scale(1.16) rotate(-5deg);
+          }
+          55% {
+            transform: scale(0.94) rotate(3deg);
+          }
+          80% {
+            transform: scale(1.05) rotate(0deg);
+          }
+          100% {
+            transform: scale(1);
+          }
+        }
+
+        @keyframes badgePop {
+          0% {
+            transform: scale(1);
+          }
+          35% {
+            transform: scale(1.35);
+          }
+          70% {
+            transform: scale(0.9);
+          }
+          100% {
+            transform: scale(1);
+          }
+        }
+
+        .mobile-menu-toggle,
+        .mobile-drawer,
+        .mobile-backdrop {
           display: none;
         }
 
-        .blackBar {
-          position: relative;
-          z-index: 900;
-          width: 100%;
-          height: 48px;
-          background: #0c0c0e;
-          font-family: var(--font-roboto), Roboto, Arial, sans-serif;
-        }
-
-        .blackBarInner {
-          width: min(1440px, calc(100% - 64px));
-          height: 100%;
-          margin: 0 auto;
-          display: flex;
-          align-items: center;
-          justify-content: flex-end;
-        }
-
-        .cartLink {
-          min-width: 136px;
-          height: 40px;
-          padding: 0 12px;
-          display: inline-flex;
-          align-items: center;
-          justify-content: center;
-          gap: 9px;
-          border-radius: 8px;
-          color: #ffffff;
-          text-decoration: none;
-          font-size: 12px;
-          font-weight: 800;
-          letter-spacing: 0.04em;
-          transition:
-            background 0.2s ease,
-            transform 0.2s ease;
-        }
-
-        .cartLink:hover {
-          background: rgba(255, 255, 255, 0.09);
-        }
-
-        .cartIcon {
-          width: 26px;
-          height: 24px;
-          display: grid;
-          place-items: center;
-        }
-
-        .cartIcon svg {
-          width: 26px;
-          height: 24px;
-          fill: none;
-          stroke: #ffffff;
-          stroke-width: 3.6;
-          stroke-linecap: round;
-          stroke-linejoin: round;
-        }
-
-        .cartIcon svg circle {
-          fill: #ffffff;
-          stroke: none;
-        }
-
-        .cartLabel {
-          line-height: 1;
-        }
-
-        .cartBadge {
-          min-width: 24px;
-          height: 22px;
-          padding: 0 6px;
-          border-radius: 999px;
-          background: #d4a24c;
-          color: #111111;
-          display: inline-grid;
-          place-items: center;
-          font-size: 10px;
-          line-height: 1;
-          font-weight: 900;
-        }
-
-        .pulse {
-          animation: cartPulse 0.65s ease;
-        }
-
-        @keyframes cartPulse {
-          50% {
-            transform: scale(1.1);
-          }
-        }
-
-        @media (max-width: 1180px) {
-          .headerInner {
-            width: min(100%, calc(100% - 36px));
-            grid-template-columns: 145px minmax(0, 1fr) 160px;
-            column-gap: 16px;
+        @media (max-width: 980px) {
+          .site-header {
+            height: 68px;
+            position: sticky;
+            top: 0;
           }
 
-          .logoImage {
-            width: 108px;
+          .site-header-inner {
+            height: 68px;
+            display: grid;
+            grid-template-columns: 56px 1fr auto;
+            gap: 10px;
+            padding: 0 14px;
           }
 
-          .desktopNav {
-            gap: 15px;
+          .site-logo {
+            justify-self: center;
+            grid-column: 2;
           }
 
-          .navLink,
-          .accountTrigger {
-            font-size: 11px;
+          .site-logo-img {
+            width: 58px;
+            height: 58px;
           }
 
-          .blackBarInner {
-            width: calc(100% - 36px);
-          }
-        }
-
-        @media (max-width: 920px) {
-          .siteHeader {
-            height: 78px;
-          }
-
-          .headerInner {
-            width: calc(100% - 28px);
-            grid-template-columns: 1fr auto;
-            column-gap: 12px;
-          }
-
-          .logoImage {
-            width: 94px;
-            height: 62px;
-          }
-
-          .desktopNav {
-            position: absolute;
-            top: 78px;
-            left: 0;
-            right: 0;
-            z-index: 1300;
+          .site-nav {
             display: none;
-            height: auto;
-            max-height: calc(100vh - 126px);
-            overflow-y: auto;
-            padding: 14px 18px 22px;
-            background: #ffffff;
-            border-top: 1px solid #ececec;
-            box-shadow: 0 18px 30px rgba(0, 0, 0, 0.14);
-            align-items: stretch;
-            justify-content: flex-start;
-            flex-direction: column;
-            gap: 0;
           }
 
-          .desktopNav.mobileVisible {
-            display: flex;
+          .site-actions {
+            grid-column: 3;
+            grid-row: 1;
           }
 
-          .navLink,
-          .mobileAccountLinks a,
-          .mobileAccountLinks button {
-            width: 100%;
-            min-height: 48px;
-            display: flex;
+          .site-actions .account-menu > :global(a),
+          .site-actions > :global(a) {
+            display: none;
+          }
+
+          .mobile-menu-toggle {
+            display: inline-flex;
+            grid-column: 1;
+            grid-row: 1;
+            width: 42px;
+            height: 42px;
+            border: 1px solid #e8e0d6;
+            border-radius: 11px;
+            background: #fff;
             align-items: center;
-            box-sizing: border-box;
-            padding: 0 6px;
-            border-bottom: 1px solid #efefef;
-            font-size: 13px;
-          }
-
-          .navGroup {
-            width: 100%;
-            height: auto;
-            display: block;
-          }
-
-          .navGroup::after,
-          .accountMenu::after {
-            display: none;
-          }
-
-          .dropdownMenu,
-          .accountDropdown {
-            position: static;
-            width: 100%;
-            visibility: visible;
-            opacity: 1;
-            transform: none;
-            pointer-events: auto;
-            padding: 2px 0 8px 14px;
-            border: 0;
-            border-radius: 0;
-            box-shadow: none;
-          }
-
-          .dropdownItem {
-            padding: 10px 8px;
-            border-bottom: 1px solid #f1f1f1;
-          }
-
-          .dropdownItem span {
-            font-size: 11px;
-          }
-
-          .dropdownItem small {
-            font-size: 10px;
-          }
-
-          .accountMenu,
-          .headerActions > .accountTrigger {
-            display: none;
-          }
-
-          .mobileAccountLinks {
-            display: grid;
-            margin-top: 8px;
-          }
-
-          .mobileAccountLinks button {
-            border: 0;
-            border-bottom: 1px solid #efefef;
-            background: transparent;
-            text-align: left;
-            cursor: pointer;
-          }
-
-          .mobileToggle {
-            width: 44px;
-            height: 44px;
-            display: grid;
-            place-content: center;
+            justify-content: center;
+            flex-direction: column;
             gap: 5px;
-            padding: 0;
-            border: 0;
-            border-radius: 8px;
-            background: transparent;
-            cursor: pointer;
+            z-index: 3050;
           }
 
-          .mobileToggle span {
-            width: 24px;
+          .mobile-menu-toggle span {
+            width: 19px;
             height: 2px;
-            border-radius: 4px;
-            background: #111111;
-            transition:
-              transform 0.2s ease,
-              opacity 0.2s ease;
+            border-radius: 999px;
+            background: #6b1a2c;
+            transition: transform .2s ease, opacity .2s ease;
           }
 
-          .mobileToggle.open span:nth-child(1) {
+          .mobile-menu-toggle.open span:nth-child(1) {
             transform: translateY(7px) rotate(45deg);
           }
-
-          .mobileToggle.open span:nth-child(2) {
-            opacity: 0;
-          }
-
-          .mobileToggle.open span:nth-child(3) {
+          .mobile-menu-toggle.open span:nth-child(2) { opacity: 0; }
+          .mobile-menu-toggle.open span:nth-child(3) {
             transform: translateY(-7px) rotate(-45deg);
           }
 
-          .blackBar {
-            height: 46px;
+          .mobile-drawer {
+            display: flex;
+            position: fixed;
+            inset: 0 auto 0 0;
+            width: min(86vw, 380px);
+            height: 100dvh;
+            background: #fff;
+            z-index: 3200;
+            flex-direction: column;
+            transform: translateX(-105%);
+            transition: transform .25s ease;
+            box-shadow: 22px 0 60px rgba(0,0,0,.22);
           }
 
-          .blackBarInner {
-            width: calc(100% - 28px);
+          .mobile-drawer.open { transform: translateX(0); }
+
+          .mobile-drawer-head {
+            min-height: 72px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 8px 16px;
+            border-bottom: 1px solid #ece4da;
           }
 
-          .cartLink {
-            min-width: 126px;
-            height: 38px;
+          .mobile-drawer-head img {
+            width: 58px;
+            height: 58px;
+            object-fit: contain;
           }
+
+          .mobile-drawer-head button {
+            width: 40px;
+            height: 40px;
+            border-radius: 50%;
+            background: #f7f2ec;
+            color: #6b1a2c;
+            font-size: 28px;
+            line-height: 1;
+          }
+
+          .mobile-drawer-scroll {
+            padding: 12px 16px 28px;
+            overflow-y: auto;
+            overscroll-behavior: contain;
+            -webkit-overflow-scrolling: touch;
+          }
+
+          .mobile-drawer-scroll > :global(a),
+          .mobile-signout {
+            display: flex;
+            width: 100%;
+            min-height: 48px;
+            align-items: center;
+            padding: 0 10px;
+            border-radius: 9px;
+            color: #181413;
+            font-weight: 900;
+            font-size: 15px;
+            text-align: left;
+          }
+
+          .mobile-drawer-scroll > :global(a:hover),
+          .mobile-signout:hover { background: #fbf4ea; color: #6b1a2c; }
+
+          .mobile-subnav {
+            display: grid;
+            gap: 2px;
+            padding: 0 0 7px 14px;
+          }
+
+          .mobile-subnav :global(a) {
+            padding: 8px 10px;
+            border-left: 2px solid #d4a24c;
+            color: #766a64;
+            font-size: 13px;
+            font-weight: 800;
+          }
+
+          .mobile-divider {
+            height: 1px;
+            margin: 10px 0;
+            background: #ece4da;
+          }
+
+          .mobile-signout {
+            border: 0;
+            background: transparent;
+          }
+
+          .mobile-backdrop {
+            display: block;
+            position: fixed;
+            inset: 0;
+            z-index: 3100;
+            background: rgba(0,0,0,.45);
+            opacity: 0;
+            pointer-events: none;
+            transition: opacity .2s ease;
+          }
+
+          .mobile-backdrop.open {
+            opacity: 1;
+            pointer-events: auto;
+          }
+
+          .blackbar {
+            height: 50px;
+            padding: 0 14px;
+          }
+
+          .icons { gap: 12px; }
+          .icon-link { width: 32px; height: 32px; }
+          .cart-link, .cart-svg { width: 52px; height: 44px; }
+          .mini-cart { display: none; }
+        }
+
+        @media (min-width: 981px) and (max-width: 1200px) {
+          .site-header-inner {
+            grid-template-columns: 110px 1fr 210px;
+          }
+
+          .site-nav {
+            gap: 18px;
+          }
+
+          .site-nav > :global(a),
+          .nav-item > :global(a),
+          .site-actions :global(a),
+          .login-link {
+            font-size: 13px;
+          }
+        }
+
+        @media (max-width: 520px) {
+          .site-header-inner { padding: 0 10px; }
+          .blackbar { padding: 0 10px; }
+          .mobile-drawer { width: min(92vw, 360px); }
         }
       `}</style>
     </>
