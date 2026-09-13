@@ -19,12 +19,12 @@ type HomeSlide = {
 const FALLBACK_SLIDES: HomeSlide[] = [
   { id: "fallback-1", title: "LA RÉFÉRENCE DES COACHS", subtitle: "Exercices, systèmes et séances prêts à l'emploi.", imageUrl: null, buttonLabel: null, buttonHref: null },
   { id: "fallback-2", title: "CRÉE TES SYSTÈMES", subtitle: "Un éditeur de schémas pensé pour le terrain.", imageUrl: null, buttonLabel: null, buttonHref: null },
-  { id: "fallback-3", title: "PARTAGE TA PLAQUETTE", subtitle: "Conçois et diffuse tes plaquettes en quelques clics.", imageUrl: null, buttonLabel: null, buttonHref: null },
+  { id: "fallback-3", title: "PARTAGE TON DESSIN", subtitle: "Conçois et diffuse tes dessins en quelques clics.", imageUrl: null, buttonLabel: null, buttonHref: null },
 ];
 
 const BIG_CARDS = [
   { href: "/bibliotheque", label: "BIBLIOTHÈQUE", image: "/images/home-bibliotheque.png" },
-  { href: "/plaquette", label: "PLAQUETTE", image: "/images/home-plaquette.png" },
+  { href: "/plaquette", label: "DESSIN", image: "/images/home-plaquette.png" },
 ];
 
 const SMALL_CARDS = [
@@ -103,8 +103,6 @@ useEffect(() => {
 
   return (
     <>
-  
-
       <main>
         <section className="hero-slider">
           <div
@@ -129,21 +127,8 @@ useEffect(() => {
           </div>
 
           <div className="slider-arrows">
-            <button
-              className="slider-arrow"
-              onClick={() => go(current - 1)}
-              aria-label="Précédent"
-            >
-              ‹
-            </button>
-
-            <button
-              className="slider-arrow"
-              onClick={() => go(current + 1)}
-              aria-label="Suivant"
-            >
-              ›
-            </button>
+            <button className="slider-arrow" onClick={() => go(current - 1)} aria-label="Précédent">‹</button>
+            <button className="slider-arrow" onClick={() => go(current + 1)} aria-label="Suivant">›</button>
           </div>
 
           <div className="slider-dots">
@@ -161,12 +146,7 @@ useEffect(() => {
         <div className="container">
           <div className="access-grid">
             {BIG_CARDS.map((card) => (
-              <Link
-                href={card.href}
-                className="access-card home-photo-card"
-                key={card.href}
-                style={{ backgroundImage: `url("${card.image}")` }}
-              >
+              <Link href={card.href} className="access-card home-photo-card" key={card.href} style={{ backgroundImage: `url("${card.image}")` }}>
                 <div className="access-label">{card.label}</div>
               </Link>
             ))}
@@ -174,33 +154,20 @@ useEffect(() => {
 
           <div className="access-grid-small">
             {SMALL_CARDS.map((card) => (
-              <Link
-                href={card.href}
-                className="access-card small home-photo-card"
-                key={card.href}
-                style={{ backgroundImage: `url("${card.image}")` }}
-              >
+              <Link href={card.href} className="access-card small home-photo-card" key={card.href} style={{ backgroundImage: `url("${card.image}")` }}>
                 <div className="access-label">{card.label}</div>
               </Link>
             ))}
           </div>
 
           <section className="latest-home-section">
-            <div className="section-title-bar">
-              <h2>LES DERNIERS AJOUTS</h2>
-            </div>
+            <div className="section-title-bar"><h2>LES DERNIERS AJOUTS</h2></div>
 
             {latest.length === 0 ? (
               <p className="empty-state">Aucun ajout pour le moment.</p>
             ) : (
               <div className="latest-slider-wrap">
-                <button
-                  className="latest-arrow latest-arrow-left"
-                  onClick={() => scrollLatest("prev")}
-                  aria-label="Voir les ajouts précédents"
-                >
-                  ‹
-                </button>
+                <button className="latest-arrow latest-arrow-left" onClick={() => scrollLatest("prev")} aria-label="Voir les ajouts précédents">‹</button>
 
                 <div className="latest-slider" ref={latestSliderRef}>
                   <div className="latest-slider-track">
@@ -208,41 +175,26 @@ useEffect(() => {
                       <article className="latest-slide-card" key={item.id}>
                         <div className="latest-slide-img">
                           <img src={getLatestImage(item)} alt={item.title} />
-
-                          <button
-                            className="latest-heart"
-                            aria-label="Ajouter aux favoris"
-                          >
-                            ♥
-                          </button>
+                          <button className="latest-heart" aria-label="Ajouter aux favoris">♥</button>
                         </div>
 
                         <div className="latest-slide-body">
                           <h3>{item.title}</h3>
-                          
-                            <p>{item.category || item.categorie || "Exercice"}</p>
-                            <small>{formatDate(item.createdAt)}</small>
+                          <p>{item.category || item.categorie || "Exercice"}</p>
+                          <small>{formatDate(item.createdAt)}</small>
                         </div>
                       </article>
                     ))}
                   </div>
                 </div>
 
-                <button
-                  className="latest-arrow latest-arrow-right"
-                  onClick={() => scrollLatest("next")}
-                  aria-label="Voir les ajouts suivants"
-                >
-                  ›
-                </button>
+                <button className="latest-arrow latest-arrow-right" onClick={() => scrollLatest("next")} aria-label="Voir les ajouts suivants">›</button>
               </div>
             )}
           </section>
 
           <section className="testimonialsSection">
-            <div className="section-title-bar">
-              <h2>ILS NOUS FONT CONFIANCE</h2>
-            </div>
+            <div className="section-title-bar"><h2>ILS NOUS FONT CONFIANCE</h2></div>
 
             <div className="testimonialsList">
               {TESTIMONIALS.map((testimonial) => (
@@ -303,141 +255,32 @@ useEffect(() => {
           border-color: #d4a24c;
         }
 
-        .latest-home-section {
-          margin-top: 2.5rem;
-        }
-
-        .latest-slider-wrap {
-          position: relative;
-          width: 100%;
-        }
-
-        .latest-slider {
-          width: 100%;
-          overflow-x: auto;
-          scroll-snap-type: x mandatory;
-          scroll-behavior: smooth;
-          padding: 0.25rem 0 1.5rem;
-        }
-
-        .latest-slider::-webkit-scrollbar {
-          height: 8px;
-        }
-
-        .latest-slider::-webkit-scrollbar-thumb {
-          background: #d4a24c;
-          border-radius: 999px;
-        }
-
-        .latest-slider-track {
-          display: grid;
-          grid-auto-flow: column;
-          grid-auto-columns: calc((100% - 2rem) / 3);
-          gap: 1rem;
-        }
-
-        .latest-slide-card {
-          scroll-snap-align: start;
-          border: 1px solid #c8c8c8;
-          border-radius: 6px;
-          overflow: hidden;
-          background: #fff;
-        }
-
-        .latest-slide-img {
-          position: relative;
-          height: 230px;
-          background: #6b1a2c;
-          overflow: hidden;
-        }
-
-        .latest-slide-img img {
-          width: 100%;
-          height: 100%;
-          object-fit: cover;
-          display: block;
-        }
-
-        .latest-heart {
-          position: absolute;
-          top: 14px;
-          right: 14px;
-          width: 46px;
-          height: 46px;
-          border-radius: 50%;
-          background: #fff;
-          color: #6b6b6b;
-          font-size: 1.5rem;
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          box-shadow: 0 4px 12px rgba(0, 0, 0, 0.18);
-        }
-
-        .latest-slide-body {
-          padding: 1rem 1.2rem 1.35rem;
-        }
-
-        .latest-slide-body h3 {
-          font-size: 1.1rem;
-          font-weight: 900;
-          margin-bottom: 0.35rem;
-          color: #0f0f12;
-        }
-
-        .latest-slide-body p {
-          color: #6b6b6b;
-          font-size: 0.95rem;
-          margin-bottom: 0.4rem;
-        }
-
-        .latest-slide-body small {
-          color: #6b6b6b;
-          font-size: 0.78rem;
-        }
-
-        .latest-arrow {
-          position: absolute;
-          top: 42%;
-          transform: translateY(-50%);
-          z-index: 5;
-          width: 36px;
-          height: 36px;
-          border-radius: 50%;
-          background: rgba(15, 15, 18, 0.9);
-          color: #fff;
-          font-size: 1.6rem;
-          display: flex;
-          align-items: center;
-          justify-content: center;
-        }
-
-        .latest-arrow-left {
-          left: -18px;
-        }
-
-        .latest-arrow-right {
-          right: -18px;
-        }
+        .latest-home-section { margin-top: 2.5rem; }
+        .latest-slider-wrap { position: relative; width: 100%; }
+        .latest-slider { width: 100%; overflow-x: auto; scroll-snap-type: x mandatory; scroll-behavior: smooth; padding: 0.25rem 0 1.5rem; }
+        .latest-slider::-webkit-scrollbar { height: 8px; }
+        .latest-slider::-webkit-scrollbar-thumb { background: #d4a24c; border-radius: 999px; }
+        .latest-slider-track { display: grid; grid-auto-flow: column; grid-auto-columns: calc((100% - 2rem) / 3); gap: 1rem; }
+        .latest-slide-card { scroll-snap-align: start; border: 1px solid #c8c8c8; border-radius: 6px; overflow: hidden; background: #fff; }
+        .latest-slide-img { position: relative; height: 230px; background: #6b1a2c; overflow: hidden; }
+        .latest-slide-img img { width: 100%; height: 100%; object-fit: cover; display: block; }
+        .latest-heart { position: absolute; top: 14px; right: 14px; width: 46px; height: 46px; border-radius: 50%; background: #fff; color: #6b6b6b; font-size: 1.5rem; display: flex; align-items: center; justify-content: center; box-shadow: 0 4px 12px rgba(0, 0, 0, 0.18); }
+        .latest-slide-body { padding: 1rem 1.2rem 1.35rem; }
+        .latest-slide-body h3 { font-size: 1.1rem; font-weight: 900; margin-bottom: 0.35rem; color: #0f0f12; }
+        .latest-slide-body p { color: #6b6b6b; font-size: 0.95rem; margin-bottom: 0.4rem; }
+        .latest-slide-body small { color: #6b6b6b; font-size: 0.78rem; }
+        .latest-arrow { position: absolute; top: 42%; transform: translateY(-50%); z-index: 5; width: 36px; height: 36px; border-radius: 50%; background: rgba(15, 15, 18, 0.9); color: #fff; font-size: 1.6rem; display: flex; align-items: center; justify-content: center; }
+        .latest-arrow-left { left: -18px; }
+        .latest-arrow-right { right: -18px; }
 
         @media (max-width: 900px) {
-          .latest-slider-track {
-            grid-auto-columns: calc((100% - 1rem) / 2);
-          }
+          .latest-slider-track { grid-auto-columns: calc((100% - 1rem) / 2); }
         }
 
         @media (max-width: 600px) {
-          .latest-slider-track {
-            grid-auto-columns: 85%;
-          }
-
-          .latest-slide-img {
-            height: 190px;
-          }
-
-          .latest-arrow {
-            display: none;
-          }
+          .latest-slider-track { grid-auto-columns: 85%; }
+          .latest-slide-img { height: 190px; }
+          .latest-arrow { display: none; }
         }
       `}</style>
     </>
