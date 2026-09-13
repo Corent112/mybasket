@@ -1,8 +1,631 @@
-import { requireAccess } from "@/lib/require-access";
-import CreerExerciceClient from "./CreerExerciceClient";
+'use client';
 
-export default async function CreerExercicePage() {
-  await requireAccess("exercices");
+import { Suspense, useEffect, useRef, useState } from 'react';
+import { useRouter, useSearchParams } from 'next/navigation';
+import { saveExercise, updateExercise, getExercise, newId } from '@/lib/exercises';
 
-  return <CreerExerciceClient />;
+type Ex = {
+  title: string;
+  organisation: string;
+  deroulement: string;
+  consignes: string;
+  variantes: string;
+  plots: string;
+  ballons: string;
+  paniers: string;
+  joueurs: string;
+  categorie: string;
+  type: string;
+  niveau: string;
+  temps: string;
+  themes: string[];
+  images: string[];
+  videos: string[];
+  schemaImages: string[];
+  schemaDataList: any[];
+};
+
+const DRAFT_KEY = 'mybasket_exo_draft';
+const RETURN_KEY = 'mb_plaquette_return_to';
+const LOAD_KEY = 'mybasket_plaquette_load';
+const RESULT_KEY = 'mybasket_plaquette_result';
+const EDIT_INDEX_KEY = 'mybasket_edit_schema_index';
+const EDIT_EXERCISE_ID_KEY = "mybasket_edit_exercise_id";
+
+const NUM = (n: number) => Array.from({ length: n + 1 }, (_, i) => String(i));
+const CATS = ['— Choisir —', 'U9', 'U11', 'U13', 'U15', 'U18', 'U21', 'Senior'];
+const TYPES = ['Individuel', 'Pré-co', 'Collectif'];
+const NIVEAUX = ['Débutant', 'Intermédiaire', 'Confirmé'];
+const TEMPS = ['5', '10', '15', '20', '25', '30', '40', '45', '60', '75', '90'];
+const THEMES = ['Échauffement', 'Dribble', 'Passe', 'Défense', 'Tir', 'Pré-co', 'Surnombre', 'Ludique', 'Rebonds', 'Physique'];
+
+// Champs numériques : "" -> undefined, sinon Number — pour coller au type Exercise
+const toNum = (v: string): number | undefined => {
+  if (v === '' || v == null) return undefined;
+  const n = Number(v);
+  return Number.isNaN(n) ? undefined : n;
+};
+
+// Champs texte stockés tantôt en string, tantôt en string[] -> toujours ramener en string
+const asText = (v: any): string => (Array.isArray(v) ? v.join('\n') : v || '');
+
+// Texte multiligne -> tableau de lignes nettoyées (pour la sauvegarde)
+const toLines = (v: string): string[] =>
+  v.split('\n').map((x) => x.trim()).filter(Boolean);
+
+const blank = (): Ex => ({
+  title: '',
+  organisation: '',
+  deroulement: '',
+  consignes: '',
+  variantes: '',
+  plots: '',
+  ballons: '',
+  paniers: '',
+  joueurs: '5',
+  categorie: '— Choisir —',
+  type: 'Collectif',
+  niveau: 'Intermédiaire',
+  temps: '15',
+  themes: [],
+  images: [],
+  videos: [],
+  schemaImages: [],
+  schemaDataList: [],
+});
+
+function CreerExerciceContent() {
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const editId = searchParams.get('id');
+  const imgInput = useRef<HTMLInputElement | null>(null);
+  const vidInput = useRef<HTMLInputElement | null>(null);
+
+  // Brouillon namespacé : un par exercice édité, pour ne pas mélanger les états
+  const draftKey = editId ? `${DRAFT_KEY}_${editId}` : DRAFT_KEY;
+
+  const [ex, setEx] = useState<Ex>(blank());
+  const [toast, setToast] = useState('');
+  const toastT = useRef<number | null>(null);
+
+  const flash = (m: string) => {
+    setToast(m);
+    if (toastT.current) window.clearTimeout(toastT.current);
+    toastT.current = window.setTimeout(() => setToast(''), 2600);
+  };
+
+  const set = <K extends keyof Ex>(k: K, v: Ex[K]) =>
+    setEx((s) => ({ ...s, [k]: v }));
+
+  const toggleTheme = (t: string) =>
+    setEx((s) => ({
+      ...s,
+      themes: s.themes.includes(t)
+        ? s.themes.filter((x) => x !== t)
+        : [...s.themes, t],
+    }));
+const makeLightDraft = (data: Ex): Ex => ({
+  title: data.title,
+  organisation: data.organisation,
+  deroulement: data.deroulement,
+  consignes: data.consignes,
+  variantes: data.variantes,
+  plots: data.plots,
+  ballons: data.ballons,
+  paniers: data.paniers,
+  joueurs: data.joueurs,
+  categorie: data.categorie,
+  type: data.type,
+  niveau: data.niveau,
+  temps: data.temps,
+  themes: data.themes,
+
+  // On garde seulement les images déjà sous forme URL.
+  // Les base64 sont trop lourds pour localStorage.
+  images: data.images.filter((img) => !img.startsWith("data:")),
+  videos: data.videos.filter((vid) => !vid.startsWith("data:")),
+  schemaImages: data.schemaImages.filter((img) => !img.startsWith("data:")),
+
+  // Les données de dessin sont trop lourdes pour localStorage.
+  schemaDataList: [],
+});
+  // ─── Chargement (édition + brouillon + retour de la plaquette) ───────────
+  useEffect(() => {
+  const load = async () => {
+    let base = blank();
+
+    try {
+      if (editId) {
+        const existing = await getExercise(editId);
+
+        if (existing) {
+          base = {
+            ...base,
+            title: existing.title || "",
+            organisation: asText((existing as any).organisation),
+            deroulement: asText((existing as any).deroulement),
+            consignes: asText((existing as any).consignes),
+            variantes: asText((existing as any).variantes),
+            plots: String((existing as any).plots ?? ""),
+            ballons: String((existing as any).ballons ?? ""),
+            paniers: String((existing as any).paniers ?? ""),
+            joueurs: String((existing as any).joueurs ?? "5"),
+            categorie:
+              (existing as any).categorie || existing.category || "— Choisir —",
+            type: existing.type || "Collectif",
+            niveau:
+              (existing as any).niveau || existing.level || "Intermédiaire",
+            temps: String((existing as any).temps ?? existing.duration ?? "15"),
+            themes: ((existing as any).themes || existing.tags || []) as string[],
+            images: ((existing as any).images || []) as string[],
+            videos: ((existing as any).videos || []) as string[],
+            schemaImages: ((existing as any).schemaImages || []) as string[],
+            schemaDataList: ((existing as any).schemaDataList || []) as any[],
+          };
+        }
+      }
+
+      setEx(base);
+    } catch (e) {
+      console.error(e);
+      flash("Erreur lors du chargement");
+    }
+  };
+
+  load();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+}, [editId]);
+
+  // ─── Plaquette : ouvrir / modifier un schéma ─────────────────────────────
+  const openDraw = async (index?: number) => {
+  if (!ex.title.trim()) {
+    flash("Ajoute un titre avant d’ouvrir le dessin");
+    return;
+  }
+
+  try {
+    let currentId = editId;
+
+    const payload = {
+      title: ex.title.trim(),
+      organisation: ex.organisation,
+      deroulement: toLines(ex.deroulement),
+      consignes: toLines(ex.consignes),
+      variantes: toLines(ex.variantes),
+      plots: toNum(ex.plots),
+      ballons: toNum(ex.ballons),
+      paniers: toNum(ex.paniers),
+      joueurs: toNum(ex.joueurs),
+      categorie: ex.categorie,
+      category: ex.categorie,
+      type: ex.type,
+      niveau: ex.niveau,
+      level: ex.niveau,
+      temps: toNum(ex.temps),
+      duration: ex.temps,
+      themes: ex.themes,
+      tags: ex.themes,
+      images: ex.images,
+      videos: ex.videos,
+      schemaImages: ex.schemaImages,
+      schemaDataList: ex.schemaDataList,
+    };
+
+    if (currentId) {
+      await updateExercise(currentId, payload);
+    } else {
+      currentId = newId();
+
+      await saveExercise({
+        id: currentId,
+        ...payload,
+      });
+
+      router.replace(`/exercices/creer?id=${currentId}`);
+    }
+
+    localStorage.setItem(EDIT_EXERCISE_ID_KEY, currentId);
+
+    if (typeof index === "number") {
+      localStorage.setItem(EDIT_INDEX_KEY, String(index));
+    } else {
+      localStorage.removeItem(EDIT_INDEX_KEY);
+    }
+
+    localStorage.removeItem(LOAD_KEY);
+
+    localStorage.setItem(
+      RETURN_KEY,
+      `/exercices/creer?id=${currentId}`
+    );
+
+    router.push("/plaquette");
+  } catch (error) {
+    console.error(error);
+    flash("Erreur avant ouverture du dessin");
+  }
+};
+
+  const removeSchema = (i: number) =>
+  setEx((s) => ({
+    ...s,
+    schemaImages: s.schemaImages.filter((_, idx) => idx !== i),
+    schemaDataList: s.schemaDataList.filter((_, idx) => idx !== i),
+  }));
+
+  // ─── Images ──────────────────────────────────────────────────────────────
+  const onImages = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(e.target.files || []);
+    if (!files.length) return;
+    const room = 5 - ex.images.length;
+    files.slice(0, room).forEach((f) => {
+      const reader = new FileReader();
+      reader.onload = () =>
+        setEx((s) => ({ ...s, images: [...s.images, reader.result as string].slice(0, 5) }));
+      reader.readAsDataURL(f);
+    });
+    e.target.value = '';
+  };
+
+  const removeImage = (i: number) =>
+    setEx((s) => ({ ...s, images: s.images.filter((_, idx) => idx !== i) }));
+
+  // ─── Vidéo ────────────────────────────────────────────────────────────────
+  const onVideos = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const f = (e.target.files || [])[0];
+    if (!f) return;
+    const reader = new FileReader();
+    reader.onload = () => setEx((s) => ({ ...s, videos: [reader.result as string] }));
+    reader.readAsDataURL(f);
+    e.target.value = '';
+  };
+
+  const removeVideo = () => setEx((s) => ({ ...s, videos: [] }));
+async function uploadBase64Image(base64: string, folder = "schemas") {
+  if (!base64.startsWith("data:image")) return base64;
+
+  const { createClient } = await import("@/lib/supabase/client");
+  const supabase = createClient();
+
+  const res = await fetch(base64);
+  const blob = await res.blob();
+
+  const fileName = `${folder}/${Date.now()}-${Math.random()
+    .toString(36)
+    .slice(2)}.png`;
+
+  const { error } = await supabase.storage
+    .from("exercise-schemas")
+    .upload(fileName, blob, {
+      contentType: "image/png",
+      upsert: false,
+    });
+
+  if (error) throw error;
+
+  const { data } = supabase.storage
+    .from("exercise-schemas")
+    .getPublicUrl(fileName);
+
+  return data.publicUrl;
 }
+  // ─── Sauvegarde ────────────────────────────────────────────────────────────
+  const save = async () => {
+  if (!ex.title.trim()) {
+    flash("Ajoute un titre à ton exercice");
+    return;
+  }
+const uploadedSchemaImages = await Promise.all(
+  ex.schemaImages.map((img) => uploadBase64Image(img, "schemas"))
+);
+
+const uploadedImages = await Promise.all(
+  ex.images.map((img) => uploadBase64Image(img, "images"))
+);
+  try {
+    const payload = {
+      title: ex.title.trim(),
+      organisation: ex.organisation,
+
+      deroulement: toLines(ex.deroulement),
+      consignes: toLines(ex.consignes),
+      variantes: toLines(ex.variantes),
+
+      plots: toNum(ex.plots),
+      ballons: toNum(ex.ballons),
+      paniers: toNum(ex.paniers),
+      joueurs: toNum(ex.joueurs),
+
+      categorie: ex.categorie,
+      category: ex.categorie,
+
+      type: ex.type,
+
+      niveau: ex.niveau,
+      level: ex.niveau,
+
+      temps: toNum(ex.temps),
+      duration: ex.temps,
+
+      themes: ex.themes,
+      tags: ex.themes,
+
+      images: uploadedImages,
+schemaImages: uploadedSchemaImages,
+      videos: ex.videos.filter((v) => !v.startsWith("data:")),
+schemaDataList: ex.schemaDataList.map((schema) => ({
+  title: schema.title,
+  courtType: schema.courtType,
+  phases: schema.phases,
+  sheet: schema.sheet,
+  current: schema.current,
+  imageData: schema.imageData?.startsWith("data:") ? "" : schema.imageData,
+  phaseImages: [],
+})),
+    };
+
+    let saved: any;
+
+    if (editId) {
+      saved = await updateExercise(editId, payload);
+    } else {
+      saved = await saveExercise({
+        id: newId(),
+        ...payload,
+      });
+    }
+
+    localStorage.removeItem(draftKey);
+    localStorage.removeItem(RESULT_KEY);
+    localStorage.removeItem(EDIT_INDEX_KEY);
+    localStorage.removeItem(LOAD_KEY);
+    localStorage.removeItem(RETURN_KEY);
+
+    const goId = saved?.id ?? editId;
+
+    flash("Exercice enregistré ✅");
+    setTimeout(() => router.push(`/exercices/${goId}`), 600);
+  } catch (e) {
+    console.error(e);
+    flash("Erreur lors de la sauvegarde");
+  }
+};
+
+  return (
+    <div className="ce">
+      <style>{CSS}</style>
+
+      <div className="ce-topbar">
+        <button className="ce-retour" onClick={() => router.push('/bibliotheque')}>
+          ← Retour aux exercices
+        </button>
+        <span className="ce-nouvel">{editId ? '✏️ MODIFIER L’EXERCICE' : '+ NOUVEL EXERCICE'}</span>
+      </div>
+
+      <div className="ce-title">
+        <span className="dash" />
+        <h1>{editId ? 'MODIFIER UN EXERCICE' : 'CRÉER UN EXERCICE'}</h1>
+        <span className="dash" />
+      </div>
+
+      <p className="ce-sub">
+        Renseigne les informations de ton exercice. Tu peux ajouter jusqu’à 5 dessins, 5 images et 1 vidéo.
+      </p>
+
+      <div className="ce-grid">
+        <div className="ce-card">
+          <label className="ce-lab">Titre de l’exercice <b className="req">*</b></label>
+          <input className="ce-input" value={ex.title} onChange={(e) => set('title', e.target.value)} />
+
+          <label className="ce-lab">Organisation</label>
+          <textarea className="ce-area" value={ex.organisation} onChange={(e) => set('organisation', e.target.value)} />
+
+          <label className="ce-lab">Déroulement</label>
+          <textarea className="ce-area" value={ex.deroulement} onChange={(e) => set('deroulement', e.target.value)} />
+
+          <label className="ce-lab">Consignes techniques</label>
+          <textarea className="ce-area" value={ex.consignes} onChange={(e) => set('consignes', e.target.value)} />
+
+          <label className="ce-lab">Évolution / Variantes</label>
+          <textarea className="ce-area" value={ex.variantes} onChange={(e) => set('variantes', e.target.value)} />
+
+          <label className="ce-lab">Dessins de l’exercice <span className="ce-lab-soft">(5 max)</span></label>
+
+          <div className="ce-schemas">
+            {ex.schemaImages.map((src, i) => (
+              <div key={i} className="ce-schema">
+                <img src={src} alt={`Schéma ${i + 1}`} />
+
+                <div className="ce-schema-acts">
+                  <button onClick={() => openDraw(i)}>✏️ Modifier</button>
+                  <button className="rm" onClick={() => removeSchema(i)}>✕ Retirer</button>
+                </div>
+              </div>
+            ))}
+
+            {ex.schemaImages.length < 5 && (
+              <button className="ce-draw" onClick={() => openDraw()}>
+                <span className="ce-draw-ico">✏️</span>
+                <b>Ajouter un schéma</b>
+                <small>{ex.schemaImages.length}/5 schémas ajoutés</small>
+              </button>
+            )}
+          </div>
+
+          <label className="ce-lab">Vidéo / Animation <span className="ce-lab-soft">(1 max)</span></label>
+
+          <div className="ce-videos">
+            {ex.videos[0] ? (
+              <div className="ce-video">
+                <video src={ex.videos[0]} controls />
+                <button className="rm" onClick={removeVideo}>✕ Retirer</button>
+              </div>
+            ) : (
+              <button className="ce-addvid" onClick={() => vidInput.current?.click()}>
+                🎬 Ajouter une vidéo
+              </button>
+            )}
+
+            <input ref={vidInput} type="file" accept="video/mp4,video/*" hidden onChange={onVideos} />
+          </div>
+
+          <label className="ce-lab">Images / Schémas <span className="ce-lab-soft">(5 max)</span></label>
+
+          <div className="ce-imgs">
+            {ex.images.map((src, i) => (
+              <div key={i} className="ce-thumb">
+                <img src={src} alt="" />
+                <button onClick={() => removeImage(i)}>✕</button>
+              </div>
+            ))}
+
+            {ex.images.length < 5 && (
+              <button className="ce-addimg" onClick={() => imgInput.current?.click()}>
+                📷 Ajouter une image
+              </button>
+            )}
+
+            <input ref={imgInput} type="file" accept="image/*" multiple hidden onChange={onImages} />
+          </div>
+        </div>
+
+        <div className="ce-card ce-criteres">
+          <h2>CRITÈRES</h2>
+
+          <label className="ce-lab">Plots</label>
+          <select className="ce-select" value={ex.plots} onChange={(e) => set('plots', e.target.value)}>
+            <option value="">—</option>
+            {NUM(12).map((n) => <option key={n}>{n}</option>)}
+          </select>
+
+          <label className="ce-lab">Ballons</label>
+          <select className="ce-select" value={ex.ballons} onChange={(e) => set('ballons', e.target.value)}>
+            <option value="">—</option>
+            {NUM(12).map((n) => <option key={n}>{n}</option>)}
+          </select>
+
+          <label className="ce-lab">Nombre de paniers</label>
+          <select className="ce-select" value={ex.paniers} onChange={(e) => set('paniers', e.target.value)}>
+            <option value="">—</option>
+            {NUM(8).map((n) => <option key={n}>{n}</option>)}
+          </select>
+
+          <label className="ce-lab">Nombre de joueurs</label>
+          <select className="ce-select" value={ex.joueurs} onChange={(e) => set('joueurs', e.target.value)}>
+            {NUM(20).slice(1).map((n) => <option key={n}>{n}</option>)}
+          </select>
+
+          <label className="ce-lab">Catégorie</label>
+          <select className="ce-select" value={ex.categorie} onChange={(e) => set('categorie', e.target.value)}>
+            {CATS.map((c) => <option key={c}>{c}</option>)}
+          </select>
+
+          <label className="ce-lab">Type</label>
+          <div className="ce-toggles">
+            {TYPES.map((t) => (
+              <button key={t} className={'ce-toggle' + (ex.type === t ? ' on' : '')} onClick={() => set('type', t)}>
+                {t}
+              </button>
+            ))}
+          </div>
+
+          <label className="ce-lab">Niveau</label>
+          <div className="ce-toggles">
+            {NIVEAUX.map((n) => (
+              <button key={n} className={'ce-toggle' + (ex.niveau === n ? ' on' : '')} onClick={() => set('niveau', n)}>
+                {n}
+              </button>
+            ))}
+          </div>
+
+          <label className="ce-lab">Temps estimé min</label>
+          <select className="ce-select" value={ex.temps} onChange={(e) => set('temps', e.target.value)}>
+            {TEMPS.map((t) => <option key={t}>{t}</option>)}
+          </select>
+
+          <label className="ce-lab">Thèmes</label>
+          <div className="ce-themes">
+            {THEMES.map((t) => (
+              <label key={t} className="ce-theme">
+                <input type="checkbox" checked={ex.themes.includes(t)} onChange={() => toggleTheme(t)} /> {t}
+              </label>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      <div className="ce-actions">
+        <button className="ce-btn ghost" onClick={() => router.back()}>Annuler</button>
+        <button className="ce-btn save" onClick={save}>
+          💾 {editId ? 'METTRE À JOUR L’EXERCICE' : 'SAUVEGARDER L’EXERCICE'}
+        </button>
+      </div>
+
+      {toast && <div className="ce-toast">{toast}</div>}
+    </div>
+  );
+}
+
+export default function CreerExercicePage() {
+  return (
+    <Suspense fallback={null}>
+      <CreerExerciceContent />
+    </Suspense>
+  );
+}
+
+const CSS = `
+.ce{font-family:'Roboto',system-ui,sans-serif;background:#fff;color:#0F0F12;max-width:1280px;margin:0 auto;padding:1.4rem 1.6rem 3rem}
+.ce *{box-sizing:border-box}.ce button{font-family:inherit;cursor:pointer}.ce img{display:block;max-width:100%}
+.ce-topbar{display:flex;align-items:center;justify-content:space-between;gap:1rem}
+.ce-retour{border:2px solid #0F0F12;background:#fff;border-radius:999px;padding:.5rem 1.1rem;font-weight:800;font-size:.95rem}
+.ce-retour:hover{background:#0F0F12;color:#fff}
+.ce-nouvel{font-weight:900;color:#777;letter-spacing:.04em}
+.ce-title{display:flex;align-items:center;justify-content:center;gap:1.2rem;margin:1.2rem 0 .3rem}
+.ce-title h1{font-weight:900;font-size:2.6rem;letter-spacing:.02em;text-align:center}
+.ce-title .dash{height:3px;width:54px;background:#0F0F12;display:inline-block}
+.ce-sub{text-align:center;color:#666;max-width:680px;margin:0 auto 1.6rem}
+.ce-grid{display:grid;grid-template-columns:2fr 1fr;gap:1.6rem;align-items:start}
+.ce-card{background:#fff;border:1px solid #e4e4e4;border-radius:18px;padding:1.4rem;box-shadow:0 2px 12px rgba(0,0,0,.04)}
+.ce-lab{display:block;font-weight:900;text-transform:uppercase;font-size:.82rem;letter-spacing:.03em;margin:1rem 0 .4rem}
+.ce-lab-soft{font-weight:500;text-transform:none;color:#888}
+.ce-lab:first-of-type{margin-top:0}
+.req{color:#C0392B}
+.ce-input,.ce-area,.ce-select{width:100%;border:1px solid #d6d6d6;border-radius:10px;padding:.7rem .9rem;font-size:.95rem;font-family:inherit;background:#fff}
+.ce-input:focus,.ce-area:focus,.ce-select:focus{outline:2px solid #6B1A2C;border-color:#6B1A2C}
+.ce-area{min-height:110px;resize:vertical}
+.ce-schemas{display:grid;grid-template-columns:repeat(2,1fr);gap:.8rem}
+.ce-draw{min-height:170px;width:100%;border:2px dashed #cfcfcf;background:#f6f6f6;border-radius:14px;padding:1.2rem;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:.3rem}
+.ce-draw:hover{background:#f0f0f0;border-color:#6B1A2C}
+.ce-draw-ico{font-size:1.8rem}.ce-draw b{font-size:1.05rem}.ce-draw small{color:#888}
+.ce-schema{border:1px solid #e0e0e0;border-radius:14px;overflow:hidden;background:#fafafa}
+.ce-schema img{width:100%;height:190px;object-fit:contain;background:#fff}
+.ce-schema-acts{display:flex;gap:.6rem;padding:.7rem;border-top:1px solid #eee}
+.ce-schema-acts button{flex:1;border:1px solid #d6d6d6;background:#fff;border-radius:8px;padding:.45rem .8rem;font-weight:700;font-size:.85rem}
+.ce-schema-acts .rm,.ce-video .rm{color:#C0392B;border-color:#F2C3C3}
+.ce-videos{display:flex;flex-direction:column;gap:.7rem}
+.ce-video{border:1px solid #e0e0e0;border-radius:12px;overflow:hidden}
+.ce-video video{width:100%;display:block;background:#000;max-height:320px}
+.ce-video .rm{width:100%;border:none;border-top:1px solid #eee;background:#fff;padding:.5rem;font-weight:700;font-size:.85rem}
+.ce-addvid{border:2px dashed #6B1A2C;color:#6B1A2C;background:#fff;border-radius:10px;padding:.7rem 1rem;font-weight:700;font-size:.9rem;text-align:center}
+.ce-addvid:hover{background:#FBEFF1}
+.ce-imgs{display:flex;flex-wrap:wrap;gap:.6rem;align-items:center}
+.ce-thumb{position:relative;width:90px;height:90px;border-radius:10px;overflow:hidden;border:1px solid #ddd}
+.ce-thumb img{width:100%;height:100%;object-fit:cover}
+.ce-thumb button{position:absolute;top:3px;right:3px;width:22px;height:22px;border:none;border-radius:50%;background:rgba(0,0,0,.65);color:#fff;font-size:.7rem}
+.ce-addimg{border:2px dashed #D4A24C;color:#B8860B;background:#fff;border-radius:10px;padding:.7rem 1rem;font-weight:700;font-size:.9rem}
+.ce-addimg:hover{background:#FFF8EC}
+.ce-criteres h2{font-weight:900;font-size:1.3rem;letter-spacing:.02em;border-bottom:2px solid #eee;padding-bottom:.6rem;margin-bottom:.4rem}
+.ce-toggles{display:flex;gap:.5rem}
+.ce-toggle{flex:1;border:1px solid #ddd;background:#f3f3f3;border-radius:10px;padding:.65rem;font-weight:800;font-size:.88rem;color:#333}
+.ce-toggle.on{background:#0F0F12;color:#fff;border-color:#0F0F12}
+.ce-themes{display:grid;grid-template-columns:1fr 1fr;gap:.5rem}
+.ce-theme{display:flex;align-items:center;gap:.5rem;background:#f6f6f6;border:1px solid #ececec;border-radius:8px;padding:.5rem .7rem;font-size:.9rem}
+.ce-theme input{width:16px;height:16px;accent-color:#6B1A2C}
+.ce-actions{display:flex;justify-content:flex-end;gap:.8rem;margin-top:1.6rem}
+.ce-btn{border-radius:999px;padding:.8rem 1.5rem;font-weight:800;font-size:.95rem;border:2px solid #0F0F12;background:#fff;color:#0F0F12}
+.ce-btn.ghost:hover{background:#f2f2f2}
+.ce-btn.save{background:#0F0F12;color:#fff;letter-spacing:.02em}.ce-btn.save:hover{background:#000}
+.ce-toast{position:fixed;bottom:1.2rem;left:50%;transform:translateX(-50%);background:#0F0F12;color:#fff;padding:.6rem 1.1rem;border-radius:10px;font-weight:600;font-size:.9rem;z-index:5000;box-shadow:0 8px 24px rgba(0,0,0,.3)}
+@media (max-width:900px){.ce-grid,.ce-schemas{grid-template-columns:1fr}.ce-title h1{font-size:1.8rem}.ce-title .dash{width:28px}.ce-actions{flex-wrap:wrap}}
+`;

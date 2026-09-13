@@ -4599,7 +4599,7 @@ const exportJson = () => {
             >
               <div style={{ fontWeight: 800, fontSize: '1.05rem', color: 'var(--bordeaux, #6B1A2C)', marginBottom: '.25rem' }}>💾 Envoyer vers MyBasket</div>
               <div style={{ fontSize: '.8rem', color: '#6b6b6b', marginBottom: '1rem', lineHeight: 1.45 }}>
-                La plaquette sera capturée phase par phase, uploadée dans Supabase, puis envoyée dans la page de création choisie.
+                Le dessin sera capturé phase par phase, uploadé dans Supabase, puis envoyé dans la page de création choisie.
               </div>
 
               <div style={{ display: 'flex', flexDirection: 'column', gap: '.55rem' }}>
