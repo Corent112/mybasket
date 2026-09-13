@@ -270,6 +270,7 @@ const resetPlaquette = () => {
   const [courtType, setCourtType] = useState<'half' | 'full'>('half');
   const [editorMode, setEditorMode] = useState<'draw' | 'animate'>('draw');
   const [notesOpen, setNotesOpen] = useState(false);
+  const [draggedActionId, setDraggedActionId] = useState<string | null>(null);
   const [courtStyle, setCourtStyle] = useState<CourtStyle>(DEFAULT_COURT_STYLE);
   const [courtStyleOpen, setCourtStyleOpen] = useState(false);
   const [phaseCourtThumbnailUrl, setPhaseCourtThumbnailUrl] = useState(MYBASKET_DEMI_URL);
@@ -1643,11 +1644,20 @@ const currentRef = useRef(current);
         ctx.stroke();
         break;
       }
-      case 'handoff':
-        ctx.fillStyle = o.color || '#0F0F12';
+      case 'handoff': {
+        const handoffColor = o.color || '#0F0F12';
+        // Le cercle est la vraie zone de déclenchement du main à main :
+        // les 2 attaquants qui entrent dans cette zone sont les 2 joueurs concernés.
+        ctx.strokeStyle = handoffColor;
+        ctx.lineWidth = Math.max(2, cs(canvas) * 0.003);
+        ctx.beginPath();
+        ctx.arc(0, 0, s * 2.65, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.fillStyle = handoffColor;
         ctx.font = '700 ' + Math.round(s * 1.9) + "px Arial, sans-serif";
         ctx.fillText('H', 0, 0);
         break;
+      }
       case 'text':
         ctx.fillStyle = o.color || '#0F0F12';
         ctx.font = '700 ' + Math.round(cs(canvas) * 0.024 * (o.size || 1)) + "px 'Roboto', sans-serif";
@@ -2040,17 +2050,15 @@ const currentRef = useRef(current);
 
     ph.objects.forEach((o) => {
       if (anim && o.kind === 'handoff') {
-        const source = o.sourcePlayerId ? anim.players[o.sourcePlayerId] : null;
-        const target = o.targetPlayerId ? anim.players[o.targetPlayerId] : null;
-
-        // Un ancien H déjà consommé dans une phase précédente n'est pas rejoué.
-        if (!source || !target) return;
-
         const HANDOFF_NEAR_N = 0.085;
-        const sourceNear = Math.hypot(source.x - o.x, source.y - o.y) <= HANDOFF_NEAR_N;
-        const targetNear = Math.hypot(target.x - o.x, target.y - o.y) <= HANDOFF_NEAR_N;
+        const attackersInside = rosterRef.current.filter((player) => {
+          if (player.team !== 'att' || player.coach) return false;
+          const pos = anim.players[player.id];
+          return !!pos && Math.hypot(pos.x - o.x, pos.y - o.y) <= HANDOFF_NEAR_N;
+        });
 
-        if (!sourceNear || !targetNear) return;
+        // Le H devient actif/visible lorsque deux attaquants arrivent dans son cercle.
+        if (attackersInside.length < 2) return;
       }
 
       drawObject(ctx, canvas, o);
@@ -2919,37 +2927,14 @@ animPosRef.current = { players, balls };
           return { ...ph, objects: [...ph.objects, { id: uid(), x: n.x, y: n.y, kind: tool.obj, rotation: 0, size: 1, color: defaultObjectColor }] };
         }
 
-        // Un H placé entre deux attaquants représente un main à main.
-        // Il mémorise les deux joueurs concernés mais NE change pas la possession
-        // dans le schéma courant. Le transfert sera appliqué uniquement au Next.
-        const nearest = ph.players
-          .filter((player) => player.team === 'att' && !player.coach)
-          .map((player) => ({ player, distance: Math.hypot(player.x - n.x, player.y - n.y) }))
-          .sort((a, b) => a.distance - b.distance)
-          .slice(0, 2)
-          .map((entry) => entry.player);
-
-        let sourcePlayerId: string | undefined;
-        let targetPlayerId: string | undefined;
-
-        if (nearest.length === 2) {
-          const [first, second] = nearest;
-          const firstHasBall = playerBallCount(first) > 0;
-          const secondHasBall = playerBallCount(second) > 0;
-          const source = firstHasBall ? first : secondHasBall ? second : first;
-          const target = source.id === first.id ? second : first;
-
-          sourcePlayerId = source.id;
-          targetPlayerId = target.id;
-
-          showHint(`Main à main : ${source.label} donnera le ballon à ${target.label} au schéma suivant`);
-        } else {
-          showHint('Place le H entre deux attaquants pour créer le main à main');
-        }
+        // Le H ne fige plus les joueurs au moment où on le pose.
+        // La zone circulaire autour du H déterminera au moment du Next quels sont
+        // les 2 attaquants réellement arrivés au main à main.
+        showHint('Main à main : fais arriver les 2 attaquants concernés dans le cercle du H');
 
         return {
           ...ph,
-          objects: [...ph.objects, { id: uid(), x: n.x, y: n.y, kind: 'handoff', rotation: 0, size: 1, color: '#0F0F12', sourcePlayerId, targetPlayerId }],
+          objects: [...ph.objects, { id: uid(), x: n.x, y: n.y, kind: 'handoff', rotation: 0, size: 1, color: '#0F0F12' }],
         };
       });
       return;
@@ -3878,24 +3863,34 @@ const exportJson = () => {
     }
   }
 
-  // Un main à main est un transfert d'état entre deux schémas :
-  // pendant cette phase, le ballon reste au porteur ; ici seulement,
-  // on prépare le porteur qui apparaîtra dans la phase créée par Next.
+  // Main à main : ce ne sont pas les joueurs proches du H lorsqu'on le pose qui comptent.
+  // On regarde les positions FINALES de la phase. Les 2 attaquants qui arrivent dans
+  // le cercle du H sont concernés ; celui qui possède le ballon le transmet à l'autre.
+  const HANDOFF_NEAR_N = 0.085;
   ph.objects
-    .filter(
-      (o) =>
-        o.kind === 'handoff' &&
-        !!o.sourcePlayerId &&
-        !!o.targetPlayerId
-    )
+    .filter((o) => o.kind === 'handoff')
     .forEach((o) => {
-      const sourceId = o.sourcePlayerId!;
-      const targetId = o.targetPlayerId!;
+      const inside = ph.players
+        .filter((player) => player.team === 'att' && !player.coach)
+        .map((player) => {
+          const pos = phasePlayerPosAt(s, player.id, span) || { x: player.x, y: player.y };
+          return { player, pos, distance: Math.hypot(pos.x - o.x, pos.y - o.y) };
+        })
+        .filter((entry) => entry.distance <= HANDOFF_NEAR_N)
+        .sort((a, b) => a.distance - b.distance);
 
-      if ((owners.get(sourceId) || 0) <= 0) return;
+      if (inside.length < 2) return;
 
-      removeOwnerBall(owners, sourceId, 1);
-      addOwnerBall(owners, targetId, 1);
+      // Priorité au porteur du ballon présent dans le cercle.
+      const sourceEntry = inside.find((entry) => (owners.get(entry.player.id) || 0) > 0);
+      if (!sourceEntry) return;
+
+      // Le receveur est l'autre attaquant le plus proche du centre du H.
+      const targetEntry = inside.find((entry) => entry.player.id !== sourceEntry.player.id);
+      if (!targetEntry) return;
+
+      removeOwnerBall(owners, sourceEntry.player.id, 1);
+      addOwnerBall(owners, targetEntry.player.id, 1);
     });
 
   const players = ph.players.map((p) => {
@@ -3970,6 +3965,43 @@ const exportJson = () => {
   const actionName = (a: string) => (a === 'pass' ? 'Passe' : a === 'dribble' ? 'Dribble' : a === 'cut' ? 'Cut' : a === 'screen' ? 'Écran' : a === 'shoot' ? 'Tir' : a);
   const actionWho = (l: Line) => (l.action === 'pass' ? `${playerLabelById(l.sourcePlayerId)}→${playerLabelById(l.targetPlayerId)}` : playerLabelById(l.sourcePlayerId));
   const toggleActionWith = (lineId: string) => { pushHistory(); updatePhase((p) => ({ ...p, lines: p.lines.map((l) => (l.id === lineId ? { ...l, startMode: l.startMode === 'withPrevious' ? 'afterPrevious' : 'withPrevious' } : l)) })); };
+
+  // Réordonne les actions de la phase sans toucher aux autres éléments du terrain.
+  // Tout le moteur (simulation, timing, animation) passe déjà par orderedActions(),
+  // donc changer `order` suffit pour que le nouvel ordre soit utilisé partout.
+  const setActionOrder = (orderedIds: string[]) => {
+    if (!ph || orderedIds.length < 2) return;
+    pushHistory();
+    const orderById = new Map(orderedIds.map((id, index) => [id, index + 1]));
+    updatePhase((p) => ({
+      ...p,
+      lines: p.lines.map((line) =>
+        ACTION_KINDS.includes(line.action) && orderById.has(line.id)
+          ? { ...line, order: orderById.get(line.id) }
+          : line
+      ),
+    }));
+  };
+
+  const moveAction = (lineId: string, direction: -1 | 1) => {
+    const ids = acts.map((action) => action.id);
+    const from = ids.indexOf(lineId);
+    const to = from + direction;
+    if (from < 0 || to < 0 || to >= ids.length) return;
+    [ids[from], ids[to]] = [ids[to], ids[from]];
+    setActionOrder(ids);
+  };
+
+  const moveActionTo = (draggedId: string, targetId: string) => {
+    if (draggedId === targetId) return;
+    const ids = acts.map((action) => action.id);
+    const from = ids.indexOf(draggedId);
+    const to = ids.indexOf(targetId);
+    if (from < 0 || to < 0) return;
+    const [moved] = ids.splice(from, 1);
+    ids.splice(to, 0, moved);
+    setActionOrder(ids);
+  };
   // Terrain complet en VERTICAL (portrait) ; demi-terrain conserve son format. Les coordonnées
   // sont normalisées 0..1 avec le CENTRE (0.5,0.5) comme référence commune : le rendu ancre le
   // centre au centre du canvas, donc gauche/droite et haut/bas restent cohérents d'un terrain à l'autre.
@@ -4216,25 +4248,63 @@ const exportJson = () => {
                       <div className="sec-lab">⏱ TIMING ACTIONS</div>
                       <div style={{ fontSize: '.72rem', color: '#6b6b6b' }}>{acts.length} étape(s)</div>
                     </div>
-                    <div style={{ fontSize: '.72rem', color: '#6b6b6b', marginBottom: '.5rem', lineHeight: 1.35 }}>Clique ↔ pour faire démarrer une action en même temps que la précédente.</div>
+                    <div style={{ fontSize: '.72rem', color: '#6b6b6b', marginBottom: '.5rem', lineHeight: 1.35 }}>Glisse une action ou utilise ↑ ↓ pour changer son ordre. Clique ↔ pour la faire démarrer en même temps que la précédente.</div>
                     {acts.length === 0 && <div style={{ fontSize: '.75rem', color: '#9a9a9a', fontStyle: 'italic' }}>Aucune action sur cette phase.</div>}
                     <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
                       {acts.map((l, i) => {
                         const sel = selection.some((s) => s.type === 'line' && s.id === l.id);
                         const withPrev = i > 0 && l.startMode === 'withPrevious';
                         return (
-                          <div key={l.id} style={{ display: 'flex', alignItems: 'center', gap: 6, border: '1px solid ' + (sel ? 'var(--or, #D4A24C)' : 'var(--gris-med)'), background: sel ? 'rgba(212,162,76,0.12)' : '#fff', borderRadius: 6, padding: '.28rem .4rem', cursor: 'pointer' }}>
+                          <div
+                            key={l.id}
+                            draggable
+                            onDragStart={(e) => {
+                              setDraggedActionId(l.id);
+                              e.dataTransfer.effectAllowed = 'move';
+                              e.dataTransfer.setData('text/plain', l.id);
+                            }}
+                            onDragEnd={() => setDraggedActionId(null)}
+                            onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; }}
+                            onDrop={(e) => {
+                              e.preventDefault();
+                              const draggedId = draggedActionId || e.dataTransfer.getData('text/plain');
+                              if (draggedId) moveActionTo(draggedId, l.id);
+                              setDraggedActionId(null);
+                            }}
+                            style={{
+                              display: 'flex', alignItems: 'center', gap: 5,
+                              border: '1px solid ' + (sel ? 'var(--or, #D4A24C)' : 'var(--gris-med)'),
+                              background: draggedActionId === l.id ? 'rgba(107,26,44,.08)' : (sel ? 'rgba(212,162,76,0.12)' : '#fff'),
+                              borderRadius: 6, padding: '.28rem .32rem', cursor: 'grab',
+                              opacity: draggedActionId === l.id ? .6 : 1,
+                            }}
+                          >
+                            <span title="Cliquer-déplacer pour changer l'ordre" style={{ color: '#999', fontSize: 13, lineHeight: 1, cursor: 'grab', userSelect: 'none' }}>⋮⋮</span>
                             <span
                               onClick={(e) => { e.stopPropagation(); if (i > 0) toggleActionWith(l.id); }}
                               title={i === 0 ? 'La 1ʳᵉ action démarre toujours en premier' : 'En même temps que la précédente'}
                               style={{ flex: '0 0 auto', width: 20, height: 20, display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: 4, fontSize: 11, fontWeight: 700, border: '1px solid ' + (withPrev ? 'var(--or, #D4A24C)' : 'var(--gris-med)'), background: withPrev ? 'var(--or, #D4A24C)' : '#fff', color: withPrev ? '#fff' : (i === 0 ? '#cfcfcf' : '#6b6b6b'), cursor: i === 0 ? 'default' : 'pointer' }}
                             >↔</span>
                             <span onClick={() => setSelection([{ type: 'line', id: l.id }])} style={{ display: 'flex', alignItems: 'center', gap: 6, flex: 1, minWidth: 0 }}>
-                              <span style={{ flex: '0 0 auto', fontWeight: 700, fontSize: '.8rem' }}>{i + 1}</span>
+                              <span style={{ flex: '0 0 auto', fontWeight: 800, fontSize: '.8rem', minWidth: 14 }}>{i + 1}</span>
                               <span style={{ flex: '0 0 auto', width: 16, textAlign: 'center', fontWeight: 700 }}>{actionIcon(l.action)}</span>
                               <span style={{ flex: 1, minWidth: 0, fontSize: '.8rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{actionName(l.action)}</span>
                               <span style={{ flex: '0 0 auto', fontSize: '.75rem', color: '#6b6b6b', fontWeight: 600 }}>{actionWho(l)}</span>
                             </span>
+                            <button
+                              type="button"
+                              disabled={i === 0}
+                              title="Monter cette action"
+                              onClick={(e) => { e.stopPropagation(); moveAction(l.id, -1); }}
+                              style={{ width: 22, height: 22, border: '1px solid var(--gris-med)', borderRadius: 4, background: '#fff', cursor: i === 0 ? 'default' : 'pointer', opacity: i === 0 ? .3 : 1, lineHeight: 1, padding: 0 }}
+                            >↑</button>
+                            <button
+                              type="button"
+                              disabled={i === acts.length - 1}
+                              title="Descendre cette action"
+                              onClick={(e) => { e.stopPropagation(); moveAction(l.id, 1); }}
+                              style={{ width: 22, height: 22, border: '1px solid var(--gris-med)', borderRadius: 4, background: '#fff', cursor: i === acts.length - 1 ? 'default' : 'pointer', opacity: i === acts.length - 1 ? .3 : 1, lineHeight: 1, padding: 0 }}
+                            >↓</button>
                           </div>
                         );
                       })}
