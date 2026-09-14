@@ -57,14 +57,25 @@ type SavedCourtPreset = {
 
 
 const BUILTIN_COURT_FONTS = [
-  { id: 'Police 1', label: 'Police 1', family: 'MyBasketCourtPolice1', url: '/fonts/SfBigWhiskey-mZ4m.ttf' },
-  { id: 'Police 2', label: 'Police 2', family: 'MyBasketCourtPolice2', url: '/fonts/OLD_SPORT_01_COLLEGE_NCV.ttf' },
-  { id: 'Police 3', label: 'Police 3', family: 'MyBasketCourtPolice3', url: '/fonts/OLD_SPORT_02_ATHLETIC_NCV.ttf' },
-  { id: 'Police 4', label: 'Police 4', family: 'MyBasketCourtPolice4', url: '/fonts/Raleway-Bold.ttf' },
-  { id: 'Police 5', label: 'Police 5', family: 'MyBasketCourtPolice5', url: '/fonts/Raleway-ExtraBoldItalic.ttf' },
-  { id: 'Police 6', label: 'Police 6', family: 'MyBasketCourtPolice6', url: '/fonts/SfBigWhiskeyExtended-PZad.ttf' },
-  { id: 'Police 7', label: 'Police 7', family: 'MyBasketCourtPolice7', url: '/fonts/SfBigWhiskeyExtendedBold-XXlP.ttf' },
-  { id: 'Police 8', label: 'Police 8', family: 'MyBasketCourtPolice8', url: '/fonts/police-ParisBasketball-Regular.otf' },
+  { id: 'Basketball-Regular', label: 'Basketball-Regular', family: 'MyBasketCourtFont1', url: '/fonts/Basketball-Regular.otf' },
+  { id: 'Basketball', label: 'Basketball', family: 'MyBasketCourtFont2', url: '/fonts/Basketball.otf' },
+  { id: 'BigStar', label: 'BigStar', family: 'MyBasketCourtFont3', url: '/fonts/BigStar.otf' },
+  { id: 'Brush Script', label: 'Brush Script', family: 'MyBasketCourtFont4', url: '/fonts/Brush%20Script.ttf' },
+  { id: 'Long_Shot', label: 'Long_Shot', family: 'MyBasketCourtFont5', url: '/fonts/Long_Shot.ttf' },
+  { id: 'OLD_SPORT_01', label: 'OLD_SPORT_01', family: 'MyBasketCourtFont6', url: '/fonts/OLD_SPORT_01.ttf' },
+  { id: 'OLD_SPORT_02', label: 'OLD_SPORT_02', family: 'MyBasketCourtFont7', url: '/fonts/OLD_SPORT_02.ttf' },
+  { id: 'Retrofunk', label: 'Retrofunk', family: 'MyBasketCourtFont8', url: '/fonts/Retrofunk%20.otf' },
+  { id: 'Ristella', label: 'Ristella', family: 'MyBasketCourtFont9', url: '/fonts/Ristella.ttf' },
+  { id: 'Romana Bold', label: 'Romana Bold', family: 'MyBasketCourtFont10', url: '/fonts/Romana%20Bold.otf' },
+  { id: 'SfBigBold', label: 'SfBigBold', family: 'MyBasketCourtFont11', url: '/fonts/SfBigBold.ttf' },
+  { id: 'SfBigCondensed', label: 'SfBigCondensed', family: 'MyBasketCourtFont12', url: '/fonts/SfBigCondensed.ttf' },
+  { id: 'SfBigGras', label: 'SfBigGras', family: 'MyBasketCourtFont13', url: '/fonts/SfBigGras.ttf' },
+  { id: 'SfBigScBold', label: 'SfBigScBold', family: 'MyBasketCourtFont14', url: '/fonts/SfBigScBold.ttf' },
+  { id: 'Source', label: 'Source', family: 'MyBasketCourtFont15', url: '/fonts/Source.otf' },
+  { id: 'Calibri', label: 'Calibri', family: 'Calibri', url: null },
+  { id: 'Arial', label: 'Arial', family: 'Arial', url: null },
+  { id: 'Times New Roman', label: 'Times New Roman', family: 'Times New Roman', url: null },
+  { id: 'Verdana', label: 'Verdana', family: 'Verdana', url: null },
 ] as const;
 
 const getCourtFontFamily = (fontId: string) => BUILTIN_COURT_FONTS.find((font) => font.id === fontId)?.family || fontId || 'Arial';
@@ -393,7 +404,8 @@ const resetPlaquette = () => {
     if (typeof FontFace === 'undefined') return;
     let cancelled = false;
     Promise.allSettled(BUILTIN_COURT_FONTS.map(async (font) => {
-      const face = new FontFace(font.family, `url(${font.url})`);
+      if (!font.url) return;
+      const face = new FontFace(font.family, `url("${font.url}")`);
       const loaded = await face.load();
       if (!cancelled) document.fonts.add(loaded);
     })).then(() => {
