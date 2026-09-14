@@ -111,10 +111,8 @@ function SystemCard({
     item.schemaImages?.[0] || item.images?.[0] || item.schemaImage || "";
 
   const firstTempsFort = item.tempsForts?.[0];
-  const detailHref = isConnected ? `/systemes/${item.id}` : "/abonnements";
-  const editHref = isConnected
-    ? `/systemes/creer?id=${item.id}`
-    : "/abonnements";
+  const detailHref = `/systemes/${item.id}`;
+  const editHref = `/systemes/creer?id=${item.id}`;
 
   return (
     <article className="mb-system-card">
@@ -192,16 +190,16 @@ export default function SystemesClient() {
     async function load() {
       try {
         setLoading(true);
-
-        const data = await listSystems();
-        setItems(data);
-
         const supabase = createClient();
-        const {
-          data: { user },
-        } = await supabase.auth.getUser();
 
-        setIsConnected(Boolean(user));
+        const [data, sessionResult] = await Promise.all([
+          listSystems(),
+          supabase.auth.getSession(),
+        ]);
+
+        setItems(data);
+        setIsConnected(Boolean(sessionResult.data.session?.user));
+        router.prefetch("/systemes/creer?new=1");
       } catch (error) {
         console.error("Erreur chargement systèmes :", error);
         setItems([]);
@@ -212,7 +210,7 @@ export default function SystemesClient() {
     }
 
     load();
-  }, []);
+  }, [router]);
 
   const options = FILTER_OPTIONS;
 
@@ -407,10 +405,10 @@ export default function SystemesClient() {
 
               <div className="list-actions">
                 <Link
-                  href={isConnected ? "/systemes/creer?new=1" : "/abonnements"}
+                  href="/systemes/creer?new=1"
                   className="btn btn-black"
                 >
-                  {isConnected ? "+ Créer un système" : "Débloquer les systèmes"}
+                  + Créer un système
                 </Link>
 
                 <select
