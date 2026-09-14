@@ -1,5 +1,9 @@
 import { createClient } from "@/lib/supabase/server";
-import { getEffectiveSubscriptionForUser } from "@/lib/effective-subscription";
+import { createAdminClient } from "@/lib/supabase/admin-server";
+import {
+  getEffectiveSubscriptionForUser,
+  isTotalAccessPlan,
+} from "@/lib/effective-subscription";
 import { userHasSubscriptionAccess } from "@/lib/subscription-entitlements";
 
 type AccessResult = { userId: string | null; allowed: boolean };
@@ -20,6 +24,10 @@ type ClubSubscriptionAccess = {
   };
 };
 
+function isAdminRole(role: unknown) {
+  const normalized = String(role ?? "").trim().toLowerCase();
+  return normalized === "ceo" || normalized === "superadmin" || normalized === "admin";
+}
 
 async function getContext() {
   const supabase = await createClient();
@@ -31,9 +39,11 @@ async function getContext() {
     };
   }
 
-  // Profil et abonnement effectif sont indépendants : on les charge en parallèle.
+  const admin = createAdminClient();
+  const profileClient = admin || supabase;
+
   const [profileResult, effective] = await Promise.all([
-    supabase
+    profileClient
       .from("profiles")
       .select("platform_role,status")
       .eq("id", user.id)
@@ -46,7 +56,9 @@ async function getContext() {
   ]);
 
   const profile = profileResult.data;
-  const totalAccess = isAdminRole(profile?.platform_role);
+  const totalAccess =
+    isAdminRole(profile?.platform_role) ||
+    (effective.active && isTotalAccessPlan(effective.plan));
 
   return {
     supabase,
@@ -58,15 +70,10 @@ async function getContext() {
   };
 }
 
-function isAdminRole(role: string | null | undefined) {
-  return role === "ceo" || role === "superadmin" || role === "admin";
-}
-
 export async function hasAccess(sectionKey: string): Promise<boolean> {
-  const { supabase, user, profile, subscription, plan, totalAccess } = await getContext();
+  const { supabase, user, profile, totalAccess } = await getContext();
   if (!user) return false;
   if (totalAccess || isAdminRole(profile?.platform_role)) return true;
-  if (!subscription?.plan_id || !plan) return false;
 
   return userHasSubscriptionAccess({
     supabase,
@@ -151,7 +158,7 @@ export async function getClubSubscriptionAccess(): Promise<ClubSubscriptionAcces
   const isAdmin = isAdminRole(profile?.platform_role);
   const isClub = isAdmin || plan?.target === "club" || String(plan?.slug ?? "").startsWith("club-");
   return {
-    userId: user.id, planId: subscription?.plan_id ?? null,
+    userId: user.id, planId: subscription?.plan_id ?? plan?.id ?? null,
     planName: isAdmin ? "Accès total CEO" : plan?.name ?? null,
     planSlug: isAdmin ? "ceo-full-access" : plan?.slug ?? null,
     hasClubSubscription: isClub, isAdmin,

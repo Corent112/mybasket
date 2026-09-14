@@ -1,5 +1,9 @@
 import { createClient } from "@/lib/supabase/server";
-import { getEffectiveSubscriptionForUser } from "@/lib/effective-subscription";
+import { createAdminClient } from "@/lib/supabase/admin-server";
+import {
+  getEffectiveSubscriptionForUser,
+  isTotalAccessPlan,
+} from "@/lib/effective-subscription";
 import { userHasSubscriptionAccess } from "@/lib/subscription-entitlements";
 
 function isAdminRole(role: unknown) {
@@ -15,9 +19,10 @@ export async function hasAllAccess(sectionKeys: string[]): Promise<boolean> {
 
   if (!user) return false;
 
-  // Priorité absolue au rôle plateforme : un CEO/admin ne doit jamais attendre
-  // la résolution d'un abonnement ni être redirigé vers /abonnements.
-  const { data: profile } = await supabase
+  const admin = createAdminClient();
+  const profileClient = admin || supabase;
+
+  const { data: profile } = await profileClient
     .from("profiles")
     .select("platform_role,status")
     .eq("id", user.id)
@@ -31,7 +36,10 @@ export async function hasAllAccess(sectionKeys: string[]): Promise<boolean> {
     email: user.email,
   });
 
-  if (!effective.subscription?.plan_id || !effective.plan) return false;
+  if (effective.active && isTotalAccessPlan(effective.plan)) return true;
+
+  const planId = effective.subscription?.plan_id || effective.plan?.id || null;
+  if (!effective.active || !planId || !effective.plan) return false;
 
   const access = await Promise.all(
     sectionKeys.map((sectionKey) =>
