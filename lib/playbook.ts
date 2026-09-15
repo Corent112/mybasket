@@ -25,6 +25,7 @@ export type PlaybookSystem = {
   system_id: string | null;
   schema_images: string[] | null;
   schema_data_list: unknown[] | null;
+  schema_video?: string | null;
   tags: string[] | null;
   created_at: string | null;
   updated_at: string | null;
@@ -261,6 +262,7 @@ export async function addSystemToPlaybook(payload: {
   system_id?: string | null;
   schema_images?: string[] | null;
   schema_data_list?: unknown[] | null;
+  schema_video?: string | null;
   tags?: string[] | null;
 }): Promise<PlaybookSystem> {
   const title = payload.title.trim();
@@ -296,6 +298,7 @@ export async function addSystemToPlaybook(payload: {
       system_id: payload.system_id ?? null,
       schema_images: schemaImages,
       schema_data_list: schemaDataList,
+      schema_video: payload.schema_video ?? null,
       tags,
       created_at: now,
       updated_at: now,
@@ -373,6 +376,7 @@ export async function duplicatePlaybookSystem(
     system_id: system.system_id,
     schema_images: cleanStringArray(system.schema_images),
     schema_data_list: cleanUnknownArray(system.schema_data_list),
+    schema_video: system.schema_video ?? null,
     tags: cleanStringArray(system.tags),
   });
 }

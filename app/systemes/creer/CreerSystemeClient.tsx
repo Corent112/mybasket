@@ -9,6 +9,7 @@ import {
   newSystemId,
   type SystemItem,
 } from "@/lib/systems";
+import { attachSystemToPlaybook, clearPendingPlaybookSelection, readPendingPlaybookSelection, listPersonalSystemTags, createPersonalSystemTag } from '@/lib/playbook-series';
 import {
   getPlaquetteTransfer,
   setPlaquetteTransfer,
@@ -47,12 +48,7 @@ const CURRENT_SYSTEM_ID_KEY = "mybasket_current_system_id";
 const DEFAULT_FAMILLES = ["Offensif"];
 
 const DEFAULT_TEMPS_FORTS = [
-  "Pick top",
-  "Pick side",
-  "Hand off",
-  "Isolation",
-  "Post-up",
-  "Écran non porteur",
+  "Pick top", "Pick side", "Pick non porteur", "Post up", "1v1", "Pick the picker", "Spanish"
 ];
 
 const DEFAULT_CATEGORIES = ["U13", "U15", "U18", "U21", "Seniors"];
@@ -168,8 +164,11 @@ export default function SystemesClient() {
   const [loading, setLoading] = useState(false);
   const [draftReady, setDraftReady] = useState(false);
   const [systemStorageId, setSystemStorageId] = useState<string>(editId || "");
+  const [personalTempsForts,setPersonalTempsForts]=useState<string[]>([]);
+  useEffect(()=>{ listPersonalSystemTags().then(rows=>setPersonalTempsForts(rows.map(x=>x.name))).catch(()=>setPersonalTempsForts(DEFAULT_TEMPS_FORTS)); },[]);
+  const addPersonalTempsFort=async()=>{const n=prompt('Nouveau tag de jeu ?');if(!n?.trim())return;await createPersonalSystemTag(n);setPersonalTempsForts((await listPersonalSystemTags()).map(x=>x.name));};
 
-  const tempsFortsOptions = DEFAULT_TEMPS_FORTS;
+  const tempsFortsOptions = personalTempsForts.length?personalTempsForts:DEFAULT_TEMPS_FORTS;
   const categories = DEFAULT_CATEGORIES;
   const types = DEFAULT_TYPES;
 
@@ -710,6 +709,19 @@ export default function SystemesClient() {
         return;
       }
 
+      // Si le système vient de DESSIN avec un Playbook/Série choisis,
+      // on l'ajoute au Playbook sans créer une deuxième fiche système.
+      const pendingPlaybook = readPendingPlaybookSelection();
+      if (pendingPlaybook) {
+        try {
+          await attachSystemToPlaybook(saved, pendingPlaybook);
+          clearPendingPlaybookSelection();
+        } catch (linkError) {
+          console.error('Erreur rattachement Playbook/Série', linkError);
+          flash('Système enregistré, mais rattachement au Playbook à vérifier');
+        }
+      }
+
       localStorage.removeItem(RETURN_KEY);
       await removePlaquetteTransfer(LOAD_KEY);
       await removePlaquetteTransfer(RESULT_KEY);
@@ -909,7 +921,7 @@ export default function SystemesClient() {
         <div className="cs-card cs-criteres">
           <h2>CRITÈRES</h2>
 
-          <label className="cs-lab">Temps forts</label>
+          <label className="cs-lab" style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}>Tags de jeu <button type="button" onClick={addPersonalTempsFort}>+ Ajouter</button></label>
 
           <div className="cs-check-grid">
             {tempsFortsOptions.map((item) => (

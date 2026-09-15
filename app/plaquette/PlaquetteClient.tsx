@@ -23,6 +23,8 @@ import { getSystem, updateSystem } from "@/lib/systems";
 import { uploadSchemaImage } from "@/lib/supabase/upload-schema";
 import ContentNavigator from "@/components/content-navigator/ContentNavigator";
 import { getPlaquetteTransfer, setPlaquetteTransfer, removePlaquetteTransfer } from "@/lib/plaquette-transfer";
+import { listPrivatePlaybooks, listPlaybookSeries, listPersonalSystemTags, createPlaybookSeries, createPersonalSystemTag, savePendingPlaybookSelection, clearPendingPlaybookSelection, type PlaybookSeries, type PersonalSystemTag } from '@/lib/playbook-series';
+import { createPlaybook, type Playbook } from '@/lib/playbook';
 
 
 type CourtStyle = {
@@ -617,6 +619,20 @@ useEffect(() => {
   const [selectionPanelOpen, setSelectionPanelOpen] = useState(true);
   const [exportOpen, setExportOpen] = useState(false);
   const [saving, setSaving] = useState<null | 'systeme' | 'exercice'>(null);
+  const [savePlaybooks,setSavePlaybooks]=useState<Playbook[]>([]);
+  const [savePlaybookId,setSavePlaybookId]=useState('');
+  const [saveSeries,setSaveSeries]=useState<PlaybookSeries[]>([]);
+  const [saveSeriesId,setSaveSeriesId]=useState('');
+  const [saveTags,setSaveTags]=useState<PersonalSystemTag[]>([]);
+  const [saveSelectedTags,setSaveSelectedTags]=useState<string[]>([]);
+
+useEffect(()=>{ if(!saveOpen)return; (async()=>{ try{ const [pbs,tags]=await Promise.all([listPrivatePlaybooks(),listPersonalSystemTags()]); setSavePlaybooks(pbs); setSaveTags(tags); const pid=savePlaybookId||pbs[0]?.id||''; setSavePlaybookId(pid); setSaveSeries(pid?await listPlaybookSeries(pid):[]); }catch(e){console.warn('Playbook save options',e)} })(); },[saveOpen]);
+useEffect(()=>{ if(!savePlaybookId){setSaveSeries([]);return;} listPlaybookSeries(savePlaybookId).then(setSaveSeries).catch(console.warn); },[savePlaybookId]);
+
+const prepareSystemPlaybookSave=()=>{ if(savePlaybookId) savePendingPlaybookSelection({playbookId:savePlaybookId,seriesId:saveSeriesId||null,tags:saveSelectedTags}); else clearPendingPlaybookSelection(); };
+const addPlaybookFromDrawing=async()=>{ const name=prompt('Nom du nouveau Playbook ?'); if(!name?.trim())return; try{ const pb=await createPlaybook({title:name.trim()}); const pbs=await listPrivatePlaybooks(); setSavePlaybooks(pbs); setSavePlaybookId(pb.id); setSaveSeries([]); setSaveSeriesId(''); showHint('Playbook créé'); }catch(e){console.error(e);showHint('Impossible de créer le Playbook');} };
+const addSeriesFromDrawing=async()=>{ if(!savePlaybookId){showHint('Choisis d’abord un Playbook');return;} const name=prompt('Nom de la nouvelle série ?'); if(!name?.trim())return; const row=await createPlaybookSeries(savePlaybookId,name,saveSelectedTags); setSaveSeries(await listPlaybookSeries(savePlaybookId)); setSaveSeriesId(row.id); };
+const addTagFromDrawing=async()=>{ const name=prompt('Nom du tag ? (ex. Pick top, Spanish, Post up…)'); if(!name?.trim())return; await createPersonalSystemTag(name); setSaveTags(await listPersonalSystemTags()); setSaveSelectedTags(v=>Array.from(new Set([...v,name.trim()]))); };
 
 const [hint, setHint] = useState('');
 const hintTimer = useRef<number | null>(null);
@@ -4768,11 +4784,28 @@ const exportJson = () => {
           >
             <div
               onClick={(e) => e.stopPropagation()}
-              style={{ background: '#fff', borderRadius: 12, padding: '1.2rem 1.3rem', width: 390, maxWidth: '92vw', boxShadow: '0 14px 50px rgba(0,0,0,.35)', borderTop: '4px solid var(--bordeaux, #6B1A2C)' }}
+              style={{ background: '#fff', borderRadius: 12, padding: '1.2rem 1.3rem', width: 520, maxWidth: '94vw', boxShadow: '0 14px 50px rgba(0,0,0,.35)', borderTop: '4px solid var(--bordeaux, #6B1A2C)' }}
             >
               <div style={{ fontWeight: 800, fontSize: '1.05rem', color: 'var(--bordeaux, #6B1A2C)', marginBottom: '.25rem' }}>💾 Envoyer vers MyBasket</div>
               <div style={{ fontSize: '.8rem', color: '#6b6b6b', marginBottom: '1rem', lineHeight: 1.45 }}>
                 La plaquette sera capturée phase par phase, uploadée dans Supabase, puis envoyée dans la page de création choisie.
+              </div>
+
+              <div style={{display:'grid',gap:'.65rem',marginBottom:'1rem',padding:'.8rem',background:'#f7f4ef',borderRadius:10}}>
+                <b style={{fontSize:'.8rem',color:'#6B1A2C'}}>DESTINATION DU SYSTÈME</b><div style={{fontSize:'.75rem',padding:'.55rem .65rem',background:'#fff',border:'1px solid #e1d9cf',borderRadius:7}}>🔒 <b>Ma bibliothèque privée</b> — toujours enregistrée, impossible à désactiver.</div>
+                <label style={{fontSize:'.76rem',fontWeight:700}}>Playbook <span style={{fontWeight:500,color:'#777'}}>(facultatif)</span>
+                  <div style={{display:'flex',gap:6,marginTop:4}}>
+                    <select value={savePlaybookId} onChange={e=>{setSavePlaybookId(e.target.value);setSaveSeriesId('')}} style={{flex:1,padding:'.55rem',border:'1px solid #ddd',borderRadius:7}}>
+                      <option value=''>Bibliothèque privée uniquement</option>{savePlaybooks.map(p=><option key={p.id} value={p.id}>{p.title}</option>)}
+                    </select>
+                    <button type='button' onClick={addPlaybookFromDrawing}>+ Playbook</button>
+                  </div>
+                </label>
+                {savePlaybookId&&<label style={{fontSize:'.76rem',fontWeight:700}}>Série
+                  <div style={{display:'flex',gap:6,marginTop:4}}><select value={saveSeriesId} onChange={e=>setSaveSeriesId(e.target.value)} style={{flex:1,padding:'.55rem',border:'1px solid #ddd',borderRadius:7}}><option value=''>Sans série</option>{saveSeries.map(x=><option key={x.id} value={x.id}>{x.name}</option>)}</select><button type='button' onClick={addSeriesFromDrawing}>+ Série</button></div>
+                </label>}
+                <div><div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}><b style={{fontSize:'.76rem'}}>Tags de jeu</b><button type='button' onClick={addTagFromDrawing}>+ Tag</button></div><div style={{display:'flex',flexWrap:'wrap',gap:6,marginTop:6}}>{saveTags.map(t=>{const on=saveSelectedTags.includes(t.name);return <button type='button' key={t.id} onClick={()=>setSaveSelectedTags(v=>on?v.filter(x=>x!==t.name):[...v,t.name])} style={{padding:'.35rem .55rem',borderRadius:999,border:'1px solid '+(on?'#6B1A2C':'#ccc'),background:on?'#6B1A2C':'#fff',color:on?'#fff':'#333'}}>{t.name}</button>})}</div></div>
+                <small style={{color:'#777'}}>Exemples : Pick top · Pick side · Pick non porteur · Post up · 1v1 · Pick the picker · Spanish. Chaque utilisateur crée ses propres tags.</small>
               </div>
 
               <div style={{ display: 'flex', flexDirection: 'column', gap: '.55rem' }}>
@@ -4788,7 +4821,7 @@ const exportJson = () => {
 
                 <button
                   disabled={!!saving}
-                  onClick={() => saveAndGoCreate('systeme')}
+                  onClick={() => { prepareSystemPlaybookSave(); saveAndGoCreate('systeme'); }}
                   style={{ padding: '.7rem', borderRadius: 9, border: 'none', background: 'var(--bordeaux, #6B1A2C)', color: '#fff', fontWeight: 700, fontSize: '.9rem', cursor: saving ? 'wait' : 'pointer', opacity: saving && saving !== 'systeme' ? 0.5 : 1 }}
                 >
                   {saving === 'systeme' ? 'Envoi…' : '🗂 Créer un système'}
@@ -5428,7 +5461,7 @@ html{font-size:15px}
 .ed-library .content-nav.compact{width:68px!important}
 .ed-library .cn-open{position:absolute!important;left:10px!important;top:10px!important}
 .ed-left,.ed-right{background:#f8f5f0;padding:.8rem;min-width:0}
-.ed-left{grid-area:phases;border-top:1px solid var(--gris-med);border-right:0;max-height:260px;overflow:auto}
+.ed-left{grid-area:phases;border-top:1px solid var(--gris-med);border-right:0;max-height:320px;overflow:auto}
 .ed-right{grid-area:right;border-left:1px solid #e4ddd5;display:flex;flex-direction:column;gap:.75rem;overflow-y:auto;max-height:calc(100vh - 180px)}
 .ed-canvas-wrap{grid-area:canvas}
 .ed-left .ed-tabs{margin-bottom:.45rem}
@@ -5436,7 +5469,7 @@ html{font-size:15px}
 .ed-left #phCounter{grid-area:counter}
 .ed-left .ph-actions{grid-area:actions;margin-bottom:0}
 .ed-left .phases-list{grid-area:list;display:flex;flex-direction:row;gap:.5rem;max-height:none;overflow-x:auto;overflow-y:hidden;padding:0 0 .35rem}
-.ed-left .ph-thumb{flex:0 0 118px;aspect-ratio:16/10}
+.ed-left .ph-thumb{flex:0 0 170px;aspect-ratio:16/10}
 .ed-left #timingPanel{grid-area:timing;margin-top:0!important;padding-top:0!important;border-top:0!important;max-height:190px;overflow:auto;padding-right:.25rem}
 .ed-left #tabPhases>div[style*="margin-top: .7rem"]{grid-area:notes}
 

@@ -4,6 +4,8 @@ import { useEffect, useMemo, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { exportPlaybookPdf } from "@/lib/playbook-export";
 import PlaybookProfitability from "@/components/playbook/PlaybookProfitability";
+import PlaybookSeriesManager from "@/components/playbook/PlaybookSeriesManager";
+import PlaybookVideoExport from "@/components/playbook/PlaybookVideoExport";
 import {
   deletePlaybook,
   deletePlaybookSystem,
@@ -278,6 +280,8 @@ export default function PlaybookDetailPage() {
             📄 Exporter PDF
           </button>
 
+          <PlaybookVideoExport playbook={playbook} systems={systems} />
+
           <button type="button" onClick={() => window.print()}>
             🖨️ Imprimer
           </button>
@@ -291,6 +295,8 @@ export default function PlaybookDetailPage() {
           </button>
         </div>
       </header>
+
+      <PlaybookSeriesManager playbook={playbook} systems={systems} onChanged={load} />
 
       <div className="pb-layout">
         <section className="pb-main">
