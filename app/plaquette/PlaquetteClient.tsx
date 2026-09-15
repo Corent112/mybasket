@@ -95,6 +95,17 @@ const DEFAULT_COURT_BRANDING: CourtBranding = {
   customFontDataUrl: null,
 };
 
+const BALL_ICON_URL = '/images/ballon-spalding-tf1000.jpg';
+let BALL_ICON_IMAGE: HTMLImageElement | null = null;
+const getBallIconImage = () => {
+  if (typeof window === 'undefined') return null;
+  if (!BALL_ICON_IMAGE) {
+    BALL_ICON_IMAGE = new Image();
+    BALL_ICON_IMAGE.src = BALL_ICON_URL;
+  }
+  return BALL_ICON_IMAGE;
+};
+
 const DEFAULT_COURT_STYLE: CourtStyle = {
   floorColor: '#F2B55F',
   paintColor: '#6B1A2C',
@@ -1578,21 +1589,24 @@ const currentRef = useRef(current);
     ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
     switch (o.kind) {
       case 'ball': {
-        const ballFill = o.color || '#E8743C';
-        const seam = '#6B2E12';
-        ctx.fillStyle = ballFill;
-        ctx.strokeStyle = seam;
-        ctx.lineWidth = Math.max(1.6, s * 0.14);
-        ctx.beginPath(); ctx.arc(0, 0, s, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+        const ballImage = getBallIconImage();
+        ctx.save();
         ctx.beginPath();
-        ctx.moveTo(-s, 0); ctx.lineTo(s, 0);
-        ctx.moveTo(0, -s); ctx.lineTo(0, s);
-        ctx.stroke();
+        ctx.arc(0, 0, s, 0, Math.PI * 2);
+        ctx.clip();
+
+        if (ballImage?.complete && ballImage.naturalWidth > 0) {
+          ctx.drawImage(ballImage, -s, -s, s * 2, s * 2);
+        } else {
+          ctx.fillStyle = o.color || '#E8743C';
+          ctx.fillRect(-s, -s, s * 2, s * 2);
+        }
+
+        ctx.restore();
+        ctx.strokeStyle = '#111';
+        ctx.lineWidth = Math.max(1.2, s * 0.09);
         ctx.beginPath();
-        ctx.arc(-s * 0.72, 0, s * 0.88, -Math.PI / 2, Math.PI / 2);
-        ctx.stroke();
-        ctx.beginPath();
-        ctx.arc(s * 0.72, 0, s * 0.88, Math.PI / 2, Math.PI * 1.5);
+        ctx.arc(0, 0, s, 0, Math.PI * 2);
         ctx.stroke();
         break;
       }
@@ -2149,7 +2163,7 @@ const currentRef = useRef(current);
 
     ph.objects.forEach((o) => {
       if (o.kind === 'handoff') {
-        const HANDOFF_LINK_N = 0.11;
+        const HANDOFF_LINK_N = 0.14;
         const moveLines = ph.lines.filter(
           (line) =>
             MOVE_KINDS.includes(line.action) &&
@@ -2181,8 +2195,7 @@ const currentRef = useRef(current);
         // Le repère de sélection ne doit apparaître que lorsque l'utilisateur clique sur le H.
       }
 
-      // Le H reste visible pendant l'animation : le cercle ci-dessus indique
-      // clairement lorsqu'un vrai duo de main-à-main a été détecté.
+      // Le H reste visible. Sa zone logique de main-à-main n'est jamais dessinée.
       drawObject(ctx, canvas, o);
     });
     const roster = anim ? rosterRef.current : ph.players;
@@ -2451,8 +2464,8 @@ if (anim && anim.balls) {
       })
     );
 
-    const HANDOFF_NEAR_N = 0.11;
-    const handoffCandidates: { time: number; pair: [string, string]; explicitSource?: string; explicitTarget?: string }[] = [];
+    const HANDOFF_NEAR_N = 0.14;
+    const handoffCandidates: { time: number; pair: [string, string] }[] = [];
 
     // Un H représente une INTENTION de main-à-main : si les trajectoires de deux
     // attaquants viennent dans sa zone, ils sont liés même si leurs actions sont
@@ -2519,26 +2532,19 @@ if (anim && anim.balls) {
       ph.objects
         .filter((o) => o.kind === 'handoff')
         .forEach((o) => {
-          // Nouveau fonctionnement : le H sait explicitement qui donne et qui reçoit.
-          // Les anciens H sans association restent compatibles grâce au fallback géométrique.
-          const linked =
-            o.sourcePlayerId && o.targetPlayerId && o.sourcePlayerId !== o.targetPlayerId
-              ? [o.sourcePlayerId, o.targetPlayerId]
-              : linkedHandoffPlayers(s, o);
-
+          const linked = linkedHandoffPlayers(s, o);
           if (linked.length < 2) return;
 
           const [a, b] = linked;
           const timeA = closestHandoffTime(s, a, o);
           const timeB = closestHandoffTime(s, b, o);
 
-          // Le ballon change de main quand les deux joueurs ont rejoint le point
-          // de main-à-main. Le H reste un simple symbole, sans zone visible.
+          // Le transfert se produit quand le deuxième joueur atteint la zone du H.
+          // Le premier peut donc avoir terminé son déplacement et attendre au point
+          // de main-à-main : cas typique dribble puis cut.
           handoffCandidates.push({
             time: s.start + Math.max(timeA, timeB),
             pair: [a, b],
-            explicitSource: o.sourcePlayerId || undefined,
-            explicitTarget: o.targetPlayerId || undefined,
           });
         });
     });
@@ -2583,22 +2589,9 @@ if (anim && anim.balls) {
       });
 
       const [a, b] = candidate.pair;
-      const explicitSource = candidate.explicitSource;
-      const explicitTarget = candidate.explicitTarget;
-
-      // Avec un H configuré, le sens est déterministe : donneur -> receveur.
-      // On ne déclenche que si le donneur possède réellement le ballon à cet instant.
-      const src =
-        explicitSource && explicitTarget
-          ? ((owners.get(explicitSource) || 0) > 0 ? explicitSource : null)
-          : ((owners.get(a) || 0) > 0 ? a : (owners.get(b) || 0) > 0 ? b : null);
-
+      const src = (owners.get(a) || 0) > 0 ? a : (owners.get(b) || 0) > 0 ? b : null;
       if (!src) return;
-
-      const target =
-        explicitSource && explicitTarget
-          ? explicitTarget
-          : (src === a ? b : a);
+      const target = src === a ? b : a;
 
       // Evènement instantané : dès la rencontre, le ballon quitte l'ancien porteur
       // et apparaît uniquement sur le nouveau. Aucun ancien porteur ne le conserve.
@@ -3212,13 +3205,14 @@ animPosRef.current = { players, balls };
           return { ...ph, objects: [...ph.objects, { id: uid(), x: n.x, y: n.y, kind: tool.obj, rotation: 0, size: 1, color: defaultObjectColor }] };
         }
 
-        // Le H porte maintenant explicitement l'intention basket.
-        // On choisit ensuite le donneur et le receveur dans le panneau Sélection.
-        showHint('Main à main : clique sur le H puis choisis le donneur et le receveur');
+        // Le H ne fige plus les joueurs au moment où on le pose.
+        // La zone circulaire autour du H déterminera au moment du Next quels sont
+        // les 2 attaquants réellement arrivés au main à main.
+        showHint('Main à main : fais arriver les 2 attaquants concernés dans le cercle du H');
 
         return {
           ...ph,
-          objects: [...ph.objects, { id: uid(), x: n.x, y: n.y, kind: 'handoff', rotation: 0, size: 1, color: '#0F0F12', sourcePlayerId: undefined, targetPlayerId: undefined }],
+          objects: [...ph.objects, { id: uid(), x: n.x, y: n.y, kind: 'handoff', rotation: 0, size: 1, color: '#0F0F12' }],
         };
       });
       return;
@@ -4150,7 +4144,7 @@ const exportJson = () => {
   // Main à main : ce ne sont pas les joueurs proches du H lorsqu'on le pose qui comptent.
   // On regarde les positions FINALES de la phase. Les 2 attaquants qui arrivent dans
   // le cercle du H sont concernés ; celui qui possède le ballon le transmet à l'autre.
-  const HANDOFF_NEAR_N = 0.085;
+  const HANDOFF_NEAR_N = 0.14;
   ph.objects
     .filter((o) => o.kind === 'handoff')
     .forEach((o) => {
@@ -4163,22 +4157,13 @@ const exportJson = () => {
         .filter((entry) => entry.distance <= HANDOFF_NEAR_N)
         .sort((a, b) => a.distance - b.distance);
 
-      // H configuré : le changement de porteur est explicite et ne dépend plus
-      // d'une détection approximative de proximité.
-      if (o.sourcePlayerId && o.targetPlayerId && o.sourcePlayerId !== o.targetPlayerId) {
-        if ((owners.get(o.sourcePlayerId) || 0) > 0) {
-          removeOwnerBall(owners, o.sourcePlayerId, 1);
-          addOwnerBall(owners, o.targetPlayerId, 1);
-        }
-        return;
-      }
-
-      // Compatibilité avec les anciens H non configurés.
       if (inside.length < 2) return;
 
+      // Priorité au porteur du ballon présent dans le cercle.
       const sourceEntry = inside.find((entry) => (owners.get(entry.player.id) || 0) > 0);
       if (!sourceEntry) return;
 
+      // Le receveur est l'autre attaquant le plus proche du centre du H.
       const targetEntry = inside.find((entry) => entry.player.id !== sourceEntry.player.id);
       if (!targetEntry) return;
 
@@ -4323,32 +4308,6 @@ const exportJson = () => {
   })();
 
   const hasResizableSelection = selection.some((item) => item.type === 'object' || item.type === 'player');
-
-  const selectedHandoff =
-    selectedItem?.type === 'object'
-      ? phases[current]?.objects.find((object) => object.id === selectedItem.id && object.kind === 'handoff') || null
-      : null;
-
-  const handoffAttackers = (phases[current]?.players || []).filter(
-    (player) => player.team === 'att' && !player.coach
-  );
-
-  const updateSelectedHandoff = (patch: Partial<Obj>) => {
-    if (!selectedHandoff) return;
-    pushHistory();
-    setPhases((prev) =>
-      prev.map((phase, index) =>
-        index === current
-          ? {
-              ...phase,
-              objects: phase.objects.map((object) =>
-                object.id === selectedHandoff.id ? { ...object, ...patch } : object
-              ),
-            }
-          : phase
-      )
-    );
-  };
 
   return (
     <div className="mb-screen">
@@ -4742,58 +4701,6 @@ const exportJson = () => {
                       <div className="selection-empty-hint">Sélectionne un joueur, une forme ou une action pour modifier ses propriétés.</div>
                     ) : (
                       <>
-                        {selectedHandoff && (
-                          <div style={{ display: 'grid', gap: 8, padding: '10px 0 4px' }}>
-                            <div style={{ fontWeight: 800, fontSize: 13 }}>🤝 Main à main</div>
-
-                            <label className="settings-label">Donneur du ballon</label>
-                            <select
-                              value={selectedHandoff.sourcePlayerId || ''}
-                              onChange={(e) => {
-                                const sourcePlayerId = e.target.value || undefined;
-                                const patch: Partial<Obj> = { sourcePlayerId };
-                                if (sourcePlayerId && sourcePlayerId === selectedHandoff.targetPlayerId) {
-                                  patch.targetPlayerId = undefined;
-                                }
-                                updateSelectedHandoff(patch);
-                              }}
-                              style={{ width: '100%', minHeight: 38 }}
-                            >
-                              <option value="">Choisir le donneur</option>
-                              {handoffAttackers.map((player) => (
-                                <option key={`handoff-source-${player.id}`} value={player.id}>
-                                  {player.label || player.name || 'Joueur'}
-                                </option>
-                              ))}
-                            </select>
-
-                            <label className="settings-label">Receveur du ballon</label>
-                            <select
-                              value={selectedHandoff.targetPlayerId || ''}
-                              onChange={(e) => {
-                                const targetPlayerId = e.target.value || undefined;
-                                const patch: Partial<Obj> = { targetPlayerId };
-                                if (targetPlayerId && targetPlayerId === selectedHandoff.sourcePlayerId) {
-                                  patch.sourcePlayerId = undefined;
-                                }
-                                updateSelectedHandoff(patch);
-                              }}
-                              style={{ width: '100%', minHeight: 38 }}
-                            >
-                              <option value="">Choisir le receveur</option>
-                              {handoffAttackers.map((player) => (
-                                <option key={`handoff-target-${player.id}`} value={player.id}>
-                                  {player.label || player.name || 'Joueur'}
-                                </option>
-                              ))}
-                            </select>
-
-                            <div style={{ fontSize: 11, lineHeight: 1.35, opacity: 0.72 }}>
-                              Le H reste invisible en dehors de son symbole. Pendant l’animation, le ballon passe du donneur au receveur lorsqu’ils rejoignent le point de main-à-main.
-                            </div>
-                          </div>
-                        )}
-
                         <label className="settings-label">Couleur de la sélection</label>
                         <input
                           key={`selection-color-${current}-${selectedItem?.type || 'none'}-${selectedItem?.id || 'none'}-${selectedItemColor}`}
