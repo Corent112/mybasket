@@ -1706,9 +1706,25 @@ const currentRef = useRef(current);
     ctx.restore();
   };
   const drawBall = (ctx: CanvasRenderingContext2D, bx: number, by: number, br: number) => {
-    ctx.fillStyle = '#E8743C'; ctx.strokeStyle = '#7a3a10'; ctx.lineWidth = Math.max(1, br * 0.18);
-    ctx.beginPath(); ctx.arc(bx, by, br, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
-    ctx.beginPath(); ctx.moveTo(bx - br, by); ctx.lineTo(bx + br, by); ctx.moveTo(bx, by - br); ctx.lineTo(bx, by + br); ctx.stroke();
+    const ballImage = getBallIconImage();
+    ctx.save();
+    ctx.beginPath();
+    ctx.arc(bx, by, br, 0, Math.PI * 2);
+    ctx.clip();
+    if (ballImage?.complete && ballImage.naturalWidth > 0) {
+      ctx.drawImage(ballImage, bx - br, by - br, br * 2, br * 2);
+    } else {
+      ctx.fillStyle = '#E8743C';
+      ctx.fillRect(bx - br, by - br, br * 2, br * 2);
+    }
+    ctx.restore();
+    ctx.save();
+    ctx.strokeStyle = '#111';
+    ctx.lineWidth = Math.max(1, br * 0.10);
+    ctx.beginPath();
+    ctx.arc(bx, by, br, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.restore();
   };
   const drawPhotoToken = (ctx: CanvasRenderingContext2D, p: Player, r: number) => {
     const img = getPhoto(p.photo as string);
@@ -2464,65 +2480,41 @@ if (anim && anim.balls) {
       })
     );
 
-    const HANDOFF_NEAR_N = 0.14;
+    // Zone logique invisible autour du H.
+    // On échantillonne la position RÉELLE animée de chaque attaquant pendant toute
+    // la phase. Les deux joueurs qui entrent dans cette zone jouent le main-à-main.
+    const HANDOFF_NEAR_N = 0.16;
     const handoffCandidates: { time: number; pair: [string, string] }[] = [];
 
-    // Un H représente une INTENTION de main-à-main : si les trajectoires de deux
-    // attaquants viennent dans sa zone, ils sont liés même si leurs actions sont
-    // séquencées dans le timing. Cela évite d'exiger qu'ils soient exactement au H
-    // à la même frame.
-    const linkedHandoffPlayers = (s: Sched, o: Obj): string[] => {
-      const ph = phasesRef.current[s.idx];
-      if (!ph) return [];
-
-      const scored = ph.players
-        .filter((p) => p.team === 'att' && !p.coach)
-        .map((player) => {
-          let best = Math.hypot(player.x - o.x, player.y - o.y);
-
-          s.actSched
-            .filter(
-              (a) =>
-                MOVE_KINDS.includes(a.line.action) &&
-                a.line.sourcePlayerId === player.id
-            )
-            .forEach((a) => {
-              const samples = 80;
-              for (let i = 0; i <= samples; i += 1) {
-                const pt = actionPointN(
-                  a.line.from,
-                  a.line,
-                  i / samples
-                );
-                best = Math.min(best, Math.hypot(pt.x - o.x, pt.y - o.y));
-              }
-            });
-
-          return { id: player.id, distance: best };
-        })
-        .filter((entry) => entry.distance <= HANDOFF_NEAR_N)
-        .sort((a, b) => a.distance - b.distance);
-
-      return scored.slice(0, 2).map((entry) => entry.id);
-    };
-
-    const closestHandoffTime = (s: Sched, playerId: string, o: Obj): number => {
-      const steps = 180;
+    const handoffApproach = (s: Sched, playerId: string, o: Obj) => {
+      const steps = 240;
       let bestLocal = 0;
       let bestDistance = Number.POSITIVE_INFINITY;
+      let firstInside: number | null = null;
 
       for (let step = 0; step <= steps; step += 1) {
         const local = s.span * (step / steps);
         const pos = phasePlayerPosAt(s, playerId, local);
         if (!pos) continue;
         const distance = Math.hypot(pos.x - o.x, pos.y - o.y);
+        if (distance <= HANDOFF_NEAR_N && firstInside === null) firstInside = local;
         if (distance < bestDistance) {
           bestDistance = distance;
           bestLocal = local;
         }
       }
+      return { distance: bestDistance, closestTime: bestLocal, firstInside };
+    };
 
-      return bestLocal;
+    const linkedHandoffPlayers = (s: Sched, o: Obj) => {
+      const ph = phasesRef.current[s.idx];
+      if (!ph) return [];
+      return ph.players
+        .filter((p) => p.team === 'att' && !p.coach)
+        .map((player) => ({ id: player.id, ...handoffApproach(s, player.id, o) }))
+        .filter((entry) => entry.firstInside !== null)
+        .sort((x, y) => x.distance - y.distance)
+        .slice(0, 2);
     };
 
     sched.forEach((s) => {
@@ -2536,15 +2528,14 @@ if (anim && anim.balls) {
           if (linked.length < 2) return;
 
           const [a, b] = linked;
-          const timeA = closestHandoffTime(s, a, o);
-          const timeB = closestHandoffTime(s, b, o);
+          const timeA = a.firstInside ?? a.closestTime;
+          const timeB = b.firstInside ?? b.closestTime;
 
-          // Le transfert se produit quand le deuxième joueur atteint la zone du H.
-          // Le premier peut donc avoir terminé son déplacement et attendre au point
-          // de main-à-main : cas typique dribble puis cut.
+          // Au moment où le deuxième joueur entre dans la zone invisible du H,
+          // le ballon quitte immédiatement son porteur et passe à l'autre joueur.
           handoffCandidates.push({
             time: s.start + Math.max(timeA, timeB),
-            pair: [a, b],
+            pair: [a.id, b.id],
           });
         });
     });
@@ -4141,35 +4132,9 @@ const exportJson = () => {
     }
   }
 
-  // Main à main : ce ne sont pas les joueurs proches du H lorsqu'on le pose qui comptent.
-  // On regarde les positions FINALES de la phase. Les 2 attaquants qui arrivent dans
-  // le cercle du H sont concernés ; celui qui possède le ballon le transmet à l'autre.
-  const HANDOFF_NEAR_N = 0.14;
-  ph.objects
-    .filter((o) => o.kind === 'handoff')
-    .forEach((o) => {
-      const inside = ph.players
-        .filter((player) => player.team === 'att' && !player.coach)
-        .map((player) => {
-          const pos = phasePlayerPosAt(s, player.id, span) || { x: player.x, y: player.y };
-          return { player, pos, distance: Math.hypot(pos.x - o.x, pos.y - o.y) };
-        })
-        .filter((entry) => entry.distance <= HANDOFF_NEAR_N)
-        .sort((a, b) => a.distance - b.distance);
-
-      if (inside.length < 2) return;
-
-      // Priorité au porteur du ballon présent dans le cercle.
-      const sourceEntry = inside.find((entry) => (owners.get(entry.player.id) || 0) > 0);
-      if (!sourceEntry) return;
-
-      // Le receveur est l'autre attaquant le plus proche du centre du H.
-      const targetEntry = inside.find((entry) => entry.player.id !== sourceEntry.player.id);
-      if (!targetEntry) return;
-
-      removeOwnerBall(owners, sourceEntry.player.id, 1);
-      addOwnerBall(owners, targetEntry.player.id, 1);
-    });
+  // buildBallEvents a déjà appliqué le main-à-main.
+  // Ne surtout pas rejouer le H ici : sinon le transfert est inversé une seconde fois
+  // et le ballon revient au donneur dans le schéma suivant.
 
   const players = ph.players.map((p) => {
     const pos = phasePlayerPosAt(s, p.id, span) || { x: p.x, y: p.y };
@@ -4472,7 +4437,11 @@ const exportJson = () => {
                         <span key={pl.id} style={{ position: 'absolute', left: `${pl.x * 100}%`, top: `${(pl.y / 0.5) * 100}%`, width: 7, height: 7, marginLeft: -3.5, marginTop: -3.5, borderRadius: pl.shape === 'square' ? 1 : '50%', background: pl.team === 'def' ? '#D62828' : '#D4A24C', border: '1px solid #0F0F12' }} />
                       ))}
                       {p.objects.map((o) => (
-                        <span key={o.id} style={{ position: 'absolute', left: `${o.x * 100}%`, top: `${(o.y / 0.5) * 100}%`, width: 4, height: 4, marginLeft: -2, marginTop: -2, borderRadius: '50%', background: o.kind === 'ball' ? '#E8743C' : '#0F0F12' }} />
+                        o.kind === 'ball' ? (
+                          <img key={o.id} src={BALL_ICON_URL} alt="" style={{ position: 'absolute', left: `${o.x * 100}%`, top: `${(o.y / 0.5) * 100}%`, width: 7, height: 7, marginLeft: -3.5, marginTop: -3.5, borderRadius: '50%', objectFit: 'cover' }} />
+                        ) : (
+                          <span key={o.id} style={{ position: 'absolute', left: `${o.x * 100}%`, top: `${(o.y / 0.5) * 100}%`, width: 4, height: 4, marginLeft: -2, marginTop: -2, borderRadius: '50%', background: '#0F0F12' }} />
+                        )
                       ))}
                       <span className="pnum">{i + 1}</span>
                       <span style={{ position: 'absolute', bottom: 1, right: 2, fontSize: 8, fontWeight: 700, color: '#0F0F12', background: 'rgba(255,255,255,0.78)', borderRadius: 3, padding: '0 2px', lineHeight: 1.3 }}>{p.duration ?? 1.5}s</span>
@@ -4659,14 +4628,14 @@ const exportJson = () => {
                   <div className={'act-btn' + (isAction('cut') ? ' active' : '')} data-action="cut" onClick={() => pick({ kind: 'action', action: 'cut' })}><span className="icn">→</span><span>Cut</span></div>
                   <div className={'act-btn' + (isAction('screen') ? ' active' : '')} data-action="screen" onClick={() => pick({ kind: 'action', action: 'screen' })}><span className="icn">⊺</span><span>Écran</span></div>
                   <div className={'act-btn' + (isAction('shoot') ? ' active' : '')} data-action="shoot" onClick={() => pick({ kind: 'action', action: 'shoot' })}><span className="icn">⊕</span><span>Tir</span></div>
-                  <div className={'act-btn' + (isAction('giveball') ? ' active' : '')} data-action="giveball" onClick={() => pick({ kind: 'action', action: 'giveball' })}><span className="icn">🏀</span><span>Donner ballon</span></div>
+                  <div className={'act-btn' + (isAction('giveball') ? ' active' : '')} data-action="giveball" onClick={() => pick({ kind: 'action', action: 'giveball' })}><span className="icn"><img src={BALL_ICON_URL} alt="Ballon" className="ball-tool-icon" /></span><span>Donner ballon</span></div>
                 </div>
               </div>
 
               <div className="right-card">
                 <div className="right-card-title"><span>🧰</span> Outils</div>
                 <div className="misc-grid misc-grid-large">
-                  <div className={'misc-btn' + (isObj('ball') ? ' active' : '')} id="addBallBtn" title="Ballon" onClick={() => pick({ kind: 'object', obj: 'ball' })}>🏀</div>
+                  <div className={'misc-btn' + (isObj('ball') ? ' active' : '')} id="addBallBtn" title="Ballon" onClick={() => pick({ kind: 'object', obj: 'ball' })}><img src={BALL_ICON_URL} alt="Ballon" className="ball-tool-icon" /></div>
                   <div className={'misc-btn' + (isObj('cone') ? ' active' : '')} data-misc="cone" title="Plot" onClick={() => pick({ kind: 'object', obj: 'cone' })}><img src="/plaquette/plot.svg" alt="Plot" style={{ width: 30, height: 30, objectFit: 'contain' }} /></div>
                   <div className={'misc-btn' + (isObj('lateralBasket') ? ' active' : '')} data-misc="lateralBasket" title="Panier latéral" onClick={() => pick({ kind: 'object', obj: 'lateralBasket' })}><img src="/plaquette/panier-lateral.svg" alt="Panier latéral" style={{ width: 36, height: 30, objectFit: 'contain' }} /></div>
                   <div className={'misc-btn' + (isObj('triangle') ? ' active' : '')} data-misc="triangle" title="Triangle" onClick={() => pick({ kind: 'object', obj: 'triangle' })}>△</div>
@@ -5519,6 +5488,9 @@ html{font-size:15px}
 .misc-grid-large .misc-btn{min-height:58px;aspect-ratio:auto;border-radius:10px;font-size:1.25rem;background:#fff;border-color:#ded8d2}
 .misc-grid-large .misc-btn:hover{border-color:var(--bordeaux);transform:translateY(-1px)}
 .misc-grid-large .misc-btn.active{background:rgba(212,162,76,.18);border-color:var(--or);box-shadow:0 0 0 2px rgba(212,162,76,.18)}
+.ball-tool-icon{width:22px;height:22px;display:block;object-fit:cover;border-radius:50%}
+.actions-grid-large .act-btn .icn .ball-tool-icon{width:22px;height:22px}
+.misc-grid-large .misc-btn .ball-tool-icon{width:22px;height:22px}
 .right-settings-stack{display:flex;flex-direction:column;gap:.45rem}
 .right-settings-stack .btn{min-height:40px;border-radius:10px;font-weight:700;font-size:.76rem}
 .selection-actions-row{display:grid;grid-template-columns:1fr 1fr;gap:.4rem}
