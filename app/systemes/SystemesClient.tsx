@@ -137,12 +137,12 @@ function SystemCard({
 
         {item.contributor_name && (
           <div className="mb-system-contributor" title={`Réalisé par ${item.contributor_name}`}>
+            <span>Réalisé par <strong>{item.contributor_name}</strong></span>
             {item.contributor_avatar_url ? (
               <img src={item.contributor_avatar_url} alt="" />
             ) : (
               <span className="mb-system-contributor-fallback">{item.contributor_name.slice(0, 1).toUpperCase()}</span>
             )}
-            <span>Réalisé par <strong>{item.contributor_name}</strong></span>
           </div>
         )}
 
@@ -549,7 +549,7 @@ export default function SystemesClient() {
           display: grid;
           grid-template-columns: repeat(auto-fill, minmax(250px, 270px));
           gap: 1.4rem;
-          align-items: start;
+          align-items: stretch;
         }
 
         .mb-system-card {
@@ -560,6 +560,9 @@ export default function SystemesClient() {
           overflow: hidden;
           padding: 12px;
           box-shadow: 0 6px 18px rgba(0, 0, 0, 0.04);
+          display: flex;
+          flex-direction: column;
+          height: 100%;
         }
 
         .mb-system-cover {
@@ -592,6 +595,9 @@ export default function SystemesClient() {
 
         .mb-system-body {
           padding-top: 4px;
+          display: flex;
+          flex: 1;
+          flex-direction: column;
         }
 
         .mb-system-title {
@@ -602,6 +608,11 @@ export default function SystemesClient() {
           line-height: 1;
           font-weight: 1000;
           text-transform: uppercase;
+          min-height: 3.1rem;
+          display: -webkit-box;
+          -webkit-line-clamp: 2;
+          -webkit-box-orient: vertical;
+          overflow: hidden;
         }
 
         .mb-system-title a {
@@ -640,7 +651,7 @@ export default function SystemesClient() {
         .mb-system-contributor span:last-child { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
         .mb-system-contributor strong { color:#222; font-weight:850; }
         .mb-system-foot {
-          margin-top: 12px;
+          margin-top: auto;
           padding-top: 10px;
           border-top: 1px solid #eee;
           display: flex;

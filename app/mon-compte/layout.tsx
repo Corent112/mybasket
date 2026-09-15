@@ -1,6 +1,5 @@
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
-import MesSystemesShortcut from "@/components/account/MesSystemesShortcut";
 
 export default async function MonCompteLayout({
   children,
@@ -15,10 +14,5 @@ export default async function MonCompteLayout({
 
   if (!user) redirect("/connexion?next=/mon-compte");
 
-  return (
-    <>
-      {children}
-      <MesSystemesShortcut />
-    </>
-  );
+  return children;
 }

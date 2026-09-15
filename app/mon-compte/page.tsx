@@ -90,6 +90,12 @@ const MENU: MenuItem[] = [
   href: '/mon-compte/exercices',
 },
   {
+  key: 'systemes',
+  label: 'Mes Systèmes',
+  icon: '🧩',
+  href: '/mon-compte/systemes',
+},
+  {
   key: 'playbooks',
   label: 'Mes Playbooks',
   icon: '📁',

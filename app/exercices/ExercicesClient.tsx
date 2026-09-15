@@ -102,13 +102,13 @@ function ExerciseCard({
         )}
 
         {item.contributor_name && (
-          <div className="mb-contributor" title={`Publié par ${item.contributor_name}`}>
+          <div className="mb-contributor" title={`Réalisé par ${item.contributor_name}`}>
+            <span>Réalisé par <strong>{item.contributor_name}</strong></span>
             {item.contributor_avatar_url ? (
               <img src={item.contributor_avatar_url} alt="" />
             ) : (
               <span className="mb-contributor-fallback">{item.contributor_name.slice(0, 1).toUpperCase()}</span>
             )}
-            <span>Publié par <strong>{item.contributor_name}</strong></span>
           </div>
         )}
 

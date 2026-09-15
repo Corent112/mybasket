@@ -296,23 +296,38 @@ function playRowToClient(row: any): PlayItem {
 
 async function attachSystemContributors(rows: any[]): Promise<SystemItem[]> {
   const mapped = rows.map(rowToSystem);
+  const supabase = createClient();
 
-  const contributorIds = Array.from(
+  // Les copies publiques validées appartiennent au CEO afin de les protéger.
+  // L'auteur affiché est donc récupéré depuis le système personnel d'origine.
+  const originalIds = Array.from(
     new Set(
       rows
-        .filter(
-          (row) =>
-            row?.user_id &&
-            row?.review_status === "approved" &&
-            row?.submitted_at,
-        )
-        .map((row) => String(row.user_id)),
+        .filter((row) => row?.review_status === "approved" && row?.original_system_id)
+        .map((row) => String(row.original_system_id)),
     ),
   );
 
-  if (!contributorIds.length) return mapped;
+  if (!originalIds.length) return mapped;
 
-  const supabase = createClient();
+  const { data: originals, error: originalsError } = await supabase
+    .from("systems")
+    .select("id, user_id")
+    .in("id", originalIds);
+
+  if (originalsError) {
+    console.warn("Attribution systèmes : sources indisponibles", originalsError);
+    return mapped;
+  }
+
+  const authorByOriginal = new Map(
+    (originals ?? []).map((row: any) => [String(row.id), row.user_id ? String(row.user_id) : null]),
+  );
+  const contributorIds = Array.from(
+    new Set(Array.from(authorByOriginal.values()).filter((id): id is string => Boolean(id))),
+  );
+
+  if (!contributorIds.length) return mapped;
 
   const { data: profiles, error } = await supabase
     .from("profiles")
@@ -324,28 +339,19 @@ async function attachSystemContributors(rows: any[]): Promise<SystemItem[]> {
     return mapped;
   }
 
-  const byId = new Map(
-    (profiles ?? []).map((profile: any) => [String(profile.id), profile]),
-  );
+  const byId = new Map((profiles ?? []).map((profile: any) => [String(profile.id), profile]));
 
   return mapped.map((item, index) => {
     const source = rows[index];
-
-    if (
-      !source?.submitted_at ||
-      source?.review_status !== "approved"
-    ) {
-      return item;
-    }
-
-    const profile: any = byId.get(String(source.user_id));
-
+    const contributorId = source?.original_system_id
+      ? authorByOriginal.get(String(source.original_system_id))
+      : null;
+    if (!contributorId) return item;
+    const profile: any = byId.get(String(contributorId));
     if (!profile) return item;
-
     return {
       ...item,
-      contributor_name:
-        profile.display_name || "Utilisateur MyBasket",
+      contributor_name: profile.display_name || "Utilisateur MyBasket",
       contributor_avatar_url: profile.avatar_url || null,
     };
   });
