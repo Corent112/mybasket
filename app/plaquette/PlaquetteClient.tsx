@@ -4287,9 +4287,6 @@ const exportJson = () => {
   return (
     <div className="mb-screen">
       <style>{CSS}</style>
-      <ContentNavigator embedded initialKind="system" />
-
-
       <main>
    {/* ===================== PLAQUETTE ===================== */}
 <section className="page editor-page active" data-page="plaquette">
@@ -4421,7 +4418,12 @@ const exportJson = () => {
   </div>
 
   <div className="ed-layout">
-            {/* -------- GAUCHE -------- */}
+            {/* -------- BIBLIOTHÈQUE / ORGANISATION -------- */}
+            <div className="ed-library">
+              <ContentNavigator embedded initialKind="system" />
+            </div>
+
+            {/* -------- PHASES — DOCK BAS -------- */}
             <aside className="ed-left">
               <div className="ed-tabs">
                 <div className="ed-tab active" data-tab="phases">Phases</div>
@@ -5420,10 +5422,24 @@ html{font-size:15px}
 .ed-icn-btn:hover{background:rgba(255,255,255,.1)}
 .ed-save{background:var(--or);color:var(--bordeaux-d);padding:.45rem 1.1rem;border-radius:6px;font-weight:700;font-size:.85rem;display:flex;align-items:center;gap:.4rem;cursor:pointer}
 .ed-save:hover{background:var(--or-l)}
-.ed-layout{display:grid;grid-template-columns:minmax(190px,220px) minmax(0,1fr) minmax(310px,350px);min-height:calc(100vh - 180px);gap:0}
-.ed-left,.ed-right{background:#f8f5f0;padding:.8rem;overflow-y:auto;max-height:calc(100vh - 160px);min-width:0}
-.ed-left{border-right:1px solid var(--gris-med)}
-.ed-right{border-left:1px solid #e4ddd5;display:flex;flex-direction:column;gap:.75rem}
+.ed-layout{display:grid;grid-template-columns:minmax(210px,250px) minmax(0,1fr) minmax(310px,350px);grid-template-areas:"library canvas right" "phases phases phases";grid-template-rows:minmax(0,1fr) auto;min-height:calc(100vh - 180px);gap:0;position:relative}
+.ed-library{grid-area:library;position:relative;min-width:0;background:#101a22;border-right:1px solid #293b48;overflow:hidden}
+.ed-library .content-nav.embedded{position:absolute!important;inset:0!important;top:0!important;bottom:0!important;width:100%!important;height:100%!important;box-shadow:none!important;border-right:0!important;z-index:4}
+.ed-library .content-nav.compact{width:68px!important}
+.ed-library .cn-open{position:absolute!important;left:10px!important;top:10px!important}
+.ed-left,.ed-right{background:#f8f5f0;padding:.8rem;min-width:0}
+.ed-left{grid-area:phases;border-top:1px solid var(--gris-med);border-right:0;max-height:260px;overflow:auto}
+.ed-right{grid-area:right;border-left:1px solid #e4ddd5;display:flex;flex-direction:column;gap:.75rem;overflow-y:auto;max-height:calc(100vh - 180px)}
+.ed-canvas-wrap{grid-area:canvas}
+.ed-left .ed-tabs{margin-bottom:.45rem}
+.ed-left #tabPhases{display:grid;grid-template-columns:170px minmax(320px,1fr) minmax(280px,360px);grid-template-areas:"counter list timing" "actions list timing" "notes list timing";column-gap:.8rem;align-items:start}
+.ed-left #phCounter{grid-area:counter}
+.ed-left .ph-actions{grid-area:actions;margin-bottom:0}
+.ed-left .phases-list{grid-area:list;display:flex;flex-direction:row;gap:.5rem;max-height:none;overflow-x:auto;overflow-y:hidden;padding:0 0 .35rem}
+.ed-left .ph-thumb{flex:0 0 118px;aspect-ratio:16/10}
+.ed-left #timingPanel{grid-area:timing;margin-top:0!important;padding-top:0!important;border-top:0!important;max-height:190px;overflow:auto;padding-right:.25rem}
+.ed-left #tabPhases>div[style*="margin-top: .7rem"]{grid-area:notes}
+
 .ed-tabs{display:flex;border-bottom:2px solid var(--gris-med);margin-bottom:.7rem}
 .ed-tab{padding:.4rem .7rem;font-weight:700;font-size:.82rem;color:var(--gris-text);cursor:pointer;border-bottom:3px solid transparent;margin-bottom:-2px}
 .ed-tab.active{color:var(--bordeaux);border-bottom-color:var(--bordeaux)}
@@ -5577,4 +5593,7 @@ html{font-size:15px}
   .ed-layout{grid-template-columns:1fr}
   .ed-left,.ed-right{border:none;border-top:1px solid var(--gris-med);max-height:none}
 }
+
+/* V38 — Architecture DESSIN : bibliothèque à gauche, terrain au centre, outils à droite, phases en bas */
+@media (max-width:1050px){.ed-layout{grid-template-columns:210px minmax(0,1fr) 300px}.ed-left #tabPhases{grid-template-columns:150px minmax(260px,1fr) 280px}}
 `;
