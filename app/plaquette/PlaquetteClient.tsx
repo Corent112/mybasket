@@ -2148,18 +2148,41 @@ const currentRef = useRef(current);
     });
 
     ph.objects.forEach((o) => {
-      if (anim && o.kind === 'handoff') {
-        const HANDOFF_NEAR_N = 0.085;
-        const attackersInside = rosterRef.current.filter((player) => {
-          if (player.team !== 'att' || player.coach) return false;
-          const pos = anim.players[player.id];
-          return !!pos && Math.hypot(pos.x - o.x, pos.y - o.y) <= HANDOFF_NEAR_N;
-        });
+      if (o.kind === 'handoff') {
+        const HANDOFF_LINK_N = 0.11;
+        const moveLines = ph.lines.filter(
+          (line) =>
+            MOVE_KINDS.includes(line.action) &&
+            !!line.sourcePlayerId
+        );
 
-        // Le H devient actif/visible lorsque deux attaquants arrivent dans son cercle.
-        if (attackersInside.length < 2) return;
+        const linked = ph.players
+          .filter((player) => player.team === 'att' && !player.coach)
+          .map((player) => {
+            let best = Math.hypot(player.x - o.x, player.y - o.y);
+
+            moveLines
+              .filter((line) => line.sourcePlayerId === player.id)
+              .forEach((line) => {
+                const samples = 80;
+                for (let i = 0; i <= samples; i += 1) {
+                  const pt = actionPointN(line.from, line, i / samples);
+                  best = Math.min(best, Math.hypot(pt.x - o.x, pt.y - o.y));
+                }
+              });
+
+            return { id: player.id, distance: best };
+          })
+          .filter((entry) => entry.distance <= HANDOFF_LINK_N)
+          .sort((a, b) => a.distance - b.distance)
+          .slice(0, 2);
+
+        // Aucun cercle automatique n'est dessiné autour du H.
+        // Le repère de sélection ne doit apparaître que lorsque l'utilisateur clique sur le H.
       }
 
+      // Le H reste visible pendant l'animation : le cercle ci-dessus indique
+      // clairement lorsqu'un vrai duo de main-à-main a été détecté.
       drawObject(ctx, canvas, o);
     });
     const roster = anim ? rosterRef.current : ph.players;
@@ -2428,38 +2451,88 @@ if (anim && anim.balls) {
       })
     );
 
-    const HANDOFF_NEAR_N = 0.085;
+    const HANDOFF_NEAR_N = 0.11;
     const handoffCandidates: { time: number; pair: [string, string] }[] = [];
+
+    // Un H représente une INTENTION de main-à-main : si les trajectoires de deux
+    // attaquants viennent dans sa zone, ils sont liés même si leurs actions sont
+    // séquencées dans le timing. Cela évite d'exiger qu'ils soient exactement au H
+    // à la même frame.
+    const linkedHandoffPlayers = (s: Sched, o: Obj): string[] => {
+      const ph = phasesRef.current[s.idx];
+      if (!ph) return [];
+
+      const scored = ph.players
+        .filter((p) => p.team === 'att' && !p.coach)
+        .map((player) => {
+          let best = Math.hypot(player.x - o.x, player.y - o.y);
+
+          s.actSched
+            .filter(
+              (a) =>
+                MOVE_KINDS.includes(a.line.action) &&
+                a.line.sourcePlayerId === player.id
+            )
+            .forEach((a) => {
+              const samples = 80;
+              for (let i = 0; i <= samples; i += 1) {
+                const pt = actionPointN(
+                  a.line.from,
+                  a.line,
+                  i / samples
+                );
+                best = Math.min(best, Math.hypot(pt.x - o.x, pt.y - o.y));
+              }
+            });
+
+          return { id: player.id, distance: best };
+        })
+        .filter((entry) => entry.distance <= HANDOFF_NEAR_N)
+        .sort((a, b) => a.distance - b.distance);
+
+      return scored.slice(0, 2).map((entry) => entry.id);
+    };
+
+    const closestHandoffTime = (s: Sched, playerId: string, o: Obj): number => {
+      const steps = 180;
+      let bestLocal = 0;
+      let bestDistance = Number.POSITIVE_INFINITY;
+
+      for (let step = 0; step <= steps; step += 1) {
+        const local = s.span * (step / steps);
+        const pos = phasePlayerPosAt(s, playerId, local);
+        if (!pos) continue;
+        const distance = Math.hypot(pos.x - o.x, pos.y - o.y);
+        if (distance < bestDistance) {
+          bestDistance = distance;
+          bestLocal = local;
+        }
+      }
+
+      return bestLocal;
+    };
 
     sched.forEach((s) => {
       const ph = phasesRef.current[s.idx];
       if (!ph) return;
-      const attackers = ph.players.filter((p) => p.team === 'att' && !p.coach);
 
       ph.objects
         .filter((o) => o.kind === 'handoff')
         .forEach((o) => {
-          // Recherche du premier instant où 2 attaquants sont simultanément dans la zone du H.
-          // 120 pas donnent un déclenchement fluide sans alourdir l'animation.
-          const steps = 120;
-          for (let step = 0; step <= steps; step += 1) {
-            const local = s.span * (step / steps);
-            const inside = attackers
-              .map((player) => {
-                const pos = phasePlayerPosAt(s, player.id, local) || { x: player.x, y: player.y };
-                return { id: player.id, distance: Math.hypot(pos.x - o.x, pos.y - o.y) };
-              })
-              .filter((entry) => entry.distance <= HANDOFF_NEAR_N)
-              .sort((a, b) => a.distance - b.distance);
+          const linked = linkedHandoffPlayers(s, o);
+          if (linked.length < 2) return;
 
-            if (inside.length >= 2) {
-              handoffCandidates.push({
-                time: s.start + local,
-                pair: [inside[0].id, inside[1].id],
-              });
-              break;
-            }
-          }
+          const [a, b] = linked;
+          const timeA = closestHandoffTime(s, a, o);
+          const timeB = closestHandoffTime(s, b, o);
+
+          // Le transfert se produit quand le deuxième joueur atteint la zone du H.
+          // Le premier peut donc avoir terminé son déplacement et attendre au point
+          // de main-à-main : cas typique dribble puis cut.
+          handoffCandidates.push({
+            time: s.start + Math.max(timeA, timeB),
+            pair: [a, b],
+          });
         });
     });
 
