@@ -100,6 +100,12 @@ const MENU: MenuItem[] = [
   label: 'Mes Playbooks',
   icon: '📁',
 },
+  {
+  key: 'documents',
+  label: 'Document Builder',
+  icon: '📄',
+  href: '/mon-compte/documents',
+},
   { key: 'profilcoach', label: 'Mon Profil Coach', icon: '⚡' },
   { key: 'annonces', label: 'Mes Annonces', icon: '📣' },
   { key: 'papiers', label: 'Mes Papiers', icon: '📃' },

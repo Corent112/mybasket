@@ -1,0 +1,8 @@
+export type ContentKind = 'exercise' | 'system';
+export type ClassificationType = 'system_series' | 'system_moment' | 'exercise_work_format' | 'exercise_work_topic' | 'custom';
+export type WorkspaceClassification = { id:string; owner_id:string; type:ClassificationType; name:string; parent_id:string|null; team_id:string|null; season:string|null; position:number; archived:boolean };
+export type ContentRelation = { id:string; content_type:ContentKind; content_id:string; classification_id:string; position:number };
+export type ContentItem = { id:string; type:ContentKind; title:string; description?:string; thumbnail?:string; tags:string[]; createdAt?:string|number; updatedAt?:string|number; favorite?:boolean; archived?:boolean; raw:any };
+export type DocumentKind = 'playbook'|'exercise_book'|'session'|'program'|'mixed';
+export type DocumentLayout = { orientation:'portrait'|'landscape'; schemasPerRow:1|2|3|4; groupBy:string; showToc:boolean; showTitle:boolean; showNumber:boolean; showSchemas:boolean; showDescription:boolean; showInstructions:boolean; showObjectives:boolean; showCoaching:boolean; showMaterial:boolean; showDuration:boolean; showClassifications:boolean; showNotes:boolean; explanationPlacement:'none'|'under-row'|'end-system'|'dedicated-page'; reserveNotesRow:boolean; notesMode:'blank'|'saved'|'saved-and-blank' };
+export const DEFAULT_DOCUMENT_LAYOUT:DocumentLayout={orientation:'portrait',schemasPerRow:3,groupBy:'manual',showToc:true,showTitle:true,showNumber:true,showSchemas:true,showDescription:true,showInstructions:true,showObjectives:true,showCoaching:true,showMaterial:true,showDuration:true,showClassifications:true,showNotes:true,explanationPlacement:'end-system',reserveNotesRow:false,notesMode:'saved-and-blank'};
