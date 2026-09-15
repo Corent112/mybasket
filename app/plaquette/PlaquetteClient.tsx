@@ -21,6 +21,7 @@ import { createClient } from '@/lib/supabase/client';
 import { getExercise, updateExercise } from "@/lib/exercises";
 import { getSystem, updateSystem } from "@/lib/systems";
 import { uploadSchemaImage } from "@/lib/supabase/upload-schema";
+import ContentNavigator from "@/components/content-navigator/ContentNavigator";
 import { getPlaquetteTransfer, setPlaquetteTransfer, removePlaquetteTransfer } from "@/lib/plaquette-transfer";
 
 
@@ -2528,15 +2529,24 @@ if (anim && anim.balls) {
           if (linked.length < 2) return;
 
           const [a, b] = linked;
-          const timeA = a.firstInside ?? a.closestTime;
-          const timeB = b.firstInside ?? b.closestTime;
-
-          // Au moment où le deuxième joueur entre dans la zone invisible du H,
-          // le ballon quitte immédiatement son porteur et passe à l'autre joueur.
-          handoffCandidates.push({
-            time: s.start + Math.max(timeA, timeB),
-            pair: [a.id, b.id],
-          });
+          // Le H identifie les deux trajectoires concernées. Le transfert réel
+          // se fait au moment où les joueurs se rencontrent dans la zone du H.
+          const steps = 300;
+          let bestLocal = Math.max(a.firstInside ?? a.closestTime, b.firstInside ?? b.closestTime);
+          let bestScore = Number.POSITIVE_INFINITY;
+          for (let step = 0; step <= steps; step += 1) {
+            const local = s.span * (step / steps);
+            const pa = phasePlayerPosAt(s, a.id, local);
+            const pb = phasePlayerPosAt(s, b.id, local);
+            if (!pa || !pb) continue;
+            const da = Math.hypot(pa.x - o.x, pa.y - o.y);
+            const db = Math.hypot(pb.x - o.x, pb.y - o.y);
+            if (da > HANDOFF_NEAR_N || db > HANDOFF_NEAR_N) continue;
+            const between = Math.hypot(pa.x - pb.x, pa.y - pb.y);
+            const score = da + db + between * 1.8;
+            if (score < bestScore) { bestScore = score; bestLocal = local; }
+          }
+          handoffCandidates.push({ time: s.start + bestLocal, pair: [a.id, b.id] });
         });
     });
 
@@ -4277,6 +4287,7 @@ const exportJson = () => {
   return (
     <div className="mb-screen">
       <style>{CSS}</style>
+      <ContentNavigator embedded initialKind="system" />
 
 
       <main>
