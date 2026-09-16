@@ -33,6 +33,7 @@ type Systeme = {
   videos: string[];
   schemaImages: string[];
   schemaDataList: any[];
+  schemaVideo?: string | null;
   createdAt?: string | number;
 };
 
@@ -89,6 +90,7 @@ const blank = (): Systeme => ({
   videos: [],
   schemaImages: [],
   schemaDataList: [],
+  schemaVideo: null,
 });
 
 function normalizeSchemaData(schema: any, index: number, image = "") {
@@ -143,6 +145,7 @@ function systemToForm(system: SystemItem): Systeme {
     videos: system.videos || [],
     schemaImages,
     schemaDataList,
+    schemaVideo: (system as any).schemaVideo || null,
     createdAt: system.createdAt,
   };
 }
@@ -156,7 +159,6 @@ export default function SystemesClient() {
   const draftKey = editId ? `${DRAFT_KEY}_${editId}` : DRAFT_KEY;
 
   const imgInput = useRef<HTMLInputElement | null>(null);
-  const vidInput = useRef<HTMLInputElement | null>(null);
   const toastT = useRef<number | null>(null);
 
   const [systeme, setSysteme] = useState<Systeme>(blank());
@@ -320,6 +322,10 @@ export default function SystemesClient() {
               : storedEditIndex !== null
               ? Number(storedEditIndex)
               : null;
+
+          if (typeof result.schemaVideo === 'string' && result.schemaVideo) {
+            base = { ...base, schemaVideo: result.schemaVideo };
+          }
 
           if (incomingImages.length) {
             const nextImages = [...base.schemaImages];
@@ -513,31 +519,6 @@ export default function SystemesClient() {
     }));
   };
 
-  const onVideos = (event: React.ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
-
-    if (!file) return;
-
-    const reader = new FileReader();
-
-    reader.onload = () => {
-      setSysteme((prev) => ({
-        ...prev,
-        videos: [reader.result as string],
-      }));
-    };
-
-    reader.readAsDataURL(file);
-    event.target.value = "";
-  };
-
-  const removeVideo = () => {
-    setSysteme((prev) => ({
-      ...prev,
-      videos: [],
-    }));
-  };
-
   async function uploadBase64Image(base64: string, folder = "schemas") {
     if (!base64.startsWith("data:image")) return base64;
 
@@ -697,10 +678,15 @@ export default function SystemesClient() {
         schemaDataList: cleanSchemaDataList,
       };
 
+      const systemPayload = {
+        ...payload,
+        schemaVideo: payload.schemaVideo ?? undefined,
+      };
+
       const saved =
         editId || systeme.id
-          ? await updateSystem(id, payload)
-          : await saveSystem(payload);
+          ? await updateSystem(id, systemPayload)
+          : await saveSystem(systemPayload);
 
       setLoading(false);
 
@@ -709,8 +695,8 @@ export default function SystemesClient() {
         return;
       }
 
-      // Si le système vient de DESSIN avec un Playbook/Série choisis,
-      // on l'ajoute au Playbook sans créer une deuxième fiche système.
+      // Les tags choisis dans DESSIN sont toujours appliqués à la fiche privée.
+      // Playbook/Série restent facultatifs et ne créent jamais une seconde fiche système.
       const pendingPlaybook = readPendingPlaybookSelection();
       if (pendingPlaybook) {
         try {
@@ -854,34 +840,19 @@ export default function SystemesClient() {
             )}
           </div>
 
-          <label className="cs-lab">
-            Vidéo / Animation <span className="cs-soft">(1 max)</span>
-          </label>
+          <label className="cs-lab">Animation du système</label>
 
-          {systeme.videos[0] ? (
-            <div className="cs-video">
-              <video src={systeme.videos[0]} controls />
-              <button type="button" className="rm" onClick={removeVideo}>
-                ✕ Retirer
-              </button>
+          <div className="cs-animation-source">
+            <div className="cs-animation-icon">▶</div>
+            <div>
+              <b>Animation liée au dessin</b>
+              <p>
+                Aucune vidéo n’est à importer depuis ton ordinateur. Les phases,
+                trajectoires et timings enregistrés dans DESSIN constituent la
+                source de l’animation du système et seront utilisés par le Playbook.
+              </p>
             </div>
-          ) : (
-            <button
-              type="button"
-              className="cs-add-video"
-              onClick={() => vidInput.current?.click()}
-            >
-              🎬 Ajouter une vidéo
-            </button>
-          )}
-
-          <input
-            ref={vidInput}
-            type="file"
-            accept="video/mp4,video/*"
-            hidden
-            onChange={onVideos}
-          />
+          </div>
 
           <label className="cs-lab">
             Images / Documents <span className="cs-soft">(5 max)</span>
@@ -1025,8 +996,10 @@ const CSS = `
 .cs-video{border:1px solid #e0e0e0;border-radius:12px;overflow:hidden}
 .cs-video video{width:100%;display:block;background:#000;max-height:320px}
 .cs-video .rm{width:100%;border:none;border-top:1px solid #eee;background:#fff;padding:.5rem;font-weight:700;font-size:.85rem}
-.cs-add-video{border:2px dashed #6B1A2C;color:#6B1A2C;background:#fff;border-radius:10px;padding:.7rem 1rem;font-weight:700;font-size:.9rem;text-align:center}
-.cs-add-video:hover{background:#FBEFF1}
+.cs-animation-source{display:flex;gap:.8rem;align-items:flex-start;border:1px solid #e4ddd5;background:#faf8f5;border-radius:12px;padding:.9rem 1rem;color:#333}
+.cs-animation-icon{width:34px;height:34px;border-radius:50%;display:grid;place-items:center;flex:0 0 auto;background:#6B1A2C;color:#fff;font-size:.8rem;padding-left:2px}
+.cs-animation-source b{display:block;color:#6B1A2C;font-size:.9rem;margin-bottom:.2rem}
+.cs-animation-source p{margin:0;color:#6f6f6f;font-size:.8rem;line-height:1.45}
 .cs-imgs{display:flex;flex-wrap:wrap;gap:.6rem;align-items:center}
 .cs-thumb{position:relative;width:90px;height:90px;border-radius:10px;overflow:hidden;border:1px solid #ddd}
 .cs-thumb img{width:100%;height:100%;object-fit:cover}

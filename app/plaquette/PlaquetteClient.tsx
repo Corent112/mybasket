@@ -23,8 +23,9 @@ import { getSystem, updateSystem } from "@/lib/systems";
 import { uploadSchemaImage } from "@/lib/supabase/upload-schema";
 import ContentNavigator from "@/components/content-navigator/ContentNavigator";
 import { getPlaquetteTransfer, setPlaquetteTransfer, removePlaquetteTransfer } from "@/lib/plaquette-transfer";
-import { listPrivatePlaybooks, listPlaybookSeries, listPersonalSystemTags, createPlaybookSeries, createPersonalSystemTag, savePendingPlaybookSelection, clearPendingPlaybookSelection, type PlaybookSeries, type PersonalSystemTag } from '@/lib/playbook-series';
+import { listPrivatePlaybooks, listPlaybookSeries, listPersonalSystemTags, ensureDefaultPersonalSystemTags, createPlaybookSeries, createPersonalSystemTag, savePendingPlaybookSelection, clearPendingPlaybookSelection, type PlaybookSeries, type PersonalSystemTag } from '@/lib/playbook-series';
 import { createPlaybook, type Playbook } from '@/lib/playbook';
+import { listDrawingTeams, ensureDrawingSeasons, createDrawingSeason, type DrawingTeam, type DrawingSeason } from '@/lib/drawing-workspace';
 
 
 type CourtStyle = {
@@ -625,12 +626,17 @@ useEffect(() => {
   const [saveSeriesId,setSaveSeriesId]=useState('');
   const [saveTags,setSaveTags]=useState<PersonalSystemTag[]>([]);
   const [saveSelectedTags,setSaveSelectedTags]=useState<string[]>([]);
+  const [saveTeams,setSaveTeams]=useState<DrawingTeam[]>([]);
+  const [saveTeamId,setSaveTeamId]=useState('');
+  const [saveSeasons,setSaveSeasons]=useState<DrawingSeason[]>([]);
+  const [saveSeason,setSaveSeason]=useState('2026-2027');
 
-useEffect(()=>{ if(!saveOpen)return; (async()=>{ try{ const [pbs,tags]=await Promise.all([listPrivatePlaybooks(),listPersonalSystemTags()]); setSavePlaybooks(pbs); setSaveTags(tags); const pid=savePlaybookId||pbs[0]?.id||''; setSavePlaybookId(pid); setSaveSeries(pid?await listPlaybookSeries(pid):[]); }catch(e){console.warn('Playbook save options',e)} })(); },[saveOpen]);
+useEffect(()=>{ if(!saveOpen)return; (async()=>{ try{ const [pbs,tags,teams,seasons]=await Promise.all([listPrivatePlaybooks(),ensureDefaultPersonalSystemTags(),listDrawingTeams(),ensureDrawingSeasons()]); setSavePlaybooks(pbs); setSaveTags(tags); setSaveTeams(teams); setSaveSeasons(seasons); const pid=savePlaybookId||''; setSaveSeries(pid?await listPlaybookSeries(pid):[]); }catch(e){console.warn('Playbook save options',e)} })(); },[saveOpen]);
 useEffect(()=>{ if(!savePlaybookId){setSaveSeries([]);return;} listPlaybookSeries(savePlaybookId).then(setSaveSeries).catch(console.warn); },[savePlaybookId]);
 
-const prepareSystemPlaybookSave=()=>{ if(savePlaybookId) savePendingPlaybookSelection({playbookId:savePlaybookId,seriesId:saveSeriesId||null,tags:saveSelectedTags}); else clearPendingPlaybookSelection(); };
-const addPlaybookFromDrawing=async()=>{ const name=prompt('Nom du nouveau Playbook ?'); if(!name?.trim())return; try{ const pb=await createPlaybook({title:name.trim()}); const pbs=await listPrivatePlaybooks(); setSavePlaybooks(pbs); setSavePlaybookId(pb.id); setSaveSeries([]); setSaveSeriesId(''); showHint('Playbook créé'); }catch(e){console.error(e);showHint('Impossible de créer le Playbook');} };
+const prepareSystemPlaybookSave=()=>{ savePendingPlaybookSelection({playbookId:savePlaybookId||null,seriesId:savePlaybookId?(saveSeriesId||null):null,tags:saveSelectedTags}); };
+const addPlaybookFromDrawing=async()=>{ const name=prompt('Nom du nouveau Playbook ?'); if(!name?.trim())return; try{ const pb=await createPlaybook({title:name.trim(),team_id:saveTeamId||null,season:saveSeason||null}); const pbs=await listPrivatePlaybooks(); setSavePlaybooks(pbs); setSavePlaybookId(pb.id); setSaveSeries([]); setSaveSeriesId(''); showHint('Playbook créé'); }catch(e){console.error(e);showHint('Impossible de créer le Playbook');} };
+const addSeasonFromDrawing=async()=>{ const label=prompt('Nouvelle saison (ex. 2027-2028) ?'); if(!label?.trim())return; try{const row=await createDrawingSeason(label);setSaveSeasons(await ensureDrawingSeasons());setSaveSeason(row.label);}catch(e:any){showHint(e?.message||'Impossible de créer la saison');} };
 const addSeriesFromDrawing=async()=>{ if(!savePlaybookId){showHint('Choisis d’abord un Playbook');return;} const name=prompt('Nom de la nouvelle série ?'); if(!name?.trim())return; const row=await createPlaybookSeries(savePlaybookId,name,saveSelectedTags); setSaveSeries(await listPlaybookSeries(savePlaybookId)); setSaveSeriesId(row.id); };
 const addTagFromDrawing=async()=>{ const name=prompt('Nom du tag ? (ex. Pick top, Spanish, Post up…)'); if(!name?.trim())return; await createPersonalSystemTag(name); setSaveTags(await listPersonalSystemTags()); setSaveSelectedTags(v=>Array.from(new Set([...v,name.trim()]))); };
 
@@ -3734,8 +3740,9 @@ const buildPlaquetteResult = async (opts: {
   targetId: string;
   schemaGroupId: string;
   editIndex: number | null;
+  captureVideo?: boolean;
 }) => {
-  const { isSysteme, targetId, schemaGroupId, editIndex } = opts;
+  const { isSysteme, targetId, schemaGroupId, editIndex, captureVideo = false } = opts;
 
   const phaseImagesBase64 = await captureAllPhaseImages();
   if (phaseImagesBase64.length === 0) throw new Error("Aucune phase capturée");
@@ -3752,6 +3759,38 @@ const buildPlaquetteResult = async (opts: {
       `phase-${i + 1}.png`
     );
     uploadedUrls.push(url);
+  }
+
+  let schemaVideo: string | null = null;
+  if (isSysteme && captureVideo) {
+    try {
+      const canvas = canvasRef.current;
+      if (canvas && typeof MediaRecorder !== 'undefined' && typeof canvas.captureStream === 'function') {
+        const supported = ['video/mp4;codecs=avc1.42E01E','video/mp4','video/webm;codecs=vp9','video/webm;codecs=vp8','video/webm'].find(t=>MediaRecorder.isTypeSupported(t));
+        if (supported) {
+          const stream = canvas.captureStream(30);
+          const recorder = new MediaRecorder(stream,{mimeType:supported,videoBitsPerSecond:6_000_000});
+          const chunks:BlobPart[]=[];
+          recorder.ondataavailable=e=>{if(e.data?.size)chunks.push(e.data)};
+          const stopped=new Promise<void>(resolve=>{recorder.onstop=()=>resolve()});
+          recorder.start();
+          await playWholeForRecording();
+          await new Promise(r=>setTimeout(r,300));
+          recorder.stop(); await stopped;
+          const blob=new Blob(chunks,{type:supported});
+          if(blob.size){
+            const supabase=createClient(); const {data:{user}}=await supabase.auth.getUser();
+            if(user){
+              const ext=supported.startsWith('video/mp4')?'mp4':'webm';
+              const path=`${user.id}/systemes/${targetId}/animations/${schemaGroupId}.${ext}`;
+              const up=await supabase.storage.from('exercise-videos').upload(path,blob,{contentType:supported,upsert:true});
+              if(!up.error){schemaVideo=supabase.storage.from('exercise-videos').getPublicUrl(path).data.publicUrl;}
+              else console.warn('Upload animation système impossible',up.error);
+            }
+          }
+        }
+      }
+    } catch (e) { console.warn('Capture automatique animation système impossible',e); }
   }
 
   const fullPhases = Array.isArray(phasesRef.current) ? phasesRef.current : [];
@@ -3782,6 +3821,7 @@ const buildPlaquetteResult = async (opts: {
     courtBranding: courtBrandingRef.current,
     schemaImages: uploadedUrls,
     schemaDataList,
+    schemaVideo,
   };
 
   await setPlaquetteTransfer(RESULT_KEY, result);
@@ -3900,6 +3940,7 @@ const saveAndGoCreate = async (kind: "systeme" | "exercice") => {
       targetId: storageTargetId,
       schemaGroupId,
       editIndex: null,
+      captureVideo: isSysteme,
     });
 
     if (!fromGamePlan && !fromScouting) localStorage.removeItem(RETURN_KEY);
@@ -4793,10 +4834,18 @@ const exportJson = () => {
 
               <div style={{display:'grid',gap:'.65rem',marginBottom:'1rem',padding:'.8rem',background:'#f7f4ef',borderRadius:10}}>
                 <b style={{fontSize:'.8rem',color:'#6B1A2C'}}>DESTINATION DU SYSTÈME</b><div style={{fontSize:'.75rem',padding:'.55rem .65rem',background:'#fff',border:'1px solid #e1d9cf',borderRadius:7}}>🔒 <b>Ma bibliothèque privée</b> — toujours enregistrée, impossible à désactiver.</div>
+                <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8}}>
+                  <label style={{fontSize:'.76rem',fontWeight:700}}>Équipe <span style={{fontWeight:500,color:'#777'}}>(facultatif)</span>
+                    <select value={saveTeamId} onChange={e=>{setSaveTeamId(e.target.value);setSavePlaybookId('');setSaveSeriesId('')}} style={{width:'100%',marginTop:4,padding:'.55rem',border:'1px solid #ddd',borderRadius:7}}><option value=''>Toutes / aucune</option><optgroup label='Mes équipes'>{saveTeams.filter(t=>!t.scouted).map(t=><option key={t.id} value={t.id}>{t.name}</option>)}</optgroup><optgroup label='Équipes scoutées'>{saveTeams.filter(t=>t.scouted).map(t=><option key={t.id} value={t.id}>{t.name}</option>)}</optgroup></select>
+                  </label>
+                  <label style={{fontSize:'.76rem',fontWeight:700}}>Saison
+                    <div style={{display:'flex',gap:6,marginTop:4}}><select value={saveSeason} onChange={e=>{setSaveSeason(e.target.value);setSavePlaybookId('');setSaveSeriesId('')}} style={{flex:1,padding:'.55rem',border:'1px solid #ddd',borderRadius:7}}><option value=''>Toutes / aucune</option>{saveSeasons.map(x=><option key={x.id} value={x.label}>{x.label}</option>)}</select><button type='button' onClick={addSeasonFromDrawing}>+ Saison</button></div>
+                  </label>
+                </div>
                 <label style={{fontSize:'.76rem',fontWeight:700}}>Playbook <span style={{fontWeight:500,color:'#777'}}>(facultatif)</span>
                   <div style={{display:'flex',gap:6,marginTop:4}}>
                     <select value={savePlaybookId} onChange={e=>{setSavePlaybookId(e.target.value);setSaveSeriesId('')}} style={{flex:1,padding:'.55rem',border:'1px solid #ddd',borderRadius:7}}>
-                      <option value=''>Bibliothèque privée uniquement</option>{savePlaybooks.map(p=><option key={p.id} value={p.id}>{p.title}</option>)}
+                      <option value=''>Bibliothèque privée uniquement</option>{savePlaybooks.filter(p=>(!saveTeamId||p.team_id===saveTeamId)&&(!saveSeason||p.season===saveSeason)).map(p=><option key={p.id} value={p.id}>{p.title}</option>)}
                     </select>
                     <button type='button' onClick={addPlaybookFromDrawing}>+ Playbook</button>
                   </div>
