@@ -51,11 +51,14 @@ type CourtBranding = {
   customFontDataUrl: string | null;
 };
 
+type PlayerBaseColors = { attacker: string; defender: string };
+
 type SavedCourtPreset = {
   id: string;
   name: string;
   style: CourtStyle;
   branding: CourtBranding;
+  playerColors: PlayerBaseColors;
   createdAt: number;
 };
 
@@ -305,6 +308,8 @@ const resetPlaquette = () => {
   const [courtBrandingOpen, setCourtBrandingOpen] = useState(false);
   const [savedCourtPresets, setSavedCourtPresets] = useState<SavedCourtPreset[]>([]);
   const [savedCourtPresetsLoading, setSavedCourtPresetsLoading] = useState(false);
+  const [playerBaseColors, setPlayerBaseColors] = useState<PlayerBaseColors>({ attacker: '#D4A24C', defender: '#D62828' });
+  const playerBaseColorsRef = useRef<PlayerBaseColors>({ attacker: '#D4A24C', defender: '#D62828' });
   const courtBrandingRef = useRef<CourtBranding>(DEFAULT_COURT_BRANDING);
   const courtBrandingLogoRef = useRef<HTMLImageElement | null>(null);
   const courtStyleRef = useRef<CourtStyle>(DEFAULT_COURT_STYLE);
@@ -312,6 +317,34 @@ const resetPlaquette = () => {
     half: null,
     full: null,
   });
+
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem('mybasket_player_base_colors');
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        const next = {
+          attacker: typeof parsed?.attacker === 'string' ? parsed.attacker : '#D4A24C',
+          defender: typeof parsed?.defender === 'string' ? parsed.defender : '#D62828',
+        };
+        playerBaseColorsRef.current = next;
+        setPlayerBaseColors(next);
+      }
+    } catch {}
+  }, []);
+
+  const updatePlayerBaseColors = (next: PlayerBaseColors, applyExisting = false) => {
+    playerBaseColorsRef.current = next;
+    setPlayerBaseColors(next);
+    try { localStorage.setItem('mybasket_player_base_colors', JSON.stringify(next)); } catch {}
+    if (applyExisting) {
+      pushHistory();
+      setPhases((items) => items.map((ph) => ({
+        ...ph,
+        players: ph.players.map((pl) => pl.coach ? pl : { ...pl, color: pl.team === 'def' ? next.defender : next.attacker }),
+      })));
+    }
+  };
 
   useEffect(() => {
     let cancelled = false;
@@ -327,7 +360,7 @@ const resetPlaquette = () => {
 
         const { data, error } = await supabase
           .from('plaquette_court_presets')
-          .select('id, name, style, branding, created_at')
+          .select('id, name, style, branding, player_colors, created_at')
           .eq('user_id', user.id)
           .order('created_at', { ascending: false })
           .limit(3);
@@ -340,6 +373,7 @@ const resetPlaquette = () => {
           name: typeof item?.name === 'string' && item.name.trim() ? item.name.trim().slice(0, 40) : 'Terrain personnalisé',
           style: normalizeCourtStyle(item?.style),
           branding: normalizeCourtBranding(item?.branding),
+          playerColors: { attacker: item?.player_colors?.attacker || '#D4A24C', defender: item?.player_colors?.defender || '#D62828' },
           createdAt: item?.created_at ? new Date(item.created_at).getTime() : Date.now(),
         }));
         setSavedCourtPresets(clean);
@@ -380,8 +414,9 @@ const resetPlaquette = () => {
           name: name.slice(0, 40),
           style,
           branding,
+          player_colors: playerBaseColorsRef.current,
         })
-        .select('id, name, style, branding, created_at')
+        .select('id, name, style, branding, player_colors, created_at')
         .single();
 
       if (error) throw error;
@@ -391,6 +426,7 @@ const resetPlaquette = () => {
         name: String(data.name || name).slice(0, 40),
         style: normalizeCourtStyle(data.style),
         branding: normalizeCourtBranding(data.branding),
+        playerColors: { attacker: data?.player_colors?.attacker || playerBaseColorsRef.current.attacker, defender: data?.player_colors?.defender || playerBaseColorsRef.current.defender },
         createdAt: data.created_at ? new Date(data.created_at).getTime() : Date.now(),
       };
       setSavedCourtPresets((currentItems) => [preset, ...currentItems].slice(0, 3));
@@ -457,6 +493,7 @@ const resetPlaquette = () => {
   const loadSavedCourtPreset = (preset: SavedCourtPreset) => {
     applyCourtStyle(preset.style);
     applyCourtBranding(preset.branding);
+    updatePlayerBaseColors(preset.playerColors || { attacker: '#D4A24C', defender: '#D62828' });
   };
 
   const deleteSavedCourtPreset = async (id: string) => {
@@ -3130,8 +3167,8 @@ animPosRef.current = { players, balls };
       pushHistory();
       const num = (placeIdx % 5) + 1;
       const pl: Player = placeMode === 'att'
-        ? { id: uid(), x: n.x, y: n.y, label: String(num), team: 'att', shape: 'circle', rotation: 0, size: 1 }
-        : { id: uid(), x: n.x, y: n.y, label: 'X' + num, team: 'def', shape: 'circle', rotation: 0, size: 0.72 };
+        ? { id: uid(), x: n.x, y: n.y, label: String(num), team: 'att', shape: 'circle', rotation: 0, size: 1, color: playerBaseColorsRef.current.attacker }
+        : { id: uid(), x: n.x, y: n.y, label: 'X' + num, team: 'def', shape: 'circle', rotation: 0, size: 0.72, color: playerBaseColorsRef.current.defender };
       updatePhase((ph) => ({ ...ph, players: [...ph.players, pl] }));
       setPlaceIdx((i) => i + 1);
       return;
@@ -3208,7 +3245,7 @@ animPosRef.current = { players, balls };
 
     if (tool.kind === 'player') {
       pushHistory();
-      updatePhase((ph) => ({ ...ph, players: [...ph.players, { id: uid(), x: n.x, y: n.y, label: tool.label, team: tool.team, shape: tool.shape, coach: tool.coach, rotation: 0, size: tool.team === 'def' ? 0.72 : 1 }] }));
+      updatePhase((ph) => ({ ...ph, players: [...ph.players, { id: uid(), x: n.x, y: n.y, label: tool.label, team: tool.team, shape: tool.shape, coach: tool.coach, rotation: 0, size: tool.team === 'def' ? 0.72 : 1, color: tool.coach ? undefined : (tool.team === 'def' ? playerBaseColorsRef.current.defender : playerBaseColorsRef.current.attacker) }] }));
       return;
     }
     if (tool.kind === 'object') {
@@ -4659,6 +4696,12 @@ const exportJson = () => {
             <aside className="ed-right">
               <div className="right-card right-card-players">
                 <div className="right-card-title"><span>👤</span> Joueurs</div>
+                <div className="player-default-colors">
+                  <span>Couleurs par défaut</span>
+                  <label title="Couleur des attaquants"><input type="color" value={playerBaseColors.attacker} onChange={(e) => updatePlayerBaseColors({ ...playerBaseColors, attacker: e.target.value })} /><b>Att.</b></label>
+                  <label title="Couleur des défenseurs"><input type="color" value={playerBaseColors.defender} onChange={(e) => updatePlayerBaseColors({ ...playerBaseColors, defender: e.target.value })} /><b>Déf.</b></label>
+                  <button type="button" onClick={() => updatePlayerBaseColors(playerBaseColors, true)} title="Appliquer ces couleurs à tous les joueurs déjà placés">Appliquer</button>
+                </div>
 
                 <div className="players-row players-row-main" id="row-circle">
                   {[1, 2, 3, 4, 5].map((i) => (
@@ -5302,6 +5345,18 @@ const exportJson = () => {
               </div>
 
               <div style={{ marginTop: '1rem', paddingTop: '.85rem', borderTop: '1px solid #ECECEC' }}>
+                <div style={{ marginBottom: '.75rem', padding: '.65rem', border: '1px solid #E6E0D8', borderRadius: 9, background: '#FAF8F4' }}>
+                  <div style={{ fontSize: '.72rem', fontWeight: 900, color: '#555', textTransform: 'uppercase', marginBottom: '.5rem' }}>Couleurs de base des joueurs</div>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '.55rem' }}>
+                    <label style={{ display: 'flex', alignItems: 'center', gap: '.45rem', fontSize: '.72rem', fontWeight: 800 }}>
+                      <input type="color" value={playerBaseColors.attacker} onChange={(e) => updatePlayerBaseColors({ ...playerBaseColors, attacker: e.target.value })} /> Attaquants
+                    </label>
+                    <label style={{ display: 'flex', alignItems: 'center', gap: '.45rem', fontSize: '.72rem', fontWeight: 800 }}>
+                      <input type="color" value={playerBaseColors.defender} onChange={(e) => updatePlayerBaseColors({ ...playerBaseColors, defender: e.target.value })} /> Défenseurs
+                    </label>
+                  </div>
+                  <button type="button" onClick={() => updatePlayerBaseColors(playerBaseColors, true)} style={{ width: '100%', marginTop: '.55rem', border: '1px solid #DDD', background: '#fff', borderRadius: 7, padding: '.42rem', fontSize: '.7rem', fontWeight: 800, cursor: 'pointer' }}>Appliquer aux joueurs déjà placés</button>
+                </div>
                 <button
                   type="button"
                   className="btn"
@@ -5311,7 +5366,7 @@ const exportJson = () => {
                   💾 Sauvegarder ce terrain ({savedCourtPresets.length}/3)
                 </button>
                 <div style={{ fontSize: '.7rem', color: '#777', marginTop: '.35rem', lineHeight: 1.35 }}>
-                  Sauvegarde sur ton compte MyBasket (maximum 3 terrains : couleurs, logo, texte et police).
+                  Sauvegarde sur ton compte MyBasket (maximum 3 terrains : terrain, branding et couleurs de base attaquants/défenseurs).
                 </div>
 
                 {savedCourtPresetsLoading && (
@@ -5504,7 +5559,7 @@ html{font-size:15px}
 .ed-icn-btn:hover{background:rgba(255,255,255,.1)}
 .ed-save{background:var(--or);color:var(--bordeaux-d);padding:.45rem 1.1rem;border-radius:6px;font-weight:700;font-size:.85rem;display:flex;align-items:center;gap:.4rem;cursor:pointer}
 .ed-save:hover{background:var(--or-l)}
-.ed-layout{display:grid;grid-template-columns:minmax(210px,250px) minmax(0,1fr) minmax(310px,350px);grid-template-areas:"library canvas right" "phases phases phases";grid-template-rows:minmax(0,1fr) auto;min-height:calc(100vh - 180px);gap:0;position:relative}
+.ed-layout{display:grid;grid-template-columns:minmax(260px,280px) minmax(0,1fr) minmax(310px,350px);grid-template-areas:"library canvas right" "phases phases phases";grid-template-rows:minmax(0,1fr) auto;min-height:calc(100vh - 180px);gap:0;position:relative}
 .ed-library{grid-area:library;position:relative;min-width:0;background:#101a22;border-right:1px solid #293b48;overflow:hidden}
 .ed-library .content-nav.embedded{position:absolute!important;inset:0!important;top:0!important;bottom:0!important;width:100%!important;height:100%!important;box-shadow:none!important;border-right:0!important;z-index:4}
 .ed-library .content-nav.compact{width:68px!important}
@@ -5626,6 +5681,7 @@ html{font-size:15px}
 .coach-head{font-size:1rem}
 .coach-cap{font-size:.76rem;top:0;right:2px}
 
+.player-default-colors{display:grid;grid-template-columns:1fr auto auto auto;align-items:center;gap:5px;margin:0 0 8px;padding:6px 7px;border:1px solid var(--gris-med,#ddd);border-radius:8px;background:#faf8f4}.player-default-colors>span{font-size:9px;font-weight:900;color:#6b6b6b;text-transform:uppercase}.player-default-colors label{display:flex;align-items:center;gap:3px;font-size:8px}.player-default-colors input{width:22px;height:22px;border:0;padding:0;background:transparent}.player-default-colors button{border:1px solid #ddd;background:#fff;border-radius:6px;padding:5px 6px;font-size:8px;font-weight:800;cursor:pointer}
 /* ---------- Bloc Joueurs compact ---------- */
 .right-card-players{padding:.62rem .68rem}
 .right-card-players .right-card-title{margin-bottom:.48rem}
@@ -5667,7 +5723,7 @@ html{font-size:15px}
 .right-card-players .coach-cap{font-size:.64rem;top:0;right:1px}
 
 @media (min-width:1400px){
-  .ed-layout{grid-template-columns:220px minmax(0,1fr) 360px}
+  .ed-layout{grid-template-columns:270px minmax(0,1fr) 360px}
   #playCanvas[data-court="full"]{max-width:540px}
 }
 
@@ -5677,5 +5733,5 @@ html{font-size:15px}
 }
 
 /* V38 — Architecture DESSIN : bibliothèque à gauche, terrain au centre, outils à droite, phases en bas */
-@media (max-width:1050px){.ed-layout{grid-template-columns:210px minmax(0,1fr) 300px}.ed-left #tabPhases{grid-template-columns:150px minmax(260px,1fr) 280px}}
+@media (max-width:1050px){.ed-layout{grid-template-columns:250px minmax(0,1fr) 300px}.ed-left #tabPhases{grid-template-columns:150px minmax(260px,1fr) 280px}}
 `;
