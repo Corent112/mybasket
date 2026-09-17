@@ -4696,12 +4696,6 @@ const exportJson = () => {
             <aside className="ed-right">
               <div className="right-card right-card-players">
                 <div className="right-card-title"><span>👤</span> Joueurs</div>
-                <div className="player-default-colors">
-                  <span>Couleurs par défaut</span>
-                  <label title="Couleur des attaquants"><input type="color" value={playerBaseColors.attacker} onChange={(e) => updatePlayerBaseColors({ ...playerBaseColors, attacker: e.target.value })} /><b>Att.</b></label>
-                  <label title="Couleur des défenseurs"><input type="color" value={playerBaseColors.defender} onChange={(e) => updatePlayerBaseColors({ ...playerBaseColors, defender: e.target.value })} /><b>Déf.</b></label>
-                  <button type="button" onClick={() => updatePlayerBaseColors(playerBaseColors, true)} title="Appliquer ces couleurs à tous les joueurs déjà placés">Appliquer</button>
-                </div>
 
                 <div className="players-row players-row-main" id="row-circle">
                   {[1, 2, 3, 4, 5].map((i) => (
@@ -4741,14 +4735,14 @@ const exportJson = () => {
                   <div className={'act-btn' + (isAction('cut') ? ' active' : '')} data-action="cut" onClick={() => pick({ kind: 'action', action: 'cut' })}><span className="icn">→</span><span>Cut</span></div>
                   <div className={'act-btn' + (isAction('screen') ? ' active' : '')} data-action="screen" onClick={() => pick({ kind: 'action', action: 'screen' })}><span className="icn">⊺</span><span>Écran</span></div>
                   <div className={'act-btn' + (isAction('shoot') ? ' active' : '')} data-action="shoot" onClick={() => pick({ kind: 'action', action: 'shoot' })}><span className="icn">⊕</span><span>Tir</span></div>
-                  <div className={'act-btn' + (isAction('giveball') ? ' active' : '')} data-action="giveball" onClick={() => pick({ kind: 'action', action: 'giveball' })}><span className="icn"><img src={BALL_ICON_URL} alt="Ballon" className="ball-tool-icon" /></span><span>Donner ballon</span></div>
+                  <div className={'act-btn' + (isAction('giveball') ? ' active' : '')} data-action="giveball" onClick={() => pick({ kind: 'action', action: 'giveball' })}><span className="icn">🏀</span><span>Donner ballon</span></div>
                 </div>
               </div>
 
               <div className="right-card">
                 <div className="right-card-title"><span>🧰</span> Outils</div>
                 <div className="misc-grid misc-grid-large">
-                  <div className={'misc-btn' + (isObj('ball') ? ' active' : '')} id="addBallBtn" title="Ballon" onClick={() => pick({ kind: 'object', obj: 'ball' })}><img src={BALL_ICON_URL} alt="Ballon" className="ball-tool-icon" /></div>
+                  <div className={'misc-btn' + (isObj('ball') ? ' active' : '')} id="addBallBtn" title="Ballon" onClick={() => pick({ kind: 'object', obj: 'ball' })}>🏀</div>
                   <div className={'misc-btn' + (isObj('cone') ? ' active' : '')} data-misc="cone" title="Plot" onClick={() => pick({ kind: 'object', obj: 'cone' })}><img src="/plaquette/plot.svg" alt="Plot" style={{ width: 30, height: 30, objectFit: 'contain' }} /></div>
                   <div className={'misc-btn' + (isObj('lateralBasket') ? ' active' : '')} data-misc="lateralBasket" title="Panier latéral" onClick={() => pick({ kind: 'object', obj: 'lateralBasket' })}><img src="/plaquette/panier-lateral.svg" alt="Panier latéral" style={{ width: 36, height: 30, objectFit: 'contain' }} /></div>
                   <div className={'misc-btn' + (isObj('triangle') ? ' active' : '')} data-misc="triangle" title="Triangle" onClick={() => pick({ kind: 'object', obj: 'triangle' })}>△</div>
@@ -4868,36 +4862,11 @@ const exportJson = () => {
           >
             <div
               onClick={(e) => e.stopPropagation()}
-              style={{ background: '#fff', borderRadius: 12, padding: '1.2rem 1.3rem', width: 520, maxWidth: '94vw', boxShadow: '0 14px 50px rgba(0,0,0,.35)', borderTop: '4px solid var(--bordeaux, #6B1A2C)' }}
+              style={{ background: '#fff', borderRadius: 12, padding: '1.2rem 1.3rem', width: 390, maxWidth: '92vw', boxShadow: '0 14px 50px rgba(0,0,0,.35)', borderTop: '4px solid var(--bordeaux, #6B1A2C)' }}
             >
               <div style={{ fontWeight: 800, fontSize: '1.05rem', color: 'var(--bordeaux, #6B1A2C)', marginBottom: '.25rem' }}>💾 Envoyer vers MyBasket</div>
               <div style={{ fontSize: '.8rem', color: '#6b6b6b', marginBottom: '1rem', lineHeight: 1.45 }}>
                 La plaquette sera capturée phase par phase, uploadée dans Supabase, puis envoyée dans la page de création choisie.
-              </div>
-
-              <div style={{display:'grid',gap:'.65rem',marginBottom:'1rem',padding:'.8rem',background:'#f7f4ef',borderRadius:10}}>
-                <b style={{fontSize:'.8rem',color:'#6B1A2C'}}>DESTINATION DU SYSTÈME</b><div style={{fontSize:'.75rem',padding:'.55rem .65rem',background:'#fff',border:'1px solid #e1d9cf',borderRadius:7}}>🔒 <b>Ma bibliothèque privée</b> — toujours enregistrée, impossible à désactiver.</div>
-                <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8}}>
-                  <label style={{fontSize:'.76rem',fontWeight:700}}>Équipe <span style={{fontWeight:500,color:'#777'}}>(facultatif)</span>
-                    <select value={saveTeamId} onChange={e=>{setSaveTeamId(e.target.value);setSavePlaybookId('');setSaveSeriesId('')}} style={{width:'100%',marginTop:4,padding:'.55rem',border:'1px solid #ddd',borderRadius:7}}><option value=''>Toutes / aucune</option><optgroup label='Mes équipes'>{saveTeams.filter(t=>!t.scouted).map(t=><option key={t.id} value={t.id}>{t.name}</option>)}</optgroup><optgroup label='Équipes scoutées'>{saveTeams.filter(t=>t.scouted).map(t=><option key={t.id} value={t.id}>{t.name}</option>)}</optgroup></select>
-                  </label>
-                  <label style={{fontSize:'.76rem',fontWeight:700}}>Saison
-                    <div style={{display:'flex',gap:6,marginTop:4}}><select value={saveSeason} onChange={e=>{setSaveSeason(e.target.value);setSavePlaybookId('');setSaveSeriesId('')}} style={{flex:1,padding:'.55rem',border:'1px solid #ddd',borderRadius:7}}><option value=''>Toutes / aucune</option>{saveSeasons.map(x=><option key={x.id} value={x.label}>{x.label}</option>)}</select><button type='button' onClick={addSeasonFromDrawing}>+ Saison</button></div>
-                  </label>
-                </div>
-                <label style={{fontSize:'.76rem',fontWeight:700}}>Playbook <span style={{fontWeight:500,color:'#777'}}>(facultatif)</span>
-                  <div style={{display:'flex',gap:6,marginTop:4}}>
-                    <select value={savePlaybookId} onChange={e=>{setSavePlaybookId(e.target.value);setSaveSeriesId('')}} style={{flex:1,padding:'.55rem',border:'1px solid #ddd',borderRadius:7}}>
-                      <option value=''>Bibliothèque privée uniquement</option>{savePlaybooks.filter(p=>(!saveTeamId||p.team_id===saveTeamId)&&(!saveSeason||p.season===saveSeason)).map(p=><option key={p.id} value={p.id}>{p.title}</option>)}
-                    </select>
-                    <button type='button' onClick={addPlaybookFromDrawing}>+ Playbook</button>
-                  </div>
-                </label>
-                {savePlaybookId&&<label style={{fontSize:'.76rem',fontWeight:700}}>Série
-                  <div style={{display:'flex',gap:6,marginTop:4}}><select value={saveSeriesId} onChange={e=>setSaveSeriesId(e.target.value)} style={{flex:1,padding:'.55rem',border:'1px solid #ddd',borderRadius:7}}><option value=''>Sans série</option>{saveSeries.map(x=><option key={x.id} value={x.id}>{x.name}</option>)}</select><button type='button' onClick={addSeriesFromDrawing}>+ Série</button></div>
-                </label>}
-                <div><div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}><b style={{fontSize:'.76rem'}}>Tags de jeu</b><button type='button' onClick={addTagFromDrawing}>+ Tag</button></div><div style={{display:'flex',flexWrap:'wrap',gap:6,marginTop:6}}>{saveTags.map(t=>{const on=saveSelectedTags.includes(t.name);return <button type='button' key={t.id} onClick={()=>setSaveSelectedTags(v=>on?v.filter(x=>x!==t.name):[...v,t.name])} style={{padding:'.35rem .55rem',borderRadius:999,border:'1px solid '+(on?'#6B1A2C':'#ccc'),background:on?'#6B1A2C':'#fff',color:on?'#fff':'#333'}}>{t.name}</button>})}</div></div>
-                <small style={{color:'#777'}}>Exemples : Pick top · Pick side · Pick non porteur · Post up · 1v1 · Pick the picker · Spanish. Chaque utilisateur crée ses propres tags.</small>
               </div>
 
               <div style={{ display: 'flex', flexDirection: 'column', gap: '.55rem' }}>
@@ -4913,7 +4882,7 @@ const exportJson = () => {
 
                 <button
                   disabled={!!saving}
-                  onClick={() => { prepareSystemPlaybookSave(); saveAndGoCreate('systeme'); }}
+                  onClick={() => saveAndGoCreate('systeme')}
                   style={{ padding: '.7rem', borderRadius: 9, border: 'none', background: 'var(--bordeaux, #6B1A2C)', color: '#fff', fontWeight: 700, fontSize: '.9rem', cursor: saving ? 'wait' : 'pointer', opacity: saving && saving !== 'systeme' ? 0.5 : 1 }}
                 >
                   {saving === 'systeme' ? 'Envoi…' : '🗂 Créer un système'}
@@ -5307,6 +5276,43 @@ const exportJson = () => {
                 </div>
               ))}
 
+              <div style={{ marginTop: '1rem', paddingTop: '.85rem', borderTop: '1px solid #ECECEC' }}>
+                <div style={{ fontSize: '.72rem', fontWeight: 800, color: '#555', textTransform: 'uppercase', letterSpacing: '.04em', marginBottom: '.35rem' }}>
+                  Couleurs des joueurs
+                </div>
+                {([
+                  ['attacker', 'Attaquants'],
+                  ['defender', 'Défenseurs'],
+                ] as [keyof PlayerBaseColors, string][]).map(([key, label]) => (
+                  <div key={key} style={{ display: 'grid', gridTemplateColumns: '1fr 42px 112px', gap: '.5rem', alignItems: 'center', padding: '.42rem 0', borderBottom: '1px solid #F0F0F0' }}>
+                    <label htmlFor={`player-base-color-${key}`} style={{ fontSize: '.82rem', fontWeight: 700, color: '#333' }}>{label}</label>
+                    <input
+                      id={`player-base-color-${key}`}
+                      type="color"
+                      value={playerBaseColors[key]}
+                      onChange={(e) => updatePlayerBaseColors({ ...playerBaseColors, [key]: e.target.value })}
+                      title={`Choisir la couleur : ${label}`}
+                      style={{ width: 42, height: 34, padding: 2, border: '1px solid #D9D9D9', borderRadius: 7, background: '#fff', cursor: 'pointer' }}
+                    />
+                    <input
+                      value={playerBaseColors[key]}
+                      onChange={(e) => {
+                        const next = e.target.value.trim();
+                        if (/^#[0-9a-f]{6}$/i.test(next)) updatePlayerBaseColors({ ...playerBaseColors, [key]: next });
+                      }}
+                      onBlur={(e) => {
+                        if (!/^#[0-9a-f]{6}$/i.test(e.target.value.trim())) e.currentTarget.value = playerBaseColorsRef.current[key];
+                      }}
+                      aria-label={`Code couleur ${label}`}
+                      style={{ width: '100%', boxSizing: 'border-box', height: 34, border: '1px solid #D9D9D9', borderRadius: 7, padding: '0 .55rem', fontSize: '.78rem', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', textTransform: 'uppercase' }}
+                    />
+                  </div>
+                ))}
+                <button type="button" onClick={() => updatePlayerBaseColors(playerBaseColors, true)} style={{ width: '100%', marginTop: '.55rem', border: '1px solid #D9D9D9', background: '#fff', borderRadius: 7, padding: '.5rem', fontSize: '.76rem', fontWeight: 800, cursor: 'pointer' }}>
+                  Appliquer aux joueurs déjà placés
+                </button>
+              </div>
+
               <div style={{ marginTop: '1rem' }}>
                 <div style={{ fontSize: '.72rem', fontWeight: 800, color: '#555', textTransform: 'uppercase', letterSpacing: '.04em', marginBottom: '.45rem' }}>
                   Préréglages
@@ -5345,18 +5351,6 @@ const exportJson = () => {
               </div>
 
               <div style={{ marginTop: '1rem', paddingTop: '.85rem', borderTop: '1px solid #ECECEC' }}>
-                <div style={{ marginBottom: '.75rem', padding: '.65rem', border: '1px solid #E6E0D8', borderRadius: 9, background: '#FAF8F4' }}>
-                  <div style={{ fontSize: '.72rem', fontWeight: 900, color: '#555', textTransform: 'uppercase', marginBottom: '.5rem' }}>Couleurs de base des joueurs</div>
-                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '.55rem' }}>
-                    <label style={{ display: 'flex', alignItems: 'center', gap: '.45rem', fontSize: '.72rem', fontWeight: 800 }}>
-                      <input type="color" value={playerBaseColors.attacker} onChange={(e) => updatePlayerBaseColors({ ...playerBaseColors, attacker: e.target.value })} /> Attaquants
-                    </label>
-                    <label style={{ display: 'flex', alignItems: 'center', gap: '.45rem', fontSize: '.72rem', fontWeight: 800 }}>
-                      <input type="color" value={playerBaseColors.defender} onChange={(e) => updatePlayerBaseColors({ ...playerBaseColors, defender: e.target.value })} /> Défenseurs
-                    </label>
-                  </div>
-                  <button type="button" onClick={() => updatePlayerBaseColors(playerBaseColors, true)} style={{ width: '100%', marginTop: '.55rem', border: '1px solid #DDD', background: '#fff', borderRadius: 7, padding: '.42rem', fontSize: '.7rem', fontWeight: 800, cursor: 'pointer' }}>Appliquer aux joueurs déjà placés</button>
-                </div>
                 <button
                   type="button"
                   className="btn"
