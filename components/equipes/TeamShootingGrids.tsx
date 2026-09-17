@@ -347,6 +347,27 @@ export default function TeamShootingGrids({
     setGrids(cur=>cur.map(g=>g.id===grid.id?{...g,...patch}:g));
   }
 
+  async function copyTextSafely(value:string){
+    try{
+      if(navigator.clipboard?.writeText){
+        await navigator.clipboard.writeText(value);
+        return true;
+      }
+    }catch(e){console.warn("Clipboard API indisponible, utilisation du fallback.",e)}
+    try{
+      const input=document.createElement("textarea");
+      input.value=value;
+      input.setAttribute("readonly","");
+      input.style.position="fixed";
+      input.style.opacity="0";
+      document.body.appendChild(input);
+      input.select();
+      const copied=document.execCommand("copy");
+      document.body.removeChild(input);
+      return copied;
+    }catch(e){console.warn("Copie du lien impossible.",e);return false}
+  }
+
   async function ensureShareLink(target:Grid){
     if(scopeType!=="team")return;
     setShareBusy(true);
@@ -354,11 +375,27 @@ export default function TeamShootingGrids({
       const token=target.share_token||crypto.randomUUID().replaceAll("-","");
       const {error}=await supabase.from("shooting_grids").update({share_token:token,share_enabled:true}).eq("id",target.id);
       if(error)throw error;
+
       setGrids(cur=>cur.map(g=>g.id===target.id?{...g,share_token:token,share_enabled:true}:g));
       const url=`${window.location.origin}/tir/${token}`;
-      await navigator.clipboard.writeText(url);
-      toast("Lien joueur copié ✓");
-    }catch(e){console.error(e);toast("Impossible de générer le lien.")}finally{setShareBusy(false)}
+      const copied=await copyTextSafely(url);
+
+      if(copied){
+        toast(target.share_enabled?"Lien joueur copié ✓":"Lien joueur généré et copié ✓");
+      }else{
+        // Le lien est bien créé en base : ne jamais afficher "Impossible de générer".
+        window.prompt("Lien joueur généré. Copie ce lien :",url);
+        toast("Lien joueur généré ✓");
+      }
+    }catch(e){
+      console.error("Erreur génération lien grille de tir",e);
+      const message=e instanceof Error?e.message:"";
+      if(message.toLowerCase().includes("share_token")||message.toLowerCase().includes("share_enabled")){
+        toast("Base de données à mettre à jour pour activer les liens.");
+      }else{
+        toast("Impossible de générer le lien.");
+      }
+    }finally{setShareBusy(false)}
   }
 
   async function disableShareLink(target:Grid){

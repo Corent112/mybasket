@@ -208,11 +208,33 @@ export default function MonComptePage() {
   };
 
   const reloadPartnerTeams = async () => {
+    // Les équipes partenaires déjà présentes dans `teams` sont la source de secours
+    // (notamment celles dont le coach principal reste à inviter).
+    const local = localPartnerTeams.map((team: any) => ({
+      linkId: `local-${team.id}`,
+      teamId: team.id,
+      name: team.name || team.cat || team.category || "Équipe partenaire",
+      category: team.cat || team.category || "",
+      clubName: team.club || team.clubName || team.club_name || "",
+      logo: team.logo || null,
+      season: team.saison || team.season || "",
+      institutionName: team.institutionName || team.institution_name || team.club || "Institutionnel",
+      playerCount: Array.isArray(team.players) ? team.players.length : 0,
+      matchCount: Array.isArray(team.matchs) ? team.matchs.length : 0,
+    }));
+
     try {
       const response = await fetch("/api/account/partner-teams", { cache: "no-store" });
-      const json = await response.json();
-      setPartnerTeams(response.ok ? (json.teams || []) : []);
-    } catch { setPartnerTeams([]); }
+      const json = await response.json().catch(() => ({}));
+      const remote = response.ok && Array.isArray(json.teams) ? json.teams : [];
+      const merged = [...remote];
+      for (const item of local) {
+        if (!merged.some((x: any) => String(x.teamId) === String(item.teamId))) merged.push(item);
+      }
+      setPartnerTeams(merged);
+    } catch {
+      setPartnerTeams(local);
+    }
   };
 
   const reloadTeams = async () => {
@@ -760,7 +782,49 @@ const getTeamCoachName = (team: Team) => {
   if (!head) return "Non renseigné";
   return `${head.prenom || ""} ${head.nom || ""}`.trim() || "Non renseigné";
 };
-const coachedTeams = teams.filter((team) => !isScoutTeam(team));
+const isPartnerTeam = (team: Team) => {
+  const raw = team as any;
+  const metadata = raw.metadata && typeof raw.metadata === "object" ? raw.metadata : {};
+  const type = String(
+    raw.teamType ??
+    raw.team_type ??
+    raw.origin ??
+    raw.source ??
+    metadata.teamType ??
+    metadata.team_type ??
+    metadata.origin ??
+    metadata.source ??
+    ""
+  ).toLowerCase();
+
+  const explicitPartner =
+    raw.isPartnerTeam === true ||
+    raw.is_partner_team === true ||
+    raw.partner === true ||
+    raw.partner_team === true ||
+    metadata.isPartnerTeam === true ||
+    metadata.is_partner_team === true ||
+    metadata.partner === true ||
+    type.includes("partner") ||
+    type.includes("partenaire") ||
+    Boolean(raw.partner_institution_id ?? raw.partnerInstitutionId ?? metadata.partner_institution_id);
+
+  if (explicitPartner) return true;
+
+  // Une équipe créée pour un partenaire mais dont le coach principal reste à inviter
+  // ne doit pas être rangée parmi "Mes équipes".
+  const coachName = getTeamCoachName(team);
+  const hasAssignedCoach =
+    !!coachName &&
+    coachName !== "Non renseigné" &&
+    !coachName.toLowerCase().includes("à inviter") &&
+    !coachName.toLowerCase().includes("a inviter");
+
+  return !team.isShared && !isScoutTeam(team) && !hasAssignedCoach;
+};
+
+const localPartnerTeams = teams.filter((team) => isPartnerTeam(team));
+const coachedTeams = teams.filter((team) => !isScoutTeam(team) && !isPartnerTeam(team));
 
 const sortedTeams = [...coachedTeams].sort((a, b) => {
   // Priorité absolue aux équipes dont l'utilisateur est propriétaire / coach principal.
