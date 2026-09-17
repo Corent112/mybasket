@@ -90,21 +90,9 @@ const MENU: MenuItem[] = [
   href: '/mon-compte/exercices',
 },
   {
-  key: 'systemes',
-  label: 'Mes Systèmes',
-  icon: '🧩',
-  href: '/mon-compte/systemes',
-},
-  {
   key: 'playbooks',
   label: 'Mes Playbooks',
   icon: '📁',
-},
-  {
-  key: 'documents',
-  label: 'Document Builder',
-  icon: '📄',
-  href: '/mon-compte/documents',
 },
   { key: 'profilcoach', label: 'Mon Profil Coach', icon: '⚡' },
   { key: 'annonces', label: 'Mes Annonces', icon: '📣' },
@@ -175,7 +163,8 @@ export default function MonComptePage() {
   const [toast, setToast] = useState('');
 
   const [teams, setTeams] = useState<Team[]>([]);
-  const [teamsView, setTeamsView] = useState<"coached" | "scout">("coached");
+  const [teamsView, setTeamsView] = useState<"coached" | "scout" | "partners">("coached");
+  const [partnerTeams, setPartnerTeams] = useState<any[]>([]);
   const [teamForm, setTeamForm] = useState<{ open: boolean; team?: Team }>({ open: false });
   const [playerFor, setPlayerFor] = useState<string | null>(null);
   const [teamCalendarMatchCounts, setTeamCalendarMatchCounts] = useState<Record<string, number>>({});
@@ -216,6 +205,14 @@ export default function MonComptePage() {
     setToast(message);
     if (toastT.current) window.clearTimeout(toastT.current);
     toastT.current = window.setTimeout(() => setToast(''), 2200);
+  };
+
+  const reloadPartnerTeams = async () => {
+    try {
+      const response = await fetch("/api/account/partner-teams", { cache: "no-store" });
+      const json = await response.json();
+      setPartnerTeams(response.ok ? (json.teams || []) : []);
+    } catch { setPartnerTeams([]); }
   };
 
   const reloadTeams = async () => {
@@ -399,7 +396,7 @@ export default function MonComptePage() {
       subscription: subscriptionLabel,
     });
 
-    await Promise.all([reloadTeams(), reloadPlaybooks()]);
+    await Promise.all([reloadTeams(), reloadPlaybooks(), reloadPartnerTeams()]);
 
     setLoading(false);
   };
@@ -1018,7 +1015,7 @@ return (
               <div className="mc-equipes-head">
                 <div>
                   <h2>Mes Équipes</h2>
-                  <p>{teamsView === "coached" ? "Tes équipes coachées et tes collaborations." : "Tes adversaires observés pour préparer les prochains matchs."}</p>
+                  <p>{teamsView === "coached" ? "Tes équipes coachées et tes collaborations." : teamsView === "partners" ? "Les équipes partenaires créées dans ton espace Institutionnel." : "Tes adversaires observés pour préparer les prochains matchs."}</p>
                 </div>
                 {teamsView === "coached" && (
                   <button className="mc-new-team" onClick={() => {
@@ -1031,10 +1028,27 @@ return (
               <div className="mc-equipes-tabs">
                 <button type="button" className={teamsView === "coached" ? "active" : ""} onClick={() => setTeamsView("coached")}>🏀 Mes équipes</button>
                 <button type="button" className={teamsView === "scout" ? "active" : ""} onClick={() => setTeamsView("scout")}>👁 Équipes scoutées</button>
+                <button type="button" className={teamsView === "partners" ? "active" : ""} onClick={() => { setTeamsView("partners"); void reloadPartnerTeams(); }}>🤝 Équipes partenaires</button>
               </div>
 
               {teamsView === "scout" ? (
                 <ScoutTeamsManager teams={teams} onReload={reloadTeams} />
+              ) : teamsView === "partners" ? (
+                <div className="mc-teamgrid">
+                  {partnerTeams.map((item:any) => (
+                    <div key={item.linkId || item.teamId} className="mc-team-group-item">
+                      <div className="mc-team-section-title collaboration"><strong>🤝 PARTENAIRE · {item.institutionName}</strong><span>{item.season || "Saison non renseignée"}</span></div>
+                      <div style={{border:"1px solid #eadfd9",borderRadius:16,background:"#fff",padding:18,display:"grid",gridTemplateColumns:"1fr auto",gap:14,alignItems:"center"}}>
+                        <div style={{display:"flex",gap:12,alignItems:"center"}}>
+                          <div style={{width:54,height:54,borderRadius:"50%",background:"#fbf4ee",display:"grid",placeItems:"center",overflow:"hidden",fontSize:24}}>{item.logo?<img src={item.logo} alt="" style={{width:"100%",height:"100%",objectFit:"cover"}}/>:"🏀"}</div>
+                          <div><strong style={{display:"block",fontSize:18,color:"#6B1A2C"}}>{item.name}</strong><span style={{fontSize:12,color:"#756760"}}>{item.clubName || item.category || "Équipe partenaire"} · {item.playerCount || 0} joueur(s) · {item.matchCount || 0} match(s)</span></div>
+                        </div>
+                        <button className="mc-new-team" onClick={() => router.push(`/equipes/${item.teamId}`)}>Voir l'équipe →</button>
+                      </div>
+                    </div>
+                  ))}
+                  {!partnerTeams.length && <div style={{padding:28,border:"1px dashed #dccfc8",borderRadius:16,color:"#756760",textAlign:"center"}}>Aucune équipe partenaire active. Les équipes créées dans Institutionnel apparaîtront ici automatiquement.</div>}
+                </div>
               ) : (
               <div className="mc-teamgrid">
                 {sortedTeams.map((team, teamIndex) => {

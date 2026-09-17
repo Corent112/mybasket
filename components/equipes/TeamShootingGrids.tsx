@@ -18,6 +18,8 @@ type Grid = {
   court_schema_data: any | null;
   created_at: string;
   updated_at: string;
+  share_token?: string | null;
+  share_enabled?: boolean;
 };
 
 type GridRow = {
@@ -221,6 +223,7 @@ export default function TeamShootingGrids({
   const [saving,setSaving]=useState(false);
   const [shootingView,setShootingView]=useState<"editor"|"library">("editor");
   const [message,setMessage]=useState("");
+  const [shareBusy,setShareBusy]=useState(false);
   const [teamIdentity,setTeamIdentity]=useState<{name:string;logo:string|null}>({name:"Équipe",logo:null});
 
   const grid=grids.find(g=>g.id===selectedGridId)||null;
@@ -342,6 +345,28 @@ export default function TeamShootingGrids({
   function patchGrid(patch:Partial<Grid>){
     if(!grid)return;
     setGrids(cur=>cur.map(g=>g.id===grid.id?{...g,...patch}:g));
+  }
+
+  async function ensureShareLink(target:Grid){
+    if(scopeType!=="team")return;
+    setShareBusy(true);
+    try{
+      const token=target.share_token||crypto.randomUUID().replaceAll("-","");
+      const {error}=await supabase.from("shooting_grids").update({share_token:token,share_enabled:true}).eq("id",target.id);
+      if(error)throw error;
+      setGrids(cur=>cur.map(g=>g.id===target.id?{...g,share_token:token,share_enabled:true}:g));
+      const url=`${window.location.origin}/tir/${token}`;
+      await navigator.clipboard.writeText(url);
+      toast("Lien joueur copié ✓");
+    }catch(e){console.error(e);toast("Impossible de générer le lien.")}finally{setShareBusy(false)}
+  }
+
+  async function disableShareLink(target:Grid){
+    if(scopeType!=="team")return;
+    const {error}=await supabase.from("shooting_grids").update({share_enabled:false}).eq("id",target.id);
+    if(error)return toast("Impossible de désactiver le lien.");
+    setGrids(cur=>cur.map(g=>g.id===target.id?{...g,share_enabled:false}:g));
+    toast("Lien désactivé.");
   }
 
   async function saveDefinition(){
@@ -681,6 +706,7 @@ export default function TeamShootingGrids({
         </div>
         <div style={{display:"flex",gap:7,flexWrap:"wrap"}}>
           {grid&&<button onClick={exportBlankPdf} style={secondary}>📄 Exporter grille vierge A4</button>}
+          {grid&&scopeType==="team"&&<button onClick={()=>void ensureShareLink(grid)} disabled={shareBusy} style={secondary}>🔗 {grid.share_enabled?"Copier le lien joueur":"Générer le lien joueur"}</button>}
         </div>
       </div>
 
@@ -702,12 +728,16 @@ export default function TeamShootingGrids({
                 <h3 style={title}>Choisis une grille à consulter ou à utiliser</h3>
                 <div className="shooting-library" style={{display:"grid",gridTemplateColumns:"repeat(3,minmax(0,1fr))",gap:8}}>
                   {grids.map(g=>(
-                    <button key={g.id} type="button" onClick={()=>{setSelectedGridId(g.id);void loadDetails(g.id);setShootingView("editor")}}
+                    <div key={g.id} role="button" tabIndex={0} onClick={()=>{setSelectedGridId(g.id);void loadDetails(g.id);setShootingView("editor")}}
                       style={{textAlign:"left",border:`1px solid ${g.id===selectedGridId?GOLD:BORDER}`,borderRadius:12,background:g.id===selectedGridId?"#FFF8E9":"#fff",padding:12,cursor:"pointer"}}>
                       <b style={{display:"block",color:BORDEAUX,fontSize:13}}>{g.name}</b>
                       <span style={{display:"block",marginTop:4,color:MUTED,fontSize:10,lineHeight:1.35}}>{g.description||"Aucune consigne"}</span>
                       <span style={{display:"block",marginTop:8,color:TEXT,fontSize:9,fontWeight:900}}>Ouvrir la grille →</span>
-                    </button>
+                      {scopeType==="team"&&<span style={{display:"flex",gap:5,marginTop:9,flexWrap:"wrap"}} onClick={e=>e.stopPropagation()}>
+                        <button type="button" disabled={shareBusy} onClick={()=>void ensureShareLink(g)} style={{...secondary,padding:"6px 8px",fontSize:9}}>🔗 {g.share_enabled?"Copier le lien":"Générer le lien"}</button>
+                        {g.share_enabled&&<button type="button" onClick={()=>void disableShareLink(g)} style={{...secondary,padding:"6px 8px",fontSize:9}}>Désactiver</button>}
+                      </span>}
+                    </div>
                   ))}
                   {!grids.length&&<div style={{color:MUTED,fontSize:11}}>Aucune grille créée.</div>}
                 </div>
