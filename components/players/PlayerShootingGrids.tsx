@@ -3,6 +3,8 @@
 import { useEffect, useMemo, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import LiveStatShotChart, { type ShotLike } from "@/components/prise-stats-pro/ShotChart";
+import ShootingComparison from "@/components/shooting/ShootingComparison";
+import type { Player } from "@/types/player";
 
 type Grid = { id:string; name:string; court_schema_url:string|null };
 type Row = { id:string; grid_id:string; name:string; sort_order:number };
@@ -114,10 +116,11 @@ function AllGridsBySpot({grids,rows,sessions,results}:{grids:Grid[];rows:Row[];s
 
 export default function PlayerShootingGrids({playerId,teamId}:{playerId:string;teamId:string}){
   const sb=useMemo(()=>createClient(),[]);
-  const [grids,setGrids]=useState<Grid[]>([]),[rows,setRows]=useState<Row[]>([]),[sessions,setSessions]=useState<Session[]>([]),[results,setResults]=useState<Result[]>([]);
+  const [grids,setGrids]=useState<Grid[]>([]),[rows,setRows]=useState<Row[]>([]),[sessions,setSessions]=useState<Session[]>([]),[results,setResults]=useState<Result[]>([]),[players,setPlayers]=useState<Player[]>([]);
   const [selected,setSelected]=useState<string[]>([]),[open,setOpen]=useState(false);
 
   useEffect(()=>{(async()=>{
+    const pp=await sb.from("players").select("id,first_name,last_name").eq("team_id",teamId); setPlayers((pp.data||[]).map((p:any)=>({id:String(p.id),firstName:p.first_name||"",lastName:p.last_name||""} as Player)));
     const rr=await sb.from("shooting_grid_player_results").select("id,session_id,row_id,player_id,made,attempted").eq("player_id",playerId);
     const res=(rr.data||[]) as Result[]; setResults(res); if(!res.length){setGrids([]);setRows([]);setSessions([]);return;}
     const ids=[...new Set(res.map(x=>x.session_id))];
@@ -145,6 +148,7 @@ export default function PlayerShootingGrids({playerId,teamId}:{playerId:string;t
     </div>
     {visible.map(g=><GridBlock key={g.id} grid={g} rows={rows.filter(r=>r.grid_id===g.id)} sessions={sessions.filter(s=>s.grid_id===g.id)} results={results}/>)}
     {!!visible.length&&<AllGridsBySpot grids={visible} rows={visibleRows} sessions={visibleSessions} results={visibleResults}/>} 
+    {!!players.length&&<ShootingComparison teamId={teamId} players={players} initialPlayerId={playerId}/>}
   </section>
 }
 

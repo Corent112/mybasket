@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import type { Player } from "@/types/player";
 import ShotChart, { SHOT_ZONES, type ShotLike } from "@/components/prise-stats-pro/ShotChart";
+import ShootingComparison from "@/components/shooting/ShootingComparison";
 
 type InputMode = "fixed_attempts" | "fixed_makes";
 
@@ -233,6 +234,7 @@ export default function TeamShootingGrids({
   const [grids,setGrids]=useState<Grid[]>([]);
   const [selectedGridId,setSelectedGridId]=useState("");
   const [rows,setRows]=useState<GridRow[]>([]);
+  const [selectedRowId,setSelectedRowId]=useState("");
   // Ordre d'affichage garanti : 2PTS puis 3PTS puis LF puis autres.
   // L'ordre interne de chaque groupe reste celui défini par l'utilisateur.
   const displayRows=useMemo(()=>orderedShotRows(rows),[rows]);
@@ -726,6 +728,18 @@ export default function TeamShootingGrids({
     if(grid)await loadDetails(grid.id);
   }
 
+  async function saveSessionGroup(items:Session[]){
+    for(const session of items) await saveSession(session);
+  }
+  async function deleteSessionGroup(items:Session[]){
+    if(!canEdit||!items.length||!window.confirm(`Supprimer toute la session du ${fmtDate(items[0].session_date)} (${items.length} tableau(x)) ?`))return;
+    for(const session of items){
+      const {error}=await supabase.from(tables.sessions).delete().eq("id",session.id);
+      if(error){setMessage(error.message);return;}
+    }
+    await loadDetails(selectedGridId);
+  }
+
   async function deleteGrid(){
     if(!grid||!canEdit||!window.confirm(`Supprimer "${grid.name}" ?`))return;
     const {error}=await supabase.from(tables.grids).delete().eq("id",grid.id);
@@ -878,10 +892,10 @@ export default function TeamShootingGrids({
                   <div style={{marginTop:10}}>
                     <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:8}}>
                       <div><span style={eyebrow}>POSITIONS / SPOTS</span><strong style={{display:"block",color:TEXT,fontSize:13,marginTop:3}}>Colonnes du futur tableau</strong></div>
-                      {canEdit&&<button onClick={addRow} style={secondary}>+ Spot</button>}
+                      {canEdit&&<div style={{display:"flex",gap:6}}><button onClick={addRow} style={secondary}>+ Spot</button><button disabled={!selectedRowId} onClick={()=>selectedRowId&&removeRow(selectedRowId).then(()=>setSelectedRowId(""))} style={{...danger,opacity:selectedRowId?1:.4}}>Supprimer la ligne sélectionnée</button></div>}
                     </div>
                     <div style={{display:"grid",gap:5,marginTop:7}}>
-                      {rows.map((row,i)=><div key={row.id} className="shooting-spot-row" style={{display:"grid",gridTemplateColumns:"32px 112px minmax(0,1fr) 72px 34px",gap:6,alignItems:"center"}}>
+                      {rows.map((row,i)=><div key={row.id} onClick={()=>setSelectedRowId(row.id)} className="shooting-spot-row" style={{display:"grid",gridTemplateColumns:"32px 112px minmax(0,1fr) 72px",gap:6,alignItems:"center",padding:4,borderRadius:9,cursor:"pointer",outline:selectedRowId===row.id?`2px solid ${GOLD}`:"2px solid transparent",background:selectedRowId===row.id?"#FFF9EE":"transparent"}}>
                         <span style={{width:28,height:28,borderRadius:8,background:"#FFF4DE",color:BORDEAUX,display:"grid",placeItems:"center",fontWeight:1000}}>{i+1}</span>
                         <select aria-label={`Catégorie de ${spotLabel(row.name)}`} value={shotGroup(row.name)}
                           onChange={e=>setRows(cur=>cur.map(r=>r.id===row.id?{...r,name:withShotGroup(r.name,e.target.value as ShotGroup)}:r))}
@@ -893,7 +907,6 @@ export default function TeamShootingGrids({
                           <button type="button" title="Monter ce spot" aria-label={`Monter ${row.name}`} disabled={i===0} onClick={()=>void moveRow(row.id,-1)} style={{...orderButton,opacity:i===0?0.35:1}}>↑</button>
                           <button type="button" title="Descendre ce spot" aria-label={`Descendre ${row.name}`} disabled={i===rows.length-1} onClick={()=>void moveRow(row.id,1)} style={{...orderButton,opacity:i===rows.length-1?0.35:1}}>↓</button>
                         </div>}
-                        {canEdit&&<button onClick={()=>removeRow(row.id)} style={trash}>×</button>}
                       </div>)}
                     </div>
                   </div>
@@ -941,7 +954,7 @@ export default function TeamShootingGrids({
                   <div key={group.date} style={{...card,padding:0,overflow:"hidden"}}>
                     <div style={{padding:"12px 14px",display:"flex",justifyContent:"space-between",gap:8,alignItems:"center",background:"#FFF9F1",borderBottom:`1px solid ${BORDER}`}}>
                       <div><span style={eyebrow}>SESSION</span><strong style={{display:"block",fontSize:14,color:TEXT,marginTop:3}}>{fmtDate(group.date)} · {grid.name}</strong><span style={{fontSize:10,color:MUTED}}>{uniquePids.length} joueur(s) · tous les résultats de cette date réunis</span></div>
-                      <div style={{display:"flex",gap:6}}>{canEdit&&group.items.map(session=><button key={session.id} onClick={()=>saveSession(session)} style={primary}>Enregistrer</button>)}</div>
+                      <div style={{display:"flex",gap:6}}>{canEdit&&<><button onClick={()=>void saveSessionGroup(group.items)} style={primary}>Enregistrer la session</button><button onClick={()=>void deleteSessionGroup(group.items)} style={danger}>Supprimer la session</button></>}</div>
                     </div>
                     <div className="shooting-session-summary" style={{display:"grid",gridTemplateColumns:"330px minmax(0,1fr)",gap:14,padding:14,alignItems:"start"}}>
                       <div style={{border:`1px solid ${BORDER}`,borderRadius:14,padding:10,background:SOFT}}>
@@ -960,7 +973,6 @@ export default function TeamShootingGrids({
                         </table>
                       </div>
                     </div>
-                    {canEdit&&<div style={{padding:"0 14px 14px",display:"flex",gap:6,justifyContent:"flex-end"}}>{group.items.map(session=><button key={session.id} onClick={()=>deleteSession(session)} style={danger}>Supprimer le tableau {sessionPlayers[session.id]?.length>1?`(${sessionPlayers[session.id].length} joueurs)`:""}</button>)}</div>}
                   </div>
                 )
               })}
@@ -987,6 +999,7 @@ export default function TeamShootingGrids({
           </>)}
         </>
       )}
+      {scopeType==="team"&&<ShootingComparison teamId={teamId} players={players}/>}
       <style jsx>{`
         @media (max-width: 900px) {
           .shooting-editor-grid { grid-template-columns: 1fr !important; }
