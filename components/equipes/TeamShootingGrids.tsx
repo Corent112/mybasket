@@ -238,6 +238,8 @@ export default function TeamShootingGrids({
   // Ordre d'affichage garanti : 2PTS puis 3PTS puis LF puis autres.
   // L'ordre interne de chaque groupe reste celui défini par l'utilisateur.
   const displayRows=useMemo(()=>orderedShotRows(rows),[rows]);
+  const shootingRows=useMemo(()=>displayRows.filter(r=>shotGroup(r.name)!=="LF"),[displayRows]);
+  const freeThrowRows=useMemo(()=>displayRows.filter(r=>shotGroup(r.name)==="LF"),[displayRows]);
   const [sessions,setSessions]=useState<Session[]>([]);
   const [sessionPlayers,setSessionPlayers]=useState<Record<string,string[]>>({});
   const [results,setResults]=useState<Record<string,Record<string,Record<string,Result>>>>({});
@@ -977,7 +979,7 @@ export default function TeamShootingGrids({
                     </div>
                     <div className="shooting-session-summary" style={{display:"grid",gridTemplateColumns:"330px minmax(0,1fr)",gap:14,padding:14,alignItems:"start"}}>
                       <div style={{border:`1px solid ${BORDER}`,borderRadius:14,padding:10,background:SOFT}}>
-                        <ShotChart mode="analysis" size="lg" shots={sessionShots} showStats showLabels showDots={false}/>
+                        <ShotChart mode="analysis" size="lg" shots={sessionShots} showStats showLabels={false} showDots={false}/>
                         <div style={{fontSize:9,color:MUTED,textAlign:"center",marginTop:6}}>Même Shot Chart que LiveStat · cumul de tous les joueurs de la session</div>
                       </div>
                       <div style={{overflowX:"auto"}}>
@@ -1006,13 +1008,13 @@ export default function TeamShootingGrids({
                     </div>
                   </div>
                   <div style={{overflowX:"auto"}}><table style={{borderCollapse:"collapse",width:"100%",minWidth:900,fontSize:10}}>
-                    <thead><tr><th style={{...th,textAlign:"left"}}>Joueur</th><th style={th}>Sessions</th>{displayRows.map(r=><th key={r.id} style={th}>{spotLabel(r.name)}</th>)}<th style={th}>{recapMode==="average"?"Marqués moy.":"Marqués"}</th><th style={th}>{recapMode==="average"?"Tentés moy.":"Tentés"}</th><th style={th}>%</th></tr></thead>
+                    <thead><tr><th style={{...th,textAlign:"left"}}>Joueur</th><th style={th}>Sessions</th>{shootingRows.map(r=><th key={r.id} style={th}>{spotLabel(r.name)}</th>)}<th style={th}>Tirs {recapMode==="average"?"marqués moy.":"marqués"}</th><th style={th}>Tirs {recapMode==="average"?"tentés moy.":"tentés"}</th><th style={th}>Tirs %</th><th style={th}>LF {recapMode==="average"?"moy.":"total"}</th><th style={th}>LF %</th></tr></thead>
                     <tbody>{Object.keys(aggregate).map(pid=>{
                       const player=players.find(p=>String(p.id)===pid);
                       const count=sessions.filter(s=>(sessionPlayers[s.id]||[]).includes(pid)).length||1;
                       const total=aggregate[pid];
                       const fmtCell=(m:number,a:number)=>recapMode==="average"?`${(m/count).toFixed(1)}/${(a/count).toFixed(1)} · ${pct(m,a)}%`:`${m}/${a} · ${pct(m,a)}%`;
-                      return <tr key={pid}><td style={{...td,textAlign:"left",fontWeight:1000,color:BORDEAUX}}>{player?playerName(player):"Joueur"}</td><td style={{...td,fontWeight:1000}}>{count}</td>{displayRows.map(row=>{const x=total.byRow[row.id]||{made:0,attempted:0};return <td key={row.id} style={td}>{fmtCell(x.made,x.attempted)}</td>})}<td style={{...td,fontWeight:900}}>{recapMode==="average"?(total.made/count).toFixed(1):total.made}</td><td style={{...td,fontWeight:900}}>{recapMode==="average"?(total.attempted/count).toFixed(1):total.attempted}</td><td style={{...td,fontWeight:1000,color:BORDEAUX}}>{pct(total.made,total.attempted)}%</td></tr>
+                      const shot=shootingRows.reduce((a,row)=>{const x=total.byRow[row.id]||{made:0,attempted:0};a.m+=x.made;a.a+=x.attempted;return a},{m:0,a:0}); const lf=freeThrowRows.reduce((a,row)=>{const x=total.byRow[row.id]||{made:0,attempted:0};a.m+=x.made;a.a+=x.attempted;return a},{m:0,a:0}); return <tr key={pid}><td style={{...td,textAlign:"left",fontWeight:1000,color:BORDEAUX}}>{player?playerName(player):"Joueur"}</td><td style={{...td,fontWeight:1000}}>{count}</td>{shootingRows.map(row=>{const x=total.byRow[row.id]||{made:0,attempted:0};return <td key={row.id} style={td}>{fmtCell(x.made,x.attempted)}</td>})}<td style={{...td,fontWeight:900}}>{recapMode==="average"?(shot.m/count).toFixed(1):shot.m}</td><td style={{...td,fontWeight:900}}>{recapMode==="average"?(shot.a/count).toFixed(1):shot.a}</td><td style={{...td,fontWeight:1000,color:BORDEAUX}}>{pct(shot.m,shot.a)}%</td><td style={{...td,fontWeight:900}}>{recapMode==="average"?`${(lf.m/count).toFixed(1)}/${(lf.a/count).toFixed(1)}`:`${lf.m}/${lf.a}`}</td><td style={{...td,fontWeight:1000,color:BORDEAUX}}>{pct(lf.m,lf.a)}%</td></tr>
                     })}</tbody>
                   </table></div>
                 </div>

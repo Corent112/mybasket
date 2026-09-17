@@ -24,6 +24,7 @@ import TeamShootingGrids from "@/components/equipes/TeamShootingGrids";
 import TeamAvailabilityLoad from "@/components/equipes/TeamAvailabilityLoad";
 import TeamResourcesPanel from "@/components/equipes/TeamResourcesPanel";
 import TeamActivityPanel from "@/components/equipes/TeamActivityPanel";
+import TeamFfbbCompetition from "@/components/equipes/TeamFfbbCompetition";
 import ActionClipsModal, { type ClipAction } from "@/components/prise-stats-pro/ActionClipsModal";
 import { type VideoSyncState, NATIVE_SYNC, normalizeSync } from "@/lib/video-sync";
 import type { Player, StaffMember, Team, TeamEvent } from "../../../types/player";
@@ -163,7 +164,7 @@ function useTeamDashboardData(
           const { data: matchData, error: matchError } = await supabase
             .from("match_stats")
             .select(
-              "id, team_id, opponent, match_date, us_score, them_score, result, home",
+              "id, team_id, opponent, match_date, us_score, them_score, result, home, match_category",
             )
             .in("team_id", candidateTeamIds)
             .order("match_date", { ascending: true });
@@ -224,7 +225,7 @@ function useTeamDashboardData(
             await supabase
               .from("match_stats")
               .select(
-                "id, team_id, opponent, match_date, us_score, them_score, result, home",
+                "id, team_id, opponent, match_date, us_score, them_score, result, home, match_category",
               )
               .eq("team_id", linkedTeamId)
               .order("match_date", { ascending: true });
@@ -450,8 +451,8 @@ function getAttendancePct(
 
 function computeLinkedKpis(team: Team, dashboard: TeamDashboardData) {
   const local = computeTeamKpis(team);
-  const matches = dashboard.matches;
-  const statRows = dashboard.statRows;
+  const matches = dashboard.matches.filter((m) => String(m.match_category || "championship").toLowerCase() !== "friendly");
+  const statRows = dashboard.statRows.filter((r) => matches.some((m) => m.id === r.match_id));
   // Après le chargement Supabase, seuls les matchs encore présents dans
   // match_stats sont comptés. Un ancien match supprimé ne doit plus compter.
   const games = dashboard.loading ? local.matchsJoues : matches.length;
@@ -1266,7 +1267,9 @@ export default function EquipeDetailPage({
               </div>
             </section>
 
-            {/* ---------- STAFF ---------- */}
+            <TeamFfbbCompetition teamId={team.id} />
+
+                        {/* ---------- STAFF ---------- */}
             <TeamStaffManager
               teamId={team.id}
               staff={team.staff || []}
@@ -2697,6 +2700,7 @@ type SupaMatchRow = {
   them_score: number | null;
   result?: string | null;
   home: boolean | null;
+  match_category?: string | null;
 };
 
 function downloadText(filename: string, text: string, type = "text/plain") {
@@ -3307,7 +3311,7 @@ function TeamMatchStatsBlock({ teamId }: { teamId: string }) {
       const { data: matchData, error: matchError } = await supabase
         .from("match_stats")
         .select(
-          "id, team_id, opponent, match_date, us_score, them_score, result, home",
+          "id, team_id, opponent, match_date, us_score, them_score, result, home, match_category",
         )
         .eq("team_id", teamId)
         .order("match_date", { ascending: false });
@@ -4020,7 +4024,7 @@ function TeamGameStatsBlock({ teamId }: { teamId: string }) {
       const { data: matchData, error: matchError } = await supabase
         .from("match_stats")
         .select(
-          "id, team_id, opponent, match_date, us_score, them_score, result, home",
+          "id, team_id, opponent, match_date, us_score, them_score, result, home, match_category",
         )
         .eq("team_id", teamId)
         .order("match_date", { ascending: false });

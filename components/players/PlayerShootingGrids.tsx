@@ -51,6 +51,7 @@ function toLiveShots(rows:Row[],results:Result[]):ShotLike[]{
 
 function GridBlock({grid,rows,sessions,results}:{grid:Grid;rows:Row[];sessions:Session[];results:Result[]}){
   const [chartSession,setChartSession]=useState("all");
+  const [chartOpen,setChartOpen]=useState(false);
   const sessionIds=new Set(sessions.map(s=>s.id));
   const gridResults=results.filter(r=>sessionIds.has(r.session_id));
   const chartResults=chartSession==="all"?gridResults:gridResults.filter(r=>r.session_id===chartSession);
@@ -68,9 +69,10 @@ function GridBlock({grid,rows,sessions,results}:{grid:Grid;rows:Row[];sessions:S
 
     <div style={{display:"grid",gridTemplateColumns:"minmax(260px,.72fr) minmax(0,1.8fr)",gap:18,marginTop:14,alignItems:"start"}}>
       <div style={{background:SOFT,border:`1px solid ${BD}`,borderRadius:14,padding:10}}>
-        <LiveStatShotChart mode="analysis" size="md" shots={liveShots} showStats showDots={false}/>
+        <button type="button" onClick={()=>setChartOpen(true)} aria-label="Agrandir la shot chart" style={{display:"block",width:"100%",padding:0,border:0,background:"transparent",cursor:"zoom-in"}}><LiveStatShotChart mode="analysis" size="md" shots={liveShots} showStats showLabels={false} showDots={false}/></button>
         <div style={{textAlign:"center",marginTop:8,fontSize:10,color:M}}>{chartSession==="all"?"Cumul de la grille":"Session sélectionnée"} · les % utilisent les zones LiveStat</div>
       </div>
+      {chartOpen&&<div onClick={()=>setChartOpen(false)} style={{position:"fixed",inset:0,zIndex:9999,background:"rgba(20,10,12,.72)",display:"grid",placeItems:"center",padding:24}}><div onClick={e=>e.stopPropagation()} style={{width:"min(1050px,94vw)",maxHeight:"92vh",overflow:"auto",background:"#fff",borderRadius:18,padding:18,boxShadow:"0 24px 80px rgba(0,0,0,.35)"}}><div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}><div><b style={{color:B,fontSize:18}}>{grid.name}</b><div style={{fontSize:11,color:M}}>Shot chart agrandie · {chartSession==="all"?"toutes les sessions":fmt(sessions.find(s=>s.id===chartSession)?.session_date||"")}</div></div><button onClick={()=>setChartOpen(false)} style={{...button,fontSize:20,padding:"4px 10px"}}>×</button></div><LiveStatShotChart mode="analysis" size="lg" shots={liveShots} showStats showLabels={false} showDots={false}/></div></div>}
 
       <div style={{overflowX:"auto",border:`1px solid ${BD}`,borderRadius:12}}>
         <table style={{width:"100%",borderCollapse:"collapse",fontSize:10,whiteSpace:"nowrap"}}>
@@ -97,18 +99,20 @@ function GridBlock({grid,rows,sessions,results}:{grid:Grid;rows:Row[];sessions:S
 }
 
 function AllGridsBySpot({grids,rows,sessions,results}:{grids:Grid[];rows:Row[];sessions:Session[];results:Result[]}){
+  const [limits,setLimits]=useState({green:60,red:40}); const [settings,setSettings]=useState(false);
+  const cellStyle=(m:number,a:number):React.CSSProperties=>{if(!a)return td;const p=pct(m,a);return {...td,background:p>=limits.green?"#E7F5EA":p<limits.red?"#FBE8E6":"#FFF3D7",color:p>=limits.green?"#176B35":p<limits.red?"#A02A2A":"#805B12",fontWeight:900}};
   const spotKeys=Array.from(new Map(rows.map(r=>[norm(r.name),r.name])).entries()).filter(([k])=>k).map(([key,label])=>({key,label}));
   const sessionGrid=new Map(sessions.map(s=>[s.id,s.grid_id]));
   const grand=sum(results);
   return <article style={card}>
-    <span style={eye}>ANALYSE GLOBALE</span><h3 style={{margin:"4px 0",color:B,fontSize:18}}>Toutes les grilles par spot</h3>
+    <div style={{display:"flex",justifyContent:"space-between",gap:8,alignItems:"center"}}><div><span style={eye}>ANALYSE GLOBALE</span><h3 style={{margin:"4px 0",color:B,fontSize:18}}>Toutes les grilles par spot</h3></div><button onClick={()=>setSettings(v=>!v)} style={button}>⚙️ Seuils</button></div>{settings&&<div style={{display:"flex",gap:12,alignItems:"center",padding:10,background:SOFT,borderRadius:10,marginBottom:10,fontSize:11}}><label>🟢 Vert à partir de <input type="number" value={limits.green} onChange={e=>setLimits(v=>({...v,green:+e.target.value}))} style={{width:58}}/>%</label><label>🔴 Rouge sous <input type="number" value={limits.red} onChange={e=>setLimits(v=>({...v,red:+e.target.value}))} style={{width:58}}/>%</label><span style={{color:M}}>Valeurs par défaut alignées sur la logique Shot Chart.</span></div>}
     <p style={{margin:"0 0 12px",fontSize:11,color:M}}>Une ligne par grille. Les spots portant le même nom sont rapprochés pour comparer les performances, sans modifier les données d'origine.</p>
     <div style={{overflowX:"auto",border:`1px solid ${BD}`,borderRadius:12}}><table style={{width:"100%",borderCollapse:"collapse",fontSize:10,whiteSpace:"nowrap"}}>
       <thead><tr><th style={{...th,textAlign:"left",position:"sticky",left:0,zIndex:2}}>Grille</th>{spotKeys.map(s=><th key={s.key} style={th}>{s.label}</th>)}<th style={th}>Total</th><th style={th}>%</th></tr></thead>
       <tbody>{grids.map(g=>{
         const gRows=rows.filter(r=>r.grid_id===g.id); const ids=new Set(gRows.map(r=>r.id));
         const gr=results.filter(r=>ids.has(r.row_id)&&sessionGrid.get(r.session_id)===g.id); const gt=sum(gr);
-        return <tr key={g.id}><td style={{...td,textAlign:"left",fontWeight:900,color:B,position:"sticky",left:0,background:"#fff"}}>{g.name}</td>{spotKeys.map(sp=>{const rowIds=new Set(gRows.filter(r=>norm(r.name)===sp.key).map(r=>r.id));const x=sum(gr.filter(r=>rowIds.has(r.row_id)));return <td key={sp.key} style={td}>{x.attempted?`${x.made}/${x.attempted} · ${pct(x.made,x.attempted)}%`:"—"}</td>})}<td style={{...td,fontWeight:900}}>{gt.made}/{gt.attempted}</td><td style={{...td,fontWeight:1000,color:B}}>{pct(gt.made,gt.attempted)}%</td></tr>
+        return <tr key={g.id}><td style={{...td,textAlign:"left",fontWeight:900,color:B,position:"sticky",left:0,background:"#fff"}}>{g.name}</td>{spotKeys.map(sp=>{const rowIds=new Set(gRows.filter(r=>norm(r.name)===sp.key).map(r=>r.id));const x=sum(gr.filter(r=>rowIds.has(r.row_id)));return <td key={sp.key} style={cellStyle(x.made,x.attempted)}>{x.attempted?`${x.made}/${x.attempted} · ${pct(x.made,x.attempted)}%`:"—"}</td>})}<td style={{...td,fontWeight:900}}>{gt.made}/{gt.attempted}</td><td style={{...td,fontWeight:1000,color:B}}>{pct(gt.made,gt.attempted)}%</td></tr>
       })}<tr style={{background:"#F7F2EE"}}><td style={{...td,textAlign:"left",fontWeight:1000,color:B,position:"sticky",left:0,background:"#F7F2EE"}}>TOTAL / MOY.</td>{spotKeys.map(sp=>{const rowIds=new Set(rows.filter(r=>norm(r.name)===sp.key).map(r=>r.id));const x=sum(results.filter(r=>rowIds.has(r.row_id)));return <td key={sp.key} style={{...td,fontWeight:900}}>{x.attempted?`${x.made}/${x.attempted} · ${pct(x.made,x.attempted)}%`:"—"}</td>})}<td style={{...td,fontWeight:1000}}>{grand.made}/{grand.attempted}</td><td style={{...td,fontWeight:1000,color:B}}>{pct(grand.made,grand.attempted)}%</td></tr></tbody>
     </table></div>
   </article>

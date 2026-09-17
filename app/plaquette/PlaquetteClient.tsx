@@ -551,7 +551,7 @@ const resetPlaquette = () => {
 
 
 useEffect(() => {
-  const loadFromSource = async () => {
+  const loadFromSource = async (previewSystemId?: string) => {
     try {
       setExoInsertMode(!!localStorage.getItem(RETURN_KEY));
       setShootingGridPending(!!localStorage.getItem("mybasket_shooting_grid_pending"));
@@ -572,8 +572,8 @@ useEffect(() => {
 
       let schemaData: any = null;
 
-      if (plaquetteType === "systeme") {
-  const systemeId = localStorage.getItem("mybasket_edit_systeme_id");
+      if (plaquetteType === "systeme" || previewSystemId) {
+  const systemeId = previewSystemId || localStorage.getItem("mybasket_edit_systeme_id");
 
   if (systemeId) {
     const systeme = await getSystem(systemeId);
@@ -634,7 +634,13 @@ useEffect(() => {
     }
   };
 
-  loadFromSource();
+  void loadFromSource();
+  const handlePreviewSystem=(event:Event)=>{
+    const systemId=(event as CustomEvent<{systemId?:string}>).detail?.systemId;
+    if(systemId)void loadFromSource(systemId);
+  };
+  window.addEventListener('mybasket:preview-system',handlePreviewSystem);
+  return()=>window.removeEventListener('mybasket:preview-system',handlePreviewSystem);
 }, []);
 
   const [title, setTitle] = useState('Nouveau play');

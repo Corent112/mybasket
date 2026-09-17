@@ -18,6 +18,9 @@ type MatchRow = {
   google_drive_file_id?: string | null;
   drive_file_id?: string | null;
   video_file_id?: string | null;
+  match_category?: string | null;
+  competition_type?: string | null;
+  is_friendly?: boolean | null;
   [key: string]: unknown;
 };
 
@@ -299,6 +302,8 @@ export default function TeamAdvancedStats({
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [matches, setMatches] = useState<MatchRow[]>([]);
+  const [matchCategory, setMatchCategory] = useState<"all"|"championship"|"cup"|"friendly">("all");
+  const [statsDisplay, setStatsDisplay] = useState<"total"|"average">("total");
   const [actions, setActions] = useState<ActionRow[]>([]);
   const [playerStats, setPlayerStats] = useState<PlayerStatRow[]>([]);
   const [filters, setFilters] = useState<Filters>(EMPTY_FILTERS);
@@ -406,8 +411,9 @@ export default function TeamAdvancedStats({
 
   const selectedMatchIds = useMemo(() => {
     if (filters.matchId) return new Set([filters.matchId]);
-    return new Set(matches.map((m) => m.id));
-  }, [filters.matchId, matches]);
+    const categoryOf=(m:MatchRow)=>{const raw=String(m.match_category||m.competition_type||m["match_type"]||"").toLowerCase();if(m.is_friendly||raw.includes("amical")||raw.includes("friendly"))return "friendly";if(raw.includes("coupe")||raw.includes("cup"))return "cup";return "championship"};
+    return new Set(matches.filter(m=>matchCategory==="all"||categoryOf(m)===matchCategory).map((m) => m.id));
+  }, [filters.matchId, matches, matchCategory]);
 
   const filteredActions = useMemo(() => {
     return actions.filter((a) => {
@@ -496,6 +502,7 @@ export default function TeamAdvancedStats({
         turnovers: number;
         points: number;
         possessions: number;
+        games: Set<string>;
       }
     >();
 
@@ -508,9 +515,11 @@ export default function TeamAdvancedStats({
         turnovers: 0,
         points: 0,
         possessions: 0,
+        games: new Set<string>(),
       };
 
       current.actions += 1;
+      current.games.add(a.match_id);
 
       if (a.action_type === "tir" || a.shot_type) {
         current.shots += 1;
@@ -752,6 +761,7 @@ export default function TeamAdvancedStats({
 
   return (
     <section className="advanced-stats">
+      <div style={{display:"flex",gap:6,flexWrap:"wrap",marginBottom:12}}>{([['all','Total'],['championship','Championnat'],['cup','Coupe'],['friendly','Amicaux']] as const).map(([v,l])=><button key={v} onClick={()=>setMatchCategory(v)} style={{border:"1px solid #d9c9c2",borderRadius:999,padding:"8px 12px",fontWeight:900,cursor:"pointer",background:matchCategory===v?"#6b1a2c":"#fff",color:matchCategory===v?"#fff":"#6b1a2c"}}>{l}</button>)}</div>
       <div className="advanced-head">
         <div>
           <span className="advanced-kicker">ANALYSE LIVE & SAISON</span>
@@ -1062,7 +1072,7 @@ export default function TeamAdvancedStats({
                     <button className={`stat-link ppp ${row.ppp >= 1 ? "good" : row.ppp >= .8 ? "mid" : "bad"}`} type="button" onClick={() => openClips(`${row.name} · PPP ${row.ppp.toFixed(2)}`, systemActions.filter(isTerminalAction))}>{row.ppp.toFixed(2)}</button>
                     <button className="stat-link" type="button" onClick={() => openClips(`${row.name} · tirs`, systemActions.filter((a) => a.action_type === "tir" || Boolean(a.shot_type)))}>{row.made}/{row.shots}</button>
                     <button className="stat-link" type="button" onClick={() => openClips(`${row.name} · tirs`, systemActions.filter((a) => a.action_type === "tir" || Boolean(a.shot_type)))}>{pct(row.made, row.shots)}</button>
-                    <button className="stat-link" type="button" onClick={() => openClips(`${row.name} · pertes de balle`, systemActions.filter(isTurnover))}>{row.turnovers}</button>
+                    <button className="stat-link" type="button" onClick={() => openClips(`${row.name} · pertes de balle`, systemActions.filter(isTurnover))}>{statsDisplay==="average"?(row.turnovers/Math.max(1,row.games.size)).toFixed(1):row.turnovers}</button>
                   </div>
                 );
               })}
@@ -1103,7 +1113,8 @@ export default function TeamAdvancedStats({
         </Panel>
       </div>
 
-      <Panel title="Joueurs & actions" subtitle="Box-score consolidée selon les filtres actifs">
+      <div style={{display:"flex",justifyContent:"flex-end",gap:6,marginBottom:6}}><button type="button" onClick={()=>setStatsDisplay("total")} className="reset">Cumulées</button><button type="button" onClick={()=>setStatsDisplay("average")} className="reset">Moyennes / match</button></div>
+      <Panel title="Joueurs & actions" subtitle={`Box-score ${statsDisplay==="average"?"moyenne par match":"cumulée"} selon les filtres actifs`}>
         {playerRows.length ? (
           <div className="player-table-wrap">
             <table className="player-table">
@@ -1127,15 +1138,15 @@ export default function TeamAdvancedStats({
                     <tr key={row.playerId}>
                       <td><button className="table-link player-name" type="button" onClick={() => openClips(`${row.name} · toutes les actions`, filteredActions.filter(own))}><strong>{row.name}</strong></button></td>
                       <td><button className="table-link" type="button" onClick={() => openClips(`${row.name} · actions`, filteredActions.filter(own))}>{row.games.size}</button></td>
-                      <td><button className="table-link" type="button" onClick={() => openClips(`${row.name} · paniers`, filteredActions.filter((a) => own(a) && shotPoints(a) > 0))}>{row.pts}</button></td>
+                      <td><button className="table-link" type="button" onClick={() => openClips(`${row.name} · paniers`, filteredActions.filter((a) => own(a) && shotPoints(a) > 0))}>{statsDisplay==="average"?(row.pts/Math.max(1,row.games.size)).toFixed(1):row.pts}</button></td>
                       <td><button className="table-link" type="button" onClick={() => openClips(`${row.name} · tirs à 2 points`, filteredActions.filter(shots2))}>{row.p2m}/{row.p2a} <small>{pct(row.p2m, row.p2a)}</small></button></td>
                       <td><button className="table-link" type="button" onClick={() => openClips(`${row.name} · tirs à 3 points`, filteredActions.filter(shots3))}>{row.p3m}/{row.p3a} <small>{pct(row.p3m, row.p3a)}</small></button></td>
                       <td><button className="table-link" type="button" onClick={() => openClips(`${row.name} · lancers francs`, filteredActions.filter((a) => own(a) && /lf|ft|lancer/i.test(String(a.action_type || a.shot_type || ""))))}>{row.ftm}/{row.fta} <small>{pct(row.ftm, row.fta)}</small></button></td>
-                      <td><button className="table-link" type="button" onClick={() => openClips(`${row.name} · rebonds`, filteredActions.filter(rebounds))}>{row.reb}</button></td>
-                      <td><button className="table-link" type="button" onClick={() => openClips(`${row.name} · passes décisives`, filteredActions.filter(assists))}>{row.ast}</button></td>
-                      <td><button className="table-link" type="button" onClick={() => openClips(`${row.name} · interceptions`, filteredActions.filter((a) => own(a) && /interception|steal|int/i.test(String(a.action_type || ""))))}>{row.stl}</button></td>
-                      <td><button className="table-link" type="button" onClick={() => openClips(`${row.name} · contres`, filteredActions.filter((a) => own(a) && /contre|block|blk/i.test(String(a.action_type || ""))))}>{row.blk}</button></td>
-                      <td><button className="table-link" type="button" onClick={() => openClips(`${row.name} · pertes de balle`, filteredActions.filter((a) => own(a) && isTurnover(a)))}>{row.turnovers}</button></td>
+                      <td><button className="table-link" type="button" onClick={() => openClips(`${row.name} · rebonds`, filteredActions.filter(rebounds))}>{statsDisplay==="average"?(row.reb/Math.max(1,row.games.size)).toFixed(1):row.reb}</button></td>
+                      <td><button className="table-link" type="button" onClick={() => openClips(`${row.name} · passes décisives`, filteredActions.filter(assists))}>{statsDisplay==="average"?(row.ast/Math.max(1,row.games.size)).toFixed(1):row.ast}</button></td>
+                      <td><button className="table-link" type="button" onClick={() => openClips(`${row.name} · interceptions`, filteredActions.filter((a) => own(a) && /interception|steal|int/i.test(String(a.action_type || ""))))}>{statsDisplay==="average"?(row.stl/Math.max(1,row.games.size)).toFixed(1):row.stl}</button></td>
+                      <td><button className="table-link" type="button" onClick={() => openClips(`${row.name} · contres`, filteredActions.filter((a) => own(a) && /contre|block|blk/i.test(String(a.action_type || ""))))}>{statsDisplay==="average"?(row.blk/Math.max(1,row.games.size)).toFixed(1):row.blk}</button></td>
+                      <td><button className="table-link" type="button" onClick={() => openClips(`${row.name} · pertes de balle`, filteredActions.filter((a) => own(a) && isTurnover(a)))}>{statsDisplay==="average"?(row.turnovers/Math.max(1,row.games.size)).toFixed(1):row.turnovers}</button></td>
                     </tr>
                   );
                 })}
