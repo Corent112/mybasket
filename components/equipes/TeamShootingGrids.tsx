@@ -247,6 +247,7 @@ export default function TeamShootingGrids({
   const [saving,setSaving]=useState(false);
   const [shootingView,setShootingView]=useState<"editor"|"library">("editor");
   const [message,setMessage]=useState("");
+  const [recapMode,setRecapMode]=useState<"average"|"total">("average");
   const [shareBusy,setShareBusy]=useState(false);
   const [teamIdentity,setTeamIdentity]=useState<{name:string;logo:string|null}>({name:"Équipe",logo:null});
 
@@ -731,6 +732,24 @@ export default function TeamShootingGrids({
   async function saveSessionGroup(items:Session[]){
     for(const session of items) await saveSession(session);
   }
+  async function deletePlayerFromSessionGroup(items:Session[],playerId:string){
+    if(!canEdit||!items.length)return;
+    const player=players.find(p=>String(p.id)===playerId);
+    if(!window.confirm(`Supprimer ${player?playerName(player):"ce joueur"} de la session du ${fmtDate(items[0].session_date)} ?`))return;
+    for(const session of items){
+      if(!(sessionPlayers[session.id]||[]).includes(playerId))continue;
+      const {error:re}=await supabase.from(tables.results).delete().eq("session_id",session.id).eq("player_id",playerId);
+      if(re){setMessage(re.message);return;}
+      const {error:pe}=await supabase.from(tables.sessionPlayers).delete().eq("session_id",session.id).eq("player_id",playerId);
+      if(pe){setMessage(pe.message);return;}
+      if((sessionPlayers[session.id]||[]).length<=1){
+        const {error:se}=await supabase.from(tables.sessions).delete().eq("id",session.id);
+        if(se){setMessage(se.message);return;}
+      }
+    }
+    await loadDetails(selectedGridId); toast("Joueur retiré de la session ✓");
+  }
+
   async function deleteSessionGroup(items:Session[]){
     if(!canEdit||!items.length||!window.confirm(`Supprimer toute la session du ${fmtDate(items[0].session_date)} (${items.length} tableau(x)) ?`))return;
     for(const session of items){
@@ -968,7 +987,7 @@ export default function TeamShootingGrids({
                             let tm=0,ta=0;
                             const byRow=displayRows.map(row=>{let m=0,a=0;for(const session of group.items){const r=results[session.id]?.[pid]?.[row.id];if(r){m+=safeInt(r.made);a+=safeInt(r.attempted)}}tm+=m;ta+=a;return {row,m,a}});
                             const player=players.find(p=>String(p.id)===pid);
-                            return <tr key={pid}><td style={{...td,textAlign:"left",fontWeight:900}}>{player?playerName(player):"Joueur"}</td>{byRow.map(x=><td key={x.row.id} style={td}>{x.m}/{x.a} · <b>{pct(x.m,x.a)}%</b></td>)}<td style={td}><b>{tm}</b></td><td style={td}><b>{ta}</b></td><td style={{...td,fontWeight:1000,color:BORDEAUX}}>{pct(tm,ta)}%</td></tr>
+                            return <tr key={pid}><td style={{...td,textAlign:"left",fontWeight:900}}><span style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:8}}><span>{player?playerName(player):"Joueur"}</span>{canEdit&&<button title="Supprimer uniquement ce joueur de cette session" onClick={()=>void deletePlayerFromSessionGroup(group.items,pid)} style={{border:"1px solid #E7C9C9",background:"#FFF7F7",color:"#A02A2A",width:22,height:22,borderRadius:7,cursor:"pointer",fontWeight:1000,lineHeight:1}}>×</button>}</span></td>{byRow.map(x=><td key={x.row.id} style={td}>{x.m}/{x.a} · <b>{pct(x.m,x.a)}%</b></td>)}<td style={td}><b>{tm}</b></td><td style={td}><b>{ta}</b></td><td style={{...td,fontWeight:1000,color:BORDEAUX}}>{pct(tm,ta)}%</td></tr>
                           })}</tbody>
                         </table>
                       </div>
@@ -979,17 +998,21 @@ export default function TeamShootingGrids({
 
               {!!sessions.length&&(
                 <div style={{...card,padding:0,overflow:"hidden"}}>
-                  <div style={{padding:"12px 14px",borderBottom:`1px solid ${BORDER}`}}><span style={eyebrow}>RÉCAPITULATIF JOUEURS</span><h3 style={title}>Toutes les sessions · {grid.name}</h3><div style={{fontSize:10,color:MUTED}}>Une ligne par session. La ligne TOTAL calcule le cumul et la moyenne de réussite du joueur.</div></div>
-                  <div style={{overflowX:"auto"}}><table style={{borderCollapse:"collapse",width:"100%",minWidth:760,fontSize:10}}>
-                    <thead><tr><th style={{...th,textAlign:"left"}}>Joueur</th><th style={th}>Date</th><th style={th}>Grille</th><th style={th}>Marqués</th><th style={th}>Tentés</th><th style={th}>Réussite</th></tr></thead>
-                    <tbody>{Object.keys(aggregate).flatMap(pid=>{
-                      const player=players.find(p=>String(p.id)===pid); const playerSessions=sessions.filter(s=>(sessionPlayers[s.id]||[]).includes(pid));
-                      const detail=playerSessions.map(session=>{let m=0,a=0;for(const row of rows){const r=results[session.id]?.[pid]?.[row.id];if(r){m+=safeInt(r.made);a+=safeInt(r.attempted)}}return {session,m,a}});
+                  <div style={{padding:"12px 14px",borderBottom:`1px solid ${BORDER}`,display:"flex",justifyContent:"space-between",gap:10,alignItems:"center",flexWrap:"wrap"}}>
+                    <div><span style={eyebrow}>RÉCAPITULATIF JOUEURS</span><h3 style={title}>{grid.name} · synthèse par joueur</h3><div style={{fontSize:10,color:MUTED}}>Une ligne = un joueur. Sessions = nombre de fois où cette grille a été réalisée.</div></div>
+                    <div style={{display:"flex",gap:4,padding:3,border:`1px solid ${BORDER}`,borderRadius:10,background:SOFT}}>
+                      <button onClick={()=>setRecapMode("average")} style={{...secondary,padding:"6px 9px",background:recapMode==="average"?BORDEAUX:"#fff",color:recapMode==="average"?"#fff":TEXT}}>Moyennes</button>
+                      <button onClick={()=>setRecapMode("total")} style={{...secondary,padding:"6px 9px",background:recapMode==="total"?BORDEAUX:"#fff",color:recapMode==="total"?"#fff":TEXT}}>Totaux</button>
+                    </div>
+                  </div>
+                  <div style={{overflowX:"auto"}}><table style={{borderCollapse:"collapse",width:"100%",minWidth:900,fontSize:10}}>
+                    <thead><tr><th style={{...th,textAlign:"left"}}>Joueur</th><th style={th}>Sessions</th>{displayRows.map(r=><th key={r.id} style={th}>{spotLabel(r.name)}</th>)}<th style={th}>{recapMode==="average"?"Marqués moy.":"Marqués"}</th><th style={th}>{recapMode==="average"?"Tentés moy.":"Tentés"}</th><th style={th}>%</th></tr></thead>
+                    <tbody>{Object.keys(aggregate).map(pid=>{
+                      const player=players.find(p=>String(p.id)===pid);
+                      const count=sessions.filter(s=>(sessionPlayers[s.id]||[]).includes(pid)).length||1;
                       const total=aggregate[pid];
-                      return [
-                        ...detail.map((x,i)=><tr key={`${pid}-${x.session.id}`}><td style={{...td,textAlign:"left",fontWeight:900}}>{i===0?(player?playerName(player):"Joueur"):""}</td><td style={td}>{fmtDate(x.session.session_date)}</td><td style={td}>{grid.name}</td><td style={td}>{x.m}</td><td style={td}>{x.a}</td><td style={{...td,fontWeight:900,color:BORDEAUX}}>{pct(x.m,x.a)}%</td></tr>),
-                        <tr key={`${pid}-total`} style={{background:"#FCF8F5"}}><td style={{...td,textAlign:"left",fontWeight:1000,color:BORDEAUX}}>{player?playerName(player):"Joueur"} · TOTAL</td><td style={td}>{detail.length} session(s)</td><td style={td}>{grid.name}</td><td style={{...td,fontWeight:1000}}>{total.made}</td><td style={{...td,fontWeight:1000}}>{total.attempted}</td><td style={{...td,fontWeight:1000,color:BORDEAUX}}>{pct(total.made,total.attempted)}%</td></tr>
-                      ];
+                      const fmtCell=(m:number,a:number)=>recapMode==="average"?`${(m/count).toFixed(1)}/${(a/count).toFixed(1)} · ${pct(m,a)}%`:`${m}/${a} · ${pct(m,a)}%`;
+                      return <tr key={pid}><td style={{...td,textAlign:"left",fontWeight:1000,color:BORDEAUX}}>{player?playerName(player):"Joueur"}</td><td style={{...td,fontWeight:1000}}>{count}</td>{displayRows.map(row=>{const x=total.byRow[row.id]||{made:0,attempted:0};return <td key={row.id} style={td}>{fmtCell(x.made,x.attempted)}</td>})}<td style={{...td,fontWeight:900}}>{recapMode==="average"?(total.made/count).toFixed(1):total.made}</td><td style={{...td,fontWeight:900}}>{recapMode==="average"?(total.attempted/count).toFixed(1):total.attempted}</td><td style={{...td,fontWeight:1000,color:BORDEAUX}}>{pct(total.made,total.attempted)}%</td></tr>
                     })}</tbody>
                   </table></div>
                 </div>
