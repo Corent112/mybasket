@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import type { Player } from "@/types/player";
+import ShotChart, { SHOT_ZONES, type ShotLike } from "@/components/prise-stats-pro/ShotChart";
 
 type InputMode = "fixed_attempts" | "fixed_makes";
 
@@ -79,6 +80,27 @@ function safeInt(v:unknown){const n=Number(v);return Number.isFinite(n)?Math.max
 function pct(m:number,a:number){return a?Math.round((m/a)*1000)/10:0}
 function playerName(p:Player){return `${p.firstName||""} ${p.lastName||""}`.trim()||"Joueur"}
 function fmtDate(v:string){return new Date(`${v}T12:00:00`).toLocaleDateString("fr-FR")}
+
+function normalizeSpot(v:string){return spotLabel(v).toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g,"").replace(/[^a-z0-9]+/g," ").trim()}
+function rowZoneId(row:GridRow):string|null{
+  const n=normalizeSpot(row.name); const group=shotGroup(row.name);
+  if(group==="LF") return null;
+  const want3=group==="3PTS";
+  const candidates=SHOT_ZONES.filter(z=>z.type===(want3?"3PTS":"2PTS"));
+  const score=(z:(typeof SHOT_ZONES)[number])=>{
+    const l=normalizeSpot(z.label+" "+z.shortLabel);
+    let v=0;
+    for(const token of n.split(" ")) if(token.length>2&&l.includes(token)) v+=2;
+    if(n.includes("corner")&&l.includes("corner"))v+=6;
+    if((n.includes("axe")||n.includes("face"))&&(l.includes("axe")||l.includes("face")))v+=6;
+    if((n.includes("droite")||n.endsWith(" d"))&&(l.includes("droite")||l.includes(" d")))v+=4;
+    if((n.includes("gauche")||n.endsWith(" g"))&&(l.includes("gauche")||l.includes(" g")))v+=4;
+    if((n.includes("45")||n.includes("aile"))&&l.includes("aile"))v+=5;
+    return v;
+  };
+  const ranked=candidates.map(z=>({z,s:score(z)})).sort((a,b)=>b.s-a.s);
+  return ranked[0]?.s>0?ranked[0].z.id:null;
+}
 
 function requestedGridIdFromLocation(){
   if(typeof window==="undefined")return "";
@@ -729,6 +751,30 @@ export default function TeamShootingGrids({
     return map;
   },[results,rows,sessionPlayers,sessions]);
 
+  const sessionsByDate=useMemo(()=>{
+    const map=new Map<string,Session[]>();
+    for(const session of sessions){
+      const list=map.get(session.session_date)||[]; list.push(session); map.set(session.session_date,list);
+    }
+    return Array.from(map.entries()).map(([date,items])=>({date,items}));
+  },[sessions]);
+
+  const shotsForSessions=useCallback((items:Session[]):ShotLike[]=>{
+    const out:ShotLike[]=[];
+    for(const session of items){
+      for(const pid of sessionPlayers[session.id]||[]){
+        for(const row of displayRows){
+          const r=results[session.id]?.[pid]?.[row.id]; if(!r)continue;
+          const zoneId=rowZoneId(row); if(!zoneId)continue;
+          const zone=SHOT_ZONES.find(z=>z.id===zoneId); if(!zone)continue;
+          const made=safeInt(r.made), attempted=safeInt(r.attempted);
+          for(let i=0;i<attempted;i++) out.push({shot_type:zone.type,shot_result:i<made?"made":"missed",shot_zone_id:zone.id,court_x:zone.cx,court_y:zone.cy});
+        }
+      }
+    }
+    return out;
+  },[displayRows,results,sessionPlayers]);
+
   if(loading)return <div style={{padding:22,color:MUTED}}>Chargement des grilles…</div>;
 
   return (
@@ -888,94 +934,52 @@ export default function TeamShootingGrids({
                 </div>
               </div>
 
-              {sessions.map(session=>{
-                const pids=sessionPlayers[session.id]||[];
+              {sessionsByDate.map(group=>{
+                const uniquePids=Array.from(new Set(group.items.flatMap(s=>sessionPlayers[s.id]||[])));
+                const sessionShots=shotsForSessions(group.items);
                 return (
-                  <div key={session.id} style={{...card,padding:0,overflow:"hidden"}}>
+                  <div key={group.date} style={{...card,padding:0,overflow:"hidden"}}>
                     <div style={{padding:"12px 14px",display:"flex",justifyContent:"space-between",gap:8,alignItems:"center",background:"#FFF9F1",borderBottom:`1px solid ${BORDER}`}}>
-                      <div><span style={eyebrow}>SESSION</span><strong style={{display:"block",fontSize:14,color:TEXT,marginTop:3}}>{fmtDate(session.session_date)} · {pids.length} joueur(s)</strong></div>
-                      <div style={{display:"flex",gap:6}}>
-                        {canEdit&&<button onClick={()=>saveSession(session)} style={primary}>Enregistrer résultats</button>}
-                        {canEdit&&<button onClick={()=>deleteSession(session)} style={trashBig}>🗑</button>}
+                      <div><span style={eyebrow}>SESSION</span><strong style={{display:"block",fontSize:14,color:TEXT,marginTop:3}}>{fmtDate(group.date)} · {grid.name}</strong><span style={{fontSize:10,color:MUTED}}>{uniquePids.length} joueur(s) · tous les résultats de cette date réunis</span></div>
+                      <div style={{display:"flex",gap:6}}>{canEdit&&group.items.map(session=><button key={session.id} onClick={()=>saveSession(session)} style={primary}>Enregistrer</button>)}</div>
+                    </div>
+                    <div className="shooting-session-summary" style={{display:"grid",gridTemplateColumns:"330px minmax(0,1fr)",gap:14,padding:14,alignItems:"start"}}>
+                      <div style={{border:`1px solid ${BORDER}`,borderRadius:14,padding:10,background:SOFT}}>
+                        <ShotChart mode="analysis" size="lg" shots={sessionShots} showStats showLabels showDots={false}/>
+                        <div style={{fontSize:9,color:MUTED,textAlign:"center",marginTop:6}}>Même Shot Chart que LiveStat · cumul de tous les joueurs de la session</div>
+                      </div>
+                      <div style={{overflowX:"auto"}}>
+                        <table style={{borderCollapse:"collapse",width:"100%",minWidth:760,fontSize:10}}>
+                          <thead><tr><th style={{...th,textAlign:"left"}}>Joueur</th>{displayRows.map(r=><th key={r.id} style={th}>{spotLabel(r.name)}</th>)}<th style={th}>Marqués</th><th style={th}>Tentés</th><th style={th}>%</th></tr></thead>
+                          <tbody>{uniquePids.map(pid=>{
+                            let tm=0,ta=0;
+                            const byRow=displayRows.map(row=>{let m=0,a=0;for(const session of group.items){const r=results[session.id]?.[pid]?.[row.id];if(r){m+=safeInt(r.made);a+=safeInt(r.attempted)}}tm+=m;ta+=a;return {row,m,a}});
+                            const player=players.find(p=>String(p.id)===pid);
+                            return <tr key={pid}><td style={{...td,textAlign:"left",fontWeight:900}}>{player?playerName(player):"Joueur"}</td>{byRow.map(x=><td key={x.row.id} style={td}>{x.m}/{x.a} · <b>{pct(x.m,x.a)}%</b></td>)}<td style={td}><b>{tm}</b></td><td style={td}><b>{ta}</b></td><td style={{...td,fontWeight:1000,color:BORDEAUX}}>{pct(tm,ta)}%</td></tr>
+                          })}</tbody>
+                        </table>
                       </div>
                     </div>
-
-                    <div style={{overflowX:"auto"}}>
-                      <table style={{borderCollapse:"collapse",width:"100%",minWidth:Math.max(850,180+displayRows.length*210),fontSize:10}}>
-                        <thead>
-                          <tr>
-                            <th rowSpan={3} style={{...th,textAlign:"left",position:"sticky",left:0,zIndex:4,background:BORDEAUX,color:"#fff"}}>JOUEUR</th>
-                            {groupRows(displayRows).map(block=><th key={block.group} colSpan={block.rows.length*3} style={{...th,background:"rgba(107,26,44,.88)",color:"#fff",fontSize:11}}>{block.group==="AUTRES"?"SPOTS":block.group==="2PTS"?"2 POINTS":block.group==="3PTS"?"3 POINTS":"LANCERS FRANCS"}</th>)}
-                            <th rowSpan={2} colSpan={3} style={{...th,background:BORDEAUX,color:"#fff"}}>TOTAL</th>
-                          </tr>
-                          <tr>
-                            {displayRows.map(row=><th key={row.id} colSpan={3} style={{...th,background:"#F7F2EE",color:BORDEAUX}}>{spotLabel(row.name)}</th>)}
-                          </tr>
-                          <tr>
-                            {displayRows.flatMap(row=>[
-                              <th key={`${row.id}-m`} style={subTh}>TM</th>,
-                              <th key={`${row.id}-t`} style={subTh}>TT</th>,
-                              <th key={`${row.id}-p`} style={subTh}>%</th>
-                            ])}
-                            <th style={subTh}>TM</th><th style={subTh}>TT</th><th style={subTh}>%</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {pids.map(pid=>{
-                            const player=players.find(p=>String(p.id)===pid);
-                            let tm=0,ta=0;
-                            const cells=displayRows.map(row=>{
-                              const r=results[session.id]?.[pid]?.[row.id]||{
-                                session_id:session.id,row_id:row.id,player_id:pid,
-                                made:grid.input_mode==="fixed_makes"?grid.fixed_value:0,
-                                attempted:grid.input_mode==="fixed_attempts"?grid.fixed_value:grid.fixed_value
-                              };
-                              tm+=safeInt(r.made);ta+=safeInt(r.attempted);
-                              return {row,r};
-                            });
-                            return <tr key={pid}>
-                              <td style={{...td,textAlign:"left",position:"sticky",left:0,zIndex:2,background:"#fff",fontWeight:900,minWidth:160}}>{player?playerName(player):"Joueur"}</td>
-                              {cells.flatMap(({row,r})=>[
-                                <td key={`${row.id}-m`} style={td}>
-                                  <input type="number" min={0} value={r.made} disabled={!canEdit||grid.input_mode==="fixed_makes"} onChange={e=>patchResult(session.id,pid,row.id,"made",Number(e.target.value))} style={{...tableInput,...(grid.input_mode==="fixed_makes"?fixedInput:{})}}/>
-                                </td>,
-                                <td key={`${row.id}-t`} style={td}>
-                                  <input type="number" min={0} value={r.attempted} disabled={!canEdit||grid.input_mode==="fixed_attempts"} onChange={e=>patchResult(session.id,pid,row.id,"attempted",Number(e.target.value))} style={{...tableInput,...(grid.input_mode==="fixed_attempts"?fixedInput:{})}}/>
-                                </td>,
-                                <td key={`${row.id}-p`} style={{...td,fontWeight:1000,color:pct(r.made,r.attempted)>=50?OK:BORDEAUX}}>{pct(r.made,r.attempted)}%</td>
-                              ])}
-                              <td style={{...td,fontWeight:1000,background:"#FCF8F5"}}>{tm}</td>
-                              <td style={{...td,fontWeight:1000,background:"#FCF8F5"}}>{ta}</td>
-                              <td style={{...td,fontWeight:1000,color:BORDEAUX,background:"#FCF8F5"}}>{pct(tm,ta)}%</td>
-                            </tr>
-                          })}
-                        </tbody>
-                      </table>
-                    </div>
+                    {canEdit&&<div style={{padding:"0 14px 14px",display:"flex",gap:6,justifyContent:"flex-end"}}>{group.items.map(session=><button key={session.id} onClick={()=>deleteSession(session)} style={danger}>Supprimer le tableau {sessionPlayers[session.id]?.length>1?`(${sessionPlayers[session.id].length} joueurs)`:""}</button>)}</div>}
                   </div>
                 )
               })}
 
               {!!sessions.length&&(
                 <div style={{...card,padding:0,overflow:"hidden"}}>
-                  <div style={{padding:"12px 14px",borderBottom:`1px solid ${BORDER}`}}>
-                    <span style={eyebrow}>CUMUL DE LA GRILLE</span>
-                    <h3 style={title}>Totaux joueurs sur toutes les sessions</h3>
-                  </div>
-                  <div style={{overflowX:"auto"}}>
-                    <table style={{borderCollapse:"collapse",width:"100%",minWidth:900,fontSize:10}}>
-                      <thead><tr><th style={{...th,textAlign:"left"}}>Joueur</th>{rows.map(r=><th key={r.id} style={th}>{r.name}</th>)}<th style={th}>Marqués</th><th style={th}>Tentés</th><th style={th}>% global</th></tr></thead>
-                      <tbody>
-                        {Object.entries(aggregate).map(([pid,a])=>{
-                          const player=players.find(p=>String(p.id)===pid);
-                          return <tr key={pid}><td style={{...td,textAlign:"left",fontWeight:900}}>{player?playerName(player):"Joueur"}</td>
-                            {displayRows.map(r=>{const x=a.byRow[r.id]||{made:0,attempted:0};return <td key={r.id} style={td}>{x.made}/{x.attempted} · <b>{pct(x.made,x.attempted)}%</b></td>})}
-                            <td style={td}><b>{a.made}</b></td><td style={td}><b>{a.attempted}</b></td><td style={{...td,color:BORDEAUX,fontWeight:1000}}>{pct(a.made,a.attempted)}%</td>
-                          </tr>
-                        })}
-                      </tbody>
-                    </table>
-                  </div>
+                  <div style={{padding:"12px 14px",borderBottom:`1px solid ${BORDER}`}}><span style={eyebrow}>RÉCAPITULATIF JOUEURS</span><h3 style={title}>Toutes les sessions · {grid.name}</h3><div style={{fontSize:10,color:MUTED}}>Une ligne par session. La ligne TOTAL calcule le cumul et la moyenne de réussite du joueur.</div></div>
+                  <div style={{overflowX:"auto"}}><table style={{borderCollapse:"collapse",width:"100%",minWidth:760,fontSize:10}}>
+                    <thead><tr><th style={{...th,textAlign:"left"}}>Joueur</th><th style={th}>Date</th><th style={th}>Grille</th><th style={th}>Marqués</th><th style={th}>Tentés</th><th style={th}>Réussite</th></tr></thead>
+                    <tbody>{Object.keys(aggregate).flatMap(pid=>{
+                      const player=players.find(p=>String(p.id)===pid); const playerSessions=sessions.filter(s=>(sessionPlayers[s.id]||[]).includes(pid));
+                      const detail=playerSessions.map(session=>{let m=0,a=0;for(const row of rows){const r=results[session.id]?.[pid]?.[row.id];if(r){m+=safeInt(r.made);a+=safeInt(r.attempted)}}return {session,m,a}});
+                      const total=aggregate[pid];
+                      return [
+                        ...detail.map((x,i)=><tr key={`${pid}-${x.session.id}`}><td style={{...td,textAlign:"left",fontWeight:900}}>{i===0?(player?playerName(player):"Joueur"):""}</td><td style={td}>{fmtDate(x.session.session_date)}</td><td style={td}>{grid.name}</td><td style={td}>{x.m}</td><td style={td}>{x.a}</td><td style={{...td,fontWeight:900,color:BORDEAUX}}>{pct(x.m,x.a)}%</td></tr>),
+                        <tr key={`${pid}-total`} style={{background:"#FCF8F5"}}><td style={{...td,textAlign:"left",fontWeight:1000,color:BORDEAUX}}>{player?playerName(player):"Joueur"} · TOTAL</td><td style={td}>{detail.length} session(s)</td><td style={td}>{grid.name}</td><td style={{...td,fontWeight:1000}}>{total.made}</td><td style={{...td,fontWeight:1000}}>{total.attempted}</td><td style={{...td,fontWeight:1000,color:BORDEAUX}}>{pct(total.made,total.attempted)}%</td></tr>
+                      ];
+                    })}</tbody>
+                  </table></div>
                 </div>
               )}
             </>
@@ -987,6 +991,7 @@ export default function TeamShootingGrids({
         @media (max-width: 900px) {
           .shooting-editor-grid { grid-template-columns: 1fr !important; }
           .shooting-session-grid { grid-template-columns: 1fr !important; }
+          .shooting-session-summary { grid-template-columns: 1fr !important; }
           .shooting-library { grid-template-columns: repeat(2,minmax(0,1fr)) !important; }
         }
         @media (max-width: 620px) {
