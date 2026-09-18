@@ -246,6 +246,30 @@ export default function SystemesClient() {
           const raw = localStorage.getItem(`${draftKey}_sync`);
           syncDraft = raw ? JSON.parse(raw) : null;
         } catch { syncDraft = null; }
+        let sourceMeta: (Partial<Systeme> & { originalSystemId?: string }) | null = null;
+        try {
+          const raw = localStorage.getItem('mybasket_drawing_source_system_meta');
+          sourceMeta = raw ? JSON.parse(raw) : null;
+        } catch { sourceMeta = null; }
+
+        if (!editId && resultStored && sourceMeta) {
+          // Duplication depuis DESSIN : on reprend la fiche source mais jamais ses anciens schémas.
+          // Les nouveaux schémas sont injectés juste après depuis mybasket_plaquette_result.
+          base = {
+            ...base,
+            title: sourceMeta.title || '',
+            objectif: sourceMeta.objectif || '',
+            organisation: sourceMeta.organisation || '',
+            deroulement: sourceMeta.deroulement || '',
+            consignes: sourceMeta.consignes || '',
+            variantes: sourceMeta.variantes || '',
+            famille: sourceMeta.famille || 'Offensif',
+            categorie: sourceMeta.categorie || 'U18',
+            type: sourceMeta.type || 'Homme à Homme demi terrain',
+            tempsForts: Array.isArray(sourceMeta.tempsForts) ? sourceMeta.tempsForts : [],
+            tags: Array.isArray(sourceMeta.tags) ? sourceMeta.tags : [],
+          };
+        }
 
         if (draftStored) {
           base = {
@@ -311,13 +335,6 @@ export default function SystemesClient() {
 
         if (resultStored) {
           const result = resultStored;
-
-          // Création depuis un système affiché dans la bibliothèque : reprendre sa fiche
-          // comme base, mais sans son id afin de garantir la création d'un nouveau système privé.
-          if (!editId && result?.sourceSystem) {
-            const sourceBase = systemToForm(result.sourceSystem as SystemItem);
-            base = { ...base, ...sourceBase, id: undefined };
-          }
 
           const incomingImages: string[] = Array.isArray(result.schemaImages)
             ? result.schemaImages.filter(Boolean)
@@ -392,8 +409,9 @@ export default function SystemesClient() {
           localStorage.removeItem(EDIT_SYSTEM_ID_KEY);
           localStorage.removeItem(CURRENT_SYSTEM_ID_KEY);
           localStorage.removeItem(EDIT_SCHEMA_GROUP_KEY);
+          localStorage.removeItem('mybasket_drawing_source_system_meta');
 
-          flash("Schéma ajouté au système ✅");
+          flash(sourceMeta ? "Informations de l’original reprises ✅" : "Schéma ajouté au système ✅");
         }
 
         setSysteme({
@@ -964,20 +982,7 @@ export default function SystemesClient() {
       </div>
 
       <div className="cs-actions">
-        <button type="button" className="cs-btn ghost" onClick={() => {
-          void removePlaquetteTransfer(draftKey).catch(() => {});
-          void removePlaquetteTransfer(RESULT_KEY).catch(() => {});
-          void removePlaquetteTransfer(LOAD_KEY).catch(() => {});
-          localStorage.removeItem(`${draftKey}_sync`);
-          localStorage.removeItem(`${draftKey}_storage_id`);
-          localStorage.removeItem(RETURN_KEY);
-          localStorage.removeItem(EDIT_INDEX_KEY);
-          localStorage.removeItem(EDIT_SCHEMA_GROUP_KEY);
-          localStorage.removeItem(EDIT_SYSTEM_ID_KEY);
-          localStorage.removeItem(CURRENT_SYSTEM_ID_KEY);
-          localStorage.removeItem('mybasket_drawing_flow');
-          router.back();
-        }}>
+        <button type="button" className="cs-btn ghost" onClick={() => router.back()}>
           Annuler
         </button>
 

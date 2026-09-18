@@ -38,6 +38,20 @@ export async function updatePlaybookSeries(id:string,patch:Partial<Pick<Playbook
 export async function deletePlaybookSeries(id:string){ const s=createClient(),owner=await uid(); const {error}=await s.from('playbook_series').delete().eq('id',id).eq('owner_id',owner); if(error)throw error; }
 export async function listPersonalSystemTags():Promise<PersonalSystemTag[]>{ const s=createClient(),owner=await uid(); const {data,error}=await s.from('personal_system_tags').select('*').eq('owner_id',owner).order('name'); if(error)throw error; return (data||[]) as PersonalSystemTag[]; }
 export async function createPersonalSystemTag(name:string){ const s=createClient(),owner=await uid(); const cleanName=name.trim(); const {data,error}=await s.from('personal_system_tags').upsert({owner_id:owner,name:cleanName},{onConflict:'owner_id,name'}).select('*').single(); if(error)throw error; return data as PersonalSystemTag; }
+export async function deletePersonalSystemTag(name:string){
+ const cleanName=name.trim(); if(!cleanName)return;
+ const s=createClient(),owner=await uid();
+ // Supprimer un dossier ne supprime jamais les systèmes : on retire seulement ce tag de classement.
+ const {data:rows,error:rowsError}=await s.from('systems').select('id,tags,temps_forts').eq('user_id',owner); if(rowsError)throw rowsError;
+ for(const row of rows||[]){
+   const tags=clean(row.tags).filter(t=>t!==cleanName);
+   const temps=clean(row.temps_forts).filter(t=>t!==cleanName);
+   if(tags.length!==clean(row.tags).length||temps.length!==clean(row.temps_forts).length){
+     const {error}=await s.from('systems').update({tags,temps_forts:temps,updated_at:new Date().toISOString()}).eq('id',row.id).eq('user_id',owner); if(error)throw error;
+   }
+ }
+ const {error}=await s.from('personal_system_tags').delete().eq('owner_id',owner).eq('name',cleanName); if(error)throw error;
+}
 export function savePendingPlaybookSelection(value:PendingPlaybookSave){ localStorage.setItem(PENDING_PLAYBOOK_SAVE_KEY,JSON.stringify(value)); }
 export function readPendingPlaybookSelection():PendingPlaybookSave|null{ try{return JSON.parse(localStorage.getItem(PENDING_PLAYBOOK_SAVE_KEY)||'null')}catch{return null} }
 export function clearPendingPlaybookSelection(){ localStorage.removeItem(PENDING_PLAYBOOK_SAVE_KEY); }
