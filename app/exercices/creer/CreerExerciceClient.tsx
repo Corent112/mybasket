@@ -299,12 +299,21 @@ export default function CreerExerciceClient() {
       try {
         const resultStored = await getPlaquetteTransfer<any>(RESULT_KEY);
         const draftStored = await getPlaquetteTransfer<Partial<Ex>>(draftKey);
+        let syncDraft: Partial<Ex> | null = null;
+        try {
+          const raw = localStorage.getItem(`${draftKey}_sync`);
+          syncDraft = raw ? JSON.parse(raw) : null;
+        } catch { syncDraft = null; }
 
         if (draftStored) {
           base = {
             ...base,
             ...draftStored,
           };
+        }
+
+        if (syncDraft) {
+          base = { ...base, ...syncDraft };
         }
 
         if (editId) {
@@ -475,13 +484,17 @@ export default function CreerExerciceClient() {
     else localStorage.removeItem(EDIT_EXERCISE_ID_KEY);
 
     const cleanDataList = syncSchemas(ex.schemaImages, ex.schemaDataList);
-    void setPlaquetteTransfer(draftKey, { ...ex, schemaDataList: cleanDataList })
-      .catch((error) => console.warn('Brouillon exercice avant DESSIN :', error));
+    // Contrat DESSIN v2 : aucune écriture asynchrone ne peut bloquer l'ouverture.
+    try {
+      localStorage.setItem(`${draftKey}_sync`, JSON.stringify({ ...ex, schemaDataList: cleanDataList }));
+    } catch (error) {
+      console.warn('Copie locale du brouillon exercice impossible :', error);
+    }
 
     if (typeof index !== 'number') {
       localStorage.removeItem(EDIT_INDEX_KEY);
       localStorage.removeItem(EDIT_SCHEMA_GROUP_KEY);
-      router.push('/plaquette?mode=new&return=exercise');
+      window.location.assign('/plaquette?mode=insert&return=exercise');
       return;
     }
 
@@ -752,6 +765,7 @@ export default function CreerExerciceClient() {
       }
 
       await removePlaquetteTransfer(draftKey);
+      localStorage.removeItem(`${draftKey}_sync`);
       await removePlaquetteTransfer(RESULT_KEY);
       localStorage.removeItem(EDIT_INDEX_KEY);
       await removePlaquetteTransfer(LOAD_KEY);

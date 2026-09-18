@@ -241,12 +241,21 @@ export default function SystemesClient() {
         const resultStored = await getPlaquetteTransfer<any>(RESULT_KEY);
         const draftStored =
           await getPlaquetteTransfer<Partial<Systeme>>(draftKey);
+        let syncDraft: Partial<Systeme> | null = null;
+        try {
+          const raw = localStorage.getItem(`${draftKey}_sync`);
+          syncDraft = raw ? JSON.parse(raw) : null;
+        } catch { syncDraft = null; }
 
         if (draftStored) {
           base = {
             ...base,
             ...draftStored,
           };
+        }
+
+        if (syncDraft) {
+          base = { ...base, ...syncDraft };
         }
 
         if (isNew) {
@@ -419,15 +428,18 @@ export default function SystemesClient() {
     else localStorage.removeItem(EDIT_SYSTEM_ID_KEY);
 
     const cleanDataList = syncSchemas(systeme.schemaImages, systeme.schemaDataList);
-    // Le brouillon est une sécurité, jamais une condition pour ouvrir DESSIN.
-    void setPlaquetteTransfer(draftKey, { ...systeme, schemaDataList: cleanDataList })
-      .catch((error) => console.warn('Brouillon système avant DESSIN :', error));
+    // Contrat DESSIN v2 : le clic ne dépend d'aucun accès IndexedDB/Supabase.
+    // On garde une copie synchrone du formulaire pour pouvoir le restaurer au retour.
+    try {
+      localStorage.setItem(`${draftKey}_sync`, JSON.stringify({ ...systeme, schemaDataList: cleanDataList }));
+    } catch (error) {
+      console.warn('Copie locale du brouillon système impossible :', error);
+    }
 
     if (typeof index !== 'number') {
       localStorage.removeItem(EDIT_INDEX_KEY);
       localStorage.removeItem(EDIT_SCHEMA_GROUP_KEY);
-      // Navigation immédiate : aucune opération IndexedDB ne peut bloquer le bouton.
-      router.push('/plaquette?mode=new&return=systeme');
+      window.location.assign('/plaquette?mode=insert&return=systeme');
       return;
     }
 
@@ -704,6 +716,7 @@ export default function SystemesClient() {
       await removePlaquetteTransfer(LOAD_KEY);
       await removePlaquetteTransfer(RESULT_KEY);
       await removePlaquetteTransfer(draftKey);
+      localStorage.removeItem(`${draftKey}_sync`);
       localStorage.removeItem(EDIT_INDEX_KEY);
       localStorage.removeItem(EDIT_SCHEMA_GROUP_KEY);
       localStorage.removeItem(EDIT_SYSTEM_ID_KEY);
