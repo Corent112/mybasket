@@ -550,6 +550,8 @@ const resetPlaquette = () => {
   };
 
 
+const previewLibrarySystemRef = useRef<((system: any) => void) | null>(null);
+
 useEffect(() => {
   const loadFromSource = async (previewSystemId?: string, previewSystem?: any) => {
     try {
@@ -668,6 +670,10 @@ useEffect(() => {
     }
   };
 
+  previewLibrarySystemRef.current = (system: any) => {
+    if (system?.id) void loadFromSource(system.id, system);
+  };
+
   void loadFromSource();
   const handlePreviewSystem=(event:Event)=>{
     const detail=(event as CustomEvent<{systemId?:string;system?:any}>).detail;
@@ -675,7 +681,10 @@ useEffect(() => {
     if(systemId)void loadFromSource(systemId,detail?.system);
   };
   window.addEventListener('mybasket:preview-system',handlePreviewSystem);
-  return()=>window.removeEventListener('mybasket:preview-system',handlePreviewSystem);
+  return()=>{
+    previewLibrarySystemRef.current = null;
+    window.removeEventListener('mybasket:preview-system',handlePreviewSystem);
+  };
 }, []);
 
   const [title, setTitle] = useState('Nouveau play');
@@ -3958,7 +3967,6 @@ const saveAndInsertToExo = async () => {
     if (!fromScouting) localStorage.removeItem("mybasket_scouting_pending");
     localStorage.removeItem("mybasket_drawing_flow");
     localStorage.removeItem("mybasket_drawing_source_system_id");
-    localStorage.removeItem("mybasket_drawing_source_system");
 
     currentRef.current = previousCurrent;
 
@@ -4015,27 +4023,13 @@ const saveAndGoCreate = async (kind: "systeme" | "exercice") => {
     const storageTargetId = crypto.randomUUID();
     const schemaGroupId = crypto.randomUUID();
 
-    const built = await buildPlaquetteResult({
+    await buildPlaquetteResult({
       isSysteme,
       targetId: storageTargetId,
       schemaGroupId,
       editIndex: null,
       captureVideo: isSysteme,
     });
-
-    // Si le dessin vient d'un système de la bibliothèque, on crée une COPIE privée :
-    // on reprend les informations de la fiche source, sans jamais modifier son id/source.
-    if (isSysteme && localStorage.getItem('mybasket_drawing_flow') === 'library-system-copy') {
-      try {
-        const rawSource = localStorage.getItem('mybasket_drawing_source_system');
-        const sourceSystem = rawSource ? JSON.parse(rawSource) : null;
-        if (sourceSystem) {
-          await setPlaquetteTransfer(RESULT_KEY, { ...built.result, sourceSystem });
-        }
-      } catch (error) {
-        console.warn('Métadonnées du système source non reprises', error);
-      }
-    }
 
     if (!fromGamePlan && !fromScouting) localStorage.removeItem(RETURN_KEY);
     localStorage.removeItem("mybasket_plaquette_load");
@@ -4049,7 +4043,6 @@ const saveAndGoCreate = async (kind: "systeme" | "exercice") => {
     if (!fromScouting) localStorage.removeItem("mybasket_scouting_pending");
     localStorage.removeItem("mybasket_drawing_flow");
     localStorage.removeItem("mybasket_drawing_source_system_id");
-    localStorage.removeItem("mybasket_drawing_source_system");
 
     currentRef.current = previousCurrent;
     setSaveOpen(false);
@@ -4574,7 +4567,7 @@ const exportJson = () => {
   <div className="ed-layout">
             {/* -------- BIBLIOTHÈQUE / ORGANISATION -------- */}
             <div className="ed-library">
-              <ContentNavigator embedded initialKind="system" />
+              <ContentNavigator embedded initialKind="system" onPreviewSystem={(system) => previewLibrarySystemRef.current?.(system)} />
             </div>
 
             {/* -------- PHASES — DOCK BAS -------- */}

@@ -1108,7 +1108,31 @@ export default function CreerExerciceClient() {
       </div>
 
       <div className="ce-actions">
-        <button type="button" className="ce-btn ghost" onClick={() => router.back()}>
+        <button
+          type="button"
+          className="ce-btn ghost"
+          onClick={async () => {
+            // Un brouillon de création n'est jamais une fiche : Annuler doit tout jeter.
+            if (!editId) {
+              try {
+                await removePlaquetteTransfer(draftKey);
+                await removePlaquetteTransfer(RESULT_KEY);
+                await removePlaquetteTransfer(LOAD_KEY);
+              } catch (error) {
+                console.warn("Nettoyage brouillon exercice incomplet", error);
+              }
+              localStorage.removeItem(`${draftKey}_sync`);
+              localStorage.removeItem(`${draftKey}_storage_id`);
+              localStorage.removeItem(RETURN_KEY);
+              localStorage.removeItem(EDIT_INDEX_KEY);
+              localStorage.removeItem(EDIT_EXERCISE_ID_KEY);
+              localStorage.removeItem(EDIT_SCHEMA_GROUP_KEY);
+              localStorage.removeItem("mybasket_current_exercise_id");
+              localStorage.removeItem("mybasket_drawing_flow");
+            }
+            router.back();
+          }}
+        >
           Annuler
         </button>
 

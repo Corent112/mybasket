@@ -6,12 +6,12 @@ import {createPlaybookSeries,createPersonalSystemTag,ensureDefaultPersonalSystem
 import {attachPrivateSystemToPlaybook,createDrawingSeason,detachPrivateSystemFromPlaybook,duplicatePrivateSystem,ensureDrawingSeasons,listDrawingTeams,loadDrawingSystems,renamePrivateSystem,renameSeries,setPrivateSystemTags,type DrawingSeason,type DrawingSystem,type DrawingTeam} from '@/lib/drawing-workspace';
 import './content-navigator.css';
 
-type Props={embedded?:boolean;initialKind?:'exercise'|'system'};
+type Props={embedded?:boolean;initialKind?:'exercise'|'system';onPreviewSystem?:(system:DrawingSystem)=>void};
 type CreateModal='playbook'|'series'|'season'|'tag'|null;
 const LIBRARY='__private_library__';
 const uniq=(v:string[])=>Array.from(new Set(v.filter(Boolean)));
 
-export default function ContentNavigator({embedded=false}:Props){
+export default function ContentNavigator({embedded=false,onPreviewSystem}:Props){
  const[teams,setTeams]=useState<DrawingTeam[]>([]),[seasons,setSeasons]=useState<DrawingSeason[]>([]),[playbooks,setPlaybooks]=useState<Playbook[]>([]),[series,setSeries]=useState<PlaybookSeries[]>([]),[systems,setSystems]=useState<DrawingSystem[]>([]),[tags,setTags]=useState<PersonalSystemTag[]>([]);
  const[teamId,setTeamId]=useState(''),[season,setSeason]=useState('2026-2027'),[playbookId,setPlaybookId]=useState(''),[tag,setTag]=useState(''),[q,setQ]=useState(''),[libraryQ,setLibraryQ]=useState(''),[openSeries,setOpenSeries]=useState<Set<string>>(new Set()),[selected,setSelected]=useState(''),[busy,setBusy]=useState(false),[actionId,setActionId]=useState('');
  const[view,setView]=useState<'playbook'|'library'>('playbook'),[expanded,setExpanded]=useState(false),[dragTarget,setDragTarget]=useState(''),[toast,setToast]=useState(''),[openLibraryFolders,setOpenLibraryFolders]=useState<Set<string>>(new Set(['__unclassified__']));
@@ -62,11 +62,15 @@ export default function ContentNavigator({embedded=false}:Props){
    // Toute sauvegarde depuis DESSIN créera une nouvelle fiche privée et ne modifiera jamais la source.
    localStorage.setItem('mybasket_drawing_flow','library-system-copy');
    localStorage.setItem('mybasket_drawing_source_system_id',id);
-   try { localStorage.setItem('mybasket_drawing_source_system', JSON.stringify(system || null)); } catch {}
 
    // Dans DESSIN on ne navigue jamais : on transmet directement le système
    // déjà chargé par la bibliothèque. PlaquetteClient peut donc l'afficher
    // immédiatement, sans refaire une lecture Supabase ni changer de page.
+   if (system && onPreviewSystem) {
+     onPreviewSystem(system);
+     return;
+   }
+   // Fallback pour les autres écrans qui embarquent le navigateur.
    window.dispatchEvent(new CustomEvent('mybasket:preview-system',{
      detail:{systemId:id,system:system||null}
    }));
