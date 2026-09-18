@@ -62,6 +62,7 @@ export default function ContentNavigator({embedded=false}:Props){
    // Toute sauvegarde depuis DESSIN créera une nouvelle fiche privée et ne modifiera jamais la source.
    localStorage.setItem('mybasket_drawing_flow','library-system-copy');
    localStorage.setItem('mybasket_drawing_source_system_id',id);
+   try { localStorage.setItem('mybasket_drawing_source_system', JSON.stringify(system || null)); } catch {}
 
    // Dans DESSIN on ne navigue jamais : on transmet directement le système
    // déjà chargé par la bibliothèque. PlaquetteClient peut donc l'afficher

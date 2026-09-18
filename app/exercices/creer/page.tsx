@@ -3,6 +3,7 @@
 import { Suspense, useEffect, useRef, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { saveExercise, updateExercise, getExercise, newId } from '@/lib/exercises';
+import { getPlaquetteTransfer, setPlaquetteTransfer, removePlaquetteTransfer } from '@/lib/plaquette-transfer';
 
 type Ex = {
   title: string;
@@ -131,120 +132,126 @@ const makeLightDraft = (data: Ex): Ex => ({
 });
   // ─── Chargement (édition + brouillon + retour de la plaquette) ───────────
   useEffect(() => {
-  const load = async () => {
-    let base = blank();
-
-    try {
-      if (editId) {
-        const existing = await getExercise(editId);
-
-        if (existing) {
-          base = {
-            ...base,
-            title: existing.title || "",
-            organisation: asText((existing as any).organisation),
-            deroulement: asText((existing as any).deroulement),
-            consignes: asText((existing as any).consignes),
-            variantes: asText((existing as any).variantes),
-            plots: String((existing as any).plots ?? ""),
-            ballons: String((existing as any).ballons ?? ""),
-            paniers: String((existing as any).paniers ?? ""),
-            joueurs: String((existing as any).joueurs ?? "5"),
-            categorie:
-              (existing as any).categorie || existing.category || "— Choisir —",
-            type: existing.type || "Collectif",
-            niveau:
-              (existing as any).niveau || existing.level || "Intermédiaire",
-            temps: String((existing as any).temps ?? existing.duration ?? "15"),
-            themes: ((existing as any).themes || existing.tags || []) as string[],
-            images: ((existing as any).images || []) as string[],
-            videos: ((existing as any).videos || []) as string[],
-            schemaImages: ((existing as any).schemaImages || []) as string[],
-            schemaDataList: ((existing as any).schemaDataList || []) as any[],
-          };
+    const load = async () => {
+      let base = blank();
+      try {
+        if (editId) {
+          const existing = await getExercise(editId);
+          if (existing) {
+            base = {
+              ...base,
+              title: existing.title || "",
+              organisation: asText((existing as any).organisation),
+              deroulement: asText((existing as any).deroulement),
+              consignes: asText((existing as any).consignes),
+              variantes: asText((existing as any).variantes),
+              plots: String((existing as any).plots ?? ""),
+              ballons: String((existing as any).ballons ?? ""),
+              paniers: String((existing as any).paniers ?? ""),
+              joueurs: String((existing as any).joueurs ?? "5"),
+              categorie: (existing as any).categorie || existing.category || "— Choisir —",
+              type: existing.type || "Collectif",
+              niveau: (existing as any).niveau || existing.level || "Intermédiaire",
+              temps: String((existing as any).temps ?? existing.duration ?? "15"),
+              themes: ((existing as any).themes || existing.tags || []) as string[],
+              images: ((existing as any).images || []) as string[],
+              videos: ((existing as any).videos || []) as string[],
+              schemaImages: ((existing as any).schemaImages || []) as string[],
+              schemaDataList: ((existing as any).schemaDataList || []) as any[],
+            };
+          }
         }
+
+        // Le brouillon est prioritaire : ouvrir DESSIN ne crée jamais l'exercice.
+        const draft = await getPlaquetteTransfer<Partial<Ex>>(draftKey).catch(() => null);
+        if (draft) base = { ...base, ...draft };
+        try {
+          const sync = localStorage.getItem(`${draftKey}_sync`);
+          if (sync) base = { ...base, ...JSON.parse(sync) };
+        } catch {}
+
+        // Résultat renvoyé par le bouton INSÉRER de DESSIN.
+        const result = await getPlaquetteTransfer<any>(RESULT_KEY).catch(() => null);
+        if (result) {
+          const incomingImages: string[] = Array.isArray(result.schemaImages)
+            ? result.schemaImages.filter(Boolean)
+            : result.schemaImage ? [result.schemaImage] : [];
+          const incomingData: any[] = Array.isArray(result.schemaDataList)
+            ? result.schemaDataList
+            : result.schemaData ? [result.schemaData] : [];
+          const stored = localStorage.getItem(EDIT_INDEX_KEY);
+          const editIndex = typeof result.editIndex === 'number'
+            ? result.editIndex
+            : stored !== null && stored !== '' ? Number(stored) : null;
+
+          if (incomingImages.length) {
+            const nextImages = [...base.schemaImages];
+            const nextData = [...base.schemaDataList];
+            if (editIndex !== null && Number.isFinite(editIndex) && editIndex >= 0 && editIndex < nextImages.length) {
+              nextImages.splice(editIndex, 1, ...incomingImages);
+              nextData.splice(editIndex, 1, ...incomingData);
+            } else {
+              nextImages.push(...incomingImages);
+              nextData.push(...incomingData);
+            }
+            base = { ...base, schemaImages: nextImages.slice(0, 5), schemaDataList: nextData.slice(0, 5) };
+          }
+
+          await removePlaquetteTransfer(RESULT_KEY).catch(() => {});
+          await removePlaquetteTransfer(LOAD_KEY).catch(() => {});
+          localStorage.removeItem(EDIT_INDEX_KEY);
+          localStorage.removeItem(EDIT_EXERCISE_ID_KEY);
+          localStorage.removeItem('mybasket_current_exercise_id');
+          localStorage.removeItem('mybasket_drawing_flow');
+          localStorage.removeItem(RETURN_KEY);
+          flash('Schéma ajouté à l’exercice ✅');
+        }
+        setEx(base);
+      } catch (e) {
+        console.error(e);
+        flash("Erreur lors du chargement");
       }
-
-      setEx(base);
-    } catch (e) {
-      console.error(e);
-      flash("Erreur lors du chargement");
-    }
-  };
-
-  load();
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-}, [editId]);
+    };
+    void load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [editId, draftKey]);
 
   // ─── Plaquette : ouvrir / modifier un schéma ─────────────────────────────
-  const openDraw = async (index?: number) => {
-  if (!ex.title.trim()) {
-    flash("Ajoute un titre avant d’ouvrir le dessin");
-    return;
-  }
+  const openDraw = (index?: number) => {
+    // Contrat : aucune création/update Supabase ici. On ne fait que mémoriser le formulaire.
+    localStorage.setItem('mybasket_drawing_flow', 'insert-exercise-draft');
+    localStorage.setItem(RETURN_KEY, editId ? `/exercices/creer?id=${editId}` : '/exercices/creer');
+    if (editId) localStorage.setItem(EDIT_EXERCISE_ID_KEY, editId);
+    else localStorage.removeItem(EDIT_EXERCISE_ID_KEY);
+    localStorage.removeItem('mybasket_current_exercise_id');
 
-  try {
-    let currentId = editId;
+    try { localStorage.setItem(`${draftKey}_sync`, JSON.stringify(makeLightDraft(ex))); } catch {}
+    // IndexedDB conserve aussi les médias et les données de dessin, mais ne bloque jamais l'ouverture.
+    void setPlaquetteTransfer(draftKey, ex).catch((error) => console.warn('Brouillon exercice non persisté', error));
 
-    const payload = {
-      title: ex.title.trim(),
-      organisation: ex.organisation,
-      deroulement: toLines(ex.deroulement),
-      consignes: toLines(ex.consignes),
-      variantes: toLines(ex.variantes),
-      plots: toNum(ex.plots),
-      ballons: toNum(ex.ballons),
-      paniers: toNum(ex.paniers),
-      joueurs: toNum(ex.joueurs),
-      categorie: ex.categorie,
-      category: ex.categorie,
-      type: ex.type,
-      niveau: ex.niveau,
-      level: ex.niveau,
-      temps: toNum(ex.temps),
-      duration: ex.temps,
-      themes: ex.themes,
-      tags: ex.themes,
-      images: ex.images,
-      videos: ex.videos,
-      schemaImages: ex.schemaImages,
-      schemaDataList: ex.schemaDataList,
-    };
-
-    if (currentId) {
-      await updateExercise(currentId, payload);
-    } else {
-      currentId = newId();
-
-      await saveExercise({
-        id: currentId,
-        ...payload,
-      });
-
-      router.replace(`/exercices/creer?id=${currentId}`);
-    }
-
-    localStorage.setItem(EDIT_EXERCISE_ID_KEY, currentId);
-
-    if (typeof index === "number") {
-      localStorage.setItem(EDIT_INDEX_KEY, String(index));
-    } else {
+    if (typeof index !== 'number') {
       localStorage.removeItem(EDIT_INDEX_KEY);
+      localStorage.removeItem(LOAD_KEY);
+      window.location.assign('/plaquette?mode=insert&return=exercice');
+      return;
     }
 
-    localStorage.removeItem(LOAD_KEY);
-
-    localStorage.setItem(
-      RETURN_KEY,
-      `/exercices/creer?id=${currentId}`
-    );
-
-    router.push("/plaquette");
-  } catch (error) {
-    console.error(error);
-    flash("Erreur avant ouverture du dessin");
-  }
-};
+    localStorage.setItem(EDIT_INDEX_KEY, String(index));
+    const schemaData = ex.schemaDataList[index] || {};
+    const schemaImage = ex.schemaImages[index] || '';
+    const loadPayload = {
+      ...schemaData,
+      title: schemaData.title || `Schéma ${index + 1}`,
+      editIndex: index,
+      courtType: schemaData.courtType || 'half',
+      phases: Array.isArray(schemaData.phases) ? schemaData.phases : [],
+      imageData: schemaData.imageData || schemaImage,
+      phaseImages: Array.isArray(schemaData.phaseImages) ? schemaData.phaseImages : (schemaImage ? [schemaImage] : []),
+    };
+    void setPlaquetteTransfer(LOAD_KEY, loadPayload)
+      .then(() => window.location.assign('/plaquette?mode=edit&return=exercice'))
+      .catch((error) => { console.error(error); flash('Impossible de charger ce schéma'); });
+  };
 
   const removeSchema = (i: number) =>
   setEx((s) => ({
@@ -309,20 +316,36 @@ async function uploadBase64Image(base64: string, folder = "schemas") {
 
   return data.publicUrl;
 }
+async function uploadBase64Video(base64: string, folder = "videos") {
+  if (!base64.startsWith("data:video")) return base64;
+  const { createClient } = await import("@/lib/supabase/client");
+  const supabase = createClient();
+  const res = await fetch(base64);
+  const blob = await res.blob();
+  const ext = blob.type.includes('webm') ? 'webm' : 'mp4';
+  const fileName = `${folder}/${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`;
+  const { error } = await supabase.storage.from("exercise-videos").upload(fileName, blob, { contentType: blob.type || 'video/mp4', upsert: false });
+  if (error) throw error;
+  return supabase.storage.from("exercise-videos").getPublicUrl(fileName).data.publicUrl;
+}
+
   // ─── Sauvegarde ────────────────────────────────────────────────────────────
   const save = async () => {
   if (!ex.title.trim()) {
     flash("Ajoute un titre à ton exercice");
     return;
   }
-const uploadedSchemaImages = await Promise.all(
-  ex.schemaImages.map((img) => uploadBase64Image(img, "schemas"))
-);
-
-const uploadedImages = await Promise.all(
-  ex.images.map((img) => uploadBase64Image(img, "images"))
-);
   try {
+    const uploadedSchemaImages = await Promise.all(
+      ex.schemaImages.map((img) => uploadBase64Image(img, "schemas"))
+    );
+    const uploadedImages = await Promise.all(
+      ex.images.map((img) => uploadBase64Image(img, "images"))
+    );
+    const uploadedVideos = await Promise.all(
+      ex.videos.map((vid) => uploadBase64Video(vid, "exercices/videos"))
+    );
+
     const payload = {
       title: ex.title.trim(),
       organisation: ex.organisation,
@@ -352,7 +375,7 @@ const uploadedImages = await Promise.all(
 
       images: uploadedImages,
 schemaImages: uploadedSchemaImages,
-      videos: ex.videos.filter((v) => !v.startsWith("data:")),
+      videos: uploadedVideos,
 schemaDataList: ex.schemaDataList.map((schema) => ({
   title: schema.title,
   courtType: schema.courtType,
@@ -376,6 +399,10 @@ schemaDataList: ex.schemaDataList.map((schema) => ({
     }
 
     localStorage.removeItem(draftKey);
+    localStorage.removeItem(`${draftKey}_sync`);
+    await removePlaquetteTransfer(draftKey).catch(() => {});
+    await removePlaquetteTransfer(RESULT_KEY).catch(() => {});
+    await removePlaquetteTransfer(LOAD_KEY).catch(() => {});
     localStorage.removeItem(RESULT_KEY);
     localStorage.removeItem(EDIT_INDEX_KEY);
     localStorage.removeItem(LOAD_KEY);
@@ -555,7 +582,20 @@ schemaDataList: ex.schemaDataList.map((schema) => ({
       </div>
 
       <div className="ce-actions">
-        <button className="ce-btn ghost" onClick={() => router.back()}>Annuler</button>
+        <button className="ce-btn ghost" onClick={() => {
+          void removePlaquetteTransfer(draftKey).catch(() => {});
+          void removePlaquetteTransfer(RESULT_KEY).catch(() => {});
+          void removePlaquetteTransfer(LOAD_KEY).catch(() => {});
+          localStorage.removeItem(`${draftKey}_sync`);
+          localStorage.removeItem(RESULT_KEY);
+          localStorage.removeItem(LOAD_KEY);
+          localStorage.removeItem(RETURN_KEY);
+          localStorage.removeItem(EDIT_INDEX_KEY);
+          localStorage.removeItem(EDIT_EXERCISE_ID_KEY);
+          localStorage.removeItem('mybasket_current_exercise_id');
+          localStorage.removeItem('mybasket_drawing_flow');
+          router.back();
+        }}>Annuler</button>
         <button className="ce-btn save" onClick={save}>
           💾 {editId ? 'METTRE À JOUR L’EXERCICE' : 'SAUVEGARDER L’EXERCICE'}
         </button>

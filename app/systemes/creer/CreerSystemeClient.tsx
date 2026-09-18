@@ -312,6 +312,13 @@ export default function SystemesClient() {
         if (resultStored) {
           const result = resultStored;
 
+          // Création depuis un système affiché dans la bibliothèque : reprendre sa fiche
+          // comme base, mais sans son id afin de garantir la création d'un nouveau système privé.
+          if (!editId && result?.sourceSystem) {
+            const sourceBase = systemToForm(result.sourceSystem as SystemItem);
+            base = { ...base, ...sourceBase, id: undefined };
+          }
+
           const incomingImages: string[] = Array.isArray(result.schemaImages)
             ? result.schemaImages.filter(Boolean)
             : result.schemaImage
@@ -957,7 +964,20 @@ export default function SystemesClient() {
       </div>
 
       <div className="cs-actions">
-        <button type="button" className="cs-btn ghost" onClick={() => router.back()}>
+        <button type="button" className="cs-btn ghost" onClick={() => {
+          void removePlaquetteTransfer(draftKey).catch(() => {});
+          void removePlaquetteTransfer(RESULT_KEY).catch(() => {});
+          void removePlaquetteTransfer(LOAD_KEY).catch(() => {});
+          localStorage.removeItem(`${draftKey}_sync`);
+          localStorage.removeItem(`${draftKey}_storage_id`);
+          localStorage.removeItem(RETURN_KEY);
+          localStorage.removeItem(EDIT_INDEX_KEY);
+          localStorage.removeItem(EDIT_SCHEMA_GROUP_KEY);
+          localStorage.removeItem(EDIT_SYSTEM_ID_KEY);
+          localStorage.removeItem(CURRENT_SYSTEM_ID_KEY);
+          localStorage.removeItem('mybasket_drawing_flow');
+          router.back();
+        }}>
           Annuler
         </button>
 
