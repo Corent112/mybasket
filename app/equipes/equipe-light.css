@@ -220,7 +220,7 @@
   border-radius: 18px;
   box-shadow: 0 6px 20px rgba(60, 30, 20, 0.05);
   display: grid;
-  grid-template-columns: repeat(6, 1fr);
+  grid-template-columns: repeat(7, 1fr);
   margin-bottom: 1.5rem;
   overflow: hidden;
 }

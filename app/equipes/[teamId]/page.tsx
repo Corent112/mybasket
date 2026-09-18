@@ -449,82 +449,192 @@ function getAttendancePct(
   return 0;
 }
 
-function computeLinkedKpis(team: Team, dashboard: TeamDashboardData) {
+
+type FfbbBannerSummary = {
+  loading: boolean;
+  connected: boolean;
+  ranking: string;
+  games: number;
+  wins: number;
+  losses: number;
+  pointsForAverage: number | null;
+  pointsAgainstAverage: number | null;
+  nextMatch: string;
+};
+
+function normalizeFfbbText(value: string) {
+  return value
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .toLowerCase();
+}
+
+function extractFfbbRanking(classementText: string, teamName: string) {
+  const ranking = normalizeFfbbText(classementText);
+  const team = normalizeFfbbText(teamName);
+  if (!ranking || !team) return "—";
+
+  const escaped = team.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const before = ranking.match(new RegExp(`(?:^|\\s)(\\d{1,2})\\s*(?:er|e|eme|ème)?\\s+${escaped}(?:\\s|$)`));
+  const after = ranking.match(new RegExp(`${escaped}\\s+(\\d{1,2})\\s*(?:er|e|eme|ème)?(?:\\s|$)`));
+  const position = Number(before?.[1] || after?.[1] || 0);
+  if (!position) return "—";
+  return position === 1 ? "1er" : `${position}e`;
+}
+
+function formatFfbbNextMatch(match: any) {
+  if (!match?.match_date) return "—";
+  const date = new Date(`${match.match_date}T12:00:00`);
+  const dateLabel = Number.isNaN(date.getTime())
+    ? String(match.match_date)
+    : new Intl.DateTimeFormat("fr-FR", { day: "2-digit", month: "2-digit" }).format(date);
+  const place = match.home_away === "away" ? "@" : "vs";
+  const time = match.start_time ? ` · ${String(match.start_time).slice(0, 5)}` : "";
+  return `${dateLabel}${time} · ${place} ${match.opponent || "Adversaire"}`;
+}
+
+function useFfbbBannerSummary(teamId: string): FfbbBannerSummary {
+  const supabase = useMemo(() => createClient(), []);
+  const [summary, setSummary] = useState<FfbbBannerSummary>({
+    loading: true,
+    connected: false,
+    ranking: "—",
+    games: 0,
+    wins: 0,
+    losses: 0,
+    pointsForAverage: null,
+    pointsAgainstAverage: null,
+    nextMatch: "—",
+  });
+
+  useEffect(() => {
+    let active = true;
+
+    async function load() {
+      setSummary((current) => ({ ...current, loading: true }));
+      try {
+        const { data: connections, error: connectionError } = await supabase
+          .from("ffbb_team_connections")
+          .select("*")
+          .eq("team_id", teamId)
+          .order("is_primary", { ascending: false })
+          .order("created_at", { ascending: true });
+
+        if (connectionError || !connections?.length) {
+          if (active) setSummary({
+            loading: false, connected: false, ranking: "—", games: 0, wins: 0, losses: 0,
+            pointsForAverage: null, pointsAgainstAverage: null, nextMatch: "—",
+          });
+          return;
+        }
+
+        const primary = connections.find((row: any) => row.is_primary) || connections[0];
+        const logicalKey = primary.logical_competition_key;
+        const selectedConnections = logicalKey
+          ? connections.filter((row: any) => row.logical_competition_key === logicalKey)
+          : [primary];
+        const connectionIds = selectedConnections.map((row: any) => row.id);
+
+        const { data: matches, error: matchesError } = await supabase
+          .from("ffbb_synced_matches")
+          .select("*")
+          .eq("team_id", teamId)
+          .in("connection_id", connectionIds)
+          .order("match_date", { ascending: true });
+
+        if (matchesError) throw matchesError;
+
+        const rows = matches || [];
+        const played = rows.filter((row: any) =>
+          Number.isFinite(Number(row.our_score)) && Number.isFinite(Number(row.opponent_score)) &&
+          row.our_score !== null && row.opponent_score !== null
+        );
+        const wins = played.filter((row: any) => Number(row.our_score) > Number(row.opponent_score)).length;
+        const losses = played.filter((row: any) => Number(row.our_score) < Number(row.opponent_score)).length;
+        const pointsForAverage = played.length
+          ? played.reduce((sum: number, row: any) => sum + Number(row.our_score || 0), 0) / played.length
+          : null;
+        const pointsAgainstAverage = played.length
+          ? played.reduce((sum: number, row: any) => sum + Number(row.opponent_score || 0), 0) / played.length
+          : null;
+
+        const today = new Date().toISOString().slice(0, 10);
+        const upcoming = rows.find((row: any) =>
+          String(row.match_date || "") >= today &&
+          (row.our_score === null || row.opponent_score === null)
+        );
+
+        let ranking = "—";
+        if (primary.source_url) {
+          try {
+            const response = await fetch(`/api/ffbb/competition?url=${encodeURIComponent(primary.source_url)}`, {
+              cache: "no-store",
+            });
+            const parsed = await response.json();
+            if (response.ok && parsed?.mode === "team") {
+              ranking = extractFfbbRanking(parsed.classementText || "", primary.ffbb_team_name || parsed.team || "");
+            }
+          } catch {
+            // Le bandeau reste exploitable même si FFBB est momentanément indisponible.
+          }
+        }
+
+        if (active) setSummary({
+          loading: false,
+          connected: true,
+          ranking,
+          games: played.length,
+          wins,
+          losses,
+          pointsForAverage,
+          pointsAgainstAverage,
+          nextMatch: formatFfbbNextMatch(upcoming),
+        });
+      } catch (error) {
+        console.error("Erreur résumé FFBB équipe :", error);
+        if (active) setSummary((current) => ({ ...current, loading: false }));
+      }
+    }
+
+    void load();
+    return () => { active = false; };
+  }, [supabase, teamId]);
+
+  return summary;
+}
+
+function computeLinkedKpis(
+  team: Team,
+  dashboard: TeamDashboardData,
+  ffbb: FfbbBannerSummary,
+) {
   const local = computeTeamKpis(team);
-  const matches = dashboard.matches.filter((m) => String(m.match_category || "championship").toLowerCase() !== "friendly");
-  const statRows = dashboard.statRows.filter((r) => matches.some((m) => m.id === r.match_id));
-  // Après le chargement Supabase, seuls les matchs encore présents dans
-  // match_stats sont comptés. Un ancien match supprimé ne doit plus compter.
-  const games = dashboard.loading ? local.matchsJoues : matches.length;
-  const wins = dashboard.loading
-    ? local.victoires
-    : matches.filter(isWin).length;
-  const losses = dashboard.loading
-    ? local.defaites
-    : matches.filter(isLoss).length;
-  const pointsAverage = matches.length
-    ? Math.round(
-        matches.reduce((sum, match) => sum + safeNum(match.us_score), 0) /
-          matches.length,
-      )
-    : dashboard.loading
-      ? local.pointsMoyenne
-      : 0;
+  const fallbackMatches = dashboard.matches.filter(
+    (m) => String(m.match_category || "championship").toLowerCase() !== "friendly",
+  );
+  const fallbackWins = fallbackMatches.filter(isWin).length;
+  const fallbackLosses = fallbackMatches.filter(isLoss).length;
+  const fallbackFor = fallbackMatches.length
+    ? fallbackMatches.reduce((sum, match) => sum + safeNum(match.us_score), 0) / fallbackMatches.length
+    : local.pointsMoyenne;
+  const fallbackAgainst = fallbackMatches.length
+    ? fallbackMatches.reduce((sum, match) => sum + safeNum(match.them_score), 0) / fallbackMatches.length
+    : null;
 
-  let progression = local.progressionPct;
-
-  if (matches.length >= 2) {
-    const middle = Math.max(1, Math.floor(matches.length / 2));
-    const first = matches.slice(0, middle);
-    const last = matches.slice(middle);
-    const avg = (rows: SupaMatchRow[]) =>
-      rows.length
-        ? rows.reduce(
-            (sum, match) =>
-              sum + safeNum(match.us_score) - safeNum(match.them_score),
-            0,
-          ) / rows.length
-        : 0;
-    progression = Math.round(avg(last) - avg(first));
-  }
+  const connected = ffbb.connected;
+  const loading = ffbb.loading;
+  const dash = loading ? "…" : "—";
 
   return [
-    {
-      ic: "users",
-      val: String(team.players.length),
-      lbl: "Joueurs",
-      hint: "Effectif",
-    },
-    {
-      ic: "bars",
-      val: `${getAttendancePct(team, dashboard.attendanceRows)}%`,
-      lbl: "Présence moy.",
-      hint: "Entraînements",
-    },
-    {
-      ic: "shirt",
-      val: String(games),
-      lbl: "Matchs joués",
-      hint: dashboard.matches.length ? "Supabase" : "Local",
-    },
-    {
-      ic: "trophy",
-      val: `${wins} / ${losses}`,
-      lbl: "V / D",
-      hint: "Résultats",
-    },
-    {
-      ic: "star",
-      val: String(pointsAverage),
-      lbl: "Points moy.",
-      hint: statRows.length ? "Live stats" : "Score",
-    },
-    {
-      ic: "trend",
-      val: `${progression >= 0 ? "+" : ""}${progression}`,
-      lbl: "Progression",
-      hint: "Diff. points",
-    },
+    { ic: "users", val: String(team.players.length), lbl: "Effectif", hint: "Joueurs" },
+    { ic: "trophy", val: connected ? ffbb.ranking : dash, lbl: "Classement", hint: connected ? "FFBB" : "FFBB non connecté" },
+    { ic: "shirt", val: connected ? String(ffbb.games) : dashboard.loading ? "…" : String(fallbackMatches.length || local.matchsJoues), lbl: "Matchs joués", hint: connected ? "FFBB" : "MyBasket" },
+    { ic: "trophy", val: connected ? `${ffbb.wins} / ${ffbb.losses}` : dashboard.loading ? "…" : `${fallbackWins} / ${fallbackLosses}`, lbl: "V / D", hint: connected ? "FFBB" : "MyBasket" },
+    { ic: "star", val: connected ? (ffbb.pointsForAverage === null ? "—" : ffbb.pointsForAverage.toFixed(1).replace(".", ",")) : Number(fallbackFor || 0).toFixed(1).replace(".", ","), lbl: "Pts marqués", hint: "Moy. / match" },
+    { ic: "bars", val: connected ? (ffbb.pointsAgainstAverage === null ? "—" : ffbb.pointsAgainstAverage.toFixed(1).replace(".", ",")) : fallbackAgainst === null ? "—" : fallbackAgainst.toFixed(1).replace(".", ","), lbl: "Pts encaissés", hint: "Moy. / match" },
+    { ic: "cal", val: connected ? ffbb.nextMatch : dash, lbl: "Prochain match", hint: connected ? "FFBB" : "FFBB non connecté" },
   ] as const;
 }
 
@@ -807,8 +917,9 @@ export default function EquipeDetailPage({
   const couleurs = team.couleurs?.length
     ? team.couleurs
     : ["#7a1228", "#e0a82e"];
-  const KPIS = computeLinkedKpis(team, dashboard);
   const linkedStatsTeamId = dashboard.resolvedTeamId || teamId;
+  const ffbbBanner = useFfbbBannerSummary(linkedStatsTeamId);
+  const KPIS = computeLinkedKpis(team, dashboard, ffbbBanner);
 
   // Google Drive doit toujours recevoir l'identifiant Supabase réel de l'équipe.
   // Certaines équipes historiques gardent un id local dans la fiche tandis que
@@ -957,7 +1068,7 @@ export default function EquipeDetailPage({
         {/* ---------- KPI ROW : toujours visible sur tous les onglets ---------- */}
         <section className="tl-kpi-row linked-kpis">
           {KPIS.map((kpi) => (
-            <div key={kpi.lbl} className="tl-kpi">
+            <div key={kpi.lbl} className={`tl-kpi ${kpi.lbl === "Prochain match" ? "tl-kpi-next" : ""}`}>
               <div className="ic">
                 <Ic d={ICONS[kpi.ic]} size={22} />
               </div>
@@ -1504,6 +1615,13 @@ export default function EquipeDetailPage({
           padding-top: 0.8rem;
           padding-bottom: 0.8rem;
           border-radius: 0 0 24px 24px;
+        }
+
+        .linked-kpis .tl-kpi-next .val {
+          font-size: 1rem;
+          line-height: 1.15;
+          white-space: normal;
+          padding: 0 0.25rem;
         }
 
         .linked-kpis .tl-kpi small {
