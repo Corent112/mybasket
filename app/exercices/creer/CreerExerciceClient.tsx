@@ -460,11 +460,8 @@ export default function CreerExerciceClient() {
     .filter((item) => !!item.src);
 
   const openDraw = async (index?: number) => {
-    if (!ex.title.trim()) {
-      flash("Ajoute un titre avant d’ouvrir la plaquette");
-      return;
-    }
-
+    // Autoriser DESSIN dès le début de la création : le brouillon est conservé
+    // et restauré au retour, même si le titre n’est pas encore renseigné.
     if (!exerciseStorageId) {
       flash("Chargement de l’exercice en cours, réessaie dans une seconde");
       return;

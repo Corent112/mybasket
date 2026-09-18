@@ -159,6 +159,7 @@ export default function SystemesClient() {
   const draftKey = editId ? `${DRAFT_KEY}_${editId}` : DRAFT_KEY;
 
   const imgInput = useRef<HTMLInputElement | null>(null);
+  const vidInput = useRef<HTMLInputElement | null>(null);
   const toastT = useRef<number | null>(null);
 
   const [systeme, setSysteme] = useState<Systeme>(blank());
@@ -403,11 +404,8 @@ export default function SystemesClient() {
     .filter((item) => !!item.src);
 
   const openDraw = async (index?: number) => {
-    if (!systeme.title.trim()) {
-      flash("Ajoute un titre avant d’ouvrir la plaquette");
-      return;
-    }
-
+    // Le dessin doit rester accessible même avant d’avoir renseigné le titre.
+    // Le brouillon est conservé et sera restauré au retour de DESSIN.
     if (!systemStorageId) {
       flash("Chargement du système en cours, réessaie dans une seconde");
       return;
@@ -563,6 +561,26 @@ export default function SystemesClient() {
 
     return data.publicUrl;
   }
+
+  const onVideos = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = (event.target.files || [])[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = () =>
+      setSysteme((current) => ({
+        ...current,
+        videos: [reader.result as string],
+      }));
+    reader.readAsDataURL(file);
+    event.target.value = "";
+  };
+
+  const removeVideo = () =>
+    setSysteme((current) => ({
+      ...current,
+      videos: [],
+    }));
 
   async function uploadBase64Video(base64: string, folder = "videos") {
     if (!base64.startsWith("data:video")) return base64;
@@ -851,13 +869,23 @@ export default function SystemesClient() {
 
           <div className="cs-animation-source">
             <div className="cs-animation-icon">▶</div>
-            <div>
-              <b>Animation liée au dessin</b>
+            <div style={{ flex: 1 }}>
+              <b>Animation liée au dessin ou vidéo</b>
               <p>
-                Aucune vidéo n’est à importer depuis ton ordinateur. Les phases,
-                trajectoires et timings enregistrés dans DESSIN constituent la
-                source de l’animation du système et seront utilisés par le Playbook.
+                L’animation créée dans DESSIN reste disponible. Tu peux aussi ajouter
+                une vidéo au système depuis ton ordinateur.
               </p>
+              {systeme.videos[0] ? (
+                <div className="cs-video">
+                  <video src={systeme.videos[0]} controls />
+                  <button type="button" className="rm" onClick={removeVideo}>✕ Retirer la vidéo</button>
+                </div>
+              ) : (
+                <button type="button" className="cs-addimg" onClick={() => vidInput.current?.click()}>
+                  🎬 Ajouter une vidéo
+                </button>
+              )}
+              <input ref={vidInput} type="file" accept="video/mp4,video/*" hidden onChange={onVideos} />
             </div>
           </div>
 
