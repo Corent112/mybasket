@@ -2,12 +2,14 @@
 
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
 import {
   deleteSystem,
   listMySystems,
   submitSystemForReview,
   type SystemItem,
 } from "@/lib/systems";
+import { addSystemToPlaybook, type PlaybookCategory } from "@/lib/playbook";
 
 type SortKey = "recent" | "alpha";
 type StatusKey = "all" | "draft" | "submitted" | "approved" | "rejected";
@@ -96,7 +98,17 @@ function getThumbnail(item: SystemItem) {
   return item.schemaImages?.[0] || item.images?.[0] || item.schemaImage || "";
 }
 
+function systemCategoryToPlaybookCategory(value?: string | null): PlaybookCategory {
+  const v = (value || "").toUpperCase();
+  if (v.includes("SLOB")) return "SLOB";
+  if (v.includes("BLOB")) return "BLOB";
+  return "Système demi-terrain";
+}
+
 export default function MesSystemesPage() {
+  const router = useRouter();
+  const [targetPlaybookId, setTargetPlaybookId] = useState("");
+  const [addingId, setAddingId] = useState<string | null>(null);
   const [items, setItems] = useState<SystemItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
@@ -122,6 +134,8 @@ export default function MesSystemesPage() {
 
   useEffect(() => {
     load();
+    const params = new URLSearchParams(window.location.search);
+    setTargetPlaybookId(params.get("addToPlaybook") || "");
   }, []);
 
   function toggleFilter(key: string, value: string) {
@@ -175,6 +189,29 @@ export default function MesSystemesPage() {
       alert("Impossible de supprimer ce système.");
     } finally {
       setDeletingId(null);
+    }
+  }
+
+  async function addPrivateSystemToPlaybook(item: SystemItem) {
+    if (!targetPlaybookId) return;
+    try {
+      setAddingId(item.id);
+      await addSystemToPlaybook({
+        playbook_id: targetPlaybookId,
+        system_id: item.id,
+        title: item.title || "Système sans titre",
+        category: systemCategoryToPlaybookCategory(`${item.type || ""} ${item.categorie || ""}`),
+        description: item.objectif || item.organisation || "",
+        schema_images: item.schemaImages ?? [],
+        schema_data_list: item.schemaDataList ?? [],
+        tags: item.tags ?? [],
+      });
+      router.push(`/mon-compte/playbooks/${targetPlaybookId}`);
+    } catch (error) {
+      console.error("Erreur ajout système privé au playbook :", error);
+      alert("Impossible d'ajouter ce système au playbook.");
+    } finally {
+      setAddingId(null);
     }
   }
 
@@ -256,8 +293,9 @@ export default function MesSystemesPage() {
         <p className="eyebrow">MYBASKET PERSONNEL</p>
         <h1>MES SYSTÈMES</h1>
         <p>
-          Ta bibliothèque personnelle de systèmes. Tes créations restent privées
-          tant que tu ne les proposes pas au CEO pour la bibliothèque MyBasket.
+          {targetPlaybookId
+            ? "Choisis un de tes systèmes pour l’ajouter à ce Playbook."
+            : "Ta bibliothèque personnelle de systèmes. Tes créations restent privées tant que tu ne les proposes pas au CEO pour la bibliothèque MyBasket."}
         </p>
       </section>
 
@@ -388,6 +426,17 @@ export default function MesSystemesPage() {
                       )}
 
                       <div className="actions">
+                        {targetPlaybookId && (
+                          <button
+                            type="button"
+                            className="submit"
+                            disabled={addingId === item.id}
+                            onClick={() => addPrivateSystemToPlaybook(item)}
+                          >
+                            {addingId === item.id ? "Ajout..." : "+ Ajouter au Playbook"}
+                          </button>
+                        )}
+
                         <Link
                           href={`/systemes/creer?id=${item.id}`}
                           className="secondary"

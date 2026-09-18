@@ -2,9 +2,8 @@
 import {useEffect,useMemo,useState} from 'react';
 import {BookOpen,ChevronDown,ChevronRight,Copy,FolderOpen,Maximize2,Minimize2,MoreHorizontal,Plus,Search,Tags,X} from 'lucide-react';
 import {createPlaybook,type Playbook} from '@/lib/playbook';
-import {createPlaybookSeries,createPersonalSystemTag,deletePersonalSystemTag,ensureDefaultPersonalSystemTags,listPersonalSystemTags,type PersonalSystemTag,type PlaybookSeries} from '@/lib/playbook-series';
+import {createPlaybookSeries,createPersonalSystemTag,ensureDefaultPersonalSystemTags,listPersonalSystemTags,type PersonalSystemTag,type PlaybookSeries} from '@/lib/playbook-series';
 import {attachPrivateSystemToPlaybook,createDrawingSeason,detachPrivateSystemFromPlaybook,duplicatePrivateSystem,ensureDrawingSeasons,listDrawingTeams,loadDrawingSystems,renamePrivateSystem,renameSeries,setPrivateSystemTags,type DrawingSeason,type DrawingSystem,type DrawingTeam} from '@/lib/drawing-workspace';
-import {deleteSystem} from '@/lib/systems';
 import './content-navigator.css';
 
 type Props={embedded?:boolean;initialKind?:'exercise'|'system';onPreviewSystem?:(system:DrawingSystem)=>void};
@@ -34,17 +33,17 @@ export default function ContentNavigator({embedded=false,onPreviewSystem}:Props)
  const privatePool=useMemo(()=>systems.filter(s=>!playbookId||!s.playbookIds.includes(playbookId)).filter(s=>!libraryQ||`${s.title} ${(s.tags||[]).join(' ')}`.toLowerCase().includes(libraryQ.toLowerCase())),[systems,playbookId,libraryQ]);
  const libraryFolders=useMemo(()=>{
    const map=new Map<string,DrawingSystem[]>();
-   // Dossier système permanent : tous les systèmes privés créés par l'utilisateur y restent visibles,
-   // même s'ils sont aussi classés dans un dossier/tag personnel.
-   map.set('__my_private_systems__',libraryVisible.filter(s=>(s.visibility||'private')==='private'));
+   // Dossier automatique : tous les systèmes privés de l'utilisateur.
+   // Il ne remplace pas les dossiers/tags personnels : c'est le point d'entrée permanent.
+   map.set('__my_systems__',libraryVisible);
    for(const system of libraryVisible){
      const ownTags=uniq(system.tags||[]);
      const folder=ownTags[0]||'__unclassified__';
      const list=map.get(folder)||[];list.push(system);map.set(folder,list);
    }
-   const ordered=[...map.entries()].filter(([folder,items])=>folder==='__my_private_systems__'||items.length>0).sort(([a],[b])=>{
-     if(a==='__my_private_systems__')return -1;if(b==='__my_private_systems__')return 1;
-     if(a==='__unclassified__')return 1;if(b==='__unclassified__')return -1;return a.localeCompare(b,'fr');
+   const ordered=[...map.entries()].sort(([a],[b])=>{
+     if(a==='__my_systems__')return -1;if(b==='__my_systems__')return 1;
+     return a==='__unclassified__'?1:b==='__unclassified__'?-1:a.localeCompare(b,'fr');
    });
    return ordered;
  },[libraryVisible]);
@@ -69,28 +68,17 @@ export default function ContentNavigator({embedded=false,onPreviewSystem}:Props)
    // Toute sauvegarde depuis DESSIN créera une nouvelle fiche privée et ne modifiera jamais la source.
    localStorage.setItem('mybasket_drawing_flow','library-system-copy');
    localStorage.setItem('mybasket_drawing_source_system_id',id);
-   if(system){
-     // On ne stocke que les informations de fiche : les schémas modifiés viennent de la Plaquette.
-     localStorage.setItem('mybasket_drawing_source_system_meta',JSON.stringify({
-       title:system.title||'',objectif:system.objectif||'',organisation:system.organisation||'',
-       deroulement:system.deroulement||'',consignes:system.consignes||'',variantes:system.variantes||'',
-       famille:system.famille||'Offensif',categorie:system.categorie||'U18',type:system.type||'Homme à Homme demi terrain',
-       tempsForts:Array.isArray(system.tempsForts)?system.tempsForts:[],tags:Array.isArray(system.tags)?system.tags:[],
-       originalSystemId:system.id
-     }));
-   }
 
    // Dans DESSIN on ne navigue jamais : on transmet directement le système
    // déjà chargé par la bibliothèque. PlaquetteClient peut donc l'afficher
    // immédiatement, sans refaire une lecture Supabase ni changer de page.
-   if (system && onPreviewSystem) {
+   if(system&&onPreviewSystem){
      onPreviewSystem(system);
-     return;
+   }else{
+     window.dispatchEvent(new CustomEvent('mybasket:preview-system',{
+       detail:{systemId:id,system:system||null}
+     }));
    }
-   // Fallback pour les autres écrans qui embarquent le navigateur.
-   window.dispatchEvent(new CustomEvent('mybasket:preview-system',{
-     detail:{systemId:id,system:system||null}
-   }));
   }
  function toggleLibraryFolder(id:string){setOpenLibraryFolders(v=>{const n=new Set(v);n.has(id)?n.delete(id):n.add(id);return n})}
  function toggle(id:string){setOpenSeries(v=>{const n=new Set(v);n.has(id)?n.delete(id):n.add(id);return n})}
@@ -118,10 +106,8 @@ export default function ContentNavigator({embedded=false,onPreviewSystem}:Props)
  async function removeFromPlaybook(s:DrawingSystem){if(!playbookId)return;setBusy(true);try{await detachPrivateSystemFromPlaybook(s,playbookId);await load();setSelected('');flash('Système retiré du Playbook, conservé dans la bibliothèque privée')}catch(e:any){alert(e?.message||'Retrait impossible')}finally{setBusy(false)}}
  async function renameSystem(s:DrawingSystem){const name=prompt('Nouveau nom du système ?',s.title);if(!name?.trim())return;setBusy(true);try{await renamePrivateSystem(s.id,name);await load()}catch(e:any){alert(e?.message||'Renommage impossible')}finally{setBusy(false)}}
  async function editSystemTags(s:DrawingSystem){const current=uniq([...(s.tags||[]),...s.inheritedTags]);const value=prompt('Tags du système (séparés par des virgules)',current.join(', '));if(value===null)return;const values=uniq(value.split(',').map(x=>x.trim()));setBusy(true);try{for(const x of values)await createPersonalSystemTag(x);await setPrivateSystemTags(s.id,values);await load();setTags(await listPersonalSystemTags())}catch(e:any){alert(e?.message||'Tags impossibles à enregistrer')}finally{setBusy(false)}}
- async function removeSystemPermanently(s:DrawingSystem){if(!confirm(`Supprimer définitivement « ${s.title} » ?\n\nCette action supprimera la fiche système de tes systèmes. Les dessins déjà ouverts sur le terrain restent affichés tant que tu ne changes pas de système.`))return;setBusy(true);try{await deleteSystem(s.id);await load();if(selected===s.id)setSelected('');setActionId('');flash('Système supprimé')}catch(e:any){alert(e?.message||'Suppression impossible')}finally{setBusy(false)}}
- async function removeFolder(folder:string){if(folder==='__unclassified__'||folder==='__my_private_systems__')return;if(!confirm(`Supprimer le dossier « ${folder} » ?\n\nLes systèmes seront conservés dans Mes systèmes privés.`))return;setBusy(true);try{await deletePersonalSystemTag(folder);await load();setTags(await listPersonalSystemTags());setOpenLibraryFolders(v=>{const n=new Set(v);n.delete(folder);return n});flash('Dossier supprimé, systèmes conservés')}catch(e:any){alert(e?.message||'Suppression du dossier impossible')}finally{setBusy(false)}}
  async function editSeries(sr:PlaybookSeries){const name=prompt('Nom de la série ?',sr.name);if(!name?.trim())return;setBusy(true);try{await renameSeries(sr.id,name);await load()}catch(e:any){alert(e?.message||'Renommage impossible')}finally{setBusy(false)}}
- function systemRow(s:DrawingSystem,compact=false){const opened=actionId===s.id;return <div key={s.id} className='cn-system-wrap'><article className={`cn-system ${selected===s.id?'selected':''} ${compact?'compact':''}`} draggable onDragStart={e=>{e.dataTransfer.setData('text/mybasket-system',s.id);e.dataTransfer.effectAllowed='move'}} onDragEnd={()=>setDragTarget('')} onClick={()=>previewSystem(s.id)}><div className='thumb'>{s.schemaImage?<img src={s.schemaImage} alt=''/>:'🏀'}</div><div className='meta'><b>{s.title}</b><small>{uniq([...(s.tags||[]),...s.inheritedTags]).slice(0,3).join(' · ')||'Non classé'}</small></div><button className='more' onClick={e=>{e.stopPropagation();setActionId(opened?'':s.id)}}><MoreHorizontal size={14}/></button></article>{opened&&<div className='cn44-menu'><button onClick={()=>previewSystem(s.id)}>Afficher sur le terrain</button><button onClick={()=>void doDuplicate(s.id)}>Dupliquer et modifier</button><button onClick={()=>void renameSystem(s)}>Renommer</button><button onClick={()=>void editSystemTags(s)}>Modifier les tags</button>{view==='library'&&<button onClick={()=>openAddToPlaybook(s.id)}>+ Ajouter à un Playbook</button>}{playbookId&&s.playbookIds.includes(playbookId)&&<button className='danger' onClick={()=>void removeFromPlaybook(s)}>Retirer du Playbook</button>}<button className='danger' onClick={()=>void removeSystemPermanently(s)}>Supprimer le système</button></div>}</div>}
+ function systemRow(s:DrawingSystem,compact=false){const opened=actionId===s.id;return <div key={s.id} className='cn-system-wrap'><article className={`cn-system ${selected===s.id?'selected':''} ${compact?'compact':''}`} draggable onDragStart={e=>{e.dataTransfer.setData('text/mybasket-system',s.id);e.dataTransfer.effectAllowed='move'}} onDragEnd={()=>setDragTarget('')} onClick={()=>previewSystem(s.id)}><div className='thumb'>{s.schemaImage?<img src={s.schemaImage} alt=''/>:'🏀'}</div><div className='meta'><b>{s.title}</b><small>{uniq([...(s.tags||[]),...s.inheritedTags]).slice(0,3).join(' · ')||'Non classé'}</small></div><button className='more' onClick={e=>{e.stopPropagation();setActionId(opened?'':s.id)}}><MoreHorizontal size={14}/></button></article>{opened&&<div className='cn44-menu'><button onClick={()=>previewSystem(s.id)}>Afficher sur le terrain</button><button onClick={()=>void doDuplicate(s.id)}>Dupliquer et modifier</button><button onClick={()=>void renameSystem(s)}>Renommer</button><button onClick={()=>void editSystemTags(s)}>Modifier les tags</button>{view==='library'&&<button onClick={()=>openAddToPlaybook(s.id)}>+ Ajouter à un Playbook</button>}{playbookId&&s.playbookIds.includes(playbookId)&&<button className='danger' onClick={()=>void removeFromPlaybook(s)}>Retirer du Playbook</button>}</div>}</div>}
  return <aside className={`content-nav-v46 ${embedded?'embedded':''} ${busy?'busy':''} ${expanded?'expanded':''}`}>
   {toast&&<div className='cn46-toast'>{toast}</div>}
   <div className='cn46-head'><div><BookOpen size={16}/><b>DESSIN</b></div><button onClick={()=>setExpanded(v=>!v)} title={expanded?'Réduire':'Agrandir'}>{expanded?<Minimize2 size={15}/>:<Maximize2 size={15}/>}</button></div>
@@ -135,7 +121,7 @@ export default function ContentNavigator({embedded=false,onPreviewSystem}:Props)
     {playbookId&&<div className='cn46-destinations'><b>DESTINATION : {activePlaybook?.title}</b><div className={`cn46-dest ${dragTarget==='playbook'?'drag':''}`} onDragEnter={()=>setDragTarget('playbook')} onDragOver={e=>e.preventDefault()} onDrop={e=>{e.preventDefault();void dropOnPlaybook(e.dataTransfer.getData('text/mybasket-system'))}}>+ Playbook</div>{activeSeries.map(sr=><div key={sr.id} className={`cn46-dest ${dragTarget===sr.id?'drag':''}`} onDragEnter={()=>setDragTarget(sr.id)} onDragOver={e=>e.preventDefault()} onDrop={e=>{e.preventDefault();void dropOnSeries(e.dataTransfer.getData('text/mybasket-system'),sr)}}>↳ {sr.name}</div>)}</div>}
     <div className='cn44-search'><Search size={14}/><input value={libraryQ} onChange={e=>setLibraryQ(e.target.value)} placeholder='Rechercher dans mes systèmes…'/></div>
     <div className='cn50-library-title'><div><b>MES DOSSIERS</b><small>{libraryVisible.length} système{libraryVisible.length>1?'s':''}</small></div><button onClick={()=>openCreate('tag')} title='Nouveau dossier'><Plus size={14}/> Dossier</button></div>
-    <div className='cn50-folder-list'>{libraryFolders.length?libraryFolders.map(([folder,items])=>{const isOpen=openLibraryFolders.has(folder)||!!libraryQ;const label=folder==='__my_private_systems__'?'Mes systèmes privés':folder==='__unclassified__'?'Non classés':folder;const canDeleteFolder=folder!=='__unclassified__'&&folder!=='__my_private_systems__';return <div className='cn50-folder' key={folder}><div style={{display:'flex',alignItems:'center'}}><button className='cn50-folder-head' style={{flex:1}} onClick={()=>toggleLibraryFolder(folder)}>{isOpen?<ChevronDown size={14}/>:<ChevronRight size={14}/>}<FolderOpen size={15}/><b>{label}</b><span>{items.length}</span></button>{canDeleteFolder&&<button className='danger' title='Supprimer le dossier' style={{marginRight:6,padding:'3px 7px'}} onClick={()=>void removeFolder(folder)}>×</button>}</div>{isOpen&&<div className='cn50-folder-children'>{items.map(s=>systemRow(s,true))}</div>}</div>}):<div className='cn50-empty'>Aucun système dans cette bibliothèque.</div>}</div>
+    <div className='cn50-folder-list'>{libraryFolders.length?libraryFolders.map(([folder,items])=>{const isOpen=openLibraryFolders.has(folder)||!!libraryQ;const label=folder==='__my_systems__'?'Mes systèmes':folder==='__unclassified__'?'Non classés':folder;return <div className='cn50-folder' key={folder}><button className='cn50-folder-head' onClick={()=>toggleLibraryFolder(folder)}>{isOpen?<ChevronDown size={14}/>:<ChevronRight size={14}/>}<FolderOpen size={15}/><b>{label}</b><span>{items.length}</span></button>{isOpen&&<div className='cn50-folder-children'>{items.map(s=>systemRow(s,true))}</div>}</div>}):<div className='cn50-empty'>Aucun système dans cette bibliothèque.</div>}</div>
     {selected&&libraryVisible.some(s=>s.id===selected)&&<button className='cn49-add-playbook' onClick={()=>openAddToPlaybook(selected)}><Plus size={14}/> Ajouter à un Playbook</button>}
    </>:!playbookId?<div className='cn44-empty'><FolderOpen size={26}/><b>Reprends un Playbook</b><span>Choisis un Playbook existant ou crée-en un nouveau. Tes systèmes privés restent dans l’onglet Bibliothèque.</span><button onClick={()=>openCreate('playbook')}><Plus size={14}/> Nouveau Playbook</button></div>:<>
     <div className='cn46-context'><div><b>{activePlaybook?.title}</b><small>{season||activePlaybook?.season}</small></div><button onClick={()=>setView('library')}>Bibliothèque</button></div>

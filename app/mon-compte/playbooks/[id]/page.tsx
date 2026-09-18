@@ -47,6 +47,7 @@ export default function PlaybookDetailPage() {
   const [notes, setNotes] = useState("");
   const [loading, setLoading] = useState(true);
   const [shareOpen, setShareOpen] = useState(false);
+  const [addSourceOpen, setAddSourceOpen] = useState(false);
   const [copied, setCopied] = useState(false);
   // §24 · vue courante : composition des systèmes ou rentabilité.
   const [view, setView] = useState<"systemes" | "rentabilite">("systemes");
@@ -173,7 +174,14 @@ export default function PlaybookDetailPage() {
 
   function addSystem() {
     if (!playbook) return;
-    router.push(`/systemes?addToPlaybook=${playbook.id}&category=${activeTab}`);
+    setAddSourceOpen(true);
+  }
+
+  function chooseSystemSource(source: "public" | "private") {
+    if (!playbook) return;
+    setAddSourceOpen(false);
+    const base = source === "public" ? "/systemes" : "/mon-compte/systemes";
+    router.push(`${base}?addToPlaybook=${playbook.id}&category=${encodeURIComponent(activeTab)}`);
   }
 
   function openSystem(system: PlaybookSystem) {
@@ -486,6 +494,26 @@ export default function PlaybookDetailPage() {
           </section>
         </aside>
       </div>
+
+      {addSourceOpen && (
+        <div className="pb-modal-backdrop" onClick={() => setAddSourceOpen(false)}>
+          <div className="pb-modal" onClick={(event) => event.stopPropagation()}>
+            <button type="button" className="pb-modal-close" onClick={() => setAddSourceOpen(false)}>×</button>
+            <h2>Ajouter un système</h2>
+            <p>Choisis la bibliothèque dans laquelle tu veux chercher.</p>
+            <div className="pb-share-grid">
+              <button type="button" onClick={() => chooseSystemSource("public")}>
+                <strong>Bibliothèque publique</strong>
+                <span>Systèmes MyBasket disponibles pour tous.</span>
+              </button>
+              <button type="button" onClick={() => chooseSystemSource("private")}>
+                <strong>Mes systèmes</strong>
+                <span>Ta bibliothèque privée et tous les systèmes que tu as créés.</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {shareOpen && (
         <div className="pb-modal-backdrop" onClick={() => setShareOpen(false)}>

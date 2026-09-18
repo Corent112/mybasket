@@ -809,18 +809,11 @@ const isPartnerTeam = (team: Team) => {
     type.includes("partenaire") ||
     Boolean(raw.partner_institution_id ?? raw.partnerInstitutionId ?? metadata.partner_institution_id);
 
-  if (explicitPartner) return true;
-
-  // Une équipe créée pour un partenaire mais dont le coach principal reste à inviter
-  // ne doit pas être rangée parmi "Mes équipes".
-  const coachName = getTeamCoachName(team);
-  const hasAssignedCoach =
-    !!coachName &&
-    coachName !== "Non renseigné" &&
-    !coachName.toLowerCase().includes("à inviter") &&
-    !coachName.toLowerCase().includes("a inviter");
-
-  return !team.isShared && !isScoutTeam(team) && !hasAssignedCoach;
+  // IMPORTANT : l'absence de coach n'est jamais un critère "partenaire".
+  // U7/U9 et toute autre équipe personnelle restent dans Mes équipes, même si
+  // le staff est incomplet ou si le coach principal est stocké dans un autre champ.
+  // Une équipe partenaire doit toujours porter un marqueur institutionnel explicite.
+  return explicitPartner;
 };
 
 const localPartnerTeams = teams.filter((team) => isPartnerTeam(team));
