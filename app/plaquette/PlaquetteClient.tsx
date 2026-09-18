@@ -561,36 +561,65 @@ useEffect(() => {
       const plaquetteType = params.get("type") || "exercise";
 
       const editIndexRaw = localStorage.getItem(EDIT_INDEX_KEY);
-      const editIndex =
+      const parsedEditIndex =
         editIndexRaw !== null && editIndexRaw !== ""
           ? Number(editIndexRaw)
           : null;
-
-      if (editIndex === null || Number.isNaN(editIndex)) {
-        return;
-      }
+      const editIndex =
+        parsedEditIndex !== null && Number.isFinite(parsedEditIndex)
+          ? parsedEditIndex
+          : null;
 
       let schemaData: any = null;
 
       if (plaquetteType === "systeme" || previewSystemId) {
-  const systemeId = previewSystemId || localStorage.getItem("mybasket_edit_systeme_id");
+        const systemeId =
+          previewSystemId || localStorage.getItem("mybasket_edit_systeme_id");
 
-  if (systemeId) {
-    const systeme = await getSystem(systemeId);
-    schemaData = (systeme as any)?.schemaDataList?.[editIndex];
-  }
-} else {
-  const exerciseId = localStorage.getItem(EDIT_EXERCISE_ID_KEY);
+        if (systemeId) {
+          const systeme = await getSystem(systemeId);
+          const schemaDataList = Array.isArray((systeme as any)?.schemaDataList)
+            ? (systeme as any).schemaDataList
+            : [];
 
-  if (exerciseId) {
-    const exercise = await getExercise(exerciseId);
-    schemaData = (exercise as any)?.schemaDataList?.[editIndex];
-  }
-}
+          // Un clic depuis la Bibliothèque n'a volontairement pas d'EDIT_INDEX_KEY.
+          // Dans ce cas on ouvre le système complet depuis sa première fiche de schéma
+          // (chaque fiche contient déjà toutes les phases) et on démarre à la phase 1.
+          const sourceIndex = previewSystemId
+            ? 0
+            : editIndex !== null
+              ? editIndex
+              : 0;
+
+          schemaData = schemaDataList[sourceIndex] || schemaDataList[0] || null;
+
+          if (schemaData && previewSystemId) {
+            schemaData = { ...schemaData, current: 0 };
+          }
+        }
+      } else {
+        // L'édition d'un schéma d'exercice conserve son comportement historique :
+        // elle nécessite un index explicite.
+        if (editIndex === null) return;
+
+        const exerciseId = localStorage.getItem(EDIT_EXERCISE_ID_KEY);
+
+        if (exerciseId) {
+          const exercise = await getExercise(exerciseId);
+          schemaData = (exercise as any)?.schemaDataList?.[editIndex];
+        }
+      }
 
       if (!schemaData) {
         return;
       }
+
+      // Un système ouvert depuis la bibliothèque remplace réellement le contenu
+      // courant de Dessin : aucune sélection / pile undo de l'ancien play ne fuit.
+      setSelection([]);
+      selectionRef.current = [];
+      setPast([]);
+      setFuture([]);
 
       if (schemaData.title) {
         setTitle(schemaData.title);
