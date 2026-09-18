@@ -594,7 +594,13 @@ useEffect(() => {
           schemaData = schemaDataList[sourceIndex] || schemaDataList[0] || null;
 
           if (schemaData && previewSystemId) {
-            schemaData = { ...schemaData, current: 0 };
+            // Depuis la bibliothèque, on charge le système dans l’éditeur courant
+            // sans navigation vers la fiche /systemes/creer.
+            schemaData = {
+              ...schemaData,
+              title: (systeme as any)?.title || schemaData.title,
+              current: 0,
+            };
           }
         }
       } else {

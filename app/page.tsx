@@ -46,10 +46,22 @@ const formatDate = (value?: string | number) => {
 };
 
 const getLatestImage = (item: Exercise) => {
+  const schemaDataList = Array.isArray((item as any).schemaDataList)
+    ? (item as any).schemaDataList
+    : Array.isArray((item as any).schema_data_list)
+    ? (item as any).schema_data_list
+    : [];
+
+  const schemaFromData = schemaDataList.find((schema: any) =>
+    typeof schema?.imageData === "string" && schema.imageData.trim()
+  )?.imageData;
+
+  // Les cartes « Derniers ajouts » représentent le contenu basket :
+  // uniquement un schéma, jamais une photo d’illustration de la fiche.
   return (
-    item.schemaImages?.[0] ||
-    item.diagrams?.[0]?.imageUrl ||
-    item.images?.[0] ||
+    item.schemaImages?.find(Boolean) ||
+    schemaFromData ||
+    item.diagrams?.find((diagram: any) => diagram?.imageUrl)?.imageUrl ||
     "/images/home-plaquette.png"
   );
 };

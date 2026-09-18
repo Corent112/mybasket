@@ -452,6 +452,13 @@ export default function CreerExerciceClient() {
     return () => window.clearTimeout(timer);
   }, [draftKey, ex]);
 
+  const drawingPreviews = syncSchemas(ex.schemaImages, ex.schemaDataList)
+    .map((schema: any, index: number) => ({
+      index,
+      src: ex.schemaImages[index] || schema?.imageData || schema?.phaseImages?.[schema?.current ?? 0] || schema?.phaseImages?.[0] || "",
+    }))
+    .filter((item) => !!item.src);
+
   const openDraw = async (index?: number) => {
     if (!ex.title.trim()) {
       flash("Ajoute un titre avant d’ouvrir la plaquette");
@@ -893,7 +900,7 @@ export default function CreerExerciceClient() {
           </label>
 
           <div className="ce-schemas">
-            {ex.schemaImages.map((src, index) => (
+            {drawingPreviews.map(({ src, index }) => (
               <div key={`${src}-${index}`} className="ce-schema">
                 <img src={src} alt={`Schéma ${index + 1}`} />
 

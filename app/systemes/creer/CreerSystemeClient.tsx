@@ -395,6 +395,13 @@ export default function SystemesClient() {
     load();
   }, [editId, isNew, draftKey]);
 
+  const drawingPreviews = syncSchemas(systeme.schemaImages, systeme.schemaDataList)
+    .map((schema: any, index: number) => ({
+      index,
+      src: systeme.schemaImages[index] || schema?.imageData || schema?.phaseImages?.[schema?.current ?? 0] || schema?.phaseImages?.[0] || "",
+    }))
+    .filter((item) => !!item.src);
+
   const openDraw = async (index?: number) => {
     if (!systeme.title.trim()) {
       flash("Ajoute un titre avant d’ouvrir la plaquette");
@@ -808,11 +815,11 @@ export default function SystemesClient() {
 
           <label className="cs-lab">
             Schémas du système{" "}
-            <span className="cs-soft">({systeme.schemaImages.length})</span>
+            <span className="cs-soft">({drawingPreviews.length})</span>
           </label>
 
           <div className="cs-schemas">
-            {systeme.schemaImages.map((src, index) => (
+            {drawingPreviews.map(({ src, index }) => (
               <div className="cs-schema" key={`${src}-${index}`}>
                 <img src={src} alt={`Schéma ${index + 1}`} />
 
@@ -831,7 +838,7 @@ export default function SystemesClient() {
               </div>
             ))}
 
-            {systeme.schemaImages.length < 50 && (
+            {drawingPreviews.length < 50 && (
               <button type="button" className="cs-draw" onClick={() => openDraw()}>
                 <span>✏️</span>
                 <b>Ajouter un schéma</b>

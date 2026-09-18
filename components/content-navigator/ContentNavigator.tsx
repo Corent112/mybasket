@@ -51,7 +51,16 @@ export default function ContentNavigator({embedded=false}:Props){
    if(modal==='series'){if(!playbookId)throw new Error('Choisis d’abord un Playbook');for(const value of createTags)await createPersonalSystemTag(value);const row=await createPlaybookSeries(playbookId,name,createTags);await load();setOpenSeries(v=>new Set(v).add(row.id));flash('Série créée')}
    setModal(null);setCreateName('');setCreateTags([]);
  }catch(e:any){alert(e?.message||'Création impossible')}finally{setBusy(false)}}
- function previewSystem(id:string){setSelected(id);setActionId('');localStorage.setItem('mybasket_edit_systeme_id',id);localStorage.setItem('mybasket_edit_system_id',id);localStorage.setItem('mybasket_current_system_id',id);localStorage.setItem('mybasket_edit_schema_index','0');window.dispatchEvent(new CustomEvent('mybasket:preview-system',{detail:{systemId:id}}));}
+ function previewSystem(id:string){
+   setSelected(id);setActionId('');
+   localStorage.setItem('mybasket_edit_systeme_id',id);
+   localStorage.setItem('mybasket_edit_system_id',id);
+   localStorage.setItem('mybasket_current_system_id',id);
+   // Un clic dans la bibliothèque est un aperçu dans Dessin, pas une navigation
+   // vers la fiche de création/modification. PlaquetteClient charge le système.
+   localStorage.removeItem('mybasket_edit_schema_index');
+   window.dispatchEvent(new CustomEvent('mybasket:preview-system',{detail:{systemId:id}}));
+  }
  function toggleLibraryFolder(id:string){setOpenLibraryFolders(v=>{const n=new Set(v);n.has(id)?n.delete(id):n.add(id);return n})}
  function toggle(id:string){setOpenSeries(v=>{const n=new Set(v);n.has(id)?n.delete(id):n.add(id);return n})}
  async function doDuplicate(id:string){setBusy(true);try{const source=systems.find(s=>s.id===id);const sr=source?.seriesIds.find(x=>activeSeries.some(a=>a.id===x))||null;const newId=await duplicatePrivateSystem(id,playbookId||null,sr);await load();setSelected(newId);flash('Copie créée dans la bibliothèque privée');previewSystem(newId)}catch(e:any){alert(e?.message||'Duplication impossible')}finally{setBusy(false)}}
