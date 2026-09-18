@@ -406,10 +406,18 @@ export default function SystemesClient() {
   const openDraw = async (index?: number) => {
     // Le dessin doit rester accessible même avant d’avoir renseigné le titre.
     // Le brouillon est conservé et sera restauré au retour de DESSIN.
-    if (!systemStorageId) {
-      flash("Chargement du système en cours, réessaie dans une seconde");
-      return;
-    }
+    // Le bouton DESSIN doit fonctionner dès le premier clic, y compris juste
+    // après l’ouverture d’une nouvelle fiche. On ne dépend donc pas du délai
+    // d’initialisation du state React pour disposer d’un id de stockage.
+    const storageKey = `${draftKey}_storage_id`;
+    const targetStorageId =
+      editId ||
+      systemStorageId ||
+      localStorage.getItem(storageKey) ||
+      crypto.randomUUID();
+
+    if (!localStorage.getItem(storageKey)) localStorage.setItem(storageKey, targetStorageId);
+    if (systemStorageId !== targetStorageId) setSystemStorageId(targetStorageId);
 
     // Poser le contexte de retour AVANT le transfert des gros payloads.
     // C'est la même logique que pour les exercices.
@@ -421,7 +429,7 @@ export default function SystemesClient() {
       localStorage.setItem(RETURN_KEY, "/systemes/creer");
     }
 
-    localStorage.setItem(CURRENT_SYSTEM_ID_KEY, systemStorageId);
+    localStorage.setItem(CURRENT_SYSTEM_ID_KEY, targetStorageId);
 
     try {
       const cleanDataList = syncSchemas(
@@ -870,10 +878,10 @@ export default function SystemesClient() {
           <div className="cs-animation-source">
             <div className="cs-animation-icon">▶</div>
             <div style={{ flex: 1 }}>
-              <b>Animation liée au dessin ou vidéo</b>
+              <b>Vidéo / Animation <span style={{fontWeight:500,opacity:.65}}>(1 max)</span></b>
               <p>
-                L’animation créée dans DESSIN reste disponible. Tu peux aussi ajouter
-                une vidéo au système depuis ton ordinateur.
+                Tu peux ajouter une vidéo au système comme pour un exercice.
+                L’animation générée dans DESSIN reste indépendante et conservée.
               </p>
               {systeme.videos[0] ? (
                 <div className="cs-video">

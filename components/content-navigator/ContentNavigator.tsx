@@ -53,13 +53,18 @@ export default function ContentNavigator({embedded=false}:Props){
  }catch(e:any){alert(e?.message||'Création impossible')}finally{setBusy(false)}}
  function previewSystem(id:string){
    setSelected(id);setActionId('');
+   const system=systems.find(s=>s.id===id);
    localStorage.setItem('mybasket_edit_systeme_id',id);
    localStorage.setItem('mybasket_edit_system_id',id);
    localStorage.setItem('mybasket_current_system_id',id);
-   // Un clic dans la bibliothèque est un aperçu dans Dessin, pas une navigation
-   // vers la fiche de création/modification. PlaquetteClient charge le système.
-   localStorage.removeItem('mybasket_edit_schema_index');
-   window.dispatchEvent(new CustomEvent('mybasket:preview-system',{detail:{systemId:id}}));
+   localStorage.setItem('mybasket_edit_schema_index','0');
+
+   // Dans DESSIN on ne navigue jamais : on transmet directement le système
+   // déjà chargé par la bibliothèque. PlaquetteClient peut donc l'afficher
+   // immédiatement, sans refaire une lecture Supabase ni changer de page.
+   window.dispatchEvent(new CustomEvent('mybasket:preview-system',{
+     detail:{systemId:id,system:system||null}
+   }));
   }
  function toggleLibraryFolder(id:string){setOpenLibraryFolders(v=>{const n=new Set(v);n.has(id)?n.delete(id):n.add(id);return n})}
  function toggle(id:string){setOpenSeries(v=>{const n=new Set(v);n.has(id)?n.delete(id):n.add(id);return n})}

@@ -462,10 +462,17 @@ export default function CreerExerciceClient() {
   const openDraw = async (index?: number) => {
     // Autoriser DESSIN dès le début de la création : le brouillon est conservé
     // et restauré au retour, même si le titre n’est pas encore renseigné.
-    if (!exerciseStorageId) {
-      flash("Chargement de l’exercice en cours, réessaie dans une seconde");
-      return;
-    }
+    // Le bouton DESSIN doit fonctionner dès le premier clic, même si le state
+    // de l'id temporaire n'a pas encore fini de s'initialiser.
+    const storageKey = `${draftKey}_storage_id`;
+    const targetStorageId =
+      editId ||
+      exerciseStorageId ||
+      localStorage.getItem(storageKey) ||
+      crypto.randomUUID();
+
+    if (!localStorage.getItem(storageKey)) localStorage.setItem(storageKey, targetStorageId);
+    if (exerciseStorageId !== targetStorageId) setExerciseStorageId(targetStorageId);
 
     // On pose le contexte de retour en premier : le bouton Insérer ne doit
     // jamais dépendre du stockage d'un gros schéma.
@@ -476,7 +483,7 @@ export default function CreerExerciceClient() {
       localStorage.removeItem(EDIT_EXERCISE_ID_KEY);
       localStorage.setItem(RETURN_KEY, "/exercices/creer");
     }
-    localStorage.setItem("mybasket_current_exercise_id", exerciseStorageId);
+    localStorage.setItem("mybasket_current_exercise_id", targetStorageId);
 
     try {
       const cleanDataList = syncSchemas(ex.schemaImages, ex.schemaDataList);
