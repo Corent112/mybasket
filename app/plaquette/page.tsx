@@ -3919,15 +3919,14 @@ const saveAndInsertToExo = async () => {
 
   try {
     const returnPath = localStorage.getItem(RETURN_KEY) || "";
+    const drawingFlow = localStorage.getItem("mybasket_drawing_flow") || "";
     const fromGamePlan = isGamePlanReturnContext();
     const fromScouting = isScoutingReturnContext();
 
     const isSysteme =
+      drawingFlow === "insert-system-draft" ||
       fromGamePlan || fromScouting ||
-      returnPath.includes("/systemes") ||
-      !!localStorage.getItem("mybasket_current_system_id") ||
-      !!localStorage.getItem("mybasket_edit_system_id") ||
-      !!localStorage.getItem("mybasket_edit_systeme_id");
+      returnPath.includes("/systemes");
 
     const targetId = isSysteme
       ? localStorage.getItem("mybasket_current_system_id") ||
@@ -3957,6 +3956,8 @@ const saveAndInsertToExo = async () => {
     localStorage.removeItem("mybasket_plaquette_load");
     localStorage.removeItem("mybasket_edit_schema_group_id");
     if (!fromScouting) localStorage.removeItem("mybasket_scouting_pending");
+    localStorage.removeItem("mybasket_drawing_flow");
+    localStorage.removeItem("mybasket_drawing_source_system_id");
 
     currentRef.current = previousCurrent;
 
@@ -4031,6 +4032,8 @@ const saveAndGoCreate = async (kind: "systeme" | "exercice") => {
     localStorage.removeItem("mybasket_edit_systeme_id");
     localStorage.removeItem("mybasket_current_system_id");
     if (!fromScouting) localStorage.removeItem("mybasket_scouting_pending");
+    localStorage.removeItem("mybasket_drawing_flow");
+    localStorage.removeItem("mybasket_drawing_source_system_id");
 
     currentRef.current = previousCurrent;
     setSaveOpen(false);

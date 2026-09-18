@@ -403,93 +403,52 @@ export default function SystemesClient() {
     }))
     .filter((item) => !!item.src);
 
-  const openDraw = async (index?: number) => {
-    // Le dessin doit rester accessible même avant d’avoir renseigné le titre.
-    // Le brouillon est conservé et sera restauré au retour de DESSIN.
-    // Le bouton DESSIN doit fonctionner dès le premier clic, y compris juste
-    // après l’ouverture d’une nouvelle fiche. On ne dépend donc pas du délai
-    // d’initialisation du state React pour disposer d’un id de stockage.
+  const openDraw = (index?: number) => {
+    // MODE INSERTION : ouvrir DESSIN ne crée JAMAIS une fiche système.
+    // La fiche n'existera en base qu'au clic sur « Enregistrer » dans ce formulaire.
     const storageKey = `${draftKey}_storage_id`;
     const targetStorageId =
-      editId ||
-      systemStorageId ||
-      localStorage.getItem(storageKey) ||
-      crypto.randomUUID();
+      editId || systemStorageId || localStorage.getItem(storageKey) || crypto.randomUUID();
 
-    if (!localStorage.getItem(storageKey)) localStorage.setItem(storageKey, targetStorageId);
-    if (systemStorageId !== targetStorageId) setSystemStorageId(targetStorageId);
-
-    // Poser le contexte de retour AVANT le transfert des gros payloads.
-    // C'est la même logique que pour les exercices.
-    if (editId) {
-      localStorage.setItem(EDIT_SYSTEM_ID_KEY, editId);
-      localStorage.setItem(RETURN_KEY, `/systemes/creer?id=${editId}`);
-    } else {
-      localStorage.removeItem(EDIT_SYSTEM_ID_KEY);
-      localStorage.setItem(RETURN_KEY, "/systemes/creer");
-    }
-
+    localStorage.setItem(storageKey, targetStorageId);
+    setSystemStorageId(targetStorageId);
+    localStorage.setItem('mybasket_drawing_flow', 'insert-system-draft');
+    localStorage.setItem(RETURN_KEY, editId ? `/systemes/creer?id=${editId}` : '/systemes/creer');
     localStorage.setItem(CURRENT_SYSTEM_ID_KEY, targetStorageId);
+    if (editId) localStorage.setItem(EDIT_SYSTEM_ID_KEY, editId);
+    else localStorage.removeItem(EDIT_SYSTEM_ID_KEY);
 
-    try {
-      const cleanDataList = syncSchemas(
-        systeme.schemaImages,
-        systeme.schemaDataList
-      );
+    const cleanDataList = syncSchemas(systeme.schemaImages, systeme.schemaDataList);
+    // Le brouillon est une sécurité, jamais une condition pour ouvrir DESSIN.
+    void setPlaquetteTransfer(draftKey, { ...systeme, schemaDataList: cleanDataList })
+      .catch((error) => console.warn('Brouillon système avant DESSIN :', error));
 
-      // IndexedDB via plaquette-transfer : évite QuotaExceededError quand
-      // la fiche contient déjà une ou plusieurs images/schémas base64.
-      await setPlaquetteTransfer(draftKey, {
-        ...systeme,
-        schemaDataList: cleanDataList,
-      });
-
-      await removePlaquetteTransfer(LOAD_KEY);
-      await removePlaquetteTransfer(RESULT_KEY);
+    if (typeof index !== 'number') {
+      localStorage.removeItem(EDIT_INDEX_KEY);
       localStorage.removeItem(EDIT_SCHEMA_GROUP_KEY);
-
-      if (typeof index === "number") {
-        localStorage.setItem(EDIT_INDEX_KEY, String(index));
-
-        const schemaData = cleanDataList[index];
-        const schemaImage = systeme.schemaImages[index];
-        const schemaGroupId =
-          schemaData?.schemaGroupId || crypto.randomUUID();
-
-        localStorage.setItem(EDIT_SCHEMA_GROUP_KEY, schemaGroupId);
-
-        const loadPayload = {
-          title: schemaData?.title || `Schéma ${index + 1}`,
-          editIndex: index,
-          schemaGroupId,
-          courtType: schemaData?.courtType || "half",
-          phases: Array.isArray(schemaData?.phases) ? schemaData.phases : [],
-          sheet: schemaData?.sheet ?? null,
-          current:
-            typeof schemaData?.current === "number" ? schemaData.current : 0,
-          imageData: schemaData?.imageData || schemaImage || "",
-          phaseImages: Array.isArray(schemaData?.phaseImages)
-            ? schemaData.phaseImages
-            : schemaImage
-            ? [schemaImage]
-            : [],
-        };
-
-        await setPlaquetteTransfer(LOAD_KEY, loadPayload);
-      } else {
-        localStorage.removeItem(EDIT_INDEX_KEY);
-        localStorage.removeItem(EDIT_SCHEMA_GROUP_KEY);
-      }
-
-      router.push(
-        typeof index === "number"
-          ? "/plaquette?mode=edit&return=systeme"
-          : "/plaquette?mode=new&return=systeme"
-      );
-    } catch (error) {
-      console.error("Ouverture Plaquette système impossible :", error);
-      flash("Erreur avant ouverture de la plaquette");
+      // Navigation immédiate : aucune opération IndexedDB ne peut bloquer le bouton.
+      router.push('/plaquette?mode=new&return=systeme');
+      return;
     }
+
+    const schemaData = cleanDataList[index];
+    const schemaImage = systeme.schemaImages[index];
+    const schemaGroupId = schemaData?.schemaGroupId || crypto.randomUUID();
+    localStorage.setItem(EDIT_INDEX_KEY, String(index));
+    localStorage.setItem(EDIT_SCHEMA_GROUP_KEY, schemaGroupId);
+
+    const loadPayload = {
+      title: schemaData?.title || `Schéma ${index + 1}`, editIndex: index, schemaGroupId,
+      courtType: schemaData?.courtType || 'half',
+      phases: Array.isArray(schemaData?.phases) ? schemaData.phases : [],
+      sheet: schemaData?.sheet ?? null,
+      current: typeof schemaData?.current === 'number' ? schemaData.current : 0,
+      imageData: schemaData?.imageData || schemaImage || '',
+      phaseImages: Array.isArray(schemaData?.phaseImages) ? schemaData.phaseImages : (schemaImage ? [schemaImage] : []),
+    };
+    void setPlaquetteTransfer(LOAD_KEY, loadPayload)
+      .then(() => router.push('/plaquette?mode=edit&return=systeme'))
+      .catch((error) => { console.error(error); flash('Impossible de charger ce schéma'); });
   };
 
   const removeSchema = (index: number) => {

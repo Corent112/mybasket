@@ -459,85 +459,50 @@ export default function CreerExerciceClient() {
     }))
     .filter((item) => !!item.src);
 
-  const openDraw = async (index?: number) => {
-    // Autoriser DESSIN dès le début de la création : le brouillon est conservé
-    // et restauré au retour, même si le titre n’est pas encore renseigné.
-    // Le bouton DESSIN doit fonctionner dès le premier clic, même si le state
-    // de l'id temporaire n'a pas encore fini de s'initialiser.
+  const openDraw = (index?: number) => {
+    // MODE INSERTION : ouvrir DESSIN ne crée JAMAIS un exercice.
+    // L'exercice n'existera en base qu'au clic sur « Enregistrer » dans ce formulaire.
     const storageKey = `${draftKey}_storage_id`;
     const targetStorageId =
-      editId ||
-      exerciseStorageId ||
-      localStorage.getItem(storageKey) ||
-      crypto.randomUUID();
+      editId || exerciseStorageId || localStorage.getItem(storageKey) || crypto.randomUUID();
 
-    if (!localStorage.getItem(storageKey)) localStorage.setItem(storageKey, targetStorageId);
-    if (exerciseStorageId !== targetStorageId) setExerciseStorageId(targetStorageId);
+    localStorage.setItem(storageKey, targetStorageId);
+    setExerciseStorageId(targetStorageId);
+    localStorage.setItem('mybasket_drawing_flow', 'insert-exercise-draft');
+    localStorage.setItem(RETURN_KEY, editId ? `/exercices/creer?id=${editId}` : '/exercices/creer');
+    localStorage.setItem('mybasket_current_exercise_id', targetStorageId);
+    if (editId) localStorage.setItem(EDIT_EXERCISE_ID_KEY, editId);
+    else localStorage.removeItem(EDIT_EXERCISE_ID_KEY);
 
-    // On pose le contexte de retour en premier : le bouton Insérer ne doit
-    // jamais dépendre du stockage d'un gros schéma.
-    if (editId) {
-      localStorage.setItem(EDIT_EXERCISE_ID_KEY, editId);
-      localStorage.setItem(RETURN_KEY, `/exercices/creer?id=${editId}`);
-    } else {
-      localStorage.removeItem(EDIT_EXERCISE_ID_KEY);
-      localStorage.setItem(RETURN_KEY, "/exercices/creer");
-    }
-    localStorage.setItem("mybasket_current_exercise_id", targetStorageId);
+    const cleanDataList = syncSchemas(ex.schemaImages, ex.schemaDataList);
+    void setPlaquetteTransfer(draftKey, { ...ex, schemaDataList: cleanDataList })
+      .catch((error) => console.warn('Brouillon exercice avant DESSIN :', error));
 
-    try {
-      const cleanDataList = syncSchemas(ex.schemaImages, ex.schemaDataList);
-
-      // IndexedDB remplace localStorage pour les payloads volumineux
-      // (images base64, phases, schémas) afin d'éviter QuotaExceededError.
-      await setPlaquetteTransfer(draftKey, {
-        ...ex,
-        schemaDataList: cleanDataList,
-      });
-
-      await removePlaquetteTransfer(LOAD_KEY);
-      await removePlaquetteTransfer(RESULT_KEY);
+    if (typeof index !== 'number') {
+      localStorage.removeItem(EDIT_INDEX_KEY);
       localStorage.removeItem(EDIT_SCHEMA_GROUP_KEY);
-
-      if (typeof index === "number") {
-        localStorage.setItem(EDIT_INDEX_KEY, String(index));
-
-        const schemaData = cleanDataList[index];
-        const schemaImage = ex.schemaImages[index];
-        const schemaGroupId = schemaData?.schemaGroupId || crypto.randomUUID();
-        localStorage.setItem(EDIT_SCHEMA_GROUP_KEY, schemaGroupId);
-
-        const loadPayload = {
-          title: schemaData?.title || `Schéma ${index + 1}`,
-          editIndex: index,
-          schemaGroupId,
-          courtType: schemaData?.courtType || "half",
-          phases: Array.isArray(schemaData?.phases) ? schemaData.phases : [],
-          sheet: schemaData?.sheet ?? null,
-          current: typeof schemaData?.current === "number" ? schemaData.current : 0,
-          imageData: schemaData?.imageData || schemaImage || "",
-          phaseImages: Array.isArray(schemaData?.phaseImages)
-            ? schemaData.phaseImages
-            : schemaImage
-            ? [schemaImage]
-            : [],
-        };
-
-        await setPlaquetteTransfer(LOAD_KEY, loadPayload);
-      } else {
-        localStorage.removeItem(EDIT_INDEX_KEY);
-        localStorage.removeItem(EDIT_SCHEMA_GROUP_KEY);
-      }
-
-      router.push(
-        typeof index === "number"
-          ? "/plaquette?mode=edit&return=exercise"
-          : "/plaquette?mode=new&return=exercise"
-      );
-    } catch (error) {
-      console.error(error);
-      flash("Erreur avant ouverture de la plaquette");
+      router.push('/plaquette?mode=new&return=exercise');
+      return;
     }
+
+    const schemaData = cleanDataList[index];
+    const schemaImage = ex.schemaImages[index];
+    const schemaGroupId = schemaData?.schemaGroupId || crypto.randomUUID();
+    localStorage.setItem(EDIT_INDEX_KEY, String(index));
+    localStorage.setItem(EDIT_SCHEMA_GROUP_KEY, schemaGroupId);
+
+    const loadPayload = {
+      title: schemaData?.title || `Schéma ${index + 1}`, editIndex: index, schemaGroupId,
+      courtType: schemaData?.courtType || 'half',
+      phases: Array.isArray(schemaData?.phases) ? schemaData.phases : [],
+      sheet: schemaData?.sheet ?? null,
+      current: typeof schemaData?.current === 'number' ? schemaData.current : 0,
+      imageData: schemaData?.imageData || schemaImage || '',
+      phaseImages: Array.isArray(schemaData?.phaseImages) ? schemaData.phaseImages : (schemaImage ? [schemaImage] : []),
+    };
+    void setPlaquetteTransfer(LOAD_KEY, loadPayload)
+      .then(() => router.push('/plaquette?mode=edit&return=exercise'))
+      .catch((error) => { console.error(error); flash('Impossible de charger ce schéma'); });
   };
 
   const removeSchema = (index: number) =>
