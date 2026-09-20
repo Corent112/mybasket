@@ -53,12 +53,16 @@ function ExerciseCard({
   isAdding,
   isAdded,
   onAdd,
+  isFavorite,
+  onToggleFavorite,
 }: {
   item: Exercise;
   isConnected: boolean;
   isAdding: boolean;
   isAdded: boolean;
   onAdd: (exercise: Exercise) => void;
+  isFavorite: boolean;
+  onToggleFavorite: (exercise: Exercise) => void;
 }) {
   const thumbnail =
     item.diagrams?.[0]?.imageUrl ||
@@ -69,7 +73,7 @@ function ExerciseCard({
   const detailHref = isConnected ? `/exercices/${item.id}` : "/abonnements";
 
   return (
-    <article className="mb-exercise-card">
+    <article className="mb-exercise-card" style={{position:"relative"}}>{isConnected&&<button type="button" aria-label="Favori" title={isFavorite?"Retirer des favoris":"Ajouter aux favoris"} onClick={()=>onToggleFavorite(item)} style={{position:"absolute",zIndex:4,right:10,top:10,width:38,height:38,borderRadius:"50%",border:"1px solid #d4a24c",background:"white",color:"#d4a24c",fontSize:24,cursor:"pointer"}}>{isFavorite?"★":"☆"}</button>}
       <Link href={detailHref} className="mb-exercise-cover">
         {thumbnail ? (
           <img src={thumbnail} alt={item.title || "Exercice"} />
@@ -136,6 +140,7 @@ export default function ExercicesClient() {
   const [user, setUser] = useState<User | null>(null);
   const [addingExerciseId, setAddingExerciseId] = useState<string | null>(null);
   const [addedIds, setAddedIds] = useState<Set<string>>(new Set());
+  const [favoriteIds, setFavoriteIds] = useState<Set<string>>(new Set());
   const [toast, setToast] = useState<ToastState>(null);
 
   useEffect(() => {
@@ -156,7 +161,10 @@ export default function ExercicesClient() {
             .select("item_id")
             .eq("user_id", currentUser.id)
             .eq("item_type", "exercise");
-(cartRows ?? []).map((row: { item_id: string | null }) => String(row.item_id || ""))        }
+          const { data: favoriteRows } = await supabase.from("favorites").select("item_id").eq("user_id", currentUser.id).eq("item_type", "exercise");
+          setFavoriteIds(new Set((favoriteRows ?? []).map((row: {item_id:string|null}) => String(row.item_id || "")).filter(Boolean)));
+setAddedIds(new Set((cartRows ?? []).map((row: { item_id: string | null }) => String(row.item_id || "")).filter(Boolean)));
+        }
       } catch (error) {
         console.error("Erreur chargement exercices :", error);
         setItems([]);
@@ -260,6 +268,15 @@ export default function ExercicesClient() {
     }
   }
 
+  async function toggleFavorite(exercise: Exercise) {
+    if (!user) return;
+    const isFavorite = favoriteIds.has(exercise.id);
+    if (isFavorite) { await supabase.from("favorites").delete().eq("user_id", user.id).eq("item_type", "exercise").eq("item_id", exercise.id); setFavoriteIds(prev=>{const n=new Set(prev);n.delete(exercise.id);return n;}); return; }
+    const imageUrl=exercise.diagrams?.[0]?.imageUrl||exercise.schemaImages?.[0]||exercise.images?.[0]||"";
+    const {error}=await supabase.from("favorites").upsert({user_id:user.id,item_type:"exercise",item_id:exercise.id,title:exercise.title||"Exercice sans titre",image_url:imageUrl},{onConflict:"user_id,item_type,item_id"});
+    if(error){alert(error.message);return;} setFavoriteIds(prev=>new Set(prev).add(exercise.id));
+  }
+
   return (
     <main>
       <div className="page-banner">
@@ -348,6 +365,8 @@ export default function ExercicesClient() {
                     isAdding={addingExerciseId === item.id}
                     isAdded={addedIds.has(item.id)}
                     onAdd={handleAdd}
+                    isFavorite={favoriteIds.has(item.id)}
+                    onToggleFavorite={toggleFavorite}
                   />
                 ))}
               </div>

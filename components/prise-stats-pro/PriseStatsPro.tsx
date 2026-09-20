@@ -427,6 +427,8 @@ function ptsOf(a: Draft) {
   if (a.actionType === 'faute-provoquee') {
     if (a.specialCase === '2pts+1lf') return 2 + (a.ftMade || 0);
     if (a.specialCase === '3pts+1lf') return 3 + (a.ftMade || 0);
+    if (a.specialCase === 'unsportsmanlike-2pts+1lf') return 2 + (a.ftMade || 0);
+    if (a.specialCase === 'unsportsmanlike-3pts+1lf') return 3 + (a.ftMade || 0);
   }
 
   let p = 0;
@@ -4962,7 +4964,12 @@ export default function PriseStatsProPage() {
     }
 
     let next: Ctx, inbound = false;
-    if (a.actionType === 'faute-technique') {
+    if (a.specialCase === 'unsportsmanlike' || a.specialCase === 'unsportsmanlike-2pts+1lf' || a.specialCase === 'unsportsmanlike-3pts+1lf') {
+      // Faute antisportive provoquée : LF + nouvelle remise en jeu pour la même équipe.
+      next = a.context;
+      inbound = a.context === 'attaque';
+    }
+    else if (a.actionType === 'faute-technique') {
       // FIBA : le LF technique ne change pas à lui seul la possession en cours.
       next = a.context;
     }
@@ -5002,7 +5009,10 @@ export default function PriseStatsProPage() {
       (a.context === next && (
         a.foulOutcome === 'touche' ||
         a.foulOutcome === 'rebound-foul-committed' ||
-        a.foulOutcome === 'rebound-foul-drawn'
+        a.foulOutcome === 'rebound-foul-drawn' ||
+        a.specialCase === 'unsportsmanlike' ||
+        a.specialCase === 'unsportsmanlike-2pts+1lf' ||
+        a.specialCase === 'unsportsmanlike-3pts+1lf'
       ))
     );
     if (!samePossession) possessionStartRef.current = getRawCodingTime();
@@ -5034,6 +5044,11 @@ export default function PriseStatsProPage() {
     const anyMade = d.ftMade > 0;
     const lastMiss = d.ftResults[d.ftResults.length - 1] === 'miss';
     const isAndOne = d.specialCase === '2pts+1lf' || d.specialCase === '3pts+1lf';
+
+    if (d.specialCase === 'unsportsmanlike' || d.specialCase === 'unsportsmanlike-2pts+1lf' || d.specialCase === 'unsportsmanlike-3pts+1lf') {
+      commit({ ...d, shotResult: d.specialCase.includes('pts+1lf') ? 'made' : (anyMade ? 'made' : 'missed') });
+      return;
+    }
 
     if (d.actionType === 'faute-technique') {
       commit({ ...d, shotResult: anyMade ? 'made' : 'missed' });
@@ -5364,6 +5379,12 @@ export default function PriseStatsProPage() {
       // attribution n'est pas nécessaire.
       setStage(o === 'technical-for' ? 'technical-foul-target' : 'ft');
       return;
+    }
+    if (o === 'us-2plus1' || o === 'us-3plus1' || o === 'us-lf2' || o === 'us-lf3') {
+      const andOne = o === 'us-2plus1' || o === 'us-3plus1';
+      const isThree = o === 'us-3plus1' || o === 'us-lf3';
+      setDraft({ ...draft, foulOutcome:'unsportsmanlike', specialCase:andOne?(isThree?'unsportsmanlike-3pts+1lf':'unsportsmanlike-2pts+1lf'):'unsportsmanlike', shotType:andOne?(isThree?'3PTS':'2PTS'):'LF', shotResult:andOne?'made':'', ftAttempts:andOne?1:(isThree?3:2), ftMade:0, ftResults:[] });
+      setStage('ft'); return;
     }
     if (o === 'touche') { commit({ ...draft, foulOutcome: 'touche' }); return; }
     if (o === '2plus1' || o === '3plus1') {
@@ -8281,6 +8302,7 @@ export default function PriseStatsProPage() {
             { id:'contre', label:'Contre', ic:'🛑' },
             { id:'faute-provoquee', label:'Faute provoquée', ic:'🔔' },
             { id:'faute-commise', label:'Faute commise', ic:'🟨' },
+            { id:'faute-technique', label:'Faute technique', ic:'🟪' },
           ];
           return <>{head("Action du joueur", 'Pas de système ni de temps fort')}{tileGrid(opts, draft.actionType, actionPick)}</>;
         }
@@ -8318,14 +8340,22 @@ export default function PriseStatsProPage() {
             )
           : (
               <>
-                {head('Faute provoquée', 'Touche, lancers francs ou and-one ?')}
-                <div className="foulOutcomeGrid">
+                {head('Faute provoquée', draft.foulOutcome === 'unsportsmanlike-pending' ? 'Faute antisportive : choisis la réparation. La possession reste à nous après les LF.' : 'Touche, lancers francs, and-one ou faute antisportive ?')}
+                {draft.foulOutcome === 'unsportsmanlike-pending' ? (
+                  <div className="foulOutcomeGrid">
+                    <button className="chip" onClick={() => foulPick('us-2plus1')}>2 + 1</button>
+                    <button className="chip" onClick={() => foulPick('us-3plus1')}>3 + 1</button>
+                    <button className="chip" onClick={() => foulPick('us-lf2')}>2 LF</button>
+                    <button className="chip" onClick={() => foulPick('us-lf3')}>3 LF</button>
+                  </div>
+                ) : <div className="foulOutcomeGrid">
+                  <button className="chip foulTouch" onClick={() => { setDraft({...draft, foulOutcome:'unsportsmanlike-pending'}); }}>🚨 Faute antisportive</button>
                   <button className="chip foulTouch" style={!codingButtonEnabled('foul','touche') ? {display:'none'} : undefined} onClick={() => foulPick('touche')}>{fl('touche','Touche')}</button>
                   <button className="chip" style={!codingButtonEnabled('foul','lf2') ? {display:'none'} : undefined} onClick={() => foulPick('lf2')}>{fl('lf2','2 LF')}</button>
                   <button className="chip" style={!codingButtonEnabled('foul','2plus1') ? {display:'none'} : undefined} onClick={() => foulPick('2plus1')}>{fl('2plus1','2pts + 1LF')}</button>
                   <button className="chip" style={!codingButtonEnabled('foul','lf3') ? {display:'none'} : undefined} onClick={() => foulPick('lf3')}>{fl('lf3','3 LF')}</button>
                   <button className="chip" style={!codingButtonEnabled('foul','3plus1') ? {display:'none'} : undefined} onClick={() => foulPick('3plus1')}>{fl('3plus1','3pts + 1LF')}</button>
-                </div>
+                </div>}
               </>
             );
       }

@@ -38,6 +38,17 @@ export async function updatePlaybookSeries(id:string,patch:Partial<Pick<Playbook
 export async function deletePlaybookSeries(id:string){ const s=createClient(),owner=await uid(); const {error}=await s.from('playbook_series').delete().eq('id',id).eq('owner_id',owner); if(error)throw error; }
 export async function listPersonalSystemTags():Promise<PersonalSystemTag[]>{ const s=createClient(),owner=await uid(); const {data,error}=await s.from('personal_system_tags').select('*').eq('owner_id',owner).order('name'); if(error)throw error; return (data||[]) as PersonalSystemTag[]; }
 export async function createPersonalSystemTag(name:string){ const s=createClient(),owner=await uid(); const cleanName=name.trim(); const {data,error}=await s.from('personal_system_tags').upsert({owner_id:owner,name:cleanName},{onConflict:'owner_id,name'}).select('*').single(); if(error)throw error; return data as PersonalSystemTag; }
+export async function renamePersonalSystemTag(oldName:string,newName:string){
+ const from=oldName.trim(),to=newName.trim(); if(!from||!to||from===to)return;
+ const s=createClient(),owner=await uid(); await createPersonalSystemTag(to);
+ const {data:rows,error:rowsError}=await s.from('systems').select('id,tags,temps_forts').eq('user_id',owner); if(rowsError)throw rowsError;
+ for(const row of rows||[]){
+   const tags=uniqReplace(clean(row.tags),from,to); const temps=uniqReplace(clean(row.temps_forts),from,to);
+   if(clean(row.tags).includes(from)||clean(row.temps_forts).includes(from)){const {error}=await s.from('systems').update({tags,temps_forts:temps,updated_at:new Date().toISOString()}).eq('id',row.id).eq('user_id',owner);if(error)throw error;}
+ }
+ const {error}=await s.from('personal_system_tags').delete().eq('owner_id',owner).eq('name',from);if(error)throw error;
+}
+function uniqReplace(values:string[],from:string,to:string){return Array.from(new Set(values.map(v=>v===from?to:v).filter(Boolean)));}
 export async function deletePersonalSystemTag(name:string){
  const cleanName=name.trim(); if(!cleanName)return;
  const s=createClient(),owner=await uid();

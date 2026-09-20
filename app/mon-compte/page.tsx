@@ -96,6 +96,12 @@ const MENU: MenuItem[] = [
   href: '/mon-compte/systemes',
 },
   {
+  key: 'favoris',
+  label: 'Mes Favoris',
+  icon: '⭐',
+  href: '/mon-compte/favoris',
+},
+  {
   key: 'playbooks',
   label: 'Mes Playbooks',
   icon: '📁',
@@ -426,119 +432,6 @@ export default function MonComptePage() {
       setTeamCalendarMatchCounts({});
     }
   };
-
-  useEffect(() => {
-    if (!partnerTeams.length) return;
-
-    let cancelled = false;
-
-    (async () => {
-      const partnerIds = Array.from(
-        new Set(
-          partnerTeams
-            .map((item:any)=>String(item?.teamId||""))
-            .filter(Boolean)
-        )
-      );
-      if (!partnerIds.length) return;
-
-      try {
-        // Passe par notre API Next au lieu d'interroger Supabase directement
-        // depuis Safari. Cela évite les "TypeError: Load failed" réseau côté navigateur.
-        const connectionResponse = await fetch(
-          `/api/account/partner-team-ffbb?teamIds=${encodeURIComponent(partnerIds.join(","))}`,
-          { cache: "no-store" }
-        );
-        if (!connectionResponse.ok || cancelled) return;
-        const connectionPayload = await connectionResponse.json().catch(() => ({}));
-        const connections = Array.isArray(connectionPayload?.connections)
-          ? connectionPayload.connections
-          : [];
-
-        if (cancelled || !connections.length) return;
-
-        setFfbbConnectedTeamIds((previous) => {
-          const next=new Set(previous);
-          connections.forEach((row:any)=>{
-            if(row?.team_id) next.add(String(row.team_id));
-          });
-          return next;
-        });
-
-        const summaries:Record<string,{games:number;wins:number;losses:number}>={};
-
-        await Promise.all(partnerTeams.map(async (item:any)=>{
-          const teamId=String(item?.teamId||"");
-          if(!teamId) return;
-
-          const teamConnections=connections.filter(
-            (row:any)=>String(row?.team_id||"")===teamId
-          );
-          const connection=
-            teamConnections.find((row:any)=>{
-              const kind=String(row.competition_kind||row.kind||row.competition||"")
-                .normalize("NFD").replace(/[\u0300-\u036f]/g,"").toLowerCase();
-              return !kind.includes("coupe")&&!kind.includes("cup")&&
-                     !kind.includes("amical")&&!kind.includes("friendly");
-            })||teamConnections[0];
-
-          if(!connection?.source_url) return;
-
-          const response=await fetch(
-            `/api/ffbb/competition?url=${encodeURIComponent(connection.source_url)}&team=${encodeURIComponent(
-              String(connection.ffbb_team_name||connection.team_name||item.name||"")
-            )}`,
-            {cache:"no-store"}
-          );
-          if(!response.ok) return;
-          const parsed=await response.json();
-
-          const score=(match:any,side:"us"|"them")=>{
-            const candidates=side==="us"
-              ? [match.ourScore,match.our_score,match.scoreFor,match.points_for]
-              : [match.opponentScore,match.opponent_score,match.scoreAgainst,match.points_against];
-            for(const value of candidates){
-              if(value===null||value===undefined||value==="") continue;
-              const n=Number(value);
-              if(Number.isFinite(n)) return n;
-            }
-            return null;
-          };
-
-          const matches=Array.isArray(parsed?.matches)?parsed.matches:[];
-          const played=matches.filter(
-            (match:any)=>score(match,"us")!==null&&score(match,"them")!==null
-          );
-
-          if(played.length){
-            summaries[teamId]={
-              games:played.length,
-              wins:played.filter((m:any)=>score(m,"us")!>score(m,"them")!).length,
-              losses:played.filter((m:any)=>score(m,"us")!<score(m,"them")!).length,
-            };
-            return;
-          }
-
-          const standing=parsed?.standings;
-          if(!standing) return;
-          const games=Number(standing.played);
-          const wins=Number(standing.wins);
-          const losses=Number(standing.losses);
-          if([games,wins,losses].every(Number.isFinite)){
-            summaries[teamId]={games,wins,losses};
-          }
-        }));
-
-        if(cancelled) return;
-        setTeamFfbbStandings((previous)=>({...previous,...summaries}));
-      } catch(error){
-        console.error("Erreur FFBB équipes partenaires:",error);
-      }
-    })();
-
-    return ()=>{cancelled=true};
-  }, [partnerTeams]);
-
   const reloadPlaybooks = async () => {
   try {
     const data = await listPlaybooks();
@@ -1394,146 +1287,18 @@ return (
                 <ScoutTeamsManager teams={teams} onReload={reloadTeams} />
               ) : teamsView === "partners" ? (
                 <div className="mc-teamgrid">
-                  {displayedPartnerTeams.map((item:any) => {
-                    const localTeam = (teams as any[]).find((team:any) => {
-                      const aliases=[
-                        String(team?.id||""),
-                        String(team?.supabaseTeamId||""),
-                        String(team?.supabase_team_id||""),
-                      ].filter(Boolean);
-                      return aliases.includes(String(item.teamId||""));
-                    });
-
-                    const aliases=[
-                      String(item.teamId||""),
-                      String(localTeam?.id||""),
-                      String(localTeam?.supabaseTeamId||""),
-                      String(localTeam?.supabase_team_id||""),
-                    ].filter(Boolean);
-
-                    const ffbbStanding=aliases
-                      .map((id)=>teamFfbbStandings[id])
-                      .find(Boolean);
-                    const isFfbbConnected=aliases.some(
-                      (id)=>id&&ffbbConnectedTeamIds.has(id)
-                    );
-
-                    // Exactement la même règle FFBB que "Mes équipes".
-                    const matchCount:number|"…"=isFfbbConnected
-                      ? (ffbbStanding ? ffbbStanding.games : "…")
-                      : (
-                          aliases.reduce(
-                            (max,id)=>Math.max(max,teamCalendarMatchCounts[id]||0),
-                            Number(item.matchCount||0)
-                          )
-                        );
-                    const wins:number|"…"=isFfbbConnected
-                      ? (ffbbStanding ? ffbbStanding.wins : "…")
-                      : (localTeam?.teamStats?.wins ?? localTeam?.kpi?.victoires ?? 0);
-                    const losses:number|"…"=isFfbbConnected
-                      ? (ffbbStanding ? ffbbStanding.losses : "…")
-                      : (localTeam?.teamStats?.losses ?? localTeam?.kpi?.defaites ?? 0);
-
-                    const bandColor=localTeam?.couleurs?.[0]||"#6B1A2C";
-                    const category=
-                      localTeam?.cat||
-                      localTeam?.categorieLabel||
-                      item.category||
-                      item.name||
-                      "Équipe partenaire";
-                    const level=
-                      localTeam?.niveau||
-                      item.clubName||
-                      "Niveau non renseigné";
-                    const playersCount=Array.isArray(localTeam?.players)
-                      ? localTeam.players.length
-                      : Number(item.playerCount||0);
-                    const coach=localTeam
-                      ? getTeamCoachName(localTeam)
-                      : (item.coachName||"Non renseigné");
-                    const season=
-                      localTeam?.season||
-                      localTeam?.saison||
-                      item.season||
-                      "2026-2027";
-
-                    return (
-                      <div key={item.linkId || item.teamId} className="mc-team-group-item">
-                        <div className="mc-team-section-title collaboration">
-                          <strong>🤝 PARTENAIRE · {item.institutionName}</strong>
-                          <span>{item.season || "Saison non renseignée"}</span>
+                  {displayedPartnerTeams.map((item:any) => (
+                    <div key={item.linkId || item.teamId} className="mc-team-group-item">
+                      <div className="mc-team-section-title collaboration"><strong>🤝 PARTENAIRE · {item.institutionName}</strong><span>{item.season || "Saison non renseignée"}</span></div>
+                      <div style={{border:"1px solid #eadfd9",borderRadius:16,background:"#fff",padding:18,display:"grid",gridTemplateColumns:"1fr auto",gap:14,alignItems:"center"}}>
+                        <div style={{display:"flex",gap:12,alignItems:"center"}}>
+                          <div style={{width:54,height:54,borderRadius:"50%",background:"#fbf4ee",display:"grid",placeItems:"center",overflow:"hidden",fontSize:24}}>{item.logo?<img src={item.logo} alt="" style={{width:"100%",height:"100%",objectFit:"cover"}}/>:"🏀"}</div>
+                          <div><strong style={{display:"block",fontSize:18,color:"#6B1A2C"}}>{item.name}</strong><span style={{fontSize:12,color:"#756760"}}>{item.clubName || item.category || "Équipe partenaire"} · {item.playerCount || 0} joueur(s) · {item.matchCount || 0} match(s)</span></div>
                         </div>
-
-                        <article className="mc-teamcard mc-teamcard-horizontal">
-                          <div
-                            className="mc-team-banner mc-team-banner-horizontal"
-                            style={{backgroundColor:bandColor}}
-                          >
-                            <div className="mc-team-banner-lines" aria-hidden="true" />
-                            <div className="mc-team-banner-logo">
-                              {(localTeam?.logo||item.logo)
-                                ? <img src={localTeam?.logo||item.logo} alt="" />
-                                : <span>🏀</span>}
-                            </div>
-                            <div className="mc-team-banner-copy">
-                              <strong>{category}</strong>
-                              <span>{level}</span>
-                              <em className="mc-team-shared">Équipe partenaire · consultation</em>
-                            </div>
-                          </div>
-
-                          <div className="mc-team-body mc-team-body-horizontal">
-                            <div className="mc-team-kpis">
-                              <div className="mc-team-kpi">
-                                <span className="mc-team-kpi-icon">▣</span>
-                                <div>
-                                  <strong>{matchCount}</strong>
-                                  <span>Matchs</span>
-                                  <small>Saison {season}</small>
-                                </div>
-                              </div>
-
-                              <div className="mc-team-kpi">
-                                <span className="mc-team-kpi-icon">♙</span>
-                                <div>
-                                  <strong>{playersCount}/15</strong>
-                                  <span>Joueurs</span>
-                                  <small>Effectif</small>
-                                </div>
-                              </div>
-
-                              <div className="mc-team-kpi">
-                                <span className="mc-team-kpi-icon">▥</span>
-                                <div>
-                                  <strong>{wins}V - {losses}D</strong>
-                                  <span>Bilan</span>
-                                  <small>{isFfbbConnected ? "Résultats FFBB" : "Victoires - Défaites"}</small>
-                                </div>
-                              </div>
-
-                              <div className="mc-team-kpi mc-team-kpi-coach">
-                                <span className="mc-team-kpi-icon">♙</span>
-                                <div>
-                                  <strong>{coach}</strong>
-                                  <span>Coach</span>
-                                  <small>Entraîneur principal</small>
-                                </div>
-                              </div>
-                            </div>
-
-                            <div className="mc-team-actions mc-team-actions-horizontal">
-                              <button
-                                className="main"
-                                onClick={()=>router.push(`/equipes/${item.teamId}`)}
-                              >
-                                Consulter l'équipe →
-                              </button>
-                            </div>
-                          </div>
-                        </article>
+                        <button className="mc-new-team" onClick={() => router.push(`/equipes/${item.teamId}`)}>Voir l'équipe →</button>
                       </div>
-                    );
-                  })}
+                    </div>
+                  ))}
                   {!displayedPartnerTeams.length && <div style={{padding:28,border:"1px dashed #dccfc8",borderRadius:16,color:"#756760",textAlign:"center"}}>Aucune équipe partenaire active. Les équipes créées dans Institutionnel apparaîtront ici automatiquement.</div>}
                 </div>
               ) : (
@@ -1979,6 +1744,7 @@ return (
 
 {playbookModalOpen && (
   <PlaybookCreateModal
+    teams={teams}
     onClose={() => setPlaybookModalOpen(false)}
     onCreated={(playbookId) => {
       setPlaybookModalOpen(false);
@@ -3971,20 +3737,27 @@ function AnnoncesSection({ userId }: { userId: string }) {
 }
 
 function PlaybookCreateModal({
+  teams,
   onClose,
   onCreated,
 }: {
+  teams: Team[];
   onClose: () => void;
   onCreated: (id: string) => void;
 }) {
   const [title, setTitle] = useState("");
   const [category, setCategory] = useState("U18");
   const [season, setSeason] = useState("2026-2027");
+  const [teamId, setTeamId] = useState("");
   const [loading, setLoading] = useState(false);
 
   const create = async () => {
     if (!title.trim()) {
       alert("Nom obligatoire");
+      return;
+    }
+    if (!teamId) {
+      alert("Un playbook doit obligatoirement être rattaché à une équipe.");
       return;
     }
 
@@ -3996,6 +3769,7 @@ function PlaybookCreateModal({
         description: "",
         category,
         season,
+        team_id: teamId,
       });
 
       onCreated(created.id);
@@ -4021,6 +3795,16 @@ function PlaybookCreateModal({
               onChange={(e) => setTitle(e.target.value)}
               placeholder="Paris Basketball"
             />
+          </label>
+
+          <label>
+            Équipe
+            <select value={teamId} onChange={(e) => setTeamId(e.target.value)}>
+              <option value="">Choisir une équipe…</option>
+              {teams.filter((team) => !(team as any).scouted).map((team) => (
+                <option key={team.id} value={team.id}>{team.name}</option>
+              ))}
+            </select>
           </label>
 
           <label>

@@ -143,6 +143,17 @@ export default function SystemeDetailClient() {
     }
   }
 
+  async function addToFavorites() {
+    if (!systeme) return;
+    const supabase=createClient();
+    const {data:{user}}=await supabase.auth.getUser();
+    if(!user){router.push("/connexion");return;}
+    const imageUrl=systeme.schemaImages?.[0]||systeme.images?.[0]||systeme.schemaImage||"";
+    const {error}=await supabase.from("favorites").upsert({user_id:user.id,item_type:"system",item_id:systeme.id,title:systeme.title||"Système sans titre",image_url:imageUrl},{onConflict:"user_id,item_type,item_id"});
+    if(error){alert(error.message);return;}
+    router.push("/mon-compte/favoris");
+  }
+
   function goEdit() {
     try {
       // On nettoie uniquement les anciens états temporaires de Dessin.
@@ -268,7 +279,7 @@ export default function SystemeDetailClient() {
             <button
               type="button"
               className="gold"
-              onClick={() => alert("Ajouté aux favoris")}
+              onClick={addToFavorites}
             >
               Ajouter aux favoris
             </button>

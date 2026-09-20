@@ -227,7 +227,7 @@ export default function ExerciceDetailClient() {
       return;
     }
 
-    router.push("/mon-compte?tab=favoris");
+    router.push("/mon-compte/favoris");
   }
 
   function editExercise() {

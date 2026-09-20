@@ -102,10 +102,14 @@ function SystemCard({
   item,
   isConnected,
   onAddToPlaybook,
+  isFavorite,
+  onToggleFavorite,
 }: {
   item: SystemItem;
   isConnected: boolean;
   onAddToPlaybook: (item: SystemItem) => void;
+  isFavorite: boolean;
+  onToggleFavorite: (item: SystemItem) => void;
 }) {
   const thumbnail =
     item.schemaImages?.[0] || item.images?.[0] || item.schemaImage || "";
@@ -115,7 +119,7 @@ function SystemCard({
   const editHref = `/systemes/creer?id=${item.id}`;
 
   return (
-    <article className="mb-system-card">
+    <article className="mb-system-card" style={{position:"relative"}}>{isConnected&&<button type="button" aria-label="Favori" title={isFavorite?"Retirer des favoris":"Ajouter aux favoris"} onClick={()=>onToggleFavorite(item)} style={{position:"absolute",zIndex:4,right:10,top:10,width:38,height:38,borderRadius:"50%",border:"1px solid #d4a24c",background:"white",color:"#d4a24c",fontSize:24,cursor:"pointer"}}>{isFavorite?"★":"☆"}</button>}
       <Link href={detailHref} className="mb-system-cover">
         {thumbnail ? (
           <img src={thumbnail} alt={item.title || "Système"} />
@@ -185,6 +189,7 @@ export default function SystemesClient() {
   const [newPlaybookCategory, setNewPlaybookCategory] = useState("U18");
   const [newPlaybookSeason, setNewPlaybookSeason] = useState("2025-2026");
   const [adding, setAdding] = useState(false);
+  const [favoriteIds, setFavoriteIds] = useState<Set<string>>(new Set());
 
   useEffect(() => {
     async function load() {
@@ -198,7 +203,9 @@ export default function SystemesClient() {
         ]);
 
         setItems(data);
-        setIsConnected(Boolean(sessionResult.data.session?.user));
+        const currentUser=sessionResult.data.session?.user;
+        setIsConnected(Boolean(currentUser));
+        if(currentUser){const {data:favorites}=await supabase.from("favorites").select("item_id").eq("user_id",currentUser.id).eq("item_type","system");setFavoriteIds(new Set((favorites??[]).map((row:{item_id:string|null})=>String(row.item_id||"")).filter(Boolean)));}
         router.prefetch("/systemes/creer?new=1");
       } catch (error) {
         console.error("Erreur chargement systèmes :", error);
@@ -211,6 +218,8 @@ export default function SystemesClient() {
 
     load();
   }, [router]);
+
+  async function toggleFavorite(system:SystemItem){const supabase=createClient();const {data:{user}}=await supabase.auth.getUser();if(!user){router.push("/connexion");return;}if(favoriteIds.has(system.id)){await supabase.from("favorites").delete().eq("user_id",user.id).eq("item_type","system").eq("item_id",system.id);setFavoriteIds(prev=>{const n=new Set(prev);n.delete(system.id);return n;});return;}const imageUrl=system.schemaImages?.[0]||system.images?.[0]||system.schemaImage||"";const {error}=await supabase.from("favorites").upsert({user_id:user.id,item_type:"system",item_id:system.id,title:system.title||"Système sans titre",image_url:imageUrl},{onConflict:"user_id,item_type,item_id"});if(error){alert(error.message);return;}setFavoriteIds(prev=>new Set(prev).add(system.id));}
 
   const options = FILTER_OPTIONS;
 
@@ -434,6 +443,8 @@ export default function SystemesClient() {
                     item={item}
                     isConnected={isConnected}
                     onAddToPlaybook={openAddToPlaybook}
+                    isFavorite={favoriteIds.has(item.id)}
+                    onToggleFavorite={toggleFavorite}
                   />
                 ))}
               </div>
