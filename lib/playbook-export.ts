@@ -1,6 +1,15 @@
 import jsPDF from "jspdf";
 import type { Playbook, PlaybookSystem } from "@/lib/playbook";
 
+export type PlaybookPdfExportOptions = {
+  courtsPerRow?: 1 | 2 | 3 | 4;
+  includeComments?: boolean;
+  includeSystemNames?: boolean;
+  includePhaseNumbers?: boolean;
+  comments?: Record<string, string>;
+  preserveOrder?: boolean;
+};
+
 type Counts = {
   total: number;
   demi: number;
@@ -128,102 +137,63 @@ async function addSystemImages(
   page: number,
   playbookTitle: string,
   systemTitle: string,
-  systemCategory: string
+  systemCategory: string,
+  options: PlaybookPdfExportOptions
 ) {
   let currentPage = page;
+  const perRow = Math.max(1, Math.min(4, options.courtsPerRow ?? 2));
+  const gap = 5;
+  const left = 14;
+  const usable = 182;
+  const imageWidth = (usable - gap * (perRow - 1)) / perRow;
+  const imageHeight = imageWidth * 0.72;
+  const labelSpace = options.includePhaseNumbers === false ? 5 : 10;
+  const rowHeight = imageHeight + labelSpace + 8;
+  const startY = 52;
+  const maxY = 268;
+  let y = startY;
+  let col = 0;
 
   if (images.length === 0) {
-    pdf.setFont("helvetica", "normal");
-    pdf.setFontSize(12);
-    pdf.setTextColor(120);
+    pdf.setFont("helvetica", "normal"); pdf.setFontSize(12); pdf.setTextColor(120);
     pdf.text("Aucun schéma disponible", 105, 120, { align: "center" });
-
-    return {
-      page: currentPage,
-      contentY: 190,
-    };
+    return { page: currentPage, contentY: 150 };
   }
 
-  const positions = [
-    { x: 14, y: 52 },
-    { x: 108, y: 52 },
-    { x: 14, y: 158 },
-    { x: 108, y: 158 },
-  ];
-
-  const imageWidth = 88;
-  const imageHeight = 78;
-
-  for (let imageIndex = 0; imageIndex < images.length; imageIndex++) {
-    const imageUrl = images[imageIndex];
-    if (!imageUrl) continue;
-
-    const slot = imageIndex % 4;
-
-    if (imageIndex > 0 && slot === 0) {
-      addFooter(pdf, currentPage);
-      pdf.addPage();
-      currentPage++;
-      addSystemTitle(pdf, playbookTitle, systemTitle, systemCategory);
+  for (let imageIndex=0; imageIndex<images.length; imageIndex++) {
+    if (col === 0 && y + rowHeight > maxY) {
+      addFooter(pdf,currentPage); pdf.addPage(); currentPage++;
+      addSystemTitle(pdf,playbookTitle,systemTitle,systemCategory); y=startY;
     }
-
-    const pos = positions[slot];
-
-    pdf.setFont("helvetica", "bold");
-    pdf.setFontSize(10);
-    pdf.setTextColor(0);
-    pdf.text(`${systemTitle}`, pos.x + imageWidth / 2, pos.y - 5, {
-      align: "center",
-    });
-
-    const img = await imageToDataUrl(imageUrl);
-
+    const x = left + col * (imageWidth + gap);
+    const img = await imageToDataUrl(images[imageIndex]);
     if (img) {
-      try {
-        pdf.addImage(img, "PNG", pos.x, pos.y, imageWidth, imageHeight);
-      } catch {
-        pdf.setFont("helvetica", "normal");
-        pdf.setFontSize(11);
-        pdf.setTextColor(120);
-        pdf.text("Schéma non exportable", pos.x + imageWidth / 2, pos.y + 38, {
-          align: "center",
-        });
-      }
+      try { pdf.addImage(img,"PNG",x,y,imageWidth,imageHeight); }
+      catch { pdf.setFontSize(9); pdf.setTextColor(120); pdf.text("Schéma non exportable",x+imageWidth/2,y+imageHeight/2,{align:"center"}); }
     } else {
-      pdf.setFont("helvetica", "normal");
-      pdf.setFontSize(11);
-      pdf.setTextColor(120);
-      pdf.text("Schéma non disponible", pos.x + imageWidth / 2, pos.y + 38, {
-        align: "center",
-      });
+      pdf.setFontSize(9); pdf.setTextColor(120); pdf.text("Schéma non disponible",x+imageWidth/2,y+imageHeight/2,{align:"center"});
     }
-
-    pdf.setFont("helvetica", "normal");
-    pdf.setFontSize(9);
-    pdf.setTextColor(40);
-    pdf.text(`Phase ${imageIndex + 1}`, pos.x + imageWidth / 2, pos.y + imageHeight + 7, {
-      align: "center",
-    });
+    if (options.includePhaseNumbers !== false) {
+      pdf.setFont("helvetica","normal"); pdf.setFontSize(8); pdf.setTextColor(50);
+      pdf.text(`Phase ${imageIndex+1}`,x+imageWidth/2,y+imageHeight+5,{align:"center"});
+    }
+    col++;
+    if(col>=perRow){ col=0; y += rowHeight; }
   }
-
-  const lastSlot = (images.length - 1) % 4;
-  const contentY = lastSlot <= 1 ? 150 : 264;
-
-  return {
-    page: currentPage,
-    contentY,
-  };
+  if(col!==0) y += rowHeight;
+  return { page:currentPage, contentY:Math.min(y+2,280) };
 }
 
 export async function exportPlaybookPdf(
   playbook: Playbook,
   systems: PlaybookSystem[],
-  counts: Counts
+  counts: Counts,
+  options: PlaybookPdfExportOptions = {}
 ) {
   const pdf = new jsPDF("p", "mm", "a4");
   const playbookTitle = safe(playbook.title, "Playbook");
   const fileName = `${slugify(playbookTitle)}-playbook-mybasket.pdf`;
-  const orderedSystems = getOrderedSystems(systems);
+  const orderedSystems = options.preserveOrder ? [...systems] : getOrderedSystems(systems);
 
   let page = 1;
 
@@ -340,7 +310,8 @@ export async function exportPlaybookPdf(
     const systemCategory = safe(system.category, "Catégorie");
     const images = (system.schema_images || []).filter(Boolean);
 
-    addSystemTitle(pdf, playbookTitle, systemTitle, systemCategory);
+    if (options.includeSystemNames !== false) addSystemTitle(pdf, playbookTitle, systemTitle, systemCategory);
+    else addHeader(pdf, playbookTitle);
 
     const imageResult = await addSystemImages(
       pdf,
@@ -348,7 +319,8 @@ export async function exportPlaybookPdf(
       page,
       playbookTitle,
       systemTitle,
-      systemCategory
+      systemCategory,
+      options
     );
 
     page = imageResult.page;
@@ -363,7 +335,7 @@ export async function exportPlaybookPdf(
       contentY = 52;
     }
 
-    const description = safe(system.description, "");
+    const description = options.includeComments === false ? "" : safe(options.comments?.[system.id] ?? system.description, "");
 
     if (description) {
       pdf.setFont("helvetica", "bold");

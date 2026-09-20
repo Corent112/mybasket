@@ -2,9 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
-import { exportPlaybookPdf } from "@/lib/playbook-export";
-import { getTeams } from "@/lib/equipes-store";
-import type { Team } from "@/types/player";
+import PlaybookPdfExport from "@/components/playbook/PlaybookPdfExport";
 import PlaybookProfitability from "@/components/playbook/PlaybookProfitability";
 import PlaybookSeriesManager from "@/components/playbook/PlaybookSeriesManager";
 import PlaybookVideoExport from "@/components/playbook/PlaybookVideoExport";
@@ -43,8 +41,6 @@ export default function PlaybookDetailPage() {
   const id = String(params.id || "");
 
   const [playbook, setPlaybook] = useState<Playbook | null>(null);
-  const [teams, setTeams] = useState<Team[]>([]);
-  const [savingTeam, setSavingTeam] = useState(false);
   const [systems, setSystems] = useState<PlaybookSystem[]>([]);
   const [activeTab, setActiveTab] =
     useState<PlaybookCategory>("Système demi-terrain");
@@ -85,20 +81,8 @@ export default function PlaybookDetailPage() {
     }
 
     try {
-      const [pb, availableTeams] = await Promise.all([
-        getPlaybook(id),
-        getTeams(),
-      ]);
+      const pb = await getPlaybook(id);
       setPlaybook(pb);
-      setTeams(
-        availableTeams.filter(
-          (team) =>
-            !(team as any).scouted &&
-            !(team as any).scout &&
-            !(team as any).isScoutTeam &&
-            String((team as any).teamType || "").toLowerCase() !== "scout"
-        )
-      );
       setNotes(pb?.description || "");
 
       if (pb) {
@@ -124,21 +108,6 @@ export default function PlaybookDetailPage() {
     });
 
     setPlaybook(updated);
-  }
-
-  async function changeTeam(teamId: string) {
-    if (!playbook || !teamId || teamId === playbook.team_id) return;
-
-    try {
-      setSavingTeam(true);
-      const updated = await updatePlaybook(playbook.id, { team_id: teamId });
-      setPlaybook(updated);
-    } catch (error) {
-      console.error("Erreur rattachement équipe du playbook:", error);
-      alert("Impossible de rattacher le playbook à cette équipe.");
-    } finally {
-      setSavingTeam(false);
-    }
   }
 
   async function saveNotes() {
@@ -224,11 +193,6 @@ export default function PlaybookDetailPage() {
     alert("Ce système n’est pas encore lié à une fiche système.");
   }
 
-  async function exportPdf() {
-    if (!playbook) return;
-
-    await exportPlaybookPdf(playbook, systems, counts);
-  }
 
   async function copyShareLink() {
     await navigator.clipboard.writeText(window.location.href);
@@ -312,28 +276,10 @@ export default function PlaybookDetailPage() {
             {counts.total > 1 ? "s" : ""} · Dernière mise à jour :{" "}
             {formatDate(playbook.updated_at || playbook.created_at)}
           </p>
-
-          <div className="pb-team-link">
-            <span>Équipe</span>
-            <select
-              value={playbook.team_id || ""}
-              onChange={(event) => void changeTeam(event.target.value)}
-              disabled={savingTeam}
-              aria-label="Équipe rattachée au playbook"
-            >
-              <option value="" disabled>Choisir une équipe…</option>
-              {teams.map((team) => (
-                <option key={team.id} value={team.id}>{team.name}</option>
-              ))}
-            </select>
-            {!playbook.team_id && <strong>Équipe obligatoire</strong>}
-          </div>
         </div>
 
         <div className="pb-actions">
-          <button type="button" onClick={exportPdf}>
-            📄 Exporter PDF
-          </button>
+          <PlaybookPdfExport playbook={playbook} systems={systems} counts={counts} />
 
           <PlaybookVideoExport playbook={playbook} systems={systems} />
 
@@ -519,7 +465,7 @@ export default function PlaybookDetailPage() {
           <section className="pb-panel">
             <h2>Actions rapides</h2>
 
-            <button type="button" onClick={exportPdf}>
+            <button type="button" onClick={() => {}}>
               📄 Exporter PDF
             </button>
 
@@ -583,7 +529,7 @@ export default function PlaybookDetailPage() {
             </p>
 
             <div className="pb-share-grid">
-              <button type="button" onClick={exportPdf}>
+              <button type="button" onClick={() => {}}>
                 <strong>📄 Exporter PDF</strong>
                 <span>Télécharger le playbook</span>
               </button>
@@ -675,34 +621,6 @@ const CSS = `
   font-size: 16px;
 }
 
-.pb-team-link {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  margin-top: 12px;
-  flex-wrap: wrap;
-}
-.pb-team-link span {
-  font-size: 12px;
-  font-weight: 900;
-  text-transform: uppercase;
-  letter-spacing: .08em;
-  opacity: .65;
-}
-.pb-team-link select {
-  min-width: 220px;
-  border: 1px solid rgba(107,26,44,.22);
-  border-radius: 10px;
-  background: #fff;
-  padding: 9px 34px 9px 11px;
-  font: inherit;
-  font-weight: 800;
-  color: #6B1A2C;
-}
-.pb-team-link strong {
-  font-size: 12px;
-  color: #b3261e;
-}
 .pb-actions {
   display: flex;
   gap: 14px;
