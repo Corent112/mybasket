@@ -107,8 +107,12 @@ function SystemCard({
   isConnected: boolean;
   onAddToPlaybook: (item: SystemItem) => void;
 }) {
-  const thumbnail =
-    item.schemaImages?.[0] || item.images?.[0] || item.schemaImage || "";
+  // Une seule prévisualisation par système :
+  // priorité à l'animation générée dans Dessin, puis à la vidéo du système.
+  // On ne charge plus toute la série de schémas dans la vignette.
+  const previewVideo = item.schemaVideo || item.videos?.[0] || "";
+  const poster =
+    item.schemaImages?.[0] || item.schemaImage || item.images?.[0] || "";
 
   const firstTempsFort = item.tempsForts?.[0];
   const detailHref = `/systemes/${item.id}`;
@@ -117,8 +121,24 @@ function SystemCard({
   return (
     <article className="mb-system-card">
       <Link href={detailHref} className="mb-system-cover">
-        {thumbnail ? (
-          <img src={thumbnail} alt={item.title || "Système"} />
+        {previewVideo ? (
+          <video
+            className="mb-system-preview-video"
+            src={previewVideo}
+            poster={poster || undefined}
+            muted
+            loop
+            autoPlay
+            playsInline
+            preload="metadata"
+          />
+        ) : poster ? (
+          <img
+            src={poster}
+            alt={item.title || "Système"}
+            loading="lazy"
+            decoding="async"
+          />
         ) : (
           <div className="mb-system-placeholder">🏀</div>
         )}
@@ -146,9 +166,9 @@ function SystemCard({
           </div>
         )}
 
-        <div className="mb-system-foot">
-          <span>{formatDate(item.createdAt)}</span>
+        <div className="mb-system-date">Créé le {formatDate(item.createdAt)}</div>
 
+        <div className="mb-system-actions">
           <button
             type="button"
             className="mb-system-add"
@@ -157,7 +177,7 @@ function SystemCard({
             {isConnected ? "+ Playbook" : "Débloquer"}
           </button>
 
-          <Link href={editHref}>Modifier</Link>
+          <Link href={editHref} className="mb-system-edit">Modifier</Link>
         </div>
       </div>
     </article>
@@ -547,46 +567,66 @@ export default function SystemesClient() {
       <style jsx global>{`
         .mb-systems-grid {
           display: grid;
-          grid-template-columns: repeat(auto-fill, minmax(250px, 270px));
-          gap: 1.4rem;
+          grid-template-columns: repeat(3, minmax(0, 1fr));
+          gap: 20px;
           align-items: stretch;
         }
 
         .mb-system-card {
+          min-width: 0;
           width: 100%;
           background: #fff;
-          border: 1.5px solid #cfcfcf;
-          border-radius: 14px;
+          border: 1px solid #eadfe2;
+          border-radius: 18px;
           overflow: hidden;
-          padding: 12px;
-          box-shadow: 0 6px 18px rgba(0, 0, 0, 0.04);
+          padding: 0;
+          box-shadow: 0 8px 24px rgba(55, 14, 25, 0.06);
           display: flex;
           flex-direction: column;
-          height: 100%;
+          transition: transform .18s ease, box-shadow .18s ease, border-color .18s ease;
+        }
+
+        .mb-system-card:hover {
+          transform: translateY(-3px);
+          border-color: #d7bcc3;
+          box-shadow: 0 14px 34px rgba(55, 14, 25, 0.11);
         }
 
         .mb-system-cover {
-          display: flex;
-          align-items: center;
-          justify-content: center;
+          position: relative;
+          display: block;
           width: 100%;
-          height: 190px;
-          background: #fff;
+          aspect-ratio: 16 / 10;
+          background: #f6f1f2;
           overflow: hidden;
           text-decoration: none;
+          border-bottom: 1px solid #eee5e7;
         }
 
-        .mb-system-cover img {
+        .mb-system-cover img,
+        .mb-system-preview-video {
           width: 100%;
           height: 100%;
-          object-fit: contain;
+          object-fit: cover;
+          object-position: center;
           display: block;
+          transition: transform .25s ease;
+        }
+
+        .mb-system-preview-video {
+          background: #2d0b14;
+          pointer-events: none;
+        }
+
+        .mb-system-card:hover .mb-system-cover img,
+        .mb-system-card:hover .mb-system-preview-video {
+          transform: scale(1.015);
         }
 
         .mb-system-placeholder {
           width: 100%;
           height: 100%;
-          background: #f5f5f5;
+          background: linear-gradient(135deg, #f7f1f3, #eee3e6);
           display: flex;
           align-items: center;
           justify-content: center;
@@ -594,21 +634,22 @@ export default function SystemesClient() {
         }
 
         .mb-system-body {
-          padding-top: 4px;
+          padding: 16px;
           display: flex;
           flex: 1;
           flex-direction: column;
+          min-width: 0;
         }
 
         .mb-system-title {
           width: 100%;
-          margin: 0 0 12px;
-          text-align: center !important;
-          font-size: 1.55rem;
-          line-height: 1;
-          font-weight: 1000;
-          text-transform: uppercase;
-          min-height: 3.1rem;
+          margin: 0 0 10px;
+          text-align: left !important;
+          font-size: 1.05rem;
+          line-height: 1.18;
+          font-weight: 950;
+          text-transform: none;
+          min-height: 2.5rem;
           display: -webkit-box;
           -webkit-line-clamp: 2;
           -webkit-box-orient: vertical;
@@ -618,74 +659,265 @@ export default function SystemesClient() {
         .mb-system-title a {
           display: block;
           width: 100%;
-          color: #111;
-          text-align: center !important;
+          color: #1c1517;
+          text-align: left !important;
           text-decoration: none;
         }
 
         .mb-system-details {
           display: flex;
-          flex-direction: column;
-          gap: 3px;
-          margin-top: 4px;
+          flex-wrap: wrap;
+          gap: 6px;
+          margin: 0 0 10px;
         }
 
         .mb-system-details div {
-          font-size: 0.92rem;
-          line-height: 1.15;
-          font-weight: 500;
-          color: #111;
+          width: auto !important;
+          max-width: 100%;
+          padding: 5px 8px;
+          border-radius: 999px;
+          background: #f7f3f4;
+          color: #5f5155 !important;
+          font-size: .72rem;
+          line-height: 1;
+          font-weight: 750 !important;
+          white-space: nowrap;
+          overflow: hidden;
+          text-overflow: ellipsis;
         }
 
         .mb-system-details div:first-child {
-          color: #6b1a2c;
-          font-weight: 700;
+          background: #f5e8eb;
+          color: #74142b !important;
         }
 
-        .mb-system-details div:last-child {
-          color: #666;
+        .mb-system-contributor {
+          display:flex;
+          align-items:center;
+          gap:7px;
+          margin-top:4px;
+          min-width:0;
+          color:#75686c;
+          font-size:.72rem;
+          line-height:1.15;
         }
 
-        .mb-system-contributor { display:flex; align-items:center; gap:7px; margin-top:12px; padding-top:10px; border-top:1px solid #eee; min-width:0; color:#555; font-size:.74rem; line-height:1.15; }
-        .mb-system-contributor img, .mb-system-contributor-fallback { width:24px; height:24px; border-radius:50%; flex:0 0 24px; object-fit:cover; border:1px solid rgba(107,26,44,.18); background:#f4ecef; color:#6b1a2c; display:flex; align-items:center; justify-content:center; font-weight:900; }
-        .mb-system-contributor span:last-child { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-        .mb-system-contributor strong { color:#222; font-weight:850; }
-        .mb-system-foot {
+        .mb-system-contributor img,
+        .mb-system-contributor-fallback {
+          width:24px;
+          height:24px;
+          border-radius:50%;
+          flex:0 0 24px;
+          object-fit:cover;
+          border:1px solid rgba(107,26,44,.18);
+          background:#f4ecef;
+          color:#6b1a2c;
+          display:flex;
+          align-items:center;
+          justify-content:center;
+          font-weight:900;
+        }
+
+        .mb-system-contributor span:last-child {
+          min-width:0;
+          overflow:hidden;
+          text-overflow:ellipsis;
+          white-space:nowrap;
+        }
+
+        .mb-system-contributor strong {
+          color:#222;
+          font-weight:850;
+        }
+
+        .mb-system-date {
           margin-top: auto;
-          padding-top: 10px;
-          border-top: 1px solid #eee;
-          display: flex;
-          justify-content: space-between;
-          align-items: center;
+          padding-top: 12px;
+          color: #9b8e92;
+          font-size: .7rem;
+          font-weight: 650;
+        }
+
+        .mb-system-actions {
+          display: grid;
+          grid-template-columns: minmax(0, 1fr) auto;
           gap: 8px;
-          font-size: 0.82rem;
-          color: #777;
-          font-weight: 600;
+          align-items: center;
+          margin-top: 10px;
         }
 
-        .mb-system-foot a {
-          color: #666;
-          font-weight: 800;
-          text-decoration: none;
-        }
-
-        .mb-system-foot a:hover {
-          color: #6b1a2c;
-          text-decoration: underline;
+        .mb-system-add,
+        .mb-system-edit {
+          box-sizing: border-box !important;
+          width: auto !important;
+          min-width: 0 !important;
+          min-height: 38px !important;
+          height: 38px !important;
+          margin: 0 !important;
+          padding: 0 13px !important;
+          border-radius: 10px !important;
+          display: inline-flex !important;
+          align-items: center !important;
+          justify-content: center !important;
+          font-size: .74rem !important;
+          line-height: 1 !important;
+          font-weight: 900 !important;
+          white-space: nowrap !important;
+          text-decoration: none !important;
         }
 
         .mb-system-add {
-          border: 0;
-          background: #6b1a2c;
-          color: #fff;
-          border-radius: 999px;
-          padding: 7px 10px;
-          font-size: 0.75rem;
-          font-weight: 900;
+          border: 1px solid #74142b !important;
+          background: #74142b !important;
+          color: #fff !important;
           cursor: pointer;
-          white-space: nowrap;
         }
 
+        .mb-system-add:hover {
+          background: #5f1023 !important;
+          border-color: #5f1023 !important;
+        }
+
+        .mb-system-edit {
+          border: 1px solid #e2d7da !important;
+          background: #fff !important;
+          color: #74142b !important;
+        }
+
+        .mb-system-edit:hover {
+          background: #faf5f6 !important;
+          border-color: #cdb8be !important;
+        }
+
+        @media (max-width: 1100px) {
+          .mb-systems-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+        }
+
+        @media (max-width: 720px) {
+          .mb-systems-grid { grid-template-columns: 1fr; }
+          .mb-system-actions { grid-template-columns: 1fr; }
+          .mb-system-edit { width: 100% !important; }
+        }
+
+        /* Actions de vignette : compactes, horizontales */
+        .mb-system-actions {
+          display:flex !important;
+          align-items:center !important;
+          gap:6px !important;
+          margin-top:8px !important;
+        }
+        .mb-system-actions .mb-system-add,
+        .mb-system-actions .mb-system-edit {
+          width:auto !important;
+          min-width:0 !important;
+          height:30px !important;
+          min-height:30px !important;
+          margin:0 !important;
+          padding:0 10px !important;
+          border-radius:8px !important;
+          font-size:.68rem !important;
+          line-height:1 !important;
+          white-space:nowrap !important;
+        }
+        .mb-system-card .mb-system-submit,
+        .mb-system-card .mb-system-delete {
+          width:auto !important;
+          min-width:30px !important;
+          height:30px !important;
+          min-height:30px !important;
+          padding:0 9px !important;
+          margin-top:6px !important;
+          border-radius:8px !important;
+          font-size:.66rem !important;
+          line-height:1 !important;
+          writing-mode:horizontal-tb !important;
+          word-break:normal !important;
+          white-space:nowrap !important;
+        }
+
+
+        /* === VIGNETTE COMPACTE — dimensions validées === */
+        .mb-system-body {
+          padding: 12px 13px 11px !important;
+        }
+
+        .mb-system-title {
+          margin: 0 0 7px !important;
+          min-height: 0 !important;
+          font-size: .98rem !important;
+          line-height: 1.12 !important;
+        }
+
+        .mb-system-details {
+          gap: 5px !important;
+          margin: 0 0 6px !important;
+        }
+
+        .mb-system-details div {
+          padding: 4px 7px !important;
+          font-size: .66rem !important;
+        }
+
+        .mb-system-contributor {
+          margin-top: 2px !important;
+          font-size: .66rem !important;
+        }
+
+        .mb-system-date {
+          margin-top: 5px !important;
+          padding-top: 0 !important;
+          font-size: .64rem !important;
+        }
+
+        .mb-system-actions {
+          display: flex !important;
+          align-items: center !important;
+          flex-wrap: nowrap !important;
+          gap: 6px !important;
+          margin-top: 8px !important;
+          min-height: 28px !important;
+        }
+
+        .mb-system-actions .mb-system-add,
+        .mb-system-actions .mb-system-edit,
+        .mb-system-card .mb-system-submit {
+          box-sizing: border-box !important;
+          width: auto !important;
+          min-width: 0 !important;
+          height: 28px !important;
+          min-height: 28px !important;
+          max-height: 28px !important;
+          margin: 0 !important;
+          padding: 0 9px !important;
+          border-radius: 7px !important;
+          display: inline-flex !important;
+          align-items: center !important;
+          justify-content: center !important;
+          font-size: .64rem !important;
+          line-height: 1 !important;
+          font-weight: 850 !important;
+          white-space: nowrap !important;
+          writing-mode: horizontal-tb !important;
+          word-break: normal !important;
+        }
+
+        .mb-system-card .mb-system-delete {
+          box-sizing: border-box !important;
+          width: 28px !important;
+          min-width: 28px !important;
+          max-width: 28px !important;
+          height: 28px !important;
+          min-height: 28px !important;
+          max-height: 28px !important;
+          margin: 6px 0 0 !important;
+          padding: 0 !important;
+          border-radius: 7px !important;
+          display: inline-flex !important;
+          align-items: center !important;
+          justify-content: center !important;
+          font-size: .78rem !important;
+          line-height: 1 !important;
+        }
         .pb-modal-bg {
           position: fixed;
           inset: 0;

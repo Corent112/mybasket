@@ -58,8 +58,14 @@ export default function Header() {
       .in("item_type", ["product", "subscription"]);
 
     if (error) {
-      console.error("Erreur chargement compteur panier:", error);
+      // Le compteur du panier est secondaire : une erreur réseau/Supabase
+      // ne doit pas déclencher l'overlay d'erreur Next.js.
+      console.warn(
+        "Compteur panier temporairement indisponible:",
+        error.message || error.code || "Load failed",
+      );
       setCartCount(0);
+      previousCountRef.current = 0;
       return;
     }
 
@@ -84,8 +90,12 @@ export default function Header() {
       previousCountRef.current = total;
       setCartCount(total);
     } catch (error) {
-      console.warn("Compteur panier indisponible:", error instanceof Error ? error.message : error);
+      console.warn(
+        "Compteur panier temporairement indisponible:",
+        error instanceof Error ? error.message : error,
+      );
       setCartCount(0);
+      previousCountRef.current = 0;
     }
   }, [loadUser, supabase]);
 

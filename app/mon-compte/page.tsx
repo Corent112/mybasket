@@ -90,6 +90,12 @@ const MENU: MenuItem[] = [
   href: '/mon-compte/exercices',
 },
   {
+  key: 'systemes',
+  label: 'Mes Systèmes',
+  icon: '📚',
+  href: '/mon-compte/systemes',
+},
+  {
   key: 'playbooks',
   label: 'Mes Playbooks',
   icon: '📁',
@@ -168,6 +174,10 @@ export default function MonComptePage() {
   const [teamForm, setTeamForm] = useState<{ open: boolean; team?: Team }>({ open: false });
   const [playerFor, setPlayerFor] = useState<string | null>(null);
   const [teamCalendarMatchCounts, setTeamCalendarMatchCounts] = useState<Record<string, number>>({});
+  const [teamFfbbStandings, setTeamFfbbStandings] = useState<
+    Record<string, { games: number; wins: number; losses: number }>
+  >({});
+  const [ffbbConnectedTeamIds, setFfbbConnectedTeamIds] = useState<Set<string>>(new Set());
   const [playbookModalOpen, setPlaybookModalOpen] = useState(false);
   const [playbooks, setPlaybooks] = useState<Playbook[]>([]);
 
@@ -305,12 +315,230 @@ export default function MonComptePage() {
       });
 
       setTeamCalendarMatchCounts(normalizedCounts);
+
+      // MES ÉQUIPES : pour une équipe connectée FFBB, le bilan affiché vient
+      // DIRECTEMENT de sa ligne dans le tableau de classement FFBB.
+      // On ne compte plus ffbb_synced_matches pour ce bandeau.
+      try {
+        const { data: connections, error: connectionError } = await supabase
+          .from("ffbb_team_connections")
+          .select("*")
+          .in("team_id", teamIds);
+
+        if (connectionError || !connections?.length) {
+          setFfbbConnectedTeamIds(new Set());
+          setTeamFfbbStandings({});
+        } else {
+          const connectedIds = new Set<string>();
+          connections.forEach((row: any) => {
+            if (row?.team_id) connectedIds.add(String(row.team_id));
+          });
+          setFfbbConnectedTeamIds(connectedIds);
+
+          const summaries: Record<string, { games: number; wins: number; losses: number }> = {};
+
+          await Promise.all(data.map(async (team) => {
+            const aliases = [
+              String(team.id || ""),
+              String((team as any).supabaseTeamId || ""),
+              String((team as any).supabase_team_id || ""),
+            ].filter(Boolean);
+
+            const teamConnections = connections.filter((row: any) =>
+              aliases.includes(String(row.team_id || ""))
+            );
+
+            // Priorité au championnat/poule, car c'est son tableau qui porte J/G/P.
+            const connection =
+              teamConnections.find((row: any) => {
+                const kind = String(row.competition_kind || row.kind || row.competition || "")
+                  .normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+                return !kind.includes("coupe") && !kind.includes("cup") &&
+                       !kind.includes("amical") && !kind.includes("friendly");
+              }) || teamConnections[0];
+
+            if (!connection?.source_url) return;
+
+            try {
+              const response = await fetch(
+                `/api/ffbb/competition?url=${encodeURIComponent(connection.source_url)}&team=${encodeURIComponent(
+                  String(connection.ffbb_team_name || connection.team_name || team.name || "")
+                )}`,
+                { cache: "no-store" }
+              );
+              if (!response.ok) return;
+              const parsed = await response.json();
+
+              // IMPORTANT : exactement la même source que la fiche équipe.
+              // La fiche équipe fonctionne déjà : elle lit les matchs renvoyés
+              // par /api/ffbb/competition et considère "joué" uniquement un match
+              // ayant les DEUX scores. On reproduit cette règle ici.
+              const directMatches = Array.isArray(parsed?.matches) ? parsed.matches : [];
+
+              const score = (match: any, side: "us" | "them") => {
+                const candidates = side === "us"
+                  ? [match.ourScore, match.our_score, match.scoreFor, match.points_for]
+                  : [match.opponentScore, match.opponent_score, match.scoreAgainst, match.points_against];
+                for (const value of candidates) {
+                  if (value === null || value === undefined || value === "") continue;
+                  const number = Number(value);
+                  if (Number.isFinite(number)) return number;
+                }
+                return null;
+              };
+
+              const played = directMatches.filter((match: any) =>
+                score(match, "us") !== null && score(match, "them") !== null
+              );
+
+              if (played.length) {
+                const wins = played.filter((match: any) => score(match, "us")! > score(match, "them")!).length;
+                const losses = played.filter((match: any) => score(match, "us")! < score(match, "them")!).length;
+                const summary = { games: played.length, wins, losses };
+                aliases.forEach((alias) => { summaries[alias] = summary; });
+                return;
+              }
+
+              // Secours : si FFBB ne renvoie pas encore les rencontres détaillées,
+              // on utilise J/G/P du classement. Jamais les matchs locaux MyBasket.
+              const standing = parsed?.standings;
+              if (!standing) return;
+              const games = Number(standing.played);
+              const wins = Number(standing.wins);
+              const losses = Number(standing.losses);
+              if (![games, wins, losses].every(Number.isFinite)) return;
+              const summary = { games, wins, losses };
+              aliases.forEach((alias) => { summaries[alias] = summary; });
+            } catch (error) {
+              console.error("Erreur classement FFBB équipe:", team.id, error);
+            }
+          }));
+
+          setTeamFfbbStandings(summaries);
+        }
+      } catch (error) {
+        console.error("Erreur chargement classements FFBB:", error);
+        setTeamFfbbStandings({});
+      }
     } catch (error) {
       console.error("Erreur chargement équipes:", error);
       setTeams([]);
       setTeamCalendarMatchCounts({});
     }
   };
+
+  useEffect(() => {
+    if (!partnerTeams.length) return;
+
+    let cancelled = false;
+
+    (async () => {
+      const partnerIds = Array.from(
+        new Set(
+          partnerTeams
+            .map((item:any)=>String(item?.teamId||""))
+            .filter(Boolean)
+        )
+      );
+      if (!partnerIds.length) return;
+
+      try {
+        // Passe par notre API Next au lieu d'interroger Supabase directement
+        // depuis Safari. Cela évite les "TypeError: Load failed" réseau côté navigateur.
+        const connectionResponse = await fetch(
+          `/api/account/partner-team-ffbb?teamIds=${encodeURIComponent(partnerIds.join(","))}`,
+          { cache: "no-store" }
+        );
+        if (!connectionResponse.ok || cancelled) return;
+        const connectionPayload = await connectionResponse.json().catch(() => ({}));
+        const connections = Array.isArray(connectionPayload?.connections)
+          ? connectionPayload.connections
+          : [];
+
+        if (cancelled || !connections.length) return;
+
+        setFfbbConnectedTeamIds((previous) => {
+          const next=new Set(previous);
+          connections.forEach((row:any)=>{
+            if(row?.team_id) next.add(String(row.team_id));
+          });
+          return next;
+        });
+
+        const summaries:Record<string,{games:number;wins:number;losses:number}>={};
+
+        await Promise.all(partnerTeams.map(async (item:any)=>{
+          const teamId=String(item?.teamId||"");
+          if(!teamId) return;
+
+          const teamConnections=connections.filter(
+            (row:any)=>String(row?.team_id||"")===teamId
+          );
+          const connection=
+            teamConnections.find((row:any)=>{
+              const kind=String(row.competition_kind||row.kind||row.competition||"")
+                .normalize("NFD").replace(/[\u0300-\u036f]/g,"").toLowerCase();
+              return !kind.includes("coupe")&&!kind.includes("cup")&&
+                     !kind.includes("amical")&&!kind.includes("friendly");
+            })||teamConnections[0];
+
+          if(!connection?.source_url) return;
+
+          const response=await fetch(
+            `/api/ffbb/competition?url=${encodeURIComponent(connection.source_url)}&team=${encodeURIComponent(
+              String(connection.ffbb_team_name||connection.team_name||item.name||"")
+            )}`,
+            {cache:"no-store"}
+          );
+          if(!response.ok) return;
+          const parsed=await response.json();
+
+          const score=(match:any,side:"us"|"them")=>{
+            const candidates=side==="us"
+              ? [match.ourScore,match.our_score,match.scoreFor,match.points_for]
+              : [match.opponentScore,match.opponent_score,match.scoreAgainst,match.points_against];
+            for(const value of candidates){
+              if(value===null||value===undefined||value==="") continue;
+              const n=Number(value);
+              if(Number.isFinite(n)) return n;
+            }
+            return null;
+          };
+
+          const matches=Array.isArray(parsed?.matches)?parsed.matches:[];
+          const played=matches.filter(
+            (match:any)=>score(match,"us")!==null&&score(match,"them")!==null
+          );
+
+          if(played.length){
+            summaries[teamId]={
+              games:played.length,
+              wins:played.filter((m:any)=>score(m,"us")!>score(m,"them")!).length,
+              losses:played.filter((m:any)=>score(m,"us")!<score(m,"them")!).length,
+            };
+            return;
+          }
+
+          const standing=parsed?.standings;
+          if(!standing) return;
+          const games=Number(standing.played);
+          const wins=Number(standing.wins);
+          const losses=Number(standing.losses);
+          if([games,wins,losses].every(Number.isFinite)){
+            summaries[teamId]={games,wins,losses};
+          }
+        }));
+
+        if(cancelled) return;
+        setTeamFfbbStandings((previous)=>({...previous,...summaries}));
+      } catch(error){
+        console.error("Erreur FFBB équipes partenaires:",error);
+      }
+    })();
+
+    return ()=>{cancelled=true};
+  }, [partnerTeams]);
+
   const reloadPlaybooks = async () => {
   try {
     const data = await listPlaybooks();
@@ -418,7 +646,10 @@ export default function MonComptePage() {
       subscription: subscriptionLabel,
     });
 
-    await Promise.all([reloadTeams(), reloadPlaybooks(), reloadPartnerTeams()]);
+    // Les équipes doivent être chargées avant les partenaires :
+    // reloadPartnerTeams utilise aussi les équipes locales comme secours.
+    await Promise.all([reloadTeams(), reloadPlaybooks()]);
+    await reloadPartnerTeams();
 
     setLoading(false);
   };
@@ -816,8 +1047,79 @@ const isPartnerTeam = (team: Team) => {
   return explicitPartner;
 };
 
-const localPartnerTeams = teams.filter((team) => isPartnerTeam(team));
-const coachedTeams = teams.filter((team) => !isScoutTeam(team) && !isPartnerTeam(team));
+// La provenance Institutionnelle est prioritaire sur user_id / team_type.
+// Une équipe créée ou rattachée dans Institutionnel ne doit pas retomber
+// dans "Mes équipes" simplement parce que l'utilisateur a créé la ligne teams.
+// IDs vérifiés directement dans Supabase le 19/09/2026.
+// Ce fallback garantit le classement même si getTeams() ne remonte pas metadata.
+const VERIFIED_PBA_PARTNER_TEAM_ID = "2a458844-c035-4a5e-a88e-0c7844f0a376";
+const VERIFIED_POLE_TEAM_ID = "da61ee1a-1410-4a33-8ee6-2b1a7981a115";
+
+const institutionalPartnerIds = new Set([
+  VERIFIED_PBA_PARTNER_TEAM_ID,
+  ...partnerTeams
+    .map((item:any)=>String(item?.teamId||""))
+    .filter(Boolean),
+]);
+
+const isInstitutionPartnerTeam=(team:Team)=>{
+  const raw:any=team as any;
+  const metadata =
+    raw?.metadata && typeof raw.metadata === "object" ? raw.metadata : {};
+  const kind=String(
+    metadata.institutionalTeamKind ??
+    metadata.institution_team_kind ??
+    metadata.teamKind ??
+    metadata.team_kind ??
+    ""
+  ).toLowerCase();
+
+  const aliases=[
+    String(team.id||""),
+    String(raw.supabaseTeamId||""),
+    String(raw.supabase_team_id||""),
+  ].filter(Boolean);
+
+  // Règle vérifiée avec les lignes Supabase réelles.
+  if (aliases.includes(VERIFIED_POLE_TEAM_ID)) return false;
+  if (aliases.includes(VERIFIED_PBA_PARTNER_TEAM_ID)) return true;
+
+  return kind==="partner" ||
+    kind==="partenaire" ||
+    isPartnerTeam(team) ||
+    aliases.some((id)=>institutionalPartnerIds.has(id));
+};
+
+const localPartnerTeams = teams.filter(
+  (team)=>isInstitutionPartnerTeam(team) && !isScoutTeam(team)
+);
+const coachedTeams = teams.filter(
+  (team)=>!isScoutTeam(team) && !isInstitutionPartnerTeam(team)
+);
+
+// Ne dépend pas du timing de reloadPartnerTeams : PBA est affichée immédiatement
+// depuis la liste teams déjà chargée, puis enrichie par l'API si disponible.
+const displayedPartnerTeams = (() => {
+  const merged:any[] = [...partnerTeams];
+  for (const team of localPartnerTeams as any[]) {
+    const teamId=String(team.id||team.supabaseTeamId||team.supabase_team_id||"");
+    if(!teamId) continue;
+    if(merged.some((x:any)=>String(x.teamId||"")===teamId)) continue;
+    merged.push({
+      linkId:`local-${teamId}`,
+      teamId,
+      name:team.name||team.cat||team.category||"Équipe partenaire",
+      category:team.cat||team.category||"",
+      clubName:team.club||team.clubName||team.club_name||"",
+      logo:team.logo||team.club_logo_url||team.logo_url||null,
+      season:team.saison||team.season||"",
+      institutionName:team.institutionName||team.institution_name||"Ligue",
+      playerCount:Array.isArray(team.players)?team.players.length:0,
+      matchCount:Array.isArray(team.matchs)?team.matchs.length:0,
+    });
+  }
+  return merged.filter((item:any)=>String(item.teamId||"")!==VERIFIED_POLE_TEAM_ID);
+})();
 
 const sortedTeams = [...coachedTeams].sort((a, b) => {
   // Priorité absolue aux équipes dont l'utilisateur est propriétaire / coach principal.
@@ -1092,19 +1394,147 @@ return (
                 <ScoutTeamsManager teams={teams} onReload={reloadTeams} />
               ) : teamsView === "partners" ? (
                 <div className="mc-teamgrid">
-                  {partnerTeams.map((item:any) => (
-                    <div key={item.linkId || item.teamId} className="mc-team-group-item">
-                      <div className="mc-team-section-title collaboration"><strong>🤝 PARTENAIRE · {item.institutionName}</strong><span>{item.season || "Saison non renseignée"}</span></div>
-                      <div style={{border:"1px solid #eadfd9",borderRadius:16,background:"#fff",padding:18,display:"grid",gridTemplateColumns:"1fr auto",gap:14,alignItems:"center"}}>
-                        <div style={{display:"flex",gap:12,alignItems:"center"}}>
-                          <div style={{width:54,height:54,borderRadius:"50%",background:"#fbf4ee",display:"grid",placeItems:"center",overflow:"hidden",fontSize:24}}>{item.logo?<img src={item.logo} alt="" style={{width:"100%",height:"100%",objectFit:"cover"}}/>:"🏀"}</div>
-                          <div><strong style={{display:"block",fontSize:18,color:"#6B1A2C"}}>{item.name}</strong><span style={{fontSize:12,color:"#756760"}}>{item.clubName || item.category || "Équipe partenaire"} · {item.playerCount || 0} joueur(s) · {item.matchCount || 0} match(s)</span></div>
+                  {displayedPartnerTeams.map((item:any) => {
+                    const localTeam = (teams as any[]).find((team:any) => {
+                      const aliases=[
+                        String(team?.id||""),
+                        String(team?.supabaseTeamId||""),
+                        String(team?.supabase_team_id||""),
+                      ].filter(Boolean);
+                      return aliases.includes(String(item.teamId||""));
+                    });
+
+                    const aliases=[
+                      String(item.teamId||""),
+                      String(localTeam?.id||""),
+                      String(localTeam?.supabaseTeamId||""),
+                      String(localTeam?.supabase_team_id||""),
+                    ].filter(Boolean);
+
+                    const ffbbStanding=aliases
+                      .map((id)=>teamFfbbStandings[id])
+                      .find(Boolean);
+                    const isFfbbConnected=aliases.some(
+                      (id)=>id&&ffbbConnectedTeamIds.has(id)
+                    );
+
+                    // Exactement la même règle FFBB que "Mes équipes".
+                    const matchCount:number|"…"=isFfbbConnected
+                      ? (ffbbStanding ? ffbbStanding.games : "…")
+                      : (
+                          aliases.reduce(
+                            (max,id)=>Math.max(max,teamCalendarMatchCounts[id]||0),
+                            Number(item.matchCount||0)
+                          )
+                        );
+                    const wins:number|"…"=isFfbbConnected
+                      ? (ffbbStanding ? ffbbStanding.wins : "…")
+                      : (localTeam?.teamStats?.wins ?? localTeam?.kpi?.victoires ?? 0);
+                    const losses:number|"…"=isFfbbConnected
+                      ? (ffbbStanding ? ffbbStanding.losses : "…")
+                      : (localTeam?.teamStats?.losses ?? localTeam?.kpi?.defaites ?? 0);
+
+                    const bandColor=localTeam?.couleurs?.[0]||"#6B1A2C";
+                    const category=
+                      localTeam?.cat||
+                      localTeam?.categorieLabel||
+                      item.category||
+                      item.name||
+                      "Équipe partenaire";
+                    const level=
+                      localTeam?.niveau||
+                      item.clubName||
+                      "Niveau non renseigné";
+                    const playersCount=Array.isArray(localTeam?.players)
+                      ? localTeam.players.length
+                      : Number(item.playerCount||0);
+                    const coach=localTeam
+                      ? getTeamCoachName(localTeam)
+                      : (item.coachName||"Non renseigné");
+                    const season=
+                      localTeam?.season||
+                      localTeam?.saison||
+                      item.season||
+                      "2026-2027";
+
+                    return (
+                      <div key={item.linkId || item.teamId} className="mc-team-group-item">
+                        <div className="mc-team-section-title collaboration">
+                          <strong>🤝 PARTENAIRE · {item.institutionName}</strong>
+                          <span>{item.season || "Saison non renseignée"}</span>
                         </div>
-                        <button className="mc-new-team" onClick={() => router.push(`/equipes/${item.teamId}`)}>Voir l'équipe →</button>
+
+                        <article className="mc-teamcard mc-teamcard-horizontal">
+                          <div
+                            className="mc-team-banner mc-team-banner-horizontal"
+                            style={{backgroundColor:bandColor}}
+                          >
+                            <div className="mc-team-banner-lines" aria-hidden="true" />
+                            <div className="mc-team-banner-logo">
+                              {(localTeam?.logo||item.logo)
+                                ? <img src={localTeam?.logo||item.logo} alt="" />
+                                : <span>🏀</span>}
+                            </div>
+                            <div className="mc-team-banner-copy">
+                              <strong>{category}</strong>
+                              <span>{level}</span>
+                              <em className="mc-team-shared">Équipe partenaire · consultation</em>
+                            </div>
+                          </div>
+
+                          <div className="mc-team-body mc-team-body-horizontal">
+                            <div className="mc-team-kpis">
+                              <div className="mc-team-kpi">
+                                <span className="mc-team-kpi-icon">▣</span>
+                                <div>
+                                  <strong>{matchCount}</strong>
+                                  <span>Matchs</span>
+                                  <small>Saison {season}</small>
+                                </div>
+                              </div>
+
+                              <div className="mc-team-kpi">
+                                <span className="mc-team-kpi-icon">♙</span>
+                                <div>
+                                  <strong>{playersCount}/15</strong>
+                                  <span>Joueurs</span>
+                                  <small>Effectif</small>
+                                </div>
+                              </div>
+
+                              <div className="mc-team-kpi">
+                                <span className="mc-team-kpi-icon">▥</span>
+                                <div>
+                                  <strong>{wins}V - {losses}D</strong>
+                                  <span>Bilan</span>
+                                  <small>{isFfbbConnected ? "Résultats FFBB" : "Victoires - Défaites"}</small>
+                                </div>
+                              </div>
+
+                              <div className="mc-team-kpi mc-team-kpi-coach">
+                                <span className="mc-team-kpi-icon">♙</span>
+                                <div>
+                                  <strong>{coach}</strong>
+                                  <span>Coach</span>
+                                  <small>Entraîneur principal</small>
+                                </div>
+                              </div>
+                            </div>
+
+                            <div className="mc-team-actions mc-team-actions-horizontal">
+                              <button
+                                className="main"
+                                onClick={()=>router.push(`/equipes/${item.teamId}`)}
+                              >
+                                Consulter l'équipe →
+                              </button>
+                            </div>
+                          </div>
+                        </article>
                       </div>
-                    </div>
-                  ))}
-                  {!partnerTeams.length && <div style={{padding:28,border:"1px dashed #dccfc8",borderRadius:16,color:"#756760",textAlign:"center"}}>Aucune équipe partenaire active. Les équipes créées dans Institutionnel apparaîtront ici automatiquement.</div>}
+                    );
+                  })}
+                  {!displayedPartnerTeams.length && <div style={{padding:28,border:"1px dashed #dccfc8",borderRadius:16,color:"#756760",textAlign:"center"}}>Aucune équipe partenaire active. Les équipes créées dans Institutionnel apparaîtront ici automatiquement.</div>}
                 </div>
               ) : (
               <div className="mc-teamgrid">
@@ -1113,9 +1543,27 @@ return (
                   const category = team.cat || team.categorieLabel || 'Équipe';
                   const level = team.niveau || 'Niveau non renseigné';
                   const coach = getTeamCoachName(team);
-                  const matchCount = teamCalendarMatchCounts[String(team.id)] || 0;
-                  const wins = team.teamStats?.wins ?? team.kpi?.victoires ?? 0;
-                  const losses = team.teamStats?.losses ?? team.kpi?.defaites ?? 0;
+                  const ffbbStanding =
+                    teamFfbbStandings[String(team.id)] ||
+                    teamFfbbStandings[String((team as any).supabaseTeamId || "")] ||
+                    teamFfbbStandings[String((team as any).supabase_team_id || "")];
+                  const isFfbbConnected = [
+                    String(team.id || ""),
+                    String((team as any).supabaseTeamId || ""),
+                    String((team as any).supabase_team_id || ""),
+                  ].some((id) => id && ffbbConnectedTeamIds.has(id));
+
+                  // Si FFBB est connecté, J/G/P viennent UNIQUEMENT du tableau FFBB.
+                  // On ne retombe jamais sur les 3 matchs locaux (amicaux / futurs / historiques).
+                  const matchCount: number | "…" = isFfbbConnected
+                    ? (ffbbStanding ? ffbbStanding.games : "…")
+                    : (teamCalendarMatchCounts[String(team.id)] || 0);
+                  const wins: number | "…" = isFfbbConnected
+                    ? (ffbbStanding ? ffbbStanding.wins : "…")
+                    : (team.teamStats?.wins ?? team.kpi?.victoires ?? 0);
+                  const losses: number | "…" = isFfbbConnected
+                    ? (ffbbStanding ? ffbbStanding.losses : "…")
+                    : (team.teamStats?.losses ?? team.kpi?.defaites ?? 0);
                   const roleInfo = getCollaborationRoleInfo(team.collaborationRole);
 
                   const showPrincipalTitle =

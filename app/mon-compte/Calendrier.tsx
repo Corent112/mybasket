@@ -3,10 +3,6 @@
 import { useEffect, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { getTeams } from "@/lib/equipes-store";
-import {
-  listProjects,
-  type LiveProjectSummary,
-} from "@/lib/stats-supabase";
 
 /* =====================================================================
  * MonCalendrier — transposition fidèle du calendrier de mybasket-app_24.html
@@ -27,7 +23,7 @@ type Attachment = {
 
 type CalEvent = {
   id: string;
-  date: string;
+  date: string;        // "YYYY-MM-DD"
   title: string;
   type: EventType;
   venue?: Venue;
@@ -35,48 +31,13 @@ type CalEvent = {
   time?: string;
   loc?: string;
   teamId?: string;
-  teamName?: string;
-  theme?: string;
-  sessionId?: string;
   assignedPlayers?: string[];
   notes?: string;
   attachment?: Attachment;
-
-  // Match LiveStats provenant de la même source que Management > Historique.
-  projectId?: string;
-  projectStatus?: "draft" | "completed";
 };
 
-type Player = {
-  id: string;
-  firstName: string;
-  lastName?: string;
-  position?: string;
-  number?: string;
-  avatarUrl?: string;
-};
-
-type Team = {
-  id: string;
-  name: string;
-  logoUrl?: string;
-  players: Player[];
-  ownerUserId?: string | null;
-  isShared?: boolean;
-  collaborationPermissions?: Record<string, boolean> | null;
-};
-
-type CalendarDbRow = Record<string, unknown>;
-
-type SessionCalendarRow = {
-  id: string;
-  team_id?: string | null;
-  team_reference_id?: string | null;
-  team_name?: string | null;
-  title?: string | null;
-  theme?: string | null;
-  pdf_url?: string | null;
-};
+type Player = { id: string; firstName: string };
+type Team = { id: string; name: string; category?: string; players: Player[] };
 
 
 const MONTHS = ["JANVIER", "FÉVRIER", "MARS", "AVRIL", "MAI", "JUIN", "JUILLET", "AOÛT", "SEPTEMBRE", "OCTOBRE", "NOVEMBRE", "DÉCEMBRE"];
@@ -84,8 +45,6 @@ const DAYS = ["L", "M", "M", "J", "V", "S", "D"];
 
 const uid = () => Math.random().toString(36).slice(2, 9);
 const pad = (n: number) => String(n).padStart(2, "0");
-const isUuid = (id: string) =>
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id);
 const isPdf = (a: Attachment) => a.type === "application/pdf" || a.name.toLowerCase().endsWith(".pdf");
 const isImage = (a: Attachment) => a.type.startsWith("image/");
 
@@ -94,33 +53,15 @@ function normalizeTeamForCalendar(team: any): Team {
   return {
     id: String(team.id ?? ""),
     name: String(team.nom || team.name || team.teamName || "Équipe"),
-    ownerUserId: team.ownerUserId || team.user_id || null,
-    isShared: team.isShared === true,
-    collaborationPermissions:
-      team.collaborationPermissions && typeof team.collaborationPermissions === "object"
-        ? team.collaborationPermissions
-        : null,
-    logoUrl: String(
-      team.logo ||
-        team.logoUrl ||
-        team.logo_url ||
-        team.clubLogo ||
-        team.clubLogoUrl ||
-        team.club_logo_url ||
-        "",
-    ),
     players: (team.players || team.joueurs || team.effectif || team.roster || []).map((p: any) => ({
       id: String(p.id ?? p.playerId ?? uid()),
       firstName:
         p.prenom ||
-        p.first_name ||
         p.firstName ||
         (p.name ? String(p.name).split(/\s+/)[0] : "") ||
-        "Joueur",
-      lastName: p.nom || p.last_name || p.lastName || "",
-      position: p.position_primary || p.position || "",
-      number: String(p.jersey_number || p.number || p.numero || p.num || ""),
-      avatarUrl: String(p.avatar_url || p.photo_url || p.image_url || ""),
+        p.nom ||
+        p.lastName ||
+        `#${p.num ?? p.numero ?? p.number ?? ""}`,
     })),
   };
 }
@@ -143,29 +84,39 @@ function calendarTypeToDbType(value: EventType): string {
   return "other";
 }
 
-function normalizeCalendarRow(row: CalendarDbRow): CalEvent {
-  const value = row as Record<string, any>;
-
+function normalizeCalendarRow(row: any): CalEvent {
   return {
-    id: String(value.id ?? ""),
-    date: String(value.event_date ?? ""),
-    title: String(value.title ?? "Évènement"),
-    type: dbTypeToCalendarType(value.event_type),
-    time: value.start_time ? String(value.start_time).slice(0, 5) : undefined,
-    loc: value.location ?? undefined,
-    notes: value.description ?? undefined,
-    teamId: value.team_id ? String(value.team_id) : undefined,
-    teamName: value.team_name ? String(value.team_name) : undefined,
-    theme: value.theme ? String(value.theme) : undefined,
-    sessionId: value.session_id ? String(value.session_id) : undefined,
-    assignedPlayers: Array.isArray(value.assigned_player_ids)
-      ? value.assigned_player_ids.map(String)
-      : [],
-    attachment: value.attachment_url
+    id: String(row.id ?? ""),
+    date: String(row.event_date ?? ""),
+    title: String(row.title ?? "Évènement"),
+    type: dbTypeToCalendarType(row.event_type),
+    time: row.start_time ? String(row.start_time).slice(0, 5) : undefined,
+    loc: row.location ?? undefined,
+    notes: row.description ?? undefined,
+    teamId: row.team_id ? String(row.team_id) : undefined,
+    opponent:
+      dbTypeToCalendarType(row.event_type) === "match"
+        ? String(row.title ?? "").replace(/^Match\s+(?:vs\s+)?/i, "").trim() || undefined
+        : undefined,
+    venue:
+      dbTypeToCalendarType(row.event_type) === "match"
+        ? (
+            /extérieur/i.test(String(row.location ?? "") + " " + String(row.description ?? ""))
+              ? "away"
+              : /domicile/i.test(String(row.location ?? "") + " " + String(row.description ?? ""))
+                ? "home"
+                : ""
+          )
+        : "",
+    attachment: row.attachment_url
       ? {
-          name: "Fiche séance",
-          type: "application/pdf",
-          dataUrl: String(value.attachment_url),
+          name: "Pièce jointe",
+          type: String(row.attachment_url).startsWith("data:application/pdf")
+            ? "application/pdf"
+            : String(row.attachment_url).startsWith("data:image/")
+              ? "image/*"
+              : "text/plain",
+          dataUrl: row.attachment_url,
         }
       : undefined,
   };
@@ -187,6 +138,22 @@ function venueLabel(ev: CalEvent): string {
   if (ev.type === "entrainement") return "🏋 ";
   if (ev.type === "tournoi") return "🏆 ";
   return "📌 ";
+}
+
+function calendarEventLabel(ev: CalEvent, teams: Team[]): string {
+  if (ev.type !== "match") return ev.title;
+
+  const team = teams.find((item) => item.id === ev.teamId);
+  const category = String(team?.category || "").trim();
+  const opponent = String(
+    ev.opponent ||
+    ev.title.replace(/^Match\s+(?:vs\s+|@\s*)?/i, "")
+  ).trim();
+
+  const prefix = category ? `${category} ` : "";
+  if (ev.venue === "away") return `${prefix}@ ${opponent}`.trim();
+  if (ev.venue === "home") return `${prefix}vs ${opponent}`.trim();
+  return `${prefix}${opponent}`.trim();
 }
 
 // Ouvre la pièce jointe dans une nouvelle fenêtre et lance l'impression
@@ -238,10 +205,8 @@ export default function MonCalendrier() {
   const [fNotes, setFNotes] = useState("");
   const [fAttach, setFAttach] = useState<Attachment | null>(null);
 
-  // Modales de prévisualisation
+  // Modale de prévisualisation de la pièce jointe
   const [preview, setPreview] = useState<Attachment | null>(null);
-  const [sessionPreviewId, setSessionPreviewId] = useState<string | null>(null);
-  const [eventSelfReview, setEventSelfReview] = useState<any | null>(null);
 
   const togglePlayer = (pid: string) =>
     setFPlayers((p) => (p.includes(pid) ? p.filter((x) => x !== pid) : [...p, pid]));
@@ -267,51 +232,7 @@ export default function MonCalendrier() {
   async function loadTeams() {
     try {
       const loadedTeams = await getTeams();
-      let normalizedTeams = (loadedTeams ?? [])
-        .map(normalizeTeamForCalendar)
-        .filter(
-          (team) =>
-            Boolean(team.id) &&
-            (
-              // Le coach principal voit toujours le calendrier de son équipe.
-              !team.isShared ||
-              // Un collaborateur ne le voit QUE si la case
-              // "Séances & calendrier" lui a été accordée.
-              team.collaborationPermissions?.sessions === true
-            ),
-        );
-
-      const teamIds = normalizedTeams.map((team) => team.id);
-      if (teamIds.length > 0) {
-        const { data: playerRows } = await supabase
-          .from("players")
-          .select("id, team_id, first_name, last_name, position_primary, jersey_number, avatar_url")
-          .in("team_id", teamIds)
-          .order("last_name", { ascending: true });
-
-        const playersByTeam = new Map<string, Player[]>();
-        for (const row of playerRows ?? []) {
-          const teamKey = String(row.team_id || "");
-          const player: Player = {
-            id: String(row.id),
-            firstName: String(row.first_name || "Joueur"),
-            lastName: String(row.last_name || ""),
-            position: String(row.position_primary || ""),
-            number: String(row.jersey_number || ""),
-            avatarUrl: String(row.avatar_url || ""),
-          };
-          playersByTeam.set(teamKey, [...(playersByTeam.get(teamKey) || []), player]);
-        }
-
-        normalizedTeams = normalizedTeams.map((team) => ({
-          ...team,
-          players: playersByTeam.get(team.id)?.length
-            ? playersByTeam.get(team.id) || []
-            : team.players,
-        }));
-      }
-
-      setTeams(normalizedTeams);
+      setTeams((loadedTeams ?? []).map(normalizeTeamForCalendar).filter((t) => t.id));
     } catch (error) {
       console.error("Erreur chargement équipes calendrier:", error);
       setTeams([]);
@@ -332,212 +253,26 @@ export default function MonCalendrier() {
       return;
     }
 
-    const loadedTeams = await getTeams().catch(() => []);
-    const visibleTeams = (loadedTeams ?? []).filter(
-      (team: any) =>
-        team?.isShared !== true ||
-        team?.collaborationPermissions?.sessions === true,
-    );
-
-    const calendarTeamIds = visibleTeams
-      .map((team: any) => String(team?.id || ""))
-      .filter((id: string) => Boolean(id));
-
-    const livestatTeamIds = calendarTeamIds.filter(isUuid);
-
-    /*
-     * ÉVÉNEMENTS CLASSIQUES
-     * ------------------------------------------------------------
-     * calendar_events reste la source des entraînements, formations,
-     * tournois et événements manuels.
-     *
-     * Les anciennes lignes game/match sont volontairement ignorées :
-     * elles ont pu être créées plusieurs fois par les anciennes versions
-     * du LiveStats. Les matchs visibles ci-dessous viennent uniquement
-     * de listProjects(), exactement comme Management > Historique.
-     */
-    const ownQuery = supabase
+    const { data, error } = await supabase
       .from("calendar_events")
       .select("*")
       .or(`user_id.eq.${user.id},owner_id.eq.${user.id}`)
       .order("event_date", { ascending: true })
       .order("start_time", { ascending: true });
 
-    const [ownResult, teamResult] = await Promise.all([
-      ownQuery,
-      calendarTeamIds.length
-        ? supabase
-            .from("calendar_events")
-            .select("*")
-            .in("team_id", calendarTeamIds)
-            .order("event_date", { ascending: true })
-            .order("start_time", { ascending: true })
-        : Promise.resolve({ data: [], error: null }),
-    ]);
-
-    if (ownResult.error || teamResult.error) {
-      const error = ownResult.error || teamResult.error;
-      console.error("Erreur chargement calendrier:", error);
+    if (error) {
+      console.error("Erreur chargement calendrier:", {
+        code: error.code,
+        message: error.message,
+        details: error.details,
+        hint: error.hint,
+      });
       setEvents([]);
       setLoading(false);
       return;
     }
 
-    const rowsById = new Map<string, CalendarDbRow>();
-
-    for (const row of [
-      ...((ownResult.data ?? []) as CalendarDbRow[]),
-      ...((teamResult.data ?? []) as CalendarDbRow[]),
-    ]) {
-      const value = row as Record<string, any>;
-      const dbType = String(value.event_type || "").toLowerCase();
-
-      // Ne jamais réafficher les vieux doublons LiveStats de calendar_events.
-      if (dbType === "game" || dbType === "match") continue;
-
-      const id = String(value.id || "");
-      if (id) rowsById.set(id, row);
-    }
-
-    const normalizedEvents: CalEvent[] = Array.from(rowsById.values()).map(
-      (row) => normalizeCalendarRow(row),
-    );
-
-    /*
-     * MATCHS / PROJETS LIVESTATS
-     * ------------------------------------------------------------
-     * Source IDENTIQUE à Management > Historique :
-     *   listProjects({ teamId, status: "draft" })
-     *   listProjects({ teamId, status: "completed" })
-     *
-     * Donc :
-     * - projet réellement en cours dans Historique  => calendrier
-     * - projet terminé/validé dans Historique       => calendrier
-     * - brouillon fantôme / ancien calendar_event   => jamais affiché
-     */
-    let historyProjects: LiveProjectSummary[] = [];
-
-    if (livestatTeamIds.length > 0) {
-      try {
-        const lists = await Promise.all(
-          livestatTeamIds.flatMap((teamId) => [
-            listProjects({ teamId, status: "draft" }),
-            listProjects({ teamId, status: "completed" }),
-          ]),
-        );
-
-        historyProjects = lists.flat();
-      } catch (error) {
-        console.error("Erreur chargement projets LiveStats du calendrier:", error);
-      }
-    }
-
-    // Un projet Historique = exactement un événement calendrier.
-    const projectsById = new Map<string, LiveProjectSummary>();
-    for (const project of historyProjects) {
-      const id = String(project.id || "");
-      if (!id) continue;
-      projectsById.set(id, project);
-    }
-
-    for (const project of projectsById.values()) {
-      const projectDate = String(project.date || "").slice(0, 10);
-      if (!projectDate) continue;
-
-      const teamId = String(project.teamId || "");
-      const teamFromStore = visibleTeams.find(
-        (team: any) => String(team?.id || "") === teamId,
-      );
-
-      const teamName = String(
-        project.teamName ||
-          teamFromStore?.name ||
-          "",
-      );
-
-      const opponent = String(project.opponent || "Adversaire");
-      const isDraft = project.projectStatus === "draft";
-
-      normalizedEvents.push({
-        id: `livestat-project:${project.id}`,
-        date: projectDate,
-        title: `Match vs ${opponent}`,
-        type: "match",
-        venue: project.home ? "home" : "away",
-        opponent,
-        teamId: teamId || undefined,
-        teamName: teamName || undefined,
-        notes: isDraft
-          ? "Projet LiveStats en cours"
-          : `Match terminé${project.result ? ` · ${project.result}` : ""} · ${project.us}-${project.them}`,
-        projectId: String(project.id),
-        projectStatus: project.projectStatus,
-      });
-    }
-
-    normalizedEvents.sort(
-      (a, b) =>
-        a.date.localeCompare(b.date) ||
-        String(a.time || "").localeCompare(String(b.time || "")),
-    );
-
-    const sessionIds: string[] = normalizedEvents
-      .map((event: CalEvent) => event.sessionId)
-      .filter(
-        (value: string | undefined): value is string => Boolean(value),
-      );
-
-    if (sessionIds.length > 0) {
-      const { data: sessionRows } = await supabase
-        .from("practice_sessions")
-        .select("id, team_id, team_reference_id, team_name, title, theme, pdf_url")
-        .in("id", sessionIds);
-
-      const typedSessionRows = (sessionRows ?? []) as SessionCalendarRow[];
-      const sessionsById = new Map<string, SessionCalendarRow>(
-        typedSessionRows.map((row: SessionCalendarRow) => [
-          String(row.id),
-          row,
-        ]),
-      );
-
-      for (const event of normalizedEvents) {
-        if (!event.sessionId) continue;
-
-        const relatedSession = sessionsById.get(event.sessionId);
-        if (!relatedSession) continue;
-
-        event.teamId =
-          event.teamId ||
-          String(
-            relatedSession.team_reference_id ||
-              relatedSession.team_id ||
-              "",
-          );
-
-        event.teamName =
-          event.teamName ||
-          String(relatedSession.team_name || "") ||
-          visibleTeams.find(
-            (team: any) => String(team?.id || "") === event.teamId,
-          )?.name ||
-          String(relatedSession.title || "");
-
-        event.theme =
-          event.theme ||
-          String(relatedSession.theme || relatedSession.title || "");
-
-        if (!event.attachment && relatedSession.pdf_url) {
-          event.attachment = {
-            name: "Fiche séance",
-            type: "application/pdf",
-            dataUrl: String(relatedSession.pdf_url),
-          };
-        }
-      }
-    }
-
-    setEvents(normalizedEvents);
+    setEvents((data ?? []).map(normalizeCalendarRow));
     setLoading(false);
   }
 
@@ -560,33 +295,8 @@ export default function MonCalendrier() {
   };
   const openEdit = (id: string) => {
     const e = events.find((x) => x.id === id); if (!e) return;
-
-    if (e.projectId) {
-      const params = new URLSearchParams({
-        project: e.projectId,
-        mode: e.projectStatus === "draft" ? "resume" : "analysis",
-      });
-
-      if (e.projectStatus === "completed") {
-        params.set("tab", "history");
-      }
-
-      window.location.href = `/management/live?${params.toString()}`;
-      return;
-    }
-    setEventSelfReview(null);
-    if (e.sessionId) {
-      void supabase
-        .from("practice_session_self_reviews")
-        .select("objectives_rating,clarity_rating,adaptation_rating,rhythm_rating,relevance_rating,takeaways,generated_summary,generated_advice,updated_at")
-        .eq("session_id", e.sessionId)
-        .order("updated_at", { ascending: false })
-        .limit(1)
-        .maybeSingle()
-        .then((result: { data: any | null }) => setEventSelfReview(result.data ?? null));
-    }
     setEditingId(id);
-    setFTitle(e.theme || e.title); setFDate(e.date); setFTime(e.time || ""); setFType(e.type);
+    setFTitle(e.title); setFDate(e.date); setFTime(e.time || ""); setFType(e.type);
     setFVenue(e.venue || "home"); setFOpp(e.opponent || ""); setFLoc(e.loc || "");
     setFTeam(e.teamId || ""); setFPlayers(e.assignedPlayers || []);
     setFNotes(e.notes || ""); setFAttach(e.attachment || null);
@@ -605,49 +315,29 @@ export default function MonCalendrier() {
       return;
     }
 
-    const editingEvent = events.find((event) => event.id === editingId);
-    const targetTeam =
-      teams.find((team) => team.id === fTeam) ||
-      teams.find((team) => team.id === editingEvent?.teamId) ||
-      null;
-    const teamOwnerId = targetTeam?.ownerUserId || user.id;
-
-    if (
-      targetTeam?.isShared &&
-      targetTeam.collaborationPermissions?.sessions !== true
-    ) {
-      window.alert(
-        "Le coach principal ne t’a pas donné accès aux séances et au calendrier de cette équipe.",
-      );
-      return;
-    }
-
     const payload = {
       user_id: user.id,
-      owner_id: teamOwnerId,
-      title: `${selectedTeam?.name || editingEvent?.teamName || "Équipe"} • ${fTitle.trim() || "Entraînement"}`,
-      theme: fTitle.trim() || "Entraînement",
-      description: fNotes || null,
+      owner_id: user.id,
+      team_id: fTeam || null,
+      title:
+        fType === "match"
+          ? (fTitle.trim() || `Match${fOpp.trim() ? ` vs ${fOpp.trim()}` : ""}`)
+          : (fTitle.trim() || "Entraînement"),
+      description: [
+        fNotes.trim(),
+        fType === "match" && fVenue === "home" ? "Domicile" : "",
+        fType === "match" && fVenue === "away" ? "Extérieur" : "",
+      ].filter(Boolean).join(" • ") || null,
       event_date: fDate,
       start_time: fTime || null,
       end_time: null,
-      location: fLoc || null,
+      location:
+        fType === "match" && !fLoc.trim()
+          ? (fVenue === "home" ? "Domicile" : fVenue === "away" ? "Extérieur" : null)
+          : (fLoc || null),
       event_type: calendarTypeToDbType(fType),
-      session_id:
-        events.find((event) => event.id === editingId)?.sessionId || null,
-      team_id:
-        fTeam ||
-        events.find((event) => event.id === editingId)?.teamId ||
-        null,
-      team_name:
-        selectedTeam?.name ||
-        events.find((event) => event.id === editingId)?.teamName ||
-        null,
-      assigned_player_ids: fPlayers,
-      attachment_url:
-        fAttach?.dataUrl ||
-        events.find((event) => event.id === editingId)?.attachment?.dataUrl ||
-        null,
+      session_id: null,
+      attachment_url: fAttach?.dataUrl || null,
       visibility: "private",
       updated_at: new Date().toISOString(),
     };
@@ -656,7 +346,8 @@ export default function MonCalendrier() {
       const { error } = await supabase
         .from("calendar_events")
         .update(payload)
-        .eq("id", editingId);
+        .eq("id", editingId)
+        .or(`user_id.eq.${user.id},owner_id.eq.${user.id}`);
 
       if (error) {
         console.error("Erreur modification événement:", {
@@ -687,70 +378,9 @@ export default function MonCalendrier() {
     setOpen(false);
   };
 
-  async function consultSessionPdf(eventId: string) {
-    const calendarEvent = events.find((event) => event.id === eventId);
-    if (!calendarEvent?.sessionId) {
-      window.alert("Aucune fiche séance n’est associée à cet événement.");
-      return;
-    }
-
-    if (calendarEvent.attachment?.dataUrl) {
-      setPreview(calendarEvent.attachment);
-      return;
-    }
-
-    try {
-      const response = await fetch(
-        `/api/seances/${calendarEvent.sessionId}/pdf`,
-        { method: "POST" },
-      );
-      const result = (await response.json()) as {
-        pdfUrl?: string;
-        error?: string;
-      };
-
-      if (!response.ok || !result.pdfUrl) {
-        throw new Error(result.error || "Le PDF n’a pas pu être généré.");
-      }
-
-      const attachment: Attachment = {
-        name: "Fiche séance",
-        type: "application/pdf",
-        dataUrl: result.pdfUrl,
-      };
-
-      setEvents((current) =>
-        current.map((event) =>
-          event.id === eventId
-            ? { ...event, attachment }
-            : event,
-        ),
-      );
-      setFAttach(attachment);
-      setPreview(attachment);
-    } catch (error) {
-      console.error("Erreur consultation fiche séance:", error);
-      window.alert(
-        error instanceof Error
-          ? error.message
-          : "Impossible d’ouvrir la fiche séance.",
-      );
-    }
-  }
-
   const deleteEvent = async () => {
     if (!editingId) return;
-
-    const eventToDelete = events.find((event) => event.id === editingId);
-    if (!eventToDelete) return;
-
-    const linkedSessionId = eventToDelete.sessionId;
-    const confirmed = window.confirm(
-      linkedSessionId
-        ? "Supprimer définitivement cette séance ? Elle disparaîtra du calendrier, de la fiche équipe et de toutes les statistiques de séance."
-        : "Supprimer cet événement ?",
-    );
-    if (!confirmed) return;
+    if (!window.confirm("Supprimer cet événement ?")) return;
 
     const {
       data: { user },
@@ -762,147 +392,11 @@ export default function MonCalendrier() {
       return;
     }
 
-    if (linkedSessionId) {
-      // Vérifie explicitement que la séance appartient bien à l'utilisateur courant.
-      // Le compte CEO/superadmin ne reçoit aucun passe-droit dans cet espace personnel.
-      const { data: linkedSession, error: sessionLookupError } = await supabase
-        .from("practice_sessions")
-        .select("id, user_id, owner_id, team_id")
-        .eq("id", linkedSessionId)
-        .maybeSingle();
-
-      if (sessionLookupError) {
-        console.error("Erreur vérification séance liée:", sessionLookupError);
-        window.alert(`Impossible de vérifier la séance : ${sessionLookupError.message}`);
-        return;
-      }
-
-      if (linkedSession) {
-        const ownerIds = [linkedSession.user_id, linkedSession.owner_id]
-          .map((value) => String(value || ""))
-          .filter(Boolean);
-        const isSessionOwner = ownerIds.includes(user.id);
-
-        if (!isSessionOwner && linkedSession.team_id) {
-          const { data: canEditSession, error: permissionError } =
-            await supabase.rpc("team_member_has_permission", {
-              p_team_id: linkedSession.team_id,
-              p_permission: "sessions",
-            });
-
-          if (permissionError || canEditSession !== true) {
-            window.alert("Tu n’as pas l’autorisation de supprimer cette séance.");
-            return;
-          }
-        } else if (!isSessionOwner && !linkedSession.team_id) {
-          window.alert("Cette séance ne t’appartient pas.");
-          return;
-        }
-
-        const sessionChildren = [
-          "practice_session_attendance",
-          "practice_session_players",
-          "practice_session_exercises",
-        ];
-
-        for (const table of sessionChildren) {
-          const { error: childError } = await supabase
-            .from(table)
-            .delete()
-            .eq("session_id", linkedSessionId);
-
-          if (childError) {
-            const optionalTableMissing =
-              childError.code === "PGRST204" ||
-              childError.code === "PGRST205" ||
-              childError.message?.includes("schema cache") ||
-              childError.message?.includes("Could not find");
-
-            if (!optionalTableMissing) {
-              console.error(`Erreur suppression ${table}:`, childError);
-              window.alert(
-                `Impossible de supprimer complètement la séance : ${childError.message}`,
-              );
-              return;
-            }
-          }
-        }
-
-        const { data: deletedSessionRows, error: sessionDeleteError } = await supabase
-          .from("practice_sessions")
-          .delete()
-          .eq("id", linkedSessionId)
-          .select("id");
-
-        if (sessionDeleteError) {
-          console.error("Erreur suppression séance liée:", sessionDeleteError);
-          window.alert(
-            `Impossible de supprimer la séance de MyBasket : ${sessionDeleteError.message}`,
-          );
-          return;
-        }
-
-        if (!deletedSessionRows || deletedSessionRows.length === 0) {
-          window.alert(
-            "La séance n’a pas été supprimée. Vérifie les droits Supabase/RLS avant de réessayer.",
-          );
-          return;
-        }
-      }
-
-      // Supprime toutes les représentations calendrier de cette même séance
-      // appartenant à l'utilisateur courant.
-      const { error: calendarDeleteError } = await supabase
-        .from("calendar_events")
-        .delete()
-        .eq("session_id", linkedSessionId);
-
-      if (calendarDeleteError) {
-        console.error("Erreur suppression calendrier séance:", calendarDeleteError);
-        window.alert(
-          `La séance a été supprimée, mais le calendrier n’a pas pu être nettoyé : ${calendarDeleteError.message}`,
-        );
-        await loadEvents();
-        return;
-      }
-
-      // Nettoyage des anciens caches locaux historiques pour empêcher toute réapparition
-      // d'une séance supprimée sur un navigateur ayant utilisé une ancienne version de MyBasket.
-      if (typeof window !== "undefined") {
-        for (const key of [
-          "mybasket_team_practice_sessions",
-          "mybasket_sessions",
-          "mybasket_seances",
-          "practice_sessions",
-        ]) {
-          try {
-            const parsed = JSON.parse(window.localStorage.getItem(key) || "[]");
-            if (!Array.isArray(parsed)) continue;
-            const cleaned = parsed.filter(
-              (row: Record<string, unknown>) => String(row?.id || "") !== linkedSessionId,
-            );
-            if (cleaned.length !== parsed.length) {
-              window.localStorage.setItem(key, JSON.stringify(cleaned));
-            }
-          } catch {
-            // Ancien cache illisible : on l'ignore, Supabase reste la source unique.
-          }
-        }
-      }
-
-      setEvents((previous) =>
-        previous.filter((event) => event.sessionId !== linkedSessionId),
-      );
-      setOpen(false);
-      return;
-    }
-
-    // Événement simple : on ne touche à aucune séance, aucun match, aucune équipe ni aucun joueur.
-    const { data: deletedEventRows, error } = await supabase
+    const { error } = await supabase
       .from("calendar_events")
       .delete()
       .eq("id", editingId)
-      .select("id");
+      .or(`user_id.eq.${user.id},owner_id.eq.${user.id}`);
 
     if (error) {
       console.error("Erreur suppression événement:", {
@@ -915,12 +409,7 @@ export default function MonCalendrier() {
       return;
     }
 
-    if (!deletedEventRows || deletedEventRows.length === 0) {
-      window.alert("L'événement n'a pas été supprimé.");
-      return;
-    }
-
-    setEvents((previous) => previous.filter((event) => event.id !== editingId));
+    await loadEvents();
     setOpen(false);
   };
 
@@ -931,40 +420,7 @@ export default function MonCalendrier() {
           <h2 className="cal-title">{title}</h2>
         </div>
         <p style={{ color: "#6B6B6B", fontWeight: 700 }}>Chargement du calendrier...</p>
-        {sessionPreviewId && (
-        <div
-          className="cal-overlay cal-session-overlay"
-          onClick={() => setSessionPreviewId(null)}
-        >
-          <div
-            className="cal-session-preview"
-            onClick={(event) => event.stopPropagation()}
-          >
-            <div className="cal-modal-head">
-              <div>
-                <span>FICHE SÉANCE</span>
-                <b>
-                  {events.find((event) => event.sessionId === sessionPreviewId)
-                    ?.title || "Séance"}
-                </b>
-              </div>
-              <button
-                className="cal-x"
-                onClick={() => setSessionPreviewId(null)}
-                aria-label="Fermer"
-              >
-                ✕
-              </button>
-            </div>
-            <iframe
-              src={`/seances/${sessionPreviewId}?embed=1`}
-              title="Aperçu de la fiche séance"
-            />
-          </div>
-        </div>
-      )}
-
-      <style jsx>{`
+        <style jsx>{`
           .mb-cal{
             --bordeaux:#6B1A2C; --or:#D4A24C; --or-l:#E8C078;
             --noir:#0F0F12; --blanc:#FFFFFF;
@@ -1005,7 +461,8 @@ export default function MonCalendrier() {
               <div className="dn">{d}</div>
               {evs.map((e) => {
                 const col = getEventColor(e);
-                const tip = `${e.title}${e.opponent ? " vs " + e.opponent : ""}${e.time ? " · " + e.time : ""}${e.venue === "home" ? " · 🏠 Domicile" : e.venue === "away" ? " · 🚌 Extérieur" : ""}${e.loc ? " · " + e.loc : ""}`;
+                const label = calendarEventLabel(e, teams);
+                const tip = `${label}${e.time ? " · " + e.time : ""}${e.venue === "home" ? " · 🏠 Domicile" : e.venue === "away" ? " · 🚌 Extérieur" : ""}${e.loc ? " · " + e.loc : ""}`;
                 return (
                   <div
                     key={e.id}
@@ -1014,7 +471,7 @@ export default function MonCalendrier() {
                     title={tip}
                     onClick={(ev) => { ev.stopPropagation(); openEdit(e.id); }}
                   >
-                    {venueLabel(e)}{e.title}
+                    {venueLabel(e)}{label}
                   </div>
                 );
               })}
@@ -1064,24 +521,34 @@ export default function MonCalendrier() {
                 </select>
               </div>
 
+              {fType === "match" && (
+                <div className="cal-fld">
+                  <label>Domicile / extérieur</label>
+                  <select value={fVenue} onChange={(e) => setFVenue(e.target.value as Venue)}>
+                    <option value="home">🏠 Domicile</option>
+                    <option value="away">🚌 Extérieur</option>
+                  </select>
+                </div>
+              )}
+
               <div className="cal-fld">
                 <label>Équipe associée</label>
-                {editingId && events.find((event) => event.id === editingId)?.sessionId ? (
-                  <div className="cal-readonly-team">
-                    <strong>{events.find((event) => event.id === editingId)?.teamName || selectedTeam?.name || "Équipe associée"}</strong>
-                    <small>Équipe liée à la fiche séance.</small>
-                  </div>
+                <select value={fTeam} onChange={(e) => { setFTeam(e.target.value); setFPlayers([]); }}>
+                  <option value="">Aucune</option>
+                  {teams.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
+                </select>
+                {teams.length === 0 ? (
+                  <p className="cal-help">Aucune équipe trouvée — crée d'abord une équipe dans « Mes équipes ».</p>
                 ) : (
-                  <select value={fTeam} onChange={(e) => { setFTeam(e.target.value); setFPlayers([]); }}>
-                    <option value="">Aucune</option>
-                    {teams.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
-                  </select>
+                  <p className="cal-help">
+                    {"Pour les entraînements, ça permet de gérer la présence et l'historique dans la gestion d'équipe."}
+                  </p>
                 )}
               </div>
 
               <div className="cal-fld">
-                <label>Thème</label>
-                <input type="text" value={fTitle} onChange={(e) => setFTitle(e.target.value)} placeholder="Ex : Défense" />
+                <label>Titre (optionnel)</label>
+                <input type="text" value={fTitle} onChange={(e) => setFTitle(e.target.value)} placeholder="Entraînement" />
               </div>
 
               <div className="cal-fld">
@@ -1099,38 +566,11 @@ export default function MonCalendrier() {
                 {selectedTeam ? (
                   selectedTeam.players.length ? (
                     <div className="cal-players">
-                      {selectedTeam.players.map((player) => (
-                        <button
-                          type="button"
-                          key={player.id}
-                          className={
-                            "cal-player-card" +
-                            (fPlayers.includes(player.id) ? " on" : "")
-                          }
-                          onClick={() => togglePlayer(player.id)}
-                        >
-                          <span className="cal-player-avatar">
-                            {player.avatarUrl ? (
-                              <img
-                                src={player.avatarUrl}
-                                alt={`${player.firstName} ${player.lastName || ""}`}
-                              />
-                            ) : (
-                              <b>{player.firstName.slice(0, 1).toUpperCase()}</b>
-                            )}
-                          </span>
-                          <span className="cal-player-info">
-                            <strong>
-                              {player.firstName} {player.lastName || ""}
-                            </strong>
-                            <small>
-                              {player.position || "Poste non défini"}
-                              {player.number ? ` · #${player.number}` : ""}
-                            </small>
-                          </span>
-                          <span className="cal-player-check">
-                            {fPlayers.includes(player.id) ? "✓" : "+"}
-                          </span>
+                      {selectedTeam.players.map((p) => (
+                        <button type="button" key={p.id}
+                          className={"cal-pchip" + (fPlayers.includes(p.id) ? " on" : "")}
+                          onClick={() => togglePlayer(p.id)}>
+                          {fPlayers.includes(p.id) ? "✓ " : ""}{p.firstName}
                         </button>
                       ))}
                     </div>
@@ -1146,61 +586,23 @@ export default function MonCalendrier() {
                 <label>Notes</label>
                 <textarea value={fNotes} onChange={(e) => setFNotes(e.target.value)} placeholder="Infos complémentaires…" />
               </div>
+
               <div className="cal-fld">
-                <label>Fiche séance</label>
-                {editingId && events.find((event) => event.id === editingId)?.sessionId ? (
-                  <>
-                    <div className="cal-session-actions">
-                      <button
-                        type="button"
-                        className="cal-open-session"
-                        onClick={() => {
-                          if (editingId) void consultSessionPdf(editingId);
-                        }}
-                      >
-                        Consulter la fiche séance
-                      </button>
-                      <button
-                        type="button"
-                        className="cal-self-review"
-                        onClick={() => {
-                          const sid = editingId
-                            ? events.find((event) => event.id === editingId)?.sessionId
-                            : undefined;
-                          if (sid) window.location.href = `/seances/${sid}/bilan`;
-                        }}
-                      >
-                        Auto-évaluation
-                      </button>
-                    </div>
-                    {eventSelfReview ? (
-                      <div className="cal-review-summary">
-                        <div className="cal-review-title">
-                          <strong>Compte rendu de séance</strong>
-                          <b>{(
-                            (
-                              Number(eventSelfReview.objectives_rating || 0) +
-                              Number(eventSelfReview.rhythm_rating || 0) +
-                              Number(eventSelfReview.clarity_rating || 0) +
-                              Number(eventSelfReview.adaptation_rating || 0) +
-                              Number(eventSelfReview.relevance_rating || 0)
-                            ) / 5
-                          ).toFixed(1)}/5</b>
-                        </div>
-                        <p>{eventSelfReview.generated_summary || "Auto-évaluation enregistrée."}</p>
-                        {eventSelfReview.takeaways ? <p><strong>Remarques :</strong> {eventSelfReview.takeaways}</p> : null}
-                        <p><strong>Prochaine séance :</strong> {eventSelfReview.generated_advice || "—"}</p>
-                      </div>
-                    ) : (
-                      <div className="cal-review-empty">Auto-évaluation non renseignée pour cette séance.</div>
-                    )}
-                  </>
-                ) : (
-                  <div className="cal-attach">
-                    <label className="cal-attach-btn">📎 Ajouter une pièce jointe<input type="file" accept=".pdf,image/*,.doc,.docx,.txt" hidden onChange={(e) => onAttach(e.target.files?.[0])} /></label>
-                    {fAttach && <span className="cal-attach-name"><span className="cal-attach-fn">{fAttach.name}</span><button type="button" className="cal-attach-act" onClick={() => setPreview(fAttach)}>Consulter</button><button type="button" className="cal-attach-rm" onClick={() => setFAttach(null)}>Retirer ✕</button></span>}
-                  </div>
-                )}
+                <label>Pièce jointe (PDF, image, doc…)</label>
+                <div className="cal-attach">
+                  <label className="cal-attach-btn">
+                    📎 Ajouter une pièce jointe
+                    <input type="file" accept=".pdf,image/*,.doc,.docx,.txt" hidden
+                      onChange={(e) => onAttach(e.target.files?.[0])} />
+                  </label>
+                  {fAttach && (
+                    <span className="cal-attach-name">
+                      <span className="cal-attach-fn" title={fAttach.name}>{fAttach.name}</span>
+                      <button type="button" className="cal-attach-act" onClick={() => setPreview(fAttach)}>Consulter</button>
+                      <button type="button" className="cal-attach-rm" onClick={() => setFAttach(null)} aria-label="Retirer">Retirer ✕</button>
+                    </span>
+                  )}
+                </div>
               </div>
             </div>
 
@@ -1301,7 +703,6 @@ export default function MonCalendrier() {
         .cal-row2{display:grid;grid-template-columns:1fr 1fr;gap:.8rem}
         .cal-help{font-size:.74rem;color:var(--gris-text);line-height:1.4;margin:.1rem 0 0}
 
-        .cal-readonly-team{padding:.8rem 1rem;border:1px solid #eaded7;border-radius:12px;background:#f8f5f3}.cal-readonly-team strong,.cal-readonly-team small{display:block}.cal-readonly-team strong{color:var(--bordeaux)}.cal-readonly-team small{margin-top:.25rem;color:var(--gris-text);font-size:.75rem}.cal-open-session{width:100%;padding:.9rem 1rem;border:0;border-radius:12px;background:var(--bordeaux);color:#fff;font-weight:950;cursor:pointer}
         .cal-players{display:flex;flex-wrap:wrap;gap:.4rem}
         .cal-pchip{display:inline-flex;align-items:center;gap:.2rem;padding:.4rem .75rem;border:1.5px solid var(--gris-med);border-radius:999px;font-size:.8rem;font-weight:600;cursor:pointer;background:#fff;color:var(--noir);transition:.13s}
         .cal-pchip:hover{border-color:var(--noir)}
@@ -1320,7 +721,6 @@ export default function MonCalendrier() {
 
         .cal-modal-actions{display:flex;align-items:center;gap:.6rem;padding:1rem 1.4rem 1.4rem}
         .cal-modal-actions .spacer{flex:1}
-        .cal-review-summary,.cal-review-empty{margin-top:.65rem;border:1px solid #eadccc;border-radius:12px;padding:.85rem;background:#fff8ef}.cal-review-title{display:flex;align-items:center;justify-content:space-between;gap:1rem;color:#6b1a2c}.cal-review-title b{font-size:1rem}.cal-review-summary p{margin:.45rem 0 0;color:#665b57;line-height:1.45}.cal-review-empty{color:#887a72}
         .cal-del{border:none;background:none;color:var(--rouge);font-weight:600;font-size:.82rem;cursor:pointer;padding:.3rem .2rem}
         .cal-del:hover{text-decoration:underline}
 
@@ -1330,26 +730,6 @@ export default function MonCalendrier() {
         .cal-preview-body img{max-width:100%;max-height:74vh;object-fit:contain;border-radius:6px;box-shadow:0 4px 16px rgba(0,0,0,.2)}
         .cal-preview-body iframe{width:100%;height:74vh;border:0;background:#fff;border-radius:6px}
         .cal-preview-other{display:flex;flex-direction:column;align-items:center;gap:.85rem;color:var(--gris-text);font-size:.9rem;text-align:center}
-        .cal-players{display:grid!important;grid-template-columns:repeat(2,minmax(0,1fr));gap:.6rem!important}
-        .cal-player-card{display:grid;grid-template-columns:40px 1fr 28px;align-items:center;gap:.65rem;width:100%;padding:.65rem;border:1px solid #e8ded8;border-radius:14px;background:#fff;text-align:left;cursor:pointer;transition:.18s ease}
-        .cal-player-card:hover{transform:translateY(-2px);box-shadow:0 10px 24px rgba(107,26,44,.09)}
-        .cal-player-card.on{border-color:var(--or);background:#fff8e9;box-shadow:0 0 0 2px rgba(212,162,76,.13)}
-        .cal-player-avatar{width:40px;height:40px;border-radius:12px;overflow:hidden;display:grid;place-items:center;background:var(--noir);color:var(--or)}
-        .cal-player-avatar img{width:100%;height:100%;object-fit:cover}
-        .cal-player-info strong,.cal-player-info small{display:block}
-        .cal-player-info strong{font-size:.84rem;color:var(--noir)}
-        .cal-player-info small{margin-top:.15rem;color:var(--gris-text);font-size:.7rem}
-        .cal-player-check{width:26px;height:26px;border-radius:9px;display:grid;place-items:center;background:#f2ece8;color:var(--bordeaux);font-weight:950}
-        .cal-player-card.on .cal-player-check{background:var(--bordeaux);color:#fff}
-        .cal-session-overlay{z-index:10000}
-        .cal-session-preview{width:min(1180px,calc(100vw - 36px));height:min(860px,calc(100vh - 36px));display:flex;flex-direction:column;overflow:hidden;border-radius:22px;background:#fff;box-shadow:0 30px 90px rgba(0,0,0,.35)}
-        .cal-session-preview .cal-modal-head span{display:block;color:var(--or);font-size:.68rem;font-weight:950;letter-spacing:.12em}
-        .cal-session-preview iframe{width:100%;flex:1;border:0;background:#eef1f5}
-
-
-        .cal-session-actions{display:flex;gap:.55rem;flex-wrap:wrap}
-        .cal-self-review{border:1px solid #d4a24c;background:#fff8ef;color:#6b1a2c;border-radius:10px;padding:.7rem .9rem;font-weight:950;cursor:pointer}
-        .cal-self-review:hover{background:#d4a24c;color:#2e1b10}
 
         @media (max-width:600px){
           .cal-d{min-height:60px;padding:.25rem}

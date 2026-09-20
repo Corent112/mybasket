@@ -341,6 +341,40 @@ async function loadSupabaseProfile(): Promise<UserProfile> {
   };
 }
 
+
+type TeamFfbbSummary = {
+  connected: boolean;
+  games: number;
+  wins: number;
+  losses: number;
+  ranking: string;
+  pool: string;
+};
+
+function ffbbNumber(value: unknown): number | null {
+  if (value === null || value === undefined || value === "") return null;
+  const n = Number(value);
+  return Number.isFinite(n) ? n : null;
+}
+
+function ffbbRowScore(row: any, side: "us" | "them") {
+  const keys = side === "us"
+    ? ["our_score", "us_score", "team_score", "score_for", "points_for"]
+    : ["opponent_score", "them_score", "opponent_points", "score_against", "points_against"];
+  for (const key of keys) {
+    const n = ffbbNumber(row?.[key]);
+    if (n !== null) return n;
+  }
+  return null;
+}
+
+function ffbbKind(value: unknown) {
+  const s = str(value).normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+  if (s.includes("amical") || s.includes("friendly")) return "friendly";
+  if (s.includes("coupe") || s.includes("cup") || s.includes("trophee")) return "cup";
+  return "championship";
+}
+
 export default function MesEquipesPage() {
   const router = useRouter();
   const supabase = createClient();
@@ -355,6 +389,120 @@ export default function MesEquipesPage() {
   const [editProfile, setEditProfile] = useState(false);
   const [toast, setToast] = useState("");
   const [loading, setLoading] = useState(true);
+  const [ffbbByTeam, setFfbbByTeam] = useState<Record<string, TeamFfbbSummary>>({});
+
+  async function loadFfbbSummaries(teamIds: string[]) {
+    if (!teamIds.length) {
+      setFfbbByTeam({});
+      return;
+    }
+
+    const { data: connections, error: connectionsError } = await supabase
+      .from("ffbb_team_connections")
+      .select("*")
+      .in("team_id", teamIds)
+      .order("is_primary", { ascending: false });
+
+    if (connectionsError) {
+      console.error("Erreur connexions FFBB Mes Équipes :", connectionsError);
+      return;
+    }
+
+    const next: Record<string, TeamFfbbSummary> = {};
+
+    await Promise.all(teamIds.map(async (teamId) => {
+      const teamConnections = (connections || []).filter((row: any) => String(row.team_id) === teamId);
+      if (!teamConnections.length) {
+        next[teamId] = { connected: false, games: 0, wins: 0, losses: 0, ranking: "—", pool: "" };
+        return;
+      }
+
+      const primary = teamConnections.find((row: any) => row.is_primary) || teamConnections[0];
+      const logicalKey = primary.logical_competition_key;
+      const selected = logicalKey
+        ? teamConnections.filter((row: any) => row.logical_competition_key === logicalKey)
+        : teamConnections;
+      const ids = selected.map((row: any) => row.id);
+      const byId = new Map<string, any>(
+        selected.map((row: any): [string, any] => [String(row.id), row])
+      );
+
+      const { data: synced } = await supabase
+        .from("ffbb_synced_matches")
+        .select("*")
+        .eq("team_id", teamId)
+        .in("connection_id", ids)
+        .order("match_date", { ascending: true });
+
+      const official = (synced || []).filter((row: any) => {
+        const connection = byId.get(String(row.connection_id || ""));
+        return ffbbKind(row.competition_kind || connection?.competition_kind || connection?.competition) !== "friendly";
+      });
+      const championship = official.filter((row: any) => {
+        const connection = byId.get(String(row.connection_id || ""));
+        return ffbbKind(row.competition_kind || connection?.competition_kind || connection?.competition) === "championship";
+      });
+      let playedOfficial = official.filter((row: any) => ffbbRowScore(row, "us") !== null && ffbbRowScore(row, "them") !== null);
+      let playedChampionship = championship.filter((row: any) => ffbbRowScore(row, "us") !== null && ffbbRowScore(row, "them") !== null);
+
+      let pool = str(primary.pool || primary.pool_name);
+      let ranking = "—";
+
+      const rankingConnection = selected.find((row: any) =>
+        ffbbKind(row.competition_kind || row.competition) === "championship"
+      ) || primary;
+
+      // Même source que la fiche équipe : la page FFBB connectée prend le relais
+      // si la table de synchro n'a pas encore le dernier résultat.
+      if (rankingConnection?.source_url) {
+        try {
+          const response = await fetch(
+            `/api/ffbb/competition?url=${encodeURIComponent(rankingConnection.source_url)}`,
+            { cache: "no-store" }
+          );
+          const parsed = await response.json();
+
+          if (response.ok) {
+            if (parsed?.pool) pool = str(parsed.pool);
+            const pos = Number(parsed?.ranking);
+            if (Number.isFinite(pos) && pos > 0) ranking = pos === 1 ? "1er" : `${pos}e`;
+
+            const direct = Array.isArray(parsed?.matches)
+              ? parsed.matches.map((match: any) => ({
+                  our_score: match.ourScore,
+                  opponent_score: match.opponentScore,
+                  competition_kind: "championship",
+                }))
+              : [];
+            const directPlayed = direct.filter((row: any) =>
+              ffbbRowScore(row, "us") !== null && ffbbRowScore(row, "them") !== null
+            );
+
+            if (directPlayed.length > playedOfficial.length) {
+              playedOfficial = directPlayed;
+              playedChampionship = directPlayed;
+            }
+          }
+        } catch (error) {
+          console.error("Erreur lecture FFBB équipe", teamId, error);
+        }
+      }
+
+      const wins = playedChampionship.filter((row: any) => ffbbRowScore(row, "us")! > ffbbRowScore(row, "them")!).length;
+      const losses = playedChampionship.filter((row: any) => ffbbRowScore(row, "us")! < ffbbRowScore(row, "them")!).length;
+
+      next[teamId] = {
+        connected: true,
+        games: playedOfficial.length,
+        wins,
+        losses,
+        ranking,
+        pool,
+      };
+    }));
+
+    setFfbbByTeam(next);
+  }
 
   async function reload() {
     setLoading(true);
@@ -416,6 +564,7 @@ export default function MesEquipesPage() {
 
       setProfile(profileData);
       setTeams(mappedTeams);
+      await loadFfbbSummaries(teamIds);
     } catch (error) {
       console.error("Erreur chargement équipes Supabase :", error);
       setTeams([]);
@@ -897,20 +1046,38 @@ export default function MesEquipesPage() {
                   <div className="acc-tbody">
                     <div className="acc-team-kpis">
                       <div className="acc-team-kpi">
+                        <span className="acc-team-kpi-icon">▣</span>
+                        <div>
+                          <strong>{ffbbByTeam[t.id]?.connected ? ffbbByTeam[t.id].games : 0}</strong>
+                          <span>Matchs</span>
+                          <small>{t.season || "2025-2026"}</small>
+                        </div>
+                      </div>
+                      <div className="acc-team-kpi">
                         <span className="acc-team-kpi-icon">♙</span>
-                        <div><strong>{t.players.length}</strong><span>Joueurs</span></div>
+                        <div><strong>{t.players.length}/15</strong><span>Joueurs</span><small>Effectif</small></div>
                       </div>
                       <div className="acc-team-kpi">
-                        <span className="acc-team-kpi-icon">🏷</span>
-                        <div><strong>{t.niveau || "—"}</strong><span>Niveau</span></div>
-                      </div>
-                      <div className="acc-team-kpi">
-                        <span className="acc-team-kpi-icon">🗓</span>
-                        <div><strong>{t.season || "2025-2026"}</strong><span>Saison</span></div>
+                        <span className="acc-team-kpi-icon">▥</span>
+                        <div>
+                          <strong>
+                            {ffbbByTeam[t.id]?.connected
+                              ? `${ffbbByTeam[t.id].wins}V - ${ffbbByTeam[t.id].losses}D`
+                              : "0V - 0D"}
+                          </strong>
+                          <span>Bilan</span>
+                          <small>
+                            {ffbbByTeam[t.id]?.connected
+                              ? ffbbByTeam[t.id].ranking !== "—"
+                                ? `${ffbbByTeam[t.id].ranking}${ffbbByTeam[t.id].pool ? ` · Poule ${ffbbByTeam[t.id].pool}` : ""}`
+                                : "Championnat FFBB"
+                              : "Victoires - Défaites"}
+                          </small>
+                        </div>
                       </div>
                       <div className="acc-team-kpi acc-team-kpi-coach">
                         <span className="acc-team-kpi-icon">♟</span>
-                        <div><strong>{coach}</strong><span>Coach</span></div>
+                        <div><strong>{coach}</strong><span>Coach</span><small>Entraîneur principal</small></div>
                       </div>
                     </div>
 

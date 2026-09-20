@@ -145,6 +145,11 @@ export default function SystemeDetailClient() {
 
   function goEdit() {
     try {
+      // On nettoie uniquement les anciens états temporaires de Dessin.
+      // IMPORTANT : quand on arrive depuis un Playbook, on conserve explicitement
+      // l'identité du système à modifier. Avant, ces deux clés étaient supprimées
+      // juste avant l'ouverture de /systemes/creer, ce qui pouvait faire basculer
+      // l'écran en création au lieu de charger la modification.
       localStorage.removeItem(`mybasket_systeme_draft_${id}`);
       localStorage.removeItem(`mybasket_systeme_draft_${id}_storage_id`);
       localStorage.removeItem("mybasket_plaquette_load");
@@ -152,11 +157,13 @@ export default function SystemeDetailClient() {
       localStorage.removeItem("mybasket_edit_schema_index");
       localStorage.removeItem("mybasket_edit_schema_group_id");
       localStorage.removeItem("mb_plaquette_return_to");
-      localStorage.removeItem("mybasket_edit_system_id");
-      localStorage.removeItem("mybasket_current_system_id");
+
+      localStorage.setItem("mybasket_edit_systeme_id", id);
+      localStorage.setItem("mybasket_edit_system_id", id);
+      localStorage.setItem("mybasket_current_system_id", id);
     } catch {}
 
-    router.push(`/systemes/creer?id=${id}`);
+    router.push(`/systemes/creer?id=${encodeURIComponent(id)}`);
   }
 
   const steps = useMemo(() => normalizeList(systeme?.deroulement), [systeme]);

@@ -1,16 +1,10 @@
 import { Suspense } from "react";
-import SystemesWorkspace from "./SystemesWorkspace";
+import SystemesClient from "./SystemesClient";
 
 export default function Page() {
   return (
-    <Suspense
-      fallback={
-        <main style={{ padding: 40 }}>
-          Chargement...
-        </main>
-      }
-    >
-      <SystemesWorkspace />
+    <Suspense fallback={<main style={{ padding: 40 }}>Chargement...</main>}>
+      <SystemesClient />
     </Suspense>
   );
 }

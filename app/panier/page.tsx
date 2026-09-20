@@ -114,16 +114,6 @@ function formatPrice(value: number) {
   }).format(value);
 }
 
-/**
- * Durée d'un exercice, assainie : une valeur vide, nulle, non numérique ou
- * négative compte pour 0 plutôt que de produire NaN sur le total.
- */
-function safeDurationMinutes(value: unknown): number {
-  const minutes = Number(value);
-  if (!Number.isFinite(minutes) || minutes <= 0) return 0;
-  return Math.round(minutes);
-}
-
 function playerName(player: TeamPlayer) {
   return (
     player.name ||
@@ -310,15 +300,6 @@ export default function PanierPage() {
       item.item_type === "session"
   );
 
-  // Temps total de la séance : somme des durées réellement saisies dans les
-  // champs « Temps en minutes ». Aucune nouvelle source de vérité — la valeur
-  // est dérivée de `items`, donc elle se recalcule à chaque ajout, suppression
-  // ou modification de durée. Le réordonnancement ne change pas la somme.
-  const sessionTotalMinutes = sessionItems.reduce(
-    (sum, item) => sum + safeDurationMinutes(item.duration_minutes),
-    0
-  );
-
   const selectedTeam = teams.find((team) => team.id === selectedTeamId);
 
 const purchaseItems = useMemo(
@@ -342,10 +323,7 @@ const subtotal = useMemo(() => {
   }, []);
 
   async function loadTeamsAndPlayers() {
-    // ISOLATION · espace personnel : uniquement les équipes de l'utilisateur.
-    const { data: { user } } = await supabase.auth.getUser();
-    if (!user) { setTeams([]); return; }
-    const { data: teamRows, error: teamError } = await supabase.from("teams").select("*").eq("user_id", user.id).order("name");
+    const { data: teamRows, error: teamError } = await supabase.from("teams").select("*").order("name");
     if (teamError) { console.error(teamError); setTeams(readTeamsFromLocalStorage()); return; }
     const rawTeams = (teamRows ?? []) as Array<Record<string, any>>;
     const teamIds = rawTeams.map((team) => String(team.id || "")).filter(Boolean);
@@ -917,8 +895,9 @@ setLoading(false);
     event.dataTransfer.setData("text/plain", playerId);
     event.dataTransfer.effectAllowed = "move";
 
+    const dragTarget = event.currentTarget;
     requestAnimationFrame(() => {
-      event.currentTarget.classList.add("isDragging");
+      dragTarget.classList.add("isDragging");
     });
   }
 
@@ -1380,11 +1359,11 @@ setLoading(false);
           String(item.session_consignes_variantes ?? "").length;
 
         const densityClass =
-          textLength > 650
+          textLength > 900
             ? " textVeryDense"
-            : textLength > 400
+            : textLength > 550
               ? " textDense"
-              : textLength > 220
+              : textLength > 300
                 ? " textMedium"
                 : "";
 
@@ -1393,12 +1372,12 @@ setLoading(false);
             <td class="who">${coachCode(item.assigned_to)}</td>
             <td class="time">${duration}'</td>
             <td class="situation">
-              <div class="schemaTitle">${formatText(item.title)}</div>
               <div class="schemasGrid schemasCount${Math.min(images.length, 6)}">
                 ${situationImages}
               </div>
             </td>
             <td class="explain">
+              <strong>${item.title}</strong>
               <p>${formatText(item.session_deroulement ?? "")}</p>
             </td>
             <td class="instructions">
@@ -1440,7 +1419,7 @@ setLoading(false);
         return `
           <section class="compositionBlock">
             <div class="compositionFormat">${formatText(block.title || "Composition")}</div>
-            <div class="compositionTeamsPdf teamsCount${Math.min(teamsWithPlayers.length, 5)}">
+            <div class="compositionTeamsPdf">
               ${teamsWithPlayers
                 .map(
                   (team) => `
@@ -1495,7 +1474,7 @@ setLoading(false);
               grid-template-columns: 150px 1fr 150px;
               align-items: center;
               border-bottom: 3px solid #111;
-              padding-bottom: 6px;
+              padding-bottom: 18px;
             }
 
             .logoBox {
@@ -1527,27 +1506,17 @@ setLoading(false);
             }
 
             .title h1 {
-              margin: 0 0 5px;
-              font-size: 24px;
-              letter-spacing: 5px;
+              margin: 0 0 12px;
+              font-size: 38px;
+              letter-spacing: 8px;
               font-weight: 900;
             }
 
             .title p {
-              margin: 2px 0;
-              font-size: 10px;
+              margin: 4px 0;
+              font-size: 13px;
               text-transform: uppercase;
-              letter-spacing: .5px;
-              line-height: 1.2;
-            }
-
-            .titleMeta {
-              white-space: nowrap;
-            }
-
-            .titleTheme {
-              margin-top: 3px !important;
-              font-weight: 700;
+              letter-spacing: 1px;
             }
 
             .players {
@@ -1558,10 +1527,10 @@ setLoading(false);
             }
 
             .playersCol {
-              min-height: 48px;
+              min-height: 100px;
               border-right: 2px solid #111;
               text-align: center;
-              padding-bottom: 4px;
+              padding-bottom: 12px;
             }
 
             .playersCol:last-child {
@@ -1569,25 +1538,24 @@ setLoading(false);
             }
 
             .playersCol h3 {
-              margin: 0 0 4px;
-              padding: 4px 6px;
+              margin: 0 0 12px;
+              padding: 10px;
               border-bottom: 2px solid #111;
               background: #f3f3f3;
-              font-size: 10px;
-              letter-spacing: 1px;
+              font-size: 14px;
+              letter-spacing: 2px;
             }
 
             .playersCol p {
-              margin: 1px 0;
-              font-size: 9px;
-              line-height: 1.05;
+              margin: 5px 0;
+              font-size: 14px;
               font-weight: 700;
             }
 
             table {
               width: 100%;
               border-collapse: collapse;
-              margin-top: 8px;
+              margin-top: 18px;
               border: 2px solid #111;
             }
 
@@ -1602,34 +1570,25 @@ setLoading(false);
             td {
               border: 2px solid #111;
               vertical-align: middle;
-              padding: 6px;
+              padding: 10px;
             }
 
             .who {
               width: 55px;
               text-align: center;
-              font-size: 14px;
+              font-size: 18px;
               font-weight: 900;
             }
 
             .time {
               width: 60px;
               text-align: center;
-              font-size: 18px;
+              font-size: 24px;
               font-weight: 900;
             }
 
             .situation {
               width: 340px;
-              text-align: center;
-            }
-
-            .schemaTitle {
-              margin: 0 0 4px;
-              font-size: 9px;
-              line-height: 1.08;
-              font-weight: 900;
-              text-transform: uppercase;
               text-align: center;
             }
 
@@ -1677,44 +1636,62 @@ setLoading(false);
 
             .explain {
               width: 360px;
-              font-size: 10px;
+              font-size: 13px;
+            }
+
+            .explain strong {
+              font-size: 15px;
             }
 
             .explain p,
             .instructions p {
-              margin: 0;
-              line-height: 1.16;
+              margin: 5px 0 0;
+              line-height: 1.28;
             }
 
             .instructions {
               width: 300px;
               color: #555;
-              font-size: 10px;
+              font-size: 13px;
             }
 
             tr.textMedium .explain,
             tr.textMedium .instructions {
-              font-size: 9px;
+              font-size: 12px;
+            }
+
+            tr.textMedium .explain strong {
+              font-size: 14px;
             }
 
             tr.textDense .explain,
             tr.textDense .instructions {
-              font-size: 8px;
+              font-size: 10.5px;
+            }
+
+            tr.textDense .explain strong {
+              font-size: 12.5px;
             }
 
             tr.textDense .explain p,
             tr.textDense .instructions p {
-              line-height: 1.1;
+              line-height: 1.18;
+              margin-top: 3px;
             }
 
             tr.textVeryDense .explain,
             tr.textVeryDense .instructions {
-              font-size: 7px;
+              font-size: 9px;
+            }
+
+            tr.textVeryDense .explain strong {
+              font-size: 11px;
             }
 
             tr.textVeryDense .explain p,
             tr.textVeryDense .instructions p {
-              line-height: 1.05;
+              line-height: 1.12;
+              margin-top: 2px;
             }
 
             .compositionsPdf {
@@ -1748,35 +1725,12 @@ setLoading(false);
               color: #6b1a2c;
               font-size: 11px;
               font-weight: 900;
-              text-align: center;
             }
 
             .compositionTeamsPdf {
               display: grid;
-              gap: 5px;
-              justify-content: center;
-              margin-left: auto;
-              margin-right: auto;
-            }
-
-            .compositionTeamsPdf.teamsCount1 {
-              grid-template-columns: minmax(0, 33.333%);
-            }
-
-            .compositionTeamsPdf.teamsCount2 {
-              grid-template-columns: repeat(2, minmax(0, 33.333%));
-            }
-
-            .compositionTeamsPdf.teamsCount3 {
               grid-template-columns: repeat(3, minmax(0, 1fr));
-            }
-
-            .compositionTeamsPdf.teamsCount4 {
-              grid-template-columns: repeat(4, minmax(0, 1fr));
-            }
-
-            .compositionTeamsPdf.teamsCount5 {
-              grid-template-columns: repeat(5, minmax(0, 1fr));
+              gap: 5px;
             }
 
             .compositionTeamPdf {
@@ -1843,16 +1797,12 @@ setLoading(false);
 
               <div class="title">
                 <h1>PRACTICE PLAN</h1>
-                <p class="titleMeta">
-                  <strong>Date :</strong> ${sessionDate}
-                  &nbsp;&nbsp;•&nbsp;&nbsp;
-                  <strong>Horaire :</strong> ${sessionStartTime} - ${sessionEndTime}
-                  &nbsp;&nbsp;•&nbsp;&nbsp;
-                  <strong>Équipe :</strong> ${
-                    selectedTeam.name ?? selectedTeam.clubName ?? "Équipe"
-                  }
-                </p>
-                <p class="titleTheme"><strong>Thème :</strong> ${sessionTheme}</p>
+                <p><strong>Date :</strong> ${sessionDate}</p>
+                <p><strong>Horaire :</strong> ${sessionStartTime} - ${sessionEndTime}</p>
+                <p><strong>Thème :</strong> ${sessionTheme}</p>
+                <p><strong>Équipe :</strong> ${
+                  selectedTeam.name ?? selectedTeam.clubName ?? "Équipe"
+                }</p>
               </div>
 
               <div class="logoBox">
@@ -2060,15 +2010,7 @@ setLoading(false);
         <div className="panel">
           <div className="panelTitle">
             <h2>CONSTRUCTION DE LA SÉANCE</h2>
-            <div className="panelTitleMeta">
-              <span
-                className="sessionDuration"
-                title="Temps total de la séance, calculé à partir des durées saisies"
-              >
-                ⏱ {sessionTotalMinutes} min
-              </span>
-              <span>{sessionItems.length}</span>
-            </div>
+            <span>{sessionItems.length}</span>
           </div>
 
           {sessionItems.length === 0 ? (
@@ -2692,36 +2634,6 @@ setLoading(false);
           display: grid;
           place-items: center;
           font-weight: 900;
-        }
-
-        .panelTitleMeta {
-          display: flex;
-          align-items: center;
-          gap: 10px;
-          flex: 0 0 auto;
-        }
-
-        /* Temps total : texte bordeaux compact, à gauche du badge rond.
-           Surcharge la règle .panelTitle span (cercle 30x30). */
-        .panelTitle span.sessionDuration {
-          width: auto;
-          height: auto;
-          border-radius: 0;
-          background: none;
-          color: #7a0d24;
-          font-size: 14px;
-          font-weight: 900;
-          line-height: 1;
-          white-space: nowrap;
-          display: inline-flex;
-          align-items: center;
-          gap: 4px;
-        }
-
-        @media (max-width: 520px) {
-          .panelTitle span.sessionDuration {
-            font-size: 12px;
-          }
         }
 
         .empty {

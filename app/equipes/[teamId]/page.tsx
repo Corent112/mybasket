@@ -454,12 +454,13 @@ type FfbbBannerSummary = {
   loading: boolean;
   connected: boolean;
   ranking: string;
+  pool: string;
   games: number;
   wins: number;
   losses: number;
   pointsForAverage: number | null;
   pointsAgainstAverage: number | null;
-  nextMatch: string;
+  nextMatch: { date: string; eventDate: string; time: string; place: string; opponent: string } | null;
 };
 
 function normalizeFfbbText(value: string) {
@@ -472,27 +473,76 @@ function normalizeFfbbText(value: string) {
 }
 
 function extractFfbbRanking(classementText: string, teamName: string) {
-  const ranking = normalizeFfbbText(classementText);
+  const raw = String(classementText || "");
   const team = normalizeFfbbText(teamName);
-  if (!ranking || !team) return "—";
+  if (!raw || !team) return "—";
 
+  // On conserve les lignes quand le parser FFBB les fournit : le classement
+  // est souvent présenté sous forme de tableau texte, une équipe par ligne.
+  const lines = raw.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+  for (const line of lines) {
+    if (!normalizeFfbbText(line).includes(team)) continue;
+    const position = line.match(/(?:^|\s)(\d{1,2})\s*(?:er|e|eme|ème)?(?:\s|$)/i);
+    if (position?.[1]) {
+      const value = Number(position[1]);
+      return value === 1 ? "1er" : `${value}e`;
+    }
+  }
+
+  // Fallback si le texte a été aplati par l'API.
+  const ranking = normalizeFfbbText(raw);
   const escaped = team.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const before = ranking.match(new RegExp(`(?:^|\\s)(\\d{1,2})\\s*(?:er|e|eme|ème)?\\s+${escaped}(?:\\s|$)`));
-  const after = ranking.match(new RegExp(`${escaped}\\s+(\\d{1,2})\\s*(?:er|e|eme|ème)?(?:\\s|$)`));
-  const position = Number(before?.[1] || after?.[1] || 0);
-  if (!position) return "—";
-  return position === 1 ? "1er" : `${position}e`;
+  const patterns = [
+    new RegExp(`(?:^|\\s)(\\d{1,2})\\s*(?:er|e|eme)?\\s+${escaped}(?:\\s|$)`),
+    new RegExp(`${escaped}\\s+(\\d{1,2})\\s*(?:er|e|eme)?(?:\\s|$)`),
+  ];
+  for (const pattern of patterns) {
+    const match = ranking.match(pattern);
+    if (match?.[1]) {
+      const value = Number(match[1]);
+      return value === 1 ? "1er" : `${value}e`;
+    }
+  }
+  return "—";
+}
+
+function ffbbScore(row: any, side: "us" | "them") {
+  // Compatibilité avec les différentes versions de la table de synchro FFBB.
+  const keys = side === "us"
+    ? ["our_score", "us_score", "team_score", "score_for", "points_for"]
+    : ["opponent_score", "them_score", "opponent_points", "score_against", "points_against"];
+  for (const key of keys) {
+    const value = row?.[key];
+    if (value !== null && value !== undefined && value !== "" && Number.isFinite(Number(value))) {
+      return Number(value);
+    }
+  }
+  return null;
+}
+
+function ffbbCompetitionKind(row: any, connectionById: Map<string, any>) {
+  const connection = connectionById.get(String(row?.connection_id || ""));
+  const value = normalizeFfbbText(
+    String(row?.competition_kind || connection?.competition_kind || connection?.kind || connection?.competition || "")
+  );
+  if (value.includes("friendly") || value.includes("amical")) return "friendly";
+  if (value.includes("cup") || value.includes("coupe") || value.includes("trophee")) return "cup";
+  return "championship";
 }
 
 function formatFfbbNextMatch(match: any) {
-  if (!match?.match_date) return "—";
+  if (!match?.match_date) return null;
   const date = new Date(`${match.match_date}T12:00:00`);
   const dateLabel = Number.isNaN(date.getTime())
     ? String(match.match_date)
     : new Intl.DateTimeFormat("fr-FR", { day: "2-digit", month: "2-digit" }).format(date);
-  const place = match.home_away === "away" ? "@" : "vs";
-  const time = match.start_time ? ` · ${String(match.start_time).slice(0, 5)}` : "";
-  return `${dateLabel}${time} · ${place} ${match.opponent || "Adversaire"}`;
+  return {
+    date: dateLabel,
+    eventDate: String(match.match_date),
+    time: match.start_time ? String(match.start_time).trim().slice(0, 5) : "",
+    place: match.home_away === "away" ? "@" : "VS",
+    opponent: String(match.opponent || "Adversaire").replace(/\s+(?:0\s+0|00)\s*$/, "").trim(),
+  };
 }
 
 function useFfbbBannerSummary(teamId: string): FfbbBannerSummary {
@@ -501,12 +551,13 @@ function useFfbbBannerSummary(teamId: string): FfbbBannerSummary {
     loading: true,
     connected: false,
     ranking: "—",
+    pool: "",
     games: 0,
     wins: 0,
     losses: 0,
     pointsForAverage: null,
     pointsAgainstAverage: null,
-    nextMatch: "—",
+    nextMatch: null,
   });
 
   useEffect(() => {
@@ -524,8 +575,8 @@ function useFfbbBannerSummary(teamId: string): FfbbBannerSummary {
 
         if (connectionError || !connections?.length) {
           if (active) setSummary({
-            loading: false, connected: false, ranking: "—", games: 0, wins: 0, losses: 0,
-            pointsForAverage: null, pointsAgainstAverage: null, nextMatch: "—",
+            loading: false, connected: false, ranking: "—", pool: "", games: 0, wins: 0, losses: 0,
+            pointsForAverage: null, pointsAgainstAverage: null, nextMatch: null,
           });
           return;
         }
@@ -534,8 +585,11 @@ function useFfbbBannerSummary(teamId: string): FfbbBannerSummary {
         const logicalKey = primary.logical_competition_key;
         const selectedConnections = logicalKey
           ? connections.filter((row: any) => row.logical_competition_key === logicalKey)
-          : [primary];
+          : connections;
         const connectionIds = selectedConnections.map((row: any) => row.id);
+        const connectionById = new Map<string, any>(
+          selectedConnections.map((row: any): [string, any] => [String(row.id), row])
+        );
 
         const { data: matches, error: matchesError } = await supabase
           .from("ffbb_synced_matches")
@@ -547,37 +601,112 @@ function useFfbbBannerSummary(teamId: string): FfbbBannerSummary {
         if (matchesError) throw matchesError;
 
         const rows = matches || [];
-        const played = rows.filter((row: any) =>
-          Number.isFinite(Number(row.our_score)) && Number.isFinite(Number(row.opponent_score)) &&
-          row.our_score !== null && row.opponent_score !== null
+        const officialRows = rows.filter((row: any) => ffbbCompetitionKind(row, connectionById) !== "friendly");
+        const championshipRows = officialRows.filter(
+          (row: any) => ffbbCompetitionKind(row, connectionById) === "championship"
         );
-        const wins = played.filter((row: any) => Number(row.our_score) > Number(row.opponent_score)).length;
-        const losses = played.filter((row: any) => Number(row.our_score) < Number(row.opponent_score)).length;
-        const pointsForAverage = played.length
-          ? played.reduce((sum: number, row: any) => sum + Number(row.our_score || 0), 0) / played.length
+
+        const playedOfficial = officialRows.filter((row: any) =>
+          ffbbScore(row, "us") !== null && ffbbScore(row, "them") !== null
+        );
+        const playedChampionship = championshipRows.filter((row: any) =>
+          ffbbScore(row, "us") !== null && ffbbScore(row, "them") !== null
+        );
+
+        // Bilan + moyennes : championnat uniquement.
+        let wins = playedChampionship.filter((row: any) => ffbbScore(row, "us")! > ffbbScore(row, "them")!).length;
+        let losses = playedChampionship.filter((row: any) => ffbbScore(row, "us")! < ffbbScore(row, "them")!).length;
+        let pointsForAverage = playedChampionship.length
+          ? playedChampionship.reduce((sum: number, row: any) => sum + (ffbbScore(row, "us") || 0), 0) / playedChampionship.length
           : null;
-        const pointsAgainstAverage = played.length
-          ? played.reduce((sum: number, row: any) => sum + Number(row.opponent_score || 0), 0) / played.length
+        let pointsAgainstAverage = playedChampionship.length
+          ? playedChampionship.reduce((sum: number, row: any) => sum + (ffbbScore(row, "them") || 0), 0) / playedChampionship.length
           : null;
 
         const today = new Date().toISOString().slice(0, 10);
-        const upcoming = rows.find((row: any) =>
+        let upcoming = officialRows.find((row: any) =>
           String(row.match_date || "") >= today &&
-          (row.our_score === null || row.opponent_score === null)
+          (ffbbScore(row, "us") === null || ffbbScore(row, "them") === null)
         );
 
         let ranking = "—";
-        if (primary.source_url) {
+        let pool = String(primary.pool || primary.pool_name || "").trim();
+        const rankingConnection =
+          selectedConnections.find((row: any) => {
+            const kind = normalizeFfbbText(String(row.competition_kind || row.kind || row.competition || ""));
+            return !kind.includes("cup") && !kind.includes("coupe");
+          }) || primary;
+
+        if (rankingConnection?.source_url) {
           try {
-            const response = await fetch(`/api/ffbb/competition?url=${encodeURIComponent(primary.source_url)}`, {
+            const response = await fetch(`/api/ffbb/competition?url=${encodeURIComponent(rankingConnection.source_url)}`, {
               cache: "no-store",
             });
             const parsed = await response.json();
-            if (response.ok && parsed?.mode === "team") {
-              ranking = extractFfbbRanking(parsed.classementText || "", primary.ffbb_team_name || parsed.team || "");
+            if (response.ok) {
+              if (parsed?.pool) pool = String(parsed.pool).trim();
+
+              // IMPORTANT :
+              // le champ numérique `parsed.ranking` peut être faux quand le parser FFBB
+              // récupère un nombre voisin dans la page (ex. "22" au lieu de "2").
+              // On privilégie donc TOUJOURS le tableau/classement texte associé au nom
+              // exact de l'équipe. Le ranking numérique ne sert que de dernier fallback.
+              // L'API FFBB calcule maintenant le rang directement depuis la ligne
+              // du tableau de la poule. On l'utilise en priorité.
+              if (Number.isFinite(Number(parsed?.ranking)) && Number(parsed.ranking) > 0) {
+                const position = Number(parsed.ranking);
+                ranking = position === 1 ? "1er" : `${position}e`;
+              } else {
+                ranking = extractFfbbRanking(
+                  parsed?.classementText || parsed?.rankingText || parsed?.standingsText || "",
+                  rankingConnection.ffbb_team_name || parsed?.team || ""
+                );
+              }
+
+              // La page équipe FFBB est la source de secours quand la table de
+              // synchronisation n'a pas encore enregistré un résultat récent.
+              const directMatches = Array.isArray(parsed?.matches) ? parsed.matches : [];
+              if (directMatches.length) {
+                const directRows = directMatches.map((match: any) => ({
+                  ...match,
+                  match_date: match.date,
+                  start_time: match.time,
+                  home_away: match.homeAway,
+                  our_score: match.ourScore,
+                  opponent_score: match.opponentScore,
+                  competition_kind: "championship",
+                }));
+
+                const directPlayed = directRows.filter((row: any) =>
+                  ffbbScore(row, "us") !== null && ffbbScore(row, "them") !== null
+                );
+                const directWins = directPlayed.filter((row: any) => ffbbScore(row, "us")! > ffbbScore(row, "them")!).length;
+                const directLosses = directPlayed.filter((row: any) => ffbbScore(row, "us")! < ffbbScore(row, "them")!).length;
+                const directFor = directPlayed.length
+                  ? directPlayed.reduce((sum: number, row: any) => sum + (ffbbScore(row, "us") || 0), 0) / directPlayed.length
+                  : null;
+                const directAgainst = directPlayed.length
+                  ? directPlayed.reduce((sum: number, row: any) => sum + (ffbbScore(row, "them") || 0), 0) / directPlayed.length
+                  : null;
+                const directUpcoming = directRows.find((row: any) =>
+                  String(row.match_date || "") >= today &&
+                  ffbbScore(row, "us") === null &&
+                  ffbbScore(row, "them") === null
+                );
+
+                if (directPlayed.length > playedOfficial.length) {
+                  playedOfficial.splice(0, playedOfficial.length, ...directPlayed);
+                  playedChampionship.splice(0, playedChampionship.length, ...directPlayed);
+                  wins = directWins;
+                  losses = directLosses;
+                  pointsForAverage = directFor;
+                  pointsAgainstAverage = directAgainst;
+                }
+                if (directUpcoming) upcoming = directUpcoming;
+              }
             }
           } catch {
-            // Le bandeau reste exploitable même si FFBB est momentanément indisponible.
+            // Le reste du bandeau reste disponible si le classement FFBB ne répond pas.
           }
         }
 
@@ -585,7 +714,8 @@ function useFfbbBannerSummary(teamId: string): FfbbBannerSummary {
           loading: false,
           connected: true,
           ranking,
-          games: played.length,
+          pool,
+          games: playedOfficial.length, // Championnat + coupe, jamais les amicaux.
           wins,
           losses,
           pointsForAverage,
@@ -604,6 +734,7 @@ function useFfbbBannerSummary(teamId: string): FfbbBannerSummary {
 
   return summary;
 }
+
 
 function computeLinkedKpis(
   team: Team,
@@ -629,12 +760,14 @@ function computeLinkedKpis(
 
   return [
     { ic: "users", val: String(team.players.length), lbl: "Effectif", hint: "Joueurs" },
-    { ic: "trophy", val: connected ? ffbb.ranking : dash, lbl: "Classement", hint: connected ? "FFBB" : "FFBB non connecté" },
-    { ic: "shirt", val: connected ? String(ffbb.games) : dashboard.loading ? "…" : String(fallbackMatches.length || local.matchsJoues), lbl: "Matchs joués", hint: connected ? "FFBB" : "MyBasket" },
-    { ic: "trophy", val: connected ? `${ffbb.wins} / ${ffbb.losses}` : dashboard.loading ? "…" : `${fallbackWins} / ${fallbackLosses}`, lbl: "V / D", hint: connected ? "FFBB" : "MyBasket" },
-    { ic: "star", val: connected ? (ffbb.pointsForAverage === null ? "—" : ffbb.pointsForAverage.toFixed(1).replace(".", ",")) : Number(fallbackFor || 0).toFixed(1).replace(".", ","), lbl: "Pts marqués", hint: "Moy. / match" },
-    { ic: "bars", val: connected ? (ffbb.pointsAgainstAverage === null ? "—" : ffbb.pointsAgainstAverage.toFixed(1).replace(".", ",")) : fallbackAgainst === null ? "—" : fallbackAgainst.toFixed(1).replace(".", ","), lbl: "Pts encaissés", hint: "Moy. / match" },
-    { ic: "cal", val: connected ? ffbb.nextMatch : dash, lbl: "Prochain match", hint: connected ? "FFBB" : "FFBB non connecté" },
+    { ic: "trophy", val: connected ? ffbb.ranking : dash, lbl: "Classement", hint: connected ? (ffbb.pool ? `Poule ${ffbb.pool}` : "Poule FFBB") : "FFBB non connecté" },
+    { ic: "shirt", val: loading ? "…" : connected ? String(ffbb.games) : dashboard.loading ? "…" : String(fallbackMatches.length || local.matchsJoues), lbl: "Matchs joués", hint: connected ? "FFBB" : "MyBasket" },
+    { ic: "trophy", val: loading ? "…" : connected ? `${ffbb.wins} / ${ffbb.losses}` : dashboard.loading ? "…" : `${fallbackWins} / ${fallbackLosses}`, lbl: "V / D", hint: connected ? "FFBB" : "MyBasket" },
+    { ic: "star", val: loading ? "…" : connected ? (ffbb.pointsForAverage === null ? "—" : ffbb.pointsForAverage.toFixed(1).replace(".", ",")) : Number(fallbackFor || 0).toFixed(1).replace(".", ","), lbl: "Pts marqués", hint: "Moy. / match" },
+    { ic: "bars", val: loading ? "…" : connected ? (ffbb.pointsAgainstAverage === null ? "—" : ffbb.pointsAgainstAverage.toFixed(1).replace(".", ",")) : fallbackAgainst === null ? "—" : fallbackAgainst.toFixed(1).replace(".", ","), lbl: "Pts encaissés", hint: "Moy. / match" },
+    { ic: "cal", val: connected && ffbb.nextMatch
+      ? `${ffbb.nextMatch.date}${ffbb.nextMatch.time ? ` · ${ffbb.nextMatch.time}` : ""}|||${ffbb.nextMatch.place}|||${ffbb.nextMatch.opponent}`
+      : dash, lbl: "Prochain match", hint: connected ? "FFBB" : "FFBB non connecté" },
   ] as const;
 }
 
@@ -702,6 +835,7 @@ export default function EquipeDetailPage({
   const [editingTeam, setEditingTeam] = useState(false);
   const [managing, setManaging] = useState(false);
   const [activeTab, setActiveTab] = useState<TeamMainTab>("presentation");
+  const [nextCalendarEvents, setNextCalendarEvents] = useState<Array<any>>([]);
 
   useEffect(()=>{
     if(typeof window==="undefined")return;
@@ -766,6 +900,237 @@ export default function EquipeDetailPage({
   useEffect(() => {
     reload();
   }, [teamId]);
+
+  useEffect(() => {
+    const supabase = createClient();
+    let active = true;
+
+    async function loadNextCalendarEvents() {
+      if (!team) return;
+
+      const today = new Date().toISOString().slice(0, 10);
+      const ids = compactStrings([
+        teamId,
+        team?.id,
+        (team as any)?.team_id,
+        (team as any)?.supabase_team_id,
+        (team as any)?.supabaseTeamId,
+        (team as any)?.supabase_id,
+        (team as any)?.supabaseId,
+        (team as any)?.db_id,
+        (team as any)?.dbId,
+        dashboard.resolvedTeamId,
+      ]);
+
+      let directRows: any[] = [];
+      if (ids.length) {
+        const direct = await supabase
+          .from("calendar_events")
+          .select("id,title,theme,event_date,start_time,location,event_type,session_id,team_id")
+          .in("team_id", ids)
+          .gte("event_date", today)
+          .order("event_date", { ascending: true })
+          .order("start_time", { ascending: true })
+          .limit(20);
+        if (!direct.error) directRows = direct.data || [];
+      }
+
+      // Compatibilité avec les événements historiques créés sans team_id :
+      // on retrouve l'équipe via la séance liée.
+      let sessionRows: any[] = [];
+      if (ids.length) {
+        const sessions = await supabase
+          .from("practice_sessions")
+          .select("id,team_id")
+          .in("team_id", ids);
+        const sessionIds = compactStrings((sessions.data || []).map((row: any) => row.id));
+        if (sessionIds.length) {
+          const linked = await supabase
+            .from("calendar_events")
+            .select("id,title,theme,event_date,start_time,location,event_type,session_id,team_id")
+            .in("session_id", sessionIds)
+            .gte("event_date", today)
+            .order("event_date", { ascending: true })
+            .order("start_time", { ascending: true })
+            .limit(20);
+          if (!linked.error) sessionRows = linked.data || [];
+        }
+      }
+
+      // Anciennes créations : le nom d'équipe était enregistré dans le titre
+      // mais team_id était absent.
+      let legacyRows: any[] = [];
+      const teamName = String(team.name || "").trim();
+      if (teamName) {
+        const legacy = await supabase
+          .from("calendar_events")
+          .select("id,title,theme,event_date,start_time,location,event_type,session_id,team_id")
+          .is("team_id", null)
+          .ilike("title", `${teamName}%`)
+          .gte("event_date", today)
+          .order("event_date", { ascending: true })
+          .order("start_time", { ascending: true })
+          .limit(20);
+        if (!legacy.error) legacyRows = legacy.data || [];
+      }
+
+      if (!active) return;
+
+      const unique = new Map<string, any>();
+      [...directRows, ...sessionRows, ...legacyRows].forEach((row: any) => {
+        if (row?.id) unique.set(String(row.id), row);
+      });
+
+      setNextCalendarEvents(
+        Array.from(unique.values())
+          .sort((a: any, b: any) =>
+            `${a.event_date || ""}T${a.start_time || "00:00:00"}`.localeCompare(
+              `${b.event_date || ""}T${b.start_time || "00:00:00"}`
+            )
+          )
+          .slice(0, 7)
+      );
+    }
+
+    void loadNextCalendarEvents();
+    return () => { active = false; };
+  }, [teamId, team?.id, dashboard.resolvedTeamId]);
+
+
+  useEffect(() => {
+    if (!team) return;
+    const currentTeam = team;
+    const supabase = createClient();
+    let active = true;
+
+    async function syncFfbbMatchesToCalendar() {
+      try {
+        const ids = compactStrings([
+          teamId,
+          currentTeam.id,
+          (currentTeam as any).supabase_team_id,
+          (currentTeam as any).supabaseTeamId,
+          dashboard.resolvedTeamId,
+        ]);
+        if (!ids.length) return;
+
+        const { data: connections, error: connectionError } = await supabase
+          .from("ffbb_team_connections")
+          .select("*")
+          .in("team_id", ids);
+
+        if (connectionError || !connections?.length) return;
+
+        const competitionConnections = connections.filter((row: any) => {
+          const kind = normalizeFfbbText(
+            String(row.competition_kind || row.kind || row.competition || "")
+          );
+          return !kind.includes("cup") && !kind.includes("coupe");
+        });
+        const selected = competitionConnections.length ? competitionConnections : connections;
+
+        const {
+          data: { user },
+        } = await supabase.auth.getUser();
+        if (!user || !active) return;
+
+        for (const connection of selected) {
+          if (!connection?.source_url) continue;
+
+          const response = await fetch(
+            `/api/ffbb/competition?url=${encodeURIComponent(connection.source_url)}&team=${encodeURIComponent(
+              String(connection.ffbb_team_name || connection.team_name || currentTeam.name || "")
+            )}`,
+            { cache: "no-store" }
+          );
+          if (!response.ok) continue;
+
+          const parsed = await response.json();
+          const matches = Array.isArray(parsed?.matches) ? parsed.matches : [];
+
+          for (const match of matches) {
+            const eventDate = String(match.date || match.match_date || "").slice(0, 10);
+            if (!/^\d{4}-\d{2}-\d{2}$/.test(eventDate)) continue;
+
+            // FFBB affiche une heure locale. On la recopie telle quelle :
+            // aucune conversion UTC / Europe-Paris.
+            const rawTime = String(match.time || match.start_time || "").trim();
+            const startTime = /^\d{1,2}:\d{2}/.test(rawTime)
+              ? rawTime.match(/^\d{1,2}:\d{2}/)?.[0]?.padStart(5, "0") || null
+              : null;
+
+            const opponent = String(
+              match.opponent || match.adversaire || match.opponent_name || "Adversaire"
+            ).trim();
+
+            // Source de vérité = ordre FFBB renvoyé par notre API.
+            // 1re équipe FFBB = domicile ; 2e équipe FFBB = extérieur.
+            const ffbbHomeAway = String(match.homeAway || "").toLowerCase();
+            const homeAway =
+              ffbbHomeAway === "home"
+                ? "Domicile"
+                : ffbbHomeAway === "away"
+                  ? "Extérieur"
+                  : "";
+            const category = String(
+              (currentTeam as any).category ||
+              (currentTeam as any).categorie ||
+              (currentTeam as any).age_category ||
+              ""
+            ).trim();
+            const matchup = homeAway === "Extérieur" ? `@ ${opponent}` : `vs ${opponent}`;
+            const title = `${category ? `${category} ` : ""}${matchup}`.trim();
+            const description = [
+              "Match FFBB",
+              homeAway ? `Lieu : ${homeAway}` : "",
+              parsed?.competition ? `Compétition : ${parsed.competition}` : "",
+              parsed?.pool ? `Poule : ${parsed.pool}` : "",
+            ].filter(Boolean).join(" • ");
+
+            // Déduplication stable : équipe + date + adversaire.
+            const { data: existing } = await supabase
+              .from("calendar_events")
+              .select("id")
+              .eq("user_id", user.id)
+              .in("team_id", ids)
+              .eq("event_date", eventDate)
+              .ilike("title", `%${opponent}%`)
+              .limit(1);
+
+            const payload = {
+              user_id: user.id,
+              owner_id: user.id,
+              team_id: teamId,
+              title,
+              description,
+              event_date: eventDate,
+              start_time: startTime,
+              end_time: null,
+              location: homeAway || null,
+              event_type: "game",
+              session_id: null,
+              visibility: "private",
+              updated_at: new Date().toISOString(),
+            };
+
+            if (existing?.[0]?.id) {
+              await supabase
+                .from("calendar_events")
+                .update(payload)
+                .eq("id", existing[0].id);
+            } else {
+              await supabase.from("calendar_events").insert(payload);
+            }
+          }
+        }
+      } catch (error) {
+        console.error("Erreur synchronisation matchs FFBB vers calendrier :", error);
+      }
+    }
+
+    void syncFfbbMatchesToCalendar();
+    return () => { active = false; };
+  }, [teamId, team?.id, dashboard.resolvedTeamId]);
 
   function flash(m: string) {
     setToast(m);
@@ -904,6 +1269,11 @@ export default function EquipeDetailPage({
     else router.push(`/equipes/${teamId}/${p.id}`);
   }
 
+  // Le hook FFBB doit être appelé à chaque rendu, y compris pendant le chargement
+  // initial de l'équipe. Sinon React détecte un changement d'ordre des hooks.
+  const linkedStatsTeamId = dashboard.resolvedTeamId || teamId;
+  const ffbbBanner = useFfbbBannerSummary(teamId);
+
   if (!team) {
     return (
       <div className="tl-wrap">
@@ -917,9 +1287,45 @@ export default function EquipeDetailPage({
   const couleurs = team.couleurs?.length
     ? team.couleurs
     : ["#7a1228", "#e0a82e"];
-  const linkedStatsTeamId = dashboard.resolvedTeamId || teamId;
-  const ffbbBanner = useFfbbBannerSummary(linkedStatsTeamId);
   const KPIS = computeLinkedKpis(team, dashboard, ffbbBanner);
+
+  // Une seule liste pour la fiche équipe :
+  // calendrier MyBasket (entraînements/séances/événements) + prochain match FFBB.
+  const upcomingTeamEvents: any[] = [...nextCalendarEvents];
+
+  if (ffbbBanner.connected && ffbbBanner.nextMatch?.eventDate) {
+    const ffbbDate = ffbbBanner.nextMatch.eventDate;
+    const ffbbOpponent = String(ffbbBanner.nextMatch.opponent || "Adversaire");
+    const alreadyPresent = upcomingTeamEvents.some((event: any) => {
+      const sameDate = String(event.event_date || "").slice(0, 10) === ffbbDate;
+      const label = String(event.theme || event.title || "").toLowerCase();
+      return sameDate && (
+        ["game", "match"].includes(String(event.event_type || "").toLowerCase()) ||
+        label.includes(ffbbOpponent.toLowerCase())
+      );
+    });
+
+    if (!alreadyPresent) {
+      upcomingTeamEvents.push({
+        id: `ffbb-${ffbbDate}-${ffbbBanner.nextMatch.time || "match"}`,
+        title: `Match vs ${ffbbOpponent}`,
+        theme: `Match vs ${ffbbOpponent}`,
+        event_date: ffbbDate,
+        start_time: ffbbBanner.nextMatch.time || null,
+        location: ffbbBanner.nextMatch.place || null,
+        event_type: "game",
+        session_id: null,
+        source: "ffbb",
+      });
+    }
+  }
+
+  upcomingTeamEvents.sort((a: any, b: any) =>
+    `${a.event_date || ""}T${a.start_time || "00:00"}`.localeCompare(
+      `${b.event_date || ""}T${b.start_time || "00:00"}`
+    )
+  );
+  upcomingTeamEvents.splice(7);
 
   // Google Drive doit toujours recevoir l'identifiant Supabase réel de l'équipe.
   // Certaines équipes historiques gardent un id local dans la fiche tandis que
@@ -1072,7 +1478,15 @@ export default function EquipeDetailPage({
               <div className="ic">
                 <Ic d={ICONS[kpi.ic]} size={22} />
               </div>
-              <div className="val">{kpi.val}</div>
+              {kpi.lbl === "Prochain match" && String(kpi.val).includes("|||") ? (
+                <div className="ffbb-next-match">
+                  <div className="ffbb-next-date">{String(kpi.val).split("|||")[0]}</div>
+                  <div className="ffbb-next-vs">{String(kpi.val).split("|||")[1]}</div>
+                  <div className="ffbb-next-opponent">{String(kpi.val).split("|||")[2]}</div>
+                </div>
+              ) : (
+                <div className="val">{kpi.val}</div>
+              )}
               <div className="lbl">{kpi.lbl}</div>
               <small>{kpi.hint}</small>
             </div>
@@ -1307,32 +1721,25 @@ export default function EquipeDetailPage({
                   </span>
                   <h2>Prochains événements</h2>
                 </div>
-                {team.evenements?.length ? (
-                  team.evenements.map((ev: TeamEvent) => (
+                {upcomingTeamEvents.length ? (
+                  upcomingTeamEvents.map((ev: any) => (
                     <div key={ev.id} className="tl-event">
-                      <div className="tl-evic">
-                        <Ic
-                          d={ICONS[EVENT_EMOJI[ev.type] || "cal"]}
-                          size={20}
-                        />
-                      </div>
+                      <div className="tl-evic"><Ic d={ICONS.cal} size={20} /></div>
                       <div style={{ flex: 1 }}>
-                        <div className="ttl">{ev.titre}</div>
+                        <div className="ttl">{ev.theme || ev.title || "Événement"}</div>
                         <div className="meta">
-                          {ev.date}
-                          {ev.heure ? ` • ${ev.heure}` : ""}
+                          {new Intl.DateTimeFormat("fr-FR", { day: "2-digit", month: "2-digit" }).format(new Date(`${ev.event_date}T12:00:00`))}
+                          {ev.start_time ? ` • ${String(ev.start_time).slice(0, 5)}` : ""}
                         </div>
-                        {ev.lieu && <div className="lieu">{ev.lieu}</div>}
+                        {ev.location && <div className="lieu">{ev.location}</div>}
                       </div>
-                      <span className="tl-chev">
-                        <Ic d={ICONS.chev} />
-                      </span>
+                      <span className="tl-chev"><Ic d={ICONS.chev} /></span>
                     </div>
                   ))
                 ) : (
                   <p style={{ color: "#9a8a82" }}>Aucun événement à venir.</p>
                 )}
-                <button className="tl-linkbtn">
+                <button className="tl-linkbtn" onClick={() => router.push("/mon-compte/calendrier")}>
                   <Ic d={ICONS.filter} size={16} /> Voir tous les événements
                 </button>
               </div>
@@ -1378,7 +1785,7 @@ export default function EquipeDetailPage({
               </div>
             </section>
 
-            <TeamFfbbCompetition teamId={team.id} />
+            <TeamFfbbCompetition teamId={teamId} />
 
                         {/* ---------- STAFF ---------- */}
             <TeamStaffManager
@@ -1617,11 +2024,42 @@ export default function EquipeDetailPage({
           border-radius: 0 0 24px 24px;
         }
 
-        .linked-kpis .tl-kpi-next .val {
-          font-size: 1rem;
-          line-height: 1.15;
-          white-space: normal;
-          padding: 0 0.25rem;
+        .linked-kpis .tl-kpi-next {
+          min-width: 0;
+        }
+        .ffbb-next-match {
+          min-height: 54px;
+          display: flex;
+          flex-direction: column;
+          align-items: center;
+          justify-content: center;
+          gap: 1px;
+          padding: 0 8px;
+          text-align: center;
+        }
+        .ffbb-next-date {
+          font-size: 0.94rem;
+          line-height: 1.05;
+          font-weight: 900;
+          color: #351014;
+          white-space: nowrap;
+        }
+        .ffbb-next-vs {
+          margin: 2px 0 1px;
+          font-size: 0.66rem;
+          line-height: 1;
+          font-weight: 900;
+          letter-spacing: 0.12em;
+          color: #c58a17;
+        }
+        .ffbb-next-opponent {
+          max-width: 150px;
+          font-size: 0.76rem;
+          line-height: 1.08;
+          font-weight: 900;
+          color: #351014;
+          text-transform: uppercase;
+          overflow-wrap: anywhere;
         }
 
         .linked-kpis .tl-kpi small {

@@ -6,13 +6,35 @@ type Props={structureId:string;go:(tab:string)=>void};
 export default function InstitutionalDashboardConnected({structureId,go}:Props){
  const sb=useMemo(()=>createClient(),[]);const[k,setK]=useState({players:0,referrals:0,detections:0,cohorts:0,candidates:0,incomplete:0});
  const[warnings,setWarnings]=useState<Array<{id:string;title:string;event_date:string;message:string}>>([]);
- useEffect(()=>{(async()=>{const [p,r,d,c,e]=await Promise.all([
- sb.from("institutional_players").select("id",{count:"exact",head:true}).eq("structure_id",structureId).eq("archived",false),
- sb.from("institutional_player_referrals").select("id",{count:"exact",head:true}).eq("structure_id",structureId).in("status",["new","reviewing"]),
+ useEffect(()=>{(async()=>{
+ const [poleLinks,selectionLinks,r,d,c,e]=await Promise.all([
+  sb.from("institutional_pole_teams").select("team_id").eq("structure_id",structureId).eq("team_kind","pole").eq("active",true),
+  sb.from("institutional_player_selection_links").select("institutional_player_id").eq("structure_id",structureId).eq("active",true),
+  sb.from("institutional_player_referrals").select("id",{count:"exact",head:true}).eq("structure_id",structureId).in("status",["new","reviewing"]),
  sb.from("institutional_detection_events").select("id",{count:"exact",head:true}).eq("structure_id",structureId).eq("archived",false),
  sb.from("training_cohorts").select("id,status").eq("institution_id",structureId),
  sb.from("institutional_events").select("id,title,event_date,location,archived").eq("structure_id",structureId).eq("archived",false).gte("event_date",new Date().toISOString().slice(0,10)).order("event_date")
- ]);const ids=(c.data||[]).map((x:any)=>x.id);let candidates=0,incomplete=0;if(ids.length){const q=await sb.from("training_candidates").select("id,administrative_status").in("cohort_id",ids).neq("administrative_status","withdrawn");candidates=q.data?.length||0;incomplete=(q.data||[]).filter((x:any)=>!["complete","registered","in_training","validated"].includes(x.administrative_status)).length;}setK({players:p.count||0,referrals:r.count||0,detections:d.count||0,cohorts:(c.data||[]).filter((x:any)=>x.status!=="archived").length,candidates,incomplete});
+ ]);
+ const poleTeamIds=[...new Set((poleLinks.data||[]).map((x:any)=>String(x.team_id||"")).filter(Boolean))];
+ let poleRoster:any[]=[];let memberships:any[]=[];
+ if(poleTeamIds.length){
+  const [roster,members]=await Promise.all([
+   sb.from("players").select("id,team_id").in("team_id",poleTeamIds),
+   sb.from("institutional_pole_player_memberships").select("institutional_player_id,pole_player_id,pole_team_id").eq("structure_id",structureId).eq("active",true).in("pole_team_id",poleTeamIds)
+  ]);
+  poleRoster=roster.data||[];memberships=members.data||[];
+ }
+ const rosterIds=new Set(poleRoster.map((x:any)=>String(x.id||"")).filter(Boolean));
+ const polistInstitutionalIds=new Set(
+  memberships.filter((x:any)=>rosterIds.has(String(x.pole_player_id||"")))
+   .map((x:any)=>String(x.institutional_player_id||"")).filter(Boolean)
+ );
+ const nonPolistSelectionIds=new Set(
+  (selectionLinks.data||[]).map((x:any)=>String(x.institutional_player_id||""))
+   .filter((id:string)=>id&&!polistInstitutionalIds.has(id))
+ );
+ const followedPlayers=rosterIds.size+nonPolistSelectionIds.size;
+ const ids=(c.data||[]).map((x:any)=>x.id);let candidates=0,incomplete=0;if(ids.length){const q=await sb.from("training_candidates").select("id,administrative_status").in("cohort_id",ids).neq("administrative_status","withdrawn");candidates=q.data?.length||0;incomplete=(q.data||[]).filter((x:any)=>!["complete","registered","in_training","validated"].includes(x.administrative_status)).length;}setK({players:followedPlayers,referrals:r.count||0,detections:d.count||0,cohorts:(c.data||[]).filter((x:any)=>x.status!=="archived").length,candidates,incomplete});
  const missingLocation=(e.data||[]).filter((x:any)=>!String(x.location||"").trim()).map((x:any)=>({id:x.id,title:x.title,event_date:x.event_date,message:"Aucun lieu n’est renseigné"}));
  setWarnings(missingLocation);})()},[structureId,sb]);
  const cards=[
