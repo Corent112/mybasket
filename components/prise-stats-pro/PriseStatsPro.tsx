@@ -56,6 +56,8 @@ import {
   syncToProjectState,
   formatOffset,
 } from "@/lib/video-sync";
+import PickQuickTagger from '@/components/prise-stats-pro/PickQuickTagger';
+import { createSharedLiveSession, joinSharedLiveSession, openSharedPossession, savePickEvent, subscribeSharedLive, updateSharedLiveState, type SharedLiveState } from '@/lib/live-mutualization';
 import {
   attachMatchVideoFile,
   relinkMatchVideo,
@@ -836,6 +838,14 @@ export default function PriseStatsProPage() {
   // - live : codage ultra rapide pendant le match ;
   // - post : codage vidéo détaillé historique (inchangé).
   const [codingMode, setCodingMode] = useState<CodingMode>('post');
+  const [mutualizedLive, setMutualizedLive] = useState(false);
+  const [joinLiveCode, setJoinLiveCode] = useState('');
+  const [sharedRole, setSharedRole] = useState<'individual'|'collective'>(codingMode === 'live-individual' ? 'individual' : 'collective');
+  const [sharedLive, setSharedLive] = useState<SharedLiveState | null>(null);
+  const [showPickQuick, setShowPickQuick] = useState(false);
+  const sharedLiveRef = useRef<SharedLiveState | null>(null);
+  useEffect(() => { sharedLiveRef.current = sharedLive; }, [sharedLive]);
+  useEffect(() => sharedLive ? subscribeSharedLive(sharedLive.id, setSharedLive) : undefined, [sharedLive?.id]);
   const [importedLiveSource, setImportedLiveSource] = useState<Record<string, any> | null>(null);
   const [teamId, setTeamId] = useState('');
   const [activeTeamId, setActiveTeamId] = useState('');
@@ -902,6 +912,7 @@ export default function PriseStatsProPage() {
   // Correction depuis l'historique : on garde l'action d'origine pour pouvoir
   // la remplacer sans créer de doublon et sans perdre son clip / horloge.
   const editingActionRef = useRef<StatA | null>(null);
+  const [historyCorrectionAction, setHistoryCorrectionAction] = useState<StatA | null>(null);
 
   const [actions, setActions] = useState<StatA[]>([]);
   const [q, setQ] = useState(1);
@@ -1331,6 +1342,16 @@ export default function PriseStatsProPage() {
     liveTeamIdRef.current = teamId;
     setLiveMatchId(matchId);
   };
+
+  // Le poste qui a créé la session publie l’état commun. Les autres écrans
+  // reçoivent ces changements par Supabase Realtime.
+  useEffect(() => {
+    const shared = sharedLiveRef.current;
+    if (!shared) return;
+    const us = Object.values(perQ).reduce((n:any,row:any)=>n+Number(row?.us||0),0);
+    const them = Object.values(perQ).reduce((n:any,row:any)=>n+Number(row?.them||0),0);
+    void updateSharedLiveState(shared.id,{current_period:q,current_clock:fmt(secs),current_lineup:onCourt.slice(),score_us:us,score_them:them}).catch(()=>{});
+  }, [q, secs, onCourt, perQ]);
 
   // Recalcule les lignes boxscore (mapping identique à finishMatch) à partir
   // de l'état courant, pour l'upsert live de match_player_stats.
@@ -2000,6 +2021,21 @@ export default function PriseStatsProPage() {
     } catch { /* noop */ }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [teams]);
+
+  const joinMutualizedLive = async () => {
+    if (!joinLiveCode.trim()) return;
+    setProjectBusy(true);
+    try {
+      const session = await joinSharedLiveSession(joinLiveCode);
+      setSharedLive(session); sharedLiveRef.current = session; setMutualizedLive(true);
+      setCodingMode(sharedRole === 'individual' ? 'live-individual' : 'live');
+      await resumeProject(session.matchId, 'resume');
+      setCodingMode(sharedRole === 'individual' ? 'live-individual' : 'live');
+      flash(`Session ${session.joinCode} rejointe · poste ${sharedRole === 'individual' ? 'individuel' : 'collectif'}`);
+    } catch (e:any) {
+      console.error('Rejoindre Live mutualisé:', e); flash('Code de session introuvable ou accès non autorisé');
+    } finally { setProjectBusy(false); }
+  };
 
   const removeProject = async (matchId: string) => {
     if (!window.confirm('Supprimer définitivement ce brouillon ?')) return;
@@ -4764,6 +4800,20 @@ export default function PriseStatsProPage() {
       if (ensured.ok) {
         setLiveMatch(ensured.matchId, ensured.teamId);
 
+        if (mutualizedLive && !String(ensured.matchId).startsWith('local_')) {
+          try {
+            const clientId = `web_${uid()}`;
+            const session = await createSharedLiveSession(String(ensured.matchId), String(ensured.teamId), clientId, starters.slice());
+            const firstPossession = await openSharedPossession(session, 1, '10:00', starters.slice(), 'us');
+            const ready = { ...session, currentPossessionId: String(firstPossession.id) };
+            setSharedLive(ready);
+            sharedLiveRef.current = ready;
+          } catch (e) {
+            console.error('Live mutualisé:', e);
+            flash('Match créé, mais la session mutualisée n’a pas pu démarrer');
+          }
+        }
+
         // Le fichier local sélectionné AVANT la création du projet reçoit
         // maintenant sa clé durable matchId. La fiche joueur retrouvera donc
         // exactement la même vidéo sans nouvelle sélection.
@@ -4902,6 +4952,9 @@ export default function PriseStatsProPage() {
         matchId, teamId,
         action: {
           id: a.id, q: a.q, clock: a.clock, lineup: a.lineup,
+          liveSessionId: sharedLiveRef.current?.id ?? null,
+          possessionId: sharedLiveRef.current?.currentPossessionId ?? null,
+          codingSource: codingMode === 'live-individual' ? 'individual' : codingMode === 'live' ? 'collective' : 'post',
           context: a.context, inbound: a.inbound, tempsFort: a.tempsFort,
           coverage: a.coverage, playerId: a.playerId,
           // AJOUT · système joué (valeurs figées au commit, cohérentes partout)
@@ -5015,7 +5068,18 @@ export default function PriseStatsProPage() {
         a.specialCase === 'unsportsmanlike-3pts+1lf'
       ))
     );
-    if (!samePossession) possessionStartRef.current = getRawCodingTime();
+    if (!samePossession) {
+      possessionStartRef.current = getRawCodingTime();
+      const shared = sharedLiveRef.current;
+      if (shared) {
+        void openSharedPossession(shared, q, fmt(secs), onCourt.slice(), next === 'attaque' ? 'us' : 'them')
+          .then((pos:any) => {
+            const updated = { ...sharedLiveRef.current!, currentPossessionId: String(pos.id), currentPeriod: q, currentClock: fmt(secs), currentLineup: onCourt.slice() };
+            sharedLiveRef.current = updated; setSharedLive(updated);
+          })
+          .catch((e:any)=>console.warn('Nouvelle possession mutualisée:',e));
+      }
+    }
     setDraft(fresh);
 
     // Routage verrouillé après lancers francs adverses :
@@ -5568,6 +5632,40 @@ export default function PriseStatsProPage() {
     return 'temps';
   };
 
+  const historyCorrectionSteps = (a: StatA) => {
+    const steps: Array<{ stage: string; label: string; detail: string }> = [
+      { stage: 'context', label: 'Attaque / Défense', detail: 'Reprendre depuis le contexte' },
+      { stage: 'systeme', label: 'Système de jeu', detail: 'Modifier le système puis continuer' },
+      { stage: 'temps', label: 'Temps fort', detail: 'Modifier le temps fort puis continuer' },
+      { stage: 'player', label: 'Joueur', detail: 'Modifier le joueur concerné puis continuer' },
+      { stage: 'action', label: "Type d’action", detail: "Modifier l’action puis continuer" },
+    ];
+    if (a.actionType === 'tir') {
+      steps.push(
+        { stage: 'result', label: 'Résultat du tir', detail: 'Marqué / raté / type de tir' },
+        { stage: 'zone', label: 'Zone du tir', detail: 'Modifier la localisation puis terminer' },
+        { stage: 'rebound', label: 'Conséquence / rebond', detail: 'Modifier uniquement la fin de l’action' },
+      );
+    } else if (a.actionType === 'faute-commise' || a.actionType === 'faute-provoquee' || a.actionType === 'faute-technique') {
+      steps.push({ stage: 'faute', label: 'Faute / lancers', detail: 'Modifier la suite de la faute puis terminer' });
+    } else if (a.actionType === 'touche') {
+      steps.push({ stage: 'inbound', label: 'Remise en jeu', detail: 'Modifier la remise en jeu puis terminer' });
+    }
+    if (a.foulOutcome === 'rebound-foul-committed' || a.foulOutcome === 'rebound-foul-drawn') {
+      steps.push({ stage: 'rebound-foul-player', label: 'Joueur sur la faute', detail: 'Modifier le joueur concerné' });
+    }
+    return steps.filter((step, index, all) => all.findIndex((x) => x.stage === step.stage) === index);
+  };
+
+  const openHistoryCorrection = (a: StatA) => setHistoryCorrectionAction(a);
+
+  const chooseHistoryCorrectionStart = (stageName: string) => {
+    const action = historyCorrectionAction;
+    if (!action) return;
+    setHistoryCorrectionAction(null);
+    beginHistoryCorrection(action, stageName);
+  };
+
   const restoreDraftFromAction = (a: StatA) => {
     setDraft({
       context: a.context,
@@ -6114,6 +6212,24 @@ export default function PriseStatsProPage() {
                       <option value="">Aucun projet — fiche autonome</option>
                       {projects.map((pr) => <option key={pr.id} value={pr.id}>vs {pr.opponent} · {pr.date}</option>)}
                     </select>
+                  </div>
+                )}
+                {(codingMode === 'live' || codingMode === 'live-individual') && (
+                  <div className="individualLinkBox" style={{marginTop:10}}>
+                    <label style={{display:'flex',alignItems:'center',gap:10,fontWeight:800}}>
+                      <input type="checkbox" checked={mutualizedLive} onChange={(e)=>setMutualizedLive(e.target.checked)} />
+                      MODE MUTUALISÉ · Live Individuel + Live Temps Forts + Stats Coach
+                    </label>
+                  </div>
+                )}
+                {(codingMode === 'live' || codingMode === 'live-individual') && (
+                  <div className="individualLinkBox" style={{marginTop:8}}>
+                    <label>Rejoindre le même match depuis un 2e ordinateur</label>
+                    <div style={{display:'flex',gap:8,flexWrap:'wrap'}}>
+                      <input value={joinLiveCode} onChange={(e)=>setJoinLiveCode(e.target.value.toUpperCase())} placeholder="MB-4821" style={{minWidth:130}} />
+                      <select value={sharedRole} onChange={(e)=>setSharedRole(e.target.value as any)}><option value="individual">🏀 Live Individuel · stats / score / lineup / résultat</option><option value="collective">⚡ Live Temps Forts · systèmes / picks / contexte tactique</option></select>
+                      <button type="button" disabled={!joinLiveCode.trim() || projectBusy} onClick={joinMutualizedLive}>↔ Rejoindre</button>
+                    </div>
                   </div>
                 )}
                 {codingMode === 'match-review' ? (
@@ -7348,6 +7464,50 @@ export default function PriseStatsProPage() {
       />
 
       {/* §25 · popup clips COMMUNE — Historique & Timeline */}
+      {screen === 'live' && sharedLive && (
+        <div style={{position:'fixed',right:18,bottom:18,zIndex:9000,display:'flex',gap:8,alignItems:'center',background:'#111',color:'#fff',padding:'9px 12px',borderRadius:14,boxShadow:'0 8px 30px #0004'}}>
+          <span style={{fontSize:12}}><b>● MUTUALISÉ</b> · {sharedRole === 'individual' ? '🏀 INDIV' : '⚡ TEMPS FORTS'} · {sharedLive.joinCode} · Q{sharedLive.currentPeriod} · {sharedLive.currentClock}</span>
+          {codingMode === 'live' && <button type="button" onClick={()=>setShowPickQuick(true)} style={{padding:'7px 10px',borderRadius:9,fontWeight:900}}>PICK</button>}
+          <button type="button" onClick={()=>window.open(`/management/live-mutualise?session=${sharedLive.id}`,'mybasket-coach-live','popup=yes,width=1500,height=950')} style={{padding:'7px 10px',borderRadius:9,fontWeight:900}}>📊 STATS LIVE ↗</button>
+        </div>
+      )}
+      {showPickQuick && sharedLive && sharedLive.currentPossessionId && (
+        <PickQuickTagger players={roster.filter(p=>onCourt.includes(p.id))} onClose={()=>setShowPickQuick(false)} onSave={async (pick)=>{
+          await savePickEvent(sharedLive, sharedLive.currentPossessionId!, pick);
+          setShowPickQuick(false); flash('Pick mutualisé enregistré ✓');
+        }} />
+      )}
+      {historyCorrectionAction && (
+        <div className="historyCorrectionBackdrop" onMouseDown={(event) => {
+          if (event.target === event.currentTarget) setHistoryCorrectionAction(null);
+        }}>
+          <div className="historyCorrectionModal" role="dialog" aria-modal="true">
+            <div className="historyCorrectionHead">
+              <div><strong>Modifier l’action</strong><span>Choisis le premier tag qui n’est pas bon.</span></div>
+              <button type="button" onClick={() => setHistoryCorrectionAction(null)}>×</button>
+            </div>
+            <div className="historyCorrectionInfo">
+              <b>{periodLabel(historyCorrectionAction.q)} · {historyCorrectionAction.clock}</b>
+              <span>{historyCorrectionAction.context === 'defense' ? 'Défense' : 'Attaque'}{historyCorrectionAction.actionType ? ` · ${String(historyCorrectionAction.actionType).replaceAll('-', ' ')}` : ''}</span>
+            </div>
+            <p className="historyCorrectionHint">
+              Tout ce qui est avant reste inchangé. MyBasket te replace à l’étape choisie, puis tu continues normalement.
+              À la validation, l’ancienne action est remplacée automatiquement.
+            </p>
+            <div className="historyCorrectionSteps">
+              {historyCorrectionSteps(historyCorrectionAction).map((step, index) => (
+                <button key={step.stage} type="button" onClick={() => chooseHistoryCorrectionStart(step.stage)}>
+                  <span className="historyCorrectionStepNo">{index + 1}</span>
+                  <span><b>{step.label}</b><small>{step.detail}</small></span>
+                  <em>Reprendre ici →</em>
+                </button>
+              ))}
+            </div>
+            <div className="historyCorrectionFoot"><button type="button" onClick={() => setHistoryCorrectionAction(null)}>Annuler</button></div>
+          </div>
+        </div>
+      )}
+
       <ActionClipsModal
         open={!!clipModal}
         actions={(clipModal?.items ?? []) as unknown as ClipAction[]}
@@ -7700,8 +7860,8 @@ export default function PriseStatsProPage() {
                     <button
                       type="button"
                       className="historyEditBtn"
-                      onClick={() => beginHistoryCorrection(a, stageForCorrection(a))}
-                      title="Recoder cette action sans perdre son clip"
+                      onClick={() => openHistoryCorrection(a)}
+                      title="Choisir à partir de quel tag reprendre la correction"
                     >
                       Modifier
                     </button>
@@ -10342,6 +10502,17 @@ function Style() {
       .tl-evt:hover { outline: 2px solid var(--gold); z-index: 2; }
       .tl-axis { flex: 0 0 auto; display: flex; padding-left: 90px; }
       .tl-axis span { font-size: 10px; color: var(--mute); text-align: center; border-left: 1px solid var(--border); }
+
+
+        .historyCorrectionBackdrop{position:fixed;inset:0;z-index:12050;background:rgba(20,12,15,.58);display:grid;place-items:center;padding:18px}
+        .historyCorrectionModal{width:min(620px,96vw);max-height:88vh;overflow:auto;background:#fff;border-radius:18px;box-shadow:0 24px 80px rgba(0,0,0,.3);color:#24171b}
+        .historyCorrectionHead{display:flex;align-items:flex-start;gap:12px;padding:18px 20px;border-bottom:1px solid #eee}.historyCorrectionHead>div{flex:1;display:flex;flex-direction:column;gap:3px}.historyCorrectionHead strong{font-size:20px}.historyCorrectionHead span{font-size:13px;color:#786a6f}.historyCorrectionHead>button{border:0;background:transparent;font-size:26px;cursor:pointer}
+        .historyCorrectionInfo{margin:16px 20px 0;padding:11px 13px;border-radius:11px;background:#f7f3f4;display:flex;justify-content:space-between;gap:10px;font-size:12px}.historyCorrectionHint{margin:12px 20px;color:#66585d;font-size:13px;line-height:1.45}
+        .historyCorrectionSteps{display:grid;gap:8px;padding:4px 20px 18px}.historyCorrectionSteps>button{display:grid;grid-template-columns:34px 1fr auto;align-items:center;gap:10px;text-align:left;border:1px solid #e5dadd;background:#fff;border-radius:12px;padding:11px;cursor:pointer}.historyCorrectionSteps>button:hover{border-color:#6B1A2C;background:#fff9fa}
+        .historyCorrectionStepNo{width:30px;height:30px;border-radius:50%;display:grid;place-items:center;background:#6B1A2C;color:#fff;font-weight:800}.historyCorrectionSteps b,.historyCorrectionSteps small{display:block}.historyCorrectionSteps small{margin-top:2px;color:#817278}.historyCorrectionSteps em{font-style:normal;font-size:11px;font-weight:800;color:#6B1A2C}
+        .historyCorrectionFoot{padding:12px 20px 18px;border-top:1px solid #eee;display:flex;justify-content:flex-end}.historyCorrectionFoot button{border:1px solid #ddd;background:#fff;border-radius:9px;padding:8px 12px;font-weight:700}
+        @media(max-width:620px){.historyCorrectionInfo{flex-direction:column}.historyCorrectionSteps>button{grid-template-columns:32px 1fr}.historyCorrectionSteps em{grid-column:2}}
+
 
       /* V8 · Popup événement (revoir + modifier) */
       .zpop-card.evt { width: min(560px, 94vw); gap: 10px; }

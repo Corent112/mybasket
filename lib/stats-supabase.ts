@@ -34,6 +34,18 @@ export type LiveMatchAction = {
   clock: string;
   lineup?: string[];
 
+  // Live mutualisé : relie les actions indiv/collectif à la même possession.
+  liveSessionId?: string | null;
+  possessionId?: string | null;
+  actionGroupId?: string | null;
+  codingSource?: "individual" | "collective" | "post" | null;
+  pickZone?: string | null;
+  pickHandlerPlayerId?: string | null;
+  pickScreenerPlayerId?: string | null;
+  pickRollerPlayerId?: string | null;
+  pickScreenerOutcome?: string | null;
+  pickDefenseCoverage?: string | null;
+
   context?: string;
   inbound?: string;
   tempsFort?: string;
@@ -383,6 +395,17 @@ function buildActionRow(
     sync_status: action.syncStatus ?? null,
 
     lineup: action.lineup ?? [],
+
+    live_session_id: action.liveSessionId ?? null,
+    possession_id: action.possessionId ?? null,
+    action_group_id: action.actionGroupId ?? null,
+    coding_source: action.codingSource ?? null,
+    pick_zone: action.pickZone ?? null,
+    pick_handler_player_id: action.pickHandlerPlayerId ?? null,
+    pick_screener_player_id: action.pickScreenerPlayerId ?? null,
+    pick_roller_player_id: action.pickRollerPlayerId ?? null,
+    pick_screener_outcome: action.pickScreenerOutcome ?? null,
+    pick_defense_coverage: action.pickDefenseCoverage ?? null,
   };
 }
 
@@ -609,6 +632,38 @@ export async function persistLiveAction(args: {
     if (!user) return { ok: false, error: "Utilisateur non connecté" };
 
     const row = buildActionRow(action, { userId: user.id, matchId, teamId });
+
+    // Mode mutualisé V2 : rattachement prudent au dernier groupe collectif ouvert.
+    // On ne fusionne automatiquement que si le handler correspond au joueur de l'action.
+    // Sinon la possession reste commune, mais l'action n'est pas liée de force.
+    if (!row.action_group_id && action.liveSessionId && action.possessionId && action.codingSource === "individual" && action.playerId) {
+      const { data: candidate } = await supabase
+        .from("live_action_groups")
+        .select("id,handler_player_id,screener_player_id,result_type")
+        .eq("session_id", action.liveSessionId)
+        .eq("possession_id", action.possessionId)
+        .eq("status", "open")
+        .order("created_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      if (candidate?.id) {
+        const actor = String(action.playerId || "");
+        const assist = String(action.assistPlayerId || "");
+        const handler = String(candidate.handler_player_id || "");
+        const screener = String(candidate.screener_player_id || "");
+        const handlerFinish = actor && actor === handler;
+        const rollerFinish = actor && actor === screener;
+        const handlerToRoller = rollerFinish && assist && assist === handler;
+        // Liaison auto uniquement sur une relation basket forte. Un autre tireur reste
+        // dans la même possession mais n'est jamais fusionné de force au Pick.
+        if (handlerFinish || rollerFinish || handlerToRoller) {
+          row.action_group_id = candidate.id;
+          const resultType = handlerFinish ? "handler-finish" : "roller-finish";
+          await supabase.from("live_action_groups").update({ status: "linked", confidence: handlerToRoller ? 0.99 : 0.95, result_type: resultType, result_player_id: actor, updated_at: new Date().toISOString() }).eq("id", candidate.id);
+          await supabase.from("live_pick_events").update({ is_decisive: true, result_type: resultType, result_player_id: actor }).eq("action_group_id", candidate.id);
+        }
+      }
+    }
 
     // IMPORTANT : ne pas utiliser .upsert(... onConflict: "match_id,client_action_id")
     // ici, car certaines bases existantes n'ont pas encore de contrainte UNIQUE
@@ -1359,6 +1414,16 @@ export function mapActionRowToLiveAction(row: Record<string, any>): LiveMatchAct
     q: Number(row.quarter ?? 0),
     clock: String(row.clock ?? ""),
     lineup: Array.isArray(row.lineup) ? row.lineup : [],
+    liveSessionId: row.live_session_id ?? null,
+    possessionId: row.possession_id ?? null,
+    actionGroupId: row.action_group_id ?? null,
+    codingSource: row.coding_source ?? null,
+    pickZone: row.pick_zone ?? null,
+    pickHandlerPlayerId: row.pick_handler_player_id ?? null,
+    pickScreenerPlayerId: row.pick_screener_player_id ?? null,
+    pickRollerPlayerId: row.pick_roller_player_id ?? null,
+    pickScreenerOutcome: row.pick_screener_outcome ?? null,
+    pickDefenseCoverage: row.pick_defense_coverage ?? null,
 
     context: row.context ?? undefined,
     inbound: row.inbound ?? undefined,
