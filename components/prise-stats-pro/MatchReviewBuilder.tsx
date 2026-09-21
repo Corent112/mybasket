@@ -308,6 +308,8 @@ export default function MatchReviewBuilder({
   const [pendingComment, setPendingComment] = useState('');
   const [pendingValue, setPendingValue] = useState<string | number>('');
   const [runtimePlayerId, setRuntimePlayerId] = useState('');
+  const [configurationDirty, setConfigurationDirty] = useState(false);
+  const [configurationSavedAt, setConfigurationSavedAt] = useState<Date | null>(null);
 
   useEffect(() => {
     const stored = safeParseTemplates();
@@ -353,6 +355,22 @@ export default function MatchReviewBuilder({
     storageSet(TEMPLATE_STORAGE, JSON.stringify(next));
   };
 
+  // Modifications du constructeur : on les garde en mémoire jusqu'à la
+  // sauvegarde globale explicite. Cela évite de confondre l'étape de logique
+  // « Enregistrer » avec la sauvegarde de toute la configuration.
+  const setTemplatesDraft = (next: MatchReviewTemplate[]) => {
+    setTemplates(next);
+    setConfigurationDirty(true);
+  };
+
+  const saveConfiguration = (closeAfterSave = false) => {
+    storageSet(TEMPLATE_STORAGE, JSON.stringify(templates));
+    if (activeId) storageSet(ACTIVE_TEMPLATE_STORAGE, activeId);
+    setConfigurationDirty(false);
+    setConfigurationSavedAt(new Date());
+    if (closeAfterSave) setEditorOpen(false);
+  };
+
   const setActiveTemplateId = (id: string) => {
     setActiveId(id);
     storageSet(ACTIVE_TEMPLATE_STORAGE, id);
@@ -362,15 +380,17 @@ export default function MatchReviewBuilder({
 
   const updateActive = (updater: (template: MatchReviewTemplate) => MatchReviewTemplate) => {
     if (!active) return;
-    persistTemplates(templates.map((template) => template.id === active.id
+    setTemplatesDraft(templates.map((template) => template.id === active.id
       ? { ...updater(template), updatedAt: new Date().toISOString() }
       : template));
   };
 
   const addTemplate = () => {
     const template = blankTemplate();
-    persistTemplates([...templates, template]);
-    setActiveTemplateId(template.id);
+    setTemplatesDraft([...templates, template]);
+    setActiveId(template.id);
+    setSelectedBlockId(null);
+    setSelectedControlId(null);
     setEditorOpen(true);
   };
 
@@ -388,22 +408,28 @@ export default function MatchReviewBuilder({
       flow: active.flow.map((step) => ({ ...step, id: uid() })),
       updatedAt: new Date().toISOString(),
     };
-    persistTemplates([...templates, copy]);
-    setActiveTemplateId(copy.id);
+    setTemplatesDraft([...templates, copy]);
+    setActiveId(copy.id);
+    setSelectedBlockId(null);
+    setSelectedControlId(null);
   };
 
   const deleteTemplate = () => {
     if (!active) return;
     if (templates.length === 1) {
       const fresh = blankTemplate();
-      persistTemplates([fresh]);
-      setActiveTemplateId(fresh.id);
+      setTemplatesDraft([fresh]);
+      setActiveId(fresh.id);
+      setSelectedBlockId(null);
+      setSelectedControlId(null);
       return;
     }
     if (!window.confirm(`Supprimer le modèle « ${active.name} » ?`)) return;
     const next = templates.filter((template) => template.id !== active.id);
-    persistTemplates(next);
-    setActiveTemplateId(next[0].id);
+    setTemplatesDraft(next);
+    setActiveId(next[0].id);
+    setSelectedBlockId(null);
+    setSelectedControlId(null);
   };
 
   const insertBlockAt = (index: number, preset?: PresetBlock) => {
@@ -738,7 +764,15 @@ export default function MatchReviewBuilder({
                 <b>◉ CONSTRUCTEUR · RETOUR DE MATCH</b>
                 <span>Reprends les blocs déjà connus de LiveStats, insère-les dans l’ordre que tu veux et modifie chaque bouton.</span>
               </div>
-              <button type="button" className={styles.editorClose} aria-label="Fermer" onClick={() => setEditorOpen(false)}>×</button>
+              <div className={styles.editorHeadActions}>
+                <span className={`${styles.saveState} ${configurationDirty ? styles.saveStateDirty : styles.saveStateSaved}`}>
+                  {configurationDirty ? '● Modifications non enregistrées' : configurationSavedAt ? '✓ Sauvegardé' : '✓ Configuration chargée'}
+                </span>
+                <button type="button" className={styles.globalSaveButton} onClick={() => saveConfiguration(false)} disabled={!configurationDirty}>
+                  💾 Sauvegarder le Retour de match
+                </button>
+                <button type="button" className={styles.editorClose} aria-label="Fermer" onClick={() => setEditorOpen(false)}>×</button>
+              </div>
             </header>
 
             <div className={styles.builderTabs}>
@@ -883,7 +917,12 @@ export default function MatchReviewBuilder({
                 <input value={active.name} onChange={(event) => updateActive((template) => ({ ...template, name: event.target.value }))} aria-label="Nom de la configuration" />
                 <button type="button" className={styles.danger} onClick={deleteTemplate}>Supprimer le modèle</button>
               </div>
-              <div><button type="button" onClick={() => setEditorOpen(false)}>💾 Enregistrer la configuration</button></div>
+              <div className={styles.footerSaveArea}>
+                <span className={`${styles.saveState} ${configurationDirty ? styles.saveStateDirty : styles.saveStateSaved}`}>
+                  {configurationDirty ? '● Modifications non enregistrées' : '✓ Sauvegardé'}
+                </span>
+                <button type="button" onClick={() => saveConfiguration(true)}>💾 Sauvegarder le Retour de match</button>
+              </div>
             </footer>
           </div>
         </div>

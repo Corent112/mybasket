@@ -236,6 +236,7 @@ export default function MontageStudio({
   const [assignedPlayerId, setAssignedPlayerId] = useState(initialPlayerId);
   const [matches, setMatches] = useState<MatchRow[]>([]);
   const [selectedMatchId, setSelectedMatchId] = useState("");
+  const [sourceMatchIds, setSourceMatchIds] = useState<string[]>([]);
   const [actions, setActions] = useState<ActionRow[]>([]);
   const [montages, setMontages] = useState<MontageRow[]>([]);
   const [montageId, setMontageId] = useState(initialMontageId);
@@ -299,7 +300,10 @@ export default function MontageStudio({
     const urlMontageId = params.get("montageId") || "";
     const urlMatchId = params.get("matchId") || "";
 
-    if (urlMatchId) setSelectedMatchId(urlMatchId);
+    if (urlMatchId) {
+      setSelectedMatchId(urlMatchId);
+      setSourceMatchIds((current) => current.includes(urlMatchId) ? current : [...current, urlMatchId]);
+    }
     if (!initialTeamId && urlTeamId) setTeamId(urlTeamId);
     if (!initialPlayerId && urlPlayerId) {
       setPlayerId(urlPlayerId);
@@ -488,7 +492,11 @@ export default function MontageStudio({
         setCoachNote(montage.coach_note || "");
         setExportUrl(montage.export_url || "");
         setAssignedPlayerId(String(montage.player_id || ""));
-        if (montage.match_id) setSelectedMatchId(String(montage.match_id));
+        if (montage.match_id) {
+          const savedMatchId = String(montage.match_id);
+          setSelectedMatchId(savedMatchId);
+          setSourceMatchIds((current) => current.includes(savedMatchId) ? current : [...current, savedMatchId]);
+        }
       }
 
       if (itemsResponse.error) {
@@ -557,6 +565,18 @@ export default function MontageStudio({
     };
   }, [actions, flash, montageId, supabase]);
 
+  // Un montage peut mélanger plusieurs matchs. Les clips de la timeline restent
+  // la source de vérité : à la réouverture, on reconstitue automatiquement la
+  // liste des matchs nécessaires sans nouvelle colonne Supabase.
+  useEffect(() => {
+    const ids = Array.from(new Set(items
+      .map((item) => String(item.action?.match_id || ""))
+      .filter(Boolean)));
+    if (!ids.length) return;
+    setSourceMatchIds((current) => Array.from(new Set([...current, ...ids])));
+    setSelectedMatchId((current) => current || ids[0]);
+  }, [items]);
+
   // À la réouverture d'un montage, restaure UNE fois chaque source locale
   // nécessaire, par matchId. Un montage de 20 clips issus de 3 matchs ne doit
   // donc jamais demander 20 reconnexions. Les sources encore autorisées par
@@ -623,6 +643,34 @@ export default function MontageStudio({
     [actions, selectedMatchId],
   );
   const selectedMatchLocalVideo = selectedMatchId ? getLocalMatchVideoUrl(selectedMatchId) : null;
+  const sourceMatches = useMemo(
+    () => sourceMatchIds.map((id) => matchMap.get(id)).filter((match): match is MatchRow => Boolean(match)),
+    [matchMap, sourceMatchIds],
+  );
+  const timelineMatchIds = useMemo(
+    () => new Set(items.map((item) => String(item.action?.match_id || "")).filter(Boolean)),
+    [items],
+  );
+
+  const addSourceMatch = (matchId: string) => {
+    if (!matchId) return;
+    setSourceMatchIds((current) => current.includes(matchId) ? current : [...current, matchId]);
+    setSelectedMatchId(matchId);
+    setSelectedPlayerFilter("");
+    setSelectedSystemFilter("");
+    setSelectedThemeId("");
+    setSearch("");
+    setClipPreviewIndex(null);
+  };
+
+  const removeSourceMatch = (matchId: string) => {
+    if (timelineMatchIds.has(matchId)) {
+      flash("Ce match est utilisé par la timeline. Retire d'abord ses clips.");
+      return;
+    }
+    setSourceMatchIds((current) => current.filter((id) => id !== matchId));
+    setSelectedMatchId((current) => current === matchId ? (sourceMatchIds.find((id) => id !== matchId) || "") : current);
+  };
 
   const selected = items[selectedIndex];
   const selectedAction = selected?.action;
@@ -1040,7 +1088,9 @@ export default function MontageStudio({
         user_id: userId,
         team_id: teamId,
         player_id: assignedPlayerId || null,
-        match_id: selectedMatchId || null,
+        // Compatibilité avec le schéma existant : match_id reste renseigné pour
+        // un montage mono-match. En multi-match, chaque clip conserve son propre match_id via match_actions.
+        match_id: sourceMatchIds.length === 1 ? sourceMatchIds[0] : null,
         title: title.trim() || "Nouveau montage",
         type: assignedPlayerId ? "player" : "team",
         coach_note: coachNote,
@@ -1124,6 +1174,7 @@ export default function MontageStudio({
   useEffect(() => {
     if (!hydratedRef.current) return;
     if (historyApplyingRef.current) { historyApplyingRef.current = false; return; }
+    setSaveState("idle");
     const snapshot = items.map((row) => ({ ...row, annotations: row.annotations.map((a)=>({...a})) }));
     const current = historyRef.current[historyIndexRef.current];
     if (current && JSON.stringify(current) === JSON.stringify(snapshot)) return;
@@ -1158,7 +1209,7 @@ export default function MontageStudio({
     return()=>window.clearTimeout(timer);
     // autosave volontairement déclenché par l'état éditable du projet
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [items, title, coachNote, assignedPlayerId, teamId]);
+  }, [items, title, coachNote, assignedPlayerId, teamId, sourceMatchIds]);
 
   const renderMontage = async () => {
     if (!montageId) {
@@ -1267,6 +1318,28 @@ export default function MontageStudio({
 
   const timelineStartOf = (item: MontageItem, index: number) =>
     item.timeline_start ?? items.slice(0, index).reduce((sum, row) => sum + itemDuration(row), 0);
+
+  // Piste vidéo magnétique façon iMovie : clips et freezes s'enchaînent sans
+  // trou ni chevauchement. Un trim, une suppression ou un drag recale
+  // automatiquement tous les éléments vidéo suivants. Les overlays/audio
+  // conservent leur position libre.
+  useEffect(() => {
+    if (!items.length) return;
+    let cursor = 0;
+    let changed = false;
+    const next = items.map((item) => {
+      const track = item.track || (item.item_type === "audio" ? "audio" : item.item_type === "clip" || item.item_type === "freeze" ? "video" : "overlay");
+      if (track !== "video") return item;
+      const expected = cursor;
+      cursor += itemDuration(item);
+      if (Math.abs(numberValue(item.timeline_start) - expected) < 0.001) return item;
+      changed = true;
+      return { ...item, timeline_start: expected };
+    });
+    if (changed) setItems(next);
+    // Reflow volontaire : dépend de l'ordre, des trims et de la vitesse des éléments.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [items.map((item) => `${item.action_id}:${item.sort_order}:${item.clip_start}:${item.clip_end}:${item.playbackRate}:${item.repeatCount}:${item.track}`).join("|")]);
 
   const totalDuration = Math.max(
     0,
@@ -1793,7 +1866,7 @@ export default function MontageStudio({
         <div className="mp-project-name">
           <input value={title} onChange={(e) => setTitle(e.target.value)} aria-label="Titre du montage" />
           <span className={`mp-save-pill ${saveState}`}>
-            {saveState === "saving" ? "Sauvegarde…" : saveState === "error" ? "Erreur" : "Sauvegardé"}
+            {saveState === "saving" ? "Sauvegarde…" : saveState === "error" ? "Erreur" : saveState === "saved" ? "Sauvegardé ✓" : "Modifié"}
           </span>
         </div>
 
@@ -1862,39 +1935,27 @@ export default function MontageStudio({
         <section className="mp-center">
           <div className="mp-source-bar">
             <div className="mp-source-copy">
-              <span>SOURCE DU MONTAGE</span>
-              <strong>
-                {selectedMatch
-                  ? `${selectedMatch.opponent ? `vs ${selectedMatch.opponent}` : "Match"}${selectedMatch.match_date ? ` · ${new Date(selectedMatch.match_date).toLocaleDateString("fr-FR")}` : ""}`
-                  : "Choisir un match"}
-              </strong>
-              <small>
-                {selectedMatchId
-                  ? `${selectedMatchClipCount} clip${selectedMatchClipCount > 1 ? "s" : ""} rattaché${selectedMatchClipCount > 1 ? "s" : ""} à ce match`
-                  : "Les clips ne s'affichent qu'après sélection du match."}
-              </small>
+              <span>SOURCES DU MONTAGE</span>
+              <strong>{sourceMatches.length ? `${sourceMatches.length} match${sourceMatches.length > 1 ? "s" : ""} sélectionné${sourceMatches.length > 1 ? "s" : ""}` : "Ajouter un match"}</strong>
+              <small>Chaque clip garde automatiquement son match et sa vidéo source.</small>
             </div>
 
-            <select
-              className="mp-source-match"
-              value={selectedMatchId}
-              onChange={(event) => {
-                setSelectedMatchId(event.target.value);
-                setSelectedPlayerFilter("");
-                setSelectedSystemFilter("");
-                setSelectedThemeId("");
-                setSearch("");
-                setClipPreviewIndex(null);
-              }}
-            >
-              <option value="">Choisir un match…</option>
-              {matches.map((match) => (
-                <option key={match.id} value={match.id}>
-                  {match.match_date ? `${new Date(match.match_date).toLocaleDateString("fr-FR")} · ` : ""}
-                  {match.opponent ? `vs ${match.opponent}` : "Match"}
-                </option>
-              ))}
-            </select>
+            <div className="mp-source-picker">
+              <select
+                className="mp-source-match"
+                value=""
+                onChange={(event) => addSourceMatch(event.target.value)}
+              >
+                <option value="">＋ Ajouter un match…</option>
+                {matches.filter((match) => !sourceMatchIds.includes(String(match.id))).map((match) => (
+                  <option key={match.id} value={match.id}>
+                    {match.match_date ? `${new Date(match.match_date).toLocaleDateString("fr-FR")} · ` : ""}
+                    {match.opponent ? `vs ${match.opponent}` : "Match"}
+                  </option>
+                ))}
+              </select>
+              <small>Ajoute autant de matchs que nécessaire.</small>
+            </div>
 
             <div className="mp-source-video">
               {selectedMatchId ? (
@@ -1906,14 +1967,35 @@ export default function MontageStudio({
                   />
                   <small className={selectedMatchLocalVideo ? "connected" : ""}>
                     {selectedMatchLocalVideo
-                      ? "Vidéo source disponible : les clips utilisent automatiquement leurs timecodes."
-                      : "Charge la vidéo originale du match pour lire, rogner et exporter les clips."}
+                      ? "Vidéo du match actif disponible ✓"
+                      : "Relie la vidéo originale de ce match pour lire et exporter ses clips."}
                   </small>
                 </>
               ) : (
-                <small>Sélectionne d'abord le match source.</small>
+                <small>Ajoute un match pour commencer.</small>
               )}
             </div>
+
+            {sourceMatches.length > 0 && (
+              <div className="mp-source-list">
+                {sourceMatches.map((match) => {
+                  const id = String(match.id);
+                  const active = id === selectedMatchId;
+                  const connected = Boolean(getLocalMatchVideoUrl(id));
+                  const used = timelineMatchIds.has(id);
+                  return (
+                    <div key={id} className={`mp-source-chip ${active ? "on" : ""}`}>
+                      <button type="button" className="mp-source-chip-main" onClick={() => setSelectedMatchId(id)}>
+                        <span>{connected ? "✓" : "⚠"}</span>
+                        <strong>{match.opponent ? `vs ${match.opponent}` : "Match"}</strong>
+                        <small>{match.match_date ? new Date(match.match_date).toLocaleDateString("fr-FR") : ""}{used ? " · utilisé" : ""}</small>
+                      </button>
+                      <button type="button" className="mp-source-chip-remove" onClick={() => removeSourceMatch(id)} title={used ? "Match utilisé dans la timeline" : "Retirer cette source"}>×</button>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
           </div>
 
           <div className="mp-stage">
@@ -2204,7 +2286,7 @@ export default function MontageStudio({
         <aside className="mp-match-clips">
           <div className="mp-match-clips-head">
             <div>
-              <strong>{selectedMatch?.opponent ? `Clips · ${selectedMatch.opponent}` : "Clips du match"}</strong>
+              <strong>{selectedMatch?.opponent ? `Clips · ${selectedMatch.opponent}` : "Clips du match actif"}</strong>
               <span>{previewActions.length}</span>
             </div>
             <select value={filter} onChange={(e) => setFilter(e.target.value as "all" | "made" | "missed" | "video")}>
@@ -2246,8 +2328,8 @@ export default function MontageStudio({
             {loading ? <div className="mp-empty">Chargement…</div> :
             !selectedMatchId ? (
               <div className="mp-empty">
-                <strong>Choisis le match source</strong>
-                <span>Tu ne verras ici que les clips de ce match, jamais tous les clips de l'équipe.</span>
+                <strong>Ajoute puis sélectionne un match</strong>
+                <span>Tu peux ensuite passer d’un match à l’autre : les clips déjà posés restent dans la même timeline.</span>
               </div>
             ) :
             previewActions.length === 0 ? <div className="mp-empty">Aucun clip disponible pour ce match.</div> :
@@ -2473,7 +2555,7 @@ export default function MontageStudio({
         .mp-playlist-list{display:grid;gap:8px}.mp-playlist-card{border:1px solid #e3e5e9;border-radius:11px;padding:7px;display:grid;grid-template-columns:minmax(0,1fr) auto;gap:5px;align-items:center;background:#fff}.mp-playlist-card.on{background:#fff4f6;border-color:#bd7283}.mp-playlist-open{border:0;background:transparent;display:grid;grid-template-columns:46px minmax(0,1fr);gap:8px;align-items:center;text-align:left;min-width:0}.mp-playlist-thumb{height:42px;border-radius:8px;background:linear-gradient(135deg,#2b2024,#8a2039);color:#fff;display:grid;place-items:center}.mp-playlist-open>span:last-child{min-width:0}.mp-playlist-open strong,.mp-playlist-open small{display:block}.mp-playlist-open strong{font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.mp-playlist-open small{font-size:9px;color:#7d8189;margin-top:3px}.mp-playlist-menu{display:grid;gap:2px}.mp-playlist-menu button{border:0;background:transparent;color:#747881;width:25px;height:23px;border-radius:6px}.mp-playlist-menu button:hover{background:#f1f2f4}
         .mp-playlist-drop{margin-top:12px;border:1px dashed #d4d7dc;border-radius:11px;padding:14px;text-align:center;color:#7c8088}.mp-playlist-drop span{display:block;font-size:22px;color:var(--wine)}.mp-playlist-drop strong,.mp-playlist-drop small{display:block}.mp-playlist-drop strong{font-size:10px;margin-top:3px}.mp-playlist-drop small{font-size:9px;margin-top:2px}
         .mp-center{padding:12px;min-width:0}
-        .mp-source-bar{display:grid;grid-template-columns:minmax(190px,1fr) minmax(190px,260px) minmax(240px,1.15fr);gap:10px;align-items:center;margin-bottom:10px;padding:10px 12px;border:1px solid var(--line);border-radius:11px;background:#fff}
+        .mp-source-bar{display:grid;grid-template-columns:minmax(190px,1fr) minmax(190px,260px) minmax(240px,1.15fr);gap:10px;align-items:center;margin-bottom:10px;padding:10px 12px;border:1px solid var(--line);border-radius:11px;background:#fff}.mp-source-list{grid-column:1/-1;display:flex;gap:7px;overflow:auto;padding-top:2px}.mp-source-chip{display:flex;align-items:stretch;flex:0 0 auto;border:1px solid #dfe2e7;border-radius:9px;background:#fafbfc;overflow:hidden}.mp-source-chip.on{border-color:var(--wine);box-shadow:0 0 0 1px var(--wine) inset;background:#fff7f8}.mp-source-chip-main{display:grid;grid-template-columns:auto auto;column-gap:6px;align-items:center;border:0;background:transparent;padding:7px 9px;text-align:left}.mp-source-chip-main span{grid-row:1/3;font-size:10px}.mp-source-chip-main strong{font-size:9px;white-space:nowrap}.mp-source-chip-main small{font-size:7px;color:#7d8189}.mp-source-chip-remove{border:0;border-left:1px solid #e7e9ed;background:transparent;padding:0 8px;color:#8a8e96}.mp-source-picker{display:grid;gap:3px}.mp-source-picker small{font-size:7px;color:#8a8e96}
         .mp-source-copy span,.mp-source-copy strong,.mp-source-copy small{display:block}.mp-source-copy span{font-size:8px;letter-spacing:.08em;color:var(--wine);font-weight:950}.mp-source-copy strong{font-size:12px;margin-top:2px}.mp-source-copy small{font-size:8px;color:#7d8189;margin-top:3px}
         .mp-source-match{height:38px;border:1px solid #dfe2e7;background:#fff;border-radius:9px;padding:0 10px;font-size:9px;font-weight:750}
         .mp-source-video{display:grid;grid-template-columns:auto minmax(0,1fr);gap:8px;align-items:center}.mp-source-video :global(button){min-height:36px;border:1px solid #d7dbe1;background:#fff;border-radius:9px;padding:0 10px;font-size:9px;font-weight:850;color:#222}.mp-source-video :global(.local-video-connected){border-color:#94c5a5;background:#f0faf3;color:#176535}.mp-source-video small{font-size:8px;line-height:1.3;color:#8a8e96}.mp-source-video small.connected{color:#3e7d50}
