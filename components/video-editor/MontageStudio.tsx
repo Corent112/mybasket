@@ -235,6 +235,7 @@ export default function MontageStudio({
   const [playerId, setPlayerId] = useState(initialPlayerId);
   const [assignedPlayerId, setAssignedPlayerId] = useState(initialPlayerId);
   const [matches, setMatches] = useState<MatchRow[]>([]);
+  const [selectedMatchId, setSelectedMatchId] = useState("");
   const [actions, setActions] = useState<ActionRow[]>([]);
   const [montages, setMontages] = useState<MontageRow[]>([]);
   const [montageId, setMontageId] = useState(initialMontageId);
@@ -287,6 +288,26 @@ export default function MontageStudio({
   const [saveState, setSaveState] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const [librarySelection, setLibrarySelection] = useState<string[]>([]);
   const [addMenuOpen, setAddMenuOpen] = useState(false);
+
+  // /montage is a standalone client workspace. Recover context directly from
+  // the URL after mount instead of making the route depend on useSearchParams.
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const params = new URLSearchParams(window.location.search);
+    const urlTeamId = params.get("teamId") || "";
+    const urlPlayerId = params.get("playerId") || "";
+    const urlMontageId = params.get("montageId") || "";
+    const urlMatchId = params.get("matchId") || "";
+
+    if (urlMatchId) setSelectedMatchId(urlMatchId);
+    if (!initialTeamId && urlTeamId) setTeamId(urlTeamId);
+    if (!initialPlayerId && urlPlayerId) {
+      setPlayerId(urlPlayerId);
+      setAssignedPlayerId(urlPlayerId);
+      setSelectedPlayerFilter(urlPlayerId);
+    }
+    if (!initialMontageId && urlMontageId) setMontageId(urlMontageId);
+  }, [initialMontageId, initialPlayerId, initialTeamId]);
 
 
   const flash = useCallback((message: string) => {
@@ -467,6 +488,7 @@ export default function MontageStudio({
         setCoachNote(montage.coach_note || "");
         setExportUrl(montage.export_url || "");
         setAssignedPlayerId(String(montage.player_id || ""));
+        if (montage.match_id) setSelectedMatchId(String(montage.match_id));
       }
 
       if (itemsResponse.error) {
@@ -592,6 +614,16 @@ export default function MontageStudio({
     return () => { cancelled = true; if (timer) clearTimeout(timer); };
   }, [flash, renderJobId, supabase]);
 
+  const selectedMatch = useMemo(
+    () => matches.find((match) => String(match.id) === selectedMatchId) || null,
+    [matches, selectedMatchId],
+  );
+  const selectedMatchClipCount = useMemo(
+    () => actions.filter((action) => String(action.match_id || "") === selectedMatchId).length,
+    [actions, selectedMatchId],
+  );
+  const selectedMatchLocalVideo = selectedMatchId ? getLocalMatchVideoUrl(selectedMatchId) : null;
+
   const selected = items[selectedIndex];
   const selectedAction = selected?.action;
   const selectedVideo = actionVideoUrl(selectedAction, matchMap);
@@ -600,10 +632,55 @@ export default function MontageStudio({
     (selected?.clip_end || 0) - (selected?.clip_start || 0),
   );
 
+
+  const startTimelineTrim = (
+    index: number,
+    edge: "start" | "end",
+    event: React.PointerEvent<HTMLSpanElement>,
+  ) => {
+    event.preventDefault();
+    event.stopPropagation();
+    const item = items[index];
+    if (!item || item.item_type !== "clip") return;
+
+    setSelectedIndex(index);
+    const startX = event.clientX;
+    const originalStart = item.clip_start;
+    const originalEnd = item.clip_end;
+    const minStart = item.action ? clipStart(item.action) : originalStart;
+    const maxEnd = item.action ? clipEnd(item.action) : originalEnd;
+    const pixelsPerSecond = Math.max(18, 45 * timelineZoom);
+
+    const move = (moveEvent: PointerEvent) => {
+      const delta = (moveEvent.clientX - startX) / pixelsPerSecond;
+      setItems((current) => current.map((row, rowIndex) => {
+        if (rowIndex !== index) return row;
+        if (edge === "start") {
+          return {
+            ...row,
+            clip_start: clamp(originalStart + delta, minStart, originalEnd - 0.1),
+          };
+        }
+        return {
+          ...row,
+          clip_end: clamp(originalEnd + delta, originalStart + 0.1, maxEnd),
+        };
+      }));
+    };
+
+    const up = () => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", up);
+    };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", up, { once: true });
+  };
+
   const filteredActions = useMemo(() => {
     const query = search.trim().toLowerCase();
 
     return actions.filter((action) => {
+      if (!selectedMatchId || String(action.match_id || "") !== selectedMatchId) return false;
       if (filter === "made" && action.shot_result !== "made") return false;
       if (filter === "missed" && action.shot_result !== "missed") return false;
       if (
@@ -631,7 +708,7 @@ export default function MontageStudio({
         .toLowerCase()
         .includes(query);
     });
-  }, [actions, filter, matchMap, search, selectedPlayerFilter, selectedSystemFilter, selectedThemeId, themes, players]);
+  }, [actions, filter, matchMap, search, selectedMatchId, selectedPlayerFilter, selectedSystemFilter, selectedThemeId, themes, players]);
 
   useEffect(() => {
     const video = videoRef.current;
@@ -963,6 +1040,7 @@ export default function MontageStudio({
         user_id: userId,
         team_id: teamId,
         player_id: assignedPlayerId || null,
+        match_id: selectedMatchId || null,
         title: title.trim() || "Nouveau montage",
         type: assignedPlayerId ? "player" : "team",
         coach_note: coachNote,
@@ -1374,26 +1452,19 @@ export default function MontageStudio({
     if (!name?.trim() || name.trim() === playlist.name) return;
     const { error } = await supabase.from("livestat_clip_themes").update({ name: name.trim() }).eq("id", playlist.id);
     if (error) { flash(error.message); return; }
-    setThemes((current) => current.map((row) => row.id === playlist.id ? { ...row, name: name.trim() } : row));
+    setThemes((rows) => rows.map((row) => row.id === playlist.id ? { ...row, name: name.trim() } : row));
     flash("Playlist renommée");
   };
 
   const deletePlaylist = async (playlist: ClipTheme) => {
-    if (!window.confirm(`Supprimer la playlist « ${playlist.name} » ? Les clips d'origine ne seront pas supprimés.`)) return;
-    const { error: itemsError } = await supabase.from("livestat_clip_theme_items").delete().eq("theme_id", playlist.id);
-    if (itemsError) { flash(itemsError.message); return; }
+    if (!window.confirm(`Supprimer la playlist « ${playlist.name} » ? Les clips resteront disponibles dans la bibliothèque.`)) return;
+    const { error: itemError } = await supabase.from("livestat_clip_theme_items").delete().eq("theme_id", playlist.id);
+    if (itemError) { flash(itemError.message); return; }
     const { error } = await supabase.from("livestat_clip_themes").delete().eq("id", playlist.id);
     if (error) { flash(error.message); return; }
-    setThemes((current) => current.filter((row) => row.id !== playlist.id));
+    setThemes((rows) => rows.filter((row) => row.id !== playlist.id));
     if (selectedThemeId === playlist.id) setSelectedThemeId("");
     flash("Playlist supprimée");
-  };
-
-  const removeActionFromPlaylist = async (playlistId: string, actionId: string) => {
-    const { error } = await supabase.from("livestat_clip_theme_items").delete().eq("theme_id", playlistId).eq("action_id", actionId);
-    if (error) { flash(error.message); return; }
-    setThemes((current) => current.map((row) => row.id === playlistId ? { ...row, actionIds: row.actionIds.filter((id) => id !== actionId) } : row));
-    flash("Clip retiré de la playlist");
   };
 
   const openPlaylist = (playlist: ClipTheme) => {
@@ -1401,6 +1472,13 @@ export default function MontageStudio({
     setSelectedThemeId(playlist.id);
     setSearch("");
     setFilter("all");
+  };
+
+  const removeActionFromPlaylist = async (playlistId: string, actionId: string) => {
+    const { error } = await supabase.from("livestat_clip_theme_items").delete().eq("theme_id", playlistId).eq("action_id", actionId);
+    if (error) { flash(error.message); return; }
+    setThemes((rows) => rows.map((row) => row.id === playlistId ? { ...row, actionIds: row.actionIds.filter((id) => id !== actionId) } : row));
+    flash("Clip retiré de la playlist");
   };
 
   const addPlaylistToMontage = (playlist: ClipTheme) => {
@@ -1705,9 +1783,11 @@ export default function MontageStudio({
     <div className={`montage-pro ${embedded ? "embedded" : ""}`}>
       <header className="mp-header">
         <div className="mp-brand">
-          <span className="mp-logo">◩</span>
-          <strong>MyBasket</strong>
-          <em>MONTAGE PRO</em>
+          <span className="mp-logo">🏀</span>
+          <div>
+            <strong>Montage vidéo</strong>
+            <em>Créez des playlists et des montages personnalisés à partir de vos clips</em>
+          </div>
         </div>
 
         <div className="mp-project-name">
@@ -1718,19 +1798,10 @@ export default function MontageStudio({
         </div>
 
         <div className="mp-header-actions">
-          <button onClick={presentMontage}>▷ Présenter</button>
-          <button onClick={exportMontageLocally} disabled={rendering}>⇧ {rendering ? "Rendu…" : "Exporter"}</button>
+          <button onClick={presentMontage}>▶ Présenter</button>
+          <button onClick={exportMontageLocally} disabled={rendering}>⇩ {rendering ? "Rendu…" : "Exporter"}</button>
           <div className="mp-add-menu-wrap">
-            <button className="gold" onClick={() => setAddMenuOpen((value) => !value)}>＋ Ajouter des éléments⌄</button>
-            {addMenuOpen && (
-              <div className="mp-add-menu">
-                <button onClick={() => { setAddMenuOpen(false); addDesignItem("title"); }}>T Titre</button>
-                <button onClick={() => { setAddMenuOpen(false); addDesignItem("text"); }}>¶ Texte</button>
-                <button onClick={() => { setAddMenuOpen(false); imageInputRef.current?.click(); }}>▣ Image</button>
-                <button onClick={() => { setAddMenuOpen(false); addFreezeItem(); }}>❄ Freeze</button>
-                <button onClick={() => { setAddMenuOpen(false); audioInputRef.current?.click(); }}>♫ Audio</button>
-              </div>
-            )}
+            <button className="gold" onClick={createTheme}>＋ Nouvelle playlist</button>
           </div>
           <button className="mp-more" onClick={saveMontage} disabled={saving} title="Sauvegarder">•••</button>
         </div>
@@ -1738,129 +1809,26 @@ export default function MontageStudio({
 
       <main className="mp-grid">
         <aside className="mp-library">
-          <div className="mp-section-title">
-            <strong>BIBLIOTHÈQUE DE CLIPS</strong>
-            <span>{previewActions.length}</span>
-          </div>
-
-          <div className="mp-search-row">
-            <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Rechercher joueur, système, action, tag…" />
-            <button title="Filtres">⚲</button>
-          </div>
-
-          <div className="mp-tabs">
-            {([
-              ["all","Tous"],
-              ["favorites","Favoris"],
-              ["playlists","Playlists"],
-              ["players","Joueurs"],
-              ["systems","Systèmes"],
-            ] as const).map(([key,label]) => (
-              <button key={key} className={libraryView===key?"on":""} onClick={()=>setLibraryView(key)}>{label}</button>
-            ))}
-          </div>
-
-          {libraryView === "players" && (
-            <select className="mp-library-select" value={selectedPlayerFilter} onChange={(e) => setSelectedPlayerFilter(e.target.value)}>
-              <option value="">Tous les joueurs</option>
-              {players.map((player) => (
-                <option key={player.id} value={player.id}>{player.name || `${player.first_name || ""} ${player.last_name || ""}`.trim() || player.id}</option>
-              ))}
-            </select>
-          )}
-
-          {libraryView === "systems" && (
-            <select className="mp-library-select" value={selectedSystemFilter} onChange={(e) => setSelectedSystemFilter(e.target.value)}>
-              <option value="">Tous les systèmes / temps forts</option>
-              {Array.from(new Set(actions.map((action) => String(action.temps_fort || "")).filter(Boolean))).map((value) => (
-                <option key={value} value={value}>{tfLabel(value)}</option>
-              ))}
-            </select>
-          )}
-
-          {libraryView === "playlists" && (
-            <div className="mp-playlist-picker">
-              <select className="mp-library-select" value={selectedThemeId} onChange={(e) => setSelectedThemeId(e.target.value)}>
-                <option value="">Toutes mes playlists</option>
-                {themes.map((playlist) => (
-                  <option key={playlist.id} value={playlist.id}>
-                    {playlist.name} · {playlist.actionIds.length} clip{playlist.actionIds.length > 1 ? "s" : ""}
-                  </option>
-                ))}
-              </select>
-              <button type="button" onClick={createTheme}>＋ Nouvelle playlist</button>
+          <div className="mp-playlist-title">
+            <div>
+              <strong>Playlists</strong>
+              <small>Organise tes clips par thème, joueur ou match.</small>
             </div>
-          )}
-
-          <div className="mp-filter-chips">
-            <button className={filter==="all"?"on":""} onClick={()=>setFilter("all")}>Tous</button>
-            <button className={filter==="made"?"on":""} onClick={()=>setFilter("made")}>Marqués</button>
-            <button className={filter==="missed"?"on":""} onClick={()=>setFilter("missed")}>Ratés</button>
-            <button className={filter==="video"?"on":""} onClick={()=>setFilter("video")}>Avec vidéo</button>
+            <button onClick={createTheme} title="Nouvelle playlist">＋</button>
           </div>
 
-          <div className="mp-clips">
-            {loading ? <div className="mp-empty">Chargement…</div> :
-            previewActions.length===0 ? <div className="mp-empty">Aucun clip disponible.</div> :
-            previewActions.map((action,index)=>{
-              const id=String(action.id);
-              const favorite=favoriteActionIds.includes(id);
-              const duration=Math.max(.1,clipEnd(action)-clipStart(action));
-              return (
-                <div
-                  className={`mp-clip-card ${librarySelection.includes(id) ? "selected" : ""}`}
-                  key={id}
-                  draggable
-                  onDragStart={(event)=>{
-                    event.dataTransfer.setData("text/mybasket-action",id);
-                    event.dataTransfer.effectAllowed="copy";
-                  }}
-                >
-                  <button className="mp-clip-open" onClick={()=>setClipPreviewIndex(index)}>
-                    <div className="mp-thumb">
-                      <span>▶</span>
-                      <small>{duration.toFixed(0)}s</small>
-                    </div>
-                    <div className="mp-clip-copy">
-                      <small>{action.quarter ? `Q${action.quarter}` : ""} · {action.clock || ""}</small>
-                      <strong>{actionLabel(action)}</strong>
-                      <div>
-                        {action.context && <i>{action.context}</i>}
-                        {action.temps_fort && <i>{tfLabel(action.temps_fort)}</i>}
-                        {action.action_type && <i>{action.action_type}</i>}
-                        {action.shot_type && <i>{action.shot_type}</i>}
-                      </div>
-                    </div>
-                  </button>
-                  <button className={`mp-star ${favorite?"on":""}`} onClick={()=>toggleFavorite(id)}>{favorite?"★":"☆"}</button>
-                  <button className={`mp-add ${librarySelection.includes(id) ? "selected" : ""}`} onClick={()=>toggleLibrarySelection(id)}>{librarySelection.includes(id) ? "✓" : "○"}</button>
-                  {libraryView === "playlists" && selectedThemeId && (
-                    <button className="mp-remove-playlist" title="Retirer de cette playlist" onClick={() => removeActionFromPlaylist(selectedThemeId, id)}>×</button>
-                  )}
-                </div>
-              )
-            })}
+          <div className="mp-playlist-tabs">
+            <button className="on">Mes playlists</button>
+            <button type="button">Partagées</button>
           </div>
 
-          <button className="mp-library-add-selected" onClick={addSelectedLibraryClips} disabled={!librarySelection.length}>
-            Ajouter les clips sélectionnés ({librarySelection.length})
-          </button>
-
-          <div className={`mp-themes ${libraryView === "playlists" ? "visible" : ""}`}>
-            <div className="mp-themes-head">
-              <div>
-                <strong>MES PLAYLISTS</strong>
-                <small>Glisse directement un clip dans une playlist.</small>
-              </div>
-              <button onClick={createTheme}>＋ Nouvelle playlist</button>
-            </div>
-
-            {themes.length === 0 && <div className="mp-empty small">Crée ta première playlist puis glisse les clips dedans.</div>}
-
-            {themes.map((playlist) => (
+          <div className="mp-playlist-list">
+            {themes.length === 0 ? (
+              <div className="mp-empty">Aucune playlist. Clique sur ＋ pour créer la première.</div>
+            ) : themes.map((playlist) => (
               <div
-                className={`mp-playlist-card ${selectedThemeId === playlist.id ? "on" : ""}`}
                 key={playlist.id}
+                className={`mp-playlist-card ${selectedThemeId === playlist.id ? "on" : ""}`}
                 onDragOver={(event) => { event.preventDefault(); event.dataTransfer.dropEffect = "copy"; }}
                 onDrop={(event) => {
                   event.preventDefault();
@@ -1869,23 +1837,85 @@ export default function MontageStudio({
                 }}
               >
                 <button className="mp-playlist-open" onClick={() => openPlaylist(playlist)}>
-                  <span>▶</span>
-                  <div>
+                  <span className="mp-playlist-thumb">▶</span>
+                  <span>
                     <strong>{playlist.name}</strong>
                     <small>{playlist.actionIds.length} clip{playlist.actionIds.length > 1 ? "s" : ""}</small>
-                  </div>
+                  </span>
                 </button>
-                <div className="mp-playlist-actions">
-                  <button title="Ajouter toute la playlist au montage" onClick={() => addPlaylistToMontage(playlist)}>＋ Montage</button>
-                  <button title="Renommer" onClick={() => renamePlaylist(playlist)}>✎</button>
-                  <button title="Supprimer la playlist" onClick={() => deletePlaylist(playlist)}>×</button>
+                <div className="mp-playlist-menu">
+                  <button onClick={() => addPlaylistToMontage(playlist)} title="Ajouter au montage">＋</button>
+                  <button onClick={() => renamePlaylist(playlist)} title="Renommer">✎</button>
+                  <button onClick={() => deletePlaylist(playlist)} title="Supprimer">⋮</button>
                 </div>
               </div>
             ))}
           </div>
+
+          <div className="mp-playlist-drop">
+            <span>＋</span>
+            <strong>Glisse un clip ici</strong>
+            <small>ou directement sur une playlist</small>
+          </div>
         </aside>
 
         <section className="mp-center">
+          <div className="mp-source-bar">
+            <div className="mp-source-copy">
+              <span>SOURCE DU MONTAGE</span>
+              <strong>
+                {selectedMatch
+                  ? `${selectedMatch.opponent ? `vs ${selectedMatch.opponent}` : "Match"}${selectedMatch.match_date ? ` · ${new Date(selectedMatch.match_date).toLocaleDateString("fr-FR")}` : ""}`
+                  : "Choisir un match"}
+              </strong>
+              <small>
+                {selectedMatchId
+                  ? `${selectedMatchClipCount} clip${selectedMatchClipCount > 1 ? "s" : ""} rattaché${selectedMatchClipCount > 1 ? "s" : ""} à ce match`
+                  : "Les clips ne s'affichent qu'après sélection du match."}
+              </small>
+            </div>
+
+            <select
+              className="mp-source-match"
+              value={selectedMatchId}
+              onChange={(event) => {
+                setSelectedMatchId(event.target.value);
+                setSelectedPlayerFilter("");
+                setSelectedSystemFilter("");
+                setSelectedThemeId("");
+                setSearch("");
+                setClipPreviewIndex(null);
+              }}
+            >
+              <option value="">Choisir un match…</option>
+              {matches.map((match) => (
+                <option key={match.id} value={match.id}>
+                  {match.match_date ? `${new Date(match.match_date).toLocaleDateString("fr-FR")} · ` : ""}
+                  {match.opponent ? `vs ${match.opponent}` : "Match"}
+                </option>
+              ))}
+            </select>
+
+            <div className="mp-source-video">
+              {selectedMatchId ? (
+                <>
+                  <LocalMatchVideoButton
+                    matchId={selectedMatchId}
+                    teamId={teamId}
+                    onConnected={() => flash("Vidéo source reliée au match ✓")}
+                  />
+                  <small className={selectedMatchLocalVideo ? "connected" : ""}>
+                    {selectedMatchLocalVideo
+                      ? "Vidéo source disponible : les clips utilisent automatiquement leurs timecodes."
+                      : "Charge la vidéo originale du match pour lire, rogner et exporter les clips."}
+                  </small>
+                </>
+              ) : (
+                <small>Sélectionne d'abord le match source.</small>
+              )}
+            </div>
+          </div>
+
           <div className="mp-stage">
             {stageItem?.item_type === "image" && stageItem.image_url ? (
               <div className="mp-editable-overlay" style={{left:`${stageItem.x ?? 50}%`,top:`${stageItem.y ?? 50}%`,width:`${stageItem.width ?? 30}%`,opacity:stageItem.opacity ?? 1,transform:`translate(-50%,-50%) rotate(${stageItem.rotation ?? 0}deg)`}} onPointerDown={(e)=>{if(stageItem.locked)return; const box=e.currentTarget.parentElement!.getBoundingClientRect(); const move=(ev:PointerEvent)=>updateSelected({x:clamp(((ev.clientX-box.left)/box.width)*100,0,100),y:clamp(((ev.clientY-box.top)/box.height)*100,0,100)}); const up=()=>{window.removeEventListener("pointermove",move);window.removeEventListener("pointerup",up)};window.addEventListener("pointermove",move);window.addEventListener("pointerup",up)}}><img src={stageItem.image_url} alt={stageItem.title} /></div>
@@ -2083,7 +2113,7 @@ export default function MontageStudio({
 
           <div className="mp-timeline-head">
             <div>
-              <strong>ORDRE DU MONTAGE</strong>
+              <strong>Ma timeline — {title}</strong>
               <small>{items.length} élément{items.length>1?"s":""} · {totalDuration.toFixed(1)}s</small>
             </div>
             <div>
@@ -2099,7 +2129,7 @@ export default function MontageStudio({
             </div>
             <div className="mp-storyboard-strip">
               {items.length === 0 ? (
-                <div className="mp-storyboard-empty">Ajoute des clips ou des éléments pour construire ton montage.</div>
+                <div className="mp-storyboard-empty">Glisse ici les clips de ta playlist pour construire ton montage.</div>
               ) : items.map((item, index) => {
                 const duration = itemDuration(item);
                 const typeLabel = item.item_type === "freeze" ? "Freeze" : item.item_type === "title" ? "Titre" : item.item_type === "image" ? "Image" : item.item_type === "audio" ? "Audio" : item.item_type === "text" ? "Texte" : "Clip";
@@ -2107,6 +2137,7 @@ export default function MontageStudio({
                   <button
                     key={`${item.action_id}:${index}`}
                     className={`mp-story-card type-${item.item_type} ${selectedIndex === index ? "selected" : ""}`}
+                    style={item.item_type === "clip" ? { minWidth: `${Math.max(110, duration * 45 * timelineZoom)}px`, width: `${Math.max(110, duration * 45 * timelineZoom)}px` } : undefined}
                     onClick={() => { setSelectedIndex(index); setPlayhead(timelineStartOf(item, index)); }}
                     draggable
                     onDragStart={(event) => { event.dataTransfer.setData("text/mybasket-story-index", String(index)); }}
@@ -2119,7 +2150,35 @@ export default function MontageStudio({
                   >
                     <span className="mp-story-index">{index + 1}</span>
                     <div className="mp-story-visual">
-                      {item.item_type === "clip" ? <span>▶</span> : item.item_type === "freeze" ? <span>Ⅱ</span> : item.item_type === "audio" ? <span>♫</span> : item.item_type === "image" ? <span>▣</span> : <strong>{item.item_type === "title" ? item.title : item.note || item.title}</strong>}
+                      {item.item_type === "clip" && item.action ? (
+                        <>
+                          <video
+                            muted
+                            playsInline
+                            preload="metadata"
+                            src={actionVideoUrl(item.action, matchMap)}
+                            ref={(node) => {
+                              if (!node) return;
+                              const seek = () => {
+                                try { node.currentTime = item.clip_start; } catch {}
+                              };
+                              if (node.readyState >= 1) seek();
+                              else node.addEventListener("loadedmetadata", seek, { once: true });
+                            }}
+                          />
+                          <span className="mp-story-duration">{formatClipTime(duration)}</span>
+                          <span
+                            className="mp-trim-handle left"
+                            title="Rogner le début"
+                            onPointerDown={(event) => startTimelineTrim(index, "start", event)}
+                          />
+                          <span
+                            className="mp-trim-handle right"
+                            title="Rogner la fin"
+                            onPointerDown={(event) => startTimelineTrim(index, "end", event)}
+                          />
+                        </>
+                      ) : item.item_type === "freeze" ? <span>Ⅱ</span> : item.item_type === "audio" ? <span>♫</span> : item.item_type === "image" ? <span>▣</span> : <strong>{item.item_type === "title" ? item.title : item.note || item.title}</strong>}
                     </div>
                     <strong className="mp-story-title">{item.title || typeLabel}</strong>
                     <small>{typeLabel} · {formatClipTime(duration)}</small>
@@ -2142,8 +2201,87 @@ export default function MontageStudio({
           </div>
         </section>
 
+        <aside className="mp-match-clips">
+          <div className="mp-match-clips-head">
+            <div>
+              <strong>{selectedMatch?.opponent ? `Clips · ${selectedMatch.opponent}` : "Clips du match"}</strong>
+              <span>{previewActions.length}</span>
+            </div>
+            <select value={filter} onChange={(e) => setFilter(e.target.value as "all" | "made" | "missed" | "video")}>
+              <option value="all">Tout</option>
+              <option value="made">Marqués</option>
+              <option value="missed">Ratés</option>
+              <option value="video">Avec vidéo</option>
+            </select>
+          </div>
+
+          <input className="mp-clips-search" value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Rechercher un clip…" />
+
+          <div className="mp-quick-filters">
+            <button className={libraryView === "all" ? "on" : ""} onClick={() => setLibraryView("all")}>Tous</button>
+            <button className={libraryView === "players" ? "on" : ""} onClick={() => setLibraryView("players")}>Joueurs</button>
+            <button className={libraryView === "systems" ? "on" : ""} onClick={() => setLibraryView("systems")}>Systèmes</button>
+            <button className={libraryView === "favorites" ? "on" : ""} onClick={() => setLibraryView("favorites")}>Favoris</button>
+          </div>
+
+          {libraryView === "players" && (
+            <select className="mp-library-select" value={selectedPlayerFilter} onChange={(e) => setSelectedPlayerFilter(e.target.value)}>
+              <option value="">Tous les joueurs</option>
+              {players.map((player) => (
+                <option key={player.id} value={player.id}>{player.name || `${player.first_name || ""} ${player.last_name || ""}`.trim() || player.id}</option>
+              ))}
+            </select>
+          )}
+
+          {libraryView === "systems" && (
+            <select className="mp-library-select" value={selectedSystemFilter} onChange={(e) => setSelectedSystemFilter(e.target.value)}>
+              <option value="">Tous les systèmes / temps forts</option>
+              {Array.from(new Set(actions.map((action) => String(action.temps_fort || "")).filter(Boolean))).map((value) => (
+                <option key={value} value={value}>{tfLabel(value)}</option>
+              ))}
+            </select>
+          )}
+
+          <div className="mp-match-clip-list">
+            {loading ? <div className="mp-empty">Chargement…</div> :
+            !selectedMatchId ? (
+              <div className="mp-empty">
+                <strong>Choisis le match source</strong>
+                <span>Tu ne verras ici que les clips de ce match, jamais tous les clips de l'équipe.</span>
+              </div>
+            ) :
+            previewActions.length === 0 ? <div className="mp-empty">Aucun clip disponible pour ce match.</div> :
+            previewActions.map((action, index) => {
+              const id = String(action.id);
+              const favorite = favoriteActionIds.includes(id);
+              const duration = Math.max(.1, clipEnd(action) - clipStart(action));
+              return (
+                <div
+                  className="mp-match-clip"
+                  key={id}
+                  draggable
+                  onDragStart={(event) => {
+                    event.dataTransfer.setData("text/mybasket-action", id);
+                    event.dataTransfer.effectAllowed = "copy";
+                  }}
+                >
+                  <button className="mp-match-clip-open" onClick={() => setClipPreviewIndex(index)}>
+                    <span className="mp-match-thumb">▶<small>{duration.toFixed(0)}s</small></span>
+                    <span className="mp-match-copy">
+                      <strong>{actionLabel(action)}</strong>
+                      <small>{actionSub(action, matchMap)}</small>
+                    </span>
+                  </button>
+                  <button className={`mp-mini-star ${favorite ? "on" : ""}`} onClick={() => toggleFavorite(id)}>{favorite ? "★" : "☆"}</button>
+                  <button className="mp-mini-add" onClick={() => addAction(action)}>＋</button>
+                </div>
+              );
+            })}
+          </div>
+        </aside>
+
         <aside className="mp-inspector">
-          <div className="mp-inspector-tabs"><button className="on">Élément</button><button>Projet</button></div>
+          <div className="mp-detail-title"><strong>Détails du clip</strong><small>Agis sur le clip sélectionné</small></div>
           {!selected ? <div className="mp-empty">Sélectionne un élément.</div> : (
             <div className="mp-inspector-form">
               <label>Titre<input value={selected.title} onChange={(e)=>updateSelected({title:e.target.value})}/></label>
@@ -2321,26 +2459,37 @@ export default function MontageStudio({
       {toast && <div className="mp-toast">{toast}</div>}
 
       <style jsx>{`
-        .montage-pro{--gold:#d6a23d;--gold2:#f2b948;--bg:#050a11;--panel:#09111b;--panel2:#0c1622;--line:#263344;--text:#f3f5f8;--muted:#8995a5;min-height:100vh;background:radial-gradient(circle at 50% 0,#0c1622 0,#050a11 42%);color:var(--text);font-family:Inter,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}.montage-pro *{box-sizing:border-box}.montage-pro button,.montage-pro input,.montage-pro textarea,.montage-pro select{font:inherit}.montage-pro button{cursor:pointer}
-        .mp-header{height:64px;display:grid;grid-template-columns:330px minmax(260px,1fr) auto;align-items:center;gap:18px;padding:0 18px;border-bottom:1px solid #1b2735;background:#060c13;position:sticky;top:0;z-index:50}.mp-brand{display:flex;align-items:center;gap:10px}.mp-logo{width:28px;height:28px;display:grid;place-items:center;color:#fff;font-size:22px}.mp-brand strong{font-size:18px;letter-spacing:-.02em}.mp-brand em{font-style:normal;color:var(--gold2);font-size:11px;font-weight:900;letter-spacing:.12em;margin-left:8px}.mp-project-name{display:flex;justify-content:center;align-items:center;gap:10px;min-width:0}.mp-project-name input{min-width:0;width:min(440px,100%);border:0;background:transparent;color:#f7f8fa;text-align:center;font-size:15px;font-weight:800;outline:none}.mp-save-pill{border:1px solid #6b501e;border-radius:999px;padding:5px 9px;color:var(--gold2);font-size:9px;font-weight:800;background:#171209}.mp-save-pill.error{color:#ff8a9b;border-color:#71303b}.mp-header-actions{display:flex;align-items:center;gap:8px}.mp-header-actions>button,.mp-add-menu-wrap>button{height:36px;border:1px solid #2c394a;background:#0b131e;color:#f5f7fa;border-radius:8px;padding:0 14px;font-size:10px;font-weight:800}.gold{background:linear-gradient(180deg,#e5ad42,#c98e2b)!important;color:#161009!important;border-color:#e0aa40!important}.mp-more{width:40px;padding:0!important}.mp-add-menu-wrap{position:relative}.mp-add-menu{position:absolute;top:43px;right:0;width:190px;background:#0c1521;border:1px solid #324052;border-radius:10px;padding:6px;box-shadow:0 18px 50px #000c;display:grid;gap:4px;z-index:80}.mp-add-menu button{border:0;background:transparent;color:#fff;text-align:left;padding:9px;border-radius:7px;font-size:10px}.mp-add-menu button:hover{background:#182334}
-        .mp-grid{display:grid;grid-template-columns:370px minmax(650px,1fr) 330px;height:calc(100vh - 64px);min-height:760px}.mp-library,.mp-inspector{background:linear-gradient(180deg,#08111b,#070e17);padding:16px;overflow:auto}.mp-library{border-right:1px solid #1d2938}.mp-inspector{border-left:1px solid #1d2938}.mp-section-title{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px}.mp-section-title strong{font-size:10px;letter-spacing:.05em}.mp-section-title span{font-size:9px;color:var(--gold2);background:#171f2c;padding:3px 8px;border-radius:999px}.mp-search-row{display:grid;grid-template-columns:1fr 38px;gap:8px}.mp-search-row input,.mp-library-select,.mp-inspector input,.mp-inspector textarea,.mp-inspector select,.mp-share input{width:100%;border:1px solid #263447;background:#080f19;color:#f4f6f8;border-radius:8px;padding:9px 10px;outline:none}.mp-search-row button{border:1px solid #2c394a;background:#0b141f;color:#fff;border-radius:8px}.mp-tabs{display:flex;gap:16px;border-bottom:1px solid #1f2b3a;margin:12px 0 10px}.mp-tabs button{border:0;background:none;color:#9aa5b4;padding:7px 0;font-size:9px}.mp-tabs button.on{color:#fff;border-bottom:2px solid var(--gold2)}.mp-library-select{font-size:9px;margin-bottom:8px}.mp-filter-chips{display:flex;gap:6px;overflow:auto;margin-bottom:10px}.mp-filter-chips button{border:1px solid #2c3a4c;background:#0d1723;color:#a7b1bf;border-radius:999px;padding:4px 8px;font-size:8px;white-space:nowrap}.mp-filter-chips button.on{border-color:#a77b2d;color:#f2bb4d;background:#1b160e}.mp-clips{display:grid;gap:8px;max-height:calc(100vh - 335px);overflow:auto;padding-right:3px}.mp-clip-card{display:grid;grid-template-columns:minmax(0,1fr) 30px 32px auto;gap:4px;border:1px solid #223042;border-radius:9px;background:#0b1521;padding:6px;transition:.15s}.mp-clip-card:hover{border-color:#506078}.mp-clip-card.selected{border-color:var(--gold);box-shadow:0 0 0 1px #d6a23d44 inset}.mp-clip-open{border:0;background:transparent;color:#fff;display:grid;grid-template-columns:94px 1fr;gap:9px;text-align:left;padding:0;min-width:0}.mp-thumb{height:56px;border-radius:7px;background:linear-gradient(135deg,#202c3c,#101822);display:grid;place-items:center;position:relative;overflow:hidden}.mp-thumb:before{content:"";position:absolute;inset:0;background:radial-gradient(circle at 65% 45%,#9f783266,transparent 28%),linear-gradient(160deg,transparent 55%,#d5a14222 56% 58%,transparent 59%)}.mp-thumb span{position:relative;font-size:14px}.mp-thumb small{position:absolute;right:4px;bottom:4px;background:#000c;border-radius:4px;padding:2px 4px;font-size:7px}.mp-clip-copy{min-width:0}.mp-clip-copy>small{font-size:7px;color:#8591a2}.mp-clip-copy strong{display:block;font-size:9px;margin:4px 0 6px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.mp-clip-copy div{display:flex;flex-wrap:wrap;gap:3px}.mp-clip-copy i,.mp-modal-tags i{font-style:normal;border:1px solid #354357;color:#aab5c4;border-radius:999px;padding:2px 5px;font-size:7px}.mp-star,.mp-add{align-self:center;width:28px;height:28px;border:1px solid #354357;background:#0b141f;color:#c9d2dd;border-radius:50%}.mp-star{border-radius:7px;color:#d7a544}.mp-add.selected{background:var(--gold);color:#161009;border-color:var(--gold)}.mp-library-add-selected{width:100%;margin-top:10px;height:38px;border:1px solid var(--gold);background:#18140d;color:#f0b945;border-radius:8px;font-size:9px;font-weight:850}.mp-library-add-selected:disabled{opacity:.35}
-.mp-playlist-picker{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:6px;align-items:start;margin-bottom:8px}
-.mp-playlist-picker .mp-library-select{margin:0}.mp-playlist-picker>button{height:34px;border:1px solid var(--gold);background:#18140d;color:#f0b945;border-radius:8px;padding:0 9px;font-size:8px;font-weight:900}
-.mp-remove-playlist{align-self:center;width:28px;height:28px;border:1px solid #6f3440;background:#211017;color:#ff8792;border-radius:7px;font-size:15px}
-.mp-themes-head>div{display:grid;gap:2px}.mp-themes-head small{font-size:7px;color:#768396}
-.mp-playlist-card{margin-top:7px;padding:7px;border:1px solid #263447;border-radius:9px;background:#0b1521;display:grid;grid-template-columns:minmax(0,1fr) auto;gap:7px;align-items:center}
-.mp-playlist-card.on{border-color:var(--gold);box-shadow:0 0 0 1px #d6a23d33 inset}
-.mp-playlist-open{border:0;background:transparent;color:#fff;display:grid;grid-template-columns:30px minmax(0,1fr);gap:7px;align-items:center;text-align:left;padding:0;min-width:0}
-.mp-playlist-open>span{width:28px;height:28px;border-radius:8px;background:#1b2635;color:var(--gold2);display:grid;place-items:center;font-size:9px}
-.mp-playlist-open>div{min-width:0}.mp-playlist-open strong,.mp-playlist-open small{display:block}.mp-playlist-open strong{font-size:8px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.mp-playlist-open small{margin-top:2px;font-size:7px;color:#8390a1}
-.mp-playlist-actions{display:flex;gap:4px}.mp-playlist-actions button{height:28px;border:1px solid #324155;background:#0d1723;color:#fff;border-radius:7px;padding:0 7px;font-size:7px;font-weight:850}.mp-playlist-actions button:first-child{color:#f0b945;border-color:#725826}
-.mp-themes{display:none}.mp-themes.visible{display:block;border-top:1px solid #243142;margin-top:12px;padding-top:10px}.mp-themes-head{display:flex;justify-content:space-between;align-items:center}.mp-themes-head strong{font-size:9px;color:var(--gold)}.mp-themes-head button{font-size:8px;border:1px solid #324155;background:#0d1723;color:#fff;border-radius:7px;padding:5px 7px}.mp-theme{display:grid;grid-template-columns:22px 1fr auto;gap:6px;align-items:center;margin-top:6px;padding:8px;border:1px solid #263447;border-radius:7px}.mp-theme strong,.mp-theme b{font-size:8px}.mp-empty{border:1px dashed #334154;border-radius:8px;padding:14px;text-align:center;color:#768396;font-size:9px}
-        .mp-center{min-width:0;display:grid;grid-template-rows:minmax(360px,1fr) 48px 50px auto auto;background:#050b12}.mp-stage{position:relative;display:grid;place-items:center;background:#000;overflow:hidden;margin:16px 14px 0;border:1px solid #263345;border-radius:7px 7px 0 0;aspect-ratio:16/9;max-height:56vh}.mp-stage video,.mp-stage img{width:100%;height:100%;object-fit:contain}.mp-stage canvas{position:absolute;inset:0;width:100%;height:100%;touch-action:none}.mp-stage-empty{color:#667388;font-size:11px}.mp-stage-connect{display:grid;gap:10px;text-align:center;justify-items:center;padding:24px}.mp-stage-connect strong{color:#fff;font-size:13px}.mp-stage-connect span{max-width:440px;color:#8290a2;font-size:9px;line-height:1.5}.mp-stage-connect :global(.local-video-reconnect),.mp-stage-connect :global(.local-video-connected){border:1px solid var(--gold);background:#18140d;color:var(--gold2);border-radius:8px;padding:9px 12px;font-weight:800}.mp-design-preview{width:100%;height:100%;display:grid;place-items:center;background:linear-gradient(145deg,#090d14,#171d2a)}.mp-design-preview strong{font-size:38px;text-align:center;padding:30px}.mp-editable-overlay{position:absolute;z-index:5}.mp-live-drawings{position:absolute;inset:0;width:100%;height:100%;z-index:7;pointer-events:none}.mp-player-bar{display:flex;align-items:center;gap:8px;padding:7px 14px;margin:0 14px;border:1px solid #263345;border-top:0;background:#0a121d}.mp-player-bar button{width:32px;height:30px;border:0;background:transparent;color:#fff;font-size:14px}.mp-time{display:grid;grid-template-columns:55px 1fr 55px;align-items:center;gap:8px;flex:1}.mp-time span{font-size:8px;color:var(--gold2);font-weight:900;text-align:center}.mp-time div{height:5px;border-radius:999px;background:#4c5562}.mp-time i{display:block;width:20%;height:100%;background:var(--gold);border-radius:999px}.mp-player-bar select{border:1px solid #293748;background:#0b141f;color:#fff;border-radius:6px;padding:5px;font-size:8px}.mp-tools{display:flex;justify-content:center;gap:7px;padding:8px 14px;margin:0 14px;border:1px solid #263345;border-top:0;background:#08111b}.mp-tools button{height:30px;border:1px solid #2e3d50;border-radius:7px;background:#0d1723;color:#e4e8ed;font-size:8px;padding:0 10px}.mp-tools button.on{border-color:var(--gold);color:var(--gold2);background:#1a150c}.mp-timeline-head{display:flex;justify-content:space-between;align-items:center;padding:9px 16px 4px;background:#050b12}.mp-timeline-head strong{font-size:9px;color:#c7ced7}.mp-timeline-head small{font-size:8px;color:#7e8999;margin-left:8px}.mp-timeline-head>div:last-child{display:none}
-        .mp-storyboard{border-top:1px solid #1e2a39;background:#060d15;padding:0 14px 10px;min-height:195px}.mp-storyboard-ruler{height:28px;display:flex;justify-content:space-between;align-items:end;padding:0 14px 5px;border-bottom:1px solid #273447;color:#788596;font-size:7px}.mp-storyboard-strip{display:flex;gap:10px;align-items:stretch;overflow:auto;padding:10px 8px 8px;min-height:120px}.mp-story-card{position:relative;flex:0 0 142px;height:106px;border:1px solid #334256;border-radius:8px;background:#0c1622;color:#fff;padding:5px;text-align:left;display:grid;grid-template-rows:60px auto auto;overflow:hidden}.mp-story-card.selected{border-color:var(--gold);box-shadow:0 0 0 1px #d6a23d55}.mp-story-card.type-title,.mp-story-card.type-text{background:#0c1622}.mp-story-card.type-freeze{background:#3f2660}.mp-story-card.type-audio{background:#18263a}.mp-story-visual{border-radius:5px;background:linear-gradient(135deg,#1c2939,#0c141f);display:grid;place-items:center;overflow:hidden}.mp-story-card.type-title .mp-story-visual,.mp-story-card.type-text .mp-story-visual{background:#081018}.mp-story-visual>strong{font-size:10px;text-align:center;padding:7px}.mp-story-index{position:absolute;top:8px;left:8px;width:22px;height:22px;border-radius:6px;background:#090d12e6;color:#e9b248;display:grid;place-items:center;font-size:8px;font-weight:900;z-index:2}.mp-story-title{font-size:8px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:3px}.mp-story-card small{font-size:7px;color:#99a4b3}.mp-story-card>b{position:absolute;top:5px;right:5px;width:18px;height:18px;border-radius:50%;background:#772a39;display:none;place-items:center}.mp-story-card:hover>b{display:grid}.mp-story-add{flex:0 0 120px;border:1px dashed #334256;border-radius:8px;background:#09111b;color:#d6dde6;display:grid;place-items:center;align-content:center;gap:8px;font-size:24px}.mp-story-add small{font-size:8px}.mp-story-toolbar{display:flex;gap:6px;align-items:center;border-top:1px solid #1c2836;padding:8px 2px 0}.mp-story-toolbar button{height:28px;border:1px solid #2c3a4c;background:#0b141f;color:#dce2e9;border-radius:6px;padding:0 9px;font-size:8px}.mp-zoom{margin-left:auto;display:flex;align-items:center;gap:8px;color:#8f9aaa;font-size:8px}.mp-zoom input{accent-color:var(--gold);width:110px}
-        .mp-inspector-tabs{display:grid;grid-template-columns:1fr 1fr;margin:-16px -16px 16px;border-bottom:1px solid #223042}.mp-inspector-tabs button{height:44px;border:0;background:#0b141f;color:#9aa5b4;font-size:9px}.mp-inspector-tabs button.on{color:#fff;border-bottom:2px solid var(--gold)}.mp-inspector-form{display:grid;gap:12px}.mp-inspector-form>label,.mp-project-note{display:grid;gap:5px;color:#8f9aab;font-size:8px;font-weight:800}.mp-readonly{border:1px solid #273548;background:#08111b;color:var(--gold2);border-radius:8px;padding:9px;text-transform:capitalize}.mp-clip-time-readable{display:grid;grid-template-columns:repeat(3,1fr);gap:6px;padding:10px;border:1px solid #263548;border-radius:8px;background:#08111b}.mp-clip-time-readable span{display:grid;gap:3px;color:#8793a4;font-size:7px}.mp-clip-time-readable b{color:#fff;font-size:9px}.mp-trim-panel{display:grid;gap:9px;padding:10px 0;border-top:1px solid #202c3b;border-bottom:1px solid #202c3b}.mp-trim-panel>strong{font-size:9px;color:var(--gold2)}.mp-trim-labels{display:flex;justify-content:space-between;color:#8894a4;font-size:7px}.mp-trim-labels b{color:#fff;font-size:9px}.mp-trim-range{position:relative;height:24px}.mp-trim-range:before{content:"";position:absolute;left:4px;right:4px;top:10px;height:4px;border-radius:999px;background:var(--gold)}.mp-trim-range input[type=range]{position:absolute;inset:0;width:100%;height:24px;background:transparent;border:0;padding:0;pointer-events:none;appearance:none}.mp-trim-range input::-webkit-slider-thumb{appearance:none;width:17px;height:17px;border-radius:50%;background:var(--gold2);border:2px solid #1b1307;pointer-events:auto}.mp-two{display:grid;grid-template-columns:1fr 1fr;gap:6px}.mp-nudge{display:grid;grid-template-columns:1fr 1fr;gap:5px}.mp-inspector button{border:1px solid #2c3a4c;background:#0c1622;color:#e4e9ef;border-radius:7px;padding:8px;font-size:8px}.mp-inspector-tools{display:grid;grid-template-columns:1fr 1fr 1fr 40px;gap:4px}.mp-draw-tools{grid-template-columns:repeat(3,minmax(0,1fr))}.mp-draw-tools button.on{border-color:var(--gold);color:var(--gold)}.danger{border-color:#6e2d3b!important;color:#ff8595!important}.mp-project-note textarea{min-height:90px;resize:vertical}.mp-annotation-list,.mp-freeze-inspector,.mp-audio-inspector{display:grid;gap:6px;padding:9px;border:1px solid #263548;border-radius:8px;background:#08111b}.mp-annotation-list>strong,.mp-freeze-inspector strong,.mp-audio-inspector strong{font-size:8px;color:var(--gold2)}.mp-annotation-list>small{font-size:7px;color:#8290a2}.mp-annotation-row{display:grid;grid-template-columns:minmax(70px,1fr) 58px 12px 58px 26px;gap:4px;align-items:center}.mp-annotation-row input{padding:5px!important;font-size:7px}.mp-annotation-name{padding:5px!important;text-align:left;font-size:7px}
-        .mp-render-status{display:grid;grid-template-columns:auto 1fr auto auto;gap:10px;align-items:center;margin:6px 14px;padding:8px 10px;border:1px solid #2b394c;border-radius:8px;background:#0a131e}.mp-render-status strong{font-size:8px;color:var(--gold)}.mp-render-status span{font-size:7px;color:#909cab}.mp-render-progress{height:6px;background:#1a2635;border-radius:999px;overflow:hidden}.mp-render-progress i{display:block;height:100%;background:var(--gold)}.mp-render-status>b,.mp-render-status>a{font-size:8px;color:var(--gold)}
-        .mp-modal-backdrop{position:fixed;inset:0;z-index:10000;background:#02050bd9;display:grid;place-items:center;padding:18px}.mp-clip-modal{width:min(760px,94vw);border:1px solid #344156;border-radius:12px;background:#0a131e;overflow:hidden;box-shadow:0 30px 90px #000}.mp-clip-modal header{display:flex;justify-content:space-between;padding:12px 14px;border-bottom:1px solid #263447}.mp-clip-modal h2{font-size:15px;margin:3px 0}.mp-clip-modal header small{font-size:8px;color:#8793a4}.mp-modal-stage{aspect-ratio:16/9;background:#000}.mp-modal-stage video{width:100%;height:100%;object-fit:contain}.mp-modal-tags,.mp-modal-actions{display:flex;gap:6px;flex-wrap:wrap;padding:9px 14px}.mp-clip-modal footer{display:grid;grid-template-columns:1fr 1.2fr 1fr;gap:7px;padding:10px 14px;border-top:1px solid #273548}.mp-share{width:min(480px,94vw);padding:18px;border:1px solid #2d3b4e;border-radius:12px;background:#0b141f}.mp-share div{display:flex;gap:7px;margin-top:10px}.mp-toast{position:fixed;right:18px;bottom:18px;z-index:12000;background:var(--gold);color:#171007;border-radius:9px;padding:10px 14px;font-size:10px;font-weight:900;box-shadow:0 10px 30px #0008}
-        @media(max-width:1320px){.mp-grid{grid-template-columns:320px minmax(600px,1fr) 290px}.mp-header{grid-template-columns:250px 1fr auto}.mp-brand em{display:none}}@media(max-width:1080px){.mp-grid{grid-template-columns:290px minmax(560px,1fr)}.mp-inspector{display:none}.mp-header-actions>button:first-child{display:none}}@media(max-width:820px){.mp-header{grid-template-columns:1fr}.mp-project-name,.mp-header-actions{display:none}.mp-grid{grid-template-columns:1fr;height:auto}.mp-library{max-height:420px}.mp-center{min-height:740px}.mp-stage{margin-top:10px}.mp-clips{max-height:260px}}
+        .montage-pro{position:fixed;top:0;right:0;bottom:0;left:0;width:100vw;height:100vh;z-index:99999;overflow:auto;--wine:#7b1730;--wine2:#9d2344;--gold:#c9972f;--ink:#17181c;--muted:#6f737c;--line:#e6e8ec;--soft:#f5f6f8;min-height:100vh;background:#f5f6f8;color:var(--ink);font-family:Inter,Arial,sans-serif}
+        .montage-pro button,.montage-pro input,.montage-pro select,.montage-pro textarea{font:inherit}
+        .mp-header{height:78px;background:#fff;border-bottom:1px solid var(--line);display:grid;grid-template-columns:minmax(290px,1fr) minmax(260px,420px) auto;align-items:center;gap:18px;padding:0 24px;position:sticky;top:0;z-index:30}
+        .mp-brand{display:flex;align-items:center;gap:12px}.mp-logo{width:40px;height:40px;border-radius:12px;background:#111;color:#fff;display:grid;place-items:center}.mp-brand>div{display:grid;gap:3px}.mp-brand strong{font-size:22px;line-height:1}.mp-brand em{font-style:normal;font-size:11px;color:#7d818a;font-weight:650}
+        .mp-project-name{display:flex;align-items:center;gap:8px}.mp-project-name input{width:100%;border:1px solid #dddfe4;background:#fff;border-radius:10px;padding:10px 12px;font-weight:800}.mp-save-pill{font-size:10px;color:#747981;white-space:nowrap}.mp-save-pill.saving{color:#a87510}.mp-save-pill.error{color:#b72d3e}
+        .mp-header-actions{display:flex;gap:8px;align-items:center}.mp-header-actions>button,.mp-add-menu-wrap>button{height:40px;border:1px solid #dfe2e7;background:#fff;color:#25272b;border-radius:10px;padding:0 14px;font-weight:850}.mp-header-actions .gold{background:var(--wine);border-color:var(--wine);color:#fff}.mp-more{width:42px;padding:0!important}.mp-add-menu{display:none}
+        .mp-grid{display:grid;grid-template-columns:250px minmax(520px,1fr) 310px 280px;gap:12px;padding:12px;min-height:calc(100vh - 78px);align-items:start}
+        .mp-library,.mp-match-clips,.mp-inspector,.mp-center{background:#fff;border:1px solid var(--line);border-radius:14px;box-shadow:0 4px 18px #16191d0a}
+        .mp-library,.mp-match-clips,.mp-inspector{padding:14px;height:calc(100vh - 104px);overflow:auto;position:sticky;top:90px}
+        .mp-playlist-title{display:flex;justify-content:space-between;gap:10px;align-items:flex-start}.mp-playlist-title strong{display:block;font-size:18px}.mp-playlist-title small{display:block;color:#858992;font-size:10px;margin-top:4px;line-height:1.35}.mp-playlist-title>button{width:34px;height:34px;border:0;border-radius:9px;background:var(--wine);color:#fff;font-size:20px}
+        .mp-playlist-tabs{display:grid;grid-template-columns:1fr 1fr;gap:4px;margin:14px 0;background:#f3f4f6;border-radius:10px;padding:3px}.mp-playlist-tabs button{border:0;background:transparent;border-radius:8px;padding:8px;font-size:11px;font-weight:800;color:#6f737c}.mp-playlist-tabs button.on{background:var(--wine);color:#fff}
+        .mp-playlist-list{display:grid;gap:8px}.mp-playlist-card{border:1px solid #e3e5e9;border-radius:11px;padding:7px;display:grid;grid-template-columns:minmax(0,1fr) auto;gap:5px;align-items:center;background:#fff}.mp-playlist-card.on{background:#fff4f6;border-color:#bd7283}.mp-playlist-open{border:0;background:transparent;display:grid;grid-template-columns:46px minmax(0,1fr);gap:8px;align-items:center;text-align:left;min-width:0}.mp-playlist-thumb{height:42px;border-radius:8px;background:linear-gradient(135deg,#2b2024,#8a2039);color:#fff;display:grid;place-items:center}.mp-playlist-open>span:last-child{min-width:0}.mp-playlist-open strong,.mp-playlist-open small{display:block}.mp-playlist-open strong{font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.mp-playlist-open small{font-size:9px;color:#7d8189;margin-top:3px}.mp-playlist-menu{display:grid;gap:2px}.mp-playlist-menu button{border:0;background:transparent;color:#747881;width:25px;height:23px;border-radius:6px}.mp-playlist-menu button:hover{background:#f1f2f4}
+        .mp-playlist-drop{margin-top:12px;border:1px dashed #d4d7dc;border-radius:11px;padding:14px;text-align:center;color:#7c8088}.mp-playlist-drop span{display:block;font-size:22px;color:var(--wine)}.mp-playlist-drop strong,.mp-playlist-drop small{display:block}.mp-playlist-drop strong{font-size:10px;margin-top:3px}.mp-playlist-drop small{font-size:9px;margin-top:2px}
+        .mp-center{padding:12px;min-width:0}
+        .mp-source-bar{display:grid;grid-template-columns:minmax(190px,1fr) minmax(190px,260px) minmax(240px,1.15fr);gap:10px;align-items:center;margin-bottom:10px;padding:10px 12px;border:1px solid var(--line);border-radius:11px;background:#fff}
+        .mp-source-copy span,.mp-source-copy strong,.mp-source-copy small{display:block}.mp-source-copy span{font-size:8px;letter-spacing:.08em;color:var(--wine);font-weight:950}.mp-source-copy strong{font-size:12px;margin-top:2px}.mp-source-copy small{font-size:8px;color:#7d8189;margin-top:3px}
+        .mp-source-match{height:38px;border:1px solid #dfe2e7;background:#fff;border-radius:9px;padding:0 10px;font-size:9px;font-weight:750}
+        .mp-source-video{display:grid;grid-template-columns:auto minmax(0,1fr);gap:8px;align-items:center}.mp-source-video :global(button){min-height:36px;border:1px solid #d7dbe1;background:#fff;border-radius:9px;padding:0 10px;font-size:9px;font-weight:850;color:#222}.mp-source-video :global(.local-video-connected){border-color:#94c5a5;background:#f0faf3;color:#176535}.mp-source-video small{font-size:8px;line-height:1.3;color:#8a8e96}.mp-source-video small.connected{color:#3e7d50}
+        .mp-stage{position:relative;background:#090909;border-radius:12px;overflow:hidden;aspect-ratio:16/9;display:grid;place-items:center}.mp-stage video{width:100%;height:100%;object-fit:contain}.mp-stage canvas{position:absolute;inset:0;width:100%;height:100%}.mp-stage-empty{color:#9297a0;font-size:13px}.mp-editable-overlay{position:absolute;z-index:8}.mp-editable-overlay img{width:100%;display:block}.mp-design-preview{color:#fff;text-align:center;z-index:8}.mp-live-overlay{position:absolute;left:50%;top:12%;transform:translateX(-50%);background:#000a;color:#fff;padding:10px 16px;border-radius:8px;z-index:9}.mp-live-overlay img{max-width:220px}
+        .mp-player-bar{display:grid;grid-template-columns:34px 42px 34px 1fr 72px;gap:6px;align-items:center;margin-top:8px}.mp-player-bar button,.mp-player-bar select{height:34px;border:1px solid #e0e2e6;background:#fff;border-radius:8px}.mp-player-bar button:nth-child(2){background:var(--wine);color:#fff;border-color:var(--wine)}.mp-time{display:grid;grid-template-columns:auto 1fr auto;gap:8px;align-items:center;font-size:9px;color:#777}.mp-time div{height:5px;background:#e5e6e9;border-radius:999px;overflow:hidden}.mp-time i{display:block;width:30%;height:100%;background:var(--wine)}
+        .mp-tools{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px;padding:8px;border:1px solid var(--line);border-radius:10px}.mp-tools button{border:0;background:#f5f6f8;border-radius:8px;padding:8px 10px;font-size:10px;font-weight:750}.mp-tools button.on{background:#f2dfe4;color:var(--wine)}
+        .mp-render-status{margin-top:8px;padding:10px;border-radius:10px;background:#faf6ec;border:1px solid #ead9af;display:grid;grid-template-columns:1fr auto;gap:8px;font-size:10px}.mp-render-progress{grid-column:1/-1;height:5px;background:#eee;border-radius:99px;overflow:hidden}.mp-render-progress i{display:block;height:100%;background:var(--gold)}
+        .mp-timeline-head{display:flex;justify-content:space-between;align-items:center;margin-top:12px;padding:8px 4px}.mp-timeline-head strong{font-size:14px}.mp-timeline-head small{margin-left:8px;color:#858992}.mp-timeline-head button{border:1px solid #ddd;background:#fff;border-radius:7px}.mp-timeline-head span{font-size:9px;margin:0 5px}
+        .mp-storyboard{border:1px solid var(--line);border-radius:12px;overflow:hidden;background:#fafbfc}.mp-storyboard-ruler{height:30px;padding:0 12px;display:flex;justify-content:space-between;align-items:end;border-bottom:1px solid var(--line);color:#8a8e96;font-size:8px}.mp-storyboard-strip{min-height:118px;padding:10px;display:flex;gap:7px;overflow:auto;align-items:stretch}.mp-storyboard-empty{flex:1;border:1px dashed #cfd3d9;border-radius:9px;display:grid;place-items:center;color:#969aa2;font-size:11px}.mp-story-card{min-width:125px;max-width:160px;border:1px solid #dde0e5;background:#fff;border-radius:9px;padding:5px;text-align:left;position:relative}.mp-story-card.selected{border:2px solid var(--wine)}.mp-story-visual{height:64px;border-radius:6px;background:linear-gradient(135deg,#d7c0a1,#7b1730);display:grid;place-items:center;color:#fff;position:relative;overflow:hidden}.mp-story-visual video{width:100%;height:100%;object-fit:cover;pointer-events:none}.mp-story-duration{position:absolute;right:4px;bottom:4px;background:#000b;color:#fff;border-radius:4px;padding:2px 4px;font-size:7px;font-weight:900}.mp-trim-handle{position:absolute;top:0;bottom:0;width:10px;background:#fff8;border:2px solid var(--wine);cursor:ew-resize;z-index:5}.mp-trim-handle.left{left:0;border-radius:6px 0 0 6px}.mp-trim-handle.right{right:0;border-radius:0 6px 6px 0}.mp-story-title{display:block;font-size:9px;margin-top:5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.mp-story-card small{font-size:8px;color:#888}.mp-story-card>b{position:absolute;right:5px;top:5px;background:#fff;border-radius:50%;width:18px;height:18px;display:grid;place-items:center}.mp-story-index{position:absolute;left:8px;top:8px;z-index:2;background:#111c;color:#fff;border-radius:5px;padding:2px 4px;font-size:7px}.mp-story-add{min-width:80px;border:1px dashed #cfd3d9;background:#fff;border-radius:9px;font-size:20px;color:var(--wine)}.mp-story-add small{display:block;font-size:8px;color:#777}.mp-story-toolbar{display:flex;gap:6px;align-items:center;border-top:1px solid var(--line);padding:8px;flex-wrap:wrap}.mp-story-toolbar button{border:0;background:#fff;border-radius:7px;padding:7px 9px;font-size:9px}.mp-zoom{margin-left:auto;display:flex;gap:6px;align-items:center;font-size:8px}
+        .mp-match-clips-head{display:flex;justify-content:space-between;align-items:center}.mp-match-clips-head>div{display:flex;gap:7px;align-items:center}.mp-match-clips-head strong{font-size:16px}.mp-match-clips-head span{background:#f0e4e7;color:var(--wine);font-size:9px;font-weight:900;border-radius:99px;padding:3px 6px}.mp-match-clips-head select{border:1px solid #e0e2e6;background:#fff;border-radius:8px;padding:7px;font-size:9px}.mp-clips-search{width:100%;margin-top:10px;border:1px solid #e0e2e6;border-radius:9px;padding:9px 10px;font-size:10px}.mp-quick-filters{display:flex;gap:5px;margin:8px 0;overflow:auto}.mp-quick-filters button{border:0;background:#f0f1f3;color:#737780;border-radius:999px;padding:6px 8px;font-size:8px;white-space:nowrap}.mp-quick-filters button.on{background:var(--wine);color:#fff}.mp-library-select{width:100%;border:1px solid #e0e2e6;border-radius:8px;padding:8px;margin-bottom:8px;font-size:9px;background:#fff}
+        .mp-match-clip-list{display:grid;gap:7px}.mp-match-clip{display:grid;grid-template-columns:minmax(0,1fr) 27px 30px;gap:4px;align-items:center;border-bottom:1px solid #eee;padding:5px 0}.mp-match-clip-open{border:0;background:transparent;display:grid;grid-template-columns:72px minmax(0,1fr);gap:7px;text-align:left;min-width:0}.mp-match-thumb{height:45px;border-radius:7px;background:linear-gradient(135deg,#3b2b27,#8b6346);color:#fff;display:grid;place-items:center;position:relative}.mp-match-thumb small{position:absolute;right:3px;bottom:3px;background:#000b;border-radius:4px;padding:2px 3px;font-size:7px}.mp-match-copy{min-width:0}.mp-match-copy strong,.mp-match-copy small{display:block}.mp-match-copy strong{font-size:9px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.mp-match-copy small{font-size:8px;color:#858992;margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.mp-mini-star,.mp-mini-add{width:27px;height:27px;border:1px solid #ddd;background:#fff;border-radius:7px}.mp-mini-star.on{color:#c69222}.mp-mini-add{font-size:17px;color:var(--wine)}
+        .mp-detail-title{border-bottom:1px solid var(--line);padding-bottom:10px;margin-bottom:10px}.mp-detail-title strong,.mp-detail-title small{display:block}.mp-detail-title strong{font-size:16px}.mp-detail-title small{font-size:9px;color:#8a8e96;margin-top:3px}.mp-inspector-form{display:grid;gap:10px}.mp-inspector-form label{font-size:9px;color:#6f737c;font-weight:800}.mp-inspector-form input,.mp-inspector-form textarea,.mp-inspector-form select{width:100%;margin-top:4px;border:1px solid #e0e2e6;background:#fff;border-radius:8px;padding:8px;color:#222}.mp-readonly{margin-top:4px;background:#f4f5f7;border-radius:8px;padding:8px}.mp-empty{border:1px dashed #d3d6db;border-radius:9px;padding:16px;text-align:center;color:#90949c;font-size:10px}.mp-empty strong,.mp-empty span{display:block}.mp-empty strong{color:#35383e;font-size:11px}.mp-empty span{margin-top:5px;line-height:1.4}.mp-clip-time-readable,.mp-trim-panel,.mp-nudge,.mp-design-controls,.mp-drawing-list,.mp-project-box{border:1px solid var(--line);border-radius:9px;padding:9px}.mp-clip-time-readable{display:grid;grid-template-columns:repeat(3,1fr);gap:5px;font-size:8px}.mp-clip-time-readable span,.mp-clip-time-readable b{display:block}.mp-trim-labels{display:flex;justify-content:space-between;font-size:8px}.mp-trim-range input{width:100%}.mp-nudge{display:flex;gap:5px;flex-wrap:wrap}.mp-nudge button,.mp-inspector-form button{border:1px solid #e0e2e6;background:#fff;border-radius:7px;padding:7px;font-size:9px}.mp-danger{color:#b62d40!important}.mp-share-modal,.mp-preview-modal{position:fixed;inset:0;background:#0009;z-index:80;display:grid;place-items:center;padding:20px}.mp-share,.mp-preview-card{background:#fff;color:#222;border-radius:14px;max-width:760px;width:min(94vw,760px);padding:18px}.mp-preview-card video{width:100%;background:#000;border-radius:10px}.mp-modal-tags{display:flex;gap:5px;flex-wrap:wrap}.mp-modal-tags i{font-style:normal;background:#f1f2f4;border-radius:99px;padding:4px 7px;font-size:8px}
+        .montage-pro.embedded{position:relative;inset:auto;z-index:auto;min-height:100vh}
+        @media(max-width:1450px){.mp-grid{grid-template-columns:220px minmax(480px,1fr) 280px 250px}.mp-brand em{display:none}}
+        @media(max-width:1180px){.mp-source-bar{grid-template-columns:1fr}.mp-grid{grid-template-columns:220px minmax(500px,1fr) 280px}.mp-inspector{display:none}.mp-header{grid-template-columns:1fr auto}.mp-project-name{display:none}}
+        @media(max-width:900px){.mp-grid{grid-template-columns:1fr}.mp-library,.mp-match-clips,.mp-inspector{height:auto;position:static}.mp-center{order:-1}.mp-header{grid-template-columns:1fr}.mp-header-actions{display:none}.mp-library{max-height:none}.mp-match-clips{max-height:420px}}
       `}</style>
     </div>
   );

@@ -1,43 +1,21 @@
 "use client";
 
-import { Suspense } from "react";
-import { useSearchParams } from "next/navigation";
-import MontageStudio from "@/components/video-editor/MontageStudio";
+import { useEffect } from "react";
 
-function MontagePageContent() {
-  const searchParams = useSearchParams();
+export default function LegacyManagementMontagePage() {
+  useEffect(() => {
+    const query = typeof window !== "undefined" ? window.location.search : "";
+    window.location.replace(`/montages${query}`);
+  }, []);
 
   return (
-    <MontageStudio
-      initialTeamId={searchParams.get("teamId") || ""}
-      initialPlayerId={searchParams.get("playerId") || ""}
-      initialMontageId={searchParams.get("montageId") || ""}
-    />
-  );
-}
-
-function MontagePageFallback() {
-  return (
-    <main
-      style={{
-        minHeight: "100vh",
-        display: "grid",
-        placeItems: "center",
-        padding: "2rem",
-        background: "#0f0f12",
-        color: "#ffffff",
-        fontFamily: "Arial, sans-serif",
-      }}
-    >
-      <p style={{ margin: 0, fontWeight: 800 }}>Chargement du studio montage…</p>
+    <main style={{
+      minHeight: "60vh",
+      display: "grid",
+      placeItems: "center",
+      fontFamily: "Arial, sans-serif",
+    }}>
+      <strong>Ouverture de Montage vidéo…</strong>
     </main>
-  );
-}
-
-export default function MontagePage() {
-  return (
-    <Suspense fallback={<MontagePageFallback />}>
-      <MontagePageContent />
-    </Suspense>
   );
 }
