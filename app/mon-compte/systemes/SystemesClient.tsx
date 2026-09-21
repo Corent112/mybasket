@@ -102,10 +102,14 @@ function SystemCard({
   item,
   isConnected,
   onAddToPlaybook,
+  isFavorite,
+  onToggleFavorite,
 }: {
   item: SystemItem;
   isConnected: boolean;
   onAddToPlaybook: (item: SystemItem) => void;
+  isFavorite: boolean;
+  onToggleFavorite: (item: SystemItem) => void;
 }) {
   // Une seule prévisualisation par système :
   // priorité à l'animation générée dans Dessin, puis à la vidéo du système.
@@ -120,6 +124,19 @@ function SystemCard({
 
   return (
     <article className="mb-system-card">
+      <button
+        type="button"
+        className={`mb-favorite-star ${isFavorite ? "is-favorite" : ""}`}
+        aria-label={isFavorite ? "Retirer des favoris" : "Ajouter aux favoris"}
+        title={isFavorite ? "Retirer des favoris" : "Ajouter aux favoris"}
+        onClick={(event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          onToggleFavorite(item);
+        }}
+      >
+        {isFavorite ? "★" : "☆"}
+      </button>
       <Link href={detailHref} className="mb-system-cover">
         {previewVideo ? (
           <video
@@ -199,6 +216,8 @@ export default function SystemesClient() {
   const [search, setSearch] = useState("");
   const [sort, setSort] = useState<SortKey>("recent");
   const [selected, setSelected] = useState<Record<string, string[]>>({});
+  const [favoriteIds, setFavoriteIds] = useState<Set<string>>(new Set());
+  const [favoritesOnly, setFavoritesOnly] = useState(false);
 
   const [creatingPlaybook, setCreatingPlaybook] = useState(false);
   const [newPlaybookTitle, setNewPlaybookTitle] = useState("");
@@ -218,7 +237,18 @@ export default function SystemesClient() {
         ]);
 
         setItems(data);
-        setIsConnected(Boolean(sessionResult.data.session?.user));
+        const currentUser = sessionResult.data.session?.user ?? null;
+        setIsConnected(Boolean(currentUser));
+        if (currentUser) {
+          const { data: favoriteRows } = await supabase
+            .from("favorites")
+            .select("item_id")
+            .eq("user_id", currentUser.id)
+            .eq("item_type", "system");
+          setFavoriteIds(new Set((favoriteRows ?? []).map((row: { item_id: string | null }) => String(row.item_id || "")).filter(Boolean)));
+        } else {
+          setFavoriteIds(new Set());
+        }
         router.prefetch("/systemes/creer?new=1");
       } catch (error) {
         console.error("Erreur chargement systèmes :", error);
@@ -243,6 +273,57 @@ export default function SystemesClient() {
 
       return { ...prev, [key]: next };
     });
+  }
+
+  async function toggleFavorite(system: SystemItem) {
+    const supabase = createClient();
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) {
+      router.push("/connexion");
+      return;
+    }
+
+    const wasFavorite = favoriteIds.has(system.id);
+    setFavoriteIds((prev) => {
+      const next = new Set(prev);
+      wasFavorite ? next.delete(system.id) : next.add(system.id);
+      return next;
+    });
+
+    if (wasFavorite) {
+      const { error } = await supabase
+        .from("favorites")
+        .delete()
+        .eq("user_id", user.id)
+        .eq("item_type", "system")
+        .eq("item_id", system.id);
+      if (error) {
+        setFavoriteIds((prev) => new Set(prev).add(system.id));
+        alert(error.message);
+      }
+      return;
+    }
+
+    const imageUrl = system.schemaImages?.[0] || system.images?.[0] || system.schemaImage || "";
+    const { error } = await supabase.from("favorites").upsert(
+      {
+        user_id: user.id,
+        item_type: "system",
+        item_id: system.id,
+        title: system.title || "Système sans titre",
+        image_url: imageUrl,
+      },
+      { onConflict: "user_id,item_type,item_id" }
+    );
+
+    if (error) {
+      setFavoriteIds((prev) => {
+        const next = new Set(prev);
+        next.delete(system.id);
+        return next;
+      });
+      alert(error.message);
+    }
   }
 
   async function openAddToPlaybook(system: SystemItem) {
@@ -333,6 +414,7 @@ export default function SystemesClient() {
 
     return [...items]
       .filter((item) => {
+        if (favoritesOnly && !favoriteIds.has(item.id)) return false;
         for (const f of FILTERS) {
           const sel = selected[f.key] ?? [];
           if (sel.length && !getFieldValues(item, f.key).some((value) => sel.includes(value))) return false;
@@ -363,22 +445,30 @@ export default function SystemesClient() {
           new Date(a.createdAt || 0).getTime()
         );
       });
-  }, [items, search, sort, selected]);
+  }, [items, search, sort, selected, favoritesOnly, favoriteIds]);
 
   return (
     <main>
-      <div className="page-banner">
-        <img src="/images/bandeau-systemes.png" alt="MyBasket Systèmes" />
-      </div>
-
-      <div className="container">
-        <div className="section-title-bar">
-          <h2>SYSTÈMES</h2>
+      <div className="container mb-account-container">
+        <div className="mb-account-top">
+          <Link href="/mon-compte">← Retour à mon compte</Link>
+          <Link href="/systemes/creer?new=1" className="mb-account-create">+ Créer un système</Link>
         </div>
 
-        <p className="section-subtitle">
-          Recherche, filtre et découvre les systèmes MyBasket.
-        </p>
+        <section className="mb-account-hero">
+          <span>MYBASKET PERSONNEL</span>
+          <h1>MES SYSTÈMES</h1>
+          <p>Uniquement les systèmes que tu as créés ou les copies personnelles que tu as modifiées.</p>
+        </section>
+
+        <div className="mb-account-status">
+          <button type="button" className={!favoritesOnly ? "on" : ""} onClick={() => setFavoritesOnly(false)}>
+            Tous <b>{items.length}</b>
+          </button>
+          <button type="button" className={favoritesOnly ? "on" : ""} onClick={() => setFavoritesOnly(true)}>
+            ⭐ Favoris <b>{items.filter((item) => favoriteIds.has(item.id)).length}</b>
+          </button>
+        </div>
 
         <div className="list-layout">
           <aside className="filters">
@@ -424,12 +514,7 @@ export default function SystemesClient() {
               </div>
 
               <div className="list-actions">
-                <Link
-                  href="/systemes/creer?new=1"
-                  className="btn btn-black"
-                >
-                  + Créer un système
-                </Link>
+                
 
                 <select
                   className="sort-select"
@@ -454,6 +539,8 @@ export default function SystemesClient() {
                     item={item}
                     isConnected={isConnected}
                     onAddToPlaybook={openAddToPlaybook}
+                    isFavorite={favoriteIds.has(item.id)}
+                    onToggleFavorite={toggleFavorite}
                   />
                 ))}
               </div>
@@ -565,6 +652,33 @@ export default function SystemesClient() {
       )}
 
       <style jsx global>{`
+        body { background: #f7f7f8; }
+        .mb-account-container { padding-top: 34px; }
+        .mb-account-top { display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap; }
+        .mb-account-top > a { color:#6b1a2c;font-weight:850;text-decoration:none; }
+        .mb-account-create { background:#6b1a2c!important;color:#fff!important;padding:11px 15px;border-radius:9px; }
+        .mb-account-hero { margin:28px 0 18px; }
+        .mb-account-hero span { font-size:11px;letter-spacing:.13em;color:#d4a24c;font-weight:950; }
+        .mb-account-hero h1 { margin:5px 0;color:#6b1a2c;font-size:36px;line-height:1.1; }
+        .mb-account-hero p { margin:0;color:#666; }
+        .mb-account-status { display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:16px; }
+        .mb-account-status button { border:1px solid #ddd;background:#fff;border-radius:9px;padding:9px 12px;font-weight:800;cursor:pointer; }
+        .mb-account-status button.on { background:#6b1a2c;color:#fff;border-color:#6b1a2c; }
+        .mb-system-card { position:relative; border-radius:15px!important; border-color:#e5e5e7!important; box-shadow:none!important; }
+        .mb-system-cover { aspect-ratio:16/10!important;background:#f1f1f1!important;border-bottom:0!important; }
+        .mb-system-cover img,.mb-system-preview-video { object-fit:contain!important; }
+        .mb-favorite-star {
+          position:absolute;z-index:30;top:10px;right:10px;width:38px;height:38px;
+          border-radius:50%;border:1px solid #eadfe2;background:rgba(255,255,255,.96);
+          color:#6b1a2c;box-shadow:0 4px 14px rgba(0,0,0,.12);font-size:23px;line-height:1;
+          display:grid;place-items:center;cursor:pointer;padding:0;
+        }
+        .mb-favorite-star:hover { transform:scale(1.06);background:#fff8eb; }
+        .mb-favorite-star.is-favorite { background:#6b1a2c;color:#d4a24c;border-color:#6b1a2c; }
+        .list-layout { grid-template-columns:220px minmax(0,1fr)!important;gap:20px!important; }
+        .filters { background:#fff!important;border:1px solid #e5e5e7!important;border-radius:14px!important;padding:15px!important; }
+        .filter-search,.sort-select { height:42px!important;border:1px solid #ddd!important;border-radius:9px!important;background:#fff!important; }
+
         .mb-systems-grid {
           display: grid;
           grid-template-columns: repeat(3, minmax(0, 1fr));
