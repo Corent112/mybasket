@@ -73,7 +73,20 @@ function ExerciseCard({
   const detailHref = isConnected ? `/exercices/${item.id}` : "/abonnements";
 
   return (
-    <article className="mb-exercise-card" style={{position:"relative"}}>{isConnected&&<button type="button" aria-label="Favori" title={isFavorite?"Retirer des favoris":"Ajouter aux favoris"} onClick={()=>onToggleFavorite(item)} style={{position:"absolute",zIndex:4,right:10,top:10,width:38,height:38,borderRadius:"50%",border:"1px solid #d4a24c",background:"white",color:"#d4a24c",fontSize:24,cursor:"pointer"}}>{isFavorite?"★":"☆"}</button>}
+    <article className="mb-exercise-card" style={{position:"relative"}}>
+      <button
+        type="button"
+        className={`mb-favorite-star ${isFavorite ? "is-favorite" : ""}`}
+        aria-label={isFavorite ? "Retirer des favoris" : "Ajouter aux favoris"}
+        title={isFavorite ? "Retirer des favoris" : "Ajouter aux favoris"}
+        onClick={(event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          onToggleFavorite(item);
+        }}
+      >
+        {isFavorite ? "★" : "☆"}
+      </button>
       <Link href={detailHref} className="mb-exercise-cover">
         {thumbnail ? (
           <img src={thumbnail} alt={item.title || "Exercice"} />
@@ -387,6 +400,29 @@ setAddedIds(new Set((cartRows ?? []).map((row: { item_id: string | null }) => St
       )}
 
       <style jsx global>{`
+        .mb-favorite-star {
+          position: absolute;
+          top: 20px;
+          right: 20px;
+          z-index: 30;
+          width: 42px;
+          height: 42px;
+          display: grid;
+          place-items: center;
+          padding: 0;
+          border: 1px solid rgba(107, 26, 44, .18);
+          border-radius: 50%;
+          background: rgba(255,255,255,.96);
+          color: #6b1a2c;
+          box-shadow: 0 5px 16px rgba(0,0,0,.13);
+          font-size: 25px;
+          line-height: 1;
+          cursor: pointer;
+          transition: transform .15s ease, background .15s ease, color .15s ease;
+        }
+        .mb-favorite-star:hover { transform: scale(1.08); background: #fff8eb; }
+        .mb-favorite-star.is-favorite { background: #6b1a2c; color: #d4a24c; border-color: #6b1a2c; }
+
         .mb-exercises-grid {
           display: grid;
           grid-template-columns: repeat(auto-fill, minmax(250px, 270px));
