@@ -2,10 +2,11 @@
 
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
+import { createClient } from "@/lib/supabase/client";
 import { deleteExercise, listMyExercises, submitExerciseForReview } from "@/lib/exercises";
 import type { Exercise } from "@/types/exercise";
 
-type StatusKey = "all" | "draft" | "submitted" | "approved" | "rejected";
+type StatusKey = "all" | "draft" | "submitted" | "approved" | "rejected" | "favorites";
 type SortKey = "recent" | "alpha";
 const FILTERS = [{key:"theme",label:"THÈMES"},{key:"category",label:"CATÉGORIE"},{key:"level",label:"NIVEAU"}] as const;
 const CATEGORY_OPTIONS=["U9","U11","U13","U15","U18","U21","Senior"];
@@ -18,18 +19,18 @@ function status(ex:Exercise):StatusKey{return (ex.review_status||"draft") as Sta
 function date(v?:string|number){return v?new Date(v).toLocaleDateString("fr-FR",{day:"2-digit",month:"short",year:"numeric"}):"—"}
 
 export default function MesExercicesPage(){
- const [items,setItems]=useState<Exercise[]>([]),[loading,setLoading]=useState(true),[search,setSearch]=useState(""),[sort,setSort]=useState<SortKey>("recent"),[activeStatus,setActiveStatus]=useState<StatusKey>("all"),[selected,setSelected]=useState<Record<string,string[]>>({}),[busy,setBusy]=useState<string|null>(null);
- async function load(){setLoading(true);try{setItems(await listMyExercises())}finally{setLoading(false)}}
+ const [items,setItems]=useState<Exercise[]>([]),[loading,setLoading]=useState(true),[search,setSearch]=useState(""),[sort,setSort]=useState<SortKey>("recent"),[activeStatus,setActiveStatus]=useState<StatusKey>("all"),[selected,setSelected]=useState<Record<string,string[]>>({}),[busy,setBusy]=useState<string|null>(null),[favoriteIds,setFavoriteIds]=useState<Set<string>>(new Set());
+ async function load(){setLoading(true);try{setItems(await listMyExercises());const sb=createClient();const {data:{user}}=await sb.auth.getUser();if(user){const {data}=await sb.from("favorites").select("item_id").eq("user_id",user.id).eq("item_type","exercise");setFavoriteIds(new Set((data||[]).map((r:any)=>String(r.item_id||"")).filter(Boolean)))}}finally{setLoading(false)}}
  useEffect(()=>{void load()},[]);
  const options=useMemo(()=>({theme:THEME_OPTIONS,category:CATEGORY_OPTIONS,level:Array.from(new Set(items.map(x=>value(x,"level")).filter(Boolean))).sort((a,b)=>a.localeCompare(b,"fr"))}),[items]);
  function toggle(k:string,v:string){setSelected(p=>({...p,[k]:(p[k]||[]).includes(v)?(p[k]||[]).filter(x=>x!==v):[...(p[k]||[]),v]}))}
- const counts=useMemo(()=>({all:items.length,draft:items.filter(x=>status(x)==="draft").length,submitted:items.filter(x=>status(x)==="submitted").length,approved:items.filter(x=>status(x)==="approved").length,rejected:items.filter(x=>status(x)==="rejected").length}),[items]);
- const shown=useMemo(()=>{const q=search.trim().toLowerCase();return [...items].filter(x=>{if(activeStatus!=="all"&&status(x)!==activeStatus)return false;for(const f of FILTERS){const a=selected[f.key]||[];if(a.length&&!a.includes(value(x,f.key)))return false}return !q||[x.title,x.theme,x.category,x.level,x.type,...(x.tags||[])].filter(Boolean).join(" ").toLowerCase().includes(q)}).sort((a,b)=>sort==="alpha"?(a.title||"").localeCompare(b.title||"","fr"):Number(b.createdAt||0)-Number(a.createdAt||0))},[items,search,sort,activeStatus,selected]);
+ const counts=useMemo(()=>({all:items.length,draft:items.filter(x=>status(x)==="draft").length,submitted:items.filter(x=>status(x)==="submitted").length,approved:items.filter(x=>status(x)==="approved").length,rejected:items.filter(x=>status(x)==="rejected").length,favorites:items.filter(x=>favoriteIds.has(x.id)).length}),[items]);
+ const shown=useMemo(()=>{const q=search.trim().toLowerCase();return [...items].filter(x=>{if(activeStatus==="favorites"&&!favoriteIds.has(x.id))return false;if(activeStatus!=="all"&&activeStatus!=="favorites"&&status(x)!==activeStatus)return false;for(const f of FILTERS){const a=selected[f.key]||[];if(a.length&&!a.includes(value(x,f.key)))return false}return !q||[x.title,x.theme,x.category,x.level,x.type,...(x.tags||[])].filter(Boolean).join(" ").toLowerCase().includes(q)}).sort((a,b)=>sort==="alpha"?(a.title||"").localeCompare(b.title||"","fr"):Number(b.createdAt||0)-Number(a.createdAt||0))},[items,search,sort,activeStatus,selected,favoriteIds]);
  async function propose(x:Exercise){if(!confirm(`Proposer « ${x.title||"cet exercice"} » au CEO ?`))return;setBusy(x.id);try{await submitExerciseForReview(x.id);await load()}finally{setBusy(null)}}
  async function remove(x:Exercise){if(!confirm(`Supprimer définitivement « ${x.title||"cet exercice"} » ?`))return;setBusy(x.id);try{if(await deleteExercise(x.id))setItems(p=>p.filter(e=>e.id!==x.id))}finally{setBusy(null)}}
  return <main className="page"><div className="top"><Link href="/mon-compte">← Retour à mon compte</Link><Link className="create" href="/exercices/creer">+ Créer un exercice</Link></div>
  <section className="hero"><span>MYBASKET PERSONNEL</span><h1>MES EXERCICES</h1><p>Uniquement les exercices que tu as créés ou les copies personnelles que tu as modifiées.</p></section>
- <div className="status">{(["all","draft","submitted","approved","rejected"] as StatusKey[]).map(k=><button key={k} className={activeStatus===k?"on":""} onClick={()=>setActiveStatus(k)}>{k==="all"?"Tous":STATUS_LABELS[k]} <b>{counts[k]}</b></button>)}</div>
+ <div className="status">{(["all","draft","submitted","approved","rejected","favorites"] as StatusKey[]).map(k=><button key={k} className={activeStatus===k?"on":""} onClick={()=>setActiveStatus(k)}>{k==="all"?"Tous":k==="favorites"?"⭐ Favoris":STATUS_LABELS[k]} <b>{counts[k]}</b></button>)}</div>
  <div className="tools"><input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Rechercher dans mes exercices…"/><select value={sort} onChange={e=>setSort(e.target.value as SortKey)}><option value="recent">Plus récents</option><option value="alpha">A → Z</option></select></div>
  <div className="layout"><aside>{FILTERS.map(f=><section key={f.key}><h3>{f.label}</h3>{(options[f.key]||[]).map(v=><label key={v}><input type="checkbox" checked={(selected[f.key]||[]).includes(v)} onChange={()=>toggle(f.key,v)}/><span>{v}</span></label>)}</section>)}</aside>
  <section>{loading?<div className="empty">Chargement…</div>:shown.length===0?<div className="empty">Aucun exercice correspondant.</div>:<div className="grid">{shown.map(x=><article className="card" key={x.id}><Link className="cover" href={`/exercices/${x.id}`}>{image(x)?<img src={image(x)} alt={x.title||"Exercice"}/>:<span>🏀</span>}<i className={`badge ${status(x)}`}>{STATUS_LABELS[status(x)]}</i></Link><div className="body"><h2>{x.title||"Exercice sans titre"}</h2><div className="meta"><strong>{x.theme||"Thème non défini"}</strong><span>{x.category||"Sans catégorie"}</span><span>{x.level||"Niveau non défini"}</span></div><div className="foot"><span>{date(x.createdAt)}</span><div><Link href={`/exercices/${x.id}/modifier`}>Modifier</Link>{status(x)!=="submitted"&&<button disabled={busy===x.id} onClick={()=>propose(x)}>Proposer</button>}<button className="del" disabled={busy===x.id} onClick={()=>remove(x)}>Supprimer</button></div></div></div></article>)}</div>}</section></div>

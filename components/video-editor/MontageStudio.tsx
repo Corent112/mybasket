@@ -117,7 +117,7 @@ type Props = {
   embedded?: boolean;
 };
 
-type LibraryView = "all" | "favorites" | "themes" | "players" | "systems";
+type LibraryView = "all" | "favorites" | "playlists" | "players" | "systems";
 type ClipTheme = { id: string; name: string; actionIds: string[] };
 type PlayerRow = { id: string; name: string | null; first_name?: string | null; last_name?: string | null; jersey_number?: number | null };
 
@@ -1315,7 +1315,7 @@ export default function MontageStudio({
   };
 
   const createTheme = async () => {
-    const name = window.prompt("Nom du thème");
+    const name = window.prompt("Nom de la playlist");
     if (!name?.trim() || !teamId) return;
 
     const userResponse = await supabase.auth.getUser();
@@ -1334,7 +1334,7 @@ export default function MontageStudio({
       .single();
 
     if (error || !data) {
-      flash(error?.message || "Création du thème impossible");
+      flash(error?.message || "Création de la playlist impossible");
       return;
     }
 
@@ -1365,7 +1365,49 @@ export default function MontageStudio({
           : theme,
       ),
     );
-    flash("Clip ajouté au thème");
+    flash("Clip ajouté à la playlist");
+  };
+
+
+  const renamePlaylist = async (playlist: ClipTheme) => {
+    const name = window.prompt("Nouveau nom de la playlist", playlist.name);
+    if (!name?.trim() || name.trim() === playlist.name) return;
+    const { error } = await supabase.from("livestat_clip_themes").update({ name: name.trim() }).eq("id", playlist.id);
+    if (error) { flash(error.message); return; }
+    setThemes((current) => current.map((row) => row.id === playlist.id ? { ...row, name: name.trim() } : row));
+    flash("Playlist renommée");
+  };
+
+  const deletePlaylist = async (playlist: ClipTheme) => {
+    if (!window.confirm(`Supprimer la playlist « ${playlist.name} » ? Les clips d'origine ne seront pas supprimés.`)) return;
+    const { error: itemsError } = await supabase.from("livestat_clip_theme_items").delete().eq("theme_id", playlist.id);
+    if (itemsError) { flash(itemsError.message); return; }
+    const { error } = await supabase.from("livestat_clip_themes").delete().eq("id", playlist.id);
+    if (error) { flash(error.message); return; }
+    setThemes((current) => current.filter((row) => row.id !== playlist.id));
+    if (selectedThemeId === playlist.id) setSelectedThemeId("");
+    flash("Playlist supprimée");
+  };
+
+  const removeActionFromPlaylist = async (playlistId: string, actionId: string) => {
+    const { error } = await supabase.from("livestat_clip_theme_items").delete().eq("theme_id", playlistId).eq("action_id", actionId);
+    if (error) { flash(error.message); return; }
+    setThemes((current) => current.map((row) => row.id === playlistId ? { ...row, actionIds: row.actionIds.filter((id) => id !== actionId) } : row));
+    flash("Clip retiré de la playlist");
+  };
+
+  const openPlaylist = (playlist: ClipTheme) => {
+    setLibraryView("playlists");
+    setSelectedThemeId(playlist.id);
+    setSearch("");
+    setFilter("all");
+  };
+
+  const addPlaylistToMontage = (playlist: ClipTheme) => {
+    const rows = actions.filter((action) => playlist.actionIds.includes(String(action.id)));
+    if (!rows.length) { flash("Cette playlist est vide."); return; }
+    rows.forEach((action) => addAction(action));
+    flash(`${rows.length} clip${rows.length > 1 ? "s" : ""} ajouté${rows.length > 1 ? "s" : ""} au montage`);
   };
 
   const addDesignItem = (type: "title" | "text") => {
@@ -1710,7 +1752,7 @@ export default function MontageStudio({
             {([
               ["all","Tous"],
               ["favorites","Favoris"],
-              ["themes","Thèmes"],
+              ["playlists","Playlists"],
               ["players","Joueurs"],
               ["systems","Systèmes"],
             ] as const).map(([key,label]) => (
@@ -1736,11 +1778,18 @@ export default function MontageStudio({
             </select>
           )}
 
-          {libraryView === "themes" && (
-            <select className="mp-library-select" value={selectedThemeId} onChange={(e) => setSelectedThemeId(e.target.value)}>
-              <option value="">Tous les thèmes</option>
-              {themes.map((theme) => <option key={theme.id} value={theme.id}>{theme.name}</option>)}
-            </select>
+          {libraryView === "playlists" && (
+            <div className="mp-playlist-picker">
+              <select className="mp-library-select" value={selectedThemeId} onChange={(e) => setSelectedThemeId(e.target.value)}>
+                <option value="">Toutes mes playlists</option>
+                {themes.map((playlist) => (
+                  <option key={playlist.id} value={playlist.id}>
+                    {playlist.name} · {playlist.actionIds.length} clip{playlist.actionIds.length > 1 ? "s" : ""}
+                  </option>
+                ))}
+              </select>
+              <button type="button" onClick={createTheme}>＋ Nouvelle playlist</button>
+            </div>
           )}
 
           <div className="mp-filter-chips">
@@ -1785,6 +1834,9 @@ export default function MontageStudio({
                   </button>
                   <button className={`mp-star ${favorite?"on":""}`} onClick={()=>toggleFavorite(id)}>{favorite?"★":"☆"}</button>
                   <button className={`mp-add ${librarySelection.includes(id) ? "selected" : ""}`} onClick={()=>toggleLibrarySelection(id)}>{librarySelection.includes(id) ? "✓" : "○"}</button>
+                  {libraryView === "playlists" && selectedThemeId && (
+                    <button className="mp-remove-playlist" title="Retirer de cette playlist" onClick={() => removeActionFromPlaylist(selectedThemeId, id)}>×</button>
+                  )}
                 </div>
               )
             })}
@@ -1794,26 +1846,40 @@ export default function MontageStudio({
             Ajouter les clips sélectionnés ({librarySelection.length})
           </button>
 
-          <div className={`mp-themes ${libraryView === "themes" ? "visible" : ""}`}>
+          <div className={`mp-themes ${libraryView === "playlists" ? "visible" : ""}`}>
             <div className="mp-themes-head">
-              <strong>MES THÈMES</strong>
-              <button onClick={createTheme}>＋ Nouveau thème</button>
+              <div>
+                <strong>MES PLAYLISTS</strong>
+                <small>Glisse directement un clip dans une playlist.</small>
+              </div>
+              <button onClick={createTheme}>＋ Nouvelle playlist</button>
             </div>
-            {themes.length===0 && <div className="mp-empty small">Crée un thème puis glisse tes clips dedans.</div>}
-            {themes.map(theme=>(
+
+            {themes.length === 0 && <div className="mp-empty small">Crée ta première playlist puis glisse les clips dedans.</div>}
+
+            {themes.map((playlist) => (
               <div
-                className="mp-theme"
-                key={theme.id}
-                onDragOver={(event)=>event.preventDefault()}
-                onDrop={(event)=>{
+                className={`mp-playlist-card ${selectedThemeId === playlist.id ? "on" : ""}`}
+                key={playlist.id}
+                onDragOver={(event) => { event.preventDefault(); event.dataTransfer.dropEffect = "copy"; }}
+                onDrop={(event) => {
                   event.preventDefault();
-                  const actionId=event.dataTransfer.getData("text/mybasket-action");
-                  if(actionId) addActionToTheme(theme.id,actionId);
+                  const actionId = event.dataTransfer.getData("text/mybasket-action");
+                  if (actionId) addActionToTheme(playlist.id, actionId);
                 }}
               >
-                <span>📁</span>
-                <strong>{theme.name}</strong>
-                <b>{theme.actionIds.length}</b>
+                <button className="mp-playlist-open" onClick={() => openPlaylist(playlist)}>
+                  <span>▶</span>
+                  <div>
+                    <strong>{playlist.name}</strong>
+                    <small>{playlist.actionIds.length} clip{playlist.actionIds.length > 1 ? "s" : ""}</small>
+                  </div>
+                </button>
+                <div className="mp-playlist-actions">
+                  <button title="Ajouter toute la playlist au montage" onClick={() => addPlaylistToMontage(playlist)}>＋ Montage</button>
+                  <button title="Renommer" onClick={() => renamePlaylist(playlist)}>✎</button>
+                  <button title="Supprimer la playlist" onClick={() => deletePlaylist(playlist)}>×</button>
+                </div>
               </div>
             ))}
           </div>
@@ -2257,7 +2323,18 @@ export default function MontageStudio({
       <style jsx>{`
         .montage-pro{--gold:#d6a23d;--gold2:#f2b948;--bg:#050a11;--panel:#09111b;--panel2:#0c1622;--line:#263344;--text:#f3f5f8;--muted:#8995a5;min-height:100vh;background:radial-gradient(circle at 50% 0,#0c1622 0,#050a11 42%);color:var(--text);font-family:Inter,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}.montage-pro *{box-sizing:border-box}.montage-pro button,.montage-pro input,.montage-pro textarea,.montage-pro select{font:inherit}.montage-pro button{cursor:pointer}
         .mp-header{height:64px;display:grid;grid-template-columns:330px minmax(260px,1fr) auto;align-items:center;gap:18px;padding:0 18px;border-bottom:1px solid #1b2735;background:#060c13;position:sticky;top:0;z-index:50}.mp-brand{display:flex;align-items:center;gap:10px}.mp-logo{width:28px;height:28px;display:grid;place-items:center;color:#fff;font-size:22px}.mp-brand strong{font-size:18px;letter-spacing:-.02em}.mp-brand em{font-style:normal;color:var(--gold2);font-size:11px;font-weight:900;letter-spacing:.12em;margin-left:8px}.mp-project-name{display:flex;justify-content:center;align-items:center;gap:10px;min-width:0}.mp-project-name input{min-width:0;width:min(440px,100%);border:0;background:transparent;color:#f7f8fa;text-align:center;font-size:15px;font-weight:800;outline:none}.mp-save-pill{border:1px solid #6b501e;border-radius:999px;padding:5px 9px;color:var(--gold2);font-size:9px;font-weight:800;background:#171209}.mp-save-pill.error{color:#ff8a9b;border-color:#71303b}.mp-header-actions{display:flex;align-items:center;gap:8px}.mp-header-actions>button,.mp-add-menu-wrap>button{height:36px;border:1px solid #2c394a;background:#0b131e;color:#f5f7fa;border-radius:8px;padding:0 14px;font-size:10px;font-weight:800}.gold{background:linear-gradient(180deg,#e5ad42,#c98e2b)!important;color:#161009!important;border-color:#e0aa40!important}.mp-more{width:40px;padding:0!important}.mp-add-menu-wrap{position:relative}.mp-add-menu{position:absolute;top:43px;right:0;width:190px;background:#0c1521;border:1px solid #324052;border-radius:10px;padding:6px;box-shadow:0 18px 50px #000c;display:grid;gap:4px;z-index:80}.mp-add-menu button{border:0;background:transparent;color:#fff;text-align:left;padding:9px;border-radius:7px;font-size:10px}.mp-add-menu button:hover{background:#182334}
-        .mp-grid{display:grid;grid-template-columns:370px minmax(650px,1fr) 330px;height:calc(100vh - 64px);min-height:760px}.mp-library,.mp-inspector{background:linear-gradient(180deg,#08111b,#070e17);padding:16px;overflow:auto}.mp-library{border-right:1px solid #1d2938}.mp-inspector{border-left:1px solid #1d2938}.mp-section-title{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px}.mp-section-title strong{font-size:10px;letter-spacing:.05em}.mp-section-title span{font-size:9px;color:var(--gold2);background:#171f2c;padding:3px 8px;border-radius:999px}.mp-search-row{display:grid;grid-template-columns:1fr 38px;gap:8px}.mp-search-row input,.mp-library-select,.mp-inspector input,.mp-inspector textarea,.mp-inspector select,.mp-share input{width:100%;border:1px solid #263447;background:#080f19;color:#f4f6f8;border-radius:8px;padding:9px 10px;outline:none}.mp-search-row button{border:1px solid #2c394a;background:#0b141f;color:#fff;border-radius:8px}.mp-tabs{display:flex;gap:16px;border-bottom:1px solid #1f2b3a;margin:12px 0 10px}.mp-tabs button{border:0;background:none;color:#9aa5b4;padding:7px 0;font-size:9px}.mp-tabs button.on{color:#fff;border-bottom:2px solid var(--gold2)}.mp-library-select{font-size:9px;margin-bottom:8px}.mp-filter-chips{display:flex;gap:6px;overflow:auto;margin-bottom:10px}.mp-filter-chips button{border:1px solid #2c3a4c;background:#0d1723;color:#a7b1bf;border-radius:999px;padding:4px 8px;font-size:8px;white-space:nowrap}.mp-filter-chips button.on{border-color:#a77b2d;color:#f2bb4d;background:#1b160e}.mp-clips{display:grid;gap:8px;max-height:calc(100vh - 335px);overflow:auto;padding-right:3px}.mp-clip-card{display:grid;grid-template-columns:minmax(0,1fr) 30px 32px;gap:4px;border:1px solid #223042;border-radius:9px;background:#0b1521;padding:6px;transition:.15s}.mp-clip-card:hover{border-color:#506078}.mp-clip-card.selected{border-color:var(--gold);box-shadow:0 0 0 1px #d6a23d44 inset}.mp-clip-open{border:0;background:transparent;color:#fff;display:grid;grid-template-columns:94px 1fr;gap:9px;text-align:left;padding:0;min-width:0}.mp-thumb{height:56px;border-radius:7px;background:linear-gradient(135deg,#202c3c,#101822);display:grid;place-items:center;position:relative;overflow:hidden}.mp-thumb:before{content:"";position:absolute;inset:0;background:radial-gradient(circle at 65% 45%,#9f783266,transparent 28%),linear-gradient(160deg,transparent 55%,#d5a14222 56% 58%,transparent 59%)}.mp-thumb span{position:relative;font-size:14px}.mp-thumb small{position:absolute;right:4px;bottom:4px;background:#000c;border-radius:4px;padding:2px 4px;font-size:7px}.mp-clip-copy{min-width:0}.mp-clip-copy>small{font-size:7px;color:#8591a2}.mp-clip-copy strong{display:block;font-size:9px;margin:4px 0 6px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.mp-clip-copy div{display:flex;flex-wrap:wrap;gap:3px}.mp-clip-copy i,.mp-modal-tags i{font-style:normal;border:1px solid #354357;color:#aab5c4;border-radius:999px;padding:2px 5px;font-size:7px}.mp-star,.mp-add{align-self:center;width:28px;height:28px;border:1px solid #354357;background:#0b141f;color:#c9d2dd;border-radius:50%}.mp-star{border-radius:7px;color:#d7a544}.mp-add.selected{background:var(--gold);color:#161009;border-color:var(--gold)}.mp-library-add-selected{width:100%;margin-top:10px;height:38px;border:1px solid var(--gold);background:#18140d;color:#f0b945;border-radius:8px;font-size:9px;font-weight:850}.mp-library-add-selected:disabled{opacity:.35}.mp-themes{display:none}.mp-themes.visible{display:block;border-top:1px solid #243142;margin-top:12px;padding-top:10px}.mp-themes-head{display:flex;justify-content:space-between;align-items:center}.mp-themes-head strong{font-size:9px;color:var(--gold)}.mp-themes-head button{font-size:8px;border:1px solid #324155;background:#0d1723;color:#fff;border-radius:7px;padding:5px 7px}.mp-theme{display:grid;grid-template-columns:22px 1fr auto;gap:6px;align-items:center;margin-top:6px;padding:8px;border:1px solid #263447;border-radius:7px}.mp-theme strong,.mp-theme b{font-size:8px}.mp-empty{border:1px dashed #334154;border-radius:8px;padding:14px;text-align:center;color:#768396;font-size:9px}
+        .mp-grid{display:grid;grid-template-columns:370px minmax(650px,1fr) 330px;height:calc(100vh - 64px);min-height:760px}.mp-library,.mp-inspector{background:linear-gradient(180deg,#08111b,#070e17);padding:16px;overflow:auto}.mp-library{border-right:1px solid #1d2938}.mp-inspector{border-left:1px solid #1d2938}.mp-section-title{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px}.mp-section-title strong{font-size:10px;letter-spacing:.05em}.mp-section-title span{font-size:9px;color:var(--gold2);background:#171f2c;padding:3px 8px;border-radius:999px}.mp-search-row{display:grid;grid-template-columns:1fr 38px;gap:8px}.mp-search-row input,.mp-library-select,.mp-inspector input,.mp-inspector textarea,.mp-inspector select,.mp-share input{width:100%;border:1px solid #263447;background:#080f19;color:#f4f6f8;border-radius:8px;padding:9px 10px;outline:none}.mp-search-row button{border:1px solid #2c394a;background:#0b141f;color:#fff;border-radius:8px}.mp-tabs{display:flex;gap:16px;border-bottom:1px solid #1f2b3a;margin:12px 0 10px}.mp-tabs button{border:0;background:none;color:#9aa5b4;padding:7px 0;font-size:9px}.mp-tabs button.on{color:#fff;border-bottom:2px solid var(--gold2)}.mp-library-select{font-size:9px;margin-bottom:8px}.mp-filter-chips{display:flex;gap:6px;overflow:auto;margin-bottom:10px}.mp-filter-chips button{border:1px solid #2c3a4c;background:#0d1723;color:#a7b1bf;border-radius:999px;padding:4px 8px;font-size:8px;white-space:nowrap}.mp-filter-chips button.on{border-color:#a77b2d;color:#f2bb4d;background:#1b160e}.mp-clips{display:grid;gap:8px;max-height:calc(100vh - 335px);overflow:auto;padding-right:3px}.mp-clip-card{display:grid;grid-template-columns:minmax(0,1fr) 30px 32px auto;gap:4px;border:1px solid #223042;border-radius:9px;background:#0b1521;padding:6px;transition:.15s}.mp-clip-card:hover{border-color:#506078}.mp-clip-card.selected{border-color:var(--gold);box-shadow:0 0 0 1px #d6a23d44 inset}.mp-clip-open{border:0;background:transparent;color:#fff;display:grid;grid-template-columns:94px 1fr;gap:9px;text-align:left;padding:0;min-width:0}.mp-thumb{height:56px;border-radius:7px;background:linear-gradient(135deg,#202c3c,#101822);display:grid;place-items:center;position:relative;overflow:hidden}.mp-thumb:before{content:"";position:absolute;inset:0;background:radial-gradient(circle at 65% 45%,#9f783266,transparent 28%),linear-gradient(160deg,transparent 55%,#d5a14222 56% 58%,transparent 59%)}.mp-thumb span{position:relative;font-size:14px}.mp-thumb small{position:absolute;right:4px;bottom:4px;background:#000c;border-radius:4px;padding:2px 4px;font-size:7px}.mp-clip-copy{min-width:0}.mp-clip-copy>small{font-size:7px;color:#8591a2}.mp-clip-copy strong{display:block;font-size:9px;margin:4px 0 6px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.mp-clip-copy div{display:flex;flex-wrap:wrap;gap:3px}.mp-clip-copy i,.mp-modal-tags i{font-style:normal;border:1px solid #354357;color:#aab5c4;border-radius:999px;padding:2px 5px;font-size:7px}.mp-star,.mp-add{align-self:center;width:28px;height:28px;border:1px solid #354357;background:#0b141f;color:#c9d2dd;border-radius:50%}.mp-star{border-radius:7px;color:#d7a544}.mp-add.selected{background:var(--gold);color:#161009;border-color:var(--gold)}.mp-library-add-selected{width:100%;margin-top:10px;height:38px;border:1px solid var(--gold);background:#18140d;color:#f0b945;border-radius:8px;font-size:9px;font-weight:850}.mp-library-add-selected:disabled{opacity:.35}
+.mp-playlist-picker{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:6px;align-items:start;margin-bottom:8px}
+.mp-playlist-picker .mp-library-select{margin:0}.mp-playlist-picker>button{height:34px;border:1px solid var(--gold);background:#18140d;color:#f0b945;border-radius:8px;padding:0 9px;font-size:8px;font-weight:900}
+.mp-remove-playlist{align-self:center;width:28px;height:28px;border:1px solid #6f3440;background:#211017;color:#ff8792;border-radius:7px;font-size:15px}
+.mp-themes-head>div{display:grid;gap:2px}.mp-themes-head small{font-size:7px;color:#768396}
+.mp-playlist-card{margin-top:7px;padding:7px;border:1px solid #263447;border-radius:9px;background:#0b1521;display:grid;grid-template-columns:minmax(0,1fr) auto;gap:7px;align-items:center}
+.mp-playlist-card.on{border-color:var(--gold);box-shadow:0 0 0 1px #d6a23d33 inset}
+.mp-playlist-open{border:0;background:transparent;color:#fff;display:grid;grid-template-columns:30px minmax(0,1fr);gap:7px;align-items:center;text-align:left;padding:0;min-width:0}
+.mp-playlist-open>span{width:28px;height:28px;border-radius:8px;background:#1b2635;color:var(--gold2);display:grid;place-items:center;font-size:9px}
+.mp-playlist-open>div{min-width:0}.mp-playlist-open strong,.mp-playlist-open small{display:block}.mp-playlist-open strong{font-size:8px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.mp-playlist-open small{margin-top:2px;font-size:7px;color:#8390a1}
+.mp-playlist-actions{display:flex;gap:4px}.mp-playlist-actions button{height:28px;border:1px solid #324155;background:#0d1723;color:#fff;border-radius:7px;padding:0 7px;font-size:7px;font-weight:850}.mp-playlist-actions button:first-child{color:#f0b945;border-color:#725826}
+.mp-themes{display:none}.mp-themes.visible{display:block;border-top:1px solid #243142;margin-top:12px;padding-top:10px}.mp-themes-head{display:flex;justify-content:space-between;align-items:center}.mp-themes-head strong{font-size:9px;color:var(--gold)}.mp-themes-head button{font-size:8px;border:1px solid #324155;background:#0d1723;color:#fff;border-radius:7px;padding:5px 7px}.mp-theme{display:grid;grid-template-columns:22px 1fr auto;gap:6px;align-items:center;margin-top:6px;padding:8px;border:1px solid #263447;border-radius:7px}.mp-theme strong,.mp-theme b{font-size:8px}.mp-empty{border:1px dashed #334154;border-radius:8px;padding:14px;text-align:center;color:#768396;font-size:9px}
         .mp-center{min-width:0;display:grid;grid-template-rows:minmax(360px,1fr) 48px 50px auto auto;background:#050b12}.mp-stage{position:relative;display:grid;place-items:center;background:#000;overflow:hidden;margin:16px 14px 0;border:1px solid #263345;border-radius:7px 7px 0 0;aspect-ratio:16/9;max-height:56vh}.mp-stage video,.mp-stage img{width:100%;height:100%;object-fit:contain}.mp-stage canvas{position:absolute;inset:0;width:100%;height:100%;touch-action:none}.mp-stage-empty{color:#667388;font-size:11px}.mp-stage-connect{display:grid;gap:10px;text-align:center;justify-items:center;padding:24px}.mp-stage-connect strong{color:#fff;font-size:13px}.mp-stage-connect span{max-width:440px;color:#8290a2;font-size:9px;line-height:1.5}.mp-stage-connect :global(.local-video-reconnect),.mp-stage-connect :global(.local-video-connected){border:1px solid var(--gold);background:#18140d;color:var(--gold2);border-radius:8px;padding:9px 12px;font-weight:800}.mp-design-preview{width:100%;height:100%;display:grid;place-items:center;background:linear-gradient(145deg,#090d14,#171d2a)}.mp-design-preview strong{font-size:38px;text-align:center;padding:30px}.mp-editable-overlay{position:absolute;z-index:5}.mp-live-drawings{position:absolute;inset:0;width:100%;height:100%;z-index:7;pointer-events:none}.mp-player-bar{display:flex;align-items:center;gap:8px;padding:7px 14px;margin:0 14px;border:1px solid #263345;border-top:0;background:#0a121d}.mp-player-bar button{width:32px;height:30px;border:0;background:transparent;color:#fff;font-size:14px}.mp-time{display:grid;grid-template-columns:55px 1fr 55px;align-items:center;gap:8px;flex:1}.mp-time span{font-size:8px;color:var(--gold2);font-weight:900;text-align:center}.mp-time div{height:5px;border-radius:999px;background:#4c5562}.mp-time i{display:block;width:20%;height:100%;background:var(--gold);border-radius:999px}.mp-player-bar select{border:1px solid #293748;background:#0b141f;color:#fff;border-radius:6px;padding:5px;font-size:8px}.mp-tools{display:flex;justify-content:center;gap:7px;padding:8px 14px;margin:0 14px;border:1px solid #263345;border-top:0;background:#08111b}.mp-tools button{height:30px;border:1px solid #2e3d50;border-radius:7px;background:#0d1723;color:#e4e8ed;font-size:8px;padding:0 10px}.mp-tools button.on{border-color:var(--gold);color:var(--gold2);background:#1a150c}.mp-timeline-head{display:flex;justify-content:space-between;align-items:center;padding:9px 16px 4px;background:#050b12}.mp-timeline-head strong{font-size:9px;color:#c7ced7}.mp-timeline-head small{font-size:8px;color:#7e8999;margin-left:8px}.mp-timeline-head>div:last-child{display:none}
         .mp-storyboard{border-top:1px solid #1e2a39;background:#060d15;padding:0 14px 10px;min-height:195px}.mp-storyboard-ruler{height:28px;display:flex;justify-content:space-between;align-items:end;padding:0 14px 5px;border-bottom:1px solid #273447;color:#788596;font-size:7px}.mp-storyboard-strip{display:flex;gap:10px;align-items:stretch;overflow:auto;padding:10px 8px 8px;min-height:120px}.mp-story-card{position:relative;flex:0 0 142px;height:106px;border:1px solid #334256;border-radius:8px;background:#0c1622;color:#fff;padding:5px;text-align:left;display:grid;grid-template-rows:60px auto auto;overflow:hidden}.mp-story-card.selected{border-color:var(--gold);box-shadow:0 0 0 1px #d6a23d55}.mp-story-card.type-title,.mp-story-card.type-text{background:#0c1622}.mp-story-card.type-freeze{background:#3f2660}.mp-story-card.type-audio{background:#18263a}.mp-story-visual{border-radius:5px;background:linear-gradient(135deg,#1c2939,#0c141f);display:grid;place-items:center;overflow:hidden}.mp-story-card.type-title .mp-story-visual,.mp-story-card.type-text .mp-story-visual{background:#081018}.mp-story-visual>strong{font-size:10px;text-align:center;padding:7px}.mp-story-index{position:absolute;top:8px;left:8px;width:22px;height:22px;border-radius:6px;background:#090d12e6;color:#e9b248;display:grid;place-items:center;font-size:8px;font-weight:900;z-index:2}.mp-story-title{font-size:8px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:3px}.mp-story-card small{font-size:7px;color:#99a4b3}.mp-story-card>b{position:absolute;top:5px;right:5px;width:18px;height:18px;border-radius:50%;background:#772a39;display:none;place-items:center}.mp-story-card:hover>b{display:grid}.mp-story-add{flex:0 0 120px;border:1px dashed #334256;border-radius:8px;background:#09111b;color:#d6dde6;display:grid;place-items:center;align-content:center;gap:8px;font-size:24px}.mp-story-add small{font-size:8px}.mp-story-toolbar{display:flex;gap:6px;align-items:center;border-top:1px solid #1c2836;padding:8px 2px 0}.mp-story-toolbar button{height:28px;border:1px solid #2c3a4c;background:#0b141f;color:#dce2e9;border-radius:6px;padding:0 9px;font-size:8px}.mp-zoom{margin-left:auto;display:flex;align-items:center;gap:8px;color:#8f9aaa;font-size:8px}.mp-zoom input{accent-color:var(--gold);width:110px}
         .mp-inspector-tabs{display:grid;grid-template-columns:1fr 1fr;margin:-16px -16px 16px;border-bottom:1px solid #223042}.mp-inspector-tabs button{height:44px;border:0;background:#0b141f;color:#9aa5b4;font-size:9px}.mp-inspector-tabs button.on{color:#fff;border-bottom:2px solid var(--gold)}.mp-inspector-form{display:grid;gap:12px}.mp-inspector-form>label,.mp-project-note{display:grid;gap:5px;color:#8f9aab;font-size:8px;font-weight:800}.mp-readonly{border:1px solid #273548;background:#08111b;color:var(--gold2);border-radius:8px;padding:9px;text-transform:capitalize}.mp-clip-time-readable{display:grid;grid-template-columns:repeat(3,1fr);gap:6px;padding:10px;border:1px solid #263548;border-radius:8px;background:#08111b}.mp-clip-time-readable span{display:grid;gap:3px;color:#8793a4;font-size:7px}.mp-clip-time-readable b{color:#fff;font-size:9px}.mp-trim-panel{display:grid;gap:9px;padding:10px 0;border-top:1px solid #202c3b;border-bottom:1px solid #202c3b}.mp-trim-panel>strong{font-size:9px;color:var(--gold2)}.mp-trim-labels{display:flex;justify-content:space-between;color:#8894a4;font-size:7px}.mp-trim-labels b{color:#fff;font-size:9px}.mp-trim-range{position:relative;height:24px}.mp-trim-range:before{content:"";position:absolute;left:4px;right:4px;top:10px;height:4px;border-radius:999px;background:var(--gold)}.mp-trim-range input[type=range]{position:absolute;inset:0;width:100%;height:24px;background:transparent;border:0;padding:0;pointer-events:none;appearance:none}.mp-trim-range input::-webkit-slider-thumb{appearance:none;width:17px;height:17px;border-radius:50%;background:var(--gold2);border:2px solid #1b1307;pointer-events:auto}.mp-two{display:grid;grid-template-columns:1fr 1fr;gap:6px}.mp-nudge{display:grid;grid-template-columns:1fr 1fr;gap:5px}.mp-inspector button{border:1px solid #2c3a4c;background:#0c1622;color:#e4e9ef;border-radius:7px;padding:8px;font-size:8px}.mp-inspector-tools{display:grid;grid-template-columns:1fr 1fr 1fr 40px;gap:4px}.mp-draw-tools{grid-template-columns:repeat(3,minmax(0,1fr))}.mp-draw-tools button.on{border-color:var(--gold);color:var(--gold)}.danger{border-color:#6e2d3b!important;color:#ff8595!important}.mp-project-note textarea{min-height:90px;resize:vertical}.mp-annotation-list,.mp-freeze-inspector,.mp-audio-inspector{display:grid;gap:6px;padding:9px;border:1px solid #263548;border-radius:8px;background:#08111b}.mp-annotation-list>strong,.mp-freeze-inspector strong,.mp-audio-inspector strong{font-size:8px;color:var(--gold2)}.mp-annotation-list>small{font-size:7px;color:#8290a2}.mp-annotation-row{display:grid;grid-template-columns:minmax(70px,1fr) 58px 12px 58px 26px;gap:4px;align-items:center}.mp-annotation-row input{padding:5px!important;font-size:7px}.mp-annotation-name{padding:5px!important;text-align:left;font-size:7px}

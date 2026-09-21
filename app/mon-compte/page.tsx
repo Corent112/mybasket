@@ -96,12 +96,6 @@ const MENU: MenuItem[] = [
   href: '/mon-compte/systemes',
 },
   {
-  key: 'favoris',
-  label: 'Mes Favoris',
-  icon: '⭐',
-  href: '/mon-compte/favoris',
-},
-  {
   key: 'playbooks',
   label: 'Mes Playbooks',
   icon: '📁',
@@ -1290,13 +1284,21 @@ return (
                   {displayedPartnerTeams.map((item:any) => (
                     <div key={item.linkId || item.teamId} className="mc-team-group-item">
                       <div className="mc-team-section-title collaboration"><strong>🤝 PARTENAIRE · {item.institutionName}</strong><span>{item.season || "Saison non renseignée"}</span></div>
-                      <div style={{border:"1px solid #eadfd9",borderRadius:16,background:"#fff",padding:18,display:"grid",gridTemplateColumns:"1fr auto",gap:14,alignItems:"center"}}>
-                        <div style={{display:"flex",gap:12,alignItems:"center"}}>
-                          <div style={{width:54,height:54,borderRadius:"50%",background:"#fbf4ee",display:"grid",placeItems:"center",overflow:"hidden",fontSize:24}}>{item.logo?<img src={item.logo} alt="" style={{width:"100%",height:"100%",objectFit:"cover"}}/>:"🏀"}</div>
-                          <div><strong style={{display:"block",fontSize:18,color:"#6B1A2C"}}>{item.name}</strong><span style={{fontSize:12,color:"#756760"}}>{item.clubName || item.category || "Équipe partenaire"} · {item.playerCount || 0} joueur(s) · {item.matchCount || 0} match(s)</span></div>
+                      <article className="mc-teamcard mc-teamcard-horizontal mc-teamcard-partner">
+                        <div className="mc-team-banner mc-team-banner-horizontal" style={{ backgroundColor: item.colors?.[0] || item.couleurs?.[0] || '#6B1A2C' }}>
+                          <div className="mc-team-banner-lines" aria-hidden="true" />
+                          <div className="mc-team-banner-logo">{item.logo?<img src={item.logo} alt=""/>:"🏀"}</div>
+                          <div className="mc-team-banner-copy"><span>ÉQUIPE PARTENAIRE</span><strong>{item.name}</strong><small>{item.clubName || item.category || "Institution partenaire"}</small></div>
                         </div>
-                        <button className="mc-new-team" onClick={() => router.push(`/equipes/${item.teamId}`)}>Voir l'équipe →</button>
-                      </div>
+                        <div className="mc-team-horizontal-content">
+                          <div className="mc-team-kpis">
+                            <div><strong>{item.playerCount || 0}</strong><span>JOUEURS</span></div>
+                            <div><strong>{item.matchCount || 0}</strong><span>MATCHS</span></div>
+                            <div><strong>👁</strong><span>LECTURE SEULE</span></div>
+                          </div>
+                          <button className="mc-new-team" onClick={() => router.push(`/equipes/${item.teamId}`)}>Voir l'équipe →</button>
+                        </div>
+                      </article>
                     </div>
                   ))}
                   {!displayedPartnerTeams.length && <div style={{padding:28,border:"1px dashed #dccfc8",borderRadius:16,color:"#756760",textAlign:"center"}}>Aucune équipe partenaire active. Les équipes créées dans Institutionnel apparaîtront ici automatiquement.</div>}

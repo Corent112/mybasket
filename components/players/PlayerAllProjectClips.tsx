@@ -227,7 +227,7 @@ export default function PlayerAllProjectClips({ teamId, playerId, playerName }: 
             opponent,
             filename,
             provider,
-            label: `${fmtDate(date)} · ${opponent}`,
+            label: `MATCH : ${opponent} · ${fmtDate(date)}`,
             sync: normalizeSync(state.videoSync ?? state.video_sync ?? state ?? NATIVE_SYNC),
           };
         });
@@ -262,7 +262,7 @@ export default function PlayerAllProjectClips({ teamId, playerId, playerName }: 
             sourceMap[matchId] ??
             {
               matchId,
-              label: "Match",
+              label: "MATCH : adversaire",
               date: "",
               opponent: "Adversaire",
               filename: "",

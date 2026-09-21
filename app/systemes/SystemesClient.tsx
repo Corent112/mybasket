@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
-import { listMySystems, type SystemItem } from "@/lib/systems";
+import { listSystems, type SystemItem } from "@/lib/systems";
 import {
   listPlaybooks,
   createPlaybook,
@@ -198,7 +198,7 @@ export default function SystemesClient() {
         const supabase = createClient();
 
         const [data, sessionResult] = await Promise.all([
-          listMySystems(),
+          listSystems(),
           supabase.auth.getSession(),
         ]);
 

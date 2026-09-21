@@ -331,6 +331,7 @@ export default function ActionClipsModal(props: ActionClipsModalProps) {
 
         <div className="acm-body">
           <div className="acm-title">{label}</div>
+          {(cur.matchLabel || cur.opponent) && <div className="acm-match-source"><b>{cur.matchLabel || `MATCH : ${cur.opponent}`}</b><span>{currentMatchId ? `Vidéo rattachée au match ${currentMatchId}` : 'Match source'}</span></div>}
 
           <div className="acm-videowrap">
             {hasVideo ? (

@@ -34,6 +34,7 @@ type CalEvent = {
   assignedPlayers?: string[];
   notes?: string;
   attachment?: Attachment;
+  sessionId?: string;
 };
 
 type Player = { id: string; firstName: string };
@@ -94,6 +95,8 @@ function normalizeCalendarRow(row: any): CalEvent {
     loc: row.location ?? undefined,
     notes: row.description ?? undefined,
     teamId: row.team_id ? String(row.team_id) : undefined,
+    assignedPlayers: Array.isArray(row.assigned_player_ids) ? row.assigned_player_ids.map(String) : [],
+    sessionId: row.session_id ? String(row.session_id) : undefined,
     opponent:
       dbTypeToCalendarType(row.event_type) === "match"
         ? String(row.title ?? "").replace(/^Match\s+(?:vs\s+)?/i, "").trim() || undefined
@@ -336,7 +339,8 @@ export default function MonCalendrier() {
           ? (fVenue === "home" ? "Domicile" : fVenue === "away" ? "Extérieur" : null)
           : (fLoc || null),
       event_type: calendarTypeToDbType(fType),
-      session_id: null,
+      session_id: events.find((event) => event.id === editingId)?.sessionId || null,
+      assigned_player_ids: fPlayers,
       attachment_url: fAttach?.dataUrl || null,
       visibility: "private",
       updated_at: new Date().toISOString(),
@@ -496,6 +500,9 @@ export default function MonCalendrier() {
           <div className="cal-modal" onClick={(e) => e.stopPropagation()}>
             <div className="cal-modal-head">
               <b>{editingId ? "Modifier l'événement" : "Nouvel événement"}</b>
+              {editingId && events.find((event) => event.id === editingId)?.sessionId && (
+                <button type="button" className="session-sheet-link" onClick={() => { const sid=events.find((event) => event.id === editingId)?.sessionId; if(sid) window.location.href=`/seances/${sid}`; }}>🏀 Ouvrir la fiche séance</button>
+              )}
               <button className="cal-x" onClick={() => setOpen(false)} aria-label="Fermer">✕</button>
             </div>
 

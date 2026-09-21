@@ -7399,6 +7399,13 @@ export default function PriseStatsProPage() {
         </div>
       )}
 
+      {screen === 'live' && (
+        <div className="alwaysLiveActions">
+          <button type="button" className="alwaysTechnical" onClick={() => actionPick('faute-technique')}>🟪 FAUTE TECHNIQUE</button>
+          {sharedLive && <button type="button" className="alwaysMultiScreen" onClick={()=>window.open(`/management/live-mutualise?session=${sharedLive.id}`,'mybasket-coach-live','popup=yes,width=1500,height=950')}>🖥 MULTI-ÉCRANS · {sharedLive.joinCode}</button>}
+        </div>
+      )}
+
       {toast && <div className="toast show">{toast}</div>}
 
       {showPlayerAssociation && (
@@ -7513,6 +7520,7 @@ export default function PriseStatsProPage() {
         actions={(clipModal?.items ?? []) as unknown as ClipAction[]}
         startIndex={clipModal?.index ?? 0}
         title={clipModal?.title ?? ''}
+        teamId={activeTeamId || teamId}
         videoUrl={(videoProvider === 'local' || videoProvider === 'google_drive') ? videoUrl : ''}
         sync={videoSync}
         onClose={() => setClipModal(null)}
@@ -12092,6 +12100,10 @@ function Style() {
         background: rgba(212,162,76,.24);
         border-color: var(--gold);
       }
+      .alwaysLiveActions{position:fixed;left:18px;bottom:18px;z-index:8999;display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+      .alwaysLiveActions button{border:0;border-radius:12px;padding:11px 14px;font-weight:1000;box-shadow:0 8px 26px #0003;cursor:pointer}
+      .alwaysTechnical{background:#6b1a8f!important;color:#fff!important}
+      .alwaysMultiScreen{background:#111!important;color:#fff!important}
 
     `}</style>
   );

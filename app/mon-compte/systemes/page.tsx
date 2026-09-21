@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
+import { createClient } from "@/lib/supabase/client";
 import {
   deleteSystem,
   listMySystems,
@@ -12,7 +13,7 @@ import {
 import { addSystemToPlaybook, type PlaybookCategory } from "@/lib/playbook";
 
 type SortKey = "recent" | "alpha";
-type StatusKey = "all" | "draft" | "submitted" | "approved" | "rejected";
+type StatusKey = "all" | "draft" | "submitted" | "approved" | "rejected" | "favorites";
 
 const FILTERS = [
   { key: "type", label: "BASE" },
@@ -117,6 +118,7 @@ export default function MesSystemesPage() {
   const [selected, setSelected] = useState<Record<string, string[]>>({});
   const [submittingId, setSubmittingId] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [favoriteIds, setFavoriteIds] = useState<Set<string>>(new Set());
 
   async function load() {
     setLoading(true);
@@ -124,6 +126,7 @@ export default function MesSystemesPage() {
     try {
       const data = await listMySystems();
       setItems(data ?? []);
+      const sb=createClient(); const {data:{user}}=await sb.auth.getUser(); if(user){const {data:favs}=await sb.from("favorites").select("item_id").eq("user_id",user.id).eq("item_type","system");setFavoriteIds(new Set((favs||[]).map((r:any)=>String(r.item_id||"")).filter(Boolean)));}
     } catch (error) {
       console.error("Erreur chargement mes systèmes :", error);
       alert("Impossible de charger tes systèmes.");
@@ -222,6 +225,7 @@ export default function MesSystemesPage() {
       submitted: 0,
       approved: 0,
       rejected: 0,
+      favorites: favoriteIds.size,
     };
 
     for (const item of items) {
@@ -230,14 +234,15 @@ export default function MesSystemesPage() {
     }
 
     return base;
-  }, [items]);
+  }, [items, favoriteIds]);
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
 
     return [...items]
       .filter((item) => {
-        if (status !== "all" && getStatus(item) !== status) return false;
+        if (status === "favorites" && !favoriteIds.has(item.id)) return false;
+        if (status !== "all" && status !== "favorites" && getStatus(item) !== status) return false;
 
         for (const filter of FILTERS) {
           const active = selected[filter.key] ?? [];
@@ -275,7 +280,7 @@ export default function MesSystemesPage() {
           new Date(a.createdAt || 0).getTime()
         );
       });
-  }, [items, search, sort, status, selected]);
+  }, [items, search, sort, status, selected, favoriteIds]);
 
   return (
     <main className="page">
@@ -307,6 +312,7 @@ export default function MesSystemesPage() {
             ["submitted", "En attente CEO"],
             ["approved", "Validés"],
             ["rejected", "Refusés"],
+            ["favorites", "⭐ Favoris"],
           ] as Array<[StatusKey, string]>
         ).map(([key, label]) => (
           <button
