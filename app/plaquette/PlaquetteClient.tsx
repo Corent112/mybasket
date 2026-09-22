@@ -389,8 +389,8 @@ const resetPlaquette = () => {
   }, []);
 
   const saveCurrentCourtPreset = async () => {
-    if (savedCourtPresets.length >= 3) {
-      alert('Tu peux sauvegarder jusqu’à 3 terrains personnels. Supprime-en un pour en enregistrer un nouveau.');
+    if (savedCourtPresets.length >= 5) {
+      alert('Tu peux sauvegarder jusqu’à 5 terrains personnels. Supprime-en un pour en enregistrer un nouveau.');
       return;
     }
 
@@ -429,7 +429,7 @@ const resetPlaquette = () => {
         playerColors: { attacker: data?.player_colors?.attacker || playerBaseColorsRef.current.attacker, defender: data?.player_colors?.defender || playerBaseColorsRef.current.defender },
         createdAt: data.created_at ? new Date(data.created_at).getTime() : Date.now(),
       };
-      setSavedCourtPresets((currentItems) => [preset, ...currentItems].slice(0, 3));
+      setSavedCourtPresets((currentItems) => [preset, ...currentItems].slice(0, 5));
     } catch (error) {
       console.warn('Sauvegarde du terrain en base impossible :', error);
       alert('Impossible de sauvegarder ce terrain sur ton compte. Vérifie que la migration Supabase des terrains personnels a bien été exécutée.');
@@ -5398,10 +5398,10 @@ const exportJson = () => {
                   onClick={saveCurrentCourtPreset}
                   style={{ width: '100%', background: 'var(--bordeaux, #6B1A2C)', color: '#fff', fontWeight: 900 }}
                 >
-                  💾 Sauvegarder ce terrain ({savedCourtPresets.length}/3)
+                  💾 Sauvegarder ce terrain ({savedCourtPresets.length}/5)
                 </button>
                 <div style={{ fontSize: '.7rem', color: '#777', marginTop: '.35rem', lineHeight: 1.35 }}>
-                  Sauvegarde sur ton compte MyBasket (maximum 3 terrains : terrain, branding et couleurs de base attaquants/défenseurs).
+                  Sauvegarde sur ton compte MyBasket (maximum 5 terrains : terrain, branding et couleurs de base attaquants/défenseurs).
                 </div>
 
                 {savedCourtPresetsLoading && (

@@ -17,23 +17,43 @@ const fmt=(v:string)=>new Date(`${v}T12:00:00`).toLocaleDateString("fr-FR");
 const sum=(rs:Result[])=>({made:rs.reduce((n,r)=>n+r.made,0),attempted:rs.reduce((n,r)=>n+r.attempted,0)});
 const norm=(v:string)=>v.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g,"").replace(/\b(2pts?|3pts?)\b/g,"").replace(/[^a-z0-9]+/g," ").trim();
 
+function compactSpotLabel(name:string){
+  const up=name.toUpperCase();
+  const group=up.includes("3PTS")||up.includes("3 PTS")?"3PTS":up.includes("2PTS")||up.includes("2 PTS")?"2PTS":up.includes("LF")?"LF":"";
+  const n=name.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g,"");
+  const side=n.includes("droit")?"D":n.includes("gauch")?"G":"";
+  let zone=name.replace(/^(2PTS|3PTS|LF|AUTRES)\s*[·:\-]\s*/i,"").trim().toUpperCase();
+  if(n.includes("short corner")) zone=`SC ${side}`.trim();
+  else if(n.includes("corner")) zone=`CORNER ${side}`.trim();
+  else if(n.includes("45")) zone=`45° ${side}`.trim();
+  else if(n.includes("axe")||n.includes("face")) zone="AXE";
+  else if(n.includes("aile")) zone=`AILE ${side}`.trim();
+  return group==="LF"?"LF":group?`${group} · ${zone}`:zone;
+}
+
 /** Associe les spots nommés d'une grille aux zones OFFICIELLES de la ShotChart LiveStat. */
 function liveZoneForRow(name:string):{zone:string;type:"2PTS"|"3PTS"}|null{
   const n=name.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g,"");
   if(n.includes("lf")||n.includes("lancer")) return null;
   const is3=n.includes("3pt")||n.includes("3 pts")||n.includes("3pts");
+  const right=n.includes("droite")||n.includes("droit");
+  const left=n.includes("gauche");
   if(is3){
-    if(n.includes("corner droit")) return {zone:"z10",type:"3PTS"};
-    if(n.includes("aile droite")) return {zone:"z11",type:"3PTS"};
-    if(n.includes("axe")) return {zone:"z13",type:"3PTS"};
-    if(n.includes("aile gauche")) return {zone:"z15",type:"3PTS"};
-    if(n.includes("corner gauche")) return {zone:"z16",type:"3PTS"};
+    if(n.includes("corner")&&right) return {zone:"z10",type:"3PTS"};
+    if(n.includes("corner")&&left) return {zone:"z16",type:"3PTS"};
+    // Les spots nommés « 45° » correspondent aux deux zones 3PTS intermédiaires.
+    if(n.includes("45")&&right) return {zone:"z12",type:"3PTS"};
+    if(n.includes("45")&&left) return {zone:"z14",type:"3PTS"};
+    if(n.includes("aile")&&right) return {zone:"z11",type:"3PTS"};
+    if(n.includes("aile")&&left) return {zone:"z15",type:"3PTS"};
+    if(n.includes("axe")||n.includes("face")) return {zone:"z13",type:"3PTS"};
   }
-  if(n.includes("corner droit")) return {zone:"z9",type:"2PTS"};
-  if(n.includes("aile droite")) return {zone:"z8",type:"2PTS"};
-  if(n.includes("axe")) return {zone:"z7",type:"2PTS"};
-  if(n.includes("aile gauche")) return {zone:"z6",type:"2PTS"};
-  if(n.includes("corner gauche")) return {zone:"z5",type:"2PTS"};
+  // Les « short corners » sont les deux zones mi-distance proches de la ligne de fond.
+  if(n.includes("corner")&&right) return {zone:"z9",type:"2PTS"};
+  if(n.includes("corner")&&left) return {zone:"z5",type:"2PTS"};
+  if((n.includes("45")||n.includes("aile"))&&right) return {zone:"z8",type:"2PTS"};
+  if((n.includes("45")||n.includes("aile"))&&left) return {zone:"z6",type:"2PTS"};
+  if(n.includes("axe")||n.includes("face")) return {zone:"z7",type:"2PTS"};
   return null;
 }
 
@@ -76,7 +96,7 @@ function GridBlock({grid,rows,sessions,results}:{grid:Grid;rows:Row[];sessions:S
 
       <div style={{overflowX:"auto",border:`1px solid ${BD}`,borderRadius:12}}>
         <table style={{width:"100%",borderCollapse:"collapse",fontSize:10,whiteSpace:"nowrap"}}>
-          <thead><tr><th style={{...th,textAlign:"left",position:"sticky",left:0,zIndex:2}}>Date</th>{rows.map(r=><th key={r.id} style={th}>{r.name}</th>)}<th style={th}>Total</th><th style={th}>%</th></tr></thead>
+          <thead><tr><th style={{...th,textAlign:"left",position:"sticky",left:0,zIndex:2}}>Date</th>{rows.map(r=><th key={r.id} style={th}>{compactSpotLabel(r.name)}</th>)}<th style={th}>Total</th><th style={th}>%</th></tr></thead>
           <tbody>
             {sessions.map(s=>{
               const sr=gridResults.filter(r=>r.session_id===s.id), st=sum(sr);
@@ -101,7 +121,7 @@ function GridBlock({grid,rows,sessions,results}:{grid:Grid;rows:Row[];sessions:S
 function AllGridsBySpot({grids,rows,sessions,results}:{grids:Grid[];rows:Row[];sessions:Session[];results:Result[]}){
   const [limits,setLimits]=useState({green:60,red:40}); const [settings,setSettings]=useState(false);
   const cellStyle=(m:number,a:number):React.CSSProperties=>{if(!a)return td;const p=pct(m,a);return {...td,background:p>=limits.green?"#E7F5EA":p<limits.red?"#FBE8E6":"#FFF3D7",color:p>=limits.green?"#176B35":p<limits.red?"#A02A2A":"#805B12",fontWeight:900}};
-  const spotKeys=Array.from(new Map(rows.map(r=>[norm(r.name),r.name])).entries()).filter(([k])=>k).map(([key,label])=>({key,label}));
+  const spotKeys=Array.from(new Map(rows.map(r=>[norm(r.name),r.name])).entries()).filter(([k])=>k).map(([key,label])=>({key,label:compactSpotLabel(label)}));
   const sessionGrid=new Map(sessions.map(s=>[s.id,s.grid_id]));
   const grand=sum(results);
   return <article style={card}>

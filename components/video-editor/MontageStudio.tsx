@@ -235,8 +235,6 @@ export default function MontageStudio({
   const [playerId, setPlayerId] = useState(initialPlayerId);
   const [assignedPlayerId, setAssignedPlayerId] = useState(initialPlayerId);
   const [matches, setMatches] = useState<MatchRow[]>([]);
-  const [selectedMatchId, setSelectedMatchId] = useState("");
-  const [sourceMatchIds, setSourceMatchIds] = useState<string[]>([]);
   const [actions, setActions] = useState<ActionRow[]>([]);
   const [montages, setMontages] = useState<MontageRow[]>([]);
   const [montageId, setMontageId] = useState(initialMontageId);
@@ -289,29 +287,6 @@ export default function MontageStudio({
   const [saveState, setSaveState] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const [librarySelection, setLibrarySelection] = useState<string[]>([]);
   const [addMenuOpen, setAddMenuOpen] = useState(false);
-
-  // /montage is a standalone client workspace. Recover context directly from
-  // the URL after mount instead of making the route depend on useSearchParams.
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    const params = new URLSearchParams(window.location.search);
-    const urlTeamId = params.get("teamId") || "";
-    const urlPlayerId = params.get("playerId") || "";
-    const urlMontageId = params.get("montageId") || "";
-    const urlMatchId = params.get("matchId") || "";
-
-    if (urlMatchId) {
-      setSelectedMatchId(urlMatchId);
-      setSourceMatchIds((current) => current.includes(urlMatchId) ? current : [...current, urlMatchId]);
-    }
-    if (!initialTeamId && urlTeamId) setTeamId(urlTeamId);
-    if (!initialPlayerId && urlPlayerId) {
-      setPlayerId(urlPlayerId);
-      setAssignedPlayerId(urlPlayerId);
-      setSelectedPlayerFilter(urlPlayerId);
-    }
-    if (!initialMontageId && urlMontageId) setMontageId(urlMontageId);
-  }, [initialMontageId, initialPlayerId, initialTeamId]);
 
 
   const flash = useCallback((message: string) => {
@@ -398,6 +373,43 @@ export default function MontageStudio({
     })();
 
     return () => { active = false; };
+  }, [supabase, teamId]);
+
+  // Garde la rubrique Favoris de Montage synchronisée avec les étoiles ajoutées
+  // depuis l'analyse vidéo / l'historique, même si Montage est déjà ouvert.
+  useEffect(() => {
+    if (!teamId) return;
+    let active = true;
+
+    const refreshFavorites = async () => {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!active || !user?.id) return;
+      const { data, error } = await supabase
+        .from("livestat_clip_favorites")
+        .select("action_id")
+        .eq("user_id", user.id)
+        .eq("team_id", teamId);
+      if (!active || error) return;
+      setFavoriteActionIds((data ?? []).map((row: any) => String(row.action_id)));
+    };
+
+    const onFocus = () => { void refreshFavorites(); };
+    window.addEventListener("focus", onFocus);
+
+    const channel = supabase
+      .channel(`montage-favorites-${teamId}`)
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "livestat_clip_favorites", filter: `team_id=eq.${teamId}` },
+        () => { void refreshFavorites(); },
+      )
+      .subscribe();
+
+    return () => {
+      active = false;
+      window.removeEventListener("focus", onFocus);
+      void supabase.removeChannel(channel);
+    };
   }, [supabase, teamId]);
 
   useEffect(() => {
@@ -492,11 +504,6 @@ export default function MontageStudio({
         setCoachNote(montage.coach_note || "");
         setExportUrl(montage.export_url || "");
         setAssignedPlayerId(String(montage.player_id || ""));
-        if (montage.match_id) {
-          const savedMatchId = String(montage.match_id);
-          setSelectedMatchId(savedMatchId);
-          setSourceMatchIds((current) => current.includes(savedMatchId) ? current : [...current, savedMatchId]);
-        }
       }
 
       if (itemsResponse.error) {
@@ -565,18 +572,6 @@ export default function MontageStudio({
     };
   }, [actions, flash, montageId, supabase]);
 
-  // Un montage peut mélanger plusieurs matchs. Les clips de la timeline restent
-  // la source de vérité : à la réouverture, on reconstitue automatiquement la
-  // liste des matchs nécessaires sans nouvelle colonne Supabase.
-  useEffect(() => {
-    const ids = Array.from(new Set(items
-      .map((item) => String(item.action?.match_id || ""))
-      .filter(Boolean)));
-    if (!ids.length) return;
-    setSourceMatchIds((current) => Array.from(new Set([...current, ...ids])));
-    setSelectedMatchId((current) => current || ids[0]);
-  }, [items]);
-
   // À la réouverture d'un montage, restaure UNE fois chaque source locale
   // nécessaire, par matchId. Un montage de 20 clips issus de 3 matchs ne doit
   // donc jamais demander 20 reconnexions. Les sources encore autorisées par
@@ -634,44 +629,6 @@ export default function MontageStudio({
     return () => { cancelled = true; if (timer) clearTimeout(timer); };
   }, [flash, renderJobId, supabase]);
 
-  const selectedMatch = useMemo(
-    () => matches.find((match) => String(match.id) === selectedMatchId) || null,
-    [matches, selectedMatchId],
-  );
-  const selectedMatchClipCount = useMemo(
-    () => actions.filter((action) => String(action.match_id || "") === selectedMatchId).length,
-    [actions, selectedMatchId],
-  );
-  const selectedMatchLocalVideo = selectedMatchId ? getLocalMatchVideoUrl(selectedMatchId) : null;
-  const sourceMatches = useMemo(
-    () => sourceMatchIds.map((id) => matchMap.get(id)).filter((match): match is MatchRow => Boolean(match)),
-    [matchMap, sourceMatchIds],
-  );
-  const timelineMatchIds = useMemo(
-    () => new Set(items.map((item) => String(item.action?.match_id || "")).filter(Boolean)),
-    [items],
-  );
-
-  const addSourceMatch = (matchId: string) => {
-    if (!matchId) return;
-    setSourceMatchIds((current) => current.includes(matchId) ? current : [...current, matchId]);
-    setSelectedMatchId(matchId);
-    setSelectedPlayerFilter("");
-    setSelectedSystemFilter("");
-    setSelectedThemeId("");
-    setSearch("");
-    setClipPreviewIndex(null);
-  };
-
-  const removeSourceMatch = (matchId: string) => {
-    if (timelineMatchIds.has(matchId)) {
-      flash("Ce match est utilisé par la timeline. Retire d'abord ses clips.");
-      return;
-    }
-    setSourceMatchIds((current) => current.filter((id) => id !== matchId));
-    setSelectedMatchId((current) => current === matchId ? (sourceMatchIds.find((id) => id !== matchId) || "") : current);
-  };
-
   const selected = items[selectedIndex];
   const selectedAction = selected?.action;
   const selectedVideo = actionVideoUrl(selectedAction, matchMap);
@@ -680,55 +637,10 @@ export default function MontageStudio({
     (selected?.clip_end || 0) - (selected?.clip_start || 0),
   );
 
-
-  const startTimelineTrim = (
-    index: number,
-    edge: "start" | "end",
-    event: React.PointerEvent<HTMLSpanElement>,
-  ) => {
-    event.preventDefault();
-    event.stopPropagation();
-    const item = items[index];
-    if (!item || item.item_type !== "clip") return;
-
-    setSelectedIndex(index);
-    const startX = event.clientX;
-    const originalStart = item.clip_start;
-    const originalEnd = item.clip_end;
-    const minStart = item.action ? clipStart(item.action) : originalStart;
-    const maxEnd = item.action ? clipEnd(item.action) : originalEnd;
-    const pixelsPerSecond = Math.max(18, 45 * timelineZoom);
-
-    const move = (moveEvent: PointerEvent) => {
-      const delta = (moveEvent.clientX - startX) / pixelsPerSecond;
-      setItems((current) => current.map((row, rowIndex) => {
-        if (rowIndex !== index) return row;
-        if (edge === "start") {
-          return {
-            ...row,
-            clip_start: clamp(originalStart + delta, minStart, originalEnd - 0.1),
-          };
-        }
-        return {
-          ...row,
-          clip_end: clamp(originalEnd + delta, originalStart + 0.1, maxEnd),
-        };
-      }));
-    };
-
-    const up = () => {
-      window.removeEventListener("pointermove", move);
-      window.removeEventListener("pointerup", up);
-    };
-    window.addEventListener("pointermove", move);
-    window.addEventListener("pointerup", up, { once: true });
-  };
-
   const filteredActions = useMemo(() => {
     const query = search.trim().toLowerCase();
 
     return actions.filter((action) => {
-      if (!selectedMatchId || String(action.match_id || "") !== selectedMatchId) return false;
       if (filter === "made" && action.shot_result !== "made") return false;
       if (filter === "missed" && action.shot_result !== "missed") return false;
       if (
@@ -756,7 +668,7 @@ export default function MontageStudio({
         .toLowerCase()
         .includes(query);
     });
-  }, [actions, filter, matchMap, search, selectedMatchId, selectedPlayerFilter, selectedSystemFilter, selectedThemeId, themes, players]);
+  }, [actions, filter, matchMap, search, selectedPlayerFilter, selectedSystemFilter, selectedThemeId, themes, players]);
 
   useEffect(() => {
     const video = videoRef.current;
@@ -1088,9 +1000,6 @@ export default function MontageStudio({
         user_id: userId,
         team_id: teamId,
         player_id: assignedPlayerId || null,
-        // Compatibilité avec le schéma existant : match_id reste renseigné pour
-        // un montage mono-match. En multi-match, chaque clip conserve son propre match_id via match_actions.
-        match_id: sourceMatchIds.length === 1 ? sourceMatchIds[0] : null,
         title: title.trim() || "Nouveau montage",
         type: assignedPlayerId ? "player" : "team",
         coach_note: coachNote,
@@ -1174,7 +1083,6 @@ export default function MontageStudio({
   useEffect(() => {
     if (!hydratedRef.current) return;
     if (historyApplyingRef.current) { historyApplyingRef.current = false; return; }
-    setSaveState("idle");
     const snapshot = items.map((row) => ({ ...row, annotations: row.annotations.map((a)=>({...a})) }));
     const current = historyRef.current[historyIndexRef.current];
     if (current && JSON.stringify(current) === JSON.stringify(snapshot)) return;
@@ -1209,7 +1117,7 @@ export default function MontageStudio({
     return()=>window.clearTimeout(timer);
     // autosave volontairement déclenché par l'état éditable du projet
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [items, title, coachNote, assignedPlayerId, teamId, sourceMatchIds]);
+  }, [items, title, coachNote, assignedPlayerId, teamId]);
 
   const renderMontage = async () => {
     if (!montageId) {
@@ -1318,28 +1226,6 @@ export default function MontageStudio({
 
   const timelineStartOf = (item: MontageItem, index: number) =>
     item.timeline_start ?? items.slice(0, index).reduce((sum, row) => sum + itemDuration(row), 0);
-
-  // Piste vidéo magnétique façon iMovie : clips et freezes s'enchaînent sans
-  // trou ni chevauchement. Un trim, une suppression ou un drag recale
-  // automatiquement tous les éléments vidéo suivants. Les overlays/audio
-  // conservent leur position libre.
-  useEffect(() => {
-    if (!items.length) return;
-    let cursor = 0;
-    let changed = false;
-    const next = items.map((item) => {
-      const track = item.track || (item.item_type === "audio" ? "audio" : item.item_type === "clip" || item.item_type === "freeze" ? "video" : "overlay");
-      if (track !== "video") return item;
-      const expected = cursor;
-      cursor += itemDuration(item);
-      if (Math.abs(numberValue(item.timeline_start) - expected) < 0.001) return item;
-      changed = true;
-      return { ...item, timeline_start: expected };
-    });
-    if (changed) setItems(next);
-    // Reflow volontaire : dépend de l'ordre, des trims et de la vitesse des éléments.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [items.map((item) => `${item.action_id}:${item.sort_order}:${item.clip_start}:${item.clip_end}:${item.playbackRate}:${item.repeatCount}:${item.track}`).join("|")]);
 
   const totalDuration = Math.max(
     0,
@@ -1866,7 +1752,7 @@ export default function MontageStudio({
         <div className="mp-project-name">
           <input value={title} onChange={(e) => setTitle(e.target.value)} aria-label="Titre du montage" />
           <span className={`mp-save-pill ${saveState}`}>
-            {saveState === "saving" ? "Sauvegarde…" : saveState === "error" ? "Erreur" : saveState === "saved" ? "Sauvegardé ✓" : "Modifié"}
+            {saveState === "saving" ? "Sauvegarde…" : saveState === "error" ? "Erreur" : "Sauvegardé"}
           </span>
         </div>
 
@@ -1933,71 +1819,6 @@ export default function MontageStudio({
         </aside>
 
         <section className="mp-center">
-          <div className="mp-source-bar">
-            <div className="mp-source-copy">
-              <span>SOURCES DU MONTAGE</span>
-              <strong>{sourceMatches.length ? `${sourceMatches.length} match${sourceMatches.length > 1 ? "s" : ""} sélectionné${sourceMatches.length > 1 ? "s" : ""}` : "Ajouter un match"}</strong>
-              <small>Chaque clip garde automatiquement son match et sa vidéo source.</small>
-            </div>
-
-            <div className="mp-source-picker">
-              <select
-                className="mp-source-match"
-                value=""
-                onChange={(event) => addSourceMatch(event.target.value)}
-              >
-                <option value="">＋ Ajouter un match…</option>
-                {matches.filter((match) => !sourceMatchIds.includes(String(match.id))).map((match) => (
-                  <option key={match.id} value={match.id}>
-                    {match.match_date ? `${new Date(match.match_date).toLocaleDateString("fr-FR")} · ` : ""}
-                    {match.opponent ? `vs ${match.opponent}` : "Match"}
-                  </option>
-                ))}
-              </select>
-              <small>Ajoute autant de matchs que nécessaire.</small>
-            </div>
-
-            <div className="mp-source-video">
-              {selectedMatchId ? (
-                <>
-                  <LocalMatchVideoButton
-                    matchId={selectedMatchId}
-                    teamId={teamId}
-                    onConnected={() => flash("Vidéo source reliée au match ✓")}
-                  />
-                  <small className={selectedMatchLocalVideo ? "connected" : ""}>
-                    {selectedMatchLocalVideo
-                      ? "Vidéo du match actif disponible ✓"
-                      : "Relie la vidéo originale de ce match pour lire et exporter ses clips."}
-                  </small>
-                </>
-              ) : (
-                <small>Ajoute un match pour commencer.</small>
-              )}
-            </div>
-
-            {sourceMatches.length > 0 && (
-              <div className="mp-source-list">
-                {sourceMatches.map((match) => {
-                  const id = String(match.id);
-                  const active = id === selectedMatchId;
-                  const connected = Boolean(getLocalMatchVideoUrl(id));
-                  const used = timelineMatchIds.has(id);
-                  return (
-                    <div key={id} className={`mp-source-chip ${active ? "on" : ""}`}>
-                      <button type="button" className="mp-source-chip-main" onClick={() => setSelectedMatchId(id)}>
-                        <span>{connected ? "✓" : "⚠"}</span>
-                        <strong>{match.opponent ? `vs ${match.opponent}` : "Match"}</strong>
-                        <small>{match.match_date ? new Date(match.match_date).toLocaleDateString("fr-FR") : ""}{used ? " · utilisé" : ""}</small>
-                      </button>
-                      <button type="button" className="mp-source-chip-remove" onClick={() => removeSourceMatch(id)} title={used ? "Match utilisé dans la timeline" : "Retirer cette source"}>×</button>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-          </div>
-
           <div className="mp-stage">
             {stageItem?.item_type === "image" && stageItem.image_url ? (
               <div className="mp-editable-overlay" style={{left:`${stageItem.x ?? 50}%`,top:`${stageItem.y ?? 50}%`,width:`${stageItem.width ?? 30}%`,opacity:stageItem.opacity ?? 1,transform:`translate(-50%,-50%) rotate(${stageItem.rotation ?? 0}deg)`}} onPointerDown={(e)=>{if(stageItem.locked)return; const box=e.currentTarget.parentElement!.getBoundingClientRect(); const move=(ev:PointerEvent)=>updateSelected({x:clamp(((ev.clientX-box.left)/box.width)*100,0,100),y:clamp(((ev.clientY-box.top)/box.height)*100,0,100)}); const up=()=>{window.removeEventListener("pointermove",move);window.removeEventListener("pointerup",up)};window.addEventListener("pointermove",move);window.addEventListener("pointerup",up)}}><img src={stageItem.image_url} alt={stageItem.title} /></div>
@@ -2219,7 +2040,6 @@ export default function MontageStudio({
                   <button
                     key={`${item.action_id}:${index}`}
                     className={`mp-story-card type-${item.item_type} ${selectedIndex === index ? "selected" : ""}`}
-                    style={item.item_type === "clip" ? { minWidth: `${Math.max(110, duration * 45 * timelineZoom)}px`, width: `${Math.max(110, duration * 45 * timelineZoom)}px` } : undefined}
                     onClick={() => { setSelectedIndex(index); setPlayhead(timelineStartOf(item, index)); }}
                     draggable
                     onDragStart={(event) => { event.dataTransfer.setData("text/mybasket-story-index", String(index)); }}
@@ -2232,35 +2052,7 @@ export default function MontageStudio({
                   >
                     <span className="mp-story-index">{index + 1}</span>
                     <div className="mp-story-visual">
-                      {item.item_type === "clip" && item.action ? (
-                        <>
-                          <video
-                            muted
-                            playsInline
-                            preload="metadata"
-                            src={actionVideoUrl(item.action, matchMap)}
-                            ref={(node) => {
-                              if (!node) return;
-                              const seek = () => {
-                                try { node.currentTime = item.clip_start; } catch {}
-                              };
-                              if (node.readyState >= 1) seek();
-                              else node.addEventListener("loadedmetadata", seek, { once: true });
-                            }}
-                          />
-                          <span className="mp-story-duration">{formatClipTime(duration)}</span>
-                          <span
-                            className="mp-trim-handle left"
-                            title="Rogner le début"
-                            onPointerDown={(event) => startTimelineTrim(index, "start", event)}
-                          />
-                          <span
-                            className="mp-trim-handle right"
-                            title="Rogner la fin"
-                            onPointerDown={(event) => startTimelineTrim(index, "end", event)}
-                          />
-                        </>
-                      ) : item.item_type === "freeze" ? <span>Ⅱ</span> : item.item_type === "audio" ? <span>♫</span> : item.item_type === "image" ? <span>▣</span> : <strong>{item.item_type === "title" ? item.title : item.note || item.title}</strong>}
+                      {item.item_type === "clip" ? <span>▶</span> : item.item_type === "freeze" ? <span>Ⅱ</span> : item.item_type === "audio" ? <span>♫</span> : item.item_type === "image" ? <span>▣</span> : <strong>{item.item_type === "title" ? item.title : item.note || item.title}</strong>}
                     </div>
                     <strong className="mp-story-title">{item.title || typeLabel}</strong>
                     <small>{typeLabel} · {formatClipTime(duration)}</small>
@@ -2286,7 +2078,7 @@ export default function MontageStudio({
         <aside className="mp-match-clips">
           <div className="mp-match-clips-head">
             <div>
-              <strong>{selectedMatch?.opponent ? `Clips · ${selectedMatch.opponent}` : "Clips du match actif"}</strong>
+              <strong>Clips du match</strong>
               <span>{previewActions.length}</span>
             </div>
             <select value={filter} onChange={(e) => setFilter(e.target.value as "all" | "made" | "missed" | "video")}>
@@ -2326,13 +2118,7 @@ export default function MontageStudio({
 
           <div className="mp-match-clip-list">
             {loading ? <div className="mp-empty">Chargement…</div> :
-            !selectedMatchId ? (
-              <div className="mp-empty">
-                <strong>Ajoute puis sélectionne un match</strong>
-                <span>Tu peux ensuite passer d’un match à l’autre : les clips déjà posés restent dans la même timeline.</span>
-              </div>
-            ) :
-            previewActions.length === 0 ? <div className="mp-empty">Aucun clip disponible pour ce match.</div> :
+            previewActions.length === 0 ? <div className="mp-empty">Aucun clip disponible.</div> :
             previewActions.map((action, index) => {
               const id = String(action.id);
               const favorite = favoriteActionIds.includes(id);
@@ -2541,7 +2327,7 @@ export default function MontageStudio({
       {toast && <div className="mp-toast">{toast}</div>}
 
       <style jsx>{`
-        .montage-pro{position:fixed;top:0;right:0;bottom:0;left:0;width:100vw;height:100vh;z-index:99999;overflow:auto;--wine:#7b1730;--wine2:#9d2344;--gold:#c9972f;--ink:#17181c;--muted:#6f737c;--line:#e6e8ec;--soft:#f5f6f8;min-height:100vh;background:#f5f6f8;color:var(--ink);font-family:Inter,Arial,sans-serif}
+        .montage-pro{--wine:#7b1730;--wine2:#9d2344;--gold:#c9972f;--ink:#17181c;--muted:#6f737c;--line:#e6e8ec;--soft:#f5f6f8;min-height:100vh;background:#f5f6f8;color:var(--ink);font-family:Inter,Arial,sans-serif}
         .montage-pro button,.montage-pro input,.montage-pro select,.montage-pro textarea{font:inherit}
         .mp-header{height:78px;background:#fff;border-bottom:1px solid var(--line);display:grid;grid-template-columns:minmax(290px,1fr) minmax(260px,420px) auto;align-items:center;gap:18px;padding:0 24px;position:sticky;top:0;z-index:30}
         .mp-brand{display:flex;align-items:center;gap:12px}.mp-logo{width:40px;height:40px;border-radius:12px;background:#111;color:#fff;display:grid;place-items:center}.mp-brand>div{display:grid;gap:3px}.mp-brand strong{font-size:22px;line-height:1}.mp-brand em{font-style:normal;font-size:11px;color:#7d818a;font-weight:650}
@@ -2554,23 +2340,17 @@ export default function MontageStudio({
         .mp-playlist-tabs{display:grid;grid-template-columns:1fr 1fr;gap:4px;margin:14px 0;background:#f3f4f6;border-radius:10px;padding:3px}.mp-playlist-tabs button{border:0;background:transparent;border-radius:8px;padding:8px;font-size:11px;font-weight:800;color:#6f737c}.mp-playlist-tabs button.on{background:var(--wine);color:#fff}
         .mp-playlist-list{display:grid;gap:8px}.mp-playlist-card{border:1px solid #e3e5e9;border-radius:11px;padding:7px;display:grid;grid-template-columns:minmax(0,1fr) auto;gap:5px;align-items:center;background:#fff}.mp-playlist-card.on{background:#fff4f6;border-color:#bd7283}.mp-playlist-open{border:0;background:transparent;display:grid;grid-template-columns:46px minmax(0,1fr);gap:8px;align-items:center;text-align:left;min-width:0}.mp-playlist-thumb{height:42px;border-radius:8px;background:linear-gradient(135deg,#2b2024,#8a2039);color:#fff;display:grid;place-items:center}.mp-playlist-open>span:last-child{min-width:0}.mp-playlist-open strong,.mp-playlist-open small{display:block}.mp-playlist-open strong{font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.mp-playlist-open small{font-size:9px;color:#7d8189;margin-top:3px}.mp-playlist-menu{display:grid;gap:2px}.mp-playlist-menu button{border:0;background:transparent;color:#747881;width:25px;height:23px;border-radius:6px}.mp-playlist-menu button:hover{background:#f1f2f4}
         .mp-playlist-drop{margin-top:12px;border:1px dashed #d4d7dc;border-radius:11px;padding:14px;text-align:center;color:#7c8088}.mp-playlist-drop span{display:block;font-size:22px;color:var(--wine)}.mp-playlist-drop strong,.mp-playlist-drop small{display:block}.mp-playlist-drop strong{font-size:10px;margin-top:3px}.mp-playlist-drop small{font-size:9px;margin-top:2px}
-        .mp-center{padding:12px;min-width:0}
-        .mp-source-bar{display:grid;grid-template-columns:minmax(190px,1fr) minmax(190px,260px) minmax(240px,1.15fr);gap:10px;align-items:center;margin-bottom:10px;padding:10px 12px;border:1px solid var(--line);border-radius:11px;background:#fff}.mp-source-list{grid-column:1/-1;display:flex;gap:7px;overflow:auto;padding-top:2px}.mp-source-chip{display:flex;align-items:stretch;flex:0 0 auto;border:1px solid #dfe2e7;border-radius:9px;background:#fafbfc;overflow:hidden}.mp-source-chip.on{border-color:var(--wine);box-shadow:0 0 0 1px var(--wine) inset;background:#fff7f8}.mp-source-chip-main{display:grid;grid-template-columns:auto auto;column-gap:6px;align-items:center;border:0;background:transparent;padding:7px 9px;text-align:left}.mp-source-chip-main span{grid-row:1/3;font-size:10px}.mp-source-chip-main strong{font-size:9px;white-space:nowrap}.mp-source-chip-main small{font-size:7px;color:#7d8189}.mp-source-chip-remove{border:0;border-left:1px solid #e7e9ed;background:transparent;padding:0 8px;color:#8a8e96}.mp-source-picker{display:grid;gap:3px}.mp-source-picker small{font-size:7px;color:#8a8e96}
-        .mp-source-copy span,.mp-source-copy strong,.mp-source-copy small{display:block}.mp-source-copy span{font-size:8px;letter-spacing:.08em;color:var(--wine);font-weight:950}.mp-source-copy strong{font-size:12px;margin-top:2px}.mp-source-copy small{font-size:8px;color:#7d8189;margin-top:3px}
-        .mp-source-match{height:38px;border:1px solid #dfe2e7;background:#fff;border-radius:9px;padding:0 10px;font-size:9px;font-weight:750}
-        .mp-source-video{display:grid;grid-template-columns:auto minmax(0,1fr);gap:8px;align-items:center}.mp-source-video :global(button){min-height:36px;border:1px solid #d7dbe1;background:#fff;border-radius:9px;padding:0 10px;font-size:9px;font-weight:850;color:#222}.mp-source-video :global(.local-video-connected){border-color:#94c5a5;background:#f0faf3;color:#176535}.mp-source-video small{font-size:8px;line-height:1.3;color:#8a8e96}.mp-source-video small.connected{color:#3e7d50}
-        .mp-stage{position:relative;background:#090909;border-radius:12px;overflow:hidden;aspect-ratio:16/9;display:grid;place-items:center}.mp-stage video{width:100%;height:100%;object-fit:contain}.mp-stage canvas{position:absolute;inset:0;width:100%;height:100%}.mp-stage-empty{color:#9297a0;font-size:13px}.mp-editable-overlay{position:absolute;z-index:8}.mp-editable-overlay img{width:100%;display:block}.mp-design-preview{color:#fff;text-align:center;z-index:8}.mp-live-overlay{position:absolute;left:50%;top:12%;transform:translateX(-50%);background:#000a;color:#fff;padding:10px 16px;border-radius:8px;z-index:9}.mp-live-overlay img{max-width:220px}
+        .mp-center{padding:12px;min-width:0}.mp-stage{position:relative;background:#090909;border-radius:12px;overflow:hidden;aspect-ratio:16/9;display:grid;place-items:center}.mp-stage video{width:100%;height:100%;object-fit:contain}.mp-stage canvas{position:absolute;inset:0;width:100%;height:100%}.mp-stage-empty{color:#9297a0;font-size:13px}.mp-editable-overlay{position:absolute;z-index:8}.mp-editable-overlay img{width:100%;display:block}.mp-design-preview{color:#fff;text-align:center;z-index:8}.mp-live-overlay{position:absolute;left:50%;top:12%;transform:translateX(-50%);background:#000a;color:#fff;padding:10px 16px;border-radius:8px;z-index:9}.mp-live-overlay img{max-width:220px}
         .mp-player-bar{display:grid;grid-template-columns:34px 42px 34px 1fr 72px;gap:6px;align-items:center;margin-top:8px}.mp-player-bar button,.mp-player-bar select{height:34px;border:1px solid #e0e2e6;background:#fff;border-radius:8px}.mp-player-bar button:nth-child(2){background:var(--wine);color:#fff;border-color:var(--wine)}.mp-time{display:grid;grid-template-columns:auto 1fr auto;gap:8px;align-items:center;font-size:9px;color:#777}.mp-time div{height:5px;background:#e5e6e9;border-radius:999px;overflow:hidden}.mp-time i{display:block;width:30%;height:100%;background:var(--wine)}
         .mp-tools{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px;padding:8px;border:1px solid var(--line);border-radius:10px}.mp-tools button{border:0;background:#f5f6f8;border-radius:8px;padding:8px 10px;font-size:10px;font-weight:750}.mp-tools button.on{background:#f2dfe4;color:var(--wine)}
         .mp-render-status{margin-top:8px;padding:10px;border-radius:10px;background:#faf6ec;border:1px solid #ead9af;display:grid;grid-template-columns:1fr auto;gap:8px;font-size:10px}.mp-render-progress{grid-column:1/-1;height:5px;background:#eee;border-radius:99px;overflow:hidden}.mp-render-progress i{display:block;height:100%;background:var(--gold)}
         .mp-timeline-head{display:flex;justify-content:space-between;align-items:center;margin-top:12px;padding:8px 4px}.mp-timeline-head strong{font-size:14px}.mp-timeline-head small{margin-left:8px;color:#858992}.mp-timeline-head button{border:1px solid #ddd;background:#fff;border-radius:7px}.mp-timeline-head span{font-size:9px;margin:0 5px}
-        .mp-storyboard{border:1px solid var(--line);border-radius:12px;overflow:hidden;background:#fafbfc}.mp-storyboard-ruler{height:30px;padding:0 12px;display:flex;justify-content:space-between;align-items:end;border-bottom:1px solid var(--line);color:#8a8e96;font-size:8px}.mp-storyboard-strip{min-height:118px;padding:10px;display:flex;gap:7px;overflow:auto;align-items:stretch}.mp-storyboard-empty{flex:1;border:1px dashed #cfd3d9;border-radius:9px;display:grid;place-items:center;color:#969aa2;font-size:11px}.mp-story-card{min-width:125px;max-width:160px;border:1px solid #dde0e5;background:#fff;border-radius:9px;padding:5px;text-align:left;position:relative}.mp-story-card.selected{border:2px solid var(--wine)}.mp-story-visual{height:64px;border-radius:6px;background:linear-gradient(135deg,#d7c0a1,#7b1730);display:grid;place-items:center;color:#fff;position:relative;overflow:hidden}.mp-story-visual video{width:100%;height:100%;object-fit:cover;pointer-events:none}.mp-story-duration{position:absolute;right:4px;bottom:4px;background:#000b;color:#fff;border-radius:4px;padding:2px 4px;font-size:7px;font-weight:900}.mp-trim-handle{position:absolute;top:0;bottom:0;width:10px;background:#fff8;border:2px solid var(--wine);cursor:ew-resize;z-index:5}.mp-trim-handle.left{left:0;border-radius:6px 0 0 6px}.mp-trim-handle.right{right:0;border-radius:0 6px 6px 0}.mp-story-title{display:block;font-size:9px;margin-top:5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.mp-story-card small{font-size:8px;color:#888}.mp-story-card>b{position:absolute;right:5px;top:5px;background:#fff;border-radius:50%;width:18px;height:18px;display:grid;place-items:center}.mp-story-index{position:absolute;left:8px;top:8px;z-index:2;background:#111c;color:#fff;border-radius:5px;padding:2px 4px;font-size:7px}.mp-story-add{min-width:80px;border:1px dashed #cfd3d9;background:#fff;border-radius:9px;font-size:20px;color:var(--wine)}.mp-story-add small{display:block;font-size:8px;color:#777}.mp-story-toolbar{display:flex;gap:6px;align-items:center;border-top:1px solid var(--line);padding:8px;flex-wrap:wrap}.mp-story-toolbar button{border:0;background:#fff;border-radius:7px;padding:7px 9px;font-size:9px}.mp-zoom{margin-left:auto;display:flex;gap:6px;align-items:center;font-size:8px}
+        .mp-storyboard{border:1px solid var(--line);border-radius:12px;overflow:hidden;background:#fafbfc}.mp-storyboard-ruler{height:30px;padding:0 12px;display:flex;justify-content:space-between;align-items:end;border-bottom:1px solid var(--line);color:#8a8e96;font-size:8px}.mp-storyboard-strip{min-height:118px;padding:10px;display:flex;gap:7px;overflow:auto;align-items:stretch}.mp-storyboard-empty{flex:1;border:1px dashed #cfd3d9;border-radius:9px;display:grid;place-items:center;color:#969aa2;font-size:11px}.mp-story-card{min-width:125px;max-width:160px;border:1px solid #dde0e5;background:#fff;border-radius:9px;padding:5px;text-align:left;position:relative}.mp-story-card.selected{border:2px solid var(--wine)}.mp-story-visual{height:58px;border-radius:6px;background:linear-gradient(135deg,#d7c0a1,#7b1730);display:grid;place-items:center;color:#fff}.mp-story-title{display:block;font-size:9px;margin-top:5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.mp-story-card small{font-size:8px;color:#888}.mp-story-card>b{position:absolute;right:5px;top:5px;background:#fff;border-radius:50%;width:18px;height:18px;display:grid;place-items:center}.mp-story-index{position:absolute;left:8px;top:8px;z-index:2;background:#111c;color:#fff;border-radius:5px;padding:2px 4px;font-size:7px}.mp-story-add{min-width:80px;border:1px dashed #cfd3d9;background:#fff;border-radius:9px;font-size:20px;color:var(--wine)}.mp-story-add small{display:block;font-size:8px;color:#777}.mp-story-toolbar{display:flex;gap:6px;align-items:center;border-top:1px solid var(--line);padding:8px;flex-wrap:wrap}.mp-story-toolbar button{border:0;background:#fff;border-radius:7px;padding:7px 9px;font-size:9px}.mp-zoom{margin-left:auto;display:flex;gap:6px;align-items:center;font-size:8px}
         .mp-match-clips-head{display:flex;justify-content:space-between;align-items:center}.mp-match-clips-head>div{display:flex;gap:7px;align-items:center}.mp-match-clips-head strong{font-size:16px}.mp-match-clips-head span{background:#f0e4e7;color:var(--wine);font-size:9px;font-weight:900;border-radius:99px;padding:3px 6px}.mp-match-clips-head select{border:1px solid #e0e2e6;background:#fff;border-radius:8px;padding:7px;font-size:9px}.mp-clips-search{width:100%;margin-top:10px;border:1px solid #e0e2e6;border-radius:9px;padding:9px 10px;font-size:10px}.mp-quick-filters{display:flex;gap:5px;margin:8px 0;overflow:auto}.mp-quick-filters button{border:0;background:#f0f1f3;color:#737780;border-radius:999px;padding:6px 8px;font-size:8px;white-space:nowrap}.mp-quick-filters button.on{background:var(--wine);color:#fff}.mp-library-select{width:100%;border:1px solid #e0e2e6;border-radius:8px;padding:8px;margin-bottom:8px;font-size:9px;background:#fff}
         .mp-match-clip-list{display:grid;gap:7px}.mp-match-clip{display:grid;grid-template-columns:minmax(0,1fr) 27px 30px;gap:4px;align-items:center;border-bottom:1px solid #eee;padding:5px 0}.mp-match-clip-open{border:0;background:transparent;display:grid;grid-template-columns:72px minmax(0,1fr);gap:7px;text-align:left;min-width:0}.mp-match-thumb{height:45px;border-radius:7px;background:linear-gradient(135deg,#3b2b27,#8b6346);color:#fff;display:grid;place-items:center;position:relative}.mp-match-thumb small{position:absolute;right:3px;bottom:3px;background:#000b;border-radius:4px;padding:2px 3px;font-size:7px}.mp-match-copy{min-width:0}.mp-match-copy strong,.mp-match-copy small{display:block}.mp-match-copy strong{font-size:9px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.mp-match-copy small{font-size:8px;color:#858992;margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.mp-mini-star,.mp-mini-add{width:27px;height:27px;border:1px solid #ddd;background:#fff;border-radius:7px}.mp-mini-star.on{color:#c69222}.mp-mini-add{font-size:17px;color:var(--wine)}
-        .mp-detail-title{border-bottom:1px solid var(--line);padding-bottom:10px;margin-bottom:10px}.mp-detail-title strong,.mp-detail-title small{display:block}.mp-detail-title strong{font-size:16px}.mp-detail-title small{font-size:9px;color:#8a8e96;margin-top:3px}.mp-inspector-form{display:grid;gap:10px}.mp-inspector-form label{font-size:9px;color:#6f737c;font-weight:800}.mp-inspector-form input,.mp-inspector-form textarea,.mp-inspector-form select{width:100%;margin-top:4px;border:1px solid #e0e2e6;background:#fff;border-radius:8px;padding:8px;color:#222}.mp-readonly{margin-top:4px;background:#f4f5f7;border-radius:8px;padding:8px}.mp-empty{border:1px dashed #d3d6db;border-radius:9px;padding:16px;text-align:center;color:#90949c;font-size:10px}.mp-empty strong,.mp-empty span{display:block}.mp-empty strong{color:#35383e;font-size:11px}.mp-empty span{margin-top:5px;line-height:1.4}.mp-clip-time-readable,.mp-trim-panel,.mp-nudge,.mp-design-controls,.mp-drawing-list,.mp-project-box{border:1px solid var(--line);border-radius:9px;padding:9px}.mp-clip-time-readable{display:grid;grid-template-columns:repeat(3,1fr);gap:5px;font-size:8px}.mp-clip-time-readable span,.mp-clip-time-readable b{display:block}.mp-trim-labels{display:flex;justify-content:space-between;font-size:8px}.mp-trim-range input{width:100%}.mp-nudge{display:flex;gap:5px;flex-wrap:wrap}.mp-nudge button,.mp-inspector-form button{border:1px solid #e0e2e6;background:#fff;border-radius:7px;padding:7px;font-size:9px}.mp-danger{color:#b62d40!important}.mp-share-modal,.mp-preview-modal{position:fixed;inset:0;background:#0009;z-index:80;display:grid;place-items:center;padding:20px}.mp-share,.mp-preview-card{background:#fff;color:#222;border-radius:14px;max-width:760px;width:min(94vw,760px);padding:18px}.mp-preview-card video{width:100%;background:#000;border-radius:10px}.mp-modal-tags{display:flex;gap:5px;flex-wrap:wrap}.mp-modal-tags i{font-style:normal;background:#f1f2f4;border-radius:99px;padding:4px 7px;font-size:8px}
-        .montage-pro.embedded{position:relative;inset:auto;z-index:auto;min-height:100vh}
+        .mp-detail-title{border-bottom:1px solid var(--line);padding-bottom:10px;margin-bottom:10px}.mp-detail-title strong,.mp-detail-title small{display:block}.mp-detail-title strong{font-size:16px}.mp-detail-title small{font-size:9px;color:#8a8e96;margin-top:3px}.mp-inspector-form{display:grid;gap:10px}.mp-inspector-form label{font-size:9px;color:#6f737c;font-weight:800}.mp-inspector-form input,.mp-inspector-form textarea,.mp-inspector-form select{width:100%;margin-top:4px;border:1px solid #e0e2e6;background:#fff;border-radius:8px;padding:8px;color:#222}.mp-readonly{margin-top:4px;background:#f4f5f7;border-radius:8px;padding:8px}.mp-empty{border:1px dashed #d3d6db;border-radius:9px;padding:16px;text-align:center;color:#90949c;font-size:10px}.mp-clip-time-readable,.mp-trim-panel,.mp-nudge,.mp-design-controls,.mp-drawing-list,.mp-project-box{border:1px solid var(--line);border-radius:9px;padding:9px}.mp-clip-time-readable{display:grid;grid-template-columns:repeat(3,1fr);gap:5px;font-size:8px}.mp-clip-time-readable span,.mp-clip-time-readable b{display:block}.mp-trim-labels{display:flex;justify-content:space-between;font-size:8px}.mp-trim-range input{width:100%}.mp-nudge{display:flex;gap:5px;flex-wrap:wrap}.mp-nudge button,.mp-inspector-form button{border:1px solid #e0e2e6;background:#fff;border-radius:7px;padding:7px;font-size:9px}.mp-danger{color:#b62d40!important}.mp-share-modal,.mp-preview-modal{position:fixed;inset:0;background:#0009;z-index:80;display:grid;place-items:center;padding:20px}.mp-share,.mp-preview-card{background:#fff;color:#222;border-radius:14px;max-width:760px;width:min(94vw,760px);padding:18px}.mp-preview-card video{width:100%;background:#000;border-radius:10px}.mp-modal-tags{display:flex;gap:5px;flex-wrap:wrap}.mp-modal-tags i{font-style:normal;background:#f1f2f4;border-radius:99px;padding:4px 7px;font-size:8px}
         @media(max-width:1450px){.mp-grid{grid-template-columns:220px minmax(480px,1fr) 280px 250px}.mp-brand em{display:none}}
-        @media(max-width:1180px){.mp-source-bar{grid-template-columns:1fr}.mp-grid{grid-template-columns:220px minmax(500px,1fr) 280px}.mp-inspector{display:none}.mp-header{grid-template-columns:1fr auto}.mp-project-name{display:none}}
+        @media(max-width:1180px){.mp-grid{grid-template-columns:220px minmax(500px,1fr) 280px}.mp-inspector{display:none}.mp-header{grid-template-columns:1fr auto}.mp-project-name{display:none}}
         @media(max-width:900px){.mp-grid{grid-template-columns:1fr}.mp-library,.mp-match-clips,.mp-inspector{height:auto;position:static}.mp-center{order:-1}.mp-header{grid-template-columns:1fr}.mp-header-actions{display:none}.mp-library{max-height:none}.mp-match-clips{max-height:420px}}
       `}</style>
     </div>

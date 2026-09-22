@@ -1,6 +1,6 @@
 export type ExportAnnotation = {
   id?: string;
-  kind: "arrow" | "line" | "circle" | "zone" | "freehand" | "text" | "tracker";
+  kind: "arrow" | "line" | "circle" | "zone" | "freehand" | "text" | "tracker" | "player" | "defender" | "ball" | "cone" | "screen";
   x1: number;
   y1: number;
   x2: number;

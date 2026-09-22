@@ -1640,12 +1640,14 @@ export default function PriseStatsProPage() {
     .filter((row) => row.category === 'system')
     .sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0));
   const activeConfiguredSystems = configuredSystemRows.filter((row) => row.is_active !== false);
-  const systemeButtons = (configuredSystemRows.length
-    ? activeConfiguredSystems.map((row) => ({ id: row.key, label: row.label, ic: row.emoji || '🏀' }))
-    : SYSTEMES_JEU.map((s) => {
-        const mapped = systemForSlot(s.id);
-        return { id: s.id, label: mapped ? mapped.title : s.label, ic: s.ic };
-      })).filter((s) => profileAllowsButton('system', s.id));
+  const systemeButtons = (playbookId && playbookSystems.length
+    ? playbookSystems.map((system) => ({ id: `playbook:${system.id}`, label: system.title, ic: '🏀' }))
+    : configuredSystemRows.length
+      ? activeConfiguredSystems.map((row) => ({ id: row.key, label: row.label, ic: row.emoji || '🏀' }))
+      : SYSTEMES_JEU.map((s) => {
+          const mapped = systemForSlot(s.id);
+          return { id: s.id, label: mapped ? mapped.title : s.label, ic: s.ic };
+        })).filter((s) => profileAllowsButton('system', s.id));
 
 
   const allCodingRowsFor = (category: string): CodingButtonCfg[] => {
@@ -2257,8 +2259,70 @@ export default function PriseStatsProPage() {
   const [historyFiltersOpen, setHistoryFiltersOpen] = useState(false);
   const [historyExpanded, setHistoryExpanded] = useState<Record<string, boolean>>({});
   const [favoriteClips, setFavoriteClips] = useState<Record<string, boolean>>({});
-  const toggleFavoriteClip = (clipId: string) =>
-    setFavoriteClips((current) => ({ ...current, [clipId]: !current[clipId] }));
+
+  // Les étoiles de l'analyse vidéo alimentent la même bibliothèque persistante
+  // que MontageStudio. On conserve l'état visuel par mini-clip, mais Supabase
+  // référence l'action réelle afin que le clip réapparaisse dans Montage.
+  const toggleFavoriteClip = async (clipId: string) => {
+    const wasFavorite = Boolean(favoriteClips[clipId]);
+    setFavoriteClips((current) => ({ ...current, [clipId]: !wasFavorite }));
+
+    const clientActionId = String(clipId || '').split('::')[0];
+    if (!clientActionId) return;
+
+    try {
+      const supabase = createClient();
+      const { data: { user } } = await supabase.auth.getUser();
+      const favoriteTeamId = String(activeTeamId || teamId || '');
+      if (!user?.id || !favoriteTeamId) throw new Error('Équipe ou utilisateur introuvable.');
+
+      // Les actions Live utilisent souvent client_action_id côté interface alors
+      // que Montage travaille avec l'id Supabase. On résout donc l'id réel ici.
+      let actionRow: { id: string } | null = null;
+      const byClient = await supabase
+        .from('match_actions')
+        .select('id')
+        .eq('client_action_id', clientActionId)
+        .eq('team_id', favoriteTeamId)
+        .maybeSingle();
+      if (!byClient.error && byClient.data?.id) actionRow = byClient.data as { id: string };
+
+      if (!actionRow && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(clientActionId)) {
+        const byId = await supabase
+          .from('match_actions')
+          .select('id')
+          .eq('id', clientActionId)
+          .eq('team_id', favoriteTeamId)
+          .maybeSingle();
+        if (!byId.error && byId.data?.id) actionRow = byId.data as { id: string };
+      }
+
+      if (!actionRow?.id) throw new Error('Cette action doit être enregistrée avant de pouvoir être ajoutée aux favoris Montage.');
+
+      if (wasFavorite) {
+        const { error } = await supabase
+          .from('livestat_clip_favorites')
+          .delete()
+          .eq('user_id', user.id)
+          .eq('team_id', favoriteTeamId)
+          .eq('action_id', actionRow.id);
+        if (error) throw error;
+        flash('Retiré des favoris Montage');
+      } else {
+        const { error } = await supabase
+          .from('livestat_clip_favorites')
+          .upsert(
+            { user_id: user.id, team_id: favoriteTeamId, action_id: actionRow.id },
+            { onConflict: 'user_id,team_id,action_id' },
+          );
+        if (error) throw error;
+        flash('★ Clip ajouté aux favoris Montage');
+      }
+    } catch (error: any) {
+      setFavoriteClips((current) => ({ ...current, [clipId]: wasFavorite }));
+      flash(error?.message || 'Impossible de mettre à jour les favoris Montage');
+    }
+  };
   const [historyAdvancedFilters, setHistoryAdvancedFilters] = useState<{
     contexts: string[];
     systems: string[];
@@ -2435,7 +2499,7 @@ export default function PriseStatsProPage() {
     // actions codées soient disponibles côté MontageStudio/Supabase.
     try { persistProjectStateRef.current?.(); } catch { /* noop */ }
 
-    const url = `/montages${params.toString() ? `?${params.toString()}` : ''}`;
+    const url = `/montage${params.toString() ? `?${params.toString()}` : ''}`;
     const popup = window.open(url, 'mybasket-montage-studio');
     if (!popup) {
       // Safari peut bloquer les popups : dans ce cas on ouvre dans l'onglet courant.
@@ -3329,12 +3393,14 @@ export default function PriseStatsProPage() {
     possessionEndOverrideRef.current = null;
     // AJOUT §2/§6/§7 · on fige sur l'action les infos système + possession + playbook,
     // pour qu'elles soient identiques partout (state, Supabase, exports, project_state).
-    const mappedSys = systemForSlot(d.systemeJeu);
+    const directPlaybookSystemId = d.systemeJeu?.startsWith('playbook:') ? d.systemeJeu.slice('playbook:'.length) : null;
+    const directPlaybookSystem = directPlaybookSystemId ? playbookSystems.find((system) => system.id === directPlaybookSystemId) : undefined;
+    const mappedSys = directPlaybookSystem ?? systemForSlot(d.systemeJeu);
     const configuredSys = (codingDb ?? []).find((row) => row.category === 'system' && row.key === d.systemeJeu);
     const enrich: Partial<StatA> = {
       playbookId: playbookId || null,
       systemeSlot: d.systemeJeu || null,
-      systemeId: (systemMapping[d.systemeJeu] as string | undefined) ?? null,
+      systemeId: directPlaybookSystem?.id ?? (systemMapping[d.systemeJeu] as string | undefined) ?? null,
       systemeName: mappedSys?.title
         ?? configuredSys?.label
         ?? (SYSTEMES_JEU.find((s) => s.id === d.systemeJeu)?.label ?? null),
@@ -5070,21 +5136,21 @@ export default function PriseStatsProPage() {
                         : 'Renseigne date, équipe et adversaire'}
               </div>
             </div>
-            <div className="cm-start-fixed">
+            {!showCodingSettings && <div className="cm-start-fixed">
               <button className="cm-start cm-start-main" disabled={!canStart} onClick={startMatch}>▶ DÉMARRER LE MATCH</button>
-            </div>
+            </div>}
           </footer>
         </div>
 
         {/* Bouton fixe hors footer : toujours visible sur l’écran de création */}
-        <button
+        {!showCodingSettings && <button
           type="button"
           className="cm-start-fixed-only"
           disabled={!canStart}
           onClick={startMatch}
         >
           ▶ DÉMARRER LE MATCH
-        </button>
+        </button>}
 
         <LiveCodingSettingsModal
           open={showCodingSettings}
@@ -5093,6 +5159,8 @@ export default function PriseStatsProPage() {
           workflow={workflowPrefs}
           onWorkflowChange={setWorkflowPrefs}
           groups={codingSettingsGroups}
+          playbookId={playbookId}
+          playbookSystems={playbookSystems}
           profiles={codingProfiles}
           selectedProfileId={selectedCodingProfileId}
           onSaveProfile={saveCodingProfile}
@@ -5866,6 +5934,8 @@ export default function PriseStatsProPage() {
         workflow={workflowPrefs}
         onWorkflowChange={setWorkflowPrefs}
         groups={codingSettingsGroups}
+        playbookId={playbookId}
+        playbookSystems={playbookSystems}
         profiles={codingProfiles}
         selectedProfileId={selectedCodingProfileId}
         onSaveProfile={saveCodingProfile}

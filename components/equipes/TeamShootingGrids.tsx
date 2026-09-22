@@ -170,6 +170,19 @@ function shotGroup(name:string):ShotGroup{
 function spotLabel(name:string){
   return name.replace(/^(2PTS|3PTS|LF|AUTRES)\s*[·:\\-]\s*/i,"").trim();
 }
+function compactSpotLabel(name:string){
+  const group=shotGroup(name);
+  const raw=spotLabel(name);
+  const n=raw.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g,"");
+  const side=n.includes("droit")?"D":n.includes("gauch")?"G":"";
+  let zone=raw.toUpperCase();
+  if(n.includes("short corner")) zone=`SC ${side}`.trim();
+  else if(n.includes("corner")) zone=`CORNER ${side}`.trim();
+  else if(n.includes("45")) zone=`45° ${side}`.trim();
+  else if(n.includes("axe")||n.includes("face")) zone="AXE";
+  else if(n.includes("aile")) zone=`AILE ${side}`.trim();
+  return group==="AUTRES"?zone:group==="LF"?"LF":`${group} · ${zone}`;
+}
 function withShotGroup(name:string,group:ShotGroup){
   const label=spotLabel(name)||"Nouveau tir";
   return `${group} · ${label}`;
@@ -984,7 +997,7 @@ export default function TeamShootingGrids({
                       </div>
                       <div style={{overflowX:"auto"}}>
                         <table style={{borderCollapse:"collapse",width:"100%",minWidth:760,fontSize:10}}>
-                          <thead><tr><th style={{...th,textAlign:"left"}}>Joueur</th>{displayRows.map(r=><th key={r.id} style={th}>{spotLabel(r.name)}</th>)}<th style={th}>Marqués</th><th style={th}>Tentés</th><th style={th}>%</th></tr></thead>
+                          <thead><tr><th style={{...th,textAlign:"left"}}>Joueur</th>{displayRows.map(r=><th key={r.id} style={th}>{compactSpotLabel(r.name)}</th>)}<th style={th}>TM</th><th style={th}>TT</th><th style={th}>%</th></tr></thead>
                           <tbody>{uniquePids.map(pid=>{
                             let tm=0,ta=0;
                             const byRow=displayRows.map(row=>{let m=0,a=0;for(const session of group.items){const r=results[session.id]?.[pid]?.[row.id];if(r){m+=safeInt(r.made);a+=safeInt(r.attempted)}}tm+=m;ta+=a;return {row,m,a}});
@@ -1008,7 +1021,7 @@ export default function TeamShootingGrids({
                     </div>
                   </div>
                   <div style={{overflowX:"auto"}}><table style={{borderCollapse:"collapse",width:"100%",minWidth:900,fontSize:10}}>
-                    <thead><tr><th style={{...th,textAlign:"left"}}>Joueur</th><th style={th}>Sessions</th>{shootingRows.map(r=><th key={r.id} style={th}>{spotLabel(r.name)}</th>)}<th style={th}>Tirs {recapMode==="average"?"marqués moy.":"marqués"}</th><th style={th}>Tirs {recapMode==="average"?"tentés moy.":"tentés"}</th><th style={th}>Tirs %</th><th style={th}>LF {recapMode==="average"?"moy.":"total"}</th><th style={th}>LF %</th></tr></thead>
+                    <thead><tr><th style={{...th,textAlign:"left"}}>Joueur</th><th style={th}>Sessions</th>{shootingRows.map(r=><th key={r.id} style={th}>{compactSpotLabel(r.name)}</th>)}<th style={th}>{recapMode==="average"?"TM moy.":"TM"}</th><th style={th}>{recapMode==="average"?"TT moy.":"TT"}</th><th style={th}>%</th><th style={th}>LF {recapMode==="average"?"moy.":"total"}</th><th style={th}>LF %</th></tr></thead>
                     <tbody>{Object.keys(aggregate).map(pid=>{
                       const player=players.find(p=>String(p.id)===pid);
                       const count=sessions.filter(s=>(sessionPlayers[s.id]||[]).includes(pid)).length||1;
@@ -1055,7 +1068,7 @@ const primary:React.CSSProperties={border:0,borderRadius:9,background:BORDEAUX,c
 const secondary:React.CSSProperties={border:`1px solid ${BORDEAUX}`,borderRadius:9,background:"#fff",color:BORDEAUX,padding:"7px 10px",fontWeight:900,cursor:"pointer"};
 const danger:React.CSSProperties={...secondary,color:"#A72D26",borderColor:"#E5BDBA"};
 const chip:React.CSSProperties={border:`1px solid ${BORDER}`,borderRadius:999,background:"#fff",color:BORDEAUX,padding:"7px 10px",fontWeight:900,whiteSpace:"nowrap",cursor:"pointer"};
-const activeChip:React.CSSProperties={background:BORDEAUX,color:"#fff",borderColor:BORDEAUX};
+const activeChip:React.CSSProperties={background:BORDEAUX,color:"#fff",border:`1px solid ${BORDEAUX}`};
 const modeCard:React.CSSProperties={display:"grid",gap:5,textAlign:"left",border:`1px solid ${BORDER}`,borderRadius:12,background:"#fff",padding:12,cursor:"pointer",color:TEXT};
 const modeActive:React.CSSProperties={borderColor:GOLD,background:"#FFF8E9",boxShadow:"inset 0 0 0 1px #E7BB63"};
 const playerChip:React.CSSProperties={border:`1px solid ${BORDER}`,borderRadius:999,background:"#fff",color:TEXT,padding:"6px 9px",fontSize:10,fontWeight:800,cursor:"pointer"};

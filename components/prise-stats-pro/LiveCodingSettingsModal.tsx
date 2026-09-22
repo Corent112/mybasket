@@ -2,6 +2,8 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { createClient } from '@/lib/supabase/client';
+import type { PlaybookSeries } from '@/lib/playbook-series';
+import type { PlaybookSystem } from '@/lib/playbook';
 
 export type LiveWorkflowPrefs = {
   system: boolean;
@@ -66,6 +68,8 @@ type Props = {
   workflow: LiveWorkflowPrefs;
   onWorkflowChange: (next: LiveWorkflowPrefs) => void;
   groups: CodingButtonGroup[];
+  playbookId?: string;
+  playbookSystems?: PlaybookSystem[];
   profiles: LiveCodingProfile[];
   selectedProfileId?: string;
   onSaveProfile: (profile: LiveCodingProfile) => void;
@@ -119,6 +123,8 @@ export default function LiveCodingSettingsModal({
   workflow,
   onWorkflowChange,
   groups,
+  playbookId = '',
+  playbookSystems = [],
   profiles,
   selectedProfileId = '',
   onSaveProfile,
@@ -134,6 +140,8 @@ export default function LiveCodingSettingsModal({
   });
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState('');
+  const [playbookSeries, setPlaybookSeries] = useState<PlaybookSeries[]>([]);
+  const [seriesMembership, setSeriesMembership] = useState<Record<string, string>>({});
   // Les blocs optionnels peuvent être retirés/réajoutés. Leur état est
   // sauvegardé par équipe et synchronisé avec le chemin de codage.
   const [hiddenBlocks, setHiddenBlocks] = useState<CodingButtonGroupKey[]>([]);
@@ -172,6 +180,72 @@ export default function LiveCodingSettingsModal({
     setInitialKeys(keys);
     setMessage('');
   }, [open, initialTab, groups, profiles, selectedProfileId]);
+
+  useEffect(() => {
+    if (!open || !playbookId) {
+      setPlaybookSeries([]);
+      setSeriesMembership({});
+      return;
+    }
+    let alive = true;
+    const loadPlaybookSeries = async () => {
+      try {
+        // Le constructeur est déjà affiché dans une session authentifiée.
+        // On laisse donc les RLS Supabase filtrer les lignes au lieu d'appeler
+        // auth.getUser() plusieurs fois à l'ouverture de la modale.
+        // Cela évite les AuthRetryableFetchError / "Load failed" ajoutés par
+        // le chargement des séries, sans modifier la logique d'auth globale.
+        const supabase = createClient();
+        const { data: seriesRows, error: seriesError } = await supabase
+          .from('playbook_series')
+          .select('*')
+          .eq('playbook_id', playbookId)
+          .order('position')
+          .order('created_at');
+        if (seriesError) throw seriesError;
+
+        const series = (seriesRows ?? []).map((row: any) => ({
+          ...row,
+          tags: Array.isArray(row.tags) ? row.tags.filter((tag: unknown): tag is string => typeof tag === 'string' && !!tag.trim()) : [],
+        })) as PlaybookSeries[];
+
+        let membership: Record<string, string> = {};
+        if (series.length) {
+          const { data: membershipRows, error: membershipError } = await supabase
+            .from('playbook_series_systems')
+            .select('series_id,playbook_system_id')
+            .in('series_id', series.map((serie) => serie.id));
+          if (membershipError) throw membershipError;
+          membership = Object.fromEntries(
+            (membershipRows ?? []).map((row: any) => [row.playbook_system_id, row.series_id]),
+          );
+        }
+
+        if (!alive) return;
+        setPlaybookSeries(series);
+        setSeriesMembership(membership);
+      } catch {
+        if (!alive) return;
+        setPlaybookSeries([]);
+        setSeriesMembership({});
+      }
+    };
+
+    void loadPlaybookSeries();
+    return () => { alive = false; };
+  }, [open, playbookId]);
+
+  const groupedPlaybookSystems = useMemo(() => {
+    if (!playbookId || !playbookSystems.length) return [];
+    const groups = playbookSeries.map((serie) => ({
+      id: serie.id,
+      title: serie.name,
+      systems: playbookSystems.filter((system) => seriesMembership[system.id] === serie.id),
+    }));
+    const withoutSeries = playbookSystems.filter((system) => !seriesMembership[system.id]);
+    if (withoutSeries.length) groups.push({ id: '__without_series__', title: 'SANS SÉRIE', systems: withoutSeries });
+    return groups.filter((group) => group.systems.length > 0);
+  }, [playbookId, playbookSeries, playbookSystems, seriesMembership]);
 
   const groupMap = useMemo(() => new Map(groups.map((g) => [g.key, g])), [groups]);
 
@@ -391,7 +465,7 @@ export default function LiveCodingSettingsModal({
     ['temps', 'Temps fort', 'Alimente analyses, filtres et clips.'],
     ['player', 'Joueur', 'Facultatif en collectif, obligatoire quand le mode individuel l’exige.'],
     ['coverage', 'Défense sur écran', 'Étape spécifique aux pick & roll.'],
-    ['zone', 'Shot chart en Live', 'Si activée : type/résultat puis zone. En post-match et hors ligne, la Shot chart reste obligatoire.'],
+    ['zone', 'Shot chart', 'Facultative, y compris en Live individuel.'],
     ['rebound', 'Rebond', 'Après un tir raté, demande RO/RD si activé.'],
     ['assist', 'Passe décisive', 'Après panier marqué, joueurs ou Skip.'],
   ];
@@ -536,7 +610,7 @@ export default function LiveCodingSettingsModal({
                     <div className="lcsBlockHead">
                       <div><b>{group.icon} {group.title}</b><small>{visible.filter((r) => r.is_active !== false && r.included !== false).length} utilisé(s)</small></div>
                       <div className="lcsBlockHeadActions">
-                        {group.allowAdd !== false && <button onClick={() => add(group.key)}>＋ Bouton</button>}
+                        {group.allowAdd !== false && !(group.key === 'system' && playbookId) && <button onClick={() => add(group.key)}>＋ Bouton</button>}
                         <button
                           type="button"
                           className="removeBlock"
@@ -547,22 +621,85 @@ export default function LiveCodingSettingsModal({
                         </button>
                       </div>
                     </div>
-                    <div className="lcsCodingGrid">
-                      {visible.map((r, index) => (
-                        <div className={`lcsTile ${r.is_active === false || r.included === false ? 'off' : ''}`} key={`${r.category}-${r.key}`}>
-                          <div className="lcsTileEdit">
-                            <input className="emoji" value={r.emoji || ''} onChange={(e) => patch(r.key, r.category, { emoji: e.target.value })} />
-                            <input className="label" value={r.label} onChange={(e) => patch(r.key, r.category, { label: e.target.value })} />
+                    {group.key === 'system' && playbookId ? (
+                      <div className="lcsSeriesList">
+                        {groupedPlaybookSystems.length ? groupedPlaybookSystems.map((serie) => (
+                          <div className="lcsSeries" key={serie.id}>
+                            <div className="lcsSeriesHead"><b>▼ {serie.title.toUpperCase()}</b><span>{serie.systems.length}</span></div>
+                            <div className="lcsCodingGrid">
+                              {serie.systems.map((system) => (
+                                <div className="lcsTile lcsPlaybookTile" key={system.id}>
+                                  <span className="lcsPlaybookIcon">🏀</span>
+                                  <b>{system.title}</b>
+                                </div>
+                              ))}
+                            </div>
                           </div>
-                          <div className="lcsTileTools">
-                            <label><input type="checkbox" disabled={r.is_active === false} checked={r.is_active !== false && r.included !== false} onChange={(e) => patch(r.key, r.category, { included: e.target.checked })} /> utiliser</label>
-                            <button disabled={index === 0} onClick={() => move(r, -1)}>←</button>
-                            <button disabled={index === visible.length - 1} onClick={() => move(r, 1)}>→</button>
-                            <button className="trash" onClick={() => remove(r)}>×</button>
+                        )) : <div className="lcsEmptyPlaybook">Aucun système dans ce Playbook.</div>}
+                        <div className="lcsPlaybookHint">Les séries et systèmes viennent directement du Playbook associé au match. Leur nom et leur classement se modifient dans le Playbook, pas dans les catégories de codage.</div>
+                      </div>
+                    ) : group.key === 'system' ? (
+
+                      <div className="lcsSeriesList">
+                        {[
+                          { key: 'jeu-courant', title: 'JEU COURANT', test: (r: Editable) => /contre|transition|libre/i.test(`${r.key} ${r.label}`) },
+                          { key: 'systemes', title: 'SYSTÈMES', test: (r: Editable) => /systeme|système/i.test(`${r.key} ${r.label}`) },
+                          { key: 'ato', title: 'ATO', test: (r: Editable) => /(^|[-_ ])ato|temps.?mort/i.test(`${r.key} ${r.label}`) },
+                          { key: 'slob', title: 'SLOB · REMISE EN JEU CÔTÉ', test: (r: Editable) => /slob/i.test(`${r.key} ${r.label}`) },
+                          { key: 'blob', title: 'BLOB · REMISE EN JEU LIGNE DE FOND', test: (r: Editable) => /blob/i.test(`${r.key} ${r.label}`) },
+                        ].map((serie) => {
+                          const serieRows = visible.filter(serie.test);
+                          if (!serieRows.length) return null;
+                          return (
+                            <div className="lcsSeries" key={serie.key}>
+                              <div className="lcsSeriesHead"><b>{serie.title}</b><span>{serieRows.length}</span></div>
+                              <div className="lcsCodingGrid">
+                                {serieRows.map((r) => {
+                                  const index = visible.findIndex((item) => item.key === r.key);
+                                  return (
+                                    <div className={`lcsTile ${r.is_active === false || r.included === false ? 'off' : ''}`} key={`${r.category}-${r.key}`}>
+                                      <div className="lcsTileEdit">
+                                        <input className="emoji" value={r.emoji || ''} onChange={(e) => patch(r.key, r.category, { emoji: e.target.value })} />
+                                        <input className="label" value={r.label} onChange={(e) => patch(r.key, r.category, { label: e.target.value })} />
+                                      </div>
+                                      <div className="lcsTileTools">
+                                        <label><input type="checkbox" disabled={r.is_active === false} checked={r.is_active !== false && r.included !== false} onChange={(e) => patch(r.key, r.category, { included: e.target.checked })} /> utiliser</label>
+                                        <button disabled={index === 0} onClick={() => move(r, -1)}>←</button>
+                                        <button disabled={index === visible.length - 1} onClick={() => move(r, 1)}>→</button>
+                                        <button className="trash" onClick={() => remove(r)}>×</button>
+                                      </div>
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            </div>
+                          );
+                        })}
+                        {(() => {
+                          const classified = visible.filter((r) => /contre|transition|libre|systeme|système|(^|[-_ ])ato|temps.?mort|slob|blob/i.test(`${r.key} ${r.label}`));
+                          const otherRows = visible.filter((r) => !classified.some((x) => x.key === r.key));
+                          if (!otherRows.length) return null;
+                          return <div className="lcsSeries"><div className="lcsSeriesHead"><b>AUTRES SYSTÈMES</b><span>{otherRows.length}</span></div><div className="lcsCodingGrid">{otherRows.map((r) => { const index = visible.findIndex((item) => item.key === r.key); return <div className={`lcsTile ${r.is_active === false || r.included === false ? 'off' : ''}`} key={`${r.category}-${r.key}`}><div className="lcsTileEdit"><input className="emoji" value={r.emoji || ''} onChange={(e) => patch(r.key, r.category, { emoji: e.target.value })} /><input className="label" value={r.label} onChange={(e) => patch(r.key, r.category, { label: e.target.value })} /></div><div className="lcsTileTools"><label><input type="checkbox" disabled={r.is_active === false} checked={r.is_active !== false && r.included !== false} onChange={(e) => patch(r.key, r.category, { included: e.target.checked })} /> utiliser</label><button disabled={index === 0} onClick={() => move(r, -1)}>←</button><button disabled={index === visible.length - 1} onClick={() => move(r, 1)}>→</button><button className="trash" onClick={() => remove(r)}>×</button></div></div>; })}</div></div>;
+                        })()}
+                      </div>
+                    ) : (
+                      <div className="lcsCodingGrid">
+                        {visible.map((r, index) => (
+                          <div className={`lcsTile ${r.is_active === false || r.included === false ? 'off' : ''}`} key={`${r.category}-${r.key}`}>
+                            <div className="lcsTileEdit">
+                              <input className="emoji" value={r.emoji || ''} onChange={(e) => patch(r.key, r.category, { emoji: e.target.value })} />
+                              <input className="label" value={r.label} onChange={(e) => patch(r.key, r.category, { label: e.target.value })} />
+                            </div>
+                            <div className="lcsTileTools">
+                              <label><input type="checkbox" disabled={r.is_active === false} checked={r.is_active !== false && r.included !== false} onChange={(e) => patch(r.key, r.category, { included: e.target.checked })} /> utiliser</label>
+                              <button disabled={index === 0} onClick={() => move(r, -1)}>←</button>
+                              <button disabled={index === visible.length - 1} onClick={() => move(r, 1)}>→</button>
+                              <button className="trash" onClick={() => remove(r)}>×</button>
+                            </div>
                           </div>
-                        </div>
-                      ))}
-                    </div>
+                        ))}
+                      </div>
+                    )}
                   </section>
                 );
               })}
@@ -572,7 +709,7 @@ export default function LiveCodingSettingsModal({
         )}
       </div>
       <style jsx>{`
-        .lcsOverlay{position:fixed;inset:0;z-index:5000;background:rgba(3,7,15,.80);display:flex;align-items:center;justify-content:center;padding:18px}.lcsCard{width:min(1320px,98vw);max-height:94vh;overflow:hidden;border:1px solid #33415a;border-radius:16px;background:#0b1321;color:#eef3fb;box-shadow:0 24px 80px rgba(0,0,0,.55);display:flex;flex-direction:column}.lcsHead{display:flex;align-items:center;justify-content:space-between;padding:14px 18px;border-bottom:1px solid #27344a}.lcsHead>div{display:grid;gap:3px}.lcsHead b{font-size:16px}.lcsHead span{font-size:11px;color:#93a0b5}.lcsHead button{width:34px;height:34px;border:1px solid #33415a;border-radius:9px;background:#111c2e;color:#fff;font-size:20px}.lcsTabs,.lcsPresets{display:flex;gap:8px;flex-wrap:wrap}.lcsTabs{padding:10px 16px;border-bottom:1px solid #27344a}.lcsTabs button,.lcsPresets button{border:1px solid #33415a;border-radius:9px;background:#111c2e;color:#aeb8ca;padding:8px 11px;font-weight:850;cursor:pointer}.lcsTabs button.on{border-color:#d4a24c;color:#f4c765;background:rgba(212,162,76,.1)}.lcsBody{padding:14px 16px 16px;overflow:auto}.lcsInfo{margin:8px 0 12px;padding:9px 10px;border:1px solid #2b3950;border-radius:9px;background:#0e1828;color:#a7b2c5;font-size:11px}.lcsProfileBar{display:grid;grid-template-columns:minmax(190px,.9fr) minmax(220px,1.2fr) auto auto;gap:8px;align-items:end;margin-bottom:10px}.lcsProfileBar label{display:grid;gap:5px}.lcsProfileBar label>span{font-size:9px;color:#8794aa;font-weight:900;text-transform:uppercase}.lcsProfileBar select,.lcsProfileBar input{height:38px;border:1px solid #34415a;border-radius:9px;background:#0d1727;color:#fff;padding:0 10px}.saveProfile,.deleteProfile{height:38px;white-space:nowrap;border:1px solid #d4a24c;border-radius:9px;background:rgba(212,162,76,.12);color:#f3c862;font-weight:900;padding:0 12px}.deleteProfile{border-color:#61313a;color:#ff8a96;background:#1c1117}.lcsWorkflow{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}.lcsWorkflowRow{display:flex;gap:10px;align-items:flex-start;border:1px solid #29364c;border-radius:10px;background:#101a2a;padding:11px}.lcsWorkflowRow input{margin-top:3px}.lcsWorkflowRow span{display:grid;gap:3px}.lcsWorkflowRow b{font-size:12px}.lcsWorkflowRow small{color:#8491a6;font-size:10px}.lcsPath{margin-top:12px;display:flex;gap:6px;align-items:center;flex-wrap:wrap}.lcsPath>b{margin-right:4px;color:#d4a24c}.lcsPath>span{border:1px solid #34415a;border-radius:999px;padding:5px 8px;background:#111b2d;font-size:10px}.lcsIndividualPaths{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:12px}.lcsIndividualPaths>div{display:grid;gap:4px;border:1px solid #2d3b52;border-radius:10px;background:#101a2a;padding:10px}.lcsIndividualPaths b{font-size:11px;color:#f1c45e}.lcsIndividualPaths span{font-size:10px;color:#9aa7bc}.lcsBlocks{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}.lcsBlock{border:1px solid #2b3950;border-radius:12px;background:#0f1929;padding:10px;min-width:0}.lcsBlockHead{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:8px}.lcsBlockHead>div{display:grid;gap:2px}.lcsBlockHead b{font-size:12px}.lcsBlockHead small{font-size:9px;color:#78869c}.lcsBlockHead button{border:1px solid #d4a24c;border-radius:8px;background:rgba(212,162,76,.1);color:#f4c765;padding:6px 9px;font-size:10px;font-weight:900}.lcsCodingGrid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:7px}.lcsTile{min-width:0;border:1px solid #35425a;border-radius:10px;background:#121d30;padding:7px;display:grid;gap:6px}.lcsTile.off{opacity:.48}.lcsTileEdit{display:grid;grid-template-columns:36px minmax(0,1fr);gap:5px}.lcsTile input.emoji,.lcsTile input.label{min-width:0;height:32px;border:1px solid #3a4962;border-radius:7px;background:#0b1422;color:#fff}.lcsTile input.emoji{text-align:center;padding:0}.lcsTile input.label{padding:0 7px;font-size:10px;font-weight:850}.lcsTileTools{display:grid;grid-template-columns:1fr 26px 26px 26px;gap:4px;align-items:center}.lcsTileTools label{font-size:8px;color:#98a5b8;white-space:nowrap}.lcsTileTools button{width:26px;height:25px;border:1px solid #39475e;border-radius:6px;background:#101a2b;color:#dce5f4;font-size:10px}.lcsTileTools button:disabled{opacity:.25}.lcsTileTools .trash{color:#ff8a96}.lcsFoot{position:sticky;bottom:-16px;background:#0b1321;border-top:1px solid #27344a;margin:14px -16px -16px;padding:10px 16px;display:flex;align-items:center;justify-content:space-between;gap:12px}.lcsFoot span{font-size:10px;color:#9eabc0}.lcsFoot .save{border:1px solid #d4a24c;border-radius:9px;background:#d4a24c;color:#17110b;padding:9px 13px;font-weight:900}@media(max-width:900px){.lcsBlocks,.lcsIndividualPaths,.lcsWorkflow{grid-template-columns:1fr}.lcsProfileBar{grid-template-columns:1fr 1fr}.lcsProfileBar .grow{grid-column:2}.lcsCodingGrid{grid-template-columns:repeat(2,minmax(0,1fr))}}@media(max-width:620px){.lcsOverlay{padding:6px}.lcsProfileBar{grid-template-columns:1fr}.lcsProfileBar .grow{grid-column:auto}.lcsCodingGrid{grid-template-columns:1fr}.lcsFoot{align-items:stretch;flex-direction:column}.lcsFoot .save{width:100%}}
+        .lcsOverlay{position:fixed;inset:0;z-index:2147483000;background:rgba(3,7,15,.80);display:flex;align-items:center;justify-content:center;padding:18px}.lcsCard{width:min(1320px,98vw);max-height:94vh;overflow:hidden;border:1px solid #33415a;border-radius:16px;background:#0b1321;color:#eef3fb;box-shadow:0 24px 80px rgba(0,0,0,.55);display:flex;flex-direction:column}.lcsHead{display:flex;align-items:center;justify-content:space-between;padding:14px 18px;border-bottom:1px solid #27344a}.lcsHead>div{display:grid;gap:3px}.lcsHead b{font-size:16px}.lcsHead span{font-size:11px;color:#93a0b5}.lcsHead button{width:34px;height:34px;border:1px solid #33415a;border-radius:9px;background:#111c2e;color:#fff;font-size:20px}.lcsTabs,.lcsPresets{display:flex;gap:8px;flex-wrap:wrap}.lcsTabs{padding:10px 16px;border-bottom:1px solid #27344a}.lcsTabs button,.lcsPresets button{border:1px solid #33415a;border-radius:9px;background:#111c2e;color:#aeb8ca;padding:8px 11px;font-weight:850;cursor:pointer}.lcsTabs button.on{border-color:#d4a24c;color:#f4c765;background:rgba(212,162,76,.1)}.lcsBody{padding:14px 16px 16px;overflow:auto}.lcsInfo{margin:8px 0 12px;padding:9px 10px;border:1px solid #2b3950;border-radius:9px;background:#0e1828;color:#a7b2c5;font-size:11px}.lcsProfileBar{display:grid;grid-template-columns:minmax(190px,.9fr) minmax(220px,1.2fr) auto auto;gap:8px;align-items:end;margin-bottom:10px}.lcsProfileBar label{display:grid;gap:5px}.lcsProfileBar label>span{font-size:9px;color:#8794aa;font-weight:900;text-transform:uppercase}.lcsProfileBar select,.lcsProfileBar input{height:38px;border:1px solid #34415a;border-radius:9px;background:#0d1727;color:#fff;padding:0 10px}.saveProfile,.deleteProfile{height:38px;white-space:nowrap;border:1px solid #d4a24c;border-radius:9px;background:rgba(212,162,76,.12);color:#f3c862;font-weight:900;padding:0 12px}.deleteProfile{border-color:#61313a;color:#ff8a96;background:#1c1117}.lcsWorkflow{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}.lcsWorkflowRow{display:flex;gap:10px;align-items:flex-start;border:1px solid #29364c;border-radius:10px;background:#101a2a;padding:11px}.lcsWorkflowRow input{margin-top:3px}.lcsWorkflowRow span{display:grid;gap:3px}.lcsWorkflowRow b{font-size:12px}.lcsWorkflowRow small{color:#8491a6;font-size:10px}.lcsPath{margin-top:12px;display:flex;gap:6px;align-items:center;flex-wrap:wrap}.lcsPath>b{margin-right:4px;color:#d4a24c}.lcsPath>span{border:1px solid #34415a;border-radius:999px;padding:5px 8px;background:#111b2d;font-size:10px}.lcsIndividualPaths{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:12px}.lcsIndividualPaths>div{display:grid;gap:4px;border:1px solid #2d3b52;border-radius:10px;background:#101a2a;padding:10px}.lcsIndividualPaths b{font-size:11px;color:#f1c45e}.lcsIndividualPaths span{font-size:10px;color:#9aa7bc}.lcsBlocks{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}.lcsBlock{border:1px solid #2b3950;border-radius:12px;background:#0f1929;padding:10px;min-width:0}.lcsBlockHead{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:8px}.lcsBlockHead>div{display:grid;gap:2px}.lcsBlockHead b{font-size:12px}.lcsBlockHead small{font-size:9px;color:#78869c}.lcsBlockHead button{border:1px solid #d4a24c;border-radius:8px;background:rgba(212,162,76,.1);color:#f4c765;padding:6px 9px;font-size:10px;font-weight:900}.lcsSeriesList{display:grid;gap:10px}.lcsSeries{border:1px solid #27364d;border-radius:10px;background:#0c1625;padding:8px}.lcsSeriesHead{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:7px;padding:0 2px}.lcsSeriesHead b{font-size:9px;letter-spacing:.07em;color:#f0c45f}.lcsPlaybookTile{grid-template-columns:28px minmax(0,1fr);align-items:center;min-height:46px}.lcsPlaybookTile b{font-size:10px;line-height:1.25}.lcsPlaybookIcon{font-size:16px;text-align:center}.lcsPlaybookHint,.lcsEmptyPlaybook{border:1px dashed #34445d;border-radius:9px;padding:9px;color:#8f9db2;font-size:9px;line-height:1.4}.lcsSeriesHead span{min-width:20px;height:20px;display:grid;place-items:center;border:1px solid #34445d;border-radius:999px;color:#9eabc0;font-size:9px}.lcsCodingGrid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:7px}.lcsTile{min-width:0;border:1px solid #35425a;border-radius:10px;background:#121d30;padding:7px;display:grid;gap:6px}.lcsTile.off{opacity:.48}.lcsTileEdit{display:grid;grid-template-columns:36px minmax(0,1fr);gap:5px}.lcsTile input.emoji,.lcsTile input.label{min-width:0;height:32px;border:1px solid #3a4962;border-radius:7px;background:#0b1422;color:#fff}.lcsTile input.emoji{text-align:center;padding:0}.lcsTile input.label{padding:0 7px;font-size:10px;font-weight:850}.lcsTileTools{display:grid;grid-template-columns:1fr 26px 26px 26px;gap:4px;align-items:center}.lcsTileTools label{font-size:8px;color:#98a5b8;white-space:nowrap}.lcsTileTools button{width:26px;height:25px;border:1px solid #39475e;border-radius:6px;background:#101a2b;color:#dce5f4;font-size:10px}.lcsTileTools button:disabled{opacity:.25}.lcsTileTools .trash{color:#ff8a96}.lcsFoot{position:sticky;bottom:-16px;background:#0b1321;border-top:1px solid #27344a;margin:14px -16px -16px;padding:10px 16px;display:flex;align-items:center;justify-content:space-between;gap:12px}.lcsFoot span{font-size:10px;color:#9eabc0}.lcsFoot .save{border:1px solid #d4a24c;border-radius:9px;background:#d4a24c;color:#17110b;padding:9px 13px;font-weight:900}@media(max-width:900px){.lcsBlocks,.lcsIndividualPaths,.lcsWorkflow{grid-template-columns:1fr}.lcsProfileBar{grid-template-columns:1fr 1fr}.lcsProfileBar .grow{grid-column:2}.lcsCodingGrid{grid-template-columns:repeat(2,minmax(0,1fr))}}@media(max-width:620px){.lcsOverlay{padding:6px}.lcsProfileBar{grid-template-columns:1fr}.lcsProfileBar .grow{grid-column:auto}.lcsCodingGrid{grid-template-columns:1fr}.lcsFoot{align-items:stretch;flex-direction:column}.lcsFoot .save{width:100%}}
 
         .lcsBlockManager{display:flex;align-items:center;justify-content:space-between;gap:12px;border:1px solid #29364b;background:#0e1727;border-radius:12px;padding:10px 12px;margin-bottom:10px}
         .lcsBlockManager>b{font-size:10px;color:#d4a24c;text-transform:uppercase;letter-spacing:.05em}

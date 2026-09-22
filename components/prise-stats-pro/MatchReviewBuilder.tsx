@@ -768,7 +768,7 @@ export default function MatchReviewBuilder({
                 <span className={`${styles.saveState} ${configurationDirty ? styles.saveStateDirty : styles.saveStateSaved}`}>
                   {configurationDirty ? '● Modifications non enregistrées' : configurationSavedAt ? '✓ Sauvegardé' : '✓ Configuration chargée'}
                 </span>
-                <button type="button" className={styles.globalSaveButton} onClick={() => saveConfiguration(false)} disabled={!configurationDirty}>
+                <button type="button" className={styles.globalSaveButton} onClick={() => saveConfiguration(false)}>
                   💾 Sauvegarder le Retour de match
                 </button>
                 <button type="button" className={styles.editorClose} aria-label="Fermer" onClick={() => setEditorOpen(false)}>×</button>
@@ -882,6 +882,9 @@ export default function MatchReviewBuilder({
                           ))}
                           <button type="button" onClick={() => addControlLogicStep(selectedBlock.id, selectedControl.id)}>＋ Étape</button>
                         </div>
+                        <button type="button" className={styles.globalSaveButton} onClick={() => saveConfiguration(false)}>
+                          💾 Enregistrer ce bouton et la configuration
+                        </button>
                       </>
                     )}
                     {!selectedBlock && <p>Sélectionne un bloc ou un bouton pour le modifier.</p>}

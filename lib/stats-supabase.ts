@@ -63,6 +63,7 @@ export type LiveMatchAction = {
   opponentPlayerId?: string | null;
   opponentPlayerName?: string | null;
   opponentPlayerNumber?: string | null;
+  evaluation?: 'positive' | 'negative' | null;
 
   playerId?: string | null;
   actionType?: string;
@@ -373,6 +374,7 @@ function buildActionRow(
     opponent_player_id: action.opponentPlayerId ?? null,
     opponent_player_name: action.opponentPlayerName ?? null,
     opponent_player_number: action.opponentPlayerNumber ?? null,
+    evaluation: action.evaluation ?? null,
     action_type: action.actionType || null,
     shot_type: action.shotType || null,
     shot_result: action.shotResult || null,
@@ -1001,6 +1003,7 @@ export async function saveLiveMatch(
       opponent_player_id: action.opponentPlayerId ?? null,
       opponent_player_name: action.opponentPlayerName ?? null,
       opponent_player_number: action.opponentPlayerNumber ?? null,
+      evaluation: action.evaluation ?? null,
       coverage: action.coverage || null,
       action_type: action.actionType || null,
       shot_type: action.shotType || null,
@@ -1439,6 +1442,7 @@ export function mapActionRowToLiveAction(row: Record<string, any>): LiveMatchAct
     opponentPlayerId: row.opponent_player_id ?? null,
     opponentPlayerName: row.opponent_player_name ?? null,
     opponentPlayerNumber: row.opponent_player_number ?? null,
+    evaluation: row.evaluation ?? null,
 
     playerId: row.player_id ?? null,
     actionType: row.action_type ?? undefined,

@@ -48,27 +48,47 @@ function ConnexionContent() {
     if (params.get("confirmed") === "1") {
       setInfo("Adresse e-mail confirmée. Tu peux maintenant te connecter.");
     }
+
+    if (params.get("password-updated") === "1") {
+      setTab("signin");
+      setInfo("Mot de passe modifié avec succès. Tu peux maintenant te connecter.");
+    }
   }, [params]);
 
   useEffect(() => {
-  let alive = true;
+    let alive = true;
 
-  async function checkSession() {
-    const result = await supabase.auth.getUser();
+    async function checkSession() {
+      const result = await supabase.auth.getUser();
 
-    if (!alive) return;
+      if (!alive) return;
 
-    if (result.data.user && tab !== "update") {
-      router.replace(next);
+      // Une session de récupération doit rester sur l’écran de changement
+      // de mot de passe au lieu d’être redirigée dans l’application.
+      if (result.data.user && tab !== "update" && requestedMode !== "update-password") {
+        router.replace(next);
+      }
     }
-  }
 
-  checkSession();
+    void checkSession();
 
-  return () => {
-    alive = false;
-  };
-}, [router, supabase, next, tab]);
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((event: string) => {
+      if (!alive) return;
+
+      if (event === "PASSWORD_RECOVERY") {
+        setTab("update");
+        setErr("");
+        setInfo("");
+      }
+    });
+
+    return () => {
+      alive = false;
+      subscription.unsubscribe();
+    };
+  }, [router, supabase, next, tab, requestedMode]);
 
   function resetMessages() {
     setErr("");
@@ -206,15 +226,20 @@ function ConnexionContent() {
         });
 
         if (error) {
-          setErr(error.message);
+          setErr(
+            error.message.toLowerCase().includes("same password")
+              ? "Choisis un mot de passe différent de l’ancien."
+              : "Impossible de modifier le mot de passe. Demande un nouveau lien de réinitialisation.",
+          );
           return;
         }
 
-        setInfo("Ton mot de passe a été modifié.");
-        window.setTimeout(() => {
-          router.replace("/mon-compte");
-          router.refresh();
-        }, 700);
+        // On ferme la session temporaire créée par le lien de récupération.
+        // L’utilisateur se reconnecte ensuite avec son nouveau mot de passe.
+        await supabase.auth.signOut();
+
+        router.replace("/connexion?password-updated=1");
+        router.refresh();
         return;
       }
 
