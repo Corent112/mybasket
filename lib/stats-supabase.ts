@@ -546,6 +546,24 @@ async function syncFinishedMatchCalendarEvent(args: {
  * Retourne le matchId + le realTeamId à réutiliser pour toutes les écritures
  * incrémentales. À appeler UNE fois (le composant garde le matchId en state).
  */
+export async function updateLiveMatchCategory(args: { matchId: string; matchCategory: "friendly" | "championship" | "cup" }): Promise<{ ok: boolean; error?: string }> {
+  try {
+    if (!args.matchId || args.matchId.startsWith("local_")) return { ok: true };
+    const supabase = createClient();
+    const { error } = await supabase
+      .from("match_stats")
+      .update({ match_category: args.matchCategory })
+      .eq("id", args.matchId);
+    if (error) {
+      logSupabaseError("updateLiveMatchCategory: update match_stats", error);
+      return { ok: false, error: supabaseErrorMessage(error) };
+    }
+    return { ok: true };
+  } catch (error) {
+    return { ok: false, error: supabaseErrorMessage(error) };
+  }
+}
+
 export async function ensureLiveMatch(
   payload: EnsureLiveMatchPayload
 ): Promise<EnsureLiveMatchResponse> {

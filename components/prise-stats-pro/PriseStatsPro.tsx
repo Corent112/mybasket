@@ -26,6 +26,7 @@ import {
   deleteLiveAction,
   upsertLiveMatchAggregates,
   finalizeLiveMatch,
+  updateLiveMatchCategory,
   saveProjectState,
   listProjects,
   loadProject,
@@ -1375,6 +1376,15 @@ export default function PriseStatsProPage() {
     liveMatchIdRef.current = matchId;
     liveTeamIdRef.current = teamId;
     setLiveMatchId(matchId);
+  };
+
+  const handleMatchTypeChange = async (nextType: 'friendly' | 'league' | 'cup') => {
+    setMatchType(nextType);
+    const matchId = liveMatchIdRef.current;
+    if (!matchId || matchId.startsWith('local_')) return;
+    const matchCategory = nextType === 'league' ? 'championship' : nextType;
+    const result = await updateLiveMatchCategory({ matchId, matchCategory });
+    if (!result.ok) console.error('Mise à jour du type de match:', result.error);
   };
 
   // Le poste qui a créé la session publie l’état commun. Les autres écrans
@@ -3116,7 +3126,7 @@ export default function PriseStatsProPage() {
     // chrono tournait. Leur valeur courante est tout de même enregistrée via
     // persistProjectStateRef.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [actions, perQ, q, onCourt, screen, playbookId, systemMapping, oppRoster, clipEdits]);
+  }, [actions, perQ, q, onCourt, screen, playbookId, systemMapping, oppRoster, clipEdits, matchType]);
 
   /* Filet de sécurité : sauvegarde immédiate au démontage du composant
      (navigation vers une autre page) pour ne pas perdre les 1,5 dernières
@@ -4914,7 +4924,7 @@ export default function PriseStatsProPage() {
                     <div className="cm-input"><input placeholder={analysisScope === 'scout' ? "Équipe affrontée par l'adversaire scouté" : "Nom de l'adversaire"} value={opponent} onChange={(e) => setOpponent(e.target.value)} /></div></label>
                   <label className="cm-field">Type de match
                     <div className="cm-input"><span>🏆</span>
-                      <select value={matchType} onChange={(e) => setMatchType(e.target.value as 'friendly' | 'league' | 'cup')}>
+                      <select value={matchType} onChange={(e) => void handleMatchTypeChange(e.target.value as 'friendly' | 'league' | 'cup')}>
                         <option value="friendly">Amical</option>
                         <option value="league">Championnat</option>
                         <option value="cup">Coupe</option>
@@ -5987,7 +5997,7 @@ export default function PriseStatsProPage() {
               <label>Date<input type="date" value={date} onChange={(e) => setDate(e.target.value)} /></label>
               <label>Adversaire<input value={opponent} onChange={(e) => setOpponent(e.target.value)} placeholder="Nom de l’adversaire" /></label>
               <label>Type de match
-                <select value={matchType} onChange={(e) => setMatchType(e.target.value as typeof matchType)}>
+                <select value={matchType} onChange={(e) => void handleMatchTypeChange(e.target.value as typeof matchType)}>
                   <option value="friendly">Amical</option>
                   <option value="league">Championnat</option>
                   <option value="cup">Coupe</option>
