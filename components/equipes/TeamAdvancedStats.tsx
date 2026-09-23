@@ -416,7 +416,7 @@ export default function TeamAdvancedStats({
 
   const selectedMatchIds = useMemo(() => {
     if (filters.matchId) return new Set([filters.matchId]);
-    const categoryOf=(m:MatchRow)=>{const ps=m["project_state"]&&typeof m["project_state"]==="object"?m["project_state"] as Record<string,unknown>:{};const raw=String(m.match_category||m.competition_type||m["match_type"]||ps.matchType||"").toLowerCase();if(m.is_friendly||raw.includes("amical")||raw.includes("friendly"))return "friendly";if(raw.includes("coupe")||raw.includes("cup"))return "cup";return "championship"};
+    const categoryOf=(m:MatchRow)=>{const ps=m["project_state"]&&typeof m["project_state"]==="object"?m["project_state"] as Record<string,unknown>:{};const raw=String(m.match_category||m.competition_type||m["match_type"]||ps.matchType||"").trim().toLowerCase();if(m.is_friendly||raw.includes("amical")||raw.includes("friendly"))return "friendly";if(raw.includes("coupe")||raw.includes("cup"))return "cup";if(raw.includes("league")||raw.includes("championnat")||raw.includes("championship"))return "championship";return "unknown"};
     return new Set(matches.filter(m=>matchCategory==="all"||categoryOf(m)===matchCategory).map((m) => m.id));
   }, [filters.matchId, matches, matchCategory]);
 
@@ -781,7 +781,7 @@ export default function TeamAdvancedStats({
 
   return (
     <section className="advanced-stats">
-      <div style={{display:"flex",gap:6,flexWrap:"wrap",marginBottom:12}}>{([['all','Total'],['championship','Championnat'],['cup','Coupe'],['friendly','Amicaux']] as const).map(([v,l])=><button key={v} onClick={()=>setMatchCategory(v)} style={{border:"1px solid #d9c9c2",borderRadius:999,padding:"8px 12px",fontWeight:900,cursor:"pointer",background:matchCategory===v?"#6b1a2c":"#fff",color:matchCategory===v?"#fff":"#6b1a2c"}}>{l}</button>)}</div>
+      <div style={{display:"flex",gap:6,flexWrap:"wrap",marginBottom:12}}>{([['championship','Championnat'],['cup','Coupe'],['friendly','Amicaux'],['all','Tous']] as const).map(([v,l])=><button key={v} onClick={()=>setMatchCategory(v)} style={{border:"1px solid #d9c9c2",borderRadius:999,padding:"8px 12px",fontWeight:900,cursor:"pointer",background:matchCategory===v?"#6b1a2c":"#fff",color:matchCategory===v?"#fff":"#6b1a2c"}}>{l}</button>)}</div>
       <div className="advanced-head">
         <div>
           <span className="advanced-kicker">ANALYSE LIVE & SAISON</span>

@@ -11,7 +11,7 @@ export type VideoSyncModalProps = {
   sync: VideoSyncState;
   expectedFilename?: string | null;
   onChange: (sync: VideoSyncState) => void;
-  onValidate: () => void;
+  onValidate: (mediaTime: number) => void;
   onClose: () => void;
   onPickVideoFile?: (file: File) => void;
 };
@@ -232,7 +232,7 @@ export default function VideoSyncModal(props: VideoSyncModalProps) {
 
         <div className="vmark-foot">
           <button className="secondary" onClick={onClose}>Fermer</button>
-          <button className="primary" disabled={!videoUrl || !q1Ready} onClick={onValidate}>✓ Valider le calage vidéo</button>
+          <button className="primary" disabled={!videoUrl || !q1Ready} onClick={() => onValidate(videoRef.current?.currentTime ?? mediaTime)}>✓ Valider le calage vidéo</button>
         </div>
       </div>
 

@@ -6064,9 +6064,28 @@ export default function PriseStatsProPage() {
         expectedFilename={videoFilename || null}
         onChange={(s) => applyVideoSync(s)}
         onPickVideoFile={(f) => onPickVideoFile(f)}
-        onValidate={() => {
+        onValidate={(calibratedMediaTime) => {
           const validated: VideoSyncState = { ...videoSyncRef.current, validated: true };
           setVideoSync(validated);
+          // Le lecteur de la modale est distinct du lecteur Live. Sans recopier
+          // sa position, la fermeture du recalage laisse le lecteur principal
+          // à son ancienne position (souvent 0). On conserve donc exactement
+          // le curseur choisi par le coach et on le réapplique au lecteur Live
+          // dès maintenant / au prochain chargement des métadonnées.
+          const keepTime = Math.max(0, Number(calibratedMediaTime) || 0);
+          inspectionVideoTimeRef.current = keepTime;
+          lastProjectVideoTimeRef.current = keepTime;
+          const mainVideo = videoRef.current;
+          if (mainVideo) {
+            try {
+              const max = Number.isFinite(mainVideo.duration) ? mainVideo.duration : keepTime;
+              mainVideo.currentTime = Math.max(0, Math.min(max, keepTime));
+            } catch { /* noop */ }
+          }
+          if (videoDetached) {
+            detachedTimeRef.current = keepTime;
+            postVideo({ type: 'seek', time: keepTime });
+          }
           persistProjectState();
           setShowVideoSync(false);
           flash('Synchronisation vidéo validée ✓');

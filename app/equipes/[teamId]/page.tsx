@@ -1869,7 +1869,7 @@ export default function EquipeDetailPage({
               matchCategory={statsMatchCategory}
             />
             <TeamMatchStatsBlock teamId={linkedStatsTeamId} matchCategory={statsMatchCategory} />
-            <TeamGameStatsBlock teamId={linkedStatsTeamId} matchCategory={statsMatchCategory} />
+            <TeamGameStatsBlock teamId={linkedStatsTeamId} matchCategory={statsMatchCategory} onMatchCategoryChange={setStatsMatchCategory} />
             <TeamLineupsBlock teamId={linkedStatsTeamId} matchCategory={statsMatchCategory} />
             <TeamMatchHistoryBlock teamId={linkedStatsTeamId} />
             <TeamSeasonRecordsBlock teamId={linkedStatsTeamId} matchCategory={statsMatchCategory} />
@@ -3257,13 +3257,15 @@ type SupaStatRow = {
 
 type MatchCategoryFilter = "championship" | "cup" | "friendly" | "all";
 
-function matchCategoryOf(match: { match_category?: string | null; project_state?: unknown }) : Exclude<MatchCategoryFilter, "all"> {
+function matchCategoryOf(match: { match_category?: string | null; project_state?: unknown }): Exclude<MatchCategoryFilter, "all"> | "unknown" {
   const projectState = match.project_state && typeof match.project_state === "object" ? match.project_state as Record<string, unknown> : {};
   const raw = String(match.match_category || projectState.matchType || "").trim().toLowerCase();
   if (raw.includes("friendly") || raw.includes("amical")) return "friendly";
   if (raw.includes("cup") || raw.includes("coupe")) return "cup";
   if (raw.includes("league") || raw.includes("championnat") || raw.includes("championship")) return "championship";
-  return "championship";
+  // Les anciens matchs sans catégorie explicite restent visibles dans « Tous »,
+  // mais ne sont plus comptés arbitrairement comme des matchs de championnat.
+  return "unknown";
 }
 
 function MatchCategoryTabs({ value, onChange }: { value: MatchCategoryFilter; onChange: (value: MatchCategoryFilter) => void }) {
@@ -4591,7 +4593,7 @@ function splitGameMatches(matches: SupaMatchRow[], split: GameSplitKey) {
   });
 }
 
-function TeamGameStatsBlock({ teamId, matchCategory }: { teamId: string; matchCategory: MatchCategoryFilter }) {
+function TeamGameStatsBlock({ teamId, matchCategory, onMatchCategoryChange }: { teamId: string; matchCategory: MatchCategoryFilter; onMatchCategoryChange: (value: MatchCategoryFilter) => void }) {
   const supabase = createClient();
 
   const [loading, setLoading] = useState(true);
@@ -4773,6 +4775,7 @@ function TeamGameStatsBlock({ teamId, matchCategory }: { teamId: string; matchCa
             automatiques.
           </p>
         </div>
+        <MatchCategoryTabs value={matchCategory} onChange={onMatchCategoryChange} />
       </div>
 
       {loading && <div className="empty">Chargement des stats jeu...</div>}
@@ -5900,7 +5903,7 @@ function TeamLineupsBlock({ teamId, matchCategory }: { teamId: string; matchCate
               <thead>
                 <tr>
                   <th>5 sur le terrain</th>
-                  <th>Actions</th>
+                  <th className="lineup-actions-col">Actions</th>
                   <th>Poss</th>
                   <th>PTS +</th>
                   <th>PTS -</th>
@@ -5941,7 +5944,7 @@ function TeamLineupsBlock({ teamId, matchCategory }: { teamId: string; matchCate
                       </div>
                       </div>
                     </td>
-                    {clickableCell(row, "all", "Toutes les actions", row.actions)}
+                    {clickableCell(row, "all", "Toutes les actions", <span className="lineup-actions-value">{row.actions}</span>)}
                     <td>{r1(row.poss)}</td>
                     <td>{row.ptsFor}</td>
                     <td>{row.ptsAgainst}</td>
@@ -6067,7 +6070,8 @@ function TeamLineupsBlock({ teamId, matchCategory }: { teamId: string; matchCate
         }
 
         .lineup-insights :global(.insight-visual) { margin:.1rem 0 .35rem; }
-        .insight-lineup-avatars { display:flex;align-items:center;gap:4px;min-height:30px; }
+        .insight-lineup-avatars { display:flex;align-items:center;gap:3px;min-height:24px; }
+        .insight-lineup-avatars .lineup-avatar { width:22px;height:22px;flex-basis:22px; }
 
         .lineup-insights :global(.insight-title) {
           display: -webkit-box;
@@ -6190,14 +6194,14 @@ function TeamLineupsBlock({ teamId, matchCategory }: { teamId: string; matchCate
           align-items: center;
           gap: 4px;
           min-width: 142px;
-          height: 28px;
+          height: 24px;
           white-space: nowrap;
         }
 
         .lineup-avatar {
-          width: 26px;
-          height: 26px;
-          flex: 0 0 26px;
+          width: 22px;
+          height: 22px;
+          flex: 0 0 22px;
           border-radius: 999px;
           overflow: hidden;
           display: inline-flex;
@@ -6218,6 +6222,28 @@ function TeamLineupsBlock({ teamId, matchCategory }: { teamId: string; matchCate
           object-fit: cover;
         }
 
+
+        .lineup-actions-col {
+          width: 62px !important;
+          min-width: 62px !important;
+          max-width: 62px !important;
+          text-align: center !important;
+        }
+
+        .lineup-actions-value {
+          display: block;
+          width: 100%;
+          text-align: center;
+        }
+
+        .lineup-table-wrap tbody td:nth-child(2) {
+          width: 62px;
+          min-width: 62px;
+          max-width: 62px;
+          padding-left: 0.25rem;
+          padding-right: 0.25rem;
+          text-align: center;
+        }
         td.lineup-video-cell {
           cursor: pointer;
           transition: background 0.15s ease, color 0.15s ease;
