@@ -4559,7 +4559,7 @@ const exportJson = () => {
             </div>
 
             {/* -------- PHASES — DOCK BAS -------- */}
-            <aside className="ed-left">
+            <aside className="ed-left" style={{ display: 'block', visibility: 'visible', opacity: 1 }}>
               <div className="ed-tabs">
                 <div className="ed-tab active" data-tab="phases">Phases</div>
                 
@@ -5600,11 +5600,11 @@ html{font-size:15px}
 .ed-library .content-nav.compact{width:68px!important}
 .ed-library .cn-open{position:absolute!important;left:10px!important;top:10px!important}
 .ed-left,.ed-right{background:#f8f5f0;padding:.8rem;min-width:0}
-.ed-left{grid-area:phases;border-top:0;border-right:1px solid var(--gris-med);max-height:none;height:100%;overflow-y:auto;overflow-x:hidden}
+.ed-left{grid-area:phases!important;display:block!important;visibility:visible!important;opacity:1!important;border-top:0;border-right:1px solid var(--gris-med);max-height:none;height:100%;overflow-y:auto;overflow-x:hidden;background:#f8f5f0;position:relative;z-index:2}
 .ed-right{grid-area:right;border-left:1px solid #e4ddd5;display:flex;flex-direction:column;gap:.75rem;overflow-y:auto;max-height:calc(100vh - 180px)}
 .ed-canvas-wrap{grid-area:canvas}
-.ed-left .ed-tabs{margin-bottom:.45rem}
-.ed-left #tabPhases{display:flex;flex-direction:column;min-width:0}
+.ed-left .ed-tabs{display:flex!important;visibility:visible!important;margin-bottom:.45rem}
+.ed-left #tabPhases{display:flex!important;visibility:visible!important;opacity:1!important;flex-direction:column;min-width:0}
 .ed-left #phCounter{order:1}
 .ed-left .ph-actions{order:2;margin-bottom:.7rem}
 .ed-left .phases-list{order:3;display:flex;flex-direction:column;gap:.45rem;max-height:250px;overflow-y:auto;overflow-x:hidden;padding:0 .2rem .35rem 0}
@@ -5767,6 +5767,12 @@ html{font-size:15px}
   .ed-left,.ed-right{border:none;border-top:1px solid var(--gris-med);max-height:none;height:auto}
 }
 
-/* V38 — Architecture DESSIN : bibliothèque à gauche, terrain au centre, outils à droite, phases en bas */
-@media (min-width:901px) and (max-width:1050px){.ed-layout{grid-template-columns:210px 210px minmax(0,1fr) 280px;grid-template-areas:"library phases canvas right"}}
+/* DESSIN — disposition desktop définitive : bibliothèque | phases/timing | terrain | outils */
+@media (min-width:901px){
+  .ed-layout{grid-template-columns:250px 250px minmax(0,1fr) 330px!important;grid-template-areas:"library phases canvas right"!important;grid-template-rows:minmax(0,1fr)!important}
+  .ed-left{grid-column:2!important;grid-row:1!important;display:block!important}
+  .ed-canvas-wrap{grid-column:3!important;grid-row:1!important}
+  .ed-right{grid-column:4!important;grid-row:1!important}
+}
+@media (min-width:901px) and (max-width:1050px){.ed-layout{grid-template-columns:210px 220px minmax(0,1fr) 280px!important;grid-template-areas:"library phases canvas right"!important}}
 `;
