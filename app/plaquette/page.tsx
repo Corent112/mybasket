@@ -5606,23 +5606,23 @@ html{font-size:15px}
 .ed-icn-btn:hover{background:rgba(255,255,255,.1)}
 .ed-save{background:var(--or);color:var(--bordeaux-d);padding:.45rem 1.1rem;border-radius:6px;font-weight:700;font-size:.85rem;display:flex;align-items:center;gap:.4rem;cursor:pointer}
 .ed-save:hover{background:var(--or-l)}
-.ed-layout{display:grid;grid-template-columns:minmax(260px,280px) minmax(0,1fr) minmax(310px,350px);grid-template-areas:"library canvas right" "phases phases phases";grid-template-rows:minmax(0,1fr) auto;min-height:calc(100vh - 180px);gap:0;position:relative}
+.ed-layout{display:grid;grid-template-columns:minmax(230px,260px) minmax(220px,260px) minmax(0,1fr) minmax(300px,330px);grid-template-areas:"library phases canvas right";grid-template-rows:minmax(0,1fr);height:calc(100vh - 180px);min-height:620px;gap:0;position:relative;overflow:hidden}
 .ed-library{grid-area:library;position:relative;min-width:0;background:#101a22;border-right:1px solid #293b48;overflow:hidden}
 .ed-library .content-nav.embedded{position:absolute!important;inset:0!important;top:0!important;bottom:0!important;width:100%!important;height:100%!important;box-shadow:none!important;border-right:0!important;z-index:4}
 .ed-library .content-nav.compact{width:68px!important}
 .ed-library .cn-open{position:absolute!important;left:10px!important;top:10px!important}
 .ed-left,.ed-right{background:#f8f5f0;padding:.8rem;min-width:0}
-.ed-left{grid-area:phases;border-top:1px solid var(--gris-med);border-right:0;max-height:320px;overflow:auto}
+.ed-left{grid-area:phases!important;display:block!important;visibility:visible!important;opacity:1!important;border-top:0;border-right:1px solid var(--gris-med);max-height:none;height:100%;overflow-y:auto;overflow-x:hidden;background:#f8f5f0;position:relative;z-index:2}
 .ed-right{grid-area:right;border-left:1px solid #e4ddd5;display:flex;flex-direction:column;gap:.75rem;overflow-y:auto;max-height:calc(100vh - 180px)}
 .ed-canvas-wrap{grid-area:canvas}
-.ed-left .ed-tabs{margin-bottom:.45rem}
-.ed-left #tabPhases{display:grid;grid-template-columns:170px minmax(320px,1fr) minmax(280px,360px);grid-template-areas:"counter list timing" "actions list timing" "notes list timing";column-gap:.8rem;align-items:start}
-.ed-left #phCounter{grid-area:counter}
-.ed-left .ph-actions{grid-area:actions;margin-bottom:0}
-.ed-left .phases-list{grid-area:list;display:flex;flex-direction:row;gap:.5rem;max-height:none;overflow-x:auto;overflow-y:hidden;padding:0 0 .35rem}
-.ed-left .ph-thumb{flex:0 0 170px;aspect-ratio:16/10}
-.ed-left #timingPanel{grid-area:timing;margin-top:0!important;padding-top:0!important;border-top:0!important;max-height:190px;overflow:auto;padding-right:.25rem}
-.ed-left #tabPhases>div[style*="margin-top: .7rem"]{grid-area:notes}
+.ed-left .ed-tabs{display:flex!important;visibility:visible!important;margin-bottom:.45rem}
+.ed-left #tabPhases{display:flex!important;visibility:visible!important;opacity:1!important;flex-direction:column;min-width:0}
+.ed-left #phCounter{order:1}
+.ed-left .ph-actions{order:2;margin-bottom:.7rem}
+.ed-left .phases-list{order:3;display:flex;flex-direction:column;gap:.45rem;max-height:250px;overflow-y:auto;overflow-x:hidden;padding:0 .2rem .35rem 0}
+.ed-left .ph-thumb{flex:0 0 auto;width:100%;aspect-ratio:16/9}
+.ed-left #tabPhases>div[style*="margin-top: .7rem"]{order:4}
+.ed-left #timingPanel{order:5;margin-top:.85rem!important;padding-top:.85rem!important;border-top:1px solid var(--gris-med)!important;max-height:none;overflow:visible;padding-right:0}
 
 .ed-tabs{display:flex;border-bottom:2px solid var(--gris-med);margin-bottom:.7rem}
 .ed-tab{padding:.4rem .7rem;font-weight:700;font-size:.82rem;color:var(--gris-text);cursor:pointer;border-bottom:3px solid transparent;margin-bottom:-2px}
@@ -5770,15 +5770,21 @@ html{font-size:15px}
 .right-card-players .coach-cap{font-size:.64rem;top:0;right:1px}
 
 @media (min-width:1400px){
-  .ed-layout{grid-template-columns:270px minmax(0,1fr) 360px}
+  .ed-layout{grid-template-columns:250px 250px minmax(0,1fr) 330px;grid-template-areas:"library phases canvas right"}
   #playCanvas[data-court="full"]{max-width:540px}
 }
 
 @media (max-width:900px){
-  .ed-layout{grid-template-columns:1fr}
-  .ed-left,.ed-right{border:none;border-top:1px solid var(--gris-med);max-height:none}
+  .ed-layout{grid-template-columns:1fr;grid-template-areas:"library" "phases" "canvas" "right";grid-template-rows:auto auto auto auto;height:auto;min-height:0;overflow:visible}
+  .ed-left,.ed-right{border:none;border-top:1px solid var(--gris-med);max-height:none;height:auto}
 }
 
-/* V38 — Architecture DESSIN : bibliothèque à gauche, terrain au centre, outils à droite, phases en bas */
-@media (max-width:1050px){.ed-layout{grid-template-columns:250px minmax(0,1fr) 300px}.ed-left #tabPhases{grid-template-columns:150px minmax(260px,1fr) 280px}}
+/* DESSIN — disposition desktop : bibliothèque | phases/timing | terrain | outils */
+@media (min-width:901px){
+  .ed-layout{grid-template-columns:250px 250px minmax(0,1fr) 330px!important;grid-template-areas:"library phases canvas right"!important;grid-template-rows:minmax(0,1fr)!important}
+  .ed-left{grid-column:2!important;grid-row:1!important;display:block!important}
+  .ed-canvas-wrap{grid-column:3!important;grid-row:1!important}
+  .ed-right{grid-column:4!important;grid-row:1!important}
+}
+@media (min-width:901px) and (max-width:1050px){.ed-layout{grid-template-columns:210px 220px minmax(0,1fr) 280px!important;grid-template-areas:"library phases canvas right"!important}}
 `;
