@@ -6,7 +6,7 @@ import TeamGoogleDriveSettings from "@/components/video/TeamGoogleDriveSettings"
 import TeamProfilingTab from "@/components/equipes/TeamProfilingTab";
 import TeamSelfEvaluationsTab from "@/components/equipes/TeamSelfEvaluationsTab";
 import WeeklyTrainingPlanner from "@/components/equipes/WeeklyTrainingPlanner";
-import { use, useEffect, useMemo, useRef, useState } from "react";
+import { use, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import {
@@ -164,7 +164,7 @@ function useTeamDashboardData(
           const { data: matchData, error: matchError } = await supabase
             .from("match_stats")
             .select(
-              "id, team_id, opponent, match_date, us_score, them_score, result, home, match_category",
+              "id, team_id, opponent, match_date, us_score, them_score, result, home, match_category, project_state",
             )
             .in("team_id", candidateTeamIds)
             .order("match_date", { ascending: true });
@@ -225,7 +225,7 @@ function useTeamDashboardData(
             await supabase
               .from("match_stats")
               .select(
-                "id, team_id, opponent, match_date, us_score, them_score, result, home, match_category",
+                "id, team_id, opponent, match_date, us_score, them_score, result, home, match_category, project_state",
               )
               .eq("team_id", linkedTeamId)
               .order("match_date", { ascending: true });
@@ -3257,10 +3257,12 @@ type SupaStatRow = {
 
 type MatchCategoryFilter = "championship" | "cup" | "friendly" | "all";
 
-function matchCategoryOf(match: { match_category?: string | null }) : Exclude<MatchCategoryFilter, "all"> {
-  const raw = String(match.match_category || "").trim().toLowerCase();
+function matchCategoryOf(match: { match_category?: string | null; project_state?: unknown }) : Exclude<MatchCategoryFilter, "all"> {
+  const projectState = match.project_state && typeof match.project_state === "object" ? match.project_state as Record<string, unknown> : {};
+  const raw = String(match.match_category || projectState.matchType || "").trim().toLowerCase();
   if (raw.includes("friendly") || raw.includes("amical")) return "friendly";
   if (raw.includes("cup") || raw.includes("coupe")) return "cup";
+  if (raw.includes("league") || raw.includes("championnat") || raw.includes("championship")) return "championship";
   return "championship";
 }
 
@@ -3279,6 +3281,7 @@ type SupaMatchRow = {
   result?: string | null;
   home: boolean | null;
   match_category?: string | null;
+  project_state?: Record<string, unknown> | null;
 };
 
 function downloadText(filename: string, text: string, type = "text/plain") {
@@ -3454,12 +3457,11 @@ function TeamLeadersBlock({
 
       const { data: matchData } = await supabase
         .from("match_stats")
-        .select("id, match_category")
+        .select("id, match_category, project_state")
         .eq("team_id", teamId);
 
-      const matchIds = ((matchData ?? []) as Array<{ id: string }>).map(
-        (match) => match.id,
-      );
+      const leaderMatches = (matchData ?? []) as SupaMatchRow[];
+      const matchIds = (matchCategory === "all" ? leaderMatches : leaderMatches.filter((match) => matchCategoryOf(match) === matchCategory)).map((match) => match.id);
 
       let rows: SupaStatRow[] = [];
 
@@ -3502,7 +3504,7 @@ function TeamLeadersBlock({
     return () => {
       active = false;
     };
-  }, [players, supabase, teamId]);
+  }, [players, supabase, teamId, matchCategory]);
 
   const cards = useMemo(
     () =>
@@ -3891,7 +3893,7 @@ function TeamMatchStatsBlock({ teamId, matchCategory }: { teamId: string; matchC
       const { data: matchData, error: matchError } = await supabase
         .from("match_stats")
         .select(
-          "id, team_id, opponent, match_date, us_score, them_score, result, home, match_category",
+          "id, team_id, opponent, match_date, us_score, them_score, result, home, match_category, project_state",
         )
         .eq("team_id", teamId)
         .order("match_date", { ascending: false });
@@ -4605,7 +4607,7 @@ function TeamGameStatsBlock({ teamId, matchCategory }: { teamId: string; matchCa
       const { data: matchData, error: matchError } = await supabase
         .from("match_stats")
         .select(
-          "id, team_id, opponent, match_date, us_score, them_score, result, home, match_category",
+          "id, team_id, opponent, match_date, us_score, them_score, result, home, match_category, project_state",
         )
         .eq("team_id", teamId)
         .order("match_date", { ascending: false });
@@ -5044,7 +5046,7 @@ function TeamGameStatsBlock({ teamId, matchCategory }: { teamId: string; matchCa
 
         .insights-grid :global(.insight-card) {
           min-height: 126px;
-          padding: 1rem 1.1rem;
+          padding: .8rem 1rem;
           display: flex;
           flex-direction: column;
           justify-content: flex-start;
@@ -5253,16 +5255,19 @@ function InsightCard({
   title,
   value,
   tone,
+  visual,
 }: {
   label: string;
-  title: string;
+  title?: string;
   value: string;
   tone: "good" | "bad" | "neutral";
+  visual?: ReactNode;
 }) {
   return (
     <article className={`insight-card ${tone}`}>
       <div className="insight-label">{label}</div>
-      <div className="insight-title">{title}</div>
+      {visual ? <div className="insight-visual">{visual}</div> : null}
+      {title ? <div className="insight-title">{title}</div> : null}
       <div className="insight-value">{value}</div>
     </article>
   );
@@ -5618,7 +5623,7 @@ function TeamLineupsBlock({ teamId, matchCategory }: { teamId: string; matchCate
       const { data: matchData, error: matchError } = await supabase
         .from("match_stats")
         .select(
-          "id, team_id, opponent, match_date, us_score, them_score, result, home, match_category, video_url, video_sync_mode, video_sync_offset, video_sync_rate",
+          "id, team_id, opponent, match_date, us_score, them_score, result, home, match_category, project_state, video_url, video_sync_mode, video_sync_offset, video_sync_rate",
         )
         .eq("team_id", teamId)
         .order("match_date", { ascending: false });
@@ -5790,6 +5795,19 @@ function TeamLineupsBlock({ teamId, matchCategory }: { teamId: string; matchCate
     setClip({ title: `Lineup · ${label}`, items });
   };
 
+  const lineupVisual = (row: LineupRow | undefined) => row ? (
+    <div className="insight-lineup-avatars" aria-label="5 joueurs du lineup">
+      {row.ids.slice(0, 5).map((playerId) => {
+        const player = playersById[playerId];
+        return (
+          <span key={playerId} className="lineup-avatar">
+            {player?.photo ? <img src={player.photo} alt="" /> : <span>{player?.initials || "J"}</span>}
+          </span>
+        );
+      })}
+    </div>
+  ) : null;
+
   const clickableCell = (
     row: LineupRow,
     kind: "all" | "fg" | "2pts" | "3pts" | "ft" | "ast" | "to" | "stops",
@@ -5838,7 +5856,7 @@ function TeamLineupsBlock({ teamId, matchCategory }: { teamId: string; matchCate
           <div className="lineup-insights">
             <InsightCard
               label="Meilleur 5"
-              title={best?.label || "—"}
+              visual={lineupVisual(best)}
               value={
                 best
                   ? `${best.plusMinus >= 0 ? "+" : ""}${best.plusMinus} +/-`
@@ -5849,16 +5867,14 @@ function TeamLineupsBlock({ teamId, matchCategory }: { teamId: string; matchCate
 
             <InsightCard
               label="5 le plus utilisé"
-              title={mostUsed?.label || "—"}
+              visual={lineupVisual(mostUsed)}
               value={mostUsed ? `${r1(mostUsed.poss)} poss` : "—"}
               tone="neutral"
             />
 
             <InsightCard
               label="Meilleur OffRtg"
-              title={
-                [...rows].sort((a, b) => b.offRtg - a.offRtg)[0]?.label || "—"
-              }
+              visual={lineupVisual([...rows].sort((a, b) => b.offRtg - a.offRtg)[0])}
               value={
                 rows.length > 0
                   ? `${r1([...rows].sort((a, b) => b.offRtg - a.offRtg)[0].offRtg)}`
@@ -5869,9 +5885,7 @@ function TeamLineupsBlock({ teamId, matchCategory }: { teamId: string; matchCate
 
             <InsightCard
               label="Plus de stops"
-              title={
-                [...rows].sort((a, b) => b.stopPct - a.stopPct)[0]?.label || "—"
-              }
+              visual={lineupVisual([...rows].sort((a, b) => b.stopPct - a.stopPct)[0])}
               value={
                 rows.length > 0
                   ? `${r1([...rows].sort((a, b) => b.stopPct - a.stopPct)[0].stopPct)}%`
@@ -5925,7 +5939,6 @@ function TeamLineupsBlock({ teamId, matchCategory }: { teamId: string; matchCate
                           );
                         })}
                       </div>
-                      <div className="lineup-names">{row.ids.slice(0,5).map((id)=>playersById[id]?.name || names[id] || "Joueur").join(" · ")}</div>
                       </div>
                     </td>
                     {clickableCell(row, "all", "Toutes les actions", row.actions)}
@@ -6032,7 +6045,7 @@ function TeamLineupsBlock({ teamId, matchCategory }: { teamId: string; matchCate
         }
 
         .lineup-insights :global(.insight-card) {
-          min-height: 148px;
+          min-height: 108px;
           padding: 1rem 1.1rem;
           display: flex;
           flex-direction: column;
@@ -6052,6 +6065,9 @@ function TeamLineupsBlock({ teamId, matchCategory }: { teamId: string; matchCate
           line-height: 1.3;
           margin-bottom: 0.55rem;
         }
+
+        .lineup-insights :global(.insight-visual) { margin:.1rem 0 .35rem; }
+        .insight-lineup-avatars { display:flex;align-items:center;gap:4px;min-height:30px; }
 
         .lineup-insights :global(.insight-title) {
           display: -webkit-box;
@@ -6117,9 +6133,9 @@ function TeamLineupsBlock({ teamId, matchCategory }: { teamId: string; matchCate
         td:first-child {
           position: sticky;
           left: 0;
-          width: 270px;
-          min-width: 270px;
-          max-width: 270px;
+          width: 185px;
+          min-width: 185px;
+          max-width: 185px;
           text-align: left;
         }
 
@@ -6130,8 +6146,8 @@ function TeamLineupsBlock({ teamId, matchCategory }: { teamId: string; matchCate
         }
 
         td {
-          height: 58px;
-          padding: 0.82rem 0.65rem;
+          height: 42px;
+          padding: 0.42rem 0.55rem;
           border-right: 1px solid #e8e3df;
           border-bottom: 1px solid #e8e3df;
           text-align: center;
@@ -6168,8 +6184,7 @@ function TeamLineupsBlock({ teamId, matchCategory }: { teamId: string; matchCate
           overflow-wrap: anywhere;
         }
 
-        .lineup-identity { display:grid;grid-template-columns:auto 1fr;gap:.7rem;align-items:center;min-width:245px; }
-        .lineup-names { color:#3d3436;font-size:.76rem;font-weight:850;line-height:1.3;white-space:normal; }
+        .lineup-identity { display:flex;align-items:center;min-width:142px; }
         .lineup-avatars {
           display: flex;
           align-items: center;
@@ -6291,7 +6306,7 @@ function TeamSeasonRecordsBlock({ teamId, matchCategory }: { teamId: string; mat
 
       const { data: matchData, error: matchError } = await supabase
         .from("match_stats")
-        .select("id, opponent, match_date, us_score, them_score, home, match_category")
+        .select("id, opponent, match_date, us_score, them_score, home, match_category, project_state")
         .eq("team_id", teamId)
         .order("match_date", { ascending: false });
 

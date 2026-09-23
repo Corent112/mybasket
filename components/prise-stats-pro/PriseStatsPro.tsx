@@ -1029,6 +1029,39 @@ export default function PriseStatsProPage() {
   const [videoSync, setVideoSyncState] = useState<VideoSyncState>(NATIVE_SYNC);
   const videoSyncRef = useRef<VideoSyncState>(NATIVE_SYNC);
   const setVideoSync = (s: VideoSyncState) => { videoSyncRef.current = s; setVideoSyncState(s); };
+
+  // Quand le coach recale une vidéo déjà ouverte, les bornes de la possession
+  // actuellement en cours ont été prises avec l'ancien repère. On les rebase
+  // immédiatement sur la nouvelle échelle SOURCE afin que le prochain clip
+  // utilise réellement « Le match commence ici » au lieu de conserver l'ancien
+  // timecode absolu de la vidéo. Les actions déjà enregistrées restent intactes.
+  const rebaseActiveVideoMarkers = (previous: VideoSyncState, next: VideoSyncState) => {
+    const toSource = (mediaTime: number | null): number | null => {
+      if (mediaTime == null || !Number.isFinite(mediaTime)) return null;
+      const marker = next.periodMarkers?.[String(q)];
+      const rate = Number.isFinite(next.rate) && next.rate > 0 ? next.rate : 1;
+      if (marker?.start != null && marker?.sourceStart != null) {
+        return Math.max(0, Number(marker.sourceStart) + (mediaTime - Number(marker.start)) / rate);
+      }
+      if (next.mode !== 'native') {
+        return Math.max(0, (mediaTime - (Number.isFinite(next.offset) ? next.offset : 0)) / rate);
+      }
+      return Math.max(0, mediaTime);
+    };
+    const rebase = (raw: number | null): number | null => {
+      if (raw == null) return null;
+      const media = resolveSyncedVideoTime(raw, previous, q);
+      return toSource(media);
+    };
+    possessionStartRef.current = rebase(possessionStartRef.current);
+    possessionEndOverrideRef.current = rebase(possessionEndOverrideRef.current);
+  };
+
+  const applyVideoSync = (next: VideoSyncState) => {
+    const previous = videoSyncRef.current;
+    rebaseActiveVideoMarkers(previous, next);
+    setVideoSync(next);
+  };
   const [showVideoSync, setShowVideoSync] = useState(false);
   const openVideoSyncAfterStartRef = useRef(false);
 
@@ -1641,14 +1674,20 @@ export default function PriseStatsProPage() {
     .filter((row) => row.category === 'system')
     .sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0));
   const activeConfiguredSystems = configuredSystemRows.filter((row) => row.is_active !== false);
-  const systemeButtons = (playbookId && playbookSystems.length
-    ? playbookSystems.map((system) => ({ id: `playbook:${system.id}`, label: system.title, ic: '🏀' }))
-    : configuredSystemRows.length
-      ? activeConfiguredSystems.map((row) => ({ id: row.key, label: row.label, ic: row.emoji || '🏀' }))
-      : SYSTEMES_JEU.map((s) => {
-          const mapped = systemForSlot(s.id);
-          return { id: s.id, label: mapped ? mapped.title : s.label, ic: s.ic };
-        })).filter((s) => profileAllowsButton('system', s.id));
+  // Le Playbook ne remplace JAMAIS le bloc Système du constructeur.
+  // Les boutons/slots configurés restent tous présents, dans le même ordre ;
+  // lorsqu'un slot est associé à un système Playbook, seul son libellé change.
+  // L'id du bouton reste celui du slot (systeme-1, systeme-2...) afin de retrouver
+  // la configuration originale dès qu'aucun Playbook n'est associé.
+  const baseSystemButtons = configuredSystemRows.length
+    ? activeConfiguredSystems.map((row) => ({ id: row.key, label: row.label, ic: row.emoji || '🏀' }))
+    : SYSTEMES_JEU.map((s) => ({ id: s.id, label: s.label, ic: s.ic }));
+  const systemeButtons = baseSystemButtons
+    .map((button) => {
+      const mapped = playbookId ? systemForSlot(button.id) : undefined;
+      return { ...button, label: mapped?.title || button.label };
+    })
+    .filter((s) => profileAllowsButton('system', s.id));
 
 
   const allCodingRowsFor = (category: string): CodingButtonCfg[] => {
@@ -3119,7 +3158,11 @@ export default function PriseStatsProPage() {
         ['blob-1','blob-2'].forEach((slot, i) => { if (blob[i]) auto[slot] = blob[i].id; });
         // Le pré-remplissage automatique ne doit PAS écraser un mapping déjà
         // restauré depuis le projet enregistré (reprise de brouillon).
-        setSystemMapping((prev) => (prev && Object.keys(prev).length > 0 ? prev : auto));
+        setSystemMapping((prev) => {
+          const validIds = new Set(list.map((system) => system.id));
+          const hasMappingForThisPlaybook = Object.values(prev ?? {}).some((id) => validIds.has(id));
+          return hasMappingForThisPlaybook ? prev : auto;
+        });
       })
       .catch(() => { if (alive) { setPlaybookSystems([]); setSystemMapping({}); } });
     return () => { alive = false; };
@@ -3319,6 +3362,7 @@ export default function PriseStatsProPage() {
         opponent: opponent || 'Adversaire',
         date,
         home,
+        matchCategory: matchType === 'league' ? 'championship' : matchType,
         playerIds: matchRoster.map((player) => player.id),
         videoMode,
         videoStatus,
@@ -4437,6 +4481,7 @@ export default function PriseStatsProPage() {
         lines,
         actions,
         home,
+        matchCategory: matchType === 'league' ? 'championship' : matchType,
       } as any;
 
       // Le match a été alimenté en TEMPS RÉEL : finishMatch FINALISE (score
@@ -6017,7 +6062,7 @@ export default function PriseStatsProPage() {
         actions={actions as unknown as LiveMatchAction[]}
         sync={videoSync}
         expectedFilename={videoFilename || null}
-        onChange={(s) => setVideoSync(s)}
+        onChange={(s) => applyVideoSync(s)}
         onPickVideoFile={(f) => onPickVideoFile(f)}
         onValidate={() => {
           const validated: VideoSyncState = { ...videoSyncRef.current, validated: true };

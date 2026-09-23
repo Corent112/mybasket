@@ -99,6 +99,7 @@ export type SaveLiveMatchPayload = {
   opponent: string;
   date: string;
   home?: boolean;
+  matchCategory?: "championship" | "cup" | "friendly";
   us: number;
   them: number;
   result: Result;
@@ -445,6 +446,7 @@ export type EnsureLiveMatchPayload = {
   opponent: string;
   date: string;
   home?: boolean;
+  matchCategory?: "championship" | "cup" | "friendly";
   playerIds?: string[];
 
   // Choix vidéo fait sur l'écran de création (structure V5).
@@ -577,6 +579,7 @@ export async function ensureLiveMatch(
         opponent: payload.opponent || "Adversaire",
         match_date: payload.date,
         home: payload.home ?? true,
+        match_category: payload.matchCategory ?? "friendly",
         us_score: 0,
         them_score: 0,
         score_us: 0,
@@ -823,6 +826,7 @@ export async function finalizeLiveMatch(args: {
         opponent: payload.opponent || "Adversaire",
         match_date: payload.date,
         home: payload.home ?? true,
+        match_category: payload.matchCategory ?? "friendly",
       })
       .eq("id", matchId);
     if (matchError) logSupabaseError("finalizeLiveMatch: update match_stats (non bloquant)", matchError);
@@ -912,6 +916,7 @@ export async function saveLiveMatch(
         opponent: payload.opponent || "Adversaire",
         match_date: payload.date,
         home: payload.home ?? true,
+        match_category: payload.matchCategory ?? "friendly",
         us_score: safeNumber(payload.us),
         them_score: safeNumber(payload.them),
         result: payload.result,

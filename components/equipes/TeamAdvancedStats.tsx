@@ -315,6 +315,8 @@ export default function TeamAdvancedStats({
   const [clipSelection, setClipSelection] = useState<ClipSelection | null>(null);
   const [activeClipIndex, setActiveClipIndex] = useState(0);
   const clipVideoRef = useRef<HTMLVideoElement | null>(null);
+  const localVideoInputRef = useRef<HTMLInputElement | null>(null);
+  const [localVideoByMatch, setLocalVideoByMatch] = useState<Map<string, { src: string; name: string }>>(new Map());
 
   useEffect(() => {
     let active = true;
@@ -414,7 +416,7 @@ export default function TeamAdvancedStats({
 
   const selectedMatchIds = useMemo(() => {
     if (filters.matchId) return new Set([filters.matchId]);
-    const categoryOf=(m:MatchRow)=>{const raw=String(m.match_category||m.competition_type||m["match_type"]||"").toLowerCase();if(m.is_friendly||raw.includes("amical")||raw.includes("friendly"))return "friendly";if(raw.includes("coupe")||raw.includes("cup"))return "cup";return "championship"};
+    const categoryOf=(m:MatchRow)=>{const ps=m["project_state"]&&typeof m["project_state"]==="object"?m["project_state"] as Record<string,unknown>:{};const raw=String(m.match_category||m.competition_type||m["match_type"]||ps.matchType||"").toLowerCase();if(m.is_friendly||raw.includes("amical")||raw.includes("friendly"))return "friendly";if(raw.includes("coupe")||raw.includes("cup"))return "cup";return "championship"};
     return new Set(matches.filter(m=>matchCategory==="all"||categoryOf(m)===matchCategory).map((m) => m.id));
   }, [filters.matchId, matches, matchCategory]);
 
@@ -721,7 +723,22 @@ export default function TeamAdvancedStats({
 
   const activeClip = clipSelection?.actions[activeClipIndex];
   const activeMatch = activeClip ? matchMap.get(activeClip.match_id) : undefined;
-  const activeVideoSource = resolveMatchVideo(activeMatch, teamId);
+  const attachedLocalVideo = activeClip ? localVideoByMatch.get(String(activeClip.match_id)) : undefined;
+  const activeVideoSource: ResolvedVideoSource = attachedLocalVideo
+    ? { kind: "direct", src: attachedLocalVideo.src, label: attachedLocalVideo.name }
+    : resolveMatchVideo(activeMatch, teamId);
+
+  const attachLocalVideo = (file: File | null) => {
+    if (!file || !activeClip?.match_id) return;
+    const matchId = String(activeClip.match_id);
+    setLocalVideoByMatch((current) => {
+      const next = new Map(current);
+      const previous = next.get(matchId);
+      if (previous) URL.revokeObjectURL(previous.src);
+      next.set(matchId, { src: URL.createObjectURL(file), name: file.name });
+      return next;
+    });
+  };
 
   useEffect(() => {
     const video = clipVideoRef.current;
@@ -877,12 +894,24 @@ export default function TeamAdvancedStats({
                       ) : (
                         <div className="clip-external missing">
                           <strong>Source vidéo non retrouvée</strong>
-                          <p>
-                            L’action est bien codée, mais aucun identifiant de vidéo n’est enregistré sur ce match.
-                          </p>
+                          <p>L’action est bien codée. Tu peux joindre le fichier vidéo du match pour lire immédiatement les clips.</p>
+                          <button type="button" className="attach-video-button" onClick={() => localVideoInputRef.current?.click()}>📁 Joindre le fichier vidéo</button>
                         </div>
                       )}
+                      <input
+                        ref={localVideoInputRef}
+                        className="local-video-input"
+                        type="file"
+                        accept="video/*,.mp4,.mov,.m4v,.webm"
+                        onChange={(event) => { attachLocalVideo(event.currentTarget.files?.[0] ?? null); event.currentTarget.value = ""; }}
+                      />
                     </div>
+                    {activeVideoSource.kind !== "unknown" ? (
+                      <div className="video-source-row">
+                        <span>{activeVideoSource.label}</span>
+                        <button type="button" onClick={() => localVideoInputRef.current?.click()}>Changer de fichier</button>
+                      </div>
+                    ) : null}
 
                     <div className="active-clip-meta">
                       <ClipMeta
@@ -1383,6 +1412,11 @@ export default function TeamAdvancedStats({
         .clip-player-column { min-width:0; min-height:0; overflow:auto; padding:16px; background:#171313; }
         .clip-player { width:100%; aspect-ratio:16/9; display:grid; place-items:center; overflow:hidden; border-radius:14px; background:#050505; }
         .clip-player video { width:100%; height:100%; object-fit:contain; background:#000; }
+        .local-video-input{display:none}
+        .attach-video-button{margin-top:12px;border:1px solid #d4a24c;border-radius:999px;padding:9px 14px;background:#d4a24c;color:#fff;font-weight:950;cursor:pointer}
+        .video-source-row{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:8px 10px;background:#fff8ef;border-top:1px solid #eadfd5;color:#6b1a2c;font-size:.75rem;font-weight:850}
+        .video-source-row span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+        .video-source-row button{flex:0 0 auto;border:1px solid #d9c9c2;border-radius:999px;padding:6px 10px;background:#fff;color:#6b1a2c;font-weight:900;cursor:pointer}
         .clip-external { padding:26px; color:#fff; text-align:center; }
         .clip-external strong { font-size:1rem; }
         .clip-external p { color:#c9c0bb; font-size:.75rem; }
