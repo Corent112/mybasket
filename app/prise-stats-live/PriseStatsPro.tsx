@@ -2348,7 +2348,7 @@ export default function PriseStatsProPage() {
   const [savedMontages, setSavedMontages] = useState<{ id: string; title: string; coach_note: string | null }[]>([]);
   const [montageLoading, setMontageLoading] = useState(false);
 
-  const addToMontage = (a: StatA) => {
+  const addToMontage = async (a: StatA) => {
     const p = find(a.playerId);
     const label = `${tags.label(a.tempsFort) || '—'} · ${describe(a, find).t}`;
     const sub = [periodLabel(a.q), a.clock, p ? `#${p.num} ${p.name}` : null].filter(Boolean).join(' · ');
@@ -2367,6 +2367,64 @@ export default function PriseStatsProPage() {
       flash('Ajouté au montage');
       return [...prev, { caid: a.id, label, sub, note, clipStart: cs, clipEnd: cEnd }];
     });
+
+    // Le bouton « Ajouter au montage » doit aussi alimenter la bibliothèque
+    // persistante du MontageStudio. Le storyboard Live reste local, mais le clip
+    // est enregistré comme favori Montage afin d'être retrouvé après navigation.
+    try {
+      const supabase = createClient();
+      const { data: { user } } = await supabase.auth.getUser();
+      const montageTeamId = String(activeTeamId || teamId || '');
+      const clientActionId = String(a.id || '');
+      if (!user?.id || !montageTeamId || !clientActionId) throw new Error('Clip, équipe ou utilisateur introuvable.');
+
+      let actionRow: { id: string } | null = null;
+      const byClient = await supabase
+        .from('match_actions')
+        .select('id')
+        .eq('client_action_id', clientActionId)
+        .eq('team_id', montageTeamId)
+        .maybeSingle();
+      if (!byClient.error && byClient.data?.id) actionRow = byClient.data as { id: string };
+
+      if (!actionRow && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(clientActionId)) {
+        const byId = await supabase
+          .from('match_actions')
+          .select('id')
+          .eq('id', clientActionId)
+          .eq('team_id', montageTeamId)
+          .maybeSingle();
+        if (!byId.error && byId.data?.id) actionRow = byId.data as { id: string };
+      }
+
+      if (!actionRow?.id) {
+        // Force d'abord la sauvegarde du projet : l'action vient peut-être juste
+        // d'être codée et n'est pas encore présente dans match_actions.
+        try { await persistProjectStateRef.current?.(); } catch { /* noop */ }
+        const retry = await supabase
+          .from('match_actions')
+          .select('id')
+          .eq('client_action_id', clientActionId)
+          .eq('team_id', montageTeamId)
+          .maybeSingle();
+        if (!retry.error && retry.data?.id) actionRow = retry.data as { id: string };
+      }
+
+      if (!actionRow?.id) throw new Error('Action non encore enregistrée : réessaie dans un instant.');
+
+      const { error } = await supabase
+        .from('livestat_clip_favorites')
+        .upsert(
+          { user_id: user.id, team_id: montageTeamId, action_id: actionRow.id },
+          { onConflict: 'user_id,team_id,action_id' },
+        );
+      if (error) throw error;
+
+      setFavoriteClips((current) => ({ ...current, [clientActionId]: true }));
+      flash('★ Clip disponible dans Montage');
+    } catch (error: any) {
+      flash(error?.message || 'Clip ajouté localement, mais impossible de l’envoyer dans Montage');
+    }
   };
   const removeMontageItem = (caid: string) => setMontageItems((prev) => prev.filter((x) => x.caid !== caid));
   const moveMontageItem = (idx: number, dir: -1 | 1) => {
