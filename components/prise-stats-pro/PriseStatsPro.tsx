@@ -106,6 +106,11 @@ interface Draft {
   opponentPlayerNumber?: string | null;
   // Clip court commun Temps fort / Joueur / Tir.
   eventClipStart?: number | null;
+  // Pick Top / Side hors Live : acteurs du pick + joueur qui réalise l'action finale.
+  pickZone?: string | null;
+  pickHandlerPlayerId?: string | null;
+  pickScreenerPlayerId?: string | null;
+  pickRollerPlayerId?: string | null;
 }
 interface StatA extends Draft {
   id: string;
@@ -400,7 +405,7 @@ function resolveCodingButtons(
 
 const NAV = ['Contexte', 'Système de jeu', 'Temps fort', 'Joueur', "Type d'action", 'Résultat', 'Où ?', 'Conséquence'];
 const STAGE_NAV: Record<string, number> = {
-  context: 0, inbound: 1, systeme: 1, temps: 2, coverage: 2, player: 3, action: 4, faute: 4, 'technical-foul-target': 4, result: 5, ft: 5, zone: 6, rebound: 7, assist: 7,
+  context: 0, inbound: 1, systeme: 1, temps: 2, 'pick-actors': 3, coverage: 3, player: 3, action: 4, faute: 4, 'technical-foul-target': 4, result: 5, ft: 5, zone: 6, rebound: 7, assist: 7,
 };
 const emptyDraft = (): Draft => ({
   context: '', systemeJeu: '', inbound: '', tempsFort: '', coverage: '', playerId: null, actionType: '',
@@ -410,6 +415,7 @@ const emptyDraft = (): Draft => ({
   playbookId: null, systemeSlot: null, systemeId: null, systemeName: null,
   possessionStart: null, possessionEnd: null, eventClipStart: null,
   opponentPlayerId: null, opponentPlayerName: null, opponentPlayerNumber: null,
+  pickZone: null, pickHandlerPlayerId: null, pickScreenerPlayerId: null, pickRollerPlayerId: null,
 });
 
 /* ============================ Calculs ============================ */
@@ -3543,6 +3549,11 @@ export default function PriseStatsProPage() {
           codingSource: codingMode === 'live-individual' ? 'individual' : codingMode === 'live' ? 'collective' : 'post',
           context: a.context, inbound: a.inbound, tempsFort: a.tempsFort,
           coverage: a.coverage, playerId: a.playerId,
+          // Pick Top / Side · acteurs figés avec l'action pour les stats de rentabilité du duo.
+          pickZone: a.pickZone ?? null,
+          pickHandlerPlayerId: a.pickHandlerPlayerId ?? null,
+          pickScreenerPlayerId: a.pickScreenerPlayerId ?? null,
+          pickRollerPlayerId: a.pickRollerPlayerId ?? a.pickScreenerPlayerId ?? null,
           // AJOUT · système joué (valeurs figées au commit, cohérentes partout)
           systemeSlot: a.systemeSlot ?? null,
           systemeId: a.systemeId ?? null,
@@ -3791,11 +3802,17 @@ export default function PriseStatsProPage() {
     return workflowOn('player') ? 'player' : 'action';
   };
 
+  const isBallScreenPick = (value: string) =>
+    value === 'pick_side' || value === 'pick_top' || value === 'pick-side' || value === 'pick-top';
+
   const stageAfterTemps = (d: Draft): string => {
     // En défense, le temps fort débouche directement sur le résultat.
     if (d.context === 'defense') return 'result';
     if (codingMode === 'live') return 'result';
-    if ((d.tempsFort === 'pick-side' || d.tempsFort === 'pick-top') && workflowOn('coverage')) return 'coverage';
+    // Hors Live : Pick Top / Side possède son bloc dédié Handler → Poseur → Action finale.
+    // Il remplace le « Qui réalise l'action ? » générique afin d'éviter tout doublon.
+    if (isPostLikeCodingMode(codingMode) && isBallScreenPick(d.tempsFort)) return 'pick-actors';
+    if (isBallScreenPick(d.tempsFort) && workflowOn('coverage')) return 'coverage';
     return workflowOn('player') ? 'player' : 'action';
   };
 
@@ -3853,13 +3870,28 @@ export default function PriseStatsProPage() {
     const commonEventStart =
       draft.eventClipStart ??
       (now == null ? null : Math.max(possessionStart, now - 6));
-    const d = { ...draft, tempsFort: id, coverage: '', eventClipStart: commonEventStart };
+    const d = {
+      ...draft,
+      tempsFort: id,
+      coverage: '',
+      eventClipStart: commonEventStart,
+      pickZone: isBallScreenPick(id) ? (id.includes('side') ? 'side' : 'top') : null,
+      pickHandlerPlayerId: null,
+      pickScreenerPlayerId: null,
+      pickRollerPlayerId: null,
+      // Pour un nouveau temps fort, le joueur final doit être redéfini.
+      playerId: null,
+    };
     setDraft(d);
     setStage(stageAfterTemps(d));
   };
   const covPick = (id: string) => {
     const d = { ...draft, coverage: id };
     setDraft(d);
+    if (d.context !== 'defense' && isPostLikeCodingMode(codingMode) && isBallScreenPick(d.tempsFort) && d.playerId) {
+      setStage('action');
+      return;
+    }
     setStage(d.context === 'defense' ? 'result' : (workflowOn('player') ? 'player' : 'action'));
   };
   const actionPick = (id: string) => {
@@ -4276,6 +4308,10 @@ export default function PriseStatsProPage() {
       assist: a.assist,
       assistPlayerId: a.assistPlayerId,
       foulOutcome: a.foulOutcome,
+      pickZone: a.pickZone ?? null,
+      pickHandlerPlayerId: a.pickHandlerPlayerId ?? null,
+      pickScreenerPlayerId: a.pickScreenerPlayerId ?? null,
+      pickRollerPlayerId: a.pickRollerPlayerId ?? a.pickScreenerPlayerId ?? null,
     });
 
     setStage(stageForCorrection(a));
@@ -7020,6 +7056,43 @@ export default function PriseStatsProPage() {
       }
       case 'temps':
         return <><div className="stageHeadWithConfig">{head('Temps fort', 'Type de jeu')}<button className="stageConfigBtn" onClick={() => openCodingSettings('buttons')} title="Créer, renommer ou masquer des temps forts">⚙</button></div>{tileGrid(tempsFortsButtons, draft.tempsFort, tempsPick)}</>;
+      case 'pick-actors': {
+        const five = roster.filter((player) => onCourt.includes(player.id));
+        const chooseHandler = (id: string) => {
+          setDraft((current) => ({
+            ...current,
+            pickHandlerPlayerId: id,
+            pickScreenerPlayerId: current.pickScreenerPlayerId === id ? null : current.pickScreenerPlayerId,
+            pickRollerPlayerId: current.pickScreenerPlayerId === id ? null : current.pickRollerPlayerId,
+            // Par défaut l'action finale reste au porteur : zéro clic supplémentaire dans le cas courant.
+            // L'opérateur peut choisir immédiatement n'importe lequel des 5 joueurs si l'action se poursuit ailleurs.
+            playerId: current.playerId && current.playerId !== current.pickHandlerPlayerId ? current.playerId : id,
+          }));
+        };
+        const chooseScreener = (id: string) => {
+          if (id === draft.pickHandlerPlayerId) return;
+          setDraft((current) => ({ ...current, pickScreenerPlayerId: id, pickRollerPlayerId: id }));
+        };
+        const continuePick = () => {
+          if (!draft.pickHandlerPlayerId || !draft.pickScreenerPlayerId || !draft.playerId) return;
+          setStage(workflowOn('coverage') ? 'coverage' : 'action');
+        };
+        const playerButtons = (selectedId: string | null | undefined, onPick: (id: string) => void, disabledId?: string | null) => (
+          <div className="grid c3">{five.map((player) => {
+            const disabled = player.id === disabledId;
+            return <button key={player.id} type="button" disabled={disabled} className={`chip ${selectedId === player.id ? 'active' : ''}`} onClick={() => onPick(player.id)} style={disabled ? { opacity: .35, cursor: 'not-allowed' } : undefined}>#{player.num} {player.name}</button>;
+          })}</div>
+        );
+        return <>
+          {head(draft.tempsFort === 'pick_side' || draft.tempsFort === 'pick-side' ? 'Pick Side' : 'Pick Top', 'Acteurs du pick puis joueur qui réalise l’action finale')}
+          <div className="pickActorsBlock">
+            <div className="pickActorsSection"><b>1 · BALL HANDLER</b><small>Porteur de balle</small>{playerButtons(draft.pickHandlerPlayerId, chooseHandler)}</div>
+            <div className="pickActorsSection"><b>2 · POSEUR D’ÉCRAN / ROLLER</b><small>Le Handler ne peut pas être le poseur</small>{playerButtons(draft.pickScreenerPlayerId, chooseScreener, draft.pickHandlerPlayerId)}</div>
+            <div className="pickActorsSection"><b>3 · QUI RÉALISE L’ACTION FINALE ?</b><small>Handler présélectionné · tu peux choisir le Roller ou l’un des 3 autres joueurs</small>{playerButtons(draft.playerId, (id) => setDraft((current) => ({ ...current, playerId: id })))}</div>
+            <button type="button" className="chip active" style={{ width: '100%', marginTop: 4 }} disabled={!draft.pickHandlerPlayerId || !draft.pickScreenerPlayerId || !draft.playerId} onClick={continuePick}>CONTINUER → RÉSULTAT DE L’ACTION</button>
+          </div>
+        </>;
+      }
       case 'coverage':
         return <>{head("Défense sur l'écran", 'Comment défend-on le pick ?')}<div className="grid c3">{codingButtonsFor('coverage').map((c) => <button key={c.key} className={`chip ${draft.coverage === c.key ? 'active' : ''}`} onClick={() => covPick(c.key)}>{c.emoji ? c.emoji + ' ' : ''}{c.label}</button>)}</div></>;
       case "player": {
@@ -7474,7 +7547,7 @@ function BoxView({ actions, roster, teamId, videoProvider = 'none', videoUrl = '
   ).length;
   const A = computeAnalytics(actions, roster);
   const pts = (l: any) => l.p2m * 2 + l.p3m * 3 + l.ftm;
-  const [boxTab, setBoxTab] = useState<'box' | 'box-advanced' | 'team' | 'matrix' | 'systems' | 'search' | 'lineups' | 'shot' | 'video'>('box');
+  const [boxTab, setBoxTab] = useState<'box' | 'box-advanced' | 'team' | 'matrix' | 'systems' | 'picks' | 'search' | 'lineups' | 'shot' | 'video'>('box');
   // Bloc C · onglet initial demandé depuis l'Historique (tab=history → Collectif, tab=players → Boxscore).
   useEffect(() => { if (initialTab) setBoxTab(initialTab); }, [initialTab]);
   const [boxSide, setBoxSide] = useState<'attaque' | 'defense'>('attaque');
@@ -7587,6 +7660,34 @@ function BoxView({ actions, roster, teamId, videoProvider = 'none', videoUrl = '
       return { ...g, made, missed, lost, points, poss, pct: shots ? Math.round((made / shots) * 100) : 0, ppp: poss ? points / poss : 0 };
     }).filter((r) => r.poss > 0).sort((a, b) => b.ppp - a.ppp);
   };
+
+  // Rentabilité Pick & Roll par duo Handler / Roller.
+  // Une ligne = un duo, tous Pick Top + Pick Side confondus ; les volumes Top/Side
+  // restent visibles pour comprendre comment le duo est utilisé.
+  const pickDuoRows = (() => {
+    const groups = new Map<string, { key: string; handlerId: string; rollerId: string; list: StatA[] }>();
+    actions.forEach((a) => {
+      if (a.context !== 'attaque') return;
+      if (!(a.tempsFort === 'pick_side' || a.tempsFort === 'pick_top' || a.tempsFort === 'pick-side' || a.tempsFort === 'pick-top')) return;
+      const handlerId = a.pickHandlerPlayerId ?? '';
+      const rollerId = a.pickRollerPlayerId ?? a.pickScreenerPlayerId ?? '';
+      if (!handlerId || !rollerId || handlerId === rollerId) return;
+      const key = `${handlerId}::${rollerId}`;
+      if (!groups.has(key)) groups.set(key, { key, handlerId, rollerId, list: [] });
+      groups.get(key)!.list.push(a);
+    });
+    return Array.from(groups.values()).map((g) => {
+      const made = g.list.filter((a) => a.actionType === 'tir' && a.shotResult === 'made').length;
+      const missed = g.list.filter((a) => a.actionType === 'tir' && a.shotResult === 'missed').length;
+      const lost = g.list.filter((a) => a.actionType === 'perte').length;
+      const points = g.list.reduce((sum, a) => sum + ptsOf(a), 0);
+      const poss = g.list.length;
+      const shots = made + missed;
+      const top = g.list.filter((a) => a.tempsFort === 'pick_top' || a.tempsFort === 'pick-top').length;
+      const side = g.list.filter((a) => a.tempsFort === 'pick_side' || a.tempsFort === 'pick-side').length;
+      return { ...g, made, missed, lost, points, poss, top, side, pct: shots ? Math.round((made / shots) * 100) : 0, ppp: poss ? points / poss : 0 };
+    }).sort((a, b) => b.ppp - a.ppp || b.poss - a.poss);
+  })();
 
   const openList = (title: string, items: StatA[]) => {
     setClipList({ title, items });
@@ -7819,7 +7920,7 @@ function BoxView({ actions, roster, teamId, videoProvider = 'none', videoUrl = '
 
   const TABS: [typeof boxTab, string][] = [
     ['box', 'Boxscore joueurs'], ['box-advanced', 'Boxscore joueur avancé'], ['team', 'Collectif'], ['matrix', 'Matrice'],
-    ['systems', 'Systèmes'],
+    ['systems', 'Systèmes'], ['picks', 'Pick & Roll'],
     ['search', 'Recherche avancée'], ['lineups', 'Lineups'], ['shot', 'Shot chart'], ['video', 'Vidéo'],
   ];
 
@@ -8030,6 +8131,44 @@ function BoxView({ actions, roster, teamId, videoProvider = 'none', videoUrl = '
           </>
         );
       })()}
+
+      {/* ===== Rentabilité Pick & Roll par duo Handler / Roller ===== */}
+      {boxTab === 'picks' && (
+        pickDuoRows.length ? (
+          <>
+            <div className="tip" style={{ marginBottom: 8 }}>
+              Rentabilité par duo Handler / Roller · PPP = points produits par action finale codée sur le Pick · clique le duo ou une cellule pour revoir les actions.
+            </div>
+            <table className="matrixClick">
+              <thead><tr><th className="l">Handler</th><th className="l">Roller</th><th>Poss.</th><th>Top</th><th>Side</th><th>Marqué</th><th>Raté</th><th>Perte</th><th>%</th><th>Points</th><th>PPP</th></tr></thead>
+              <tbody>{pickDuoRows.map((r) => {
+                const handler = find(r.handlerId);
+                const roller = find(r.rollerId);
+                const madeList = r.list.filter((a) => a.actionType === 'tir' && a.shotResult === 'made');
+                const missedList = r.list.filter((a) => a.actionType === 'tir' && a.shotResult === 'missed');
+                const lostList = r.list.filter((a) => a.actionType === 'perte');
+                const topList = r.list.filter((a) => a.tempsFort === 'pick_top' || a.tempsFort === 'pick-top');
+                const sideList = r.list.filter((a) => a.tempsFort === 'pick_side' || a.tempsFort === 'pick-side');
+                const duoLabel = `${handler?.name ?? 'Handler'} + ${roller?.name ?? 'Roller'}`;
+                return (
+                  <tr key={r.key}>
+                    <td className="l clickCell" onClick={() => openList(`Pick · ${duoLabel}`, r.list)}>{handler ? `#${handler.num} ${handler.name}` : r.handlerId}</td>
+                    <td className="l clickCell" onClick={() => openList(`Pick · ${duoLabel}`, r.list)}>{roller ? `#${roller.num} ${roller.name}` : r.rollerId}</td>
+                    <td>{r.poss}</td>
+                    <td><button className="cellBtn" onClick={() => openList(`${duoLabel} · Pick Top`, topList)}>{r.top}</button></td>
+                    <td><button className="cellBtn" onClick={() => openList(`${duoLabel} · Pick Side`, sideList)}>{r.side}</button></td>
+                    <td><button className="cellBtn ok" onClick={() => openList(`${duoLabel} · paniers marqués`, madeList)}>{r.made}</button></td>
+                    <td><button className="cellBtn ko" onClick={() => openList(`${duoLabel} · tirs ratés`, missedList)}>{r.missed}</button></td>
+                    <td><button className="cellBtn" onClick={() => openList(`${duoLabel} · pertes`, lostList)}>{r.lost}</button></td>
+                    <td>{r.pct}%</td><td>{r.points}</td>
+                    <td><b style={{ color: r.ppp >= 1 ? 'var(--green)' : r.ppp >= 0.8 ? 'var(--gold)' : 'var(--red)' }}>{r.ppp.toFixed(2)}</b></td>
+                  </tr>
+                );
+              })}</tbody>
+            </table>
+          </>
+        ) : <div className="tip">Aucun Pick Top / Pick Side avec Handler et Roller enregistré pour le moment.</div>
+      )}
 
       {/* ===== Recherche avancée : filtres cumulables ===== */}
       {boxTab === 'search' && (
@@ -8310,7 +8449,7 @@ function Style() {
       .cm-t { font-size: 13px; font-weight: 900; letter-spacing: .03em; } .cm-s { font-size: 9px; color: var(--mute); font-weight: 800; letter-spacing: .12em; }
       .cm-head-r { display: flex; gap: 10px; align-items: center; }
 
-      .projectMenuWrap{position:relative}.menuDots{min-width:44px;justify-content:center;font-size:16px;letter-spacing:2px}.projectMenu{position:absolute;right:0;top:calc(100% + 8px);z-index:2500;width:280px;padding:8px;border:1px solid var(--border);border-radius:12px;background:#0d1626;box-shadow:0 18px 50px rgba(0,0,0,.45);display:grid;gap:4px}.projectMenu button{width:100%;border:0;border-radius:8px;background:transparent;color:#eef3fb;text-align:left;padding:9px 10px;font-size:11px;font-weight:850;cursor:pointer}.projectMenu button:hover{background:rgba(255,255,255,.07)}.projectMenu .danger{color:#ff8792}.layoutToggleRow{display:grid;grid-template-columns:1fr auto 1fr;align-items:center;gap:8px;padding:8px 10px;border-radius:8px;background:rgba(255,255,255,.04);color:#8f9bb0;font-size:10px;font-weight:850}.layoutToggleRow span:last-child{text-align:right}.layoutToggleRow span.on{color:#fff}.layoutToggle{position:relative!important;width:42px!important;height:22px!important;padding:0!important;border:1px solid var(--gold)!important;border-radius:999px!important;background:#111b2d!important}.layoutToggle i{position:absolute;top:3px;left:3px;width:14px;height:14px;border-radius:50%;background:var(--gold);transition:transform .18s ease}.layoutToggle.coding i{transform:translateX(20px)}.projectMenuSep{height:1px;background:var(--border);margin:4px 2px}.trackpadHint{font-size:10px;color:#9eabc0;border:1px solid var(--border);border-radius:999px;padding:5px 9px}.stageHeadWithConfig{position:relative}.stageHeadWithConfig .stageConfigBtn{position:absolute;right:0;top:0;width:30px;height:30px;border:1px solid var(--border);border-radius:8px;background:rgba(212,162,76,.10);color:var(--gold);font-weight:900;cursor:pointer}.panelResizeHandle{min-width:7px;border-radius:999px;background:linear-gradient(180deg,transparent 8%,rgba(212,162,76,.28) 24%,rgba(212,162,76,.58) 50%,rgba(212,162,76,.28) 76%,transparent 92%);cursor:col-resize;display:flex;align-items:center;justify-content:center;touch-action:none;user-select:none}.panelResizeHandle span{font-size:14px;color:#d4a24c;opacity:.8;writing-mode:vertical-rl}.videoMaximized{grid-template-columns:1fr!important}.videoMaximized>.panelResizeHandle,.videoMaximized>.lc-code,.videoMaximized>.lc-right{display:none!important}.videoMaximized>.lc-video{grid-column:1!important;width:100%;min-width:0}.videoMaximized .videoSlot.big{min-height:0;height:100%}.videoMaximized .vplayer{height:100%;max-height:none}.codingLogicSetup{margin-top:10px;border:1px solid var(--border);border-radius:11px;background:var(--panel);padding:10px;display:grid;gap:8px}.codingLogicSetupHead{display:flex;align-items:center;justify-content:space-between;gap:10px}.codingLogicSetupHead>div{display:grid;gap:2px}.codingLogicSetupHead b{font-size:10px;color:var(--gold)}.codingLogicSetupHead small{font-size:9px;color:var(--mute)}.codingLogicSetupHead button,.codingLogicSetupRow button{border:1px solid var(--gold);border-radius:8px;background:rgba(212,162,76,.1);color:var(--gold);padding:7px 9px;font-size:9px;font-weight:900;cursor:pointer}.codingLogicSetupRow{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:7px}.codingLogicSetupRow select{min-width:0;border:1px solid var(--border);border-radius:8px;background:var(--card);color:var(--txt);padding:8px;font-size:10px}.codingLogicPath{display:flex;align-items:center;gap:4px;flex-wrap:wrap}.codingLogicPath span{border:1px solid #35415a;border-radius:999px;background:#111b2d;color:#c4cedd;padding:4px 7px;font-size:8px;font-weight:850}.codingLogicPath i{font-style:normal;color:#65738b;font-size:8px}.codingLogicPath em{flex-basis:100%;font-style:normal;color:#8794aa;font-size:8px;margin-top:2px}.foulOutcomeGrid{display:grid;grid-template-columns:1fr 1fr;gap:8px}.foulOutcomeGrid .foulTouch{grid-column:1/-1}.foulOutcomeGrid .chip{min-height:44px}.individualDefenseHint{border:1px solid #39465d;border-radius:9px;background:#101a2b;padding:7px 9px;color:#9eabc0;font-size:9px}.individualLinkBox{margin-top:10px;border:1px solid var(--border);background:var(--panel);border-radius:10px;padding:10px}.individualLinkBox label{display:block;color:var(--mute);font-size:10px;font-weight:850;margin-bottom:6px}.individualLinkBox select{width:100%;border:1px solid var(--border);border-radius:8px;background:var(--card);color:var(--txt);padding:8px}.cm-video{grid-template-columns:repeat(4,minmax(0,1fr)) !important}.cm-vid-note{margin-top:6px;font-size:8px;font-weight:850;color:var(--gold)}
+      .projectMenuWrap{position:relative}.menuDots{min-width:44px;justify-content:center;font-size:16px;letter-spacing:2px}.projectMenu{position:absolute;right:0;top:calc(100% + 8px);z-index:2500;width:280px;padding:8px;border:1px solid var(--border);border-radius:12px;background:#0d1626;box-shadow:0 18px 50px rgba(0,0,0,.45);display:grid;gap:4px}.projectMenu button{width:100%;border:0;border-radius:8px;background:transparent;color:#eef3fb;text-align:left;padding:9px 10px;font-size:11px;font-weight:850;cursor:pointer}.projectMenu button:hover{background:rgba(255,255,255,.07)}.projectMenu .danger{color:#ff8792}.layoutToggleRow{display:grid;grid-template-columns:1fr auto 1fr;align-items:center;gap:8px;padding:8px 10px;border-radius:8px;background:rgba(255,255,255,.04);color:#8f9bb0;font-size:10px;font-weight:850}.layoutToggleRow span:last-child{text-align:right}.layoutToggleRow span.on{color:#fff}.layoutToggle{position:relative!important;width:42px!important;height:22px!important;padding:0!important;border:1px solid var(--gold)!important;border-radius:999px!important;background:#111b2d!important}.layoutToggle i{position:absolute;top:3px;left:3px;width:14px;height:14px;border-radius:50%;background:var(--gold);transition:transform .18s ease}.layoutToggle.coding i{transform:translateX(20px)}.projectMenuSep{height:1px;background:var(--border);margin:4px 2px}.trackpadHint{font-size:10px;color:#9eabc0;border:1px solid var(--border);border-radius:999px;padding:5px 9px}.stageHeadWithConfig{position:relative}.stageHeadWithConfig .stageConfigBtn{position:absolute;right:0;top:0;width:30px;height:30px;border:1px solid var(--border);border-radius:8px;background:rgba(212,162,76,.10);color:var(--gold);font-weight:900;cursor:pointer}.panelResizeHandle{min-width:7px;border-radius:999px;background:linear-gradient(180deg,transparent 8%,rgba(212,162,76,.28) 24%,rgba(212,162,76,.58) 50%,rgba(212,162,76,.28) 76%,transparent 92%);cursor:col-resize;display:flex;align-items:center;justify-content:center;touch-action:none;user-select:none}.panelResizeHandle span{font-size:14px;color:#d4a24c;opacity:.8;writing-mode:vertical-rl}.videoMaximized{grid-template-columns:1fr!important}.videoMaximized>.panelResizeHandle,.videoMaximized>.lc-code,.videoMaximized>.lc-right{display:none!important}.videoMaximized>.lc-video{grid-column:1!important;width:100%;min-width:0}.videoMaximized .videoSlot.big{min-height:0;height:100%}.videoMaximized .vplayer{height:100%;max-height:none}.codingLogicSetup{margin-top:10px;border:1px solid var(--border);border-radius:11px;background:var(--panel);padding:10px;display:grid;gap:8px}.codingLogicSetupHead{display:flex;align-items:center;justify-content:space-between;gap:10px}.codingLogicSetupHead>div{display:grid;gap:2px}.codingLogicSetupHead b{font-size:10px;color:var(--gold)}.codingLogicSetupHead small{font-size:9px;color:var(--mute)}.codingLogicSetupHead button,.codingLogicSetupRow button{border:1px solid var(--gold);border-radius:8px;background:rgba(212,162,76,.1);color:var(--gold);padding:7px 9px;font-size:9px;font-weight:900;cursor:pointer}.codingLogicSetupRow{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:7px}.codingLogicSetupRow select{min-width:0;border:1px solid var(--border);border-radius:8px;background:var(--card);color:var(--txt);padding:8px;font-size:10px}.codingLogicPath{display:flex;align-items:center;gap:4px;flex-wrap:wrap}.codingLogicPath span{border:1px solid #35415a;border-radius:999px;background:#111b2d;color:#c4cedd;padding:4px 7px;font-size:8px;font-weight:850}.codingLogicPath i{font-style:normal;color:#65738b;font-size:8px}.codingLogicPath em{flex-basis:100%;font-style:normal;color:#8794aa;font-size:8px;margin-top:2px}.pickActorsBlock{display:grid;gap:10px}.pickActorsSection{display:grid;gap:6px;padding:10px;border:1px solid var(--border);border-radius:10px;background:var(--panel)}.pickActorsSection>b{font-size:10px;color:var(--gold)}.pickActorsSection>small{font-size:9px;color:var(--mute);margin-top:-3px}.foulOutcomeGrid{display:grid;grid-template-columns:1fr 1fr;gap:8px}.foulOutcomeGrid .foulTouch{grid-column:1/-1}.foulOutcomeGrid .chip{min-height:44px}.individualDefenseHint{border:1px solid #39465d;border-radius:9px;background:#101a2b;padding:7px 9px;color:#9eabc0;font-size:9px}.individualLinkBox{margin-top:10px;border:1px solid var(--border);background:var(--panel);border-radius:10px;padding:10px}.individualLinkBox label{display:block;color:var(--mute);font-size:10px;font-weight:850;margin-bottom:6px}.individualLinkBox select{width:100%;border:1px solid var(--border);border-radius:8px;background:var(--card);color:var(--txt);padding:8px}.cm-video{grid-template-columns:repeat(4,minmax(0,1fr)) !important}.cm-vid-note{margin-top:6px;font-size:8px;font-weight:850;color:var(--gold)}
       @media(max-width:900px){.cm-video{grid-template-columns:1fr !important}.projectMenu{position:fixed;right:12px;top:72px;width:min(300px,calc(100vw - 24px))}.panelResizeHandle{display:none!important}.videoMaximized>.lc-code,.videoMaximized>.lc-right{display:none!important}}
       .cm-ghost { display: flex; align-items: center; gap: 7px; background: var(--panel2); border: 1px solid var(--border); border-radius: 10px; padding: 9px 14px; font-size: 12px; font-weight: 800; color: var(--txt); cursor: pointer; }
       .cm-ghost.sm { padding: 6px 11px; font-size: 11px; }

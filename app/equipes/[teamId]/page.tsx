@@ -5799,15 +5799,21 @@ function TeamLineupsBlock({ teamId, matchCategory }: { teamId: string; matchCate
   };
 
   const lineupVisual = (row: LineupRow | undefined) => row ? (
-    <div className="insight-lineup-avatars" aria-label="5 joueurs du lineup">
-      {row.ids.slice(0, 5).map((playerId) => {
-        const player = playersById[playerId];
-        return (
-          <span key={playerId} className="lineup-avatar">
-            {player?.photo ? <img src={player.photo} alt="" /> : <span>{player?.initials || "J"}</span>}
-          </span>
-        );
-      })}
+    <div className="lineup-identity">
+      <div className="lineup-avatars" aria-label="5 joueurs du lineup">
+        {row.ids.slice(0, 5).map((playerId) => {
+          const player = playersById[playerId];
+          return (
+            <span key={playerId} className="lineup-avatar">
+              {player?.photo ? (
+                <img src={player.photo} alt="" />
+              ) : (
+                <span>{player?.initials || "J"}</span>
+              )}
+            </span>
+          );
+        })}
+      </div>
     </div>
   ) : null;
 
@@ -6070,8 +6076,6 @@ function TeamLineupsBlock({ teamId, matchCategory }: { teamId: string; matchCate
         }
 
         .lineup-insights :global(.insight-visual) { margin:.1rem 0 .35rem; }
-        .insight-lineup-avatars { display:flex;align-items:center;gap:3px;min-height:24px; }
-        .insight-lineup-avatars .lineup-avatar { width:22px;height:22px;flex-basis:22px; }
 
         .lineup-insights :global(.insight-title) {
           display: -webkit-box;
