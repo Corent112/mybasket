@@ -835,6 +835,7 @@ export default function EquipeDetailPage({
   const [editingTeam, setEditingTeam] = useState(false);
   const [managing, setManaging] = useState(false);
   const [activeTab, setActiveTab] = useState<TeamMainTab>("presentation");
+  const [statsMatchCategory, setStatsMatchCategory] = useState<MatchCategoryFilter>("championship");
   const [nextCalendarEvents, setNextCalendarEvents] = useState<Array<any>>([]);
 
   useEffect(()=>{
@@ -1858,18 +1859,20 @@ export default function EquipeDetailPage({
         {activeTab === "stats" && (
           <div className="team-tab-panel stats-panel">
             <LiveStatsSourceBanner dashboard={dashboard} />
+            <MatchCategoryTabs value={statsMatchCategory} onChange={setStatsMatchCategory} />
             {dashboard.statRows.length === 0 && (team.statsHistory || []).length > 0 && (
               <LocalStatsFallbackPanel team={team} />
             )}
             <TeamLeadersBlock
               teamId={linkedStatsTeamId}
               players={team.players}
+              matchCategory={statsMatchCategory}
             />
-            <TeamMatchStatsBlock teamId={linkedStatsTeamId} />
-            <TeamGameStatsBlock teamId={linkedStatsTeamId} />
-            <TeamLineupsBlock teamId={linkedStatsTeamId} />
+            <TeamMatchStatsBlock teamId={linkedStatsTeamId} matchCategory={statsMatchCategory} />
+            <TeamGameStatsBlock teamId={linkedStatsTeamId} matchCategory={statsMatchCategory} />
+            <TeamLineupsBlock teamId={linkedStatsTeamId} matchCategory={statsMatchCategory} />
             <TeamMatchHistoryBlock teamId={linkedStatsTeamId} />
-            <TeamSeasonRecordsBlock teamId={linkedStatsTeamId} />
+            <TeamSeasonRecordsBlock teamId={linkedStatsTeamId} matchCategory={statsMatchCategory} />
           </div>
         )}
 
@@ -1878,6 +1881,7 @@ export default function EquipeDetailPage({
             <TeamAdvancedStats
               teamId={linkedStatsTeamId}
               team={team}
+              initialMatchCategory={statsMatchCategory}
             />
           </div>
         )}
@@ -1917,6 +1921,10 @@ export default function EquipeDetailPage({
 
 
       <style jsx>{`
+        :global(.stats-panel > .match-category-tabs){display:flex;gap:7px;flex-wrap:wrap;align-items:center;margin:0 0 14px;padding:7px;background:#fff8ef;border:1px solid #eadfd5;border-radius:14px;width:max-content;max-width:100%}
+        :global(.match-category-tabs button){border:1px solid transparent;background:transparent;color:#6b1a2c;border-radius:10px;padding:8px 13px;font-weight:900;cursor:pointer}
+        :global(.match-category-tabs button.on){background:#6b1a2c;color:#fff;box-shadow:0 5px 14px rgba(107,26,44,.16)}
+
         .tl-hero-logo {
           background: transparent !important;
           overflow: hidden;
@@ -3247,6 +3255,20 @@ type SupaStatRow = {
   present?: boolean | null;
 };
 
+type MatchCategoryFilter = "championship" | "cup" | "friendly" | "all";
+
+function matchCategoryOf(match: { match_category?: string | null }) : Exclude<MatchCategoryFilter, "all"> {
+  const raw = String(match.match_category || "").trim().toLowerCase();
+  if (raw.includes("friendly") || raw.includes("amical")) return "friendly";
+  if (raw.includes("cup") || raw.includes("coupe")) return "cup";
+  return "championship";
+}
+
+function MatchCategoryTabs({ value, onChange }: { value: MatchCategoryFilter; onChange: (value: MatchCategoryFilter) => void }) {
+  const options: Array<[MatchCategoryFilter, string]> = [["championship","Championnat"],["cup","Coupe"],["friendly","Amicaux"],["all","Tous"]];
+  return <div className="match-category-tabs" aria-label="Type de matchs">{options.map(([key,label]) => <button key={key} type="button" className={value===key?"on":""} onClick={()=>onChange(key)}>{label}</button>)}</div>;
+}
+
 type SupaMatchRow = {
   id: string;
   team_id?: string | null;
@@ -3405,9 +3427,11 @@ function getTop3(lines: LeaderLine[], category: LeaderCategory) {
 function TeamLeadersBlock({
   teamId,
   players,
+  matchCategory,
 }: {
   teamId: string;
   players: Player[];
+  matchCategory: MatchCategoryFilter;
 }) {
   const supabase = createClient();
 
@@ -3430,7 +3454,7 @@ function TeamLeadersBlock({
 
       const { data: matchData } = await supabase
         .from("match_stats")
-        .select("id")
+        .select("id, match_category")
         .eq("team_id", teamId);
 
       const matchIds = ((matchData ?? []) as Array<{ id: string }>).map(
@@ -3850,7 +3874,7 @@ function teamAdvanced(stats: TeamStats) {
   return { fgm, fga, poss, eff, efg, ts, astPct, tovPct, shot2Rep, shot3Rep };
 }
 
-function TeamMatchStatsBlock({ teamId }: { teamId: string }) {
+function TeamMatchStatsBlock({ teamId, matchCategory }: { teamId: string; matchCategory: MatchCategoryFilter }) {
   const supabase = createClient();
 
   const [loading, setLoading] = useState(true);
@@ -3882,7 +3906,8 @@ function TeamMatchStatsBlock({ teamId }: { teamId: string }) {
         return;
       }
 
-      const matchRows = (matchData ?? []) as SupaMatchRow[];
+      const allMatchRows = (matchData ?? []) as SupaMatchRow[];
+      const matchRows = matchCategory === "all" ? allMatchRows : allMatchRows.filter((match) => matchCategoryOf(match) === matchCategory);
       setMatches(matchRows);
 
       const matchIds = matchRows.map((m) => m.id);
@@ -3921,7 +3946,7 @@ function TeamMatchStatsBlock({ teamId }: { teamId: string }) {
     return () => {
       active = false;
     };
-  }, [supabase, teamId]);
+  }, [supabase, teamId, matchCategory]);
 
   const splitRows = useMemo(() => {
     const rowsByMatch = statsRows.reduce(
@@ -4564,7 +4589,7 @@ function splitGameMatches(matches: SupaMatchRow[], split: GameSplitKey) {
   });
 }
 
-function TeamGameStatsBlock({ teamId }: { teamId: string }) {
+function TeamGameStatsBlock({ teamId, matchCategory }: { teamId: string; matchCategory: MatchCategoryFilter }) {
   const supabase = createClient();
 
   const [loading, setLoading] = useState(true);
@@ -4595,7 +4620,8 @@ function TeamGameStatsBlock({ teamId }: { teamId: string }) {
         return;
       }
 
-      const matchRows = (matchData ?? []) as SupaMatchRow[];
+      const allMatchRows = (matchData ?? []) as SupaMatchRow[];
+      const matchRows = matchCategory === "all" ? allMatchRows : allMatchRows.filter((match) => matchCategoryOf(match) === matchCategory);
       setMatches(matchRows);
 
       const matchIds = matchRows.map((match) => match.id);
@@ -4630,7 +4656,7 @@ function TeamGameStatsBlock({ teamId }: { teamId: string }) {
     return () => {
       active = false;
     };
-  }, [supabase, teamId]);
+  }, [supabase, teamId, matchCategory]);
 
   const actionsByMatch = useMemo(() => {
     return actions.reduce(
@@ -4875,8 +4901,7 @@ function TeamGameStatsBlock({ teamId }: { teamId: string }) {
             <div className="sub-head">
               <h3>Impact victoire / défaite</h3>
               <p>
-                Ce tableau montre ce qui change vraiment entre les matchs gagnés
-                et perdus.
+                Comparaison de l’efficacité de chaque temps fort selon l’issue du match. PPP = points marqués par possession ; Util. = part des possessions ; Poss = nombre de possessions ; PTS = points produits.
               </p>
             </div>
 
@@ -5571,7 +5596,7 @@ function lineupClipAction(
   };
 }
 
-function TeamLineupsBlock({ teamId }: { teamId: string }) {
+function TeamLineupsBlock({ teamId, matchCategory }: { teamId: string; matchCategory: MatchCategoryFilter }) {
   const supabase = createClient();
 
   const [loading, setLoading] = useState(true);
@@ -5593,7 +5618,7 @@ function TeamLineupsBlock({ teamId }: { teamId: string }) {
       const { data: matchData, error: matchError } = await supabase
         .from("match_stats")
         .select(
-          "id, team_id, opponent, match_date, us_score, them_score, result, home, video_url, video_sync_mode, video_sync_offset, video_sync_rate",
+          "id, team_id, opponent, match_date, us_score, them_score, result, home, match_category, video_url, video_sync_mode, video_sync_offset, video_sync_rate",
         )
         .eq("team_id", teamId)
         .order("match_date", { ascending: false });
@@ -5608,7 +5633,8 @@ function TeamLineupsBlock({ teamId }: { teamId: string }) {
         return;
       }
 
-      const matchRows = (matchData ?? []) as SupaMatchRow[];
+      const allMatchRows = (matchData ?? []) as SupaMatchRow[];
+      const matchRows = matchCategory === "all" ? allMatchRows : allMatchRows.filter((match) => matchCategoryOf(match) === matchCategory);
       setMatches(matchRows);
 
       const info = new Map<string, { date: string; opponent: string }>();
@@ -5722,7 +5748,7 @@ function TeamLineupsBlock({ teamId }: { teamId: string }) {
     return () => {
       active = false;
     };
-  }, [supabase, teamId]);
+  }, [supabase, teamId, matchCategory]);
 
   const rows = useMemo(() => computeLineups(actions, names), [actions, names]);
   const topRows = rows.slice(0, 12);
@@ -5884,6 +5910,7 @@ function TeamLineupsBlock({ teamId }: { teamId: string }) {
                 {topRows.map((row) => (
                   <tr key={row.ids.join("|")}>
                     <td className="lineup-label">
+                      <div className="lineup-identity">
                       <div className="lineup-avatars" aria-label="5 joueurs du lineup">
                         {row.ids.slice(0, 5).map((playerId) => {
                           const player = playersById[playerId];
@@ -5897,6 +5924,8 @@ function TeamLineupsBlock({ teamId }: { teamId: string }) {
                             </span>
                           );
                         })}
+                      </div>
+                      <div className="lineup-names">{row.ids.slice(0,5).map((id)=>playersById[id]?.name || names[id] || "Joueur").join(" · ")}</div>
                       </div>
                     </td>
                     {clickableCell(row, "all", "Toutes les actions", row.actions)}
@@ -6139,6 +6168,8 @@ function TeamLineupsBlock({ teamId }: { teamId: string }) {
           overflow-wrap: anywhere;
         }
 
+        .lineup-identity { display:grid;grid-template-columns:auto 1fr;gap:.7rem;align-items:center;min-width:245px; }
+        .lineup-names { color:#3d3436;font-size:.76rem;font-weight:850;line-height:1.3;white-space:normal; }
         .lineup-avatars {
           display: flex;
           align-items: center;
@@ -6245,7 +6276,7 @@ type RecordLine = {
   opponent: string;
 };
 
-function TeamSeasonRecordsBlock({ teamId }: { teamId: string }) {
+function TeamSeasonRecordsBlock({ teamId, matchCategory }: { teamId: string; matchCategory: MatchCategoryFilter }) {
   const supabase = createClient();
 
   const [loading, setLoading] = useState(true);
@@ -6260,7 +6291,7 @@ function TeamSeasonRecordsBlock({ teamId }: { teamId: string }) {
 
       const { data: matchData, error: matchError } = await supabase
         .from("match_stats")
-        .select("id, opponent, match_date, us_score, them_score, home")
+        .select("id, opponent, match_date, us_score, them_score, home, match_category")
         .eq("team_id", teamId)
         .order("match_date", { ascending: false });
 
@@ -6274,7 +6305,8 @@ function TeamSeasonRecordsBlock({ teamId }: { teamId: string }) {
         return;
       }
 
-      const matchRows = (matchData ?? []) as SupaMatchRow[];
+      const allMatchRows = (matchData ?? []) as SupaMatchRow[];
+      const matchRows = matchCategory === "all" ? allMatchRows : allMatchRows.filter((match) => matchCategoryOf(match) === matchCategory);
       setMatches(matchRows);
 
       const matchIds = matchRows.map((m) => m.id);
@@ -6311,7 +6343,7 @@ function TeamSeasonRecordsBlock({ teamId }: { teamId: string }) {
     return () => {
       active = false;
     };
-  }, [supabase, teamId]);
+  }, [supabase, teamId, matchCategory]);
 
   const records = useMemo(() => {
     const byMatch = matches.reduce(

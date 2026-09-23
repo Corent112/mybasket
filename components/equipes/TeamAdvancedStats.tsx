@@ -294,16 +294,19 @@ function sameTag(a: unknown, b: unknown) {
 export default function TeamAdvancedStats({
   teamId,
   team,
+  initialMatchCategory = "championship",
 }: {
   teamId: string;
   team: Team;
+  initialMatchCategory?: "all"|"championship"|"cup"|"friendly";
 }) {
   const supabase = useMemo(() => createClient(), []);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [matches, setMatches] = useState<MatchRow[]>([]);
-  const [matchCategory, setMatchCategory] = useState<"all"|"championship"|"cup"|"friendly">("all");
+  const [matchCategory, setMatchCategory] = useState<"all"|"championship"|"cup"|"friendly">(initialMatchCategory);
   const [statsDisplay, setStatsDisplay] = useState<"total"|"average">("total");
+  useEffect(() => { setMatchCategory(initialMatchCategory); }, [initialMatchCategory]);
   const [actions, setActions] = useState<ActionRow[]>([]);
   const [playerStats, setPlayerStats] = useState<PlayerStatRow[]>([]);
   const [filters, setFilters] = useState<Filters>(EMPTY_FILTERS);

@@ -610,7 +610,7 @@ export default function LiveCodingSettingsModal({
                     <div className="lcsBlockHead">
                       <div><b>{group.icon} {group.title}</b><small>{visible.filter((r) => r.is_active !== false && r.included !== false).length} utilisé(s)</small></div>
                       <div className="lcsBlockHeadActions">
-                        {group.allowAdd !== false && !(group.key === 'system' && playbookId) && <button onClick={() => add(group.key)}>＋ Bouton</button>}
+                        {group.allowAdd !== false && <button onClick={() => add(group.key)}>＋ Bouton</button>}
                         <button
                           type="button"
                           className="removeBlock"
@@ -621,24 +621,7 @@ export default function LiveCodingSettingsModal({
                         </button>
                       </div>
                     </div>
-                    {group.key === 'system' && playbookId ? (
-                      <div className="lcsSeriesList">
-                        {groupedPlaybookSystems.length ? groupedPlaybookSystems.map((serie) => (
-                          <div className="lcsSeries" key={serie.id}>
-                            <div className="lcsSeriesHead"><b>▼ {serie.title.toUpperCase()}</b><span>{serie.systems.length}</span></div>
-                            <div className="lcsCodingGrid">
-                              {serie.systems.map((system) => (
-                                <div className="lcsTile lcsPlaybookTile" key={system.id}>
-                                  <span className="lcsPlaybookIcon">🏀</span>
-                                  <b>{system.title}</b>
-                                </div>
-                              ))}
-                            </div>
-                          </div>
-                        )) : <div className="lcsEmptyPlaybook">Aucun système dans ce Playbook.</div>}
-                        <div className="lcsPlaybookHint">Les séries et systèmes viennent directement du Playbook associé au match. Leur nom et leur classement se modifient dans le Playbook, pas dans les catégories de codage.</div>
-                      </div>
-                    ) : group.key === 'system' ? (
+                    {group.key === 'system' ? (
 
                       <div className="lcsSeriesList">
                         {[
