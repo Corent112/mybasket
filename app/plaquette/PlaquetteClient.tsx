@@ -4552,14 +4552,25 @@ const exportJson = () => {
     </div>
   </div>
 
-  <div className="ed-layout">
+  <div
+    className="ed-layout"
+    style={{
+      display: 'grid',
+      gridTemplateColumns: '250px 290px minmax(500px, 1fr) 320px',
+      gridTemplateAreas: '"library phases canvas right"',
+      gridTemplateRows: 'minmax(0, 1fr)',
+      height: 'calc(100vh - 180px)',
+      minHeight: 620,
+      overflow: 'hidden',
+    }}
+  >
             {/* -------- BIBLIOTHÈQUE / ORGANISATION -------- */}
-            <div className="ed-library">
+            <div className="ed-library" style={{ gridArea: 'library', minWidth: 0, height: '100%', overflow: 'hidden' }}>
               <ContentNavigator embedded initialKind="system" />
             </div>
 
             {/* -------- PHASES — DOCK BAS -------- */}
-            <aside className="ed-left">
+            <aside className="ed-left" style={{ gridArea: 'phases', minWidth: 0, height: '100%', overflowY: 'auto', overflowX: 'hidden' }}>
               <div className="ed-tabs">
                 <div className="ed-tab active" data-tab="phases">Phases</div>
                 
@@ -4710,7 +4721,7 @@ const exportJson = () => {
             </aside>
 
             {/* -------- TERRAIN -------- */}
-            <div className="ed-canvas-wrap" style={{ position: 'relative' }}>
+            <div className="ed-canvas-wrap" style={{ gridArea: 'canvas', position: 'relative', minWidth: 0, height: '100%', overflow: 'hidden' }}>
               <div className="court-view-switch">
                 <button type="button" className="court-view-switch-btn" id="courtToggleBtn" onClick={toggleCourt}>
                   🏟 Terrain : {courtType === 'half' ? 'Demi' : 'Complet'}
@@ -4734,7 +4745,7 @@ const exportJson = () => {
             </div>
 
             {/* -------- DROITE -------- */}
-            <aside className="ed-right">
+            <aside className="ed-right" style={{ gridArea: 'right', minWidth: 0, height: '100%', overflowY: 'auto', overflowX: 'hidden' }}>
               <div className="right-card right-card-players">
                 <div className="right-card-title"><span>👤</span> Joueurs</div>
 
@@ -5768,6 +5779,6 @@ html{font-size:15px}
   .ed-canvas-wrap{height:auto;overflow:visible}
 }
 
-/* V38 — Architecture DESSIN : bibliothèque à gauche, terrain au centre, outils à droite, phases en bas */
+/* V39 — Desktop: 4 colonnes fixes : bibliothèque | phases/timing | terrain | outils */
 @media (min-width:901px) and (max-width:1250px){.ed-layout{grid-template-columns:240px 270px minmax(420px,1fr) 300px;overflow-x:auto}}
 `;
