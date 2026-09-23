@@ -4552,25 +4552,14 @@ const exportJson = () => {
     </div>
   </div>
 
-  <div
-    className="ed-layout"
-    style={{
-      display: 'grid',
-      gridTemplateColumns: '250px 290px minmax(500px, 1fr) 320px',
-      gridTemplateAreas: '"library phases canvas right"',
-      gridTemplateRows: 'minmax(0, 1fr)',
-      height: 'calc(100vh - 180px)',
-      minHeight: 620,
-      overflow: 'hidden',
-    }}
-  >
+  <div className="ed-layout">
             {/* -------- BIBLIOTHÈQUE / ORGANISATION -------- */}
-            <div className="ed-library" style={{ gridArea: 'library', minWidth: 0, height: '100%', overflow: 'hidden' }}>
+            <div className="ed-library">
               <ContentNavigator embedded initialKind="system" />
             </div>
 
             {/* -------- PHASES — DOCK BAS -------- */}
-            <aside className="ed-left" style={{ gridArea: 'phases', minWidth: 0, height: '100%', overflowY: 'auto', overflowX: 'hidden' }}>
+            <aside className="ed-left">
               <div className="ed-tabs">
                 <div className="ed-tab active" data-tab="phases">Phases</div>
                 
@@ -4721,7 +4710,7 @@ const exportJson = () => {
             </aside>
 
             {/* -------- TERRAIN -------- */}
-            <div className="ed-canvas-wrap" style={{ gridArea: 'canvas', position: 'relative', minWidth: 0, height: '100%', overflow: 'hidden' }}>
+            <div className="ed-canvas-wrap" style={{ position: 'relative' }}>
               <div className="court-view-switch">
                 <button type="button" className="court-view-switch-btn" id="courtToggleBtn" onClick={toggleCourt}>
                   🏟 Terrain : {courtType === 'half' ? 'Demi' : 'Complet'}
@@ -4745,7 +4734,7 @@ const exportJson = () => {
             </div>
 
             {/* -------- DROITE -------- */}
-            <aside className="ed-right" style={{ gridArea: 'right', minWidth: 0, height: '100%', overflowY: 'auto', overflowX: 'hidden' }}>
+            <aside className="ed-right">
               <div className="right-card right-card-players">
                 <div className="right-card-title"><span>👤</span> Joueurs</div>
 
@@ -5605,22 +5594,23 @@ html{font-size:15px}
 .ed-icn-btn:hover{background:rgba(255,255,255,.1)}
 .ed-save{background:var(--or);color:var(--bordeaux-d);padding:.45rem 1.1rem;border-radius:6px;font-weight:700;font-size:.85rem;display:flex;align-items:center;gap:.4rem;cursor:pointer}
 .ed-save:hover{background:var(--or-l)}
-.ed-layout{display:grid;grid-template-columns:minmax(250px,280px) minmax(280px,320px) minmax(0,1fr) minmax(310px,350px);grid-template-areas:"library phases canvas right";grid-template-rows:minmax(0,1fr);height:calc(100vh - 180px);min-height:620px;gap:0;position:relative;overflow:hidden}
+.ed-layout{display:grid;grid-template-columns:minmax(238px,260px) minmax(245px,280px) minmax(0,1fr) minmax(300px,330px);grid-template-areas:"library phases canvas right";grid-template-rows:minmax(0,1fr);height:calc(100vh - 132px);min-height:620px;gap:0;position:relative;overflow:hidden}
 .ed-library{grid-area:library;position:relative;min-width:0;background:#101a22;border-right:1px solid #293b48;overflow:hidden}
 .ed-library .content-nav.embedded{position:absolute!important;inset:0!important;top:0!important;bottom:0!important;width:100%!important;height:100%!important;box-shadow:none!important;border-right:0!important;z-index:4}
 .ed-library .content-nav.compact{width:68px!important}
 .ed-library .cn-open{position:absolute!important;left:10px!important;top:10px!important}
 .ed-left,.ed-right{background:#f8f5f0;padding:.8rem;min-width:0}
-.ed-left{grid-area:phases;border-top:0;border-right:1px solid #e4ddd5;max-height:none;height:100%;overflow-y:auto;overflow-x:hidden}
-.ed-right{grid-area:right;border-left:1px solid #e4ddd5;display:flex;flex-direction:column;gap:.75rem;overflow-y:auto;max-height:none;height:100%}
+.ed-left{grid-area:phases;border-top:0;border-right:1px solid var(--gris-med);max-height:none;height:100%;overflow-y:auto;overflow-x:hidden}
+.ed-right{grid-area:right;border-left:1px solid #e4ddd5;display:flex;flex-direction:column;gap:.75rem;overflow-y:auto;height:100%;max-height:none}
 .ed-canvas-wrap{grid-area:canvas;min-width:0;height:100%;overflow:auto}
 .ed-left .ed-tabs{margin-bottom:.45rem}
-.ed-left #tabPhases{display:block}
-.ed-left #phCounter{margin-bottom:.5rem}
-.ed-left .ph-actions{margin-bottom:.7rem}
-.ed-left .phases-list{display:flex;flex-direction:column;gap:.4rem;max-height:260px;overflow-y:auto;overflow-x:hidden;padding-right:.2rem}
-.ed-left .ph-thumb{width:100%;flex:0 0 auto;aspect-ratio:16/10}
-.ed-left #timingPanel{margin-top:.85rem!important;padding-top:.85rem!important;border-top:1px solid var(--gris-med)!important;max-height:none;overflow:visible;padding-right:0}
+.ed-left #tabPhases{display:flex;flex-direction:column;gap:.55rem;min-width:0}
+.ed-left #phCounter{margin-bottom:0}
+.ed-left .ph-actions{margin-bottom:0}
+.ed-left .phases-list{display:flex;flex-direction:column;gap:.45rem;max-height:none;overflow:visible;padding:0}
+.ed-left .ph-thumb{flex:0 0 auto;width:100%;aspect-ratio:16/10}
+.ed-left #timingPanel{margin-top:.2rem!important;padding-top:.65rem!important;border-top:1px solid var(--gris-med)!important;max-height:none;overflow:visible;padding-right:0}
+.ed-left #tabPhases>div[style*="margin-top: .7rem"]{margin-top:.2rem!important}
 
 .ed-tabs{display:flex;border-bottom:2px solid var(--gris-med);margin-bottom:.7rem}
 .ed-tab{padding:.4rem .7rem;font-weight:700;font-size:.82rem;color:var(--gris-text);cursor:pointer;border-bottom:3px solid transparent;margin-bottom:-2px}
@@ -5768,17 +5758,15 @@ html{font-size:15px}
 .right-card-players .coach-cap{font-size:.64rem;top:0;right:1px}
 
 @media (min-width:1400px){
-  .ed-layout{grid-template-columns:270px 300px minmax(0,1fr) 340px}
+  .ed-layout{grid-template-columns:270px minmax(0,1fr) 360px}
   #playCanvas[data-court="full"]{max-width:540px}
 }
 
 @media (max-width:900px){
-  .ed-layout{grid-template-columns:1fr;grid-template-areas:"library" "phases" "canvas" "right";grid-template-rows:auto auto auto auto;height:auto;overflow:visible}
-  .ed-library{min-height:420px}
-  .ed-left,.ed-right{border:none;border-top:1px solid var(--gris-med);max-height:none;height:auto}
-  .ed-canvas-wrap{height:auto;overflow:visible}
+  .ed-layout{grid-template-columns:1fr}
+  .ed-left,.ed-right{border:none;border-top:1px solid var(--gris-med);max-height:none}
 }
 
-/* V39 — Desktop: 4 colonnes fixes : bibliothèque | phases/timing | terrain | outils */
-@media (min-width:901px) and (max-width:1250px){.ed-layout{grid-template-columns:240px 270px minmax(420px,1fr) 300px;overflow-x:auto}}
+/* V38 — Architecture DESSIN : bibliothèque à gauche, terrain au centre, outils à droite, phases en bas */
+@media (max-width:1050px){.ed-layout{grid-template-columns:220px 230px minmax(420px,1fr) 280px;overflow-x:auto}.ed-left #tabPhases{display:flex;flex-direction:column}}
 `;
