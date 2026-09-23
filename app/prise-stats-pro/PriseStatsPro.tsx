@@ -309,7 +309,6 @@ const ATT_ACTIONS = [
 const DEF_ACTIONS = [
   { id: 'tir', label: 'Tir adverse', ic: '🏀' },
   { id: 'interception', label: 'Interception / récupération', ic: '🖐' },
-  { id: 'perte-adverse', label: 'BP adverse', ic: '✖' },
   { id: 'contre', label: 'Contre', ic: '🛑' },
   { id: 'touche', label: 'Touche', ic: '⤵' },
   { id: 'faute-provoquee', label: 'Faute provoquée', ic: '🔔' },

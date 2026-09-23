@@ -318,7 +318,6 @@ const ATT_ACTIONS = [
 const DEF_ACTIONS = [
   { id: 'tir', label: 'Tir adverse', ic: '🏀' },
   { id: 'interception', label: 'Interception / récupération', ic: '🖐' },
-  { id: 'perte-adverse', label: 'BP adverse', ic: '✖' },
   { id: 'contre', label: 'Contre', ic: '🛑' },
   { id: 'touche', label: 'Touche', ic: '⤵' },
   { id: 'faute-provoquee', label: 'Faute provoquée', ic: '🔔' },
@@ -3468,7 +3467,7 @@ export default function PriseStatsProPage() {
     // est LA source de vérité de l'action individuelle finale. Handler et Roller
     // décrivent uniquement le duo du pick et ne reçoivent jamais automatiquement
     // le panier, la faute provoquée, le tir raté ou la balle perdue.
-    if (isPostLikeCodingMode(codingMode) && isBallScreenPick(d.tempsFort) && !d.playerId) {
+    if (d.context !== 'defense' && isPostLikeCodingMode(codingMode) && isBallScreenPick(d.tempsFort) && !d.playerId) {
       setDraft(d);
       setStage('pick-actors');
       flash("Choisis le joueur qui réalise l’action");
