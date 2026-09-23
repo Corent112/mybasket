@@ -3032,10 +3032,10 @@ export default function PriseStatsProPage() {
 
       if (typing(e.target)) return;
 
-      // LIVE : ESPACE = START / STOP du chrono match. Si une vidéo est chargée,
-      // elle suit le même état pour rester synchronisée avec le chrono.
-      if (e.key === ' ' || e.code === 'Space') { e.preventDefault(); toggleClockAndVideo(); return; }
-      // B reste disponible comme raccourci secondaire / compatibilité.
+      // LIVE : ESPACE = lecture / pause de la vidéo. Quand on met la vidéo
+      // en pause, toggleVideo coupe aussi le chrono du match pour garder la synchro.
+      if (e.key === ' ' || e.code === 'Space') { e.preventDefault(); toggleVideo(); return; }
+      // B reste dédié au START / STOP du chrono (et synchronise la vidéo).
       if (e.key === 'b' || e.key === 'B') { e.preventDefault(); toggleClockAndVideo(); return; }
 
       // SHIFT + flèche = seek vidéo (ou Tab maintenu + flèche, compat V7)
