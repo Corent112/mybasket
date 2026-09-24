@@ -109,8 +109,10 @@ export default function InstitutionalPlayerSheet({ structureId, player, referral
     jersey_number: profile.jerseyNumber || "",
     jersey_color: profile.jerseyColor || "",
     nationality: profile.nationality || "",
+    guardian1_name: profile.guardian1Name || "",
     tutor1_phone: player.tutor1_phone || profile.guardian1Phone || "",
     tutor1_email: player.tutor1_email || profile.guardian1Email || "",
+    guardian2_name: profile.guardian2Name || "",
     tutor2_phone: player.tutor2_phone || profile.guardian2Phone || "",
     tutor2_email: player.tutor2_email || profile.guardian2Email || "",
     observations: profile.observations || "",
@@ -403,10 +405,12 @@ export default function InstitutionalPlayerSheet({ structureId, player, referral
           </div>
           <div className="subTitle">Responsables / tuteurs</div>
           <div className="fields">
-            <Field label="Téléphone tuteur 1" value={form.tutor1_phone} onChange={(v) => patch("tutor1_phone", v)} />
-            <Field label="Email tuteur 1" type="email" value={form.tutor1_email} onChange={(v) => patch("tutor1_email", v)} />
-            <Field label="Téléphone tuteur 2" value={form.tutor2_phone} onChange={(v) => patch("tutor2_phone", v)} />
-            <Field label="Email tuteur 2" type="email" value={form.tutor2_email} onChange={(v) => patch("tutor2_email", v)} />
+            <Field label="Nom responsable 1" value={form.guardian1_name} onChange={(v) => patch("guardian1_name", v)} />
+            <Field label="Téléphone responsable 1" value={form.tutor1_phone} onChange={(v) => patch("tutor1_phone", v)} />
+            <Field label="Email responsable 1" type="email" value={form.tutor1_email} onChange={(v) => patch("tutor1_email", v)} />
+            <Field label="Nom responsable 2" value={form.guardian2_name} onChange={(v) => patch("guardian2_name", v)} />
+            <Field label="Téléphone responsable 2" value={form.tutor2_phone} onChange={(v) => patch("tutor2_phone", v)} />
+            <Field label="Email responsable 2" type="email" value={form.tutor2_email} onChange={(v) => patch("tutor2_email", v)} />
           </div>
           <label className="textArea">Observations<textarea value={form.observations} onChange={(e) => patch("observations", e.target.value)} /></label>
           <label className="textArea">Provenance<input value={form.provenance} onChange={(e) => patch("provenance", e.target.value)} /></label>

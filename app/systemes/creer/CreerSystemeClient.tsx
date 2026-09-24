@@ -2,6 +2,9 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
+import ExercisePhotoImport from "@/components/ai/ExercisePhotoImport";
+import type { AiExerciseImport } from "@/lib/import/types";
+import { importToPlaquetteSchema, renderSchemaPreviews } from "@/lib/import/plaquette-converter";
 import {
   saveSystem,
   updateSystem,
@@ -430,6 +433,38 @@ export default function SystemesClient() {
     load();
   }, [editId, isNew, draftKey]);
 
+  /** Import Vision : photo / capture / dessin papier -> phases Plaquette natives. */
+  const applyVisionImport = async (result: AiExerciseImport) => {
+    const imported = importToPlaquetteSchema(result);
+    if (!imported) {
+      flash("Aucun schéma exploitable détecté. Tu peux corriger l’analyse puis réessayer.");
+      return;
+    }
+
+    const previews = await renderSchemaPreviews(imported);
+
+    setSysteme((current) => {
+      const images = imported.entries.map((_entry, index) => previews[index] || "");
+      const data = imported.entries.map((entry, index) => ({
+        ...entry,
+        imageData: images[index],
+        phaseImages: images,
+      }));
+
+      const nextImages = [...current.schemaImages, ...images].slice(0, 50);
+      const nextData = [...current.schemaDataList, ...data].slice(0, 50);
+
+      return {
+        ...current,
+        schemaImages: nextImages,
+        schemaDataList: syncSchemas(nextImages, nextData),
+      };
+    });
+
+    const count = imported.phases.length;
+    flash(`Import Vision terminé — ${count} phase${count > 1 ? "s" : ""} reconstruite${count > 1 ? "s" : ""}.`);
+  };
+
   const drawingPreviews = syncSchemas(systeme.schemaImages, systeme.schemaDataList)
     .map((schema: any, index: number) => ({
       index,
@@ -841,6 +876,10 @@ export default function SystemesClient() {
             <span className="cs-soft">({drawingPreviews.length})</span>
           </label>
 
+          <div className="cs-vision-import">
+            <ExercisePhotoImport onImported={applyVisionImport} />
+          </div>
+
           <div className="cs-schemas">
             {drawingPreviews.map(({ src, index }) => (
               <div className="cs-schema" key={`${src}-${index}`}>
@@ -1022,6 +1061,7 @@ const CSS = `
 .cs-area{min-height:105px;resize:vertical}
 .cs-area.big{min-height:150px}
 .cs-help{display:block;color:#777;font-size:.78rem;margin-top:.35rem}
+.cs-vision-import{margin:.55rem 0 1rem}
 .cs-schemas{display:grid;grid-template-columns:repeat(2,1fr);gap:.8rem}
 .cs-draw{min-height:170px;width:100%;border:2px dashed #cfcfcf;background:#f6f6f6;border-radius:14px;padding:1.2rem;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:.3rem}
 .cs-draw:hover{background:#f0f0f0;border-color:#6B1A2C}

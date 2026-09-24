@@ -236,6 +236,69 @@ export async function POST(req: Request) {
     return NextResponse.json({ ok: true, player: created.data });
   }
 
+  if (action === "create_player") {
+    const patch = body.player || {};
+    const firstName = clean(patch.first_name);
+    const lastName = clean(patch.last_name);
+    if (!firstName || !lastName) {
+      return NextResponse.json({ error: "Prénom et nom obligatoires" }, { status: 400 });
+    }
+
+    const now = new Date().toISOString();
+    const profileData = {
+      origin: "manual",
+      position: clean(patch.position),
+      secondaryPosition: clean(patch.secondary_position),
+      jerseyNumber: clean(patch.jersey_number),
+      jerseyColor: clean(patch.jersey_color),
+      licenseNumber: clean(patch.license_number),
+      nationality: clean(patch.nationality),
+      guardian1Name: clean(patch.guardian1_name),
+      guardian1Phone: clean(patch.guardian1_phone),
+      guardian1Email: clean(patch.guardian1_email),
+      guardian2Name: clean(patch.guardian2_name),
+      guardian2Phone: clean(patch.guardian2_phone),
+      guardian2Email: clean(patch.guardian2_email),
+      lifecycle: {
+        workflowStatus: "validated",
+        validatedAt: now,
+        validatedBy: ctx.user.id,
+      },
+    };
+
+    const created = await ctx.admin
+      .from("institutional_players")
+      .insert({
+        structure_id: structureId,
+        first_name: firstName,
+        last_name: lastName,
+        birthdate: clean(patch.birthdate),
+        club_name: clean(patch.club_name),
+        category: clean(patch.category),
+        email: clean(patch.email),
+        phone: clean(patch.phone),
+        sex: clean(patch.sex),
+        height_cm: numberOrNull(patch.height_cm),
+        position_primary: clean(patch.position),
+        license_number: clean(patch.license_number),
+        tutor1_phone: clean(patch.guardian1_phone),
+        tutor1_email: clean(patch.guardian1_email),
+        tutor2_phone: clean(patch.guardian2_phone),
+        tutor2_email: clean(patch.guardian2_email),
+        status: "followed",
+        archived: false,
+        profile_data: profileData,
+        created_by: ctx.user.id,
+      })
+      .select(PLAYER_SELECT)
+      .single();
+
+    if (created.error) {
+      return NextResponse.json({ error: created.error.message }, { status: 400 });
+    }
+    return NextResponse.json({ ok: true, player: created.data });
+  }
+
   const playerId = String(body.playerId || "");
   if (!playerId) {
     return NextResponse.json({ error: "Joueur manquant" }, { status: 400 });
@@ -275,8 +338,10 @@ export async function POST(req: Request) {
       className: clean(patch.class_name) ?? oldProfile.className ?? null,
       weight: clean(patch.weight_kg ?? patch.weight) ?? oldProfile.weight ?? null,
       dominantHand: clean(patch.dominant_hand) ?? oldProfile.dominantHand ?? null,
+      guardian1Name: clean(patch.guardian1_name) ?? oldProfile.guardian1Name ?? null,
       guardian1Phone: clean(patch.tutor1_phone ?? patch.guardian1_phone) ?? oldProfile.guardian1Phone ?? null,
       guardian1Email: clean(patch.tutor1_email ?? patch.guardian1_email) ?? oldProfile.guardian1Email ?? null,
+      guardian2Name: clean(patch.guardian2_name) ?? oldProfile.guardian2Name ?? null,
       guardian2Phone: clean(patch.tutor2_phone ?? patch.guardian2_phone) ?? oldProfile.guardian2Phone ?? null,
       guardian2Email: clean(patch.tutor2_email ?? patch.guardian2_email) ?? oldProfile.guardian2Email ?? null,
       observations: clean(patch.observations) ?? oldProfile.observations ?? null,

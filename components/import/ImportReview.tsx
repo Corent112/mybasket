@@ -24,6 +24,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type {
   AiDetectionType,
   AiDiagramAction,
+  AiDiagramActionKind,
   AiDiagramObject,
   AiDiagramPlayer,
   AiExerciseDiagram,
@@ -543,6 +544,47 @@ export default function ImportReview({
     }));
   };
 
+  const setPlayerLabel = (index: number, label: string) => {
+    updateDiagram((item) => ({
+      ...item,
+      players: item.players.map((player, i) =>
+        i === index
+          ? {
+              ...player,
+              label: label.slice(0, 4),
+              labelConfident: true,
+              source: `${player.source ?? ""} · numéro corrigé`.trim(),
+            }
+          : player
+      ),
+    }));
+  };
+
+  const togglePlayerBall = (index: number) => {
+    updateDiagram((item) => ({
+      ...item,
+      players: item.players.map((player, i) =>
+        i === index ? { ...player, hasBall: !player.hasBall, confidence: 1 } : player
+      ),
+    }));
+  };
+
+  const setActionKind = (index: number, action: AiDiagramActionKind) => {
+    updateDiagram((item) => ({
+      ...item,
+      actions: item.actions.map((line, i) =>
+        i === index
+          ? {
+              ...line,
+              action,
+              confidence: 1,
+              source: `type corrigé à la main : ${action}`,
+            }
+          : line
+      ),
+    }));
+  };
+
   const confirmSelected = () => {
     if (!selection || !diagram) return;
     updateDiagram((item) => {
@@ -632,6 +674,18 @@ export default function ImportReview({
 
   const selectedPlayer =
     selection?.kind === "player" ? diagram.players[selection.index] : undefined;
+  const selectedAction =
+    selection?.kind === "action" ? diagram.actions[selection.index] : undefined;
+
+  const actionChoices: Array<{ value: AiDiagramActionKind; label: string; hint: string }> = [
+    { value: "pass", label: "Passe", hint: "pointillés + flèche" },
+    { value: "cut", label: "Déplacement", hint: "trait plein + flèche" },
+    { value: "dribble", label: "Dribble", hint: "zigzag + flèche" },
+    { value: "shoot", label: "Tir", hint: "flèche vers le panier" },
+    { value: "screen", label: "Écran", hint: "symbole écran" },
+    { value: "giveball", label: "Main à main", hint: "handoff" },
+    { value: "freedraw", label: "Dessin libre", hint: "tracé non classé" },
+  ];
 
   return (
     <div style={styles.wrapper}>
@@ -724,6 +778,17 @@ export default function ImportReview({
           </section>
 
           <section>
+            <h3 style={styles.sectionTitle}>Lecture MyBasket</h3>
+            <div style={styles.legend}>
+              <span><b>⋯→</b> Passe</span>
+              <span><b>—→</b> Déplacement</span>
+              <span><b>〰→</b> Dribble</span>
+              <span><b>↗︎ panier</b> Tir</span>
+            </div>
+            <p style={styles.hint}>L’import traduit l’image en objets natifs : rien n’est figé dans une photo.</p>
+          </section>
+
+          <section>
             <h3 style={styles.sectionTitle}>Élément sélectionné</h3>
             {selection ? (
               <>
@@ -746,11 +811,48 @@ export default function ImportReview({
                         </button>
                       ))}
                     </div>
+                    <div style={styles.fieldRow}>
+                      <label style={styles.fieldLabel}>
+                        Numéro
+                        <input
+                          value={selectedPlayer.label}
+                          maxLength={4}
+                          onChange={(event) => setPlayerLabel(selection.index, event.target.value)}
+                          style={styles.input}
+                        />
+                      </label>
+                      <button
+                        type="button"
+                        style={selectedPlayer.hasBall ? styles.buttonPrimary : styles.button}
+                        onClick={() => togglePlayerBall(selection.index)}
+                      >
+                        {selectedPlayer.hasBall ? "🏀 Porteur" : "+ Ballon"}
+                      </button>
+                    </div>
+                  </>
+                ) : selectedAction ? (
+                  <>
+                    <p style={styles.hint}>
+                      Trajectoire détectée : <strong>{selectedAction.action}</strong>. Choisis sa signification MyBasket ;
+                      la géométrie du tracé est conservée.
+                    </p>
+                    <div style={styles.actionGrid}>
+                      {actionChoices.map((choice) => (
+                        <button
+                          key={choice.value}
+                          type="button"
+                          title={choice.hint}
+                          style={selectedAction.action === choice.value ? styles.actionButtonActive : styles.actionButton}
+                          onClick={() => setActionKind(selection.index, choice.value)}
+                        >
+                          <strong>{choice.label}</strong>
+                          <span style={styles.actionHint}>{choice.hint}</span>
+                        </button>
+                      ))}
+                    </div>
                   </>
                 ) : (
-                  <p style={styles.hint}>
-                    {selection.kind === "object" ? "Objet" : "Trajectoire"} — glisse pour déplacer.
-                  </p>
+                  <p style={styles.hint}>Objet — glisse pour déplacer.</p>
                 )}
                 <div style={styles.row}>
                   <button type="button" style={styles.button} onClick={confirmSelected}>
@@ -821,6 +923,14 @@ const styles: Record<string, React.CSSProperties> = {
   sectionTitle: { margin: "0 0 8px", fontSize: 13, textTransform: "uppercase", letterSpacing: 0.6, color: "#6B6B6B" },
   row: { display: "flex", gap: 8, flexWrap: "wrap" },
   hint: { margin: "6px 0 0", fontSize: 13, color: "#6B6B6B" },
+  fieldRow: { display: "flex", gap: 8, flexWrap: "wrap", alignItems: "flex-end", marginTop: 10 },
+  fieldLabel: { display: "flex", flexDirection: "column", gap: 5, fontSize: 12, color: "#6B6B6B", fontWeight: 600 },
+  input: { width: 82, padding: "7px 9px", borderRadius: 8, border: "1px solid #D8D2C8", fontSize: 13, background: "#fff", color: COLORS.ink },
+  legend: { display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 6, fontSize: 12, color: COLORS.ink },
+  actionGrid: { display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 7, marginTop: 10 },
+  actionButton: { display: "flex", flexDirection: "column", gap: 2, textAlign: "left", padding: "8px 10px", borderRadius: 8, border: "1px solid #D8D2C8", background: "#fff", cursor: "pointer", color: COLORS.ink },
+  actionButtonActive: { display: "flex", flexDirection: "column", gap: 2, textAlign: "left", padding: "8px 10px", borderRadius: 8, border: "1px solid " + COLORS.bord, background: "#F7ECEF", cursor: "pointer", color: COLORS.bord },
+  actionHint: { fontSize: 10, fontWeight: 400, opacity: 0.72 },
   button: { padding: "7px 12px", borderRadius: 8, border: "1px solid #D8D2C8", background: "#fff", cursor: "pointer", fontSize: 13 },
   buttonPrimary: { padding: "7px 12px", borderRadius: 8, border: "1px solid " + COLORS.bord, background: COLORS.bord, color: "#fff", cursor: "pointer", fontSize: 13 },
   buttonDanger: { padding: "7px 12px", borderRadius: 8, border: "1px solid #D9534F", background: "#fff", color: "#D9534F", cursor: "pointer", fontSize: 13 },

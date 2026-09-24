@@ -35,6 +35,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { AiExerciseImport } from "@/lib/import/types";
 import { IMPORT_DEBUG_ENABLED } from "@/lib/import/debug";
 import { scanExerciseLocally } from "@/lib/import/local-exercise-scanner";
+import { refineImportedExercise } from "@/lib/import/import-refiner";
 import ImportReview, { countReviewItems, diagramsOf } from "@/components/import/ImportReview";
 
 type Props = {
@@ -64,6 +65,7 @@ export default function ExercisePhotoImport({ onImported }: Props) {
   /** Photo d'origine, uniquement pour la comparaison visuelle. */
   const [sourceImage, setSourceImage] = useState<string>("");
   const [compare, setCompare] = useState(false);
+  const [dragging, setDragging] = useState(false);
   /** Garde-fou anti double injection (double clic, double soumission). */
   const injecting = useRef(false);
 
@@ -109,7 +111,9 @@ export default function ExercisePhotoImport({ onImported }: Props) {
     setStatus("Préparation…");
 
     try {
-      const exercise = await scanExerciseLocally(file, setStatus);
+      const scanned = await scanExerciseLocally(file, setStatus);
+      setStatus("Nettoyage des liaisons joueurs / trajectoires…");
+      const exercise = refineImportedExercise(scanned);
 
       setPending(exercise);
       setWarnings(exercise.warnings);
@@ -175,20 +179,31 @@ export default function ExercisePhotoImport({ onImported }: Props) {
   const toCheck = pending ? countReviewItems(pending) : 0;
 
   return (
-    <div className="ce-ai-import">
+    <div
+      className="ce-ai-import"
+      onDragOver={(event) => { event.preventDefault(); setDragging(true); }}
+      onDragLeave={() => setDragging(false)}
+      onDrop={(event) => {
+        event.preventDefault();
+        setDragging(false);
+        const file = event.dataTransfer.files?.[0];
+        if (file && !busy) void analyze(file);
+      }}
+      style={dragging ? { outline: "2px dashed #8F1D35", outlineOffset: 8, borderRadius: 12 } : undefined}
+    >
       <div className="ce-ai-copy">
         <span className="ce-ai-badge">NUMÉRISATION GRATUITE</span>
         <div>
           <b>Exercice sur papier, capture d’écran ou vidéo ?</b>
           <p>
-            MyBasket lit les zones utiles du document et reconstruit chaque dessin dans ton outil Plaquette,
-            directement dans ton navigateur. Rien n’est enregistré tant que tu n’as pas validé.
+            MyBasket détecte le terrain, redresse la perspective, isole joueurs et tracés puis reconstruit chaque dessin
+            avec les objets natifs de Plaquette. Tu peux aussi glisser-déposer une image ici. Rien n’est enregistré tant que tu n’as pas validé.
           </p>
         </div>
       </div>
 
       <button type="button" className="ce-ai-btn" disabled={busy} onClick={() => inputRef.current?.click()}>
-        {busy ? "Numérisation en cours…" : "📸 Importer photo / vidéo"}
+        {busy ? "Numérisation en cours…" : "📸 Scanner un schéma"}
       </button>
 
       <input
