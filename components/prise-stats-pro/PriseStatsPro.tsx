@@ -3876,6 +3876,10 @@ export default function PriseStatsProPage() {
   const stageAfterTemps = (d: Draft): string => {
     // En défense, le temps fort débouche directement sur le résultat.
     if (d.context === 'defense') return 'result';
+    // En Live mutualisé, le poste COLLECTIF renseigne le duo du Pick.
+    // Le joueur qui termine l'action et son résultat restent exclusivement
+    // sur le poste Live Individuel.
+    if (codingMode === 'live' && mutualizedLive && sharedRole === 'collective' && isBallScreenPick(d.tempsFort)) return 'pick-actors';
     if (codingMode === 'live') return 'result';
     // Hors Live : Pick Top / Side possède son bloc dédié Handler → Poseur → Action finale.
     // Il remplace le « Qui réalise l'action ? » générique afin d'éviter tout doublon.
@@ -7190,8 +7194,31 @@ export default function PriseStatsProPage() {
           if (id === draft.pickHandlerPlayerId) return;
           setDraft((current) => ({ ...current, pickScreenerPlayerId: id, pickRollerPlayerId: id }));
         };
-        const continuePick = () => {
-          if (!draft.pickHandlerPlayerId || !draft.pickScreenerPlayerId || !draft.playerId) return;
+        const isMutualizedCollectivePick = codingMode === 'live' && mutualizedLive && sharedRole === 'collective' && !!sharedLive;
+        const continuePick = async () => {
+          if (!draft.pickHandlerPlayerId || !draft.pickScreenerPlayerId) return;
+          if (isMutualizedCollectivePick) {
+            const session = sharedLiveRef.current;
+            if (!session?.currentPossessionId) { flash('Possession mutualisée introuvable'); return; }
+            try {
+              await savePickEvent(session, session.currentPossessionId, {
+                zone: draft.pickZone ?? (draft.tempsFort.includes('side') ? 'side' : 'top'),
+                handlerPlayerId: draft.pickHandlerPlayerId,
+                screenerPlayerId: draft.pickScreenerPlayerId,
+                rollerPlayerId: draft.pickScreenerPlayerId,
+              });
+              flash('Pick mutualisé enregistré · résultat attendu du Live Individuel ✓');
+              // Le poste collectif ne code PAS le finisseur ni le résultat.
+              // Il reste sur la possession courante et peut poursuivre son contexte tactique.
+              setDraft((current) => ({ ...current, pickHandlerPlayerId: null, pickScreenerPlayerId: null, pickRollerPlayerId: null, playerId: null }));
+              setStage('temps');
+            } catch (e) {
+              console.error('Enregistrement Pick mutualisé:', e);
+              flash('Impossible d’enregistrer le Pick mutualisé');
+            }
+            return;
+          }
+          if (!draft.playerId) return;
           setStage(workflowOn('coverage') ? 'coverage' : 'action');
         };
         const playerButtons = (selectedId: string | null | undefined, onPick: (id: string) => void, disabledId?: string | null) => (
@@ -7214,12 +7241,25 @@ export default function PriseStatsProPage() {
           })}</div>
         );
         return <>
-          {head(draft.tempsFort === 'pick_side' || draft.tempsFort === 'pick-side' ? 'Pick Side' : 'Pick Top', 'Handler et Roller décrivent le pick · le 3e joueur est celui qui réalise l’action')}
+          {head(
+            draft.tempsFort === 'pick_side' || draft.tempsFort === 'pick-side' ? 'Pick Side' : 'Pick Top',
+            isMutualizedCollectivePick
+              ? 'Poste collectif · renseigne uniquement Handler + Roller · le finisseur, le résultat et la PD sont codés sur le Live Individuel'
+              : 'Handler et Roller décrivent le pick · le 3e joueur est celui qui réalise l’action'
+          )}
           <div className="pickActorsBlock">
             <div className="pickActorsSection"><b>1 · BALL HANDLER</b><small>Porteur de balle</small>{playerButtons(draft.pickHandlerPlayerId, chooseHandler)}</div>
             <div className="pickActorsSection"><b>2 · POSEUR D’ÉCRAN / ROLLER</b><small>Le Handler ne peut pas être le poseur</small>{playerButtons(draft.pickScreenerPlayerId, chooseScreener, draft.pickHandlerPlayerId)}</div>
-            <div className="pickActorsSection"><b>3 · QUI RÉALISE L’ACTION ?</b><small>Ce joueur reçoit seul le résultat individuel · Handler présélectionné, modifiable</small>{playerButtons(draft.playerId, (id) => setDraft((current) => ({ ...current, playerId: id })))}</div>
-            <button type="button" className="chip active" style={{ width: '100%', marginTop: 4 }} disabled={!draft.pickHandlerPlayerId || !draft.pickScreenerPlayerId || !draft.playerId} onClick={continuePick}>CONTINUER → RÉSULTAT DE L’ACTION</button>
+            {!isMutualizedCollectivePick && <div className="pickActorsSection"><b>3 · QUI RÉALISE L’ACTION ?</b><small>Ce joueur reçoit seul le résultat individuel · Handler présélectionné, modifiable</small>{playerButtons(draft.playerId, (id) => setDraft((current) => ({ ...current, playerId: id })))}</div>}
+            <button
+              type="button"
+              className="chip active"
+              style={{ width: '100%', marginTop: 4 }}
+              disabled={!draft.pickHandlerPlayerId || !draft.pickScreenerPlayerId || (!isMutualizedCollectivePick && !draft.playerId)}
+              onClick={() => { void continuePick(); }}
+            >
+              {isMutualizedCollectivePick ? 'VALIDER LE PICK → LIVE INDIVIDUEL' : 'CONTINUER → RÉSULTAT DE L’ACTION'}
+            </button>
           </div>
         </>;
       }

@@ -677,12 +677,16 @@ export async function persistLiveAction(args: {
         const handlerFinish = actor && actor === handler;
         const rollerFinish = actor && actor === screener;
         const handlerToRoller = rollerFinish && assist && assist === handler;
-        // Liaison auto uniquement sur une relation basket forte. Un autre tireur reste
-        // dans la même possession mais n'est jamais fusionné de force au Pick.
-        if (handlerFinish || rollerFinish || handlerToRoller) {
+        // Exemple fréquent : le Handler ressort sur un 3e joueur qui marque.
+        // La PD identifie alors sans ambiguïté le Pick collectif correspondant.
+        const handlerAssist = actor && actor !== handler && assist && assist === handler;
+        // Liaison auto uniquement sur une relation basket forte. Un autre tireur sans
+        // lien avec le Handler/Roller reste dans la même possession sans fusion forcée.
+        if (handlerFinish || rollerFinish || handlerToRoller || handlerAssist) {
           row.action_group_id = candidate.id;
-          const resultType = handlerFinish ? "handler-finish" : "roller-finish";
-          await supabase.from("live_action_groups").update({ status: "linked", confidence: handlerToRoller ? 0.99 : 0.95, result_type: resultType, result_player_id: actor, updated_at: new Date().toISOString() }).eq("id", candidate.id);
+          const resultType = handlerFinish ? "handler-finish" : rollerFinish ? "roller-finish" : "handler-assist";
+          const confidence = handlerToRoller ? 0.99 : handlerAssist ? 0.98 : 0.95;
+          await supabase.from("live_action_groups").update({ status: "linked", confidence, result_type: resultType, result_player_id: actor, updated_at: new Date().toISOString() }).eq("id", candidate.id);
           await supabase.from("live_pick_events").update({ is_decisive: true, result_type: resultType, result_player_id: actor }).eq("action_group_id", candidate.id);
         }
       }
