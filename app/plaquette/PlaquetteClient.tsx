@@ -1331,11 +1331,12 @@ const currentRef = useRef(current);
   };
 
   const offsetBallPoint = (pt: Pt, index: number, count: number): Pt => {
-    if (count <= 1) return pt;
-    const gap = 0.016;
+    // Le ballon porté reste collé au joueur mais ne masque jamais son numéro.
+    // Les coordonnées sont normalisées sur la largeur du terrain.
+    if (count <= 1) return { x: pt.x + 0.020, y: pt.y - 0.020 };
     return {
-      x: pt.x + (index - (count - 1) / 2) * gap,
-      y: pt.y - 0.012,
+      x: pt.x + (index === 0 ? -0.020 : 0.020),
+      y: pt.y - 0.020,
     };
   };
 
@@ -4706,6 +4707,27 @@ const exportJson = () => {
                     </div>
                   </div>
                 </div>
+
+                {/* Animation — reste dans la même colonne, sous le timing */}
+                <div className="phase-animation-dock">
+                  <div className="sec-lab">ANIMATION</div>
+                  <div className="timeline">
+                    <div className="tl-controls">
+                      <div className="tl-btn" id="tlPrev" title="Précédent" onClick={() => seekPhaseTL(current - 1)}>⏮</div>
+                      <div className="tl-btn" id="tlPlay" title="Play/Pause" onClick={togglePlay}>{isPlaying ? '⏸' : '▶'}</div>
+                      <div className="tl-btn" id="tlStop" title="Stop" onClick={stopAnim}>⏹</div>
+                      <div className="tl-btn" id="tlNext" title="Suivant" onClick={() => seekPhaseTL(current + 1)}>⏭</div>
+                    </div>
+                    <select className="tl-speed" id="tlSpeed" defaultValue="1" onChange={(e) => { speedRef.current = Number(e.target.value); }}>
+                      <option value="0.5">0.5x</option>
+                      <option value="1">1x</option>
+                      <option value="1.5">1.5x</option>
+                      <option value="2">2x</option>
+                    </select>
+                    <div className="tl-progress" id="tlProgress"><div className="tl-progress-bar" id="tlBar" ref={tlBarRef}></div></div>
+                    <div className="tl-status" id="tlStatus">{isPlaying ? '▶ ' : ''}Phase {current + 1}/{phases.length}</div>
+                  </div>
+                </div>
               </div>
             </aside>
 
@@ -4877,23 +4899,6 @@ const exportJson = () => {
             </aside>
           </div>
 
-          {/* -------- TIMELINE (étape 4) -------- */}
-          <div className="timeline">
-            <div className="tl-controls">
-              <div className="tl-btn" id="tlPrev" title="Précédent" onClick={() => seekPhaseTL(current - 1)}>⏮</div>
-              <div className="tl-btn" id="tlPlay" title="Play/Pause" onClick={togglePlay}>{isPlaying ? '⏸' : '▶'}</div>
-              <div className="tl-btn" id="tlStop" title="Stop" onClick={stopAnim}>⏹</div>
-              <div className="tl-btn" id="tlNext" title="Suivant" onClick={() => seekPhaseTL(current + 1)}>⏭</div>
-            </div>
-            <select className="tl-speed" id="tlSpeed" defaultValue="1" onChange={(e) => { speedRef.current = Number(e.target.value); }}>
-              <option value="0.5">0.5x</option>
-              <option value="1">1x</option>
-              <option value="1.5">1.5x</option>
-              <option value="2">2x</option>
-            </select>
-            <div className="tl-progress" id="tlProgress"><div className="tl-progress-bar" id="tlBar" ref={tlBarRef}></div></div>
-            <div className="tl-status" id="tlStatus">{isPlaying ? '▶ ' : ''}Phase {current + 1}/{phases.length}</div>
-          </div>
         </section>
         {/* ===================== MODALE ENREGISTRER / INSÉRER ===================== */}
         {saveOpen && (
@@ -5775,4 +5780,19 @@ html{font-size:15px}
   .ed-right{grid-column:4!important;grid-row:1!important}
 }
 @media (min-width:901px) and (max-width:1050px){.ed-layout{grid-template-columns:210px 220px minmax(0,1fr) 280px!important;grid-template-areas:"library phases canvas right"!important}}
+
+/* Plaquette 24-09 : terrain complet visible + 3 phases + animation dans la colonne */
+@media (min-width:901px){
+  .ed-layout{height:calc(100vh - 74px)!important;min-height:0!important}
+  .ed-left{height:100%!important;min-height:0!important;overflow-y:auto!important}
+  .ed-left .phases-list{height:238px!important;min-height:238px!important;max-height:238px!important;gap:7px!important}
+  .ed-left .ph-thumb{height:74px!important;min-height:74px!important;flex:0 0 74px!important;aspect-ratio:auto!important}
+  .ed-canvas-wrap{height:100%!important;min-height:0!important;padding:.65rem 1rem!important;justify-content:flex-start!important}
+  #playCanvas[data-court="full"]{width:auto!important;height:auto!important;max-width:100%!important;max-height:calc(100vh - 145px)!important;object-fit:contain!important}
+  .phase-animation-dock{margin-top:.85rem;padding-top:.75rem;border-top:1px solid var(--gris-med)}
+  .phase-animation-dock .timeline{position:static!important;width:100%!important;min-height:0!important;padding:.45rem!important;border-radius:8px!important;display:grid!important;grid-template-columns:1fr auto!important;gap:.4rem!important}
+  .phase-animation-dock .tl-controls{grid-column:1 / -1!important;justify-content:center!important}
+  .phase-animation-dock .tl-progress{grid-column:1 / -1!important;width:100%!important}
+  .phase-animation-dock .tl-status{font-size:.68rem!important}
+}
 `;
