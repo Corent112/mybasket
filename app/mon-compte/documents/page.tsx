@@ -3,11 +3,12 @@
 import { useEffect, useState } from "react";
 import AccountChrome from "@/components/equipes/AccountChrome";
 import TeamShootingGrids from "@/components/equipes/TeamShootingGrids";
+import MesPapiers from "../MesPapiers";
 
 type Structure={id:string;name:string;short_name?:string|null};
 
 export default function MyDocumentsPage(){
-  const [tab,setTab]=useState<"papers"|"shooting">("shooting");
+  const [tab,setTab]=useState<"papers"|"shooting">("papers");
   const [structures,setStructures]=useState<Structure[]>([]);
   const [structureId,setStructureId]=useState("");
   const [loading,setLoading]=useState(true);
@@ -32,7 +33,7 @@ export default function MyDocumentsPage(){
         <button onClick={()=>setTab("papers")} style={tabStyle(tab==="papers")}>📄 Mes papiers</button>
         <button onClick={()=>setTab("shooting")} style={tabStyle(tab==="shooting")}>🏀 Mes grilles de tir</button>
       </div>
-      {tab==="papers"&&<section style={panel}><h2 style={{marginTop:0,color:"#4d1420"}}>Mes papiers</h2><p style={{color:"#7f7169"}}>Tes documents personnels restent regroupés ici.</p></section>}
+      {tab==="papers"&&<section style={panel}><MesPapiers /></section>}
       {tab==="shooting"&&<section style={panel}>
         <div style={{marginBottom:14}}><h2 style={{margin:"0 0 5px",color:"#4d1420"}}>Mes grilles de tir</h2><p style={{margin:0,color:"#7f7169"}}>Crée ici tes modèles, avec le même éditeur et le même schéma Plaquette que dans Mes équipes. L’attribution aux joueurs se fait ensuite depuis Institution.</p></div>
         {loading?<p>Chargement…</p>:structureId?<TeamShootingGrids teamId={structureId} scopeType="institution" scopeId={structureId} scopeLabel="Mes documents" players={[]} canEdit libraryOnly/>:<div style={{padding:18,border:"1px dashed #d8cbc2",borderRadius:10,color:"#7f7169"}}>Aucune structure institutionnelle accessible sur ce compte.</div>}
