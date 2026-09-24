@@ -950,6 +950,8 @@ type InkContext = {
   raw?: Uint8Array;
   bg: Background;
   paper: boolean;
+  /** V13 : export numérique propre, déjà soustrait du terrain. */
+  cleanDigital: boolean;
   step: number;
   gw: number;
 };
@@ -1250,21 +1252,32 @@ function makeInkContext(canvas: HTMLCanvasElement, kind: CourtKind, play: AiRect
   const ink = new Uint8Array(px.w * px.h);
   if (cleanDigital) {
     /*
-     * V12 — EXPORT NUMÉRIQUE : SOUSTRACTION DU TERRAIN D'ABORD.
+     * V14 — « VISION ÉPAISSEUR », validée sur l'image de référence AVANT
+     * intégration.
      *
-     * V11 essayait de distinguer « ligne fine » et « annotation épaisse » par
-     * ouverture morphologique. C'était une erreur : la bordure, la raquette et
-     * certaines lignes officielles sont elles aussi épaisses et survivaient,
-     * puis devenaient de fausses trajectoires.
+     * Le terrain et les annotations noires ont la même couleur : tenter de les
+     * séparer uniquement avec un gabarit géométrique est fragile au moindre
+     * décalage. En revanche, sur un export numérique propre, les lignes
+     * officielles sont des traits fins et réguliers, tandis que les gestes du
+     * coach (jeton, zigzag, pointe de flèche) possèdent un vrai noyau épais.
      *
-     * Ici le gabarit géométrique redevient l'autorité pour un export numérique
-     * propre. On enlève tout pixel achromatique situé sur une ligne officielle.
-     * En revanche une annotation SATURÉE (rouge/bleu/vert...) est protégée : si
-     * elle traverse une ligne du terrain elle reste intégralement disponible.
-     * Les trajectoires noires peuvent être coupées de quelques pixels à un
-     * croisement ; le regroupement/vectoriseur les reconnecte ensuite. C'est
-     * infiniment préférable à transformer la raquette entière en action.
+     * 1. On construit le masque neutre sombre directement depuis les pixels.
+     * 2. Un pixel devient « noyau » seulement si un LOSANGE de rayon 2 autour
+     *    de lui est sombre. Cela élimine les lignes fines sans redresser les
+     *    diagonales du zigzag (une érosion carrée les détruisait).
+     * 3. On redilate ce noyau sur 4 px MAIS uniquement à l'intérieur de
+     *    l'encre sombre originale : on récupère les bords exacts du trait sans
+     *    laisser la reconstruction se propager dans le terrain.
+     * 4. Les couleurs saturées sont conservées indépendamment, pixel pour pixel.
+     * 5. La bordure extérieure du terrain, elle aussi épaisse, est supprimée
+     *    explicitement avec le repère `play` — comme la calibration Vision.
+     *
+     * Ce régime ne dépend donc plus de l'alignement des lignes intérieures du
+     * gabarit. Les petits reliquats officiels qui survivent sont trop courts
+     * pour passer les garde-fous de trajectoire.
      */
+    const neutralDark = new Uint8Array(px.w * px.h);
+    const coloured = new Uint8Array(px.w * px.h);
     for (let y = 0; y < px.h; y += 1) {
       for (let x = 0; x < px.w; x += 1) {
         const p = y * px.w + x;
@@ -1274,24 +1287,80 @@ function makeInkContext(canvas: HTMLCanvasElement, kind: CourtKind, play: AiRect
         const b = px.data[i + 2];
         const avg = (r + g + b) / 3;
         const sat = saturationOf(r, g, b);
-        const dark = avg < 205;
-        const coloured = sat >= 0.22 && avg < 248;
-        if (!dark && !coloured) continue;
-
-        // Une couleur de coach est une preuve plus forte que le gabarit terrain.
-        if (coloured) {
-          ink[p] = 1;
-          continue;
-        }
-
-        // Noir/gris : une ligne officielle connue n'entre JAMAIS dans le moteur
-        // sémantique. C'est le changement structurel de V12.
-        if (!mask[p]) ink[p] = 1;
+        if (avg < 205 && sat < 0.22) neutralDark[p] = 1;
+        if (sat >= 0.22 && avg < 248) coloured[p] = 1;
       }
     }
 
-    // Nettoyage uniquement des poussières isolées. Pas d'ouverture/érosion :
-    // on conserve exactement les dents d'un zigzag et les pointes de flèche.
+    // Érosion en losange (distance Manhattan <= 2), nettement plus fidèle aux
+    // diagonales qu'une fenêtre carrée 5x5.
+    const diamond = [
+      [0, -2],
+      [-1, -1], [0, -1], [1, -1],
+      [-2, 0], [-1, 0], [0, 0], [1, 0], [2, 0],
+      [-1, 1], [0, 1], [1, 1],
+      [0, 2],
+    ] as const;
+    const core = new Uint8Array(neutralDark.length);
+    for (let y = 2; y < px.h - 2; y += 1) {
+      for (let x = 2; x < px.w - 2; x += 1) {
+        let keep = 1;
+        for (const [dx, dy] of diamond) {
+          if (!neutralDark[(y + dy) * px.w + (x + dx)]) {
+            keep = 0;
+            break;
+          }
+        }
+        if (keep) core[y * px.w + x] = 1;
+      }
+    }
+
+    // Dilatation contrôlée : récupérer le trait source jusqu'à 4 px du noyau,
+    // sans jamais créer un pixel qui n'était pas de l'encre dans l'original.
+    const radius = Math.max(3, Math.round(Math.min(px.w, px.h) * 0.007));
+    const expanded = new Uint8Array(core.length);
+    for (let y = 0; y < px.h; y += 1) {
+      for (let x = 0; x < px.w; x += 1) {
+        if (!core[y * px.w + x]) continue;
+        const y0 = Math.max(0, y - radius);
+        const y1 = Math.min(px.h - 1, y + radius);
+        const x0 = Math.max(0, x - radius);
+        const x1 = Math.min(px.w - 1, x + radius);
+        for (let yy = y0; yy <= y1; yy += 1) {
+          for (let xx = x0; xx <= x1; xx += 1) expanded[yy * px.w + xx] = 1;
+        }
+      }
+    }
+
+    const borderBand = Math.max(3, Math.round(Math.min(play.x1 - play.x0, play.y1 - play.y0) * 0.012));
+    const nearOuterBorder = (x: number, y: number) => {
+      const withinX = x >= play.x0 - borderBand && x <= play.x1 + borderBand;
+      const withinY = y >= play.y0 - borderBand && y <= play.y1 + borderBand;
+      if (!withinX || !withinY) return false;
+      return (
+        Math.abs(x - play.x0) <= borderBand ||
+        Math.abs(x - play.x1) <= borderBand ||
+        Math.abs(y - play.y0) <= borderBand ||
+        Math.abs(y - play.y1) <= borderBand
+      );
+    };
+
+    for (let y = 0; y < px.h; y += 1) {
+      for (let x = 0; x < px.w; x += 1) {
+        const p = y * px.w + x;
+        // Les annotations colorées ont priorité absolue, même sur la bordure.
+        if (coloured[p]) {
+          ink[p] = 1;
+          continue;
+        }
+        if (!neutralDark[p] || !expanded[p]) continue;
+        if (nearOuterBorder(x, y)) continue;
+        ink[p] = 1;
+      }
+    }
+
+    // Supprimer uniquement les poussières vraiment isolées. Aucun lissage :
+    // la denture du dribble et la pointe de flèche doivent rester identiques.
     const cleaned = new Uint8Array(ink);
     for (let y = 1; y < px.h - 1; y += 1) {
       for (let x = 1; x < px.w - 1; x += 1) {
@@ -1345,6 +1414,7 @@ function makeInkContext(canvas: HTMLCanvasElement, kind: CourtKind, play: AiRect
     raw,
     bg,
     paper,
+    cleanDigital,
     step,
     gw: Math.ceil(px.w / step),
   };
@@ -3217,12 +3287,26 @@ export async function analyseGraphic(
     const template = Boolean(item.candidate.template);
     const readable = Boolean(item.digits) && item.confidence > 0.42;
     const structuralDefense = item.defenseEvidence >= 0.68;
-    // V9 : un simple « trou »/glyphe dans une intersection de lignes ne suffit
-    // plus. Sans OCR, il faut aussi une silhouette franchement compatible avec
-    // un jeton. C'est le garde-fou principal contre les joueurs fantômes.
     const glyphWithTokenShape = item.hasGlyph && item.shapeScore >= 0.58 && item.contrastScore >= 0.42;
+
+    /*
+     * V13 — SUR UN EXPORT NUMÉRIQUE, L'OCR N'EST JAMAIS UNE PREUVE DE FORME.
+     * Un morceau de raquette peut parfaitement être lu « 2 » ou « 3 ». C'était
+     * la source exacte des joueurs fantômes observés en V12. On exige donc
+     * simultanément : un glyphe lisible ET une vraie boîte de jeton quasi carrée
+     * de taille plausible. Un gabarit MyBasket fiable reste prioritaire.
+     */
+    if (ink.cleanDigital) {
+      const ratio = Math.max(item.candidate.bw, item.candidate.bh) / Math.max(1, Math.min(item.candidate.bw, item.candidate.bh));
+      const size = Math.max(item.candidate.bw, item.candidate.bh) / Math.max(1, unit);
+      const tokenGeometry = ratio <= 1.28 && size >= 0.045 && size <= 0.105 && item.shapeScore >= 0.72;
+      const keep = template || (readable && item.hasGlyph && tokenGeometry);
+      if (!keep) reject("jeton joueur", "V13 digital exact : OCR sans silhouette de jeton ignoré");
+      return keep;
+    }
+
     const keep = template || readable || structuralDefense || glyphWithTokenShape;
-    if (!keep) reject("jeton joueur", "V9 exact : preuve insuffisante — candidat conservé hors import automatique");
+    if (!keep) reject("jeton joueur", "V13 exact : preuve insuffisante — candidat conservé hors import automatique");
     return keep;
   });
 
@@ -3324,7 +3408,10 @@ export async function analyseGraphic(
   // est effacé, et uniquement pour ce passage.
   const strokeInk = new Uint8Array(ink.ink);
   const removed: Array<{ x: number; y: number; r: number }> = [];
-  for (const item of reads) {
+  // V13 : retirer UNIQUEMENT les joueurs réellement retenus. En V12, `reads`
+  // contenait aussi les faux candidats OCR : on effaçait donc des morceaux des
+  // vraies trajectoires avant même de les vectoriser.
+  for (const item of exactReads) {
     const radius = Math.max(3, Math.max(item.candidate.bw, item.candidate.bh) * 0.55);
     removed.push({ x: item.centre.x, y: item.centre.y, r: radius });
     const x0 = Math.max(0, Math.floor(item.centre.x - radius));
@@ -3809,12 +3896,12 @@ export async function analyseGraphic(
     // Un vrai tracé noir peut CROISER le terrain, mais il ne peut pas en
     // suivre la géométrie sur presque la moitié de sa centreline. C'est la
     // différence cruciale entre « traverse la raquette » et « EST la raquette ».
-    if (hardOnLine > 0.46 && !coachColoredStroke) {
+    if (!ink.cleanDigital && hardOnLine > 0.46 && !coachColoredStroke) {
       reject("trajectoire", `V10 exact : ${Math.round(hardOnLine * 100)} % du tracé épouse le gabarit terrain`);
       return;
     }
 
-    if (onLine > 0.6 && !coachColoredStroke) {
+    if (!ink.cleanDigital && onLine > 0.6 && !coachColoredStroke) {
       /*
        * DIAGNOSTIC DU REJET. Le taux de recouvrement seul ne dit pas si le
        * masque est trop large, mal placé, ou si la composante est vraiment une
@@ -3918,8 +4005,14 @@ export async function analyseGraphic(
       from: normalizedStart,
       to: normalizedEnd,
       order: actions.length + 1,
-      // Conserver la géométrie source pour que Plaquette puisse recréer la courbe.
+      // V15 : la géométrie source est la vérité. Plaquette la rend directement
+      // au lieu de la réduire à quelques points de contrôle.
       points: ordered.map((p) => norm(p.x, p.y)),
+      ...(coachColoredStroke && component
+        ? { color: `#${[component.color.r, component.color.g, component.color.b]
+            .map((value) => Math.max(0, Math.min(255, Math.round(value))).toString(16).padStart(2, "0"))
+            .join("")}` }
+        : {}),
       confidence: Number(confidence.toFixed(3)),
       source: [
         arrow.hasArrow ? "pointe de flèche détectée" : "symbole d'écran",

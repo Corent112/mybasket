@@ -1534,6 +1534,11 @@ const currentRef = useRef(current);
   };
   // polyligne échantillonnée d'une trajectoire (du départ à l'arrivée, en passant par les points)
   const linePoly = (canvas: HTMLCanvasElement, l: Line): Pt[] => {
+    // Vision import : `points` contient la géométrie réellement scannée.
+    // On la restitue telle quelle au lieu de la remplacer par une spline.
+    if (l.action !== 'freedraw' && Array.isArray(l.points) && l.points.length >= 2) {
+      return l.points.map((point) => toPx(canvas, point));
+    }
     const g = lineGeom(canvas, l);
     return catmullRom([g.f, ...g.ctrls, g.t]);
   };
@@ -1571,6 +1576,17 @@ const currentRef = useRef(current);
     const endTanPt = poly[poly.length - 2] || f; // avant-dernier échantillon → tangente d'arrivée
 
     if (l.action === 'dribble') {
+      // Un dribble importé par Vision est déjà un zigzag réel : ne pas générer
+      // une seconde ondulation artificielle par-dessus.
+      if (Array.isArray(l.points) && l.points.length >= 2) {
+        ctx.beginPath();
+        poly.forEach((p, i) => { if (i) ctx.lineTo(p.x, p.y); else ctx.moveTo(p.x, p.y); });
+        ctx.stroke();
+        const tip = poly[poly.length - 1];
+        const before = poly[Math.max(0, poly.length - 2)];
+        arrowHead(ctx, before, tip, w);
+        return;
+      }
       const amp = w * 2.2;
       const waves = Math.max(3, Math.round(total / 18));
       const tipBack = Math.min(total * 0.14, 16); // garde la place de la pointe
@@ -2419,8 +2435,9 @@ if (anim && anim.balls) {
 
   // point (canonique) à la fraction t le long de la trajectoire d'une action (courbe respectée)
   const actionPointN = (startN: Pt, line: Line, t: number): Pt => {
-    const pts = [startN, ...lineCtrls(line), line.to];
-    const poly = catmullRom(pts, 24);
+    const poly = Array.isArray(line.points) && line.points.length >= 2
+      ? line.points
+      : catmullRom([startN, ...lineCtrls(line), line.to], 24);
     if (poly.length < 2) return poly[0] || startN;
     let total = 0; const seg: number[] = [];
     for (let i = 1; i < poly.length; i++) { const d = Math.hypot(poly[i].x - poly[i - 1].x, poly[i].y - poly[i - 1].y); seg.push(d); total += d; }
@@ -3192,7 +3209,7 @@ animPosRef.current = { players, balls };
     pushHistory();
     setPhases((prev) => prev.map((p, i) => {
       if (i !== currentRef.current) return p;
-      return { ...p, lines: p.lines.map((z) => { if (z.id !== l.id) return z; const cur = z.ctrls ?? (z.ctrl ? [z.ctrl] : []); const next = cur.slice(); next.splice(k, 0, cN); return { ...z, ctrls: next, ctrl: undefined }; }) };
+      return { ...p, lines: p.lines.map((z) => { if (z.id !== l.id) return z; const cur = z.ctrls ?? (z.ctrl ? [z.ctrl] : []); const next = cur.slice(); next.splice(k, 0, cN); return { ...z, ctrls: next, ctrl: undefined, points: undefined }; }) };
     }));
     setSelection([{ type: 'line', id: l.id }]);
     lineDragRef.current = { id: l.id, which: 'ctrl', index: k };
@@ -3386,12 +3403,12 @@ animPosRef.current = { players, balls };
         if (i !== currentRef.current) return p;
         return { ...p, lines: p.lines.map((z) => {
           if (z.id !== id) return z;
-          if (which === 'from') return { ...z, from: n };
-          if (which === 'to') return { ...z, to: n };
+          if (which === 'from') return { ...z, from: n, points: undefined };
+          if (which === 'to') return { ...z, to: n, points: undefined };
           const cur = z.ctrls ?? (z.ctrl ? [z.ctrl] : []);
           const next = cur.slice();
           if (index != null && index < next.length) next[index] = n; else next.push(n);
-          return { ...z, ctrls: next, ctrl: undefined };
+          return { ...z, ctrls: next, ctrl: undefined, points: undefined };
         }) };
       }));
       return;

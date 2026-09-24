@@ -109,6 +109,8 @@ export type AiDiagramAction = {
   to: AiPoint;
   order?: number;
   points?: AiPoint[];
+  /** Couleur réelle du tracé détecté (préserve notamment les annotations rouges/bleues). */
+  color?: string;
   /** V3 — confiance et origine de la détection. */
   confidence?: number;
   source?: string;

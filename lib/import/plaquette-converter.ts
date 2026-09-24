@@ -157,11 +157,19 @@ function diagramToPhase(diagram: AiExerciseDiagram, courtType: "half" | "full"):
       from,
       to,
       rotation: 0,
-      ...(action.action === "freedraw" && action.points?.length
-        ? { points: action.points.map((point) => clampPoint(point, courtType)) }
-        : action.points && action.points.length > 2
-        ? { ctrls: pickControlPoints(action.points).map((point) => clampPoint(point, courtType)) }
+      // V15 — ne plus détruire la forme détectée.
+      // `points` garde le chemin Vision complet, même pour cut/pass/dribble.
+      // La Plaquette V15 sait rendre ce chemin directement. Les `ctrls` restent
+      // présents comme repli natif si l'utilisateur édite ensuite la trajectoire.
+      ...(action.points?.length
+        ? {
+            points: action.points.map((point) => clampPoint(point, courtType)),
+            ...(action.action !== "freedraw" && action.points.length > 2
+              ? { ctrls: pickControlPoints(action.points, 7).map((point) => clampPoint(point, courtType)) }
+              : {}),
+          }
         : {}),
+      ...(action.color ? { color: action.color } : {}),
       ...(sourcePlayerId ? { sourcePlayerId } : {}),
       ...(targetPlayerId ? { targetPlayerId } : {}),
       ...(isShoot ? { target: "basket" as const } : {}),
