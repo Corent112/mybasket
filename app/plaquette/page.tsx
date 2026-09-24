@@ -4731,26 +4731,6 @@ const exportJson = () => {
                   </div>
                 </div>
 
-                {/* Animation — reste dans la même colonne, sous le timing */}
-                <div className="phase-animation-dock">
-                  <div className="sec-lab">ANIMATION</div>
-                  <div className="timeline">
-                    <div className="tl-controls">
-                      <div className="tl-btn" id="tlPrev" title="Précédent" onClick={() => seekPhaseTL(current - 1)}>⏮</div>
-                      <div className="tl-btn" id="tlPlay" title="Play/Pause" onClick={togglePlay}>{isPlaying ? '⏸' : '▶'}</div>
-                      <div className="tl-btn" id="tlStop" title="Stop" onClick={stopAnim}>⏹</div>
-                      <div className="tl-btn" id="tlNext" title="Suivant" onClick={() => seekPhaseTL(current + 1)}>⏭</div>
-                    </div>
-                    <select className="tl-speed" id="tlSpeed" defaultValue="1" onChange={(e) => { speedRef.current = Number(e.target.value); }}>
-                      <option value="0.5">0.5x</option>
-                      <option value="1">1x</option>
-                      <option value="1.5">1.5x</option>
-                      <option value="2">2x</option>
-                    </select>
-                    <div className="tl-progress" id="tlProgress"><div className="tl-progress-bar" id="tlBar" ref={tlBarRef}></div></div>
-                    <div className="tl-status" id="tlStatus">{isPlaying ? '▶ ' : ''}Phase {current + 1}/{phases.length}</div>
-                  </div>
-                </div>
               </div>
             </aside>
 
@@ -5649,7 +5629,7 @@ html{font-size:15px}
 .ph-act:hover{border-color:var(--bordeaux);background:rgba(107,26,44,.05)}
 .ph-act .ico{font-size:.8rem}
 .phases-list{display:flex;flex-direction:column;gap:.4rem;max-height:calc(100vh - 380px);overflow-y:auto;padding-right:.2rem}
-.ph-thumb{aspect-ratio:16/12;background:#6B1A2C;background-size:cover;background-position:center;background-repeat:no-repeat;border:2px solid #C8C8C8;border-radius:5px;cursor:pointer;position:relative;transition:.15s;overflow:hidden}
+.ph-thumb{aspect-ratio:16/12;background:#6B1A2C;background-size:contain;background-position:center;background-repeat:no-repeat;border:2px solid #C8C8C8;border-radius:5px;cursor:pointer;position:relative;transition:.15s;overflow:hidden}
 .ph-thumb:hover{border-color:var(--or);transform:scale(1.02)}
 .ph-thumb.active{border-color:var(--or);box-shadow:0 0 0 3px rgba(212,162,76,.35)}
 .ph-thumb .pnum{position:absolute;bottom:3px;left:3px;background:rgba(0,0,0,.85);color:var(--or);padding:.1rem .35rem;border-radius:3px;font-size:.65rem;font-weight:700;font-family:var(--varsity);letter-spacing:.05em}
@@ -5808,14 +5788,9 @@ html{font-size:15px}
 @media (min-width:901px){
   .ed-layout{height:calc(100vh - 74px)!important;min-height:0!important}
   .ed-left{height:100%!important;min-height:0!important;overflow-y:auto!important}
-  .ed-left .phases-list{height:238px!important;min-height:238px!important;max-height:238px!important;gap:7px!important}
-  .ed-left .ph-thumb{height:74px!important;min-height:74px!important;flex:0 0 74px!important;aspect-ratio:auto!important}
+  .ed-left .phases-list{height:300px!important;min-height:300px!important;max-height:300px!important;gap:7px!important}
+  .ed-left .ph-thumb{height:95px!important;min-height:95px!important;flex:0 0 95px!important;aspect-ratio:auto!important;background-size:contain!important;background-position:center!important;background-repeat:no-repeat!important}
   .ed-canvas-wrap{height:100%!important;min-height:0!important;padding:.65rem 1rem!important;justify-content:flex-start!important}
   #playCanvas[data-court="full"]{width:auto!important;height:auto!important;max-width:100%!important;max-height:calc(100vh - 145px)!important;object-fit:contain!important}
-  .phase-animation-dock{margin-top:.85rem;padding-top:.75rem;border-top:1px solid var(--gris-med)}
-  .phase-animation-dock .timeline{position:static!important;width:100%!important;min-height:0!important;padding:.45rem!important;border-radius:8px!important;display:grid!important;grid-template-columns:1fr auto!important;gap:.4rem!important}
-  .phase-animation-dock .tl-controls{grid-column:1 / -1!important;justify-content:center!important}
-  .phase-animation-dock .tl-progress{grid-column:1 / -1!important;width:100%!important}
-  .phase-animation-dock .tl-status{font-size:.68rem!important}
 }
 `;
