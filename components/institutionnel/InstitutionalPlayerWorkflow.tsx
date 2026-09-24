@@ -5,6 +5,7 @@ import { createClient } from "@/lib/supabase/client";
 import InstitutionalResources from "@/components/institutionnel/InstitutionalResources";
 import InstitutionalPlayerPerformance from "@/components/institutionnel/InstitutionalPlayerPerformance";
 import InstitutionalPlayerSheet from "@/components/institutionnel/InstitutionalPlayerSheet";
+import InstitutionalSelectionDocuments from "@/components/institutionnel/InstitutionalSelectionDocuments";
 
 type WorkflowStatus = "reviewing" | "validated" | "archived";
 type Tab = "base" | "referrals" | "detections" | "transfers";
@@ -119,6 +120,7 @@ export default function InstitutionalPlayerWorkflow({ structureId }: { structure
   const [activeEvent, setActiveEvent] = useState("");
   const [busy, setBusy] = useState("");
   const [showDocs, setShowDocs] = useState(false);
+  const selectedPlayers = useMemo(() => players.filter((p) => selected.includes(p.id) && !p.archived), [players, selected]);
   const [openedReferral, setOpenedReferral] = useState<string | null>(null);
   const [referralView, setReferralView] = useState<"review" | "validated" | "rejected">("review");
   const [openedPlayerId, setOpenedPlayerId] = useState<string | null>(null);
@@ -454,7 +456,8 @@ export default function InstitutionalPlayerWorkflow({ structureId }: { structure
             </div>
           </section>
 
-          {selected.length > 0 && <section className="bulk compactBulk"><div><b>{selected.length} joueur(s) sélectionné(s)</b><span>Tu peux maintenant les utiliser dans une détection, une sélection ou une passation.</span></div><div><button onClick={() => setTab("detections")}>Détection / sélection</button><button className="ghost" onClick={() => setTab("transfers")}>Passation</button><button className="ghost" onClick={() => setShowDocs((v) => !v)}>Documents</button></div></section>}
+          {selected.length > 0 && <section className="bulk compactBulk"><div><b>{selected.length} joueur(s) sélectionné(s)</b><span>Choisis maintenant l’action à réaliser avec cette sélection.</span></div><div><button onClick={() => setShowDocs(true)}>Créer une action</button><button className="ghost" onClick={() => setTab("detections")}>Détection / sélection</button><button className="ghost" onClick={() => setTab("transfers")}>Passation</button></div></section>}
+          {showDocs && selectedPlayers.length > 0 && <InstitutionalSelectionDocuments structureId={structureId} players={selectedPlayers} onClose={() => setShowDocs(false)} />}
 
           {shares.length > 0 && <section className="receivedStrip"><b>Fiches reçues</b><div className="sharedGrid">{shares.map((sh) => { const p: any = sh.institutional_players; return p ? <article key={sh.id}><div className="avatar small">{p.photo_url ? <img src={p.photo_url} alt="" /> : p.first_name?.[0] || "?"}</div><div><b>{p.first_name} {p.last_name}</b><span>{p.club_name || "Club —"} · droit {sh.access_level}</span></div></article> : null; })}</div></section>}
         </>

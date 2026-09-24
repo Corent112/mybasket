@@ -120,6 +120,13 @@ export default function InstitutionalPlayerSheet({ structureId, player, referral
     provenance: profile.provenance || "",
     bone_age: profile.growth?.boneAge ?? "",
     sitting_height_cm: profile.growth?.sittingHeightCm ?? "",
+    street: profile.street || profile.address || "",
+    postal_code: profile.postalCode || "",
+    city: profile.city || "",
+    basketball_years: profile.basketballYears || "",
+    other_sports: profile.otherSports || "",
+    shoe_size: profile.shoeSize || "",
+    siblings: profile.siblings || "",
   });
 
   useEffect(() => {
@@ -393,6 +400,13 @@ export default function InstitutionalPlayerSheet({ structureId, player, referral
               <Field label="Classe" value={form.class_name} onChange={(v) => patch("class_name", v)} />
               <Field label="Email" type="email" value={form.email} onChange={(v) => patch("email", v)} />
               <Field label="Téléphone" value={form.phone} onChange={(v) => patch("phone", v)} />
+              <Field label="Rue" value={form.street} onChange={(v) => patch("street", v)} />
+              <Field label="Code postal" value={form.postal_code} onChange={(v) => patch("postal_code", v)} />
+              <Field label="Ville" value={form.city} onChange={(v) => patch("city", v)} />
+              <Field label="Années de basket" type="number" value={form.basketball_years} onChange={(v) => patch("basketball_years", v)} />
+              <Field label="Autres sports pratiqués" value={form.other_sports} onChange={(v) => patch("other_sports", v)} />
+              <Field label="Pointure" type="number" value={form.shoe_size} onChange={(v) => patch("shoe_size", v)} />
+              <Field label="Frères / sœurs" value={form.siblings} onChange={(v) => patch("siblings", v)} />
             </div>
           </div>
           <div className="subTitle">Anthropométrie & croissance</div>
@@ -416,7 +430,7 @@ export default function InstitutionalPlayerSheet({ structureId, player, referral
           </div>
           <label className="textArea">Observations<textarea value={form.observations} onChange={(e) => patch("observations", e.target.value)} /></label>
           <label className="textArea">Provenance<input value={form.provenance} onChange={(e) => patch("provenance", e.target.value)} /></label>
-          <div className="saveLine"><button className="primary" disabled={saving === "save" || busy === "save_player"} onClick={() => saveBase({ growth: { ...(profile.growth || {}), boneAge: num(String(form.bone_age)), sittingHeightCm: num(String(form.sitting_height_cm)) } })}>{saving === "save" ? "Enregistrement…" : "Enregistrer la fiche"}</button></div>
+          <div className="saveLine"><button className="primary" disabled={saving === "save" || busy === "save_player"} onClick={() => saveBase({ growth: { ...(profile.growth || {}), boneAge: num(String(form.bone_age)), sittingHeightCm: num(String(form.sitting_height_cm)) }, street: clean(form.street) || null, postalCode: clean(form.postal_code) || null, city: clean(form.city) || null, basketballYears: clean(form.basketball_years) || null, otherSports: clean(form.other_sports) || null, shoeSize: clean(form.shoe_size) || null, siblings: clean(form.siblings) || null })}>{saving === "save" ? "Enregistrement…" : "Enregistrer la fiche"}</button></div>
         </section>}
 
         {tab === "Profil joueur" && <ProfileEditor value={profiling} saving={saving === "profiling"} onSave={(value) => saveProfileSection("profiling", value)} />}
