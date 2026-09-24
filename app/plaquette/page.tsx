@@ -4718,6 +4718,26 @@ const exportJson = () => {
                     </div>
                   </div>
                 </div>
+
+                <div className="phase-animation-panel">
+                  <div className="sec-lab">ANIMATION</div>
+                  <div className="timeline timeline-in-phases">
+                    <div className="tl-controls">
+                      <div className="tl-btn" id="tlPrev" title="Précédent" onClick={() => seekPhaseTL(current - 1)}>⏮</div>
+                      <div className="tl-btn" id="tlPlay" title="Play/Pause" onClick={togglePlay}>{isPlaying ? '⏸' : '▶'}</div>
+                      <div className="tl-btn" id="tlStop" title="Stop" onClick={stopAnim}>⏹</div>
+                      <div className="tl-btn" id="tlNext" title="Suivant" onClick={() => seekPhaseTL(current + 1)}>⏭</div>
+                    </div>
+                    <select className="tl-speed" id="tlSpeed" defaultValue="1" onChange={(e) => { speedRef.current = Number(e.target.value); }}>
+                      <option value="0.5">0.5x</option>
+                      <option value="1">1x</option>
+                      <option value="1.5">1.5x</option>
+                      <option value="2">2x</option>
+                    </select>
+                    <div className="tl-progress" id="tlProgress"><div className="tl-progress-bar" id="tlBar" ref={tlBarRef}></div></div>
+                    <div className="tl-status" id="tlStatus">{isPlaying ? '▶ ' : ''}Phase {current + 1}/{phases.length}</div>
+                  </div>
+                </div>
               </div>
             </aside>
 
@@ -4889,23 +4909,6 @@ const exportJson = () => {
             </aside>
           </div>
 
-          {/* -------- TIMELINE (étape 4) -------- */}
-          <div className="timeline">
-            <div className="tl-controls">
-              <div className="tl-btn" id="tlPrev" title="Précédent" onClick={() => seekPhaseTL(current - 1)}>⏮</div>
-              <div className="tl-btn" id="tlPlay" title="Play/Pause" onClick={togglePlay}>{isPlaying ? '⏸' : '▶'}</div>
-              <div className="tl-btn" id="tlStop" title="Stop" onClick={stopAnim}>⏹</div>
-              <div className="tl-btn" id="tlNext" title="Suivant" onClick={() => seekPhaseTL(current + 1)}>⏭</div>
-            </div>
-            <select className="tl-speed" id="tlSpeed" defaultValue="1" onChange={(e) => { speedRef.current = Number(e.target.value); }}>
-              <option value="0.5">0.5x</option>
-              <option value="1">1x</option>
-              <option value="1.5">1.5x</option>
-              <option value="2">2x</option>
-            </select>
-            <div className="tl-progress" id="tlProgress"><div className="tl-progress-bar" id="tlBar" ref={tlBarRef}></div></div>
-            <div className="tl-status" id="tlStatus">{isPlaying ? '▶ ' : ''}Phase {current + 1}/{phases.length}</div>
-          </div>
         </section>
         {/* ===================== MODALE ENREGISTRER / INSÉRER ===================== */}
         {saveOpen && (
@@ -5787,4 +5790,68 @@ html{font-size:15px}
   .ed-right{grid-column:4!important;grid-row:1!important}
 }
 @media (min-width:901px) and (max-width:1050px){.ed-layout{grid-template-columns:210px 220px minmax(0,1fr) 280px!important;grid-template-areas:"library phases canvas right"!important}}
+
+
+/* 24-09 — Ajustement vertical Plaquette : terrain complet + 3 phases + animation dans la colonne */
+@media (min-width:901px){
+  .ed-layout{
+    height:calc(100vh - 112px)!important;
+    min-height:0!important;
+  }
+  .ed-left{
+    overflow-y:auto!important;
+    padding-bottom:.55rem!important;
+  }
+  .ed-left .phases-list{
+    max-height:300px!important;
+    min-height:286px;
+    gap:6px!important;
+  }
+  .ed-left .ph-thumb{
+    height:90px!important;
+    min-height:90px!important;
+    aspect-ratio:auto!important;
+    background-size:contain!important;
+    background-color:#6B1A2C;
+  }
+  .ed-left #timingPanel{
+    margin-top:.55rem!important;
+    padding-top:.55rem!important;
+  }
+  .phase-animation-panel{
+    order:6;
+    margin-top:.65rem;
+    padding-top:.6rem;
+    border-top:1px solid var(--gris-med);
+  }
+  .timeline-in-phases{
+    padding:.5rem!important;
+    border-radius:8px;
+    display:grid!important;
+    grid-template-columns:1fr auto;
+    gap:.45rem!important;
+  }
+  .timeline-in-phases .tl-controls{gap:.18rem}
+  .timeline-in-phases .tl-btn{width:30px;height:30px}
+  .timeline-in-phases .tl-speed{height:30px;padding:.2rem .4rem}
+  .timeline-in-phases .tl-progress{grid-column:1 / -1;width:100%;min-width:0}
+  .timeline-in-phases .tl-status{grid-column:1 / -1;min-width:0;text-align:left;font-size:.7rem}
+  .ed-canvas-wrap{
+    height:100%;
+    min-height:0;
+    padding:.65rem 1rem!important;
+  }
+  .court-view-switch{margin-bottom:.4rem!important;flex:0 0 auto}
+  #playCanvas[data-court="full"]{
+    width:auto!important;
+    height:min(calc(100vh - 190px), 100%)!important;
+    max-height:calc(100vh - 190px)!important;
+    max-width:100%!important;
+    object-fit:contain;
+  }
+  #playCanvas[data-court="half"]{
+    max-height:calc(100vh - 190px)!important;
+  }
+  .ed-right{max-height:none!important;height:100%}
+}
 `;

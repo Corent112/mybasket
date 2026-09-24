@@ -1249,12 +1249,22 @@ function makeInkContext(canvas: HTMLCanvasElement, kind: CourtKind, play: AiRect
 
   const ink = new Uint8Array(px.w * px.h);
   if (cleanDigital) {
-    // Repartir des pixels eux-mêmes, avec un seuil sombre strict. Le masque
-    // `raw` contient aussi l'anti-crénelage gris des lignes fines du terrain ;
-    // sur notre référence cela suffisait à les faire survivre à l'ouverture.
-    // Les couleurs saturées sont gardées séparément pour ne pas perdre une
-    // flèche rouge/bleue plus claire.
-    const digitalRaw = new Uint8Array(raw.length);
+    /*
+     * V12 — EXPORT NUMÉRIQUE : SOUSTRACTION DU TERRAIN D'ABORD.
+     *
+     * V11 essayait de distinguer « ligne fine » et « annotation épaisse » par
+     * ouverture morphologique. C'était une erreur : la bordure, la raquette et
+     * certaines lignes officielles sont elles aussi épaisses et survivaient,
+     * puis devenaient de fausses trajectoires.
+     *
+     * Ici le gabarit géométrique redevient l'autorité pour un export numérique
+     * propre. On enlève tout pixel achromatique situé sur une ligne officielle.
+     * En revanche une annotation SATURÉE (rouge/bleu/vert...) est protégée : si
+     * elle traverse une ligne du terrain elle reste intégralement disponible.
+     * Les trajectoires noires peuvent être coupées de quelques pixels à un
+     * croisement ; le regroupement/vectoriseur les reconnecte ensuite. C'est
+     * infiniment préférable à transformer la raquette entière en action.
+     */
     for (let y = 0; y < px.h; y += 1) {
       for (let x = 0; x < px.w; x += 1) {
         const p = y * px.w + x;
@@ -1264,35 +1274,40 @@ function makeInkContext(canvas: HTMLCanvasElement, kind: CourtKind, play: AiRect
         const b = px.data[i + 2];
         const avg = (r + g + b) / 3;
         const sat = saturationOf(r, g, b);
-        if (avg < 180 || (sat >= 0.30 && avg < 245)) digitalRaw[p] = 1;
+        const dark = avg < 205;
+        const coloured = sat >= 0.22 && avg < 248;
+        if (!dark && !coloured) continue;
+
+        // Une couleur de coach est une preuve plus forte que le gabarit terrain.
+        if (coloured) {
+          ink[p] = 1;
+          continue;
+        }
+
+        // Noir/gris : une ligne officielle connue n'entre JAMAIS dans le moteur
+        // sémantique. C'est le changement structurel de V12.
+        if (!mask[p]) ink[p] = 1;
       }
     }
-    const eroded = new Uint8Array(raw.length);
-    // Érosion 3x3 : seuls les pixels réellement au coeur d'un trait épais
-    // survivent. Les bords hors image valent fond.
+
+    // Nettoyage uniquement des poussières isolées. Pas d'ouverture/érosion :
+    // on conserve exactement les dents d'un zigzag et les pointes de flèche.
+    const cleaned = new Uint8Array(ink);
     for (let y = 1; y < px.h - 1; y += 1) {
       for (let x = 1; x < px.w - 1; x += 1) {
-        let all = 1;
-        for (let dy = -1; dy <= 1 && all; dy += 1) {
+        const p = y * px.w + x;
+        if (!ink[p]) continue;
+        let neighbours = 0;
+        for (let dy = -1; dy <= 1; dy += 1) {
           for (let dx = -1; dx <= 1; dx += 1) {
-            if (!digitalRaw[(y + dy) * px.w + (x + dx)]) { all = 0; break; }
+            if (!dx && !dy) continue;
+            if (ink[(y + dy) * px.w + (x + dx)]) neighbours += 1;
           }
         }
-        if (all) eroded[y * px.w + x] = 1;
+        if (neighbours === 0) cleaned[p] = 0;
       }
     }
-    // Dilatation 3x3 : rend aux annotations leur calibre d'origine.
-    for (let y = 1; y < px.h - 1; y += 1) {
-      for (let x = 1; x < px.w - 1; x += 1) {
-        let any = 0;
-        for (let dy = -1; dy <= 1 && !any; dy += 1) {
-          for (let dx = -1; dx <= 1; dx += 1) {
-            if (eroded[(y + dy) * px.w + (x + dx)]) { any = 1; break; }
-          }
-        }
-        if (any) ink[y * px.w + x] = 1;
-      }
-    }
+    ink.set(cleaned);
   } else {
     for (let i = 0; i < ink.length; i += 1) ink[i] = raw[i] && !mask[i] ? 1 : 0;
   }
