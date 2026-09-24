@@ -76,7 +76,10 @@ import {
   type DirectDetection,
 } from "./mybasket-symbols";
 
-const MAX_PLAYERS = 12;
+const MAX_PLAYERS = 10;
+
+/** V9 Exact+ : aucun objet ambigu ne doit être créé automatiquement. */
+const EXACT_IMPORT_V9 = true;
 const MAX_LINES = 14;
 const MAX_OBJECTS = 12;
 const MAX_TEXTS = 3;
@@ -3017,9 +3020,37 @@ export async function analyseGraphic(
   /** Position PIXEL des joueurs retenus, alignée sur `players` par sa clé. */
   const playerPixel: Array<{ key: string; x: number; y: number; area: number }> = [];
 
-  const medianArea = medianOf(reads.map((item) => item.area)) || 1;
+  /*
+   * V8 — MODE « EXACT » POUR LES JOUEURS.
+   *
+   * Le principal défaut observé sur les imports réels était la création de
+   * joueurs fantômes à partir de morceaux de raquette, du cercle central ou
+   * d'intersections de lignes. Une forme vaguement ronde ne suffit donc plus.
+   *
+   * On conserve un candidat si au moins UN indice positif existe :
+   *   - gabarit MyBasket reconnu ;
+   *   - glyphe/numéro réellement présent dans le jeton ;
+   *   - OCR lisible ;
+   *   - marque défensive structurelle forte.
+   *
+   * Doctrine : mieux vaut laisser un joueur à confirmer que d'en inventer six.
+   */
+  const exactReads = reads.filter((item) => {
+    const template = Boolean(item.candidate.template);
+    const readable = Boolean(item.digits) && item.confidence > 0.42;
+    const structuralDefense = item.defenseEvidence >= 0.68;
+    // V9 : un simple « trou »/glyphe dans une intersection de lignes ne suffit
+    // plus. Sans OCR, il faut aussi une silhouette franchement compatible avec
+    // un jeton. C'est le garde-fou principal contre les joueurs fantômes.
+    const glyphWithTokenShape = item.hasGlyph && item.shapeScore >= 0.58 && item.contrastScore >= 0.42;
+    const keep = template || readable || structuralDefense || glyphWithTokenShape;
+    if (!keep) reject("jeton joueur", "V9 exact : preuve insuffisante — candidat conservé hors import automatique");
+    return keep;
+  });
 
-  for (const item of reads) {
+  const medianArea = medianOf(exactReads.map((item) => item.area)) || 1;
+
+  for (const item of exactReads) {
     const point = norm(item.centre.x, item.centre.y);
 
     const type = typeOf(item.defenseEvidence);
@@ -3570,7 +3601,24 @@ export async function analyseGraphic(
     const onLine =
       poly.points.filter((point) => nearCourtLine(ink, point.x, point.y, unit * 0.022)).length /
       Math.max(1, poly.points.length);
-    if (onLine > 0.6) {
+
+    /*
+     * V8 — ENCRE COLORÉE PRIORITAIRE SUR LE MASQUE TERRAIN.
+     *
+     * Une trajectoire rouge/bleue dessinée par le coach peut traverser la
+     * raquette ou l'arc à 3 points. Dans ce cas le recouvrement géométrique ne
+     * doit jamais suffire à la supprimer. Les lignes imprimées du terrain sont
+     * généralement neutres ; une composante franchement saturée constitue donc
+     * une preuve indépendante d'annotation.
+     */
+    const strokeSaturation = saturationOf(
+      component?.color.r ?? 128,
+      component?.color.g ?? 128,
+      component?.color.b ?? 128
+    );
+    const coachColoredStroke = Boolean(component) && strokeSaturation >= 0.34;
+
+    if (onLine > 0.6 && !coachColoredStroke) {
       /*
        * DIAGNOSTIC DU REJET. Le taux de recouvrement seul ne dit pas si le
        * masque est trop large, mal placé, ou si la composante est vraiment une
@@ -3643,18 +3691,43 @@ export async function analyseGraphic(
       Math.min(1, 0.28 + (arrow.hasArrow ? 0.32 : 0) + 0.2 * (1 - onLine) + 0.2 * lengthScore)
     );
 
+    // V9 — DÉDOUBLONNAGE GÉOMÉTRIQUE. Une même flèche peut être extraite
+    // deux fois (bord gauche/bord droit d'un trait épais, ou composante couleur
+    // + composante neutre). On ne crée jamais deux actions quasi identiques.
+    const normalizedStart = norm(start.x, start.y);
+    const normalizedEnd = norm(end.x, end.y);
+    const duplicate = actions.some((existing) => {
+      // Certaines actions héritées peuvent ne pas avoir encore de coordonnées
+      // normalisées (from/to sont optionnels dans AiAction). Elles ne peuvent
+      // donc pas participer au dédoublonnage géométrique.
+      if (!existing.from || !existing.to) return false;
+
+      const direct =
+        weighted(existing.from, normalizedStart) < 0.035 &&
+        weighted(existing.to, normalizedEnd) < 0.035;
+      const reverse =
+        weighted(existing.from, normalizedEnd) < 0.035 &&
+        weighted(existing.to, normalizedStart) < 0.035;
+      return direct || reverse;
+    });
+    if (duplicate) {
+      reject("trajectoire", "V9 exact : doublon géométrique d'un tracé déjà retenu");
+      return;
+    }
+
     actions.push({
       action: kind,
       fromPlayer,
       toPlayer,
-      from: norm(start.x, start.y),
-      to: norm(end.x, end.y),
+      from: normalizedStart,
+      to: normalizedEnd,
       order: actions.length + 1,
       // Conserver la géométrie source pour que Plaquette puisse recréer la courbe.
       points: ordered.map((p) => norm(p.x, p.y)),
       confidence: Number(confidence.toFixed(3)),
       source: [
         arrow.hasArrow ? "pointe de flèche détectée" : "symbole d'écran",
+        coachColoredStroke ? `encre coach colorée (sat ${strokeSaturation.toFixed(2)})` : "encre neutre",
         `${Math.round((1 - onLine) * 100)} % hors lignes de terrain`,
       ].join(" · "),
     });
