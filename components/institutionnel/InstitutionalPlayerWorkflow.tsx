@@ -527,7 +527,7 @@ export default function InstitutionalPlayerWorkflow({ structureId }: { structure
             </div></div>
             <div className="createSection"><b>Basket</b><div className="createGrid">
               <label>Club<input value={createPlayerForm.club_name} onChange={(e) => setCreatePlayerForm(v => ({...v, club_name:e.target.value}))} /></label>
-              <label>Catégorie<input value={createPlayerForm.category} onChange={(e) => setCreatePlayerForm(v => ({...v, category:e.target.value}))} /></label>
+              <label>Catégorie de suivi<select value={createPlayerForm.category} onChange={(e) => setCreatePlayerForm(v => ({...v, category:e.target.value}))}><option value="">Choisir</option><option value="U13">U13</option><option value="U14">U14</option></select></label>
               <label>Taille (cm)<input type="number" value={createPlayerForm.height_cm} onChange={(e) => setCreatePlayerForm(v => ({...v, height_cm:e.target.value}))} /></label>
               <label>Poste<input value={createPlayerForm.position} onChange={(e) => setCreatePlayerForm(v => ({...v, position:e.target.value}))} /></label>
               <label>N° maillot<input value={createPlayerForm.jersey_number} onChange={(e) => setCreatePlayerForm(v => ({...v, jersey_number:e.target.value}))} /></label>

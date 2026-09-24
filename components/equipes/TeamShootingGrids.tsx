@@ -220,6 +220,7 @@ export default function TeamShootingGrids({
   scopeType="team",
   scopeId,
   scopeLabel,
+  libraryOnly=false,
 }:{
   teamId:string;
   players:Player[];
@@ -227,6 +228,7 @@ export default function TeamShootingGrids({
   scopeType?:"team"|"institution";
   scopeId?:string;
   scopeLabel?:string;
+  libraryOnly?:boolean;
 }){
   const supabase=useMemo(()=>createClient(),[]);
   const effectiveScopeId=scopeType==="institution"?(scopeId||teamId):teamId;
@@ -963,6 +965,7 @@ export default function TeamShootingGrids({
                 </div>
               </div>
 
+              {!libraryOnly&&<>
               <div style={card}>
                 <span style={eyebrow}>NOUVELLE SESSION</span>
                 <h3 style={title}>Qui réalise la grille ?</h3>
@@ -1032,6 +1035,7 @@ export default function TeamShootingGrids({
                   </table></div>
                 </div>
               )}
+              </>}
             </>
           )}
           </>)}

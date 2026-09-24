@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
+import InstitutionalPlayerShootingGrids from "@/components/institutionnel/InstitutionalPlayerShootingGrids";
 
 const TABS = [
   "Aperçu",
@@ -299,6 +300,7 @@ export default function InstitutionalPlayerSheet({ structureId, player, referral
         <button className="backLink" onClick={onClose}>← <span>Retour à la liste des joueurs</span></button>
         <div className="topActions">
           <button className="actionBtn" onClick={() => setTab("Informations")}>✎ <span>Modifier</span></button>
+          {!archived && clean(player.category).toUpperCase().startsWith("U13") && <button className="actionBtn" onClick={()=>onSave({...form,category:"U14"})}>↑ <span>Passer en U14</span></button>}
           {archived ? <button className="actionBtn success" onClick={onRestore}>↺ <span>Restaurer</span></button> : <button className="actionBtn" onClick={onArchive}>▣ <span>Archiver</span></button>}
           <button className="actionBtn danger" onClick={onDelete}>⌫ <span>Supprimer</span></button>
           <button className="close" onClick={onClose} aria-label="Fermer">×</button>
@@ -425,7 +427,7 @@ export default function InstitutionalPlayerSheet({ structureId, player, referral
           <div className="measureTable"><div className="tr head"><span>Date</span><span>Taille</span><span>Poids</span><span>Envergure</span><span>Pointure</span><span /></div>{measurements.map((m) => <div className="tr" key={m.id}><span>{fmtDate(m.measured_at)}</span><b>{m.height_cm ? `${m.height_cm} cm` : "—"}</b><b>{m.weight_kg ? `${m.weight_kg} kg` : "—"}</b><b>{m.wingspan_cm ? `${m.wingspan_cm} cm` : "—"}</b><b>{m.shoe_size || "—"}</b><button className="iconDanger" onClick={() => deleteMeasurement(m.id)}>×</button></div>)}{!measurements.length && <div className="empty">Aucune mesure enregistrée.</div>}</div>
         </section>}
 
-        {tab === "Grilles de tir" && <section className="panel"><SectionTitle eyebrow="GRILLES DE TIR" title="Suivi tir du joueur" help="Conserve ici les objectifs, grilles et remarques de travail liées au tir." /><SimpleNotes value={profile.shooting || {}} labels={{ title: "Objectif / grille en cours", notes: "Notes de tir" }} saving={saving === "shooting"} onSave={(v) => saveProfileSection("shooting", v)} /></section>}
+        {tab === "Grilles de tir" && <section className="panel"><InstitutionalPlayerShootingGrids structureId={structureId} player={{id:player.id,first_name:player.first_name,last_name:player.last_name}} /></section>}
         {tab === "Médical" && <ListEditor kind="medical" title="Suivi médical" eyebrow="MÉDICAL" items={medicalEntries} saving={saving === "medicalEntries"} onSave={(items) => saveProfileSection("medicalEntries", items)} />}
         {tab === "Bilans" && <ListEditor kind="bilan" title="Bilans joueur" eyebrow="BILANS" items={bilans} saving={saving === "bilans"} onSave={(items) => saveProfileSection("bilans", items)} />}
         {tab === "Bilan sportif" && <section className="panel"><SectionTitle eyebrow="BILAN SPORTIF" title="Bilan sportif partagé" help="Synthèse utilisable dans les transmissions et le suivi longitudinal." /><SimpleNotes value={sportsReport} labels={{ title: "Conclusion sportive", notes: "Forces, axes de progression, projection et recommandations" }} saving={saving === "sportsReport"} onSave={(v) => saveProfileSection("sportsReport", v)} /></section>}

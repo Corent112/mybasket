@@ -24,7 +24,7 @@ const NAV: [string, string, string?][] = [
   ["⚡", "Mon Profil Coach"],
   ["📣", "Mes Annonces"],
   ["💰", "Mes Revenus"],
-  ["📄", "Mes Papiers"],
+  ["📄", "Mes Documents", "/mon-compte/documents"],
   ["👥", "Mes Equipes", "/equipes"],
   ["📊", "Management", "/management"],
 ];
