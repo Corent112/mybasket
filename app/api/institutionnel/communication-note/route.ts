@@ -21,13 +21,12 @@ export async function POST(req: Request) {
   const note = body.note || {};
   const to = Array.isArray(body.to) ? body.to.map(String).filter(Boolean) : [];
   const shouldSend = body.send === true;
-  const mailBody = String(body.mailBody || "").trim();
   if (!structureId || !String(note.title || "").trim() || !String(note.body || "").trim()) return NextResponse.json({ error: "Titre et contenu obligatoires" }, { status: 400 });
   if (shouldSend && !to.length) return NextResponse.json({ error: "Sélectionne au moins un destinataire" }, { status: 400 });
 
   const [{ data: member }, { data: structure }] = await Promise.all([
     admin.from("institutional_members").select("id").eq("structure_id", structureId).eq("user_id", user.id).eq("status", "active").maybeSingle(),
-    admin.from("institutional_structures").select("id,name,short_name,logo_url,email,city,document_primary_color,document_secondary_color").eq("id", structureId).maybeSingle(),
+    admin.from("institutional_structures").select("id,name,short_name,logo_url,email,city,document_primary_color,document_secondary_color,email_signature_url").eq("id", structureId).maybeSingle(),
   ]);
   if (!member || !structure) return NextResponse.json({ error: "Accès refusé" }, { status: 403 });
 
@@ -54,8 +53,15 @@ export async function POST(req: Request) {
     const mail = await sendTransactionalEmail({
       to,
       subject: String(body.subject || title),
-      html: `<div style="font-family:Arial,sans-serif;max-width:760px;margin:auto"><div style="background:${esc(structure.document_primary_color || '#6B1A2C')};color:white;padding:18px 22px"><strong>${esc(structure.name)}</strong></div><div style="padding:22px;white-space:pre-wrap;line-height:1.55">${esc(mailBody || `Bonjour,\n\nVeuillez trouver en pièce jointe la convocation « ${title} ».\n\nCordialement,\n${structure.name}`)}</div></div>`,
-      text: mailBody || undefined,
+      html: (() => {
+        const primary = esc(structure.document_primary_color || "#172B54");
+        const secondary = esc(structure.document_secondary_color || "#D7282F");
+        const message = String(body.mailBody || `Bonjour,\n\nVeuillez trouver en pièce jointe la convocation « ${title} ».\n\nNous vous remercions d’en prendre connaissance et restons à votre disposition pour toute information complémentaire.\n\nCordialement,\n${structure.name}`);
+        const messageHtml = esc(message).replace(/\n/g, "<br>");
+        const logo = structure.logo_url ? `<img src="${esc(structure.logo_url)}" alt="${esc(structure.name)}" style="display:block;max-width:150px;max-height:64px;object-fit:contain">` : `<strong style="font-size:18px;color:${primary}">${esc(structure.name)}</strong>`;
+        const signature = structure.email_signature_url ? `<div style="margin-top:18px"><img src="${esc(structure.email_signature_url)}" alt="Signature" style="display:block;max-width:420px;max-height:180px;width:auto;height:auto;object-fit:contain"></div>` : "";
+        return `<div style="margin:0;padding:0;background:#ffffff;font-family:Arial,Helvetica,sans-serif;color:#202733;text-align:left"><div style="max-width:680px;margin:0 auto;padding:28px 24px"><div style="display:flex;align-items:center;min-height:64px">${logo}</div><div style="height:3px;margin:14px 0 28px;background:linear-gradient(90deg,${primary} 0 82%,${secondary} 82% 100%)"></div><div style="font-size:15px;line-height:1.7;text-align:left">${messageHtml}</div>${signature}<div style="margin-top:28px;padding-top:14px;border-top:1px solid #e6e9ee;font-size:11px;line-height:1.5;color:#7a8494;text-align:left">${esc(structure.name)}${structure.email ? ` · ${esc(structure.email)}` : ""}</div></div></div>`;
+      })(),
       attachments: [{ filename, content: Buffer.from(buffer).toString("base64") }],
     });
     sent = mail.sent;

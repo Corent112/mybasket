@@ -9,6 +9,7 @@ type Branding = {
   logo_url: string | null;
   document_primary_color: string | null;
   document_secondary_color: string | null;
+  email_signature_url: string | null;
 };
 
 const DEFAULT_PRIMARY = "#6B1A2C";
@@ -31,6 +32,7 @@ export default function InstitutionalBrandingSettings({
   const [primary, setPrimary] = useState(DEFAULT_PRIMARY);
   const [secondary, setSecondary] = useState(DEFAULT_SECONDARY);
   const [logoUrl, setLogoUrl] = useState<string | null>(null);
+  const [signatureUrl, setSignatureUrl] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [message, setMessage] = useState("");
@@ -38,7 +40,7 @@ export default function InstitutionalBrandingSettings({
   async function load() {
     const { data, error } = await supabase
       .from("institutional_structures")
-      .select("id,name,logo_url,document_primary_color,document_secondary_color")
+      .select("id,name,logo_url,document_primary_color,document_secondary_color,email_signature_url")
       .eq("id", structureId)
       .single();
 
@@ -50,6 +52,7 @@ export default function InstitutionalBrandingSettings({
     const row = data as Branding;
     setBranding(row);
     setLogoUrl(row.logo_url ?? null);
+    setSignatureUrl(row.email_signature_url ?? null);
     setPrimary(validHex(row.document_primary_color, DEFAULT_PRIMARY));
     setSecondary(validHex(row.document_secondary_color, DEFAULT_SECONDARY));
   }
@@ -104,6 +107,32 @@ export default function InstitutionalBrandingSettings({
     } finally {
       setUploading(false);
     }
+  }
+
+  async function uploadSignature(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file) return;
+    if (!["image/png", "image/jpeg", "image/webp"].includes(file.type)) return alert("Utilise une signature PNG, JPG ou WEBP.");
+    if (file.size > 3 * 1024 * 1024) return alert("La signature doit faire moins de 3 Mo.");
+    setUploading(true); setMessage("");
+    try {
+      const extension = file.name.split(".").pop()?.toLowerCase() || "png";
+      const path = `${structureId}/email-signature-${Date.now()}.${extension}`;
+      const upload = await supabase.storage.from("institutional-assets").upload(path, file, { upsert: true, cacheControl: "3600" });
+      if (upload.error) throw upload.error;
+      const url = supabase.storage.from("institutional-assets").getPublicUrl(path).data.publicUrl;
+      const update = await supabase.from("institutional_structures").update({ email_signature_url: url, updated_at: new Date().toISOString() }).eq("id", structureId);
+      if (update.error) throw update.error;
+      setSignatureUrl(url); setMessage("Signature mail enregistrée."); onSaved?.();
+    } catch (error) { alert(error instanceof Error ? error.message : "Import de la signature impossible."); }
+    finally { setUploading(false); }
+  }
+
+  async function removeSignature() {
+    const update = await supabase.from("institutional_structures").update({ email_signature_url: null, updated_at: new Date().toISOString() }).eq("id", structureId);
+    if (update.error) return alert(update.error.message);
+    setSignatureUrl(null); setMessage("Signature mail supprimée."); onSaved?.();
   }
 
   async function removeLogo() {
@@ -182,6 +211,21 @@ export default function InstitutionalBrandingSettings({
           <small>PNG, JPG, WEBP ou SVG · 3 Mo maximum.</small>
         </div>
 
+        <div className="signatureCard">
+          <span className="label">Signature des emails</span>
+          <div className="signaturePreview">
+            {signatureUrl ? <img src={signatureUrl} alt="Signature mail" /> : <div className="signaturePlaceholder">Aucune signature</div>}
+          </div>
+          <div className="logoActions">
+            <label className="upload">
+              {uploading ? "Import en cours…" : signatureUrl ? "Remplacer la signature" : "Ajouter une signature"}
+              <input type="file" accept=".png,.jpg,.jpeg,.webp,image/png,image/jpeg,image/webp" hidden disabled={uploading} onChange={uploadSignature} />
+            </label>
+            {signatureUrl && <button type="button" className="secondary" onClick={() => void removeSignature()}>Supprimer</button>}
+          </div>
+          <small>Image affichée automatiquement à la fin des emails envoyés par l’institution.</small>
+        </div>
+
         <div className="colors">
           <div className="colorField">
             <label>Couleur principale</label>
@@ -244,15 +288,15 @@ export default function InstitutionalBrandingSettings({
         .heading h2{margin:3px 0;color:#321015}
         .heading span{color:#81736c;font-size:.8rem}
         .layout{display:grid;grid-template-columns:300px minmax(0,1fr);gap:18px;margin-top:16px}
-        .logoCard,.colors{border:1px solid #eadfd8;border-radius:14px;padding:14px;background:#fffaf7}
+        .logoCard,.signatureCard,.colors{border:1px solid #eadfd8;border-radius:14px;padding:14px;background:#fffaf7}
         .label,.colorField>label{display:block;font-size:.76rem;font-weight:900;color:#4e3439;margin-bottom:8px}
         .logoPreview{height:150px;border:1px dashed #d8c9c2;border-radius:12px;background:#fff;display:grid;place-items:center;padding:12px}
-        .logoPreview img{max-width:100%;max-height:125px;object-fit:contain}
+        .logoPreview img{max-width:100%;max-height:125px;object-fit:contain}.signaturePreview{height:150px;border:1px dashed #d8c9c2;border-radius:12px;background:#fff;display:flex;align-items:center;justify-content:flex-start;padding:14px}.signaturePreview img{max-width:100%;max-height:120px;object-fit:contain}.signaturePlaceholder{color:#9c8d86;font-size:.78rem;font-weight:800}
         .placeholder{width:86px;height:86px;border-radius:18px;background:#f4ede9;color:#9c8d86;display:grid;place-items:center;font-weight:1000}
         .logoActions{display:flex;gap:7px;margin-top:10px}
         .upload,.buttons button{border:0;border-radius:9px;background:#6b1a2c;color:#fff;padding:9px 12px;font-weight:900;cursor:pointer;font-size:.78rem}
         .secondary{background:#fff!important;color:#6b1a2c!important;border:1px solid #d8bbc2!important}
-        .logoCard small,.colorField small{display:block;color:#8a7b74;font-size:.69rem;margin-top:6px}
+        .logoCard small,.signatureCard small,.colorField small{display:block;color:#8a7b74;font-size:.69rem;margin-top:6px}
         .colors{display:grid;grid-template-columns:1fr 1fr;gap:14px}
         .colorField>div{display:grid;grid-template-columns:46px 1fr;gap:8px}
         .colorField input[type=color]{width:46px;height:40px;padding:2px;border:1px solid #d9cbc4;border-radius:9px;background:#fff}
