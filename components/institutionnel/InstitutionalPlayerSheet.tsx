@@ -47,7 +47,7 @@ type Measurement = {
 
 type Season = { id: string; season_label: string };
 type AttendanceSession = { id:string; session_date:string; title:string; location:string|null; session_type?:string|null };
-type AttendanceRecord = { id:string; session_id:string; player_id:string; status:"present"|"absent"|"excused" };
+type AttendanceRecord = { id:string; session_id:string; season_id:string|null; player_id:string; status:"present"|"absent"|"excused" };
 
 const today = () => new Date().toISOString().slice(0, 10);
 const clean = (v: unknown) => String(v ?? "").trim();
@@ -144,6 +144,10 @@ export default function InstitutionalPlayerSheet({ structureId, player, referral
 
   useEffect(() => {
     void loadMeasurements();
+    const refresh=()=>{ if(document.visibilityState!=="hidden") void loadMeasurements(); };
+    window.addEventListener("focus",refresh);
+    document.addEventListener("visibilitychange",refresh);
+    return()=>{window.removeEventListener("focus",refresh);document.removeEventListener("visibilitychange",refresh)};
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [player.id, structureId]);
 
@@ -151,7 +155,7 @@ export default function InstitutionalPlayerSheet({ structureId, player, referral
     const [s, m, ar] = await Promise.all([
       sb.from("institutional_player_tracking_seasons").select("id,season_label").eq("structure_id", structureId).eq("archived", false).order("season_label", { ascending: false }),
       sb.from("institutional_player_measurements").select("id,season_id,measured_at,height_cm,weight_kg,wingspan_cm,shoe_size").eq("structure_id", structureId).eq("player_id", player.id).order("measured_at", { ascending: false }),
-      sb.from("institutional_player_attendance_records").select("id,session_id,player_id,status").eq("structure_id",structureId).eq("player_id",player.id),
+      sb.from("institutional_player_attendance_records").select("id,session_id,season_id,player_id,status").eq("structure_id",structureId).eq("player_id",player.id),
     ]);
     if (!s.error) {
       const rows = (s.data || []) as Season[];
@@ -246,8 +250,9 @@ export default function InstitutionalPlayerSheet({ structureId, player, referral
   const profiling = profile.profiling || {};
   const sportsReport = profile.sportsReport || {};
   const poleFollowup = profile.poleFollowup || {};
-  const attendancePastIds=new Set(attendanceSessions.filter((x)=>x.session_date<=today()).map((x)=>x.id));
-  const countedAttendance=attendanceRecords.filter((x)=>attendancePastIds.has(x.session_id));
+  const currentAttendanceSeasonId=seasons[0]?.id||null;
+  const attendancePastIds=new Set(attendanceSessions.filter((x)=>String(x.session_date||"").slice(0,10)<=today()).map((x)=>x.id));
+  const countedAttendance=attendanceRecords.filter((x)=>attendancePastIds.has(x.session_id)&&(!currentAttendanceSeasonId||!x.season_id||x.season_id===currentAttendanceSeasonId));
   const attendanceTotal=countedAttendance.length;
   const attendancePresent=countedAttendance.filter((x)=>x.status==="present").length;
   const attendanceExcused=countedAttendance.filter((x)=>x.status==="excused").length;
