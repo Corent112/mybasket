@@ -4108,6 +4108,27 @@ export default function PriseStatsProPage() {
   setDraft({ ...draft, playerId: id });
   setStage("action");
 };
+  const currentTeamFoulsBeforeDraft = (side: 'us' | 'them') => actions.filter((a) => {
+    if (a.q !== q) return false;
+    if (side === 'us') {
+      // Toutes les fautes commises alimentent le compteur d'équipe, y compris
+      // les fautes offensives. Une technique compte également, qu'elle soit
+      // attribuée à un joueur, au banc ou au coach.
+      return (
+        a.actionType === 'faute-commise' ||
+        (a.actionType === 'faute-technique' && a.foulOutcome === 'technical-against')
+      );
+    }
+    return (
+      a.actionType === 'faute-provoquee' ||
+      (a.actionType === 'faute-technique' && a.foulOutcome === 'technical-for')
+    );
+  }).length;
+
+  const draftTriggersTeamBonus =
+    (draft.actionType === 'faute-commise' && draft.context === 'defense' && currentTeamFoulsBeforeDraft('us') >= 4) ||
+    (draft.actionType === 'faute-provoquee' && currentTeamFoulsBeforeDraft('them') >= 4);
+
   const foulPick = (o: string) => {
     if (o === 'technical-for' || o === 'technical-against') {
       const technicalDraft: Draft = {
@@ -4135,6 +4156,14 @@ export default function PriseStatsProPage() {
       const isThree = o === 'us-3plus1' || o === 'us-lf3';
       setDraft({ ...draft, foulOutcome:'unsportsmanlike', specialCase:andOne?(isThree?'unsportsmanlike-3pts+1lf':'unsportsmanlike-2pts+1lf'):'unsportsmanlike', shotType:andOne?(isThree?'3PTS':'2PTS'):'LF', shotResult:andOne?'made':'', ftAttempts:andOne?1:(isThree?3:2), ftMade:0, ftResults:[] });
       setStage('ft'); return;
+    }
+    // À partir de la 5e faute d'équipe de la période, une faute défensive
+    // non-shooting ne peut plus donner une simple touche : elle donne 2 LF.
+    // Les fautes offensives sont traitées plus haut et n'entrent jamais ici.
+    if (o === 'touche' && draftTriggersTeamBonus) {
+      setDraft({ ...draft, foulOutcome: 'lf', shotType: 'LF', ftAttempts: 2, ftMade: 0, ftResults: [] });
+      setStage('ft');
+      return;
     }
     if (o === 'touche') { commit({ ...draft, foulOutcome: 'touche' }); return; }
     if (o === '2plus1' || o === '3plus1') {
@@ -5419,8 +5448,28 @@ export default function PriseStatsProPage() {
       ))}
     </span>
   );
-  const usTeamFouls = actions.filter((a) => a.q === q && ((a.actionType === 'faute-commise' && a.context === 'defense') || (a.actionType === 'faute-technique' && a.foulOutcome === 'technical-against' && a.specialCase === 'technical-player'))).length;
-  const themTeamFouls = actions.filter((a) => a.q === q && (a.actionType === 'faute-provoquee' || (a.actionType === 'faute-technique' && a.foulOutcome === 'technical-for' && a.specialCase === 'technical-player'))).length;
+  // Compteur collectif : toute faute commise compte, même offensive. Les
+  // techniques joueur / banc / coach alimentent elles aussi le total d'équipe.
+  // Cela n'implique pas qu'une faute offensive donne des LF : le bonus reste
+  // déclenché uniquement par une faute non offensive.
+  const usTeamFouls = actions.filter((a) => a.q === q && (
+    a.actionType === 'faute-commise' ||
+    (a.actionType === 'faute-technique' && a.foulOutcome === 'technical-against')
+  )).length;
+  const themTeamFouls = actions.filter((a) => a.q === q && (
+    a.actionType === 'faute-provoquee' ||
+    (a.actionType === 'faute-technique' && a.foulOutcome === 'technical-for')
+  )).length;
+  const teamFoulLights = (count: number) => (
+    <span className="teamFoulLights" aria-label={`${Math.min(count, 5)} faute${count > 1 ? 's' : ''} d'équipe`}>
+      {Array.from({ length: 5 }).map((_, i) => (
+        <i
+          key={i}
+          className={i < Math.min(count, 5) ? (i === 4 ? 'red' : 'orange') : ''}
+        />
+      ))}
+    </span>
+  );
 
   // Bloc C · bandeau de resélection de la vidéo locale d'un projet rouvert.
   // Une URL blob: locale ne survit pas au rechargement : si le projet attend une
@@ -5527,8 +5576,8 @@ export default function PriseStatsProPage() {
 
       {!(codingMode === 'live-individual' || codingMode === 'live') && <div className="qstrip">
         {Object.keys(perQ).map((k) => <span key={k} className={`qbox ${+k === q ? 'cur' : ''}`}>{periodLabel(+k)} <b>{perQ[+k].us}-{perQ[+k].them}</b></span>)}
-        <span className="foulbox usf">Fautes équipe {teamName || 'Nous'} <b>{usTeamFouls}</b></span>
-        <span className="foulbox themf">Fautes adv. <b>{themTeamFouls}</b></span>
+        <span className="foulbox usf">Fautes équipe {teamName || 'Nous'} <b>{usTeamFouls}</b>{teamFoulLights(usTeamFouls)}</span>
+        <span className="foulbox themf">Fautes adv. <b>{themTeamFouls}</b>{teamFoulLights(themTeamFouls)}</span>
       </div>}
 
       {screen === 'box' ? (
@@ -7282,9 +7331,9 @@ export default function PriseStatsProPage() {
         return draft.actionType === 'faute-commise'
           ? (
               <>
-                {head('Faute commise', codingMode === 'live-individual' && draft.context === 'defense' ? 'Choisis maintenant la suite de la faute' : 'LF concédés, and-one ou touche ?')}
+                {head('Faute commise', draftTriggersTeamBonus ? '5e faute d’équipe ou plus : bonus actif · 2 LF minimum hors faute offensive' : (codingMode === 'live-individual' && draft.context === 'defense' ? 'Choisis maintenant la suite de la faute' : 'LF concédés, and-one ou touche ?'))}
                 <div className="foulOutcomeGrid">
-                  <button className="chip foulTouch" style={!codingButtonEnabled('foul','touche') ? {display:'none'} : undefined} onClick={() => foulPick('touche')}>{fl('touche','Touche')}</button>
+                  <button className="chip foulTouch" style={!codingButtonEnabled('foul','touche') ? {display:'none'} : undefined} onClick={() => foulPick('touche')}>{draftTriggersTeamBonus ? '🏀 Bonus · 2 LF' : fl('touche','Touche')}</button>
                   <button className="chip" style={!codingButtonEnabled('foul','lf2') ? {display:'none'} : undefined} onClick={() => foulPick('lf2')}>{fl('lf2','2 LF')}</button>
                   <button className="chip" style={!codingButtonEnabled('foul','2plus1') ? {display:'none'} : undefined} onClick={() => foulPick('2plus1')}>{fl('2plus1','2pts + 1LF')}</button>
                   <button className="chip" style={!codingButtonEnabled('foul','lf3') ? {display:'none'} : undefined} onClick={() => foulPick('lf3')}>{fl('lf3','3 LF')}</button>
@@ -7294,7 +7343,7 @@ export default function PriseStatsProPage() {
             )
           : (
               <>
-                {head('Faute provoquée', draft.foulOutcome === 'unsportsmanlike-pending' ? 'Faute antisportive : choisis la réparation. La possession reste à nous après les LF.' : 'Touche, lancers francs, and-one ou faute antisportive ?')}
+                {head('Faute provoquée', draft.foulOutcome === 'unsportsmanlike-pending' ? 'Faute antisportive : choisis la réparation. La possession reste à nous après les LF.' : (draftTriggersTeamBonus ? '5e faute d’équipe adverse ou plus : bonus actif · 2 LF minimum' : 'Touche, lancers francs, and-one ou faute antisportive ?'))}
                 {draft.foulOutcome === 'unsportsmanlike-pending' ? (
                   <div className="foulOutcomeGrid">
                     <button className="chip" onClick={() => foulPick('us-2plus1')}>2 + 1</button>
@@ -7304,7 +7353,7 @@ export default function PriseStatsProPage() {
                   </div>
                 ) : <div className="foulOutcomeGrid">
                   <button className="chip foulTouch" onClick={() => { setDraft({...draft, foulOutcome:'unsportsmanlike-pending'}); }}>🚨 Faute antisportive</button>
-                  <button className="chip foulTouch" style={!codingButtonEnabled('foul','touche') ? {display:'none'} : undefined} onClick={() => foulPick('touche')}>{fl('touche','Touche')}</button>
+                  <button className="chip foulTouch" style={!codingButtonEnabled('foul','touche') ? {display:'none'} : undefined} onClick={() => foulPick('touche')}>{draftTriggersTeamBonus ? '🏀 Bonus · 2 LF' : fl('touche','Touche')}</button>
                   <button className="chip" style={!codingButtonEnabled('foul','lf2') ? {display:'none'} : undefined} onClick={() => foulPick('lf2')}>{fl('lf2','2 LF')}</button>
                   <button className="chip" style={!codingButtonEnabled('foul','2plus1') ? {display:'none'} : undefined} onClick={() => foulPick('2plus1')}>{fl('2plus1','2pts + 1LF')}</button>
                   <button className="chip" style={!codingButtonEnabled('foul','lf3') ? {display:'none'} : undefined} onClick={() => foulPick('lf3')}>{fl('lf3','3 LF')}</button>
@@ -10512,7 +10561,10 @@ function Style() {
       .ghost { min-height: 40px; padding: 0 13px; white-space: nowrap; }
       .qstrip { height: 30px; padding: 3px 10px; gap: 8px; justify-content: center; }
       .foulbox { display: inline-flex; gap: 5px; align-items: center; }
-      .foulbox::after { content: ''; display: inline-flex; width: 46px; height: 7px; border-radius: 999px; background: repeating-linear-gradient(90deg, rgba(212,162,76,.95) 0 7px, transparent 7px 9px); opacity: .35; }
+      .teamFoulLights { display: inline-flex; align-items: center; gap: 3px; margin-left: 2px; }
+      .teamFoulLights i { width: 7px; height: 7px; border-radius: 50%; background: rgba(255,255,255,.12); border: 1px solid rgba(255,255,255,.12); box-shadow: inset 0 0 0 1px rgba(0,0,0,.12); }
+      .teamFoulLights i.orange { background: #f59e0b; border-color: #f59e0b; box-shadow: 0 0 6px rgba(245,158,11,.72); }
+      .teamFoulLights i.red { background: #ef4444; border-color: #ef4444; box-shadow: 0 0 7px rgba(239,68,68,.82); }
       .detacherRow { flex: 0 0 auto; height: 34px; display: flex; align-items: center; justify-content: center; border-top: 1px solid var(--border); background: rgba(6,9,18,.35); }
       .detachBtn { border: 1px solid rgba(212,162,76,.65); background: rgba(212,162,76,.12); color: var(--gold); border-radius: 10px; padding: 7px 12px; font-size: 12px; font-weight: 900; cursor: pointer; }
       .detachBtn:hover { background: rgba(212,162,76,.22); }
