@@ -21,6 +21,7 @@ export async function POST(req: Request) {
   const note = body.note || {};
   const to = Array.isArray(body.to) ? body.to.map(String).filter(Boolean) : [];
   const shouldSend = body.send === true;
+  const mailBody = String(body.mailBody || "").trim();
   if (!structureId || !String(note.title || "").trim() || !String(note.body || "").trim()) return NextResponse.json({ error: "Titre et contenu obligatoires" }, { status: 400 });
   if (shouldSend && !to.length) return NextResponse.json({ error: "Sélectionne au moins un destinataire" }, { status: 400 });
 
@@ -53,7 +54,8 @@ export async function POST(req: Request) {
     const mail = await sendTransactionalEmail({
       to,
       subject: String(body.subject || title),
-      html: `<div style="font-family:Arial,sans-serif;max-width:760px;margin:auto"><div style="background:${esc(structure.document_primary_color || '#6B1A2C')};color:white;padding:18px 22px"><strong>${esc(structure.name)}</strong></div><div style="padding:22px"><p>Bonjour,</p><p>Veuillez trouver en pièce jointe la note <strong>${esc(title)}</strong>.</p><p>Sportivement,<br>${esc(structure.name)}</p></div></div>`,
+      html: `<div style="font-family:Arial,sans-serif;max-width:760px;margin:auto"><div style="background:${esc(structure.document_primary_color || '#6B1A2C')};color:white;padding:18px 22px"><strong>${esc(structure.name)}</strong></div><div style="padding:22px;white-space:pre-wrap;line-height:1.55">${esc(mailBody || `Bonjour,\n\nVeuillez trouver en pièce jointe la convocation « ${title} ».\n\nCordialement,\n${structure.name}`)}</div></div>`,
+      text: mailBody || undefined,
       attachments: [{ filename, content: Buffer.from(buffer).toString("base64") }],
     });
     sent = mail.sent;

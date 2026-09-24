@@ -63,11 +63,16 @@ export async function GET(request: NextRequest) {
     request.nextUrl.searchParams.get("error") ||
     "Lien invalide ou expiré.";
 
-  const login = new URL(
-    "/connexion",
+  // Pour une récupération de mot de passe, renvoyer l'erreur sur la page
+  // dédiée afin que l'utilisateur puisse demander immédiatement un nouveau lien.
+  const errorPath = next === "/auth/reset-password"
+    ? "/auth/reset-password"
+    : "/connexion";
+  const destination = new URL(
+    errorPath,
     `${getSiteUrl(request)}/`,
   );
-  login.searchParams.set("error", sourceMessage);
+  destination.searchParams.set("error", sourceMessage);
 
-  return NextResponse.redirect(login);
+  return NextResponse.redirect(destination);
 }

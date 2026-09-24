@@ -243,8 +243,7 @@ function ConnexionContent() {
         return;
       }
 
-      const recoveryNext =
-        "/connexion?mode=update-password";
+      const recoveryNext = "/auth/reset-password";
 
       const { error } =
         await supabase.auth.resetPasswordForEmail(
@@ -263,7 +262,7 @@ function ConnexionContent() {
       }
 
       setInfo(
-        "Email de réinitialisation envoyé. Le lien te ramènera directement sur MyBasket.",
+        "Email de réinitialisation envoyé. Clique sur le lien reçu pour choisir ton nouveau mot de passe.",
       );
     } finally {
       setBusy(false);
