@@ -939,6 +939,8 @@ type Component = {
 type InkContext = {
   px: Pixels;
   mask: Uint8Array;
+  /** V10 : masque terrain élargi, utilisé uniquement pour refuser les faux tracés. */
+  hardMask: Uint8Array;
   /** Image intégrale du masque : « y a-t-il une ligne de terrain à moins de r ? ». */
   maskIntegral: Int32Array;
   /** Encre finale : brute, moins les lignes, mais symboles denses préservés. */
@@ -1071,6 +1073,10 @@ function makeInkContext(canvas: HTMLCanvasElement, kind: CourtKind, play: AiRect
   // est approximative (photo, perspective, tracé à main levée) : il faut un
   // masque plus généreux, sinon une ligne qui fuit engloutit les jetons voisins.
   const mask = buildCourtLineMask(px.w, px.h, kind, play, paper ? 0.028 : 0.012);
+  // V10 : seconde empreinte plus large. Elle ne supprime pas les pixels (donc
+  // ne mange pas un zigzag qui traverse une ligne) ; elle sert uniquement à
+  // reconnaître un tracé qui épouse réellement la géométrie officielle.
+  const hardMask = buildCourtLineMask(px.w, px.h, kind, play, paper ? 0.050 : 0.026);
 
   // ---- Encre BRUTE, avant tout masquage ---------------------------------
   // On la calcule une fois pour toutes : c'est aussi bien plus rapide que de
@@ -1210,8 +1216,86 @@ function makeInkContext(canvas: HTMLCanvasElement, kind: CourtKind, play: AiRect
     raw.set(cleaned);
   }
 
+  /*
+   * V11 — MODE « EXPORT NUMÉRIQUE PROPRE ».
+   *
+   * Sur un export blanc/noir (comme notre image de référence), soustraire un
+   * gabarit de terrain approximatif est la mauvaise opération : le moindre
+   * décalage laisse des morceaux d'arc/raquette, tandis qu'un tracé du coach
+   * qui croise ces lignes est amputé. Ici on exploite une propriété beaucoup
+   * plus fiable de ce type d'image : les lignes imprimées du terrain sont
+   * fines, alors que les annotations (jeton, dribble, flèche, plot) sont
+   * sensiblement plus épaisses.
+   *
+   * Une ouverture morphologique 3x3 supprime les traits fins AVANT toute
+   * interprétation. Les gros contours du terrain qui survivent (bord extérieur)
+   * restent ensuite éliminés par le garde-fou hardMask. Cela permet surtout de
+   * conserver intact un zigzag qui traverse l'arc, au lieu de le couper avec le
+   * masque géométrique. Ce mode n'est activé que pour les images quasi blanches
+   * et nettes ; photos/parquet/papier manuscrit gardent le pipeline historique.
+   */
+  let nearWhite = 0;
+  let sampled = 0;
+  const digitalStep = Math.max(1, Math.round(Math.min(px.w, px.h) / 280));
+  for (let y = 0; y < px.h; y += digitalStep) {
+    for (let x = 0; x < px.w; x += digitalStep) {
+      const i = (y * px.w + x) * 4;
+      const avg = (px.data[i] + px.data[i + 1] + px.data[i + 2]) / 3;
+      sampled += 1;
+      if (avg >= 245) nearWhite += 1;
+    }
+  }
+  const cleanDigital = sampled > 0 && nearWhite / sampled >= 0.88 && moire < 0.12;
+
   const ink = new Uint8Array(px.w * px.h);
-  for (let i = 0; i < ink.length; i += 1) ink[i] = raw[i] && !mask[i] ? 1 : 0;
+  if (cleanDigital) {
+    // Repartir des pixels eux-mêmes, avec un seuil sombre strict. Le masque
+    // `raw` contient aussi l'anti-crénelage gris des lignes fines du terrain ;
+    // sur notre référence cela suffisait à les faire survivre à l'ouverture.
+    // Les couleurs saturées sont gardées séparément pour ne pas perdre une
+    // flèche rouge/bleue plus claire.
+    const digitalRaw = new Uint8Array(raw.length);
+    for (let y = 0; y < px.h; y += 1) {
+      for (let x = 0; x < px.w; x += 1) {
+        const p = y * px.w + x;
+        const i = p * 4;
+        const r = px.data[i];
+        const g = px.data[i + 1];
+        const b = px.data[i + 2];
+        const avg = (r + g + b) / 3;
+        const sat = saturationOf(r, g, b);
+        if (avg < 180 || (sat >= 0.30 && avg < 245)) digitalRaw[p] = 1;
+      }
+    }
+    const eroded = new Uint8Array(raw.length);
+    // Érosion 3x3 : seuls les pixels réellement au coeur d'un trait épais
+    // survivent. Les bords hors image valent fond.
+    for (let y = 1; y < px.h - 1; y += 1) {
+      for (let x = 1; x < px.w - 1; x += 1) {
+        let all = 1;
+        for (let dy = -1; dy <= 1 && all; dy += 1) {
+          for (let dx = -1; dx <= 1; dx += 1) {
+            if (!digitalRaw[(y + dy) * px.w + (x + dx)]) { all = 0; break; }
+          }
+        }
+        if (all) eroded[y * px.w + x] = 1;
+      }
+    }
+    // Dilatation 3x3 : rend aux annotations leur calibre d'origine.
+    for (let y = 1; y < px.h - 1; y += 1) {
+      for (let x = 1; x < px.w - 1; x += 1) {
+        let any = 0;
+        for (let dy = -1; dy <= 1 && !any; dy += 1) {
+          for (let dx = -1; dx <= 1; dx += 1) {
+            if (eroded[(y + dy) * px.w + (x + dx)]) { any = 1; break; }
+          }
+        }
+        if (any) ink[y * px.w + x] = 1;
+      }
+    }
+  } else {
+    for (let i = 0; i < ink.length; i += 1) ink[i] = raw[i] && !mask[i] ? 1 : 0;
+  }
 
   // ---- SYMBOLES POSÉS SUR UNE LIGNE : deux méthodes essayées, rejetées ----
   // 1) Protéger du masquage les zones DENSES (un symbole est dense, une ligne
@@ -1237,6 +1321,7 @@ function makeInkContext(canvas: HTMLCanvasElement, kind: CourtKind, play: AiRect
   return {
     px,
     mask,
+    hardMask,
     maskIntegral,
     ink,
     /** Encre brute avant réparation du moiré — DEBUG uniquement. */
@@ -1398,70 +1483,148 @@ type Polyline = { points: AiPoint[]; density: number[]; length: number };
 
 /** Ordonne un nuage de points le long de son axe principal (ACP). */
 function componentPolyline(component: Component, buckets = 22): Polyline | null {
-  const points = component.points;
-  if (points.length < 4) return null;
+  /*
+   * V10 — CENTRELINE RÉELLE, PAS PCA.
+   *
+   * L'ancienne version projetait toute la composante sur son axe principal puis
+   * prenait une médiane par tranche. Très efficace pour une droite, mais elle
+   * « redressait » précisément ce que l'on veut conserver : courbes et zigzags.
+   *
+   * Ici on amincit le trait (Zhang–Suen), puis on extrait le plus long chemin
+   * géodésique du squelette. Les points envoyés à Plaquette suivent donc le
+   * dessin source au lieu d'être une approximation par axe moyen.
+   */
+  const w = component.bw;
+  const h = component.bh;
+  if (component.points.length < 4 || w < 2 || h < 2) return null;
 
-  let mx = 0;
-  let my = 0;
-  for (const p of points) {
-    mx += p.x;
-    my += p.y;
+  const mask = new Uint8Array(w * h);
+  for (const point of component.points) {
+    const x = point.x - component.x0;
+    const y = point.y - component.y0;
+    if (x >= 0 && y >= 0 && x < w && y < h) mask[y * w + x] = 1;
   }
-  mx /= points.length;
-  my /= points.length;
+  const at = (x: number, y: number) => (x < 0 || y < 0 || x >= w || y >= h ? 0 : mask[y * w + x]);
 
-  let sxx = 0;
-  let syy = 0;
-  let sxy = 0;
-  for (const p of points) {
-    const dx = p.x - mx;
-    const dy = p.y - my;
-    sxx += dx * dx;
-    syy += dy * dy;
-    sxy += dx * dy;
-  }
-  const theta = 0.5 * Math.atan2(2 * sxy, sxx - syy);
-  const ax = Math.cos(theta);
-  const ay = Math.sin(theta);
-
-  const projected = points.map((p) => ({
-    t: (p.x - mx) * ax + (p.y - my) * ay,
-    s: -(p.x - mx) * ay + (p.y - my) * ax,
-  }));
-  let tMin = Infinity;
-  let tMax = -Infinity;
-  for (const p of projected) {
-    if (p.t < tMin) tMin = p.t;
-    if (p.t > tMax) tMax = p.t;
-  }
-  const span = tMax - tMin;
-  if (!Number.isFinite(span) || span < 1) return null;
-
-  const slots: number[][] = Array.from({ length: buckets }, () => []);
-  for (const p of projected) {
-    const index = Math.min(buckets - 1, Math.max(0, Math.floor(((p.t - tMin) / span) * buckets)));
-    slots[index].push(p.s);
+  let changed = true;
+  let guard = 0;
+  while (changed && guard < 60) {
+    changed = false;
+    guard += 1;
+    for (const step of [0, 1]) {
+      const remove: number[] = [];
+      for (let y = 1; y < h - 1; y += 1) {
+        for (let x = 1; x < w - 1; x += 1) {
+          if (!at(x, y)) continue;
+          const q = [
+            at(x, y - 1), at(x + 1, y - 1), at(x + 1, y), at(x + 1, y + 1),
+            at(x, y + 1), at(x - 1, y + 1), at(x - 1, y), at(x - 1, y - 1),
+          ];
+          const n = q.reduce((sum, value) => sum + value, 0);
+          if (n < 2 || n > 6) continue;
+          let transitions = 0;
+          for (let i = 0; i < 8; i += 1) if (q[i] === 0 && q[(i + 1) % 8] === 1) transitions += 1;
+          if (transitions !== 1) continue;
+          if (step === 0) {
+            if (q[0] * q[2] * q[4] !== 0 || q[2] * q[4] * q[6] !== 0) continue;
+          } else if (q[0] * q[2] * q[6] !== 0 || q[0] * q[4] * q[6] !== 0) continue;
+          remove.push(y * w + x);
+        }
+      }
+      if (remove.length) {
+        changed = true;
+        for (const index of remove) mask[index] = 0;
+      }
+    }
   }
 
+  const nodes: number[] = [];
+  for (let i = 0; i < mask.length; i += 1) if (mask[i]) nodes.push(i);
+  if (nodes.length < 2) return null;
+
+  const neighbours = (index: number): number[] => {
+    const x = index % w;
+    const y = Math.floor(index / w);
+    const out: number[] = [];
+    for (let dy = -1; dy <= 1; dy += 1) {
+      for (let dx = -1; dx <= 1; dx += 1) {
+        if (!dx && !dy) continue;
+        const xx = x + dx;
+        const yy = y + dy;
+        if (xx < 0 || yy < 0 || xx >= w || yy >= h) continue;
+        const ni = yy * w + xx;
+        if (mask[ni]) out.push(ni);
+      }
+    }
+    return out;
+  };
+
+  const bfs = (origin: number) => {
+    const distance = new Int32Array(mask.length);
+    distance.fill(-1);
+    const parent = new Int32Array(mask.length);
+    parent.fill(-1);
+    const queue = new Int32Array(nodes.length + 8);
+    let head = 0;
+    let tail = 0;
+    queue[tail++] = origin;
+    distance[origin] = 0;
+    let farthest = origin;
+    while (head < tail) {
+      const current = queue[head++];
+      if (distance[current] > distance[farthest]) farthest = current;
+      for (const next of neighbours(current)) {
+        if (distance[next] >= 0) continue;
+        distance[next] = distance[current] + 1;
+        parent[next] = current;
+        queue[tail++] = next;
+      }
+    }
+    return { farthest, parent, distance };
+  };
+
+  // Deux balayages donnent le diamètre géodésique de la composante principale.
+  const a = bfs(nodes[0]).farthest;
+  const second = bfs(a);
+  const b = second.farthest;
+  const path: number[] = [];
+  let cursor = b;
+  while (cursor >= 0) {
+    path.push(cursor);
+    if (cursor === a) break;
+    cursor = second.parent[cursor];
+  }
+  if (path.length < 2 || path[path.length - 1] !== a) return null;
+  path.reverse();
+
+  // Rééchantillonnage le long du chemin : assez de points pour garder un
+  // zigzag, sans envoyer des centaines de pixels à l'éditeur.
+  const wanted = Math.max(12, Math.min(64, Math.round(path.length / 4)));
   const out: AiPoint[] = [];
-  const density: number[] = [];
-  for (let i = 0; i < buckets; i += 1) {
-    const values = slots[i];
-    if (!values.length) continue;
-    values.sort((a, b) => a - b);
-    const median = values[Math.floor(values.length / 2)];
-    const t = tMin + ((i + 0.5) / buckets) * span;
-    out.push({ x: mx + t * ax - median * ay, y: my + t * ay + median * ax });
-    density.push(values.length);
+  for (let i = 0; i < wanted; i += 1) {
+    const pos = (i / Math.max(1, wanted - 1)) * (path.length - 1);
+    const index = path[Math.round(pos)];
+    out.push({
+      x: component.x0 + (index % w),
+      y: component.y0 + Math.floor(index / w),
+    });
   }
-  if (out.length < 2) return null;
+
+  // Lissage minimal 3 points : retire le bruit pixel sans redresser les angles.
+  const smooth = out.map((point, i) => {
+    if (i === 0 || i === out.length - 1) return point;
+    return {
+      x: (out[i - 1].x + point.x * 2 + out[i + 1].x) / 4,
+      y: (out[i - 1].y + point.y * 2 + out[i + 1].y) / 4,
+    };
+  });
 
   let length = 0;
-  for (let i = 1; i < out.length; i += 1) {
-    length += Math.hypot(out[i].x - out[i - 1].x, out[i].y - out[i - 1].y);
+  for (let i = 1; i < smooth.length; i += 1) {
+    length += Math.hypot(smooth[i].x - smooth[i - 1].x, smooth[i].y - smooth[i - 1].y);
   }
-
-  return { points: out, density, length };
+  const density = smooth.map(() => 1);
+  return { points: smooth, density, length };
 }
 
 /* -------------------------------------------------------------------------- */
@@ -3602,6 +3765,16 @@ export async function analyseGraphic(
       poly.points.filter((point) => nearCourtLine(ink, point.x, point.y, unit * 0.022)).length /
       Math.max(1, poly.points.length);
 
+    // V10 : recouvrement avec l'empreinte LARGE du terrain. Contrairement à
+    // `onLine`, ce test ne dépend pas d'une dilatation locale approximative :
+    // il demande combien de points du centre du tracé tombent réellement dans
+    // le corridor d'une ligne officielle.
+    const hardOnLine = poly.points.filter((point) => {
+      const x = Math.max(0, Math.min(ink.px.w - 1, Math.round(point.x)));
+      const y = Math.max(0, Math.min(ink.px.h - 1, Math.round(point.y)));
+      return ink.hardMask[y * ink.px.w + x] === 1;
+    }).length / Math.max(1, poly.points.length);
+
     /*
      * V8 — ENCRE COLORÉE PRIORITAIRE SUR LE MASQUE TERRAIN.
      *
@@ -3617,6 +3790,14 @@ export async function analyseGraphic(
       component?.color.b ?? 128
     );
     const coachColoredStroke = Boolean(component) && strokeSaturation >= 0.34;
+
+    // Un vrai tracé noir peut CROISER le terrain, mais il ne peut pas en
+    // suivre la géométrie sur presque la moitié de sa centreline. C'est la
+    // différence cruciale entre « traverse la raquette » et « EST la raquette ».
+    if (hardOnLine > 0.46 && !coachColoredStroke) {
+      reject("trajectoire", `V10 exact : ${Math.round(hardOnLine * 100)} % du tracé épouse le gabarit terrain`);
+      return;
+    }
 
     if (onLine > 0.6 && !coachColoredStroke) {
       /*
