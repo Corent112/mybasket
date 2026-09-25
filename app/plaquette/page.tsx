@@ -1344,8 +1344,11 @@ const currentRef = useRef(current);
     return { x: pt.x + 0.020, y: pt.y - 0.020 };
   };
 
-  const addOwnerBall = (owners: Map<string, number>, id: string, amount = 1) => {
-    owners.set(id, Math.min(2, (owners.get(id) || 0) + amount));
+  const addOwnerBall = (owners: Map<string, number>, id: string, _amount = 1) => {
+    // Le ballon de possession est unique : un transfert change de porteur,
+    // il ne crée jamais un second ballon dans le moteur d’animation.
+    owners.clear();
+    owners.set(id, 1);
   };
 
   const removeOwnerBall = (owners: Map<string, number>, id: string, amount = 1) => {
@@ -2744,15 +2747,11 @@ if (anim && anim.balls) {
     const owners = new Map<string, number>();
     if (!sched.length) return owners;
 
-    const firstStart = Math.min(...sched.map((s) => s.start));
-
-    sched.forEach((s) => {
-      if (s.start !== firstStart) return;
-      phasesRef.current[s.idx].players.forEach((p) => {
-        const count = playerBallCount(p);
-        if (count > 0) owners.set(p.id, Math.min(2, Math.max(owners.get(p.id) || 0, count)));
-      });
-    });
+    // Une seule source de vérité pour le ballon de possession au démarrage.
+    // Même si un ancien schéma contient plusieurs hasBall/ballCount, on garde
+    // uniquement le premier porteur de la première phase programmée.
+    const carrier = initialCarrier(sched);
+    if (carrier) owners.set(carrier, 1);
 
     return owners;
   };
@@ -2789,12 +2788,11 @@ if (anim && anim.balls) {
     });
 
     // Ballons attachés aux joueurs réellement porteurs à cet instant.
-    owners.forEach((count, ownerId) => {
+    owners.forEach((_count, ownerId) => {
       const pos = playerPosAtClock(sched, ownerId, clock);
       if (!pos) return;
-      for (let i = 0; i < count; i += 1) {
-        balls.push(offsetBallPoint(pos, i, count));
-      }
+      // Ballon de possession unique, y compris pendant un dribble.
+      balls.push(offsetBallPoint(pos, 0, 1));
     });
 
     // Ballons en vol : passe ou tir actif.
