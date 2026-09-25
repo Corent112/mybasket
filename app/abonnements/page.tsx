@@ -160,8 +160,9 @@ export default function AbonnementsPage() {
       plans.filter((plan) => {
         const text = `${plan.target || ""} ${plan.slug || ""} ${plan.name || ""}`.toLowerCase();
         return (
-          ["institution", "committee", "league", "federation", "pole"].includes(plan.target) ||
-          /comit[eé]|ligue|f[eé]d[eé]ration|ffbb|p[oô]le/.test(text)
+          plan.target !== "individual" &&
+          (["institution", "committee", "league", "federation", "pole"].includes(plan.target) ||
+          /comit[eé]|ligue|f[eé]d[eé]ration|ffbb|p[oô]le/.test(text))
         );
       }),
     [plans]
@@ -208,7 +209,7 @@ export default function AbonnementsPage() {
         <>
           <PlansSection
             title="Abonnements individuels"
-            subtitle="Basic, Pro ou Premium : l’offre adaptée à ton utilisation."
+            subtitle="Basic, Pro, Premium ou Institution : du quotidien jusqu’à la gestion complète d’une institution."
             icon="👤"
             plans={individualPlans}
             billing={billing}

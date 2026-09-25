@@ -1,7 +1,10 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin-server";
-import { getEffectiveSubscriptionForUser } from "@/lib/effective-subscription";
+import {
+  getEffectiveSubscriptionForUser,
+  isTotalAccessPlan,
+} from "@/lib/effective-subscription";
 import {
   ALL_MATRIX_PERMISSION_KEYS,
   PUBLIC_ACCESS_ALIASES,
@@ -61,6 +64,12 @@ export async function GET() {
   ]);
 
   if (isAdminRole(profileResult.data?.platform_role)) {
+    return NextResponse.json(buildAccess(new Set(), true), {
+      headers: { "Cache-Control": "private, no-store, max-age=0" },
+    });
+  }
+
+  if (effective.active && isTotalAccessPlan(effective.plan)) {
     return NextResponse.json(buildAccess(new Set(), true), {
       headers: { "Cache-Control": "private, no-store, max-age=0" },
     });

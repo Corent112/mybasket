@@ -37,8 +37,15 @@ export function isTotalAccessPlan(plan: EffectivePlan | null | undefined) {
   const slug = normalizePlanSlug(plan.slug);
   const name = normalizePlanSlug(plan.name);
 
-  // Premium est l'offre individuelle "accès total" de MyBasket.
-  return slug === "premium" || name === "premium";
+  // Premium et Institution sont les offres « accès total » de MyBasket.
+  // Institution hérite donc automatiquement de tous les droits Premium,
+  // auxquels s’ajoute l’espace institutionnel.
+  return (
+    slug === "premium" ||
+    name === "premium" ||
+    slug === "institution" ||
+    name === "institution"
+  );
 }
 
 function timestamp(value: unknown) {

@@ -282,6 +282,7 @@ export default function AdminAbonnementsPage() {
         <div className={styles.headLegend}>
           <b>LiveStats</b><span>collectif + individuel · connecté</span>
           <b>Premium</b><span>accès total · vidéo + hors ligne</span>
+          <b>Institution</b><span>tout Premium + espace Institution</span>
         </div>
       </header>
 
@@ -325,7 +326,7 @@ export default function AdminAbonnementsPage() {
             Matrice <strong>{activeTarget === "club" ? "Club" : "Individuelle"}</strong>
             <span>— les cases ouvrent ou ferment les pages et fonctionnalités correspondantes.</span>
           </div>
-          <div className={styles.legend}><span><i className={styles.dotStats}/> LiveStats = stats en ligne</span><span><i className={styles.dotPremium}/> Premium = tout, vidéo + hors ligne</span></div>
+          <div className={styles.legend}><span><i className={styles.dotStats}/> LiveStats = stats en ligne</span><span><i className={styles.dotPremium}/> Premium = tout, vidéo + hors ligne · Institution = Premium + Institution</span></div>
         </div>
 
         <div className={styles.systemAccessNote}><strong>Accès système toujours ouverts</strong><span>Profil · Mon abonnement · Boutique · Calendrier personnel</span></div>

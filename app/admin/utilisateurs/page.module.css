@@ -458,3 +458,31 @@
   background: #fee2e2 !important;
   color: #991b1b !important;
 }
+
+.subscriptionForm {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 210px;
+}
+
+.subscriptionForm select {
+  min-width: 130px;
+  max-width: 160px;
+  border: 1px solid #e5e7eb;
+  border-radius: 9px;
+  background: #fff;
+  padding: 7px 8px;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.subscriptionForm button {
+  border-radius: 9px !important;
+  padding: 7px 9px !important;
+  background: #111827 !important;
+  color: #fff !important;
+  font-size: 11px !important;
+  font-weight: 900 !important;
+}

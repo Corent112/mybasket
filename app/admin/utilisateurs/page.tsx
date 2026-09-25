@@ -27,6 +27,9 @@ type Subscription = {
 type Plan = {
   id: string;
   name: string | null;
+  slug?: string | null;
+  target?: string | null;
+  status?: string | null;
 };
 
 function formatDate(value: string | null) {
@@ -131,6 +134,66 @@ async function createUserAction(formData: FormData) {
   revalidatePath("/admin/utilisateurs");
 }
 
+
+async function changeSubscriptionAction(formData: FormData) {
+  "use server";
+
+  await requireAdmin();
+  const userId = String(formData.get("user_id") || "").trim();
+  const planId = String(formData.get("plan_id") || "").trim();
+  if (!userId || !planId) return;
+
+  const adminClient = createAdminClient();
+  if (!adminClient) {
+    throw new Error("SUPABASE_SERVICE_ROLE_KEY manquante : modification impossible.");
+  }
+
+  const { data: targetProfile } = await adminClient
+    .from("profiles")
+    .select("platform_role")
+    .eq("id", userId)
+    .maybeSingle();
+
+  // Les accès CEO / superadmin restent indépendants des abonnements commerciaux.
+  if (["ceo", "superadmin"].includes(String(targetProfile?.platform_role || ""))) return;
+
+  const { data: plan, error: planError } = await adminClient
+    .from("subscription_plans")
+    .select("id")
+    .eq("id", planId)
+    .eq("status", "active")
+    .maybeSingle();
+  if (planError) throw planError;
+  if (!plan?.id) throw new Error("Abonnement introuvable ou inactif.");
+
+  const { data: activeRows, error: activeError } = await adminClient
+    .from("subscriptions")
+    .select("id")
+    .eq("user_id", userId)
+    .in("status", ["active", "trialing"])
+    .order("created_at", { ascending: false })
+    .limit(1);
+  if (activeError) throw activeError;
+
+  const current = activeRows?.[0];
+  if (current?.id) {
+    const { error } = await adminClient
+      .from("subscriptions")
+      .update({ plan_id: planId, status: "active" })
+      .eq("id", current.id);
+    if (error) throw error;
+  } else {
+    const { error } = await adminClient
+      .from("subscriptions")
+      .insert({ user_id: userId, plan_id: planId, status: "active" });
+    if (error) throw error;
+  }
+
+  revalidatePath("/admin/utilisateurs");
+  revalidatePath("/mon-compte");
+  revalidatePath("/institutionnel");
+}
+
 async function deleteUserAction(formData: FormData) {
   "use server";
 
@@ -187,7 +250,9 @@ export default async function AdminUtilisateursPage() {
 
   const { data: plansData } = await supabase
     .from("subscription_plans")
-    .select("id,name");
+    .select("id,name,slug,target,status")
+    .eq("status", "active")
+    .order("sort_order", { ascending: true });
 
   const storedProfiles = (profilesData || []) as Profile[];
   const adminClient = createAdminClient();
@@ -416,11 +481,22 @@ export default async function AdminUtilisateursPage() {
                       </td>
 
                       <td>
-                        <span className={styles.planBadge}>
-                          {["ceo", "superadmin", "admin"].includes(user.platform_role || "")
-                            ? "Accès total CEO"
-                            : plan?.name || "Sans abonnement"}
-                        </span>
+                        {["ceo", "superadmin"].includes(user.platform_role || "") ? (
+                          <span className={styles.planBadge}>Accès total CEO</span>
+                        ) : (
+                          <form action={changeSubscriptionAction} className={styles.subscriptionForm}>
+                            <input type="hidden" name="user_id" value={user.id} />
+                            <select name="plan_id" defaultValue={plan?.id || ""} aria-label={`Abonnement de ${user.email || user.display_name || "l’utilisateur"}`}>
+                              {!plan?.id ? <option value="" disabled>Sans abonnement</option> : null}
+                              {plans.map((availablePlan) => (
+                                <option key={availablePlan.id} value={availablePlan.id}>
+                                  {availablePlan.name || "Abonnement"}
+                                </option>
+                              ))}
+                            </select>
+                            <button type="submit">Appliquer</button>
+                          </form>
+                        )}
                       </td>
 
                       <td>{formatDate(user.created_at)}</td>
