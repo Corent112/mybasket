@@ -31,7 +31,7 @@ export async function GET(){
 
   const {data:memberships} = await db.from("institutional_members").select("structure_id,role").eq("user_id",user.id).eq("status","active");
   const structureIds=(memberships??[]).map(x=>x.structure_id);
-  const ownedStructureIds=(memberships??[]).filter((x:any)=>String(x.role||"").toLowerCase()==="owner").map((x:any)=>x.structure_id);
+  const ownsInstitution=(memberships??[]).some((x:any)=>String(x.role||"").toLowerCase()==="owner");
   let structures:any[]=[];
   if(structureIds.length){const q=await db.from("institutional_structures").select("id,structure_type,name,short_name,season_label,city").in("id",structureIds).eq("archived",false);structures=q.data??[];}
 
@@ -60,10 +60,14 @@ export async function GET(){
   if(allowed.has("league")) allowed.add("pole");
 
   const collaboratorAccess=structures.length>0;
-  // Un abonnement Institution permet de posséder une seule institution.
-  // Les invitations comme collaborateur restent possibles dans d'autres structures.
-  const canCreate=isAdmin||(allowed.size>0&&ownedStructureIds.length===0);
-  return NextResponse.json({allowed:isAdmin||allowed.size>0||collaboratorAccess,allowedTypes:[...allowed],structures,canCreate});
+  return NextResponse.json({
+    allowed:isAdmin||allowed.size>0||collaboratorAccess,
+    allowedTypes:[...allowed],
+    structures,
+    // Un compte Institution standard ne peut posséder qu'une seule institution.
+    // Les rôles plateforme admin/CEO gardent leur fonctionnement actuel.
+    canCreate:isAdmin||((allowed.size>0)&&!ownsInstitution)
+  });
 }
 
 
@@ -100,15 +104,6 @@ export async function POST(request: Request){
   }
   if(allowed.has("league")) allowed.add("pole");
 
-  let body:any={};
-  try { body = await request.json(); } catch { return NextResponse.json({error:"Données invalides."},{status:400}); }
-  const structureType=String(body?.structure_type||"") as StructureType;
-  const name=String(body?.name||"").trim();
-
-  if(!TYPES.includes(structureType)) return NextResponse.json({error:"Type de structure invalide."},{status:400});
-  if(!name) return NextResponse.json({error:"Le nom officiel est obligatoire."},{status:400});
-  if(!isAdmin && !allowed.has(structureType)) return NextResponse.json({error:"Ton abonnement n'autorise pas ce type de structure."},{status:403});
-
   if(!isAdmin){
     const {data:owned,error:ownedError}=await db
       .from("institutional_members")
@@ -117,11 +112,24 @@ export async function POST(request: Request){
       .eq("role","owner")
       .eq("status","active")
       .limit(1);
+
     if(ownedError) return NextResponse.json({error:ownedError.message},{status:400});
     if((owned??[]).length>0){
-      return NextResponse.json({error:"Ton abonnement Institution permet de posséder une seule institution."},{status:409});
+      return NextResponse.json(
+        {error:"Ce compte possède déjà une institution. Un compte ne peut posséder qu’une seule institution."},
+        {status:409}
+      );
     }
   }
+
+  let body:any={};
+  try { body = await request.json(); } catch { return NextResponse.json({error:"Données invalides."},{status:400}); }
+  const structureType=String(body?.structure_type||"") as StructureType;
+  const name=String(body?.name||"").trim();
+
+  if(!TYPES.includes(structureType)) return NextResponse.json({error:"Type de structure invalide."},{status:400});
+  if(!name) return NextResponse.json({error:"Le nom officiel est obligatoire."},{status:400});
+  if(!isAdmin && !allowed.has(structureType)) return NextResponse.json({error:"Ton abonnement n'autorise pas ce type de structure."},{status:403});
 
   const created = await db.from("institutional_structures").insert({
     structure_type: structureType,
