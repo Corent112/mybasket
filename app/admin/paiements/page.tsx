@@ -29,6 +29,32 @@ type PromoCode = {
   created_at: string | null;
 };
 
+
+
+type UserPlan = {
+  id: string;
+  name: string | null;
+  slug: string | null;
+  target: string | null;
+  status: string | null;
+  sort_order: number | null;
+};
+
+type UserProfile = {
+  id: string;
+  email: string | null;
+  display_name: string | null;
+  platform_role: string | null;
+};
+
+type UserSubscription = {
+  id: string;
+  user_id: string;
+  plan_id: string | null;
+  status: string | null;
+  created_at: string | null;
+};
+
 type FreeAccess = {
   id: string;
   user_email: string | null;
@@ -82,6 +108,61 @@ function statusClass(status: string | null) {
   }
 
   return styles.neutral;
+}
+
+
+
+async function changeUserSubscriptionAction(formData: FormData) {
+  "use server";
+
+  await requireAdmin();
+  const userId = String(formData.get("user_id") || "").trim();
+  const planId = String(formData.get("plan_id") || "").trim();
+  if (!userId || !planId) return;
+
+  const adminClient = createAdminClient();
+  if (!adminClient) throw new Error("SUPABASE_SERVICE_ROLE_KEY manquante.");
+
+  const { data: plan, error: planError } = await adminClient
+    .from("subscription_plans")
+    .select("id,target,status")
+    .eq("id", planId)
+    .eq("status", "active")
+    .maybeSingle();
+
+  if (planError) throw planError;
+  if (!plan?.id || plan.target !== "individual") {
+    throw new Error("Abonnement individuel introuvable ou inactif.");
+  }
+
+  const { data: activeRows, error: activeError } = await adminClient
+    .from("subscriptions")
+    .select("id")
+    .eq("user_id", userId)
+    .in("status", ["active", "trialing"])
+    .order("created_at", { ascending: false })
+    .limit(1);
+
+  if (activeError) throw activeError;
+
+  const current = activeRows?.[0];
+  if (current?.id) {
+    const { error } = await adminClient
+      .from("subscriptions")
+      .update({ plan_id: planId, status: "active" })
+      .eq("id", current.id);
+    if (error) throw error;
+  } else {
+    const { error } = await adminClient
+      .from("subscriptions")
+      .insert({ user_id: userId, plan_id: planId, status: "active" });
+    if (error) throw error;
+  }
+
+  revalidatePath("/admin/paiements");
+  revalidatePath("/admin/utilisateurs");
+  revalidatePath("/mon-compte");
+  revalidatePath("/institutionnel");
 }
 
 async function createPromoCodeAction(formData: FormData) {
@@ -325,6 +406,40 @@ export default async function AdminPaiementsPage() {
     .select("*")
     .order("created_at", { ascending: false });
 
+
+
+  const [{ data: profilesData }, { data: subscriptionsData }, { data: plansData }] =
+    await Promise.all([
+      supabase
+        .from("profiles")
+        .select("id,email,display_name,platform_role")
+        .order("created_at", { ascending: false }),
+      supabase
+        .from("subscriptions")
+        .select("id,user_id,plan_id,status,created_at")
+        .in("status", ["active", "trialing"]),
+      supabase
+        .from("subscription_plans")
+        .select("id,name,slug,target,status,sort_order")
+        .eq("target", "individual")
+        .eq("status", "active")
+        .order("sort_order", { ascending: true }),
+    ]);
+
+  const profiles = (profilesData || []) as UserProfile[];
+  const userSubscriptions = (subscriptionsData || []) as UserSubscription[];
+  const userPlans = (plansData || []) as UserPlan[];
+  const plansById = new Map(userPlans.map((plan) => [plan.id, plan]));
+  const subscriptionsByUser = new Map<string, UserSubscription>();
+  userSubscriptions
+    .slice()
+    .sort((a, b) => String(b.created_at || "").localeCompare(String(a.created_at || "")))
+    .forEach((subscription) => {
+      if (!subscriptionsByUser.has(subscription.user_id)) {
+        subscriptionsByUser.set(subscription.user_id, subscription);
+      }
+    });
+
   const payments = (paymentsData || []) as Payment[];
   const promoCodes = (promoCodesData || []) as PromoCode[];
   const freeAccess = (freeAccessData || []) as FreeAccess[];
@@ -407,6 +522,85 @@ export default async function AdminPaiementsPage() {
           </div>
         </section>
 
+
+        <section className={styles.tableCard}>
+          <div className={styles.tableHead}>
+            <div>
+              <h2>Abonnements des utilisateurs</h2>
+              <span>Change directement le forfait d’un compte MyBasket.</span>
+            </div>
+          </div>
+
+          <div className={styles.tableWrapper}>
+            <table>
+              <thead>
+                <tr>
+                  <th>Utilisateur</th>
+                  <th>Email</th>
+                  <th>Abonnement actuel</th>
+                  <th>Changer l’abonnement</th>
+                </tr>
+              </thead>
+              <tbody>
+                {profiles.map((profile) => {
+                  const subscription = subscriptionsByUser.get(profile.id);
+                  const currentPlan = subscription?.plan_id
+                    ? plansById.get(subscription.plan_id)
+                    : null;
+                  const isPlatformAdmin = ["ceo", "superadmin"].includes(
+                    String(profile.platform_role || ""),
+                  );
+
+                  return (
+                    <tr key={profile.id}>
+                      <td>
+                        <strong>{profile.display_name || "Sans nom"}</strong>
+                      </td>
+                      <td>{profile.email || "—"}</td>
+                      <td>
+                        {isPlatformAdmin ? (
+                          <span className={`${styles.statusBadge} ${styles.active}`}>
+                            Accès total CEO
+                          </span>
+                        ) : (
+                          <strong>{currentPlan?.name || "Aucun abonnement actif"}</strong>
+                        )}
+                      </td>
+                      <td>
+                        {isPlatformAdmin ? (
+                          <span>Géré par le rôle plateforme</span>
+                        ) : (
+                          <form action={changeUserSubscriptionAction} className={styles.actions}>
+                            <input type="hidden" name="user_id" value={profile.id} />
+                            <select
+                              name="plan_id"
+                              defaultValue={currentPlan?.id || ""}
+                              required
+                              aria-label={`Abonnement de ${profile.email || profile.display_name || "l’utilisateur"}`}
+                            >
+                              {!currentPlan?.id ? (
+                                <option value="" disabled>
+                                  Choisir un abonnement
+                                </option>
+                              ) : null}
+                              {userPlans.map((plan) => (
+                                <option key={plan.id} value={plan.id}>
+                                  {plan.name || "Abonnement"}
+                                </option>
+                              ))}
+                            </select>
+                            <button type="submit">Appliquer</button>
+                          </form>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </section>
+
         <section className={styles.grid2}>
           <section className={styles.card}>
             <div className={styles.cardHead}>
@@ -456,6 +650,7 @@ export default async function AdminPaiementsPage() {
                 <option value="individual_basic">Individual Basic</option>
                 <option value="individual_pro">Individual Pro</option>
                 <option value="premium">Premium</option>
+                <option value="institution">Institution</option>
                 <option value="club_bronze">Club Bronze</option>
                 <option value="club_silver">Club Silver</option>
                 <option value="club_gold">Club Gold</option>

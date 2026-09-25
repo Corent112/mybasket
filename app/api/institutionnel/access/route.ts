@@ -5,6 +5,11 @@ import { createAdminClient } from "@/lib/supabase/admin-server";
 type StructureType = "committee" | "league" | "federation" | "pole";
 const TYPES: StructureType[] = ["committee","league","federation","pole"];
 
+function isInstitutionPlan(value: unknown) {
+  const text = String(value ?? "").trim().toLowerCase();
+  return /(^|[\s_-])institution([\s_-]|$)/.test(text);
+}
+
 function inferType(value: unknown): StructureType | null {
   const text = String(value ?? "").toLowerCase();
   if (text.includes("feder") || text.includes("fédé") || text.includes("ffbb")) return "federation";
@@ -40,7 +45,14 @@ export async function GET(){
       db.from("subscription_plans").select("id,name,slug,target").in("id",planIds),
     ]);
     (maps??[]).forEach((row:any)=>{if(TYPES.includes(row.structure_type))allowed.add(row.structure_type)});
-    (plans??[]).forEach((p:any)=>{const inferred=inferType(`${p.target} ${p.slug} ${p.name}`);if(inferred)allowed.add(inferred)});
+    (plans??[]).forEach((p:any)=>{
+      const identity = `${p.target} ${p.slug} ${p.name}`;
+      if(isInstitutionPlan(identity)) TYPES.forEach(t=>allowed.add(t));
+      else {
+        const inferred=inferType(identity);
+        if(inferred) allowed.add(inferred);
+      }
+    });
   }
 
   // Une Ligue peut gérer ses structures de performance depuis Institutionnel.
@@ -73,7 +85,14 @@ export async function POST(request: Request){
       db.from("subscription_plans").select("id,name,slug,target").in("id",planIds),
     ]);
     (maps??[]).forEach((row:any)=>{if(TYPES.includes(row.structure_type))allowed.add(row.structure_type)});
-    (plans??[]).forEach((p:any)=>{const inferred=inferType(`${p.target} ${p.slug} ${p.name}`);if(inferred)allowed.add(inferred)});
+    (plans??[]).forEach((p:any)=>{
+      const identity = `${p.target} ${p.slug} ${p.name}`;
+      if(isInstitutionPlan(identity)) TYPES.forEach(t=>allowed.add(t));
+      else {
+        const inferred=inferType(identity);
+        if(inferred) allowed.add(inferred);
+      }
+    });
   }
   if(allowed.has("league")) allowed.add("pole");
 
