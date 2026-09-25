@@ -30,6 +30,13 @@ type ImportRow = {
   address: string;
   postal_code: string;
   city: string;
+  guardian1_name: string;
+  guardian1_phone: string;
+  guardian1_email: string;
+  guardian2_name: string;
+  guardian2_phone: string;
+  guardian2_email: string;
+  external_license_id: string;
   duplicateId?: string;
   duplicateReason?: string;
   warningId?: string;
@@ -49,7 +56,7 @@ const ALIASES: Record<keyof Omit<ImportRow, "id" | "selected" | "duplicateId" | 
   birthdate: ["naissance", "datedenaissance", "ddn", "birthdate", "datebirth"],
   club_name: ["club", "clubname", "lborg", "structure", "association"],
   height_cm: ["taille", "taillecm", "height", "heightcm"],
-  license_number: ["idlice", "licence", "licensenumber", "numerolicence", "nlicence"],
+  license_number: ["numero_licence", "numerolicence", "nlicence", "licence", "licensenumber"],
   sex: ["sexe", "sex", "genre"],
   category: ["categorie", "category", "cat"],
   nationality: ["nationalite", "nationality"],
@@ -57,7 +64,14 @@ const ALIASES: Record<keyof Omit<ImportRow, "id" | "selected" | "duplicateId" | 
   phone: ["telephone", "tel", "phone", "portable", "mobile"],
   address: ["adresse", "address", "rue"],
   postal_code: ["codepostal", "cp", "postalcode", "zipcode"],
-  city: ["ville", "city", "commune"],
+  city: ["ville", "city", "commune", "lb_cmne", "lbcmne"],
+  guardian1_name: ["responsable1", "tuteur1", "nommere", "nom_mere"],
+  guardian1_phone: ["telephone_mineur_mere", "telephonemineurmere", "telephone_tuteur_1", "telephonetuteur1"],
+  guardian1_email: ["mail_mineur_mere", "mailmineurmere", "email_tuteur_1", "emailtuteur1"],
+  guardian2_name: ["responsable2", "tuteur2", "nompere", "nom_pere"],
+  guardian2_phone: ["telephone_mineur_pere", "telephonemineurpere", "telephone_tuteur_2", "telephonetuteur2"],
+  guardian2_email: ["mail_mineur_pere", "mailmineurpere", "email_tuteur_2", "emailtuteur2"],
+  external_license_id: ["id_lice", "idlice"],
 };
 
 function editDistance(a: string, b: string) {
@@ -142,6 +156,34 @@ function findValue(record: Record<string,string>, aliases: string[]) {
   return "";
 }
 
+function headerScore(row: string[]) {
+  const known = new Set(Object.values(ALIASES).flat().map(key));
+  return row.reduce((score, cell) => score + (known.has(key(cell)) ? 1 : 0), 0);
+}
+
+function findHeaderRow(matrix: string[][]) {
+  let bestIndex = 0;
+  let bestScore = -1;
+  matrix.slice(0, 20).forEach((row, index) => {
+    const score = headerScore(row);
+    if (score > bestScore) { bestScore = score; bestIndex = index; }
+  });
+  return bestIndex;
+}
+
+function normalizePhone(value: string) {
+  const raw = norm(value);
+  if (!raw) return "";
+  const digits = raw.replace(/\D/g, "");
+  // Excel supprime souvent le 0 initial des numéros français stockés comme nombres.
+  if (digits.length === 9 && /^[1-9]/.test(digits)) return `0${digits}`;
+  return raw;
+}
+
+function fullName(first: string, last: string) {
+  return [norm(first), norm(last)].filter(Boolean).join(" ");
+}
+
 export default function InstitutionalPlayerImport({ open, structureId, existingPlayers, onClose, onImported }:{ open:boolean; structureId:string; existingPlayers:ExistingPlayer[]; onClose:()=>void; onImported:()=>void|Promise<void> }) {
   const [mode,setMode]=useState<Mode>("large");
   const [rows,setRows]=useState<ImportRow[]>([]);
@@ -153,6 +195,8 @@ export default function InstitutionalPlayerImport({ open, structureId, existingP
   const [busy,setBusy]=useState(false);
   const [error,setError]=useState("");
   const [summary,setSummary]=useState("");
+  const [page,setPage]=useState(1);
+  const pageSize=50;
 
   const filtered=useMemo(()=>rows.filter(r=>{
     const q=key(search); const hay=key(`${r.first_name} ${r.last_name} ${r.club_name} ${r.license_number}`);
@@ -163,6 +207,9 @@ export default function InstitutionalPlayerImport({ open, structureId, existingP
   const selectedCount=rows.filter(r=>r.selected && !r.duplicateId).length;
   const duplicateCount=rows.filter(r=>!!r.duplicateId).length;
   const warningCount=rows.filter(r=>!r.duplicateId && !!r.warningReason).length;
+  const pageCount=Math.max(1,Math.ceil(filtered.length/pageSize));
+  const currentPage=Math.min(page,pageCount);
+  const paginated=filtered.slice((currentPage-1)*pageSize,currentPage*pageSize);
 
   async function readFile(file:File) {
     setError(""); setSummary(""); setFileName(file.name);
@@ -188,13 +235,25 @@ export default function InstitutionalPlayerImport({ open, structureId, existingP
       setRows([]); setError("Format non reconnu. Utilise CSV, TSV ou Excel (.xlsx/.xls). Pour Numbers, exporte directement en Excel ou CSV depuis Numbers."); return;
     }
     if (matrix.length<2) { setRows([]); setError("Aucune ligne joueur détectée dans ce fichier."); return; }
-    const headers=matrix[0].map((h,i)=>norm(h)||`Colonne ${i+1}`);
-    const parsed=matrix.slice(1).map((cells,idx)=>{
+    const headerIndex=findHeaderRow(matrix);
+    const headers=matrix[headerIndex].map((h,i)=>norm(h)||`Colonne ${i+1}`);
+    const parsed=matrix.slice(headerIndex+1).map((cells,idx)=>{
       const raw:Record<string,string>={}; headers.forEach((h,i)=>raw[h]=norm(cells[i]));
       const value=(field:keyof typeof ALIASES)=>findValue(raw,ALIASES[field]);
       const birthdate=toIsoDate(value("birthdate"));
       const license=value("license_number");
-      const base={ id:`import-${idx}`, selected:false, first_name:value("first_name"), last_name:value("last_name"), birthdate, club_name:value("club_name"), height_cm:value("height_cm").replace(/[^0-9.,]/g,"").replace(",","."), license_number:license, sex:value("sex"), category:value("category"), nationality:value("nationality"), email:value("email"), phone:value("phone"), address:value("address"), postal_code:value("postal_code"), city:value("city"), raw } as ImportRow;
+      const motherLast=findValue(raw,["nom_mere","nommere"]);
+      const motherFirst=findValue(raw,["prenom_mere","prenommere"]);
+      const fatherLast=findValue(raw,["nom_pere","nompere"]);
+      const fatherFirst=findValue(raw,["prenom_pere","prenompere"]);
+      const base={ id:`import-${idx}`, selected:false, first_name:value("first_name"), last_name:value("last_name"), birthdate, club_name:value("club_name"), height_cm:value("height_cm").replace(/[^0-9.,]/g,"").replace(",","."), license_number:license, sex:value("sex"), category:value("category"), nationality:value("nationality"), email:value("email"), phone:normalizePhone(value("phone")), address:value("address"), postal_code:value("postal_code"), city:value("city"),
+        guardian1_name:fullName(motherFirst,motherLast) || value("guardian1_name"),
+        guardian1_phone:normalizePhone(value("guardian1_phone")),
+        guardian1_email:value("guardian1_email"),
+        guardian2_name:fullName(fatherFirst,fatherLast) || value("guardian2_name"),
+        guardian2_phone:normalizePhone(value("guardian2_phone")),
+        guardian2_email:value("guardian2_email"),
+        external_license_id:value("external_license_id"), raw } as ImportRow;
       return {...base,...duplicateAgainstExisting(base,existingPlayers)};
     }).filter(r=>r.first_name || r.last_name || r.license_number);
 
@@ -211,7 +270,7 @@ export default function InstitutionalPlayerImport({ open, structureId, existingP
       if (ident) seenIdentity.set(ident,r.id);
       return {...r,selected:mode==='filtered' && !r.warningReason};
     });
-    setRows(checked);
+    setRows(checked); setPage(1);
   }
 
   function toggleVisible(value:boolean) { const ids=new Set(filtered.filter(r=>!r.duplicateId).map(r=>r.id)); setRows(v=>v.map(r=>ids.has(r.id)?{...r,selected:value}:r)); }
@@ -236,8 +295,9 @@ export default function InstitutionalPlayerImport({ open, structureId, existingP
     for (const r of safeChosen) {
       if (!r.first_name || !r.last_name) { failures.push(`${r.first_name} ${r.last_name}`.trim() || "Ligne sans nom"); continue; }
       const player={ first_name:r.first_name,last_name:r.last_name,birthdate:r.birthdate,club_name:r.club_name,category:r.category,sex:r.sex,height_cm:r.height_cm,license_number:r.license_number,nationality:r.nationality,email:r.email,phone:r.phone,
-        // Les coordonnées postales restent dans profile_extra tant que la fiche/API actuelle ne possède pas de colonnes dédiées.
-        profile_extra:{ address:r.address, postal_code:r.postal_code, city:r.city, import_source:fileName } };
+        guardian1_name:r.guardian1_name,guardian1_phone:r.guardian1_phone,guardian1_email:r.guardian1_email,
+        guardian2_name:r.guardian2_name,guardian2_phone:r.guardian2_phone,guardian2_email:r.guardian2_email,
+        profile_extra:{ address:r.address, postal_code:r.postal_code, city:r.city, external_license_id:r.external_license_id, import_source:fileName } };
       try {
         const res=await fetch('/api/institutionnel/players',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({structureId,action:'create_player',player})});
         const data=await res.json().catch(()=>({}));
@@ -267,13 +327,15 @@ export default function InstitutionalPlayerImport({ open, structureId, existingP
           <div className="filters"><input placeholder="Rechercher nom, club, licence…" value={search} onChange={e=>setSearch(e.target.value)}/><select value={club} onChange={e=>setClub(e.target.value)}><option value="">Tous les clubs</option>{clubs.map(x=><option key={x}>{x}</option>)}</select><select value={year} onChange={e=>setYear(e.target.value)}><option value="">Toutes les années</option>{years.map(x=><option key={x}>{x}</option>)}</select><input type="number" placeholder="Taille min." value={minHeight} onChange={e=>setMinHeight(e.target.value)}/></div>
           <div className="selectBar"><span>{filtered.length} ligne(s) affichée(s)</span><div><button onClick={()=>toggleVisible(true)}>Tout cocher</button><button onClick={()=>toggleVisible(false)}>Tout décocher</button></div></div>
           <div className="legend"><span className="lg greenDot">Nouvelle fiche</span><span className="lg blueDot">Doublon bloqué</span><span className="lg orangeDot">À vérifier manuellement</span></div>
-          <div className="table"><div className="tr head"><span></span><span>Joueur</span><span>Naissance</span><span>Club</span><span>Taille</span><span>Licence</span><span>État</span></div>{filtered.map(r=><label title={r.duplicateReason || r.warningReason || ""} className={`tr ${r.duplicateId?'duplicate':r.warningReason?'warning':''}`} key={r.id}><span><input type="checkbox" disabled={!!r.duplicateId} checked={r.selected&&!r.duplicateId} onChange={()=>setRows(v=>v.map(x=>x.id===r.id?{...x,selected:!x.selected}:x))}/></span><span><b>{r.last_name || '—'} {r.first_name}</b></span><span>{r.birthdate || '—'}</span><span>{r.club_name || '—'}</span><span>{r.height_cm ? `${r.height_cm} cm`:'—'}</span><span>{r.license_number || '—'}</span><span className={r.duplicateId?'blue':r.warningReason?'orange':'green'}>{r.duplicateId?(r.duplicateReason || 'Doublon bloqué'):r.warningReason?(r.warningReason):'Prêt à créer'}</span></label>)}</div>
+          <div className="table"><div className="tr head"><span></span><span>Joueur</span><span>Naissance</span><span>Club</span><span>Taille</span><span>Licence</span><span>État</span></div>{paginated.map(r=><label title={[r.duplicateReason || r.warningReason, r.guardian1_name ? `Tuteur 1 : ${r.guardian1_name}` : "", r.guardian2_name ? `Tuteur 2 : ${r.guardian2_name}` : ""].filter(Boolean).join(" · ")} className={`tr ${r.duplicateId?'duplicate':r.warningReason?'warning':''}`} key={r.id}><span><input type="checkbox" disabled={!!r.duplicateId} checked={r.selected&&!r.duplicateId} onChange={()=>setRows(v=>v.map(x=>x.id===r.id?{...x,selected:!x.selected}:x))}/></span><span><b>{r.last_name || '—'} {r.first_name}</b></span><span>{r.birthdate || '—'}</span><span>{r.club_name || '—'}</span><span>{r.height_cm ? `${r.height_cm} cm`:'—'}</span><span>{r.license_number || '—'}</span><span className={r.duplicateId?'blue':r.warningReason?'orange':'green'}>{r.duplicateId?(r.duplicateReason || 'Doublon bloqué'):r.warningReason?(r.warningReason):'Prêt à créer'}</span></label>)}</div>
+          <div className="pager"><span>{filtered.length} joueur(s) affiché(s) · page {currentPage}/{pageCount}</span><div><button className="ghost" disabled={currentPage<=1} onClick={()=>setPage(p=>Math.max(1,p-1))}>← Précédent</button><button className="ghost" disabled={currentPage>=pageCount} onClick={()=>setPage(p=>Math.min(pageCount,p+1))}>Suivant →</button></div></div>
         </>}
         {summary && <div className="summary">{summary}</div>}
       </div>
       <footer><button className="ghost" onClick={onClose}>Fermer</button>{rows.length>0&&<><button className="ghost" onClick={()=>{setRows([]);setFileName('');setSummary('');}}>Changer de fichier</button><button disabled={!selectedCount||busy} onClick={()=>void createSelected()}>{busy?'Création…':`Créer ${selectedCount} fiche(s)`}</button></>}</footer>
       <style jsx>{`
-        .back{position:fixed!important;inset:0!important;z-index:2147483647!important;background:rgba(25,18,20,.55);display:grid;place-items:center;padding:20px}.modal{width:min(1180px,97vw);max-height:94vh;background:#fff;border-radius:20px;display:flex;flex-direction:column;overflow:hidden;box-shadow:0 30px 90px rgba(30,15,20,.3)}header{display:flex;justify-content:space-between;gap:20px;padding:22px 24px 18px;border-bottom:1px solid #eadfd8}header p{margin:0;color:#a16b16;font-size:.68rem;font-weight:1000;letter-spacing:.12em}header h2{margin:4px 0;color:#4d1420}header span{color:#81736d;font-size:.8rem}.close{width:36px;height:36px;border-radius:50%;font-size:1.3rem}.body{padding:20px 24px;overflow:auto;display:grid;gap:16px}.modes{display:grid;grid-template-columns:1fr 1fr;gap:12px}.modes button{text-align:left;background:#faf7f5;color:#4d1420;border:1px solid #e4d7d1;padding:18px;border-radius:14px;display:grid;gap:5px}.modes button.on{border:2px solid #6b1a2c;background:#fff7f8}.modes span{font-size:.76rem;color:#7b6c67;font-weight:600}.drop{border:2px dashed #d7c4bc;border-radius:16px;padding:34px;display:grid;place-items:center;text-align:center;gap:5px;background:#fcfaf9;cursor:pointer}.drop input{display:none}.drop b{color:#5c1324}.drop span{font-size:.76rem;color:#81736d}.error{background:#fff1f1;border:1px solid #edcaca;color:#922b2b;padding:12px;border-radius:10px}.stats{display:flex;gap:10px}.stats b{min-width:120px;padding:12px 14px;background:#f8f4f2;border-radius:12px;color:#4d1420;font-size:1.15rem}.stats span{display:block;font-size:.65rem;color:#82736d}.filters{display:grid;grid-template-columns:1fr 220px 160px 140px;gap:8px}.filters input,.filters select{border:1px solid #ddd1ca;border-radius:9px;padding:10px;background:#fff}.selectBar{display:flex;justify-content:space-between;align-items:center;font-size:.76rem;color:#776964}.selectBar div{display:flex;gap:6px}.selectBar button,.ghost{background:#fff!important;color:#6b1a2c!important;border:1px solid #d8c8c1!important}.table{border:1px solid #e6dbd5;border-radius:12px;overflow:hidden}.tr{display:grid;grid-template-columns:34px minmax(190px,1.4fr) 110px minmax(160px,1fr) 80px 110px minmax(190px,1fr);gap:8px;align-items:center;padding:9px 12px;border-top:1px solid #eee5e1;font-size:.76rem}.tr:first-child{border-top:0}.tr.head{background:#f7f3f1;font-weight:950;color:#625257}.tr.duplicate{background:#f5f8ff}.tr.warning{background:#fff8ea}.green{color:#28713d;font-weight:900}.blue{color:#315f9b;font-weight:900}.orange{color:#9a6509;font-weight:900}.legend{display:flex;gap:14px;flex-wrap:wrap;font-size:.72rem;font-weight:850;color:#6f625d}.lg:before{content:"";display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:6px}.greenDot:before{background:#3d9a57}.blueDot:before{background:#4f79b5}.orangeDot:before{background:#d79a29}.summary{background:#edf8ef;color:#286a3b;padding:12px;border-radius:10px;font-weight:900}footer{display:flex;justify-content:flex-end;gap:8px;padding:14px 24px;border-top:1px solid #eadfd8;background:#fcfaf9}button{border:0;border-radius:9px;padding:10px 12px;background:#6b1a2c;color:#fff;font-weight:900;cursor:pointer}button:disabled{opacity:.45;cursor:not-allowed}@media(max-width:850px){.modes{grid-template-columns:1fr}.filters{grid-template-columns:1fr 1fr}.table{overflow:auto}.tr{min-width:900px}}`}</style>
+        .back{position:fixed!important;inset:0!important;z-index:2147483647!important;background:rgba(25,18,20,.55);display:grid;place-items:center;padding:20px}.modal{width:min(1180px,97vw);max-height:94vh;background:#fff;border-radius:20px;display:flex;flex-direction:column;overflow:hidden;box-shadow:0 30px 90px rgba(30,15,20,.3)}header{display:flex;justify-content:space-between;gap:20px;padding:22px 24px 18px;border-bottom:1px solid #eadfd8}header p{margin:0;color:#a16b16;font-size:.68rem;font-weight:1000;letter-spacing:.12em}header h2{margin:4px 0;color:#4d1420}header span{color:#81736d;font-size:.8rem}.close{width:36px;height:36px;border-radius:50%;font-size:1.3rem}.body{padding:20px 24px;overflow:auto;display:grid;gap:16px}.modes{display:grid;grid-template-columns:1fr 1fr;gap:12px}.modes button{text-align:left;background:#faf7f5;color:#4d1420;border:1px solid #e4d7d1;padding:18px;border-radius:14px;display:grid;gap:5px}.modes button.on{border:2px solid #6b1a2c;background:#fff7f8}.modes span{font-size:.76rem;color:#7b6c67;font-weight:600}.drop{border:2px dashed #d7c4bc;border-radius:16px;padding:34px;display:grid;place-items:center;text-align:center;gap:5px;background:#fcfaf9;cursor:pointer}.drop input{display:none}.drop b{color:#5c1324}.drop span{font-size:.76rem;color:#81736d}.error{background:#fff1f1;border:1px solid #edcaca;color:#922b2b;padding:12px;border-radius:10px}.stats{display:flex;gap:10px}.stats b{min-width:120px;padding:12px 14px;background:#f8f4f2;border-radius:12px;color:#4d1420;font-size:1.15rem}.stats span{display:block;font-size:.65rem;color:#82736d}.filters{display:grid;grid-template-columns:1fr 220px 160px 140px;gap:8px}.filters input,.filters select{border:1px solid #ddd1ca;border-radius:9px;padding:10px;background:#fff}.selectBar{display:flex;justify-content:space-between;align-items:center;font-size:.76rem;color:#776964}.selectBar div{display:flex;gap:6px}.selectBar button,.ghost{background:#fff!important;color:#6b1a2c!important;border:1px solid #d8c8c1!important}.pager{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-top:10px;font-size:12px;color:#64748b}.pager>div{display:flex;gap:8px}.pager button:disabled{opacity:.4;cursor:not-allowed}
+        .table{border:1px solid #e6dbd5;border-radius:12px;overflow:hidden}.tr{display:grid;grid-template-columns:34px minmax(190px,1.4fr) 110px minmax(160px,1fr) 80px 110px minmax(190px,1fr);gap:8px;align-items:center;padding:9px 12px;border-top:1px solid #eee5e1;font-size:.76rem}.tr:first-child{border-top:0}.tr.head{background:#f7f3f1;font-weight:950;color:#625257}.tr.duplicate{background:#f5f8ff}.tr.warning{background:#fff8ea}.green{color:#28713d;font-weight:900}.blue{color:#315f9b;font-weight:900}.orange{color:#9a6509;font-weight:900}.legend{display:flex;gap:14px;flex-wrap:wrap;font-size:.72rem;font-weight:850;color:#6f625d}.lg:before{content:"";display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:6px}.greenDot:before{background:#3d9a57}.blueDot:before{background:#4f79b5}.orangeDot:before{background:#d79a29}.summary{background:#edf8ef;color:#286a3b;padding:12px;border-radius:10px;font-weight:900}footer{display:flex;justify-content:flex-end;gap:8px;padding:14px 24px;border-top:1px solid #eadfd8;background:#fcfaf9}button{border:0;border-radius:9px;padding:10px 12px;background:#6b1a2c;color:#fff;font-weight:900;cursor:pointer}button:disabled{opacity:.45;cursor:not-allowed}@media(max-width:850px){.modes{grid-template-columns:1fr}.filters{grid-template-columns:1fr 1fr}.table{overflow:auto}.tr{min-width:900px}}`}</style>
     </section>
   </div>;
 }
