@@ -146,11 +146,22 @@ async function changeUserSubscriptionAction(formData: FormData) {
   if (activeError) throw activeError;
 
   const current = activeRows?.[0];
+
+  // Un compte ne doit avoir qu'un seul abonnement actif. On conserve l'historique
+  // des anciennes lignes mais on les désactive avant d'appliquer le nouveau forfait.
+  const { error: deactivateError } = await adminClient
+    .from("subscriptions")
+    .update({ status: "inactive" })
+    .eq("user_id", userId)
+    .in("status", ["active", "trialing"]);
+  if (deactivateError) throw deactivateError;
+
   if (current?.id) {
     const { error } = await adminClient
       .from("subscriptions")
       .update({ plan_id: planId, status: "active" })
-      .eq("id", current.id);
+      .eq("id", current.id)
+      .eq("user_id", userId);
     if (error) throw error;
   } else {
     const { error } = await adminClient
