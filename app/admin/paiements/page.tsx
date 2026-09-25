@@ -146,22 +146,11 @@ async function changeUserSubscriptionAction(formData: FormData) {
   if (activeError) throw activeError;
 
   const current = activeRows?.[0];
-
-  // Un compte ne doit avoir qu'un seul abonnement actif. On conserve l'historique
-  // des anciennes lignes mais on les désactive avant d'appliquer le nouveau forfait.
-  const { error: deactivateError } = await adminClient
-    .from("subscriptions")
-    .update({ status: "inactive" })
-    .eq("user_id", userId)
-    .in("status", ["active", "trialing"]);
-  if (deactivateError) throw deactivateError;
-
   if (current?.id) {
     const { error } = await adminClient
       .from("subscriptions")
       .update({ plan_id: planId, status: "active" })
-      .eq("id", current.id)
-      .eq("user_id", userId);
+      .eq("id", current.id);
     if (error) throw error;
   } else {
     const { error } = await adminClient
@@ -352,6 +341,48 @@ async function createFreeAccessAction(formData: FormData) {
       error,
     );
   }
+}
+
+async function changeFreeAccessPlanAction(formData: FormData) {
+  "use server";
+
+  await requireAdmin();
+
+  const id = String(formData.get("id") || "").trim();
+  const planSlug = String(formData.get("plan_slug") || "").trim();
+  if (!id || !planSlug) return;
+
+  const adminClient = createAdminClient();
+  if (!adminClient) throw new Error("SUPABASE_SERVICE_ROLE_KEY manquante.");
+
+  // On ne crée/modifie aucune offre : on vérifie simplement que l'offre choisie
+  // existe déjà parmi les forfaits individuels actifs.
+  const { data: plan, error: planError } = await adminClient
+    .from("subscription_plans")
+    .select("slug")
+    .eq("slug", planSlug)
+    .eq("target", "individual")
+    .eq("status", "active")
+    .maybeSingle();
+
+  if (planError) throw planError;
+  if (!plan?.slug) throw new Error("Offre individuelle introuvable ou inactive.");
+
+  const { error } = await adminClient
+    .from("free_access_grants")
+    .update({
+      plan_slug: plan.slug,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", id);
+
+  if (error) throw error;
+
+  revalidatePath("/admin");
+  revalidatePath("/admin/paiements");
+  revalidatePath("/admin/utilisateurs");
+  revalidatePath("/mon-compte");
+  revalidatePath("/institutionnel");
 }
 
 async function extendFreeAccessAction(formData: FormData) {
@@ -856,7 +887,30 @@ export default async function AdminPaiementsPage() {
 
                   <div className={styles.freeAccessInfo}>
                     <span>OFFRE</span>
-                    <strong>{grant.plan_slug || "—"}</strong>
+                    <form action={changeFreeAccessPlanAction} className={styles.actions}>
+                      <input type="hidden" name="id" value={grant.id} />
+                      <select
+                        name="plan_slug"
+                        defaultValue={grant.plan_slug || ""}
+                        required
+                        aria-label={`Offre de ${grant.user_email || "cet accès"}`}
+                      >
+                        {!userPlans.some((plan) => plan.slug === grant.plan_slug) &&
+                        grant.plan_slug ? (
+                          <option value={grant.plan_slug}>
+                            {grant.plan_slug}
+                          </option>
+                        ) : null}
+                        {userPlans
+                          .filter((plan) => Boolean(plan.slug))
+                          .map((plan) => (
+                            <option key={plan.id} value={plan.slug || ""}>
+                              {plan.name || plan.slug || "Abonnement"}
+                            </option>
+                          ))}
+                      </select>
+                      <button type="submit">Appliquer</button>
+                    </form>
                   </div>
 
                   <div className={styles.freeAccessInfo}>
