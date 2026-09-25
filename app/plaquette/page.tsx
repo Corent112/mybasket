@@ -1931,7 +1931,13 @@ const currentRef = useRef(current);
     const hasDribbleAction = Boolean(
       phase?.lines.some((line) => line.action === 'dribble' && line.sourcePlayerId === p.id)
     );
-    const visibleBallCount = Math.max(attachedBallCount, hasDribbleAction ? 1 : 0);
+    // Pendant l'animation, le ballon est dessiné exclusivement par anim.balls.
+    // Sinon le fallback visuel du dribble dessine un ballon sur le joueur
+    // ET le moteur d'animation en dessine un second au même moment.
+    const isAnimationFrame = Boolean(animPosRef.current);
+    const visibleBallCount = isAnimationFrame
+      ? attachedBallCount
+      : Math.max(attachedBallCount, hasDribbleAction ? 1 : 0);
 
     if (visibleBallCount >= 1) {
       // 1er ballon : position historique MyBasket.

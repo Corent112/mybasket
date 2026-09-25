@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin-server";
+import { getEffectiveSubscriptionForUser } from "@/lib/effective-subscription";
 
 type StructureType = "committee" | "league" | "federation" | "pole";
 const TYPES: StructureType[] = ["committee","league","federation","pole"];
@@ -56,6 +57,19 @@ export async function GET(){
     });
   }
 
+  // L'accès effectif sait aussi lire free_access_grants.
+  // Ainsi un compte auquel l'admin attribue directement l'offre Institution
+  // obtient immédiatement l'accès institutionnel, même sans ligne payante.
+  const effective = await getEffectiveSubscriptionForUser({
+    supabase,
+    userId: user.id,
+    email: user.email,
+  });
+  const effectiveIdentity = `${effective.plan?.target || ""} ${effective.plan?.slug || ""} ${effective.plan?.name || ""}`;
+  if(effective.active && isInstitutionPlan(effectiveIdentity)) {
+    TYPES.forEach(t=>allowed.add(t));
+  }
+
   // Une Ligue peut gérer ses structures de performance depuis Institutionnel.
   if(allowed.has("league")) allowed.add("pole");
 
@@ -102,6 +116,17 @@ export async function POST(request: Request){
       }
     });
   }
+
+  const effective = await getEffectiveSubscriptionForUser({
+    supabase,
+    userId: user.id,
+    email: user.email,
+  });
+  const effectiveIdentity = `${effective.plan?.target || ""} ${effective.plan?.slug || ""} ${effective.plan?.name || ""}`;
+  if(effective.active && isInstitutionPlan(effectiveIdentity)) {
+    TYPES.forEach(t=>allowed.add(t));
+  }
+
   if(allowed.has("league")) allowed.add("pole");
 
   if(!isAdmin){
