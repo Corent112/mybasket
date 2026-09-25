@@ -523,7 +523,7 @@ export default function InstitutionalPlayerWorkflow({ structureId }: { structure
       )}
 
 
-      {showPlayerImport && <InstitutionalPlayerImport structureId={structureId} existingPlayers={players} onClose={() => setShowPlayerImport(false)} onImported={async () => { setShowPlayerImport(false); await loadPlayersAndReferrals(); }} />}
+      <InstitutionalPlayerImport open={showPlayerImport} structureId={structureId} existingPlayers={players} onClose={() => setShowPlayerImport(false)} onImported={async () => { setShowPlayerImport(false); await loadPlayersAndReferrals(); }} />
 
       {showCreatePlayer && <div className="createPlayerBack" onMouseDown={(e) => { if (e.target === e.currentTarget) setShowCreatePlayer(false); }}>
         <section className="createPlayerModal" role="dialog" aria-modal="true" aria-label="Ajouter un joueur">
