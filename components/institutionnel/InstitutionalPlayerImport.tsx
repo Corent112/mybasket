@@ -340,6 +340,10 @@ export default function InstitutionalPlayerImport({ open, structureId, existingP
 .table th{padding:6px 10px!important;line-height:1.1!important;font-size:11px!important}
 .table td{padding:5px 10px!important;line-height:1.1!important;font-size:11px!important;height:25px!important}
 .table tr{height:25px!important}
+
+.filters{position:static!important;top:auto!important;bottom:auto!important;z-index:auto!important;transform:none!important;background:#fff!important;margin:0 0 12px 0!important;padding:10px 12px!important;box-sizing:border-box!important}
+.filters + *{clear:both!important}
+.table{position:relative!important;z-index:1!important;margin-top:0!important}
 `}</style>
     </section>
   </div>;
