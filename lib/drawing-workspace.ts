@@ -66,6 +66,17 @@ export async function movePlaybookSystemToSeries(playbookSystemId:string,seriesI
 
 export async function detachPrivateSystemFromPlaybook(system:DrawingSystem,playbookId:string){const s=createClient(),uid=await userId();const id=system.playbookSystemIds[playbookId];if(!id)return;const rel=await s.from('playbook_series_systems').delete().eq('owner_id',uid).eq('playbook_system_id',id);if(rel.error)throw rel.error;const del=await s.from('playbook_systems').delete().eq('owner_id',uid).eq('id',id);if(del.error)throw del.error;}
 
+
+export async function deletePrivateSystem(system:DrawingSystem){
+ const s=createClient(),uid=await userId();
+ const ids=Object.values(system.playbookSystemIds||{}).filter(Boolean);
+ if(ids.length){
+  const rel=await s.from('playbook_series_systems').delete().eq('owner_id',uid).in('playbook_system_id',ids);if(rel.error)throw rel.error;
+  const pb=await s.from('playbook_systems').delete().eq('owner_id',uid).in('id',ids);if(pb.error)throw pb.error;
+ }
+ const del=await s.from('systems').delete().eq('id',system.id).eq('user_id',uid);if(del.error)throw del.error;
+}
+
 export async function duplicatePrivateSystem(systemId:string,playbookId?:string|null,seriesId?:string|null):Promise<string>{
  const s=createClient(),uid=await userId();const {data,error}=await s.from('systems').select('*').eq('id',systemId).eq('user_id',uid).single();if(error)throw error;
  const id=crypto.randomUUID();const now=new Date().toISOString();const copy:any={...data,id,title:`${data.title||'Système'} - Copie`,visibility:'private',review_status:'draft',original_system_id:data.id,created_at:now,updated_at:now};delete copy.contributor_name;delete copy.contributor_avatar_url;
