@@ -196,7 +196,7 @@ export default function InstitutionalPlayerImport({ open, structureId, existingP
   const [error,setError]=useState("");
   const [summary,setSummary]=useState("");
   const [page,setPage]=useState(1);
-  const pageSize=10;
+  const pageSize = 10;
 
   const filtered=useMemo(()=>rows.filter(r=>{
     const q=key(search); const hay=key(`${r.first_name} ${r.last_name} ${r.club_name} ${r.license_number}`);
@@ -207,9 +207,9 @@ export default function InstitutionalPlayerImport({ open, structureId, existingP
   const selectedCount=rows.filter(r=>r.selected && !r.duplicateId).length;
   const duplicateCount=rows.filter(r=>!!r.duplicateId).length;
   const warningCount=rows.filter(r=>!r.duplicateId && !!r.warningReason).length;
-  const pageCount=Math.max(1,Math.ceil(filtered.length/pageSize));
+  const pageCount = Math.max(1, Math.ceil(filtered.length / pageSize));
   const currentPage=Math.min(page,pageCount);
-  const paginated=filtered.slice((currentPage-1)*pageSize,currentPage*pageSize);
+  const paginated = filtered.slice((currentPage - 1) * pageSize, currentPage * pageSize);
 
   async function readFile(file:File) {
     setError(""); setSummary(""); setFileName(file.name);
