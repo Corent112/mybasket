@@ -426,6 +426,14 @@ const reboundNext = (c: Ctx, t: string): Ctx =>
 
 function ptsOf(a: Draft) {
   if (a.actionType === 'faute-technique' && a.foulOutcome === 'technical-for') return a.ftMade || 0;
+  // Une antisportive provoquée donne sa réparation à notre équipe, quel que soit
+  // le contexte depuis lequel elle a été saisie (attaque ou défense).
+  if (a.actionType === 'faute-provoquee' && (a.specialCase === 'unsportsmanlike' || a.specialCase === 'unsportsmanlike-2pts+1lf' || a.specialCase === 'unsportsmanlike-3pts+1lf')) {
+    let p = a.ftMade || 0;
+    if (a.specialCase === 'unsportsmanlike-2pts+1lf') p += 2;
+    else if (a.specialCase === 'unsportsmanlike-3pts+1lf') p += 3;
+    return p;
+  }
   if (a.context === 'defense') return 0;
 
   // Faute provoquée sur panier marqué :
@@ -446,6 +454,12 @@ function ptsOf(a: Draft) {
 }
 function themPtsOf(a: Draft) {
   if (a.actionType === 'faute-technique' && a.foulOutcome === 'technical-against') return a.ftMade || 0;
+  if (a.actionType === 'faute-commise' && (a.specialCase === 'unsportsmanlike-committed' || a.specialCase === 'unsportsmanlike-committed-2pts+1lf' || a.specialCase === 'unsportsmanlike-committed-3pts+1lf')) {
+    let p = a.ftMade || 0;
+    if (a.specialCase === 'unsportsmanlike-committed-2pts+1lf') p += 2;
+    else if (a.specialCase === 'unsportsmanlike-committed-3pts+1lf') p += 3;
+    return p;
+  }
   if (a.context === 'defense' && a.actionType === 'tir' && a.shotResult === 'made')
     return a.shotType === '3PTS' ? 3 : a.shotType === 'LF' ? 1 : 2;
   if (a.context === 'defense' && a.actionType === 'faute-commise') {
@@ -928,6 +942,11 @@ export default function PriseStatsProPage() {
   const [minutesByPlayer, setMinutesByPlayer] = useState<Record<string, number>>({});
 
   const [running, setRunning] = useState(false);
+  // Le listener clavier est installé une seule fois par configuration vidéo et peut
+  // sinon conserver une ancienne valeur de `running`. Cette ref donne toujours
+  // l'état réel du chrono à ESPACE / B sans réinstaller le listener à chaque tick.
+  const runningRef = useRef(false);
+  useEffect(() => { runningRef.current = running; }, [running]);
   const [perQ, setPerQ] = useState<Record<number, { us: number; them: number }>>({ 1: { us: 0, them: 0 } });
   const [subSel, setSubSel] = useState<string | null>(null);
 
@@ -2616,10 +2635,11 @@ export default function PriseStatsProPage() {
   // MÊME SANS vidéo : c'est ce qui permet de coder un match en direct et de caler
   // la vidéo après coup. Avec une vidéo, on garde la synchro lecture/pause.
   const toggleClockAndVideo = () => {
+    const clockRunning = runningRef.current;
     if (!hasVideoLoaded()) {
       // Sans vidéo : au premier PLAY du quart-temps, on mémorise son début sur
       // l'horloge source continue. Ce repère sera associé à la vidéo après coup.
-      if (!running) {
+      if (!clockRunning) {
         if (matchStartAtRef.current == null) {
           matchStartAtRef.current = Date.now();
           setNoVideoMatchClockStarted(true);
@@ -2627,12 +2647,19 @@ export default function PriseStatsProPage() {
         }
         markPeriodSourceStart(q, q === 1 && !videoSyncRef.current.periodMarkers?.['1']?.sourceStart ? 0 : undefined);
       }
-      setRunning((r) => !r);
+      const nextRunning = !clockRunning;
+      runningRef.current = nextRunning;
+      setRunning(nextRunning);
       return;
     }
-    if (running && isVideoPlaying()) { pauseVideo(); setRunning(false); return; }
-    if (running && !isVideoPlaying()) { setRunning(false); return; }
-    if (!isVideoPlaying()) playVideo();
+    if (clockRunning || isVideoPlaying()) {
+      pauseVideo();
+      runningRef.current = false;
+      setRunning(false);
+      return;
+    }
+    playVideo();
+    runningRef.current = true;
     setRunning(true);
   };
 
@@ -3480,9 +3507,14 @@ export default function PriseStatsProPage() {
 
     let next: Ctx, inbound = false;
     if (a.specialCase === 'unsportsmanlike' || a.specialCase === 'unsportsmanlike-2pts+1lf' || a.specialCase === 'unsportsmanlike-3pts+1lf') {
-      // Faute antisportive provoquée : LF + nouvelle remise en jeu pour la même équipe.
-      next = a.context;
-      inbound = a.context === 'attaque';
+      // Faute antisportive provoquée : réparation pour nous + possession pour nous.
+      next = 'attaque';
+      inbound = true;
+    }
+    else if (a.specialCase === 'unsportsmanlike-committed' || a.specialCase === 'unsportsmanlike-committed-2pts+1lf' || a.specialCase === 'unsportsmanlike-committed-3pts+1lf') {
+      // Faute antisportive commise : réparation adverse + possession adverse.
+      next = 'defense';
+      inbound = false;
     }
     else if (a.actionType === 'faute-technique') {
       // FIBA : le LF technique ne change pas à lui seul la possession en cours.
@@ -3527,7 +3559,10 @@ export default function PriseStatsProPage() {
         a.foulOutcome === 'rebound-foul-drawn' ||
         a.specialCase === 'unsportsmanlike' ||
         a.specialCase === 'unsportsmanlike-2pts+1lf' ||
-        a.specialCase === 'unsportsmanlike-3pts+1lf'
+        a.specialCase === 'unsportsmanlike-3pts+1lf' ||
+        a.specialCase === 'unsportsmanlike-committed' ||
+        a.specialCase === 'unsportsmanlike-committed-2pts+1lf' ||
+        a.specialCase === 'unsportsmanlike-committed-3pts+1lf'
       ))
     );
     if (!samePossession) {
@@ -3571,7 +3606,7 @@ export default function PriseStatsProPage() {
     const lastMiss = d.ftResults[d.ftResults.length - 1] === 'miss';
     const isAndOne = d.specialCase === '2pts+1lf' || d.specialCase === '3pts+1lf';
 
-    if (d.specialCase === 'unsportsmanlike' || d.specialCase === 'unsportsmanlike-2pts+1lf' || d.specialCase === 'unsportsmanlike-3pts+1lf') {
+    if (d.specialCase === 'unsportsmanlike' || d.specialCase === 'unsportsmanlike-2pts+1lf' || d.specialCase === 'unsportsmanlike-3pts+1lf' || d.specialCase === 'unsportsmanlike-committed' || d.specialCase === 'unsportsmanlike-committed-2pts+1lf' || d.specialCase === 'unsportsmanlike-committed-3pts+1lf') {
       commit({ ...d, shotResult: d.specialCase.includes('pts+1lf') ? 'made' : (anyMade ? 'made' : 'missed') });
       return;
     }
@@ -3933,6 +3968,12 @@ export default function PriseStatsProPage() {
       const andOne = o === 'us-2plus1' || o === 'us-3plus1';
       const isThree = o === 'us-3plus1' || o === 'us-lf3';
       setDraft({ ...draft, foulOutcome:'unsportsmanlike', specialCase:andOne?(isThree?'unsportsmanlike-3pts+1lf':'unsportsmanlike-2pts+1lf'):'unsportsmanlike', shotType:andOne?(isThree?'3PTS':'2PTS'):'LF', shotResult:andOne?'made':'', ftAttempts:andOne?1:(isThree?3:2), ftMade:0, ftResults:[] });
+      setStage('ft'); return;
+    }
+    if (o === 'usc-2plus1' || o === 'usc-3plus1' || o === 'usc-lf2' || o === 'usc-lf3') {
+      const andOne = o === 'usc-2plus1' || o === 'usc-3plus1';
+      const isThree = o === 'usc-3plus1' || o === 'usc-lf3';
+      setDraft({ ...draft, foulOutcome:'unsportsmanlike-committed', specialCase:andOne?(isThree?'unsportsmanlike-committed-3pts+1lf':'unsportsmanlike-committed-2pts+1lf'):'unsportsmanlike-committed', shotType:andOne?(isThree?'3PTS':'2PTS'):'LF', shotResult:andOne?'made':'', ftAttempts:andOne?1:(isThree?3:2), ftMade:0, ftResults:[] });
       setStage('ft'); return;
     }
     if (o === 'touche') { commit({ ...draft, foulOutcome: 'touche' }); return; }
@@ -7030,14 +7071,22 @@ export default function PriseStatsProPage() {
         return draft.actionType === 'faute-commise'
           ? (
               <>
-                {head('Faute commise', codingMode === 'live-individual' && draft.context === 'defense' ? 'Choisis maintenant la suite de la faute' : 'LF concédés, and-one ou touche ?')}
-                <div className="foulOutcomeGrid">
+                {head('Faute commise', draft.foulOutcome === 'unsportsmanlike-committed-pending' ? 'Faute antisportive : choisis la réparation adverse. La possession reste à l’adversaire après les LF.' : (codingMode === 'live-individual' && draft.context === 'defense' ? 'Choisis maintenant la suite de la faute' : 'LF concédés, and-one, touche ou faute antisportive ?'))}
+                {draft.foulOutcome === 'unsportsmanlike-committed-pending' ? (
+                  <div className="foulOutcomeGrid">
+                    <button className="chip" onClick={() => foulPick('usc-2plus1')}>2 + 1</button>
+                    <button className="chip" onClick={() => foulPick('usc-3plus1')}>3 + 1</button>
+                    <button className="chip" onClick={() => foulPick('usc-lf2')}>2 LF</button>
+                    <button className="chip" onClick={() => foulPick('usc-lf3')}>3 LF</button>
+                  </div>
+                ) : <div className="foulOutcomeGrid">
+                  <button className="chip foulTouch" onClick={() => { setDraft({...draft, foulOutcome:'unsportsmanlike-committed-pending'}); }}>🚨 Faute antisportive</button>
                   <button className="chip foulTouch" style={!codingButtonEnabled('foul','touche') ? {display:'none'} : undefined} onClick={() => foulPick('touche')}>{fl('touche','Touche')}</button>
                   <button className="chip" style={!codingButtonEnabled('foul','lf2') ? {display:'none'} : undefined} onClick={() => foulPick('lf2')}>{fl('lf2','2 LF')}</button>
                   <button className="chip" style={!codingButtonEnabled('foul','2plus1') ? {display:'none'} : undefined} onClick={() => foulPick('2plus1')}>{fl('2plus1','2pts + 1LF')}</button>
                   <button className="chip" style={!codingButtonEnabled('foul','lf3') ? {display:'none'} : undefined} onClick={() => foulPick('lf3')}>{fl('lf3','3 LF')}</button>
                   <button className="chip" style={!codingButtonEnabled('foul','3plus1') ? {display:'none'} : undefined} onClick={() => foulPick('3plus1')}>{fl('3plus1','3pts + 1LF')}</button>
-                </div>
+                </div>}
               </>
             )
           : (
@@ -10765,6 +10814,43 @@ function Style() {
         .actionEvaluation { flex-wrap:wrap; height:auto; }
         .actionEvaluationLabel span { white-space:normal; line-height:1.25; overflow-wrap:anywhere; }
         .actionEvaluationButtons { flex-wrap:wrap; }
+
+        /* Uniformisation V7 : toutes les tuiles de choix du panneau central
+           reprennent exactement la hauteur de référence Pick Side / Pick Top. */
+        .lc-body .bt,
+        .lc-body .chip,
+        .lc-body .res,
+        .lc-body .resultActionBtn,
+        .lc-body .foulOutcomeGrid .chip,
+        .lc-body .pickResultActions .resultActionBtn,
+        .lc-body .pickCompactChoice,
+        .lc-body .technicalQuickBtn,
+        .lc-body .technicalQuickChoices button {
+          height:58px !important;
+          min-height:58px !important;
+          max-height:58px !important;
+          box-sizing:border-box;
+          display:flex;
+          align-items:center;
+          justify-content:center;
+          padding:8px 10px !important;
+          line-height:1.15 !important;
+        }
+        .lc-body .bt { justify-content:flex-start; }
+        .lc-body .bt .lbl,
+        .lc-body .chip,
+        .lc-body .res,
+        .lc-body .resultActionBtn,
+        .lc-body .pickCompactChoice,
+        .lc-body .technicalQuickChoices button {
+          overflow-wrap:normal;
+          word-break:normal;
+        }
+        .systemLibreRow .bt { height:58px !important; min-height:58px !important; max-height:58px !important; }
+        .resultAllActionsGrid,
+        .pickResultActions,
+        .foulOutcomeGrid,
+        .lc-body .grid { align-items:stretch; grid-auto-rows:58px; }
 
         @media(max-width:760px){
           .resultAllActionsGrid,
