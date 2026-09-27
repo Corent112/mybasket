@@ -107,6 +107,10 @@ interface Draft {
   eventClipStart?: number | null;
   // Qualification coach facultative. Un seul clic + ou - est autorisé pendant l'action.
   evaluation?: 'positive' | 'negative' | null;
+  // Pick : acteurs liés à la même action / possession.
+  pickHandlerId?: string | null;
+  pickRollerId?: string | null;
+  pickCoverageSkipped?: boolean;
 }
 interface StatA extends Draft {
   id: string;
@@ -411,7 +415,7 @@ const emptyDraft = (): Draft => ({
   playbookId: null, systemeSlot: null, systemeId: null, systemeName: null,
   possessionStart: null, possessionEnd: null, eventClipStart: null,
   opponentPlayerId: null, opponentPlayerName: null, opponentPlayerNumber: null,
-  evaluation: null,
+  evaluation: null, pickHandlerId: null, pickRollerId: null, pickCoverageSkipped: false,
 });
 
 /* ============================ Calculs ============================ */
@@ -3669,7 +3673,7 @@ export default function PriseStatsProPage() {
     // En défense, le temps fort débouche directement sur le résultat.
     if (d.context === 'defense') return 'result';
     if (codingMode === 'live') return 'result';
-    if ((d.tempsFort === 'pick-side' || d.tempsFort === 'pick-top') && workflowOn('coverage')) return 'coverage';
+    if (d.tempsFort === 'pick-side' || d.tempsFort === 'pick-top') return 'pick-details';
     return workflowOn('player') ? 'player' : 'action';
   };
 
@@ -3735,6 +3739,25 @@ export default function PriseStatsProPage() {
     const d = { ...draft, coverage: id };
     setDraft(d);
     setStage(d.context === 'defense' ? 'result' : (workflowOn('player') ? 'player' : 'action'));
+  };
+  const pickHandlerPick = (id: string) => setDraft((current) => ({ ...current, pickHandlerId: id }));
+  const pickRollerPick = (id: string) => setDraft((current) => ({ ...current, pickRollerId: id }));
+  const pickCoveragePick = (id: string) => setDraft((current) => ({ ...current, coverage: id, pickCoverageSkipped: false }));
+  const pickCoverageSkip = () => setDraft((current) => ({ ...current, coverage: '', pickCoverageSkipped: true }));
+  const pickActorPick = (id: string) => {
+    const d = { ...draft, playerId: id };
+    setDraft(d);
+    const shared = sharedLiveRef.current;
+    if (shared?.currentPossessionId) {
+      void savePickEvent(shared, shared.currentPossessionId, {
+        pickType: d.tempsFort,
+        handlerId: d.pickHandlerId ?? null,
+        rollerId: d.pickRollerId ?? null,
+        coverage: d.coverage || null,
+        actionPlayerId: id,
+      } as any).catch((error:any) => console.warn('Pick mutualisé:', error));
+    }
+    setStage('result');
   };
   const actionPick = (id: string) => {
   let d = { ...draft, actionType: id };
@@ -5356,6 +5379,14 @@ export default function PriseStatsProPage() {
                 )}
               </div>}
 
+              <div className={`actionEvaluation underVideo ${draft.evaluation ? 'locked' : ''}`} aria-label="Qualifier l'action en cours">
+                <div className="actionEvaluationLabel"><strong>Qualifier l’action</strong><span>{draft.evaluation === 'positive' ? 'Action marquée +' : draft.evaluation === 'negative' ? 'Action marquée −' : 'Facultatif'}</span></div>
+                <div className="actionEvaluationButtons">
+                  <button type="button" className={`actionEvaluationBtn negative ${draft.evaluation === 'negative' ? 'selected' : ''}`} disabled={draft.evaluation != null} onClick={() => setDraft((current) => current.evaluation ? current : { ...current, evaluation: 'negative' })}>−</button>
+                  <button type="button" className={`actionEvaluationBtn positive ${draft.evaluation === 'positive' ? 'selected' : ''}`} disabled={draft.evaluation != null} onClick={() => setDraft((current) => current.evaluation ? current : { ...current, evaluation: 'positive' })}>+</button>
+                </div>
+              </div>
+
               {(codingMode === 'live-individual' || codingMode === 'live') && (
                 <div className={`videoMatchControl ${showVideoPanel ? 'withVideo' : 'withoutVideo'}`}>
                   {!showVideoPanel && <div className="vmcPanelTitle">PILOTAGE DU MATCH</div>}
@@ -5494,28 +5525,6 @@ export default function PriseStatsProPage() {
                       )
                     )}
                     {renderStage()}
-                  </div>
-                  <div className={`actionEvaluation ${draft.evaluation ? 'locked' : ''}`} aria-label="Qualifier l'action en cours">
-                    <div className="actionEvaluationLabel">
-                      <strong>Qualifier l’action</strong>
-                      <span>{draft.evaluation === 'positive' ? 'Action marquée +' : draft.evaluation === 'negative' ? 'Action marquée −' : 'Facultatif · 1 seul choix'}</span>
-                    </div>
-                    <div className="actionEvaluationButtons">
-                      <button
-                        type="button"
-                        className={`actionEvaluationBtn negative ${draft.evaluation === 'negative' ? 'selected' : ''}`}
-                        disabled={draft.evaluation !== null && draft.evaluation !== undefined}
-                        onClick={() => setDraft((current) => current.evaluation ? current : { ...current, evaluation: 'negative' })}
-                        title="Marquer l'action / le clip en cours comme négatif"
-                      >−</button>
-                      <button
-                        type="button"
-                        className={`actionEvaluationBtn positive ${draft.evaluation === 'positive' ? 'selected' : ''}`}
-                        disabled={draft.evaluation !== null && draft.evaluation !== undefined}
-                        onClick={() => setDraft((current) => current.evaluation ? current : { ...current, evaluation: 'positive' })}
-                        title="Marquer l'action / le clip en cours comme positif"
-                      >+</button>
-                    </div>
                   </div>
                   <div className="lc-foot">
                     <button className="qbtn sm" onClick={resetDraft}>🗑 Reset</button>
@@ -6880,6 +6889,26 @@ export default function PriseStatsProPage() {
       }
       case 'temps':
         return <><div className="stageHeadWithConfig">{head('Temps fort', 'Type de jeu')}<button className="stageConfigBtn" onClick={() => openCodingSettings('buttons')} title="Créer, renommer ou masquer des temps forts">⚙</button></div>{tileGrid(tempsFortsButtons, draft.tempsFort, tempsPick)}</>;
+      case 'pick-details': {
+        const pickPlayers = floor;
+        const miniPlayers = (selected: string | null | undefined, onPick: (id:string)=>void, disabledId?: string | null) => (
+          <div className="pickMiniPlayers">{pickPlayers.map((p) => (
+            <button key={p.id} type="button" className={`pickMiniPlayer ${selected === p.id ? 'active' : ''}`} disabled={disabledId === p.id} onClick={() => onPick(p.id)} title={`#${p.num} ${p.name}`}>
+              <Av p={p} cls="pickMiniAvatar" />
+            </button>
+          ))}</div>
+        );
+        const readyForActor = !!draft.pickHandlerId && !!draft.pickRollerId && (!!draft.coverage || !!draft.pickCoverageSkipped);
+        return <>
+          {head(draft.tempsFort === 'pick-side' ? 'Pick Side' : 'Pick Top', 'Handler · Roller · Défense · Qui réalise l’action')}
+          <div className="pickLinkedBlock">
+            <div className="pickLinkedRow"><div className="pickLinkedLabel"><b>Ball Handler</b><span>Utilise l’écran</span></div>{miniPlayers(draft.pickHandlerId, pickHandlerPick, draft.pickRollerId)}</div>
+            <div className="pickLinkedRow"><div className="pickLinkedLabel"><b>Roller</b><span>Pose l’écran</span></div>{miniPlayers(draft.pickRollerId, pickRollerPick, draft.pickHandlerId)}</div>
+            <div className="pickLinkedRow pickCoverageRow"><div className="pickLinkedLabel"><b>Défense</b><span>Type de couverture</span></div><div className="pickCoverageChoices">{codingButtonsFor('coverage').map((c) => <button key={c.key} type="button" className={`pickCompactChoice ${draft.coverage === c.key ? 'active' : ''}`} onClick={() => pickCoveragePick(c.key)}>{c.label}</button>)}<button type="button" className={`pickCompactChoice skip ${draft.pickCoverageSkipped ? 'active' : ''}`} onClick={pickCoverageSkip}>SKIP</button></div></div>
+            <div className={`pickLinkedRow pickActorRow ${readyForActor ? '' : 'disabled'}`}><div className="pickLinkedLabel"><b>Qui réalise l’action ?</b><span>{readyForActor ? 'Choisis le joueur' : 'Renseigne Handler, Roller et Défense'}</span></div>{miniPlayers(draft.playerId, readyForActor ? pickActorPick : ()=>{})}</div>
+          </div>
+        </>;
+      }
       case 'coverage':
         return <>{head("Défense sur l'écran", 'Comment défend-on le pick ?')}<div className="grid c3">{codingButtonsFor('coverage').map((c) => <button key={c.key} className={`chip ${draft.coverage === c.key ? 'active' : ''}`} onClick={() => covPick(c.key)}>{c.emoji ? c.emoji + ' ' : ''}{c.label}</button>)}</div></>;
       case "player": {
@@ -10630,6 +10659,14 @@ function Style() {
         border-color: var(--gold);
       }
 
-    `}</style>
+      /* Pick lié : compact, lisible, mêmes joueurs sur une seule carte. */
+      .pickLinkedBlock{display:flex;flex-direction:column;gap:8px;margin-top:10px}
+      .pickLinkedRow{display:grid;grid-template-columns:132px minmax(0,1fr);align-items:center;gap:10px;padding:10px 12px;border:1px solid rgba(255,255,255,.09);border-radius:12px;background:rgba(255,255,255,.035)}
+      .pickLinkedLabel{display:flex;flex-direction:column;gap:2px}.pickLinkedLabel b{font-size:12px}.pickLinkedLabel span{font-size:10px;opacity:.58}
+      .pickMiniPlayers{display:flex;align-items:center;gap:7px;flex-wrap:wrap}.pickMiniPlayer{width:38px;height:38px;padding:0;border:2px solid transparent;border-radius:50%;background:transparent;cursor:pointer;display:grid;place-items:center;transition:.15s ease}.pickMiniPlayer:hover{transform:translateY(-1px)}.pickMiniPlayer.active{border-color:var(--gold);box-shadow:0 0 0 2px rgba(212,162,76,.15)}.pickMiniPlayer:disabled{opacity:.22;cursor:not-allowed}.pickMiniPlayer .av.pickMiniAvatar{width:30px;height:30px;min-width:30px;border-radius:50%;font-size:10px;margin:0;object-fit:cover}
+      .pickCoverageChoices{display:flex;gap:6px;flex-wrap:wrap}.pickCompactChoice{min-height:32px;padding:6px 10px;border:1px solid rgba(255,255,255,.12);border-radius:9px;background:rgba(255,255,255,.045);font-size:11px;font-weight:800;cursor:pointer}.pickCompactChoice:hover{border-color:rgba(212,162,76,.55)}.pickCompactChoice.active{background:var(--gold);color:#111;border-color:var(--gold)}.pickCompactChoice.skip{opacity:.72}.pickActorRow.disabled{opacity:.45;pointer-events:none}
+      .actionEvaluation.underVideo{margin:8px 0 0;min-height:42px;padding:7px 9px;border-radius:10px;display:flex;align-items:center;justify-content:space-between;gap:8px}.actionEvaluation.underVideo .actionEvaluationLabel strong{font-size:11px}.actionEvaluation.underVideo .actionEvaluationLabel span{font-size:9px}.actionEvaluation.underVideo .actionEvaluationBtn{width:32px;height:30px;min-width:32px}
+    `}
+</style>
   );
 }
