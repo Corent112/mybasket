@@ -313,7 +313,6 @@ const ATT_ACTIONS = [
   { id: 'touche', label: 'Touche / Sortie', ic: '⤵' }, { id: 'perte', label: 'Perte de balle', ic: '✖' },
   { id: 'contre', label: 'Contre', ic: '🛑' },
   { id: 'faute-commise', label: 'Faute commise', ic: '🟨' },
-  { id: 'faute-technique', label: 'Faute technique', ic: '🟪' },
 ];
 const DEF_ACTIONS = [
   { id: 'tir', label: 'Tir adverse', ic: '🏀' },
@@ -323,7 +322,6 @@ const DEF_ACTIONS = [
   { id: 'touche', label: 'Touche', ic: '⤵' },
   { id: 'faute-provoquee', label: 'Faute provoquée', ic: '🔔' },
   { id: 'faute-commise', label: 'Faute commise', ic: '🟨' },
-  { id: 'faute-technique', label: 'Faute technique', ic: '🟪' },
 ];
 const NEEDS_PLAYER_DEF = ["contre"];
 const CAN_TAG_PLAYER_DEF = ["interception", "perte-adverse"];
@@ -3673,7 +3671,7 @@ export default function PriseStatsProPage() {
     // En défense, le temps fort débouche directement sur le résultat.
     if (d.context === 'defense') return 'result';
     if (codingMode === 'live') return 'result';
-    if (d.tempsFort === 'pick-side' || d.tempsFort === 'pick-top') return 'pick-details';
+    if (d.tempsFort === 'pick_side' || d.tempsFort === 'pick_top') return 'pick-details';
     return workflowOn('player') ? 'player' : 'action';
   };
 
@@ -5388,6 +5386,21 @@ export default function PriseStatsProPage() {
               </div>
 
               {(codingMode === 'live-individual' || codingMode === 'live') && (
+                <div className="technicalUnderQualification">
+                  <button type="button" className={`technicalQuickBtn ${showTechnicalFtChoice ? 'on' : ''}`} onClick={() => setShowTechnicalFtChoice((v) => !v)}>
+                    <span className="technicalQuickIcon">T</span><span><b>Faute technique</b><small>Interruption · 1 LF puis reprise de l’action</small></span>
+                  </button>
+                  {showTechnicalFtChoice && (
+                    <div className="technicalQuickChoices">
+                      <button type="button" onClick={() => beginTechnicalFtInterruption('us')}>1 LF POUR NOUS</button>
+                      <button type="button" onClick={() => beginTechnicalFtInterruption('them')}>1 LF ADVERSE</button>
+                      <button type="button" className="ghosty" onClick={cancelTechnicalFtInterruption}>Annuler</button>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {(codingMode === 'live-individual' || codingMode === 'live') && (
                 <div className={`videoMatchControl ${showVideoPanel ? 'withVideo' : 'withoutVideo'}`}>
                   {!showVideoPanel && <div className="vmcPanelTitle">PILOTAGE DU MATCH</div>}
                   <div className="vmcTop">
@@ -5404,16 +5417,6 @@ export default function PriseStatsProPage() {
                     <button onClick={() => setPerQ((p) => { const cur = p[q] || { us: 0, them: 0 }; return { ...p, [q]: { ...cur, us: cur.us + 1 } }; })}>+ NOUS</button>
                     <button onClick={() => setPerQ((p) => { const cur = p[q] || { us: 0, them: 0 }; return { ...p, [q]: { ...cur, them: Math.max(0, cur.them - 1) } }; })}>− ADV</button>
                     <button onClick={() => setPerQ((p) => { const cur = p[q] || { us: 0, them: 0 }; return { ...p, [q]: { ...cur, them: cur.them + 1 } }; })}>+ ADV</button>
-                  </div>
-                  <div className="vmcInterruptRow">
-                    <button className={`vmcFtInterrupt ${showTechnicalFtChoice ? 'on' : ''}`} onClick={() => setShowTechnicalFtChoice((v) => !v)}>⏸ LF TECH.</button>
-                    {showTechnicalFtChoice && (
-                      <div className="vmcFtChoice">
-                        <button onClick={() => beginTechnicalFtInterruption('us')}>1 LF POUR NOUS</button>
-                        <button onClick={() => beginTechnicalFtInterruption('them')}>1 LF ADVERSE</button>
-                        <button className="ghosty" onClick={cancelTechnicalFtInterruption}>Annuler</button>
-                      </div>
-                    )}
                   </div>
                   <button className="vmcNextQuarter" onClick={() => changeQ(1)}>
                     QT SUIVANT <span>➜</span>
@@ -6898,14 +6901,14 @@ export default function PriseStatsProPage() {
             </button>
           ))}</div>
         );
-        const readyForActor = !!draft.pickHandlerId && !!draft.pickRollerId && (!!draft.coverage || !!draft.pickCoverageSkipped);
+        const readyForActor = !!draft.pickHandlerId && !!draft.pickRollerId;
         return <>
-          {head(draft.tempsFort === 'pick-side' ? 'Pick Side' : 'Pick Top', 'Handler · Roller · Défense · Qui réalise l’action')}
+          {head(draft.tempsFort === 'pick_side' ? 'Pick Side' : 'Pick Top', 'Handler · Roller · Défense · Qui réalise l’action')}
           <div className="pickLinkedBlock">
             <div className="pickLinkedRow"><div className="pickLinkedLabel"><b>Ball Handler</b><span>Utilise l’écran</span></div>{miniPlayers(draft.pickHandlerId, pickHandlerPick, draft.pickRollerId)}</div>
             <div className="pickLinkedRow"><div className="pickLinkedLabel"><b>Roller</b><span>Pose l’écran</span></div>{miniPlayers(draft.pickRollerId, pickRollerPick, draft.pickHandlerId)}</div>
             <div className="pickLinkedRow pickCoverageRow"><div className="pickLinkedLabel"><b>Défense</b><span>Type de couverture</span></div><div className="pickCoverageChoices">{codingButtonsFor('coverage').map((c) => <button key={c.key} type="button" className={`pickCompactChoice ${draft.coverage === c.key ? 'active' : ''}`} onClick={() => pickCoveragePick(c.key)}>{c.label}</button>)}<button type="button" className={`pickCompactChoice skip ${draft.pickCoverageSkipped ? 'active' : ''}`} onClick={pickCoverageSkip}>SKIP</button></div></div>
-            <div className={`pickLinkedRow pickActorRow ${readyForActor ? '' : 'disabled'}`}><div className="pickLinkedLabel"><b>Qui réalise l’action ?</b><span>{readyForActor ? 'Choisis le joueur' : 'Renseigne Handler, Roller et Défense'}</span></div>{miniPlayers(draft.playerId, readyForActor ? pickActorPick : ()=>{})}</div>
+            <div className={`pickLinkedRow pickActorRow ${readyForActor ? '' : 'disabled'}`}><div className="pickLinkedLabel"><b>Qui réalise l’action ?</b><span>{readyForActor ? 'Choisis le joueur' : 'Renseigne Handler et Roller'}</span></div>{miniPlayers(draft.playerId, readyForActor ? pickActorPick : ()=>{})}</div>
           </div>
         </>;
       }
@@ -6991,7 +6994,6 @@ export default function PriseStatsProPage() {
             { id:'contre', label:'Contre', ic:'🛑' },
             { id:'faute-provoquee', label:'Faute provoquée', ic:'🔔' },
             { id:'faute-commise', label:'Faute commise', ic:'🟨' },
-            { id:'faute-technique', label:'Faute technique', ic:'🟪' },
           ];
           return <>{head("Action du joueur", 'Pas de système ni de temps fort')}{tileGrid(opts, draft.actionType, actionPick)}</>;
         }
@@ -7002,7 +7004,6 @@ export default function PriseStatsProPage() {
         const mandatory = [
           { id:'faute-provoquee', label:'Faute provoquée', ic:'🔔' },
           { id:'faute-commise', label:'Faute commise', ic:'🟨' },
-          { id:'faute-technique', label:'Faute technique', ic:'🟪' },
         ];
         mandatory.forEach((item) => { if (!opts.some((o) => o.id === item.id)) opts.push(item); });
         return <>{head("Type d'action", draft.context === 'defense' ? 'Action défensive' : 'Action offensive')}{tileGrid(opts, draft.actionType, actionPick)}</>;
@@ -10666,6 +10667,22 @@ function Style() {
       .pickMiniPlayers{display:flex;align-items:center;gap:7px;flex-wrap:wrap}.pickMiniPlayer{width:38px;height:38px;padding:0;border:2px solid transparent;border-radius:50%;background:transparent;cursor:pointer;display:grid;place-items:center;transition:.15s ease}.pickMiniPlayer:hover{transform:translateY(-1px)}.pickMiniPlayer.active{border-color:var(--gold);box-shadow:0 0 0 2px rgba(212,162,76,.15)}.pickMiniPlayer:disabled{opacity:.22;cursor:not-allowed}.pickMiniPlayer .av.pickMiniAvatar{width:30px;height:30px;min-width:30px;border-radius:50%;font-size:10px;margin:0;object-fit:cover}
       .pickCoverageChoices{display:flex;gap:6px;flex-wrap:wrap}.pickCompactChoice{min-height:32px;padding:6px 10px;border:1px solid rgba(255,255,255,.12);border-radius:9px;background:rgba(255,255,255,.045);font-size:11px;font-weight:800;cursor:pointer}.pickCompactChoice:hover{border-color:rgba(212,162,76,.55)}.pickCompactChoice.active{background:var(--gold);color:#111;border-color:var(--gold)}.pickCompactChoice.skip{opacity:.72}.pickActorRow.disabled{opacity:.45;pointer-events:none}
       .actionEvaluation.underVideo{margin:8px 0 0;min-height:42px;padding:7px 9px;border-radius:10px;display:flex;align-items:center;justify-content:space-between;gap:8px}.actionEvaluation.underVideo .actionEvaluationLabel strong{font-size:11px}.actionEvaluation.underVideo .actionEvaluationLabel span{font-size:9px}.actionEvaluation.underVideo .actionEvaluationBtn{width:32px;height:30px;min-width:32px}
+
+      /* V3 · commandes compactes et lisibles */
+      .lc-body .grid.c3{gap:7px;grid-template-columns:repeat(2,minmax(0,1fr))}
+      .lc-body .bt{min-height:58px;height:auto;padding:10px 12px;border:1px solid rgba(255,255,255,.10)!important;border-radius:11px!important;background:#171e31!important;color:#f5f7fb!important;box-shadow:none!important;flex-direction:row;justify-content:flex-start;gap:9px}
+      .lc-body .bt:hover{background:#1d263b!important;border-color:rgba(212,162,76,.55)!important}
+      .lc-body .bt.active{background:linear-gradient(180deg,var(--bordeaux2),var(--bordeaux))!important;border-color:var(--bordeaux2)!important;color:#fff!important}
+      .lc-body .bt .ic{font-size:20px!important;min-width:24px}.lc-body .bt .lbl{font-size:13px!important;text-align:left!important}
+      .systemLibreRow .bt{min-height:50px!important}
+      .technicalUnderQualification{margin:7px 0 2px;position:relative}
+      .technicalQuickBtn{width:100%;display:flex;align-items:center;gap:9px;padding:8px 10px;border:1px solid rgba(174,107,255,.38);border-radius:10px;background:rgba(115,70,180,.10);color:#f5f7fb;cursor:pointer;text-align:left}
+      .technicalQuickBtn:hover,.technicalQuickBtn.on{border-color:#b77cff;background:rgba(115,70,180,.18)}
+      .technicalQuickIcon{width:26px;height:26px;border-radius:8px;display:grid;place-items:center;background:rgba(174,107,255,.20);color:#d9b8ff;font-weight:950}
+      .technicalQuickBtn>span:last-child{display:flex;flex-direction:column;gap:1px}.technicalQuickBtn b{font-size:11px}.technicalQuickBtn small{font-size:9px;color:var(--mut)}
+      .technicalQuickChoices{display:grid;grid-template-columns:1fr 1fr auto;gap:6px;margin-top:6px;padding:7px;border:1px solid rgba(174,107,255,.25);border-radius:10px;background:#101729}
+      .technicalQuickChoices button{min-height:32px;padding:6px 8px;border:1px solid rgba(255,255,255,.12);border-radius:8px;background:#171e31;color:#fff;font-size:10px;font-weight:900;cursor:pointer}
+      .technicalQuickChoices button:hover{border-color:#b77cff}
     `}
 </style>
   );
