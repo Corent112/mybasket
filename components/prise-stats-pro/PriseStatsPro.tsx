@@ -7168,7 +7168,6 @@ export default function PriseStatsProPage() {
                   <button className="res made" style={!codingButtonEnabled('result','2-made') ? {display:'none'} : undefined} onClick={() => quickShotResult('2PTS', 'made', null)}>✓ Marqué</button>
                   <button className="res miss" style={!codingButtonEnabled('result','2-missed') ? {display:'none'} : undefined} onClick={() => quickShotResult('2PTS', 'missed', null)}>✕ Loupé</button>
                 </div>
-                <div className="postShotHint">La Shot Chart est obligatoire : intérieur / extérieur est calculé automatiquement à partir de la zone cliquée.</div>
               </>
             ) : (
               <>
@@ -10092,7 +10091,7 @@ function Style() {
         font-weight: 800;
       }
 
-      .matchInfoOverlay{position:fixed;inset:0;z-index:3200;background:rgba(0,0,0,.68);display:grid;place-items:center;padding:18px}.matchInfoCard{width:min(620px,96vw);background:#101827;border:1px solid var(--border);border-radius:16px;box-shadow:0 30px 100px rgba(0,0,0,.5);overflow:hidden}.matchInfoHead{display:flex;align-items:center;justify-content:space-between;padding:14px 16px;border-bottom:1px solid var(--border);color:#fff}.matchInfoHead button{border:0;background:transparent;color:#fff;font-size:22px;cursor:pointer}.matchInfoGrid{display:grid;grid-template-columns:1fr 1fr;gap:12px;padding:16px}.matchInfoGrid label{display:grid;gap:6px;color:#fff;font-size:11px;font-weight:850}.matchInfoGrid input,.matchInfoGrid select{border:1px solid var(--border);border-radius:9px;background:var(--card);color:#fff;padding:10px;font:inherit}.matchInfoFoot{display:flex;justify-content:flex-end;gap:8px;padding:0 16px 16px}.matchInfoSave{border:1px solid var(--gold);border-radius:9px;background:var(--gold);color:#10131f;padding:9px 14px;font-weight:950;cursor:pointer}.postShotHint{margin:6px 0 10px;padding:7px 9px;border:1px solid rgba(212,162,76,.35);border-radius:8px;background:rgba(212,162,76,.08);color:#d9c18c;font-size:9px}
+      .matchInfoOverlay{position:fixed;inset:0;z-index:3200;background:rgba(0,0,0,.68);display:grid;place-items:center;padding:18px}.matchInfoCard{width:min(620px,96vw);background:#101827;border:1px solid var(--border);border-radius:16px;box-shadow:0 30px 100px rgba(0,0,0,.5);overflow:hidden}.matchInfoHead{display:flex;align-items:center;justify-content:space-between;padding:14px 16px;border-bottom:1px solid var(--border);color:#fff}.matchInfoHead button{border:0;background:transparent;color:#fff;font-size:22px;cursor:pointer}.matchInfoGrid{display:grid;grid-template-columns:1fr 1fr;gap:12px;padding:16px}.matchInfoGrid label{display:grid;gap:6px;color:#fff;font-size:11px;font-weight:850}.matchInfoGrid input,.matchInfoGrid select{border:1px solid var(--border);border-radius:9px;background:var(--card);color:#fff;padding:10px;font:inherit}.matchInfoFoot{display:flex;justify-content:flex-end;gap:8px;padding:0 16px 16px}.matchInfoSave{border:1px solid var(--gold);border-radius:9px;background:var(--gold);color:#10131f;padding:9px 14px;font-weight:950;cursor:pointer}
 
       .toast {
         position: fixed;
@@ -10728,6 +10727,54 @@ function Style() {
         .pickResultDivider{display:flex;align-items:center;gap:8px;margin:10px 0 6px;color:#8f99ad;font-size:10px;font-weight:900;letter-spacing:.12em}
         .pickResultDivider:before,.pickResultDivider:after{content:'';height:1px;background:#293247;flex:1}
         @media(max-width:1180px){.pickResultActions{grid-template-columns:repeat(2,minmax(0,1fr))}}
+
+        /* Correctif ciblé panneau de codage : contenu fluide sans modifier les parcours. */
+        .lc-body,
+        .lc-body > *,
+        .lc-body .grid,
+        .lc-body .grid > *,
+        .resultMainGrid,
+        .resultMainGrid > *,
+        .resultAllActionsGrid,
+        .resultAllActionsGrid > *,
+        .pickResultActions,
+        .pickResultActions > *,
+        .technicalUnderQualification,
+        .technicalQuickChoices,
+        .pickLinkedBlock,
+        .pickLinkedRow,
+        .pickLinkedRow > * { min-width:0; }
+
+        .lc-body { height:auto; overflow-y:auto; overflow-x:hidden; }
+        .lc-body .grid { width:100%; height:auto; }
+        .lc-body .bt,
+        .lc-body .chip,
+        .lc-body .res,
+        .resultActionBtn,
+        .technicalQuickBtn,
+        .technicalQuickChoices button,
+        .pickCompactChoice { height:auto; max-width:100%; white-space:normal; line-height:1.25; overflow-wrap:anywhere; }
+        .lc-body .bt .lbl,
+        .technicalQuickBtn > span:last-child,
+        .technicalQuickBtn b,
+        .technicalQuickBtn small { min-width:0; white-space:normal; line-height:1.25; overflow-wrap:anywhere; }
+        .resultAllActionsGrid,
+        .pickResultActions { width:100%; align-items:stretch; }
+        .technicalQuickChoices { grid-template-columns:repeat(2,minmax(0,1fr)); height:auto; }
+        .technicalQuickChoices button:last-child { grid-column:1 / -1; }
+        .actionEvaluation { flex-wrap:wrap; height:auto; }
+        .actionEvaluationLabel span { white-space:normal; line-height:1.25; overflow-wrap:anywhere; }
+        .actionEvaluationButtons { flex-wrap:wrap; }
+
+        @media(max-width:760px){
+          .resultAllActionsGrid,
+          .pickResultActions,
+          .resultMainGrid.grid.c2,
+          .lc-body .grid.c2,
+          .lc-body .grid.c3 { grid-template-columns:1fr; }
+          .technicalQuickChoices { grid-template-columns:1fr; }
+          .technicalQuickChoices button:last-child { grid-column:auto; }
+        }
     `}
 </style>
   );
