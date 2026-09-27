@@ -3817,7 +3817,9 @@ export default function PriseStatsProPage() {
 
     if (id === "faute-commise") {
       setDraft(d);
-      setStage("player");
+      // Si l’acteur est déjà connu (ex. Pick Handler/Roller), on ouvre directement
+      // toutes les réparations de faute. Sinon on demande d’abord le joueur.
+      setStage(d.playerId ? "faute" : "player");
       return;
     }
 
@@ -3839,9 +3841,11 @@ export default function PriseStatsProPage() {
   if (id === "tir") {
     setDraft(d);
     setStage("result");
-  } else if (id === "faute-provoquee") {
+  } else if (id === "faute-provoquee" || id === "faute-commise") {
     setDraft(d);
-    setStage("faute");
+    // Les deux types de faute ouvrent toujours le bloc complet : touche, 2/3 LF,
+    // 2+1 / 3+1 et antisportive quand elle est proposée.
+    setStage(d.playerId ? "faute" : "player");
   } else if (id === "touche") {
     setDraft(d);
     setStage("inbound");
@@ -3874,7 +3878,7 @@ export default function PriseStatsProPage() {
     setStage('result');
     return;
   }
-  if (draft.context === "defense" && draft.actionType === "faute-commise") {
+  if (draft.actionType === "faute-commise" || draft.actionType === "faute-provoquee") {
     setDraft({ ...draft, playerId: id });
     setStage("faute");
     return;
@@ -5385,7 +5389,7 @@ export default function PriseStatsProPage() {
                 </div>
               </div>
 
-              {(codingMode !== 'post' && codingMode !== 'match-review') && (
+              {(
                 <div className="technicalUnderQualification">
                   <button type="button" className={`technicalQuickBtn ${showTechnicalFtChoice ? 'on' : ''}`} onClick={() => setShowTechnicalFtChoice((v) => !v)}>
                     <span className="technicalQuickIcon">T</span><span><b>Faute technique</b><small>Interruption · 1 LF puis reprise de l’action</small></span>
@@ -7122,6 +7126,21 @@ export default function PriseStatsProPage() {
               !isPostLikeCodingMode(codingMode)
                 ? (codingMode === 'live-individual' ? (isDefense ? 'Résultat défensif — le joueur sera demandé seulement si nécessaire' : 'Résultat du joueur sélectionné') : (isDefense ? 'Choisis le résultat défensif' : 'Choisis le résultat offensif'))
                 : (isDefense ? 'Choisis le résultat défensif' : 'Choisis directement le résultat du tir')
+            )}
+
+            {(draft.tempsFort === 'pick_side' || draft.tempsFort === 'pick_top') && (
+              <>
+                <div className="sublbl resultSectionLabel">RÉSULTAT DE L’ACTION</div>
+                <div className="pickResultActions">
+                  <button className="chip resultActionBtn" onClick={() => actionPick('faute-provoquee')}>🔔 Faute provoquée</button>
+                  <button className="chip resultActionBtn" onClick={() => actionPick('faute-commise')}>🟨 Faute commise</button>
+                  {draft.context !== 'defense' && <button className="chip resultActionBtn" onClick={() => actionPick('perte')}>✖ Perte de balle</button>}
+                  {draft.context === 'defense' && <button className="chip resultActionBtn" onClick={() => actionPick('interception')}>🖐 Interception</button>}
+                  <button className="chip resultActionBtn" onClick={() => actionPick('touche')}>⤵ Touche / sortie</button>
+                  <button className="chip resultActionBtn" onClick={() => actionPick('contre')}>🛑 Contre</button>
+                </div>
+                <div className="pickResultDivider"><span>TIR</span></div>
+              </>
             )}
 
             {isPostLikeCodingMode(codingMode) && isDefense && oppRoster.length > 0 && (
@@ -10702,6 +10721,13 @@ function Style() {
       .pickCompactChoice.active{background:var(--bordeaux)!important;border-color:var(--bordeaux2)!important;color:#fff!important}
       .pickActorRow.disabled{opacity:.48}
       @media (max-width:1100px){.pickLinkedRow{grid-template-columns:1fr}.pickLinkedLabel{margin-bottom:2px}.pickCoverageChoices{gap:5px}.pickCompactChoice{padding:6px 8px}}
+
+        .pickResultActions{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin:6px 0 12px}
+        .pickResultActions .resultActionBtn{min-height:44px!important;padding:8px 10px!important;background:#171f31!important;color:#fff!important;border:1px solid #303b53!important;border-radius:10px!important;font-size:12px!important;font-weight:800!important;box-shadow:none!important}
+        .pickResultActions .resultActionBtn:hover{background:#202a40!important;border-color:#d39a2c!important}
+        .pickResultDivider{display:flex;align-items:center;gap:8px;margin:10px 0 6px;color:#8f99ad;font-size:10px;font-weight:900;letter-spacing:.12em}
+        .pickResultDivider:before,.pickResultDivider:after{content:'';height:1px;background:#293247;flex:1}
+        @media(max-width:1180px){.pickResultActions{grid-template-columns:repeat(2,minmax(0,1fr))}}
     `}
 </style>
   );
