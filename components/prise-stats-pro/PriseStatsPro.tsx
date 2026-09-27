@@ -5385,7 +5385,7 @@ export default function PriseStatsProPage() {
                 </div>
               </div>
 
-              {(codingMode === 'live-individual' || codingMode === 'live') && (
+              {(codingMode !== 'post' && codingMode !== 'match-review') && (
                 <div className="technicalUnderQualification">
                   <button type="button" className={`technicalQuickBtn ${showTechnicalFtChoice ? 'on' : ''}`} onClick={() => setShowTechnicalFtChoice((v) => !v)}>
                     <span className="technicalQuickIcon">T</span><span><b>Faute technique</b><small>Interruption · 1 LF puis reprise de l’action</small></span>
@@ -6903,11 +6903,11 @@ export default function PriseStatsProPage() {
         );
         const readyForActor = !!draft.pickHandlerId && !!draft.pickRollerId;
         return <>
-          {head(draft.tempsFort === 'pick_side' ? 'Pick Side' : 'Pick Top', 'Handler · Roller · Défense · Qui réalise l’action')}
+          {head(draft.tempsFort === 'pick_side' ? 'Pick Side' : 'Pick Top', 'Handler · Roller · Défense facultative · Qui réalise l’action')}
           <div className="pickLinkedBlock">
             <div className="pickLinkedRow"><div className="pickLinkedLabel"><b>Ball Handler</b><span>Utilise l’écran</span></div>{miniPlayers(draft.pickHandlerId, pickHandlerPick, draft.pickRollerId)}</div>
             <div className="pickLinkedRow"><div className="pickLinkedLabel"><b>Roller</b><span>Pose l’écran</span></div>{miniPlayers(draft.pickRollerId, pickRollerPick, draft.pickHandlerId)}</div>
-            <div className="pickLinkedRow pickCoverageRow"><div className="pickLinkedLabel"><b>Défense</b><span>Type de couverture</span></div><div className="pickCoverageChoices">{codingButtonsFor('coverage').map((c) => <button key={c.key} type="button" className={`pickCompactChoice ${draft.coverage === c.key ? 'active' : ''}`} onClick={() => pickCoveragePick(c.key)}>{c.label}</button>)}<button type="button" className={`pickCompactChoice skip ${draft.pickCoverageSkipped ? 'active' : ''}`} onClick={pickCoverageSkip}>SKIP</button></div></div>
+            <div className="pickLinkedRow pickCoverageRow"><div className="pickLinkedLabel"><b>Défense</b><span>Facultatif</span></div><div className="pickCoverageChoices">{codingButtonsFor('coverage').map((c) => <button key={c.key} type="button" className={`pickCompactChoice ${draft.coverage === c.key ? 'active' : ''}`} onClick={() => pickCoveragePick(c.key)}>{c.label}</button>)}<button type="button" className={`pickCompactChoice skip ${draft.pickCoverageSkipped ? 'active' : ''}`} onClick={pickCoverageSkip}>SKIP</button></div></div>
             <div className={`pickLinkedRow pickActorRow ${readyForActor ? '' : 'disabled'}`}><div className="pickLinkedLabel"><b>Qui réalise l’action ?</b><span>{readyForActor ? 'Choisis le joueur' : 'Renseigne Handler et Roller'}</span></div>{miniPlayers(draft.playerId, readyForActor ? pickActorPick : ()=>{})}</div>
           </div>
         </>;
@@ -10683,6 +10683,25 @@ function Style() {
       .technicalQuickChoices{display:grid;grid-template-columns:1fr 1fr auto;gap:6px;margin-top:6px;padding:7px;border:1px solid rgba(174,107,255,.25);border-radius:10px;background:#101729}
       .technicalQuickChoices button{min-height:32px;padding:6px 8px;border:1px solid rgba(255,255,255,.12);border-radius:8px;background:#171e31;color:#fff;font-size:10px;font-weight:900;cursor:pointer}
       .technicalQuickChoices button:hover{border-color:#b77cff}
+
+      /* V6 · aucun pavé blanc dans les boutons de codage */
+      .lc-body .bt,.lc-body .bt *{color:inherit}
+      .lc-body .bt .ic,.lc-body .bt .lbl,.lc-body .bt .lbl *{background:transparent!important;box-shadow:none!important}
+      .lc-body .bt{appearance:none!important;-webkit-appearance:none!important}
+      .lc-body .bt:focus,.lc-body .bt:focus-visible{outline:none!important;background:#1d263b!important}
+      .lc-body .bt.active:focus,.lc-body .bt.active:focus-visible{background:linear-gradient(180deg,var(--bordeaux2),var(--bordeaux))!important}
+
+      /* V6 · Pick lié responsive et plus propre */
+      .pickLinkedBlock{width:100%;max-width:100%;gap:7px}
+      .pickLinkedRow{grid-template-columns:minmax(92px,28%) minmax(0,1fr);padding:9px 10px;gap:8px}
+      .pickMiniPlayers{gap:clamp(5px,1vw,9px);flex-wrap:nowrap;overflow-x:auto;padding:2px 0}
+      .pickMiniPlayer{width:clamp(34px,3.2vw,42px);height:clamp(34px,3.2vw,42px);min-width:clamp(34px,3.2vw,42px)}
+      .pickMiniPlayer .av.pickMiniAvatar{width:clamp(28px,2.7vw,34px);height:clamp(28px,2.7vw,34px);min-width:clamp(28px,2.7vw,34px)}
+      .pickCompactChoice,.pickCompactChoice.skip{color:#fff!important;background:#171e31!important;border-color:#35415a!important;opacity:1}
+      .pickCompactChoice:hover{background:#202a40!important;border-color:rgba(212,162,76,.65)!important}
+      .pickCompactChoice.active{background:var(--bordeaux)!important;border-color:var(--bordeaux2)!important;color:#fff!important}
+      .pickActorRow.disabled{opacity:.48}
+      @media (max-width:1100px){.pickLinkedRow{grid-template-columns:1fr}.pickLinkedLabel{margin-bottom:2px}.pickCoverageChoices{gap:5px}.pickCompactChoice{padding:6px 8px}}
     `}
 </style>
   );
