@@ -1,7 +1,5 @@
 'use client';
 
-// MYBASKET LIVESTAT V11.0 — live individuel / technique / touche / shot chart
-
 /**
  * Prise de stats LIVE — wizard une-étape-à-la-fois (Sportscode / FIBA LiveStats)
  * Intégré au Management ("Stats Live"). Choix de l'équipe depuis les vraies équipes Supabase.
@@ -15,10 +13,7 @@
  */
 
 import { type MouseEvent, useEffect, useRef, useState } from 'react';
-import { CODING_MODES, type CodingMode, isPostLikeCodingMode } from '@/components/prise-stats-pro/coding-modes';
 import { createClient } from "@/lib/supabase/client";
-import { getTeams, saveTeam } from "@/lib/equipes-store";
-import { emptyTeam } from "@/types/player";
 import {
   saveLiveMatch,
   ensureLiveMatch,
@@ -26,7 +21,6 @@ import {
   deleteLiveAction,
   upsertLiveMatchAggregates,
   finalizeLiveMatch,
-  updateLiveMatchCategory,
   saveProjectState,
   listProjects,
   loadProject,
@@ -37,16 +31,7 @@ import {
 import { listPlaybooks, listPlaybookSystems, type Playbook, type PlaybookSystem } from "@/lib/playbook";
 import { useLivestatTags } from "@/lib/livestat-tags";
 import ActionClipsModal, { type ClipAction } from "@/components/prise-stats-pro/ActionClipsModal";
-import GoogleDriveVideoPicker from "@/components/video/GoogleDriveVideoPicker";
-import type { GoogleDrivePickedVideo } from "@/lib/google-drive/client";
-import {
-  googleDriveFileStreamUrl,
-  linkGoogleDriveFileToMatch,
-} from "@/lib/google-drive/client";
 import VideoSyncModal from "@/components/prise-stats-pro/VideoSyncModal";
-import LiveCodingSettingsModal, { DEFAULT_WORKFLOW_PREFS, type LiveWorkflowPrefs, type LiveCodingProfile, type CodingButtonGroup } from "@/components/prise-stats-pro/LiveCodingSettingsModal";
-import LivePlayerAssociationModal, { type AssociableLiveAction } from "@/components/prise-stats-pro/LivePlayerAssociationModal";
-import MatchReviewBuilder, { type MatchReviewEvent, type MatchReviewLayout } from "@/components/prise-stats-pro/MatchReviewBuilder";
 import ShotChart, { SHOT_ZONES, zoneById, resolveShotZone } from "@/components/prise-stats-pro/ShotChart";
 import {
   type VideoSyncState,
@@ -57,13 +42,6 @@ import {
   syncToProjectState,
   formatOffset,
 } from "@/lib/video-sync";
-import PickQuickTagger from '@/components/prise-stats-pro/PickQuickTagger';
-import { createSharedLiveSession, joinSharedLiveSession, openSharedPossession, savePickEvent, subscribeSharedLive, updateSharedLiveState, type SharedLiveState } from '@/lib/live-mutualization';
-import {
-  attachMatchVideoFile,
-  relinkMatchVideo,
-  restoreMatchVideoForClip,
-} from "@/lib/video/match-video-resolver";
 
 /* Safari/WebKit peut exposer un TimeRanges vide sous le nom interne
  * `EmptyRanges`. Certaines opérations vidéo détachées peuvent alors tenter
@@ -86,12 +64,10 @@ type Ctx = '' | 'attaque' | 'defense';
 interface Draft {
   context: Ctx; systemeJeu: string; inbound: string; tempsFort: string; coverage: string;
   playerId: string | null; actionType: string;
-  shotType: string; shotResult: string; shotRange?: 'interior' | 'exterior' | 'three' | null; specialCase: string;
+  shotType: string; shotResult: string; specialCase: string;
   ftAttempts: number; ftMade: number; ftResults: string[];
   zone: string; courtX: number | null; courtY: number | null;
   reboundType: string; reboundPlayerId: string | null;
-  // Joueur impliqué dans une faute au rebond, sans écraser le tireur.
-  reboundFoulPlayerId?: string | null;
   assist: boolean | null; assistPlayerId: string | null;
   foulOutcome: string;
   // AJOUT §2 · playbook, système mappé, bornes de possession, joueur adverse
@@ -104,13 +80,6 @@ interface Draft {
   opponentPlayerId?: string | null;
   opponentPlayerName?: string | null;
   opponentPlayerNumber?: string | null;
-  // Clip court commun Temps fort / Joueur / Tir.
-  eventClipStart?: number | null;
-  // Pick Top / Side hors Live : acteurs du pick + joueur qui réalise l'action finale.
-  pickZone?: string | null;
-  pickHandlerPlayerId?: string | null;
-  pickScreenerPlayerId?: string | null;
-  pickRollerPlayerId?: string | null;
 }
 interface StatA extends Draft {
   id: string;
@@ -184,50 +153,116 @@ function readTeamsFromLocalStorage(): { id: string; name: string; players: Playe
   }
 }
 
-async function readTeams(): Promise<{ id: string; name: string; players: Player[]; teamType?: string; isScoutTeam?: boolean }[]> {
+async function readTeams(): Promise<{ id: string; name: string; players: Player[] }[]> {
   if (typeof window === 'undefined') return [];
 
   try {
-    const loadedTeams = await getTeams();
+    const supabase = createClient();
 
-    return (loadedTeams ?? [])
-      .filter(
-        (team: any) =>
-          team?.isShared !== true ||
-          team?.collaborationPermissions?.livestats === true,
-      )
+    const { data: teamsData, error: teamsError } = await supabase
+      .from('teams')
+      .select('*')
+      .order('name', { ascending: true });
+
+    if (teamsError) {
+      console.error('Erreur chargement équipes Supabase prise stats :', {
+        message: teamsError.message,
+        details: teamsError.details,
+        hint: teamsError.hint,
+        code: teamsError.code,
+        raw: teamsError,
+      });
+
+      return [];
+    }
+
+    const validTeams = (teamsData ?? [])
       .map((team: any) => ({
-        id: String(team.id || ''),
-        name: String(team.name || team.club_name || 'Équipe').toUpperCase(),
-        teamType: String(team.teamType ?? team.team_type ?? ((team.isScoutTeam || team.scout) ? 'scout' : 'coached')),
-        isScoutTeam: Boolean(team.isScoutTeam || team.scout || String(team.teamType ?? team.team_type ?? '').toLowerCase() === 'scout'),
-        players: (team.players || [])
-          .map((player: any) =>
-            normalizePlayer({
-              id: player.id,
-              num: player.num ?? player.number ?? player.jersey_number ?? 0,
-              first_name: player.firstName ?? player.first_name,
-              last_name: player.lastName ?? player.last_name,
-              name:
-                [player.firstName ?? player.first_name, player.lastName ?? player.last_name]
-                  .filter(Boolean)
-                  .join(' ')
-                  .trim(),
-              pos: player.postePrincipal ?? player.position_primary ?? player.position ?? '',
-              photo_url: player.photo ?? player.photo_url ?? player.avatar_url ?? '',
-            }),
-          )
-          .filter((player: Player) => player.id)
-          .sort((a: Player, b: Player) => a.num - b.num),
+        ...team,
+        id: String(team.id ?? ''),
       }))
-      .filter(
-        (team: { id: string; players: Player[]; teamType?: string; isScoutTeam?: boolean }) =>
-          team.id &&
-          /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(team.id) &&
-          (team.players.length > 0 || team.isScoutTeam === true || String(team.teamType || '').toLowerCase() === 'scout'),
+      .filter((team: any) => team.id && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(team.id));
+
+    const teamIds = validTeams.map((team: any) => team.id);
+
+    if (!teamIds.length) {
+      console.warn('Aucune vraie équipe Supabase trouvée pour la prise de stats.');
+      return [];
+    }
+
+    const { data: playersData, error: playersError } = await supabase
+      .from('players')
+      .select('*')
+      .in('team_id', teamIds);
+
+    if (playersError) {
+      console.error('Erreur chargement joueurs Supabase prise stats :', {
+        message: playersError.message,
+        details: playersError.details,
+        hint: playersError.hint,
+        code: playersError.code,
+        raw: playersError,
+      });
+
+      return validTeams.map((team: any) => ({
+        id: team.id,
+        name: String(team.name || team.club_name || 'Équipe').toUpperCase(),
+        players: [],
+      }));
+    }
+
+    const playersByTeam: Record<string, Player[]> = {};
+
+    (playersData ?? []).forEach((player: any) => {
+      const currentTeamId = String(player.team_id ?? '');
+      if (!currentTeamId) return;
+
+      if (!playersByTeam[currentTeamId]) playersByTeam[currentTeamId] = [];
+
+      playersByTeam[currentTeamId].push(
+        normalizePlayer({
+          id: player.id,
+          num:
+            player.number_jersey ??
+            player.number ??
+            player.numero ??
+            player.num ??
+            player.jersey_number ??
+            0,
+          first_name: player.first_name,
+          last_name: player.last_name,
+          name:
+            player.name ||
+            [player.first_name, player.last_name].filter(Boolean).join(' ').trim() ||
+            player.full_name ||
+            '',
+          pos: player.position || player.pos || player.poste || '',
+          photo_url: player.photo_url || player.avatar_url || player.photo || '',
+        })
       );
+    });
+
+    Object.keys(playersByTeam).forEach((id) => {
+      playersByTeam[id].sort((a, b) => a.num - b.num);
+    });
+
+    const mapped = validTeams
+      .map((team: any) => {
+        const players = playersByTeam[team.id] ?? [];
+
+        return {
+          id: team.id,
+          name: String(team.name || team.club_name || 'Équipe').toUpperCase(),
+          players,
+        };
+      })
+      .filter((team: { id?: string; players: unknown[] }) => team.id && team.players.length);
+
+    console.log('Équipes Supabase chargées pour prise stats =', mapped);
+
+    return mapped;
   } catch (error) {
-    console.error('Erreur chargement équipes MyBasket prise stats :', error);
+    console.error('Erreur inattendue chargement équipes Supabase prise stats :', error);
     return [];
   }
 }
@@ -289,11 +324,6 @@ const TEMPS = [
     icon: "✂️",
   },
   {
-    id: "passing",
-    label: "Passing",
-    icon: "🔁",
-  },
-  {
     id: "rebond_offensif",
     label: "Rebond offensif",
     icon: "🔄",
@@ -311,18 +341,15 @@ const COVERAGES = [
 const ATT_ACTIONS = [
   { id: 'tir', label: 'Tir', ic: '🏀' }, { id: 'faute-provoquee', label: 'Faute provoquée', ic: '🔔' },
   { id: 'touche', label: 'Touche / Sortie', ic: '⤵' }, { id: 'perte', label: 'Perte de balle', ic: '✖' },
-  { id: 'contre', label: 'Contre', ic: '🛑' },
   { id: 'faute-commise', label: 'Faute commise', ic: '🟨' },
-  { id: 'faute-technique', label: 'Faute technique', ic: '🟪' },
 ];
 const DEF_ACTIONS = [
   { id: 'tir', label: 'Tir adverse', ic: '🏀' },
   { id: 'interception', label: 'Interception / récupération', ic: '🖐' },
+  { id: 'perte-adverse', label: 'BP adverse', ic: '✖' },
   { id: 'contre', label: 'Contre', ic: '🛑' },
-  { id: 'touche', label: 'Touche', ic: '⤵' },
   { id: 'faute-provoquee', label: 'Faute provoquée', ic: '🔔' },
   { id: 'faute-commise', label: 'Faute commise', ic: '🟨' },
-  { id: 'faute-technique', label: 'Faute technique', ic: '🟪' },
 ];
 const NEEDS_PLAYER_DEF = ["contre"];
 const CAN_TAG_PLAYER_DEF = ["interception", "perte-adverse"];
@@ -355,29 +382,9 @@ type CodingButtonCfg = {
 
 // Fallback = constantes actuelles, converties une seule fois au shape config.
 const CODING_FALLBACK: Record<string, CodingButtonCfg[]> = {
-  'system': SYSTEMES_JEU.map((o, i) => ({ key: o.id, label: o.label, emoji: o.ic, category: 'system', stage: 'systeme', sort_order: i, is_active: true })),
   'att-action': ATT_ACTIONS.map((o, i) => ({ key: o.id, label: o.label, emoji: o.ic, category: 'att-action', stage: 'action', sort_order: i, is_active: true })),
   'def-action': DEF_ACTIONS.map((o, i) => ({ key: o.id, label: o.label, emoji: o.ic, category: 'def-action', stage: 'action', sort_order: i, is_active: true })),
   'coverage': COVERAGES.map((o, i) => ({ key: o.id, label: o.label, category: 'coverage', stage: 'coverage', sort_order: i, is_active: true })),
-  'result': [
-    { key:'2-made', label:'2PTS marqué', emoji:'✓', category:'result', stage:'result', sort_order:0, is_active:true },
-    { key:'2-missed', label:'2PTS raté', emoji:'✕', category:'result', stage:'result', sort_order:1, is_active:true },
-    { key:'3-made', label:'3PTS marqué', emoji:'✓', category:'result', stage:'result', sort_order:2, is_active:true },
-    { key:'3-missed', label:'3PTS raté', emoji:'✕', category:'result', stage:'result', sort_order:3, is_active:true },
-  ],
-  'foul': [
-    { key:'touche', label:'Touche', category:'foul', stage:'faute', sort_order:0, is_active:true },
-    { key:'lf2', label:'2 LF', category:'foul', stage:'faute', sort_order:1, is_active:true },
-    { key:'2plus1', label:'2pts + 1LF', category:'foul', stage:'faute', sort_order:2, is_active:true },
-    { key:'lf3', label:'3 LF', category:'foul', stage:'faute', sort_order:3, is_active:true },
-    { key:'3plus1', label:'3pts + 1LF', category:'foul', stage:'faute', sort_order:4, is_active:true },
-  ],
-  'rebound': [
-    { key:'off', label:'Rebond offensif', emoji:'🔄', category:'rebound', stage:'rebound', sort_order:0, is_active:true },
-    { key:'def', label:'Rebond défensif', emoji:'🧲', category:'rebound', stage:'rebound', sort_order:1, is_active:true },
-    { key:'touche-pour', label:'Touche / sortie pour moi', emoji:'↪', category:'rebound', stage:'rebound', sort_order:2, is_active:true },
-    { key:'touche-contre', label:'Touche / sortie contre moi', emoji:'↩', category:'rebound', stage:'rebound', sort_order:3, is_active:true },
-  ],
 };
 
 /**
@@ -391,30 +398,24 @@ function resolveCodingButtons(
   db?: CodingButtonCfg[] | null
 ): CodingButtonCfg[] {
   if (db && db.length) {
-    const categoryRows = db.filter((b) => b.category === category);
-    if (categoryRows.length) {
-      return categoryRows
-        .filter((b) => b.is_active !== false)
-        .slice()
-        .sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0));
-    }
+    const rows = db.filter((b) => b.category === category && b.is_active !== false);
+    if (rows.length) return [...rows].sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0));
   }
   return CODING_FALLBACK[category] ?? [];
 }
 
 const NAV = ['Contexte', 'Système de jeu', 'Temps fort', 'Joueur', "Type d'action", 'Résultat', 'Où ?', 'Conséquence'];
 const STAGE_NAV: Record<string, number> = {
-  context: 0, inbound: 1, systeme: 1, temps: 2, 'pick-actors': 3, coverage: 3, player: 3, action: 4, faute: 4, 'technical-foul-target': 4, result: 5, ft: 5, zone: 6, rebound: 7, assist: 7,
+  context: 0, inbound: 1, systeme: 1, temps: 2, coverage: 2, player: 3, action: 4, faute: 4, result: 5, ft: 5, zone: 6, rebound: 7, assist: 7,
 };
 const emptyDraft = (): Draft => ({
   context: '', systemeJeu: '', inbound: '', tempsFort: '', coverage: '', playerId: null, actionType: '',
-  shotType: '', shotResult: '', shotRange: null, specialCase: 'aucun', ftAttempts: 0, ftMade: 0, ftResults: [],
-  zone: '', courtX: null, courtY: null, reboundType: '', reboundPlayerId: null, reboundFoulPlayerId: null, assist: null, assistPlayerId: null, foulOutcome: '',
+  shotType: '', shotResult: '', specialCase: 'aucun', ftAttempts: 0, ftMade: 0, ftResults: [],
+  zone: '', courtX: null, courtY: null, reboundType: '', reboundPlayerId: null, assist: null, assistPlayerId: null, foulOutcome: '',
   // AJOUT §2
   playbookId: null, systemeSlot: null, systemeId: null, systemeName: null,
-  possessionStart: null, possessionEnd: null, eventClipStart: null,
+  possessionStart: null, possessionEnd: null,
   opponentPlayerId: null, opponentPlayerName: null, opponentPlayerNumber: null,
-  pickZone: null, pickHandlerPlayerId: null, pickScreenerPlayerId: null, pickRollerPlayerId: null,
 });
 
 /* ============================ Calculs ============================ */
@@ -426,19 +427,7 @@ const reboundNext = (c: Ctx, t: string): Ctx =>
       : t === 'touche-pour' ? 'attaque' : t === 'touche-contre' ? 'defense' : POSS(c);
 
 function ptsOf(a: Draft) {
-  if (a.actionType === 'faute-technique' && a.foulOutcome === 'technical-for') return a.ftMade || 0;
   if (a.context === 'defense') return 0;
-
-  // Faute provoquée sur panier marqué :
-  // 2+1 = 2 points déjà marqués + 1 LF éventuel
-  // 3+1 = 3 points déjà marqués + 1 LF éventuel
-  if (a.actionType === 'faute-provoquee') {
-    if (a.specialCase === '2pts+1lf') return 2 + (a.ftMade || 0);
-    if (a.specialCase === '3pts+1lf') return 3 + (a.ftMade || 0);
-    if (a.specialCase === 'unsportsmanlike-2pts+1lf') return 2 + (a.ftMade || 0);
-    if (a.specialCase === 'unsportsmanlike-3pts+1lf') return 3 + (a.ftMade || 0);
-  }
-
   let p = 0;
   if (a.shotType === 'LF') p += a.ftMade || 0;
   else if (a.actionType === 'tir' && a.shotResult === 'made') { if (a.shotType === '2PTS') p = 2; else if (a.shotType === '3PTS') p = 3; }
@@ -446,7 +435,6 @@ function ptsOf(a: Draft) {
   return p;
 }
 function themPtsOf(a: Draft) {
-  if (a.actionType === 'faute-technique' && a.foulOutcome === 'technical-against') return a.ftMade || 0;
   if (a.context === 'defense' && a.actionType === 'tir' && a.shotResult === 'made')
     return a.shotType === '3PTS' ? 3 : a.shotType === 'LF' ? 1 : 2;
   if (a.context === 'defense' && a.actionType === 'faute-commise') {
@@ -566,7 +554,6 @@ function computeBox(actions: StatA[], roster: Player[]) {
     blk: 0,
     to: 0,
     pf: 0,
-    fd: 0, // fautes provoquées
   });
 
   roster.forEach((p) => {
@@ -592,18 +579,6 @@ function computeBox(actions: StatA[], roster: Player[]) {
   actions.forEach((a) => {
     const L = ens(a.playerId);
 
-    // Faute commise au rebond : +1 faute personnelle au joueur choisi.
-    if (a.foulOutcome === "rebound-foul-committed" && a.reboundFoulPlayerId) {
-      const foulPlayer = ens(a.reboundFoulPlayerId);
-      if (foulPlayer) foulPlayer.pf++;
-    }
-
-    // Faute provoquée au rebond.
-    if (a.foulOutcome === "rebound-foul-drawn" && a.reboundFoulPlayerId) {
-      const drawnBy = ens(a.reboundFoulPlayerId);
-      if (drawnBy) drawnBy.fd++;
-    }
-
     if (a.actionType === "tir" && L && a.context !== "defense") {
       if (a.shotType === "2PTS") {
         L.p2a++;
@@ -624,43 +599,23 @@ function computeBox(actions: StatA[], roster: Player[]) {
         L.fta += a.ftAttempts;
         L.ftm += a.ftMade;
       }
-    } else if ((a.actionType === "interception" || a.actionType === "perte-adverse") && L) {
-      // BP adverse attribuée à un joueur = interception joueur.
-      // Sans playerId, la statistique reste uniquement sur la ligne ÉQUIPE.
+    } else if (a.actionType === "interception" && L) {
       L.stl++;
     } else if (a.actionType === "contre" && L) {
       L.blk++;
     } else if (a.actionType === "perte" && L) {
       L.to++;
-    } else if (a.actionType === "rebond-off" && L) {
-      L.offReb++;
     } else if (a.actionType === "rebond-def" && L) {
       L.defReb++;
-    } else if (a.actionType === "passe-decisive" && L) {
-      L.ast++;
-    } else if ((a.actionType === "faute-commise" || (a.actionType === "faute-technique" && a.specialCase === "technical-player")) && L) {
+    } else if (a.actionType === "faute-commise" && L) {
       L.pf++;
-      // Faute commise alors que nous sommes en attaque = faute offensive :
-      // elle compte aussi comme perte de balle pour le joueur.
-      if (a.context === "attaque") L.to++;
-    } else if (a.actionType === "faute-provoquee" && L) {
-      L.fd++;
-      // Faute provoquée classique : uniquement les LF.
-      // And-one : le panier marqué compte aussi dans les tirs du joueur.
-      if (a.specialCase === "2pts+1lf") {
-        L.p2a++;
-        L.p2m++;
-        L.fta += 1;
-        L.ftm += a.ftMade || 0;
-      } else if (a.specialCase === "3pts+1lf") {
-        L.p3a++;
-        L.p3m++;
-        L.fta += 1;
-        L.ftm += a.ftMade || 0;
-      } else {
-        L.fta += a.ftAttempts;
-        L.ftm += a.ftMade;
-      }
+    } else if (
+      a.actionType === "faute-provoquee" &&
+      L &&
+      a.shotType === "LF"
+    ) {
+      L.fta += a.ftAttempts;
+      L.ftm += a.ftMade;
     }
 
     if (a.assist && a.assistPlayerId) {
@@ -695,28 +650,16 @@ function computeBox(actions: StatA[], roster: Player[]) {
           l.stl +
           l.blk +
           l.to +
-          l.pf +
-          l.fd >
+          l.pf >
         0
     )
     .sort((a: any, b: any) => a.p.num - b.p.num);
 }
 function computeAnalytics(actions: StatA[], roster: Player[]) {
-  // Une possession peut contenir plusieurs attaques (RO / touche conservée).
-  // On compte donc les possessions par ancre de début et non par nombre d'actions.
-  const offKeys = new Set<string>();
-  const defKeys = new Set<string>();
-  const defSeq: boolean[] = [];
+  let offPoss = 0, defPoss = 0; const defSeq: boolean[] = [];
   actions.forEach((a) => {
-    const key = `${a.context}:${a.possessionStart ?? a.id}`;
-    if (a.context === 'attaque') offKeys.add(key);
-    else if (a.context === 'defense') defKeys.add(key);
-  });
-  const offPoss = offKeys.size;
-  const defPoss = defKeys.size;
-  Array.from(defKeys).forEach((key) => {
-    const list = actions.filter((a) => `${a.context}:${a.possessionStart ?? a.id}` === key);
-    defSeq.push(list.reduce((sum, a) => sum + themPtsOf(a), 0) === 0);
+    if (a.context === 'attaque') offPoss++;
+    else if (a.context === 'defense') { defPoss++; defSeq.push(themPtsOf(a) === 0); }
   });
   let maxStreak = 0, cur = 0; defSeq.forEach((stop) => { if (stop) { cur++; maxStreak = Math.max(maxStreak, cur); } else cur = 0; });
   const tfUsed = TEMPS.filter((t) => actions.some((a) => a.tempsFort === t.id));
@@ -736,123 +679,9 @@ function Av({ p, cls }: { p?: Player; cls?: string }) {
 }
 
 /* ============================ Composant ============================ */
-
-/* ============================================================================
- * Accès persistant à la vidéo locale
- * ----------------------------------------------------------------------------
- * Quand le navigateur supporte File System Access API, on conserve le handle
- * du fichier dans IndexedDB. À la reprise du projet, MyBasket tente donc de
- * rouvrir EXACTEMENT le même fichier. Si le fichier a été déplacé/supprimé ou
- * si l'autorisation a expiré, on revient au bouton « Retrouver la vidéo ».
- * ========================================================================== */
-type MyBasketLocalVideoHandle = {
-  name?: string;
-  getFile: () => Promise<File>;
-  queryPermission?: (options?: { mode?: 'read' | 'readwrite' }) => Promise<string>;
-  requestPermission?: (options?: { mode?: 'read' | 'readwrite' }) => Promise<string>;
-};
-
-const LOCAL_VIDEO_DB = 'mybasket-local-video-handles';
-const LOCAL_VIDEO_STORE = 'handles';
-
-function localVideoHandleKey(teamId: string, filename: string) {
-  return `team:${String(teamId || 'unknown')}::${String(filename || '').trim().toLowerCase()}`;
-}
-
-function openLocalVideoHandleDb(): Promise<IDBDatabase | null> {
-  return new Promise((resolve) => {
-    if (typeof indexedDB === 'undefined') {
-      resolve(null);
-      return;
-    }
-
-    const req = indexedDB.open(LOCAL_VIDEO_DB, 1);
-
-    req.onupgradeneeded = () => {
-      const db = req.result;
-      if (!db.objectStoreNames.contains(LOCAL_VIDEO_STORE)) {
-        db.createObjectStore(LOCAL_VIDEO_STORE);
-      }
-    };
-
-    req.onsuccess = () => resolve(req.result);
-    req.onerror = () => resolve(null);
-  });
-}
-
-async function saveLocalVideoHandle(key: string, handle: MyBasketLocalVideoHandle) {
-  const db = await openLocalVideoHandleDb();
-  if (!db) return;
-
-  await new Promise<void>((resolve) => {
-    try {
-      const tx = db.transaction(LOCAL_VIDEO_STORE, 'readwrite');
-      tx.objectStore(LOCAL_VIDEO_STORE).put(handle, key);
-      tx.oncomplete = () => resolve();
-      tx.onerror = () => resolve();
-    } catch {
-      resolve();
-    }
-  });
-
-  db.close();
-}
-
-async function readLocalVideoHandle(key: string): Promise<MyBasketLocalVideoHandle | null> {
-  const db = await openLocalVideoHandleDb();
-  if (!db) return null;
-
-  const value = await new Promise<MyBasketLocalVideoHandle | null>((resolve) => {
-    try {
-      const tx = db.transaction(LOCAL_VIDEO_STORE, 'readonly');
-      const req = tx.objectStore(LOCAL_VIDEO_STORE).get(key);
-      req.onsuccess = () =>
-        resolve((req.result as MyBasketLocalVideoHandle | undefined) ?? null);
-      req.onerror = () => resolve(null);
-    } catch {
-      resolve(null);
-    }
-  });
-
-  db.close();
-  return value;
-}
-
 export default function PriseStatsProPage() {
-  const [teams, setTeams] = useState<{ id: string; name: string; players: Player[]; teamType?: string; isScoutTeam?: boolean }[]>([]);
-  const [analysisScope, setAnalysisScope] = useState<'coached' | 'scout'>('coached');
-  const quickCreateScoutTeam = async () => {
-    const name = window.prompt("Nom de l'équipe scoutée (ex : AS Monaco)")?.trim();
-    if (!name) return;
-    const category = window.prompt("Catégorie / niveau (optionnel)", "Senior")?.trim() || "SCOUT";
-    try {
-      const base = emptyTeam();
-      const created = await saveTeam({ ...base, id: '', name, cat: category, categorieLabel: category, teamType: 'scout', isScoutTeam: true, scout: true, players: [] } as any);
-      const loaded = await readTeams();
-      setTeams(loaded);
-      setAnalysisScope('scout');
-      setTeamId(created.id);
-      setStarters([]);
-      flash("Équipe scoutée créée. Ajoute maintenant son effectif dans Mes équipes.");
-    } catch (error) {
-      console.error('Création équipe scoutée LiveStats :', error);
-      flash("Création de l'équipe scoutée impossible");
-    }
-  };
+  const [teams, setTeams] = useState<{ id: string; name: string; players: Player[] }[]>([]);
   const [screen, setScreen] = useState<'setup' | 'live' | 'box'>('setup');
-  // Deux usages volontairement séparés :
-  // - live : codage ultra rapide pendant le match ;
-  // - post : codage vidéo détaillé historique (inchangé).
-  const [codingMode, setCodingMode] = useState<CodingMode>('post');
-  const [mutualizedLive, setMutualizedLive] = useState(false);
-  const [joinLiveCode, setJoinLiveCode] = useState('');
-  const [sharedRole, setSharedRole] = useState<'individual'|'collective'>(codingMode === 'live-individual' ? 'individual' : 'collective');
-  const [sharedLive, setSharedLive] = useState<SharedLiveState | null>(null);
-  const [showPickQuick, setShowPickQuick] = useState(false);
-  const sharedLiveRef = useRef<SharedLiveState | null>(null);
-  useEffect(() => { sharedLiveRef.current = sharedLive; }, [sharedLive]);
-  useEffect(() => sharedLive ? subscribeSharedLive(sharedLive.id, setSharedLive) : undefined, [sharedLive?.id]);
-  const [importedLiveSource, setImportedLiveSource] = useState<Record<string, any> | null>(null);
   const [teamId, setTeamId] = useState('');
   const [activeTeamId, setActiveTeamId] = useState('');
   const [opponent, setOpponent] = useState('');
@@ -872,54 +701,17 @@ export default function PriseStatsProPage() {
   };
   const removeOppPlayer = (id: string) => setOppRoster((r) => r.filter((p) => p.id !== id));
   const [date, setDate] = useState(() => new Date().toISOString().slice(0, 10));
-  const [matchType, setMatchType] = useState<'friendly' | 'league' | 'cup'>('friendly');
   const [home, setHome] = useState(true);
-
-  // Effectif officiel du match : de 5 à 12 joueurs choisis parmi l'effectif de l'équipe.
-  // Seuls ces joueurs sont ensuite proposés dans tout le codage et les statistiques.
-  const [matchPlayerIds, setMatchPlayerIds] = useState<string[]>([]);
   const [starters, setStarters] = useState<string[]>([]);
-
   // Numéro de maillot propre au match du jour. Ne modifie jamais la fiche joueur Supabase.
   // playerId -> numéro porté pour CE match (utile aujourd'hui pour le codage, demain pour l'IA vidéo).
   const [matchJerseyNumbers, setMatchJerseyNumbers] = useState<Record<string, number>>({});
-
-  useEffect(() => {
-    setMatchPlayerIds([]);
-    setStarters([]);
-    setMatchJerseyNumbers({});
-  }, [teamId]);
 
   const [roster, setRoster] = useState<Player[]>([]);
   const [teamName, setTeamName] = useState('');
   const [onCourt, setOnCourt] = useState<string[]>([]);
   const [stage, setStage] = useState('context');
-  // Navigation du wizard : mémorise le dernier bloc réellement visité.
-  // La flèche ← remonte donc le chemin parcouru, au lieu de recalculer un ordre théorique.
-  const [stageHistory, setStageHistory] = useState<string[]>([]);
-  const previousStageRef = useRef('context');
-  const backNavigationRef = useRef(false);
-
-  useEffect(() => {
-    const previous = previousStageRef.current;
-    if (stage === previous) return;
-
-    if (backNavigationRef.current) {
-      backNavigationRef.current = false;
-    } else {
-      setStageHistory((current) => [...current.slice(-39), previous]);
-    }
-
-    previousStageRef.current = stage;
-  }, [stage]);
-
   const [draft, setDraft] = useState<Draft>(emptyDraft());
-
-  // Correction depuis l'historique : on garde l'action d'origine pour pouvoir
-  // la remplacer sans créer de doublon et sans perdre son clip / horloge.
-  const editingActionRef = useRef<StatA | null>(null);
-  const [historyCorrectionAction, setHistoryCorrectionAction] = useState<StatA | null>(null);
-
   const [actions, setActions] = useState<StatA[]>([]);
   const [q, setQ] = useState(1);
   const [secs, setSecs] = useState(600);
@@ -932,102 +724,23 @@ export default function PriseStatsProPage() {
   const [perQ, setPerQ] = useState<Record<number, { us: number; them: number }>>({ 1: { us: 0, them: 0 } });
   const [subSel, setSubSel] = useState<string | null>(null);
 
-  // LF technique en interruption : on mémorise le codage courant, on saisit le LF,
-  // puis on revient exactement au bloc où l'on était sans changer la possession.
-  const technicalFtReturnRef = useRef<{ stage: string; draft: Draft; history: string[]; wasRunning: boolean } | null>(null);
-  const [showTechnicalFtChoice, setShowTechnicalFtChoice] = useState(false);
-  const [technicalFtSanctionedSide, setTechnicalFtSanctionedSide] = useState<'us' | 'them' | null>(null);
-
   /* V6→final · boutons de codification configurables (Management).
      Chargés depuis livestat_coding_buttons pour l'équipe active ; si vide ou
      erreur → null → resolveCodingButtons retombe sur les constantes. Un
      changement dans Management se répercute ici (label/emoji/couleur/ordre). */
   const [codingDb, setCodingDb] = useState<CodingButtonCfg[] | null>(null);
-  const [codingDbNonce, setCodingDbNonce] = useState(0);
-  const [showCodingSettings, setShowCodingSettings] = useState(false);
-  const [showMatchReviewBuilder, setShowMatchReviewBuilder] = useState(false);
-  const [matchReviewLayout, setMatchReviewLayout] = useState<MatchReviewLayout>({ columns: 2, compact: false, showPlayerPanel: true, showVideo: true, showHistory: true });
-  const [codingSettingsTab, setCodingSettingsTab] = useState<'workflow' | 'buttons'>('workflow');
-  const [workflowPrefs, setWorkflowPrefs] = useState<LiveWorkflowPrefs>({ ...DEFAULT_WORKFLOW_PREFS });
-  const [isOffline, setIsOffline] = useState(false);
-
-  useEffect(() => {
-    if (typeof window === 'undefined') return;
-    const syncOnlineState = () => setIsOffline(!window.navigator.onLine);
-    syncOnlineState();
-    window.addEventListener('online', syncOnlineState);
-    window.addEventListener('offline', syncOnlineState);
-    return () => {
-      window.removeEventListener('online', syncOnlineState);
-      window.removeEventListener('offline', syncOnlineState);
-    };
-  }, []);
-  const [codingProfiles, setCodingProfiles] = useState<LiveCodingProfile[]>([]);
-  const [selectedCodingProfileId, setSelectedCodingProfileId] = useState('');
-  const [profileButtonKeys, setProfileButtonKeys] = useState<LiveCodingProfile['activeButtonKeys'] | null>(null);
   const [toast, setToast] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
 
-
-  const codingProfilesStorageKey = (tId: string) => `mybasket:livestat-coding-profiles:${tId || 'default'}`;
-  const loadCodingProfiles = (tId: string) => {
-    if (typeof window === 'undefined') return [] as LiveCodingProfile[];
-    try {
-      const raw = window.localStorage.getItem(codingProfilesStorageKey(tId));
-      const parsed = raw ? JSON.parse(raw) : [];
-      return Array.isArray(parsed) ? parsed : [];
-    } catch { return [] as LiveCodingProfile[]; }
-  };
-  const persistCodingProfiles = (tId: string, list: LiveCodingProfile[]) => {
-    setCodingProfiles(list);
-    if (typeof window !== 'undefined') {
-      try { window.localStorage.setItem(codingProfilesStorageKey(tId), JSON.stringify(list)); } catch { /* noop */ }
-    }
-  };
-  const applyCodingProfile = (profile: LiveCodingProfile) => {
-    setSelectedCodingProfileId(profile.id);
-    setWorkflowPrefs({ ...profile.workflow });
-    setProfileButtonKeys(profile.activeButtonKeys || null);
-  };
-  const saveCodingProfile = (profile: LiveCodingProfile) => {
-    const tId = activeTeamId || teamId;
-    const list = loadCodingProfiles(tId);
-    const next = list.some((p) => p.id === profile.id)
-      ? list.map((p) => p.id === profile.id ? profile : p)
-      : [...list, profile];
-    persistCodingProfiles(tId, next);
-    applyCodingProfile(profile);
-  };
-  const deleteCodingProfile = (profileId: string) => {
-    const tId = activeTeamId || teamId;
-    const next = loadCodingProfiles(tId).filter((p) => p.id !== profileId);
-    persistCodingProfiles(tId, next);
-    if (selectedCodingProfileId === profileId) {
-      setSelectedCodingProfileId('');
-      setProfileButtonKeys(null);
-    }
-  };
-  useEffect(() => {
-    const tId = activeTeamId || teamId;
-    if (!tId) { setCodingProfiles([]); return; }
-    setCodingProfiles(loadCodingProfiles(tId));
-  }, [activeTeamId, teamId]);
-
   /* -------- V5 · choix vidéo à la création du match (structure + UI) --------
      Aucun upload serveur / ffmpeg ici : on ne prépare que la donnée et l'UI. */
-  const [videoMode, setVideoMode] = useState<'later' | 'file' | 'drive' | 'youtube'>('later');
+  const [videoMode, setVideoMode] = useState<'later' | 'file' | 'youtube'>('later');
   const [videoFile, setVideoFile] = useState<File | null>(null);
-  // Handle durable du fichier choisi : il sera enregistré sous le matchId
-  // dès que le projet Supabase est créé.
-  const pendingLocalFileHandleRef = useRef<FileSystemFileHandle | null>(null);
-  const [pendingDriveFile, setPendingDriveFile] = useState<GoogleDrivePickedVideo | null>(null);
   const [youtubeUrl, setYoutubeUrl] = useState('');
   const [videoStatus, setVideoStatus] = useState('pending');   // pending | ready | linked
-  const [videoProvider, setVideoProvider] = useState('none');  // none | local | google_drive | youtube
+  const [videoProvider, setVideoProvider] = useState('none');  // none | local | youtube
   const [videoUrl, setVideoUrl] = useState('');                // objectURL local ou lien YouTube
   const [videoFilename, setVideoFilename] = useState('');
-  // Le bloc vidéo est optionnel en Live individuel/collectif. Le masquer ne supprime pas la vidéo.
-  const [showVideoPanel, setShowVideoPanel] = useState(false);
 
   /* -------- Synchro vidéo ajoutée APRÈS le codage (offset/dérive au niveau match) --------
      On ne modifie JAMAIS les temps bruts des actions : cette synchro convertit,
@@ -1035,306 +748,63 @@ export default function PriseStatsProPage() {
   const [videoSync, setVideoSyncState] = useState<VideoSyncState>(NATIVE_SYNC);
   const videoSyncRef = useRef<VideoSyncState>(NATIVE_SYNC);
   const setVideoSync = (s: VideoSyncState) => { videoSyncRef.current = s; setVideoSyncState(s); };
-
-  // Quand le coach recale une vidéo déjà ouverte, les bornes de la possession
-  // actuellement en cours ont été prises avec l'ancien repère. On les rebase
-  // immédiatement sur la nouvelle échelle SOURCE afin que le prochain clip
-  // utilise réellement « Le match commence ici » au lieu de conserver l'ancien
-  // timecode absolu de la vidéo. Les actions déjà enregistrées restent intactes.
-  const rebaseActiveVideoMarkers = (previous: VideoSyncState, next: VideoSyncState) => {
-    const toSource = (mediaTime: number | null): number | null => {
-      if (mediaTime == null || !Number.isFinite(mediaTime)) return null;
-      const marker = next.periodMarkers?.[String(q)];
-      const rate = Number.isFinite(next.rate) && next.rate > 0 ? next.rate : 1;
-      if (marker?.start != null && marker?.sourceStart != null) {
-        return Math.max(0, Number(marker.sourceStart) + (mediaTime - Number(marker.start)) / rate);
-      }
-      if (next.mode !== 'native') {
-        return Math.max(0, (mediaTime - (Number.isFinite(next.offset) ? next.offset : 0)) / rate);
-      }
-      return Math.max(0, mediaTime);
-    };
-    const rebase = (raw: number | null): number | null => {
-      if (raw == null) return null;
-      const media = resolveSyncedVideoTime(raw, previous, q);
-      return toSource(media);
-    };
-    possessionStartRef.current = rebase(possessionStartRef.current);
-    possessionEndOverrideRef.current = rebase(possessionEndOverrideRef.current);
-  };
-
-  const applyVideoSync = (next: VideoSyncState) => {
-    const previous = videoSyncRef.current;
-    rebaseActiveVideoMarkers(previous, next);
-    setVideoSync(next);
-  };
   const [showVideoSync, setShowVideoSync] = useState(false);
-  const openVideoSyncAfterStartRef = useRef(false);
-
-  const requestInitialVideoSync = () => {
-    const alreadyValidated =
-      videoSyncRef.current.validated ??
-      videoSyncRef.current.mode !== 'native';
-
-    if (alreadyValidated) return;
-
-    if (screen === 'live') {
-      window.setTimeout(() => setShowVideoSync(true), 80);
-    } else {
-      openVideoSyncAfterStartRef.current = true;
-    }
-  };
 
   // Accès synchrone dans commit() (le state est async) + base de temps vidéo.
   const videoProviderRef = useRef('none');
   const matchStartAtRef = useRef<number | null>(null);
-  // Sans vidéo uniquement : ESPACE lance une horloge murale continue qui ne s'arrête plus.
-  // B reste réservé au chrono officiel 4x10 et ne tourne que pendant le jeu effectif.
-  const [noVideoMatchClockStarted, setNoVideoMatchClockStarted] = useState(false);
-  const [noVideoElapsedDisplay, setNoVideoElapsedDisplay] = useState(0);
   const VIDEO_PRE_ROLL = 6;   // s avant l'action (préparation du clip)
   const VIDEO_POST_ROLL = 4;  // s après l'action
 
-  // Rattache une vidéo locale sans jamais modifier les actions ou les clips.
-  const attachLocalVideoFile = (file: File, restored = false) => {
+  // Sélection d'un fichier vidéo local (objectURL, pas d'upload réel en V5).
+  // Ne réinitialise NI les actions NI les bornes de clips : on ne fait que
+  // rattacher une source vidéo. Sert aussi à re-sélectionner la vidéo d'un
+  // projet rouvert (l'URL blob: d'origine ne survit pas au rechargement).
+  const onPickVideoFile = (file: File | null) => {
+    if (!file) return;
     setVideoFile(file);
-    setPendingDriveFile(null);
     setVideoFilename(file.name);
     try { setVideoUrl(URL.createObjectURL(file)); } catch { setVideoUrl(''); }
     setVideoProvider('local');
     videoProviderRef.current = 'local';
     setVideoStatus('ready');
-    setShowVideoPanel(true);
-    restoredVideoRef.current = { provider: 'local', filename: file.name };
 
-    // À la reprise, la synchro du projet existe déjà.
-    if (!restored) requestInitialVideoSync();
-  };
-
-  // Fallback classique : utile pour les navigateurs ne permettant pas
-  // de conserver un FileSystemFileHandle.
-  const onPickVideoFile = (file: File | null) => {
-    if (!file) return;
-    attachLocalVideoFile(file, false);
-  };
-
-  // Sélection intelligente : si le navigateur le permet, on mémorise le handle
-  // du fichier afin de rouvrir automatiquement EXACTEMENT ce fichier plus tard.
-  const pickLocalVideoSmart = async () => {
-    const picker = (window as any).showOpenFilePicker as
-      | ((options?: any) => Promise<MyBasketLocalVideoHandle[]>)
-      | undefined;
-
-    if (picker) {
-      try {
-        const [handle] = await picker({
-          multiple: false,
-          types: [
-            {
-              description: 'Vidéo du match',
-              accept: { 'video/*': ['.mp4', '.mov', '.m4v', '.webm'] },
-            },
-          ],
-        });
-
-        if (!handle) return;
-
-        const file = await handle.getFile();
-        const tId = String(selTeam?.id || activeTeamId || teamId || 'setup');
-
-        pendingLocalFileHandleRef.current = handle as FileSystemFileHandle;
-        // Ancien registre conservé en compatibilité.
-        await saveLocalVideoHandle(localVideoHandleKey(tId, file.name), handle);
-        attachLocalVideoFile(file, false);
-        return;
-      } catch (error: any) {
-        if (error?.name === 'AbortError') return;
-      }
+    // §3/§8 · Vidéo ajoutée APRÈS le codage : si des actions existent déjà et
+    // que la synchro n'a pas encore été validée, on ouvre automatiquement la
+    // fenêtre « Synchroniser la vidéo avec le codage ». Si elle est déjà validée
+    // (réouverture d'un projet), on applique directement le décalage sauvegardé
+    // et on ne redemande rien (bouton « Recalibrer la vidéo » disponible).
+    const already = videoSyncRef.current.validated ?? videoSyncRef.current.mode !== 'native';
+    if (actions.length > 0 && !already) {
+      setTimeout(() => setShowVideoSync(true), 60);
     }
-
-    // Safari / navigateur sans showOpenFilePicker : le navigateur impose
-    // une nouvelle sélection manuelle après un rechargement de page.
-    const input = document.createElement('input');
-    input.type = 'file';
-    input.accept = 'video/*';
-    input.onchange = () => {
-      pendingLocalFileHandleRef.current = null;
-      onPickVideoFile(input.files?.[0] ?? null);
-    };
-    input.click();
-  };
-
-  const tryRestoreLocalVideo = async (
-    tId: string,
-    filename: string,
-    askPermission = false,
-  ) => {
-    if (!filename) return false;
-
-    const handle = await readLocalVideoHandle(localVideoHandleKey(tId, filename));
-    if (!handle) return false;
-
-    try {
-      let permission = handle.queryPermission
-        ? await handle.queryPermission({ mode: 'read' })
-        : 'granted';
-
-      if (
-        permission !== 'granted' &&
-        askPermission &&
-        handle.requestPermission
-      ) {
-        permission = await handle.requestPermission({ mode: 'read' });
-      }
-
-      if (permission !== 'granted') return false;
-
-      const file = await handle.getFile();
-
-      // Si le fichier a été supprimé/déplacé, getFile() échoue et on tombera
-      // naturellement sur « Retrouver la vidéo ».
-      attachLocalVideoFile(file, true);
-      return true;
-    } catch {
-      return false;
-    }
-  };
-
-  const reconnectLocalVideo = async () => {
-    const tId = String(selTeam?.id || activeTeamId || teamId || 'setup');
-    const currentMatchId = String(liveMatchIdRef.current || '');
-
-    // IMPORTANT : le bouton « Retrouver la vidéo » doit ouvrir le sélecteur
-    // immédiatement. Les navigateurs (notamment Chrome) peuvent perdre
-    // l'activation utilisateur si l'on attend d'abord IndexedDB/Supabase, ce
-    // qui donnait l'impression que le bouton ne faisait rien.
-    if (currentMatchId && !currentMatchId.startsWith('local_')) {
-      try {
-        const relinked = await relinkMatchVideo(currentMatchId, tId, null);
-        if (relinked) {
-          attachLocalVideoFile(relinked.file, true);
-          flash('Vidéo locale reconnectée au projet ✓');
-        }
-        return;
-      } catch (error: any) {
-        if (error?.name === 'AbortError') return;
-        console.error('Reconnexion vidéo locale:', error);
-      }
-    }
-
-    // Compatibilité avant création du matchId / très anciens projets.
-    await pickLocalVideoSmart();
-  };
-
-
-  const registerLocalVideoForMatch = async (
-    matchId: string,
-    tId: string,
-    file: File,
-    handle: FileSystemFileHandle | null = pendingLocalFileHandleRef.current,
-  ) => {
-    try {
-      await attachMatchVideoFile(matchId, tId, file, handle);
-    } catch (error) {
-      // Non bloquant pour le codage : la vidéo reste utilisable dans LiveStat.
-      console.warn('Enregistrement vidéo locale du projet :', error);
-    }
-  };
-
-  const onPickGoogleDriveVideo = (file: GoogleDrivePickedVideo) => {
-    const selectedTeamId = String(
-      selTeam?.id || activeTeamId || teamId || '',
-    ).trim();
-
-    if (!isSupabaseUuid(selectedTeamId)) {
-      flash("Choisis d'abord une équipe valide.");
-      return;
-    }
-
-    setPendingDriveFile(file);
-    setVideoFile(null);
-    setYoutubeUrl('');
-    setVideoFilename(file.name);
-    setVideoUrl(googleDriveFileStreamUrl(selectedTeamId, file.id));
-    setVideoProvider('google_drive');
-    videoProviderRef.current = 'google_drive';
-    setVideoStatus('linked');
-    setShowVideoPanel(true);
-    requestInitialVideoSync();
   };
 
   // Saisie d'un lien YouTube.
   const onSetYoutube = (url: string) => {
-    setPendingDriveFile(null);
     setYoutubeUrl(url);
     const ok = /youtu\.?be/i.test(url) && url.trim().length > 0;
     setVideoUrl(url.trim());
     setVideoProvider(ok ? 'youtube' : 'none');
     setVideoStatus(ok ? 'linked' : 'pending');
-    if (ok) setShowVideoPanel(true);
   };
 
-  // Bascule entre les modes vidéo sans toucher aux actions déjà codées.
-  const chooseVideoMode = (mode: 'later' | 'file' | 'drive' | 'youtube') => {
+  // Bascule entre les 3 modes (réinitialise proprement les champs liés).
+  const chooseVideoMode = (mode: 'later' | 'file' | 'youtube') => {
     setVideoMode(mode);
-
     if (mode === 'later') {
-      setVideoFile(null);
-      setPendingDriveFile(null);
-      setVideoFilename('');
-      setYoutubeUrl('');
-      setVideoUrl('');
-      setVideoProvider('none');
-      videoProviderRef.current = 'none';
-      setVideoStatus('pending');
-      return;
-    }
-
-    if (mode === 'file') {
-      setPendingDriveFile(null);
+      setVideoFile(null); setVideoFilename(''); setYoutubeUrl('');
+      setVideoUrl(''); setVideoProvider('none'); setVideoStatus('pending');
+    } else if (mode === 'file') {
       setYoutubeUrl('');
       setVideoProvider(videoFile ? 'local' : 'none');
-      videoProviderRef.current = videoFile ? 'local' : 'none';
       setVideoStatus(videoFile ? 'ready' : 'pending');
-      return;
+    } else {
+      setVideoFile(null); setVideoFilename('');
+      const ok = /youtu\.?be/i.test(youtubeUrl) && youtubeUrl.trim().length > 0;
+      setVideoProvider(ok ? 'youtube' : 'none');
+      setVideoStatus(ok ? 'linked' : 'pending');
     }
-
-    if (mode === 'drive') {
-      setVideoFile(null);
-      setYoutubeUrl('');
-      if (pendingDriveFile) {
-        const selectedTeamId = String(
-          selTeam?.id || activeTeamId || teamId || '',
-        ).trim();
-        if (isSupabaseUuid(selectedTeamId)) {
-          setVideoUrl(
-            googleDriveFileStreamUrl(
-              selectedTeamId,
-              pendingDriveFile.id,
-            ),
-          );
-          setVideoProvider('google_drive');
-          videoProviderRef.current = 'google_drive';
-          setVideoStatus('linked');
-        }
-      } else {
-        setVideoUrl('');
-        setVideoProvider('none');
-        videoProviderRef.current = 'none';
-        setVideoStatus('pending');
-      }
-      return;
-    }
-
-    setVideoFile(null);
-    setPendingDriveFile(null);
-    setVideoFilename('');
-    const ok =
-      /youtu\.?be/i.test(youtubeUrl) &&
-      youtubeUrl.trim().length > 0;
-    setVideoProvider(ok ? 'youtube' : 'none');
-    videoProviderRef.current = ok ? 'youtube' : 'none';
-    setVideoStatus(ok ? 'linked' : 'pending');
   };
 
   // Prépare video_time / clip_start / clip_end au moment d'un commit.
@@ -1371,7 +841,7 @@ export default function PriseStatsProPage() {
 
   /* -------- Persistance TEMPS RÉEL (match_actions = source unique) -------- */
   // matchId Supabase du match en cours + realTeamId résolu, gardés en state ET
-  // en ref pour un accès synchrone dans commit()/suppression explicite sans attendre un render.
+  // en ref pour un accès synchrone dans commit()/undo() sans attendre un render.
   const [liveMatchId, setLiveMatchId] = useState<string | null>(null);
   const liveMatchIdRef = useRef<string | null>(null);
   const liveTeamIdRef = useRef<string | null>(null);
@@ -1382,25 +852,6 @@ export default function PriseStatsProPage() {
     liveTeamIdRef.current = teamId;
     setLiveMatchId(matchId);
   };
-
-  const handleMatchTypeChange = async (nextType: 'friendly' | 'league' | 'cup') => {
-    setMatchType(nextType);
-    const matchId = liveMatchIdRef.current;
-    if (!matchId || matchId.startsWith('local_')) return;
-    const matchCategory = nextType === 'league' ? 'championship' : nextType;
-    const result = await updateLiveMatchCategory({ matchId, matchCategory });
-    if (!result.ok) console.error('Mise à jour du type de match:', result.error);
-  };
-
-  // Le poste qui a créé la session publie l’état commun. Les autres écrans
-  // reçoivent ces changements par Supabase Realtime.
-  useEffect(() => {
-    const shared = sharedLiveRef.current;
-    if (!shared) return;
-    const us = Object.values(perQ).reduce((n:any,row:any)=>n+Number(row?.us||0),0);
-    const them = Object.values(perQ).reduce((n:any,row:any)=>n+Number(row?.them||0),0);
-    void updateSharedLiveState(shared.id,{current_period:q,current_clock:fmt(secs),current_lineup:onCourt.slice(),score_us:us,score_them:them}).catch(()=>{});
-  }, [q, secs, onCourt, perQ]);
 
   // Recalcule les lignes boxscore (mapping identique à finishMatch) à partir
   // de l'état courant, pour l'upsert live de match_player_stats.
@@ -1452,41 +903,6 @@ export default function PriseStatsProPage() {
   }, []);
 
   const find = (id: string | null) => roster.find((p) => p.id === id);
-  const profileAllowsButton = (category: string, key: string) => {
-    const allowed = (profileButtonKeys as Partial<Record<string, string[]>> | null)?.[category];
-    return !allowed || allowed.includes(key);
-  };
-  const codingButtonsFor = (category: string) => {
-    const resolved = resolveCodingButtons(category, codingDb)
-      .filter((b) => profileAllowsButton(category, b.key));
-
-    // Compatibilité : les configurations déjà enregistrées avant l'ajout de
-    // "Contre" en ATTAQUE n'ont forcément aucune ligne correspondante.
-    // Dans ce seul cas, on ajoute le nouveau bouton sans réactiver les autres
-    // boutons que l'utilisateur aurait volontairement désactivés.
-    if (
-      category === 'att-action' &&
-      !codingDb?.some((b) => b.category === 'att-action' && b.key === 'contre') &&
-      !resolved.some((b) => b.key === 'contre')
-    ) {
-      const blockButton = CODING_FALLBACK['att-action']?.find((b) => b.key === 'contre');
-      if (blockButton) resolved.push(blockButton);
-    }
-
-    // Même compatibilité pour le nouveau bouton TOUCHE en défense.
-    if (
-      category === 'def-action' &&
-      !codingDb?.some((b) => b.category === 'def-action' && b.key === 'touche') &&
-      !resolved.some((b) => b.key === 'touche')
-    ) {
-      const touchButton = CODING_FALLBACK['def-action']?.find((b) => b.key === 'touche');
-      if (touchButton) resolved.push(touchButton);
-    }
-
-    return resolved;
-  };
-  const codingLabel = (category: string, key: string, fallback: string) => codingButtonsFor(category).find((b) => b.key === key)?.label || fallback;
-  const codingButtonEnabled = (category: string, key: string) => codingButtonsFor(category).some((b) => b.key === key);
   const floor = roster.filter((p) => onCourt.includes(p.id));
   const bench = roster.filter((p) => !onCourt.includes(p.id));
 
@@ -1497,157 +913,27 @@ export default function PriseStatsProPage() {
   // (livestat_tags via useLivestatTags). key = id stable ; label/emoji renommables
   // depuis Management > Codification sans casser les stats. Fallback constantes
   // intégré dans useLivestatTags → jamais vide, jamais de key brute affichée.
-  // Temps forts : dès qu'une équipe possède sa configuration Supabase, elle
-  // pilote le wizard. Sinon on conserve exactement la liste historique actuelle.
-  const tempsFortsButtons = (tags.source === 'supabase'
-    ? tags.active.map((t) => ({ id: t.key, label: t.label, ic: t.emoji || '⚡', is_active: t.is_active, sort_order: t.sort_order }))
-    : TEMPS.map((t, i) => ({ id: t.id, label: t.label, ic: t.icon, is_active: true, sort_order: i })))
-    .filter((t) => profileAllowsButton('temps', t.id));
+  // Temps forts officiels LiveStat : on force la liste fixe demandée ici.
+  // Les anciens tags Supabase peuvent encore exister, mais ne doivent pas
+  // réafficher Fast Break / Transition / Jeu placé dans ce wizard.
+  const tempsFortsButtons = TEMPS.map((t) => ({
+  id: t.id,
+  label: t.label,
+  ic: t.icon,
+}));
 
   /* ---------------- V7 · ergonomie vidéo + workspace à onglets ---------------- */
   // Onglet de travail visible dans l'écran live (desktop + mobile).
   const [workTab, setWorkTab] = useState<'coding' | 'center' | 'analysis'>('coding');
-  const liveWorkspaceRef = useRef<HTMLDivElement | null>(null);
-  const [videoPanePct, setVideoPanePct] = useState(48);
-  const [rightPanePx, setRightPanePx] = useState(305);
-  const [videoMaximized, setVideoMaximized] = useState(false);
 
   // Lecteur vidéo local + saut réglable + Tab+flèches.
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const clipVideoRef = useRef<HTMLVideoElement | null>(null); // vidéo du popup "revoir séquence"
-  // Position conservée pendant la consultation Boxscore / Historique.
-  const inspectionVideoTimeRef = useRef<number | null>(null);
   const detachedVideoWindowRef = useRef<Window | null>(null);
   const detachedVideoChannelRef = useRef<BroadcastChannel | null>(null);
   const [videoStepSeconds, setVideoStepSeconds] = useState(5);
-  const scrubAccumRef = useRef(0);
-  const scrubRafRef = useRef<number | null>(null);
-  const scrubResumeTimerRef = useRef<number | null>(null);
-  const scrubWasPlayingRef = useRef(false);
-
-  const handleTrackpadScrub = (e: any) => {
-    if (!(videoProvider === 'local' || videoProvider === 'google_drive') || !videoUrl) return;
-
-    // Mac trackpad : un geste horizontal vers la DROITE produit généralement
-    // deltaX négatif dans WheelEvent. On inverse donc volontairement le signe
-    // pour respecter le geste utilisateur demandé : droite = avance, gauche = recul.
-    if (Math.abs(e.deltaX) < Math.abs(e.deltaY) * 0.65) return;
-    const gestureSeconds = -e.deltaX * 0.010;
-    if (!gestureSeconds) return;
-
-    e.preventDefault();
-    const v = videoRef.current;
-    if (!v) return;
-
-    if (scrubRafRef.current == null) {
-      scrubWasPlayingRef.current = !v.paused;
-      if (!v.paused) v.pause();
-    }
-
-    // On accumule les micro-mouvements du trackpad et on ne touche au timecode
-    // qu'une fois par frame. Pas de fastSeek : il ferait des bonds entre keyframes.
-    scrubAccumRef.current += gestureSeconds;
-
-    if (scrubRafRef.current == null) {
-      scrubRafRef.current = window.requestAnimationFrame(() => {
-        scrubRafRef.current = null;
-        const delta = Math.max(-0.85, Math.min(0.85, scrubAccumRef.current));
-        scrubAccumRef.current -= delta;
-        const max = Number.isFinite(v.duration) ? v.duration : Infinity;
-        const target = Math.max(0, Math.min(max, v.currentTime + delta));
-        try { v.currentTime = target; } catch { /* noop */ }
-
-        // S'il reste de l'inertie accumulée, la frame suivante continue le scrub.
-        if (Math.abs(scrubAccumRef.current) > 0.002) {
-          scrubRafRef.current = window.requestAnimationFrame(() => {
-            scrubRafRef.current = null;
-            const rest = Math.max(-0.85, Math.min(0.85, scrubAccumRef.current));
-            scrubAccumRef.current -= rest;
-            try {
-              const m = Number.isFinite(v.duration) ? v.duration : Infinity;
-              v.currentTime = Math.max(0, Math.min(m, v.currentTime + rest));
-            } catch { /* noop */ }
-          });
-        }
-      });
-    }
-
-    if (scrubResumeTimerRef.current) window.clearTimeout(scrubResumeTimerRef.current);
-    scrubResumeTimerRef.current = window.setTimeout(() => {
-      if (scrubWasPlayingRef.current) v.play().catch(() => {});
-      scrubWasPlayingRef.current = false;
-    }, 160);
-  };
   const [videoStepCustom, setVideoStepCustom] = useState(false);
   const tabHeldRef = useRef(false);
-
-  const workflowKey = `mybasket-livestat-workflow:${activeTeamId || teamId || 'default'}`;
-  const layoutKey = `mybasket-livestat-layout:${activeTeamId || teamId || 'default'}`;
-
-  useEffect(() => {
-    if (typeof window === 'undefined') return;
-    try {
-      const raw = window.localStorage.getItem(workflowKey);
-      setWorkflowPrefs(raw ? { ...DEFAULT_WORKFLOW_PREFS, ...JSON.parse(raw) } : { ...DEFAULT_WORKFLOW_PREFS });
-    } catch {
-      setWorkflowPrefs({ ...DEFAULT_WORKFLOW_PREFS });
-    }
-  }, [workflowKey]);
-
-  useEffect(() => {
-    if (typeof window === 'undefined') return;
-    try { window.localStorage.setItem(workflowKey, JSON.stringify(workflowPrefs)); } catch { /* noop */ }
-  }, [workflowKey, workflowPrefs]);
-
-  useEffect(() => {
-    if (typeof window === 'undefined') return;
-    try {
-      const raw = window.localStorage.getItem(layoutKey);
-      if (!raw) return;
-      const saved = JSON.parse(raw);
-      if (Number.isFinite(saved.videoPanePct)) setVideoPanePct(Math.max(25, Math.min(72, Number(saved.videoPanePct))));
-      if (Number.isFinite(saved.rightPanePx)) setRightPanePx(Math.max(210, Math.min(520, Number(saved.rightPanePx))));
-    } catch { /* noop */ }
-  }, [layoutKey]);
-
-  useEffect(() => {
-    if (typeof window === 'undefined') return;
-    try { window.localStorage.setItem(layoutKey, JSON.stringify({ videoPanePct, rightPanePx })); } catch { /* noop */ }
-  }, [layoutKey, videoPanePct, rightPanePx]);
-
-  const openCodingSettings = (tab: 'workflow' | 'buttons') => {
-    setCodingSettingsTab(tab);
-    setShowCodingSettings(true);
-  };
-
-  const startPanelResize = (kind: 'video' | 'right', e: any) => {
-    e.preventDefault();
-    const host = liveWorkspaceRef.current;
-    if (!host) return;
-    const rect = host.getBoundingClientRect();
-    const move = (ev: PointerEvent) => {
-      if (kind === 'video') {
-        const pct = ((ev.clientX - rect.left) / Math.max(1, rect.width)) * 100;
-        setVideoPanePct(Math.max(25, Math.min(72, pct)));
-      } else {
-        const px = rect.right - ev.clientX;
-        setRightPanePx(Math.max(210, Math.min(520, px)));
-      }
-    };
-    const up = () => {
-      window.removeEventListener('pointermove', move);
-      window.removeEventListener('pointerup', up);
-    };
-    window.addEventListener('pointermove', move);
-    window.addEventListener('pointerup', up);
-  };
-
-  const setLayoutPreset = (preset: 'video' | 'balanced' | 'coding') => {
-    setVideoMaximized(false);
-    if (preset === 'video') { setShowVideoPanel(true); setVideoPanePct(64); setRightPanePx(230); return; }
-    if (preset === 'balanced') { setLayoutMode('balanced'); setVideoPanePct(48); setRightPanePx(305); return; }
-    setLayoutMode('coding'); setVideoPanePct(32); setRightPanePx(260);
-  };
 
   /* ══════════════════ AJOUT · Vidéo détachée : horloge partagée ══════════════════
      Une seule source de vérité pour le timecode : le lecteur détaché quand il est
@@ -1683,78 +969,23 @@ export default function PriseStatsProPage() {
     return sid ? playbookSystems.find((s) => s.id === sid) : undefined;
   };
 
-  // Boutons du wizard : si l'utilisateur a configuré ses systèmes, cette liste
-  // devient la source d'affichage. Sinon on conserve les slots/playbooks historiques.
-  const configuredSystemRows = (codingDb ?? [])
-    .filter((row) => row.category === 'system')
-    .sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0));
-  const activeConfiguredSystems = configuredSystemRows.filter((row) => row.is_active !== false);
-  // Le Playbook ne remplace JAMAIS le bloc Système du constructeur.
-  // Les boutons/slots configurés restent tous présents, dans le même ordre ;
-  // lorsqu'un slot est associé à un système Playbook, seul son libellé change.
-  // L'id du bouton reste celui du slot (systeme-1, systeme-2...) afin de retrouver
-  // la configuration originale dès qu'aucun Playbook n'est associé.
-  const baseSystemButtons = configuredSystemRows.length
-    ? activeConfiguredSystems.map((row) => ({ id: row.key, label: row.label, ic: row.emoji || '🏀' }))
-    : SYSTEMES_JEU.map((s) => ({ id: s.id, label: s.label, ic: s.ic }));
-  const systemeButtons = baseSystemButtons
-    .map((button) => {
-      const mapped = playbookId ? systemForSlot(button.id) : undefined;
-      return { ...button, label: mapped?.title || button.label };
-    })
-    .filter((s) => profileAllowsButton('system', s.id));
-
-
-  const allCodingRowsFor = (category: string): CodingButtonCfg[] => {
-    const configured = (codingDb ?? []).filter((row) => row.category === category);
-    return (configured.length ? configured : (CODING_FALLBACK[category] ?? []))
-      .slice()
-      .sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0));
-  };
-  const codingSettingsGroups: CodingButtonGroup[] = [
-    { key:'system', title:'Système de jeu', icon:'🏀', stage:'systeme', allowAdd:true, rows:(configuredSystemRows.length ? configuredSystemRows : (CODING_FALLBACK.system ?? [])).map((r,i)=>({ key:r.key,label:r.label,emoji:r.emoji,is_active:r.is_active!==false,sort_order:r.sort_order??i })) },
-    { key:'temps', title:'Temps fort', icon:'⚡', stage:'temps', allowAdd:true, rows:(tags.source === 'supabase' ? tags.all.map((x,i)=>({key:x.key,label:x.label,emoji:x.emoji,is_active:x.is_active!==false,sort_order:x.sort_order??i})) : TEMPS.map((x,i)=>({key:x.id,label:x.label,emoji:x.icon,is_active:true,sort_order:i}))) },
-    { key:'att-action', title:'Actions attaque', icon:'🔵', stage:'action', allowAdd:true, rows:allCodingRowsFor('att-action').map((r,i)=>({key:r.key,label:r.label,emoji:r.emoji,is_active:r.is_active!==false,sort_order:r.sort_order??i})) },
-    { key:'def-action', title:'Actions défense', icon:'🔴', stage:'action', allowAdd:true, rows:allCodingRowsFor('def-action').map((r,i)=>({key:r.key,label:r.label,emoji:r.emoji,is_active:r.is_active!==false,sort_order:r.sort_order??i})) },
-    { key:'coverage', title:'Défense sur écran', icon:'🛡️', stage:'coverage', allowAdd:true, rows:allCodingRowsFor('coverage').map((r,i)=>({key:r.key,label:r.label,emoji:r.emoji,is_active:r.is_active!==false,sort_order:r.sort_order??i})) },
-    { key:'result', title:'Résultats tirs', icon:'🎯', stage:'result', allowAdd:false, rows:allCodingRowsFor('result').map((r,i)=>({key:r.key,label:r.label,emoji:r.emoji,is_active:r.is_active!==false,sort_order:r.sort_order??i})) },
-    { key:'foul', title:'Suites de faute', icon:'🟨', stage:'faute', allowAdd:false, rows:allCodingRowsFor('foul').map((r,i)=>({key:r.key,label:r.label,emoji:r.emoji,is_active:r.is_active!==false,sort_order:r.sort_order??i})) },
-    { key:'rebound', title:'Rebonds / possession', icon:'🔄', stage:'rebound', allowAdd:false, rows:allCodingRowsFor('rebound').map((r,i)=>({key:r.key,label:r.label,emoji:r.emoji,is_active:r.is_active!==false,sort_order:r.sort_order??i})) },
-  ];
+  // Boutons du wizard : libellé réel si le slot est mappé, sinon libellé par défaut.
+  const systemeButtons = SYSTEMES_JEU.map((s) => {
+    const mapped = systemForSlot(s.id);
+    return { id: s.id, label: mapped ? mapped.title : s.label, ic: s.ic };
+  });
 
   const [projects, setProjects] = useState<LiveProjectSummary[]>([]);
   const [projectBusy, setProjectBusy] = useState(false);
-  const [showProjectMenu, setShowProjectMenu] = useState(false);
-  const [showMatchInfo, setShowMatchInfo] = useState(false);
-  const [layoutMode, setLayoutMode] = useState<'balanced' | 'coding'>('balanced');
-  const [showPlayerAssociation, setShowPlayerAssociation] = useState(false);
-  const [linkedCollectiveProjectId, setLinkedCollectiveProjectId] = useState('');
   const projectSaveRef = useRef<number | null>(null);
-  /* Vidéo présente dans le projet enregistré mais non rattachable au
-     rechargement (fichier local). Sert uniquement à ne pas écraser
-     l'information en base lors de l'auto-sauvegarde. */
-  const restoredVideoRef = useRef<{ provider: string; filename: string } | null>(null);
-  // Dernière position de lecture persistée dans le projet. Elle permet de fermer
-  // complètement LiveStat puis de reprendre exactement au même timecode.
-  const lastProjectVideoTimeRef = useRef<number | null>(null);
 
   const buildProjectState = () => ({
     v: 1,
     teamId: activeTeamId || teamId,
     teamName,
     opponent,
-    analysisScope,
     date,
-    matchType,
     home,
-    codingMode,
-    workflowPrefs,
-    selectedCodingProfileId,
-    profileButtonKeys,
-    workspaceLayout: { videoPanePct, rightPanePx, mode: layoutMode },
-    linkedCollectiveProjectId: linkedCollectiveProjectId || null,
-    matchPlayerIds,
-    starters,
     matchJerseyNumbers,
     q,
     secs,
@@ -1765,17 +996,9 @@ export default function PriseStatsProPage() {
     stage,
     draft,
     videoMode,
-    // Une vidéo locale restaurée mais non resélectionnée ne doit pas repasser
-    // le projet en "aucune vidéo" de façon définitive.
-    videoProvider:
-      videoProvider === 'none' && restoredVideoRef.current
-        ? restoredVideoRef.current.provider
-        : videoProvider,
-    driveFileId: pendingDriveFile?.id ?? null,
-    driveFileName: pendingDriveFile?.name ?? null,
+    videoProvider,
     videoUrl,
-    videoFilename:
-      videoFilename || (videoProvider === 'none' ? (restoredVideoRef.current?.filename ?? '') : ''),
+    videoFilename,
     youtubeUrl,
     playbookId,        // AJOUT §8
     playbookName: playbooks.find((pb) => pb.id === playbookId)?.title ?? null, // Bloc C
@@ -1791,10 +1014,6 @@ export default function PriseStatsProPage() {
     // Permet de reprendre un brouillon codé SANS vidéo sans remettre l'horloge à
     // zéro (les nouvelles actions gardent une chronologie cohérente).
     codingElapsed: matchStartAtRef.current == null ? 0 : (Date.now() - matchStartAtRef.current) / 1000,
-    codingClockStarted: matchStartAtRef.current != null,
-    lastVideoTime: hasVideoLoaded() ? getCurrentVideoTime() : lastProjectVideoTimeRef.current,
-    projectFormat: 'mybasket-livestat-project',
-    projectVersion: 2,
     savedAt: new Date().toISOString(),
   });
 
@@ -1810,67 +1029,21 @@ export default function PriseStatsProPage() {
     }).catch(() => {});
   };
 
-  const saveProjectNow = async (closeAfter = false) => {
-    const matchId = liveMatchIdRef.current;
-    if (!matchId || matchId.startsWith('local_')) {
-      flash('Projet non sauvegardable : connexion Supabase requise');
-      return;
-    }
-    if (projectBusy) return;
-    setProjectBusy(true);
-    try {
-      pauseVideo();
-      setRunning(false);
-      const currentVideoTime = hasVideoLoaded() ? getCurrentVideoTime() : lastProjectVideoTimeRef.current;
-      if (currentVideoTime != null) lastProjectVideoTimeRef.current = currentVideoTime;
-      const res = await saveProjectState({
-        matchId,
-        state: buildProjectState(),
-        playbookId: playbookId || null,
-        systemMapping,
-        videoSync: videoSyncRef.current,
-      });
-      if (!res.ok) { flash('Sauvegarde du projet impossible'); return; }
-      flash(closeAfter ? 'Projet enregistré et fermé ✓' : 'Projet enregistré ✓');
-      if (closeAfter) {
-        const tid = liveTeamIdRef.current || activeTeamId || teamId;
-        setLiveMatch(null, null);
-        setScreen('setup');
-        try { window.history.replaceState({}, '', window.location.pathname); } catch { /* noop */ }
-        if (tid) refreshProjects(tid);
-      }
-    } finally {
-      setProjectBusy(false);
-    }
-  };
-
-  // Référence toujours à jour vers la dernière version de persistProjectState :
-  // permet de débrancher `secs` des dépendances de l'auto-sauvegarde tout en
-  // enregistrant malgré tout la valeur courante du chrono.
-  const persistProjectStateRef = useRef(persistProjectState);
-  useEffect(() => {
-    persistProjectStateRef.current = persistProjectState;
-  });
-
   const refreshProjects = async (tId: string) => {
     if (!isSupabaseUuid(tId)) { setProjects([]); return; }
     const list = await listProjects({ teamId: tId, status: 'draft' });
     setProjects(list);
   };
 
-  const resumeProject = async (matchId: string, mode: 'resume' | 'analysis' | 'montage' | 'sync' | 'associate' = 'resume') => {
+  const resumeProject = async (matchId: string, mode: 'resume' | 'analysis' | 'montage' = 'resume') => {
     setProjectBusy(true);
     try {
       const res = await loadProject(matchId);
       if (!res.ok) { flash('Projet illisible : ' + res.error); return; }
       const s = res.state as Record<string, any>;
       const tId = String(s.teamId || teamId);
-      const team = teams.find((t) => t.id === tId)
-        || (s.teamName ? teams.find((t) => String(t.name || '').trim().toLowerCase() === String(s.teamName || '').trim().toLowerCase()) : undefined);
-      if (!team) {
-        flash('Équipe du projet introuvable — recharge la page Historique puis réessaie.');
-        return;
-      }
+      const team = teams.find((t) => t.id === tId);
+      if (!team) { flash('Équipe du projet introuvable.'); return; }
 
       setActiveTeamId(team.id);
       setTeamId(team.id);
@@ -1878,70 +1051,14 @@ export default function PriseStatsProPage() {
         ? s.matchJerseyNumbers as Record<string, number>
         : {};
       setMatchJerseyNumbers(restoredMatchNumbers);
-
-      const restoredMatchPlayerIds = Array.isArray(s.matchPlayerIds)
-        ? s.matchPlayerIds
-            .map(String)
-            .filter((id: string) => team.players.some((player) => player.id === id))
-            .slice(0, 12)
-        : Array.from(new Set([
-            ...(Array.isArray(s.onCourt) ? s.onCourt : []),
-            ...(Array.isArray(s.actions)
-              ? s.actions.flatMap((action: any) => [
-                  action.playerId,
-                  action.assistPlayerId,
-                  ...(Array.isArray(action.lineup) ? action.lineup : []),
-                ])
-              : []),
-          ].filter(Boolean)))
-            .map(String)
-            .filter((id: string) => team.players.some((player) => player.id === id))
-            .slice(0, 12);
-
-      const effectiveMatchPlayerIds = restoredMatchPlayerIds.length >= 5
-        ? restoredMatchPlayerIds
-        : team.players.map((player) => player.id).slice(0, 12);
-
-      const restoredStarters = Array.isArray(s.starters)
-        ? s.starters
-            .map(String)
-            .filter((id: string) => effectiveMatchPlayerIds.includes(id))
-            .slice(0, 5)
-        : (Array.isArray(s.onCourt)
-            ? s.onCourt
-                .map(String)
-                .filter((id: string) => effectiveMatchPlayerIds.includes(id))
-                .slice(0, 5)
-            : []);
-
-      setMatchPlayerIds(effectiveMatchPlayerIds);
-      setStarters(restoredStarters);
-      setRoster(
-        team.players
-          .filter((player) => effectiveMatchPlayerIds.includes(player.id))
-          .map((player) => ({
-            ...player,
-            num: Number(restoredMatchNumbers[player.id] ?? player.num),
-          })),
-      );
+      setRoster(team.players.map((player) => ({
+        ...player,
+        num: Number(restoredMatchNumbers[player.id] ?? player.num),
+      })));
       setTeamName(String(s.teamName || team.name));
-      setAnalysisScope(s.analysisScope === 'scout' || team.isScoutTeam || String(team.teamType || '').toLowerCase() === 'scout' ? 'scout' : 'coached');
       setOpponent(String(s.opponent || ''));
       setDate(String(s.date || date));
-      setMatchType(s.matchType === 'league' || s.matchType === 'cup' ? s.matchType : 'friendly');
       setHome(s.home ?? true);
-      setCodingMode(s.codingMode === 'match-review' ? 'match-review' : s.codingMode === 'live-individual' ? 'live-individual' : s.codingMode === 'live' ? 'live' : 'post');
-      if (s.workflowPrefs && typeof s.workflowPrefs === 'object') {
-        setWorkflowPrefs({ ...DEFAULT_WORKFLOW_PREFS, ...s.workflowPrefs });
-      }
-      setSelectedCodingProfileId(String(s.selectedCodingProfileId || ''));
-      setProfileButtonKeys(s.profileButtonKeys && typeof s.profileButtonKeys === 'object' ? s.profileButtonKeys : null);
-      if (s.workspaceLayout && typeof s.workspaceLayout === 'object') {
-        if (Number.isFinite(Number(s.workspaceLayout.videoPanePct))) setVideoPanePct(Math.max(25, Math.min(72, Number(s.workspaceLayout.videoPanePct))));
-        if (Number.isFinite(Number(s.workspaceLayout.rightPanePx))) setRightPanePx(Math.max(210, Math.min(520, Number(s.workspaceLayout.rightPanePx))));
-        if (s.workspaceLayout.mode === 'coding' || s.workspaceLayout.mode === 'balanced') setLayoutMode(s.workspaceLayout.mode);
-      }
-      setLinkedCollectiveProjectId(String(s.linkedCollectiveProjectId || ''));
       setQ(Number(s.q || 1));
       setSecs(Number(s.secs ?? 600));
       setPerQ(s.perQ || { 1: { us: 0, them: 0 } });
@@ -1961,66 +1078,26 @@ export default function PriseStatsProPage() {
       setOppRoster(Array.isArray(s.oppRoster) ? s.oppRoster : []); // AJOUT §12
       setClipEdits((s.clipEdits && typeof s.clipEdits === 'object') ? s.clipEdits : {}); // §25 · annotations
 
-      // Restauration vidéo. Local : le blob doit être resélectionné après
-      // rechargement. Google Drive : le fileId durable permet de recréer
-      // immédiatement une URL de lecture sécurisée.
+      // Bloc C · restauration des réglages vidéo. Une URL locale (blob:) n'est
+      // jamais restaurable après rechargement : on force le provider à 'none' et
+      // on prévient l'utilisateur. YouTube, lui, est restaurable.
       const provider = String(s.videoProvider || 'none');
       setVideoMode(String(s.videoMode || 'later') as any);
       setVideoFilename(String(s.videoFilename || ''));
       setYoutubeUrl(String(s.youtubeUrl || ''));
 
+      // AJOUT §8 · restauration de la synchro vidéo (colonnes prioritaires, sinon
+      // project_state). Le décalage sauvegardé est réappliqué immédiatement dès
+      // que la vidéo locale sera resélectionnée ; on ne redemande pas la synchro.
       setVideoSync(normalizeSync(res.videoSync ?? s));
-      lastProjectVideoTimeRef.current = s.lastVideoTime == null ? null : Number(s.lastVideoTime);
 
-      if (provider === 'google_drive' && s.driveFileId) {
-        const driveFile = {
-          id: String(s.driveFileId),
-          name: String(s.driveFileName || s.videoFilename || 'Vidéo Google Drive'),
-        };
-        setPendingDriveFile(driveFile);
-        setVideoProvider('google_drive');
-        videoProviderRef.current = 'google_drive';
-        setVideoUrl(googleDriveFileStreamUrl(team.id, driveFile.id));
-      } else if (provider === 'youtube' && s.youtubeUrl) {
-        setPendingDriveFile(null);
-        setVideoProvider('youtube');
-        setVideoUrl(String(s.videoUrl || s.youtubeUrl));
+      if (provider === 'youtube' && s.youtubeUrl) {
+        setVideoProvider('youtube'); setVideoUrl(String(s.videoUrl || s.youtubeUrl));
         videoProviderRef.current = 'youtube';
       } else {
-        setPendingDriveFile(null);
-        setVideoProvider('none');
-        setVideoUrl('');
+        setVideoProvider('none'); setVideoUrl('');
         videoProviderRef.current = 'none';
-        if (provider === 'local') {
-          const restoredFilename = String(s.videoFilename || '');
-
-          restoredVideoRef.current = {
-            provider: 'local',
-            filename: restoredFilename,
-          };
-
-          // La vidéo locale fait partie de l'ouverture du projet : on attend sa
-          // résolution AVANT d'afficher l'espace de travail. Si ce navigateur a
-          // encore accès au fichier, le lecteur arrive donc déjà alimenté.
-          try {
-            const restored = await restoreMatchVideoForClip(matchId, team.id);
-
-            if (restored.video) {
-              attachLocalVideoFile(restored.video.file, true);
-              flash('Projet restauré · vidéo locale retrouvée automatiquement ✓');
-            } else {
-              // Compatibilité stricte avec les très anciens projets.
-              const foundLegacy = await tryRestoreLocalVideo(team.id, restoredFilename, false);
-              if (foundLegacy) {
-                flash('Projet restauré · vidéo locale retrouvée automatiquement ✓');
-              } else {
-                flash('Projet restauré · fichier vidéo à reconnecter sur cet ordinateur.');
-              }
-            }
-          } catch {
-            flash('Projet restauré · fichier vidéo à reconnecter sur cet ordinateur.');
-          }
-        }
+        if (provider === 'local') flash('Projet restauré. Resélectionne le fichier vidéo local — le décalage de synchronisation sera réappliqué automatiquement.');
       }
 
       // Bloc C · restauration du montage.
@@ -2032,20 +1109,12 @@ export default function PriseStatsProPage() {
       // AJOUT · on NE remet PAS l'horloge source à zéro : on la recale sur le
       // temps de codage déjà écoulé (codingElapsed), pour poursuivre un brouillon
       // codé sans vidéo avec une chronologie source continue.
-      if (s.codingClockStarted || Number(s.codingElapsed ?? 0) > 0) {
-        matchStartAtRef.current = Date.now() - Number(s.codingElapsed ?? 0) * 1000;
-        setNoVideoMatchClockStarted(provider === 'none');
-      } else {
-        matchStartAtRef.current = provider === 'none' ? null : Date.now();
-        setNoVideoMatchClockStarted(false);
-      }
+      matchStartAtRef.current = Date.now() - Number(s.codingElapsed ?? 0) * 1000;
       possessionStartRef.current = null;
 
       // Mode d'ouverture demandé depuis l'Historique.
       if (mode === 'analysis') { setScreen('box'); flash('Projet ouvert en analyse'); }
       else if (mode === 'montage') { setScreen('box'); setShowMontagePanel(true); flash('Montage ouvert'); }
-      else if (mode === 'sync') { setScreen('live'); setTimeout(() => setShowVideoSync(true), 120); flash('Projet ouvert — ajoute ou recale la vidéo'); }
-      else if (mode === 'associate') { setScreen('live'); setTimeout(() => setShowPlayerAssociation(true), 140); flash('Projet ouvert — associe les joueurs aux actions'); }
       else { setScreen('live'); flash('Projet rouvert — reprends le codage'); }
     } finally {
       setProjectBusy(false);
@@ -2062,37 +1131,16 @@ export default function PriseStatsProPage() {
     const params = new URLSearchParams(window.location.search);
     const pid = params.get('project');
     if (!pid) return;
-    const mode = (params.get('mode') || 'resume') as 'resume' | 'analysis' | 'montage' | 'sync' | 'associate';
+    const mode = (params.get('mode') || 'resume') as 'resume' | 'analysis' | 'montage';
     const tab = params.get('tab'); // 'history' | 'players' | null
     if (tab === 'players') setInitialBoxTab('box');
     else if (tab === 'history') setInitialBoxTab('team');
     urlProjectHandled.current = true;
     resumeProject(pid, mode);
-    // Nettoie l'URL des paramètres d'ouverture MAIS conserve ?project=<id> :
-    // sans lui, un F5 ou un redeploy Vercel repartait sur l'écran de création
-    // au lieu de rouvrir le match en cours.
-    try {
-      const kept = new URLSearchParams();
-      kept.set('project', pid);
-      window.history.replaceState({}, '', `${window.location.pathname}?${kept.toString()}`);
-    } catch { /* noop */ }
+    // Nettoie l'URL pour ne pas rouvrir au prochain render.
+    try { window.history.replaceState({}, '', window.location.pathname); } catch { /* noop */ }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [teams]);
-
-  const joinMutualizedLive = async () => {
-    if (!joinLiveCode.trim()) return;
-    setProjectBusy(true);
-    try {
-      const session = await joinSharedLiveSession(joinLiveCode);
-      setSharedLive(session); sharedLiveRef.current = session; setMutualizedLive(true);
-      setCodingMode(sharedRole === 'individual' ? 'live-individual' : 'live');
-      await resumeProject(session.matchId, 'resume');
-      setCodingMode(sharedRole === 'individual' ? 'live-individual' : 'live');
-      flash(`Session ${session.joinCode} rejointe · poste ${sharedRole === 'individual' ? 'individuel' : 'collectif'}`);
-    } catch (e:any) {
-      console.error('Rejoindre Live mutualisé:', e); flash('Code de session introuvable ou accès non autorisé');
-    } finally { setProjectBusy(false); }
-  };
 
   const removeProject = async (matchId: string) => {
     if (!window.confirm('Supprimer définitivement ce brouillon ?')) return;
@@ -2118,63 +1166,15 @@ export default function PriseStatsProPage() {
   //   - aucune vidéo → temps réel écoulé depuis le coup d'envoi du codage.
   // Renvoie null uniquement si le codage n'a pas encore démarré.
   const getRawCodingTime = (): number | null => {
+    if (matchStartAtRef.current == null) return null;
     const hasVideoPlayer =
       videoDetached ||
       Boolean(clipVideoRef.current) ||
-      ((videoProviderRef.current === 'local' || videoProviderRef.current === 'google_drive') && Boolean(videoRef.current));
+      (videoProviderRef.current === 'local' && Boolean(videoRef.current));
     if (hasVideoPlayer) {
-      const mediaTime = Math.max(0, getCurrentVideoTime());
-      const sync = videoSyncRef.current;
-      const marker = sync.periodMarkers?.[String(q)];
-      const rate = Number.isFinite(sync.rate) && sync.rate > 0 ? sync.rate : 1;
-      // Une vidéo ajoutée après le live travaille sur l'échelle MEDIA. Pour
-      // continuer à coder sans casser les anciens événements, on reconvertit
-      // la tête de lecture vers l'échelle SOURCE LiveStat avant d'enregistrer.
-      if (marker?.start != null && marker?.sourceStart != null) {
-        return Math.max(0, Number(marker.sourceStart) + (mediaTime - Number(marker.start)) / rate);
-      }
-      if (sync.mode !== 'native') {
-        return Math.max(0, (mediaTime - (Number.isFinite(sync.offset) ? sync.offset : 0)) / rate);
-      }
-      return mediaTime;
+      return Math.max(0, getCurrentVideoTime());
     }
-    if (matchStartAtRef.current == null) return null;
     return Math.max(0, (Date.now() - matchStartAtRef.current) / 1000);
-  };
-
-  // Ancre SOURCE de début de quart-temps. En direct sans vidéo, elle est posée
-  // au premier démarrage du chrono de la période. Plus tard le coach associe
-  // cette ancre au curseur vidéo Q1/Q2/Q3/Q4 dans VideoSyncModal.
-  const markPeriodSourceStart = (period: number, explicitTime?: number) => {
-    const key = String(period);
-    const prev = videoSyncRef.current;
-    if (prev.periodMarkers?.[key]?.sourceStart != null) return;
-    const raw = explicitTime ?? getRawCodingTime();
-    if (raw == null || !Number.isFinite(raw)) return;
-    const next: VideoSyncState = {
-      ...prev,
-      periodMarkers: {
-        ...(prev.periodMarkers ?? {}),
-        [key]: { ...(prev.periodMarkers?.[key] ?? {}), sourceStart: Math.max(0, raw) },
-      },
-    };
-    setVideoSync(next);
-  };
-
-  const markPeriodSourceEnd = (period: number) => {
-    const raw = getRawCodingTime();
-    if (raw == null || !Number.isFinite(raw)) return;
-    const key = String(period);
-    const prev = videoSyncRef.current;
-    setVideoSync({
-      ...prev,
-      periodMarkers: {
-        ...(prev.periodMarkers ?? {}),
-        [key]: { ...(prev.periodMarkers?.[key] ?? {}), sourceEnd: Math.max(0, raw) },
-      },
-    });
-    persistProjectStateRef.current?.();
-    flash(`Fin ${periodLabel(period)} repérée`);
   };
 
   const markClipStartBefore = (secondsBefore: number) => {
@@ -2268,10 +1268,10 @@ export default function PriseStatsProPage() {
     flash('Clip ' + fmt(Math.round(start)) + (end != null ? ' → ' + fmt(Math.round(end)) : ''));
   };
 
-  const hasLocalVideo = () => ((videoProvider === 'local' || videoProvider === 'google_drive') && !!videoRef.current) || !!clipVideoRef.current;
+  const hasLocalVideo = () => (videoProvider === 'local' && !!videoRef.current) || !!clipVideoRef.current;
   const nudgeVideo = (dir: -1 | 1) => {
     // Priorité à la vidéo du popup clip si elle est ouverte, sinon la vidéo centrale.
-    const v = clipVideoRef.current || ((videoProvider === 'local' || videoProvider === 'google_drive') ? videoRef.current : null);
+    const v = clipVideoRef.current || (videoProvider === 'local' ? videoRef.current : null);
     if (!v) return;
     const dur = Number.isFinite(v.duration) ? v.duration : Infinity;
     v.currentTime = Math.max(0, Math.min(dur, v.currentTime + dir * videoStepSeconds));
@@ -2310,137 +1310,8 @@ export default function PriseStatsProPage() {
   const [clipThemeAssignments, setClipThemeAssignments] = useState<Record<string, string[]>>({});
   const [historySearch, setHistorySearch] = useState('');
   const [historyScope, setHistoryScope] = useState<'all' | 'attaque' | 'defense' | 'made' | 'missed'>('all');
-  const [analysisView, setAnalysisView] = useState<'timeline' | 'history'>('timeline');
-  const [historyFiltersOpen, setHistoryFiltersOpen] = useState(false);
-  const [historyExpanded, setHistoryExpanded] = useState<Record<string, boolean>>({});
-  const [favoriteClips, setFavoriteClips] = useState<Record<string, boolean>>({});
-
-  // Les étoiles de l'analyse vidéo alimentent la même bibliothèque persistante
-  // que MontageStudio. On conserve l'état visuel par mini-clip, mais Supabase
-  // référence l'action réelle afin que le clip réapparaisse dans Montage.
-  const toggleFavoriteClip = async (clipId: string) => {
-    const wasFavorite = Boolean(favoriteClips[clipId]);
-    setFavoriteClips((current) => ({ ...current, [clipId]: !wasFavorite }));
-
-    const clientActionId = String(clipId || '').split('::')[0];
-    if (!clientActionId) return;
-
-    try {
-      const supabase = createClient();
-      const { data: { user } } = await supabase.auth.getUser();
-      const favoriteTeamId = String(activeTeamId || teamId || '');
-      if (!user?.id || !favoriteTeamId) throw new Error('Équipe ou utilisateur introuvable.');
-
-      // Les actions Live utilisent souvent client_action_id côté interface alors
-      // que Montage travaille avec l'id Supabase. On résout donc l'id réel ici.
-      let actionRow: { id: string } | null = null;
-      const byClient = await supabase
-        .from('match_actions')
-        .select('id')
-        .eq('client_action_id', clientActionId)
-        .eq('team_id', favoriteTeamId)
-        .maybeSingle();
-      if (!byClient.error && byClient.data?.id) actionRow = byClient.data as { id: string };
-
-      if (!actionRow && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(clientActionId)) {
-        const byId = await supabase
-          .from('match_actions')
-          .select('id')
-          .eq('id', clientActionId)
-          .eq('team_id', favoriteTeamId)
-          .maybeSingle();
-        if (!byId.error && byId.data?.id) actionRow = byId.data as { id: string };
-      }
-
-      if (!actionRow?.id) throw new Error('Cette action doit être enregistrée avant de pouvoir être ajoutée aux favoris Montage.');
-
-      if (wasFavorite) {
-        const { error } = await supabase
-          .from('livestat_clip_favorites')
-          .delete()
-          .eq('user_id', user.id)
-          .eq('team_id', favoriteTeamId)
-          .eq('action_id', actionRow.id);
-        if (error) throw error;
-        flash('Retiré des favoris Montage');
-      } else {
-        const { error } = await supabase
-          .from('livestat_clip_favorites')
-          .upsert(
-            { user_id: user.id, team_id: favoriteTeamId, action_id: actionRow.id },
-            { onConflict: 'user_id,team_id,action_id' },
-          );
-        if (error) throw error;
-        flash('★ Clip ajouté aux favoris Montage');
-      }
-    } catch (error: any) {
-      setFavoriteClips((current) => ({ ...current, [clipId]: wasFavorite }));
-      flash(error?.message || 'Impossible de mettre à jour les favoris Montage');
-    }
-  };
-  const [historyAdvancedFilters, setHistoryAdvancedFilters] = useState<{
-    contexts: string[];
-    systems: string[];
-    tempsForts: string[];
-    actions: string[];
-    shotTypes: string[];
-    results: string[];
-    zones: string[];
-    players: string[];
-    rebounds: string[];
-  }>({
-    contexts: [],
-    systems: [],
-    tempsForts: [],
-    actions: [],
-    shotTypes: [],
-    results: [],
-    zones: [],
-    players: [],
-    rebounds: [],
-  });
-  useEffect(() => {
-    if (showTimelinePanel && analysisView === 'history') {
-      inspectionVideoTimeRef.current = getCurrentVideoTime();
-      pauseVideo();
-      setRunning(false);
-    }
-  }, [showTimelinePanel, analysisView]);
-
   const [timelineCompact, setTimelineCompact] = useState(false);
   const [timelineHiddenRows, setTimelineHiddenRows] = useState<Record<string, boolean>>({});
-  // Timeline type Sportscode / LongoMatch : zoom horizontal du canevas.
-  const [timelineZoom, setTimelineZoom] = useState<1 | 2 | 4 | 8>(1);
-
-  const toggleHistoryFilter = (
-    key: keyof typeof historyAdvancedFilters,
-    value: string,
-  ) => {
-    setHistoryAdvancedFilters((current) => {
-      const values = current[key];
-      const nextValues = values.includes(value)
-        ? values.filter((item) => item !== value)
-        : [...values, value];
-      return { ...current, [key]: nextValues };
-    });
-  };
-
-  const resetHistoryAdvancedFilters = () => {
-    setHistoryAdvancedFilters({
-      contexts: [],
-      systems: [],
-      tempsForts: [],
-      actions: [],
-      shotTypes: [],
-      results: [],
-      zones: [],
-      players: [],
-      rebounds: [],
-    });
-  };
-
-  const historyAdvancedFilterCount = Object.values(historyAdvancedFilters)
-    .reduce((sum, values) => sum + values.length, 0);
 
   const assignClipTheme = (action: ClipAction, themeName: string) => {
     if (!action.id) return;
@@ -2457,9 +1328,6 @@ export default function PriseStatsProPage() {
     if (!items.length) return;
     setClipModal({ title, items, index });
   };
-
-
-
   // V8 · édition de clip locale (hors match_actions) : rognage / note coach / dessins.
   // Clé = id d'action ; stockée séparément, jamais persistée dans match_actions.
   type ClipDraw = { id: string; tool: 'arrow' | 'circle' | 'rect' | 'text'; x1: number; y1: number; x2: number; y2: number; text?: string };
@@ -2492,7 +1360,7 @@ export default function PriseStatsProPage() {
   const [savedMontages, setSavedMontages] = useState<{ id: string; title: string; coach_note: string | null }[]>([]);
   const [montageLoading, setMontageLoading] = useState(false);
 
-  const addToMontage = async (a: StatA) => {
+  const addToMontage = (a: StatA) => {
     const p = find(a.playerId);
     const label = `${tags.label(a.tempsFort) || '—'} · ${describe(a, find).t}`;
     const sub = [periodLabel(a.q), a.clock, p ? `#${p.num} ${p.name}` : null].filter(Boolean).join(' · ');
@@ -2511,64 +1379,6 @@ export default function PriseStatsProPage() {
       flash('Ajouté au montage');
       return [...prev, { caid: a.id, label, sub, note, clipStart: cs, clipEnd: cEnd }];
     });
-
-    // Le bouton « Ajouter au montage » doit aussi alimenter la bibliothèque
-    // persistante du MontageStudio. Le storyboard Live reste local, mais le clip
-    // est enregistré comme favori Montage afin d'être retrouvé après navigation.
-    try {
-      const supabase = createClient();
-      const { data: { user } } = await supabase.auth.getUser();
-      const montageTeamId = String(activeTeamId || teamId || '');
-      const clientActionId = String(a.id || '');
-      if (!user?.id || !montageTeamId || !clientActionId) throw new Error('Clip, équipe ou utilisateur introuvable.');
-
-      let actionRow: { id: string } | null = null;
-      const byClient = await supabase
-        .from('match_actions')
-        .select('id')
-        .eq('client_action_id', clientActionId)
-        .eq('team_id', montageTeamId)
-        .maybeSingle();
-      if (!byClient.error && byClient.data?.id) actionRow = byClient.data as { id: string };
-
-      if (!actionRow && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(clientActionId)) {
-        const byId = await supabase
-          .from('match_actions')
-          .select('id')
-          .eq('id', clientActionId)
-          .eq('team_id', montageTeamId)
-          .maybeSingle();
-        if (!byId.error && byId.data?.id) actionRow = byId.data as { id: string };
-      }
-
-      if (!actionRow?.id) {
-        // Force d'abord la sauvegarde du projet : l'action vient peut-être juste
-        // d'être codée et n'est pas encore présente dans match_actions.
-        try { await persistProjectStateRef.current?.(); } catch { /* noop */ }
-        const retry = await supabase
-          .from('match_actions')
-          .select('id')
-          .eq('client_action_id', clientActionId)
-          .eq('team_id', montageTeamId)
-          .maybeSingle();
-        if (!retry.error && retry.data?.id) actionRow = retry.data as { id: string };
-      }
-
-      if (!actionRow?.id) throw new Error('Action non encore enregistrée : réessaie dans un instant.');
-
-      const { error } = await supabase
-        .from('livestat_clip_favorites')
-        .upsert(
-          { user_id: user.id, team_id: montageTeamId, action_id: actionRow.id },
-          { onConflict: 'user_id,team_id,action_id' },
-        );
-      if (error) throw error;
-
-      setFavoriteClips((current) => ({ ...current, [clientActionId]: true }));
-      flash('★ Clip disponible dans Montage');
-    } catch (error: any) {
-      flash(error?.message || 'Clip ajouté localement, mais impossible de l’envoyer dans Montage');
-    }
   };
   const removeMontageItem = (caid: string) => setMontageItems((prev) => prev.filter((x) => x.caid !== caid));
   const moveMontageItem = (idx: number, dir: -1 | 1) => {
@@ -2600,26 +1410,1579 @@ export default function PriseStatsProPage() {
   };
 
   const openMontageWindow = () => {
-    // Le montage n'est plus un éditeur HTML parallèle généré depuis LiveStat.
-    // Tous les accès ouvrent désormais le vrai MontageStudio MyBasket.
-    // On transmet l'équipe courante pour retrouver immédiatement ses matchs/clips.
-    const params = new URLSearchParams();
-    if (teamId) params.set('teamId', teamId);
-    const matchId = liveMatchIdRef.current;
-    if (matchId) params.set('matchId', matchId);
+    const w = window.open(
+      '',
+      'mybasket-montage-window',
+      'width=1560,height=960,resizable=yes,scrollbars=yes',
+    );
 
-    // Sauvegarde l'état courant avant d'ouvrir le studio afin que les dernières
-    // actions codées soient disponibles côté MontageStudio/Supabase.
-    try { persistProjectStateRef.current?.(); } catch { /* noop */ }
-
-    const url = `/montages${params.toString() ? `?${params.toString()}` : ''}`;
-    const popup = window.open(url, 'mybasket-montage-studio');
-    if (!popup) {
-      // Safari peut bloquer les popups : dans ce cas on ouvre dans l'onglet courant.
-      window.location.assign(url);
+    if (!w) {
+      flash('Popup bloquée par le navigateur.');
       return;
     }
-    try { popup.focus(); } catch { /* noop */ }
+
+    const montagePayloadItems = montageItems.map((item, index) => ({
+      ...item,
+      index: index + 1,
+      type: item.caid.startsWith('slide_')
+        ? 'title'
+        : item.caid.startsWith('image_')
+          ? 'image'
+          : item.caid.startsWith('text_')
+            ? 'text'
+            : 'clip',
+      mediaStart: resolveSyncedVideoTime(
+        item.clipStart,
+        videoSyncRef.current,
+      ),
+      mediaEnd: resolveSyncedVideoTime(
+        item.clipEnd,
+        videoSyncRef.current,
+      ),
+    }));
+
+    const montageLibrary = actions.map((action) => {
+      const player = find(action.playerId);
+      const edit = clipEdits[action.id];
+
+      return {
+        caid: action.id,
+        type: 'clip',
+        label: `${tags.label(action.tempsFort) || 'Action'} · ${
+          describe(action, find).t
+        }`,
+        sub: [
+          periodLabel(action.q),
+          action.clock,
+          player ? `#${player.num} ${player.name}` : null,
+        ]
+          .filter(Boolean)
+          .join(' · '),
+        note: edit?.note || '',
+        mediaStart: resolveSyncedVideoTime(
+          edit?.trimStart ?? action.clipStart ?? action.possessionStart,
+          videoSyncRef.current,
+        ),
+        mediaEnd: resolveSyncedVideoTime(
+          edit?.trimEnd ?? action.clipEnd ?? action.possessionEnd,
+          videoSyncRef.current,
+        ),
+        tags: [
+          action.context,
+          action.systemeName || action.systemeJeu || action.systemeSlot,
+          tags.label(action.tempsFort),
+          action.actionType,
+          action.shotType,
+          action.shotResult === 'made'
+            ? 'Marqué'
+            : action.shotResult === 'missed'
+              ? 'Raté'
+              : action.shotResult,
+          action.zone,
+          ...(clipThemeAssignments[action.id] || []),
+        ].filter(Boolean),
+      };
+    });
+
+    const payload = JSON.stringify({
+      items: montagePayloadItems,
+      library: montageLibrary,
+      shortcuts: clipShortcutThemes,
+      title: montageTitle || 'Nouveau montage',
+      note: montageNote || '',
+      videoUrl: videoUrl || '',
+    }).replace(/</g, '\\u003c');
+
+    w.document.open();
+    w.document.write(`<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>MyBasket · Montage Pro</title>
+  <style>
+    :root {
+      --bg: #070b14;
+      --panel: #0c1423;
+      --panel2: #111b2d;
+      --line: #29364e;
+      --text: #eef2f8;
+      --muted: #8794aa;
+      --gold: #d4a24c;
+      --wine: #6b1a2c;
+      --green: #22c55e;
+      --red: #ef4444;
+    }
+
+    * { box-sizing: border-box; }
+
+    html, body {
+      width: 100%;
+      height: 100%;
+      margin: 0;
+      overflow: hidden;
+      background: var(--bg);
+      color: var(--text);
+      font-family: Inter, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+
+    button, input, textarea, select {
+      font: inherit;
+    }
+
+    button {
+      cursor: pointer;
+    }
+
+    .topbar {
+      height: 64px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      padding: 0 18px;
+      border-bottom: 1px solid var(--line);
+      background: #0e1727;
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .brand b {
+      font-size: 19px;
+    }
+
+    .brand span {
+      padding: 3px 7px;
+      border: 1px solid rgba(212,162,76,.55);
+      border-radius: 999px;
+      color: var(--gold);
+      font-size: 9px;
+      font-weight: 900;
+    }
+
+    .top-actions {
+      display: flex;
+      gap: 8px;
+    }
+
+    .top-actions button {
+      min-height: 38px;
+      padding: 0 13px;
+      border: 1px solid var(--line);
+      border-radius: 9px;
+      background: #172238;
+      color: var(--text);
+      font-weight: 850;
+    }
+
+    .top-actions .primary {
+      border-color: var(--gold);
+      background: var(--gold);
+      color: #17120a;
+    }
+
+    .workspace {
+      display: grid;
+      grid-template-columns: 300px minmax(0,1fr) 330px;
+      height: calc(100% - 64px);
+      min-width: 1100px;
+    }
+
+    .library,
+    .properties {
+      min-width: 0;
+      overflow: auto;
+      padding: 14px;
+      background: var(--panel);
+    }
+
+    .library {
+      border-right: 1px solid var(--line);
+    }
+
+    .properties {
+      border-left: 1px solid var(--line);
+    }
+
+    .column-title {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 10px;
+    }
+
+    .column-title b {
+      font-size: 14px;
+    }
+
+    .count {
+      min-width: 26px;
+      height: 26px;
+      display: grid;
+      place-items: center;
+      border-radius: 8px;
+      background: #171f30;
+      color: var(--gold);
+      font-size: 10px;
+      font-weight: 900;
+    }
+
+    .search {
+      width: 100%;
+      height: 38px;
+      margin-bottom: 10px;
+      padding: 0 10px;
+      border: 1px solid var(--line);
+      border-radius: 9px;
+      background: #08111f;
+      color: #fff;
+    }
+
+    .library-list {
+      display: grid;
+      gap: 8px;
+    }
+
+    .library-card {
+      display: grid;
+      grid-template-columns: minmax(0,1fr) 34px;
+      gap: 8px;
+      padding: 10px;
+      border: 1px solid #2c3951;
+      border-radius: 10px;
+      background: #111b2d;
+    }
+
+    .library-card b,
+    .library-card small {
+      display: block;
+    }
+
+    .library-card b {
+      font-size: 11px;
+      line-height: 1.35;
+    }
+
+    .library-card small {
+      margin-top: 4px;
+      color: var(--muted);
+      font-size: 9px;
+    }
+
+    .tag-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 4px;
+      margin-top: 7px;
+    }
+
+    .tag {
+      padding: 3px 6px;
+      border: 1px solid #3a4862;
+      border-radius: 999px;
+      color: #cbd5e1;
+      font-size: 8px;
+      font-weight: 800;
+    }
+
+    .library-card button {
+      width: 34px;
+      height: 34px;
+      align-self: center;
+      border: 1px solid var(--gold);
+      border-radius: 9px;
+      background: rgba(212,162,76,.1);
+      color: var(--gold);
+      font-size: 18px;
+      font-weight: 900;
+    }
+
+    .center {
+      display: grid;
+      grid-template-rows: minmax(360px, 55%) minmax(300px, 45%);
+      min-width: 0;
+      overflow: hidden;
+    }
+
+    .viewer {
+      display: grid;
+      grid-template-rows: minmax(0,1fr) auto auto;
+      min-height: 0;
+      overflow: hidden;
+      border-bottom: 1px solid var(--line);
+      background: #03060c;
+    }
+
+    .stage {
+      position: relative;
+      display: grid;
+      place-items: center;
+      min-height: 0;
+      overflow: hidden;
+      background: #000;
+    }
+
+    .stage video {
+      width: 100%;
+      height: 100%;
+      object-fit: contain;
+    }
+
+    .stage canvas {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      pointer-events: none;
+    }
+
+    .stage canvas.active {
+      pointer-events: auto;
+      cursor: crosshair;
+    }
+
+    .empty-preview {
+      color: #657289;
+      text-align: center;
+    }
+
+    .spotlight {
+      position: absolute;
+      width: 160px;
+      height: 160px;
+      transform: translate(-50%, -50%);
+      border: 3px solid var(--gold);
+      border-radius: 50%;
+      box-shadow: 0 0 0 9999px rgba(0,0,0,.64);
+      pointer-events: none;
+    }
+
+    .player-circle {
+      position: absolute;
+      width: 105px;
+      height: 38px;
+      transform: translate(-50%, -50%);
+      border: 4px solid var(--gold);
+      border-radius: 50%;
+      pointer-events: none;
+    }
+
+    .overlay-text {
+      position: absolute;
+      transform: translate(-50%, -50%);
+      color: var(--gold);
+      font-size: 25px;
+      font-weight: 950;
+      text-shadow: 0 2px 5px #000;
+      pointer-events: none;
+      white-space: nowrap;
+    }
+
+    .transport {
+      display: grid;
+      grid-template-columns: auto minmax(0,1fr) auto;
+      gap: 10px;
+      align-items: center;
+      padding: 8px 12px;
+      border-top: 1px solid #202b3f;
+      background: #0b1220;
+    }
+
+    .transport-buttons {
+      display: flex;
+      gap: 5px;
+    }
+
+    .transport button,
+    .tool-button,
+    .trim-button {
+      min-height: 34px;
+      border: 1px solid #344159;
+      border-radius: 8px;
+      background: #172238;
+      color: #eef2f8;
+      font-size: 10px;
+      font-weight: 850;
+    }
+
+    .transport button {
+      min-width: 36px;
+    }
+
+    .transport input[type="range"] {
+      width: 100%;
+    }
+
+    .timecode {
+      color: var(--gold);
+      font-size: 11px;
+      font-weight: 900;
+      white-space: nowrap;
+    }
+
+    .tools {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      padding: 8px 12px;
+      border-top: 1px solid #202b3f;
+      background: #0d1524;
+    }
+
+    .tool-button,
+    .trim-button {
+      padding: 0 10px;
+    }
+
+    .tool-button.on,
+    .trim-button.on {
+      border-color: var(--gold);
+      background: rgba(212,162,76,.12);
+      color: var(--gold);
+    }
+
+    .editor-bottom {
+      display: grid;
+      grid-template-rows: auto minmax(0,1fr);
+      min-height: 0;
+      overflow: hidden;
+      background: #080e19;
+    }
+
+    .timeline-toolbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 8px 12px;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .add-elements {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+    }
+
+    .add-elements button {
+      height: 32px;
+      padding: 0 10px;
+      border: 1px solid #344159;
+      border-radius: 8px;
+      background: #131e31;
+      color: #dbe4f2;
+      font-size: 10px;
+      font-weight: 850;
+    }
+
+    .timeline {
+      min-height: 0;
+      overflow: auto;
+      padding: 12px;
+    }
+
+    .timeline-track {
+      display: flex;
+      align-items: stretch;
+      gap: 8px;
+      min-width: max-content;
+      min-height: 146px;
+      padding: 12px;
+      border: 1px dashed #35425a;
+      border-radius: 12px;
+      background:
+        repeating-linear-gradient(
+          90deg,
+          transparent 0,
+          transparent 99px,
+          rgba(255,255,255,.025) 100px
+        );
+    }
+
+    .timeline-item {
+      position: relative;
+      width: 205px;
+      min-height: 120px;
+      padding: 10px;
+      border: 1px solid #344159;
+      border-radius: 10px;
+      background: #111b2d;
+      cursor: grab;
+    }
+
+    .timeline-item.selected {
+      border-color: var(--gold);
+      box-shadow: 0 0 0 2px rgba(212,162,76,.18);
+    }
+
+    .timeline-item .number {
+      position: absolute;
+      top: 7px;
+      right: 7px;
+      min-width: 23px;
+      height: 23px;
+      display: grid;
+      place-items: center;
+      border-radius: 7px;
+      background: #070b14;
+      color: var(--gold);
+      font-size: 9px;
+      font-weight: 900;
+    }
+
+    .timeline-item b {
+      display: block;
+      padding-right: 27px;
+      color: #f4c665;
+      font-size: 11px;
+      line-height: 1.35;
+    }
+
+    .timeline-item small {
+      display: block;
+      margin-top: 5px;
+      color: var(--muted);
+      font-size: 9px;
+    }
+
+    .timeline-item .duration {
+      margin-top: 9px;
+      color: #dbe4f2;
+      font-size: 10px;
+      font-weight: 850;
+    }
+
+    .timeline-item .remove {
+      position: absolute;
+      right: 7px;
+      bottom: 7px;
+      width: 27px;
+      height: 27px;
+      border: 0;
+      border-radius: 7px;
+      background: var(--wine);
+      color: #fff;
+      font-weight: 900;
+    }
+
+    .property-section {
+      margin-bottom: 18px;
+    }
+
+    .property-section h3 {
+      margin: 0 0 10px;
+      color: var(--gold);
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: .08em;
+    }
+
+    .properties label {
+      display: block;
+      margin: 9px 0 4px;
+      color: #98a6bc;
+      font-size: 10px;
+      font-weight: 800;
+    }
+
+    .properties input,
+    .properties textarea,
+    .properties select {
+      width: 100%;
+      padding: 9px;
+      border: 1px solid #344159;
+      border-radius: 8px;
+      background: #08111f;
+      color: #fff;
+    }
+
+    .properties textarea {
+      min-height: 82px;
+      resize: vertical;
+    }
+
+    .property-row {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 7px;
+    }
+
+    .trim-panel {
+      padding: 10px;
+      border: 1px solid #2d3a52;
+      border-radius: 10px;
+      background: #0a1220;
+    }
+
+    .trim-value {
+      display: flex;
+      justify-content: space-between;
+      margin: 6px 0;
+      color: #c7d0df;
+      font-size: 10px;
+    }
+
+    .trim-actions {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 5px;
+      margin-top: 8px;
+    }
+
+    .shortcut-list {
+      display: grid;
+      gap: 6px;
+    }
+
+    .shortcut {
+      display: grid;
+      grid-template-columns: 35px minmax(0,1fr);
+      gap: 7px;
+      align-items: center;
+    }
+
+    .shortcut kbd {
+      height: 32px;
+      display: grid;
+      place-items: center;
+      border: 1px solid var(--gold);
+      border-radius: 8px;
+      background: rgba(212,162,76,.1);
+      color: var(--gold);
+      font-size: 11px;
+      font-weight: 900;
+    }
+
+    .shortcut span {
+      overflow: hidden;
+      color: #c9d3e2;
+      font-size: 10px;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .hint {
+      color: var(--muted);
+      font-size: 9px;
+      line-height: 1.5;
+    }
+
+    .empty {
+      padding: 30px;
+      color: #66738b;
+      text-align: center;
+    }
+
+    @media (max-width: 1250px) {
+      .workspace {
+        grid-template-columns: 260px minmax(0,1fr) 290px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <b>🎬 MyBasket Montage Pro</b>
+      <span>ÉDITEUR</span>
+    </div>
+
+    <div class="top-actions">
+      <button id="saveProject">💾 Sauvegarder</button>
+      <button id="exportProject">⬇ Exporter le projet</button>
+      <button class="primary" id="renderVideo">🎞 Export vidéo</button>
+    </div>
+  </header>
+
+  <div class="workspace">
+    <aside class="library">
+      <div class="column-title">
+        <b>Bibliothèque de clips</b>
+        <span class="count" id="libraryCount">0</span>
+      </div>
+
+      <input
+        id="librarySearch"
+        class="search"
+        placeholder="Rechercher joueur, système, tag…"
+      />
+
+      <div id="libraryList" class="library-list"></div>
+    </aside>
+
+    <main class="center">
+      <section class="viewer">
+        <div class="stage" id="stage">
+          <div class="empty-preview">Sélectionne un clip dans la timeline.</div>
+        </div>
+
+        <div class="transport">
+          <div class="transport-buttons">
+            <button id="backFrame" title="Reculer de 0,1 seconde">−0,1</button>
+            <button id="playPause">▶</button>
+            <button id="forwardFrame" title="Avancer de 0,1 seconde">+0,1</button>
+          </div>
+
+          <input id="scrubber" type="range" min="0" max="1" step="0.01" value="0" />
+
+          <span id="timecode" class="timecode">00:00.0 / 00:00.0</span>
+        </div>
+
+        <div class="tools">
+          <button class="trim-button" id="markIn">I · Début</button>
+          <button class="trim-button" id="markOut">O · Fin</button>
+          <button class="tool-button" data-tool="draw">✏ Dessin</button>
+          <button class="tool-button" data-tool="circle">◯ Cercle joueur</button>
+          <button class="tool-button" data-tool="spotlight">◉ Spotlight</button>
+          <button class="tool-button" data-tool="text">T Texte</button>
+          <button class="tool-button" data-tool="freeze">⏸ Freeze</button>
+          <button class="tool-button" id="clearTools">🧽 Effacer</button>
+        </div>
+      </section>
+
+      <section class="editor-bottom">
+        <div class="timeline-toolbar">
+          <div>
+            <b>Ordre du montage</b>
+            <span class="hint" id="totalDuration">0 clip</span>
+          </div>
+
+          <div class="add-elements">
+            <button data-add="title">＋ Titre</button>
+            <button data-add="text">＋ Texte</button>
+            <button data-add="image">＋ Image</button>
+            <button data-add="freeze">＋ Arrêt image</button>
+            <button data-add="audio">＋ Audio</button>
+          </div>
+        </div>
+
+        <div class="timeline">
+          <div id="timelineTrack" class="timeline-track"></div>
+        </div>
+      </section>
+    </main>
+
+    <aside class="properties">
+      <section class="property-section">
+        <h3>Projet</h3>
+
+        <label for="projectTitle">Titre</label>
+        <input id="projectTitle" />
+
+        <label for="projectNote">Notes</label>
+        <textarea id="projectNote"></textarea>
+      </section>
+
+      <section class="property-section">
+        <h3>Élément sélectionné</h3>
+        <div id="itemProperties" class="hint">
+          Aucun élément sélectionné.
+        </div>
+      </section>
+
+      <section class="property-section">
+        <h3>Raccourcis</h3>
+        <div id="shortcutList" class="shortcut-list"></div>
+        <p class="hint">
+          <b>Tab</b> : clip suivant · <b>I</b> : début · <b>O</b> : fin ·
+          <b>Suppr.</b> : retirer de la timeline · <b>Espace</b> : lecture.
+        </p>
+      </section>
+    </aside>
+  </div>
+
+  <script>
+    const state = ${payload};
+
+    let items = Array.isArray(state.items) ? state.items.slice() : [];
+    let library = Array.isArray(state.library) ? state.library.slice() : [];
+    let shortcuts = Array.isArray(state.shortcuts) ? state.shortcuts.slice() : [];
+    let selectedId = items[0] ? items[0].caid : null;
+    let activeTool = null;
+    let overlayPoint = null;
+    let overlayText = '';
+    let drawing = false;
+    let dragFromId = null;
+
+    const videoUrl = state.videoUrl || '';
+
+    const byId = (id) => document.getElementById(id);
+    const stage = byId('stage');
+    const timelineTrack = byId('timelineTrack');
+    const itemProperties = byId('itemProperties');
+    const scrubber = byId('scrubber');
+    const timecode = byId('timecode');
+
+    const escapeHtml = (value) =>
+      String(value == null ? '' : value).replace(/[&<>"']/g, (character) => ({
+        '&': '&amp;',
+        '<': '&lt;',
+        '>': '&gt;',
+        '"': '&quot;',
+        "'": '&#039;',
+      }[character]));
+
+    const formatTime = (seconds) => {
+      const safe = Number.isFinite(Number(seconds)) ? Math.max(0, Number(seconds)) : 0;
+      const minutes = Math.floor(safe / 60);
+      const rest = (safe % 60).toFixed(1).padStart(4, '0');
+      return String(minutes).padStart(2, '0') + ':' + rest;
+    };
+
+    const selectedItem = () => items.find((item) => item.caid === selectedId) || null;
+    const previewVideo = () => byId('previewVideo');
+
+    function itemDuration(item) {
+      if (!item || item.type !== 'clip') return Number(item && item.duration || 2);
+      const start = Number(item.mediaStart);
+      const end = Number(item.mediaEnd);
+      return Number.isFinite(start) && Number.isFinite(end) && end > start
+        ? end - start
+        : 0;
+    }
+
+    function totalDuration() {
+      return items.reduce((sum, item) => sum + itemDuration(item), 0);
+    }
+
+    function addLibraryClip(clip) {
+      if (!clip) return;
+      const existing = items.find((item) => item.caid === clip.caid);
+
+      if (existing) {
+        selectedId = existing.caid;
+      } else {
+        items.push({
+          ...clip,
+          collections: Array.isArray(clip.collections) ? clip.collections : [],
+        });
+        selectedId = clip.caid;
+      }
+
+      renderAll();
+    }
+
+    function addElement(type) {
+      const id = type + '_' + Date.now();
+
+      const labels = {
+        title: 'Titre',
+        text: 'Texte',
+        image: 'Image',
+        freeze: 'Arrêt sur image',
+        audio: 'Piste audio',
+      };
+
+      items.push({
+        caid: id,
+        type,
+        label: labels[type] || 'Élément',
+        sub: 'Élément de montage',
+        note: '',
+        duration: type === 'freeze' ? 2 : 3,
+        mediaStart: null,
+        mediaEnd: null,
+      });
+
+      selectedId = id;
+      renderAll();
+    }
+
+    function removeItem(id) {
+      items = items.filter((item) => item.caid !== id);
+
+      if (selectedId === id) {
+        selectedId = items[0] ? items[0].caid : null;
+      }
+
+      renderAll();
+    }
+
+    function moveItem(fromId, toId) {
+      const fromIndex = items.findIndex((item) => item.caid === fromId);
+      const toIndex = items.findIndex((item) => item.caid === toId);
+
+      if (fromIndex < 0 || toIndex < 0 || fromIndex === toIndex) return;
+
+      const next = items.slice();
+      const moved = next.splice(fromIndex, 1)[0];
+      next.splice(toIndex, 0, moved);
+      items = next;
+      renderTimeline();
+    }
+
+    function setActiveTool(tool) {
+      activeTool = activeTool === tool ? null : tool;
+
+      document.querySelectorAll('[data-tool]').forEach((button) => {
+        button.classList.toggle('on', button.dataset.tool === activeTool);
+      });
+
+      const canvas = byId('drawingCanvas');
+
+      if (canvas) {
+        canvas.classList.toggle('active', activeTool === 'draw');
+      }
+    }
+
+    function clearVisualTools() {
+      overlayPoint = null;
+      overlayText = '';
+
+      const canvas = byId('drawingCanvas');
+
+      if (canvas) {
+        const context = canvas.getContext('2d');
+        context.clearRect(0, 0, canvas.width, canvas.height);
+      }
+
+      renderOverlay();
+    }
+
+    function renderOverlay() {
+      stage.querySelectorAll('.spotlight,.player-circle,.overlay-text').forEach((node) => node.remove());
+
+      if (!overlayPoint || !activeTool) return;
+
+      if (activeTool === 'spotlight') {
+        const node = document.createElement('div');
+        node.className = 'spotlight';
+        node.style.left = overlayPoint.x + '%';
+        node.style.top = overlayPoint.y + '%';
+        stage.appendChild(node);
+      }
+
+      if (activeTool === 'circle') {
+        const node = document.createElement('div');
+        node.className = 'player-circle';
+        node.style.left = overlayPoint.x + '%';
+        node.style.top = overlayPoint.y + '%';
+        stage.appendChild(node);
+      }
+
+      if (activeTool === 'text' && overlayText) {
+        const node = document.createElement('div');
+        node.className = 'overlay-text';
+        node.style.left = overlayPoint.x + '%';
+        node.style.top = overlayPoint.y + '%';
+        node.textContent = overlayText;
+        stage.appendChild(node);
+      }
+    }
+
+    function bindDrawingCanvas() {
+      const canvas = byId('drawingCanvas');
+
+      if (!canvas) return;
+
+      canvas.width = Math.max(640, stage.clientWidth);
+      canvas.height = Math.max(360, stage.clientHeight);
+
+      const context = canvas.getContext('2d');
+      context.strokeStyle = '#d4a24c';
+      context.lineWidth = 4;
+      context.lineCap = 'round';
+
+      const position = (event) => {
+        const rect = canvas.getBoundingClientRect();
+
+        return {
+          x: ((event.clientX - rect.left) / rect.width) * canvas.width,
+          y: ((event.clientY - rect.top) / rect.height) * canvas.height,
+        };
+      };
+
+      canvas.onpointerdown = (event) => {
+        if (activeTool !== 'draw') return;
+        drawing = true;
+        const point = position(event);
+        context.beginPath();
+        context.moveTo(point.x, point.y);
+      };
+
+      canvas.onpointermove = (event) => {
+        if (!drawing || activeTool !== 'draw') return;
+        const point = position(event);
+        context.lineTo(point.x, point.y);
+        context.stroke();
+      };
+
+      canvas.onpointerup = () => {
+        drawing = false;
+      };
+
+      canvas.onpointerleave = () => {
+        drawing = false;
+      };
+    }
+
+    function showPreview(item) {
+      if (!item) {
+        stage.innerHTML = '<div class="empty-preview">Sélectionne un clip dans la timeline.</div>';
+        scrubber.max = '1';
+        scrubber.value = '0';
+        timecode.textContent = '00:00.0 / 00:00.0';
+        return;
+      }
+
+      overlayPoint = null;
+      overlayText = '';
+
+      if (item.type === 'clip' && videoUrl) {
+        stage.innerHTML =
+          '<video id="previewVideo" src="' +
+          escapeHtml(videoUrl) +
+          '" controls playsinline></video>' +
+          '<canvas id="drawingCanvas"></canvas>';
+
+        const video = previewVideo();
+
+        video.onloadedmetadata = () => {
+          const start = Number(item.mediaStart);
+          const end = Number(item.mediaEnd);
+
+          if (Number.isFinite(start)) {
+            video.currentTime = Math.max(0, start);
+          }
+
+          scrubber.min = '0';
+          scrubber.max = String(Number.isFinite(video.duration) ? video.duration : 1);
+          scrubber.value = String(video.currentTime || 0);
+          updateTimecode();
+        };
+
+        video.ontimeupdate = () => {
+          const end = Number(item.mediaEnd);
+
+          if (Number.isFinite(end) && video.currentTime >= end) {
+            video.pause();
+          }
+
+          scrubber.value = String(video.currentTime || 0);
+          updateTimecode();
+        };
+
+        bindDrawingCanvas();
+      } else {
+        stage.innerHTML =
+          '<div class="empty-preview"><b>' +
+          escapeHtml(item.label || 'Élément') +
+          '</b><br />' +
+          escapeHtml(item.note || item.type || '') +
+          '</div>';
+      }
+
+      renderOverlay();
+    }
+
+    function updateTimecode() {
+      const video = previewVideo();
+
+      if (!video) {
+        timecode.textContent = '00:00.0 / 00:00.0';
+        return;
+      }
+
+      timecode.textContent =
+        formatTime(video.currentTime || 0) +
+        ' / ' +
+        formatTime(Number.isFinite(video.duration) ? video.duration : 0);
+    }
+
+    function selectItem(id) {
+      selectedId = id;
+      renderTimeline();
+      renderProperties();
+      showPreview(selectedItem());
+    }
+
+    function renderLibrary() {
+      const query = byId('librarySearch').value.trim().toLowerCase();
+
+      const filtered = library.filter((clip) => {
+        const content = [
+          clip.label,
+          clip.sub,
+          ...(Array.isArray(clip.tags) ? clip.tags : []),
+        ]
+          .filter(Boolean)
+          .join(' ')
+          .toLowerCase();
+
+        return !query || content.includes(query);
+      });
+
+      byId('libraryCount').textContent = String(filtered.length);
+
+      const container = byId('libraryList');
+
+      container.innerHTML = '';
+
+      if (!filtered.length) {
+        container.innerHTML = '<div class="empty">Aucun clip correspondant.</div>';
+        return;
+      }
+
+      filtered
+        .slice()
+        .reverse()
+        .forEach((clip) => {
+          const card = document.createElement('div');
+          card.className = 'library-card';
+
+          const content = document.createElement('div');
+          content.innerHTML =
+            '<b>' +
+            escapeHtml(clip.label || 'Clip') +
+            '</b><small>' +
+            escapeHtml(clip.sub || '') +
+            '</small><div class="tag-row">' +
+            (Array.isArray(clip.tags)
+              ? clip.tags
+                  .slice(0, 8)
+                  .map((tag) => '<span class="tag">' + escapeHtml(tag) + '</span>')
+                  .join('')
+              : '') +
+            '</div>';
+
+          const addButton = document.createElement('button');
+          addButton.textContent = '+';
+          addButton.title = 'Ajouter à la timeline';
+          addButton.onclick = () => addLibraryClip(clip);
+
+          card.appendChild(content);
+          card.appendChild(addButton);
+          container.appendChild(card);
+        });
+    }
+
+    function renderTimeline() {
+      timelineTrack.innerHTML = '';
+
+      if (!items.length) {
+        timelineTrack.innerHTML =
+          '<div class="empty">Ajoute des clips ou des éléments à ton montage.</div>';
+      }
+
+      items.forEach((item, index) => {
+        const card = document.createElement('article');
+        card.className =
+          'timeline-item' + (selectedId === item.caid ? ' selected' : '');
+        card.draggable = true;
+        card.dataset.id = item.caid;
+
+        card.innerHTML =
+          '<span class="number">' +
+          (index + 1) +
+          '</span><b>' +
+          escapeHtml(item.label || 'Élément') +
+          '</b><small>' +
+          escapeHtml(item.sub || item.type || '') +
+          '</small><div class="duration">' +
+          formatTime(itemDuration(item)) +
+          '</div><button class="remove" title="Retirer">×</button>';
+
+        card.onclick = (event) => {
+          if (event.target.classList.contains('remove')) return;
+          selectItem(item.caid);
+        };
+
+        card.querySelector('.remove').onclick = (event) => {
+          event.stopPropagation();
+          removeItem(item.caid);
+        };
+
+        card.ondragstart = () => {
+          dragFromId = item.caid;
+        };
+
+        card.ondragover = (event) => {
+          event.preventDefault();
+        };
+
+        card.ondrop = (event) => {
+          event.preventDefault();
+
+          if (dragFromId) {
+            moveItem(dragFromId, item.caid);
+          }
+
+          dragFromId = null;
+        };
+
+        timelineTrack.appendChild(card);
+      });
+
+      byId('totalDuration').textContent =
+        items.length +
+        ' élément' +
+        (items.length > 1 ? 's' : '') +
+        ' · ' +
+        formatTime(totalDuration());
+    }
+
+    function renderProperties() {
+      const item = selectedItem();
+
+      if (!item) {
+        itemProperties.innerHTML = 'Aucun élément sélectionné.';
+        return;
+      }
+
+      const isClip = item.type === 'clip';
+
+      itemProperties.innerHTML =
+        '<label>Titre</label>' +
+        '<input id="itemLabel" value="' +
+        escapeHtml(item.label || '') +
+        '" />' +
+        '<label>Note / texte</label>' +
+        '<textarea id="itemNote">' +
+        escapeHtml(item.note || '') +
+        '</textarea>' +
+        (isClip
+          ? '<div class="trim-panel">' +
+            '<div class="trim-value"><span>Début</span><b id="startValue">' +
+            formatTime(item.mediaStart) +
+            '</b></div>' +
+            '<input id="itemStart" type="number" step="0.1" value="' +
+            (item.mediaStart == null ? '' : item.mediaStart) +
+            '" />' +
+            '<div class="trim-value"><span>Fin</span><b id="endValue">' +
+            formatTime(item.mediaEnd) +
+            '</b></div>' +
+            '<input id="itemEnd" type="number" step="0.1" value="' +
+            (item.mediaEnd == null ? '' : item.mediaEnd) +
+            '" />' +
+            '<div class="trim-actions">' +
+            '<button class="trim-button" data-nudge-start="-1">−1 début</button>' +
+            '<button class="trim-button" data-nudge-start="1">+1 début</button>' +
+            '<button class="trim-button" data-nudge-end="-1">−1 fin</button>' +
+            '<button class="trim-button" data-nudge-end="1">+1 fin</button>' +
+            '</div></div>'
+          : '<label>Durée de l’élément (s)</label>' +
+            '<input id="itemDuration" type="number" min="0.5" step="0.5" value="' +
+            Number(item.duration || 2) +
+            '" />');
+
+      byId('itemLabel').oninput = (event) => {
+        item.label = event.target.value;
+        renderTimeline();
+      };
+
+      byId('itemNote').oninput = (event) => {
+        item.note = event.target.value;
+      };
+
+      if (isClip) {
+        byId('itemStart').oninput = (event) => {
+          item.mediaStart =
+            event.target.value === '' ? null : Number(event.target.value);
+          renderTimeline();
+          renderProperties();
+        };
+
+        byId('itemEnd').oninput = (event) => {
+          item.mediaEnd =
+            event.target.value === '' ? null : Number(event.target.value);
+          renderTimeline();
+          renderProperties();
+        };
+
+        itemProperties.querySelectorAll('[data-nudge-start]').forEach((button) => {
+          button.onclick = () => {
+            const delta = Number(button.dataset.nudgeStart);
+            item.mediaStart = Math.max(0, Number(item.mediaStart || 0) + delta);
+
+            if (
+              Number.isFinite(Number(item.mediaEnd)) &&
+              item.mediaStart >= item.mediaEnd
+            ) {
+              item.mediaStart = Math.max(0, Number(item.mediaEnd) - 0.1);
+            }
+
+            renderAll();
+          };
+        });
+
+        itemProperties.querySelectorAll('[data-nudge-end]').forEach((button) => {
+          button.onclick = () => {
+            const delta = Number(button.dataset.nudgeEnd);
+            item.mediaEnd = Math.max(
+              Number(item.mediaStart || 0) + 0.1,
+              Number(item.mediaEnd || item.mediaStart || 0) + delta,
+            );
+            renderAll();
+          };
+        });
+      } else {
+        byId('itemDuration').oninput = (event) => {
+          item.duration = Math.max(0.5, Number(event.target.value || 2));
+          renderTimeline();
+        };
+      }
+    }
+
+    function renderShortcuts() {
+      const container = byId('shortcutList');
+      container.innerHTML = '';
+
+      shortcuts.forEach((shortcut) => {
+        const row = document.createElement('div');
+        row.className = 'shortcut';
+        row.innerHTML =
+          '<kbd>' +
+          escapeHtml(String(shortcut.key || '').toUpperCase()) +
+          '</kbd><span>' +
+          escapeHtml(shortcut.name || '') +
+          '</span>';
+        container.appendChild(row);
+      });
+    }
+
+    function renderAll() {
+      renderLibrary();
+      renderTimeline();
+      renderProperties();
+      renderShortcuts();
+      showPreview(selectedItem());
+    }
+
+    function markBoundary(type) {
+      const item = selectedItem();
+      const video = previewVideo();
+
+      if (!item || item.type !== 'clip' || !video) return;
+
+      const value = Math.max(0, Number(video.currentTime || 0));
+
+      if (type === 'in') {
+        item.mediaStart = value;
+      } else {
+        item.mediaEnd = Math.max(Number(item.mediaStart || 0) + 0.1, value);
+      }
+
+      renderTimeline();
+      renderProperties();
+    }
+
+    function nudgeVideo(delta) {
+      const video = previewVideo();
+
+      if (!video) return;
+
+      const duration = Number.isFinite(video.duration) ? video.duration : Infinity;
+      video.currentTime = Math.max(
+        0,
+        Math.min(duration, Number(video.currentTime || 0) + delta),
+      );
+      updateTimecode();
+    }
+
+    function assignShortcut(key) {
+      const item = selectedItem();
+
+      if (!item || item.type !== 'clip') return false;
+
+      const shortcut = shortcuts.find(
+        (entry) => String(entry.key || '').toLowerCase() === key.toLowerCase(),
+      );
+
+      if (!shortcut) return false;
+
+      item.collections = Array.from(
+        new Set([...(item.collections || []), shortcut.name]),
+      );
+
+      return true;
+    }
+
+    byId('projectTitle').value = state.title || '';
+    byId('projectNote').value = state.note || '';
+
+    byId('librarySearch').oninput = renderLibrary;
+
+    byId('playPause').onclick = () => {
+      const video = previewVideo();
+
+      if (!video) return;
+
+      if (video.paused) {
+        video.play().catch(() => {});
+      } else {
+        video.pause();
+      }
+    };
+
+    byId('backFrame').onclick = () => nudgeVideo(-0.1);
+    byId('forwardFrame').onclick = () => nudgeVideo(0.1);
+    byId('markIn').onclick = () => markBoundary('in');
+    byId('markOut').onclick = () => markBoundary('out');
+    byId('clearTools').onclick = clearVisualTools;
+
+    scrubber.oninput = () => {
+      const video = previewVideo();
+
+      if (!video) return;
+
+      video.currentTime = Number(scrubber.value || 0);
+      updateTimecode();
+    };
+
+    document.querySelectorAll('[data-tool]').forEach((button) => {
+      button.onclick = () => {
+        const tool = button.dataset.tool;
+
+        if (tool === 'freeze') {
+          const video = previewVideo();
+
+          if (video) {
+            if (video.paused) {
+              video.play().catch(() => {});
+            } else {
+              video.pause();
+            }
+          }
+
+          return;
+        }
+
+        setActiveTool(tool);
+      };
+    });
+
+    document.querySelectorAll('[data-add]').forEach((button) => {
+      button.onclick = () => addElement(button.dataset.add);
+    });
+
+    stage.onpointerdown = (event) => {
+      if (!['circle', 'spotlight', 'text'].includes(activeTool)) return;
+
+      const rect = stage.getBoundingClientRect();
+
+      overlayPoint = {
+        x: ((event.clientX - rect.left) / rect.width) * 100,
+        y: ((event.clientY - rect.top) / rect.height) * 100,
+      };
+
+      if (activeTool === 'text') {
+        const value = window.prompt('Texte à afficher :', overlayText || '');
+
+        if (value != null) {
+          overlayText = value.trim();
+        }
+      }
+
+      renderOverlay();
+    };
+
+    window.addEventListener('keydown', (event) => {
+      const activeTag = document.activeElement && document.activeElement.tagName;
+
+      if (['INPUT', 'TEXTAREA', 'SELECT'].includes(activeTag)) return;
+
+      if (event.code === 'Space') {
+        event.preventDefault();
+        byId('playPause').click();
+        return;
+      }
+
+      if (event.key === 'Tab') {
+        event.preventDefault();
+
+        if (!items.length) return;
+
+        const index = items.findIndex((item) => item.caid === selectedId);
+        const next = items[(index + 1 + items.length) % items.length];
+        selectItem(next.caid);
+        return;
+      }
+
+      if (event.key.toLowerCase() === 'i') {
+        event.preventDefault();
+        markBoundary('in');
+        return;
+      }
+
+      if (event.key.toLowerCase() === 'o') {
+        event.preventDefault();
+        markBoundary('out');
+        return;
+      }
+
+      if (event.key === 'ArrowLeft') {
+        event.preventDefault();
+        nudgeVideo(event.shiftKey ? -1 : -0.1);
+        return;
+      }
+
+      if (event.key === 'ArrowRight') {
+        event.preventDefault();
+        nudgeVideo(event.shiftKey ? 1 : 0.1);
+        return;
+      }
+
+      if (event.key === 'Delete' || event.key === 'Backspace') {
+        if (selectedId) {
+          event.preventDefault();
+          removeItem(selectedId);
+        }
+        return;
+      }
+
+      if (assignShortcut(event.key)) {
+        event.preventDefault();
+        renderProperties();
+      }
+    });
+
+    byId('saveProject').onclick = () => {
+      localStorage.setItem(
+        'mybasket_montage_project',
+        JSON.stringify(projectData()),
+      );
+      window.alert('Projet sauvegardé dans ce navigateur.');
+    };
+
+    byId('exportProject').onclick = () => {
+      const anchor = document.createElement('a');
+
+      anchor.href = URL.createObjectURL(
+        new Blob([JSON.stringify(projectData(), null, 2)], {
+          type: 'application/json',
+        }),
+      );
+      anchor.download = 'montage-mybasket.json';
+      anchor.click();
+      URL.revokeObjectURL(anchor.href);
+    };
+
+    byId('renderVideo').onclick = () => {
+      window.alert(
+        'Le montage et ses découpes sont prêts. Le rendu MP4 nécessite le moteur d’export serveur FFmpeg/Remotion, qui sera branché dans l’étape suivante.',
+      );
+    };
+
+    function projectData() {
+      return {
+        title: byId('projectTitle').value,
+        note: byId('projectNote').value,
+        items,
+        shortcuts,
+        exportedAt: new Date().toISOString(),
+      };
+    }
+
+    renderAll();
+  <\/script>
+</body>
+</html>`);
+
+    w.document.close();
   };
 
   const saveMontage = async () => {
@@ -2734,27 +3097,16 @@ export default function PriseStatsProPage() {
       active = false;
     };
   }, []);
-  const coachedTeams = teams.filter((team) => !team.isScoutTeam && String(team.teamType || '').toLowerCase() !== 'scout');
-  const scoutTeams = teams.filter((team) => team.isScoutTeam || String(team.teamType || '').toLowerCase() === 'scout');
-  const setupTeams = analysisScope === 'scout' ? scoutTeams : coachedTeams;
-
   useEffect(() => {
     if (!teams.length) return;
-    const params = new URLSearchParams(window.location.search);
-    const requestedScout = params.get('scoutTeamId');
-    if (requestedScout && scoutTeams.some((team) => team.id === requestedScout)) {
-      setAnalysisScope('scout');
-      setTeamId(requestedScout);
-      setStarters([]);
-      return;
-    }
 
-    const currentStillExists = setupTeams.some((team) => team.id === teamId);
+    const currentStillExists = teams.some((team) => team.id === teamId);
+
     if (!teamId || !currentStillExists) {
-      setTeamId(setupTeams[0]?.id || '');
+      setTeamId(teams[0].id);
       setStarters([]);
     }
-  }, [teams, teamId, analysisScope]);
+  }, [teams, teamId]);
 
   // V10 · Raccourcis clavier : ESPACE = play/pause vidéo, B = chrono start/stop,
   // SHIFT + flèche = reculer/avancer la vidéo. (Compat V7 : Tab+flèche marche aussi.)
@@ -2779,16 +3131,8 @@ export default function PriseStatsProPage() {
   // la vidéo après coup. Avec une vidéo, on garde la synchro lecture/pause.
   const toggleClockAndVideo = () => {
     if (!hasVideoLoaded()) {
-      // Sans vidéo : au premier PLAY du quart-temps, on mémorise son début sur
-      // l'horloge source continue. Ce repère sera associé à la vidéo après coup.
-      if (!running) {
-        if (matchStartAtRef.current == null) {
-          matchStartAtRef.current = Date.now();
-          setNoVideoMatchClockStarted(true);
-          setNoVideoElapsedDisplay(0);
-        }
-        markPeriodSourceStart(q, q === 1 && !videoSyncRef.current.periodMarkers?.['1']?.sourceStart ? 0 : undefined);
-      }
+      // Sans vidéo : simple bascule du chrono (l'horloge source tourne déjà en
+      // temps réel depuis le coup d'envoi, cf. getRawCodingTime).
       setRunning((r) => !r);
       return;
     }
@@ -2798,80 +3142,10 @@ export default function PriseStatsProPage() {
     setRunning(true);
   };
 
-
-  const beginTechnicalFtInterruption = (sanctionedSide: 'us' | 'them', target: 'player' | 'bench' | 'coach', player?: { id: string; num: number | string; name: string }) => {
-    if (!technicalFtReturnRef.current) {
-      technicalFtReturnRef.current = {
-        stage,
-        draft: { ...draft, ftResults: [...(draft.ftResults || [])] },
-        history: [...stageHistory],
-        wasRunning: running,
-      };
-    }
-    pauseVideo();
-    setRunning(false);
-    setShowTechnicalFtChoice(false);
-    setTechnicalFtSanctionedSide(null);
-
-    const technicalDraft = emptyDraft();
-    technicalDraft.context = draft.context || 'attaque';
-    technicalDraft.actionType = 'faute-technique';
-    // sanctionedSide = équipe qui PREND la technique. Le LF va donc à l'autre équipe.
-    technicalDraft.foulOutcome = sanctionedSide === 'us' ? 'technical-against' : 'technical-for';
-    technicalDraft.shotType = 'LF';
-    technicalDraft.shotResult = '';
-    technicalDraft.specialCase = `technical-${target}`;
-    technicalDraft.ftAttempts = 1;
-    technicalDraft.ftMade = 0;
-    technicalDraft.ftResults = [];
-
-    if (sanctionedSide === 'us') {
-      // Une FT joueur compte aussi comme faute personnelle. Banc / coach : aucune FP joueur.
-      technicalDraft.playerId = target === 'player' && player ? player.id : null;
-      technicalDraft.opponentPlayerId = null;
-      technicalDraft.opponentPlayerName = target === 'bench' ? 'Banc' : target === 'coach' ? 'Coach' : null;
-      technicalDraft.opponentPlayerNumber = null;
-    } else {
-      // Côté adverse on conserve l'identité du joueur quand l'effectif adverse est disponible.
-      technicalDraft.playerId = null;
-      technicalDraft.opponentPlayerId = target === 'player' && player ? player.id : null;
-      technicalDraft.opponentPlayerName = target === 'player' && player ? player.name : target === 'bench' ? 'Banc adverse' : 'Coach adverse';
-      technicalDraft.opponentPlayerNumber = target === 'player' && player ? String(player.num) : null;
-    }
-
-    setDraft(technicalDraft);
-    setStage('ft');
-  };
-
-  const cancelTechnicalFtInterruption = () => {
-    const snap = technicalFtReturnRef.current;
-    technicalFtReturnRef.current = null;
-    setShowTechnicalFtChoice(false);
-    setTechnicalFtSanctionedSide(null);
-    if (!snap) return;
-    setDraft(snap.draft);
-    setStageHistory(snap.history);
-    setStage(snap.stage);
-    if (snap.wasRunning) {
-      if (hasVideoLoaded()) playVideo();
-      setRunning(true);
-    }
-  };
-
-  // ESPACE. Sans vidéo : démarre UNE SEULE FOIS le temps réel continu du match.
-  // Cette horloge ne s'arrête plus jusqu'à la fin et inclut tous les arrêts de jeu.
-  // Avec vidéo : comportement historique lecture/pause de la vidéo.
+  // AJOUT · Barre espace. Sans vidéo → bascule seulement le chrono. Avec vidéo :
+  // vidéo à l'arrêt → on lance la vidéo ; vidéo en lecture → pause + arrêt chrono.
   const toggleVideoOnly = () => {
-    if (!hasVideoLoaded()) {
-      if (matchStartAtRef.current == null) {
-        matchStartAtRef.current = Date.now();
-        setNoVideoMatchClockStarted(true);
-        setNoVideoElapsedDisplay(0);
-        markPeriodSourceStart(q, q === 1 ? 0 : undefined);
-        flash(`🏁 Début ${periodLabel(q)} — temps réel lancé`);
-      }
-      return;
-    }
+    if (!hasVideoLoaded()) { setRunning((r) => !r); return; }
     if (isVideoPlaying()) { pauseVideo(); setRunning(false); }
     else playVideo();
   };
@@ -2883,8 +3157,8 @@ export default function PriseStatsProPage() {
     }
 
     const sourceVideo = videoRef.current;
-    if ((videoProvider !== 'local' && videoProvider !== 'google_drive') || !videoUrl || !sourceVideo) {
-      flash('Ajoute une vidéo locale ou Google Drive avant de la détacher.');
+    if (videoProvider !== 'local' || !videoUrl || !sourceVideo) {
+      flash('Ajoute une vidéo locale avant de la détacher.');
       return;
     }
 
@@ -3076,17 +3350,6 @@ export default function PriseStatsProPage() {
     flash('Vidéo détachée au même timecode');
   };
   useEffect(() => {
-    if (videoProvider !== 'none' || !noVideoMatchClockStarted) return;
-    const update = () => {
-      const start = matchStartAtRef.current;
-      setNoVideoElapsedDisplay(start == null ? 0 : Math.max(0, (Date.now() - start) / 1000));
-    };
-    update();
-    const id = window.setInterval(update, 250);
-    return () => window.clearInterval(id);
-  }, [videoProvider, noVideoMatchClockStarted]);
-
-  useEffect(() => {
     const typing = (t: EventTarget | null) => {
       const el = t as HTMLElement | null;
       if (!el) return false;
@@ -3094,21 +3357,11 @@ export default function PriseStatsProPage() {
       return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || el.isContentEditable;
     };
     const onKeyDown = (e: KeyboardEvent) => {
-      // ÉCHAP doit fonctionner partout, même si un champ / select a encore le focus.
-      // On le traite donc avant le filtre "typing".
-      if (e.key === 'Escape') {
-        e.preventDefault();
-        e.stopPropagation();
-        resetDraft();
-        return;
-      }
-
       if (typing(e.target)) return;
 
-      // LIVE : ESPACE = lecture / pause de la vidéo. Quand on met la vidéo
-      // en pause, toggleVideo coupe aussi le chrono du match pour garder la synchro.
-      if (e.key === ' ' || e.code === 'Space') { e.preventDefault(); toggleVideo(); return; }
-      // B reste dédié au START / STOP du chrono (et synchronise la vidéo).
+      // ESPACE = play/pause vidéo
+      if (e.key === ' ' || e.code === 'Space') { e.preventDefault(); toggleVideoOnly(); return; }
+      // B = start/stop du chrono match
       if (e.key === 'b' || e.key === 'B') { e.preventDefault(); toggleClockAndVideo(); return; }
 
       // SHIFT + flèche = seek vidéo (ou Tab maintenu + flèche, compat V7)
@@ -3117,12 +3370,9 @@ export default function PriseStatsProPage() {
       if (e.key === 'ArrowLeft' && (e.shiftKey || tabHeldRef.current)) { e.preventDefault(); nudgeVideo(-1); return; }
     };
     const onKeyUp = (e: KeyboardEvent) => { if (e.key === 'Tab') tabHeldRef.current = false; };
-    window.addEventListener('keydown', onKeyDown, true);
-    window.addEventListener('keyup', onKeyUp, true);
-    return () => {
-      window.removeEventListener('keydown', onKeyDown, true);
-      window.removeEventListener('keyup', onKeyUp, true);
-    };
+    window.addEventListener('keydown', onKeyDown);
+    window.addEventListener('keyup', onKeyUp);
+    return () => { window.removeEventListener('keydown', onKeyDown); window.removeEventListener('keyup', onKeyUp); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [videoProvider, videoStepSeconds]);
 
@@ -3149,7 +3399,7 @@ export default function PriseStatsProPage() {
     })();
 
     return () => { active = false; };
-  }, [activeTeamId, teamId, codingDbNonce]);
+  }, [activeTeamId, teamId]);
 
   // Charge la liste des montages sauvegardés quand on ouvre l'onglet Montage.
   useEffect(() => {
@@ -3181,28 +3431,10 @@ export default function PriseStatsProPage() {
     if (screen !== 'live') return;
     if (!liveMatchIdRef.current) return;
     if (projectSaveRef.current) window.clearTimeout(projectSaveRef.current);
-    projectSaveRef.current = window.setTimeout(() => { persistProjectStateRef.current(); }, 1500);
+    projectSaveRef.current = window.setTimeout(() => { persistProjectState(); }, 1500);
     return () => { if (projectSaveRef.current) window.clearTimeout(projectSaveRef.current); };
-    // `secs` et `minutesByPlayer` sont volontairement HORS dépendances : ils
-    // changent toutes les secondes (chrono) et relançaient le debounce de
-    // 1,5 s en permanence — la sauvegarde ne partait donc jamais tant que le
-    // chrono tournait. Leur valeur courante est tout de même enregistrée via
-    // persistProjectStateRef.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [actions, perQ, q, onCourt, screen, playbookId, systemMapping, oppRoster, clipEdits, matchType]);
-
-  /* Filet de sécurité : sauvegarde immédiate au démontage du composant
-     (navigation vers une autre page) pour ne pas perdre les 1,5 dernières
-     secondes de modifications. */
-  useEffect(() => {
-    return () => {
-      if (projectSaveRef.current) {
-        window.clearTimeout(projectSaveRef.current);
-        projectSaveRef.current = null;
-      }
-      if (liveMatchIdRef.current) persistProjectStateRef.current();
-    };
-  }, []);
+  }, [actions, perQ, q, secs, onCourt, minutesByPlayer, screen, playbookId, systemMapping, oppRoster, clipEdits]);
 
   /* AJOUT · Playbooks disponibles (écran de création). Non bloquant. */
   useEffect(() => {
@@ -3229,13 +3461,7 @@ export default function PriseStatsProPage() {
           .forEach((slot, i) => { if (half[i]) auto[slot] = half[i].id; });
         ['slob-1','slob-2'].forEach((slot, i) => { if (slob[i]) auto[slot] = slob[i].id; });
         ['blob-1','blob-2'].forEach((slot, i) => { if (blob[i]) auto[slot] = blob[i].id; });
-        // Le pré-remplissage automatique ne doit PAS écraser un mapping déjà
-        // restauré depuis le projet enregistré (reprise de brouillon).
-        setSystemMapping((prev) => {
-          const validIds = new Set(list.map((system) => system.id));
-          const hasMappingForThisPlaybook = Object.values(prev ?? {}).some((id) => validIds.has(id));
-          return hasMappingForThisPlaybook ? prev : auto;
-        });
+        setSystemMapping(auto);
       })
       .catch(() => { if (alive) { setPlaybookSystems([]); setSystemMapping({}); } });
     return () => { alive = false; };
@@ -3317,52 +3543,14 @@ export default function PriseStatsProPage() {
     Object.values(perQ).reduce((total, item) => total + item[key], 0);
 
   /* -------- création du match -------- */
-  const selTeam = setupTeams.find((t) => t.id === teamId);
+  const selTeam = teams.find((t) => t.id === teamId);
   const setupRoster = selTeam?.players || [];
-  const selectedMatchRoster = setupRoster.filter((player) => matchPlayerIds.includes(player.id));
   const matchNumberOf = (player: Player) => Number(matchJerseyNumbers[player.id] ?? player.num);
-  const matchNumbers = selectedMatchRoster.map(matchNumberOf).filter((n) => Number.isFinite(n));
+  const matchNumbers = setupRoster.map(matchNumberOf).filter((n) => Number.isFinite(n));
   const hasDuplicateMatchNumbers = new Set(matchNumbers).size !== matchNumbers.length;
   const hasInvalidMatchNumbers = matchNumbers.some((n) => n < 0 || n > 99 || !Number.isInteger(n));
-  const hasValidMatchSquad = matchPlayerIds.length >= 5 && matchPlayerIds.length <= 12;
-  const canStart =
-    !!date &&
-    !!teamId &&
-    !!selTeam &&
-    !!opponent.trim() &&
-    hasValidMatchSquad &&
-    starters.length === 5 &&
-    starters.every((id) => matchPlayerIds.includes(id)) &&
-    !hasDuplicateMatchNumbers &&
-    !hasInvalidMatchNumbers;
-
-  const toggleMatchPlayer = (id: string) => {
-    setMatchPlayerIds((current) => {
-      if (current.includes(id)) {
-        setStarters((selected) => selected.filter((playerId) => playerId !== id));
-        return current.filter((playerId) => playerId !== id);
-      }
-      if (current.length >= 12) {
-        flash('Maximum 12 joueurs pour un match');
-        return current;
-      }
-      return [...current, id];
-    });
-  };
-
-  const toggleStarter = (id: string) => {
-    if (!matchPlayerIds.includes(id)) {
-      flash("Sélectionne d'abord ce joueur dans l'effectif du match");
-      return;
-    }
-    setStarters((current) =>
-      current.includes(id)
-        ? current.filter((playerId) => playerId !== id)
-        : current.length < 5
-          ? [...current, id]
-          : current,
-    );
-  };
+  const canStart = !!date && !!teamId && !!selTeam && !!opponent.trim() && starters.length === 5 && !hasDuplicateMatchNumbers && !hasInvalidMatchNumbers;
+  const toggleStarter = (id: string) => setStarters((s) => (s.includes(id) ? s.filter((x) => x !== id) : s.length < 5 ? [...s, id] : s));
   const setMatchNumber = (playerId: string, raw: string) => {
     const cleaned = raw.replace(/\D/g, '').slice(0, 2);
     if (cleaned === '') {
@@ -3376,229 +3564,54 @@ export default function PriseStatsProPage() {
     const value = Math.max(0, Math.min(99, Number(cleaned)));
     setMatchJerseyNumbers((current) => ({ ...current, [playerId]: value }));
   };
-  const startMatch = async () => {
-    if (!selTeam || hasDuplicateMatchNumbers || hasInvalidMatchNumbers || projectBusy) return;
-    setProjectBusy(true);
-
-    const matchRoster = selTeam.players
-      .filter((player) => matchPlayerIds.includes(player.id))
-      .map((player) => ({
-        ...player,
-        num: matchNumberOf(player),
-      }));
-    const source = importedLiveSource;
-
+  const startMatch = () => {
+    if (!selTeam || hasDuplicateMatchNumbers || hasInvalidMatchNumbers) return;
+    const matchRoster = selTeam.players.map((player) => ({
+      ...player,
+      num: matchNumberOf(player),
+    }));
     setActiveTeamId(selTeam.id);
     setTeamId(selTeam.id);
-    setRoster(matchRoster);
-    setTeamName(selTeam.name);
+    setRoster(matchRoster); setTeamName(selTeam.name); setOnCourt(starters.slice());
+    setActions([]); setMinutesByPlayer({}); setPerQ({ 1: { us: 0, them: 0 } }); setQ(1); setSecs(600); setRunning(false);
+    setDraft(emptyDraft()); setStage('context'); setScreen('live');
 
-    if (source) {
-      const sourceActions = Array.isArray(source.actions) ? source.actions : [];
-      const sourcePerQ = source.perQ && typeof source.perQ === 'object' ? source.perQ : { 1: { us: 0, them: 0 } };
-      const sourceCourt = Array.isArray(source.onCourt) && source.onCourt.length ? source.onCourt : starters.slice();
-      setOnCourt(sourceCourt);
-      setActions(sourceActions);
-      setMinutesByPlayer(source.minutesByPlayer || {});
-      setPerQ(sourcePerQ);
-      setQ(Number(source.q || 1));
-      setSecs(Number(source.secs ?? 600));
-      const restoredSync = normalizeSync(source.videoSync ?? source);
-      setVideoSync(restoredSync);
-      lastProjectVideoTimeRef.current = source.lastVideoTime == null ? null : Number(source.lastVideoTime);
-    } else {
-      setOnCourt(starters.slice());
-      setActions([]);
-      setMinutesByPlayer({});
-      setPerQ({ 1: { us: 0, them: 0 } });
-      setQ(1);
-      setSecs(600);
-      setVideoSync(NATIVE_SYNC);
-      lastProjectVideoTimeRef.current = null;
-    }
 
-    setRunning(false);
-    setDraft(emptyDraft());
-    setStage('context');
+    // Le match reste uniquement en brouillon local pendant le live.
+    // Aucune ligne Supabase n'est créée avant le clic sur « Terminer ».
+    setLiveMatch(null, null);
     videoProviderRef.current = videoProvider;
-    matchStartAtRef.current = source ? null : (videoProvider === 'none' ? null : Date.now());
-    setNoVideoMatchClockStarted(false);
-    setNoVideoElapsedDisplay(0);
+    matchStartAtRef.current = Date.now();
     ensuringRef.current = false;
-
-    // Un match devient immédiatement un PROJET Supabase en statut draft.
-    // Il est donc sauvegardable/rouvrable, mais n'alimente AUCUNE stat officielle
-    // avant le clic explicite sur « Terminer ».
-    try {
-      const ensured = await ensureLiveMatch({
-        teamId: selTeam.id,
-        opponent: opponent || 'Adversaire',
-        date,
-        home,
-        matchCategory: matchType === 'league' ? 'championship' : matchType,
-        playerIds: matchRoster.map((player) => player.id),
-        videoMode,
-        videoStatus,
-        videoProvider,
-        videoUrl,
-        videoFilename,
-        youtubeUrl,
-      });
-      if (ensured.ok) {
-        setLiveMatch(ensured.matchId, ensured.teamId);
-
-        if (mutualizedLive && !String(ensured.matchId).startsWith('local_')) {
-          try {
-            const clientId = `web_${uid()}`;
-            const session = await createSharedLiveSession(String(ensured.matchId), String(ensured.teamId), clientId, starters.slice());
-            const firstPossession = await openSharedPossession(session, 1, '10:00', starters.slice(), 'us');
-            const ready = { ...session, currentPossessionId: String(firstPossession.id) };
-            setSharedLive(ready);
-            sharedLiveRef.current = ready;
-          } catch (e) {
-            console.error('Live mutualisé:', e);
-            flash('Match créé, mais la session mutualisée n’a pas pu démarrer');
-          }
-        }
-
-        // Le fichier local sélectionné AVANT la création du projet reçoit
-        // maintenant sa clé durable matchId. La fiche joueur retrouvera donc
-        // exactement la même vidéo sans nouvelle sélection.
-        if (videoProviderRef.current === 'local' && videoFile) {
-          void registerLocalVideoForMatch(
-            String(ensured.matchId),
-            String(ensured.teamId),
-            videoFile,
-          );
-        }
-      } else {
-        setLiveMatch(null, null);
-        flash('Le match démarre, mais la sauvegarde projet Supabase est indisponible : ' + ensured.error);
-      }
-    } catch (error) {
-      console.error('Création projet LiveStat:', error);
-      setLiveMatch(null, null);
-      flash('Le match démarre en local — sauvegarde projet à vérifier');
-    } finally {
-      setProjectBusy(false);
-    }
-
-    setScreen('live');
-
-    const mustOpenInitialSync =
-      openVideoSyncAfterStartRef.current ||
-      (
-        videoProvider !== 'none' &&
-        !(videoSyncRef.current.validated ?? videoSyncRef.current.mode !== 'native')
-      );
-
-    if (mustOpenInitialSync) {
-      openVideoSyncAfterStartRef.current = false;
-      window.setTimeout(() => setShowVideoSync(true), 140);
-    }
   };
 
   /* -------- horloge / quart-temps -------- */
   const changeQ = (d: number) => {
     const nq = Math.max(1, q + d);
-    if (codingMode === 'live' && d > 0) {
-      const raw = getRawCodingTime();
-      if (raw != null) {
-        const prev = videoSyncRef.current;
-        setVideoSync({
-          ...prev,
-          periodMarkers: {
-            ...(prev.periodMarkers ?? {}),
-            [String(q)]: { ...(prev.periodMarkers?.[String(q)] ?? {}), sourceEnd: raw },
-            [String(nq)]: { ...(prev.periodMarkers?.[String(nq)] ?? {}), sourceStart: raw },
-          },
-        });
-      }
-    }
     setQ(nq); setPerQ((p) => (p[nq] ? p : { ...p, [nq]: { us: 0, them: 0 } }));
     setSecs(periodDuration(nq)); setRunning(false); setDraft(emptyDraft()); setStage('context');
   };
 
   /* -------- enregistrement (auto, sans validation) -------- */
   const commit = (d: Draft) => {
-    // Pick Top / Side en Hors Live : le joueur choisi dans le bloc Acteurs du pick
-    // est LA source de vérité de l'action individuelle finale. Handler et Roller
-    // décrivent uniquement le duo du pick et ne reçoivent jamais automatiquement
-    // le panier, la faute provoquée, le tir raté ou la balle perdue.
-    if (d.context !== 'defense' && isPostLikeCodingMode(codingMode) && isBallScreenPick(d.tempsFort) && !d.playerId) {
-      setDraft(d);
-      setStage('pick-actors');
-      flash("Choisis le joueur qui réalise l’action");
-      return;
-    }
-
     const vstamp = stampVideo();
-    // Filet : si le début de période n'a pas été posé via le chrono, on utilise
-    // le premier événement de cette période comme ancre source approximative.
-    if (videoSyncRef.current.periodMarkers?.[String(q)]?.sourceStart == null && vstamp.videoTime != null) {
-      markPeriodSourceStart(q, q === 1 ? 0 : vstamp.videoTime);
-    }
     possessionEndOverrideRef.current = null;
     // AJOUT §2/§6/§7 · on fige sur l'action les infos système + possession + playbook,
     // pour qu'elles soient identiques partout (state, Supabase, exports, project_state).
-    const directPlaybookSystemId = d.systemeJeu?.startsWith('playbook:') ? d.systemeJeu.slice('playbook:'.length) : null;
-    const directPlaybookSystem = directPlaybookSystemId ? playbookSystems.find((system) => system.id === directPlaybookSystemId) : undefined;
-    const mappedSys = directPlaybookSystem ?? systemForSlot(d.systemeJeu);
-    const configuredSys = (codingDb ?? []).find((row) => row.category === 'system' && row.key === d.systemeJeu);
+    const mappedSys = systemForSlot(d.systemeJeu);
     const enrich: Partial<StatA> = {
       playbookId: playbookId || null,
       systemeSlot: d.systemeJeu || null,
-      systemeId: directPlaybookSystem?.id ?? (systemMapping[d.systemeJeu] as string | undefined) ?? null,
+      systemeId: (systemMapping[d.systemeJeu] as string | undefined) ?? null,
       systemeName: mappedSys?.title
-        ?? configuredSys?.label
         ?? (SYSTEMES_JEU.find((s) => s.id === d.systemeJeu)?.label ?? null),
-      possessionStart: possessionStartRef.current ?? vstamp.clipStart ?? null,
+      possessionStart: vstamp.clipStart ?? null,
       possessionEnd: vstamp.clipEnd ?? null,
     };
-    const editingOriginal = editingActionRef.current;
-    const a: StatA = editingOriginal
-      ? {
-          ...editingOriginal,
-          ...d,
-          ...enrich,
-          // Une correction change les tags/statistiques, jamais l'identité ni
-          // les bornes du clip déjà décodé.
-          id: editingOriginal.id,
-          clock: editingOriginal.clock,
-          q: editingOriginal.q,
-          lineup: editingOriginal.lineup,
-          videoTime: editingOriginal.videoTime ?? null,
-          clipStart: editingOriginal.clipStart ?? null,
-          clipEnd: editingOriginal.clipEnd ?? null,
-          possessionStart: editingOriginal.possessionStart ?? editingOriginal.clipStart ?? null,
-          possessionEnd: editingOriginal.possessionEnd ?? editingOriginal.clipEnd ?? null,
-          syncStatus: editingOriginal.syncStatus ?? null,
-        }
-      : {
-          ...d,
-          ...enrich,
-          id: uid(),
-          clock: fmt(secs),
-          q,
-          lineup: onCourt.slice(),
-          ...vstamp,
-          // clipStart/clipEnd = clip court commun Temps fort/Joueur/Tir.
-          // possessionStart/possessionEnd restent la possession entière (Système).
-          clipStart: d.eventClipStart ?? vstamp.clipStart ?? null,
-          clipEnd: vstamp.clipEnd ?? null,
-        };
-
-    if (editingOriginal) {
-      setActions((arr) => arr.map((item) => item.id === a.id ? a : item));
-    } else {
-      setActions((arr) => [...arr, a]);
-    }
-
-    setPerQ((p) => {
-      const cur = p[a.q] || { us: 0, them: 0 };
-      return { ...p, [a.q]: { us: cur.us + ptsOf(a), them: cur.them + themPtsOf(a) } };
-    });
-    flash((editingOriginal ? 'Corrigé : ' : 'Enregistré : ') + describe(a, find).t);
+    const a: StatA = { ...d, ...enrich, id: uid(), clock: fmt(secs), q, lineup: onCourt.slice(), ...vstamp };
+    setActions((arr) => [...arr, a]);
+    setPerQ((p) => { const cur = p[q] || { us: 0, them: 0 }; return { ...p, [q]: { us: cur.us + ptsOf(a), them: cur.them + themPtsOf(a) } }; });
+    flash('Enregistré : ' + describe(a, find).t);
 
     /* --- Écriture TEMPS RÉEL (non bloquante) : match_actions + boxscore ---
        Le state React se met à jour de façon asynchrone : on calcule donc
@@ -3612,16 +3625,8 @@ export default function PriseStatsProPage() {
         matchId, teamId,
         action: {
           id: a.id, q: a.q, clock: a.clock, lineup: a.lineup,
-          liveSessionId: sharedLiveRef.current?.id ?? null,
-          possessionId: sharedLiveRef.current?.currentPossessionId ?? null,
-          codingSource: codingMode === 'live-individual' ? 'individual' : codingMode === 'live' ? 'collective' : 'post',
           context: a.context, inbound: a.inbound, tempsFort: a.tempsFort,
           coverage: a.coverage, playerId: a.playerId,
-          // Pick Top / Side · acteurs figés avec l'action pour les stats de rentabilité du duo.
-          pickZone: a.pickZone ?? null,
-          pickHandlerPlayerId: a.pickHandlerPlayerId ?? null,
-          pickScreenerPlayerId: a.pickScreenerPlayerId ?? null,
-          pickRollerPlayerId: a.pickRollerPlayerId ?? a.pickScreenerPlayerId ?? null,
           // AJOUT · système joué (valeurs figées au commit, cohérentes partout)
           systemeSlot: a.systemeSlot ?? null,
           systemeId: a.systemeId ?? null,
@@ -3645,263 +3650,85 @@ export default function PriseStatsProPage() {
         },
       }).catch(() => {});
 
-      const nextActions = editingOriginal
-        ? actions.map((item) => item.id === a.id ? a : item)
-        : [...actions, a];
-      const cur = perQ[a.q] || { us: 0, them: 0 };
-      const nextPerQ = { ...perQ, [a.q]: { us: cur.us + ptsOf(a), them: cur.them + themPtsOf(a) } };
+      const nextActions = [...actions, a];
+      const cur = perQ[q] || { us: 0, them: 0 };
+      const nextPerQ = { ...perQ, [q]: { us: cur.us + ptsOf(a), them: cur.them + themPtsOf(a) } };
       syncLiveAggregates(nextActions, onCourt, nextPerQ);
     }
 
-    // LF technique saisi depuis le panneau Live : c'est une interruption du codage
-    // courant, pas une nouvelle possession. Après l'enregistrement du LF, on restaure
-    // exactement le draft, l'étape et l'historique précédents.
-    if (!editingOriginal && a.actionType === 'faute-technique' && technicalFtReturnRef.current) {
-      const snap = technicalFtReturnRef.current;
-      technicalFtReturnRef.current = null;
-      setShowTechnicalFtChoice(false);
-      setDraft(snap.draft);
-      setStageHistory(snap.history);
-      setStage(snap.stage);
-      if (snap.wasRunning) {
-        if (hasVideoLoaded()) playVideo();
-        setRunning(true);
-      }
-      return;
-    }
-
-    // Une correction historique ne doit jamais modifier la possession LIVE
-    // courante. On enregistre la nouvelle version puis on revient au choix
-    // Attaque / Défense.
-    if (editingOriginal) {
-      editingActionRef.current = null;
-      setDraft(emptyDraft());
-      setStageHistory([]);
-      setStage('context');
-      return;
-    }
-
     let next: Ctx, inbound = false;
-    if (a.specialCase === 'unsportsmanlike' || a.specialCase === 'unsportsmanlike-2pts+1lf' || a.specialCase === 'unsportsmanlike-3pts+1lf') {
-      // Faute antisportive provoquée : LF + nouvelle remise en jeu pour la même équipe.
-      next = a.context;
-      inbound = a.context === 'attaque';
-    }
-    else if (a.actionType === 'faute-technique') {
-      // FIBA : le LF technique ne change pas à lui seul la possession en cours.
-      next = a.context;
-    }
-    else if (a.actionType === 'touche' && a.reboundType) {
-      next = reboundNext(a.context, a.reboundType);
-      inbound = a.reboundType === 'touche-pour';
-    }
-    else if (a.actionType === 'touche') {
-      // Touche en ATTAQUE : ballon pour nous.
-      // Touche en DÉFENSE : l'adversaire garde la balle, on repart au Temps fort.
-      next = a.context === 'defense' ? 'defense' : 'attaque';
-    }
+    if (a.actionType === 'touche') next = 'attaque';
+    else if (a.actionType === 'faute-commise' && a.context === 'defense') next = 'defense';
+    else if (a.foulOutcome === 'touche') { if (a.context === 'defense') next = 'defense'; else { next = 'attaque'; inbound = true; } }
     else if (a.reboundType === 'touche-pour') { next = 'attaque'; inbound = true; }
     else if (a.reboundType) next = reboundNext(a.context, a.reboundType);
-    // Faute au rebond après un tir manqué.
-    // La faute reste une conséquence du tir afin de conserver le tir raté dans
-    // l'action codée, mais elle décide explicitement de la possession suivante.
-    else if (a.foulOutcome === 'rebound-foul-committed') {
-      // Attaque + faute commise -> Défense
-      // Défense + faute commise -> reste Défense
-      next = 'defense';
-    }
-    else if (a.foulOutcome === 'rebound-foul-drawn') {
-      // Attaque + faute provoquée -> reste Attaque
-      // Défense + faute provoquée -> Attaque
-      next = 'attaque';
-    }
-    else if (a.foulOutcome === 'touche') { if (a.context === 'defense') next = 'defense'; else { next = 'attaque'; inbound = true; } }
-    else if (a.actionType === 'faute-commise' && a.context === 'defense') next = 'attaque';
-    else if (a.actionType === 'faute-commise' && a.context === 'attaque') next = 'defense';
     else next = POSS(a.context);
     const fresh = emptyDraft(); fresh.context = next;
-    // Live collectif : RO / touche conservée = nouvelle ATTAQUE mais même POSSESSION.
-    const samePossession = codingMode === 'live' && (
-      (a.context === 'attaque' && (a.reboundType === 'off' || a.reboundType === 'touche-pour')) ||
-      (a.context === 'defense' && (a.reboundType === 'off' || a.reboundType === 'touche-contre')) ||
-      (a.context === next && (
-        a.foulOutcome === 'touche' ||
-        a.foulOutcome === 'rebound-foul-committed' ||
-        a.foulOutcome === 'rebound-foul-drawn' ||
-        a.specialCase === 'unsportsmanlike' ||
-        a.specialCase === 'unsportsmanlike-2pts+1lf' ||
-        a.specialCase === 'unsportsmanlike-3pts+1lf'
-      ))
-    );
-    if (!samePossession) {
-      possessionStartRef.current = getRawCodingTime();
-      const shared = sharedLiveRef.current;
-      if (shared) {
-        void openSharedPossession(shared, q, fmt(secs), onCourt.slice(), next === 'attaque' ? 'us' : 'them')
-          .then((pos:any) => {
-            const updated = { ...sharedLiveRef.current!, currentPossessionId: String(pos.id), currentPeriod: q, currentClock: fmt(secs), currentLineup: onCourt.slice() };
-            sharedLiveRef.current = updated; setSharedLive(updated);
-          })
-          .catch((e:any)=>console.warn('Nouvelle possession mutualisée:',e));
-      }
-    }
-    setDraft(fresh);
-
-    // Routage verrouillé après lancers francs adverses :
-    // si le dernier LF est marqué en DÉFENSE, la possession bascule en ATTAQUE
-    // et on repart TOUJOURS par SYSTÈME (Live collectif + Après match/vidéo).
-    // Le Live individuel conserve son propre chemin joueur/résultat.
-    const defensiveFtFinishedMade =
-      a.context === 'defense' &&
-      a.shotType === 'LF' &&
-      (a.ftResults?.length || 0) > 0 &&
-      a.ftResults[a.ftResults.length - 1] === 'made';
-
-    if (codingMode === 'live-individual') {
-      setStage(next === 'attaque' ? 'player' : 'result');
-    } else if (defensiveFtFinishedMade) {
-      setStage('systeme');
-    } else {
-      setStage(codingMode === 'live'
-        ? (next === 'defense' ? 'temps' : 'systeme')
-        : (inbound ? 'inbound' : (next === 'defense' ? 'temps' : 'systeme')));
-    }
+    // AJOUT · la possession suivante commence au timecode de bascule du contexte.
+    possessionStartRef.current = getRawCodingTime();
+    setDraft(fresh); setStage(inbound ? 'inbound' : 'systeme');
   };
 
   /* -------- routages LF / passe décisive -------- */
   const afterFT = (d: Draft) => {
     const anyMade = d.ftMade > 0;
     const lastMiss = d.ftResults[d.ftResults.length - 1] === 'miss';
-    const isAndOne = d.specialCase === '2pts+1lf' || d.specialCase === '3pts+1lf';
 
-    if (d.specialCase === 'unsportsmanlike' || d.specialCase === 'unsportsmanlike-2pts+1lf' || d.specialCase === 'unsportsmanlike-3pts+1lf') {
-      commit({ ...d, shotResult: d.specialCase.includes('pts+1lf') ? 'made' : (anyMade ? 'made' : 'missed') });
-      return;
-    }
+    if (d.actionType === 'faute-commise') {
+      const nd = { ...d, shotResult: anyMade ? 'made' : 'missed' };
 
-    if (d.actionType === 'faute-technique') {
-      commit({ ...d, shotResult: anyMade ? 'made' : 'missed' });
-      return;
-    }
-
-    // Sur un 2+1 / 3+1, le panier est acquis AVANT le LF.
-    // Un LF raté ne doit donc jamais transformer le panier en tir raté.
-    if (isAndOne) {
-      const nd = { ...d, shotResult: 'made' };
-      if (lastMiss && workflowOn('rebound')) {
+      // En défense, si le dernier LF adverse est loupé, on doit choisir le rebond.
+      if (lastMiss) {
         setDraft(nd);
         setStage('rebound');
+        return;
+      }
+
+      commit(nd);
+      return;
+    }
+
+    if (d.specialCase === '2pts+1lf' || d.specialCase === '3pts+1lf') {
+      if (lastMiss) {
+        setDraft(d);
+        setStage('rebound');
       } else {
-        commit(nd);
+        commit(d);
       }
       return;
     }
 
-    if (codingMode === 'live-individual') {
+    if (d.actionType === 'faute-provoquee') {
       const nd = { ...d, shotResult: anyMade ? 'made' : 'missed' };
-      if (lastMiss && workflowOn('rebound')) { setDraft(nd); setStage('rebound'); }
-      else commit(nd);
-      return;
-    }
-    if (codingMode === 'live') {
-      const nd = { ...d, shotResult: anyMade ? 'made' : 'missed' };
-      if (lastMiss) { setDraft(nd); setStage('rebound'); }
-      else commit(nd);
+
+      if (anyMade) {
+        setDraft(nd);
+        setStage('assist');
+        return;
+      }
+
+      if (lastMiss) {
+        setDraft(nd);
+        setStage('rebound');
+        return;
+      }
+
+      commit(nd);
       return;
     }
 
     const nd = { ...d, shotResult: anyMade ? 'made' : 'missed' };
 
-    if (d.actionType === 'faute-commise') {
-      if (lastMiss && workflowOn('rebound')) { setDraft(nd); setStage('rebound'); return; }
+    if (lastMiss) {
+      setDraft(nd);
+      setStage('rebound');
+    } else {
       commit(nd);
-      return;
     }
-
-    if (d.actionType === 'faute-provoquee') {
-      if (anyMade && workflowOn('assist')) { setDraft(nd); setStage('assist'); return; }
-      if (lastMiss && workflowOn('rebound')) { setDraft(nd); setStage('rebound'); return; }
-      commit(nd);
-      return;
-    }
-
-    if (lastMiss && workflowOn('rebound')) { setDraft(nd); setStage('rebound'); }
-    else commit(nd);
   };
-
   const afterPD = (d: Draft) => {
     if (d.specialCase === '2pts+1lf' || d.specialCase === '3pts+1lf') { setDraft({ ...d, ftResults: [] }); setStage('ft'); return; }
     if (d.actionType === 'faute-provoquee') { const lastMiss = d.ftResults[d.ftResults.length - 1] === 'miss'; if (lastMiss) { setDraft(d); setStage('rebound'); return; } commit(d); return; }
-    commit(d);
-  };
-
-  /* -------- navigation dynamique du workflow -------- */
-  const workflowOn = (key: keyof LiveWorkflowPrefs) => {
-    if (isPostLikeCodingMode(codingMode)) return workflowPrefs[key];
-    if (codingMode === 'live') {
-      if (key === 'system' || key === 'temps' || key === 'zone') return workflowPrefs[key];
-      return true;
-    }
-    if (codingMode === 'live-individual') {
-      if (key === 'zone' || key === 'rebound' || key === 'assist') return workflowPrefs[key];
-      if (key === 'player') return true;
-      return false;
-    }
-    return true;
-  };
-
-  const stageAfterContext = (c: Ctx): string => {
-    if (codingMode === 'live-individual') return c === 'defense' ? 'result' : 'player';
-    if (c === 'defense') {
-      // DÉFENSE : aucun joueur avant de connaître le résultat.
-      // Chemin attendu : Temps fort → Résultat → Joueur/Équipe seulement si nécessaire.
-      if (workflowOn('temps')) return 'temps';
-      return 'result';
-    }
-    if (workflowOn('system')) return 'systeme';
-    if (workflowOn('temps')) return 'temps';
-    if (codingMode === 'live') return 'result';
-    return workflowOn('player') ? 'player' : 'action';
-  };
-
-  const stageAfterSystem = (): string => {
-    if (workflowOn('temps')) return 'temps';
-    if (codingMode === 'live') return 'result';
-    return workflowOn('player') ? 'player' : 'action';
-  };
-
-  const isBallScreenPick = (value: string) =>
-    value === 'pick_side' || value === 'pick_top' || value === 'pick-side' || value === 'pick-top';
-
-  const stageAfterTemps = (d: Draft): string => {
-    // En défense, le temps fort débouche directement sur le résultat.
-    if (d.context === 'defense') return 'result';
-    // En Live mutualisé, le poste COLLECTIF renseigne le duo du Pick.
-    // Le joueur qui termine l'action et son résultat restent exclusivement
-    // sur le poste Live Individuel.
-    if (codingMode === 'live' && mutualizedLive && sharedRole === 'collective' && isBallScreenPick(d.tempsFort)) return 'pick-actors';
-    if (codingMode === 'live') return 'result';
-    // Hors Live : Pick Top / Side possède son bloc dédié Handler → Poseur → Action finale.
-    // Il remplace le « Qui réalise l'action ? » générique afin d'éviter tout doublon.
-    if (isPostLikeCodingMode(codingMode) && isBallScreenPick(d.tempsFort)) return 'pick-actors';
-    if (isBallScreenPick(d.tempsFort) && workflowOn('coverage')) return 'coverage';
-    return workflowOn('player') ? 'player' : 'action';
-  };
-
-  const routePostShot = (d: Draft) => {
-    // Post-match et hors ligne : localisation obligatoire.
-    // Live : localisation seulement si la Shot chart est activée.
-    // Après-match : localisation toujours obligatoire. En LIVE (même hors-ligne),
-    // la Shot Chart reste un choix utilisateur via workflowPrefs.zone.
-    const forceShotChart = isPostLikeCodingMode(codingMode);
-    const wantsLiveShotChart = !isPostLikeCodingMode(codingMode) && workflowOn('zone');
-    if (d.shotType !== 'LF' && (forceShotChart || wantsLiveShotChart)) {
-      setDraft(d);
-      setStage('zone');
-      return;
-    }
-    if (d.shotResult === 'missed' && workflowOn('rebound')) { setDraft(d); setStage('rebound'); return; }
-    if (d.context !== 'defense' && d.shotResult === 'made' && workflowOn('assist')) { setDraft(d); setStage('assist'); return; }
     commit(d);
   };
 
@@ -3910,112 +3737,32 @@ export default function PriseStatsProPage() {
     if (c === 'defense') markClipEndNow();
     possessionStartRef.current = getRawCodingTime(); // AJOUT · début de possession (temps source)
     setDraft({ ...draft, context: c, systemeJeu: '', tempsFort: '', coverage: '' });
-    setStage(stageAfterContext(c));
+    setStage('systeme');
   };
   const inboundPick = (t: string) => {
     const d = { ...draft, inbound: t };
     if (d.actionType === 'touche') commit(d);
-    else { possessionStartRef.current = getRawCodingTime(); setDraft(d); setStage(stageAfterContext(d.context)); } // AJOUT
+    else { possessionStartRef.current = getRawCodingTime(); setDraft(d); setStage('systeme'); } // AJOUT
   };
   const systemePick = (id: string) => {
-    // Verrou Live individuel : Système et Temps fort n'appartiennent jamais
-    // au parcours individuel, même si une ancienne configuration tente d'y router.
-    if (codingMode === 'live-individual') {
-      setStage(draft.context === 'defense' ? 'result' : (draft.playerId ? 'result' : 'player'));
-      return;
-    }
     if (id === 'libre') markClipStartBefore(3);
     setDraft({ ...draft, systemeJeu: id, tempsFort: '', coverage: '' });
-    setStage(stageAfterSystem());
+    setStage('temps');
   };
   const tempsPick = (id: string) => {
-    if (codingMode === 'live-individual') {
-      setStage(draft.context === 'defense' ? 'result' : (draft.playerId ? 'result' : 'player'));
-      return;
+    if (id === 'autres') markClipStartBefore(5);
+    const d = { ...draft, tempsFort: id, coverage: '' };
+    if (id === 'pick-side' || id === 'pick-top') {
+      setDraft(d);
+      setStage('coverage');
+    } else {
+      setDraft(d);
+      setStage(d.context === 'defense' ? 'action' : 'player');
     }
-    const now = getRawCodingTime();
-    const possessionStart = possessionStartRef.current ?? 0;
-    // Convention LiveStats MyBasket :
-    // clic utilisateur = événement observé 2 s plus tôt ;
-    // clip court = encore 4 s avant cet événement.
-    // => début commun = clic - 6 s, borné au début de possession.
-    const commonEventStart =
-      draft.eventClipStart ??
-      (now == null ? null : Math.max(possessionStart, now - 6));
-    const d = {
-      ...draft,
-      tempsFort: id,
-      coverage: '',
-      eventClipStart: commonEventStart,
-      pickZone: isBallScreenPick(id) ? (id.includes('side') ? 'side' : 'top') : null,
-      pickHandlerPlayerId: null,
-      pickScreenerPlayerId: null,
-      pickRollerPlayerId: null,
-      // Pour un nouveau temps fort, le joueur final doit être redéfini.
-      playerId: null,
-    };
-    setDraft(d);
-    setStage(stageAfterTemps(d));
   };
-  const covPick = (id: string) => {
-    const d = { ...draft, coverage: id };
-    setDraft(d);
-    if (d.context !== 'defense' && isPostLikeCodingMode(codingMode) && isBallScreenPick(d.tempsFort) && d.playerId) {
-      setStage('action');
-      return;
-    }
-    setStage(d.context === 'defense' ? 'result' : (workflowOn('player') ? 'player' : 'action'));
-  };
+  const covPick = (id: string) => { const d = { ...draft, coverage: id }; setDraft(d); setStage(d.context === 'defense' ? 'action' : 'player'); };
   const actionPick = (id: string) => {
-  let d = { ...draft, actionType: id };
-
-  if (codingMode === 'live-individual') {
-    d = { ...d, context: draft.context || 'attaque' };
-    if (id === 'tir') { setDraft(d); setStage('result'); return; }
-
-    // Faute offensive : faute personnelle + balle perdue, puis on passe en défense.
-    if (id === 'faute-commise' && d.context === 'attaque') {
-      const offensiveFoul = { ...d, foulOutcome: 'offensive' };
-      if (!offensiveFoul.playerId) { setDraft(offensiveFoul); setStage('player'); return; }
-      commit(offensiveFoul);
-      return;
-    }
-
-    if (id === 'faute-commise' && d.context === 'defense') { setDraft(d); setStage('player'); return; }
-
-    // En défense, la faute provoquée appartient à un de nos joueurs :
-    // on demande donc le joueur avant la suite de faute.
-    if (id === 'faute-provoquee' && d.context === 'defense') { setDraft(d); setStage('player'); return; }
-
-    if (id === 'contre') {
-      if (d.context === 'attaque') {
-        // Contre subi : le joueur offensif est déjà connu. On demande
-        // directement ce que devient le ballon sans transformer l'action
-        // en contre défensif de notre équipe.
-        setDraft(d);
-        setStage('rebound');
-        return;
-      }
-      setDraft({ ...d, context: 'defense' });
-      setStage('player');
-      return;
-    }
-    if (id === 'interception') { setDraft({ ...d, context:'defense' }); setStage('player'); return; }
-    if (id === 'faute-provoquee') { setDraft(d); setStage('faute'); return; }
-
-    // La faute technique est volontairement une action d'équipe :
-    // l'écran suivant demande uniquement qui bénéficie du LF.
-    if (id === 'faute-technique') { setDraft(d); setStage('faute'); return; }
-
-    commit(d);
-    return;
-  }
-
-  if (id === 'faute-technique') {
-    setDraft(d);
-    setStage('faute');
-    return;
-  }
+  const d = { ...draft, actionType: id };
 
   if (d.context === "defense") {
     if (id === "tir") {
@@ -4027,11 +3774,6 @@ export default function PriseStatsProPage() {
     if (id === "faute-commise") {
       setDraft(d);
       setStage("player");
-      return;
-    }
-
-    if (id === "touche") {
-      commit(d);
       return;
     }
 
@@ -4054,36 +3796,23 @@ export default function PriseStatsProPage() {
   } else if (id === "touche") {
     setDraft(d);
     setStage("inbound");
-  } else if (id === "contre") {
-    // CONTRE subi en attaque : la possession ne bascule pas encore.
-    // La conséquence décide : touche = on garde la balle,
-    // récupération adverse = passage en défense.
-    setDraft(d);
-    setStage("rebound");
   } else {
     commit(d);
   }
 };
   const playerPick = (id: string) => {
-  if (codingMode === 'live-individual') {
-    if (draft.actionType) {
-      const d = { ...draft, playerId: id };
-      // Faute offensive : dès que le joueur est choisi, on valide PF + BP
-      // et la possession bascule automatiquement en défense.
-      if (draft.actionType === 'faute-commise' && draft.context === 'attaque') {
-        commit({ ...d, foulOutcome: 'offensive' });
-        return;
-      }
-      if (draft.actionType === 'faute-commise' || draft.actionType === 'faute-provoquee') { setDraft(d); setStage('faute'); return; }
-      if (draft.actionType === 'contre') { setDraft(d); setStage('rebound'); return; }
-      commit(d);
-      return;
-    }
-    setDraft({ ...emptyDraft(), playerId: id, context: 'attaque' });
-    setStage('result');
+  markClipStartBefore(8);
+
+  if (draft.context === "defense" && draft.actionType === "faute-commise") {
+    setDraft({ ...draft, playerId: id });
+    setStage("faute");
     return;
   }
-  if (draft.context === "defense" && draft.actionType === "faute-commise") {
+
+  // Après un tir adverse raté, une faute provoquée peut donner des LF.
+  // Le tir raté a déjà été enregistré séparément ; ici on choisit le joueur
+  // qui subit la faute puis on va directement au choix Touche / 2 LF / 3 LF.
+  if (draft.actionType === "faute-provoquee") {
     setDraft({ ...draft, playerId: id });
     setStage("faute");
     return;
@@ -4094,98 +3823,16 @@ export default function PriseStatsProPage() {
     (NEEDS_PLAYER_DEF.includes(draft.actionType) ||
       CAN_TAG_PLAYER_DEF.includes(draft.actionType))
   ) {
-    const d = { ...draft, playerId: id };
-
-    // CONTRE : on ne valide pas immédiatement.
-    // On demande la conséquence : touche = l'adversaire conserve,
-    // récupération de notre équipe = passage en attaque.
-    if (draft.actionType === "contre") {
-      setDraft(d);
-      setStage("rebound");
-      return;
-    }
-
-    commit(d);
+    commit({ ...draft, playerId: id });
     return;
   }
 
   setDraft({ ...draft, playerId: id });
   setStage("action");
 };
-  const currentTeamFoulsBeforeDraft = (side: 'us' | 'them') => actions.filter((a) => {
-    if (a.q !== q) return false;
-    if (side === 'us') {
-      // Toutes les fautes commises alimentent le compteur d'équipe, y compris
-      // les fautes offensives. Une technique compte également, qu'elle soit
-      // attribuée à un joueur, au banc ou au coach.
-      return (
-        a.actionType === 'faute-commise' ||
-        (a.actionType === 'faute-technique' && a.foulOutcome === 'technical-against')
-      );
-    }
-    return (
-      a.actionType === 'faute-provoquee' ||
-      (a.actionType === 'faute-technique' && a.foulOutcome === 'technical-for')
-    );
-  }).length;
-
-  const draftTriggersTeamBonus =
-    (draft.actionType === 'faute-commise' && draft.context === 'defense' && currentTeamFoulsBeforeDraft('us') >= 4) ||
-    (draft.actionType === 'faute-provoquee' && currentTeamFoulsBeforeDraft('them') >= 4);
-
   const foulPick = (o: string) => {
-    if (o === 'technical-for' || o === 'technical-against') {
-      const technicalDraft: Draft = {
-        ...draft,
-        foulOutcome: o,
-        shotType: 'LF',
-        shotResult: '',
-        specialCase: 'technical',
-        ftAttempts: 1,
-        ftMade: 0,
-        ftResults: [],
-        opponentPlayerId: null,
-        opponentPlayerName: null,
-        opponentPlayerNumber: null,
-      };
-      setDraft(technicalDraft);
-      // Si le LF est pour nous, on attribue d'abord la faute technique
-      // à un joueur adverse ou à l'équipe. Si le LF est adverse, cette
-      // attribution n'est pas nécessaire.
-      setStage(o === 'technical-for' ? 'technical-foul-target' : 'ft');
-      return;
-    }
-    if (o === 'us-2plus1' || o === 'us-3plus1' || o === 'us-lf2' || o === 'us-lf3') {
-      const andOne = o === 'us-2plus1' || o === 'us-3plus1';
-      const isThree = o === 'us-3plus1' || o === 'us-lf3';
-      setDraft({ ...draft, foulOutcome:'unsportsmanlike', specialCase:andOne?(isThree?'unsportsmanlike-3pts+1lf':'unsportsmanlike-2pts+1lf'):'unsportsmanlike', shotType:andOne?(isThree?'3PTS':'2PTS'):'LF', shotResult:andOne?'made':'', ftAttempts:andOne?1:(isThree?3:2), ftMade:0, ftResults:[] });
-      setStage('ft'); return;
-    }
-    // À partir de la 5e faute d'équipe de la période, une faute défensive
-    // non-shooting ne peut plus donner une simple touche : elle donne 2 LF.
-    // Les fautes offensives sont traitées plus haut et n'entrent jamais ici.
-    if (o === 'touche' && draftTriggersTeamBonus) {
-      setDraft({ ...draft, foulOutcome: 'lf', shotType: 'LF', ftAttempts: 2, ftMade: 0, ftResults: [] });
-      setStage('ft');
-      return;
-    }
     if (o === 'touche') { commit({ ...draft, foulOutcome: 'touche' }); return; }
-    if (o === '2plus1' || o === '3plus1') {
-      const isTwoPlusOne = o === '2plus1';
-      setDraft({
-        ...draft,
-        foulOutcome: 'and-one',
-        specialCase: isTwoPlusOne ? '2pts+1lf' : '3pts+1lf',
-        // Le panier est DÉJÀ marqué. Le LF qui suit vaut au maximum +1.
-        shotType: isTwoPlusOne ? '2PTS' : '3PTS',
-        shotResult: 'made',
-        ftAttempts: 1,
-        ftMade: 0,
-        ftResults: [],
-      });
-      setStage('ft');
-      return;
-    }
+    if (o === '2plus1' || o === '3plus1') { setDraft({ ...draft, foulOutcome: 'and-one', specialCase: o === '2plus1' ? '2pts+1lf' : '3pts+1lf', shotType: 'LF', ftAttempts: 1, ftResults: [] }); setStage('ft'); return; }
     setDraft({ ...draft, foulOutcome: 'lf', shotType: 'LF', ftAttempts: o === 'lf2' ? 2 : 3, ftResults: [] }); setStage('ft');
   };
   const shotPick = (t: string) => { const d = { ...draft, shotType: t, actionType: 'tir' }; if (t === 'LF') { d.ftAttempts = d.ftAttempts || 2; d.ftResults = []; } setDraft(d); };
@@ -4196,62 +3843,46 @@ export default function PriseStatsProPage() {
     const d = { ...draft, ftResults: res };
     if (res.length >= draft.ftAttempts) { d.ftMade = res.filter((r) => r === 'made').length; afterFT(d); } else setDraft(d);
   };
-  const quickShotResult = (
-    shotType: '2PTS' | '3PTS',
-    shotResult: 'made' | 'missed',
-    shotRange: 'interior' | 'exterior' | 'three' | null,
-  ) => {
-    // En attaque Live individuel, aucun tir ne peut être enregistré sans joueur.
-    if (codingMode === 'live-individual' && draft.context === 'attaque' && !draft.playerId) {
-      setStage('player');
-      flash('Choisis d’abord le joueur qui réalise l’action');
-      return;
-    }
+  const quickShotResult = (shotType: '2PTS' | '3PTS', shotResult: 'made' | 'missed') => {
     markClipStartBefore(5);
-    const d: Draft = {
-      ...draft,
-      actionType: 'tir',
-      shotType,
-      shotResult,
-      shotRange,
-      zone: '',
-      courtX: null,
-      courtY: null,
-    };
-    routePostShot(d);
+    const d = { ...draft, actionType: 'tir', shotType, shotResult };
+
+    // Même logique qu'avant : tout tir extérieur à LF passe par la shot chart,
+    // y compris en défense pour localiser le panier concédé.
+    setDraft(d);
+    setStage('zone');
   };
 
   const resultPick = (r: string) => {
-    if (codingMode === 'live-individual' && draft.context === 'attaque' && !draft.playerId) {
-      setStage('player');
-      flash('Choisis d’abord le joueur qui réalise l’action');
-      return;
-    }
     markClipStartBefore(5);
     const d = { ...draft, shotResult: r, actionType: 'tir' };
 
-    if (d.shotType === 'LF') {
-      if (r === 'missed' && workflowOn('rebound')) { setDraft(d); setStage('rebound'); }
-      else commit(d);
+    // En défense aussi, on localise le tir concédé sur la shot chart.
+    // Le point est affiché temporairement pendant l'action puis enregistré
+    // dans le boxscore / shot chart défense.
+    if (d.context === 'defense') {
+      if (d.shotType === 'LF') {
+        if (r === 'made') commit(d);
+        else { setDraft(d); setStage('rebound'); }
+        return;
+      }
+      setDraft(d);
+      setStage('zone');
       return;
     }
-    routePostShot(d);
+
+    setDraft(d); setStage('zone');
   };
   const special = (s: string) => {
     markClipStartBefore(5);
     const d = { ...draft, actionType: 'tir', specialCase: s === '2pts1lf' ? '2pts+1lf' : '3pts+1lf', shotType: s === '2pts1lf' ? '2PTS' : '3PTS', shotResult: 'made', ftAttempts: 1, ftMade: 0, ftResults: [] };
-    if (!isPostLikeCodingMode(codingMode)) { setDraft(d); setStage('ft'); return; }
-    if (workflowOn('zone')) { setDraft(d); setStage('zone'); return; }
-    if (workflowOn('assist')) { setDraft(d); setStage('assist'); return; }
-    setDraft(d); setStage('ft');
+    setDraft(d); setStage('zone');
   };
   const courtClick = (e: MouseEvent<HTMLDivElement>) => {
     if (stage !== 'zone') return;
     const r = (e.currentTarget as HTMLDivElement).getBoundingClientRect();
     const d = { ...draft, courtX: (e.clientX - r.left) / r.width, courtY: (e.clientY - r.top) / r.height };
-    if (d.shotResult === 'missed' && workflowOn('rebound')) { setDraft(d); setStage('rebound'); }
-    else if (d.context !== 'defense' && d.shotResult === 'made' && workflowOn('assist')) { setDraft(d); setStage('assist'); }
-    else commit(d);
+    if (d.shotResult === 'missed') { setDraft(d); setStage('rebound'); } else { setDraft(d); setStage('assist'); }
   };
 
   // V10.8 · sélection par CLIC EXACT sur la shot chart. Écrit shot_zone_id
@@ -4262,127 +3893,57 @@ export default function PriseStatsProPage() {
     if (stage !== 'zone') return;
     const px = point ? point.x : zone.cx;
     const py = point ? point.y : zone.cy;
-    const inferredRange: Draft['shotRange'] = draft.shotType === '3PTS'
-      ? 'three'
-      : ['z1', 'z2', 'z3', 'z4'].includes(zone.id)
-        ? 'interior'
-        : 'exterior';
-    const d = { ...draft, zone: zone.id, courtX: px / 100, courtY: py / 100, shotRange: inferredRange };
+    const d = { ...draft, zone: zone.id, courtX: px / 100, courtY: py / 100 };
     if (d.context === 'defense') {
-      if (d.shotResult === 'missed' && workflowOn('rebound')) { setDraft(d); setStage('rebound'); }
-      else commit(d);
+      if (d.shotResult === 'missed') { setDraft(d); setStage('rebound'); }
+      else { commit(d); }
       return;
     }
-    if (d.shotResult === 'missed' && workflowOn('rebound')) { setDraft(d); setStage('rebound'); }
-    else if (d.shotResult === 'made' && workflowOn('assist')) { setDraft(d); setStage('assist'); }
-    else commit(d);
+    if (d.shotResult === 'missed') { setDraft(d); setStage('rebound'); } else { setDraft(d); setStage('assist'); }
   };
+  const foulProvokedAfterDefensiveMiss = () => {
+    // Important : on conserve le tir adverse raté comme une vraie action.
+    // Ensuite seulement on ouvre une nouvelle action "faute provoquée" côté attaque,
+    // afin de pouvoir attribuer la faute à un joueur et saisir 2 LF / 3 LF.
+    const missedShot: Draft = { ...draft, reboundType: '', reboundPlayerId: null };
+    commit(missedShot);
+
+    const foulDraft = emptyDraft();
+    foulDraft.context = 'attaque';
+    foulDraft.actionType = 'faute-provoquee';
+    foulDraft.tempsFort = draft.tempsFort;
+    foulDraft.systemeJeu = draft.systemeJeu;
+    foulDraft.playbookId = draft.playbookId ?? null;
+    foulDraft.systemeSlot = draft.systemeSlot ?? null;
+    foulDraft.systemeId = draft.systemeId ?? null;
+    foulDraft.systemeName = draft.systemeName ?? null;
+
+    setDraft(foulDraft);
+    setStage('player');
+  };
+
   const rebPick = (id: string) => {
     markClipEndNow();
     const d = { ...draft, reboundType: id };
-
-    // Après un contre, la conséquence choisie décide seule de la possession :
-    // ATTAQUE  + touche               -> reste ATTAQUE
-    // ATTAQUE  + récupération adverse -> passe DÉFENSE
-    // DÉFENSE  + touche               -> reste DÉFENSE
-    // DÉFENSE  + récupération de nous -> passe ATTAQUE
-    if (d.actionType === 'contre') {
+    if (isMyRebound(d.context, id)) {
+      setDraft(d);
+    } else {
       commit(d);
-      return;
     }
-
-    if (codingMode === 'live') {
-      commit(d);
-      return;
-    }
-    if (isMyRebound(d.context, id)) setDraft(d);
-    else commit(d);
   };
-  const reboundFoulPick = (kind: 'committed' | 'drawn') => {
-    markClipEndNow();
-    setDraft({
-      ...draft,
-      reboundType: '',
-      reboundPlayerId: null,
-      reboundFoulPlayerId: null,
-      foulOutcome: kind === 'committed'
-        ? 'rebound-foul-committed'
-        : 'rebound-foul-drawn',
-    });
-    setStage('rebound-foul-player');
-  };
-  const reboundFoulPlayerPick = (id: string) => commit({ ...draft, reboundFoulPlayerId: id });
   const rebWho = (id: string) => commit({ ...draft, reboundPlayerId: id });
-  const passer = (id: string) => {
-    // Filet de sécurité : le marqueur ne peut jamais être crédité de sa propre PD.
-    if (id && id === draft.playerId) {
-      flash('La passe décisive doit être attribuée à un autre joueur');
-      return;
-    }
-    if (id) afterPD({ ...draft, assist: true, assistPlayerId: id });
-    else afterPD({ ...draft, assist: false, assistPlayerId: null });
-  };
-  const usBtn = (d: number) => setPerQ((p) => { const cur = p[q] || { us: 0, them: 0 }; return { ...p, [q]: { ...cur, us: Math.max(0, cur.us + d) } }; });
+  const passer = (id: string) => { if (id) afterPD({ ...draft, assist: true, assistPlayerId: id }); else afterPD({ ...draft, assist: false, assistPlayerId: null }); };
   const themBtn = (d: number) => setPerQ((p) => { const cur = p[q] || { us: 0, them: 0 }; return { ...p, [q]: { ...cur, them: Math.max(0, cur.them + d) } }; });
 
-  const patchActionPlayers = (actionId: string, patch: { playerId?: string | null; assist?: boolean | null; assistPlayerId?: string | null; reboundPlayerId?: string | null; reboundFoulPlayerId?: string | null }) => {
-    const current = actions.find((a) => a.id === actionId);
-    if (!current) return;
-    const updated: StatA = { ...current, ...patch };
-    setActions((list) => list.map((a) => a.id === actionId ? updated : a));
-    const matchId = liveMatchIdRef.current;
-    const tId = liveTeamIdRef.current;
-    if (matchId && tId) {
-      persistLiveAction({ matchId, teamId: tId, action: updated }).catch(() => {});
-      const next = actions.map((a) => a.id === actionId ? updated : a);
-      syncLiveAggregates(next, onCourt, perQ);
-    }
-  };
-
   const stageForCorrection = (a: Draft) => {
-    if (a.foulOutcome === 'rebound-foul-committed' || a.foulOutcome === 'rebound-foul-drawn') return 'rebound-foul-player';
     if (!a.context) return 'context';
     if (a.actionType === 'tir') return a.shotType ? 'result' : 'action';
-    if (a.actionType === 'faute-commise' || a.actionType === 'faute-provoquee' || a.actionType === 'faute-technique') return 'faute';
+    if (a.actionType === 'faute-commise' || a.actionType === 'faute-provoquee') return 'faute';
     if (a.actionType === 'touche') return 'inbound';
     if (a.actionType) return 'action';
     if (a.playerId) return 'action';
-    if (a.tempsFort) return a.context === 'defense' ? 'result' : 'player';
+    if (a.tempsFort) return a.context === 'defense' ? 'action' : 'player';
     return 'temps';
-  };
-
-  const historyCorrectionSteps = (a: StatA) => {
-    const steps: Array<{ stage: string; label: string; detail: string }> = [
-      { stage: 'context', label: 'Attaque / Défense', detail: 'Reprendre depuis le contexte' },
-      { stage: 'systeme', label: 'Système de jeu', detail: 'Modifier le système puis continuer' },
-      { stage: 'temps', label: 'Temps fort', detail: 'Modifier le temps fort puis continuer' },
-      { stage: 'player', label: 'Joueur', detail: 'Modifier le joueur concerné puis continuer' },
-      { stage: 'action', label: "Type d’action", detail: "Modifier l’action puis continuer" },
-    ];
-    if (a.actionType === 'tir') {
-      steps.push(
-        { stage: 'result', label: 'Résultat du tir', detail: 'Marqué / raté / type de tir' },
-        { stage: 'zone', label: 'Zone du tir', detail: 'Modifier la localisation puis terminer' },
-        { stage: 'rebound', label: 'Conséquence / rebond', detail: 'Modifier uniquement la fin de l’action' },
-      );
-    } else if (a.actionType === 'faute-commise' || a.actionType === 'faute-provoquee' || a.actionType === 'faute-technique') {
-      steps.push({ stage: 'faute', label: 'Faute / lancers', detail: 'Modifier la suite de la faute puis terminer' });
-    } else if (a.actionType === 'touche') {
-      steps.push({ stage: 'inbound', label: 'Remise en jeu', detail: 'Modifier la remise en jeu puis terminer' });
-    }
-    if (a.foulOutcome === 'rebound-foul-committed' || a.foulOutcome === 'rebound-foul-drawn') {
-      steps.push({ stage: 'rebound-foul-player', label: 'Joueur sur la faute', detail: 'Modifier le joueur concerné' });
-    }
-    return steps.filter((step, index, all) => all.findIndex((x) => x.stage === step.stage) === index);
-  };
-
-  const openHistoryCorrection = (a: StatA) => setHistoryCorrectionAction(a);
-
-  const chooseHistoryCorrectionStart = (stageName: string) => {
-    const action = historyCorrectionAction;
-    if (!action) return;
-    setHistoryCorrectionAction(null);
-    beginHistoryCorrection(action, stageName);
   };
 
   const restoreDraftFromAction = (a: StatA) => {
@@ -4405,14 +3966,9 @@ export default function PriseStatsProPage() {
       courtY: a.courtY,
       reboundType: a.reboundType,
       reboundPlayerId: a.reboundPlayerId,
-      reboundFoulPlayerId: a.reboundFoulPlayerId ?? null,
       assist: a.assist,
       assistPlayerId: a.assistPlayerId,
       foulOutcome: a.foulOutcome,
-      pickZone: a.pickZone ?? null,
-      pickHandlerPlayerId: a.pickHandlerPlayerId ?? null,
-      pickScreenerPlayerId: a.pickScreenerPlayerId ?? null,
-      pickRollerPlayerId: a.pickRollerPlayerId ?? a.pickScreenerPlayerId ?? null,
     });
 
     setStage(stageForCorrection(a));
@@ -4432,6 +3988,27 @@ export default function PriseStatsProPage() {
     });
   };
 
+  const undo = () => {
+    if (!actions.length) return;
+
+    const a = actions[actions.length - 1];
+
+    setActions((arr) => arr.slice(0, -1));
+    subtractActionFromScore(a);
+    restoreDraftFromAction(a);
+    flash('Dernière action annulée et replacée en correction');
+
+    // Correction TEMPS RÉEL (non bloquante) : retire la ligne + resync boxscore.
+    const matchId = liveMatchIdRef.current;
+    const teamId = liveTeamIdRef.current;
+    if (matchId && teamId) {
+      deleteLiveAction({ matchId, clientActionId: a.id }).catch(() => {});
+      const nextActions = actions.filter((x) => x.id !== a.id);
+      const cur = perQ[a.q] || { us: 0, them: 0 };
+      const nextPerQ = { ...perQ, [a.q]: { us: cur.us - ptsOf(a), them: cur.them - themPtsOf(a) } };
+      syncLiveAggregates(nextActions, onCourt, nextPerQ);
+    }
+  };
 
   const removeAction = (id: string) => {
     const a = actions.find((x) => x.id === id);
@@ -4452,70 +4029,9 @@ export default function PriseStatsProPage() {
       syncLiveAggregates(nextActions, onCourt, nextPerQ);
     }
   };
-  const beginHistoryCorrection = (a: StatA, targetStage: string) => {
-    // Si une autre correction était ouverte, on restitue d'abord son score.
-    const previous = editingActionRef.current;
-    if (previous && previous.id !== a.id) {
-      setPerQ((p) => {
-        const cur = p[previous.q] || { us: 0, them: 0 };
-        return {
-          ...p,
-          [previous.q]: {
-            us: cur.us + ptsOf(previous),
-            them: cur.them + themPtsOf(previous),
-          },
-        };
-      });
-    }
-
-    editingActionRef.current = a;
-    subtractActionFromScore(a);
-    restoreDraftFromAction(a);
-    setStageHistory([]);
-    setStage(targetStage);
-    setEvtSel(null);
-    setShowHistoryPanel(false);
-    setShowTimelinePanel(false);
-    setWorkTab('coding');
-    flash('Correction ouverte · reclique le bon choix');
-  };
-
   const resetDraft = () => {
-    // ÉCHAP pendant une correction = annuler la correction et restituer le score
-    // d'origine, puisque l'action historique n'a pas encore été remplacée.
-    const editingOriginal = editingActionRef.current;
-    if (editingOriginal) {
-      setPerQ((p) => {
-        const cur = p[editingOriginal.q] || { us: 0, them: 0 };
-        return {
-          ...p,
-          [editingOriginal.q]: {
-            us: cur.us + ptsOf(editingOriginal),
-            them: cur.them + themPtsOf(editingOriginal),
-          },
-        };
-      });
-      editingActionRef.current = null;
-    }
-
     setDraft(emptyDraft());
-    setStageHistory([]);
-
-    // Reset complet de la navigation : Échap = toujours écran initial
-    // ATTAQUE / DÉFENSE, sans possibilité qu'un ancien stage soit réinjecté.
-    previousStageRef.current = 'context';
-    backNavigationRef.current = true;
     setStage('context');
-
-    setEvtSel(null);
-    setShowHistoryPanel(false);
-    setShowTimelinePanel(false);
-    setWorkTab('coding');
-
-    // Retire également le focus d'un champ/bouton qui aurait consommé Échap.
-    if (typeof document !== 'undefined') {
-      (document.activeElement as HTMLElement | null)?.blur?.();
-    }
   };
 
   const swap = (outId: string) => {
@@ -4628,7 +4144,6 @@ export default function PriseStatsProPage() {
         lines,
         actions,
         home,
-        matchCategory: matchType === 'league' ? 'championship' : matchType,
       } as any;
 
       // Le match a été alimenté en TEMPS RÉEL : finishMatch FINALISE (score
@@ -4645,22 +4160,6 @@ export default function PriseStatsProPage() {
       console.log('SAVE RESULT =', res);
 
       if (res.ok) {
-        if (
-          pendingDriveFile &&
-          !String(res.matchId).startsWith('local_')
-        ) {
-          try {
-            await linkGoogleDriveFileToMatch({
-              matchId: String(res.matchId),
-              teamId: activeTeamForWrite,
-              fileId: pendingDriveFile.id,
-            });
-          } catch (driveError) {
-            console.error('Vidéo Google Drive non liée au match :', driveError);
-            flash('Match enregistré, liaison Google Drive à vérifier');
-          }
-        }
-
         flash('Match enregistré ✓');
         setLiveMatch(null, null);
         setScreen('box');
@@ -4765,104 +4264,20 @@ export default function PriseStatsProPage() {
     const us = sumPerQ('us');
     const them = sumPerQ('them');
     const payload = {
-      format: 'mybasket-livestat-project',
-      version: 2,
-      codingMode,
-      sourceClock: { type: 'match-elapsed-seconds', matchStart: 0 },
-      teamId: activeTeamId || teamId,
-      teamName,
-      opponent: opponent || 'Adversaire',
-      date,
-      matchType,
+      teamId, teamName, opponent: opponent || 'Adversaire', date,
       home,
-      q,
-      secs,
-      onCourt,
-      matchPlayerIds,
-      starters,
-      matchJerseyNumbers,
-      score: { us, them },
-      perQ,
+      score: { us, them }, perQ,
       minutesByPlayer,
       box: computeBox(actions, roster),
       actions,
-      videoSync: videoSyncRef.current,
-      lastVideoTime: hasVideoLoaded() ? getCurrentVideoTime() : lastProjectVideoTimeRef.current,
-      projectState: buildProjectState(),
       exportedAt: new Date().toISOString(),
     };
     triggerDownload(
-      `${safeName(teamName)}_vs_${safeName(opponent || 'Adversaire')}_${date}.mybasket`,
+      `match_${safeName(teamName)}_${date}.json`,
       JSON.stringify(payload, null, 2),
       'application/json',
     );
-    flash('Projet MyBasket exporté ✓');
-  };
-
-  const importLiveSourceFile = async (file: File | null) => {
-    if (!file) return;
-    try {
-      const raw = await file.text();
-      const data = JSON.parse(raw);
-      if (!['mybasket-livestat-source', 'mybasket-livestat-project'].includes(String(data?.format || '')) || !Array.isArray(data?.actions)) {
-        flash('Fichier projet LiveStat MyBasket non reconnu');
-        return;
-      }
-      const sourceTeamId = String(data.teamId || '');
-      if (sourceTeamId && teams.some((t) => t.id === sourceTeamId)) {
-        setTeamId(sourceTeamId);
-        setActiveTeamId(sourceTeamId);
-      }
-      setOpponent(String(data.opponent || ''));
-      if (data.date) setDate(String(data.date));
-      setMatchType(data.matchType === 'league' || data.matchType === 'cup' ? data.matchType : 'friendly');
-      setHome(data.home ?? true);
-      if (data.matchJerseyNumbers && typeof data.matchJerseyNumbers === 'object') {
-        setMatchJerseyNumbers(data.matchJerseyNumbers);
-      }
-
-      const importedMatchPlayerIds = Array.isArray(data.matchPlayerIds)
-        ? data.matchPlayerIds.map(String).slice(0, 12)
-        : Array.from(new Set([
-            ...(Array.isArray(data.playerIds) ? data.playerIds : []),
-            ...(Array.isArray(data.onCourt) ? data.onCourt : []),
-            ...(Array.isArray(data.actions)
-              ? data.actions.flatMap((action: any) => [
-                  action.playerId,
-                  action.assistPlayerId,
-                  ...(Array.isArray(action.lineup) ? action.lineup : []),
-                ])
-              : []),
-          ].filter(Boolean)))
-            .map(String)
-            .slice(0, 12);
-
-      setMatchPlayerIds(importedMatchPlayerIds);
-
-      if (Array.isArray(data.starters)) {
-        setStarters(
-          data.starters
-            .map(String)
-            .filter((id: string) => importedMatchPlayerIds.includes(id))
-            .slice(0, 5),
-        );
-      } else if (Array.isArray(data.onCourt)) {
-        setStarters(
-          data.onCourt
-            .map(String)
-            .filter((id: string) => importedMatchPlayerIds.includes(id))
-            .slice(0, 5),
-        );
-      }
-
-      setImportedLiveSource(data);
-      setCodingMode('post');
-      setVideoSync(normalizeSync(data.videoSync ?? data.projectState ?? data));
-      flash(`Source LiveStat importée · ${data.actions.length} actions`);
-    } catch (error) {
-      console.error('Import LiveStat source:', error);
-      flash('Impossible de lire ce fichier source');
-    }
+    flash('Export JSON téléchargé ✓');
   };
 
   const scoreUs = sumPerQ('us');
@@ -4870,19 +4285,14 @@ export default function PriseStatsProPage() {
 
   /* ============================ Rendu ============================ */
   if (screen === 'setup') {
-    const startersList = starters
-      .map((id) => selectedMatchRoster.find((player) => player.id === id))
-      .filter((player): player is Player => !!player);
-    const videoLabel = videoMode === 'file' ? '📁 Fichier vidéo' : videoMode === 'drive' ? '☁️ Google Drive' : videoMode === 'youtube' ? '▶️ Lien YouTube' : '🏟 Aucune sélection';
+    const startersList = setupRoster.filter((p) => starters.includes(p.id));
+    const videoLabel = videoMode === 'file' ? '📁 Fichier vidéo' : videoMode === 'youtube' ? '▶️ Lien YouTube' : '🏟 Aucune sélection';
     return (
       <div className="ps-root">
         <div id="create-match">
           <header className="cm-head">
             <div className="cm-brand"><div className="cm-logo">📊</div><div><div className="cm-t">PRISE DE STATS</div><div className="cm-s">LIVE STATS PRO</div></div></div>
-            <div className="cm-head-r">
-              <button className="cm-ghost" type="button" onClick={() => openCodingSettings('workflow')}>⚙ Codification</button>
-              <button className="cm-ghost" type="button" onClick={() => { window.location.href = '/management/historique'; }}>↺ Historique des matchs</button>
-            </div>
+            <div className="cm-head-r"><button className="cm-ghost" type="button">↺ Historique des matchs</button></div>
           </header>
 
           <div className="cm-body">
@@ -4896,134 +4306,6 @@ export default function PriseStatsProPage() {
                   <p className="cm-sub">Configurez les informations du match et sélectionnez votre 5 majeur.</p>
                 </div>
               </div>
-
-              <section className="cm-card cm-purpose-card">
-                <div className="cm-card-t">🎯 QUE VEUX-TU CODER ?</div>
-                <div className="cm-purpose">
-                  <button type="button" className={analysisScope === 'coached' ? 'on' : ''} onClick={() => { setAnalysisScope('coached'); setTeamId(coachedTeams[0]?.id || ''); setOpponent(''); }}>
-                    <span>🏀</span><b>Mon équipe</b><small>Coder un match de ton équipe.</small>
-                  </button>
-                  <button type="button" className={analysisScope === 'scout' ? 'on scout' : ''} onClick={() => { setAnalysisScope('scout'); setTeamId(scoutTeams[0]?.id || ''); setOpponent(''); }}>
-                    <span>👁️</span><b>Scouting adverse</b><small>Observer une équipe pour préparer un futur match.</small>
-                  </button>
-                </div>
-                {analysisScope === 'scout' && scoutTeams.length === 0 && (
-                  <div className="cm-scout-empty">Aucune équipe scoutée. <button type="button" onClick={quickCreateScoutTeam}>＋ Créer ici</button><button type="button" onClick={() => { window.location.href='/mon-compte?tab=equipes&teamType=scout'; }}>Gérer les équipes scoutées</button></div>
-                )}
-              </section>
-
-              <section className="cm-card">
-                <div className="cm-card-t">⚡ MODE DE CODAGE</div>
-                <div className="cm-video">
-                  {CODING_MODES.map((mode) => (
-                    <div
-                      key={mode.id}
-                      className={`cm-vid ${codingMode === mode.id ? 'on' : ''}`}
-                      onClick={() => { setCodingMode(mode.id); if (mode.id !== 'post' && mode.id !== 'match-review') setImportedLiveSource(null); }}
-                    >
-                      {codingMode === mode.id && <div className="cm-vid-ck">✓</div>}
-                      <div className="cm-vid-ic">{mode.icon}</div>
-                      <div className="cm-vid-t">{mode.label}</div>
-                      <div className="cm-vid-d">{mode.description}</div>
-                      {mode.id === 'match-review' && <div className="cm-vid-note">100 % personnalisable · blocs · boutons · ordre · logique</div>}
-                    </div>
-                  ))}
-                </div>
-                {codingMode === 'live-individual' && (
-                  <div className="individualLinkBox">
-                    <label>Rattacher cette fiche individuelle à un projet collectif (optionnel)</label>
-                    <select value={linkedCollectiveProjectId} onChange={(e) => setLinkedCollectiveProjectId(e.target.value)}>
-                      <option value="">Aucun projet — fiche autonome</option>
-                      {projects.map((pr) => <option key={pr.id} value={pr.id}>vs {pr.opponent} · {pr.date}</option>)}
-                    </select>
-                  </div>
-                )}
-                {(codingMode === 'live' || codingMode === 'live-individual') && (
-                  <div className="individualLinkBox" style={{marginTop:10}}>
-                    <label style={{display:'flex',alignItems:'center',gap:10,fontWeight:800}}>
-                      <input type="checkbox" checked={mutualizedLive} onChange={(e)=>setMutualizedLive(e.target.checked)} />
-                      MODE MUTUALISÉ · Live Individuel + Live Temps Forts + Stats Coach
-                    </label>
-                  </div>
-                )}
-                {(codingMode === 'live' || codingMode === 'live-individual') && (
-                  <div className="individualLinkBox" style={{marginTop:8}}>
-                    <label>Rejoindre le même match depuis un 2e ordinateur</label>
-                    <div style={{display:'flex',gap:8,flexWrap:'wrap'}}>
-                      <input value={joinLiveCode} onChange={(e)=>setJoinLiveCode(e.target.value.toUpperCase())} placeholder="MB-4821" style={{minWidth:130}} />
-                      <select value={sharedRole} onChange={(e)=>setSharedRole(e.target.value as any)}><option value="individual">🏀 Live Individuel · stats / score / lineup / résultat</option><option value="collective">⚡ Live Temps Forts · systèmes / picks / contexte tactique</option></select>
-                      <button type="button" disabled={!joinLiveCode.trim() || projectBusy} onClick={joinMutualizedLive}>↔ Rejoindre</button>
-                    </div>
-                  </div>
-                )}
-                {codingMode === 'match-review' ? (
-                  <div className="matchReviewConstructorCard">
-                    <div className="matchReviewConstructorTop">
-                      <div className="matchReviewConstructorIcon">🧱</div>
-                      <div>
-                        <b>CONSTRUCTEUR · RETOUR DE MATCH</b>
-                        <small>Pars d'une page vide et construis exactement ta logique de retour de match.</small>
-                      </div>
-                      <button type="button" onClick={() => setShowMatchReviewBuilder(true)}>Créer / modifier</button>
-                    </div>
-
-                    <div className="matchReviewConstructorGrid">
-                      <div><strong>01</strong><b>Blocs</b><span>Crée autant de blocs que tu veux, nomme-les, colore-les et choisis leur ordre.</span></div>
-                      <div><strong>02</strong><b>Boutons</b><span>Bouton simple, + / −, compteur, note, choix multiple ou texte.</span></div>
-                      <div><strong>03</strong><b>Ordre</b><span>Réorganise librement les blocs, les boutons et les étapes de saisie.</span></div>
-                      <div><strong>04</strong><b>Logique</b><span>Choisis ce qui est obligatoire, le joueur, le commentaire, le clip et l'enregistrement.</span></div>
-                    </div>
-
-                    <div className="matchReviewConstructorFlow">
-                      <span>Exemple libre</span>
-                      <b>Joueur</b><i>→</i><b>Bloc</b><i>→</i><b>Action</b><i>→</i><b>+ / −</b><i>→</i><b>Clip</b><i>→</i><b>Enregistrer</b>
-                    </div>
-                    <p className="matchReviewConstructorNote">Rien n'est imposé : cet ordre est seulement un exemple. Chaque modèle peut avoir sa propre structure et son propre parcours.</p>
-                  </div>
-                ) : (
-                <div className="codingLogicSetup">
-                  <div className="codingLogicSetupHead">
-                    <div><b>🧩 LOGIQUE DE CODAGE</b><small>Sélectionne une logique déjà enregistrée ou construis-la avant de démarrer.</small></div>
-                    <button type="button" onClick={() => openCodingSettings('buttons')}>Gérer mes boutons</button>
-                  </div>
-                  <div className="codingLogicSetupRow">
-                    <select
-                      value={selectedCodingProfileId}
-                      onChange={(e) => {
-                        const id = e.target.value;
-                        setSelectedCodingProfileId(id);
-                        if (!id) { setProfileButtonKeys(null); return; }
-                        const profile = codingProfiles.find((p) => p.id === id);
-                        if (profile) applyCodingProfile(profile);
-                      }}
-                    >
-                      <option value="">Configuration actuelle / personnalisée</option>
-                      {codingProfiles.map((profile) => <option key={profile.id} value={profile.id}>{profile.name}</option>)}
-                    </select>
-                    <button type="button" onClick={() => openCodingSettings('workflow')}>⚙ Modifier le chemin</button>
-                  </div>
-                  <div className="codingLogicPath">
-                    {codingMode === 'live-individual' ? (
-                      <>
-                        <span>Attaque : Joueur</span><i>→</i><span>Résultat</span>{workflowPrefs.zone && <><i>→</i><span>Shot chart</span></>}{workflowPrefs.rebound && <><i>→</i><span>Rebond si raté</span></>}{workflowPrefs.assist && <><i>→</i><span>PD / Skip si panier</span></>}
-                        <em>Défense : Résultat → joueur si faute/INT/contre → conséquence</em>
-                      </>
-                    ) : (
-                      <>
-                        <span>Contexte</span>{workflowPrefs.system && <><i>→</i><span>Système</span></>}{workflowPrefs.temps && <><i>→</i><span>Temps fort</span></>}<i>→</i><span>Résultat</span>{isPostLikeCodingMode(codingMode) && <><i>→</i><span>Shot chart obligatoire</span></>}
-                      </>
-                    )}
-                  </div>
-                </div>
-                )}
-                <div className="vid-input" style={{marginTop:10}}>
-                  <label className="vid-file">
-                    <input type="file" accept="application/json,.json,.mybasket" onChange={(e) => { void importLiveSourceFile(e.target.files?.[0] ?? null); e.currentTarget.value = ''; }} />
-                    <span className="vf-btn">⬆ Importer un projet LiveStat</span>
-                    <span className="vf-name">{importedLiveSource ? `✓ ${importedLiveSource.actions?.length || 0} actions prêtes à recaler sur la vidéo` : 'Rouvrir un fichier .mybasket ou JSON'}</span>
-                  </label>
-                </div>
-              </section>
 
               {/* AJOUT · Reprise d'un match en cours (projet brouillon Supabase) */}
               {projects.length > 0 && (
@@ -5049,33 +4331,37 @@ export default function PriseStatsProPage() {
                 <div className="cm-form">
                   <label className="cm-field">Date du match
                     <div className="cm-input"><span>📅</span><input type="date" value={date} onChange={(e) => setDate(e.target.value)} /></div></label>
-                  <label className="cm-field">{analysisScope === 'scout' ? 'Équipe observée' : 'Équipe Supabase'}
+                  <label className="cm-field">Équipe Supabase
                     <div className="cm-input"><span>🅧</span>
                       <select value={teamId} onChange={(e) => { setTeamId(e.target.value); setStarters([]); }}>
-                        {setupTeams.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
+                        {teams.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
                       </select>
                     </div>
-                    <span className="cm-auto">↳ depuis <b>{analysisScope === 'scout' ? 'Équipes scoutées' : 'Mes équipes'}</b> : joueurs, numéros, postes et photos récupérés automatiquement</span>
+                    <span className="cm-auto">↳ depuis <b>Mes équipes</b> : joueurs, numéros, postes, photos et staff récupérés automatiquement</span>
                   </label>
-                  <label className="cm-field">{analysisScope === 'scout' ? 'Adversaire du match observé' : 'Adversaire'}
-                    <div className="cm-input"><input placeholder={analysisScope === 'scout' ? "Équipe affrontée par l'adversaire scouté" : "Nom de l'adversaire"} value={opponent} onChange={(e) => setOpponent(e.target.value)} /></div></label>
-                  <label className="cm-field">Type de match
-                    <div className="cm-input"><span>🏆</span>
-                      <select value={matchType} onChange={(e) => void handleMatchTypeChange(e.target.value as 'friendly' | 'league' | 'cup')}>
-                        <option value="friendly">Amical</option>
-                        <option value="league">Championnat</option>
-                        <option value="cup">Coupe</option>
-                      </select>
-                    </div>
-                  </label>
+                  <label className="cm-field">Adversaire
+                    <div className="cm-input"><input placeholder="Nom de l'adversaire" value={opponent} onChange={(e) => setOpponent(e.target.value)} /></div></label>
                   <div className="cm-field">Lieu du match
                     <div className="cm-venue"><button type="button" className={`cm-v ${home ? 'on' : ''}`} onClick={() => setHome(true)}>🏠 DOMICILE</button><button type="button" className={`cm-v ${!home ? 'on' : ''}`} onClick={() => setHome(false)}>🏟 EXTÉRIEUR</button></div></div>
                 </div>
               </section>
 
-              {/* L'effectif adverse manuel n'est plus créé ici.
-                  En mode scouting, les joueurs proviennent de l'équipe scoutée.
-                  oppRoster reste conservé dans l'état pour la compatibilité des anciens projets. */}
+              {/* AJOUT §12 · Effectif adverse (optionnel) pour attribuer les tirs concédés */}
+              <section className="cm-card">
+                <div className="cm-card-t">🆚 EFFECTIF ADVERSE <span className="cm-opt">OPTIONNEL — POUR NOMMER LES TIRS CONCÉDÉS EN DÉFENSE</span></div>
+                <div className="opp-add">
+                  <input className="opp-num" placeholder="N°" value={oppNumInput} onChange={(e) => setOppNumInput(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); addOppPlayer(); } }} />
+                  <input className="opp-name" placeholder="Nom (optionnel)" value={oppNameInput} onChange={(e) => setOppNameInput(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); addOppPlayer(); } }} />
+                  <button type="button" className="opp-addbtn" onClick={addOppPlayer}>＋ Ajouter</button>
+                </div>
+                {oppRoster.length > 0 && (
+                  <div className="opp-list">
+                    {oppRoster.map((p) => (
+                      <span className="opp-chip" key={p.id}>#{p.num} {p.name}<button type="button" onClick={() => removeOppPlayer(p.id)}>✕</button></span>
+                    ))}
+                  </div>
+                )}
+              </section>
 
               {/* AJOUT · Playbook associé au match + mapping des slots système (§8) */}
               <section className="cm-card">
@@ -5116,28 +4402,15 @@ export default function PriseStatsProPage() {
                 <div className="cm-video">
                   <div className={`cm-vid ${videoMode === 'later' ? 'on' : ''}`} onClick={() => chooseVideoMode('later')}>{videoMode === 'later' && <div className="cm-vid-ck">✓</div>}<div className="cm-vid-ic">🎥</div><div className="cm-vid-t">Sans vidéo / plus tard</div><div className="cm-vid-d">Coder maintenant, ajouter la vidéo ensuite.</div></div>
                   <div className={`cm-vid ${videoMode === 'file' ? 'on' : ''}`} onClick={() => chooseVideoMode('file')}>{videoMode === 'file' && <div className="cm-vid-ck">✓</div>}<div className="cm-vid-ic">▶</div><div className="cm-vid-t">Fichier vidéo maintenant</div><div className="cm-vid-d">Sélectionner un fichier vidéo sur votre appareil.</div></div>
-                  <div className={`cm-vid ${videoMode === 'drive' ? 'on' : ''}`} onClick={() => chooseVideoMode('drive')}>{videoMode === 'drive' && <div className="cm-vid-ck">✓</div>}<div className="cm-vid-ic">☁️</div><div className="cm-vid-t">Google Drive</div><div className="cm-vid-d">Recommandé staff : le match reste accessible aux coachs autorisés.</div></div>
                   <div className={`cm-vid ${videoMode === 'youtube' ? 'on' : ''}`} onClick={() => chooseVideoMode('youtube')}>{videoMode === 'youtube' && <div className="cm-vid-ck">✓</div>}<div className="cm-vid-ic">▶</div><div className="cm-vid-t">Lien YouTube</div><div className="cm-vid-d">Coller l'URL d'une vidéo YouTube.</div></div>
                 </div>
                 {videoMode === 'file' && (
                   <div className="vid-input">
-                    <div className="vid-file">
-                      <button type="button" className="vf-btn" onClick={() => void pickLocalVideoSmart()}>
-                        📁 Choisir un fichier vidéo
-                      </button>
+                    <label className="vid-file">
+                      <input type="file" accept="video/*" onChange={(e) => onPickVideoFile(e.target.files?.[0] ?? null)} />
+                      <span className="vf-btn">📁 Choisir un fichier vidéo</span>
                       <span className="vf-name">{videoFilename || 'Aucun fichier sélectionné'}</span>
-                    </div>
-                  </div>
-                )}
-                {videoMode === 'drive' && (
-                  <div className="vid-input">
-                    <GoogleDriveVideoPicker
-                      teamId={String(selTeam?.id || teamId || '')}
-                      selectedName={pendingDriveFile?.name || null}
-                      className="drive-picker-main-btn"
-                      label={pendingDriveFile?.name ? `✓ ${pendingDriveFile.name} · Changer` : "Choisir une vidéo dans Google Drive"}
-                      onPicked={onPickGoogleDriveVideo}
-                    />
+                    </label>
                   </div>
                 )}
                 {videoMode === 'youtube' && (
@@ -5148,174 +4421,60 @@ export default function PriseStatsProPage() {
               </section>
             </div>
 
-            {/* Colonne droite : effectif du match + 5 majeur */}
+            {/* Colonne droite : 5 majeur */}
             <div className="cm-right">
               <div className="cm-right-head">
-                <div className="cm-5t">
-                  🏀 <b>EFFECTIF DU MATCH</b>
-                  <span className={`cm-5c ${matchPlayerIds.length >= 5 ? 'ok' : ''}`}>
-                    {matchPlayerIds.length} / 12 MAX
-                  </span>
-                </div>
-                <button
-                  className="cm-clear-roster"
-                  type="button"
-                  onClick={() => {
-                    setMatchPlayerIds([]);
-                    setStarters([]);
-                  }}
-                  aria-label="Vider l’effectif du match"
-                  title="Vider l’effectif du match"
-                >
-                  🗑
-                </button>
+                <div className="cm-5t">👥 <b>5 MAJEUR</b> <span className="cm-5c">{starters.length} / 5 SÉLECTIONNÉS</span></div>
+                <button className="cm-ghost sm" type="button" onClick={() => setStarters([])}>Vider la sélection</button>
               </div>
-
-              <div className="cm-roster-help">
-                Coche les joueurs présents sur la feuille de match (12 maximum).
-                Les joueurs cochés apparaissent juste dessous, puis tu choisis le 5 majeur parmi eux.
-              </div>
-
-              <div className="cm-roster-checklist">
+              <div className="cm-players">
                 {setupRoster.map((p) => {
-                  const selected = matchPlayerIds.includes(p.id);
+                  const on = starters.includes(p.id);
                   return (
-                    <label key={p.id} className={`cm-roster-line ${selected ? 'on' : ''}`}>
-                      <input
-                        type="checkbox"
-                        checked={selected}
-                        onChange={() => toggleMatchPlayer(p.id)}
-                      />
-                      <span className="cm-roster-line-num">#{matchNumberOf(p)}</span>
-                      <span className="cm-roster-line-name">{p.name}</span>
-                      <span className="cm-roster-line-pos">{p.pos || '—'}</span>
-                    </label>
+                    <div key={p.id} className={`cm-p ${on ? 'on' : ''}`} onClick={() => toggleStarter(p.id)}>
+                      <div className="cm-p-num">{matchNumberOf(p)}</div>
+                      <div className="cm-p-ck">{on ? '✓' : '○'}</div>
+                      <div className="cm-p-av"><Av p={{ ...p, num: matchNumberOf(p) }} /></div>
+                      <div className="cm-p-nm">{p.name}</div>
+                      <div className="cm-p-pos">● {p.pos}</div>
+                      <label className="cm-p-jersey" onClick={(event) => event.stopPropagation()}>
+                        <span>N° DU JOUR</span>
+                        <input
+                          type="text"
+                          inputMode="numeric"
+                          maxLength={2}
+                          value={String(matchNumberOf(p))}
+                          onChange={(event) => setMatchNumber(p.id, event.target.value)}
+                          onFocus={(event) => event.currentTarget.select()}
+                          aria-label={`Numéro de maillot du jour de ${p.name}`}
+                        />
+                      </label>
+                    </div>
                   );
                 })}
-                {setupRoster.length === 0 && (
-                  <div className="cm-no-roster">
-                    <span className="cnt">Aucun joueur dans cette équipe.</span>
-                    {analysisScope === 'scout' && (
-                      <button
-                        type="button"
-                        onClick={() => { window.location.href='/mon-compte?tab=equipes&teamType=scout'; }}
-                      >
-                        ＋ Ajouter l'effectif scout
-                      </button>
-                    )}
-                  </div>
-                )}
+                {setupRoster.length === 0 && <span className="cnt">Aucun joueur Supabase dans cette équipe.</span>}
               </div>
-
-              {selectedMatchRoster.length > 0 && (
-                <div className="cm-selected-roster">
-                  <div className="cm-selected-roster-title">
-                    <b>Effectif du match</b>
-                    <span>{selectedMatchRoster.length} / 12</span>
-                  </div>
-                  <div className="cm-selected-roster-cards">
-                    {selectedMatchRoster.map((p) => {
-                      const starter = starters.includes(p.id);
-                      return (
-                        <article
-                          key={p.id}
-                          className={`cm-selected-player ${starter ? 'starter' : ''}`}
-                          role="button"
-                          tabIndex={0}
-                          onClick={() => toggleStarter(p.id)}
-                          onKeyDown={(event) => {
-                            if (event.key === 'Enter' || event.key === ' ') {
-                              event.preventDefault();
-                              toggleStarter(p.id);
-                            }
-                          }}
-                          aria-label={starter ? `Retirer ${p.name} du 5 majeur` : `Ajouter ${p.name} au 5 majeur`}
-                          title={starter ? 'Cliquer pour retirer du 5 majeur' : starters.length >= 5 ? 'Le 5 majeur est complet' : 'Cliquer pour ajouter au 5 majeur'}
-                        >
-                          <span className={`cm-selected-star ${starter ? 'on' : ''}`} aria-hidden="true">
-                            {starter ? '★' : ''}
-                          </span>
-                          <Av p={{ ...p, num: matchNumberOf(p) }} />
-                          <div>
-                            <b>#{matchNumberOf(p)} {p.name}</b>
-                            <small>{starter ? '★ 5 MAJEUR' : (p.pos || 'Banc')}</small>
-                          </div>
-                          <label className="cm-selected-number" onClick={(event) => event.stopPropagation()}>
-                            <span>N°</span>
-                            <input
-                              type="text"
-                              inputMode="numeric"
-                              maxLength={2}
-                              value={String(matchNumberOf(p))}
-                              onChange={(event) => setMatchNumber(p.id, event.target.value)}
-                              onFocus={(event) => event.currentTarget.select()}
-                              aria-label={`Numéro de maillot du jour de ${p.name}`}
-                            />
-                          </label>
-                          <button
-                            type="button"
-                            className="cm-selected-remove"
-                            onClick={(event) => {
-                              event.stopPropagation();
-                              toggleMatchPlayer(p.id);
-                            }}
-                            aria-label={`Retirer ${p.name} du match`}
-                            title="Retirer du match"
-                          >
-                            🗑
-                          </button>
-                        </article>
-                      );
-                    })}
-                  </div>
-                </div>
-              )}
-
-              <div className="cm-starters-head">
-                <div className="cm-5t">
-                  ⭐ <b>5 MAJEUR</b>
-                  <span className={`cm-5c ${starters.length === 5 ? 'ok' : ''}`}>
-                    {starters.length} / 5
-                  </span>
-                </div>
-                <button className="cm-ghost sm" type="button" onClick={() => setStarters([])}>
-                  Vider le 5
-                </button>
+              <div className="cm-slots">
+                {[0, 1, 2, 3, 4].map((i) => {
+                  const p = startersList[i];
+                  return (
+                    <div className="cm-slot" key={i}>
+                      <span className="cm-slot-l">TITULAIRE {i + 1}</span>
+                      {p
+                        ? <div className="cm-slot-f"><span className="rm" onClick={() => toggleStarter(p.id)}>✕</span><b>{matchNumberOf(p)}</b><span>{p.name}</span></div>
+                        : <div className="cm-slot-e">＋ Ajouter</div>}
+                    </div>
+                  );
+                })}
               </div>
-
-              <div className="cm-starting-five-only">
-                {startersList.map((p) => (
-                  <button
-                    type="button"
-                    key={p.id}
-                    className="cm-five-player"
-                    onClick={() => toggleStarter(p.id)}
-                    title="Cliquer pour retirer du 5 majeur"
-                  >
-                    <Av p={{ ...p, num: matchNumberOf(p) }} />
-                    <b>#{matchNumberOf(p)}</b>
-                    <span>{p.name}</span>
-                    <small>★ TITULAIRE</small>
-                  </button>
-                ))}
-                {starters.length === 0 && (
-                  <div className="cm-five-empty">Clique directement sur les joueurs de l'effectif du match pour choisir ton 5 majeur.</div>
-                )}
-                {starters.length > 0 && starters.length < 5 && (
-                  <div className="cm-five-empty compact">Encore {5 - starters.length} joueur{5 - starters.length > 1 ? 's' : ''} à choisir.</div>
-                )}
-              </div>
-
-              <div className={`cm-warn ${canStart ? 'ok' : ''}`}>
-                {matchPlayerIds.length < 5
-                  ? <><span>⚠</span> Sélectionne au moins 5 joueurs pour ce match.</>
-                  : hasDuplicateMatchNumbers
-                    ? <><span>⚠</span> Deux joueurs du match ne peuvent pas porter le même numéro.</>
-                    : hasInvalidMatchNumbers
-                      ? <><span>⚠</span> Les numéros de maillot doivent être compris entre 0 et 99.</>
-                      : starters.length === 5
-                        ? <><span>✓</span> Effectif prêt : {matchPlayerIds.length} joueurs, dont 5 titulaires.</>
-                        : <><span>⚠</span> Choisis maintenant les 5 joueurs qui commencent.</>}
+              <div className={`cm-warn ${starters.length === 5 && !hasDuplicateMatchNumbers && !hasInvalidMatchNumbers ? 'ok' : ''}`}>
+                {hasDuplicateMatchNumbers
+                  ? <><span>⚠</span> Deux joueurs ne peuvent pas porter le même numéro pendant ce match.</>
+                  : hasInvalidMatchNumbers
+                    ? <><span>⚠</span> Les numéros de maillot doivent être compris entre 0 et 99.</>
+                    : starters.length === 5
+                      ? <><span>✓</span> 5 joueurs sélectionnés — les numéros du jour seront utilisés pour tout le match.</>
+                      : <><span>⚠</span> Sélectionnez 5 joueurs pour démarrer la saisie des statistiques.</>}
               </div>
             </div>
           </div>
@@ -5330,110 +4489,36 @@ export default function PriseStatsProPage() {
                 <div className="cm-sum"><span className="cm-sum-l">ADVERSAIRE</span><span className="cm-sum-v">{opponent.trim() || '-'}</span></div>
                 <div className="cm-sum"><span className="cm-sum-l">LIEU</span><span className="cm-sum-v">{home ? '🏠 DOMICILE' : '🏟 EXTÉRIEUR'}</span></div>
                 <div className="cm-sum"><span className="cm-sum-l">VIDÉO</span><span className="cm-sum-v">{videoLabel}</span></div>
-                <div className="cm-sum"><span className="cm-sum-l">EFFECTIF MATCH</span><span className="cm-sum-v"><b className="gold">{matchPlayerIds.length} / 12</b> joueurs</span></div>
                 <div className="cm-sum"><span className="cm-sum-l">5 MAJEUR</span><span className="cm-sum-v"><b className="gold">{starters.length} / 5</b> sélectionnés</span></div>
               </div>
             </div>
             <div className="cm-start-wrap">
               <button className="cm-start" disabled={!canStart} onClick={startMatch}>▶ Démarrer la saisie</button>
-              <div className="cm-start-hint">
-                {canStart
-                  ? 'Tout est prêt — lancez la saisie'
-                  : matchPlayerIds.length < 5
-                    ? 'Sélectionne au moins 5 joueurs pour le match'
-                    : hasDuplicateMatchNumbers
-                      ? 'Corrige les numéros de maillot en double'
-                      : starters.length < 5
-                        ? 'Complète ton 5 majeur'
-                        : 'Renseigne date, équipe et adversaire'}
-              </div>
+              <div className="cm-start-hint">{canStart ? 'Tout est prêt — lancez la saisie' : (hasDuplicateMatchNumbers ? 'Corrigez les numéros de maillot en double' : starters.length < 5 ? 'Complétez votre 5 majeur pour continuer' : 'Renseignez date, équipe et adversaire')}</div>
             </div>
-            {!showCodingSettings && <div className="cm-start-fixed">
+            <div className="cm-start-fixed">
               <button className="cm-start cm-start-main" disabled={!canStart} onClick={startMatch}>▶ DÉMARRER LE MATCH</button>
-            </div>}
+            </div>
           </footer>
         </div>
 
         {/* Bouton fixe hors footer : toujours visible sur l’écran de création */}
-        {!showCodingSettings && <button
+        <button
           type="button"
           className="cm-start-fixed-only"
           disabled={!canStart}
           onClick={startMatch}
         >
           ▶ DÉMARRER LE MATCH
-        </button>}
+        </button>
 
-        <LiveCodingSettingsModal
-          open={showCodingSettings}
-          teamId={activeTeamId || teamId}
-          initialTab={codingSettingsTab}
-          workflow={workflowPrefs}
-          onWorkflowChange={setWorkflowPrefs}
-          groups={codingSettingsGroups}
-          playbookId={playbookId}
-          playbookSystems={playbookSystems}
-          profiles={codingProfiles}
-          selectedProfileId={selectedCodingProfileId}
-          onSaveProfile={saveCodingProfile}
-          onDeleteProfile={deleteCodingProfile}
-          onApplyProfile={applyCodingProfile}
-          onChanged={() => { setCodingDbNonce((n) => n + 1); tags.reload(); }}
-          onClose={() => setShowCodingSettings(false)}
-        />
-        {showMatchReviewBuilder && (
-          <MatchReviewBuilder
-            players={setupRoster.map((player) => ({ id: player.id, name: player.name, num: player.num }))}
-            initialEditorOpen
-            onLayoutChange={setMatchReviewLayout}
-            onClose={() => setShowMatchReviewBuilder(false)}
-          />
-        )}
         <Style />
       </div>
     );
   }
 
   const liveCourt = stage === 'zone';
-  const navIdx = codingMode === 'live-individual' ? ({ context:0, player:3, result:5, faute:4, ft:5, zone:6, rebound:7, assist:7 } as Record<string, number>)[stage] ?? 0 : STAGE_NAV[stage] ?? 0;
-
-  const activeStageOrder = codingMode === 'live-individual'
-    ? ['context', 'player', 'result', 'faute', 'ft', ...(workflowPrefs.zone ? ['zone'] : []), ...(workflowPrefs.rebound ? ['rebound'] : []), ...(workflowPrefs.assist ? ['assist'] : [])]
-    : codingMode === 'live'
-      ? ['context', ...(workflowPrefs.system ? ['systeme'] : []), ...(workflowPrefs.temps ? ['temps'] : []), 'result', 'ft', 'rebound']
-      : ['context', ...(workflowPrefs.system ? ['systeme'] : []), ...(workflowPrefs.temps ? ['temps'] : []), ...(workflowPrefs.coverage ? ['coverage'] : []), ...(workflowPrefs.player ? ['player'] : []), 'action', 'faute', 'result', 'ft', ...(workflowPrefs.zone ? ['zone'] : []), ...(workflowPrefs.rebound ? ['rebound'] : []), ...(workflowPrefs.assist ? ['assist'] : [])];
-
-  const activeCrumbs = codingMode === 'live-individual'
-    ? ['Contexte', 'Joueur / Résultat', ...(workflowPrefs.zone ? ['Shot chart'] : []), ...(workflowPrefs.rebound ? ['Rebond'] : []), ...(workflowPrefs.assist ? ['PD'] : [])]
-    : codingMode === 'live'
-      ? ['Contexte', ...(workflowPrefs.system ? ['Système'] : []), ...(workflowPrefs.temps ? ['Temps fort'] : []), 'Résultat']
-      : ['Contexte', ...(workflowPrefs.system ? ['Système'] : []), ...(workflowPrefs.temps ? ['Temps fort'] : []), ...(workflowPrefs.player ? ['Joueur'] : []), 'Action', 'Résultat', ...(workflowPrefs.zone ? ['Shot chart'] : []), ...(workflowPrefs.rebound ? ['Rebond'] : []), ...(workflowPrefs.assist ? ['PD'] : [])];
-
-  const currentCrumbLabel = codingMode === 'live-individual'
-    ? (stage === 'context' ? 'Contexte'
-      : stage === 'zone' ? 'Shot chart'
-        : stage === 'rebound' ? 'Rebond'
-          : stage === 'assist' ? 'PD'
-            : 'Joueur / Résultat')
-    : (stage === 'context' ? 'Contexte'
-      : stage === 'systeme' || stage === 'inbound' ? 'Système'
-      : stage === 'temps' || stage === 'coverage' ? 'Temps fort'
-      : stage === 'player' ? 'Joueur'
-      : stage === 'action' || stage === 'faute' ? 'Action'
-      : stage === 'result' || stage === 'ft' ? 'Résultat'
-      : stage === 'zone' ? 'Shot chart'
-      : stage === 'rebound' ? 'Rebond'
-      : stage === 'assist' ? 'PD'
-      : activeCrumbs[0]);
-  const activeCrumbIndex = Math.max(0, activeCrumbs.indexOf(currentCrumbLabel));
-
-  const goBackStage = () => {
-    const previous = stageHistory[stageHistory.length - 1];
-    if (!previous) return;
-    setStageHistory((current) => current.slice(0, -1));
-    backNavigationRef.current = true;
-    setStage(previous);
-  };
+  const navIdx = STAGE_NAV[stage] ?? 0;
 
   // Stats live pour les cartes joueurs de la colonne droite
   const liveBox = computeBox(actions, roster) as any[];
@@ -5452,28 +4537,8 @@ export default function PriseStatsProPage() {
       ))}
     </span>
   );
-  // Compteur collectif : toute faute commise compte, même offensive. Les
-  // techniques joueur / banc / coach alimentent elles aussi le total d'équipe.
-  // Cela n'implique pas qu'une faute offensive donne des LF : le bonus reste
-  // déclenché uniquement par une faute non offensive.
-  const usTeamFouls = actions.filter((a) => a.q === q && (
-    a.actionType === 'faute-commise' ||
-    (a.actionType === 'faute-technique' && a.foulOutcome === 'technical-against')
-  )).length;
-  const themTeamFouls = actions.filter((a) => a.q === q && (
-    a.actionType === 'faute-provoquee' ||
-    (a.actionType === 'faute-technique' && a.foulOutcome === 'technical-for')
-  )).length;
-  const teamFoulLights = (count: number) => (
-    <span className="teamFoulLights" aria-label={`${Math.min(count, 5)} faute${count > 1 ? 's' : ''} d'équipe`}>
-      {Array.from({ length: 5 }).map((_, i) => (
-        <i
-          key={i}
-          className={i < Math.min(count, 5) ? (i === 4 ? 'red' : 'orange') : ''}
-        />
-      ))}
-    </span>
-  );
+  const usTeamFouls = actions.filter((a) => a.q === q && a.actionType === 'faute-commise' && a.context === 'defense').length;
+  const themTeamFouls = actions.filter((a) => a.q === q && a.actionType === 'faute-provoquee').length;
 
   // Bloc C · bandeau de resélection de la vidéo locale d'un projet rouvert.
   // Une URL blob: locale ne survit pas au rechargement : si le projet attend une
@@ -5482,13 +4547,10 @@ export default function PriseStatsProPage() {
   const VideoReselectBanner = () => needsLocalVideo ? (
     <div className="vid-reselect">
       <span>🎥 Vidéo requise : <b>{videoFilename}</b></span>
-      <button
-        type="button"
-        className="vid-reselect-btn"
-        onClick={() => void reconnectLocalVideo()}
-      >
-        Retrouver la vidéo
-      </button>
+      <label className="vid-reselect-btn">
+        Resélectionner la vidéo
+        <input type="file" accept="video/*" onChange={(e) => onPickVideoFile(e.target.files?.[0] ?? null)} />
+      </label>
     </div>
   ) : null;
 
@@ -5497,22 +4559,14 @@ export default function PriseStatsProPage() {
       <header className="h">
         <div className="h-l"><div className="h-ic">📊</div><div><div className="h-tt">PRISE DE STATS LIVE</div><div className="h-sub">{screen === 'box' ? 'Box-score' : NAV[navIdx]}</div></div>
           {screen !== 'box' && (
-            <div className={`vid-badge ${(videoProvider === 'local' || videoProvider === 'google_drive') ? 'is-local' : videoProvider === 'youtube' ? 'is-yt' : 'is-later'}`}>
+            <div className={`vid-badge ${videoProvider === 'local' ? 'is-local' : videoProvider === 'youtube' ? 'is-yt' : 'is-later'}`}>
               {videoProvider === 'local' ? '🎥 Vidéo locale prête'
-                : videoProvider === 'google_drive' ? '☁️ Google Drive lié'
                 : videoProvider === 'youtube' ? '▶️ YouTube lié'
                 : '⏳ Vidéo à ajouter après match'}
             </div>
           )}
-          {screen !== 'box' && videoProvider === 'none' && (
-            <div className={`vid-badge ${noVideoMatchClockStarted ? 'is-local' : 'is-later'}`}>
-              {noVideoMatchClockStarted
-                ? `⏱ Temps réel ${fmt(Math.floor(noVideoElapsedDisplay))}`
-                : 'ESPACE = début réel du match'}
-            </div>
-          )}
         </div>
-        {!(codingMode === 'live-individual' || codingMode === 'live') && <div className="h-c compactScore">
+        <div className="h-c compactScore">
           <div className="team"><div className="logo">{teamName.slice(0, 2)}</div><span>{teamName}</span></div>
           <div className="score us">{scoreUs}</div>
           <div className="clockbox">
@@ -5525,64 +4579,67 @@ export default function PriseStatsProPage() {
           </div>
           <div className="score them"><button className="mini" onClick={() => themBtn(-1)}>–</button><span>{scoreThem}</span><button className="mini" onClick={() => themBtn(1)}>+</button></div>
           <div className="team"><span>{opponent || 'ADVERSAIRE'}</span><div className="logo">{(opponent || 'AD').slice(0, 2).toUpperCase()}</div></div>
-        </div>}
+        </div>
         <div className="h-r">
           <button
             className={`ghost ${showHistoryPanel ? 'on' : ''}`}
-            onClick={() => setShowHistoryPanel((v) => { const opening = !v; if (opening) { inspectionVideoTimeRef.current = getCurrentVideoTime(); pauseVideo(); setRunning(false); } return opening; })}
-          >📚 Historique</button>
-          <button className={`ghost ${screen === 'box' ? 'on' : ''}`} onClick={() => { if (screen === 'box') { setScreen('live'); return; } inspectionVideoTimeRef.current = getCurrentVideoTime(); pauseVideo(); setRunning(false); setScreen('box'); }}>📊 Box-score</button>
-          <div className="projectMenuWrap">
-            <button className={`ghost menuDots ${showProjectMenu ? 'on' : ''}`} onClick={() => setShowProjectMenu((v) => !v)} aria-label="Menu projet">•••</button>
-            {showProjectMenu && (
-              <div className="projectMenu">
-                <button onClick={() => { setShowProjectMenu(false); void saveProjectNow(false); }}>💾 Enregistrer</button>
-                <button onClick={() => { setShowProjectMenu(false); void saveProjectNow(true); }}>💾 Enregistrer et fermer</button>
-                <div className="projectMenuSep" />
-                <button onClick={() => { setShowProjectMenu(false); setVideoMaximized(false); setShowVideoPanel(true); setWorkTab('center'); }}>🎥 Ajouter une vidéo</button>
-                {showVideoPanel && <button onClick={() => { setShowProjectMenu(false); setVideoMaximized(false); setShowVideoPanel(false); if (workTab === 'center') setWorkTab('coding'); }}>✕ Masquer la vidéo</button>}
-                {showVideoPanel && videoProvider === 'local' && videoUrl && <button onClick={() => { setShowProjectMenu(false); void pickLocalVideoSmart(); }}>📁 Changer la vidéo locale</button>}
-                {codingMode === 'live-individual' && (
-                  <button onClick={() => { setShowProjectMenu(false); setWorkflowPrefs((current) => ({ ...current, zone: !current.zone })); }}>
-                    {workflowPrefs.zone ? '✓ Shot chart Live individuel : activée' : '○ Shot chart Live individuel : désactivée'}
-                  </button>
-                )}
-                {codingMode === 'match-review' && <button onClick={() => { setShowProjectMenu(false); setShowMatchReviewBuilder(true); }}>🧱 Configurer Retour de match</button>}
-                {codingMode !== 'match-review' && <button onClick={() => { setShowProjectMenu(false); openCodingSettings('workflow'); }}>⚙ Configurer mon codage</button>}
-                <button onClick={() => { setShowProjectMenu(false); setShowMatchInfo(true); }}>ℹ Informations du match</button>
-                {codingMode !== 'match-review' && <button onClick={() => { setShowProjectMenu(false); openCodingSettings('buttons'); }}>🧩 Gérer mes boutons</button>}
-                <button onClick={() => { setShowProjectMenu(false); setLayoutPreset('video'); }}>🎥 Disposition : vidéo grande</button>
-                <div className="layoutToggleRow">
-                  <span className={layoutMode === 'balanced' ? 'on' : ''}>Équilibré</span>
-                  <button
-                    type="button"
-                    className={`layoutToggle ${layoutMode === 'coding' ? 'coding' : ''}`}
-                    onClick={() => setLayoutPreset(layoutMode === 'balanced' ? 'coding' : 'balanced')}
-                    aria-label="Basculer entre disposition équilibrée et codage grand"
-                  >
-                    <i />
-                  </button>
-                  <span className={layoutMode === 'coding' ? 'on' : ''}>Codage grand</span>
-                </div>
-                {codingMode === 'live' && <button onClick={() => { setShowProjectMenu(false); setShowPlayerAssociation(true); }}>👥 Associer les joueurs</button>}
-                {(videoProvider === 'local' || videoProvider === 'google_drive') && videoUrl && <button onClick={() => { setShowProjectMenu(false); setShowVideoSync(true); }}>🎯 Recaler la vidéo</button>}
-                {codingMode === 'live' && <button onClick={() => { markPeriodSourceStart(q); flash(`Début ${periodLabel(q)} repéré`); }}>▶ Repérer début {periodLabel(q)}</button>}
-                {codingMode === 'live' && <button onClick={() => markPeriodSourceEnd(q)}>⏹ Repérer fin {periodLabel(q)}</button>}
-                <button onClick={() => { setShowProjectMenu(false); exportMatchJSON(); }}>⬇ Exporter projet .mybasket</button>
-                <button onClick={() => { setShowProjectMenu(false); openMontageWindow(); }}>🎬 Montage</button>
-                <div className="projectMenuSep" />
-                <button className="danger" onClick={() => { setShowProjectMenu(false); void finishMatch(); }}>🏁 Terminer le match</button>
-              </div>
-            )}
-          </div>
+            onClick={() => setShowHistoryPanel((v) => !v)}
+            title="Afficher / masquer l'historique des actions"
+          >
+            📚 Historique
+          </button>
+
+          <button
+            className={`ghost ${showMontagePanel ? 'on' : ''}`}
+            onClick={openMontageWindow}
+            title="Ouvrir le logiciel de montage dans une nouvelle fenêtre"
+          >
+            🎬 Montage
+          </button>
+
+          <button
+            className="ghost"
+            onClick={finishMatch}
+            disabled={saving}
+            title="Enregistrer le match dans Supabase"
+          >
+            {saving ? '⏳ …' : '🏁 Terminer'}
+          </button>
+
+          <button
+            className="ghost"
+            onClick={exportMatchCSV}
+            title="Exporter le box-score en CSV (Excel)"
+          >
+            ⬇ CSV
+          </button>
+
+          <button
+            className="ghost"
+            onClick={exportMatchJSON}
+            title="Exporter toutes les données du match en JSON"
+          >
+            ⬇ JSON
+          </button>
+
+          <button
+            className={`ghost ${screen === 'box' ? 'on' : ''}`}
+            onClick={() => setScreen((s) => (s === 'box' ? 'live' : 'box'))}
+          >
+            📊 Box-score
+          </button>
+
+          <button className="ghost" onClick={() => setScreen('setup')}>
+            ⚙ Match
+          </button>
         </div>
       </header>
 
-      {!(codingMode === 'live-individual' || codingMode === 'live') && <div className="qstrip">
+      <div className="qstrip">
         {Object.keys(perQ).map((k) => <span key={k} className={`qbox ${+k === q ? 'cur' : ''}`}>{periodLabel(+k)} <b>{perQ[+k].us}-{perQ[+k].them}</b></span>)}
-        <span className="foulbox usf">Fautes équipe {teamName || 'Nous'} <b>{usTeamFouls}</b>{teamFoulLights(usTeamFouls)}</span>
-        <span className="foulbox themf">Fautes adv. <b>{themTeamFouls}</b>{teamFoulLights(themTeamFouls)}</span>
-      </div>}
+        <span className="foulbox usf">Fautes équipe {teamName || 'Nous'} <b>{usTeamFouls}</b></span>
+        <span className="foulbox themf">Fautes adv. <b>{themTeamFouls}</b></span>
+      </div>
 
       {screen === 'box' ? (
         <>
@@ -5592,29 +4649,12 @@ export default function PriseStatsProPage() {
       ) : (
         <>
           <VideoReselectBanner />
-          <div
-            ref={liveWorkspaceRef}
-            className={`live3 ${videoMaximized ? 'videoMaximized' : 'resizableLive3'} ${showVideoPanel ? '' : 'videoPanelHidden'}`}
-            style={videoMaximized ? undefined : {
-              gridTemplateColumns: codingMode === 'match-review'
-                ? (matchReviewLayout.showVideo ? `${videoPanePct}% 7px minmax(360px,1fr) 0px 0px` : `0px 0px minmax(360px,1fr) 0px 0px`)
-                : `${videoPanePct}% 7px minmax(280px,1fr) 7px ${rightPanePx}px`,
-            }}
-          >
-            {/* ============ GAUCHE · PILOTAGE LIVE / VIDÉO OPTIONNELLE ============ */}
-            <>
-            <section className={`lc lc-video liveControlPane ${workTab === 'center' ? 'mshow' : ''}`}>
-              {showVideoPanel && <div className="videoSlot big">
-                {(videoProvider === 'local' || videoProvider === 'google_drive') && videoUrl ? (
-                  <video ref={videoRef} className="vplayer" src={videoUrl} controls preload="auto" onWheel={handleTrackpadScrub} title="Trackpad : glisse horizontalement pour avancer/reculer avec précision" onLoadedMetadata={(e) => {
-                    const savedTime = inspectionVideoTimeRef.current ?? lastProjectVideoTimeRef.current;
-                    if (savedTime == null) return;
-                    try {
-                      const max = Number.isFinite(e.currentTarget.duration) ? e.currentTarget.duration : savedTime;
-                      e.currentTarget.currentTime = Math.max(0, Math.min(max, savedTime));
-                    } catch { /* noop */ }
-                    inspectionVideoTimeRef.current = null;
-                  }} />
+          <div className="live3">
+            {/* ============ GAUCHE · VIDÉO (élément principal) ============ */}
+            <section className={`lc lc-video ${workTab === 'center' ? 'mshow' : ''}`}>
+              <div className="videoSlot big">
+                {videoProvider === 'local' && videoUrl ? (
+                  <video ref={videoRef} className="vplayer" src={videoUrl} controls />
                 ) : videoProvider === 'youtube' && videoUrl ? (
                   <div className="vyt">
                     <div className="vyt-ic">▶️</div>
@@ -5626,93 +4666,16 @@ export default function PriseStatsProPage() {
                     <div className="vempty-tt">Ajouter une vidéo</div>
                     <div className="vempty-sub">Le codage fonctionne sans vidéo — synchronisable après le match.</div>
                     <div className="vempty-btns">
-                      <button type="button" className="vbtn" onClick={() => void pickLocalVideoSmart()}>📁 Fichier</button>
-                      {isSupabaseUuid(String(selTeam?.id || activeTeamId || teamId || '').trim()) && (
-                        <GoogleDriveVideoPicker
-                          teamId={String(selTeam?.id || activeTeamId || teamId || '').trim()}
-                          className="vbtn"
-                          label="Google Drive"
-                          onPicked={onPickGoogleDriveVideo}
-                        />
-                      )}
+                      <label className="vbtn"><input type="file" accept="video/*" onChange={(e) => onPickVideoFile(e.target.files?.[0] ?? null)} />📁 Fichier</label>
                       <button className="vbtn" onClick={() => { const u = window.prompt('Lien YouTube :', youtubeUrl); if (u != null) onSetYoutube(u); }}>▶️ YouTube</button>
                       <button className="vbtn ghosty" onClick={() => flash('Vidéo à ajouter après le match')}>⏳ Plus tard</button>
                     </div>
                   </div>
                 )}
-              </div>}
-
-              {(codingMode === 'live-individual' || codingMode === 'live') && (
-                <div className={`videoMatchControl ${showVideoPanel ? 'withVideo' : 'withoutVideo'}`}>
-                  {!showVideoPanel && <div className="vmcPanelTitle">PILOTAGE DU MATCH</div>}
-                  <div className="vmcTop">
-                    <div className="vmcTeam"><b>{teamName || 'NOUS'}</b><strong>{scoreUs}</strong><small>Fautes {usTeamFouls}</small></div>
-                    <div className="vmcClock">
-                      <span>{periodLabel(q)}</span>
-                      <b>{fmt(secs)}</b>
-                      <button className={`vmcStart ${running ? 'running' : ''}`} onClick={toggleClockAndVideo}>{running ? '⏸ STOP' : '▶ START'}</button>
-                    </div>
-                    <div className="vmcTeam opponent"><b>{opponent || 'ADVERSAIRE'}</b><strong>{scoreThem}</strong><small>Fautes {themTeamFouls}</small></div>
-                  </div>
-                  <div className="vmcScoreAdjust">
-                    <button onClick={() => setPerQ((p) => { const cur = p[q] || { us: 0, them: 0 }; return { ...p, [q]: { ...cur, us: Math.max(0, cur.us - 1) } }; })}>− NOUS</button>
-                    <button onClick={() => setPerQ((p) => { const cur = p[q] || { us: 0, them: 0 }; return { ...p, [q]: { ...cur, us: cur.us + 1 } }; })}>+ NOUS</button>
-                    <button onClick={() => setPerQ((p) => { const cur = p[q] || { us: 0, them: 0 }; return { ...p, [q]: { ...cur, them: Math.max(0, cur.them - 1) } }; })}>− ADV</button>
-                    <button onClick={() => setPerQ((p) => { const cur = p[q] || { us: 0, them: 0 }; return { ...p, [q]: { ...cur, them: cur.them + 1 } }; })}>+ ADV</button>
-                  </div>
-                  <button className="vmcNextQuarter" onClick={() => changeQ(1)}>
-                    QT SUIVANT <span>➜</span>
-                  </button>
-                </div>
-              )}
-
-              {/* FT GLOBALE : toujours accessible quel que soit le mode de codage.
-                  Elle interrompt le codage, saisit le LF puis restaure exactement le contexte précédent. */}
-              <div className="vmcInterruptRow vmcInterruptGlobal">
-                <button
-                  className={`vmcFtInterrupt ${showTechnicalFtChoice ? 'on' : ''}`}
-                  onClick={() => {
-                    setShowTechnicalFtChoice((v) => !v);
-                    setTechnicalFtSanctionedSide(null);
-                  }}
-                >
-                  🟪 FAUTE TECHNIQUE
-                </button>
-                {showTechnicalFtChoice && (
-                  <div className="vmcFtChoice">
-                    {!technicalFtSanctionedSide ? (
-                      <>
-                        <button onClick={() => setTechnicalFtSanctionedSide('us')}>FT · {teamName || 'NOUS'}</button>
-                        <button onClick={() => setTechnicalFtSanctionedSide('them')}>FT · {opponent || 'ADVERSAIRE'}</button>
-                        <button className="ghosty" onClick={cancelTechnicalFtInterruption}>Annuler</button>
-                      </>
-                    ) : (
-                      <>
-                        <div className="vmcFtTargetTitle">
-                          {technicalFtSanctionedSide === 'us' ? (teamName || 'NOUS') : (opponent || 'ADVERSAIRE')} · attribuer la FT
-                        </div>
-                        <button onClick={() => beginTechnicalFtInterruption(technicalFtSanctionedSide, 'bench')}>🪑 BANC</button>
-                        <button onClick={() => beginTechnicalFtInterruption(technicalFtSanctionedSide, 'coach')}>🧑‍🏫 COACH</button>
-                        {(technicalFtSanctionedSide === 'us' ? roster : oppRoster).map((p) => (
-                          <button key={`ft-${technicalFtSanctionedSide}-${p.id}`} onClick={() => beginTechnicalFtInterruption(technicalFtSanctionedSide, 'player', p)}>
-                            👤 #{p.num} {p.name}
-                          </button>
-                        ))}
-                        <button className="ghosty" onClick={() => setTechnicalFtSanctionedSide(null)}>← Retour</button>
-                        <button className="ghosty" onClick={cancelTechnicalFtInterruption}>Annuler</button>
-                      </>
-                    )}
-                  </div>
-                )}
               </div>
 
-              {showVideoPanel && <div className="detacherRow">
-                {(videoProvider === 'local' || videoProvider === 'google_drive') && videoUrl && <span className="trackpadHint">↔ 2 doigts : droite = avancer · gauche = reculer</span>}
-                <button className="detachBtn" onClick={() => setVideoPanePct((v) => Math.max(25, v - 8))} title="Réduire la zone vidéo">− Vidéo</button>
-                <button className="detachBtn" onClick={() => setVideoPanePct((v) => Math.min(72, v + 8))} title="Agrandir la zone vidéo">＋ Vidéo</button>
-                <button className="detachBtn" onClick={() => setVideoMaximized((v) => !v)} title="Afficher uniquement la vidéo ou restaurer les panneaux">{videoMaximized ? '▦ Restaurer' : '⛶ Vidéo'}</button>
+              <div className="detacherRow">
                 <button className="detachBtn" onClick={detachVideo}>↗ Détacher la vidéo</button>
-                <button className="detachBtn" onClick={() => { setVideoMaximized(false); setShowVideoPanel(false); setWorkTab('coding'); }} title="Masquer le bloc sans supprimer la vidéo">✕ Masquer</button>
                 {/* AJOUT · Image dans l'image + vitesse de lecture (synchronisée) */}
                 <button className="detachBtn" onClick={togglePiP} title="Garder la vidéo au-dessus de la fenêtre de codage">⧉ Image dans l'image</button>
                 <label className="rateBox">
@@ -5721,7 +4684,7 @@ export default function PriseStatsProPage() {
                     {[0.25, 0.5, 0.75, 1, 1.25, 1.5, 2].map((r) => <option key={r} value={r}>{r}×</option>)}
                   </select>
                 </label>
-                {(videoProvider === 'local' || videoProvider === 'google_drive') && videoUrl && (
+                {videoProvider === 'local' && videoUrl && (
                   <button className="detachBtn" onClick={() => setShowVideoSync(true)} title="Ajuster la correspondance vidéo ↔ codage">
                     🎯 Recalibrer la vidéo
                   </button>
@@ -5732,9 +4695,9 @@ export default function PriseStatsProPage() {
                   </span>
                 )}
                 {videoDetached && <span className="detachState">🎥 Vidéo ouverte dans une fenêtre détachée</span>}
-              </div>}
+              </div>
 
-              {showVideoPanel && (videoProvider === 'local' || videoProvider === 'google_drive') && videoUrl && (
+              {videoProvider === 'local' && videoUrl && (
                 <div className="vbar">
                   <button className="vnav" onClick={() => nudgeVideo(-1)} title="Reculer (Tab + ←)">« −{videoStepSeconds}s</button>
                   <div className="vstep">
@@ -5750,106 +4713,49 @@ export default function PriseStatsProPage() {
               )}
             </section>
 
-            {!videoMaximized && (codingMode !== 'match-review' || matchReviewLayout.showVideo) && (
-              <div className="panelResizeHandle" onPointerDown={(e) => startPanelResize('video', e)} title="Glisser pour redimensionner panneau Live / codage">
-                <span>⋮</span>
-              </div>
-            )}
-            </>
-
             {/* ============ CENTRE · CODAGE (wizard) ============ */}
             <aside className={`lc lc-code ${workTab === 'coding' ? 'mshow' : ''}`}>
-              {codingMode === 'match-review' ? (
-                <MatchReviewBuilder
-                  embedded
-                  projectId={String(liveMatchId || `draft_${teamId}_${date}`)}
-                  players={roster.map((player) => ({ id: player.id, name: player.name, num: player.num }))}
-                  getVideoTime={getCurrentVideoTime}
-                  onLayoutChange={setMatchReviewLayout}
-                  onRecord={(event: MatchReviewEvent) => {
-                    const who = event.playerName ? ` · ${event.playerName}` : '';
-                    flash(`${event.controlLabel}${who} enregistré ✓`);
-                  }}
-                />
-              ) : (
-                <>
-                  <div className="lc-head codeTop">
-                    <button className="headBack" disabled={stage === 'context' || stageHistory.length === 0} onClick={goBackStage}>←</button>
-                    <div className="crumb-mini">
-                      {activeCrumbs.map((c, i) => {
-                        const state = activeCrumbIndex === i ? 'cur' : activeCrumbIndex > i ? 'done' : '';
-                        return <span key={`${c}-${i}`} className={`cm ${state}`} title={c}>{c}</span>;
-                      })}
-                    </div>
-                  </div>
-                  <div className="lc-body codeDense">
-                    {stage !== 'context' && (
-                      draft.context ? (
-                        <div
-                          style={{
-                            width: '100%',
-                            minHeight: 58,
-                            borderRadius: 8,
-                            display: 'flex',
-                            alignItems: 'center',
-                            justifyContent: 'center',
-                            background: draft.context === 'attaque' ? '#1565D8' : '#D62839',
-                            color: '#FFFFFF',
-                            fontSize: 20,
-                            fontWeight: 900,
-                            letterSpacing: '0.06em',
-                            textTransform: 'uppercase',
-                            marginBottom: 10,
-                          }}
-                        >
-                          {draft.context === 'attaque' ? 'ATTAQUE' : 'DÉFENSE'}
-                        </div>
-                      ) : (
-                        <button className="backBtn sm" onClick={goBackStage}>← Retour</button>
-                      )
-                    )}
-                    {renderStage()}
-                  </div>
-                  <div className="lc-foot">
-                    <button className="qbtn sm" onClick={resetDraft}>🗑 Reset</button>
-                  </div>
-                </>
-              )}
+              <div className="lc-head codeTop">
+                <button className="headBack" disabled={stage === 'context'} onClick={() => {
+                  const order = ['context', 'inbound', 'temps', 'coverage', 'player', 'action', 'faute', 'result', 'ft', 'zone', 'rebound', 'assist'];
+                  const currentIndex = order.indexOf(stage);
+                  if (currentIndex > 0) setStage(order[currentIndex - 1]);
+                }}>←</button>
+                <button className="headUndo" onClick={undo}>↺</button>
+                <div className="crumb-mini">
+                  {['Contexte', 'Temps fort', 'Joueur', 'Action', 'Résultat', 'Zone'].map((c, i) => {
+                    const state = navIdx === i ? 'cur' : navIdx > i ? 'done' : '';
+                    return <span key={c} className={`cm ${state}`} title={c}>{c}</span>;
+                  })}
+                </div>
+              </div>
+              <div className="lc-body codeDense">
+                {stage !== 'context' && (
+                  <button className="backBtn sm" onClick={() => {
+                    const order = ['context', 'inbound', 'temps', 'coverage', 'player', 'action', 'faute', 'result', 'ft', 'zone', 'rebound', 'assist'];
+                    const currentIndex = order.indexOf(stage);
+                    if (currentIndex > 0) setStage(order[currentIndex - 1]);
+                  }}>← Retour</button>
+                )}
+                {renderStage()}
+              </div>
+              <div className="lc-foot">
+                <button className="qbtn sm" onClick={undo}>↺ Annuler</button>
+                <button className="qbtn sm" onClick={resetDraft}>🗑 Reset</button>
+              </div>
             </aside>
 
-            {!videoMaximized && codingMode !== 'match-review' && (
-              <div className="panelResizeHandle" onPointerDown={(e) => startPanelResize('right', e)} title="Glisser pour redimensionner codage / joueurs">
-                <span>⋮</span>
-              </div>
-            )}
-
             {/* ============ DROITE · SHOT CHART + JOUEURS / BANC ============ */}
-            {codingMode !== 'match-review' && (
             <aside className={`lc lc-right ${workTab === 'analysis' ? 'mshow' : ''}`}>
               {/* Shot chart PAR ZONES pro — pick à l'étape zone, analyse sinon */}
               <div className="scZone">
                 {liveCourt ? (
                   <div className="scZone-live">
-                    <div className="courtSlotHead">
-                      <span>🎯 Choisis la zone · {draft.shotRange === 'interior' ? '2 PTS intérieur' : draft.shotRange === 'exterior' ? '2 PTS extérieur' : draft.shotType || 'Tir'}</span>
-                      {draft.context === 'defense' && !isPostLikeCodingMode(codingMode) && !isOffline && (
-                        <button type="button" className="chip" onClick={() => {
-                          const d: Draft = { ...draft, zone: '', courtX: null, courtY: null };
-                          if (d.shotResult === 'missed' && workflowOn('rebound')) { setDraft(d); setStage('rebound'); }
-                          else commit(d);
-                        }}>Passer la zone</button>
-                      )}
-                    </div>
+                    <div className="courtSlotHead"><span>🎯 Choisis la zone du tir ({draft.shotType || '2PTS'})</span></div>
                     <ShotChart
                       mode="pick"
                       size="sm"
                       shotType={draft.shotType === '3PTS' ? '3PTS' : '2PTS'}
-                      allowedZoneIds={
-                        draft.shotRange === 'interior' ? ['z1','z2','z3','z4']
-                        : draft.shotRange === 'exterior' ? ['z5','z6','z7','z8','z9']
-                        : draft.shotRange === 'three' ? ['z10','z11','z12','z13','z14','z15','z16']
-                        : undefined
-                      }
                       selectedZone={draft.zone || null}
                       shotResult={draft.shotResult === 'made' ? 'made' : draft.shotResult === 'missed' ? 'missed' : null}
                       pendingPoint={draft.courtX != null && draft.courtY != null ? { x: draft.courtX * 100, y: draft.courtY * 100 } : null}
@@ -5927,22 +4833,15 @@ export default function PriseStatsProPage() {
                 </div>
               </div>
             </aside>
-            )}
           </div>
 
           {/* ============ BAS · TIMELINE REPLIABLE ============ */}
           <button className={`timelinePull ${showTimelinePanel ? 'open' : ''}`} onClick={() => setShowTimelinePanel((v) => !v)}>
-            {showTimelinePanel ? '⌄ Fermer analyse' : '⌃ Analyse'}
+            {showTimelinePanel ? '⌄ Fermer timeline' : '⌃ Timeline'}
           </button>
           {showTimelinePanel && (
             <div className="live-strip timelineOnly">
-              <div className="analysisSwitchBar">
-                <button type="button" className={analysisView === 'timeline' ? 'on' : ''} onClick={() => setAnalysisView('timeline')}>Timeline</button>
-                <button type="button" className={analysisView === 'history' ? 'on' : ''} onClick={() => setAnalysisView('history')}>Historique</button>
-              </div>
-              <div className="an-body">
-                {analysisView === 'timeline' ? renderTimeline() : renderHistoryList()}
-              </div>
+              <div className="an-body">{renderTimeline()}</div>
             </div>
           )}
 
@@ -6020,7 +4919,7 @@ export default function PriseStatsProPage() {
 
               {/* Vidéo + calque de dessin */}
               <div className="clip-stage">
-                {(videoProvider === 'local' || videoProvider === 'google_drive') && videoUrl && hasClip ? (
+                {videoProvider === 'local' && videoUrl && hasClip ? (
                   <video
                     className="evt-vplayer"
                     src={videoUrl}
@@ -6129,14 +5028,7 @@ export default function PriseStatsProPage() {
                       <span className="htime">{periodLabel(a.q)} {a.clock}</span>
                       <span className="hbody"><b>{p ? `#${p.num} ${p.name}` : '—'}</b><em>{tags.label(a.tempsFort)} · {describe(a, find).t}</em></span>
                       <button className={`hplay ${hasClip ? 'has' : ''}`} title={hasClip ? 'Revoir le clip' : 'Clip à synchroniser'} onClick={() => { const list = actions.slice().reverse(); openClipModal('Historique des actions', list, list.findIndex((x) => x.id === a.id)); }}>▶</button>
-                      <button
-                      type="button"
-                      className={`hadd ${favoriteClips[`${a.id}::possession`] ? 'favorite' : ''}`}
-                      onClick={() => toggleFavoriteClip(`${a.id}::possession`)}
-                      title="Favori"
-                    >
-                      {favoriteClips[`${a.id}::possession`] ? '★' : '☆'}
-                    </button>
+                      <button className="hadd" onClick={() => addToMontage(a)}>⭐</button>
                     </div>
                   );
                 })}
@@ -6146,113 +5038,20 @@ export default function PriseStatsProPage() {
         );
       })()}
 
-      {showMatchInfo && (
-        <div className="matchInfoOverlay" onClick={() => setShowMatchInfo(false)}>
-          <div className="matchInfoCard" onClick={(e) => e.stopPropagation()}>
-            <div className="matchInfoHead"><b>ℹ Informations du match</b><button onClick={() => setShowMatchInfo(false)}>×</button></div>
-            <div className="matchInfoGrid">
-              <label>Date<input type="date" value={date} onChange={(e) => setDate(e.target.value)} /></label>
-              <label>Adversaire<input value={opponent} onChange={(e) => setOpponent(e.target.value)} placeholder="Nom de l’adversaire" /></label>
-              <label>Type de match
-                <select value={matchType} onChange={(e) => void handleMatchTypeChange(e.target.value as typeof matchType)}>
-                  <option value="friendly">Amical</option>
-                  <option value="league">Championnat</option>
-                  <option value="cup">Coupe</option>
-                </select>
-              </label>
-              <label>Lieu
-                <select value={home ? 'home' : 'away'} onChange={(e) => setHome(e.target.value === 'home')}>
-                  <option value="home">Domicile</option>
-                  <option value="away">Extérieur</option>
-                </select>
-              </label>
-            </div>
-            <div className="matchInfoFoot">
-              <button className="ghost" onClick={() => setShowMatchInfo(false)}>Annuler</button>
-              <button className="matchInfoSave" onClick={() => { persistProjectState(); setShowMatchInfo(false); flash('Informations du match mises à jour ✓'); }}>Enregistrer</button>
-            </div>
-          </div>
-        </div>
-      )}
-
       {toast && <div className="toast show">{toast}</div>}
-
-      {showPlayerAssociation && (
-        <LivePlayerAssociationModal
-          open={showPlayerAssociation}
-          actions={actions as unknown as AssociableLiveAction[]}
-          roster={roster}
-          videoUrl={(videoProvider === 'local' || videoProvider === 'google_drive') ? videoUrl : ''}
-          sync={videoSync}
-          onPatch={patchActionPlayers}
-          onClose={() => setShowPlayerAssociation(false)}
-        />
-      )}
-
-      <LiveCodingSettingsModal
-        open={showCodingSettings}
-        teamId={activeTeamId || teamId}
-        initialTab={codingSettingsTab}
-        workflow={workflowPrefs}
-        onWorkflowChange={setWorkflowPrefs}
-        groups={codingSettingsGroups}
-        playbookId={playbookId}
-        playbookSystems={playbookSystems}
-        profiles={codingProfiles}
-        selectedProfileId={selectedCodingProfileId}
-        onSaveProfile={saveCodingProfile}
-        onDeleteProfile={deleteCodingProfile}
-        onApplyProfile={applyCodingProfile}
-        onChanged={() => { setCodingDbNonce((n) => n + 1); tags.reload(); }}
-        onClose={() => setShowCodingSettings(false)}
-      />
-
-      {showMatchReviewBuilder && (
-        <MatchReviewBuilder
-          projectId={String(liveMatchId || `draft_${teamId}_${date}`)}
-          players={roster.map((player) => ({ id: player.id, name: player.name, num: player.num }))}
-          getVideoTime={getCurrentVideoTime}
-          onLayoutChange={setMatchReviewLayout}
-          initialEditorOpen
-          onClose={() => setShowMatchReviewBuilder(false)}
-          onRecord={(event: MatchReviewEvent) => {
-            const who = event.playerName ? ` · ${event.playerName}` : '';
-            flash(`${event.controlLabel}${who} enregistré ✓`);
-          }}
-        />
-      )}
 
       {/* §3–§6 · Synchronisation d'une vidéo ajoutée APRÈS le codage */}
       <VideoSyncModal
         open={showVideoSync}
-        videoUrl={(videoProvider === 'local' || videoProvider === 'google_drive') ? videoUrl : null}
+        videoUrl={videoProvider === 'local' ? videoUrl : null}
         actions={actions as unknown as LiveMatchAction[]}
         sync={videoSync}
         expectedFilename={videoFilename || null}
-        onChange={(s) => applyVideoSync(s)}
+        onChange={(s) => setVideoSync(s)}
         onPickVideoFile={(f) => onPickVideoFile(f)}
-        onValidate={(calibratedMediaTime) => {
+        onValidate={() => {
           const validated: VideoSyncState = { ...videoSyncRef.current, validated: true };
           setVideoSync(validated);
-          // Le lecteur de la modale est distinct du lecteur Live. Sans recopier
-          // sa position, la fermeture du recalage laisse le lecteur principal
-          // à son ancienne position (souvent 0). On conserve donc exactement
-          // le curseur choisi par le coach et on le réapplique au lecteur Live
-          // dès maintenant / au prochain chargement des métadonnées.
-          const keepTime = Math.max(0, Number(calibratedMediaTime) || 0);
-          inspectionVideoTimeRef.current = keepTime;
-          lastProjectVideoTimeRef.current = keepTime;
-          const mainVideo = videoRef.current;
-          if (mainVideo) {
-            try {
-              const max = Number.isFinite(mainVideo.duration) ? mainVideo.duration : keepTime;
-              mainVideo.currentTime = Math.max(0, Math.min(max, keepTime));
-            } catch { /* noop */ }
-          }
-          if (videoDetached) {
-            detachedTimeRef.current = keepTime;
-            postVideo({ type: 'seek', time: keepTime });
-          }
           persistProjectState();
           setShowVideoSync(false);
           flash('Synchronisation vidéo validée ✓');
@@ -6261,56 +5060,12 @@ export default function PriseStatsProPage() {
       />
 
       {/* §25 · popup clips COMMUNE — Historique & Timeline */}
-      {screen === 'live' && sharedLive && (
-        <div style={{position:'fixed',right:18,bottom:18,zIndex:9000,display:'flex',gap:8,alignItems:'center',background:'#111',color:'#fff',padding:'9px 12px',borderRadius:14,boxShadow:'0 8px 30px #0004'}}>
-          <span style={{fontSize:12}}><b>● MUTUALISÉ</b> · {sharedRole === 'individual' ? '🏀 INDIV' : '⚡ TEMPS FORTS'} · {sharedLive.joinCode} · Q{sharedLive.currentPeriod} · {sharedLive.currentClock}</span>
-          {codingMode === 'live' && <button type="button" onClick={()=>setShowPickQuick(true)} style={{padding:'7px 10px',borderRadius:9,fontWeight:900}}>PICK</button>}
-          <button type="button" onClick={()=>window.open(`/management/live-mutualise?session=${sharedLive.id}`,'mybasket-coach-live','popup=yes,width=1500,height=950')} style={{padding:'7px 10px',borderRadius:9,fontWeight:900}}>📊 STATS LIVE ↗</button>
-        </div>
-      )}
-      {showPickQuick && sharedLive && sharedLive.currentPossessionId && (
-        <PickQuickTagger players={roster.filter(p=>onCourt.includes(p.id))} onClose={()=>setShowPickQuick(false)} onSave={async (pick)=>{
-          await savePickEvent(sharedLive, sharedLive.currentPossessionId!, pick);
-          setShowPickQuick(false); flash('Pick mutualisé enregistré ✓');
-        }} />
-      )}
-      {historyCorrectionAction && (
-        <div className="historyCorrectionBackdrop" onMouseDown={(event) => {
-          if (event.target === event.currentTarget) setHistoryCorrectionAction(null);
-        }}>
-          <div className="historyCorrectionModal" role="dialog" aria-modal="true">
-            <div className="historyCorrectionHead">
-              <div><strong>Modifier l’action</strong><span>Choisis le premier tag qui n’est pas bon.</span></div>
-              <button type="button" onClick={() => setHistoryCorrectionAction(null)}>×</button>
-            </div>
-            <div className="historyCorrectionInfo">
-              <b>{periodLabel(historyCorrectionAction.q)} · {historyCorrectionAction.clock}</b>
-              <span>{historyCorrectionAction.context === 'defense' ? 'Défense' : 'Attaque'}{historyCorrectionAction.actionType ? ` · ${String(historyCorrectionAction.actionType).replaceAll('-', ' ')}` : ''}</span>
-            </div>
-            <p className="historyCorrectionHint">
-              Tout ce qui est avant reste inchangé. MyBasket te replace à l’étape choisie, puis tu continues normalement.
-              À la validation, l’ancienne action est remplacée automatiquement.
-            </p>
-            <div className="historyCorrectionSteps">
-              {historyCorrectionSteps(historyCorrectionAction).map((step, index) => (
-                <button key={step.stage} type="button" onClick={() => chooseHistoryCorrectionStart(step.stage)}>
-                  <span className="historyCorrectionStepNo">{index + 1}</span>
-                  <span><b>{step.label}</b><small>{step.detail}</small></span>
-                  <em>Reprendre ici →</em>
-                </button>
-              ))}
-            </div>
-            <div className="historyCorrectionFoot"><button type="button" onClick={() => setHistoryCorrectionAction(null)}>Annuler</button></div>
-          </div>
-        </div>
-      )}
-
       <ActionClipsModal
         open={!!clipModal}
         actions={(clipModal?.items ?? []) as unknown as ClipAction[]}
         startIndex={clipModal?.index ?? 0}
         title={clipModal?.title ?? ''}
-        videoUrl={(videoProvider === 'local' || videoProvider === 'google_drive') ? videoUrl : ''}
+        videoUrl={videoProvider === 'local' ? videoUrl : ''}
         sync={videoSync}
         onClose={() => setClipModal(null)}
         onAddToMontage={(a: ClipAction) => addToMontage(a as unknown as StatA)}
@@ -6320,6 +5075,8 @@ export default function PriseStatsProPage() {
         describe={(a: ClipAction) => describe(a as unknown as StatA, find).t}
         playerName={(id: string | null | undefined) => { const p = find(id ?? null); return p ? `#${p.num} ${p.name}` : undefined; }}
         tempsFortLabel={(id: string | null | undefined) => tags.label(id ?? '')}
+        shortcutThemes={clipShortcutThemes}
+        onAssignTheme={(action, themeName) => assignClipTheme(action, themeName)}
       />
       <Style />
     </div>
@@ -6367,593 +5124,285 @@ export default function PriseStatsProPage() {
   }
 
   function renderHistoryList() {
-    const base = mxFiltered();
-    const unique = <T,>(values: T[]) => Array.from(new Set(values));
-
-    const systemValueOf = (a: StatA) =>
-      String(a.systemeName || a.systemeJeu || a.systemeSlot || '');
-    const resultValueOf = (a: StatA) => String(a.shotResult || '');
-    const zoneValueOf = (a: StatA) => String(a.zone || '');
-    const reboundValueOf = (a: StatA) => String(a.reboundType || '');
-
-    const filterOptions = {
-      contexts: unique(base.map((a) => a.context).filter(Boolean) as string[]),
-      systems: unique(base.map((a) => systemValueOf(a)).filter(Boolean)),
-      tempsForts: unique(base.map((a) => a.tempsFort).filter(Boolean) as string[]),
-      actions: unique(base.map((a) => a.actionType).filter(Boolean) as string[]),
-      shotTypes: unique(base.map((a) => a.shotType).filter(Boolean) as string[]),
-      results: unique(base.map((a) => resultValueOf(a)).filter(Boolean)),
-      zones: unique(base.map((a) => zoneValueOf(a)).filter(Boolean)),
-      players: unique(base.map((a) => a.playerId).filter(Boolean) as string[]),
-      rebounds: unique(base.map((a) => reboundValueOf(a)).filter(Boolean)),
-    };
-
-    const passesAdvanced = (a: StatA) => {
-      if (historyAdvancedFilters.contexts.length && !historyAdvancedFilters.contexts.includes(String(a.context || ''))) return false;
-      if (historyAdvancedFilters.systems.length && !historyAdvancedFilters.systems.includes(systemValueOf(a))) return false;
-      if (historyAdvancedFilters.tempsForts.length && !historyAdvancedFilters.tempsForts.includes(String(a.tempsFort || ''))) return false;
-      if (historyAdvancedFilters.actions.length && !historyAdvancedFilters.actions.includes(String(a.actionType || ''))) return false;
-      if (historyAdvancedFilters.shotTypes.length && !historyAdvancedFilters.shotTypes.includes(String(a.shotType || ''))) return false;
-      if (historyAdvancedFilters.results.length && !historyAdvancedFilters.results.includes(resultValueOf(a))) return false;
-      if (historyAdvancedFilters.zones.length && !historyAdvancedFilters.zones.includes(zoneValueOf(a))) return false;
-      if (historyAdvancedFilters.players.length && !historyAdvancedFilters.players.includes(String(a.playerId || ''))) return false;
-      if (historyAdvancedFilters.rebounds.length && !historyAdvancedFilters.rebounds.includes(reboundValueOf(a))) return false;
-      return true;
-    };
-
-    const search = historySearch.trim().toLowerCase();
-
-    const filtered = base.filter((a) => {
-      if (!passesAdvanced(a)) return false;
+    const normalizedSearch = historySearch.trim().toLowerCase();
+    const filtered = actions.filter((a) => {
       if (historyScope === 'attaque' && a.context !== 'attaque') return false;
       if (historyScope === 'defense' && a.context !== 'defense') return false;
       if (historyScope === 'made' && a.shotResult !== 'made') return false;
       if (historyScope === 'missed' && a.shotResult !== 'missed') return false;
-      if (!search) return true;
-
+      if (!normalizedSearch) return true;
       const p = find(a.playerId);
       const haystack = [
-        periodLabel(a.q),
-        a.clock,
         a.context,
+        a.systemeName,
+        a.systemeJeu,
+        a.systemeSlot,
+        tags.label(a.tempsFort),
         p?.name,
         p?.num,
-        systemValueOf(a),
-        a.tempsFort ? tags.label(a.tempsFort) : '',
         a.actionType,
         a.shotType,
         a.shotResult,
-        a.zone ? zoneById(a.zone)?.shortLabel || a.zone : '',
         a.reboundType,
-        describe(a, find).t,
+        a.zone,
+        ...(clipThemeAssignments[a.id] || []),
       ].filter(Boolean).join(' ').toLowerCase();
-
-      return haystack.includes(search);
+      return haystack.includes(normalizedSearch);
     });
 
-    const renderFilterGroup = (
-      title: string,
-      key: keyof typeof historyAdvancedFilters,
-      values: string[],
-      labelOf: (value: string) => string = (value) => value.replaceAll('-', ' '),
-    ) => {
-      if (!values.length) return null;
-      return (
-        <div className="historyFilterGroup">
-          <b>{title}</b>
-          <div className="historyFilterChecks">
-            {values.map((value) => {
-              const checked = historyAdvancedFilters[key].includes(value);
-              return (
-                <label key={`${key}:${value}`} className={`historyCheck ${checked ? 'on' : ''}`}>
-                  <input
-                    type="checkbox"
-                    checked={checked}
-                    onChange={() => toggleHistoryFilter(key, value)}
-                  />
-                  <span>{labelOf(value)}</span>
-                </label>
-              );
-            })}
-          </div>
-        </div>
-      );
-    };
-
-    const visible = filtered.slice().reverse();
+    const tag = (label: string, kind = '') => <i className={`historyTag ${kind}`}>{label}</i>;
 
     return (
-      <div className="historyWritten">
+      <div className="hist proHistory">
         <div className="historyToolbar">
-          <div className="historySearchWrap">
-            <span>⌕</span>
-            <input
-              value={historySearch}
-              onChange={(e) => setHistorySearch(e.target.value)}
-              placeholder="Rechercher joueur, système, action, zone..."
-            />
-          </div>
-
+          <input value={historySearch} onChange={(e) => setHistorySearch(e.target.value)} placeholder="Rechercher joueur, système, temps fort, zone…" />
           <div className="historyScopes">
-            {[
-              ['all', 'Tous'],
-              ['attaque', 'Attaque'],
-              ['defense', 'Défense'],
-              ['made', 'Marqués'],
-              ['missed', 'Ratés'],
-            ].map(([value, label]) => (
-              <button
-                key={value}
-                type="button"
-                className={historyScope === value ? 'on' : ''}
-                onClick={() => setHistoryScope(value as typeof historyScope)}
-              >
-                {label}
-              </button>
+            {([['all','Tous'],['attaque','Attaque'],['defense','Défense'],['made','Marqués'],['missed','Ratés']] as const).map(([key,label]) => (
+              <button key={key} className={historyScope === key ? 'on' : ''} onClick={() => setHistoryScope(key)}>{label}</button>
             ))}
           </div>
-
-          <button
-            type="button"
-            className={`historyFilterBtn ${historyFiltersOpen ? 'on' : ''}`}
-            onClick={() => setHistoryFiltersOpen((value) => !value)}
-          >
-            ⚲ Filtres
-            {historyAdvancedFilterCount > 0 && <b>{historyAdvancedFilterCount}</b>}
-          </button>
-
-          <span className="historyCount">{visible.length} clip{visible.length > 1 ? 's' : ''}</span>
+          <span className="historyCount">{filtered.length} action{filtered.length > 1 ? 's' : ''}</span>
         </div>
 
-        {historyFiltersOpen && (
-          <div className="historyFilterPanel">
-            <div className="historyFilterPanelHead">
-              <div>
-                <b>Filtrer les clips</b>
-                <span>Les familles cochées se combinent entre elles.</span>
-              </div>
-              <button
-                type="button"
-                onClick={resetHistoryAdvancedFilters}
-                disabled={historyAdvancedFilterCount === 0}
-              >
-                Réinitialiser
-              </button>
+        <div className="historyShortcutEditor">
+          <div className="historyShortcutTitle">
+            <div>
+              <b>Raccourcis de classement</b>
+              <span>Dans la popup vidéo, appuie sur la touche pour classer immédiatement le clip.</span>
             </div>
-
-            <div className="historyFilterGrid">
-              {renderFilterGroup('Contexte', 'contexts', filterOptions.contexts, (value) =>
-                value === 'attaque' ? 'Attaque' : value === 'defense' ? 'Défense' : value
-              )}
-              {renderFilterGroup('Systèmes', 'systems', filterOptions.systems, (value) =>
-                SYSTEMES_JEU.find((item) => item.id === value)?.label ||
-                systemForSlot(value)?.title ||
-                value
-              )}
-              {renderFilterGroup('Temps forts', 'tempsForts', filterOptions.tempsForts, (value) =>
-                tags.label(value)
-              )}
-              {renderFilterGroup('Actions', 'actions', filterOptions.actions)}
-              {renderFilterGroup('Type de tir', 'shotTypes', filterOptions.shotTypes)}
-              {renderFilterGroup('Résultat', 'results', filterOptions.results, (value) =>
-                value === 'made' ? 'Marqué' : value === 'missed' ? 'Raté' : value
-              )}
-              {renderFilterGroup('Zones', 'zones', filterOptions.zones, (value) =>
-                zoneById(value)?.shortLabel || value
-              )}
-              {renderFilterGroup('Joueurs', 'players', filterOptions.players, (value) => {
-                const p = find(value);
-                return p ? `#${p.num} ${p.name}` : value;
-              })}
-              {renderFilterGroup('Rebonds', 'rebounds', filterOptions.rebounds, (value) =>
-                value === 'off' ? 'Offensif' : value === 'def' ? 'Défensif' : value
-              )}
-            </div>
+            <button
+              type="button"
+              onClick={() =>
+                setClipShortcutThemes((current) => [
+                  ...current,
+                  {
+                    key: String.fromCharCode(65 + Math.min(current.length, 25)).toLowerCase(),
+                    name: `Thème ${current.length + 1}`,
+                  },
+                ])
+              }
+            >
+              + Ajouter
+            </button>
           </div>
-        )}
 
-        <div className="historyWrittenList">
-          {visible.length === 0 && <div className="hist-empty">Aucun clip ne correspond à ces filtres.</div>}
-
-          {visible.map((a) => {
-            const d = describe(a, find);
-            const p = find(a.playerId);
-            const hasClip = a.videoTime != null || a.clipStart != null;
-            const possessionStart = Number(a.possessionStart ?? a.clipStart ?? a.videoTime ?? 0);
-            const possessionEnd = Math.max(possessionStart, Number(a.possessionEnd ?? a.clipEnd ?? possessionStart));
-            const possessionDuration = Math.max(0, possessionEnd - possessionStart);
-            const expanded = Boolean(historyExpanded[a.id]);
-
-            const systemName =
-              a.systemeName ||
-              SYSTEMES_JEU.find((item) => item.id === (a.systemeJeu || a.systemeSlot))?.label ||
-              a.systemeSlot;
-
-            const commonShortStart = Math.max(
-              possessionStart,
-              Number(a.clipStart ?? a.possessionStart ?? possessionStart),
-            );
-            const commonShortEnd = possessionEnd;
-
-            const eventClips = [
-              systemName ? { key: 'system', label: `Système · ${systemName}`, kind: 'system' as const } : null,
-              a.tempsFort ? { key: 'tempo', label: `Temps fort · ${tags.label(a.tempsFort)}`, kind: 'short' as const } : null,
-              a.playerId ? { key: 'player', label: `Joueur · ${p ? `#${p.num} ${p.name}` : a.playerId}`, kind: 'short' as const } : null,
-              (a.actionType === 'tir' || a.shotType) ? { key: 'shot', label: `Tir · ${a.shotType || 'Tir'}`, kind: 'short' as const } : null,
-              a.shotResult ? {
-                key: 'result',
-                label: `Résultat · ${a.shotType || 'Tir'} ${a.shotResult === 'made' ? 'marqué' : a.shotResult === 'missed' ? 'raté' : a.shotResult}`,
-                kind: 'short' as const,
-              } : null,
-              a.assist && a.assistPlayerId ? {
-                key: 'assist',
-                label: `Passe décisive · ${find(a.assistPlayerId) ? `#${find(a.assistPlayerId)!.num} ${find(a.assistPlayerId)!.name}` : a.assistPlayerId}`,
-                kind: 'short' as const,
-              } : null,
-              a.reboundType ? {
-                key: 'rebound',
-                label: `Rebond · ${a.reboundType === 'off' ? 'offensif' : a.reboundType === 'def' ? 'défensif' : a.reboundType}`,
-                kind: 'short' as const,
-              } : null,
-            ].filter(Boolean) as Array<{ key: string; label: string; kind: 'system' | 'short' }>;
-
-            return (
-              <div className="historyPossessionBlock" key={a.id}>
-                <div className="historyPossessionRow">
-                  <button
-                    type="button"
-                    className={`historyExpand ${expanded ? 'open' : ''}`}
-                    onClick={() => setHistoryExpanded((current) => ({ ...current, [a.id]: !current[a.id] }))}
-                    disabled={eventClips.length === 0}
-                  >
-                    {expanded ? '⌄' : '›'}
-                  </button>
-
-                  <div className="historyActionTime">
-                    <b>{periodLabel(a.q)} · {a.clock}</b>
-                    <span>{a.context === 'defense' ? 'DÉFENSE' : 'ATTAQUE'}</span>
-                  </div>
-
-                  <div className="historyActionContent">
-                    <div className="historyActionHeadline">
-                      <strong>{p ? `#${p.num} ${p.name}` : a.opponentPlayerName || 'Possession collective'}</strong>
-                      <em>{d.t}</em>
-                    </div>
-                    <div className="historyTags">
-                      <button type="button" className={`historyTag historyTagEdit ${a.context || ''}`} onClick={() => beginHistoryCorrection(a, 'context')} title="Changer Attaque / Défense">
-                        {a.context === 'defense' ? 'Défense' : 'Attaque'}
-                      </button>
-                      {systemName && <button type="button" className="historyTag historyTagEdit system" onClick={() => beginHistoryCorrection(a, 'systeme')} title="Changer le système">{systemName}</button>}
-                      {a.tempsFort && <button type="button" className="historyTag historyTagEdit tempo" onClick={() => beginHistoryCorrection(a, 'temps')} title="Changer le temps fort">{tags.label(a.tempsFort)}</button>}
-                      {a.actionType && <button type="button" className="historyTag historyTagEdit action" onClick={() => beginHistoryCorrection(a, 'action')} title="Changer l'action">{String(a.actionType).replaceAll('-', ' ')}</button>}
-                      {a.shotType && <button type="button" className="historyTag historyTagEdit shot" onClick={() => beginHistoryCorrection(a, 'result')} title="Changer le tir">{a.shotType}</button>}
-                      {a.shotResult && (
-                        <button type="button" className={`historyTag historyTagEdit ${a.shotResult}`} onClick={() => beginHistoryCorrection(a, 'result')} title="Changer le résultat">
-                          {a.shotResult === 'made' ? 'Marqué' : a.shotResult === 'missed' ? 'Raté' : a.shotResult}
-                        </button>
-                      )}
-                      {a.zone && <button type="button" className="historyTag historyTagEdit zone" onClick={() => beginHistoryCorrection(a, 'zone')} title="Changer la zone">{zoneById(a.zone)?.shortLabel || a.zone}</button>}
-                      {a.reboundFoulPlayerId && (
-                        <button type="button" className="historyTag historyTagEdit action" onClick={() => beginHistoryCorrection(a, 'rebound-foul-player')}>
-                          {a.foulOutcome === 'rebound-foul-committed' ? '🟨 ' : '🔔 '}
-                          {find(a.reboundFoulPlayerId)?.name || 'Joueur'}
-                        </button>
-                      )}
-                    </div>
-                  </div>
-
-                  <div className="historyActionButtons">
-                    <button
-                      type="button"
-                      className={`hplay ${hasClip ? 'has' : ''}`}
-                      onClick={() => {
-                        const list = visible;
-                        openClipModal('Possessions', list, list.findIndex((item) => item.id === a.id));
-                      }}
-                    >
-                      ▶ <span>{possessionDuration.toFixed(1)}s</span>
-                    </button>
-                    <button className="hadd" onClick={() => addToMontage(a)}>⭐</button>
-                    <button
-                      type="button"
-                      className="historyEditBtn"
-                      onClick={() => openHistoryCorrection(a)}
-                      title="Choisir à partir de quel tag reprendre la correction"
-                    >
-                      Modifier
-                    </button>
-                    <button
-                      type="button"
-                      className="historyDeleteBtn"
-                      onClick={() => removeAction(a.id)}
-                      title="Supprimer cette action"
-                    >
-                      Supprimer
-                    </button>
-                  </div>
-                </div>
-
-                {expanded && eventClips.length > 0 && (
-                  <div className="historyMiniClips">
-                    <div className="historyMiniClipsHead">
-                      <span>Clips de la possession</span>
-                      <b>{eventClips.length}</b>
-                    </div>
-
-                    {eventClips.map((clip) => {
-                      const miniStart = clip.kind === 'system' ? possessionStart : commonShortStart;
-                      const miniEnd = Math.max(miniStart + 0.25, commonShortEnd);
-                      const duration = Math.max(0.25, miniEnd - miniStart);
-                      const clipId = `${a.id}::${clip.key}`;
-
-                      const miniAction: StatA = {
-                        ...a,
-                        id: clipId,
-                        videoTime: miniStart,
-                        clipStart: miniStart,
-                        clipEnd: miniEnd,
-                        possessionStart: miniStart,
-                        possessionEnd: miniEnd,
-                      };
-
-                      return (
-                        <div className={`historyMiniClip clip-${clip.key}`} key={clip.key}>
-                          <div className="historyMiniClipInfo">
-                            <b>{clip.label}</b>
-                            <small>{fmt(Math.round(miniStart))} → {fmt(Math.round(miniEnd))}</small>
-                          </div>
-                          <span className="historyMiniClipDuration">{duration.toFixed(1)}s</span>
-                          <button type="button" className="miniPlay" onClick={() => openClipModal(clip.label, [miniAction], 0)}>▶</button>
-                          <button
-                            type="button"
-                            className={`miniFavorite ${favoriteClips[clipId] ? 'favorite' : ''}`}
-                            onClick={() => toggleFavoriteClip(clipId)}
-                            title="Favori"
-                          >
-                            {favoriteClips[clipId] ? '★' : '☆'}
-                          </button>
-                        </div>
-                      );
-                    })}
-                  </div>
-                )}
+          <div className="historyShortcutGrid">
+            {clipShortcutThemes.map((shortcut, index) => (
+              <div className="historyShortcutItem" key={`${shortcut.key}:${index}`}>
+                <input
+                  className="historyShortcutKey"
+                  value={shortcut.key.toUpperCase()}
+                  maxLength={1}
+                  aria-label={`Touche du raccourci ${index + 1}`}
+                  onChange={(event) => {
+                    const key = event.target.value.slice(-1).toLowerCase();
+                    setClipShortcutThemes((current) =>
+                      current.map((item, itemIndex) =>
+                        itemIndex === index ? { ...item, key } : item,
+                      ),
+                    );
+                  }}
+                />
+                <input
+                  value={shortcut.name}
+                  aria-label={`Nom du raccourci ${index + 1}`}
+                  onChange={(event) =>
+                    setClipShortcutThemes((current) =>
+                      current.map((item, itemIndex) =>
+                        itemIndex === index
+                          ? { ...item, name: event.target.value }
+                          : item,
+                      ),
+                    )
+                  }
+                />
+                <button
+                  type="button"
+                  title="Supprimer ce raccourci"
+                  onClick={() =>
+                    setClipShortcutThemes((current) =>
+                      current.filter((_, itemIndex) => itemIndex !== index),
+                    )
+                  }
+                >
+                  ×
+                </button>
               </div>
-            );
-          })}
+            ))}
+          </div>
         </div>
+
+        {filtered.length === 0 && <div className="hist-empty">Aucune action correspondant aux filtres.</div>}
+        {filtered.slice().reverse().map((a) => {
+          const d = describe(a, find);
+          const p = find(a.playerId);
+          const rebounder = find(a.reboundPlayerId);
+          const assister = find(a.assistPlayerId);
+          const hasClip = a.videoTime != null || a.clipStart != null;
+          const systemName = a.systemeName || SYSTEMES_JEU.find((item) => item.id === (a.systemeJeu || a.systemeSlot))?.label || a.systemeSlot;
+          const consequence = a.reboundType
+            ? `${a.reboundType === 'off' ? 'Rebond offensif' : a.reboundType === 'def' ? 'Rebond défensif' : a.reboundType}${rebounder ? ` · #${rebounder.num} ${rebounder.name}` : ''}`
+            : a.assist
+              ? `Passe décisive${assister ? ` · #${assister.num} ${assister.name}` : ''}`
+              : a.foulOutcome || '';
+          return (
+            <div className="historyActionCard" key={a.id}>
+              <div className="historyActionTime">
+                <b>{periodLabel(a.q)} · {a.clock}</b>
+                <span>{a.videoTime != null ? '🎬 ' + fmt(Math.round(a.videoTime)) : 'Sans repère vidéo'}</span>
+              </div>
+              <div className="historyActionContent">
+                <div className="historyActionHeadline">
+                  <strong>{p ? `#${p.num} ${p.name}` : a.opponentPlayerName || 'Action collective'}</strong>
+                  <em>{d.t}</em>
+                </div>
+                <div className="historyTags">
+                  {tag(a.context === 'defense' ? 'Défense' : 'Attaque', a.context || '')}
+                  {systemName && tag(systemName, 'system')}
+                  {a.tempsFort && tag(tags.label(a.tempsFort), 'tempo')}
+                  {a.actionType && tag(a.actionType.replaceAll('-', ' '), 'action')}
+                  {a.shotType && tag(a.shotType, 'shot')}
+                  {a.shotResult && tag(a.shotResult === 'made' ? 'Marqué' : a.shotResult === 'missed' ? 'Raté' : a.shotResult, a.shotResult)}
+                  {a.zone && tag(zoneById(a.zone)?.shortLabel || a.zone, 'zone')}
+                  {consequence && tag(consequence, 'consequence')}
+                  {(clipThemeAssignments[a.id] || []).map((theme) => <i className="historyTag custom" key={theme}>🏷 {theme}</i>)}
+                </div>
+              </div>
+              <div className="historyActionButtons">
+                <button className={`hplay ${hasClip ? 'has' : ''}`} title={hasClip ? 'Revoir dans la popup indépendante' : 'Clip à synchroniser'} onClick={() => { const list = filtered.slice().reverse(); openClipModal('Historique des actions', list, list.findIndex((x) => x.id === a.id)); }}>▶</button>
+                <button className="hadd" title="Ajouter au montage" onClick={() => addToMontage(a)}>⭐</button>
+                <button className="hedit" title="Reprendre l’action pour correction" onClick={() => {
+                  setActions((arr) => arr.filter((x) => x.id !== a.id));
+                  subtractActionFromScore(a);
+                  restoreDraftFromAction(a);
+                  flash('Action ouverte en correction');
+                  const mId = liveMatchIdRef.current;
+                  const tId = liveTeamIdRef.current;
+                  if (mId && tId) {
+                    deleteLiveAction({ matchId: mId, clientActionId: a.id }).catch(() => {});
+                    const nextActions = actions.filter((x) => x.id !== a.id);
+                    const cur = perQ[a.q] || { us: 0, them: 0 };
+                    const nextPerQ = { ...perQ, [a.q]: { us: cur.us - ptsOf(a), them: cur.them - themPtsOf(a) } };
+                    syncLiveAggregates(nextActions, onCourt, nextPerQ);
+                  }
+                }}>↩</button>
+                <button className="hdel" title="Supprimer" onClick={() => removeAction(a.id)}>✕</button>
+              </div>
+            </div>
+          );
+        })}
       </div>
     );
   }
 
+  /* ============ V8 · Timeline Sportscode ============
+     Une piste (row) par catégorie codée effectivement utilisée : les temps
+     forts (via tags) + les contextes attaque/défense. Chaque événement est
+     placé horizontalement selon son chrono dans le quart-temps ; séparateurs
+     verticaux entre QT. Hover = tags ; clic = popup revoir/modifier (evtSel).
+     Lecture seule des `actions` locales : aucun impact moteur. */
+  function evtColor(a: StatA): string {
+    // Bleu = attaque réussie, Rouge = erreur/perte, Vert = positif défensif, Orange = faute
+    if (a.actionType === 'tir' && a.shotResult === 'made') return 'var(--blue)';
+    if (a.actionType === 'perte' || a.actionType === 'perte-adverse') return 'var(--red)';
+    if (a.actionType === 'tir' && a.shotResult === 'missed') return 'var(--red)';
+    if (a.actionType === 'interception' || a.actionType === 'contre') return 'var(--green)';
+    if (a.actionType === 'faute-provoquee' || a.actionType === 'faute-commise') return 'var(--orange)';
+    if (a.context === 'attaque') return 'var(--bordeaux2)';
+    return 'var(--mute)';
+  }
+  // Position horizontale 0..1 d'une action dans son quart-temps (chrono décroissant).
+  function evtX(a: StatA): number {
+    const parts = (a.clock || '00:00').split(':');
+    const rem = (parseInt(parts[0], 10) || 0) * 60 + (parseInt(parts[1], 10) || 0);
+    const dur = periodDuration(a.q);
+    return Math.max(0, Math.min(1, (dur - rem) / dur)); // début QT = 0, fin QT = 1
+  }
+
   function renderTimeline() {
     const list = mxFiltered();
-
-    const clipStartOf = (a: StatA) =>
-      Math.max(0, Number(a.possessionStart ?? a.clipStart ?? a.videoTime ?? 0) || 0);
-
-    const clipEndOf = (a: StatA) => {
-      const startValue = clipStartOf(a);
-      const raw = Number(a.possessionEnd ?? a.clipEnd ?? startValue + 2);
-      return Math.max(startValue + 0.35, Number.isFinite(raw) ? raw : startValue + 2);
-    };
-
-    const clipDurationOf = (a: StatA) => Math.max(0.35, clipEndOf(a) - clipStartOf(a));
-
-    // La timeline utilise la durée TOTALE de la vidéo comme référence.
-    // Si aucune vidéo locale n'est disponible/chargée, on garde la durée
-    // calculée depuis les clips comme fallback.
-    const codedEndSeconds = Math.max(
-      1,
-      ...list.map((a) => clipEndOf(a)),
-    );
-
-    const loadedVideoDuration =
-      videoProvider === 'local' &&
-      videoRef.current &&
-      Number.isFinite(videoRef.current.duration) &&
-      videoRef.current.duration > 0
-        ? videoRef.current.duration
-        : 0;
-
     const totalSeconds = Math.max(
       1,
-      loadedVideoDuration || codedEndSeconds,
+      ...list.map((a) => Number(a.possessionEnd ?? a.clipEnd ?? a.videoTime ?? 0)),
     );
-
     const unique = <T,>(values: T[]) => Array.from(new Set(values));
-    const systemValues = unique(
-      list.map((a) => a.systemeName || a.systemeJeu || a.systemeSlot).filter(Boolean) as string[],
-    );
+    const systemValues = unique(list.map((a) => a.systemeName || a.systemeJeu || a.systemeSlot).filter(Boolean) as string[]);
     const tfValues = unique(list.map((a) => a.tempsFort).filter(Boolean) as string[]);
     const actionValues = unique(list.map((a) => a.actionType).filter(Boolean) as string[]);
     const customValues = unique(Object.values(clipThemeAssignments).flat()) as string[];
 
-    type TimelineRow = {
-      key: string;
-      label: string;
-      group: string;
-      color: string;
-      test: (a: StatA) => boolean;
-    };
-
-    const rows: TimelineRow[] = [
-      // Piste maîtresse : tous les clips, exactement comme un outil de tagging vidéo.
-      { key: 'all:clips', label: 'Tous les clips', group: 'Clips', color: '#d4a24c', test: () => true },
+    const rows: { key: string; label: string; group: string; color: string; test: (a: StatA) => boolean }[] = [
       { key: 'ctx:attaque', label: 'Attaque', group: 'Contexte', color: '#ff7a18', test: (a: StatA) => a.context === 'attaque' },
-      { key: 'ctx:defense', label: 'Défense', group: 'Contexte', color: '#168ad4', test: (a: StatA) => a.context === 'defense' },
-      ...systemValues.map((value) => ({
-        key: `sys:${value}`,
-        label: value,
-        group: 'Systèmes',
-        color: '#7c5cff',
-        test: (a: StatA) => (a.systemeName || a.systemeJeu || a.systemeSlot) === value,
-      })),
-      ...tfValues.map((value) => ({
-        key: `tf:${value}`,
-        label: tags.label(value),
-        group: 'Temps forts',
-        color: tags.color(value) || '#d4a24c',
-        test: (a: StatA) => a.tempsFort === value,
-      })),
-      ...actionValues.map((value) => ({
-        key: `act:${value}`,
-        label: String(value).replace(/-/g, ' '),
-        group: 'Actions',
-        color: '#d94b71',
-        test: (a: StatA) => a.actionType === value,
-      })),
+      { key: 'ctx:defense', label: 'Défense', group: 'Contexte', color: '#32b7ef', test: (a: StatA) => a.context === 'defense' },
+      ...systemValues.map((value) => ({ key: `sys:${value}`, label: value, group: 'Systèmes', color: '#7c5cff', test: (a: StatA) => (a.systemeName || a.systemeJeu || a.systemeSlot) === value })),
+      ...tfValues.map((value) => ({ key: `tf:${value}`, label: tags.label(value), group: 'Temps forts', color: tags.color(value) || '#d4a24c', test: (a: StatA) => a.tempsFort === value })),
+      ...actionValues.map((value) => ({ key: `act:${value}`, label: String(value).replace(/-/g, ' '), group: 'Actions', color: '#d94b71', test: (a: StatA) => a.actionType === value })),
       { key: 'res:made', label: 'Tirs marqués', group: 'Résultats', color: '#22c55e', test: (a: StatA) => a.shotResult === 'made' },
       { key: 'res:missed', label: 'Tirs ratés', group: 'Résultats', color: '#ef4444', test: (a: StatA) => a.shotResult === 'missed' },
       { key: 'reb:off', label: 'Rebond offensif', group: 'Conséquences', color: '#f59e0b', test: (a: StatA) => a.reboundType === 'off' },
       { key: 'reb:def', label: 'Rebond défensif', group: 'Conséquences', color: '#06b6d4', test: (a: StatA) => a.reboundType === 'def' },
-      ...customValues.map((value) => ({
-        key: `custom:${value}`,
-        label: value,
-        group: 'Collections',
-        color: '#d4a24c',
-        test: (a: StatA) => (clipThemeAssignments[a.id] || []).includes(value),
-      })),
+      ...customValues.map((value) => ({ key: `custom:${value}`, label: value, group: 'Collections', color: '#d4a24c', test: (a: StatA) => (clipThemeAssignments[a.id] || []).includes(value) })),
     ].filter((row) => list.some(row.test));
 
     const visibleRows = rows.filter((row) => !timelineHiddenRows[row.key]);
     const grouped = unique(rows.map((row) => row.group));
-
-    const openRowClips = (row: TimelineRow) => {
+    const openRowClips = (row: typeof rows[number]) => {
       const clips = list.filter(row.test);
       if (clips.length) openClipModal(row.label, clips, 0);
     };
-
-    const fmtDuration = (seconds: number) =>
-      seconds < 10 ? `${seconds.toFixed(1)}s` : `${Math.round(seconds)}s`;
-
-    const eventLabel = (a: StatA) => {
-      const p = find(a.playerId);
-      if (a.actionType === 'tir') {
-        const result = a.shotResult === 'made' ? '✓' : a.shotResult === 'missed' ? '✕' : '';
-        return `${p ? `#${p.num} ` : ''}${a.shotType || 'Tir'} ${result}`.trim();
-      }
-      if (a.actionType) return `${p ? `#${p.num} ` : ''}${String(a.actionType).replace(/-/g, ' ')}`.trim();
-      return p ? `#${p.num} ${p.name}` : periodLabel(a.q);
-    };
-
-    const rulerTicks = Math.max(7, timelineZoom * 6 + 1);
 
     return (
       <div className={`proTimeline ${timelineCompact ? 'compact' : ''}`}>
         <div className="proTimelineToolbar">
           <div>
-            <b>Timeline vidéo</b>
-            <span>
-              {visibleRows.length} pistes · {list.length} clips · vidéo {fmt(Math.round(totalSeconds))}
-            </span>
+            <b>Timeline d’analyse</b>
+            <span>{visibleRows.length} pistes · {list.length} actions</span>
           </div>
-
           <div className="proTimelineTools">
-            <div className="timelineZoomTools" aria-label="Zoom timeline">
-              <button
-                onClick={() => setTimelineZoom((z) => (z === 8 ? 4 : z === 4 ? 2 : 1))}
-                disabled={timelineZoom === 1}
-                title="Dézoomer"
-              >−</button>
-              <span>{timelineZoom}×</span>
-              <button
-                onClick={() => setTimelineZoom((z) => (z === 1 ? 2 : z === 2 ? 4 : 8))}
-                disabled={timelineZoom === 8}
-                title="Zoomer"
-              >＋</button>
-            </div>
-            <button className={timelineCompact ? 'on' : ''} onClick={() => setTimelineCompact((value) => !value)}>
-              Vue compacte
-            </button>
+            <button className={timelineCompact ? 'on' : ''} onClick={() => setTimelineCompact((value) => !value)}>Vue compacte</button>
             <button onClick={() => setTimelineHiddenRows({})}>Tout afficher</button>
           </div>
         </div>
-
-        <div className="timelineHorizontalScroll">
-          <div className="timelineCanvas" style={{ width: `${timelineZoom * 100}%` }}>
-            <div className="timelineRuler">
-              <div className="timelineRulerLabel">Temps vidéo</div>
-              <div className="timelineRulerTrack">
-                {Array.from({ length: rulerTicks }).map((_, index) => {
-                  const value = (totalSeconds * index) / Math.max(1, rulerTicks - 1);
-                  return (
-                    <span key={index} style={{ left: `${(index / Math.max(1, rulerTicks - 1)) * 100}%` }}>
-                      {fmt(Math.round(value))}
-                    </span>
-                  );
-                })}
-              </div>
-            </div>
-
-            <div className="timelineMatrix">
-              {grouped.map((group) => (
-                <div className="timelineGroup" key={group}>
-                  <div className="timelineGroupTitle">{group}</div>
-
-                  {rows.filter((row) => row.group === group).map((row) => {
-                    const hidden = Boolean(timelineHiddenRows[row.key]);
-                    const events = list.filter(row.test);
-
-                    return (
-                      <div className={`timelineLane ${hidden ? 'hidden' : ''}`} key={row.key}>
-                        <button
-                          className="timelineLaneLabel"
-                          onDoubleClick={() => openRowClips(row)}
-                          onClick={() =>
-                            setTimelineHiddenRows((current) => ({
-                              ...current,
-                              [row.key]: !current[row.key],
-                            }))
-                          }
-                          title="Cliquer pour masquer/afficher · double-clic pour revoir toute la piste"
-                        >
-                          <i style={{ background: row.color }} />
-                          <span>{row.label}</span>
-                          <b>{events.length}</b>
-                        </button>
-
-                        {!hidden && (
-                          <div className="timelineLaneTrack">
-                            {events.map((a) => {
-                              const startValue = clipStartOf(a);
-                              const endValue = clipEndOf(a);
-                              const duration = clipDurationOf(a);
-
-                              const left = Math.max(0, Math.min(99.8, (startValue / totalSeconds) * 100));
-                              // La largeur représente RÉELLEMENT la durée. Le min-width CSS
-                              // garantit seulement que les clips très courts restent cliquables.
-                              const width = Math.max(0.08, ((endValue - startValue) / totalSeconds) * 100);
-                              const p = find(a.playerId);
-                              const listIndex = events.findIndex((item) => item.id === a.id);
-
-                              return (
-                                <button
-                                  key={`${row.key}:${a.id}`}
-                                  className={`timelineEventBlock ${a.context === 'attaque' ? 'attack' : a.context === 'defense' ? 'defense' : ''}`}
-                                  style={{
-                                    left: `${left}%`,
-                                    width: `${width}%`,
-                                    background: row.color,
-                                  }}
-                                  onClick={() => openClipModal(row.label, events, listIndex)}
-                                  title={`${periodLabel(a.q)} ${a.clock} · ${p ? `#${p.num} ${p.name}` : 'Action'} · ${describe(a, find).t} · Clip ${fmtDuration(duration)}`}
-                                >
-                                  <span className="timelineEventText">{eventLabel(a)}</span>
-                                  <span className="timelineDurationPill">{fmtDuration(duration)}</span>
-                                </button>
-                              );
-                            })}
-                          </div>
-                        )}
-                      </div>
-                    );
-                  })}
-                </div>
-              ))}
-
-              {rows.length === 0 && <div className="hist-empty">Aucun clip à afficher.</div>}
-            </div>
+        <div className="timelineRuler">
+          <div className="timelineRulerLabel">Temps vidéo</div>
+          <div className="timelineRulerTrack">
+            {Array.from({ length: 7 }).map((_, index) => {
+              const value = (totalSeconds * index) / 6;
+              return <span key={index} style={{ left: `${(index / 6) * 100}%` }}>{fmt(Math.round(value))}</span>;
+            })}
           </div>
+        </div>
+        <div className="timelineMatrix">
+          {grouped.map((group) => (
+            <div className="timelineGroup" key={group}>
+              <div className="timelineGroupTitle">{group}</div>
+              {rows.filter((row) => row.group === group).map((row) => {
+                const hidden = Boolean(timelineHiddenRows[row.key]);
+                const events = list.filter(row.test);
+                return (
+                  <div className={`timelineLane ${hidden ? 'hidden' : ''}`} key={row.key}>
+                    <button className="timelineLaneLabel" onDoubleClick={() => openRowClips(row)} onClick={() => setTimelineHiddenRows((current) => ({ ...current, [row.key]: !current[row.key] }))} title="Cliquer pour masquer/afficher · double-clic pour revoir toute la piste">
+                      <i style={{ background: row.color }} />
+                      <span>{row.label}</span>
+                      <b>{events.length}</b>
+                    </button>
+                    {!hidden && <div className="timelineLaneTrack">
+                      {events.map((a) => {
+                        const start = Number(a.possessionStart ?? a.clipStart ?? a.videoTime ?? 0);
+                        const endValue = Number(a.possessionEnd ?? a.clipEnd ?? start + 2);
+                        const end = Math.max(start + 1, endValue);
+                        const left = Math.max(0, Math.min(99, (start / totalSeconds) * 100));
+                        const width = Math.max(0.7, Math.min(30, ((end - start) / totalSeconds) * 100));
+                        const p = find(a.playerId);
+                        return <button key={`${row.key}:${a.id}`} className="timelineEventBlock" style={{ left: `${left}%`, width: `${width}%`, background: row.color }} onClick={() => openClipModal(row.label, events, events.findIndex((item) => item.id === a.id))} title={`${periodLabel(a.q)} ${a.clock} · ${p ? `#${p.num} ${p.name}` : 'Action'} · ${describe(a, find).t}`}><span>{p ? p.num : ''}</span></button>;
+                      })}
+                    </div>}
+                  </div>
+                );
+              })}
+            </div>
+          ))}
+          {rows.length === 0 && <div className="hist-empty">Aucune piste à afficher.</div>}
         </div>
       </div>
     );
@@ -7153,21 +5602,20 @@ export default function PriseStatsProPage() {
   function renderStage() {
     switch (stage) {
       case 'context':
-        return <>{head(codingMode === 'live-individual' ? 'Phase individuelle' : 'Contexte de possession', codingMode === 'live-individual' ? 'Attaque : choisis d’abord le joueur · Défense : choisis d’abord le résultat' : 'Choix uniquement au début du quart-temps')}<div className="grid c2 big">
+        return <>{head('Contexte de possession', 'Choix uniquement au début du quart-temps')}<div className="grid c2 big">
           <button className={`bt ${draft.context === 'attaque' ? 'active' : ''}`} onClick={() => ctxPick('attaque')}><span className="ic">↗</span><span className="lbl">ATTAQUE</span></button>
           <button className={`bt def ${draft.context === 'defense' ? 'active' : ''}`} onClick={() => ctxPick('defense')}><span className="ic">🛡</span><span className="lbl">DÉFENSE</span></button>
         </div></>;
       case 'inbound':
-        return <>{head('Remise en jeu', 'Sortie / touche → choisis uniquement le type de remise en jeu')}<div className="grid c3 big">
+        return <>{head('Remise en jeu', 'Sortie de balle / faute → on remet en jeu')}<div className="grid c2 big">
           <button className={`bt ${draft.inbound === 'slob' ? 'active' : ''}`} onClick={() => inboundPick('slob')}><span className="ic">↔</span><span className="lbl">SLOB<br /><small className="mut">Côté</small></span></button>
           <button className={`bt ${draft.inbound === 'blob' ? 'active' : ''}`} onClick={() => inboundPick('blob')}><span className="ic">⎯</span><span className="lbl">BLOB<br /><small className="mut">Ligne de fond</small></span></button>
-          <button className={`bt ${draft.inbound === 'premiere-moitie' ? 'active' : ''}`} onClick={() => inboundPick('premiere-moitie')}><span className="ic">◐</span><span className="lbl">PREMIÈRE MOITIÉ DE TERRAIN<br /><small className="mut">Aucun système associé</small></span></button>
         </div></>;
       case 'systeme': {
         const firstLine = systemeButtons.filter((item) => item.id === 'contre-attaque' || item.id === 'transition');
         const libre = systemeButtons.find((item) => item.id === 'libre');
         const rest = systemeButtons.filter((item) => !['contre-attaque', 'transition', 'libre'].includes(item.id));
-        return <><div className="stageHeadWithConfig">{head('Système de jeu', playbookId ? 'Systèmes du playbook associé' : 'Organisation de la possession')}<button className="stageConfigBtn" onClick={() => openCodingSettings('buttons')} title="Créer, renommer ou masquer des systèmes">⚙</button></div>
+        return <>{head('Système de jeu', playbookId ? 'Systèmes du playbook associé' : 'Organisation de la possession')}
           <div className="systemChoiceLayout">
             {tileGrid(firstLine, draft.systemeJeu, systemePick)}
             {libre && <div className="systemLibreRow">{tileGrid([libre], draft.systemeJeu, systemePick)}</div>}
@@ -7176,132 +5624,10 @@ export default function PriseStatsProPage() {
         </>;
       }
       case 'temps':
-        return <><div className="stageHeadWithConfig">{head('Temps fort', 'Type de jeu')}<button className="stageConfigBtn" onClick={() => openCodingSettings('buttons')} title="Créer, renommer ou masquer des temps forts">⚙</button></div>{tileGrid(tempsFortsButtons, draft.tempsFort, tempsPick)}</>;
-      case 'pick-actors': {
-        const five = roster.filter((player) => onCourt.includes(player.id));
-        const chooseHandler = (id: string) => {
-          setDraft((current) => ({
-            ...current,
-            pickHandlerPlayerId: id,
-            pickScreenerPlayerId: current.pickScreenerPlayerId === id ? null : current.pickScreenerPlayerId,
-            pickRollerPlayerId: current.pickScreenerPlayerId === id ? null : current.pickRollerPlayerId,
-            // Par défaut l'action finale reste au porteur : zéro clic supplémentaire dans le cas courant.
-            // L'opérateur peut choisir immédiatement n'importe lequel des 5 joueurs si l'action se poursuit ailleurs.
-            playerId: current.playerId && current.playerId !== current.pickHandlerPlayerId ? current.playerId : id,
-          }));
-        };
-        const chooseScreener = (id: string) => {
-          if (id === draft.pickHandlerPlayerId) return;
-          setDraft((current) => ({ ...current, pickScreenerPlayerId: id, pickRollerPlayerId: id }));
-        };
-        const isMutualizedCollectivePick = codingMode === 'live' && mutualizedLive && sharedRole === 'collective' && !!sharedLive;
-        const continuePick = async () => {
-          if (!draft.pickHandlerPlayerId || !draft.pickScreenerPlayerId) return;
-          if (isMutualizedCollectivePick) {
-            const session = sharedLiveRef.current;
-            if (!session?.currentPossessionId) { flash('Possession mutualisée introuvable'); return; }
-            try {
-              await savePickEvent(session, session.currentPossessionId, {
-                zone: draft.pickZone ?? (draft.tempsFort.includes('side') ? 'side' : 'top'),
-                handlerPlayerId: draft.pickHandlerPlayerId,
-                screenerPlayerId: draft.pickScreenerPlayerId,
-                rollerPlayerId: draft.pickScreenerPlayerId,
-              });
-              flash('Pick mutualisé enregistré · résultat attendu du Live Individuel ✓');
-              // Le poste collectif ne code PAS le finisseur ni le résultat.
-              // Il reste sur la possession courante et peut poursuivre son contexte tactique.
-              setDraft((current) => ({ ...current, pickHandlerPlayerId: null, pickScreenerPlayerId: null, pickRollerPlayerId: null, playerId: null }));
-              setStage('temps');
-            } catch (e) {
-              console.error('Enregistrement Pick mutualisé:', e);
-              flash('Impossible d’enregistrer le Pick mutualisé');
-            }
-            return;
-          }
-          if (!draft.playerId) return;
-          setStage(workflowOn('coverage') ? 'coverage' : 'action');
-        };
-        const playerButtons = (selectedId: string | null | undefined, onPick: (id: string) => void, disabledId?: string | null) => (
-          <div className="pickActorsPlayers">{five.map((player) => {
-            const disabled = player.id === disabledId;
-            const firstName = (player.name || '').trim().split(/\s+/)[0] || `#${player.num}`;
-            return (
-              <button
-                key={player.id}
-                type="button"
-                disabled={disabled}
-                className={`pickActorPlayer ${selectedId === player.id ? 'active' : ''}`}
-                onClick={() => onPick(player.id)}
-                title={player.name}
-              >
-                <Av p={player} cls="pickActorAvatar" />
-                <span>{firstName}</span>
-              </button>
-            );
-          })}</div>
-        );
-        return <>
-          {head(
-            draft.tempsFort === 'pick_side' || draft.tempsFort === 'pick-side' ? 'Pick Side' : 'Pick Top',
-            isMutualizedCollectivePick
-              ? 'Poste collectif · renseigne uniquement Handler + Roller · le finisseur, le résultat et la PD sont codés sur le Live Individuel'
-              : 'Handler et Roller décrivent le pick · le 3e joueur est celui qui réalise l’action'
-          )}
-          <div className="pickActorsBlock">
-            <div className="pickActorsSection"><b>1 · BALL HANDLER</b><small>Porteur de balle</small>{playerButtons(draft.pickHandlerPlayerId, chooseHandler)}</div>
-            <div className="pickActorsSection"><b>2 · POSEUR D’ÉCRAN / ROLLER</b><small>Le Handler ne peut pas être le poseur</small>{playerButtons(draft.pickScreenerPlayerId, chooseScreener, draft.pickHandlerPlayerId)}</div>
-            {!isMutualizedCollectivePick && <div className="pickActorsSection"><b>3 · QUI RÉALISE L’ACTION ?</b><small>Ce joueur reçoit seul le résultat individuel · Handler présélectionné, modifiable</small>{playerButtons(draft.playerId, (id) => setDraft((current) => ({ ...current, playerId: id })))}</div>}
-            <button
-              type="button"
-              className="chip active"
-              style={{ width: '100%', marginTop: 4 }}
-              disabled={!draft.pickHandlerPlayerId || !draft.pickScreenerPlayerId || (!isMutualizedCollectivePick && !draft.playerId)}
-              onClick={() => { void continuePick(); }}
-            >
-              {isMutualizedCollectivePick ? 'VALIDER LE PICK → LIVE INDIVIDUEL' : 'CONTINUER → RÉSULTAT DE L’ACTION'}
-            </button>
-          </div>
-        </>;
-      }
+        return <>{head('Temps fort', 'Type de jeu')}{tileGrid(tempsFortsButtons, draft.tempsFort, tempsPick)}</>;
       case 'coverage':
-        return <>{head("Défense sur l'écran", 'Comment défend-on le pick ?')}<div className="grid c3">{codingButtonsFor('coverage').map((c) => <button key={c.key} className={`chip ${draft.coverage === c.key ? 'active' : ''}`} onClick={() => covPick(c.key)}>{c.emoji ? c.emoji + ' ' : ''}{c.label}</button>)}</div></>;
+        return <>{head("Défense sur l'écran", 'Comment défend-on le pick ?')}<div className="grid c3">{resolveCodingButtons('coverage', codingDb).map((c) => <button key={c.key} className={`chip ${draft.coverage === c.key ? 'active' : ''}`} onClick={() => covPick(c.key)}>{c.emoji ? c.emoji + ' ' : ''}{c.label}</button>)}</div></>;
       case "player": {
-  if (codingMode === 'live-individual') {
-    const title = draft.context === 'defense'
-      ? draft.actionType === 'faute-commise' ? 'Qui commet la faute ?'
-        : draft.actionType === 'interception' ? 'Qui réalise l’interception ?'
-          : draft.actionType === 'contre' ? 'Qui réalise le contre ?'
-            : 'Qui réalise l’action défensive ?'
-      : 'Qui réalise l’action ?';
-    return (
-      <>
-        {head('Joueur', title)}
-        {players3(draft.playerId, playerPick)}
-        {codingMode === 'live-individual' &&
-          draft.context === 'attaque' &&
-          draft.actionType === 'perte' && (
-            <button
-              className="chip"
-              onClick={() => commit({ ...draft, playerId: null, actionType: 'perte' })}
-            >
-              👥 ÉQUIPE · balle perdue
-            </button>
-          )}
-        {draft.context === 'defense' &&
-          (draft.actionType === 'perte-adverse' || draft.actionType === 'interception') && (
-          <button
-            className="chip"
-            style={{ marginTop: 10, width: "100%" }}
-            onClick={() => commit({ ...draft, playerId: null })}
-          >
-            {draft.actionType === 'interception'
-              ? '🏀 ÉQUIPE'
-              : '🏀 ÉQUIPE · BP adverse sans interception'}
-          </button>
-        )}
-      </>
-    );
-  }
   const canSkip =
     draft.context === "defense" &&
     CAN_TAG_PLAYER_DEF.includes(draft.actionType);
@@ -7325,380 +5651,100 @@ export default function PriseStatsProPage() {
           style={{ marginTop: 10, width: "100%" }}
           onClick={() => commit({ ...draft, playerId: null })}
         >
-          {draft.actionType === "perte-adverse"
-            ? "🏀 ÉQUIPE · BP adverse sans interception"
-            : "🏀 ÉQUIPE"}
+          Sans précision
         </button>
       )}
     </>
   );
 }
       case 'action': {
-        if (codingMode === 'live-individual') {
-          const opts = [
-            { id:'tir', label:'Tir', ic:'🏀' },
-            { id:'passe-decisive', label:'Passe décisive', ic:'🎯' },
-            { id:'rebond-off', label:'Rebond offensif', ic:'🔄' },
-            { id:'rebond-def', label:'Rebond défensif', ic:'🧲' },
-            { id:'interception', label:'Interception', ic:'🖐' },
-            { id:'perte', label:'Perte de balle', ic:'✖' },
-            { id:'contre', label:'Contre', ic:'🛑' },
-            { id:'faute-provoquee', label:'Faute provoquée', ic:'🔔' },
-            { id:'faute-commise', label:'Faute commise', ic:'🟨' },
-            { id:'faute-technique', label:'Faute technique', ic:'🟪' },
-          ];
-          return <>{head("Action du joueur", 'Pas de système ni de temps fort')}{tileGrid(opts, draft.actionType, actionPick)}</>;
-        }
-        const cfg = codingButtonsFor(draft.context === 'defense' ? 'def-action' : 'att-action');
+        const cfg = resolveCodingButtons(draft.context === 'defense' ? 'def-action' : 'att-action', codingDb);
         const opts = cfg.map((b) => ({ id: b.key, label: b.label, ic: b.emoji }));
         return <>{head("Type d'action", draft.context === 'defense' ? 'Action défensive' : 'Action offensive')}{tileGrid(opts, draft.actionType, actionPick)}</>;
       }
-      case 'faute': {
-        const fl = (key: string, fallback: string) => codingLabel('foul', key, fallback);
-
-        if (draft.actionType === 'faute-technique') {
-          return (
-            <>
-              {head('Faute technique', '1 LF pour l’équipe qui n’a pas pris la faute technique')}
-              <div className="foulOutcomeGrid">
-                <button className="chip" onClick={() => foulPick('technical-for')}>🟢 1 LF POUR MOI</button>
-                <button className="chip" onClick={() => foulPick('technical-against')}>🔴 1 LF ADVERSE</button>
-              </div>
-            </>
-          );
-        }
-
+      case 'faute':
         return draft.actionType === 'faute-commise'
-          ? (
-              <>
-                {head('Faute commise', draftTriggersTeamBonus ? '5e faute d’équipe ou plus : bonus actif · 2 LF minimum hors faute offensive' : (codingMode === 'live-individual' && draft.context === 'defense' ? 'Choisis maintenant la suite de la faute' : 'LF concédés, and-one ou touche ?'))}
-                <div className="foulOutcomeGrid">
-                  <button className="chip foulTouch" style={!codingButtonEnabled('foul','touche') ? {display:'none'} : undefined} onClick={() => foulPick('touche')}>{draftTriggersTeamBonus ? '🏀 Bonus · 2 LF' : fl('touche','Touche')}</button>
-                  <button className="chip" style={!codingButtonEnabled('foul','lf2') ? {display:'none'} : undefined} onClick={() => foulPick('lf2')}>{fl('lf2','2 LF')}</button>
-                  <button className="chip" style={!codingButtonEnabled('foul','2plus1') ? {display:'none'} : undefined} onClick={() => foulPick('2plus1')}>{fl('2plus1','2pts + 1LF')}</button>
-                  <button className="chip" style={!codingButtonEnabled('foul','lf3') ? {display:'none'} : undefined} onClick={() => foulPick('lf3')}>{fl('lf3','3 LF')}</button>
-                  <button className="chip" style={!codingButtonEnabled('foul','3plus1') ? {display:'none'} : undefined} onClick={() => foulPick('3plus1')}>{fl('3plus1','3pts + 1LF')}</button>
-                </div>
-              </>
-            )
-          : (
-              <>
-                {head('Faute provoquée', draft.foulOutcome === 'unsportsmanlike-pending' ? 'Faute antisportive : choisis la réparation. La possession reste à nous après les LF.' : (draftTriggersTeamBonus ? '5e faute d’équipe adverse ou plus : bonus actif · 2 LF minimum' : 'Touche, lancers francs, and-one ou faute antisportive ?'))}
-                {draft.foulOutcome === 'unsportsmanlike-pending' ? (
-                  <div className="foulOutcomeGrid">
-                    <button className="chip" onClick={() => foulPick('us-2plus1')}>2 + 1</button>
-                    <button className="chip" onClick={() => foulPick('us-3plus1')}>3 + 1</button>
-                    <button className="chip" onClick={() => foulPick('us-lf2')}>2 LF</button>
-                    <button className="chip" onClick={() => foulPick('us-lf3')}>3 LF</button>
-                  </div>
-                ) : <div className="foulOutcomeGrid">
-                  <button className="chip foulTouch" onClick={() => { setDraft({...draft, foulOutcome:'unsportsmanlike-pending'}); }}>🚨 Faute antisportive</button>
-                  <button className="chip foulTouch" style={!codingButtonEnabled('foul','touche') ? {display:'none'} : undefined} onClick={() => foulPick('touche')}>{draftTriggersTeamBonus ? '🏀 Bonus · 2 LF' : fl('touche','Touche')}</button>
-                  <button className="chip" style={!codingButtonEnabled('foul','lf2') ? {display:'none'} : undefined} onClick={() => foulPick('lf2')}>{fl('lf2','2 LF')}</button>
-                  <button className="chip" style={!codingButtonEnabled('foul','2plus1') ? {display:'none'} : undefined} onClick={() => foulPick('2plus1')}>{fl('2plus1','2pts + 1LF')}</button>
-                  <button className="chip" style={!codingButtonEnabled('foul','lf3') ? {display:'none'} : undefined} onClick={() => foulPick('lf3')}>{fl('lf3','3 LF')}</button>
-                  <button className="chip" style={!codingButtonEnabled('foul','3plus1') ? {display:'none'} : undefined} onClick={() => foulPick('3plus1')}>{fl('3plus1','3pts + 1LF')}</button>
-                </div>}
-              </>
-            );
-      }
-      case 'technical-foul-target': {
+          ? <>{head('Faute commise', 'LF concédés, and-one ou touche ?')}<div className="grid c3"><button className="chip" onClick={() => foulPick('touche')}>Touche</button><button className="chip" onClick={() => foulPick('lf2')}>2 LF</button><button className="chip" onClick={() => foulPick('lf3')}>3 LF</button><button className="chip" onClick={() => foulPick('2plus1')}>2 + 1</button><button className="chip" onClick={() => foulPick('3plus1')}>3 + 1</button></div></>
+          : <>{head('Faute provoquée', 'Touche ou lancers francs ?')}<div className="grid c3"><button className="chip" onClick={() => foulPick('touche')}>Touche</button><button className="chip" onClick={() => foulPick('lf2')}>2 LF</button><button className="chip" onClick={() => foulPick('lf3')}>3 LF</button></div></>;
+      case 'result':
         return (
           <>
-            {head('À qui attribuer la faute technique ?', 'Le lancer franc est pour nous : indique qui a reçu la technique avant de saisir le LF.')}
-            <div className="grid c2">
-              <button
-                className="chip"
-                onClick={() => {
-                  setDraft({ ...draft, opponentPlayerId: null, opponentPlayerName: 'Équipe adverse', opponentPlayerNumber: null });
-                  setStage('ft');
-                }}
-              >
-                🏀 Technique équipe adverse
-              </button>
-              {oppRoster.length === 0 && (
-                <div className="tip">Aucun joueur adverse n'est renseigné sur ce projet. Tu peux attribuer la technique à l'équipe, ou ajouter l'effectif adverse avant le match pour choisir un joueur.</div>
-              )}
-            </div>
-            {oppRoster.length > 0 && (
-              <>
-                <div className="sublbl">Ou choisir le joueur adverse sanctionné</div>
-                <div className="grid c3">
-                  {oppRoster.map((op) => (
-                    <button
-                      key={op.id}
-                      className="bt"
-                      onClick={() => {
-                        setDraft({ ...draft, opponentPlayerId: op.id, opponentPlayerName: op.name, opponentPlayerNumber: op.num });
-                        setStage('ft');
-                      }}
-                    >
-                      <span className="ic">#{op.num}</span>
-                      <span className="lbl">{op.name}</span>
-                    </button>
-                  ))}
-                </div>
-              </>
-            )}
-          </>
-        );
-      }
-      case 'result': {
-        const isDefense = draft.context === 'defense';
+            {head('Résultat', draft.context === 'defense' ? 'Tir concédé — résultat' : 'Choisis directement le résultat du tir')}
 
-        const startFreeThrows = (attempts: number) => {
-          setDraft({
-            ...draft,
-            actionType: 'tir',
-            shotType: 'LF',
-            shotResult: '',
-            specialCase: 'aucun',
-            ftAttempts: attempts,
-            ftMade: 0,
-            ftResults: [],
-          });
-          setStage('ft');
-        };
-
-        return (
-          <>
-            {head(
-              'Résultat',
-              !isPostLikeCodingMode(codingMode)
-                ? (codingMode === 'live-individual' ? (isDefense ? 'Résultat défensif — le joueur sera demandé seulement si nécessaire' : 'Résultat du joueur sélectionné') : (isDefense ? 'Choisis le résultat défensif' : 'Choisis le résultat offensif'))
-                : (isDefense ? 'Choisis le résultat défensif' : 'Choisis directement le résultat du tir')
-            )}
-
-            {isPostLikeCodingMode(codingMode) && isDefense && oppRoster.length > 0 && (
+            {/* AJOUT §12 · en défense, attribuer le tir à un joueur adverse (optionnel) */}
+            {draft.context === 'defense' && oppRoster.length > 0 && (
               <>
                 <div className="sublbl">Joueur adverse (tir concédé)</div>
                 <div className="grid c3">
                   {oppRoster.map((op) => (
-                    <button
-                      key={op.id}
-                      className={`bt ${draft.playerId === op.id ? 'active' : ''}`}
-                      onClick={() => setDraft({ ...draft, playerId: draft.playerId === op.id ? null : op.id })}
-                    >
-                      <span className="ic">#{op.num}</span>
-                      <span className="lbl">{op.name}</span>
+                    <button key={op.id} className={`bt ${draft.playerId === op.id ? 'active' : ''}`} onClick={() => setDraft({ ...draft, playerId: draft.playerId === op.id ? null : op.id })}>
+                      <span className="ic">#{op.num}</span><span className="lbl">{op.name}</span>
                     </button>
                   ))}
                 </div>
               </>
             )}
 
-            {isPostLikeCodingMode(codingMode) ? (
-              <>
-                <div className="sublbl resultSectionLabel">2 PTS</div>
-                <div className="grid c2 resultMainGrid">
-                  <button className="res made" style={!codingButtonEnabled('result','2-made') ? {display:'none'} : undefined} onClick={() => quickShotResult('2PTS', 'made', null)}>✓ Marqué</button>
-                  <button className="res miss" style={!codingButtonEnabled('result','2-missed') ? {display:'none'} : undefined} onClick={() => quickShotResult('2PTS', 'missed', null)}>✕ Loupé</button>
-                </div>
-                <div className="postShotHint">La Shot Chart est obligatoire : intérieur / extérieur est calculé automatiquement à partir de la zone cliquée.</div>
-              </>
-            ) : (
-              <>
-                <div className="sublbl resultSectionLabel">2 PTS · INTÉRIEUR</div>
-                <div className="grid c2 resultMainGrid">
-                  <button className="res made" style={!codingButtonEnabled('result','2-made') ? {display:'none'} : undefined} onClick={() => quickShotResult('2PTS', 'made', 'interior')}>✓ Marqué</button>
-                  <button className="res miss" style={!codingButtonEnabled('result','2-missed') ? {display:'none'} : undefined} onClick={() => quickShotResult('2PTS', 'missed', 'interior')}>✕ Loupé</button>
-                </div>
-                <div className="sublbl resultSectionLabel">2 PTS · EXTÉRIEUR</div>
-                <div className="grid c2 resultMainGrid">
-                  <button className="res made" style={!codingButtonEnabled('result','2-made') ? {display:'none'} : undefined} onClick={() => quickShotResult('2PTS', 'made', 'exterior')}>✓ Marqué</button>
-                  <button className="res miss" style={!codingButtonEnabled('result','2-missed') ? {display:'none'} : undefined} onClick={() => quickShotResult('2PTS', 'missed', 'exterior')}>✕ Loupé</button>
-                </div>
-              </>
-            )}
-            <div className="sublbl resultSectionLabel">3 PTS</div>
-            <div className="grid c2 resultMainGrid">
-              <button className="res made" style={!codingButtonEnabled('result','3-made') ? {display:'none'} : undefined} onClick={() => quickShotResult('3PTS', 'made', 'three')}>✓ Marqué</button>
-              <button className="res miss" style={!codingButtonEnabled('result','3-missed') ? {display:'none'} : undefined} onClick={() => quickShotResult('3PTS', 'missed', 'three')}>✕ Loupé</button>
+            <div className="grid c2">
+              <button className="res made" onClick={() => quickShotResult('2PTS', 'made')}>✓ 2PTS marqué</button>
+              <button className="res miss" onClick={() => quickShotResult('2PTS', 'missed')}>✕ 2PTS raté</button>
+              <button className="res made" onClick={() => quickShotResult('3PTS', 'made')}>✓ 3PTS marqué</button>
+              <button className="res miss" onClick={() => quickShotResult('3PTS', 'missed')}>✕ 3PTS raté</button>
             </div>
 
-            {!isPostLikeCodingMode(codingMode) ? (
+            <div className="sublbl">Lancers francs</div>
+            <div className="seg">
+              {[1, 2, 3].map((n) => (
+                <button
+                  key={n}
+                  className={`segb ${draft.shotType === 'LF' && draft.ftAttempts === n ? 'active' : ''}`}
+                  onClick={() => {
+                    shotPick('LF');
+                    ftn(n);
+                  }}
+                >
+                  {n} LF
+                </button>
+              ))}
+            </div>
+            {draft.shotType === 'LF' && draft.ftAttempts > 0 && ftSeq()}
+
+            {draft.context !== 'defense' && (
               <>
-                {codingMode === 'live-individual' ? (
-                  <>
-                    {!isDefense && (
-                      <>
-                        <div className="sublbl resultSectionLabel">Autres résultats joueur</div>
-                        <div className="resultAllActionsGrid">
-                          <button className="chip resultActionBtn" style={!codingButtonEnabled('att-action','faute-provoquee') ? {display:'none'} : undefined} onClick={() => actionPick('faute-provoquee')}>🔔 {codingLabel('att-action','faute-provoquee','Faute provoquée')}</button>
-                          <button className="chip resultActionBtn" style={!codingButtonEnabled('att-action','faute-commise') ? {display:'none'} : undefined} onClick={() => actionPick('faute-commise')}>🟨 {codingLabel('att-action','faute-commise','Faute commise')}</button>
-                          <button className="chip resultActionBtn" style={!codingButtonEnabled('att-action','perte') ? {display:'none'} : undefined} onClick={() => actionPick('perte')}>✖ {codingLabel('att-action','perte','BP · Perte de balle')}</button>
-                          <button className="chip resultActionBtn" style={!codingButtonEnabled('att-action','contre') ? {display:'none'} : undefined} onClick={() => actionPick('contre')}>🛑 Contré</button>
-                        </div>
-                      </>
-                    )}
-                    {isDefense && (
-                      <>
-                        <div className="sublbl resultSectionLabel">Autres résultats défense</div>
-                        <div className="resultAllActionsGrid">
-                          <button className="chip resultActionBtn" style={!codingButtonEnabled('def-action','faute-commise') ? {display:'none'} : undefined} onClick={() => actionPick('faute-commise')}>🟨 {codingLabel('def-action','faute-commise','Faute commise')}</button>
-                          <button className="chip resultActionBtn" style={!codingButtonEnabled('def-action','interception') ? {display:'none'} : undefined} onClick={() => actionPick('interception')}>🖐 {codingLabel('def-action','interception','INT · Interception')}</button>
-                          <button className="chip resultActionBtn" style={!codingButtonEnabled('def-action','contre') ? {display:'none'} : undefined} onClick={() => actionPick('contre')}>🛑 {codingLabel('def-action','contre','Contre')}</button>
-                        </div>
-                      </>
-                    )}
-                  </>
-                ) : (
-                  <>
-                    <div className="sublbl resultSectionLabel">Autres résultats</div>
-                    <div className="resultAllActionsGrid">
-                      {codingButtonsFor(isDefense ? 'def-action' : 'att-action')
-                        .filter((button) => button.key !== 'tir')
-                        .map((button) => (
-                          <button key={button.key} className="chip resultActionBtn" onClick={() => actionPick(button.key)}>
-                            {button.emoji ? `${button.emoji} ` : ''}{button.label}
-                          </button>
-                        ))}
-                    </div>
-                  </>
-                )}
-              </>
-            ) : (
-              <>
-                <div className="sublbl">Lancers francs</div>
-                <div className="seg">
-                  {[1, 2, 3].map((n) => (
-                    <button
-                      key={n}
-                      className={`segb ${draft.shotType === 'LF' && draft.ftAttempts === n ? 'active' : ''}`}
-                      onClick={() => {
-                        shotPick('LF');
-                        ftn(n);
-                      }}
-                    >
-                      {n} LF
-                    </button>
-                  ))}
+                <div className="sublbl">Situations spéciales</div>
+                <div className="grid c2">
+                  <button className="chip" onClick={() => special('2pts1lf')}>2 PTS + 1 LF</button>
+                  <button className="chip" onClick={() => special('3pts1lf')}>3 PTS + 1 LF</button>
                 </div>
-                {draft.shotType === 'LF' && draft.ftAttempts > 0 && ftSeq()}
-
-                {draft.context === 'defense' && (
-                  <>
-                    <div className="sublbl resultSectionLabel">Autres résultats défense</div>
-                    <div className="resultAllActionsGrid">
-                      {codingButtonsFor('def-action')
-                        .filter((button) => button.key !== 'tir')
-                        .map((button) => (
-                          <button
-                            key={button.key}
-                            className="chip resultActionBtn"
-                            onClick={() => actionPick(button.key)}
-                          >
-                            {button.emoji ? `${button.emoji} ` : ''}{button.label}
-                          </button>
-                        ))}
-                    </div>
-                  </>
-                )}
-
-                {draft.context !== 'defense' && (
-                  <>
-                    <div className="sublbl">Situations spéciales</div>
-                    <div className="grid c2">
-                      <button className="chip" style={!codingButtonEnabled('result','2plus1') ? {display:'none'} : undefined} onClick={() => special('2pts1lf')}>2 PTS + 1 LF</button>
-                      <button className="chip" style={!codingButtonEnabled('result','3plus1') ? {display:'none'} : undefined} onClick={() => special('3pts1lf')}>3 PTS + 1 LF</button>
-                    </div>
-                  </>
-                )}
               </>
             )}
           </>
         );
-      }
       case 'ft':
-        return <>{head(
-          'Lancers francs',
-          draft.actionType === 'faute-technique'
-            ? (draft.foulOutcome === 'technical-for' ? '1 LF technique pour nous' : '1 LF technique adverse')
-            : (draft.specialCase === '2pts+1lf' || draft.specialCase === '3pts+1lf')
-              ? 'Lancer franc bonus (and-one)'
-              : draft.actionType === 'faute-commise'
-                ? `${draft.ftAttempts} LF adverses — dans l'ordre`
-                : `${draft.ftAttempts} LF — dans l'ordre`
-        )}{ftSeq()}</>;
+        return <>{head('Lancers francs', (draft.specialCase === '2pts+1lf' || draft.specialCase === '3pts+1lf') ? 'Lancer franc bonus (and-one)' : draft.actionType === 'faute-commise' ? `${draft.ftAttempts} LF adverses — dans l'ordre` : `${draft.ftAttempts} LF — dans l'ordre`)}{ftSeq()}</>;
       case 'zone':
         return <>{head('Où ?', 'Cliquez directement sur le terrain (shot chart)')}<div className="tip">Pas d'étiquette de zone : cliquez l'emplacement exact du tir sur le terrain à droite.</div></>;
       case 'rebound': {
-        // CONTRE : conséquence spécifique selon le contexte.
-        // On réutilise uniquement les ids stables déjà compris par reboundNext()
-        // afin de ne changer ni le schéma Supabase ni les statistiques existantes.
-        //
-        // En ATTAQUE :
-        // - touche-pour = ballon pour nous -> reste ATTAQUE
-        // - def         = récupération adverse -> passe DÉFENSE
-        //
-        // En DÉFENSE :
-        // - touche-contre = ballon pour l'adversaire -> reste DÉFENSE
-        // - def           = récupération de notre équipe -> passe ATTAQUE
-        if (draft.actionType === 'contre') {
-          const blockConsequences =
-            draft.context === 'attaque'
-              ? [
-                  { id: 'touche-pour', label: '↪ Touche pour nous' },
-                  { id: 'touche-contre', label: '↩ Touche pour l’adversaire' },
-                  { id: 'off', label: '🟢 Récupération par nous' },
-                  { id: 'def', label: '🔴 Récupération par l’adversaire' },
-                ]
-              : [
-                  { id: 'touche-contre', label: '↩ Touche / sortie' },
-                  { id: 'off', label: '🔴 Récupération adverse' },
-                  { id: 'def', label: '🟢 Récupération de mon équipe' },
-                ];
-
-          return (
-            <>
-              {head('Conséquence du contre', 'Que devient le ballon après le contre ?')}
-              <div className="grid c2">
-                {blockConsequences.map((item) => (
-                  <button
-                    key={item.id}
-                    className={`chip ${draft.reboundType === item.id ? 'active' : ''}`}
-                    onClick={() => rebPick(item.id)}
-                  >
-                    {item.label}
-                  </button>
-                ))}
-              </div>
-            </>
-          );
-        }
-
         // Rebonds : ids STABLES (off/def/touche-pour/touche-contre) utilisés par le
         // moteur (isMyRebound/reboundNext) — jamais modifiés. Seuls les LIBELLÉS sont
         // configurables via livestat_coding_buttons (catégorie 'rebound') : la config
         // par équipe écrase le label par key, sinon on garde les libellés par défaut.
-        const rebDefaults: Record<string, string> = { 'off': 'Rebond offensif', 'def': 'Rebond défensif', 'touche-pour': 'Touche / sortie pour moi', 'touche-contre': 'Touche / sortie contre moi' };
-        const rebCfg = codingButtonsFor('rebound');
+        const rebDefaults: Record<string, string> = { 'off': 'Rebond offensif', 'def': 'Rebond défensif', 'touche-pour': 'Touche pour', 'touche-contre': 'Touche contre' };
+        const rebCfg = resolveCodingButtons('rebound', codingDb);
         const rebLabelOf = (id: string) => rebCfg.find((c) => c.key === id)?.label ?? rebDefaults[id];
-        const reb: string[] = (codingMode === 'live-individual' ? ['off', 'def'] : ['off', 'def', 'touche-pour', 'touche-contre']).filter((id) => rebCfg.some((c) => c.key === id));
-        return <>{head('Conséquence', codingMode === 'live-individual' ? (draft.context === 'defense' ? 'Tir adverse raté : RO adverse ou RD pour nous' : 'Tir raté : RO ou RD') : 'Rebond sur tir manqué')}<div className="grid c2">{reb.map((id) => <button key={id} className={`chip ${draft.reboundType === id ? 'active' : ''}`} onClick={() => rebPick(id)}>{rebLabelOf(id)}</button>)}</div>
-          <div className="sublbl">Faute au rebond</div>
-          <div className="grid c2">
-            <button className="chip" onClick={() => reboundFoulPick('drawn')}>🔔 Faute provoquée</button>
-            <button className="chip" onClick={() => reboundFoulPick('committed')}>🟨 Faute commise</button>
-          </div>
-          {draft.reboundType && isMyRebound(draft.context, draft.reboundType) && <><div className="sublbl">Qui prend le rebond ?</div>{players3(draft.reboundPlayerId, rebWho)}{codingMode !== 'live-individual' && <button className="chip" style={{ marginTop: 8 }} onClick={() => commit(draft)}>Sans précision →</button>}</>}
-        </>;
-      }
-      case 'rebound-foul-player': {
-        const committed = draft.foulOutcome === 'rebound-foul-committed';
-        return <>
-          {head(
-            committed ? 'Faute commise au rebond' : 'Faute provoquée au rebond',
-            committed ? 'Qui a commis la faute ?' : 'Qui a provoqué la faute ?'
+        const reb: string[] = ['off', 'def', 'touche-pour', 'touche-contre'];
+        return <>{head('Conséquence', 'Rebond sur tir manqué ou faute provoquée')}<div className="grid c2">{reb.map((id) => <button key={id} className={`chip ${draft.reboundType === id ? 'active' : ''}`} onClick={() => rebPick(id)}>{rebLabelOf(id)}</button>)}</div>
+          {draft.context === 'defense' && draft.actionType === 'tir' && draft.shotResult === 'missed' && (
+            <button className="chip" style={{ marginTop: 8, width: '100%' }} onClick={foulProvokedAfterDefensiveMiss}>🔔 Faute provoquée → 2 LF / 3 LF</button>
           )}
-          {players3(draft.reboundFoulPlayerId ?? null, reboundFoulPlayerPick)}
+          {draft.reboundType && isMyRebound(draft.context, draft.reboundType) && <><div className="sublbl">Qui prend le rebond ?</div>{players3(draft.reboundPlayerId, rebWho)}<button className="chip" style={{ marginTop: 8 }} onClick={() => commit(draft)}>Sans précision →</button></>}
         </>;
       }
       case 'assist': {
         const others = floor.filter((p) => p.id !== draft.playerId);
         return <>{head('Passe décisive', draft.actionType === 'faute-provoquee' ? 'Action ayant amené la faute' : 'Panier marqué')}<div className="sublbl">Qui a fait la passe décisive ?</div>
           <div className="grid c3">{others.map((p) => <button key={p.id} className="pl sm" onClick={() => passer(p.id)}><Av p={p} /><span className="num">{p.num}</span><span className="nm">{p.name}</span></button>)}
-            <button className="pl sm" onClick={() => passer('')}><Av /><span className="num">—</span><span className="nm">Skip / aucune</span></button></div></>;
+            <button className="pl sm" onClick={() => passer('')}><Av /><span className="num">—</span><span className="nm">Personne</span></button></div></>;
       }
       default: return null;
     }
@@ -7712,12 +5758,9 @@ function BoxView({ actions, roster, teamId, videoProvider = 'none', videoUrl = '
   const find = (id: string | null) => roster.find((p) => p.id === id)
     || (id ? oppRoster.filter((o) => o.id === id).map((o) => ({ id: o.id, num: Number(o.num) || 0, name: o.name, pos: 'ADV' } as Player))[0] : undefined);
   const box = computeBox(actions, roster);
-  const teamOnlyStl = actions.filter(
-    (a) => a.context === 'defense' && a.actionType === 'perte-adverse' && !a.playerId
-  ).length;
   const A = computeAnalytics(actions, roster);
   const pts = (l: any) => l.p2m * 2 + l.p3m * 3 + l.ftm;
-  const [boxTab, setBoxTab] = useState<'box' | 'box-advanced' | 'team' | 'matrix' | 'systems' | 'picks' | 'search' | 'lineups' | 'shot' | 'video'>('box');
+  const [boxTab, setBoxTab] = useState<'box' | 'team' | 'matrix' | 'systems' | 'search' | 'lineups' | 'shot' | 'video'>('box');
   // Bloc C · onglet initial demandé depuis l'Historique (tab=history → Collectif, tab=players → Boxscore).
   useEffect(() => { if (initialTab) setBoxTab(initialTab); }, [initialTab]);
   const [boxSide, setBoxSide] = useState<'attaque' | 'defense'>('attaque');
@@ -7728,27 +5771,10 @@ function BoxView({ actions, roster, teamId, videoProvider = 'none', videoUrl = '
   // La lecture vidéo bornée est désormais gérée par ActionClipsModal (§25).
 
   const tot: any = box.reduce((t: any, l: any) => {
-    ['p2m', 'p2a', 'p3m', 'p3a', 'ftm', 'fta', 'offReb', 'defReb', 'ast', 'stl', 'blk', 'to', 'pf', 'fd'].forEach((k) => { t[k] = (t[k] || 0) + (l[k] || 0); });
+    ['p2m', 'p2a', 'p3m', 'p3a', 'ftm', 'fta', 'offReb', 'defReb', 'ast', 'stl', 'blk', 'to', 'pf'].forEach((k) => { t[k] = (t[k] || 0) + (l[k] || 0); });
     t.pts = (t.pts || 0) + pts(l);
     return t;
   }, {});
-
-  // Évaluation FIBA simplifiée et +/- réel basé sur les points marqués/concédés
-  // pendant que le joueur figure dans le lineup de l'action.
-  const evalOf = (l: any) => {
-    const missed2 = Math.max(0, (l.p2a || 0) - (l.p2m || 0));
-    const missed3 = Math.max(0, (l.p3a || 0) - (l.p3m || 0));
-    const missedFt = Math.max(0, (l.fta || 0) - (l.ftm || 0));
-    const reb = (l.offReb || 0) + (l.defReb || 0);
-    return pts(l) + reb + (l.ast || 0) + (l.stl || 0) + (l.blk || 0)
-      - missed2 - missed3 - missedFt - (l.to || 0) - (l.pf || 0);
-  };
-  const plusMinusOf = (playerId: string) => actions.reduce((sum, action) => {
-    const lineup = Array.isArray(action.lineup) ? action.lineup : [];
-    if (!lineup.includes(playerId)) return sum;
-    return sum + ptsOf(action) - themPtsOf(action);
-  }, 0);
-  const teamEval = box.reduce((sum: number, line: any) => sum + evalOf(line), 0);
 
   // --- KPIs collectifs (calculés sur les vraies actions) ---
   const teamPts = tot.pts || 0;
@@ -7831,242 +5857,9 @@ function BoxView({ actions, roster, teamId, videoProvider = 'none', videoUrl = '
     }).filter((r) => r.poss > 0).sort((a, b) => b.ppp - a.ppp);
   };
 
-  // Rentabilité Pick & Roll par duo Handler / Roller.
-  // Une ligne = un duo, tous Pick Top + Pick Side confondus ; les volumes Top/Side
-  // restent visibles pour comprendre comment le duo est utilisé.
-  const pickDuoRows = (() => {
-    const groups = new Map<string, { key: string; handlerId: string; rollerId: string; list: StatA[] }>();
-    actions.forEach((a) => {
-      if (a.context !== 'attaque') return;
-      if (!(a.tempsFort === 'pick_side' || a.tempsFort === 'pick_top' || a.tempsFort === 'pick-side' || a.tempsFort === 'pick-top')) return;
-      const handlerId = a.pickHandlerPlayerId ?? '';
-      const rollerId = a.pickRollerPlayerId ?? a.pickScreenerPlayerId ?? '';
-      if (!handlerId || !rollerId || handlerId === rollerId) return;
-      const key = `${handlerId}::${rollerId}`;
-      if (!groups.has(key)) groups.set(key, { key, handlerId, rollerId, list: [] });
-      groups.get(key)!.list.push(a);
-    });
-    return Array.from(groups.values()).map((g) => {
-      const made = g.list.filter((a) => a.actionType === 'tir' && a.shotResult === 'made').length;
-      const missed = g.list.filter((a) => a.actionType === 'tir' && a.shotResult === 'missed').length;
-      const lost = g.list.filter((a) => a.actionType === 'perte').length;
-      const points = g.list.reduce((sum, a) => sum + ptsOf(a), 0);
-      const poss = g.list.length;
-      const shots = made + missed;
-      const top = g.list.filter((a) => a.tempsFort === 'pick_top' || a.tempsFort === 'pick-top').length;
-      const side = g.list.filter((a) => a.tempsFort === 'pick_side' || a.tempsFort === 'pick-side').length;
-      return { ...g, made, missed, lost, points, poss, top, side, pct: shots ? Math.round((made / shots) * 100) : 0, ppp: poss ? points / poss : 0 };
-    }).sort((a, b) => b.ppp - a.ppp || b.poss - a.poss);
-  })();
-
   const openList = (title: string, items: StatA[]) => {
     setClipList({ title, items });
     if (items.length === 1) setClipAction(items[0]);
-  };
-
-  /* ===== BOXVIEW · chaque statistique joueur ouvre uniquement ses actions ===== */
-  type BoxClipKind = 'all'|'pts'|'2pts'|'3pts'|'lf'|'oreb'|'dreb'|'reb'|'ast'|'stl'|'blk'|'tov'|'pf'|'fd';
-
-  const uniqActions = (items: StatA[]) => {
-    const seen = new Set<string>();
-    return items.filter((a) => {
-      const key = String(a.id);
-      if (seen.has(key)) return false;
-      seen.add(key);
-      return true;
-    });
-  };
-
-  const playerBoxClips = (playerId: string, kind: BoxClipKind): StatA[] => {
-    const ownShot = (a: StatA, shotType?: string) =>
-      a.context !== 'defense' &&
-      a.playerId === playerId &&
-      a.actionType === 'tir' &&
-      (!shotType || a.shotType === shotType);
-
-    switch (kind) {
-      case 'all':
-        return uniqActions(actions.filter((a) =>
-          a.playerId === playerId ||
-          a.assistPlayerId === playerId ||
-          a.reboundPlayerId === playerId ||
-          a.reboundFoulPlayerId === playerId
-        ));
-      case 'pts':
-        return uniqActions(actions.filter((a) =>
-          (ownShot(a) && (
-            (a.shotType !== 'LF' && a.shotResult === 'made') ||
-            (a.shotType === 'LF' && (a.ftMade || 0) > 0)
-          )) ||
-          (
-            a.context !== 'defense' &&
-            a.playerId === playerId &&
-            a.actionType === 'faute-provoquee' &&
-            a.shotType === 'LF' &&
-            (a.ftMade || 0) > 0
-          )
-        ));
-      case '2pts':
-        return actions.filter((a) => ownShot(a, '2PTS'));
-      case '3pts':
-        return actions.filter((a) => ownShot(a, '3PTS'));
-      case 'lf':
-        return uniqActions(actions.filter((a) =>
-          (
-            a.context !== 'defense' &&
-            a.playerId === playerId &&
-            a.actionType === 'tir' &&
-            (
-              a.shotType === 'LF' ||
-              (a.shotResult === 'made' && a.specialCase !== 'aucun' && (a.ftAttempts || 0) > 0)
-            )
-          ) ||
-          (
-            a.context !== 'defense' &&
-            a.playerId === playerId &&
-            a.actionType === 'faute-provoquee' &&
-            a.shotType === 'LF'
-          )
-        ));
-      case 'oreb':
-        return actions.filter((a) => a.reboundPlayerId === playerId && a.reboundType === 'off');
-      case 'dreb':
-        return uniqActions(actions.filter((a) =>
-          (a.actionType === 'rebond-def' && a.playerId === playerId) ||
-          (a.reboundPlayerId === playerId && a.reboundType === 'def')
-        ));
-      case 'reb':
-        return uniqActions([
-          ...playerBoxClips(playerId, 'oreb'),
-          ...playerBoxClips(playerId, 'dreb'),
-        ]);
-      case 'ast':
-        // Une passe décisive a besoin d'un peu plus de contexte que le tir.
-        // On avance UNIQUEMENT la lecture du clip PD de 3 secondes, sans
-        // modifier l'action source ni le clip du marqueur associé au même panier.
-        return actions
-          .filter((a) => a.assist === true && a.assistPlayerId === playerId)
-          .map((a) => ({
-            ...a,
-            clipStart: a.clipStart != null ? Math.max(0, a.clipStart - 3) : a.clipStart,
-          }));
-      case 'stl':
-        return actions.filter((a) => a.actionType === 'interception' && a.playerId === playerId);
-      case 'blk':
-        return actions.filter((a) => a.actionType === 'contre' && a.playerId === playerId);
-      case 'tov':
-        return actions.filter((a) => a.actionType === 'perte' && a.playerId === playerId);
-      case 'pf':
-        return actions.filter((a) => (a.actionType === 'faute-commise' || (a.actionType === 'faute-technique' && a.specialCase === 'technical-player')) && a.playerId === playerId);
-      case 'fd':
-        return uniqActions(actions.filter((a) => (a.actionType === 'faute-provoquee' && a.playerId === playerId) || (a.foulOutcome === 'rebound-foul-drawn' && a.reboundFoulPlayerId === playerId)));
-      default:
-        return [];
-    }
-  };
-
-  const openPlayerBoxClips = (player: Player, kind: BoxClipKind, label: string) => {
-    const items = playerBoxClips(player.id, kind);
-    if (!items.length) return;
-    openList(`#${player.num} ${player.name} · ${label}`, items);
-  };
-
-  type TeamClipKind = 'all'|'pts'|'2pts'|'3pts'|'lf'|'oreb'|'dreb'|'reb'|'ast'|'stl'|'blk'|'tov'|'pf'|'fd';
-  const teamBoxClips = (kind: TeamClipKind): StatA[] => {
-    const attack = actions.filter((a) => a.context !== 'defense');
-    switch (kind) {
-      case 'all': return uniqActions(attack);
-      case 'pts': return uniqActions(attack.filter((a) => ptsOf(a) > 0));
-      case '2pts': return attack.filter((a) => a.actionType === 'tir' && a.shotType === '2PTS');
-      case '3pts': return attack.filter((a) => a.actionType === 'tir' && a.shotType === '3PTS');
-      case 'lf': return attack.filter((a) => a.shotType === 'LF' || (a.ftAttempts || 0) > 0);
-      case 'oreb': return attack.filter((a) => a.reboundType === 'off');
-      case 'dreb': return actions.filter((a) => a.context === 'defense' && a.reboundType === 'def');
-      case 'reb': return uniqActions([...teamBoxClips('oreb'), ...teamBoxClips('dreb')]);
-      case 'ast': return attack.filter((a) => a.assist === true || a.actionType === 'passe-decisive');
-      case 'stl': return actions.filter((a) => a.context === 'defense' && (a.actionType === 'interception' || a.actionType === 'perte-adverse'));
-      case 'blk': return actions.filter((a) => a.context === 'defense' && a.actionType === 'contre');
-      case 'tov': return attack.filter((a) => a.actionType === 'perte' || (a.actionType === 'faute-commise' && a.context === 'attaque'));
-      case 'pf': return actions.filter((a) => a.actionType === 'faute-commise' && a.context !== 'defense');
-      case 'fd': return uniqActions(actions.filter((a) => a.context !== 'defense' && (a.actionType === 'faute-provoquee' || a.foulOutcome === 'rebound-foul-drawn')));
-      default: return [];
-    }
-  };
-  const opponentBoxClips = (kind: TeamClipKind): StatA[] => {
-    const defense = actions.filter((a) => a.context === 'defense');
-    switch (kind) {
-      case 'all': return uniqActions(defense);
-      case 'pts': return uniqActions(defense.filter((a) => themPtsOf(a) > 0));
-      case '2pts': return defense.filter((a) => a.actionType === 'tir' && a.shotType === '2PTS');
-      case '3pts': return defense.filter((a) => a.actionType === 'tir' && a.shotType === '3PTS');
-      case 'lf': return defense.filter((a) => a.shotType === 'LF' || (a.ftAttempts || 0) > 0);
-      case 'oreb': return defense.filter((a) => a.reboundType === 'off');
-      case 'dreb': return actions.filter((a) => a.context === 'attaque' && a.reboundType === 'def');
-      case 'reb': return uniqActions([...opponentBoxClips('oreb'), ...opponentBoxClips('dreb')]);
-      case 'tov': return defense.filter((a) => a.actionType === 'perte-adverse');
-      case 'pf': return defense.filter((a) => a.actionType === 'faute-provoquee');
-      case 'fd': return uniqActions(defense.filter((a) => a.actionType === 'faute-commise' || a.foulOutcome === 'rebound-foul-committed'));
-      default: return [];
-    }
-  };
-  const openTeamBoxClips = (side: 'team'|'opponent', kind: TeamClipKind, label: string) => {
-    const items = side === 'team' ? teamBoxClips(kind) : opponentBoxClips(kind);
-    if (!items.length) return;
-    openList(`${side === 'team' ? 'Équipe' : 'Équipe adverse'} · ${label}`, items);
-  };
-  const oppShots2 = opponentBoxClips('2pts');
-  const oppShots3 = opponentBoxClips('3pts');
-  const oppLf = opponentBoxClips('lf');
-  const oppPts = opponentBoxClips('pts').reduce((sum, a) => sum + themPtsOf(a), 0);
-  const opp2m = oppShots2.filter((a) => a.shotResult === 'made').length;
-  const opp3m = oppShots3.filter((a) => a.shotResult === 'made').length;
-  const oppFtm = oppLf.reduce((sum, a) => sum + (a.ftMade || (a.shotType === 'LF' && a.shotResult === 'made' ? 1 : 0)), 0);
-  const oppFta = oppLf.reduce((sum, a) => sum + (a.ftAttempts || (a.shotType === 'LF' ? 1 : 0)), 0);
-  const oppOreb = opponentBoxClips('oreb').length;
-  const oppDreb = opponentBoxClips('dreb').length;
-  const oppTov = opponentBoxClips('tov').length;
-  const oppPf = opponentBoxClips('pf').length;
-  const oppFd = opponentBoxClips('fd').length;
-
-  const stopCell = (event: MouseEvent<HTMLElement>) => event.stopPropagation();
-
-  const openShotZoneClips = (
-    clicked: StatA,
-    pool: StatA[],
-    titlePrefix: string,
-  ) => {
-    const zoneId =
-      clicked.zone ||
-      resolveShotZone({
-        zone: clicked.zone,
-        courtX: clicked.courtX,
-        courtY: clicked.courtY,
-      } as any);
-
-    const clips = pool.filter((action) => {
-      if (action.actionType !== 'tir' || action.shotType === 'LF') return false;
-
-      const actionZone =
-        action.zone ||
-        resolveShotZone({
-          zone: action.zone,
-          courtX: action.courtX,
-          courtY: action.courtY,
-        } as any);
-
-      return zoneId ? actionZone === zoneId : action.id === clicked.id;
-    });
-
-    const zoneLabel = zoneId
-      ? (zoneById(zoneId)?.shortLabel || zoneId)
-      : 'zone';
-
-    setClipList({
-      title: `${titlePrefix} · ${zoneLabel} · ${clips.length || 1} tir${(clips.length || 1) > 1 ? 's' : ''}`,
-      items: clips.length ? clips : [clicked],
-    });
-
-    setClipAction(null);
   };
 
   const actionTitle = (a: StatA) => {
@@ -8082,15 +5875,13 @@ function BoxView({ actions, roster, teamId, videoProvider = 'none', videoUrl = '
   );
 
   const Sec = ({ t }: { t: string }) => <div className="boxsec">{t}</div>;
-  const Card = ({ t, v, c, onClick }: { t: string; v: any; c?: string; onClick?: () => void }) => (
-    onClick
-      ? <button type="button" className="boxcard clickable" onClick={onClick}><div className="bt-lbl2">{t}</div><div className="bt-val" style={{ color: c || 'var(--txt)' }}>{v}</div></button>
-      : <div className="boxcard"><div className="bt-lbl2">{t}</div><div className="bt-val" style={{ color: c || 'var(--txt)' }}>{v}</div></div>
+  const Card = ({ t, v, c }: { t: string; v: any; c?: string }) => (
+    <div className="boxcard"><div className="bt-lbl2">{t}</div><div className="bt-val" style={{ color: c || 'var(--txt)' }}>{v}</div></div>
   );
 
   const TABS: [typeof boxTab, string][] = [
-    ['box', 'Boxscore joueurs'], ['box-advanced', 'Boxscore joueur avancé'], ['team', 'Collectif'], ['matrix', 'Matrice'],
-    ['systems', 'Systèmes'], ['picks', 'Pick & Roll'],
+    ['box', 'Boxscore joueurs'], ['team', 'Collectif'], ['matrix', 'Matrice'],
+    ['systems', 'Systèmes'],
     ['search', 'Recherche avancée'], ['lineups', 'Lineups'], ['shot', 'Shot chart'], ['video', 'Vidéo'],
   ];
 
@@ -8104,101 +5895,27 @@ function BoxView({ actions, roster, teamId, videoProvider = 'none', videoUrl = '
 
       {/* ===== Boxscore joueurs ===== */}
       {boxTab === 'box' && (
-        <table className="boxscoreClipTable">
-          <thead><tr><th className="l">Joueur</th><th>PTS</th><th>2PTS</th><th>3PTS</th><th>LF</th><th>RO</th><th>RD</th><th>RT</th><th>PD</th><th>INT</th><th>CT</th><th>BP</th><th>FPRO</th><th>FPER</th><th>ÉVAL</th><th>+/-</th></tr></thead>
+        <table>
+          <thead><tr><th className="l">Joueur</th><th>PTS</th><th>2PTS</th><th>3PTS</th><th>LF</th><th>RO</th><th>RD</th><th>RT</th><th>PD</th><th>INT</th><th>CT</th><th>BP</th><th>F</th></tr></thead>
           <tbody>
             {box.map((l: any) => (
-              <tr key={l.p.id} className="clickRow" onClick={() => openPlayerBoxClips(l.p, 'all', 'Toutes les actions')}>
-                <td className="l"><button type="button" className="boxStatBtn player" onClick={(e) => { stopCell(e); openPlayerBoxClips(l.p, 'all', 'Toutes les actions'); }}>#{l.p.num} {l.p.name}</button></td>
-                <td><button type="button" className="boxStatBtn" onClick={(e) => { stopCell(e); openPlayerBoxClips(l.p, 'pts', 'Points marqués'); }}><b>{pts(l)}</b></button></td>
-                <td><button type="button" className="boxStatBtn" onClick={(e) => { stopCell(e); openPlayerBoxClips(l.p, '2pts', `2PTS ${l.p2m}/${l.p2a}`); }}>{l.p2m}/{l.p2a}</button></td>
-                <td><button type="button" className="boxStatBtn" onClick={(e) => { stopCell(e); openPlayerBoxClips(l.p, '3pts', `3PTS ${l.p3m}/${l.p3a}`); }}>{l.p3m}/{l.p3a}</button></td>
-                <td><button type="button" className="boxStatBtn" onClick={(e) => { stopCell(e); openPlayerBoxClips(l.p, 'lf', `LF ${l.ftm}/${l.fta}`); }}>{l.ftm}/{l.fta}</button></td>
-                <td><button type="button" className="boxStatBtn" onClick={(e) => { stopCell(e); openPlayerBoxClips(l.p, 'oreb', 'Rebonds offensifs'); }}>{l.offReb || 0}</button></td>
-                <td><button type="button" className="boxStatBtn" onClick={(e) => { stopCell(e); openPlayerBoxClips(l.p, 'dreb', 'Rebonds défensifs'); }}>{l.defReb || 0}</button></td>
-                <td><button type="button" className="boxStatBtn" onClick={(e) => { stopCell(e); openPlayerBoxClips(l.p, 'reb', 'Tous les rebonds'); }}>{(l.offReb || 0) + (l.defReb || 0)}</button></td>
-                <td><button type="button" className="boxStatBtn" onClick={(e) => { stopCell(e); openPlayerBoxClips(l.p, 'ast', 'Passes décisives'); }}>{l.ast}</button></td>
-                <td><button type="button" className="boxStatBtn" onClick={(e) => { stopCell(e); openPlayerBoxClips(l.p, 'stl', 'Interceptions'); }}>{l.stl}</button></td>
-                <td><button type="button" className="boxStatBtn" onClick={(e) => { stopCell(e); openPlayerBoxClips(l.p, 'blk', 'Contres'); }}>{l.blk}</button></td>
-                <td><button type="button" className="boxStatBtn" onClick={(e) => { stopCell(e); openPlayerBoxClips(l.p, 'tov', 'Pertes de balle'); }}>{l.to}</button></td>
-                <td><button type="button" className="boxStatBtn" onClick={(e) => { stopCell(e); openPlayerBoxClips(l.p, 'fd', 'Fautes provoquées'); }}>{l.fd || 0}</button></td>
-                <td><button type="button" className="boxStatBtn" onClick={(e) => { stopCell(e); openPlayerBoxClips(l.p, 'pf', 'Fautes commises'); }}>{l.pf}</button></td>
-                <td><button type="button" className="boxStatBtn" onClick={(e) => { stopCell(e); openPlayerBoxClips(l.p, 'all', 'Actions utilisées pour l’évaluation'); }}><b>{evalOf(l)}</b></button></td><td><button type="button" className="boxStatBtn" onClick={(e) => { stopCell(e); openList(`#${l.p.num} ${l.p.name} · Actions du +/-`, actions.filter((a) => Array.isArray(a.lineup) && a.lineup.includes(l.p.id))); }}><b style={{ color: plusMinusOf(l.p.id) >= 0 ? 'var(--green)' : 'var(--red)' }}>{plusMinusOf(l.p.id) > 0 ? `+${plusMinusOf(l.p.id)}` : plusMinusOf(l.p.id)}</b></button></td>
+              <tr key={l.p.id} className="clickRow" onClick={() => openList(`#${l.p.num} ${l.p.name}`, actions.filter((a) => a.playerId === l.p.id))}>
+                <td className="l">#{l.p.num} {l.p.name}</td>
+                <td><b>{pts(l)}</b></td>
+                <td>{l.p2m}/{l.p2a}</td><td>{l.p3m}/{l.p3a}</td><td>{l.ftm}/{l.fta}</td>
+                <td>{l.offReb || 0}</td><td>{l.defReb || 0}</td><td>{(l.offReb || 0) + (l.defReb || 0)}</td>
+                <td>{l.ast}</td><td>{l.stl}</td><td>{l.blk}</td><td>{l.to}</td><td>{l.pf}</td>
               </tr>
             ))}
-            <tr className="team-stat-row">
-              <td className="l"><button type="button" className="boxStatBtn player" onClick={(e) => { stopCell(e); openTeamBoxClips('team', 'all', 'Toutes les actions'); }}><b>ÉQUIPE</b></button></td>
-              <td><button type="button" className="boxStatBtn" onClick={(e) => { stopCell(e); openTeamBoxClips('team', 'pts', 'Points marqués'); }}><b>{tot.pts || 0}</b></button></td>
-              <td><button type="button" className="boxStatBtn" onClick={(e) => { stopCell(e); openTeamBoxClips('team', '2pts', '2PTS'); }}>{tot.p2m || 0}/{tot.p2a || 0}</button></td>
-              <td><button type="button" className="boxStatBtn" onClick={(e) => { stopCell(e); openTeamBoxClips('team', '3pts', '3PTS'); }}>{tot.p3m || 0}/{tot.p3a || 0}</button></td>
-              <td><button type="button" className="boxStatBtn" onClick={(e) => { stopCell(e); openTeamBoxClips('team', 'lf', 'Lancers francs'); }}>{tot.ftm || 0}/{tot.fta || 0}</button></td>
-              <td><button type="button" className="boxStatBtn" onClick={(e) => { stopCell(e); openTeamBoxClips('team', 'oreb', 'Rebonds offensifs'); }}>{tot.offReb || 0}</button></td>
-              <td><button type="button" className="boxStatBtn" onClick={(e) => { stopCell(e); openTeamBoxClips('team', 'dreb', 'Rebonds défensifs'); }}>{tot.defReb || 0}</button></td>
-              <td><button type="button" className="boxStatBtn" onClick={(e) => { stopCell(e); openTeamBoxClips('team', 'reb', 'Tous les rebonds'); }}>{(tot.offReb || 0) + (tot.defReb || 0)}</button></td>
-              <td><button type="button" className="boxStatBtn" onClick={(e) => { stopCell(e); openTeamBoxClips('team', 'ast', 'Passes décisives'); }}>{tot.ast || 0}</button></td>
-              <td><button type="button" className="boxStatBtn" onClick={(e) => { stopCell(e); openTeamBoxClips('team', 'stl', 'Interceptions'); }}>{(tot.stl || 0) + teamOnlyStl}</button></td>
-              <td><button type="button" className="boxStatBtn" onClick={(e) => { stopCell(e); openTeamBoxClips('team', 'blk', 'Contres'); }}>{tot.blk || 0}</button></td>
-              <td><button type="button" className="boxStatBtn" onClick={(e) => { stopCell(e); openTeamBoxClips('team', 'tov', 'Pertes de balle'); }}>{tot.to || 0}</button></td>
-              <td><button type="button" className="boxStatBtn" onClick={(e) => { stopCell(e); openTeamBoxClips('team', 'fd', 'Fautes provoquées'); }}>{tot.fd || 0}</button></td>
-              <td><button type="button" className="boxStatBtn" onClick={(e) => { stopCell(e); openTeamBoxClips('team', 'pf', 'Fautes'); }}>{tot.pf || 0}</button></td>
-              <td><button type="button" className="boxStatBtn" onClick={(e) => { stopCell(e); openTeamBoxClips('team', 'all', 'Évaluation collective'); }}>{teamEval + teamOnlyStl}</button></td><td>—</td>
-            </tr>
-            <tr className="team-stat-row opponent-stat-row">
-              <td className="l"><button type="button" className="boxStatBtn player" onClick={(e) => { stopCell(e); openTeamBoxClips('opponent', 'all', 'Toutes les actions'); }}><b>ÉQUIPE ADVERSE</b></button></td>
-              <td><button type="button" className="boxStatBtn" onClick={(e) => { stopCell(e); openTeamBoxClips('opponent', 'pts', 'Points'); }}><b>{oppPts}</b></button></td>
-              <td><button type="button" className="boxStatBtn" onClick={(e) => { stopCell(e); openTeamBoxClips('opponent', '2pts', '2PTS'); }}>{opp2m}/{oppShots2.length}</button></td>
-              <td><button type="button" className="boxStatBtn" onClick={(e) => { stopCell(e); openTeamBoxClips('opponent', '3pts', '3PTS'); }}>{opp3m}/{oppShots3.length}</button></td>
-              <td><button type="button" className="boxStatBtn" onClick={(e) => { stopCell(e); openTeamBoxClips('opponent', 'lf', 'Lancers francs'); }}>{oppFtm}/{oppFta}</button></td>
-              <td><button type="button" className="boxStatBtn" onClick={(e) => { stopCell(e); openTeamBoxClips('opponent', 'oreb', 'Rebonds offensifs'); }}>{oppOreb}</button></td>
-              <td><button type="button" className="boxStatBtn" onClick={(e) => { stopCell(e); openTeamBoxClips('opponent', 'dreb', 'Rebonds défensifs'); }}>{oppDreb}</button></td>
-              <td><button type="button" className="boxStatBtn" onClick={(e) => { stopCell(e); openTeamBoxClips('opponent', 'reb', 'Tous les rebonds'); }}>{oppOreb + oppDreb}</button></td>
-              <td>—</td><td>—</td><td>—</td>
-              <td><button type="button" className="boxStatBtn" onClick={(e) => { stopCell(e); openTeamBoxClips('opponent', 'tov', 'Pertes de balle'); }}>{oppTov}</button></td>
-              <td><button type="button" className="boxStatBtn" onClick={(e) => { stopCell(e); openTeamBoxClips('opponent', 'fd', 'Fautes provoquées'); }}>{oppFd}</button></td>
-              <td><button type="button" className="boxStatBtn" onClick={(e) => { stopCell(e); openTeamBoxClips('opponent', 'pf', 'Fautes'); }}>{oppPf}</button></td><td>—</td><td>—</td>
-            </tr>
-            {box.length === 0 && teamOnlyStl === 0 && <tr><td className="l" colSpan={16}>Aucune stat pour le moment.</td></tr>}
-            {(box.length > 0 || teamOnlyStl > 0) && (
+            {box.length === 0 && <tr><td className="l" colSpan={13}>Aucune stat pour le moment.</td></tr>}
+            {box.length > 0 && (
               <tr className="tot">
                 <td className="l">TOTAL ÉQUIPE</td><td>{tot.pts || 0}</td>
                 <td>{tot.p2m || 0}/{tot.p2a || 0}</td><td>{tot.p3m || 0}/{tot.p3a || 0}</td><td>{tot.ftm || 0}/{tot.fta || 0}</td>
                 <td>{tot.offReb || 0}</td><td>{tot.defReb || 0}</td><td>{(tot.offReb || 0) + (tot.defReb || 0)}</td>
-                <td>{tot.ast || 0}</td><td>{(tot.stl || 0) + teamOnlyStl}</td><td>{tot.blk || 0}</td><td>{tot.to || 0}</td><td>{tot.fd || 0}</td><td>{tot.pf || 0}</td><td><b>{teamEval + teamOnlyStl}</b></td><td>—</td>
+                <td>{tot.ast || 0}</td><td>{tot.stl || 0}</td><td>{tot.blk || 0}</td><td>{tot.to || 0}</td><td>{tot.pf || 0}</td>
               </tr>
             )}
-          </tbody>
-        </table>
-      )}
-
-      {/* ===== Boxscore joueur avancé : 2PTS intérieur / extérieur via Shot Chart ===== */}
-      {boxTab === 'box-advanced' && (
-        <table className="boxscoreClipTable advancedBoxscoreTable">
-          <thead>
-            <tr>
-              <th className="l">Joueur</th><th>PTS</th><th>2PTS INT</th><th>2PTS EXT</th><th>3PTS</th><th>LF</th>
-              <th>RO</th><th>RD</th><th>RT</th><th>PD</th><th>INT</th><th>CT</th><th>BP</th><th>FPRO</th><th>FPER</th><th>ÉVAL</th><th>+/-</th>
-            </tr>
-          </thead>
-          <tbody>
-            {box.map((l: any) => {
-              const twoShots = actions.filter((a) => a.context !== 'defense' && a.playerId === l.p.id && a.actionType === 'tir' && a.shotType === '2PTS');
-              const rangeOf = (a: StatA) => a.shotRange || (['z1','z2','z3','z4'].includes(String(a.zone || '')) ? 'interior' : 'exterior');
-              const inside = twoShots.filter((a) => rangeOf(a) === 'interior');
-              const outside = twoShots.filter((a) => rangeOf(a) === 'exterior');
-              const inMade = inside.filter((a) => a.shotResult === 'made').length;
-              const outMade = outside.filter((a) => a.shotResult === 'made').length;
-              return (
-                <tr key={`advanced:${l.p.id}`} className="clickRow" onClick={() => openPlayerBoxClips(l.p, 'all', 'Toutes les actions')}>
-                  <td className="l"><button type="button" className="boxStatBtn player" onClick={(e) => { stopCell(e); openPlayerBoxClips(l.p, 'all', 'Toutes les actions'); }}>#{l.p.num} {l.p.name}</button></td>
-                  <td><b>{pts(l)}</b></td>
-                  <td><button type="button" className="boxStatBtn" onClick={(e) => { stopCell(e); openList(`#${l.p.num} ${l.p.name} · 2PTS intérieur`, inside); }}>{inMade}/{inside.length}</button></td>
-                  <td><button type="button" className="boxStatBtn" onClick={(e) => { stopCell(e); openList(`#${l.p.num} ${l.p.name} · 2PTS extérieur`, outside); }}>{outMade}/{outside.length}</button></td>
-                  <td>{l.p3m}/{l.p3a}</td><td>{l.ftm}/{l.fta}</td><td>{l.offReb || 0}</td><td>{l.defReb || 0}</td><td>{(l.offReb || 0) + (l.defReb || 0)}</td>
-                  <td>{l.ast}</td><td>{l.stl}</td><td>{l.blk}</td><td>{l.to}</td><td>{l.fd || 0}</td><td>{l.pf}</td><td><b>{evalOf(l)}</b></td>
-                  <td><b style={{ color: plusMinusOf(l.p.id) >= 0 ? 'var(--green)' : 'var(--red)' }}>{plusMinusOf(l.p.id) > 0 ? `+${plusMinusOf(l.p.id)}` : plusMinusOf(l.p.id)}</b></td>
-                </tr>
-              );
-            })}
           </tbody>
         </table>
       )}
@@ -8217,11 +5934,10 @@ function BoxView({ actions, roster, teamId, videoProvider = 'none', videoUrl = '
             <div className="cardrow">
               <button className="boxcard clickable" onClick={() => openList(boxSide === 'attaque' ? 'Toutes les actions attaque' : 'Toutes les actions défense', list)}><div className="bt-lbl2">Actions</div><div className="bt-val">{list.length}</div></button>
               <button className="boxcard clickable" onClick={() => openList('Tirs ' + boxSide, sideShots)}><div className="bt-lbl2">Tirs</div><div className="bt-val">{sideMade}/{sideShots.length}</div></button>
-              <Card t={boxSide === 'attaque' ? 'Points marqués' : 'Points concédés'} v={sidePts} c="var(--gold)" onClick={() => openList(boxSide === 'attaque' ? 'Actions ayant marqué des points' : 'Actions ayant concédé des points', list.filter((a) => boxSide === 'attaque' ? ptsOf(a) > 0 : themPtsOf(a) > 0))} />
-              <Card t="Réussite" v={sidePct + '%'} onClick={() => openList(`Tirs ${boxSide}`, sideShots)} />
-              <Card t="Temps forts" v={rows.length} onClick={() => openList(`Actions avec temps fort · ${boxSide}`, list.filter((a) => Boolean(a.tempsFort)))} />
-              <Card t="Fautes provoquées" v={(boxSide === 'attaque' ? teamBoxClips('fd') : opponentBoxClips('fd')).length} onClick={() => openList(`Fautes provoquées · ${boxSide}`, boxSide === 'attaque' ? teamBoxClips('fd') : opponentBoxClips('fd'))} />
-              <Card t="PPP" v={list.length ? (sidePts / list.length).toFixed(2) : '0.00'} onClick={() => openList(`Possessions · ${boxSide}`, list)} />
+              <Card t={boxSide === 'attaque' ? 'Points marqués' : 'Points concédés'} v={sidePts} c="var(--gold)" />
+              <Card t="Réussite" v={sidePct + '%'} />
+              <Card t="Temps forts" v={rows.length} />
+              <Card t="PPP" v={list.length ? (sidePts / list.length).toFixed(2) : '0.00'} />
             </div>
             <Sec t={boxSide === 'attaque' ? 'Temps forts offensifs' : 'Temps forts défensifs'} />
             {rows.length ? (
@@ -8302,44 +6018,6 @@ function BoxView({ actions, roster, teamId, videoProvider = 'none', videoUrl = '
         );
       })()}
 
-      {/* ===== Rentabilité Pick & Roll par duo Handler / Roller ===== */}
-      {boxTab === 'picks' && (
-        pickDuoRows.length ? (
-          <>
-            <div className="tip" style={{ marginBottom: 8 }}>
-              Rentabilité par duo Handler / Roller · PPP = points produits par action finale codée sur le Pick · clique le duo ou une cellule pour revoir les actions.
-            </div>
-            <table className="matrixClick">
-              <thead><tr><th className="l">Handler</th><th className="l">Roller</th><th>Poss.</th><th>Top</th><th>Side</th><th>Marqué</th><th>Raté</th><th>Perte</th><th>%</th><th>Points</th><th>PPP</th></tr></thead>
-              <tbody>{pickDuoRows.map((r) => {
-                const handler = find(r.handlerId);
-                const roller = find(r.rollerId);
-                const madeList = r.list.filter((a) => a.actionType === 'tir' && a.shotResult === 'made');
-                const missedList = r.list.filter((a) => a.actionType === 'tir' && a.shotResult === 'missed');
-                const lostList = r.list.filter((a) => a.actionType === 'perte');
-                const topList = r.list.filter((a) => a.tempsFort === 'pick_top' || a.tempsFort === 'pick-top');
-                const sideList = r.list.filter((a) => a.tempsFort === 'pick_side' || a.tempsFort === 'pick-side');
-                const duoLabel = `${handler?.name ?? 'Handler'} + ${roller?.name ?? 'Roller'}`;
-                return (
-                  <tr key={r.key}>
-                    <td className="l clickCell" onClick={() => openList(`Pick · ${duoLabel}`, r.list)}>{handler ? `#${handler.num} ${handler.name}` : r.handlerId}</td>
-                    <td className="l clickCell" onClick={() => openList(`Pick · ${duoLabel}`, r.list)}>{roller ? `#${roller.num} ${roller.name}` : r.rollerId}</td>
-                    <td>{r.poss}</td>
-                    <td><button className="cellBtn" onClick={() => openList(`${duoLabel} · Pick Top`, topList)}>{r.top}</button></td>
-                    <td><button className="cellBtn" onClick={() => openList(`${duoLabel} · Pick Side`, sideList)}>{r.side}</button></td>
-                    <td><button className="cellBtn ok" onClick={() => openList(`${duoLabel} · paniers marqués`, madeList)}>{r.made}</button></td>
-                    <td><button className="cellBtn ko" onClick={() => openList(`${duoLabel} · tirs ratés`, missedList)}>{r.missed}</button></td>
-                    <td><button className="cellBtn" onClick={() => openList(`${duoLabel} · pertes`, lostList)}>{r.lost}</button></td>
-                    <td>{r.pct}%</td><td>{r.points}</td>
-                    <td><b style={{ color: r.ppp >= 1 ? 'var(--green)' : r.ppp >= 0.8 ? 'var(--gold)' : 'var(--red)' }}>{r.ppp.toFixed(2)}</b></td>
-                  </tr>
-                );
-              })}</tbody>
-            </table>
-          </>
-        ) : <div className="tip">Aucun Pick Top / Pick Side avec Handler et Roller enregistré pour le moment.</div>
-      )}
-
       {/* ===== Recherche avancée : filtres cumulables ===== */}
       {boxTab === 'search' && (
         <>
@@ -8413,47 +6091,11 @@ function BoxView({ actions, roster, teamId, videoProvider = 'none', videoUrl = '
             <div className="shotPair">
               <div className="shotPanel">
                 <div className="boxsec">Shot chart attaque</div>
-                {Ashot.att === 0 ? <div className="tip">Aucun tir attaque.</div> : <ShotChart
-                  mode="analysis"
-                  size="lg"
-                  showPoints
-                  showDots
-                  showLabels={false}
-                  shots={attackShots}
-                  onZoneClick={(zoneId) => {
-                    const zoneShots = attackShots.filter((a) => {
-                      const actionZone = a.zone || resolveShotZone({ zone: a.zone, courtX: a.courtX, courtY: a.courtY } as any);
-                      return actionZone === zoneId;
-                    });
-                    if (zoneShots.length) openList(`${shotPlayer === 'all' ? 'Tirs équipe' : `Tirs ${find(shotPlayer)?.name || 'joueur'}`} · ${zoneById(zoneId)?.shortLabel || zoneId}`, zoneShots);
-                  }}
-                  onShotClick={(a) => {
-                    const shot = a as unknown as StatA;
-                    openList(`${shotPlayer === 'all' ? 'Tir équipe' : `Tir ${find(shotPlayer)?.name || 'joueur'}`} · ${periodLabel(shot.q)} ${shot.clock}`, [shot]);
-                  }}
-                />}
+                {Ashot.att === 0 ? <div className="tip">Aucun tir attaque.</div> : <ShotChart mode="analysis" size="lg" showPoints showDots shots={attackShots} onShotClick={(a) => setClipAction(a as unknown as StatA)} />}
               </div>
               <div className="shotPanel">
                 <div className="boxsec">Shot chart défense — tirs concédés</div>
-                {Dshot.att === 0 ? <div className="tip">Aucun tir concédé localisé.</div> : <ShotChart
-                  mode="analysis"
-                  size="lg"
-                  showPoints
-                  showDots
-                  showLabels={false}
-                  shots={defenseShots}
-                  onZoneClick={(zoneId) => {
-                    const zoneShots = defenseShots.filter((a) => {
-                      const actionZone = a.zone || resolveShotZone({ zone: a.zone, courtX: a.courtX, courtY: a.courtY } as any);
-                      return actionZone === zoneId;
-                    });
-                    if (zoneShots.length) openList(`Tirs concédés · ${zoneById(zoneId)?.shortLabel || zoneId}`, zoneShots);
-                  }}
-                  onShotClick={(a) => {
-                    const shot = a as unknown as StatA;
-                    openList(`Tir concédé · ${periodLabel(shot.q)} ${shot.clock}`, [shot]);
-                  }}
-                />}
+                {Dshot.att === 0 ? <div className="tip">Aucun tir concédé localisé.</div> : <ShotChart mode="analysis" size="lg" showPoints showDots shots={defenseShots} onShotClick={(a) => setClipAction(a as unknown as StatA)} />}
               </div>
             </div>
           </div>
@@ -8477,7 +6119,7 @@ function BoxView({ actions, roster, teamId, videoProvider = 'none', videoUrl = '
         open={!!clipList || !!clipAction}
         actions={(clipList ? clipList.items : clipAction ? [clipAction] : []) as unknown as ClipAction[]}
         title={clipList ? clipList.title : clipAction ? 'Séquence codée' : ''}
-        videoUrl={(videoProvider === 'local' || videoProvider === 'google_drive') ? videoUrl : ''}
+        videoUrl={videoProvider === 'local' ? videoUrl : ''}
         sync={sync}
         onClose={() => { setClipList(null); setClipAction(null); }}
         onAddToMontage={onAddToMontage ? (a: ClipAction) => onAddToMontage(a as unknown as StatA) : undefined}
@@ -8525,19 +6167,6 @@ function Court() {
 function Style() {
   return (
     <style jsx global>{`
-        .matchReviewConstructorCard{margin-top:12px;border:1px solid rgba(212,162,76,.42);border-radius:16px;background:linear-gradient(180deg,rgba(212,162,76,.08),rgba(107,26,44,.05));padding:14px;display:grid;gap:12px;box-shadow:inset 0 1px 0 rgba(255,255,255,.025)}
-        .matchReviewConstructorTop{display:grid;grid-template-columns:auto minmax(0,1fr) auto;gap:11px;align-items:center}
-        .matchReviewConstructorIcon{width:42px;height:42px;border-radius:12px;display:grid;place-items:center;background:rgba(212,162,76,.12);border:1px solid rgba(212,162,76,.28);font-size:20px}
-        .matchReviewConstructorTop>div:nth-child(2){display:grid;gap:3px}.matchReviewConstructorTop b{font-size:11px;color:#d4a24c;letter-spacing:.04em}.matchReviewConstructorTop small{font-size:9px;color:#9eacc0;line-height:1.45}
-        .matchReviewConstructorTop>button{border:1px solid #d4a24c;border-radius:9px;background:#6b1a2c;color:#fff;padding:9px 12px;font-weight:900;cursor:pointer;white-space:nowrap}
-        .matchReviewConstructorGrid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px}
-        .matchReviewConstructorGrid>div{min-height:92px;border:1px solid #2a3850;border-radius:11px;background:#0f1929;padding:10px;display:grid;align-content:start;gap:4px}
-        .matchReviewConstructorGrid strong{font-size:9px;color:#d4a24c}.matchReviewConstructorGrid b{font-size:10px;color:#fff}.matchReviewConstructorGrid span{font-size:8px;line-height:1.45;color:#8f9db2}
-        .matchReviewConstructorFlow{display:flex;align-items:center;gap:5px;flex-wrap:wrap;padding:8px 10px;border:1px dashed #33415a;border-radius:10px;background:#0b1422}.matchReviewConstructorFlow>span{font-size:8px;color:#78869b;margin-right:3px}.matchReviewConstructorFlow b{font-size:8px;color:#fff;border:1px solid #344159;border-radius:999px;padding:4px 7px;background:#111c2e}.matchReviewConstructorFlow i{font-style:normal;color:#d4a24c;font-size:9px}.matchReviewConstructorNote{margin:0;font-size:8px;color:#7f8ca0}
-
-        @media(max-width:900px){.matchReviewConstructorGrid{grid-template-columns:1fr 1fr}.matchReviewConstructorTop{grid-template-columns:auto 1fr}.matchReviewConstructorTop>button{grid-column:1/-1;width:100%}}
-        @media(max-width:560px){.matchReviewConstructorGrid{grid-template-columns:1fr}}
-
       html,
       body,
       body > div:first-child {
@@ -8618,9 +6247,6 @@ function Style() {
       .cm-logo { width: 34px; height: 34px; border-radius: 9px; background: var(--panel2); display: grid; place-items: center; color: var(--gold); font-size: 17px; }
       .cm-t { font-size: 13px; font-weight: 900; letter-spacing: .03em; } .cm-s { font-size: 9px; color: var(--mute); font-weight: 800; letter-spacing: .12em; }
       .cm-head-r { display: flex; gap: 10px; align-items: center; }
-
-      .projectMenuWrap{position:relative}.menuDots{min-width:44px;justify-content:center;font-size:16px;letter-spacing:2px}.projectMenu{position:absolute;right:0;top:calc(100% + 8px);z-index:2500;width:280px;padding:8px;border:1px solid var(--border);border-radius:12px;background:#0d1626;box-shadow:0 18px 50px rgba(0,0,0,.45);display:grid;gap:4px}.projectMenu button{width:100%;border:0;border-radius:8px;background:transparent;color:#eef3fb;text-align:left;padding:9px 10px;font-size:11px;font-weight:850;cursor:pointer}.projectMenu button:hover{background:rgba(255,255,255,.07)}.projectMenu .danger{color:#ff8792}.layoutToggleRow{display:grid;grid-template-columns:1fr auto 1fr;align-items:center;gap:8px;padding:8px 10px;border-radius:8px;background:rgba(255,255,255,.04);color:#8f9bb0;font-size:10px;font-weight:850}.layoutToggleRow span:last-child{text-align:right}.layoutToggleRow span.on{color:#fff}.layoutToggle{position:relative!important;width:42px!important;height:22px!important;padding:0!important;border:1px solid var(--gold)!important;border-radius:999px!important;background:#111b2d!important}.layoutToggle i{position:absolute;top:3px;left:3px;width:14px;height:14px;border-radius:50%;background:var(--gold);transition:transform .18s ease}.layoutToggle.coding i{transform:translateX(20px)}.projectMenuSep{height:1px;background:var(--border);margin:4px 2px}.trackpadHint{font-size:10px;color:#9eabc0;border:1px solid var(--border);border-radius:999px;padding:5px 9px}.stageHeadWithConfig{position:relative}.stageHeadWithConfig .stageConfigBtn{position:absolute;right:0;top:0;width:30px;height:30px;border:1px solid var(--border);border-radius:8px;background:rgba(212,162,76,.10);color:var(--gold);font-weight:900;cursor:pointer}.panelResizeHandle{min-width:7px;border-radius:999px;background:linear-gradient(180deg,transparent 8%,rgba(212,162,76,.28) 24%,rgba(212,162,76,.58) 50%,rgba(212,162,76,.28) 76%,transparent 92%);cursor:col-resize;display:flex;align-items:center;justify-content:center;touch-action:none;user-select:none}.panelResizeHandle span{font-size:14px;color:#d4a24c;opacity:.8;writing-mode:vertical-rl}.videoMaximized{grid-template-columns:1fr!important}.videoMaximized>.panelResizeHandle,.videoMaximized>.lc-code,.videoMaximized>.lc-right{display:none!important}.videoMaximized>.lc-video{grid-column:1!important;width:100%;min-width:0}.videoMaximized .videoSlot.big{min-height:0;height:100%}.videoMaximized .vplayer{height:100%;max-height:none}.codingLogicSetup{margin-top:10px;border:1px solid var(--border);border-radius:11px;background:var(--panel);padding:10px;display:grid;gap:8px}.codingLogicSetupHead{display:flex;align-items:center;justify-content:space-between;gap:10px}.codingLogicSetupHead>div{display:grid;gap:2px}.codingLogicSetupHead b{font-size:10px;color:var(--gold)}.codingLogicSetupHead small{font-size:9px;color:var(--mute)}.codingLogicSetupHead button,.codingLogicSetupRow button{border:1px solid var(--gold);border-radius:8px;background:rgba(212,162,76,.1);color:var(--gold);padding:7px 9px;font-size:9px;font-weight:900;cursor:pointer}.codingLogicSetupRow{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:7px}.codingLogicSetupRow select{min-width:0;border:1px solid var(--border);border-radius:8px;background:var(--card);color:var(--txt);padding:8px;font-size:10px}.codingLogicPath{display:flex;align-items:center;gap:4px;flex-wrap:wrap}.codingLogicPath span{border:1px solid #35415a;border-radius:999px;background:#111b2d;color:#c4cedd;padding:4px 7px;font-size:8px;font-weight:850}.codingLogicPath i{font-style:normal;color:#65738b;font-size:8px}.codingLogicPath em{flex-basis:100%;font-style:normal;color:#8794aa;font-size:8px;margin-top:2px}.pickActorsBlock{display:grid;gap:7px}.pickActorsSection{display:grid;gap:4px;padding:7px 8px;border:1px solid var(--border);border-radius:10px;background:var(--panel)}.pickActorsSection>b{font-size:9px;color:var(--gold)}.pickActorsSection>small{font-size:8px;color:var(--mute);margin-top:-2px}.pickActorsPlayers{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:5px;align-items:start}.pickActorPlayer{min-width:0;border:1px solid transparent;border-radius:9px;background:transparent;color:var(--txt);padding:3px 2px 2px;display:grid;justify-items:center;gap:2px;cursor:pointer}.pickActorPlayer:hover{background:rgba(255,255,255,.04)}.pickActorPlayer.active{border-color:var(--gold);background:rgba(212,162,76,.10)}.pickActorPlayer:disabled{opacity:.28;cursor:not-allowed}.pickActorPlayer .pickActorAvatar{width:30px!important;height:30px!important;border-radius:50%!important;font-size:9px!important}.pickActorPlayer span{max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:8px;font-weight:850;line-height:1.05}.foulOutcomeGrid{display:grid;grid-template-columns:1fr 1fr;gap:8px}.foulOutcomeGrid .foulTouch{grid-column:1/-1}.foulOutcomeGrid .chip{min-height:44px}.individualDefenseHint{border:1px solid #39465d;border-radius:9px;background:#101a2b;padding:7px 9px;color:#9eabc0;font-size:9px}.individualLinkBox{margin-top:10px;border:1px solid var(--border);background:var(--panel);border-radius:10px;padding:10px}.individualLinkBox label{display:block;color:var(--mute);font-size:10px;font-weight:850;margin-bottom:6px}.individualLinkBox select{width:100%;border:1px solid var(--border);border-radius:8px;background:var(--card);color:var(--txt);padding:8px}.cm-video{grid-template-columns:repeat(4,minmax(0,1fr)) !important}.cm-vid-note{margin-top:6px;font-size:8px;font-weight:850;color:var(--gold)}
-      @media(max-width:900px){.cm-video{grid-template-columns:1fr !important}.projectMenu{position:fixed;right:12px;top:72px;width:min(300px,calc(100vw - 24px))}.panelResizeHandle{display:none!important}.videoMaximized>.lc-code,.videoMaximized>.lc-right{display:none!important}}
       .cm-ghost { display: flex; align-items: center; gap: 7px; background: var(--panel2); border: 1px solid var(--border); border-radius: 10px; padding: 9px 14px; font-size: 12px; font-weight: 800; color: var(--txt); cursor: pointer; }
       .cm-ghost.sm { padding: 6px 11px; font-size: 11px; }
       .cm-body { flex: 1; display: grid; grid-template-columns: 1fr 1fr; gap: 22px; padding: 24px 26px; align-items: start; }
@@ -8667,24 +6293,7 @@ function Style() {
       .cm-p-jersey input { width: 42px; height: 28px; border: 1px solid rgba(212,162,76,.45); border-radius: 8px; background: rgba(5,8,15,.72); color: var(--gold); text-align: center; font-size: 14px; font-weight: 950; outline: none; }
       .cm-p-jersey input:focus { border-color: var(--gold); box-shadow: 0 0 0 2px rgba(212,162,76,.14); }
       .cm-p-pos { font-size: 9.5px; font-weight: 800; margin-top: 3px; color: var(--blue); }
-.cm-no-roster{grid-column:1/-1;display:flex;align-items:center;justify-content:center;gap:8px;padding:12px}.cm-no-roster button{border:1px solid #D4A24C;background:transparent;color:#D4A24C;border-radius:7px;padding:6px 8px;font-weight:900;cursor:pointer}
-            .cm-purpose{display:grid;grid-template-columns:1fr 1fr;gap:9px}.cm-purpose>button{position:relative;display:grid;grid-template-columns:34px 1fr;column-gap:9px;align-items:center;text-align:left;border:1px solid #2b3850;background:#101827;color:#fff;border-radius:12px;padding:11px;cursor:pointer}.cm-purpose>button>span{grid-row:1/3;font-size:22px}.cm-purpose>button>b{font-size:11px}.cm-purpose>button>small{color:#8190a7;font-size:8px}.cm-purpose>button.on{border-color:#D4A24C;background:rgba(212,162,76,.10)}.cm-purpose>button.scout.on{border-color:#8c5bd9;background:rgba(140,91,217,.10)}.cm-scout-empty{margin-top:9px;padding:10px;border:1px dashed #46536a;border-radius:10px;color:#96a2b4;font-size:9px}.cm-scout-empty button{margin-left:7px;border:0;background:#D4A24C;color:#111827;border-radius:7px;padding:6px 8px;font-weight:900;cursor:pointer}@media(max-width:760px){.cm-purpose{grid-template-columns:1fr}}
-      .cm-roster-help { margin: 8px 0 10px; padding: 9px 11px; border: 1px solid rgba(212,162,76,.22); border-radius: 10px; background: rgba(212,162,76,.06); font-size: 10px; line-height: 1.45; color: #aab5c7; }
-      .cm-match-roster { max-height: 310px; overflow: auto; padding-right: 3px; }
-      .cm-p.squad { border-color: rgba(212,162,76,.58); background: rgba(212,162,76,.08); }
-      .cm-squad-toggle { position: absolute; top: 8px; right: 8px; z-index: 2; width: 28px; height: 28px; border-radius: 8px; border: 1px solid #34435e; background: #121d30; color: #cbd5e1; font-weight: 950; cursor: pointer; }
-      .cm-squad-toggle.selected { border-color: var(--gold); background: var(--gold); color: #10131a; }
-      .cm-starters-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--border); }
-      .cm-starter-picker { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 7px; margin-top: 10px; }
-      .cm-starter-card { min-width: 0; border: 1px solid #2b3850; border-radius: 11px; background: #101827; color: #fff; padding: 8px; display: grid; grid-template-columns: 30px 30px 1fr; align-items: center; gap: 6px; text-align: left; cursor: pointer; }
-      .cm-starter-card.on { border-color: var(--gold); background: rgba(212,162,76,.12); }
-      .cm-starter-card .av { width: 28px !important; height: 28px !important; }
-      .cm-starter-card > b { color: var(--gold); font-size: 11px; }
-      .cm-starter-card > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 10px; font-weight: 850; }
-      .cm-starter-card > small { grid-column: 2 / 4; font-size: 8px; color: #7f8da4; font-weight: 900; }
-      .cm-starter-card.on > small { color: var(--gold); }
-      .cm-starter-empty { grid-column: 1 / -1; padding: 16px; border: 1px dashed #34435e; border-radius: 10px; color: #8290a5; text-align: center; font-size: 10px; }
-      .cm-5c.ok { color: var(--gold); }
+      .cm-slots { display: grid; grid-template-columns: repeat(5,1fr); gap: 8px; margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--border); }
       .cm-slot { display: flex; flex-direction: column; gap: 5px; }
       .cm-slot-l { font-size: 9px; font-weight: 800; color: var(--mute); letter-spacing: .04em; text-align: center; }
       .cm-slot-e { border: 1px dashed var(--border); border-radius: 10px; min-height: 54px; display: grid; place-items: center; font-size: 11px; font-weight: 800; color: var(--mute); text-align: center; padding: 4px; }
@@ -8757,25 +6366,6 @@ function Style() {
       .prj-open { border: 1px solid var(--gold); background: rgba(212,162,76,.12); color: var(--gold); border-radius: 8px; padding: 7px 12px; font-size: 12px; font-weight: 900; cursor: pointer; white-space: nowrap; }
       .prj-del { border: 1px solid var(--border); background: var(--panel); color: var(--red); border-radius: 8px; padding: 7px 10px; font-size: 12px; cursor: pointer; }
       .prj-open:disabled, .prj-del:disabled { opacity: .5; cursor: not-allowed; }
-      /* 2026-08-24 · sélection compacte de l'effectif du match */
-      .cm-roster-checklist{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px;max-height:230px;overflow:auto;padding:2px}
-      .cm-roster-line{display:grid;grid-template-columns:22px 48px minmax(0,1fr) 72px;align-items:center;gap:7px;border:1px solid #29364d;background:#101827;border-radius:9px;padding:7px 9px;cursor:pointer;min-width:0}
-      .cm-roster-line:hover{border-color:#465570}.cm-roster-line.on{border-color:rgba(212,162,76,.65);background:rgba(212,162,76,.09)}
-      .cm-roster-line input{width:16px;height:16px;accent-color:var(--gold)}
-      .cm-roster-line-num{color:var(--gold);font-size:10px;font-weight:950}.cm-roster-line-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:10px;font-weight:850}.cm-roster-line-pos{text-align:right;color:#7e8ca3;font-size:9px}
-      .cm-selected-roster{margin-top:12px;border-top:1px solid var(--border);padding-top:12px}.cm-selected-roster-title{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px}.cm-selected-roster-title b{font-size:11px;color:var(--gold);text-transform:uppercase}.cm-selected-roster-title span{font-size:9px;color:#8794a8;font-weight:900}
-      .cm-selected-roster-cards{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:7px}.cm-selected-player{position:relative;display:grid;grid-template-columns:34px minmax(0,1fr) 46px;align-items:center;gap:7px;border:1px solid #2b3850;background:#101827;border-radius:10px;padding:8px;min-width:0}.cm-selected-player>.av{width:32px!important;height:32px!important}.cm-selected-player b,.cm-selected-player small{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.cm-selected-player b{font-size:9.5px}.cm-selected-player small{font-size:8px;color:#77869d;margin-top:2px}.cm-selected-number{display:grid;grid-template-columns:auto 1fr;align-items:center;gap:3px}.cm-selected-number span{font-size:7px;color:#7f8da4;font-weight:900}.cm-selected-number input{width:31px;height:28px;border:1px solid rgba(212,162,76,.45);border-radius:7px;background:#080d17;color:var(--gold);text-align:center;font-weight:950}.cm-selected-remove{position:absolute;top:4px;right:4px;width:24px;height:24px;border:1px solid rgba(239,68,68,.18);border-radius:7px;background:rgba(239,68,68,.05);color:#94a3b8;font-size:11px;display:grid;place-items:center;cursor:pointer}.cm-selected-remove:hover{background:rgba(239,68,68,.14);border-color:rgba(239,68,68,.4);color:#f87171}.cm-clear-roster{width:30px;height:30px;padding:0;border:1px solid rgba(239,68,68,.22);border-radius:8px;background:rgba(239,68,68,.06);color:#cbd5e1;display:grid;place-items:center;font-size:12px;cursor:pointer}.cm-clear-roster:hover{background:rgba(239,68,68,.14);border-color:rgba(239,68,68,.45);color:#f87171}
-      @media(max-width:760px){.cm-roster-checklist{grid-template-columns:1fr}.cm-selected-roster-cards{grid-template-columns:1fr 1fr}}
-
-
-      /* 2026-08-24 · effectif unique + sélection directe du 5 majeur */
-      .cm-selected-player{padding-right:30px}.cm-selected-player{cursor:pointer}.cm-selected-player.starter{border-color:var(--gold);background:rgba(212,162,76,.10);box-shadow:0 0 0 1px rgba(212,162,76,.20) inset}
-      .cm-selected-star{position:absolute;top:5px;right:5px;width:23px;height:23px;border:1px solid #40506a;border-radius:7px;background:#121d30;color:#8593a8;font-size:14px;line-height:1;display:grid;place-items:center;cursor:pointer;z-index:2}.cm-selected-star.on{border-color:var(--gold);background:var(--gold);color:#17130d}.cm-selected-star:hover{border-color:var(--gold);color:var(--gold)}.cm-selected-star.on:hover{color:#17130d}
-      .cm-selected-remove{top:auto!important;bottom:4px!important;right:6px!important}
-      .cm-starting-five-only{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:7px;margin-top:10px}.cm-five-player{min-width:0;border:1px solid var(--gold);border-radius:10px;background:rgba(212,162,76,.10);color:#fff;padding:8px 6px;display:grid;grid-template-columns:28px 30px minmax(0,1fr);align-items:center;gap:5px;text-align:left;cursor:pointer}.cm-five-player .av{width:27px!important;height:27px!important}.cm-five-player>b{color:var(--gold);font-size:9px}.cm-five-player>span{font-size:9px;font-weight:850;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.cm-five-player>small{grid-column:2/4;font-size:7px;color:var(--gold);font-weight:950}.cm-five-empty{grid-column:1/-1;padding:13px;border:1px dashed #34435e;border-radius:9px;color:#8290a5;text-align:center;font-size:9px}.cm-five-empty.compact{padding:7px}
-      @media(max-width:900px){.cm-starting-five-only{grid-template-columns:repeat(3,minmax(0,1fr))}}
-      @media(max-width:600px){.cm-starting-five-only{grid-template-columns:1fr 1fr}}
-
       @media (max-width: 1000px) {
         .cm-body { grid-template-columns: 1fr; }
         .cm-h1 { font-size: 34px; }
@@ -8784,7 +6374,7 @@ function Style() {
       }
       @media (max-width: 600px) {
         .cm-form { grid-template-columns: 1fr; } .cm-video { grid-template-columns: 1fr; }
-        .cm-players { grid-template-columns: 1fr 1fr; }
+        .cm-players { grid-template-columns: 1fr 1fr; } .cm-slots { grid-template-columns: 1fr 1fr; }
         .cm-hero-ic { width: 64px; height: 64px; font-size: 26px; } .cm-h1 { font-size: 26px; }
         .cm-sum-grid { grid-template-columns: 1fr 1fr; } .cm-start { width: 100%; }
       }
@@ -8905,24 +6495,6 @@ function Style() {
       .vmode .vm-tt { font-weight: 900; font-size: 13px; }
       .vmode .vm-sub { font-size: 11px; color: var(--mute); }
       .vid-input { margin-top: 10px; display: grid; gap: 6px; }
-      .drive-picker-main-btn {
-        width: 100%;
-        min-height: 48px;
-        border: 1px solid var(--gold);
-        border-radius: 10px;
-        background: var(--gold);
-        color: #11131d;
-        padding: 12px 18px;
-        font: inherit;
-        font-size: 13px;
-        font-weight: 950;
-        letter-spacing: .01em;
-        cursor: pointer;
-        box-shadow: 0 10px 26px rgba(212,162,76,.24);
-        transition: transform .15s ease, box-shadow .15s ease, opacity .15s ease;
-      }
-      .drive-picker-main-btn:hover:not(:disabled) { transform: translateY(-1px); box-shadow: 0 13px 30px rgba(212,162,76,.34); }
-      .drive-picker-main-btn:disabled { opacity: .55; cursor: wait; }
       .vid-file { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; cursor: pointer; }
       .vid-file input[type="file"] { display: none; }
       .vf-btn {
@@ -9259,32 +6831,6 @@ function Style() {
         color: var(--gold);
       }
 
-
-      .liveControlPane { padding: 10px; }
-      .videoMatchControl { margin: 10px 0 8px; padding: 12px; border: 1px solid rgba(255,255,255,.13); border-radius: 14px; background: rgba(10,10,12,.72); }
-      .videoMatchControl.withoutVideo { margin: 0; min-height: calc(100% - 2px); display:flex; flex-direction:column; justify-content:center; }
-      .vmcPanelTitle { text-align:center; font-size:12px; font-weight:950; letter-spacing:.12em; opacity:.72; margin-bottom:12px; }
-      .vmcTop { display:grid; grid-template-columns:1fr 150px 1fr; gap:10px; align-items:stretch; }
-      .vmcTeam { display:flex; flex-direction:column; align-items:center; justify-content:center; gap:3px; min-width:0; }
-      .vmcTeam b { max-width:100%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:12px; }
-      .vmcTeam strong { font-size:34px; line-height:1; }
-      .vmcTeam small { opacity:.72; font-size:11px; }
-      .vmcClock { display:flex; flex-direction:column; align-items:center; justify-content:center; gap:4px; padding:8px; border-radius:12px; background:rgba(255,255,255,.06); }
-      .vmcClock span { font-size:12px; font-weight:900; letter-spacing:.06em; }
-      .vmcClock b { font-size:28px; font-variant-numeric:tabular-nums; line-height:1; }
-      .vmcStart { width:100%; border:0; border-radius:9px; padding:8px 10px; font-weight:900; cursor:pointer; }
-      .vmcScoreAdjust { display:grid; grid-template-columns:repeat(4,1fr); gap:6px; margin-top:8px; }
-      .vmcScoreAdjust button { border:1px solid rgba(255,255,255,.14); border-radius:8px; padding:7px 5px; background:rgba(255,255,255,.05); color:inherit; font-weight:800; cursor:pointer; }
-      .vmcInterruptRow { position:relative; margin-top:8px; }
-      .vmcInterruptGlobal { width:100%; z-index:20; }
-      .vmcFtInterrupt { width:100%; border:1px solid rgba(255,255,255,.16); border-radius:9px; padding:9px 10px; background:rgba(255,255,255,.06); color:inherit; font-weight:950; cursor:pointer; }
-      .vmcFtInterrupt.on { border-color:var(--gold); color:var(--gold); }
-      .vmcFtChoice { display:grid; grid-template-columns:1fr 1fr; gap:6px; margin-top:6px; }
-      .vmcFtChoice button { border:1px solid rgba(255,255,255,.14); border-radius:8px; padding:8px 6px; background:rgba(255,255,255,.05); color:inherit; font-size:11px; font-weight:900; cursor:pointer; }
-      .vmcFtChoice .ghosty { grid-column:1 / -1; opacity:.75; }
-      .vmcFtTargetTitle { grid-column:1 / -1; font-size:11px; font-weight:950; letter-spacing:.04em; opacity:.85; padding:4px 2px; }
-      .vmcNextQuarter { width:100%; margin-top:9px; border:0; border-radius:11px; padding:11px 14px; font-size:15px; font-weight:950; cursor:pointer; display:flex; justify-content:center; align-items:center; gap:12px; }
-      .vmcNextQuarter span { font-size:28px; line-height:.7; }
       .qstrip {
         flex: 0 0 38px;
         min-height: 38px;
@@ -9453,17 +6999,6 @@ function Style() {
       .tl-evt:hover { outline: 2px solid var(--gold); z-index: 2; }
       .tl-axis { flex: 0 0 auto; display: flex; padding-left: 90px; }
       .tl-axis span { font-size: 10px; color: var(--mute); text-align: center; border-left: 1px solid var(--border); }
-
-
-        .historyCorrectionBackdrop{position:fixed;inset:0;z-index:12050;background:rgba(20,12,15,.58);display:grid;place-items:center;padding:18px}
-        .historyCorrectionModal{width:min(620px,96vw);max-height:88vh;overflow:auto;background:#fff;border-radius:18px;box-shadow:0 24px 80px rgba(0,0,0,.3);color:#24171b}
-        .historyCorrectionHead{display:flex;align-items:flex-start;gap:12px;padding:18px 20px;border-bottom:1px solid #eee}.historyCorrectionHead>div{flex:1;display:flex;flex-direction:column;gap:3px}.historyCorrectionHead strong{font-size:20px}.historyCorrectionHead span{font-size:13px;color:#786a6f}.historyCorrectionHead>button{border:0;background:transparent;font-size:26px;cursor:pointer}
-        .historyCorrectionInfo{margin:16px 20px 0;padding:11px 13px;border-radius:11px;background:#f7f3f4;display:flex;justify-content:space-between;gap:10px;font-size:12px}.historyCorrectionHint{margin:12px 20px;color:#66585d;font-size:13px;line-height:1.45}
-        .historyCorrectionSteps{display:grid;gap:8px;padding:4px 20px 18px}.historyCorrectionSteps>button{display:grid;grid-template-columns:34px 1fr auto;align-items:center;gap:10px;text-align:left;border:1px solid #e5dadd;background:#fff;border-radius:12px;padding:11px;cursor:pointer}.historyCorrectionSteps>button:hover{border-color:#6B1A2C;background:#fff9fa}
-        .historyCorrectionStepNo{width:30px;height:30px;border-radius:50%;display:grid;place-items:center;background:#6B1A2C;color:#fff;font-weight:800}.historyCorrectionSteps b,.historyCorrectionSteps small{display:block}.historyCorrectionSteps small{margin-top:2px;color:#817278}.historyCorrectionSteps em{font-style:normal;font-size:11px;font-weight:800;color:#6B1A2C}
-        .historyCorrectionFoot{padding:12px 20px 18px;border-top:1px solid #eee;display:flex;justify-content:flex-end}.historyCorrectionFoot button{border:1px solid #ddd;background:#fff;border-radius:9px;padding:8px 12px;font-weight:700}
-        @media(max-width:620px){.historyCorrectionInfo{flex-direction:column}.historyCorrectionSteps>button{grid-template-columns:32px 1fr}.historyCorrectionSteps em{grid-column:2}}
-
 
       /* V8 · Popup événement (revoir + modifier) */
       .zpop-card.evt { width: min(560px, 94vw); gap: 10px; }
@@ -10094,20 +7629,6 @@ function Style() {
         border-color: var(--bordeaux2);
         color: #fff;
       }
-      .resultMainGrid { gap: 7px !important; }
-      .resultMainGrid .res { min-height: 50px !important; padding: 8px 10px !important; font-size: 13px !important; }
-      .resultSectionLabel { margin-top: 7px !important; margin-bottom: 4px !important; }
-      .resultShotsGrid { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:7px; }
-      .resultShotsGrid .chip { min-height:40px !important; padding:6px 7px !important; text-align:center; }
-      .resultShotsGrid .chip:nth-child(4),
-      .resultShotsGrid .chip:nth-child(5) { grid-column:span 1; }
-      .resultAllActionsGrid { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 7px; }
-      .resultActionBtn { min-height: 43px !important; padding: 7px 8px !important; display:flex !important; align-items:center; justify-content:center; gap:6px; text-align:center !important; line-height:1.1; }
-      @media (max-height: 820px) {
-        .resultMainGrid .res { min-height: 43px !important; padding: 6px 8px !important; }
-        .resultActionBtn { min-height: 36px !important; padding: 5px 6px !important; font-size: 10.5px !important; }
-        .resultSectionLabel { margin-top: 4px !important; margin-bottom: 3px !important; }
-      }
 
       .sublbl {
         color: var(--mute);
@@ -10380,8 +7901,7 @@ function Style() {
       .box-tab.on { background: var(--card); color: var(--txt); border-color: var(--gold); }
       /* Recherche avancée */
       .srch-filters { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }
-      .srch-filters select { border: 1px solid var(--border); background: var(--card); color: #fff; border-radius: 8px; padding: 7px 9px; font: inherit; font-size: 12px; }
-      .srch-filters select option,.srch-row,.srch-row *,.srch-count{color:#fff!important}
+      .srch-filters select { border: 1px solid var(--border); background: var(--card); color: var(--txt); border-radius: 8px; padding: 7px 9px; font: inherit; font-size: 12px; }
       .srch-reset { border: 1px solid var(--border); background: var(--panel); color: var(--txt); border-radius: 8px; padding: 7px 11px; font-size: 12px; font-weight: 800; cursor: pointer; }
       .srch-count { font-size: 14px; margin: 6px 0 10px; } .srch-count b { color: var(--gold); font-size: 18px; }
       .srch-list { display: flex; flex-direction: column; gap: 5px; }
@@ -10464,8 +7984,6 @@ function Style() {
         font-weight: 800;
       }
 
-      .matchInfoOverlay{position:fixed;inset:0;z-index:3200;background:rgba(0,0,0,.68);display:grid;place-items:center;padding:18px}.matchInfoCard{width:min(620px,96vw);background:#101827;border:1px solid var(--border);border-radius:16px;box-shadow:0 30px 100px rgba(0,0,0,.5);overflow:hidden}.matchInfoHead{display:flex;align-items:center;justify-content:space-between;padding:14px 16px;border-bottom:1px solid var(--border);color:#fff}.matchInfoHead button{border:0;background:transparent;color:#fff;font-size:22px;cursor:pointer}.matchInfoGrid{display:grid;grid-template-columns:1fr 1fr;gap:12px;padding:16px}.matchInfoGrid label{display:grid;gap:6px;color:#fff;font-size:11px;font-weight:850}.matchInfoGrid input,.matchInfoGrid select{border:1px solid var(--border);border-radius:9px;background:var(--card);color:#fff;padding:10px;font:inherit}.matchInfoFoot{display:flex;justify-content:flex-end;gap:8px;padding:0 16px 16px}.matchInfoSave{border:1px solid var(--gold);border-radius:9px;background:var(--gold);color:#10131f;padding:9px 14px;font-weight:950;cursor:pointer}.postShotHint{margin:6px 0 10px;padding:7px 9px;border:1px solid rgba(212,162,76,.35);border-radius:8px;background:rgba(212,162,76,.08);color:#d9c18c;font-size:9px}
-
       .toast {
         position: fixed;
         bottom: 14px;
@@ -10483,19 +8001,6 @@ function Style() {
 
       /* ===================== V6/V7.1 · Responsive ===================== */
 
-      .boxscoreClipTable .boxStatBtn {
-        width:100%; min-width:34px; border:0; background:transparent; color:inherit;
-        font:inherit; font-weight:inherit; padding:7px 5px; border-radius:7px;
-        cursor:pointer; transition:background .15s ease,color .15s ease,transform .15s ease;
-      }
-      .boxscoreClipTable .boxStatBtn:hover { background:rgba(212,162,76,.14); color:var(--gold); }
-      .boxscoreClipTable .boxStatBtn:active { transform:scale(.96); }
-      .boxscoreClipTable .boxStatBtn.player { text-align:left; font-weight:850; }
-      .boxscoreClipTable .team-stat-row td{background:rgba(212,162,76,.08);border-top:2px solid rgba(212,162,76,.5)}
-      .boxscoreClipTable .opponent-stat-row td { background:rgba(107,26,44,.24);border-top:3px solid var(--wine);border-bottom:2px solid rgba(107,26,44,.7) }
-      .boxscoreClipTable .opponent-stat-row .boxStatBtn { color:#fff; }
-      .advancedBoxscoreTable{min-width:1250px}
-
       /* PATCH Boxscore cliquable / joueurs droite propres */
       .clickRow { cursor: pointer; }
       .clickRow:hover, .clickCell:hover { background: rgba(212,162,76,.10); }
@@ -10504,8 +8009,7 @@ function Style() {
       .sideSwitch { display: inline-flex; gap: 8px; padding: 4px; border: 1px solid var(--border); border-radius: 12px; background: rgba(255,255,255,.04); margin: 0 0 10px; }
       .sideSwitch button { border: 0; border-radius: 9px; padding: 8px 14px; background: transparent; color: var(--mute); font-weight: 900; cursor: pointer; }
       .sideSwitch button.on { background: var(--gold); color: #080b17; }
-      .boxcard.clickable { border: 1px solid var(--border); cursor: pointer; text-align: left; color:#fff; }
-      .boxcard.clickable .bt-lbl2,.boxcard.clickable .bt-val{color:#fff!important}
+      .boxcard.clickable { border: 1px solid var(--border); cursor: pointer; text-align: left; }
       .cellBtn { min-width: 54px; height: 32px; border-radius: 9px; border: 1px solid var(--border); background: rgba(255,255,255,.05); color: #fff; font-weight: 950; cursor: pointer; }
       .cellBtn.ok { color: var(--green); }
       .cellBtn.ko { color: var(--red); }
@@ -10601,10 +8105,7 @@ function Style() {
       .ghost { min-height: 40px; padding: 0 13px; white-space: nowrap; }
       .qstrip { height: 30px; padding: 3px 10px; gap: 8px; justify-content: center; }
       .foulbox { display: inline-flex; gap: 5px; align-items: center; }
-      .teamFoulLights { display: inline-flex; align-items: center; gap: 3px; margin-left: 2px; }
-      .teamFoulLights i { width: 7px; height: 7px; border-radius: 50%; background: rgba(255,255,255,.12); border: 1px solid rgba(255,255,255,.12); box-shadow: inset 0 0 0 1px rgba(0,0,0,.12); }
-      .teamFoulLights i.orange { background: #f59e0b; border-color: #f59e0b; box-shadow: 0 0 6px rgba(245,158,11,.72); }
-      .teamFoulLights i.red { background: #ef4444; border-color: #ef4444; box-shadow: 0 0 7px rgba(239,68,68,.82); }
+      .foulbox::after { content: ''; display: inline-flex; width: 46px; height: 7px; border-radius: 999px; background: repeating-linear-gradient(90deg, rgba(212,162,76,.95) 0 7px, transparent 7px 9px); opacity: .35; }
       .detacherRow { flex: 0 0 auto; height: 34px; display: flex; align-items: center; justify-content: center; border-top: 1px solid var(--border); background: rgba(6,9,18,.35); }
       .detachBtn { border: 1px solid rgba(212,162,76,.65); background: rgba(212,162,76,.12); color: var(--gold); border-radius: 10px; padding: 7px 12px; font-size: 12px; font-weight: 900; cursor: pointer; }
       .detachBtn:hover { background: rgba(212,162,76,.22); }
@@ -10619,8 +8120,8 @@ function Style() {
       .rateBox select { border: 1px solid var(--border); background: var(--card); color: var(--txt); border-radius: 7px; padding: 4px 6px; font: inherit; font-size: 11px; }
       .detachState { font-size: 11px; font-weight: 900; color: var(--gold); background: rgba(212,162,76,.12); border: 1px solid rgba(212,162,76,.4); border-radius: 999px; padding: 4px 10px; }
       .syncBadge { font-size: 11px; font-weight: 900; color: #6B1A2C; background: rgba(107,26,44,.08); border: 1px solid rgba(107,26,44,.35); border-radius: 999px; padding: 4px 10px; font-variant-numeric: tabular-nums; }
-      .codeTop { display: grid; grid-template-columns: 30px 1fr; align-items: center; gap: 6px; }
-      .headBack { width: 28px; height: 28px; border-radius: 9px; border: 1px solid var(--border); background: rgba(255,255,255,.05); color: #fff; font-size: 14px; font-weight: 950; cursor: pointer; }
+      .codeTop { display: grid; grid-template-columns: 30px 30px 1fr; align-items: center; gap: 6px; }
+      .headBack, .headUndo { width: 28px; height: 28px; border-radius: 9px; border: 1px solid var(--border); background: rgba(255,255,255,.05); color: #fff; font-size: 14px; font-weight: 950; cursor: pointer; }
       .headBack:disabled { opacity: .25; cursor: not-allowed; }
       .lc-foot { display: none !important; }
       .lc-body { padding: 10px; }
@@ -10654,270 +8155,17 @@ function Style() {
       .historyActionCard { display:grid; grid-template-columns:105px minmax(0,1fr) auto; gap:12px; align-items:center; padding:12px; margin-bottom:8px; border:1px solid #29344a; border-radius:11px; background:linear-gradient(135deg,#121a2a,#0d1422); }
       .historyActionTime b,.historyActionTime span { display:block; }.historyActionTime b{font-size:12px;color:#fff}.historyActionTime span{font-size:10px;color:var(--gold);margin-top:5px}
       .historyActionHeadline { display:flex; gap:10px; align-items:baseline; margin-bottom:7px; }.historyActionHeadline strong{font-size:12px}.historyActionHeadline em{font-size:10px;color:#8490a7;font-style:normal}
-      .historyTags { display:flex; flex-wrap:wrap; gap:5px; }.historyTagEdit{font:inherit;cursor:pointer;text-align:left}
-.historyTag{font-style:normal;border:1px solid #35415a;border-radius:999px;padding:4px 7px;background:#172238;color:#d8dfec;font-size:9px;font-weight:850;text-transform:capitalize}.historyTag.attaque{background:rgba(255,122,24,.14);border-color:#ff7a18;color:#ffad67}.historyTag.defense{background:rgba(50,183,239,.13);border-color:#32b7ef;color:#79d5fa}.historyTag.system{border-color:#7c5cff}.historyTag.tempo{border-color:#d4a24c;color:#f4c665}.historyTag.made{border-color:#22c55e;color:#6ee7a0}.historyTag.missed{border-color:#ef4444;color:#fb8a8a}.historyTag.custom{border-color:#d4a24c;background:rgba(212,162,76,.12)}
+      .historyTags { display:flex; flex-wrap:wrap; gap:5px; }.historyTag{font-style:normal;border:1px solid #35415a;border-radius:999px;padding:4px 7px;background:#172238;color:#d8dfec;font-size:9px;font-weight:850;text-transform:capitalize}.historyTag.attaque{background:rgba(255,122,24,.14);border-color:#ff7a18;color:#ffad67}.historyTag.defense{background:rgba(50,183,239,.13);border-color:#32b7ef;color:#79d5fa}.historyTag.system{border-color:#7c5cff}.historyTag.tempo{border-color:#d4a24c;color:#f4c665}.historyTag.made{border-color:#22c55e;color:#6ee7a0}.historyTag.missed{border-color:#ef4444;color:#fb8a8a}.historyTag.custom{border-color:#d4a24c;background:rgba(212,162,76,.12)}
       .historyActionButtons { display:flex; gap:5px; }.historyActionButtons button{width:32px;height:32px;border-radius:8px}
-      .proTimeline {
-        min-width: 760px;
-        height: 100%;
-        display: flex;
-        flex-direction: column;
-        overflow: hidden;
-        background: #080e19;
-      }
-      .proTimelineToolbar {
-        flex: 0 0 auto;
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-        gap: 12px;
-        padding: 9px 10px;
-        border-bottom: 1px solid #222e42;
-        background: linear-gradient(180deg,#101827,#0b1220);
-      }
-      .proTimelineToolbar b,.proTimelineToolbar span{display:block}
-      .proTimelineToolbar b{color:#fff;font-size:12px}
-      .proTimelineToolbar>div:first-child>span{font-size:9px;color:#7f8ca3;margin-top:3px}
-      .proTimelineTools{display:flex;align-items:center;gap:6px}
-      .proTimelineTools>button,.timelineZoomTools button{
-        border:1px solid #303b52;
-        border-radius:7px;
-        background:#131c2d;
-        color:#aeb9ce;
-        padding:6px 9px;
-        font-size:9px;
-        font-weight:850;
-        cursor:pointer;
-      }
-      .proTimelineTools>button.on{border-color:var(--gold);color:var(--gold);background:rgba(212,162,76,.1)}
-      .proTimelineTools button:disabled{opacity:.35;cursor:not-allowed}
-      .timelineZoomTools{
-        height:29px;
-        display:flex;
-        align-items:center;
-        border:1px solid #303b52;
-        border-radius:8px;
-        overflow:hidden;
-        background:#0d1524;
-      }
-      .timelineZoomTools button{height:27px;min-width:30px;padding:0;border:0;border-radius:0;background:transparent}
-      .timelineZoomTools button:hover:not(:disabled){background:#1a263c;color:#fff}
-      .timelineZoomTools span{min-width:35px;text-align:center;color:var(--gold);font-size:9px;font-weight:950}
-
-      .timelineHorizontalScroll{
-        flex:1;
-        min-height:0;
-        overflow:auto;
-        scrollbar-color:#3b4a65 #0a101c;
-        scrollbar-width:thin;
-      }
-      .timelineCanvas{
-        min-width:100%;
-        transition:width .16s ease;
-      }
-
-      .timelineRuler{
-        position:sticky;
-        top:0;
-        z-index:8;
-        display:grid;
-        grid-template-columns:142px minmax(0,1fr);
-        height:28px;
-        background:#0a111e;
-        border-bottom:1px solid #2b3549;
-      }
-      .timelineRulerLabel{
-        display:flex;
-        align-items:center;
-        padding:0 9px;
-        border-right:1px solid #273247;
-        font-size:8px;
-        font-weight:850;
-        color:#76839b;
-        text-transform:uppercase;
-        letter-spacing:.04em;
-      }
-      .timelineRulerTrack{
-        position:relative;
-        height:28px;
-        background:
-          repeating-linear-gradient(
-            90deg,
-            transparent 0,
-            transparent calc(5% - 1px),
-            rgba(255,255,255,.035) calc(5% - 1px),
-            rgba(255,255,255,.035) 5%
-          );
-      }
-      .timelineRulerTrack span{
-        position:absolute;
-        bottom:5px;
-        transform:translateX(-50%);
-        font-size:7px;
-        color:#748198;
-        font-variant-numeric:tabular-nums;
-        white-space:nowrap;
-      }
-
-      .timelineMatrix{padding-bottom:8px}
-      .timelineGroup{
-        margin:0;
-        border:0;
-        border-bottom:1px solid #202b3f;
-        border-radius:0;
-        overflow:visible;
-      }
-      .timelineGroupTitle{
-        position:sticky;
-        left:0;
-        z-index:6;
-        width:142px;
-        box-sizing:border-box;
-        padding:4px 9px;
-        border-right:1px solid #273247;
-        background:#101827;
-        color:#d4a24c;
-        font-size:8px;
-        font-weight:950;
-        text-transform:uppercase;
-        letter-spacing:.09em;
-      }
-
-      .timelineLane{
-        display:grid;
-        grid-template-columns:142px minmax(0,1fr);
-        min-height:37px;
-        border-top:1px solid #1e293b;
-      }
-      .timelineLane.hidden{min-height:27px;opacity:.5}
-      .timelineLaneLabel{
-        position:sticky;
-        left:0;
-        z-index:5;
-        display:grid;
-        grid-template-columns:8px minmax(0,1fr) auto;
-        gap:7px;
-        align-items:center;
-        border:0;
-        border-right:1px solid #273247;
-        background:#0d1524;
-        color:#dbe3ef;
-        text-align:left;
-        padding:0 9px;
-        cursor:pointer;
-      }
-      .timelineLaneLabel:hover{background:#121d30}
-      .timelineLaneLabel i{width:8px;height:8px;border-radius:2px}
-      .timelineLaneLabel span{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:9px;font-weight:800}
-      .timelineLaneLabel b{font-size:8px;color:#71809a}
-
-      .timelineLaneTrack{
-        position:relative;
-        min-height:37px;
-        overflow:visible;
-        background:
-          repeating-linear-gradient(
-            90deg,
-            transparent 0,
-            transparent calc(5% - 1px),
-            rgba(255,255,255,.025) calc(5% - 1px),
-            rgba(255,255,255,.025) 5%
-          );
-      }
-
-      .timelineEventBlock{
-        position:absolute;
-        top:5px;
-        height:27px;
-        min-width:16px;
-        max-width:none;
-        border:1px solid rgba(255,255,255,.28);
-        border-radius:4px;
-        opacity:.96;
-        cursor:pointer;
-        padding:0 4px;
-        box-shadow:0 1px 4px rgba(0,0,0,.42);
-        overflow:visible;
-        transition:filter .1s ease,transform .1s ease,outline .1s ease;
-      }
-      .timelineEventBlock:hover{
-        filter:brightness(1.18);
-        transform:translateY(-2px);
-        outline:1px solid rgba(255,255,255,.5);
-        z-index:12;
-      }
-      .timelineEventBlock.attack{box-shadow:inset 0 -2px 0 rgba(255,122,24,.8),0 1px 4px rgba(0,0,0,.42)}
-      .timelineEventBlock.defense{box-shadow:inset 0 -2px 0 rgba(50,183,239,.9),0 1px 4px rgba(0,0,0,.42)}
-
-      .timelineEventText{
-        display:block;
-        overflow:hidden;
-        text-overflow:ellipsis;
-        white-space:nowrap;
-        color:#fff;
-        font-size:7px;
-        font-weight:900;
-        text-shadow:0 1px 2px rgba(0,0,0,.9);
-        text-align:left;
-        line-height:25px;
-      }
-      .timelineDurationPill{
-        position:absolute;
-        top:-7px;
-        right:-6px;
-        min-width:26px;
-        height:14px;
-        display:grid;
-        place-items:center;
-        padding:0 4px;
-        border:1px solid rgba(255,255,255,.28);
-        border-radius:999px;
-        background:#060b14;
-        color:#fff;
-        font-size:6.5px;
-        font-weight:950;
-        line-height:1;
-        font-variant-numeric:tabular-nums;
-        box-shadow:0 2px 4px rgba(0,0,0,.45);
-        pointer-events:none;
-      }
-
-      .proTimeline.compact .timelineLane,.proTimeline.compact .timelineLaneTrack{min-height:27px}
-      .proTimeline.compact .timelineEventBlock{top:4px;height:20px}
-      .proTimeline.compact .timelineEventText{line-height:18px}
-      .proTimeline.compact .timelineDurationPill{top:-6px}
-
+      .proTimeline { min-width:760px; }.proTimelineToolbar { display:flex;justify-content:space-between;align-items:center;margin-bottom:10px}.proTimelineToolbar b,.proTimelineToolbar span{display:block}.proTimelineToolbar b{color:#fff}.proTimelineToolbar span{font-size:10px;color:#7f8ca3;margin-top:3px}.proTimelineTools{display:flex;gap:6px}
+      .timelineRuler { display:grid;grid-template-columns:150px minmax(0,1fr);margin-bottom:5px}.timelineRulerLabel{font-size:9px;color:#76839b;padding:0 8px}.timelineRulerTrack{position:relative;height:22px;border-bottom:1px solid #2b3549}.timelineRulerTrack span{position:absolute;transform:translateX(-50%);font-size:8px;color:#6e7b92;bottom:4px}
+      .timelineGroup { margin-bottom:8px;border:1px solid #202b3f;border-radius:9px;overflow:hidden}.timelineGroupTitle{padding:5px 9px;background:#101827;color:#d4a24c;font-size:9px;font-weight:900;text-transform:uppercase;letter-spacing:.08em}
+      .timelineLane { display:grid;grid-template-columns:150px minmax(0,1fr);min-height:34px;border-top:1px solid #1e293b}.timelineLane.hidden{min-height:27px;opacity:.55}.timelineLaneLabel{display:grid;grid-template-columns:8px minmax(0,1fr) auto;gap:7px;align-items:center;border:0;border-right:1px solid #273247;background:#0d1524;color:#dbe3ef;text-align:left;padding:0 9px;cursor:pointer}.timelineLaneLabel i{width:8px;height:8px;border-radius:2px}.timelineLaneLabel span{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:10px}.timelineLaneLabel b{font-size:9px;color:#71809a}.timelineLaneTrack{position:relative;min-height:34px;background:repeating-linear-gradient(90deg,transparent 0,transparent calc(10% - 1px),rgba(255,255,255,.025) calc(10% - 1px),rgba(255,255,255,.025) 10%)}
+      .timelineEventBlock{position:absolute;top:7px;height:20px;min-width:7px;border:1px solid rgba(255,255,255,.32);border-radius:4px;opacity:.92;cursor:pointer;padding:0;box-shadow:0 2px 5px rgba(0,0,0,.3)}.timelineEventBlock:hover{transform:translateY(-2px);z-index:3}.timelineEventBlock span{font-size:8px;font-weight:900;color:#fff;text-shadow:0 1px 2px #000}.proTimeline.compact .timelineLane,.proTimeline.compact .timelineLaneTrack{min-height:25px}.proTimeline.compact .timelineEventBlock{top:4px;height:17px}
       @media(max-width:900px){.historyToolbar{grid-template-columns:1fr}.historyActionCard{grid-template-columns:1fr}.historyActionButtons{justify-content:flex-end}}
-
-      .analysisSwitchBar{flex:0 0 auto;height:38px;display:flex;align-items:flex-end;gap:3px;padding:0 10px;border-bottom:1px solid #273247;background:#0a111e}
-      .analysisSwitchBar button{height:31px;min-width:105px;border:1px solid #303b52;border-bottom:0;border-radius:8px 8px 0 0;background:#111a2b;color:#8794aa;font-size:10px;font-weight:900;cursor:pointer}
-      .analysisSwitchBar button.on{background:#172238;color:#f4c665;border-color:#d4a24c}
-      .historyWritten{height:100%;display:flex;flex-direction:column;min-height:0;overflow:hidden;background:#080e19;padding:8px}
-      .historyToolbar{flex:0 0 auto;display:grid;grid-template-columns:minmax(250px,1fr) auto auto auto;gap:7px;align-items:center;margin-bottom:7px}
-      .historySearchWrap{height:34px;display:flex;align-items:center;gap:7px;border:1px solid #2b354b;border-radius:8px;background:#0b1220;padding:0 9px}
-      .historySearchWrap input{width:100%;height:30px;border:0;outline:0;background:transparent;color:#fff;font:inherit;font-size:10px}
-      .historyScopes{display:flex;gap:4px;flex-wrap:nowrap}
-      .historyScopes button,.historyFilterBtn{height:32px;border:1px solid #303b52;border-radius:7px;background:#131c2d;color:#aeb9ce;padding:0 8px;font-size:9px;font-weight:850;cursor:pointer;white-space:nowrap}
-      .historyScopes button.on,.historyFilterBtn.on{border-color:#d4a24c;color:#d4a24c;background:rgba(212,162,76,.09)}
-      .historyFilterBtn{display:inline-flex;align-items:center;gap:5px}.historyFilterBtn b{min-width:16px;height:16px;display:grid;place-items:center;border-radius:999px;background:#d4a24c;color:#16100b;font-size:7px}
-      .historyCount{color:#7f8ca3;font-size:9px;white-space:nowrap}
-      .historyFilterPanel{flex:0 0 auto;max-height:185px;overflow:auto;margin-bottom:8px;border:1px solid #29344a;border-radius:9px;background:#0d1524;padding:8px}
-      .historyFilterPanelHead{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:8px}.historyFilterPanelHead b,.historyFilterPanelHead span{display:block}.historyFilterPanelHead b{color:#fff;font-size:10px}.historyFilterPanelHead span{color:#7e8ba1;font-size:8px;margin-top:2px}
-      .historyFilterPanelHead button{border:1px solid #35415a;border-radius:7px;background:#121d30;color:#aeb9ce;padding:5px 8px;font-size:8px;cursor:pointer}.historyFilterPanelHead button:disabled{opacity:.35}
-      .historyFilterGrid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}.historyFilterGroup{min-width:0;border-top:1px solid #202c40;padding-top:6px}.historyFilterGroup>b{display:block;color:#d4a24c;font-size:8px;margin-bottom:5px;text-transform:uppercase;letter-spacing:.05em}
-      .historyFilterChecks{display:flex;flex-wrap:wrap;gap:4px}.historyCheck{display:inline-flex;align-items:center;gap:4px;border:1px solid #34415a;border-radius:999px;background:#101827;color:#aab5c8;padding:3px 6px;font-size:8px;cursor:pointer}.historyCheck.on{border-color:#d4a24c;background:rgba(212,162,76,.1);color:#f1c66c}.historyCheck input{width:11px;height:11px;margin:0}
-      .historyWrittenList{flex:1;min-height:0;overflow:auto;padding-right:3px}.historyPossessionBlock{margin-bottom:6px;border:1px solid #29344a;border-radius:9px;overflow:hidden;background:#0c1422}.historyPossessionRow{display:grid;grid-template-columns:28px 95px minmax(0,1fr) auto;gap:8px;align-items:center;padding:8px}
-      .historyExpand{width:24px;height:24px;border:1px solid #34415a;border-radius:6px;background:#111b2d;color:#d4a24c;font-size:16px;font-weight:900;cursor:pointer}.historyExpand.open{border-color:#d4a24c;background:rgba(212,162,76,.1)}.historyExpand:disabled{opacity:.25;cursor:default}
-      .historyActionTime b,.historyActionTime span{display:block}.historyActionTime b{color:#fff;font-size:9px}.historyActionTime span{margin-top:3px;color:#d4a24c;font-size:7px;font-weight:900}
-      .historyActionHeadline{display:flex;align-items:baseline;justify-content:center;gap:7px;margin-bottom:7px;text-align:center}.historyActionHeadline strong{font-size:10px}.historyActionHeadline em{color:#8692a8;font-size:8px;font-style:normal}
-      .historyTags{display:flex;gap:7px;flex-wrap:wrap;justify-content:center;align-items:center}.historyTag{border:1px solid #35415a;border-radius:999px;padding:3px 6px;background:#172238;color:#d8dfec;font-size:9px;font-weight:900;text-transform:capitalize;padding:5px 9px}.historyTag.attaque{border-color:#ff7a18;color:#ffad67}.historyTag.defense{border-color:#32b7ef;color:#79d5fa}.historyTag.system{border-color:#7c5cff}.historyTag.tempo{border-color:#d4a24c;color:#f4c665}.historyTag.made{border-color:#22c55e;color:#6ee7a0}.historyTag.missed{border-color:#ef4444;color:#fb8a8a}
-      .historyActionButtons{display:flex;gap:4px;align-items:center}.historyActionButtons button{height:29px;border-radius:7px}.historyActionButtons .hplay{width:auto;padding:0 8px;display:inline-flex;align-items:center;gap:4px}.historyActionButtons .hplay span{font-size:7px;font-weight:900}.historyActionButtons .historyEditBtn,.historyActionButtons .historyDeleteBtn{width:auto;padding:0 8px;font-size:8px;font-weight:900;white-space:nowrap}.historyActionButtons .historyEditBtn{border:1px solid #596278;background:#121b2a;color:#dce5f3}.historyActionButtons .historyDeleteBtn{border:1px solid rgba(239,68,68,.55);background:rgba(239,68,68,.08);color:#fca5a5}
-      .historyMiniClips{border-top:1px solid #273247;background:#080f1b;padding:6px 9px 8px 37px}.historyMiniClipsHead{display:flex;align-items:center;justify-content:space-between;margin-bottom:3px;color:#7e8ba1;font-size:7px;text-transform:uppercase;letter-spacing:.05em}.historyMiniClipsHead b{color:#d4a24c}
-      .historyMiniClip{display:grid;grid-template-columns:minmax(0,1fr) 45px 28px 28px;gap:6px;align-items:center;min-height:32px;border-top:1px solid #1d293c;padding:4px 5px}.historyMiniClip:first-of-type{border-top:0}.historyMiniClipInfo{min-width:0}.historyMiniClipInfo b{display:block;color:#dfe6f2;font-size:8px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.historyMiniClipInfo small{display:block;margin-top:2px;color:#65738a;font-size:7px}
-      .historyMiniClipDuration{justify-self:end;border:1px solid #36445e;border-radius:999px;padding:3px 5px;color:#f4c665;background:#101827;font-size:7px;font-weight:900}.historyMiniClip button{width:26px;height:26px;border:1px solid #d4a24c;border-radius:6px;background:rgba(212,162,76,.08);color:#d4a24c;cursor:pointer}.historyMiniClip .miniFavorite,.historyActionButtons .hadd{font-size:17px;line-height:1;background:transparent;color:#d4a24c;border:1px solid #596278}.historyMiniClip .miniFavorite.favorite,.historyActionButtons .hadd.favorite{border-color:#d4a24c;color:#d4a24c;background:rgba(212,162,76,.10)}
       .timelinePull { position: fixed; left: 50%; bottom: 12px; transform: translateX(-50%); z-index: 1001; border: 1px solid rgba(212,162,76,.65); background: rgba(10,13,25,.96); color: var(--gold); border-radius: 999px; height: 28px; padding: 0 16px; font-size: 12px; font-weight: 950; cursor: pointer; box-shadow: 0 8px 22px rgba(0,0,0,.35); }
-      .timelinePull.open { bottom: 356px; }
-      .live-strip.timelineOnly { position: fixed; left: 10px; right: 10px; bottom: 8px; z-index: 1000; height: 340px; margin: 0; box-shadow: 0 -18px 40px rgba(0,0,0,.35); animation: slideTimeline .18s ease-out; }
+      .timelinePull.open { bottom: 226px; }
+      .live-strip.timelineOnly { position: fixed; left: 10px; right: 10px; bottom: 8px; z-index: 1000; height: 210px; margin: 0; box-shadow: 0 -18px 40px rgba(0,0,0,.35); animation: slideTimeline .18s ease-out; }
       @keyframes slideTimeline { from { transform: translateY(105%); opacity: .4; } to { transform: translateY(0); opacity: 1; } }
       .floatingPanel { position: fixed; z-index: 1200; right: 14px; top: 88px; width: min(620px, calc(100vw - 28px)); max-height: calc(100vh - 120px); background: rgba(13,17,31,.98); border: 1px solid var(--border); border-radius: 16px; box-shadow: 0 24px 70px rgba(0,0,0,.45); overflow: hidden; display: flex; flex-direction: column; }
       .historyPanel { width: min(840px, calc(100vw - 28px)); }

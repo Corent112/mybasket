@@ -1324,31 +1324,33 @@ const currentRef = useRef(current);
   // ----- Possession du ballon & simulation de phase -----
   const ACTION_KINDS = ['cut', 'dribble', 'screen', 'pass', 'shoot'];
 
-  // Un seul ballon de possession peut être attaché à un joueur.
-  // Compatibilité : les anciens schémas utilisant hasBall=true ou ballCount=2
-  // sont normalisés visuellement et logiquement à un seul ballon.
+  // Ballons attachés à un joueur.
+  // Compatibilité : les anciens schémas utilisent hasBall=true.
+  // Nouveau : ballCount permet 0, 1 ou 2 ballons sur le même joueur.
   const playerBallCount = (player?: Player | null): number => {
     if (!player) return 0;
     const raw = player.ballCount ?? (player.hasBall ? 1 : 0);
     const n = Number(raw);
-    return Number.isFinite(n) && n > 0 ? 1 : 0;
+    return Math.max(0, Math.min(2, Number.isFinite(n) ? Math.round(n) : 0));
   };
 
   const ballPatch = (count: number): Partial<Player> => {
-    const next = Number(count) > 0 ? 1 : 0;
-    return { hasBall: next === 1, ballCount: next };
+    const next = Math.max(0, Math.min(2, Math.round(count || 0)));
+    return { hasBall: next > 0, ballCount: next };
   };
 
-  const offsetBallPoint = (pt: Pt, _index: number, _count: number): Pt => {
-    // Une position unique pour le ballon de possession.
-    return { x: pt.x + 0.020, y: pt.y - 0.020 };
+  const offsetBallPoint = (pt: Pt, index: number, count: number): Pt => {
+    // Le ballon porté reste collé au joueur mais ne masque jamais son numéro.
+    // Les coordonnées sont normalisées sur la largeur du terrain.
+    if (count <= 1) return { x: pt.x + 0.020, y: pt.y - 0.020 };
+    return {
+      x: pt.x + (index === 0 ? -0.020 : 0.020),
+      y: pt.y - 0.020,
+    };
   };
 
-  const addOwnerBall = (owners: Map<string, number>, id: string, _amount = 1) => {
-    // Le ballon de possession est unique : un transfert change de porteur,
-    // il ne crée jamais un second ballon dans le moteur d’animation.
-    owners.clear();
-    owners.set(id, 1);
+  const addOwnerBall = (owners: Map<string, number>, id: string, amount = 1) => {
+    owners.set(id, Math.min(2, (owners.get(id) || 0) + amount));
   };
 
   const removeOwnerBall = (owners: Map<string, number>, id: string, amount = 1) => {
@@ -1925,29 +1927,16 @@ const currentRef = useRef(current);
     }
     const attachedBallCount = playerBallCount(p);
 
-    // Lisibilité du schéma : un joueur qui possède une trajectoire de dribble
-    // doit toujours être identifiable comme porteur, même si le ballon n'est
-    // pas explicitement attaché au Player de la phase (anciens plays/imports).
-    // Cela ne modifie pas la possession logique ni l'animation : c'est
-    // uniquement un indicateur visuel sur le schéma statique.
-    const phase = phasesRef.current[currentRef.current];
-    const hasDribbleAction = Boolean(
-      phase?.lines.some((line) => line.action === 'dribble' && line.sourcePlayerId === p.id)
-    );
-    // Pendant l'animation, le ballon est dessiné exclusivement par anim.balls.
-    // Sinon le fallback visuel du dribble dessine un ballon sur le joueur
-    // ET le moteur d'animation en dessine un second au même moment.
-    const isAnimationFrame = Boolean(animPosRef.current);
-    const visibleBallCount = isAnimationFrame
-      ? attachedBallCount
-      : Math.max(attachedBallCount, hasDribbleAction ? 1 : 0);
-
-    if (visibleBallCount >= 1) {
+    if (attachedBallCount >= 1) {
       // 1er ballon : position historique MyBasket.
       // Ne pas modifier : il reste collé au joueur comme avant.
       drawBall(ctx, x + r * 0.78, y - r * 0.78, Math.max(5, r * 0.42));
     }
 
+    if (attachedBallCount >= 2) {
+      // 2e ballon : même hauteur, symétrique à gauche du joueur.
+      drawBall(ctx, x - r * 0.78, y - r * 0.78, Math.max(5, r * 0.42));
+    }
   };
 
   // géométrie d'un élément (centre + rayon de contour)
@@ -2747,11 +2736,15 @@ if (anim && anim.balls) {
     const owners = new Map<string, number>();
     if (!sched.length) return owners;
 
-    // Une seule source de vérité pour le ballon de possession au démarrage.
-    // Même si un ancien schéma contient plusieurs hasBall/ballCount, on garde
-    // uniquement le premier porteur de la première phase programmée.
-    const carrier = initialCarrier(sched);
-    if (carrier) owners.set(carrier, 1);
+    const firstStart = Math.min(...sched.map((s) => s.start));
+
+    sched.forEach((s) => {
+      if (s.start !== firstStart) return;
+      phasesRef.current[s.idx].players.forEach((p) => {
+        const count = playerBallCount(p);
+        if (count > 0) owners.set(p.id, Math.min(2, Math.max(owners.get(p.id) || 0, count)));
+      });
+    });
 
     return owners;
   };
@@ -2788,11 +2781,12 @@ if (anim && anim.balls) {
     });
 
     // Ballons attachés aux joueurs réellement porteurs à cet instant.
-    owners.forEach((_count, ownerId) => {
+    owners.forEach((count, ownerId) => {
       const pos = playerPosAtClock(sched, ownerId, clock);
       if (!pos) return;
-      // Ballon de possession unique, y compris pendant un dribble.
-      balls.push(offsetBallPoint(pos, 0, 1));
+      for (let i = 0; i < count; i += 1) {
+        balls.push(offsetBallPoint(pos, i, count));
+      }
     });
 
     // Ballons en vol : passe ou tir actif.
@@ -2977,20 +2971,16 @@ animPosRef.current = { players, balls };
   const giveBall = (id: string) => {
     pushHistory();
 
-    updatePhase((ph) => {
-      const selected = ph.players.find((z) => z.id === id);
-      const remove = playerBallCount(selected) > 0;
+    updatePhase((ph) => ({
+      ...ph,
+      players: ph.players.map((z) => {
+        if (z.id !== id) return z;
 
-      return {
-        ...ph,
-        // Une possession = un seul ballon : donner le ballon à un joueur
-        // le retire automatiquement de tous les autres joueurs.
-        players: ph.players.map((z) => ({
-          ...z,
-          ...ballPatch(!remove && z.id === id ? 1 : 0),
-        })),
-      };
-    });
+        // Cycle au clic : 0 ballon → 1 ballon → 2 ballons → 0 ballon.
+        const nextCount = (playerBallCount(z) + 1) % 3;
+        return { ...z, ...ballPatch(nextCount) };
+      }),
+    }));
   };
   const removeBall = (id: string) => { pushHistory(); updatePlayer(id, ballPatch(0)); };
   const deletePlayerById = (id: string) => {
@@ -5017,8 +5007,8 @@ const exportJson = () => {
                         <span>Lié à <b>{editingPlayer.linkedPlayerName}</b> · {editingPlayer.linkedTeamName}</span>
                         <span onClick={() => unlinkPlayer(editingPlayer.id)} style={{ cursor: 'pointer', color: 'var(--rouge)', fontWeight: 600 }}>Dissocier</span>
                       </div>
-                      <button className="btn btn-outline btn-small btn-block" onClick={() => (playerBallCount(editingPlayer) > 0 ? removeBall(editingPlayer.id) : giveBall(editingPlayer.id))}>
-                        {playerBallCount(editingPlayer) > 0 ? '🏀 Enlever le ballon' : '🏀 Donner le ballon à ce joueur'}
+                      <button className="btn btn-outline btn-small btn-block" onClick={() => (playerBallCount(editingPlayer) >= 2 ? removeBall(editingPlayer.id) : giveBall(editingPlayer.id))}>
+                        {playerBallCount(editingPlayer) >= 2 ? '🏀 Enlever les ballons' : playerBallCount(editingPlayer) === 1 ? '🏀 Ajouter un 2e ballon' : '🏀 Donner le ballon à ce joueur'}
                       </button>
                     </div>
                   )}
@@ -5048,10 +5038,10 @@ const exportJson = () => {
                 </div>
 
                 <div style={{ display: 'flex', gap: '.4rem' }}>
-                  {playerBallCount(editingPlayer) > 0
-                    ? <button className="btn btn-outline btn-small btn-block" onClick={() => removeBall(editingPlayer.id)}>🏀 Enlever le ballon</button>
+                  {playerBallCount(editingPlayer) >= 2
+                    ? <button className="btn btn-outline btn-small btn-block" onClick={() => removeBall(editingPlayer.id)}>🏀 Enlever les ballons</button>
                     : <button className="btn btn-outline btn-small btn-block" onClick={() => giveBall(editingPlayer.id)}>
-                        🏀 Donner le ballon
+                        {playerBallCount(editingPlayer) === 1 ? '🏀 Ajouter un 2e ballon' : '🏀 Donner le ballon'}
                       </button>}
                 </div>
 

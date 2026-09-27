@@ -84,6 +84,10 @@ export type ActionClipsModalProps = {
   describe?: (action: ClipAction) => string;
   playerName?: (id: string | null | undefined) => string | undefined;
   tempsFortLabel?: (id: string | null | undefined) => string | undefined;
+  /** Raccourcis de classement configurés depuis la prise de stats. */
+  shortcutThemes?: Array<{ key: string; name: string }>;
+  /** Affecte le clip courant à un thème/raccourci. */
+  onAssignTheme?: (action: ClipAction, themeName: string) => void;
 };
 
 const fmt = (s: number) => {
