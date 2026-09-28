@@ -4502,11 +4502,6 @@ function VideoModal({
 
   useEffect(() => { setIdx(startIndex || 0); }, [startIndex]);
   useEffect(() => { setIdx(0); }, [pf]);
-  useEffect(() => {
-    if (current && playable && videoRef.current && resolvedStart != null) {
-      try { videoRef.current.currentTime = Math.max(0, Number(resolvedStart) || 0); } catch { /* no-op */ }
-    }
-  }, [current, playable, resolvedStart, url]);
 
   useEffect(() => {
     const handleKey = (event: KeyboardEvent) => {
@@ -4537,6 +4532,12 @@ function VideoModal({
   const nativeUrl = current ? actionVideoUrl(current) : null;
   const url = nativeUrl || localMatchVideo?.url || null;
   const playable = !!current && resolvedStart != null && !!url && !actionIsYoutube({ ...current, video_url: url });
+
+  useEffect(() => {
+    if (current && playable && videoRef.current && resolvedStart != null) {
+      try { videoRef.current.currentTime = Math.max(0, Number(resolvedStart) || 0); } catch { /* no-op */ }
+    }
+  }, [current, playable, resolvedStart, url]);
   const elig = current
     ? (playable
         ? { ok: true, reason: "" }
