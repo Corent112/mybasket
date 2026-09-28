@@ -4456,6 +4456,23 @@ function VideoModal({
   const modalSupabase = useMemo(() => createClient(), []);
   const stageRef = useRef<HTMLDivElement | null>(null);
   const videoRef = useRef<HTMLVideoElement | null>(null);
+  // Fiche joueur : une vidéo locale chargée ici est liée au match pendant la
+  // session. Toutes les actions du même match réutilisent le même fichier.
+  const [localMatchVideos, setLocalMatchVideos] = useState<Record<string, { url: string; name: string }>>({});
+  const localMatchVideosRef = useRef<Record<string, { url: string; name: string }>>({});
+  const matchVideoInputRef = useRef<HTMLInputElement | null>(null);
+
+  useEffect(() => {
+    localMatchVideosRef.current = localMatchVideos;
+  }, [localMatchVideos]);
+
+  useEffect(() => {
+    return () => {
+      Object.values(localMatchVideosRef.current).forEach((video) => {
+        try { URL.revokeObjectURL(video.url); } catch { /* no-op */ }
+      });
+    };
+  }, []);
 
   const tfKeys = useMemo(() => Array.from(new Set(actions.map((a) => String(a.temps_fort ?? "")).filter(Boolean))), [actions]);
   const quarters = useMemo(() => Array.from(new Set(actions.map((a) => String(a.quarter ?? "")).filter(Boolean))).sort((a, b) => Number(a) - Number(b)), [actions]);
@@ -4486,10 +4503,10 @@ function VideoModal({
   useEffect(() => { setIdx(startIndex || 0); }, [startIndex]);
   useEffect(() => { setIdx(0); }, [pf]);
   useEffect(() => {
-    if (current && actionIsPlayable(current) && videoRef.current && current.clip_start != null) {
-      try { videoRef.current.currentTime = Number(current.clip_start) || 0; } catch { /* no-op */ }
+    if (current && playable && videoRef.current && resolvedStart != null) {
+      try { videoRef.current.currentTime = Math.max(0, Number(resolvedStart) || 0); } catch { /* no-op */ }
     }
-  }, [current]);
+  }, [current, playable, resolvedStart, url]);
 
   useEffect(() => {
     const handleKey = (event: KeyboardEvent) => {
@@ -4509,9 +4526,40 @@ function VideoModal({
     else if (el?.webkitRequestFullscreen) el.webkitRequestFullscreen();
   };
 
-  const elig = current ? exportEligibility(current) : { ok: false, reason: "Aucune action" };
-  const playable = current ? actionIsPlayable(current) : false;
-  const url = current ? actionVideoUrl(current) : null;
+  const currentMatchId = current?.match_id != null ? String(current.match_id) : "";
+  const localMatchVideo = currentMatchId ? localMatchVideos[currentMatchId] : undefined;
+  const resolvedStart = current
+    ? (current.resolved_clip_start ?? current.clip_start ?? current.video_time ?? current.possession_start ?? null)
+    : null;
+  const resolvedEnd = current
+    ? (current.resolved_clip_end ?? current.clip_end ?? current.possession_end ?? null)
+    : null;
+  const nativeUrl = current ? actionVideoUrl(current) : null;
+  const url = nativeUrl || localMatchVideo?.url || null;
+  const playable = !!current && resolvedStart != null && !!url && !actionIsYoutube({ ...current, video_url: url });
+  const elig = current
+    ? (playable
+        ? { ok: true, reason: "" }
+        : { ok: false, reason: resolvedStart == null ? "Vidéo non synchronisée" : "Source vidéo locale requise" })
+    : { ok: false, reason: "Aucune action" };
+
+  const attachMatchVideo = (file: File | null) => {
+    if (!file || !currentMatchId) return;
+    const nextUrl = URL.createObjectURL(file);
+    setLocalMatchVideos((prev) => {
+      const previous = prev[currentMatchId];
+      if (previous?.url) {
+        try { URL.revokeObjectURL(previous.url); } catch { /* no-op */ }
+      }
+      return { ...prev, [currentMatchId]: { url: nextUrl, name: file.name } };
+    });
+    window.setTimeout(() => {
+      const video = videoRef.current;
+      if (!video || resolvedStart == null) return;
+      try { video.currentTime = Math.max(0, Number(resolvedStart) || 0); } catch { /* no-op */ }
+    }, 80);
+  };
+
   const cat = current ? actionResultCategory(current) : "autre";
   const catLabel = cat === "made" ? "Marqué" : cat === "missed" ? "Manqué" : cat === "fauteProv" ? "Faute provoquée" : cat === "intercept" ? "Intercepté" : cat === "perte" ? "Perte" : actionTypeLabel(current || {});
 
@@ -4675,22 +4723,55 @@ function VideoModal({
           <div className="vr-modal-stage" ref={stageRef}>
             <button className="vr-stage-arrow prev" onClick={goPrev} disabled={safeIdx <= 0} aria-label="Clip précédent">‹</button>
             <button className="vr-stage-arrow next" onClick={goNext} disabled={safeIdx >= list.length - 1} aria-label="Clip suivant">›</button>
-            {current && actionHasClip(current) && current.match_id ? (
+            {current && nativeUrl && actionHasClip(current) && current.match_id ? (
               <LocalClipPlayer
                 clip={current}
                 teamId={teamId}
                 autoPlay
               />
             ) : current && playable && url ? (
-              <video ref={videoRef} src={url} controls playsInline className="vr-modal-video" />
+              <video
+                ref={videoRef}
+                src={url}
+                controls
+                playsInline
+                className="vr-modal-video"
+                onLoadedMetadata={(e) => {
+                  if (resolvedStart == null) return;
+                  try { e.currentTarget.currentTime = Math.max(0, Number(resolvedStart) || 0); } catch { /* no-op */ }
+                }}
+                onTimeUpdate={(e) => {
+                  if (resolvedEnd == null) return;
+                  if (e.currentTarget.currentTime >= Number(resolvedEnd)) e.currentTarget.pause();
+                }}
+              />
             ) : (
               <div className="vr-modal-empty">
-                <span>🎬 Aucune borne vidéo pour cette action</span>
+                <span>🎬 {resolvedStart == null ? "Aucune borne vidéo pour cette action" : "Vidéo du match non chargée"}</span>
                 <small>
                   {current
-                    ? "Cette action ne possède pas encore de repère vidéo."
+                    ? (resolvedStart == null
+                        ? "Cette action ne possède pas encore de repère vidéo."
+                        : "Charge le fichier du match : il sera utilisé pour toutes les actions de ce match.")
                     : "Aucune action."}
                 </small>
+                {current && currentMatchId && (
+                  <>
+                    <input
+                      ref={matchVideoInputRef}
+                      type="file"
+                      accept="video/*"
+                      style={{ display: "none" }}
+                      onChange={(e) => {
+                        attachMatchVideo(e.target.files?.[0] ?? null);
+                        e.currentTarget.value = "";
+                      }}
+                    />
+                    <button className="vr-load-match-video" onClick={() => matchVideoInputRef.current?.click()}>
+                      📂 Charger la vidéo du match
+                    </button>
+                  </>
+                )}
               </div>
             )}
           </div>
@@ -4702,6 +4783,14 @@ function VideoModal({
             <div className="vr-meta-row"><span>🏀 Points</span><b>{current ? matchActionPoints(current) : 0}</b></div>
             <div className="vr-meta-row"><span>⏱ Période</span><b>{current ? quarterLabel(current.quarter) : "—"}</b></div>
             <div className="vr-meta-row"><span>🎬 Match</span><b>{current ? matchLabelOf(current.match_id) : "—"}</b></div>
+            {current && currentMatchId && (
+              <div className="vr-match-video-link">
+                <span>{localMatchVideo ? `📎 ${localMatchVideo.name}` : (nativeUrl ? "✓ Vidéo liée" : "Aucune vidéo chargée")}</span>
+                <button onClick={() => matchVideoInputRef.current?.click()}>
+                  {localMatchVideo || nativeUrl ? "Changer le fichier" : "Charger le fichier"}
+                </button>
+              </div>
+            )}
             <div className="vr-meta-row"><span>🕑 Temps match</span><b>{current ? matchTimeLabel(current) : "—"}</b></div>
             {current && (current.score || current.us_score != null) && (
               <div className="vr-meta-row"><span>🔢 Score</span><b>{current.score ?? `${current.us_score}-${current.them_score}`}</b></div>
@@ -4812,7 +4901,11 @@ function VideoModal({
       </div>
 
       <style jsx>{`
-        .modal-bg { position: fixed; inset: 0; display: grid; place-items: center; padding: 24px; background: rgba(22, 14, 15, .58); backdrop-filter: blur(5px); z-index: 1299; }
+        .vr-load-match-video { margin-top: 14px; border: 1px solid #9e1b32; background: #9e1b32; color: #fff; border-radius: 10px; padding: 10px 14px; font-weight: 800; cursor: pointer; }
+        .vr-match-video-link { display:flex; align-items:center; justify-content:space-between; gap:10px; padding:8px 0; border-bottom:1px solid rgba(158,27,50,.10); font-size:12px; }
+        .vr-match-video-link span { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:#6f5b5e; }
+        .vr-match-video-link button { flex:0 0 auto; border:1px solid rgba(158,27,50,.25); background:#fff; color:#9e1b32; border-radius:8px; padding:6px 9px; font-weight:800; cursor:pointer; }
+                .modal-bg { position: fixed; inset: 0; display: grid; place-items: center; padding: 24px; background: rgba(22, 14, 15, .58); backdrop-filter: blur(5px); z-index: 1299; }
         .vr-modal { position: relative; width: min(920px, 94vw); max-height: min(88vh, 820px); overflow: auto; background: #14100f; color: #f4efe8; border: 1px solid rgba(255,255,255,.11); border-radius: 18px; box-shadow: 0 30px 90px rgba(0,0,0,.62); z-index: 1300; }
         .vr-modal-head { display: flex; align-items: center; justify-content: space-between; gap: 1rem; padding: .8rem 1rem; border-bottom: 1px solid rgba(255,255,255,.08); }
         .vr-modal-head h2 { font-size: .95rem; margin: 0; font-weight: 800; color: #fff; }
