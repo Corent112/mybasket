@@ -2119,6 +2119,27 @@ function hasDefenseMark(ctx: InkContext, candidate: Component, own: Set<number>)
   }
 
   const need = Math.max(3, Math.round((bw / step) * 0.45));
+
+  // Vision 2 papier : sur les schémas photographiés, les défenseurs portent
+  // souvent une marque rouge/rose. On la cherche UNIQUEMENT dans la petite
+  // fenêtre du joueur, avec saturation forte : le parquet ne peut donc plus
+  // déclencher le test comme dans l'ancien moteur.
+  let redLeft = 0;
+  let redRight = 0;
+  for (let y = yTop; y <= yBottom; y += step) {
+    for (let x = x0; x <= x1; x += step) {
+      const [r, g, b] = pixelAt(ctx.px, x, y);
+      const sat = saturationOf(r, g, b);
+      const hue = hueOf(r, g, b);
+      const red = sat >= 0.32 && (hue <= 12 || hue >= 330) && r > g * 1.12 && r > b * 1.08;
+      if (!red) continue;
+      if (x < cx - bw * 0.18) redLeft += 1;
+      else if (x > cx + bw * 0.18) redRight += 1;
+    }
+  }
+  const redNeed = Math.max(2, Math.round((bw / step) * 0.18));
+  if (redLeft >= redNeed && redRight >= redNeed) return true;
+
   if (left < need || right < need || above < need * 2.5) return false;
   // Symétrie : un simple tracé qui passe au-dessus n'est pas une marque.
   return Math.min(left, right) >= Math.max(left, right) * 0.28;
@@ -3263,6 +3284,9 @@ export async function analyseGraphic(
       item.shapeScore >= 0.72 &&
       !hasSplitTop(item.candidate);
 
+    // Un rond seul = attaquant. Une marque défensive structurelle autour du
+    // rond transforme le symbole complet en défenseur.
+    if (item.defenseEvidence >= DEFENSE_SURE) return "defender";
     return circular ? "attacker" : "defender";
   };
 
@@ -3336,11 +3360,12 @@ export async function analyseGraphic(
 
     const type = typeOfRead(item);
     const isDefense = type === "defender";
+    const readableDigit = Boolean(item.digits) && item.confidence > 0.22;
     const confident = Boolean(item.digits) && item.confidence > 0.5;
 
     // Le numéro ne sert JAMAIS à créer/placer/typer un joueur.
     // S'il n'est pas lu, on laisse vide au lieu d'en inventer un.
-    const label = confident ? item.digits : "";
+    const label = readableDigit ? item.digits : "";
     if (!confident) {
       reject("numéro de joueur", "chiffre illisible → numéro provisoire à corriger");
     }
