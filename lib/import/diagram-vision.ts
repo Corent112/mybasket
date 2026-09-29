@@ -3340,18 +3340,32 @@ export async function analyseGraphic(
     if (item.candidate.template?.kind === "attacker") return "attacker";
     if (item.candidate.template?.kind === "defender") return "defender";
 
-    const ratio =
-      Math.max(item.candidate.bw, item.candidate.bh) /
-      Math.max(1, Math.min(item.candidate.bw, item.candidate.bh));
-    const circular =
-      ratio <= 1.28 &&
-      item.shapeScore >= 0.72 &&
-      !hasSplitTop(item.candidate);
+    /*
+     * Vision 2 papier — étape 1 de recalage.
+     *
+     * Jusqu'ici la règle finale était « si ce n'est pas assez circulaire,
+     * alors défenseur ». C'est exactement ce qui transformait les 6 candidats
+     * de la photo réelle en 6 défenseurs : perspective, numéro et anti-aliasing
+     * suffisent à rendre une boîte un peu rectangulaire.
+     *
+     * Désormais un défenseur exige une PREUVE POSITIVE de bras/parenthèses.
+     * L'absence de rondeur n'est plus une preuve de défense.
+     *
+     * Pour cette première passe on exige deux indices structurels lorsque les
+     * bras sont seulement inférés (split + arc). Un indice rouge local seul ne
+     * peut donc plus convertir tout le terrain en défenseurs. Le gabarit
+     * MyBasket reconnu reste, lui, une preuve directe.
+     */
+    const mergedArms = hasSplitTop(item.candidate);
+    const structuralArms =
+      item.defenseEvidence >= 0.78 ||
+      (mergedArms && item.defenseEvidence >= DEFENSE_SURE);
 
-    // Un rond seul = attaquant. Une marque défensive structurelle autour du
-    // rond transforme le symbole complet en défenseur.
-    if (item.defenseEvidence >= DEFENSE_SURE) return "defender";
-    return circular ? "attacker" : "defender";
+    if (structuralArms) return "defender";
+
+    // Numéro seul, numéro entouré, rond légèrement déformé par la photo :
+    // attaquant par défaut. On ne déplace rien ici.
+    return "attacker";
   };
 
   const usedAttack = new Set<string>();
