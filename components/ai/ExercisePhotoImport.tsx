@@ -40,11 +40,7 @@ import ImportReview, { countReviewItems, diagramsOf } from "@/components/import/
 
 type Props = {
   onImported: (exercise: AiExerciseImport) => void | Promise<void>;
-  /**
-   * Vision 2 — palier joueurs uniquement.
-   * Quand actif, le scanner conserve uniquement les joueurs détectés et leur
-   * position. Aucun texte du formulaire, objet ou trajectoire n'est injecté.
-   */
+  /** Vision 2 : ne détecte que les joueurs + leurs numéros/positions. */
   playersOnly?: boolean;
 };
 
@@ -96,6 +92,34 @@ export default function ExercisePhotoImport({ onImported, playersOnly = false }:
     });
   }, []);
 
+  const imageToDataUrl = async (file: File): Promise<string> => {
+    const bitmap = await createImageBitmap(file);
+    const maxSide = 1800;
+    const scale = Math.min(1, maxSide / Math.max(bitmap.width, bitmap.height));
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.max(1, Math.round(bitmap.width * scale));
+    canvas.height = Math.max(1, Math.round(bitmap.height * scale));
+    const ctx = canvas.getContext("2d");
+    if (!ctx) throw new Error("Canvas indisponible");
+    ctx.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+    bitmap.close?.();
+    return canvas.toDataURL("image/jpeg", 0.9);
+  };
+
+  const scanPlayersOnly = async (file: File): Promise<AiExerciseImport> => {
+    setStatus("Vision 2 · repérage du terrain et des joueurs…");
+    const image = await imageToDataUrl(file);
+    const response = await fetch("/api/ai/import/players", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ image }),
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(payload?.error || "La détection des joueurs a échoué.");
+    if (!payload?.exercise) throw new Error("Vision 2 n’a renvoyé aucun résultat.");
+    return payload.exercise as AiExerciseImport;
+  };
+
   const analyze = async (file: File) => {
     const isImage = file.type.startsWith("image/");
     const isVideo = file.type.startsWith("video/");
@@ -117,41 +141,9 @@ export default function ExercisePhotoImport({ onImported, playersOnly = false }:
     setStatus("Préparation…");
 
     try {
-      const scanned = await scanExerciseLocally(file, setStatus);
-      setStatus(playersOnly ? "Vision 2 — validation des joueurs…" : "Nettoyage des liaisons joueurs / trajectoires…");
-      const refined = refineImportedExercise(scanned);
-
-      // Palier Vision 2 : on utilise la géométrie déjà calculée par le scanner,
-      // mais on ne laisse sortir QUE les joueurs. Le formulaire reste intact et
-      // aucun objet / tracé ne peut polluer Plaquette pendant ce benchmark.
-      const exercise: AiExerciseImport = playersOnly
-        ? {
-            ...refined,
-            title: "",
-            organisation: "",
-            deroulement: [],
-            consignes: [],
-            variantes: [],
-            plots: null,
-            ballons: null,
-            paniers: null,
-            joueurs: null,
-            categorie: "— Choisir —",
-            temps: null,
-            themes: [],
-            diagram: { ...refined.diagram, objects: [], actions: [] },
-            diagrams: (refined.diagrams?.length ? refined.diagrams : [refined.diagram]).map((diagram) => ({
-              ...diagram,
-              objects: [],
-              actions: [],
-              notes: "Vision 2 — joueurs uniquement",
-            })),
-            warnings: [
-              ...refined.warnings.filter((warning) => /joueur|défenseur|attaquant|terrain|perspective|numéro/i.test(warning)),
-              "Vision 2 : seuls les joueurs sont importés pour ce test.",
-            ],
-          }
-        : refined;
+      const exercise = playersOnly && isImage
+        ? await scanPlayersOnly(file)
+        : refineImportedExercise(await scanExerciseLocally(file, setStatus));
 
       setPending(exercise);
       setWarnings(exercise.warnings);
@@ -234,9 +226,8 @@ export default function ExercisePhotoImport({ onImported, playersOnly = false }:
         <div>
           <b>Exercice sur papier, capture d’écran ou vidéo ?</b>
           <p>
-            {playersOnly
-              ? "MyBasket repère le terrain puis replace uniquement les attaquants et défenseurs sur Plaquette. Pour ce test, ballon, plots et trajectoires sont volontairement ignorés."
-              : "MyBasket détecte le terrain, redresse la perspective, isole joueurs et tracés puis reconstruit chaque dessin avec les objets natifs de Plaquette. Tu peux aussi glisser-déposer une image ici. Rien n’est enregistré tant que tu n’as pas validé."}
+            MyBasket détecte le terrain, redresse la perspective, isole joueurs et tracés puis reconstruit chaque dessin
+            avec les objets natifs de Plaquette. Tu peux aussi glisser-déposer une image ici. Rien n’est enregistré tant que tu n’as pas validé.
           </p>
         </div>
       </div>
@@ -262,17 +253,7 @@ export default function ExercisePhotoImport({ onImported, playersOnly = false }:
       {step === "summary" && pending && (
         <div style={summaryStyles.panel}>
           <div style={summaryStyles.head}>
-            <strong style={summaryStyles.title}>{playersOnly ? "Joueurs détectés" : "Analyse terminée"}</strong>
-            {playersOnly && (() => {
-              const players = diagramsOf(pending).flatMap((diagram) => diagram.players);
-              const attackers = players.filter((player) => player.team === "att").length;
-              const defenders = players.filter((player) => player.team === "def").length;
-              return (
-                <span style={summaryStyles.line}>
-                  {players.length} joueur{players.length > 1 ? "s" : ""} — {attackers} attaquant{attackers > 1 ? "s" : ""} · {defenders} défenseur{defenders > 1 ? "s" : ""}
-                </span>
-              );
-            })()}
+            <strong style={summaryStyles.title}>Analyse terminée</strong>
             <span style={summaryStyles.line}>
               {diagramCount === 0
                 ? "Aucun schéma détecté"
