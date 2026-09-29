@@ -2099,10 +2099,12 @@ function discCentre(component: Component): { x: number; y: number } {
 function hasDefenseMark(ctx: InkContext, candidate: Component, own: Set<number>): boolean {
   const step = ctx.step;
   const { bw, bh, cx } = candidate;
-  const yTop = candidate.cy - bh * 1.8;
-  const yBottom = candidate.cy - bh * 0.15;
-  const x0 = cx - bw * 1.35;
-  const x1 = cx + bw * 1.35;
+  // Vision 2 papier : les bras/parenthèses peuvent entourer le rond et ne
+  // sont pas forcément uniquement au-dessus. Fenêtre locale complète.
+  const yTop = candidate.cy - bh * 1.45;
+  const yBottom = candidate.cy + bh * 1.45;
+  const x0 = cx - bw * 1.55;
+  const x1 = cx + bw * 1.55;
 
   let left = 0;
   let right = 0;
@@ -3137,12 +3139,41 @@ export async function analyseGraphic(
   });
   if (circleSourceParts.length) {
     const globalInk = mergeComponents(circleSourceParts);
-    const circlePlayers = circlesInComponent(ink, globalInk, unit, MAX_PLAYERS, templateCalibre);
+    const rawCirclePlayers = circlesInComponent(ink, globalInk, unit, MAX_PLAYERS + 8, templateCalibre);
+    const circlePlayers = rawCirclePlayers.filter((candidate) => {
+      // Le logo, les numéros dans la marge et les ronds hors terrain étaient
+      // encore pris pour des joueurs. Le CENTRE doit être dans l'aire de jeu.
+      const insidePlay =
+        candidate.cx >= play.x0 + unit * 0.006 &&
+        candidate.cx <= play.x1 - unit * 0.006 &&
+        candidate.cy >= play.y0 + playH * 0.006 &&
+        candidate.cy <= play.y1 - playH * 0.006;
+      if (!insidePlay) {
+        reject("Vision 2 cercle", "centre hors aire de jeu : marge/logo ignoré");
+        return false;
+      }
+
+      // Un cercle papier doit contenir un numéro/glyphe OU avoir les bras d'un
+      // défenseur. Un panier/rond de terrain vide ne suffit plus.
+      const own = new Set<number>();
+      for (const point of candidate.points) own.add(gridKey(ink, point.x, point.y));
+      const glyph = hasInnerGlyph(ink, candidate);
+      const defenderArms = hasDefenseMark(ink, candidate, own);
+      if (!glyph && !defenderArms) {
+        reject("Vision 2 cercle", "rond sans numéro ni bras : décor/panier ignoré");
+        return false;
+      }
+      return true;
+    }).slice(0, MAX_PLAYERS);
+
     if (circlePlayers.length >= 3) {
       tokenCandidates.length = 0;
       tokenCandidates.push(...circlePlayers);
       fusedComponentsToScan.length = 0;
-      reject("Vision 2 joueurs", `${circlePlayers.length} cercle(s) joueur détecté(s) par centre géométrique`);
+      reject(
+        "Vision 2 joueurs",
+        `${circlePlayers.length} cercle(s) joueur retenu(s) après filtre terrain + numéro/bras`
+      );
     }
   }
 
