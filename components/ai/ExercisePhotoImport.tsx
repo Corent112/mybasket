@@ -40,6 +40,12 @@ import ImportReview, { countReviewItems, diagramsOf } from "@/components/import/
 
 type Props = {
   onImported: (exercise: AiExerciseImport) => void | Promise<void>;
+  /**
+   * Vision 2 — palier joueurs uniquement.
+   * Quand actif, le scanner conserve uniquement les joueurs détectés et leur
+   * position. Aucun texte du formulaire, objet ou trajectoire n'est injecté.
+   */
+  playersOnly?: boolean;
 };
 
 /** Étapes de l'écran : rien → analyse → résumé → correction. */
@@ -50,7 +56,7 @@ const rect = (r: { x0: number; y0: number; x1: number; y1: number }) =>
 
 const plural = (count: number, one: string, many: string) => (count > 1 ? many : one);
 
-export default function ExercisePhotoImport({ onImported }: Props) {
+export default function ExercisePhotoImport({ onImported, playersOnly = false }: Props) {
   const inputRef = useRef<HTMLInputElement | null>(null);
   const [step, setStep] = useState<Step>("idle");
   const [busy, setBusy] = useState(false);
@@ -112,8 +118,40 @@ export default function ExercisePhotoImport({ onImported }: Props) {
 
     try {
       const scanned = await scanExerciseLocally(file, setStatus);
-      setStatus("Nettoyage des liaisons joueurs / trajectoires…");
-      const exercise = refineImportedExercise(scanned);
+      setStatus(playersOnly ? "Vision 2 — validation des joueurs…" : "Nettoyage des liaisons joueurs / trajectoires…");
+      const refined = refineImportedExercise(scanned);
+
+      // Palier Vision 2 : on utilise la géométrie déjà calculée par le scanner,
+      // mais on ne laisse sortir QUE les joueurs. Le formulaire reste intact et
+      // aucun objet / tracé ne peut polluer Plaquette pendant ce benchmark.
+      const exercise: AiExerciseImport = playersOnly
+        ? {
+            ...refined,
+            title: "",
+            organisation: "",
+            deroulement: [],
+            consignes: [],
+            variantes: [],
+            plots: null,
+            ballons: null,
+            paniers: null,
+            joueurs: null,
+            categorie: "— Choisir —",
+            temps: null,
+            themes: [],
+            diagram: { ...refined.diagram, objects: [], actions: [] },
+            diagrams: (refined.diagrams?.length ? refined.diagrams : [refined.diagram]).map((diagram) => ({
+              ...diagram,
+              objects: [],
+              actions: [],
+              notes: "Vision 2 — joueurs uniquement",
+            })),
+            warnings: [
+              ...refined.warnings.filter((warning) => /joueur|défenseur|attaquant|terrain|perspective|numéro/i.test(warning)),
+              "Vision 2 : seuls les joueurs sont importés pour ce test.",
+            ],
+          }
+        : refined;
 
       setPending(exercise);
       setWarnings(exercise.warnings);
@@ -196,8 +234,9 @@ export default function ExercisePhotoImport({ onImported }: Props) {
         <div>
           <b>Exercice sur papier, capture d’écran ou vidéo ?</b>
           <p>
-            MyBasket détecte le terrain, redresse la perspective, isole joueurs et tracés puis reconstruit chaque dessin
-            avec les objets natifs de Plaquette. Tu peux aussi glisser-déposer une image ici. Rien n’est enregistré tant que tu n’as pas validé.
+            {playersOnly
+              ? "MyBasket repère le terrain puis replace uniquement les attaquants et défenseurs sur Plaquette. Pour ce test, ballon, plots et trajectoires sont volontairement ignorés."
+              : "MyBasket détecte le terrain, redresse la perspective, isole joueurs et tracés puis reconstruit chaque dessin avec les objets natifs de Plaquette. Tu peux aussi glisser-déposer une image ici. Rien n’est enregistré tant que tu n’as pas validé."}
           </p>
         </div>
       </div>
@@ -223,7 +262,17 @@ export default function ExercisePhotoImport({ onImported }: Props) {
       {step === "summary" && pending && (
         <div style={summaryStyles.panel}>
           <div style={summaryStyles.head}>
-            <strong style={summaryStyles.title}>Analyse terminée</strong>
+            <strong style={summaryStyles.title}>{playersOnly ? "Joueurs détectés" : "Analyse terminée"}</strong>
+            {playersOnly && (() => {
+              const players = diagramsOf(pending).flatMap((diagram) => diagram.players);
+              const attackers = players.filter((player) => player.team === "att").length;
+              const defenders = players.filter((player) => player.team === "def").length;
+              return (
+                <span style={summaryStyles.line}>
+                  {players.length} joueur{players.length > 1 ? "s" : ""} — {attackers} attaquant{attackers > 1 ? "s" : ""} · {defenders} défenseur{defenders > 1 ? "s" : ""}
+                </span>
+              );
+            })()}
             <span style={summaryStyles.line}>
               {diagramCount === 0
                 ? "Aucun schéma détecté"
