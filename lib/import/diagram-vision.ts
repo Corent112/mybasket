@@ -3113,6 +3113,39 @@ export async function analyseGraphic(
     reject("composante indéterminée", "ni jeton joueur ni trajectoire exploitable");
   }
 
+  /**
+   * VISION 2 PAPIER — PASSAGE CERCLES GLOBAL.
+   *
+   * Sur le benchmark utilisateur, la vérité visuelle est le CERCLE du joueur :
+   * les attaquants sont des ronds numérotés et les défenseurs sont ces mêmes
+   * ronds accompagnés de bras. On cherche donc les cercles sur TOUTE l'encre
+   * utile du terrain, et plus seulement dans les grosses composantes fusionnées.
+   *
+   * Les composantes orange sont exclues AVANT cette recherche : un triangle de
+   * plot ne peut ainsi plus prendre une place de joueur. Les lignes du terrain
+   * sont déjà retirées par makeInkContext().
+   *
+   * Si au moins trois cercles cohérents sont trouvés, cette voie devient la
+   * source de vérité des joueurs. Leur centre est conservé tel quel jusqu'à
+   * Plaquette : aucun "rangement" ultérieur.
+   */
+  const circleSourceParts = components.filter((component) => {
+    const maxSide = Math.max(component.bw, component.bh);
+    if (maxSide < unit * 0.004) return false;
+    if (isOrangeInk(component.color.r, component.color.g, component.color.b)) return false;
+    return true;
+  });
+  if (circleSourceParts.length) {
+    const globalInk = mergeComponents(circleSourceParts);
+    const circlePlayers = circlesInComponent(ink, globalInk, unit, MAX_PLAYERS, templateCalibre);
+    if (circlePlayers.length >= 3) {
+      tokenCandidates.length = 0;
+      tokenCandidates.push(...circlePlayers);
+      fusedComponentsToScan.length = 0;
+      reject("Vision 2 joueurs", `${circlePlayers.length} cercle(s) joueur détecté(s) par centre géométrique`);
+    }
+  }
+
   // Calibre de référence : la taille des jetons DÉJÀ reconnus, c'est-à-dire
   // ceux qui ne touchaient rien. C'est la mesure la plus sûre du schéma.
   const isolatedSizes = tokenCandidates
