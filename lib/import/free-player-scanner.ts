@@ -27,10 +27,20 @@ const numberOf = (value: string): string => {
   return match?.[1] ?? "";
 };
 
-const hasDefenseSignal = (player: AiDiagramPlayer): boolean =>
-  player.type === "defender" ||
-  player.team === "def" ||
-  /def|bras|parenth|arc/i.test(String(player.source ?? ""));
+const hasDefenseSignal = (player: AiDiagramPlayer): boolean => {
+  /*
+   * Le moteur bas niveau fournit désormais le verdict de forme. Ne surtout pas
+   * retransformer un attaquant en défenseur à partir de l'ancien team='def' :
+   * ce champ est précisément celui qui contenait le mauvais verdict des
+   * versions précédentes et annulait la correction de diagram-vision.
+   */
+  if (player.type === "attacker") return false;
+  if (player.type === "defender") return true;
+
+  // Compatibilité uniquement pour une détection ancienne qui n'aurait pas de
+  // type explicite : il faut alors une source qui mentionne réellement les bras.
+  return /bras|parenth/i.test(String(player.source ?? ""));
+};
 
 function playersOf(players: AiDiagramPlayer[]): AiDiagramPlayer[] {
   const out: AiDiagramPlayer[] = [];
