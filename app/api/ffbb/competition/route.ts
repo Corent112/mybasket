@@ -11,115 +11,122 @@ function isoDate(raw:string){const m=raw.toLowerCase().match(/(\d{1,2})\s+([a-z�
 function parseScoreTail(raw:string){
   const cleaned=raw.replace(/\u00a0/g," ").replace(/\s+/g," ").trim();
 
-  // Formats FFBB explicites : 8-72, 72 - 8, 72:68, 72–68...
-  const separated=cleaned.match(/^(.*?)\s+(\d{1,3})\s*[-–—:]\s*(\d{1,3})\s*$/);
+  // Score avec séparateur explicite.
+  const separated=cleaned.match(/^(.*?)\s*(\d{1,3})\s*[-–—:]\s*(\d{1,3})\s*$/);
   if(separated){
     const a=Number(separated[2]),b=Number(separated[3]);
-    if((a===0&&b===0)||!Number.isFinite(a)||!Number.isFinite(b)){
-      return {opponent:separated[1].trim(),a:null as number|null,b:null as number|null};
-    }
+    if((a===0&&b===0)||!Number.isFinite(a)||!Number.isFinite(b)) return {opponent:separated[1].trim(),a:null as number|null,b:null as number|null};
     return {opponent:separated[1].trim(),a,b};
   }
 
-  // Anciennes variantes : "Adversaire 72 68".
+  // FFBB colle actuellement souvent les deux scores au nom :
+  // "BASKET CLUB LIEVINOIS6485" => adversaire + 64 / 85.
+  // On cherche d'abord 3+3, 3+2, 2+3 puis 2+2 pour éviter de découper
+  // arbitrairement des chiffres appartenant au nom de l'équipe.
+  const compactPatterns=[
+    /^(.*\D)(\d{3})(\d{3})$/,
+    /^(.*\D)(\d{3})(\d{2})$/,
+    /^(.*\D)(\d{2})(\d{3})$/,
+    /^(.*\D)(\d{2})(\d{2})$/,
+  ];
+  for(const pattern of compactPatterns){
+    const m=cleaned.match(pattern);
+    if(!m)continue;
+    const a=Number(m[2]),b=Number(m[3]);
+    if(a>200||b>200)continue;
+    if(a===0&&b===0)return {opponent:m[1].trim(),a:null as number|null,b:null as number|null};
+    return {opponent:m[1].trim(),a,b};
+  }
+
   const spaced=cleaned.match(/^(.*?)\s+(\d{1,3})\s+(\d{1,3})\s*$/);
   if(spaced){
     const a=Number(spaced[2]),b=Number(spaced[3]);
-    if((a===0&&b===0)||!Number.isFinite(a)||!Number.isFinite(b)){
-      return {opponent:spaced[1].trim(),a:null as number|null,b:null as number|null};
-    }
+    if((a===0&&b===0)||!Number.isFinite(a)||!Number.isFinite(b))return {opponent:spaced[1].trim(),a:null as number|null,b:null as number|null};
     return {opponent:spaced[1].trim(),a,b};
   }
-
-  // Format compact historique, gardé avec prudence.
-  const glued=cleaned.match(/^(.*?)(\d{2,3})(\d{2,3})$/);
-  if(glued){
-    const a=Number(glued[2]),b=Number(glued[3]);
-    if((a===0&&b===0)||!Number.isFinite(a)||!Number.isFinite(b)){
-      return {opponent:glued[1].trim(),a:null as number|null,b:null as number|null};
-    }
-    return {opponent:glued[1].trim(),a,b};
-  }
-
   return {opponent:cleaned.replace(/\s+(?:0\s*[-–—:]?\s*0|00)\s*$/,"").trim(),a:null as number|null,b:null as number|null};
 }
 
-function parseRanking(rankText:string,teamName:string){
-  const normalizedTeam=teamName.normalize("NFD").replace(/[\u0300-\u036f]/g,"").replace(/\s+/g," ").trim().toLowerCase();
-  if(!rankText||!normalizedTeam)return null;
-  const normalized=rankText.normalize("NFD").replace(/[\u0300-\u036f]/g,"").replace(/\s+/g," ").trim().toLowerCase();
-  const escaped=normalizedTeam.replace(/[.*+?^${}()|[\]\\]/g,"\\$&");
-  const patterns=[
-    new RegExp(`(?:^|\\s)(\\d{1,2})\\s*(?:er|e|eme)?\\s+${escaped}(?:\\s|$)`),
-    new RegExp(`${escaped}\\s+(\\d{1,2})\\s*(?:er|e|eme)?(?:\\s|$)`),
-  ];
-  for(const pattern of patterns){const m=normalized.match(pattern);if(m?.[1])return Number(m[1]);}
-  return null;
-}
-
-function normalizeRankText(value:string){return value.normalize("NFD").replace(/[\u0300-\u036f]/g,"").replace(/\s+/g," ").trim().toLowerCase()}
-function teamNameMatches(cell:string,wanted:string){
-  const n=normalizeRankText(cell);
-  return n===wanted || (wanted.length>5&&n.includes(wanted)) || (n.length>5&&wanted.includes(n));
-}
+function norm(value:string){return value.normalize("NFD").replace(/[\u0300-\u036f]/g,"").replace(/\s+/g," ").trim().toLowerCase()}
+function teamNameMatches(cell:string,wanted:string){const n=norm(cell);return n===wanted||(wanted.length>5&&n.includes(wanted))||(n.length>5&&wanted.includes(n))}
 function parseRankingFromHtml(html:string,teamName:string){
-  const wanted=normalizeRankText(teamName);if(!wanted)return null;
+  const wanted=norm(teamName);if(!wanted)return null;
   const rows=html.match(/<tr\b[\s\S]*?<\/tr>/gi)||[];
-  for(const row of rows){
-    const cells=Array.from(row.matchAll(/<t[dh]\b[^>]*>([\s\S]*?)<\/t[dh]>/gi)).map(m=>text(m[1]));
-    const teamCell=cells.findIndex(cell=>teamNameMatches(cell,wanted));if(teamCell<0)continue;
-    for(let i=teamCell-1;i>=0;i--){
-      const m=cells[i].match(/^\s*(\d{1,2})\s*(?:er|e|eme|ème)?\s*[.)-]?\s*$/i);
-      if(m){const rank=Number(m[1]);if(rank>=1&&rank<=30)return rank;}
+  for(let i=0;i<rows.length;i++){
+    const cells=Array.from(rows[i].matchAll(/<t[dh]\b[^>]*>([\s\S]*?)<\/t[dh]>/gi)).map(m=>text(m[1]));
+    if(!cells.some(c=>teamNameMatches(c,wanted)))continue;
+    for(const c of cells){
+      const m=c.match(/^\s*(\d{1,2})\s*(?:er|e|eme|ème)?\s*$/i);
+      if(m){const rank=Number(m[1]);if(rank>=1&&rank<=30)return rank}
     }
+    // Sur certaines versions FFBB, le rang est hors cellule mais dans la ligne.
+    const rowText=text(rows[i]);
+    const before=rowText.slice(0,Math.max(0,norm(rowText).indexOf(wanted)));
+    const nums=before.match(/\b(\d{1,2})\b/g);
+    if(nums?.length){const rank=Number(nums[nums.length-1]);if(rank>=1&&rank<=30)return rank}
   }
-  const normalized=normalizeRankText(text(html));
-  const escaped=wanted.replace(/[.*+?^${}()|[\]\\]/g,"\\$&");
-  const m=normalized.match(new RegExp(`(?:^|\\s)(\\d{1,2})\\s*(?:er|e|eme)?[.)\\-:]?\\s+${escaped}(?:\\s|$)`));
-  if(m?.[1]){const rank=Number(m[1]);if(rank>=1&&rank<=30)return rank;}
   return null;
 }
-
-function parseStandingsFromHtml(html:string,teamName:string){
-  const wanted=normalizeRankText(teamName);if(!wanted)return null;
-  const rows=html.match(/<tr\b[\s\S]*?<\/tr>/gi)||[];
-  for(const row of rows){
-    const cells=Array.from(row.matchAll(/<t[dh]\b[^>]*>([\s\S]*?)<\/t[dh]>/gi)).map(m=>text(m[1]).replace(/\s+/g," ").trim()).filter(Boolean);
-    if(cells.length<4)continue;
-    const teamIndex=cells.findIndex(c=>teamNameMatches(c,wanted));if(teamIndex<0)continue;
-    let rank:number|null=null;
-    for(let i=teamIndex-1;i>=0;i--){const hit=cells[i].match(/^\s*(\d{1,2})\s*(?:er|e|eme|ème)?\s*$/i);if(hit){rank=Number(hit[1]);break;}}
-    const after=cells.slice(teamIndex+1);
-    const nums=after.flatMap(c=>(c.match(/-?\d+/g)||[]).map(Number)).filter(n=>Number.isFinite(n));
-    const points=nums.length?nums[0]:null,played=nums.length>1?nums[1]:null,wins=nums.length>2?nums[2]:null,losses=nums.length>3?nums[3]:null,draws=nums.length>4?nums[4]:null;
-    if(rank&&played!==null&&wins!==null&&losses!==null)return {rank,points,played,wins,losses,draws:draws??0};
-  }
+function parseRanking(raw:string,teamName:string){
+  const wanted=norm(teamName),all=norm(raw);if(!wanted)return null;
+  const idx=all.indexOf(wanted);if(idx<0)return null;
+  const before=all.slice(Math.max(0,idx-30),idx);
+  const nums=before.match(/\b(\d{1,2})\b/g);
+  if(nums?.length){const rank=Number(nums[nums.length-1]);if(rank>=1&&rank<=30)return rank}
   return null;
+}
+function parseStandingsFromHtml(html:string,teamName:string){
+  const rank=parseRankingFromHtml(html,teamName);
+  return rank?{rank}:null;
 }
 
 function parseTeamPage(html:string,url:string,standingsHtml:string=html,teamNameOverride:string=""){
   const t=text(html);
   const h1=text(html.match(/<h1\b[^>]*>([\s\S]*?)<\/h1>/i)?.[1]||"");
-  const team=teamNameOverride.trim()||h1||(t.match(/#\s*([^#]{2,80}?)\s+(?:NATIONALE|REGIONALE|RÉGIONALE|DEPARTEMENTALE|DÉPARTEMENTALE|PRÉ|PRE|U\d|Calendrier)/i)?.[1]||t.match(/club\s+[^ ]+\s+équipe\s+([^#]{2,70})/i)?.[1]||"Équipe FFBB").trim();
+  const team=teamNameOverride.trim()||h1||(t.match(/#\s*([^#]{2,80}?)\s+(?:NATIONALE|REGIONALE|RÉGIONALE|DEPARTEMENTALE|DÉPARTEMENTALE|PRÉ|PRE|U\d|Calendrier)/i)?.[1]||"Équipe FFBB").trim();
   const competition=(t.match(/((?:NATIONALE|REGIONALE|RÉGIONALE|DEPARTEMENTALE|DÉPARTEMENTALE|PRÉ|PRE)[^|]{2,100})\s+FEDE/i)?.[1]||t.match(/\|\s*([A-Z0-9 -]{2,35})\s*\|\s*Poule/i)?.[1]||"Compétition FFBB").trim();
   const pool=t.match(/Poule\s+([A-Z0-9-]+)/i)?.[1]||text(standingsHtml).match(/Poule\s+([A-Z0-9-]+)/i)?.[1]||"";
   const phase=new URL(url).searchParams.get("phase")||"";
   const matches:Game[]=[];
+
   const re=/#(\d+)\s+(J\d+)?\s*(\d{1,2}\s+(?:janv\.?|févr\.?|mars|avr\.?|mai|juin|juil\.?|août|sept\.?|oct\.?|nov\.?|déc\.?)(?:\s+\d{4})?)\s+(\d{1,2}h\d{2})\s+(Domicile|Extérieur)\s+([^#]{2,180}?)(?=#\d+|Datas de l'équipe|Classement officiel|$)/gi;
   let m;
   while((m=re.exec(t))){
-    const score=parseScoreTail(m[6]);let ourScore:number|null=null,opponentScore:number|null=null;
-    if(score.a!==null&&score.b!==null){
-      if(m[5].toLowerCase().startsWith("dom")){ourScore=score.a;opponentScore=score.b}else{ourScore=score.b;opponentScore=score.a}
-    }
+    const score=parseScoreTail(m[6]);
+    let ourScore:number|null=null,opponentScore:number|null=null;
     const homeAway=m[5].toLowerCase().startsWith("dom")?"home":"away";
+    if(score.a!==null&&score.b!==null){
+      if(homeAway==="home"){ourScore=score.a;opponentScore=score.b}
+      else{ourScore=score.b;opponentScore=score.a}
+    }
     const opponent=score.opponent.replace(/\s+(?:0\s*[-–—:]?\s*0|00)\s*$/,"").trim();
     matches.push({sourceKey:m[1],round:m[2]||"",date:isoDate(m[3]),time:m[4].replace("h",":"),homeAway,homeTeam:homeAway==="home"?team:opponent,awayTeam:homeAway==="away"?team:opponent,opponent,ourScore,opponentScore});
   }
-  const rankText=t.includes("Classement officiel")?t.slice(t.indexOf("Classement officiel"),t.indexOf("Classement officiel")+6000):text(standingsHtml).slice(0,6000);
+
+  // Source de vérité de secours : "Datas de l'équipe".
+  // Elle reste exploitable même lorsque le calendrier FFBB colle les scores au nom.
+  const dataStart=t.indexOf("Datas de l'équipe");
+  const classStart=t.indexOf("Classement officiel");
+  const datas=dataStart>=0?t.slice(dataStart,classStart>dataStart?classStart:dataStart+3000):"";
+  const numbers=(datas.match(/\b\d+\b/g)||[]).map(Number);
+  let teamStats:null|{played:number;wins:number;losses:number;pointsFor:number;pointsAgainst:number}=null;
+  // FFBB expose généralement : MJ, V, D, ... PF, PA. On n'invente pas les
+  // positions si le bloc ne contient pas assez de données : les matchs restent prioritaires.
+  const playedMatches=matches.filter(x=>x.ourScore!==null&&x.opponentScore!==null);
+  if(playedMatches.length){
+    teamStats={
+      played:playedMatches.length,
+      wins:playedMatches.filter(x=>x.ourScore!>x.opponentScore!).length,
+      losses:playedMatches.filter(x=>x.ourScore!<x.opponentScore!).length,
+      pointsFor:playedMatches.reduce((s,x)=>s+(x.ourScore||0),0),
+      pointsAgainst:playedMatches.reduce((s,x)=>s+(x.opponentScore||0),0),
+    };
+  }
+
+  const rankText=classStart>=0?t.slice(classStart,classStart+8000):text(standingsHtml).slice(0,8000);
   const standings=parseStandingsFromHtml(standingsHtml,team);
-  const ranking=standings?.rank??parseRankingFromHtml(standingsHtml,team)??parseRanking(rankText,team);
-  return {mode:"team",team,competition,pool,phase,sourceUrl:url,matches,classementText:rankText,ranking,standings,updatedAt:new Date().toISOString()};
+  const ranking=standings?.rank??parseRanking(rankText,team);
+  return {mode:"team",team,competition,pool,phase,sourceUrl:url,matches,classementText:rankText,ranking,standings,teamStats,datasText:datas,updatedAt:new Date().toISOString()};
 }
 
 export async function GET(req:NextRequest){
@@ -138,16 +145,12 @@ export async function GET(req:NextRequest){
       for(const classementUrl of classementUrls){
         try{
           const response=await fetch(classementUrl,{headers,cache:"no-store",redirect:"follow"});
-          if(response.ok){
-            const candidate=await response.text();
-            if(candidate&&candidate.length>500){standingsHtml=candidate;break;}
-          }
+          if(response.ok){const candidate=await response.text();if(candidate&&candidate.length>500){standingsHtml=candidate;break}}
         }catch(error){console.warn("FFBB classement indisponible",classementUrl,error)}
       }
       return NextResponse.json(parseTeamPage(html,url,standingsHtml,requestedTeam));
     }
-    const teams=teamChoices(html);
-    return NextResponse.json({mode:"choose-team",sourceUrl:url,teams,updatedAt:new Date().toISOString()});
+    return NextResponse.json({mode:"choose-team",sourceUrl:url,teams:teamChoices(html),updatedAt:new Date().toISOString()});
   }catch(e){
     return NextResponse.json({error:e instanceof Error?e.message:"Lecture FFBB impossible"},{status:502});
   }
