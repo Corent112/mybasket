@@ -663,6 +663,27 @@ function useFfbbBannerSummary(teamId: string): FfbbBannerSummary {
                 );
               }
 
+              // Le classement officiel FFBB est prioritaire pour le bilan de championnat.
+              // Il reste disponible même lorsque le calendrier détaillé ne permet pas
+              // d'isoler correctement les scores.
+              const officialStats = parsed?.teamStats;
+              if (officialStats && Number.isFinite(Number(officialStats.played))) {
+                const officialPlayed = Number(officialStats.played);
+                const officialWins = Number(officialStats.wins);
+                const officialLosses = Number(officialStats.losses);
+                const officialFor = Number(officialStats.pointsFor);
+                const officialAgainst = Number(officialStats.pointsAgainst);
+                if (officialPlayed >= 0) {
+                  wins = Number.isFinite(officialWins) ? officialWins : wins;
+                  losses = Number.isFinite(officialLosses) ? officialLosses : losses;
+                  pointsForAverage = officialPlayed > 0 && Number.isFinite(officialFor) ? officialFor / officialPlayed : pointsForAverage;
+                  pointsAgainstAverage = officialPlayed > 0 && Number.isFinite(officialAgainst) ? officialAgainst / officialPlayed : pointsAgainstAverage;
+                  if (officialPlayed > playedOfficial.length) {
+                    playedOfficial.splice(0, playedOfficial.length, ...Array.from({ length: officialPlayed }, () => ({})));
+                  }
+                }
+              }
+
               // La page équipe FFBB est la source de secours quand la table de
               // synchronisation n'a pas encore enregistré un résultat récent.
               const directMatches = Array.isArray(parsed?.matches) ? parsed.matches : [];

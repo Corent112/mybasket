@@ -76,8 +76,51 @@ function parseRanking(raw:string,teamName:string){
   return null;
 }
 function parseStandingsFromHtml(html:string,teamName:string){
+  const wanted=norm(teamName);
+  if(!wanted)return null;
+
+  const tables=html.match(/<table\b[\s\S]*?<\/table>/gi)||[];
+  for(const table of tables){
+    const rows=table.match(/<tr\b[\s\S]*?<\/tr>/gi)||[];
+    const headerRow=rows.find(row=>/<th\b/i.test(row));
+    const headers=headerRow
+      ? Array.from(headerRow.matchAll(/<t[dh]\b[^>]*>([\s\S]*?)<\/t[dh]>/gi)).map(m=>norm(text(m[1])))
+      : [];
+
+    for(const row of rows){
+      const cells=Array.from(row.matchAll(/<t[dh]\b[^>]*>([\s\S]*?)<\/t[dh]>/gi)).map(m=>text(m[1]));
+      if(!cells.some(c=>teamNameMatches(c,wanted)))continue;
+
+      const numeric=(value:string)=>{const m=value.replace(/\s/g,'').match(/^-?\d+$/);return m?Number(m[0]):null};
+      const byHeader=(aliases:string[])=>{
+        const idx=headers.findIndex(h=>aliases.includes(h));
+        return idx>=0&&idx<cells.length?numeric(cells[idx]):null;
+      };
+
+      let rank=byHeader(['cl','class','classement','rang','position']);
+      if(rank===null){
+        for(const c of cells){const m=c.match(/^\s*(\d{1,2})\s*(?:er|e|eme|ème)?\s*$/i);if(m){rank=Number(m[1]);break}}
+      }
+
+      const played=byHeader(['j','mj','joue','joues','matchs','matchs joues']);
+      const wins=byHeader(['g','v','victoire','victoires','gagnes']);
+      const losses=byHeader(['p','d','defaite','defaites','perdus']);
+      const pointsFor=byHeader(['pm','pf','points marques','pts marques']);
+      const pointsAgainst=byHeader(['pe','pa','points encaisses','pts encaisses']);
+
+      return {
+        rank:rank!==null&&rank>=1&&rank<=30?rank:null,
+        played:played!==null&&played>=0?played:null,
+        wins:wins!==null&&wins>=0?wins:null,
+        losses:losses!==null&&losses>=0?losses:null,
+        pointsFor:pointsFor!==null&&pointsFor>=0?pointsFor:null,
+        pointsAgainst:pointsAgainst!==null&&pointsAgainst>=0?pointsAgainst:null,
+      };
+    }
+  }
+
   const rank=parseRankingFromHtml(html,teamName);
-  return rank?{rank}:null;
+  return rank?{rank,played:null,wins:null,losses:null,pointsFor:null,pointsAgainst:null}:null;
 }
 
 function parseTeamPage(html:string,url:string,standingsHtml:string=html,teamNameOverride:string=""){
@@ -126,6 +169,15 @@ function parseTeamPage(html:string,url:string,standingsHtml:string=html,teamName
   const rankText=classStart>=0?t.slice(classStart,classStart+8000):text(standingsHtml).slice(0,8000);
   const standings=parseStandingsFromHtml(standingsHtml,team);
   const ranking=standings?.rank??parseRanking(rankText,team);
+  if(standings && standings.played!==null && standings.wins!==null && standings.losses!==null){
+    teamStats={
+      played:standings.played,
+      wins:standings.wins,
+      losses:standings.losses,
+      pointsFor:standings.pointsFor ?? teamStats?.pointsFor ?? 0,
+      pointsAgainst:standings.pointsAgainst ?? teamStats?.pointsAgainst ?? 0,
+    };
+  }
   return {mode:"team",team,competition,pool,phase,sourceUrl:url,matches,classementText:rankText,ranking,standings,teamStats,datasText:datas,updatedAt:new Date().toISOString()};
 }
 

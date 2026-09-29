@@ -447,6 +447,9 @@ export default function MesEquipesPage() {
 
       let pool = str(primary.pool || primary.pool_name);
       let ranking = "—";
+      let officialGames: number | null = null;
+      let officialWins: number | null = null;
+      let officialLosses: number | null = null;
 
       const rankingConnection = selected.find((row: any) =>
         ffbbKind(row.competition_kind || row.competition) === "championship"
@@ -466,6 +469,15 @@ export default function MesEquipesPage() {
             if (parsed?.pool) pool = str(parsed.pool);
             const pos = Number(parsed?.ranking);
             if (Number.isFinite(pos) && pos > 0) ranking = pos === 1 ? "1er" : `${pos}e`;
+
+            if (parsed?.teamStats) {
+              const games = Number(parsed.teamStats.played);
+              const wins = Number(parsed.teamStats.wins);
+              const losses = Number(parsed.teamStats.losses);
+              if (Number.isFinite(games) && games >= 0) officialGames = games;
+              if (Number.isFinite(wins) && wins >= 0) officialWins = wins;
+              if (Number.isFinite(losses) && losses >= 0) officialLosses = losses;
+            }
 
             const direct = Array.isArray(parsed?.matches)
               ? parsed.matches.map((match: any) => ({
@@ -488,12 +500,12 @@ export default function MesEquipesPage() {
         }
       }
 
-      const wins = playedChampionship.filter((row: any) => ffbbRowScore(row, "us")! > ffbbRowScore(row, "them")!).length;
-      const losses = playedChampionship.filter((row: any) => ffbbRowScore(row, "us")! < ffbbRowScore(row, "them")!).length;
+      const wins = officialWins ?? playedChampionship.filter((row: any) => ffbbRowScore(row, "us")! > ffbbRowScore(row, "them")!).length;
+      const losses = officialLosses ?? playedChampionship.filter((row: any) => ffbbRowScore(row, "us")! < ffbbRowScore(row, "them")!).length;
 
       next[teamId] = {
         connected: true,
-        games: playedOfficial.length,
+        games: officialGames ?? playedOfficial.length,
         wins,
         losses,
         ranking,
