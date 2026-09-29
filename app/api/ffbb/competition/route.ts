@@ -3,7 +3,7 @@ import { NextRequest, NextResponse } from "next/server";
 type TeamChoice={name:string;url:string};
 type Game={sourceKey:string;round:string;date:string;time:string;homeAway:"home"|"away"|"unknown";homeTeam:string;awayTeam:string;opponent:string;ourScore:number|null;opponentScore:number|null};
 const MONTHS:Record<string,string>={janv:"01",févr:"02",mars:"03",avr:"04",mai:"05",juin:"06",juil:"07",août:"08",sept:"09",oct:"10",nov:"11",déc:"12"};
-function text(html:string){return html.replace(/<script[\s\S]*?<\/script>/gi," ").replace(/<style[\s\S]*?<\/style>/gi," ").replace(/<[^>]+>/g," ").replace(/&nbsp;|&#160;/g," ").replace(/&amp;/g,"&").replace(/&#39;|&apos;/g,"'").replace(/&quot;/g,'"').replace(/\s+/g," ").trim()}
+function text(html:string){return html.replace(/<script[\s\S]*?<\/script>/gi," ").replace(/<style[\s\S]*?<\/style>/gi," ").replace(/<[^>]+>/g," ").replace(/!\[[^\]]*\]\([^)]*\)/g," ").replace(/\[([^\]]+)\]\([^)]*\)/g,"$1").replace(/^#{1,6}\s+/gm," ").replace(/[|*_`]+/g," ").replace(/&nbsp;|&#160;/g," ").replace(/&amp;/g,"&").replace(/&#39;|&apos;/g,"'").replace(/&quot;/g,'"').replace(/\s+/g," ").trim()}
 function abs(href:string){return new URL(href,"https://competitions.ffbb.com").toString()}
 function teamChoices(html:string):TeamChoice[]{const out=new Map<string,TeamChoice>();const re=/<a[^>]+href=["']([^"']*\/equipes\/\d+[^"']*)["'][^>]*>([\s\S]*?)<\/a>/gi;let m;while((m=re.exec(html))){const name=text(m[2]);if(name&&name.length<120)out.set(abs(m[1]),{name,url:abs(m[1])})}return [...out.values()]}
 function isoDate(raw:string){const m=raw.toLowerCase().match(/(\d{1,2})\s+([a-zéû\.]+)(?:\s+(\d{4}))?/i);if(!m)return raw;const key=Object.keys(MONTHS).find(k=>m[2].startsWith(k));if(!key)return raw;const y=m[3]||String(new Date().getFullYear());return `${y}-${MONTHS[key]}-${m[1].padStart(2,"0")}`}
@@ -151,7 +151,6 @@ function parseTeamPage(html:string,url:string,standingsHtml:string=html,teamName
   const dataStart=t.indexOf("Datas de l'équipe");
   const classStart=t.indexOf("Classement officiel");
   const datas=dataStart>=0?t.slice(dataStart,classStart>dataStart?classStart:dataStart+3000):"";
-  const numbers=(datas.match(/\b\d+\b/g)||[]).map(Number);
   let teamStats:null|{played:number;wins:number;losses:number;pointsFor:number;pointsAgainst:number}=null;
   // FFBB expose généralement : MJ, V, D, ... PF, PA. On n'invente pas les
   // positions si le bloc ne contient pas assez de données : les matchs restent prioritaires.
@@ -164,6 +163,15 @@ function parseTeamPage(html:string,url:string,standingsHtml:string=html,teamName
       pointsFor:playedMatches.reduce((s,x)=>s+(x.ourScore||0),0),
       pointsAgainst:playedMatches.reduce((s,x)=>s+(x.opponentScore||0),0),
     };
+  }
+  if(!teamStats&&datas){
+    const record=datas.match(/\((\d+)\s*V\s*(\d+)\s*D\)/i);
+    const pf=datas.match(/(\d+)\s+points?\s+marqu/i);
+    const pa=datas.match(/(\d+)\s+points?\s+encaiss/i);
+    if(record){
+      const wins=Number(record[1]),losses=Number(record[2]);
+      teamStats={played:wins+losses,wins,losses,pointsFor:pf?Number(pf[1]):0,pointsAgainst:pa?Number(pa[1]):0};
+    }
   }
 
   const rankText=classStart>=0?t.slice(classStart,classStart+8000):text(standingsHtml).slice(0,8000);
@@ -181,26 +189,53 @@ function parseTeamPage(html:string,url:string,standingsHtml:string=html,teamName
   return {mode:"team",team,competition,pool,phase,sourceUrl:url,matches,classementText:rankText,ranking,standings,teamStats,datasText:datas,updatedAt:new Date().toISOString()};
 }
 
+
+type FetchedPage={body:string;via:"ffbb"|"reader";status:number};
+async function fetchFfbbPage(target:string,headers:Record<string,string>):Promise<FetchedPage>{
+  const direct=await fetch(target,{headers,cache:"no-store",redirect:"follow"});
+  if(direct.ok)return {body:await direct.text(),via:"ffbb",status:direct.status};
+  if(direct.status!==401&&direct.status!==403&&direct.status!==429)throw new Error(`FFBB ${direct.status}`);
+
+  // FFBB bloque actuellement certaines requêtes venant des IP de Vercel (403).
+  // Reader rend la page publique dans un navigateur puis renvoie son contenu texte.
+  // On ne l'utilise qu'en secours : FFBB direct reste toujours prioritaire.
+  const readerUrl=`https://r.jina.ai/${target}`;
+  const reader=await fetch(readerUrl,{
+    headers:{
+      "accept":"text/plain",
+      "x-engine":"browser",
+      "x-timeout":"15",
+      "x-cache-tolerance":"60",
+    },
+    cache:"no-store",
+    redirect:"follow",
+  });
+  if(!reader.ok)throw new Error(`FFBB ${direct.status} / secours ${reader.status}`);
+  const body=await reader.text();
+  if(!body||body.length<300)throw new Error(`FFBB ${direct.status} / secours vide`);
+  return {body,via:"reader",status:direct.status};
+}
+
 export async function GET(req:NextRequest){
   const url=req.nextUrl.searchParams.get("url")||"";
   const requestedTeam=req.nextUrl.searchParams.get("team")||"";
   if(!/^https:\/\/competitions\.ffbb\.com\//i.test(url))return NextResponse.json({error:"Lien FFBB invalide"},{status:400});
   try{
     const headers={"user-agent":"Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 Chrome/136 Safari/537.36","accept-language":"fr-FR,fr;q=0.9,en;q=0.8","accept":"text/html,application/xhtml+xml"};
-    const r=await fetch(url,{headers,cache:"no-store",redirect:"follow"});
-    if(!r.ok)throw new Error(`FFBB ${r.status}`);
-    const html=await r.text();
+    const mainPage=await fetchFfbbPage(url,headers);
+    const html=mainPage.body;
     if(/\/equipes\/\d+/i.test(new URL(url).pathname)){
       const cleanUrl=url.replace(/[?#].*$/,"").replace(/\/classement\/?$/i,"").replace(/\/$/,"");
       const classementUrls=[`${cleanUrl}/classement`,`${cleanUrl}/classement/`];
       let standingsHtml=html;
       for(const classementUrl of classementUrls){
         try{
-          const response=await fetch(classementUrl,{headers,cache:"no-store",redirect:"follow"});
-          if(response.ok){const candidate=await response.text();if(candidate&&candidate.length>500){standingsHtml=candidate;break}}
+          const response=await fetchFfbbPage(classementUrl,headers);
+          const candidate=response.body;
+          if(candidate&&candidate.length>500){standingsHtml=candidate;break}
         }catch(error){console.warn("FFBB classement indisponible",classementUrl,error)}
       }
-      return NextResponse.json(parseTeamPage(html,url,standingsHtml,requestedTeam));
+      return NextResponse.json({...parseTeamPage(html,url,standingsHtml,requestedTeam),transport:mainPage.via});
     }
     return NextResponse.json({mode:"choose-team",sourceUrl:url,teams:teamChoices(html),updatedAt:new Date().toISOString()});
   }catch(e){
