@@ -204,17 +204,26 @@ export default function ImportReview({
   const [diagrams, setDiagrams] = useState<AiExerciseDiagram[]>(initial);
   const [current, setCurrent] = useState(Math.min(initialDiagram, Math.max(0, initial.length - 1)));
   const [selection, setSelection] = useState<Selection>(null);
-  const [overlay, setOverlay] = useState(result.rectifiedImage ? 0.35 : 0);
+  const [overlay, setOverlay] = useState(0);
   const [addMode, setAddMode] = useState<AiDetectionType | null>(null);
   const [dragging, setDragging] = useState(false);
 
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const overlayImage = useRef<HTMLImageElement | null>(null);
   const [overlayReady, setOverlayReady] = useState(false);
+  const nativeCourtImage = useRef<HTMLImageElement | null>(null);
+  const [nativeCourtReady, setNativeCourtReady] = useState(false);
 
   const diagram = diagrams[current];
   const courtType: "half" | "full" = diagram?.courtType ?? "half";
   const size = courtType === "full" ? { w: 560, h: 880 } : { w: 720, h: 564 };
+
+  useEffect(() => {
+    const court = new Image();
+    court.onload = () => { nativeCourtImage.current = court; setNativeCourtReady(true); };
+    court.src = courtType === "full" ? "/plaquette/full-court.jpg" : "/plaquette/half-court.jpg";
+    return () => { court.onload = null; };
+  }, [courtType]);
 
   useEffect(() => {
     if (!result.rectifiedImage) return;
@@ -239,6 +248,11 @@ export default function ImportReview({
     ctx.fillStyle = COLORS.surface;
     ctx.fillRect(0, 0, width, height);
 
+    // Toujours afficher le vrai terrain MyBasket comme base de travail.
+    if (nativeCourtReady && nativeCourtImage.current) {
+      ctx.drawImage(nativeCourtImage.current, 0, 0, width, height);
+    }
+
     // Calque : la photo redressée, sous le dessin, pour comparer d'un coup d'œil.
     if (overlay > 0 && overlayReady && overlayImage.current) {
       ctx.save();
@@ -247,18 +261,19 @@ export default function ImportReview({
       ctx.restore();
     }
 
-    // Terrain
+    // Terrain vectoriel uniquement en repli si l’image native n’est pas disponible.
     const rect = playRect(courtType);
     const px0 = rect.x0 * width;
     const py0 = (courtType === "full" ? rect.y0 : rect.y0) * height;
     const pw = (rect.x1 - rect.x0) * width;
     const ph = (rect.y1 - rect.y0) * height;
-    ctx.save();
-    ctx.globalAlpha = overlay > 0 ? 0.55 : 1;
-    ctx.translate(px0, py0);
-    ctx.strokeStyle = COLORS.bord;
-    strokeCourtLines(ctx, pw, ph, courtType, Math.max(1.5, pw * 0.004));
-    ctx.restore();
+    if (!nativeCourtReady) {
+      ctx.save();
+      ctx.translate(px0, py0);
+      ctx.strokeStyle = COLORS.bord;
+      strokeCourtLines(ctx, pw, ph, courtType, Math.max(1.5, pw * 0.004));
+      ctx.restore();
+    }
 
     const toPixel = (point: AiPoint) => canonicalToPixel(point, width, height, courtType);
 
@@ -388,7 +403,7 @@ export default function ImportReview({
       ctx.fillText(type === "unknown" ? "?" : String(player.label ?? ""), 0, 1);
       ctx.restore();
     });
-  }, [diagram, courtType, overlay, overlayReady, selection]);
+  }, [diagram, courtType, overlay, overlayReady, selection, nativeCourtReady]);
 
   useEffect(() => {
     draw();
