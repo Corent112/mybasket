@@ -22,6 +22,9 @@ import PoleSportsReportPanel from "@/components/equipes/PoleSportsReportPanel";
 import PolePlayerLongitudinalPanel from "@/components/equipes/PolePlayerLongitudinalPanel";
 import LocalClipPlayer from "@/components/video/LocalClipPlayer";
 import { normalizeSync, resolveActionClipBounds } from "@/lib/video-sync";
+import LocalMatchVideoButton from "@/components/video/LocalMatchVideoButton";
+import useLocalMatchVideoVersion from "@/hooks/useLocalMatchVideoVersion";
+import { getLocalMatchVideo } from "@/lib/local-video-registry";
 
 type PlayerExtra = Player & {
   licenceNumber?: string;
@@ -4012,7 +4015,16 @@ function VideoRentabilityTab({
               </option>
             ))}
           </select>
-          <button type="button" className="pa-montage-secondary" onClick={newMontage}>＋ Nouveau</button>
+          <button
+            type="button"
+            className="pa-montage-secondary"
+            onClick={() => {
+              newMontage();
+              onOpenMontageStudio();
+            }}
+          >
+            ＋ Nouveau montage
+          </button>
           <button
             type="button"
             className="pa-montage-save"
@@ -4456,23 +4468,10 @@ function VideoModal({
   const modalSupabase = useMemo(() => createClient(), []);
   const stageRef = useRef<HTMLDivElement | null>(null);
   const videoRef = useRef<HTMLVideoElement | null>(null);
-  // Fiche joueur : une vidéo locale chargée ici est liée au match pendant la
-  // session. Toutes les actions du même match réutilisent le même fichier.
-  const [localMatchVideos, setLocalMatchVideos] = useState<Record<string, { url: string; name: string }>>({});
-  const localMatchVideosRef = useRef<Record<string, { url: string; name: string }>>({});
-  const matchVideoInputRef = useRef<HTMLInputElement | null>(null);
 
-  useEffect(() => {
-    localMatchVideosRef.current = localMatchVideos;
-  }, [localMatchVideos]);
-
-  useEffect(() => {
-    return () => {
-      Object.values(localMatchVideosRef.current).forEach((video) => {
-        try { URL.revokeObjectURL(video.url); } catch { /* no-op */ }
-      });
-    };
-  }, []);
+  // Bibliothèque vidéo commune à MyBasket : une vidéo appartient au match.
+  // Toutes les actions et Montage réutilisent donc la même source.
+  useLocalMatchVideoVersion();
 
   const tfKeys = useMemo(() => Array.from(new Set(actions.map((a) => String(a.temps_fort ?? "")).filter(Boolean))), [actions]);
   const quarters = useMemo(() => Array.from(new Set(actions.map((a) => String(a.quarter ?? "")).filter(Boolean))).sort((a, b) => Number(a) - Number(b)), [actions]);
@@ -4522,7 +4521,7 @@ function VideoModal({
   };
 
   const currentMatchId = current?.match_id != null ? String(current.match_id) : "";
-  const localMatchVideo = currentMatchId ? localMatchVideos[currentMatchId] : undefined;
+  const localMatchVideo = currentMatchId ? getLocalMatchVideo(currentMatchId) : null;
   const resolvedStart = current
     ? (current.resolved_clip_start ?? current.clip_start ?? current.video_time ?? current.possession_start ?? null)
     : null;
@@ -4530,7 +4529,7 @@ function VideoModal({
     ? (current.resolved_clip_end ?? current.clip_end ?? current.possession_end ?? null)
     : null;
   const nativeUrl = current ? actionVideoUrl(current) : null;
-  const url = nativeUrl || localMatchVideo?.url || null;
+  const url = localMatchVideo?.url || nativeUrl || null;
   const playable = !!current && resolvedStart != null && !!url && !actionIsYoutube({ ...current, video_url: url });
 
   useEffect(() => {
@@ -4543,23 +4542,6 @@ function VideoModal({
         ? { ok: true, reason: "" }
         : { ok: false, reason: resolvedStart == null ? "Vidéo non synchronisée" : "Source vidéo locale requise" })
     : { ok: false, reason: "Aucune action" };
-
-  const attachMatchVideo = (file: File | null) => {
-    if (!file || !currentMatchId) return;
-    const nextUrl = URL.createObjectURL(file);
-    setLocalMatchVideos((prev) => {
-      const previous = prev[currentMatchId];
-      if (previous?.url) {
-        try { URL.revokeObjectURL(previous.url); } catch { /* no-op */ }
-      }
-      return { ...prev, [currentMatchId]: { url: nextUrl, name: file.name } };
-    });
-    window.setTimeout(() => {
-      const video = videoRef.current;
-      if (!video || resolvedStart == null) return;
-      try { video.currentTime = Math.max(0, Number(resolvedStart) || 0); } catch { /* no-op */ }
-    }, 80);
-  };
 
   const cat = current ? actionResultCategory(current) : "autre";
   const catLabel = cat === "made" ? "Marqué" : cat === "missed" ? "Manqué" : cat === "fauteProv" ? "Faute provoquée" : cat === "intercept" ? "Intercepté" : cat === "perte" ? "Perte" : actionTypeLabel(current || {});
@@ -4757,21 +4739,17 @@ function VideoModal({
                     : "Aucune action."}
                 </small>
                 {current && currentMatchId && (
-                  <>
-                    <input
-                      ref={matchVideoInputRef}
-                      type="file"
-                      accept="video/*"
-                      style={{ display: "none" }}
-                      onChange={(e) => {
-                        attachMatchVideo(e.target.files?.[0] ?? null);
-                        e.currentTarget.value = "";
-                      }}
-                    />
-                    <button className="vr-load-match-video" onClick={() => matchVideoInputRef.current?.click()}>
-                      📂 Charger la vidéo du match
-                    </button>
-                  </>
+                  <LocalMatchVideoButton
+                    matchId={currentMatchId}
+                    teamId={teamId}
+                    onConnected={() => {
+                      window.setTimeout(() => {
+                        const video = videoRef.current;
+                        if (!video || resolvedStart == null) return;
+                        try { video.currentTime = Math.max(0, Number(resolvedStart) || 0); } catch { /* no-op */ }
+                      }, 80);
+                    }}
+                  />
                 )}
               </div>
             )}
@@ -4786,10 +4764,18 @@ function VideoModal({
             <div className="vr-meta-row"><span>🎬 Match</span><b>{current ? matchLabelOf(current.match_id) : "—"}</b></div>
             {current && currentMatchId && (
               <div className="vr-match-video-link">
-                <span>{localMatchVideo ? `📎 ${localMatchVideo.name}` : (nativeUrl ? "✓ Vidéo liée" : "Aucune vidéo chargée")}</span>
-                <button onClick={() => matchVideoInputRef.current?.click()}>
-                  {localMatchVideo || nativeUrl ? "Changer le fichier" : "Charger le fichier"}
-                </button>
+                <span>
+                  {localMatchVideo
+                    ? `✓ ${localMatchVideo.file.name}`
+                    : nativeUrl
+                      ? "✓ Vidéo liée"
+                      : "Vidéo locale à relier"}
+                </span>
+                <LocalMatchVideoButton
+                  matchId={currentMatchId}
+                  teamId={teamId}
+                  compact
+                />
               </div>
             )}
             <div className="vr-meta-row"><span>🕑 Temps match</span><b>{current ? matchTimeLabel(current) : "—"}</b></div>

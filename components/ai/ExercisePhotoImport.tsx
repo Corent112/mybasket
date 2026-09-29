@@ -35,6 +35,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { AiExerciseImport } from "@/lib/import/types";
 import { IMPORT_DEBUG_ENABLED } from "@/lib/import/debug";
 import { scanExerciseLocally } from "@/lib/import/local-exercise-scanner";
+import { scanPlayersFree } from "@/lib/import/free-player-scanner";
 import { refineImportedExercise } from "@/lib/import/import-refiner";
 import ImportReview, { countReviewItems, diagramsOf } from "@/components/import/ImportReview";
 
@@ -92,32 +93,9 @@ export default function ExercisePhotoImport({ onImported, playersOnly = false }:
     });
   }, []);
 
-  const imageToDataUrl = async (file: File): Promise<string> => {
-    const bitmap = await createImageBitmap(file);
-    const maxSide = 1800;
-    const scale = Math.min(1, maxSide / Math.max(bitmap.width, bitmap.height));
-    const canvas = document.createElement("canvas");
-    canvas.width = Math.max(1, Math.round(bitmap.width * scale));
-    canvas.height = Math.max(1, Math.round(bitmap.height * scale));
-    const ctx = canvas.getContext("2d");
-    if (!ctx) throw new Error("Canvas indisponible");
-    ctx.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
-    bitmap.close?.();
-    return canvas.toDataURL("image/jpeg", 0.9);
-  };
-
   const scanPlayersOnly = async (file: File): Promise<AiExerciseImport> => {
-    setStatus("Vision 2 · repérage du terrain et des joueurs…");
-    const image = await imageToDataUrl(file);
-    const response = await fetch("/api/ai/import/players", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ image }),
-    });
-    const payload = await response.json().catch(() => ({}));
-    if (!response.ok) throw new Error(payload?.error || "La détection des joueurs a échoué.");
-    if (!payload?.exercise) throw new Error("Vision 2 n’a renvoyé aucun résultat.");
-    return payload.exercise as AiExerciseImport;
+    setStatus("Vision 2 gratuit · terrain → joueurs → numéros…");
+    return scanPlayersFree(file, setStatus);
   };
 
   const analyze = async (file: File) => {
