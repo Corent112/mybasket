@@ -1,51 +1,145 @@
-import type { AiDiagramObject, AiDiagramPlayer, AiExerciseDiagram, AiExerciseImport } from "./types";
+import type { AiDiagramPlayer, AiExerciseDiagram, AiExerciseImport } from "./types";
 import { scanExerciseLocally } from "./local-exercise-scanner";
 
-const clamp=(v:number,a=0,b=1)=>Math.max(a,Math.min(b,v));
-const dist=(a:{x:number;y:number},b:{x:number;y:number})=>Math.hypot(a.x-b.x,(a.y-b.y)*1.6);
-const numberOf=(s:string)=>{const m=String(s||"").match(/\d{1,2}/); return m?m[0]:"";};
+const clamp = (v: number, a = 0, b = 1) => Math.max(a, Math.min(b, v));
+const dist = (a: { x: number; y: number }, b: { x: number; y: number }) =>
+  Math.hypot(a.x - b.x, (a.y - b.y) * 1.6);
 
-function conesOf(objects:AiDiagramObject[]){
- const out:AiDiagramObject[]=[];
- for(const raw of objects.filter(o=>o.kind==="cone"||o.kind==="triangle").sort((a,b)=>(b.confidence??0)-(a.confidence??0))){
-  const o={...raw,kind:"cone" as const,x:clamp(raw.x),y:clamp(raw.y),source:"vision2-paper-cone"};
-  if((o.confidence??.65)<.48) continue;
-  if(!out.some(q=>dist(q,o)<.04)) out.push(o);
- }
- return out.slice(0,12);
+/**
+ * Vision 2 papier — doctrine stricte.
+ *
+ * Le terrain est d'abord redressé par le moteur d'homographie. Les coordonnées
+ * qui arrivent ici sont donc déjà des coordonnées Plaquette issues du terrain,
+ * et non de la feuille/photo. Ce fichier ne doit PLUS déplacer les joueurs pour
+ * « améliorer » visuellement le résultat : il ne fait que décider si un symbole
+ * détecté a le droit d'être créé.
+ *
+ * Vocabulaire validé sur le terrain papier de calibration (repères verts) :
+ *   - numéro seul                    => attaquant
+ *   - numéro dans un rond            => attaquant
+ *   - rond numéroté + bras/parenthèses => défenseur
+ *
+ * Règle absolue : aucun numéro inventé, aucun joueur sans preuve, aucun objet
+ * ajouté pour remplir le dessin.
+ */
+const numberOf = (value: string): string => {
+  const match = String(value || "").match(/(?:^|\D)(\d{1,2})(?:\D|$)/);
+  return match?.[1] ?? "";
+};
+
+const hasDefenseSignal = (player: AiDiagramPlayer): boolean =>
+  player.type === "defender" ||
+  player.team === "def" ||
+  /def|bras|parenth|arc/i.test(String(player.source ?? ""));
+
+function playersOf(players: AiDiagramPlayer[]): AiDiagramPlayer[] {
+  const out: AiDiagramPlayer[] = [];
+
+  // On traite d'abord les détections les plus sûres. Si deux moteurs voient le
+  // même symbole, la meilleure détection gagne au lieu de créer deux joueurs.
+  const ordered = [...players].sort(
+    (a, b) => (b.confidence ?? 0.5) - (a.confidence ?? 0.5)
+  );
+
+  for (const [index, raw] of ordered.entries()) {
+    const label = numberOf(raw.label);
+    const defender = hasDefenseSignal(raw);
+    const confidence = raw.confidence ?? 0.5;
+
+    // Un attaquant doit être matérialisé par un numéro réellement lu.
+    // Un défenseur peut survivre à un OCR faible uniquement si sa forme
+    // « rond + bras/parenthèses » a été explicitement reconnue par la vision.
+    if (!label && !defender) continue;
+    if (confidence < (defender ? 0.46 : 0.5)) continue;
+
+    const p: AiDiagramPlayer = {
+      ...raw,
+      key: `v2-paper-${defender ? "def" : "att"}-${index}`,
+      label,
+      team: defender ? "def" : "att",
+      type: defender ? "defender" : "attacker",
+      // IMPORTANT : on conserve la position calculée sur le terrain redressé.
+      // Aucun snap, aucun décalage esthétique, aucune position inventée.
+      x: clamp(raw.x),
+      y: clamp(raw.y),
+      source: defender
+        ? "vision2-paper-defender-exact"
+        : "vision2-paper-attacker-exact",
+    };
+
+    const duplicateIndex = out.findIndex((q) => dist(q, p) < 0.032);
+    if (duplicateIndex < 0) {
+      out.push(p);
+      continue;
+    }
+
+    const previous = out[duplicateIndex];
+    const previousConfidence = previous.confidence ?? 0.5;
+    // À position identique : défense reconnue > attaque, puis numéro lu > vide,
+    // puis meilleure confiance. On ne crée jamais un second joueur.
+    const replace =
+      (p.type === "defender" && previous.type !== "defender") ||
+      (!previous.label && !!p.label) ||
+      (p.type === previous.type && !!p.label === !!previous.label && confidence > previousConfidence);
+    if (replace) out[duplicateIndex] = p;
+  }
+
+  return out.slice(0, 10);
 }
-function playersOf(players:AiDiagramPlayer[],cones:AiDiagramObject[]){
- const out:AiDiagramPlayer[]=[];
- for(const [i,raw] of players.entries()){
-  if((raw.confidence??.55)<.40) continue;
-  if(cones.some(c=>dist(c,raw)<.05)) continue;
-  const defender=raw.type==="defender"||raw.team==="def"||/def|bras|parenth|arc/i.test(String(raw.source??""));
-  const p:AiDiagramPlayer={...raw,key:`v2-paper-${defender?"def":"att"}-${i}`,label:numberOf(raw.label),
-   team:defender?"def":"att",type:defender?"defender":"attacker",
-   x:clamp(raw.x),y:clamp(raw.y),source:defender?"vision2-paper-defender":"vision2-paper-attacker"};
-  const dup=out.find(q=>dist(q,p)<.028);
-  if(!dup) out.push(p);
-  else if((p.type==="defender"&&dup.type!=="defender") || (!dup.label&&p.label)) out[out.indexOf(dup)]=p;
- }
- return out.slice(0,10);
+
+function clean(diagram: AiExerciseDiagram): AiExerciseDiagram {
+  const players = playersOf(diagram.players || []);
+
+  return {
+    ...diagram,
+    detected: players.length > 0,
+    players,
+    // Palier volontairement strict : cette passe reconstruit les JOUEURS.
+    // Les traits/plots/ballons ne doivent plus générer de faux joueurs ou de
+    // parasites dans la Plaquette. Ils seront réactivés séparément après
+    // validation de la géométrie et des joueurs.
+    objects: [],
+    actions: [],
+    notes:
+      "Vision 2 papier strict · terrain redressé · numéro/rond = attaquant · rond avec bras = défenseur · aucune création automatique",
+  };
 }
-function clean(d:AiExerciseDiagram):AiExerciseDiagram{
- const objects=conesOf(d.objects||[]);
- const players=playersOf(d.players||[],objects);
- return {...d,detected:!!(players.length||objects.length),players,objects,actions:[],
-  notes:"Vision 2 papier · numéro/rond = attaquant · bras = défenseur · triangle = plot"};
-}
-export async function scanPlayersFree(file:File,onStatus?:(m:string)=>void):Promise<AiExerciseImport>{
- onStatus?.("Vision 2 papier · analyse du terrain et des symboles…");
- const scanned=await scanExerciseLocally(file,onStatus);
- const diagrams=(scanned.diagrams?.length?scanned.diagrams:[scanned.diagram]).map(clean);
- const diagram=diagrams[0]??clean(scanned.diagram);
- const players=diagrams.flatMap(d=>d.players), cones=diagrams.flatMap(d=>d.objects);
- const attackers=players.filter(p=>p.team==="att").length, defenders=players.filter(p=>p.team==="def").length;
- return {...scanned,title:"",organisation:"",deroulement:[],consignes:[],variantes:[],
-  plots:cones.length||null,ballons:null,paniers:null,joueurs:players.length||null,categorie:"— Choisir —",temps:null,themes:[],
-  diagram,diagrams,source:"local",
-  warnings:[`Vision 2 papier : ${players.length} joueurs (${attackers} attaquants, ${defenders} défenseurs), ${cones.length} plots.`,
-   `Numéros réellement lus : ${players.filter(p=>p.label).length}/${players.length}. Aucun numéro inventé.`,
-   "Règle : numéro/rond = attaquant · parenthèses/bras = défenseur · triangle = plot."]};
+
+export async function scanPlayersFree(
+  file: File,
+  onStatus?: (message: string) => void
+): Promise<AiExerciseImport> {
+  onStatus?.("Vision 2 papier · redressement du terrain puis lecture stricte des joueurs…");
+
+  const scanned = await scanExerciseLocally(file, onStatus);
+  const diagrams = (scanned.diagrams?.length ? scanned.diagrams : [scanned.diagram]).map(clean);
+  const diagram = diagrams[0] ?? clean(scanned.diagram);
+  const players = diagrams.flatMap((d) => d.players);
+  const attackers = players.filter((p) => p.team === "att").length;
+  const defenders = players.filter((p) => p.team === "def").length;
+  const numbered = players.filter((p) => !!p.label).length;
+
+  return {
+    ...scanned,
+    title: "",
+    organisation: "",
+    deroulement: [],
+    consignes: [],
+    variantes: [],
+    plots: null,
+    ballons: null,
+    paniers: null,
+    joueurs: players.length || null,
+    categorie: "— Choisir —",
+    temps: null,
+    themes: [],
+    diagram,
+    diagrams,
+    source: "local",
+    warnings: [
+      `Vision 2 papier : ${players.length} joueurs conservés (${attackers} attaquants, ${defenders} défenseurs).`,
+      `Numéros réellement lus : ${numbered}/${players.length}. Aucun numéro inventé.`,
+      "Placement : coordonnées du terrain redressé conservées telles quelles ; aucun joueur ni objet ajouté automatiquement.",
+    ],
+  };
 }
