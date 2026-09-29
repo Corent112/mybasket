@@ -368,10 +368,33 @@ export function detectPlayingArea(canvas: HTMLCanvasElement, rect: AiRect): Play
   const sides = [top, bottom, left, right].filter((value) => value !== null).length;
   if (sides < 2) return fallback;
 
-  const y0 = top ?? 0;
-  const y1 = bottom ?? px.h - 1;
-  const x0 = left ?? 0;
-  const x1 = right ?? px.w - 1;
+  let y0 = top ?? 0;
+  let y1 = bottom ?? px.h - 1;
+  let x0 = left ?? 0;
+  let x1 = right ?? px.w - 1;
+
+  /**
+   * Vision 2 papier — calibration par les repères structurels du benchmark.
+   *
+   * Les points verts de référence nous ont appris une chose importante :
+   * sur une photo en perspective, les lignes de touche/fond restent la vérité,
+   * mais une simple bbox peut choisir une ligne intérieure (arc/raquette) comme
+   * bord. On exige donc que les deux côtés opposés aient une portée cohérente
+   * avec un demi-terrain 15 x 14 et on préfère les extrêmes quand ils existent.
+   *
+   * Les points verts NE SONT PAS nécessaires en production : ils ont uniquement
+   * servi à fixer cette règle géométrique.
+   */
+  if (paper && left !== null && right !== null && top !== null) {
+    const width = right - left;
+    const expectedHalfLength = width * (14 / 15);
+    // Si le bas détecté est manifestement une ligne intérieure, on déduit la
+    // ligne médiane depuis la largeur réglementaire plutôt que d'écraser tous
+    // les objets vers le bas de Plaquette.
+    if (bottom === null || Math.abs((bottom - top) - expectedHalfLength) / Math.max(1, expectedHalfLength) > 0.18) {
+      y1 = Math.min(px.h - 1, Math.round(top + expectedHalfLength));
+    }
+  }
 
   // Garde-fou : une aire de jeu qui ne couvre presque rien est une erreur de
   // détection (un trait isolé, une légende soulignée…).
