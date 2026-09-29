@@ -3242,16 +3242,35 @@ export async function analyseGraphic(
   // trancher au hasard : un clic de l'utilisateur coûte moins cher qu'une
   // erreur silencieuse.
   const DEFENSE_SURE = 0.5;
-  const DEFENSE_NONE = 0.2;
 
-  const typeOf = (evidence: number): AiDetectionType =>
-    evidence >= DEFENSE_SURE ? "defender" : evidence <= DEFENSE_NONE ? "attacker" : "unknown";
+  /**
+   * Vision 2 papier : la FORME est la vérité produit.
+   * - rond fermé / silhouette quasi circulaire => attaquant
+   * - symbole joueur non circulaire => défenseur
+   *
+   * La couleur et l'OCR n'ont plus le droit de déplacer ou typer le joueur.
+   * Le gabarit MyBasket reste prioritaire lorsqu'il est reconnu.
+   */
+  const typeOfRead = (item: (typeof reads)[number]): AiDetectionType => {
+    if (item.candidate.template?.kind === "attacker") return "attacker";
+    if (item.candidate.template?.kind === "defender") return "defender";
+
+    const ratio =
+      Math.max(item.candidate.bw, item.candidate.bh) /
+      Math.max(1, Math.min(item.candidate.bw, item.candidate.bh));
+    const circular =
+      ratio <= 1.28 &&
+      item.shapeScore >= 0.72 &&
+      !hasSplitTop(item.candidate);
+
+    return circular ? "attacker" : "defender";
+  };
 
   const usedAttack = new Set<string>();
   const usedDefense = new Set<string>();
   for (const item of reads) {
     if (!item.digits || item.confidence <= 0.5) continue;
-    if (typeOf(item.defenseEvidence) === "defender") usedDefense.add(item.digits);
+    if (typeOfRead(item) === "defender") usedDefense.add(item.digits);
     else usedAttack.add(item.digits);
   }
   const nextFree = (used: Set<string>): string => {
@@ -3315,18 +3334,13 @@ export async function analyseGraphic(
   for (const item of exactReads) {
     const point = norm(item.centre.x, item.centre.y);
 
-    const type = typeOf(item.defenseEvidence);
+    const type = typeOfRead(item);
     const isDefense = type === "defender";
     const confident = Boolean(item.digits) && item.confidence > 0.5;
 
-    let label: string;
-    if (isDefense) {
-      label = `X${confident ? item.digits : nextFree(usedDefense)}`;
-    } else if (confident) {
-      label = item.digits;
-    } else {
-      label = nextFree(usedAttack);
-    }
+    // Le numéro ne sert JAMAIS à créer/placer/typer un joueur.
+    // S'il n'est pas lu, on laisse vide au lieu d'en inventer un.
+    const label = confident ? item.digits : "";
     if (!confident) {
       reject("numéro de joueur", "chiffre illisible → numéro provisoire à corriger");
     }
@@ -3345,11 +3359,9 @@ export async function analyseGraphic(
     // Confiance de CLASSIFICATION, distincte : on peut être sûr que c'est un
     // joueur sans savoir de quel côté il joue.
     const typeConfidence =
-      type === "defender"
-        ? Math.min(1, 0.55 + item.defenseEvidence * 0.45)
-        : type === "attacker"
-        ? 0.75
-        : 0.4;
+      type === "attacker"
+        ? Math.max(0.72, item.shapeScore)
+        : Math.max(0.68, Math.min(1, 0.55 + item.defenseEvidence * 0.45));
     const source = [
       item.hasGlyph ? "jeton numéroté" : "jeton uni",
       ...item.defenseSource,
@@ -3357,9 +3369,7 @@ export async function analyseGraphic(
     ]
       .filter(Boolean)
       .join(" · ");
-    if (type === "unknown") {
-      reject("type de joueur", "indices défensifs ambigus → laissé à confirmer");
-    }
+    // Plus de type "unknown" sur ce flux : rond = attaquant, autre symbole joueur = défenseur.
 
     // Règle produit MyBasket : tous les attaquants importés sont des ronds.
     // Les défenseurs utilisent aussi le shape circle ; leur rendu spécifique est
@@ -4163,7 +4173,12 @@ function tidyPlayers(
     );
   }
 
-  // 3. écartement doux
+  // 3. POSITION SOURCE STRICTE — Vision 2.
+  // Ne jamais "ranger" ou écarter automatiquement les joueurs : leur centre
+  // détecté doit rester exactement au point projeté depuis le dessin.
+  return;
+
+  // Ancien écartement doux (conservé ci-dessous, volontairement inatteignable).
   const MIN_SEP = 0.042;
   for (let pass = 0; pass < 4; pass += 1) {
     let moved = false;
