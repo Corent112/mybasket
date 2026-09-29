@@ -47,7 +47,7 @@ import type {
   AiRect,
 } from "./types";
 import type { ImportDebugRejection } from "./debug";
-import { ocrRegion, ocrToken } from "./ocr";
+import { ocrCanvas, ocrRegion, ocrToken } from "./ocr";
 import {
   applyOrientation,
   buildCourtLineMask,
@@ -3319,6 +3319,88 @@ export async function analyseGraphic(
       contrastScore,
       hasGlyph: hasInnerGlyph(ink, candidate),
     });
+  }
+
+  /*
+   * Vision 2 papier — PASSAGE NUMÉROS SEULS.
+   *
+   * Le cercle global ne peut, par définition, jamais retrouver un attaquant
+   * écrit uniquement sous la forme "4" ou "12". C'est une convention validée
+   * du schéma papier : un numéro isolé DANS L'AIRE DE JEU est un joueur.
+   *
+   * On demande donc une fois à l'OCR de localiser les mots du terrain redressé.
+   * On ne conserve que les mots composés de 1 ou 2 chiffres, de petite taille,
+   * dont le centre est dans l'aire de jeu. Ils ne remplacent jamais un symbole
+   * déjà détecté : ils servent uniquement à récupérer un joueur manquant.
+   */
+  try {
+    const pageOcr = await ocrCanvas(work);
+    const digitBoxes = pageOcr.words
+      .map((box) => ({ ...box, digits: box.text.replace(/\D/g, "") }))
+      .filter((box) => /^\d{1,2}$/.test(box.digits))
+      .filter((box) => box.confidence >= 0.42)
+      .filter((box) => {
+        const cx = (box.x0 + box.x1) / 2;
+        const cy = (box.y0 + box.y1) / 2;
+        const bw = Math.max(1, box.x1 - box.x0);
+        const bh = Math.max(1, box.y1 - box.y0);
+        const size = Math.max(bw, bh) / Math.max(1, unit);
+        return (
+          cx >= play.x0 + unit * 0.01 &&
+          cx <= play.x1 - unit * 0.01 &&
+          cy >= play.y0 + playH * 0.01 &&
+          cy <= play.y1 - playH * 0.01 &&
+          size >= 0.012 &&
+          size <= 0.09
+        );
+      });
+
+    for (const box of digitBoxes) {
+      const cx = (box.x0 + box.x1) / 2;
+      const cy = (box.y0 + box.y1) / 2;
+
+      // Si le chiffre est déjà au centre d'un jeton détecté, le jeton garde la
+      // main : on ne crée surtout pas un doublon.
+      const nearToken = reads.some((item) => {
+        const radius = Math.max(item.candidate.bw, item.candidate.bh) * 0.72;
+        return Math.hypot(item.centre.x - cx, item.centre.y - cy) <= radius;
+      });
+      if (nearToken) continue;
+
+      const bw = Math.max(3, box.x1 - box.x0);
+      const bh = Math.max(3, box.y1 - box.y0);
+      const synthetic: Component = {
+        x0: box.x0,
+        y0: box.y0,
+        x1: box.x1,
+        y1: box.y1,
+        bw,
+        bh,
+        cx,
+        cy,
+        points: [],
+        fillRatio: 0.35,
+        color: { r: 40, g: 40, b: 40 },
+      };
+
+      reads.push({
+        candidate: synthetic,
+        centre: { x: cx, y: cy },
+        area: Math.max(1, bw * bh * 0.35),
+        digits: box.digits,
+        confidence: box.confidence,
+        // Numéro seul = attaquant. Aucun bras n'est inventé.
+        defenseEvidence: 0,
+        defenseSource: ["numéro seul OCR"],
+        shapeScore: 0.82,
+        contrastScore: 0.72,
+        hasGlyph: true,
+      });
+      reject("Vision 2 numéro seul", `joueur ${box.digits} récupéré par OCR global`);
+    }
+  } catch {
+    // Le passage OCR global est un bonus de récupération. S'il échoue, le
+    // détecteur géométrique historique continue exactement comme avant.
   }
 
   // Attribution des libellés en DEUXIÈME passe : un numéro provisoire ne doit
