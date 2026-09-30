@@ -699,6 +699,20 @@ useEffect(() => {
   // Système actuellement ouvert directement depuis la Bibliothèque.
   // Cet id permet à "Enregistrer" de mettre à jour ce même système sans créer de copie.
   const [openedLibrarySystemId, setOpenedLibrarySystemId] = useState<string | null>(null);
+
+  // ContentNavigator mémorise l'id du système choisi dans localStorage.
+  // On le relit au moment exact où l'utilisateur clique sur Enregistrer :
+  // ainsi le bouton de mise à jour apparaît aussi via la Bibliothèque intégrée.
+  const openSaveModal = () => {
+    try {
+      const drawingFlow = localStorage.getItem('mybasket_drawing_flow');
+      const sourceSystemId = localStorage.getItem('mybasket_drawing_source_system_id');
+      if (drawingFlow === 'library-system-copy' && sourceSystemId) {
+        setOpenedLibrarySystemId(sourceSystemId);
+      }
+    } catch {}
+    setSaveOpen(true);
+  };
   const [terrainPanelOpen, setTerrainPanelOpen] = useState(true);
   const [selectionPanelOpen, setSelectionPanelOpen] = useState(true);
   const [exportOpen, setExportOpen] = useState(false);
@@ -4628,7 +4642,7 @@ const exportJson = () => {
         )}
       </div>
 
-      <div className="ed-save" id="edSaveBtn" onClick={() => setSaveOpen(true)}>
+      <div className="ed-save" id="edSaveBtn" onClick={openSaveModal}>
         {saveMsg ? '✓ Envoyé' : '💾 Enregistrer'}
       </div>
     </div>
