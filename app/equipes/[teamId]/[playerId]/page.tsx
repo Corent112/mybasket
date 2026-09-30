@@ -3502,6 +3502,7 @@ function VideoRentabilityTab({
   const [montageTitle, setMontageTitle] = useState(`Montage ${playerName}`);
   const [montageBusy, setMontageBusy] = useState(false);
   const [montageMessage, setMontageMessage] = useState("");
+  const [actionMatchLabels, setActionMatchLabels] = useState<Record<string, string>>({});
   const montageSupabase = useMemo(() => createClient(), []);
   const montageStorageKey = `mybasket_player_montage_${playerId}`;
   const montageDesignStorageKey = `mybasket_player_montage_design_${playerId}`;
@@ -3821,16 +3822,72 @@ function VideoRentabilityTab({
     }
   };
 
+  useEffect(() => {
+    let active = true;
+
+    const actionMatchIds = Array.from(
+      new Set(
+        (actions ?? [])
+          .map((action) => String(action?.match_id ?? ""))
+          .filter(Boolean)
+      )
+    );
+
+    if (!actionMatchIds.length) {
+      setActionMatchLabels({});
+      return () => {
+        active = false;
+      };
+    }
+
+    (async () => {
+      const { data, error } = await montageSupabase
+        .from("match_stats")
+        .select("id,opponent,match_date")
+        .in("id", actionMatchIds);
+
+      if (!active) return;
+
+      if (error) {
+        console.error("Erreur chargement libellés matchs fiche joueur :", error);
+        setActionMatchLabels({});
+        return;
+      }
+
+      const nextLabels: Record<string, string> = {};
+      for (const row of data ?? []) {
+        const id = String(row.id ?? "");
+        if (!id) continue;
+        nextLabels[id] =
+          `${row.opponent || "Adversaire"}${row.match_date ? ` · ${fmtDate(row.match_date)}` : ""}`;
+      }
+      setActionMatchLabels(nextLabels);
+    })();
+
+    return () => {
+      active = false;
+    };
+  }, [actions, montageSupabase]);
+
   const matchLabelOf = useMemo(() => {
     const labels = new Map<string, string>();
+
     for (const row of matches ?? []) {
       labels.set(
         String(row.matchId),
         `${row.opponent || "Adversaire"}${row.date ? ` · ${fmtDate(row.date)}` : ""}`
       );
     }
-    return (id: unknown) => labels.get(String(id ?? "")) || "Match";
-  }, [matches]);
+
+    for (const [id, label] of Object.entries(actionMatchLabels)) {
+      labels.set(id, label);
+    }
+
+    return (id: unknown) => {
+      const matchId = String(id ?? "");
+      return labels.get(matchId) || (matchId ? `Match ${matchId.slice(0, 8)}` : "Match");
+    };
+  }, [matches, actionMatchLabels]);
 
   // Données strictement individuelles : aucune action d'un autre joueur.
   const playerActionsOnly = useMemo(
