@@ -4114,8 +4114,9 @@ const saveAndGoCreate = async (kind: "systeme" | "exercice") => {
 
 // Sauvegarde directe d'un système ouvert depuis la Bibliothèque.
 // Aucun nouveau système n'est créé : le système ouvert est mis à jour.
-const saveOpenedLibrarySystem = async () => {
-  if (!openedLibrarySystemId || saving) return;
+const saveOpenedLibrarySystem = async (resolvedSystemId?: string | null) => {
+  const targetSystemId = resolvedSystemId || openedLibrarySystemId;
+  if (!targetSystemId || saving) return;
 
   const canvas = canvasRef.current;
   if (!canvas) {
@@ -4127,7 +4128,7 @@ const saveOpenedLibrarySystem = async () => {
   setSaving('library-system');
 
   try {
-    const existingSystem = await getSystem(openedLibrarySystemId);
+    const existingSystem = await getSystem(targetSystemId);
     if (!existingSystem) {
       throw new Error("Système introuvable ou non modifiable.");
     }
@@ -4135,13 +4136,13 @@ const saveOpenedLibrarySystem = async () => {
     const schemaGroupId = crypto.randomUUID();
     const { uploadedUrls, schemaDataList, result } = await buildPlaquetteResult({
       isSysteme: true,
-      targetId: openedLibrarySystemId,
+      targetId: targetSystemId,
       schemaGroupId,
       editIndex: null,
       captureVideo: false,
     });
 
-    const updated = await updateSystem(openedLibrarySystemId, {
+    const updated = await updateSystem(targetSystemId, {
       title: title || existingSystem.title || "Système",
       schemaImage: uploadedUrls[0] || "",
       schemaImages: uploadedUrls,
@@ -5023,15 +5024,33 @@ const exportJson = () => {
               </div>
 
               <div style={{ display: 'flex', flexDirection: 'column', gap: '.55rem' }}>
-                {openedLibrarySystemId && (
-                  <button
-                    disabled={!!saving}
-                    onClick={saveOpenedLibrarySystem}
-                    style={{ padding: '.75rem', borderRadius: 9, border: 'none', background: 'var(--or, #D4A24C)', color: '#0F0F12', fontWeight: 900, fontSize: '.9rem', cursor: saving ? 'wait' : 'pointer' }}
-                  >
-                    {saving === 'library-system' ? 'Enregistrement…' : '💾 Enregistrer les modifications'}
-                  </button>
-                )}
+                <button
+                  disabled={!!saving}
+                  onClick={async () => {
+                    let systemId = openedLibrarySystemId;
+                    try {
+                      systemId =
+                        systemId ||
+                        localStorage.getItem('mybasket_drawing_source_system_id') ||
+                        localStorage.getItem('mybasket_current_system_id') ||
+                        localStorage.getItem('mybasket_edit_systeme_id') ||
+                        localStorage.getItem('mybasket_edit_system_id');
+                    } catch {}
+
+                    if (!systemId) {
+                      alert("Ouvre d’abord un système depuis la Bibliothèque avant d’enregistrer ses modifications.");
+                      return;
+                    }
+
+                    if (systemId !== openedLibrarySystemId) {
+                      setOpenedLibrarySystemId(systemId);
+                    }
+                    await saveOpenedLibrarySystem(systemId);
+                  }}
+                  style={{ padding: '.75rem', borderRadius: 9, border: 'none', background: 'var(--or, #D4A24C)', color: '#0F0F12', fontWeight: 900, fontSize: '.9rem', cursor: saving ? 'wait' : 'pointer' }}
+                >
+                  {saving === 'library-system' ? 'Enregistrement…' : '💾 Enregistrer les modifications'}
+                </button>
 
                 {exoInsertMode && (
                   <button
