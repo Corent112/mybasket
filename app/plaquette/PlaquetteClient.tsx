@@ -596,6 +596,8 @@ useEffect(() => {
           if (schemaData && previewSystemId) {
             // Depuis la bibliothèque, on charge le système dans l’éditeur courant
             // sans navigation vers la fiche /systemes/creer.
+            // On conserve son id afin de pouvoir enregistrer directement les modifications.
+            setOpenedLibrarySystemId(systemeId);
             schemaData = {
               ...schemaData,
               title: (systeme as any)?.title || schemaData.title,
@@ -694,10 +696,13 @@ useEffect(() => {
   const [shootingGridPending, setShootingGridPending] = useState(false);
   const [scoutingPending, setScoutingPending] = useState(false);
   const [saveOpen, setSaveOpen] = useState(false);
+  // Système actuellement ouvert directement depuis la Bibliothèque.
+  // Cet id permet à "Enregistrer" de mettre à jour ce même système sans créer de copie.
+  const [openedLibrarySystemId, setOpenedLibrarySystemId] = useState<string | null>(null);
   const [terrainPanelOpen, setTerrainPanelOpen] = useState(true);
   const [selectionPanelOpen, setSelectionPanelOpen] = useState(true);
   const [exportOpen, setExportOpen] = useState(false);
-  const [saving, setSaving] = useState<null | 'systeme' | 'exercice'>(null);
+  const [saving, setSaving] = useState<null | 'systeme' | 'exercice' | 'library-system'>(null);
   const [savePlaybooks,setSavePlaybooks]=useState<Playbook[]>([]);
   const [savePlaybookId,setSavePlaybookId]=useState('');
   const [saveSeries,setSaveSeries]=useState<PlaybookSeries[]>([]);
@@ -4081,6 +4086,65 @@ const saveAndGoCreate = async (kind: "systeme" | "exercice") => {
   }
 };
 
+// Sauvegarde directe d'un système ouvert depuis la Bibliothèque.
+// Aucun nouveau système n'est créé : le système ouvert est mis à jour.
+const saveOpenedLibrarySystem = async () => {
+  if (!openedLibrarySystemId || saving) return;
+
+  const canvas = canvasRef.current;
+  if (!canvas) {
+    alert("Canvas introuvable");
+    return;
+  }
+
+  const previousCurrent = currentRef.current;
+  setSaving('library-system');
+
+  try {
+    const existingSystem = await getSystem(openedLibrarySystemId);
+    if (!existingSystem) {
+      throw new Error("Système introuvable ou non modifiable.");
+    }
+
+    const schemaGroupId = crypto.randomUUID();
+    const { uploadedUrls, schemaDataList, result } = await buildPlaquetteResult({
+      isSysteme: true,
+      targetId: openedLibrarySystemId,
+      schemaGroupId,
+      editIndex: null,
+      captureVideo: false,
+    });
+
+    const updated = await updateSystem(openedLibrarySystemId, {
+      title: title || existingSystem.title || "Système",
+      schemaImage: uploadedUrls[0] || "",
+      schemaImages: uploadedUrls,
+      schemaData: schemaDataList[0] || null,
+      schemaDataList,
+      // Une modification du dessin ne supprime pas une animation déjà enregistrée.
+      schemaVideo: existingSystem.schemaVideo || result.schemaVideo || "",
+    });
+
+    if (!updated) {
+      throw new Error("La sauvegarde du système a échoué.");
+    }
+
+    currentRef.current = previousCurrent;
+    setCurrent(previousCurrent);
+    setSaveOpen(false);
+    setSaveMsg(true);
+    window.setTimeout(() => setSaveMsg(false), 1500);
+    showHint("Modifications enregistrées");
+  } catch (error: any) {
+    console.error("ERREUR saveOpenedLibrarySystem", error);
+    alert(error?.message || "Impossible d’enregistrer les modifications.");
+  } finally {
+    currentRef.current = previousCurrent;
+    setCurrent(previousCurrent);
+    setSaving(null);
+  }
+};
+
 const exportJson = () => {
   const data = JSON.stringify({ title, courtType, courtStyle: courtStyleRef.current, courtBranding: courtBrandingRef.current, phases, sheet }, null, 2);
   const blob = new Blob([data], { type: 'application/json' });
@@ -4933,6 +4997,16 @@ const exportJson = () => {
               </div>
 
               <div style={{ display: 'flex', flexDirection: 'column', gap: '.55rem' }}>
+                {openedLibrarySystemId && (
+                  <button
+                    disabled={!!saving}
+                    onClick={saveOpenedLibrarySystem}
+                    style={{ padding: '.75rem', borderRadius: 9, border: 'none', background: 'var(--or, #D4A24C)', color: '#0F0F12', fontWeight: 900, fontSize: '.9rem', cursor: saving ? 'wait' : 'pointer' }}
+                  >
+                    {saving === 'library-system' ? 'Enregistrement…' : '💾 Enregistrer les modifications'}
+                  </button>
+                )}
+
                 {exoInsertMode && (
                   <button
                     disabled={!!saving}
