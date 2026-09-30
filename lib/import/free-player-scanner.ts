@@ -88,6 +88,13 @@ function playersOf(players: AiDiagramPlayer[]): AiDiagramPlayer[] {
       // Aucun snap, aucun décalage esthétique, aucune position inventée.
       x: clamp(raw.x),
       y: clamp(raw.y),
+      /*
+       * Orientation : les défenseurs doivent regarder le panier / l'attaque,
+       * et non être dessinés à l'envers après import. Le terrain canonique a
+       * son panier en haut : 0° = bras vers le haut dans la Plaquette.
+       * On ne modifie pas l'orientation des attaquants.
+       */
+      ...(defender ? ({ rotation: 0 } as Partial<AiDiagramPlayer>) : {}),
       source: defender
         ? "vision2-paper-defender-exact"
         : "vision2-paper-attacker-exact",
