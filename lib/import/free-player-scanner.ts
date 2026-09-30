@@ -55,12 +55,28 @@ function playersOf(players: AiDiagramPlayer[]): AiDiagramPlayer[] {
     const label = numberOf(raw.label);
     const defender = hasDefenseSignal(raw);
     const confidence = raw.confidence ?? 0.5;
+    const source = String(raw.source ?? "");
+    const ocrOnly = /numéro seul OCR/i.test(source);
+    const geometricToken =
+      /jeton numéroté|mybasket-template/i.test(source) && !ocrOnly;
 
-    // Un attaquant doit être matérialisé par un numéro réellement lu.
-    // Un défenseur peut survivre à un OCR faible uniquement si sa forme
-    // « rond + bras/parenthèses » a été explicitement reconnue par la vision.
-    if (!label && !defender) continue;
-    if (confidence < (defender ? 0.46 : 0.5)) continue;
+    /*
+     * Vision 2 papier — étape suivante : ne plus perdre un joueur parce que
+     * Tesseract n'a pas réussi à lire son numéro.
+     *
+     * Le moteur amont a déjà fait le travail difficile : cercle + glyphe dans
+     * l'aire de jeu. Cette preuve GÉOMÉTRIQUE suffit à conserver le joueur,
+     * quitte à laisser son label vide. L'OCR n'a plus le droit de décider de
+     * l'existence d'un joueur.
+     *
+     * À l'inverse, un joueur créé UNIQUEMENT par l'OCR global reste soumis à un
+     * seuil plus fort : c'est lui qui produisait les « 4 » fantômes visibles
+     * près du bas du terrain sur le test réel.
+     */
+    const provenPlayer = defender || geometricToken;
+    if (!label && !provenPlayer) continue;
+    if (ocrOnly && confidence < 0.62) continue;
+    if (!ocrOnly && confidence < (defender ? 0.4 : geometricToken ? 0.34 : 0.5)) continue;
 
     const p: AiDiagramPlayer = {
       ...raw,
