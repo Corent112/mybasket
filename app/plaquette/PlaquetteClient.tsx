@@ -682,7 +682,16 @@ useEffect(() => {
     }
   };
   window.addEventListener('mybasket:preview-system',handlePreviewSystem);
+    const handleSaveLibrarySystem=(event:Event)=>{
+      const systemId=(event as CustomEvent<{systemId?:string}>).detail?.systemId;
+      if(systemId){
+        setOpenedLibrarySystemId(systemId);
+        void saveOpenedLibrarySystem(systemId);
+      }
+    };
+    window.addEventListener('mybasket:save-library-system',handleSaveLibrarySystem);
   return()=>window.removeEventListener('mybasket:preview-system',handlePreviewSystem);
+      window.removeEventListener('mybasket:save-library-system',handleSaveLibrarySystem);
 }, []);
 
   const [title, setTitle] = useState('Nouveau play');
