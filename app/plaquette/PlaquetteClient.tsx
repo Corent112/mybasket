@@ -4664,7 +4664,14 @@ const exportJson = () => {
   <div className="ed-layout">
             {/* -------- BIBLIOTHÈQUE / ORGANISATION -------- */}
             <div className="ed-library">
-              <ContentNavigator embedded initialKind="system" />
+              <ContentNavigator
+          embedded
+          initialKind="system"
+          onSaveSystem={(system) => {
+            setOpenedLibrarySystemId(system.id);
+            void saveOpenedLibrarySystem(system.id);
+          }}
+        />
             </div>
 
             {/* -------- PHASES — DOCK BAS -------- */}
