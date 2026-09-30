@@ -3433,40 +3433,10 @@ export async function analyseGraphic(
    * La couleur et l'OCR n'ont plus le droit de déplacer ou typer le joueur.
    * Le gabarit MyBasket reste prioritaire lorsqu'il est reconnu.
    */
-  const typeOfRead = (item: (typeof reads)[number]): AiDetectionType => {
-    // Palier actuel : on importe UNIQUEMENT les ronds bleus/noirs comme attaquants.
-    // La défense rouge sera réactivée séparément après validation des XY.
+  const typeOfRead = (_item: (typeof reads)[number]): AiDetectionType => {
+    // Palier actuel : uniquement les ronds bleus/noirs, importés en attaquants.
+    // Les défenseurs seront réactivés après validation des coordonnées XY.
     return "attacker";
-
-    /*
-
-    /*
-     * Vision 2 papier — étape 1 de recalage.
-     *
-     * Jusqu'ici la règle finale était « si ce n'est pas assez circulaire,
-     * alors défenseur ». C'est exactement ce qui transformait les 6 candidats
-     * de la photo réelle en 6 défenseurs : perspective, numéro et anti-aliasing
-     * suffisent à rendre une boîte un peu rectangulaire.
-     *
-     * Désormais un défenseur exige une PREUVE POSITIVE de bras/parenthèses.
-     * L'absence de rondeur n'est plus une preuve de défense.
-     *
-     * Pour cette première passe on exige deux indices structurels lorsque les
-     * bras sont seulement inférés (split + arc). Un indice rouge local seul ne
-     * peut donc plus convertir tout le terrain en défenseurs. Le gabarit
-     * MyBasket reconnu reste, lui, une preuve directe.
-     */
-    const mergedArms = hasSplitTop(item.candidate);
-    const structuralArms =
-      item.defenseEvidence >= 0.78 ||
-      (mergedArms && item.defenseEvidence >= DEFENSE_SURE);
-
-    if (structuralArms) return "defender";
-
-    // Numéro seul, numéro entouré, rond légèrement déformé par la photo :
-    // attaquant par défaut. On ne déplace rien ici.
-    return "attacker";
-    */
   };
 
   const usedAttack = new Set<string>();
