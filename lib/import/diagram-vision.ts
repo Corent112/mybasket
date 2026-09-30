@@ -3445,127 +3445,53 @@ export async function analyseGraphic(
   }
 
   /*
-   * Vision 2 papier — RONDS BLEUS/NOIRS NUMÉROTÉS.
+   * Vision 2 papier — ronds bleus/noirs.
    *
-   * Passe volontairement indépendante de la défense : on part des mots OCR
-   * numériques, puis on vérifie qu'ils sont réellement enfermés dans un anneau
-   * sombre/bleuté. Le centre utilisé est le CENTRE DE L'ANNEAU, jamais le centre
-   * du chiffre. Cela donne exactement la position à reporter dans Plaquette.
+   * IMPORTANT : la tentative OCR→recherche d'anneau a été retirée. Elle pouvait
+   * accrocher une ligne de terrain autour d'un chiffre et fabriquer les faux
+   * joueurs visibles dans le test (3 en haut, 4 en bas).
    *
-   * Cette passe ne crée que des attaquants. Les défenseurs rouges sont traités
-   * séparément après validation de cette couche.
+   * Les ronds sont déjà trouvés géométriquement plus haut par circlesInComponent.
+   * Ici on ne CRÉE donc plus aucun joueur. On utilise seulement l'OCR global
+   * pour attribuer un numéro à un cercle géométrique EXISTANT, à condition que
+   * le chiffre tombe réellement à l'intérieur de ce cercle.
    */
   try {
     const blueOcr = await ocrCanvas(work);
     for (const box of blueOcr.words) {
       const digits = box.text.replace(/\D/g, "");
-      if (!/^\d{1,2}$/.test(digits) || box.confidence < 0.46) continue;
+      if (!/^\d{1,2}$/.test(digits) || box.confidence < 0.42) continue;
 
       const tx = (box.x0 + box.x1) / 2;
       const ty = (box.y0 + box.y1) / 2;
-      const glyphSize = Math.max(2, box.x1 - box.x0, box.y1 - box.y0);
-      const rMin = Math.max(glyphSize * 0.65, unit * 0.012);
-      const rMax = Math.min(unit * 0.075, Math.max(glyphSize * 2.8, unit * 0.026));
 
-      let best:
-        | { cx: number; cy: number; r: number; score: number }
-        | undefined;
+      let bestIndex = -1;
+      let bestRatio = Number.POSITIVE_INFINITY;
 
-      // Le chiffre peut être légèrement décentré dans un rond manuscrit.
-      const centreStep = Math.max(1, Math.round(glyphSize * 0.18));
-      for (let oy = -glyphSize * 0.55; oy <= glyphSize * 0.55; oy += centreStep) {
-        for (let ox = -glyphSize * 0.55; ox <= glyphSize * 0.55; ox += centreStep) {
-          const cx = tx + ox;
-          const cy = ty + oy;
+      for (let i = 0; i < reads.length; i += 1) {
+        const item = reads[i];
+        const radius = Math.max(3, Math.min(item.candidate.bw, item.candidate.bh) / 2);
+        const d = Math.hypot(item.centre.x - tx, item.centre.y - ty);
+        const ratio = d / radius;
 
-          for (let r = rMin; r <= rMax; r += Math.max(1, rMax / 12)) {
-            let darkBlue = 0;
-            let inkHits = 0;
-            let samples = 0;
-
-            for (let a = 0; a < Math.PI * 2; a += Math.PI / 16) {
-              const x = cx + Math.cos(a) * r;
-              const y = cy + Math.sin(a) * r;
-              const [rr, gg, bb] = pixelAt(ink.px, x, y);
-              const lum = (rr + gg + bb) / 3;
-              const blueish = bb >= rr * 0.72 && bb >= gg * 0.72;
-              if (lum < 145 && blueish) darkBlue += 1;
-              if (isInk(ink, x, y)) inkHits += 1;
-              samples += 1;
-            }
-
-            const coverage = Math.max(darkBlue / samples, inkHits / samples);
-            if (coverage < 0.46) continue;
-
-            // Le mot OCR doit réellement être à l'intérieur du rond.
-            const dText = Math.hypot(tx - cx, ty - cy);
-            if (dText > r * 0.72) continue;
-
-            const score = coverage - dText / Math.max(1, r) * 0.12;
-            if (!best || score > best.score) best = { cx, cy, r, score };
-          }
+        // Le centre du chiffre doit être franchement DANS le rond. Une simple
+        // proximité ne suffit plus.
+        if (ratio <= 0.62 && ratio < bestRatio) {
+          bestRatio = ratio;
+          bestIndex = i;
         }
       }
 
-      if (!best) continue;
-
-      const marginX = unit * 0.2;
-      const marginY = playH * 0.14;
-      if (
-        best.cx < Math.max(0, play.x0 - marginX) ||
-        best.cx > Math.min(work.width, play.x1 + marginX) ||
-        best.cy < Math.max(0, play.y0 - marginY) ||
-        best.cy > Math.min(work.height, play.y1 + marginY)
-      ) continue;
-
-      // Si un jeton géométrique existe déjà au même centre, on lui donne le
-      // BON numéro et on conserve son centre géométrique.
-      const existing = reads.find((item) => {
-        const radius = Math.max(best!.r * 0.9, Math.max(item.candidate.bw, item.candidate.bh) * 0.7);
-        return Math.hypot(item.centre.x - best!.cx, item.centre.y - best!.cy) <= radius;
-      });
-
-      if (existing) {
-        if (!existing.digits || existing.confidence < box.confidence) {
-          existing.digits = digits;
-          existing.confidence = Math.max(existing.confidence, box.confidence);
-        }
-        // Le centre du rond est la vérité de position.
-        existing.centre = { x: best.cx, y: best.cy };
-        continue;
+      if (bestIndex < 0) continue;
+      const item = reads[bestIndex];
+      if (!item.digits || item.confidence < box.confidence) {
+        item.digits = digits;
+        item.confidence = Math.max(item.confidence, box.confidence);
       }
-
-      const d = best.r * 2;
-      const synthetic: Component = {
-        x0: best.cx - best.r,
-        y0: best.cy - best.r,
-        x1: best.cx + best.r,
-        y1: best.cy + best.r,
-        bw: d,
-        bh: d,
-        cx: best.cx,
-        cy: best.cy,
-        points: [],
-        fillRatio: 0.28,
-        color: { r: 45, g: 60, b: 85 },
-      };
-
-      reads.push({
-        candidate: synthetic,
-        centre: { x: best.cx, y: best.cy },
-        area: Math.PI * best.r * best.r,
-        digits,
-        confidence: box.confidence,
-        defenseEvidence: 0,
-        defenseSource: ["rond bleu/noir numéroté"],
-        shapeScore: 0.95,
-        contrastScore: 0.9,
-        hasGlyph: true,
-      });
-      reject("Vision 2 rond bleu", `attaquant ${digits} au centre exact du rond`);
+      reject("Vision 2 numéro rond", `numéro ${digits} rattaché à un rond géométrique existant`);
     }
   } catch {
-    // La passe historique reste disponible si OCR global indisponible.
+    // Aucun joueur n'est créé si cette lecture OCR échoue.
   }
 
   // Attribution des libellés en DEUXIÈME passe : un numéro provisoire ne doit
