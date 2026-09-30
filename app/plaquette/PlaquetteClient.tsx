@@ -674,7 +674,12 @@ useEffect(() => {
   void loadFromSource();
   const handlePreviewSystem=(event:Event)=>{
     const systemId=(event as CustomEvent<{systemId?:string}>).detail?.systemId;
-    if(systemId)void loadFromSource(systemId);
+    if(systemId){
+      // L'ID est mémorisé immédiatement au clic Bibliothèque, avant même le chargement Supabase.
+      // Le bouton "Enregistrer les modifications" ne dépend donc plus du succès/du timing du chargement.
+      setOpenedLibrarySystemId(systemId);
+      void loadFromSource(systemId);
+    }
   };
   window.addEventListener('mybasket:preview-system',handlePreviewSystem);
   return()=>window.removeEventListener('mybasket:preview-system',handlePreviewSystem);
@@ -705,9 +710,16 @@ useEffect(() => {
   // ainsi le bouton de mise à jour apparaît aussi via la Bibliothèque intégrée.
   const openSaveModal = () => {
     try {
-      const drawingFlow = localStorage.getItem('mybasket_drawing_flow');
-      const sourceSystemId = localStorage.getItem('mybasket_drawing_source_system_id');
-      if (drawingFlow === 'library-system-copy' && sourceSystemId) {
+      // ContentNavigator écrit ces IDs dès qu'un système est ouvert depuis la Bibliothèque.
+      // On ne dépend plus de mybasket_drawing_flow : selon le chemin d'ouverture,
+      // ce marqueur pouvait manquer alors que l'ID du système était bien présent.
+      const sourceSystemId =
+        localStorage.getItem('mybasket_drawing_source_system_id') ||
+        localStorage.getItem('mybasket_current_system_id') ||
+        localStorage.getItem('mybasket_edit_systeme_id') ||
+        localStorage.getItem('mybasket_edit_system_id');
+
+      if (sourceSystemId) {
         setOpenedLibrarySystemId(sourceSystemId);
       }
     } catch {}
