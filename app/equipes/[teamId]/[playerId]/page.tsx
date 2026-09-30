@@ -4103,10 +4103,17 @@ function VideoRentabilityTab({
                 showLabels={false}
                 shots={playerShots}
                 onShotClick={(shot) => {
-                  const index = playerShots.findIndex((item) => item === shot);
-                  openPopup("Tir du joueur", playerShots, Math.max(0, index));
+                  // Un clic sur un point = cette action précise uniquement.
+                  // La modale s'ouvre donc en 1 / 1 sur le tir sélectionné.
+                  openPopup("Tir du joueur", [shot], 0);
                 }}
-                onZoneClick={(zoneId) => openPopup(`Zone ${zoneId}`, playerShots.filter((shot) => (shot.shot_zone_id ?? shot.zone) === zoneId))}
+                onZoneClick={(zoneId) => {
+                  // Un clic sur une zone = uniquement les tirs réellement
+                  // calculés dans cette zone par la même logique que le résumé.
+                  const zoneShots = playerShots.filter((shot) => shotZone(shot).id === zoneId);
+                  const zoneLabel = zones.find((zone) => zone.id === zoneId)?.label ?? `Zone ${zoneId}`;
+                  openPopup(zoneLabel, zoneShots, 0);
+                }}
               />
             </div>
 
@@ -4852,7 +4859,6 @@ function VideoModal({
           teamId={teamId}
           playerId={playerId}
           montageTitle={montageTitle}
-          saveTarget="match-action"
         />
 
         <div className="vr-modal-filters">
