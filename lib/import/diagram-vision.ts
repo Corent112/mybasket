@@ -2097,54 +2097,86 @@ function discCentre(component: Component): { x: number; y: number } {
  * chaque joueur un défenseur.
  */
 function hasDefenseMark(ctx: InkContext, candidate: Component, own: Set<number>): boolean {
-  const step = ctx.step;
-  const { bw, bh, cx } = candidate;
-  // Vision 2 papier : les bras/parenthèses peuvent entourer le rond et ne
-  // sont pas forcément uniquement au-dessus. Fenêtre locale complète.
-  const yTop = candidate.cy - bh * 1.45;
-  const yBottom = candidate.cy + bh * 1.45;
-  const x0 = cx - bw * 1.55;
-  const x1 = cx + bw * 1.55;
+  /*
+   * Vision 2 papier — les défenseurs du modèle utilisateur sont un rond avec
+   * DEUX bras/parenthèses latéraux. On ne compte donc plus toute l'encre d'une
+   * grande fenêtre (une ligne de raquette ou l'arc à 3 points suffisait).
+   *
+   * La preuve doit être bilatérale : de l'encre à gauche ET à droite du disque,
+   * dans une bande centrée verticalement sur le joueur. Les pixels du disque
+   * lui-même sont exclus avec `own`.
+   */
+  const step = Math.max(1, ctx.step);
+  const { bw, bh, cx, cy } = candidate;
+  const inner = bw * 0.42;
+  const outer = bw * 1.18;
+  const y0 = cy - bh * 0.72;
+  const y1 = cy + bh * 0.72;
 
   let left = 0;
   let right = 0;
-  let above = 0;
+  let leftRows = 0;
+  let rightRows = 0;
 
-  for (let y = yTop; y <= yBottom; y += step) {
-    for (let x = x0; x <= x1; x += step) {
-      if (!isInk(ctx, x, y)) continue;
-      if (own.has(gridKey(ctx, x, y))) continue;
-      above += 1;
-      if (x < cx - bw * 0.25) left += 1;
-      else if (x > cx + bw * 0.25) right += 1;
+  for (let y = y0; y <= y1; y += step) {
+    let rowLeft = false;
+    let rowRight = false;
+
+    for (let x = cx - outer; x <= cx - inner; x += step) {
+      if (!isInk(ctx, x, y) || own.has(gridKey(ctx, x, y))) continue;
+      left += 1;
+      rowLeft = true;
     }
+    for (let x = cx + inner; x <= cx + outer; x += step) {
+      if (!isInk(ctx, x, y) || own.has(gridKey(ctx, x, y))) continue;
+      right += 1;
+      rowRight = true;
+    }
+
+    if (rowLeft) leftRows += 1;
+    if (rowRight) rightRows += 1;
   }
 
-  const need = Math.max(3, Math.round((bw / step) * 0.45));
+  const rows = Math.max(1, Math.round((y1 - y0) / step));
+  const needPixels = Math.max(3, Math.round((bw / step) * 0.28));
+  const needRows = Math.max(2, Math.round(rows * 0.16));
 
-  // Vision 2 papier : sur les schémas photographiés, les défenseurs portent
-  // souvent une marque rouge/rose. On la cherche UNIQUEMENT dans la petite
-  // fenêtre du joueur, avec saturation forte : le parquet ne peut donc plus
-  // déclencher le test comme dans l'ancien moteur.
+  // Les deux bras doivent exister. Un trait qui traverse un seul côté ne suffit
+  // jamais à typer le joueur en défenseur.
+  const bilateralInk =
+    left >= needPixels &&
+    right >= needPixels &&
+    leftRows >= needRows &&
+    rightRows >= needRows;
+
+  if (!bilateralInk) return false;
+
+  // Sur le cas papier de référence les bras défenseurs sont rouges/roses.
+  // La couleur n'est PAS obligatoire, mais lorsqu'elle est présente des deux
+  // côtés elle renforce une géométrie déjà bilatérale ; elle ne crée jamais à
+  // elle seule un défenseur.
   let redLeft = 0;
   let redRight = 0;
-  for (let y = yTop; y <= yBottom; y += step) {
-    for (let x = x0; x <= x1; x += step) {
+  for (let y = y0; y <= y1; y += step) {
+    for (let x = cx - outer; x <= cx - inner; x += step) {
       const [r, g, b] = pixelAt(ctx.px, x, y);
       const sat = saturationOf(r, g, b);
       const hue = hueOf(r, g, b);
-      const red = sat >= 0.32 && (hue <= 12 || hue >= 330) && r > g * 1.12 && r > b * 1.08;
-      if (!red) continue;
-      if (x < cx - bw * 0.18) redLeft += 1;
-      else if (x > cx + bw * 0.18) redRight += 1;
+      if (sat >= 0.32 && (hue <= 12 || hue >= 330) && r > g * 1.12 && r > b * 1.08) redLeft += 1;
+    }
+    for (let x = cx + inner; x <= cx + outer; x += step) {
+      const [r, g, b] = pixelAt(ctx.px, x, y);
+      const sat = saturationOf(r, g, b);
+      const hue = hueOf(r, g, b);
+      if (sat >= 0.32 && (hue <= 12 || hue >= 330) && r > g * 1.12 && r > b * 1.08) redRight += 1;
     }
   }
-  const redNeed = Math.max(2, Math.round((bw / step) * 0.18));
+
+  const redNeed = Math.max(2, Math.round((bw / step) * 0.12));
   if (redLeft >= redNeed && redRight >= redNeed) return true;
 
-  if (left < need || right < need || above < need * 2.5) return false;
-  // Symétrie : un simple tracé qui passe au-dessus n'est pas une marque.
-  return Math.min(left, right) >= Math.max(left, right) * 0.28;
+  // En monochrome, on exige en plus une présence assez équilibrée des deux bras.
+  return Math.min(left, right) >= Math.max(left, right) * 0.42;
 }
 
 type OrangeKind = "ball" | "cone" | "unknown";
