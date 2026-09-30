@@ -14,7 +14,7 @@ import { createClient } from "@/lib/supabase/client";
 import { useLivestatTags } from "@/lib/livestat-tags";
 import PlayerMontages from "@/components/players/PlayerMontages";
 import PlayerProfilingTab from "@/components/players/PlayerProfilingTab";
-import ShotChart from "@/components/prise-stats-pro/ShotChart";
+import ShotChart, { resolveShotZone } from "@/components/prise-stats-pro/ShotChart";
 import AdvancedVideoEditor from "@/components/video-editor/AdvancedVideoEditor";
 import PlayerLoadMonitoring from "@/components/players/PlayerLoadMonitoring";
 import PlayerShootingGrids from "@/components/players/PlayerShootingGrids";
@@ -4110,7 +4110,7 @@ function VideoRentabilityTab({
                 onZoneClick={(zoneId) => {
                   // Un clic sur une zone = uniquement les tirs réellement
                   // calculés dans cette zone par la même logique que le résumé.
-                  const zoneShots = playerShots.filter((shot) => shotZone(shot).id === zoneId);
+                  const zoneShots = playerShots.filter((shot) => resolveShotZone(shot) === zoneId);
                   const zoneLabel = zones.find((zone) => zone.id === zoneId)?.label ?? `Zone ${zoneId}`;
                   openPopup(zoneLabel, zoneShots, 0);
                 }}
