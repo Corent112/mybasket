@@ -3360,139 +3360,63 @@ export async function analyseGraphic(
   }
 
   /*
-   * Vision 2 papier — PASSAGE NUMÉROS SEULS.
+   * Vision 2 — PALIER STRICT « RONDS BLEUS ».
    *
-   * Le cercle global ne peut, par définition, jamais retrouver un attaquant
-   * écrit uniquement sous la forme "4" ou "12". C'est une convention validée
-   * du schéma papier : un numéro isolé DANS L'AIRE DE JEU est un joueur.
+   * Comme un système de tracking XY : la géométrie détecte d'abord le jeton,
+   * son CENTRE fournit la position, puis l'OCR ne sert qu'à lire son identité.
+   * Aucun mot OCR ne peut créer une position.
    *
-   * On demande donc une fois à l'OCR de localiser les mots du terrain redressé.
-   * On ne conserve que les mots composés de 1 ou 2 chiffres, de petite taille,
-   * dont le centre est dans l'aire de jeu. Ils ne remplacent jamais un symbole
-   * déjà détecté : ils servent uniquement à récupérer un joueur manquant.
+   * On ne garde ici que les jetons circulaires déjà détectés géométriquement,
+   * avec un glyphe intérieur. Toute l'ancienne récupération « numéro seul » est
+   * volontairement désactivée pour ce palier.
    */
+  const circleReads = reads.filter((item) => {
+    const ratio =
+      Math.max(item.candidate.bw, item.candidate.bh) /
+      Math.max(1, Math.min(item.candidate.bw, item.candidate.bh));
+    const size = Math.max(item.candidate.bw, item.candidate.bh) / Math.max(1, unit);
+    return (
+      item.hasGlyph &&
+      ratio <= 1.32 &&
+      size >= 0.028 &&
+      size <= 0.13 &&
+      item.shapeScore >= 0.68
+    );
+  });
+
+  // OCR = identité uniquement. Le chiffre doit tomber à l'intérieur du cercle.
   try {
     const pageOcr = await ocrCanvas(work);
-    const digitBoxes = pageOcr.words
-      .map((box) => ({ ...box, digits: box.text.replace(/\D/g, "") }))
-      .filter((box) => /^\d{1,2}$/.test(box.digits))
-      .filter((box) => box.confidence >= 0.42)
-      .filter((box) => {
-        const cx = (box.x0 + box.x1) / 2;
-        const cy = (box.y0 + box.y1) / 2;
-        const bw = Math.max(1, box.x1 - box.x0);
-        const bh = Math.max(1, box.y1 - box.y0);
-        const size = Math.max(bw, bh) / Math.max(1, unit);
-        return (
-          // Même règle que les cercles : un numéro de joueur peut être
-          // dessiné juste hors touche (file d'attente). On conserve sa vraie
-          // coordonnée relative ; courtToCanonical sait projeter les marges.
-          cx >= Math.max(0, play.x0 - unit * 0.18) &&
-          cx <= Math.min(work.width, play.x1 + unit * 0.18) &&
-          cy >= Math.max(0, play.y0 - playH * 0.12) &&
-          cy <= Math.min(work.height, play.y1 + playH * 0.12) &&
-          size >= 0.012 &&
-          size <= 0.09
-        );
-      });
-
-    for (const box of digitBoxes) {
-      const cx = (box.x0 + box.x1) / 2;
-      const cy = (box.y0 + box.y1) / 2;
-
-      // Si le chiffre est déjà au centre d'un jeton détecté, le jeton garde la
-      // main : on ne crée surtout pas un doublon.
-      const nearToken = reads.some((item) => {
-        const radius = Math.max(item.candidate.bw, item.candidate.bh) * 0.72;
-        return Math.hypot(item.centre.x - cx, item.centre.y - cy) <= radius;
-      });
-      if (nearToken) continue;
-
-      const bw = Math.max(3, box.x1 - box.x0);
-      const bh = Math.max(3, box.y1 - box.y0);
-      const synthetic: Component = {
-        x0: box.x0,
-        y0: box.y0,
-        x1: box.x1,
-        y1: box.y1,
-        bw,
-        bh,
-        cx,
-        cy,
-        points: [],
-        fillRatio: 0.35,
-        color: { r: 40, g: 40, b: 40 },
-      };
-
-      reads.push({
-        candidate: synthetic,
-        centre: { x: cx, y: cy },
-        area: Math.max(1, bw * bh * 0.35),
-        digits: box.digits,
-        confidence: box.confidence,
-        // Numéro seul = attaquant. Aucun bras n'est inventé.
-        defenseEvidence: 0,
-        defenseSource: ["numéro seul OCR"],
-        shapeScore: 0.82,
-        contrastScore: 0.72,
-        hasGlyph: true,
-      });
-      reject("Vision 2 numéro seul", `joueur ${box.digits} récupéré par OCR global`);
-    }
-  } catch {
-    // Le passage OCR global est un bonus de récupération. S'il échoue, le
-    // détecteur géométrique historique continue exactement comme avant.
-  }
-
-  /*
-   * Vision 2 papier — ronds bleus/noirs.
-   *
-   * IMPORTANT : la tentative OCR→recherche d'anneau a été retirée. Elle pouvait
-   * accrocher une ligne de terrain autour d'un chiffre et fabriquer les faux
-   * joueurs visibles dans le test (3 en haut, 4 en bas).
-   *
-   * Les ronds sont déjà trouvés géométriquement plus haut par circlesInComponent.
-   * Ici on ne CRÉE donc plus aucun joueur. On utilise seulement l'OCR global
-   * pour attribuer un numéro à un cercle géométrique EXISTANT, à condition que
-   * le chiffre tombe réellement à l'intérieur de ce cercle.
-   */
-  try {
-    const blueOcr = await ocrCanvas(work);
-    for (const box of blueOcr.words) {
+    for (const box of pageOcr.words) {
       const digits = box.text.replace(/\D/g, "");
-      if (!/^\d{1,2}$/.test(digits) || box.confidence < 0.42) continue;
-
+      if (!/^\d{1,2}$/.test(digits) || box.confidence < 0.38) continue;
       const tx = (box.x0 + box.x1) / 2;
       const ty = (box.y0 + box.y1) / 2;
 
-      let bestIndex = -1;
-      let bestRatio = Number.POSITIVE_INFINITY;
-
-      for (let i = 0; i < reads.length; i += 1) {
-        const item = reads[i];
-        const radius = Math.max(3, Math.min(item.candidate.bw, item.candidate.bh) / 2);
+      let best: (typeof circleReads)[number] | undefined;
+      let bestRatio = Infinity;
+      for (const item of circleReads) {
+        const r = Math.max(3, Math.min(item.candidate.bw, item.candidate.bh) / 2);
         const d = Math.hypot(item.centre.x - tx, item.centre.y - ty);
-        const ratio = d / radius;
-
-        // Le centre du chiffre doit être franchement DANS le rond. Une simple
-        // proximité ne suffit plus.
-        if (ratio <= 0.62 && ratio < bestRatio) {
-          bestRatio = ratio;
-          bestIndex = i;
+        const q = d / r;
+        if (q <= 0.62 && q < bestRatio) {
+          best = item;
+          bestRatio = q;
         }
       }
-
-      if (bestIndex < 0) continue;
-      const item = reads[bestIndex];
-      if (!item.digits || item.confidence < box.confidence) {
-        item.digits = digits;
-        item.confidence = Math.max(item.confidence, box.confidence);
+      if (!best) continue;
+      if (!best.digits || best.confidence < box.confidence) {
+        best.digits = digits;
+        best.confidence = Math.max(best.confidence, box.confidence);
       }
-      reject("Vision 2 numéro rond", `numéro ${digits} rattaché à un rond géométrique existant`);
     }
   } catch {
-    // Aucun joueur n'est créé si cette lecture OCR échoue.
+    // Sans OCR, on conserve les centres détectés mais on n'invente aucun numéro.
   }
+
+  // Pour CE palier uniquement, la suite ne voit plus que les vrais ronds.
+  reads.length = 0;
+  reads.push(...circleReads);
 
   // Attribution des libellés en DEUXIÈME passe : un numéro provisoire ne doit
   // jamais entrer en collision avec un numéro réellement lu ailleurs.
@@ -3510,8 +3434,11 @@ export async function analyseGraphic(
    * Le gabarit MyBasket reste prioritaire lorsqu'il est reconnu.
    */
   const typeOfRead = (item: (typeof reads)[number]): AiDetectionType => {
-    if (item.candidate.template?.kind === "attacker") return "attacker";
-    if (item.candidate.template?.kind === "defender") return "defender";
+    // Palier actuel : on importe UNIQUEMENT les ronds bleus/noirs comme attaquants.
+    // La défense rouge sera réactivée séparément après validation des XY.
+    return "attacker";
+
+    /*
 
     /*
      * Vision 2 papier — étape 1 de recalage.
@@ -3539,6 +3466,7 @@ export async function analyseGraphic(
     // Numéro seul, numéro entouré, rond légèrement déformé par la photo :
     // attaquant par défaut. On ne déplace rien ici.
     return "attacker";
+    */
   };
 
   const usedAttack = new Set<string>();
