@@ -3175,11 +3175,17 @@ export async function analyseGraphic(
     const circlePlayers = rawCirclePlayers.filter((candidate) => {
       // Le logo, les numéros dans la marge et les ronds hors terrain étaient
       // encore pris pour des joueurs. Le CENTRE doit être dans l'aire de jeu.
+      // Un exercice peut volontairement placer une file/joueur HORS des
+      // lignes de touche. Le repère Plaquette possède justement des marges pour
+      // cela : ne pas jeter ces joueurs. On accepte une couronne autour de
+      // l'aire de jeu, tout en restant dans le canvas réellement photographié.
+      const marginX = unit * 0.18;
+      const marginY = playH * 0.12;
       const insidePlay =
-        candidate.cx >= play.x0 + unit * 0.006 &&
-        candidate.cx <= play.x1 - unit * 0.006 &&
-        candidate.cy >= play.y0 + playH * 0.006 &&
-        candidate.cy <= play.y1 - playH * 0.006;
+        candidate.cx >= Math.max(0, play.x0 - marginX) &&
+        candidate.cx <= Math.min(work.width, play.x1 + marginX) &&
+        candidate.cy >= Math.max(0, play.y0 - marginY) &&
+        candidate.cy <= Math.min(work.height, play.y1 + marginY);
       if (!insidePlay) {
         reject("Vision 2 cercle", "centre hors aire de jeu : marge/logo ignoré");
         return false;
@@ -3378,10 +3384,13 @@ export async function analyseGraphic(
         const bh = Math.max(1, box.y1 - box.y0);
         const size = Math.max(bw, bh) / Math.max(1, unit);
         return (
-          cx >= play.x0 + unit * 0.01 &&
-          cx <= play.x1 - unit * 0.01 &&
-          cy >= play.y0 + playH * 0.01 &&
-          cy <= play.y1 - playH * 0.01 &&
+          // Même règle que les cercles : un numéro de joueur peut être
+          // dessiné juste hors touche (file d'attente). On conserve sa vraie
+          // coordonnée relative ; courtToCanonical sait projeter les marges.
+          cx >= Math.max(0, play.x0 - unit * 0.18) &&
+          cx <= Math.min(work.width, play.x1 + unit * 0.18) &&
+          cy >= Math.max(0, play.y0 - playH * 0.12) &&
+          cy <= Math.min(work.height, play.y1 + playH * 0.12) &&
           size >= 0.012 &&
           size <= 0.09
         );
