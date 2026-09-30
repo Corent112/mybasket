@@ -100,7 +100,10 @@ function diagramToPhase(diagram: AiExerciseDiagram, courtType: "half" | "full"):
       // Le rendu défenseur spécifique dépend uniquement de team='def'.
       shape: "circle" as const,
       coach: player.coach ? true : undefined,
-      rotation: 0,
+      // Le symbole défenseur natif est dessiné bras ouverts dans le sens
+      // opposé à la convention papier de référence. Un demi-tour restitue le
+      // rond + bras tel qu'il est lu sur la feuille. Les attaquants restent à 0°.
+      rotation: player.team === "def" ? 180 : 0,
       ...(player.color ? { color: player.color } : {}),
       hasBall: Boolean(player.hasBall),
       ballCount: player.hasBall ? 1 : 0,
