@@ -682,16 +682,18 @@ useEffect(() => {
     }
   };
   window.addEventListener('mybasket:preview-system',handlePreviewSystem);
-    const handleSaveLibrarySystem=(event:Event)=>{
-      const systemId=(event as CustomEvent<{systemId?:string}>).detail?.systemId;
-      if(systemId){
-        setOpenedLibrarySystemId(systemId);
-        void saveOpenedLibrarySystem(systemId);
-      }
-    };
-    window.addEventListener('mybasket:save-library-system',handleSaveLibrarySystem);
-  return()=>window.removeEventListener('mybasket:preview-system',handlePreviewSystem);
-      window.removeEventListener('mybasket:save-library-system',handleSaveLibrarySystem);
+  const handleSaveLibrarySystem=(event:Event)=>{
+    const systemId=(event as CustomEvent<{systemId?:string}>).detail?.systemId;
+    if(systemId){
+      setOpenedLibrarySystemId(systemId);
+      void saveOpenedLibrarySystem(systemId);
+    }
+  };
+  window.addEventListener('mybasket:save-library-system',handleSaveLibrarySystem);
+  return()=>{
+    window.removeEventListener('mybasket:preview-system',handlePreviewSystem);
+    window.removeEventListener('mybasket:save-library-system',handleSaveLibrarySystem);
+  };
 }, []);
 
   const [title, setTitle] = useState('Nouveau play');
@@ -4142,23 +4144,52 @@ const saveOpenedLibrarySystem = async (resolvedSystemId?: string | null) => {
       throw new Error("Système introuvable ou non modifiable.");
     }
 
+    // Sauvegarde Bibliothèque dédiée : on prend directement l'état ACTUEL de la plaquette.
+    // On ne passe pas par le flux création/insertion (buildPlaquetteResult).
+    const phaseImagesBase64 = await captureAllPhaseImages();
+    if (!phaseImagesBase64.length) {
+      throw new Error("Aucune phase capturée.");
+    }
+
     const schemaGroupId = crypto.randomUUID();
-    const { uploadedUrls, schemaDataList, result } = await buildPlaquetteResult({
-      isSysteme: true,
-      targetId: targetSystemId,
+    const folder = `exercices/systemes-${targetSystemId}/schemas/${schemaGroupId}`;
+    const uploadedUrls: string[] = [];
+
+    for (let i = 0; i < phaseImagesBase64.length; i += 1) {
+      uploadedUrls.push(
+        await uploadSchemaImage(
+          phaseImagesBase64[i],
+          folder,
+          `phase-${i + 1}.png`
+        )
+      );
+    }
+
+    const fullPhases = JSON.parse(JSON.stringify(phasesRef.current || []));
+    const savedTitle = title || existingSystem.title || "Système";
+    const schemaDataList = uploadedUrls.map((url, phaseIndex) => ({
+      title: `${savedTitle} - Phase ${phaseIndex + 1}`,
       schemaGroupId,
-      editIndex: null,
-      captureVideo: false,
-    });
+      phaseIndex,
+      courtType: courtRef.current,
+      courtStyle: courtStyleRef.current,
+      courtBranding: courtBrandingRef.current,
+      phases: fullPhases,
+      sheet,
+      current: phaseIndex,
+      imageData: url,
+      phaseImages: uploadedUrls,
+      editable: true,
+    }));
 
     const updated = await updateSystem(targetSystemId, {
-      title: title || existingSystem.title || "Système",
-      schemaImage: uploadedUrls[0] || "",
+      title: savedTitle,
+      schemaImage: uploadedUrls[0] || existingSystem.schemaImage || "",
       schemaImages: uploadedUrls,
       schemaData: schemaDataList[0] || null,
       schemaDataList,
-      // Une modification du dessin ne supprime pas une animation déjà enregistrée.
-      schemaVideo: existingSystem.schemaVideo || result.schemaVideo || "",
+      // Une modification du dessin conserve l'animation déjà enregistrée.
+      schemaVideo: existingSystem.schemaVideo || "",
     });
 
     if (!updated) {
@@ -4171,6 +4202,11 @@ const saveOpenedLibrarySystem = async (resolvedSystemId?: string | null) => {
     setSaveMsg(true);
     window.setTimeout(() => setSaveMsg(false), 1500);
     showHint("Modifications enregistrées");
+
+    // Recharge immédiatement la Bibliothèque pour refléter la nouvelle miniature/donnée.
+    window.dispatchEvent(new CustomEvent('mybasket:library-system-saved', {
+      detail: { systemId: targetSystemId }
+    }));
   } catch (error: any) {
     console.error("ERREUR saveOpenedLibrarySystem", error);
     alert(error?.message || "Impossible d’enregistrer les modifications.");

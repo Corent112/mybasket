@@ -19,6 +19,11 @@ export default function ContentNavigator({embedded=false,onPreviewSystem,onSaveS
  const[addSystemId,setAddSystemId]=useState(''),[addPlaybookId,setAddPlaybookId]=useState(''),[addSeriesId,setAddSeriesId]=useState('');
  async function load(){try{const[t,ss,ws,tg]=await Promise.all([listDrawingTeams(),ensureDrawingSeasons(),loadDrawingSystems(),ensureDefaultPersonalSystemTags()]);setTeams(t);setSeasons(ss);setSystems(ws.systems);setPlaybooks(ws.playbooks);setSeries(ws.series);setTags(tg)}catch(e){console.error('DESSIN workspace',e)}}
  useEffect(()=>{void load()},[]);
+ useEffect(()=>{
+   const handleLibrarySystemSaved=()=>{void load()};
+   window.addEventListener('mybasket:library-system-saved',handleLibrarySystemSaved);
+   return()=>window.removeEventListener('mybasket:library-system-saved',handleLibrarySystemSaved);
+ },[]);
  const flash=(message:string)=>{setToast(message);window.setTimeout(()=>setToast(''),1800)};
  const filteredPlaybooks=useMemo(()=>playbooks.filter(p=>
    (!teamId||!p.team_id||p.team_id===teamId)&&
