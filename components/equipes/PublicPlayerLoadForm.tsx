@@ -134,13 +134,13 @@ function BodyFigure({
     : new Set(["head_back","shoulder_left_back","shoulder_right_back","upper_back","lower_back","elbow_left_back","elbow_right_back","wrist_left_back","wrist_right_back","glute_left","glute_right","hamstring_left","hamstring_right","knee_left_back","knee_right_back","ankle_left_back","ankle_right_back"]);
   const zones = PAIN_ZONES.filter((zone) => zone.side === side && visibleIds.has(zone.id));
   const front = side === "front";
-  const anatomySource = "/api/body-map";
+  const anatomySource = front ? "/30.png" : "/29.png";
 
   return <div className="bodyFigure">
     <div className="bodyLabel">{front ? "Face" : "Dos"}</div>
     <div className={`human medicalBody anatomyPhoto ${front ? "front" : "back"}`}>
       <div className="anatomyCrop" aria-label={front ? "Corps anatomique de face" : "Corps anatomique de dos"}>
-        <img src={anatomySource} alt="" draggable={false} />
+        <img src={anatomySource} alt={front ? "Corps anatomique de face" : "Corps anatomique de dos"} draggable={false} />
       </div>
       {zones.map((zone) => (
         <button
@@ -493,6 +493,6 @@ const css = `
 .painLayout{display:grid;grid-template-columns:minmax(0,1.45fr) minmax(280px,.75fr);gap:20px}.painMain{min-width:0}.painAside{border:1px solid #e7e1de;border-radius:16px;padding:14px;background:#fcfbfa;align-self:start;max-height:650px;overflow:auto}.painAside h2{font-size:.9rem;margin:0 0 10px}.painNav{grid-column:1/-1}.largeBodies{padding:12px 20px}.largeBodies .human{width:230px}.anSkin{stroke:#8f8b88;stroke-width:1;stroke-linejoin:round}.muscleLine{fill:none;stroke:#b9b4b1;stroke-width:1;stroke-linecap:round}.anatomical .painPoint{width:30px;height:30px;background:rgba(215,35,55,.14);border:1.5px solid rgba(215,35,55,.32);box-shadow:none}.anatomical .painPoint.selected{background:#c8103d;border:3px solid #fff;box-shadow:0 0 0 8px rgba(200,16,61,.18)}.largeBodies .anatomical .painPoint{width:32px;height:32px}
 @media(max-width:760px){.questionnaireWide{width:100%}.qGrid,.painLayout{grid-template-columns:1fr}.painAside{max-height:none}.painNav{grid-column:auto}.largeBodies{padding:8px 0}.largeBodies .human{width:150px}.questionnaireWide .wStep{padding-left:16px;padding-right:16px}.questionnaireWide .wHeader{padding-left:16px;padding-right:16px}.qTop>b{font-size:.66rem}.qGrid .question,.qBox{padding:12px}}
 
-.medicalBody{width:280px;aspect-ratio:306/612;position:relative}.anatomyCrop{position:absolute;inset:0;overflow:hidden;background:#fff}.anatomyCrop img{position:absolute;top:0;width:200%;height:100%;max-width:none;object-fit:fill;user-select:none;pointer-events:none}.anatomyPhoto.front .anatomyCrop img{left:0}.anatomyPhoto.back .anatomyCrop img{left:-100%}.medicalBody .painPoint{position:absolute;z-index:2;transform:translate(-50%,-50%);width:24px;height:24px;border-radius:999px;background:rgba(200,16,61,.12);border:1.5px solid rgba(200,16,61,.42);box-shadow:0 0 0 3px rgba(200,16,61,.025);cursor:pointer}.medicalBody .painPoint:hover{background:rgba(200,16,61,.24);border-color:rgba(200,16,61,.65)}.medicalBody .painPoint.selected{background:#8f1731;border:3px solid #fff;box-shadow:0 0 0 6px rgba(143,23,49,.2)}.largeBodies{gap:3.2rem}.largeBodies .medicalBody{width:300px}
+.medicalBody{width:280px;aspect-ratio:306/612;position:relative}.anatomyCrop{position:absolute;inset:0;overflow:hidden;background:#fff}.anatomyCrop img{position:absolute;inset:0;width:100%;height:100%;max-width:none;object-fit:contain;user-select:none;pointer-events:none}.medicalBody .painPoint{position:absolute;z-index:2;transform:translate(-50%,-50%);width:24px;height:24px;border-radius:999px;background:rgba(200,16,61,.12);border:1.5px solid rgba(200,16,61,.42);box-shadow:0 0 0 3px rgba(200,16,61,.025);cursor:pointer}.medicalBody .painPoint:hover{background:rgba(200,16,61,.24);border-color:rgba(200,16,61,.65)}.medicalBody .painPoint.selected{background:#8f1731;border:3px solid #fff;box-shadow:0 0 0 6px rgba(143,23,49,.2)}.largeBodies{gap:3.2rem}.largeBodies .medicalBody{width:300px}
 @media(max-width:760px){.largeBodies{gap:1.5rem}.medicalBody,.largeBodies .medicalBody{width:175px}.medicalBody .painPoint{width:19px;height:19px}}
 `;
