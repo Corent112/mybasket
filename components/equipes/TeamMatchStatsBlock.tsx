@@ -26,6 +26,7 @@ type MatchRow = {
   result: string | null;
   home: boolean | null;
   match_category?: string | null;
+  project_state?: Record<string, unknown> | null;
 };
 
 type StatRow = {
@@ -123,6 +124,15 @@ function emptyStats(): TeamStats {
     pf: 0,
     pts: 0,
   };
+}
+
+function categoryOf(match: MatchRow): "championship" | "friendly" | "cup" {
+  const projectType = String(match.project_state?.matchType || "").trim().toLowerCase();
+  const raw = String(match.match_category || projectType || "").trim().toLowerCase();
+  if (raw === "friendly" || raw.includes("amical")) return "friendly";
+  if (raw === "cup" || raw.includes("coupe")) return "cup";
+  if (raw === "league" || raw === "championship" || raw.includes("championnat")) return "championship";
+  return "championship";
 }
 
 function isHome(match: MatchRow) {
@@ -225,7 +235,7 @@ export default function TeamMatchStatsBlock({ teamId, matchCategory = "champions
 
       const { data: matchData, error: matchError } = await supabase
         .from("match_stats")
-        .select("id, team_id, opponent, match_date, us_score, them_score, result, home, match_category, project_status")
+        .select("id, team_id, opponent, match_date, us_score, them_score, result, home, match_category, project_status, project_state")
         .eq("team_id", teamId)
         .or("project_status.eq.completed,project_status.is.null")
         .order("match_date", { ascending: false });
@@ -240,7 +250,7 @@ export default function TeamMatchStatsBlock({ teamId, matchCategory = "champions
         return;
       }
 
-      const matchRows = ((matchData ?? []) as MatchRow[]).filter((m) => matchCategory === "all" || String(m.match_category || "championship") === matchCategory);
+      const matchRows = ((matchData ?? []) as MatchRow[]).filter((m) => matchCategory === "all" || categoryOf(m) === matchCategory);
       setMatches(matchRows);
 
       const matchIds = matchRows.map((m) => m.id);
