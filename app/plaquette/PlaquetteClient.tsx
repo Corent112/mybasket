@@ -4142,6 +4142,15 @@ const saveOpenedLibrarySystem = async (resolvedSystemId?: string | null) => {
     const fullPhases = JSON.parse(JSON.stringify(phasesRef.current || []));
     if (!fullPhases.length) throw new Error("Aucune phase à sauvegarder.");
 
+    // Figer toutes les données du système au moment exact du clic.
+    // Les captures parcourent temporairement les phases : la sauvegarde ne doit
+    // plus relire l'état vivant une fois la capture commencée.
+    const savedSheet = JSON.parse(JSON.stringify(sheet));
+    const savedCourtType = courtRef.current;
+    const savedCourtStyle = JSON.parse(JSON.stringify(courtStyleRef.current));
+    const savedCourtBranding = JSON.parse(JSON.stringify(courtBrandingRef.current));
+    const savedTitleAtClick = title;
+
     const existingSystem = await getSystem(targetSystemId);
     if (!existingSystem) throw new Error("Système introuvable ou non modifiable.");
 
@@ -4158,16 +4167,16 @@ const saveOpenedLibrarySystem = async (resolvedSystemId?: string | null) => {
       );
     }
 
-    const savedTitle = title || existingSystem.title || "Système";
+    const savedTitle = savedTitleAtClick || existingSystem.title || "Système";
     const schemaDataList = uploadedUrls.map((url, phaseIndex) => ({
       title: `${savedTitle} - Phase ${phaseIndex + 1}`,
       schemaGroupId,
       phaseIndex,
-      courtType: courtRef.current,
-      courtStyle: courtStyleRef.current,
-      courtBranding: courtBrandingRef.current,
+      courtType: savedCourtType,
+      courtStyle: savedCourtStyle,
+      courtBranding: savedCourtBranding,
       phases: fullPhases,
-      sheet: JSON.parse(JSON.stringify(sheet)),
+      sheet: savedSheet,
       current: phaseIndex,
       imageData: url,
       phaseImages: uploadedUrls,
