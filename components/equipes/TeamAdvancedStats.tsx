@@ -19,6 +19,7 @@ type MatchRow = {
   drive_file_id?: string | null;
   video_file_id?: string | null;
   match_category?: string | null;
+  project_status?: string | null;
   competition_type?: string | null;
   is_friendly?: boolean | null;
   [key: string]: unknown;
@@ -333,7 +334,7 @@ export default function TeamAdvancedStats({
           .order("match_date", { ascending: false });
 
         if (matchError) throw matchError;
-        const loadedMatches = (matchData || []) as MatchRow[];
+        const loadedMatches = ((matchData || []) as MatchRow[]).filter((m) => m.project_status == null || m.project_status === "completed");
         const matchIds = loadedMatches.map((m) => m.id).filter(Boolean);
 
         let loadedActions: ActionRow[] = [];
