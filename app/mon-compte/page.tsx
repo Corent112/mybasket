@@ -167,6 +167,11 @@ export default function MonComptePage() {
 >("rotation");
   const [form, setForm] = useState<Form>(blank());
   const [toast, setToast] = useState('');
+  const [currentPassword, setCurrentPassword] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [passwordSaving, setPasswordSaving] = useState(false);
+  const [passwordMessage, setPasswordMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
   const [teams, setTeams] = useState<Team[]>([]);
   const [teamsView, setTeamsView] = useState<"coached" | "scout" | "partners">("coached");
@@ -605,6 +610,66 @@ export default function MonComptePage() {
           ? error.message
           : "Impossible d'enregistrer les modifications du profil."
       );
+    }
+  };
+
+  const changePassword = async () => {
+    setPasswordMessage(null);
+
+    if (!currentPassword || !newPassword || !confirmPassword) {
+      setPasswordMessage({ type: 'error', text: 'Remplis les trois champs.' });
+      return;
+    }
+
+    if (newPassword !== confirmPassword) {
+      setPasswordMessage({ type: 'error', text: 'Les deux nouveaux mots de passe ne correspondent pas.' });
+      return;
+    }
+
+    if (newPassword.length < 6) {
+      setPasswordMessage({ type: 'error', text: 'Le nouveau mot de passe doit contenir au moins 6 caractères.' });
+      return;
+    }
+
+    if (!email) {
+      setPasswordMessage({ type: 'error', text: 'Adresse e-mail de la session indisponible.' });
+      return;
+    }
+
+    setPasswordSaving(true);
+
+    try {
+      // Vérifie réellement le mot de passe actuel sans modifier le flux de
+      // connexion existant. signInWithPassword rafraîchit simplement la session
+      // du même utilisateur lorsque les identifiants sont corrects.
+      const { data: signInData, error: signInError } = await supabase.auth.signInWithPassword({
+        email,
+        password: currentPassword,
+      });
+
+      if (signInError || !signInData.user || signInData.user.id !== uid) {
+        setPasswordMessage({ type: 'error', text: 'Le mot de passe actuel est incorrect.' });
+        return;
+      }
+
+      const { error: updateError } = await supabase.auth.updateUser({
+        password: newPassword,
+      });
+
+      if (updateError) throw updateError;
+
+      setCurrentPassword('');
+      setNewPassword('');
+      setConfirmPassword('');
+      setPasswordMessage({ type: 'success', text: 'Mot de passe modifié avec succès ✓' });
+    } catch (error) {
+      console.error('Erreur modification mot de passe :', error);
+      setPasswordMessage({
+        type: 'error',
+        text: error instanceof Error ? error.message : 'Impossible de modifier le mot de passe.',
+      });
+    } finally {
+      setPasswordSaving(false);
     }
   };
 
@@ -1236,6 +1301,63 @@ return (
                 <button className="mc-save" onClick={save}>
                   Sauvegarder
                 </button>
+              </div>
+
+              <div style={{ marginTop: '2rem', paddingTop: '1.5rem', borderTop: '2px solid #f0e6e8' }}>
+                <h2 style={{ margin: '0 0 .35rem', fontSize: '1.15rem', fontWeight: 900, color: '#0f0f12' }}>🔒 Sécurité</h2>
+                <p style={{ margin: '0 0 1.1rem', fontSize: '.82rem', color: '#6f6f6f' }}>
+                  Modifie le mot de passe de ton compte MyBasket.
+                </p>
+
+                <div className="mc-row">
+                  <label className="k">Mot de passe actuel</label>
+                  <div className="f">
+                    <input
+                      className="pill"
+                      type="password"
+                      autoComplete="current-password"
+                      value={currentPassword}
+                      onChange={(e) => setCurrentPassword(e.target.value)}
+                    />
+                  </div>
+                </div>
+
+                <div className="mc-row">
+                  <label className="k">Nouveau mot de passe</label>
+                  <div className="f">
+                    <input
+                      className="pill"
+                      type="password"
+                      autoComplete="new-password"
+                      value={newPassword}
+                      onChange={(e) => setNewPassword(e.target.value)}
+                    />
+                  </div>
+                </div>
+
+                <div className="mc-row">
+                  <label className="k">Confirmer le nouveau mot de passe</label>
+                  <div className="f">
+                    <input
+                      className="pill"
+                      type="password"
+                      autoComplete="new-password"
+                      value={confirmPassword}
+                      onChange={(e) => setConfirmPassword(e.target.value)}
+                    />
+                  </div>
+                </div>
+
+                <div className="mc-save-row" style={{ alignItems: 'center', gap: '.8rem' }}>
+                  <button className="mc-save" type="button" disabled={passwordSaving} onClick={changePassword}>
+                    {passwordSaving ? 'Modification…' : 'Modifier mon mot de passe'}
+                  </button>
+                  {passwordMessage && (
+                    <span style={{ fontSize: '.82rem', fontWeight: 700, color: passwordMessage.type === 'success' ? '#1f8a4c' : '#b42318' }}>
+                      {passwordMessage.text}
+                    </span>
+                  )}
+                </div>
               </div>
             </div>
           )}
