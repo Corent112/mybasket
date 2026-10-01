@@ -224,8 +224,9 @@ export default function TeamMatchStatsBlock({ teamId }: { teamId: string }) {
 
       const { data: matchData, error: matchError } = await supabase
         .from("match_stats")
-        .select("id, team_id, opponent, match_date, us_score, them_score, result, home")
+        .select("id, team_id, opponent, match_date, us_score, them_score, result, home, project_status")
         .eq("team_id", teamId)
+        .or("project_status.eq.completed,project_status.is.null")
         .order("match_date", { ascending: false });
 
       if (!active) return;
