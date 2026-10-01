@@ -313,12 +313,87 @@ export async function sendWellnessPainAlert(input: {
   responseDate: string;
   zones: Array<{ label: string; intensity: number; previousIntensity: number | null; reason: "new" | "increase" }>;
 }) {
-  const recipients = await alertRecipients(input.teamId, false);
-  if (!recipients.length || !input.zones.length) return;
+  const admin = createAdminClient();
+  if (!admin || !input.zones.length) return;
 
+  const recipients = await alertRecipients(input.teamId, false);
+  if (!recipients.length) return;
+
+  const { data: team } = await admin.from("teams").select("*").eq("id", input.teamId).maybeSingle();
+  const teamLogo = teamLogoFromRow(team);
   const href = `${appUrl()}/equipes/${encodeURIComponent(input.teamId)}?tab=load`;
-  const rows = input.zones.map((zone) => `<tr><td style="padding:9px;border-bottom:1px solid #eee"><strong>${esc(zone.label)}</strong></td><td style="padding:9px;border-bottom:1px solid #eee;text-align:center"><strong style="color:#B42318">${zone.intensity}/10</strong></td><td style="padding:9px;border-bottom:1px solid #eee">${zone.reason === "new" ? "Nouvelle douleur" : `Hausse de +${zone.intensity - (zone.previousIntensity || 0)} (précédent : ${zone.previousIntensity}/10)`}</td></tr>`).join("");
-  const html = `<!doctype html><html><body style="margin:0;background:#F3EFEC;font-family:Arial,sans-serif;color:#241D1A"><table width="100%" cellspacing="0" cellpadding="0"><tr><td align="center" style="padding:28px 12px"><table width="100%" style="max-width:650px;background:#fff;border-radius:20px;overflow:hidden"><tr><td style="background:#6B1A2C;color:#fff;padding:24px 28px"><div style="font-size:12px;font-weight:900;color:#D4A24C;letter-spacing:.12em">MYBASKET · WELLNESS</div><h1 style="margin:8px 0 0;font-size:25px">Alerte douleur</h1><p style="margin:6px 0 0;color:#EBDDE1">${esc(input.teamName)} · ${esc(frDate(input.responseDate))}</p></td></tr><tr><td style="padding:25px 28px"><h2 style="margin-top:0">${esc(input.playerName)}</h2><p>Une évolution de douleur nécessite l’attention du staff.</p><table width="100%" cellspacing="0" cellpadding="0" style="border-collapse:collapse">${rows}</table><p style="font-size:12px;color:#756760;margin-top:18px">Aucune alerte n’est envoyée lorsque la douleur reste au même niveau ou augmente de moins de 2 points.</p><div style="text-align:center;margin-top:22px"><a href="${esc(href)}" style="display:inline-block;background:#6B1A2C;color:#fff;text-decoration:none;border-radius:999px;padding:13px 22px;font-weight:900">VOIR LE WELLNESS →</a></div></td></tr></table></td></tr></table></body></html>`;
+  const isIncrease = input.zones.some((zone) => zone.reason === "increase");
+  const headline = isIncrease ? "Alerte douleur — Aggravation" : "Alerte douleur — Nouvelle douleur";
+  const intro = isIncrease
+    ? "Une douleur déclarée par un joueur est plus élevée que lors du dernier relevé."
+    : "Une nouvelle zone douloureuse vient d’être déclarée par un joueur.";
+
+  const rows = input.zones.map((zone) => {
+    const delta = zone.previousIntensity == null ? null : zone.intensity - zone.previousIntensity;
+    const reason = zone.reason === "new"
+      ? "Nouvelle douleur"
+      : `Aggravation (+${delta})`;
+    const previous = zone.previousIntensity == null ? "—" : `${zone.previousIntensity}/10`;
+    return `<tr>
+      <td style="padding:14px 10px;border-bottom:1px solid #EEE6E1;font-size:13px;font-weight:900;color:#241D1A">${esc(zone.label)}</td>
+      <td align="center" style="padding:14px 8px;border-bottom:1px solid #EEE6E1;font-size:20px;font-weight:900;color:#B42318">${esc(zone.intensity)}/10</td>
+      <td align="center" style="padding:14px 8px;border-bottom:1px solid #EEE6E1;font-size:13px;color:#625650">${esc(previous)}</td>
+      <td style="padding:14px 10px;border-bottom:1px solid #EEE6E1;font-size:12px;font-weight:800;color:#9B1C31">${esc(reason)}</td>
+    </tr>`;
+  }).join("");
+
+  const html = `<!doctype html>
+<html><body style="margin:0;padding:0;background:#F3EFEC;font-family:Arial,Helvetica,sans-serif;color:#241D1A">
+<table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="background:#F3EFEC">
+<tr><td align="center" style="padding:28px 12px">
+<table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="max-width:680px;background:#FFFFFF;border-radius:22px;overflow:hidden;box-shadow:0 16px 45px rgba(52,25,20,.12)">
+<tr><td style="background:#6B1A2C;padding:26px 30px">
+<table role="presentation" width="100%" cellspacing="0" cellpadding="0"><tr>
+<td valign="middle">
+<div style="font-size:12px;line-height:16px;font-weight:900;letter-spacing:.14em;color:#E8C681">MYBASKET · WELLNESS</div>
+<div style="margin-top:8px;font-size:27px;line-height:32px;font-weight:900;color:#FFFFFF">${esc(headline)}</div>
+<div style="margin-top:5px;font-size:13px;color:#EBDDE1">${esc(input.teamName)} · ${esc(frDate(input.responseDate))}</div>
+</td>
+<td width="94" align="right" valign="middle">${teamLogoHtml(input.teamName, teamLogo)}</td>
+</tr></table>
+</td></tr>
+<tr><td style="height:5px;background:#D4A24C"></td></tr>
+
+<tr><td style="padding:28px 30px 10px">
+<div style="padding:18px 20px;border-radius:16px;background:#FFF4F3;border:1px solid #F1C7C3">
+<div style="font-size:11px;font-weight:900;letter-spacing:.11em;color:#B42318">POINT D’ATTENTION WELLNESS</div>
+<div style="margin-top:8px;font-size:21px;font-weight:900;color:#241D1A">${esc(input.playerName)}</div>
+<div style="margin-top:7px;font-size:14px;line-height:21px;color:#625650">${esc(intro)}</div>
+</div>
+</td></tr>
+
+<tr><td style="padding:15px 30px">
+<table width="100%" cellspacing="0" cellpadding="0" style="border-collapse:collapse;border:1px solid #EEE6E1;border-radius:14px">
+<thead><tr style="background:#FBF8F6">
+<th align="left" style="padding:11px 10px;font-size:10px;color:#8B7D76">ZONE</th>
+<th style="padding:11px 8px;font-size:10px;color:#8B7D76">AUJOURD’HUI</th>
+<th style="padding:11px 8px;font-size:10px;color:#8B7D76">PRÉCÉDENT</th>
+<th align="left" style="padding:11px 10px;font-size:10px;color:#8B7D76">ALERTE</th>
+</tr></thead><tbody>${rows}</tbody>
+</table>
+</td></tr>
+
+<tr><td style="padding:4px 30px 14px">
+<div style="padding:17px;border-radius:15px;background:#FFF8F1;border:1px solid #F0DAC0">
+<div style="font-size:11px;font-weight:900;letter-spacing:.1em;color:#A56300">RÈGLE D’ALERTE</div>
+<div style="margin-top:8px;font-size:13px;line-height:20px;color:#625650">Une alerte est envoyée pour une <strong>nouvelle douleur</strong> ou lorsqu’une douleur déjà présente augmente d’au moins <strong>2 points</strong>. Une douleur stable, en baisse ou en hausse de seulement 1 point ne déclenche aucun email.</div>
+</div>
+</td></tr>
+
+<tr><td align="center" style="padding:10px 30px 30px">
+<a href="${esc(href)}" style="display:inline-block;background:#6B1A2C;color:#FFFFFF;text-decoration:none;border-radius:999px;padding:14px 24px;font-size:13px;font-weight:900">VOIR LE SUIVI DU JOUEUR →</a>
+</td></tr>
+
+<tr><td style="background:#FBF8F6;padding:18px 28px;text-align:center;border-top:1px solid #EFE6E0">
+<div style="font-size:12px;font-weight:900;color:#6B1A2C">MYBASKET</div>
+<div style="margin-top:5px;font-size:11px;line-height:17px;color:#958780">Email envoyé automatiquement à la suite du questionnaire Wellness. Ces informations sont des indicateurs de suivi et ne constituent pas un diagnostic médical.</div>
+</td></tr>
+</table></td></tr></table></body></html>`;
 
   for (const recipient of recipients) {
     if (!recipient.emailEnabled || !recipient.email) continue;
@@ -326,7 +401,7 @@ export async function sendWellnessPainAlert(input: {
       await sendTransactionalEmail({
         to: recipient.email,
         from: "MyBasket <contact@mybasket.fr>",
-        subject: `🔴 Alerte douleur — ${input.playerName} · ${input.teamName}`,
+        subject: `🔴 ${headline} — ${input.playerName} · ${input.teamName}`,
         html,
       });
     } catch (error) {
