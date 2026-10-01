@@ -87,7 +87,36 @@ export default function ContentNavigator({embedded=false,onPreviewSystem,onSaveS
   }
  function toggleLibraryFolder(id:string){setOpenLibraryFolders(v=>{const n=new Set(v);n.has(id)?n.delete(id):n.add(id);return n})}
  function toggle(id:string){setOpenSeries(v=>{const n=new Set(v);n.has(id)?n.delete(id):n.add(id);return n})}
- async function doDuplicate(id:string){setBusy(true);try{const source=systems.find(s=>s.id===id);const sr=source?.seriesIds.find(x=>activeSeries.some(a=>a.id===x))||null;const newId=await duplicatePrivateSystem(id,playbookId||null,sr);await load();setSelected(newId);flash('Copie créée dans la bibliothèque privée');previewSystem(newId)}catch(e:any){alert(e?.message||'Duplication impossible')}finally{setBusy(false)}}
+ async function doDuplicate(id:string){
+   setBusy(true);
+   try{
+     const source=systems.find(s=>s.id===id);
+     const sr=source?.seriesIds.find(x=>activeSeries.some(a=>a.id===x))||null;
+     const newId=await duplicatePrivateSystem(id,playbookId||null,sr);
+
+     // La copie existe déjà dans Supabase à cet instant. On mémorise immédiatement
+     // SON id avant le rechargement React : previewSystem() ne doit jamais retomber
+     // sur l'ancien système parce que le state "systems" n'est pas encore rafraîchi.
+     localStorage.setItem('mybasket_edit_systeme_id',newId);
+     localStorage.setItem('mybasket_edit_system_id',newId);
+     localStorage.setItem('mybasket_current_system_id',newId);
+     localStorage.setItem('mybasket_edit_schema_index','0');
+     localStorage.setItem('mybasket_drawing_flow','library-system-edit');
+     localStorage.setItem('mybasket_drawing_source_system_id',newId);
+     setSelected(newId);
+
+     window.dispatchEvent(new CustomEvent('mybasket:preview-system',{
+       detail:{systemId:newId,system:null}
+     }));
+
+     await load();
+     flash('Copie créée dans la bibliothèque privée');
+   }catch(e:any){
+     alert(e?.message||'Duplication impossible');
+   }finally{
+     setBusy(false);
+   }
+ }
  function openAddToPlaybook(systemId:string){
    const preferred=(playbookId&&playbooks.some(p=>p.id===playbookId))?playbookId:(filteredPlaybooks[0]?.id||playbooks[0]?.id||'');
    setAddSystemId(systemId);setAddPlaybookId(preferred);setAddSeriesId('');
