@@ -474,7 +474,7 @@ export default function PublicPlayerLoadForm({ token }: { token: string }) {
           />
         </Question>
 
-        <section className={kind === "wellness" ? "painQuestion wellnessPain" : "painQuestion"}>
+        <section className="painQuestion">
   
           <div className="painHead">
             <div>
