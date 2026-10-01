@@ -359,20 +359,51 @@ async function attachSystemContributors(rows: any[]): Promise<SystemItem[]> {
 
 export async function listSystems(): Promise<SystemItem[]> {
   const supabase = createClient();
+  const user = await getCurrentUser();
 
-  const { data, error } = await supabase
+  // La Bibliothèque Systèmes contient :
+  // - les systèmes publics validés pour tout le monde ;
+  // - tous les systèmes personnels de l'utilisateur connecté, y compris les
+  //   brouillons créés par "Dupliquer et modifier".
+  // Ainsi, tout système visible dans la bibliothèque Dessin possède aussi sa
+  // fiche /systemes/[id] et reste retrouvable dans la Bibliothèque Systèmes.
+  const publicQuery = supabase
     .from("systems")
     .select("*")
     .eq("visibility", "public")
     .eq("review_status", "approved")
     .order("created_at", { ascending: false });
 
-  if (error) {
-    showSupabaseError("Erreur Supabase listSystems:", error);
-    return [];
+  const [publicResult, mineResult] = await Promise.all([
+    publicQuery,
+    user
+      ? supabase
+          .from("systems")
+          .select("*")
+          .eq("user_id", user.id)
+          .order("created_at", { ascending: false })
+      : Promise.resolve({ data: [], error: null } as any),
+  ]);
+
+  if (publicResult.error) {
+    showSupabaseError("Erreur Supabase listSystems publics:", publicResult.error);
+  }
+  if (mineResult.error) {
+    showSupabaseError("Erreur Supabase listSystems personnels:", mineResult.error);
   }
 
-  return attachSystemContributors(data ?? []);
+  const byId = new Map<string, any>();
+  for (const row of [...(publicResult.data ?? []), ...(mineResult.data ?? [])]) {
+    if (row?.id) byId.set(String(row.id), row);
+  }
+
+  const rows = Array.from(byId.values()).sort(
+    (a, b) =>
+      new Date(b?.created_at ?? 0).getTime() -
+      new Date(a?.created_at ?? 0).getTime()
+  );
+
+  return attachSystemContributors(rows);
 }
 
 export async function listMySystems(): Promise<SystemItem[]> {
