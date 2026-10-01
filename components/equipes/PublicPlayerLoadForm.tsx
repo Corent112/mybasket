@@ -21,45 +21,45 @@ type PainDetail = {
 const PAIN_ZONES: PainZone[] = [
   { id: "head_front", label: "Tête / visage", side: "front", x: 50, y: 8 },
   { id: "neck_front", label: "Cou", side: "front", x: 50, y: 18 },
-  { id: "shoulder_left_front", label: "Épaule gauche", side: "front", x: 33, y: 21 },
-  { id: "shoulder_right_front", label: "Épaule droite", side: "front", x: 67, y: 21 },
+  { id: "shoulder_left_front", label: "Épaule gauche", side: "front", x: 37, y: 20 },
+  { id: "shoulder_right_front", label: "Épaule droite", side: "front", x: 63, y: 20 },
   { id: "chest_front", label: "Thorax", side: "front", x: 50, y: 27 },
   { id: "plexus_front", label: "Plexus", side: "front", x: 50, y: 34 },
-  { id: "abdomen_front", label: "Abdominaux", side: "front", x: 50, y: 37 },
-  { id: "elbow_left_front", label: "Coude gauche", side: "front", x: 25, y: 35 },
-  { id: "elbow_right_front", label: "Coude droit", side: "front", x: 75, y: 35 },
-  { id: "wrist_left_front", label: "Poignet / main gauche", side: "front", x: 18, y: 49 },
-  { id: "wrist_right_front", label: "Poignet / main droite", side: "front", x: 82, y: 49 },
-  { id: "hip_left_front", label: "Hanche gauche", side: "front", x: 40, y: 50 },
-  { id: "hip_right_front", label: "Hanche droite", side: "front", x: 60, y: 50 },
-  { id: "thigh_left_front", label: "Cuisse gauche", side: "front", x: 40, y: 63 },
-  { id: "thigh_right_front", label: "Cuisse droite", side: "front", x: 60, y: 63 },
-  { id: "knee_left_front", label: "Genou gauche", side: "front", x: 40, y: 75 },
-  { id: "knee_right_front", label: "Genou droit", side: "front", x: 60, y: 75 },
+  { id: "abdomen_front", label: "Abdominaux", side: "front", x: 50, y: 38 },
+  { id: "elbow_left_front", label: "Coude gauche", side: "front", x: 31, y: 35 },
+  { id: "elbow_right_front", label: "Coude droit", side: "front", x: 69, y: 35 },
+  { id: "wrist_left_front", label: "Poignet / main gauche", side: "front", x: 27, y: 49 },
+  { id: "wrist_right_front", label: "Poignet / main droite", side: "front", x: 73, y: 49 },
+  { id: "hip_left_front", label: "Hanche gauche", side: "front", x: 43, y: 50 },
+  { id: "hip_right_front", label: "Hanche droite", side: "front", x: 57, y: 50 },
+  { id: "thigh_left_front", label: "Cuisse gauche", side: "front", x: 43, y: 63 },
+  { id: "thigh_right_front", label: "Cuisse droite", side: "front", x: 57, y: 63 },
+  { id: "knee_left_front", label: "Genou gauche", side: "front", x: 43, y: 75 },
+  { id: "knee_right_front", label: "Genou droit", side: "front", x: 57, y: 75 },
   { id: "calf_left_front", label: "Mollet gauche", side: "front", x: 41, y: 84 },
   { id: "calf_right_front", label: "Mollet droit", side: "front", x: 59, y: 84 },
-  { id: "ankle_left_front", label: "Cheville / pied gauche", side: "front", x: 39, y: 91 },
-  { id: "ankle_right_front", label: "Cheville / pied droit", side: "front", x: 61, y: 91 },
+  { id: "ankle_left_front", label: "Cheville / pied gauche", side: "front", x: 44, y: 92 },
+  { id: "ankle_right_front", label: "Cheville / pied droit", side: "front", x: 56, y: 92 },
   { id: "head_back", label: "Arrière de la tête", side: "back", x: 50, y: 8 },
   { id: "neck_back", label: "Nuque", side: "back", x: 50, y: 18 },
-  { id: "shoulder_left_back", label: "Épaule gauche (dos)", side: "back", x: 33, y: 21 },
-  { id: "shoulder_right_back", label: "Épaule droite (dos)", side: "back", x: 67, y: 21 },
+  { id: "shoulder_left_back", label: "Épaule gauche (dos)", side: "back", x: 37, y: 20 },
+  { id: "shoulder_right_back", label: "Épaule droite (dos)", side: "back", x: 63, y: 20 },
   { id: "upper_back", label: "Haut du dos", side: "back", x: 50, y: 28 },
   { id: "lower_back", label: "Lombaires", side: "back", x: 50, y: 40 },
-  { id: "elbow_left_back", label: "Coude gauche (dos)", side: "back", x: 25, y: 35 },
-  { id: "elbow_right_back", label: "Coude droit (dos)", side: "back", x: 75, y: 35 },
-  { id: "wrist_left_back", label: "Poignet / main gauche (dos)", side: "back", x: 18, y: 49 },
-  { id: "wrist_right_back", label: "Poignet / main droit (dos)", side: "back", x: 82, y: 49 },
-  { id: "glute_left", label: "Fessier gauche", side: "back", x: 40, y: 51 },
-  { id: "glute_right", label: "Fessier droit", side: "back", x: 60, y: 51 },
-  { id: "hamstring_left", label: "Ischio gauche", side: "back", x: 40, y: 64 },
-  { id: "hamstring_right", label: "Ischio droit", side: "back", x: 60, y: 64 },
+  { id: "elbow_left_back", label: "Coude gauche (dos)", side: "back", x: 31, y: 35 },
+  { id: "elbow_right_back", label: "Coude droit (dos)", side: "back", x: 69, y: 35 },
+  { id: "wrist_left_back", label: "Poignet / main gauche (dos)", side: "back", x: 27, y: 49 },
+  { id: "wrist_right_back", label: "Poignet / main droit (dos)", side: "back", x: 73, y: 49 },
+  { id: "glute_left", label: "Fessier gauche", side: "back", x: 43, y: 51 },
+  { id: "glute_right", label: "Fessier droit", side: "back", x: 57, y: 51 },
+  { id: "hamstring_left", label: "Ischio gauche", side: "back", x: 43, y: 64 },
+  { id: "hamstring_right", label: "Ischio droit", side: "back", x: 57, y: 64 },
   { id: "knee_left_back", label: "Genou gauche (arrière)", side: "back", x: 40, y: 75 },
   { id: "knee_right_back", label: "Genou droit (arrière)", side: "back", x: 60, y: 75 },
-  { id: "calf_left", label: "Mollet gauche", side: "back", x: 42, y: 84 },
-  { id: "calf_right", label: "Mollet droit", side: "back", x: 58, y: 84 },
-  { id: "ankle_left_back", label: "Cheville / pied gauche (dos)", side: "back", x: 39, y: 91 },
-  { id: "ankle_right_back", label: "Cheville / pied droit (dos)", side: "back", x: 61, y: 91 },
+  { id: "calf_left", label: "Mollet gauche", side: "back", x: 44, y: 80 },
+  { id: "calf_right", label: "Mollet droit", side: "back", x: 56, y: 80 },
+  { id: "ankle_left_back", label: "Cheville / pied gauche (dos)", side: "back", x: 44, y: 92 },
+  { id: "ankle_right_back", label: "Cheville / pied droit (dos)", side: "back", x: 56, y: 92 },
 ];
 type FormPayload = {
   valid: boolean;
@@ -131,7 +131,7 @@ function BodyFigure({
 }) {
   const visibleIds = side === "front"
     ? new Set(["head_front","shoulder_left_front","shoulder_right_front","chest_front","abdomen_front","elbow_left_front","elbow_right_front","wrist_left_front","wrist_right_front","hip_left_front","hip_right_front","thigh_left_front","thigh_right_front","knee_left_front","knee_right_front","ankle_left_front","ankle_right_front"])
-    : new Set(["head_back","shoulder_left_back","shoulder_right_back","upper_back","lower_back","elbow_left_back","elbow_right_back","wrist_left_back","wrist_right_back","glute_left","glute_right","hamstring_left","hamstring_right","knee_left_back","knee_right_back","ankle_left_back","ankle_right_back"]);
+    : new Set(["head_back","shoulder_left_back","shoulder_right_back","upper_back","lower_back","elbow_left_back","elbow_right_back","wrist_left_back","wrist_right_back","glute_left","glute_right","hamstring_left","hamstring_right","calf_left","calf_right","ankle_left_back","ankle_right_back"]);
   const zones = PAIN_ZONES.filter((zone) => zone.side === side && visibleIds.has(zone.id));
   const front = side === "front";
   const anatomySource = front ? "/30.png" : "/29.png";
@@ -493,6 +493,6 @@ const css = `
 .painLayout{display:grid;grid-template-columns:minmax(0,1.45fr) minmax(280px,.75fr);gap:20px}.painMain{min-width:0}.painAside{border:1px solid #e7e1de;border-radius:16px;padding:14px;background:#fcfbfa;align-self:start;max-height:650px;overflow:auto}.painAside h2{font-size:.9rem;margin:0 0 10px}.painNav{grid-column:1/-1}.largeBodies{padding:12px 20px}.largeBodies .human{width:230px}.anSkin{stroke:#8f8b88;stroke-width:1;stroke-linejoin:round}.muscleLine{fill:none;stroke:#b9b4b1;stroke-width:1;stroke-linecap:round}.anatomical .painPoint{width:30px;height:30px;background:rgba(215,35,55,.14);border:1.5px solid rgba(215,35,55,.32);box-shadow:none}.anatomical .painPoint.selected{background:#c8103d;border:3px solid #fff;box-shadow:0 0 0 8px rgba(200,16,61,.18)}.largeBodies .anatomical .painPoint{width:32px;height:32px}
 @media(max-width:760px){.questionnaireWide{width:100%}.qGrid,.painLayout{grid-template-columns:1fr}.painAside{max-height:none}.painNav{grid-column:auto}.largeBodies{padding:8px 0}.largeBodies .human{width:150px}.questionnaireWide .wStep{padding-left:16px;padding-right:16px}.questionnaireWide .wHeader{padding-left:16px;padding-right:16px}.qTop>b{font-size:.66rem}.qGrid .question,.qBox{padding:12px}}
 
-.medicalBody{width:235px;height:430px;position:relative}.anatomyCrop{position:absolute;inset:0;overflow:hidden;background:#fff}.anatomyCrop img{position:absolute;top:0;width:auto;height:100%;max-width:none;object-fit:unset;user-select:none;pointer-events:none}.anatomyPhoto.front .anatomyCrop img{left:50%;transform:translateX(-50%) scale(.98);transform-origin:center top}.anatomyPhoto.back .anatomyCrop img{left:50%;transform:translateX(-50%) scale(.98);transform-origin:center top}.medicalBody .painPoint{position:absolute;z-index:2;transform:translate(-50%,-50%);width:18px;height:18px;border-radius:999px;background:rgba(92,92,92,.72);border:1.5px solid rgba(55,55,55,.82);box-shadow:0 0 0 2px rgba(255,255,255,.82);cursor:pointer}.medicalBody .painPoint:hover{background:rgba(120,120,120,.26);border-color:rgba(90,90,90,.68)}.medicalBody .painPoint.selected{background:#8f1731;border:3px solid #fff;box-shadow:0 0 0 6px rgba(143,23,49,.2)}.largeBodies{gap:3.5rem;align-items:flex-start;justify-content:center;padding:10px 8px}.largeBodies .medicalBody{width:250px;height:465px}
+.medicalBody{width:235px;height:430px;position:relative}.anatomyCrop{position:absolute;inset:0;overflow:hidden;background:#fff}.anatomyCrop img{position:absolute;top:0;width:auto;height:100%;max-width:none;object-fit:unset;user-select:none;pointer-events:none}.anatomyPhoto.front .anatomyCrop img{left:50%;transform:translateX(-50%) scale(.94);transform-origin:center top}.anatomyPhoto.back .anatomyCrop img{left:50%;transform:translateX(-50%) scale(.94);transform-origin:center top}.medicalBody .painPoint{position:absolute;z-index:2;transform:translate(-50%,-50%);width:18px;height:18px;border-radius:999px;background:rgba(92,92,92,.72);border:1.5px solid rgba(55,55,55,.82);box-shadow:0 0 0 2px rgba(255,255,255,.82);cursor:pointer}.medicalBody .painPoint:hover{background:rgba(120,120,120,.26);border-color:rgba(90,90,90,.68)}.medicalBody .painPoint.selected{background:#8f1731;border:3px solid #fff;box-shadow:0 0 0 6px rgba(143,23,49,.2)}.largeBodies{gap:.8rem;align-items:flex-start;justify-content:center;padding:10px 4px}.largeBodies .medicalBody{width:230px;height:465px}
 @media(max-width:760px){.largeBodies{gap:1rem}.medicalBody,.largeBodies .medicalBody{width:150px;height:300px}.medicalBody .painPoint{width:14px;height:14px}}
 `;
