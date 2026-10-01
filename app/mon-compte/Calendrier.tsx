@@ -35,6 +35,9 @@ type CalEvent = {
   notes?: string;
   attachment?: Attachment;
   sessionId?: string;
+  seriesId?: string;
+  recurrenceRule?: string;
+  participantStatuses?: Record<string, "invited" | "present" | "absent" | "uncertain">;
 };
 
 type Player = { id: string; firstName: string };
@@ -97,6 +100,9 @@ function normalizeCalendarRow(row: any): CalEvent {
     teamId: row.team_id ? String(row.team_id) : undefined,
     assignedPlayers: Array.isArray(row.assigned_player_ids) ? row.assigned_player_ids.map(String) : [],
     sessionId: row.session_id ? String(row.session_id) : undefined,
+    seriesId: row.series_id ? String(row.series_id) : undefined,
+    recurrenceRule: row.recurrence_rule ? String(row.recurrence_rule) : undefined,
+    participantStatuses: row.participant_statuses && typeof row.participant_statuses === "object" ? row.participant_statuses : {},
     opponent:
       dbTypeToCalendarType(row.event_type) === "match"
         ? String(row.title ?? "").replace(/^Match\s+(?:vs\s+)?/i, "").trim() || undefined
@@ -210,6 +216,7 @@ export default function MonCalendrier() {
   const [fPlayers, setFPlayers] = useState<string[]>([]);
   const [fNotes, setFNotes] = useState("");
   const [fAttach, setFAttach] = useState<Attachment | null>(null);
+  const [fStatuses, setFStatuses] = useState<Record<string, "invited" | "present" | "absent" | "uncertain">>({});
 
   // Modale de prévisualisation de la pièce jointe
   const [preview, setPreview] = useState<Attachment | null>(null);
@@ -296,7 +303,7 @@ export default function MonCalendrier() {
     setEditingId(null);
     setFTitle(""); setFDate(ds); setFTime(""); setFEndTime(""); setFRepeat("none"); setFRepeatUntil(""); setFType("entrainement");
     setFVenue("home"); setFOpp(""); setFLoc("");
-    setFTeam(""); setFPlayers([]); setFNotes(""); setFAttach(null);
+    setFTeam(""); setFPlayers([]); setFStatuses({}); setFNotes(""); setFAttach(null);
     setOpen(true);
   };
   const openEdit = (id: string) => {
@@ -304,7 +311,7 @@ export default function MonCalendrier() {
     setEditingId(id);
     setFTitle(e.title); setFDate(e.date); setFTime(e.time || ""); setFEndTime(""); setFRepeat("none"); setFRepeatUntil(""); setFType(e.type);
     setFVenue(e.venue || "home"); setFOpp(e.opponent || ""); setFLoc(e.loc || "");
-    setFTeam(e.teamId || ""); setFPlayers(e.assignedPlayers || []);
+    setFTeam(e.teamId || ""); setFPlayers(e.assignedPlayers || []); setFStatuses(e.participantStatuses || {});
     setFNotes(e.notes || ""); setFAttach(e.attachment || null);
     setOpen(true);
   };
@@ -344,6 +351,7 @@ export default function MonCalendrier() {
       event_type: calendarTypeToDbType(fType),
       session_id: events.find((event) => event.id === editingId)?.sessionId || null,
       assigned_player_ids: fPlayers,
+      participant_statuses: Object.fromEntries(fPlayers.map((id) => [id, fStatuses[id] || "invited"])),
       attachment_url: fAttach?.dataUrl || null,
       visibility: "private",
       updated_at: new Date().toISOString(),
@@ -361,7 +369,8 @@ export default function MonCalendrier() {
         else cursor.setMonth(cursor.getMonth() + 1);
         guard += 1;
       }
-      const recurringRows = dates.map((eventDate) => ({ ...payload, event_date: eventDate }));
+      const seriesId = crypto.randomUUID();
+      const recurringRows = dates.map((eventDate) => ({ ...payload, event_date: eventDate, series_id: seriesId, recurrence_rule: fRepeat }));
       const { error } = await supabase.from("calendar_events").insert(recurringRows);
       if (error) {
         console.error("Erreur création récurrence:", error);
@@ -391,7 +400,7 @@ export default function MonCalendrier() {
         return;
       }
     } else {
-      const { error } = await supabase.from("calendar_events").insert(payload);
+      const { error } = await supabase.from("calendar_events").insert({ ...payload, series_id: null, recurrence_rule: null });
 
       if (error) {
         console.error("Erreur création événement:", {
@@ -645,6 +654,27 @@ export default function MonCalendrier() {
                 )}
               </div>
 
+              {editingId && fPlayers.length > 0 && (
+                <div className="cal-fld">
+                  <label>Convocations / présences</label>
+                  <div className="cal-status-list">
+                    {fPlayers.map((playerId) => {
+                      const player = selectedTeam?.players.find((item) => item.id === playerId);
+                      const current = fStatuses[playerId] || "invited";
+                      return <div className="cal-status-row" key={playerId}>
+                        <strong>{player?.firstName || "Joueur"}</strong>
+                        <select value={current} onChange={(e) => setFStatuses((prev) => ({ ...prev, [playerId]: e.target.value as "invited" | "present" | "absent" | "uncertain" }))}>
+                          <option value="invited">Convoqué</option>
+                          <option value="present">Présent</option>
+                          <option value="absent">Absent</option>
+                          <option value="uncertain">Incertain</option>
+                        </select>
+                      </div>;
+                    })}
+                  </div>
+                </div>
+              )}
+
               <div className="cal-fld">
                 <label>Notes</label>
                 <textarea value={fNotes} onChange={(e) => setFNotes(e.target.value)} placeholder="Infos complémentaires…" />
@@ -766,7 +796,7 @@ export default function MonCalendrier() {
         .cal-row2{display:grid;grid-template-columns:1fr 1fr;gap:.8rem}
         .cal-help{font-size:.74rem;color:var(--gris-text);line-height:1.4;margin:.1rem 0 0}
 
-        .cal-player-actions{display:flex;gap:.4rem;margin-bottom:.45rem}.cal-player-actions button{border:1px solid var(--gris-med);background:#fff;border-radius:999px;padding:.35rem .65rem;font-size:.72rem;font-weight:700;cursor:pointer}.cal-player-actions button:hover{border-color:var(--bordeaux);color:var(--bordeaux)}.cal-players{display:flex;flex-wrap:wrap;gap:.4rem}
+        .cal-player-actions{display:flex;gap:.4rem;margin-bottom:.45rem}.cal-player-actions button{border:1px solid var(--gris-med);background:#fff;border-radius:999px;padding:.35rem .65rem;font-size:.72rem;font-weight:700;cursor:pointer}.cal-player-actions button:hover{border-color:var(--bordeaux);color:var(--bordeaux)}.cal-players{display:flex;flex-wrap:wrap;gap:.4rem}.cal-status-list{display:grid;gap:.4rem}.cal-status-row{display:grid;grid-template-columns:1fr 150px;gap:.6rem;align-items:center;padding:.45rem .55rem;background:var(--gris-bg);border-radius:9px}.cal-status-row strong{font-size:.8rem}
         .cal-pchip{display:inline-flex;align-items:center;gap:.2rem;padding:.4rem .75rem;border:1.5px solid var(--gris-med);border-radius:999px;font-size:.8rem;font-weight:600;cursor:pointer;background:#fff;color:var(--noir);transition:.13s}
         .cal-pchip:hover{border-color:var(--noir)}
         .cal-pchip.on{background:var(--bordeaux);border-color:var(--bordeaux);color:#fff}
