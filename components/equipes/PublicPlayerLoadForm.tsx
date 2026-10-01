@@ -133,27 +133,29 @@ function BodyFigure({
   const front = side === "front";
   return <div className="bodyFigure">
     <div className="bodyLabel">{front ? "Face" : "Dos"}</div>
-    <div className="human anatomical">
-      <svg viewBox="0 0 180 420" role="img" aria-label={front ? "Silhouette anatomique de face" : "Silhouette anatomique de dos"}>
+    <div className="human medicalBody">
+      <svg viewBox="0 0 220 520" role="img" aria-label={front ? "Corps anatomique de face" : "Corps anatomique de dos"}>
         <defs>
-          <linearGradient id={`muscle-${side}`} x1="0" y1="0" x2="1" y2="1"><stop stopColor="#fbfbfb"/><stop offset=".52" stopColor="#e7e5e3"/><stop offset="1" stopColor="#c9c5c2"/></linearGradient>
-          <linearGradient id={`shade-${side}`} x1="0" y1="0" x2="0" y2="1"><stop stopColor="#f7f7f7"/><stop offset="1" stopColor="#d5d1ce"/></linearGradient>
+          <linearGradient id={`skinMain-${side}`} x1="0" y1="0" x2="1" y2="0"><stop stopColor="#d2d0ce"/><stop offset=".22" stopColor="#f8f8f7"/><stop offset=".5" stopColor="#dedbd9"/><stop offset=".78" stopColor="#fafafa"/><stop offset="1" stopColor="#c8c5c3"/></linearGradient>
+          <linearGradient id={`skinVert-${side}`} x1="0" y1="0" x2="0" y2="1"><stop stopColor="#fbfbfb"/><stop offset=".48" stopColor="#dedbd9"/><stop offset="1" stopColor="#c9c5c2"/></linearGradient>
         </defs>
-        <ellipse cx="90" cy="31" rx="22" ry="28" className="anSkin" fill={`url(#shade-${side})`}/>
-        <path d="M75 55 Q90 65 105 55 L108 76 Q130 82 143 104 L132 160 Q127 190 116 215 L64 215 Q53 190 48 160 L37 104 Q50 82 72 76Z" className="anSkin" fill={`url(#muscle-${side})`}/>
-        <path d="M42 98 Q27 104 23 124 L12 184 L7 235 Q6 248 17 250 Q27 250 30 238 L35 193 L53 127Z" className="anSkin" fill={`url(#muscle-${side})`}/>
-        <path d="M138 98 Q153 104 157 124 L168 184 L173 235 Q174 248 163 250 Q153 250 150 238 L145 193 L127 127Z" className="anSkin" fill={`url(#muscle-${side})`}/>
-        <path d="M65 208 Q53 230 55 263 L51 315 L45 391 Q44 407 58 409 Q70 409 73 394 L82 316 L89 231Z" className="anSkin" fill={`url(#muscle-${side})`}/>
-        <path d="M115 208 Q127 230 125 263 L129 315 L135 391 Q136 407 122 409 Q110 409 107 394 L98 316 L91 231Z" className="anSkin" fill={`url(#muscle-${side})`}/>
+        <ellipse cx="110" cy="38" rx="26" ry="34" className="medShape" fill={`url(#skinVert-${side})`}/>
+        <path d="M93 67 Q110 78 127 67 L131 91 Q153 96 169 119 L157 196 Q151 225 139 255 L81 255 Q69 225 63 196 L51 119 Q67 96 89 91Z" className="medShape" fill={`url(#skinMain-${side})`}/>
+        <path d="M55 116 Q36 122 31 148 L17 226 L9 292 Q8 308 21 311 Q34 312 38 297 L45 239 L67 151Z" className="medShape" fill={`url(#skinMain-${side})`}/>
+        <path d="M165 116 Q184 122 189 148 L203 226 L211 292 Q212 308 199 311 Q186 312 182 297 L175 239 L153 151Z" className="medShape" fill={`url(#skinMain-${side})`}/>
+        <path d="M82 248 Q67 273 69 316 L64 381 L55 486 Q54 505 70 508 Q84 508 88 490 L101 383 L109 278Z" className="medShape" fill={`url(#skinMain-${side})`}/>
+        <path d="M138 248 Q153 273 151 316 L156 381 L165 486 Q166 505 150 508 Q136 508 132 490 L119 383 L111 278Z" className="medShape" fill={`url(#skinMain-${side})`}/>
         {front ? <>
-          <path d="M72 78 Q58 85 55 105 Q71 117 88 104 Q86 86 72 78 M108 78 Q122 85 125 105 Q109 117 92 104 Q94 86 108 78" className="muscleLine"/>
-          <path d="M90 75 L90 205 M70 119 Q80 128 90 119 Q100 128 110 119 M72 139 Q82 148 90 140 Q98 148 108 139 M73 160 Q82 169 90 161 Q98 169 107 160 M75 181 Q83 189 90 182 Q97 189 105 181" className="muscleLine"/>
-          <path d="M38 108 Q46 99 55 104 M25 145 Q36 151 42 143 M18 190 Q27 197 34 190 M142 108 Q134 99 125 104 M155 145 Q144 151 138 143 M162 190 Q153 197 146 190" className="muscleLine"/>
-          <path d="M61 220 Q72 235 87 226 M119 220 Q108 235 93 226 M57 263 Q68 275 79 263 M123 263 Q112 275 101 263 M52 317 Q64 327 74 316 M128 317 Q116 327 106 316" className="muscleLine"/>
+          <path d="M91 91 Q72 98 68 127 Q88 143 107 128 Q104 103 91 91 M129 91 Q148 98 152 127 Q132 143 113 128 Q116 103 129 91" className="medMuscle"/>
+          <path d="M110 83 L110 247 M84 145 Q97 158 110 146 Q123 158 136 145 M85 171 Q98 184 110 172 Q122 184 135 171 M87 198 Q99 211 110 199 Q121 211 133 198 M90 224 Q100 236 110 225 Q120 236 130 224" className="medMuscle"/>
+          <path d="M57 124 Q68 113 78 122 M37 169 Q50 178 59 166 M26 226 Q39 237 48 224 M163 124 Q152 113 142 122 M183 169 Q170 178 161 166 M194 226 Q181 237 172 224" className="medMuscle"/>
+          <path d="M79 260 Q93 280 107 265 M141 260 Q127 280 113 265 M70 316 Q84 334 99 316 M150 316 Q136 334 121 316 M64 382 Q80 397 93 380 M156 382 Q140 397 127 380" className="medMuscle"/>
+          <path d="M96 70 Q110 75 124 70 M101 34 Q110 40 119 34 M101 51 Q110 55 119 51" className="medFine"/>
         </> : <>
-          <path d="M66 80 Q90 101 114 80 M90 68 L90 210 M57 107 Q74 125 90 111 Q106 125 123 107 M58 142 Q75 132 90 145 Q105 132 122 142 M62 178 Q76 190 90 178 Q104 190 118 178" className="muscleLine"/>
-          <path d="M61 216 Q74 205 89 221 M119 216 Q106 205 91 221 M57 264 Q68 278 80 263 M123 264 Q112 278 100 263 M52 318 Q64 330 75 316 M128 318 Q116 330 105 316" className="muscleLine"/>
-          <path d="M39 109 Q48 102 56 108 M25 146 Q36 153 43 144 M18 191 Q27 198 34 190 M141 109 Q132 102 124 108 M155 146 Q144 153 137 144 M162 191 Q153 198 146 190" className="muscleLine"/>
+          <path d="M83 95 Q110 124 137 95 M110 77 L110 251 M70 128 Q91 151 110 134 Q129 151 150 128 M72 168 Q91 155 110 173 Q129 155 148 168 M76 209 Q93 225 110 210 Q127 225 144 209" className="medMuscle"/>
+          <path d="M78 260 Q94 245 108 267 M142 260 Q126 245 112 267 M70 316 Q84 336 99 315 M150 316 Q136 336 121 315 M64 382 Q80 400 94 379 M156 382 Q140 400 126 379" className="medMuscle"/>
+          <path d="M58 124 Q69 116 79 125 M37 170 Q50 180 60 167 M26 226 Q39 238 48 224 M162 124 Q151 116 141 125 M183 170 Q170 180 160 167 M194 226 Q181 238 172 224" className="medMuscle"/>
+          <path d="M96 70 Q110 77 124 70 M88 111 Q110 100 132 111" className="medFine"/>
         </>}
       </svg>
       {zones.map((zone) => <button key={zone.id} type="button" className={`painPoint ${selected.includes(zone.id) ? "selected" : ""}`} style={{left:`${zone.x}%`,top:`${zone.y}%`}} aria-label={zone.label} title={zone.label} onClick={()=>onToggle(zone)} />)}
@@ -496,4 +498,7 @@ const css = `
 .qGrid{display:grid;grid-template-columns:1fr 1fr;gap:12px}.qGrid .question,.qBox{border:1px solid #e7e1de;border-radius:14px;padding:16px;background:#fff;margin:0}.qGrid .injuryCheck{margin:0}.qBox{display:grid;gap:12px}.qBox strong{font-size:1rem}.qBox small{color:#756a66}.qBox .number{max-width:280px}
 .painLayout{display:grid;grid-template-columns:minmax(0,1.45fr) minmax(280px,.75fr);gap:20px}.painMain{min-width:0}.painAside{border:1px solid #e7e1de;border-radius:16px;padding:14px;background:#fcfbfa;align-self:start;max-height:650px;overflow:auto}.painAside h2{font-size:.9rem;margin:0 0 10px}.painNav{grid-column:1/-1}.largeBodies{padding:12px 20px}.largeBodies .human{width:230px}.anSkin{stroke:#8f8b88;stroke-width:1;stroke-linejoin:round}.muscleLine{fill:none;stroke:#b9b4b1;stroke-width:1;stroke-linecap:round}.anatomical .painPoint{width:30px;height:30px;background:rgba(215,35,55,.14);border:1.5px solid rgba(215,35,55,.32);box-shadow:none}.anatomical .painPoint.selected{background:#c8103d;border:3px solid #fff;box-shadow:0 0 0 8px rgba(200,16,61,.18)}.largeBodies .anatomical .painPoint{width:32px;height:32px}
 @media(max-width:760px){.questionnaireWide{width:100%}.qGrid,.painLayout{grid-template-columns:1fr}.painAside{max-height:none}.painNav{grid-column:auto}.largeBodies{padding:8px 0}.largeBodies .human{width:150px}.questionnaireWide .wStep{padding-left:16px;padding-right:16px}.questionnaireWide .wHeader{padding-left:16px;padding-right:16px}.qTop>b{font-size:.66rem}.qGrid .question,.qBox{padding:12px}}
+
+.medicalBody{width:250px}.medicalBody svg{width:100%;height:auto;filter:drop-shadow(0 7px 7px rgba(45,38,35,.08))}.medShape{stroke:#85817f;stroke-width:1.15;stroke-linejoin:round}.medMuscle{fill:none;stroke:#aaa6a3;stroke-width:1.2;stroke-linecap:round}.medFine{fill:none;stroke:#c1bdbb;stroke-width:.8;stroke-linecap:round}.medicalBody .painPoint{width:34px;height:34px;background:rgba(214,32,58,.15);border:1.5px solid rgba(205,25,54,.32);box-shadow:0 0 0 4px rgba(205,25,54,.04)}.medicalBody .painPoint:hover{background:rgba(200,16,61,.25)}.medicalBody .painPoint.selected{background:#c8103d;border:4px solid #fff;box-shadow:0 0 0 9px rgba(200,16,61,.2)}.largeBodies .medicalBody{width:270px}
+@media(max-width:760px){.medicalBody,.largeBodies .medicalBody{width:155px}.medicalBody .painPoint{width:25px;height:25px}}
 `;
