@@ -34,6 +34,8 @@ type WellnessRow = {
   stress: number | null;
   comment: string | null;
   computed_load?: number | null;
+  pain_zones?: string[] | null;
+  pain_details?: Record<string, { intensity?: number; type?: string; since?: string; comment?: string }> | null;
   created_at: string;
 };
 
@@ -337,7 +339,7 @@ export default function PlayerLoadMonitoring({
   async function reload() {
     setLoading(true);
 
-    const [loadResult, wellnessResult, planResult] = await Promise.all([
+    const [loadResult, wellnessExtended, planResult] = await Promise.all([
       supabase
         .from("training_load_entries")
         .select(
@@ -351,7 +353,7 @@ export default function PlayerLoadMonitoring({
       supabase
         .from("player_wellness_responses")
         .select(
-          "id,response_date,response_kind,duration_minutes,rpe,fatigue,soreness,sleep,stress,comment,computed_load,created_at",
+          "id,response_date,response_kind,duration_minutes,rpe,fatigue,soreness,sleep,stress,comment,computed_load,pain_zones,pain_details,created_at",
         )
         .eq("team_id", teamId)
         .eq("player_id", playerId)
@@ -365,6 +367,19 @@ export default function PlayerLoadMonitoring({
         .order("plan_date", { ascending: true })
         .limit(1200),
     ]);
+
+    let wellnessResult: any = wellnessExtended;
+    if (wellnessExtended.error && /pain_zones|pain_details/i.test(wellnessExtended.error.message || "")) {
+      wellnessResult = await supabase
+        .from("player_wellness_responses")
+        .select(
+          "id,response_date,response_kind,duration_minutes,rpe,fatigue,soreness,sleep,stress,comment,computed_load,created_at",
+        )
+        .eq("team_id", teamId)
+        .eq("player_id", playerId)
+        .order("created_at", { ascending: true })
+        .limit(1200);
+    }
 
     if (loadResult.error) console.error(loadResult.error);
     if (wellnessResult.error) console.error(wellnessResult.error);
@@ -753,6 +768,18 @@ export default function PlayerLoadMonitoring({
                   <span style={styles.pill}>Sommeil <b>{row.sleep ?? "—"}</b></span>
                   <span style={styles.pill}>Douleurs <b>{row.soreness ?? "—"}</b></span>
                   <span style={styles.pill}>Stress <b>{row.stress ?? "—"}</b></span>
+                  {Array.isArray(row.pain_zones) && row.pain_zones.map((zoneId) => {
+                    const detail = row.pain_details?.[zoneId];
+                    const label = zoneId
+                      .replace(/_(front|back)$/i, "")
+                      .replaceAll("_", " ")
+                      .replace(/^./, (char) => char.toUpperCase());
+                    return (
+                      <span key={zoneId} style={{ ...styles.pill, background: "#FFF0F1", color: "#9B1C31" }}>
+                        📍 {label}{detail?.intensity ? <b>{detail.intensity}/10</b> : null}
+                      </span>
+                    );
+                  })}
                   {row.computed_load != null && Number(row.computed_load) > 0 && (
                     <span style={{ ...styles.pill, background: "#FFF6E5" }}>
                       Charge <b>{Math.round(Number(row.computed_load))}</b>
