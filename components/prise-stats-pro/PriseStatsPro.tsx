@@ -1130,6 +1130,11 @@ export default function PriseStatsProPage() {
         // Ancien registre conservé en compatibilité.
         await saveLocalVideoHandle(localVideoHandleKey(tId, file.name), handle);
         attachLocalVideoFile(file, false);
+        const currentMatchId = String(liveMatchIdRef.current || '');
+        if (currentMatchId && !currentMatchId.startsWith('local_')) {
+          await registerLocalVideoForMatch(currentMatchId, tId, file, handle as FileSystemFileHandle);
+          flash('Nouveau fichier vidéo lié au projet ✓');
+        }
         return;
       } catch (error: any) {
         if (error?.name === 'AbortError') return;
@@ -1143,7 +1148,15 @@ export default function PriseStatsProPage() {
     input.accept = 'video/*';
     input.onchange = () => {
       pendingLocalFileHandleRef.current = null;
-      onPickVideoFile(input.files?.[0] ?? null);
+      const file = input.files?.[0] ?? null;
+      onPickVideoFile(file);
+      const currentMatchId = String(liveMatchIdRef.current || '');
+      const tId = String(selTeam?.id || activeTeamId || teamId || 'setup');
+      if (file && currentMatchId && !currentMatchId.startsWith('local_')) {
+        void registerLocalVideoForMatch(currentMatchId, tId, file, null).then(() => {
+          flash('Nouveau fichier vidéo lié au projet ✓');
+        });
+      }
     };
     input.click();
   };
@@ -1769,6 +1782,27 @@ export default function PriseStatsProPage() {
     projectVersion: 2,
     savedAt: new Date().toISOString(),
   });
+
+  // Les informations structurantes du projet doivent rester identiques à celles
+  // choisies dans LiveStat. Les tableaux de stats lisent match_stats, pas seulement
+  // le JSON du projet.
+  useEffect(() => {
+    const matchId = String(liveMatchIdRef.current || '');
+    if (!matchId || matchId.startsWith('local_')) return;
+    const timer = window.setTimeout(() => {
+      const supabase = createClient();
+      void supabase
+        .from('match_stats')
+        .update({
+          opponent: opponent || 'Adversaire',
+          match_date: date,
+          home,
+          match_category: matchType === 'league' ? 'championship' : matchType,
+        })
+        .eq('id', matchId);
+    }, 250);
+    return () => window.clearTimeout(timer);
+  }, [opponent, date, home, matchType]);
 
   const persistProjectState = () => {
     const matchId = liveMatchIdRef.current;
@@ -3277,6 +3311,7 @@ export default function PriseStatsProPage() {
         opponent: opponent || 'Adversaire',
         date,
         home,
+        matchCategory: matchType === 'league' ? 'championship' : matchType,
         playerIds: matchRoster.map((player) => player.id),
         videoMode,
         videoStatus,
@@ -4431,6 +4466,7 @@ export default function PriseStatsProPage() {
         lines,
         actions,
         home,
+        matchCategory: matchType === 'league' ? 'championship' : matchType,
       } as any;
 
       // Le match a été alimenté en TEMPS RÉEL : finishMatch FINALISE (score
