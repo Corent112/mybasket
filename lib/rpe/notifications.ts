@@ -306,6 +306,35 @@ function immediateAlertHtml(input: {
 </body></html>`;
 }
 
+export async function sendWellnessPainAlert(input: {
+  teamId: string;
+  teamName: string;
+  playerName: string;
+  responseDate: string;
+  zones: Array<{ label: string; intensity: number; previousIntensity: number | null; reason: "new" | "increase" }>;
+}) {
+  const recipients = await alertRecipients(input.teamId, false);
+  if (!recipients.length || !input.zones.length) return;
+
+  const href = `${appUrl()}/equipes/${encodeURIComponent(input.teamId)}?tab=load`;
+  const rows = input.zones.map((zone) => `<tr><td style="padding:9px;border-bottom:1px solid #eee"><strong>${esc(zone.label)}</strong></td><td style="padding:9px;border-bottom:1px solid #eee;text-align:center"><strong style="color:#B42318">${zone.intensity}/10</strong></td><td style="padding:9px;border-bottom:1px solid #eee">${zone.reason === "new" ? "Nouvelle douleur" : `Hausse de +${zone.intensity - (zone.previousIntensity || 0)} (précédent : ${zone.previousIntensity}/10)`}</td></tr>`).join("");
+  const html = `<!doctype html><html><body style="margin:0;background:#F3EFEC;font-family:Arial,sans-serif;color:#241D1A"><table width="100%" cellspacing="0" cellpadding="0"><tr><td align="center" style="padding:28px 12px"><table width="100%" style="max-width:650px;background:#fff;border-radius:20px;overflow:hidden"><tr><td style="background:#6B1A2C;color:#fff;padding:24px 28px"><div style="font-size:12px;font-weight:900;color:#D4A24C;letter-spacing:.12em">MYBASKET · WELLNESS</div><h1 style="margin:8px 0 0;font-size:25px">Alerte douleur</h1><p style="margin:6px 0 0;color:#EBDDE1">${esc(input.teamName)} · ${esc(frDate(input.responseDate))}</p></td></tr><tr><td style="padding:25px 28px"><h2 style="margin-top:0">${esc(input.playerName)}</h2><p>Une évolution de douleur nécessite l’attention du staff.</p><table width="100%" cellspacing="0" cellpadding="0" style="border-collapse:collapse">${rows}</table><p style="font-size:12px;color:#756760;margin-top:18px">Aucune alerte n’est envoyée lorsque la douleur reste au même niveau ou augmente de moins de 2 points.</p><div style="text-align:center;margin-top:22px"><a href="${esc(href)}" style="display:inline-block;background:#6B1A2C;color:#fff;text-decoration:none;border-radius:999px;padding:13px 22px;font-weight:900">VOIR LE WELLNESS →</a></div></td></tr></table></td></tr></table></body></html>`;
+
+  for (const recipient of recipients) {
+    if (!recipient.emailEnabled || !recipient.email) continue;
+    try {
+      await sendTransactionalEmail({
+        to: recipient.email,
+        from: "MyBasket <contact@mybasket.fr>",
+        subject: `🔴 Alerte douleur — ${input.playerName} · ${input.teamName}`,
+        html,
+      });
+    } catch (error) {
+      console.error("Email alerte douleur impossible", error);
+    }
+  }
+}
+
 export async function sendCriticalRpeAlert(input: {
   alertId: string;
   teamId: string;
