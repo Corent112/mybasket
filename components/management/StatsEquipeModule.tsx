@@ -32,6 +32,7 @@ type MatchRow = {
   them_score: number | null;
   result: string | null;
   home: boolean | null;
+  match_category?: string | null;
 };
 
 type PlayerStatRow = {
@@ -374,6 +375,7 @@ export default function StatsEquipeModule() {
   const [playerRows, setPlayerRows] = useState<PlayerStatRow[]>([]);
   const [actionRows, setActionRows] = useState<ActionRow[]>([]);
   const [mode, setMode] = useState<Mode>("total");
+  const [matchCategory, setMatchCategory] = useState<"championship"|"friendly"|"cup"|"all">("championship");
 
   useEffect(() => {
     async function loadTeamsAndMatches() {
@@ -390,7 +392,7 @@ export default function StatsEquipeModule() {
 
       const { data, error } = await supabase
         .from("match_stats")
-        .select("id, team_id, opponent, match_date, us_score, them_score, result, home, project_status")
+        .select("id, team_id, opponent, match_date, us_score, them_score, result, home, match_category, project_status")
         .eq("user_id", user.id)
         .or("project_status.eq.completed,project_status.is.null")
         .order("match_date", { ascending: false });
@@ -497,7 +499,11 @@ export default function StatsEquipeModule() {
   const rows = useMemo<TableRow[]>(() => {
     if (!teamId) return [];
 
-    const selectedMatches = matches.filter((match) => match.team_id === teamId);
+    const selectedMatches = matches.filter((match) => {
+      if (match.team_id !== teamId) return false;
+      if (matchCategory === "all") return true;
+      return String(match.match_category || "championship") === matchCategory;
+    });
 
     const playerRowsByMatch = playerRows.reduce((acc, row) => {
       const matchId = String(row.match_id || "");
@@ -573,7 +579,7 @@ export default function StatsEquipeModule() {
     });
 
     return [...matchRows, average, totalRow, ...splitRows];
-  }, [actionRows, matches, playerRows, teamId]);
+  }, [actionRows, matches, playerRows, teamId, matchCategory]);
 
   const totalStats =
     rows.find((row) => row.kind === "total")?.stats || emptyStats();
@@ -624,6 +630,12 @@ export default function StatsEquipeModule() {
 
       {!loading && selectedTeam && (
         <>
+          <div className="category-switch">
+            {([["championship","Championnat"],["friendly","Amical"],["cup","Coupe"],["all","Tous"]] as const).map(([value,label]) => (
+              <button key={value} type="button" className={matchCategory === value ? "on" : ""} onClick={() => setMatchCategory(value)}>{label}</button>
+            ))}
+          </div>
+
           <div className="mode-switch">
             <button
               type="button"
@@ -734,15 +746,20 @@ export default function StatsEquipeModule() {
                   const vd =
                     row.match
                       ? resultLabel(row.match)
-                      : row.kind === "win" ||
-                          row.kind === "home_win" ||
-                          row.kind === "away_win"
-                        ? "V"
-                        : row.kind === "loss" ||
-                            row.kind === "home_loss" ||
-                            row.kind === "away_loss"
-                          ? "D"
-                          : "—";
+                      : row.kind === "total" || row.kind === "average"
+                        ? `${s.wins}/${s.losses}`
+                        : row.kind === "win" || row.kind === "home_win" || row.kind === "away_win"
+                          ? String(s.wins)
+                          : row.kind === "loss" || row.kind === "home_loss" || row.kind === "away_loss"
+                            ? String(s.losses)
+                            : `${s.wins}/${s.losses}`;
+
+                  const deCount =
+                    row.match
+                      ? de
+                      : row.kind === "total" || row.kind === "average"
+                        ? `${selectedMatches.filter(isHome).length}/${selectedMatches.filter((m) => !isHome(m)).length}`
+                        : String(s.games);
 
                   return (
                     <tr
@@ -758,7 +775,7 @@ export default function StatsEquipeModule() {
                       }
                     >
                       <td className="team-name">{row.label}</td>
-                      <td>{de}</td>
+                      <td>{deCount}</td>
                       <td>{vd}</td>
                       <td>{display(s.pointsFor, s.games, useAverage)}</td>
                       <td>{display(s.pointsAgainst, s.games, useAverage)}</td>
@@ -860,6 +877,7 @@ export default function StatsEquipeModule() {
           font-weight: 900;
         }
 
+        .category-switch,
         .mode-switch {
           display: inline-flex;
           gap: 0.4rem;
@@ -870,6 +888,7 @@ export default function StatsEquipeModule() {
           margin-bottom: 1.15rem;
         }
 
+        .category-switch button,
         .mode-switch button {
           border: 0;
           background: transparent;
@@ -880,6 +899,7 @@ export default function StatsEquipeModule() {
           font-weight: 900;
         }
 
+        .category-switch button.on,
         .mode-switch button.on {
           background: #6b1a2c;
           color: white;
