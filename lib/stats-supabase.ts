@@ -1202,7 +1202,7 @@ export async function getTeamPlayerStats(
     return await supabase
       .from("match_player_stats")
       .select(
-        "player_id, p2m, p2a, p3m, p3a, ftm, fta, off_reb, def_reb, ast, stl, blk, turnovers, pf, present"
+        "match_id, player_id, p2m, p2a, p3m, p3a, ftm, fta, off_reb, def_reb, ast, stl, blk, turnovers, pf, present"
       )
       .eq("team_id", cleanTeamId);
   }
@@ -1213,7 +1213,7 @@ export async function getTeamPlayerStats(
     return await supabase
       .from("match_player_stats")
       .select(
-        "player_id, p2m, p2a, p3m, p3a, ftm, fta, off_reb, def_reb, ast, stl, blk, turnovers, pf, present"
+        "match_id, player_id, p2m, p2a, p3m, p3a, ftm, fta, off_reb, def_reb, ast, stl, blk, turnovers, pf, present"
       )
       .in("player_id", cleanPlayerIds);
   }
@@ -1236,9 +1236,31 @@ export async function getTeamPlayerStats(
     }
   }
 
+  // Les lignes de boxscore peuvent exister pendant un live encore en brouillon.
+  // Elles ne doivent alimenter ni Management ni les fiches tant que le match
+  // n'a pas été finalisé. Les anciens matchs sans project_status restent valides.
+  const candidateRows = (data ?? []) as Array<MatchPlayerStatsRow & { match_id?: string | null }>;
+  const matchIds = uniqueStrings(candidateRows.map((row) => row.match_id));
+  let officialMatchIds = new Set<string>(matchIds);
+
+  if (matchIds.length > 0) {
+    const { data: officialMatches, error: officialMatchesError } = await supabase
+      .from("match_stats")
+      .select("id, project_status")
+      .in("id", matchIds)
+      .or("project_status.eq.completed,project_status.is.null");
+
+    if (!officialMatchesError) {
+      officialMatchIds = new Set((officialMatches ?? []).map((row: any) => String(row.id)));
+    } else {
+      console.warn("Filtrage matchs finalisés indisponible :", officialMatchesError);
+    }
+  }
+
   const result: Record<string, TeamPlayerStat> = {};
 
-  ((data ?? []) as MatchPlayerStatsRow[])
+  candidateRows
+    .filter((row) => !row.match_id || officialMatchIds.has(String(row.match_id)))
     .filter((row: MatchPlayerStatsRow) => row.present !== false)
     .forEach((row: MatchPlayerStatsRow) => {
       const playerId = String(row.player_id);
