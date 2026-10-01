@@ -10,6 +10,7 @@
 
 import React, { createContext, useContext, useEffect, useMemo, useState } from 'react';
 import { getTeams as getSupabaseTeams } from '@/lib/equipes-store';
+import { createClient } from '@/lib/supabase/client';
 
 /* ============================ Types ============================ */
 export interface Player { id: string; num: number; name: string; pos: string; photo?: string }
@@ -81,6 +82,55 @@ export async function readTeamsSupabase(): Promise<Team[]> {
     return [];
   }
 }
+async function readMatchesSupabase(teamId: string): Promise<Match[]> {
+  if (!teamId) return [];
+  try {
+    const supabase = createClient();
+    const { data: matchRows, error } = await supabase
+      .from('match_stats')
+      .select('id,match_date,opponent,home,us_score,them_score,match_category')
+      .eq('team_id', teamId)
+      .order('match_date', { ascending: true });
+    if (error || !matchRows?.length) return [];
+
+    const ids = matchRows.map((m: any) => String(m.id)).filter(Boolean);
+    const { data: statRows } = await supabase
+      .from('match_player_stats')
+      .select('match_id,player_id,pts,p2m,p2a,p3m,p3a,ftm,fta,reb,off_reb,def_reb,ast,stl,blk,turnovers,pf,present,minutes')
+      .in('match_id', ids);
+
+    const byMatch = new Map<string, any[]>();
+    for (const row of statRows || []) {
+      const key = String((row as any).match_id || '');
+      byMatch.set(key, [...(byMatch.get(key) || []), row]);
+    }
+
+    return matchRows.map((m: any) => ({
+      id: String(m.id),
+      date: String(m.match_date || ''),
+      type: 'match' as const,
+      opponent: String(m.opponent || 'Adversaire'),
+      home: m.home !== false,
+      scoreUs: Number(m.us_score || 0),
+      scoreThem: Number(m.them_score || 0),
+      lines: (byMatch.get(String(m.id)) || []).map((row: any) => ({
+        playerId: String(row.player_id),
+        present: row.present !== false,
+        min: Number(row.minutes || 0),
+        p2m: Number(row.p2m || 0), p2a: Number(row.p2a || 0),
+        p3m: Number(row.p3m || 0), p3a: Number(row.p3a || 0),
+        ftm: Number(row.ftm || 0), fta: Number(row.fta || 0),
+        reb: Number(row.reb || 0) || Number(row.off_reb || 0) + Number(row.def_reb || 0),
+        ast: Number(row.ast || 0), stl: Number(row.stl || 0), blk: Number(row.blk || 0),
+        to: Number(row.turnovers || 0), pf: Number(row.pf || 0),
+      })),
+    }));
+  } catch (error) {
+    console.error('Erreur chargement stats Supabase management:', error);
+    return [];
+  }
+}
+
 function readMap(key: string): Record<string, any> {
   if (typeof window === 'undefined') return {};
   try { return JSON.parse(window.localStorage.getItem(key) || '{}') || {}; } catch { return {}; }
@@ -177,7 +227,15 @@ export function MgmtProvider({ children, onToast }: { children: React.ReactNode;
 
       setTeamIdState(saved && t.some((x) => x.id === saved) ? saved : t[0]?.id ?? '');
 
-      setMatchesMap(readMap(MATCHES_KEY));
+      const localMatches = readMap(MATCHES_KEY);
+      const liveEntries = await Promise.all(t.map(async (team) => [team.id, await readMatchesSupabase(team.id)] as const));
+      const mergedMatches = { ...localMatches };
+      for (const [id, rows] of liveEntries) {
+        // Dès que des statistiques de match existent dans Supabase, elles deviennent
+        // la source de vérité du Management. On n'affiche plus un ancien cache local.
+        if (rows.length) mergedMatches[id] = rows;
+      }
+      setMatchesMap(mergedMatches);
       setEventsMap(readMap(EVENTS_KEY));
       setPlanMap(readMap(PLAN_KEY));
       setRotMap(readMap(ROT_KEY));
