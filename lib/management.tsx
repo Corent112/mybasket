@@ -88,8 +88,9 @@ async function readMatchesSupabase(teamId: string): Promise<Match[]> {
     const supabase = createClient();
     const { data: matchRows, error } = await supabase
       .from('match_stats')
-      .select('id,match_date,opponent,home,us_score,them_score,match_category')
+      .select('id,match_date,opponent,home,us_score,them_score,match_category,project_status')
       .eq('team_id', teamId)
+      .or('project_status.eq.completed,project_status.is.null')
       .order('match_date', { ascending: true });
     if (error || !matchRows?.length) return [];
 
