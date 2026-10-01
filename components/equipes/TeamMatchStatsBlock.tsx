@@ -25,6 +25,7 @@ type MatchRow = {
   them_score: number | null;
   result: string | null;
   home: boolean | null;
+  match_category?: string | null;
 };
 
 type StatRow = {
@@ -208,7 +209,7 @@ function advanced(stats: TeamStats) {
   return { fgm, fga, poss, eff, efg, ts, astPct, tovPct, shot2Rep, shot3Rep };
 }
 
-export default function TeamMatchStatsBlock({ teamId }: { teamId: string }) {
+export default function TeamMatchStatsBlock({ teamId, matchCategory = "championship" }: { teamId: string; matchCategory?: "all"|"championship"|"cup"|"friendly" }) {
   const supabase = createClient();
 
   const [loading, setLoading] = useState(true);
@@ -224,7 +225,7 @@ export default function TeamMatchStatsBlock({ teamId }: { teamId: string }) {
 
       const { data: matchData, error: matchError } = await supabase
         .from("match_stats")
-        .select("id, team_id, opponent, match_date, us_score, them_score, result, home, project_status")
+        .select("id, team_id, opponent, match_date, us_score, them_score, result, home, match_category, project_status")
         .eq("team_id", teamId)
         .or("project_status.eq.completed,project_status.is.null")
         .order("match_date", { ascending: false });
@@ -239,7 +240,7 @@ export default function TeamMatchStatsBlock({ teamId }: { teamId: string }) {
         return;
       }
 
-      const matchRows = (matchData ?? []) as MatchRow[];
+      const matchRows = ((matchData ?? []) as MatchRow[]).filter((m) => matchCategory === "all" || String(m.match_category || "championship") === matchCategory);
       setMatches(matchRows);
 
       const matchIds = matchRows.map((m) => m.id);
@@ -274,7 +275,7 @@ export default function TeamMatchStatsBlock({ teamId }: { teamId: string }) {
     return () => {
       active = false;
     };
-  }, [supabase, teamId]);
+  }, [supabase, teamId, matchCategory]);
 
   const splitRows = useMemo<SplitRow[]>(() => {
     const rowsByMatch = statsRows.reduce((acc, row) => {
