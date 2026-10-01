@@ -551,7 +551,7 @@ export async function sendWellnessDailyDigest(input: {
   }).join("");
   const missing=(players||[]).filter((p:any)=>!latest.has(String(p.id)));
   const logo=teamLogoFromRow(team); const href=`${appUrl()}/equipes/${encodeURIComponent(input.teamId)}?tab=load`;
-  const html=`<!doctype html><html><body style="margin:0;background:#171717;font-family:Arial,sans-serif;color:#fff"><table width="100%" cellspacing="0"><tr><td align="center" style="padding:28px 12px"><table width="100%" style="max-width:760px;background:#1D1D1D;border-radius:22px;overflow:hidden;border:1px solid #3A302A"><tr><td style="background:#6B1A2C;padding:27px 30px"><table width="100%"><tr><td><div style="font-size:12px;font-weight:900;letter-spacing:.14em;color:#D4A24C">MYBASKET · WELLNESS</div><div style="margin-top:8px;font-size:30px;font-weight:900">Bilan du matin</div><div style="margin-top:5px;color:#EBDDE1">${esc(input.teamName)} · ${esc(frDate(input.responseDate))}</div></td><td width="94" align="right">${teamLogoHtml(input.teamName,logo)}</td></tr></table></td></tr><tr><td style="height:5px;background:#D4A24C"></td></tr>
+  const html=`<!doctype html><html><body style="margin:0;background:#171717;font-family:Arial,sans-serif;color:#fff"><table width="100%" cellspacing="0"><tr><td align="center" style="padding:28px 12px"><table width="100%" style="max-width:1040px;background:#1D1D1D;border-radius:22px;overflow:hidden;border:1px solid #3A302A"><tr><td style="background:#6B1A2C;padding:27px 30px"><table width="100%"><tr><td><div style="font-size:12px;font-weight:900;letter-spacing:.14em;color:#D4A24C">MYBASKET · WELLNESS</div><div style="margin-top:8px;font-size:30px;font-weight:900">Bilan du matin</div><div style="margin-top:5px;color:#EBDDE1">${esc(input.teamName)} · ${esc(frDate(input.responseDate))}</div></td><td width="94" align="right">${teamLogoHtml(input.teamName,logo)}</td></tr></table></td></tr><tr><td style="height:5px;background:#D4A24C"></td></tr>
 <tr><td style="padding:22px"><table width="100%" cellspacing="7"><tr><td align="center" style="padding:14px;background:#242424;border:1px solid #4A403A;border-radius:13px"><b style="font-size:22px">${latest.size}/${players?.length||latest.size}</b><div style="font-size:9px;color:#D4A24C">RÉPONSES</div></td><td align="center" style="padding:14px;background:#242424;border:1px solid #4A403A;border-radius:13px"><b style="font-size:22px">${avg("sleep")}</b><div style="font-size:9px;color:#D4A24C">SOMMEIL</div></td><td align="center" style="padding:14px;background:#242424;border:1px solid #4A403A;border-radius:13px"><b style="font-size:22px">${avg("fatigue")}</b><div style="font-size:9px;color:#D4A24C">FATIGUE</div></td><td align="center" style="padding:14px;background:#242424;border:1px solid #4A403A;border-radius:13px"><b style="font-size:22px">${avg("stress")}</b><div style="font-size:9px;color:#D4A24C">STRESS</div></td></tr></table></td></tr>
 <tr><td style="padding:0 24px 18px"><div style="font-size:11px;font-weight:900;color:#D4A24C;letter-spacing:.1em">TABLEAU ÉQUIPE</div><table width="100%" style="margin-top:8px;border-collapse:collapse;color:#fff"><thead><tr style="background:#2B2928"><th align="left" style="padding:9px 7px">Joueur</th><th>Sommeil</th><th>Fatigue</th><th>Stress</th><th>Humeur</th><th>Coup</th><th>Douleurs</th></tr></thead><tbody>${rows}</tbody></table></td></tr>
 ${missing.length?`<tr><td style="padding:0 24px 18px"><div style="padding:14px;border-radius:14px;background:#292625;color:#CBBDB6"><strong style="color:#fff">Sans réponse (${missing.length}) :</strong> ${esc(missing.map((p:any)=>[p.first_name,p.last_name].filter(Boolean).join(" ")).join(" · "))}</div></td></tr>`:""}
@@ -593,7 +593,7 @@ export async function sendRpeDailyDigest(input: {
     admin
       .from("player_wellness_responses")
       .select(
-        "player_id,rpe,fatigue,soreness,sleep,stress,comment,created_at",
+        "player_id,rpe,duration_minutes,fatigue,soreness,sleep,stress,comment,pain_zones,pain_details,is_injured,created_at",
       )
       .eq("team_id", input.teamId)
       .eq("response_kind", "post_session")
@@ -688,40 +688,30 @@ export async function sendRpeDailyDigest(input: {
     ]),
   );
 
+  const painLabels: Record<string,string> = {
+    head_front:"Tête / visage", neck_front:"Cou", shoulder_left_front:"Épaule G", shoulder_right_front:"Épaule D", chest_front:"Thorax", plexus_front:"Plexus", abdomen_front:"Abdos", elbow_left_front:"Coude G", elbow_right_front:"Coude D", wrist_left_front:"Poignet G", wrist_right_front:"Poignet D", hip_left_front:"Hanche G", hip_right_front:"Hanche D", thigh_left_front:"Cuisse G", thigh_right_front:"Cuisse D", knee_left_front:"Genou G", knee_right_front:"Genou D", calf_left_front:"Mollet G", calf_right_front:"Mollet D", ankle_left_front:"Cheville G", ankle_right_front:"Cheville D", head_back:"Arrière tête", neck_back:"Nuque", shoulder_left_back:"Épaule G dos", shoulder_right_back:"Épaule D dos", upper_back:"Haut dos", lower_back:"Lombaires", elbow_left_back:"Coude G dos", elbow_right_back:"Coude D dos", wrist_left_back:"Poignet G dos", wrist_right_back:"Poignet D dos", glute_left:"Fessier G", glute_right:"Fessier D", hamstring_left:"Ischio G", hamstring_right:"Ischio D", knee_left_back:"Genou G arrière", knee_right_back:"Genou D arrière", calf_left:"Mollet G", calf_right:"Mollet D", ankle_left_back:"Cheville G dos", ankle_right_back:"Cheville D dos"
+  };
+
   const tableRows = evaluated
     .map(({ player, row, evaluation }) => {
-      const status =
-        evaluation.severity === "alert"
-          ? "🔴"
-          : evaluation.severity === "watch"
-            ? "🟠"
-            : "🟢";
-
-      const name =
-        [player?.first_name, player?.last_name]
-          .filter(Boolean)
-          .join(" ") || "Joueur";
-
+      const status = evaluation.severity === "alert" ? "🔴" : evaluation.severity === "watch" ? "🟠" : "🟢";
+      const name = [player?.first_name, player?.last_name].filter(Boolean).join(" ") || "Joueur";
+      const zones = Array.isArray(row.pain_zones) ? row.pain_zones.map((id:string) => painLabels[id] || id) : [];
+      const pain = zones.length ? zones.join(", ") : "—";
+      const load = Number(row.duration_minutes || 0) * Number(row.rpe || 0);
       return `<tr>
-        <td style="padding:10px 8px;border-bottom:1px solid #EEE6E1;font-size:13px;font-weight:700">${esc(
-          name,
-        )}</td>
-        <td align="center" style="padding:10px 5px;border-bottom:1px solid #EEE6E1;font-size:13px">${
-          target ?? "—"
-        }</td>
-        <td align="center" style="padding:10px 5px;border-bottom:1px solid #EEE6E1;font-size:14px;font-weight:900;color:#6B1A2C">${esc(
-          row.rpe,
-        )}</td>
-        <td align="center" style="padding:10px 5px;border-bottom:1px solid #EEE6E1;font-size:13px">${esc(
-          signed(evaluation.targetDelta),
-        )}</td>
-        <td align="center" style="padding:10px 5px;border-bottom:1px solid #EEE6E1;font-size:13px">${esc(
-          signed(evaluation.groupDelta),
-        )}</td>
-        <td align="center" style="padding:10px 5px;border-bottom:1px solid #EEE6E1;font-size:16px">${status}</td>
+        <td style="padding:10px 7px;border-bottom:1px solid #EEE6E1;font-size:12px;font-weight:800;white-space:nowrap">${status} ${esc(name)}</td>
+        <td align="center" style="padding:10px 4px;border-bottom:1px solid #EEE6E1;font-size:12px">${esc(row.duration_minutes ?? "—")}</td>
+        <td align="center" style="padding:10px 4px;border-bottom:1px solid #EEE6E1;font-size:13px;font-weight:900;color:#6B1A2C">${esc(row.rpe)}</td>
+        <td align="center" style="padding:10px 4px;border-bottom:1px solid #EEE6E1;font-size:12px;font-weight:800">${load || "—"}</td>
+        <td align="center" style="padding:10px 4px;border-bottom:1px solid #EEE6E1;font-size:12px">${esc(row.fatigue ?? "—")}/10</td>
+        <td align="center" style="padding:10px 4px;border-bottom:1px solid #EEE6E1;font-size:12px">${esc(row.soreness ?? "—")}/10</td>
+        <td align="center" style="padding:10px 4px;border-bottom:1px solid #EEE6E1;font-size:12px">${esc(row.sleep ?? "—")}/10</td>
+        <td align="center" style="padding:10px 4px;border-bottom:1px solid #EEE6E1;font-size:12px">${esc(row.stress ?? "—")}/10</td>
+        <td style="padding:10px 6px;border-bottom:1px solid #EEE6E1;font-size:11px;max-width:150px">${esc(pain)}</td>
+        <td style="padding:10px 6px;border-bottom:1px solid #EEE6E1;font-size:11px;max-width:160px">${esc(row.comment || "—")}</td>
       </tr>`;
-    })
-    .join("");
+    }).join("");
 
   const attentionBlocks = [...red, ...orange]
     .map(({ playerId, player, row, evaluation }) => {
@@ -830,12 +820,16 @@ export async function sendRpeDailyDigest(input: {
   <div style="font-size:11px;font-weight:900;letter-spacing:.1em;color:#D4A24C">TABLEAU ÉQUIPE</div>
   <table width="100%" cellspacing="0" cellpadding="0" style="margin-top:8px;border-collapse:collapse;color:#FFFFFF">
     <thead><tr style="background:#2B2928">
-      <th align="left" style="padding:9px 8px;font-size:10px;color:#D9CCC5">Joueur</th>
-      <th style="padding:9px 5px;font-size:10px;color:#D9CCC5">Prévu</th>
-      <th style="padding:9px 5px;font-size:10px;color:#D9CCC5">RPE</th>
-      <th style="padding:9px 5px;font-size:10px;color:#D9CCC5">vs prévu</th>
-      <th style="padding:9px 5px;font-size:10px;color:#D9CCC5">vs groupe</th>
-      <th style="padding:9px 5px;font-size:10px;color:#D9CCC5">Statut</th>
+      <th align="left" style="padding:9px 7px;font-size:10px;color:#D9CCC5">Joueur</th>
+      <th style="padding:9px 4px;font-size:10px;color:#D9CCC5">Min</th>
+      <th style="padding:9px 4px;font-size:10px;color:#D9CCC5">RPE</th>
+      <th style="padding:9px 4px;font-size:10px;color:#D9CCC5">Charge</th>
+      <th style="padding:9px 4px;font-size:10px;color:#D9CCC5">Fatigue</th>
+      <th style="padding:9px 4px;font-size:10px;color:#D9CCC5">Gêne</th>
+      <th style="padding:9px 4px;font-size:10px;color:#D9CCC5">Sommeil</th>
+      <th style="padding:9px 4px;font-size:10px;color:#D9CCC5">Stress</th>
+      <th align="left" style="padding:9px 6px;font-size:10px;color:#D9CCC5">Zones douloureuses</th>
+      <th align="left" style="padding:9px 6px;font-size:10px;color:#D9CCC5">Commentaire</th>
     </tr></thead>
     <tbody>${tableRows
       .replaceAll("#EEE6E1", "#403A36")
