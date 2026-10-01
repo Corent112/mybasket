@@ -4127,7 +4127,14 @@ const saveAndGoCreate = async (kind: "systeme" | "exercice") => {
 // Aucun nouveau système n'est créé : le système ouvert est mis à jour.
 const saveOpenedLibrarySystem = async (resolvedSystemId?: string | null) => {
   const targetSystemId = resolvedSystemId || openedLibrarySystemId;
-  if (!targetSystemId || saving) return;
+  if (!targetSystemId) {
+    alert("Aucun système sélectionné.");
+    return;
+  }
+  if (saving) {
+    alert("Une sauvegarde est déjà en cours.");
+    return;
+  }
 
   const canvas = canvasRef.current;
   if (!canvas) {
@@ -4139,17 +4146,27 @@ const saveOpenedLibrarySystem = async (resolvedSystemId?: string | null) => {
   setSaving('library-system');
 
   try {
-    const existingSystem = await getSystem(targetSystemId);
-    if (!existingSystem) {
-      throw new Error("Système introuvable ou non modifiable.");
-    }
+    // On fige immédiatement l'état ACTUEL du dessin avant toute capture.
+    const fullPhases = JSON.parse(JSON.stringify(phasesRef.current || []));
+    if (!fullPhases.length) throw new Error("Aucune phase à sauvegarder.");
 
-    // Sauvegarde Bibliothèque dédiée : on prend directement l'état ACTUEL de la plaquette.
-    // On ne passe pas par le flux création/insertion (buildPlaquetteResult).
+    const { data: { user }, error: authError } = await supabase.auth.getUser();
+    if (authError || !user) throw new Error("Session utilisateur indisponible.");
+
+    // Vérifie que le système cliqué est bien un système privé de l'utilisateur.
+    const { data: existingRow, error: existingError } = await supabase
+      .from("systems")
+      .select("*")
+      .eq("id", targetSystemId)
+      .eq("user_id", user.id)
+      .maybeSingle();
+
+    if (existingError) throw existingError;
+    if (!existingRow) throw new Error("Système introuvable ou non modifiable.");
+
+    // Capture les miniatures de toutes les phases.
     const phaseImagesBase64 = await captureAllPhaseImages();
-    if (!phaseImagesBase64.length) {
-      throw new Error("Aucune phase capturée.");
-    }
+    if (!phaseImagesBase64.length) throw new Error("Aucune phase capturée.");
 
     const schemaGroupId = crypto.randomUUID();
     const folder = `exercices/systemes-${targetSystemId}/schemas/${schemaGroupId}`;
@@ -4165,8 +4182,7 @@ const saveOpenedLibrarySystem = async (resolvedSystemId?: string | null) => {
       );
     }
 
-    const fullPhases = JSON.parse(JSON.stringify(phasesRef.current || []));
-    const savedTitle = title || existingSystem.title || "Système";
+    const savedTitle = title || existingRow.title || "Système";
     const schemaDataList = uploadedUrls.map((url, phaseIndex) => ({
       title: `${savedTitle} - Phase ${phaseIndex + 1}`,
       schemaGroupId,
@@ -4182,18 +4198,51 @@ const saveOpenedLibrarySystem = async (resolvedSystemId?: string | null) => {
       editable: true,
     }));
 
-    const updated = await updateSystem(targetSystemId, {
-      title: savedTitle,
-      schemaImage: uploadedUrls[0] || existingSystem.schemaImage || "",
-      schemaImages: uploadedUrls,
-      schemaData: schemaDataList[0] || null,
-      schemaDataList,
-      // Une modification du dessin conserve l'animation déjà enregistrée.
-      schemaVideo: existingSystem.schemaVideo || "",
-    });
+    // Écriture directe dans systems : aucun flux "création", aucune copie.
+    const now = new Date().toISOString();
+    const { data: savedRow, error: saveError } = await supabase
+      .from("systems")
+      .update({
+        title: savedTitle,
+        schema_image: uploadedUrls[0] || existingRow.schema_image || "",
+        schema_images: uploadedUrls,
+        schema_data: schemaDataList[0] || null,
+        schema_data_list: schemaDataList,
+        updated_at: now,
+      })
+      .eq("id", targetSystemId)
+      .eq("user_id", user.id)
+      .select("id, schema_data_list, updated_at")
+      .maybeSingle();
 
-    if (!updated) {
-      throw new Error("La sauvegarde du système a échoué.");
+    if (saveError) throw saveError;
+    if (!savedRow) throw new Error("Supabase n'a confirmé aucune modification.");
+
+    // Les entrées Playbook gardent une copie des schémas : on les synchronise aussi.
+    const { error: playbookSyncError } = await supabase
+      .from("playbook_systems")
+      .update({
+        title: savedTitle,
+        schema_images: uploadedUrls,
+        schema_data_list: schemaDataList,
+        updated_at: now,
+      })
+      .eq("system_id", targetSystemId)
+      .eq("owner_id", user.id);
+
+    if (playbookSyncError) {
+      console.warn("Synchronisation Playbook impossible :", playbookSyncError);
+    }
+
+    // Vérification réelle de ce qui vient d'être écrit en base.
+    const savedList = Array.isArray(savedRow.schema_data_list)
+      ? savedRow.schema_data_list
+      : [];
+    const verified = savedList.some(
+      (item: any) => item?.schemaGroupId === schemaGroupId
+    );
+    if (!verified) {
+      throw new Error("La base n'a pas conservé le nouveau dessin.");
     }
 
     currentRef.current = previousCurrent;
@@ -4201,15 +4250,18 @@ const saveOpenedLibrarySystem = async (resolvedSystemId?: string | null) => {
     setSaveOpen(false);
     setSaveMsg(true);
     window.setTimeout(() => setSaveMsg(false), 1500);
-    showHint("Modifications enregistrées");
+    showHint("✓ Modifications enregistrées");
 
-    // Recharge immédiatement la Bibliothèque pour refléter la nouvelle miniature/donnée.
-    window.dispatchEvent(new CustomEvent('mybasket:library-system-saved', {
-      detail: { systemId: targetSystemId }
+    window.dispatchEvent(new CustomEvent("mybasket:library-system-saved", {
+      detail: { systemId: targetSystemId, schemaGroupId }
     }));
+
+    // Confirmation volontairement visible pendant le diagnostic :
+    // si ce message apparaît, Supabase a relu le nouveau schemaGroupId.
+    alert("✓ Modifications sauvegardées et vérifiées.");
   } catch (error: any) {
     console.error("ERREUR saveOpenedLibrarySystem", error);
-    alert(error?.message || "Impossible d’enregistrer les modifications.");
+    alert(`Échec de la sauvegarde : ${error?.message || "erreur inconnue"}`);
   } finally {
     currentRef.current = previousCurrent;
     setCurrent(previousCurrent);
