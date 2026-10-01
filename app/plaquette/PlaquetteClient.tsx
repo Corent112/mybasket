@@ -4901,26 +4901,6 @@ const exportJson = () => {
                   </div>
                 </div>
 
-                {/* Animation — reste dans la même colonne, sous le timing */}
-                <div className="phase-animation-dock">
-                  <div className="sec-lab">ANIMATION</div>
-                  <div className="timeline">
-                    <div className="tl-controls">
-                      <div className="tl-btn" id="tlPrev" title="Précédent" onClick={() => seekPhaseTL(current - 1)}>⏮</div>
-                      <div className="tl-btn" id="tlPlay" title="Play/Pause" onClick={togglePlay}>{isPlaying ? '⏸' : '▶'}</div>
-                      <div className="tl-btn" id="tlStop" title="Stop" onClick={stopAnim}>⏹</div>
-                      <div className="tl-btn" id="tlNext" title="Suivant" onClick={() => seekPhaseTL(current + 1)}>⏭</div>
-                    </div>
-                    <select className="tl-speed" id="tlSpeed" defaultValue="1" onChange={(e) => { speedRef.current = Number(e.target.value); }}>
-                      <option value="0.5">0.5x</option>
-                      <option value="1">1x</option>
-                      <option value="1.5">1.5x</option>
-                      <option value="2">2x</option>
-                    </select>
-                    <div className="tl-progress" id="tlProgress"><div className="tl-progress-bar" id="tlBar" ref={tlBarRef}></div></div>
-                    <div className="tl-status" id="tlStatus">{isPlaying ? '▶ ' : ''}Phase {current + 1}/{phases.length}</div>
-                  </div>
-                </div>
               </div>
             </aside>
 
@@ -5584,18 +5564,20 @@ const exportJson = () => {
                 <div style={{ fontSize: '.72rem', fontWeight: 900, color: '#555', textTransform: 'uppercase', letterSpacing: '.04em', marginBottom: '.45rem' }}>
                   Terrains par défaut
                 </div>
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0,1fr))', gap: '.55rem' }}>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, minmax(0,1fr))', gap: '.5rem' }}>
                   {COURT_STYLE_PRESETS.map((preset) => (
                     <button
                       key={preset.id}
                       type="button"
                       onClick={() => applyCourtStyle(preset.style)}
-                      style={{ border: '1px solid #DDD', borderRadius: 10, background: '#fff', padding: '.5rem', cursor: 'pointer', fontSize: '.72rem', fontWeight: 800 }}
+                      style={{ border: '1px solid #DDD', borderRadius: 10, background: '#fff', padding: '.38rem', cursor: 'pointer', fontSize: '.7rem', fontWeight: 800, boxShadow: '0 1px 4px rgba(0,0,0,.05)' }}
                     >
-                      <span aria-hidden="true" style={{ display: 'block', position: 'relative', height: 72, overflow: 'hidden', borderRadius: 7, marginBottom: '.35rem', background: preset.style.floorColor, border: `5px solid ${preset.style.borderColor}` }}>
-                        <span style={{ position: 'absolute', left: '27%', right: '27%', top: 0, height: '45%', background: preset.style.paintColor, border: `2px solid ${preset.style.lineColor}`, borderTop: 0 }} />
-                        <span style={{ position: 'absolute', left: '50%', bottom: -26, width: 52, height: 52, transform: 'translateX(-50%)', border: `2px solid ${preset.style.lineColor}`, borderRadius: '50%' }} />
-                        <span style={{ position: 'absolute', left: '8%', right: '8%', top: '70%', borderTop: `2px solid ${preset.style.lineColor}` }} />
+                      <span aria-hidden="true" style={{ display: 'block', padding: '4px', borderRadius: 7, marginBottom: '.3rem', background: '#F7F5F2' }}>
+                        <span style={{ display: 'block', position: 'relative', height: 54, overflow: 'hidden', borderRadius: 5, background: preset.style.floorColor, border: `4px solid ${preset.style.borderColor}`, boxSizing: 'border-box' }}>
+                          <span style={{ position: 'absolute', left: '27%', right: '27%', top: 0, height: '45%', background: preset.style.paintColor, border: `1.5px solid ${preset.style.lineColor}`, borderTop: 0 }} />
+                          <span style={{ position: 'absolute', left: '50%', bottom: -21, width: 42, height: 42, transform: 'translateX(-50%)', border: `1.5px solid ${preset.style.lineColor}`, borderRadius: '50%' }} />
+                          <span style={{ position: 'absolute', left: '8%', right: '8%', top: '70%', borderTop: `1.5px solid ${preset.style.lineColor}` }} />
+                        </span>
                       </span>
                       {preset.label}
                     </button>
@@ -5981,18 +5963,15 @@ html{font-size:15px}
 }
 @media (min-width:901px) and (max-width:1050px){.ed-layout{grid-template-columns:210px 220px minmax(0,1fr) 280px!important;grid-template-areas:"library phases canvas right"!important}}
 
-/* Plaquette 24-09 : terrain complet visible + 3 phases + animation dans la colonne */
+/* Plaquette : terrain complet visible + jusqu'à 4 phases dans la colonne.
+   L'animation reste disponible via l'onglet Animation du bandeau supérieur,
+   sans dupliquer un bloc noir dans la colonne des phases. */
 @media (min-width:901px){
   .ed-layout{height:calc(100vh - 74px)!important;min-height:0!important}
   .ed-left{height:100%!important;min-height:0!important;overflow-y:auto!important}
-  .ed-left .phases-list{height:238px!important;min-height:238px!important;max-height:238px!important;gap:7px!important}
-  .ed-left .ph-thumb{height:74px!important;min-height:74px!important;flex:0 0 74px!important;aspect-ratio:auto!important}
+  .ed-left .phases-list{height:352px!important;min-height:0!important;max-height:352px!important;gap:7px!important}
+  .ed-left .ph-thumb{height:82px!important;min-height:82px!important;flex:0 0 82px!important;aspect-ratio:auto!important;background-size:contain!important;background-position:center!important;background-color:#6B1A2C!important}
   .ed-canvas-wrap{height:100%!important;min-height:0!important;padding:.65rem 1rem!important;justify-content:flex-start!important}
   #playCanvas[data-court="full"]{width:auto!important;height:auto!important;max-width:100%!important;max-height:calc(100vh - 145px)!important;object-fit:contain!important}
-  .phase-animation-dock{margin-top:.85rem;padding-top:.75rem;border-top:1px solid var(--gris-med)}
-  .phase-animation-dock .timeline{position:static!important;width:100%!important;min-height:0!important;padding:.45rem!important;border-radius:8px!important;display:grid!important;grid-template-columns:1fr auto!important;gap:.4rem!important}
-  .phase-animation-dock .tl-controls{grid-column:1 / -1!important;justify-content:center!important}
-  .phase-animation-dock .tl-progress{grid-column:1 / -1!important;width:100%!important}
-  .phase-animation-dock .tl-status{font-size:.68rem!important}
 }
 `;
