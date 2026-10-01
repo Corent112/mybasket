@@ -17,6 +17,7 @@ import PlayerProfilingTab from "@/components/players/PlayerProfilingTab";
 import ShotChart, { resolveShotZone } from "@/components/prise-stats-pro/ShotChart";
 import AdvancedVideoEditor from "@/components/video-editor/AdvancedVideoEditor";
 import PlayerLoadMonitoring from "@/components/players/PlayerLoadMonitoring";
+import PlayerCalendar from "@/components/players/PlayerCalendar";
 import PlayerShootingGrids from "@/components/players/PlayerShootingGrids";
 import PoleSportsReportPanel from "@/components/equipes/PoleSportsReportPanel";
 import PolePlayerLongitudinalPanel from "@/components/equipes/PolePlayerLongitudinalPanel";
@@ -42,6 +43,7 @@ const TABS = [
   "Profilage",
   "Tests",
   "Charge & récup.",
+  "Calendrier",
   "Grilles de tir",
   "Médical",
   "Bilans",
@@ -2162,6 +2164,16 @@ export default function JoueurDetailPage({
 
         {tab === "Charge & récup." && (
           <PlayerLoadMonitoring playerId={playerId} teamId={teamId} />
+        )}
+
+        {tab === "Calendrier" && (
+          <PlayerCalendar
+            teamId={String(teamId)}
+            playerId={String(playerId)}
+            playerName={`${p.firstName ?? ""} ${p.lastName ?? ""}`.trim() || "Joueur"}
+            guardianEmails={[p.tuteur1Email, p.tuteur2Email].filter((value): value is string => Boolean(value))}
+            school={p.school}
+          />
         )}
 
         {tab === "Grilles de tir" && (
