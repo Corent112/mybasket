@@ -19,30 +19,47 @@ type PainDetail = {
 };
 
 const PAIN_ZONES: PainZone[] = [
-  { id: "head_front", label: "Tête / visage", side: "front", x: 50, y: 10 },
+  { id: "head_front", label: "Tête / visage", side: "front", x: 50, y: 9 },
+  { id: "neck_front", label: "Cou", side: "front", x: 50, y: 18 },
   { id: "shoulder_left_front", label: "Épaule gauche", side: "front", x: 31, y: 24 },
   { id: "shoulder_right_front", label: "Épaule droite", side: "front", x: 69, y: 24 },
-  { id: "chest_front", label: "Thorax", side: "front", x: 50, y: 30 },
+  { id: "chest_front", label: "Thorax", side: "front", x: 50, y: 27 },
+  { id: "plexus_front", label: "Plexus", side: "front", x: 50, y: 34 },
   { id: "abdomen_front", label: "Abdominaux", side: "front", x: 50, y: 42 },
+  { id: "elbow_left_front", label: "Coude gauche", side: "front", x: 24, y: 42 },
+  { id: "elbow_right_front", label: "Coude droit", side: "front", x: 76, y: 42 },
+  { id: "wrist_left_front", label: "Poignet / main gauche", side: "front", x: 18, y: 55 },
+  { id: "wrist_right_front", label: "Poignet / main droite", side: "front", x: 82, y: 55 },
   { id: "hip_left_front", label: "Hanche gauche", side: "front", x: 40, y: 51 },
   { id: "hip_right_front", label: "Hanche droite", side: "front", x: 60, y: 51 },
   { id: "thigh_left_front", label: "Cuisse gauche", side: "front", x: 41, y: 63 },
   { id: "thigh_right_front", label: "Cuisse droite", side: "front", x: 59, y: 63 },
   { id: "knee_left_front", label: "Genou gauche", side: "front", x: 41, y: 75 },
   { id: "knee_right_front", label: "Genou droit", side: "front", x: 59, y: 75 },
-  { id: "ankle_left_front", label: "Cheville gauche", side: "front", x: 42, y: 91 },
-  { id: "ankle_right_front", label: "Cheville droite", side: "front", x: 58, y: 91 },
+  { id: "calf_left_front", label: "Mollet gauche", side: "front", x: 41, y: 84 },
+  { id: "calf_right_front", label: "Mollet droit", side: "front", x: 59, y: 84 },
+  { id: "ankle_left_front", label: "Cheville / pied gauche", side: "front", x: 42, y: 93 },
+  { id: "ankle_right_front", label: "Cheville / pied droit", side: "front", x: 58, y: 93 },
+  { id: "head_back", label: "Arrière de la tête", side: "back", x: 50, y: 9 },
   { id: "neck_back", label: "Nuque", side: "back", x: 50, y: 18 },
   { id: "shoulder_left_back", label: "Épaule gauche (dos)", side: "back", x: 31, y: 25 },
   { id: "shoulder_right_back", label: "Épaule droite (dos)", side: "back", x: 69, y: 25 },
   { id: "upper_back", label: "Haut du dos", side: "back", x: 50, y: 32 },
   { id: "lower_back", label: "Lombaires", side: "back", x: 50, y: 43 },
+  { id: "elbow_left_back", label: "Coude gauche (dos)", side: "back", x: 24, y: 42 },
+  { id: "elbow_right_back", label: "Coude droit (dos)", side: "back", x: 76, y: 42 },
+  { id: "wrist_left_back", label: "Poignet / main gauche (dos)", side: "back", x: 18, y: 55 },
+  { id: "wrist_right_back", label: "Poignet / main droit (dos)", side: "back", x: 82, y: 55 },
   { id: "glute_left", label: "Fessier gauche", side: "back", x: 41, y: 52 },
   { id: "glute_right", label: "Fessier droit", side: "back", x: 59, y: 52 },
   { id: "hamstring_left", label: "Ischio gauche", side: "back", x: 41, y: 64 },
   { id: "hamstring_right", label: "Ischio droit", side: "back", x: 59, y: 64 },
-  { id: "calf_left", label: "Mollet gauche", side: "back", x: 42, y: 82 },
-  { id: "calf_right", label: "Mollet droit", side: "back", x: 58, y: 82 },
+  { id: "knee_left_back", label: "Genou gauche (arrière)", side: "back", x: 41, y: 75 },
+  { id: "knee_right_back", label: "Genou droit (arrière)", side: "back", x: 59, y: 75 },
+  { id: "calf_left", label: "Mollet gauche", side: "back", x: 42, y: 84 },
+  { id: "calf_right", label: "Mollet droit", side: "back", x: 58, y: 84 },
+  { id: "ankle_left_back", label: "Cheville / pied gauche (dos)", side: "back", x: 42, y: 93 },
+  { id: "ankle_right_back", label: "Cheville / pied droit (dos)", side: "back", x: 58, y: 93 },
 ];
 type FormPayload = {
   valid: boolean;
@@ -120,27 +137,14 @@ function BodyFigure({
       <div className="bodyLabel">{side === "front" ? "FACE" : "DOS"}</div>
       <div className="human">
         <svg viewBox="0 0 120 260" aria-label={side === "front" ? "Corps vu de face" : "Corps vu de dos"}>
-          <defs>
-            <linearGradient id={`skin-${side}`} x1="0" y1="0" x2="1" y2="1">
-              <stop offset="0" stopColor="#f4f1ef" />
-              <stop offset="1" stopColor="#d7d0cc" />
-            </linearGradient>
-          </defs>
-          <circle cx="60" cy="23" r="15" className="bodyShape" fill={`url(#skin-${side})`} />
-          <path d="M54 38 Q60 42 66 38 L67 51 Q60 55 53 51Z" className="bodyShape" fill={`url(#skin-${side})`} />
-          <path d="M43 50 Q60 44 77 50 Q82 68 80 91 Q78 113 72 133 L48 133 Q42 113 40 91 Q38 68 43 50Z" className="bodyShape" fill={`url(#skin-${side})`} />
-          <path d="M43 52 Q34 54 29 65 L20 105 L15 142 Q14 151 21 153 Q28 153 30 145 L35 112 L46 75Z" className="bodyShape" fill={`url(#skin-${side})`} />
-          <path d="M77 52 Q86 54 91 65 L100 105 L105 142 Q106 151 99 153 Q92 153 90 145 L85 112 L74 75Z" className="bodyShape" fill={`url(#skin-${side})`} />
-          <path d="M49 130 Q43 144 44 163 L42 193 L38 242 Q37 252 46 253 Q54 253 55 244 L59 194 L60 140Z" className="bodyShape" fill={`url(#skin-${side})`} />
-          <path d="M71 130 Q77 144 76 163 L78 193 L82 242 Q83 252 74 253 Q66 253 65 244 L61 194 L60 140Z" className="bodyShape" fill={`url(#skin-${side})`} />
-          <path d="M38 246 Q43 253 54 247 M66 247 Q77 253 82 246" className="bodyDetail" />
-          {side === "front" ? <>
-            <path d="M47 59 Q60 65 73 59 M60 54 L60 128 M48 87 Q60 91 72 87 M50 111 Q60 115 70 111" className="bodyDetail" />
-            <path d="M49 136 Q53 145 60 145 Q67 145 71 136" className="bodyDetail" />
-          </> : <>
-            <path d="M45 58 Q60 70 75 58 M60 52 L60 129 M47 87 Q60 80 73 87 M47 112 Q60 120 73 112" className="bodyDetail" />
-            <path d="M48 136 Q60 128 72 136 M60 136 L60 153" className="bodyDetail" />
-          </>}
+          <defs><linearGradient id={`skin-${side}`} x1="0" y1="0" x2="1" y2="1"><stop offset="0" stopColor="#fafafa"/><stop offset="1" stopColor="#d8d5d3"/></linearGradient></defs>
+          <ellipse cx="60" cy="21" rx="13" ry="17" className="bodyShape" fill={`url(#skin-${side})`} />
+          <path d="M54 37 Q60 41 66 37 L68 48 Q79 50 86 59 L79 89 Q76 108 71 126 L49 126 Q44 108 41 89 L34 59 Q41 50 52 48Z" className="bodyShape" fill={`url(#skin-${side})`} />
+          <path d="M37 55 Q29 57 26 67 L18 105 L12 137 Q11 146 18 148 Q25 149 27 140 L32 111 L43 74Z" className="bodyShape" fill={`url(#skin-${side})`} />
+          <path d="M83 55 Q91 57 94 67 L102 105 L108 137 Q109 146 102 148 Q95 149 93 140 L88 111 L77 74Z" className="bodyShape" fill={`url(#skin-${side})`} />
+          <path d="M49 123 Q42 137 43 158 L41 188 L37 240 Q36 250 45 252 Q53 252 55 243 L59 190 L60 136Z" className="bodyShape" fill={`url(#skin-${side})`} />
+          <path d="M71 123 Q78 137 77 158 L79 188 L83 240 Q84 250 75 252 Q67 252 65 243 L61 190 L60 136Z" className="bodyShape" fill={`url(#skin-${side})`} />
+          {side === "front" ? <><path d="M44 57 Q51 51 60 57 Q69 51 76 57 M60 49 L60 122 M47 72 Q53 78 60 74 Q67 78 73 72 M48 88 Q60 94 72 88 M50 104 Q60 109 70 104" className="bodyDetail"/><path d="M47 128 Q53 137 60 137 Q67 137 73 128 M43 159 Q49 163 55 160 M65 160 Q71 163 77 159 M39 190 Q47 194 55 190 M65 190 Q73 194 81 190" className="bodyDetail"/></> : <><path d="M44 57 Q60 70 76 57 M60 48 L60 124 M45 77 Q60 68 75 77 M46 101 Q60 112 74 101" className="bodyDetail"/><path d="M47 128 Q60 120 73 128 M60 128 L60 145 M42 158 Q49 164 55 160 M65 160 Q71 164 78 158 M39 190 Q47 195 55 190 M65 190 Q73 195 81 190" className="bodyDetail"/></>}
         </svg>
         {zones.map((zone) => (
           <button key={zone.id} type="button" className={`painPoint ${selected.includes(zone.id) ? "selected" : ""}`} style={{ left: `${zone.x}%`, top: `${zone.y}%` }} title={zone.label} aria-label={zone.label} onClick={() => onToggle(zone)} />
@@ -607,7 +611,7 @@ const css = `
 
 .painQuestion{border-top:1px solid #eee4df;padding:15px 0}.painHead{display:flex;justify-content:space-between;gap:12px;align-items:flex-start}.painHead h2{font-size:1rem;margin:0}.painHead p{font-size:.78rem;color:#80726b;margin:4px 0 10px}.yesNo{display:flex;gap:5px}.yesNo button{border:1px solid #decfd1;background:#fff;color:#6b1a2c;border-radius:9px;padding:7px 16px;font-weight:900}.yesNo button.active{background:#6b1a2c;color:#fff;border-color:#6b1a2c}
 .wellnessPain{margin-top:6px;border:1px solid #eadfd8;background:#fffaf8;border-radius:17px;padding:14px}.painSectionTitle{margin:0 0 13px}.bodyPicker{display:grid;grid-template-columns:1fr 1fr;gap:12px;background:linear-gradient(180deg,#fbf8f6,#f5efec);border:1px solid #e6d9d3;border-radius:18px;padding:14px 10px;margin-top:8px}.bodyFigure{text-align:center}.bodyLabel{font-size:.7rem;font-weight:1000;color:#6b1a2c;letter-spacing:.12em;margin-bottom:7px}.human{position:relative;width:180px;max-width:100%;margin:auto}.bodyHelp{text-align:center;color:#887a73;font-size:.7rem;margin:8px 8px 2px;line-height:1.4}.human svg{display:block;width:100%;height:auto}.bodyShape{stroke:#8f8783;stroke-width:1.25;stroke-linejoin:round}.bodyDetail{fill:none;stroke:#b9afaa;stroke-width:.9;stroke-linecap:round}
-.painPoint{position:absolute;width:24px;height:24px;transform:translate(-50%,-50%);border-radius:50%;border:2px solid rgba(180,35,24,.65);background:rgba(225,57,46,.24);box-shadow:0 0 0 5px rgba(225,57,46,.08);cursor:pointer}.painPoint:hover,.painPoint.selected{background:#d92d20;border-color:#fff;box-shadow:0 0 0 5px rgba(217,45,32,.22)}
+.painPoint{position:absolute;width:24px;height:24px;transform:translate(-50%,-50%);border-radius:50%;border:2px solid rgba(180,35,24,.65);background:rgba(225,57,46,.24);box-shadow:0 0 0 5px rgba(225,57,46,.08);cursor:pointer}.painPoint:hover,.painPoint:hover{background:rgba(190,17,59,.16);transform:translate(-50%,-50%) scale(1.12)}.painPoint.selected{background:#d92d20;border-color:#fff;box-shadow:0 0 0 5px rgba(217,45,32,.22)}
 .selectedZones{display:grid;gap:8px;margin-top:10px}.selectHint{text-align:center;color:#8b7d75;font-size:.78rem}.painDetail{border:1px solid #eadfd8;border-radius:13px;padding:11px;background:#fff}.painDetailHead{display:flex;justify-content:space-between;align-items:center;color:#6b1a2c;margin-bottom:8px}.painDetailHead button{border:0;background:#f6ecee;color:#6b1a2c;width:27px;height:27px;border-radius:50%;font-size:1.1rem}.painDetail>label{display:flex;justify-content:space-between;font-size:.75rem;font-weight:800}.painDetail>input[type=range]{width:100%;accent-color:#6b1a2c}.painDetailGrid{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:7px}.painDetailGrid label{display:grid;gap:4px;font-size:.7rem;font-weight:800;color:#786a63}.painDetailGrid select,.painDetail textarea{border:1px solid #d9cec7;border-radius:9px;padding:9px;background:#fff}.painDetail textarea{width:100%;box-sizing:border-box;min-height:58px;margin-top:8px;resize:vertical}
 @media(max-width:520px){.two{grid-template-columns:1fr}.scaleButtons button{padding:9px 0;font-size:.76rem}.brand h1{font-size:1.55rem}.wellnessSteps{grid-template-columns:1fr}.wellnessSteps span{padding:6px 8px}.wellnessCard{padding:14px}.human{width:145px}.bodyPicker{gap:4px;padding:10px 4px}.painPoint{width:22px;height:22px}.painHead{display:grid}.yesNo{justify-content:flex-start}}
 
