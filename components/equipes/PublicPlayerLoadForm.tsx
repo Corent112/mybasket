@@ -293,15 +293,22 @@ export default function PublicPlayerLoadForm({ token }: { token: string }) {
 
   return (
     <main className="publicPage">
-      <section className="brand">
-        <small>MYBASKET · {kind === "post_session" ? "CHARGE" : "WELLNESS"}</small>
+      <section className={kind === "wellness" ? "brand wellnessBrand" : "brand"}>
+        <small>MYBASKET · {kind === "post_session" ? "CHARGE" : "WELLNESS QUOTIDIEN"}</small>
         <h1>{payload.team_name || "Mon équipe"}</h1>
-        <p>{kind === "post_session" ? "Retour après séance" : "État de récupération"}</p>
+        <p>{kind === "post_session" ? "Retour après séance" : "Comment te sens-tu aujourd’hui ?"}</p>
+        {kind === "wellness" && (
+          <div className="wellnessSteps">
+            <span><b>1</b> Ton prénom</span>
+            <span><b>2</b> Ton état</span>
+            <span><b>3</b> Tes douleurs</span>
+          </div>
+        )}
       </section>
 
-      <section className="card">
-        <label className="field">
-          <span>Joueur</span>
+      <section className={kind === "wellness" ? "card wellnessCard" : "card"}>
+        <label className={kind === "wellness" ? "field playerChoice" : "field"}>
+          <span>{kind === "wellness" ? "1 · Qui es-tu ?" : "Joueur"}</span>
           <select value={playerId} onChange={(e) => setPlayerId(e.target.value)}>
             <option value="">Choisis ton prénom</option>
             {payload.players?.map((player) => {
@@ -361,6 +368,7 @@ export default function PublicPlayerLoadForm({ token }: { token: string }) {
           </>
         )}
 
+        {kind === "wellness" && <div className="sectionTitle"><b>2</b><span><strong>Ton état aujourd’hui</strong><small>Réponds rapidement, il n’y a pas de bonne ou de mauvaise réponse.</small></span></div>}
         <label className="injuryCheck"><input type="checkbox" checked={injured} onChange={(e)=>setInjured(e.target.checked)}/><span><b>Je suis blessé(e)</b><small>Ma réponse est enregistrée pour le staff, mais elle n'entre pas dans les moyennes RPE / récupération du groupe.</small></span></label>
 
         <Question title="Fatigue" subtitle="Comment te sens-tu physiquement ?">
@@ -379,7 +387,8 @@ export default function PublicPlayerLoadForm({ token }: { token: string }) {
           />
         </Question>
 
-        <section className="painQuestion">
+        <section className={kind === "wellness" ? "painQuestion wellnessPain" : "painQuestion"}>
+          {kind === "wellness" && <div className="sectionTitle painSectionTitle"><b>3</b><span><strong>Localise tes douleurs</strong><small>Le bonhomme est visible de face et de dos. Tu peux sélectionner plusieurs zones.</small></span></div>}
           <div className="painHead">
             <div>
               <h2>As-tu une douleur ou une gêne ?</h2>
@@ -397,6 +406,7 @@ export default function PublicPlayerLoadForm({ token }: { token: string }) {
                 <BodyFigure side="front" selected={painZones} onToggle={togglePainZone} />
                 <BodyFigure side="back" selected={painZones} onToggle={togglePainZone} />
               </div>
+              <p className="bodyHelp">Appuie directement sur la zone concernée. Les points rouges correspondent aux zones sélectionnables.</p>
 
               <div className="selectedZones">
                 {painZones.length === 0 && <p className="selectHint">Clique sur la zone concernée sur le bonhomme.</p>}
@@ -477,7 +487,10 @@ const css = `
 .brand{background:linear-gradient(135deg,#6b1a2c,#341017);color:white;border-radius:22px;padding:22px;margin-bottom:10px}
 .brand small{color:#d4a24c;font-weight:1000;letter-spacing:.12em}
 .brand h1{margin:5px 0;font-size:2rem}.brand p{margin:0;color:#eadfe2}
-.card,.success{background:white;border:1px solid #eadfd8;border-radius:18px;padding:16px}
+.wellnessBrand{padding:24px;background:linear-gradient(145deg,#71192d 0%,#4b1320 72%,#2d0d14 100%);box-shadow:0 12px 30px rgba(76,18,32,.16)}
+.wellnessSteps{display:grid;grid-template-columns:repeat(3,1fr);gap:7px;margin-top:18px}.wellnessSteps span{display:flex;align-items:center;gap:7px;background:rgba(255,255,255,.09);border:1px solid rgba(255,255,255,.14);border-radius:12px;padding:8px;font-size:.72rem;font-weight:800}.wellnessSteps b{width:22px;height:22px;border-radius:50%;display:grid;place-items:center;background:#d4a24c;color:#341017}
+.card,.success{background:white;border:1px solid #eadfd8;border-radius:18px;padding:16px}.wellnessCard{padding:20px;box-shadow:0 10px 32px rgba(44,30,24,.06)}.playerChoice{background:#faf7f5;border:1px solid #eadfd8;border-radius:14px;padding:12px;margin-bottom:16px}.playerChoice>span{color:#6b1a2c;font-size:.76rem}.playerChoice select{font-weight:850;color:#2b2020}
+.sectionTitle{display:flex;gap:10px;align-items:center;margin:7px 0 4px}.sectionTitle>b{width:31px;height:31px;border-radius:50%;display:grid;place-items:center;background:#6b1a2c;color:#fff;flex:0 0 auto}.sectionTitle>span{display:grid;gap:2px}.sectionTitle strong{font-size:.94rem;color:#2b2020}.sectionTitle small{font-size:.7rem;color:#887a73;font-weight:500}
 .field{display:grid;gap:5px;margin-bottom:12px}.field>span{font-size:.7rem;text-transform:uppercase;font-weight:1000;color:#786a63}
 .field select,.field input,.field textarea{width:100%;box-sizing:border-box;border:1px solid #d9cec7;border-radius:12px;padding:12px;font-size:1rem;background:#fff}
 .field textarea{min-height:92px;resize:vertical}.two{display:grid;grid-template-columns:1fr 1fr;gap:9px}
@@ -495,8 +508,8 @@ const css = `
 .loading{text-align:center;padding:60px;color:#6b1a2c;font-weight:900}
 
 .painQuestion{border-top:1px solid #eee4df;padding:15px 0}.painHead{display:flex;justify-content:space-between;gap:12px;align-items:flex-start}.painHead h2{font-size:1rem;margin:0}.painHead p{font-size:.78rem;color:#80726b;margin:4px 0 10px}.yesNo{display:flex;gap:5px}.yesNo button{border:1px solid #decfd1;background:#fff;color:#6b1a2c;border-radius:9px;padding:7px 16px;font-weight:900}.yesNo button.active{background:#6b1a2c;color:#fff;border-color:#6b1a2c}
-.bodyPicker{display:grid;grid-template-columns:1fr 1fr;gap:12px;background:#faf7f5;border:1px solid #eadfd8;border-radius:16px;padding:12px;margin-top:8px}.bodyFigure{text-align:center}.bodyLabel{font-size:.7rem;font-weight:1000;color:#6b1a2c;letter-spacing:.12em;margin-bottom:4px}.human{position:relative;width:150px;max-width:100%;margin:auto}.human svg{display:block;width:100%;height:auto}.bodyShape{fill:#e6e1de;stroke:#8e8580;stroke-width:1.5}.bodyDetail{fill:none;stroke:#b5aaa4;stroke-width:1}
+.wellnessPain{margin-top:6px;border:1px solid #eadfd8;background:#fffaf8;border-radius:17px;padding:14px}.painSectionTitle{margin:0 0 13px}.bodyPicker{display:grid;grid-template-columns:1fr 1fr;gap:12px;background:linear-gradient(180deg,#fbf8f6,#f5efec);border:1px solid #e6d9d3;border-radius:18px;padding:14px 10px;margin-top:8px}.bodyFigure{text-align:center}.bodyLabel{font-size:.7rem;font-weight:1000;color:#6b1a2c;letter-spacing:.12em;margin-bottom:7px}.human{position:relative;width:180px;max-width:100%;margin:auto}.bodyHelp{text-align:center;color:#887a73;font-size:.7rem;margin:8px 8px 2px;line-height:1.4}.human svg{display:block;width:100%;height:auto}.bodyShape{fill:#e6e1de;stroke:#8e8580;stroke-width:1.5}.bodyDetail{fill:none;stroke:#b5aaa4;stroke-width:1}
 .painPoint{position:absolute;width:24px;height:24px;transform:translate(-50%,-50%);border-radius:50%;border:2px solid rgba(180,35,24,.65);background:rgba(225,57,46,.24);box-shadow:0 0 0 5px rgba(225,57,46,.08);cursor:pointer}.painPoint:hover,.painPoint.selected{background:#d92d20;border-color:#fff;box-shadow:0 0 0 5px rgba(217,45,32,.22)}
 .selectedZones{display:grid;gap:8px;margin-top:10px}.selectHint{text-align:center;color:#8b7d75;font-size:.78rem}.painDetail{border:1px solid #eadfd8;border-radius:13px;padding:11px;background:#fff}.painDetailHead{display:flex;justify-content:space-between;align-items:center;color:#6b1a2c;margin-bottom:8px}.painDetailHead button{border:0;background:#f6ecee;color:#6b1a2c;width:27px;height:27px;border-radius:50%;font-size:1.1rem}.painDetail>label{display:flex;justify-content:space-between;font-size:.75rem;font-weight:800}.painDetail>input[type=range]{width:100%;accent-color:#6b1a2c}.painDetailGrid{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:7px}.painDetailGrid label{display:grid;gap:4px;font-size:.7rem;font-weight:800;color:#786a63}.painDetailGrid select,.painDetail textarea{border:1px solid #d9cec7;border-radius:9px;padding:9px;background:#fff}.painDetail textarea{width:100%;box-sizing:border-box;min-height:58px;margin-top:8px;resize:vertical}
-@media(max-width:520px){.two{grid-template-columns:1fr}.scaleButtons button{padding:9px 0;font-size:.76rem}.brand h1{font-size:1.55rem}}
+@media(max-width:520px){.two{grid-template-columns:1fr}.scaleButtons button{padding:9px 0;font-size:.76rem}.brand h1{font-size:1.55rem}.wellnessSteps{grid-template-columns:1fr}.wellnessSteps span{padding:6px 8px}.wellnessCard{padding:14px}.human{width:145px}.bodyPicker{gap:4px;padding:10px 4px}.painPoint{width:22px;height:22px}.painHead{display:grid}.yesNo{justify-content:flex-start}}
 `;
