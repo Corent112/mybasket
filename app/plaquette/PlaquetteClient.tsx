@@ -720,30 +720,9 @@ useEffect(() => {
   // On le relit au moment exact où l'utilisateur clique sur Enregistrer :
   // ainsi le bouton de mise à jour apparaît aussi via la Bibliothèque intégrée.
   const openSaveModal = () => {
-    try {
-      // Priorité à l'ID réellement ouvert dans cette instance de Dessin.
-      // Le localStorage n'est qu'un secours : certaines routes/nettoyages peuvent
-      // retirer ses clés alors que le système est toujours ouvert à l'écran.
-      const sourceSystemId =
-        openedLibrarySystemId ||
-        localStorage.getItem('mybasket_drawing_source_system_id') ||
-        localStorage.getItem('mybasket_current_system_id') ||
-        localStorage.getItem('mybasket_edit_systeme_id') ||
-        localStorage.getItem('mybasket_edit_system_id');
-
-      if (sourceSystemId) {
-        if (sourceSystemId !== openedLibrarySystemId) {
-          setOpenedLibrarySystemId(sourceSystemId);
-        }
-        // Un système ouvert depuis la Bibliothèque est toujours mis à jour
-        // directement. Le bouton principal ne doit jamais retomber dans le
-        // flux de création tant que cet ID source existe.
-        void saveOpenedLibrarySystem(sourceSystemId);
-        return;
-      }
-    } catch {}
-    // Aucun système Bibliothèque ouvert : on conserve le flux historique
-    // permettant de créer un système ou un exercice depuis un nouveau dessin.
+    // Le bouton principal ouvre toujours la modale.
+    // Si un système de la Bibliothèque est ouvert, la modale propose
+    // "Enregistrer les modifications" sans court-circuiter les autres flux.
     setSaveOpen(true);
   };
   const [terrainPanelOpen, setTerrainPanelOpen] = useState(true);
