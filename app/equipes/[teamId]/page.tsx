@@ -663,9 +663,9 @@ function useFfbbBannerSummary(teamId: string): FfbbBannerSummary {
                 );
               }
 
-              // Le classement officiel FFBB est prioritaire pour le bilan de championnat.
-              // Il reste disponible même lorsque le calendrier détaillé ne permet pas
-              // d'isoler correctement les scores.
+              // Le tableau de classement de la poule FFBB est la source de vérité
+              // pour le bilan ET les points marqués / encaissés. On ne mélange plus
+              // ces KPI avec les scores issus d'une autre source.
               const officialStats = parsed?.teamStats;
               if (officialStats && Number.isFinite(Number(officialStats.played))) {
                 const officialPlayed = Number(officialStats.played);
@@ -676,11 +676,10 @@ function useFfbbBannerSummary(teamId: string): FfbbBannerSummary {
                 if (officialPlayed >= 0) {
                   wins = Number.isFinite(officialWins) ? officialWins : wins;
                   losses = Number.isFinite(officialLosses) ? officialLosses : losses;
-                  pointsForAverage = officialPlayed > 0 && Number.isFinite(officialFor) ? officialFor / officialPlayed : pointsForAverage;
-                  pointsAgainstAverage = officialPlayed > 0 && Number.isFinite(officialAgainst) ? officialAgainst / officialPlayed : pointsAgainstAverage;
-                  if (officialPlayed > playedOfficial.length) {
-                    playedOfficial.splice(0, playedOfficial.length, ...Array.from({ length: officialPlayed }, () => ({})));
-                  }
+                  pointsForAverage = officialPlayed > 0 && Number.isFinite(officialFor) ? officialFor / officialPlayed : null;
+                  pointsAgainstAverage = officialPlayed > 0 && Number.isFinite(officialAgainst) ? officialAgainst / officialPlayed : null;
+                  playedChampionship.splice(0, playedChampionship.length, ...Array.from({ length: officialPlayed }, () => ({})));
+                  playedOfficial.splice(0, playedOfficial.length, ...Array.from({ length: officialPlayed }, () => ({})));
                 }
               }
 
@@ -715,7 +714,7 @@ function useFfbbBannerSummary(teamId: string): FfbbBannerSummary {
                   ffbbScore(row, "them") === null
                 );
 
-                if (directPlayed.length > playedOfficial.length) {
+                if (!officialStats && directPlayed.length > playedOfficial.length) {
                   playedOfficial.splice(0, playedOfficial.length, ...directPlayed);
                   playedChampionship.splice(0, playedChampionship.length, ...directPlayed);
                   wins = directWins;
