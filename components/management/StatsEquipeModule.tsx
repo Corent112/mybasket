@@ -390,8 +390,9 @@ export default function StatsEquipeModule() {
 
       const { data, error } = await supabase
         .from("match_stats")
-        .select("id, team_id, opponent, match_date, us_score, them_score, result, home")
+        .select("id, team_id, opponent, match_date, us_score, them_score, result, home, project_status")
         .eq("user_id", user.id)
+        .or("project_status.eq.completed,project_status.is.null")
         .order("match_date", { ascending: false });
 
       if (error) {
