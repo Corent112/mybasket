@@ -777,8 +777,8 @@ export default function StatsEquipeModule() {
                       <td className="team-name">{row.label}</td>
                       <td>{deCount}</td>
                       <td>{vd}</td>
-                      <td>{display(s.pointsFor, s.games, useAverage)}</td>
-                      <td>{display(s.pointsAgainst, s.games, useAverage)}</td>
+                      <td className={s.pointsFor > s.pointsAgainst ? "positive-cell" : ""}>{display(s.pointsFor, s.games, useAverage)}</td>
+                      <td className={s.pointsFor < s.pointsAgainst ? "negative-cell" : ""}>{display(s.pointsAgainst, s.games, useAverage)}</td>
                       <td>{display(a.fgm, s.games, useAverage)}</td>
                       <td>{display(a.fga, s.games, useAverage)}</td>
                       <td>{pct(a.fgm, a.fga)}</td>
@@ -808,7 +808,7 @@ export default function StatsEquipeModule() {
                       <td>{displayRate(a.pace)}</td>
                       <td>{round2(a.offRtg)}</td>
                       <td>{round2(a.defRtg)}</td>
-                      <td>{round2(a.netRtg)}</td>
+                      <td className={a.netRtg > 0 ? "positive-cell" : a.netRtg < 0 ? "negative-cell" : ""}>{round2(a.netRtg)}</td>
                       <td>{displayRate(a.efg)}%</td>
                       <td>{displayRate(a.ts)}%</td>
                       <td>{displayRate(a.orbPct)}%</td>
@@ -830,6 +830,9 @@ export default function StatsEquipeModule() {
       )}
 
       <style jsx>{`
+        .positive-cell { background:#edf8f1 !important; color:#177245 !important; font-weight:950; }
+        .negative-cell { background:#fff0ee !important; color:#b42318 !important; font-weight:950; }
+
         .se {
           background: #fff;
           border-radius: 20px;
