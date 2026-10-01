@@ -164,9 +164,10 @@ function useTeamDashboardData(
           const { data: matchData, error: matchError } = await supabase
             .from("match_stats")
             .select(
-              "id, team_id, opponent, match_date, us_score, them_score, result, home, match_category, project_state",
+              "id, team_id, opponent, match_date, us_score, them_score, result, home, match_category, project_state, project_status",
             )
             .in("team_id", candidateTeamIds)
+            .or("project_status.eq.completed,project_status.is.null")
             .order("match_date", { ascending: true });
 
           if (!matchError && matchData && matchData.length > 0) {
@@ -225,9 +226,10 @@ function useTeamDashboardData(
             await supabase
               .from("match_stats")
               .select(
-                "id, team_id, opponent, match_date, us_score, them_score, result, home, match_category, project_state",
+                "id, team_id, opponent, match_date, us_score, them_score, result, home, match_category, project_state, project_status",
               )
               .eq("team_id", linkedTeamId)
+              .or("project_status.eq.completed,project_status.is.null")
               .order("match_date", { ascending: true });
 
           if (!matchErrorByResolved && matchDataByResolved) {
