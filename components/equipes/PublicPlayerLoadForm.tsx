@@ -4,6 +4,46 @@ import { useEffect, useMemo, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 
 type PublicPlayer = { id: string; first_name: string; last_name: string };
+type PainZone = {
+  id: string;
+  label: string;
+  side: "front" | "back";
+  x: number;
+  y: number;
+};
+type PainDetail = {
+  intensity: number;
+  type: string;
+  since: string;
+  comment: string;
+};
+
+const PAIN_ZONES: PainZone[] = [
+  { id: "head_front", label: "Tête / visage", side: "front", x: 50, y: 10 },
+  { id: "shoulder_left_front", label: "Épaule gauche", side: "front", x: 31, y: 24 },
+  { id: "shoulder_right_front", label: "Épaule droite", side: "front", x: 69, y: 24 },
+  { id: "chest_front", label: "Thorax", side: "front", x: 50, y: 30 },
+  { id: "abdomen_front", label: "Abdominaux", side: "front", x: 50, y: 42 },
+  { id: "hip_left_front", label: "Hanche gauche", side: "front", x: 40, y: 51 },
+  { id: "hip_right_front", label: "Hanche droite", side: "front", x: 60, y: 51 },
+  { id: "thigh_left_front", label: "Cuisse gauche", side: "front", x: 41, y: 63 },
+  { id: "thigh_right_front", label: "Cuisse droite", side: "front", x: 59, y: 63 },
+  { id: "knee_left_front", label: "Genou gauche", side: "front", x: 41, y: 75 },
+  { id: "knee_right_front", label: "Genou droit", side: "front", x: 59, y: 75 },
+  { id: "ankle_left_front", label: "Cheville gauche", side: "front", x: 42, y: 91 },
+  { id: "ankle_right_front", label: "Cheville droite", side: "front", x: 58, y: 91 },
+  { id: "neck_back", label: "Nuque", side: "back", x: 50, y: 18 },
+  { id: "shoulder_left_back", label: "Épaule gauche (dos)", side: "back", x: 31, y: 25 },
+  { id: "shoulder_right_back", label: "Épaule droite (dos)", side: "back", x: 69, y: 25 },
+  { id: "upper_back", label: "Haut du dos", side: "back", x: 50, y: 32 },
+  { id: "lower_back", label: "Lombaires", side: "back", x: 50, y: 43 },
+  { id: "glute_left", label: "Fessier gauche", side: "back", x: 41, y: 52 },
+  { id: "glute_right", label: "Fessier droit", side: "back", x: 59, y: 52 },
+  { id: "hamstring_left", label: "Ischio gauche", side: "back", x: 41, y: 64 },
+  { id: "hamstring_right", label: "Ischio droit", side: "back", x: 59, y: 64 },
+  { id: "calf_left", label: "Mollet gauche", side: "back", x: 42, y: 82 },
+  { id: "calf_right", label: "Mollet droit", side: "back", x: 58, y: 82 },
+];
 type FormPayload = {
   valid: boolean;
   team_name?: string;
@@ -65,6 +105,47 @@ function Question({
   );
 }
 
+function BodyFigure({
+  side,
+  selected,
+  onToggle,
+}: {
+  side: "front" | "back";
+  selected: string[];
+  onToggle: (zone: PainZone) => void;
+}) {
+  const zones = PAIN_ZONES.filter((zone) => zone.side === side);
+  return (
+    <div className="bodyFigure">
+      <div className="bodyLabel">{side === "front" ? "FACE" : "DOS"}</div>
+      <div className="human">
+        <svg viewBox="0 0 120 260" aria-label={side === "front" ? "Corps vu de face" : "Corps vu de dos"}>
+          <circle cx="60" cy="25" r="17" className="bodyShape" />
+          <rect x="53" y="41" width="14" height="15" rx="6" className="bodyShape" />
+          <path d="M38 56 Q60 47 82 56 L88 116 Q78 133 72 139 L48 139 Q42 132 32 116Z" className="bodyShape" />
+          <path d="M38 60 Q27 68 23 95 L16 143 Q15 151 22 153 Q28 153 30 145 L39 100 46 72Z" className="bodyShape" />
+          <path d="M82 60 Q93 68 97 95 L104 143 Q105 151 98 153 Q92 153 90 145 L81 100 74 72Z" className="bodyShape" />
+          <path d="M48 137 L43 190 39 245 Q39 253 47 253 Q54 253 56 245 L60 191 60 141Z" className="bodyShape" />
+          <path d="M72 137 L77 190 81 245 Q81 253 73 253 Q66 253 64 245 L60 191 60 141Z" className="bodyShape" />
+          {side === "front" && <path d="M60 58 L60 132 M42 88 L78 88" className="bodyDetail" />}
+          {side === "back" && <path d="M42 67 Q60 82 78 67 M60 58 L60 132 M45 115 Q60 124 75 115" className="bodyDetail" />}
+        </svg>
+        {zones.map((zone) => (
+          <button
+            key={zone.id}
+            type="button"
+            className={`painPoint ${selected.includes(zone.id) ? "selected" : ""}`}
+            style={{ left: `${zone.x}%`, top: `${zone.y}%` }}
+            title={zone.label}
+            aria-label={zone.label}
+            onClick={() => onToggle(zone)}
+          />
+        ))}
+      </div>
+    </div>
+  );
+}
+
 export default function PublicPlayerLoadForm({ token }: { token: string }) {
   const supabase = useMemo(() => createClient(), []);
   const [payload, setPayload] = useState<FormPayload | null>(null);
@@ -82,6 +163,9 @@ export default function PublicPlayerLoadForm({ token }: { token: string }) {
   const [comment, setComment] = useState("");
   const [loadType, setLoadType] = useState("basket");
   const [injured, setInjured] = useState(false);
+  const [hasPain, setHasPain] = useState(false);
+  const [painZones, setPainZones] = useState<string[]>([]);
+  const [painDetails, setPainDetails] = useState<Record<string, PainDetail>>({});
 
   useEffect(() => {
     void (async () => {
@@ -106,6 +190,32 @@ export default function PublicPlayerLoadForm({ token }: { token: string }) {
   const kind = payload?.kind || "post_session";
   const selected = payload?.players?.find((player) => player.id === playerId);
 
+  function togglePainZone(zone: PainZone) {
+    setPainZones((current) => {
+      if (current.includes(zone.id)) {
+        const next = current.filter((id) => id !== zone.id);
+        setPainDetails((details) => {
+          const copy = { ...details };
+          delete copy[zone.id];
+          return copy;
+        });
+        return next;
+      }
+      setPainDetails((details) => ({
+        ...details,
+        [zone.id]: details[zone.id] || { intensity: 5, type: "Douleur", since: "Aujourd’hui", comment: "" },
+      }));
+      return [...current, zone.id];
+    });
+  }
+
+  function updatePainDetail(zoneId: string, patch: Partial<PainDetail>) {
+    setPainDetails((current) => ({
+      ...current,
+      [zoneId]: { ...(current[zoneId] || { intensity: 5, type: "Douleur", since: "Aujourd’hui", comment: "" }), ...patch },
+    }));
+  }
+
   async function submit() {
     if (!playerId) return alert("Choisis ton nom.");
 
@@ -126,6 +236,8 @@ export default function PublicPlayerLoadForm({ token }: { token: string }) {
           comment: comment.trim() || null,
           loadType: kind === "post_session" ? loadType : null,
           injured,
+          painZones: hasPain ? painZones : [],
+          painDetails: hasPain ? painDetails : {},
         }),
       });
       const result = await response.json().catch(() => ({}));
@@ -249,7 +361,7 @@ export default function PublicPlayerLoadForm({ token }: { token: string }) {
 
         <Question
           title="Douleurs / courbatures"
-          subtitle="Choisis 1 si tu n'as pratiquement aucune gêne."
+          subtitle="Indique d'abord ton niveau global de gêne."
         >
           <Scale
             value={soreness}
@@ -258,6 +370,60 @@ export default function PublicPlayerLoadForm({ token }: { token: string }) {
             high="Très douloureux"
           />
         </Question>
+
+        <section className="painQuestion">
+          <div className="painHead">
+            <div>
+              <h2>As-tu une douleur ou une gêne ?</h2>
+              <p>Si oui, clique directement sur une ou plusieurs zones du corps.</p>
+            </div>
+            <div className="yesNo">
+              <button type="button" className={hasPain ? "active" : ""} onClick={() => setHasPain(true)}>Oui</button>
+              <button type="button" className={!hasPain ? "active" : ""} onClick={() => { setHasPain(false); setPainZones([]); setPainDetails({}); }}>Non</button>
+            </div>
+          </div>
+
+          {hasPain && (
+            <>
+              <div className="bodyPicker">
+                <BodyFigure side="front" selected={painZones} onToggle={togglePainZone} />
+                <BodyFigure side="back" selected={painZones} onToggle={togglePainZone} />
+              </div>
+
+              <div className="selectedZones">
+                {painZones.length === 0 && <p className="selectHint">Clique sur la zone concernée sur le bonhomme.</p>}
+                {painZones.map((zoneId) => {
+                  const zone = PAIN_ZONES.find((item) => item.id === zoneId);
+                  const detail = painDetails[zoneId] || { intensity: 5, type: "Douleur", since: "Aujourd’hui", comment: "" };
+                  if (!zone) return null;
+                  return (
+                    <div className="painDetail" key={zoneId}>
+                      <div className="painDetailHead">
+                        <strong>{zone.label}</strong>
+                        <button type="button" onClick={() => togglePainZone(zone)}>×</button>
+                      </div>
+                      <label>Intensité <b>{detail.intensity}/10</b></label>
+                      <input type="range" min="1" max="10" value={detail.intensity} onChange={(e) => updatePainDetail(zoneId, { intensity: Number(e.target.value) })} />
+                      <div className="painDetailGrid">
+                        <label>Type
+                          <select value={detail.type} onChange={(e) => updatePainDetail(zoneId, { type: e.target.value })}>
+                            <option>Douleur</option><option>Gêne</option><option>Raideur</option><option>Courbatures</option><option>Inflammation</option><option>Autre</option>
+                          </select>
+                        </label>
+                        <label>Depuis
+                          <select value={detail.since} onChange={(e) => updatePainDetail(zoneId, { since: e.target.value })}>
+                            <option>Aujourd’hui</option><option>Hier</option><option>2-3 jours</option><option>Plus d’une semaine</option><option>Chronique</option>
+                          </select>
+                        </label>
+                      </div>
+                      <textarea value={detail.comment} onChange={(e) => updatePainDetail(zoneId, { comment: e.target.value })} placeholder="Commentaire sur cette zone (facultatif)" />
+                    </div>
+                  );
+                })}
+              </div>
+            </>
+          )}
+        </section>
 
         <Question
           title="Qualité du sommeil"
@@ -319,5 +485,10 @@ const css = `
 .success{text-align:center;margin-top:50px}.success>div{width:60px;height:60px;border-radius:50%;display:grid;place-items:center;margin:auto;background:#eaf8ee;color:#13803d;font-size:2rem}
 .success h1{color:#6b1a2c}.success button{border:0;border-radius:10px;background:#6b1a2c;color:white;padding:10px 14px;font-weight:900}
 .loading{text-align:center;padding:60px;color:#6b1a2c;font-weight:900}
+
+.painQuestion{border-top:1px solid #eee4df;padding:15px 0}.painHead{display:flex;justify-content:space-between;gap:12px;align-items:flex-start}.painHead h2{font-size:1rem;margin:0}.painHead p{font-size:.78rem;color:#80726b;margin:4px 0 10px}.yesNo{display:flex;gap:5px}.yesNo button{border:1px solid #decfd1;background:#fff;color:#6b1a2c;border-radius:9px;padding:7px 16px;font-weight:900}.yesNo button.active{background:#6b1a2c;color:#fff;border-color:#6b1a2c}
+.bodyPicker{display:grid;grid-template-columns:1fr 1fr;gap:12px;background:#faf7f5;border:1px solid #eadfd8;border-radius:16px;padding:12px;margin-top:8px}.bodyFigure{text-align:center}.bodyLabel{font-size:.7rem;font-weight:1000;color:#6b1a2c;letter-spacing:.12em;margin-bottom:4px}.human{position:relative;width:150px;max-width:100%;margin:auto}.human svg{display:block;width:100%;height:auto}.bodyShape{fill:#e6e1de;stroke:#8e8580;stroke-width:1.5}.bodyDetail{fill:none;stroke:#b5aaa4;stroke-width:1}
+.painPoint{position:absolute;width:24px;height:24px;transform:translate(-50%,-50%);border-radius:50%;border:2px solid rgba(180,35,24,.65);background:rgba(225,57,46,.24);box-shadow:0 0 0 5px rgba(225,57,46,.08);cursor:pointer}.painPoint:hover,.painPoint.selected{background:#d92d20;border-color:#fff;box-shadow:0 0 0 5px rgba(217,45,32,.22)}
+.selectedZones{display:grid;gap:8px;margin-top:10px}.selectHint{text-align:center;color:#8b7d75;font-size:.78rem}.painDetail{border:1px solid #eadfd8;border-radius:13px;padding:11px;background:#fff}.painDetailHead{display:flex;justify-content:space-between;align-items:center;color:#6b1a2c;margin-bottom:8px}.painDetailHead button{border:0;background:#f6ecee;color:#6b1a2c;width:27px;height:27px;border-radius:50%;font-size:1.1rem}.painDetail>label{display:flex;justify-content:space-between;font-size:.75rem;font-weight:800}.painDetail>input[type=range]{width:100%;accent-color:#6b1a2c}.painDetailGrid{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:7px}.painDetailGrid label{display:grid;gap:4px;font-size:.7rem;font-weight:800;color:#786a63}.painDetailGrid select,.painDetail textarea{border:1px solid #d9cec7;border-radius:9px;padding:9px;background:#fff}.painDetail textarea{width:100%;box-sizing:border-box;min-height:58px;margin-top:8px;resize:vertical}
 @media(max-width:520px){.two{grid-template-columns:1fr}.scaleButtons button{padding:9px 0;font-size:.76rem}.brand h1{font-size:1.55rem}}
 `;
