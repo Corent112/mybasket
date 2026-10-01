@@ -362,8 +362,7 @@ const resetPlaquette = () => {
           .from('plaquette_court_presets')
           .select('id, name, style, branding, player_colors, created_at')
           .eq('user_id', user.id)
-          .order('created_at', { ascending: false })
-          .limit(3);
+          .order('created_at', { ascending: false });
 
         if (error) throw error;
         if (cancelled) return;
@@ -389,11 +388,6 @@ const resetPlaquette = () => {
   }, []);
 
   const saveCurrentCourtPreset = async () => {
-    if (savedCourtPresets.length >= 5) {
-      alert('Tu peux sauvegarder jusqu’à 5 terrains personnels. Supprime-en un pour en enregistrer un nouveau.');
-      return;
-    }
-
     const proposed = window.prompt('Nom du terrain à sauvegarder :', `Mon terrain ${savedCourtPresets.length + 1}`);
     const name = proposed?.trim();
     if (!name) return;
@@ -429,7 +423,7 @@ const resetPlaquette = () => {
         playerColors: { attacker: data?.player_colors?.attacker || playerBaseColorsRef.current.attacker, defender: data?.player_colors?.defender || playerBaseColorsRef.current.defender },
         createdAt: data.created_at ? new Date(data.created_at).getTime() : Date.now(),
       };
-      setSavedCourtPresets((currentItems) => [preset, ...currentItems].slice(0, 5));
+      setSavedCourtPresets((currentItems) => [preset, ...currentItems]);
     } catch (error) {
       console.warn('Sauvegarde du terrain en base impossible :', error);
       alert('Impossible de sauvegarder ce terrain sur ton compte. Vérifie que la migration Supabase des terrains personnels a bien été exécutée.');
@@ -5587,36 +5581,22 @@ const exportJson = () => {
               </div>
 
               <div style={{ marginTop: '1rem' }}>
-                <div style={{ fontSize: '.72rem', fontWeight: 800, color: '#555', textTransform: 'uppercase', letterSpacing: '.04em', marginBottom: '.45rem' }}>
-                  Préréglages
+                <div style={{ fontSize: '.72rem', fontWeight: 900, color: '#555', textTransform: 'uppercase', letterSpacing: '.04em', marginBottom: '.45rem' }}>
+                  Terrains par défaut
                 </div>
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, minmax(0,1fr))', gap: '.45rem' }}>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0,1fr))', gap: '.55rem' }}>
                   {COURT_STYLE_PRESETS.map((preset) => (
                     <button
                       key={preset.id}
                       type="button"
                       onClick={() => applyCourtStyle(preset.style)}
-                      style={{
-                        border: '1px solid #DDD',
-                        borderRadius: 8,
-                        background: '#fff',
-                        padding: '.45rem .35rem',
-                        cursor: 'pointer',
-                        fontSize: '.72rem',
-                        fontWeight: 700,
-                      }}
+                      style={{ border: '1px solid #DDD', borderRadius: 10, background: '#fff', padding: '.5rem', cursor: 'pointer', fontSize: '.72rem', fontWeight: 800 }}
                     >
-                      <span
-                        aria-hidden="true"
-                        style={{
-                          display: 'block',
-                          height: 24,
-                          borderRadius: 5,
-                          marginBottom: '.3rem',
-                          background: `linear-gradient(90deg, ${preset.style.borderColor} 0 16%, ${preset.style.floorColor} 16% 58%, ${preset.style.paintColor} 58% 80%, ${preset.style.lineColor} 80% 84%, ${preset.style.brandingColor} 84%)`,
-                          border: '1px solid rgba(0,0,0,.08)',
-                        }}
-                      />
+                      <span aria-hidden="true" style={{ display: 'block', position: 'relative', height: 72, overflow: 'hidden', borderRadius: 7, marginBottom: '.35rem', background: preset.style.floorColor, border: `5px solid ${preset.style.borderColor}` }}>
+                        <span style={{ position: 'absolute', left: '27%', right: '27%', top: 0, height: '45%', background: preset.style.paintColor, border: `2px solid ${preset.style.lineColor}`, borderTop: 0 }} />
+                        <span style={{ position: 'absolute', left: '50%', bottom: -26, width: 52, height: 52, transform: 'translateX(-50%)', border: `2px solid ${preset.style.lineColor}`, borderRadius: '50%' }} />
+                        <span style={{ position: 'absolute', left: '8%', right: '8%', top: '70%', borderTop: `2px solid ${preset.style.lineColor}` }} />
+                      </span>
                       {preset.label}
                     </button>
                   ))}
@@ -5630,10 +5610,10 @@ const exportJson = () => {
                   onClick={saveCurrentCourtPreset}
                   style={{ width: '100%', background: 'var(--bordeaux, #6B1A2C)', color: '#fff', fontWeight: 900 }}
                 >
-                  💾 Sauvegarder ce terrain ({savedCourtPresets.length}/5)
+                  💾 Sauvegarder ce terrain
                 </button>
                 <div style={{ fontSize: '.7rem', color: '#777', marginTop: '.35rem', lineHeight: 1.35 }}>
-                  Sauvegarde sur ton compte MyBasket (maximum 5 terrains : terrain, branding et couleurs de base attaquants/défenseurs).
+                  Sauvegarde sur ton compte MyBasket : terrain, branding et couleurs de base attaquants/défenseurs. Tu peux créer autant de terrains personnels que nécessaire.
                 </div>
 
                 {savedCourtPresetsLoading && (
@@ -5642,28 +5622,21 @@ const exportJson = () => {
 
                 {savedCourtPresets.length > 0 && (
                   <div style={{ marginTop: '.8rem' }}>
-                    <div style={{ fontSize: '.72rem', fontWeight: 800, color: '#555', textTransform: 'uppercase', letterSpacing: '.04em', marginBottom: '.4rem' }}>
-                      Mes terrains sauvegardés
+                    <div style={{ fontSize: '.72rem', fontWeight: 900, color: '#555', textTransform: 'uppercase', letterSpacing: '.04em', marginBottom: '.4rem' }}>
+                      Mes terrains
                     </div>
-                    <div style={{ display: 'grid', gap: '.38rem' }}>
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0,1fr))', gap: '.55rem' }}>
                       {savedCourtPresets.map((preset) => (
-                        <div key={preset.id} style={{ display: 'grid', gridTemplateColumns: '1fr 38px', gap: '.4rem' }}>
-                          <button
-                            type="button"
-                            onClick={() => loadSavedCourtPreset(preset)}
-                            style={{ border: '1px solid #DDD', borderRadius: 8, background: '#fff', padding: '.48rem .6rem', cursor: 'pointer', textAlign: 'left', fontWeight: 800, fontSize: '.76rem' }}
-                          >
+                        <div key={preset.id} style={{ position: 'relative', border: '1px solid #DDD', borderRadius: 10, background: '#fff', padding: '.45rem' }}>
+                          <button type="button" onClick={() => loadSavedCourtPreset(preset)} style={{ width: '100%', border: 0, background: 'transparent', padding: 0, cursor: 'pointer', textAlign: 'left', fontWeight: 800, fontSize: '.76rem' }}>
+                            <span aria-hidden="true" style={{ display: 'block', position: 'relative', height: 78, overflow: 'hidden', borderRadius: 7, marginBottom: '.4rem', background: preset.style.floorColor, border: `5px solid ${preset.style.borderColor}` }}>
+                              <span style={{ position: 'absolute', left: '27%', right: '27%', top: 0, height: '45%', background: preset.style.paintColor, border: `2px solid ${preset.style.lineColor}`, borderTop: 0 }} />
+                              <span style={{ position: 'absolute', left: '50%', bottom: -28, width: 56, height: 56, transform: 'translateX(-50%)', border: `2px solid ${preset.style.lineColor}`, borderRadius: '50%' }} />
+                              <span style={{ position: 'absolute', left: '8%', right: '8%', top: '70%', borderTop: `2px solid ${preset.style.lineColor}` }} />
+                            </span>
                             {preset.name}
                           </button>
-                          <button
-                            type="button"
-                            onClick={() => deleteSavedCourtPreset(preset.id)}
-                            title={`Supprimer ${preset.name}`}
-                            aria-label={`Supprimer ${preset.name}`}
-                            style={{ border: '1px solid #E5C6CB', borderRadius: 8, background: '#fff', color: '#9F1F37', cursor: 'pointer', fontWeight: 900 }}
-                          >
-                            ×
-                          </button>
+                          <button type="button" onClick={() => deleteSavedCourtPreset(preset.id)} title={`Supprimer ${preset.name}`} aria-label={`Supprimer ${preset.name}`} style={{ position: 'absolute', right: 7, top: 7, width: 25, height: 25, border: '1px solid #E5C6CB', borderRadius: 7, background: '#fff', color: '#9F1F37', cursor: 'pointer', fontWeight: 900 }}>×</button>
                         </div>
                       ))}
                     </div>
