@@ -391,22 +391,15 @@ export default function PublicPlayerLoadForm({ token }: { token: string }) {
 
   return (
     <main className="publicPage">
-      <section className={kind === "wellness" ? "brand wellnessBrand" : "brand"}>
-        <small>MYBASKET · {kind === "post_session" ? "CHARGE" : "WELLNESS QUOTIDIEN"}</small>
+      <section className="brand">
+        <small>MYBASKET · CHARGE</small>
         <h1>{payload.team_name || "Mon équipe"}</h1>
-        <p>{kind === "post_session" ? "Retour après séance" : "Comment te sens-tu aujourd’hui ?"}</p>
-        {kind === "wellness" && (
-          <div className="wellnessSteps">
-            <span><b>1</b> Ton prénom</span>
-            <span><b>2</b> Ton état</span>
-            <span><b>3</b> Tes douleurs</span>
-          </div>
-        )}
+        <p>Retour après séance</p>
       </section>
 
-      <section className={kind === "wellness" ? "card wellnessCard" : "card"}>
-        <label className={kind === "wellness" ? "field playerChoice" : "field"}>
-          <span>{kind === "wellness" ? "1 · Qui es-tu ?" : "Joueur"}</span>
+      <section className="card">
+        <label className="field">
+          <span>Joueur</span>
           <select value={playerId} onChange={(e) => setPlayerId(e.target.value)}>
             <option value="">Choisis ton prénom</option>
             {payload.players?.map((player) => {
@@ -423,8 +416,7 @@ export default function PublicPlayerLoadForm({ token }: { token: string }) {
           </select>
         </label>
 
-        {kind === "post_session" && (
-          <>
+        <>
             <div className="two">
               <label className="field">
                 <span>Durée</span>
@@ -464,9 +456,6 @@ export default function PublicPlayerLoadForm({ token }: { token: string }) {
               <small>Durée × RPE</small>
             </div>
           </>
-        )}
-
-        {kind === "wellness" && <div className="sectionTitle"><b>2</b><span><strong>Ton état aujourd’hui</strong><small>Réponds rapidement, il n’y a pas de bonne ou de mauvaise réponse.</small></span></div>}
         <label className="injuryCheck"><input type="checkbox" checked={injured} onChange={(e)=>setInjured(e.target.checked)}/><span><b>Je suis blessé(e)</b><small>Ma réponse est enregistrée pour le staff, mais elle n'entre pas dans les moyennes RPE / récupération du groupe.</small></span></label>
 
         <Question title="Fatigue" subtitle="Comment te sens-tu physiquement ?">
@@ -486,7 +475,7 @@ export default function PublicPlayerLoadForm({ token }: { token: string }) {
         </Question>
 
         <section className={kind === "wellness" ? "painQuestion wellnessPain" : "painQuestion"}>
-          {kind === "wellness" && <div className="sectionTitle painSectionTitle"><b>3</b><span><strong>Localise tes douleurs</strong><small>Le bonhomme est visible de face et de dos. Tu peux sélectionner plusieurs zones.</small></span></div>}
+  
           <div className="painHead">
             <div>
               <h2>As-tu une douleur ou une gêne ?</h2>
