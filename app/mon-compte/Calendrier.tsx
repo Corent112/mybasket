@@ -199,6 +199,9 @@ export default function MonCalendrier() {
   const [fTitle, setFTitle] = useState("");
   const [fDate, setFDate] = useState("");
   const [fTime, setFTime] = useState("");
+  const [fEndTime, setFEndTime] = useState("");
+  const [fRepeat, setFRepeat] = useState<"none" | "weekly" | "biweekly" | "monthly">("none");
+  const [fRepeatUntil, setFRepeatUntil] = useState("");
   const [fType, setFType] = useState<EventType>("entrainement");
   const [fVenue, setFVenue] = useState<Venue>("home");
   const [fOpp, setFOpp] = useState("");
@@ -291,7 +294,7 @@ export default function MonCalendrier() {
   /* Modale événement */
   const openCreate = (ds: string) => {
     setEditingId(null);
-    setFTitle(""); setFDate(ds); setFTime(""); setFType("entrainement");
+    setFTitle(""); setFDate(ds); setFTime(""); setFEndTime(""); setFRepeat("none"); setFRepeatUntil(""); setFType("entrainement");
     setFVenue("home"); setFOpp(""); setFLoc("");
     setFTeam(""); setFPlayers([]); setFNotes(""); setFAttach(null);
     setOpen(true);
@@ -299,7 +302,7 @@ export default function MonCalendrier() {
   const openEdit = (id: string) => {
     const e = events.find((x) => x.id === id); if (!e) return;
     setEditingId(id);
-    setFTitle(e.title); setFDate(e.date); setFTime(e.time || ""); setFType(e.type);
+    setFTitle(e.title); setFDate(e.date); setFTime(e.time || ""); setFEndTime(""); setFRepeat("none"); setFRepeatUntil(""); setFType(e.type);
     setFVenue(e.venue || "home"); setFOpp(e.opponent || ""); setFLoc(e.loc || "");
     setFTeam(e.teamId || ""); setFPlayers(e.assignedPlayers || []);
     setFNotes(e.notes || ""); setFAttach(e.attachment || null);
@@ -333,7 +336,7 @@ export default function MonCalendrier() {
       ].filter(Boolean).join(" • ") || null,
       event_date: fDate,
       start_time: fTime || null,
-      end_time: null,
+      end_time: fEndTime || null,
       location:
         fType === "match" && !fLoc.trim()
           ? (fVenue === "home" ? "Domicile" : fVenue === "away" ? "Extérieur" : null)
@@ -345,6 +348,30 @@ export default function MonCalendrier() {
       visibility: "private",
       updated_at: new Date().toISOString(),
     };
+
+    if (!editingId && fRepeat !== "none" && fRepeatUntil) {
+      const dates: string[] = [];
+      const cursor = new Date(`${fDate}T12:00:00`);
+      const until = new Date(`${fRepeatUntil}T12:00:00`);
+      let guard = 0;
+      while (cursor <= until && guard < 180) {
+        dates.push(`${cursor.getFullYear()}-${pad(cursor.getMonth() + 1)}-${pad(cursor.getDate())}`);
+        if (fRepeat === "weekly") cursor.setDate(cursor.getDate() + 7);
+        else if (fRepeat === "biweekly") cursor.setDate(cursor.getDate() + 14);
+        else cursor.setMonth(cursor.getMonth() + 1);
+        guard += 1;
+      }
+      const recurringRows = dates.map((eventDate) => ({ ...payload, event_date: eventDate }));
+      const { error } = await supabase.from("calendar_events").insert(recurringRows);
+      if (error) {
+        console.error("Erreur création récurrence:", error);
+        window.alert(`Impossible de créer la récurrence : ${error.message}`);
+        return;
+      }
+      await loadEvents();
+      setOpen(false);
+      return;
+    }
 
     if (editingId) {
       const { error } = await supabase
@@ -513,10 +540,33 @@ export default function MonCalendrier() {
                   <input type="date" value={fDate} onChange={(e) => setFDate(e.target.value)} />
                 </div>
                 <div className="cal-fld">
-                  <label>Heure</label>
+                  <label>Début</label>
                   <input type="time" value={fTime} onChange={(e) => setFTime(e.target.value)} />
                 </div>
               </div>
+              <div className="cal-row2">
+                <div className="cal-fld">
+                  <label>Fin</label>
+                  <input type="time" value={fEndTime} onChange={(e) => setFEndTime(e.target.value)} />
+                </div>
+                <div className="cal-fld">
+                  <label>Récurrence</label>
+                  <select value={fRepeat} onChange={(e) => setFRepeat(e.target.value as typeof fRepeat)} disabled={Boolean(editingId)}>
+                    <option value="none">Ne se répète pas</option>
+                    <option value="weekly">Toutes les semaines</option>
+                    <option value="biweekly">Toutes les 2 semaines</option>
+                    <option value="monthly">Tous les mois</option>
+                  </select>
+                </div>
+              </div>
+
+              {fRepeat !== "none" && !editingId && (
+                <div className="cal-fld">
+                  <label>Répéter jusqu'au</label>
+                  <input type="date" min={fDate} value={fRepeatUntil} onChange={(e) => setFRepeatUntil(e.target.value)} />
+                  <p className="cal-help">MyBasket créera les occurrences et les affichera automatiquement dans le calendrier des joueurs conviés.</p>
+                </div>
+              )}
 
               <div className="cal-fld">
                 <label>Type</label>
@@ -572,6 +622,11 @@ export default function MonCalendrier() {
                 <label>Joueurs assignés</label>
                 {selectedTeam ? (
                   selectedTeam.players.length ? (
+                    <>
+                    <div className="cal-player-actions">
+                      <button type="button" onClick={() => setFPlayers(selectedTeam.players.map((p) => p.id))}>✓ Toute l'équipe</button>
+                      <button type="button" onClick={() => setFPlayers([])}>Aucun</button>
+                    </div>
                     <div className="cal-players">
                       {selectedTeam.players.map((p) => (
                         <button type="button" key={p.id}
@@ -581,6 +636,7 @@ export default function MonCalendrier() {
                         </button>
                       ))}
                     </div>
+                    </>
                   ) : (
                     <span className="cal-pempty">Cette équipe n'a pas encore de joueurs.</span>
                   )
@@ -710,7 +766,7 @@ export default function MonCalendrier() {
         .cal-row2{display:grid;grid-template-columns:1fr 1fr;gap:.8rem}
         .cal-help{font-size:.74rem;color:var(--gris-text);line-height:1.4;margin:.1rem 0 0}
 
-        .cal-players{display:flex;flex-wrap:wrap;gap:.4rem}
+        .cal-player-actions{display:flex;gap:.4rem;margin-bottom:.45rem}.cal-player-actions button{border:1px solid var(--gris-med);background:#fff;border-radius:999px;padding:.35rem .65rem;font-size:.72rem;font-weight:700;cursor:pointer}.cal-player-actions button:hover{border-color:var(--bordeaux);color:var(--bordeaux)}.cal-players{display:flex;flex-wrap:wrap;gap:.4rem}
         .cal-pchip{display:inline-flex;align-items:center;gap:.2rem;padding:.4rem .75rem;border:1.5px solid var(--gris-med);border-radius:999px;font-size:.8rem;font-weight:600;cursor:pointer;background:#fff;color:var(--noir);transition:.13s}
         .cal-pchip:hover{border-color:var(--noir)}
         .cal-pchip.on{background:var(--bordeaux);border-color:var(--bordeaux);color:#fff}
