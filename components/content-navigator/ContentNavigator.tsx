@@ -69,9 +69,9 @@ export default function ContentNavigator({embedded=false,onPreviewSystem,onSaveS
    localStorage.setItem('mybasket_edit_system_id',id);
    localStorage.setItem('mybasket_current_system_id',id);
    localStorage.setItem('mybasket_edit_schema_index','0');
-   // Un système ouvert depuis la bibliothèque est un modèle de travail.
-   // Toute sauvegarde depuis DESSIN créera une nouvelle fiche privée et ne modifiera jamais la source.
-   localStorage.setItem('mybasket_drawing_flow','library-system-copy');
+   // Un système ouvert depuis la bibliothèque est édité directement.
+   // La sauvegarde conserve le même ID et met à jour la même fiche Systèmes.
+   localStorage.setItem('mybasket_drawing_flow','library-system-edit');
    localStorage.setItem('mybasket_drawing_source_system_id',id);
 
    // Dans DESSIN on ne navigue jamais : on transmet directement le système
