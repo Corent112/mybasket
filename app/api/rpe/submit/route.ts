@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin-server";
 import { averageOtherPlayers, evaluateRpe } from "@/lib/rpe/engine";
-import { sendCriticalRpeAlert } from "@/lib/rpe/notifications";
+import { sendCriticalRpeAlert, sendWellnessPainAlert } from "@/lib/rpe/notifications";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -112,6 +112,51 @@ export async function POST(request: Request) {
     }
 
     if (responseKind !== "post_session") {
+      const currentZones = Array.isArray(body?.painZones) ? body.painZones.map((value: unknown) => String(value)) : [];
+      const currentDetails = body?.painDetails && typeof body.painDetails === "object" && !Array.isArray(body.painDetails) ? body.painDetails as Record<string, any> : {};
+
+      if (currentZones.length && savedResponse?.id) {
+        const { data: previous } = await admin
+          .from("player_wellness_responses")
+          .select("pain_zones,pain_details,response_date,created_at")
+          .eq("team_id", link.team_id)
+          .eq("player_id", playerId)
+          .eq("response_kind", responseKind)
+          .neq("id", savedResponse.id)
+          .order("response_date", { ascending: false })
+          .order("created_at", { ascending: false })
+          .limit(1)
+          .maybeSingle();
+
+        const previousZones = Array.isArray(previous?.pain_zones) ? previous.pain_zones.map(String) : [];
+        const previousDetails = previous?.pain_details && typeof previous.pain_details === "object" && !Array.isArray(previous.pain_details) ? previous.pain_details as Record<string, any> : {};
+        const zoneLabels: Record<string, string> = {
+          head_front:"Tête / visage", shoulder_left_front:"Épaule gauche", shoulder_right_front:"Épaule droite", chest_front:"Thorax", abdomen_front:"Abdominaux", hip_left_front:"Hanche gauche", hip_right_front:"Hanche droite", thigh_left_front:"Cuisse gauche", thigh_right_front:"Cuisse droite", knee_left_front:"Genou gauche", knee_right_front:"Genou droit", ankle_left_front:"Cheville gauche", ankle_right_front:"Cheville droite", neck_back:"Nuque", shoulder_left_back:"Épaule gauche (dos)", shoulder_right_back:"Épaule droite (dos)", upper_back:"Haut du dos", lower_back:"Lombaires", glute_left:"Fessier gauche", glute_right:"Fessier droit", hamstring_left:"Ischio gauche", hamstring_right:"Ischio droit", calf_left:"Mollet gauche", calf_right:"Mollet droit"
+        };
+        const alerts = currentZones.flatMap((zoneId: string) => {
+          const intensity = Number(currentDetails?.[zoneId]?.intensity || 0);
+          const wasPresent = previousZones.includes(zoneId);
+          const previousIntensity = wasPresent ? Number(previousDetails?.[zoneId]?.intensity || 0) : null;
+          if (!wasPresent) return [{ label: zoneLabels[zoneId] || zoneId, intensity, previousIntensity: null, reason: "new" as const }];
+          if (previousIntensity !== null && intensity >= previousIntensity + 2) return [{ label: zoneLabels[zoneId] || zoneId, intensity, previousIntensity, reason: "increase" as const }];
+          return [];
+        });
+
+        if (alerts.length) {
+          const [{ data: team }, { data: player }] = await Promise.all([
+            admin.from("teams").select("name").eq("id", link.team_id).maybeSingle(),
+            admin.from("players").select("first_name,last_name").eq("id", playerId).maybeSingle(),
+          ]);
+          await sendWellnessPainAlert({
+            teamId: String(link.team_id),
+            teamName: String(team?.name || "Équipe"),
+            playerName: [player?.first_name, player?.last_name].filter(Boolean).join(" ") || "Joueur",
+            responseDate,
+            zones: alerts,
+          });
+        }
+      }
+
       return NextResponse.json({ ok: true, injured });
     }
 
