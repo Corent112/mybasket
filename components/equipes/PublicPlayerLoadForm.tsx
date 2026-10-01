@@ -172,6 +172,7 @@ export default function PublicPlayerLoadForm({ token }: { token: string }) {
   const [painDetails, setPainDetails] = useState<Record<string, PainDetail>>({});
   const [wellnessStep, setWellnessStep] = useState(1);
   const [mood, setMood] = useState(8);
+  const [hitReceived, setHitReceived] = useState(false);
 
   useEffect(() => {
     void (async () => {
@@ -244,7 +245,7 @@ export default function PublicPlayerLoadForm({ token }: { token: string }) {
           loadType: kind === "post_session" ? loadType : null,
           injured,
           painZones: hasPain ? painZones : [],
-          painDetails: hasPain ? { ...painDetails, _wellness: { mood } } : { _wellness: { mood } },
+          painDetails: hasPain ? { ...painDetails, _wellness: { mood, hitReceived } } : { _wellness: { mood, hitReceived } },
         }),
       });
       const result = await response.json().catch(() => ({}));
@@ -283,9 +284,9 @@ export default function PublicPlayerLoadForm({ token }: { token: string }) {
       const zones = painZones.map((id) => PAIN_ZONES.find((z) => z.id === id)).filter((z): z is PainZone => Boolean(z));
       return <main className="wellnessPage"><section className="wellnessPhone wDone">
         <div className="check">✓</div><h1>Merci !</h1><p>Ton questionnaire a bien été enregistré.</p>
-        <div className="wRecap"><h2>Récapitulatif</h2><div><span>Sommeil</span><b>{sleep}/10</b></div><div><span>Fatigue</span><b>{fatigue}/10</b></div><div><span>Stress</span><b>{stress}/10</b></div><div><span>Humeur</span><b>{mood}/10</b></div></div>
+        <div className="wRecap"><h2>Récapitulatif</h2><div><span>Sommeil</span><b>{sleep}/10</b></div><div><span>Fatigue</span><b>{fatigue}/10</b></div><div><span>Stress</span><b>{stress}/10</b></div><div><span>Humeur</span><b>{mood}/10</b></div><div><span>Coup reçu</span><b>{hitReceived ? "Oui" : "Non"}</b></div></div>
         {zones.length > 0 && <div className="wRecap pain"><h2>Douleurs signalées</h2>{zones.map((z) => <div key={z.id}><span>{z.label}</span><b>{painDetails[z.id]?.intensity || 5}/10</b></div>)}</div>}
-        <button className="finish" onClick={() => { setDone(false); setWellnessStep(1); setPlayerId(""); setPainZones([]); setPainDetails({}); setHasPain(false); }}>Terminer</button>
+        <button className="finish" onClick={() => { setDone(false); setWellnessStep(1); setPlayerId(""); setPainZones([]); setPainDetails({}); setHasPain(false); setHitReceived(false); }}>Terminer</button>
       </section><style jsx>{css}</style></main>;
     }
     return (
@@ -331,6 +332,12 @@ export default function PublicPlayerLoadForm({ token }: { token: string }) {
                 <Question title="Niveau de fatigue" subtitle=""><Scale value={fatigue} onChange={setFatigue} low="Faible" high="Élevé" /></Question>
                 <Question title="Niveau de stress" subtitle=""><Scale value={stress} onChange={setStress} low="Faible" high="Élevé" /></Question>
                 <Question title="Humeur générale" subtitle=""><Scale value={mood} onChange={setMood} low="Mauvaise" high="Excellente" /></Question>
+                <Question title="As-tu reçu un coup / un choc ?" subtitle="">
+                  <div className="wYesNo">
+                    <button type="button" className={hitReceived ? "active" : ""} onClick={() => setHitReceived(true)}>Oui</button>
+                    <button type="button" className={!hitReceived ? "active" : ""} onClick={() => setHitReceived(false)}>Non</button>
+                  </div>
+                </Question>
               </div>
               <div className="wNav single"><button className="next" onClick={() => { if (!playerId) return alert("Choisis ton prénom."); setWellnessStep(2); }}>Suivant →</button></div>
             </section>
