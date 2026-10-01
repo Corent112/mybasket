@@ -732,8 +732,15 @@ useEffect(() => {
 
       if (sourceSystemId) {
         setOpenedLibrarySystemId(sourceSystemId);
+        // Un système ouvert depuis la Bibliothèque est toujours mis à jour
+        // directement. Le bouton principal ne doit jamais retomber dans le
+        // flux de création tant que cet ID source existe.
+        void saveOpenedLibrarySystem(sourceSystemId);
+        return;
       }
     } catch {}
+    // Aucun système Bibliothèque ouvert : on conserve le flux historique
+    // permettant de créer un système ou un exercice depuis un nouveau dessin.
     setSaveOpen(true);
   };
   const [terrainPanelOpen, setTerrainPanelOpen] = useState(true);
@@ -4736,7 +4743,7 @@ const exportJson = () => {
       </div>
 
       <div className="ed-save" id="edSaveBtn" onClick={openSaveModal}>
-        {saveMsg ? '✓ Envoyé' : '💾 Enregistrer'}
+        {saveMsg ? '✓ Sauvegardé' : '💾 Enregistrer'}
       </div>
     </div>
   </div>
