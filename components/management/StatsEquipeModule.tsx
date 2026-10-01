@@ -496,14 +496,18 @@ export default function StatsEquipeModule() {
 
   const selectedTeam = teams.find((team) => team.id === teamId);
 
+  const selectedMatches = useMemo(
+    () =>
+      matches.filter((match) => {
+        if (match.team_id !== teamId) return false;
+        if (matchCategory === "all") return true;
+        return String(match.match_category || "championship") === matchCategory;
+      }),
+    [matches, teamId, matchCategory],
+  );
+
   const rows = useMemo<TableRow[]>(() => {
     if (!teamId) return [];
-
-    const selectedMatches = matches.filter((match) => {
-      if (match.team_id !== teamId) return false;
-      if (matchCategory === "all") return true;
-      return String(match.match_category || "championship") === matchCategory;
-    });
 
     const playerRowsByMatch = playerRows.reduce((acc, row) => {
       const matchId = String(row.match_id || "");
@@ -579,7 +583,7 @@ export default function StatsEquipeModule() {
     });
 
     return [...matchRows, average, totalRow, ...splitRows];
-  }, [actionRows, matches, playerRows, teamId, matchCategory]);
+  }, [actionRows, playerRows, selectedMatches, teamId]);
 
   const totalStats =
     rows.find((row) => row.kind === "total")?.stats || emptyStats();
