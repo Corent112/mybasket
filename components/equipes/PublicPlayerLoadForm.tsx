@@ -166,6 +166,8 @@ export default function PublicPlayerLoadForm({ token }: { token: string }) {
   const [hasPain, setHasPain] = useState(false);
   const [painZones, setPainZones] = useState<string[]>([]);
   const [painDetails, setPainDetails] = useState<Record<string, PainDetail>>({});
+  const [wellnessStep, setWellnessStep] = useState(1);
+  const [mood, setMood] = useState(8);
 
   useEffect(() => {
     void (async () => {
@@ -238,7 +240,7 @@ export default function PublicPlayerLoadForm({ token }: { token: string }) {
           loadType: kind === "post_session" ? loadType : null,
           injured,
           painZones: hasPain ? painZones : [],
-          painDetails: hasPain ? painDetails : {},
+          painDetails: hasPain ? { ...painDetails, _wellness: { mood } } : { _wellness: { mood } },
         }),
       });
       const result = await response.json().catch(() => ({}));
@@ -273,18 +275,114 @@ export default function PublicPlayerLoadForm({ token }: { token: string }) {
   }
 
   if (done) {
+    if (kind === "wellness") {
+      const zones = painZones.map((id) => PAIN_ZONES.find((z) => z.id === id)).filter((z): z is PainZone => Boolean(z));
+      return <main className="wellnessPage"><section className="wellnessPhone wDone">
+        <div className="check">✓</div><h1>Merci !</h1><p>Ton questionnaire a bien été enregistré.</p>
+        <div className="wRecap"><h2>Récapitulatif</h2><div><span>Sommeil</span><b>{sleep}/10</b></div><div><span>Fatigue</span><b>{fatigue}/10</b></div><div><span>Stress</span><b>{stress}/10</b></div><div><span>Humeur</span><b>{mood}/10</b></div></div>
+        {zones.length > 0 && <div className="wRecap pain"><h2>Douleurs signalées</h2>{zones.map((z) => <div key={z.id}><span>{z.label}</span><b>{painDetails[z.id]?.intensity || 5}/10</b></div>)}</div>}
+        <button className="finish" onClick={() => { setDone(false); setWellnessStep(1); setPlayerId(""); setPainZones([]); setPainDetails({}); setHasPain(false); }}>Terminer</button>
+      </section><style jsx>{css}</style></main>;
+    }
     return (
-      <main className="publicPage">
-        <section className="success">
-          <div>✓</div>
-          <h1>Merci {selected?.first_name || ""} !</h1>
-          <p>
-            Ta réponse a bien été enregistrée. Le staff la retrouve
-            automatiquement dans MyBasket.
-          </p>
-          <button onClick={() => { setDone(false); setComment(""); }}>
-            Nouvelle réponse
-          </button>
+      <main className="publicPage"><section className="success"><div>✓</div><h1>Merci {selected?.first_name || ""} !</h1><p>Ta réponse a bien été enregistrée. Le staff la retrouve automatiquement dans MyBasket.</p><button onClick={() => { setDone(false); setComment(""); }}>Nouvelle réponse</button></section><style jsx>{css}</style></main>
+    );
+  }
+
+  if (kind === "wellness") {
+    const progress = wellnessStep === 1 ? 33 : wellnessStep === 2 ? 66 : 100;
+    const selectedZones = painZones
+      .map((id) => PAIN_ZONES.find((zone) => zone.id === id))
+      .filter((zone): zone is PainZone => Boolean(zone));
+
+    return (
+      <main className="wellnessPage">
+        <section className="wellnessPhone">
+          <header className="wHeader">
+            <div className="wLogo"><span>◉</span> MYBASKET</div>
+            <div className="wProgress"><i style={{ width: `${progress}%` }} /></div>
+            <div className="wProgressText">{wellnessStep}/3</div>
+          </header>
+
+          {wellnessStep === 1 && (
+            <section className="wStep">
+              <h1>{selected ? `Bonjour ${selected.first_name} 👋` : "Mon check-up quotidien"}</h1>
+              <p className="wDate">{new Date().toLocaleDateString("fr-FR", { weekday: "long", day: "numeric", month: "long", year: "numeric" })}</p>
+
+              <label className="wPlayer">
+                <span>Qui es-tu ?</span>
+                <select value={playerId} onChange={(e) => setPlayerId(e.target.value)}>
+                  <option value="">Choisis ton prénom</option>
+                  {payload.players?.map((player) => {
+                    const duplicate = (payload.players || []).filter((p) => p.first_name.trim().toLowerCase() === player.first_name.trim().toLowerCase()).length > 1;
+                    const initial = player.last_name?.trim()?.[0]?.toUpperCase();
+                    return <option key={player.id} value={player.id}>{player.first_name}{duplicate && initial ? ` ${initial}.` : ""}</option>;
+                  })}
+                </select>
+              </label>
+
+              <div className="wPanel">
+                <h2>Comment te sens-tu aujourd’hui ?</h2>
+                <Question title="Qualité du sommeil" subtitle=""><Scale value={sleep} onChange={setSleep} low="Très mauvais" high="Excellent" /></Question>
+                <Question title="Niveau de fatigue" subtitle=""><Scale value={fatigue} onChange={setFatigue} low="Faible" high="Élevé" /></Question>
+                <Question title="Niveau de stress" subtitle=""><Scale value={stress} onChange={setStress} low="Faible" high="Élevé" /></Question>
+                <Question title="Humeur générale" subtitle=""><Scale value={mood} onChange={setMood} low="Mauvaise" high="Excellente" /></Question>
+              </div>
+              <div className="wNav single"><button className="next" onClick={() => { if (!playerId) return alert("Choisis ton prénom."); setWellnessStep(2); }}>Suivant →</button></div>
+            </section>
+          )}
+
+          {wellnessStep === 2 && (
+            <section className="wStep">
+              <h1>As-tu des douleurs ou une gêne ?</h1>
+              <div className="wYesNo">
+                <button className={hasPain ? "active" : ""} onClick={() => setHasPain(true)}>Oui</button>
+                <button className={!hasPain ? "active" : ""} onClick={() => { setHasPain(false); setPainZones([]); setPainDetails({}); }}>Non</button>
+              </div>
+
+              {hasPain ? (
+                <>
+                  <div className="wBodyTabs"><b>Face</b><b>Dos</b></div>
+                  <div className="wBodies">
+                    <BodyFigure side="front" selected={painZones} onToggle={togglePainZone} />
+                    <BodyFigure side="back" selected={painZones} onToggle={togglePainZone} />
+                  </div>
+                  <p className="wHint">Appuie directement sur la ou les zones concernées.</p>
+                  {selectedZones.length > 0 && <div className="wSelected">{selectedZones.map((z) => <span key={z.id}>● {z.label}</span>)}</div>}
+                </>
+              ) : <div className="wNoPain">Aucune douleur signalée aujourd’hui.</div>}
+
+              <div className="wNav"><button onClick={() => setWellnessStep(1)}>← Précédent</button><button className="next" onClick={() => setWellnessStep(3)}>Suivant →</button></div>
+            </section>
+          )}
+
+          {wellnessStep === 3 && (
+            <section className="wStep">
+              <h1>{hasPain && selectedZones.length ? "Détail de la douleur" : "Derniers détails"}</h1>
+
+              {hasPain && selectedZones.length > 0 ? (
+                <div className="wPainList">
+                  {selectedZones.map((zone) => {
+                    const detail = painDetails[zone.id] || { intensity: 5, type: "Douleur", since: "Aujourd’hui", comment: "" };
+                    return <article className="wPainCard" key={zone.id}>
+                      <div className="wPainTitle"><strong>{zone.label}</strong><button onClick={() => togglePainZone(zone)}>×</button></div>
+                      <label>Intensité de la douleur <b>{detail.intensity}/10</b></label>
+                      <input className="wRange" type="range" min="1" max="10" value={detail.intensity} onChange={(e) => updatePainDetail(zone.id, { intensity: Number(e.target.value) })} />
+                      <label>Type de gêne</label>
+                      <div className="wTypes">{["Douleur","Gêne","Raideur","Inflammation","Courbatures","Autre"].map((type) => <button key={type} className={detail.type === type ? "active" : ""} onClick={() => updatePainDetail(zone.id, { type })}>{type}</button>)}</div>
+                      <label>Depuis quand ?</label>
+                      <select value={detail.since} onChange={(e) => updatePainDetail(zone.id, { since: e.target.value })}><option>Aujourd’hui</option><option>Hier</option><option>2-3 jours</option><option>Plus d’une semaine</option><option>Chronique</option></select>
+                      <label>Commentaire (facultatif)</label>
+                      <textarea value={detail.comment} onChange={(e) => updatePainDetail(zone.id, { comment: e.target.value })} placeholder="Précise ta douleur si besoin…" />
+                    </article>;
+                  })}
+                </div>
+              ) : <div className="wNoPain">Tu n’as signalé aucune douleur.</div>}
+
+              <label className="wComment">Commentaire général (facultatif)<textarea value={comment} onChange={(e) => setComment(e.target.value)} placeholder="Quelque chose à signaler au staff ?" /></label>
+              <div className="wNav"><button onClick={() => setWellnessStep(2)}>← Précédent</button><button className="next" disabled={sending} onClick={submit}>{sending ? "Envoi…" : "Valider →"}</button></div>
+            </section>
+          )}
         </section>
         <style jsx>{css}</style>
       </main>
@@ -512,4 +610,7 @@ const css = `
 .painPoint{position:absolute;width:24px;height:24px;transform:translate(-50%,-50%);border-radius:50%;border:2px solid rgba(180,35,24,.65);background:rgba(225,57,46,.24);box-shadow:0 0 0 5px rgba(225,57,46,.08);cursor:pointer}.painPoint:hover,.painPoint.selected{background:#d92d20;border-color:#fff;box-shadow:0 0 0 5px rgba(217,45,32,.22)}
 .selectedZones{display:grid;gap:8px;margin-top:10px}.selectHint{text-align:center;color:#8b7d75;font-size:.78rem}.painDetail{border:1px solid #eadfd8;border-radius:13px;padding:11px;background:#fff}.painDetailHead{display:flex;justify-content:space-between;align-items:center;color:#6b1a2c;margin-bottom:8px}.painDetailHead button{border:0;background:#f6ecee;color:#6b1a2c;width:27px;height:27px;border-radius:50%;font-size:1.1rem}.painDetail>label{display:flex;justify-content:space-between;font-size:.75rem;font-weight:800}.painDetail>input[type=range]{width:100%;accent-color:#6b1a2c}.painDetailGrid{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:7px}.painDetailGrid label{display:grid;gap:4px;font-size:.7rem;font-weight:800;color:#786a63}.painDetailGrid select,.painDetail textarea{border:1px solid #d9cec7;border-radius:9px;padding:9px;background:#fff}.painDetail textarea{width:100%;box-sizing:border-box;min-height:58px;margin-top:8px;resize:vertical}
 @media(max-width:520px){.two{grid-template-columns:1fr}.scaleButtons button{padding:9px 0;font-size:.76rem}.brand h1{font-size:1.55rem}.wellnessSteps{grid-template-columns:1fr}.wellnessSteps span{padding:6px 8px}.wellnessCard{padding:14px}.human{width:145px}.bodyPicker{gap:4px;padding:10px 4px}.painPoint{width:22px;height:22px}.painHead{display:grid}.yesNo{justify-content:flex-start}}
+
+.wellnessPage{min-height:100vh;background:#f4f1ed;padding:18px 10px 40px;font-family:Arial,sans-serif;color:#171315}.wellnessPhone{width:min(430px,100%);margin:0 auto;background:#fff;border:1px solid #e7dfdb;border-radius:24px;box-shadow:0 18px 50px rgba(45,25,30,.12);overflow:hidden}.wHeader{position:relative;padding:20px 22px 12px}.wLogo{color:#9f1733;font-weight:1000;letter-spacing:.02em;text-align:center}.wLogo span{font-size:1.25rem}.wProgress{height:6px;background:#e9e9e9;border-radius:99px;margin-top:18px;overflow:hidden}.wProgress i{display:block;height:100%;background:#a80e35;border-radius:99px;transition:width .2s}.wProgressText{text-align:right;font-size:.72rem;font-weight:900;margin-top:5px;color:#6d6265}.wStep{padding:2px 22px 20px}.wStep h1{font-size:1.08rem;margin:7px 0 2px}.wDate{margin:0 0 12px;font-size:.75rem;color:#62585b;text-transform:capitalize}.wPlayer{display:grid;gap:5px;margin:10px 0 14px;font-size:.76rem;font-weight:900}.wPlayer select,.wPainCard select,.wPainCard textarea,.wComment textarea{width:100%;box-sizing:border-box;border:1px solid #d7d7d7;border-radius:8px;background:#fff;padding:10px;font:inherit}.wPanel{border:1px solid #e5e1df;border-radius:10px;padding:0 10px}.wPanel h2{font-size:.9rem;margin:12px 0 4px}.wPanel .question{padding:12px 0}.wPanel .question h2{font-size:.78rem}.wPanel .question p{display:none}.wPanel .scaleButtons button{border:0;border-radius:50%;padding:0;width:25px;height:25px;font-size:.67rem;background:transparent;color:#342c2e}.wPanel .scaleButtons button.active{background:#a80e35;color:#fff;transform:none}.wPanel .scaleButtons{position:relative}.wPanel .scaleButtons:before{content:"";position:absolute;left:10px;right:10px;top:12px;height:4px;background:#ddd;z-index:0}.wPanel .scaleButtons button{position:relative;z-index:1}.wYesNo{display:grid;grid-template-columns:1fr 1fr;gap:6px;margin:10px 0}.wYesNo button,.wTypes button{border:1px solid #d8d8d8;background:#fff;border-radius:7px;padding:9px;font-weight:800}.wYesNo button.active,.wTypes button.active{background:#a80e35;color:#fff;border-color:#a80e35}.wBodyTabs{display:grid;grid-template-columns:1fr 1fr;text-align:center;color:#a80e35;border-bottom:2px solid #eee}.wBodyTabs b{padding:8px;border-bottom:2px solid #a80e35;margin-bottom:-2px}.wBodies{display:grid;grid-template-columns:1fr 1fr;gap:2px;padding:8px 0}.wBodies .human{width:155px}.wBodies .bodyLabel{display:none}.wBodies .bodyShape{fill:#ddd;stroke:#999}.wBodies .painPoint{width:27px;height:27px;background:rgba(220,35,45,.18);border-color:rgba(220,35,45,.45)}.wBodies .painPoint.selected{background:#e32636;border-color:#fff;box-shadow:0 0 0 8px rgba(227,38,54,.18)}.wHint{text-align:center;font-size:.7rem;color:#776b6e}.wSelected{display:flex;gap:5px;flex-wrap:wrap}.wSelected span{background:#fff0f2;color:#a80e35;border-radius:99px;padding:5px 8px;font-size:.68rem;font-weight:800}.wNoPain{background:#f7f7f7;border-radius:10px;padding:25px;text-align:center;color:#777;margin:15px 0}.wNav{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:18px}.wNav.single{grid-template-columns:1fr}.wNav button{border:1px solid #ddd;background:#fff;border-radius:8px;padding:11px;font-weight:900}.wNav .next,.finish{background:#a80e35;color:#fff;border-color:#a80e35}.wPainList{display:grid;gap:10px}.wPainCard{border:1px solid #e2dfe0;border-radius:10px;padding:12px}.wPainTitle{display:flex;justify-content:space-between;align-items:center;background:#f7f5f5;padding:9px;border-radius:8px;margin-bottom:12px}.wPainTitle button{border:0;background:none;font-size:1.2rem}.wPainCard>label,.wComment{display:grid;gap:5px;font-size:.74rem;font-weight:900;margin:10px 0 5px}.wPainCard>label:first-of-type{display:flex;justify-content:space-between}.wRange{width:100%;accent-color:#a80e35}.wTypes{display:grid;grid-template-columns:repeat(3,1fr);gap:6px}.wTypes button{font-size:.68rem;padding:8px 4px}.wPainCard textarea,.wComment textarea{min-height:70px;resize:vertical}.wDone{padding:45px 22px 24px;box-sizing:border-box;text-align:center}.check{width:64px;height:64px;border-radius:50%;background:#0a9b4c;color:#fff;display:grid;place-items:center;margin:0 auto 10px;font-size:2.4rem;font-weight:900}.wDone h1{margin:0;font-size:1.4rem}.wDone>p{font-size:.8rem;color:#5f5659}.wRecap{text-align:left;border:1px solid #e3dfe0;border-radius:10px;padding:10px;margin:18px 0}.wRecap h2{font-size:.8rem;margin:0 0 7px}.wRecap div{display:flex;justify-content:space-between;padding:6px 0;border-top:1px solid #eee;font-size:.75rem}.wRecap b{color:#0a9b4c}.wRecap.pain b{color:#d82030}.finish{width:100%;border:0;border-radius:8px;padding:12px;font-weight:900}
+@media(max-width:430px){.wellnessPage{padding:0;background:#fff}.wellnessPhone{border:0;border-radius:0;box-shadow:none;min-height:100vh}.wBodies .human{width:140px}.wStep{padding-left:16px;padding-right:16px}.wHeader{padding-left:16px;padding-right:16px}}
 `;
