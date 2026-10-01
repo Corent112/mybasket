@@ -33,6 +33,7 @@ type MatchRow = {
   result: string | null;
   home: boolean | null;
   match_category?: string | null;
+  project_state?: Record<string, unknown> | null;
 };
 
 type PlayerStatRow = {
@@ -191,6 +192,15 @@ function formatDate(value: string | null) {
     day: "2-digit",
     month: "2-digit",
   });
+}
+
+function categoryOf(match: MatchRow): "championship" | "friendly" | "cup" {
+  const projectType = String(match.project_state?.matchType || "").trim().toLowerCase();
+  const raw = String(match.match_category || projectType || "").trim().toLowerCase();
+  if (raw === "friendly" || raw.includes("amical")) return "friendly";
+  if (raw === "cup" || raw.includes("coupe")) return "cup";
+  if (raw === "league" || raw === "championship" || raw.includes("championnat")) return "championship";
+  return "championship";
 }
 
 function isHome(match: MatchRow) {
@@ -392,7 +402,7 @@ export default function StatsEquipeModule() {
 
       const { data, error } = await supabase
         .from("match_stats")
-        .select("id, team_id, opponent, match_date, us_score, them_score, result, home, match_category, project_status")
+        .select("id, team_id, opponent, match_date, us_score, them_score, result, home, match_category, project_status, project_state")
         .eq("user_id", user.id)
         .or("project_status.eq.completed,project_status.is.null")
         .order("match_date", { ascending: false });
@@ -501,7 +511,7 @@ export default function StatsEquipeModule() {
       matches.filter((match) => {
         if (match.team_id !== teamId) return false;
         if (matchCategory === "all") return true;
-        return String(match.match_category || "championship") === matchCategory;
+        return categoryOf(match) === matchCategory;
       }),
     [matches, teamId, matchCategory],
   );
