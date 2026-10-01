@@ -521,6 +521,54 @@ export async function sendCriticalRpeAlert(input: {
     .eq("id", input.alertId);
 }
 
+export async function sendWellnessDailyDigest(input: {
+  teamId: string;
+  teamName: string;
+  responseDate: string;
+}) {
+  const admin = createAdminClient();
+  if (!admin) return { sent: 0, skipped: 0 };
+
+  const [{ data: team }, { data: players }, { data: responses }] = await Promise.all([
+    admin.from("teams").select("*").eq("id", input.teamId).maybeSingle(),
+    admin.from("players").select("id,first_name,last_name").eq("team_id", input.teamId).order("last_name"),
+    admin.from("player_wellness_responses")
+      .select("player_id,fatigue,sleep,stress,soreness,comment,pain_zones,pain_details,created_at")
+      .eq("team_id", input.teamId).eq("response_kind", "wellness").eq("response_date", input.responseDate)
+      .order("created_at", { ascending: true }),
+  ]);
+  if (!responses?.length) return { sent: 0, skipped: 0 };
+
+  const latest = new Map<string, any>();
+  for (const row of responses) latest.set(String(row.player_id), row);
+  const playerById = new Map((players || []).map((p:any)=>[String(p.id),p]));
+  const vals = Array.from(latest.values());
+  const avg=(key:string)=>Math.round((vals.reduce((a:number,r:any)=>a+Number(r?.[key]||0),0)/vals.length)*10)/10;
+  const rows = Array.from(latest.entries()).map(([id,row]:any)=>{
+    const p:any=playerById.get(id); const name=[p?.first_name,p?.last_name].filter(Boolean).join(" ")||"Joueur";
+    const meta=row?.pain_details?._wellness||{}; const pains=Array.isArray(row?.pain_zones)?row.pain_zones.length:0;
+    return `<tr><td style="padding:10px 7px;border-bottom:1px solid #403A36;font-weight:800">${esc(name)}</td><td align="center" style="padding:10px 5px;border-bottom:1px solid #403A36">${esc(row.sleep)}/10</td><td align="center" style="padding:10px 5px;border-bottom:1px solid #403A36">${esc(row.fatigue)}/10</td><td align="center" style="padding:10px 5px;border-bottom:1px solid #403A36">${esc(row.stress)}/10</td><td align="center" style="padding:10px 5px;border-bottom:1px solid #403A36">${esc(meta.mood ?? "—")}${meta.mood!=null?"/10":""}</td><td align="center" style="padding:10px 5px;border-bottom:1px solid #403A36">${meta.hitReceived?"🥊 Oui":"Non"}</td><td align="center" style="padding:10px 5px;border-bottom:1px solid #403A36">${pains? `🔴 ${pains}`:"—"}</td></tr>`;
+  }).join("");
+  const missing=(players||[]).filter((p:any)=>!latest.has(String(p.id)));
+  const logo=teamLogoFromRow(team); const href=`${appUrl()}/equipes/${encodeURIComponent(input.teamId)}?tab=load`;
+  const html=`<!doctype html><html><body style="margin:0;background:#171717;font-family:Arial,sans-serif;color:#fff"><table width="100%" cellspacing="0"><tr><td align="center" style="padding:28px 12px"><table width="100%" style="max-width:760px;background:#1D1D1D;border-radius:22px;overflow:hidden;border:1px solid #3A302A"><tr><td style="background:#6B1A2C;padding:27px 30px"><table width="100%"><tr><td><div style="font-size:12px;font-weight:900;letter-spacing:.14em;color:#D4A24C">MYBASKET · WELLNESS</div><div style="margin-top:8px;font-size:30px;font-weight:900">Bilan du matin</div><div style="margin-top:5px;color:#EBDDE1">${esc(input.teamName)} · ${esc(frDate(input.responseDate))}</div></td><td width="94" align="right">${teamLogoHtml(input.teamName,logo)}</td></tr></table></td></tr><tr><td style="height:5px;background:#D4A24C"></td></tr>
+<tr><td style="padding:22px"><table width="100%" cellspacing="7"><tr><td align="center" style="padding:14px;background:#242424;border:1px solid #4A403A;border-radius:13px"><b style="font-size:22px">${latest.size}/${players?.length||latest.size}</b><div style="font-size:9px;color:#D4A24C">RÉPONSES</div></td><td align="center" style="padding:14px;background:#242424;border:1px solid #4A403A;border-radius:13px"><b style="font-size:22px">${avg("sleep")}</b><div style="font-size:9px;color:#D4A24C">SOMMEIL</div></td><td align="center" style="padding:14px;background:#242424;border:1px solid #4A403A;border-radius:13px"><b style="font-size:22px">${avg("fatigue")}</b><div style="font-size:9px;color:#D4A24C">FATIGUE</div></td><td align="center" style="padding:14px;background:#242424;border:1px solid #4A403A;border-radius:13px"><b style="font-size:22px">${avg("stress")}</b><div style="font-size:9px;color:#D4A24C">STRESS</div></td></tr></table></td></tr>
+<tr><td style="padding:0 24px 18px"><div style="font-size:11px;font-weight:900;color:#D4A24C;letter-spacing:.1em">TABLEAU ÉQUIPE</div><table width="100%" style="margin-top:8px;border-collapse:collapse;color:#fff"><thead><tr style="background:#2B2928"><th align="left" style="padding:9px 7px">Joueur</th><th>Sommeil</th><th>Fatigue</th><th>Stress</th><th>Humeur</th><th>Coup</th><th>Douleurs</th></tr></thead><tbody>${rows}</tbody></table></td></tr>
+${missing.length?`<tr><td style="padding:0 24px 18px"><div style="padding:14px;border-radius:14px;background:#292625;color:#CBBDB6"><strong style="color:#fff">Sans réponse (${missing.length}) :</strong> ${esc(missing.map((p:any)=>[p.first_name,p.last_name].filter(Boolean).join(" ")).join(" · "))}</div></td></tr>`:""}
+<tr><td align="center" style="padding:8px 24px 28px"><a href="${esc(href)}" style="display:inline-block;background:#6B1A2C;color:#fff;text-decoration:none;border-radius:999px;padding:14px 24px;font-weight:900;border:1px solid #D4A24C">OUVRIR LE WELLNESS →</a></td></tr><tr><td style="background:#111;padding:18px;text-align:center;color:#A99D96;font-size:11px">Résumé automatique du questionnaire Wellness du matin. Ces indicateurs ne constituent pas un diagnostic médical.</td></tr></table></td></tr></table></body></html>`;
+
+  const recipients=await alertRecipients(input.teamId,true); let sent=0,skipped=0;
+  for(const recipient of recipients){
+    if(!recipient.emailEnabled||!recipient.email){skipped++;continue;}
+    const {data:existing}=await admin.from("rpe_digest_deliveries").select("id,status").eq("team_id",input.teamId).eq("response_date",input.responseDate).eq("response_kind","wellness").eq("user_id",recipient.userId).maybeSingle();
+    if(existing?.status==="sent"){skipped++;continue;}
+    const delivery=existing?.id?existing:(await admin.from("rpe_digest_deliveries").insert({team_id:input.teamId,response_date:input.responseDate,response_kind:"wellness",user_id:recipient.userId,status:"pending"}).select("id,status").maybeSingle()).data;
+    if(!delivery?.id){skipped++;continue;}
+    try{const result=await sendTransactionalEmail({to:recipient.email,from:"MyBasket <contact@mybasket.fr>",subject:`Wellness — ${input.teamName} — bilan du matin`,html});if(!result.sent)throw new Error(String(result.reason||"Email non envoyé"));await admin.from("rpe_digest_deliveries").update({status:"sent",sent_at:new Date().toISOString()}).eq("id",delivery.id);sent++;}catch(error){await admin.from("rpe_digest_deliveries").update({status:"failed",error_message:error instanceof Error?error.message:"Erreur",updated_at:new Date().toISOString()}).eq("id",delivery.id);}
+  }
+  return {sent,skipped};
+}
+
 export async function sendRpeDailyDigest(input: {
   teamId: string;
   teamName: string;
