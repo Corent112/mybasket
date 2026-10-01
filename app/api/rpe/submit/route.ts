@@ -94,7 +94,20 @@ export async function POST(request: Request) {
         .eq("id", savedResponse.id);
 
       if (injuredError) {
-        return NextResponse.json({ error: injuredError.message }, { status: 400 });
+        // Compatibilité pendant le déploiement de la migration additive :
+        // l'ancien wellness continue de fonctionner même si les nouvelles
+        // colonnes de cartographie corporelle ne sont pas encore disponibles.
+        if (/pain_zones|pain_details/i.test(injuredError.message || "")) {
+          const { error: fallbackError } = await admin
+            .from("player_wellness_responses")
+            .update({ is_injured: injured })
+            .eq("id", savedResponse.id);
+          if (fallbackError) {
+            return NextResponse.json({ error: fallbackError.message }, { status: 400 });
+          }
+        } else {
+          return NextResponse.json({ error: injuredError.message }, { status: 400 });
+        }
       }
     }
 
