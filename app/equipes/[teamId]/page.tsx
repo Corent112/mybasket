@@ -6216,20 +6216,20 @@ function TeamLineupsBlock({ teamId, matchCategory }: { teamId: string; matchCate
           overflow-wrap: anywhere;
         }
 
-        .lineup-identity { display:flex;align-items:center;min-width:142px; }
+        .lineup-identity { display:flex;align-items:center;min-width:126px; }
         .lineup-avatars {
           display: flex;
           align-items: center;
-          gap: 4px;
-          min-width: 142px;
-          height: 24px;
+          gap: 3px;
+          min-width: 126px;
+          height: 28px;
           white-space: nowrap;
         }
 
         .lineup-avatar {
-          width: 22px;
-          height: 22px;
-          flex: 0 0 22px;
+          width: 26px;
+          height: 26px;
+          flex: 0 0 26px;
           border-radius: 999px;
           overflow: hidden;
           display: inline-flex;
