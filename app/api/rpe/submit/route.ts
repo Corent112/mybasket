@@ -76,9 +76,21 @@ export async function POST(request: Request) {
     }
 
     if (savedResponse?.id) {
+      const painZones = Array.isArray(body?.painZones)
+        ? body.painZones.map((value: unknown) => String(value)).slice(0, 20)
+        : [];
+      const painDetails =
+        body?.painDetails && typeof body.painDetails === "object" && !Array.isArray(body.painDetails)
+          ? body.painDetails
+          : {};
+
       const { error: injuredError } = await admin
         .from("player_wellness_responses")
-        .update({ is_injured: injured })
+        .update({
+          is_injured: injured,
+          pain_zones: painZones,
+          pain_details: painDetails,
+        })
         .eq("id", savedResponse.id);
 
       if (injuredError) {
