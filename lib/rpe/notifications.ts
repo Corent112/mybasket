@@ -226,7 +226,7 @@ function immediateAlertHtml(input: {
   <td style="background:#6B1A2C;padding:26px 30px">
     <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0"><tr>
       <td valign="middle">
-        <div style="font-size:12px;line-height:16px;font-weight:900;letter-spacing:.14em;color:#E8C681">MYBASKET · CHARGE & RPE</div>
+        <div style="font-size:12px;line-height:16px;font-weight:900;letter-spacing:.14em;color:#E8C681">MYBASKET · RPE & WELLNESS</div>
         <div style="margin-top:8px;font-size:27px;line-height:32px;font-weight:900;color:#FFFFFF">Point d’attention élevé</div>
         <div style="margin-top:5px;font-size:13px;color:#EBDDE1">${esc(
           input.teamName,
@@ -583,6 +583,7 @@ export async function sendRpeDailyDigest(input: {
     { data: responses },
     { data: plan },
     { data: storedAlerts },
+    { data: wellnessResponses },
   ] = await Promise.all([
     admin.from("teams").select("*").eq("id", input.teamId).maybeSingle(),
     admin
@@ -611,6 +612,13 @@ export async function sendRpeDailyDigest(input: {
       .select("player_id,severity,email_sent_at,triggered_at")
       .eq("team_id", input.teamId)
       .eq("response_date", input.responseDate),
+    admin
+      .from("player_wellness_responses")
+      .select("player_id,fatigue,soreness,sleep,stress,comment,pain_zones,pain_details,is_injured,created_at")
+      .eq("team_id", input.teamId)
+      .eq("response_kind", "wellness")
+      .eq("response_date", input.responseDate)
+      .order("created_at", { ascending: true }),
   ]);
 
   if (!players?.length) return { sent: 0, skipped: 0 };
@@ -621,6 +629,9 @@ export async function sendRpeDailyDigest(input: {
   }
 
   if (!latest.size) return { sent: 0, skipped: 0 };
+
+  const latestWellness = new Map<string, any>();
+  for (const row of wellnessResponses || []) latestWellness.set(String(row.player_id), row);
 
   const recipients = await alertRecipients(input.teamId, true);
   if (!recipients.length) return { sent: 0, skipped: 0 };
@@ -696,18 +707,27 @@ export async function sendRpeDailyDigest(input: {
     .map(({ player, row, evaluation }) => {
       const status = evaluation.severity === "alert" ? "🔴" : evaluation.severity === "watch" ? "🟠" : "🟢";
       const name = [player?.first_name, player?.last_name].filter(Boolean).join(" ") || "Joueur";
-      const zones = Array.isArray(row.pain_zones) ? row.pain_zones.map((id:string) => painLabels[id] || id) : [];
+      const wellness = latestWellness.get(String(player?.id)) || {};
+      const zonesSource = Array.isArray(row.pain_zones) && row.pain_zones.length ? row.pain_zones : wellness.pain_zones;
+      const zones = Array.isArray(zonesSource) ? zonesSource.map((id:string) => painLabels[id] || id) : [];
       const pain = zones.length ? zones.join(", ") : "—";
+      const meta = wellness?.pain_details?._wellness || row?.pain_details?._wellness || {};
+      const fatigue = row.fatigue ?? wellness.fatigue ?? "—";
+      const sleep = row.sleep ?? wellness.sleep ?? "—";
+      const stress = row.stress ?? wellness.stress ?? "—";
+      const soreness = row.soreness ?? wellness.soreness ?? "—";
       const load = Number(row.duration_minutes || 0) * Number(row.rpe || 0);
       return `<tr>
         <td style="padding:10px 7px;border-bottom:1px solid #EEE6E1;font-size:12px;font-weight:800;white-space:nowrap">${status} ${esc(name)}</td>
         <td align="center" style="padding:10px 4px;border-bottom:1px solid #EEE6E1;font-size:12px">${esc(row.duration_minutes ?? "—")}</td>
         <td align="center" style="padding:10px 4px;border-bottom:1px solid #EEE6E1;font-size:13px;font-weight:900;color:#6B1A2C">${esc(row.rpe)}</td>
         <td align="center" style="padding:10px 4px;border-bottom:1px solid #EEE6E1;font-size:12px;font-weight:800">${load || "—"}</td>
-        <td align="center" style="padding:10px 4px;border-bottom:1px solid #EEE6E1;font-size:12px">${esc(row.fatigue ?? "—")}/10</td>
-        <td align="center" style="padding:10px 4px;border-bottom:1px solid #EEE6E1;font-size:12px">${esc(row.soreness ?? "—")}/10</td>
-        <td align="center" style="padding:10px 4px;border-bottom:1px solid #EEE6E1;font-size:12px">${esc(row.sleep ?? "—")}/10</td>
-        <td align="center" style="padding:10px 4px;border-bottom:1px solid #EEE6E1;font-size:12px">${esc(row.stress ?? "—")}/10</td>
+        <td align="center" style="padding:10px 4px;border-bottom:1px solid #EEE6E1;font-size:12px">${esc(fatigue)}/10</td>
+        <td align="center" style="padding:10px 4px;border-bottom:1px solid #EEE6E1;font-size:12px">${esc(soreness)}/10</td>
+        <td align="center" style="padding:10px 4px;border-bottom:1px solid #EEE6E1;font-size:12px">${esc(sleep)}/10</td>
+        <td align="center" style="padding:10px 4px;border-bottom:1px solid #EEE6E1;font-size:12px">${esc(stress)}/10</td>
+        <td align="center" style="padding:10px 4px;border-bottom:1px solid #EEE6E1;font-size:12px">${meta.mood != null ? esc(meta.mood)+"/10" : "—"}</td>
+        <td align="center" style="padding:10px 4px;border-bottom:1px solid #EEE6E1;font-size:11px">${meta.hitReceived ? "Oui" : "Non"}</td>
         <td style="padding:10px 6px;border-bottom:1px solid #EEE6E1;font-size:11px;max-width:150px">${esc(pain)}</td>
         <td style="padding:10px 6px;border-bottom:1px solid #EEE6E1;font-size:11px;max-width:160px">${esc(row.comment || "—")}</td>
       </tr>`;
@@ -787,7 +807,7 @@ export async function sendRpeDailyDigest(input: {
     <tr>
       <td valign="middle">
         <div style="font-size:12px;font-weight:900;letter-spacing:.14em;color:#D4A24C">MYBASKET · CHARGE & RPE</div>
-        <div style="margin-top:8px;font-size:30px;font-weight:900;color:#FFFFFF">Bilan du jour</div>
+        <div style="margin-top:8px;font-size:30px;font-weight:900;color:#FFFFFF">Récapitulatif quotidien — RPE & Wellness</div>
         <div style="margin-top:5px;font-size:13px;color:#EBDDE1">${esc(
           input.teamName,
         )} · ${esc(frDate(input.responseDate))}</div>
@@ -828,6 +848,8 @@ export async function sendRpeDailyDigest(input: {
       <th style="padding:9px 4px;font-size:10px;color:#D9CCC5">Gêne</th>
       <th style="padding:9px 4px;font-size:10px;color:#D9CCC5">Sommeil</th>
       <th style="padding:9px 4px;font-size:10px;color:#D9CCC5">Stress</th>
+      <th style="padding:9px 4px;font-size:10px;color:#D9CCC5">Humeur</th>
+      <th style="padding:9px 4px;font-size:10px;color:#D9CCC5">Coup reçu</th>
       <th align="left" style="padding:9px 6px;font-size:10px;color:#D9CCC5">Zones douloureuses</th>
       <th align="left" style="padding:9px 6px;font-size:10px;color:#D9CCC5">Commentaire</th>
     </tr></thead>
@@ -944,7 +966,7 @@ ${
       const result = await sendTransactionalEmail({
         to: recipient.email,
         from: "MyBasket <contact@mybasket.fr>",
-        subject: `RPE — ${input.teamName} — bilan du ${frDate(
+        subject: `RPE & Wellness — ${input.teamName} — bilan du ${frDate(
           input.responseDate,
         )}`,
         html: digestHtml,
