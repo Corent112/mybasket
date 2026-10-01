@@ -134,8 +134,7 @@ function BodyFigure({
     : new Set(["head_back","shoulder_left_back","shoulder_right_back","upper_back","lower_back","elbow_left_back","elbow_right_back","wrist_left_back","wrist_right_back","glute_left","glute_right","hamstring_left","hamstring_right","knee_left_back","knee_right_back","ankle_left_back","ankle_right_back"]);
   const zones = PAIN_ZONES.filter((zone) => zone.side === side && visibleIds.has(zone.id));
   const front = side === "front";
-  const anatomySource =
-    "https://media.istockphoto.com/id/1479094313/fr/vectoriel/syst%C3%A8me-musculaire-corps-humain-anatomie-masculine-athletyc-fitness-trainig-gym-workout.jpg?s=612x612&w=0&k=20&c=wWpSyCpOKr-K1pHfoq9XX4zPlETaf1qylvhlBbQgk-s%3D";
+  const anatomySource = "/api/body-map";
 
   return <div className="bodyFigure">
     <div className="bodyLabel">{front ? "Face" : "Dos"}</div>
