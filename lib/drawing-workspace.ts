@@ -12,7 +12,14 @@ export type DrawingSystem=SystemItem & {
   playbookSystemIds:Record<string,string>;
 };
 
-async function userId(){const s=createClient();const {data,error}=await s.auth.getUser();if(error||!data.user)throw new Error('Session utilisateur indisponible');return data.user.id;}
+async function userId(){
+ const s=createClient();
+ const {data:{session}}=await s.auth.getSession();
+ if(session?.user?.id)return session.user.id;
+ const {data,error}=await s.auth.getUser();
+ if(error||!data.user)throw new Error('Session utilisateur indisponible');
+ return data.user.id;
+}
 function isScout(row:any){const t=String(row.team_type??row.teamType??row.type??'').toLowerCase();return row.is_scout_team===true||row.isScoutTeam===true||row.scout===true||['scout','scouting','scouted'].includes(t)}
 const clean=(v:unknown)=>Array.isArray(v)?v.filter((x):x is string=>typeof x==='string'&&!!x.trim()):[];
 
