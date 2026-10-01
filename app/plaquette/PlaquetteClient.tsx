@@ -4131,40 +4131,20 @@ const saveOpenedLibrarySystem = async (resolvedSystemId?: string | null) => {
     alert("Aucun système sélectionné.");
     return;
   }
-  if (saving) {
-    alert("Une sauvegarde est déjà en cours.");
-    return;
-  }
-
-  const canvas = canvasRef.current;
-  if (!canvas) {
-    alert("Canvas introuvable");
-    return;
-  }
+  if (saving) return;
 
   const previousCurrent = currentRef.current;
   setSaving('library-system');
 
   try {
-    // On fige immédiatement l'état ACTUEL du dessin avant toute capture.
+    // La source de vérité est l'état ACTUEL de la plaquette.
+    // On le fige avant les captures, qui changent temporairement currentRef.
     const fullPhases = JSON.parse(JSON.stringify(phasesRef.current || []));
     if (!fullPhases.length) throw new Error("Aucune phase à sauvegarder.");
 
-    const { data: { user }, error: authError } = await supabase.auth.getUser();
-    if (authError || !user) throw new Error("Session utilisateur indisponible.");
+    const existingSystem = await getSystem(targetSystemId);
+    if (!existingSystem) throw new Error("Système introuvable ou non modifiable.");
 
-    // Vérifie que le système cliqué est bien un système privé de l'utilisateur.
-    const { data: existingRow, error: existingError } = await supabase
-      .from("systems")
-      .select("*")
-      .eq("id", targetSystemId)
-      .eq("user_id", user.id)
-      .maybeSingle();
-
-    if (existingError) throw existingError;
-    if (!existingRow) throw new Error("Système introuvable ou non modifiable.");
-
-    // Capture les miniatures de toutes les phases.
     const phaseImagesBase64 = await captureAllPhaseImages();
     if (!phaseImagesBase64.length) throw new Error("Aucune phase capturée.");
 
@@ -4174,15 +4154,11 @@ const saveOpenedLibrarySystem = async (resolvedSystemId?: string | null) => {
 
     for (let i = 0; i < phaseImagesBase64.length; i += 1) {
       uploadedUrls.push(
-        await uploadSchemaImage(
-          phaseImagesBase64[i],
-          folder,
-          `phase-${i + 1}.png`
-        )
+        await uploadSchemaImage(phaseImagesBase64[i], folder, `phase-${i + 1}.png`)
       );
     }
 
-    const savedTitle = title || existingRow.title || "Système";
+    const savedTitle = title || existingSystem.title || "Système";
     const schemaDataList = uploadedUrls.map((url, phaseIndex) => ({
       title: `${savedTitle} - Phase ${phaseIndex + 1}`,
       schemaGroupId,
@@ -4191,62 +4167,64 @@ const saveOpenedLibrarySystem = async (resolvedSystemId?: string | null) => {
       courtStyle: courtStyleRef.current,
       courtBranding: courtBrandingRef.current,
       phases: fullPhases,
-      sheet,
+      sheet: JSON.parse(JSON.stringify(sheet)),
       current: phaseIndex,
       imageData: url,
       phaseImages: uploadedUrls,
       editable: true,
     }));
 
-    // Écriture directe dans systems : aucun flux "création", aucune copie.
-    const now = new Date().toISOString();
-    const { data: savedRow, error: saveError } = await supabase
-      .from("systems")
-      .update({
-        title: savedTitle,
-        schema_image: uploadedUrls[0] || existingRow.schema_image || "",
-        schema_images: uploadedUrls,
-        schema_data: schemaDataList[0] || null,
-        schema_data_list: schemaDataList,
-        updated_at: now,
-      })
-      .eq("id", targetSystemId)
-      .eq("user_id", user.id)
-      .select("id, schema_data_list, updated_at")
-      .maybeSingle();
+    // updateSystem est le chemin officiel de sauvegarde de la fiche Systèmes.
+    // Même ID = la fiche Bibliothèque est mise à jour, aucune copie n'est créée.
+    const updated = await updateSystem(targetSystemId, {
+      title: savedTitle,
+      schemaImage: uploadedUrls[0] || existingSystem.schemaImage || "",
+      schemaImages: uploadedUrls,
+      schemaData: schemaDataList[0] || null,
+      schemaDataList,
+      schemaVideo: existingSystem.schemaVideo || "",
+    });
 
-    if (saveError) throw saveError;
-    if (!savedRow) throw new Error("Supabase n'a confirmé aucune modification.");
+    if (!updated) throw new Error("La fiche système n'a pas été mise à jour.");
 
-    // Les entrées Playbook gardent une copie des schémas : on les synchronise aussi.
-    const { error: playbookSyncError } = await supabase
-      .from("playbook_systems")
-      .update({
-        title: savedTitle,
-        schema_images: uploadedUrls,
-        schema_data_list: schemaDataList,
-        updated_at: now,
-      })
-      .eq("system_id", targetSystemId)
-      .eq("owner_id", user.id);
-
-    if (playbookSyncError) {
-      console.warn("Synchronisation Playbook impossible :", playbookSyncError);
+    // Les fiches déjà placées dans des Playbooks stockent aussi une copie des schémas.
+    // On les synchronise pour qu'elles affichent immédiatement la même version.
+    const { data: { user } } = await supabase.auth.getUser();
+    if (user) {
+      const { error: syncError } = await supabase
+        .from("playbook_systems")
+        .update({
+          title: savedTitle,
+          schema_images: uploadedUrls,
+          schema_data_list: schemaDataList,
+          schema_video: existingSystem.schemaVideo || "",
+          updated_at: new Date().toISOString(),
+        })
+        .eq("system_id", targetSystemId)
+        .eq("owner_id", user.id);
+      if (syncError) console.warn("Synchronisation Playbook impossible :", syncError);
     }
 
-    // Vérification réelle de ce qui vient d'être écrit en base.
-    const savedList = Array.isArray(savedRow.schema_data_list)
-      ? savedRow.schema_data_list
+    // Relire la fiche réellement enregistrée avant d'annoncer le succès.
+    const verifiedSystem = await getSystem(targetSystemId);
+    const verifiedList = Array.isArray((verifiedSystem as any)?.schemaDataList)
+      ? (verifiedSystem as any).schemaDataList
       : [];
-    const verified = savedList.some(
-      (item: any) => item?.schemaGroupId === schemaGroupId
-    );
-    if (!verified) {
-      throw new Error("La base n'a pas conservé le nouveau dessin.");
+    if (!verifiedList.some((item: any) => item?.schemaGroupId === schemaGroupId)) {
+      throw new Error("La nouvelle version n'a pas été conservée.");
     }
 
-    currentRef.current = previousCurrent;
-    setCurrent(previousCurrent);
+    // Le système reste désormais en mode édition directe, jamais en mode copie.
+    try {
+      localStorage.setItem('mybasket_edit_systeme_id', targetSystemId);
+      localStorage.setItem('mybasket_edit_system_id', targetSystemId);
+      localStorage.setItem('mybasket_current_system_id', targetSystemId);
+      localStorage.setItem('mybasket_drawing_source_system_id', targetSystemId);
+      localStorage.setItem('mybasket_drawing_flow', 'library-system-edit');
+      localStorage.setItem('mybasket_edit_schema_index', '0');
+    } catch {}
+
+    setOpenedLibrarySystemId(targetSystemId);
     setSaveOpen(false);
     setSaveMsg(true);
     window.setTimeout(() => setSaveMsg(false), 1500);
@@ -4255,10 +4233,6 @@ const saveOpenedLibrarySystem = async (resolvedSystemId?: string | null) => {
     window.dispatchEvent(new CustomEvent("mybasket:library-system-saved", {
       detail: { systemId: targetSystemId, schemaGroupId }
     }));
-
-    // Confirmation volontairement visible pendant le diagnostic :
-    // si ce message apparaît, Supabase a relu le nouveau schemaGroupId.
-    alert("✓ Modifications sauvegardées et vérifiées.");
   } catch (error: any) {
     console.error("ERREUR saveOpenedLibrarySystem", error);
     alert(`Échec de la sauvegarde : ${error?.message || "erreur inconnue"}`);
