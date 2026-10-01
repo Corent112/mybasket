@@ -721,17 +721,20 @@ useEffect(() => {
   // ainsi le bouton de mise à jour apparaît aussi via la Bibliothèque intégrée.
   const openSaveModal = () => {
     try {
-      // ContentNavigator écrit ces IDs dès qu'un système est ouvert depuis la Bibliothèque.
-      // On ne dépend plus de mybasket_drawing_flow : selon le chemin d'ouverture,
-      // ce marqueur pouvait manquer alors que l'ID du système était bien présent.
+      // Priorité à l'ID réellement ouvert dans cette instance de Dessin.
+      // Le localStorage n'est qu'un secours : certaines routes/nettoyages peuvent
+      // retirer ses clés alors que le système est toujours ouvert à l'écran.
       const sourceSystemId =
+        openedLibrarySystemId ||
         localStorage.getItem('mybasket_drawing_source_system_id') ||
         localStorage.getItem('mybasket_current_system_id') ||
         localStorage.getItem('mybasket_edit_systeme_id') ||
         localStorage.getItem('mybasket_edit_system_id');
 
       if (sourceSystemId) {
-        setOpenedLibrarySystemId(sourceSystemId);
+        if (sourceSystemId !== openedLibrarySystemId) {
+          setOpenedLibrarySystemId(sourceSystemId);
+        }
         // Un système ouvert depuis la Bibliothèque est toujours mis à jour
         // directement. Le bouton principal ne doit jamais retomber dans le
         // flux de création tant que cet ID source existe.
@@ -4754,6 +4757,21 @@ const exportJson = () => {
               <ContentNavigator
           embedded
           initialKind="system"
+          onPreviewSystem={(system) => {
+            // Liaison directe Bibliothèque -> Dessin : l'ID édité reste connu
+            // sans dépendre d'un CustomEvent ou du localStorage.
+            setOpenedLibrarySystemId(system.id);
+            try {
+              localStorage.setItem('mybasket_drawing_source_system_id', system.id);
+              localStorage.setItem('mybasket_current_system_id', system.id);
+              localStorage.setItem('mybasket_edit_systeme_id', system.id);
+              localStorage.setItem('mybasket_edit_system_id', system.id);
+              localStorage.setItem('mybasket_drawing_flow', 'library-system-edit');
+            } catch {}
+            window.dispatchEvent(new CustomEvent('mybasket:preview-system', {
+              detail: { systemId: system.id, system }
+            }));
+          }}
           onSaveSystem={(system) => {
             setOpenedLibrarySystemId(system.id);
             void saveOpenedLibrarySystem(system.id);
