@@ -182,7 +182,8 @@ export default function PublicPlayerLoadForm({ token }: { token: string }) {
 
       const next = (data || {}) as FormPayload;
       setPayload(next);
-      setPlayerId(next.players?.[0]?.id || "");
+      // Le questionnaire est commun à l'équipe : le joueur s'identifie lui-même.
+      setPlayerId("");
       setLoading(false);
     })();
   }, [supabase, token]);
@@ -302,11 +303,18 @@ export default function PublicPlayerLoadForm({ token }: { token: string }) {
         <label className="field">
           <span>Joueur</span>
           <select value={playerId} onChange={(e) => setPlayerId(e.target.value)}>
-            {payload.players?.map((player) => (
-              <option key={player.id} value={player.id}>
-                {player.first_name} {player.last_name}
-              </option>
-            ))}
+            <option value="">Choisis ton prénom</option>
+            {payload.players?.map((player) => {
+              const sameFirstName = (payload.players || []).filter(
+                (item) => item.first_name.trim().toLowerCase() === player.first_name.trim().toLowerCase(),
+              ).length > 1;
+              const lastInitial = player.last_name?.trim()?.[0]?.toUpperCase();
+              return (
+                <option key={player.id} value={player.id}>
+                  {player.first_name}{sameFirstName && lastInitial ? ` ${lastInitial}.` : ""}
+                </option>
+              );
+            })}
           </select>
         </label>
 
