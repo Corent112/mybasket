@@ -639,9 +639,11 @@ function useFfbbBannerSummary(teamId: string): FfbbBannerSummary {
 
         if (rankingConnection?.source_url) {
           try {
-            const response = await fetch(`/api/ffbb/competition?url=${encodeURIComponent(rankingConnection.source_url)}`, {
-              cache: "no-store",
-            });
+            const ffbbTeamName = String(rankingConnection.ffbb_team_name || "").trim();
+            const response = await fetch(
+              `/api/ffbb/competition?url=${encodeURIComponent(rankingConnection.source_url)}&team=${encodeURIComponent(ffbbTeamName)}`,
+              { cache: "no-store" },
+            );
             const parsed = await response.json();
             if (response.ok) {
               if (parsed?.pool) pool = String(parsed.pool).trim();
