@@ -123,35 +123,42 @@ function Question({
 }
 
 function BodyFigure({
-  side,
-  selected,
-  onToggle,
+  side, selected, onToggle,
 }: {
   side: "front" | "back";
   selected: string[];
   onToggle: (zone: PainZone) => void;
 }) {
   const zones = PAIN_ZONES.filter((zone) => zone.side === side);
-  return (
-    <div className="bodyFigure">
-      <div className="bodyLabel">{side === "front" ? "FACE" : "DOS"}</div>
-      <div className="human">
-        <svg viewBox="0 0 120 260" aria-label={side === "front" ? "Corps vu de face" : "Corps vu de dos"}>
-          <defs><linearGradient id={`skin-${side}`} x1="0" y1="0" x2="1" y2="1"><stop offset="0" stopColor="#fafafa"/><stop offset="1" stopColor="#d8d5d3"/></linearGradient></defs>
-          <ellipse cx="60" cy="21" rx="13" ry="17" className="bodyShape" fill={`url(#skin-${side})`} />
-          <path d="M54 37 Q60 41 66 37 L68 48 Q79 50 86 59 L79 89 Q76 108 71 126 L49 126 Q44 108 41 89 L34 59 Q41 50 52 48Z" className="bodyShape" fill={`url(#skin-${side})`} />
-          <path d="M37 55 Q29 57 26 67 L18 105 L12 137 Q11 146 18 148 Q25 149 27 140 L32 111 L43 74Z" className="bodyShape" fill={`url(#skin-${side})`} />
-          <path d="M83 55 Q91 57 94 67 L102 105 L108 137 Q109 146 102 148 Q95 149 93 140 L88 111 L77 74Z" className="bodyShape" fill={`url(#skin-${side})`} />
-          <path d="M49 123 Q42 137 43 158 L41 188 L37 240 Q36 250 45 252 Q53 252 55 243 L59 190 L60 136Z" className="bodyShape" fill={`url(#skin-${side})`} />
-          <path d="M71 123 Q78 137 77 158 L79 188 L83 240 Q84 250 75 252 Q67 252 65 243 L61 190 L60 136Z" className="bodyShape" fill={`url(#skin-${side})`} />
-          {side === "front" ? <><path d="M44 57 Q51 51 60 57 Q69 51 76 57 M60 49 L60 122 M47 72 Q53 78 60 74 Q67 78 73 72 M48 88 Q60 94 72 88 M50 104 Q60 109 70 104" className="bodyDetail"/><path d="M47 128 Q53 137 60 137 Q67 137 73 128 M43 159 Q49 163 55 160 M65 160 Q71 163 77 159 M39 190 Q47 194 55 190 M65 190 Q73 194 81 190" className="bodyDetail"/></> : <><path d="M44 57 Q60 70 76 57 M60 48 L60 124 M45 77 Q60 68 75 77 M46 101 Q60 112 74 101" className="bodyDetail"/><path d="M47 128 Q60 120 73 128 M60 128 L60 145 M42 158 Q49 164 55 160 M65 160 Q71 164 78 158 M39 190 Q47 195 55 190 M65 190 Q73 195 81 190" className="bodyDetail"/></>}
-        </svg>
-        {zones.map((zone) => (
-          <button key={zone.id} type="button" className={`painPoint ${selected.includes(zone.id) ? "selected" : ""}`} style={{ left: `${zone.x}%`, top: `${zone.y}%` }} title={zone.label} aria-label={zone.label} onClick={() => onToggle(zone)} />
-        ))}
-      </div>
+  const front = side === "front";
+  return <div className="bodyFigure">
+    <div className="bodyLabel">{front ? "Face" : "Dos"}</div>
+    <div className="human anatomical">
+      <svg viewBox="0 0 180 420" role="img" aria-label={front ? "Silhouette anatomique de face" : "Silhouette anatomique de dos"}>
+        <defs>
+          <linearGradient id={`muscle-${side}`} x1="0" y1="0" x2="1" y2="1"><stop stopColor="#fbfbfb"/><stop offset=".52" stopColor="#e7e5e3"/><stop offset="1" stopColor="#c9c5c2"/></linearGradient>
+          <linearGradient id={`shade-${side}`} x1="0" y1="0" x2="0" y2="1"><stop stopColor="#f7f7f7"/><stop offset="1" stopColor="#d5d1ce"/></linearGradient>
+        </defs>
+        <ellipse cx="90" cy="31" rx="22" ry="28" className="anSkin" fill={`url(#shade-${side})`}/>
+        <path d="M75 55 Q90 65 105 55 L108 76 Q130 82 143 104 L132 160 Q127 190 116 215 L64 215 Q53 190 48 160 L37 104 Q50 82 72 76Z" className="anSkin" fill={`url(#muscle-${side})`}/>
+        <path d="M42 98 Q27 104 23 124 L12 184 L7 235 Q6 248 17 250 Q27 250 30 238 L35 193 L53 127Z" className="anSkin" fill={`url(#muscle-${side})`}/>
+        <path d="M138 98 Q153 104 157 124 L168 184 L173 235 Q174 248 163 250 Q153 250 150 238 L145 193 L127 127Z" className="anSkin" fill={`url(#muscle-${side})`}/>
+        <path d="M65 208 Q53 230 55 263 L51 315 L45 391 Q44 407 58 409 Q70 409 73 394 L82 316 L89 231Z" className="anSkin" fill={`url(#muscle-${side})`}/>
+        <path d="M115 208 Q127 230 125 263 L129 315 L135 391 Q136 407 122 409 Q110 409 107 394 L98 316 L91 231Z" className="anSkin" fill={`url(#muscle-${side})`}/>
+        {front ? <>
+          <path d="M72 78 Q58 85 55 105 Q71 117 88 104 Q86 86 72 78 M108 78 Q122 85 125 105 Q109 117 92 104 Q94 86 108 78" className="muscleLine"/>
+          <path d="M90 75 L90 205 M70 119 Q80 128 90 119 Q100 128 110 119 M72 139 Q82 148 90 140 Q98 148 108 139 M73 160 Q82 169 90 161 Q98 169 107 160 M75 181 Q83 189 90 182 Q97 189 105 181" className="muscleLine"/>
+          <path d="M38 108 Q46 99 55 104 M25 145 Q36 151 42 143 M18 190 Q27 197 34 190 M142 108 Q134 99 125 104 M155 145 Q144 151 138 143 M162 190 Q153 197 146 190" className="muscleLine"/>
+          <path d="M61 220 Q72 235 87 226 M119 220 Q108 235 93 226 M57 263 Q68 275 79 263 M123 263 Q112 275 101 263 M52 317 Q64 327 74 316 M128 317 Q116 327 106 316" className="muscleLine"/>
+        </> : <>
+          <path d="M66 80 Q90 101 114 80 M90 68 L90 210 M57 107 Q74 125 90 111 Q106 125 123 107 M58 142 Q75 132 90 145 Q105 132 122 142 M62 178 Q76 190 90 178 Q104 190 118 178" className="muscleLine"/>
+          <path d="M61 216 Q74 205 89 221 M119 216 Q106 205 91 221 M57 264 Q68 278 80 263 M123 264 Q112 278 100 263 M52 318 Q64 330 75 316 M128 318 Q116 330 105 316" className="muscleLine"/>
+          <path d="M39 109 Q48 102 56 108 M25 146 Q36 153 43 144 M18 191 Q27 198 34 190 M141 109 Q132 102 124 108 M155 146 Q144 153 137 144 M162 191 Q153 198 146 190" className="muscleLine"/>
+        </>}
+      </svg>
+      {zones.map((zone) => <button key={zone.id} type="button" className={`painPoint ${selected.includes(zone.id) ? "selected" : ""}`} style={{left:`${zone.x}%`,top:`${zone.y}%`}} aria-label={zone.label} title={zone.label} onClick={()=>onToggle(zone)} />)}
     </div>
-  );
+  </div>;
 }
 
 export default function PublicPlayerLoadForm({ token }: { token: string }) {
@@ -175,6 +182,7 @@ export default function PublicPlayerLoadForm({ token }: { token: string }) {
   const [painZones, setPainZones] = useState<string[]>([]);
   const [painDetails, setPainDetails] = useState<Record<string, PainDetail>>({});
   const [wellnessStep, setWellnessStep] = useState(1);
+  const [rpeStep, setRpeStep] = useState(1);
   const [mood, setMood] = useState(8);
   const [hitReceived, setHitReceived] = useState(false);
 
@@ -308,7 +316,7 @@ export default function PublicPlayerLoadForm({ token }: { token: string }) {
       <main className="wellnessPage">
         <section className="wellnessPhone">
           <header className="wHeader">
-            <div className="wLogo"><span>◉</span> MYBASKET</div>
+            <div className="qTop"><div className="wLogo"><span>◉</span> MYBASKET</div><b>☀️ WELLNESS · MATIN</b></div>
             <div className="wProgress"><i style={{ width: `${progress}%` }} /></div>
             <div className="wProgressText">{wellnessStep}/3</div>
           </header>
@@ -336,12 +344,6 @@ export default function PublicPlayerLoadForm({ token }: { token: string }) {
                 <Question title="Niveau de fatigue" subtitle=""><Scale value={fatigue} onChange={setFatigue} low="Faible" high="Élevé" /></Question>
                 <Question title="Niveau de stress" subtitle=""><Scale value={stress} onChange={setStress} low="Faible" high="Élevé" /></Question>
                 <Question title="Humeur générale" subtitle=""><Scale value={mood} onChange={setMood} low="Mauvaise" high="Excellente" /></Question>
-                <Question title="As-tu reçu un coup / un choc ?" subtitle="">
-                  <div className="wYesNo">
-                    <button type="button" className={hitReceived ? "active" : ""} onClick={() => setHitReceived(true)}>Oui</button>
-                    <button type="button" className={!hitReceived ? "active" : ""} onClick={() => setHitReceived(false)}>Non</button>
-                  </div>
-                </Question>
               </div>
               <div className="wNav single"><button className="next" onClick={() => { if (!playerId) return alert("Choisis ton prénom."); setWellnessStep(2); }}>Suivant →</button></div>
             </section>
@@ -404,180 +406,51 @@ export default function PublicPlayerLoadForm({ token }: { token: string }) {
     );
   }
 
+  const rpeProgress = rpeStep === 1 ? 33 : rpeStep === 2 ? 66 : 100;
+  const rpeZones = painZones.map((id) => PAIN_ZONES.find((z) => z.id === id)).filter((z): z is PainZone => Boolean(z));
   return (
-    <main className="publicPage">
-      <section className="brand">
-        <small>MYBASKET · CHARGE</small>
-        <h1>{payload.team_name || "Mon équipe"}</h1>
-        <p>Retour après séance</p>
-      </section>
+    <main className="wellnessPage eveningPage">
+      <section className="wellnessPhone questionnaireWide">
+        <header className="wHeader">
+          <div className="qTop"><div className="wLogo"><span>◉</span> MYBASKET</div><b>🌙 RPE · SOIR</b></div>
+          <div className="wProgress"><i style={{width:`${rpeProgress}%`}} /></div>
+          <div className="wProgressText">{rpeStep}/3</div>
+        </header>
 
-      <section className="card">
-        <label className="field">
-          <span>Joueur</span>
-          <select value={playerId} onChange={(e) => setPlayerId(e.target.value)}>
-            <option value="">Choisis ton prénom</option>
-            {payload.players?.map((player) => {
-              const sameFirstName = (payload.players || []).filter(
-                (item) => item.first_name.trim().toLowerCase() === player.first_name.trim().toLowerCase(),
-              ).length > 1;
-              const lastInitial = player.last_name?.trim()?.[0]?.toUpperCase();
-              return (
-                <option key={player.id} value={player.id}>
-                  {player.first_name}{sameFirstName && lastInitial ? ` ${lastInitial}.` : ""}
-                </option>
-              );
-            })}
-          </select>
-        </label>
-
-        <>
-            <div className="two">
-              <label className="field">
-                <span>Durée</span>
-                <div className="number">
-                  <input
-                    type="number"
-                    min={0}
-                    max={300}
-                    value={duration}
-                    onChange={(e) => setDuration(Number(e.target.value) || 0)}
-                  />
-                  <b>min</b>
-                </div>
-              </label>
-
-              <label className="field">
-                <span>Type</span>
-                <select value={loadType} onChange={(e) => setLoadType(e.target.value)}>
-                  <option value="basket">Basket</option>
-                  <option value="physical">Préparation physique</option>
-                  <option value="game">Match</option>
-                  <option value="individual">Individuel</option>
-                </select>
-              </label>
-            </div>
-
-            <Question
-              title="RPE · difficulté ressentie"
-              subtitle="1 = très facile · 10 = extrêmement difficile"
-            >
-              <Scale value={rpe} onChange={setRpe} low="Très facile" high="Très difficile" />
-            </Question>
-
-            <div className="loadPreview">
-              <span>Charge calculée</span>
-              <strong>{Math.round(duration * rpe)}</strong>
-              <small>Durée × RPE</small>
-            </div>
-          </>
-        <label className="injuryCheck"><input type="checkbox" checked={injured} onChange={(e)=>setInjured(e.target.checked)}/><span><b>Je suis blessé(e)</b><small>Ma réponse est enregistrée pour le staff, mais elle n'entre pas dans les moyennes RPE / récupération du groupe.</small></span></label>
-
-        <Question title="Fatigue" subtitle="Comment te sens-tu physiquement ?">
-          <Scale value={fatigue} onChange={setFatigue} />
-        </Question>
-
-        <Question
-          title="Douleurs / courbatures"
-          subtitle="Indique d'abord ton niveau global de gêne."
-        >
-          <Scale
-            value={soreness}
-            onChange={setSoreness}
-            low="Aucune gêne"
-            high="Très douloureux"
-          />
-        </Question>
-
-        <section className="painQuestion">
-  
-          <div className="painHead">
-            <div>
-              <h2>As-tu une douleur ou une gêne ?</h2>
-              <p>Si oui, clique directement sur une ou plusieurs zones du corps.</p>
-            </div>
-            <div className="yesNo">
-              <button type="button" className={hasPain ? "active" : ""} onClick={() => setHasPain(true)}>Oui</button>
-              <button type="button" className={!hasPain ? "active" : ""} onClick={() => { setHasPain(false); setPainZones([]); setPainDetails({}); }}>Non</button>
-            </div>
+        {rpeStep === 1 && <section className="wStep">
+          <h1>Retour après séance</h1>
+          <p className="wDate">{payload.team_name || "Mon équipe"} · RPE du soir</p>
+          <label className="wPlayer"><span>Qui es-tu ?</span><select value={playerId} onChange={(e)=>setPlayerId(e.target.value)}><option value="">Choisis ton prénom</option>{payload.players?.map((player)=><option key={player.id} value={player.id}>{player.first_name} {player.last_name?.[0] || ""}.</option>)}</select></label>
+          <div className="qGrid">
+            <Question title="1. RPE" subtitle="Quel est ton ressenti d'effort global sur cette séance ?"><Scale value={rpe} onChange={setRpe} low="Très facile" high="Effort maximal" /></Question>
+            <label className="qBox"><strong>2. Durée de la séance</strong><div className="number"><input type="number" min={0} max={300} value={duration} onChange={(e)=>setDuration(Number(e.target.value)||0)}/><b>min</b></div><small>Charge calculée : <b>{duration*rpe}</b></small></label>
+            <Question title="3. Fatigue après séance" subtitle="Quel est ton niveau de fatigue maintenant ?"><Scale value={fatigue} onChange={setFatigue} low="Pas du tout fatigué" high="Extrêmement fatigué" /></Question>
+            <label className="injuryCheck"><input type="checkbox" checked={injured} onChange={(e)=>setInjured(e.target.checked)}/><span><b>Je suis blessé(e)</b><small>Le staff verra cette information.</small></span></label>
           </div>
+          <div className="wNav single"><button className="next" onClick={()=>{if(!playerId)return alert("Choisis ton prénom.");setRpeStep(2)}}>Suivant →</button></div>
+        </section>}
 
-          {hasPain && (
-            <>
-              <div className="bodyPicker">
-                <BodyFigure side="front" selected={painZones} onToggle={togglePainZone} />
-                <BodyFigure side="back" selected={painZones} onToggle={togglePainZone} />
-              </div>
-              <p className="bodyHelp">Appuie directement sur la zone concernée. Les points rouges correspondent aux zones sélectionnables.</p>
+        {rpeStep === 2 && <section className="wStep painLayout">
+          <div className="painMain">
+            <h1>4. Douleurs ou gêne ?</h1>
+            <p className="wDate">As-tu une douleur ou une gêne après cette séance ? Tu peux sélectionner plusieurs zones.</p>
+            <div className="wYesNo"><button className={hasPain?"active":""} onClick={()=>setHasPain(true)}>Oui</button><button className={!hasPain?"active":""} onClick={()=>{setHasPain(false);setPainZones([]);setPainDetails({})}}>Non</button></div>
+            {hasPain && <><div className="wBodyTabs"><b>Face</b><b>Dos</b></div><div className="wBodies largeBodies"><BodyFigure side="front" selected={painZones} onToggle={togglePainZone}/><BodyFigure side="back" selected={painZones} onToggle={togglePainZone}/></div><p className="wHint">☝ Clique directement sur la ou les zones concernées</p></>}
+          </div>
+          <aside className="painAside">
+            {hasPain && rpeZones.length ? <><h2>Zones sélectionnées</h2>{rpeZones.map(zone=>{const d=painDetails[zone.id]||{intensity:5,type:"Douleur",since:"Aujourd’hui",comment:""};return <article className="wPainCard" key={zone.id}><div className="wPainTitle"><strong>{zone.label}</strong><button onClick={()=>togglePainZone(zone)}>×</button></div><label>Intensité <b>{d.intensity}/10</b></label><input className="wRange" type="range" min="1" max="10" value={d.intensity} onChange={(e)=>updatePainDetail(zone.id,{intensity:Number(e.target.value)})}/><textarea value={d.comment} maxLength={200} onChange={(e)=>updatePainDetail(zone.id,{comment:e.target.value})} placeholder="Commentaire facultatif…"/></article>})}</> : <div className="wNoPain">{hasPain ? "Clique sur le bonhomme pour sélectionner une ou plusieurs zones." : "Aucune douleur signalée."}</div>}
+          </aside>
+          <div className="wNav painNav"><button onClick={()=>setRpeStep(1)}>← Précédent</button><button className="next" onClick={()=>setRpeStep(3)}>Suivant →</button></div>
+        </section>}
 
-              <div className="selectedZones">
-                {painZones.length === 0 && <p className="selectHint">Clique sur la zone concernée sur le bonhomme.</p>}
-                {painZones.map((zoneId) => {
-                  const zone = PAIN_ZONES.find((item) => item.id === zoneId);
-                  const detail = painDetails[zoneId] || { intensity: 5, type: "Douleur", since: "Aujourd’hui", comment: "" };
-                  if (!zone) return null;
-                  return (
-                    <div className="painDetail" key={zoneId}>
-                      <div className="painDetailHead">
-                        <strong>{zone.label}</strong>
-                        <button type="button" onClick={() => togglePainZone(zone)}>×</button>
-                      </div>
-                      <label>Intensité <b>{detail.intensity}/10</b></label>
-                      <input type="range" min="1" max="10" value={detail.intensity} onChange={(e) => updatePainDetail(zoneId, { intensity: Number(e.target.value) })} />
-                      <div className="painDetailGrid">
-                        <label>Type
-                          <select value={detail.type} onChange={(e) => updatePainDetail(zoneId, { type: e.target.value })}>
-                            <option>Douleur</option><option>Gêne</option><option>Raideur</option><option>Courbatures</option><option>Inflammation</option><option>Autre</option>
-                          </select>
-                        </label>
-                        <label>Depuis
-                          <select value={detail.since} onChange={(e) => updatePainDetail(zoneId, { since: e.target.value })}>
-                            <option>Aujourd’hui</option><option>Hier</option><option>2-3 jours</option><option>Plus d’une semaine</option><option>Chronique</option>
-                          </select>
-                        </label>
-                      </div>
-                      <textarea value={detail.comment} onChange={(e) => updatePainDetail(zoneId, { comment: e.target.value })} placeholder="Commentaire sur cette zone (facultatif)" />
-                    </div>
-                  );
-                })}
-              </div>
-            </>
-          )}
-        </section>
-
-        <Question
-          title="Qualité du sommeil"
-          subtitle="Plus la note est haute, meilleure est ta récupération."
-        >
-          <Scale value={sleep} onChange={setSleep} low="Très mauvais" high="Excellent" />
-        </Question>
-
-        <Question
-          title="Stress / charge mentale"
-          subtitle="École, travail, perso, fatigue générale."
-        >
-          <Scale value={stress} onChange={setStress} />
-        </Question>
-
-        <label className="field">
-          <span>Commentaire facultatif</span>
-          <textarea
-            value={comment}
-            onChange={(e) => setComment(e.target.value)}
-            placeholder="Une douleur particulière ? Quelque chose à signaler au staff ?"
-          />
-        </label>
-
-        <button className="send" disabled={sending} onClick={submit}>
-          {sending ? "Envoi…" : "ENVOYER"}
-        </button>
-
-        <p className="privacy">
-          Ces informations servent au suivi de charge et de récupération du
-          staff. Elles ne constituent pas un diagnostic médical.
-        </p>
+        {rpeStep === 3 && <section className="wStep">
+          <h1>Récapitulatif du soir</h1>
+          <div className="wRecap"><div><span>RPE</span><b>{rpe}/10</b></div><div><span>Durée</span><b>{duration} min</b></div><div><span>Charge</span><b>{duration*rpe}</b></div><div><span>Fatigue</span><b>{fatigue}/10</b></div><div><span>Douleurs</span><b>{rpeZones.length ? `${rpeZones.length} zone(s)` : "Non"}</b></div></div>
+          {rpeZones.length>0 && <div className="wRecap pain">{rpeZones.map(z=><div key={z.id}><span>{z.label}</span><b>{painDetails[z.id]?.intensity||5}/10</b></div>)}</div>}
+          <label className="wComment">Commentaire facultatif<textarea value={comment} onChange={(e)=>setComment(e.target.value)} placeholder="Quelque chose à signaler au staff ?"/></label>
+          <div className="wNav"><button onClick={()=>setRpeStep(2)}>← Précédent</button><button className="next" disabled={sending} onClick={submit}>{sending?"Envoi…":"Valider →"}</button></div>
+        </section>}
       </section>
-
       <style jsx>{css}</style>
     </main>
   );
@@ -617,4 +490,10 @@ const css = `
 
 .wellnessPage{min-height:100vh;background:#f4f1ed;padding:18px 10px 40px;font-family:Arial,sans-serif;color:#171315}.wellnessPhone{width:min(430px,100%);margin:0 auto;background:#fff;border:1px solid #e7dfdb;border-radius:24px;box-shadow:0 18px 50px rgba(45,25,30,.12);overflow:hidden}.wHeader{position:relative;padding:20px 22px 12px}.wLogo{color:#9f1733;font-weight:1000;letter-spacing:.02em;text-align:center}.wLogo span{font-size:1.25rem}.wProgress{height:6px;background:#e9e9e9;border-radius:99px;margin-top:18px;overflow:hidden}.wProgress i{display:block;height:100%;background:#a80e35;border-radius:99px;transition:width .2s}.wProgressText{text-align:right;font-size:.72rem;font-weight:900;margin-top:5px;color:#6d6265}.wStep{padding:2px 22px 20px}.wStep h1{font-size:1.08rem;margin:7px 0 2px}.wDate{margin:0 0 12px;font-size:.75rem;color:#62585b;text-transform:capitalize}.wPlayer{display:grid;gap:5px;margin:10px 0 14px;font-size:.76rem;font-weight:900}.wPlayer select,.wPainCard select,.wPainCard textarea,.wComment textarea{width:100%;box-sizing:border-box;border:1px solid #d7d7d7;border-radius:8px;background:#fff;padding:10px;font:inherit}.wPanel{border:1px solid #e5e1df;border-radius:10px;padding:0 10px}.wPanel h2{font-size:.9rem;margin:12px 0 4px}.wPanel .question{padding:12px 0}.wPanel .question h2{font-size:.78rem}.wPanel .question p{display:none}.wPanel .scaleButtons button{border:0;border-radius:50%;padding:0;width:25px;height:25px;font-size:.67rem;background:transparent;color:#342c2e}.wPanel .scaleButtons button.active{background:#a80e35;color:#fff;transform:none}.wPanel .scaleButtons{position:relative}.wPanel .scaleButtons:before{content:"";position:absolute;left:10px;right:10px;top:12px;height:4px;background:#ddd;z-index:0}.wPanel .scaleButtons button{position:relative;z-index:1}.wYesNo{display:grid;grid-template-columns:1fr 1fr;gap:6px;margin:10px 0}.wYesNo button,.wTypes button{border:1px solid #d8d8d8;background:#fff;border-radius:7px;padding:9px;font-weight:800}.wYesNo button.active,.wTypes button.active{background:#a80e35;color:#fff;border-color:#a80e35}.wBodyTabs{display:grid;grid-template-columns:1fr 1fr;text-align:center;color:#a80e35;border-bottom:2px solid #eee}.wBodyTabs b{padding:8px;border-bottom:2px solid #a80e35;margin-bottom:-2px}.wBodies{display:grid;grid-template-columns:1fr 1fr;gap:2px;padding:8px 0}.wBodies .human{width:155px}.wBodies .bodyLabel{display:none}.wBodies .bodyShape{stroke:#8f8783}.wBodies .human svg{filter:drop-shadow(0 5px 5px rgba(55,38,33,.08))}.wBodies .painPoint{width:27px;height:27px;background:rgba(220,35,45,.18);border-color:rgba(220,35,45,.45)}.wBodies .painPoint.selected{background:#e32636;border-color:#fff;box-shadow:0 0 0 8px rgba(227,38,54,.18)}.wHint{text-align:center;font-size:.7rem;color:#776b6e}.wSelected{display:flex;gap:5px;flex-wrap:wrap}.wSelected span{background:#fff0f2;color:#a80e35;border-radius:99px;padding:5px 8px;font-size:.68rem;font-weight:800}.wNoPain{background:#f7f7f7;border-radius:10px;padding:25px;text-align:center;color:#777;margin:15px 0}.wNav{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:18px}.wNav.single{grid-template-columns:1fr}.wNav button{border:1px solid #ddd;background:#fff;border-radius:8px;padding:11px;font-weight:900}.wNav .next,.finish{background:#a80e35;color:#fff;border-color:#a80e35}.wPainList{display:grid;gap:10px}.wPainCard{border:1px solid #e2dfe0;border-radius:10px;padding:12px}.wPainTitle{display:flex;justify-content:space-between;align-items:center;background:#f7f5f5;padding:9px;border-radius:8px;margin-bottom:12px}.wPainTitle button{border:0;background:none;font-size:1.2rem}.wPainCard>label,.wComment{display:grid;gap:5px;font-size:.74rem;font-weight:900;margin:10px 0 5px}.wPainCard>label:first-of-type{display:flex;justify-content:space-between}.wRange{width:100%;accent-color:#a80e35}.wTypes{display:grid;grid-template-columns:repeat(3,1fr);gap:6px}.wTypes button{font-size:.68rem;padding:8px 4px}.wPainCard textarea,.wComment textarea{min-height:70px;resize:vertical}.wDone{padding:45px 22px 24px;box-sizing:border-box;text-align:center}.check{width:64px;height:64px;border-radius:50%;background:#0a9b4c;color:#fff;display:grid;place-items:center;margin:0 auto 10px;font-size:2.4rem;font-weight:900}.wDone h1{margin:0;font-size:1.4rem}.wDone>p{font-size:.8rem;color:#5f5659}.wRecap{text-align:left;border:1px solid #e3dfe0;border-radius:10px;padding:10px;margin:18px 0}.wRecap h2{font-size:.8rem;margin:0 0 7px}.wRecap div{display:flex;justify-content:space-between;padding:6px 0;border-top:1px solid #eee;font-size:.75rem}.wRecap b{color:#0a9b4c}.wRecap.pain b{color:#d82030}.finish{width:100%;border:0;border-radius:8px;padding:12px;font-weight:900}
 @media(max-width:430px){.wellnessPage{padding:0;background:#fff}.wellnessPhone{border:0;border-radius:0;box-shadow:none;min-height:100vh}.wBodies .human{width:140px}.wStep{padding-left:16px;padding-right:16px}.wHeader{padding-left:16px;padding-right:16px}}
+
+.qTop{display:flex;align-items:center;justify-content:space-between;gap:16px}.qTop .wLogo{text-align:left}.qTop>b{font-size:.78rem;color:#171315;letter-spacing:.04em}
+.questionnaireWide{width:min(980px,calc(100vw - 28px))}.questionnaireWide .wStep{padding:8px 30px 26px}.questionnaireWide .wHeader{padding-left:30px;padding-right:30px}
+.qGrid{display:grid;grid-template-columns:1fr 1fr;gap:12px}.qGrid .question,.qBox{border:1px solid #e7e1de;border-radius:14px;padding:16px;background:#fff;margin:0}.qGrid .injuryCheck{margin:0}.qBox{display:grid;gap:12px}.qBox strong{font-size:1rem}.qBox small{color:#756a66}.qBox .number{max-width:280px}
+.painLayout{display:grid;grid-template-columns:minmax(0,1.45fr) minmax(280px,.75fr);gap:20px}.painMain{min-width:0}.painAside{border:1px solid #e7e1de;border-radius:16px;padding:14px;background:#fcfbfa;align-self:start;max-height:650px;overflow:auto}.painAside h2{font-size:.9rem;margin:0 0 10px}.painNav{grid-column:1/-1}.largeBodies{padding:12px 20px}.largeBodies .human{width:230px}.anSkin{stroke:#8f8b88;stroke-width:1;stroke-linejoin:round}.muscleLine{fill:none;stroke:#b9b4b1;stroke-width:1;stroke-linecap:round}.anatomical .painPoint{width:30px;height:30px;background:rgba(215,35,55,.14);border:1.5px solid rgba(215,35,55,.32);box-shadow:none}.anatomical .painPoint.selected{background:#c8103d;border:3px solid #fff;box-shadow:0 0 0 8px rgba(200,16,61,.18)}.largeBodies .anatomical .painPoint{width:32px;height:32px}
+@media(max-width:760px){.questionnaireWide{width:100%}.qGrid,.painLayout{grid-template-columns:1fr}.painAside{max-height:none}.painNav{grid-column:auto}.largeBodies{padding:8px 0}.largeBodies .human{width:150px}.questionnaireWide .wStep{padding-left:16px;padding-right:16px}.questionnaireWide .wHeader{padding-left:16px;padding-right:16px}.qTop>b{font-size:.66rem}.qGrid .question,.qBox{padding:12px}}
 `;
