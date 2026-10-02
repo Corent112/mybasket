@@ -30,7 +30,7 @@ export default function MyDocumentsPage(){
         {structures.length>1&&<label style={{display:"grid",gap:5,fontSize:11,fontWeight:800,color:"#594b46"}}>Structure<select value={structureId} onChange={e=>setStructureId(e.target.value)} style={{padding:"9px 10px",border:"1px solid #ddd2ca",borderRadius:9,background:"#fff"}}>{structures.map(s=><option key={s.id} value={s.id}>{s.short_name||s.name}</option>)}</select></label>}
       </div>
       <div style={{display:"flex",gap:7,borderBottom:"1px solid #eadfd8",paddingBottom:8}}>
-        <button onClick={()=>setTab("papers")} style={tabStyle(tab==="papers")}>📄 Mes papiers</button>
+        <button onClick={()=>setTab("papers")} style={tabStyle(tab==="papers")}>📄 Mes fichiers</button>
         <button onClick={()=>setTab("shooting")} style={tabStyle(tab==="shooting")}>🏀 Mes grilles de tir</button>
       </div>
       {tab==="papers"&&<section style={panel}><MesPapiers /></section>}
