@@ -267,6 +267,9 @@ export default function TeamShootingGrids({
   const [recapMode,setRecapMode]=useState<"average"|"total">("average");
   const [shareBusy,setShareBusy]=useState(false);
   const [teamIdentity,setTeamIdentity]=useState<{name:string;logo:string|null}>({name:"Équipe",logo:null});
+  const [importOpen,setImportOpen]=useState(false);
+  const [personalGrids,setPersonalGrids]=useState<Array<Grid & {structure_id?:string}>>([]);
+  const [importBusy,setImportBusy]=useState(false);
 
   const grid=grids.find(g=>g.id===selectedGridId)||null;
   const toast=(t:string)=>{setMessage(t);window.setTimeout(()=>setMessage(""),2200)};
@@ -382,6 +385,25 @@ export default function TeamShootingGrids({
       if(rowError)throw rowError;
       await loadGrids(g.id);toast("Grille créée.");
     }catch(e){console.error(e);toast("Impossible de créer la grille.")}finally{setSaving(false)}
+  }
+
+  async function openPersonalImport(){
+    if(scopeType!=="team"||!userId)return;
+    setImportBusy(true);
+    try{
+      const {data,error}=await supabase.from("institutional_shooting_grids").select("id,structure_id,owner_id,name,description,input_mode,fixed_value,court_schema_url,court_schema_data,created_at,updated_at").eq("owner_id",userId).order("updated_at",{ascending:false});
+      if(error)throw error;
+      setPersonalGrids((data||[]) as Array<Grid & {structure_id?:string}>); setImportOpen(true);
+    }catch(e){console.error(e);toast("Impossible de charger Mes Documents.")}finally{setImportBusy(false)}
+  }
+  async function importPersonalGrid(source:Grid){
+    if(scopeType!=="team"||!userId||!canEdit)return; setImportBusy(true);
+    try{
+      const {data:sourceRows,error:rowsError}=await supabase.from("institutional_shooting_grid_rows").select("name,sort_order,target_attempts").eq("grid_id",source.id).order("sort_order"); if(rowsError)throw rowsError;
+      const {data:created,error:createError}=await supabase.from("shooting_grids").insert({team_id:teamId,owner_id:userId,name:source.name,description:source.description,input_mode:source.input_mode,fixed_value:source.fixed_value,court_schema_url:source.court_schema_url,court_schema_data:source.court_schema_data}).select("*").single(); if(createError)throw createError;
+      if(sourceRows?.length){const {error:insertRowsError}=await supabase.from("shooting_grid_rows").insert(sourceRows.map((row:any)=>({grid_id:created.id,name:row.name,sort_order:row.sort_order,target_attempts:row.target_attempts??source.fixed_value})));if(insertRowsError){await supabase.from("shooting_grids").delete().eq("id",created.id);throw insertRowsError}}
+      setImportOpen(false); await loadGrids(created.id); setShootingView("editor"); toast("Grille importée depuis Mes Documents ✓");
+    }catch(e){console.error(e);toast("Impossible d’importer cette grille.")}finally{setImportBusy(false)}
   }
 
   function patchGrid(patch:Partial<Grid>){
@@ -840,13 +862,15 @@ export default function TeamShootingGrids({
         <div style={{display:"flex",gap:7,flexWrap:"wrap"}}>
           {grid&&<button onClick={exportBlankPdf} style={secondary}>📄 Exporter grille vierge A4</button>}
           {grid&&scopeType==="team"&&<button onClick={()=>void ensureShareLink(grid)} disabled={shareBusy} style={secondary}>🔗 {grid.share_enabled?"Copier le lien joueur":"Générer le lien joueur"}</button>}
+          {scopeType==="team"&&canEdit&&<button onClick={()=>void openPersonalImport()} disabled={importBusy} style={secondary}>⬇ Importer depuis Mes Documents</button>}
         </div>
       </div>
 
       {!grids.length?(
         <div style={empty}>
           <strong style={{color:BORDEAUX}}>Aucune grille pour cette équipe.</strong>
-          <span>Crée ton premier modèle : nombre de tentés imposé ou nombre de marqués imposé.</span>
+          <span>Crée ton premier modèle ou importe une grille déjà préparée dans Mes Documents.</span>
+          {canEdit&&<div style={{display:"flex",gap:8,justifyContent:"center",flexWrap:"wrap",marginTop:10}}><button onClick={createGrid} disabled={saving} style={primary}>+ Créer une grille</button>{scopeType==="team"&&<button onClick={()=>void openPersonalImport()} disabled={importBusy} style={secondary}>⬇ Importer depuis Mes Documents</button>}</div>}
         </div>
       ):(
         <>
@@ -1042,6 +1066,21 @@ export default function TeamShootingGrids({
         </>
       )}
       {scopeType==="team"&&<ShootingComparison teamId={teamId} players={players}/>}
+      {importOpen&&<div style={{position:"fixed",inset:0,zIndex:10000,background:"rgba(20,12,10,.58)",display:"grid",placeItems:"center",padding:18}} onClick={()=>setImportOpen(false)}>
+        <div style={{width:"min(760px,100%)",maxHeight:"80vh",overflow:"auto",background:"#fff",borderRadius:18,padding:18,boxShadow:"0 24px 70px rgba(0,0,0,.25)"}} onClick={e=>e.stopPropagation()}>
+          <div style={{display:"flex",justifyContent:"space-between",gap:12,alignItems:"start"}}>
+            <div><span style={eyebrow}>MES DOCUMENTS</span><h3 style={{...title,fontSize:20}}>Importer une grille de tir</h3><p style={{margin:"4px 0 14px",color:MUTED,fontSize:11}}>Le nom, les spots, les réglages et le schéma Plaquette seront copiés dans cette équipe.</p></div>
+            <button onClick={()=>setImportOpen(false)} style={{...secondary,padding:"7px 10px"}}>✕</button>
+          </div>
+          <div style={{display:"grid",gap:8}}>
+            {personalGrids.map(g=><div key={g.id} style={{border:`1px solid ${BORDER}`,borderRadius:12,padding:12,display:"grid",gridTemplateColumns:"1fr auto",gap:12,alignItems:"center"}}>
+              <div><b style={{color:BORDEAUX}}>{g.name}</b><div style={{fontSize:10,color:MUTED,marginTop:4}}>{g.description||"Aucune consigne"} · {g.input_mode==="fixed_attempts"?`${g.fixed_value} tentés / spot`:`${g.fixed_value} marqués à atteindre`}</div></div>
+              <button disabled={importBusy} onClick={()=>void importPersonalGrid(g)} style={primary}>Importer</button>
+            </div>)}
+            {!personalGrids.length&&<div style={{padding:20,border:`1px dashed ${BORDER}`,borderRadius:12,color:MUTED,textAlign:"center"}}>Aucune grille personnelle trouvée. Crée d’abord ta grille dans Mon compte → Mes Documents.</div>}
+          </div>
+        </div>
+      </div>}
       <style jsx>{`
         @media (max-width: 900px) {
           .shooting-editor-grid { grid-template-columns: 1fr !important; }
