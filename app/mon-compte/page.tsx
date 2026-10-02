@@ -7,6 +7,7 @@ import { createClient } from '@/lib/supabase/client';
 import MonCalendrier from './Calendrier';
 import Messagerie from '@/components/account/Messagerie';
 import MesPapiers from './MesPapiers';
+import TeamShootingGrids from '@/components/equipes/TeamShootingGrids';
 import LiveStatsModule from "@/components/management/LiveStatsModule";
 import StatsJoueursModule from "@/components/management/StatsJoueursModule";
 import StatsTempsFortsModule from "@/components/management/StatsTempsFortsModule";
@@ -102,7 +103,7 @@ const MENU: MenuItem[] = [
 },
   { key: 'profilcoach', label: 'Mon Profil Coach', icon: '⚡' },
   { key: 'annonces', label: 'Mes Annonces', icon: '📣' },
-  { key: 'papiers', label: 'Mes Documents', icon: '📃', href: '/mon-compte/documents' },
+  { key: 'papiers', label: 'Mes Documents', icon: '📃' },
   { key: 'equipes', label: 'Mes Équipes', icon: '👥' },
   { key: 'institutionnel', label: 'Institutionnel', icon: '🏛️', href: '/institutionnel' },
   { key: 'management', label: 'Management', icon: '📊' },
@@ -154,6 +155,7 @@ export default function MonComptePage() {
   const [isAdmin, setIsAdmin] = useState(false);
   const [hasClubSubscription, setHasClubSubscription] = useState(false);
   const [accessMap, setAccessMap] = useState<Record<string, boolean>>({});
+  const [documentsTab, setDocumentsTab] = useState<'papers'|'shooting'|'other'>('papers');
   const [active, setActive] = useState<string>('profil');
   const [managementView, setManagementView] = useState<
   | "stats-joueurs"
@@ -1364,7 +1366,18 @@ return (
 
           {active === 'messagerie' && <Messagerie />}
           {active === 'calendrier' && <MonCalendrier />}
-          {active === 'papiers' && <MesPapiers />}
+          {active === 'papiers' && (
+            <div>
+              <div style={{display:'flex',gap:8,flexWrap:'wrap',marginBottom:18}}>
+                <button onClick={()=>setDocumentsTab('papers')} style={{padding:'9px 14px',borderRadius:10,border:'1px solid #d8cbc2',background:documentsTab==='papers'?'#6B1A2C':'#fff',color:documentsTab==='papers'?'#fff':'#6B1A2C',fontWeight:800,cursor:'pointer'}}>📄 Mes papiers</button>
+                <button onClick={()=>setDocumentsTab('shooting')} style={{padding:'9px 14px',borderRadius:10,border:'1px solid #d8cbc2',background:documentsTab==='shooting'?'#6B1A2C':'#fff',color:documentsTab==='shooting'?'#fff':'#6B1A2C',fontWeight:800,cursor:'pointer'}}>🏀 Mes grilles de tir</button>
+                <button onClick={()=>setDocumentsTab('other')} style={{padding:'9px 14px',borderRadius:10,border:'1px solid #d8cbc2',background:documentsTab==='other'?'#6B1A2C':'#fff',color:documentsTab==='other'?'#fff':'#6B1A2C',fontWeight:800,cursor:'pointer'}}>••• Autres</button>
+              </div>
+              {documentsTab==='papers'&&<MesPapiers />}
+              {documentsTab==='shooting'&&<TeamShootingGrids libraryOnly />}
+              {documentsTab==='other'&&<div className="mc-soft"><h2>Autres</h2><p>Cet espace accueillera tes autres documents personnels.</p></div>}
+            </div>
+          )}
 
           {active === 'abonnement' && uid && (
             <AbonnementSection userId={uid} />
