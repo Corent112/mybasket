@@ -1368,10 +1368,10 @@ return (
           {active === 'calendrier' && <MonCalendrier />}
           {active === 'papiers' && (
             <div>
-              <div style={{display:'flex',gap:8,flexWrap:'wrap',marginBottom:18}}>
-                <button onClick={()=>setDocumentsTab('papers')} style={{padding:'9px 14px',borderRadius:10,border:'1px solid #d8cbc2',background:documentsTab==='papers'?'#6B1A2C':'#fff',color:documentsTab==='papers'?'#fff':'#6B1A2C',fontWeight:800,cursor:'pointer'}}>📄 Mes papiers</button>
-                <button onClick={()=>setDocumentsTab('shooting')} style={{padding:'9px 14px',borderRadius:10,border:'1px solid #d8cbc2',background:documentsTab==='shooting'?'#6B1A2C':'#fff',color:documentsTab==='shooting'?'#fff':'#6B1A2C',fontWeight:800,cursor:'pointer'}}>🏀 Mes grilles de tir</button>
-                <button onClick={()=>setDocumentsTab('other')} style={{padding:'9px 14px',borderRadius:10,border:'1px solid #d8cbc2',background:documentsTab==='other'?'#6B1A2C':'#fff',color:documentsTab==='other'?'#fff':'#6B1A2C',fontWeight:800,cursor:'pointer'}}>••• Autres</button>
+              <div className="mc-equipes-head"><div><h2>Mes Documents</h2><p>Retrouve tes papiers, tes modèles de grilles de tir et tes autres documents.</p></div></div><div className="mc-equipes-tabs">
+                <button type="button" className={documentsTab==='papers'?'active':''} onClick={()=>setDocumentsTab('papers')}>📄 Mes papiers</button>
+                <button type="button" className={documentsTab==='shooting'?'active':''} onClick={()=>setDocumentsTab('shooting')}>🏀 Mes grilles de tir</button>
+                <button type="button" className={documentsTab==='other'?'active':''} onClick={()=>setDocumentsTab('other')}>••• Autres</button>
               </div>
               {documentsTab==='papers'&&<MesPapiers />}
               {documentsTab==='shooting'&&<TeamShootingGrids teamId="" players={[]} canEdit={true} scopeType="institution" scopeId="personal" scopeLabel="Mes Documents" libraryOnly />}
