@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import type { Player } from "@/types/player";
 import ShotChart, { SHOT_ZONES, type ShotLike } from "@/components/prise-stats-pro/ShotChart";
@@ -18,6 +18,7 @@ type Grid = {
   fixed_value: number;
   court_schema_url: string | null;
   court_schema_data: any | null;
+  movement_video_url?: string | null;
   created_at: string;
   updated_at: string;
   share_token?: string | null;
@@ -277,6 +278,8 @@ export default function TeamShootingGrids({
   const [importOpen,setImportOpen]=useState(false);
   const [personalGrids,setPersonalGrids]=useState<Array<Grid & {structure_id?:string}>>([]);
   const [importBusy,setImportBusy]=useState(false);
+  const movementVideoInput=useRef<HTMLInputElement|null>(null);
+  const [videoBusy,setVideoBusy]=useState(false);
 
   const grid=grids.find(g=>g.id===selectedGridId)||null;
   const toast=(t:string)=>{setMessage(t);window.setTimeout(()=>setMessage(""),2200)};
@@ -325,10 +328,10 @@ export default function TeamShootingGrids({
       });
     }
     const gridQuery=personalLibrary
-      ? supabase.from(tables.grids).select("id,owner_id,name,description,input_mode,fixed_value,court_schema_url,court_schema_data,created_at,updated_at").eq("owner_id",user.id)
+      ? supabase.from(tables.grids).select("id,owner_id,name,description,input_mode,fixed_value,court_schema_url,court_schema_data,movement_video_url,created_at,updated_at").eq("owner_id",user.id)
       : scopeType==="institution"
-        ? supabase.from(tables.grids).select("id,structure_id,owner_id,name,description,input_mode,fixed_value,court_schema_url,court_schema_data,created_at,updated_at").eq("structure_id",effectiveScopeId)
-        : supabase.from(tables.grids).select("id,team_id,owner_id,name,description,input_mode,fixed_value,court_schema_url,court_schema_data,created_at,updated_at").eq("team_id",teamId);
+        ? supabase.from(tables.grids).select("id,structure_id,owner_id,name,description,input_mode,fixed_value,court_schema_url,court_schema_data,movement_video_url,created_at,updated_at").eq("structure_id",effectiveScopeId)
+        : supabase.from(tables.grids).select("id,team_id,owner_id,name,description,input_mode,fixed_value,court_schema_url,court_schema_data,movement_video_url,created_at,updated_at").eq("team_id",teamId);
     const {data,error}=await gridQuery.order("updated_at",{ascending:false});
     if(error)throw error;
     const list=(data||[]) as Grid[];
@@ -402,7 +405,7 @@ export default function TeamShootingGrids({
     if(scopeType!=="team"||!userId)return;
     setImportBusy(true);
     try{
-      const {data,error}=await supabase.from("personal_shooting_grids").select("id,owner_id,name,description,input_mode,fixed_value,court_schema_url,court_schema_data,created_at,updated_at").eq("owner_id",userId).order("updated_at",{ascending:false});
+      const {data,error}=await supabase.from("personal_shooting_grids").select("id,owner_id,name,description,input_mode,fixed_value,court_schema_url,court_schema_data,movement_video_url,created_at,updated_at").eq("owner_id",userId).order("updated_at",{ascending:false});
       if(error)throw error;
       setPersonalGrids((data||[]) as Array<Grid & {structure_id?:string}>); setImportOpen(true);
     }catch(e){console.error(e);toast("Impossible de charger Mes Documents.")}finally{setImportBusy(false)}
@@ -411,7 +414,7 @@ export default function TeamShootingGrids({
     if(scopeType!=="team"||!userId||!canEdit)return; setImportBusy(true);
     try{
       const {data:sourceRows,error:rowsError}=await supabase.from("personal_shooting_grid_rows").select("name,sort_order,target_attempts").eq("grid_id",source.id).order("sort_order"); if(rowsError)throw rowsError;
-      const {data:created,error:createError}=await supabase.from("shooting_grids").insert({team_id:teamId,owner_id:userId,name:source.name,description:source.description,input_mode:source.input_mode,fixed_value:source.fixed_value,court_schema_url:source.court_schema_url,court_schema_data:source.court_schema_data}).select("*").single(); if(createError)throw createError;
+      const {data:created,error:createError}=await supabase.from("shooting_grids").insert({team_id:teamId,owner_id:userId,name:source.name,description:source.description,input_mode:source.input_mode,fixed_value:source.fixed_value,court_schema_url:source.court_schema_url,court_schema_data:source.court_schema_data,movement_video_url:source.movement_video_url||null}).select("*").single(); if(createError)throw createError;
       if(sourceRows?.length){const {error:insertRowsError}=await supabase.from("shooting_grid_rows").insert(sourceRows.map((row:any)=>({grid_id:created.id,name:row.name,sort_order:row.sort_order,target_attempts:row.target_attempts??source.fixed_value})));if(insertRowsError){await supabase.from("shooting_grids").delete().eq("id",created.id);throw insertRowsError}}
       setImportOpen(false); await loadGrids(created.id); setShootingView("editor"); toast("Grille importée depuis Mes Documents ✓");
     }catch(e){console.error(e);toast("Impossible d’importer cette grille.")}finally{setImportBusy(false)}
@@ -479,6 +482,39 @@ export default function TeamShootingGrids({
     if(error)return toast("Impossible de désactiver le lien.");
     setGrids(cur=>cur.map(g=>g.id===target.id?{...g,share_enabled:false}:g));
     toast("Lien désactivé.");
+  }
+
+  async function uploadMovementVideo(file:File|null){
+    if(!file||!grid||!canEdit||!userId)return;
+    if(!file.type.startsWith("video/")){toast("Choisis un fichier vidéo.");return}
+    if(file.size>250*1024*1024){toast("Vidéo trop lourde (250 Mo maximum).");return}
+    setVideoBusy(true);
+    try{
+      const ext=(file.name.split(".").pop()||"mp4").toLowerCase().replace(/[^a-z0-9]/g,"")||"mp4";
+      const path=`${userId}/${grid.id}/mouvement-${Date.now()}.${ext}`;
+      const {error:uploadError}=await supabase.storage.from("shooting-grid-videos").upload(path,file,{upsert:false,contentType:file.type||"video/mp4"});
+      if(uploadError)throw uploadError;
+      const {data:publicData}=supabase.storage.from("shooting-grid-videos").getPublicUrl(path);
+      const url=publicData.publicUrl;
+      const {error:updateError}=await supabase.from(tables.grids).update({movement_video_url:url,updated_at:new Date().toISOString()}).eq("id",grid.id);
+      if(updateError){await supabase.storage.from("shooting-grid-videos").remove([path]);throw updateError}
+      patchGrid({movement_video_url:url});
+      toast("Vidéo de déplacement ajoutée ✓");
+    }catch(e){console.error(e);toast("Impossible d’ajouter la vidéo.")}finally{setVideoBusy(false);if(movementVideoInput.current)movementVideoInput.current.value=""}
+  }
+
+  async function removeMovementVideo(){
+    if(!grid||!canEdit)return;
+    setVideoBusy(true);
+    try{
+      const old=grid.movement_video_url||"";
+      const {error}=await supabase.from(tables.grids).update({movement_video_url:null,updated_at:new Date().toISOString()}).eq("id",grid.id);
+      if(error)throw error;
+      const marker="/storage/v1/object/public/shooting-grid-videos/";
+      const path=old.includes(marker)?decodeURIComponent(old.split(marker)[1]||""):"";
+      if(path)await supabase.storage.from("shooting-grid-videos").remove([path]);
+      patchGrid({movement_video_url:null});toast("Vidéo retirée.");
+    }catch(e){console.error(e);toast("Impossible de retirer la vidéo.")}finally{setVideoBusy(false)}
   }
 
   async function saveDefinition(){
@@ -997,6 +1033,23 @@ export default function TeamShootingGrids({
                   <CourtPreview image={grid.court_schema_url}/>
                   <div style={{marginTop:8,color:MUTED,fontSize:10,lineHeight:1.45}}>
                     Le bouton ouvre directement <b>Plaquette MyBasket</b>. Place tes spots sur le demi-terrain puis clique sur <b>Insérer dans la grille de tir</b> : le dessin revient ici et reste sauvegardé avec la grille.
+                  </div>
+
+                  <div style={{marginTop:14,paddingTop:12,borderTop:`1px solid ${BORDER}`}}>
+                    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:8,flexWrap:"wrap"}}>
+                      <div><span style={eyebrow}>VIDÉO / DÉPLACEMENTS</span><strong style={{display:"block",color:TEXT,fontSize:13,marginTop:3}}>Montrer comment réaliser la grille</strong></div>
+                      {canEdit&&<div style={{display:"flex",gap:6}}>
+                        <input ref={movementVideoInput} type="file" accept="video/*" hidden onChange={e=>void uploadMovementVideo(e.target.files?.[0]||null)}/>
+                        <button type="button" disabled={videoBusy} onClick={()=>movementVideoInput.current?.click()} style={secondary}>🎬 {grid.movement_video_url?"Remplacer la vidéo":"Ajouter une vidéo"}</button>
+                        {grid.movement_video_url&&<button type="button" disabled={videoBusy} onClick={()=>void removeMovementVideo()} style={danger}>× Retirer</button>}
+                      </div>}
+                    </div>
+                    {grid.movement_video_url?(
+                      <video src={grid.movement_video_url} controls playsInline preload="metadata" style={{width:"100%",maxHeight:260,marginTop:9,borderRadius:12,background:"#111",display:"block"}}/>
+                    ):(
+                      <button type="button" disabled={!canEdit||videoBusy} onClick={()=>movementVideoInput.current?.click()} style={{width:"100%",minHeight:82,marginTop:9,border:`1px dashed ${GOLD}`,borderRadius:12,background:"#FCF8F3",color:BORDEAUX,fontWeight:900,cursor:canEdit?"pointer":"default"}}>🎬 Ajouter une vidéo des déplacements</button>
+                    )}
+                    <div style={{fontSize:9,color:MUTED,marginTop:6}}>Vidéo facultative · MP4/MOV/WebM · 250 Mo maximum. Elle reste attachée à cette grille.</div>
                   </div>
                 </div>
               </div>
