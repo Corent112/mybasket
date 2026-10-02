@@ -24,6 +24,7 @@ const THEME_OPTIONS = [
   "Rebond",
   "Physique",
   "Adresse",
+  "Ludique",
 ];
 
 const FILTERS = [
