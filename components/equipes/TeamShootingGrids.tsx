@@ -487,7 +487,7 @@ export default function TeamShootingGrids({
     try{
       const {error}=await supabase.from(tables.grids).update({
         name:grid.name.trim()||"Grille de tir",
-        description:grid.description?.trim()||null,
+        description:personalLibrary?(grid.description?.trim()||""):(grid.description?.trim()||null),
         input_mode:grid.input_mode,
         fixed_value:Math.max(1,safeInt(grid.fixed_value)),
         updated_at:new Date().toISOString()
