@@ -1374,7 +1374,7 @@ return (
                 <button onClick={()=>setDocumentsTab('other')} style={{padding:'9px 14px',borderRadius:10,border:'1px solid #d8cbc2',background:documentsTab==='other'?'#6B1A2C':'#fff',color:documentsTab==='other'?'#fff':'#6B1A2C',fontWeight:800,cursor:'pointer'}}>••• Autres</button>
               </div>
               {documentsTab==='papers'&&<MesPapiers />}
-              {documentsTab==='shooting'&&<TeamShootingGrids libraryOnly />}
+              {documentsTab==='shooting'&&<TeamShootingGrids teamId="" players={[]} canEdit={true} scopeType="institution" scopeId="personal" scopeLabel="Mes Documents" libraryOnly />}
               {documentsTab==='other'&&<div className="mc-soft"><h2>Autres</h2><p>Cet espace accueillera tes autres documents personnels.</p></div>}
             </div>
           )}
