@@ -20,7 +20,7 @@ type Structure={id:string;structure_type:"committee"|"league"|"federation"|"pole
 const TABS=["Dashboard","Joueurs","Dossiers de sortie","Formation des cadres","Mon calendrier","Documents","Communication","Ressources","Membres & droits","Paramètres"] as const;
 type Tab=(typeof TABS)[number];
 const META:Record<Tab,{icon:string;title:string;subtitle:string}>={
- Dashboard:{icon:"▦",title:"Dashboard",subtitle:"Pilote l’activité de ton Institution depuis un seul espace."},
+ Dashboard:{icon:"▦",title:"Dashboard Institution",subtitle:"Pilote l’activité de ton Institution depuis un seul espace."},
  Joueurs:{icon:"♙",title:"Joueurs",subtitle:"Effectif, convocations, présences, détection et parcours longitudinal."},
  "Dossiers de sortie":{icon:"⇧",title:"Dossiers de sortie",subtitle:"Sélectionne les joueurs, compose les PDF et envoie les dossiers de fin de parcours."},
  "Formation des cadres":{icon:"⌂",title:"Formation des cadres",subtitle:"Promotions, inscrits, présence, documents et évaluations."},
