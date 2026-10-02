@@ -34,10 +34,8 @@ const PAIN_ZONES: PainZone[] = [
   { id: "thigh_right_front", label: "Cuisse droite", side: "front", x: 39, y: 59 },
   { id: "knee_left_front", label: "Genou gauche", side: "front", x: 62, y: 72 },
   { id: "knee_right_front", label: "Genou droit", side: "front", x: 38, y: 72 },
-  { id: "tibia_left_front", label: "Tibia gauche", side: "front", x: 62, y: 83 },
-  { id: "tibia_right_front", label: "Tibia droit", side: "front", x: 38, y: 83 },
-  { id: "ankle_left_front", label: "Cheville gauche", side: "front", x: 62, y: 94 },
-  { id: "ankle_right_front", label: "Cheville droite", side: "front", x: 38, y: 94 },
+  { id: "tibia_left_front", label: "Tibia / cheville gauche", side: "front", x: 62, y: 83 },
+  { id: "tibia_right_front", label: "Tibia / cheville droite", side: "front", x: 38, y: 83 },
   { id: "neck_back", label: "Nuque", side: "back", x: 50, y: 13 },
   { id: "upper_back", label: "Dos", side: "back", x: 50, y: 27 },
   { id: "elbow_left_back", label: "Coude gauche", side: "back", x: 22, y: 43 },
@@ -122,7 +120,7 @@ function BodyFigure({
   onToggle: (zone: PainZone) => void;
 }) {
   const visibleIds = side === "front"
-    ? new Set(["head_front","shoulder_left_front","shoulder_right_front","plexus_front","biceps_left_front","biceps_right_front","abdomen_front","fingers_left_front","fingers_right_front","hip_left_front","hip_right_front","thigh_left_front","thigh_right_front","knee_left_front","knee_right_front","tibia_left_front","tibia_right_front","ankle_left_front","ankle_right_front"])
+    ? new Set(["head_front","shoulder_left_front","shoulder_right_front","plexus_front","biceps_left_front","biceps_right_front","abdomen_front","fingers_left_front","fingers_right_front","hip_left_front","hip_right_front","thigh_left_front","thigh_right_front","knee_left_front","knee_right_front","tibia_left_front","tibia_right_front"])
     : new Set(["neck_back","upper_back","elbow_left_back","elbow_right_back","wrist_left_back","wrist_right_back","hamstring_left","hamstring_right","calf_left","calf_right","achilles_left_back","achilles_right_back","foot_left_back","foot_right_back"]);
   const zones = PAIN_ZONES.filter((zone) => zone.side === side && visibleIds.has(zone.id));
   const front = side === "front";
