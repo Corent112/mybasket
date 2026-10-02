@@ -213,7 +213,7 @@ export default function MesPapiers() {
       <div className="papers">
         <div className="papers-head">
           <div>
-            <h2>Mes Papiers</h2>
+            <h2>Mes documents</h2>
             <p>{limitText}</p>
           </div>
 
