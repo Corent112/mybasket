@@ -855,9 +855,9 @@ export default function TeamShootingGrids({
 
       <div style={{display:"flex",justifyContent:"space-between",gap:10,alignItems:"center",flexWrap:"wrap"}}>
         <div>
-          <span style={eyebrow}>GRILLES DE TIR</span>
-          <h2 style={{margin:"4px 0",color:BORDEAUX}}>Créer · tester · suivre la progression</h2>
-          <p style={{margin:0,color:MUTED,fontSize:11}}>Une grille équipe peut être remplie par plusieurs joueurs et alimente automatiquement leur fiche individuelle.</p>
+          <span style={eyebrow}>{libraryOnly?"MES DOCUMENTS · GRILLES DE TIR":"GRILLES DE TIR · ÉQUIPE"}</span>
+          <h2 style={{margin:"4px 0",color:BORDEAUX}}>{libraryOnly?"Créer · consulter · modifier tes modèles":"Créer pour cette équipe · importer depuis Mes Documents"}</h2>
+          <p style={{margin:0,color:MUTED,fontSize:11}}>{libraryOnly?"Ces grilles sont tes modèles personnels. Tu peux les consulter, modifier ou supprimer puis les importer dans une équipe.":"Une grille créée ici appartient uniquement à cette équipe. Tu peux aussi importer une copie d’un modèle de Mes Documents."}</p>
         </div>
         <div style={{display:"flex",gap:7,flexWrap:"wrap"}}>
           {grid&&<button onClick={exportBlankPdf} style={secondary}>📄 Exporter grille vierge A4</button>}
@@ -882,7 +882,7 @@ export default function TeamShootingGrids({
             {shootingView==="library"&&(
               <div style={{...card,marginBottom:12}}>
                 <span style={eyebrow}>MES GRILLES DE TIR</span>
-                <h3 style={title}>Choisis une grille à consulter ou à utiliser</h3>
+                <h3 style={title}>{libraryOnly?"Consulte, modifie ou supprime une grille":"Choisis une grille liée à cette équipe"}</h3>
                 <div className="shooting-library" style={{display:"grid",gridTemplateColumns:"repeat(3,minmax(0,1fr))",gap:8}}>
                   {grids.map(g=>(
                     <div key={g.id} role="button" tabIndex={0} onClick={()=>{setSelectedGridId(g.id);void loadDetails(g.id);setShootingView("editor")}}
@@ -890,7 +890,7 @@ export default function TeamShootingGrids({
                       {canEdit&&<button type="button" title="Supprimer cette grille" aria-label={`Supprimer ${g.name}`} onClick={e=>{e.stopPropagation();void deleteGrid(g)}} style={{position:"absolute",top:7,right:7,width:22,height:22,border:"1px solid #E7B8B8",borderRadius:999,background:"#FFF4F4",color:"#B42318",fontSize:15,fontWeight:1000,lineHeight:1,cursor:"pointer"}}>×</button>}
                       <b style={{display:"block",color:BORDEAUX,fontSize:13}}>{g.name}</b>
                       <span style={{display:"block",marginTop:4,color:MUTED,fontSize:10,lineHeight:1.35}}>{g.description||"Aucune consigne"}</span>
-                      <span style={{display:"block",marginTop:8,color:TEXT,fontSize:9,fontWeight:900}}>Ouvrir la grille →</span>
+                      <span style={{display:"block",marginTop:8,color:TEXT,fontSize:9,fontWeight:900}}>{libraryOnly?"Consulter / modifier →":"Ouvrir la grille →"}</span>
                       {scopeType==="team"&&<span style={{display:"flex",gap:5,marginTop:9,flexWrap:"wrap"}} onClick={e=>e.stopPropagation()}>
                         <button type="button" disabled={shareBusy} onClick={()=>void ensureShareLink(g)} style={{...secondary,padding:"6px 8px",fontSize:9}}>🔗 {g.share_enabled?"Copier le lien":"Générer le lien"}</button>
                         {g.share_enabled&&<button type="button" onClick={()=>void disableShareLink(g)} style={{...secondary,padding:"6px 8px",fontSize:9}}>Désactiver</button>}
@@ -917,9 +917,9 @@ export default function TeamShootingGrids({
               </select>
             </label>
             <div style={{color:MUTED,fontSize:10,lineHeight:1.45,paddingBottom:4}}>
-              <b style={{color:TEXT}}>Bibliothèque de modèles.</b> Chaque grille conserve son nom, ses spots, leur ordre, son mode de saisie et son schéma Plaquette.
+              <b style={{color:TEXT}}>{libraryOnly?"Mes modèles personnels.":"Grilles de cette équipe."}</b> {libraryOnly?"Tu peux les modifier ici puis les importer dans une équipe.":"Toute grille créée ici reste liée uniquement à cette équipe ; l’import depuis Mes Documents crée une copie pour cette équipe."}
             </div>
-            {canEdit&&<button onClick={createGrid} disabled={saving} style={primary}>+ Créer une grille</button>}
+            {canEdit&&<button onClick={createGrid} disabled={saving} style={primary}>{libraryOnly?"+ Créer une grille dans Mes Documents":"+ Créer une grille pour cette équipe"}</button>}
             </>)}
           </div>
 
