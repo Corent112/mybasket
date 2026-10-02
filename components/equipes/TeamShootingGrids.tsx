@@ -232,6 +232,7 @@ export default function TeamShootingGrids({
 }){
   const supabase=useMemo(()=>createClient(),[]);
   const effectiveScopeId=scopeType==="institution"?(scopeId||teamId):teamId;
+  const personalLibrary=libraryOnly&&scopeType==="institution";
   const tables=scopeType==="institution"?{
     grids:"institutional_shooting_grids",
     rows:"institutional_shooting_grid_rows",
@@ -318,7 +319,9 @@ export default function TeamShootingGrids({
       });
     }
     const gridQuery=scopeType==="institution"
-      ? supabase.from(tables.grids).select("id,structure_id,owner_id,name,description,input_mode,fixed_value,court_schema_url,court_schema_data,created_at,updated_at").eq("structure_id",effectiveScopeId)
+      ? (personalLibrary
+          ? supabase.from(tables.grids).select("id,structure_id,owner_id,name,description,input_mode,fixed_value,court_schema_url,court_schema_data,created_at,updated_at").eq("owner_id",user.id)
+          : supabase.from(tables.grids).select("id,structure_id,owner_id,name,description,input_mode,fixed_value,court_schema_url,court_schema_data,created_at,updated_at").eq("structure_id",effectiveScopeId))
       : supabase.from(tables.grids).select("id,team_id,owner_id,name,description,input_mode,fixed_value,court_schema_url,court_schema_data,created_at,updated_at").eq("team_id",teamId);
     const {data,error}=await gridQuery.order("updated_at",{ascending:false});
     if(error)throw error;
@@ -356,12 +359,14 @@ export default function TeamShootingGrids({
         const parsed=JSON.parse(raw);
         const image=Array.isArray(parsed?.schemaImages)?parsed.schemaImages[0]:null;
         if(!image)return;
-        const {error}=await supabase.from(tables.grids).update({
+        let updateQuery=supabase.from(tables.grids).update({
           court_schema_url:image,
           court_schema_data:parsed,
           updated_at:new Date().toISOString()
-        }) .eq("id",pending)
-        .eq(scopeType==="institution"?"structure_id":"team_id",effectiveScopeId);
+        }).eq("id",pending);
+        if(scopeType==="institution"&&!personalLibrary) updateQuery=updateQuery.eq("structure_id",effectiveScopeId);
+        if(scopeType==="team") updateQuery=updateQuery.eq("team_id",effectiveScopeId);
+        const {error}=await updateQuery;
         if(error)throw error;
         localStorage.removeItem("mybasket_shooting_grid_pending");
         localStorage.removeItem("mybasket_plaquette_result");
@@ -377,7 +382,7 @@ export default function TeamShootingGrids({
     setSaving(true);
     try{
       const {data:g,error}=await supabase.from(tables.grids).insert({
-        ...(scopeType==="institution"?{structure_id:effectiveScopeId}:{team_id:teamId}),owner_id:userId,name:"Nouvelle grille de tir",description:"",
+        ...(scopeType==="institution"?(personalLibrary?{}:{structure_id:effectiveScopeId}):{team_id:teamId}),owner_id:userId,name:"Nouvelle grille de tir",description:"",
         input_mode:"fixed_attempts",fixed_value:10
       }).select("*").single();
       if(error)throw error;
