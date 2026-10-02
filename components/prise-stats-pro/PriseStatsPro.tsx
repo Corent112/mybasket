@@ -651,6 +651,8 @@ function computeBox(actions: StatA[], roster: Player[]) {
       L.defReb++;
     } else if (a.actionType === "passe-decisive" && L) {
       L.ast++;
+    } else if (a.actionType === "faute-technique" && a.foulOutcome === "technical-against" && a.specialCase === "technical-player" && L) {
+      L.pf++;
     } else if (a.actionType === "faute-commise" && L) {
       L.pf++;
       // Faute commise alors que nous sommes en attaque = faute offensive :
@@ -2721,7 +2723,7 @@ export default function PriseStatsProPage() {
     technicalDraft.ftMade = 0;
     technicalDraft.ftResults = [];
     setDraft(technicalDraft);
-    setStage('ft');
+    setStage('technical-foul-target');
   };
 
   const cancelTechnicalFtInterruption = () => {
@@ -3996,7 +3998,7 @@ export default function PriseStatsProPage() {
       // Si le LF est pour nous, on attribue d'abord la faute technique
       // à un joueur adverse ou à l'équipe. Si le LF est adverse, cette
       // attribution n'est pas nécessaire.
-      setStage(o === 'technical-for' ? 'technical-foul-target' : 'ft');
+      setStage('technical-foul-target');
       return;
     }
     if (o === 'us-2plus1' || o === 'us-3plus1' || o === 'us-lf2' || o === 'us-lf3') {
@@ -4799,7 +4801,7 @@ export default function PriseStatsProPage() {
                     <div className="matchReviewConstructorTop">
                       <div className="matchReviewConstructorIcon">🧱</div>
                       <div>
-                        <b>CONSTRUCTEUR · RETOUR DE MATCH</b>
+                        <b>CONSTRUCTEUR · MON MODE</b>
                         <small>Pars d'une page vide et construis exactement ta logique de retour de match.</small>
                       </div>
                       <button type="button" onClick={() => setShowMatchReviewBuilder(true)}>Créer / modifier</button>
@@ -5363,7 +5365,7 @@ export default function PriseStatsProPage() {
                     {workflowPrefs.zone ? '✓ Shot chart Live individuel : activée' : '○ Shot chart Live individuel : désactivée'}
                   </button>
                 )}
-                {codingMode === 'match-review' && <button onClick={() => { setShowProjectMenu(false); setShowMatchReviewBuilder(true); }}>🧱 Configurer Retour de match</button>}
+                {codingMode === 'match-review' && <button onClick={() => { setShowProjectMenu(false); setShowMatchReviewBuilder(true); }}>🧱 Configurer Mon mode</button>}
                 {codingMode !== 'match-review' && <button onClick={() => { setShowProjectMenu(false); openCodingSettings('workflow'); }}>⚙ Configurer mon codage</button>}
                 <button onClick={() => { setShowProjectMenu(false); setShowMatchInfo(true); }}>ℹ Informations du match</button>
                 {codingMode !== 'match-review' && <button onClick={() => { setShowProjectMenu(false); openCodingSettings('buttons'); }}>🧩 Gérer mes boutons</button>}
@@ -7147,38 +7149,34 @@ export default function PriseStatsProPage() {
             );
       }
       case 'technical-foul-target': {
+        const technicalForUs = draft.foulOutcome === 'technical-for';
         return (
           <>
-            {head('À qui attribuer la faute technique ?', 'Le lancer franc est pour nous : indique qui a reçu la technique avant de saisir le LF.')}
-            <div className="grid c2">
-              <button
-                className="chip"
-                onClick={() => {
-                  setDraft({ ...draft, opponentPlayerId: null, opponentPlayerName: 'Équipe adverse', opponentPlayerNumber: null });
-                  setStage('ft');
-                }}
-              >
-                🏀 Technique équipe adverse
-              </button>
-              {oppRoster.length === 0 && (
-                <div className="tip">Aucun joueur adverse n'est renseigné sur ce projet. Tu peux attribuer la technique à l'équipe, ou ajouter l'effectif adverse avant le match pour choisir un joueur.</div>
-              )}
-            </div>
-            {oppRoster.length > 0 && (
+            {head(
+              technicalForUs ? 'Qui tire le lancer franc ?' : 'Qui prend la faute technique ?',
+              technicalForUs
+                ? 'Choisis le joueur de ton équipe qui tire le LF, puis saisis le résultat.'
+                : 'Choisis le joueur sanctionné, le coach ou le banc, puis saisis le résultat du LF adverse.'
+            )}
+            {technicalForUs ? (
+              <div className="grid c3">
+                {roster.map((p) => (
+                  <button key={p.id} className="pl" onClick={() => { setDraft({ ...draft, playerId:p.id, specialCase:'technical' }); setStage('ft'); }}>
+                    <Av p={p}/><span className="num">#{p.num}</span><span className="nm">{p.name}</span>
+                  </button>
+                ))}
+              </div>
+            ) : (
               <>
-                <div className="sublbl">Ou choisir le joueur adverse sanctionné</div>
+                <div className="grid c2">
+                  <button className="chip" onClick={() => { setDraft({ ...draft, playerId:null, specialCase:'technical-coach' }); setStage('ft'); }}>🧑‍🏫 Coach</button>
+                  <button className="chip" onClick={() => { setDraft({ ...draft, playerId:null, specialCase:'technical-bench' }); setStage('ft'); }}>🪑 Banc</button>
+                </div>
+                <div className="sublbl">Ou choisir le joueur sanctionné</div>
                 <div className="grid c3">
-                  {oppRoster.map((op) => (
-                    <button
-                      key={op.id}
-                      className="bt"
-                      onClick={() => {
-                        setDraft({ ...draft, opponentPlayerId: op.id, opponentPlayerName: op.name, opponentPlayerNumber: op.num });
-                        setStage('ft');
-                      }}
-                    >
-                      <span className="ic">#{op.num}</span>
-                      <span className="lbl">{op.name}</span>
+                  {roster.map((p) => (
+                    <button key={p.id} className="pl" onClick={() => { setDraft({ ...draft, playerId:p.id, specialCase:'technical-player' }); setStage('ft'); }}>
+                      <Av p={p}/><span className="num">#{p.num}</span><span className="nm">{p.name}</span>
                     </button>
                   ))}
                 </div>
@@ -9409,7 +9407,7 @@ function Style() {
         flex-direction: column;
         position: relative;
       }
-      .vplayer { width: 100%; height: 100%; object-fit: contain; background: #000; }
+      .vplayer { width: 100%; height: 100%; object-fit: contain; background: #000; opacity:1!important; filter:none!important; mix-blend-mode:normal!important; }
       .vctrls { position: absolute; left: 0; right: 0; bottom: 0; display: flex; align-items: center; gap: 8px; padding: 6px 10px; background: linear-gradient(transparent, rgba(0,0,0,0.6)); }
       .vname { font-size: 11px; color: #dfe6f5; font-weight: 700; }
       .vyt { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; color: #dfe6f5; }
