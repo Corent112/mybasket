@@ -4639,6 +4639,66 @@ export default function PriseStatsProPage() {
     flash('Projet MyBasket exporté ✓');
   };
 
+  const exportMatchReportPDF = async () => {
+    if (!actions.length) { flash('Aucune donnée pour générer le rapport'); return; }
+    try {
+      const { jsPDF } = await import('jspdf');
+      const pdf = new jsPDF({ orientation:'landscape', unit:'mm', format:'a4' });
+      const W=297, H=210, burg:[number,number,number]=[107,26,44], ink:[number,number,number]=[28,31,38], muted:[number,number,number]=[105,112,122], soft:[number,number,number]=[246,247,249], green:[number,number,number]=[28,145,92], red:[number,number,number]=[190,45,55];
+      const box=computeBox(actions,roster) as any[];
+      const analytics=computeAnalytics(actions,roster);
+      const us=sumPerQ('us'), them=sumPerQ('them');
+      const pts=(l:any)=>(l.p2m||0)*2+(l.p3m||0)*3+(l.ftm||0);
+      const teamTotals=box.reduce((a:any,l:any)=>({p2m:a.p2m+l.p2m,p2a:a.p2a+l.p2a,p3m:a.p3m+l.p3m,p3a:a.p3a+l.p3a,ftm:a.ftm+l.ftm,fta:a.fta+l.fta,reb:a.reb+l.offReb+l.defReb,ast:a.ast+l.ast,stl:a.stl+l.stl,blk:a.blk+l.blk,to:a.to+l.to,pf:a.pf+l.pf}),{p2m:0,p2a:0,p3m:0,p3a:0,ftm:0,fta:0,reb:0,ast:0,stl:0,blk:0,to:0,pf:0});
+      const pct=(m:number,a:number)=>a?Math.round(m*100/a):0;
+      const card=(x:number,y:number,w:number,h:number)=>{pdf.setFillColor(...soft);pdf.roundedRect(x,y,w,h,2,2,'F');};
+      const txt=(s:any,x:number,y:number,size=8,bold=false,color=ink)=>{pdf.setTextColor(...color);pdf.setFont('helvetica',bold?'bold':'normal');pdf.setFontSize(size);pdf.text(String(s),x,y);};
+      const title=(s:string,x:number,y:number)=>txt(s.toUpperCase(),x,y,9,true,burg);
+      const metric=(x:number,y:number,w:number,value:string,label:string)=>{card(x,y,w,17);txt(value,x+w/2,y+7,12,true,ink);pdf.setFontSize(6);pdf.setTextColor(...muted);pdf.text(label.toUpperCase(),x+w/2,y+12,{align:'center'});};
+      // Header
+      pdf.setFillColor(...burg);pdf.rect(0,0,W,5,'F');
+      txt('RAPPORT DE MATCH',10,17,19,true,ink); txt(date,286,15,8,true,muted); txt(home?'DOMICILE':'EXTÉRIEUR',286,20,7,false,muted);
+      pdf.setFillColor(...burg);pdf.roundedRect(10,25,135,28,3,3,'F');pdf.setFillColor(31,38,47);pdf.roundedRect(152,25,135,28,3,3,'F');
+      pdf.setTextColor(255,255,255);pdf.setFont('helvetica','bold');pdf.setFontSize(12);pdf.text(teamName||'MON ÉQUIPE',18,36);pdf.text(opponent||'ADVERSAIRE',279,36,{align:'right'});
+      pdf.setFontSize(24);pdf.text(String(us),126,46,{align:'right'});pdf.text(String(them),171,46);pdf.setFontSize(9);pdf.text('VS',148.5,43,{align:'center'});
+      let qx=184; Object.keys(perQ).slice(0,6).forEach(k=>{const v=perQ[+k];txt(periodLabel(+k),qx,32,6,true,[220,225,230]);pdf.setTextColor(255,255,255);pdf.setFontSize(7);pdf.text(`${v.us}-${v.them}`,qx,39);qx+=15;});
+      const diff=us-them;
+      metric(10,58,31,(diff>=0?'+':'')+diff,'Écart final'); metric(44,58,31,`${teamTotals.p2m}/${teamTotals.p2a}`,'2PTS '+pct(teamTotals.p2m,teamTotals.p2a)+'%'); metric(78,58,31,`${teamTotals.p3m}/${teamTotals.p3a}`,'3PTS '+pct(teamTotals.p3m,teamTotals.p3a)+'%'); metric(112,58,31,`${teamTotals.ftm}/${teamTotals.fta}`,'LF '+pct(teamTotals.ftm,teamTotals.fta)+'%'); metric(146,58,31,String(teamTotals.ast),'Passes'); metric(180,58,31,String(teamTotals.reb),'Rebonds'); metric(214,58,31,String(teamTotals.to),'Pertes'); metric(248,58,39,String(teamTotals.pf),'Fautes');
+      // Lineups
+      title('Lineups',10,84);
+      const lus=(analytics.lineups as any[]).map((l:any)=>({...l,diff:l.us-l.them})).sort((a:any,b:any)=>b.diff-a.diff);
+      const lineupBox=(l:any,x:number,y:number,w:number,label:string,color:[number,number,number])=>{card(x,y,w,36);txt(label,x+4,y+7,8,true,color);txt(l?`${l.diff>=0?'+':''}${l.diff}`:'—',x+w-4,y+7,11,true,color);if(l){const names=(l.ids||[]).map((id:string)=>{const p=roster.find(r=>r.id===id);return p?`#${p.num} ${p.name}`:''}).filter(Boolean).join(' · ');txt(names.slice(0,78),x+4,y+15,6.5,true,ink);txt(`Score pendant présence : ${l.us} - ${l.them}`,x+4,y+23,7,false,muted);txt(`Actions codées : ${l.n}`,x+4,y+30,7,false,muted);}};
+      lineupBox(lus[0],10,88,88,'MEILLEUR LINEUP',green); lineupBox(lus[lus.length-1],102,88,88,'LINEUP LE PLUS DIFFICILE',red);
+      card(194,88,93,36);title('Indicateurs collectifs',198,96);txt(`Possessions attaque : ${analytics.offPoss}`,198,104,7);txt(`Possessions défense : ${analytics.defPoss}`,198,111,7);txt(`Série max de stops : ${analytics.maxStreak}`,198,118,7);
+      // Player table
+      title('Statistiques joueurs',10,133);
+      const cols=[['#',10],['JOUEUR',17],['MIN',70],['PTS',88],['2PTS',102],['3PTS',123],['LF',144],['REB',163],['PD',178],['INT',190],['CTR',203],['BP',216],['F',229]];
+      pdf.setFillColor(235,237,240);pdf.rect(10,137,277,8,'F');cols.forEach(([h,x])=>txt(h,x as number,142,6.5,true,muted));
+      let y=150; box.slice().sort((a:any,b:any)=>pts(b)-pts(a)).slice(0,10).forEach((l:any,idx:number)=>{if(idx%2===1){pdf.setFillColor(249,249,250);pdf.rect(10,y-5,277,7,'F')} const vals=[l.p.num,l.p.name,fmt(minutesByPlayer[l.p.id]||0),pts(l),`${l.p2m}/${l.p2a}`,`${l.p3m}/${l.p3a}`,`${l.ftm}/${l.fta}`,(l.offReb||0)+(l.defReb||0),l.ast,l.stl,l.blk,l.to,l.pf]; vals.forEach((v,j)=>txt(v,cols[j][1] as number,y,6.5,j===1||j===3,ink));y+=7;});
+      // page 2
+      pdf.addPage('a4','landscape');pdf.setFillColor(...burg);pdf.rect(0,0,W,5,'F');txt('RAPPORT DE MATCH · ANALYSE',10,17,16,true,ink);txt(`${teamName} ${us} - ${them} ${opponent||'Adversaire'}`,10,24,8,true,muted);
+      title('Répartition & discipline',10,37);
+      const indicators=[['REBONDS',teamTotals.reb],['PASSES',teamTotals.ast],['INTERCEPTIONS',teamTotals.stl],['CONTRES',teamTotals.blk],['PERTES',teamTotals.to],['FAUTES',teamTotals.pf]];
+      indicators.forEach((it,idx)=>{const yy=43+idx*10;txt(it[0],10,yy+5,7,true,muted);pdf.setFillColor(225,228,233);pdf.roundedRect(42,yy,65,6,2,2,'F');pdf.setFillColor(...burg);pdf.roundedRect(42,yy,Math.min(65,Number(it[1])*2),6,2,2,'F');txt(it[1],111,yy+5,7,true,ink);});
+      title('Actions clés',128,37);
+      const keyActions=actions.filter(a=>ptsOf(a)>0||a.actionType==='interception'||a.actionType==='contre'||a.actionType==='faute-technique').slice(-12).reverse();
+      keyActions.forEach((a,idx)=>{const p=find(a.playerId);const yy=43+idx*8; if(yy>139)return; txt(`${periodLabel(a.q)} ${a.clock}`,128,yy,6.5,true,muted);txt((describe(a,find).t||a.actionType).slice(0,42),151,yy,6.5,false,ink);if(p)txt(`#${p.num} ${p.name}`,225,yy,6.5,true,burg);});
+      title('Temps forts / systèmes',10,116);
+      const grouped=new Map<string,{n:number,pts:number}>();actions.forEach(a=>{const k=a.systemeName||a.systemeJeu||(a.tempsFort?tags.label(a.tempsFort):'');if(!k)return;const v=grouped.get(k)||{n:0,pts:0};v.n++;v.pts+=ptsOf(a);grouped.set(k,v);});
+      Array.from(grouped.entries()).sort((a,b)=>b[1].n-a[1].n).slice(0,8).forEach(([k,v],idx)=>{const yy=123+idx*8;txt(k.slice(0,30),10,yy,7,idx<3,ink);txt(`${v.n} actions`,65,yy,7,false,muted);txt(`${v.pts} pts`,92,yy,7,true,burg);});
+      title('Top performances',128,151);
+      box.slice().sort((a:any,b:any)=>pts(b)-pts(a)).slice(0,4).forEach((l:any,idx)=>{const yy=158+idx*10;card(128,yy-6,75,8);txt(`#${l.p.num} ${l.p.name}`,132,yy,7,true,ink);txt(`${pts(l)} PTS · ${(l.offReb||0)+(l.defReb||0)} REB · ${l.ast||0} PD`,199,yy,6.5,true,burg);});
+      title('Lecture rapide',214,151);
+      const notes=[teamTotals.to<=12?'✓ Ballon bien protégé':'• Pertes de balle à surveiller',pct(teamTotals.p3m,teamTotals.p3a)>=35?'✓ Adresse extérieure efficace':'• Adresse à 3PTS à travailler',teamTotals.ast>=15?'✓ Bonne création collective':'• Création collective à développer',analytics.maxStreak>=3?'✓ Séquence défensive forte':'• Chercher davantage de stops consécutifs'];
+      notes.forEach((n,idx)=>txt(n,214,160+idx*9,7,idx===0,n.startsWith('✓')?green:ink));
+      pdf.save(`rapport_${safeName(teamName)}_vs_${safeName(opponent||'Adversaire')}_${date}.pdf`);
+      flash('Rapport PDF téléchargé ✓');
+    } catch (e) {
+      console.error('Rapport PDF:',e);
+      flash('Impossible de générer le rapport PDF');
+    }
+  };
+
   const importLiveSourceFile = async (file: File | null) => {
     if (!file) return;
     try {
@@ -5350,6 +5410,7 @@ export default function PriseStatsProPage() {
             onClick={() => setShowHistoryPanel((v) => { const opening = !v; if (opening) { inspectionVideoTimeRef.current = getCurrentVideoTime(); pauseVideo(); setRunning(false); } return opening; })}
           >📚 Historique</button>
           <button className={`ghost ${screen === 'box' ? 'on' : ''}`} onClick={() => { if (screen === 'box') { setScreen('live'); return; } inspectionVideoTimeRef.current = getCurrentVideoTime(); pauseVideo(); setRunning(false); setScreen('box'); }}>📊 Box-score</button>
+          {screen === 'box' && <button className="ghost on" onClick={() => void exportMatchReportPDF()}>📄 Rapport PDF</button>}
           <div className="projectMenuWrap">
             <button className={`ghost menuDots ${showProjectMenu ? 'on' : ''}`} onClick={() => setShowProjectMenu((v) => !v)} aria-label="Menu projet">•••</button>
             {showProjectMenu && (
