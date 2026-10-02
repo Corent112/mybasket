@@ -19,7 +19,7 @@ type PainDetail = {
 };
 
 const PAIN_ZONES: PainZone[] = [
-  { id: "head_front", label: "Tête", side: "front", x: 50, y: 5 },
+  { id: "head_front", label: "Tête", side: "front", x: 50, y: 4 },
   { id: "shoulder_left_front", label: "Épaule gauche", side: "front", x: 72, y: 20 },
   { id: "shoulder_right_front", label: "Épaule droite", side: "front", x: 28, y: 20 },
   { id: "plexus_front", label: "Plexus", side: "front", x: 50, y: 27 },
@@ -28,12 +28,12 @@ const PAIN_ZONES: PainZone[] = [
   { id: "abdomen_front", label: "Abdos", side: "front", x: 50, y: 39 },
   { id: "fingers_left_front", label: "Doigts / main gauche", side: "front", x: 80, y: 51 },
   { id: "fingers_right_front", label: "Doigts / main droite", side: "front", x: 20, y: 51 },
-  { id: "hip_left_front", label: "Hanche gauche", side: "front", x: 61, y: 50 },
-  { id: "hip_right_front", label: "Hanche droite", side: "front", x: 39, y: 50 },
+  { id: "hip_left_front", label: "Hanche gauche", side: "front", x: 61, y: 48 },
+  { id: "hip_right_front", label: "Hanche droite", side: "front", x: 39, y: 48 },
   { id: "thigh_left_front", label: "Cuisse gauche", side: "front", x: 61, y: 62 },
   { id: "thigh_right_front", label: "Cuisse droite", side: "front", x: 39, y: 62 },
-  { id: "knee_left_front", label: "Genou gauche", side: "front", x: 62, y: 74 },
-  { id: "knee_right_front", label: "Genou droit", side: "front", x: 38, y: 74 },
+  { id: "knee_left_front", label: "Genou gauche", side: "front", x: 62, y: 72 },
+  { id: "knee_right_front", label: "Genou droit", side: "front", x: 38, y: 72 },
   { id: "tibia_left_front", label: "Tibia gauche", side: "front", x: 62, y: 83 },
   { id: "tibia_right_front", label: "Tibia droit", side: "front", x: 38, y: 83 },
   { id: "ankle_left_front", label: "Cheville gauche", side: "front", x: 65, y: 94 },
