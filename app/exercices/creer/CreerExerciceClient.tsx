@@ -59,6 +59,7 @@ const THEMES = [
   "Rebond",
   "Physique",
   "Adresse",
+  "Ludique",
 ];
 
 const toNum = (v: string): number | undefined => {
