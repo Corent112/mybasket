@@ -10,7 +10,7 @@ type StatusKey = "all" | "draft" | "submitted" | "approved" | "rejected" | "favo
 type SortKey = "recent" | "alpha";
 const FILTERS = [{key:"theme",label:"THÈMES"},{key:"category",label:"CATÉGORIE"},{key:"level",label:"NIVEAU"}] as const;
 const CATEGORY_OPTIONS=["U9","U11","U13","U15","U18","U21","Senior"];
-const THEME_OPTIONS=["Fondamentaux individuel","Fondamentaux pré collectif","Collectif","Défense","Surnombre","Jeu rapide","Repli","Rebond","Physique","Adresse"];
+const THEME_OPTIONS=["Fondamentaux individuel","Fondamentaux pré collectif","Collectif","Défense","Surnombre","Jeu rapide","Repli","Rebond","Physique","Adresse","Ludique"];
 const STATUS_LABELS:Record<string,string>={draft:"Privé",submitted:"En attente CEO",approved:"Validé bibliothèque",rejected:"Refusé"};
 
 function value(ex:Exercise,key:string){const v=(ex as unknown as Record<string,unknown>)[key];return typeof v==="string"?v:""}
