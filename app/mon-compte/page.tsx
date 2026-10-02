@@ -102,7 +102,7 @@ const MENU: MenuItem[] = [
 },
   { key: 'profilcoach', label: 'Mon Profil Coach', icon: '⚡' },
   { key: 'annonces', label: 'Mes Annonces', icon: '📣' },
-  { key: 'papiers', label: 'Mes Papiers', icon: '📃' },
+  { key: 'papiers', label: 'Mes Documents', icon: '📃', href: '/mon-compte/documents' },
   { key: 'equipes', label: 'Mes Équipes', icon: '👥' },
   { key: 'institutionnel', label: 'Institutionnel', icon: '🏛️', href: '/institutionnel' },
   { key: 'management', label: 'Management', icon: '📊' },
