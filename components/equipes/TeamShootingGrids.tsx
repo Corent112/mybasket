@@ -798,9 +798,9 @@ export default function TeamShootingGrids({
     await loadDetails(selectedGridId);
   }
 
-  async function deleteGrid(){
-    if(!grid||!canEdit||!window.confirm(`Supprimer "${grid.name}" ?`))return;
-    const {error}=await supabase.from(tables.grids).delete().eq("id",grid.id);
+  async function deleteGrid(target:Grid|null=grid){
+    if(!target||!canEdit||!window.confirm(`Supprimer "${target.name}" ?`))return;
+    const {error}=await supabase.from(tables.grids).delete().eq("id",target.id);
     if(error)return alert(error.message);
     await loadGrids();
   }
@@ -886,7 +886,8 @@ export default function TeamShootingGrids({
                 <div className="shooting-library" style={{display:"grid",gridTemplateColumns:"repeat(3,minmax(0,1fr))",gap:8}}>
                   {grids.map(g=>(
                     <div key={g.id} role="button" tabIndex={0} onClick={()=>{setSelectedGridId(g.id);void loadDetails(g.id);setShootingView("editor")}}
-                      style={{textAlign:"left",border:`1px solid ${g.id===selectedGridId?GOLD:BORDER}`,borderRadius:12,background:g.id===selectedGridId?"#FFF8E9":"#fff",padding:12,cursor:"pointer"}}>
+                      style={{position:"relative",textAlign:"left",border:`1px solid ${g.id===selectedGridId?GOLD:BORDER}`,borderRadius:12,background:g.id===selectedGridId?"#FFF8E9":"#fff",padding:12,cursor:"pointer"}}>
+                      {canEdit&&<button type="button" title="Supprimer cette grille" aria-label={`Supprimer ${g.name}`} onClick={e=>{e.stopPropagation();void deleteGrid(g)}} style={{position:"absolute",top:7,right:7,width:22,height:22,border:"1px solid #E7B8B8",borderRadius:999,background:"#FFF4F4",color:"#B42318",fontSize:15,fontWeight:1000,lineHeight:1,cursor:"pointer"}}>×</button>}
                       <b style={{display:"block",color:BORDEAUX,fontSize:13}}>{g.name}</b>
                       <span style={{display:"block",marginTop:4,color:MUTED,fontSize:10,lineHeight:1.35}}>{g.description||"Aucune consigne"}</span>
                       <span style={{display:"block",marginTop:8,color:TEXT,fontSize:9,fontWeight:900}}>Ouvrir la grille →</span>
@@ -973,7 +974,7 @@ export default function TeamShootingGrids({
 
                   {canEdit&&<div style={{display:"flex",gap:7,marginTop:12,flexWrap:"wrap"}}>
                     <button onClick={saveDefinition} disabled={saving} style={primary}>Enregistrer le modèle</button>
-                    <button onClick={deleteGrid} style={danger}>Supprimer</button>
+                    <button onClick={()=>void deleteGrid()} style={danger}>Supprimer</button>
                   </div>}
                 </div>
 
