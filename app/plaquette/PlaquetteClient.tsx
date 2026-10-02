@@ -1594,6 +1594,13 @@ const currentRef = useRef(current);
       ctx.stroke();
       return;
     }
+    if (l.action === 'straightLine' || l.action === 'straightArrow') {
+      const f = toPx(canvas, l.from);
+      const t = toPx(canvas, l.to);
+      ctx.beginPath(); ctx.moveTo(f.x, f.y); ctx.lineTo(t.x, t.y); ctx.stroke();
+      if (l.action === 'straightArrow') arrowHead(ctx, f, t, w);
+      return;
+    }
     const { f, t } = lineGeom(canvas, l);
     const poly = linePoly(canvas, l);
     const L = arcLengths(poly);
@@ -3342,6 +3349,10 @@ animPosRef.current = { players, balls };
         dragRef.current = { id: uid(), action: 'freedraw', from: n, to: n, points: [n], rotation: 0 };
         drawingRef.current = true; histPushedRef.current = false; render(); return;
       }
+      if (tool.obj === 'straightLine' || tool.obj === 'straightArrow') {
+        dragRef.current = { id: uid(), action: tool.obj, from: n, to: n, rotation: 0, color: '#0F0F12' };
+        drawingRef.current = true; histPushedRef.current = false; render(); return;
+      }
       pushHistory();
       updatePhase((ph) => {
         if (tool.obj !== 'handoff') {
@@ -4986,6 +4997,8 @@ const exportJson = () => {
                   <div className={'misc-btn' + (isObj('circle') ? ' active' : '')} data-misc="circle" title="Rond" onClick={() => pick({ kind: 'object', obj: 'circle' })}>●</div>
                   <div className={'misc-btn' + (isObj('text') ? ' active' : '')} data-misc="text" title="Texte" onClick={() => pick({ kind: 'object', obj: 'text' })}>T</div>
                   <div className={'misc-btn' + (isObj('handoff') ? ' active' : '')} data-misc="handoff" title="Main à main : le changement de porteur s’applique au schéma suivant" style={{ fontFamily: 'Arial,sans-serif', fontWeight: 900 }} onClick={() => pick({ kind: 'object', obj: 'handoff' })}>H</div>
+                  <div className={'misc-btn' + (isObj('straightLine') ? ' active' : '')} data-misc="straightLine" title="Trait droit libre — non rattaché à un joueur" onClick={() => pick({ kind: 'object', obj: 'straightLine' })}>━</div>
+                  <div className={'misc-btn' + (isObj('straightArrow') ? ' active' : '')} data-misc="straightArrow" title="Flèche droite libre — non rattachée à un joueur" onClick={() => pick({ kind: 'object', obj: 'straightArrow' })}>→</div>
                   <div className={'misc-btn' + (isObj('freedraw') ? ' active' : '')} data-misc="freedraw" title="Dessin libre" onClick={() => pick({ kind: 'object', obj: 'freedraw' })}>✎</div>
                 </div>
               </div>
