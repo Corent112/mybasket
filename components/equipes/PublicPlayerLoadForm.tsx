@@ -42,14 +42,14 @@ const PAIN_ZONES: PainZone[] = [
   { id: "elbow_right_back", label: "Coude droit", side: "back", x: 78, y: 43 },
   { id: "wrist_left_back", label: "Poignet gauche", side: "back", x: 14, y: 51 },
   { id: "wrist_right_back", label: "Poignet droit", side: "back", x: 86, y: 51 },
-  { id: "hamstring_left", label: "Ischio gauche", side: "back", x: 39, y: 63 },
-  { id: "hamstring_right", label: "Ischio droit", side: "back", x: 61, y: 63 },
-  { id: "calf_left", label: "Mollet gauche", side: "back", x: 39, y: 74 },
-  { id: "calf_right", label: "Mollet droit", side: "back", x: 61, y: 74 },
-  { id: "achilles_left_back", label: "Tendon gauche", side: "back", x: 39, y: 84 },
-  { id: "achilles_right_back", label: "Tendon droit", side: "back", x: 61, y: 84 },
-  { id: "foot_left_back", label: "Pied gauche", side: "back", x: 39, y: 94 },
-  { id: "foot_right_back", label: "Pied droit", side: "back", x: 61, y: 94 },
+  { id: "hamstring_left", label: "Ischio gauche", side: "back", x: 39, y: 59 },
+  { id: "hamstring_right", label: "Ischio droit", side: "back", x: 61, y: 59 },
+  { id: "calf_left", label: "Mollet gauche", side: "back", x: 39, y: 70 },
+  { id: "calf_right", label: "Mollet droit", side: "back", x: 61, y: 70 },
+  { id: "achilles_left_back", label: "Tendon gauche", side: "back", x: 39, y: 80 },
+  { id: "achilles_right_back", label: "Tendon droit", side: "back", x: 61, y: 80 },
+  { id: "foot_left_back", label: "Pied gauche", side: "back", x: 39, y: 91 },
+  { id: "foot_right_back", label: "Pied droit", side: "back", x: 61, y: 91 },
 ];
 type FormPayload = {
   valid: boolean;
