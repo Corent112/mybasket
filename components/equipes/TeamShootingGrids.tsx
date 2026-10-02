@@ -233,7 +233,13 @@ export default function TeamShootingGrids({
   const supabase=useMemo(()=>createClient(),[]);
   const effectiveScopeId=scopeType==="institution"?(scopeId||teamId):teamId;
   const personalLibrary=libraryOnly&&scopeType==="institution";
-  const tables=scopeType==="institution"?{
+  const tables=personalLibrary?{
+    grids:"personal_shooting_grids",
+    rows:"personal_shooting_grid_rows",
+    sessions:"personal_shooting_grid_sessions",
+    sessionPlayers:"personal_shooting_grid_session_players",
+    results:"personal_shooting_grid_player_results",
+  }:scopeType==="institution"?{
     grids:"institutional_shooting_grids",
     rows:"institutional_shooting_grid_rows",
     sessions:"institutional_shooting_grid_sessions",
@@ -318,11 +324,11 @@ export default function TeamShootingGrids({
         logo:typeof (teamRow as {logo_url?:unknown}).logo_url==="string"?String((teamRow as {logo_url?:unknown}).logo_url):null
       });
     }
-    const gridQuery=scopeType==="institution"
-      ? (personalLibrary
-          ? supabase.from(tables.grids).select("id,structure_id,owner_id,name,description,input_mode,fixed_value,court_schema_url,court_schema_data,created_at,updated_at").eq("owner_id",user.id)
-          : supabase.from(tables.grids).select("id,structure_id,owner_id,name,description,input_mode,fixed_value,court_schema_url,court_schema_data,created_at,updated_at").eq("structure_id",effectiveScopeId))
-      : supabase.from(tables.grids).select("id,team_id,owner_id,name,description,input_mode,fixed_value,court_schema_url,court_schema_data,created_at,updated_at").eq("team_id",teamId);
+    const gridQuery=personalLibrary
+      ? supabase.from(tables.grids).select("id,owner_id,name,description,input_mode,fixed_value,court_schema_url,court_schema_data,created_at,updated_at").eq("owner_id",user.id)
+      : scopeType==="institution"
+        ? supabase.from(tables.grids).select("id,structure_id,owner_id,name,description,input_mode,fixed_value,court_schema_url,court_schema_data,created_at,updated_at").eq("structure_id",effectiveScopeId)
+        : supabase.from(tables.grids).select("id,team_id,owner_id,name,description,input_mode,fixed_value,court_schema_url,court_schema_data,created_at,updated_at").eq("team_id",teamId);
     const {data,error}=await gridQuery.order("updated_at",{ascending:false});
     if(error)throw error;
     const list=(data||[]) as Grid[];
@@ -396,7 +402,7 @@ export default function TeamShootingGrids({
     if(scopeType!=="team"||!userId)return;
     setImportBusy(true);
     try{
-      const {data,error}=await supabase.from("institutional_shooting_grids").select("id,structure_id,owner_id,name,description,input_mode,fixed_value,court_schema_url,court_schema_data,created_at,updated_at").eq("owner_id",userId).order("updated_at",{ascending:false});
+      const {data,error}=await supabase.from("personal_shooting_grids").select("id,owner_id,name,description,input_mode,fixed_value,court_schema_url,court_schema_data,created_at,updated_at").eq("owner_id",userId).order("updated_at",{ascending:false});
       if(error)throw error;
       setPersonalGrids((data||[]) as Array<Grid & {structure_id?:string}>); setImportOpen(true);
     }catch(e){console.error(e);toast("Impossible de charger Mes Documents.")}finally{setImportBusy(false)}
@@ -404,7 +410,7 @@ export default function TeamShootingGrids({
   async function importPersonalGrid(source:Grid){
     if(scopeType!=="team"||!userId||!canEdit)return; setImportBusy(true);
     try{
-      const {data:sourceRows,error:rowsError}=await supabase.from("institutional_shooting_grid_rows").select("name,sort_order,target_attempts").eq("grid_id",source.id).order("sort_order"); if(rowsError)throw rowsError;
+      const {data:sourceRows,error:rowsError}=await supabase.from("personal_shooting_grid_rows").select("name,sort_order,target_attempts").eq("grid_id",source.id).order("sort_order"); if(rowsError)throw rowsError;
       const {data:created,error:createError}=await supabase.from("shooting_grids").insert({team_id:teamId,owner_id:userId,name:source.name,description:source.description,input_mode:source.input_mode,fixed_value:source.fixed_value,court_schema_url:source.court_schema_url,court_schema_data:source.court_schema_data}).select("*").single(); if(createError)throw createError;
       if(sourceRows?.length){const {error:insertRowsError}=await supabase.from("shooting_grid_rows").insert(sourceRows.map((row:any)=>({grid_id:created.id,name:row.name,sort_order:row.sort_order,target_attempts:row.target_attempts??source.fixed_value})));if(insertRowsError){await supabase.from("shooting_grids").delete().eq("id",created.id);throw insertRowsError}}
       setImportOpen(false); await loadGrids(created.id); setShootingView("editor"); toast("Grille importée depuis Mes Documents ✓");
