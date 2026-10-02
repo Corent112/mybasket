@@ -1420,18 +1420,60 @@ return (
                     <div key={item.linkId || item.teamId} className="mc-team-group-item">
                       <div className="mc-team-section-title collaboration"><strong>🤝 PARTENAIRE · {item.institutionName}</strong><span>{item.season || "Saison non renseignée"}</span></div>
                       <article className="mc-teamcard mc-teamcard-horizontal mc-teamcard-partner">
+                        <div className="mc-collaboration-role-badge" title="Équipe partenaire · Lecture seule" aria-label="Équipe partenaire · Lecture seule">👁</div>
                         <div className="mc-team-banner mc-team-banner-horizontal" style={{ backgroundColor: item.colors?.[0] || item.couleurs?.[0] || '#6B1A2C' }}>
                           <div className="mc-team-banner-lines" aria-hidden="true" />
-                          <div className="mc-team-banner-logo">{item.logo?<img src={item.logo} alt=""/>:"🏀"}</div>
-                          <div className="mc-team-banner-copy"><span>ÉQUIPE PARTENAIRE</span><strong>{item.name}</strong><small>{item.clubName || item.category || "Institution partenaire"}</small></div>
-                        </div>
-                        <div className="mc-team-horizontal-content">
-                          <div className="mc-team-kpis">
-                            <div><strong>{item.playerCount || 0}</strong><span>JOUEURS</span></div>
-                            <div><strong>{item.matchCount || 0}</strong><span>MATCHS</span></div>
-                            <div><strong>👁</strong><span>LECTURE SEULE</span></div>
+                          <div className="mc-team-banner-logo">
+                            {item.logo ? <img src={item.logo} alt="" /> : <span>🏀</span>}
                           </div>
-                          <button className="mc-new-team" onClick={() => router.push(`/equipes/${item.teamId}`)}>Voir l'équipe →</button>
+                          <div className="mc-team-banner-copy">
+                            <strong>{item.category || item.name || "Équipe partenaire"}</strong>
+                            <span>{item.level || item.niveau || item.clubName || "Institution partenaire"}</span>
+                            <em className="mc-team-shared">Équipe partenaire · Lecture seule</em>
+                          </div>
+                        </div>
+
+                        <div className="mc-team-body mc-team-body-horizontal">
+                          <div className="mc-team-kpis">
+                            <div className="mc-team-kpi">
+                              <span className="mc-team-kpi-icon">▣</span>
+                              <div>
+                                <strong>{item.matchCount || 0}</strong>
+                                <span>Matchs</span>
+                                <small>Saison {item.season || "non renseignée"}</small>
+                              </div>
+                            </div>
+                            <div className="mc-team-kpi">
+                              <span className="mc-team-kpi-icon">♙</span>
+                              <div>
+                                <strong>{item.playerCount || 0}/15</strong>
+                                <span>Joueurs</span>
+                                <small>Effectif</small>
+                              </div>
+                            </div>
+                            <div className="mc-team-kpi">
+                              <span className="mc-team-kpi-icon">👁</span>
+                              <div>
+                                <strong>Lecture seule</strong>
+                                <span>Partenaire</span>
+                                <small>{item.institutionName || "Institutionnel"}</small>
+                              </div>
+                            </div>
+                            <div className="mc-team-kpi mc-team-kpi-coach">
+                              <span className="mc-team-kpi-icon">♙</span>
+                              <div>
+                                <strong>{item.coachName || "—"}</strong>
+                                <span>Coach</span>
+                                <small>Entraîneur principal</small>
+                              </div>
+                            </div>
+                          </div>
+
+                          <div className="mc-team-actions mc-team-actions-horizontal">
+                            <button className="main" onClick={() => router.push(`/equipes/${item.teamId}`)}>
+                              Voir la page de l'équipe →
+                            </button>
+                          </div>
                         </div>
                       </article>
                     </div>
