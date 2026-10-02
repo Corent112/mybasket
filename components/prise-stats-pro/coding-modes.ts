@@ -37,10 +37,10 @@ export const CODING_MODES: CodingModeDefinition[] = [
   },
   {
     id: 'match-review',
-    label: 'Retour de match',
+    label: 'Mon mode',
     icon: '📝',
     family: 'match-review',
-    description: 'Constructeur libre : blocs, boutons, ordre, logique, valeurs et règles créés de A à Z par l’utilisateur.',
+    description: 'Crée ta propre fenêtre de codage : blocs MyBasket ou personnels, boutons, ordre et parcours configurables.',
   },
 ];
 
