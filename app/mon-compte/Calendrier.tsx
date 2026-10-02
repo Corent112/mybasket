@@ -762,14 +762,14 @@ export default function MonCalendrier() {
         .btn-red:hover{background:#B91C2C}
 
         /* Grille calendrier — valeurs EXACTES du HTML de référence */
-        .cal-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:1px;background:var(--gris-med);border:1px solid var(--gris-med);border-radius:6px;overflow:hidden}
+        .cal-grid{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:1px;background:var(--gris-med);border:1px solid var(--gris-med);border-radius:6px;overflow:hidden}
         .cal-h{background:var(--noir);color:var(--blanc);padding:.45rem;text-align:center;font-weight:700;font-size:.8rem}
-        .cal-d{background:var(--blanc);min-height:72px;padding:.35rem;cursor:pointer;font-size:.82rem;position:relative}
+        .cal-d{background:var(--blanc);min-width:0;min-height:72px;padding:.35rem;cursor:pointer;font-size:.82rem;position:relative}
         .cal-d:hover{background:var(--gris-bg)}
         .cal-d.empty{background:var(--gris-bg);cursor:default;opacity:.5}
         .cal-d.today{background:rgba(212,162,76,.15)}
         .cal-d .dn{font-weight:700}
-        .cal-d .ev{font-size:.68rem;font-weight:600;padding:1px 4px;border-radius:3px;margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;cursor:pointer}
+        .cal-d .ev{display:block;max-width:100%;font-size:.68rem;font-weight:600;padding:1px 4px;border-radius:3px;margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;cursor:pointer}
 
         /* Légende (styles inline d'origine) */
         .cal-legend{display:flex;gap:.6rem;flex-wrap:wrap;margin-top:.85rem;padding:.6rem .85rem;background:#FAF7F0;border-radius:6px;font-size:.72rem;align-items:center}
