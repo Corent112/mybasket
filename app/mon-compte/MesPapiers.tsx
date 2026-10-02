@@ -82,9 +82,10 @@ export default function MesPapiers() {
 
   const addDocument = async () => {
     if (!name.trim()) return alert('Ajoute un nom au document.');
-    if (!file) return alert('Ajoute un fichier PDF.');
-    if (file.type !== 'application/pdf') {
-      return alert('Le fichier doit être un PDF.');
+    if (!file) return alert('Ajoute un fichier.');
+    const allowedTypes = ['application/pdf', 'image/jpeg', 'image/png', 'image/webp', 'image/heic', 'image/heif'];
+    if (!allowedTypes.includes(file.type)) {
+      return alert('Ajoute un PDF ou une image (JPG, PNG, WEBP, HEIC).');
     }
 
     const limitResponse = await fetch('/api/documents/can-upload');
@@ -119,7 +120,7 @@ export default function MesPapiers() {
     const { error: uploadError } = await supabase.storage
       .from('user-documents')
       .upload(filePath, file, {
-        contentType: 'application/pdf',
+        contentType: file.type,
         upsert: false,
       });
 
@@ -206,14 +207,14 @@ export default function MesPapiers() {
     ? `Documents utilisés : ${documentLimit.count} / ${
         documentLimit.limit === null ? '∞' : documentLimit.limit
       }`
-    : 'Charge tes diplômes, licences, contrats et certificats.';
+    : 'Charge tes PDF et images : diplômes, licences, contrats, certificats…';
 
   return (
     <>
       <div className="papers">
         <div className="papers-head">
           <div>
-            <h2>Mes documents</h2>
+            <h2>Mes papiers</h2>
             <p>{limitText}</p>
           </div>
 
@@ -275,10 +276,10 @@ export default function MesPapiers() {
             </label>
 
             <label>
-              Fichier PDF
+              Fichier PDF ou image
               <input
                 type="file"
-                accept="application/pdf"
+                accept="application/pdf,image/jpeg,image/png,image/webp,image/heic,image/heif"
                 onChange={(e) => setFile(e.target.files?.[0] ?? null)}
               />
             </label>
