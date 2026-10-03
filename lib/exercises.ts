@@ -465,8 +465,10 @@ export async function saveExercise(ex: any): Promise<Exercise | null> {
   const prepared = {
     ...ex,
     user_id: user.id,
-    visibility: ceo ? ex.visibility ?? "public" : "private",
-    review_status: ceo ? ex.review_status ?? "approved" : "draft",
+    // Un exercice créé par le CEO est une publication officielle MyBasket :
+    // il ne passe jamais par le workflow de validation utilisateur.
+    visibility: ceo ? "public" : "private",
+    review_status: ceo ? "approved" : "draft",
     original_exercise_id: ex.original_exercise_id ?? null,
   };
 
