@@ -5787,6 +5787,8 @@ function TeamLineupsBlock({ teamId, matchCategory }: { teamId: string; matchCate
 
   const best = topRows[0];
   const mostUsed = [...rows].sort((a, b) => b.poss - a.poss)[0];
+  const mostProfitable = [...rows].sort((a, b) => b.plusMinus - a.plusMinus)[0];
+  const bestOffense = [...rows].sort((a, b) => b.offRtg - a.offRtg)[0];
 
   const clipsForLineup = (row: LineupRow, kind: "all" | "fg" | "2pts" | "3pts" | "ft" | "ast" | "to" | "stops") => {
     const lineupActions = actions.filter((action) => sameLineup(action, row.ids));
@@ -5887,45 +5889,35 @@ function TeamLineupsBlock({ teamId, matchCategory }: { teamId: string; matchCate
       {!loading && rows.length > 0 && (
         <>
           <div className="lineup-insights">
-            <InsightCard
-              label="Meilleur 5"
-              visual={lineupVisual(best)}
-              value={
-                best
-                  ? `${best.plusMinus >= 0 ? "+" : ""}${best.plusMinus} +/-`
-                  : "—"
-              }
-              tone={best && best.plusMinus < 0 ? "bad" : "good"}
-            />
-
-            <InsightCard
-              label="5 le plus utilisé"
-              visual={lineupVisual(mostUsed)}
-              value={mostUsed ? `${r1(mostUsed.poss)} poss` : "—"}
-              tone="neutral"
-            />
-
-            <InsightCard
-              label="Meilleur OffRtg"
-              visual={lineupVisual([...rows].sort((a, b) => b.offRtg - a.offRtg)[0])}
-              value={
-                rows.length > 0
-                  ? `${r1([...rows].sort((a, b) => b.offRtg - a.offRtg)[0].offRtg)}`
-                  : "—"
-              }
-              tone="good"
-            />
-
-            <InsightCard
-              label="Plus de stops"
-              visual={lineupVisual([...rows].sort((a, b) => b.stopPct - a.stopPct)[0])}
-              value={
-                rows.length > 0
-                  ? `${r1([...rows].sort((a, b) => b.stopPct - a.stopPct)[0].stopPct)}%`
-                  : "—"
-              }
-              tone="good"
-            />
+            {[
+              { label: "Lineup le plus utilisé", row: mostUsed, metric: mostUsed ? `${r1(mostUsed.poss)} poss` : "—", sub: "possessions ensemble", tone: "neutral" },
+              { label: "Lineup le plus rentable", row: mostProfitable, metric: mostProfitable ? `${mostProfitable.plusMinus >= 0 ? "+" : ""}${mostProfitable.plusMinus}` : "—", sub: "+/-", tone: mostProfitable && mostProfitable.plusMinus < 0 ? "bad" : "good" },
+              { label: "Lineup le plus performant", row: bestOffense, metric: bestOffense ? r1(bestOffense.offRtg) : "—", sub: "OffRtg", tone: "good" },
+            ].map((item, index) => (
+              <article className={`lineup-summary-card ${item.tone}`} key={item.label}>
+                <div className="lineup-summary-head">
+                  <span className="lineup-summary-rank">{index + 1}</span>
+                  <b>{item.label}</b>
+                  <span className="lineup-summary-metric"><strong>{item.metric}</strong><small>{item.sub}</small></span>
+                </div>
+                {item.row && (
+                  <>
+                    <div className="lineup-summary-main">
+                      {lineupVisual(item.row)}
+                      <div className="lineup-summary-score">
+                        <strong>{item.row.plusMinus >= 0 ? "+" : ""}{item.row.plusMinus}</strong>
+                        <small>+/-</small>
+                      </div>
+                    </div>
+                    <div className="lineup-summary-foot">
+                      <span>{item.row.ids.slice(0, 5).map((id) => names[id] || "Joueur").join(" · ")}</span>
+                      <div><b>{item.row.ptsFor}</b><small>PTS +</small></div>
+                      <div className="against"><b>{item.row.ptsAgainst}</b><small>PTS -</small></div>
+                    </div>
+                  </>
+                )}
+              </article>
+            ))}
           </div>
 
           <div className="lineup-table-wrap">
@@ -6070,65 +6062,130 @@ function TeamLineupsBlock({ teamId, matchCategory }: { teamId: string; matchCate
 
         .lineup-insights {
           display: grid;
-          grid-template-columns: repeat(4, minmax(0, 1fr));
-          border-top: 1px solid #ece4dd;
-          border-bottom: 1px solid #ece4dd;
+          grid-template-columns: repeat(3, minmax(0, 1fr));
+          gap: 14px;
           margin-bottom: 1.2rem;
+        }
+
+        .lineup-summary-card {
+          min-width: 0;
+          padding: 14px;
+          border: 1px solid #eadfd5;
+          border-radius: 17px;
           background: #fff;
+          box-shadow: 0 7px 20px rgba(62,31,22,.045);
         }
 
-        .lineup-insights :global(.insight-card) {
-          min-height: 108px;
-          padding: 1rem 1.1rem;
-          display: flex;
-          flex-direction: column;
-          justify-content: flex-start;
-          overflow: hidden;
-          background: #fff;
+        .lineup-summary-head {
+          display: grid;
+          grid-template-columns: 32px minmax(0,1fr) auto;
+          gap: 9px;
+          align-items: center;
         }
 
-        .lineup-insights :global(.insight-card + .insight-card) {
-          border-left: 1px solid #ece4dd;
-        }
-
-        .lineup-insights :global(.insight-label) {
-          color: #5c5451;
-          font-size: 0.82rem;
-          font-weight: 750;
-          line-height: 1.3;
-          margin-bottom: 0.55rem;
-        }
-
-        .lineup-insights :global(.insight-visual) { margin:.1rem 0 .35rem; }
-
-        .lineup-insights :global(.insight-title) {
-          display: -webkit-box;
-          -webkit-line-clamp: 3;
-          -webkit-box-orient: vertical;
-          overflow: hidden;
-          color: #211d1e;
-          font-size: 0.98rem;
-          line-height: 1.38;
+        .lineup-summary-rank {
+          width: 32px;
+          height: 32px;
+          display: grid;
+          place-items: center;
+          border-radius: 10px;
+          background: #f7ead6;
+          color: #8b5c13;
           font-weight: 950;
-          overflow-wrap: anywhere;
         }
 
-        .lineup-insights :global(.insight-value) {
-          margin-top: auto;
-          padding-top: 0.6rem;
+        .lineup-summary-head > b {
+          color: #241c20;
+          font-size: .82rem;
+          line-height: 1.2;
+        }
+
+        .lineup-summary-metric {
+          display: grid;
+          justify-items: end;
+          line-height: 1;
+        }
+
+        .lineup-summary-metric strong {
           color: #6b1a2c;
-          font-size: 0.98rem;
-          font-style: italic;
-          font-weight: 950;
+          font-size: .96rem;
         }
 
-        .lineup-insights :global(.insight-card.good .insight-value) {
-          color: #177245;
+        .lineup-summary-metric small {
+          margin-top: 3px;
+          color: #998b84;
+          font-size: .55rem;
+          font-weight: 800;
         }
 
-        .lineup-insights :global(.insight-card.bad .insight-value) {
-          color: #b42318;
+        .lineup-summary-main {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 10px;
+          margin-top: 13px;
         }
+
+        .lineup-summary-main .lineup-identity { min-width: 0; }
+        .lineup-summary-main .lineup-avatars { min-width: 0; height: 42px; gap: 0; }
+        .lineup-summary-main .lineup-avatar {
+          width: 42px;
+          height: 42px;
+          flex-basis: 42px;
+          margin-left: -5px;
+          border: 2px solid #fff;
+          box-shadow: 0 2px 6px rgba(28,25,23,.08);
+          font-size: 9px;
+        }
+        .lineup-summary-main .lineup-avatar:first-child { margin-left: 0; }
+
+        .lineup-summary-score {
+          min-width: 66px;
+          padding: 8px 10px;
+          border-radius: 12px;
+          background: #eaf7ef;
+          display: grid;
+          place-items: center;
+        }
+
+        .lineup-summary-score strong { color: #177245; font-size: 1.35rem; line-height: 1; }
+        .lineup-summary-score small { margin-top: 3px; color: #698071; font-size: .56rem; font-weight: 900; }
+        .lineup-summary-card.bad .lineup-summary-score { background: #fff0f0; }
+        .lineup-summary-card.bad .lineup-summary-score strong { color: #b42318; }
+
+        .lineup-summary-foot {
+          display: grid;
+          grid-template-columns: minmax(0,1fr) 54px 54px;
+          gap: 7px;
+          align-items: end;
+          margin-top: 10px;
+        }
+
+        .lineup-summary-foot > span {
+          color: #53627a;
+          font-size: .6rem;
+          line-height: 1.35;
+          font-weight: 800;
+          overflow: hidden;
+          display: -webkit-box;
+          -webkit-line-clamp: 2;
+          -webkit-box-orient: vertical;
+        }
+
+        .lineup-summary-foot > div {
+          min-height: 42px;
+          border-radius: 9px;
+          background: #eef8f1;
+          display: grid;
+          place-items: center;
+          align-content: center;
+        }
+
+        .lineup-summary-foot > div b { color: #177245; font-size: .82rem; }
+        .lineup-summary-foot > div small { color: #75877a; font-size: .48rem; font-weight: 900; }
+        .lineup-summary-foot > div.against { background: #fff0f0; }
+        .lineup-summary-foot > div.against b { color: #b42318; }
+        .lineup-summary-foot > div.against small { color: #9c7474; }
 
         .lineup-table-wrap {
           width: 100%;
