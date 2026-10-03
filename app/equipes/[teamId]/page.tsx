@@ -6069,7 +6069,7 @@ function TeamLineupsBlock({ teamId, matchCategory }: { teamId: string; matchCate
 
         .lineup-summary-card {
           min-width: 0;
-          padding: 14px;
+          padding: 16px;
           border: 1px solid #eadfd5;
           border-radius: 17px;
           background: #fff;
@@ -6129,17 +6129,17 @@ function TeamLineupsBlock({ teamId, matchCategory }: { teamId: string; matchCate
         .lineup-summary-main :global(.lineup-identity) { min-width: 0; }
         .lineup-summary-main :global(.lineup-avatars) {
           min-width: 0 !important;
-          height: 44px !important;
+          height: 46px !important;
           gap: 0 !important;
           display: flex !important;
           align-items: center !important;
           overflow: visible !important;
         }
         .lineup-summary-main :global(.lineup-avatar) {
-          width: 44px !important;
-          height: 44px !important;
-          flex: 0 0 44px !important;
-          margin-left: -7px !important;
+          width: 46px !important;
+          height: 46px !important;
+          flex: 0 0 46px !important;
+          margin-left: -5px !important;
           border: 3px solid #fff !important;
           border-radius: 999px !important;
           overflow: hidden !important;
@@ -6371,18 +6371,7 @@ function TeamLineupsBlock({ teamId, matchCategory }: { teamId: string; matchCate
         }
 
         @media (max-width: 1100px) {
-          .lineup-insights {
-            grid-template-columns: repeat(2, 1fr);
-          }
-
-          .lineup-insights :global(.insight-card:nth-child(3)) {
-            border-left: 0;
-            border-top: 1px solid #ece4dd;
-          }
-
-          .lineup-insights :global(.insight-card:nth-child(4)) {
-            border-top: 1px solid #ece4dd;
-          }
+          .lineup-insights { grid-template-columns: 1fr; }
         }
 
         @media (max-width: 700px) {
