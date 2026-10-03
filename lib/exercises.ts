@@ -491,9 +491,9 @@ export async function saveExercise(ex: any): Promise<Exercise | null> {
           ...existing,
           ...prepared,
           user_id: existing.user_id ?? user.id,
-          visibility: ceo ? prepared.visibility ?? "public" : "private",
+          visibility: ceo ? "public" : "private",
           review_status: ceo
-            ? prepared.review_status ?? "approved"
+            ? "approved"
             : existing.review_status === "submitted"
             ? "draft"
             : prepared.review_status ?? existing.review_status ?? "draft",
@@ -567,9 +567,11 @@ export async function updateExercise(
       ...existing,
       ...patch,
       user_id: existing.user_id ?? user.id,
-      visibility: ceo ? existing.visibility ?? "public" : "private",
+      // Toute sauvegarde effectuée par le CEO correspond à la version
+      // officielle visible dans la bibliothèque publique.
+      visibility: ceo ? "public" : "private",
       review_status: ceo
-        ? existing.review_status ?? "approved"
+        ? "approved"
         : existing.review_status === "submitted"
         ? "draft"
         : existing.review_status ?? "draft",
