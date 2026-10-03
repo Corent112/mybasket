@@ -205,6 +205,12 @@ export default function TeamUnifiedChrome({children}:{children:ReactNode}){
           max-width:100%!important;
         }
 
+        /* La navigation équipe reste fixe, mais ne doit jamais masquer le footer global. */
+        body:has(.teamUnifiedChrome) footer{
+          margin-left:278px!important;
+          width:calc(100% - 278px)!important;
+        }
+
         @media(max-width:980px){
           .teamUnifiedChrome .tl-wrap{
             padding-left:0!important;
@@ -215,6 +221,10 @@ export default function TeamUnifiedChrome({children}:{children:ReactNode}){
           .teamUnifiedChrome .tl-appbar{
             margin:0 -16px 18px!important;
             padding:0 16px!important;
+          }
+          body:has(.teamUnifiedChrome) footer{
+            margin-left:0!important;
+            width:100%!important;
           }
           .teamUnifiedChrome .team-tabs{
             position:static!important;
