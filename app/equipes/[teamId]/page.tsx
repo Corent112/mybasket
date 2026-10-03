@@ -6126,18 +6126,38 @@ function TeamLineupsBlock({ teamId, matchCategory }: { teamId: string; matchCate
           margin-top: 13px;
         }
 
-        .lineup-summary-main .lineup-identity { min-width: 0; }
-        .lineup-summary-main .lineup-avatars { min-width: 0; height: 42px; gap: 0; }
-        .lineup-summary-main .lineup-avatar {
-          width: 42px;
-          height: 42px;
-          flex-basis: 42px;
-          margin-left: -5px;
-          border: 2px solid #fff;
-          box-shadow: 0 2px 6px rgba(28,25,23,.08);
-          font-size: 9px;
+        .lineup-summary-main :global(.lineup-identity) { min-width: 0; }
+        .lineup-summary-main :global(.lineup-avatars) {
+          min-width: 0 !important;
+          height: 44px !important;
+          gap: 0 !important;
+          display: flex !important;
+          align-items: center !important;
+          overflow: visible !important;
         }
-        .lineup-summary-main .lineup-avatar:first-child { margin-left: 0; }
+        .lineup-summary-main :global(.lineup-avatar) {
+          width: 44px !important;
+          height: 44px !important;
+          flex: 0 0 44px !important;
+          margin-left: -7px !important;
+          border: 3px solid #fff !important;
+          border-radius: 999px !important;
+          overflow: hidden !important;
+          box-shadow: 0 3px 9px rgba(28,25,23,.12) !important;
+          background: #f3ece4 !important;
+          font-size: 9px !important;
+        }
+        .lineup-summary-main :global(.lineup-avatar:first-child) { margin-left: 0 !important; }
+        .lineup-summary-main :global(.lineup-avatar img) {
+          width: 100% !important;
+          height: 100% !important;
+          max-width: 100% !important;
+          max-height: 100% !important;
+          display: block !important;
+          object-fit: cover !important;
+          object-position: center top !important;
+          border-radius: 999px !important;
+        }
 
         .lineup-summary-score {
           min-width: 66px;
@@ -6163,7 +6183,7 @@ function TeamLineupsBlock({ teamId, matchCategory }: { teamId: string; matchCate
 
         .lineup-summary-foot > span {
           color: #53627a;
-          font-size: .6rem;
+          font-size: .58rem;
           line-height: 1.35;
           font-weight: 800;
           overflow: hidden;
