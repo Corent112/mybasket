@@ -32,6 +32,7 @@ function ConnexionContent() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [passwordConfirm, setPasswordConfirm] = useState("");
+  const [showSignupPassword, setShowSignupPassword] = useState(false);
   const [name, setName] = useState("");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
@@ -355,15 +356,28 @@ function ConnexionContent() {
         {tab !== "reset" && (
           <label>
             {tab === "update" ? "Nouveau mot de passe" : "Mot de passe"}
-            <input
-              type="password"
-              value={password}
-              onChange={(event) => setPassword(event.target.value)}
-              autoComplete={tab === "signin" ? "current-password" : "new-password"}
-              onKeyDown={(event) => {
-                if (event.key === "Enter") void submit();
-              }}
-            />
+            <span className={tab === "signup" ? "password-field" : undefined}>
+              <input
+                type={tab === "signup" && showSignupPassword ? "text" : "password"}
+                value={password}
+                onChange={(event) => setPassword(event.target.value)}
+                autoComplete={tab === "signin" ? "current-password" : "new-password"}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") void submit();
+                }}
+              />
+              {tab === "signup" && (
+                <button
+                  type="button"
+                  className="password-eye"
+                  aria-label={showSignupPassword ? "Masquer le mot de passe" : "Afficher le mot de passe"}
+                  title={showSignupPassword ? "Masquer le mot de passe" : "Afficher le mot de passe"}
+                  onClick={() => setShowSignupPassword((visible) => !visible)}
+                >
+                  {showSignupPassword ? "◉" : "◌"}
+                </button>
+              )}
+            </span>
           </label>
         )}
 
@@ -476,6 +490,12 @@ const CSS = `
   padding: 24px;
   font-family: system-ui, sans-serif;
 }
+
+.password-field{position:relative;display:block}
+.password-field input{width:100%;padding-right:46px!important}
+.password-eye{position:absolute;right:10px;top:50%;transform:translateY(-50%);width:34px;height:34px;border:0;background:transparent;color:#6B1A2C;font-size:22px;line-height:1;cursor:pointer;display:grid;place-items:center;border-radius:50%}
+.password-eye:hover{background:#f6ecef}
+.password-eye:focus-visible{outline:2px solid #D4A24C;outline-offset:1px}
 
 .auth-card {
   width: 390px;
