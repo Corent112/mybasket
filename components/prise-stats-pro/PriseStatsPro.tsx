@@ -4681,27 +4681,27 @@ export default function PriseStatsProPage() {
       const cols:any[]=[['#',6],['JOUEUR',12],['MIN',58],['PTS',72],['2P',83],['3P',95],['LF',107],['RO',119],['RD',128],['REB',137],['PD',147],['INT',156],['CTR',165],['BP',174],['F',183],['FD',190]];
       cols.forEach(([h,x])=>txt(h,x,107,3.7,true,muted));
       const boxRows=box.slice().sort((a:any,b:any)=>pts(b)-pts(a));
-      const rowH=Math.min(5.2,51/Math.max(1,boxRows.length));
+      const rowH=Math.min(4.7,49/Math.max(1,boxRows.length));
       let yy=112;
-      boxRows.forEach((l:any,i:number)=>{if(i%2){pdf.setFillColor(249,250,251);pdf.rect(5,yy-3.7,186,rowH,'F');}const vals=[l.p.num,String(l.p.name).slice(0,18),fmt(minutesByPlayer[l.p.id]||0),pts(l),`${l.p2m}/${l.p2a}`,`${l.p3m}/${l.p3a}`,`${l.ftm}/${l.fta}`,l.offReb||0,l.defReb||0,(l.offReb||0)+(l.defReb||0),l.ast||0,l.stl||0,l.blk||0,l.to||0,l.pf||0,l.fd||0];vals.forEach((v,j)=>txt(v,cols[j][1],yy,3.8,j===1||j===3,ink));yy+=rowH;});
+      boxRows.forEach((l:any,i:number)=>{if(i%2){pdf.setFillColor(249,250,251);pdf.rect(5,yy-3.7,186,rowH,'F');}const vals=[l.p.num,String(l.p.name).slice(0,18),fmt(minutesByPlayer[l.p.id]||0),pts(l),`${l.p2m}/${l.p2a}`,`${l.p3m}/${l.p3a}`,`${l.ftm}/${l.fta}`,l.offReb||0,l.defReb||0,(l.offReb||0)+(l.defReb||0),l.ast||0,l.stl||0,l.blk||0,l.to||0,l.pf||0,l.fd||0];vals.forEach((v,j)=>txt(v,cols[j][1],yy,3.35,j===1||j===3,ink));yy+=rowH;});
       pdf.setFillColor(...navy);pdf.rect(5,163,186,5,'F');txt('TOTAL',12,166.5,4,true,[255,255,255]);txt(us,72,166.5,4,true,[255,255,255]);txt(`${totals.p2m}/${totals.p2a}`,83,166.5,4,true,[255,255,255]);txt(`${totals.p3m}/${totals.p3a}`,95,166.5,4,true,[255,255,255]);txt(`${totals.ftm}/${totals.fta}`,107,166.5,4,true,[255,255,255]);txt(box.reduce((s:any,l:any)=>s+(l.offReb||0),0),119,166.5,4,true,[255,255,255]);txt(box.reduce((s:any,l:any)=>s+(l.defReb||0),0),128,166.5,4,true,[255,255,255]);txt(totals.reb,137,166.5,4,true,[255,255,255]);txt(totals.ast,147,166.5,4,true,[255,255,255]);txt(totals.stl,156,166.5,4,true,[255,255,255]);txt(totals.blk,165,166.5,4,true,[255,255,255]);txt(totals.to,174,166.5,4,true,[255,255,255]);txt(totals.pf,183,166.5,4,true,[255,255,255]);
-      // Shot chart : terrain de référence MyBasket + volumes par type de tir, sans nuage de points.
-      card(195,96,98,72);barTitle('SHOT CHART ÉQUIPE',195,96,98,navy);
-      if(courtImage) pdf.addImage(courtImage,'PNG',200,107,88,55);
-      else {pdf.setFillColor(247,242,232);pdf.rect(200,107,88,55,'F');}
-      const shotVolumes=[
-        {label:'2 PTS',made:totals.p2m,attempts:totals.p2a},
-        {label:'3 PTS',made:totals.p3m,attempts:totals.p3a},
-        {label:'LF',made:totals.ftm,attempts:totals.fta},
-      ];
-      shotVolumes.forEach((s,i)=>{const x=202+i*28.5;pdf.setFillColor(255,255,255);pdf.roundedRect(x,146,25.5,13,2,2,'F');txt(s.label,x+12.75,151,4.5,true,navy,'center');txt(`${s.attempts} tirs`,x+12.75,155.5,6.3,true,ink,'center');txt(`${s.made}/${s.attempts} · ${pct(s.made,s.attempts)}%`,x+12.75,159,3.7,true,muted,'center');});
-      // Ligne basse: classements lineups, temps forts, systèmes, mode.
-      card(4,172,83,34);barTitle('LINEUPS LES PLUS UTILISÉS',4,172,83,navy);[...lus].sort((a,b)=>(b.n||0)-(a.n||0)).slice(0,3).forEach((l,i)=>{txt(`${i+1}. ${(l.ids||[]).slice(0,5).map((id:string)=>'#'+(playerById(id)?.num||'?')).join(' · ')}`,7,184+i*7,4.3,true,ink);txt(`${l.diff>=0?'+':''}${l.diff}`,83,184+i*7,5,true,l.diff>=0?green:red,'right');});
-      card(90,172,70,34);barTitle('LINEUPS LES PLUS RENTABLES',90,172,70,navy);[...lus].sort((a,b)=>b.diff-a.diff).slice(0,3).forEach((l,i)=>{txt(`${i+1}. ${(l.ids||[]).slice(0,5).map((id:string)=>'#'+(playerById(id)?.num||'?')).join(' · ')}`,93,184+i*7,4.1,true,ink);txt(`${l.diff>=0?'+':''}${l.diff}`,156,184+i*7,5,true,l.diff>=0?green:red,'right');});
+      // Shot chart : terrain officiel + détail de réussite directement dans chaque zone.
+      card(195,96,98,72);barTitle('SHOT CHART · TIRS PAR ZONE',195,96,98,navy);
+      if(courtImage) pdf.addImage(courtImage,'PNG',199,106,90,57);
+      else {pdf.setFillColor(247,242,232);pdf.rect(199,106,90,57,'F');}
+      const zoneStats=new Map<string,{m:number,a:number}>();
+      actions.filter(a=>a.actionType==='tir'&&a.shotType!=='LF'&&a.zone).forEach(a=>{const v=zoneStats.get(a.zone)||{m:0,a:0};v.a++;if(a.shotResult==='made')v.m++;zoneStats.set(a.zone,v);});
+      SHOT_ZONES.forEach(z=>{const v=zoneStats.get(z.id);if(!v?.a)return;const x=199+(z.cx/100)*90,y=106+(z.cy/100)*57;pdf.setFillColor(255,255,255);pdf.setDrawColor(...navy);pdf.circle(x,y,3.7,'FD');txt(`${v.m}/${v.a}`,x,y+.8,3.7,true,navy,'center');});
+      const volumeY=165;txt(`2PTS  ${totals.p2m}/${totals.p2a} (${pct(totals.p2m,totals.p2a)}%)`,199,volumeY,4.2,true,ink);txt(`3PTS  ${totals.p3m}/${totals.p3a} (${pct(totals.p3m,totals.p3a)}%)`,232,volumeY,4.2,true,ink);txt(`LF  ${totals.ftm}/${totals.fta} (${pct(totals.ftm,totals.fta)}%)`,264,volumeY,4.2,true,ink);
+      // Bas du rapport : lineups visuels avec photos, puis contexte match.
+      const rankedUsed=[...lus].sort((a,b)=>(b.n||0)-(a.n||0)).slice(0,3), rankedRent=[...lus].sort((a,b)=>b.diff-a.diff).slice(0,3);
+      const miniLineups=(list:any[],x:number,w:number,label:string)=>{card(x,172,w,34);barTitle(label,x,172,w,navy);list.forEach((l,i)=>{const y=184+i*7.3;txt(String(i+1),x+4,y+1,4.2,true,muted);(l.ids||[]).slice(0,5).forEach((id:string,j:number)=>avatar(id,x+12+j*8.2,y,3));txt(`${l.diff>=0?'+':''}${l.diff}`,x+w-4,y+1,4.8,true,l.diff>=0?green:red,'right');});};
+      miniLineups(rankedUsed,4,91,'LINEUPS LES PLUS UTILISÉS');
+      miniLineups(rankedRent,98,91,'LINEUPS LES PLUS RENTABLES');
+      card(192,172,38,34);barTitle('TEMPS FORTS',192,172,38,navy);actions.filter(a=>a.tempsFort).slice(-3).reverse().forEach((a,i)=>{txt(`${periodLabel(a.q)} · ${a.clock}`,195,184+i*7,3.8,true,burg);txt((tags.label(a.tempsFort)||a.tempsFort).slice(0,10),211,184+i*7,3.7,false,ink);});
       const grouped=new Map<string,{n:number,pts:number}>();actions.forEach(a=>{const k=a.systemeName||a.systemeJeu||(a.tempsFort?tags.label(a.tempsFort):'');if(!k)return;const v=grouped.get(k)||{n:0,pts:0};v.n++;v.pts+=ptsOf(a);grouped.set(k,v);});
-      card(163,172,50,34);barTitle('TEMPS FORTS',163,172,50,navy);actions.filter(a=>a.tempsFort).slice(-3).reverse().forEach((a,i)=>{txt(`${periodLabel(a.q)} · ${a.clock}`,166,184+i*7,4.1,true,burg);txt((tags.label(a.tempsFort)||a.tempsFort).slice(0,15),181,184+i*7,4.1,false,ink);});
-      card(216,172,45,34);barTitle('SYSTÈMES UTILISÉS',216,172,45,navy);Array.from(grouped.entries()).sort((a,b)=>b[1].n-a[1].n).slice(0,3).forEach(([k,v],i)=>{txt(String(k).slice(0,14),219,184+i*7,4.1,true,ink);txt(`${v.n} act.`,258,184+i*7,4.1,true,burg,'right');});
-      card(264,172,29,34);barTitle('MON MODE',264,172,29,navy);txt(codingMode==='live-individual'?'Live individuel':codingMode==='live'?'Live collectif':codingMode==='match-review'?'Mon mode':'Post-match',267,184,4.2,true,burg);txt(`${actions.length} actions`,267,192,4.2,true,ink);txt(`${analytics.offPoss} poss. att.`,267,200,4.1,false,muted);
+      card(233,172,36,34);barTitle('SYSTÈMES',233,172,36,navy);Array.from(grouped.entries()).sort((a,b)=>b[1].n-a[1].n).slice(0,3).forEach(([k,v],i)=>{txt(String(k).slice(0,10),236,184+i*7,3.8,true,ink);txt(`${v.n}x`,266,184+i*7,3.8,true,burg,'right');});
+      card(272,172,21,34);barTitle('MODE',272,172,21,navy);txt(codingMode==='live-individual'?'Indiv.':codingMode==='live'?'Collectif':codingMode==='match-review'?'Perso':'Post',274,185,3.9,true,burg);txt(`${actions.length} act.`,274,193,3.8,true,ink);txt(`${analytics.offPoss} poss.`,274,201,3.7,false,muted);
       pdf.save(`rapport_${safeName(teamName)}_vs_${safeName(opponent||'Adversaire')}_${date}.pdf`);flash('Rapport PDF 1 page téléchargé ✓');
     } catch(e){console.error('Rapport PDF:',e);flash('Impossible de générer le rapport PDF');}
   };
