@@ -4690,11 +4690,11 @@ export default function PriseStatsProPage() {
       // Boxscore complet : largeur resserrée pour afficher toutes les statistiques jusqu'à ÉVAL et +/-.
       card(4,96,188,72);barTitle('BOXSCORE COMPLET',4,96,188,navy);
       const cols:any[]=[['#',6],['JOUEUR',10],['MIN',48],['PTS',61],['2P',71],['3P',81],['LF',91],['RO',101],['RD',109],['RT',117],['PD',126],['INT',134],['CTR',143],['BP',152],['FD',160],['F',168],['ÉVAL',177],['+/-',188]];
-      cols.forEach(([h,x])=>txt(h,x,107,3.7,true,muted));
+      cols.forEach(([h,x])=>txt(h,x,107,4.25,true,muted));
       const boxRows=box.slice().sort((a:any,b:any)=>pts(b)-pts(a));
       const rowH=Math.min(4.7,49/Math.max(1,boxRows.length));let yy=112;
-      boxRows.forEach((l:any,i:number)=>{if(i%2){pdf.setFillColor(249,250,251);pdf.rect(5,yy-3.7,186,rowH,'F');}const pm=reportPlusMinus(l.p.id);const vals=[l.p.num,String(l.p.name).slice(0,18),fmt(minutesByPlayer[l.p.id]||0),pts(l),`${l.p2m}/${l.p2a}`,`${l.p3m}/${l.p3a}`,`${l.ftm}/${l.fta}`,l.offReb||0,l.defReb||0,(l.offReb||0)+(l.defReb||0),l.ast||0,l.stl||0,l.blk||0,l.to||0,l.fd||0,l.pf||0,reportEval(l),pm>0?`+${pm}`:pm];vals.forEach((v,j)=>txt(v,cols[j][1],yy,j===1?4.55:3.45,j===1||j===3||j===16||j===17,j===17?(pm>=0?green:red):ink));yy+=rowH;});
-      pdf.setFillColor(...navy);pdf.rect(5,163,186,5,'F');txt('TOTAL',10,166.5,3.8,true,[255,255,255]);txt(us,61,166.5,3.7,true,[255,255,255]);txt(`${totals.p2m}/${totals.p2a}`,71,166.5,3.5,true,[255,255,255]);txt(`${totals.p3m}/${totals.p3a}`,81,166.5,3.5,true,[255,255,255]);txt(`${totals.ftm}/${totals.fta}`,91,166.5,3.5,true,[255,255,255]);txt(box.reduce((s:any,l:any)=>s+(l.offReb||0),0),101,166.5,3.5,true,[255,255,255]);txt(box.reduce((s:any,l:any)=>s+(l.defReb||0),0),109,166.5,3.5,true,[255,255,255]);txt(totals.reb,117,166.5,3.5,true,[255,255,255]);txt(totals.ast,126,166.5,3.5,true,[255,255,255]);txt(totals.stl,134,166.5,3.5,true,[255,255,255]);txt(totals.blk,143,166.5,3.5,true,[255,255,255]);txt(totals.to,152,166.5,3.5,true,[255,255,255]);txt(totals.pf,168,166.5,3.5,true,[255,255,255]);txt(box.reduce((s:any,l:any)=>s+reportEval(l),0),177,166.5,3.5,true,[255,255,255]);
+      boxRows.forEach((l:any,i:number)=>{if(i%2){pdf.setFillColor(249,250,251);pdf.rect(5,yy-3.7,186,rowH,'F');}const pm=reportPlusMinus(l.p.id);const vals=[l.p.num,String(l.p.name).slice(0,18),fmt(minutesByPlayer[l.p.id]||0),pts(l),`${l.p2m}/${l.p2a}`,`${l.p3m}/${l.p3a}`,`${l.ftm}/${l.fta}`,l.offReb||0,l.defReb||0,(l.offReb||0)+(l.defReb||0),l.ast||0,l.stl||0,l.blk||0,l.to||0,l.fd||0,l.pf||0,reportEval(l),pm>0?`+${pm}`:pm];vals.forEach((v,j)=>txt(v,cols[j][1],yy,j===1?5.6:4.15,j===1||j===3||j===16||j===17,j===17?(pm>=0?green:red):ink));yy+=rowH;});
+      pdf.setFillColor(...navy);pdf.rect(5,163,186,5,'F');txt('TOTAL',10,166.5,4.6,true,[255,255,255]);txt(us,61,166.5,4.2,true,[255,255,255]);txt(`${totals.p2m}/${totals.p2a}`,71,166.5,4.0,true,[255,255,255]);txt(`${totals.p3m}/${totals.p3a}`,81,166.5,4.0,true,[255,255,255]);txt(`${totals.ftm}/${totals.fta}`,91,166.5,4.0,true,[255,255,255]);txt(box.reduce((s:any,l:any)=>s+(l.offReb||0),0),101,166.5,4.0,true,[255,255,255]);txt(box.reduce((s:any,l:any)=>s+(l.defReb||0),0),109,166.5,4.0,true,[255,255,255]);txt(totals.reb,117,166.5,4.0,true,[255,255,255]);txt(totals.ast,126,166.5,4.0,true,[255,255,255]);txt(totals.stl,134,166.5,4.0,true,[255,255,255]);txt(totals.blk,143,166.5,4.0,true,[255,255,255]);txt(totals.to,152,166.5,4.0,true,[255,255,255]);txt(totals.pf,168,166.5,4.0,true,[255,255,255]);txt(box.reduce((s:any,l:any)=>s+reportEval(l),0),177,166.5,4.0,true,[255,255,255]);
       // Shot chart : répartition globale en tête du bloc, puis détail directement dans chaque zone.
       card(195,96,98,72);barTitle('SHOT CHART · TIRS PAR ZONE',195,96,98,navy);
       const shotSummary=[
@@ -4702,16 +4702,16 @@ export default function PriseStatsProPage() {
         ['3 PTS',totals.p3m,totals.p3a],
         ['LF',totals.ftm,totals.fta],
       ] as const;
-      shotSummary.forEach(([label,made,attempts],i)=>{const x=199+i*30;pdf.setFillColor(247,248,250);pdf.roundedRect(x,105,27,11,1.5,1.5,'F');txt(label,x+13.5,109,4.1,true,navy,'center');txt(`${attempts} tirs`,x+13.5,113.2,5.5,true,ink,'center');txt(`${made}/${attempts} · ${pct(made,attempts)}%`,x+13.5,115.4,3.2,false,muted,'center');});
+      shotSummary.forEach(([label,made,attempts],i)=>{const x=199+i*30;pdf.setFillColor(247,248,250);pdf.roundedRect(x,105,27,11,1.5,1.5,'F');txt(label,x+13.5,108.8,4.8,true,navy,'center');txt(`${attempts} TIRS`,x+13.5,112.9,7.2,true,ink,'center');txt(`${made}/${attempts} · ${pct(made,attempts)}%`,x+13.5,115.6,4.2,true,burg,'center');});
       if(courtImage) pdf.addImage(courtImage,'PNG',199,118,90,45);
       else {pdf.setFillColor(247,242,232);pdf.rect(199,118,90,45,'F');}
       const paintZoneIds=new Set(['z1','z2']); // ShotChart.tsx : z1 = Cercle, z2 = Raquette
       const paintPoints=actions.filter(a=>a.context==='attaque'&&a.actionType==='tir'&&a.shotType==='2PTS'&&paintZoneIds.has(a.zone||'')&&a.shotResult==='made').length*2;
       const zoneStats=new Map<string,{m:number,a:number}>();
       actions.filter(a=>a.context==='attaque'&&a.actionType==='tir'&&a.shotType!=='LF'&&a.zone).forEach(a=>{const v=zoneStats.get(a.zone)||{m:0,a:0};v.a++;if(a.shotResult==='made')v.m++;zoneStats.set(a.zone,v);});
-      SHOT_ZONES.forEach(z=>{const v=zoneStats.get(z.id);if(!v?.a)return;const x=199+(z.cx/100)*90,y=118+(z.cy/100)*45,zonePct=pct(v.m,v.a);pdf.setFillColor(255,255,255);pdf.setDrawColor(...navy);pdf.circle(x,y,5,'FD');txt(`${v.m}/${v.a}`,x,y-.3,4.6,true,navy,'center');txt(`${zonePct}%`,x,y+2.6,3.6,true,burg,'center');});
+      SHOT_ZONES.forEach(z=>{const v=zoneStats.get(z.id);if(!v?.a)return;const x=199+(z.cx/100)*90,y=118+(z.cy/100)*45,zonePct=pct(v.m,v.a);pdf.setFillColor(255,255,255);pdf.setDrawColor(...navy);pdf.circle(x,y,5.6,'FD');txt(`${v.m}/${v.a}`,x,y-.45,5.5,true,navy,'center');txt(`${zonePct}%`,x,y+3.0,4.5,true,burg,'center');});
       // Pas de bandeau sur le terrain : la shot chart reste entièrement lisible.
-      txt(`PTS RAQUETTE  ${paintPoints}`,244,166,4.2,true,burg,'center');
+      txt(`PTS RAQUETTE  ${paintPoints}`,244,166,5.8,true,burg,'center');
        // Bas du rapport : lineups visuels avec photos, puis contexte match.
       const rankedUsed=[...lus].sort((a,b)=>(b.n||0)-(a.n||0)).slice(0,3), rankedRent=[...lus].sort((a,b)=>b.diff-a.diff).slice(0,3);
       const miniLineups=(list:any[],x:number,w:number,label:string)=>{card(x,172,w,34);barTitle(label,x,172,w,navy);list.forEach((l,i)=>{const y=184+i*7.3;txt(String(i+1),x+4,y+1,4.2,true,muted);(l.ids||[]).slice(0,5).forEach((id:string,j:number)=>avatar(id,x+12+j*8.2,y,3));txt(`${l.diff>=0?'+':''}${l.diff}`,x+w-4,y+1,4.8,true,l.diff>=0?green:red,'right');});};
@@ -4722,10 +4722,10 @@ export default function PriseStatsProPage() {
       const oppPaintMade=actions.filter(a=>a.context==='defense'&&a.actionType==='tir'&&a.shotResult==='made'&&isPaintShot(a)).length;
       const oppPaintPoints=oppPaintMade*2;
       card(192,172,38,34);barTitle('TEMPS FORTS · ADV.',192,172,38,navy);
-      txt('REB OFF ADV.',195,184,3.7,true,muted);txt(oppOffReb,227,184,5,true,navy,'right');
-      txt('PTS RAQUETTE ADV.',195,191,3.4,true,muted);txt(oppPaintPoints,227,191,5,true,burg,'right');
+      txt('REB OFF ADV.',195,184,4.1,true,muted);txt(oppOffReb,227,184,7,true,navy,'right');
+      txt('PTS RAQUETTE ADV.',195,191,3.8,true,muted);txt(oppPaintPoints,227,191,7,true,burg,'right');
       const oppPoss=actions.filter(a=>a.context==='defense'&&a.possessionEnd).length;
-      txt('POSSESSIONS ADV.',195,198,3.4,true,muted);txt(oppPoss,227,198,5,true,ink,'right');
+      txt('POSSESSIONS ADV.',195,198,3.8,true,muted);txt(oppPoss,227,198,7,true,ink,'right');
       const grouped=new Map<string,{n:number,pts:number}>();actions.forEach(a=>{const k=a.systemeName||a.systemeJeu||(a.tempsFort?tags.label(a.tempsFort):'');if(!k)return;const v=grouped.get(k)||{n:0,pts:0};v.n++;v.pts+=ptsOf(a);grouped.set(k,v);});
       card(233,172,36,34);barTitle('SYSTÈMES',233,172,36,navy);Array.from(grouped.entries()).sort((a,b)=>b[1].n-a[1].n).slice(0,3).forEach(([k,v],i)=>{txt(String(k).slice(0,10),236,184+i*7,3.8,true,ink);txt(`${v.n}x`,266,184+i*7,3.8,true,burg,'right');});
       card(272,172,21,34);barTitle('MODE',272,172,21,navy);txt(codingMode==='live-individual'?'Indiv.':codingMode==='live'?'Collectif':codingMode==='match-review'?'Perso':'Post',274,185,3.9,true,burg);txt(`${actions.length} act.`,274,193,3.8,true,ink);txt(`${analytics.offPoss} poss.`,274,201,3.7,false,muted);
