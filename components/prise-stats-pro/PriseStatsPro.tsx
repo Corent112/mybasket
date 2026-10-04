@@ -184,7 +184,7 @@ function readTeamsFromLocalStorage(): { id: string; name: string; players: Playe
   }
 }
 
-async function readTeams(): Promise<{ id: string; name: string; players: Player[]; teamType?: string; isScoutTeam?: boolean; primaryColor?: string; secondaryColor?: string; logo?: string }[]> {
+async function readTeams(): Promise<{ id: string; name: string; clubName?: string; category?: string; players: Player[]; teamType?: string; isScoutTeam?: boolean; primaryColor?: string; secondaryColor?: string; logo?: string }[]> {
   if (typeof window === 'undefined') return [];
 
   try {
@@ -198,7 +198,9 @@ async function readTeams(): Promise<{ id: string; name: string; players: Player[
       )
       .map((team: any) => ({
         id: String(team.id || ''),
-        name: String(team.name || team.club_name || 'Équipe').toUpperCase(),
+        name: String(team.name || team.clubName || team.club_name || 'Équipe').toUpperCase(),
+        clubName: String(team.clubName || team.club_name || team.name || '').trim(),
+        category: String(team.category || team.cat || '').trim(),
         teamType: String(team.teamType ?? team.team_type ?? ((team.isScoutTeam || team.scout) ? 'scout' : 'coached')),
         isScoutTeam: Boolean(team.isScoutTeam || team.scout || String(team.teamType ?? team.team_type ?? '').toLowerCase() === 'scout'),
         primaryColor: team.primaryColor || team.primary_color || team.color || team.couleur || team.color1 || team.couleur1 || '',
@@ -837,7 +839,7 @@ async function readLocalVideoHandle(key: string): Promise<MyBasketLocalVideoHand
 }
 
 export default function PriseStatsProPage() {
-  const [teams, setTeams] = useState<{ id: string; name: string; players: Player[]; teamType?: string; isScoutTeam?: boolean; primaryColor?: string; secondaryColor?: string; logo?: string }[]>([]);
+  const [teams, setTeams] = useState<{ id: string; name: string; clubName?: string; category?: string; players: Player[]; teamType?: string; isScoutTeam?: boolean; primaryColor?: string; secondaryColor?: string; logo?: string }[]>([]);
   const [analysisScope, setAnalysisScope] = useState<'coached' | 'scout'>('coached');
   const quickCreateScoutTeam = async () => {
     const name = window.prompt("Nom de l'équipe scoutée (ex : AS Monaco)")?.trim();
@@ -4668,8 +4670,10 @@ export default function PriseStatsProPage() {
       // En-tête fidèle à la maquette validée.
       pdf.setFillColor(...burg);pdf.rect(0,0,116,20,'F');pdf.setFillColor(...navy);pdf.rect(116,0,181,20,'F');
       if(teamLogo) pdf.addImage(teamLogo,'PNG',7,3,14,14);
-      txt(teamName||'MON ÉQUIPE',teamLogo?24:12,9,10,true,[255,255,255]);
-      txt(activeTeam?.name||teamName||'MON ÉQUIPE',62,12,11,true,[255,255,255],'center');
+      const clubLabel=String(activeTeam?.clubName||activeTeam?.name||teamName||'MON ÉQUIPE').trim();
+      const categoryLabel=String(activeTeam?.category||'').trim();
+      const reportTeamLabel=categoryLabel&&clubLabel.toLowerCase().indexOf(categoryLabel.toLowerCase())<0?`${clubLabel} ${categoryLabel}`:clubLabel;
+      txt(reportTeamLabel,teamLogo?24:12,9,10,true,[255,255,255]);
       txt(opponent||'ADVERSAIRE',285,9,9,true,[255,255,255],'right');
       txt(String(us),130,13,18,true,[255,255,255],'center');txt('-',148.5,13,12,true,[255,255,255],'center');txt(String(them),167,13,18,true,[255,255,255],'center');
       txt(`${date} · ${home?'Domicile':'Extérieur'} · ${matchType==='league'?'Championnat':matchType==='cup'?'Coupe':'Amical'}`,148.5,18,5.5,false,[235,238,242],'center');
@@ -4714,7 +4718,8 @@ export default function PriseStatsProPage() {
       miniLineups(rankedUsed,4,91,'LINEUPS LES PLUS UTILISÉS');
       miniLineups(rankedRent,98,91,'LINEUPS LES PLUS RENTABLES');
       const oppOffReb=actions.filter(a=>a.context==='defense'&&((a.actionType==='rebond-off')||a.reboundType==='off')).length;
-      const oppPaintMade=actions.filter(a=>a.context==='defense'&&a.actionType==='tir'&&paintZoneIds.has(a.zone||'')&&a.shotResult==='made').length;
+      const isPaintShot=(a:StatA)=>{if(paintZoneIds.has(a.zone||''))return true;const x=Number(a.courtX),y=Number(a.courtY);if(!Number.isFinite(x)||!Number.isFinite(y))return false;const nx=x<=1?x*100:x,ny=y<=1?y*100:y;const inCircle=((nx-50)*(nx-50))/(14*14)+((ny-14)*(ny-14))/(14*14)<=1;const inLane=nx>=36&&nx<=64&&ny>=14&&ny<=47;return inCircle||inLane;};
+      const oppPaintMade=actions.filter(a=>a.context==='defense'&&a.actionType==='tir'&&a.shotResult==='made'&&isPaintShot(a)).length;
       const oppPaintPoints=oppPaintMade*2;
       card(192,172,38,34);barTitle('TEMPS FORTS · ADV.',192,172,38,navy);
       txt('REB OFF ADV.',195,184,3.7,true,muted);txt(oppOffReb,227,184,5,true,navy,'right');
