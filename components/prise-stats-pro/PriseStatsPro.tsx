@@ -4668,7 +4668,9 @@ export default function PriseStatsProPage() {
       // En-tête fidèle à la maquette validée.
       pdf.setFillColor(...burg);pdf.rect(0,0,116,20,'F');pdf.setFillColor(...navy);pdf.rect(116,0,181,20,'F');
       if(teamLogo) pdf.addImage(teamLogo,'PNG',7,3,14,14);
-      txt(teamName||'MON ÉQUIPE',teamLogo?24:12,9,10,true,[255,255,255]);txt(opponent||'ADVERSAIRE',285,9,9,true,[255,255,255],'right');
+      txt(teamName||'MON ÉQUIPE',teamLogo?24:12,9,10,true,[255,255,255]);
+      txt(activeTeam?.name||teamName||'MON ÉQUIPE',62,12,11,true,[255,255,255],'center');
+      txt(opponent||'ADVERSAIRE',285,9,9,true,[255,255,255],'right');
       txt(String(us),130,13,18,true,[255,255,255],'center');txt('-',148.5,13,12,true,[255,255,255],'center');txt(String(them),167,13,18,true,[255,255,255],'center');
       txt(`${date} · ${home?'Domicile':'Extérieur'} · ${matchType==='league'?'Championnat':matchType==='cup'?'Coupe':'Amical'}`,148.5,18,5.5,false,[235,238,242],'center');
       const qs=Object.keys(perQ).map(Number).sort((a,b)=>a-b).slice(0,4);qs.forEach((k,i)=>{const x=4+i*73.25,v=perQ[k],d=v.us-v.them;card(x,23,69,10);txt(periodLabel(k),x+7,29,5.5,true,ink);txt(`${v.us} - ${v.them}`,x+34.5,29,8,true,ink,'center');txt(`${d>=0?'+':''}${d}`,x+63,29,6,true,d>=0?green:red,'right');});
@@ -4679,15 +4681,16 @@ export default function PriseStatsProPage() {
       const lineupCard=(l:any,x:number,label:string,accent:[number,number,number])=>{card(x,57,108,35);barTitle(label,x,57,45,accent);if(!l){txt('Aucune donnée',x+4,76,6,false,muted);return;}(l.ids||[]).slice(0,5).forEach((id:string,i:number)=>avatar(id,x+12+i*14,72,5));txt(`${l.diff>=0?'+':''}${l.diff}`,x+101,72,13,true,l.diff>=0?green:red,'right');txt('+/-',x+101,77,4.5,true,muted,'right');const ns=(l.ids||[]).slice(0,5).map((id:string)=>playerById(id)?.name||'Joueur');ns.forEach((n:string,i:number)=>txt(n.split(' ').slice(-1)[0].slice(0,9),x+12+i*14,83,3.7,true,muted,'center'));txt(`${l.us||0} pts marqués`,x+76,88,4.3,true,green);txt(`${l.them||0} pts encaissés`,x+104,88,4.3,true,red,'right');};
       lineupCard(mostUsed,4,'LINEUP LE PLUS UTILISÉ',navy);lineupCard(mostProfitable,115,'LINEUP LE PLUS RENTABLE',navy);
       card(226,57,67,35);barTitle('TOP PERFORMANCES',226,57,35,burg);box.slice().sort((a:any,b:any)=>pts(b)-pts(a)).slice(0,3).forEach((l:any,i:number)=>{const x=237+i*20;avatar(l.p.id,x,71,5);txt(String(l.p.name).split(' ').slice(-1)[0].slice(0,8),x,80,3.7,true,ink,'center');txt(`${pts(l)} PTS`,x,85,5.2,true,burg,'center');txt(`${(l.offReb||0)+(l.defReb||0)} REB`,x,89,3.8,true,muted,'center');});
-      // Boxscore complet : tous les joueurs ayant une statistique, sans coupe arbitraire.
+      const reportEval=(l:any)=>{const missed2=Math.max(0,(l.p2a||0)-(l.p2m||0)),missed3=Math.max(0,(l.p3a||0)-(l.p3m||0)),missedFt=Math.max(0,(l.fta||0)-(l.ftm||0)),reb=(l.offReb||0)+(l.defReb||0);return pts(l)+reb+(l.ast||0)+(l.stl||0)+(l.blk||0)-missed2-missed3-missedFt-(l.to||0)-(l.pf||0);};
+      const reportPlusMinus=(playerId:string)=>actions.reduce((sum,a)=>Array.isArray(a.lineup)&&a.lineup.includes(playerId)?sum+ptsOf(a)-themPtsOf(a):sum,0);
+      // Boxscore complet : largeur resserrée pour afficher toutes les statistiques jusqu'à ÉVAL et +/-.
       card(4,96,188,72);barTitle('BOXSCORE COMPLET',4,96,188,navy);
-      const cols:any[]=[['#',6],['JOUEUR',11],['MIN',55],['PTS',68],['2P',79],['3P',91],['LF',103],['RO',115],['RT',126],['PD',137],['INT',148],['CTR',159],['BP',170],['F',181]];
-      cols.forEach(([h,x])=>txt(h,x,107,3.7,true,muted));
+      const cols:any[]=[['#',6],['JOUEUR',10],['MIN',48],['PTS',61],['2P',71],['3P',81],['LF',91],['RO',101],['RD',109],['RT',117],['PD',126],['INT',134],['CTR',143],['BP',152],['FD',160],['F',168],['ÉVAL',177],['+/-',188]];
+      cols.forEach(([h,x])=>txt(h,x,107,3.35,true,muted));
       const boxRows=box.slice().sort((a:any,b:any)=>pts(b)-pts(a));
-      const rowH=Math.min(4.7,49/Math.max(1,boxRows.length));
-      let yy=112;
-      boxRows.forEach((l:any,i:number)=>{if(i%2){pdf.setFillColor(249,250,251);pdf.rect(5,yy-3.7,186,rowH,'F');}const vals=[l.p.num,String(l.p.name).slice(0,17),fmt(minutesByPlayer[l.p.id]||0),pts(l),`${l.p2m}/${l.p2a}`,`${l.p3m}/${l.p3a}`,`${l.ftm}/${l.fta}`,l.offReb||0,(l.offReb||0)+(l.defReb||0),l.ast||0,l.stl||0,l.blk||0,l.to||0,l.pf||0];vals.forEach((v,j)=>txt(v,cols[j][1],yy,3.35,j===1||j===3,ink));yy+=rowH;});
-      pdf.setFillColor(...navy);pdf.rect(5,163,186,5,'F');txt('TOTAL',12,166.5,4,true,[255,255,255]);txt(us,72,166.5,4,true,[255,255,255]);txt(`${totals.p2m}/${totals.p2a}`,83,166.5,4,true,[255,255,255]);txt(`${totals.p3m}/${totals.p3a}`,95,166.5,4,true,[255,255,255]);txt(`${totals.ftm}/${totals.fta}`,107,166.5,4,true,[255,255,255]);txt(box.reduce((s:any,l:any)=>s+(l.offReb||0),0),115,166.5,4,true,[255,255,255]);txt(totals.reb,126,166.5,4,true,[255,255,255]);txt(totals.ast,137,166.5,4,true,[255,255,255]);txt(totals.stl,148,166.5,4,true,[255,255,255]);txt(totals.blk,159,166.5,4,true,[255,255,255]);txt(totals.to,170,166.5,4,true,[255,255,255]);txt(totals.pf,181,166.5,4,true,[255,255,255]);
+      const rowH=Math.min(4.7,49/Math.max(1,boxRows.length));let yy=112;
+      boxRows.forEach((l:any,i:number)=>{if(i%2){pdf.setFillColor(249,250,251);pdf.rect(5,yy-3.7,186,rowH,'F');}const pm=reportPlusMinus(l.p.id);const vals=[l.p.num,String(l.p.name).slice(0,18),fmt(minutesByPlayer[l.p.id]||0),pts(l),`${l.p2m}/${l.p2a}`,`${l.p3m}/${l.p3a}`,`${l.ftm}/${l.fta}`,l.offReb||0,l.defReb||0,(l.offReb||0)+(l.defReb||0),l.ast||0,l.stl||0,l.blk||0,l.to||0,l.fd||0,l.pf||0,reportEval(l),pm>0?`+${pm}`:pm];vals.forEach((v,j)=>txt(v,cols[j][1],yy,j===1?3.65:3.05,j===1||j===3||j===16||j===17,j===17?(pm>=0?green:red):ink));yy+=rowH;});
+      pdf.setFillColor(...navy);pdf.rect(5,163,186,5,'F');txt('TOTAL',10,166.5,3.8,true,[255,255,255]);txt(us,61,166.5,3.7,true,[255,255,255]);txt(`${totals.p2m}/${totals.p2a}`,71,166.5,3.5,true,[255,255,255]);txt(`${totals.p3m}/${totals.p3a}`,81,166.5,3.5,true,[255,255,255]);txt(`${totals.ftm}/${totals.fta}`,91,166.5,3.5,true,[255,255,255]);txt(box.reduce((s:any,l:any)=>s+(l.offReb||0),0),101,166.5,3.5,true,[255,255,255]);txt(box.reduce((s:any,l:any)=>s+(l.defReb||0),0),109,166.5,3.5,true,[255,255,255]);txt(totals.reb,117,166.5,3.5,true,[255,255,255]);txt(totals.ast,126,166.5,3.5,true,[255,255,255]);txt(totals.stl,134,166.5,3.5,true,[255,255,255]);txt(totals.blk,143,166.5,3.5,true,[255,255,255]);txt(totals.to,152,166.5,3.5,true,[255,255,255]);txt(totals.pf,168,166.5,3.5,true,[255,255,255]);txt(box.reduce((s:any,l:any)=>s+reportEval(l),0),177,166.5,3.5,true,[255,255,255]);
       // Shot chart : répartition globale en tête du bloc, puis détail directement dans chaque zone.
       card(195,96,98,72);barTitle('SHOT CHART · TIRS PAR ZONE',195,96,98,navy);
       const shotSummary=[
@@ -4698,11 +4701,12 @@ export default function PriseStatsProPage() {
       shotSummary.forEach(([label,made,attempts],i)=>{const x=199+i*30;pdf.setFillColor(247,248,250);pdf.roundedRect(x,105,27,11,1.5,1.5,'F');txt(label,x+13.5,109,4.1,true,navy,'center');txt(`${attempts} tirs`,x+13.5,113.2,5.5,true,ink,'center');txt(`${made}/${attempts} · ${pct(made,attempts)}%`,x+13.5,115.4,3.2,false,muted,'center');});
       if(courtImage) pdf.addImage(courtImage,'PNG',199,118,90,45);
       else {pdf.setFillColor(247,242,232);pdf.rect(199,118,90,45,'F');}
-      const paintZoneIds=new Set(['z4','z5']);
+      const paintZoneIds=new Set(['z4','z5']); // cercle sous le panier + zone raquette
       const paintPoints=actions.filter(a=>a.context==='attaque'&&a.actionType==='tir'&&a.shotType==='2PTS'&&paintZoneIds.has(a.zone||'')&&a.shotResult==='made').length*2;
       const zoneStats=new Map<string,{m:number,a:number}>();
       actions.filter(a=>a.context==='attaque'&&a.actionType==='tir'&&a.shotType!=='LF'&&a.zone).forEach(a=>{const v=zoneStats.get(a.zone)||{m:0,a:0};v.a++;if(a.shotResult==='made')v.m++;zoneStats.set(a.zone,v);});
       SHOT_ZONES.forEach(z=>{const v=zoneStats.get(z.id);if(!v?.a)return;const x=199+(z.cx/100)*90,y=118+(z.cy/100)*45,zonePct=pct(v.m,v.a);pdf.setFillColor(255,255,255);pdf.setDrawColor(...navy);pdf.circle(x,y,5,'FD');txt(`${v.m}/${v.a}`,x,y-.3,4.6,true,navy,'center');txt(`${zonePct}%`,x,y+2.6,3.6,true,burg,'center');});
+      pdf.setFillColor(...burg);pdf.roundedRect(220,157,48,5,1,1,'F');txt(`PTS RAQUETTE  ${paintPoints}`,244,160.5,4.2,true,[255,255,255],'center');
        // Bas du rapport : lineups visuels avec photos, puis contexte match.
       const rankedUsed=[...lus].sort((a,b)=>(b.n||0)-(a.n||0)).slice(0,3), rankedRent=[...lus].sort((a,b)=>b.diff-a.diff).slice(0,3);
       const miniLineups=(list:any[],x:number,w:number,label:string)=>{card(x,172,w,34);barTitle(label,x,172,w,navy);list.forEach((l,i)=>{const y=184+i*7.3;txt(String(i+1),x+4,y+1,4.2,true,muted);(l.ids||[]).slice(0,5).forEach((id:string,j:number)=>avatar(id,x+12+j*8.2,y,3));txt(`${l.diff>=0?'+':''}${l.diff}`,x+w-4,y+1,4.8,true,l.diff>=0?green:red,'right');});};
