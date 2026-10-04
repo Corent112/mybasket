@@ -4675,8 +4675,20 @@ export default function PriseStatsProPage() {
       const cols=[['#',10],['JOUEUR',17],['MIN',70],['PTS',88],['2PTS',102],['3PTS',123],['LF',144],['REB',163],['PD',178],['INT',190],['CTR',203],['BP',216],['F',229]];
       pdf.setFillColor(235,237,240);pdf.rect(10,137,277,8,'F');cols.forEach(([h,x])=>txt(h,x as number,142,6.5,true,muted));
       let y=150; box.slice().sort((a:any,b:any)=>pts(b)-pts(a)).slice(0,10).forEach((l:any,idx:number)=>{if(idx%2===1){pdf.setFillColor(249,249,250);pdf.rect(10,y-5,277,7,'F')} const vals=[l.p.num,l.p.name,fmt(minutesByPlayer[l.p.id]||0),pts(l),`${l.p2m}/${l.p2a}`,`${l.p3m}/${l.p3a}`,`${l.ftm}/${l.fta}`,(l.offReb||0)+(l.defReb||0),l.ast,l.stl,l.blk,l.to,l.pf]; vals.forEach((v,j)=>txt(v,cols[j][1] as number,y,6.5,j===1||j===3,ink));y+=7;});
-      // page 2
-      pdf.addPage('a4','landscape');pdf.setFillColor(...burg);pdf.rect(0,0,W,5,'F');txt('RAPPORT DE MATCH · ANALYSE',10,17,16,true,ink);txt(`${teamName} ${us} - ${them} ${opponent||'Adversaire'}`,10,24,8,true,muted);
+      // Le rapport validé tient sur une seule page paysage.
+      // La zone basse remplace l'ancienne seconde page : pas d'Actions clés, uniquement les synthèses utiles.
+      title('Temps forts / systèmes',214,133);
+      const grouped=new Map<string,{n:number,pts:number}>();actions.forEach(a=>{const k=a.systemeName||a.systemeJeu||(a.tempsFort?tags.label(a.tempsFort):'');if(!k)return;const v=grouped.get(k)||{n:0,pts:0};v.n++;v.pts+=ptsOf(a);grouped.set(k,v);});
+      Array.from(grouped.entries()).sort((a,b)=>b[1].n-a[1].n).slice(0,5).forEach(([k,v],idx)=>{const yy=141+idx*8;txt(k.slice(0,18),214,yy,6,idx<2,ink);txt(`${v.n} act. · ${v.pts} pts`,284,yy,5.8,true,burg);});
+      title('Top performances',214,183);
+      box.slice().sort((a:any,b:any)=>pts(b)-pts(a)).slice(0,2).forEach((l:any,idx)=>{const yy=190+idx*8;txt(`#${l.p.num} ${l.p.name}`.slice(0,24),214,yy,6,true,ink);txt(`${pts(l)} PTS · ${(l.offReb||0)+(l.defReb||0)} REB · ${l.ast||0} PD`,284,yy,5.5,true,burg);});
+      pdf.save(`rapport_${safeName(teamName)}_vs_${safeName(opponent||'Adversaire')}_${date}.pdf`);
+      flash('Rapport PDF 1 page téléchargé ✓');
+      return;
+
+      /* Ancienne page d'analyse conservée hors exécution pour ne pas perturber
+         les calculs existants pendant la transition graphique. */
+      if (false) pdf.addPage('a4','landscape');pdf.setFillColor(...burg);pdf.rect(0,0,W,5,'F');txt('RAPPORT DE MATCH · ANALYSE',10,17,16,true,ink);txt(`${teamName} ${us} - ${them} ${opponent||'Adversaire'}`,10,24,8,true,muted);
       title('Répartition & discipline',10,37);
       const indicators=[['REBONDS',teamTotals.reb],['PASSES',teamTotals.ast],['INTERCEPTIONS',teamTotals.stl],['CONTRES',teamTotals.blk],['PERTES',teamTotals.to],['FAUTES',teamTotals.pf]];
       indicators.forEach((it,idx)=>{const yy=43+idx*10;txt(it[0],10,yy+5,7,true,muted);pdf.setFillColor(225,228,233);pdf.roundedRect(42,yy,65,6,2,2,'F');pdf.setFillColor(...burg);pdf.roundedRect(42,yy,Math.min(65,Number(it[1])*2),6,2,2,'F');txt(it[1],111,yy+5,7,true,ink);});
@@ -4691,8 +4703,7 @@ export default function PriseStatsProPage() {
       title('Lecture rapide',214,151);
       const notes=[teamTotals.to<=12?'✓ Ballon bien protégé':'• Pertes de balle à surveiller',pct(teamTotals.p3m,teamTotals.p3a)>=35?'✓ Adresse extérieure efficace':'• Adresse à 3PTS à travailler',teamTotals.ast>=15?'✓ Bonne création collective':'• Création collective à développer',analytics.maxStreak>=3?'✓ Séquence défensive forte':'• Chercher davantage de stops consécutifs'];
       notes.forEach((n,idx)=>txt(n,214,160+idx*9,7,idx===0,n.startsWith('✓')?green:ink));
-      pdf.save(`rapport_${safeName(teamName)}_vs_${safeName(opponent||'Adversaire')}_${date}.pdf`);
-      flash('Rapport PDF téléchargé ✓');
+      // sauvegarde effectuée plus haut sur la page unique
     } catch (e) {
       console.error('Rapport PDF:',e);
       flash('Impossible de générer le rapport PDF');
