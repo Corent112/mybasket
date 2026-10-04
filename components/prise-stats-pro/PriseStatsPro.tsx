@@ -4644,70 +4644,45 @@ export default function PriseStatsProPage() {
     try {
       const { jsPDF } = await import('jspdf');
       const pdf = new jsPDF({ orientation:'landscape', unit:'mm', format:'a4' });
-      const W=297, H=210, burg:[number,number,number]=[107,26,44], ink:[number,number,number]=[28,31,38], muted:[number,number,number]=[105,112,122], soft:[number,number,number]=[246,247,249], green:[number,number,number]=[28,145,92], red:[number,number,number]=[190,45,55];
-      const box=computeBox(actions,roster) as any[];
-      const analytics=computeAnalytics(actions,roster);
-      const us=sumPerQ('us'), them=sumPerQ('them');
-      const pts=(l:any)=>(l.p2m||0)*2+(l.p3m||0)*3+(l.ftm||0);
-      const teamTotals=box.reduce((a:any,l:any)=>({p2m:a.p2m+l.p2m,p2a:a.p2a+l.p2a,p3m:a.p3m+l.p3m,p3a:a.p3a+l.p3a,ftm:a.ftm+l.ftm,fta:a.fta+l.fta,reb:a.reb+l.offReb+l.defReb,ast:a.ast+l.ast,stl:a.stl+l.stl,blk:a.blk+l.blk,to:a.to+l.to,pf:a.pf+l.pf}),{p2m:0,p2a:0,p3m:0,p3a:0,ftm:0,fta:0,reb:0,ast:0,stl:0,blk:0,to:0,pf:0});
-      const pct=(m:number,a:number)=>a?Math.round(m*100/a):0;
-      const card=(x:number,y:number,w:number,h:number)=>{pdf.setFillColor(...soft);pdf.roundedRect(x,y,w,h,2,2,'F');};
-      const txt=(s:any,x:number,y:number,size=8,bold=false,color=ink)=>{pdf.setTextColor(...color);pdf.setFont('helvetica',bold?'bold':'normal');pdf.setFontSize(size);pdf.text(String(s),x,y);};
-      const title=(s:string,x:number,y:number)=>txt(s.toUpperCase(),x,y,9,true,burg);
-      const metric=(x:number,y:number,w:number,value:string,label:string)=>{card(x,y,w,17);txt(value,x+w/2,y+7,12,true,ink);pdf.setFontSize(6);pdf.setTextColor(...muted);pdf.text(label.toUpperCase(),x+w/2,y+12,{align:'center'});};
-      // Header
-      pdf.setFillColor(...burg);pdf.rect(0,0,W,5,'F');
-      txt('RAPPORT DE MATCH',10,17,19,true,ink); txt(date,286,15,8,true,muted); txt(home?'DOMICILE':'EXTÉRIEUR',286,20,7,false,muted);
-      pdf.setFillColor(...burg);pdf.roundedRect(10,25,135,28,3,3,'F');pdf.setFillColor(31,38,47);pdf.roundedRect(152,25,135,28,3,3,'F');
-      pdf.setTextColor(255,255,255);pdf.setFont('helvetica','bold');pdf.setFontSize(12);pdf.text(teamName||'MON ÉQUIPE',18,36);pdf.text(opponent||'ADVERSAIRE',279,36,{align:'right'});
-      pdf.setFontSize(24);pdf.text(String(us),126,46,{align:'right'});pdf.text(String(them),171,46);pdf.setFontSize(9);pdf.text('VS',148.5,43,{align:'center'});
-      let qx=184; Object.keys(perQ).slice(0,6).forEach(k=>{const v=perQ[+k];txt(periodLabel(+k),qx,32,6,true,[220,225,230]);pdf.setTextColor(255,255,255);pdf.setFontSize(7);pdf.text(`${v.us}-${v.them}`,qx,39);qx+=15;});
-      const diff=us-them;
-      metric(10,58,31,(diff>=0?'+':'')+diff,'Écart final'); metric(44,58,31,`${teamTotals.p2m}/${teamTotals.p2a}`,'2PTS '+pct(teamTotals.p2m,teamTotals.p2a)+'%'); metric(78,58,31,`${teamTotals.p3m}/${teamTotals.p3a}`,'3PTS '+pct(teamTotals.p3m,teamTotals.p3a)+'%'); metric(112,58,31,`${teamTotals.ftm}/${teamTotals.fta}`,'LF '+pct(teamTotals.ftm,teamTotals.fta)+'%'); metric(146,58,31,String(teamTotals.ast),'Passes'); metric(180,58,31,String(teamTotals.reb),'Rebonds'); metric(214,58,31,String(teamTotals.to),'Pertes'); metric(248,58,39,String(teamTotals.pf),'Fautes');
-      // Lineups
-      title('Lineups',10,84);
-      const lus=(analytics.lineups as any[]).map((l:any)=>({...l,diff:l.us-l.them})).sort((a:any,b:any)=>b.diff-a.diff);
-      const lineupBox=(l:any,x:number,y:number,w:number,label:string,color:[number,number,number])=>{card(x,y,w,36);txt(label,x+4,y+7,8,true,color);txt(l?`${l.diff>=0?'+':''}${l.diff}`:'—',x+w-4,y+7,11,true,color);if(l){const names=(l.ids||[]).map((id:string)=>{const p=roster.find(r=>r.id===id);return p?`#${p.num} ${p.name}`:''}).filter(Boolean).join(' · ');txt(names.slice(0,78),x+4,y+15,6.5,true,ink);txt(`Score pendant présence : ${l.us} - ${l.them}`,x+4,y+23,7,false,muted);txt(`Actions codées : ${l.n}`,x+4,y+30,7,false,muted);}};
-      lineupBox(lus[0],10,88,88,'MEILLEUR LINEUP',green); lineupBox(lus[lus.length-1],102,88,88,'LINEUP LE PLUS DIFFICILE',red);
-      card(194,88,93,36);title('Indicateurs collectifs',198,96);txt(`Possessions attaque : ${analytics.offPoss}`,198,104,7);txt(`Possessions défense : ${analytics.defPoss}`,198,111,7);txt(`Série max de stops : ${analytics.maxStreak}`,198,118,7);
-      // Player table
-      title('Statistiques joueurs',10,133);
-      const cols=[['#',10],['JOUEUR',17],['MIN',70],['PTS',88],['2PTS',102],['3PTS',123],['LF',144],['REB',163],['PD',178],['INT',190],['CTR',203],['BP',216],['F',229]];
-      pdf.setFillColor(235,237,240);pdf.rect(10,137,277,8,'F');cols.forEach(([h,x])=>txt(h,x as number,142,6.5,true,muted));
-      let y=150; box.slice().sort((a:any,b:any)=>pts(b)-pts(a)).slice(0,10).forEach((l:any,idx:number)=>{if(idx%2===1){pdf.setFillColor(249,249,250);pdf.rect(10,y-5,277,7,'F')} const vals=[l.p.num,l.p.name,fmt(minutesByPlayer[l.p.id]||0),pts(l),`${l.p2m}/${l.p2a}`,`${l.p3m}/${l.p3a}`,`${l.ftm}/${l.fta}`,(l.offReb||0)+(l.defReb||0),l.ast,l.stl,l.blk,l.to,l.pf]; vals.forEach((v,j)=>txt(v,cols[j][1] as number,y,6.5,j===1||j===3,ink));y+=7;});
-      // Le rapport validé tient sur une seule page paysage.
-      // La zone basse remplace l'ancienne seconde page : pas d'Actions clés, uniquement les synthèses utiles.
-      title('Temps forts / systèmes',214,133);
+      const W=297, burg:[number,number,number]=[107,26,44], navy:[number,number,number]=[21,48,72], ink:[number,number,number]=[25,35,48], muted:[number,number,number]=[105,112,122], soft:[number,number,number]=[247,248,250], green:[number,number,number]=[20,145,72], red:[number,number,number]=[190,45,55], gold:[number,number,number]=[212,162,76];
+      const box=computeBox(actions,roster) as any[], analytics=computeAnalytics(actions,roster), us=sumPerQ('us'), them=sumPerQ('them');
+      const pts=(l:any)=>(l.p2m||0)*2+(l.p3m||0)*3+(l.ftm||0), pct=(m:number,a:number)=>a?Math.round(m*100/a):0;
+      const totals=box.reduce((a:any,l:any)=>({p2m:a.p2m+l.p2m,p2a:a.p2a+l.p2a,p3m:a.p3m+l.p3m,p3a:a.p3a+l.p3a,ftm:a.ftm+l.ftm,fta:a.fta+l.fta,reb:a.reb+(l.offReb||0)+(l.defReb||0),ast:a.ast+(l.ast||0),stl:a.stl+(l.stl||0),blk:a.blk+(l.blk||0),to:a.to+(l.to||0),pf:a.pf+(l.pf||0)}),{p2m:0,p2a:0,p3m:0,p3a:0,ftm:0,fta:0,reb:0,ast:0,stl:0,blk:0,to:0,pf:0});
+      const txt=(s:any,x:number,y:number,size=6,bold=false,color=ink,align:'left'|'center'|'right'='left')=>{pdf.setTextColor(...color);pdf.setFont('helvetica',bold?'bold':'normal');pdf.setFontSize(size);pdf.text(String(s),x,y,{align});};
+      const card=(x:number,y:number,w:number,h:number,fill:[number,number,number]=[255,255,255])=>{pdf.setFillColor(...fill);pdf.setDrawColor(229,232,236);pdf.roundedRect(x,y,w,h,2,2,'FD');};
+      const barTitle=(s:string,x:number,y:number,w:number,color=navy)=>{pdf.setFillColor(...color);pdf.roundedRect(x,y,w,7,1.5,1.5,'F');txt(s,x+3,y+4.8,5.6,true,[255,255,255]);};
+      const playerById=(id:string)=>roster.find(p=>p.id===id);
+      const avatar=(id:string,x:number,y:number,r=4)=>{const p=playerById(id);pdf.setFillColor(238,232,226);pdf.circle(x,y,r,'F');txt(p?.num||'•',x,y+1.5,5,true,burg,'center');};
+      // En-tête fidèle à la maquette validée.
+      pdf.setFillColor(...burg);pdf.rect(0,0,116,20,'F');pdf.setFillColor(...navy);pdf.rect(116,0,181,20,'F');
+      txt(teamName||'MON ÉQUIPE',12,9,10,true,[255,255,255]);txt(opponent||'ADVERSAIRE',285,9,9,true,[255,255,255],'right');
+      txt(String(us),130,13,18,true,[255,255,255],'center');txt('-',148.5,13,12,true,[255,255,255],'center');txt(String(them),167,13,18,true,[255,255,255],'center');
+      txt(`${date} · ${home?'Domicile':'Extérieur'} · ${matchType==='league'?'Championnat':matchType==='cup'?'Coupe':'Amical'}`,148.5,18,5.5,false,[235,238,242],'center');
+      const qs=Object.keys(perQ).map(Number).sort((a,b)=>a-b).slice(0,4);qs.forEach((k,i)=>{const x=4+i*73.25,v=perQ[k],d=v.us-v.them;card(x,23,69,10);txt(periodLabel(k),x+7,29,5.5,true,ink);txt(`${v.us} - ${v.them}`,x+34.5,29,8,true,ink,'center');txt(`${d>=0?'+':''}${d}`,x+63,29,6,true,d>=0?green:red,'right');});
+      const metrics:any[]=[['2 PTS',`${pct(totals.p2m,totals.p2a)}%`,`${totals.p2m}/${totals.p2a}`],['3 PTS',`${pct(totals.p3m,totals.p3a)}%`,`${totals.p3m}/${totals.p3a}`],['LF',`${pct(totals.ftm,totals.fta)}%`,`${totals.ftm}/${totals.fta}`],['REBONDS',totals.reb,''],['PASSES DÉCISIVES',totals.ast,''],['PERTES DE BALLE',totals.to,''],['INTERCEPTIONS',totals.stl,'']];
+      card(4,36,289,17);metrics.forEach((m,i)=>{const x=4+i*41.3;if(i){pdf.setDrawColor(225,228,232);pdf.line(x,39,x,50);}txt(m[0],x+20.6,42,4.4,true,navy,'center');txt(m[1],x+20.6,47,8.2,true,ink,'center');if(m[2])txt(m[2],x+20.6,50.5,4.2,false,muted,'center');});
+      // Lineups + tops.
+      const lus=(analytics.lineups as any[]).map((l:any)=>({...l,diff:(l.us||0)-(l.them||0)})), mostUsed=[...lus].sort((a,b)=>(b.n||0)-(a.n||0))[0], mostProfitable=[...lus].sort((a,b)=>b.diff-a.diff)[0];
+      const lineupCard=(l:any,x:number,label:string,accent:[number,number,number])=>{card(x,57,108,35);barTitle(label,x,57,45,accent);if(!l){txt('Aucune donnée',x+4,76,6,false,muted);return;}(l.ids||[]).slice(0,5).forEach((id:string,i:number)=>avatar(id,x+12+i*14,72,5));txt(`${l.diff>=0?'+':''}${l.diff}`,x+101,72,13,true,l.diff>=0?green:red,'right');txt('+/-',x+101,77,4.5,true,muted,'right');const ns=(l.ids||[]).slice(0,5).map((id:string)=>playerById(id)?.name||'Joueur');ns.forEach((n:string,i:number)=>txt(n.split(' ').slice(-1)[0].slice(0,9),x+12+i*14,83,3.7,true,muted,'center'));txt(`${l.us||0} pts marqués`,x+76,88,4.3,true,green);txt(`${l.them||0} pts encaissés`,x+104,88,4.3,true,red,'right');};
+      lineupCard(mostUsed,4,'LINEUP LE PLUS UTILISÉ',navy);lineupCard(mostProfitable,115,'LINEUP LE PLUS RENTABLE',navy);
+      card(226,57,67,35);barTitle('TOP PERFORMANCES',226,57,35,burg);box.slice().sort((a:any,b:any)=>pts(b)-pts(a)).slice(0,3).forEach((l:any,i:number)=>{const x=237+i*20;avatar(l.p.id,x,71,5);txt(String(l.p.name).split(' ').slice(-1)[0].slice(0,8),x,80,3.7,true,ink,'center');txt(`${pts(l)} PTS`,x,85,5.2,true,burg,'center');txt(`${(l.offReb||0)+(l.defReb||0)} REB`,x,89,3.8,true,muted,'center');});
+      // Boxscore.
+      card(4,96,170,72);barTitle('BOXSCORE',4,96,170,navy);const cols:any[]=[['#',7],['JOUEUR',14],['MIN',72],['PTS',88],['2P',101],['3P',114],['LF',127],['REB',140],['PD',151],['INT',160],['BP',169]];
+      cols.forEach(([h,x])=>txt(h,x,108,4.3,true,muted));let yy=114;box.slice().sort((a:any,b:any)=>pts(b)-pts(a)).slice(0,9).forEach((l:any,i:number)=>{if(i%2){pdf.setFillColor(249,250,251);pdf.rect(5,yy-4,168,5.5,'F');}const vals=[l.p.num,String(l.p.name).slice(0,20),fmt(minutesByPlayer[l.p.id]||0),pts(l),`${l.p2m}/${l.p2a}`,`${l.p3m}/${l.p3a}`,`${l.ftm}/${l.fta}`,(l.offReb||0)+(l.defReb||0),l.ast,l.stl,l.to];vals.forEach((v,j)=>txt(v,cols[j][1],yy,4.4,j===1||j===3,ink));yy+=5.5;});pdf.setFillColor(236,240,244);pdf.rect(5,164,168,4,'F');txt('TOTAL',14,167,4.5,true,navy);txt(us,88,167,4.5,true,navy);
+      // Shot chart réel.
+      card(177,96,72,72);barTitle('SHOT CHART ÉQUIPE',177,96,72,navy);pdf.setDrawColor(80,91,103);pdf.rect(186,112,54,49,'S');pdf.line(198,112,198,133);pdf.line(228,112,228,133);pdf.rect(202,112,22,18,'S');pdf.circle(213,130,7,'S');pdf.arc(213,151,18,18,200,340,'S');
+      actions.filter(a=>a.actionType==='tir'&&a.courtX!=null&&a.courtY!=null).forEach(a=>{const x=186+Math.max(0,Math.min(1,Number(a.courtX)))*54,y=112+Math.max(0,Math.min(1,Number(a.courtY)))*49;const made=a.shotResult==='made';pdf.setDrawColor(...(made?green:red));if(made){pdf.circle(x,y,1.2,'S');}else{pdf.line(x-1,y-1,x+1,y+1);pdf.line(x+1,y-1,x-1,y+1);}});
+      // Répartition par zones réellement codées.
+      card(252,96,41,72);barTitle('RÉPARTITION TIRS',252,96,41,navy);const zoneMap=new Map<string,{m:number,a:number}>();actions.filter(a=>a.actionType==='tir').forEach(a=>{const z=a.zone||'Sans zone',v=zoneMap.get(z)||{m:0,a:0};v.a++;if(a.shotResult==='made')v.m++;zoneMap.set(z,v);});Array.from(zoneMap.entries()).slice(0,6).forEach(([z,v],i)=>{const y=110+i*9;txt(z.slice(0,13),255,y,4.2,true,ink);txt(`${v.m}/${v.a} · ${pct(v.m,v.a)}%`,290,y,4.5,true,navy,'right');});
+      // Ligne basse: classements lineups, temps forts, systèmes, mode.
+      card(4,172,83,34);barTitle('LINEUPS LES PLUS UTILISÉS',4,172,83,navy);[...lus].sort((a,b)=>(b.n||0)-(a.n||0)).slice(0,3).forEach((l,i)=>{txt(`${i+1}. ${(l.ids||[]).slice(0,5).map((id:string)=>'#'+(playerById(id)?.num||'?')).join(' · ')}`,7,184+i*7,4.3,true,ink);txt(`${l.diff>=0?'+':''}${l.diff}`,83,184+i*7,5,true,l.diff>=0?green:red,'right');});
+      card(90,172,70,34);barTitle('LINEUPS LES PLUS RENTABLES',90,172,70,navy);[...lus].sort((a,b)=>b.diff-a.diff).slice(0,3).forEach((l,i)=>{txt(`${i+1}. ${(l.ids||[]).slice(0,5).map((id:string)=>'#'+(playerById(id)?.num||'?')).join(' · ')}`,93,184+i*7,4.1,true,ink);txt(`${l.diff>=0?'+':''}${l.diff}`,156,184+i*7,5,true,l.diff>=0?green:red,'right');});
       const grouped=new Map<string,{n:number,pts:number}>();actions.forEach(a=>{const k=a.systemeName||a.systemeJeu||(a.tempsFort?tags.label(a.tempsFort):'');if(!k)return;const v=grouped.get(k)||{n:0,pts:0};v.n++;v.pts+=ptsOf(a);grouped.set(k,v);});
-      Array.from(grouped.entries()).sort((a,b)=>b[1].n-a[1].n).slice(0,5).forEach(([k,v],idx)=>{const yy=141+idx*8;txt(k.slice(0,18),214,yy,6,idx<2,ink);txt(`${v.n} act. · ${v.pts} pts`,284,yy,5.8,true,burg);});
-      title('Top performances',214,183);
-      box.slice().sort((a:any,b:any)=>pts(b)-pts(a)).slice(0,2).forEach((l:any,idx)=>{const yy=190+idx*8;txt(`#${l.p.num} ${l.p.name}`.slice(0,24),214,yy,6,true,ink);txt(`${pts(l)} PTS · ${(l.offReb||0)+(l.defReb||0)} REB · ${l.ast||0} PD`,284,yy,5.5,true,burg);});
-      pdf.save(`rapport_${safeName(teamName)}_vs_${safeName(opponent||'Adversaire')}_${date}.pdf`);
-      flash('Rapport PDF 1 page téléchargé ✓');
-      return;
-
-      /* Ancienne page d'analyse conservée hors exécution pour ne pas perturber
-         les calculs existants pendant la transition graphique. */
-      if (false) pdf.addPage('a4','landscape');pdf.setFillColor(...burg);pdf.rect(0,0,W,5,'F');txt('RAPPORT DE MATCH · ANALYSE',10,17,16,true,ink);txt(`${teamName} ${us} - ${them} ${opponent||'Adversaire'}`,10,24,8,true,muted);
-      title('Répartition & discipline',10,37);
-      const indicators=[['REBONDS',teamTotals.reb],['PASSES',teamTotals.ast],['INTERCEPTIONS',teamTotals.stl],['CONTRES',teamTotals.blk],['PERTES',teamTotals.to],['FAUTES',teamTotals.pf]];
-      indicators.forEach((it,idx)=>{const yy=43+idx*10;txt(it[0],10,yy+5,7,true,muted);pdf.setFillColor(225,228,233);pdf.roundedRect(42,yy,65,6,2,2,'F');pdf.setFillColor(...burg);pdf.roundedRect(42,yy,Math.min(65,Number(it[1])*2),6,2,2,'F');txt(it[1],111,yy+5,7,true,ink);});
-      title('Actions clés',128,37);
-      const keyActions=actions.filter(a=>ptsOf(a)>0||a.actionType==='interception'||a.actionType==='contre'||a.actionType==='faute-technique').slice(-12).reverse();
-      keyActions.forEach((a,idx)=>{const p=find(a.playerId);const yy=43+idx*8; if(yy>139)return; txt(`${periodLabel(a.q)} ${a.clock}`,128,yy,6.5,true,muted);txt((describe(a,find).t||a.actionType).slice(0,42),151,yy,6.5,false,ink);if(p)txt(`#${p.num} ${p.name}`,225,yy,6.5,true,burg);});
-      title('Temps forts / systèmes',10,116);
-      const grouped=new Map<string,{n:number,pts:number}>();actions.forEach(a=>{const k=a.systemeName||a.systemeJeu||(a.tempsFort?tags.label(a.tempsFort):'');if(!k)return;const v=grouped.get(k)||{n:0,pts:0};v.n++;v.pts+=ptsOf(a);grouped.set(k,v);});
-      Array.from(grouped.entries()).sort((a,b)=>b[1].n-a[1].n).slice(0,8).forEach(([k,v],idx)=>{const yy=123+idx*8;txt(k.slice(0,30),10,yy,7,idx<3,ink);txt(`${v.n} actions`,65,yy,7,false,muted);txt(`${v.pts} pts`,92,yy,7,true,burg);});
-      title('Top performances',128,151);
-      box.slice().sort((a:any,b:any)=>pts(b)-pts(a)).slice(0,4).forEach((l:any,idx)=>{const yy=158+idx*10;card(128,yy-6,75,8);txt(`#${l.p.num} ${l.p.name}`,132,yy,7,true,ink);txt(`${pts(l)} PTS · ${(l.offReb||0)+(l.defReb||0)} REB · ${l.ast||0} PD`,199,yy,6.5,true,burg);});
-      title('Lecture rapide',214,151);
-      const notes=[teamTotals.to<=12?'✓ Ballon bien protégé':'• Pertes de balle à surveiller',pct(teamTotals.p3m,teamTotals.p3a)>=35?'✓ Adresse extérieure efficace':'• Adresse à 3PTS à travailler',teamTotals.ast>=15?'✓ Bonne création collective':'• Création collective à développer',analytics.maxStreak>=3?'✓ Séquence défensive forte':'• Chercher davantage de stops consécutifs'];
-      notes.forEach((n,idx)=>txt(n,214,160+idx*9,7,idx===0,n.startsWith('✓')?green:ink));
-      // sauvegarde effectuée plus haut sur la page unique
-    } catch (e) {
-      console.error('Rapport PDF:',e);
-      flash('Impossible de générer le rapport PDF');
-    }
+      card(163,172,50,34);barTitle('TEMPS FORTS',163,172,50,navy);actions.filter(a=>a.tempsFort).slice(-3).reverse().forEach((a,i)=>{txt(`${periodLabel(a.q)} · ${a.clock}`,166,184+i*7,4.1,true,burg);txt((tags.label(a.tempsFort)||a.tempsFort).slice(0,15),181,184+i*7,4.1,false,ink);});
+      card(216,172,45,34);barTitle('SYSTÈMES UTILISÉS',216,172,45,navy);Array.from(grouped.entries()).sort((a,b)=>b[1].n-a[1].n).slice(0,3).forEach(([k,v],i)=>{txt(String(k).slice(0,14),219,184+i*7,4.1,true,ink);txt(`${v.n} act.`,258,184+i*7,4.1,true,burg,'right');});
+      card(264,172,29,34);barTitle('MON MODE',264,172,29,navy);txt(codingMode==='live-individual'?'Live individuel':codingMode==='live'?'Live collectif':codingMode==='match-review'?'Mon mode':'Post-match',267,184,4.2,true,burg);txt(`${actions.length} actions`,267,192,4.2,true,ink);txt(`${analytics.offPoss} poss. att.`,267,200,4.1,false,muted);
+      pdf.save(`rapport_${safeName(teamName)}_vs_${safeName(opponent||'Adversaire')}_${date}.pdf`);flash('Rapport PDF 1 page téléchargé ✓');
+    } catch(e){console.error('Rapport PDF:',e);flash('Impossible de générer le rapport PDF');}
   };
 
   const importLiveSourceFile = async (file: File | null) => {
