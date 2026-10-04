@@ -5486,7 +5486,7 @@ export default function PriseStatsProPage() {
       {screen === 'box' ? (
         <>
           <VideoReselectBanner />
-          <BoxView actions={actions} roster={roster} teamId={activeTeamId || teamId} minutesByPlayer={minutesByPlayer} onChangeMinutes={(playerId, seconds) => setMinutesByPlayer((current) => ({ ...current, [playerId]: Math.max(0, Math.round(seconds)) }))} videoProvider={videoProvider} videoUrl={videoUrl} sync={videoSync} oppRoster={oppRoster} onAddToMontage={addToMontage} onSaveNote={(id, note) => setClipEdit(id, { note })} onTrim={(id, cs, ce) => setClipEdit(id, { trimStart: cs, trimEnd: ce })} getEdit={(id) => getClipEdit(id)} initialTab={initialBoxTab} />
+          <BoxView actions={actions} roster={roster} teamId={activeTeamId || teamId} minutesByPlayer={minutesByPlayer} onChangeMinutes={(playerId, seconds) => setMinutesByPlayer((current) => ({ ...current, [playerId]: Math.max(0, Math.round(seconds)) }))} onSaveMinutes={() => { void persistProjectStateRef.current(); flash('Temps de jeu enregistrés ✓'); }} videoProvider={videoProvider} videoUrl={videoUrl} sync={videoSync} oppRoster={oppRoster} onAddToMontage={addToMontage} onSaveNote={(id, note) => setClipEdit(id, { note })} onTrim={(id, cs, ce) => setClipEdit(id, { trimStart: cs, trimEnd: ce })} getEdit={(id) => getClipEdit(id)} initialTab={initialBoxTab} />
         </>
       ) : (
         <>
@@ -7545,7 +7545,7 @@ export default function PriseStatsProPage() {
 }
 
 /* ============================ Box-score ============================ */
-function BoxView({ actions, roster, teamId, minutesByPlayer = {}, onChangeMinutes, videoProvider = 'none', videoUrl = '', sync = NATIVE_SYNC, oppRoster = [], onAddToMontage, onSaveNote, onTrim, getEdit, initialTab }: { actions: StatA[]; roster: Player[]; teamId?: string; minutesByPlayer?: Record<string, number>; onChangeMinutes?: (playerId: string, seconds: number) => void; videoProvider?: string; videoUrl?: string; sync?: VideoSyncState; oppRoster?: { id: string; num: string; name: string }[]; onAddToMontage?: (a: StatA) => void; onSaveNote?: (id: string, note: string) => void; onTrim?: (id: string, cs: number, ce: number) => void; getEdit?: (id: string) => { note?: string; trimStart?: number | null; trimEnd?: number | null } | undefined; initialTab?: 'box' | 'team' | null }) {
+function BoxView({ actions, roster, teamId, minutesByPlayer = {}, onChangeMinutes, onSaveMinutes, videoProvider = 'none', videoUrl = '', sync = NATIVE_SYNC, oppRoster = [], onAddToMontage, onSaveNote, onTrim, getEdit, initialTab }: { actions: StatA[]; roster: Player[]; teamId?: string; minutesByPlayer?: Record<string, number>; onChangeMinutes?: (playerId: string, seconds: number) => void; onSaveMinutes?: () => void; videoProvider?: string; videoUrl?: string; sync?: VideoSyncState; oppRoster?: { id: string; num: string; name: string }[]; onAddToMontage?: (a: StatA) => void; onSaveNote?: (id: string, note: string) => void; onTrim?: (id: string, cs: number, ce: number) => void; getEdit?: (id: string) => { note?: string; trimStart?: number | null; trimEnd?: number | null } | undefined; initialTab?: 'box' | 'team' | null }) {
   const tags = useLivestatTags(teamId);
   // AJOUT §12 · find reconnaît aussi les joueurs adverses (préfixe opp_).
   const find = (id: string | null) => roster.find((p) => p.id === id)
@@ -7914,13 +7914,14 @@ function BoxView({ actions, roster, teamId, minutesByPlayer = {}, onChangeMinute
       </div>
 
       {/* ===== Boxscore joueurs ===== */}
+      {boxTab === 'box' && <div style={{display:'flex',justifyContent:'flex-end',margin:'0 0 10px'}}><button type="button" className="ghost on" onClick={() => onSaveMinutes?.()}>💾 Enregistrer les temps de jeu</button></div>}
       {boxTab === 'box' && (
         <table className="boxscoreClipTable">
-          <thead><tr><th className="l">Joueur</th><th>MIN</th><th>PTS</th><th>2PTS</th><th>3PTS</th><th>LF</th><th>RO</th><th>RD</th><th>RT</th><th>PD</th><th>INT</th><th>CT</th><th>BP</th><th>FPRO</th><th>FPER</th><th>ÉVAL</th><th>+/-</th></tr></thead>
+          <thead><tr><th className="l">Joueur</th><th>TEMPS</th><th>PTS</th><th>2PTS</th><th>3PTS</th><th>LF</th><th>RO</th><th>RD</th><th>RT</th><th>PD</th><th>INT</th><th>CT</th><th>BP</th><th>FPRO</th><th>FPER</th><th>ÉVAL</th><th>+/-</th></tr></thead>
           <tbody>
             {box.map((l: any) => (
               <tr key={l.p.id} className="clickRow" onClick={() => openPlayerBoxClips(l.p, 'all', 'Toutes les actions')}>
-                <td className="l"><button type="button" className="boxStatBtn player" onClick={(e) => { stopCell(e); openPlayerBoxClips(l.p, 'all', 'Toutes les actions'); }}>#{l.p.num} {l.p.name}</button></td><td onClick={stopCell}><input type="number" min="0" max="99" step="1" value={Math.round((minutesByPlayer[l.p.id] || 0) / 60)} onChange={(e) => onChangeMinutes?.(l.p.id, Math.max(0, Number(e.target.value) || 0) * 60)} title="Temps de jeu manuel en minutes" style={{width:52,border:'1px solid #d8dde5',borderRadius:8,padding:'6px 4px',textAlign:'center',fontWeight:800}} /></td>
+                <td className="l"><button type="button" className="boxStatBtn player" onClick={(e) => { stopCell(e); openPlayerBoxClips(l.p, 'all', 'Toutes les actions'); }}>#{l.p.num} {l.p.name}</button></td><td onClick={stopCell}><div style={{display:'inline-flex',alignItems:'center',gap:3}}><input type="number" min="0" max="99" step="1" value={Math.floor((minutesByPlayer[l.p.id] || 0) / 60)} onChange={(e) => { const total=minutesByPlayer[l.p.id] || 0; onChangeMinutes?.(l.p.id, Math.max(0, Number(e.target.value) || 0) * 60 + (total % 60)); }} title="Minutes" style={{width:38,border:'1px solid #d8dde5',borderRadius:7,padding:'6px 3px',textAlign:'center',fontWeight:800}} /><b>:</b><input type="number" min="0" max="59" step="1" value={(minutesByPlayer[l.p.id] || 0) % 60} onChange={(e) => { const total=minutesByPlayer[l.p.id] || 0; onChangeMinutes?.(l.p.id, Math.floor(total/60)*60 + Math.max(0,Math.min(59,Number(e.target.value)||0))); }} title="Secondes" style={{width:38,border:'1px solid #d8dde5',borderRadius:7,padding:'6px 3px',textAlign:'center',fontWeight:800}} /></div></td>
                 <td><button type="button" className="boxStatBtn" onClick={(e) => { stopCell(e); openPlayerBoxClips(l.p, 'pts', 'Points marqués'); }}><b>{pts(l)}</b></button></td>
                 <td><button type="button" className="boxStatBtn" onClick={(e) => { stopCell(e); openPlayerBoxClips(l.p, '2pts', `2PTS ${l.p2m}/${l.p2a}`); }}>{l.p2m}/{l.p2a}</button></td>
                 <td><button type="button" className="boxStatBtn" onClick={(e) => { stopCell(e); openPlayerBoxClips(l.p, '3pts', `3PTS ${l.p3m}/${l.p3a}`); }}>{l.p3m}/{l.p3a}</button></td>
