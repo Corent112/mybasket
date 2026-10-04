@@ -4714,7 +4714,7 @@ export default function PriseStatsProPage() {
       card(192,172,38,34);barTitle('TEMPS FORTS · ADV.',192,172,38,navy);
       txt('REB OFF ADV.',195,184,3.7,true,muted);txt(oppOffReb,227,184,5,true,navy,'right');
       txt('PTS RAQUETTE ADV.',195,191,3.4,true,muted);txt(oppPaintPoints,227,191,5,true,burg,'right');
-      const oppPoss=actions.filter(a=>a.context==='defense'&&a.possessionId).reduce((s,a)=>s.add(a.possessionId!),new Set<string>()).size;
+      const oppPoss=actions.filter(a=>a.context==='defense'&&a.possessionEnd).length;
       txt('POSSESSIONS ADV.',195,198,3.4,true,muted);txt(oppPoss,227,198,5,true,ink,'right');
       const grouped=new Map<string,{n:number,pts:number}>();actions.forEach(a=>{const k=a.systemeName||a.systemeJeu||(a.tempsFort?tags.label(a.tempsFort):'');if(!k)return;const v=grouped.get(k)||{n:0,pts:0};v.n++;v.pts+=ptsOf(a);grouped.set(k,v);});
       card(233,172,36,34);barTitle('SYSTÈMES',233,172,36,navy);Array.from(grouped.entries()).sort((a,b)=>b[1].n-a[1].n).slice(0,3).forEach(([k,v],i)=>{txt(String(k).slice(0,10),236,184+i*7,3.8,true,ink);txt(`${v.n}x`,266,184+i*7,3.8,true,burg,'right');});
