@@ -4701,7 +4701,7 @@ export default function PriseStatsProPage() {
       shotSummary.forEach(([label,made,attempts],i)=>{const x=199+i*30;pdf.setFillColor(247,248,250);pdf.roundedRect(x,105,27,11,1.5,1.5,'F');txt(label,x+13.5,109,4.1,true,navy,'center');txt(`${attempts} tirs`,x+13.5,113.2,5.5,true,ink,'center');txt(`${made}/${attempts} · ${pct(made,attempts)}%`,x+13.5,115.4,3.2,false,muted,'center');});
       if(courtImage) pdf.addImage(courtImage,'PNG',199,118,90,45);
       else {pdf.setFillColor(247,242,232);pdf.rect(199,118,90,45,'F');}
-      const paintZoneIds=new Set(['z4','z5']); // cercle sous le panier + zone raquette
+      const paintZoneIds=new Set(['z1','z2']); // ShotChart.tsx : z1 = Cercle, z2 = Raquette
       const paintPoints=actions.filter(a=>a.context==='attaque'&&a.actionType==='tir'&&a.shotType==='2PTS'&&paintZoneIds.has(a.zone||'')&&a.shotResult==='made').length*2;
       const zoneStats=new Map<string,{m:number,a:number}>();
       actions.filter(a=>a.context==='attaque'&&a.actionType==='tir'&&a.shotType!=='LF'&&a.zone).forEach(a=>{const v=zoneStats.get(a.zone)||{m:0,a:0};v.a++;if(a.shotResult==='made')v.m++;zoneStats.set(a.zone,v);});
