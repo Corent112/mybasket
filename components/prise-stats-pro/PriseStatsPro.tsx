@@ -4685,14 +4685,19 @@ export default function PriseStatsProPage() {
       let yy=112;
       boxRows.forEach((l:any,i:number)=>{if(i%2){pdf.setFillColor(249,250,251);pdf.rect(5,yy-3.7,186,rowH,'F');}const vals=[l.p.num,String(l.p.name).slice(0,18),fmt(minutesByPlayer[l.p.id]||0),pts(l),`${l.p2m}/${l.p2a}`,`${l.p3m}/${l.p3a}`,`${l.ftm}/${l.fta}`,l.offReb||0,l.defReb||0,(l.offReb||0)+(l.defReb||0),l.ast||0,l.stl||0,l.blk||0,l.to||0,l.pf||0,l.fd||0];vals.forEach((v,j)=>txt(v,cols[j][1],yy,3.35,j===1||j===3,ink));yy+=rowH;});
       pdf.setFillColor(...navy);pdf.rect(5,163,186,5,'F');txt('TOTAL',12,166.5,4,true,[255,255,255]);txt(us,72,166.5,4,true,[255,255,255]);txt(`${totals.p2m}/${totals.p2a}`,83,166.5,4,true,[255,255,255]);txt(`${totals.p3m}/${totals.p3a}`,95,166.5,4,true,[255,255,255]);txt(`${totals.ftm}/${totals.fta}`,107,166.5,4,true,[255,255,255]);txt(box.reduce((s:any,l:any)=>s+(l.offReb||0),0),119,166.5,4,true,[255,255,255]);txt(box.reduce((s:any,l:any)=>s+(l.defReb||0),0),128,166.5,4,true,[255,255,255]);txt(totals.reb,137,166.5,4,true,[255,255,255]);txt(totals.ast,147,166.5,4,true,[255,255,255]);txt(totals.stl,156,166.5,4,true,[255,255,255]);txt(totals.blk,165,166.5,4,true,[255,255,255]);txt(totals.to,174,166.5,4,true,[255,255,255]);txt(totals.pf,183,166.5,4,true,[255,255,255]);
-      // Shot chart : terrain officiel + détail de réussite directement dans chaque zone.
+      // Shot chart : répartition globale en tête du bloc, puis détail directement dans chaque zone.
       card(195,96,98,72);barTitle('SHOT CHART · TIRS PAR ZONE',195,96,98,navy);
-      if(courtImage) pdf.addImage(courtImage,'PNG',199,106,90,57);
-      else {pdf.setFillColor(247,242,232);pdf.rect(199,106,90,57,'F');}
+      const shotSummary=[
+        ['2 PTS',totals.p2m,totals.p2a],
+        ['3 PTS',totals.p3m,totals.p3a],
+        ['LF',totals.ftm,totals.fta],
+      ] as const;
+      shotSummary.forEach(([label,made,attempts],i)=>{const x=199+i*30;pdf.setFillColor(247,248,250);pdf.roundedRect(x,105,27,11,1.5,1.5,'F');txt(label,x+13.5,109,4.1,true,navy,'center');txt(`${attempts} tirs`,x+13.5,113.2,5.5,true,ink,'center');txt(`${made}/${attempts} · ${pct(made,attempts)}%`,x+13.5,115.4,3.2,false,muted,'center');});
+      if(courtImage) pdf.addImage(courtImage,'PNG',199,118,90,45);
+      else {pdf.setFillColor(247,242,232);pdf.rect(199,118,90,45,'F');}
       const zoneStats=new Map<string,{m:number,a:number}>();
       actions.filter(a=>a.actionType==='tir'&&a.shotType!=='LF'&&a.zone).forEach(a=>{const v=zoneStats.get(a.zone)||{m:0,a:0};v.a++;if(a.shotResult==='made')v.m++;zoneStats.set(a.zone,v);});
-      SHOT_ZONES.forEach(z=>{const v=zoneStats.get(z.id);if(!v?.a)return;const x=199+(z.cx/100)*90,y=106+(z.cy/100)*57;pdf.setFillColor(255,255,255);pdf.setDrawColor(...navy);pdf.circle(x,y,3.7,'FD');txt(`${v.m}/${v.a}`,x,y+.8,3.7,true,navy,'center');});
-      const volumeY=165;txt(`2PTS  ${totals.p2m}/${totals.p2a} (${pct(totals.p2m,totals.p2a)}%)`,199,volumeY,4.2,true,ink);txt(`3PTS  ${totals.p3m}/${totals.p3a} (${pct(totals.p3m,totals.p3a)}%)`,232,volumeY,4.2,true,ink);txt(`LF  ${totals.ftm}/${totals.fta} (${pct(totals.ftm,totals.fta)}%)`,264,volumeY,4.2,true,ink);
+      SHOT_ZONES.forEach(z=>{const v=zoneStats.get(z.id);if(!v?.a)return;const x=199+(z.cx/100)*90,y=118+(z.cy/100)*45;pdf.setFillColor(255,255,255);pdf.setDrawColor(...navy);pdf.circle(x,y,3.5,'FD');txt(`${v.m}/${v.a}`,x,y+.75,3.5,true,navy,'center');});
       // Bas du rapport : lineups visuels avec photos, puis contexte match.
       const rankedUsed=[...lus].sort((a,b)=>(b.n||0)-(a.n||0)).slice(0,3), rankedRent=[...lus].sort((a,b)=>b.diff-a.diff).slice(0,3);
       const miniLineups=(list:any[],x:number,w:number,label:string)=>{card(x,172,w,34);barTitle(label,x,172,w,navy);list.forEach((l,i)=>{const y=184+i*7.3;txt(String(i+1),x+4,y+1,4.2,true,muted);(l.ids||[]).slice(0,5).forEach((id:string,j:number)=>avatar(id,x+12+j*8.2,y,3));txt(`${l.diff>=0?'+':''}${l.diff}`,x+w-4,y+1,4.8,true,l.diff>=0?green:red,'right');});};
