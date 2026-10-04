@@ -4669,7 +4669,7 @@ export default function PriseStatsProPage() {
       txt(String(us),130,13,18,true,[255,255,255],'center');txt('-',148.5,13,12,true,[255,255,255],'center');txt(String(them),167,13,18,true,[255,255,255],'center');
       txt(`${date} · ${home?'Domicile':'Extérieur'} · ${matchType==='league'?'Championnat':matchType==='cup'?'Coupe':'Amical'}`,148.5,18,5.5,false,[235,238,242],'center');
       const qs=Object.keys(perQ).map(Number).sort((a,b)=>a-b).slice(0,4);qs.forEach((k,i)=>{const x=4+i*73.25,v=perQ[k],d=v.us-v.them;card(x,23,69,10);txt(periodLabel(k),x+7,29,5.5,true,ink);txt(`${v.us} - ${v.them}`,x+34.5,29,8,true,ink,'center');txt(`${d>=0?'+':''}${d}`,x+63,29,6,true,d>=0?green:red,'right');});
-      const metrics:any[]=[['2 PTS',`${pct(totals.p2m,totals.p2a)}%`,`${totals.p2m}/${totals.p2a}`],['3 PTS',`${pct(totals.p3m,totals.p3a)}%`,`${totals.p3m}/${totals.p3a}`],['LF',`${pct(totals.ftm,totals.fta)}%`,`${totals.ftm}/${totals.fta}`],['REBONDS',totals.reb,''],['REB. OFF',box.reduce((s:any,l:any)=>s+(l.offReb||0),0),''],['PASSES DÉCISIVES',totals.ast,''],['PERTES DE BALLE',totals.to,''],['INTERCEPTIONS',totals.stl,'']];
+      const metrics:any[]=[['2 PTS',`${pct(totals.p2m,totals.p2a)}%`,`${totals.p2m}/${totals.p2a}`],['3 PTS',`${pct(totals.p3m,totals.p3a)}%`,`${totals.p3m}/${totals.p3a}`],['LF',`${pct(totals.ftm,totals.fta)}%`,`${totals.ftm}/${totals.fta}`],['REBONDS',totals.reb,''],['REB. OFF',box.reduce((s:any,l:any)=>s+(l.offReb||0),0),''],['PASSES DÉCISIVES',totals.ast,''],['PERTES DE BALLE',totals.to,''],['POSSESSIONS',analytics.offPoss,'']];
       card(4,36,289,17);metrics.forEach((m,i)=>{const x=4+i*36.125;if(i){pdf.setDrawColor(225,228,232);pdf.line(x,39,x,50);}txt(m[0],x+18.05,42,4.4,true,navy,'center');txt(m[1],x+18.05,47,8.2,true,ink,'center');if(m[2])txt(m[2],x+18.05,50.5,4.2,false,muted,'center');});
       // Lineups + tops.
       const lus=(analytics.lineups as any[]).map((l:any)=>({...l,diff:(l.us||0)-(l.them||0)})), mostUsed=[...lus].sort((a,b)=>(b.n||0)-(a.n||0))[0], mostProfitable=[...lus].sort((a,b)=>b.diff-a.diff)[0];
@@ -5473,7 +5473,7 @@ export default function PriseStatsProPage() {
       {screen === 'box' ? (
         <>
           <VideoReselectBanner />
-          <BoxView actions={actions} roster={roster} teamId={activeTeamId || teamId} videoProvider={videoProvider} videoUrl={videoUrl} sync={videoSync} oppRoster={oppRoster} onAddToMontage={addToMontage} onSaveNote={(id, note) => setClipEdit(id, { note })} onTrim={(id, cs, ce) => setClipEdit(id, { trimStart: cs, trimEnd: ce })} getEdit={(id) => getClipEdit(id)} initialTab={initialBoxTab} />
+          <BoxView actions={actions} roster={roster} teamId={activeTeamId || teamId} minutesByPlayer={minutesByPlayer} onChangeMinutes={(playerId, seconds) => setMinutesByPlayer((current) => ({ ...current, [playerId]: Math.max(0, Math.round(seconds)) }))} videoProvider={videoProvider} videoUrl={videoUrl} sync={videoSync} oppRoster={oppRoster} onAddToMontage={addToMontage} onSaveNote={(id, note) => setClipEdit(id, { note })} onTrim={(id, cs, ce) => setClipEdit(id, { trimStart: cs, trimEnd: ce })} getEdit={(id) => getClipEdit(id)} initialTab={initialBoxTab} />
         </>
       ) : (
         <>
@@ -7532,7 +7532,7 @@ export default function PriseStatsProPage() {
 }
 
 /* ============================ Box-score ============================ */
-function BoxView({ actions, roster, teamId, videoProvider = 'none', videoUrl = '', sync = NATIVE_SYNC, oppRoster = [], onAddToMontage, onSaveNote, onTrim, getEdit, initialTab }: { actions: StatA[]; roster: Player[]; teamId?: string; videoProvider?: string; videoUrl?: string; sync?: VideoSyncState; oppRoster?: { id: string; num: string; name: string }[]; onAddToMontage?: (a: StatA) => void; onSaveNote?: (id: string, note: string) => void; onTrim?: (id: string, cs: number, ce: number) => void; getEdit?: (id: string) => { note?: string; trimStart?: number | null; trimEnd?: number | null } | undefined; initialTab?: 'box' | 'team' | null }) {
+function BoxView({ actions, roster, teamId, minutesByPlayer = {}, onChangeMinutes, videoProvider = 'none', videoUrl = '', sync = NATIVE_SYNC, oppRoster = [], onAddToMontage, onSaveNote, onTrim, getEdit, initialTab }: { actions: StatA[]; roster: Player[]; teamId?: string; minutesByPlayer?: Record<string, number>; onChangeMinutes?: (playerId: string, seconds: number) => void; videoProvider?: string; videoUrl?: string; sync?: VideoSyncState; oppRoster?: { id: string; num: string; name: string }[]; onAddToMontage?: (a: StatA) => void; onSaveNote?: (id: string, note: string) => void; onTrim?: (id: string, cs: number, ce: number) => void; getEdit?: (id: string) => { note?: string; trimStart?: number | null; trimEnd?: number | null } | undefined; initialTab?: 'box' | 'team' | null }) {
   const tags = useLivestatTags(teamId);
   // AJOUT §12 · find reconnaît aussi les joueurs adverses (préfixe opp_).
   const find = (id: string | null) => roster.find((p) => p.id === id)
@@ -7903,11 +7903,11 @@ function BoxView({ actions, roster, teamId, videoProvider = 'none', videoUrl = '
       {/* ===== Boxscore joueurs ===== */}
       {boxTab === 'box' && (
         <table className="boxscoreClipTable">
-          <thead><tr><th className="l">Joueur</th><th>PTS</th><th>2PTS</th><th>3PTS</th><th>LF</th><th>RO</th><th>RD</th><th>RT</th><th>PD</th><th>INT</th><th>CT</th><th>BP</th><th>FPRO</th><th>FPER</th><th>ÉVAL</th><th>+/-</th></tr></thead>
+          <thead><tr><th className="l">Joueur</th><th>MIN</th><th>PTS</th><th>2PTS</th><th>3PTS</th><th>LF</th><th>RO</th><th>RD</th><th>RT</th><th>PD</th><th>INT</th><th>CT</th><th>BP</th><th>FPRO</th><th>FPER</th><th>ÉVAL</th><th>+/-</th></tr></thead>
           <tbody>
             {box.map((l: any) => (
               <tr key={l.p.id} className="clickRow" onClick={() => openPlayerBoxClips(l.p, 'all', 'Toutes les actions')}>
-                <td className="l"><button type="button" className="boxStatBtn player" onClick={(e) => { stopCell(e); openPlayerBoxClips(l.p, 'all', 'Toutes les actions'); }}>#{l.p.num} {l.p.name}</button></td>
+                <td className="l"><button type="button" className="boxStatBtn player" onClick={(e) => { stopCell(e); openPlayerBoxClips(l.p, 'all', 'Toutes les actions'); }}>#{l.p.num} {l.p.name}</button></td><td onClick={stopCell}><input type="number" min="0" max="99" step="1" value={Math.round((minutesByPlayer[l.p.id] || 0) / 60)} onChange={(e) => onChangeMinutes?.(l.p.id, Math.max(0, Number(e.target.value) || 0) * 60)} title="Temps de jeu manuel en minutes" style={{width:52,border:'1px solid #d8dde5',borderRadius:8,padding:'6px 4px',textAlign:'center',fontWeight:800}} /></td>
                 <td><button type="button" className="boxStatBtn" onClick={(e) => { stopCell(e); openPlayerBoxClips(l.p, 'pts', 'Points marqués'); }}><b>{pts(l)}</b></button></td>
                 <td><button type="button" className="boxStatBtn" onClick={(e) => { stopCell(e); openPlayerBoxClips(l.p, '2pts', `2PTS ${l.p2m}/${l.p2a}`); }}>{l.p2m}/{l.p2a}</button></td>
                 <td><button type="button" className="boxStatBtn" onClick={(e) => { stopCell(e); openPlayerBoxClips(l.p, '3pts', `3PTS ${l.p3m}/${l.p3a}`); }}>{l.p3m}/{l.p3a}</button></td>
@@ -7925,7 +7925,7 @@ function BoxView({ actions, roster, teamId, videoProvider = 'none', videoUrl = '
               </tr>
             ))}
             <tr className="team-stat-row">
-              <td className="l"><button type="button" className="boxStatBtn player" onClick={(e) => { stopCell(e); openTeamBoxClips('team', 'all', 'Toutes les actions'); }}><b>ÉQUIPE</b></button></td>
+              <td className="l"><button type="button" className="boxStatBtn player" onClick={(e) => { stopCell(e); openTeamBoxClips('team', 'all', 'Toutes les actions'); }}><b>ÉQUIPE</b></button></td><td>—</td>
               <td><button type="button" className="boxStatBtn" onClick={(e) => { stopCell(e); openTeamBoxClips('team', 'pts', 'Points marqués'); }}><b>{tot.pts || 0}</b></button></td>
               <td><button type="button" className="boxStatBtn" onClick={(e) => { stopCell(e); openTeamBoxClips('team', '2pts', '2PTS'); }}>{tot.p2m || 0}/{tot.p2a || 0}</button></td>
               <td><button type="button" className="boxStatBtn" onClick={(e) => { stopCell(e); openTeamBoxClips('team', '3pts', '3PTS'); }}>{tot.p3m || 0}/{tot.p3a || 0}</button></td>
@@ -7942,7 +7942,7 @@ function BoxView({ actions, roster, teamId, videoProvider = 'none', videoUrl = '
               <td><button type="button" className="boxStatBtn" onClick={(e) => { stopCell(e); openTeamBoxClips('team', 'all', 'Évaluation collective'); }}>{teamEval + teamOnlyStl}</button></td><td>—</td>
             </tr>
             <tr className="team-stat-row opponent-stat-row">
-              <td className="l"><button type="button" className="boxStatBtn player" onClick={(e) => { stopCell(e); openTeamBoxClips('opponent', 'all', 'Toutes les actions'); }}><b>ÉQUIPE ADVERSE</b></button></td>
+              <td className="l"><button type="button" className="boxStatBtn player" onClick={(e) => { stopCell(e); openTeamBoxClips('opponent', 'all', 'Toutes les actions'); }}><b>ÉQUIPE ADVERSE</b></button></td><td>—</td>
               <td><button type="button" className="boxStatBtn" onClick={(e) => { stopCell(e); openTeamBoxClips('opponent', 'pts', 'Points'); }}><b>{oppPts}</b></button></td>
               <td><button type="button" className="boxStatBtn" onClick={(e) => { stopCell(e); openTeamBoxClips('opponent', '2pts', '2PTS'); }}>{opp2m}/{oppShots2.length}</button></td>
               <td><button type="button" className="boxStatBtn" onClick={(e) => { stopCell(e); openTeamBoxClips('opponent', '3pts', '3PTS'); }}>{opp3m}/{oppShots3.length}</button></td>
