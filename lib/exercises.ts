@@ -376,7 +376,19 @@ export async function listExercises(): Promise<Exercise[]> {
     return [];
   }
 
-  return attachExerciseContributors(data ?? []);
+  const seen = new Set<string>();
+  const deduped = (data ?? []).filter((row: any) => {
+    // Une même proposition ne doit produire qu'une seule fiche officielle
+    // visible, même si elle a été validée plusieurs fois historiquement.
+    const key = row?.original_exercise_id
+      ? `original:${row.original_exercise_id}`
+      : `id:${row.id}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+
+  return attachExerciseContributors(deduped);
 }
 
 export async function listMyExercises(): Promise<Exercise[]> {
