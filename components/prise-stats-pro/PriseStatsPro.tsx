@@ -184,7 +184,7 @@ function readTeamsFromLocalStorage(): { id: string; name: string; players: Playe
   }
 }
 
-async function readTeams(): Promise<{ id: string; name: string; players: Player[]; teamType?: string; isScoutTeam?: boolean; primaryColor?: string; secondaryColor?: string }[]> {
+async function readTeams(): Promise<{ id: string; name: string; players: Player[]; teamType?: string; isScoutTeam?: boolean; primaryColor?: string; secondaryColor?: string; logo?: string }[]> {
   if (typeof window === 'undefined') return [];
 
   try {
@@ -203,6 +203,7 @@ async function readTeams(): Promise<{ id: string; name: string; players: Player[
         isScoutTeam: Boolean(team.isScoutTeam || team.scout || String(team.teamType ?? team.team_type ?? '').toLowerCase() === 'scout'),
         primaryColor: team.primaryColor || team.primary_color || team.color || team.couleur || team.color1 || team.couleur1 || '',
         secondaryColor: team.secondaryColor || team.secondary_color || team.color2 || team.couleur2 || '',
+        logo: team.logo || team.logo_url || team.club_logo_url || '',
         players: (team.players || [])
           .map((player: any) =>
             normalizePlayer({
@@ -836,7 +837,7 @@ async function readLocalVideoHandle(key: string): Promise<MyBasketLocalVideoHand
 }
 
 export default function PriseStatsProPage() {
-  const [teams, setTeams] = useState<{ id: string; name: string; players: Player[]; teamType?: string; isScoutTeam?: boolean; primaryColor?: string; secondaryColor?: string }[]>([]);
+  const [teams, setTeams] = useState<{ id: string; name: string; players: Player[]; teamType?: string; isScoutTeam?: boolean; primaryColor?: string; secondaryColor?: string; logo?: string }[]>([]);
   const [analysisScope, setAnalysisScope] = useState<'coached' | 'scout'>('coached');
   const quickCreateScoutTeam = async () => {
     const name = window.prompt("Nom de l'équipe scoutée (ex : AS Monaco)")?.trim();
@@ -4662,10 +4663,12 @@ export default function PriseStatsProPage() {
       const photoEntries=await Promise.all(roster.map(async p=>[p.id,await loadImageData(p.photo||'',true)] as const));
       const photoMap=new Map(photoEntries);
       const courtImage=await loadImageData('/shot-chart-clean.webp');
+      const teamLogo=await loadImageData(activeTeam?.logo || '');
       const avatar=(id:string,x:number,y:number,r=4)=>{const p=playerById(id),photo=photoMap.get(id);if(photo){pdf.addImage(photo,'PNG',x-r,y-r,r*2,r*2);pdf.setDrawColor(255,255,255);pdf.setLineWidth(.7);pdf.circle(x,y,r,'S');}else{pdf.setFillColor(238,232,226);pdf.circle(x,y,r,'F');txt(p?.num||'•',x,y+1.5,5,true,burg,'center');}};
       // En-tête fidèle à la maquette validée.
       pdf.setFillColor(...burg);pdf.rect(0,0,116,20,'F');pdf.setFillColor(...navy);pdf.rect(116,0,181,20,'F');
-      txt(teamName||'MON ÉQUIPE',12,9,10,true,[255,255,255]);txt(opponent||'ADVERSAIRE',285,9,9,true,[255,255,255],'right');
+      if(teamLogo) pdf.addImage(teamLogo,'PNG',7,3,14,14);
+      txt(teamName||'MON ÉQUIPE',teamLogo?24:12,9,10,true,[255,255,255]);txt(opponent||'ADVERSAIRE',285,9,9,true,[255,255,255],'right');
       txt(String(us),130,13,18,true,[255,255,255],'center');txt('-',148.5,13,12,true,[255,255,255],'center');txt(String(them),167,13,18,true,[255,255,255],'center');
       txt(`${date} · ${home?'Domicile':'Extérieur'} · ${matchType==='league'?'Championnat':matchType==='cup'?'Coupe':'Amical'}`,148.5,18,5.5,false,[235,238,242],'center');
       const qs=Object.keys(perQ).map(Number).sort((a,b)=>a-b).slice(0,4);qs.forEach((k,i)=>{const x=4+i*73.25,v=perQ[k],d=v.us-v.them;card(x,23,69,10);txt(periodLabel(k),x+7,29,5.5,true,ink);txt(`${v.us} - ${v.them}`,x+34.5,29,8,true,ink,'center');txt(`${d>=0?'+':''}${d}`,x+63,29,6,true,d>=0?green:red,'right');});
@@ -4697,7 +4700,7 @@ export default function PriseStatsProPage() {
       else {pdf.setFillColor(247,242,232);pdf.rect(199,118,90,45,'F');}
       const zoneStats=new Map<string,{m:number,a:number}>();
       actions.filter(a=>a.actionType==='tir'&&a.shotType!=='LF'&&a.zone).forEach(a=>{const v=zoneStats.get(a.zone)||{m:0,a:0};v.a++;if(a.shotResult==='made')v.m++;zoneStats.set(a.zone,v);});
-      SHOT_ZONES.forEach(z=>{const v=zoneStats.get(z.id);if(!v?.a)return;const x=199+(z.cx/100)*90,y=118+(z.cy/100)*45;pdf.setFillColor(255,255,255);pdf.setDrawColor(...navy);pdf.circle(x,y,3.5,'FD');txt(`${v.m}/${v.a}`,x,y+.75,3.5,true,navy,'center');});
+      SHOT_ZONES.forEach(z=>{const v=zoneStats.get(z.id);if(!v?.a)return;const x=199+(z.cx/100)*90,y=118+(z.cy/100)*45,zonePct=pct(v.m,v.a);pdf.setFillColor(255,255,255);pdf.setDrawColor(...navy);pdf.circle(x,y,5,'FD');txt(`${v.m}/${v.a}`,x,y-.3,4.6,true,navy,'center');txt(`${zonePct}%`,x,y+2.6,3.6,true,burg,'center');});
       // Bas du rapport : lineups visuels avec photos, puis contexte match.
       const rankedUsed=[...lus].sort((a,b)=>(b.n||0)-(a.n||0)).slice(0,3), rankedRent=[...lus].sort((a,b)=>b.diff-a.diff).slice(0,3);
       const miniLineups=(list:any[],x:number,w:number,label:string)=>{card(x,172,w,34);barTitle(label,x,172,w,navy);list.forEach((l,i)=>{const y=184+i*7.3;txt(String(i+1),x+4,y+1,4.2,true,muted);(l.ids||[]).slice(0,5).forEach((id:string,j:number)=>avatar(id,x+12+j*8.2,y,3));txt(`${l.diff>=0?'+':''}${l.diff}`,x+w-4,y+1,4.8,true,l.diff>=0?green:red,'right');});};
