@@ -13,6 +13,7 @@ export type PerQuarter = Record<number, { us: number; them: number }>;
 export type LivePlayerLine = {
   playerId: string;
   present: boolean;
+  minutesSeconds?: number;
   p2m: number;
   p2a: number;
   p3m: number;
@@ -300,6 +301,8 @@ function saveLiveMatchMirrorToLocalStore(
       players: payload.lines.map((line) => ({
         playerId: line.playerId,
         played: Boolean(line.present),
+        minutesSeconds: safeNumber(line.minutesSeconds),
+        minutes: safeNumber(line.minutesSeconds) / 60,
         pts: points(line),
         ast: safeNumber(line.ast),
         stl: safeNumber(line.stl),
@@ -423,6 +426,7 @@ function buildPlayerRow(
     team_id: ctx.teamId,
     player_id: line.playerId,
     present: Boolean(line.present),
+    minutes_seconds: safeNumber(line.minutesSeconds),
     pts: points(line),
     p2m: safeNumber(line.p2m),
     p2a: safeNumber(line.p2a),
