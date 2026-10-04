@@ -393,8 +393,21 @@ export async function listSystems(): Promise<SystemItem[]> {
   }
 
   const byId = new Map<string, any>();
+  const officialSourceIds = new Set(
+    (publicResult.data ?? [])
+      .map((row: any) => row?.original_system_id)
+      .filter(Boolean)
+      .map(String)
+  );
   for (const row of [...(publicResult.data ?? []), ...(mineResult.data ?? [])]) {
-    if (row?.id) byId.set(String(row.id), row);
+    if (!row?.id) continue;
+    // Après validation, la copie officielle publique remplace la source
+    // personnelle dans la Bibliothèque : on n'affiche jamais les deux.
+    if (
+      officialSourceIds.has(String(row.id)) &&
+      row.visibility !== "public"
+    ) continue;
+    byId.set(String(row.id), row);
   }
 
   const rows = Array.from(byId.values()).sort(
@@ -618,8 +631,9 @@ export async function saveSystem(system: any): Promise<SystemItem | null> {
   const prepared = {
     ...system,
     user_id: user.id,
-    visibility: ceo ? system.visibility ?? "public" : "private",
-    review_status: ceo ? system.review_status ?? "approved" : "draft",
+    // Un système créé par le CEO est directement une publication officielle.
+    visibility: ceo ? "public" : "private",
+    review_status: ceo ? "approved" : "draft",
     original_system_id: system.original_system_id ?? null,
   };
 
@@ -639,9 +653,9 @@ export async function saveSystem(system: any): Promise<SystemItem | null> {
         ...existing,
         ...prepared,
         user_id: existing.user_id ?? user.id,
-        visibility: ceo ? prepared.visibility ?? "public" : "private",
+        visibility: ceo ? "public" : "private",
         review_status: ceo
-          ? prepared.review_status ?? "approved"
+          ? "approved"
           : existing.review_status === "submitted"
           ? "draft"
           : prepared.review_status ?? existing.review_status ?? "draft",
@@ -795,9 +809,9 @@ export async function updateSystem(
       ...patch,
       id,
       user_id: existing.user_id ?? user.id,
-      visibility: ceo ? existing.visibility ?? "public" : "private",
+      visibility: ceo ? "public" : "private",
       review_status: ceo
-        ? existing.review_status ?? "approved"
+        ? "approved"
         : existing.review_status === "submitted"
         ? "draft"
         : existing.review_status ?? "draft",
