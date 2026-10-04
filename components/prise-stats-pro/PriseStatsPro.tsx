@@ -4706,14 +4706,16 @@ export default function PriseStatsProPage() {
       const zoneStats=new Map<string,{m:number,a:number}>();
       actions.filter(a=>a.context==='attaque'&&a.actionType==='tir'&&a.shotType!=='LF'&&a.zone).forEach(a=>{const v=zoneStats.get(a.zone)||{m:0,a:0};v.a++;if(a.shotResult==='made')v.m++;zoneStats.set(a.zone,v);});
       SHOT_ZONES.forEach(z=>{const v=zoneStats.get(z.id);if(!v?.a)return;const x=199+(z.cx/100)*90,y=118+(z.cy/100)*45,zonePct=pct(v.m,v.a);pdf.setFillColor(255,255,255);pdf.setDrawColor(...navy);pdf.circle(x,y,5,'FD');txt(`${v.m}/${v.a}`,x,y-.3,4.6,true,navy,'center');txt(`${zonePct}%`,x,y+2.6,3.6,true,burg,'center');});
-      pdf.setFillColor(...burg);pdf.roundedRect(220,157,48,5,1,1,'F');txt(`PTS RAQUETTE  ${paintPoints}`,244,160.5,4.2,true,[255,255,255],'center');
+      // Pas de bandeau sur le terrain : la shot chart reste entièrement lisible.
+      txt(`PTS RAQUETTE  ${paintPoints}`,244,166,4.2,true,burg,'center');
        // Bas du rapport : lineups visuels avec photos, puis contexte match.
       const rankedUsed=[...lus].sort((a,b)=>(b.n||0)-(a.n||0)).slice(0,3), rankedRent=[...lus].sort((a,b)=>b.diff-a.diff).slice(0,3);
       const miniLineups=(list:any[],x:number,w:number,label:string)=>{card(x,172,w,34);barTitle(label,x,172,w,navy);list.forEach((l,i)=>{const y=184+i*7.3;txt(String(i+1),x+4,y+1,4.2,true,muted);(l.ids||[]).slice(0,5).forEach((id:string,j:number)=>avatar(id,x+12+j*8.2,y,3));txt(`${l.diff>=0?'+':''}${l.diff}`,x+w-4,y+1,4.8,true,l.diff>=0?green:red,'right');});};
       miniLineups(rankedUsed,4,91,'LINEUPS LES PLUS UTILISÉS');
       miniLineups(rankedRent,98,91,'LINEUPS LES PLUS RENTABLES');
       const oppOffReb=actions.filter(a=>a.context==='defense'&&((a.actionType==='rebond-off')||a.reboundType==='off')).length;
-      const oppPaintPoints=actions.filter(a=>a.context==='defense'&&a.actionType==='tir'&&a.shotType==='2PTS'&&paintZoneIds.has(a.zone||'')&&a.shotResult==='made').length*2;
+      const oppPaintMade=actions.filter(a=>a.context==='defense'&&a.actionType==='tir'&&paintZoneIds.has(a.zone||'')&&a.shotResult==='made').length;
+      const oppPaintPoints=oppPaintMade*2;
       card(192,172,38,34);barTitle('TEMPS FORTS · ADV.',192,172,38,navy);
       txt('REB OFF ADV.',195,184,3.7,true,muted);txt(oppOffReb,227,184,5,true,navy,'right');
       txt('PTS RAQUETTE ADV.',195,191,3.4,true,muted);txt(oppPaintPoints,227,191,5,true,burg,'right');
