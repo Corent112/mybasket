@@ -1219,25 +1219,27 @@ export default function PriseStatsProPage() {
     const tId = String(selTeam?.id || activeTeamId || teamId || 'setup');
     const currentMatchId = String(liveMatchIdRef.current || '');
 
-    // IMPORTANT : le bouton « Retrouver la vidéo » doit ouvrir le sélecteur
-    // immédiatement. Les navigateurs (notamment Chrome) peuvent perdre
-    // l'activation utilisateur si l'on attend d'abord IndexedDB/Supabase, ce
-    // qui donnait l'impression que le bouton ne faisait rien.
+    // On tente d'abord de retrouver le fichier déjà associé au projet.
+    // S'il n'existe plus / n'est plus accessible, on NE reste jamais bloqué :
+    // on ouvre immédiatement le choix d'un nouveau fichier vidéo.
     if (currentMatchId && !currentMatchId.startsWith('local_')) {
       try {
         const relinked = await relinkMatchVideo(currentMatchId, tId, null);
-        if (relinked) {
+        if (relinked?.file) {
           attachLocalVideoFile(relinked.file, true);
           flash('Vidéo locale reconnectée au projet ✓');
+          return;
         }
-        return;
       } catch (error: any) {
         if (error?.name === 'AbortError') return;
         console.error('Reconnexion vidéo locale:', error);
       }
+
+      flash('Vidéo introuvable · choisis à nouveau le fichier vidéo.');
     }
 
-    // Compatibilité avant création du matchId / très anciens projets.
+    // Nouveau choix manuel : le fichier choisi remplace simplement la source
+    // vidéo du projet, sans modifier les actions, clips ou statistiques.
     await pickLocalVideoSmart();
   };
 
