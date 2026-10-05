@@ -4646,6 +4646,9 @@ export default function PriseStatsProPage() {
 
   const exportMatchReportPDF = async () => {
     if (!actions.length) { flash('Aucune donnée pour générer le rapport'); return; }
+    const analysisInput = window.prompt('Analyses du match — ajoute 2 à 4 points courts (facultatif). Ils seront intégrés au rapport.', '');
+    if (analysisInput === null) return;
+    const reportAnalysis = analysisInput.trim();
     try {
       const { jsPDF } = await import('jspdf');
       const pdf = new jsPDF({ orientation:'landscape', unit:'mm', format:'a4' });
@@ -4659,7 +4662,7 @@ export default function PriseStatsProPage() {
       const totals=box.reduce((a:any,l:any)=>({p2m:a.p2m+l.p2m,p2a:a.p2a+l.p2a,p3m:a.p3m+l.p3m,p3a:a.p3a+l.p3a,ftm:a.ftm+l.ftm,fta:a.fta+l.fta,reb:a.reb+(l.offReb||0)+(l.defReb||0),ast:a.ast+(l.ast||0),stl:a.stl+(l.stl||0),blk:a.blk+(l.blk||0),to:a.to+(l.to||0),pf:a.pf+(l.pf||0)}),{p2m:0,p2a:0,p3m:0,p3a:0,ftm:0,fta:0,reb:0,ast:0,stl:0,blk:0,to:0,pf:0});
       const txt=(s:any,x:number,y:number,size=6,bold=false,color=ink,align:'left'|'center'|'right'='left')=>{pdf.setTextColor(...color);pdf.setFont('helvetica',bold?'bold':'normal');pdf.setFontSize(size);pdf.text(String(s),x,y,{align});};
       const card=(x:number,y:number,w:number,h:number,fill:[number,number,number]=[255,255,255])=>{pdf.setFillColor(...fill);pdf.setDrawColor(229,232,236);pdf.roundedRect(x,y,w,h,2,2,'FD');};
-      const barTitle=(s:string,x:number,y:number,w:number,color=navy)=>{pdf.setFillColor(...color);pdf.roundedRect(x,y,w,7,1.5,1.5,'F');txt(s,x+3,y+4.8,5.6,true,[255,255,255]);};
+      const barTitle=(s:string,x:number,y:number,w:number,color=navy)=>{pdf.setFillColor(...color);pdf.roundedRect(x,y,w,7,1.5,1.5,'F');txt(s,x+3,y+4.8,6.3,true,[255,255,255]);};
       const playerById=(id:string)=>roster.find(p=>p.id===id);
       const loadImageData=async(src:string,circle=false):Promise<string|null>=>{if(!src)return null;try{const res=await fetch(src);if(!res.ok)return null;const blob=await res.blob();const url=URL.createObjectURL(blob);const img=await new Promise<HTMLImageElement>((resolve,reject)=>{const el=new Image();el.onload=()=>resolve(el);el.onerror=reject;el.src=url;});const size=circle?240:Math.max(240,img.width);const canvas=document.createElement('canvas');if(circle){canvas.width=240;canvas.height=240;const ctx=canvas.getContext('2d');if(!ctx){URL.revokeObjectURL(url);return null;}ctx.beginPath();ctx.arc(120,120,120,0,Math.PI*2);ctx.clip();const scale=Math.max(240/img.width,240/img.height),w=img.width*scale,h=img.height*scale;ctx.drawImage(img,(240-w)/2,(240-h)/2,w,h);}else{canvas.width=img.width;canvas.height=img.height;canvas.getContext('2d')?.drawImage(img,0,0);}URL.revokeObjectURL(url);return canvas.toDataURL('image/png');}catch{return null;}};
       const photoEntries=await Promise.all(roster.map(async p=>[p.id,await loadImageData(p.photo||'',true)] as const));
@@ -4679,7 +4682,7 @@ export default function PriseStatsProPage() {
       txt(`${date} · ${home?'Domicile':'Extérieur'} · ${matchType==='league'?'Championnat':matchType==='cup'?'Coupe':'Amical'}`,148.5,18,5.5,false,[235,238,242],'center');
       const qs=Object.keys(perQ).map(Number).sort((a,b)=>a-b).slice(0,4);qs.forEach((k,i)=>{const x=4+i*73.25,v=perQ[k],d=v.us-v.them;card(x,23,69,10);txt(periodLabel(k),x+7,29,5.5,true,ink);txt(`${v.us} - ${v.them}`,x+34.5,29,8,true,ink,'center');txt(`${d>=0?'+':''}${d}`,x+63,29,6,true,d>=0?green:red,'right');});
       const metrics:any[]=[['2 PTS',`${pct(totals.p2m,totals.p2a)}%`,`${totals.p2m}/${totals.p2a}`],['3 PTS',`${pct(totals.p3m,totals.p3a)}%`,`${totals.p3m}/${totals.p3a}`],['LF',`${pct(totals.ftm,totals.fta)}%`,`${totals.ftm}/${totals.fta}`],['REBONDS',totals.reb,''],['REB. OFF',box.reduce((s:any,l:any)=>s+(l.offReb||0),0),''],['PASSES DÉCISIVES',totals.ast,''],['PERTES DE BALLE',totals.to,''],['POSSESSIONS',analytics.offPoss,'']];
-      card(4,36,289,17);metrics.forEach((m,i)=>{const x=4+i*36.125;if(i){pdf.setDrawColor(225,228,232);pdf.line(x,39,x,50);}txt(m[0],x+18.05,42,4.4,true,navy,'center');txt(m[1],x+18.05,47,8.2,true,ink,'center');if(m[2])txt(m[2],x+18.05,50.5,4.2,false,muted,'center');});
+      card(4,36,289,17);metrics.forEach((m,i)=>{const x=4+i*36.125;if(i){pdf.setDrawColor(225,228,232);pdf.line(x,39,x,50);}txt(m[0],x+18.05,42,5.1,true,navy,'center');txt(m[1],x+18.05,47,9.2,true,ink,'center');if(m[2])txt(m[2],x+18.05,50.5,4.8,false,muted,'center');});
       // Lineups + tops.
       const lus=(analytics.lineups as any[]).map((l:any)=>({...l,diff:(l.us||0)-(l.them||0)})), mostUsed=[...lus].sort((a,b)=>(b.n||0)-(a.n||0))[0], mostProfitable=[...lus].sort((a,b)=>b.diff-a.diff)[0];
       const lineupCard=(l:any,x:number,label:string,accent:[number,number,number])=>{card(x,57,108,35);barTitle(label,x,57,45,accent);if(!l){txt('Aucune donnée',x+4,76,6,false,muted);return;}(l.ids||[]).slice(0,5).forEach((id:string,i:number)=>avatar(id,x+12+i*14,72,5));txt(`${l.diff>=0?'+':''}${l.diff}`,x+101,72,13,true,l.diff>=0?green:red,'right');txt('+/-',x+101,77,4.5,true,muted,'right');const ns=(l.ids||[]).slice(0,5).map((id:string)=>playerById(id)?.name||'Joueur');ns.forEach((n:string,i:number)=>txt(n.split(' ').slice(-1)[0].slice(0,9),x+12+i*14,83,3.7,true,muted,'center'));txt(`${l.us||0} pts marqués`,x+76,88,4.3,true,green);txt(`${l.them||0} pts encaissés`,x+104,88,4.3,true,red,'right');};
@@ -4693,7 +4696,7 @@ export default function PriseStatsProPage() {
       cols.forEach(([h,x])=>txt(h,x,107,4.25,true,muted));
       const boxRows=box.slice().sort((a:any,b:any)=>pts(b)-pts(a));
       const rowH=Math.min(4.7,49/Math.max(1,boxRows.length));let yy=112;
-      boxRows.forEach((l:any,i:number)=>{if(i%2){pdf.setFillColor(249,250,251);pdf.rect(5,yy-3.7,186,rowH,'F');}const pm=reportPlusMinus(l.p.id);const vals=[l.p.num,String(l.p.name).slice(0,18),fmt(minutesByPlayer[l.p.id]||0),pts(l),`${l.p2m}/${l.p2a}`,`${l.p3m}/${l.p3a}`,`${l.ftm}/${l.fta}`,l.offReb||0,l.defReb||0,(l.offReb||0)+(l.defReb||0),l.ast||0,l.stl||0,l.blk||0,l.to||0,l.fd||0,l.pf||0,reportEval(l),pm>0?`+${pm}`:pm];vals.forEach((v,j)=>txt(v,cols[j][1],yy,j===1?5.6:4.15,j===1||j===3||j===16||j===17,j===17?(pm>=0?green:red):ink));yy+=rowH;});
+      boxRows.forEach((l:any,i:number)=>{if(i%2){pdf.setFillColor(249,250,251);pdf.rect(5,yy-3.7,186,rowH,'F');}const pm=reportPlusMinus(l.p.id);const vals=[l.p.num,String(l.p.name).slice(0,18),fmt(minutesByPlayer[l.p.id]||0),pts(l),`${l.p2m}/${l.p2a}`,`${l.p3m}/${l.p3a}`,`${l.ftm}/${l.fta}`,l.offReb||0,l.defReb||0,(l.offReb||0)+(l.defReb||0),l.ast||0,l.stl||0,l.blk||0,l.to||0,l.fd||0,l.pf||0,reportEval(l),pm>0?`+${pm}`:pm];vals.forEach((v,j)=>txt(v,cols[j][1],yy,j===1?6.2:4.65,j===1||j===3||j===16||j===17,j===17?(pm>=0?green:red):ink));yy+=rowH;});
       pdf.setFillColor(...navy);pdf.rect(5,163,186,5,'F');txt('TOTAL',10,166.5,4.6,true,[255,255,255]);txt(us,61,166.5,4.2,true,[255,255,255]);txt(`${totals.p2m}/${totals.p2a}`,71,166.5,4.0,true,[255,255,255]);txt(`${totals.p3m}/${totals.p3a}`,81,166.5,4.0,true,[255,255,255]);txt(`${totals.ftm}/${totals.fta}`,91,166.5,4.0,true,[255,255,255]);txt(box.reduce((s:any,l:any)=>s+(l.offReb||0),0),101,166.5,4.0,true,[255,255,255]);txt(box.reduce((s:any,l:any)=>s+(l.defReb||0),0),109,166.5,4.0,true,[255,255,255]);txt(totals.reb,117,166.5,4.0,true,[255,255,255]);txt(totals.ast,126,166.5,4.0,true,[255,255,255]);txt(totals.stl,134,166.5,4.0,true,[255,255,255]);txt(totals.blk,143,166.5,4.0,true,[255,255,255]);txt(totals.to,152,166.5,4.0,true,[255,255,255]);txt(totals.pf,168,166.5,4.0,true,[255,255,255]);txt(box.reduce((s:any,l:any)=>s+reportEval(l),0),177,166.5,4.0,true,[255,255,255]);
       // Shot chart : répartition globale en tête du bloc, puis détail directement dans chaque zone.
       card(195,96,98,72);barTitle('SHOT CHART · TIRS PAR ZONE',195,96,98,navy);
@@ -4714,20 +4717,21 @@ export default function PriseStatsProPage() {
       txt(`PTS RAQUETTE  ${paintPoints}`,244,166,5.8,true,burg,'center');
        // Bas du rapport : lineups visuels avec photos, puis contexte match.
       const rankedUsed=[...lus].sort((a,b)=>(b.n||0)-(a.n||0)).slice(0,3), rankedRent=[...lus].sort((a,b)=>b.diff-a.diff).slice(0,3);
-      const miniLineups=(list:any[],x:number,w:number,label:string)=>{card(x,172,w,34);barTitle(label,x,172,w,navy);list.forEach((l,i)=>{const y=184+i*7.3;txt(String(i+1),x+4,y+1,4.2,true,muted);(l.ids||[]).slice(0,5).forEach((id:string,j:number)=>avatar(id,x+12+j*8.2,y,3));txt(`${l.diff>=0?'+':''}${l.diff}`,x+w-4,y+1,4.8,true,l.diff>=0?green:red,'right');});};
-      miniLineups(rankedUsed,4,91,'LINEUPS LES PLUS UTILISÉS');
-      miniLineups(rankedRent,98,91,'LINEUPS LES PLUS RENTABLES');
+      const miniLineups=(list:any[],x:number,w:number,label:string)=>{card(x,172,w,34);barTitle(label,x,172,w,navy);list.forEach((l,i)=>{const y=184+i*7.3;txt(String(i+1),x+4,y+1,5.2,true,muted);(l.ids||[]).slice(0,5).forEach((id:string,j:number)=>avatar(id,x+11+j*7.7,y,3));txt(`${l.diff>=0?'+':''}${l.diff}`,x+w-4,y+1,6.4,true,l.diff>=0?green:red,'right');});};
+      miniLineups(rankedUsed,4,75,'LINEUPS LES PLUS UTILISÉS');
+      miniLineups(rankedRent,82,75,'LINEUPS LES PLUS RENTABLES');
       const oppOffReb=actions.filter(a=>a.context==='defense'&&((a.actionType==='rebond-off')||a.reboundType==='off')).length;
       const isPaintShot=(a:StatA)=>{if(paintZoneIds.has(a.zone||''))return true;const x=Number(a.courtX),y=Number(a.courtY);if(!Number.isFinite(x)||!Number.isFinite(y))return false;const nx=x<=1?x*100:x,ny=y<=1?y*100:y;const inCircle=((nx-50)*(nx-50))/(14*14)+((ny-14)*(ny-14))/(14*14)<=1;const inLane=nx>=36&&nx<=64&&ny>=14&&ny<=47;return inCircle||inLane;};
       const oppPaintMade=actions.filter(a=>a.context==='defense'&&a.actionType==='tir'&&a.shotResult==='made'&&isPaintShot(a)).length;
       const oppPaintPoints=oppPaintMade*2;
-      card(192,172,38,34);barTitle('TEMPS FORTS · ADV.',192,172,38,navy);
-      txt('REB OFF ADV.',195,184,4.1,true,muted);txt(oppOffReb,227,184,7,true,navy,'right');
-      txt('PTS RAQUETTE ADV.',195,191,3.8,true,muted);txt(oppPaintPoints,227,191,7,true,burg,'right');
+      card(160,172,40,34);barTitle('TEMPS FORTS · ADV.',160,172,40,navy);
+      txt('REB OFF ADV.',163,184,4.8,true,muted);txt(oppOffReb,197,184,8.2,true,navy,'right');
+      txt('PTS RAQUETTE ADV.',163,191,4.5,true,muted);txt(oppPaintPoints,197,191,8.2,true,burg,'right');
       const oppPoss=actions.filter(a=>a.context==='defense'&&a.possessionEnd).length;
-      txt('POSSESSIONS ADV.',195,198,3.8,true,muted);txt(oppPoss,227,198,7,true,ink,'right');
-      const grouped=new Map<string,{n:number,pts:number}>();actions.forEach(a=>{const k=a.systemeName||a.systemeJeu||(a.tempsFort?tags.label(a.tempsFort):'');if(!k)return;const v=grouped.get(k)||{n:0,pts:0};v.n++;v.pts+=ptsOf(a);grouped.set(k,v);});
-      card(233,172,36,34);barTitle('SYSTÈMES',233,172,36,navy);Array.from(grouped.entries()).sort((a,b)=>b[1].n-a[1].n).slice(0,3).forEach(([k,v],i)=>{txt(String(k).slice(0,10),236,184+i*7,3.8,true,ink);txt(`${v.n}x`,266,184+i*7,3.8,true,burg,'right');});
+      txt('POSSESSIONS ADV.',163,198,4.5,true,muted);txt(oppPoss,197,198,8.2,true,ink,'right');
+      card(203,172,66,34);barTitle('ANALYSES',203,172,66,navy);
+      if(reportAnalysis){const analysisLines=pdf.splitTextToSize(reportAnalysis,59).slice(0,5);analysisLines.forEach((line:string,i:number)=>txt(line,206,184+i*4.3,5.2,i===0,ink));}
+      else txt('Aucune analyse renseignée',206,186,4.8,false,muted);
       card(272,172,21,34);barTitle('MODE',272,172,21,navy);txt(codingMode==='live-individual'?'Indiv.':codingMode==='live'?'Collectif':codingMode==='match-review'?'Perso':'Post',274,185,3.9,true,burg);txt(`${actions.length} act.`,274,193,3.8,true,ink);txt(`${analytics.offPoss} poss.`,274,201,3.7,false,muted);
       pdf.save(`rapport_${safeName(teamName)}_vs_${safeName(opponent||'Adversaire')}_${date}.pdf`);flash('Rapport PDF 1 page téléchargé ✓');
     } catch(e){console.error('Rapport PDF:',e);flash('Impossible de générer le rapport PDF');}
