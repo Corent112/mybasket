@@ -5625,6 +5625,9 @@ export default function PriseStatsProPage() {
               )}
 
               {showVideoPanel && <div className="detacherRow">
+                <button type="button" className="detachBtn videoReloadBtn" onClick={() => void pickLocalVideoSmart()} title={videoUrl ? "Choisir une autre vidéo" : "Ajouter ou recharger la vidéo"}>
+                  🎥 {videoUrl ? "Changer la vidéo" : "Ajouter une vidéo"}
+                </button>
                 {(videoProvider === 'local' || videoProvider === 'google_drive') && videoUrl && <span className="trackpadHint">↔ 2 doigts : droite = avancer · gauche = reculer</span>}
                 <button className="detachBtn compactVideoBtn" onClick={() => nudgeVideo(-1)} title={`Reculer de ${videoStepSeconds}s`}>↶ −{videoStepSeconds}s</button>
                 <button className="detachBtn compactVideoBtn" onClick={() => nudgeVideo(1)} title={`Avancer de ${videoStepSeconds}s`}>↷ +{videoStepSeconds}s</button>
@@ -8783,6 +8786,7 @@ function Style() {
       .vid-reselect b { color: #2b2b2b; }
       .vid-reselect-btn { background: #6B1A2C; color: #fff; border-radius: 9px; padding: 8px 14px; font-size: 12.5px; font-weight: 900; cursor: pointer; }
       .vid-reselect-btn input[type="file"] { display: none; }
+      .videoReloadBtn { border-color: var(--gold) !important; color: var(--gold) !important; font-weight: 950 !important; white-space: nowrap; }
       .vid-badge {
         margin-left: 10px;
         align-self: center;
