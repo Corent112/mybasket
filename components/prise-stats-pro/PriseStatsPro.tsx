@@ -4685,7 +4685,8 @@ export default function PriseStatsProPage() {
       const clubLabel=String(activeTeam?.clubName||activeTeam?.name||teamName||'MON ÉQUIPE').trim();
       const categoryLabel=String(activeTeam?.category||'').trim();
       const reportTeamLabel=categoryLabel&&clubLabel.toLowerCase().indexOf(categoryLabel.toLowerCase())<0?`${clubLabel} ${categoryLabel}`:clubLabel;
-      txt(reportTeamLabel,teamLogo?24:12,9,10,true,[255,255,255]);
+      // Nom du club + catégorie : centré et très visible dans la partie équipe.
+      txt(reportTeamLabel,58,11.5,12.5,true,[255,255,255],'center');
       txt(opponent||'ADVERSAIRE',285,9,9,true,[255,255,255],'right');
       txt(String(us),130,13,18,true,[255,255,255],'center');txt('-',148.5,13,12,true,[255,255,255],'center');txt(String(them),167,13,18,true,[255,255,255],'center');
       txt(`${date} · ${home?'Domicile':'Extérieur'} · ${matchType==='league'?'Championnat':matchType==='cup'?'Coupe':'Amical'}`,148.5,18,5.5,false,[235,238,242],'center');
