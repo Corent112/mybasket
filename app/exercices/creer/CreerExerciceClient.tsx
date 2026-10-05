@@ -311,7 +311,17 @@ export default function CreerExerciceClient() {
         // la Plaquette avec un schéma à insérer. Cela conserve tout ce qui
         // était déjà saisi (titre, organisation, déroulement, consignes...)
         // sans faire réapparaître un ancien exercice lors d'une nouvelle création.
-        const returningFromPlaquette = !editId && !!resultStored;
+        // Un ancien résultat Plaquette peut rester en stockage après un flux précédent.
+        // Il ne doit JAMAIS transformer une nouvelle création en reprise de l'ancien exercice.
+        // On considère un vrai retour de Dessin uniquement si le flux d'insertion est encore actif
+        // ET que la destination de retour correspond bien à la création d'exercice.
+        const drawingFlow = localStorage.getItem("mybasket_drawing_flow");
+        const returnTo = localStorage.getItem(RETURN_KEY);
+        const returningFromPlaquette =
+          !editId &&
+          !!resultStored &&
+          drawingFlow === "insert-exercise-draft" &&
+          returnTo === "/exercices/creer";
 
         if ((editId || returningFromPlaquette) && draftStored) {
           base = {
@@ -327,6 +337,13 @@ export default function CreerExerciceClient() {
         }
 
         if (!editId && !returningFromPlaquette) {
+          // Nouvelle création réelle : purge aussi les restes du précédent aller/retour Dessin.
+          // C'est ce qui empêchait l'ancien exercice de réapparaître.
+          await removePlaquetteTransfer(RESULT_KEY);
+          await removePlaquetteTransfer(LOAD_KEY);
+          localStorage.removeItem(RETURN_KEY);
+          localStorage.removeItem("mybasket_drawing_flow");
+          localStorage.removeItem("mybasket_current_exercise_id");
           await removePlaquetteTransfer(draftKey);
           localStorage.removeItem(`${draftKey}_sync`);
           localStorage.removeItem(`${draftKey}_storage_id`);
