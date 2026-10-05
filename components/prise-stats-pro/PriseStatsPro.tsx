@@ -991,6 +991,8 @@ export default function PriseStatsProPage() {
   const [profileButtonKeys, setProfileButtonKeys] = useState<LiveCodingProfile['activeButtonKeys'] | null>(null);
   const [toast, setToast] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const [showReportExport, setShowReportExport] = useState(false);
+  const [reportComment, setReportComment] = useState('');
 
 
   const codingProfilesStorageKey = (tId: string) => `mybasket:livestat-coding-profiles:${tId || 'default'}`;
@@ -4644,10 +4646,8 @@ export default function PriseStatsProPage() {
     flash('Projet MyBasket exporté ✓');
   };
 
-  const exportMatchReportPDF = async () => {
+  const exportMatchReportPDF = async (analysisInput = '') => {
     if (!actions.length) { flash('Aucune donnée pour générer le rapport'); return; }
-    const analysisInput = window.prompt('Analyses du match — ajoute 2 à 4 points courts (facultatif). Ils seront intégrés au rapport.', '');
-    if (analysisInput === null) return;
     const reportAnalysis = analysisInput.trim();
     try {
       const { jsPDF } = await import('jspdf');
@@ -5448,7 +5448,7 @@ export default function PriseStatsProPage() {
             onClick={() => setShowHistoryPanel((v) => { const opening = !v; if (opening) { inspectionVideoTimeRef.current = getCurrentVideoTime(); pauseVideo(); setRunning(false); } return opening; })}
           >📚 Historique</button>
           <button className={`ghost ${screen === 'box' ? 'on' : ''}`} onClick={() => { if (screen === 'box') { setScreen('live'); return; } inspectionVideoTimeRef.current = getCurrentVideoTime(); pauseVideo(); setRunning(false); setScreen('box'); }}>📊 Box-score</button>
-          {screen === 'box' && <button className="ghost on" onClick={() => void exportMatchReportPDF()}>📄 Rapport PDF</button>}
+          {screen === 'box' && <button className="ghost on" onClick={() => setShowReportExport(true)}>📄 Rapport PDF</button>}
           <div className="projectMenuWrap">
             <button className={`ghost menuDots ${showProjectMenu ? 'on' : ''}`} onClick={() => setShowProjectMenu((v) => !v)} aria-label="Menu projet">•••</button>
             {showProjectMenu && (
@@ -6218,6 +6218,27 @@ export default function PriseStatsProPage() {
         playerName={(id: string | null | undefined) => { const p = find(id ?? null); return p ? `#${p.num} ${p.name}` : undefined; }}
         tempsFortLabel={(id: string | null | undefined) => tags.label(id ?? '')}
       />
+      {showReportExport && (
+        <div role="dialog" aria-modal="true" aria-label="Exporter le rapport PDF" style={{position:'fixed',inset:0,zIndex:10000,background:'rgba(5,10,18,.72)',display:'grid',placeItems:'center',padding:20}}>
+          <div style={{width:'min(680px,96vw)',background:'#111a2a',border:'1px solid rgba(212,162,76,.4)',borderRadius:16,padding:18,boxShadow:'0 24px 70px rgba(0,0,0,.45)'}}>
+            <div style={{fontSize:17,fontWeight:900,color:'#fff',marginBottom:5}}>Analyses du match</div>
+            <div style={{fontSize:12,color:'#9eacc0',marginBottom:12}}>Écris librement sur plusieurs lignes. Tu peux utiliser des tirets ou des puces : chaque retour à la ligne sera conservé dans le rapport.</div>
+            <textarea
+              autoFocus
+              value={reportComment}
+              onChange={(e) => setReportComment(e.target.value)}
+              placeholder={'• Point positif\n• Point de vigilance\n• Axe de travail'}
+              rows={8}
+              style={{width:'100%',boxSizing:'border-box',resize:'vertical',minHeight:150,borderRadius:11,border:'1px solid #344159',background:'#0b1422',color:'#fff',padding:12,font:'inherit',lineHeight:1.5,outline:'none'}}
+            />
+            <div style={{display:'flex',justifyContent:'flex-end',gap:8,flexWrap:'wrap',marginTop:14}}>
+              <button className="ghost" onClick={() => setShowReportExport(false)}>Annuler</button>
+              <button className="ghost" onClick={() => { setShowReportExport(false); setReportComment(''); void exportMatchReportPDF(''); }}>Exporter sans commentaire</button>
+              <button className="ghost on" onClick={() => { const comment=reportComment; setShowReportExport(false); setReportComment(''); void exportMatchReportPDF(comment); }}>Exporter avec commentaire</button>
+            </div>
+          </div>
+        </div>
+      )}
       <Style />
     </div>
   );
