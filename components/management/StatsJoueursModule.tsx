@@ -229,6 +229,7 @@ export default function StatsJoueursModule() {
   const [stats, setStats] = useState<Record<string, PlayerStats>>({});
   const [loading, setLoading] = useState(false);
   const [loadingTeams, setLoadingTeams] = useState(true);
+  const [displayMode, setDisplayMode] = useState<"cumulative" | "average">("cumulative");
 
   useEffect(() => {
     let active = true;
@@ -290,6 +291,24 @@ export default function StatsJoueursModule() {
     loadStats();
   }, [selectedTeam]);
 
+  const matchCount = useMemo(() => {
+    // Une tentative de match = une ligne de stats cumulée ayant au moins une action.
+    // Si le backend fournit plus tard un vrai nombre de matchs, il pourra remplacer ce fallback.
+    const saved = typeof window !== "undefined"
+      ? safeParse<any>(localStorage.getItem(LIVE_STATS_KEY), {})
+      : {};
+    const explicit =
+      saved?.[selectedTeam?.id || ""]?.matchCount ??
+      saved?.[selectedTeam?.id || ""]?._matchCount ??
+      0;
+    return Math.max(1, Number(explicit) || 1);
+  }, [selectedTeam, stats]);
+
+  const shown = (value: number) =>
+    displayMode === "average"
+      ? (value / matchCount).toLocaleString("fr-FR", { maximumFractionDigits: 1 })
+      : String(value);
+
   const totals = useMemo(() => {
     const result = emptyStats("totals");
 
@@ -326,6 +345,23 @@ export default function StatsJoueursModule() {
           </p>
         </div>
 
+        <div className="sj-controls">
+          <div className="mode-toggle" role="group" aria-label="Affichage des statistiques">
+            <button
+              type="button"
+              className={displayMode === "cumulative" ? "active" : ""}
+              onClick={() => setDisplayMode("cumulative")}
+            >
+              Cumulées
+            </button>
+            <button
+              type="button"
+              className={displayMode === "average" ? "active" : ""}
+              onClick={() => setDisplayMode("average")}
+            >
+              Moyenne
+            </button>
+          </div>
         <select
           value={teamId}
           onChange={(e) => setTeamId(e.target.value)}
@@ -341,6 +377,7 @@ export default function StatsJoueursModule() {
             </option>
           ))}
         </select>
+        </div>
       </div>
 
       {loading && <div className="sj-empty">Chargement des stats...</div>}
@@ -404,17 +441,17 @@ export default function StatsJoueursModule() {
                     <td>{formatMadeAttempt(stat.twoPm, stat.twoPa)}</td>
                     <td>{formatMadeAttempt(stat.threePm, stat.threePa)}</td>
                     <td>{formatMadeAttempt(stat.ftm, stat.fta)}</td>
-                    <td>{stat.off}</td>
-                    <td>{stat.def}</td>
-                    <td>{reb}</td>
-                    <td>{stat.ast}</td>
-                    <td>{stat.st}</td>
-                    <td>{stat.to}</td>
-                    <td>{stat.bs}</td>
-                    <td>{stat.pf}</td>
-                    <td>{stat.fpf}</td>
-                    <td>{efficiency(stat)}</td>
-                    <td className="pts">{pts}</td>
+                    <td>{shown(stat.off)}</td>
+                    <td>{shown(stat.def)}</td>
+                    <td>{shown(reb)}</td>
+                    <td>{shown(stat.ast)}</td>
+                    <td>{shown(stat.st)}</td>
+                    <td>{shown(stat.to)}</td>
+                    <td>{shown(stat.bs)}</td>
+                    <td>{shown(stat.pf)}</td>
+                    <td>{shown(stat.fpf)}</td>
+                    <td>{shown(efficiency(stat))}</td>
+                    <td className="pts">{shown(pts)}</td>
                   </tr>
                 );
               })}
@@ -425,18 +462,18 @@ export default function StatsJoueursModule() {
                 <td>{formatMadeAttempt(totals.twoPm, totals.twoPa)}</td>
                 <td>{formatMadeAttempt(totals.threePm, totals.threePa)}</td>
                 <td>{formatMadeAttempt(totals.ftm, totals.fta)}</td>
-                <td>{totals.off}</td>
-                <td>{totals.def}</td>
-                <td>{totals.off + totals.def}</td>
-                <td>{totals.ast}</td>
-                <td>{totals.st}</td>
-                <td>{totals.to}</td>
-                <td>{totals.bs}</td>
-                <td>{totals.pf}</td>
-                <td>{totals.fpf}</td>
-                <td>{efficiency(totals)}</td>
+                <td>{shown(totals.off)}</td>
+                <td>{shown(totals.def)}</td>
+                <td>{shown(totals.off + totals.def)}</td>
+                <td>{shown(totals.ast)}</td>
+                <td>{shown(totals.st)}</td>
+                <td>{shown(totals.to)}</td>
+                <td>{shown(totals.bs)}</td>
+                <td>{shown(totals.pf)}</td>
+                <td>{shown(totals.fpf)}</td>
+                <td>{shown(efficiency(totals))}</td>
                 <td className="pts">
-                  {totals.twoPm * 2 + totals.threePm * 3 + totals.ftm}
+                  {shown(totals.twoPm * 2 + totals.threePm * 3 + totals.ftm)}
                 </td>
               </tr>
 
@@ -483,6 +520,11 @@ export default function StatsJoueursModule() {
           color: #7c7470;
           font-size: 0.9rem;
         }
+
+        .sj-controls { display:flex; align-items:center; gap:.65rem; flex-wrap:wrap; justify-content:flex-end; }
+        .mode-toggle { display:flex; padding:3px; border:1px solid #eadccc; border-radius:11px; background:#fff8ef; }
+        .mode-toggle button { border:0; background:transparent; color:#6b1a2c; padding:.55rem .8rem; border-radius:8px; font-weight:900; cursor:pointer; }
+        .mode-toggle button.active { background:#6b1a2c; color:white; box-shadow:0 3px 10px rgba(107,26,44,.18); }
 
         select {
           border: 1px solid #eadccc;
