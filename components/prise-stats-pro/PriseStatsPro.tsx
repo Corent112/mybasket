@@ -219,14 +219,14 @@ async function readTeams(): Promise<{ id: string; name: string; clubName?: strin
               // historiques pour éviter qu'un UUID apparaisse dans le rapport.
               name:
                 [
-                  player.firstName ?? player.first_name ?? player.prenom ?? player.first_name_player,
-                  player.lastName ?? player.last_name ?? player.nom ?? player.last_name_player,
+                  player.firstName ?? player.first_name ?? player.prenom ?? player.first_name_player ?? player.metadata?.firstName ?? player.metadata?.first_name ?? player.metadata?.prenom,
+                  player.lastName ?? player.last_name ?? player.nom ?? player.last_name_player ?? player.metadata?.lastName ?? player.metadata?.last_name ?? player.metadata?.nom,
                 ]
                   .filter((value: any) => String(value ?? '').trim())
                   .map((value: any) => String(value).trim())
                   .join(' ')
                   .trim() ||
-                String(player.name ?? player.fullName ?? player.displayName ?? '').trim(),
+                String(player.name ?? player.fullName ?? player.displayName ?? player.metadata?.name ?? player.metadata?.fullName ?? '').trim(),
               pos: player.postePrincipal ?? player.position_primary ?? player.position ?? '',
               photo_url: player.photo ?? player.photo_url ?? player.avatar_url ?? '',
             }),
@@ -4701,12 +4701,12 @@ export default function PriseStatsProPage() {
       const reportPlusMinus=(playerId:string)=>actions.reduce((sum,a)=>Array.isArray(a.lineup)&&a.lineup.includes(playerId)?sum+ptsOf(a)-themPtsOf(a):sum,0);
       // Boxscore complet : largeur resserrée pour afficher toutes les statistiques jusqu'à ÉVAL et +/-.
       card(4,96,188,72);barTitle('BOXSCORE COMPLET',4,96,188,navy);
-      const cols:any[]=[['#',6],['JOUEUR',10],['MIN',48],['PTS',61],['2P',71],['3P',81],['LF',91],['RO',101],['RD',109],['RT',117],['PD',126],['INT',134],['CTR',143],['BP',152],['FD',160],['F',168],['ÉVAL',177],['+/-',188]];
-      cols.forEach(([h,x])=>txt(h,x,107,4.25,true,muted));
+      const cols:any[]=[['#',6],['JOUEUR',10],['MIN',45],['PTS',56],['2P M/T',64],['%',76],['3P M/T',84],['%',96],['LF M/T',104],['%',116],['RO',124],['RD',131],['RT',138],['PD',145],['INT',152],['CTR',159],['BP',166],['FD',173],['F',180],['ÉVAL',187],['+/-',191]];
+      cols.forEach(([h,x])=>txt(h,x,107,h==='%'?4.8:4.05,true,h==='%'?burg:muted));
       const boxRows=box.slice().sort((a:any,b:any)=>pts(b)-pts(a));
       const rowH=Math.min(4.7,49/Math.max(1,boxRows.length));let yy=112;
-      boxRows.forEach((l:any,i:number)=>{if(i%2){pdf.setFillColor(249,250,251);pdf.rect(5,yy-3.7,186,rowH,'F');}const pm=reportPlusMinus(l.p.id);const vals=[l.p.num,String(l.p.name).slice(0,18),fmt(minutesByPlayer[l.p.id]||0),pts(l),`${l.p2m}/${l.p2a}   ${pct(l.p2m,l.p2a)}%`,`${l.p3m}/${l.p3a}   ${pct(l.p3m,l.p3a)}%`,`${l.ftm}/${l.fta}   ${pct(l.ftm,l.fta)}%`,l.offReb||0,l.defReb||0,(l.offReb||0)+(l.defReb||0),l.ast||0,l.stl||0,l.blk||0,l.to||0,l.fd||0,l.pf||0,reportEval(l),pm>0?`+${pm}`:pm];vals.forEach((v,j)=>txt(v,cols[j][1],yy,j===1?6.2:4.65,j===1||j===3||j===16||j===17,j===17?(pm>=0?green:red):ink));yy+=rowH;});
-      pdf.setFillColor(...navy);pdf.rect(5,162.5,186,5.5,'F');txt('TOTAL',10,166.4,5.6,true,[255,255,255]);txt(us,61,166.4,5.2,true,[255,255,255]);txt(`${totals.p2m}/${totals.p2a}   ${pct(totals.p2m,totals.p2a)}%`,71,166.4,4.15,true,[255,255,255]);txt(`${totals.p3m}/${totals.p3a}   ${pct(totals.p3m,totals.p3a)}%`,81,166.4,4.15,true,[255,255,255]);txt(`${totals.ftm}/${totals.fta}   ${pct(totals.ftm,totals.fta)}%`,91,166.4,4.15,true,[255,255,255]);txt(box.reduce((s:any,l:any)=>s+(l.offReb||0),0),101,166.4,5.0,true,[255,255,255]);txt(box.reduce((s:any,l:any)=>s+(l.defReb||0),0),109,166.4,5.0,true,[255,255,255]);txt(totals.reb,117,166.4,5.0,true,[255,255,255]);txt(totals.ast,126,166.4,5.0,true,[255,255,255]);txt(totals.stl,134,166.4,5.0,true,[255,255,255]);txt(totals.blk,143,166.4,5.0,true,[255,255,255]);txt(totals.to,152,166.4,5.0,true,[255,255,255]);txt(totals.pf,168,166.4,5.0,true,[255,255,255]);txt(box.reduce((s:any,l:any)=>s+reportEval(l),0),177,166.4,5.0,true,[255,255,255]);
+      boxRows.forEach((l:any,i:number)=>{if(i%2){pdf.setFillColor(249,250,251);pdf.rect(5,yy-3.7,186,rowH,'F');}const pm=reportPlusMinus(l.p.id);const vals=[l.p.num,String(l.p.name).slice(0,18),fmt(minutesByPlayer[l.p.id]||0),pts(l),`${l.p2m}/${l.p2a}`,`${pct(l.p2m,l.p2a)}%`,`${l.p3m}/${l.p3a}`,`${pct(l.p3m,l.p3a)}%`,`${l.ftm}/${l.fta}`,`${pct(l.ftm,l.fta)}%`,l.offReb||0,l.defReb||0,(l.offReb||0)+(l.defReb||0),l.ast||0,l.stl||0,l.blk||0,l.to||0,l.fd||0,l.pf||0,reportEval(l),pm>0?`+${pm}`:pm];vals.forEach((v,j)=>txt(v,cols[j][1],yy,j===1?5.7:4.25,j===1||j===3||j===5||j===7||j===9||j===19||j===20,j===20?(pm>=0?green:red):(j===5||j===7||j===9?burg:ink)));yy+=rowH;});
+      pdf.setFillColor(...navy);pdf.rect(5,162.5,186,5.5,'F');txt('TOTAL',10,166.4,5.2,true,[255,255,255]);txt(us,56,166.4,4.8,true,[255,255,255]);txt(`${totals.p2m}/${totals.p2a}`,64,166.4,3.9,true,[255,255,255]);txt(`${pct(totals.p2m,totals.p2a)}%`,76,166.4,4.25,true,gold);txt(`${totals.p3m}/${totals.p3a}`,84,166.4,3.9,true,[255,255,255]);txt(`${pct(totals.p3m,totals.p3a)}%`,96,166.4,4.25,true,gold);txt(`${totals.ftm}/${totals.fta}`,104,166.4,3.9,true,[255,255,255]);txt(`${pct(totals.ftm,totals.fta)}%`,116,166.4,4.25,true,gold);txt(box.reduce((s:any,l:any)=>s+(l.offReb||0),0),124,166.4,4.4,true,[255,255,255]);txt(box.reduce((s:any,l:any)=>s+(l.defReb||0),0),131,166.4,4.4,true,[255,255,255]);txt(totals.reb,138,166.4,4.4,true,[255,255,255]);txt(totals.ast,145,166.4,4.4,true,[255,255,255]);txt(totals.stl,152,166.4,4.4,true,[255,255,255]);txt(totals.blk,159,166.4,4.4,true,[255,255,255]);txt(totals.to,166,166.4,4.4,true,[255,255,255]);txt(totals.pf,180,166.4,4.4,true,[255,255,255]);txt(box.reduce((s:any,l:any)=>s+reportEval(l),0),187,166.4,4.4,true,[255,255,255]);
       // Shot chart : répartition globale en tête du bloc, puis détail directement dans chaque zone.
       card(195,96,98,72);barTitle('SHOT CHART · TIRS PAR ZONE',195,96,98,navy);
       const shotSummary=[
