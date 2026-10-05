@@ -603,23 +603,25 @@ export default function CreerExerciceClient() {
     const file = (event.target.files || [])[0];
     if (!file) return;
 
-    const reader = new FileReader();
+    if (!file.type.startsWith("video/")) {
+      flash("Choisis un fichier vidéo.");
+      event.target.value = "";
+      return;
+    }
 
-    reader.onload = () =>
-      setEx((current) => ({
-        ...current,
-        videos: [reader.result as string],
-      }));
-
-    reader.readAsDataURL(file);
+    // Ne pas convertir les vidéos en base64 dans le formulaire : les gros
+    // fichiers peuvent dépasser la mémoire du navigateur. On garde un aperçu
+    // local et le fichier lui-même jusqu'à l'enregistrement.
+    const previewUrl = URL.createObjectURL(file);
+    (window as any).__mybasketExerciseVideoFile = file;
+    setEx((current) => ({ ...current, videos: [previewUrl] }));
     event.target.value = "";
   };
 
-  const removeVideo = () =>
-    setEx((current) => ({
-      ...current,
-      videos: [],
-    }));
+  const removeVideo = () => {
+    (window as any).__mybasketExerciseVideoFile = null;
+    setEx((current) => ({ ...current, videos: [] }));
+  };
 
   async function uploadBase64Image(base64: string, folder = "schemas") {
     if (!base64.startsWith("data:image")) return base64;
@@ -657,6 +659,22 @@ export default function CreerExerciceClient() {
       .getPublicUrl(fileName);
 
     return data.publicUrl;
+  }
+
+  async function uploadVideoFile(file: File, folder = "videos") {
+    const { createClient } = await import("@/lib/supabase/client");
+    const supabase = createClient();
+    const { data: { user }, error: userError } = await supabase.auth.getUser();
+    if (userError || !user) throw new Error("Utilisateur non connecté");
+
+    const extension = file.name.split(".").pop()?.toLowerCase() || (file.type.includes("quicktime") ? "mov" : "mp4");
+    const fileName = `${user.id}/${folder}/${Date.now()}-${Math.random().toString(36).slice(2)}.${extension}`;
+    const { error } = await supabase.storage.from("exercise-videos").upload(fileName, file, {
+      contentType: file.type || "video/mp4",
+      upsert: false,
+    });
+    if (error) throw error;
+    return supabase.storage.from("exercise-videos").getPublicUrl(fileName).data.publicUrl;
   }
 
   async function uploadBase64Video(base64: string, folder = "videos") {
@@ -727,11 +745,14 @@ export default function CreerExerciceClient() {
         )
       );
 
-      const uploadedVideos = await Promise.all(
-        ex.videos.map((video) =>
-          uploadBase64Video(video, `exercices/${exerciseStorageId}/videos`)
-        )
-      );
+      const pendingVideoFile = (window as any).__mybasketExerciseVideoFile as File | null | undefined;
+      const uploadedVideos = pendingVideoFile
+        ? [await uploadVideoFile(pendingVideoFile, `exercices/${exerciseStorageId}/videos`)]
+        : await Promise.all(
+            ex.videos.map((video) =>
+              uploadBase64Video(video, `exercices/${exerciseStorageId}/videos`)
+            )
+          );
 
       const uploadedSchemaImages = await Promise.all(
         ex.schemaImages.map((image) =>
