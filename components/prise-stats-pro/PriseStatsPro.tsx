@@ -1002,6 +1002,7 @@ export default function PriseStatsProPage() {
   const [saving, setSaving] = useState(false);
   const [showReportExport, setShowReportExport] = useState(false);
   const [reportComment, setReportComment] = useState('');
+  const [reportPlayerAnalysis, setReportPlayerAnalysis] = useState('');
 
 
   const codingProfilesStorageKey = (tId: string) => `mybasket:livestat-coding-profiles:${tId || 'default'}`;
@@ -4657,9 +4658,10 @@ export default function PriseStatsProPage() {
     flash('Projet MyBasket exporté ✓');
   };
 
-  const exportMatchReportPDF = async (analysisInput = '') => {
+  const exportMatchReportPDF = async (analysisInput = '', playerAnalysisInput = '') => {
     if (!actions.length) { flash('Aucune donnée pour générer le rapport'); return; }
     const reportAnalysis = analysisInput.trim();
+    const reportPlayerAnalysisText = playerAnalysisInput.trim();
     try {
       const { jsPDF } = await import('jspdf');
       const pdf = new jsPDF({ orientation:'landscape', unit:'mm', format:'a4' });
@@ -4728,29 +4730,14 @@ export default function PriseStatsProPage() {
       SHOT_ZONES.forEach(z=>{const v=zoneStats.get(z.id);if(!v?.a)return;const x=201+(z.cx/100)*86,y=114.7+(z.cy/100)*44.8,zonePct=pct(v.m,v.a);pdf.setFillColor(255,255,255);pdf.setDrawColor(...navy);pdf.circle(x,y,5.6,'FD');txt(`${v.m}/${v.a}`,x,y-.45,5.5,true,navy,'center');txt(`${zonePct}%`,x,y+3.0,4.5,true,burg,'center');});
       // Pas de bandeau sur le terrain : la shot chart reste entièrement lisible.
       txt(`PTS RAQUETTE  ${paintPoints}`,244,166,5.8,true,burg,'center');
-       // Bas du rapport : lineups visuels avec photos, puis contexte match.
-      const rankedUsed=[...lus].sort((a,b)=>(b.n||0)-(a.n||0)).slice(0,3), rankedRent=[...lus].sort((a,b)=>b.diff-a.diff).slice(0,3);
+       // Bas du rapport : un seul bloc lineups, puis analyses joueur et équipe.
+      const rankedUsed=[...lus].sort((a,b)=>(b.n||0)-(a.n||0)).slice(0,3);
       const miniLineups=(list:any[],x:number,w:number,label:string)=>{card(x,172,w,34);barTitle(label,x,172,w,navy);list.forEach((l,i)=>{const y=184+i*7.3;txt(String(i+1),x+3.2,y+1,5.8,true,muted);(l.ids||[]).slice(0,5).forEach((id:string,j:number)=>avatar(id,x+8+j*6.25,y,3));txt(`${l.diff>=0?'+':''}${l.diff}`,x+w-2.4,y+1.6,10.2,true,l.diff>=0?green:red,'right');});};
-      miniLineups(rankedUsed,4,55,'LINEUPS LES PLUS UTILISÉS');
-      miniLineups(rankedRent,62,55,'LINEUPS LES PLUS RENTABLES');
-      const oppOffReb=actions.filter(a=>a.context==='defense'&&((a.actionType==='rebond-off')||a.reboundType==='off')).length;
-      const isPaintShot=(a:StatA)=>{if(paintZoneIds.has(a.zone||''))return true;const x=Number(a.courtX),y=Number(a.courtY);if(!Number.isFinite(x)||!Number.isFinite(y))return false;const nx=x<=1?x*100:x,ny=y<=1?y*100:y;const inCircle=((nx-50)*(nx-50))/(14*14)+((ny-14)*(ny-14))/(14*14)<=1;const inLane=nx>=36&&nx<=64&&ny>=14&&ny<=47;return inCircle||inLane;};
-      const oppPaintMade=actions.filter(a=>a.context==='defense'&&a.actionType==='tir'&&a.shotResult==='made'&&isPaintShot(a)).length;
-      const oppPaintPoints=oppPaintMade*2;
-      card(120,172,45,34);barTitle('TEMPS FORTS · ADV.',120,172,45,navy);
-      txt('REB OFF ADV.',123,184,5.4,true,muted);txt(oppOffReb,162,184,9.8,true,navy,'right');
-      txt('PTS RAQUETTE ADV.',123,191,5.1,true,muted);txt(oppPaintPoints,162,191,9.8,true,burg,'right');
-      const oppPoss=actions.filter(a=>a.context==='defense'&&a.possessionEnd).length;
-      txt('POSSESSIONS ADV.',123,198,5.1,true,muted);txt(oppPoss,162,198,9.8,true,ink,'right');
-      card(168,172,101,34);barTitle('ANALYSES',168,172,101,navy);
-      if(reportAnalysis){
-        const maxAnalysisWidth=95, maxAnalysisHeight=24;
-        let analysisFont=5.5, analysisLines=pdf.splitTextToSize(reportAnalysis,maxAnalysisWidth);
-        while(analysisFont>3.1 && analysisLines.length*(analysisFont*0.43)>maxAnalysisHeight){analysisFont-=0.2;pdf.setFontSize(analysisFont);analysisLines=pdf.splitTextToSize(reportAnalysis,maxAnalysisWidth);}
-        const analysisStep=Math.min(4.4,maxAnalysisHeight/Math.max(1,analysisLines.length));
-        analysisLines.forEach((line:string,i:number)=>txt(line,171,182.5+i*analysisStep,analysisFont,false,ink));
-      } else txt('Aucune analyse renseignée',171,186,5.2,false,muted);
-      card(272,172,21,34);barTitle('MODE',272,172,21,navy);txt(codingMode==='live-individual'?'Indiv.':codingMode==='live'?'Collectif':codingMode==='match-review'?'Perso':'Post',274,185,3.9,true,burg);txt(`${actions.length} act.`,274,193,3.8,true,ink);txt(`${analytics.offPoss} poss.`,274,201,3.7,false,muted);
+      miniLineups(rankedUsed,4,58,'LINEUPS');
+      const analysisBlock=(x:number,w:number,label:string,value:string)=>{card(x,172,w,34);barTitle(label,x,172,w,navy);if(value){const maxW=w-7,maxH=24;let fs=5.4,lines=pdf.splitTextToSize(value,maxW);while(fs>3.2&&lines.length*(fs*.43)>maxH){fs-=.2;pdf.setFontSize(fs);lines=pdf.splitTextToSize(value,maxW);}const step=Math.min(4.3,maxH/Math.max(1,lines.length));lines.forEach((line:string,i:number)=>txt(line,x+3,182.5+i*step,fs,false,ink));}else txt('Aucune analyse renseignée',x+3,186,5,false,muted);};
+      analysisBlock(65,94,'ANALYSE JOUEUR',reportPlayerAnalysisText);
+      analysisBlock(162,110,'ANALYSE ÉQUIPE',reportAnalysis);
+      card(275,172,18,34);barTitle('MODE',275,172,18,navy);txt(codingMode==='live-individual'?'Indiv.':codingMode==='live'?'Coll.':codingMode==='match-review'?'Perso':'Post',277,185,3.7,true,burg);txt(`${actions.length} act.`,277,193,3.6,true,ink);txt(`${analytics.offPoss} poss.`,277,201,3.5,false,muted);
       pdf.save(`rapport_${safeName(teamName)}_vs_${safeName(opponent||'Adversaire')}_${date}.pdf`);flash('Rapport PDF 1 page téléchargé ✓');
     } catch(e){console.error('Rapport PDF:',e);flash('Impossible de générer le rapport PDF');}
   };
@@ -6241,21 +6228,16 @@ export default function PriseStatsProPage() {
       />
       {showReportExport && (
         <div role="dialog" aria-modal="true" aria-label="Exporter le rapport PDF" style={{position:'fixed',inset:0,zIndex:10000,background:'rgba(5,10,18,.72)',display:'grid',placeItems:'center',padding:20}}>
-          <div style={{width:'min(680px,96vw)',background:'#111a2a',border:'1px solid rgba(212,162,76,.4)',borderRadius:16,padding:18,boxShadow:'0 24px 70px rgba(0,0,0,.45)'}}>
-            <div style={{fontSize:17,fontWeight:900,color:'#fff',marginBottom:5}}>Analyses du match</div>
-            <div style={{fontSize:12,color:'#9eacc0',marginBottom:12}}>Écris librement sur plusieurs lignes. Tu peux utiliser des tirets ou des puces : chaque retour à la ligne sera conservé dans le rapport.</div>
-            <textarea
-              autoFocus
-              value={reportComment}
-              onChange={(e) => setReportComment(e.target.value)}
-              placeholder={'• Point positif\n• Point de vigilance\n• Axe de travail'}
-              rows={8}
-              style={{width:'100%',boxSizing:'border-box',resize:'vertical',minHeight:150,borderRadius:11,border:'1px solid #344159',background:'#0b1422',color:'#fff',padding:12,font:'inherit',lineHeight:1.5,outline:'none'}}
-            />
+          <div style={{width:'min(760px,96vw)',maxHeight:'92vh',overflowY:'auto',background:'#111a2a',border:'1px solid rgba(212,162,76,.4)',borderRadius:16,padding:18,boxShadow:'0 24px 70px rgba(0,0,0,.45)'}}>
+            <div style={{fontSize:18,fontWeight:900,color:'#fff',marginBottom:12}}>Analyses du rapport</div>
+            <div style={{fontSize:13,fontWeight:800,color:'#fff',marginBottom:6}}>Analyse match / équipe</div>
+            <textarea autoFocus value={reportComment} onChange={(e)=>setReportComment(e.target.value)} placeholder={'• Point collectif\n• Point de vigilance\n• Axe de travail'} rows={5} style={{width:'100%',boxSizing:'border-box',resize:'vertical',minHeight:105,borderRadius:11,border:'1px solid #344159',background:'#0b1422',color:'#fff',padding:12,font:'inherit',lineHeight:1.5,outline:'none'}} />
+            <div style={{fontSize:13,fontWeight:800,color:'#fff',margin:'14px 0 6px'}}>Analyse joueur</div>
+            <textarea value={reportPlayerAnalysis} onChange={(e)=>setReportPlayerAnalysis(e.target.value)} placeholder={'• Joueur : point fort / point à travailler\n• Autre observation individuelle'} rows={5} style={{width:'100%',boxSizing:'border-box',resize:'vertical',minHeight:105,borderRadius:11,border:'1px solid #344159',background:'#0b1422',color:'#fff',padding:12,font:'inherit',lineHeight:1.5,outline:'none'}} />
             <div style={{display:'flex',justifyContent:'flex-end',gap:8,flexWrap:'wrap',marginTop:14}}>
-              <button className="ghost" onClick={() => setShowReportExport(false)}>Annuler</button>
-              <button className="ghost" onClick={() => { setShowReportExport(false); setReportComment(''); void exportMatchReportPDF(''); }}>Exporter sans commentaire</button>
-              <button className="ghost on" onClick={() => { const comment=reportComment; setShowReportExport(false); setReportComment(''); void exportMatchReportPDF(comment); }}>Exporter avec commentaire</button>
+              <button className="ghost" onClick={()=>setShowReportExport(false)}>Annuler</button>
+              <button className="ghost" onClick={()=>{setShowReportExport(false);void exportMatchReportPDF('','');}}>Exporter sans analyse</button>
+              <button className="ghost on" onClick={()=>{const matchAnalysis=reportComment,playerAnalysis=reportPlayerAnalysis;setShowReportExport(false);void exportMatchReportPDF(matchAnalysis,playerAnalysis);}}>Exporter le rapport</button>
             </div>
           </div>
         </div>
