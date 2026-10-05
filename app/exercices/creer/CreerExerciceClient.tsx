@@ -306,15 +306,28 @@ export default function CreerExerciceClient() {
           syncDraft = raw ? JSON.parse(raw) : null;
         } catch { syncDraft = null; }
 
-        if (draftStored) {
+        // Un brouillon n'est restauré que lorsqu'on MODIFIE un exercice.
+        // En création, /exercices/creer doit toujours ouvrir une fiche vierge :
+        // un ancien brouillon ne doit jamais transformer "Créer" en "Modifier".
+        if (editId && draftStored) {
           base = {
             ...base,
             ...draftStored,
           };
         }
 
-        if (syncDraft) {
+        if (editId && syncDraft) {
           base = { ...base, ...syncDraft };
+        }
+
+        if (!editId) {
+          await removePlaquetteTransfer(draftKey);
+          localStorage.removeItem(`${draftKey}_sync`);
+          localStorage.removeItem(`${draftKey}_storage_id`);
+          localStorage.removeItem(EDIT_EXERCISE_ID_KEY);
+          localStorage.removeItem(EDIT_INDEX_KEY);
+          localStorage.removeItem(EDIT_SCHEMA_GROUP_KEY);
+          base = blank();
         }
 
         if (editId) {
