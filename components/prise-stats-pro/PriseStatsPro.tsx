@@ -4730,13 +4730,19 @@ export default function PriseStatsProPage() {
       SHOT_ZONES.forEach(z=>{const v=zoneStats.get(z.id);if(!v?.a)return;const x=201+(z.cx/100)*86,y=114.7+(z.cy/100)*44.8,zonePct=pct(v.m,v.a);pdf.setFillColor(255,255,255);pdf.setDrawColor(...navy);pdf.circle(x,y,5.6,'FD');txt(`${v.m}/${v.a}`,x,y-.45,5.5,true,navy,'center');txt(`${zonePct}%`,x,y+3.0,4.5,true,burg,'center');});
       // Pas de bandeau sur le terrain : la shot chart reste entièrement lisible.
       txt(`PTS RAQUETTE  ${paintPoints}`,244,166,5.8,true,burg,'center');
-       // Bas du rapport : un seul bloc lineups, puis analyses joueur et équipe.
-      const rankedUsed=[...lus].sort((a,b)=>(b.n||0)-(a.n||0)).slice(0,3);
-      const miniLineups=(list:any[],x:number,w:number,label:string)=>{card(x,172,w,34);barTitle(label,x,172,w,navy);list.forEach((l,i)=>{const y=184+i*7.3;txt(String(i+1),x+3.2,y+1,5.8,true,muted);(l.ids||[]).slice(0,5).forEach((id:string,j:number)=>avatar(id,x+8+j*6.25,y,3));txt(`${l.diff>=0?'+':''}${l.diff}`,x+w-2.4,y+1.6,10.2,true,l.diff>=0?green:red,'right');});};
-      miniLineups(rankedUsed,4,58,'LINEUPS');
+      // Bas du rapport : lineup le plus rentable + analyses équipe / adverse.
+      const rankedProfitable=[...lus].sort((a,b)=>b.diff-a.diff);
+      const bestProfitable=rankedProfitable[0];
+      const profitableLineup=(l:any,x:number,w:number)=>{card(x,172,w,34);barTitle('LINEUP LE PLUS RENTABLE',x,172,w,navy);if(!l){txt('Aucune donnée',x+3,187,5,false,muted);return;}const ids=(l.ids||[]).slice(0,5);ids.forEach((id:string,j:number)=>avatar(id,x+7+j*7.1,187,3.3));txt(`${l.diff>=0?'+':''}${l.diff}`,x+w-3,188.5,11,true,l.diff>=0?green:red,'right');txt('+/-',x+w-3,193,4.2,true,muted,'right');txt(`${l.us||0} pts pour · ${l.them||0} pts contre`,x+3,201,4.6,true,ink);};
+      profitableLineup(bestProfitable,4,48);
       const analysisBlock=(x:number,w:number,label:string,value:string)=>{card(x,172,w,34);barTitle(label,x,172,w,navy);if(value){const maxW=w-7,maxH=24;let fs=5.4,lines=pdf.splitTextToSize(value,maxW);while(fs>3.2&&lines.length*(fs*.43)>maxH){fs-=.2;pdf.setFontSize(fs);lines=pdf.splitTextToSize(value,maxW);}const step=Math.min(4.3,maxH/Math.max(1,lines.length));lines.forEach((line:string,i:number)=>txt(line,x+3,182.5+i*step,fs,false,ink));}else txt('Aucune analyse renseignée',x+3,186,5,false,muted);};
-      analysisBlock(65,94,'ANALYSE JOUEUR',reportPlayerAnalysisText);
-      analysisBlock(162,110,'ANALYSE ÉQUIPE',reportAnalysis);
+      analysisBlock(55,58,'ANALYSE JOUEUR',reportPlayerAnalysisText);
+      analysisBlock(116,72,'ANALYSE ÉQUIPE',reportAnalysis);
+      const oppPaintPoints=actions.filter(a=>a.context==='defense'&&a.actionType==='tir'&&a.shotType==='2PTS'&&paintZoneIds.has(a.zone||'')&&a.shotResult==='made').length*2;
+      const oppOffReb=actions.filter(a=>a.context==='defense'&&(a.reboundType==='off'||a.actionType==='rebond-off')).length;
+      card(191,172,81,34);barTitle('ANALYSE ÉQUIPE ADVERSE',191,172,81,burg);
+      txt('PTS DANS LA RAQUETTE',195,186,5.4,true,muted);txt(oppPaintPoints,266,186,10.5,true,burg,'right');
+      txt('REBONDS OFFENSIFS',195,197,5.4,true,muted);txt(oppOffReb,266,197,10.5,true,burg,'right');
       card(275,172,18,34);barTitle('MODE',275,172,18,navy);txt(codingMode==='live-individual'?'Indiv.':codingMode==='live'?'Coll.':codingMode==='match-review'?'Perso':'Post',277,185,3.7,true,burg);txt(`${actions.length} act.`,277,193,3.6,true,ink);txt(`${analytics.offPoss} poss.`,277,201,3.5,false,muted);
       pdf.save(`rapport_${safeName(teamName)}_vs_${safeName(opponent||'Adversaire')}_${date}.pdf`);flash('Rapport PDF 1 page téléchargé ✓');
     } catch(e){console.error('Rapport PDF:',e);flash('Impossible de générer le rapport PDF');}
