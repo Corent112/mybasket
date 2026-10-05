@@ -979,9 +979,14 @@ export default function CreerExerciceClient() {
               <div className="ce-video">
                 <video src={ex.videos[0]} controls />
 
-                <button type="button" className="rm" onClick={removeVideo}>
-                  ✕ Retirer
-                </button>
+                <div className="ce-video-actions">
+                  <button type="button" className="reload" onClick={() => vidInput.current?.click()}>
+                    🎬 Recharger / choisir une vidéo
+                  </button>
+                  <button type="button" className="rm" onClick={removeVideo}>
+                    ✕ Retirer
+                  </button>
+                </div>
               </div>
             ) : (
               <button
@@ -1249,7 +1254,7 @@ const CSS = `
 .ce-videos{display:flex;flex-direction:column;gap:.7rem}
 .ce-video{border:1px solid #e0e0e0;border-radius:12px;overflow:hidden}
 .ce-video video{width:100%;display:block;background:#000;max-height:320px}
-.ce-video .rm{width:100%;border:none;border-top:1px solid #eee;background:#fff;padding:.5rem;font-weight:700;font-size:.85rem}
+.ce-video-actions{display:grid;grid-template-columns:1fr auto;border-top:1px solid #eee}.ce-video-actions button{border:none;background:#fff;padding:.65rem .8rem;font-weight:800;font-size:.85rem;cursor:pointer}.ce-video-actions .reload{color:#6B1A2C;text-align:left}.ce-video-actions .reload:hover{background:#FBEFF1}.ce-video .rm{color:#C0392B;border-left:1px solid #eee}
 .ce-addvid{border:2px dashed #6B1A2C;color:#6B1A2C;background:#fff;border-radius:10px;padding:.7rem 1rem;font-weight:700;font-size:.9rem;text-align:center}
 .ce-addvid:hover{background:#FBEFF1}
 .ce-imgs{display:flex;flex-wrap:wrap;gap:.6rem;align-items:center}
