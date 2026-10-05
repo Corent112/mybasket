@@ -4705,33 +4705,37 @@ export default function PriseStatsProPage() {
         ['3 PTS',totals.p3m,totals.p3a],
         ['LF',totals.ftm,totals.fta],
       ] as const;
-      shotSummary.forEach(([label,made,attempts],i)=>{const x=199+i*30;pdf.setFillColor(247,248,250);pdf.roundedRect(x,105,27,11,1.5,1.5,'F');txt(label,x+13.5,108.8,4.8,true,navy,'center');txt(`${attempts} TIRS`,x+13.5,112.9,7.2,true,ink,'center');txt(`${made}/${attempts} · ${pct(made,attempts)}%`,x+13.5,115.6,4.2,true,burg,'center');});
-      if(courtImage) pdf.addImage(courtImage,'PNG',199,118,90,45);
-      else {pdf.setFillColor(247,242,232);pdf.rect(199,118,90,45,'F');}
+      shotSummary.forEach(([label,made,attempts],i)=>{const x=200+i*29.5;pdf.setFillColor(247,248,250);pdf.roundedRect(x,104.5,26.5,10.2,1.5,1.5,'F');txt(label,x+13.25,108,4.7,true,navy,'center');txt(`${attempts} TIRS`,x+13.25,111.8,6.8,true,ink,'center');txt(`${made}/${attempts} · ${pct(made,attempts)}%`,x+13.25,114.2,4.0,true,burg,'center');});
+      if(courtImage) pdf.addImage(courtImage,'PNG',201,116.5,86,43);
+      else {pdf.setFillColor(247,242,232);pdf.rect(201,116.5,86,43,'F');}
       const paintZoneIds=new Set(['z1','z2']); // ShotChart.tsx : z1 = Cercle, z2 = Raquette
       const paintPoints=actions.filter(a=>a.context==='attaque'&&a.actionType==='tir'&&a.shotType==='2PTS'&&paintZoneIds.has(a.zone||'')&&a.shotResult==='made').length*2;
       const zoneStats=new Map<string,{m:number,a:number}>();
       actions.filter(a=>a.context==='attaque'&&a.actionType==='tir'&&a.shotType!=='LF'&&a.zone).forEach(a=>{const v=zoneStats.get(a.zone)||{m:0,a:0};v.a++;if(a.shotResult==='made')v.m++;zoneStats.set(a.zone,v);});
-      SHOT_ZONES.forEach(z=>{const v=zoneStats.get(z.id);if(!v?.a)return;const x=199+(z.cx/100)*90,y=118+(z.cy/100)*45,zonePct=pct(v.m,v.a);pdf.setFillColor(255,255,255);pdf.setDrawColor(...navy);pdf.circle(x,y,5.6,'FD');txt(`${v.m}/${v.a}`,x,y-.45,5.5,true,navy,'center');txt(`${zonePct}%`,x,y+3.0,4.5,true,burg,'center');});
+      SHOT_ZONES.forEach(z=>{const v=zoneStats.get(z.id);if(!v?.a)return;const x=201+(z.cx/100)*86,y=116.5+(z.cy/100)*43,zonePct=pct(v.m,v.a);pdf.setFillColor(255,255,255);pdf.setDrawColor(...navy);pdf.circle(x,y,5.6,'FD');txt(`${v.m}/${v.a}`,x,y-.45,5.5,true,navy,'center');txt(`${zonePct}%`,x,y+3.0,4.5,true,burg,'center');});
       // Pas de bandeau sur le terrain : la shot chart reste entièrement lisible.
       txt(`PTS RAQUETTE  ${paintPoints}`,244,166,5.8,true,burg,'center');
        // Bas du rapport : lineups visuels avec photos, puis contexte match.
       const rankedUsed=[...lus].sort((a,b)=>(b.n||0)-(a.n||0)).slice(0,3), rankedRent=[...lus].sort((a,b)=>b.diff-a.diff).slice(0,3);
-      const miniLineups=(list:any[],x:number,w:number,label:string)=>{card(x,172,w,34);barTitle(label,x,172,w,navy);list.forEach((l,i)=>{const y=184+i*7.3;txt(String(i+1),x+4,y+1,5.2,true,muted);(l.ids||[]).slice(0,5).forEach((id:string,j:number)=>avatar(id,x+11+j*7.7,y,3));txt(`${l.diff>=0?'+':''}${l.diff}`,x+w-4,y+1,6.4,true,l.diff>=0?green:red,'right');});};
-      miniLineups(rankedUsed,4,75,'LINEUPS LES PLUS UTILISÉS');
-      miniLineups(rankedRent,82,75,'LINEUPS LES PLUS RENTABLES');
+      const miniLineups=(list:any[],x:number,w:number,label:string)=>{card(x,172,w,34);barTitle(label,x,172,w,navy);list.forEach((l,i)=>{const y=184+i*7.3;txt(String(i+1),x+3.5,y+1,5.5,true,muted);(l.ids||[]).slice(0,5).forEach((id:string,j:number)=>avatar(id,x+9+j*6.6,y,3));txt(`${l.diff>=0?'+':''}${l.diff}`,x+w-3,y+1.4,8.4,true,l.diff>=0?green:red,'right');});};
+      miniLineups(rankedUsed,4,62,'LINEUPS LES PLUS UTILISÉS');
+      miniLineups(rankedRent,69,62,'LINEUPS LES PLUS RENTABLES');
       const oppOffReb=actions.filter(a=>a.context==='defense'&&((a.actionType==='rebond-off')||a.reboundType==='off')).length;
       const isPaintShot=(a:StatA)=>{if(paintZoneIds.has(a.zone||''))return true;const x=Number(a.courtX),y=Number(a.courtY);if(!Number.isFinite(x)||!Number.isFinite(y))return false;const nx=x<=1?x*100:x,ny=y<=1?y*100:y;const inCircle=((nx-50)*(nx-50))/(14*14)+((ny-14)*(ny-14))/(14*14)<=1;const inLane=nx>=36&&nx<=64&&ny>=14&&ny<=47;return inCircle||inLane;};
       const oppPaintMade=actions.filter(a=>a.context==='defense'&&a.actionType==='tir'&&a.shotResult==='made'&&isPaintShot(a)).length;
       const oppPaintPoints=oppPaintMade*2;
-      card(160,172,40,34);barTitle('TEMPS FORTS · ADV.',160,172,40,navy);
-      txt('REB OFF ADV.',163,184,4.8,true,muted);txt(oppOffReb,197,184,8.2,true,navy,'right');
-      txt('PTS RAQUETTE ADV.',163,191,4.5,true,muted);txt(oppPaintPoints,197,191,8.2,true,burg,'right');
+      card(134,172,45,34);barTitle('TEMPS FORTS · ADV.',134,172,45,navy);
+      txt('REB OFF ADV.',137,184,5.2,true,muted);txt(oppOffReb,176,184,9.2,true,navy,'right');
+      txt('PTS RAQUETTE ADV.',137,191,4.9,true,muted);txt(oppPaintPoints,176,191,9.2,true,burg,'right');
       const oppPoss=actions.filter(a=>a.context==='defense'&&a.possessionEnd).length;
-      txt('POSSESSIONS ADV.',163,198,4.5,true,muted);txt(oppPoss,197,198,8.2,true,ink,'right');
-      card(203,172,66,34);barTitle('ANALYSES',203,172,66,navy);
-      if(reportAnalysis){const analysisLines=pdf.splitTextToSize(reportAnalysis,59).slice(0,5);analysisLines.forEach((line:string,i:number)=>txt(line,206,184+i*4.3,5.2,i===0,ink));}
-      else txt('Aucune analyse renseignée',206,186,4.8,false,muted);
+      txt('POSSESSIONS ADV.',137,198,4.9,true,muted);txt(oppPoss,176,198,9.2,true,ink,'right');
+      card(182,172,87,34);barTitle('ANALYSES',182,172,87,navy);
+      if(reportAnalysis){
+        const analysisLines=pdf.splitTextToSize(reportAnalysis,80);
+        const analysisStep=Math.min(4.2,22/Math.max(1,analysisLines.length));
+        const analysisFont=Math.max(3.4,Math.min(5.3,analysisStep*1.2));
+        analysisLines.forEach((line:string,i:number)=>txt(line,185,183+i*analysisStep,analysisFont,i===0,ink));
+      } else txt('Aucune analyse renseignée',185,186,5.0,false,muted);
       card(272,172,21,34);barTitle('MODE',272,172,21,navy);txt(codingMode==='live-individual'?'Indiv.':codingMode==='live'?'Collectif':codingMode==='match-review'?'Perso':'Post',274,185,3.9,true,burg);txt(`${actions.length} act.`,274,193,3.8,true,ink);txt(`${analytics.offPoss} poss.`,274,201,3.7,false,muted);
       pdf.save(`rapport_${safeName(teamName)}_vs_${safeName(opponent||'Adversaire')}_${date}.pdf`);flash('Rapport PDF 1 page téléchargé ✓');
     } catch(e){console.error('Rapport PDF:',e);flash('Impossible de générer le rapport PDF');}
