@@ -213,11 +213,20 @@ async function readTeams(): Promise<{ id: string; name: string; clubName?: strin
               num: player.num ?? player.number ?? player.jersey_number ?? 0,
               first_name: player.firstName ?? player.first_name,
               last_name: player.lastName ?? player.last_name,
+              // Certaines anciennes fiches joueurs ont le prénom/nom dans metadata
+              // alors que les colonnes normalisées peuvent être vides. getTeams() expose
+              // déjà ces valeurs via firstName/lastName ; on garde aussi les variantes
+              // historiques pour éviter qu'un UUID apparaisse dans le rapport.
               name:
-                [player.firstName ?? player.first_name, player.lastName ?? player.last_name]
-                  .filter(Boolean)
+                [
+                  player.firstName ?? player.first_name ?? player.prenom ?? player.first_name_player,
+                  player.lastName ?? player.last_name ?? player.nom ?? player.last_name_player,
+                ]
+                  .filter((value: any) => String(value ?? '').trim())
+                  .map((value: any) => String(value).trim())
                   .join(' ')
-                  .trim(),
+                  .trim() ||
+                String(player.name ?? player.fullName ?? player.displayName ?? '').trim(),
               pos: player.postePrincipal ?? player.position_primary ?? player.position ?? '',
               photo_url: player.photo ?? player.photo_url ?? player.avatar_url ?? '',
             }),
