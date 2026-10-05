@@ -4687,7 +4687,8 @@ export default function PriseStatsProPage() {
       const reportTeamLabel=categoryLabel&&clubLabel.toLowerCase().indexOf(categoryLabel.toLowerCase())<0?`${clubLabel} ${categoryLabel}`:clubLabel;
       // Nom du club + catégorie : centré et très visible dans la partie équipe.
       txt(reportTeamLabel,58,11.5,12.5,true,[255,255,255],'center');
-      txt(opponent||'ADVERSAIRE',285,9,9,true,[255,255,255],'right');
+      // Adversaire : même traitement visuel que notre équipe, centré dans sa moitié du bandeau.
+      txt(opponent||'ADVERSAIRE',245,11.5,12.5,true,[255,255,255],'center');
       txt(String(us),130,13,18,true,[255,255,255],'center');txt('-',148.5,13,12,true,[255,255,255],'center');txt(String(them),167,13,18,true,[255,255,255],'center');
       txt(`${date} · ${home?'Domicile':'Extérieur'} · ${matchType==='league'?'Championnat':matchType==='cup'?'Coupe':'Amical'}`,148.5,18,5.5,false,[235,238,242],'center');
       const qs=Object.keys(perQ).map(Number).sort((a,b)=>a-b).slice(0,4);qs.forEach((k,i)=>{const x=4+i*73.25,v=perQ[k],d=v.us-v.them;card(x,23,69,10);txt(periodLabel(k),x+7,29,5.5,true,ink);txt(`${v.us} - ${v.them}`,x+34.5,29,8,true,ink,'center');txt(`${d>=0?'+':''}${d}`,x+63,29,6,true,d>=0?green:red,'right');});
