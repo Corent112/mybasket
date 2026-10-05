@@ -306,21 +306,27 @@ export default function CreerExerciceClient() {
           syncDraft = raw ? JSON.parse(raw) : null;
         } catch { syncDraft = null; }
 
-        // Un brouillon n'est restauré que lorsqu'on MODIFIE un exercice.
-        // En création, /exercices/creer doit toujours ouvrir une fiche vierge :
-        // un ancien brouillon ne doit jamais transformer "Créer" en "Modifier".
-        if (editId && draftStored) {
+        // En modification, on restaure normalement le brouillon.
+        // En création, on ne restaure le brouillon QUE lorsqu'on revient de
+        // la Plaquette avec un schéma à insérer. Cela conserve tout ce qui
+        // était déjà saisi (titre, organisation, déroulement, consignes...)
+        // sans faire réapparaître un ancien exercice lors d'une nouvelle création.
+        const returningFromPlaquette = !editId && !!resultStored;
+
+        if ((editId || returningFromPlaquette) && draftStored) {
           base = {
             ...base,
             ...draftStored,
           };
         }
 
-        if (editId && syncDraft) {
+        if ((editId || returningFromPlaquette) && syncDraft) {
+          // La copie synchrone est écrite juste avant l'ouverture de Dessin :
+          // elle est donc la photographie la plus récente du formulaire.
           base = { ...base, ...syncDraft };
         }
 
-        if (!editId) {
+        if (!editId && !returningFromPlaquette) {
           await removePlaquetteTransfer(draftKey);
           localStorage.removeItem(`${draftKey}_sync`);
           localStorage.removeItem(`${draftKey}_storage_id`);
