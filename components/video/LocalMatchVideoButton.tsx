@@ -15,6 +15,8 @@ type Props = {
   matchId: string;
   teamId: string;
   compact?: boolean;
+  /** Libellé explicite quand aucune vidéo n'est disponible pour ce match. */
+  emptyLabel?: string;
   onConnected?: (url: string) => void;
 };
 
@@ -22,6 +24,7 @@ export default function LocalMatchVideoButton({
   matchId,
   teamId,
   compact = false,
+  emptyLabel,
   onConnected,
 }: Props) {
   useLocalMatchVideoVersion();
@@ -123,7 +126,7 @@ export default function LocalMatchVideoButton({
           ? "Recherche de la vidéo…"
           : expected
             ? `Resélectionner ${expected.name}`
-            : "Relier la vidéo du match"}
+            : (emptyLabel ?? "Relier la vidéo du match")}
     </button>
   );
 }
