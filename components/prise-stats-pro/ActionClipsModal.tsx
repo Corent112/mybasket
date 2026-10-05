@@ -365,6 +365,7 @@ export default function ActionClipsModal(props: ActionClipsModalProps) {
                     matchId={currentMatchId}
                     teamId={props.teamId}
                     compact
+                    emptyLabel="Ajouter le fichier vidéo"
                   />
                 )}
               </div>
