@@ -7522,19 +7522,15 @@ export default function PriseStatsProPage() {
         // - touche-contre = ballon pour l'adversaire -> reste DÉFENSE
         // - def           = récupération de notre équipe -> passe ATTAQUE
         if (draft.actionType === 'contre') {
-          const blockConsequences =
-            draft.context === 'attaque'
-              ? [
-                  { id: 'touche-pour', label: '↪ Touche pour nous' },
-                  { id: 'touche-contre', label: '↩ Touche pour l’adversaire' },
-                  { id: 'off', label: '🟢 Récupération par nous' },
-                  { id: 'def', label: '🔴 Récupération par l’adversaire' },
-                ]
-              : [
-                  { id: 'touche-contre', label: '↩ Touche / sortie' },
-                  { id: 'off', label: '🔴 Récupération adverse' },
-                  { id: 'def', label: '🟢 Récupération de mon équipe' },
-                ];
+          // Après CHAQUE contre, quel que soit le mode LiveStats ou le contexte,
+          // on propose toujours les 4 issues possibles. Les ids historiques sont
+          // conservés afin de ne pas modifier les stats ni la logique de possession.
+          const blockConsequences = [
+            { id: 'off', label: '🟢 Récupération de balle' },
+            { id: 'def', label: '🔴 Récupération adverse' },
+            { id: 'touche-pour', label: '↪ Touche pour moi' },
+            { id: 'touche-contre', label: '↩ Touche pour l’adversaire' },
+          ];
 
           return (
             <>
