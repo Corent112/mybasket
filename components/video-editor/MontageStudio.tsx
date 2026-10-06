@@ -1,6 +1,10 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type SetStateAction } from "react";
+import { loadMontageLibrary, hasMontageBounds, type MontageAction } from "@/lib/montage/multi-match-data";
+import { enforceTimelineSequence, montageItemDuration, montageTrack } from "@/lib/montage/timeline-sequence";
+import { saveMontageAtomically } from "@/lib/montage/save-timeline";
+import { useLivestatTags } from "@/lib/livestat-tags";
 import { getLocalMatchVideoUrl } from "@/lib/local-video-registry";
 import useLocalMatchVideoVersion from "@/hooks/useLocalMatchVideoVersion";
 import { exportTimelineLocally, downloadLocalExport, shareLocalExport, type LocalExportResult, type LocalExportOverlay, type LocalExportSource } from "@/lib/local-montage-export";
@@ -18,26 +22,7 @@ type MatchRow = {
   youtube_url: string | null;
 };
 
-type ActionRow = {
-  id: string;
-  client_action_id: string | null;
-  team_id: string | null;
-  match_id: string | null;
-  player_id: string | null;
-  quarter: number | null;
-  clock: string | null;
-  context: string | null;
-  temps_fort: string | null;
-  action_type: string | null;
-  shot_type: string | null;
-  shot_result: string | null;
-  video_time: number | null;
-  clip_start: number | null;
-  clip_end: number | null;
-  edited_clip_start?: number | null;
-  edited_clip_end?: number | null;
-  clip_title?: string | null;
-};
+type ActionRow = MontageAction;
 
 type MontageRow = {
   id: string;
@@ -86,6 +71,7 @@ type MontageItem = {
   freeze_time: number | null;
   freeze_duration: number | null;
   annotations: Drawing[];
+  saved_editor_state?: Record<string, unknown>;
   action?: ActionRow;
   track?: "video" | "overlay" | "audio";
   timeline_start?: number;
@@ -157,7 +143,7 @@ function tfLabel(value: string | null) {
   return TF_LABELS[key] || key.replace(/[-_]+/g, " ") || "Action";
 }
 
-function actionLabel(action: ActionRow) {
+function actionLabel(action: ActionRow, label = tfLabel) {
   const result =
     action.action_type === "tir"
       ? action.shot_result === "made"
@@ -165,7 +151,7 @@ function actionLabel(action: ActionRow) {
         : "Tir manqué"
       : action.action_type || "Action";
 
-  return `${tfLabel(action.temps_fort)} · ${result}`;
+  return `${label(action.temps_fort)} · ${result}`;
 }
 
 function actionSub(action: ActionRow, matches: Map<string, MatchRow>) {
@@ -205,14 +191,18 @@ function formatClipTime(value: number) {
 
 function clipStart(action: ActionRow) {
   return numberValue(
-    action.edited_clip_start ?? action.clip_start ?? action.video_time ?? 0,
+    action.resolved_clip_start ?? action.edited_clip_start ?? action.clip_start ?? action.video_time ?? 0,
   );
 }
 
 function clipEnd(action: ActionRow) {
   const start = clipStart(action);
-  const raw = numberValue(action.edited_clip_end ?? action.clip_end);
-  return raw > start ? raw : start + 8;
+  const raw = numberValue(action.resolved_clip_end ?? action.edited_clip_end ?? action.clip_end);
+  return raw > start ? raw : start;
+}
+
+function draftFingerprint(items: MontageItem[], title: string, note: string, playerId: string) {
+  return JSON.stringify({ items: items.map(({ action, ...item }) => item), title, note, playerId });
 }
 
 export default function MontageStudio({
@@ -240,7 +230,21 @@ export default function MontageStudio({
   const [montageId, setMontageId] = useState(initialMontageId);
   const [title, setTitle] = useState("Nouveau montage");
   const [coachNote, setCoachNote] = useState("");
-  const [items, setItems] = useState<MontageItem[]>([]);
+  const [items, setItemsState] = useState<MontageItem[]>([]);
+  const setItems = useCallback((update: SetStateAction<MontageItem[]>) => {
+    setItemsState(current => enforceTimelineSequence(typeof update === "function" ? update(current) : update));
+    setSaveState("idle");
+  }, []);
+  const loadedKeyRef = useRef<string | null>(null);
+  const montageVersionRef = useRef<string | null>(null);
+  const newMontageIdRef = useRef<string | null>(null);
+  const saveBusyRef = useRef(false);
+  const savedFingerprintRef = useRef("");
+  const failedFingerprintRef = useRef("");
+  const [editorReady, setEditorReady] = useState(false);
+  const [libraryError, setLibraryError] = useState("");
+  const tags = useLivestatTags(teamId);
+  const clipLabel = (action: ActionRow) => actionLabel(action, key => tags.label(key));
   const [selectedIndex, setSelectedIndex] = useState(0);
   const [filter, setFilter] = useState<"all" | "made" | "missed" | "video">("all");
   const [search, setSearch] = useState("");
@@ -317,13 +321,20 @@ export default function MontageStudio({
 
       const rows = (data ?? []) as TeamRow[];
       setTeams(rows);
-      if (!teamId && rows.length) setTeamId(rows[0].id);
+      if (!teamId && rows.length) {
+        if (initialMontageId) {
+          const result = await supabase.from("livestat_montages").select("team_id").eq("id", initialMontageId).maybeSingle();
+          if (!active) return;
+          if (result.error || !result.data?.team_id) { flash("Montage inaccessible."); return; }
+          setTeamId(String(result.data.team_id));
+        } else setTeamId(rows[0].id);
+      }
     })();
 
     return () => {
       active = false;
     };
-  }, [flash, supabase, teamId]);
+  }, [flash, supabase, teamId, initialMontageId]);
 
   useEffect(() => {
     if (!teamId) return;
@@ -334,12 +345,7 @@ export default function MontageStudio({
       const userId = userResponse.data.user?.id;
       if (!userId) return;
 
-      const [playersResponse, favoritesResponse, themesResponse] = await Promise.all([
-        supabase
-          .from("players")
-          .select("id,name,first_name,last_name,jersey_number")
-          .eq("team_id", teamId)
-          .order("name"),
+      const [favoritesResponse, themesResponse] = await Promise.all([
         supabase
           .from("livestat_clip_favorites")
           .select("action_id")
@@ -355,7 +361,6 @@ export default function MontageStudio({
 
       if (!active) return;
 
-      if (!playersResponse.error) setPlayers((playersResponse.data ?? []) as PlayerRow[]);
 
       if (!favoritesResponse.error) {
         setFavoriteActionIds((favoritesResponse.data ?? []).map((row: any) => String(row.action_id)));
@@ -414,63 +419,51 @@ export default function MontageStudio({
 
   useEffect(() => {
     if (!teamId) return;
-
     let active = true;
     setLoading(true);
-
-    (async () => {
-      const [matchResponse, actionResponse, montageResponse] = await Promise.all([
-        supabase
-          .from("match_stats")
-          .select("id,opponent,match_date,video_url,youtube_url")
-          .eq("team_id", teamId)
-          .order("match_date", { ascending: false }),
-        supabase
-          .from("match_actions")
-          .select(
-            "id,client_action_id,team_id,match_id,player_id,quarter,clock,context,temps_fort,action_type,shot_type,shot_result,video_time,clip_start,clip_end,edited_clip_start,edited_clip_end,clip_title",
-          )
-          .eq("team_id", teamId)
-          .order("created_at", { ascending: false })
-          .limit(800),
-        supabase
-          .from("livestat_montages")
-          .select("*")
-          .eq("team_id", teamId)
-          .order("updated_at", { ascending: false }),
-      ]);
-
-      if (!active) return;
-
-      setMatches(
-        matchResponse.error ? [] : ((matchResponse.data ?? []) as MatchRow[]),
-      );
-
-      const actionRows = actionResponse.error
-        ? []
-        : ((actionResponse.data ?? []) as ActionRow[]);
-
-      // Conserve toutes les actions de l'équipe en mémoire : un montage peut
-      // contenir plusieurs joueurs. Le filtre joueur reste purement visuel dans
-      // la bibliothèque et ne doit jamais casser la réouverture d'un montage.
-      setActions(actionRows);
-
-      const montageRows = montageResponse.error
-        ? []
-        : ((montageResponse.data ?? []) as MontageRow[]);
-      setMontages(montageRows);
-
-      if (!montageId && initialMontageId) setMontageId(initialMontageId);
-      setLoading(false);
+    setLibraryError("");
+    setEditorReady(false);
+    hydratedRef.current = false;
+    void (async () => {
+      try {
+        const [library, montageResponse] = await Promise.all([
+          loadMontageLibrary(supabase, teamId),
+          supabase.from("livestat_montages").select("*").eq("team_id", teamId).order("updated_at", { ascending: false }),
+        ]);
+        if (!active) return;
+        if (montageResponse.error) throw new Error(montageResponse.error.message);
+        setMatches(library.matches);
+        setActions(library.actions);
+        setPlayers(library.players);
+        setMontages((montageResponse.data ?? []) as MontageRow[]);
+      } catch (error) {
+        if (!active) return;
+        const message = error instanceof Error ? error.message : "Bibliothèque indisponible.";
+        setLibraryError(message);
+        flash(message);
+      } finally {
+        if (active) setLoading(false);
+      }
     })();
-
-    return () => {
-      active = false;
-    };
-  }, [initialMontageId, montageId, playerId, supabase, teamId]);
+    return () => { active = false; };
+  }, [flash, supabase, teamId]);
 
   useEffect(() => {
+    if (loading || libraryError || !teamId) return;
+    const key = `${teamId}:${montageId}`;
+    if (loadedKeyRef.current === key) { setEditorReady(true); return; }
+    hydratedRef.current = false;
+    setEditorReady(false);
     if (!montageId) {
+      loadedKeyRef.current = key;
+      montageVersionRef.current = null;
+      newMontageIdRef.current = null;
+      historyRef.current = [];
+      historyIndexRef.current = -1;
+      hydratedRef.current = true;
+      setEditorReady(true);
+      savedFingerprintRef.current = draftFingerprint([], playerId ? "Montage joueur" : "Nouveau montage", "", initialPlayerId || "");
+      failedFingerprintRef.current = "";
       setTitle(playerId ? "Montage joueur" : "Nouveau montage");
       setCoachNote("");
       setItems([]);
@@ -498,7 +491,13 @@ export default function MontageStudio({
 
       if (!active) return;
 
+      if (montageResponse.error || !montageResponse.data) {
+        flash(montageResponse.error?.message || "Montage inaccessible.");
+        return;
+      }
       const montage = montageResponse.data as MontageRow | null;
+      if (montage?.team_id && montage.team_id !== teamId) { setTeamId(montage.team_id); return; }
+      montageVersionRef.current = montage?.updated_at || null;
       if (montage) {
         setTitle(montage.title || "Montage");
         setCoachNote(montage.coach_note || "");
@@ -508,7 +507,6 @@ export default function MontageStudio({
 
       if (itemsResponse.error) {
         flash(`Clips indisponibles : ${itemsResponse.error.message}`);
-        setItems([]);
         return;
       }
 
@@ -516,8 +514,7 @@ export default function MontageStudio({
         actions.map((action) => [String(action.id), action]),
       );
 
-      setItems(
-        ((itemsResponse.data ?? []) as any[]).map((item, index) => {
+      const restoredItems: MontageItem[] = ((itemsResponse.data ?? []) as any[]).map((item, index) => {
           const actionId = String(
             item.action_id || item.client_action_id || item.clip_id || "",
           );
@@ -539,7 +536,7 @@ export default function MontageStudio({
             title:
               item.title ||
               item.clip_title ||
-              (action ? actionLabel(action) : itemType === "image" ? "Image" : `Élément ${index + 1}`),
+              (action ? clipLabel(action) : itemType === "image" ? "Image" : `Élément ${index + 1}`),
             note: item.note || item.text || "",
             clip_start: startValue,
             clip_end: endValue,
@@ -554,23 +551,34 @@ export default function MontageStudio({
             annotations: Array.isArray(item.annotations)
               ? item.annotations
               : [],
-            track: item.track || (item.item_type === "audio" ? "audio" : item.item_type === "clip" ? "video" : "overlay"),
+            track: item.track || (item.item_type === "audio" ? "audio" : item.item_type === "clip" || item.item_type === "freeze" ? "video" : "overlay"),
             timeline_start: numberValue(item.timeline_start),
             asset_url: String(item.image_url || ""),
             volume: item.volume == null ? 1 : numberValue(item.volume),
             ...(item.editor_state && typeof item.editor_state === "object" ? item.editor_state : {}),
+            saved_editor_state: item.editor_state ?? {},
             action,
           };
-        }),
-      );
+        });
+      const sequenced = enforceTimelineSequence(restoredItems);
+      setItems(sequenced);
+      historyRef.current = [];
+      historyIndexRef.current = -1;
+      savedFingerprintRef.current = draftFingerprint(sequenced, montage?.title || "Montage", montage?.coach_note || "", String(montage?.player_id || ""));
+      loadedKeyRef.current = key;
       setSelectedIndex(0);
       hydratedRef.current = true;
-    })();
+      setEditorReady(true);
+      failedFingerprintRef.current = "";
+      setSaveState("saved");
+    })().catch(error => {
+      if (active) flash(error instanceof Error ? error.message : "Montage inaccessible.");
+    });
 
     return () => {
       active = false;
     };
-  }, [actions, flash, montageId, supabase]);
+  }, [actions, flash, montageId, supabase, teamId, loading, libraryError]);
 
   // À la réouverture d'un montage, restaure UNE fois chaque source locale
   // nécessaire, par matchId. Un montage de 20 clips issus de 3 matchs ne doit
@@ -664,11 +672,11 @@ export default function MontageStudio({
       if (!query) return true;
 
       const player = players.find((row) => String(row.id) === String(action.player_id || ""));
-      return `${actionLabel(action)} ${actionSub(action, matchMap)} ${player?.name || ""}`
+      return `${clipLabel(action)} ${actionSub(action, matchMap)} ${player?.name || ""}`
         .toLowerCase()
         .includes(query);
     });
-  }, [actions, filter, matchMap, search, selectedPlayerFilter, selectedSystemFilter, selectedThemeId, themes, players]);
+  }, [actions, filter, matchMap, search, selectedPlayerFilter, selectedSystemFilter, selectedThemeId, themes, players, tags]);
 
   useEffect(() => {
     const video = videoRef.current;
@@ -859,13 +867,14 @@ export default function MontageStudio({
     items.length === 0 ? 0 : clamp(selectedIndex + 1, 0, items.length);
 
   const addAction = (action: ActionRow) => {
+    if (!hasMontageBounds(action)) { flash("Cette action ne possède pas de bornes vidéo exploitables."); return; }
     const insertAt = insertionIndex();
     setItems((current) => {
       const next: MontageItem = {
         action_id: String(action.id),
         item_type: "clip",
         sort_order: insertAt,
-        title: action.clip_title || actionLabel(action),
+        title: action.clip_title || clipLabel(action),
         note: "",
         clip_start: clipStart(action),
         clip_end: clipEnd(action),
@@ -977,107 +986,58 @@ export default function MontageStudio({
   };
 
   const saveMontage = async () => {
-    if (!teamId) {
-      flash("Choisis une équipe.");
-      return;
-    }
-
-    setSaving(true)
+    if (!teamId || !editorReady || loading || saveBusyRef.current) return;
+    const snapshot = enforceTimelineSequence(items);
+    const fingerprint = draftFingerprint(snapshot, title, coachNote, assignedPlayerId);
+    if (montageId && fingerprint === savedFingerprintRef.current) return;
+    saveBusyRef.current = true;
+    setSaving(true);
     setSaveState("saving");
-
     try {
-      const userResponse = await supabase.auth.getUser();
-      const userId = userResponse.data.user?.id;
-
-      if (!userId) {
-        flash("Utilisateur non connecté.");
-        return;
-      }
-
-      let currentMontageId = montageId;
-
-      const montagePayload: Record<string, unknown> = {
-        user_id: userId,
-        team_id: teamId,
-        player_id: assignedPlayerId || null,
-        title: title.trim() || "Nouveau montage",
-        type: assignedPlayerId ? "player" : "team",
-        coach_note: coachNote,
-        updated_at: new Date().toISOString(),
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) throw new Error("Utilisateur non connecté.");
+      if (!newMontageIdRef.current) newMontageIdRef.current = montageId || uid();
+      const id = montageId || newMontageIdRef.current;
+      const montagePayload = {
+        team_id: teamId, player_id: assignedPlayerId || null,
+        title: title.trim() || "Nouveau montage", coach_note: coachNote,
       };
-
-      if (!currentMontageId) {
-        const { data, error } = await supabase
-          .from("livestat_montages")
-          .insert({
-            ...montagePayload,
-            created_at: new Date().toISOString(),
-          })
-          .select("*")
-          .single();
-
-        if (error || !data) throw error || new Error("Création impossible.");
-        currentMontageId = String(data.id);
-        setMontageId(currentMontageId);
-        setMontages((current) => [data as MontageRow, ...current]);
-      } else {
-        const { error } = await supabase
-          .from("livestat_montages")
-          .update(montagePayload)
-          .eq("id", currentMontageId);
-
-        if (error) throw error;
-      }
-
-      const { error: deleteError } = await supabase
-        .from("livestat_montage_items")
-        .delete()
-        .eq("montage_id", currentMontageId);
-
-      if (deleteError) throw deleteError;
-
-      if (items.length) {
-        const payload = items.map((item, index) => ({
-          montage_id: currentMontageId,
-          user_id: userId,
-          item_type: item.item_type,
-          action_id: item.item_type === "clip" ? item.action_id : null,
-          sort_order: index,
-          title: item.title || null,
-          text: item.note || null,
+      const payload = snapshot.map((item, index) => {
+        const sourceActionId = item.action?.id || (item.item_type === "clip" ? item.action_id : null);
+        if (["clip", "freeze"].includes(item.item_type) && !sourceActionId) throw new Error("Une source vidéo est introuvable. Le montage précédent est conservé.");
+        if (item.item_type === "clip" && (!Number.isFinite(item.clip_start) || !Number.isFinite(item.clip_end) || item.clip_start < 0 || item.clip_end <= item.clip_start)) throw new Error("Bornes du clip invalides.");
+        return {
+          item_type: item.item_type, action_id: ["clip", "freeze"].includes(item.item_type) ? sourceActionId : null,
+          sort_order: index, title: item.title || null, text: item.note || null,
           image_url: item.image_url || item.asset_url || null,
-          clip_start: item.item_type === "clip" ? item.clip_start : null,
-          clip_end: item.item_type === "clip" ? item.clip_end : null,
-          duration: item.duration ?? Math.max(0.1, item.clip_end - item.clip_start),
-          track: item.track || (item.item_type === "audio" ? "audio" : item.item_type === "clip" ? "video" : "overlay"),
-          timeline_start: item.timeline_start ?? 0,
-          volume: item.volume ?? 1,
-          freeze_time: item.freeze_time,
-          freeze_duration: item.freeze_duration,
-          annotations: item.annotations,
-          editor_state: { x:item.x ?? 50, y:item.y ?? 50, width:item.width ?? (item.item_type === "image" ? 30 : 70), height:item.height ?? 20, rotation:item.rotation ?? 0, opacity:item.opacity ?? 1, fontSize:item.fontSize ?? (item.item_type === "title" ? 48 : 30), fontFamily:item.fontFamily ?? "Arial", fontWeight:item.fontWeight ?? 800, textAlign:item.textAlign ?? "center", background:item.background ?? "transparent", locked:item.locked ?? false, hidden:item.hidden ?? false, playbackRate:item.playbackRate ?? 1, repeatCount:item.repeatCount ?? 1, transition:item.transition ?? "none" },
-          created_at: new Date().toISOString(),
-        }));
-
-        const { error } = await supabase
-          .from("livestat_montage_items")
-          .insert(payload);
-
-        if (error) throw error;
-      }
-
+          clip_start: ["clip", "freeze"].includes(item.item_type) ? item.clip_start : null,
+          clip_end: ["clip", "freeze"].includes(item.item_type) ? item.clip_end : null,
+          duration: montageItemDuration(item), track: montageTrack(item),
+          timeline_start: item.timeline_start ?? 0, volume: item.volume ?? 1,
+          freeze_time: item.freeze_time, freeze_duration: item.freeze_duration, annotations: item.annotations,
+          editor_state: { ...item.saved_editor_state, x:item.x ?? 50, y:item.y ?? 50, width:item.width ?? (item.item_type === "image" ? 30 : 70), height:item.height ?? 20, rotation:item.rotation ?? 0, opacity:item.opacity ?? 1, fontSize:item.fontSize ?? (item.item_type === "title" ? 48 : 30), fontFamily:item.fontFamily ?? "Arial", fontWeight:item.fontWeight ?? 800, textAlign:item.textAlign ?? "center", background:item.background ?? "transparent", locked:item.locked ?? false, hidden:item.hidden ?? false, playbackRate:item.playbackRate ?? 1, repeatCount:item.repeatCount ?? 1, transition:item.transition ?? "none" },
+        };
+      });
+      const result = await saveMontageAtomically(supabase, id, montagePayload, payload, montageVersionRef.current);
+      montageVersionRef.current = result.updated_at;
+      savedFingerprintRef.current = fingerprint;
+      failedFingerprintRef.current = "";
+      loadedKeyRef.current = `${teamId}:${result.id}`;
+      setMontageId(result.id);
+      setMontages(rows => [{ ...montagePayload, id: result.id, updated_at: result.updated_at } as MontageRow, ...rows.filter(row => row.id !== result.id)]);
       setSaveState("saved");
       flash("Montage enregistré ✓");
     } catch (error) {
-      const message =
-        error instanceof Error ? error.message : "Enregistrement impossible.";
-      console.error("Erreur sauvegarde montage :", error);
+      failedFingerprintRef.current = fingerprint;
       setSaveState("error");
-      flash(message);
+      flash(error instanceof Error ? error.message : "Enregistrement impossible.");
     } finally {
+      saveBusyRef.current = false;
       setSaving(false);
     }
   };
+  const saveLatestRef = useRef(saveMontage);
+  saveLatestRef.current = saveMontage;
 
   // Historique non destructif + autosave. Chaque mutation de timeline reste réversible.
   useEffect(() => {
@@ -1112,12 +1072,14 @@ export default function MontageStudio({
   }, [redoEdit, undoEdit]);
 
   useEffect(() => {
-    if (!hydratedRef.current || !teamId) return;
-    const timer=window.setTimeout(()=>{ void saveMontage(); }, 900);
+    if (!hydratedRef.current || !teamId || !editorReady || saving) return;
+    const fingerprint = draftFingerprint(items, title, coachNote, assignedPlayerId);
+    if (fingerprint === savedFingerprintRef.current || fingerprint === failedFingerprintRef.current) return;
+    const timer=window.setTimeout(()=>{ void saveLatestRef.current(); }, 900);
     return()=>window.clearTimeout(timer);
     // autosave volontairement déclenché par l'état éditable du projet
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [items, title, coachNote, assignedPlayerId, teamId]);
+  }, [items, title, coachNote, assignedPlayerId, teamId, editorReady, saving]);
 
   const renderMontage = async () => {
     if (!montageId) {
@@ -1214,15 +1176,7 @@ export default function MontageStudio({
     };
   };
 
-  const itemDuration = (item: MontageItem) => {
-    if (item.item_type === "clip") {
-      const sourceDuration = Math.max(0.1, item.clip_end - item.clip_start);
-      const rate = clamp(item.playbackRate ?? 1, 0.25, 4);
-      const repeats = Math.max(1, Math.round(item.repeatCount ?? 1));
-      return Math.max(0.1, (sourceDuration / rate) * repeats);
-    }
-    return Math.max(0.5, item.duration || (item.item_type === "audio" ? item.clip_end - item.clip_start : 4));
-  };
+  const itemDuration = montageItemDuration;
 
   const timelineStartOf = (item: MontageItem, index: number) =>
     item.timeline_start ?? items.slice(0, index).reduce((sum, row) => sum + itemDuration(row), 0);
@@ -1694,7 +1648,7 @@ export default function MontageStudio({
   };
 
   const addSelectedLibraryClips = () => {
-    const selectedActions = previewActions.filter((action) => librarySelection.includes(String(action.id)));
+    const selectedActions = librarySelection.map(id => actions.find(action => String(action.id) === id)).filter((action): action is ActionRow => Boolean(action));
     if (!selectedActions.length) {
       flash("Sélectionne au moins un clip.");
       return;
@@ -1752,7 +1706,7 @@ export default function MontageStudio({
         <div className="mp-project-name">
           <input value={title} onChange={(e) => setTitle(e.target.value)} aria-label="Titre du montage" />
           <span className={`mp-save-pill ${saveState}`}>
-            {saveState === "saving" ? "Sauvegarde…" : saveState === "error" ? "Erreur" : "Sauvegardé"}
+            {saveState === "saving" ? "Sauvegarde…" : saveState === "error" ? "Non enregistré" : saveState === "saved" ? "Sauvegardé" : montageId ? "Modifications en cours" : "Non enregistré"}
           </span>
         </div>
 
@@ -2111,13 +2065,13 @@ export default function MontageStudio({
             <select className="mp-library-select" value={selectedSystemFilter} onChange={(e) => setSelectedSystemFilter(e.target.value)}>
               <option value="">Tous les systèmes / temps forts</option>
               {Array.from(new Set(actions.map((action) => String(action.temps_fort || "")).filter(Boolean))).map((value) => (
-                <option key={value} value={value}>{tfLabel(value)}</option>
+                <option key={value} value={value}>{tags.label(value)}</option>
               ))}
             </select>
           )}
 
           <div className="mp-match-clip-list">
-            {loading ? <div className="mp-empty">Chargement…</div> :
+            {libraryError ? <div className="mp-empty">Bibliothèque indisponible : {libraryError}</div> : loading ? <div className="mp-empty">Chargement…</div> :
             previewActions.length === 0 ? <div className="mp-empty">Aucun clip disponible.</div> :
             previewActions.map((action, index) => {
               const id = String(action.id);
@@ -2136,7 +2090,7 @@ export default function MontageStudio({
                   <button className="mp-match-clip-open" onClick={() => setClipPreviewIndex(index)}>
                     <span className="mp-match-thumb">▶<small>{duration.toFixed(0)}s</small></span>
                     <span className="mp-match-copy">
-                      <strong>{actionLabel(action)}</strong>
+                      <strong>{clipLabel(action)}</strong>
                       <small>{actionSub(action, matchMap)}</small>
                     </span>
                   </button>
@@ -2274,7 +2228,7 @@ export default function MontageStudio({
             <header>
               <div>
                 <small>{previewAction.quarter ? `Q${previewAction.quarter}` : ""} · {previewAction.clock || ""}</small>
-                <h2>{actionLabel(previewAction)}</h2>
+                <h2>{clipLabel(previewAction)}</h2>
               </div>
               <button onClick={()=>setClipPreviewIndex(null)}>×</button>
             </header>
@@ -2294,7 +2248,7 @@ export default function MontageStudio({
 
             <div className="mp-modal-tags">
               {previewAction.context && <i>{previewAction.context}</i>}
-              {previewAction.temps_fort && <i>{tfLabel(previewAction.temps_fort)}</i>}
+              {previewAction.temps_fort && <i>{tags.label(previewAction.temps_fort)}</i>}
               {previewAction.action_type && <i>{previewAction.action_type}</i>}
               {previewAction.shot_type && <i>{previewAction.shot_type}</i>}
               {previewAction.shot_result && <i>{previewAction.shot_result==="made"?"Marqué":"Raté"}</i>}

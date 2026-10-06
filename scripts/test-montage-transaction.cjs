@@ -1,0 +1,33 @@
+// Requires @electric-sql/pglite in a separate test environment. No project dependency change.
+const { PGlite } = require(process.env.PGLITE_MODULE || '@electric-sql/pglite');
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
+(async () => {
+ const db = new PGlite();
+ const owner='11111111-1111-4111-8111-111111111111', team='22222222-2222-4222-8222-222222222222', action='33333333-3333-4333-8333-333333333333', montage='44444444-4444-4444-8444-444444444444';
+ await db.exec(`create role authenticated; create schema auth; create function auth.uid() returns uuid language sql as 'select current_setting(''test.actor'')::uuid';
+ create table teams(id uuid primary key,user_id uuid);
+ create table players(id uuid primary key,team_id uuid);
+ create table match_actions(id uuid primary key,team_id uuid);
+ create table livestat_montages(id uuid primary key,user_id uuid,team_id uuid,player_id uuid,title text,type text,coach_note text,created_at timestamptz,updated_at timestamptz);
+ create table livestat_montage_items(id bigint generated always as identity primary key,montage_id uuid references livestat_montages(id),user_id uuid,item_type text,action_id uuid,sort_order integer,title text,text text,image_url text,clip_start numeric,clip_end numeric,duration numeric,track text,timeline_start numeric,volume numeric,freeze_time numeric,freeze_duration numeric,annotations jsonb,editor_state jsonb,created_at timestamptz);
+ set test.actor='${owner}'; insert into teams values('${team}','${owner}'); insert into match_actions values('${action}','${team}');`);
+ await db.exec(fs.readFileSync(path.join(__dirname,'../supabase/migrations/20261006143000_atomic_montage_save.sql'),'utf8'));
+ const header={team_id:team,title:'Original',coach_note:'note'};
+ const row={item_type:'clip',action_id:action,track:'video',clip_start:10,clip_end:15,duration:5,timeline_start:0,sort_order:99,annotations:[{kind:'arrow'}],editor_state:{custom:'preserved'}};
+ const save=async (h,rows,version) => (await db.query('select public.save_montage_timeline_atomic($1,$2,$3,$4) as result',[montage,JSON.stringify(h),JSON.stringify(rows),version])).rows[0].result;
+ const first=await save(header,[row],null);
+ assert.equal((await db.query('select sort_order from livestat_montage_items')).rows[0].sort_order,0);
+ await assert.rejects(save({...header,title:'Broken'},[row,{...row,clip_end:9}],first.updated_at),/Bornes/);
+ assert.equal((await db.query('select title from livestat_montages')).rows[0].title,'Original');
+ assert.equal((await db.query('select count(*)::int as n from livestat_montage_items')).rows[0].n,1);
+ const second=await save({...header,title:'Updated'},[row,{...row,item_type:'freeze',freeze_time:12,freeze_duration:3,duration:3,timeline_start:5}],first.updated_at);
+ assert.equal((await db.query("select action_id, editor_state from livestat_montage_items where item_type='freeze'")).rows[0].action_id,action);
+ await assert.rejects(save(header,[],first.updated_at),/changé/);
+ await db.exec("set test.actor='55555555-5555-4555-8555-555555555555'");
+ await assert.rejects(save(header,[],second.updated_at),/inaccessible/);
+ assert.equal((await db.query('select count(*)::int as n from match_actions')).rows[0].n,1);
+ await db.close();
+ console.log('Montage SQL: création, rollback, sources freeze, conflit de version et contrôle propriétaire validés sur schéma de test.');
+})().catch(error=>{console.error(error);process.exitCode=1;});
