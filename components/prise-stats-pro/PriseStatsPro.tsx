@@ -4740,10 +4740,10 @@ export default function PriseStatsProPage() {
       analysisBlock(116,72,'ANALYSE ÉQUIPE',reportAnalysis);
       const oppPaintPoints=actions.filter(a=>a.context==='defense'&&a.actionType==='tir'&&a.shotType==='2PTS'&&paintZoneIds.has(a.zone||'')&&a.shotResult==='made').length*2;
       const oppOffReb=actions.filter(a=>a.context==='defense'&&(a.reboundType==='off'||a.actionType==='rebond-off')).length;
-      card(191,172,81,34);barTitle('ANALYSE ÉQUIPE ADVERSE',191,172,81,burg);
-      txt('PTS DANS LA RAQUETTE',195,186,5.4,true,muted);txt(oppPaintPoints,266,186,10.5,true,burg,'right');
-      txt('REBONDS OFFENSIFS',195,197,5.4,true,muted);txt(oppOffReb,266,197,10.5,true,burg,'right');
-      card(275,172,18,34);barTitle('MODE',275,172,18,navy);txt(codingMode==='live-individual'?'Indiv.':codingMode==='live'?'Coll.':codingMode==='match-review'?'Perso':'Post',277,185,3.7,true,burg);txt(`${actions.length} act.`,277,193,3.6,true,ink);txt(`${analytics.offPoss} poss.`,277,201,3.5,false,muted);
+      card(191,172,72,34);barTitle('ANALYSE ÉQUIPE ADVERSE',191,172,72,burg);
+      txt('PTS DANS LA RAQUETTE',195,186,5.2,true,muted);txt(oppPaintPoints,258,186,10.5,true,burg,'right');
+      txt('REBONDS OFFENSIFS',195,197,5.2,true,muted);txt(oppOffReb,258,197,10.5,true,burg,'right');
+      card(266,172,27,34);barTitle('MODE',266,172,27,navy);txt(codingMode==='live-individual'?'Indiv.':codingMode==='live'?'Coll.':codingMode==='match-review'?'Perso':'Post',269,185,4.2,true,burg);txt(`${actions.length} act.`,269,193,4.1,true,ink);txt(`${analytics.offPoss} poss.`,269,201,4,false,muted);
       pdf.save(`rapport_${safeName(teamName)}_vs_${safeName(opponent||'Adversaire')}_${date}.pdf`);flash('Rapport PDF 1 page téléchargé ✓');
     } catch(e){console.error('Rapport PDF:',e);flash('Impossible de générer le rapport PDF');}
   };
