@@ -4046,7 +4046,13 @@ export default function PriseStatsProPage() {
         ftMade: 0,
         ftResults: [],
       });
-      setStage('ft');
+      // 2+1 / 3+1 : le panier est marqué, mais on localise d'abord le tir
+      // sur la shot chart lorsque celle-ci est active. Le LF vient ensuite.
+      if (workflowOn('zone') || isPostLikeCodingMode(codingMode)) {
+        setStage('zone');
+      } else {
+        setStage('ft');
+      }
       return;
     }
     setDraft({ ...draft, foulOutcome: 'lf', shotType: 'LF', ftAttempts: o === 'lf2' ? 2 : 3, ftResults: [] }); setStage('ft');
@@ -4134,6 +4140,13 @@ export default function PriseStatsProPage() {
     if (d.context === 'defense') {
       if (d.shotResult === 'missed' && workflowOn('rebound')) { setDraft(d); setStage('rebound'); }
       else commit(d);
+      return;
+    }
+    // Faute provoquée 2+1 / 3+1 : après avoir placé le panier sur la shot chart,
+    // on poursuit obligatoirement vers le LF bonus au lieu de valider l'action.
+    if (d.actionType === 'faute-provoquee' && (d.specialCase === '2pts+1lf' || d.specialCase === '3pts+1lf')) {
+      setDraft(d);
+      setStage('ft');
       return;
     }
     if (d.shotResult === 'missed' && workflowOn('rebound')) { setDraft(d); setStage('rebound'); }
