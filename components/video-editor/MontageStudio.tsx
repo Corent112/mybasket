@@ -1,7 +1,8 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState, type SetStateAction } from "react";
-import { loadMontageLibrary, hasMontageBounds, type MontageAction } from "@/lib/montage/multi-match-data";
+import { loadMontageLibrary, hasMontageBounds, synchronizeMontageAction, type MontageAction, type MontageMatch } from "@/lib/montage/multi-match-data";
+import { MONTAGE_INCOMING_EVENT, readIncomingClips, acknowledgeIncomingClip } from "@/lib/montage/incoming-clips";
 import { enforceTimelineSequence, montageItemDuration, montageTrack } from "@/lib/montage/timeline-sequence";
 import { saveMontageAtomically } from "@/lib/montage/save-timeline";
 import { useLivestatTags } from "@/lib/livestat-tags";
@@ -291,6 +292,8 @@ export default function MontageStudio({
   const [saveState, setSaveState] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const [librarySelection, setLibrarySelection] = useState<string[]>([]);
   const [addMenuOpen, setAddMenuOpen] = useState(false);
+  const incomingSourcesRef = useRef({ actions, matches });
+  incomingSourcesRef.current = { actions, matches };
 
 
   const flash = useCallback((message: string) => {
@@ -893,6 +896,81 @@ export default function MontageStudio({
     setSelectedIndex(insertAt);
   };
 
+  // Transfer from LiveStats works both in an already-open window and after
+  // navigation. Pending references remain until a valid clip is inserted.
+  useEffect(() => {
+    if (!editorReady || !teamId) return;
+    let active = true;
+    let processing = false;
+    let requested = false;
+    const receive = async () => {
+      if (!active) return;
+      if (processing) { requested = true; return; }
+      processing = true;
+      try {
+        const { data: { user } } = await supabase.auth.getUser();
+        if (!user || !active) return;
+        const incoming = readIncomingClips(user.id, teamId);
+        for (const clip of incoming) {
+          if (!active) return;
+          let action = incomingSourcesRef.current.actions.find(row => row.id === clip.actionId);
+          if (!action) {
+            const result = await supabase.from("match_actions").select("*").eq("id", clip.actionId).eq("team_id", teamId).maybeSingle();
+            if (result.error) throw new Error(result.error.message);
+            if (!result.data) throw new Error("L’action envoyée dans Montage est introuvable.");
+            action = result.data as ActionRow;
+          }
+          let source = incomingSourcesRef.current.matches.find(row => row.id === action!.match_id) as MontageMatch | undefined;
+          if (!source && action.match_id) {
+            const result = await supabase.from("match_stats").select("*").eq("id", action.match_id).eq("team_id", teamId).maybeSingle();
+            if (result.error) throw new Error(result.error.message);
+            if (!result.data) throw new Error("Le match source est introuvable.");
+            source = result.data as MontageMatch;
+          }
+          const synced = synchronizeMontageAction(action, source);
+          const start = clip.clipStart ?? synced.resolved_clip_start;
+          const end = clip.clipEnd ?? synced.resolved_clip_end;
+          if (start == null || end == null || !Number.isFinite(start) || !Number.isFinite(end) || start < 0 || end <= start) {
+            throw new Error("Le clip envoyé n’a pas de bornes vidéo valides. Son transfert est conservé.");
+          }
+          if (!active) return;
+          setItems(current => {
+            if (current.some(item => item.saved_editor_state?.incoming_transfer_id === clip.transferId)) return current;
+            return [...current, {
+              action_id: synced.id, item_type: "clip", sort_order: current.length,
+              title: clip.title || synced.clip_title || "Action", note: clip.note || "",
+              clip_start: start, clip_end: end, freeze_time: null, freeze_duration: null,
+              annotations: [], action: synced, track: "video", volume: 1,
+              saved_editor_state: { incoming_transfer_id: clip.transferId },
+            }];
+          });
+          if (source) setMatches(current => current.some(row => row.id === source!.id) ? current : [...current, source!]);
+          setActions(current => current.some(row => row.id === synced.id) ? current : [...current, synced]);
+          flash("✓ Clip reçu dans la timeline Montage");
+        }
+      } catch (error) {
+        if (active) flash(error instanceof Error ? error.message : "Transfert Montage impossible.");
+      } finally {
+        processing = false;
+        if (requested && active) { requested = false; void receive(); }
+      }
+    };
+    const onIncoming = () => { void receive(); };
+    const onStorage = (event: StorageEvent) => {
+      if (event.key?.startsWith("mybasket:montage-incoming:") && event.newValue !== event.oldValue) void receive();
+    };
+    void receive();
+    window.addEventListener(MONTAGE_INCOMING_EVENT, onIncoming);
+    window.addEventListener("storage", onStorage);
+    window.addEventListener("focus", onIncoming);
+    return () => {
+      active = false;
+      window.removeEventListener(MONTAGE_INCOMING_EVENT, onIncoming);
+      window.removeEventListener("storage", onStorage);
+      window.removeEventListener("focus", onIncoming);
+    };
+  }, [editorReady, teamId, supabase, flash, setItems]);
+
   const removeItem = (index: number) => {
     setItems((current) =>
       current
@@ -1019,6 +1097,14 @@ export default function MontageStudio({
         };
       });
       const result = await saveMontageAtomically(supabase, id, montagePayload, payload, montageVersionRef.current);
+      // A pending transfer is removed only after the montage is saved.
+      // Missing RPC/network errors must not lose clips after a reload.
+      for (const item of snapshot) {
+        const transferId = item.saved_editor_state?.incoming_transfer_id;
+        if (typeof transferId === "string") {
+          try { acknowledgeIncomingClip(user.id, teamId, transferId); } catch { /* saved clip remains authoritative */ }
+        }
+      }
       montageVersionRef.current = result.updated_at;
       savedFingerprintRef.current = fingerprint;
       failedFingerprintRef.current = "";

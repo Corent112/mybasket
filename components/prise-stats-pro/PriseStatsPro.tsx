@@ -2483,12 +2483,14 @@ export default function PriseStatsProPage() {
       return [...prev, { caid: a.id, label, sub, note, clipStart: cs, clipEnd: cEnd }];
     });
     try {
+      const bounds = resolveActionClipBounds(a, videoSyncRef.current);
       await sendActionToMontageLibrary(
         createClient(), String(liveTeamIdRef.current || activeTeamId || teamId || ''),
         String(a.id), liveMatchIdRef.current,
+        { clipStart: ce?.trimStart ?? bounds.start, clipEnd: ce?.trimEnd ?? bounds.end, title: label, note },
       );
       setFavoriteClips(current => ({ ...current, [a.id]: true }));
-      flash('★ Clip disponible dans Montage → Favoris');
+      flash('✓ Clip envoyé directement dans la timeline Montage');
     } catch (error) {
       flash(error instanceof Error ? error.message : 'Impossible d’envoyer ce clip dans Montage.');
     }

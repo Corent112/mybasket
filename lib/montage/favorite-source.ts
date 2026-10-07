@@ -1,8 +1,10 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { enqueueIncomingClip, type IncomingMontageClip } from "./incoming-clips";
 
 // Persist only a reference to the saved action. Never create or overwrite stats.
 export async function sendActionToMontageLibrary(
   supabase: SupabaseClient, teamId: string, sourceId: string, matchId?: string | null,
+  transfer?: Pick<IncomingMontageClip, "clipStart" | "clipEnd" | "title" | "note">,
 ): Promise<string> {
   const { data: { user }, error: authError } = await supabase.auth.getUser();
   if (authError) throw new Error(authError.message);
@@ -27,5 +29,6 @@ export async function sendActionToMontageLibrary(
     { onConflict: "user_id,team_id,action_id" },
   );
   if (error) throw new Error(error.message);
+  if (transfer) enqueueIncomingClip(user.id, teamId, { ...transfer, actionId, matchId });
   return actionId;
 }
