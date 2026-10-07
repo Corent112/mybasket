@@ -97,12 +97,17 @@ export async function loadMontageLibrary(supabase: SupabaseClient, teamId: strin
   });
   const [matches, actions, players] = await Promise.all([
     page<MontageMatch>("match_stats"), page<MontageAction>("match_actions"),
-    page<MontagePlayer>("players", "id,name,first_name,last_name,jersey_number"),
+    // Deployed rosters may only have first_name/last_name: selecting an
+    // optional `name` column aborts the entire library, including valid clips.
+    page<MontagePlayer>("players"),
   ]);
   const matchMap = new Map(matches.map(match => [String(match.id), match]));
   return {
     matches: matches.sort((a, b) => String(b.match_date ?? "").localeCompare(String(a.match_date ?? ""))),
     actions: actions.map(action => synchronizeMontageAction(action, matchMap.get(String(action.match_id)))),
-    players,
+    players: players.map(player => ({
+      ...player,
+      name: player.name || [player.first_name, player.last_name].filter(Boolean).join(" ").trim() || "Joueur",
+    })),
   };
 }

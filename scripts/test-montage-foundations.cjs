@@ -14,6 +14,27 @@ const save = require('../lib/montage/save-timeline.ts');
   assert.deepEqual(loaded, rows); assert.equal(calls, 8);
   await assert.rejects(data.loadByIdCursor(async () => ({ data: null, error: { message: 'denied' } })), /denied/);
   await assert.rejects(data.loadByIdCursor(async () => ({ data: [{ id: 'same' }], error: null })), /progresse/);
+  // Regression: deployed players has no `name` or jersey_number column.
+  const tables = { match_stats:[{ id:'m', opponent:'Nanterre' }], match_actions:[{ id:'a', match_id:'m', quarter:1, clip_start:10, clip_end:15 }], players:[{ id:'p', first_name:'Keelyan', last_name:'NZAPAKETE' }] };
+  const client = { from: table => {
+    let after=null;
+    const query={ select:columns=>{ assert.equal(columns,'*'); return query; }, eq:()=>query, order:()=>query, limit:()=>query, gt:(_column,id)=>{ after=id; return query; }, then:resolve=>Promise.resolve(resolve({ data:tables[table].filter(row=>!after||row.id>after), error:null })) };
+    return query;
+  } };
+  const library=await data.loadMontageLibrary(client,'team');
+  assert.equal(library.players[0].name,'Keelyan NZAPAKETE');
+  assert.equal(library.actions.length,1); assert.equal(data.hasMontageBounds(library.actions[0]),true);
+  const { sendActionToMontageLibrary } = require('../lib/montage/favorite-source.ts');
+  const written=[];
+  const sourceClient = actionId => ({ auth:{ getUser:async()=>({data:{user:{id:'user'}},error:null}) }, from:table=> {
+    if(table==='livestat_clip_favorites') return { upsert:async (row,options)=>{ written.push({row,options}); return {error:null}; } };
+    assert.equal(table,'match_actions');
+    const query={ select:()=>query, eq:()=>query, maybeSingle:async()=>({ data:actionId?{id:actionId}:null,error:null }) }; return query;
+  } });
+  assert.equal(await sendActionToMontageLibrary(sourceClient('saved-action'),'team','local-action','m'),'saved-action');
+  assert.equal(written[0].row.action_id,'saved-action'); assert.equal(written[0].row.team_id,'team');
+  await assert.rejects(sendActionToMontageLibrary(sourceClient(null),'team','missing','m'),/enregistrée/);
+  assert.equal(written.length,1); // A missing source must never create an action or a favorite.
   const action = { id:'a', quarter:2, video_time:100, clip_start:96, clip_end:104 };
   const match = state => ({ project_state: state });
   const bounds = state => data.synchronizeMontageAction(action, match(state));

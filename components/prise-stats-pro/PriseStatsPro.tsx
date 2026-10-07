@@ -17,6 +17,7 @@
 import { type MouseEvent, useEffect, useRef, useState } from 'react';
 import { CODING_MODES, type CodingMode, isPostLikeCodingMode } from '@/components/prise-stats-pro/coding-modes';
 import { createClient } from "@/lib/supabase/client";
+import { sendActionToMontageLibrary } from "@/lib/montage/favorite-source";
 import { getTeams, saveTeam } from "@/lib/equipes-store";
 import { emptyTeam } from "@/types/player";
 import {
@@ -2462,7 +2463,7 @@ export default function PriseStatsProPage() {
   const [savedMontages, setSavedMontages] = useState<{ id: string; title: string; coach_note: string | null }[]>([]);
   const [montageLoading, setMontageLoading] = useState(false);
 
-  const addToMontage = (a: StatA) => {
+  const addToMontage = async (a: StatA) => {
     const p = find(a.playerId);
     const label = `${tags.label(a.tempsFort) || '—'} · ${describe(a, find).t}`;
     const sub = [periodLabel(a.q), a.clock, p ? `#${p.num} ${p.name}` : null].filter(Boolean).join(' · ');
@@ -2481,6 +2482,16 @@ export default function PriseStatsProPage() {
       flash('Ajouté au montage');
       return [...prev, { caid: a.id, label, sub, note, clipStart: cs, clipEnd: cEnd }];
     });
+    try {
+      await sendActionToMontageLibrary(
+        createClient(), String(liveTeamIdRef.current || activeTeamId || teamId || ''),
+        String(a.id), liveMatchIdRef.current,
+      );
+      setFavoriteClips(current => ({ ...current, [a.id]: true }));
+      flash('★ Clip disponible dans Montage → Favoris');
+    } catch (error) {
+      flash(error instanceof Error ? error.message : 'Impossible d’envoyer ce clip dans Montage.');
+    }
   };
   const removeMontageItem = (caid: string) => setMontageItems((prev) => prev.filter((x) => x.caid !== caid));
   const moveMontageItem = (idx: number, dir: -1 | 1) => {
