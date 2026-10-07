@@ -64,6 +64,16 @@ const save = require('../lib/montage/save-timeline.ts');
   queue.enqueueIncomingClip('user','team',{...incoming,actionId:'second'},storage);
   queue.acknowledgeIncomingClip('user','team',pending[0].transferId,storage);
   assert.deepEqual(queue.readIncomingClips('user','team',storage).map(row=>row.actionId),['second']);
+  // Receipt is distinct from enqueueing; destination reuse preserves unsaved work.
+  const previousWindow=global.window;
+  const assigned=[]; const destination={location:{pathname:'/montages',search:'?teamId=team',assign:url=>assigned.push(url)},focus:()=>{}};
+  global.window={localStorage:storage,setTimeout,open:()=>destination,dispatchEvent:()=>{}};
+  queue.openMontageDestination('team'); assert.equal(assigned.length,0);
+  queue.openMontageDestination('other'); assert.equal(assigned[0],'/montages?teamId=other');
+  queue.markIncomingReceived('user','team','received');
+  assert.equal(await queue.waitForIncomingReceipt('user','team','received',5),true);
+  assert.equal(await queue.waitForIncomingReceipt('other','team','received',1),false);
+  global.window=previousWindow;
   let rpcCalls=0;
   await assert.rejects(save.saveMontageAtomically({ rpc:async () => { rpcCalls++; return { error:{ code:'PGRST202', message:'missing' } }; } }, 'id', {}, [], null), /migration/);
   assert.equal(rpcCalls,1);

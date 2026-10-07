@@ -2,11 +2,12 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState, type SetStateAction } from "react";
 import { loadMontageLibrary, hasMontageBounds, synchronizeMontageAction, type MontageAction, type MontageMatch } from "@/lib/montage/multi-match-data";
-import { MONTAGE_INCOMING_EVENT, readIncomingClips, acknowledgeIncomingClip } from "@/lib/montage/incoming-clips";
+import { fingerprintVideo } from "@/lib/local-match-project";
+import { MONTAGE_INCOMING_EVENT, readIncomingClips, acknowledgeIncomingClip, markIncomingReceived } from "@/lib/montage/incoming-clips";
 import { enforceTimelineSequence, montageItemDuration, montageTrack } from "@/lib/montage/timeline-sequence";
 import { saveMontageAtomically } from "@/lib/montage/save-timeline";
 import { useLivestatTags } from "@/lib/livestat-tags";
-import { getLocalMatchVideoUrl } from "@/lib/local-video-registry";
+import { getLocalMatchVideoUrl, setLocalMatchVideo } from "@/lib/local-video-registry";
 import useLocalMatchVideoVersion from "@/hooks/useLocalMatchVideoVersion";
 import { exportTimelineLocally, downloadLocalExport, shareLocalExport, type LocalExportResult, type LocalExportOverlay, type LocalExportSource } from "@/lib/local-montage-export";
 import LocalMatchVideoButton from "@/components/video/LocalMatchVideoButton";
@@ -292,6 +293,12 @@ export default function MontageStudio({
   const [saveState, setSaveState] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const [librarySelection, setLibrarySelection] = useState<string[]>([]);
   const [addMenuOpen, setAddMenuOpen] = useState(false);
+  const [transferError, setTransferError] = useState("");
+  const [selectedMatchFilter, setSelectedMatchFilter] = useState("");
+  const [selectedActionFilter, setSelectedActionFilter] = useState("");
+  const receiptTokensRef = useRef(new Set<string>());
+  const itemsRef = useRef(items);
+  itemsRef.current = items;
   const incomingSourcesRef = useRef({ actions, matches });
   incomingSourcesRef.current = { actions, matches };
 
@@ -665,6 +672,8 @@ export default function MontageStudio({
         return false;
       }
 
+      if (selectedMatchFilter && action.match_id !== selectedMatchFilter) return false;
+      if (selectedActionFilter && action.action_type !== selectedActionFilter) return false;
       if (selectedPlayerFilter && String(action.player_id || "") !== selectedPlayerFilter) return false;
       if (selectedSystemFilter && String(action.temps_fort || "") !== selectedSystemFilter) return false;
       if (selectedThemeId) {
@@ -679,7 +688,7 @@ export default function MontageStudio({
         .toLowerCase()
         .includes(query);
     });
-  }, [actions, filter, matchMap, search, selectedPlayerFilter, selectedSystemFilter, selectedThemeId, themes, players, tags]);
+  }, [actions, filter, matchMap, search, selectedMatchFilter, selectedActionFilter, selectedPlayerFilter, selectedSystemFilter, selectedThemeId, themes, players, tags]);
 
   useEffect(() => {
     const video = videoRef.current;
@@ -870,8 +879,8 @@ export default function MontageStudio({
     items.length === 0 ? 0 : clamp(selectedIndex + 1, 0, items.length);
 
   const addAction = (action: ActionRow) => {
-    if (!hasMontageBounds(action)) { flash("Cette action ne possède pas de bornes vidéo exploitables."); return; }
-    const insertAt = insertionIndex();
+    if (!hasMontageBounds(action)) { flash("Cette action ne possède pas de bornes vidéo exploitables."); return false; }
+    const insertAt = items.length;
     setItems((current) => {
       const next: MontageItem = {
         action_id: String(action.id),
@@ -890,11 +899,43 @@ export default function MontageStudio({
         volume: 1,
       };
       const rows = [...current];
-      rows.splice(insertAt, 0, next);
+      rows.push(next);
       return rows.map((item, index) => ({ ...item, sort_order: index }));
     });
     setSelectedIndex(insertAt);
+    setPlayhead(totalDuration);
+    flash("Clip ajouté dans la timeline");
+    return true;
   };
+
+  // Confirm only clips actually rendered in the timeline, before autosave.
+  useEffect(() => {
+    if (!teamId) return;
+    let active = true;
+    void (async () => {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user || !active) return;
+      for (const item of items) {
+        const token = item.saved_editor_state?.incoming_transfer_id;
+        if (typeof token === "string" && !receiptTokensRef.current.has(token)) {
+          markIncomingReceived(user.id, teamId, token);
+          receiptTokensRef.current.add(token);
+        }
+      }
+    })();
+    return () => { active = false; };
+  }, [items, teamId, supabase]);
+
+  useEffect(() => {
+    const receiveVideo = async (event: MessageEvent) => {
+      const data = event.data;
+      if (event.origin !== window.location.origin || event.source !== window.opener || data?.type !== "mybasket:montage-video" || data.teamId !== teamId || !(data.file instanceof File)) return;
+      const fingerprint = await fingerprintVideo(data.file);
+      setLocalMatchVideo({ matchId: data.matchId, file: data.file, url: URL.createObjectURL(data.file), fingerprint });
+    };
+    window.addEventListener("message", receiveVideo);
+    return () => window.removeEventListener("message", receiveVideo);
+  }, [teamId]);
 
   // Transfer from LiveStats works both in an already-open window and after
   // navigation. Pending references remain until a valid clip is inserted.
@@ -913,6 +954,11 @@ export default function MontageStudio({
         const incoming = readIncomingClips(user.id, teamId);
         for (const clip of incoming) {
           if (!active) return;
+          if (itemsRef.current.some(item => item.saved_editor_state?.incoming_transfer_id === clip.transferId)) {
+            markIncomingReceived(user.id, teamId, clip.transferId);
+            continue;
+          }
+          if (receiptTokensRef.current.has(clip.transferId)) continue;
           let action = incomingSourcesRef.current.actions.find(row => row.id === clip.actionId);
           if (!action) {
             const result = await supabase.from("match_actions").select("*").eq("id", clip.actionId).eq("team_id", teamId).maybeSingle();
@@ -927,6 +973,9 @@ export default function MontageStudio({
             if (!result.data) throw new Error("Le match source est introuvable.");
             source = result.data as MontageMatch;
           }
+          if (action.match_id && !getLocalMatchVideoUrl(action.match_id)) {
+            window.opener?.postMessage({ type: "mybasket:montage-video-request", teamId, matchId: action.match_id }, window.location.origin);
+          }
           const synced = synchronizeMontageAction(action, source);
           const start = clip.clipStart ?? synced.resolved_clip_start;
           const end = clip.clipEnd ?? synced.resolved_clip_end;
@@ -934,6 +983,8 @@ export default function MontageStudio({
             throw new Error("Le clip envoyé n’a pas de bornes vidéo valides. Son transfert est conservé.");
           }
           if (!active) return;
+          const insertAt = itemsRef.current.length;
+          setSelectedIndex(insertAt);
           setItems(current => {
             if (current.some(item => item.saved_editor_state?.incoming_transfer_id === clip.transferId)) return current;
             return [...current, {
@@ -946,10 +997,12 @@ export default function MontageStudio({
           });
           if (source) setMatches(current => current.some(row => row.id === source!.id) ? current : [...current, source!]);
           setActions(current => current.some(row => row.id === synced.id) ? current : [...current, synced]);
+          setTransferError("");
+          // Receipt is published after React has rendered the new item (next poll).
           flash("✓ Clip reçu dans la timeline Montage");
         }
       } catch (error) {
-        if (active) flash(error instanceof Error ? error.message : "Transfert Montage impossible.");
+        if (active) setTransferError(error instanceof Error ? error.message : "Transfert Montage impossible.");
       } finally {
         processing = false;
         if (requested && active) { requested = false; void receive(); }
@@ -960,11 +1013,13 @@ export default function MontageStudio({
       if (event.key?.startsWith("mybasket:montage-incoming:") && event.newValue !== event.oldValue) void receive();
     };
     void receive();
+    const poll = window.setInterval(onIncoming, 1500);
     window.addEventListener(MONTAGE_INCOMING_EVENT, onIncoming);
     window.addEventListener("storage", onStorage);
     window.addEventListener("focus", onIncoming);
     return () => {
       active = false;
+      window.clearInterval(poll);
       window.removeEventListener(MONTAGE_INCOMING_EVENT, onIncoming);
       window.removeEventListener("storage", onStorage);
       window.removeEventListener("focus", onIncoming);
@@ -972,6 +1027,14 @@ export default function MontageStudio({
   }, [editorReady, teamId, supabase, flash, setItems]);
 
   const removeItem = (index: number) => {
+    const transferId = items[index]?.saved_editor_state?.incoming_transfer_id;
+    if (typeof transferId === "string") {
+      receiptTokensRef.current.add(transferId);
+      void (async () => {
+        const { data: { user } } = await supabase.auth.getUser();
+        if (user) acknowledgeIncomingClip(user.id, teamId, transferId);
+      })();
+    }
     setItems((current) =>
       current
         .filter((_, currentIndex) => currentIndex !== index)
@@ -1483,7 +1546,10 @@ export default function MontageStudio({
   const addPlaylistToMontage = (playlist: ClipTheme) => {
     const rows = actions.filter((action) => playlist.actionIds.includes(String(action.id)));
     if (!rows.length) { flash("Cette playlist est vide."); return; }
+    const validRows = rows.filter(hasMontageBounds);
+    if (validRows.length !== rows.length) { flash("Certains clips n’ont pas de bornes vidéo. Aucun ajout effectué."); return; }
     rows.forEach((action) => addAction(action));
+    setSelectedIndex(items.length + rows.length - 1);
     flash(`${rows.length} clip${rows.length > 1 ? "s" : ""} ajouté${rows.length > 1 ? "s" : ""} au montage`);
   };
 
@@ -1679,8 +1745,7 @@ export default function MontageStudio({
       }
       if (event.key === "Enter" && previewAction) {
         event.preventDefault();
-        addAction(previewAction);
-        flash("Clip envoyé dans le montage");
+        if (!addAction(previewAction)) return;
         if (!event.shiftKey) {
           setClipPreviewIndex((current) => Math.min(previewActions.length - 1, (current ?? 0) + 1));
         }
@@ -1739,7 +1804,9 @@ export default function MontageStudio({
       flash("Sélectionne au moins un clip.");
       return;
     }
+    if (selectedActions.some(action => !hasMontageBounds(action))) { flash("Un clip sélectionné n’a pas de bornes vidéo. La sélection est conservée."); return; }
     selectedActions.forEach((action) => addAction(action));
+    setSelectedIndex(items.length + selectedActions.length - 1);
     flash(`${selectedActions.length} clip${selectedActions.length > 1 ? "s" : ""} ajouté${selectedActions.length > 1 ? "s" : ""} au montage`);
     setLibrarySelection([]);
   };
@@ -1806,6 +1873,7 @@ export default function MontageStudio({
         </div>
       </header>
 
+      {transferError && <div role="alert" style={{ padding: 12, background: "#fff0f0", color: "#941b32" }}>Transfert Montage : {transferError} <button onClick={() => window.dispatchEvent(new Event(MONTAGE_INCOMING_EVENT))}>Réessayer</button></div>}
       <main className="mp-grid">
         <aside className="mp-library">
           <div className="mp-playlist-title">
@@ -2070,9 +2138,14 @@ export default function MontageStudio({
             <div className="mp-storyboard-ruler">
               <span>00:00</span><span>00:15</span><span>00:30</span><span>00:45</span><span>01:00</span><span>01:15</span><span>{formatClipTime(totalDuration)}</span>
             </div>
-            <div className="mp-storyboard-strip">
+            <div className="mp-storyboard-strip" onDragOver={event => event.preventDefault()} onDrop={event => {
+              event.preventDefault();
+              const id = event.dataTransfer.getData("text/mybasket-action");
+              const action = actions.find(row => row.id === id);
+              if (action) addAction(action);
+            }}>
               {items.length === 0 ? (
-                <div className="mp-storyboard-empty">Glisse ici les clips de ta playlist pour construire ton montage.</div>
+                <div className="mp-storyboard-empty">Clique sur « Ajouter au montage » depuis un clip, ou glisse une action depuis la bibliothèque.</div>
               ) : items.map((item, index) => {
                 const duration = itemDuration(item);
                 const typeLabel = item.item_type === "freeze" ? "Freeze" : item.item_type === "title" ? "Titre" : item.item_type === "image" ? "Image" : item.item_type === "audio" ? "Audio" : item.item_type === "text" ? "Texte" : "Clip";
@@ -2086,8 +2159,11 @@ export default function MontageStudio({
                     onDragOver={(event) => event.preventDefault()}
                     onDrop={(event) => {
                       event.preventDefault();
-                      const from = Number(event.dataTransfer.getData("text/mybasket-story-index"));
-                      if (Number.isFinite(from) && from !== index) moveItem(from, index);
+                      const raw = event.dataTransfer.getData("text/mybasket-story-index");
+                      if (!raw) return; // Library drops are handled by the strip.
+                      event.stopPropagation();
+                      const from = Number(raw);
+                      if (Number.isInteger(from) && from >= 0 && from < items.length && from !== index) moveItem(from, index);
                     }}
                   >
                     <span className="mp-story-index">{index + 1}</span>
@@ -2096,6 +2172,7 @@ export default function MontageStudio({
                     </div>
                     <strong className="mp-story-title">{item.title || typeLabel}</strong>
                     <small>{typeLabel} · {formatClipTime(duration)}</small>
+                    {item.action && <small>{actionSub(item.action, matchMap)}</small>}
                     <b onClick={(event) => { event.stopPropagation(); removeItem(index); }}>×</b>
                   </button>
                 );
@@ -2129,6 +2206,14 @@ export default function MontageStudio({
             </select>
           </div>
 
+          <select className="mp-library-select" aria-label="Filtrer par match" value={selectedMatchFilter} onChange={e => setSelectedMatchFilter(e.target.value)}>
+            <option value="">Tous les matchs</option>
+            {matches.map(match => <option key={match.id} value={match.id}>{match.opponent || "Adversaire"} · {match.match_date || "Date inconnue"}</option>)}
+          </select>
+          <select className="mp-library-select" aria-label="Filtrer par action" value={selectedActionFilter} onChange={e => setSelectedActionFilter(e.target.value)}>
+            <option value="">Toutes les actions</option>
+            {Array.from(new Set(actions.map(action => action.action_type).filter(Boolean))).map(type => <option key={type!} value={type!}>{tags.label(type!)}</option>)}
+          </select>
           <input className="mp-clips-search" value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Rechercher un clip…" />
 
           <div className="mp-quick-filters">
@@ -2156,6 +2241,11 @@ export default function MontageStudio({
             </select>
           )}
 
+          <div style={{ padding: "8px 0", display: "grid", gap: 6 }}>
+            <strong>{librarySelection.length} actions sélectionnées · {new Set(actions.filter(action => librarySelection.includes(action.id)).map(action => action.match_id)).size} matchs</strong>
+            <button disabled={!librarySelection.length} onClick={addSelectedLibraryClips}>＋ Ajouter la sélection au montage</button>
+            <button disabled={!librarySelection.length} onClick={() => setLibrarySelection([])}>Vider la sélection</button>
+          </div>
           <div className="mp-match-clip-list">
             {libraryError ? <div className="mp-empty">Bibliothèque indisponible : {libraryError}</div> : loading ? <div className="mp-empty">Chargement…</div> :
             previewActions.length === 0 ? <div className="mp-empty">Aucun clip disponible.</div> :
@@ -2173,6 +2263,7 @@ export default function MontageStudio({
                     event.dataTransfer.effectAllowed = "copy";
                   }}
                 >
+                  <input type="checkbox" aria-label={`Sélectionner ${clipLabel(action)}`} checked={librarySelection.includes(id)} onChange={() => toggleLibrarySelection(id)} />
                   <button className="mp-match-clip-open" onClick={() => setClipPreviewIndex(index)}>
                     <span className="mp-match-thumb">▶<small>{duration.toFixed(0)}s</small></span>
                     <span className="mp-match-copy">
@@ -2262,6 +2353,8 @@ export default function MontageStudio({
                 {selected.item_type !== "image" && <><div className="mp-two"><label>Taille texte<input type="number" min="10" max="140" value={selected.fontSize ?? (selected.item_type === "title" ? 48 : 30)} onChange={e=>updateSelected({fontSize:numberValue(e.target.value)})}/></label><label>Police<select value={selected.fontFamily ?? "Arial"} onChange={e=>updateSelected({fontFamily:e.target.value})}><option>Arial</option><option>Roboto</option><option>Georgia</option><option>Impact</option></select></label></div><label>Alignement<select value={selected.textAlign ?? "center"} onChange={e=>updateSelected({textAlign:e.target.value as "left"|"center"|"right"})}><option value="left">Gauche</option><option value="center">Centre</option><option value="right">Droite</option></select></label></>}
                 <label><input type="checkbox" checked={selected.locked ?? false} onChange={e=>updateSelected({locked:e.target.checked})}/> Verrouiller le calque</label>
               </>}
+              <button disabled={selectedIndex === 0} onClick={() => moveItem(selectedIndex, selectedIndex - 1)}>← Déplacer avant</button>
+              <button disabled={selectedIndex >= items.length - 1} onClick={() => moveItem(selectedIndex, selectedIndex + 1)}>Déplacer après →</button>
               <button className="danger" onClick={()=>removeItem(selectedIndex)}>🗑 Retirer de la timeline</button>
             </div>
           )}
@@ -2347,7 +2440,7 @@ export default function MontageStudio({
 
             <footer>
               <button onClick={()=>setClipPreviewIndex(i=>Math.max(0,(i??0)-1))}>← Précédent <kbd>⇧TAB</kbd></button>
-              <button className="gold" onClick={()=>{addAction(previewAction);flash("Clip envoyé dans le montage")}}>＋ Ajouter au montage <kbd>Entrée</kbd></button>
+              <button className="gold" onClick={()=>addAction(previewAction)}>＋ Ajouter au montage <kbd>Entrée</kbd></button>
               <button onClick={()=>setClipPreviewIndex(i=>Math.min(previewActions.length-1,(i??0)+1))}>Suivant <kbd>TAB</kbd> →</button>
             </footer>
           </div>
@@ -2387,11 +2480,11 @@ export default function MontageStudio({
         .mp-timeline-head{display:flex;justify-content:space-between;align-items:center;margin-top:12px;padding:8px 4px}.mp-timeline-head strong{font-size:14px}.mp-timeline-head small{margin-left:8px;color:#858992}.mp-timeline-head button{border:1px solid #ddd;background:#fff;border-radius:7px}.mp-timeline-head span{font-size:9px;margin:0 5px}
         .mp-storyboard{border:1px solid var(--line);border-radius:12px;overflow:hidden;background:#fafbfc}.mp-storyboard-ruler{height:30px;padding:0 12px;display:flex;justify-content:space-between;align-items:end;border-bottom:1px solid var(--line);color:#8a8e96;font-size:8px}.mp-storyboard-strip{min-height:118px;padding:10px;display:flex;gap:7px;overflow:auto;align-items:stretch}.mp-storyboard-empty{flex:1;border:1px dashed #cfd3d9;border-radius:9px;display:grid;place-items:center;color:#969aa2;font-size:11px}.mp-story-card{min-width:125px;max-width:160px;border:1px solid #dde0e5;background:#fff;border-radius:9px;padding:5px;text-align:left;position:relative}.mp-story-card.selected{border:2px solid var(--wine)}.mp-story-visual{height:58px;border-radius:6px;background:linear-gradient(135deg,#d7c0a1,#7b1730);display:grid;place-items:center;color:#fff}.mp-story-title{display:block;font-size:9px;margin-top:5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.mp-story-card small{font-size:8px;color:#888}.mp-story-card>b{position:absolute;right:5px;top:5px;background:#fff;border-radius:50%;width:18px;height:18px;display:grid;place-items:center}.mp-story-index{position:absolute;left:8px;top:8px;z-index:2;background:#111c;color:#fff;border-radius:5px;padding:2px 4px;font-size:7px}.mp-story-add{min-width:80px;border:1px dashed #cfd3d9;background:#fff;border-radius:9px;font-size:20px;color:var(--wine)}.mp-story-add small{display:block;font-size:8px;color:#777}.mp-story-toolbar{display:flex;gap:6px;align-items:center;border-top:1px solid var(--line);padding:8px;flex-wrap:wrap}.mp-story-toolbar button{border:0;background:#fff;border-radius:7px;padding:7px 9px;font-size:9px}.mp-zoom{margin-left:auto;display:flex;gap:6px;align-items:center;font-size:8px}
         .mp-match-clips-head{display:flex;justify-content:space-between;align-items:center}.mp-match-clips-head>div{display:flex;gap:7px;align-items:center}.mp-match-clips-head strong{font-size:16px}.mp-match-clips-head span{background:#f0e4e7;color:var(--wine);font-size:9px;font-weight:900;border-radius:99px;padding:3px 6px}.mp-match-clips-head select{border:1px solid #e0e2e6;background:#fff;border-radius:8px;padding:7px;font-size:9px}.mp-clips-search{width:100%;margin-top:10px;border:1px solid #e0e2e6;border-radius:9px;padding:9px 10px;font-size:10px}.mp-quick-filters{display:flex;gap:5px;margin:8px 0;overflow:auto}.mp-quick-filters button{border:0;background:#f0f1f3;color:#737780;border-radius:999px;padding:6px 8px;font-size:8px;white-space:nowrap}.mp-quick-filters button.on{background:var(--wine);color:#fff}.mp-library-select{width:100%;border:1px solid #e0e2e6;border-radius:8px;padding:8px;margin-bottom:8px;font-size:9px;background:#fff}
-        .mp-match-clip-list{display:grid;gap:7px}.mp-match-clip{display:grid;grid-template-columns:minmax(0,1fr) 27px 30px;gap:4px;align-items:center;border-bottom:1px solid #eee;padding:5px 0}.mp-match-clip-open{border:0;background:transparent;display:grid;grid-template-columns:72px minmax(0,1fr);gap:7px;text-align:left;min-width:0}.mp-match-thumb{height:45px;border-radius:7px;background:linear-gradient(135deg,#3b2b27,#8b6346);color:#fff;display:grid;place-items:center;position:relative}.mp-match-thumb small{position:absolute;right:3px;bottom:3px;background:#000b;border-radius:4px;padding:2px 3px;font-size:7px}.mp-match-copy{min-width:0}.mp-match-copy strong,.mp-match-copy small{display:block}.mp-match-copy strong{font-size:9px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.mp-match-copy small{font-size:8px;color:#858992;margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.mp-mini-star,.mp-mini-add{width:27px;height:27px;border:1px solid #ddd;background:#fff;border-radius:7px}.mp-mini-star.on{color:#c69222}.mp-mini-add{font-size:17px;color:var(--wine)}
+        .mp-match-clip-list{display:grid;gap:7px}.mp-match-clip{display:grid;grid-template-columns:18px minmax(0,1fr) 27px 30px;gap:4px;align-items:center;border-bottom:1px solid #eee;padding:5px 0}.mp-match-clip-open{border:0;background:transparent;display:grid;grid-template-columns:72px minmax(0,1fr);gap:7px;text-align:left;min-width:0}.mp-match-thumb{height:45px;border-radius:7px;background:linear-gradient(135deg,#3b2b27,#8b6346);color:#fff;display:grid;place-items:center;position:relative}.mp-match-thumb small{position:absolute;right:3px;bottom:3px;background:#000b;border-radius:4px;padding:2px 3px;font-size:7px}.mp-match-copy{min-width:0}.mp-match-copy strong,.mp-match-copy small{display:block}.mp-match-copy strong{font-size:9px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.mp-match-copy small{font-size:8px;color:#858992;margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.mp-mini-star,.mp-mini-add{width:27px;height:27px;border:1px solid #ddd;background:#fff;border-radius:7px}.mp-mini-star.on{color:#c69222}.mp-mini-add{font-size:17px;color:var(--wine)}
         .mp-detail-title{border-bottom:1px solid var(--line);padding-bottom:10px;margin-bottom:10px}.mp-detail-title strong,.mp-detail-title small{display:block}.mp-detail-title strong{font-size:16px}.mp-detail-title small{font-size:9px;color:#8a8e96;margin-top:3px}.mp-inspector-form{display:grid;gap:10px}.mp-inspector-form label{font-size:9px;color:#6f737c;font-weight:800}.mp-inspector-form input,.mp-inspector-form textarea,.mp-inspector-form select{width:100%;margin-top:4px;border:1px solid #e0e2e6;background:#fff;border-radius:8px;padding:8px;color:#222}.mp-readonly{margin-top:4px;background:#f4f5f7;border-radius:8px;padding:8px}.mp-empty{border:1px dashed #d3d6db;border-radius:9px;padding:16px;text-align:center;color:#90949c;font-size:10px}.mp-clip-time-readable,.mp-trim-panel,.mp-nudge,.mp-design-controls,.mp-drawing-list,.mp-project-box{border:1px solid var(--line);border-radius:9px;padding:9px}.mp-clip-time-readable{display:grid;grid-template-columns:repeat(3,1fr);gap:5px;font-size:8px}.mp-clip-time-readable span,.mp-clip-time-readable b{display:block}.mp-trim-labels{display:flex;justify-content:space-between;font-size:8px}.mp-trim-range input{width:100%}.mp-nudge{display:flex;gap:5px;flex-wrap:wrap}.mp-nudge button,.mp-inspector-form button{border:1px solid #e0e2e6;background:#fff;border-radius:7px;padding:7px;font-size:9px}.mp-danger{color:#b62d40!important}.mp-share-modal,.mp-preview-modal{position:fixed;inset:0;background:#0009;z-index:80;display:grid;place-items:center;padding:20px}.mp-share,.mp-preview-card{background:#fff;color:#222;border-radius:14px;max-width:760px;width:min(94vw,760px);padding:18px}.mp-preview-card video{width:100%;background:#000;border-radius:10px}.mp-modal-tags{display:flex;gap:5px;flex-wrap:wrap}.mp-modal-tags i{font-style:normal;background:#f1f2f4;border-radius:99px;padding:4px 7px;font-size:8px}
-        @media(max-width:1450px){.mp-grid{grid-template-columns:220px minmax(480px,1fr) 280px 250px}.mp-brand em{display:none}}
-        @media(max-width:1180px){.mp-grid{grid-template-columns:220px minmax(500px,1fr) 280px}.mp-inspector{display:none}.mp-header{grid-template-columns:1fr auto}.mp-project-name{display:none}}
-        @media(max-width:900px){.mp-grid{grid-template-columns:1fr}.mp-library,.mp-match-clips,.mp-inspector{height:auto;position:static}.mp-center{order:-1}.mp-header{grid-template-columns:1fr}.mp-header-actions{display:none}.mp-library{max-height:none}.mp-match-clips{max-height:420px}}
+        @media(max-width:1450px){.mp-grid{grid-template-columns:160px minmax(0,1fr) 220px 210px}.mp-brand em{display:none}}
+        @media(max-width:1180px){.mp-header{height:auto;min-height:78px;padding:12px}.mp-grid{grid-template-columns:160px minmax(0,1fr) 220px}.mp-inspector{display:block;grid-column:1/-1;max-height:320px;overflow:auto}.mp-header{grid-template-columns:1fr auto}.mp-project-name{display:flex;grid-column:1/-1}}
+        @media(max-width:900px){.mp-grid{grid-template-columns:1fr}.mp-library,.mp-match-clips,.mp-inspector{height:auto;position:static}.mp-center{order:-1}.mp-header{grid-template-columns:1fr}.mp-header-actions{display:flex;flex-wrap:wrap}.mp-library{max-height:none}.mp-match-clips{max-height:420px}}
       `}</style>
     </div>
   );

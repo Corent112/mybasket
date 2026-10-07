@@ -1,5 +1,5 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { enqueueIncomingClip, type IncomingMontageClip } from "./incoming-clips";
+import { enqueueIncomingClip, readIncomingClips, waitForIncomingReceipt, type IncomingMontageClip } from "./incoming-clips";
 
 // Persist only a reference to the saved action. Never create or overwrite stats.
 export async function sendActionToMontageLibrary(
@@ -28,7 +28,13 @@ export async function sendActionToMontageLibrary(
     { user_id: user.id, team_id: teamId, action_id: actionId },
     { onConflict: "user_id,team_id,action_id" },
   );
-  if (error) throw new Error(error.message);
-  if (transfer) enqueueIncomingClip(user.id, teamId, { ...transfer, actionId, matchId });
+  if (error && !transfer) throw new Error(error.message);
+  if (transfer) {
+    enqueueIncomingClip(user.id, teamId, { ...transfer, actionId, matchId });
+    const request = readIncomingClips(user.id, teamId).find(row => row.actionId === actionId);
+    if (!request || !await waitForIncomingReceipt(user.id, teamId, request.transferId)) {
+      throw new Error("Clip en attente de réception. Ouvre Montage : il reste dans la file d’envoi, il n’est pas encore confirmé dans la timeline.");
+    }
+  }
   return actionId;
 }

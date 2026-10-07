@@ -10,6 +10,8 @@ import DonutChart from "../../../../components/equipes/DonutChart";
 import LineChart from "../../../../components/equipes/LineChart";
 import { Jersey, Sparkline } from "../../../../components/equipes/Sparkline";
 import type { Player, Team } from "../../../../types/player";
+import { sendActionToMontageLibrary } from "@/lib/montage/favorite-source";
+import { openMontageDestination } from "@/lib/montage/incoming-clips";
 import { createClient } from "@/lib/supabase/client";
 import { useLivestatTags } from "@/lib/livestat-tags";
 import PlayerMontages from "@/components/players/PlayerMontages";
@@ -3654,13 +3656,23 @@ function VideoRentabilityTab({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [teamId, playerId]);
 
-  const toggleHighlight = (action: any) => {
+  const toggleHighlight = async (action: any) => {
     const actionId = String(action?.id ?? "");
     if (!actionId) return;
 
+    openMontageDestination(teamId);
+    flashMontage("Envoi du clip vers Montage…");
+    try {
+      await sendActionToMontageLibrary(montageSupabase, teamId, actionId, action.match_id,
+        { clipStart: action.edited_clip_start ?? action.resolved_clip_start ?? null, clipEnd: action.edited_clip_end ?? action.resolved_clip_end ?? null, title: actionTypeLabel(action) });
+      flashMontage("Clip reçu dans la timeline Montage");
+    } catch (error) {
+      flashMontage(error instanceof Error ? error.message : "Envoi impossible");
+      return;
+    }
     setHighlightQueue((current) => {
       if (current.some((clip) => clip.action_id === actionId)) {
-        return current.filter((clip) => clip.action_id !== actionId);
+        return current;
       }
 
       return [

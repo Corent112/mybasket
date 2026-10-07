@@ -17,6 +17,7 @@
 import { type MouseEvent, useEffect, useRef, useState } from 'react';
 import { CODING_MODES, type CodingMode, isPostLikeCodingMode } from '@/components/prise-stats-pro/coding-modes';
 import { createClient } from "@/lib/supabase/client";
+import { openMontageDestination } from "@/lib/montage/incoming-clips";
 import { sendActionToMontageLibrary } from "@/lib/montage/favorite-source";
 import { getTeams, saveTeam } from "@/lib/equipes-store";
 import { emptyTeam } from "@/types/player";
@@ -2463,6 +2464,18 @@ export default function PriseStatsProPage() {
   const [savedMontages, setSavedMontages] = useState<{ id: string; title: string; coach_note: string | null }[]>([]);
   const [montageLoading, setMontageLoading] = useState(false);
 
+  useEffect(() => {
+    const sendVideo = (event: MessageEvent) => {
+      const data = event.data;
+      if (event.origin !== window.location.origin || data?.type !== "mybasket:montage-video-request" || !event.source || !videoFile) return;
+      const currentTeam = String(liveTeamIdRef.current || activeTeamId || teamId || '');
+      if (data.teamId !== currentTeam || data.matchId !== liveMatchIdRef.current) return;
+      (event.source as Window).postMessage({ type: "mybasket:montage-video", teamId: currentTeam, matchId: data.matchId, file: videoFile }, window.location.origin);
+    };
+    window.addEventListener('message', sendVideo);
+    return () => window.removeEventListener('message', sendVideo);
+  }, [videoFile, activeTeamId, teamId]);
+
   const addToMontage = async (a: StatA) => {
     const p = find(a.playerId);
     const label = `${tags.label(a.tempsFort) || '—'} · ${describe(a, find).t}`;
@@ -2473,13 +2486,13 @@ export default function PriseStatsProPage() {
     const cs = (ce?.trimStart ?? a.clipStart) ?? null;
     const cEnd = (ce?.trimEnd ?? a.clipEnd) ?? null;
     const note = ce?.note || '';
+    openMontageDestination(String(liveTeamIdRef.current || activeTeamId || teamId || ''));
+    flash('Envoi du clip vers Montage…');
     setMontageItems((prev) => {
       const existing = prev.find((x) => x.caid === a.id);
       if (existing) {
-        flash('Clip mis à jour dans le montage');
         return prev.map((x) => (x.caid === a.id ? { ...x, label, sub, clipStart: cs, clipEnd: cEnd, note: note || x.note } : x));
       }
-      flash('Ajouté au montage');
       return [...prev, { caid: a.id, label, sub, note, clipStart: cs, clipEnd: cEnd }];
     });
     try {
@@ -2537,14 +2550,8 @@ export default function PriseStatsProPage() {
     // actions codées soient disponibles côté MontageStudio/Supabase.
     try { persistProjectStateRef.current?.(); } catch { /* noop */ }
 
-    const url = `/montages${params.toString() ? `?${params.toString()}` : ''}`;
-    const popup = window.open(url, 'mybasket-montage-studio');
-    if (!popup) {
-      // Safari peut bloquer les popups : dans ce cas on ouvre dans l'onglet courant.
-      window.location.assign(url);
-      return;
-    }
-    try { popup.focus(); } catch { /* noop */ }
+    const popup = openMontageDestination(String(liveTeamIdRef.current || activeTeamId || teamId || ''));
+    if (!popup) window.location.assign(`/montages?${params}`);
   };
 
   const saveMontage = async () => {
