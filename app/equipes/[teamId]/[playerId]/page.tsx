@@ -12,6 +12,7 @@ import { Jersey, Sparkline } from "../../../../components/equipes/Sparkline";
 import type { Player, Team } from "../../../../types/player";
 import { sendActionToMontageLibrary } from "@/lib/montage/favorite-source";
 import { openMontageDestination } from "@/lib/montage/incoming-clips";
+import { completedPlayerMatchRows, playerMatchCategoryOf, type PlayerMatchCategory, loadPlayerMatchStats } from "@/lib/player-match-stats";
 import { createClient } from "@/lib/supabase/client";
 import { useLivestatTags } from "@/lib/livestat-tags";
 import PlayerMontages from "@/components/players/PlayerMontages";
@@ -149,6 +150,11 @@ type PlayerBilan = {
 
 
 type PlayerLiveMatchLine = {
+  category: ReturnType<typeof playerMatchCategoryOf>;
+  minutes: number | null;
+  hasScore: boolean;
+  offReb: number;
+  defReb: number;
   matchId: string;
   date: string;
   opponent: string;
@@ -701,12 +707,18 @@ function computeLiveStats(rows: any[], matchesById: Map<string, any>): PlayerLiv
 
     return {
       matchId,
+      category: playerMatchCategoryOf(match),
       date: match?.match_date ?? row.created_at ?? "",
       opponent: match?.opponent ?? "Adversaire",
       result: match?.result ?? "",
       usScore: statNumber(match?.us_score),
       themScore: statNumber(match?.them_score),
       present: row.present !== false,
+      hasScore: match?.us_score != null && match?.them_score != null,
+      minutes: row.minutes_seconds != null ? statNumber(row.minutes_seconds) / 60
+        : [row.min, row.minutes, row.playing_time, row.playing_time_minutes, row.time_played].some(value => value != null && value !== "")
+          ? statMinutes([row.min, row.minutes, row.playing_time, row.playing_time_minutes, row.time_played].find(value => value != null && value !== "")) : null,
+      offReb, defReb,
       pts: statNumber(row.pts),
       reb: statNumber(row.reb) || offReb + defReb,
       ast: statNumber(row.ast),
@@ -929,6 +941,8 @@ export default function JoueurDetailPage({
   const [team, setTeam] = useState<Team | undefined>();
   const [identityLoading, setIdentityLoading] = useState(true);
   const [liveStats, setLiveStats] = useState<PlayerLiveStats>(EMPTY_LIVE_STATS);
+  const [matchStatsLoading, setMatchStatsLoading] = useState(true);
+  const [matchStatsError, setMatchStatsError] = useState("");
   const [playerActions, setPlayerActions] = useState<any[]>([]);
   const [teamPlayersStats, setTeamPlayersStats] = useState<TeamPlayerComparisonStat[]>([]);
   const [attendanceSummary, setAttendanceSummary] = useState<PlayerAttendanceSummary>({
@@ -1194,59 +1208,17 @@ export default function JoueurDetailPage({
       setLiveStats(EMPTY_LIVE_STATS);
       setTeamPlayersStats([]);
 
+      setMatchStatsLoading(true);
+      setMatchStatsError("");
       try {
-        const { data: rows, error: rowsError } = await supabase
-          .from("match_player_stats")
-          .select("*")
-          .eq("team_id", teamId);
-
-        if (rowsError) throw rowsError;
+        const { rows: allTeamRows, matchesById } = await loadPlayerMatchStats(supabase, teamId);
         if (!active) return;
-
-        const allTeamRows = (rows ?? []) as any[];
-
-        // §23 · le classement / la comparaison ne doivent compter que les matchs
-        // TERMINÉS. On récupère le statut de tous les matchs de l'équipe et on
-        // écarte les lignes rattachées à un brouillon (project_status = 'draft').
-        const allMatchIds = Array.from(new Set(allTeamRows.map((r) => String(r.match_id ?? "")).filter(Boolean)));
-        const draftMatchIds = new Set<string>();
-        if (allMatchIds.length > 0) {
-          const { data: statusRows } = await supabase
-            .from("match_stats")
-            .select("id, project_status")
-            .in("id", allMatchIds);
-          (statusRows ?? []).forEach((m: any) => { if (m.project_status === "draft") draftMatchIds.add(String(m.id)); });
-        }
-        const completedTeamRows = allTeamRows.filter((r) => !draftMatchIds.has(String(r.match_id ?? "")));
+        // Keep the existing rule: draft matches do not count in player statistics.
+        const completedTeamRows = completedPlayerMatchRows(allTeamRows, matchesById);
 
         const currentPlayerRows = completedTeamRows.filter(
           (row) => String(row.player_id ?? "") === String(playerId)
         );
-
-        const matchIds = Array.from(
-          new Set(
-            currentPlayerRows
-              .map((row) => String(row.match_id ?? ""))
-              .filter(Boolean)
-          )
-        );
-
-        let matchesById = new Map<string, any>();
-
-        if (matchIds.length > 0) {
-          const { data: matches, error: matchError } = await supabase
-            .from("match_stats")
-            .select("id, opponent, match_date, us_score, them_score, result")
-            .in("id", matchIds);
-
-          if (matchError) {
-            console.error("Erreur chargement matchs pour fiche joueur :", matchError);
-          }
-
-          matchesById = new Map(
-            ((matches ?? []) as any[]).map((match) => [String(match.id), match])
-          );
-        }
 
         if (!active) return;
 
@@ -1260,7 +1232,10 @@ export default function JoueurDetailPage({
         if (active) {
           setLiveStats(EMPTY_LIVE_STATS);
           setTeamPlayersStats([]);
+          setMatchStatsError(error instanceof Error ? error.message : "Statistiques indisponibles.");
         }
+      } finally {
+        if (active) setMatchStatsLoading(false);
       }
     }
 
@@ -2124,6 +2099,8 @@ export default function JoueurDetailPage({
             playerId={String(playerId)}
             playerName={`${p.firstName ?? ""} ${p.lastName ?? ""}`.trim() || "Joueur"}
             matches={liveStats.matches}
+            matchStatsLoading={matchStatsLoading}
+            matchStatsError={matchStatsError}
             onRequestExport={requestActionExport}
             onOpenMontageStudio={(montageId) => {
               const params = new URLSearchParams({
@@ -3485,6 +3462,65 @@ function computeAutoInsights(
   return insights.slice(0, 3);
 }
 
+function PlayerMatchStatsTable({ matches, loading = false, error = "" }: { matches: PlayerLiveMatchLine[]; loading?: boolean; error?: string }) {
+  const [search, setSearch] = useState("");
+  const [sort, setSort] = useState("date");
+  const [category, setCategory] = useState<PlayerMatchCategory>("all");
+  const rows = useMemo(() => matches.filter(match => (category === "all" || match.category === category) && `${match.opponent} ${fmtDate(match.date)}`.toLocaleLowerCase("fr").includes(search.toLocaleLowerCase("fr").trim())).sort((a, b) => {
+    if (sort === "points") return b.pts - a.pts || b.date.localeCompare(a.date);
+    if (sort === "rebounds") return b.reb - a.reb || b.date.localeCompare(a.date);
+    if (sort === "assists") return b.ast - a.ast || b.date.localeCompare(a.date);
+    return b.date.localeCompare(a.date);
+  }), [matches, search, sort, category]);
+  const played = rows.filter(match => match.present);
+  const games = new Set(played.map(match => match.matchId)).size;
+  const sum = (key: keyof PlayerLiveMatchLine) => played.reduce((total, match) => total + (typeof match[key] === "number" ? match[key] as number : 0), 0);
+  const number = (value: number) => value.toLocaleString("fr-FR", { maximumFractionDigits: 1 });
+  const allMinutesKnown = played.length > 0 && played.every(match => match.minutes != null);
+  const categoryLabel = (value: PlayerLiveMatchLine["category"]) => ({ championship:"Championnat", cup:"Coupe", friendly:"Amical", unknown:"Non renseigné" })[value];
+  const time = (minutes: number | null) => {
+    if (minutes == null) return "—";
+    const seconds = Math.max(0, Math.round(minutes * 60));
+    return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`;
+  };
+  const percent = (made: number, attempted: number) => attempted ? `${percentStat(made, attempted)} %` : "—";
+  return <section className="light-card" style={{ marginBottom: 18, minWidth: 0 }} aria-label="Statistiques du joueur par match">
+    <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 12, justifyContent: "space-between", marginBottom: 12 }}>
+      <div><h3 style={{ marginBottom: 4 }}>Statistiques par match <span>({rows.length})</span></h3><p style={{ margin: 0, fontSize: 12, color: "#737780" }}>{games} match{games > 1 ? "s" : ""} joué{games > 1 ? "s" : ""} · moyennes = totaux ÷ matchs joués · temps de jeu en min:s</p></div>
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+        <select aria-label="Type de matchs du joueur" value={category} onChange={event => setCategory(event.target.value as PlayerMatchCategory)} style={{ padding: 8, border: "1px solid #e0e2e6", borderRadius: 8 }}><option value="all">Tous les matchs</option><option value="championship">Championnat</option><option value="cup">Coupe</option><option value="friendly">Amical</option></select>
+        <input aria-label="Rechercher un match dans les statistiques" placeholder="Adversaire ou date…" value={search} onChange={event => setSearch(event.target.value)} style={{ padding: 8, border: "1px solid #e0e2e6", borderRadius: 8, maxWidth: "100%" }} />
+        <select aria-label="Trier les statistiques par match" value={sort} onChange={event => setSort(event.target.value)} style={{ padding: 8, border: "1px solid #e0e2e6", borderRadius: 8 }}><option value="date">Plus récents</option><option value="points">Points</option><option value="rebounds">Rebonds</option><option value="assists">Passes décisives</option></select>
+      </div>
+    </div>
+    {loading ? <p role="status">Chargement des statistiques…</p> : error ? <p role="alert">Statistiques indisponibles : {error}</p> : rows.length === 0 ? <p className="empty-small">{matches.length ? "Aucun match ne correspond à la recherche." : "Aucune statistique enregistrée pour ce joueur sur les matchs sélectionnés."}</p> :
+      <div style={{ overflowX: "auto", maxHeight: 520 }} tabIndex={0} aria-label="Tableau des matchs, défilement horizontal">
+        <table className="phys-light" style={{ minWidth: 1120, width: "100%", whiteSpace: "nowrap" }}>
+          <thead><tr>{["Date", "Adversaire", "Type", "Score", "Présence", "MIN", "PTS", "2PTS", "3PTS", "LF", "% Tir", "% 3PTS", "% LF", "RO", "RD", "REB", "PD", "INT", "CTR", "BP", "FP"].map(label => <th scope="col" key={label} style={{ position: "sticky", top: 0, background: "#6b1a2c", color: "#fff", zIndex: 1 }}>{label}</th>)}</tr></thead>
+          <tbody>{rows.map(match => <tr key={match.matchId}>
+            <td>{fmtDate(match.date)}</td><th scope="row" style={{ textAlign: "left" }}>{match.opponent || "—"}</th><td>{categoryLabel(match.category)}</td>
+            <td>{match.hasScore ? `${match.usScore}–${match.themScore}` : "—"}</td><td>{match.present ? "Présent" : "Absent"}</td>
+            <td>{match.present ? time(match.minutes) : "—"}</td><td><b>{match.present ? match.pts : "—"}</b></td>
+            {[`${match.p2m}/${match.p2a}`, `${match.p3m}/${match.p3a}`, `${match.ftm}/${match.fta}`, percent(match.p2m + match.p3m, match.p2a + match.p3a), percent(match.p3m, match.p3a), percent(match.ftm, match.fta), match.offReb, match.defReb, match.reb, match.ast, match.stl, match.blk, match.to, match.pf].map((value, index) => <td key={index}>{match.present ? value : "—"}</td>)}
+          </tr>)}</tbody>
+          <tfoot>{["Totaux", "Moyennes"].map(label => {
+            const average = label === "Moyennes";
+            const value = (key: keyof PlayerLiveMatchLine) => average ? (games ? number(sum(key) / games) : "—") : number(sum(key));
+            const pair = (made: keyof PlayerLiveMatchLine, attempts: keyof PlayerLiveMatchLine) => `${value(made)}/${value(attempts)}`;
+            return <tr key={label} style={{ background: average ? "#fff4f6" : "#f6f7f9", fontWeight: 800, ...(average ? { position: "sticky" as const, bottom: 0, zIndex: 2 } : {}) }}>
+              <th scope="row" colSpan={4} style={{ textAlign: "left" }}>{label}</th><td>{games} MJ</td>
+              <td>{allMinutesKnown ? time(average ? sum("minutes") / games : sum("minutes")) : "—"}</td><td>{value("pts")}</td>
+              <td>{pair("p2m", "p2a")}</td><td>{pair("p3m", "p3a")}</td><td>{pair("ftm", "fta")}</td>
+              <td>{percent(sum("p2m") + sum("p3m"), sum("p2a") + sum("p3a"))}</td><td>{percent(sum("p3m"), sum("p3a"))}</td><td>{percent(sum("ftm"), sum("fta"))}</td>
+              {(["offReb", "defReb", "reb", "ast", "stl", "blk", "to", "pf"] as const).map(key => <td key={key}>{value(key)}</td>)}
+            </tr>;
+          })}</tfoot>
+        </table>
+      </div>}
+    <p style={{ marginBottom: 0, fontSize: 11, color: "#737780" }}>RO / RD : rebonds offensifs / défensifs · PD : passes décisives · INT : interceptions · CTR : contres · BP : balles perdues · FP : fautes personnelles</p>
+  </section>;
+}
+
 function VideoRentabilityTab({
   actions,
   tags,
@@ -3492,6 +3528,8 @@ function VideoRentabilityTab({
   playerId,
   playerName,
   matches,
+  matchStatsLoading,
+  matchStatsError,
   onRequestExport,
   onOpenMontageStudio,
 }: {
@@ -3501,10 +3539,12 @@ function VideoRentabilityTab({
   playerId: string;
   playerName: string;
   matches: PlayerLiveMatchLine[];
+  matchStatsLoading: boolean;
+  matchStatsError: string;
   onRequestExport: (actionId: string) => void;
   onOpenMontageStudio: (montageId?: string) => void;
 }) {
-  const [section, setSection] = useState<"overview" | "shots" | "temps-forts" | "actions" | "montage">("overview");
+  const [section, setSection] = useState<"overview" | "matches" | "shots" | "temps-forts" | "actions" | "montage">("overview");
   const [shotFilter, setShotFilter] = useState<"all" | "2PTS" | "3PTS">("all");
   const [shotResultFilter, setShotResultFilter] = useState<"all" | "made" | "missed">("all");
   const [matchFilter, setMatchFilter] = useState("all");
@@ -3937,9 +3977,9 @@ function VideoRentabilityTab({
   const matchOptions = useMemo(
     () =>
       Array.from(
-        new Set(playerActionsOnly.map((a) => String(a.match_id ?? "")).filter(Boolean))
+        new Set([...playerActionsOnly.map((a) => String(a.match_id ?? "")), ...matches.map(match => match.matchId)].filter(Boolean))
       ),
-    [playerActionsOnly]
+    [playerActionsOnly, matches]
   );
 
   const filteredActions = useMemo(
@@ -4133,11 +4173,19 @@ function VideoRentabilityTab({
 
       <div className="pa-tabs">
         <button className={section === "overview" ? "active" : ""} onClick={() => setSection("overview")}>Vue d'ensemble</button>
+        <button className={section === "matches" ? "active" : ""} onClick={() => setSection("matches")}>Par match</button>
         <button className={section === "shots" ? "active" : ""} onClick={() => setSection("shots")}>Shot chart</button>
         <button className={section === "temps-forts" ? "active" : ""} onClick={() => setSection("temps-forts")}>Temps forts</button>
         <button className={section === "actions" ? "active" : ""} onClick={() => setSection("actions")}>Actions</button>
         <button className={section === "montage" ? "active" : ""} onClick={() => setSection("montage")}>Montage</button>
       </div>
+
+      {(section === "overview" || section === "matches") && <PlayerMatchStatsTable
+        key={`${teamId}:${playerId}`}
+        matches={matchFilter === "all" ? matches : matches.filter(match => match.matchId === matchFilter)}
+        loading={matchStatsLoading}
+        error={matchStatsError}
+      />}
 
       {(section === "overview" || section === "shots") && (
         <div className="pa-main-grid">

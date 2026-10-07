@@ -1,10 +1,9 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { getTeamPlayerStats } from "@/lib/stats-supabase";
+import { loadPlayerMatchStats, completedPlayerMatchRows, summarizePlayerMatchRows, type PlayerMatchCategory } from "@/lib/player-match-stats";
 import { createClient } from "@/lib/supabase/client";
 
-const LIVE_STATS_KEY = "mybasket_live_stats";
 const TEAMS_KEY = "mybasket_equipes";
 
 type Player = {
@@ -24,6 +23,9 @@ type Team = {
 
 type PlayerStats = {
   playerId: string;
+  games: number;
+  pts: number;
+  reb: number;
   fgm: number;
   fga: number;
   twoPm: number;
@@ -44,6 +46,9 @@ type PlayerStats = {
 
 const emptyStats = (playerId: string): PlayerStats => ({
   playerId,
+  games: 0,
+  pts: 0,
+  reb: 0,
   fgm: 0,
   fga: 0,
   twoPm: 0,
@@ -206,8 +211,8 @@ function percent(made: number, attempt: number) {
 }
 
 function efficiency(stat: PlayerStats) {
-  const reb = stat.off + stat.def;
-  const pts = stat.twoPm * 2 + stat.threePm * 3 + stat.ftm;
+  const reb = stat.reb;
+  const pts = stat.pts;
 
   return (
     pts +
@@ -226,7 +231,10 @@ function efficiency(stat: PlayerStats) {
 export default function StatsJoueursModule() {
   const [teams, setTeams] = useState<Team[]>([]);
   const [teamId, setTeamId] = useState("");
-  const [stats, setStats] = useState<Record<string, PlayerStats>>({});
+  const [matchRows, setMatchRows] = useState<Record<string, any>[]>([]);
+  const [matchesById, setMatchesById] = useState(new Map<string, Record<string, any>>());
+  const [matchCategory, setMatchCategory] = useState<PlayerMatchCategory>("all");
+  const [statsError, setStatsError] = useState("");
   const [loading, setLoading] = useState(false);
   const [loadingTeams, setLoadingTeams] = useState(true);
   const [displayMode, setDisplayMode] = useState<"cumulative" | "average">("cumulative");
@@ -263,56 +271,30 @@ export default function StatsJoueursModule() {
 
   useEffect(() => {
     if (!selectedTeam) return;
-
-    const loadStats = async () => {
-      setLoading(true);
-
-      const supabaseStats = await getTeamPlayerStats(selectedTeam.id);
-
-      const saved = safeParse<Record<string, Record<string, PlayerStats>>>(
-        localStorage.getItem(LIVE_STATS_KEY),
-        {}
-      );
-
-      const localTeamStats = saved[selectedTeam.id] || {};
-      const next: Record<string, PlayerStats> = {};
-
-      selectedTeam.players.forEach((player) => {
-        next[player.id] =
-          supabaseStats[player.id] ||
-          localTeamStats[player.id] ||
-          emptyStats(player.id);
-      });
-
-      setStats(next);
-      setLoading(false);
-    };
-
-    loadStats();
+    let active = true;
+    setLoading(true); setStatsError(""); setMatchRows([]); setMatchesById(new Map());
+    void loadPlayerMatchStats(createClient(), selectedTeam.id).then(result => {
+      if (active) { setMatchRows(result.rows); setMatchesById(result.matchesById); }
+    }).catch(error => {
+      if (active) setStatsError(error instanceof Error ? error.message : "Statistiques indisponibles.");
+    }).finally(() => { if (active) setLoading(false); });
+    return () => { active = false; };
   }, [selectedTeam]);
 
-  const matchCount = useMemo(() => {
-    // Une tentative de match = une ligne de stats cumulée ayant au moins une action.
-    // Si le backend fournit plus tard un vrai nombre de matchs, il pourra remplacer ce fallback.
-    const saved = typeof window !== "undefined"
-      ? safeParse<any>(localStorage.getItem(LIVE_STATS_KEY), {})
-      : {};
-    const explicit =
-      saved?.[selectedTeam?.id || ""]?.matchCount ??
-      saved?.[selectedTeam?.id || ""]?._matchCount ??
-      0;
-    return Math.max(1, Number(explicit) || 1);
-  }, [selectedTeam, stats]);
-
-  const shown = (value: number) =>
-    displayMode === "average"
-      ? (value / matchCount).toLocaleString("fr-FR", { maximumFractionDigits: 1 })
-      : String(value);
+  const filteredRows = useMemo(() => completedPlayerMatchRows(matchRows, matchesById, matchCategory), [matchRows, matchesById, matchCategory]);
+  const stats = useMemo(() => summarizePlayerMatchRows(filteredRows), [filteredRows]);
+  const matchCount = new Set(filteredRows.map(row => String(row.match_id))).size;
+  const shown = (value: number, games: number) => displayMode === "average"
+    ? games ? (value / games).toLocaleString("fr-FR", { maximumFractionDigits: 1 }) : "—"
+    : String(value);
+  const shownPair = (made: number, attempts: number, games: number) => `${shown(made, games)}-${shown(attempts, games)}`;
 
   const totals = useMemo(() => {
     const result = emptyStats("totals");
 
     Object.values(stats).forEach((stat) => {
+      result.pts += stat.pts;
+      result.reb += stat.reb;
       result.fgm += stat.fgm;
       result.fga += stat.fga;
       result.twoPm += stat.twoPm;
@@ -341,7 +323,7 @@ export default function StatsJoueursModule() {
           <h3>Stats joueurs</h3>
           <p>
             Sélectionne une équipe pour charger les joueurs. Les données sont
-            alimentées par la prise de stats live.
+            alimentées par les matchs terminés. Chaque moyenne utilise les matchs joués par le joueur.
           </p>
         </div>
 
@@ -362,6 +344,9 @@ export default function StatsJoueursModule() {
               Moyenne
             </button>
           </div>
+        <select aria-label="Type de matchs des statistiques joueurs" value={matchCategory} onChange={event => setMatchCategory(event.target.value as PlayerMatchCategory)}>
+          <option value="all">Tous les matchs</option><option value="championship">Championnat</option><option value="cup">Coupe</option><option value="friendly">Amical</option>
+        </select>
         <select
           value={teamId}
           onChange={(e) => setTeamId(e.target.value)}
@@ -388,12 +373,14 @@ export default function StatsJoueursModule() {
         </div>
       )}
 
-      {!loading && selectedTeam && (
+      {statsError && <div className="sj-empty" role="alert">Statistiques indisponibles : {statsError}</div>}
+      {!loading && selectedTeam && !statsError && (
         <div className="sj-table-wrap">
           <table className="sj-table">
             <thead>
               <tr>
                 <th>Player</th>
+                <th title="Nombre de matchs joués">MJ</th>
                 <th>FGM-A</th>
                 <th>2PM-A</th>
                 <th>3PM-A</th>
@@ -415,8 +402,8 @@ export default function StatsJoueursModule() {
             <tbody>
               {selectedTeam.players.map((player) => {
                 const stat = stats[player.id] || emptyStats(player.id);
-                const reb = stat.off + stat.def;
-                const pts = stat.twoPm * 2 + stat.threePm * 3 + stat.ftm;
+                const reb = stat.reb;
+                const pts = stat.pts;
 
                 return (
                   <tr key={player.id}>
@@ -437,48 +424,51 @@ export default function StatsJoueursModule() {
                       </strong>
                     </td>
 
-                    <td>{formatMadeAttempt(stat.fgm, stat.fga)}</td>
-                    <td>{formatMadeAttempt(stat.twoPm, stat.twoPa)}</td>
-                    <td>{formatMadeAttempt(stat.threePm, stat.threePa)}</td>
-                    <td>{formatMadeAttempt(stat.ftm, stat.fta)}</td>
-                    <td>{shown(stat.off)}</td>
-                    <td>{shown(stat.def)}</td>
-                    <td>{shown(reb)}</td>
-                    <td>{shown(stat.ast)}</td>
-                    <td>{shown(stat.st)}</td>
-                    <td>{shown(stat.to)}</td>
-                    <td>{shown(stat.bs)}</td>
-                    <td>{shown(stat.pf)}</td>
-                    <td>{shown(stat.fpf)}</td>
-                    <td>{shown(efficiency(stat))}</td>
-                    <td className="pts">{shown(pts)}</td>
+                    <td>{stat.games}</td>
+                    <td>{shownPair(stat.fgm, stat.fga, stat.games)}</td>
+                    <td>{shownPair(stat.twoPm, stat.twoPa, stat.games)}</td>
+                    <td>{shownPair(stat.threePm, stat.threePa, stat.games)}</td>
+                    <td>{shownPair(stat.ftm, stat.fta, stat.games)}</td>
+                    <td>{shown(stat.off, stat.games)}</td>
+                    <td>{shown(stat.def, stat.games)}</td>
+                    <td>{shown(reb, stat.games)}</td>
+                    <td>{shown(stat.ast, stat.games)}</td>
+                    <td>{shown(stat.st, stat.games)}</td>
+                    <td>{shown(stat.to, stat.games)}</td>
+                    <td>{shown(stat.bs, stat.games)}</td>
+                    <td>{shown(stat.pf, stat.games)}</td>
+                    <td>{shown(stat.fpf, stat.games)}</td>
+                    <td>{shown(efficiency(stat), stat.games)}</td>
+                    <td className="pts">{shown(pts, stat.games)}</td>
                   </tr>
                 );
               })}
 
               <tr className="totals">
-                <td>Totals</td>
-                <td>{formatMadeAttempt(totals.fgm, totals.fga)}</td>
-                <td>{formatMadeAttempt(totals.twoPm, totals.twoPa)}</td>
-                <td>{formatMadeAttempt(totals.threePm, totals.threePa)}</td>
-                <td>{formatMadeAttempt(totals.ftm, totals.fta)}</td>
-                <td>{shown(totals.off)}</td>
-                <td>{shown(totals.def)}</td>
-                <td>{shown(totals.off + totals.def)}</td>
-                <td>{shown(totals.ast)}</td>
-                <td>{shown(totals.st)}</td>
-                <td>{shown(totals.to)}</td>
-                <td>{shown(totals.bs)}</td>
-                <td>{shown(totals.pf)}</td>
-                <td>{shown(totals.fpf)}</td>
-                <td>{shown(efficiency(totals))}</td>
+                <td>{displayMode === "average" ? "Équipe / match" : "Totaux équipe"}</td>
+                <td>{matchCount}</td>
+                <td>{shownPair(totals.fgm, totals.fga, matchCount)}</td>
+                <td>{shownPair(totals.twoPm, totals.twoPa, matchCount)}</td>
+                <td>{shownPair(totals.threePm, totals.threePa, matchCount)}</td>
+                <td>{shownPair(totals.ftm, totals.fta, matchCount)}</td>
+                <td>{shown(totals.off, matchCount)}</td>
+                <td>{shown(totals.def, matchCount)}</td>
+                <td>{shown(totals.reb, matchCount)}</td>
+                <td>{shown(totals.ast, matchCount)}</td>
+                <td>{shown(totals.st, matchCount)}</td>
+                <td>{shown(totals.to, matchCount)}</td>
+                <td>{shown(totals.bs, matchCount)}</td>
+                <td>{shown(totals.pf, matchCount)}</td>
+                <td>{shown(totals.fpf, matchCount)}</td>
+                <td>{shown(efficiency(totals), matchCount)}</td>
                 <td className="pts">
-                  {shown(totals.twoPm * 2 + totals.threePm * 3 + totals.ftm)}
+                  {shown(totals.pts, matchCount)}
                 </td>
               </tr>
 
               <tr className="percentages">
                 <td>Pourcentages</td>
+                <td>—</td>
                 <td>{percent(totals.fgm, totals.fga)}</td>
                 <td>{percent(totals.twoPm, totals.twoPa)}</td>
                 <td>{percent(totals.threePm, totals.threePa)}</td>
