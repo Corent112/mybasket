@@ -880,7 +880,7 @@ export default function CreerExerciceClient() {
         tant que tu ne le proposes pas au CEO.
       </p>
 
-      <ExercisePhotoImport onImported={applyAIImport} playersOnly />
+      <ExercisePhotoImport onImported={applyAIImport} />
 
       <div className="ce-grid">
         <div className="ce-card">

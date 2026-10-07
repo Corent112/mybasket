@@ -52,7 +52,6 @@ import {
   applyOrientation,
   buildCourtLineMask,
   canonicalBounds,
-  courtLengthM,
   courtToCanonical,
   hueOf,
   orientedSize,
@@ -2201,6 +2200,29 @@ function classifyOrange(component: Component): OrangeKind {
   return "unknown";
 }
 
+/**
+ * VISION PAPIER V2 — un cône peut être dessiné en noir, pas uniquement en
+ * orange comme dans un export MyBasket. On reconnaît donc aussi une petite
+ * silhouette verticale dont la base est franchement plus large que le sommet.
+ *
+ * La contrainte d'orientation est volontaire : une simple pointe de flèche,
+ * orientée selon sa trajectoire, ne doit pas devenir un cône.
+ */
+function looksLikePaperCone(component: Component): boolean {
+  const ratio = component.bh / Math.max(1, component.bw);
+  if (ratio < 0.8 || ratio > 2.4) return false;
+
+  const topLimit = component.y0 + component.bh * 0.34;
+  const bottomLimit = component.y0 + component.bh * 0.7;
+  const topXs = component.points.filter((p) => p.y <= topLimit).map((p) => p.x);
+  const bottomXs = component.points.filter((p) => p.y >= bottomLimit).map((p) => p.x);
+  const width = (xs: number[]) => (xs.length ? Math.max(...xs) - Math.min(...xs) : 0);
+  const topW = width(topXs);
+  const bottomW = width(bottomXs);
+
+  return bottomW >= component.bw * 0.55 && bottomW > Math.max(3, topW * 1.5);
+}
+
 function arrowEvidence(poly: Polyline): { hasArrow: boolean; reverse: boolean } {
   if (poly.density.length < 4) return { hasArrow: false, reverse: false };
   const d = poly.density;
@@ -3108,6 +3130,25 @@ export async function analyseGraphic(
       continue;
     }
 
+    // VISION PAPIER V2 : les plots dessinés au feutre noir doivent survivre à
+    // l'import. On les crée comme vrais objets Plaquette, avec une confiance
+    // modérée pour qu'un cas limite reste corrigeable dans ImportReview.
+    if (
+      maxSide > unit * 0.025 &&
+      maxSide < unit * 0.1 &&
+      looksLikePaperCone(component)
+    ) {
+      const point = norm(component.cx, component.cy);
+      objects.push({
+        kind: "cone",
+        x: point.x,
+        y: point.y,
+        confidence: 0.62,
+        source: "vision papier : silhouette de cône verticale",
+      });
+      continue;
+    }
+
     const tokenSized = maxSide > unit * 0.03 && maxSide < unit * 0.12;
     if (tokenSized && ratio < 1.75) {
       if (trajectoryLike(component)) {
@@ -3375,13 +3416,21 @@ export async function analyseGraphic(
       Math.max(item.candidate.bw, item.candidate.bh) /
       Math.max(1, Math.min(item.candidate.bw, item.candidate.bh));
     const size = Math.max(item.candidate.bw, item.candidate.bh) / Math.max(1, unit);
-    return (
+    const circularAttacker =
       item.hasGlyph &&
       ratio <= 1.32 &&
       size >= 0.028 &&
       size <= 0.13 &&
-      item.shapeScore >= 0.68
-    );
+      item.shapeScore >= 0.68;
+
+    // VISION PAPIER V2 : un défenseur « bonhomme » possède une tête ronde mais
+    // ses bras élargissent sa boîte. Ne pas le jeter au seul motif qu'il n'est
+    // plus parfaitement circulaire.
+    const structuralDefender =
+      item.candidate.template?.kind === "defender" ||
+      item.defenseEvidence >= 0.5;
+
+    return circularAttacker || structuralDefender;
   });
 
   // OCR = identité uniquement. Le chiffre doit tomber à l'intérieur du cercle.
@@ -3433,9 +3482,15 @@ export async function analyseGraphic(
    * La couleur et l'OCR n'ont plus le droit de déplacer ou typer le joueur.
    * Le gabarit MyBasket reste prioritaire lorsqu'il est reconnu.
    */
-  const typeOfRead = (_item: (typeof reads)[number]): AiDetectionType => {
-    // Palier actuel : uniquement les ronds bleus/noirs, importés en attaquants.
-    // Les défenseurs seront réactivés après validation des coordonnées XY.
+  const typeOfRead = (item: (typeof reads)[number]): AiDetectionType => {
+    // VISION PAPIER V2 — vérité de forme :
+    // - gabarit défenseur ou bras/arc/croix suffisamment probants => défenseur ;
+    // - gabarit attaquant => attaquant ;
+    // - entre les deux, on conserve le joueur mais on demande confirmation.
+    if (item.candidate.template?.kind === "defender") return "defender";
+    if (item.candidate.template?.kind === "attacker") return "attacker";
+    if (item.defenseEvidence >= DEFENSE_SURE) return "defender";
+    if (item.defenseEvidence >= 0.34) return "unknown";
     return "attacker";
   };
 
@@ -3578,6 +3633,65 @@ export async function analyseGraphic(
       source: item.candidate.template ? "mybasket-template" : source,
     });
     playerPixel.push({ key, x: item.centre.x, y: item.centre.y, area: item.area });
+  }
+
+  /*
+   * VISION PAPIER V2 — DÉFENSEURS ROUGES NOTÉS PAR UN CHIFFRE.
+   *
+   * Dans les schémas papier de référence MyBasket, certains défenseurs sont
+   * indiqués par un chiffre rouge isolé (sans cercle). Ce chiffre ne devient
+   * PAS le numéro du défenseur dans Plaquette : il sert seulement de marqueur
+   * de position. On exige à la fois OCR numérique + encre réellement rouge,
+   * afin qu'un numéro noir d'attaquant ou un numéro d'ordre ne soit jamais
+   * promu défenseur.
+   */
+  try {
+    const redOcr = await ocrCanvas(work);
+    for (const word of redOcr.words) {
+      const digits = word.text.replace(/\D/g, "");
+      if (!/^\d{1,2}$/.test(digits) || word.confidence < 0.42) continue;
+
+      const x0 = Math.max(0, Math.floor(word.x0 - 2));
+      const y0 = Math.max(0, Math.floor(word.y0 - 2));
+      const x1 = Math.min(ink.px.w - 1, Math.ceil(word.x1 + 2));
+      const y1 = Math.min(ink.px.h - 1, Math.ceil(word.y1 + 2));
+      let colored = 0;
+      let red = 0;
+      for (let y = y0; y <= y1; y += 1) {
+        for (let x = x0; x <= x1; x += 1) {
+          const [r, g, b] = pixelAt(ink.px, x, y);
+          if (Math.max(r, g, b) - Math.min(r, g, b) < 24) continue;
+          colored += 1;
+          if (r > 105 && r > g * 1.28 && r > b * 1.18) red += 1;
+        }
+      }
+      const redShare = colored ? red / colored : 0;
+      if (redShare < 0.46) continue;
+
+      const cx = (word.x0 + word.x1) / 2;
+      const cy = (word.y0 + word.y1) / 2;
+      const point = norm(cx, cy);
+      if (players.some((player) => weighted({ x: player.x, y: player.y }, point) < 0.045)) continue;
+
+      const key = `${keyPrefix}p${players.length + 1}`;
+      players.push({
+        key,
+        label: "",
+        team: "def",
+        x: point.x,
+        y: point.y,
+        shape: "circle",
+        hasBall: false,
+        labelConfident: true,
+        type: "defender",
+        confidence: Number(Math.min(0.9, 0.55 + word.confidence * 0.25 + redShare * 0.2).toFixed(3)),
+        typeConfidence: Number(Math.min(0.95, 0.68 + redShare * 0.27).toFixed(3)),
+        source: "vision papier : chiffre rouge isolé = repère défenseur",
+      });
+      playerPixel.push({ key, x: cx, y: cy, area: Math.max(1, (word.x1 - word.x0) * (word.y1 - word.y0)) });
+    }
+  } catch {
+    // L'OCR couleur est un renfort : son échec ne doit jamais bloquer l'import.
   }
 
   /* ------------------------------------- second passage : trajectoires */
@@ -3882,12 +3996,6 @@ export async function analyseGraphic(
   const insideToken = (p: { x: number; y: number }) =>
     tokenBoxes.some((boxRect) => p.x >= boxRect.x0 && p.x <= boxRect.x1 && p.y >= boxRect.y0 && p.y <= boxRect.y1);
 
-  // Panier : exprimé dans l'AIRE DE JEU, pas dans le canvas de travail.
-  const hoop: AiPoint = {
-    x: play.x0 + playW * 0.5,
-    y: play.y0 + playH * (1.575 / courtLengthM(geometry.kind)),
-  };
-
   const nearestPlayer = (point: { x: number; y: number }, maxDistance: number) => {
     let best: { key: string; d: number } | null = null;
     for (const item of playerPixel) {
@@ -4013,8 +4121,11 @@ export async function analyseGraphic(
       return "dribble";
     }
 
-    // Tir : la trajectoire se termine sur le cercle du panier.
-    if (Math.hypot(last.x - hoop.x, last.y - hoop.y) < unit * 0.11) return "shoot";
+    // VISION PAPIER V2 : nos références réelles n'utilisent aucun symbole de
+    // tir fiable. Une flèche qui finit près du cercle reste donc un déplacement
+    // (`cut`) tant qu'une convention de tir n'a pas été validée par l'utilisateur.
+    // Surtout : ne jamais inventer un `shoot` uniquement parce qu'une flèche
+    // approche le panier.
 
     // Écran : la fin forme un T perpendiculaire au reste du tracé.
     if (poly.points.length >= 5) {
@@ -4261,6 +4372,29 @@ export async function analyseGraphic(
   for (const action of actions) {
     if (action.fromPlayer && !liveKeys.has(action.fromPlayer)) action.fromPlayer = undefined;
     if (action.toPlayer && !liveKeys.has(action.toPlayer)) action.toPlayer = undefined;
+  }
+
+  /*
+   * VISION PAPIER V2 — PORTEUR INITIAL PAR COHÉRENCE D'ACTION.
+   * Si aucun ballon explicite n'a été reconnu mais que la première action
+   * porteuse de ballon est une passe ou un dribble rattaché à un joueur, ce
+   * joueur est nécessairement le porteur initial. Cette déduction est beaucoup
+   * plus sûre que d'inventer un ballon à partir d'une forme ronde voisine
+   * (notamment la tête d'un défenseur).
+   */
+  if (!players.some((player) => player.hasBall)) {
+    const firstBallAction = [...actions]
+      .filter((action) => (action.action === "pass" || action.action === "dribble") && action.fromPlayer)
+      .sort((a, b) => (a.order ?? 999) - (b.order ?? 999))[0];
+    if (firstBallAction?.fromPlayer) {
+      const owner = players.find((player) => player.key === firstBallAction.fromPlayer);
+      if (owner) {
+        owner.hasBall = true;
+        owner.source = [owner.source, `porteur déduit de l'action ${firstBallAction.action}`]
+          .filter(Boolean)
+          .join(" · ");
+      }
+    }
   }
 
   return { players, objects, actions, rejections, workCanvas: work, playRect: play };
