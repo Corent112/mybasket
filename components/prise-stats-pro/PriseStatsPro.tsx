@@ -440,6 +440,10 @@ const reboundNext = (c: Ctx, t: string): Ctx =>
     : t === 'def' ? (c === 'attaque' ? 'defense' : 'attaque')
       : t === 'touche-pour' ? 'attaque' : t === 'touche-contre' ? 'defense' : POSS(c);
 
+function isAndOneBasket(specialCase: string) {
+  return ['2pts+1lf', '3pts+1lf', 'unsportsmanlike-2pts+1lf', 'unsportsmanlike-3pts+1lf', 'unsportsmanlike-committed-2pts+1lf', 'unsportsmanlike-committed-3pts+1lf'].includes(specialCase);
+}
+
 function ptsOf(a: Draft) {
   if (a.actionType === 'faute-technique' && a.foulOutcome === 'technical-for') return a.ftMade || 0;
   // Une antisportive provoquée donne sa réparation à notre équipe, quel que soit
@@ -3680,7 +3684,7 @@ export default function PriseStatsProPage() {
   const afterFT = (d: Draft) => {
     const anyMade = d.ftMade > 0;
     const lastMiss = d.ftResults[d.ftResults.length - 1] === 'miss';
-    const isAndOne = d.specialCase === '2pts+1lf' || d.specialCase === '3pts+1lf';
+    const isAndOne = isAndOneBasket(d.specialCase);
 
     if (d.specialCase === 'unsportsmanlike' || d.specialCase === 'unsportsmanlike-2pts+1lf' || d.specialCase === 'unsportsmanlike-3pts+1lf' || d.specialCase === 'unsportsmanlike-committed' || d.specialCase === 'unsportsmanlike-committed-2pts+1lf' || d.specialCase === 'unsportsmanlike-committed-3pts+1lf') {
       commit({ ...d, shotResult: d.specialCase.includes('pts+1lf') ? 'made' : (anyMade ? 'made' : 'missed') });
@@ -3738,7 +3742,7 @@ export default function PriseStatsProPage() {
   };
 
   const afterPD = (d: Draft) => {
-    if (d.specialCase === '2pts+1lf' || d.specialCase === '3pts+1lf') { setDraft({ ...d, ftResults: [] }); setStage('ft'); return; }
+    if (isAndOneBasket(d.specialCase)) { setDraft({ ...d, ftAttempts: 1, ftMade: 0, ftResults: [] }); setStage('ft'); return; }
     if (d.actionType === 'faute-provoquee') { const lastMiss = d.ftResults[d.ftResults.length - 1] === 'miss'; if (lastMiss) { setDraft(d); setStage('rebound'); return; } commit(d); return; }
     commit(d);
   };
@@ -4043,14 +4047,14 @@ export default function PriseStatsProPage() {
     if (o === 'us-2plus1' || o === 'us-3plus1' || o === 'us-lf2' || o === 'us-lf3') {
       const andOne = o === 'us-2plus1' || o === 'us-3plus1';
       const isThree = o === 'us-3plus1' || o === 'us-lf3';
-      setDraft({ ...draft, foulOutcome:'unsportsmanlike', specialCase:andOne?(isThree?'unsportsmanlike-3pts+1lf':'unsportsmanlike-2pts+1lf'):'unsportsmanlike', shotType:andOne?(isThree?'3PTS':'2PTS'):'LF', shotResult:andOne?'made':'', ftAttempts:andOne?1:(isThree?3:2), ftMade:0, ftResults:[] });
-      setStage('ft'); return;
+      setDraft({ ...draft, foulOutcome:'unsportsmanlike', specialCase:andOne?(isThree?'unsportsmanlike-3pts+1lf':'unsportsmanlike-2pts+1lf'):'unsportsmanlike', shotType:andOne?(isThree?'3PTS':'2PTS'):'LF', shotResult:andOne?'made':'', ftAttempts:andOne?1:(isThree?3:2), ftMade:0, ftResults:[], ...(andOne ? { zone:'', courtX:null, courtY:null, shotRange:isThree?'three' as const:null, assist:null, assistPlayerId:null } : {}) });
+      setStage(andOne ? 'zone' : 'ft'); return;
     }
     if (o === 'usc-2plus1' || o === 'usc-3plus1' || o === 'usc-lf2' || o === 'usc-lf3') {
       const andOne = o === 'usc-2plus1' || o === 'usc-3plus1';
       const isThree = o === 'usc-3plus1' || o === 'usc-lf3';
-      setDraft({ ...draft, foulOutcome:'unsportsmanlike-committed', specialCase:andOne?(isThree?'unsportsmanlike-committed-3pts+1lf':'unsportsmanlike-committed-2pts+1lf'):'unsportsmanlike-committed', shotType:andOne?(isThree?'3PTS':'2PTS'):'LF', shotResult:andOne?'made':'', ftAttempts:andOne?1:(isThree?3:2), ftMade:0, ftResults:[] });
-      setStage('ft'); return;
+      setDraft({ ...draft, foulOutcome:'unsportsmanlike-committed', specialCase:andOne?(isThree?'unsportsmanlike-committed-3pts+1lf':'unsportsmanlike-committed-2pts+1lf'):'unsportsmanlike-committed', shotType:andOne?(isThree?'3PTS':'2PTS'):'LF', shotResult:andOne?'made':'', ftAttempts:andOne?1:(isThree?3:2), ftMade:0, ftResults:[], ...(andOne ? { zone:'', courtX:null, courtY:null, shotRange:isThree?'three' as const:null, assist:null, assistPlayerId:null } : {}) });
+      setStage(andOne ? 'zone' : 'ft'); return;
     }
     if (o === 'touche') { commit({ ...draft, foulOutcome: 'touche' }); return; }
     if (o === '2plus1' || o === '3plus1') {
@@ -4065,14 +4069,11 @@ export default function PriseStatsProPage() {
         ftAttempts: 1,
         ftMade: 0,
         ftResults: [],
+        zone: '', courtX: null, courtY: null, shotRange: isTwoPlusOne ? null : 'three',
+        assist: null, assistPlayerId: null,
       });
-      // 2+1 / 3+1 : le panier est marqué, mais on localise d'abord le tir
-      // sur la shot chart lorsque celle-ci est active. Le LF vient ensuite.
-      if (workflowOn('zone') || isPostLikeCodingMode(codingMode)) {
-        setStage('zone');
-      } else {
-        setStage('ft');
-      }
+      // Le panier marqué est localisé avant la passe éventuelle et le LF bonus.
+      setStage('zone');
       return;
     }
     setDraft({ ...draft, foulOutcome: 'lf', shotType: 'LF', ftAttempts: o === 'lf2' ? 2 : 3, ftResults: [] }); setStage('ft');
@@ -4129,15 +4130,18 @@ export default function PriseStatsProPage() {
   const special = (s: string) => {
     markClipStartBefore(5);
     const d = { ...draft, actionType: 'tir', specialCase: s === '2pts1lf' ? '2pts+1lf' : '3pts+1lf', shotType: s === '2pts1lf' ? '2PTS' : '3PTS', shotResult: 'made', ftAttempts: 1, ftMade: 0, ftResults: [] };
-    if (!isPostLikeCodingMode(codingMode)) { setDraft(d); setStage('ft'); return; }
-    if (workflowOn('zone')) { setDraft(d); setStage('zone'); return; }
-    if (workflowOn('assist')) { setDraft(d); setStage('assist'); return; }
-    setDraft(d); setStage('ft');
+    setDraft({ ...d, zone: '', courtX: null, courtY: null, shotRange: s === '2pts1lf' ? null : 'three', assist: null, assistPlayerId: null });
+    setStage('zone');
   };
   const courtClick = (e: MouseEvent<HTMLDivElement>) => {
     if (stage !== 'zone') return;
     const r = (e.currentTarget as HTMLDivElement).getBoundingClientRect();
     const d = { ...draft, courtX: (e.clientX - r.left) / r.width, courtY: (e.clientY - r.top) / r.height };
+    if (isAndOneBasket(d.specialCase)) {
+      setDraft(d);
+      setStage(d.context === 'attaque' ? 'assist' : 'ft');
+      return;
+    }
     if (d.shotResult === 'missed' && workflowOn('rebound')) { setDraft(d); setStage('rebound'); }
     else if (d.context !== 'defense' && d.shotResult === 'made' && workflowOn('assist')) { setDraft(d); setStage('assist'); }
     else commit(d);
@@ -4157,16 +4161,14 @@ export default function PriseStatsProPage() {
         ? 'interior'
         : 'exterior';
     const d = { ...draft, zone: zone.id, courtX: px / 100, courtY: py / 100, shotRange: inferredRange };
+    if (isAndOneBasket(d.specialCase)) {
+      setDraft(d);
+      setStage(d.context === 'attaque' ? 'assist' : 'ft');
+      return;
+    }
     if (d.context === 'defense') {
       if (d.shotResult === 'missed' && workflowOn('rebound')) { setDraft(d); setStage('rebound'); }
       else commit(d);
-      return;
-    }
-    // Faute provoquée 2+1 / 3+1 : après avoir placé le panier sur la shot chart,
-    // on poursuit obligatoirement vers le LF bonus au lieu de valider l'action.
-    if (d.actionType === 'faute-provoquee' && (d.specialCase === '2pts+1lf' || d.specialCase === '3pts+1lf')) {
-      setDraft(d);
-      setStage('ft');
       return;
     }
     if (d.shotResult === 'missed' && workflowOn('rebound')) { setDraft(d); setStage('rebound'); }
@@ -5773,14 +5775,14 @@ export default function PriseStatsProPage() {
 
             {/* ============ DROITE · SHOT CHART + JOUEURS / BANC ============ */}
             {codingMode !== 'match-review' && (
-            <aside className={`lc lc-right ${workTab === 'analysis' ? 'mshow' : ''}`}>
+            <aside className={`lc lc-right ${workTab === 'analysis' || (liveCourt && isAndOneBasket(draft.specialCase)) ? 'mshow' : ''}`}>
               {/* Shot chart PAR ZONES pro — pick à l'étape zone, analyse sinon */}
               <div className="scZone">
                 {liveCourt ? (
                   <div className="scZone-live">
                     <div className="courtSlotHead">
                       <span>🎯 Choisis la zone · {draft.shotRange === 'interior' ? '2 PTS intérieur' : draft.shotRange === 'exterior' ? '2 PTS extérieur' : draft.shotType || 'Tir'}</span>
-                      {draft.context === 'defense' && !isPostLikeCodingMode(codingMode) && !isOffline && (
+                      {draft.context === 'defense' && !isAndOneBasket(draft.specialCase) && !isPostLikeCodingMode(codingMode) && !isOffline && (
                         <button type="button" className="chip" onClick={() => {
                           const d: Draft = { ...draft, zone: '', courtX: null, courtY: null };
                           if (d.shotResult === 'missed' && workflowOn('rebound')) { setDraft(d); setStage('rebound'); }
@@ -7612,7 +7614,7 @@ export default function PriseStatsProPage() {
       }
       case 'assist': {
         const others = floor.filter((p) => p.id !== draft.playerId);
-        return <>{head('Passe décisive', draft.actionType === 'faute-provoquee' ? 'Action ayant amené la faute' : 'Panier marqué')}<div className="sublbl">Qui a fait la passe décisive ?</div>
+        return <>{head('Passe décisive', isAndOneBasket(draft.specialCase) ? 'Panier marqué — ensuite le lancer franc bonus' : draft.actionType === 'faute-provoquee' ? 'Action ayant amené la faute' : 'Panier marqué')}<div className="sublbl">Qui a fait la passe décisive ?</div>
           <div className="grid c3">{others.map((p) => <button key={p.id} className="pl sm" onClick={() => passer(p.id)}><Av p={p} /><span className="num">{p.num}</span><span className="nm">{p.name}</span></button>)}
             <button className="pl sm" onClick={() => passer('')}><Av /><span className="num">—</span><span className="nm">Skip / aucune</span></button></div></>;
       }
