@@ -33,7 +33,7 @@ export async function sendActionToMontageLibrary(
     enqueueIncomingClip(user.id, teamId, { ...transfer, actionId, matchId });
     const request = readIncomingClips(user.id, teamId).find(row => row.actionId === actionId);
     if (!request || !await waitForIncomingReceipt(user.id, teamId, request.transferId)) {
-      throw new Error("Clip en attente de réception. Ouvre Montage : il reste dans la file d’envoi, il n’est pas encore confirmé dans la timeline.");
+      throw new Error("Clip en attente de réception. Ouvre Montage : il reste dans la file d’envoi, il n’est pas encore confirmé dans la playlist Clips reçus.");
     }
   }
   return actionId;

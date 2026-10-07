@@ -3665,7 +3665,7 @@ function VideoRentabilityTab({
     try {
       await sendActionToMontageLibrary(montageSupabase, teamId, actionId, action.match_id,
         { clipStart: action.edited_clip_start ?? action.resolved_clip_start ?? null, clipEnd: action.edited_clip_end ?? action.resolved_clip_end ?? null, title: actionTypeLabel(action) });
-      flashMontage("Clip reçu dans la timeline Montage");
+      flashMontage("Clip reçu dans la playlist Montage");
     } catch (error) {
       flashMontage(error instanceof Error ? error.message : "Envoi impossible");
       return;

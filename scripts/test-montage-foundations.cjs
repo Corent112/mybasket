@@ -74,6 +74,17 @@ const save = require('../lib/montage/save-timeline.ts');
   assert.equal(await queue.waitForIncomingReceipt('user','team','received',5),true);
   assert.equal(await queue.waitForIncomingReceipt('other','team','received',1),false);
   global.window=previousWindow;
+  const receivedPlaylist = require('../lib/montage/received-playlist.ts');
+  const refs=[]; let created=0;
+  const playlistClient = exists => ({ from: table => {
+    if(table==='livestat_clip_theme_items') return {upsert:async row=>{refs.push(row);return {error:null}}};
+    assert.equal(table,'livestat_clip_themes');
+    const query={select:()=>query,eq:()=>query,order:()=>query,limit:()=>query,maybeSingle:async()=>({data:exists?{id:'inbox',name:'Clips reçus'}:null,error:null}),insert:row=>{created++;assert.equal(row.name,'Clips reçus');return query},single:async()=>({data:{id:'inbox',name:'Clips reçus'},error:null})};return query;
+  }});
+  await receivedPlaylist.saveReceivedClipReference(playlistClient(false),'user','team','a');
+  await receivedPlaylist.saveReceivedClipReference(playlistClient(true),'user','team','b');
+  assert.equal(created,1);assert.deepEqual(refs.map(row=>row.action_id),['a','b']);
+  await assert.rejects(receivedPlaylist.saveReceivedClipReference({from:()=>{const q={select:()=>q,eq:()=>q,order:()=>q,limit:()=>q,maybeSingle:async()=>({error:{message:'RLS denied'}})};return q}},'user','team','a'),/RLS denied/);
   let rpcCalls=0;
   await assert.rejects(save.saveMontageAtomically({ rpc:async () => { rpcCalls++; return { error:{ code:'PGRST202', message:'missing' } }; } }, 'id', {}, [], null), /migration/);
   assert.equal(rpcCalls,1);

@@ -19,7 +19,8 @@ export function enqueueIncomingClip(userId: string, teamId: string, clip: Omit<I
   const rows = readIncomingClips(userId, teamId, target);
   // Repeated clicks before the receiving window opens update the same request.
   const previous = rows.find(row => row.actionId === clip.actionId);
-  const next = { ...clip, transferId: previous?.transferId ?? crypto.randomUUID() };
+  const received = previous && target.getItem(`${incomingMontageKey(userId, teamId)}:received:${previous.transferId}`) === "1";
+  const next = { ...clip, transferId: previous && !received ? previous.transferId : crypto.randomUUID() };
   if (!storage) window.localStorage.removeItem(`${incomingMontageKey(userId, teamId)}:received:${next.transferId}`);
   target.setItem(incomingMontageKey(userId, teamId), JSON.stringify([...rows.filter(row => row.actionId !== clip.actionId), next]));
   if (!storage) window.dispatchEvent(new Event(MONTAGE_INCOMING_EVENT));
