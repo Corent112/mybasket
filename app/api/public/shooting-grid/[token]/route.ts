@@ -6,7 +6,7 @@ export const runtime="nodejs";
 const esc=(v:unknown)=>String(v??"").replaceAll("&","&amp;").replaceAll("<","&lt;").replaceAll(">","&gt;").replaceAll('"',"&quot;");
 
 async function getGrid(db:any,token:string){
- const q=await db.from("shooting_grids").select("id,team_id,owner_id,name,description,input_mode,fixed_value,court_schema_url,share_enabled").eq("share_token",token).eq("share_enabled",true).maybeSingle();
+ const q=await db.from("shooting_grids").select("id,team_id,owner_id,name,description,input_mode,fixed_value,court_schema_url,court_schema_data,movement_video_url,share_enabled").eq("share_token",token).eq("share_enabled",true).maybeSingle();
  return q.error?null:q.data;
 }
 export async function GET(_:Request,{params}:{params:Promise<{token:string}>}){

@@ -6,6 +6,9 @@ import type { Player } from "@/types/player";
 import ShotChart, { SHOT_ZONES, type ShotLike } from "@/components/prise-stats-pro/ShotChart";
 import ShootingComparison from "@/components/shooting/ShootingComparison";
 
+import { appendShootingGridSchemas, shootingGridImages } from "@/lib/shooting-grid-media";
+import ShootingGridMedia from "@/components/shooting/ShootingGridMedia";
+
 type InputMode = "fixed_attempts" | "fixed_makes";
 
 type Grid = {
@@ -279,6 +282,7 @@ export default function TeamShootingGrids({
   const [personalGrids,setPersonalGrids]=useState<Array<Grid & {structure_id?:string}>>([]);
   const [importBusy,setImportBusy]=useState(false);
   const movementVideoInput=useRef<HTMLInputElement|null>(null);
+  const receivingSchema=useRef(false);
   const [videoBusy,setVideoBusy]=useState(false);
 
   const grid=grids.find(g=>g.id===selectedGridId)||null;
@@ -361,16 +365,20 @@ export default function TeamShootingGrids({
     if(typeof window==="undefined") return;
     const pending=localStorage.getItem("mybasket_shooting_grid_pending");
     const raw=localStorage.getItem("mybasket_plaquette_result");
-    if(!pending||!raw)return;
+    if(!pending||!raw||receivingSchema.current)return;
+    receivingSchema.current=true;
 
     void (async()=>{
       try{
         const parsed=JSON.parse(raw);
         const image=Array.isArray(parsed?.schemaImages)?parsed.schemaImages[0]:null;
         if(!image)return;
+        const {data:existing,error:readError}=await supabase.from(tables.grids).select("court_schema_url,court_schema_data").eq("id",pending).single();
+        if(readError)throw readError;
+        const merged=appendShootingGridSchemas(existing,parsed);
         let updateQuery=supabase.from(tables.grids).update({
-          court_schema_url:image,
-          court_schema_data:parsed,
+          court_schema_url:merged.schemaImages[0]||image,
+          court_schema_data:merged,
           updated_at:new Date().toISOString()
         }).eq("id",pending);
         if(scopeType==="institution"&&!personalLibrary) updateQuery=updateQuery.eq("structure_id",effectiveScopeId);
@@ -382,7 +390,7 @@ export default function TeamShootingGrids({
         await loadGrids(pending);
         restoreShootingScroll();
         toast("Schéma Plaquette ajouté à la grille ✓");
-      }catch(e){console.error(e)}
+      }catch(e){console.error(e);toast("Impossible d’ajouter les schémas à la grille.")}finally{receivingSchema.current=false}
     })();
   },[loadGrids,supabase,teamId,scopeType,effectiveScopeId]);
 
@@ -1027,10 +1035,10 @@ export default function TeamShootingGrids({
 
                 <div style={card}>
                   <div style={{display:"flex",justifyContent:"space-between",gap:8,alignItems:"start"}}>
-                    <div><span style={eyebrow}>SCHÉMA DE LA GRILLE</span><h3 style={title}>{grid.court_schema_url?"Ton schéma Plaquette":"Demi-terrain Plaquette"}</h3></div>
-                    {canEdit&&<button onClick={openPlaquette} style={secondary}>✏️ Dessiner dans Plaquette</button>}
+                    <div><span style={eyebrow}>SCHÉMA DE LA GRILLE</span><h3 style={title}>{grid.court_schema_url?"Tes schémas Plaquette":"Demi-terrain Plaquette"}</h3></div>
+                    {canEdit&&<button onClick={openPlaquette} style={secondary}>✏️ Ajouter un schéma dans Plaquette</button>}
                   </div>
-                  <CourtPreview image={grid.court_schema_url}/>
+                  {shootingGridImages(grid).length?<ShootingGridMedia grid={{court_schema_url:grid.court_schema_url,court_schema_data:grid.court_schema_data}}/>:<CourtPreview image={null}/>}
                   <div style={{marginTop:8,color:MUTED,fontSize:10,lineHeight:1.45}}>
                     Le bouton ouvre directement <b>Plaquette MyBasket</b>. Place tes spots sur le demi-terrain puis clique sur <b>Insérer dans la grille de tir</b> : le dessin revient ici et reste sauvegardé avec la grille.
                   </div>
