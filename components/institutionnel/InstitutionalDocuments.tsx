@@ -79,6 +79,7 @@ export default function InstitutionalDocuments({ structureId }: { structureId: s
       .select("*")
       .eq("structure_id", structureId)
       .eq("archived", false)
+      .is("content->>cohort_id", null)
       .order("updated_at", { ascending: false });
     setRows((data || []) as D[]);
   }

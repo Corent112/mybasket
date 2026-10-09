@@ -567,7 +567,7 @@ export default function TrainingPlanningBoard({
       a.download = `Planning - ${planningTitle.trim()}.pdf`;
       a.click();
       URL.revokeObjectURL(url);
-      toast("PDF exporté et enregistré dans Documents.");
+      toast("PDF exporté et enregistré dans les Documents de la formation.");
     } finally {
       setExporting(false);
     }

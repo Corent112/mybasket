@@ -1,3 +1,4 @@
+import {archiveTrainingExport} from "@/lib/institutionnel/training-export-archive";
 import React from "react";
 import { NextResponse } from "next/server";
 import { renderToBuffer } from "@react-pdf/renderer";
@@ -125,44 +126,12 @@ export async function POST(req: Request) {
   );
 
   const filename = `Planning - ${title}.pdf`;
-  const path = `${cohort.institution_id}/planning/${Date.now()}-${filename.replace(
-    /[^a-zA-Z0-9._-]/g,
-    "-",
-  )}`;
-
-  const upload = await admin.storage
-    .from("institutional-documents")
-    .upload(path, buffer, {
-      contentType: "application/pdf",
-      upsert: false,
-    });
-
-  if (upload.error) {
-    return NextResponse.json(
-      {
-        error: `PDF généré mais enregistrement impossible : ${upload.error.message}`,
-      },
-      { status: 400 },
-    );
+  let fileUrl: string;
+  try {
+    fileUrl = await archiveTrainingExport(admin, {institutionId: cohort.institution_id, cohortId, userId: user.id, filename, buffer, contentType: "application/pdf", kind: "planning_pdf"});
+  } catch(e) {
+    return NextResponse.json({error: e instanceof Error ? e.message : "Enregistrement impossible"}, {status: 400});
   }
-
-  const fileUrl = admin.storage
-    .from("institutional-documents")
-    .getPublicUrl(path).data.publicUrl;
-
-  await admin.from("institutional_documents").insert({
-    structure_id: cohort.institution_id,
-    title: filename,
-    document_type: "planning_pdf",
-    storage_path: path,
-    file_url: fileUrl,
-    content: {
-      cohort_id: cohortId,
-      planning_title: title,
-      generated_at: new Date().toISOString(),
-    },
-    created_by: user.id,
-  });
 
   return new Response(new Uint8Array(buffer), {
     headers: {

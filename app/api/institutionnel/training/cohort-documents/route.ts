@@ -1,3 +1,4 @@
+import {archiveTrainingExport} from "@/lib/institutionnel/training-export-archive";
 import React from "react";
 import { NextResponse } from "next/server";
 import {
@@ -583,6 +584,12 @@ export async function POST(request: Request) {
     /[^a-z0-9_-]/gi,
     "-",
   )}.pdf`;
+
+  if (cohort?.institution_id) {
+    try {
+      await archiveTrainingExport(db, {institutionId: cohort.institution_id, cohortId, userId: user.id, filename, buffer, contentType: "application/pdf", kind: type === "attendance" ? "attendance_pdf" : "participants_pdf"});
+    } catch(e) {return NextResponse.json({error: e instanceof Error ? e.message : "Enregistrement impossible"}, {status: 400});}
+  }
 
   return new NextResponse(new Uint8Array(buffer), {
     headers: {
