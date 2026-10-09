@@ -438,7 +438,7 @@ export async function POST(request: Request) {
     "-",
   )}.pdf`;
 
-  if (cohort?.institution_id) {
+  if (cohort?.institution_id && body.preview !== true) {
     try {
       await archiveTrainingExport(db, {institutionId: cohort.institution_id, cohortId, userId: user.id, filename, buffer, contentType: "application/pdf", kind: type === "attendance" ? "attendance_pdf" : "participants_pdf"});
     } catch(e) {return NextResponse.json({error: e instanceof Error ? e.message : "Enregistrement impossible"}, {status: 400});}
