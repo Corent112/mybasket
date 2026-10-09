@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
+import AttendanceCell from "@/components/formation/AttendanceCell";
 import AttendanceSigningDialog from "@/components/formation/AttendanceSigningDialog";
 import {readAttendanceSignature,attendanceMetadata} from "@/lib/institutionnel/training-attendance-signature";
 import TrainingExportedDocuments from "@/components/formation/TrainingExportedDocuments";
@@ -766,7 +767,7 @@ export default function TrainingManager({ institutionId }: { institutionId?: str
   }
   function attendanceControl(candidate:Candidate,session:AttendanceSession,record?:Attendance){
     const status=record?.status||"unknown",present=status==="present"||status==="late",signature=readAttendanceSignature(record?.notes),busy=attendanceBusy.includes(`${session.id}:${candidate.id}`),canUndo=!!attendanceMetadata(record?.notes).mybasketAttendancePrevious;
-    return <div className={`attendance-control status-${status}`}><div className="status-line"><select aria-label={`${candidate.first_name||""} ${candidate.last_name||""} — ${session.title}`} disabled={busy} value={status} onChange={event=>void setAttendance(session.id,candidate.id,event.target.value)}><option value="unknown">À renseigner</option><option value="present">Présent</option><option value="absent">Absent</option><option value="excused">Excusé</option>{status==="late"&&<option value="late">Retard</option>}</select>{status!=="unknown"&&<button type="button" className="presence-icon" title="Remettre à renseigner" aria-label="Remettre la présence à renseigner" disabled={busy} onClick={()=>void setAttendance(session.id,candidate.id,"unknown")}>×</button>}</div><div className="signature-line">{present&&<button type="button" className="mini-action" disabled={busy} onClick={()=>setSignatureTarget({candidate,session})}>{signature?"✓ Signé":"✍ Signer"}</button>}{signature&&record&&<button type="button" className="presence-icon danger-text" title="Supprimer la signature" aria-label="Supprimer la signature" disabled={busy} onClick={()=>void removeAttendanceSignature(candidate,session,record)}>×</button>}{canUndo&&<button type="button" className="presence-icon" title="Annuler la dernière modification de cette présence ou signature" aria-label="Annuler la dernière modification" disabled={busy} onClick={()=>void undoAttendance(candidate,session)}>↶</button>}</div></div>;
+    return <AttendanceCell status={status} signature={!!signature} busy={busy} canUndo={canUndo} wide={!!attendanceDay} label={`${candidate.first_name||""} ${candidate.last_name||""} — ${session.title}`} onStatus={value=>void setAttendance(session.id,candidate.id,value)} onSign={()=>setSignatureTarget({candidate,session})} onRemove={()=>{if(record)void removeAttendanceSignature(candidate,session,record);}} onUndo={()=>void undoAttendance(candidate,session)}/>;
   }
 
   async function saveEvaluation(candidate: Candidate, patch: Partial<Evaluation>) {

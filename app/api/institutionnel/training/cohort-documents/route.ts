@@ -1,3 +1,4 @@
+import sharp from "sharp";
 import {archiveTrainingExport} from "@/lib/institutionnel/training-export-archive";
 import {readAttendanceSignature,ATTENDANCE_LABELS} from "@/lib/institutionnel/training-attendance-signature";
 import React from "react";
@@ -292,6 +293,24 @@ export async function POST(request: Request) {
   let pages: React.ReactElement[] = [];
 
   if (type === "attendance") {
+    let attendanceLogo:string|null=null;
+    if(structure?.logo_url){
+      try{
+        const source=String(structure.logo_url);let bytes:Buffer;
+        if(/^data:image\/[a-zA-Z0-9.+-]+;base64,/.test(source))bytes=Buffer.from(source.split(",")[1],"base64");
+        else{
+          const url=new URL(source,new URL(request.url).origin);
+          if(!["https:","http:"].includes(url.protocol))throw new Error("URL invalide");
+          const response=await fetch(url,{signal:AbortSignal.timeout(10000)});
+          if(!response.ok)throw new Error("Logo inaccessible");
+          bytes=Buffer.from(await response.arrayBuffer());
+        }
+        if(bytes.length>5*1024*1024)throw new Error("Logo trop volumineux");
+        const png=await sharp(bytes,{limitInputPixels:20000000}).resize(240,240,{fit:"inside",withoutEnlargement:true}).png().toBuffer();
+        attendanceLogo=`data:image/png;base64,${png.toString("base64")}`;
+      }catch{return NextResponse.json({error:"Le logo de l’institution ne peut pas être chargé. Vérifiez le logo dans les paramètres de l’institution."},{status:400});}
+    }
+
     const ordered = [...(sessions || [])].sort((a:any,b:any)=>`${a.session_date} ${a.start_time||""}`.localeCompare(`${b.session_date} ${b.start_time||""}`));
     const people=candidates||[];
     const rowHeight=Math.min(24,410/Math.max(1,people.length));
@@ -302,7 +321,7 @@ export async function POST(request: Request) {
     const cell={paddingHorizontal:3,paddingVertical:2,justifyContent:"center" as const,overflow:"hidden" as const};
     const sessionCell={...cell,width:`${columnWidth}%`,borderLeftWidth:.5,borderLeftColor:"#E7DDD8"};
     const header=React.createElement(View,{style:{flexDirection:"row",alignItems:"center",marginBottom:10,height:46}},
-      ...(structure?.logo_url?[React.createElement(Image,{src:structure.logo_url,style:{width:46,height:46,objectFit:"contain",marginRight:10}})]:[]),
+      ...(attendanceLogo?[React.createElement(Image,{src:attendanceLogo,style:{width:46,height:46,objectFit:"contain",marginRight:10}})]:[]),
       React.createElement(View,{style:{flex:1}},React.createElement(Text,{style:{fontSize:16,fontWeight:700,color:primary}},"Feuille d’émargement"),React.createElement(Text,{style:{fontSize:8,color:"#75686c",marginTop:4}},`${formationLabel}${cohort?.location?` · ${cohort.location}`:""}`)),
       React.createElement(Text,{style:{fontSize:9,fontWeight:700,color:primary,maxWidth:160}},structure?.name||"MyBasket"));
     const tableHeader=React.createElement(View,{style:{flexDirection:"row",height:42,backgroundColor:"#F6F0ED",borderBottomWidth:1,borderColor:secondary}},
@@ -318,7 +337,7 @@ export async function POST(request: Request) {
       ...ordered.map((session:any)=>{
         const record:any=attendanceByPair.get(`${session.id}:${candidate.id}`),signature=readAttendanceSignature(record?.notes),present=record?.status==="present"||record?.status==="late";
         return React.createElement(View,{key:session.id,style:sessionCell},present&&signature?React.createElement(View,null,
-          React.createElement(Image,{src:signature.image,style:{width:signatureWidth,height:Math.max(1,rowHeight-10),objectFit:"contain"}}),
+          React.createElement(Image,{src:signature.image,style:{width:signatureWidth,height:Math.max(1,rowHeight-8),objectFit:"contain"}}),
           React.createElement(Text,{style:{fontSize:Math.min(4.2,rowHeight*.18),color:"#75686c",textAlign:"center"}},new Date(signature.signedAt).toLocaleString("fr-FR",{timeZone:"Europe/Paris",day:"2-digit",month:"2-digit",year:"2-digit",hour:"2-digit",minute:"2-digit"})))
           :React.createElement(Text,{style:{fontSize:Math.min(fontSize,6),textAlign:"center"}},record?.status&&record.status!=="unknown"?(ATTENDANCE_LABELS[record.status]||record.status):""));
       })));
