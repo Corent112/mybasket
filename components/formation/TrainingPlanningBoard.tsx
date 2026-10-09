@@ -92,6 +92,7 @@ export default function TrainingPlanningBoard({
   const [selectedBlockId, setSelectedBlockId] = useState("");
   const [editingBlock, setEditingBlock] = useState<PlanningBlock | null>(null);
   const [savingBlock, setSavingBlock] = useState(false);
+  const [blockSaveMessage, setBlockSaveMessage] = useState("");
   const [message, setMessage] = useState("");
   const [planningTitle, setPlanningTitle] = useState("");
   const [cohortMeta, setCohortMeta] = useState({
@@ -204,17 +205,19 @@ export default function TrainingPlanningBoard({
 
   useEffect(() => {
     setEditingBlock(null);
+    setBlockSaveMessage("");
   }, [cohortId, selectedBlockId]);
 
   async function saveBlock() {
     if (!editingBlock || savingBlock) return;
     const block = editingBlock;
-    if (!block.title.trim()) return toast("Le titre du bloc est obligatoire.");
+    setBlockSaveMessage("");
+    if (!block.title.trim()) return setBlockSaveMessage("Le titre du bloc est obligatoire.");
     if (!block.training_day || !block.start_time || !block.end_time) {
-      return toast("Renseigne la date et les horaires du bloc.");
+      return setBlockSaveMessage("Renseigne la date et les horaires du bloc.");
     }
     if (timeToMinutes(block.end_time) <= timeToMinutes(block.start_time)) {
-      return toast("L’heure de fin doit être après l’heure de début.");
+      return setBlockSaveMessage("L’heure de fin doit être après l’heure de début.");
     }
 
     setSavingBlock(true);
@@ -238,7 +241,7 @@ export default function TrainingPlanningBoard({
         .eq("cohort_id", cohortId)
         .select("id")
         .single();
-      if (error) return toast(error.message);
+      if (error) return setBlockSaveMessage(`Enregistrement impossible : ${error.message}`);
 
       setEditingBlock(null);
       await reload();
@@ -248,7 +251,7 @@ export default function TrainingPlanningBoard({
         : "Bloc modifié. La synchronisation des présences reste à relancer via Sauvegarder le planning.");
     } catch (error) {
       console.error(error);
-      toast("La modification n’a pas pu être terminée. Vérifie le planning avant de réessayer.");
+      setBlockSaveMessage(error instanceof Error ? `Enregistrement impossible : ${error.message}` : "La modification n’a pas pu être terminée. Vérifie le planning avant de réessayer.");
     } finally {
       setSavingBlock(false);
     }
@@ -1099,13 +1102,13 @@ export default function TrainingPlanningBoard({
             </div>
 
             <div className="block-detail-actions">
-              {!editingBlock && <button type="button" onClick={() => setEditingBlock({ ...selectedBlock })}>Modifier</button>}
+              {!editingBlock && <button type="button" onClick={() => { setBlockSaveMessage(""); setEditingBlock({ ...selectedBlock, training_day: selectedBlock.training_day.slice(0, 10), start_time: selectedBlock.start_time.slice(0, 5), end_time: selectedBlock.end_time.slice(0, 5) }); }}>Modifier</button>}
               <button type="button" className="danger" disabled={savingBlock} onClick={() => void deleteBlock(selectedBlock.id)}>Supprimer</button>
             </div>
           </div>
 
           {editingBlock && (
-            <form className="block-edit-form" onSubmit={(event) => { event.preventDefault(); void saveBlock(); }}>
+            <div className="block-edit-form">
               <fieldset disabled={savingBlock} className="form-grid">
                 {([
                   ["training_day", "Date", "date"],
@@ -1122,9 +1125,10 @@ export default function TrainingPlanningBoard({
                 <label className="wide"><span>Titre / contenu</span><input required value={editingBlock.title} onChange={(event) => setEditingBlock({ ...editingBlock, title: event.target.value })}/></label>
                 <label className="wide"><span>Description / consigne</span><textarea value={editingBlock.description || ""} onChange={(event) => setEditingBlock({ ...editingBlock, description: event.target.value })}/></label>
                 <label className="wide"><span>Scénario pédagogique</span><select value={editingBlock.pedagogical_scenario_id || ""} onChange={(event) => setEditingBlock({ ...editingBlock, pedagogical_scenario_id: event.target.value })}><option value="">Aucun</option>{scenarios.map((scenario) => <option key={scenario.id} value={scenario.id}>{scenario.title}</option>)}</select></label>
-                <div className="wide block-detail-actions"><button type="submit">{savingBlock ? "Enregistrement…" : "Enregistrer les modifications"}</button><button type="button" className="secondary" onClick={() => setEditingBlock(null)}>Annuler</button></div>
+                <div className="wide block-detail-actions"><button type="button" onClick={() => void saveBlock()}>{savingBlock ? "Enregistrement…" : "Enregistrer les modifications"}</button><button type="button" className="secondary" onClick={() => setEditingBlock(null)}>Annuler</button></div>
               </fieldset>
-            </form>
+              {blockSaveMessage && <p className="block-save-error" role="alert">{blockSaveMessage}</p>}
+            </div>
           )}
 
           <div className="selected-summary">
@@ -1220,6 +1224,10 @@ export default function TrainingPlanningBoard({
 
       <style jsx>{`
         .block-detail-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+        .block-detail-actions button { border: 0; border-radius: 9px; padding: 11px 16px; background: #6b1a2c; color: #fff; font-weight: 900; cursor: pointer; }
+        .block-detail-actions button:disabled { opacity: .5; cursor: wait; }
+        .block-save-error { color: #a02a2a; padding: 12px; background: #fff4f4; border: 1px solid #e7c9c9; border-radius: 8px; margin: 12px 0 0; }
+
         .block-edit-form { padding: 16px; margin: 16px 0; border: 1px solid #d8bbc2; border-radius: 12px; background: #fbf7f3; }
         .block-edit-form fieldset { padding: 0; margin: 0; border: 0; min-width: 0; }
 
