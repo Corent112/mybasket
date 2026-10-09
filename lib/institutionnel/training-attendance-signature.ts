@@ -8,3 +8,12 @@ export function withAttendanceSignature(notes: string | null | undefined, signat
   return JSON.stringify({notes:original,mybasketAttendanceSignature:signature});
 }
 export const ATTENDANCE_LABELS: Record<string,string>={unknown:"À renseigner",present:"Présent",absent:"Absent",excused:"Excusé",late:"Retard"};
+
+export function withoutAttendanceSignature(notes: string | null | undefined): string {
+  try {
+    const value=JSON.parse(notes||"");
+    if(!value||typeof value!=="object"||Array.isArray(value)||!("mybasketAttendanceSignature" in value))return notes||"";
+    delete value.mybasketAttendanceSignature;
+    return Object.keys(value).length===1&&typeof value.notes==="string"?value.notes:JSON.stringify(value);
+  }catch{return notes||"";}
+}

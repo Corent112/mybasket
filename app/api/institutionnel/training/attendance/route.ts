@@ -2,7 +2,7 @@ import {NextResponse} from "next/server";
 import sharp from "sharp";
 import {createClient} from "@/lib/supabase/server";
 import {createAdminClient} from "@/lib/supabase/admin-server";
-import {withAttendanceSignature} from "@/lib/institutionnel/training-attendance-signature";
+import {withAttendanceSignature,withoutAttendanceSignature} from "@/lib/institutionnel/training-attendance-signature";
 export async function PATCH(request: Request) {
  const sb=await createClient();const {data:{user}}=await sb.auth.getUser();
  if(!user)return NextResponse.json({error:"Non connecté"},{status:401});
@@ -25,7 +25,9 @@ export async function PATCH(request: Request) {
  if(!session||!candidate)return NextResponse.json({error:"Stagiaire ou demi-journée introuvable dans cette formation"},{status:404});
  if(existing.error)return NextResponse.json({error:existing.error.message},{status:400});
  let notes: string|undefined;
- if(body.signature!==undefined){
+ if(body.signature===null){
+  notes=withoutAttendanceSignature(existing.data?.notes);
+ }else if(body.signature!==undefined){
   if(status!=="present"||typeof body.signature!=="string"||body.signature.length>150000||!/^data:image\/png;base64,[A-Za-z0-9+/=]+$/.test(body.signature))return NextResponse.json({error:"Signature PNG invalide"},{status:400});
   try {
    const buffer=Buffer.from(body.signature.split(",")[1],"base64");

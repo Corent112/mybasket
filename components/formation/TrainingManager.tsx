@@ -724,8 +724,8 @@ export default function TrainingManager({ institutionId }: { institutionId?: str
     await loadCohort(cohortId);
   }
 
-  async function persistAttendance(sessionId:string,candidateId:string,status:string,signature?:string){
-    const response=await fetch("/api/institutionnel/training/attendance",{method:"PATCH",headers:{"Content-Type":"application/json"},body:JSON.stringify({cohortId,sessionId,candidateId,status,...(signature?{signature}:{})})});
+  async function persistAttendance(sessionId:string,candidateId:string,status:string,signature?:string|null){
+    const response=await fetch("/api/institutionnel/training/attendance",{method:"PATCH",headers:{"Content-Type":"application/json"},body:JSON.stringify({cohortId,sessionId,candidateId,status,...(signature!==undefined?{signature}:{})})});
     const json=await response.json();if(!response.ok)throw new Error(json.error||"Enregistrement impossible");
     await loadCohort(cohortId);
   }
@@ -734,10 +734,15 @@ export default function TrainingManager({ institutionId }: { institutionId?: str
     setAttendanceBusy(items=>[...items,key]);
     try{await persistAttendance(sessionId,candidateId,status);}catch(error){alert(error instanceof Error?error.message:"Enregistrement impossible");}finally{setAttendanceBusy(items=>items.filter(item=>item!==key));}
   }
+  async function removeAttendanceSignature(candidate:Candidate,session:AttendanceSession,record:Attendance){
+    const key=`${session.id}:${candidate.id}`;
+    setAttendanceBusy(items=>[...items,key]);
+    try{await persistAttendance(session.id,candidate.id,record.status,null);}catch(error){alert(error instanceof Error?error.message:"Suppression impossible");}finally{setAttendanceBusy(items=>items.filter(item=>item!==key));}
+  }
   function attendanceControl(candidate:Candidate,session:AttendanceSession,record?:Attendance){
     const present=record?.status==="present"||record?.status==="late";
     const signature=readAttendanceSignature(record?.notes);
-    return <div className="attendance-control"><select aria-label={`${candidate.first_name||""} ${candidate.last_name||""} — ${session.title}`} disabled={attendanceBusy.includes(`${session.id}:${candidate.id}`)} value={record?.status||"unknown"} onChange={event=>void setAttendance(session.id,candidate.id,event.target.value)}><option value="unknown" disabled>À renseigner</option><option value="present">Présent</option><option value="absent">Absent</option><option value="excused">Excusé</option>{record?.status==="late"&&<option value="late">Retard</option>}</select>{present&&<button className="mini-action" onClick={()=>setSignatureTarget({candidate,session})}>{signature?"Voir la signature":"Faire signer"}</button>}{present&&signature&&<small>Signé le {new Date(signature.signedAt).toLocaleString("fr-FR")}</small>}</div>;
+    return <div className="attendance-control"><select aria-label={`${candidate.first_name||""} ${candidate.last_name||""} — ${session.title}`} disabled={attendanceBusy.includes(`${session.id}:${candidate.id}`)} value={record?.status||"unknown"} onChange={event=>void setAttendance(session.id,candidate.id,event.target.value)}><option value="unknown" disabled>À renseigner</option><option value="present">Présent</option><option value="absent">Absent</option><option value="excused">Excusé</option>{record?.status==="late"&&<option value="late">Retard</option>}</select>{present&&<button className="mini-action" onClick={()=>setSignatureTarget({candidate,session})}>{signature?"Voir la signature":"Faire signer"}</button>}{signature&&record&&<button type="button" className="mini-action" title="Supprimer la signature" aria-label={`Supprimer la signature de ${candidate.first_name||""} ${candidate.last_name||""} — ${session.title}`} disabled={attendanceBusy.includes(`${session.id}:${candidate.id}`)} onClick={()=>void removeAttendanceSignature(candidate,session,record)}>× Annuler la signature</button>}{present&&signature&&<small>Signé le {new Date(signature.signedAt).toLocaleString("fr-FR")}</small>}</div>;
   }
 
   async function saveEvaluation(candidate: Candidate, patch: Partial<Evaluation>) {
@@ -831,7 +836,7 @@ export default function TrainingManager({ institutionId }: { institutionId?: str
 
   async function downloadCohortPdf(type: "participants" | "attendance") {
     const response = await fetch(
-      institutionId ? "/api/institutionnel/training/cohort-documents" : "/api/training/cohort-documents",
+      "/api/institutionnel/training/cohort-documents",
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },
