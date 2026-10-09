@@ -180,7 +180,11 @@ function compactSpotLabel(name:string){
   const n=raw.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g,"");
   const side=n.includes("droit")?"D":n.includes("gauch")?"G":"";
   let zone=raw.toUpperCase();
-  if(n.includes("short corner")) zone=`SC ${side}`.trim();
+  if(n.includes("short roll")) zone=`ROLL ${side}`.trim();
+  else if(n.includes("pop slot")) zone=`POP SLOT ${side}`.trim();
+  else if(n.includes("pop")&&n.includes("0")) zone=`POP 0° ${side}`.trim();
+  else if(n.includes("0")) zone=`0° ${side}`.trim();
+  else if(n.includes("short corner")) zone=`SC ${side}`.trim();
   else if(n.includes("corner")) zone=`CORNER ${side}`.trim();
   else if(n.includes("45")) zone=`45° ${side}`.trim();
   else if(n.includes("axe")||n.includes("face")) zone="AXE";
@@ -1094,13 +1098,13 @@ export default function TeamShootingGrids({
                         <div style={{fontSize:9,color:MUTED,textAlign:"center",marginTop:6}}>Même Shot Chart que LiveStat · cumul de tous les joueurs de la session</div>
                       </div>
                       <div style={{overflowX:"auto"}}>
-                        <table style={{borderCollapse:"collapse",width:"100%",minWidth:760,fontSize:10}}>
-                          <thead><tr><th style={{...th,textAlign:"left"}}>Joueur</th>{displayRows.map(r=><th key={r.id} style={th}>{compactSpotLabel(r.name)}</th>)}<th style={th}>TM</th><th style={th}>TT</th><th style={th}>%</th></tr></thead>
+                        <table className="shooting-results-table" style={{borderCollapse:"collapse",tableLayout:"fixed",width:160+displayRows.length*104+3*64,fontSize:11}}><colgroup><col style={{width:160}}/>{displayRows.map(row=><col key={row.id} style={{width:104}}/>)}{[0,1,2].map(i=><col key={i} style={{width:64}}/>)}</colgroup>
+                          <thead><tr><th style={{...th,textAlign:"left"}}>Joueur</th>{displayRows.map(r=><th key={r.id} title={r.name} style={th}>{compactSpotLabel(r.name)}</th>)}<th style={th}>TM</th><th style={th}>TT</th><th style={th}>%</th></tr></thead>
                           <tbody>{uniquePids.map(pid=>{
                             let tm=0,ta=0;
                             const byRow=displayRows.map(row=>{let m=0,a=0;for(const session of group.items){const r=results[session.id]?.[pid]?.[row.id];if(r){m+=safeInt(r.made);a+=safeInt(r.attempted)}}tm+=m;ta+=a;return {row,m,a}});
                             const player=players.find(p=>String(p.id)===pid);
-                            return <tr key={pid}><td style={{...td,textAlign:"left",fontWeight:900}}><span style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:8}}><span>{player?playerName(player):"Joueur"}</span>{canEdit&&<button title="Supprimer uniquement ce joueur de cette session" onClick={()=>void deletePlayerFromSessionGroup(group.items,pid)} style={{border:"1px solid #E7C9C9",background:"#FFF7F7",color:"#A02A2A",width:22,height:22,borderRadius:7,cursor:"pointer",fontWeight:1000,lineHeight:1}}>×</button>}</span></td>{byRow.map(x=><td key={x.row.id} style={td}>{x.m}/{x.a} · <b>{pct(x.m,x.a)}%</b></td>)}<td style={td}><b>{tm}</b></td><td style={td}><b>{ta}</b></td><td style={{...td,fontWeight:1000,color:BORDEAUX}}>{pct(tm,ta)}%</td></tr>
+                            return <tr key={pid}><td style={{...td,textAlign:"left",fontWeight:900}}><span style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:8}}><span className="shooting-player-name" title={player?playerName(player):"Joueur"}>{player?playerName(player):"Joueur"}</span>{canEdit&&<button title="Supprimer uniquement ce joueur de cette session" onClick={()=>void deletePlayerFromSessionGroup(group.items,pid)} style={{border:"1px solid #E7C9C9",background:"#FFF7F7",color:"#A02A2A",width:22,height:22,borderRadius:7,cursor:"pointer",fontWeight:1000,lineHeight:1}}>×</button>}</span></td>{byRow.map(x=><td key={x.row.id} style={td}>{x.m}/{x.a} · <b>{pct(x.m,x.a)}%</b></td>)}<td style={td}><b>{tm}</b></td><td style={td}><b>{ta}</b></td><td style={{...td,fontWeight:1000,color:BORDEAUX}}>{pct(tm,ta)}%</td></tr>
                           })}</tbody>
                         </table>
                       </div>
@@ -1118,14 +1122,14 @@ export default function TeamShootingGrids({
                       <button onClick={()=>setRecapMode("total")} style={{...secondary,padding:"6px 9px",background:recapMode==="total"?BORDEAUX:"#fff",color:recapMode==="total"?"#fff":TEXT}}>Totaux</button>
                     </div>
                   </div>
-                  <div style={{overflowX:"auto"}}><table style={{borderCollapse:"collapse",width:"100%",minWidth:900,fontSize:10}}>
-                    <thead><tr><th style={{...th,textAlign:"left"}}>Joueur</th><th style={th}>Sessions</th>{shootingRows.map(r=><th key={r.id} style={th}>{compactSpotLabel(r.name)}</th>)}<th style={th}>{recapMode==="average"?"TM moy.":"TM"}</th><th style={th}>{recapMode==="average"?"TT moy.":"TT"}</th><th style={th}>%</th><th style={th}>LF {recapMode==="average"?"moy.":"total"}</th><th style={th}>LF %</th></tr></thead>
+                  <div style={{overflowX:"auto"}}><table className="shooting-results-table" style={{borderCollapse:"collapse",tableLayout:"fixed",width:160+64+shootingRows.length*104+5*80,fontSize:11}}><colgroup><col style={{width:160}}/><col style={{width:64}}/>{shootingRows.map(row=><col key={row.id} style={{width:104}}/>)}{[0,1,2,3,4].map(i=><col key={i} style={{width:80}}/>)}</colgroup>
+                    <thead><tr><th style={{...th,textAlign:"left"}}>Joueur</th><th style={th}>Sessions</th>{shootingRows.map(r=><th key={r.id} title={r.name} style={th}>{compactSpotLabel(r.name)}</th>)}<th style={th}>{recapMode==="average"?"TM moy.":"TM"}</th><th style={th}>{recapMode==="average"?"TT moy.":"TT"}</th><th style={th}>%</th><th style={th}>LF {recapMode==="average"?"moy.":"total"}</th><th style={th}>LF %</th></tr></thead>
                     <tbody>{Object.keys(aggregate).map(pid=>{
                       const player=players.find(p=>String(p.id)===pid);
                       const count=sessions.filter(s=>(sessionPlayers[s.id]||[]).includes(pid)).length||1;
                       const total=aggregate[pid];
                       const fmtCell=(m:number,a:number)=>recapMode==="average"?`${(m/count).toFixed(1)}/${(a/count).toFixed(1)} · ${pct(m,a)}%`:`${m}/${a} · ${pct(m,a)}%`;
-                      const shot=shootingRows.reduce((a,row)=>{const x=total.byRow[row.id]||{made:0,attempted:0};a.m+=x.made;a.a+=x.attempted;return a},{m:0,a:0}); const lf=freeThrowRows.reduce((a,row)=>{const x=total.byRow[row.id]||{made:0,attempted:0};a.m+=x.made;a.a+=x.attempted;return a},{m:0,a:0}); return <tr key={pid}><td style={{...td,textAlign:"left",fontWeight:1000,color:BORDEAUX}}>{player?playerName(player):"Joueur"}</td><td style={{...td,fontWeight:1000}}>{count}</td>{shootingRows.map(row=>{const x=total.byRow[row.id]||{made:0,attempted:0};return <td key={row.id} style={td}>{fmtCell(x.made,x.attempted)}</td>})}<td style={{...td,fontWeight:900}}>{recapMode==="average"?(shot.m/count).toFixed(1):shot.m}</td><td style={{...td,fontWeight:900}}>{recapMode==="average"?(shot.a/count).toFixed(1):shot.a}</td><td style={{...td,fontWeight:1000,color:BORDEAUX}}>{pct(shot.m,shot.a)}%</td><td style={{...td,fontWeight:900}}>{recapMode==="average"?`${(lf.m/count).toFixed(1)}/${(lf.a/count).toFixed(1)}`:`${lf.m}/${lf.a}`}</td><td style={{...td,fontWeight:1000,color:BORDEAUX}}>{pct(lf.m,lf.a)}%</td></tr>
+                      const shot=shootingRows.reduce((a,row)=>{const x=total.byRow[row.id]||{made:0,attempted:0};a.m+=x.made;a.a+=x.attempted;return a},{m:0,a:0}); const lf=freeThrowRows.reduce((a,row)=>{const x=total.byRow[row.id]||{made:0,attempted:0};a.m+=x.made;a.a+=x.attempted;return a},{m:0,a:0}); return <tr key={pid}><td style={{...td,textAlign:"left",fontWeight:1000,color:BORDEAUX}}><span className="shooting-player-name" title={player?playerName(player):"Joueur"}>{player?playerName(player):"Joueur"}</span></td><td style={{...td,fontWeight:1000}}>{count}</td>{shootingRows.map(row=>{const x=total.byRow[row.id]||{made:0,attempted:0};return <td key={row.id} style={td}>{fmtCell(x.made,x.attempted)}</td>})}<td style={{...td,fontWeight:900}}>{recapMode==="average"?(shot.m/count).toFixed(1):shot.m}</td><td style={{...td,fontWeight:900}}>{recapMode==="average"?(shot.a/count).toFixed(1):shot.a}</td><td style={{...td,fontWeight:1000,color:BORDEAUX}}>{pct(shot.m,shot.a)}%</td><td style={{...td,fontWeight:900}}>{recapMode==="average"?`${(lf.m/count).toFixed(1)}/${(lf.a/count).toFixed(1)}`:`${lf.m}/${lf.a}`}</td><td style={{...td,fontWeight:1000,color:BORDEAUX}}>{pct(lf.m,lf.a)}%</td></tr>
                     })}</tbody>
                   </table></div>
                 </div>
@@ -1153,6 +1157,13 @@ export default function TeamShootingGrids({
         </div>
       </div>}
       <style jsx>{`
+        .shooting-results-table th { height:48px; box-sizing:border-box; font-size:10px; line-height:1.4; vertical-align:middle; overflow-wrap:normal; word-break:normal; }
+        .shooting-results-table td { height:48px; box-sizing:border-box; white-space:nowrap; }
+        .shooting-results-table th:first-child,.shooting-results-table td:first-child {position:sticky;left:0;z-index:1;background:#fff;box-shadow:2px 0 5px #4d142010;}
+        .shooting-results-table th:first-child {background:#F7F2EE;z-index:2;}
+        .shooting-player-name {display:block;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11px;line-height:1.4;}
+        .shooting-results-table button {flex-shrink:0;}
+
         @media (max-width: 900px) {
           .shooting-editor-grid { grid-template-columns: 1fr !important; }
           .shooting-session-grid { grid-template-columns: 1fr !important; }
