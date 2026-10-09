@@ -1,4 +1,5 @@
 import {archiveTrainingExport} from "@/lib/institutionnel/training-export-archive";
+import {readAttendanceSignature,ATTENDANCE_LABELS} from "@/lib/institutionnel/training-attendance-signature";
 import React from "react";
 import { NextResponse } from "next/server";
 import {
@@ -114,6 +115,9 @@ export async function POST(request: Request) {
         : Promise.resolve({ data: [] }),
     ]);
 
+  const attendanceRows=type==="attendance"&&(sessions||[]).length?await db.from("training_candidate_attendance").select("session_id,candidate_id,status,notes").in("session_id",(sessions||[]).map((session:any)=>session.id)):{data:[],error:null};
+  if(attendanceRows.error)return NextResponse.json({error:attendanceRows.error.message},{status:400});
+  const attendanceByPair=new Map((attendanceRows.data||[]).map((row:any)=>[`${row.session_id}:${row.candidate_id}`,row]));
   let structure: any = null;
   if (cohort?.institution_id) {
     const q = await db
@@ -380,7 +384,7 @@ export async function POST(request: Request) {
                       { width: `${signatureWidth}%` },
                     ],
                   },
-                  React.createElement(Text, null, ""),
+                  (()=>{const record:any=attendanceByPair.get(`${session.id}:${candidate.id}`);const signature=readAttendanceSignature(record?.notes);const present=record?.status==="present"||record?.status==="late";return present&&signature?React.createElement(View,null,React.createElement(Image,{src:signature.image,style:{width:90,height:28,objectFit:"contain"}}),React.createElement(Text,{style:{fontSize:5,color:"#75686c"}},`Signé le ${new Date(signature.signedAt).toLocaleString("fr-FR",{timeZone:"Europe/Paris"})}`)):React.createElement(Text,{style:{fontSize:7}},record?.status&&record.status!=="unknown"?(ATTENDANCE_LABELS[record.status]||record.status):"");})(),
                 ),
               ),
             ),

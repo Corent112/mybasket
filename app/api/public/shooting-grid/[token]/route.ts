@@ -29,7 +29,8 @@ export async function POST(req:Request,{params}:{params:Promise<{token:string}>}
  let player:any=null;
  if(playerId){const p=await db.from("players").select("id,first_name,last_name").eq("id",playerId).eq("team_id",grid.team_id).maybeSingle();player=p.data;if(!player)return NextResponse.json({error:"Joueur introuvable."},{status:400});}
  const values=Array.isArray(body.results)?body.results:[]; const byRow=new Map(values.map((x:any)=>[String(x.rowId),x]));
- const normalized=(rowsQ.data||[]).map((row:any)=>{const x:any=byRow.get(String(row.id))||{};const made=Math.max(0,Number(x.made)||0),attempted=Math.max(0,Number(x.attempted)||0);return {row,made,attempted};});
+ const normalized=(rowsQ.data||[]).filter((row:any)=>{const x:any=byRow.get(String(row.id));const value=x?.[grid.input_mode==="fixed_attempts"?"made":"attempted"];return value!==undefined&&value!==null&&String(value).trim()!=="";}).map((row:any)=>{const x:any=byRow.get(String(row.id))||{};const made=Math.max(0,Number(x.made)||0),attempted=Math.max(0,Number(x.attempted)||0);return {row,made,attempted};});
+ if(!normalized.length)return NextResponse.json({error:"Renseigne au moins une position."},{status:400});
  if(normalized.some((x:any)=>x.attempted<x.made))return NextResponse.json({error:"Un score contient plus de paniers marqués que de tirs tentés."},{status:400});
  const today=new Date().toISOString().slice(0,10);
  if(player){
