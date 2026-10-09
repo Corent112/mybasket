@@ -8,7 +8,7 @@ export async function normalizeAttendanceSignature(signature:unknown){
 }
 export async function updateAttendanceRecord(db:any,existing:any,payload:any){
  let query=db.from("training_candidate_attendance").update(payload).eq("id",existing.id);
- query=existing.notes==null?query.is("notes",null):query.eq("notes",existing.notes);
+ query=existing.updated_at?query.eq("updated_at",existing.updated_at):(existing.notes==null?query.is("notes",null):query.eq("notes",existing.notes));
  query=existing.status==null?query.is("status",null):query.eq("status",existing.status);
  const result=await query.select("id").maybeSingle();
  if(result.error)throw new Error(result.error.message);

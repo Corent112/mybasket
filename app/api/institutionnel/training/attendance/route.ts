@@ -25,7 +25,7 @@ export async function PATCH(request: Request) {
  const [{data:session},{data:candidate},existing]=await Promise.all([
  db.from("training_attendance_sessions").select("id").eq("id",sessionId).eq("cohort_id",cohortId).maybeSingle(),
  db.from("training_candidates").select("id").eq("id",candidateId).eq("cohort_id",cohortId).maybeSingle(),
- db.from("training_candidate_attendance").select("id,notes,status").eq("session_id",sessionId).eq("candidate_id",candidateId).maybeSingle()]);
+ db.from("training_candidate_attendance").select("id,notes,status,updated_at").eq("session_id",sessionId).eq("candidate_id",candidateId).maybeSingle()]);
  if(!session||!candidate)return NextResponse.json({error:"Stagiaire ou demi-journée introuvable dans cette formation"},{status:404});
  if(existing.error)return NextResponse.json({error:existing.error.message},{status:400});
  try{

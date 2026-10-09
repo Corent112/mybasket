@@ -87,6 +87,8 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Accès refusé" }, { status: 403 });
   }
 
+  const selectedIds=body.candidateIds===undefined?null:body.candidateIds;
+  if(selectedIds!==null&&(type!=="attendance"||!Array.isArray(selectedIds)||selectedIds.length===0||selectedIds.length>2000||selectedIds.some((id:unknown)=>typeof id!=="string"||id.length>128)))return NextResponse.json({error:"Sélection de candidats invalide"},{status:400});
   const db = createAdminClient() || sb;
 
   const [{ data: cohort }, { data: candidates }, { data: sessions }] =
@@ -116,6 +118,7 @@ export async function POST(request: Request) {
         : Promise.resolve({ data: [] }),
     ]);
 
+  if(selectedIds&&selectedIds.some((id:string)=>!(candidates||[]).some((candidate:any)=>candidate.id===id)))return NextResponse.json({error:"Un candidat sélectionné n’appartient pas à cette promotion ou n’est plus actif."},{status:400});
   const attendanceRows=type==="attendance"&&(sessions||[]).length?await db.from("training_candidate_attendance").select("session_id,candidate_id,status,notes").in("session_id",(sessions||[]).map((session:any)=>session.id)):{data:[],error:null};
   if(attendanceRows.error)return NextResponse.json({error:attendanceRows.error.message},{status:400});
   const attendanceByPair=new Map((attendanceRows.data||[]).map((row:any)=>[`${row.session_id}:${row.candidate_id}`,row]));
@@ -312,7 +315,7 @@ export async function POST(request: Request) {
     }
 
     const ordered = [...(sessions || [])].sort((a:any,b:any)=>`${a.session_date} ${a.start_time||""}`.localeCompare(`${b.session_date} ${b.start_time||""}`));
-    const people=candidates||[];
+    const people=(candidates||[]).filter((candidate:any)=>!selectedIds||selectedIds.includes(candidate.id));
     const rowHeight=Math.min(24,410/Math.max(1,people.length));
     const nameWidth=20,clubWidth=14;
     const columnWidth=66/Math.max(1,ordered.length);
@@ -455,7 +458,7 @@ export async function POST(request: Request) {
   }-${String(cohort?.name || "formation").replace(
     /[^a-z0-9_-]/gi,
     "-",
-  )}.pdf`;
+  )}${selectedIds?"-selection":""}.pdf`;
 
   if (cohort?.institution_id && body.preview !== true) {
     try {

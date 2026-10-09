@@ -7,7 +7,7 @@ export async function POST(request:Request,{params}:{params:Promise<{id:string}>
  const db=createAdminClient();if(!db)return NextResponse.json({error:"Signature indisponible"},{status:503});
  const body=await request.json().catch(()=>null),{id}=await params;
  if(!body||typeof body.token!=="string"||! /^[a-f0-9]{64}$/.test(body.token)||! /^[a-f0-9-]{36}$/i.test(id))return NextResponse.json({error:"Lien invalide"},{status:400});
- const {data:record,error}=await db.from("training_candidate_attendance").select("id,session_id,candidate_id,status,notes").eq("id",id).maybeSingle();
+ const {data:record,error}=await db.from("training_candidate_attendance").select("id,session_id,candidate_id,status,notes,updated_at").eq("id",id).maybeSingle();
  if(error)return NextResponse.json({error:"Lecture impossible"},{status:503});
  const link=attendanceMetadata(record?.notes).mybasketAttendancePhone;
  const actual=createHash("sha256").update(body.token).digest("hex");
