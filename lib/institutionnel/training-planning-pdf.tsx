@@ -249,9 +249,18 @@ const styles = StyleSheet.create({
     fontSize: 5.5,
     color: "#666666",
   },
-  footerLogo: {
-    width: 38,
-    height: 16,
+  headerBrand: {
+    width: 82,
+    height: 112,
+    borderWidth: 1,
+    borderRightWidth: 0,
+    borderColor: "#111111",
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  headerLogo: {
+    width: 70,
+    height: 100,
     objectFit: "contain",
   },
 });
@@ -387,7 +396,9 @@ function Header({
     "";
 
   return (
-    <View>
+    <View style={{ flexDirection: "row" }}>
+      {structure.logo_url ? <View style={styles.headerBrand}><Image src={structure.logo_url} style={styles.headerLogo}/></View> : null}
+      <View style={{ flex: 1, minWidth: 0 }}>
       <View style={styles.topTitle}>
         <Text style={styles.topTitleText}>
           {(() => {
@@ -515,6 +526,7 @@ function Header({
             <Text style={styles.summaryText}>—</Text>
           )}
         </View>
+      </View>
       </View>
     </View>
   );
@@ -714,9 +726,6 @@ function SchedulePage({
 
       <View style={styles.footer} fixed>
         <View style={{ flexDirection: "row", alignItems: "center", gap: 5 }}>
-          {structure.logo_url ? (
-            <Image src={structure.logo_url} style={styles.footerLogo} />
-          ) : null}
           <Text>{structure.short_name || structure.name || "Institution"}</Text>
         </View>
         <Text>
