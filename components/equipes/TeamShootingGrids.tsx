@@ -935,22 +935,20 @@ export default function TeamShootingGrids({
               <button type="button" onClick={()=>setShootingView("library")} style={{...chip,...(shootingView==="library"?activeChip:{})}}>📚 Grilles de tir créées ({grids.length})</button>
             </div>
             {shootingView==="library"&&(
-              <div style={{...card,marginBottom:12}}>
+              <div style={{...card,marginBottom:12,width:"100%",boxSizing:"border-box",gridColumn:"1 / -1"}}>
                 <span style={eyebrow}>MES GRILLES DE TIR</span>
                 <h3 style={title}>{libraryOnly?"Consulte, modifie ou supprime une grille":"Choisis une grille liée à cette équipe"}</h3>
-                <div className="shooting-library" style={{display:"grid",gridTemplateColumns:"repeat(3,minmax(0,1fr))",gap:8}}>
+                <div className="shooting-library" style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(min(100%,300px),1fr))",gap:18}}>
                   {grids.map(g=>(
-                    <div key={g.id} role="button" tabIndex={0} onClick={()=>{setSelectedGridId(g.id);void loadDetails(g.id);setShootingView("editor")}}
-                      style={{position:"relative",textAlign:"left",border:`1px solid ${g.id===selectedGridId?GOLD:BORDER}`,borderRadius:12,background:g.id===selectedGridId?"#FFF8E9":"#fff",padding:12,cursor:"pointer"}}>
-                      {canEdit&&<button type="button" title="Supprimer cette grille" aria-label={`Supprimer ${g.name}`} onClick={e=>{e.stopPropagation();void deleteGrid(g)}} style={{position:"absolute",top:7,right:7,width:22,height:22,border:"1px solid #E7B8B8",borderRadius:999,background:"#FFF4F4",color:"#B42318",fontSize:15,fontWeight:1000,lineHeight:1,cursor:"pointer"}}>×</button>}
-                      <b style={{display:"block",color:BORDEAUX,fontSize:13}}>{g.name}</b>
-                      <span style={{display:"block",marginTop:4,color:MUTED,fontSize:10,lineHeight:1.35}}>{g.description||"Aucune consigne"}</span>
-                      <span style={{display:"block",marginTop:8,color:TEXT,fontSize:9,fontWeight:900}}>{libraryOnly?"Consulter / modifier →":"Ouvrir la grille →"}</span>
-                      {scopeType==="team"&&<span style={{display:"flex",gap:5,marginTop:9,flexWrap:"wrap"}} onClick={e=>e.stopPropagation()}>
-                        <button type="button" disabled={shareBusy} onClick={()=>void ensureShareLink(g)} style={{...secondary,padding:"6px 8px",fontSize:9}}>🔗 {g.share_enabled?"Copier le lien":"Générer le lien"}</button>
-                        {g.share_enabled&&<button type="button" onClick={()=>void disableShareLink(g)} style={{...secondary,padding:"6px 8px",fontSize:9}}>Désactiver</button>}
-                      </span>}
-                    </div>
+                    <article key={g.id} style={{position:"relative",textAlign:"left",border:`1px solid ${g.id===selectedGridId?GOLD:BORDER}`,borderRadius:16,background:g.id===selectedGridId?"#FFFCF5":"#fff",padding:18,minWidth:0}}>
+                      <div style={{display:"flex",justifyContent:"space-between",gap:12,alignItems:"start"}}>
+                        <div><h3 style={{color:BORDEAUX,fontSize:21,margin:"0 0 6px"}}>{g.name}</h3><p style={{color:MUTED,fontSize:12,margin:0,lineHeight:1.5}}>{g.description||"Aucune consigne"}</p></div>
+                        {canEdit&&<details style={{position:"relative"}}><summary aria-label={`Options de ${g.name}`} style={{cursor:"pointer",fontSize:20,color:BORDEAUX,listStyle:"none"}}>⋯</summary><div style={{position:"absolute",right:0,top:26,zIndex:2,background:"white",padding:10,border:`1px solid ${BORDER}`,borderRadius:10,minWidth:150,display:"grid",gap:8}}>{scopeType==="team"&&g.share_enabled&&<button type="button" onClick={()=>void disableShareLink(g)} style={secondary}>Désactiver le lien</button>}<button type="button" onClick={()=>void deleteGrid(g)} style={danger}>Supprimer la grille</button></div></details>}
+                      </div>
+                      <div style={{marginTop:14,display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(min(100%,140px),1fr))",gap:8}}>{shootingGridImages(g).map((image,i)=><a key={`${i}:${image}`} href={image} target="_blank" rel="noreferrer" style={{textDecoration:"none",color:MUTED}}><img src={image} alt={`Schéma ${i+1} de ${g.name}`} style={{display:"block",width:"100%",height:170,objectFit:"contain",borderRadius:9,background:SOFT,border:`1px solid ${BORDER}`}}/><span style={{display:"block",fontSize:10,marginTop:4}}>Schéma {i+1}</span></a>)}{!shootingGridImages(g).length&&<div style={{height:170,display:"grid",placeItems:"center",borderRadius:9,background:SOFT,color:MUTED,fontSize:12}}>Aucun schéma associé</div>}</div>
+                      <div style={{display:"flex",gap:8,margin:"12px 0",fontSize:11,color:MUTED}}><span>{shootingGridImages(g).length} schéma{shootingGridImages(g).length>1?"s":""}</span>{g.movement_video_url&&<span>· 1 vidéo</span>}</div>
+                      <div style={{display:"flex",gap:8,flexWrap:"wrap"}}><button type="button" onClick={()=>{setSelectedGridId(g.id);void loadDetails(g.id);setShootingView("editor")}} style={{...primary,flex:"1 1 150px"}}>Ouvrir la grille →</button>{scopeType==="team"&&<button type="button" disabled={shareBusy} onClick={()=>void ensureShareLink(g)} style={{...secondary,flex:"1 1 150px"}}>{g.share_enabled?"Copier le lien joueur":"Générer le lien joueur"}</button>}</div>
+                    </article>
                   ))}
                   {!grids.length&&<div style={{color:MUTED,fontSize:11}}>Aucune grille créée.</div>}
                 </div>

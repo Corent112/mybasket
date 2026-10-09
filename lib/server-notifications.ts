@@ -22,7 +22,7 @@ export async function sendTransactionalEmail(input: {
   text?: string | null;
   replyTo?: string | null;
   from?: string | null;
-  attachments?: Array<{ filename: string; content: string }>;
+  attachments?: Array<{ filename: string; content: string; content_id?: string; content_type?: string }>;
 }) {
   const apiKey = process.env.RESEND_API_KEY;
   const from = input.from || process.env.RESEND_FROM;
