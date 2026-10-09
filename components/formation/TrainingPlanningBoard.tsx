@@ -90,6 +90,8 @@ export default function TrainingPlanningBoard({
   const [scenarios, setScenarios] = useState<Scenario[]>([]);
   const [assets, setAssets] = useState<Asset[]>([]);
   const [selectedBlockId, setSelectedBlockId] = useState("");
+  const [editingBlock, setEditingBlock] = useState<PlanningBlock | null>(null);
+  const [savingBlock, setSavingBlock] = useState(false);
   const [message, setMessage] = useState("");
   const [planningTitle, setPlanningTitle] = useState("");
   const [cohortMeta, setCohortMeta] = useState({
@@ -199,6 +201,58 @@ export default function TrainingPlanningBoard({
   useEffect(() => {
     void reload();
   }, [cohortId]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    setEditingBlock(null);
+  }, [cohortId, selectedBlockId]);
+
+  async function saveBlock() {
+    if (!editingBlock || savingBlock) return;
+    const block = editingBlock;
+    if (!block.title.trim()) return toast("Le titre du bloc est obligatoire.");
+    if (!block.training_day || !block.start_time || !block.end_time) {
+      return toast("Renseigne la date et les horaires du bloc.");
+    }
+    if (timeToMinutes(block.end_time) <= timeToMinutes(block.start_time)) {
+      return toast("L’heure de fin doit être après l’heure de début.");
+    }
+
+    setSavingBlock(true);
+    try {
+      const { error } = await supabase
+        .from("training_schedule_blocks")
+        .update({
+          training_day: block.training_day,
+          start_time: block.start_time,
+          end_time: block.end_time,
+          title: block.title.trim(),
+          formation_name: block.formation_name?.trim() || null,
+          instructor_name: block.instructor_name?.trim() || null,
+          room_name: block.room_name?.trim() || null,
+          location_type: block.location_type || null,
+          block_type: block.block_type,
+          description: block.description?.trim() || null,
+          pedagogical_scenario_id: block.pedagogical_scenario_id || null,
+        })
+        .eq("id", block.id)
+        .eq("cohort_id", cohortId)
+        .select("id")
+        .single();
+      if (error) return toast(error.message);
+
+      setEditingBlock(null);
+      await reload();
+      const synced = await syncAttendanceFromPlanning(false);
+      toast(synced
+        ? "Bloc modifié et présences mises à jour."
+        : "Bloc modifié. La synchronisation des présences reste à relancer via Sauvegarder le planning.");
+    } catch (error) {
+      console.error(error);
+      toast("La modification n’a pas pu être terminée. Vérifie le planning avant de réessayer.");
+    } finally {
+      setSavingBlock(false);
+    }
+  }
 
   async function uploadAsset(
     blockId: string,
@@ -1044,13 +1098,34 @@ export default function TrainingPlanningBoard({
               </span>
             </div>
 
-            <button
-              className="danger"
-              onClick={() => void deleteBlock(selectedBlock.id)}
-            >
-              Supprimer
-            </button>
+            <div className="block-detail-actions">
+              {!editingBlock && <button type="button" onClick={() => setEditingBlock({ ...selectedBlock })}>Modifier</button>}
+              <button type="button" className="danger" disabled={savingBlock} onClick={() => void deleteBlock(selectedBlock.id)}>Supprimer</button>
+            </div>
           </div>
+
+          {editingBlock && (
+            <form className="block-edit-form" onSubmit={(event) => { event.preventDefault(); void saveBlock(); }}>
+              <fieldset disabled={savingBlock} className="form-grid">
+                {([
+                  ["training_day", "Date", "date"],
+                  ["start_time", "Début", "time"],
+                  ["end_time", "Fin", "time"],
+                  ["formation_name", "Nom de la formation", "text"],
+                  ["instructor_name", "Intervenant", "text"],
+                  ["room_name", "Salle / terrain", "text"],
+                ] as const).map(([key, label, type]) => (
+                  <label key={key}><span>{label}</span><input type={type} required={type !== "text"} value={editingBlock[key] || ""} onChange={(event) => setEditingBlock({ ...editingBlock, [key]: event.target.value })}/></label>
+                ))}
+                <label><span>Type</span><select value={editingBlock.block_type} onChange={(event) => setEditingBlock({ ...editingBlock, block_type: event.target.value })}>{BLOCK_TYPES.map(([key, label]) => <option key={key} value={key}>{label}</option>)}</select></label>
+                <label><span>Lieu</span><select value={editingBlock.location_type || ""} onChange={(event) => setEditingBlock({ ...editingBlock, location_type: event.target.value })}><option value="">Non renseigné</option><option value="salle">Salle</option><option value="terrain">Terrain</option><option value="visio">Visio</option><option value="autre">Autre</option></select></label>
+                <label className="wide"><span>Titre / contenu</span><input required value={editingBlock.title} onChange={(event) => setEditingBlock({ ...editingBlock, title: event.target.value })}/></label>
+                <label className="wide"><span>Description / consigne</span><textarea value={editingBlock.description || ""} onChange={(event) => setEditingBlock({ ...editingBlock, description: event.target.value })}/></label>
+                <label className="wide"><span>Scénario pédagogique</span><select value={editingBlock.pedagogical_scenario_id || ""} onChange={(event) => setEditingBlock({ ...editingBlock, pedagogical_scenario_id: event.target.value })}><option value="">Aucun</option>{scenarios.map((scenario) => <option key={scenario.id} value={scenario.id}>{scenario.title}</option>)}</select></label>
+                <div className="wide block-detail-actions"><button type="submit">{savingBlock ? "Enregistrement…" : "Enregistrer les modifications"}</button><button type="button" className="secondary" onClick={() => setEditingBlock(null)}>Annuler</button></div>
+              </fieldset>
+            </form>
+          )}
 
           <div className="selected-summary">
             <div><small>Formation</small><strong>{selectedBlock.formation_name || "—"}</strong></div>
@@ -1065,7 +1140,7 @@ export default function TrainingPlanningBoard({
             )}
           </div>
 
-          <div className="detail-grid">
+          {!editingBlock && <div className="detail-grid">
             <label>
               <span>Scénario pédagogique</span>
               <select
@@ -1106,7 +1181,7 @@ export default function TrainingPlanningBoard({
                 }}
               />
             </label>
-          </div>
+          </div>}
 
           <div className="assets">
             {selectedAssets.map((asset) => (
@@ -1144,6 +1219,10 @@ export default function TrainingPlanningBoard({
       )}
 
       <style jsx>{`
+        .block-detail-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+        .block-edit-form { padding: 16px; margin: 16px 0; border: 1px solid #d8bbc2; border-radius: 12px; background: #fbf7f3; }
+        .block-edit-form fieldset { padding: 0; margin: 0; border: 0; min-width: 0; }
+
         .planning {
           display: grid;
           gap: 14px;
