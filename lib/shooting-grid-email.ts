@@ -19,7 +19,7 @@ export function shootingZone(name:string):string|null {
   if(/45|aile|elbow/.test(n))return right?"z8":left?"z6":null;
   if(/axe|face/.test(n))return "z7";
  } else {
-  if(/corner|coin/.test(n))return right?"z10":left?"z16":null;
+  if(/corner|coin|\b0\s*°/.test(n))return right?"z10":left?"z16":null;
   if(/45|aile/.test(n))return right?"z11":left?"z15":null;
   if(/axe|face/.test(n))return "z13";
   if(/slot/.test(n))return right?"z12":left?"z14":null;
