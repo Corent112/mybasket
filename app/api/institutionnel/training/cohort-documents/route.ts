@@ -292,192 +292,41 @@ export async function POST(request: Request) {
   let pages: React.ReactElement[] = [];
 
   if (type === "attendance") {
-    const grouped = new Map<string, any[]>();
-    for (const session of sessions || []) {
-      const date = String((session as any).session_date || "");
-      if (!date) continue;
-      const list = grouped.get(date) || [];
-      list.push(session);
-      grouped.set(date, list);
-    }
+    const ordered = [...(sessions || [])].sort((a:any,b:any)=>`${a.session_date} ${a.start_time||""}`.localeCompare(`${b.session_date} ${b.start_time||""}`));
+    const people=candidates||[];
+    const rowHeight=Math.min(24,410/Math.max(1,people.length));
+    const nameWidth=20,clubWidth=14;
+    const columnWidth=66/Math.max(1,ordered.length);
+    const signatureWidth=Math.max(1,805.89*columnWidth/100-6);
+    const fontSize=Math.min(7,rowHeight*.32);
+    const cell={paddingHorizontal:3,paddingVertical:2,justifyContent:"center" as const,overflow:"hidden" as const};
+    const sessionCell={...cell,width:`${columnWidth}%`,borderLeftWidth:.5,borderLeftColor:"#E7DDD8"};
+    const header=React.createElement(View,{style:{flexDirection:"row",alignItems:"center",marginBottom:10,height:46}},
+      ...(structure?.logo_url?[React.createElement(Image,{src:structure.logo_url,style:{width:46,height:46,objectFit:"contain",marginRight:10}})]:[]),
+      React.createElement(View,{style:{flex:1}},React.createElement(Text,{style:{fontSize:16,fontWeight:700,color:primary}},"Feuille d’émargement"),React.createElement(Text,{style:{fontSize:8,color:"#75686c",marginTop:4}},`${formationLabel}${cohort?.location?` · ${cohort.location}`:""}`)),
+      React.createElement(Text,{style:{fontSize:9,fontWeight:700,color:primary,maxWidth:160}},structure?.name||"MyBasket"));
+    const tableHeader=React.createElement(View,{style:{flexDirection:"row",height:42,backgroundColor:"#F6F0ED",borderBottomWidth:1,borderColor:secondary}},
+      React.createElement(Text,{style:{...cell,width:`${nameWidth}%`,fontSize:7,fontWeight:700,color:primary}},"CANDIDAT"),
+      React.createElement(Text,{style:{...cell,width:`${clubWidth}%`,fontSize:7,fontWeight:700,color:primary}},"CLUB / STRUCTURE"),
+      ...ordered.map((session:any)=>React.createElement(View,{key:session.id,style:sessionCell},
+        React.createElement(Text,{style:{fontSize:6.2,fontWeight:700,color:primary,textAlign:"center"}},new Date(`${session.session_date}T12:00:00`).toLocaleDateString("fr-FR",{day:"2-digit",month:"2-digit",year:"2-digit"})),
+        React.createElement(Text,{style:{fontSize:5.5,fontWeight:700,textAlign:"center",marginTop:3}},String(session.title||"Émargement").toUpperCase()),
+        React.createElement(Text,{style:{fontSize:5.2,textAlign:"center",color:"#75686c",marginTop:2}},`${shortTime(session.start_time)} - ${shortTime(session.end_time)}`))));
+    const tableRows=people.map((candidate:any)=>React.createElement(View,{key:candidate.id,wrap:false,style:{flexDirection:"row",height:rowHeight,borderBottomWidth:.5,borderColor:"#E7DDD8",backgroundColor:people.indexOf(candidate)%2?"#FCFAF8":"#FFFFFF"}},
+      React.createElement(Text,{style:{...cell,width:`${nameWidth}%`,fontSize,fontWeight:700}},`${candidate.last_name||""} ${candidate.first_name||""}`.trim()),
+      React.createElement(Text,{style:{...cell,width:`${clubWidth}%`,fontSize}},candidate.club_name||"—"),
+      ...ordered.map((session:any)=>{
+        const record:any=attendanceByPair.get(`${session.id}:${candidate.id}`),signature=readAttendanceSignature(record?.notes),present=record?.status==="present"||record?.status==="late";
+        return React.createElement(View,{key:session.id,style:sessionCell},present&&signature?React.createElement(View,null,
+          React.createElement(Image,{src:signature.image,style:{width:signatureWidth,height:Math.max(1,rowHeight-10),objectFit:"contain"}}),
+          React.createElement(Text,{style:{fontSize:Math.min(4.2,rowHeight*.18),color:"#75686c",textAlign:"center"}},new Date(signature.signedAt).toLocaleString("fr-FR",{timeZone:"Europe/Paris",day:"2-digit",month:"2-digit",year:"2-digit",hour:"2-digit",minute:"2-digit"})))
+          :React.createElement(Text,{style:{fontSize:Math.min(fontSize,6),textAlign:"center"}},record?.status&&record.status!=="unknown"?(ATTENDANCE_LABELS[record.status]||record.status):""));
+      })));
+    pages=[React.createElement(Page,{key:"attendance-all",size:"A4",orientation:"landscape",wrap:false,style:{...styles.page,height:595.28,minHeight:595.28,paddingTop:18,paddingHorizontal:18,paddingBottom:24}},
+      React.createElement(View,{style:{height:4,backgroundColor:primary,marginBottom:8}}),header,
+      ordered.length?React.createElement(View,{style:styles.table},tableHeader,...tableRows):React.createElement(Text,{style:{fontSize:9}},"Aucune demi-journée de présence définie."),
+      footer)];
 
-    if (!grouped.size) {
-      pages = [
-        React.createElement(
-          Page,
-          {
-            key: "attendance-empty",
-            size: "A4",
-            orientation: "landscape",
-            style: styles.page,
-          },
-          ...renderHeader(),
-          React.createElement(
-            Text,
-            { style: styles.title },
-            "Feuille d’émargement",
-          ),
-          React.createElement(
-            Text,
-            { style: styles.subtitle },
-            `${formationLabel}${cohort?.location ? ` · ${cohort.location}` : ""}`,
-          ),
-          React.createElement(
-            Text,
-            { style: styles.dayTitle },
-            "Aucune demi-journée de présence n’est encore définie. Sauvegarde le planning pour les générer.",
-          ),
-          footer,
-        ),
-      ];
-    } else {
-      pages = Array.from(grouped.entries()).map(
-        ([date, daySessions]) => {
-          const ordered = [...daySessions].sort((a: any, b: any) =>
-            String(a.start_time || "").localeCompare(
-              String(b.start_time || ""),
-            ),
-          );
-
-          const fixedWidth = 44;
-          const signatureWidth =
-            Math.max(18, 100 - fixedWidth) / Math.max(1, ordered.length);
-
-          const rows = (candidates || []).map((candidate: any) =>
-            React.createElement(
-              View,
-              {
-                style: styles.row,
-                key: candidate.id,
-                wrap: false,
-              },
-              React.createElement(
-                Text,
-                {
-                  style: [
-                    styles.cell,
-                    { width: "24%" },
-                  ],
-                },
-                `${candidate.last_name || ""} ${
-                  candidate.first_name || ""
-                }`.trim(),
-              ),
-              React.createElement(
-                Text,
-                {
-                  style: [
-                    styles.cell,
-                    { width: "20%" },
-                  ],
-                },
-                candidate.club_name || "—",
-              ),
-              ...ordered.map((session: any) =>
-                React.createElement(
-                  View,
-                  {
-                    key: session.id,
-                    style: [
-                      styles.cell,
-                      styles.signCell,
-                      { width: `${signatureWidth}%` },
-                    ],
-                  },
-                  (()=>{const record:any=attendanceByPair.get(`${session.id}:${candidate.id}`);const signature=readAttendanceSignature(record?.notes);const present=record?.status==="present"||record?.status==="late";return present&&signature?React.createElement(View,null,React.createElement(Image,{src:signature.image,style:{width:90,height:28,objectFit:"contain"}}),React.createElement(Text,{style:{fontSize:5,color:"#75686c"}},`Signé le ${new Date(signature.signedAt).toLocaleString("fr-FR",{timeZone:"Europe/Paris"})}`)):React.createElement(Text,{style:{fontSize:7}},record?.status&&record.status!=="unknown"?(ATTENDANCE_LABELS[record.status]||record.status):"");})(),
-                ),
-              ),
-            ),
-          );
-
-          return React.createElement(
-            Page,
-            {
-              key: date,
-              size: "A4",
-              orientation: "landscape",
-              style: styles.page,
-            },
-            ...renderHeader(),
-            React.createElement(
-              Text,
-              { style: styles.title },
-              "Feuille d’émargement",
-            ),
-            React.createElement(
-              Text,
-              { style: styles.subtitle },
-              `${formationLabel}${cohort?.location ? ` · ${cohort.location}` : ""}`,
-            ),
-            React.createElement(
-              Text,
-              { style: styles.dayTitle },
-              formatDate(date),
-            ),
-            React.createElement(
-              View,
-              { style: styles.table },
-              React.createElement(
-                View,
-                {
-                  style: [styles.row, styles.headRow],
-                  fixed: true,
-                },
-                React.createElement(
-                  Text,
-                  {
-                    style: [
-                      styles.cell,
-                      { width: "24%" },
-                      styles.headText,
-                    ],
-                  },
-                  "CANDIDAT",
-                ),
-                React.createElement(
-                  Text,
-                  {
-                    style: [
-                      styles.cell,
-                      { width: "20%" },
-                      styles.headText,
-                    ],
-                  },
-                  "CLUB / STRUCTURE",
-                ),
-                ...ordered.map((session: any) =>
-                  React.createElement(
-                    View,
-                    {
-                      key: session.id,
-                      style: [
-                        styles.cell,
-                        styles.signCell,
-                        { width: `${signatureWidth}%` },
-                      ],
-                    },
-                    React.createElement(
-                      Text,
-                      { style: styles.sessionHead },
-                      String(session.title || "Émargement").toUpperCase(),
-                    ),
-                    React.createElement(
-                      Text,
-                      { style: styles.sessionSub },
-                      `${shortTime(session.start_time)} – ${shortTime(
-                        session.end_time,
-                      )}`,
-                    ),
-                  ),
-                ),
-              ),
-              ...rows,
-            ),
-            footer,
-          );
-        },
-      );
-    }
   } else {
     const rows = (candidates || []).map((candidate: any) =>
       React.createElement(
