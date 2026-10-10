@@ -1263,7 +1263,7 @@ export default function TrainingManager({ institutionId }: { institutionId?: str
 
           {tab === "exports" && <TrainingExportedDocuments cohortId={cohortId}/> }
           {tab === "planning" && <section className="embedded"><TrainingPlanningBoard cohortId={cohortId} onAttendanceChanged={() => void loadCohort(cohortId)} /></section>}
-          {tab === "events" && institutionId && <InstitutionalLinkedEvents structureId={institutionId} scope="training" cohortId={cohortId} />}
+          {tab === "events" && institutionId && <InstitutionalLinkedEvents key={`${institutionId}:${cohortId}`} structureId={institutionId} scope="training" cohortId={cohortId} />}
           {tab === "scenario" && <section className="embedded"><PedagogicalScenarioEditor cohortId={cohortId} /></section>}
 
           {tab === "communication" && (

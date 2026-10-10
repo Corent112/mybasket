@@ -26,8 +26,10 @@ export default function InstitutionalLinkedEvents({structureId,scope,cohortId}:P
   const [form,setForm]=useState({title:"",event_date:today(),start_time:"09:00",end_time:"17:00",location:"",event_type:scope==="training"?"formation":"stage",description:""});
 
   async function load(){
+    if(scope==="training"&&!cohortId){setEvents([]);setResources([]);setSelectedId("");return;}
     let q=sb.from("institutional_events").select("id,title,event_date,start_time,end_time,location,event_type,event_domain,description,cohort_id").eq("structure_id",structureId).eq("archived",false).order("event_date");
     q=q.eq("event_domain",scope);
+    if(scope==="training")q=q.eq("cohort_id",cohortId);
     const [e,r]=await Promise.all([q,sb.from("institutional_event_resources").select("id,event_id,title,resource_type,completed").eq("structure_id",structureId)]);
     setEvents((e.data||[]) as EventRow[]); setResources((r.data||[]) as Resource[]);
     const rows=(e.data||[]) as EventRow[];
@@ -40,6 +42,7 @@ export default function InstitutionalLinkedEvents({structureId,scope,cohortId}:P
   const complete=selectedResources.filter(r=>r.completed).length;
 
   async function createEvent(){
+    if(scope==="training"&&!cohortId)return alert("Choisis la formation avant de créer un événement.");
     if(!form.title.trim())return alert("Donne un titre à l’événement.");
     const {data:{user}}=await sb.auth.getUser(); if(!user)return;
     setBusy(true);
