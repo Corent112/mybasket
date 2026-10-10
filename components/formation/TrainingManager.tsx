@@ -578,6 +578,19 @@ export default function TrainingManager({ institutionId }: { institutionId?: str
     setCandidates((items) => items.map((item) => (item.id === candidateId ? { ...item, ...patch } : item)));
   }
 
+  async function deleteCandidate(candidate:Candidate){
+    if(busy||!confirm(`Supprimer définitivement l’inscription de ${candidate.first_name||""} ${candidate.last_name||""} à cette formation ? Cette action est irréversible.`))return;
+    setBusy(true);
+    try{
+      const response=await fetch("/api/institutionnel/training/candidates",{method:"DELETE",headers:{"Content-Type":"application/json"},body:JSON.stringify({cohortId,candidateId:candidate.id})});
+      const result=await response.json();if(!response.ok)throw new Error(result.error||"Suppression impossible");
+      setChecked(previous=>{const next=new Set(previous);next.delete(candidate.id);return next;});
+      setAttendanceChecked(previous=>{const next=new Set(previous);next.delete(candidate.id);return next;});
+      if(selectedCandidateId===candidate.id){setShowCandidate(false);setSelectedCandidateId("");}
+      await loadCohort(cohortId);alert("Candidat supprimé de cette formation.");
+    }catch(error){alert(error instanceof Error?error.message:"Suppression impossible");}finally{setBusy(false);}
+  }
+
   function resetRequirementForm() {
     setEditingRequirementId("");
     setReqTitle("");
@@ -1120,7 +1133,7 @@ export default function TrainingManager({ institutionId }: { institutionId?: str
                                 {Object.entries(ADMIN_STATUS).map(([key, label]) => <option key={key} value={key}>{label}</option>)}
                               </select>
                             </td>
-                            <td><button className="open" onClick={() => { setSelectedCandidateId(candidate.id); setShowCandidate(true); }}>Modifier</button></td>
+                            <td><div style={{display:"flex",gap:5,flexWrap:"wrap"}}><button className="open" onClick={() => { setSelectedCandidateId(candidate.id); setShowCandidate(true); }}>Modifier</button><button type="button" className="ghost danger-text" disabled={busy} onClick={()=>void deleteCandidate(candidate)}>Supprimer</button></div></td>
                           </tr>
                         );
                       })}
@@ -1345,6 +1358,7 @@ export default function TrainingManager({ institutionId }: { institutionId?: str
               <button className="close" onClick={() => setShowCandidate(false)}>×</button>
             </div>
 
+            <div style={{display:"flex",justifyContent:"flex-end",marginTop:8}}><button type="button" className="ghost danger-text" disabled={busy} onClick={()=>void deleteCandidate(selectedCandidate)}>Supprimer ce candidat de la formation</button></div>
             <div className="drawer-summary">
               {(() => {
                 const d = documentStats(selectedCandidate);

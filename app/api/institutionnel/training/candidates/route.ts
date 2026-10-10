@@ -60,3 +60,24 @@ export async function PATCH(request: Request) {
  if(!data)return NextResponse.json({error:"Candidat introuvable dans cette formation"},{status:404});
  return NextResponse.json({ok:true});
 }
+
+export async function DELETE(request:Request){
+ const sb=await createClient();const {data:{user}}=await sb.auth.getUser();
+ if(!user)return NextResponse.json({error:"Non connecté"},{status:401});
+ const body=await request.json().catch(()=>null),cohortId=String(body?.cohortId||""),candidateId=String(body?.candidateId||"");
+ if(!cohortId||!candidateId)return NextResponse.json({error:"Formation ou candidat manquant"},{status:400});
+ const db=createAdminClient()||sb;
+ const [{data:cohort},{data:instructor},{data:profile}]=await Promise.all([
+ db.from("training_cohorts").select("id,institution_id").eq("id",cohortId).maybeSingle(),
+ db.from("training_instructors").select("id").eq("cohort_id",cohortId).eq("user_id",user.id).maybeSingle(),
+ db.from("profiles").select("platform_role").eq("id",user.id).maybeSingle()]);
+ let allowed=!!cohort&&(!!instructor||["ceo","superadmin"].includes(String(profile?.platform_role||"")));
+ if(!allowed&&cohort?.institution_id){const {data:member}=await db.from("institutional_members").select("id").eq("structure_id",cohort.institution_id).eq("user_id",user.id).eq("status","active").maybeSingle();allowed=!!member;}
+ if(!allowed)return NextResponse.json({error:"Accès formation requis"},{status:403});
+ // Une seule suppression : les contraintes de la base restent appliquées atomiquement.
+ // Ne supprime jamais le compte utilisateur ni les inscriptions aux autres formations.
+ const {data,error}=await db.from("training_candidates").delete().eq("id",candidateId).eq("cohort_id",cohortId).select("id").maybeSingle();
+ if(error)return NextResponse.json({error:error.code==="23503"?"Ce candidat possède des données liées qui bloquent sa suppression. Aucune donnée n’a été supprimée.":error.message},{status:400});
+ if(!data)return NextResponse.json({error:"Candidat introuvable ou suppression non autorisée"},{status:404});
+ return NextResponse.json({ok:true,deletedId:data.id});
+}
