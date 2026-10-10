@@ -11,7 +11,7 @@ export async function PATCH(request: Request) {
  const body=await request.json().catch(()=>null);
  if(!body)return NextResponse.json({error:"Données invalides"},{status:400});
  const action=String(body.action||"update");
- if(!["update","phone","revoke","undo"].includes(action))return NextResponse.json({error:"Action invalide"},{status:400});
+ if(!["update","phone","revoke","undo","reset"].includes(action))return NextResponse.json({error:"Action invalide"},{status:400});
  const cohortId=String(body.cohortId||""),sessionId=String(body.sessionId||""),candidateId=String(body.candidateId||""),status=String(body.status||"");
  if(!cohortId||!sessionId||!candidateId||(action==="update"&&!["present","absent","excused","unknown","late"].includes(status)))return NextResponse.json({error:"Présence invalide"},{status:400});
  const db=createAdminClient()||sb;
@@ -32,7 +32,9 @@ export async function PATCH(request: Request) {
   const previous=existing.data;
   let notes=previous?.notes||"",nextStatus=status||previous?.status||"unknown";
   let phoneResult:any=null;
-  if(action==="phone"){
+  if(action==="reset"){
+   const metadata=attendanceMetadata(notes);delete metadata.mybasketAttendanceSignature;delete metadata.mybasketAttendancePrevious;delete metadata.mybasketAttendancePhone;notes=JSON.stringify(metadata);nextStatus="unknown";
+  }else if(action==="phone"){
    if(!previous||!["present","late"].includes(previous.status))return NextResponse.json({error:"Choisissez Présent avant de faire signer."},{status:400});
    if(!createAdminClient())return NextResponse.json({error:"Signature téléphone indisponible : configuration serveur requise."},{status:503});
    const token=randomBytes(32).toString("hex"),expiresAt=new Date(Date.now()+10*60*1000).toISOString();

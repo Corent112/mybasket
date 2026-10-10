@@ -753,12 +753,12 @@ export default function TrainingManager({ institutionId }: { institutionId?: str
     setAttendanceBusy(items=>[...items,key]);
     try{await persistAttendance(sessionId,candidateId,status);}catch(error){alert(error instanceof Error?error.message:"Enregistrement impossible");}finally{setAttendanceBusy(items=>items.filter(item=>item!==key));}
   }
-  async function removeAttendanceSignature(candidate:Candidate,session:AttendanceSession,record:Attendance){
-    const key=`${session.id}:${candidate.id}`;
-    setAttendanceBusy(items=>[...items,key]);
-    try{await persistAttendance(session.id,candidate.id,record.status,null);}catch(error){alert(error instanceof Error?error.message:"Suppression impossible");}finally{setAttendanceBusy(items=>items.filter(item=>item!==key));}
+  async function resetAttendance(candidate:Candidate,session:AttendanceSession){
+    if(!confirm(`Effacer la présence et la signature de ${candidate.first_name||""} ${candidate.last_name||""} pour « ${session.title} » ? La case reviendra à « À renseigner » sans retour arrière.`))return;
+    const key=`${session.id}:${candidate.id}`;setAttendanceBusy(items=>[...items,key]);
+    try{await attendanceAction(candidate,session,"reset");setLastAttendanceChange(null);setAttendanceNotice("Présence et signature effacées. La case est revenue à À renseigner.");}catch(error){alert(error instanceof Error?error.message:"Suppression impossible");}finally{setAttendanceBusy(items=>items.filter(item=>item!==key));}
   }
-  async function attendanceAction(candidate:Candidate,session:AttendanceSession,action:"phone"|"revoke"|"undo"){
+  async function attendanceAction(candidate:Candidate,session:AttendanceSession,action:"phone"|"revoke"|"undo"|"reset"){
     const response=await fetch("/api/institutionnel/training/attendance",{method:"PATCH",headers:{"Content-Type":"application/json"},body:JSON.stringify({cohortId,candidateId:candidate.id,sessionId:session.id,action})});
     const data=await response.json();if(!response.ok)throw new Error(data.error||"Action impossible");await loadCohort(cohortId);return data;
   }
@@ -768,7 +768,7 @@ export default function TrainingManager({ institutionId }: { institutionId?: str
   }
   function attendanceControl(candidate:Candidate,session:AttendanceSession,record?:Attendance){
     const status=record?.status||"unknown",present=status==="present"||status==="late",signature=readAttendanceSignature(record?.notes),busy=attendanceBusy.includes(`${session.id}:${candidate.id}`),canUndo=!!attendanceMetadata(record?.notes).mybasketAttendancePrevious;
-    return <AttendanceCell status={status} signature={!!signature} busy={busy} canUndo={canUndo} wide={!!attendanceDay} label={`${candidate.first_name||""} ${candidate.last_name||""} — ${session.title}`} onStatus={value=>void setAttendance(session.id,candidate.id,value)} onSign={()=>setSignatureTarget({candidate,session})} onRemove={()=>{if(record)void removeAttendanceSignature(candidate,session,record);}} onUndo={()=>void undoAttendance(candidate,session)}/>;
+    return <AttendanceCell status={status} signature={!!signature} busy={busy} canUndo={canUndo} wide={!!attendanceDay} label={`${candidate.first_name||""} ${candidate.last_name||""} — ${session.title}`} onStatus={value=>{if(value==="unknown")void resetAttendance(candidate,session);else void setAttendance(session.id,candidate.id,value);}} onSign={()=>setSignatureTarget({candidate,session})} onRemove={()=>void resetAttendance(candidate,session)} onUndo={()=>void undoAttendance(candidate,session)}/>;
   }
 
   async function saveEvaluation(candidate: Candidate, patch: Partial<Evaluation>) {
