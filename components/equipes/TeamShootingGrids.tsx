@@ -785,6 +785,23 @@ export default function TeamShootingGrids({
     })
   }
 
+  async function editSeriesScore(group:Session[],playerId:string,rowId:string,text:string){
+    if(!canEdit||!grid)return;
+    const value=text.trim();const skipped=!value||/^[—–-]$/.test(value);
+    const pair=value.match(/^(\d+)\s*\/\s*(\d+)$/);
+    if(!skipped&&!pair){alert("Saisis un score comme 7/10 ou — pour une série non réalisée.");return;}
+    const playerSessions=group.filter(session=>(sessionPlayers[session.id]||[]).includes(playerId));
+    if(!skipped&&playerSessions.length!==1){alert("Cette case réunit plusieurs sessions. Modifie les scores dans leur session d’origine ; — retire cette série de toutes les sessions de cette date.");return;}
+    const made=pair?Number(pair[1]):0,attempted=pair?Number(pair[2]):0;
+    if(!skipped&&(!Number.isSafeInteger(made)||!Number.isSafeInteger(attempted)||attempted<1||made>attempted)){alert("Le score doit contenir au moins un tir tenté et les paniers marqués ne peuvent pas dépasser les tirs tentés.");return;}
+    setSaving(true);
+    try{
+      if(skipped){const {error}=await supabase.from(tables.results).delete().in("session_id",playerSessions.map(session=>session.id)).eq("player_id",playerId).eq("row_id",rowId);if(error)throw error;}
+      else{const {error}=await supabase.from(tables.results).upsert({session_id:playerSessions[0].id,player_id:playerId,row_id:rowId,made,attempted},{onConflict:"session_id,row_id,player_id"});if(error)throw error;}
+      await loadDetails(grid.id);toast(skipped?"Série non réalisée : exclue des résultats et moyennes.":"Score enregistré ✓");
+    }catch(error:any){alert(error?.message||"Enregistrement impossible.");}finally{setSaving(false);}
+  }
+
   async function saveSession(session:Session){
     if(!grid||!canEdit)return;
     setSaving(true);
@@ -1092,7 +1109,7 @@ export default function TeamShootingGrids({
                             let tm=0,ta=0;
                             const byRow=displayRows.map(row=>{let m=0,a=0,n=0;for(const session of group.items){const r=results[session.id]?.[pid]?.[row.id];if(r&&r.made!=null&&r.attempted!=null){m+=safeInt(r.made);a+=safeInt(r.attempted);n++}}tm+=m;ta+=a;return {row,m,a,n}});
                             const player=players.find(p=>String(p.id)===pid);
-                            return <tr key={pid}><td style={{...td,textAlign:"left",fontWeight:900}}><span style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:8}}><span className="shooting-player-name" title={player?playerName(player):"Joueur"}>{player?playerName(player):"Joueur"}</span>{canEdit&&<button title="Supprimer uniquement ce joueur de cette session" onClick={()=>void deletePlayerFromSessionGroup(group.items,pid)} style={{border:"1px solid #E7C9C9",background:"#FFF7F7",color:"#A02A2A",width:22,height:22,borderRadius:7,cursor:"pointer",fontWeight:1000,lineHeight:1}}>×</button>}</span></td>{byRow.map(x=><td key={x.row.id} style={td}>{x.n?<><span>{x.m}/{x.a}</span><b className="shooting-percent">{pct(x.m,x.a)}%</b></>:"—"}</td>)}<td style={td}><b>{tm}</b></td><td style={td}><b>{ta}</b></td><td style={{...td,fontWeight:1000,color:BORDEAUX}}>{pct(tm,ta)}%</td></tr>
+                            return <tr key={pid}><td style={{...td,textAlign:"left",fontWeight:900}}><span style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:8}}><span className="shooting-player-name" title={player?playerName(player):"Joueur"}>{player?playerName(player):"Joueur"}</span>{canEdit&&<button title="Supprimer uniquement ce joueur de cette session" onClick={()=>void deletePlayerFromSessionGroup(group.items,pid)} style={{border:"1px solid #E7C9C9",background:"#FFF7F7",color:"#A02A2A",width:22,height:22,borderRadius:7,cursor:"pointer",fontWeight:1000,lineHeight:1}}>×</button>}</span></td>{byRow.map(x=><td key={x.row.id} style={td}>{canEdit?<><input key={`${x.m}:${x.a}:${x.n}`} aria-label={`Score ${player?playerName(player):"Joueur"} — ${x.row.name}`} title="Score (ex. 7/10) ou — : non réalisé" type="text" defaultValue={x.n?`${x.m}/${x.a}`:"—"} disabled={saving} onFocus={event=>event.target.select()} onBlur={event=>{const original=x.n?`${x.m}/${x.a}`:"—";if(event.target.value.trim()!==original)void editSeriesScore(group.items,pid,x.row.id,event.target.value);}} onKeyDown={event=>{if(event.key==="Enter")event.currentTarget.blur();if(event.key==="Escape"){event.currentTarget.value=x.n?`${x.m}/${x.a}`:"—";event.currentTarget.blur();}}} style={{width:"100%",minWidth:0,padding:2,border:0,background:"transparent",textAlign:"center",font:"inherit"}}/>{x.n>0&&<b className="shooting-percent">{pct(x.m,x.a)}%</b>}</>:x.n?<><span>{x.m}/{x.a}</span><b className="shooting-percent">{pct(x.m,x.a)}%</b></>:"—"}</td>)}<td style={td}><b>{tm}</b></td><td style={td}><b>{ta}</b></td><td style={{...td,fontWeight:1000,color:BORDEAUX}}>{pct(tm,ta)}%</td></tr>
                           })}</tbody>
                         </table>
                       </div>
