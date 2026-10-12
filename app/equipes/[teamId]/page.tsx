@@ -26,6 +26,7 @@ import TeamAvailabilityLoad from "@/components/equipes/TeamAvailabilityLoad";
 import TeamResourcesPanel from "@/components/equipes/TeamResourcesPanel";
 import TeamActivityPanel from "@/components/equipes/TeamActivityPanel";
 import { syncCompetitionCalendar } from "@/lib/competition-calendar";
+import LnbPlayerStats from "@/components/equipes/LnbPlayerStats";
 import TeamFfbbCompetition from "@/components/equipes/TeamFfbbCompetition";
 import ActionClipsModal, { type ClipAction } from "@/components/prise-stats-pro/ActionClipsModal";
 import { type VideoSyncState, NATIVE_SYNC, normalizeSync } from "@/lib/video-sync";
@@ -1601,7 +1602,7 @@ export default function EquipeDetailPage({
               </div>
             </section>
 
-            <TeamFfbbCompetition key={`${teamId}:${team.competitionSource || "ffbb"}`} teamId={teamId} source={team.competitionSource || "ffbb"} niveau={team.niveau} onSourceChange={isOwner ? async source => { const supabase = createClient(); const { data: { user } } = await supabase.auth.getUser(); if (!user) throw new Error("Connexion requise."); const existing = await supabase.from("teams").select("metadata").eq("id", teamId).eq("user_id", user.id).single(); if (existing.error) throw existing.error; const saved = await supabase.from("teams").update({ metadata: { ...existing.data.metadata, competitionSource: source } }).eq("id", teamId).eq("user_id", user.id).select("id"); if (saved.error) throw saved.error; if (!saved.data?.length) throw new Error("Source non enregistrée."); await reload(); setCompetitionRevision(value => value + 1); } : undefined} onConnected={() => setCompetitionRevision(value => value + 1)} />
+            <TeamFfbbCompetition key={`${teamId}:${team.competitionSource || "ffbb"}`} teamId={teamId} source={team.competitionSource || "ffbb"} niveau={team.niveau} onSourceChange={isOwner ? async source => { const supabase = createClient(); const { data: { user } } = await supabase.auth.getUser(); if (!user) throw new Error("Connexion requise."); const existing = await supabase.from("teams").select("metadata").eq("id", teamId).eq("user_id", user.id).single(); if (existing.error) throw existing.error; const saved = await supabase.from("teams").update({ metadata: { ...existing.data.metadata, competitionSource: source } }).eq("id", teamId).eq("user_id", user.id).select("id"); if (saved.error) throw saved.error; if (!saved.data?.length) throw new Error("Source non enregistrée."); await reload(); setCompetitionRevision(value => value + 1); } : undefined} onConnected={() => { void reload(); setCompetitionRevision(value => value + 1); }} />
 
                         {/* ---------- STAFF ---------- */}
             <TeamStaffManager
@@ -1673,6 +1674,7 @@ export default function EquipeDetailPage({
 
         {activeTab === "stats" && (
           <div className="team-tab-panel stats-panel">
+            {team.competitionSource === "lnb" && <LnbPlayerStats teamId={teamId} revision={competitionRevision} onProfilesCreated={reload} />}
             <LiveStatsSourceBanner dashboard={dashboard} />
             <MatchCategoryTabs value={statsMatchCategory} onChange={setStatsMatchCategory} />
             {dashboard.statRows.length === 0 && (team.statsHistory || []).length > 0 && (

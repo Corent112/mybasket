@@ -33,6 +33,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode, MouseEvent as RME, TouchEvent as RTE } from "react";
 import { createClient } from "@/lib/supabase/client";
+import OfficialScoutingImport from "@/components/scouting/OfficialScoutingImport";
+import { normalizeLnbName } from "@/lib/lnb-player-stats";
 import { getTeams } from "@/lib/equipes-store";
 
 const K_SEL = "mybasket_management_team";
@@ -75,6 +77,7 @@ type ImportantStatRow = { id: string; number: string; player: string; stat: stri
 type ImportantStatTable = { id: string; title: string; rows: ImportantStatRow[] };
 
 type Scouting = {
+  officialSourceUrl?: string;
   team: string; classement: string; bilan: string; serie: string; ptsFor: string; ptsAgainst: string; ortg: string; drtg: string; pace: string;
   opponentLogo?: string;
   attackSummary?: string;
@@ -402,7 +405,27 @@ export default function ScoutingModule() {
     if (!roster.length) { window.alert("Aucun effectif trouvé pour cette équipe."); return; }
     patch({ players: [...sc.players, ...roster] });
   };
-  const autoFill = () => window.alert("Mode automatique : la récupération effectif/stats depuis des bases publiques nécessite un connecteur serveur (API/fournisseur). L'interface est prête — branche un endpoint et je pré-remplis le scouting.");
+  const importOfficial = (calendar: any, officialPlayers: any[]) => {
+    const games = (calendar.matches || []).filter((g: any) => g.ourScore != null && g.opponentScore != null);
+    const wins = games.filter((g: any) => g.ourScore > g.opponentScore).length;
+    const losses = games.filter((g: any) => g.ourScore < g.opponentScore).length;
+    const value = (v: unknown) => v == null ? "" : String(v);
+    const players = [...sc.players];
+    for (const row of officialPlayers) {
+      const name = `${row.person.first_name} ${row.person.family_name}`.trim();
+      const exact = players.filter(p => normalizeLnbName(p.name) === normalizeLnbName(name));
+      const id = `lnb:${new URL(calendar.sourceUrl).searchParams.get("tid")}:${row.person.external_id}`;
+      const existing = players.find(p => p.id === id) || (exact.length === 1 ? exact[0] : undefined);
+      const mapped: ScoutPlayer = {
+        id, name, role: "Rotation", strongHand: "", off: {}, def: {}, ...existing,
+        games: value(row.s_games), min: value(row.minutes_display), pts: value(row.s_points_average), reb: value(row.s_rebounds_total_average), orb: value(row.s_rebounds_offensive_average), ast: value(row.s_assists_average), stl: value(row.s_steals_average), to: value(row.s_turnovers_average), blk: value(row.s_blocks_average),
+        fg2m: value(row.s_two_pointers_made_average), fg2a: value(row.s_two_pointers_attempted_average), fg3m: value(row.s_three_pointers_made_average), fg3a: value(row.s_three_pointers_attempted_average), ftm: value(row.s_free_throws_made_average), fta: value(row.s_free_throws_attempted_average), photo: row.person.photo?.md || existing?.photo, num: row.player_role?.shirt_number ?? existing?.num ?? "", poste: row.player_role?.playing_position ?? existing?.poste ?? "", taille: row.person.height == null ? existing?.taille ?? "" : String(row.person.height), age: row.person.age == null ? existing?.age ?? "" : String(row.person.age),
+      };
+      const index = existing ? players.indexOf(existing) : -1;
+      if (index >= 0) players[index] = mapped; else players.push(mapped);
+    }
+    patch({ team: calendar.team, officialSourceUrl: calendar.sourceUrl, ...(games.length ? { bilan: `${wins} V / ${losses} D`, ptsFor: (games.reduce((sum: number, g: any) => sum + g.ourScore, 0) / games.length).toFixed(1), ptsAgainst: (games.reduce((sum: number, g: any) => sum + g.opponentScore, 0) / games.length).toFixed(1) } : {}), ...(officialPlayers.length ? { players } : {}) });
+  };
 
   // ---------- Playbook adverse (via la VRAIE plaquette) ----------
   const openPlaquette = (opts: { id?: string; title: string; kind: string; asSystem?: boolean; play?: OppPlay }) => {
@@ -460,7 +483,7 @@ export default function ScoutingModule() {
           <h3>Équipe — cahier de scouting</h3>
           <div className="sm-mode"><button className={sc.mode === "manuel" ? "on" : ""} onClick={() => patch({ mode: "manuel" })}>Manuel</button><button className={sc.mode === "auto" ? "on" : ""} onClick={() => patch({ mode: "auto" })}>Auto</button></div>
         </div>
-        {sc.mode === "auto" && <div className="sm-auto"><span>Renseigne équipe + compétition, puis récupère les données publiques.</span><button className="sm-btn dark sm" onClick={autoFill}>⟳ Récupérer</button></div>}
+        {sc.mode === "auto" && <OfficialScoutingImport key={teamId} initialUrl={sc.officialSourceUrl} onImport={importOfficial} />}
 
         <Field label="Équipe adverse"><input value={sc.team} onChange={(e) => patch({ team: e.target.value })} placeholder="Ex : Blois" /></Field>
 

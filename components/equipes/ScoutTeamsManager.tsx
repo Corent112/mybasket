@@ -109,6 +109,7 @@ export default function ScoutTeamsManager({ teams, onReload }: Props) {
                 </div>
                 <div className="stm-actions">
                   <button type="button" onClick={() => router.push(`/prise-stats-pro?scoutTeamId=${encodeURIComponent(team.id)}`)}>▶ Coder un match</button>
+                  <button type="button" onClick={() => router.push(`/equipes/${team.id}`)}>Fiche / données officielles</button>
                   <button type="button" onClick={() => setOpenTeamId(open ? null : team.id)}>{open ? "Fermer" : "Effectif"}</button>
                   <button type="button" className="danger" onClick={async () => {
                     if (!confirm(`Supprimer l'équipe scoutée « ${team.name} » et ses données liées ?`)) return;
@@ -120,10 +121,10 @@ export default function ScoutTeamsManager({ teams, onReload }: Props) {
                     <div className="stm-roster-head"><b>Effectif scouting</b><button type="button" onClick={() => setPlayerFor(team.id)}>＋ Ajouter un joueur</button></div>
                     <div className="stm-players">
                       {(team.players || []).map((player) => (
-                        <div key={player.id} className="stm-player">
+                        <a key={player.id} className="stm-player" href={`/equipes/${team.id}/${player.id}`} style={{textDecoration:"none",color:"inherit"}}>
                           <div className="stm-avatar">{player.photo ? <img src={player.photo} alt="" /> : <span>{player.firstName?.[0]}{player.lastName?.[0]}</span>}</div>
                           <div><b>#{player.num ?? "—"} {playerName(player)}</b><span>Poste {player.postePrincipal || "—"} · {player.taille || "—"} · {player.mainDominante || "Main à renseigner"}</span></div>
-                        </div>
+                        </a>
                       ))}
                       {!team.players?.length && <p>Aucun joueur. Ajoute l'effectif avant le premier scouting.</p>}
                     </div>

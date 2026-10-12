@@ -81,6 +81,7 @@ function mapPlayerRow(row: any, team?: Team): Player {
 
   return {
     ...base,
+    ...(row.metadata?.lnbExternalId ? { lnbExternalId: row.metadata.lnbExternalId } : {}),
     id: str(row.id),
     supabasePlayerId: str(row.id),
     firstName: firstName || str(row.name).split(" ")[0] || "",
@@ -147,6 +148,10 @@ function mapTeamRow(row: any): Team {
 
   return {
     ...base,
+    ...(row.metadata?.lnbPlayerLinks ? { lnbPlayerLinks: row.metadata.lnbPlayerLinks } : {}),
+    teamType: row.team_type ?? row.metadata?.teamType ?? "coached",
+    isScoutTeam: row.team_type === "scout" || row.metadata?.isScoutTeam === true,
+    scout: row.team_type === "scout" || row.metadata?.scout === true,
     id: str(row.id),
     supabaseTeamId: str(row.id),
     clubId: row.club_id ?? row.clubId ?? null,

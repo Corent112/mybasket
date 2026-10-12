@@ -13,6 +13,7 @@ import { Jersey, Sparkline } from "../../../../components/equipes/Sparkline";
 import type { Player, Team } from "../../../../types/player";
 import { sendActionToMontageLibrary } from "@/lib/montage/favorite-source";
 import { openMontageDestination } from "@/lib/montage/incoming-clips";
+import LnbPlayerStats from "@/components/equipes/LnbPlayerStats";
 import { completedPlayerMatchRows, playerMatchCategoryOf, type PlayerMatchCategory, loadPlayerMatchStats } from "@/lib/player-match-stats";
 import { createClient } from "@/lib/supabase/client";
 import { useLivestatTags } from "@/lib/livestat-tags";
@@ -2096,6 +2097,8 @@ export default function JoueurDetailPage({
         {tab === "Informations" && (
           <InformationTab p={p} team={team} latestHeight={latestHeight} latestWeight={latestWeight} latestWingspan={latestWingspan} />
         )}
+
+        {(tab === "Aperçu" || tab === "Stats & Vidéo") && (statsTeamId === "all" ? playerTeams : [playerTeams.find(t => t.id === statsTeamId) || team]).filter(t => t?.competitionSource === "lnb").map(t => t && <LnbPlayerStats key={t.id} teamId={t.id} playerId={String(playerId)} />)}
 
         {tab === "Stats & Vidéo" && (
           <VideoRentabilityTab
