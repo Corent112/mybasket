@@ -25,6 +25,8 @@ import PlayerShootingGrids from "@/components/players/PlayerShootingGrids";
 import PoleSportsReportPanel from "@/components/equipes/PoleSportsReportPanel";
 import PolePlayerLongitudinalPanel from "@/components/equipes/PolePlayerLongitudinalPanel";
 import LocalClipPlayer from "@/components/video/LocalClipPlayer";
+import useLocalMatchVideoVersion from "@/hooks/useLocalMatchVideoVersion";
+import { getLocalMatchVideo } from "@/lib/local-video-registry";
 import { normalizeSync, resolveActionClipBounds } from "@/lib/video-sync";
 
 type PlayerExtra = Player & {
@@ -4639,7 +4641,9 @@ function VideoModal({
   useEffect(() => { setIdx(startIndex || 0); }, [startIndex]);
   useEffect(() => { setIdx(0); }, [pf]);
   const currentMatchId = current?.match_id != null ? String(current.match_id) : "";
-  const localMatchVideo = currentMatchId ? localMatchVideos[currentMatchId] : undefined;
+  useLocalMatchVideoVersion();
+  const registeredVideo=getLocalMatchVideo(currentMatchId);
+  const localMatchVideo = currentMatchId ? localMatchVideos[currentMatchId] ?? (registeredVideo?{url:registeredVideo.url,name:registeredVideo.file.name}:undefined) : undefined;
   const resolvedStart = current
     ? (current.resolved_clip_start ?? current.clip_start ?? current.video_time ?? current.possession_start ?? null)
     : null;
@@ -4647,7 +4651,7 @@ function VideoModal({
     ? (current.resolved_clip_end ?? current.clip_end ?? current.possession_end ?? null)
     : null;
   const nativeUrl = current ? actionVideoUrl(current) : null;
-  const url = nativeUrl || localMatchVideo?.url || null;
+  const url = localMatchVideo?.url || nativeUrl || null;
   const playable = !!current && resolvedStart != null && !!url && !actionIsYoutube({ ...current, video_url: url });
   const elig = current
     ? (playable
@@ -4864,8 +4868,9 @@ function VideoModal({
                 e.currentTarget.value = "";
               }}
             />
-            {current && nativeUrl && actionHasClip(current) && current.match_id ? (
+            {current && (!nativeUrl || nativeUrl.startsWith("blob:")) && actionHasClip(current) && current.match_id ? (
               <LocalClipPlayer
+                key={currentMatchId}
                 clip={current}
                 teamId={teamId}
                 autoPlay
