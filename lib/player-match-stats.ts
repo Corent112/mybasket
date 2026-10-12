@@ -36,7 +36,12 @@ export async function loadPlayerMatchStats(supabase: SupabaseClient, teamId: str
     }
   }
   const resolvedRows=rows.map(row=>{
-    const saved=matchesById.get(String(row.match_id))?.project_state?.minutesByPlayer;
+    const state=matchesById.get(String(row.match_id))?.project_state;
+    const actions=Array.isArray(state?.actions)?state.actions:[];
+    const hasLineups=actions.some((action:any)=>Array.isArray(action.lineup)&&action.lineup.length>0);
+    const plusMinus=row.plus_minus??(hasLineups?actions.reduce((sum:number,action:any)=>Array.isArray(action.lineup)&&action.lineup.includes(String(row.player_id))?sum+ptsOf(action)-themPtsOf(action):sum,0):null);
+    row={...row,plus_minus:plusMinus};
+    const saved=state?.minutesByPlayer;
     if(!saved||!Object.prototype.hasOwnProperty.call(saved,String(row.player_id)))return row;
     const raw=saved[String(row.player_id)];
     if(raw===null||raw===""||typeof raw==="boolean")return row;
@@ -84,4 +89,50 @@ export function summarizePlayerMatchRows(rows: Record<string, any>[]) {
     current.ast += stat(row.ast); current.st += stat(row.stl); current.to += stat(row.turnovers); current.bs += stat(row.blk); current.pf += stat(row.pf);
   }
   return players;
+}
+
+function ptsOf(a: any) {
+  if (a.actionType === 'faute-technique' && a.foulOutcome === 'technical-for') return a.ftMade || 0;
+  // Une antisportive provoquée donne sa réparation à notre équipe, quel que soit
+  // le contexte depuis lequel elle a été saisie (attaque ou défense).
+  if (a.actionType === 'faute-provoquee' && (a.specialCase === 'unsportsmanlike' || a.specialCase === 'unsportsmanlike-2pts+1lf' || a.specialCase === 'unsportsmanlike-3pts+1lf')) {
+    let p = a.ftMade || 0;
+    if (a.specialCase === 'unsportsmanlike-2pts+1lf') p += 2;
+    else if (a.specialCase === 'unsportsmanlike-3pts+1lf') p += 3;
+    return p;
+  }
+  if (a.context === 'defense') return 0;
+
+  // Faute provoquée sur panier marqué :
+  // 2+1 = 2 points déjà marqués + 1 LF éventuel
+  // 3+1 = 3 points déjà marqués + 1 LF éventuel
+  if (a.actionType === 'faute-provoquee') {
+    if (a.specialCase === '2pts+1lf') return 2 + (a.ftMade || 0);
+    if (a.specialCase === '3pts+1lf') return 3 + (a.ftMade || 0);
+    if (a.specialCase === 'unsportsmanlike-2pts+1lf') return 2 + (a.ftMade || 0);
+    if (a.specialCase === 'unsportsmanlike-3pts+1lf') return 3 + (a.ftMade || 0);
+  }
+
+  let p = 0;
+  if (a.shotType === 'LF') p += a.ftMade || 0;
+  else if (a.actionType === 'tir' && a.shotResult === 'made') { if (a.shotType === '2PTS') p = 2; else if (a.shotType === '3PTS') p = 3; }
+  if (a.actionType === 'tir' && a.shotType !== 'LF' && a.shotResult === 'made' && a.specialCase !== 'aucun') p += a.ftMade || 0;
+  return p;
+}
+function themPtsOf(a: any) {
+  if (a.actionType === 'faute-technique' && a.foulOutcome === 'technical-against') return a.ftMade || 0;
+  if (a.actionType === 'faute-commise' && (a.specialCase === 'unsportsmanlike-committed' || a.specialCase === 'unsportsmanlike-committed-2pts+1lf' || a.specialCase === 'unsportsmanlike-committed-3pts+1lf')) {
+    let p = a.ftMade || 0;
+    if (a.specialCase === 'unsportsmanlike-committed-2pts+1lf') p += 2;
+    else if (a.specialCase === 'unsportsmanlike-committed-3pts+1lf') p += 3;
+    return p;
+  }
+  if (a.context === 'defense' && a.actionType === 'tir' && a.shotResult === 'made')
+    return a.shotType === '3PTS' ? 3 : a.shotType === 'LF' ? 1 : 2;
+  if (a.context === 'defense' && a.actionType === 'faute-commise') {
+    let p = a.ftMade || 0;
+    if (a.specialCase === '2pts+1lf') p += 2; else if (a.specialCase === '3pts+1lf') p += 3;
+    return p;
+  }
+  return 0;
 }

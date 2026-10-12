@@ -154,6 +154,8 @@ type PlayerBilan = {
 type PlayerLiveMatchLine = {
   category: ReturnType<typeof playerMatchCategoryOf>;
   minutes: number | null;
+  eval: number;
+  plusMinus: number | null;
   hasScore: boolean;
   offReb: number;
   defReb: number;
@@ -720,6 +722,8 @@ function computeLiveStats(rows: any[], matchesById: Map<string, any>): PlayerLiv
       minutes: row.minutes_seconds != null ? statNumber(row.minutes_seconds) / 60
         : [row.min, row.minutes, row.playing_time, row.playing_time_minutes, row.time_played].some(value => value != null && value !== "")
           ? statMinutes([row.min, row.minutes, row.playing_time, row.playing_time_minutes, row.time_played].find(value => value != null && value !== "")) : null,
+      eval:statNumber(row.pts)+offReb+defReb+statNumber(row.ast)+statNumber(row.stl)+statNumber(row.blk)-Math.max(0,statNumber(row.p2a)-statNumber(row.p2m))-Math.max(0,statNumber(row.p3a)-statNumber(row.p3m))-Math.max(0,statNumber(row.fta)-statNumber(row.ftm))-statNumber(row.turnovers)-statNumber(row.pf),
+      plusMinus:row.plus_minus==null?null:statNumber(row.plus_minus),
       offReb, defReb,
       pts: statNumber(row.pts),
       reb: statNumber(row.reb) || offReb + defReb,
@@ -3487,23 +3491,24 @@ function PlayerMatchStatsTable({ matches, loading = false, error = "" }: { match
     {loading ? <p role="status">Chargement des statistiques…</p> : error ? <p role="alert">Statistiques indisponibles : {error}</p> : rows.length === 0 ? <p className="empty-small">{matches.length ? "Aucun match ne correspond à la recherche." : "Aucune statistique enregistrée pour ce joueur sur les matchs sélectionnés."}</p> :
       <div style={{ overflowX: "auto" }} tabIndex={0} aria-label="Tableau des matchs, défilement horizontal">
         <table className="player-match-table" style={{ width: "100%", whiteSpace: "nowrap" }}>
-          <thead><tr>{["Date", "Adversaire", "Type", "Score", "Présence", "MIN", "PTS", "2PTS", "3PTS", "LF", "% Tir", "% 3PTS", "% LF", "RO", "RD", "REB", "PD", "INT", "CTR", "BP", "FP"].map(label => <th scope="col" key={label} style={{ position: "sticky", top: 0, background: "#fbf7f4", color: "#6b1a2c", zIndex: 1 }}>{label}</th>)}</tr></thead>
+          <thead><tr>{["Date", "Adversaire", "Type", "Score", "MIN", "PTS", "2PTS", "3PTS", "LF", "% Tir", "% 3PTS", "% LF", "RO", "RD", "REB", "PD", "INT", "CTR", "BP", "FP", "Éval", "+/−"].map(label => <th scope="col" key={label} style={{ position: "sticky", top: 0, background: "#fbf7f4", color: "#6b1a2c", zIndex: 1 }}>{label}</th>)}</tr></thead>
           <tbody>{rows.map(match => <tr key={match.matchId}>
             <td>{fmtDate(match.date)}</td><th scope="row" style={{ textAlign: "left" }}>{match.opponent || "—"}</th><td>{categoryLabel(match.category)}</td>
-            <td>{match.hasScore ? `${match.usScore}–${match.themScore}` : "—"}</td><td>{match.present ? "Présent" : "Absent"}</td>
+            <td>{match.hasScore ? `${match.usScore}–${match.themScore}` : "—"}</td>
             <td>{match.present ? time(match.minutes) : "—"}</td><td><b>{match.present ? match.pts : "—"}</b></td>
-            {[`${match.p2m}/${match.p2a}`, `${match.p3m}/${match.p3a}`, `${match.ftm}/${match.fta}`, percent(match.p2m + match.p3m, match.p2a + match.p3a), percent(match.p3m, match.p3a), percent(match.ftm, match.fta), match.offReb, match.defReb, match.reb, match.ast, match.stl, match.blk, match.to, match.pf].map((value, index) => <td key={index}>{match.present ? value : "—"}</td>)}
+            {[`${match.p2m}/${match.p2a}`, `${match.p3m}/${match.p3a}`, `${match.ftm}/${match.fta}`, percent(match.p2m + match.p3m, match.p2a + match.p3a), percent(match.p3m, match.p3a), percent(match.ftm, match.fta), match.offReb, match.defReb, match.reb, match.ast, match.stl, match.blk, match.to, match.pf, match.eval, match.plusMinus==null?"—":match.plusMinus>0?`+${match.plusMinus}`:match.plusMinus].map((value, index) => <td key={index}>{match.present ? value : "—"}</td>)}
           </tr>)}</tbody>
           <tfoot>{["Totaux", "Moyennes"].map(label => {
             const average = label === "Moyennes";
             const value = (key: keyof PlayerLiveMatchLine) => average ? (games ? number(sum(key) / games) : "—") : number(sum(key));
             const pair = (made: keyof PlayerLiveMatchLine, attempts: keyof PlayerLiveMatchLine) => `${value(made)}/${value(attempts)}`;
             return <tr key={label} style={{ background: average ? "#fff4f6" : "#f6f7f9", fontWeight: 800, ...(average ? { borderTop:"2px solid #d4a24c" } : {}) }}>
-              <th scope="row" colSpan={4} style={{ textAlign: "left" }}>{label}</th><td>{games} MJ</td>
+              <th scope="row" colSpan={4} style={{ textAlign: "left" }}>{label} · {games} MJ</th>
               <td>{allMinutesKnown ? time(average ? sum("minutes") / games : sum("minutes")) : "—"}</td><td>{value("pts")}</td>
               <td>{pair("p2m", "p2a")}</td><td>{pair("p3m", "p3a")}</td><td>{pair("ftm", "fta")}</td>
               <td>{percent(sum("p2m") + sum("p3m"), sum("p2a") + sum("p3a"))}</td><td>{percent(sum("p3m"), sum("p3a"))}</td><td>{percent(sum("ftm"), sum("fta"))}</td>
-              {(["offReb", "defReb", "reb", "ast", "stl", "blk", "to", "pf"] as const).map(key => <td key={key}>{value(key)}</td>)}
+              {(["offReb", "defReb", "reb", "ast", "stl", "blk", "to", "pf", "eval"] as const).map(key => <td key={key}>{value(key)}</td>)}
+              <td>{played.length>0&&played.every(match=>match.plusMinus!=null)?value("plusMinus"):"—"}</td>
             </tr>;
           })}</tfoot>
         </table>
