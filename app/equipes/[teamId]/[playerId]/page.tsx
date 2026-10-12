@@ -737,18 +737,7 @@ function computeLiveStats(rows: any[], matchesById: Map<string, any>): PlayerLiv
 
   matches.sort((a, b) => String(a.date).localeCompare(String(b.date)));
 
-  const totalMinutes = presentRows.reduce(
-    (sum, row) =>
-      sum +
-      statMinutes(
-        row.min ??
-          row.minutes ??
-          row.playing_time ??
-          row.playing_time_minutes ??
-          row.time_played,
-      ),
-    0,
-  );
+  const totalMinutes = matches.filter(match=>match.present).reduce((sum,match)=>sum+(match.minutes??0),0);
 
   return {
     hasData: allRows.length > 0,
@@ -3484,7 +3473,7 @@ function PlayerMatchStatsTable({ matches, loading = false, error = "" }: { match
     return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`;
   };
   const percent = (made: number, attempted: number) => attempted ? `${percentStat(made, attempted)} %` : "—";
-  return <section className="light-card" style={{ marginBottom: 18, minWidth: 0 }} aria-label="Statistiques du joueur par match">
+  return <section className="light-card player-match-card" style={{ marginBottom: 18, minWidth: 0 }} aria-label="Statistiques du joueur par match">
     <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 12, justifyContent: "space-between", marginBottom: 12 }}>
       <div><h3 style={{ marginBottom: 4 }}>Statistiques par match <span>({rows.length})</span></h3><p style={{ margin: 0, fontSize: 12, color: "#737780" }}>{games} match{games > 1 ? "s" : ""} joué{games > 1 ? "s" : ""} · moyennes = totaux ÷ matchs joués · temps de jeu en min:s</p></div>
       <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
@@ -3494,9 +3483,9 @@ function PlayerMatchStatsTable({ matches, loading = false, error = "" }: { match
       </div>
     </div>
     {loading ? <p role="status">Chargement des statistiques…</p> : error ? <p role="alert">Statistiques indisponibles : {error}</p> : rows.length === 0 ? <p className="empty-small">{matches.length ? "Aucun match ne correspond à la recherche." : "Aucune statistique enregistrée pour ce joueur sur les matchs sélectionnés."}</p> :
-      <div style={{ overflowX: "auto", maxHeight: 520 }} tabIndex={0} aria-label="Tableau des matchs, défilement horizontal">
-        <table className="phys-light" style={{ minWidth: 1120, width: "100%", whiteSpace: "nowrap" }}>
-          <thead><tr>{["Date", "Adversaire", "Type", "Score", "Présence", "MIN", "PTS", "2PTS", "3PTS", "LF", "% Tir", "% 3PTS", "% LF", "RO", "RD", "REB", "PD", "INT", "CTR", "BP", "FP"].map(label => <th scope="col" key={label} style={{ position: "sticky", top: 0, background: "#6b1a2c", color: "#fff", zIndex: 1 }}>{label}</th>)}</tr></thead>
+      <div style={{ overflowX: "auto" }} tabIndex={0} aria-label="Tableau des matchs, défilement horizontal">
+        <table className="player-match-table" style={{ width: "100%", whiteSpace: "nowrap" }}>
+          <thead><tr>{["Date", "Adversaire", "Type", "Score", "Présence", "MIN", "PTS", "2PTS", "3PTS", "LF", "% Tir", "% 3PTS", "% LF", "RO", "RD", "REB", "PD", "INT", "CTR", "BP", "FP"].map(label => <th scope="col" key={label} style={{ position: "sticky", top: 0, background: "#fbf7f4", color: "#6b1a2c", zIndex: 1 }}>{label}</th>)}</tr></thead>
           <tbody>{rows.map(match => <tr key={match.matchId}>
             <td>{fmtDate(match.date)}</td><th scope="row" style={{ textAlign: "left" }}>{match.opponent || "—"}</th><td>{categoryLabel(match.category)}</td>
             <td>{match.hasScore ? `${match.usScore}–${match.themScore}` : "—"}</td><td>{match.present ? "Présent" : "Absent"}</td>
@@ -3507,7 +3496,7 @@ function PlayerMatchStatsTable({ matches, loading = false, error = "" }: { match
             const average = label === "Moyennes";
             const value = (key: keyof PlayerLiveMatchLine) => average ? (games ? number(sum(key) / games) : "—") : number(sum(key));
             const pair = (made: keyof PlayerLiveMatchLine, attempts: keyof PlayerLiveMatchLine) => `${value(made)}/${value(attempts)}`;
-            return <tr key={label} style={{ background: average ? "#fff4f6" : "#f6f7f9", fontWeight: 800, ...(average ? { position: "sticky" as const, bottom: 0, zIndex: 2 } : {}) }}>
+            return <tr key={label} style={{ background: average ? "#fff4f6" : "#f6f7f9", fontWeight: 800, ...(average ? { borderTop:"2px solid #d4a24c" } : {}) }}>
               <th scope="row" colSpan={4} style={{ textAlign: "left" }}>{label}</th><td>{games} MJ</td>
               <td>{allMinutesKnown ? time(average ? sum("minutes") / games : sum("minutes")) : "—"}</td><td>{value("pts")}</td>
               <td>{pair("p2m", "p2a")}</td><td>{pair("p3m", "p3a")}</td><td>{pair("ftm", "fta")}</td>
@@ -3518,6 +3507,19 @@ function PlayerMatchStatsTable({ matches, loading = false, error = "" }: { match
         </table>
       </div>}
     <p style={{ marginBottom: 0, fontSize: 11, color: "#737780" }}>RO / RD : rebonds offensifs / défensifs · PD : passes décisives · INT : interceptions · CTR : contres · BP : balles perdues · FP : fautes personnelles</p>
+    <style jsx>{`
+      .player-match-card{padding:22px!important;border:1px solid #e9ded8!important;border-radius:18px!important;box-shadow:0 8px 28px #35142105}
+      .player-match-card h3{font-family:Arial,sans-serif!important;font-size:19px!important;font-weight:750!important;text-transform:none!important;letter-spacing:0!important;color:#6b1a2c}
+      .player-match-table{width:100%;border-collapse:separate!important;border-spacing:0;min-width:1450px;font:12px Arial,sans-serif!important;font-variant-numeric:tabular-nums}
+      .player-match-table th,.player-match-table td{padding:13px 9px!important;text-align:center;border:0!important;border-bottom:1px solid #eee7e2!important;white-space:nowrap;line-height:1.4;font-size:12px!important}
+      .player-match-table thead th{font-size:10px!important;font-weight:750;letter-spacing:.03em;min-width:42px}
+      .player-match-table tbody th{text-transform:none!important;font-weight:700!important;color:#302328!important;background:transparent!important}
+      .player-match-table tbody tr:nth-child(even){background:#fcfaf8}.player-match-table tbody tr:hover{background:#fff5e8}
+      .player-match-table td:first-child,.player-match-table th:first-child{text-align:left;min-width:104px}
+      .player-match-table tfoot th{font-family:Arial,sans-serif!important;font-size:12px!important;color:#6b1a2c!important;text-transform:none!important;letter-spacing:0}
+      .player-match-table tfoot td{font-weight:750}.player-match-table tfoot tr:last-child td,.player-match-table tfoot tr:last-child th{border-bottom:0!important}
+      @media(max-width:760px){.player-match-card{padding:14px!important}.player-match-table{min-width:1350px}}
+    `}</style>
   </section>;
 }
 

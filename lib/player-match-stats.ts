@@ -35,7 +35,16 @@ export async function loadPlayerMatchStats(supabase: SupabaseClient, teamId: str
       matchOffset += page.length;
     }
   }
-  return { rows, matchesById };
+  const resolvedRows=rows.map(row=>{
+    const saved=matchesById.get(String(row.match_id))?.project_state?.minutesByPlayer;
+    if(!saved||!Object.prototype.hasOwnProperty.call(saved,String(row.player_id)))return row;
+    const raw=saved[String(row.player_id)];
+    if(raw===null||raw===""||typeof raw==="boolean")return row;
+    const seconds=Number(raw);
+    if(!Number.isFinite(seconds)||seconds<0)return row;
+    return {...row,minutes_seconds:seconds};
+  });
+  return { rows:resolvedRows, matchesById };
 }
 
 export type PlayerMatchCategory = "all" | "championship" | "cup" | "friendly";
