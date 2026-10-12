@@ -6196,9 +6196,24 @@ export default function PriseStatsProPage() {
         expectedFilename={videoFilename || null}
         onChange={(s) => setVideoSync(s)}
         onPickVideoFile={(f) => onPickVideoFile(f)}
-        onValidate={() => {
+        onValidate={(mediaTime) => {
           const validated: VideoSyncState = { ...videoSyncRef.current, validated: true };
+          const marker=validated.periodMarkers?.[String(q)];
+          // Le lecteur de calage est distinct du lecteur de codage : transmettre
+          // le repère de la période active, pas le dernier curseur de prévisualisation.
+          const start=marker?.start ?? validated.periodMarkers?.['1']?.start ?? mediaTime;
+          const target=Math.max(0,Number(start));
+          pauseVideo();
+          runningRef.current=false;
+          setRunning(false);
           setVideoSync(validated);
+          inspectionVideoTimeRef.current=target;
+          lastProjectVideoTimeRef.current=target;
+          seekVideo(target);
+          if(actions.length===0){
+            possessionStartRef.current=marker?.sourceStart ?? 0;
+            possessionEndOverrideRef.current=null;
+          }
           persistProjectState();
           setShowVideoSync(false);
           flash('Synchronisation vidéo validée ✓');
