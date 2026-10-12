@@ -186,6 +186,8 @@ function normalizePlayerRow(row: any): Player {
     ...data,
     id: row.id,
     supabasePlayerId: row.id,
+    primaryTeamId: String(row.team_id || ""),
+    additionalTeamIds: Array.isArray(data.additionalTeamIds) ? data.additionalTeamIds.filter((id: unknown): id is string => typeof id === "string" && id !== row.team_id) : [],
     supabase_player_id: row.id,
     player_id: row.id,
     firstName: row.first_name ?? data.firstName ?? "",
@@ -593,7 +595,7 @@ export async function getTeams(): Promise<Team[]> {
     supabase
       .from("players")
       .select("*")
-      .in("team_id", teamIds)
+      .or(`team_id.in.(${teamIds.join(",")}),user_id.eq.${userId}`)
       .order("created_at", { ascending: true }),
     supabase
       .from("team_matches")
@@ -617,9 +619,12 @@ export async function getTeams(): Promise<Team[]> {
   const statsByTeam = new Map<string, MatchRecord[]>();
 
   (playersData ?? []).forEach((row: any) => {
-    const currentTeamId = String(row.team_id);
-    if (!playersByTeam.has(currentTeamId)) playersByTeam.set(currentTeamId, []);
-    playersByTeam.get(currentTeamId)?.push(normalizePlayerRow(row));
+    const player = normalizePlayerRow(row);
+    for (const currentTeamId of new Set([String(row.team_id), ...(player.additionalTeamIds || [])])) {
+      if (!teamIds.includes(currentTeamId)) continue;
+      if (!playersByTeam.has(currentTeamId)) playersByTeam.set(currentTeamId, []);
+      playersByTeam.get(currentTeamId)?.push(player);
+    }
   });
 
   (matchesData ?? []).forEach((row: any) => {
@@ -690,6 +695,12 @@ export async function deleteTeam(teamId: string): Promise<void> {
 
   if (!isUuid(teamId)) {
     throw new Error(`Identifiant équipe invalide : ${teamId}`);
+  }
+
+  const { data: primaryPlayers, error: primaryPlayersError } = await supabase.from("players").select("metadata").eq("team_id", teamId);
+  if (primaryPlayersError) throw primaryPlayersError;
+  if ((primaryPlayers || []).some((row: { metadata?: { additionalTeamIds?: unknown } }) => Array.isArray(row.metadata?.additionalTeamIds) && row.metadata.additionalTeamIds.length)) {
+    throw new Error("Cette équipe contient des joueurs rattachés à d’autres équipes. Retirez leurs rattachements avant de supprimer l’équipe principale.");
   }
 
   // Suppression irréversible : on nettoie les données de management liées
@@ -823,27 +834,29 @@ export async function upsertPlayer(
 
   const isNewPlayer = !isUuid(player.id) && !isUuid((player as any).supabasePlayerId);
   if (isNewPlayer) {
-    const { count, error: countError } = await supabase
-      .from("players")
-      .select("id", { count: "exact", head: true })
-      .eq("team_id", teamId)
-      .not("status", "eq", "Archivé");
-
-    if (countError) {
-      logSupabaseError("Erreur comptage effectif", countError, { teamId });
-      throw countError;
-    }
-
-    if ((count ?? 0) >= 15) {
-      throw new Error(
-        "Effectif complet : une équipe MyBasket est limitée à 15 joueurs actifs."
-      );
+    const team = await getTeam(teamId);
+    if ((team?.players.filter(player => String(player.statut) !== "Archivé").length ?? 0) >= 15) {
+      throw new Error("Effectif complet : une équipe MyBasket est limitée à 15 joueurs actifs.");
     }
   }
 
   // Les données métier restent rattachées au propriétaire de l'équipe,
   // même lorsqu'un collaborateur réalise l'action.
-  const payload = playerPayload(teamId, player, existingTeam.user_id || userId);
+  let primaryTeamId = teamId;
+  let playerOwnerId = existingTeam.user_id || userId;
+  let storedMetadata: Record<string, unknown> = {};
+  let additionalTeamIds: string[] = [];
+  if (!isNewPlayer) {
+    const { data: stored, error } = await supabase.from("players").select("team_id,user_id,metadata").eq("id", player.supabasePlayerId || player.id).single();
+    if (error) throw error;
+    primaryTeamId = stored.team_id;
+    playerOwnerId = stored.user_id;
+    storedMetadata = stored.metadata || {};
+    additionalTeamIds = Array.isArray(storedMetadata.additionalTeamIds) ? storedMetadata.additionalTeamIds as string[] : [];
+    if (primaryTeamId !== teamId && !additionalTeamIds.includes(teamId)) throw new Error("Ce joueur n’est pas rattaché à cette équipe.");
+  }
+  const payload = playerPayload(primaryTeamId, player, playerOwnerId);
+  payload.metadata = { ...storedMetadata, ...player, primaryTeamId, additionalTeamIds };
 
   // Pour un nouveau joueur, on laisse PostgreSQL utiliser gen_random_uuid().
   // Pour un joueur existant, on conserve son UUID et on fait l'upsert.
@@ -928,6 +941,20 @@ export async function deletePlayer(
       );
     }
   }
+
+  const { data: storedPlayer, error: playerError } = await supabase.from("players").select("team_id,metadata,updated_at").eq("id", playerId).single();
+  if (playerError) throw playerError;
+  const linkedIds: string[] = Array.isArray(storedPlayer.metadata?.additionalTeamIds) ? storedPlayer.metadata.additionalTeamIds : [];
+  if (storedPlayer.team_id !== teamId) {
+    if (!linkedIds.includes(teamId)) throw new Error("Ce joueur ne fait pas partie de cette équipe.");
+    let query = supabase.from("players").update({ metadata: { ...storedPlayer.metadata, additionalTeamIds: linkedIds.filter(id => id !== teamId) }, updated_at: new Date().toISOString() }).eq("id", playerId);
+    query = storedPlayer.updated_at == null ? query.is("updated_at", null) : query.eq("updated_at", storedPlayer.updated_at);
+    const { data, error } = await query.select("id");
+    if (error) throw error;
+    if (!data?.length) throw new Error("La fiche vient d’être modifiée. Actualisez puis réessayez.");
+    return;
+  }
+  if (linkedIds.length) throw new Error("Ce joueur appartient à plusieurs équipes. Retirez d’abord ses rattachements supplémentaires avant de supprimer sa fiche principale.");
 
   const { error } = await supabase
     .from("players")
@@ -1612,3 +1639,23 @@ export async function resetDemo(): Promise<void> {
 }
 
 export { uid };
+/** Rattache une identité existante, sans copier le joueur ni ses statistiques. */
+export async function attachExistingPlayer(playerId: string, targetTeamId: string): Promise<void> {
+  const supabase = createClient();
+  const userId = await getUserId();
+  const teams = await getTeams();
+  const target = teams.find(team => team.id === targetTeamId);
+  if (!target || target.ownerUserId !== userId) throw new Error("Le rattachement est réservé aux équipes dont vous êtes propriétaire.");
+  if (target.players.some(player => player.id === playerId)) return;
+  if (target.players.filter(player => player.statut !== ("Archivé" as string)).length >= 15) throw new Error("Effectif complet : 15 joueurs actifs maximum.");
+  const { data: row, error } = await supabase.from("players").select("id,team_id,user_id,metadata,updated_at").eq("id", playerId).eq("user_id", userId).single();
+  if (error) throw error;
+  if (!teams.some(team => team.id === row.team_id && team.ownerUserId === userId)) throw new Error("L’équipe principale du joueur doit vous appartenir.");
+  const metadata = row.metadata || {};
+  const additionalTeamIds = Array.from(new Set([...(Array.isArray(metadata.additionalTeamIds) ? metadata.additionalTeamIds : []), targetTeamId])).filter(id => id !== row.team_id);
+  let query = supabase.from("players").update({ metadata: { ...metadata, additionalTeamIds }, updated_at: new Date().toISOString() }).eq("id", playerId).eq("user_id", userId);
+  query = row.updated_at == null ? query.is("updated_at", null) : query.eq("updated_at", row.updated_at);
+  const result = await query.select("id");
+  if (result.error) throw result.error;
+  if (!result.data?.length) throw new Error("La fiche vient d’être modifiée. Actualisez puis réessayez.");
+}

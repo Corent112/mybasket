@@ -561,11 +561,13 @@ export default function MesEquipesPage() {
 
       const byTeam: Record<string, Player[]> = {};
       players.forEach((row) => {
-        const teamId = str(row.team_id);
-        const team = mappedTeams.find((t) => t.id === teamId);
-        if (!teamId) return;
-        if (!byTeam[teamId]) byTeam[teamId] = [];
-        byTeam[teamId].push(mapPlayerRow(row, team));
+        const additional = Array.isArray(row.metadata?.additionalTeamIds) ? row.metadata.additionalTeamIds : [];
+        for (const teamId of new Set<string>([str(row.team_id), ...additional])) {
+          const team = mappedTeams.find((t) => t.id === teamId);
+          if (!team) continue;
+          if (!byTeam[teamId]) byTeam[teamId] = [];
+          byTeam[teamId].push(mapPlayerRow(row, team));
+        }
       });
 
       mappedTeams.forEach((team) => {
@@ -751,6 +753,9 @@ export default function MesEquipesPage() {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) throw new Error("Non authentifie.");
 
+      const { data: primaryPlayers, error: primaryPlayersError } = await supabase.from("players").select("metadata").eq("team_id", t.id).eq("user_id", user.id);
+      if (primaryPlayersError) throw primaryPlayersError;
+      if ((primaryPlayers || []).some((row: { metadata?: { additionalTeamIds?: unknown } }) => Array.isArray(row.metadata?.additionalTeamIds) && row.metadata.additionalTeamIds.length)) throw new Error("Cette équipe contient des joueurs rattachés à d’autres équipes. Retirez leurs rattachements avant de supprimer l’équipe principale.");
       await supabase.from("players").delete().eq("team_id", t.id).eq("user_id", user.id);
       const { error } = await supabase.from("teams").delete().eq("id", t.id).eq("user_id", user.id);
 

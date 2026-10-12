@@ -3,7 +3,8 @@
 
 import { use, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { getPlayer, getTeam, upsertPlayer } from "../../../../lib/equipes-store";
+import { getPlayer, getTeam, getTeams, upsertPlayer } from "../../../../lib/equipes-store";
+import PlayerTeamAttachment from "@/components/equipes/PlayerTeamAttachment";
 import PlayerForm from "../../../../components/equipes/PlayerForm";
 import RadarChart from "../../../../components/equipes/RadarChart";
 import DonutChart from "../../../../components/equipes/DonutChart";
@@ -160,6 +161,7 @@ type PlayerLiveMatchLine = {
   offReb: number;
   defReb: number;
   matchId: string;
+  teamLabel: string;
   date: string;
   opponent: string;
   result: string;
@@ -711,6 +713,7 @@ function computeLiveStats(rows: any[], matchesById: Map<string, any>): PlayerLiv
 
     return {
       matchId,
+      teamLabel: match?.playerTeamLabel || "",
       category: playerMatchCategoryOf(match),
       date: match?.match_date ?? row.created_at ?? "",
       opponent: match?.opponent ?? "Adversaire",
@@ -935,6 +938,8 @@ export default function JoueurDetailPage({
   const [player, setPlayer] = useState<PlayerExtra | undefined>();
   const [team, setTeam] = useState<Team | undefined>();
   const [identityLoading, setIdentityLoading] = useState(true);
+  const [playerTeams, setPlayerTeams] = useState<Team[]>([]);
+  const [statsTeamId, setStatsTeamId] = useState("all");
   const [liveStats, setLiveStats] = useState<PlayerLiveStats>(EMPTY_LIVE_STATS);
   const [matchStatsLoading, setMatchStatsLoading] = useState(true);
   const [matchStatsError, setMatchStatsError] = useState("");
@@ -1016,6 +1021,8 @@ export default function JoueurDetailPage({
 
       setPlayer(playerData as PlayerExtra | undefined);
       setTeam(teamData);
+      const allTeams = await getTeams();
+      setPlayerTeams(allTeams.filter(item => item.players.some(p => p.id === playerId)));
     } catch (error) {
       console.error("Erreur chargement joueur:", error);
       setPlayer(undefined);
@@ -1026,6 +1033,8 @@ export default function JoueurDetailPage({
   }
 
   useEffect(() => {
+    setStatsTeamId("all");
+    setPlayerTeams([]);
     reload();
   }, [teamId, playerId]);
 
@@ -1206,7 +1215,10 @@ export default function JoueurDetailPage({
       setMatchStatsLoading(true);
       setMatchStatsError("");
       try {
-        const { rows: allTeamRows, matchesById } = await loadPlayerMatchStats(supabase, teamId);
+        const sourceTeamIds = statsTeamId === "all" ? Array.from(new Set([teamId, ...playerTeams.map(item => item.id)])) : [statsTeamId];
+        const loaded = await Promise.all(sourceTeamIds.map(id => loadPlayerMatchStats(supabase, id)));
+        const allTeamRows = loaded.flatMap(item => item.rows);
+        const matchesById = new Map(loaded.flatMap((item, index) => Array.from(item.matchesById.entries()).map(([id, match]) => [id, { ...match, playerTeamLabel: (() => { const source = playerTeams.find(t => t.id === sourceTeamIds[index]) || team; return source ? `${source.name} · ${source.cat}` : ""; })() }] as const)));
         if (!active) return;
         // Keep the existing rule: draft matches do not count in player statistics.
         const completedTeamRows = completedPlayerMatchRows(allTeamRows, matchesById);
@@ -1219,7 +1231,7 @@ export default function JoueurDetailPage({
 
         setLiveStats(computeLiveStats(currentPlayerRows, matchesById));
         setTeamPlayersStats(
-          computeTeamPlayersComparisonStats(completedTeamRows, team?.players ?? [])
+          computeTeamPlayersComparisonStats(completedTeamRows.filter(row => String(row.team_id) === teamId), team?.players ?? [])
         );
       } catch (error) {
         console.error("Erreur chargement stats joueur Supabase :", error);
@@ -1239,7 +1251,7 @@ export default function JoueurDetailPage({
     return () => {
       active = false;
     };
-  }, [supabase, teamId, playerId, team?.players]);
+  }, [supabase, teamId, playerId, team?.players, playerTeams, statsTeamId]);
 
   useEffect(() => {
     let active = true;
@@ -1374,10 +1386,11 @@ export default function JoueurDetailPage({
 
     async function loadPlayerActions() {
       try {
+        const sourceTeamIds = statsTeamId === "all" ? Array.from(new Set([teamId, ...playerTeams.map(item => item.id)])) : [statsTeamId];
         const { data, error } = await supabase
           .from("match_actions")
           .select("*")
-          .eq("team_id", teamId)
+          .in("team_id", sourceTeamIds)
           .or(
             `player_id.eq.${playerId},assist_player_id.eq.${playerId},rebound_player_id.eq.${playerId}`
           );
@@ -1442,7 +1455,7 @@ export default function JoueurDetailPage({
     return () => {
       active = false;
     };
-  }, [supabase, teamId, playerId]);
+  }, [supabase, teamId, playerId, playerTeams, statsTeamId]);
 
   const tfRentability = useMemo(
     () => computePlayerTempsFortRentability(playerActions),
@@ -2060,6 +2073,13 @@ export default function JoueurDetailPage({
               {t}
             </button>
           ))}
+        </div>
+
+        <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 8, margin: "0 0 18px" }}>
+          {(tab === "Aperçu" || tab === "Stats & Vidéo") && playerTeams.length > 1 && <div role="tablist" aria-label="Équipe des statistiques" style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+            {[{ id: "all", name: "Toutes les équipes", cat: "" }, ...playerTeams].map(item => <button key={item.id} type="button" role="tab" aria-selected={statsTeamId === item.id} onClick={() => setStatsTeamId(item.id)} style={{ padding: "9px 14px", borderRadius: 10, border: "1px solid #e2d8dc", background: statsTeamId === item.id ? "#6b1a2c" : "white", color: statsTeamId === item.id ? "white" : "#6b1a2c", fontWeight: 800, cursor: "pointer" }}>{item.name}{item.cat ? ` · ${item.cat}` : ""}</button>)}
+          </div>}
+          {team?.ownerUserId && !team.isShared && <PlayerTeamAttachment teamId={teamId} playerId={playerId} onDone={reload} />}
         </div>
 
         {tab === "Aperçu" && (
@@ -3493,7 +3513,7 @@ function PlayerMatchStatsTable({ matches, loading = false, error = "" }: { match
         <table className="player-match-table" style={{ width: "100%", whiteSpace: "nowrap" }}>
           <thead><tr>{["Date", "Adversaire", "Type", "Score", "MIN", "PTS", "2PTS", "3PTS", "LF", "% Tir", "% 3PTS", "% LF", "RO", "RD", "REB", "PD", "INT", "CTR", "BP", "FP", "Éval", "+/−"].map(label => <th scope="col" key={label} style={{ position: "sticky", top: 0, background: "#fbf7f4", color: "#6b1a2c", zIndex: 1 }}>{label}</th>)}</tr></thead>
           <tbody>{rows.map(match => <tr key={match.matchId}>
-            <td>{fmtDate(match.date)}</td><th scope="row" style={{ textAlign: "left" }}>{match.opponent || "—"}</th><td>{categoryLabel(match.category)}</td>
+            <td>{fmtDate(match.date)}</td><th scope="row" style={{ textAlign: "left" }}>{match.opponent || "—"}{match.teamLabel && <small style={{ display: "block", fontWeight: 400, color: "#817981", fontSize: 10 }}>{match.teamLabel}</small>}</th><td>{categoryLabel(match.category)}</td>
             <td>{match.hasScore ? `${match.usScore}–${match.themScore}` : "—"}</td>
             <td>{match.present ? time(match.minutes) : "—"}</td><td><b>{match.present ? match.pts : "—"}</b></td>
             {[`${match.p2m}/${match.p2a}`, `${match.p3m}/${match.p3a}`, `${match.ftm}/${match.fta}`, percent(match.p2m + match.p3m, match.p2a + match.p3a), percent(match.p3m, match.p3a), percent(match.ftm, match.fta), match.offReb, match.defReb, match.reb, match.ast, match.stl, match.blk, match.to, match.pf, match.eval, match.plusMinus==null?"—":match.plusMinus>0?`+${match.plusMinus}`:match.plusMinus].map((value, index) => <td key={index}>{match.present ? value : "—"}</td>)}

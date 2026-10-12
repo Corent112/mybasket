@@ -16,6 +16,7 @@ import {
   deletePlayer,
   computeTeamKpis,
 } from "../../../lib/equipes-store";
+import PlayerTeamAttachment from "@/components/equipes/PlayerTeamAttachment";
 import PlayerForm from "@/components/equipes/PlayerForm";
 import TeamForm from "@/components/equipes/TeamForm";
 import TeamStaffManager from "@/components/equipes/TeamStaffManager";
@@ -1285,7 +1286,7 @@ export default function EquipeDetailPage({
       flash("Joueur retiré");
     } catch (error) {
       console.error("Erreur suppression joueur:", error);
-      alert("Erreur pendant la suppression du joueur.");
+      alert(error instanceof Error ? error.message : "Erreur pendant la suppression du joueur.");
     }
   }
 
@@ -1736,6 +1737,8 @@ export default function EquipeDetailPage({
                 )}
               </div>
             </section>
+
+            {managing && canManagePlayers && isOwner && !playerLimitReached && <div style={{ marginBottom: 20 }}><PlayerTeamAttachment teamId={teamId} onDone={reload} /></div>}
 
             {/* ---------- ÉVÉNEMENTS + INFOS ---------- */}
             <section className="tl-2col">

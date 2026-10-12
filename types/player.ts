@@ -100,6 +100,9 @@ export interface Player {
   id: string;
   /** Id réel Supabase du joueur, utilisé par match_player_stats.player_id. */
   supabasePlayerId?: string | null;
+  /** Équipe d’origine : conservée lors des rattachements supplémentaires. */
+  primaryTeamId?: string;
+  additionalTeamIds?: string[];
 
   // --- Identité ---
   firstName: string;
