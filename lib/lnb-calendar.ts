@@ -9,7 +9,7 @@ async function request(url: string, init?: RequestInit) {
 }
 export async function readLnbCalendar(sourceUrl: string) {
   const source = new URL(sourceUrl);
-  if (!["lnb.fr", "www.lnb.fr"].includes(source.hostname) || source.protocol !== "https:" || !/^\/fr\/calendar\/[a-z0-9-]+\/?$/i.test(source.pathname)) throw new Error("Lien calendrier LNB invalide.");
+  if (!["lnb.fr", "www.lnb.fr"].includes(source.hostname) || source.protocol !== "https:" || !/^\/fr\/calendar(?:\/[a-z0-9-]+)?\/?$/i.test(source.pathname)) throw new Error("Lien calendrier LNB invalide.");
   const abbrev = source.searchParams.get("abbrev") || "";
   const year = Number(source.searchParams.get("yid"));
   const teamId = Number(source.searchParams.get("tid") || 0);

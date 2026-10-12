@@ -13,6 +13,8 @@ type TeamPlan = {
 };
 
 type Wellness = {
+  response_kind?: string;
+  pain_zones?: string[] | null;
   is_injured?: boolean;
   id: string;
   player_id: string;
@@ -361,8 +363,10 @@ export default function TeamWeeklyRpeComparison({
   const responseMap = useMemo(() => {
     const map = new Map<string, Wellness>();
     for (const row of responses) {
+      if (row.response_kind !== "post_session") continue;
       const key = `${row.player_id}|${row.response_date}`;
-      map.set(key, row); // last response of the day wins
+      const previous = map.get(key);
+      if (!previous || row.created_at > previous.created_at) map.set(key, row);
     }
     return map;
   }, [responses]);
@@ -571,19 +575,8 @@ export default function TeamWeeklyRpeComparison({
       </div>
 
       <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(135px,1fr))",gap:8}}>
-        <K label="Charge prévue équipe" value={teamSummary.planned.toLocaleString("fr-FR")} />
-        <K label="Charge réelle équipe" value={teamSummary.actual.toLocaleString("fr-FR")} />
-        <K label="Semaine précédente" value={teamSummary.previousActual ? teamSummary.previousActual.toLocaleString("fr-FR") : "—"} />
-        <K label="Évolution vs S-1" value={teamSummary.previousPct == null ? "—" : `${teamSummary.previousPct > 0 ? "+" : ""}${teamSummary.previousPct}%`} />
-        <K label="Écart prévu / réel" value={teamSummary.pct == null ? "—" : `${teamSummary.pct > 0 ? "+" : ""}${teamSummary.pct}%`} />
-        <K label="RPE théorique moyen" value={teamSummary.plannedRpe ? teamSummary.plannedRpe.toFixed(1) : "—"} />
-        <K label="RPE réel moyen" value={teamSummary.actualRpe ? teamSummary.actualRpe.toFixed(1) : "—"} />
-        <K label="Joueurs en alerte" value={teamSummary.alertPlayers} />
-        <K label="Taux de réponse" value={`${teamSummary.responseRate}%`} />
-        <K label="Fatigue moy." value={teamSummary.fatigue ? teamSummary.fatigue.toFixed(1) : "—"} />
-        <K label="Sommeil moy." value={teamSummary.sleep ? teamSummary.sleep.toFixed(1) : "—"} />
-        <K label="Douleurs moy." value={teamSummary.soreness ? teamSummary.soreness.toFixed(1) : "—"} />
-        <K label="Stress moy." value={teamSummary.stress ? teamSummary.stress.toFixed(1) : "—"} />
+        <K label="RPE théorique moyen" value={!plans.length ? "—" : teamSummary.plannedRpe.toFixed(1)} />
+        <K label="RPE réel moyen" value={!weeklyRows.some(row=>row.actualRpeAvg!=null) ? "—" : teamSummary.actualRpe.toFixed(1)} />
       </div>
 
       {view === "recap" ? (
@@ -707,24 +700,17 @@ export default function TeamWeeklyRpeComparison({
         <div style={{padding:"12px 14px",borderBottom:`1px solid ${BORDER}`}}>
           <span style={{display:"block",color:GOLD,fontWeight:1000,fontSize:9,letterSpacing:".12em"}}>TABLEAU ÉQUIPE</span>
           <strong style={{display:"block",marginTop:3,color:TEXT}}>Récapitulatif semaine</strong>
-          <small style={{color:MUTED}}>RPE théorique historique inchangé • RPE réel • charge prévue/réelle • comparaison S-1 • fatigue. Survole une cellule pour le détail.</small>
+          <small style={{color:MUTED}}>Réponses du questionnaire après séance : RPE, durée, douleurs et commentaire, avec le RPE théorique enregistré.</small>
         </div>
 
         <div style={{overflow:"auto",maxHeight:"min(68vh,720px)",paddingBottom:18,overscrollBehavior:"contain"}}>
-          <table style={{width:"100%",borderCollapse:"collapse",minWidth:1540,fontSize:10}}>
+          <table style={{width:"100%",borderCollapse:"collapse",minWidth:980,fontSize:10}}>
             <thead>
               <tr>
                 <th style={{...th,textAlign:"left",position:"sticky",left:0,background:"#F7F3F0",zIndex:5}}>Joueur</th>
                 {dates.map((d,i)=><th key={iso(d)} style={th}>{DAYS[i]}<br/><small>{fmt(d)}</small></th>)}
                 <th style={th}>RPE théo moy.</th>
                 <th style={th}>RPE réel moy.</th>
-                <th style={th}>Prévu sem.</th>
-                <th style={th}>Réel sem.</th>
-                <th style={th}>S-1 réel</th>
-                <th style={th}>Évol. S-1</th>
-                <th style={th}>Écart prévu/réel</th>
-                <th style={th}>Fatigue</th>
-                <th style={th}>Réponses</th>
               </tr>
             </thead>
             <tbody>
@@ -738,7 +724,7 @@ export default function TeamWeeklyRpeComparison({
                     const actual=cell.response?.rpe ?? null;
                     const bg = cell.level==="alert" ? "#FFF0EF" : cell.level==="watch" ? "#FFF7E8" : "#fff";
                     const title = cell.response
-                      ? `RPE prévu: ${planned ?? "—"} | RPE réel: ${actual ?? "—"} | Fatigue: ${cell.response.fatigue ?? "—"} | Sommeil: ${cell.response.sleep ?? "—"} | Douleurs: ${cell.response.soreness ?? "—"} | Stress: ${cell.response.stress ?? "—"}${cell.response.comment ? ` | ${cell.response.comment}` : ""}`
+                      ? `RPE théorique : ${planned ?? "—"} | RPE réel : ${actual ?? "—"} | Durée : ${cell.response.duration_minutes ?? "—"} min${cell.response.comment ? ` | ${cell.response.comment}` : ""}`
                       : `RPE prévu: ${planned ?? "—"} | Pas de réponse`;
                     return (
                       <td key={cell.date} title={title} style={{...td,background:bg,minWidth:86}}>
@@ -747,43 +733,17 @@ export default function TeamWeeklyRpeComparison({
                           <span style={{color:"#9C8E87",margin:"0 4px"}}>/</span>
                           <span style={{color:BORDEAUX}}>{actual ?? "—"}</span>
                         </div>
-                        {cell.delta != null && (
-                          <small style={{display:"block",marginTop:2,color:cell.level==="alert"?"#B42318":cell.level==="watch"?"#A26808":"#467A50"}}>
-                            {cell.delta>0?"+":""}{cell.delta}
-                          </small>
-                        )}
-                        {cell.response && (
-                          <small style={{display:"block",marginTop:2,color:MUTED}}>
-                            F{cell.response.fatigue ?? "—"} S{cell.response.sleep ?? "—"}
-                          </small>
-                        )}
+                        {cell.response && <>
+                          <small style={{display:"block",marginTop:3,color:MUTED}}>Durée : {cell.response.duration_minutes == null ? "—" : `${cell.response.duration_minutes} min`}</small>
+                          <small style={{display:"block",color:MUTED}}>Douleurs : {Array.isArray(cell.response.pain_zones) ? (cell.response.pain_zones.length ? `${cell.response.pain_zones.length} zone(s)` : "Non") : "—"}</small>
+                          {cell.response.is_injured && <small style={{display:"block",color:BORDEAUX}}>Blessé</small>}
+                          {cell.response.comment && <small style={{display:"block",marginTop:3,color:TEXT,whiteSpace:"normal"}}>{cell.response.comment}</small>}
+                        </>}
                       </td>
                     )
                   })}
                   <td style={{...td,fontWeight:900,color:GOLD}}>{row.plannedRpeAvg == null ? "—" : row.plannedRpeAvg.toFixed(1)}</td>
                   <td style={{...td,fontWeight:900,color:BORDEAUX}}>{row.actualRpeAvg == null ? "—" : row.actualRpeAvg.toFixed(1)}</td>
-                  <td style={{...td,fontWeight:900}}>{row.plannedLoad || "—"}</td>
-                  <td style={{...td,fontWeight:900,color:BORDEAUX}}>{row.actualLoad || "—"}</td>
-                  {(() => {
-                    const previous = previousWeekRows.get(String(row.player.id)) ?? 0;
-                    const evolution = previous > 0 ? Math.round(((row.actualLoad - previous) / previous) * 100) : null;
-                    return (
-                      <>
-                        <td style={td}>{previous || "—"}</td>
-                        <td style={{...td,fontWeight:1000,color:evolution!=null&&Math.abs(evolution)>=25?"#B42318":evolution!=null&&Math.abs(evolution)>=15?"#A26808":"#467A50"}}>
-                          {evolution==null?"—":`${evolution>0?"+":""}${evolution}%`}
-                        </td>
-                      </>
-                    );
-                  })()}
-                  <td style={{...td,fontWeight:1000,color:row.pct!=null&&Math.abs(row.pct)>=25?"#B42318":row.pct!=null&&Math.abs(row.pct)>=15?"#A26808":"#467A50"}}>
-                    {row.pct==null?"—":`${row.pct>0?"+":""}${row.pct}%`}
-                  </td>
-                  {(() => {
-                    const fatigue = fatigueLevel(row.fatigueAvg);
-                    return <td style={{...td,background:fatigue.background,color:fatigue.color,fontWeight:1000}}>{fatigue.label}</td>;
-                  })()}
-                  <td style={td}>{row.responsesCount}/{plans.length || 0}</td>
                 </tr>
               ))}
             </tbody>

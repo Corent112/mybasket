@@ -25,6 +25,7 @@ import TeamShootingGrids from "@/components/equipes/TeamShootingGrids";
 import TeamAvailabilityLoad from "@/components/equipes/TeamAvailabilityLoad";
 import TeamResourcesPanel from "@/components/equipes/TeamResourcesPanel";
 import TeamActivityPanel from "@/components/equipes/TeamActivityPanel";
+import { syncCompetitionCalendar } from "@/lib/competition-calendar";
 import TeamFfbbCompetition from "@/components/equipes/TeamFfbbCompetition";
 import ActionClipsModal, { type ClipAction } from "@/components/prise-stats-pro/ActionClipsModal";
 import { type VideoSyncState, NATIVE_SYNC, normalizeSync } from "@/lib/video-sync";
@@ -434,7 +435,7 @@ function formatFfbbNextMatch(match: any) {
   };
 }
 
-function useFfbbBannerSummary(teamId: string, source: "ffbb" | "lnb" = "ffbb"): FfbbBannerSummary {
+function useFfbbBannerSummary(teamId: string, source: "ffbb" | "lnb" = "ffbb", revision = 0): FfbbBannerSummary {
   const supabase = useMemo(() => createClient(), []);
   const [summary, setSummary] = useState<FfbbBannerSummary>({
     loading: true,
@@ -642,7 +643,7 @@ function useFfbbBannerSummary(teamId: string, source: "ffbb" | "lnb" = "ffbb"): 
 
     void load();
     return () => { active = false; };
-  }, [supabase, teamId, source]);
+  }, [supabase, teamId, source, revision]);
 
   return summary;
 }
@@ -745,6 +746,7 @@ export default function EquipeDetailPage({
   const { teamId } = use(params);
   const router = useRouter();
   const [team, setTeam] = useState<Team | undefined>();
+  const [competitionRevision, setCompetitionRevision] = useState(0);
   const [editingTeam, setEditingTeam] = useState(false);
   const [managing, setManaging] = useState(false);
   const [activeTab, setActiveTab] = useState<TeamMainTab>("presentation");
@@ -883,7 +885,7 @@ export default function EquipeDetailPage({
 
     void loadNextCalendarEvents();
     return () => { active = false; };
-  }, [teamId, team?.id, team?.competitionSource, dashboard.resolvedTeamId]);
+  }, [teamId, team?.id, team?.competitionSource, dashboard.resolvedTeamId, competitionRevision]);
 
 
   useEffect(() => {
@@ -932,80 +934,8 @@ export default function EquipeDetailPage({
           const parsed = await response.json();
           const matches = Array.isArray(parsed?.matches) ? parsed.matches : [];
 
-          for (const match of matches) {
-            const eventDate = String(match.date || match.match_date || "").slice(0, 10);
-            if (!/^\d{4}-\d{2}-\d{2}$/.test(eventDate)) continue;
+          await syncCompetitionCalendar(supabase, teamId, user.id, currentTeam.competitionSource || "ffbb", matches);
 
-            // FFBB affiche une heure locale. On la recopie telle quelle :
-            // aucune conversion UTC / Europe-Paris.
-            const rawTime = String(match.time || match.start_time || "").trim();
-            const startTime = /^\d{1,2}:\d{2}/.test(rawTime)
-              ? rawTime.match(/^\d{1,2}:\d{2}/)?.[0]?.padStart(5, "0") || null
-              : null;
-
-            const opponent = String(
-              match.opponent || match.adversaire || match.opponent_name || "Adversaire"
-            ).trim();
-
-            // Source de vérité = ordre FFBB renvoyé par notre API.
-            // 1re équipe FFBB = domicile ; 2e équipe FFBB = extérieur.
-            const ffbbHomeAway = String(match.homeAway || "").toLowerCase();
-            const homeAway =
-              ffbbHomeAway === "home"
-                ? "Domicile"
-                : ffbbHomeAway === "away"
-                  ? "Extérieur"
-                  : "";
-            const category = String(
-              (currentTeam as any).category ||
-              (currentTeam as any).categorie ||
-              (currentTeam as any).age_category ||
-              ""
-            ).trim();
-            const matchup = homeAway === "Extérieur" ? `@ ${opponent}` : `vs ${opponent}`;
-            const title = `${category ? `${category} ` : ""}${matchup}`.trim();
-            const description = [
-              currentTeam.competitionSource === "lnb" ? "Match LNB" : "Match FFBB",
-              homeAway ? `Lieu : ${homeAway}` : "",
-              parsed?.competition ? `Compétition : ${parsed.competition}` : "",
-              parsed?.pool ? `Poule : ${parsed.pool}` : "",
-            ].filter(Boolean).join(" • ");
-
-            // Déduplication stable : équipe + date + adversaire.
-            const { data: existing } = await supabase
-              .from("calendar_events")
-              .select("id")
-              .eq("user_id", user.id)
-              .in("team_id", ids)
-              .eq("event_date", eventDate)
-              .ilike("title", `%${opponent}%`)
-              .limit(1);
-
-            const payload = {
-              user_id: user.id,
-              owner_id: user.id,
-              team_id: teamId,
-              title,
-              description,
-              event_date: eventDate,
-              start_time: startTime,
-              end_time: null,
-              location: homeAway || null,
-              event_type: "game",
-              session_id: null,
-              visibility: "private",
-              updated_at: new Date().toISOString(),
-            };
-
-            if (existing?.[0]?.id) {
-              await supabase
-                .from("calendar_events")
-                .update(payload)
-                .eq("id", existing[0].id);
-            } else {
-              await supabase.from("calendar_events").insert(payload);
-            }
-          }
         }
       } catch (error) {
         console.error("Erreur synchronisation matchs FFBB vers calendrier :", error);
@@ -1014,7 +944,7 @@ export default function EquipeDetailPage({
 
     void syncFfbbMatchesToCalendar();
     return () => { active = false; };
-  }, [teamId, team?.id, team?.competitionSource, dashboard.resolvedTeamId]);
+  }, [teamId, team?.id, team?.competitionSource, dashboard.resolvedTeamId, competitionRevision]);
 
   function flash(m: string) {
     setToast(m);
@@ -1156,7 +1086,7 @@ export default function EquipeDetailPage({
   // Le hook FFBB doit être appelé à chaque rendu, y compris pendant le chargement
   // initial de l'équipe. Sinon React détecte un changement d'ordre des hooks.
   const linkedStatsTeamId = dashboard.resolvedTeamId || teamId;
-  const ffbbBanner = useFfbbBannerSummary(teamId, team?.competitionSource || "ffbb");
+  const ffbbBanner = useFfbbBannerSummary(teamId, team?.competitionSource || "ffbb", competitionRevision);
 
   if (!team) {
     return (
@@ -1671,7 +1601,7 @@ export default function EquipeDetailPage({
               </div>
             </section>
 
-            <TeamFfbbCompetition key={`${teamId}:${team.competitionSource || "ffbb"}`} teamId={teamId} source={team.competitionSource || "ffbb"} onConnected={() => window.location.reload()} />
+            <TeamFfbbCompetition key={`${teamId}:${team.competitionSource || "ffbb"}`} teamId={teamId} source={team.competitionSource || "ffbb"} niveau={team.niveau} onSourceChange={isOwner ? async source => { const supabase = createClient(); const { data: { user } } = await supabase.auth.getUser(); if (!user) throw new Error("Connexion requise."); const existing = await supabase.from("teams").select("metadata").eq("id", teamId).eq("user_id", user.id).single(); if (existing.error) throw existing.error; const saved = await supabase.from("teams").update({ metadata: { ...existing.data.metadata, competitionSource: source } }).eq("id", teamId).eq("user_id", user.id).select("id"); if (saved.error) throw saved.error; if (!saved.data?.length) throw new Error("Source non enregistrée."); await reload(); setCompetitionRevision(value => value + 1); } : undefined} onConnected={() => setCompetitionRevision(value => value + 1)} />
 
                         {/* ---------- STAFF ---------- */}
             <TeamStaffManager

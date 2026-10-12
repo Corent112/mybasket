@@ -45,6 +45,7 @@ type WellnessLink = {
 };
 
 type WellnessResponse = {
+  pain_zones?: string[] | null;
   id: string;
   player_id: string;
   response_kind: "post_session" | "wellness";
@@ -784,18 +785,16 @@ export default function TeamAvailabilityLoad({
                   </small>
                 </div>
 
-                <span>
-                  RPE <b>{row.rpe ?? "—"}</b>
-                </span>
-                <span>
-                  Fatigue <b>{row.fatigue ?? "—"}</b>
-                </span>
-                <span>
-                  Sommeil <b>{row.sleep ?? "—"}</b>
-                </span>
-                <span>
-                  Douleurs <b>{row.soreness ?? "—"}</b>
-                </span>
+                {row.response_kind === "post_session" ? <>
+                  <span>RPE <b>{row.rpe ?? "—"}</b></span>
+                  <span>Durée <b>{row.duration_minutes == null ? "—" : `${row.duration_minutes} min`}</b></span>
+                  <span>Douleurs <b>{Array.isArray(row.pain_zones) ? (row.pain_zones.length ? `${row.pain_zones.length} zone(s)` : "Non") : "—"}</b></span>
+                  {row.comment && <span>{row.comment}</span>}
+                </> : <>
+                  <span>Fatigue <b>{row.fatigue ?? "—"}</b></span>
+                  <span>Sommeil <b>{row.sleep ?? "—"}</b></span>
+                  <span>Stress <b>{row.stress ?? "—"}</b></span>
+                </>}
 
                 {canEdit && (
                   <span

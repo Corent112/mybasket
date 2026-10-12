@@ -129,6 +129,8 @@ function normalizeTeamRow(row: any): Team {
     name: row.name ?? data.name ?? "",
     cat: row.category ?? data.cat ?? data.category ?? "",
     category: row.category ?? data.category ?? data.cat ?? "",
+    niveau: data.niveau ?? row.niveau ?? row.level ?? "",
+    competitionSource: data.competitionSource === "lnb" ? "lnb" : "ffbb",
     coach:
       row.coach_name ??
       row.coach ??

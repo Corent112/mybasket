@@ -161,7 +161,8 @@ function mapTeamRow(row: any): Team {
       row.category_label ||
       row.cat ||
       "",
-    niveau: row.niveau || row.level || "",
+    niveau: row.metadata?.niveau ?? row.niveau ?? row.level ?? "",
+    competitionSource: row.metadata?.competitionSource === "lnb" ? "lnb" : "ffbb",
     genre: row.genre || row.gender || "",
     tags: toArray(row.tags),
     banniere: row.banner_url || row.banniere || row.team_photo_url || null,
