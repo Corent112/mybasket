@@ -11,3 +11,11 @@
 /* --- Sauvegarde globale Retour de match --- */
 .editorHeadActions{display:flex;align-items:center;justify-content:flex-end;gap:8px}.saveState{font-size:8px!important;font-weight:900;white-space:nowrap}.saveStateDirty{color:#f6c85f!important}.saveStateSaved{color:#70d99b!important}.globalSaveButton{border:1px solid #d4a24c!important;border-radius:8px!important;background:#d4a24c!important;color:#111827!important;padding:8px 11px!important;font-size:9px!important;font-weight:950!important;cursor:pointer!important}.globalSaveButton:disabled{opacity:.45;cursor:default!important}.footerSaveArea{display:flex!important;align-items:center!important;gap:9px!important}.footerSaveArea .saveState{display:inline-block}.footerSaveArea button{background:#d4a24c!important;color:#111827!important;border-color:#d4a24c!important}.editorFoot{position:sticky;bottom:0;z-index:5}
 @media(max-width:760px){.editorHeadActions{gap:5px}.editorHeadActions>.saveState{display:none}.globalSaveButton{padding:7px 8px!important;font-size:8px!important}.footerSaveArea .saveState{display:none}}
+
+/* Keep the editor chrome visible and read blocks in order. */
+.editorOverlay{box-sizing:border-box;z-index:2147483000;overflow:hidden;color:#eef3fb}
+.editor{box-sizing:border-box;height:min(940px,calc(100dvh - 36px));max-height:calc(100dvh - 36px);min-height:0;grid-template-rows:auto auto auto minmax(0,1fr) auto}
+.editor.editorLogic{grid-template-rows:auto auto minmax(0,1fr) auto}
+.editorHead{flex-shrink:0;gap:10px;min-width:0}.editorHeadActions{display:flex!important;flex-direction:row;flex-shrink:0}.editorClose{display:grid;place-items:center;min-width:40px;min-height:40px;border:1px solid #526079!important;border-radius:8px;background:#152238!important;font-size:28px!important;line-height:1}
+.logicBlocks,.visualBlocks{grid-template-columns:minmax(0,1fr)!important;align-items:start}.logicBlocks section{min-width:0}.logicBlocks section>header{font-size:13px;padding:12px}.logicBlocks section>header b,.logicBlocks section>header span{font-size:12px}.logicButtonRow strong{font-size:11px}.logicButtonRow span{font-size:10px}.logicButtonRow button{font-size:11px}
+@media(max-width:760px){.editorHead{flex-wrap:wrap}.editorHeadActions{margin-left:auto}.editorHeadActions>.saveState{display:none}.templateBar select,.templateMini select{min-width:0;max-width:100%}}

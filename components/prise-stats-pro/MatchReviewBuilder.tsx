@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import styles from './MatchReviewBuilder.module.css';
+import { createPortal } from 'react-dom';
 
 export type MatchReviewControlType =
   | 'button'
@@ -298,6 +299,8 @@ export default function MatchReviewBuilder({
   const [templates, setTemplates] = useState<MatchReviewTemplate[]>([]);
   const [activeId, setActiveId] = useState('');
   const [editorOpen, setEditorOpen] = useState(initialEditorOpen);
+  const [mounted,setMounted]=useState(false);
+  useEffect(()=>{setMounted(true)},[]);
   const [editorTab, setEditorTab] = useState<'logic' | 'blocks'>('blocks');
   const [insertIndex, setInsertIndex] = useState<number | null>(null);
   const [selectedBlockId, setSelectedBlockId] = useState<string | null>(null);
@@ -756,9 +759,9 @@ export default function MatchReviewBuilder({
         </div>
       )}
 
-      {editorOpen && (
+      {editorOpen && mounted && createPortal(
         <div className={styles.editorOverlay}>
-          <div className={styles.editor}>
+          <div className={`${styles.editor} ${editorTab==='logic'?styles.editorLogic:''}`}>
             <header className={styles.editorHead}>
               <div>
                 <b>◉ CONSTRUCTEUR · RETOUR DE MATCH</b>
@@ -929,7 +932,7 @@ export default function MatchReviewBuilder({
             </footer>
           </div>
         </div>
-      )}
+      , document.body)}
 
       {!embedded && !editorOpen && <button type="button" className={styles.closeStandalone} onClick={onClose}>Fermer</button>}
     </div>
