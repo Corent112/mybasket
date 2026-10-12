@@ -939,7 +939,7 @@ export default function JoueurDetailPage({
   const [team, setTeam] = useState<Team | undefined>();
   const [identityLoading, setIdentityLoading] = useState(true);
   const [playerTeams, setPlayerTeams] = useState<Team[]>([]);
-  const [statsTeamId, setStatsTeamId] = useState("all");
+  const [statsTeamId, setStatsTeamId] = useState(teamId);
   const [liveStats, setLiveStats] = useState<PlayerLiveStats>(EMPTY_LIVE_STATS);
   const [matchStatsLoading, setMatchStatsLoading] = useState(true);
   const [matchStatsError, setMatchStatsError] = useState("");
@@ -1033,7 +1033,7 @@ export default function JoueurDetailPage({
   }
 
   useEffect(() => {
-    setStatsTeamId("all");
+    setStatsTeamId(teamId);
     setPlayerTeams([]);
     reload();
   }, [teamId, playerId]);
@@ -1230,8 +1230,9 @@ export default function JoueurDetailPage({
         if (!active) return;
 
         setLiveStats(computeLiveStats(currentPlayerRows, matchesById));
+        const comparisonTeam = playerTeams.find(item => item.id === statsTeamId) || team;
         setTeamPlayersStats(
-          computeTeamPlayersComparisonStats(completedTeamRows.filter(row => String(row.team_id) === teamId), team?.players ?? [])
+          computeTeamPlayersComparisonStats(completedTeamRows.filter(row => String(row.team_id) === comparisonTeam?.id), comparisonTeam?.players ?? [])
         );
       } catch (error) {
         console.error("Erreur chargement stats joueur Supabase :", error);
@@ -1885,8 +1886,7 @@ export default function JoueurDetailPage({
 
   const p: any = {
     ...basePlayer,
-    stats: liveStats.hasData
-      ? {
+    stats: {
           ...(basePlayer.stats ?? {}),
           pts: liveStats.averages.pts,
           reb: liveStats.averages.reb,
@@ -1898,26 +1898,17 @@ export default function JoueurDetailPage({
           pctTir: liveStats.averages.pctTir,
           pct3pts: liveStats.averages.pct3pts,
           pctLf: liveStats.averages.pctLf,
-        }
-      : basePlayer.stats,
+        },
     presencePct: liveStats.hasData ? liveStats.attendancePct : basePlayer.presencePct,
-    evolution: liveStats.evolution.length ? liveStats.evolution : basePlayer.evolution,
+    evolution: liveStats.evolution,
   };
 
-  const tdj = liveStats.hasData
-    ? {
-        ...(basePlayer.tempsDeJeu || {}),
-        matchsJoues: liveStats.games,
-        matchsManques: liveStats.missedGames,
-        tempsMoyenMatchMin: basePlayer.tempsDeJeu?.tempsMoyenMatchMin || 0,
-        tempsTotalLabel: basePlayer.tempsDeJeu?.tempsTotalLabel || "—",
-      }
-    : basePlayer.tempsDeJeu || {
-        matchsJoues: 0,
-        matchsManques: 0,
-        tempsMoyenMatchMin: 0,
-        tempsTotalLabel: "—",
-      };
+  const tdj = {
+    matchsJoues: liveStats.games,
+    matchsManques: liveStats.missedGames,
+    tempsMoyenMatchMin: liveStats.averageMinutes,
+    tempsTotalLabel: `${Math.round(liveStats.totalMinutes)} min`,
+  };
 
   const tdjPct =
     tdj.matchsJoues + tdj.matchsManques > 0
@@ -3577,6 +3568,9 @@ function VideoRentabilityTab({
   const [shotFilter, setShotFilter] = useState<"all" | "2PTS" | "3PTS">("all");
   const [shotResultFilter, setShotResultFilter] = useState<"all" | "made" | "missed">("all");
   const [matchFilter, setMatchFilter] = useState("all");
+  useEffect(() => {
+    if (matchFilter !== "all" && !matches.some(match => match.matchId === matchFilter)) setMatchFilter("all");
+  }, [matches, matchFilter]);
   const [popup, setPopup] = useState<{ title: string; actions: any[]; index?: number } | null>(null);
   const [highlightQueue, setHighlightQueue] = useState<HighlightClip[]>([]);
   const [montageDesignItems, setMontageDesignItems] = useState<MontageDesignItem[]>([]);

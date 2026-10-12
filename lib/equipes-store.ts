@@ -1350,21 +1350,20 @@ function refreshPlayersStatsFromHistory(team: Team): void {
   team.players = (team.players || []).map((player: Player) => {
     const agg = aggregatePlayerStats(team, player.id);
 
-    if (!agg.gamesPlayed) return player;
 
     const fgAtt = agg.fg2Att + agg.fg3Att;
 
     const pctTir = fgAtt
       ? round1(((agg.fg2Made + agg.fg3Made) / fgAtt) * 100)
-      : player.stats?.pctTir ?? 0;
+      : 0;
 
     const pct3pts = agg.fg3Att
       ? round1((agg.fg3Made / agg.fg3Att) * 100)
-      : player.stats?.pct3pts ?? 0;
+      : 0;
 
     const pctLf = agg.ftAtt
       ? round1((agg.ftMade / agg.ftAtt) * 100)
-      : player.stats?.pctLf ?? 0;
+      : 0;
 
     const evolution = (team.statsHistory || [])
       .map((match: MatchRecord, index: number) => {
@@ -1403,7 +1402,9 @@ function refreshPlayersStatsFromHistory(team: Team): void {
       tempsDeJeu: {
         ...player.tempsDeJeu,
         matchsJoues: agg.gamesPlayed,
+        matchsManques: (team.statsHistory || []).filter(match => (match.players || []).some(line => playerMatchesId(player, line.playerId) && !line.played)).length,
         tempsMoyenMatchMin: Math.round(agg.minutes),
+        tempsTotalLabel: `${Math.round(agg.totalMinutes)} min`,
       },
     };
   });

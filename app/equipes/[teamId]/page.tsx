@@ -123,16 +123,6 @@ function getTeamIdCandidates(teamId: string, team: Team | undefined) {
   ]);
 }
 
-function mostCommon(values: string[]) {
-  const counts = values.reduce((acc: Record<string, number>, value) => {
-    if (!value) return acc;
-    acc[value] = (acc[value] || 0) + 1;
-    return acc;
-  }, {});
-
-  return Object.entries(counts).sort((a, b) => b[1] - a[1])[0]?.[0] || "";
-}
-
 function useTeamDashboardData(
   teamId: string,
   team: Team | undefined,
@@ -153,8 +143,8 @@ function useTeamDashboardData(
     async function load() {
       setLoading(true);
 
-      const candidateTeamIds = getTeamIdCandidates(teamId, team);
-      const playerIds = compactStrings((team?.players || []).map((p) => p.id));
+      // A shared player never determines which team owns a match.
+      const candidateTeamIds = [teamId];
 
       try {
         let matchRows: SupaMatchRow[] = [];
@@ -188,6 +178,7 @@ function useTeamDashboardData(
               .select(
                 "team_id, player_id, match_id, pts, p2m, p2a, p3m, p3a, ftm, fta, off_reb, def_reb, reb, ast, stl, blk, turnovers, pf, present",
               )
+              .eq("team_id", teamId)
               .in("match_id", matchIdsFromMatches);
 
           if (!playerErrorByMatch && playerDataByMatch) {
@@ -195,117 +186,11 @@ function useTeamDashboardData(
           }
         }
 
-        // Fallback important : si match_stats n'utilise pas le même team_id que la fiche,
-        // on repart des joueurs de l'effectif. C'est souvent le cas après une migration localStorage -> Supabase.
-        if (playerRows.length === 0 && playerIds.length > 0) {
-          const { data: playerDataByPlayers, error: playerErrorByPlayers } =
-            await supabase
-              .from("match_player_stats")
-              .select(
-                "team_id, player_id, match_id, pts, p2m, p2a, p3m, p3a, ftm, fta, off_reb, def_reb, reb, ast, stl, blk, turnovers, pf, present",
-              )
-              .in("player_id", playerIds);
-
-          if (
-            !playerErrorByPlayers &&
-            playerDataByPlayers &&
-            playerDataByPlayers.length > 0
-          ) {
-            playerRows = playerDataByPlayers as SupaStatRow[];
-            const foundTeamId = mostCommon(
-              playerRows
-                .map((row) => String(row.team_id || ""))
-                .filter(Boolean),
-            );
-            if (foundTeamId) linkedTeamId = foundTeamId;
-          }
-        }
-
-        // Dernier fallback : si on a trouvé un vrai team_id via les joueurs, on recharge les matchs avec cet id.
-        if (matchRows.length === 0 && linkedTeamId) {
-          const { data: matchDataByResolved, error: matchErrorByResolved } =
-            await supabase
-              .from("match_stats")
-              .select(
-                "id, team_id, opponent, match_date, us_score, them_score, result, home, match_category, project_state, project_status",
-              )
-              .eq("team_id", linkedTeamId)
-              .or("project_status.eq.completed,project_status.is.null")
-              .order("match_date", { ascending: true });
-
-          if (!matchErrorByResolved && matchDataByResolved) {
-            matchRows = matchDataByResolved as SupaMatchRow[];
-          }
-        }
-
-
-        // Fallback local uniquement si aucune donnée de match n'est disponible.
-        // On évite ainsi de faire réapparaître dans la fiche équipe des matchs
-        // supprimés de match_stats mais encore présents dans un ancien statsHistory.
-        if (
-          matchRows.length === 0 &&
-          playerRows.length === 0 &&
-          team?.statsHistory?.length
-        ) {
-          linkedTeamId = teamId;
-          matchRows = team.statsHistory.map((match, index) => ({
-            id: String(match.id || `local_match_${index}`),
-            team_id: teamId,
-            opponent: match.opponent || "Adversaire",
-            match_date: match.date || null,
-            us_score: safeNum(match.scoreUs),
-            them_score: safeNum(match.scoreThem),
-            result:
-              safeNum(match.scoreUs) > safeNum(match.scoreThem)
-                ? "V"
-                : safeNum(match.scoreUs) < safeNum(match.scoreThem)
-                  ? "D"
-                  : "N",
-            home: true,
-          }));
-
-          playerRows = team.statsHistory.flatMap((match, index) =>
-            (match.players || []).map((line) => {
-              const p2m = safeNum(line.pts2made ?? line.fg2m);
-              const p2a = safeNum(line.fg2a ?? p2m + safeNum(line.pts2miss));
-              const p3m = safeNum(line.pts3made ?? line.fg3m);
-              const p3a = safeNum(line.fg3a ?? p3m + safeNum(line.pts3miss));
-              const ftm = safeNum(line.ftMade ?? line.ftm);
-              const fta = safeNum(line.fta ?? ftm + safeNum(line.ftMiss));
-              const off = safeNum(line.rebOff);
-              const def = safeNum(line.rebDef);
-              return {
-                team_id: teamId,
-                player_id: String(line.playerId),
-                match_id: String(match.id || `local_match_${index}`),
-                pts: safeNum(line.pts) || p2m * 2 + p3m * 3 + ftm,
-                p2m,
-                p2a,
-                p3m,
-                p3a,
-                ftm,
-                fta,
-                off_reb: off,
-                def_reb: def,
-                reb: safeNum(line.reb) || off + def,
-                ast: safeNum(line.ast),
-                stl: safeNum(line.stl),
-                blk: safeNum(line.blk),
-                turnovers: safeNum(line.to),
-                pf: 0,
-                present: line.played !== false,
-              } as SupaStatRow;
-            }),
-          );
-        }
-
         // Dès que match_stats contient les matchs encore existants, il devient
         // la source de vérité. Les lignes orphelines de match_player_stats ne
         // doivent pas ressusciter un match supprimé.
         const matchIds = compactStrings(
-          matchRows.length > 0
-            ? matchRows.map((match) => match.id)
-            : playerRows.map((row) => row.match_id),
+          matchRows.map((match) => match.id),
         );
 
         // Si on a des matchs mais pas encore les lignes joueurs, recharge par match_id.
@@ -316,6 +201,7 @@ function useTeamDashboardData(
               .select(
                 "team_id, player_id, match_id, pts, p2m, p2a, p3m, p3a, ftm, fta, off_reb, def_reb, reb, ast, stl, blk, turnovers, pf, present",
               )
+              .eq("team_id", teamId)
               .in("match_id", matchIds);
 
           if (!playerErrorByMatch && playerDataByMatch) {
@@ -331,8 +217,8 @@ function useTeamDashboardData(
           playerRows.filter(
             (row) =>
               row.present !== false &&
-              (validMatchIds.size === 0 ||
-                validMatchIds.has(String(row.match_id))),
+              String(row.team_id) === teamId &&
+              validMatchIds.has(String(row.match_id)),
           ),
         );
 
@@ -846,7 +732,7 @@ function getLivePlayerLabel(
     return `${live.pts} pts · ${live.reb} reb · ${live.ast} pd`;
   }
 
-  return `${player.presencePct}% · ${player.stats.pts} pts`;
+  return "Aucun match joué avec cette équipe";
 }
 
 export default function EquipeDetailPage({
@@ -3385,20 +3271,6 @@ function playerDisplayName(player: Player) {
   );
 }
 
-function fallbackLeaders(players: Player[]): LeaderLine[] {
-  return players.map((player) => ({
-    playerId: String(player.id),
-    name: playerDisplayName(player),
-    games: 1,
-    pts: safeNum(player.stats?.pts),
-    ast: safeNum(player.stats?.ast),
-    reb: safeNum(player.stats?.reb),
-    stl: safeNum(player.stats?.stl),
-    p3m: safeNum(player.stats?.pct3pts),
-    p3a: safeNum(player.stats?.pct3pts) > 0 ? 100 : 0,
-  }));
-}
-
 function aggregateLeaderRows(
   rows: SupaStatRow[],
   names: Record<string, string>,
@@ -3487,7 +3359,8 @@ function TeamLeadersBlock({
       const { data: matchData } = await supabase
         .from("match_stats")
         .select("id, match_category, project_state")
-        .eq("team_id", teamId);
+        .eq("team_id", teamId)
+        .or("project_status.eq.completed,project_status.is.null");
 
       const leaderMatches = (matchData ?? []) as SupaMatchRow[];
       const matchIds = (matchCategory === "all" ? leaderMatches : leaderMatches.filter((match) => matchCategoryOf(match) === matchCategory)).map((match) => match.id);
@@ -3500,26 +3373,16 @@ function TeamLeadersBlock({
           .select(
             "player_id, match_id, pts, p2m, p3m, ftm, p3a, off_reb, def_reb, reb, ast, stl, present",
           )
+          .eq("team_id", teamId)
           .in("match_id", matchIds);
 
         rows = (byMatch ?? []) as SupaStatRow[];
       }
 
-      if (rows.length === 0) {
-        const { data: byTeam } = await supabase
-          .from("match_player_stats")
-          .select(
-            "player_id, match_id, pts, p2m, p3m, ftm, p3a, off_reb, def_reb, reb, ast, stl, present",
-          )
-          .eq("team_id", teamId);
-
-        rows = (byTeam ?? []) as SupaStatRow[];
-      }
-
       if (!active) return;
 
       if (rows.length === 0) {
-        setLeaders(fallbackLeaders(players));
+        setLeaders([]);
         setLoading(false);
         return;
       }
