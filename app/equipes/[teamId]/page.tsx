@@ -434,7 +434,7 @@ function formatFfbbNextMatch(match: any) {
   };
 }
 
-function useFfbbBannerSummary(teamId: string): FfbbBannerSummary {
+function useFfbbBannerSummary(teamId: string, source: "ffbb" | "lnb" = "ffbb"): FfbbBannerSummary {
   const supabase = useMemo(() => createClient(), []);
   const [summary, setSummary] = useState<FfbbBannerSummary>({
     loading: true,
@@ -455,14 +455,15 @@ function useFfbbBannerSummary(teamId: string): FfbbBannerSummary {
     async function load() {
       setSummary((current) => ({ ...current, loading: true }));
       try {
-        const { data: connections, error: connectionError } = await supabase
+        const { data: allConnections, error: connectionError } = await supabase
           .from("ffbb_team_connections")
           .select("*")
           .eq("team_id", teamId)
           .order("is_primary", { ascending: false })
           .order("created_at", { ascending: true });
 
-        if (connectionError || !connections?.length) {
+        const connections = (allConnections || []).filter((row: any) => source === "lnb" ? /^https:\/\/(www\.)?lnb\.fr\//i.test(row.source_url) : /^https:\/\/competitions\.ffbb\.com\//i.test(row.source_url));
+        if (connectionError || !connections.length) {
           if (active) setSummary({
             loading: false, connected: false, ranking: "—", pool: "", games: 0, wins: 0, losses: 0,
             pointsForAverage: null, pointsAgainstAverage: null, nextMatch: null,
@@ -641,7 +642,7 @@ function useFfbbBannerSummary(teamId: string): FfbbBannerSummary {
 
     void load();
     return () => { active = false; };
-  }, [supabase, teamId]);
+  }, [supabase, teamId, source]);
 
   return summary;
 }
@@ -652,6 +653,7 @@ function computeLinkedKpis(
   dashboard: TeamDashboardData,
   ffbb: FfbbBannerSummary,
 ) {
+  const provider = team.competitionSource === "lnb" ? "LNB" : "FFBB";
   const local = computeTeamKpis(team);
   const fallbackMatches = dashboard.matches.filter(
     (m) => String(m.match_category || "championship").toLowerCase() !== "friendly",
@@ -671,14 +673,14 @@ function computeLinkedKpis(
 
   return [
     { ic: "users", val: String(team.players.length), lbl: "Effectif", hint: "Joueurs" },
-    { ic: "trophy", val: connected ? ffbb.ranking : dash, lbl: "Classement", hint: connected ? (ffbb.pool ? `Poule ${ffbb.pool}` : "Poule FFBB") : "FFBB non connecté" },
-    { ic: "shirt", val: loading ? "…" : connected ? String(ffbb.games) : dashboard.loading ? "…" : String(fallbackMatches.length || local.matchsJoues), lbl: "Matchs joués", hint: connected ? "FFBB" : "MyBasket" },
-    { ic: "trophy", val: loading ? "…" : connected ? `${ffbb.wins} / ${ffbb.losses}` : dashboard.loading ? "…" : `${fallbackWins} / ${fallbackLosses}`, lbl: "V / D", hint: connected ? "FFBB" : "MyBasket" },
+    { ic: "trophy", val: connected ? ffbb.ranking : dash, lbl: "Classement", hint: connected ? (ffbb.pool ? `Poule ${ffbb.pool}` : provider) : `${provider} non connecté` },
+    { ic: "shirt", val: loading ? "…" : connected ? String(ffbb.games) : dashboard.loading ? "…" : String(fallbackMatches.length || local.matchsJoues), lbl: "Matchs joués", hint: connected ? provider : "MyBasket" },
+    { ic: "trophy", val: loading ? "…" : connected ? `${ffbb.wins} / ${ffbb.losses}` : dashboard.loading ? "…" : `${fallbackWins} / ${fallbackLosses}`, lbl: "V / D", hint: connected ? provider : "MyBasket" },
     { ic: "star", val: loading ? "…" : connected ? (ffbb.pointsForAverage === null ? "—" : ffbb.pointsForAverage.toFixed(1).replace(".", ",")) : Number(fallbackFor || 0).toFixed(1).replace(".", ","), lbl: "Pts marqués", hint: "Moy. / match" },
     { ic: "bars", val: loading ? "…" : connected ? (ffbb.pointsAgainstAverage === null ? "—" : ffbb.pointsAgainstAverage.toFixed(1).replace(".", ",")) : fallbackAgainst === null ? "—" : fallbackAgainst.toFixed(1).replace(".", ","), lbl: "Pts encaissés", hint: "Moy. / match" },
     { ic: "cal", val: connected && ffbb.nextMatch
       ? `${ffbb.nextMatch.date}${ffbb.nextMatch.time ? ` · ${ffbb.nextMatch.time}` : ""}|||${ffbb.nextMatch.place}|||${ffbb.nextMatch.opponent}`
-      : dash, lbl: "Prochain match", hint: connected ? "FFBB" : "FFBB non connecté" },
+      : dash, lbl: "Prochain match", hint: connected ? provider : `${provider} non connecté` },
   ] as const;
 }
 
@@ -821,24 +823,13 @@ export default function EquipeDetailPage({
       if (!team) return;
 
       const today = new Date().toISOString().slice(0, 10);
-      const ids = compactStrings([
-        teamId,
-        team?.id,
-        (team as any)?.team_id,
-        (team as any)?.supabase_team_id,
-        (team as any)?.supabaseTeamId,
-        (team as any)?.supabase_id,
-        (team as any)?.supabaseId,
-        (team as any)?.db_id,
-        (team as any)?.dbId,
-        dashboard.resolvedTeamId,
-      ]);
+      const ids = [teamId];
 
       let directRows: any[] = [];
       if (ids.length) {
         const direct = await supabase
           .from("calendar_events")
-          .select("id,title,theme,event_date,start_time,location,event_type,session_id,team_id")
+          .select("id,title,description,theme,event_date,start_time,location,event_type,session_id,team_id")
           .in("team_id", ids)
           .gte("event_date", today)
           .order("event_date", { ascending: true })
@@ -859,7 +850,7 @@ export default function EquipeDetailPage({
         if (sessionIds.length) {
           const linked = await supabase
             .from("calendar_events")
-            .select("id,title,theme,event_date,start_time,location,event_type,session_id,team_id")
+            .select("id,title,description,theme,event_date,start_time,location,event_type,session_id,team_id")
             .in("session_id", sessionIds)
             .gte("event_date", today)
             .order("event_date", { ascending: true })
@@ -869,27 +860,13 @@ export default function EquipeDetailPage({
         }
       }
 
-      // Anciennes créations : le nom d'équipe était enregistré dans le titre
-      // mais team_id était absent.
-      let legacyRows: any[] = [];
-      const teamName = String(team.name || "").trim();
-      if (teamName) {
-        const legacy = await supabase
-          .from("calendar_events")
-          .select("id,title,theme,event_date,start_time,location,event_type,session_id,team_id")
-          .is("team_id", null)
-          .ilike("title", `${teamName}%`)
-          .gte("event_date", today)
-          .order("event_date", { ascending: true })
-          .order("start_time", { ascending: true })
-          .limit(20);
-        if (!legacy.error) legacyRows = legacy.data || [];
-      }
-
       if (!active) return;
 
       const unique = new Map<string, any>();
-      [...directRows, ...sessionRows, ...legacyRows].forEach((row: any) => {
+      [...directRows, ...sessionRows].forEach((row: any) => {
+        const description = String(row.description || "");
+        if (team.competitionSource === "lnb" && /^(Match FFBB|Synchronisé FFBB)/.test(description)) return;
+        if (team.competitionSource !== "lnb" && /^(Match LNB|Synchronisé LNB)/.test(description)) return;
         if (row?.id) unique.set(String(row.id), row);
       });
 
@@ -906,7 +883,7 @@ export default function EquipeDetailPage({
 
     void loadNextCalendarEvents();
     return () => { active = false; };
-  }, [teamId, team?.id, dashboard.resolvedTeamId]);
+  }, [teamId, team?.id, team?.competitionSource, dashboard.resolvedTeamId]);
 
 
   useEffect(() => {
@@ -917,13 +894,7 @@ export default function EquipeDetailPage({
 
     async function syncFfbbMatchesToCalendar() {
       try {
-        const ids = compactStrings([
-          teamId,
-          currentTeam.id,
-          (currentTeam as any).supabase_team_id,
-          (currentTeam as any).supabaseTeamId,
-          dashboard.resolvedTeamId,
-        ]);
+        const ids = [teamId];
         if (!ids.length) return;
 
         const { data: connections, error: connectionError } = await supabase
@@ -933,13 +904,14 @@ export default function EquipeDetailPage({
 
         if (connectionError || !connections?.length) return;
 
-        const competitionConnections = connections.filter((row: any) => {
+        const sourceConnections = connections.filter((row: any) => currentTeam.competitionSource === "lnb" ? /^https:\/\/(www\.)?lnb\.fr\//i.test(row.source_url) : /^https:\/\/competitions\.ffbb\.com\//i.test(row.source_url));
+        const competitionConnections = sourceConnections.filter((row: any) => {
           const kind = normalizeFfbbText(
             String(row.competition_kind || row.kind || row.competition || "")
           );
           return !kind.includes("cup") && !kind.includes("coupe");
         });
-        const selected = competitionConnections.length ? competitionConnections : connections;
+        const selected = competitionConnections.length ? competitionConnections : sourceConnections;
 
         const {
           data: { user },
@@ -993,7 +965,7 @@ export default function EquipeDetailPage({
             const matchup = homeAway === "Extérieur" ? `@ ${opponent}` : `vs ${opponent}`;
             const title = `${category ? `${category} ` : ""}${matchup}`.trim();
             const description = [
-              "Match FFBB",
+              currentTeam.competitionSource === "lnb" ? "Match LNB" : "Match FFBB",
               homeAway ? `Lieu : ${homeAway}` : "",
               parsed?.competition ? `Compétition : ${parsed.competition}` : "",
               parsed?.pool ? `Poule : ${parsed.pool}` : "",
@@ -1042,7 +1014,7 @@ export default function EquipeDetailPage({
 
     void syncFfbbMatchesToCalendar();
     return () => { active = false; };
-  }, [teamId, team?.id, dashboard.resolvedTeamId]);
+  }, [teamId, team?.id, team?.competitionSource, dashboard.resolvedTeamId]);
 
   function flash(m: string) {
     setToast(m);
@@ -1184,7 +1156,7 @@ export default function EquipeDetailPage({
   // Le hook FFBB doit être appelé à chaque rendu, y compris pendant le chargement
   // initial de l'équipe. Sinon React détecte un changement d'ordre des hooks.
   const linkedStatsTeamId = dashboard.resolvedTeamId || teamId;
-  const ffbbBanner = useFfbbBannerSummary(teamId);
+  const ffbbBanner = useFfbbBannerSummary(teamId, team?.competitionSource || "ffbb");
 
   if (!team) {
     return (
@@ -1699,7 +1671,7 @@ export default function EquipeDetailPage({
               </div>
             </section>
 
-            <TeamFfbbCompetition teamId={teamId} />
+            <TeamFfbbCompetition key={`${teamId}:${team.competitionSource || "ffbb"}`} teamId={teamId} source={team.competitionSource || "ffbb"} onConnected={() => window.location.reload()} />
 
                         {/* ---------- STAFF ---------- */}
             <TeamStaffManager

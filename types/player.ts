@@ -332,6 +332,7 @@ export interface Team {
   // --- Identité étendue ---
   categorieLabel: string; // "U15 France - Masculins"
   niveau: string; // "Départemental"
+  competitionSource?: "ffbb" | "lnb";
   genre: string; // "Masculins"
   tags: string[]; // ["DÉPARTEMENTAL","U15","MASCULINS"]
   banniere?: string | null; // photo d'équipe (data URL)

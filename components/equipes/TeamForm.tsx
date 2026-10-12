@@ -158,8 +158,9 @@ export default function TeamForm({ team, onSave, onClose }: {
                 <option value="">Choisir</option>{["U7","U9","U11","U13","U15","U18","U21","SENIOR"].map((v)=><option key={v} value={v}>{v==="SENIOR"?"Senior":v}</option>)}
               </select></div>
               <div style={{gridColumn:"1 / -1"}}><label style={labelStyle}>Niveau</label><select value={t.niveau} onChange={(e)=>set("niveau",e.target.value)} style={fieldStyle}>
-                <option value="">Choisir</option><option>Départemental</option><option>Régional</option><option>National</option>
+                <option value="">Choisir</option><option>Départemental</option><option>Régional</option><option>National</option><option>Espoirs Élite</option><option>Espoirs Élite 2</option><option>Élite 2</option><option>Betclic Élite</option>
               </select></div>
+              <div style={{gridColumn:"1 / -1"}}><label style={labelStyle}>Source du calendrier et des résultats</label><select value={t.competitionSource || "ffbb"} onChange={event => set("competitionSource", event.target.value as "ffbb" | "lnb")} style={fieldStyle}><option value="ffbb">FFBB</option><option value="lnb">LNB</option></select><p style={{fontSize:12,color:MUTED,margin:"7px 0 0"}}>Choix indépendant de la catégorie : une équipe U21 peut rester sur FFBB. La LNB couvre Espoirs Élite, Espoirs Élite 2, Élite 2 et Betclic Élite.</p></div>
             </div>
           </section>
 

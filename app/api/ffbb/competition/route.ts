@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { readLnbCalendar } from "@/lib/lnb-calendar";
 
 type TeamChoice = { name: string; url: string };
 type Game = {
@@ -689,6 +690,11 @@ export async function GET(req: NextRequest) {
     validatedUrl = new URL(url);
   } catch {
     return NextResponse.json({ error: "Lien FFBB invalide" }, { status: 400 });
+  }
+
+  if (["lnb.fr", "www.lnb.fr"].includes(validatedUrl.hostname)) {
+    try { return NextResponse.json(await readLnbCalendar(url)); }
+    catch (error) { return NextResponse.json({ error: error instanceof Error ? error.message : "Calendrier LNB indisponible." }, { status: 502 }); }
   }
 
   if (
