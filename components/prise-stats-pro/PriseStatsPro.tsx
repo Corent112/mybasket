@@ -5775,14 +5775,14 @@ export default function PriseStatsProPage() {
 
             {/* ============ DROITE · SHOT CHART + JOUEURS / BANC ============ */}
             {codingMode !== 'match-review' && (
-            <aside className={`lc lc-right ${workTab === 'analysis' || (liveCourt && isAndOneBasket(draft.specialCase)) ? 'mshow' : ''}`}>
+            <aside className={`lc lc-right ${workTab === 'analysis' || liveCourt ? 'mshow' : ''}`}>
               {/* Shot chart PAR ZONES pro — pick à l'étape zone, analyse sinon */}
               <div className="scZone">
                 {liveCourt ? (
                   <div className="scZone-live">
                     <div className="courtSlotHead">
                       <span>🎯 Choisis la zone · {draft.shotRange === 'interior' ? '2 PTS intérieur' : draft.shotRange === 'exterior' ? '2 PTS extérieur' : draft.shotType || 'Tir'}</span>
-                      {draft.context === 'defense' && !isAndOneBasket(draft.specialCase) && !isPostLikeCodingMode(codingMode) && !isOffline && (
+                      {draft.context === 'defense' && !isAndOneBasket(draft.specialCase) && !isPostLikeCodingMode(codingMode) && (
                         <button type="button" className="chip" onClick={() => {
                           const d: Draft = { ...draft, zone: '', courtX: null, courtY: null };
                           if (d.shotResult === 'missed' && workflowOn('rebound')) { setDraft(d); setStage('rebound'); }
@@ -7576,8 +7576,8 @@ export default function PriseStatsProPage() {
           // on propose toujours les 4 issues possibles. Les ids historiques sont
           // conservés afin de ne pas modifier les stats ni la logique de possession.
           const blockConsequences = [
-            { id: 'off', label: '🟢 Récupération de balle' },
-            { id: 'def', label: '🔴 Récupération adverse' },
+            { id: draft.context === 'defense' ? 'def' : 'off', label: '🟢 Récupération de balle' },
+            { id: draft.context === 'defense' ? 'off' : 'def', label: '🔴 Récupération adverse' },
             { id: 'touche-pour', label: '↪ Touche pour moi' },
             { id: 'touche-contre', label: '↩ Touche pour l’adversaire' },
           ];
