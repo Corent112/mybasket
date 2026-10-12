@@ -98,8 +98,10 @@ function levelFromDelta(delta: number | null) {
 
 function LineChart({
   data,
+  actualLabel="RPE réel moyen",
 }: {
   data: Array<{ label: string; planned: number | null; actual: number | null }>;
+  actualLabel?: string;
 }) {
   const width = 760;
   const height = 250;
@@ -139,7 +141,7 @@ function LineChart({
       </svg>
       <div style={{ display: "flex", gap: 16, flexWrap: "wrap", fontSize: 11, color: MUTED }}>
         <span><i style={{display:"inline-block",width:20,height:3,background:GOLD,marginRight:6,verticalAlign:"middle"}} />RPE prévu</span>
-        <span><i style={{display:"inline-block",width:20,height:3,background:BORDEAUX,marginRight:6,verticalAlign:"middle"}} />RPE réel moyen</span>
+        <span><i style={{display:"inline-block",width:20,height:3,background:BORDEAUX,marginRight:6,verticalAlign:"middle"}} />{actualLabel}</span>
       </div>
     </div>
   );
@@ -212,6 +214,10 @@ export default function TeamWeeklyRpeComparison({
   const [history, setHistory] = useState<WeekSnapshot[]>([]);
   const [view, setView] = useState<"recap" | "history">("recap");
   const [message, setMessage] = useState("");
+  const [chartPlayerId,setChartPlayerId]=useState("");
+  const chartPlayer=players.find(player=>String(player.id)===chartPlayerId);
+  useEffect(()=>{setChartPlayerId("")},[teamId]);
+
 
   const dates = useMemo(
     () => Array.from({ length: 7 }, (_, i) => addDays(weekStart, i)),
@@ -367,7 +373,7 @@ export default function TeamWeeklyRpeComparison({
     return dates.map((date, index) => {
       const dateIso = iso(date);
       const plan = planMap.get(dateIso);
-      const actuals = players
+      const actuals = (chartPlayer ? [chartPlayer] : players)
         .map((p) => { const r=responseMap.get(`${String(p.id)}|${dateIso}`); return r?.is_injured ? null : r?.rpe; })
         .filter((v): v is number => v != null)
         .map(Number);
@@ -378,7 +384,7 @@ export default function TeamWeeklyRpeComparison({
         actual: actuals.length ? Number((actuals.reduce((a,b)=>a+b,0)/actuals.length).toFixed(1)) : null,
       };
     });
-  }, [dates, planMap, players, responseMap]);
+  }, [dates, planMap, players, responseMap, chartPlayer]);
 
   const weeklyRows = useMemo(() => {
     return players.map((player) => {
@@ -582,18 +588,24 @@ export default function TeamWeeklyRpeComparison({
 
       {view === "recap" ? (
         <div style={{border:`1px solid ${BORDER}`,borderRadius:16,background:"#fff",padding:14}}>
-          <div style={{display:"flex",justifyContent:"space-between",gap:10,alignItems:"end",marginBottom:8}}>
+          <div style={{display:"flex",justifyContent:"space-between",gap:10,alignItems:"end",flexWrap:"wrap",marginBottom:8}}>
             <div>
-              <span style={{display:"block",color:GOLD,fontWeight:1000,fontSize:9,letterSpacing:".12em"}}>GRAPHIQUE ÉQUIPE</span>
-              <strong style={{display:"block",marginTop:3,color:TEXT}}>RPE théorique et RPE réel moyen par jour</strong>
+              <span style={{display:"block",color:GOLD,fontWeight:1000,fontSize:9,letterSpacing:".12em"}}>{chartPlayer?"GRAPHIQUE JOUEUR":"GRAPHIQUE ÉQUIPE"}</span>
+              <strong style={{display:"block",marginTop:3,color:TEXT}}>{chartPlayer?`RPE de ${chartPlayer.firstName} ${chartPlayer.lastName} · semaine sélectionnée`:"RPE théorique et RPE réel moyen par jour"}</strong>
             </div>
-            <small style={{color:MUTED}}>Échelle 1 à 10</small>
+            <label style={{display:"grid",gap:5,fontSize:11,color:MUTED}}>Afficher
+              <select aria-label="Joueur du graphique RPE hebdomadaire" value={chartPlayerId} onChange={event=>setChartPlayerId(event.target.value)} style={{padding:"9px 12px",border:`1px solid ${BORDER}`,borderRadius:9,background:"#fff",color:BORDEAUX,maxWidth:"100%"}}>
+                <option value="">Toute l’équipe</option>
+                {players.map(player=><option key={String(player.id)} value={String(player.id)}>{player.firstName} {player.lastName}</option>)}
+              </select>
+            </label>
           </div>
-          <LineChart data={teamChart} />
+          <LineChart data={teamChart} actualLabel={chartPlayer?"RPE réel du joueur":"RPE réel moyen"} />
+          <small style={{display:"block",color:MUTED,marginTop:8}}>Échelle 1 à 10 · Les jours sans réponse restent vides. La courbe prévue reste celle du programme de l’équipe.</small>
         </div>
       ) : (
         <div style={{border:`1px solid ${BORDER}`,borderRadius:16,background:"#fff",padding:14}}>
-          <div style={{display:"flex",justifyContent:"space-between",gap:10,alignItems:"end",marginBottom:8}}>
+          <div style={{display:"flex",justifyContent:"space-between",gap:10,alignItems:"end",flexWrap:"wrap",marginBottom:8}}>
             <div>
               <span style={{display:"block",color:GOLD,fontWeight:1000,fontSize:9,letterSpacing:".12em"}}>ÉVOLUTION 6 SEMAINES</span>
               <strong style={{display:"block",marginTop:3,color:TEXT}}>Charge prévue vs charge réellement vécue</strong>
