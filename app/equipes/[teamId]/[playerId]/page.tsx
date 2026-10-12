@@ -13,6 +13,8 @@ import { Jersey, Sparkline } from "../../../../components/equipes/Sparkline";
 import type { Player, Team } from "../../../../types/player";
 import { sendActionToMontageLibrary } from "@/lib/montage/favorite-source";
 import { openMontageDestination } from "@/lib/montage/incoming-clips";
+import { loadLnbTeamStatistics } from "@/lib/lnb-statistics-client";
+import { combineLnbSeasons, fillLnbIdentity, isCoveredLnbMatch } from "@/lib/lnb-statistics-model";
 import LnbPlayerStats from "@/components/equipes/LnbPlayerStats";
 import { completedPlayerMatchRows, playerMatchCategoryOf, type PlayerMatchCategory, loadPlayerMatchStats } from "@/lib/player-match-stats";
 import { createClient } from "@/lib/supabase/client";
@@ -216,6 +218,10 @@ type PlayerLiveAverages = {
 };
 
 type PlayerLiveStats = {
+  evaluationAverage?: number;
+  plusMinusAverage?: number | null;
+  sourceLabel?: string;
+  officialGames?: number;
   hasData: boolean;
   totalRows: number;
   games: number;
@@ -941,6 +947,9 @@ export default function JoueurDetailPage({
   const [identityLoading, setIdentityLoading] = useState(true);
   const [playerTeams, setPlayerTeams] = useState<Team[]>([]);
   const [statsTeamId, setStatsTeamId] = useState(teamId);
+  const [officialSeasons, setOfficialSeasons] = useState<Array<{ teamId: string; data: any }>>([]);
+  const [statsRefresh, setStatsRefresh] = useState(0);
+  useEffect(() => { const handler = (event: Event) => { if ([teamId, ...playerTeams.map(t => t.id)].includes((event as CustomEvent).detail)) setStatsRefresh(v => v + 1); }; window.addEventListener("mybasket:lnb-updated", handler); return () => window.removeEventListener("mybasket:lnb-updated", handler); }, [teamId, playerTeams]);
   const [liveStats, setLiveStats] = useState<PlayerLiveStats>(EMPTY_LIVE_STATS);
   const [matchStatsLoading, setMatchStatsLoading] = useState(true);
   const [matchStatsError, setMatchStatsError] = useState("");
@@ -1211,6 +1220,7 @@ export default function JoueurDetailPage({
 
     async function loadSupabaseStats() {
       setLiveStats(EMPTY_LIVE_STATS);
+      setOfficialSeasons([]);
       setTeamPlayersStats([]);
 
       setMatchStatsLoading(true);
@@ -1230,8 +1240,24 @@ export default function JoueurDetailPage({
 
         if (!active) return;
 
-        setLiveStats(computeLiveStats(currentPlayerRows, matchesById));
+        const official = await Promise.all(sourceTeamIds.map(async id => {
+          const source = playerTeams.find(t => t.id === id) || (team?.id === id ? team : undefined);
+          if (source?.competitionSource !== "lnb") return null;
+          try { return { teamId: id, data: await loadLnbTeamStatistics(id, statsRefresh > 0) }; }
+          catch (error) { if (active) setMatchStatsError(error instanceof Error ? error.message : "LNB indisponible."); return null; }
+        }));
+        if (!active) return;
+        const seasons = official.filter((item): item is {teamId:string;data:any} => !!item && !!item.data?.connected);
+        setOfficialSeasons(seasons);
+        const rows = seasons.map(item => ({ ...item.data.players.find((p:any) => p.playerId === playerId), year: item.data.year, matches: item.data.matches, sourceTeamId: item.teamId })).filter(row => row.seasonTotals && row.s_games != null);
+        const remaining = currentPlayerRows.filter(row => !rows.some(season => String(row.team_id) === season.sourceTeamId && isCoveredLnbMatch(matchesById.get(String(row.match_id)), season)));
+        setLiveStats(combineLnbSeasons(computeLiveStats(remaining, matchesById), rows));
         const comparisonTeam = playerTeams.find(item => item.id === statsTeamId) || team;
+        const comparisonOfficial = seasons.find(item => item.teamId === comparisonTeam?.id);
+        if (comparisonOfficial) {
+          setTeamPlayersStats(comparisonOfficial.data.players.filter((row:any) => row.playerId && row.s_games > 0).map((row:any) => ({ id:row.playerId, player_id:row.playerId, first_name:row.person.first_name, last_name:row.person.family_name, position:row.player_role?.playing_position || null, plus_minus:row.s_plus_minus_points, name:`${row.person.first_name} ${row.person.family_name}`, pts:row.s_points_average, reb:row.s_rebounds_total_average, ast:row.s_assists_average, stl:row.s_steals_average, blk:row.s_blocks_average, turnovers:row.s_turnovers_average })));
+          return;
+        }
         setTeamPlayersStats(
           computeTeamPlayersComparisonStats(completedTeamRows.filter(row => String(row.team_id) === comparisonTeam?.id), comparisonTeam?.players ?? [])
         );
@@ -1253,7 +1279,7 @@ export default function JoueurDetailPage({
     return () => {
       active = false;
     };
-  }, [supabase, teamId, playerId, team?.players, playerTeams, statsTeamId]);
+  }, [supabase, teamId, playerId, team?.players, playerTeams, statsTeamId, statsRefresh]);
 
   useEffect(() => {
     let active = true;
@@ -1883,10 +1909,15 @@ export default function JoueurDetailPage({
     );
   }
 
-  const basePlayer: any = player;
+  const primaryOfficial = officialSeasons.find(item => item.teamId === (statsTeamId === "all" ? teamId : statsTeamId)) || officialSeasons[0];
+  const officialRow = primaryOfficial?.data.players.find((row:any) => row.playerId === playerId);
+  const basePlayer: any = fillLnbIdentity(player, officialRow);
 
   const p: any = {
     ...basePlayer,
+    statsLoading: matchStatsLoading,
+    officialRow,
+    statsSourceLabel: liveStats.sourceLabel || "MyBasket",
     stats: {
           ...(basePlayer.stats ?? {}),
           pts: liveStats.averages.pts,
@@ -1900,7 +1931,7 @@ export default function JoueurDetailPage({
           pct3pts: liveStats.averages.pct3pts,
           pctLf: liveStats.averages.pctLf,
         },
-    presencePct: liveStats.hasData ? liveStats.attendancePct : basePlayer.presencePct,
+    presencePct: liveStats.sourceLabel ? basePlayer.presencePct : liveStats.hasData ? liveStats.attendancePct : basePlayer.presencePct,
     evolution: liveStats.evolution,
   };
 
@@ -2098,7 +2129,7 @@ export default function JoueurDetailPage({
           <InformationTab p={p} team={team} latestHeight={latestHeight} latestWeight={latestWeight} latestWingspan={latestWingspan} />
         )}
 
-        {(tab === "Aperçu" || tab === "Stats & Vidéo") && (statsTeamId === "all" ? playerTeams : [playerTeams.find(t => t.id === statsTeamId) || team]).filter(t => t?.competitionSource === "lnb").map(t => t && <LnbPlayerStats key={t.id} teamId={t.id} playerId={String(playerId)} />)}
+        {tab === "Stats & Vidéo" && (statsTeamId === "all" ? playerTeams : [playerTeams.find(t => t.id === statsTeamId) || team]).filter(t => t?.competitionSource === "lnb").map(t => t && <LnbPlayerStats key={t.id} teamId={t.id} playerId={String(playerId)} externalData={officialSeasons.find(item => item.teamId === t.id)?.data} externalLoading={matchStatsLoading} externalError={matchStatsError} />)}
 
         {tab === "Stats & Vidéo" && (
           <VideoRentabilityTab
@@ -2107,6 +2138,7 @@ export default function JoueurDetailPage({
             teamId={String(teamId)}
             playerId={String(playerId)}
             playerName={`${p.firstName ?? ""} ${p.lastName ?? ""}`.trim() || "Joueur"}
+            hasOfficialStats={officialSeasons.some(item => item.data.players.some((row:any) => row.playerId === playerId && row.s_games != null))}
             matches={liveStats.matches}
             matchStatsLoading={matchStatsLoading}
             matchStatsError={matchStatsError}
@@ -2530,15 +2562,15 @@ function OverviewTab({
         <Kpi
           icon="🏀"
           label="Matchs joués"
-          value={String(liveStats.hasData ? liveStats.games : tdj.matchsJoues || 0)}
-          sub={`${liveStats.hasData ? liveStats.missedGames : tdj.matchsManques || 0} manqué${(liveStats.hasData ? liveStats.missedGames : tdj.matchsManques || 0) > 1 ? "s" : ""}`}
+          value={p.statsLoading ? "…" : liveStats.hasData ? String(liveStats.games) : "—"}
+          sub={liveStats.sourceLabel ? `${liveStats.sourceLabel} · matchs joués` : `${liveStats.hasData ? liveStats.missedGames : tdj.matchsManques || 0} manqué${(liveStats.hasData ? liveStats.missedGames : tdj.matchsManques || 0) > 1 ? "s" : ""}`}
         />
 
         <Kpi
           icon="⌛"
           label="Temps moyen"
-          value={`${liveStats.hasData ? liveStats.averageMinutes : tdj.tempsMoyenMatchMin || 0} min`}
-          sub={liveStats.hasData ? "Depuis les stats match" : "par match"}
+          value={p.statsLoading ? "…" : liveStats.hasData ? `${liveStats.averageMinutes} min` : "—"}
+          sub={liveStats.sourceLabel || (liveStats.hasData ? "Depuis les stats match" : "par match")}
         />
       </div>
 
@@ -2550,21 +2582,23 @@ function OverviewTab({
         </div>
 
         <div className="light-card">
-          <h3>Stats match <span>(moyennes)</span></h3>
+          <h3>Stats match <span>(moyennes)</span></h3><p className="muted">{p.statsSourceLabel} · {liveStats.games} matchs joués</p>
 
           <div className="stats-grid-light">
-            <StatCell n={p.stats?.pts || 0} l="Pts" />
-            <StatCell n={p.stats?.reb || 0} l="Reb" />
-            <StatCell n={p.stats?.ast || 0} l="Ast" />
-            <StatCell n={p.stats?.stl || 0} l="Stl" />
-            <StatCell n={p.stats?.blk || 0} l="Blk" />
-            <StatCell n={p.stats?.to || 0} l="To" />
+            <StatCell n={p.statsLoading ? "…" : liveStats.hasData ? p.stats?.pts ?? "—" : "—"} l="Pts" />
+            <StatCell n={p.statsLoading ? "…" : liveStats.hasData ? p.stats?.reb ?? "—" : "—"} l="Reb" />
+            <StatCell n={p.statsLoading ? "…" : liveStats.hasData ? p.stats?.ast ?? "—" : "—"} l="Ast" />
+            <StatCell n={p.statsLoading ? "…" : liveStats.hasData ? p.stats?.stl ?? "—" : "—"} l="Stl" />
+            <StatCell n={p.statsLoading ? "…" : liveStats.hasData ? p.stats?.blk ?? "—" : "—"} l="Blk" />
+            <StatCell n={p.statsLoading ? "…" : liveStats.hasData ? p.stats?.to ?? "—" : "—"} l="To" />
+            {liveStats.evaluationAverage != null && <StatCell n={liveStats.evaluationAverage} l="Éval" />}
+            {liveStats.plusMinusAverage != null && <StatCell n={liveStats.plusMinusAverage > 0 ? `+${liveStats.plusMinusAverage}` : liveStats.plusMinusAverage} l="+/−" />}
           </div>
 
           <div className="pct-row-light">
-            <StatCell n={`${p.stats?.pctTir || 0}%`} l="% Tir" small />
-            <StatCell n={`${p.stats?.pct3pts || 0}%`} l="% 3pts" small />
-            <StatCell n={`${p.stats?.pctLf || 0}%`} l="% LF" small />
+            <StatCell n={p.statsLoading ? "…" : !liveStats.hasData || (liveStats.totals.p2a + liveStats.totals.p3a === 0) ? "—" : `${p.stats?.pctTir ?? 0}%`} l="% Tir" small />
+            <StatCell n={p.statsLoading ? "…" : !liveStats.hasData || (liveStats.totals.p3a === 0) ? "—" : `${p.stats?.pct3pts ?? 0}%`} l="% 3pts" small />
+            <StatCell n={p.statsLoading ? "…" : !liveStats.hasData || (liveStats.totals.fta === 0) ? "—" : `${p.stats?.pctLf ?? 0}%`} l="% LF" small />
           </div>
         </div>
 
@@ -2585,13 +2619,13 @@ function OverviewTab({
           <h3>Temps de jeu</h3>
 
           <div className="temps-row">
-            <DonutChart pct={tdjPct} centerTop="Temps de jeu" centerBottom="moyen" />
+            {liveStats.sourceLabel ? <div style={{padding:20,minWidth:140,textAlign:"center",color:"#6b1a2c"}}><strong style={{display:"block",fontSize:30}}>{liveStats.averageMinutes} min</strong><small>par match joué · {liveStats.sourceLabel}</small></div> : <DonutChart pct={tdjPct} centerTop="Temps de jeu" centerBottom="moyen" />}
 
             <div className="legend-list">
               <Legend color="#1f6fb2" label="Temps moyen / match" value={`${tdj.tempsMoyenMatchMin || 0} min`} />
               <Legend color="#f47b20" label="Temps total" value={tdj.tempsTotalLabel || "—"} />
               <Legend color="#22a06b" label="Matchs joués" value={String(tdj.matchsJoues || 0)} />
-              <Legend color="#e4564f" label="Matchs manqués" value={String(tdj.matchsManques || 0)} />
+              {!liveStats.sourceLabel && <Legend color="#e4564f" label="Matchs manqués" value={String(tdj.matchsManques || 0)} />}
             </div>
           </div>
         </div>
@@ -3546,6 +3580,7 @@ function PlayerMatchStatsTable({ matches, loading = false, error = "" }: { match
 
 function VideoRentabilityTab({
   actions,
+  hasOfficialStats = false,
   tags,
   teamId,
   playerId,
@@ -3557,6 +3592,7 @@ function VideoRentabilityTab({
   onOpenMontageStudio,
 }: {
   actions: any[];
+  hasOfficialStats?: boolean;
   tags: ReturnType<typeof useLivestatTags>;
   teamId: string;
   playerId: string;
@@ -4206,7 +4242,7 @@ function VideoRentabilityTab({
         <button className={section === "montage" ? "active" : ""} onClick={() => setSection("montage")}>Montage</button>
       </div>
 
-      {(section === "overview" || section === "matches") && <PlayerMatchStatsTable
+      {(section === "overview" || section === "matches") && (!hasOfficialStats || matches.length > 0) && <PlayerMatchStatsTable
         key={`${teamId}:${playerId}`}
         matches={matchFilter === "all" ? matches : matches.filter(match => match.matchId === matchFilter)}
         loading={matchStatsLoading}

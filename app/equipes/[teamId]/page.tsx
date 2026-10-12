@@ -26,6 +26,8 @@ import TeamAvailabilityLoad from "@/components/equipes/TeamAvailabilityLoad";
 import TeamResourcesPanel from "@/components/equipes/TeamResourcesPanel";
 import TeamActivityPanel from "@/components/equipes/TeamActivityPanel";
 import { syncCompetitionCalendar } from "@/lib/competition-calendar";
+import { useLnbTeamStatistics } from "@/lib/lnb-statistics-client";
+import { fillLnbIdentity } from "@/lib/lnb-statistics-model";
 import LnbPlayerStats from "@/components/equipes/LnbPlayerStats";
 import TeamFfbbCompetition from "@/components/equipes/TeamFfbbCompetition";
 import ActionClipsModal, { type ClipAction } from "@/components/prise-stats-pro/ActionClipsModal";
@@ -747,6 +749,7 @@ export default function EquipeDetailPage({
   const { teamId } = use(params);
   const router = useRouter();
   const [team, setTeam] = useState<Team | undefined>();
+  const [showCodedStats, setShowCodedStats] = useState(false);
   const [competitionRevision, setCompetitionRevision] = useState(0);
   const [editingTeam, setEditingTeam] = useState(false);
   const [managing, setManaging] = useState(false);
@@ -769,9 +772,11 @@ export default function EquipeDetailPage({
   const bannerRef = useRef<HTMLInputElement>(null);
 
   const dashboard = useTeamDashboardData(teamId, team);
+  const officialStats = useLnbTeamStatistics(teamId, team?.competitionSource === "lnb", competitionRevision);
+  const rosterPlayers = useMemo(() => (team?.players || []).map(p => fillLnbIdentity(p, officialStats.data?.players?.find((row:any) => row.playerId === p.id))), [team?.players, officialStats.data]);
   const livePlayerAverages = useMemo(
-    () => buildPlayerLiveAverages(dashboard.statRows),
-    [dashboard.statRows],
+    () => team?.competitionSource === "lnb" ? Object.fromEntries((officialStats.data?.players || []).filter((row:any) => row.playerId && row.s_games != null).map((row:any) => [row.playerId, { games:row.s_games, pts:row.s_points_average, reb:row.s_rebounds_total_average, ast:row.s_assists_average, stl:row.s_steals_average }])) : buildPlayerLiveAverages(dashboard.statRows),
+    [dashboard.statRows, officialStats.data, team?.competitionSource],
   );
 
   const isOwner = team ? team.isShared !== true : false;
@@ -1475,7 +1480,7 @@ export default function EquipeDetailPage({
                 </span>
               </div>
               <div className="tl-roster">
-                {team.players.map((p) => (
+                {rosterPlayers.map((p) => (
                   <div
                     key={p.id}
                     className="tl-pcard"
@@ -1505,7 +1510,7 @@ export default function EquipeDetailPage({
                     </div>
                     <div className="tl-pposte">{p.postePrincipal}</div>
                     <div className="tl-pstat">
-                      {getLivePlayerLabel(p, livePlayerAverages)}
+                      {officialStats.loading ? "Chargement LNB…" : officialStats.error ? "Statistiques LNB indisponibles" : getLivePlayerLabel(p, livePlayerAverages)}{team.competitionSource === "lnb" && livePlayerAverages[p.id] && <small style={{display:"block",color:"#a38147"}}>LNB · {livePlayerAverages[p.id].games} MJ</small>}
                     </div>
                   </div>
                 ))}
@@ -1674,7 +1679,9 @@ export default function EquipeDetailPage({
 
         {activeTab === "stats" && (
           <div className="team-tab-panel stats-panel">
-            {team.competitionSource === "lnb" && <LnbPlayerStats teamId={teamId} revision={competitionRevision} onProfilesCreated={reload} />}
+            {team.competitionSource === "lnb" && <div style={{display:"flex",gap:8,marginBottom:12}}><button className="tl-btn" onClick={() => setShowCodedStats(false)} aria-pressed={!showCodedStats}>Statistiques officielles LNB</button><button className="tl-btn" onClick={() => setShowCodedStats(true)} aria-pressed={showCodedStats}>Matchs codés MyBasket</button></div>}
+            {team.competitionSource === "lnb" && !showCodedStats && <><LnbPlayerStats initialView="defense" teamId={teamId} revision={competitionRevision} onProfilesCreated={reload} externalData={officialStats.data} externalLoading={officialStats.loading} externalError={officialStats.error} /><TeamLeadersBlock teamId={teamId} players={team.players} matchCategory={statsMatchCategory} officialRows={officialStats.data?.players || []} officialLoading={officialStats.loading} /></>}
+            {(team.competitionSource !== "lnb" || showCodedStats) && <>
             <LiveStatsSourceBanner dashboard={dashboard} />
             <MatchCategoryTabs value={statsMatchCategory} onChange={setStatsMatchCategory} />
             {dashboard.statRows.length === 0 && (team.statsHistory || []).length > 0 && (
@@ -1690,16 +1697,19 @@ export default function EquipeDetailPage({
             <TeamLineupsBlock teamId={linkedStatsTeamId} matchCategory={statsMatchCategory} />
             <TeamMatchHistoryBlock teamId={linkedStatsTeamId} />
             <TeamSeasonRecordsBlock teamId={linkedStatsTeamId} matchCategory={statsMatchCategory} />
+            </>}
           </div>
         )}
 
         {activeTab === "advanced" && (
           <div className="team-tab-panel stats-panel">
-            <TeamAdvancedStats
+            {team.competitionSource === "lnb" && <button className="tl-btn" onClick={() => setShowCodedStats(v => !v)}>{showCodedStats ? "Voir les données LNB" : "Voir aussi l’analyse des matchs codés"}</button>}
+            {team.competitionSource === "lnb" && <LnbPlayerStats teamId={teamId} revision={competitionRevision} externalData={officialStats.data} externalLoading={officialStats.loading} externalError={officialStats.error} />}
+            {(team.competitionSource !== "lnb" || showCodedStats) && <TeamAdvancedStats
               teamId={linkedStatsTeamId}
               team={team}
               initialMatchCategory={statsMatchCategory}
-            />
+            />}
           </div>
         )}
 
@@ -3236,10 +3246,14 @@ function TeamLeadersBlock({
   teamId,
   players,
   matchCategory,
+  officialRows,
+  officialLoading = false,
 }: {
   teamId: string;
   players: Player[];
   matchCategory: MatchCategoryFilter;
+  officialRows?: any[];
+  officialLoading?: boolean;
 }) {
   const supabase = createClient();
 
@@ -3251,7 +3265,10 @@ function TeamLeadersBlock({
 
     async function load() {
       setLoading(true);
-
+      if (officialRows !== undefined) {
+        setLeaders(officialRows.filter(row => row.s_games > 0 && row.seasonTotals).map(row => ({ playerId:row.playerId || `lnb:${row.person.external_id}`, name:`${row.person.first_name} ${row.person.family_name}`, games:row.s_games, pts:row.seasonTotals.s_points_average, ast:row.seasonTotals.s_assists_average, reb:row.seasonTotals.s_rebounds_total_average, stl:row.seasonTotals.s_steals_average, p3m:row.seasonTotals.s_three_pointers_made_average, p3a:row.seasonTotals.s_three_pointers_attempted_average })));
+        setLoading(officialLoading); return;
+      }
       const localNames = players.reduce(
         (acc: Record<string, string>, player) => {
           acc[String(player.id)] = playerDisplayName(player);
@@ -3300,7 +3317,7 @@ function TeamLeadersBlock({
     return () => {
       active = false;
     };
-  }, [players, supabase, teamId, matchCategory]);
+  }, [players, supabase, teamId, matchCategory, officialRows, officialLoading]);
 
   const cards = useMemo(
     () =>
@@ -3318,7 +3335,7 @@ function TeamLeadersBlock({
           <p className="eyebrow">Performance</p>
           <h2>Leaders de l'équipe</h2>
           <p className="muted">
-            Top 3 par catégorie, calculé sur les matchs enregistrés.
+            {officialRows !== undefined ? "Top 3 du championnat et de la saison LNB connectés." : "Top 3 par catégorie, calculé sur les matchs enregistrés."}
           </p>
         </div>
 

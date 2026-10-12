@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import LnbPlayerStats from "@/components/equipes/LnbPlayerStats";
 import { loadPlayerMatchStats, completedPlayerMatchRows, summarizePlayerMatchRows, type PlayerMatchCategory } from "@/lib/player-match-stats";
 import { createClient } from "@/lib/supabase/client";
 
@@ -16,6 +17,7 @@ type Player = {
 };
 
 type Team = {
+  competitionSource?: "lnb" | "ffbb";
   id: string;
   name: string;
   players: Player[];
@@ -86,6 +88,7 @@ function readTeams(): Team[] {
   return arr.map((team: any, index: number) => ({
     id: String(team.id ?? `team_${index}`),
     name: team.name ?? team.nom ?? "Équipe",
+    competitionSource: team.competitionSource,
     players: (team.players ?? team.joueurs ?? []).map(
       (player: any, pIndex: number) => ({
         id: String(player.id ?? `player_${index}_${pIndex}`),
@@ -177,6 +180,7 @@ async function loadAccessibleTeams(): Promise<Team[]> {
       return {
         id,
         name: String(row.name ?? row.nom ?? row.club_name ?? "Équipe"),
+        competitionSource: row.metadata?.competitionSource === "lnb" ? "lnb" : "ffbb",
         players: playersByTeam.get(id) || [],
       };
     });
@@ -237,6 +241,7 @@ export default function StatsJoueursModule() {
   const [statsError, setStatsError] = useState("");
   const [loading, setLoading] = useState(false);
   const [loadingTeams, setLoadingTeams] = useState(true);
+  const [showCodedStats, setShowCodedStats] = useState(false);
   const [displayMode, setDisplayMode] = useState<"cumulative" | "average">("cumulative");
 
   useEffect(() => {
@@ -268,6 +273,8 @@ export default function StatsJoueursModule() {
     () => teams.find((team) => team.id === teamId) || null,
     [teams, teamId]
   );
+
+  const officialVisible = selectedTeam?.competitionSource === "lnb" && !showCodedStats && (matchCategory === "all" || matchCategory === "championship");
 
   useEffect(() => {
     if (!selectedTeam) return;
@@ -365,7 +372,9 @@ export default function StatsJoueursModule() {
         </div>
       </div>
 
-      {loading && <div className="sj-empty">Chargement des stats...</div>}
+      {selectedTeam?.competitionSource === "lnb" && <div style={{display:"flex",gap:8,margin:"12px 0"}}><button onClick={() => setShowCodedStats(false)}>Statistiques officielles LNB</button><button onClick={() => setShowCodedStats(true)}>Matchs codés MyBasket</button></div>}
+      {officialVisible && selectedTeam && <LnbPlayerStats key={selectedTeam.id} teamId={selectedTeam.id} />}
+      {loading && !officialVisible && <div className="sj-empty">Chargement des stats...</div>}
 
       {!loadingTeams && !loading && !selectedTeam && (
         <div className="sj-empty">
@@ -374,7 +383,7 @@ export default function StatsJoueursModule() {
       )}
 
       {statsError && <div className="sj-empty" role="alert">Statistiques indisponibles : {statsError}</div>}
-      {!loading && selectedTeam && !statsError && (
+      {!loading && selectedTeam && !statsError && !officialVisible && (
         <div className="sj-table-wrap">
           <table className="sj-table">
             <thead>

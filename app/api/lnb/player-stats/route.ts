@@ -1,5 +1,6 @@
 import { createClient } from "@/lib/supabase/server";
 import { readLnbPlayerStats, resolveLnbPlayer, normalizeLnbName } from "@/lib/lnb-player-stats";
+import { lnbIdentity } from "@/lib/lnb-statistics-model";
 import { createHash } from "node:crypto";
 export const maxDuration = 60;
 // Stable owner + official person identity prevents duplicate inserts on retry.
@@ -14,18 +15,39 @@ export async function POST(request: Request) {
     const sb = await createClient();
     const { data: { user } } = await sb.auth.getUser();
     if (!user) return Response.json({ error: "Connexion requise." }, { status: 401 });
-    const { teamId } = await request.json();
+    const { teamId, action } = await request.json();
     if (typeof teamId !== "string") return Response.json({ error: "Équipe invalide." }, { status: 400 });
     const team = await sb.from("teams").select("id,user_id,metadata,team_type,name").eq("id", teamId).eq("user_id", user.id).single();
     if (team.error || !team.data) return Response.json({ error: "Modification réservée au propriétaire." }, { status: 403 });
-    if (!(team.data.team_type === "scout" || team.data.metadata?.isScoutTeam === true || team.data.metadata?.scout === true)) return Response.json({ error: "Création réservée aux équipes scoutées." }, { status: 400 });
+    if (action !== "complete" && !(team.data.team_type === "scout" || team.data.metadata?.isScoutTeam === true || team.data.metadata?.scout === true)) return Response.json({ error: "Création réservée aux équipes scoutées." }, { status: 400 });
     const connections = await sb.from("ffbb_team_connections").select("source_url,last_synced_at").eq("team_id", teamId).order("last_synced_at", { ascending: false });
     if (connections.error) throw connections.error;
     const sourceUrl = connections.data?.find(row => /^https:\/\/(www\.)?lnb\.fr\//i.test(row.source_url))?.source_url;
     if (!sourceUrl) throw new Error("Connecte d’abord cette équipe à la LNB.");
     const official = await readLnbPlayerStats(sourceUrl);
-    const owned = await sb.from("players").select("id,team_id,first_name,last_name,birth_date,metadata").eq("user_id", user.id);
+    const owned = await sb.from("players").select("id,team_id,first_name,last_name,birth_date,number,photo_url,position_primary,height,age,metadata").eq("user_id", user.id);
     if (owned.error) throw owned.error;
+    if (action === "complete") {
+      const members = (owned.data || []).filter(p => p.team_id === teamId || p.metadata?.additionalTeamIds?.includes(teamId));
+      let completed = 0;
+      for (const row of official.players) {
+        const id = resolveLnbPlayer(row.person, members, team.data.metadata?.lnbPlayerLinks || {});
+        const existing = members.find(p => p.id === id);
+        if (!existing) continue;
+        const identity = lnbIdentity(row), fields: Record<string, unknown> = {}, metadata: Record<string, unknown> = { ...existing.metadata, lnbExternalId: row.person.external_id };
+        const mapping = [["birth_date", "dob"], ["height", "taille"], ["photo_url", "photo"], ["number", "num"], ["position_primary", "postePrincipal"], ["age", "age"]] as const;
+        for (const [column, key] of mapping) {
+          const saved = existing[column] != null && existing[column] !== "" ? existing[column] : existing.metadata?.[key];
+          const value = identity[key];
+          if ((saved == null || saved === "") && value != null && value !== "") { fields[column] = value; metadata[key] = value; }
+        }
+        if (!Object.keys(fields).length) continue;
+        const saved = await sb.from("players").update({ ...fields, metadata }).eq("id", existing.id).eq("user_id", user.id).select("id");
+        if (saved.error || !saved.data?.length) throw new Error(saved.error?.message || "Informations non enregistrées.");
+        completed++;
+      }
+      return Response.json({ completed });
+    }
     const links = team.data.metadata?.lnbPlayerLinks || {};
     // Resolve all ambiguous names before writing any profile.
     const plan = official.players.map((row: any) => {
@@ -71,13 +93,19 @@ export async function GET(request: Request) {
     const params = new URL(request.url).searchParams;
     const teamId = params.get("teamId");
     let sourceUrl = params.get("sourceUrl") || "";
-    let localPlayers: any[] = [], links = {}, canEdit = false, isScout = false;
+    let localPlayers: any[] = [], links = {}, canEdit = false, isScout = false, matches: any[] = [];
     if (teamId) {
       const team = await sb.from("teams").select("id,user_id,metadata,team_type").eq("id", teamId).single();
       if (team.error || !team.data) return Response.json({ error: "Équipe inaccessible." }, { status: 403 });
-      const connections = await sb.from("ffbb_team_connections").select("source_url,last_synced_at").eq("team_id", teamId).order("last_synced_at", { ascending: false });
+      const connections = await sb.from("ffbb_team_connections").select("id,source_url,last_synced_at").eq("team_id", teamId).order("last_synced_at", { ascending: false });
       if (connections.error) throw connections.error;
-      sourceUrl = (connections.data || []).find(row => /^https:\/\/(www\.)?lnb\.fr\//i.test(row.source_url))?.source_url || "";
+      const connection = (connections.data || []).find(row => /^https:\/\/(www\.)?lnb\.fr\//i.test(row.source_url));
+      sourceUrl = connection?.source_url || "";
+      if (connection) {
+        const games = await sb.from("ffbb_synced_matches").select("source_match_key,match_date,opponent,our_score,opponent_score,home_away").eq("team_id", teamId).eq("connection_id", connection.id).order("match_date");
+        if (games.error) throw games.error;
+        matches = games.data || [];
+      }
       if (!sourceUrl) return Response.json({ connected: false });
       const players = await sb.from("players").select("id,team_id,first_name,last_name,metadata").eq("user_id", team.data.user_id);
       if (players.error) throw players.error;
@@ -89,7 +117,7 @@ export async function GET(request: Request) {
     const personId = params.get("personId") ? Number(params.get("personId")) : undefined;
     if (personId !== undefined && (!Number.isSafeInteger(personId) || personId <= 0)) throw new Error("Joueur LNB invalide.");
     const stats = await readLnbPlayerStats(sourceUrl, personId, params.get("refresh") === "1");
-    return Response.json({ ...stats, connected: true, canEdit, isScout, localPlayers: localPlayers.map(p => ({ id: p.id, name: `${p.first_name || p.metadata?.firstName || ""} ${p.last_name || p.metadata?.lastName || ""}`.trim() })), players: stats.players.map((row: any) => ({ ...row, playerId: resolveLnbPlayer(row.person, localPlayers, links) })) });
+    return Response.json({ ...stats, connected: true, canEdit, isScout, matches, localPlayers: localPlayers.map(p => ({ id: p.id, name: `${p.first_name || p.metadata?.firstName || ""} ${p.last_name || p.metadata?.lastName || ""}`.trim() })), players: stats.players.map((row: any) => ({ ...row, playerId: resolveLnbPlayer(row.person, localPlayers, links) })) });
   } catch (error) {
     return Response.json({ error: error instanceof Error ? error.message : "Statistiques LNB indisponibles." }, { status: 502 });
   }
