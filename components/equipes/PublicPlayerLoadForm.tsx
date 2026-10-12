@@ -59,6 +59,7 @@ type FormPayload = {
   message?: string;
 };
 
+const SCALE_EN:Record<string,string>={"Faible":"Low","Élevé":"High","Très facile":"Very easy","Effort maximal":"Maximum effort","Très mauvais":"Very poor","Excellent":"Excellent","Mauvaise":"Poor","Excellente":"Excellent"};
 const SCALE = [1,2,3,4,5,6,7,8,9,10];
 
 function Scale({
@@ -87,8 +88,8 @@ function Scale({
         ))}
       </div>
       <div className="scaleLegend">
-        <span>{low}</span>
-        <span>{high}</span>
+        <span>{low}{SCALE_EN[low]&&<em lang="en" style={{display:"block",fontSize:10,fontWeight:400,marginTop:3}}>{SCALE_EN[low]}</em>}</span>
+        <span>{high}{SCALE_EN[high]&&<em lang="en" style={{display:"block",fontSize:10,fontWeight:400,marginTop:3}}>{SCALE_EN[high]}</em>}</span>
       </div>
     </div>
   );
@@ -97,16 +98,19 @@ function Scale({
 function Question({
   title,
   subtitle,
+  english,
   children,
 }: {
   title: string;
   subtitle: string;
+  english?: string;
   children: React.ReactNode;
 }) {
   return (
     <section className="question">
       <h2>{title}</h2>
-      <p>{subtitle}</p>
+      {subtitle&&<p>{subtitle}</p>}
+      {english&&<em lang="en" style={{display:"block",fontSize:11,fontWeight:400,color:"#8a7e78",margin:"4px 0 10px",lineHeight:1.4}}>{english}</em>}
       {children}
     </section>
   );
@@ -313,7 +317,7 @@ export default function PublicPlayerLoadForm({ token }: { token: string }) {
               <p className="wDate">{new Date().toLocaleDateString("fr-FR", { weekday: "long", day: "numeric", month: "long", year: "numeric" })}</p>
 
               <label className="wPlayer">
-                <span>Qui es-tu ?</span>
+                <span>Qui es-tu ?</span><em lang="en" className="english">Who are you?</em>
                 <select value={playerId} onChange={(e) => setPlayerId(e.target.value)}>
                   <option value="">Choisis ton prénom</option>
                   {payload.players?.map((player) => {
@@ -325,11 +329,11 @@ export default function PublicPlayerLoadForm({ token }: { token: string }) {
               </label>
 
               <div className="wPanel">
-                <h2>Comment te sens-tu aujourd’hui ?</h2>
-                <Question title="Qualité du sommeil" subtitle=""><Scale value={sleep} onChange={setSleep} low="Très mauvais" high="Excellent" /></Question>
-                <Question title="Niveau de fatigue" subtitle=""><Scale value={fatigue} onChange={setFatigue} low="Faible" high="Élevé" /></Question>
-                <Question title="Niveau de stress" subtitle=""><Scale value={stress} onChange={setStress} low="Faible" high="Élevé" /></Question>
-                <Question title="Humeur générale" subtitle=""><Scale value={mood} onChange={setMood} low="Mauvaise" high="Excellente" /></Question>
+                <h2>Comment te sens-tu aujourd’hui ?</h2><em lang="en" className="english">How do you feel today?</em>
+                <Question title="Qualité du sommeil" subtitle="" english="How well did you sleep?"><Scale value={sleep} onChange={setSleep} low="Très mauvais" high="Excellent" /></Question>
+                <Question title="Niveau de fatigue" subtitle="" english="How tired do you feel?"><Scale value={fatigue} onChange={setFatigue} low="Faible" high="Élevé" /></Question>
+                <Question title="Niveau de stress" subtitle="" english="How stressed do you feel?"><Scale value={stress} onChange={setStress} low="Faible" high="Élevé" /></Question>
+                <Question title="Humeur générale" subtitle="" english="How is your mood today?"><Scale value={mood} onChange={setMood} low="Mauvaise" high="Excellente" /></Question>
               </div>
               <div className="wNav single"><button className="next" onClick={() => { if (!playerId) return alert("Choisis ton prénom."); setWellnessStep(2); }}>Suivant →</button></div>
             </section>
@@ -337,7 +341,7 @@ export default function PublicPlayerLoadForm({ token }: { token: string }) {
 
           {wellnessStep === 2 && (
             <section className="wStep">
-              <h1>As-tu des douleurs ou une gêne ?</h1>
+              <h1>As-tu des douleurs ou une gêne ?</h1><em lang="en" className="english">Do you have any pain or discomfort?</em>
               <div className="wYesNo">
                 <button className={hasPain ? "active" : ""} onClick={() => setHasPain(true)}>Oui</button>
                 <button className={!hasPain ? "active" : ""} onClick={() => { setHasPain(false); setPainZones([]); setPainDetails({}); }}>Non</button>
@@ -406,19 +410,19 @@ export default function PublicPlayerLoadForm({ token }: { token: string }) {
         {rpeStep === 1 && <section className="wStep">
           <h1>Retour après séance</h1>
           <p className="wDate">{payload.team_name || "Mon équipe"} · RPE du soir</p>
-          <label className="wPlayer"><span>Qui es-tu ?</span><select value={playerId} onChange={(e)=>setPlayerId(e.target.value)}><option value="">Choisis ton prénom</option>{payload.players?.map((player)=><option key={player.id} value={player.id}>{player.first_name} {player.last_name?.[0] || ""}.</option>)}</select></label>
+          <label className="wPlayer"><span>Qui es-tu ?</span><em lang="en" className="english">Who are you?</em><select value={playerId} onChange={(e)=>setPlayerId(e.target.value)}><option value="">Choisis ton prénom</option>{payload.players?.map((player)=><option key={player.id} value={player.id}>{player.first_name} {player.last_name?.[0] || ""}.</option>)}</select></label>
           <div className="qGrid">
-            <Question title="1. RPE" subtitle="Quel est ton ressenti d'effort global sur cette séance ?"><Scale value={rpe} onChange={setRpe} low="Très facile" high="Effort maximal" /></Question>
-            <label className="qBox"><strong>2. Durée de la séance</strong><div className="number"><input type="number" min={0} max={300} value={duration} onChange={(e)=>setDuration(Number(e.target.value)||0)}/><b>min</b></div><small>Charge calculée : <b>{duration*rpe}</b></small></label>
-            <Question title="3. Fatigue après séance" subtitle="Quel est ton niveau de fatigue maintenant ?"><Scale value={fatigue} onChange={setFatigue} low="Pas du tout fatigué" high="Extrêmement fatigué" /></Question>
-            <label className="injuryCheck"><input type="checkbox" checked={injured} onChange={(e)=>setInjured(e.target.checked)}/><span><b>Je suis blessé(e)</b><small>Le staff verra cette information.</small></span></label>
+            <Question title="1. RPE" subtitle="Quel est ton ressenti d'effort global sur cette séance ?" english="How hard did this session feel overall?"><Scale value={rpe} onChange={setRpe} low="Très facile" high="Effort maximal" /></Question>
+            <label className="qBox durationBox"><strong>2. Durée de la séance</strong><em lang="en" className="english">How long was the session?</em><div className="number"><input type="number" min={0} max={300} value={duration} onChange={(e)=>setDuration(Number(e.target.value)||0)}/><b>min</b></div><small>Charge calculée : <b>{duration*rpe}</b></small></label>
+
+            <label className="injuryCheck"><input type="checkbox" checked={injured} onChange={(e)=>setInjured(e.target.checked)}/><span><b>Je suis blessé(e)</b><em lang="en" className="english">I am injured.</em><small>Le staff verra cette information.</small></span></label>
           </div>
           <div className="wNav single"><button className="next" onClick={()=>{if(!playerId)return alert("Choisis ton prénom.");setRpeStep(2)}}>Suivant →</button></div>
         </section>}
 
         {rpeStep === 2 && <section className="wStep painLayout">
           <div className="painMain">
-            <h1>4. Douleurs ou gêne ?</h1>
+            <h1>3. Douleurs ou gêne ?</h1><em lang="en" className="english">Do you have any pain or discomfort after this session?</em>
             <p className="wDate">As-tu une douleur ou une gêne après cette séance ? Tu peux sélectionner plusieurs zones.</p>
             <div className="wYesNo"><button className={hasPain?"active":""} onClick={()=>setHasPain(true)}>Oui</button><button className={!hasPain?"active":""} onClick={()=>{setHasPain(false);setPainZones([]);setPainDetails({})}}>Non</button></div>
             {hasPain && <><div className="wBodyTabs"><b>Face</b><b>Dos</b></div><div className="wBodies"><BodyFigure side="front" selected={painZones} onToggle={togglePainZone}/><BodyFigure side="back" selected={painZones} onToggle={togglePainZone}/></div><p className="wHint">☝ Clique directement sur la ou les zones concernées</p></>}
@@ -431,7 +435,7 @@ export default function PublicPlayerLoadForm({ token }: { token: string }) {
 
         {rpeStep === 3 && <section className="wStep">
           <h1>Récapitulatif du soir</h1>
-          <div className="wRecap"><div><span>RPE</span><b>{rpe}/10</b></div><div><span>Durée</span><b>{duration} min</b></div><div><span>Charge</span><b>{duration*rpe}</b></div><div><span>Fatigue</span><b>{fatigue}/10</b></div><div><span>Douleurs</span><b>{rpeZones.length ? `${rpeZones.length} zone(s)` : "Non"}</b></div></div>
+          <div className="wRecap"><div><span>RPE</span><b>{rpe}/10</b></div><div><span>Durée</span><b>{duration} min</b></div><div><span>Charge</span><b>{duration*rpe}</b></div><div><span>Douleurs</span><b>{rpeZones.length ? `${rpeZones.length} zone(s)` : "Non"}</b></div></div>
           {rpeZones.length>0 && <div className="wRecap pain">{rpeZones.map(z=><div key={z.id}><span>{z.label}</span><b>{painDetails[z.id]?.intensity||5}/10</b></div>)}</div>}
           <label className="wComment">Commentaire facultatif<textarea value={comment} onChange={(e)=>setComment(e.target.value)} placeholder="Quelque chose à signaler au staff ?"/></label>
           <div className="wNav"><button onClick={()=>setRpeStep(2)}>← Précédent</button><button className="next" disabled={sending} onClick={submit}>{sending?"Envoi…":"Valider →"}</button></div>
@@ -443,6 +447,8 @@ export default function PublicPlayerLoadForm({ token }: { token: string }) {
 }
 
 const css = `
+.english{display:block;font-size:11px;font-style:italic;font-weight:400;color:#8a7e78;line-height:1.4;margin:3px 0 8px}.durationBox{justify-items:center;text-align:center}.durationBox .number{width:190px;max-width:100%;margin:auto}.durationBox .number input{text-align:center}.durationBox .english{margin:0}.qGrid .injuryCheck{grid-column:1/-1}
+
 :global(body){margin:0;background:#f4f1ed;color:#211a18}
 .publicPage{min-height:100vh;max-width:680px;margin:auto;padding:18px 14px 45px;font-family:Arial,sans-serif}
 .brand{background:linear-gradient(135deg,#6b1a2c,#341017);color:white;border-radius:22px;padding:22px;margin-bottom:10px}
