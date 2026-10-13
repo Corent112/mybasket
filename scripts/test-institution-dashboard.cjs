@@ -1,0 +1,12 @@
+const fs=require('fs'),vm=require('vm'),ts=require('typescript'),assert=require('node:assert/strict');const context={exports:{}};
+vm.runInNewContext(ts.transpileModule(fs.readFileSync('lib/institutionnel/dashboard-summary.ts','utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2020}}).outputText,context);
+const {institutionalPlayerCounts:players,institutionalTrainingProgramSummaries:formations}=context.exports;
+const counts=players([{category:'U12',sex:'F'},{category:'U13F',sex:null},{category:'U14',sex:'Féminine'},{category:'U13',sex:'M'},{category:'U14M',sex:null},{category:'U13',sex:'F',archived:true},{category:'U18',sex:'F'}]);
+assert.equal(counts.u13f,2);assert.equal(counts.u14f,1);assert.equal(counts.u13m,1);assert.equal(counts.u14m,1);assert.equal(counts.players,6);
+const programs=[{id:'detb',name:'DETB'},{id:'bfa',name:'BFA'},{id:'new',name:'Nouvelle formation'}],cohorts=[{id:'a',program_id:'detb',name:'DETB 2026',fee_amount_cents:100,capacity:10},{id:'b',program_id:'detb',name:'DETB 2027',fee_amount_cents:0,capacity:10},{id:'c',program_id:'bfa',name:'BFA 2026',capacity:4}];
+const candidates=[{id:'one',cohort_id:'a',administrative_status:null},{id:'two',cohort_id:'a',administrative_status:'in_training'},{id:'three',cohort_id:'a',administrative_status:'withdrawn'},{id:'four',cohort_id:'b',administrative_status:'validated'},{id:'five',cohort_id:'c',administrative_status:null}];
+const summaries=formations(programs,cohorts,candidates,[{id:'req',cohort_id:'a',is_required:true},{id:'optional',cohort_id:'a',is_required:false}],[{candidate_id:'two',request_id:'req',status:'validated'}],[{candidate_id:'two',amount_cents:100}]);
+const detb=summaries[0];assert.equal(detb.candidates,3);assert.equal(detb.incomplete,1);assert.equal(detb.complete,2);assert.equal(detb.inTraining,1);assert.equal(detb.validated,1);assert.equal(detb.withdrawn,1);assert.equal(detb.capacity,20);
+assert.equal(summaries[1].candidates,1);assert.equal(summaries[2].candidates,0);assert.equal(summaries[2].cohortId,null);
+const paid=formations(programs,cohorts,[{id:'one',cohort_id:'a',payment_exempt:true}],[{id:'req',cohort_id:'a'}],[{candidate_id:'one',request_id:'req',status:'validated'}],[]);assert.equal(paid[0].registered,1);
+console.log('Institution dashboard: U12/U13 grouping, sexes, archives, null candidate statuses, actual documents/payments, formation isolation, multiple promotions and newly created formations passed.');

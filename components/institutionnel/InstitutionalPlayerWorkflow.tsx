@@ -254,12 +254,13 @@ export default function InstitutionalPlayerWorkflow({ structureId }: { structure
   }
 
   async function savePlayer(data: PlayerEditData, validate = false) {
-    if (!openedPlayer) return;
+    if (!openedPlayer) return false;
     const action = validate ? "validate_player" : "save_player";
     const j = await playerAction(action, { playerId: openedPlayer.id, player: data });
-    if (!j) return;
+    if (!j) return false;
     await loadPlayersAndReferrals(openedPlayer.id);
     if (validate) setTab("base");
+    return true;
   }
 
   async function archivePlayer() {
