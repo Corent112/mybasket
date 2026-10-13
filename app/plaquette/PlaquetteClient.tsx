@@ -1273,6 +1273,24 @@ const currentRef = useRef(current);
   const basketFor = (ct: 'half' | 'full', from: Pt): Pt =>
     ct === 'half' ? HALF_BASKET : (from.y < 0.5 ? FULL_BASKET_TOP : FULL_BASKET_BOT);
 
+  const machineBasketPosition = (phase: Phase, point: Pt): Pt => {
+    const baskets = [...(courtRef.current==='half'?[HALF_BASKET]:[FULL_BASKET_TOP,FULL_BASKET_BOT]), ...phase.objects.filter(o=>o.kind==='lateralBasket').map(o=>({x:o.x,y:o.y}))];
+    return baskets.reduce((nearest,basket)=>Math.hypot(basket.x-point.x,basket.y-point.y)<Math.hypot(nearest.x-point.x,nearest.y-point.y)?basket:nearest);
+  };
+
+  useEffect(() => {
+    setPhases(previous=>{
+      let changed=false;
+      const next=previous.map(phase=>({...phase,objects:phase.objects.map(object=>{
+        if(object.kind!=='shootingMachine')return object;
+        const point=machineBasketPosition(phase,object);
+        if(point.x===object.x&&point.y===object.y)return object;
+        changed=true;return {...object,...point};
+      })}));
+      return changed?next:previous;
+    });
+  }, [phases,courtType]);
+
   // Panier latéral : objet libre. Un tir peut le viser sans modifier la logique historique
   // du panier principal. Si aucun targetBasketId n'est défini, basketFor() reste la référence.
   const lateralBasketPoint = (phase: Phase | undefined, basketId?: string): Pt | null => {
@@ -3372,7 +3390,7 @@ const owners=ownersAtClock(sched,ballEventsRef.current,clock);
       updatePhase((ph) => {
         if (tool.obj !== 'handoff') {
           const defaultObjectColor = tool.obj === 'ball' ? '#E8743C' : tool.obj === 'cone' ? '#F05A16' : '#0F0F12';
-          return { ...ph, objects: [...ph.objects, { id: uid(), x: n.x, y: n.y, kind: tool.obj, ...(tool.obj==='shootingMachine'?{ballCount:10,infiniteBalls:true,collectsShots:true}:{}), rotation: 0, size: tool.obj==='shootingMachine'?1.35:1, color: tool.obj==='shootingMachine'?'#6B1A2C':defaultObjectColor }] };
+          return { ...ph, objects: [...ph.objects, { id: uid(), ...(tool.obj==='shootingMachine'?machineBasketPosition(ph,n):{x:n.x,y:n.y}), kind: tool.obj, ...(tool.obj==='shootingMachine'?{ballCount:10,infiniteBalls:true,collectsShots:true}:{}), rotation: 0, size: tool.obj==='shootingMachine'?1.35:1, color: tool.obj==='shootingMachine'?'#6B1A2C':defaultObjectColor }] };
         }
 
         // Le H ne fige plus les joueurs au moment où on le pose.
@@ -3600,7 +3618,7 @@ const owners=ownersAtClock(sched,ballEventsRef.current,clock);
             };
           }
 
-          return moved;
+          return 'kind' in moved && moved.kind==='shootingMachine' ? {...moved,...machineBasketPosition(p,moved)} : moved;
         };
         const mvL = (el: Line) => {
           const o = orig.get(el.id) as Line | undefined; if (!o) return el;
@@ -3710,7 +3728,7 @@ const owners=ownersAtClock(sched,ballEventsRef.current,clock);
       if (i !== current) return p;
       const np = [...p.players], no = [...p.objects], nl = [...p.lines];
       p.players.forEach((o) => { if (has('player', o.id)) { const id = uid(); np.push({ ...o, id, x: Math.min(0.97, o.x + 0.04), y: Math.min(0.97, o.y + 0.04), hasBall: false, ballCount: 0 }); newSel.push({ type: 'player', id }); } });
-      p.objects.forEach((o) => { if (has('object', o.id)) { const id = uid(); no.push({ ...o, id, x: Math.min(0.97, o.x + 0.04), y: Math.min(0.97, o.y + 0.04) }); newSel.push({ type: 'object', id }); } });
+      p.objects.forEach((o) => { if (has('object', o.id)) { const id = uid(); no.push({ ...o, id, ...(o.kind==='shootingMachine'?machineBasketPosition(p,o):{x:Math.min(0.97,o.x+0.04),y:Math.min(0.97,o.y+0.04)}) }); newSel.push({ type: 'object', id }); } });
       p.lines.forEach((o) => { if (has('line', o.id)) { const id = uid(); const oc = o.ctrls ?? (o.ctrl ? [o.ctrl] : []); nl.push({ ...o, id, from: { x: o.from.x + 0.04, y: o.from.y + 0.04 }, to: { x: o.to.x + 0.04, y: o.to.y + 0.04 }, ctrls: oc.length ? oc.map((c) => ({ x: c.x + 0.04, y: c.y + 0.04 })) : undefined, ctrl: undefined, points: o.points ? o.points.map((q) => ({ x: q.x + 0.04, y: q.y + 0.04 })) : undefined }); newSel.push({ type: 'line', id }); } });
       return { ...p, players: np, objects: no, lines: nl };
     }));

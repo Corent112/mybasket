@@ -9,10 +9,10 @@ assert.equal(machineReserves([{...machine,infiniteBalls:true}],Array.from({lengt
 assert.equal(collectorForBasket([machine],{x:.5,y:.1}).id,'m');
 assert.equal(collectorForBasket([machine],{x:.5,y:.9}),undefined);
 const source=fs.readFileSync('app/plaquette/PlaquetteClient.tsx','utf8');const ast=ts.createSourceFile('drawing.tsx',source,ts.ScriptTarget.Latest,true,ts.ScriptKind.TSX);
-const names=['addOwnerBall','removeOwnerBall','buildBallEvents','initialBallOwners','ownersAtClock','ballsPosAtClock'];const functions={};
+const names=['machineBasketPosition','addOwnerBall','removeOwnerBall','buildBallEvents','initialBallOwners','ownersAtClock','ballsPosAtClock'];const functions={};
 function visit(n){if(ts.isVariableDeclaration(n)&&names.includes(n.name.getText(ast)))functions[n.name.getText(ast)]=n.initializer.getText(ast);ts.forEachChild(n,visit);}visit(ast);
 const player={id:'p',x:.3,y:.4,ballCount:0};const phase={players:[player],objects:[machine],lines:[]};
-const context={...helper.exports,phasesRef:{current:[phase]},ballEventsRef:{current:[]},courtRef:{current:'half'},playerBallCount:p=>p.ballCount||0,phasePlayerPosAt:()=>player,playerPosAtClock:(_,id)=>id==='p'?player:null,lateralBasketPoint:()=>({x:.5,y:.1}),basketFor:()=>({x:.5,y:.1}),offsetBallPoint:p=>p,ease:t=>t};
+const context={HALF_BASKET:{x:.5,y:.1},FULL_BASKET_TOP:{x:.5,y:.09},FULL_BASKET_BOT:{x:.5,y:.91},...helper.exports,phasesRef:{current:[phase]},ballEventsRef:{current:[]},courtRef:{current:'half'},playerBallCount:p=>p.ballCount||0,phasePlayerPosAt:()=>player,playerPosAtClock:(_,id)=>id==='p'?player:null,lateralBasketPoint:()=>({x:.5,y:.1}),basketFor:()=>({x:.5,y:.1}),offsetBallPoint:p=>p,ease:t=>t};
 vm.createContext(context);vm.runInContext(compile(names.map(n=>`const ${n}=${functions[n]};`).join('\n')+`\nexports.result={${names.join(',')}};`),Object.assign(context,{exports:{}}));
 const f=context.exports.result;const sched=[{idx:0,start:0,span:200,end:200,actSched:[{line:{action:'pass',sourceMachineId:'m',targetPlayerId:'p',from:machine,to:player},start:0,end:100},{line:{action:'shoot',sourcePlayerId:'p',returnMachineId:'m',target:'basket',to:{x:.5,y:.1}},start:100,end:200}]}];
 const events=f.buildBallEvents(sched);
@@ -25,3 +25,8 @@ phase.objects[0]={...machine,infiniteBalls:true};assert.equal(f.ownersAtClock(sc
 const owners=new Map([['p',2]]);f.addOwnerBall(owners,'p');assert.equal(owners.get('p'),2);
 const roundtrip=JSON.parse(JSON.stringify({...phase,lines:[sched[0].actSched[1].line]}));assert.equal(roundtrip.lines[0].target,'basket');assert.equal(roundtrip.lines[0].returnMachineId,'m');assert.equal(roundtrip.objects[0].infiniteBalls,true);
 console.log('Drawing machine: reserve cycles, unlimited passes, hoop target, animated recovery, player limits and saved references passed.');
+
+assert.equal(f.machineBasketPosition(phase,{x:.1,y:.7}).y,.1);
+context.courtRef.current='full';assert.equal(f.machineBasketPosition(phase,{x:.8,y:.85}).y,.91);
+assert.equal(f.machineBasketPosition({...phase,objects:[{kind:'lateralBasket',x:.1,y:.5}]},{x:.12,y:.52}).x,.1);
+console.log('Machine placement: half-court, both full-court baskets and lateral baskets passed.');
