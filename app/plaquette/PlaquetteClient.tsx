@@ -17,6 +17,7 @@
 
 import React, { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
+import { machineBallCount, machineReserves, collectorForBasket, drawShootingMachine } from '@/lib/drawing-shooting-machine';
 import { createClient } from '@/lib/supabase/client';
 import { getExercise, updateExercise } from "@/lib/exercises";
 import { getSystem, updateSystem } from "@/lib/systems";
@@ -256,8 +257,8 @@ const EDIT_EXERCISE_ID_KEY = "mybasket_edit_exercise_id";
   // ----------------------- Modèle -----------------------
   type Pt = { x: number; y: number };
   type Player = { id: string; x: number; y: number; label: string; team: 'att' | 'def'; shape: 'circle' | 'square'; coach?: boolean; rotation?: number; name?: string; color?: string; size?: number; photo?: string; hasBall?: boolean; ballCount?: number; linkedPlayerId?: string; linkedPlayerName?: string; linkedTeamId?: string; linkedTeamName?: string };
-  type Obj = { id: string; x: number; y: number; kind: string; text?: string; rotation?: number; size?: number; scaleX?: number; scaleY?: number; points?: Pt[]; color?: string; sourcePlayerId?: string; targetPlayerId?: string };
-  type Line = { id: string; action: string; from: Pt; to: Pt; ctrls?: Pt[]; ctrl?: Pt; points?: Pt[]; rotation?: number; color?: string; target?: 'basket'; targetBasketId?: string; sourcePlayerId?: string; targetPlayerId?: string; order?: number; startMode?: 'withPrevious' | 'afterPrevious'; duration?: number; targetMode?: 'player' | 'playerCurrentPoint'; createdTargetPoint?: Pt };
+  type Obj = { id: string; x: number; y: number; kind: string; ballCount?: number; infiniteBalls?: boolean; collectsShots?: boolean; text?: string; rotation?: number; size?: number; scaleX?: number; scaleY?: number; points?: Pt[]; color?: string; sourcePlayerId?: string; targetPlayerId?: string };
+  type Line = { sourceMachineId?: string; targetMachineId?: string; returnMachineId?: string; id: string; action: string; from: Pt; to: Pt; ctrls?: Pt[]; ctrl?: Pt; points?: Pt[]; rotation?: number; color?: string; target?: 'basket'; targetBasketId?: string; sourcePlayerId?: string; targetPlayerId?: string; order?: number; startMode?: 'withPrevious' | 'afterPrevious'; duration?: number; targetMode?: 'player' | 'playerCurrentPoint'; createdTargetPoint?: Pt };
   type ActSched = { line: Line; start: number; dur: number; end: number };
   type Sched = { idx: number; start: number; span: number; end: number; actSched: ActSched[] };
   type Phase = { players: Player[]; objects: Obj[]; lines: Line[]; notes: string; duration?: number; startMode?: 'withPrevious' | 'afterPrevious' };
@@ -268,6 +269,7 @@ const EDIT_EXERCISE_ID_KEY = "mybasket_edit_exercise_id";
     | { kind: 'object'; obj: string };
   type Sel = { type: 'player' | 'object' | 'line'; id: string } | null;
   type SelItem = { type: 'player' | 'object' | 'line'; id: string };
+  type BallEvent = { src:string|null; target:string|null; shoot:boolean; wStart:number; wEnd:number; from?:Pt; to?:Pt; tMode?:'player'|'playerCurrentPoint'; createdPt?:Pt; basketPt?:Pt; machineFrom?:Pt; machineTarget?:Pt; returnMachineId?:string; returnPt?:Pt };
   type TeamPlayer = { id: string; name: string; number?: string; photo?: string; position?: string; teamId: string; teamName: string; color?: string };
 
   // Données mockées — remplacer ensuite par un fetch Supabase (voir loadTeamPlayers)
@@ -786,6 +788,7 @@ const currentRef = useRef(current);
   const animPosRef = useRef<{
   players: Record<string, Pt>;
   balls: Pt[];
+  machineBalls?: Record<string,number>;
 } | null>(null);
   const rafRef = useRef<number | null>(null);
   const playingRef = useRef(false);
@@ -797,7 +800,7 @@ const currentRef = useRef(current);
   const lastNowRef = useRef(0);
   const scheduleRef = useRef<Sched[]>([]);
   const totalMsRef = useRef(0);
-  const ballEventsRef = useRef<{ src: string | null; target: string | null; shoot: boolean; wStart: number; wEnd: number; from?: Pt; to?: Pt; tMode?: 'player' | 'playerCurrentPoint'; createdPt?: Pt; basketPt?: Pt }[]>([]);
+  const ballEventsRef = useRef<BallEvent[]>([]);
   const carrier0Ref = useRef<string | null>(null);
   const rosterRef = useRef<Player[]>([]);
   const onAnimEndRef = useRef<(() => void) | null>(null); // callback fin d'animation (utilisé par l'export vidéo)
@@ -1366,7 +1369,8 @@ const currentRef = useRef(current);
   };
 
   const addOwnerBall = (owners: Map<string, number>, id: string, amount = 1) => {
-    owners.set(id, Math.min(2, (owners.get(id) || 0) + amount));
+    const machine = phasesRef.current.flatMap(ph=>ph.objects).find(o=>o.id===id&&o.kind==='shootingMachine');
+    owners.set(id, Math.min(machine?.infiniteBalls ? Infinity : machine ? 999 : 2, (owners.get(id) || 0) + amount));
   };
 
   const removeOwnerBall = (owners: Map<string, number>, id: string, amount = 1) => {
@@ -1473,6 +1477,7 @@ const currentRef = useRef(current);
   };
   // point de départ effectif d'une trajectoire (suit le joueur source / la fin de sa dernière action)
   const resolveFrom = (l: Line): Pt => {
+    if (l.sourceMachineId) { const machine = phasesRef.current[currentRef.current]?.objects.find(o=>o.id===l.sourceMachineId&&o.kind==='shootingMachine'); if(machine) return {x:machine.x,y:machine.y}; }
     if (l.sourcePlayerId) { const ph = phasesRef.current[currentRef.current]; const pos = ph ? lineStartN(ph, l) : null; if (pos) return pos; }
     return l.from;
   };
@@ -1501,6 +1506,7 @@ const currentRef = useRef(current);
       const phase = phasesRef.current[currentRef.current];
       return lateralBasketPoint(phase, l.targetBasketId) || basketFor(courtRef.current, resolveFrom(l));
     }
+    if(l.action==='pass'&&l.targetMachineId){const m=phasesRef.current[currentRef.current]?.objects.find(o=>o.id===l.targetMachineId&&o.kind==='shootingMachine');if(m)return{x:m.x,y:m.y};}
     if (l.action === 'pass' && l.targetPlayerId) return passTargetPointN(l);
     return l.to;
   };
@@ -1738,6 +1744,10 @@ const currentRef = useRef(current);
     ctx.lineWidth = Math.max(2, cs(canvas) * 0.003) / Math.max(scaleX, scaleY);
     ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
     switch (o.kind) {
+      case 'shootingMachine': {
+        drawShootingMachine(ctx,s,o.infiniteBalls ? Infinity : animPosRef.current?.machineBalls?.[o.id] ?? machineBallCount(o),o.color || '#6B1A2C');
+        break;
+      }
       case 'ball': {
         const ballImage = getBallIconImage();
         ctx.save();
@@ -1988,8 +1998,8 @@ const currentRef = useRef(current);
       if (!o) return null;
       const c = toPx(canvas, { x: o.x, y: o.y });
       const base = scale * 0.018 * (o.size || 1);
-      const objectFactorX = o.kind === 'lateralBasket' ? 1.9 : 1.25;
-      const objectFactorY = o.kind === 'lateralBasket' ? 1.05 : 1.25;
+      const objectFactorX = o.kind === 'shootingMachine' ? 1.5 : o.kind === 'lateralBasket' ? 1.9 : 1.25;
+      const objectFactorY = o.kind === 'shootingMachine' ? 2.0 : o.kind === 'lateralBasket' ? 1.05 : 1.25;
       const halfW = base * (o.scaleX || 1) * objectFactorX;
       const halfH = base * (o.scaleY || 1) * objectFactorY;
       return {
@@ -2597,26 +2607,19 @@ if (anim && anim.balls) {
   // Le main à main transfère réellement la possession au moment où les 2 attaquants
   // entrent dans la zone logique (invisible) du H.
   const buildBallEvents = (sched: Sched[]) => {
-    const evs: {
-      src: string | null;
-      target: string | null;
-      shoot: boolean;
-      wStart: number;
-      wEnd: number;
-      from?: Pt;
-      to?: Pt;
-      tMode?: 'player' | 'playerCurrentPoint';
-      createdPt?: Pt;
-      basketPt?: Pt;
-    }[] = [];
+    const evs: BallEvent[] = [];
 
     sched.forEach((s) =>
       s.actSched.forEach((a) => {
         if (a.line.action !== 'pass' && a.line.action !== 'shoot') return;
 
         evs.push({
-          src: a.line.sourcePlayerId || null,
-          target: a.line.targetPlayerId || null,
+          src: a.line.sourcePlayerId || a.line.sourceMachineId || null,
+          target: a.line.targetPlayerId || a.line.targetMachineId || a.line.returnMachineId || null,
+          machineFrom: a.line.sourceMachineId ? phasesRef.current[s.idx].objects.find(o=>o.id===a.line.sourceMachineId) : undefined,
+          machineTarget: a.line.targetMachineId ? phasesRef.current[s.idx].objects.find(o=>o.id===a.line.targetMachineId) : undefined,
+          returnMachineId: a.line.returnMachineId,
+          returnPt: a.line.returnMachineId ? phasesRef.current[s.idx].objects.find(o=>o.id===a.line.returnMachineId) : undefined,
           shoot: a.line.action === 'shoot',
           wStart: s.start + a.start,
           wEnd: s.start + a.end,
@@ -2726,7 +2729,7 @@ if (anim && anim.balls) {
       evs.forEach((e) => {
         if (e.wEnd <= candidate.time) {
           if (e.src) removeOwnerBall(owners, e.src);
-          if (!e.shoot && e.target) addOwnerBall(owners, e.target);
+          if ((!e.shoot || e.returnMachineId) && e.target) addOwnerBall(owners, e.target);
         } else if (e.wStart <= candidate.time && candidate.time < e.wEnd) {
           if (e.src) removeOwnerBall(owners, e.src);
         }
@@ -2786,6 +2789,29 @@ if (anim && anim.balls) {
       });
     });
 
+    [...sched].sort((a,b)=>a.start-b.start).forEach(s=>phasesRef.current[s.idx].objects.filter(o=>o.kind==='shootingMachine').forEach(o=>{if(!owners.has(o.id))owners.set(o.id,o.infiniteBalls?Infinity:machineBallCount(o));}));
+    return owners;
+  };
+
+  const ownersAtClock = (sched:Sched[],evs:BallEvent[],clock:number) => {
+    const owners=initialBallOwners(sched);
+    const activeEvents = evs.filter((e) => clock >= e.wStart && clock < e.wEnd);
+    const endedEvents = evs.filter((e) => e.wEnd <= clock);
+
+    // Applique tous les transferts terminés avant l'instant courant.
+    endedEvents.forEach((e) => {
+      if (e.src) removeOwnerBall(owners, e.src);
+
+      if ((!e.shoot || e.returnMachineId) && e.target) {
+        addOwnerBall(owners, e.target);
+      }
+    });
+
+    // Dès qu'une passe/tir démarre, le porteur n'a plus le ballon sur lui.
+    activeEvents.forEach((e) => {
+      if (e.src) removeOwnerBall(owners, e.src);
+    });
+
     return owners;
   };
 
@@ -2801,24 +2827,8 @@ if (anim && anim.balls) {
     clock: number
   ): Pt[] => {
     const balls: Pt[] = [];
-    const owners = initialBallOwners(sched);
-
-    const activeEvents = evs.filter((e) => clock >= e.wStart && clock < e.wEnd);
-    const endedEvents = evs.filter((e) => e.wEnd <= clock);
-
-    // Applique tous les transferts terminés avant l'instant courant.
-    endedEvents.forEach((e) => {
-      if (e.src) removeOwnerBall(owners, e.src);
-
-      if (!e.shoot && e.target) {
-        addOwnerBall(owners, e.target);
-      }
-    });
-
-    // Dès qu'une passe/tir démarre, le porteur n'a plus le ballon sur lui.
-    activeEvents.forEach((e) => {
-      if (e.src) removeOwnerBall(owners, e.src);
-    });
+    const owners = ownersAtClock(sched,evs,clock);
+    const activeEvents=evs.filter(e=>clock>=e.wStart&&clock<e.wEnd);
 
     // Ballons attachés aux joueurs réellement porteurs à cet instant.
     owners.forEach((count, ownerId) => {
@@ -2831,9 +2841,9 @@ if (anim && anim.balls) {
 
     // Ballons en vol : passe ou tir actif.
     activeEvents.forEach((active) => {
-      const from = active.src
+      const from = active.machineFrom || (active.src
         ? playerPosAtClock(sched, active.src, clock)
-        : active.from || null;
+        : active.from || null);
 
       if (!from) return;
 
@@ -2844,6 +2854,7 @@ if (anim && anim.balls) {
       } else if (active.target) {
         target =
           playerPosAtClock(sched, active.target, clock) ||
+          active.machineTarget ||
           active.createdPt ||
           active.to ||
           from;
@@ -2852,13 +2863,15 @@ if (anim && anim.balls) {
       }
 
       const duration = Math.max(1, active.wEnd - active.wStart);
-      const te = ease(Math.min(1, Math.max(0, (clock - active.wStart) / duration)));
-      const arc = Math.sin(te * Math.PI) * 0.05;
-
-      balls.push({
-        x: from.x + (target.x - from.x) * te,
-        y: from.y + (target.y - from.y) * te - arc,
-      });
+      const progress = Math.min(1, Math.max(0, (clock - active.wStart) / duration));
+      if(active.shoot && active.returnPt && progress >= .75) {
+        const t=ease((progress-.75)/.25);
+        balls.push({x:target.x+(active.returnPt.x-target.x)*t,y:target.y+(active.returnPt.y-target.y)*t});
+      } else {
+        const te=ease(active.shoot && active.returnPt ? progress/.75 : progress);
+        const arc = Math.sin(te * Math.PI) * 0.05;
+        balls.push({x:from.x+(target.x-from.x)*te,y:from.y+(target.y-from.y)*te-arc});
+      }
     });
 
     return balls;
@@ -2869,7 +2882,9 @@ if (anim && anim.balls) {
     const players: Record<string, Pt> = {};
     rosterRef.current.forEach((p) => { const pos = playerPosAtClock(sched, p.id, clock); if (pos) players[p.id] = pos; });
     const balls = ballsPosAtClock(sched, ballEventsRef.current, clock);
-animPosRef.current = { players, balls };
+const owners=ownersAtClock(sched,ballEventsRef.current,clock);
+    const machineBalls=Object.fromEntries(sched.flatMap(s=>phasesRef.current[s.idx].objects.filter(o=>o.kind==='shootingMachine').map(o=>[o.id,owners.get(o.id)||0])));
+    animPosRef.current = { players, balls, machineBalls };
     const ci = currentScheduledIdx(sched, clock);
     if (currentRef.current !== ci) setCurrent(ci);
     render();
@@ -3191,8 +3206,8 @@ animPosRef.current = { players, balls };
       const localX = dx * Math.cos(rotation) - dy * Math.sin(rotation);
       const localY = dx * Math.sin(rotation) + dy * Math.cos(rotation);
       const base = scale * 0.018 * (o.size || 1);
-      const halfW = base * (o.scaleX || 1) * (o.kind === 'lateralBasket' ? 2.15 : 1.55);
-      const halfH = base * (o.scaleY || 1) * (o.kind === 'lateralBasket' ? 1.35 : 1.55);
+      const halfW = base * (o.scaleX || 1) * (o.kind === 'shootingMachine' ? 1.7 : o.kind === 'lateralBasket' ? 2.15 : 1.55);
+      const halfH = base * (o.scaleY || 1) * (o.kind === 'shootingMachine' ? 2.15 : o.kind === 'lateralBasket' ? 1.35 : 1.55);
       if (Math.abs(localX) <= halfW && Math.abs(localY) <= halfH) {
         return { type: 'object', id: o.id };
       }
@@ -3357,7 +3372,7 @@ animPosRef.current = { players, balls };
       updatePhase((ph) => {
         if (tool.obj !== 'handoff') {
           const defaultObjectColor = tool.obj === 'ball' ? '#E8743C' : tool.obj === 'cone' ? '#F05A16' : '#0F0F12';
-          return { ...ph, objects: [...ph.objects, { id: uid(), x: n.x, y: n.y, kind: tool.obj, rotation: 0, size: 1, color: defaultObjectColor }] };
+          return { ...ph, objects: [...ph.objects, { id: uid(), x: n.x, y: n.y, kind: tool.obj, ...(tool.obj==='shootingMachine'?{ballCount:10,infiniteBalls:true,collectsShots:true}:{}), rotation: 0, size: tool.obj==='shootingMachine'?1.35:1, color: tool.obj==='shootingMachine'?'#6B1A2C':defaultObjectColor }] };
         }
 
         // Le H ne fige plus les joueurs au moment où on le pose.
@@ -3384,25 +3399,30 @@ animPosRef.current = { players, balls };
       // joueur source = joueur sélectionné (unique) sinon joueur sous le curseur
       let sourceId = (selection.length === 1 && selection[0].type === 'player') ? selection[0].id : null;
       if (!sourceId) { const h = hitTest(canvas, getPx(e)); if (h && h.type === 'player') { sourceId = h.id; setSelection([h]); } }
-      if (!sourceId) { showHint('Sélectionne d’abord un joueur'); return; }
+      const objectHit=selection.length===1&&selection[0].type==='object'?selection[0]:hitTest(canvas,getPx(e));
+      const sourceMachine=tool.action==='pass'&&objectHit?.type==='object'?ph.objects.find(o=>o.id===objectHit.id&&o.kind==='shootingMachine'):undefined;
+      if(sourceMachine)sourceId=null;
+      if (!sourceId && !sourceMachine) { showHint('Sélectionne un joueur ou la machine pour une passe'); return; }
+      if(sourceMachine && !sourceMachine.infiniteBalls && (machineReserves(ph.objects,orderedActions(ph))[sourceMachine.id]||0)<=0){showHint('La réserve de la machine est vide : ajoute des ballons ou un tir avec retour');return;}
       // logique ballon : dribble / passe / tir exigent le ballon ; cut / écran exigent de NE PAS l'avoir
-      if ((tool.action === 'dribble' || tool.action === 'pass' || tool.action === 'shoot') && !playerHasBallAtActionStart(sourceId)) {
+      if ((tool.action === 'dribble' || tool.action === 'pass' || tool.action === 'shoot') && sourceId && !playerHasBallAtActionStart(sourceId)) {
         showHint('Ce joueur n’a pas le ballon'); return;
       }
       // départ ancré au joueur (sa position OU la fin de sa dernière action), jamais le point cliqué
-      const startN = getPlayerCurrentPoint(sourceId) || n;
+      const startN = sourceMachine ? {x:sourceMachine.x,y:sourceMachine.y} : getPlayerCurrentPoint(sourceId!) || n;
       const isShoot = tool.action === 'shoot';
       const existingActions = orderedActions(ph);
       const hasBallAtPhaseStart = ph.players.some((p) => p.id === sourceId && playerBallCount(p) > 0);
       const isBallAction = tool.action === 'dribble' || tool.action === 'pass' || tool.action === 'shoot';
       // Si le joueur vient de recevoir le ballon dans cette même phase, son action doit s'enchaîner
       // après la passe précédente, sinon elle partirait en même temps que la passe.
-      const shouldStartWithPrevious = existingActions.length > 0 && !(isBallAction && !hasBallAtPhaseStart);
+      const shouldStartWithPrevious = !sourceMachine && existingActions.length > 0 && !(isBallAction && !hasBallAtPhaseStart);
 
       dragRef.current = {
         id: uid(),
         action: tool.action,
-        sourcePlayerId: sourceId,
+        sourcePlayerId: sourceId || undefined,
+        sourceMachineId: sourceMachine?.id,
         from: startN,
         to: isShoot ? basketFor(courtType, startN) : n,
         rotation: 0,
@@ -3615,7 +3635,10 @@ animPosRef.current = { players, balls };
       if (d.action === 'pass') {
         // la passe doit arriver sur un joueur (jeton ou fin de sa dernière action existante), sinon elle n'est pas créée
         const targetId = ph ? findPlayerAt(ph, d.to, d.sourcePlayerId) : null;
-        if (!targetId) { showHint('La passe doit arriver sur un joueur'); }
+        const hit=canvasRef.current&&e?hitTest(canvasRef.current,getPx(e)):null;
+        const machine=hit?.type==='object'?ph?.objects.find(o=>o.id===hit.id&&o.kind==='shootingMachine'&&o.id!==d.sourceMachineId):null;
+        if(machine){pushHistory();updatePhase(p=>({...p,lines:[...p.lines,{...d,to:{x:machine.x,y:machine.y},targetMachineId:machine.id}]}));}
+        else if (!targetId) { showHint('La passe doit arriver sur un joueur ou une autre machine'); }
         else if (ph) {
           pushHistory();
           // cible figée = position du joueur cible au moment de la création (ses actions futures ne déplaceront pas la passe)
@@ -3634,8 +3657,10 @@ animPosRef.current = { players, balls };
           const shot = targetObject
             ? { ...d, target: 'basket' as const, targetBasketId: targetObject.id, to: { x: targetObject.x, y: targetObject.y } }
             : { ...d, target: 'basket' as const, targetBasketId: undefined, to: basketFor(courtType, d.from) };
+          const machine=collectorForBasket(ph.objects,shot.to);
+          const returningShot={...shot,returnMachineId:machine?.id};
           pushHistory();
-          updatePhase((p) => ({ ...p, lines: [...p.lines, shot] }));
+          updatePhase((p) => ({ ...p, lines: [...p.lines, returningShot] }));
           if (targetObject) showHint('Tir dirigé vers le panier latéral');
         } else {
           const ok = d.action === 'freedraw' ? (d.points!.length > 1) : (Math.hypot(d.to.x - d.from.x, d.to.y - d.from.y) > 0.01);
@@ -3671,7 +3696,7 @@ animPosRef.current = { players, balls };
         ...p,
         players: p.players.filter((z) => !has('player', z.id)),
         objects: p.objects.filter((z) => !has('object', z.id)),
-        lines: p.lines.filter((z) => !has('line', z.id)),
+        lines: p.lines.filter((z) => !has('line', z.id) && !(z.sourceMachineId && has('object',z.sourceMachineId)) && !(z.targetMachineId && has('object',z.targetMachineId))).map(z=>z.returnMachineId&&has('object',z.returnMachineId)?{...z,returnMachineId:undefined}:z),
       };
     }));
     setSelection([]); setEditingId(null);
@@ -4325,7 +4350,7 @@ const exportJson = () => {
       section('Coaching points', sheet.coaching);
       // Phases
       const nameOf = (a: string) => (a === 'pass' ? 'Passe' : a === 'dribble' ? 'Dribble' : a === 'cut' ? 'Cut' : a === 'screen' ? 'Écran' : a === 'shoot' ? 'Tir' : a);
-      const labOf = (ph: Phase, id?: string) => { const p = id ? ph.players.find((z) => z.id === id) : null; return p ? p.label : '?'; };
+      const labOf = (ph: Phase, id?: string) => { const p = id ? ph.players.find((z) => z.id === id) : null; return p ? p.label : ph.objects.some(o=>o.id===id&&o.kind==='shootingMachine')?'Machine':'?'; };
       const aspect = courtType === 'full' ? (1100 / 704) : (704 / 900);
       phasesRef.current.forEach((ph, i) => {
         const acts = orderedActions(ph);
@@ -4343,7 +4368,7 @@ const exportJson = () => {
         if (acts.length === 0) { doc.setFont(undefined, 'italic'); doc.text('Aucune action.', M, y); y += 5; doc.setFont(undefined, 'normal'); }
         acts.forEach((l, j) => {
           ensure(5);
-          const who = l.action === 'pass' ? `${labOf(ph, l.sourcePlayerId)}\u2192${labOf(ph, l.targetPlayerId)}` : labOf(ph, l.sourcePlayerId);
+          const who = l.action === 'pass' ? `${labOf(ph, l.sourcePlayerId || l.sourceMachineId)}\u2192${labOf(ph, l.targetPlayerId || l.targetMachineId)}` : labOf(ph, l.sourcePlayerId || l.sourceMachineId);
           const simA = j > 0 && l.startMode === 'withPrevious' ? '  (simultanée)' : '';
           doc.setFont(undefined, 'bold'); doc.text(`${j + 1}.`, M, y);
           doc.setFont(undefined, 'normal'); doc.text(`${nameOf(l.action)}  ${who}${simA}`, M + 6, y); y += 5;
@@ -4432,11 +4457,11 @@ const exportJson = () => {
   // état final temporel d'une phase : positions finales des joueurs + porteur + position du ballon
   const computePhaseFinalState = (
   phaseIdx: number
-): { players: Player[]; ballOwnerIds: string[]; ballPositions: Pt[] } => {
+): { players: Player[]; ballOwnerIds: string[]; ballPositions: Pt[]; machineBalls: Record<string,number> } => {
   const ph = phasesRef.current[phaseIdx];
 
   if (!ph) {
-    return { players: [], ballOwnerIds: [], ballPositions: [] };
+    return { players: [], ballOwnerIds: [], ballPositions: [], machineBalls:{} };
   }
 
   const actSched = buildPhaseActionSched(phaseIdx);
@@ -4444,6 +4469,7 @@ const exportJson = () => {
   const s: Sched = { idx: phaseIdx, start: 0, span, end: span, actSched };
 
   const owners = new Map<string, number>();
+  ph.objects.filter(o=>o.kind==='shootingMachine').forEach(o=>owners.set(o.id,o.infiniteBalls?Infinity:machineBallCount(o)));
 
   ph.players.forEach((p) => {
     const count = playerBallCount(p);
@@ -4455,7 +4481,7 @@ const exportJson = () => {
   for (const e of evs) {
     if (e.src) removeOwnerBall(owners, e.src);
 
-    if (!e.shoot && e.target) {
+    if ((!e.shoot || e.returnMachineId) && e.target) {
       addOwnerBall(owners, e.target);
     }
   }
@@ -4485,7 +4511,7 @@ const exportJson = () => {
     return Array.from({ length: count }, (_, index) => offsetBallPoint(pos, index, count));
   });
 
-  return { players, ballOwnerIds, ballPositions };
+  return { players, ballOwnerIds, ballPositions, machineBalls:machineReserves(ph.objects,orderedActions(ph)) };
 };
   // Next : nouvelle phase repartant de l'état FINAL de la phase courante (joueurs replacés, bon porteur, actions vides)
   const nextPhase = () => {
@@ -4500,7 +4526,7 @@ const exportJson = () => {
           // recopiés automatiquement dans le schéma suivant.
           objects: cur!.objects
             .filter((o) => o.kind !== 'handoff' && o.kind !== 'text')
-            .map((o) => ({ ...o })),
+            .map((o) => o.kind==='shootingMachine'?{...o,ballCount:fin.machineBalls[o.id]??machineBallCount(o)}:{...o}),
           lines: [],
           notes: '',
           duration: 1.5,
@@ -4531,10 +4557,10 @@ const exportJson = () => {
   const ph = phases[current];
   // actions ordonnées + helpers d'affichage du panneau « Timing Actions »
   const acts = ph ? orderedActions(ph) : [];
-  const playerLabelById = (id?: string) => { if (!id || !ph) return '?'; const p = ph.players.find((z) => z.id === id); return p ? p.label : '?'; };
+  const playerLabelById = (id?: string) => { if (!id || !ph) return '?'; const p = ph.players.find((z) => z.id === id); return p ? p.label : ph.objects.some(o=>o.id===id&&o.kind==='shootingMachine')?'Machine':'?'; };
   const actionIcon = (a: string) => (a === 'pass' ? '→' : a === 'dribble' ? '~' : a === 'cut' ? '↗' : a === 'screen' ? '⊥' : a === 'shoot' ? '◎' : '•');
   const actionName = (a: string) => (a === 'pass' ? 'Passe' : a === 'dribble' ? 'Dribble' : a === 'cut' ? 'Cut' : a === 'screen' ? 'Écran' : a === 'shoot' ? 'Tir' : a);
-  const actionWho = (l: Line) => (l.action === 'pass' ? `${playerLabelById(l.sourcePlayerId)}→${playerLabelById(l.targetPlayerId)}` : playerLabelById(l.sourcePlayerId));
+  const actionWho = (l: Line) => (l.action === 'pass' ? `${playerLabelById(l.sourcePlayerId || l.sourceMachineId)}→${playerLabelById(l.targetPlayerId || l.targetMachineId)}` : playerLabelById(l.sourcePlayerId));
   const toggleActionWith = (lineId: string) => { pushHistory(); updatePhase((p) => ({ ...p, lines: p.lines.map((l) => (l.id === lineId ? { ...l, startMode: l.startMode === 'withPrevious' ? 'afterPrevious' : 'withPrevious' } : l)) })); };
 
   // Réordonne les actions de la phase sans toucher aux autres éléments du terrain.
@@ -4580,6 +4606,10 @@ const exportJson = () => {
   const chh = courtType === 'full' ? 1100 : 704;
 
   const selectedItem = selection.length === 1 ? selection[0] : null;
+
+  const selectedMachine = selectedItem?.type==='object' ? ph?.objects.find(o=>o.id===selectedItem.id&&o.kind==='shootingMachine') : undefined;
+  const selectedShot = selectedItem?.type==='line' ? ph?.lines.find(l=>l.id===selectedItem.id&&l.action==='shoot') : undefined;
+  const updateMachine = (patch: Partial<Obj>) => { if(!selectedMachine)return; pushHistory(); setPhases(prev=>prev.map((phase,i)=>i===current?{...phase,objects:phase.objects.map(o=>o.id===selectedMachine.id?{...o,...patch}:o)}:phase)); };
 
   const selectedItemColor = (() => {
     if (!selectedItem) return '#0F0F12';
@@ -4992,6 +5022,7 @@ const exportJson = () => {
                   <div className={'misc-btn' + (isObj('ball') ? ' active' : '')} id="addBallBtn" title="Ballon" onClick={() => pick({ kind: 'object', obj: 'ball' })}>🏀</div>
                   <div className={'misc-btn' + (isObj('cone') ? ' active' : '')} data-misc="cone" title="Plot" onClick={() => pick({ kind: 'object', obj: 'cone' })}><img src="/plaquette/plot.svg" alt="Plot" style={{ width: 30, height: 30, objectFit: 'contain' }} /></div>
                   <div className={'misc-btn' + (isObj('lateralBasket') ? ' active' : '')} data-misc="lateralBasket" title="Panier latéral" onClick={() => pick({ kind: 'object', obj: 'lateralBasket' })}><img src="/plaquette/panier-lateral.svg" alt="Panier latéral" style={{ width: 36, height: 30, objectFit: 'contain' }} /></div>
+                  <button type="button" className={'misc-btn'+(isObj('shootingMachine')?' active':'')} title="Machine à ballons — passes et récupération des tirs" onClick={()=>pick({kind:'object',obj:'shootingMachine'})}><img src="/plaquette/shooting-machine.svg" alt="Machine à ballons" style={{width:32,height:36}}/></button>
                   <div className={'misc-btn' + (isObj('triangle') ? ' active' : '')} data-misc="triangle" title="Triangle" onClick={() => pick({ kind: 'object', obj: 'triangle' })}>△</div>
                   <div className={'misc-btn' + (isObj('square') ? ' active' : '')} data-misc="square" title="Carré" onClick={() => pick({ kind: 'object', obj: 'square' })}>■</div>
                   <div className={'misc-btn' + (isObj('circle') ? ' active' : '')} data-misc="circle" title="Rond" onClick={() => pick({ kind: 'object', obj: 'circle' })}>●</div>
@@ -5046,6 +5077,20 @@ const exportJson = () => {
                           }}
                           style={{ width: '100%', height: 40, cursor: 'pointer' }}
                         />
+
+                        {selectedMachine && <div style={{display:'grid',gap:8}}>
+                          <b>Machine à ballons</b>
+                          <label><input type="checkbox" checked={!!selectedMachine.infiniteBalls} onChange={e=>updateMachine({infiniteBalls:e.target.checked})}/> Réserve illimitée</label>
+                          <label>Ballons en réserve <input type="number" min={0} max={999} disabled={!!selectedMachine.infiniteBalls} value={machineBallCount(selectedMachine)} onChange={e=>updateMachine({ballCount:Math.max(0,Math.min(999,Number(e.target.value)||0))})}/></label>
+                          <label><input type="checkbox" checked={selectedMachine.collectsShots!==false} onChange={e=>updateMachine({collectsShots:e.target.checked})}/> Récupérer les prochains tirs près du panier</label>
+                          <small>Le tir conserve sa cible sur le panier. Le ballon revient ensuite dans la machine.</small>
+                        </div>}
+                        {selectedShot && <label className="settings-label">Ballon récupéré après le tir
+                          <select value={selectedShot.returnMachineId||''} onChange={e=>{pushHistory();const id=e.target.value||undefined;setPhases(prev=>prev.map((phase,i)=>i===current?{...phase,lines:phase.lines.map(l=>l.id===selectedShot.id?{...l,returnMachineId:id}:l)}:phase));}}>
+                            <option value="">Sans récupération</option>
+                            {ph?.objects.filter(o=>o.kind==='shootingMachine').map((o,i)=><option key={o.id} value={o.id}>Machine {i+1}</option>)}
+                          </select>
+                        </label>}
 
                         <label className="settings-label">Taille</label>
                         <input

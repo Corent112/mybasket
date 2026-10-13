@@ -1,0 +1,27 @@
+const fs=require('fs'),vm=require('vm'),ts=require('typescript'),assert=require('node:assert/strict');
+const compile=s=>ts.transpileModule(s,{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2020}}).outputText;
+const helper={exports:{}};vm.runInNewContext(compile(fs.readFileSync('lib/drawing-shooting-machine.ts','utf8')),helper);
+const {machineReserves,collectorForBasket}=helper.exports;
+const machine={id:'m',kind:'shootingMachine',x:.5,y:.15,ballCount:1};
+const cycle=[{action:'pass',sourceMachineId:'m'},{action:'shoot',returnMachineId:'m'}];
+assert.equal(machineReserves([machine],Array.from({length:100},()=>cycle).flat()).m,1);
+assert.equal(machineReserves([{...machine,infiniteBalls:true}],Array.from({length:1000},()=>cycle[0])).m,1);
+assert.equal(collectorForBasket([machine],{x:.5,y:.1}).id,'m');
+assert.equal(collectorForBasket([machine],{x:.5,y:.9}),undefined);
+const source=fs.readFileSync('app/plaquette/PlaquetteClient.tsx','utf8');const ast=ts.createSourceFile('drawing.tsx',source,ts.ScriptTarget.Latest,true,ts.ScriptKind.TSX);
+const names=['addOwnerBall','removeOwnerBall','buildBallEvents','initialBallOwners','ownersAtClock','ballsPosAtClock'];const functions={};
+function visit(n){if(ts.isVariableDeclaration(n)&&names.includes(n.name.getText(ast)))functions[n.name.getText(ast)]=n.initializer.getText(ast);ts.forEachChild(n,visit);}visit(ast);
+const player={id:'p',x:.3,y:.4,ballCount:0};const phase={players:[player],objects:[machine],lines:[]};
+const context={...helper.exports,phasesRef:{current:[phase]},ballEventsRef:{current:[]},courtRef:{current:'half'},playerBallCount:p=>p.ballCount||0,phasePlayerPosAt:()=>player,playerPosAtClock:(_,id)=>id==='p'?player:null,lateralBasketPoint:()=>({x:.5,y:.1}),basketFor:()=>({x:.5,y:.1}),offsetBallPoint:p=>p,ease:t=>t};
+vm.createContext(context);vm.runInContext(compile(names.map(n=>`const ${n}=${functions[n]};`).join('\n')+`\nexports.result={${names.join(',')}};`),Object.assign(context,{exports:{}}));
+const f=context.exports.result;const sched=[{idx:0,start:0,span:200,end:200,actSched:[{line:{action:'pass',sourceMachineId:'m',targetPlayerId:'p',from:machine,to:player},start:0,end:100},{line:{action:'shoot',sourcePlayerId:'p',returnMachineId:'m',target:'basket',to:{x:.5,y:.1}},start:100,end:200}]}];
+const events=f.buildBallEvents(sched);
+assert.equal(events[1].shoot,true);assert.equal(events[1].returnMachineId,'m');assert.equal(events[1].basketPt.y,.1);
+assert.equal(f.ownersAtClock(sched,events,50).get('m'),undefined);
+assert.equal(f.ownersAtClock(sched,events,100).get('p'),undefined); // already shooting
+assert.equal(f.ownersAtClock(sched,events,200).get('m'),1);
+const returning=f.ballsPosAtClock(sched,events,190)[0];assert(returning.y>.1&&returning.y<.15);
+phase.objects[0]={...machine,infiniteBalls:true};assert.equal(f.ownersAtClock(sched,events,50).get('m'),Infinity);
+const owners=new Map([['p',2]]);f.addOwnerBall(owners,'p');assert.equal(owners.get('p'),2);
+const roundtrip=JSON.parse(JSON.stringify({...phase,lines:[sched[0].actSched[1].line]}));assert.equal(roundtrip.lines[0].target,'basket');assert.equal(roundtrip.lines[0].returnMachineId,'m');assert.equal(roundtrip.objects[0].infiniteBalls,true);
+console.log('Drawing machine: reserve cycles, unlimited passes, hoop target, animated recovery, player limits and saved references passed.');

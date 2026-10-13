@@ -981,7 +981,7 @@ export default function PriseStatsProPage() {
      Chargés depuis livestat_coding_buttons pour l'équipe active ; si vide ou
      erreur → null → resolveCodingButtons retombe sur les constantes. Un
      changement dans Management se répercute ici (label/emoji/couleur/ordre). */
-  const [codingDb, setCodingDb] = useState<CodingButtonCfg[] | null>(null);
+  const [baseCodingDb, setCodingDb] = useState<CodingButtonCfg[] | null>(null);
   const [codingDbNonce, setCodingDbNonce] = useState(0);
   const [showCodingSettings, setShowCodingSettings] = useState(false);
   const [showMatchReviewBuilder, setShowMatchReviewBuilder] = useState(false);
@@ -1003,6 +1003,9 @@ export default function PriseStatsProPage() {
   }, []);
   const [codingProfiles, setCodingProfiles] = useState<LiveCodingProfile[]>([]);
   const [selectedCodingProfileId, setSelectedCodingProfileId] = useState('');
+  const [profileConfig,setProfileConfig] = useState<LiveCodingProfile | null>(null);
+  const [defaultCodingWindow,setDefaultCodingWindow] = useState(false);
+  const codingDb: CodingButtonCfg[] | null = profileConfig?.buttons ? profileConfig.buttons.filter(r=>r.category!=='temps').map(r=>({...r,emoji:r.emoji||undefined})) : defaultCodingWindow ? null : baseCodingDb;
   const [profileButtonKeys, setProfileButtonKeys] = useState<LiveCodingProfile['activeButtonKeys'] | null>(null);
   const [toast, setToast] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
@@ -1021,16 +1024,20 @@ export default function PriseStatsProPage() {
     } catch { return [] as LiveCodingProfile[]; }
   };
   const persistCodingProfiles = (tId: string, list: LiveCodingProfile[]) => {
-    setCodingProfiles(list);
     if (typeof window !== 'undefined') {
-      try { window.localStorage.setItem(codingProfilesStorageKey(tId), JSON.stringify(list)); } catch { /* noop */ }
+      window.localStorage.setItem(codingProfilesStorageKey(tId), JSON.stringify(list));
     }
+    setCodingProfiles(list);
   };
   const applyCodingProfile = (profile: LiveCodingProfile) => {
     setSelectedCodingProfileId(profile.id);
+    setProfileConfig({...profile,teamId:activeTeamId||teamId});
+    setDefaultCodingWindow(false);
     setWorkflowPrefs({ ...profile.workflow });
     setProfileButtonKeys(profile.activeButtonKeys || null);
   };
+  const resetCodingWindow = () => { setSelectedCodingProfileId('');setProfileConfig(null);setProfileButtonKeys(null);setDefaultCodingWindow(true);setWorkflowPrefs({...DEFAULT_WORKFLOW_PREFS}); };
+  const selectCodingWindow = (id:string) => { if(!id){resetCodingWindow();return;}const p=codingProfiles.find(p=>p.id===id);if(p)applyCodingProfile(p); };
   const saveCodingProfile = (profile: LiveCodingProfile) => {
     const tId = activeTeamId || teamId;
     const list = loadCodingProfiles(tId);
@@ -1045,14 +1052,14 @@ export default function PriseStatsProPage() {
     const next = loadCodingProfiles(tId).filter((p) => p.id !== profileId);
     persistCodingProfiles(tId, next);
     if (selectedCodingProfileId === profileId) {
-      setSelectedCodingProfileId('');
-      setProfileButtonKeys(null);
+      resetCodingWindow();
     }
   };
   useEffect(() => {
     const tId = activeTeamId || teamId;
     if (!tId) { setCodingProfiles([]); return; }
     setCodingProfiles(loadCodingProfiles(tId));
+    if(profileConfig?.teamId!==tId){setProfileConfig(null);setProfileButtonKeys(null);setSelectedCodingProfileId('');setDefaultCodingWindow(false);}
   }, [activeTeamId, teamId]);
 
   /* -------- V5 · choix vidéo à la création du match (structure + UI) --------
@@ -1514,7 +1521,7 @@ export default function PriseStatsProPage() {
   // intégré dans useLivestatTags → jamais vide, jamais de key brute affichée.
   // Temps forts : dès qu'une équipe possède sa configuration Supabase, elle
   // pilote le wizard. Sinon on conserve exactement la liste historique actuelle.
-  const tempsFortsButtons = (tags.source === 'supabase'
+  const tempsFortsButtons = (profileConfig?.buttons ? profileConfig.buttons.filter(r=>r.category==='temps'&&r.is_active!==false).sort((a,b)=>(a.sort_order??0)-(b.sort_order??0)).map(r=>({id:r.key,label:r.label,ic:r.emoji||'⚡',is_active:true,sort_order:r.sort_order??0})) : !defaultCodingWindow && tags.source === 'supabase'
     ? tags.active.map((t) => ({ id: t.key, label: t.label, ic: t.emoji || '⚡', is_active: t.is_active, sort_order: t.sort_order }))
     : TEMPS.map((t, i) => ({ id: t.id, label: t.label, ic: t.icon, is_active: true, sort_order: i })))
     .filter((t) => profileAllowsButton('temps', t.id));
@@ -1725,14 +1732,14 @@ export default function PriseStatsProPage() {
   };
   const codingSettingsGroups: CodingButtonGroup[] = [
     { key:'system', title:'Système de jeu', icon:'🏀', stage:'systeme', allowAdd:true, rows:(configuredSystemRows.length ? configuredSystemRows : (CODING_FALLBACK.system ?? [])).map((r,i)=>({ key:r.key,label:r.label,emoji:r.emoji,is_active:r.is_active!==false,sort_order:r.sort_order??i })) },
-    { key:'temps', title:'Temps fort', icon:'⚡', stage:'temps', allowAdd:true, rows:(tags.source === 'supabase' ? tags.all.map((x,i)=>({key:x.key,label:x.label,emoji:x.emoji,is_active:x.is_active!==false,sort_order:x.sort_order??i})) : TEMPS.map((x,i)=>({key:x.id,label:x.label,emoji:x.icon,is_active:true,sort_order:i}))) },
+    { key:'temps', title:'Temps fort', icon:'⚡', stage:'temps', allowAdd:true, rows:(profileConfig?.buttons ? profileConfig.buttons.filter(r=>r.category==='temps') : !defaultCodingWindow && tags.source === 'supabase' ? tags.all.map((x,i)=>({key:x.key,label:x.label,emoji:x.emoji,is_active:x.is_active!==false,sort_order:x.sort_order??i})) : TEMPS.map((x,i)=>({key:x.id,label:x.label,emoji:x.icon,is_active:true,sort_order:i}))) },
     { key:'att-action', title:'Actions attaque', icon:'🔵', stage:'action', allowAdd:true, rows:allCodingRowsFor('att-action').map((r,i)=>({key:r.key,label:r.label,emoji:r.emoji,is_active:r.is_active!==false,sort_order:r.sort_order??i})) },
     { key:'def-action', title:'Actions défense', icon:'🔴', stage:'action', allowAdd:true, rows:allCodingRowsFor('def-action').map((r,i)=>({key:r.key,label:r.label,emoji:r.emoji,is_active:r.is_active!==false,sort_order:r.sort_order??i})) },
     { key:'coverage', title:'Défense sur écran', icon:'🛡️', stage:'coverage', allowAdd:true, rows:allCodingRowsFor('coverage').map((r,i)=>({key:r.key,label:r.label,emoji:r.emoji,is_active:r.is_active!==false,sort_order:r.sort_order??i})) },
     { key:'result', title:'Résultats tirs', icon:'🎯', stage:'result', allowAdd:false, rows:allCodingRowsFor('result').map((r,i)=>({key:r.key,label:r.label,emoji:r.emoji,is_active:r.is_active!==false,sort_order:r.sort_order??i})) },
     { key:'foul', title:'Suites de faute', icon:'🟨', stage:'faute', allowAdd:false, rows:allCodingRowsFor('foul').map((r,i)=>({key:r.key,label:r.label,emoji:r.emoji,is_active:r.is_active!==false,sort_order:r.sort_order??i})) },
     { key:'rebound', title:'Rebonds / possession', icon:'🔄', stage:'rebound', allowAdd:false, rows:allCodingRowsFor('rebound').map((r,i)=>({key:r.key,label:r.label,emoji:r.emoji,is_active:r.is_active!==false,sort_order:r.sort_order??i})) },
-  ];
+  ].map(g=>({...g,title:profileConfig?.blockTitles?.[g.key as keyof NonNullable<LiveCodingProfile['blockTitles']>]||g.title})) as CodingButtonGroup[];
 
   const [projects, setProjects] = useState<LiveProjectSummary[]>([]);
   const [projectBusy, setProjectBusy] = useState(false);
@@ -1763,6 +1770,8 @@ export default function PriseStatsProPage() {
     workflowPrefs,
     selectedCodingProfileId,
     profileButtonKeys,
+    codingWindow: profileConfig,
+    defaultCodingWindow,
     workspaceLayout: { videoPanePct, rightPanePx, mode: layoutMode },
     linkedCollectiveProjectId: linkedCollectiveProjectId || null,
     matchPlayerIds,
@@ -1968,6 +1977,8 @@ export default function PriseStatsProPage() {
         setWorkflowPrefs({ ...DEFAULT_WORKFLOW_PREFS, ...s.workflowPrefs });
       }
       setSelectedCodingProfileId(String(s.selectedCodingProfileId || ''));
+      setProfileConfig(s.codingWindow && typeof s.codingWindow==='object'?{...s.codingWindow,teamId:s.teamId||activeTeamId||teamId}:null);
+      setDefaultCodingWindow(!!s.defaultCodingWindow);
       setProfileButtonKeys(s.profileButtonKeys && typeof s.profileButtonKeys === 'object' ? s.profileButtonKeys : null);
       if (s.workspaceLayout && typeof s.workspaceLayout === 'object') {
         if (Number.isFinite(Number(s.workspaceLayout.videoPanePct))) setVideoPanePct(Math.max(25, Math.min(72, Number(s.workspaceLayout.videoPanePct))));
@@ -4973,15 +4984,9 @@ export default function PriseStatsProPage() {
                   <div className="codingLogicSetupRow">
                     <select
                       value={selectedCodingProfileId}
-                      onChange={(e) => {
-                        const id = e.target.value;
-                        setSelectedCodingProfileId(id);
-                        if (!id) { setProfileButtonKeys(null); return; }
-                        const profile = codingProfiles.find((p) => p.id === id);
-                        if (profile) applyCodingProfile(profile);
-                      }}
+                      onChange={e=>selectCodingWindow(e.target.value)}
                     >
-                      <option value="">Configuration actuelle / personnalisée</option>
+                      <option value="">Fenêtre par défaut MyBasket</option>
                       {codingProfiles.map((profile) => <option key={profile.id} value={profile.id}>{profile.name}</option>)}
                     </select>
                     <button type="button" onClick={() => openCodingSettings('workflow')}>⚙ Modifier le chemin</button>
@@ -6303,7 +6308,11 @@ export default function PriseStatsProPage() {
   );
 
   /* ---------- rendu d'une étape ---------- */
-  function head(t: string, s?: string) { return <div className="wzhead"><div className="wzstep">{NAV[navIdx].toUpperCase()}</div><div className="wztitle">{t}</div>{s && <div className="wzsub">{s}</div>}</div>; }
+  function head(t: string, s?: string) {
+    const titleKeys:Record<string,string>={'Système de jeu':'system','Temps fort':'temps',"Défense sur l'écran":'coverage',"Type d'action":draft.context==='defense'?'def-action':'att-action',"Action du joueur":draft.context==='defense'?'def-action':'att-action','Conséquence':'rebound','Faute commise':'foul','Faute provoquée':'foul'};
+    const stageKeys:Record<string,string>={systeme:'system',temps:'temps',action:draft.context==='defense'?'def-action':'att-action',coverage:'coverage',result:'result',rebound:'rebound'};
+    const customTitle=profileConfig?.blockTitles?.[(stageKeys[stage]||titleKeys[t]) as keyof NonNullable<LiveCodingProfile['blockTitles']>];
+    return <div className="wzhead"><div className="wzstep">{NAV[navIdx].toUpperCase()}</div><select aria-label="Fenêtre de codage" value={selectedCodingProfileId} onChange={e=>selectCodingWindow(e.target.value)} style={{maxWidth:'100%',marginBottom:8}}><option value="">Fenêtre par défaut MyBasket</option>{codingProfiles.map(p=><option key={p.id} value={p.id}>{p.name}</option>)}</select><div className="wztitle">{customTitle||t}</div>{s && <div className="wzsub">{s}</div>}</div>; }
   function tileGrid(arr: { id: string; label: string; ic?: string }[], sel: string, fn: (id: string) => void) {
     return <div className="grid c3">{arr.map((o) => { const labelSize = o.label.length > 24 ? 'xs' : o.label.length > 16 ? 'sm' : o.label.length > 11 ? 'md' : ''; return <button key={o.id} className={`bt ${o.id === 'libre' ? 'systemLibre' : ''} ${sel === o.id ? 'active' : ''}`} onClick={() => fn(o.id)}><span className="ic">{o.ic || '•'}</span><span className={`lbl ${labelSize}`}>{o.label}</span></button>; })}</div>;
   }

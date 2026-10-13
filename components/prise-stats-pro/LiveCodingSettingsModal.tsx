@@ -54,9 +54,13 @@ export type CodingButtonGroup = {
 
 export type LiveCodingProfile = {
   id: string;
+  teamId?: string;
   name: string;
   workflow: LiveWorkflowPrefs;
   activeButtonKeys: Partial<Record<CodingButtonGroupKey, string[]>>;
+  buttons?: (ConfigButton & { category: CodingButtonGroupKey; stage: string })[];
+  blockTitles?: Partial<Record<CodingButtonGroupKey,string>>;
+  hiddenBlocks?: CodingButtonGroupKey[];
   createdAt: string;
   updatedAt: string;
 };
@@ -146,6 +150,8 @@ export default function LiveCodingSettingsModal({
   // sauvegardé par équipe et synchronisé avec le chemin de codage.
   const [hiddenBlocks, setHiddenBlocks] = useState<CodingButtonGroupKey[]>([]);
 
+  const [blockTitles,setBlockTitles] = useState<LiveCodingProfile['blockTitles']>({});
+  const groupsSignature = JSON.stringify(groups);
   const [profileName, setProfileName] = useState('');
   const [profileId, setProfileId] = useState(selectedProfileId);
   // Sert à détecter uniquement un vrai passage OFF → ON depuis « Logique & chemin ».
@@ -158,11 +164,12 @@ export default function LiveCodingSettingsModal({
     setProfileId(selectedProfileId);
     const selected = profiles.find((p) => p.id === selectedProfileId);
     setProfileName(selected?.name || '');
+    setBlockTitles(selected?.blockTitles || {});
 
     const nextRows: Editable[] = [];
     const keys = { system: [], temps: [], 'att-action': [], 'def-action': [], coverage: [], result: [], foul: [], rebound: [] } as Record<CodingButtonGroupKey, string[]>;
     groups.forEach((group) => {
-      group.rows.forEach((x, i) => {
+      (selected?.buttons?.filter(r=>r.category===group.key) || group.rows).forEach((x, i) => {
         const selectedKeys = selected?.activeButtonKeys?.[group.key];
         nextRows.push({
           ...x,
@@ -179,7 +186,7 @@ export default function LiveCodingSettingsModal({
     setRows(nextRows);
     setInitialKeys(keys);
     setMessage('');
-  }, [open, initialTab, groups, profiles, selectedProfileId]);
+  }, [open, initialTab, groupsSignature, profiles, selectedProfileId]);
 
   useEffect(() => {
     if (!open || !playbookId) {
@@ -259,18 +266,17 @@ export default function LiveCodingSettingsModal({
     if (!open || typeof window === 'undefined') return;
     try {
       const raw = window.localStorage.getItem(blockStorageKey);
-      const parsed = raw ? JSON.parse(raw) : [];
+      const saved=profiles.find(p=>p.id===selectedProfileId);
+      const parsed = saved?.hiddenBlocks ?? (raw ? JSON.parse(raw) : []);
       setHiddenBlocks(Array.isArray(parsed) ? parsed.filter((key) => groups.some((g) => g.key === key)) : []);
     } catch {
       setHiddenBlocks([]);
     }
-  }, [open, blockStorageKey, groups]);
+  }, [open, blockStorageKey, groupsSignature, selectedProfileId]);
 
   const persistHiddenBlocks = (next: CodingButtonGroupKey[]) => {
     setHiddenBlocks(next);
-    if (typeof window !== 'undefined') {
-      try { window.localStorage.setItem(blockStorageKey, JSON.stringify(next)); } catch { /* noop */ }
-    }
+
   };
 
 
@@ -292,9 +298,7 @@ export default function LiveCodingSettingsModal({
     if (restore.length) {
       setHiddenBlocks((current) => {
         const next = current.filter((key) => !restore.includes(key));
-        if (next.length !== current.length && typeof window !== 'undefined') {
-          try { window.localStorage.setItem(blockStorageKey, JSON.stringify(next)); } catch { /* noop */ }
-        }
+
         return next;
       });
       setMessage('Bloc réactivé automatiquement dans « Boutons par bloc » ✓');
@@ -379,80 +383,7 @@ export default function LiveCodingSettingsModal({
     }));
   };
 
-  const saveButtons = async () => {
-    if (!teamId) return;
-    setSaving(true);
-    setMessage('');
-    try {
-      const supabase = createClient();
-      const codingRows = rows.filter((r) => r.category !== 'temps');
-      const tagRows = rows.filter((r) => r.category === 'temps');
-
-      const currentByCategory = new Map<CodingButtonGroupKey, string[]>();
-      groups.forEach((g) => currentByCategory.set(g.key, rows.filter((r) => r.category === g.key).map((r) => r.key)));
-
-      for (const group of groups) {
-        const before = initialKeys[group.key] || [];
-        const after = currentByCategory.get(group.key) || [];
-        const deleted = before.filter((key) => !after.includes(key));
-        if (!deleted.length) continue;
-        if (group.key === 'temps') {
-          await supabase.from('livestat_tags').delete().eq('team_id', teamId).in('key', deleted);
-        } else {
-          await supabase.from('livestat_coding_buttons').delete().eq('team_id', teamId).eq('category', group.key).in('key', deleted);
-        }
-      }
-
-      if (codingRows.length) {
-        const payload = codingRows.map((r, index) => ({
-          team_id: teamId,
-          key: r.key,
-          label: r.label.trim() || 'Sans nom',
-          emoji: r.emoji || null,
-          category: r.category,
-          stage: r.stage,
-          sort_order: r.sort_order ?? index,
-          is_active: r.is_active !== false,
-        }));
-        const { error } = await supabase.from('livestat_coding_buttons').upsert(payload, { onConflict: 'team_id,category,key' });
-        if (error) throw error;
-
-        const systemRows = codingRows.filter((r) => r.category === 'system');
-        for (const r of systemRows) {
-          await supabase
-            .from('match_actions')
-            .update({ systeme_name: r.label.trim() || 'Sans nom' })
-            .eq('team_id', teamId)
-            .eq('systeme_slot', r.key);
-        }
-      }
-
-      if (tagRows.length) {
-        const payload = tagRows.map((r, index) => ({
-          team_id: teamId,
-          key: r.key,
-          label: r.label.trim() || 'Sans nom',
-          category: 'offense',
-          emoji: r.emoji || null,
-          sort_order: r.sort_order ?? index,
-          is_active: r.is_active !== false,
-          clip_mode: 'possession',
-          pre_roll: 5,
-          post_roll: 3,
-        }));
-        const { error } = await supabase.from('livestat_tags').upsert(payload, { onConflict: 'team_id,key' });
-        if (error) throw error;
-      }
-
-      setMessage('Boutons enregistrés ✓');
-      onChanged();
-    } catch (e: any) {
-      console.error(e);
-      setMessage(e?.message ? `Erreur : ${e.message}` : 'Impossible d’enregistrer la configuration');
-    } finally {
-      setSaving(false);
-    }
-  };
+  const saveButtons = () => saveProfile();
 
   const preset = (name: 'rapide' | 'coach' | 'complet') => {
     if (name === 'rapide') onWorkflowChange({ system: false, temps: true, player: false, coverage: false, zone: false, rebound: true, assist: false });
@@ -492,12 +423,16 @@ export default function LiveCodingSettingsModal({
     const profile: LiveCodingProfile = {
       id: existing?.id || uid(),
       name,
+      teamId,
       workflow: { ...workflow },
       activeButtonKeys: activeKeys(),
+      buttons: rows.map(r=>({key:r.key,label:r.label.trim()||'Sans nom',emoji:r.emoji,category:r.category,stage:r.stage,is_active:r.is_active!==false,sort_order:r.sort_order})),
+      blockTitles: {...blockTitles},
+      hiddenBlocks: [...hiddenBlocks],
       createdAt: existing?.createdAt || now,
       updatedAt: now,
     };
-    onSaveProfile(profile);
+    try { onSaveProfile(profile); } catch { setMessage('Impossible de sauvegarder dans ce navigateur. Vérifie son espace de stockage.');return; }
     setProfileId(profile.id);
     setMessage(`Logique « ${name} » enregistrée ✓`);
   };
@@ -536,7 +471,7 @@ export default function LiveCodingSettingsModal({
                 <span>Nom</span>
                 <input value={profileName} onChange={(e) => setProfileName(e.target.value)} placeholder="Ex : Coach U18 sans Shot Chart" />
               </label>
-              <button className="saveProfile" onClick={saveProfile}>💾 Enregistrer la logique</button>
+              <button type="button" onClick={()=>{setProfileId('');setProfileName('');setMessage('Donne un nom pour enregistrer une nouvelle fenêtre.');}}>＋ Nouvelle fenêtre</button><button className="saveProfile" onClick={saveProfile}>💾 Enregistrer la logique</button>
               {selectedProfile && (
                 <button
                   type="button"
@@ -591,7 +526,7 @@ export default function LiveCodingSettingsModal({
           </div>
         ) : (
           <div className="lcsBody">
-            <div className="lcsInfo">Chaque bloc garde la même présentation que pendant le codage. Tu peux retirer puis rajouter les blocs optionnels. Les blocs statistiques indispensables restent protégés pour ne pas casser les calculs.</div>
+            <label className="lcsInfo">Nom de la fenêtre <input value={profileName} onChange={e=>setProfileName(e.target.value)} placeholder="Ex : Codage U21"/></label><div className="lcsInfo">Les fenêtres sont conservées dans ce navigateur, par équipe. Chaque bloc garde la même présentation que pendant le codage. Tu peux retirer puis rajouter les blocs optionnels. Les blocs statistiques indispensables restent protégés pour ne pas casser les calculs.</div>
             <div className="lcsBlockManager">
               <b>Organisation des blocs</b>
               <div className="lcsBlockPalette">
@@ -608,7 +543,7 @@ export default function LiveCodingSettingsModal({
                 return (
                   <section className="lcsBlock" key={group.key}>
                     <div className="lcsBlockHead">
-                      <div><b>{group.icon} {group.title}</b><small>{visible.filter((r) => r.is_active !== false && r.included !== false).length} utilisé(s)</small></div>
+                      <div><b>{group.icon} <input aria-label="Nom du bloc" value={blockTitles?.[group.key]||group.title} onChange={e=>setBlockTitles(prev=>({...prev,[group.key]:e.target.value}))}/></b><small>{visible.filter((r) => r.is_active !== false && r.included !== false).length} utilisé(s)</small></div>
                       <div className="lcsBlockHeadActions">
                         {group.allowAdd !== false && <button onClick={() => add(group.key)}>＋ Bouton</button>}
                         <button
@@ -687,7 +622,7 @@ export default function LiveCodingSettingsModal({
                 );
               })}
             </div>
-            <div className="lcsFoot"><span>{message}</span><button className="save" disabled={saving || !teamId} onClick={() => void saveButtons()}>{saving ? '⏳ Enregistrement…' : '💾 Enregistrer les boutons'}</button></div>
+            <div className="lcsFoot"><span>{message}</span><button className="save" disabled={saving || !teamId} onClick={() => void saveButtons()}>{saving ? '⏳ Enregistrement…' : '💾 Enregistrer cette fenêtre'}</button></div>
           </div>
         )}
       </div>
