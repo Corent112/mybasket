@@ -1593,7 +1593,6 @@ return (
                               <strong>{wins}V - {losses}D</strong>
                               <span>Bilan</span>
                               <small>Victoires - Défaites</small>
-                              {ffbbStanding?.pointsForAverage != null && ffbbStanding?.pointsAgainstAverage != null && <small style={{whiteSpace:"normal",overflow:"visible"}}>{ffbbStanding.pointsForAverage.toFixed(1).replace(".",",")} pts marqués · {ffbbStanding.pointsAgainstAverage.toFixed(1).replace(".",",")} pts encaissés / match</small>}
                             </div>
                           </div>
 
