@@ -463,7 +463,6 @@ function useFfbbBannerSummary(teamId: string, source: "ffbb" | "lnb" = "ffbb", r
           .from("ffbb_team_connections")
           .select("*")
           .eq("team_id", teamId)
-          .order("is_primary", { ascending: false })
           .order("created_at", { ascending: true });
 
         const connections = (allConnections || []).filter((row: any) => source === "lnb" ? /^https:\/\/(www\.)?lnb\.fr\//i.test(row.source_url) : /^https:\/\/competitions\.ffbb\.com\//i.test(row.source_url));
@@ -536,14 +535,20 @@ function useFfbbBannerSummary(teamId: string, source: "ffbb" | "lnb" = "ffbb", r
           try {
             const ffbbTeamName = String(rankingConnection.ffbb_team_name || "").trim();
             const endpoint = `/api/ffbb/competition?url=${encodeURIComponent(rankingConnection.source_url)}&team=${encodeURIComponent(ffbbTeamName)}`;
-            let response = await fetch(endpoint, { cache: "no-store" });
-            let parsed = await response.json();
-            let responseOkay = response.ok;
-            // FFBB accepte les requêtes du navigateur même lorsque Vercel est refusé.
-            if (source === "ffbb" && !parsed?.teamStats && (parsed?.warning || !response.ok)) {
-              const { fetchTeamFromFfbbApi } = await import("@/lib/ffbb-api");
-              parsed = await fetchTeamFromFfbbApi(rankingConnection.source_url, ffbbTeamName);
-              responseOkay = true;
+            let parsed: any;
+            let responseOkay = false;
+            // Lire FFBB directement évite le refus réseau et le délai côté Vercel.
+            if (source === "ffbb") {
+              try {
+                const { fetchTeamFromFfbbApi } = await import("@/lib/ffbb-api");
+                parsed = await fetchTeamFromFfbbApi(rankingConnection.source_url, ffbbTeamName);
+                responseOkay = true;
+              } catch { /* Le serveur et les résultats synchronisés restent les secours. */ }
+            }
+            if (!responseOkay) {
+              const response = await fetch(endpoint, { cache: "no-store" });
+              parsed = await response.json();
+              responseOkay = response.ok;
             }
             if (responseOkay) {
               if (parsed?.pool) pool = String(parsed.pool).trim();
@@ -683,7 +688,7 @@ function computeLinkedKpis(
 
   return [
     { ic: "users", val: String(team.players.length), lbl: "Effectif", hint: "Joueurs" },
-    { ic: "trophy", val: connected ? ffbb.ranking : dash, lbl: "Classement", hint: connected ? (ffbb.pool ? `Poule ${ffbb.pool}` : provider) : `${provider} non connecté` },
+    { ic: "trophy", val: loading ? "…" : connected ? ffbb.ranking : dash, lbl: "Classement", hint: loading ? `Chargement ${provider}…` : connected ? (ffbb.pool ? `Poule ${ffbb.pool}` : provider) : `${provider} non connecté` },
     { ic: "shirt", val: loading ? "…" : connected ? String(ffbb.games) : dashboard.loading ? "…" : String(fallbackMatches.length || local.matchsJoues), lbl: "Matchs joués", hint: connected ? provider : "MyBasket" },
     { ic: "trophy", val: loading ? "…" : connected ? `${ffbb.wins} / ${ffbb.losses}` : dashboard.loading ? "…" : `${fallbackWins} / ${fallbackLosses}`, lbl: "V / D", hint: connected ? provider : "MyBasket" },
     { ic: "star", val: loading ? "…" : connected ? (ffbb.pointsForAverage === null ? "—" : ffbb.pointsForAverage.toFixed(1).replace(".", ",")) : Number(fallbackFor || 0).toFixed(1).replace(".", ","), lbl: "Pts marqués", hint: "Moy. / match" },
