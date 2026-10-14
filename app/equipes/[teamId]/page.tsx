@@ -1,6 +1,7 @@
 "use client";
 
 // app/equipes/[teamId]/page.tsx
+import { currentBasketballSeason, linkedCompetitionSeason } from "@/lib/team-season";
 import TeamMatchHistoryBlock from "@/components/equipes/TeamMatchHistoryBlock";
 import TeamGoogleDriveSettings from "@/components/video/TeamGoogleDriveSettings";
 import TeamProfilingTab from "@/components/equipes/TeamProfilingTab";
@@ -344,6 +345,7 @@ function getAttendancePct(
 
 
 type FfbbBannerSummary = {
+  seasonLabel?: string;
   loading: boolean;
   connected: boolean;
   ranking: string;
@@ -523,6 +525,7 @@ function useFfbbBannerSummary(teamId: string, source: "ffbb" | "lnb" = "ffbb", r
           (ffbbScore(row, "us") === null || ffbbScore(row, "them") === null)
         );
 
+        let seasonLabel: string | undefined;
         let ranking = "—";
         let pool = String(primary.pool || primary.pool_name || "").trim();
         const rankingConnection =
@@ -551,6 +554,7 @@ function useFfbbBannerSummary(teamId: string, source: "ffbb" | "lnb" = "ffbb", r
               responseOkay = response.ok;
             }
             if (responseOkay) {
+              seasonLabel = linkedCompetitionSeason(parsed, rankingConnection.source_url);
               if (parsed?.pool) pool = String(parsed.pool).trim();
 
               // IMPORTANT :
@@ -640,6 +644,7 @@ function useFfbbBannerSummary(teamId: string, source: "ffbb" | "lnb" = "ffbb", r
         if (active) setSummary({
           loading: false,
           connected: true,
+          seasonLabel,
           ranking,
           pool,
           games: playedOfficial.length, // Championnat + coupe, jamais les amicaux.
@@ -1202,7 +1207,7 @@ export default function EquipeDetailPage({
 
           <div className="tl-appbar-right only-season">
             <span className="tl-season">
-              <Ic d={ICONS.cal} size={16} /> Saison 2025/2026
+              <Ic d={ICONS.cal} size={16} /> Saison {ffbbBanner.seasonLabel || team.season || currentBasketballSeason()}
             </span>
           </div>
         </header>

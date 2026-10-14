@@ -1,3 +1,5 @@
+import { competitionSeason } from "@/lib/team-season";
+
 type Game = {
   sourceKey: string;
   round: string;
@@ -291,6 +293,7 @@ export async function fetchTeamFromFfbbApi(sourceUrl: string, requestedTeam: str
     phase: parsedUrl.searchParams.get("phase") || "",
     sourceUrl,
     matches,
+    seasonLabel: competitionSeason(matches),
     classementText: "",
     ranking,
     standings: ownStanding ? {

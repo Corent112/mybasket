@@ -1,6 +1,7 @@
 // components/equipes/TeamForm.tsx
 "use client";
 
+import { currentBasketballSeason } from "@/lib/team-season";
 import { useRef, useState } from "react";
 import type { StaffMember, Team } from "../../types/player";
 import { emptyTeam } from "../../types/player";
@@ -54,7 +55,7 @@ export default function TeamForm({ team, onSave, onClose }: {
     staff: Array.isArray(team?.staff) ? team!.staff : [],
     supabaseTeamId: team?.supabaseTeamId ?? null,
     clubId: team?.clubId ?? null,
-    season: team?.season ?? "2025-2026",
+    season: team?.season ?? currentBasketballSeason(),
     couleurs: team?.couleurs?.length ? team.couleurs : [BORDEAUX, GOLD],
   }));
   const [clubName, setClubName] = useState(() => (team as Team & { clubName?: string })?.clubName || "");
@@ -104,7 +105,7 @@ export default function TeamForm({ team, onSave, onClose }: {
       tags,
       entraineurPrincipal: head ? `${head.prenom} ${head.nom}`.trim() : t.entraineurPrincipal,
       assistant: assistant ? `${assistant.prenom} ${assistant.nom}`.trim() : t.assistant,
-      season: t.season || "2025-2026",
+      season: t.season || currentBasketballSeason(),
       supabaseTeamId: t.supabaseTeamId ?? null,
       clubId: t.clubId ?? null,
       clubName: clubName.trim(),
@@ -160,6 +161,7 @@ export default function TeamForm({ team, onSave, onClose }: {
               <div style={{gridColumn:"1 / -1"}}><label style={labelStyle}>Niveau</label><select value={t.niveau} onChange={(e)=>set("niveau",e.target.value)} style={fieldStyle}>
                 <option value="">Choisir</option><option>Départemental</option><option>Régional</option><option>National</option><option>Espoirs Élite</option><option>Espoirs Élite 2</option><option>Élite 2</option><option>Betclic Élite</option>
               </select></div>
+              <div><label style={labelStyle}>Saison</label><input value={t.season || ""} onChange={event=>set("season",event.target.value)} placeholder="2026-2027" style={fieldStyle}/></div>
               <div style={{gridColumn:"1 / -1"}}><label style={labelStyle}>Source du calendrier et des résultats</label><select value={t.competitionSource || "ffbb"} onChange={event => set("competitionSource", event.target.value as "ffbb" | "lnb")} style={fieldStyle}><option value="ffbb">FFBB</option><option value="lnb">LNB</option></select><p style={{fontSize:12,color:MUTED,margin:"7px 0 0"}}>Choix indépendant de la catégorie : une équipe U21 peut rester sur FFBB. La LNB couvre Espoirs Élite, Espoirs Élite 2, Élite 2 et Betclic Élite.</p></div>
             </div>
           </section>

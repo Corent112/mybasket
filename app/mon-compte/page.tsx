@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import { createClient } from '@/lib/supabase/client';
+import { currentBasketballSeason, linkedCompetitionSeason } from '@/lib/team-season';
 import MonCalendrier from './Calendrier';
 import Messagerie from '@/components/account/Messagerie';
 import MesPapiers from './MesPapiers';
@@ -182,7 +183,7 @@ export default function MonComptePage() {
   const [playerFor, setPlayerFor] = useState<string | null>(null);
   const [teamCalendarMatchCounts, setTeamCalendarMatchCounts] = useState<Record<string, number>>({});
   const [teamFfbbStandings, setTeamFfbbStandings] = useState<
-    Record<string, { games: number; wins: number; losses: number }>
+    Record<string, { games: number; wins: number; losses: number; seasonLabel?: string; pointsForAverage?: number | null; pointsAgainstAverage?: number | null }>
   >({});
   const [ffbbConnectedTeamIds, setFfbbConnectedTeamIds] = useState<Set<string>>(new Set());
   const [playbookModalOpen, setPlaybookModalOpen] = useState(false);
@@ -288,7 +289,7 @@ export default function MonComptePage() {
       if (matchError) {
         console.error("Erreur chargement matchs Supabase:", matchError);
         setTeamCalendarMatchCounts({});
-        return;
+        // Le bilan officiel ne dépend pas de la disponibilité des matchs locaux.
       }
 
       const counts: Record<string, number> = (matchRows ?? []).reduce(
@@ -338,11 +339,12 @@ export default function MonComptePage() {
         } else {
           const connectedIds = new Set<string>();
           connections.forEach((row: any) => {
-            if (row?.team_id) connectedIds.add(String(row.team_id));
+            const linked = data.find(team=>[team.id,(team as any).supabaseTeamId,(team as any).supabase_team_id].filter(Boolean).map(String).includes(String(row?.team_id)));
+            if (linked && (linked.competitionSource === "lnb" ? /^https:\/\/(www\.)?lnb\.fr\//i.test(row.source_url) : /^https:\/\/competitions\.ffbb\.com\//i.test(row.source_url))) connectedIds.add(String(row.team_id));
           });
           setFfbbConnectedTeamIds(connectedIds);
 
-          const summaries: Record<string, { games: number; wins: number; losses: number }> = {};
+          const summaries: Record<string, { games: number; wins: number; losses: number; seasonLabel?: string; pointsForAverage?: number | null; pointsAgainstAverage?: number | null }> = {};
 
           await Promise.all(data.map(async (team) => {
             const aliases = [
@@ -352,7 +354,7 @@ export default function MonComptePage() {
             ].filter(Boolean);
 
             const teamConnections = connections.filter((row: any) =>
-              aliases.includes(String(row.team_id || ""))
+              aliases.includes(String(row.team_id || "")) && (team.competitionSource === "lnb" ? /^https:\/\/(www\.)?lnb\.fr\//i.test(row.source_url) : /^https:\/\/competitions\.ffbb\.com\//i.test(row.source_url))
             );
 
             // Priorité au championnat/poule, car c'est son tableau qui porte J/G/P.
@@ -367,15 +369,29 @@ export default function MonComptePage() {
             if (!connection?.source_url) return;
 
             try {
-              const response = await fetch(
-                `/api/ffbb/competition?url=${encodeURIComponent(connection.source_url)}&team=${encodeURIComponent(
-                  String(connection.ffbb_team_name || connection.team_name || team.name || "")
-                )}`,
-                { cache: "no-store" }
-              );
-              if (!response.ok) return;
-              const parsed = await response.json();
-
+              const endpoint = `/api/ffbb/competition?url=${encodeURIComponent(connection.source_url)}&team=${encodeURIComponent(String(connection.ffbb_team_name || connection.team_name || team.name || ""))}`;
+              let parsed: any;
+              if (team.competitionSource !== "lnb") {
+                try {
+                  const { fetchTeamFromFfbbApi } = await import("@/lib/ffbb-api");
+                  parsed = await fetchTeamFromFfbbApi(connection.source_url, String(connection.ffbb_team_name || connection.team_name || team.name || ""));
+                } catch { /* Server fallback keeps existing connection behavior. */ }
+              }
+              if (!parsed) {
+                const response = await fetch(endpoint, { cache: "no-store" });
+                if (!response.ok) return;
+                parsed = await response.json();
+              }
+              const seasonLabel = linkedCompetitionSeason(parsed, connection.source_url);
+              const official = parsed?.teamStats || parsed?.standings;
+              if (official && [official.played,official.wins,official.losses].every(value=>value != null && Number.isFinite(Number(value)) && Number(value)>=0)) {
+                const games=Number(official.played);
+                const summary={games,wins:Number(official.wins),losses:Number(official.losses),seasonLabel,
+                  pointsForAverage:games>0&&official.pointsFor!=null&&Number.isFinite(Number(official.pointsFor))?Number(official.pointsFor)/games:null,
+                  pointsAgainstAverage:games>0&&official.pointsAgainst!=null&&Number.isFinite(Number(official.pointsAgainst))?Number(official.pointsAgainst)/games:null};
+                aliases.forEach(alias=>{summaries[alias]=summary});
+                return;
+              }
               // IMPORTANT : exactement la même source que la fiche équipe.
               // La fiche équipe fonctionne déjà : elle lit les matchs renvoyés
               // par /api/ffbb/competition et considère "joué" uniquement un match
@@ -401,21 +417,12 @@ export default function MonComptePage() {
               if (played.length) {
                 const wins = played.filter((match: any) => score(match, "us")! > score(match, "them")!).length;
                 const losses = played.filter((match: any) => score(match, "us")! < score(match, "them")!).length;
-                const summary = { games: played.length, wins, losses };
+                const summary = { games: played.length, wins, losses, seasonLabel, pointsForAverage:played.reduce((sum:number,match:any)=>sum+score(match,"us")!,0)/played.length, pointsAgainstAverage:played.reduce((sum:number,match:any)=>sum+score(match,"them")!,0)/played.length };
                 aliases.forEach((alias) => { summaries[alias] = summary; });
                 return;
               }
 
-              // Secours : si FFBB ne renvoie pas encore les rencontres détaillées,
-              // on utilise J/G/P du classement. Jamais les matchs locaux MyBasket.
-              const standing = parsed?.standings;
-              if (!standing) return;
-              const games = Number(standing.played);
-              const wins = Number(standing.wins);
-              const losses = Number(standing.losses);
-              if (![games, wins, losses].every(Number.isFinite)) return;
-              const summary = { games, wins, losses };
-              aliases.forEach((alias) => { summaries[alias] = summary; });
+
             } catch (error) {
               console.error("Erreur classement FFBB équipe:", team.id, error);
             }
@@ -1567,7 +1574,7 @@ return (
                             <div>
                               <strong>{matchCount}</strong>
                               <span>Matchs</span>
-                              <small>Saison {team.season || '2025-2026'}</small>
+                              <small>Saison {ffbbStanding?.seasonLabel || team.season || currentBasketballSeason()}</small>
                             </div>
                           </div>
 
@@ -1586,6 +1593,7 @@ return (
                               <strong>{wins}V - {losses}D</strong>
                               <span>Bilan</span>
                               <small>Victoires - Défaites</small>
+                              {ffbbStanding?.pointsForAverage != null && ffbbStanding?.pointsAgainstAverage != null && <small style={{whiteSpace:"normal",overflow:"visible"}}>{ffbbStanding.pointsForAverage.toFixed(1).replace(".",",")} pts marqués · {ffbbStanding.pointsAgainstAverage.toFixed(1).replace(".",",")} pts encaissés / match</small>}
                             </div>
                           </div>
 
