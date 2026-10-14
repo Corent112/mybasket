@@ -516,12 +516,12 @@ function apiTime(value: string | null | undefined) {
   return m ? `${m[1]}:${m[2]}` : "";
 }
 
-async function fetchTeamFromFfbbApi(sourceUrl: string, requestedTeam: string) {
+async function fetchTeamFromFfbbApi(sourceUrl: string, requestedTeam: string, publicToken = "") {
   const parsedUrl = new URL(sourceUrl);
   const engagementId = parsedUrl.pathname.match(/\/equipes\/([^/?#]+)/i)?.[1] || "";
   if (!engagementId) throw new Error("Identifiant équipe FFBB introuvable");
 
-  const token = await ffbbApiToken();
+  const token = publicToken || await ffbbApiToken();
 
   // L'identifiant présent dans /equipes/{id} correspond à l'engagement FFBB.
   const engagementQuery = new URLSearchParams();
@@ -725,7 +725,13 @@ export async function GET(req: NextRequest) {
       let apiFailure: string | null = null;
       // Les totaux structurés du classement officiel sont prioritaires.
       try {
-        const apiPayload = await fetchTeamFromFfbbApi(url, requestedTeam);
+        // Clé publique récupérée directement par le navigateur auprès de FFBB.
+        // Elle reste en mémoire, et n’est envoyée qu’à l’API officielle FFBB.
+        const publicToken = req.headers.get("x-ffbb-public-token") || "";
+        if (publicToken && (publicToken.length < 10 || publicToken.length > 4096)) {
+          return NextResponse.json({ error: "Clé publique FFBB invalide" }, { status: 400 });
+        }
+        const apiPayload = await fetchTeamFromFfbbApi(url, requestedTeam, publicToken);
         return NextResponse.json(apiPayload, {
           headers: {
             "Cache-Control": "private, max-age=0, s-maxage=60, stale-while-revalidate=300",
