@@ -98,7 +98,10 @@ type EventResource = {
   completed: boolean;
 };
 
+type SelectionChoice = { id: string; name: string; category?: string | null; season_label?: string | null };
+
 type EventForm = {
+  selection_id: string;
   end_date: string;
   all_day: boolean;
   id?: string;
@@ -152,6 +155,7 @@ const blankEvent = (date: string): EventForm => ({
   description: "",
   cohort_id: "",
   category_id: "",
+  selection_id: "",
 });
 
 const RESOURCE_OPTIONS: {
@@ -236,10 +240,12 @@ export default function InstitutionalCalendarHub({
   const [month, setMonth] = useState(today.getMonth());
   const [events, setEvents] = useState<EventRow[]>([]);
   const [cohorts, setCohorts] = useState<Cohort[]>([]);
+  const [selections, setSelections] = useState<SelectionChoice[]>([]);
+  const [selectionError, setSelectionError] = useState("");
   const [trainingBlocks, setTrainingBlocks] = useState<TrainingBlock[]>([]);
   const [resources, setResources] = useState<EventResource[]>([]);
   const [loading, setLoading] = useState(true);
-  const [recurrence,setRecurrence]=useState<EventRecurrence>(()=>defaultEventRecurrence(new Date().toISOString().slice(0,10)));
+  const [recurrence,setRecurrence]=useState<EventRecurrence>(()=>({...defaultEventRecurrence(new Date().toISOString().slice(0,10)),endMode:"until"}));
   const [savingEvent,setSavingEvent]=useState(false);
   const eventSavingRef=useRef(false);
   const [eventForm, setEventForm] = useState<EventForm | null>(null);
@@ -269,9 +275,18 @@ export default function InstitutionalCalendarHub({
     }
   }
 
+  async function loadSelections() {
+    try {
+      const response = await fetch(`/api/institutionnel/sport/selections?structureId=${encodeURIComponent(structureId)}`, { cache: "no-store" });
+      const parsed = await response.json();
+      if (!response.ok) throw new Error(parsed.error || "Lecture des sélections impossible.");
+      return { data: (parsed.selections || []) as SelectionChoice[], error: "" };
+    } catch (error) { return { data: [] as SelectionChoice[], error: error instanceof Error ? error.message : "Lecture des sélections impossible." }; }
+  }
+
   async function load() {
     setLoading(true);
-    const [a, b, c, d] = await Promise.all([
+    const [a, b, c, d, selectionResult] = await Promise.all([
       loadCalendarEvents(),
       sb
         .from("training_cohorts")
@@ -293,6 +308,7 @@ export default function InstitutionalCalendarHub({
         .eq("structure_id", structureId)
         .eq("archived", false)
         .order("name"),
+      loadSelections(),
     ]);
 
     if (a.error) console.error(a.error);
@@ -306,6 +322,8 @@ export default function InstitutionalCalendarHub({
     const loadedCohorts = (b.data || []) as unknown as Cohort[];
     setEvents((a.data || []) as EventRow[]);
     setCohorts(loadedCohorts);
+    setSelections(selectionResult.data);
+    setSelectionError(selectionResult.error);
     setResources((c.data || []) as EventResource[]);
     if (!d.error) setCategories(((d.data || []) as any[]).map((row) => ({ ...row, event_types: Array.isArray(row.event_types) ? row.event_types : [] })) as CalendarCategory[]);
 
@@ -419,7 +437,7 @@ export default function InstitutionalCalendarHub({
 
   function openNew(date?: string) {
     const start=date||todayIso;
-    setRecurrence(defaultEventRecurrence(start));
+    setRecurrence({...defaultEventRecurrence(start),endMode:"until"});
     setEventForm(blankEvent(start));
   }
 
@@ -439,6 +457,7 @@ export default function InstitutionalCalendarHub({
       description: e.description || "",
       cohort_id: e.cohort_id || "",
       category_id: e.category_id || "",
+      selection_id: e.selection_id || "",
     });
   }
 
@@ -466,6 +485,7 @@ export default function InstitutionalCalendarHub({
           ? eventForm.cohort_id || null
           : null,
       category_id: eventForm.category_id || null,
+      selection_id: eventForm.event_domain === "player" ? eventForm.selection_id || null : null,
       updated_at: new Date().toISOString(),
     };
 
@@ -950,6 +970,7 @@ export default function InstitutionalCalendarHub({
                 {frDate(selectedEvent.event_date)} ·{" "}
                 {selectedEvent.start_time?.slice(0, 5) || (selectedEvent.end_time?"--:--":"Journée entière")}
                 {selectedEvent.location ? ` · ${selectedEvent.location}` : ""}
+                {selectedEvent.selection_id && selections.find(selection=>selection.id===selectedEvent.selection_id)?.name ? ` · Sélection : ${selections.find(selection=>selection.id===selectedEvent.selection_id)?.name}` : ""}
               </span>
             </div>
             <button className="ghost" onClick={() => setSelectedEventId(null)}>
@@ -1169,14 +1190,15 @@ export default function InstitutionalCalendarHub({
                     setEventForm({
                       ...eventForm,
                       event_domain: domain,
-                      event_type: domain === "training" ? "formation" : "stage",
+                      event_type: domain === "training" ? "formation" : "Entraînement",
+                      selection_id: domain === "player" ? eventForm.selection_id : "",
                       cohort_id:
                         domain === "training" ? eventForm.cohort_id : "",
                     });
                   }}
                 >
                   <option value="training">Formation des cadres</option>
-                  <option value="player">Formation du joueur</option>
+                  <option value="player">Joueurs / sélections</option>
                 </select>
               </label>
               <label>
@@ -1195,6 +1217,7 @@ export default function InstitutionalCalendarHub({
                     </>
                   ) : (
                     <>
+                      <option value="Entraînement">Entraînement</option>
                       <option value="stage">Stage</option>
                       <option value="selection">Sélection</option>
                       <option value="detection">Détection</option>
@@ -1236,6 +1259,19 @@ export default function InstitutionalCalendarHub({
                   }
                   placeholder="Ex. Réunion pédagogique"
                 />
+              </label>
+              <label className="wide">
+                Sélection liée
+                <select value={eventForm.selection_id} onChange={e=>{
+                  const chosen=selections.find(selection=>selection.id===e.target.value);
+                  setEventForm({...eventForm,selection_id:e.target.value,...(chosen?{event_domain:"player" as const,cohort_id:"",event_type:eventForm.event_domain==="training"?"Entraînement":eventForm.event_type,title:eventForm.title||`Entraînement · ${chosen.name}`}:{})});
+                }}>
+                  <option value="">Aucune sélection / événement général</option>
+                  {eventForm.selection_id&&!selections.some(selection=>selection.id===eventForm.selection_id)&&<option value={eventForm.selection_id}>Sélection déjà rattachée</option>}
+                  {selections.map(selection=><option key={selection.id} value={selection.id}>{[selection.name,selection.category,selection.season_label].filter(Boolean).join(" · ")}</option>)}
+                </select>
+                {selectionError&&<small role="alert">{selectionError}</small>}
+                <small>Choisis une sélection existante pour retrouver cet événement dans sa fiche.</small>
               </label>
               <label>
                 Catégorie / couleur
@@ -1294,10 +1330,10 @@ export default function InstitutionalCalendarHub({
                 </label>
               )}
               {!eventForm.id&&<div className="wide recurrenceBox">
-                <label>Répétition<select value={recurrence.frequency} onChange={e=>setRecurrence({...recurrence,frequency:e.target.value as EventRecurrence['frequency']})}><option value="none">Ne pas répéter</option><option value="daily">Tous les jours</option><option value="weekly">Toutes les semaines</option><option value="monthly">Tous les mois</option></select></label>
-                {recurrence.frequency==='weekly'&&<div><small>Jours de début</small><div className="weekdays">{[{id:1,label:'Lundi'},{id:2,label:'Mardi'},{id:3,label:'Mercredi'},{id:4,label:'Jeudi'},{id:5,label:'Vendredi'},{id:6,label:'Samedi'},{id:0,label:'Dimanche'}].map(day=><label key={day.id}><input type="checkbox" checked={recurrence.weekdays.includes(day.id)} onChange={e=>setRecurrence({...recurrence,weekdays:e.target.checked?[...recurrence.weekdays,day.id]:recurrence.weekdays.filter(id=>id!==day.id)})}/>{day.label}</label>)}</div></div>}
+                <label>Répétition<select value={recurrence.frequency} onChange={e=>setRecurrence({...recurrence,frequency:e.target.value as EventRecurrence['frequency'],endMode:'until',weekdays:e.target.value==='daily'?[1,2,3,4,5,6,0]:recurrence.weekdays})}><option value="none">Ne pas répéter</option><option value="daily">Tous les jours</option><option value="weekly">Toutes les semaines</option><option value="monthly">Tous les mois</option></select></label>
+                {(recurrence.frequency==='weekly'||recurrence.frequency==='daily')&&<div><small>Jours à répéter</small><div className="weekdays">{[{id:1,label:'Lundi'},{id:2,label:'Mardi'},{id:3,label:'Mercredi'},{id:4,label:'Jeudi'},{id:5,label:'Vendredi'},{id:6,label:'Samedi'},{id:0,label:'Dimanche'}].map(day=><label key={day.id}><input type="checkbox" checked={recurrence.weekdays.includes(day.id)} onChange={e=>setRecurrence({...recurrence,frequency:'weekly',weekdays:e.target.checked?[...recurrence.weekdays,day.id]:recurrence.weekdays.filter(id=>id!==day.id)})}/>{day.label}</label>)}</div></div>}
                 {eventForm.end_date>eventForm.event_date&&recurrence.frequency!=='none'&&<small>Chaque répétition conserve la durée de l’événement.</small>}
-                {recurrence.frequency!=='none'&&<div className="repeatEnd"><label>Terminer<select value={recurrence.endMode} onChange={e=>setRecurrence({...recurrence,endMode:e.target.value as EventRecurrence['endMode']})}><option value="count">Après un nombre d’événements</option><option value="until">À une date</option></select></label>{recurrence.endMode==='count'?<label>Nombre d’événements<input type="number" min={1} max={500} value={recurrence.count} onChange={e=>setRecurrence({...recurrence,count:Number(e.target.value)})}/></label>:<label>Répéter jusqu’au<input type="date" min={eventForm.end_date} value={recurrence.until} onChange={e=>setRecurrence({...recurrence,until:e.target.value})}/></label>}</div>}
+                {recurrence.frequency!=='none'&&<div className="repeatEnd"><label>Période de répétition<select value={recurrence.endMode} onChange={e=>setRecurrence({...recurrence,endMode:e.target.value as EventRecurrence['endMode']})}><option value="until">Du début jusqu’à une date</option><option value="count">Limiter le nombre d’événements</option></select></label>{recurrence.endMode==='count'?<label>Nombre maximum d’événements<input type="number" min={1} max={500} value={recurrence.count} onChange={e=>setRecurrence({...recurrence,count:Number(e.target.value)})}/></label>:<label>Fin de la période<input type="date" min={eventForm.end_date} value={recurrence.until} onChange={e=>setRecurrence({...recurrence,until:e.target.value})}/></label>}<small>Début de la période : {frDate(eventForm.event_date)}. Seuls les jours cochés sont retenus.</small></div>}
                 {eventPreview.error?<p role="alert" className="repeatError">{eventPreview.error}</p>:<div className="repeatPreview"><b>{eventPreview.dates.length} journée{eventPreview.dates.length>1?'s':''} dans le calendrier</b><span>{eventPreview.dates.slice(0,5).map(frDate).join(' · ')}{eventPreview.dates.length>5?' · …':''}</span>{eventPreview.dates.length>1&&<small>Dernière date : {frDate(eventPreview.dates[eventPreview.dates.length-1])}</small>}</div>}
               </div>}
               <label className="wide">

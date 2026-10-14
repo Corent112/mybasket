@@ -538,21 +538,14 @@ function useFfbbBannerSummary(teamId: string, source: "ffbb" | "lnb" = "ffbb", r
             const endpoint = `/api/ffbb/competition?url=${encodeURIComponent(rankingConnection.source_url)}&team=${encodeURIComponent(ffbbTeamName)}`;
             let response = await fetch(endpoint, { cache: "no-store" });
             let parsed = await response.json();
-            // FFBB autorise la configuration publique en CORS, mais peut refuser
-            // sa lecture depuis Vercel. Le navigateur la lit directement chez FFBB.
-            if (source === "ffbb" && !parsed?.teamStats && String(parsed?.warning || "").startsWith("FFBB API configuration")) {
-              const configuration = await fetch("https://api.ffbb.com/items/configuration", {
-                cache: "no-store", signal: AbortSignal.timeout(15000),
-              });
-              if (configuration.ok) {
-                const publicToken = (await configuration.json())?.data?.key_dh;
-                if (typeof publicToken === "string" && publicToken.length >= 10 && publicToken.length <= 4096) {
-                  response = await fetch(endpoint, { cache: "no-store", headers: { "x-ffbb-public-token": publicToken } });
-                  parsed = await response.json();
-                }
-              }
+            let responseOkay = response.ok;
+            // FFBB accepte les requêtes du navigateur même lorsque Vercel est refusé.
+            if (source === "ffbb" && !parsed?.teamStats && (parsed?.warning || !response.ok)) {
+              const { fetchTeamFromFfbbApi } = await import("@/lib/ffbb-api");
+              parsed = await fetchTeamFromFfbbApi(rankingConnection.source_url, ffbbTeamName);
+              responseOkay = true;
             }
-            if (response.ok) {
+            if (responseOkay) {
               if (parsed?.pool) pool = String(parsed.pool).trim();
 
               // IMPORTANT :

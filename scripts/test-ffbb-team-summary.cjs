@@ -1,6 +1,6 @@
 const fs = require('fs'), vm = require('vm'), ts = require('typescript'), assert = require('node:assert/strict');
 const compile = source => ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020 } }).outputText;
-const route = fs.readFileSync('app/api/ffbb/competition/route.ts', 'utf8');
+const route = fs.readFileSync('lib/ffbb-api.ts', 'utf8');
 const ast = ts.createSourceFile('route.ts', route, ts.ScriptTarget.Latest, true);
 const functions = ast.statements.filter(n => ts.isFunctionDeclaration(n) && ['fetchTeamFromFfbbApi','apiNumber','apiDate','apiTime','teamNameMatches','norm','text'].includes(n.name?.text)).map(n => n.getText(ast)).join('\n');
 async function apiSummary({ totalFor = '225', totalAgainst = '154', played = '3', partial = true } = {}) {
@@ -31,12 +31,22 @@ async function bannerSummary(officialStats, cacheError = false, browserRecovery 
   const names=['useFfbbBannerSummary','normalizeFfbbText','extractFfbbRanking','ffbbScore','ffbbCompetitionKind','formatFfbbNextMatch'];
   const code=ast.statements.filter(n=>ts.isFunctionDeclaration(n)&&names.includes(n.name?.text)).map(n=>n.getText(ast)).join('\n');
   let state, requests=[];
-  const test={exports:{},console:{error(){}},useMemo:fn=>fn(),useState:initial=>{state=initial;return [state,v=>state=typeof v==='function'?v(state):v]},useEffect:fn=>{fn()},createClient:()=>({from(table){const result=table==='ffbb_team_connections'?{data:[{id:'connection',source_url:'https://competitions.ffbb.com/ligues/test',is_primary:true,ffbb_team_name:'Notre équipe'}]}:{data:cacheError?null:[{our_score:70,opponent_score:60,match_date:'2026-10-01',competition_kind:'championship'}],error:cacheError?new Error('cache unavailable'):null};const chain={select(){return chain},eq(){return chain},in(){return chain},order(){return chain},then(resolve,reject){return Promise.resolve(result).then(resolve,reject)}};return chain}}),AbortSignal,fetch:async(url,options)=>{requests.push({url,options});if(url==='https://api.ffbb.com/items/configuration')return {ok:true,json:async()=>({data:{key_dh:'public-test-token'}})};if(browserRecovery&&!options?.headers?.['x-ffbb-public-token'])return {ok:true,json:async()=>({teamStats:null,warning:'FFBB API configuration 403'})};return {ok:true,json:async()=>({ranking:1,teamStats:officialStats,matches:[]})}}};
+  const test={exports:{},console:{error(){}},useMemo:fn=>fn(),useState:initial=>{state=initial;return [state,v=>state=typeof v==='function'?v(state):v]},useEffect:fn=>{fn()},createClient:()=>({from(table){const result=table==='ffbb_team_connections'?{data:[{id:'connection',source_url:'https://competitions.ffbb.com/ligues/test',is_primary:true,ffbb_team_name:'Notre équipe'}]}:{data:cacheError?null:[{our_score:70,opponent_score:60,match_date:'2026-10-01',competition_kind:'championship'}],error:cacheError?new Error('cache unavailable'):null};const chain={select(){return chain},eq(){return chain},in(){return chain},order(){return chain},then(resolve,reject){return Promise.resolve(result).then(resolve,reject)}};return chain}}),require:path=>{assert.equal(path,'@/lib/ffbb-api');return {fetchTeamFromFfbbApi:async(url,team)=>{requests.push({url:'direct-ffbb',team});return {ranking:1,teamStats:officialStats,matches:[]}}}},AbortSignal,fetch:async(url,options)=>{requests.push({url,options});if(url==='https://api.ffbb.com/items/configuration')return {ok:true,json:async()=>({data:{key_dh:'public-test-token'}})};if(browserRecovery&&!options?.headers?.['x-ffbb-public-token'])return {ok:true,json:async()=>({teamStats:null,warning:'FFBB API configuration 403'})};return {ok:true,json:async()=>({ranking:1,teamStats:officialStats,matches:[]})}}};
   vm.createContext(test);vm.runInContext(compile(code+'\nexports.load=useFfbbBannerSummary;'),test);test.exports.load('team');
   for(let n=0;n<20&&state.loading;n++)await new Promise(resolve=>setImmediate(resolve));
-  assert.equal(state.loading,false);if(browserRecovery){assert.equal(requests.length,3);assert.equal(requests[1].url,'https://api.ffbb.com/items/configuration');assert.equal(requests[2].options.headers['x-ffbb-public-token'],'public-test-token');assert.equal(requests.some(r=>r.url.includes('public-test-token')),false);}return state;
+  assert.equal(state.loading,false);if(browserRecovery){assert.equal(requests.length,2);assert.equal(requests[1].url,'direct-ffbb');assert.equal(requests[1].team,'Notre équipe');}return state;
+}
+async function checkTransport(browser) {
+  const source = fs.readFileSync('lib/ffbb-api.ts','utf8'), ast = ts.createSourceFile('api.ts',source,ts.ScriptTarget.Latest,true);
+  const fn = ast.statements.find(n=>ts.isFunctionDeclaration(n)&&n.name?.text==='ffbbApiGet').getText(ast);
+  let sent; const ctx={exports:{},URL,FFBB_API_ORIGIN:'https://api.ffbb.com',...(browser?{window:{}}:{}),ffbbFetch:async(path,init)=>{sent={path,init};return {ok:true,json:async()=>({data:{}})}}};
+  vm.createContext(ctx);vm.runInContext(compile(fn+'\nexports.read=ffbbApiGet;'),ctx);await ctx.exports.read('/items/ffbbserver_poules/123?fields=id','public-test-token');
+  assert.equal(sent.init.referrerPolicy,'no-referrer');
+  if(browser){assert.equal(new URL(sent.path,'https://api.ffbb.com').searchParams.get('access_token'),'public-test-token');assert.equal(sent.init.headers.authorization,undefined);}else{assert.equal(sent.path.includes('public-test-token'),false);assert.equal(sent.init.headers.authorization,'Bearer public-test-token');}
+  await assert.rejects(ctx.exports.read('/items/private','public-test-token'));
 }
 (async()=>{
+  await Promise.all([checkTransport(true),checkTransport(false)]);
   const official=(await apiSummary()).teamStats;
   assert.equal(official.pointsFor,225);assert.equal(official.pointsAgainst,154);assert.equal(official.played,3);
   const partial=(await apiSummary({totalFor:null,totalAgainst:null})).teamStats;
