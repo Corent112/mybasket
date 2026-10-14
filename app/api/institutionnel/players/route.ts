@@ -86,6 +86,19 @@ export async function POST(req: Request) {
   const ctx = await actor(structureId);
   if ("error" in ctx) return ctx.error;
 
+  if (action === "remove_detection_participant") {
+    const eventId = String(body.eventId || "");
+    const participantId = String(body.participantId || "");
+    if (!eventId || !participantId) return NextResponse.json({ error: "Événement ou participant manquant" }, { status: 400 });
+    const event = await ctx.admin.from("institutional_detection_events").select("id").eq("id", eventId).eq("structure_id", structureId).maybeSingle();
+    if (event.error) return NextResponse.json({ error: event.error.message }, { status: 400 });
+    if (!event.data) return NextResponse.json({ error: "Événement introuvable dans cette institution" }, { status: 404 });
+    const removed = await ctx.admin.from("institutional_detection_participants").delete().eq("id", participantId).eq("event_id", eventId).select("id").maybeSingle();
+    if (removed.error) return NextResponse.json({ error: removed.error.message }, { status: 400 });
+    if (!removed.data) return NextResponse.json({ error: "Cette personne n’est plus convoquée à cet événement" }, { status: 404 });
+    return NextResponse.json({ ok: true });
+  }
+
   if (action === "mark_referral_reviewing") {
     const referralId = String(body.referralId || "");
     const q = await ctx.admin

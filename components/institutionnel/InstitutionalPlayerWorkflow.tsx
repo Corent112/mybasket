@@ -314,6 +314,20 @@ export default function InstitutionalPlayerWorkflow({ structureId }: { structure
     await loadSupportingData();
   }
 
+  async function removeEventParticipant(participant: Participant, player: Player) {
+    if (busy) return;
+    const event = events.find((item) => item.id === participant.event_id);
+    if (!window.confirm(`Retirer ${player.first_name} ${player.last_name} de « ${event?.title || 'cet événement'} » ?\n\nSa fiche joueur sera conservée.`)) return;
+    try {
+      const result = await playerAction('remove_detection_participant', { eventId: participant.event_id, participantId: participant.id });
+      if (result) setParts((current) => current.filter((item) => item.id !== participant.id));
+    } catch (error) {
+      alert(error instanceof Error ? error.message : 'Impossible de retirer cette personne.');
+    } finally {
+      setBusy('');
+    }
+  }
+
   async function patchStatus(id: string, status: string) {
     const { data: { user } } = await sb.auth.getUser();
     const q = await sb.from("institutional_detection_participants").update({ status, updated_by: user?.id || null, updated_at: new Date().toISOString() }).eq("id", id);
@@ -515,7 +529,7 @@ export default function InstitutionalPlayerWorkflow({ structureId }: { structure
       {tab === "detections" && (
         <>
           <section className="card"><div className="sectionHead"><div><p>SAISONS</p><h3>Suivi institutionnel</h3></div><span>{seasons.length} saison(s)</span></div><div className="line"><input value={seasonLabel} onChange={(e) => setSeasonLabel(e.target.value)} placeholder="2026-2027" /><button onClick={createSeason}>+ Créer la saison</button></div></section>
-          <section className="card"><div className="sectionHead"><div><p>DÉTECTIONS & SÉLECTIONS</p><h3>Créer une journée puis constituer le groupe</h3></div><span>{selected.length} joueur(s) sélectionné(s) depuis la base</span></div><div className="grid"><input value={eform.title} onChange={(e) => setEform({ ...eform, title: e.target.value })} /><select value={eform.event_type} onChange={(e) => setEform({ ...eform, event_type: e.target.value })}>{Object.entries(EVENT_LABELS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}</select><input type="date" value={eform.event_date} onChange={(e) => setEform({ ...eform, event_date: e.target.value })} /><input type="time" value={eform.start_time} onChange={(e) => setEform({ ...eform, start_time: e.target.value })} /><input placeholder="Lieu" value={eform.location} onChange={(e) => setEform({ ...eform, location: e.target.value })} /><button onClick={createEvent}>+ Créer</button></div><div className="line"><select value={activeEvent} onChange={(e) => setActiveEvent(e.target.value)}><option value="">Choisir une journée</option>{events.map((e) => <option key={e.id} value={e.id}>{e.event_date} · {e.title}</option>)}</select><button onClick={addToEvent}>Ajouter les joueurs sélectionnés</button><button className="ghost" onClick={() => setTab("base")}>Choisir dans Base joueurs</button></div>{activeEvent && <div className="partList">{currentParts.map((x) => { const p = pMap.get(x.player_id); return p ? <div className="part" key={x.id}><b>{p.first_name} {p.last_name}</b><select value={x.status} onChange={(e) => patchStatus(x.id, e.target.value)}>{Object.entries(STATUS_LABELS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}</select></div> : null; })}</div>}</section>
+          <section className="card"><div className="sectionHead"><div><p>DÉTECTIONS & SÉLECTIONS</p><h3>Créer une journée puis constituer le groupe</h3></div><span>{selected.length} joueur(s) sélectionné(s) depuis la base</span></div><div className="grid"><input value={eform.title} onChange={(e) => setEform({ ...eform, title: e.target.value })} /><select value={eform.event_type} onChange={(e) => setEform({ ...eform, event_type: e.target.value })}>{Object.entries(EVENT_LABELS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}</select><input type="date" value={eform.event_date} onChange={(e) => setEform({ ...eform, event_date: e.target.value })} /><input type="time" value={eform.start_time} onChange={(e) => setEform({ ...eform, start_time: e.target.value })} /><input placeholder="Lieu" value={eform.location} onChange={(e) => setEform({ ...eform, location: e.target.value })} /><button onClick={createEvent}>+ Créer</button></div><div className="line"><select value={activeEvent} onChange={(e) => setActiveEvent(e.target.value)}><option value="">Choisir une journée</option>{events.map((e) => <option key={e.id} value={e.id}>{e.event_date} · {e.title}</option>)}</select><button onClick={addToEvent}>Ajouter les joueurs sélectionnés</button><button className="ghost" onClick={() => setTab("base")}>Choisir dans Base joueurs</button></div>{activeEvent && <div className="partList">{currentParts.map((x) => { const p = pMap.get(x.player_id); return p ? <div className="part" key={x.id}><b>{p.first_name} {p.last_name}</b><div className="participantActions"><select disabled={!!busy} value={x.status} onChange={(e) => patchStatus(x.id, e.target.value)}>{Object.entries(STATUS_LABELS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}</select><button type="button" className="removeParticipant" disabled={!!busy} aria-label={`Retirer ${p.first_name} ${p.last_name} de cet événement`} title="Retirer de cet événement" onClick={() => void removeEventParticipant(x, p)}>×</button></div></div> : null; })}</div>}</section>
         </>
       )}
 
@@ -642,7 +656,9 @@ function PlayerDrawer({ structureId, player, referral, busy, onClose, onSave, on
 }
 
 function Info({ label, value }: { label: string; value?: string | null }) {
-  return <div className="info"><small>{label}</small><b>{value || "—"}</b><style jsx>{`.info{display:grid;gap:2px;min-width:0}.info small{font-size:.67rem;color:#8d7f78;text-transform:uppercase;letter-spacing:.06em}.info b{font-size:.8rem;color:#392d30;overflow-wrap:anywhere}`}</style></div>;
+  return <div className="info"><small>{label}</small><b>{value || "—"}</b><style jsx>{`
+.participantActions{display:flex;align-items:center;gap:8px}.removeParticipant{width:30px!important;height:30px!important;padding:0!important;border-radius:50%!important;border:1px solid #efcaca!important;background:#fff0f3!important;color:#a1243f!important;font-size:20px!important;line-height:1!important;display:grid;place-items:center;cursor:pointer}.removeParticipant:disabled{opacity:.5;cursor:wait}
+.info{display:grid;gap:2px;min-width:0}.info small{font-size:.67rem;color:#8d7f78;text-transform:uppercase;letter-spacing:.06em}.info b{font-size:.8rem;color:#392d30;overflow-wrap:anywhere}`}</style></div>;
 }
 
 const css = `
