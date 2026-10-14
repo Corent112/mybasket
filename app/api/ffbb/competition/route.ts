@@ -19,8 +19,8 @@ type TeamStats = {
   played: number;
   wins: number;
   losses: number;
-  pointsFor: number;
-  pointsAgainst: number;
+  pointsFor: number | null;
+  pointsAgainst: number | null;
 };
 
 type Standing = {
@@ -423,6 +423,8 @@ type ApiClassement = {
   position?: string | number | null;
   gagnes?: string | number | null;
   perdus?: string | number | null;
+  paniersMarques?: string | number | null;
+  paniersEncaisses?: string | number | null;
 };
 
 type ApiRencontre = {
@@ -561,6 +563,8 @@ async function fetchTeamFromFfbbApi(sourceUrl: string, requestedTeam: string) {
     "classements.position",
     "classements.gagnes",
     "classements.perdus",
+    "classements.paniersMarques",
+    "classements.paniersEncaisses",
   ].forEach((field) => pouleQuery.append("fields[]", field));
   pouleQuery.set("deep[rencontres][_limit]", "1000");
   pouleQuery.set("deep[rencontres][_sort][]", "date_rencontre");
@@ -623,8 +627,8 @@ async function fetchTeamFromFfbbApi(sourceUrl: string, requestedTeam: string) {
     played,
     wins,
     losses,
-    pointsFor: calculatedPointsFor,
-    pointsAgainst: calculatedPointsAgainst,
+    pointsFor: apiNumber(ownStanding?.paniersMarques) ?? (playedMatches.length === played ? calculatedPointsFor : null),
+    pointsAgainst: apiNumber(ownStanding?.paniersEncaisses) ?? (playedMatches.length === played ? calculatedPointsAgainst : null),
   };
 
   return {
@@ -642,8 +646,8 @@ async function fetchTeamFromFfbbApi(sourceUrl: string, requestedTeam: string) {
       played,
       wins,
       losses,
-      pointsFor: calculatedPointsFor,
-      pointsAgainst: calculatedPointsAgainst,
+      pointsFor: teamStats.pointsFor,
+      pointsAgainst: teamStats.pointsAgainst,
     } : null,
     teamStats,
     datasText: "",
@@ -713,9 +717,18 @@ export async function GET(req: NextRequest) {
     };
 
     if (/\/equipes\/\d+/i.test(new URL(url).pathname)) {
-      // 1) On tente le site public FFBB.
-      // 2) Si Cloudflare bloque Vercel (403/429), on utilise l'API FFBB Directus.
-      // 3) Le reader historique reste seulement un dernier secours.
+      // Les totaux structurés du classement officiel sont prioritaires.
+      try {
+        const apiPayload = await fetchTeamFromFfbbApi(url, requestedTeam);
+        return NextResponse.json(apiPayload, {
+          headers: {
+            "Cache-Control": "private, max-age=0, s-maxage=60, stale-while-revalidate=300",
+          },
+        });
+      } catch (apiError) {
+        console.warn("FFBB API indisponible, secours site public", apiError instanceof Error ? apiError.message : "erreur");
+      }
+
       try {
         const direct = await fetch(url, { headers, cache: "no-store", redirect: "follow" });
         if (direct.ok) {
@@ -738,23 +751,15 @@ export async function GET(req: NextRequest) {
               }
             } catch {}
           }
-          return NextResponse.json({
-            ...parseTeamPage(html, url, standingsHtml, requestedTeam),
-            transport: "ffbb",
-          });
+          const parsed = parseTeamPage(html, url, standingsHtml, requestedTeam);
+          // Une page HTML sans données exploitables laisse passer le secours reader.
+          if (parsed.teamStats) {
+            return NextResponse.json({ ...parsed, transport: "ffbb" });
+          }
         }
       } catch {}
 
-      try {
-        const apiPayload = await fetchTeamFromFfbbApi(url, requestedTeam);
-        return NextResponse.json(apiPayload, {
-          headers: {
-            "Cache-Control": "private, max-age=0, s-maxage=60, stale-while-revalidate=300",
-          },
-        });
-      } catch (apiError) {
-        console.warn("FFBB API indisponible, dernier secours reader", apiError instanceof Error ? apiError.message : "erreur");
-      }
+
 
       const mainPage = await fetchFfbbPage(url, headers);
       const html = mainPage.body;

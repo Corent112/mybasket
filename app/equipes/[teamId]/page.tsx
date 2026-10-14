@@ -492,7 +492,8 @@ function useFfbbBannerSummary(teamId: string, source: "ffbb" | "lnb" = "ffbb", r
           .in("connection_id", connectionIds)
           .order("match_date", { ascending: true });
 
-        if (matchesError) throw matchesError;
+        // Le résumé officiel reste lisible même si le cache des matchs échoue.
+        if (matchesError) console.error("Lecture des matchs synchronisés impossible :", matchesError);
 
         const rows = matches || [];
         const officialRows = rows.filter((row: any) => ffbbCompetitionKind(row, connectionById) !== "friendly");
@@ -563,17 +564,17 @@ function useFfbbBannerSummary(teamId: string, source: "ffbb" | "lnb" = "ffbb", r
               // pour le bilan ET les points marqués / encaissés. On ne mélange plus
               // ces KPI avec les scores issus d'une autre source.
               const officialStats = parsed?.teamStats;
-              if (officialStats && Number.isFinite(Number(officialStats.played))) {
+              if (officialStats && officialStats.played != null && Number.isFinite(Number(officialStats.played))) {
                 const officialPlayed = Number(officialStats.played);
                 const officialWins = Number(officialStats.wins);
                 const officialLosses = Number(officialStats.losses);
                 const officialFor = Number(officialStats.pointsFor);
                 const officialAgainst = Number(officialStats.pointsAgainst);
                 if (officialPlayed >= 0) {
-                  wins = Number.isFinite(officialWins) ? officialWins : wins;
-                  losses = Number.isFinite(officialLosses) ? officialLosses : losses;
-                  pointsForAverage = officialPlayed > 0 && Number.isFinite(officialFor) ? officialFor / officialPlayed : null;
-                  pointsAgainstAverage = officialPlayed > 0 && Number.isFinite(officialAgainst) ? officialAgainst / officialPlayed : null;
+                  wins = officialStats.wins != null && Number.isFinite(officialWins) ? officialWins : wins;
+                  losses = officialStats.losses != null && Number.isFinite(officialLosses) ? officialLosses : losses;
+                  if (officialPlayed > 0 && officialStats.pointsFor != null && Number.isFinite(officialFor)) pointsForAverage = officialFor / officialPlayed;
+                  if (officialPlayed > 0 && officialStats.pointsAgainst != null && Number.isFinite(officialAgainst)) pointsAgainstAverage = officialAgainst / officialPlayed;
                   playedChampionship.splice(0, playedChampionship.length, ...Array.from({ length: officialPlayed }, () => ({})));
                   playedOfficial.splice(0, playedOfficial.length, ...Array.from({ length: officialPlayed }, () => ({})));
                 }
