@@ -442,7 +442,7 @@ type ApiRencontre = {
 };
 
 const FFBB_API_ORIGIN = "https://api.ffbb.com";
-const FFBB_TIMEOUT_MS = 8000;
+const FFBB_TIMEOUT_MS = 15000;
 
 async function ffbbFetch(input: string, init: RequestInit = {}) {
   const target = new URL(input, FFBB_API_ORIGIN);
@@ -453,6 +453,11 @@ async function ffbbFetch(input: string, init: RequestInit = {}) {
   try {
     return await fetch(target, {
       ...init,
+      headers: {
+        "user-agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 Chrome/136 Safari/537.36",
+        "accept-language": "fr-FR,fr;q=0.9",
+        ...init.headers,
+      },
       cache: "no-store",
       redirect: "error",
       signal: controller.signal,
@@ -717,6 +722,7 @@ export async function GET(req: NextRequest) {
     };
 
     if (/\/equipes\/\d+/i.test(new URL(url).pathname)) {
+      let apiFailure: string | null = null;
       // Les totaux structurés du classement officiel sont prioritaires.
       try {
         const apiPayload = await fetchTeamFromFfbbApi(url, requestedTeam);
@@ -726,7 +732,8 @@ export async function GET(req: NextRequest) {
           },
         });
       } catch (apiError) {
-        console.warn("FFBB API indisponible, secours site public", apiError instanceof Error ? apiError.message : "erreur");
+        apiFailure = apiError instanceof Error ? apiError.message : "Lecture API FFBB impossible";
+        console.warn("FFBB API indisponible, secours site public", apiFailure);
       }
 
       try {
@@ -759,8 +766,6 @@ export async function GET(req: NextRequest) {
         }
       } catch {}
 
-
-
       const mainPage = await fetchFfbbPage(url, headers);
       const html = mainPage.body;
       const cleanUrl = url
@@ -777,9 +782,11 @@ export async function GET(req: NextRequest) {
           }
         } catch {}
       }
+      const parsed = parseTeamPage(html, url, standingsHtml, requestedTeam);
       return NextResponse.json({
-        ...parseTeamPage(html, url, standingsHtml, requestedTeam),
+        ...parsed,
         transport: mainPage.via,
+        warning: parsed.teamStats ? undefined : apiFailure,
       });
     }
 
