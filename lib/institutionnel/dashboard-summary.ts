@@ -1,20 +1,40 @@
-type Player = {category?:string|null;sex?:string|null;archived?:boolean|null};
+type Player = {birthdate?:string|null;category?:string|null;sex?:string|null;archived?:boolean|null};
 type Cohort = {id:string;program_id?:string;name:string;capacity?:number|null;fee_amount_cents?:number|null;training_programs?:{name?:string|null;code?:string|null}|null};
 type Candidate = {id:string;cohort_id:string;administrative_status?:string|null;payment_exempt?:boolean|null;fee_override_cents?:number|null};
 type Requirement = {id:string;cohort_id:string;is_required?:boolean|null};
 type Submission = {candidate_id:string;request_id:string;status:string};
 type Payment = {candidate_id:string;amount_cents?:number|null};
 const normalized=(value:unknown)=>String(value||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').trim().toUpperCase();
-export function institutionalPlayerCounts(players:Player[]) {
+// Basketball categories use the age reached in the calendar year ending the season.
+// Existing manually assigned categories always take precedence over birthdate inference.
+export function institutionalSeasonEndYear(label?:string|null):number|null {
+ const value=String(label||'').trim();
+ const full=value.match(/^(20\d{2})\s*[-/–—]\s*(20\d{2}|\d{2})$/);
+ if(full){const first=Number(full[1]),last=full[2].length===2?Math.floor(first/100)*100+Number(full[2]):Number(full[2]);return last===first+1?last:null;}
+ return /^20\d{2}$/.test(value)?Number(value):null;
+}
+function institutionalAgeCategory(player:Player,seasonYear:number|null):number|null {
+ const category=normalized(player.category);
+ if(category){const explicit=category.match(/(?:^|\b)U\s*-?\s*(\d{1,2})(?!\d)/);return explicit?Number(explicit[1]):null;}
+ if(seasonYear===null)return null;
+ const birthdate=String(player.birthdate||'').slice(0,10);
+ if(!/^\d{4}-\d{2}-\d{2}$/.test(birthdate))return null;
+ const [year,month,day]=birthdate.split('-').map(Number),date=new Date(Date.UTC(year,month-1,day));
+ if(date.getUTCFullYear()!==year||date.getUTCMonth()!==month-1||date.getUTCDate()!==day)return null;
+ const age=seasonYear-year;
+ return age>=0&&age<=120?age:null;
+}
+export function institutionalPlayerCounts(players:Player[],seasonLabel?:string|null) {
+ const seasonYear=institutionalSeasonEndYear(seasonLabel);
  const counts={players:0,u13m:0,u13f:0,u14m:0,u14f:0};
  for(const player of players){
   if(player.archived)continue;counts.players++;
-  const category=normalized(player.category),age=category.match(/U\s*-?\s*(12|13|14)(?!\d)/)?.[1],sex=normalized(player.sex);
-  const female=['F','FILLE','FILLES','FEMALE','FEMININ','FEMININE','FEMME'].includes(sex)||(!sex&&/F$/.test(category));
-  const male=['M','GARCON','GARCONS','MALE','MASCULIN','MASCULINE','HOMME'].includes(sex)||(!sex&&/M$/.test(category));
+  const category=normalized(player.category),age=institutionalAgeCategory(player,seasonYear),sex=normalized(player.sex);
+  const female=['F','FILLE','FILLES','FEMALE','FEMININ','FEMININE','FEMME','GIRL','GIRLS'].includes(sex)||(!sex&&/F$/.test(category));
+  const male=['M','GARCON','GARCONS','MALE','MASCULIN','MASCULINE','HOMME','BOY','BOYS'].includes(sex)||(!sex&&/M$/.test(category));
   if(!female&&!male)continue;
-  if(age==='12'||age==='13')counts[female?'u13f':'u13m']++;
-  if(age==='14')counts[female?'u14f':'u14m']++;
+  if(age===12||age===13)counts[female?'u13f':'u13m']++;
+  if(age===14)counts[female?'u14f':'u14m']++;
  }
  return counts;
 }

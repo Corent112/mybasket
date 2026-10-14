@@ -10,3 +10,12 @@ const detb=summaries[0];assert.equal(detb.candidates,3);assert.equal(detb.incomp
 assert.equal(summaries[1].candidates,1);assert.equal(summaries[2].candidates,0);assert.equal(summaries[2].cohortId,null);
 const paid=formations(programs,cohorts,[{id:'one',cohort_id:'a',payment_exempt:true}],[{id:'req',cohort_id:'a'}],[{candidate_id:'one',request_id:'req',status:'validated'}],[]);assert.equal(paid[0].registered,1);
 console.log('Institution dashboard: U12/U13 grouping, sexes, archives, null candidate statuses, actual documents/payments, formation isolation, multiple promotions and newly created formations passed.');
+
+const seasonCounts=players([{category:null,birthdate:'2014-04-22',sex:'M'},{category:'',birthdate:'2015-12-31',sex:'F'},{birthdate:'2013-01-01',sex:'M'},{birthdate:'2013-12-31',sex:'F'},{category:'U14',birthdate:'2014-04-22',sex:'F'},{category:'U18',birthdate:'2014-04-22',sex:'M'},{birthdate:'2016-04-22',sex:'M'},{birthdate:'2014-22-04',sex:'M'},{birthdate:'2014-02-30',sex:'F'},{birthdate:null,sex:'M'},{birthdate:'2014-04-22',sex:'M',archived:true}], '2026-2027');
+assert.equal(seasonCounts.u13m,1);assert.equal(seasonCounts.u13f,1);assert.equal(seasonCounts.u14m,1);assert.equal(seasonCounts.u14f,2);assert.equal(seasonCounts.players,10);
+assert.equal(players([{birthdate:'2014-12-31',sex:'M'}],'2027-2028').u14m,1);
+assert.equal(players([{birthdate:'2014-01-01',sex:'M'}],null).u13m,0);
+assert.equal(players([{category:'U13',birthdate:null,sex:'boy'}],null).u13m,1);
+assert.equal(context.exports.institutionalSeasonEndYear('2026/27'),2027);
+assert.equal(context.exports.institutionalSeasonEndYear('2026-2028'),null);
+console.log('Institution age counters: birthdate fallback, basketball season, U12/U13 grouping, manual category priority, archives and invalid/missing dates passed.');
