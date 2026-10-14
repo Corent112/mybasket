@@ -15,11 +15,11 @@ type PoleView = "pole" | "selections" | "workflow";
 export default function InstitutionalPlayersHub({ structureId, structureType }: Props) {
   const isPoleContext = structureType === "league" || structureType === "pole";
   const [poleView, setPoleView] = useState<PoleView>("pole");
+  const [committeeView,setCommitteeView]=useState<"workflow"|"selections">("workflow");
 
-  // Pour les comités / fédérations, Joueurs devient directement la Base joueurs.
-  // On évite une couche de navigation supplémentaire et on retrouve la logique de Mes équipes.
+  // Les comités conservent la base joueurs et accèdent aussi aux sélections reliées au calendrier.
   if (!isPoleContext) {
-    return <InstitutionalPlayerWorkflow structureId={structureId} />;
+    return <div><nav style={{display:"flex",gap:8,marginBottom:16,flexWrap:"wrap"}}><button type="button" style={{border:"1px solid #e4d7d1",borderRadius:20,padding:"10px 16px",fontWeight:800,cursor:"pointer",background:committeeView==="workflow"?"#6b1a2c":"#fff",color:committeeView==="workflow"?"#fff":"#6b1a2c"}} onClick={()=>setCommitteeView("workflow")} aria-pressed={committeeView==="workflow"}>Base joueurs · Détections</button><button type="button" style={{border:"1px solid #e4d7d1",borderRadius:20,padding:"10px 16px",fontWeight:800,cursor:"pointer",background:committeeView==="selections"?"#6b1a2c":"#fff",color:committeeView==="selections"?"#fff":"#6b1a2c"}} onClick={()=>setCommitteeView("selections")} aria-pressed={committeeView==="selections"}>Sélections</button></nav>{committeeView==="workflow"?<InstitutionalPlayerWorkflow structureId={structureId}/>:<InstitutionalSelectionsManager structureId={structureId} structureType={structureType}/>}</div>;
   }
 
   return (

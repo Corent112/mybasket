@@ -28,6 +28,9 @@ async function createTeamPlayer(
     canonicalPlayerId: string;
   }
 ) {
+  const existing = await admin.from("players").select("id").eq("team_id",teamId).eq("metadata->>institutionCentralPlayerId",canonicalPlayerId).maybeSingle();
+  if(existing.error)throw new Error(existing.error.message);
+  if(existing.data?.id)return String(existing.data.id);
   const row = {
     id: crypto.randomUUID(),
     user_id: ownerId,
@@ -296,7 +299,9 @@ export async function POST(req: Request) {
         canonicalPlayerId: playerId,
       });
 
-      const linkWrite = await ctx.admin
+      const previousLink = await ctx.admin.from("institutional_player_team_links").select("id").eq("structure_id",structureId).eq("player_id",playerId).eq("team_id",selection.team_id).maybeSingle();
+      if(previousLink.error)throw new Error(previousLink.error.message);
+      const linkWrite = previousLink.data ? {error:null} : await ctx.admin
         .from("institutional_player_team_links")
         .insert({
           structure_id: structureId,

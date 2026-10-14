@@ -98,7 +98,7 @@ type EventResource = {
   completed: boolean;
 };
 
-type SelectionChoice = { id: string; name: string; category?: string | null; season_label?: string | null };
+type SelectionChoice = { id: string; name: string; category?: string | null; season_label?: string | null; origin?: "selection" | "detection"; event_date?: string };
 
 type EventForm = {
   selection_id: string;
@@ -242,6 +242,10 @@ export default function InstitutionalCalendarHub({
   const [cohorts, setCohorts] = useState<Cohort[]>([]);
   const [selections, setSelections] = useState<SelectionChoice[]>([]);
   const [selectionError, setSelectionError] = useState("");
+  const [categoryError, setCategoryError] = useState("");
+  const [categoryPresets, setCategoryPresets] = useState<string[]>([]);
+  const [inlineCategory, setInlineCategory] = useState<{name:string;color:string}|null>(null);
+  const [categoryBusy, setCategoryBusy] = useState(false);
   const [trainingBlocks, setTrainingBlocks] = useState<TrainingBlock[]>([]);
   const [resources, setResources] = useState<EventResource[]>([]);
   const [loading, setLoading] = useState(true);
@@ -277,11 +281,11 @@ export default function InstitutionalCalendarHub({
 
   async function loadSelections() {
     try {
-      const response = await fetch(`/api/institutionnel/sport/selections?structureId=${encodeURIComponent(structureId)}`, { cache: "no-store" });
+      const response = await fetch(`/api/institutionnel/calendar-options?structureId=${encodeURIComponent(structureId)}`, { cache: "no-store" });
       const parsed = await response.json();
       if (!response.ok) throw new Error(parsed.error || "Lecture des sélections impossible.");
-      return { data: (parsed.selections || []) as SelectionChoice[], error: "" };
-    } catch (error) { return { data: [] as SelectionChoice[], error: error instanceof Error ? error.message : "Lecture des sélections impossible." }; }
+      return { data: (parsed.selections || []) as SelectionChoice[], error: String(parsed.errors?.selections || ""), categories: parsed.categories as CalendarCategory[]|undefined, presets:(parsed.presetCategories||[]) as string[], categoryError:String(parsed.errors?.categories||"") };
+    } catch (error) { return { data: [] as SelectionChoice[], categories:undefined, presets:[] as string[], categoryError:"Lecture des catégories impossible.", error: error instanceof Error ? error.message : "Lecture des sélections impossible." }; }
   }
 
   async function load() {
@@ -324,8 +328,11 @@ export default function InstitutionalCalendarHub({
     setCohorts(loadedCohorts);
     setSelections(selectionResult.data);
     setSelectionError(selectionResult.error);
+    setCategoryError(selectionResult.categoryError);
+    setCategoryPresets(selectionResult.presets);
+    if(selectionResult.categories)setCategories(selectionResult.categories);
     setResources((c.data || []) as EventResource[]);
-    if (!d.error) setCategories(((d.data || []) as any[]).map((row) => ({ ...row, event_types: Array.isArray(row.event_types) ? row.event_types : [] })) as CalendarCategory[]);
+    if (!selectionResult.categories && !d.error) setCategories(((d.data || []) as any[]).map((row) => ({ ...row, event_types: Array.isArray(row.event_types) ? row.event_types : [] })) as CalendarCategory[]);
 
     const cohortIds = loadedCohorts.map((item) => item.id);
     if (cohortIds.length) {
@@ -437,6 +444,7 @@ export default function InstitutionalCalendarHub({
 
   function openNew(date?: string) {
     const start=date||todayIso;
+    setInlineCategory(null);
     setRecurrence({...defaultEventRecurrence(start),endMode:"until"});
     setEventForm(blankEvent(start));
   }
@@ -469,6 +477,18 @@ export default function InstitutionalCalendarHub({
     eventSavingRef.current=true;setSavingEvent(true);
     try{
       const {data:{user}}=await sb.auth.getUser();if(!user)return;
+      let categoryId=eventForm.category_id;
+      if(categoryId.startsWith("preset:")) {
+        const response=await fetch("/api/institutionnel/calendar-options",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({structureId,kind:"category",name:categoryId.slice(7),color:"#6B1A2C"})});
+        const result=await response.json();if(!response.ok)throw new Error(result.error||"Catégorie non enregistrée.");categoryId=result.category.id;
+      }
+      const linked=selections.find(selection=>selection.id===eventForm.selection_id);
+      if(eventForm.event_domain==="player"&&linked?.origin==="detection") {
+        const response=await fetch("/api/institutionnel/calendar-options",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({structureId,kind:"detection_group",eventId:linked.id})});
+        const result=await response.json();if(!response.ok)throw new Error(result.error||"Groupe non rattaché.");
+        if(result.selection?.id!==eventForm.selection_id)throw new Error("Le groupe rattaché ne correspond pas à la sélection choisie.");
+      }
+
     const payload = {
       structure_id: structureId,
       event_date: eventForm.event_date,
@@ -484,7 +504,7 @@ export default function InstitutionalCalendarHub({
         eventForm.event_domain === "training"
           ? eventForm.cohort_id || null
           : null,
-      category_id: eventForm.category_id || null,
+      category_id: categoryId || null,
       selection_id: eventForm.event_domain === "player" ? eventForm.selection_id || null : null,
       updated_at: new Date().toISOString(),
     };
@@ -506,6 +526,17 @@ export default function InstitutionalCalendarHub({
     if (q.error) return alert(q.error.message);
     if (selectedEventId === e.id) setSelectedEventId(null);
     await load();
+  }
+
+  async function createInlineCategory() {
+    if(!inlineCategory||!inlineCategory.name.trim()||categoryBusy)return;
+    setCategoryBusy(true);setCategoryError("");
+    try {
+      const response=await fetch("/api/institutionnel/calendar-options",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({structureId,kind:"category",...inlineCategory})});
+      const result=await response.json();if(!response.ok)throw new Error(result.error||"Catégorie non enregistrée.");
+      setCategories(current=>[...current.filter(category=>category.id!==result.category.id),result.category]);
+      setEventForm(current=>current?{...current,category_id:result.category.id}:null);setInlineCategory(null);
+    }catch(error){setCategoryError(error instanceof Error?error.message:"Catégorie non enregistrée.");}finally{setCategoryBusy(false);}
   }
 
   async function saveCategory() {
@@ -1264,27 +1295,32 @@ export default function InstitutionalCalendarHub({
                 Sélection liée
                 <select value={eventForm.selection_id} onChange={e=>{
                   const chosen=selections.find(selection=>selection.id===e.target.value);
-                  setEventForm({...eventForm,selection_id:e.target.value,...(chosen?{event_domain:"player" as const,cohort_id:"",event_type:eventForm.event_domain==="training"?"Entraînement":eventForm.event_type,title:eventForm.title||`Entraînement · ${chosen.name}`}:{})});
+                  setEventForm({...eventForm,selection_id:e.target.value,...(chosen?{event_domain:"player" as const,cohort_id:"",category_id:eventForm.category_id||(chosen.category?(categories.find(category=>category.name.toUpperCase()===chosen.category!.toUpperCase())?.id||`preset:${chosen.category}`):""),event_type:eventForm.event_domain==="training"?"Entraînement":eventForm.event_type,title:eventForm.title||`Entraînement · ${chosen.name}`}:{})});
                 }}>
                   <option value="">Aucune sélection / événement général</option>
                   {eventForm.selection_id&&!selections.some(selection=>selection.id===eventForm.selection_id)&&<option value={eventForm.selection_id}>Sélection déjà rattachée</option>}
-                  {selections.map(selection=><option key={selection.id} value={selection.id}>{[selection.name,selection.category,selection.season_label].filter(Boolean).join(" · ")}</option>)}
+                  {selections.map(selection=><option key={selection.id} value={selection.id}>{[selection.name,selection.category,selection.season_label,selection.origin==="detection"?"Groupe constitué":""].filter(Boolean).join(" · ")}</option>)}
                 </select>
                 {selectionError&&<small role="alert">{selectionError}</small>}
-                <small>Choisis une sélection existante pour retrouver cet événement dans sa fiche.</small>
+                {selections.length===0&&!selectionError&&<small>Aucun groupe constitué pour cette institution. Les sélections et groupes de « Détections & sélections » apparaîtront ici.</small>}
+                <button type="button" className="ghost" onClick={()=>void load()}>Actualiser les listes</button>
               </label>
               <label>
                 Catégorie / couleur
                 <select
                   value={eventForm.category_id}
-                  onChange={(e) => setEventForm({ ...eventForm, category_id: e.target.value })}
+                  onChange={(e) => e.target.value==="__new__"?setInlineCategory({name:"",color:"#6B1A2C"}):setEventForm({ ...eventForm, category_id: e.target.value })}
                 >
                   <option value="">Sans catégorie</option>
                   {categories.map((category) => (
                     <option key={category.id} value={category.id}>{category.name}</option>
                   ))}
+                  {categoryPresets.filter(name=>!categories.some(category=>category.name.toUpperCase()===name.toUpperCase())).map(name=><option key={name} value={`preset:${name}`}>{name}</option>)}
+                  <option value="__new__">+ Créer une catégorie…</option>
                 </select>
+                {categoryError&&<small role="alert">{categoryError}</small>}
               </label>
+              {inlineCategory&&<div className="wide recurrenceBox"><label>Nom de la catégorie<input value={inlineCategory.name} onChange={e=>setInlineCategory({...inlineCategory,name:e.target.value})}/></label><label>Couleur<input type="color" value={inlineCategory.color} onChange={e=>setInlineCategory({...inlineCategory,color:e.target.value})}/></label><div><button type="button" className="primary" disabled={categoryBusy||!inlineCategory.name.trim()} onClick={()=>void createInlineCategory()}>{categoryBusy?"Enregistrement…":"Créer et sélectionner"}</button><button type="button" className="ghost" disabled={categoryBusy} onClick={()=>setInlineCategory(null)}>Annuler</button></div></div>}
               <label>
                 Lieu{" "}
                 <small style={{ fontWeight: 700, color: "#9a7d72" }}>
@@ -1362,7 +1398,7 @@ export default function InstitutionalCalendarHub({
               >
                 Annuler
               </button>
-              <button type="submit" className="primary" disabled={savingEvent||!!eventPreview.error}>
+              <button type="submit" className="primary" disabled={savingEvent||categoryBusy||!!inlineCategory||!!eventPreview.error}>
                 {savingEvent?'Enregistrement…':eventForm.id?'💾 Enregistrer les modifications':eventPreview.dates.length>1?`💾 Créer ${eventPreview.dates.length} journées`:'💾 Enregistrer l’événement'}
               </button>
             </div>

@@ -113,7 +113,15 @@ export async function POST(req: Request) {
   }
 
   const teamId = crypto.randomUUID();
-  const selectionId = crypto.randomUUID();
+  const detectionEventId = String(body.detectionEventId || "");
+  if (detectionEventId) {
+    const source = await ctx.admin.from("institutional_detection_events").select("id").eq("id",detectionEventId).eq("structure_id",structureId).eq("archived",false).maybeSingle();
+    if(source.error||!source.data)return NextResponse.json({error:"Groupe source introuvable"},{status:404});
+    const existing = await ctx.admin.from("institutional_selections").select("*").eq("id",detectionEventId).eq("structure_id",structureId).maybeSingle();
+    if(existing.error)return NextResponse.json({error:existing.error.message},{status:400});
+    if(existing.data)return NextResponse.json({ok:true,selection:existing.data});
+  }
+  const selectionId = detectionEventId || crypto.randomUUID();
   const now = new Date().toISOString();
 
   const teamWrite = await ctx.admin.from("teams").insert({
