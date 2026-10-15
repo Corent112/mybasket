@@ -1212,7 +1212,9 @@ export default function MatchReviewBuilder({
                       </button>
                     )}
                   </div>
-                  <div className={styles.blockBody}>
+                  <div
+                    className={`${styles.blockBody} ${b.kind === "shot-chart" ? styles.shotBody : ""}`}
+                  >
                     {b.kind === "players" ? (
                       <div
                         className={styles.controls}
@@ -1286,26 +1288,37 @@ export default function MatchReviewBuilder({
                           </div>
                         )}
                         <div className={styles.sharedCourt}>
-                          <ShotChart
-                            mode="pick"
-                            size="lg"
-                            shotType={shotType}
-                            locked={editing}
-                            selectedZone={shotZoneId}
-                            pendingPoint={
-                              point
-                                ? { x: point.x * 100, y: point.y * 100 }
-                                : null
-                            }
-                            showLabels={false}
-                            onPick={(zone, position) => {
-                              setShotZoneId(zone.id);
-                              setPoint({
-                                x: position.x / 100,
-                                y: position.y / 100,
-                              });
-                            }}
-                          />
+                          {editing ? (
+                            <ShotChart
+                              mode="analysis"
+                              size="lg"
+                              shots={[]}
+                              showStats={false}
+                              showLabels={false}
+                              showDots={false}
+                            />
+                          ) : (
+                            <ShotChart
+                              mode="pick"
+                              size="lg"
+                              shotType={shotType}
+                              locked={editing}
+                              selectedZone={shotZoneId}
+                              pendingPoint={
+                                point
+                                  ? { x: point.x * 100, y: point.y * 100 }
+                                  : null
+                              }
+                              showLabels={false}
+                              onPick={(zone, position) => {
+                                setShotZoneId(zone.id);
+                                setPoint({
+                                  x: position.x / 100,
+                                  y: position.y / 100,
+                                });
+                              }}
+                            />
+                          )}
                         </div>
                         {point && !editing && (
                           <button onClick={() => setPoint(null)}>
