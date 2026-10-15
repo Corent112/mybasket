@@ -20,6 +20,7 @@
  * Aucune dépendance à PriseStatsPro : tout arrive par props.
  * ========================================================================== */
 
+import { highlightLabel } from "@/lib/livestat-labels";
 import { type PointerEvent as ReactPointerEvent, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { type VideoSyncState, NATIVE_SYNC, resolveActionClipBounds } from '@/lib/video-sync';
 import { getLocalMatchVideoUrl } from '@/lib/local-video-registry';
@@ -398,7 +399,7 @@ export default function ActionClipsModal(props: ActionClipsModalProps) {
             <Info k="Chrono" v={cur.clock} />
             <Info k="Contexte" v={cur.context === 'defense' ? 'Défense' : cur.context === 'attaque' ? 'Attaque' : cur.context} />
             <Info k="Système" v={systemLabelOf(cur)} />
-            <Info k="Temps fort" v={props.tempsFortLabel?.(cur.tempsFort) ?? cur.tempsFort} />
+            <Info k="Temps fort" v={props.tempsFortLabel?.(cur.tempsFort) ?? highlightLabel(cur.tempsFort)} />
             <Info k="Joueur" v={whoLabel(cur)} />
             <Info k="Action" v={cur.actionType} />
             <Info k="Résultat" v={cur.shotResult === 'made' ? 'Marqué' : cur.shotResult === 'missed' ? 'Raté' : cur.shotResult} />

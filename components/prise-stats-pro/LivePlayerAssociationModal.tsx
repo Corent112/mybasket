@@ -1,5 +1,6 @@
 'use client';
 
+import { highlightLabel } from "@/lib/livestat-labels";
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { VideoSyncState } from '@/lib/video-sync';
 import { resolveActionClipBounds } from '@/lib/video-sync';
@@ -155,7 +156,7 @@ export default function LivePlayerAssociationModal({ open, actions, roster, vide
               <div className="assocMeta">
                 <b>{action.context === 'defense' ? 'DÉFENSE' : 'ATTAQUE'} · Q{action.q} · {action.clock}</b>
                 <strong>{actionLabel(action)}</strong>
-                <span>{action.systemeName || action.systemeSlot || action.systemeJeu || ''}{action.tempsFort ? ` · ${action.tempsFort}` : ''}</span>
+                <span>{action.systemeName || action.systemeSlot || action.systemeJeu || ''}{action.tempsFort ? ` · ${highlightLabel(action.tempsFort)}` : ''}</span>
               </div>
             </section>
 

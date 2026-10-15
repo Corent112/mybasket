@@ -1,5 +1,6 @@
 "use client";
 
+import { highlightLabel } from "@/lib/livestat-labels";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import ShotChart, { SHOT_ZONES, type ShotLike } from "@/components/prise-stats-pro/ShotChart";
@@ -950,7 +951,7 @@ export default function TeamAdvancedStats({
                           {action.clock ? ` · ${action.clock}` : ""}
                         </small>
                         <small>
-                          {[systemDisplayName(action), action.temps_fort]
+                          {[systemDisplayName(action), highlightLabel(action.temps_fort)]
                             .filter(Boolean)
                             .join(" · ") || "—"}
                         </small>
@@ -1549,7 +1550,7 @@ function ClipMeta({
       <span>{human(String(action.action_type || action.shot_type || "Action"))}</span>
       {action.shot_result ? <span>{human(String(action.shot_result))}</span> : null}
       {systemDisplayName(action) ? <span>Système : {systemDisplayName(action)}</span> : null}
-      {action.temps_fort ? <span>Temps fort : {human(action.temps_fort)}</span> : null}
+      {action.temps_fort ? <span>Temps fort : {highlightLabel(action.temps_fort)}</span> : null}
       {match?.opponent ? <span>vs {String(match.opponent)}</span> : null}
       {action.quarter ? <span>Q{action.quarter}</span> : null}
       {action.clock ? <span>{action.clock}</span> : null}

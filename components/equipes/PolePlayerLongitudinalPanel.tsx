@@ -1,5 +1,6 @@
 "use client";
 
+import { highlightLabel } from "@/lib/livestat-labels";
 import Link from "next/link";
 import PolePlayerFollowupPanel from "@/components/equipes/PolePlayerFollowupPanel";
 import { useEffect, useMemo, useState } from "react";
@@ -71,7 +72,7 @@ export default function PolePlayerLongitudinalPanel({ teamId, playerId }: { team
     <div className="two"><section className="box"><div className="sectionTitle"><div><p>CHARGE / RPE</p><h3>Charge croisée</h3></div></div>{loadRows.length?loadRows.map((x:any)=><div className="loadRow" key={`${x.source.teamId}-${x.source.playerId}`}><div><b>{x.source.kind==="pole"?"🏛":"🏀"} {x.source.teamName}</b><span>7 j : {Math.round(x.current7)} · semaine précédente : {Math.round(x.previous7)}</span></div><div><strong>{x.latestRpe==null?"—":`${f1(x.latestRpe)}/10`}</strong><small>RPE</small><strong>{x.latestFatigue==null?"—":`${f1(x.latestFatigue)}/10`}</strong><small>FATIGUE</small></div></div>):<div className="miniEmpty">Aucune charge disponible.</div>}</section>
     <section className="box"><div className="sectionTitle"><div><p>PRÉSENCE</p><h3>Pôle + club</h3></div></div>{presence.length?presence.map((x:any)=><div className="presenceRow" key={`${x.source.teamId}-${x.source.playerId}`}><div><b>{x.source.kind==="pole"?"🏛":"🏀"} {x.source.teamName}</b><span>{x.present} présent · {x.late} retard · {x.absent} absent</span></div><strong>{x.rate==null?"—":`${x.rate}%`}</strong></div>):<div className="miniEmpty">Aucune présence enregistrée.</div>}</section></div>
 
-    <section className="box"><div className="sectionTitle"><div><p>VIDÉO</p><h3>Clips du joueur dans ses deux équipes</h3></div><span>{clips.length} clip(s)</span></div><div className="clipGrid">{clips.slice(0,12).map((c:any)=>{const source=(data.sources||[]).find((s:any)=>String(s.teamId)===String(c.teamId));return <Link key={c.id} href={`/equipes/${c.teamId}/${source?.playerId||c.playerId}`}><b>{source?.kind==="pole"?"🏛":"🏀"} {source?.teamName||"Équipe"}</b><span>{c.title}</span><small>{c.tempsFort?`${c.tempsFort} · `:""}{c.result||"Action vidéo"}</small></Link>})}{!clips.length&&<div className="miniEmpty">Les clips apparaîtront ici dès que LiveStats les associe au joueur.</div>}</div></section>
+    <section className="box"><div className="sectionTitle"><div><p>VIDÉO</p><h3>Clips du joueur dans ses deux équipes</h3></div><span>{clips.length} clip(s)</span></div><div className="clipGrid">{clips.slice(0,12).map((c:any)=>{const source=(data.sources||[]).find((s:any)=>String(s.teamId)===String(c.teamId));return <Link key={c.id} href={`/equipes/${c.teamId}/${source?.playerId||c.playerId}`}><b>{source?.kind==="pole"?"🏛":"🏀"} {source?.teamName||"Équipe"}</b><span>{c.title}</span><small>{c.tempsFort?`${highlightLabel(c.tempsFort)} · `:""}{c.result||"Action vidéo"}</small></Link>})}{!clips.length&&<div className="miniEmpty">Les clips apparaîtront ici dès que LiveStats les associe au joueur.</div>}</div></section>
 
     <PolePlayerFollowupPanel structureId={data.structureId||data.structure?.id||null} institutionalPlayerId={data.institutionalPlayerId||data.player?.institutionalPlayerId||null} />
 

@@ -110,12 +110,12 @@ export default function GlobalActionSearch() {
       if (fType !== 'all' && r.action_type !== fType) return false;
       if (fResult !== 'all' && r.shot_result !== fResult) return false;
       if (fText) {
-        const hay = `${r.systeme_name ?? ''} ${r.systeme_slot ?? ''} ${r.temps_fort ?? ''} ${playerNames.get(String(r.player_id)) ?? ''} ${mi?.opponent ?? ''}`.toLowerCase();
+        const hay = `${r.systeme_name ?? ''} ${r.systeme_slot ?? ''} ${tags.label(r.temps_fort)} ${playerNames.get(String(r.player_id)) ?? ''} ${mi?.opponent ?? ''}`.toLowerCase();
         if (!hay.includes(fText.toLowerCase())) return false;
       }
       return true;
     });
-  }, [rows, matchInfo, playerNames, fTeam, fOpponent, fContext, fType, fResult, fText]);
+  }, [rows, matchInfo, playerNames, fTeam, fOpponent, fContext, fType, fResult, fText, tags]);
 
   const toClip = useCallback((r: Row): ClipAction & Row => {
     const mi = matchInfo.get(String(r.match_id));

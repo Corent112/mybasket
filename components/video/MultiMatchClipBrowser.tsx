@@ -1,5 +1,6 @@
  "use client";
 
+import { highlightLabel } from "@/lib/livestat-labels";
 import { useEffect, useMemo, useState } from "react";
 import LocalClipPlayer from "./LocalClipPlayer";
 import LocalMatchVideoButton from "./LocalMatchVideoButton";
@@ -87,7 +88,7 @@ export default function MultiMatchClipBrowser({
         <section className="mmcb-meta">
           <b>{clip.opponent || "Match"}</b>
           <span>{clip.match_date || ""}</span>
-          {clip.temps_fort && <em>{clip.temps_fort}</em>}
+          {clip.temps_fort && <em>{highlightLabel(clip.temps_fort)}</em>}
           {clip.shot_type && <em>{clip.shot_type}</em>}
           {clip.shot_result && <em>{clip.shot_result === "made" ? "Marqué" : clip.shot_result === "missed" ? "Raté" : clip.shot_result}</em>}
           {clip.zone && <em>{clip.zone}</em>}

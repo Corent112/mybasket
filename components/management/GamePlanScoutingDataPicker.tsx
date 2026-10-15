@@ -1,5 +1,6 @@
 "use client";
 
+import { highlightLabel } from "@/lib/livestat-labels";
 import { useEffect, useMemo, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 
@@ -317,7 +318,7 @@ export default function GamePlanScoutingDataPicker({
               {!detailLoading && tab === "clips" && <div className="gpd-list">
                 {clips.map((c, index) => {
                   const url = videoUrlForMatch(c.match_id) || String(selectedState.videoUrl || "");
-                  const label = [c.systeme_name, c.temps_fort, c.action_type, c.shot_type, c.shot_result].filter(Boolean).join(" · ") || `Clip ${index + 1}`;
+                  const label = [c.systeme_name, highlightLabel(c.temps_fort), c.action_type, c.shot_type, c.shot_result].filter(Boolean).join(" · ") || `Clip ${index + 1}`;
                   return <div className="gpd-row" key={c.id}><div><b>{label}</b><span>{Number(c.clip_start || 0).toFixed(1)}s → {Number(c.clip_end || 0).toFixed(1)}s</span></div><button disabled={!url} onClick={() => addOnce({ id:crypto.randomUUID(), kind:"clip", title:label, subtitle:"Clip scouting", sourceTeamId:teamId, matchIds:[c.match_id], videoUrl:url, clipStart:Number(c.clip_start || 0), clipEnd:Number(c.clip_end || 0) })}>{url ? "＋ Ajouter" : "Vidéo absente"}</button></div>;
                 })}
                 {!clips.length && <div className="gpd-empty">Aucun clip déjà découpé sur ces matchs.</div>}
