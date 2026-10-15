@@ -5348,14 +5348,14 @@ export default function PriseStatsProPage() {
         </div>
 
         {/* Bouton fixe hors footer : toujours visible sur l’écran de création */}
-        <button
+        {!showCodingSettings && !showMatchReviewBuilder && <button
           type="button"
           className="cm-start-fixed-only"
           disabled={!canStart}
           onClick={startMatch}
         >
           ▶ DÉMARRER LE MATCH
-        </button>
+        </button>}
 
         <LiveCodingSettingsModal
           open={showCodingSettings}
