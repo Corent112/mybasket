@@ -1,29 +1,29 @@
-'use client';
+"use client";
 
-import { useEffect, useMemo, useState } from 'react';
-import styles from './MatchReviewBuilder.module.css';
-import { createPortal } from 'react-dom';
+import {
+  useEffect,
+  useRef,
+  useState,
+  type PointerEvent as ReactPointerEvent,
+} from "react";
+import styles from "./FreeCodingBoard.module.css";
+import { createPortal } from "react-dom";
 
 export type MatchReviewControlType =
-  | 'button'
-  | 'plus-minus'
-  | 'counter'
-  | 'rating'
-  | 'choice'
-  | 'text';
+  "button" | "plus-minus" | "counter" | "rating" | "choice" | "text";
 
 export type MatchReviewFlowStepType =
-  | 'block'
-  | 'control'
-  | 'player'
-  | 'passer'
-  | 'receiver'
-  | 'opponent'
-  | 'team'
-  | 'value'
-  | 'comment'
-  | 'clip'
-  | 'save';
+  | "block"
+  | "control"
+  | "player"
+  | "passer"
+  | "receiver"
+  | "opponent"
+  | "team"
+  | "value"
+  | "comment"
+  | "clip"
+  | "save";
 
 export type MatchReviewControl = {
   id: string;
@@ -48,7 +48,10 @@ export type MatchReviewBlock = {
   subtitle?: string;
   color: string;
   columns: 1 | 2 | 3 | 4;
+  buttonSize?: "compact" | "normal" | "large";
   controls: MatchReviewControl[];
+  kind?: "buttons" | "players" | "shot-chart" | "context";
+  frame?: { x: number; y: number; width: number; height: number };
 };
 
 export type MatchReviewFlowStep = {
@@ -93,6 +96,8 @@ export type MatchReviewEvent = {
   postRoll: number;
   videoTime: number | null;
   createdAt: string;
+  context?: "attaque" | "defense" | null;
+  shotPosition?: { x: number; y: number } | null;
 };
 
 type PlayerOption = { id: string; name: string; num?: number | string | null };
@@ -101,6 +106,7 @@ type Props = {
   projectId?: string | null;
   players?: PlayerOption[];
   getVideoTime?: () => number | null;
+  onSeek?: (time: number) => void;
   embedded?: boolean;
   initialEditorOpen?: boolean;
   onClose?: () => void;
@@ -108,42 +114,40 @@ type Props = {
   onLayoutChange?: (layout: MatchReviewLayout) => void;
 };
 
-const TEMPLATE_STORAGE = 'mybasket.match-review.templates.v2';
-const ACTIVE_TEMPLATE_STORAGE = 'mybasket.match-review.active-template.v2';
-const EVENT_STORAGE_PREFIX = 'mybasket.match-review.events.v2.';
+const TEMPLATE_STORAGE = "mybasket.match-review.templates.v2";
+const ACTIVE_TEMPLATE_STORAGE = "mybasket.match-review.active-template.v2";
+const EVENT_STORAGE_PREFIX = "mybasket.match-review.events.v2.";
 
 const storageGet = (key: string): string | null => {
-  if (typeof window === 'undefined') return null;
-  try { return window.localStorage.getItem(key); } catch { return null; }
-};
-
-const storageSet = (key: string, value: string) => {
-  if (typeof window === 'undefined') return;
-  try { window.localStorage.setItem(key, value); } catch { /* Safari/private mode: keep working in memory */ }
-};
-
-const storageRemove = (key: string) => {
-  if (typeof window === 'undefined') return;
-  try { window.localStorage.removeItem(key); } catch { /* noop */ }
+  if (typeof window === "undefined") return null;
+  try {
+    return window.localStorage.getItem(key);
+  } catch {
+    return null;
+  }
 };
 
 const uid = () => {
-  try { return crypto.randomUUID(); } catch { return `${Date.now()}_${Math.random().toString(36).slice(2)}`; }
+  try {
+    return crypto.randomUUID();
+  } catch {
+    return `${Date.now()}_${Math.random().toString(36).slice(2)}`;
+  }
 };
 
 const blankTemplate = (): MatchReviewTemplate => ({
   id: uid(),
-  name: 'Nouveau retour de match',
-  description: 'Configuration 100 % personnalisable',
+  name: "Ma fenêtre de codification",
+  description: "Configuration 100 % personnalisable",
   blocks: [],
   flow: [
-    { id: uid(), type: 'block', required: true },
-    { id: uid(), type: 'control', required: true },
-    { id: uid(), type: 'player', required: false },
-    { id: uid(), type: 'value', required: false },
-    { id: uid(), type: 'comment', required: false },
-    { id: uid(), type: 'clip', required: false },
-    { id: uid(), type: 'save', required: true },
+    { id: uid(), type: "block", required: true },
+    { id: uid(), type: "control", required: true },
+    { id: uid(), type: "player", required: false },
+    { id: uid(), type: "value", required: false },
+    { id: uid(), type: "comment", required: false },
+    { id: uid(), type: "clip", required: false },
+    { id: uid(), type: "save", required: true },
   ],
   layout: {
     columns: 2,
@@ -155,30 +159,16 @@ const blankTemplate = (): MatchReviewTemplate => ({
   updatedAt: new Date().toISOString(),
 });
 
-const stepLabels: Record<MatchReviewFlowStepType, string> = {
-  block: 'Bloc',
-  control: 'Bouton / action',
-  player: "Qui réalise l’action",
-  passer: 'Qui réalise la passe',
-  receiver: 'Qui reçoit',
-  opponent: 'Joueur adverse concerné',
-  team: 'Équipe / collectif',
-  value: 'Résultat / valeur',
-  comment: 'Commentaire',
-  clip: 'Clip vidéo',
-  save: 'Enregistrer',
-};
-
 const typeLabels: Record<MatchReviewControlType, string> = {
-  button: 'Bouton simple',
-  'plus-minus': '+ / −',
-  counter: 'Compteur',
-  rating: 'Note',
-  choice: 'Choix multiple',
-  text: 'Texte / commentaire',
+  button: "Bouton simple",
+  "plus-minus": "+ / −",
+  counter: "Compteur",
+  rating: "Note",
+  choice: "Choix multiple",
+  text: "Texte / commentaire",
 };
 
-type PresetControl = Omit<MatchReviewControl, 'id' | 'logic'> & {
+type PresetControl = Omit<MatchReviewControl, "id" | "logic"> & {
   logic?: MatchReviewFlowStepType[];
 };
 
@@ -191,105 +181,331 @@ type PresetBlock = {
 };
 
 const logic = (...types: MatchReviewFlowStepType[]): MatchReviewFlowStep[] =>
-  types.map((type) => ({ id: uid(), type, required: !['comment', 'clip'].includes(type) }));
+  types.map((type) => ({
+    id: uid(),
+    type,
+    required: !["comment", "clip"].includes(type),
+  }));
 
 const PRESET_BLOCKS: PresetBlock[] = [
   {
-    key: 'systeme', label: 'Système de jeu', icon: '🏀', color: '#D4A24C',
-    controls: ['Contre attaque', 'Transition', 'Libre', 'Système 1', 'Système 2', 'Système 3', 'Système 4', 'Système 5', 'Système 6', 'Système 7', 'Système 8', 'SLOB 1', 'SLOB 2', 'BLOB 1', 'BLOB 2'].map((label) => ({
-      label, type: 'button' as const, color: '#D4A24C', value: 1, createClip: true, preRoll: 4, postRoll: 4,
-      logic: ['player', 'value', 'clip', 'save'] as MatchReviewFlowStepType[],
-    })),
-  },
-  {
-    key: 'temps-fort', label: 'Temps fort', icon: '⚡', color: '#D4A24C',
-    controls: ['1v1', 'Hand Off', 'Drive & Kick', 'Jeu sans ballon', 'Passing', 'Rebond offensif', 'Autres'].map((label) => ({
-      label, type: 'button' as const, color: '#D4A24C', value: 1, createClip: true, preRoll: 4, postRoll: 4,
-      logic: label === 'Passing' ? ['passer', 'receiver', 'value', 'clip', 'save'] as MatchReviewFlowStepType[] : ['player', 'value', 'clip', 'save'] as MatchReviewFlowStepType[],
-    })),
-  },
-  {
-    key: 'attaque', label: 'Actions attaque', icon: '🔵', color: '#3B82F6',
-    controls: ['Tir', 'Faute provoquée', 'Touche / Sortie', 'Perte de balle', 'Contre', 'Faute commise', 'Faute technique'].map((label) => ({
-      label, type: 'button' as const, color: '#3B82F6', value: 1, createClip: true, preRoll: 4, postRoll: 4,
-      logic: ['player', 'value', 'clip', 'save'] as MatchReviewFlowStepType[],
-    })),
-  },
-  {
-    key: 'defense', label: 'Actions défense', icon: '🔴', color: '#EF4444',
-    controls: ['Tir adverse', 'Interception / récupération', 'BP adverse', 'Contre', 'Touche', 'Faute provoquée', 'Faute commise', 'Faute technique'].map((label) => ({
-      label, type: 'button' as const, color: '#EF4444', value: 1, createClip: true, preRoll: 4, postRoll: 4,
-      logic: ['player', 'opponent', 'value', 'clip', 'save'] as MatchReviewFlowStepType[],
-    })),
-  },
-  {
-    key: 'transition', label: 'Transition', icon: '🏃', color: '#84CC16',
-    controls: ['Montée de balle', 'Fast break', 'Repli défensif', 'Retour défense'].map((label) => ({
-      label, type: 'button' as const, color: '#84CC16', value: 1, createClip: true, preRoll: 4, postRoll: 4,
-      logic: ['player', 'value', 'clip', 'save'] as MatchReviewFlowStepType[],
-    })),
-  },
-  {
-    key: 'individuel', label: 'Individuel', icon: '🧍', color: '#A855F7',
+    key: "systeme",
+    label: "Système de jeu",
+    icon: "🏀",
+    color: "#D4A24C",
     controls: [
-      { label: '+ (positif)', type: 'button', color: '#22C55E', value: 1, createClip: true, preRoll: 4, postRoll: 4, logic: ['player', 'clip', 'save'] },
-      { label: '− (négatif)', type: 'button', color: '#EF4444', value: -1, createClip: true, preRoll: 4, postRoll: 4, logic: ['player', 'clip', 'save'] },
-      { label: 'Bonne décision', type: 'button', color: '#22C55E', value: 1, createClip: true, preRoll: 4, postRoll: 4, logic: ['player', 'clip', 'save'] },
-      { label: 'Mauvaise décision', type: 'button', color: '#EF4444', value: -1, createClip: true, preRoll: 4, postRoll: 4, logic: ['player', 'clip', 'save'] },
+      "Contre attaque",
+      "Transition",
+      "Libre",
+      "Système 1",
+      "Système 2",
+      "Système 3",
+      "Système 4",
+      "Système 5",
+      "Système 6",
+      "Système 7",
+      "Système 8",
+      "SLOB 1",
+      "SLOB 2",
+      "BLOB 1",
+      "BLOB 2",
+    ].map((label) => ({
+      label,
+      type: "button" as const,
+      color: "#D4A24C",
+      value: 1,
+      createClip: true,
+      preRoll: 4,
+      postRoll: 4,
+      logic: ["player", "value", "clip", "save"] as MatchReviewFlowStepType[],
+    })),
+  },
+  {
+    key: "temps-fort",
+    label: "Temps fort",
+    icon: "⚡",
+    color: "#D4A24C",
+    controls: [
+      "1v1",
+      "Hand Off",
+      "Drive & Kick",
+      "Jeu sans ballon",
+      "Passing",
+      "Rebond offensif",
+      "Autres",
+    ].map((label) => ({
+      label,
+      type: "button" as const,
+      color: "#D4A24C",
+      value: 1,
+      createClip: true,
+      preRoll: 4,
+      postRoll: 4,
+      logic:
+        label === "Passing"
+          ? ([
+              "passer",
+              "receiver",
+              "value",
+              "clip",
+              "save",
+            ] as MatchReviewFlowStepType[])
+          : (["player", "value", "clip", "save"] as MatchReviewFlowStepType[]),
+    })),
+  },
+  {
+    key: "attaque",
+    label: "Actions attaque",
+    icon: "🔵",
+    color: "#3B82F6",
+    controls: [
+      "Tir",
+      "Faute provoquée",
+      "Touche / Sortie",
+      "Perte de balle",
+      "Contre",
+      "Faute commise",
+      "Faute technique",
+    ].map((label) => ({
+      label,
+      type: "button" as const,
+      color: "#3B82F6",
+      value: 1,
+      createClip: true,
+      preRoll: 4,
+      postRoll: 4,
+      logic: ["player", "value", "clip", "save"] as MatchReviewFlowStepType[],
+    })),
+  },
+  {
+    key: "defense",
+    label: "Actions défense",
+    icon: "🔴",
+    color: "#EF4444",
+    controls: [
+      "Tir adverse",
+      "Interception / récupération",
+      "BP adverse",
+      "Contre",
+      "Touche",
+      "Faute provoquée",
+      "Faute commise",
+      "Faute technique",
+    ].map((label) => ({
+      label,
+      type: "button" as const,
+      color: "#EF4444",
+      value: 1,
+      createClip: true,
+      preRoll: 4,
+      postRoll: 4,
+      logic: [
+        "player",
+        "opponent",
+        "value",
+        "clip",
+        "save",
+      ] as MatchReviewFlowStepType[],
+    })),
+  },
+  {
+    key: "transition",
+    label: "Transition",
+    icon: "🏃",
+    color: "#84CC16",
+    controls: [
+      "Montée de balle",
+      "Fast break",
+      "Repli défensif",
+      "Retour défense",
+    ].map((label) => ({
+      label,
+      type: "button" as const,
+      color: "#84CC16",
+      value: 1,
+      createClip: true,
+      preRoll: 4,
+      postRoll: 4,
+      logic: ["player", "value", "clip", "save"] as MatchReviewFlowStepType[],
+    })),
+  },
+  {
+    key: "individuel",
+    label: "Individuel",
+    icon: "🧍",
+    color: "#A855F7",
+    controls: [
+      {
+        label: "+ (positif)",
+        type: "button",
+        color: "#22C55E",
+        value: 1,
+        createClip: true,
+        preRoll: 4,
+        postRoll: 4,
+        logic: ["player", "clip", "save"],
+      },
+      {
+        label: "− (négatif)",
+        type: "button",
+        color: "#EF4444",
+        value: -1,
+        createClip: true,
+        preRoll: 4,
+        postRoll: 4,
+        logic: ["player", "clip", "save"],
+      },
+      {
+        label: "Bonne décision",
+        type: "button",
+        color: "#22C55E",
+        value: 1,
+        createClip: true,
+        preRoll: 4,
+        postRoll: 4,
+        logic: ["player", "clip", "save"],
+      },
+      {
+        label: "Mauvaise décision",
+        type: "button",
+        color: "#EF4444",
+        value: -1,
+        createClip: true,
+        preRoll: 4,
+        postRoll: 4,
+        logic: ["player", "clip", "save"],
+      },
     ],
   },
   {
-    key: 'collectif', label: 'Collectif', icon: '👥', color: '#22D3EE',
-    controls: ['Espacement', 'Circulation', 'Lecture jeu', 'Discipline'].map((label) => ({
-      label, type: 'button' as const, color: '#22D3EE', value: 1, createClip: true, preRoll: 4, postRoll: 4,
-      logic: ['team', 'value', 'clip', 'save'] as MatchReviewFlowStepType[],
-    })),
+    key: "collectif",
+    label: "Collectif",
+    icon: "👥",
+    color: "#22D3EE",
+    controls: ["Espacement", "Circulation", "Lecture jeu", "Discipline"].map(
+      (label) => ({
+        label,
+        type: "button" as const,
+        color: "#22D3EE",
+        value: 1,
+        createClip: true,
+        preRoll: 4,
+        postRoll: 4,
+        logic: ["team", "value", "clip", "save"] as MatchReviewFlowStepType[],
+      }),
+    ),
   },
   {
-    key: 'rebond', label: 'Rebond', icon: '↔', color: '#10B981',
-    controls: ['Rebond offensif', 'Rebond défensif', 'Box out +', 'Box out −'].map((label) => ({
-      label, type: 'button' as const, color: '#10B981', value: label.endsWith('−') ? -1 : 1, createClip: true, preRoll: 4, postRoll: 4,
-      logic: ['player', 'value', 'clip', 'save'] as MatchReviewFlowStepType[],
-    })),
-  },
-  {
-    key: 'faute', label: 'Faute', icon: '❌', color: '#F97316',
-    controls: ['Faute provoquée', 'Faute personnelle', 'Faute technique'].map((label) => ({
-      label, type: 'button' as const, color: '#F97316', value: 1, createClip: true, preRoll: 4, postRoll: 4,
-      logic: ['player', 'opponent', 'clip', 'save'] as MatchReviewFlowStepType[],
-    })),
-  },
-  {
-    key: 'autres', label: 'Autres', icon: '＋', color: '#94A3B8',
-    controls: ['Commentaire', 'Créer un clip', 'Temps mort', 'Autre'].map((label) => ({
+    key: "rebond",
+    label: "Rebond",
+    icon: "↔",
+    color: "#10B981",
+    controls: [
+      "Rebond offensif",
+      "Rebond défensif",
+      "Box out +",
+      "Box out −",
+    ].map((label) => ({
       label,
-      type: label === 'Commentaire' ? 'text' as const : 'button' as const,
-      color: '#94A3B8', value: 1, createClip: label !== 'Commentaire', preRoll: 4, postRoll: 4,
-      logic: label === 'Commentaire' ? ['comment', 'save'] as MatchReviewFlowStepType[] : ['player', 'clip', 'save'] as MatchReviewFlowStepType[],
+      type: "button" as const,
+      color: "#10B981",
+      value: label.endsWith("−") ? -1 : 1,
+      createClip: true,
+      preRoll: 4,
+      postRoll: 4,
+      logic: ["player", "value", "clip", "save"] as MatchReviewFlowStepType[],
     })),
+  },
+  {
+    key: "faute",
+    label: "Faute",
+    icon: "❌",
+    color: "#F97316",
+    controls: ["Faute provoquée", "Faute personnelle", "Faute technique"].map(
+      (label) => ({
+        label,
+        type: "button" as const,
+        color: "#F97316",
+        value: 1,
+        createClip: true,
+        preRoll: 4,
+        postRoll: 4,
+        logic: [
+          "player",
+          "opponent",
+          "clip",
+          "save",
+        ] as MatchReviewFlowStepType[],
+      }),
+    ),
+  },
+  {
+    key: "autres",
+    label: "Autres",
+    icon: "＋",
+    color: "#94A3B8",
+    controls: ["Commentaire", "Créer un clip", "Temps mort", "Autre"].map(
+      (label) => ({
+        label,
+        type: label === "Commentaire" ? ("text" as const) : ("button" as const),
+        color: "#94A3B8",
+        value: 1,
+        createClip: label !== "Commentaire",
+        preRoll: 4,
+        postRoll: 4,
+        logic:
+          label === "Commentaire"
+            ? (["comment", "save"] as MatchReviewFlowStepType[])
+            : (["player", "clip", "save"] as MatchReviewFlowStepType[]),
+      }),
+    ),
   },
 ];
 
 const clonePresetControl = (control: PresetControl): MatchReviewControl => ({
   ...control,
   id: uid(),
-  logic: logic(...(control.logic || ['player', 'clip', 'save'])),
+  logic: logic(...(control.logic || ["player", "clip", "save"])),
 });
 
 const safeParseTemplates = (): MatchReviewTemplate[] => {
-  if (typeof window === 'undefined') return [];
+  if (typeof window === "undefined") return [];
   try {
-    const parsed = JSON.parse(storageGet(TEMPLATE_STORAGE) || '[]');
+    const parsed = JSON.parse(storageGet(TEMPLATE_STORAGE) || "[]");
     return Array.isArray(parsed) ? parsed : [];
-  } catch { return []; }
+  } catch {
+    return [];
+  }
 };
 
-const normalizeHex = (value: string, fallback = '#6B1A2C') => /^#[0-9a-f]{6}$/i.test(value) ? value : fallback;
+const normalizeHex = (value: string, fallback = "#6B1A2C") =>
+  /^#[0-9a-f]{6}$/i.test(value) ? value : fallback;
+
+const frameOf = (block: MatchReviewBlock, index: number) =>
+  block.frame || {
+    x: (index % 2) * 480,
+    y: Math.floor(index / 2) * 270,
+    width: 460,
+    height: 250,
+  };
+const bounded = (n: number, min: number, max: number) =>
+  Math.min(max, Math.max(min, n));
+const freshControl = (): MatchReviewControl => ({
+  id: uid(),
+  label: "Nouveau bouton",
+  type: "button",
+  color: "#861b3a",
+  value: 1,
+  createClip: true,
+  preRoll: 4,
+  postRoll: 4,
+});
 
 export default function MatchReviewBuilder({
   projectId,
   players = [],
   getVideoTime,
+  onSeek,
   embedded = false,
   initialEditorOpen = false,
   onClose,
@@ -297,644 +513,1240 @@ export default function MatchReviewBuilder({
   onLayoutChange,
 }: Props) {
   const [templates, setTemplates] = useState<MatchReviewTemplate[]>([]);
-  const [activeId, setActiveId] = useState('');
-  const [editorOpen, setEditorOpen] = useState(initialEditorOpen);
-  const [mounted,setMounted]=useState(false);
-  useEffect(()=>{setMounted(true)},[]);
-  const [editorTab, setEditorTab] = useState<'logic' | 'blocks'>('blocks');
-  const [insertIndex, setInsertIndex] = useState<number | null>(null);
-  const [selectedBlockId, setSelectedBlockId] = useState<string | null>(null);
-  const [selectedControlId, setSelectedControlId] = useState<string | null>(null);
+  const [activeId, setActiveId] = useState("");
+  const [editing, setEditing] = useState(initialEditorOpen || !embedded);
+  const [selected, setSelected] = useState<string | null>(null);
+  const [controlId, setControlId] = useState<string | null>(null);
   const [events, setEvents] = useState<MatchReviewEvent[]>([]);
-  const [pending, setPending] = useState<{ block: MatchReviewBlock; control: MatchReviewControl } | null>(null);
-  const [pendingPlayerId, setPendingPlayerId] = useState('');
-  const [pendingComment, setPendingComment] = useState('');
-  const [pendingValue, setPendingValue] = useState<string | number>('');
-  const [runtimePlayerId, setRuntimePlayerId] = useState('');
-  const [configurationDirty, setConfigurationDirty] = useState(false);
-  const [configurationSavedAt, setConfigurationSavedAt] = useState<Date | null>(null);
-
+  const [playerId, setPlayerId] = useState("");
+  const [context, setContext] = useState<"attaque" | "defense" | null>(null);
+  const [point, setPoint] = useState<{ x: number; y: number } | null>(null);
+  const [draft, setDraft] = useState<{
+    blockId: string;
+    controlId: string;
+    value: string | number;
+    time: number | null;
+  } | null>(null);
+  const [comment, setComment] = useState("");
+  const [message, setMessage] = useState("");
+  const [dirty, setDirty] = useState(false);
+  const [tab, setTab] = useState<"history" | "timeline">("history");
+  const [ready, setReady] = useState(false);
+  const [addMenu, setAddMenu] = useState(false);
+  const [past, setPast] = useState<MatchReviewTemplate[][]>([]);
+  const [future, setFuture] = useState<MatchReviewTemplate[][]>([]);
+  const canvas = useRef<HTMLDivElement>(null);
+  const origin = useRef(uid());
+  const gesture = useRef<{
+    id: string;
+    mode: "move" | "resize";
+    startX: number;
+    startY: number;
+    scale: number;
+    frame: ReturnType<typeof frameOf>;
+  } | null>(null);
   useEffect(() => {
-    const stored = safeParseTemplates();
-    const source = stored.length ? stored : [blankTemplate()];
-    // Migration douce des modèles créés avec les premières versions du constructeur :
-    // chaque ancien bouton reçoit une logique modifiable par défaut.
-    const next = source.map((template) => ({
-      ...template,
-      blocks: (template.blocks || []).map((block) => ({
-        ...block,
-        controls: (block.controls || []).map((control) => ({
-          ...control,
-          logic: control.logic?.length ? control.logic : logic('player', 'clip', 'save'),
-        })),
-      })),
-    }));
-    const storedActive = storageGet(ACTIVE_TEMPLATE_STORAGE) || '';
-    const resolved = next.some((template) => template.id === storedActive) ? storedActive : next[0].id;
+    const saved = safeParseTemplates();
+    const next = saved.length ? saved : [blankTemplate()];
     setTemplates(next);
-    setActiveId(resolved);
-    storageSet(TEMPLATE_STORAGE, JSON.stringify(next));
+    setActiveId(storageGet(ACTIVE_TEMPLATE_STORAGE) || next[0].id);
+    setReady(true);
   }, []);
-
   useEffect(() => {
-    if (!projectId || typeof window === 'undefined') return;
+    setDraft(null);
+    setPlayerId("");
+    setPoint(null);
     try {
-      const parsed = JSON.parse(storageGet(`${EVENT_STORAGE_PREFIX}${projectId}`) || '[]');
-      setEvents(Array.isArray(parsed) ? parsed : []);
-    } catch { setEvents([]); }
+      const saved = JSON.parse(
+        storageGet(`${EVENT_STORAGE_PREFIX}${projectId}`) || "[]",
+      );
+      setEvents(Array.isArray(saved) ? saved : []);
+    } catch {
+      setEvents([]);
+    }
   }, [projectId]);
-
-  const active = useMemo(
-    () => templates.find((template) => template.id === activeId) || templates[0] || null,
-    [templates, activeId],
-  );
-
+  const active = templates.find((t) => t.id === activeId) || templates[0];
   useEffect(() => {
-    if (active) onLayoutChange?.(active.layout);
-  }, [active, onLayoutChange]);
-
-  const persistTemplates = (next: MatchReviewTemplate[]) => {
-    setTemplates(next);
-    storageSet(TEMPLATE_STORAGE, JSON.stringify(next));
-  };
-
-  // Modifications du constructeur : on les garde en mémoire jusqu'à la
-  // sauvegarde globale explicite. Cela évite de confondre l'étape de logique
-  // « Enregistrer » avec la sauvegarde de toute la configuration.
-  const setTemplatesDraft = (next: MatchReviewTemplate[]) => {
-    setTemplates(next);
-    setConfigurationDirty(true);
-  };
-
-  const saveConfiguration = (closeAfterSave = false) => {
-    storageSet(TEMPLATE_STORAGE, JSON.stringify(templates));
-    if (activeId) storageSet(ACTIVE_TEMPLATE_STORAGE, activeId);
-    setConfigurationDirty(false);
-    setConfigurationSavedAt(new Date());
-    if (closeAfterSave) setEditorOpen(false);
-  };
-
-  const setActiveTemplateId = (id: string) => {
-    setActiveId(id);
-    storageSet(ACTIVE_TEMPLATE_STORAGE, id);
-    setSelectedBlockId(null);
-    setSelectedControlId(null);
-  };
-
-  const updateActive = (updater: (template: MatchReviewTemplate) => MatchReviewTemplate) => {
-    if (!active) return;
-    setTemplatesDraft(templates.map((template) => template.id === active.id
-      ? { ...updater(template), updatedAt: new Date().toISOString() }
-      : template));
-  };
-
-  const addTemplate = () => {
-    const template = blankTemplate();
-    setTemplatesDraft([...templates, template]);
-    setActiveId(template.id);
-    setSelectedBlockId(null);
-    setSelectedControlId(null);
-    setEditorOpen(true);
-  };
-
-  const duplicateTemplate = () => {
-    if (!active) return;
-    const copy: MatchReviewTemplate = {
-      ...active,
-      id: uid(),
-      name: `${active.name} — copie`,
-      blocks: active.blocks.map((block) => ({
-        ...block,
-        id: uid(),
-        controls: block.controls.map((control) => ({ ...control, id: uid() })),
-      })),
-      flow: active.flow.map((step) => ({ ...step, id: uid() })),
-      updatedAt: new Date().toISOString(),
+    if (active) onLayoutChange?.({ ...active.layout, showVideo: true });
+  }, [active?.id, onLayoutChange]);
+  useEffect(() => {
+    const sync = (event: Event) => {
+      const data = (event as CustomEvent).detail;
+      if (
+        data?.origin !== origin.current &&
+        !dirty &&
+        Array.isArray(data?.templates)
+      ) {
+        setTemplates(data.templates);
+        setActiveId(data.activeId);
+      }
     };
-    setTemplatesDraft([...templates, copy]);
-    setActiveId(copy.id);
-    setSelectedBlockId(null);
-    setSelectedControlId(null);
-  };
-
-  const deleteTemplate = () => {
+    window.addEventListener("mybasket:mon-mode-saved", sync);
+    return () => window.removeEventListener("mybasket:mon-mode-saved", sync);
+  }, [dirty]);
+  useEffect(() => {
+    const warn = (event: BeforeUnloadEvent) => {
+      if (dirty) {
+        event.preventDefault();
+        event.returnValue = "";
+      }
+    };
+    window.addEventListener("beforeunload", warn);
+    return () => window.removeEventListener("beforeunload", warn);
+  }, [dirty]);
+  const change = (
+    updater: (t: MatchReviewTemplate) => MatchReviewTemplate,
+    checkpoint = true,
+  ) => {
     if (!active) return;
-    if (templates.length === 1) {
-      const fresh = blankTemplate();
-      setTemplatesDraft([fresh]);
-      setActiveId(fresh.id);
-      setSelectedBlockId(null);
-      setSelectedControlId(null);
+    if (checkpoint) {
+      setPast((p) => [...p.slice(-29), templates]);
+      setFuture([]);
+    }
+    setTemplates((current) =>
+      current.map((t) =>
+        t.id === active.id
+          ? { ...updater(t), updatedAt: new Date().toISOString() }
+          : t,
+      ),
+    );
+    setDirty(true);
+    setMessage("");
+  };
+  const patchBlock = (
+    id: string,
+    patch: Partial<MatchReviewBlock>,
+    checkpoint = true,
+  ) =>
+    change(
+      (t) => ({
+        ...t,
+        blocks: t.blocks.map((b) => (b.id === id ? { ...b, ...patch } : b)),
+      }),
+      checkpoint,
+    );
+  const patchControl = (patch: Partial<MatchReviewControl>) => {
+    if (!selected || !controlId) return;
+    change((t) => ({
+      ...t,
+      blocks: t.blocks.map((b) =>
+        b.id === selected
+          ? {
+              ...b,
+              controls: b.controls.map((c) =>
+                c.id === controlId ? { ...c, ...patch } : c,
+              ),
+            }
+          : b,
+      ),
+    }));
+  };
+  const save = () => {
+    try {
+      window.localStorage.setItem(TEMPLATE_STORAGE, JSON.stringify(templates));
+      window.localStorage.setItem(ACTIVE_TEMPLATE_STORAGE, active.id);
+      setDirty(false);
+      setMessage("Fenêtre enregistrée dans ce navigateur ✓");
+      window.dispatchEvent(
+        new CustomEvent("mybasket:mon-mode-saved", {
+          detail: { origin: origin.current, templates, activeId: active.id },
+        }),
+      );
+    } catch {
+      setMessage(
+        "Enregistrement impossible : espace de stockage indisponible. Vos modifications restent ouvertes.",
+      );
+    }
+  };
+  const addBlock = (
+    kind: MatchReviewBlock["kind"] = "buttons",
+    preset?: PresetBlock,
+  ) => {
+    const bottom = active.blocks.reduce(
+      (max, b, i) => Math.max(max, frameOf(b, i).y + frameOf(b, i).height),
+      0,
+    );
+    const b: MatchReviewBlock = {
+      id: uid(),
+      title:
+        preset?.label ||
+        {
+          players: "Joueurs",
+          "shot-chart": "Shot chart",
+          context: "Contexte",
+          buttons: "Nouveau bloc",
+        }[kind!],
+      kind,
+      color: preset?.color || "#861b3a",
+      columns: 2,
+      controls: preset
+        ? preset.controls.map(clonePresetControl)
+        : kind === "buttons"
+          ? [freshControl()]
+          : [],
+      frame: {
+        x: 0,
+        y: bottom ? bottom + 16 : 0,
+        width: 460,
+        height: kind === "shot-chart" ? 360 : 250,
+      },
+    };
+    change((t) => ({ ...t, blocks: [...t.blocks, b] }));
+    setSelected(b.id);
+    setControlId(null);
+    setAddMenu(false);
+  };
+  const begin = (
+    block: MatchReviewBlock,
+    control: MatchReviewControl,
+    value?: string | number,
+  ) => {
+    if (editing) {
+      setSelected(block.id);
+      setControlId(control.id);
       return;
     }
-    if (!window.confirm(`Supprimer le modèle « ${active.name} » ?`)) return;
-    const next = templates.filter((template) => template.id !== active.id);
-    setTemplatesDraft(next);
-    setActiveId(next[0].id);
-    setSelectedBlockId(null);
-    setSelectedControlId(null);
-  };
-
-  const insertBlockAt = (index: number, preset?: PresetBlock) => {
-    const block: MatchReviewBlock = preset ? {
-      id: uid(),
-      title: preset.label,
-      subtitle: 'Bloc prédéfini — entièrement modifiable',
-      color: preset.color,
-      columns: 2,
-      controls: preset.controls.map(clonePresetControl),
-    } : {
-      id: uid(),
-      title: 'Nouveau bloc',
-      subtitle: '',
-      color: '#6B1A2C',
-      columns: 2,
-      controls: [],
-    };
-    updateActive((template) => {
-      const blocks = template.blocks.slice();
-      blocks.splice(Math.max(0, Math.min(index, blocks.length)), 0, block);
-      return { ...template, blocks };
+    setDraft({
+      blockId: block.id,
+      controlId: control.id,
+      value:
+        value ??
+        (control.type === "text" || control.type === "choice"
+          ? ""
+          : (control.value ?? 1)),
+      time: getVideoTime?.() ?? null,
     });
-    setSelectedBlockId(block.id);
-    setSelectedControlId(null);
-    setEditorTab('blocks');
+    setComment("");
+    setMessage("");
   };
-
-  const addBlock = () => { insertBlockAt(insertIndex ?? (active?.blocks.length || 0)); setInsertIndex(null); };
-  const addPresetBlock = (preset: PresetBlock) => { insertBlockAt(insertIndex ?? (active?.blocks.length || 0), preset); setInsertIndex(null); };
-
-  const updateBlock = (blockId: string, patch: Partial<MatchReviewBlock>) => {
-    updateActive((template) => ({
-      ...template,
-      blocks: template.blocks.map((block) => block.id === blockId ? { ...block, ...patch } : block),
-    }));
-  };
-
-  const deleteBlock = (blockId: string) => {
-    updateActive((template) => ({ ...template, blocks: template.blocks.filter((block) => block.id !== blockId) }));
-    if (selectedBlockId === blockId) {
-      setSelectedBlockId(null);
-      setSelectedControlId(null);
+  useEffect(() => {
+    const key = (event: KeyboardEvent) => {
+      if (
+        editing ||
+        event.ctrlKey ||
+        event.metaKey ||
+        event.altKey ||
+        /INPUT|SELECT|TEXTAREA/.test((event.target as HTMLElement)?.tagName) ||
+        (event.target as HTMLElement)?.isContentEditable
+      )
+        return;
+      const matches =
+        active?.blocks.flatMap((b) =>
+          b.controls
+            .filter(
+              (c) => c.shortcut?.toLowerCase() === event.key.toLowerCase(),
+            )
+            .map((c) => ({ b, c })),
+        ) || [];
+      if (matches.length === 1) {
+        event.preventDefault();
+        begin(matches[0].b, matches[0].c);
+      }
+    };
+    window.addEventListener("keydown", key);
+    return () => window.removeEventListener("keydown", key);
+  }, [active, editing, getVideoTime]);
+  const record = () => {
+    const b = active.blocks.find((b) => b.id === draft?.blockId),
+      c = b?.controls.find((c) => c.id === draft?.controlId);
+    if (!b || !c || !draft) return;
+    if (c.requirePlayer && !playerId) {
+      setMessage("Sélectionnez un joueur.");
+      return;
     }
-  };
-
-  const moveBlock = (blockId: string, delta: -1 | 1) => {
-    if (!active) return;
-    const index = active.blocks.findIndex((block) => block.id === blockId);
-    const target = index + delta;
-    if (index < 0 || target < 0 || target >= active.blocks.length) return;
-    const blocks = active.blocks.slice();
-    [blocks[index], blocks[target]] = [blocks[target], blocks[index]];
-    updateActive((template) => ({ ...template, blocks }));
-  };
-
-  const addControl = (blockId: string) => {
-    const control: MatchReviewControl = {
-      id: uid(),
-      label: 'Nouveau bouton',
-      type: 'button',
-      color: '#D4A24C',
-      value: 1,
-      requirePlayer: false,
-      requireComment: false,
-      createClip: true,
-      preRoll: 4,
-      postRoll: 4,
-      options: ['Option 1', 'Option 2'],
-      logic: logic('player', 'clip', 'save'),
-    };
-    updateActive((template) => ({
-      ...template,
-      blocks: template.blocks.map((block) => block.id === blockId
-        ? { ...block, controls: [...block.controls, control] }
-        : block),
-    }));
-    setSelectedBlockId(blockId);
-    setSelectedControlId(control.id);
-  };
-
-  const updateControl = (blockId: string, controlId: string, patch: Partial<MatchReviewControl>) => {
-    updateActive((template) => ({
-      ...template,
-      blocks: template.blocks.map((block) => block.id === blockId ? {
-        ...block,
-        controls: block.controls.map((control) => control.id === controlId ? { ...control, ...patch } : control),
-      } : block),
-    }));
-  };
-
-  const updateControlLogic = (blockId: string, controlId: string, updater: (steps: MatchReviewFlowStep[]) => MatchReviewFlowStep[]) => {
-    const block = active?.blocks.find((item) => item.id === blockId);
-    const control = block?.controls.find((item) => item.id === controlId);
-    if (!block || !control) return;
-    updateControl(blockId, controlId, { logic: updater(control.logic || logic('player', 'clip', 'save')) });
-  };
-
-  const addControlLogicStep = (blockId: string, controlId: string) => {
-    updateControlLogic(blockId, controlId, (steps) => [...steps, { id: uid(), type: 'comment', required: false }]);
-  };
-
-  const moveControlLogicStep = (blockId: string, controlId: string, stepId: string, delta: -1 | 1) => {
-    updateControlLogic(blockId, controlId, (steps) => {
-      const index = steps.findIndex((step) => step.id === stepId);
-      const target = index + delta;
-      if (index < 0 || target < 0 || target >= steps.length) return steps;
-      const next = steps.slice();
-      [next[index], next[target]] = [next[target], next[index]];
-      return next;
-    });
-  };
-
-  const deleteControl = (blockId: string, controlId: string) => {
-    updateActive((template) => ({
-      ...template,
-      blocks: template.blocks.map((block) => block.id === blockId
-        ? { ...block, controls: block.controls.filter((control) => control.id !== controlId) }
-        : block),
-    }));
-    if (selectedControlId === controlId) setSelectedControlId(null);
-  };
-
-  const moveControl = (blockId: string, controlId: string, delta: -1 | 1) => {
-    if (!active) return;
-    const block = active.blocks.find((item) => item.id === blockId);
-    if (!block) return;
-    const index = block.controls.findIndex((control) => control.id === controlId);
-    const target = index + delta;
-    if (index < 0 || target < 0 || target >= block.controls.length) return;
-    const controls = block.controls.slice();
-    [controls[index], controls[target]] = [controls[target], controls[index]];
-    updateBlock(blockId, { controls });
-  };
-
-  const addFlowStep = () => {
-    updateActive((template) => ({
-      ...template,
-      flow: [...template.flow, { id: uid(), type: 'comment', required: false }],
-    }));
-  };
-
-  const updateFlowStep = (stepId: string, patch: Partial<MatchReviewFlowStep>) => {
-    updateActive((template) => ({
-      ...template,
-      flow: template.flow.map((step) => step.id === stepId ? { ...step, ...patch } : step),
-    }));
-  };
-
-  const moveFlowStep = (stepId: string, delta: -1 | 1) => {
-    if (!active) return;
-    const index = active.flow.findIndex((step) => step.id === stepId);
-    const target = index + delta;
-    if (index < 0 || target < 0 || target >= active.flow.length) return;
-    const flow = active.flow.slice();
-    [flow[index], flow[target]] = [flow[target], flow[index]];
-    updateActive((template) => ({ ...template, flow }));
-  };
-
-  const removeFlowStep = (stepId: string) => {
-    updateActive((template) => ({ ...template, flow: template.flow.filter((step) => step.id !== stepId) }));
-  };
-
-  const beginControl = (block: MatchReviewBlock, control: MatchReviewControl, forcedValue?: string | number) => {
-    setPending({ block, control });
-    setPendingPlayerId(runtimePlayerId);
-    setPendingComment('');
-    if (forcedValue != null) setPendingValue(forcedValue);
-    else if (control.type === 'button' || control.type === 'counter') setPendingValue(control.value ?? 1);
-    else if (control.type === 'rating') setPendingValue(3);
-    else setPendingValue('');
-  };
-
-  const saveEvent = () => {
-    if (!active || !pending) return;
-    const { block, control } = pending;
-    if (control.requirePlayer && !pendingPlayerId) return;
-    if (control.requireComment && !pendingComment.trim()) return;
-    if ((control.type === 'choice' || control.type === 'plus-minus' || control.type === 'rating') && pendingValue === '') return;
-    const player = players.find((item) => item.id === pendingPlayerId) || null;
+    if (c.requireComment && !comment.trim()) {
+      setMessage("Renseignez un commentaire.");
+      return;
+    }
+    if (draft.value === "") {
+      setMessage("Renseignez le résultat ou le texte.");
+      return;
+    }
+    const player = players.find((p) => p.id === playerId);
     const event: MatchReviewEvent = {
       id: uid(),
       templateId: active.id,
       templateName: active.name,
-      blockId: block.id,
-      blockTitle: block.title,
-      controlId: control.id,
-      controlLabel: control.label,
-      controlType: control.type,
-      value: pendingValue === '' ? null : pendingValue,
+      blockId: b.id,
+      blockTitle: b.title,
+      controlId: c.id,
+      controlLabel: c.label,
+      controlType: c.type,
+      value: draft.value,
       playerId: player?.id || null,
       playerName: player?.name || null,
-      comment: pendingComment.trim(),
-      createClip: !!control.createClip,
-      preRoll: Math.max(0, Number(control.preRoll || 0)),
-      postRoll: Math.max(0, Number(control.postRoll || 0)),
-      videoTime: getVideoTime ? getVideoTime() : null,
+      comment: comment.trim(),
+      createClip: !!c.createClip,
+      preRoll: Math.max(0, c.preRoll || 0),
+      postRoll: Math.max(0, c.postRoll || 0),
+      videoTime: draft.time,
       createdAt: new Date().toISOString(),
+      context,
+      shotPosition: point,
     };
     const next = [event, ...events];
+    try {
+      if (projectId)
+        window.localStorage.setItem(
+          `${EVENT_STORAGE_PREFIX}${projectId}`,
+          JSON.stringify(next),
+        );
+    } catch {
+      setMessage("Saisie non enregistrée : stockage indisponible.");
+      return;
+    }
     setEvents(next);
-    if (projectId) storageSet(`${EVENT_STORAGE_PREFIX}${projectId}`, JSON.stringify(next));
     onRecord?.(event);
-    setPending(null);
+    setDraft(null);
+    setPoint(null);
+    setComment("");
+    setMessage("Action personnalisée enregistrée ✓");
   };
-
-  const selectedBlock = active?.blocks.find((block) => block.id === selectedBlockId) || null;
-  const selectedControl = selectedBlock?.controls.find((control) => control.id === selectedControlId) || null;
-
-  if (!active) return null;
-
-  const runtime = (
-    <div className={styles.runtime}>
-      <div className={styles.runtimeHead}>
-        <div>
-          <strong>{active.name}</strong>
-          <span>{active.description || 'Retour de match personnalisé'}</span>
-        </div>
-        <button type="button" onClick={() => setEditorOpen(true)}>⚙ Personnaliser</button>
-      </div>
-      <div className={styles.flowPreview}>
-        {active.flow.map((step, index) => (
-          <span key={step.id}>{index > 0 && <i>→</i>}{stepLabels[step.type]}{step.required ? ' *' : ''}</span>
-        ))}
-      </div>
-      {active.layout.showPlayerPanel && players.length > 0 && (
-        <div className={styles.playerStrip}>
-          <button type="button" className={!runtimePlayerId ? styles.playerOn : ''} onClick={() => setRuntimePlayerId('')}>Équipe</button>
-          {players.map((player) => (
-            <button key={player.id} type="button" className={runtimePlayerId === player.id ? styles.playerOn : ''} onClick={() => setRuntimePlayerId(player.id)}>
-              {player.num != null ? <b>#{player.num}</b> : null}<span>{player.name}</span>
-            </button>
-          ))}
-        </div>
-      )}
-      {active.blocks.length === 0 ? (
-        <button type="button" className={styles.emptyBuilder} onClick={() => setEditorOpen(true)}>
-          ＋ Créer mon premier bloc
-          <small>Retour de match est vide : construis entièrement ta logique.</small>
-        </button>
-      ) : (
-        <div className={styles.runtimeBlocks} style={{ gridTemplateColumns: `repeat(${active.layout.columns}, minmax(0, 1fr))` }}>
-          {active.blocks.map((block) => (
-            <section key={block.id} className={styles.runtimeBlock} style={{ borderColor: normalizeHex(block.color) }}>
-              <header style={{ background: `${normalizeHex(block.color)}22` }}>
-                <div><strong>{block.title}</strong>{block.subtitle && <span>{block.subtitle}</span>}</div>
-              </header>
-              <div className={styles.runtimeControls} style={{ gridTemplateColumns: `repeat(${block.columns}, minmax(0, 1fr))` }}>
-                {block.controls.map((control) => {
-                  if (control.type === 'plus-minus') {
-                    return (
-                      <div key={control.id} className={styles.pmControl}>
-                        <span>{control.label}</span>
-                        <div><button type="button" onClick={() => beginControl(block, control, -1)}>−</button><button type="button" onClick={() => beginControl(block, control, 1)}>＋</button></div>
-                      </div>
-                    );
-                  }
-                  if (control.type === 'rating') {
-                    return (
-                      <div key={control.id} className={styles.ratingControl}>
-                        <span>{control.label}</span>
-                        <div>{[1,2,3,4,5].map((value) => <button key={value} type="button" onClick={() => beginControl(block, control, value)}>{value}</button>)}</div>
-                      </div>
-                    );
-                  }
-                  if (control.type === 'choice') {
-                    return (
-                      <div key={control.id} className={styles.choiceControl}>
-                        <span>{control.label}</span>
-                        <div>{(control.options || []).map((option) => <button key={option} type="button" onClick={() => beginControl(block, control, option)}>{option}</button>)}</div>
-                      </div>
-                    );
-                  }
-                  return (
-                    <button
-                      key={control.id}
-                      type="button"
-                      className={styles.runtimeButton}
-                      style={{ borderColor: normalizeHex(control.color, '#D4A24C'), background: `${normalizeHex(control.color, '#D4A24C')}1f` }}
-                      onClick={() => beginControl(block, control)}
-                    >
-                      <b>{control.label}</b>
-                      <small>{typeLabels[control.type]}{control.shortcut ? ` · ${control.shortcut}` : ''}</small>
-                    </button>
-                  );
-                })}
-                {block.controls.length === 0 && <button type="button" className={styles.emptyControl} onClick={() => { setSelectedBlockId(block.id); setEditorOpen(true); }}>＋ Ajouter un bouton</button>}
-              </div>
-            </section>
-          ))}
-        </div>
-      )}
-      {active.layout.showHistory && events.length > 0 && (
-        <div className={styles.history}>
-          <div className={styles.historyHead}><b>Dernières saisies</b><button type="button" onClick={() => { setEvents([]); if (projectId) storageRemove(`${EVENT_STORAGE_PREFIX}${projectId}`); }}>Vider</button></div>
-          {events.slice(0, 8).map((event) => <div key={event.id}><span>{event.blockTitle} · {event.controlLabel}</span><b>{event.value ?? ''}</b><small>{event.playerName || ''}{event.comment ? ` · ${event.comment}` : ''}</small></div>)}
-        </div>
-      )}
-    </div>
+  const startGesture = (
+    e: ReactPointerEvent<HTMLElement>,
+    b: MatchReviewBlock,
+    index: number,
+    mode: "move" | "resize",
+  ) => {
+    if (!editing || !canvas.current || e.button !== 0) return;
+    e.preventDefault();
+    e.stopPropagation();
+    setSelected(b.id);
+    setControlId(null);
+    setPast((p) => [...p.slice(-29), templates]);
+    setFuture([]);
+    gesture.current = {
+      id: b.id,
+      mode,
+      startX: e.clientX,
+      startY: e.clientY,
+      scale: 960 / canvas.current.getBoundingClientRect().width,
+      frame: frameOf(b, index),
+    };
+    e.currentTarget.setPointerCapture(e.pointerId);
+  };
+  const moveGesture = (e: ReactPointerEvent<HTMLElement>) => {
+    const g = gesture.current;
+    if (!g) return;
+    const dx = Math.round(((e.clientX - g.startX) * g.scale) / 8) * 8,
+      dy = Math.round((e.clientY - g.startY) / 8) * 8;
+    const f =
+      g.mode === "move"
+        ? {
+            ...g.frame,
+            x: bounded(g.frame.x + dx, 0, 960 - g.frame.width),
+            y: Math.max(0, g.frame.y + dy),
+          }
+        : {
+            ...g.frame,
+            width: bounded(g.frame.width + dx, 200, 960 - g.frame.x),
+            height: bounded(g.frame.height + dy, 130, 1200),
+          };
+    patchBlock(g.id, { frame: f }, false);
+  };
+  const stopGesture = () => {
+    gesture.current = null;
+  };
+  if (!ready || !active)
+    return <div className={styles.board}>Chargement de Mon mode…</div>;
+  const block = active.blocks.find((b) => b.id === selected),
+    control = block?.controls.find((c) => c.id === controlId);
+  const draftBlock = active.blocks.find((b) => b.id === draft?.blockId),
+    draftControl = draftBlock?.controls.find((c) => c.id === draft?.controlId);
+  const maxY = Math.max(
+    500,
+    ...active.blocks.map((b, i) => frameOf(b, i).y + frameOf(b, i).height + 24),
   );
-
-  return (
-    <div className={embedded ? styles.embedded : styles.modalShell}>
-      {runtime}
-
-      {pending && (
-        <div className={styles.pendingOverlay} onMouseDown={(event) => { if (event.currentTarget === event.target) setPending(null); }}>
-          <div className={styles.pendingCard}>
-            <header><div><b>{pending.block.title}</b><span>{pending.control.label}</span></div><button type="button" onClick={() => setPending(null)}>×</button></header>
-            {(pending.control.requirePlayer || active.flow.some((step) => step.type === 'player' && step.required)) && (
-              <label>Joueur
-                <select value={pendingPlayerId} onChange={(event) => setPendingPlayerId(event.target.value)}>
-                  <option value="">— Choisir —</option>
-                  {players.map((player) => <option key={player.id} value={player.id}>{player.num != null ? `#${player.num} · ` : ''}{player.name}</option>)}
-                </select>
-              </label>
-            )}
-            {pending.control.type === 'text' && <label>Texte<textarea value={String(pendingValue)} onChange={(event) => setPendingValue(event.target.value)} autoFocus /></label>}
-            {pending.control.type === 'counter' && <label>Valeur<input type="number" value={pendingValue} onChange={(event) => setPendingValue(Number(event.target.value))} /></label>}
-            {(pending.control.requireComment || active.flow.some((step) => step.type === 'comment' && step.required)) && <label>Commentaire<textarea value={pendingComment} onChange={(event) => setPendingComment(event.target.value)} /></label>}
-            {pending.control.createClip && <div className={styles.clipInfo}>🎬 Clip : {pending.control.preRoll ?? 0}s avant · {pending.control.postRoll ?? 0}s après</div>}
-            <button type="button" className={styles.saveEvent} onClick={saveEvent}>Enregistrer</button>
+  const updateFrame = (patch: Partial<ReturnType<typeof frameOf>>) => {
+    if (!block) return;
+    const f = { ...frameOf(block, active.blocks.indexOf(block)), ...patch };
+    f.width = bounded(f.width, 200, 960);
+    f.x = bounded(f.x, 0, 960 - f.width);
+    f.y = Math.max(0, f.y);
+    f.height = bounded(f.height, 130, 1200);
+    patchBlock(block.id, { frame: f });
+  };
+  const content = (
+    <div className={embedded ? styles.board : styles.overlay}>
+      <div
+        className={embedded ? "" : styles.dialog}
+        role={embedded ? undefined : "dialog"}
+        aria-label="Constructeur Mon mode"
+        aria-modal={embedded ? undefined : true}
+      >
+        <header className={styles.top}>
+          <div>
+            <b>Mon mode · Fenêtre de codification</b>
+            <small>
+              {dirty
+                ? "● Modifications non enregistrées"
+                : "Tableau libre · sans codage guidé"}
+            </small>
           </div>
-        </div>
-      )}
-
-      {editorOpen && mounted && createPortal(
-        <div className={styles.editorOverlay}>
-          <div className={`${styles.editor} ${editorTab==='logic'?styles.editorLogic:''}`}>
-            <header className={styles.editorHead}>
-              <div>
-                <b>◉ CONSTRUCTEUR · RETOUR DE MATCH</b>
-                <span>Reprends les blocs déjà connus de LiveStats, insère-les dans l’ordre que tu veux et modifie chaque bouton.</span>
-              </div>
-              <div className={styles.editorHeadActions}>
-                <span className={`${styles.saveState} ${configurationDirty ? styles.saveStateDirty : styles.saveStateSaved}`}>
-                  {configurationDirty ? '● Modifications non enregistrées' : configurationSavedAt ? '✓ Sauvegardé' : '✓ Configuration chargée'}
-                </span>
-                <button type="button" className={styles.globalSaveButton} onClick={() => saveConfiguration(false)}>
-                  💾 Sauvegarder le Retour de match
-                </button>
-                <button type="button" className={styles.editorClose} aria-label="Fermer" onClick={() => setEditorOpen(false)}>×</button>
-              </div>
-            </header>
-
-            <div className={styles.builderTabs}>
-              <button type="button" className={editorTab === 'logic' ? styles.tabOn : ''} onClick={() => setEditorTab('logic')}>◉ Logique & chemin</button>
-              <button type="button" className={editorTab === 'blocks' ? styles.tabOn : ''} onClick={() => setEditorTab('blocks')}>🧩 Boutons par bloc</button>
-              <div className={styles.templateMini}>
-                <select value={active.id} onChange={(event) => setActiveTemplateId(event.target.value)}>{templates.map((template) => <option key={template.id} value={template.id}>{template.name}</option>)}</select>
-                <button type="button" onClick={addTemplate}>＋</button>
-                <button type="button" onClick={duplicateTemplate}>⧉</button>
-              </div>
-            </div>
-
-            {editorTab === 'blocks' ? (
-              <>
-                <div className={styles.builderNotice}>
-                  <span>Chaque bloc garde la même présentation pendant le codage. Les blocs prédéfinis créent automatiquement leurs boutons et leur logique, mais tout reste modifiable.</span>
-                  <button type="button" onClick={() => setInsertIndex(active.blocks.length)}>＋ Insérer un bloc</button>
+          <select
+            aria-label="Choisir une fenêtre"
+            value={active.id}
+            onChange={(e) => {
+              if (
+                dirty &&
+                !window.confirm(
+                  "Changer de fenêtre ? Les modifications restent en mémoire jusqu’à Enregistrer.",
+                )
+              )
+                return;
+              setActiveId(e.target.value);
+              setSelected(null);
+              setControlId(null);
+              setDraft(null);
+            }}
+          >
+            {templates.map((t) => (
+              <option key={t.id} value={t.id}>
+                {t.name}
+              </option>
+            ))}
+          </select>
+          <button aria-pressed={editing} onClick={() => setEditing(!editing)}>
+            {editing ? "Utiliser" : "Modifier"}
+          </button>
+          <button className={styles.primary} onClick={save}>
+            Enregistrer
+          </button>
+          {!embedded && (
+            <button
+              aria-label="Fermer le constructeur"
+              onClick={() => {
+                if (
+                  !dirty ||
+                  window.confirm("Fermer sans enregistrer les modifications ?")
+                )
+                  onClose?.();
+              }}
+            >
+              ×
+            </button>
+          )}
+        </header>
+        {editing && (
+          <div className={styles.toolbar}>
+            <div className={styles.menuWrap}>
+              <button onClick={() => setAddMenu(!addMenu)}>＋ Bloc ▾</button>
+              {addMenu && (
+                <div className={styles.menu}>
+                  <button onClick={() => addBlock()}>Bloc personnalisé</button>
+                  <button onClick={() => addBlock("players")}>
+                    Joueurs du match
+                  </button>
+                  <button onClick={() => addBlock("shot-chart")}>
+                    Shot chart
+                  </button>
+                  <button onClick={() => addBlock("context")}>
+                    Attaque / Défense
+                  </button>
+                  {PRESET_BLOCKS.map((p) => (
+                    <button key={p.key} onClick={() => addBlock("buttons", p)}>
+                      {p.icon} {p.label}
+                    </button>
+                  ))}
                 </div>
-
-                <div className={styles.visualBuilderGrid}>
-                  <aside className={styles.presetLibrary}>
-                    <h3>BLOCS PRÉDÉFINIS</h3>
-                    <p>Clique sur un bloc pour l’ajouter {insertIndex != null ? `en position ${insertIndex + 1}` : 'à la fin'}.</p>
-                    {PRESET_BLOCKS.map((preset) => (
-                      <button key={preset.key} type="button" onClick={() => addPresetBlock(preset)}>
-                        <span>{preset.icon}</span><b>{preset.label}</b>
+              )}
+            </div>
+            <button
+              disabled={!block || (block.kind && block.kind !== "buttons")}
+              onClick={() => {
+                if (!block) return;
+                const c = freshControl();
+                patchBlock(block.id, { controls: [...block.controls, c] });
+                setControlId(c.id);
+              }}
+            >
+              ＋ Bouton
+            </button>
+            <button
+              disabled={!past.length}
+              aria-label="Annuler la modification"
+              onClick={() => {
+                setFuture((f) => [templates, ...f]);
+                setTemplates(past[past.length - 1]);
+                setPast((p) => p.slice(0, -1));
+                setDirty(true);
+              }}
+            >
+              ↶
+            </button>
+            <button
+              disabled={!future.length}
+              aria-label="Rétablir la modification"
+              onClick={() => {
+                setPast((p) => [...p, templates]);
+                setTemplates(future[0]);
+                setFuture((f) => f.slice(1));
+                setDirty(true);
+              }}
+            >
+              ↷
+            </button>
+            <button
+              onClick={() => {
+                const t = blankTemplate();
+                setTemplates((v) => [...v, t]);
+                setActiveId(t.id);
+                setSelected(null);
+                setDirty(true);
+              }}
+            >
+              Nouvelle fenêtre
+            </button>
+            <button
+              onClick={() => {
+                const copy = {
+                  ...active,
+                  id: uid(),
+                  name: active.name + " — copie",
+                  blocks: active.blocks.map((b) => ({
+                    ...b,
+                    id: uid(),
+                    controls: b.controls.map((c) => ({ ...c, id: uid() })),
+                  })),
+                };
+                setTemplates((t) => [...t, copy]);
+                setActiveId(copy.id);
+                setSelected(null);
+                setDirty(true);
+              }}
+            >
+              Dupliquer
+            </button>
+            <button
+              onClick={() => {
+                if (
+                  !window.confirm(
+                    `Supprimer la fenêtre « ${active.name} » ? Les actions existantes sont conservées.`,
+                  )
+                )
+                  return;
+                setPast((p) => [...p, templates]);
+                setFuture([]);
+                const remaining = templates.filter((t) => t.id !== active.id);
+                const next = remaining.length ? remaining : [blankTemplate()];
+                setTemplates(next);
+                setActiveId(next[0].id);
+                setSelected(null);
+                setControlId(null);
+                setDirty(true);
+              }}
+            >
+              Supprimer la fenêtre
+            </button>
+            <span>Déplacez les blocs par leur poignée ⋮⋮</span>
+          </div>
+        )}
+        <div className={styles.workspace}>
+          <div className={styles.canvas} ref={canvas} style={{ height: maxY }}>
+            {!active.blocks.length && (
+              <button
+                className={styles.empty}
+                onClick={() => {
+                  setEditing(true);
+                  setAddMenu(true);
+                }}
+              >
+                ＋ Ajouter mon premier bloc
+                <small>Joueurs, shot chart ou boutons personnalisés</small>
+              </button>
+            )}
+            {active.blocks.map((b, i) => {
+              const f = frameOf(b, i);
+              return (
+                <section
+                  key={b.id}
+                  className={`${styles.block} ${editing && selected === b.id ? styles.selected : ""}`}
+                  style={{
+                    left: `${f.x / 9.6}%`,
+                    top: f.y,
+                    width: `${f.width / 9.6}%`,
+                    height: f.height,
+                    borderColor: b.color,
+                  }}
+                >
+                  <header style={{ background: `${normalizeHex(b.color)}25` }}>
+                    <button
+                      className={styles.grip}
+                      aria-label={`Déplacer ${b.title}`}
+                      disabled={!editing}
+                      onPointerDown={(e) => startGesture(e, b, i, "move")}
+                      onPointerMove={moveGesture}
+                      onPointerUp={stopGesture}
+                      onPointerCancel={stopGesture}
+                    >
+                      ⋮⋮
+                    </button>
+                    <button
+                      className={styles.blockTitle}
+                      onClick={() => {
+                        if (editing) {
+                          setSelected(b.id);
+                          setControlId(null);
+                        }
+                      }}
+                    >
+                      {b.title}
+                    </button>
+                    {editing && (
+                      <button
+                        aria-label={`Configurer ${b.title}`}
+                        onClick={() => {
+                          setSelected(b.id);
+                          setControlId(null);
+                        }}
+                      >
+                        ⚙
+                      </button>
+                    )}
+                  </header>
+                  <div className={styles.blockBody}>
+                    {b.kind === "players" ? (
+                      <div
+                        className={styles.controls}
+                        style={{
+                          gridTemplateColumns: `repeat(${b.columns},minmax(0,1fr))`,
+                        }}
+                      >
+                        <button
+                          aria-pressed={!playerId}
+                          onClick={() => setPlayerId("")}
+                        >
+                          Équipe
+                        </button>
+                        {players.map((p) => (
+                          <button
+                            aria-pressed={playerId === p.id}
+                            key={p.id}
+                            onClick={() => setPlayerId(p.id)}
+                          >
+                            #{p.num ?? "–"} {p.name}
+                          </button>
+                        ))}
+                        {!players.length && (
+                          <small>Les joueurs du match apparaîtront ici.</small>
+                        )}
+                      </div>
+                    ) : b.kind === "context" ? (
+                      <div className={styles.controls}>
+                        <button
+                          aria-pressed={context === "attaque"}
+                          onClick={() => setContext("attaque")}
+                        >
+                          Attaque
+                        </button>
+                        <button
+                          aria-pressed={context === "defense"}
+                          onClick={() => setContext("defense")}
+                        >
+                          Défense
+                        </button>
+                      </div>
+                    ) : b.kind === "shot-chart" ? (
+                      <>
+                        <svg
+                          className={styles.court}
+                          viewBox="0 0 500 470"
+                          role="img"
+                          aria-label="Shot chart : cliquer pour choisir une position"
+                          onClick={(e) => {
+                            if (editing) {
+                              setSelected(b.id);
+                              setControlId(null);
+                              return;
+                            }
+                            const r = e.currentTarget.getBoundingClientRect();
+                            setPoint({
+                              x: bounded((e.clientX - r.left) / r.width, 0, 1),
+                              y: bounded((e.clientY - r.top) / r.height, 0, 1),
+                            });
+                          }}
+                          preserveAspectRatio="none"
+                        >
+                          <rect width="500" height="470" fill="#cfa86f" />
+                          <g fill="none" stroke="#fff9e6" strokeWidth="3">
+                            <rect x="5" y="5" width="490" height="460" />
+                            <rect x="170" y="5" width="160" height="190" />
+                            <path d="M170 195 A80 80 0 0 0 330 195 M30 5 V80 A225 225 0 0 0 470 80 V5" />
+                            <path d="M220 40H280" />
+                            <circle cx="250" cy="55" r="9" />
+                            <path d="M215 55 A35 35 0 0 0 285 55" />
+                          </g>
+                          {point && (
+                            <circle
+                              cx={point.x * 500}
+                              cy={point.y * 470}
+                              r="10"
+                              fill="#ffc857"
+                              stroke="#861b3a"
+                              strokeWidth="3"
+                            />
+                          )}
+                        </svg>
+                        {point && !editing && (
+                          <button onClick={() => setPoint(null)}>
+                            Effacer la position
+                          </button>
+                        )}
+                      </>
+                    ) : (
+                      <div
+                        className={`${styles.controls} ${styles[b.buttonSize || "normal"]}`}
+                        style={{
+                          gridTemplateColumns: `repeat(${b.columns},minmax(0,1fr))`,
+                        }}
+                      >
+                        {b.controls.map((c) => (
+                          <div key={c.id} className={styles.control}>
+                            <button
+                              style={{
+                                borderColor: c.color,
+                                background: `${normalizeHex(c.color)}22`,
+                              }}
+                              aria-pressed={
+                                editing
+                                  ? controlId === c.id
+                                  : draft?.controlId === c.id
+                              }
+                              onClick={() => begin(b, c)}
+                            >
+                              {c.label}
+                              {c.shortcut && <kbd>{c.shortcut}</kbd>}
+                            </button>
+                            {!editing && c.type === "plus-minus" && (
+                              <div className={styles.variants}>
+                                <button onClick={() => begin(b, c, -1)}>
+                                  −
+                                </button>
+                                <button onClick={() => begin(b, c, 1)}>
+                                  ＋
+                                </button>
+                              </div>
+                            )}
+                            {!editing && c.type === "rating" && (
+                              <div className={styles.variants}>
+                                {[1, 2, 3, 4, 5].map((n) => (
+                                  <button
+                                    key={n}
+                                    onClick={() => begin(b, c, n)}
+                                  >
+                                    {n}
+                                  </button>
+                                ))}
+                              </div>
+                            )}
+                            {!editing && c.type === "choice" && (
+                              <div className={styles.variants}>
+                                {c.options?.map((o) => (
+                                  <button
+                                    key={o}
+                                    onClick={() => begin(b, c, o)}
+                                  >
+                                    {o}
+                                  </button>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        ))}
+                        {!b.controls.length && (
+                          <small>
+                            Utilisez « ＋ Bouton » pour remplir ce bloc.
+                          </small>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                  {editing && (
+                    <button
+                      className={styles.resize}
+                      aria-label={`Redimensionner ${b.title}`}
+                      onPointerDown={(e) => startGesture(e, b, i, "resize")}
+                      onPointerMove={moveGesture}
+                      onPointerUp={stopGesture}
+                      onPointerCancel={stopGesture}
+                    >
+                      ◢
+                    </button>
+                  )}
+                </section>
+              );
+            })}
+          </div>
+          {editing && block && (
+            <aside className={styles.inspector}>
+              <header>
+                <b>{control ? "Propriétés du bouton" : "Propriétés du bloc"}</b>
+                <button
+                  aria-label="Fermer les propriétés"
+                  onClick={() => {
+                    setSelected(null);
+                    setControlId(null);
+                  }}
+                >
+                  ×
+                </button>
+              </header>
+              <label>
+                Nom de la fenêtre
+                <input
+                  value={active.name}
+                  onChange={(e) =>
+                    change((t) => ({ ...t, name: e.target.value }))
+                  }
+                />
+              </label>
+              <label>
+                Nom
+                <input
+                  value={control?.label ?? block.title}
+                  onChange={(e) =>
+                    control
+                      ? patchControl({ label: e.target.value })
+                      : patchBlock(block.id, { title: e.target.value })
+                  }
+                />
+              </label>
+              {control ? (
+                <>
+                  <label>
+                    Type
+                    <select
+                      value={control.type}
+                      onChange={(e) =>
+                        patchControl({
+                          type: e.target.value as MatchReviewControlType,
+                        })
+                      }
+                    >
+                      {Object.entries(typeLabels).map(([value, label]) => (
+                        <option key={value} value={value}>
+                          {label}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label>
+                    Raccourci
+                    <input
+                      maxLength={1}
+                      value={control.shortcut || ""}
+                      onChange={(e) =>
+                        patchControl({ shortcut: e.target.value })
+                      }
+                    />
+                  </label>
+                  {control.type === "choice" && (
+                    <label>
+                      Choix (un par ligne)
+                      <textarea
+                        value={control.options?.join("\n") || ""}
+                        onChange={(e) =>
+                          patchControl({ options: e.target.value.split("\n") })
+                        }
+                      />
+                    </label>
+                  )}
+                  <label>
+                    <input
+                      type="checkbox"
+                      checked={!!control.requirePlayer}
+                      onChange={(e) =>
+                        patchControl({ requirePlayer: e.target.checked })
+                      }
+                    />{" "}
+                    Joueur obligatoire
+                  </label>
+                  <label>
+                    <input
+                      type="checkbox"
+                      checked={!!control.requireComment}
+                      onChange={(e) =>
+                        patchControl({ requireComment: e.target.checked })
+                      }
+                    />{" "}
+                    Commentaire obligatoire
+                  </label>
+                  <label>
+                    <input
+                      type="checkbox"
+                      checked={!!control.createClip}
+                      onChange={(e) =>
+                        patchControl({ createClip: e.target.checked })
+                      }
+                    />{" "}
+                    Marquer un clip vidéo
+                  </label>
+                  {control.createClip && (
+                    <div className={styles.two}>
+                      <label>
+                        Avant (s)
+                        <input
+                          type="number"
+                          min="0"
+                          max="600"
+                          value={control.preRoll ?? 4}
+                          onChange={(e) =>
+                            patchControl({
+                              preRoll: bounded(Number(e.target.value), 0, 600),
+                            })
+                          }
+                        />
+                      </label>
+                      <label>
+                        Après (s)
+                        <input
+                          type="number"
+                          min="0"
+                          max="600"
+                          value={control.postRoll ?? 4}
+                          onChange={(e) =>
+                            patchControl({
+                              postRoll: bounded(Number(e.target.value), 0, 600),
+                            })
+                          }
+                        />
+                      </label>
+                    </div>
+                  )}
+                  <small>
+                    Événement personnalisé : ce bouton ne modifie pas le score
+                    officiel.
+                  </small>
+                  <button
+                    onClick={() => {
+                      const idx = block.controls.findIndex(
+                        (c) => c.id === control.id,
+                      );
+                      if (idx < 1) return;
+                      const controls = block.controls.slice();
+                      [controls[idx - 1], controls[idx]] = [
+                        controls[idx],
+                        controls[idx - 1],
+                      ];
+                      patchBlock(block.id, { controls });
+                    }}
+                  >
+                    ← Déplacer avant
+                  </button>
+                  <button
+                    onClick={() => {
+                      const idx = block.controls.findIndex(
+                        (c) => c.id === control.id,
+                      );
+                      if (idx >= block.controls.length - 1) return;
+                      const controls = block.controls.slice();
+                      [controls[idx + 1], controls[idx]] = [
+                        controls[idx],
+                        controls[idx + 1],
+                      ];
+                      patchBlock(block.id, { controls });
+                    }}
+                  >
+                    Déplacer après →
+                  </button>
+                  <button
+                    onClick={() => {
+                      if (
+                        window.confirm("Supprimer ce bouton de la fenêtre ?")
+                      ) {
+                        patchBlock(block.id, {
+                          controls: block.controls.filter(
+                            (c) => c.id !== control.id,
+                          ),
+                        });
+                        setControlId(null);
+                      }
+                    }}
+                  >
+                    Supprimer le bouton
+                  </button>
+                </>
+              ) : (
+                <>
+                  <span>Taille du bloc</span>
+                  <div className={styles.variants}>
+                    {[
+                      ["Petit", 300, 180],
+                      ["Moyen", 460, 250],
+                      ["Grand", 720, 380],
+                    ].map(([label, w, h]) => (
+                      <button
+                        key={String(label)}
+                        onClick={() =>
+                          updateFrame({ width: Number(w), height: Number(h) })
+                        }
+                      >
+                        {label}
                       </button>
                     ))}
-                    <button type="button" className={styles.blankPreset} onClick={addBlock}><span>＋</span><b>Bloc vide</b></button>
-                    {insertIndex != null && <button type="button" className={styles.cancelInsert} onClick={() => setInsertIndex(null)}>Annuler l’insertion</button>}
-                  </aside>
-
-                  <main className={styles.organisationArea}>
-                    <div className={styles.organisationHead}>
-                      <b>ORGANISATION DES BLOCS</b>
-                      <span>{active.blocks.length} bloc{active.blocks.length > 1 ? 's' : ''} au total</span>
-                    </div>
-
-                    {active.blocks.length === 0 ? (
-                      <button type="button" className={styles.emptyBuilder} onClick={() => setInsertIndex(0)}>＋ Ajouter ton premier bloc</button>
-                    ) : (
-                      <div className={styles.visualBlocks}>
-                        {active.blocks.map((block, blockIndex) => (
-                          <section key={block.id} className={`${styles.visualBlock} ${selectedBlockId === block.id ? styles.visualBlockSelected : ''}`}>
-                            <header onClick={() => { setSelectedBlockId(block.id); setSelectedControlId(null); }}>
-                              <div className={styles.blockIdentity}>
-                                <span className={styles.blockDot} style={{ background: normalizeHex(block.color) }} />
-                                <div><b>Bloc {blockIndex + 1}</b><small>{block.title}</small></div>
-                              </div>
-                              <div className={styles.blockActions}>
-                                <button type="button" onClick={(event) => { event.stopPropagation(); addControl(block.id); }}>＋ Bouton</button>
-                                <button type="button" title="Monter" disabled={blockIndex === 0} onClick={(event) => { event.stopPropagation(); moveBlock(block.id, -1); }}>←</button>
-                                <button type="button" title="Descendre" disabled={blockIndex === active.blocks.length - 1} onClick={(event) => { event.stopPropagation(); moveBlock(block.id, 1); }}>→</button>
-                                <button type="button" className={styles.iconDanger} title="Supprimer" onClick={(event) => { event.stopPropagation(); deleteBlock(block.id); }}>×</button>
-                              </div>
-                            </header>
-
-                            <div className={styles.visualControlList}>
-                              {block.controls.map((control, controlIndex) => (
-                                <div key={control.id} className={`${styles.visualControl} ${selectedControlId === control.id ? styles.visualControlSelected : ''}`} onClick={() => { setSelectedBlockId(block.id); setSelectedControlId(control.id); }}>
-                                  <span className={styles.dragHandle}>⠿</span>
-                                  <b>{control.label}</b>
-                                  <button type="button" title="Modifier" onClick={(event) => { event.stopPropagation(); setSelectedBlockId(block.id); setSelectedControlId(control.id); }}>✎</button>
-                                  <button type="button" title="Monter" disabled={controlIndex === 0} onClick={(event) => { event.stopPropagation(); moveControl(block.id, control.id, -1); }}>↑</button>
-                                  <button type="button" title="Descendre" disabled={controlIndex === block.controls.length - 1} onClick={(event) => { event.stopPropagation(); moveControl(block.id, control.id, 1); }}>↓</button>
-                                  <button type="button" className={styles.iconDanger} title="Supprimer" onClick={(event) => { event.stopPropagation(); deleteControl(block.id, control.id); }}>×</button>
-                                </div>
-                              ))}
-                              <button type="button" className={styles.addVisualControl} onClick={() => addControl(block.id)}>＋ Ajouter un bouton</button>
-                            </div>
-
-                            <button type="button" className={styles.insertHere} onClick={() => setInsertIndex(blockIndex + 1)}>＋ Insérer un bloc ici</button>
-                          </section>
-                        ))}
-                      </div>
-                    )}
-                  </main>
-
-                  <aside className={styles.visualProperties}>
-                    <h3>MODIFIER</h3>
-                    {selectedBlock && !selectedControl && (
-                      <>
-                        <b>Bloc {Math.max(1, active.blocks.findIndex((block) => block.id === selectedBlock.id) + 1)}</b>
-                        <label>Nom du bloc<input value={selectedBlock.title} onChange={(event) => updateBlock(selectedBlock.id, { title: event.target.value })} /></label>
-                        <label>Sous-titre<input value={selectedBlock.subtitle || ''} onChange={(event) => updateBlock(selectedBlock.id, { subtitle: event.target.value })} /></label>
-                        <label>Couleur<input type="color" value={normalizeHex(selectedBlock.color)} onChange={(event) => updateBlock(selectedBlock.id, { color: event.target.value })} /></label>
-                        <label>Colonnes<select value={selectedBlock.columns} onChange={(event) => updateBlock(selectedBlock.id, { columns: Number(event.target.value) as 1|2|3|4 })}><option value={1}>1</option><option value={2}>2</option><option value={3}>3</option><option value={4}>4</option></select></label>
-                      </>
-                    )}
-                    {selectedBlock && selectedControl && (
-                      <>
-                        <b>{selectedControl.label}</b>
-                        <label>Nom du bouton<input value={selectedControl.label} onChange={(event) => updateControl(selectedBlock.id, selectedControl.id, { label: event.target.value })} /></label>
-                        <label>Type<select value={selectedControl.type} onChange={(event) => updateControl(selectedBlock.id, selectedControl.id, { type: event.target.value as MatchReviewControlType })}>{Object.entries(typeLabels).map(([value,label]) => <option key={value} value={value}>{label}</option>)}</select></label>
-                        <label>Couleur<input type="color" value={normalizeHex(selectedControl.color, '#D4A24C')} onChange={(event) => updateControl(selectedBlock.id, selectedControl.id, { color: event.target.value })} /></label>
-                        <label className={styles.check}><input type="checkbox" checked={!!selectedControl.createClip} onChange={(event) => updateControl(selectedBlock.id, selectedControl.id, { createClip: event.target.checked })} /> Créer un clip</label>
-                        <div className={styles.logicMiniTitle}>LOGIQUE DU BOUTON</div>
-                        <div className={styles.logicMiniList}>
-                          {(selectedControl.logic || []).map((step, index) => (
-                            <div key={step.id}>
-                              <span>{index + 1}</span>
-                              <select value={step.type} onChange={(event) => updateControlLogic(selectedBlock.id, selectedControl.id, (steps) => steps.map((item) => item.id === step.id ? { ...item, type: event.target.value as MatchReviewFlowStepType } : item))}>{Object.entries(stepLabels).map(([value,label]) => <option key={value} value={value}>{label}</option>)}</select>
-                              <button type="button" disabled={index === 0} onClick={() => moveControlLogicStep(selectedBlock.id, selectedControl.id, step.id, -1)}>↑</button>
-                              <button type="button" disabled={index === (selectedControl.logic || []).length - 1} onClick={() => moveControlLogicStep(selectedBlock.id, selectedControl.id, step.id, 1)}>↓</button>
-                              <button type="button" onClick={() => updateControlLogic(selectedBlock.id, selectedControl.id, (steps) => steps.filter((item) => item.id !== step.id))}>×</button>
-                            </div>
-                          ))}
-                          <button type="button" onClick={() => addControlLogicStep(selectedBlock.id, selectedControl.id)}>＋ Étape</button>
-                        </div>
-                        <button type="button" className={styles.globalSaveButton} onClick={() => saveConfiguration(false)}>
-                          💾 Enregistrer ce bouton et la configuration
-                        </button>
-                      </>
-                    )}
-                    {!selectedBlock && <p>Sélectionne un bloc ou un bouton pour le modifier.</p>}
-                  </aside>
+                  </div>
+                  <div className={styles.two}>
+                    <label>
+                      Largeur
+                      <input
+                        aria-label="Largeur du bloc"
+                        type="number"
+                        min="200"
+                        max="960"
+                        value={
+                          frameOf(block, active.blocks.indexOf(block)).width
+                        }
+                        onChange={(e) =>
+                          updateFrame({ width: Number(e.target.value) })
+                        }
+                      />
+                    </label>
+                    <label>
+                      Hauteur
+                      <input
+                        aria-label="Hauteur du bloc"
+                        type="number"
+                        min="130"
+                        max="1200"
+                        value={
+                          frameOf(block, active.blocks.indexOf(block)).height
+                        }
+                        onChange={(e) =>
+                          updateFrame({ height: Number(e.target.value) })
+                        }
+                      />
+                    </label>
+                  </div>
+                  <div className={styles.two}>
+                    <label>
+                      Position X
+                      <input
+                        type="number"
+                        min="0"
+                        value={frameOf(block, active.blocks.indexOf(block)).x}
+                        onChange={(e) =>
+                          updateFrame({ x: Number(e.target.value) })
+                        }
+                      />
+                    </label>
+                    <label>
+                      Position Y
+                      <input
+                        type="number"
+                        min="0"
+                        value={frameOf(block, active.blocks.indexOf(block)).y}
+                        onChange={(e) =>
+                          updateFrame({ y: Number(e.target.value) })
+                        }
+                      />
+                    </label>
+                  </div>
+                  <label>
+                    Taille des boutons
+                    <select
+                      value={block.buttonSize || "normal"}
+                      onChange={(e) =>
+                        patchBlock(block.id, {
+                          buttonSize: e.target
+                            .value as MatchReviewBlock["buttonSize"],
+                        })
+                      }
+                    >
+                      <option value="compact">Compact</option>
+                      <option value="normal">Normal</option>
+                      <option value="large">Grand</option>
+                    </select>
+                  </label>
+                  <label>
+                    Colonnes
+                    <select
+                      value={block.columns}
+                      onChange={(e) =>
+                        patchBlock(block.id, {
+                          columns: Number(
+                            e.target.value,
+                          ) as MatchReviewBlock["columns"],
+                        })
+                      }
+                    >
+                      {[1, 2, 3, 4].map((n) => (
+                        <option key={n}>{n}</option>
+                      ))}
+                    </select>
+                  </label>
+                  <button
+                    onClick={() => {
+                      if (window.confirm("Supprimer ce bloc de la fenêtre ?")) {
+                        change((t) => ({
+                          ...t,
+                          blocks: t.blocks.filter((b) => b.id !== block.id),
+                        }));
+                        setSelected(null);
+                      }
+                    }}
+                  >
+                    Supprimer le bloc
+                  </button>
+                </>
+              )}
+              <label>
+                Couleur
+                <input
+                  type="color"
+                  value={normalizeHex(control?.color || block.color)}
+                  onChange={(e) =>
+                    control
+                      ? patchControl({ color: e.target.value })
+                      : patchBlock(block.id, { color: e.target.value })
+                  }
+                />
+              </label>
+            </aside>
+          )}
+        </div>
+        {!editing && (
+          <div className={styles.composer}>
+            <b>
+              {draftControl
+                ? `${draftBlock?.title} · ${draftControl.label}`
+                : "Sélectionnez un bouton pour préparer une action"}
+            </b>
+            <div className={styles.two}>
+              <label>
+                Joueur
+                <select
+                  value={playerId}
+                  onChange={(e) => setPlayerId(e.target.value)}
+                >
+                  <option value="">Équipe / sans joueur</option>
+                  {players.map((p) => (
+                    <option key={p.id} value={p.id}>
+                      #{p.num ?? "–"} {p.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              {draft && (
+                <label>
+                  Valeur
+                  <input
+                    type={
+                      draftControl?.type === "text" ||
+                      draftControl?.type === "choice"
+                        ? "text"
+                        : "number"
+                    }
+                    value={draft.value}
+                    onChange={(e) =>
+                      setDraft({ ...draft, value: e.target.value })
+                    }
+                  />
+                </label>
+              )}
+            </div>
+            {draft && (
+              <>
+                <label>
+                  Commentaire
+                  <input
+                    value={comment}
+                    onChange={(e) => setComment(e.target.value)}
+                  />
+                </label>
+                <small>
+                  {context || "Sans contexte"} ·{" "}
+                  {point
+                    ? "Position de tir renseignée"
+                    : "Sans position de tir"}{" "}
+                  ·{" "}
+                  {draft.time == null
+                    ? "Sans timecode vidéo"
+                    : `${draft.time.toFixed(1)} s`}
+                </small>
+                <div className={styles.variants}>
+                  <button
+                    onClick={() => {
+                      setDraft(null);
+                      setPoint(null);
+                      setComment("");
+                    }}
+                  >
+                    Annuler la saisie
+                  </button>
+                  <button className={styles.primary} onClick={record}>
+                    Enregistrer l’action
+                  </button>
                 </div>
               </>
-            ) : (
-              <div className={styles.logicScreen}>
-                <div className={styles.logicScreenHead}>
-                  <div><b>LOGIQUE GÉNÉRÉE</b><span>Chaque bloc prédéfini a déjà sa logique. Tu peux ensuite la modifier bouton par bouton dans « Boutons par bloc ».</span></div>
-                  <button type="button" onClick={() => setEditorTab('blocks')}>Modifier les blocs</button>
-                </div>
-                <div className={styles.logicBlocks}>
-                  {active.blocks.map((block, blockIndex) => (
-                    <section key={block.id}>
-                      <header><b>Bloc {blockIndex + 1}</b><span>{block.title}</span></header>
-                      {block.controls.map((control) => (
-                        <div key={control.id} className={styles.logicButtonRow}>
-                          <strong>{control.label}</strong>
-                          <div>{(control.logic || logic('player', 'clip', 'save')).map((step, index) => <span key={step.id}>{index > 0 && <i>→</i>}{stepLabels[step.type]}</span>)}</div>
-                          <button type="button" onClick={() => { setSelectedBlockId(block.id); setSelectedControlId(control.id); setEditorTab('blocks'); }}>Modifier</button>
-                        </div>
-                      ))}
-                    </section>
+            )}
+          </div>
+        )}
+        <p role="status" className={styles.status}>
+          {message ||
+            (editing
+              ? "Position et taille libres · Enregistrer pour conserver votre fenêtre."
+              : "Les saisies restent liées au projet courant.")}
+        </p>
+        {!!events.length && (
+          <div className={styles.history}>
+            <div className={styles.variants}>
+              <button
+                aria-pressed={tab === "history"}
+                onClick={() => setTab("history")}
+              >
+                Historique · {events.length}
+              </button>
+              <button
+                aria-pressed={tab === "timeline"}
+                onClick={() => setTab("timeline")}
+              >
+                Timeline des saisies
+              </button>
+            </div>
+            {tab === "timeline" && (
+              <div className={styles.timeline}>
+                {events
+                  .slice()
+                  .reverse()
+                  .map((event) => (
+                    <button
+                      key={event.id}
+                      disabled={event.videoTime == null || !onSeek}
+                      title={`${event.controlLabel} · ${event.videoTime?.toFixed(1) ?? "–"} s`}
+                      onClick={() =>
+                        onSeek?.(
+                          Math.max(0, (event.videoTime || 0) - event.preRoll),
+                        )
+                      }
+                    >
+                      {event.controlLabel}
+                    </button>
                   ))}
-                  {active.blocks.length === 0 && <div className={styles.emptyLogic}>Ajoute un bloc prédéfini : sa logique apparaîtra automatiquement ici.</div>}
-                </div>
               </div>
             )}
-
-            <footer className={styles.editorFoot}>
-              <div className={styles.modelQuickEdit}>
-                <input value={active.name} onChange={(event) => updateActive((template) => ({ ...template, name: event.target.value }))} aria-label="Nom de la configuration" />
-                <button type="button" className={styles.danger} onClick={deleteTemplate}>Supprimer le modèle</button>
-              </div>
-              <div className={styles.footerSaveArea}>
-                <span className={`${styles.saveState} ${configurationDirty ? styles.saveStateDirty : styles.saveStateSaved}`}>
-                  {configurationDirty ? '● Modifications non enregistrées' : '✓ Sauvegardé'}
+            {events.slice(0, 20).map((event) => (
+              <button
+                className={styles.event}
+                key={event.id}
+                disabled={event.videoTime == null || !onSeek}
+                onClick={() =>
+                  onSeek?.(Math.max(0, (event.videoTime || 0) - event.preRoll))
+                }
+              >
+                <span>
+                  {event.videoTime == null
+                    ? "—"
+                    : `${event.videoTime.toFixed(1)} s`}
                 </span>
-                <button type="button" onClick={() => saveConfiguration(true)}>💾 Sauvegarder le Retour de match</button>
-              </div>
-            </footer>
+                <b>{event.controlLabel}</b>
+                <span>{event.playerName || "Équipe"}</span>
+                <span>{event.value}</span>
+              </button>
+            ))}
           </div>
-        </div>
-      , document.body)}
-
-      {!embedded && !editorOpen && <button type="button" className={styles.closeStandalone} onClick={onClose}>Fermer</button>}
+        )}
+      </div>
     </div>
   );
+  return embedded ? content : createPortal(content, document.body);
 }

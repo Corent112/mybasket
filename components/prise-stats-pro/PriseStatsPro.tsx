@@ -4966,17 +4966,13 @@ export default function PriseStatsProPage() {
                     </div>
 
                     <div className="matchReviewConstructorGrid">
-                      <div><strong>01</strong><b>Blocs</b><span>Crée autant de blocs que tu veux, nomme-les, colore-les et choisis leur ordre.</span></div>
+                      <div><strong>01</strong><b>Blocs</b><span>Place et redimensionne tes blocs : joueurs, shot chart ou blocs personnels.</span></div>
                       <div><strong>02</strong><b>Boutons</b><span>Bouton simple, + / −, compteur, note, choix multiple ou texte.</span></div>
-                      <div><strong>03</strong><b>Ordre</b><span>Réorganise librement les blocs, les boutons et les étapes de saisie.</span></div>
-                      <div><strong>04</strong><b>Logique</b><span>Choisis ce qui est obligatoire, le joueur, le commentaire, le clip et l'enregistrement.</span></div>
+                      <div><strong>03</strong><b>Ordre</b><span>Déplace les blocs sur le tableau et choisis leur taille et leurs colonnes.</span></div>
+                      <div><strong>04</strong><b>Logique</b><span>Définis le contenu des boutons, leurs raccourcis et leurs bornes vidéo.</span></div>
                     </div>
 
-                    <div className="matchReviewConstructorFlow">
-                      <span>Exemple libre</span>
-                      <b>Joueur</b><i>→</i><b>Bloc</b><i>→</i><b>Action</b><i>→</i><b>+ / −</b><i>→</i><b>Clip</b><i>→</i><b>Enregistrer</b>
-                    </div>
-                    <p className="matchReviewConstructorNote">Rien n'est imposé : cet ordre est seulement un exemple. Chaque modèle peut avoir sa propre structure et son propre parcours.</p>
+                    <p className="matchReviewConstructorNote">Tableau libre sans codage guidé. Sélectionne tes boutons, le joueur et la position de tir, puis enregistre l’action.</p>
                   </div>
                 ) : (
                 <div className="codingLogicSetup">
@@ -5724,6 +5720,7 @@ export default function PriseStatsProPage() {
                   projectId={String(liveMatchId || `draft_${teamId}_${date}`)}
                   players={roster.map((player) => ({ id: player.id, name: player.name, num: player.num }))}
                   getVideoTime={getCurrentVideoTime}
+                  onSeek={seekVideo}
                   onLayoutChange={setMatchReviewLayout}
                   onRecord={(event: MatchReviewEvent) => {
                     const who = event.playerName ? ` · ${event.playerName}` : '';
