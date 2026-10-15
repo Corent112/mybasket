@@ -1,3 +1,4 @@
+import { readHighlightIdentity, highlightLabel, highlightBaseKey } from "./livestat-labels";
 import { createClient } from "@/lib/supabase/client";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
@@ -135,8 +136,8 @@ export function makeTagResolver(dbTags: LivestatTag[]): TagResolver {
     byCategory: (category) =>
       list.filter((t) => t.category === category && t.is_active !== false),
     byKey: get,
-    label: (key) => get(key)?.label ?? (key ? String(key) : ""),
-    emoji: (key) => get(key)?.emoji ?? "",
+    label: (key) => readHighlightIdentity(key)?.label ?? get(key)?.label ?? highlightLabel(key),
+    emoji: (key) => get(key)?.emoji ?? get(key?highlightBaseKey(key):key)?.emoji ?? "",
     color: (key) => get(key)?.color ?? DEFAULT_COLOR,
     category: (key) => get(key)?.category,
     shortcut: (key) => get(key)?.shortcut_key ?? null,

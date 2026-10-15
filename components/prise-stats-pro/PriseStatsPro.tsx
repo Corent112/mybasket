@@ -45,6 +45,8 @@ import {
   linkGoogleDriveFileToMatch,
 } from "@/lib/google-drive/client";
 import VideoSyncModal from "@/components/prise-stats-pro/VideoSyncModal";
+import { readCodingProfiles, writeCodingProfiles, normalizeCodingProfileHighlights } from "@/lib/live-coding-profile-store";
+import { highlightLabel, highlightBaseKey } from "@/lib/livestat-labels";
 import LiveCodingSettingsModal, { DEFAULT_WORKFLOW_PREFS, type LiveWorkflowPrefs, type LiveCodingProfile, type CodingButtonGroup } from "@/components/prise-stats-pro/LiveCodingSettingsModal";
 import LivePlayerAssociationModal, { type AssociableLiveAction } from "@/components/prise-stats-pro/LivePlayerAssociationModal";
 import MatchReviewBuilder, { type MatchReviewEvent, type MatchReviewLayout } from "@/components/prise-stats-pro/MatchReviewBuilder";
@@ -754,7 +756,8 @@ function computeAnalytics(actions: StatA[], roster: Player[]) {
     defSeq.push(list.reduce((sum, a) => sum + themPtsOf(a), 0) === 0);
   });
   let maxStreak = 0, cur = 0; defSeq.forEach((stop) => { if (stop) { cur++; maxStreak = Math.max(maxStreak, cur); } else cur = 0; });
-  const tfUsed = TEMPS.filter((t) => actions.some((a) => a.tempsFort === t.id));
+  const highlightKeys=Array.from(new Set(actions.map(a=>a.tempsFort).filter(Boolean)));
+  const tfUsed=highlightKeys.map(id=>TEMPS.find(t=>t.id===id)??{id,label:highlightLabel(id),icon:'⚡'});
   const tfMatrix: Record<string, Record<string, number>> = {};
   actions.forEach((a) => { if (a.playerId && a.tempsFort) { tfMatrix[a.playerId] = tfMatrix[a.playerId] || {}; tfMatrix[a.playerId][a.tempsFort] = (tfMatrix[a.playerId][a.tempsFort] || 0) + ptsOf(a); } });
   const lu: Record<string, any> = {};
@@ -1001,6 +1004,8 @@ export default function PriseStatsProPage() {
       window.removeEventListener('offline', syncOnlineState);
     };
   }, []);
+  const [codingProfileOwner,setCodingProfileOwner]=useState('');
+  useEffect(()=>{let alive=true;void createClient().auth.getUser().then(({data}: {data:{user:{id:string}|null}})=>{if(alive)setCodingProfileOwner(data.user?.id||'');});return()=>{alive=false;};},[]);
   const [codingProfiles, setCodingProfiles] = useState<LiveCodingProfile[]>([]);
   const [selectedCodingProfileId, setSelectedCodingProfileId] = useState('');
   const [profileConfig,setProfileConfig] = useState<LiveCodingProfile | null>(null);
@@ -1014,33 +1019,27 @@ export default function PriseStatsProPage() {
   const [reportPlayerAnalysis, setReportPlayerAnalysis] = useState('');
 
 
-  const codingProfilesStorageKey = (tId: string) => `mybasket:livestat-coding-profiles:${tId || 'default'}`;
-  const loadCodingProfiles = (tId: string) => {
-    if (typeof window === 'undefined') return [] as LiveCodingProfile[];
-    try {
-      const raw = window.localStorage.getItem(codingProfilesStorageKey(tId));
-      const parsed = raw ? JSON.parse(raw) : [];
-      return Array.isArray(parsed) ? parsed : [];
-    } catch { return [] as LiveCodingProfile[]; }
+  const loadCodingProfiles = (tId:string) => {
+    if(typeof window==='undefined')return [] as LiveCodingProfile[];
+    return readCodingProfiles(window.localStorage,codingProfileOwner,tId);
   };
-  const persistCodingProfiles = (tId: string, list: LiveCodingProfile[]) => {
-    if (typeof window !== 'undefined') {
-      window.localStorage.setItem(codingProfilesStorageKey(tId), JSON.stringify(list));
-    }
+  const persistCodingProfiles = (tId:string,list:LiveCodingProfile[]) => {
+    writeCodingProfiles(window.localStorage,codingProfileOwner,tId,list);
     setCodingProfiles(list);
   };
   const applyCodingProfile = (profile: LiveCodingProfile) => {
     setSelectedCodingProfileId(profile.id);
-    setProfileConfig({...profile,teamId:activeTeamId||teamId});
+    const normalized=normalizeCodingProfileHighlights(profile);
+    setProfileConfig({...normalized,teamId:activeTeamId||teamId});
     setDefaultCodingWindow(false);
     setWorkflowPrefs({ ...profile.workflow });
-    setProfileButtonKeys(profile.activeButtonKeys || null);
+    setProfileButtonKeys(normalized.activeButtonKeys || null);
   };
   const resetCodingWindow = () => { setSelectedCodingProfileId('');setProfileConfig(null);setProfileButtonKeys(null);setDefaultCodingWindow(true);setWorkflowPrefs({...DEFAULT_WORKFLOW_PREFS}); };
   const selectCodingWindow = (id:string) => { if(!id){resetCodingWindow();return;}const p=codingProfiles.find(p=>p.id===id);if(p)applyCodingProfile(p); };
-  const saveCodingProfile = (profile: LiveCodingProfile) => {
+  const saveCodingProfile = (profile: LiveCodingProfile, removedIds: string[] = []) => {
     const tId = activeTeamId || teamId;
-    const list = loadCodingProfiles(tId);
+    const list = loadCodingProfiles(tId).filter(p=>!removedIds.includes(p.id));
     const next = list.some((p) => p.id === profile.id)
       ? list.map((p) => p.id === profile.id ? profile : p)
       : [...list, profile];
@@ -1058,9 +1057,9 @@ export default function PriseStatsProPage() {
   useEffect(() => {
     const tId = activeTeamId || teamId;
     if (!tId) { setCodingProfiles([]); return; }
-    setCodingProfiles(loadCodingProfiles(tId));
+    try {setCodingProfiles(loadCodingProfiles(tId));}catch{setCodingProfiles([]);setToast('Lecture des fenêtres impossible. Les données locales ont été conservées.');}
     if(profileConfig?.teamId!==tId){setProfileConfig(null);setProfileButtonKeys(null);setSelectedCodingProfileId('');setDefaultCodingWindow(false);}
-  }, [activeTeamId, teamId]);
+  }, [activeTeamId, teamId, codingProfileOwner]);
 
   /* -------- V5 · choix vidéo à la création du match (structure + UI) --------
      Aucun upload serveur / ffmpeg ici : on ne prépare que la donnée et l'UI. */
@@ -1977,9 +1976,9 @@ export default function PriseStatsProPage() {
         setWorkflowPrefs({ ...DEFAULT_WORKFLOW_PREFS, ...s.workflowPrefs });
       }
       setSelectedCodingProfileId(String(s.selectedCodingProfileId || ''));
-      setProfileConfig(s.codingWindow && typeof s.codingWindow==='object'?{...s.codingWindow,teamId:s.teamId||activeTeamId||teamId}:null);
+      setProfileConfig(s.codingWindow && typeof s.codingWindow==='object'?{...normalizeCodingProfileHighlights(s.codingWindow),teamId:s.teamId||activeTeamId||teamId}:null);
       setDefaultCodingWindow(!!s.defaultCodingWindow);
-      setProfileButtonKeys(s.profileButtonKeys && typeof s.profileButtonKeys === 'object' ? s.profileButtonKeys : null);
+      setProfileButtonKeys(s.codingWindow ? normalizeCodingProfileHighlights(s.codingWindow).activeButtonKeys : s.profileButtonKeys && typeof s.profileButtonKeys === 'object' ? s.profileButtonKeys : null);
       if (s.workspaceLayout && typeof s.workspaceLayout === 'object') {
         if (Number.isFinite(Number(s.workspaceLayout.videoPanePct))) setVideoPanePct(Math.max(25, Math.min(72, Number(s.workspaceLayout.videoPanePct))));
         if (Number.isFinite(Number(s.workspaceLayout.rightPanePx))) setRightPanePx(Math.max(210, Math.min(520, Number(s.workspaceLayout.rightPanePx))));
@@ -3797,7 +3796,7 @@ export default function PriseStatsProPage() {
     // En défense, le temps fort débouche directement sur le résultat.
     if (d.context === 'defense') return 'result';
     if (codingMode === 'live') return 'result';
-    if (d.tempsFort === 'pick_side' || d.tempsFort === 'pick_top') return 'pick-details';
+    if (highlightBaseKey(d.tempsFort) === 'pick_side' || highlightBaseKey(d.tempsFort) === 'pick_top') return 'pick-details';
     return workflowOn('player') ? 'player' : 'action';
   };
 
@@ -3874,7 +3873,7 @@ export default function PriseStatsProPage() {
     const shared = sharedLiveRef.current;
     if (shared?.currentPossessionId) {
       void savePickEvent(shared, shared.currentPossessionId, {
-        pickType: d.tempsFort,
+        pickType: highlightBaseKey(d.tempsFort),
         handlerId: d.pickHandlerId ?? null,
         rollerId: d.pickRollerId ?? null,
         coverage: d.coverage || null,
@@ -4744,6 +4743,10 @@ export default function PriseStatsProPage() {
       const qs=Object.keys(perQ).map(Number).sort((a,b)=>a-b).slice(0,4);qs.forEach((k,i)=>{const x=4+i*73.25,v=perQ[k],d=v.us-v.them;card(x,23,69,10);txt(periodLabel(k),x+7,29,5.5,true,ink);txt(`${v.us} - ${v.them}`,x+34.5,29,8,true,ink,'center');txt(`${d>=0?'+':''}${d}`,x+63,29,6,true,d>=0?green:red,'right');});
       const metrics:any[]=[['2 PTS',`${pct(totals.p2m,totals.p2a)}%`,`${totals.p2m}/${totals.p2a}`],['3 PTS',`${pct(totals.p3m,totals.p3a)}%`,`${totals.p3m}/${totals.p3a}`],['LF',`${pct(totals.ftm,totals.fta)}%`,`${totals.ftm}/${totals.fta}`],['REBONDS',totals.reb,''],['REB. OFF',box.reduce((s:any,l:any)=>s+(l.offReb||0),0),''],['PASSES DÉCISIVES',totals.ast,''],['PERTES DE BALLE',totals.to,''],['POSSESSIONS',analytics.offPoss,'']];
       card(4,36,289,17);metrics.forEach((m,i)=>{const x=4+i*36.125;if(i){pdf.setDrawColor(225,228,232);pdf.line(x,39,x,50);}txt(m[0],x+18.05,42.2,5.8,true,navy,'center');txt(m[1],x+18.05,47.6,10.8,true,ink,'center');if(m[2])txt(m[2],x+18.05,51,5.3,true,muted,'center');});
+      const reportHighlightCounts=new Map<string,number>();
+      actions.forEach(action=>{if(action.tempsFort)reportHighlightCounts.set(action.tempsFort,(reportHighlightCounts.get(action.tempsFort)||0)+1);});
+      const reportTopHighlight=[...reportHighlightCounts].sort((a,b)=>b[1]-a[1])[0];
+      if(reportTopHighlight)txt(`TEMPS FORT LE PLUS JOUÉ : ${tags.label(reportTopHighlight[0])} · ${reportTopHighlight[1]} actions`,6,55.6,4.5,true,burg);
       // Lineups + tops.
       const lus=(analytics.lineups as any[]).map((l:any)=>({...l,diff:(l.us||0)-(l.them||0)})), mostUsed=[...lus].sort((a,b)=>(b.n||0)-(a.n||0))[0], mostProfitable=[...lus].sort((a,b)=>b.diff-a.diff)[0];
       const lineupCard=(l:any,x:number,label:string,accent:[number,number,number])=>{card(x,57,108,35);barTitle(label,x,57,45,accent);if(!l){txt('Aucune donnée',x+4,76,6,false,muted);return;}(l.ids||[]).slice(0,5).forEach((id:string,i:number)=>avatar(id,x+12+i*14,72,5));txt(`${l.diff>=0?'+':''}${l.diff}`,x+101,72,13,true,l.diff>=0?green:red,'right');txt('+/-',x+101,77,4.5,true,muted,'right');const ns=(l.ids||[]).slice(0,5).map((id:string)=>playerById(id)?.name||'Joueur');ns.forEach((n:string,i:number)=>txt(n.split(' ').slice(-1)[0].slice(0,9),x+12+i*14,83,3.7,true,muted,'center'));txt(`${l.us||0} pts marqués`,x+76,88,4.3,true,green);txt(`${l.them||0} pts encaissés`,x+104,88,4.3,true,red,'right');};
@@ -4983,6 +4986,7 @@ export default function PriseStatsProPage() {
                   </div>
                   <div className="codingLogicSetupRow">
                     <select
+                      aria-label="Fenêtre de codification"
                       value={selectedCodingProfileId}
                       onChange={e=>selectCodingWindow(e.target.value)}
                     >
@@ -7174,7 +7178,7 @@ export default function PriseStatsProPage() {
         );
         const readyForActor = !!draft.pickHandlerId && !!draft.pickRollerId;
         return <>
-          {head(draft.tempsFort === 'pick_side' ? 'Pick Side' : 'Pick Top', 'Handler · Roller · Défense facultative · Qui réalise l’action')}
+          {head(tags.label(draft.tempsFort), 'Handler · Roller · Défense facultative · Qui réalise l’action')}
           <div className="pickLinkedBlock">
             <div className="pickLinkedRow"><div className="pickLinkedLabel"><b>Ball Handler</b><span>Utilise l’écran</span></div>{miniPlayers(draft.pickHandlerId, pickHandlerPick, draft.pickRollerId)}</div>
             <div className="pickLinkedRow"><div className="pickLinkedLabel"><b>Roller</b><span>Pose l’écran</span></div>{miniPlayers(draft.pickRollerId, pickRollerPick, draft.pickHandlerId)}</div>
@@ -7399,7 +7403,7 @@ export default function PriseStatsProPage() {
                 : (isDefense ? 'Choisis le résultat défensif' : 'Choisis directement le résultat du tir')
             )}
 
-            {(draft.tempsFort === 'pick_side' || draft.tempsFort === 'pick_top') && (
+            {(highlightBaseKey(draft.tempsFort) === 'pick_side' || highlightBaseKey(draft.tempsFort) === 'pick_top') && (
               <>
                 <div className="sublbl resultSectionLabel">RÉSULTAT DE L’ACTION</div>
                 <div className="pickResultActions">
@@ -7461,7 +7465,7 @@ export default function PriseStatsProPage() {
             </div>
 
             {!isPostLikeCodingMode(codingMode) ? (
-              (draft.tempsFort === 'pick_side' || draft.tempsFort === 'pick_top') ? null : (
+              (highlightBaseKey(draft.tempsFort) === 'pick_side' || highlightBaseKey(draft.tempsFort) === 'pick_top') ? null : (
               <>
                 {codingMode === 'live-individual' ? (
                   <>
@@ -7522,7 +7526,7 @@ export default function PriseStatsProPage() {
                 </div>
                 {draft.shotType === 'LF' && draft.ftAttempts > 0 && ftSeq()}
 
-                {draft.context === 'defense' && draft.tempsFort !== 'pick_side' && draft.tempsFort !== 'pick_top' && (
+                {draft.context === 'defense' && highlightBaseKey(draft.tempsFort) !== 'pick_side' && highlightBaseKey(draft.tempsFort) !== 'pick_top' && (
                   <>
                     <div className="sublbl resultSectionLabel">Autres résultats défense</div>
                     <div className="resultAllActionsGrid">

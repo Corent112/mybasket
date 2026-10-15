@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { highlightLabel, readHighlightIdentity } from "@/lib/livestat-labels";
 import { createClient } from "@/lib/supabase/client";
 
 type Mode = "total" | "average";
@@ -120,6 +121,7 @@ function isLoss(match: MatchRow) {
 }
 
 function normalizeHighlightKey(action: ActionRow) {
+  if(readHighlightIdentity(action.temps_fort))return String(action.temps_fort);
   const inbound = String(action.inbound || "").toLowerCase();
   const tempsFort = String(action.temps_fort || "").toLowerCase();
 
@@ -131,11 +133,11 @@ function normalizeHighlightKey(action: ActionRow) {
   if (tempsFort === "pnp_top" || tempsFort === "pick_top" || tempsFort === "pick-top") return "pick-top";
   if (tempsFort === "pnp_side" || tempsFort === "pick_side" || tempsFort === "pick-side") return "pick-side";
   if (tempsFort === "handoff" || tempsFort === "hand_off" || tempsFort === "hand-off") return "hand-off";
-  if (tempsFort === "isolation" || tempsFort === "iso" || tempsFort === "1v1") return "1v1";
+  if (tempsFort === "one_vs_one" || tempsFort === "isolation" || tempsFort === "iso" || tempsFort === "1v1") return "1v1";
   if (tempsFort === "drive_kick" || tempsFort === "drive-kick") return "drive-kick";
   if (tempsFort === "stagger") return "stagger";
   if (tempsFort === "jeu_sans_ballon" || tempsFort === "sans_ballon") return "jeu-sans-ballon";
-  if (tempsFort === "rebond_off" || tempsFort === "off_rebound" || tempsFort === "off-rebound") return "off-rebound";
+  if (tempsFort === "rebond_offensif" || tempsFort === "rebond_off" || tempsFort === "off_rebound" || tempsFort === "off-rebound") return "off-rebound";
   if (tempsFort === "blob") return "blob";
   if (tempsFort === "slob") return "slob";
 
@@ -231,14 +233,11 @@ function buildHighlightStats(actions: ActionRow[]) {
 
   actions.forEach((action) => {
     const key = normalizeHighlightKey(action);
-    const item =
-      HIGHLIGHTS.find((highlight) => highlight.key === key) ||
-      HIGHLIGHTS.find((highlight) => highlight.key === "jeu-place")!;
-
-    addAction(byHighlight[item.key], action);
+    if(!byHighlight[key])byHighlight[key]=emptyHighlight({key,label:highlightLabel(key)});
+    addAction(byHighlight[key], action);
   });
 
-  return HIGHLIGHTS.map((item) => byHighlight[item.key]);
+  return Object.values(byHighlight);
 }
 
 function aggregateTotal(rows: HighlightStats[]) {
@@ -491,7 +490,8 @@ export default function StatsTempsFortsModule() {
     const winTotal = aggregateTotal(winRows);
     const lossTotal = aggregateTotal(lossRows);
 
-    return HIGHLIGHTS.map((item) => {
+    const comparisonHighlights=Array.from(new Map([...winRows,...lossRows].map(row=>[row.key,{key:row.key,label:row.label}])).values());
+    return comparisonHighlights.map((item) => {
       const win = winRows.find((row) => row.key === item.key) || emptyHighlight(item);
       const loss = lossRows.find((row) => row.key === item.key) || emptyHighlight(item);
 
