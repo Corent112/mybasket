@@ -874,7 +874,7 @@ export default function MatchReviewBuilder({
         aria-label="Constructeur Mon mode"
         aria-modal={embedded ? undefined : true}
       >
-        <header className={styles.top}>
+        <div className={styles.top}>
           <div>
             <b>Mon mode · Fenêtre de codification</b>
             <small>
@@ -926,7 +926,7 @@ export default function MatchReviewBuilder({
               ×
             </button>
           )}
-        </header>
+        </div>
         {editing && (
           <div className={styles.toolbar}>
             <div className={styles.menuWrap}>
@@ -1069,7 +1069,10 @@ export default function MatchReviewBuilder({
                     borderColor: b.color,
                   }}
                 >
-                  <header style={{ background: `${normalizeHex(b.color)}25` }}>
+                  <div
+                    className={styles.blockHead}
+                    style={{ background: `${normalizeHex(b.color)}25` }}
+                  >
                     <button
                       className={styles.grip}
                       aria-label={`Déplacer ${b.title}`}
@@ -1103,7 +1106,7 @@ export default function MatchReviewBuilder({
                         ⚙
                       </button>
                     )}
-                  </header>
+                  </div>
                   <div className={styles.blockBody}>
                     {b.kind === "players" ? (
                       <div
@@ -1279,7 +1282,7 @@ export default function MatchReviewBuilder({
           </div>
           {editing && block && (
             <aside className={styles.inspector}>
-              <header>
+              <div className={styles.inspectorHead}>
                 <b>{control ? "Propriétés du bouton" : "Propriétés du bloc"}</b>
                 <button
                   aria-label="Fermer les propriétés"
@@ -1290,7 +1293,7 @@ export default function MatchReviewBuilder({
                 >
                   ×
                 </button>
-              </header>
+              </div>
               <label>
                 Nom de la fenêtre
                 <input

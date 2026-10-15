@@ -150,7 +150,7 @@
   outline: 2px solid #dfad4e;
   outline-offset: 1px;
 }
-.block > header {
+.blockHead {
   display: flex;
   align-items: center;
   gap: 4px;
@@ -158,7 +158,7 @@
   border-bottom: 1px solid #303b50;
   height: 42px;
 }
-.block > header button {
+.blockHead button {
   background: transparent;
   border: none;
   padding: 4px;
@@ -240,7 +240,7 @@
   display: grid;
   gap: 12px;
 }
-.inspector header {
+.inspectorHead {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -355,7 +355,7 @@
     max-height: none;
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
-  .inspector header {
+  .inspectorHead {
     grid-column: 1/-1;
   }
   .toolbar > span {
