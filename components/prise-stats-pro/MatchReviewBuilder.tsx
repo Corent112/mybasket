@@ -8,6 +8,7 @@ import {
 } from "react";
 import styles from "./FreeCodingBoard.module.css";
 import { createPortal } from "react-dom";
+import ShotChart from "./ShotChart";
 
 export type MatchReviewControlType =
   "button" | "plus-minus" | "counter" | "rating" | "choice" | "text";
@@ -98,6 +99,8 @@ export type MatchReviewEvent = {
   createdAt: string;
   context?: "attaque" | "defense" | null;
   shotPosition?: { x: number; y: number } | null;
+  shotZoneId?: string | null;
+  shotType?: "2PTS" | "3PTS" | null;
 };
 
 type PlayerOption = { id: string; name: string; num?: number | string | null };
@@ -110,6 +113,7 @@ type Props = {
   embedded?: boolean;
   initialEditorOpen?: boolean;
   onClose?: () => void;
+  onSaved?: (templateId: string) => void;
   onRecord?: (event: MatchReviewEvent) => void;
   onLayoutChange?: (layout: MatchReviewLayout) => void;
 };
@@ -478,6 +482,77 @@ const safeParseTemplates = (): MatchReviewTemplate[] => {
   }
 };
 
+/** Saved free windows are deliberately separate from guided coding profiles. */
+export function MatchReviewWindowPicker() {
+  const [windows, setWindows] = useState<MatchReviewTemplate[]>([]);
+  const [selectedId, setSelectedId] = useState("");
+  const [error, setError] = useState("");
+  useEffect(() => {
+    const reload = () => {
+      const saved = safeParseTemplates();
+      const id = storageGet(ACTIVE_TEMPLATE_STORAGE);
+      setWindows(saved);
+      setSelectedId(saved.some((t) => t.id === id) ? id! : saved[0]?.id || "");
+    };
+    reload();
+    window.addEventListener("mybasket:mon-mode-saved", reload);
+    window.addEventListener("storage", reload);
+    return () => {
+      window.removeEventListener("mybasket:mon-mode-saved", reload);
+      window.removeEventListener("storage", reload);
+    };
+  }, []);
+  const active = windows.find((t) => t.id === selectedId);
+  return (
+    <div className={styles.savedWindows}>
+      <label>
+        Ma fenêtre enregistrée
+        <select
+          aria-label="Fenêtre enregistrée de Mon mode"
+          value={selectedId}
+          disabled={!windows.length}
+          onChange={(event) => {
+            try {
+              window.localStorage.setItem(
+                ACTIVE_TEMPLATE_STORAGE,
+                event.target.value,
+              );
+              setSelectedId(event.target.value);
+              setError("");
+              window.dispatchEvent(
+                new CustomEvent("mybasket:mon-mode-selected", {
+                  detail: { activeId: event.target.value },
+                }),
+              );
+            } catch {
+              setError(
+                "Impossible de sélectionner cette fenêtre : stockage indisponible.",
+              );
+            }
+          }}
+        >
+          {!windows.length && (
+            <option value="">
+              Aucune fenêtre enregistrée — cliquez sur Créer / modifier
+            </option>
+          )}
+          {windows.map((t) => (
+            <option key={t.id} value={t.id}>
+              {t.name}
+            </option>
+          ))}
+        </select>
+      </label>
+      <small>
+        {active
+          ? `${active.blocks.length} bloc(s) · Cette fenêtre sera utilisée au démarrage du match.`
+          : "Créez votre fenêtre, donnez-lui un nom puis enregistrez-la."}
+      </small>
+      {error && <p role="alert">{error}</p>}
+    </div>
+  );
+}
+
 const normalizeHex = (value: string, fallback = "#6B1A2C") =>
   /^#[0-9a-f]{6}$/i.test(value) ? value : fallback;
 
@@ -509,6 +584,7 @@ export default function MatchReviewBuilder({
   embedded = false,
   initialEditorOpen = false,
   onClose,
+  onSaved,
   onRecord,
   onLayoutChange,
 }: Props) {
@@ -520,6 +596,8 @@ export default function MatchReviewBuilder({
   const [events, setEvents] = useState<MatchReviewEvent[]>([]);
   const [playerId, setPlayerId] = useState("");
   const [context, setContext] = useState<"attaque" | "defense" | null>(null);
+  const [shotType, setShotType] = useState<"2PTS" | "3PTS">("2PTS");
+  const [shotZoneId, setShotZoneId] = useState<string | null>(null);
   const [point, setPoint] = useState<{ x: number; y: number } | null>(null);
   const [draft, setDraft] = useState<{
     blockId: string;
@@ -556,6 +634,7 @@ export default function MatchReviewBuilder({
     setDraft(null);
     setPlayerId("");
     setPoint(null);
+    setShotZoneId(null);
     try {
       const saved = JSON.parse(
         storageGet(`${EVENT_STORAGE_PREFIX}${projectId}`) || "[]",
@@ -642,8 +721,17 @@ export default function MatchReviewBuilder({
     }));
   };
   const save = () => {
+    if (!active.name.trim()) {
+      setMessage("Donnez un nom à votre fenêtre avant de l’enregistrer.");
+      return;
+    }
     try {
       window.localStorage.setItem(TEMPLATE_STORAGE, JSON.stringify(templates));
+      if (
+        window.localStorage.getItem(TEMPLATE_STORAGE) !==
+        JSON.stringify(templates)
+      )
+        throw new Error("storage verification");
       window.localStorage.setItem(ACTIVE_TEMPLATE_STORAGE, active.id);
       setDirty(false);
       setMessage("Fenêtre enregistrée dans ce navigateur ✓");
@@ -652,6 +740,7 @@ export default function MatchReviewBuilder({
           detail: { origin: origin.current, templates, activeId: active.id },
         }),
       );
+      onSaved?.(active.id);
     } catch {
       setMessage(
         "Enregistrement impossible : espace de stockage indisponible. Vos modifications restent ouvertes.",
@@ -783,6 +872,8 @@ export default function MatchReviewBuilder({
       createdAt: new Date().toISOString(),
       context,
       shotPosition: point,
+      shotZoneId: point ? shotZoneId : null,
+      shotType: point ? shotType : null,
     };
     const next = [event, ...events];
     try {
@@ -799,6 +890,7 @@ export default function MatchReviewBuilder({
     onRecord?.(event);
     setDraft(null);
     setPoint(null);
+    setShotZoneId(null);
     setComment("");
     setMessage("Action personnalisée enregistrée ✓");
   };
@@ -877,12 +969,25 @@ export default function MatchReviewBuilder({
         <div className={styles.top}>
           <div>
             <b>Mon mode · Fenêtre de codification</b>
+            {message && (
+              <span role="status" className={styles.saveNotice}>
+                {message}
+              </span>
+            )}
             <small>
               {dirty
                 ? "● Modifications non enregistrées"
                 : "Tableau libre · sans codage guidé"}
             </small>
           </div>
+          <label className={styles.windowName}>
+            Nom de la fenêtre
+            <input
+              aria-label="Nom de la fenêtre"
+              value={active.name}
+              onChange={(e) => change((t) => ({ ...t, name: e.target.value }))}
+            />
+          </label>
           <select
             aria-label="Choisir une fenêtre"
             value={active.id}
@@ -1151,45 +1256,57 @@ export default function MatchReviewBuilder({
                       </div>
                     ) : b.kind === "shot-chart" ? (
                       <>
-                        <svg
-                          className={styles.court}
-                          viewBox="0 0 500 470"
-                          role="img"
-                          aria-label="Shot chart : cliquer pour choisir une position"
-                          onClick={(e) => {
-                            if (editing) {
-                              setSelected(b.id);
-                              setControlId(null);
-                              return;
+                        {!editing && (
+                          <div
+                            className={styles.variants}
+                            aria-label="Type de tir"
+                          >
+                            <button
+                              type="button"
+                              aria-pressed={shotType === "2PTS"}
+                              onClick={() => {
+                                setShotType("2PTS");
+                                setPoint(null);
+                                setShotZoneId(null);
+                              }}
+                            >
+                              2 PTS
+                            </button>
+                            <button
+                              type="button"
+                              aria-pressed={shotType === "3PTS"}
+                              onClick={() => {
+                                setShotType("3PTS");
+                                setPoint(null);
+                                setShotZoneId(null);
+                              }}
+                            >
+                              3 PTS
+                            </button>
+                          </div>
+                        )}
+                        <div className={styles.sharedCourt}>
+                          <ShotChart
+                            mode="pick"
+                            size="lg"
+                            shotType={shotType}
+                            locked={editing}
+                            selectedZone={shotZoneId}
+                            pendingPoint={
+                              point
+                                ? { x: point.x * 100, y: point.y * 100 }
+                                : null
                             }
-                            const r = e.currentTarget.getBoundingClientRect();
-                            setPoint({
-                              x: bounded((e.clientX - r.left) / r.width, 0, 1),
-                              y: bounded((e.clientY - r.top) / r.height, 0, 1),
-                            });
-                          }}
-                          preserveAspectRatio="none"
-                        >
-                          <rect width="500" height="470" fill="#cfa86f" />
-                          <g fill="none" stroke="#fff9e6" strokeWidth="3">
-                            <rect x="5" y="5" width="490" height="460" />
-                            <rect x="170" y="5" width="160" height="190" />
-                            <path d="M170 195 A80 80 0 0 0 330 195 M30 5 V80 A225 225 0 0 0 470 80 V5" />
-                            <path d="M220 40H280" />
-                            <circle cx="250" cy="55" r="9" />
-                            <path d="M215 55 A35 35 0 0 0 285 55" />
-                          </g>
-                          {point && (
-                            <circle
-                              cx={point.x * 500}
-                              cy={point.y * 470}
-                              r="10"
-                              fill="#ffc857"
-                              stroke="#861b3a"
-                              strokeWidth="3"
-                            />
-                          )}
-                        </svg>
+                            showLabels={false}
+                            onPick={(zone, position) => {
+                              setShotZoneId(zone.id);
+                              setPoint({
+                                x: position.x / 100,
+                                y: position.y / 100,
+                              });
+                            }}
+                          />
+                        </div>
                         {point && !editing && (
                           <button onClick={() => setPoint(null)}>
                             Effacer la position
@@ -1294,15 +1411,6 @@ export default function MatchReviewBuilder({
                   ×
                 </button>
               </div>
-              <label>
-                Nom de la fenêtre
-                <input
-                  value={active.name}
-                  onChange={(e) =>
-                    change((t) => ({ ...t, name: e.target.value }))
-                  }
-                />
-              </label>
               <label>
                 Nom
                 <input
@@ -1671,6 +1779,7 @@ export default function MatchReviewBuilder({
                     onClick={() => {
                       setDraft(null);
                       setPoint(null);
+                      setShotZoneId(null);
                       setComment("");
                     }}
                   >

@@ -49,7 +49,7 @@ import { readCodingProfiles, writeCodingProfiles, normalizeCodingProfileHighligh
 import { highlightLabel, highlightBaseKey } from "@/lib/livestat-labels";
 import LiveCodingSettingsModal, { DEFAULT_WORKFLOW_PREFS, type LiveWorkflowPrefs, type LiveCodingProfile, type CodingButtonGroup } from "@/components/prise-stats-pro/LiveCodingSettingsModal";
 import LivePlayerAssociationModal, { type AssociableLiveAction } from "@/components/prise-stats-pro/LivePlayerAssociationModal";
-import MatchReviewBuilder, { type MatchReviewEvent, type MatchReviewLayout } from "@/components/prise-stats-pro/MatchReviewBuilder";
+import MatchReviewBuilder, { MatchReviewWindowPicker, type MatchReviewEvent, type MatchReviewLayout } from "@/components/prise-stats-pro/MatchReviewBuilder";
 import ShotChart, { SHOT_ZONES, zoneById, resolveShotZone } from "@/components/prise-stats-pro/ShotChart";
 import {
   type VideoSyncState,
@@ -4965,6 +4965,7 @@ export default function PriseStatsProPage() {
                       <button type="button" onClick={() => setShowMatchReviewBuilder(true)}>Créer / modifier</button>
                     </div>
 
+                    <MatchReviewWindowPicker />
                     <div className="matchReviewConstructorGrid">
                       <div><strong>01</strong><b>Blocs</b><span>Place et redimensionne tes blocs : joueurs, shot chart ou blocs personnels.</span></div>
                       <div><strong>02</strong><b>Boutons</b><span>Bouton simple, + / −, compteur, note, choix multiple ou texte.</span></div>
@@ -5372,6 +5373,7 @@ export default function PriseStatsProPage() {
           <MatchReviewBuilder
             players={setupRoster.map((player) => ({ id: player.id, name: player.name, num: player.num }))}
             initialEditorOpen
+            onSaved={() => { setCodingMode('match-review'); setShowMatchReviewBuilder(false); flash('Fenêtre de Mon mode enregistrée et sélectionnée ✓'); }}
             onLayoutChange={setMatchReviewLayout}
             onClose={() => setShowMatchReviewBuilder(false)}
           />
@@ -6185,6 +6187,7 @@ export default function PriseStatsProPage() {
           getVideoTime={getCurrentVideoTime}
           onLayoutChange={setMatchReviewLayout}
           initialEditorOpen
+          onSaved={() => { setShowMatchReviewBuilder(false); flash('Fenêtre de Mon mode enregistrée et sélectionnée ✓'); }}
           onClose={() => setShowMatchReviewBuilder(false)}
           onRecord={(event: MatchReviewEvent) => {
             const who = event.playerName ? ` · ${event.playerName}` : '';

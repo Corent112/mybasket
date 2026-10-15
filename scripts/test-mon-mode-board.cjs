@@ -18,6 +18,13 @@ for (const k of [
 ])
   global[k] = dom.window[k];
 global.IS_REACT_ACT_ENVIRONMENT = true;
+const Module = require("module"),
+  originalLoad = Module._load;
+Module._load = function (request, parent, isMain) {
+  if (request === "@/lib/shot-chart-zones")
+    request = require("path").resolve("lib/shot-chart-zones.ts");
+  return originalLoad.call(this, request, parent, isMain);
+};
 require.extensions[".css"] = (mod) =>
   (mod.exports = new Proxy(
     {},
@@ -83,6 +90,7 @@ window.localStorage.setItem(
 window.localStorage.setItem("unrelated-mode", "unchanged");
 let root,
   time = 14,
+  savedIds = [],
   recorded = [],
   seek = [];
 const render = async () => {
@@ -96,6 +104,7 @@ const render = async () => {
         getVideoTime: () => time,
         onSeek: (t) => seek.push(t),
         onRecord: (e) => recorded.push(e),
+        onSaved: (id) => savedIds.push(id),
       }),
     ),
   );
@@ -206,7 +215,17 @@ const fill = async (el, value) => {
     width: 500,
     height: 470,
   });
-  await click(svg);
+  assert.equal(
+    svg.querySelectorAll("path.sc-zone").length,
+    16,
+    "shared official 16-zone court",
+  );
+  assert(
+    svg.querySelector("image").getAttribute("href").startsWith("data:image/"),
+    "existing offline court image",
+  );
+  await click(svg.querySelector("path.sc-zone.act"));
+  assert(document.body.textContent.includes("Position de tir renseignée"));
   await click(btn("Annuler la saisie"));
   assert.equal(recorded.length, 1, "cancel never saves");
   assert(!document.querySelector('svg circle[fill="#ffc857"]'));
@@ -245,9 +264,44 @@ const fill = async (el, value) => {
     )[0].blocks[0].frame.width,
     500,
   );
+  assert(savedIds.length >= 2, "save emits selected window id only on success");
+  await click(btn("Dupliquer"));
+  await fill(
+    document.querySelector('[aria-label="Nom de la fenêtre"]'),
+    "Analyse essai",
+  );
+  await click(btn("Enregistrer"));
+  const selectedId = window.localStorage.getItem(
+    "mybasket.match-review.active-template.v2",
+  );
+  assert.notEqual(selectedId, "old-template");
+  await act(async () => root.unmount());
+  root = createRoot(document.getElementById("root"));
+  const Picker =
+    require("../components/prise-stats-pro/MatchReviewBuilder.tsx").MatchReviewWindowPicker;
+  await act(async () => root.render(React.createElement(Picker)));
+  const picker = document.querySelector(
+    '[aria-label="Fenêtre enregistrée de Mon mode"]',
+  );
+  assert.equal(picker.value, selectedId);
+  assert.equal(picker.selectedOptions[0].textContent, "Analyse essai");
+  await act(async () => {
+    picker.value = "old-template";
+    picker.dispatchEvent(new Event("change", { bubbles: true }));
+  });
+  assert.equal(
+    window.localStorage.getItem("mybasket.match-review.active-template.v2"),
+    "old-template",
+  );
+  await act(async () => root.unmount());
+  await render();
+  assert.equal(
+    document.querySelector('[aria-label="Choisir une fenêtre"]').value,
+    "old-template",
+  );
   await act(async () => root.unmount());
   console.log(
-    "Mon mode: legacy template preserved, free inline coding, required player, captured video time, timeline seek, block sizes and shot-chart saved/reopened, cancel and project isolation passed.",
+    "Mon mode: legacy template preserved, free inline coding, required player, captured video time, timeline seek, block sizes and shot-chart saved/reopened, cancel, saved-window picker, duplicate naming and reopening selected window, save callback and project isolation passed.",
   );
 })().catch((e) => {
   console.error(e);

@@ -438,3 +438,68 @@
     width: 100%;
   }
 }
+
+.top {
+  position: sticky;
+  top: 0;
+  z-index: 35;
+  background: #101625;
+  border-radius: 10px 10px 0 0;
+}
+.windowName {
+  display: grid;
+  gap: 3px;
+  font-size: 11px;
+  max-width: 230px;
+}
+.windowName input {
+  width: 100%;
+}
+.saveNotice {
+  display: block;
+  color: #efc36d;
+  font-size: 12px;
+  margin-top: 5px;
+}
+.savedWindows {
+  border: 1px solid #41495d;
+  background: #131a29;
+  padding: 12px;
+  border-radius: 9px;
+  margin: 12px 0;
+  color: #edf0f7;
+}
+.savedWindows label {
+  display: grid;
+  gap: 7px;
+  font-size: 12px;
+  font-weight: 700;
+}
+.savedWindows select {
+  width: 100%;
+  padding: 10px;
+  border: 1px solid #596176;
+  border-radius: 7px;
+  background: #1b2435;
+  color: #fff;
+  min-width: 0;
+}
+.savedWindows small {
+  display: block;
+  margin-top: 7px;
+  color: #b4bed1;
+}
+.sharedCourt {
+  width: 100%;
+  min-width: 0;
+}
+.sharedCourt :global(.sc) {
+  width: 100%;
+  max-width: none;
+}
+.sharedCourt :global(.sc-svg) {
+  display: block;
+  width: 100%;
+  height: auto;
+  max-height: 100%;
+}
