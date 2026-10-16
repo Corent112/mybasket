@@ -176,6 +176,7 @@ const OFFLINE_COURT_IMAGE = "data:image/webp;base64,UklGRhTAAQBXRUJQVlA4IAjAAQBQ
 export default function ShotChart(props: ShotChartProps) {
   const size = props.size ?? 'md';
   const imageSrc = props.imageSrc ?? OFFLINE_COURT_IMAGE;
+  const [failedImage, setFailedImage] = useState<string | null>(null);
   const [hover, setHover] = useState<string | null>(null);
   const svgRef = useRef<SVGSVGElement | null>(null);
 
@@ -209,7 +210,18 @@ export default function ShotChart(props: ShotChartProps) {
     <div className={`sc sc-${size} ${props.className ?? ''}`}>
       <svg ref={svgRef} viewBox={`0 0 ${COURT_W} ${COURT_H}`} preserveAspectRatio="xMidYMid meet" className="sc-svg">
         {/* Fond : l'image de référence, dans le même repère que les zones */}
-        <image href={imageSrc} x={0} y={0} width={COURT_W} height={COURT_H} preserveAspectRatio="none" />
+        {/* Permanent local geometry: remains visible if the bitmap cannot decode. */}
+        <g className="sc-fallback" pointerEvents="none" aria-hidden="true">
+          <rect width={COURT_W} height={COURT_H} fill="#dfbd86" />
+          {SHOT_ZONES.map((zone) => (
+            <path key={zone.id} d={zone.d} fill="none" stroke="#463b2e" strokeWidth={3} />
+          ))}
+        </g>
+        {failedImage !== imageSrc && (
+          <image key={imageSrc} href={imageSrc} x={0} y={0} width={COURT_W} height={COURT_H}
+            preserveAspectRatio="none" pointerEvents="none"
+            onError={() => setFailedImage(imageSrc)} />
+        )}
 
         {/* Calque des zones : contours calqués sur les traits noirs */}
         {SHOT_ZONES.map((z) => {
