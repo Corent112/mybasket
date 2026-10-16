@@ -16,6 +16,7 @@
     "jspdf": "^4.2.1",
     "lucide-react": "^1.17.0",
     "mammoth": "^1.12.3",
+    "mediabunny": "^1.61.5",
     "next": "16.2.6",
     "openai": "^7.23.0",
     "qrcode": "^1.5.4",

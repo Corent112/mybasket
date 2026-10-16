@@ -4439,36 +4439,64 @@ const exportJson = () => {
   });
   const recordVideo = async () => {
     const canvas = canvasRef.current;
-    if (!canvas) return;
-    const cap = (canvas as HTMLCanvasElement).captureStream;
-    if (typeof MediaRecorder === 'undefined' || !cap) { showHint('Vidéo non supportée par ce navigateur'); setVideoOpen(false); return; }
-    const bitrate = vidQuality === 'fhd' ? 12000000 : vidQuality === 'hd' ? 6000000 : 3000000;
-    const isSupported = (t: string) => { try { return MediaRecorder.isTypeSupported(t); } catch { return false; } };
-    const pick = (arr: string[]) => arr.find(isSupported);
-    const mp4 = ['video/mp4;codecs=avc1.42E01E', 'video/mp4'];
-    const webm = ['video/webm;codecs=vp9', 'video/webm;codecs=vp8', 'video/webm'];
-    const mime = vidFormat === 'mp4' ? (pick(mp4) || pick(webm)) : (pick(webm) || pick(mp4));
-    if (!mime) { showHint('Aucun format vidéo disponible'); setVideoOpen(false); return; }
+    if (!canvas || recording) return;
+    if (typeof MediaRecorder === 'undefined' || typeof canvas.captureStream !== 'function') {
+      showHint('Export vidéo indisponible. Essayez Chrome ou Safari à jour.'); return;
+    }
+    const supported = (type: string) => { try { return MediaRecorder.isTypeSupported(type); } catch { return false; } };
+    // Prefer explicit AVC over the browser's default MP4 codec (which can be HEVC).
+    const mime = ['video/mp4;codecs=avc1.42001f', 'video/mp4;codecs=avc1.42E01E', 'video/mp4;codecs=avc1.4d0028',
+      'video/mp4', 'video/webm;codecs=vp8', 'video/webm'].find(supported);
+    if (!mime) { showHint('Aucun encodeur vidéo disponible dans ce navigateur.'); return; }
     setVideoOpen(false); setRecording(true);
+    let stream: MediaStream | undefined;
+    let rec: MediaRecorder | undefined;
+    let copyFrame = 0;
     try {
-      const stream = (canvas as HTMLCanvasElement).captureStream(vidFps);
-      const rec = new MediaRecorder(stream, { mimeType: mime, videoBitsPerSecond: bitrate });
+      const { drawingExportSize, finalizeDrawingMp4 } = await import('@/lib/drawing-video-export');
+      const size = drawingExportSize(canvas.width, canvas.height, vidQuality);
+      const capture = document.createElement('canvas');
+      capture.width = size.width; capture.height = size.height;
+      const context = capture.getContext('2d', { alpha: false });
+      if (!context) throw new Error('Impossible de préparer la vidéo.');
+      const draw = () => {
+        context.fillStyle = '#ffffff'; context.fillRect(0, 0, capture.width, capture.height);
+        context.drawImage(canvas, 0, 0, capture.width, capture.height);
+        copyFrame = requestAnimationFrame(draw);
+      };
+      draw();
+      stream = capture.captureStream(vidFps);
+      rec = new MediaRecorder(stream, { mimeType: mime, videoBitsPerSecond: vidQuality === 'fhd' ? 6_000_000 : vidQuality === 'hd' ? 3_000_000 : 1_500_000 });
       const chunks: BlobPart[] = [];
-      rec.ondataavailable = (e) => { if (e.data && e.data.size) chunks.push(e.data); };
-      const stopped = new Promise<void>((res) => { rec.onstop = () => res(); });
-      rec.start();
-      await playWholeForRecording();
-      await new Promise((r) => setTimeout(r, 350)); // laisse capturer la dernière frame
-      rec.stop();
+      rec.ondataavailable = (event) => { if (event.data.size) chunks.push(event.data); };
+      const stopped = new Promise<void>((resolve, reject) => {
+        rec!.onstop = () => resolve();
+        rec!.onerror = () => reject(new Error('L’enregistrement vidéo a échoué.'));
+      });
+      rec.start(1000);
+      await Promise.race([playWholeForRecording(), stopped]);
+      await new Promise(resolve => setTimeout(resolve, 350));
+      if (rec.state !== 'inactive') rec.stop();
       await stopped;
-      const ext = mime.startsWith('video/mp4') ? 'mp4' : 'webm';
-      const blob = new Blob(chunks, { type: mime });
+      cancelAnimationFrame(copyFrame);
+      stream.getTracks().forEach(track => track.stop());
+      // Rebuild the MP4 index and duration. A MediaRecorder blob is often fragmented,
+      // which can play in the browser but be rejected by messaging applications.
+      const blob = await finalizeDrawingMp4(new Blob(chunks, { type: rec.mimeType || mime }));
       const url = URL.createObjectURL(blob);
-      const a = document.createElement('a'); a.download = (title || 'play') + '.' + ext; a.href = url; a.click();
-      setTimeout(() => URL.revokeObjectURL(url), 8000);
-      if (ext !== 'mp4') showHint('Export ' + ext.toUpperCase() + ' (MP4 non supporté par ce navigateur)');
-    } catch { showHint('Échec de l’export vidéo'); }
-    finally { setRecording(false); }
+      const anchor = document.createElement('a');
+      anchor.download = (title || 'play').replace(/[\\/:*?"<>|]/g, '-') + '.mp4';
+      anchor.href = url; document.body.appendChild(anchor); anchor.click(); anchor.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 60_000);
+      showHint('MP4 H.264 téléchargé. Vous pouvez joindre ce nouveau fichier à votre message.');
+    } catch (error) {
+      showHint(error instanceof Error ? error.message : 'Échec de l’export MP4. Essayez Chrome ou Safari à jour.');
+    } finally {
+      cancelAnimationFrame(copyFrame);
+      if (rec && rec.state !== 'inactive') rec.stop();
+      stream?.getTracks().forEach(track => track.stop());
+      setRecording(false);
+    }
   };
 
   // ----------------------- Phases -----------------------
@@ -5759,7 +5787,7 @@ const exportJson = () => {
 
               <div style={{ fontSize: '.78rem', fontWeight: 700, marginBottom: '.3rem' }}>Qualité</div>
               <div style={{ display: 'flex', gap: 6, marginBottom: '.8rem' }}>
-                {([['std', 'Standard'], ['hd', 'HD'], ['fhd', 'Full HD']] as const).map(([v, lab]) => (
+                {([['std', 'Compact'], ['hd', 'HD · partage'], ['fhd', 'Full HD']] as const).map(([v, lab]) => (
                   <button key={v} onClick={() => setVidQuality(v)} style={{ flex: 1, padding: '.4rem .2rem', fontSize: '.78rem', fontWeight: 600, borderRadius: 7, cursor: 'pointer', border: '1px solid ' + (vidQuality === v ? 'var(--bordeaux, #6B1A2C)' : 'var(--gris-med, #ddd)'), background: vidQuality === v ? 'var(--bordeaux, #6B1A2C)' : '#fff', color: vidQuality === v ? '#fff' : '#333' }}>{lab}</button>
                 ))}
               </div>
@@ -5773,7 +5801,7 @@ const exportJson = () => {
 
               <div style={{ fontSize: '.78rem', fontWeight: 700, marginBottom: '.3rem' }}>Format</div>
               <div style={{ display: 'flex', gap: 6, marginBottom: '1rem' }}>
-                <button onClick={() => setVidFormat('mp4')} style={{ flex: 1, padding: '.4rem .2rem', fontSize: '.78rem', fontWeight: 600, borderRadius: 7, cursor: 'pointer', border: '1px solid ' + (vidFormat === 'mp4' ? 'var(--bordeaux, #6B1A2C)' : 'var(--gris-med, #ddd)'), background: vidFormat === 'mp4' ? 'var(--bordeaux, #6B1A2C)' : '#fff', color: vidFormat === 'mp4' ? '#fff' : '#333' }}>MP4</button>
+                <button onClick={() => setVidFormat('mp4')} style={{ flex: 1, padding: '.4rem .2rem', fontSize: '.78rem', fontWeight: 600, borderRadius: 7, cursor: 'pointer', border: '1px solid ' + (vidFormat === 'mp4' ? 'var(--bordeaux, #6B1A2C)' : 'var(--gris-med, #ddd)'), background: vidFormat === 'mp4' ? 'var(--bordeaux, #6B1A2C)' : '#fff', color: vidFormat === 'mp4' ? '#fff' : '#333' }}>MP4 · H.264</button>
                 <button disabled title="Bientôt disponible" style={{ flex: 1, padding: '.4rem .2rem', fontSize: '.78rem', fontWeight: 600, borderRadius: 7, border: '1px solid var(--gris-med, #ddd)', background: '#f3f3f3', color: '#bbb', cursor: 'not-allowed' }}>GIF (bientôt)</button>
               </div>
 
