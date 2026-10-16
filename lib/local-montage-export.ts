@@ -16,7 +16,8 @@ export type ExportAnnotation = {
 
 export type LocalExportSource = {
   id?: string;
-  type?: "clip" | "freeze";
+  type?: "clip" | "freeze" | "card";
+  card?: LocalExportOverlay;
   url: string;
   start: number;
   end: number;
@@ -221,7 +222,18 @@ const drawOverlay = async (
       ctx.fillRect(-w / 2, -h / 2, w, h);
     }
     ctx.fillStyle = "#ffffff";
-    ctx.fillText(overlay.text || "", 0, 0, w);
+    let size=fontSize;
+    const text=overlay.text || '';
+    const wrap=() => text.split('\n').flatMap(paragraph=>{
+      const lines:string[]=[];let line='';
+      for(const char of paragraph) {if(line && ctx.measureText(line+char).width>w){lines.push(line);line=char;}else line+=char;}
+      lines.push(line);return lines;
+    });
+    let lines=wrap();
+    const maxHeight=canvasHeight*.9;
+    while(size>12 && lines.length*size*1.15>maxHeight){size-=2;ctx.font=`${Number(overlay.fontWeight ?? 800)} ${size}px ${overlay.fontFamily || 'Arial'}`;lines=wrap();}
+    const x=ctx.textAlign==='left'?-w/2:ctx.textAlign==='right'?w/2:0;
+    lines.forEach((line,index)=>ctx.fillText(line,x,(index-(lines.length-1)/2)*size*1.15,w));
   }
   ctx.restore();
 };
@@ -261,8 +273,8 @@ export const exportTimelineLocally = async (
 
   const imageCache = new Map<string, HTMLImageElement>();
   const total = sources.reduce((sum, source) => {
-    const base = source.type === "freeze"
-      ? Math.max(0.1, Number(source.duration ?? 2))
+    const base = source.type === "freeze" || source.type === "card"
+      ? Math.max(0.1, Number(source.duration ?? (source.type === "card" ? 4 : 2)))
       : Math.max(0.1, Number(source.end) - Number(source.start)) / clamp(Number(source.playbackRate ?? 1), 0.25, 4);
     return sum + base * Math.max(1, Math.round(Number(source.repeatCount ?? 1)));
   }, 0);
@@ -281,6 +293,21 @@ export const exportTimelineLocally = async (
 
   try {
     for (const source of sources) {
+      if (source.type === "card") {
+        video.pause();
+        const duration=Math.max(.1,Number(source.duration ?? 4));
+        const started=performance.now();
+        while((performance.now()-started)/1000<duration) {
+          const elapsed=(performance.now()-started)/1000;
+          ctx.fillStyle='#000';ctx.fillRect(0,0,canvas.width,canvas.height);
+          if(source.card) await drawOverlay(ctx,{...source.card,timelineStart:renderedTimeline,duration},renderedTimeline+elapsed,imageCache);
+          for(const overlay of overlays) await drawOverlay(ctx,overlay,renderedTimeline+elapsed,imageCache);
+          onProgress?.(clamp((renderedTimeline+elapsed)/total*100,0,100));
+          await sleep(1000/30);
+        }
+        renderedTimeline+=duration;
+        continue;
+      }
       video.src = source.url;
       video.load();
       await waitFor(video, "loadedmetadata");

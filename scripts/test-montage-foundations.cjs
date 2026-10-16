@@ -53,6 +53,8 @@ const save = require('../lib/montage/save-timeline.ts');
   assert.deepEqual(output.map(x => x.timeline_start), [0,7,24,5]);
   assert.deepEqual(output.map(x => x.sort_order), [0,1,2,3]);
   assert.equal(output[0].duration,24); assert.equal(output[2].duration,3); assert.equal(input[0].timeline_start,80);
+  const titleSequence=sequence.enforceTimelineSequence([{item_type:'title',track:'video',duration:4,clip_start:0,clip_end:0,sort_order:0},{...clip,track:'video',playbackRate:1,repeatCount:1},{item_type:'title',track:'overlay',duration:3,clip_start:0,clip_end:0,sort_order:2,timeline_start:2}]);
+  assert.deepEqual(titleSequence.map(item=>item.timeline_start),[0,4,2]);
   const queue = require('../lib/montage/incoming-clips.ts');
   const map = new Map(); const storage = { getItem:key=>map.get(key)??null, setItem:(key,value)=>map.set(key,value) };
   const incoming = { actionId:'saved-action',matchId:'m',clipStart:0,clipEnd:8 };

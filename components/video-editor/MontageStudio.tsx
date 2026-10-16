@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type SetStateAction } from "react";
 import { loadMontageLibrary, hasMontageBounds, synchronizeMontageAction, type MontageAction, type MontageMatch } from "@/lib/montage/multi-match-data";
 import { fingerprintVideo } from "@/lib/local-match-project";
-import { MONTAGE_INCOMING_EVENT, readIncomingClips, markIncomingReceived, type IncomingMontageClip } from "@/lib/montage/incoming-clips";
+import { MONTAGE_INCOMING_EVENT, incomingMontageKey, readIncomingClips, markIncomingReceived, type IncomingMontageClip } from "@/lib/montage/incoming-clips";
 import { enforceTimelineSequence, montageItemDuration, montageTrack } from "@/lib/montage/timeline-sequence";
 import ClipThumbnail from "@/components/video-editor/ClipThumbnail";
 import { saveReceivedClipReference, RECEIVED_PLAYLIST_NAME } from "@/lib/montage/received-playlist";
@@ -216,7 +216,7 @@ export default function MontageStudio({
   onClose,
   embedded = false,
 }: Props) {
-  useLocalMatchVideoVersion();
+  const localVideoVersion = useLocalMatchVideoVersion();
   const supabase = useMemo(() => createClient(), []);
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -263,13 +263,15 @@ export default function MontageStudio({
   const [panelTab, setPanelTab] = useState<"clips" | "playlists" | "settings">("clips");
   const [toolTab, setToolTab] = useState<"edit" | "draw" | "titles" | "transitions">("edit");
   const [titleDraft, setTitleDraft] = useState("");
+  const [titlePlacement, setTitlePlacement] = useState<"overlay" | "video">("overlay");
+  const [titleTarget, setTitleTarget] = useState("");
   const [drawMode, setDrawMode] = useState<Drawing["kind"]>("arrow");
   const [drawColor, setDrawColor] = useState("#ffd34d");
   const [selectedDrawingId, setSelectedDrawingId] = useState<string | null>(null);
   const [shareOpen, setShareOpen] = useState(false);
   const [recipient, setRecipient] = useState("");
   const [exportUrl, setExportUrl] = useState("");
-  const [libraryView, setLibraryView] = useState<LibraryView>("received");
+  const [libraryView, setLibraryView] = useState<LibraryView>("all");
   const [favoriteActionIds, setFavoriteActionIds] = useState<string[]>([]);
   const [themes, setThemes] = useState<ClipTheme[]>([]);
   const [clipPreviewIndex, setClipPreviewIndex] = useState<number | null>(null);
@@ -310,6 +312,7 @@ export default function MontageStudio({
   const [selectedContextFilter, setSelectedContextFilter] = useState("");
   const [clipSort, setClipSort] = useState("received");
   const receiptTokensRef = useRef(new Set<string>());
+  const manualReceiptQueueRef = useRef(Promise.resolve());
   const itemsRef = useRef(items);
   itemsRef.current = items;
   const incomingSourcesRef = useRef({ actions, matches, themes });
@@ -676,7 +679,8 @@ export default function MontageStudio({
   );
 
   const filteredActions = useMemo(() => {
-    const query = search.trim().toLowerCase();
+    const normalize = (value: string) => value.normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase();
+    const tokens = normalize(search.trim()).split(/\s+/).filter(Boolean);
 
     return actions.map(action => {
       const incoming = receivedClips.find(clip => clip.actionId === action.id);
@@ -705,35 +709,32 @@ export default function MontageStudio({
         if (theme && !theme.actionIds.includes(String(action.id))) return false;
       }
 
-      if (!query) return true;
+      if (!tokens.length) return true;
 
       const player = players.find((row) => String(row.id) === String(action.player_id || ""));
-      return `${clipLabel(action)} ${actionSub(action, matchMap)} ${player?.name || ""}`
-        .toLowerCase()
-        .includes(query);
+      const match = matchMap.get(String(action.match_id));
+      const haystack = normalize(`${clipLabel(action)} ${actionSub(action, matchMap)} ${player?.name || ""} ${action.shot_type || ""} ${action.action_type || ""} ${action.temps_fort ? tags.label(action.temps_fort) : ""} ${match?.match_date || ""}`);
+      return tokens.every(token=>haystack.includes(token));
     });
   }, [actions, receivedClips, filter, matchMap, search, selectedMatchFilter, selectedActionFilter, selectedPlayerFilter, selectedSystemFilter, selectedContextFilter, selectedThemeId, themes, players, tags]);
 
   useEffect(() => {
     const video = videoRef.current;
-    if (!video || !selected) return;
-
+    if (!video || !selected || montagePlaying) return;
+    const frame = montageTrack(selected)==='overlay'
+      ? items.find(item=>montageTrack(item)==='video' && playhead >= (item.timeline_start ?? 0) && playhead < (item.timeline_start ?? 0)+montageItemDuration(item))
+      : selected;
+    if(!frame || !['clip','freeze'].includes(frame.item_type)) return;
     const seek = () => {
-      if (montagePlaying) return;
-      const elapsed = Math.max(0, playhead - (selected.timeline_start ?? 0));
-      const rate = clamp(selected.playbackRate ?? 1, .25, 4);
-      video.currentTime = selected.item_type === "freeze"
-        ? numberValue(selected.freeze_time ?? selected.clip_start)
-        : Math.min(selected.clip_end, selected.clip_start + elapsed * rate);
+      const rate=clamp(frame.playbackRate ?? 1,.25,4);
+      const duration=Math.max(.1,frame.clip_end-frame.clip_start);
+      const elapsed=Math.max(0,playhead-(frame.timeline_start ?? 0))*rate;
+      const repeats=Math.max(1,Math.round(frame.repeatCount ?? 1));
+      video.currentTime=frame.item_type==='freeze'?numberValue(frame.freeze_time ?? frame.clip_start):frame.clip_start+(elapsed>=duration*repeats?duration:elapsed%duration);
     };
-
-    if (video.readyState >= 1) seek();
-    else video.addEventListener("loadedmetadata", seek, { once: true });
-
-    return () => {
-      video.removeEventListener("loadedmetadata", seek);
-    };
-  }, [selectedIndex, selected?.action_id, selected?.clip_start, selectedVideo, playhead, montagePlaying]);
+    if(video.readyState>=1) seek();else video.addEventListener('loadedmetadata',seek,{once:true});
+    return()=>video.removeEventListener('loadedmetadata',seek);
+  }, [selectedIndex, selected, items, playhead, montagePlaying, matchMap, localVideoVersion]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -942,6 +943,18 @@ export default function MontageStudio({
     setClipPreviewIndex(null);
     setMontagePlaying(false);
     setPlayhead(position == null ? totalDuration : timelineStartOf(items[insertAt], insertAt));
+    if (!themes.some(theme=>theme.name===RECEIVED_PLAYLIST_NAME && theme.actionIds.includes(action.id))) {
+      const sourceTeamId = teamId;
+      manualReceiptQueueRef.current = manualReceiptQueueRef.current.then(async()=>{
+        const {data:{user}} = await supabase.auth.getUser();
+        if (!user) throw new Error("Utilisateur non connecté.");
+        const playlist = await saveReceivedClipReference(supabase,user.id,sourceTeamId,action.id);
+        if (incomingSourcesRef.current.actions.some(row=>row.id===action.id)) setThemes(current=>{
+          const previous=current.find(row=>row.id===playlist.id);
+          return [...current.filter(row=>row.id!==playlist.id),{...playlist,actionIds:Array.from(new Set([...(previous?.actionIds || []),action.id]))}];
+        });
+      }).catch(error=>flash(`Clip inséré. Sa référence dans Mes clips ajoutés n’a pas pu être enregistrée : ${error instanceof Error ? error.message : 'erreur réseau'}`));
+    }
     flash("Clip ajouté dans la timeline");
     return true;
   };
@@ -991,6 +1004,7 @@ export default function MontageStudio({
         for (const clip of incoming) {
           if (!active) return;
           if (receiptTokensRef.current.has(clip.transferId)) continue;
+          const newlyReceived = window.localStorage.getItem(`${incomingMontageKey(user.id,teamId)}:received:${clip.transferId}`) !== '1';
           let action = incomingSourcesRef.current.actions.find(row => row.id === clip.actionId);
           if (!action) {
             const result = await supabase.from("match_actions").select("*").eq("id", clip.actionId).eq("team_id", teamId).maybeSingle();
@@ -1017,11 +1031,14 @@ export default function MontageStudio({
           if (!active) return;
           setReceivedClips(current => [...current.filter(row => row.actionId !== clip.actionId), clip]);
           setActions(current => [...current.filter(row => row.id !== synced.id), receivedAction]);
+          if (newlyReceived) {
+          setPanelTab('clips');
           setLibraryView("received");
           setClipSort("received");
           setSelectedThemeId("");
           setSearch(""); setFilter("all"); setSelectedMatchFilter(""); setSelectedActionFilter(""); setSelectedPlayerFilter(""); setSelectedSystemFilter(""); setSelectedContextFilter("");
           setClipPreviewIndex(null);
+          }
           receiptTokensRef.current.add(clip.transferId);
           // Reuse the existing playlist tables; local references remain a recovery copy.
           try {
@@ -1038,7 +1055,7 @@ export default function MontageStudio({
 
           }
           if (source) setMatches(current => current.some(row => row.id === source!.id) ? current : [...current, source!]);
-          flash("✓ Clip reçu dans la playlist · glisse-le dans la timeline pour l’insérer");
+          if (newlyReceived) flash("✓ Clip reçu dans Mes clips ajoutés · glisse-le dans la timeline pour l’insérer");
         }
       } catch (error) {
         if (active) setTransferError(error instanceof Error ? error.message : "Transfert Montage impossible.");
@@ -1098,7 +1115,7 @@ export default function MontageStudio({
     setLocalExportProgress(0);
     try {
       const orderedVideoItems = items
-        .filter((item) => (item.track || (item.item_type === "clip" || item.item_type === "freeze" ? "video" : item.item_type === "audio" ? "audio" : "overlay")) === "video" && item.action)
+        .filter((item) => (item.track || (item.item_type === "clip" || item.item_type === "freeze" ? "video" : item.item_type === "audio" ? "audio" : "overlay")) === "video")
         .sort((a, b) => Number(a.timeline_start || 0) - Number(b.timeline_start || 0));
 
       // Préflight : tente d'abord la restauration automatique de chaque match
@@ -1109,7 +1126,13 @@ export default function MontageStudio({
         try { await restoreMatchVideoForClip(matchId, teamId); } catch {}
       }
 
+      const designOverlay = (item: MontageItem): LocalExportOverlay => ({
+        id:item.id || item.action_id,type:item.item_type as 'title'|'text'|'image',timelineStart:item.timeline_start ?? 0,duration:itemDuration(item),
+        text:item.item_type==='title'?item.title:item.note,imageUrl:item.image_url || item.asset_url,
+        x:item.x,y:item.y,width:item.width,height:item.height,rotation:item.rotation,opacity:item.opacity,fontSize:item.fontSize,fontFamily:item.fontFamily,fontWeight:item.fontWeight,textAlign:item.textAlign,background:item.background,hidden:item.hidden,
+      });
       const sources: LocalExportSource[] = orderedVideoItems.map((item) => {
+        if(['title','text','image'].includes(item.item_type)) return {type:'card',url:'',start:0,end:0,duration:itemDuration(item),card:designOverlay(item)};
         const matchId = String(item.action?.match_id || "");
         const url = getLocalMatchVideoUrl(matchId);
         if (!url) {
@@ -1132,7 +1155,7 @@ export default function MontageStudio({
       });
 
       const overlays: LocalExportOverlay[] = items
-        .filter((item) => ["title", "text", "image"].includes(item.item_type))
+        .filter((item) => montageTrack(item)==='overlay' && ["title", "text", "image"].includes(item.item_type))
         .map((item, index) => ({
           id: item.id || item.action_id,
           type: item.item_type as "title" | "text" | "image",
@@ -1144,6 +1167,9 @@ export default function MontageStudio({
           fontSize: item.fontSize, fontFamily: item.fontFamily, fontWeight: item.fontWeight, textAlign: item.textAlign, background: item.background, hidden: item.hidden,
         }));
 
+      const videoEnd = orderedVideoItems.reduce((sum,item)=>sum+itemDuration(item),0);
+      const overlayEnd = Math.max(0,...overlays.map(item=>item.timelineStart+item.duration));
+      if(overlayEnd>videoEnd) sources.push({type:'card',url:'',start:0,end:0,duration:overlayEnd-videoEnd});
       const result = await exportTimelineLocally(
         sources, overlays,
         (title || "montage-mybasket").replace(/[^a-zA-Z0-9_-]+/g, "-"),
@@ -1414,6 +1440,7 @@ export default function MontageStudio({
   useEffect(() => {
     if (!montagePlaying || !activeVideoEntry) return;
     const { item, start } = activeVideoEntry;
+    if (!['clip','freeze'].includes(item.item_type)) return;
     const url = actionVideoUrl(item.action, matchMap);
     if (!url || failedVideos.includes(url)) {
       setMontagePlaying(false);
@@ -1465,7 +1492,7 @@ export default function MontageStudio({
       source = source.filter((action) => favoriteActionIds.includes(String(action.id)));
     }
     if (libraryView === "received") {
-      const ids = new Set([...receivedClips.map(clip => clip.actionId), ...themes.filter(theme => theme.name === RECEIVED_PLAYLIST_NAME).flatMap(theme => theme.actionIds)]);
+      const ids = new Set([...receivedClips.map(clip => clip.actionId), ...themes.filter(theme => theme.name === RECEIVED_PLAYLIST_NAME).flatMap(theme => theme.actionIds), ...items.filter(item=>item.item_type==="clip").map(item=>item.action_id)]);
       source = source.filter(action => ids.has(action.id));
     }
     return [...source].sort((a, b) => {
@@ -1475,7 +1502,7 @@ export default function MontageStudio({
       const date = (row: ActionRow) => String(matchMap.get(String(row.match_id))?.match_date || "");
       return clipSort === "oldest" ? date(a).localeCompare(date(b)) : date(b).localeCompare(date(a));
     });
-  }, [filteredActions, favoriteActionIds, libraryView, receivedClips, themes, clipSort, matchMap]);
+  }, [filteredActions, favoriteActionIds, libraryView, receivedClips, themes, items, clipSort, matchMap]);
 
   useEffect(() => { setClipLimit(48); setClipPreviewIndex(null); }, [search, filter, selectedMatchFilter, selectedActionFilter, selectedPlayerFilter, selectedSystemFilter, selectedContextFilter, selectedThemeId, libraryView, clipSort]);
 
@@ -1623,7 +1650,11 @@ export default function MontageStudio({
     if (!value?.trim()) return;
     setPanelTab("settings");
     setToolTab("titles");
-    const insertAt = insertionIndex();
+    const placement = type === "title" ? titlePlacement : "overlay";
+    const requested = titleTarget === "" ? (selected?.item_type === "clip" ? selectedIndex : items.findIndex(item=>item.item_type==='clip')) : Number(titleTarget);
+    const targetIndex = requested >= 0 && items[requested]?.item_type === 'clip' ? requested : -1;
+    const insertAt = placement === 'video' ? (targetIndex >= 0 ? targetIndex : items.length) : insertionIndex();
+    const titleStart = targetIndex >= 0 ? timelineStartOf(items[targetIndex],targetIndex) : placement==='video' ? items.filter(item=>montageTrack(item)==='video').reduce((sum,item)=>sum+itemDuration(item),0) : playhead;
     setItems((current) => {
       const next: MontageItem = {
         action_id: `design:${uid()}`,
@@ -1638,14 +1669,15 @@ export default function MontageStudio({
         freeze_time: null,
         freeze_duration: null,
         annotations: [],
-        track: "overlay",
-        timeline_start: playhead,
+        track: placement,
+        timeline_start: titleStart,
       };
       const rows = [...current];
       rows.splice(insertAt, 0, next);
       return rows.map((item, index) => ({ ...item, sort_order: index }));
     });
     setSelectedIndex(insertAt);
+    setPlayhead(titleStart);
     setClipPreviewIndex(null);
     setMontagePlaying(false);
   };
@@ -1889,7 +1921,9 @@ export default function MontageStudio({
     }
   };
 
-  const stageEntry = montagePlaying && activeVideoEntry ? activeVideoEntry : (selected ? { item: selected, index: selectedIndex, start: timelineStartOf(selected, selectedIndex) } : undefined);
+  const selectedIsOverlay = selected && montageTrack(selected) === 'overlay';
+  const stageEntry = montagePlaying || selectedIsOverlay ? activeVideoEntry : (selected ? { item: selected, index: selectedIndex, start: timelineStartOf(selected, selectedIndex) } : undefined);
+  const visibleOverlayEntries = montagePlaying ? activeOverlayEntries : selectedIsOverlay ? [{item:selected,index:selectedIndex,start:timelineStartOf(selected,selectedIndex)}] : activeOverlayEntries;
   const stageItem = stageEntry?.item;
   const stageSourceUrl = actionVideoUrl(stageItem?.action, matchMap);
   const stageVideo = failedVideos.includes(stageSourceUrl) ? "" : stageSourceUrl;
@@ -1931,6 +1965,64 @@ export default function MontageStudio({
     if (!previewActions.length) openClipCollection("all");
     document.querySelector<HTMLElement>(".mp-match-clips")?.scrollIntoView({ block: "nearest", behavior: "smooth" });
     document.querySelector<HTMLInputElement>(".mp-clips-search")?.focus({ preventScroll: true });
+  };
+  const timelineScale = 16 * timelineZoom;
+  const timelineWidth = Math.max(600,totalDuration * timelineScale + 64);
+  const overlaySlots = new Map<number,number>();
+  const slotEnds: number[] = [];
+  items.map((item,index)=>({item,index})).filter(({item})=>montageTrack(item)==='overlay')
+    .sort((a,b)=>(a.item.timeline_start ?? 0)-(b.item.timeline_start ?? 0)).forEach(({item,index})=>{
+      const start=item.timeline_start ?? 0;
+      let slot=slotEnds.findIndex(end=>end<=start);
+      if(slot<0) slot=slotEnds.length;
+      slotEnds[slot]=start+itemDuration(item);overlaySlots.set(index,slot);
+    });
+  const timelineTimeAt = (event: React.DragEvent<HTMLElement> | React.MouseEvent<HTMLElement>) => {
+    const body=event.currentTarget.closest('.mp-lane-body') || event.currentTarget;
+    return Math.max(0,Math.round(((event.clientX-body.getBoundingClientRect().left)/timelineScale)*10)/10);
+  };
+  const dropOnTrack = (event: React.DragEvent<HTMLElement>, track: 'video'|'overlay'|'audio', beforeIndex?: number) => {
+    event.preventDefault();event.stopPropagation();setMontagePlaying(false);
+    const raw=event.dataTransfer.getData('text/mybasket-story-index');
+    const time=timelineTimeAt(event);
+    if(raw==='') {
+      if(track!=='video') {flash('Dépose les clips sur la piste Clips.');return;}
+      const action=actions.find(row=>row.id===event.dataTransfer.getData('text/mybasket-action'));
+      if(action) {
+        const target=beforeIndex ?? items.findIndex((item,index)=>montageTrack(item)==='video' && timelineStartOf(item,index)+itemDuration(item)/2>time);
+        addAction(action,target<0 ? items.length : target);
+      }
+      return;
+    }
+    const from=Number(raw), item=items[from];
+    if(!Number.isInteger(from)||!item) return;
+    const design=['title','text','image'].includes(item.item_type);
+    if((track==='audio')!==(item.item_type==='audio') || (!design && item.item_type!=='audio' && track!=='video')) {flash('Cet élément ne peut pas être placé sur cette piste.');return;}
+    if(track==='video') {
+      const target=beforeIndex ?? items.findIndex((row,index)=>index!==from && montageTrack(row)==='video' && timelineStartOf(row,index)+itemDuration(row)/2>time);
+      const at=target<0 ? items.length : target;
+      const next=[...items];next.splice(from,1);
+      const destination=Math.max(0,at-(from<at?1:0));
+      next.splice(destination,0,{...item,track:'video'});const sequenced=enforceTimelineSequence(next);setItems(sequenced);setSelectedIndex(destination);setPlayhead(sequenced[destination]?.timeline_start ?? 0);
+    } else {
+      setItems(current=>current.map((row,index)=>index===from?{...row,track,timeline_start:time}:row));setSelectedIndex(from);setPlayhead(time);
+    }
+    setClipPreviewIndex(null);setToolTab('edit');
+  };
+  const overlayStyle = (item: MontageItem): React.CSSProperties => ({
+    left:`${item.x ?? 50}%`,top:`${item.y ?? 50}%`,width:`${item.width ?? (item.item_type==='image'?30:70)}%`,
+    transform:`translate(-50%,-50%) rotate(${item.rotation ?? 0}deg)`,opacity:item.hidden?0:item.opacity ?? 1,
+    fontSize:`${(item.fontSize ?? (item.item_type==='title'?48:30))/9.6}cqw`,fontFamily:item.fontFamily ?? 'Arial',fontWeight:item.fontWeight ?? 800,
+    textAlign:item.textAlign ?? 'center',background:item.background ?? 'transparent',padding:0,
+  });
+  const dragOverlay = (event: React.PointerEvent<HTMLElement>, item: MontageItem, index: number) => {
+    if(item.locked || montagePlaying) return;
+    event.preventDefault();event.stopPropagation();setSelectedIndex(index);
+    const box=event.currentTarget.closest('.mp-stage')!.getBoundingClientRect();
+    const origin={x:event.clientX,y:event.clientY};
+    const move=(e:PointerEvent)=>setItems(current=>current.map((row,i)=>i===index?{...row,x:clamp((item.x ?? 50)+(e.clientX-origin.x)/box.width*100,0,100),y:clamp((item.y ?? 50)+(e.clientY-origin.y)/box.height*100,0,100)}:row));
+    const up=()=>{window.removeEventListener('pointermove',move);window.removeEventListener('pointerup',up);};
+    window.addEventListener('pointermove',move);window.addEventListener('pointerup',up,{once:true});
   };
   const confirmDraftExit = () => !editorReady || draftFingerprint(items, title, coachNote, assignedPlayerId || "") === savedFingerprintRef.current || window.confirm("Ce montage contient des modifications non enregistrées. Quitter ce montage ?");
 
@@ -2057,9 +2149,13 @@ export default function MontageStudio({
         </aside>
 
         <aside className="mp-match-clips" id="mp-panel-clips" role="tabpanel" aria-labelledby="mp-tab-clips" hidden={panelTab!=="clips"}>
+          <div className="mp-clip-collections" role="tablist" aria-label="Bibliothèque de clips">
+            <button role="tab" aria-selected={libraryView!=='received'} onClick={()=>{openClipCollection('all');setSearch('');setFilter('all');setSelectedMatchFilter('');setSelectedActionFilter('');setSelectedPlayerFilter('');setSelectedSystemFilter('');setSelectedContextFilter('');}}>Tous les clips</button>
+            <button role="tab" aria-selected={libraryView==='received'} onClick={()=>{openClipCollection('received');setSearch('');setFilter('all');setSelectedMatchFilter('');setSelectedActionFilter('');setSelectedPlayerFilter('');setSelectedSystemFilter('');setSelectedContextFilter('');}}>Mes clips ajoutés</button>
+          </div>
           <div className="mp-match-clips-head">
             <div>
-              <strong>{libraryView === "received" ? "Clips reçus" : selectedThemeId ? themes.find(theme => theme.id === selectedThemeId)?.name : "Clips disponibles"}</strong>
+              <strong>{libraryView === "received" ? "Mes clips ajoutés" : selectedThemeId ? themes.find(theme => theme.id === selectedThemeId)?.name : "Clips disponibles"}</strong>
               <span>{previewActions.length}</span>
             </div>
             <select value={filter} onChange={(e) => setFilter(e.target.value as "all" | "made" | "missed" | "video")}>
@@ -2187,7 +2283,7 @@ export default function MontageStudio({
             </div>
 
             {!hasMontageBounds(previewAction) && <p role="status">Cette action n’a pas de timecode vidéo exploitable. Le match doit être synchronisé avec sa vidéo dans LiveStats avant de pouvoir l’insérer.</p>}
-            <div className="mp-modal-tags">
+            <details className="mp-preview-details"><summary>Détails du clip</summary><div className="mp-modal-tags">
               {previewAction.context && <i>{previewAction.context}</i>}
               {previewAction.temps_fort && <i>{tags.label(previewAction.temps_fort)}</i>}
               {previewAction.action_type && <i>{previewAction.action_type}</i>}
@@ -2200,6 +2296,7 @@ export default function MontageStudio({
               <button onClick={() => setClipPreviewIndex(null)}>Revenir au film</button>
             </div>
 
+            </details>
             <footer>
               <button onClick={()=>setClipPreviewIndex(i=>Math.max(0,(i??0)-1))}>← Précédent <span aria-hidden="true">←</span></button>
               <button className="gold" disabled={!hasMontageBounds(previewAction)} onClick={()=>addAction(previewAction)}>＋ Ajouter au montage <kbd>Entrée</kbd></button>
@@ -2213,9 +2310,9 @@ export default function MontageStudio({
 
           <div className="mp-stage">
             {stageItem?.item_type === "image" && stageItem.image_url ? (
-              <div className="mp-editable-overlay" style={{left:`${stageItem.x ?? 50}%`,top:`${stageItem.y ?? 50}%`,width:`${stageItem.width ?? 30}%`,opacity:stageItem.opacity ?? 1,transform:`translate(-50%,-50%) rotate(${stageItem.rotation ?? 0}deg)`}} onPointerDown={(e)=>{if(stageItem.locked)return; const box=e.currentTarget.parentElement!.getBoundingClientRect(); const move=(ev:PointerEvent)=>updateSelected({x:clamp(((ev.clientX-box.left)/box.width)*100,0,100),y:clamp(((ev.clientY-box.top)/box.height)*100,0,100)}); const up=()=>{window.removeEventListener("pointermove",move);window.removeEventListener("pointerup",up)};window.addEventListener("pointermove",move);window.addEventListener("pointerup",up)}}><img src={stageItem.image_url} alt={stageItem.title} /></div>
+              <div className="mp-editable-overlay" style={overlayStyle(stageItem)} onPointerDown={(event)=>dragOverlay(event,stageItem,stageEntry?.index ?? selectedIndex)}><img src={stageItem.image_url} alt={stageItem.title} /></div>
             ) : stageItem?.item_type === "title" || stageItem?.item_type === "text" ? (
-              <div className="mp-design-preview mp-editable-overlay" style={{left:`${stageItem.x ?? 50}%`,top:`${stageItem.y ?? 50}%`,width:`${stageItem.width ?? 70}%`,opacity:stageItem.opacity ?? 1,transform:`translate(-50%,-50%) rotate(${stageItem.rotation ?? 0}deg)`,fontSize:`${stageItem.fontSize ?? (stageItem.item_type === "title" ? 48 : 30)}px`,fontFamily:stageItem.fontFamily ?? "Arial",fontWeight:stageItem.fontWeight ?? 800,textAlign:stageItem.textAlign ?? "center",background:stageItem.background ?? "transparent"}} onPointerDown={(e)=>{if(stageItem.locked)return; const box=e.currentTarget.parentElement!.getBoundingClientRect(); const move=(ev:PointerEvent)=>updateSelected({x:clamp(((ev.clientX-box.left)/box.width)*100,0,100),y:clamp(((ev.clientY-box.top)/box.height)*100,0,100)}); const up=()=>{window.removeEventListener("pointermove",move);window.removeEventListener("pointerup",up)};window.addEventListener("pointermove",move);window.addEventListener("pointerup",up)}}><strong>{stageItem.item_type === "title" ? stageItem.title : stageItem.note}</strong></div>
+              <div className="mp-design-preview mp-editable-overlay" style={overlayStyle(stageItem)} onPointerDown={(event)=>dragOverlay(event,stageItem,stageEntry?.index ?? selectedIndex)}><strong>{stageItem.item_type === "title" ? stageItem.title : stageItem.note}</strong></div>
             ) : stageVideo ? (
               <video
                 ref={videoRef}
@@ -2238,10 +2335,10 @@ export default function MontageStudio({
                 {stageSourceUrl && <button disabled={reconnecting} onClick={() => replaceSourceVideo(stageItem.action!)}>Remplacer le fichier vidéo</button>}
               </div>
             ) : (
-              <div className="mp-stage-empty">Sélectionne un clip dans la bibliothèque ou dans la timeline.</div>
+              <div className="mp-stage-empty">{visibleOverlayEntries.length ? '' : 'Sélectionne un clip dans la bibliothèque ou dans la timeline.'}</div>
             )}
 
-            {stageVideo && (stageItem?.item_type === "clip" || stageItem?.item_type === "freeze") && !montagePlaying && <canvas
+            {stageVideo && selected && ['clip','freeze'].includes(selected.item_type) && (stageItem?.item_type === "clip" || stageItem?.item_type === "freeze") && !montagePlaying && <canvas
               ref={canvasRef}
               width={960}
               height={540}
@@ -2356,9 +2453,9 @@ export default function MontageStudio({
               </svg>
             )}
 
-            {montagePlaying && activeOverlayEntries.map(({ item, index }) => (
-              <div className={`mp-live-overlay type-${item.item_type}`} key={`${item.action_id}:${index}`} style={{left:`${item.x ?? 50}%`,top:`${item.y ?? 50}%`,width:`${item.width ?? (item.item_type === 'image' ? 30 : 70)}%`,transform:`translate(-50%,-50%) rotate(${item.rotation ?? 0}deg)`,opacity:item.hidden ? 0 : item.opacity ?? 1,fontSize:`${item.fontSize ?? (item.item_type === 'title' ? 48 : 30)}px`,fontFamily:item.fontFamily ?? 'Arial',fontWeight:item.fontWeight ?? 800,textAlign:item.textAlign ?? 'center',background:item.background ?? 'transparent',padding:0}}>
-                {item.item_type === "image" && item.image_url ? <img src={item.image_url} alt={item.title} /> : <strong>{item.item_type === "title" ? item.title : item.note || item.title}</strong>}
+            {visibleOverlayEntries.filter(({item})=>!item.hidden && (stageVideo || !stageItem?.action)).map(({item,index}) => (
+              <div className={`mp-live-overlay type-${item.item_type}`} key={`${item.action_id}:${index}`} style={overlayStyle(item)} onPointerDown={event=>dragOverlay(event,item,index)}>
+                {item.item_type==='image' && item.image_url ? <img src={item.image_url} alt={item.title} /> : <strong>{item.item_type==='title'?item.title:item.note || item.title}</strong>}
               </div>
             ))}
             <audio ref={montageAudioRef} hidden />
@@ -2407,13 +2504,15 @@ export default function MontageStudio({
               {([['arrow','Flèche'],['circle','Cercle'],['zone','Zone'],['freehand','Libre']] as const).map(([mode,label]) => <button key={mode} aria-label={label} aria-pressed={drawMode===mode} disabled={!stageVideo || !selected || !['clip','freeze'].includes(selected.item_type)} className={drawMode===mode?'on':''} onClick={()=>activateDrawing(mode)}>{label}</button>)}
               <input aria-label="Couleur du dessin" type="color" value={drawColor} onChange={event=>setDrawColor(event.target.value)} />
               <button disabled={!selected?.annotations.length} onClick={()=>selected && updateSelected({annotations:selected.annotations.slice(0,-1)})}>Effacer le dernier</button>
-              <small>{!stageVideo ? 'Sélectionne un clip et reconnecte sa vidéo pour dessiner.' : 'Vidéo en pause : clique et glisse sur l’image. Tes dessins sont enregistrés dans ce montage.'}</small>
+              <small>{!stageVideo || !selected || !['clip','freeze'].includes(selected.item_type) ? 'Sélectionne un clip et reconnecte sa vidéo pour dessiner.' : 'Vidéo en pause : clique et glisse sur l’image. Tes dessins sont enregistrés dans ce montage.'}</small>
             </>}
             {toolTab==='titles' && <form className="mp-title-composer" onSubmit={event=>{event.preventDefault();addDesignItem('title',titleDraft.trim() || 'Nouveau titre');setTitleDraft('');}}>
               <input aria-label="Texte du nouveau titre" placeholder="Écris ton titre…" value={titleDraft} onChange={event=>setTitleDraft(event.target.value)} />
+              <select aria-label="Placement du nouveau titre" value={titlePlacement} onChange={event=>setTitlePlacement(event.target.value as 'overlay'|'video')}><option value="overlay">Sur la vidéo</option><option value="video">Carton seul avant un clip</option></select>
+              <select aria-label="Clip cible du titre" value={titleTarget} onChange={event=>setTitleTarget(event.target.value)}><option value="">{titlePlacement==='video'?'Avant le clip sélectionné / premier clip':'Au clip sélectionné / curseur'}</option>{items.map((item,index)=>item.item_type==='clip'?<option key={index} value={index}>{index+1} · {item.title}</option>:null)}</select>
               <button type="submit">＋ Ajouter le titre</button>
               <button type="button" onClick={()=>addDesignItem('text')}>＋ Texte</button>
-              <small>Le titre apparaît immédiatement. Sa durée, sa taille et sa position se règlent dans l’onglet Réglages.</small>
+              <small>Sur la vidéo : piste Titres. Carton seul : piste Clips, avant le clip choisi. Glisse ensuite le titre où tu veux.</small>
             </form>}
             {toolTab==='transitions' && <>
               <label>Transition du clip <select aria-label="Transition du clip" disabled={!selected || !['clip','freeze'].includes(selected.item_type)} value={selected?.transition || 'none'} onChange={event=>updateSelected({transition:event.target.value as 'none'|'fade'})}><option value="none">Coupe directe</option><option value="fade">Fondu au noir</option></select></label>
@@ -2444,6 +2543,8 @@ export default function MontageStudio({
             <div className="mp-inspector-form">
               <label>Titre<input value={selected.title} onChange={(e)=>updateSelected({title:e.target.value})}/></label>
               <label>Type<div className="mp-readonly">{selected.item_type}</div></label>
+              {selected.item_type==='title' && <label>Affichage<select aria-label="Affichage du titre" value={montageTrack(selected)} onChange={event=>updateSelected({track:event.target.value as 'video'|'overlay'})}><option value="overlay">Sur la vidéo (piste Titres)</option><option value="video">Carton seul (piste Clips)</option></select></label>}
+              {montageTrack(selected)!=='video' && <label>Position dans le montage (secondes)<input aria-label="Position de l’élément dans le montage" type="number" min="0" step="0.1" value={selected.timeline_start ?? 0} onChange={event=>updateSelected({timeline_start:Math.max(0,numberValue(event.target.value))})}/></label>}
 
               {selected.item_type==="clip" ? <>
                 <div className="mp-clip-time-readable">
@@ -2571,55 +2672,27 @@ export default function MontageStudio({
             </div>
           </div>
 
-            <div className="mp-storyboard-ruler">
-              <strong>Timeline · {items.length} éléments</strong><span>00:15</span><span>00:30</span><span>00:45</span><span>01:00</span><span>01:15</span><span>{formatClipTime(totalDuration)}</span>
-            </div>
-            <div className="mp-storyboard-strip" onDragOver={event => event.preventDefault()} onDrop={event => {
-              event.preventDefault();
-              const id = event.dataTransfer.getData("text/mybasket-action");
-              const action = previewActions.find(row => row.id === id);
-              if (action) addAction(action);
-            }}>
-              {items.length === 0 ? (
-                <div className="mp-storyboard-empty">Ton film est vide. Regarde les clips reçus, puis glisse ici ceux que tu veux garder.</div>
-              ) : items.map((item, index) => {
-                const duration = itemDuration(item);
-                const typeLabel = item.item_type === "freeze" ? "Freeze" : item.item_type === "title" ? "Titre" : item.item_type === "image" ? "Image" : item.item_type === "audio" ? "Audio" : item.item_type === "text" ? "Texte" : "Clip";
-                return (
-                  <button
-                    key={`${item.action_id}:${index}`}
-                    className={`mp-story-card type-${item.item_type} ${selectedIndex === index ? "selected" : ""}`}
-                    style={{ minWidth: Math.max(125, duration * 14 * timelineZoom), maxWidth: Math.max(125, duration * 14 * timelineZoom) }}
-                    onClick={() => selectTimelineItem(index)}
-                    draggable
-                    onDragStart={(event) => { event.dataTransfer.setData("text/mybasket-story-index", String(index)); }}
-                    onDragOver={(event) => event.preventDefault()}
-                    onDrop={(event) => {
-                      event.preventDefault();
-                      const raw = event.dataTransfer.getData("text/mybasket-story-index");
-                      if (!raw) {
-                        const id = event.dataTransfer.getData("text/mybasket-action");
-                        const action = previewActions.find(row => row.id === id);
-                        if (action) { event.stopPropagation(); addAction(action, index); }
-                        return;
-                      }
-                      event.stopPropagation();
-                      const from = Number(raw);
-                      if (Number.isInteger(from) && from >= 0 && from < items.length && from !== index) moveItem(from, index);
-                    }}
-                  >
-                    <span className="mp-story-index">{index + 1}</span>
-                    <div className="mp-story-visual">
-                      {item.item_type === "clip" ? <ClipThumbnail src={actionVideoUrl(item.action, matchMap)} time={item.clip_start} /> : item.item_type === "freeze" ? <span>Ⅱ</span> : item.item_type === "audio" ? <span>♫</span> : item.item_type === "image" ? <span>▣</span> : <strong>{item.item_type === "title" ? item.title : item.note || item.title}</strong>}
+            <div className="mp-timeline-scroll">
+              <div className="mp-timeline-content" style={{width:timelineWidth+78}}>
+                <div className="mp-time-ruler" style={{width:timelineWidth}} onClick={event=>{const time=timelineTimeAt(event);setMontagePlaying(false);setPlayhead(Math.min(totalDuration,time));const entry=activeEntryAt('video',time);if(entry)setSelectedIndex(entry.index);}}>
+                  {Array.from({length:Math.ceil(timelineWidth/timelineScale/5)},(_,index)=><span key={index} style={{left:index*5*timelineScale}}>{formatClipTime(index*5)}</span>)}
+                </div>
+                {([['overlay','Titres / images'],['video','Clips'],['audio','Audio']] as const).map(([track,label])=>(
+                  <div key={track} className={`mp-timeline-lane track-${track}`} style={{height:track==='overlay'?Math.max(1,slotEnds.length)*34:track==='video'?66:32}}>
+                    <strong className="mp-lane-label">{label}</strong>
+                    <div className="mp-lane-body" data-track={track} onDragOver={event=>event.preventDefault()} onDrop={event=>dropOnTrack(event,track)}>
+                      {items.map((item,index)=>montageTrack(item)===track && <button key={`${item.action_id}:${index}`} data-item-index={index} title={`${item.title} · ${formatClipTime(itemDuration(item))}${item.action?' · '+actionSub(item.action,matchMap):''}`} className={`mp-story-card type-${item.item_type} ${selectedIndex===index?'selected':''}`} style={{left:timelineStartOf(item,index)*timelineScale,width:Math.max(2,itemDuration(item)*timelineScale),top:track==='overlay'?(overlaySlots.get(index) || 0)*34+3:3}} onClick={()=>selectTimelineItem(index)} draggable onDragStart={event=>event.dataTransfer.setData('text/mybasket-story-index',String(index))} onDragOver={event=>event.preventDefault()} onDrop={event=>dropOnTrack(event,track,track==='video'?index:undefined)}>
+                        {track==='video' && <div className="mp-story-visual">{item.item_type==='clip'?<ClipThumbnail src={actionVideoUrl(item.action,matchMap)} time={item.clip_start}/>:<span>{item.title}</span>}</div>}
+                        <strong className="mp-story-title">{item.title || item.item_type}</strong>
+                        <small>{formatClipTime(itemDuration(item))}</small>
+                        <b onClick={event=>{event.stopPropagation();removeItem(index);}}>×</b>
+                      </button>)}
+                      {!items.some(item=>montageTrack(item)===track) && <span className="mp-lane-hint">{track==='overlay'?'Glisse un titre ici pour le superposer à la vidéo':track==='video'?'Glisse tes clips ici · un carton placé ici apparaît seul':'Piste audio'}</span>}
                     </div>
-                    <strong className="mp-story-title">{item.title || typeLabel}</strong>
-                    <small>{typeLabel} · {formatClipTime(duration)}</small>
-                    {item.action && <small>{actionSub(item.action, matchMap)}</small>}
-                    <b onClick={(event) => { event.stopPropagation(); removeItem(index); }}>×</b>
-                  </button>
-                );
-              })}
-              <button className="mp-story-add" onClick={chooseClips}>＋<small>Choisir un clip</small></button>
+                  </div>
+                ))}
+                <i className="mp-timeline-playhead" style={{left:78+playhead*timelineScale}} />
+              </div>
             </div>
             <div className="mp-story-toolbar">
               <button onClick={chooseClips}>▣ Ajouter des clips</button>
@@ -2710,6 +2783,14 @@ export default function MontageStudio({
         .mp-storyboard{grid-row:3;grid-column:1/-1}.mp-storyboard-strip{min-height:96px;padding:6px}.mp-story-visual{height:42px}.mp-story-card{min-width:112px;max-width:145px;padding:4px}.mp-storyboard-ruler{height:22px}.mp-story-toolbar{padding:5px;gap:4px}.mp-story-toolbar button{padding:5px 8px;min-height:28px}.mp-timeline-head{margin-top:2px;padding:4px}.mp-timeline-head strong{font-size:12px}
         @media(max-width:850px){.mp-grid{grid-template-columns:250px minmax(0,1fr)}.mp-workspace-nav{gap:6px;flex-wrap:wrap}.mp-workspace-nav [role=tab]{padding:6px 9px}.mp-workspace-nav small{display:none}.mp-stage{width:100%}.mp-center{height:auto;min-height:300px}.mp-tool-tabs button{padding:6px 8px;font-size:11px}}
         @media(max-width:600px){.mp-grid{grid-template-columns:minmax(0,1fr)}.mp-workspace-nav{grid-row:1}.mp-library,.mp-match-clips,.mp-inspector{grid-column:1;grid-row:2;height:250px;max-height:250px}.mp-center{grid-column:1;grid-row:3;min-height:0}.mp-storyboard{grid-row:4}.mp-stage{width:min(100%,420px)}.mp-header{grid-template-columns:1fr}.mp-header-actions{gap:4px}.mp-tool-tabs{width:100%;justify-content:space-between}}
+
+        .mp-stage{container-type:inline-size}.mp-stage .mp-editable-overlay,.mp-stage .mp-live-overlay{line-height:1.15;white-space:pre-wrap;overflow-wrap:anywhere;max-height:100%;overflow:hidden;border-radius:0}.mp-stage .mp-live-overlay{cursor:move}.mp-stage .mp-live-overlay img{max-width:none;width:100%;display:block}
+        .mp-clip-collections{display:flex;gap:3px;padding:3px;background:#f0f0f3;border-radius:8px;margin-bottom:8px}.mp-clip-collections button{flex:1;font-size:11px;padding:6px;border:0;border-radius:6px;background:transparent}.mp-clip-collections [aria-selected=true]{background:var(--wine);color:#fff}
+        .mp-match-clip-list{display:grid;grid-template-columns:minmax(0,1fr);gap:4px}.mp-match-clip{display:grid;grid-template-columns:18px minmax(0,1fr) 28px 28px;padding:5px;gap:5px}.mp-match-clip-open{grid-column:2;grid-row:1;display:grid;grid-template-columns:62px minmax(0,1fr);align-items:center;gap:7px}.mp-match-clip input{grid-row:1;grid-column:1}.mp-mini-star{grid-row:1;grid-column:3}.mp-mini-add{grid-row:1;grid-column:4}.mp-match-thumb{height:38px;aspect-ratio:auto}.mp-match-copy strong{font-size:10px}.mp-match-copy small{font-size:9px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;line-height:1.3}.mp-preview-details{font-size:11px;margin-top:6px}.mp-preview-details summary{cursor:pointer}.mp-source-card footer button{font-size:11px}.mp-source-card h2{font-size:14px}
+        .mp-title-composer select{max-width:240px;font-size:11px;min-width:0}
+        .mp-timeline-scroll{overflow:auto;max-height:240px;border-top:1px solid var(--line)}.mp-timeline-content{position:relative;min-width:100%}.mp-time-ruler{height:24px;position:relative;margin-left:78px;font-size:9px;color:#777;cursor:crosshair}.mp-time-ruler span{position:absolute;top:5px;border-left:1px solid #ddd;padding-left:3px;height:19px}
+        .mp-timeline-lane{position:relative;border-top:1px solid #ececf0;background:#fafafa;min-width:100%}.mp-lane-label{position:sticky;left:0;width:78px;height:100%;display:flex;align-items:center;padding:6px;background:#f4f4f6;border-right:1px solid #ddd;z-index:4;font-size:10px;line-height:1.3}.mp-lane-body{position:absolute;left:78px;right:0;top:0;bottom:0}.mp-lane-hint{position:absolute;top:8px;left:10px;font-size:10px;color:#999;pointer-events:none;white-space:nowrap}.mp-timeline-playhead{position:absolute;top:0;bottom:0;border-left:2px solid var(--wine);pointer-events:none;z-index:3}
+        .mp-timeline-lane .mp-story-card{position:absolute;min-width:0!important;max-width:none!important;margin:0;padding:2px;border-radius:4px;height:28px;overflow:hidden;display:block}.mp-timeline-lane.track-video .mp-story-card{height:58px;background:#e5edf3}.mp-timeline-lane.track-overlay .mp-story-card{background:#eee2f5;border-color:#d4b8e3}.mp-timeline-lane.track-audio .mp-story-card{height:24px;background:#deefe5;border-color:#a4ceb8}.mp-timeline-lane .mp-story-visual{height:25px;border-radius:2px}.mp-timeline-lane .mp-story-title{font-size:9px;margin:1px 0 0;line-height:11px}.mp-timeline-lane small{font-size:8px;line-height:9px;display:block}.mp-timeline-lane .mp-story-card>b{display:none;width:14px;height:14px;right:1px;top:1px;font-size:11px}.mp-timeline-lane .mp-story-card:is(:hover,.selected)>b{display:grid}
 
       `}</style>
     </div>

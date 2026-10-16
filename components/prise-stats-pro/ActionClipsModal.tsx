@@ -391,7 +391,7 @@ export default function ActionClipsModal(props: ActionClipsModalProps) {
             <button disabled={index === actions.length - 1} onClick={() => go(1)}>Suivant →</button>
           </div>
 
-          <div className="acm-infos">
+          <details className="acm-details"><summary>Informations du clip</summary><div className="acm-infos">
             <Info k="Match" v={cur.matchLabel} />
             <Info k="Date" v={cur.date} />
             <Info k="Adversaire" v={cur.opponent} />
@@ -406,7 +406,7 @@ export default function ActionClipsModal(props: ActionClipsModalProps) {
             <Info k="Zone" v={cur.zone} />
             <Info k="Clip début" v={(trimStart ?? effectiveStartOf(cur)) != null ? fmt((trimStart ?? effectiveStartOf(cur))!) : null} />
             <Info k="Clip fin" v={(trimEnd ?? effectiveEndOf(cur)) != null ? fmt((trimEnd ?? effectiveEndOf(cur))!) : null} />
-          </div>
+          </div></details>
 
           <div className="acm-tools">
             {onAddToMontage && <button onClick={() => onAddToMontage(cur)}>⭐ Ajouter au montage</button>}
@@ -429,7 +429,7 @@ export default function ActionClipsModal(props: ActionClipsModalProps) {
             const precisionMax = Math.min(duration, Math.max(precisionMin + .05, precisionMin + precisionSpan));
             const clipDuration = Math.max(0, endValue - startValue);
             const dirty = Math.abs(startValue - savedStart) > .0005 || Math.abs(endValue - savedEnd) > .0005;
-            return <div className="acm-trim-editor">
+            return <details className="acm-details"><summary>✂ Rogner le clip · {fmt(startValue)} → {fmt(endValue)}</summary><div className="acm-trim-editor">
               <div className="acm-trim-title">
                 <b>✂ Découper précisément le clip</b>
                 <span>Lis la vidéo, place la tête de lecture puis utilise « Début ici » et « Fin ici ». Affine ensuite au centième avec la timeline de précision.</span>
@@ -483,15 +483,17 @@ export default function ActionClipsModal(props: ActionClipsModalProps) {
                 <button onClick={previewEditedTrim}>▶ Tester le clip</button>
                 {onTrim && <button className="acm-trim-save" disabled={trimStart == null || trimEnd == null || endValue <= startValue} onClick={saveTrim}>{dirty ? '✓ Enregistrer' : '✓ Enregistré'}</button>}
               </div>
-            </div>;
+            </div></details>;
           })()}
 
+          <details className="acm-details"><summary>Note coach{note ? " · renseignée" : ""}</summary>
           <textarea className="acm-note" placeholder="Note coach / commentaire…" value={note} onChange={(e) => setNote(e.target.value)} />
-          {onSaveNote && <button className="acm-note-save" onClick={() => onSaveNote(cur, note)}>💾 Enregistrer la note</button>}
+          {onSaveNote && <button className="acm-note-save" onClick={() => onSaveNote(cur, note)}>💾 Enregistrer la note</button>}</details>
         </div>
       </div>
 
       <style>{`
+        .acm-details{border:1px solid #2a3142;border-radius:9px;padding:9px}.acm-details summary{cursor:pointer;font-size:12px;font-weight:700;color:#d8deeb}.acm-details[open]>summary{margin-bottom:10px}.acm-details .acm-note{width:100%}
         .acm-backdrop { position: fixed; inset: 0; z-index: 4000; background: rgba(4,7,15,.72); display: flex; align-items: center; justify-content: center; padding: 16px; }
         .acm-card { width: min(820px, 96vw); max-height: 92vh; overflow: auto; background: #12131c; color: #eef1f7; border: 1px solid #2a3142; border-radius: 16px; box-shadow: 0 24px 60px -20px rgba(0,0,0,.7); }
         .acm-card.acm-full { position: fixed; inset: 12px; width: auto; max-height: none; }
@@ -503,7 +505,7 @@ export default function ActionClipsModal(props: ActionClipsModalProps) {
         .acm-body { padding: 14px 16px 16px; display: flex; flex-direction: column; gap: 12px; }
         .acm-title { font-size: 13px; font-weight: 800; color: #D4A24C; }
         .acm-videowrap { position: relative; }
-        .acm-video { width: 100%; max-height: 58vh; background: #000; border-radius: 10px; display: block; }
+        .acm-video { width: 100%; max-height: min(42vh,360px); background: #000; border-radius: 10px; display: block; }
         .acm-card.acm-full .acm-video { max-height: calc(100vh - 320px); }
         .acm-canvas { position: absolute; inset: 0; width: 100%; height: 100%; cursor: crosshair; touch-action: none; }
         .acm-novideo { padding: 28px; text-align: center; color: #8a93a8; background: #0c0f1a; border: 1px dashed #2a3142; border-radius: 10px; font-weight: 700; display: grid; gap: 12px; justify-items: center; }
