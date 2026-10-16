@@ -2091,12 +2091,14 @@ export default function MontageStudio({
           <select className="mp-library-select" aria-label="Trier les clips" value={clipSort} onChange={event => setClipSort(event.target.value)}>
             <option value="received">Derniers clips reçus</option><option value="recent">Matchs les plus récents</option><option value="oldest">Matchs les plus anciens</option><option value="player">Joueur / titre</option><option value="action">Type d’action</option>
           </select>
-          </details>
           <button onClick={() => { setSearch(""); setFilter("all"); setSelectedMatchFilter(""); setSelectedActionFilter(""); setSelectedPlayerFilter(""); setSelectedSystemFilter(""); setSelectedContextFilter(""); }}>Réinitialiser les filtres</button>
+          </details>
           <div style={{ padding: "8px 0", display: "grid", gap: 6 }}>
+            {librarySelection.length > 0 ? <>
             <strong>{librarySelection.length} actions sélectionnées · {new Set(actions.filter(action => librarySelection.includes(action.id)).map(action => action.match_id)).size} matchs</strong>
             <button disabled={!librarySelection.length} onClick={addSelectedLibraryClips}>＋ Ajouter la sélection au montage</button>
-            <button disabled={!librarySelection.length} onClick={() => setLibrarySelection([])}>Vider la sélection</button>
+            <button onClick={() => setLibrarySelection([])}>Vider la sélection</button>
+            </> : <small>Ouvre un clip pour le regarder, ou coche plusieurs clips à ajouter.</small>}
           </div>
           <div className="mp-match-clip-list">
             {libraryError ? <div className="mp-empty">Bibliothèque indisponible : {libraryError}</div> : loading ? <div className="mp-empty">Chargement…</div> :
@@ -2643,6 +2645,7 @@ export default function MontageStudio({
         .mp-story-visual{overflow:hidden}.mp-match-clips-head strong{font-size:15px}.mp-library-select{font-size:11px}.mp-quick-filters button{font-size:10px}
         .mp-toast{position:fixed;bottom:22px;left:50%;transform:translateX(-50%);z-index:150;background:#29202b;color:#fff;border-radius:12px;padding:14px 20px;box-shadow:0 8px 28px #0003;max-width:min(640px,92vw);font-size:14px;line-height:1.4}
         .montage-pro button{cursor:pointer;min-height:32px}.montage-pro button:disabled{cursor:not-allowed;opacity:.45}.montage-pro :is(button,input,select,textarea,summary):focus-visible{outline:3px solid #c99b42;outline-offset:2px}
+        .mp-playlist-card{grid-template-columns:minmax(0,1fr)}.mp-playlist-open{grid-template-columns:28px minmax(0,1fr);gap:5px}.mp-playlist-thumb{height:28px}.mp-playlist-menu{display:flex;justify-content:flex-end}
         .mp-advanced-filters{border:1px solid var(--line);border-radius:9px;margin:8px 0;padding:8px}.mp-advanced-filters summary{cursor:pointer;font-size:12px;font-weight:700}.mp-advanced-filters[open] summary{margin-bottom:10px}
         .mp-library,.mp-match-clips,.mp-inspector,.mp-center{height:clamp(320px,46vh,540px)}
         .mp-stage{width:min(100%,calc((clamp(320px,46vh,540px) - 170px) * 1.77778));margin-inline:auto}
