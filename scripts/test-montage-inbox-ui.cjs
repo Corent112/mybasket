@@ -87,6 +87,7 @@ const drop=async(target,payload)=>{const event=new Event('drop',{bubbles:true,ca
  assert.equal(document.querySelector('.mp-stage canvas'),null,'Drawing overlay cannot cover the reconnect button');
  assert.ok(document.querySelector('[data-connect-video]'));
  await click(document.querySelector('[aria-label="Annuler la dernière modification"]'));assert.equal(count(),1);
+ assert.ok(document.querySelector('.mp-story-card.selected'),'Undo must leave the remaining clip selected');
  await click(document.querySelector('[aria-label="Rétablir la modification"]'));assert.equal(count(),2);
  await click(document.querySelector('[aria-label="Élément précédent"]'));
  assert.ok(document.querySelector('.mp-story-card').classList.contains('selected'));

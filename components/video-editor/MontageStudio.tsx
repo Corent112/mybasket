@@ -660,6 +660,10 @@ export default function MontageStudio({
     return () => { cancelled = true; if (timer) clearTimeout(timer); };
   }, [flash, renderJobId, supabase]);
 
+  useEffect(() => {
+    setSelectedIndex(index => clamp(index, 0, Math.max(0, items.length - 1)));
+  }, [items.length]);
+
   const selected = items[selectedIndex];
   const selectedAction = selected?.action;
   const selectedVideo = actionVideoUrl(selectedAction, matchMap);
