@@ -2645,10 +2645,11 @@ export default function MontageStudio({
         .montage-pro button{cursor:pointer;min-height:32px}.montage-pro button:disabled{cursor:not-allowed;opacity:.45}.montage-pro :is(button,input,select,textarea,summary):focus-visible{outline:3px solid #c99b42;outline-offset:2px}
         .mp-advanced-filters{border:1px solid var(--line);border-radius:9px;margin:8px 0;padding:8px}.mp-advanced-filters summary{cursor:pointer;font-size:12px;font-weight:700}.mp-advanced-filters[open] summary{margin-bottom:10px}
         .mp-library,.mp-match-clips,.mp-inspector,.mp-center{height:clamp(320px,46vh,540px)}
+        .mp-stage{width:min(100%,calc((clamp(320px,46vh,540px) - 170px) * 1.77778));margin-inline:auto}
         .mp-stage-connect{position:relative;z-index:2;display:grid;gap:12px;padding:24px;text-align:center}.mp-time input{width:100%;min-width:0;accent-color:var(--wine)}
         .mp-tools button{font-size:11px}.mp-story-toolbar button{font-size:11px}.mp-header-actions{flex-wrap:wrap}.mp-project-name{min-width:0}.mp-project-name input{min-width:0;width:100%}
         @media(max-width:1450px){.mp-grid{grid-template-columns:160px minmax(260px,.85fr) minmax(320px,1.2fr)}.mp-inspector{grid-column:1/-1;height:auto;min-height:0;max-height:260px;grid-row:3}.mp-brand em{display:none}.mp-storyboard{grid-row:2}}
-        @media(max-width:1000px){.mp-header{height:auto;min-height:78px;padding:12px;grid-template-columns:1fr auto}.mp-project-name{grid-column:1/-1}.mp-grid{grid-template-columns:150px minmax(0,1fr)}.mp-library{grid-row:1/3;height:auto}.mp-match-clips{grid-column:2;grid-row:1;height:320px}.mp-center{grid-column:2;grid-row:2;height:auto;min-height:0}.mp-storyboard{grid-row:3}.mp-inspector{grid-row:4}}
+        @media(max-width:1000px){.mp-stage{width:100%}.mp-header{height:auto;min-height:78px;padding:12px;grid-template-columns:1fr auto}.mp-project-name{grid-column:1/-1}.mp-grid{grid-template-columns:150px minmax(0,1fr)}.mp-library{grid-row:1/3;height:auto}.mp-match-clips{grid-column:2;grid-row:1;height:320px}.mp-center{grid-column:2;grid-row:2;height:auto;min-height:0}.mp-storyboard{grid-row:3}.mp-inspector{grid-row:4}}
         @media(max-width:650px){.mp-header{grid-template-columns:1fr}.mp-header-actions{flex-wrap:wrap}.mp-grid{grid-template-columns:minmax(0,1fr)}.mp-library,.mp-match-clips,.mp-center,.mp-inspector,.mp-storyboard{grid-column:1;grid-row:auto;min-height:0;height:auto;max-height:none}.mp-library{max-height:230px}.mp-match-clips{max-height:460px}.mp-storyboard-strip{min-height:130px}}
 
       `}</style>
