@@ -40,7 +40,7 @@ Module._load=function(request,parent,isMain){
   '@/lib/local-video-registry':{getLocalMatchVideoUrl:()=>null,setLocalMatchVideo:()=>{}},
   '@/hooks/useLocalMatchVideoVersion':{__esModule:true,default:()=>0},
   '@/lib/video/match-video-resolver':{restoreMatchVideoForClip:async()=>({video:null})},
-  '@/components/video/LocalMatchVideoButton':{__esModule:true,default:()=>null},
+  '@/components/video/LocalMatchVideoButton':{__esModule:true,default:()=>React.createElement('button',{'data-connect-video':true},'Reconnecter la vidéo')},
   '@/components/video-editor/ClipThumbnail':{__esModule:true,default:()=>null},
   '@/lib/local-montage-export':{},
  };
@@ -77,12 +77,24 @@ const drop=async(target,payload)=>{const event=new Event('drop',{bubbles:true,ca
  assert.ok(document.querySelector('.mp-source-preview'),'Preview appears in the central reader');assert.equal(count(),0);
  await click(document.querySelector('.mp-source-card .gold'));assert.equal(count(),1);
  // Changing filters does not discard selection, and the batch insertion uses edited absolute bounds.
- await click(button('Revenir au film'));
+ assert.equal(document.querySelector('.mp-source-preview'),null,'Insertion closes preview and exposes the film');
  await click(document.querySelector('.mp-match-clip input'));
  const select=document.querySelector('[aria-label="Filtrer par match"]');
  await act(async()=>{select.value='m1';select.dispatchEvent(new Event('change',{bubbles:true}))});await flush();
  assert.ok(document.body.textContent.includes('1 actions sélectionnées'));
  await click([...document.querySelectorAll('button')].find(el=>el.textContent.includes('Ajouter la sélection au montage')));assert.equal(count(),2);
+ // Actual visible editing controls, not only the keyboard shortcuts.
+ assert.equal(document.querySelector('.mp-stage canvas'),null,'Drawing overlay cannot cover the reconnect button');
+ assert.ok(document.querySelector('[data-connect-video]'));
+ await click(document.querySelector('[aria-label="Annuler la dernière modification"]'));assert.equal(count(),1);
+ await click(document.querySelector('[aria-label="Rétablir la modification"]'));assert.equal(count(),2);
+ await click(document.querySelector('[aria-label="Élément précédent"]'));
+ assert.ok(document.querySelector('.mp-story-card').classList.contains('selected'));
+ await click(document.querySelector('[aria-label="Élément suivant"]'));
+ assert.ok(document.querySelectorAll('.mp-story-card')[1].classList.contains('selected'));
+ await click([...document.querySelectorAll('button')].find(el=>el.textContent.includes('Exporter')));
+ assert.ok(document.querySelector('.mp-toast').textContent.includes('Vidéo locale manquante'),'Missing-video export returns visible feedback, never an unhandled rejection');
+ assert.equal([...document.querySelectorAll('button')].find(el=>el.textContent.includes('Exporter')).disabled,false,'Export unlocks after failed preflight');
  await click(document.querySelector('.mp-story-card b'));assert.equal(count(),1);
  assert.equal(queue.readIncomingClips('user','team').length,2,'Film deletion never deletes received sources');
  // Repeated send updates its received source but cannot append another film segment.
@@ -100,6 +112,17 @@ const drop=async(target,payload)=>{const event=new Event('drop',{bubbles:true,ca
  await act(async()=>root.unmount());
  await act(async()=>{createRoot(document.getElementById('root')).render(React.createElement(Studio,{initialTeamId:'team'}))});await flush();await flush();
  assert.equal(count(),0,'Reopening an empty film must not import the inbox automatically');assert.equal(document.querySelectorAll('.mp-match-clip').length,2);
- console.log('Montage UI: réception multi-matchs, aperçu, insertion explicite, filtres, sélection et réouverture validés.');
+ // A remote or local URL can exist yet fail to decode: never leave a broken player.
+ matches[0].video_url='https://example.test/unavailable.mp4';
+ await click(document.querySelector('.mp-match-clip-open'));
+ const broken=document.querySelector('.mp-source-card video');assert.ok(broken);
+ await act(async()=>broken.dispatchEvent(new Event('error')));await flush();
+ assert.equal(document.querySelector('.mp-source-card video'),null);
+ assert.ok(document.querySelector('.mp-source-card').textContent.includes('Vidéo indisponible'));
+ assert.ok(document.querySelector('.mp-source-card').textContent.includes('Remplacer le fichier vidéo'));
+ const tab=new dom.window.KeyboardEvent('keydown',{key:'Tab',bubbles:true,cancelable:true});
+ await act(async()=>document.body.dispatchEvent(tab));
+ assert.equal(tab.defaultPrevented,false,'Tab must remain usable to reach every control');
+ console.log('Montage UI: réception multi-matchs, aperçu, insertion visible, filtres, réordonnancement, annuler/rétablir, navigation, vidéo manquante, export en erreur et réouverture validés.');
  process.exit(0);
 })().catch(error=>{console.error(error);process.exit(1)});
