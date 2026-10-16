@@ -260,6 +260,9 @@ export default function MontageStudio({
   const [reconnecting, setReconnecting] = useState(false);
   const [failedVideos, setFailedVideos] = useState<string[]>([]);
   const [historyAvailability, setHistoryAvailability] = useState({ undo: false, redo: false });
+  const [panelTab, setPanelTab] = useState<"clips" | "playlists" | "settings">("clips");
+  const [toolTab, setToolTab] = useState<"edit" | "draw" | "titles" | "transitions">("edit");
+  const [titleDraft, setTitleDraft] = useState("");
   const [drawMode, setDrawMode] = useState<Drawing["kind"]>("arrow");
   const [drawColor, setDrawColor] = useState("#ffd34d");
   const [selectedDrawingId, setSelectedDrawingId] = useState<string | null>(null);
@@ -1538,6 +1541,7 @@ export default function MontageStudio({
     }
 
     setThemes((current) => [...current, { id: String(data.id), name: String(data.name), actionIds: [] }]);
+    setPanelTab("playlists");
   };
 
   const addActionToTheme = async (themeId: string, actionId: string) => {
@@ -1588,9 +1592,10 @@ export default function MontageStudio({
     flash("Playlist supprimée");
   };
 
-  const openClipCollection = (view: LibraryView) => { setLibraryView(view); setSelectedThemeId(""); };
+  const openClipCollection = (view: LibraryView) => { setPanelTab("clips"); setLibraryView(view); setSelectedThemeId(""); };
 
   const openPlaylist = (playlist: ClipTheme) => {
+    setPanelTab("clips");
     setLibraryView("playlists");
     setSelectedThemeId(playlist.id);
     setSearch("");
@@ -1614,10 +1619,10 @@ export default function MontageStudio({
     flash(`${rows.length} clip${rows.length > 1 ? "s" : ""} ajouté${rows.length > 1 ? "s" : ""} au montage`);
   };
 
-  const addDesignItem = (type: "title" | "text") => {
-    const label = type === "title" ? "Nouveau titre" : "Nouveau texte";
-    const value = window.prompt(type === "title" ? "Titre à afficher" : "Texte à afficher", label);
+  const addDesignItem = (type: "title" | "text", value = type === "title" ? "Nouveau titre" : "Nouveau texte") => {
     if (!value?.trim()) return;
+    setPanelTab("settings");
+    setToolTab("titles");
     const insertAt = insertionIndex();
     setItems((current) => {
       const next: MontageItem = {
@@ -1895,6 +1900,12 @@ export default function MontageStudio({
     setMontagePlaying(false);
     flash("Vidéo indisponible. Reconnecte le fichier du match pour continuer.");
   };
+  const activateDrawing = (mode: Drawing["kind"]) => {
+    setDrawMode(mode);
+    setToolTab("draw");
+    setMontagePlaying(false);
+    setClipPreviewIndex(null);
+  };
   const replaceSourceVideo = async (action: ActionRow) => {
     if (!action.match_id || reconnecting) return;
     setReconnecting(true);
@@ -1916,6 +1927,7 @@ export default function MontageStudio({
     setPlayhead(timelineStartOf(items[index], index));
   };
   const chooseClips = () => {
+    setPanelTab("clips");
     if (!previewActions.length) openClipCollection("all");
     document.querySelector<HTMLElement>(".mp-match-clips")?.scrollIntoView({ block: "nearest", behavior: "smooth" });
     document.querySelector<HTMLInputElement>(".mp-clips-search")?.focus({ preventScroll: true });
@@ -1969,10 +1981,16 @@ export default function MontageStudio({
 
       {transferError && <div role="alert" style={{ padding: 12, background: "#fff0f0", color: "#941b32" }}>Transfert Montage : {transferError} <button onClick={() => { receiptTokensRef.current.clear(); window.dispatchEvent(new Event(MONTAGE_INCOMING_EVENT)); }}>Réessayer</button></div>}
       <main className="mp-grid">
-        <aside className="mp-library">
+        <nav className="mp-workspace-nav" aria-label="Organisation du montage">
           <select className="mp-library-select" aria-label="Équipe des clips" disabled={saving} value={teamId || ""} onChange={event => { if (!confirmDraftExit()) return; setTeamId(event.target.value); setMontageId(""); setSelectedThemeId(""); setSelectedPlayerFilter(""); setSelectedMatchFilter(""); setLibrarySelection([]); }}>
             {teams.map(team => <option key={team.id} value={team.id}>{team.name}</option>)}
           </select>
+          <div role="tablist" aria-label="Panneau de travail">
+            {([['clips','Clips'],['playlists','Playlists'],['settings','Réglages']] as const).map(([id,label]) => <button key={id} id={`mp-tab-${id}`} role="tab" aria-selected={panelTab===id} aria-controls={`mp-panel-${id}`} onClick={()=>setPanelTab(id)}>{label}</button>)}
+          </div>
+          <small>{items.filter(item=>item.item_type==='clip').length} clips dans le montage</small>
+        </nav>
+        <aside className="mp-library" id="mp-panel-playlists" role="tabpanel" aria-labelledby="mp-tab-playlists" hidden={panelTab!=="playlists"}>
           <div className="mp-playlist-title">
             <div>
               <strong>Playlists</strong>
@@ -2038,7 +2056,7 @@ export default function MontageStudio({
           </div>
         </aside>
 
-        <aside className="mp-match-clips">
+        <aside className="mp-match-clips" id="mp-panel-clips" role="tabpanel" aria-labelledby="mp-tab-clips" hidden={panelTab!=="clips"}>
           <div className="mp-match-clips-head">
             <div>
               <strong>{libraryView === "received" ? "Clips reçus" : selectedThemeId ? themes.find(theme => theme.id === selectedThemeId)?.name : "Clips disponibles"}</strong>
@@ -2101,6 +2119,9 @@ export default function MontageStudio({
             {librarySelection.length > 0 ? <>
             <strong>{librarySelection.length} actions sélectionnées · {new Set(actions.filter(action => librarySelection.includes(action.id)).map(action => action.match_id)).size} matchs</strong>
             <button disabled={!librarySelection.length} onClick={addSelectedLibraryClips}>＋ Ajouter la sélection au montage</button>
+            {themes.length > 0 && <select className="mp-library-select" aria-label="Ajouter la sélection à une playlist" value="" onChange={event=>{const playlistId=event.target.value;if(playlistId) void (async()=>{for(const actionId of librarySelection) await addActionToTheme(playlistId,actionId);})();}}>
+              <option value="">Ajouter à une playlist…</option>{themes.map(theme=><option key={theme.id} value={theme.id}>{theme.name}</option>)}
+            </select>}
             <button onClick={() => setLibrarySelection([])}>Vider la sélection</button>
             </> : <small>Ouvre un clip pour le regarder, ou coche plusieurs clips à ajouter.</small>}
           </div>
@@ -2199,6 +2220,7 @@ export default function MontageStudio({
               <video
                 ref={videoRef}
                 src={stageVideo}
+                style={{opacity: montagePlaying && stageItem?.transition === 'fade' ? Math.max(0,Math.min(1,(playhead-(stageEntry?.start ?? 0))/.25,((stageEntry?.start ?? 0)+itemDuration(stageItem)-playhead)/.25)) : 1}}
                 onError={() => failVideo(stageSourceUrl)}
                 playsInline
                 onTimeUpdate={(event) => {
@@ -2223,6 +2245,7 @@ export default function MontageStudio({
               ref={canvasRef}
               width={960}
               height={540}
+              style={{pointerEvents: toolTab === 'draw' ? 'auto' : 'none', cursor: toolTab === 'draw' ? 'crosshair' : 'default', touchAction: toolTab === 'draw' ? 'none' : 'auto'}}
               onPointerDown={(event)=>{
                 const point = pointer(event);
                 dragOrigin.current=point;
@@ -2334,7 +2357,7 @@ export default function MontageStudio({
             )}
 
             {montagePlaying && activeOverlayEntries.map(({ item, index }) => (
-              <div className={`mp-live-overlay type-${item.item_type}`} key={`${item.action_id}:${index}`}>
+              <div className={`mp-live-overlay type-${item.item_type}`} key={`${item.action_id}:${index}`} style={{left:`${item.x ?? 50}%`,top:`${item.y ?? 50}%`,width:`${item.width ?? (item.item_type === 'image' ? 30 : 70)}%`,transform:`translate(-50%,-50%) rotate(${item.rotation ?? 0}deg)`,opacity:item.hidden ? 0 : item.opacity ?? 1,fontSize:`${item.fontSize ?? (item.item_type === 'title' ? 48 : 30)}px`,fontFamily:item.fontFamily ?? 'Arial',fontWeight:item.fontWeight ?? 800,textAlign:item.textAlign ?? 'center',background:item.background ?? 'transparent',padding:0}}>
                 {item.item_type === "image" && item.image_url ? <img src={item.image_url} alt={item.title} /> : <strong>{item.item_type === "title" ? item.title : item.note || item.title}</strong>}
               </div>
             ))}
@@ -2368,20 +2391,34 @@ export default function MontageStudio({
             </select>
           </div>
 
-          <div className="mp-tools">
-            <button aria-label="Annuler la dernière modification" disabled={!historyAvailability.undo} onClick={undoEdit}>↶ Annuler</button>
-            <button aria-label="Rétablir la modification" disabled={!historyAvailability.redo} onClick={redoEdit}>↷ Rétablir</button>
-            <button disabled={!selected} onClick={() => document.querySelector<HTMLElement>(".mp-inspector")?.scrollIntoView({ block: "nearest", behavior: "smooth" })}>Réglages du clip</button>
-            <button onClick={()=>addDesignItem("title")}>＋ Titre</button>
-            <button onClick={()=>addDesignItem("text")}>＋ Texte</button>
-            <button onClick={()=>imageInputRef.current?.click()} disabled={designUploading}>▣ {designUploading ? "Import…" : "Image"}</button>
-            <button title="Flèche" aria-label="Flèche" disabled={!stageVideo || !selected || !["clip","freeze"].includes(selected.item_type)} className={drawMode==="arrow"?"on":""} onClick={()=>setDrawMode("arrow")}>➜</button>
-            <button title="Ligne" aria-label="Ligne" disabled={!stageVideo || !selected || !["clip","freeze"].includes(selected.item_type)} className={drawMode==="line"?"on":""} onClick={()=>setDrawMode("line")}>／</button>
-            <button title="Cercle" aria-label="Cercle" disabled={!stageVideo || !selected || !["clip","freeze"].includes(selected.item_type)} className={drawMode==="circle"?"on":""} onClick={()=>setDrawMode("circle")}>◎</button>
-            <button title="Zone" aria-label="Zone" disabled={!stageVideo || !selected || !["clip","freeze"].includes(selected.item_type)} className={drawMode==="zone"?"on":""} onClick={()=>setDrawMode("zone")}>▭</button>
-            <button title="Dessin libre" aria-label="Dessin libre" disabled={!stageVideo || !selected || !["clip","freeze"].includes(selected.item_type)} className={drawMode==="freehand"?"on":""} onClick={()=>setDrawMode("freehand")}>✎</button><button title="Repère joueur" aria-label="Repère joueur" disabled={!stageVideo || !selected || !["clip","freeze"].includes(selected.item_type)} className={drawMode==="tracker"?"on":""} onClick={()=>setDrawMode("tracker" as any)}>◎</button>
-            <button onClick={addFreezeItem}>◉ Freeze</button>
-            <button onClick={() => audioInputRef.current?.click()} disabled={audioUploading}>♫ {audioUploading ? "Import…" : "Audio"}</button>
+          <div className="mp-tool-tabs" role="tablist" aria-label="Outils de montage">
+            {([['edit','Montage'],['draw','Dessiner'],['titles','Titres'],['transitions','Transitions']] as const).map(([id,label]) => <button key={id} id={`mp-tool-${id}`} role="tab" aria-selected={toolTab===id} aria-controls={`mp-tools-${id}`} onClick={()=>{setToolTab(id); if(id==='draw'){setMontagePlaying(false);setClipPreviewIndex(null);}}}>{label}</button>)}
+          </div>
+          <div className="mp-tools" id={`mp-tools-${toolTab}`} role="tabpanel" aria-labelledby={`mp-tool-${toolTab}`}>
+            {toolTab==='edit' && <>
+              <button aria-label="Annuler la dernière modification" disabled={!historyAvailability.undo} onClick={undoEdit}>↶ Annuler</button>
+              <button aria-label="Rétablir la modification" disabled={!historyAvailability.redo} onClick={redoEdit}>↷ Rétablir</button>
+              <button disabled={!selected} onClick={()=>setPanelTab('settings')}>Réglages du clip</button>
+              <button onClick={()=>imageInputRef.current?.click()} disabled={designUploading}>Image</button>
+              <button onClick={addFreezeItem}>Arrêt sur image</button>
+              <button onClick={()=>audioInputRef.current?.click()} disabled={audioUploading}>Audio</button>
+            </>}
+            {toolTab==='draw' && <>
+              {([['arrow','Flèche'],['circle','Cercle'],['zone','Zone'],['freehand','Libre']] as const).map(([mode,label]) => <button key={mode} aria-label={label} aria-pressed={drawMode===mode} disabled={!stageVideo || !selected || !['clip','freeze'].includes(selected.item_type)} className={drawMode===mode?'on':''} onClick={()=>activateDrawing(mode)}>{label}</button>)}
+              <input aria-label="Couleur du dessin" type="color" value={drawColor} onChange={event=>setDrawColor(event.target.value)} />
+              <button disabled={!selected?.annotations.length} onClick={()=>selected && updateSelected({annotations:selected.annotations.slice(0,-1)})}>Effacer le dernier</button>
+              <small>{!stageVideo ? 'Sélectionne un clip et reconnecte sa vidéo pour dessiner.' : 'Vidéo en pause : clique et glisse sur l’image. Tes dessins sont enregistrés dans ce montage.'}</small>
+            </>}
+            {toolTab==='titles' && <form className="mp-title-composer" onSubmit={event=>{event.preventDefault();addDesignItem('title',titleDraft.trim() || 'Nouveau titre');setTitleDraft('');}}>
+              <input aria-label="Texte du nouveau titre" placeholder="Écris ton titre…" value={titleDraft} onChange={event=>setTitleDraft(event.target.value)} />
+              <button type="submit">＋ Ajouter le titre</button>
+              <button type="button" onClick={()=>addDesignItem('text')}>＋ Texte</button>
+              <small>Le titre apparaît immédiatement. Sa durée, sa taille et sa position se règlent dans l’onglet Réglages.</small>
+            </form>}
+            {toolTab==='transitions' && <>
+              <label>Transition du clip <select aria-label="Transition du clip" disabled={!selected || !['clip','freeze'].includes(selected.item_type)} value={selected?.transition || 'none'} onChange={event=>updateSelected({transition:event.target.value as 'none'|'fade'})}><option value="none">Coupe directe</option><option value="fade">Fondu au noir</option></select></label>
+              <small>Choisis un clip dans la timeline. Le fondu de 0,25 s se voit à la lecture et à l’export.</small>
+            </>}
             <input ref={imageInputRef} type="file" accept="image/*" hidden onChange={(e)=>{const file=e.target.files?.[0]; if(file) void uploadImageItem(file)}} />
             <input ref={audioInputRef} type="file" accept="audio/*" hidden onChange={(e)=>{const file=e.target.files?.[0]; if(file) void uploadAudioItem(file)}} />
           </div>
@@ -2401,7 +2438,7 @@ export default function MontageStudio({
         </section>
 
 
-        <aside className="mp-inspector">
+        <aside className="mp-inspector" id="mp-panel-settings" role="tabpanel" aria-labelledby="mp-tab-settings" hidden={panelTab!=="settings"}>
           <div className="mp-detail-title"><strong>Détails du clip</strong><small>Agis sur le clip sélectionné</small></div>
           {!selected ? <div className="mp-empty">Sélectionne un élément.</div> : (
             <div className="mp-inspector-form">
@@ -2440,12 +2477,12 @@ export default function MontageStudio({
 
               {(selected.item_type==="clip" || selected.item_type==="freeze") && <>
                 <div className="mp-inspector-tools mp-draw-tools">
-                  <button className={drawMode==="arrow"?"on":""} onClick={()=>setDrawMode("arrow")}>➜ Flèche</button>
-                  <button className={drawMode==="line"?"on":""} onClick={()=>setDrawMode("line")}>／ Ligne</button>
-                  <button className={drawMode==="circle"?"on":""} onClick={()=>setDrawMode("circle")}>○ Cercle</button>
-                  <button className={drawMode==="zone"?"on":""} onClick={()=>setDrawMode("zone")}>▭ Zone</button>
-                  <button className={drawMode==="freehand"?"on":""} onClick={()=>setDrawMode("freehand")}>✎ Libre</button><button className={drawMode==="tracker"?"on":""} onClick={()=>setDrawMode("tracker" as any)}>◎ Suivi</button>
-                  <button className={drawMode==="text"?"on":""} onClick={()=>setDrawMode("text")}>T Texte</button>
+                  <button className={drawMode==="arrow"?"on":""} onClick={()=>activateDrawing("arrow")}>➜ Flèche</button>
+                  <button className={drawMode==="line"?"on":""} onClick={()=>activateDrawing("line")}>／ Ligne</button>
+                  <button className={drawMode==="circle"?"on":""} onClick={()=>activateDrawing("circle")}>○ Cercle</button>
+                  <button className={drawMode==="zone"?"on":""} onClick={()=>activateDrawing("zone")}>▭ Zone</button>
+                  <button className={drawMode==="freehand"?"on":""} onClick={()=>activateDrawing("freehand")}>✎ Libre</button><button className={drawMode==="tracker"?"on":""} onClick={()=>activateDrawing("tracker" as any)}>◎ Suivi</button>
+                  <button className={drawMode==="text"?"on":""} onClick={()=>activateDrawing("text")}>T Texte</button>
                   <input type="color" value={drawColor} onChange={(e)=>setDrawColor(e.target.value)}/>
                 </div>
                 <button onClick={()=>updateSelected({annotations:selected.annotations.slice(0,-1)})}>↶ Annuler le dernier dessin</button>
@@ -2591,7 +2628,7 @@ export default function MontageStudio({
               <button onClick={addFreezeItem}>❄ Freeze</button>
               <button onClick={() => addDesignItem("text")}>Ⅱ Pause / texte</button>
               <button onClick={() => audioInputRef.current?.click()}>♫ Audio</button>
-              <button disabled={!selected} onClick={() => selected && updateSelected({ transition: selected.transition === "fade" ? "none" : "fade" })}>⌁ Transition</button>
+              <button disabled={!selected} onClick={() => setToolTab('transitions')}>⌁ Transition</button>
               <div className="mp-zoom"><span>Zoom</span><input type="range" min="0.5" max="3" step="0.25" value={timelineZoom} onChange={(e)=>setTimelineZoom(numberValue(e.target.value))}/></div>
             </div>
           </div>
@@ -2658,6 +2695,21 @@ export default function MontageStudio({
         @media(max-width:1450px){.mp-grid{grid-template-columns:160px minmax(260px,.85fr) minmax(320px,1.2fr)}.mp-inspector{grid-column:1/-1;height:auto;min-height:0;max-height:260px;grid-row:3}.mp-brand em{display:none}.mp-storyboard{grid-row:2}}
         @media(max-width:1000px){.mp-stage{width:100%}.mp-header{height:auto;min-height:78px;padding:12px;grid-template-columns:1fr auto}.mp-project-name{grid-column:1/-1}.mp-grid{grid-template-columns:150px minmax(0,1fr)}.mp-library{grid-row:1/3;height:auto}.mp-match-clips{grid-column:2;grid-row:1;height:320px}.mp-center{grid-column:2;grid-row:2;height:auto;min-height:0}.mp-storyboard{grid-row:3}.mp-inspector{grid-row:4}}
         @media(max-width:650px){.mp-header{grid-template-columns:1fr}.mp-header-actions{flex-wrap:wrap}.mp-grid{grid-template-columns:minmax(0,1fr)}.mp-library,.mp-match-clips,.mp-center,.mp-inspector,.mp-storyboard{grid-column:1;grid-row:auto;min-height:0;height:auto;max-height:none}.mp-library{max-height:230px}.mp-match-clips{max-height:460px}.mp-storyboard-strip{min-height:130px}}
+
+        .montage-pro [hidden]{display:none!important}
+        .mp-header{min-height:60px;height:auto;padding:8px 14px;gap:12px}.mp-brand strong{font-size:17px}.mp-brand em{display:none}.mp-logo{width:32px;height:32px}.mp-header-actions button{padding:7px 10px;font-size:12px}
+        .mp-grid{grid-template-columns:300px minmax(0,1fr);gap:8px;padding:8px}
+        .mp-workspace-nav{grid-column:1/-1;grid-row:1;display:flex;align-items:center;gap:12px;min-width:0}.mp-workspace-nav>.mp-library-select{width:160px;margin:0;padding:7px;font-size:12px}.mp-workspace-nav small{margin-left:auto;font-size:11px;color:#777}
+        .mp-workspace-nav [role=tablist],.mp-tool-tabs{display:flex;gap:3px;background:#eeeef1;border-radius:9px;padding:3px}
+        .mp-workspace-nav [role=tab],.mp-tool-tabs button{border:0;background:transparent;border-radius:7px;padding:7px 12px;font-size:12px;font-weight:700;min-height:30px;cursor:pointer}.mp-workspace-nav [aria-selected=true],.mp-tool-tabs [aria-selected=true]{background:var(--wine);color:#fff}
+        .mp-library,.mp-match-clips,.mp-inspector{grid-column:1;grid-row:2;height:clamp(300px,43vh,440px);max-height:none;min-height:0;padding:10px;position:static;overflow:auto}
+        .mp-center{grid-column:2;grid-row:2;height:clamp(300px,43vh,440px);min-height:0;padding:10px;overflow:auto}
+        .mp-stage{width:min(100%,calc((clamp(300px,43vh,440px) - 165px) * 1.77778));margin-inline:auto}
+        .mp-tool-tabs{margin-top:7px;width:max-content;max-width:100%;overflow:auto}.mp-tools{margin-top:5px;padding:5px;gap:5px;min-height:38px}.mp-tools button{font-size:11px;padding:6px 9px;min-height:28px}.mp-tools small{font-size:10px;color:#777;flex-basis:100%;line-height:1.3}.mp-tools input[type=color]{width:32px;height:28px;padding:2px}.mp-tools label{font-size:12px}.mp-tools select{border:1px solid var(--line);border-radius:7px;padding:5px}
+        .mp-title-composer{display:flex;flex-wrap:wrap;gap:6px;width:100%}.mp-title-composer input{flex:1;min-width:100px;border:1px solid var(--line);border-radius:7px;padding:6px 9px;font-size:12px}
+        .mp-storyboard{grid-row:3;grid-column:1/-1}.mp-storyboard-strip{min-height:96px;padding:6px}.mp-story-visual{height:42px}.mp-story-card{min-width:112px;max-width:145px;padding:4px}.mp-storyboard-ruler{height:22px}.mp-story-toolbar{padding:5px;gap:4px}.mp-story-toolbar button{padding:5px 8px;min-height:28px}.mp-timeline-head{margin-top:2px;padding:4px}.mp-timeline-head strong{font-size:12px}
+        @media(max-width:850px){.mp-grid{grid-template-columns:250px minmax(0,1fr)}.mp-workspace-nav{gap:6px;flex-wrap:wrap}.mp-workspace-nav [role=tab]{padding:6px 9px}.mp-workspace-nav small{display:none}.mp-stage{width:100%}.mp-center{height:auto;min-height:300px}.mp-tool-tabs button{padding:6px 8px;font-size:11px}}
+        @media(max-width:600px){.mp-grid{grid-template-columns:minmax(0,1fr)}.mp-workspace-nav{grid-row:1}.mp-library,.mp-match-clips,.mp-inspector{grid-column:1;grid-row:2;height:250px;max-height:250px}.mp-center{grid-column:1;grid-row:3;min-height:0}.mp-storyboard{grid-row:4}.mp-stage{width:min(100%,420px)}.mp-header{grid-template-columns:1fr}.mp-header-actions{gap:4px}.mp-tool-tabs{width:100%;justify-content:space-between}}
 
       `}</style>
     </div>

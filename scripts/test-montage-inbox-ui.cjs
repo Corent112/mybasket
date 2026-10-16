@@ -79,6 +79,10 @@ const drop=async(target,payload)=>{const event=new Event('drop',{bubbles:true,ca
  // Changing filters does not discard selection, and the batch insertion uses edited absolute bounds.
  assert.equal(document.querySelector('.mp-source-preview'),null,'Insertion closes preview and exposes the film');
  await click(document.querySelector('.mp-match-clip input'));
+ const playlistSelect=document.querySelector('[aria-label="Ajouter la sélection à une playlist"]');
+ assert.ok(playlistSelect,'Selection can be filed into a playlist without dragging across hidden tabs');
+ await act(async()=>{playlistSelect.value='inbox';playlistSelect.dispatchEvent(new Event('change',{bubbles:true}))});await flush();
+ assert.equal(playlistItems.length,3,'Playlist picker saves an existing source reference');
  const select=document.querySelector('[aria-label="Filtrer par match"]');
  await act(async()=>{select.value='m1';select.dispatchEvent(new Event('change',{bubbles:true}))});await flush();
  assert.ok(document.body.textContent.includes('1 actions sélectionnées'));
@@ -124,6 +128,39 @@ const drop=async(target,payload)=>{const event=new Event('drop',{bubbles:true,ca
  const tab=new dom.window.KeyboardEvent('keydown',{key:'Tab',bubbles:true,cancelable:true});
  await act(async()=>document.body.dispatchEvent(tab));
  assert.equal(tab.defaultPrevented,false,'Tab must remain usable to reach every control');
- console.log('Montage UI: réception multi-matchs, aperçu, insertion visible, filtres, réordonnancement, annuler/rétablir, navigation, vidéo manquante, export en erreur et réouverture validés.');
+ // Compact tabs preserve the same clip collection and isolate the active panel.
+ await click(button('Fermer l’aperçu') || document.querySelector('[aria-label="Fermer l’aperçu"]'));
+ assert.equal(document.querySelector('#mp-panel-clips').hidden,false);
+ assert.equal(document.querySelector('#mp-panel-settings').hidden,true);
+ await click(button('Playlists'));assert.equal(document.querySelector('#mp-panel-playlists').hidden,false);
+ await click(button('Clips'));assert.equal(document.querySelectorAll('.mp-match-clip').length,2);
+ await click(button('Titres'));
+ await act(async()=>document.querySelector('.mp-title-composer').dispatchEvent(new Event('submit',{bubbles:true,cancelable:true})));await flush();
+ assert.equal(count(),1,'Title insertion works without a native prompt');
+ assert.ok(document.querySelector('.mp-story-card').textContent.includes('Nouveau titre'));
+ assert.equal(document.querySelector('#mp-panel-settings').hidden,false);
+ await click(button('Montage'));
+ await click(document.querySelector('[aria-label="Annuler la dernière modification"]'));assert.equal(count(),0);
+ // Draw only after choosing the drawing tab, with an available source video.
+ matches[0].video_url='https://example.test/valid.mp4';
+ await click(button('Clips'));
+ await click(document.querySelector('.mp-mini-add'));assert.equal(count(),1);
+ assert.equal(document.querySelector('.mp-stage canvas').style.pointerEvents,'none');
+ await click(button('Dessiner'));
+ const canvas=document.querySelector('.mp-stage canvas');assert.equal(canvas.style.pointerEvents,'auto');
+ canvas.getBoundingClientRect=()=>({left:0,top:0,width:960,height:540});
+ await click(button('Cercle'));
+ await act(async()=>{
+  canvas.dispatchEvent(new MouseEvent('pointerdown',{bubbles:true,clientX:100,clientY:100}));
+  canvas.dispatchEvent(new MouseEvent('pointerup',{bubbles:true,clientX:150,clientY:150}));
+ });await flush();
+ assert.equal(button('Effacer le dernier').disabled,false,'Pointer drawing creates a saved montage annotation');
+ await click(button('Effacer le dernier'));assert.equal(button('Effacer le dernier').disabled,true);
+ await click(button('Transitions'));
+ const transition=document.querySelector('[aria-label="Transition du clip"]');
+ await act(async()=>{transition.value='fade';transition.dispatchEvent(new Event('change',{bubbles:true}))});await flush();
+ assert.equal(transition.value,'fade');
+ assert.ok(document.querySelector('.mp-tools').textContent.includes('0,25 s'));
+ console.log('Montage UI: multi-matchs, insertion, onglets, titre sans popup, dessin au pointeur, effacement, transition, annulation et export en erreur validés.');
  process.exit(0);
 })().catch(error=>{console.error(error);process.exit(1)});
