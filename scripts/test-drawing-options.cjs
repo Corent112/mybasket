@@ -155,10 +155,11 @@ const exportJson=async()=>{await click([...document.querySelectorAll('.ed-tool')
  const Navigator=require('../components/content-navigator/ContentNavigator.tsx').default;
  let openedGroup=null;root=createRoot(document.getElementById('root'));
  await act(async()=>root.render(React.createElement(Navigator,{initialKind:'exercise',onPreviewExercise:(item,index)=>{openedGroup={id:item.id,index}}})));await flush(50);
- assert(button('Systèmes'));assert(button('Exercices'));assert(document.querySelector('.cn-exercise'));
+ assert(button('Systèmes'));assert(button('Exercices'));assert(document.querySelector('.cn-exercises .cn-system'));
+ await click(document.querySelector('.cn-exercise-schemas-toggle'));
  await click(document.querySelectorAll('.cn-exercise-open')[1]);assert.deepEqual(openedGroup,{id:'exercise',index:1});
- await fill(document.querySelector('.cn-exercises input'),'absent');assert.equal(document.querySelectorAll('.cn-exercise').length,0);
- await fill(document.querySelector('.cn-exercises input'),'exercice');assert(document.querySelector('.cn-exercise'));
+ await fill(document.querySelector('.cn-exercises input'),'absent');assert.equal(document.querySelectorAll('.cn-exercises .cn-system').length,0);
+ await fill(document.querySelector('.cn-exercises input'),'exercice');assert(document.querySelector('.cn-exercises .cn-system'));
  await click(button('PLAYBOOK'));assert(document.body.textContent.includes('Reprends un Playbook'));
  await act(async()=>root.unmount());
  console.log('Exercise library: existing group preserved, image-only drawing/video/instructions intact, update in place, reopen, search and navigator tabs passed.');

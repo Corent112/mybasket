@@ -735,6 +735,15 @@ useEffect(() => {
   // Cet id permet à "Enregistrer" de mettre à jour ce même système sans créer de copie.
   const [openedLibrarySystemId, setOpenedLibrarySystemId] = useState<string | null>(null);
   const [openedLibraryExercise, setOpenedLibraryExercise] = useState<{id:string; index:number; groupId?:string} | null>(null);
+  useEffect(() => {
+    const renamed = (event: Event) => {
+      const detail = (event as CustomEvent<{id:string;title:string}>).detail;
+      if (detail?.id === openedLibraryExercise?.id) setTitle(detail.title);
+    };
+    window.addEventListener('mybasket:library-exercise-renamed', renamed);
+    return () => window.removeEventListener('mybasket:library-exercise-renamed', renamed);
+  }, [openedLibraryExercise?.id]);
+
 
   // ContentNavigator mémorise l'id du système choisi dans localStorage.
   // On le relit au moment exact où l'utilisateur clique sur Enregistrer :
