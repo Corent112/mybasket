@@ -33,7 +33,7 @@ Module._load=function(request,parent,isMain){
  const stubs={
   'next/link':({children,...props})=>React.createElement('a',props,children),
   '@/lib/supabase/client':{createClient:()=>supabase},
-  '@/lib/exercises':{getExercise:async()=>exercise,listMyExercises:async()=>[exercise],updateExercise:async(id,patch)=>{assert.equal(id,'exercise');exerciseSaves++;assert(!('description' in patch));exercise={...exercise,...structuredClone(patch)};return exercise;}},
+  '@/lib/exercises':{getExercise:async()=>exercise,listMyExercises:async()=>[exercise],updateExercise:async(id,patch)=>{assert.equal(id,'exercise');exerciseSaves++;assert(!('description' in patch));assert.equal(patch.schemaVideo,'video-to-keep');exercise={...exercise,...structuredClone(patch)};return exercise;}},
   '@/lib/systems':{getSystem:async()=>savedSystem,updateSystem:async(id,data)=>{assert.equal(id,'system');saves++;savedSystem={...savedSystem,...structuredClone(data)};return savedSystem;}},
   '@/lib/supabase/upload-schema':{uploadSchemaImage:async()=>`https://example.test/schema.png`},
   '@/components/content-navigator/ContentNavigator':props=>React.createElement(React.Fragment,null,React.createElement('button',{onClick:()=>props.onSaveSystem({id:'system'})},'Save fixture'),React.createElement('button',{onClick:()=>props.onPreviewExercise(exercise,1)},'Open exercise fixture'),React.createElement('button',{onClick:props.onSaveExercise},'Save exercise fixture')),

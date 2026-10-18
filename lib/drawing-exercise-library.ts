@@ -36,5 +36,6 @@ export function replaceExerciseDrawingGroup(exercise: Exercise, index: number, r
   });
   // Some old exercises also contain image-only drawings without editable metadata.
   for (let position = entries.length; position < (exercise.schemaImages?.length || 0); position++) schemaImages.push(exercise.schemaImages![position]);
-  return { schemaDataList, schemaData: schemaDataList[0], schemaImages, schemaImage: schemaImages[0] || '' };
+  // updateExercise serializes schemaVideo from its camel-case field; pass it explicitly.
+  return { schemaDataList, schemaData: schemaDataList[0], schemaImages, schemaImage: schemaImages[0] || '', schemaVideo: exercise.schemaVideo || '' };
 }
