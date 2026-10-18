@@ -17,7 +17,7 @@
 
 import React, { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
-import { addDrawingOption, drawingOptions, drawingPath, removeDrawingOption, type DrawingOptionPhase } from '@/lib/drawing-options';
+import { addDrawingOption, drawingOptions, drawingPath, drawingPlaybackGroups, removeDrawingOption, type DrawingOptionPhase } from '@/lib/drawing-options';
 import { machineBallCount, machineReserves, collectorForBasket, drawShootingMachine } from '@/lib/drawing-shooting-machine';
 import { createClient } from '@/lib/supabase/client';
 import { getExercise, updateExercise } from "@/lib/exercises";
@@ -303,8 +303,10 @@ const resetPlaquette = () => {
   const [current, setCurrent] = useState(0);
   const [activeOptionId, setActiveOptionId] = useState<string | null>(null);
   const activeOptionRef = useRef<string | null>(null);
+  const playbackQueueRef = useRef<number[][]>([]);
+  const playbackModeRef = useRef<'all' | 'option' | null>(null);
   const [optionName, setOptionName] = useState('');
-  const [drawingLibraryOpen, setDrawingLibraryOpen] = useState(false);
+  const [drawingLibraryOpen, setDrawingLibraryOpen] = useState(true);
   const [optionFormOpen, setOptionFormOpen] = useState(false);
   const [videoOptionsMode, setVideoOptionsMode] = useState<'selected' | 'all'>('selected');
   const recordingOptionLabel = useRef('');
@@ -2578,13 +2580,13 @@ if (anim && anim.balls) {
     (actSched.length ? actSched.reduce((mx, a) => Math.max(mx, a.end), 0) : phaseDuration(phasesRef.current[phaseIdx]) * 1000);
 
   // Planning global (ms, à 1x) depuis startPhase : phases enchaînées, actions séquencées dans chaque phase.
-  const buildSchedule = (startPhase: number): Sched[] => {
+  const buildSchedule = (startPhase: number, phaseIndices?: number[]): Sched[] => {
     const phs = phasesRef.current;
     const sched: Sched[] = [];
     let prevStart = 0, prevSpan = 0;
     const availableOptions = drawingOptions(phs);
     const optionId = phs[startPhase]?.option?.id || availableOptions.find(option => option.id === activeOptionRef.current)?.id || availableOptions[0]?.id;
-    const path = drawingPath(phs, optionId);
+    const path = phaseIndices || drawingPath(phs, optionId);
     const startIndex = Math.max(0, path.indexOf(startPhase));
     for (const [pathIndex, i] of path.slice(startIndex).entries()) {
       const actSched = buildPhaseActionSched(i);
@@ -2948,16 +2950,17 @@ const owners=ownersAtClock(sched,ballEventsRef.current,clock);
     rafRef.current = requestAnimationFrame(tick);
   };
 
-  const playAnim = () => {
+  const playAnim = (phaseIndices?: number[]) => {
     const phs = phasesRef.current;
     if (!phs.length) return;
     const availableOptions = drawingOptions(phs);
-    const path = drawingPath(phs, phs[currentRef.current]?.option?.id || availableOptions.find(option => option.id === activeOptionRef.current)?.id || availableOptions[0]?.id);
+    const path = phaseIndices || drawingPath(phs, phs[currentRef.current]?.option?.id || availableOptions.find(option => option.id === activeOptionRef.current)?.id || availableOptions[0]?.id);
     const hasAction = path.some((index) => { const p = phs[index]; return p.lines.some((l) => MOVE_KINDS.includes(l.action) || BALL_KINDS.includes(l.action)); });
-    if (!hasAction && path.length < 2) { showHint('Crée des actions ou des phases pour animer'); return; }
-    const start = currentRef.current === path.at(-1) ? (path[0] ?? 0) : currentRef.current;
-    const sched = buildSchedule(start);
+    if (!hasAction && path.length < 2 && !phaseIndices) { showHint('Crée des actions ou des phases pour animer'); return; }
+    const start = phaseIndices ? (path[0] ?? 0) : currentRef.current === path.at(-1) ? (path[0] ?? 0) : currentRef.current;
+    const sched = buildSchedule(start, path);
     if (!sched.length) { showHint('Rien à animer'); return; }
+    currentRef.current = sched[0].idx; setCurrent(sched[0].idx);
     scheduleRef.current = sched;
     totalMsRef.current = sched.reduce((mx, s) => Math.max(mx, s.end), 0);
     rosterRef.current = buildRoster(sched);
@@ -2978,12 +2981,22 @@ const owners=ownersAtClock(sched,ballEventsRef.current,clock);
     playingRef.current = true; setIsPlaying(true);
     rafRef.current = requestAnimationFrame(tick);
   };
+  const playNextSystemGroup = () => {
+    const indices = playbackQueueRef.current.shift();
+    if (!indices?.length) { onAnimEndRef.current = null; playbackModeRef.current = null; return; }
+    // Each branch starts a fresh animation segment, resetting possession and positions.
+    onAnimEndRef.current = playNextSystemGroup;
+    playAnim(indices);
+  };
   const togglePlay = () => {
-    if (playingRef.current) pauseAnim();
-    else if (animPosRef.current) resumeAnim();
-    else playAnim();
+    if (playbackModeRef.current === 'all' && playingRef.current) { pauseAnim(); return; }
+    if (playbackModeRef.current === 'all' && animPosRef.current) { resumeAnim(); return; }
+    stopAnim(); playbackModeRef.current = 'all';
+    playbackQueueRef.current = drawingPlaybackGroups(phasesRef.current);
+    playNextSystemGroup();
   };
   const stopAnim = () => {
+    playbackQueueRef.current = []; playbackModeRef.current = null; onAnimEndRef.current = null;
     playingRef.current = false; setIsPlaying(false);
     if (rafRef.current) { cancelAnimationFrame(rafRef.current); rafRef.current = null; }
     animPosRef.current = null; clockRef.current = 0;
@@ -4451,6 +4464,7 @@ const exportJson = () => {
   // ----------------------- Export vidéo (MP4 / WebM) -----------------------
   // joue toute l'animation depuis la 1ʳᵉ phase et résout la promesse à la fin
   const playWholeForRecording = () => new Promise<void>((resolve) => {
+    playbackQueueRef.current = []; playbackModeRef.current = null;
     if (rafRef.current) { cancelAnimationFrame(rafRef.current); rafRef.current = null; }
     playingRef.current = false; animPosRef.current = null;
     currentRef.current = 0; setCurrent(0);
@@ -4599,6 +4613,7 @@ const exportJson = () => {
 };
   // Next : nouvelle phase repartant de l'état FINAL de la phase courante (joueurs replacés, bon porteur, actions vides)
   const nextPhase = () => {
+    stopAnim();
     const here = phasesRef.current[currentRef.current];
     if (here && options.some(option => option.fromPhaseId === here.phaseId)) {
       chooseOption(selectedOption?.id || options[0].id); return;
@@ -4635,7 +4650,7 @@ const exportJson = () => {
       ? { ...phase, option: { ...phase.option, fromPhaseId: copy.phaseId! } } : phase);
     setPhases(linked); setCurrent(current + 1); setSelection([]);
   };
-  const emptyPhaseBtn = () => { pushHistory(); updatePhase(phase => ({ ...emptyPhase(), phaseId: phase.phaseId, option: phase.option })); setSelection([]); };
+  const emptyPhaseBtn = () => { stopAnim(); pushHistory(); updatePhase(phase => ({ ...emptyPhase(), phaseId: phase.phaseId, option: phase.option })); setSelection([]); };
   const delPhase = () => {
     const phase = phases[current];
     if (options.some(option => option.fromPhaseId === phase?.phaseId)) {
@@ -4686,8 +4701,13 @@ const exportJson = () => {
     setActiveOptionId(activeOptionRef.current);
   };
   const readSelectedOption = () => {
+    if (playbackModeRef.current === 'option' && playingRef.current) { pauseAnim(); return; }
+    if (playbackModeRef.current === 'option' && animPosRef.current) { resumeAnim(); return; }
     stopAnim(); activeOptionRef.current = selectedOption?.id || null;
-    currentRef.current = 0; setCurrent(0); setEditorMode('animate'); playAnim();
+    const indices = selectedOption
+      ? phasesRef.current.flatMap((phase, index) => phase.option?.id === selectedOption.id ? [index] : [])
+      : drawingPath(phasesRef.current);
+    playbackModeRef.current = 'option'; setEditorMode('animate'); playAnim(indices);
   };
 
 
@@ -4820,6 +4840,7 @@ const exportJson = () => {
       <div
         className={'ed-tool' + (editorMode === 'animate' ? ' active' : '')}
         id="edAnimateBtn"
+        title="Lire tout le système : début commun et toutes les options"
         onClick={() => {
           setEditorMode('animate');
           togglePlay();
@@ -5140,7 +5161,7 @@ const exportJson = () => {
                 onDoubleClick={onDoubleClick}
               ></canvas>
               <div className="drawing-option-reader">
-                <button type="button" onClick={isPlaying ? pauseAnim : readSelectedOption}>{isPlaying ? 'Ⅱ Pause' : `▶ Lire ${selectedOption ? 'cette option' : 'le système'}`}</button>
+                <button type="button" onClick={readSelectedOption}>{isPlaying && playbackModeRef.current === 'option' ? 'Ⅱ Pause' : `▶ Lire ${selectedOption ? 'cette option' : 'le système'}`}</button>
                 <button type="button" onClick={stopAnim}>■ Arrêter</button>
               </div>
               {options.length > 0 && <details className="drawing-option-overview">

@@ -44,3 +44,10 @@ export function addDrawingOption<T extends DrawingOptionPhase>(
 export function removeDrawingOption<T extends DrawingOptionPhase>(phases: T[], optionId: string): T[] {
   return phases.filter(phase => phase.option?.id !== optionId);
 }
+
+/** Global reading: common beginning once, then each independent option in display order. */
+export function drawingPlaybackGroups(phases: DrawingOptionPhase[]): number[][] {
+  return [drawingPath(phases), ...drawingOptions(phases).map(option =>
+    phases.flatMap((phase, index) => phase.option?.id === option.id ? [index] : [])
+  )].filter(indices => indices.length > 0);
+}

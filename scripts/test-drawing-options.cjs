@@ -64,16 +64,20 @@ const exportJson=async()=>{await click([...document.querySelectorAll('.ed-tool')
  const names=['orderedActions','phaseDuration','phaseStartMode','actionDurationMs','buildPhaseActionSched','phaseSpanMs','buildSchedule'];const declarations={};
  const visit=node=>{if(ts.isVariableDeclaration(node)&&names.includes(node.name.getText(sourceFile)))declarations[node.name.getText(sourceFile)]=node.initializer.getText(sourceFile);ts.forEachChild(node,visit);};visit(sourceFile);
  const code=ts.transpileModule('const ACTION_KINDS=["cut","dribble","screen","pass","shoot"]; const ANIM_DEFAULT_SEC=1.5;'+names.map(name=>'const '+name+'='+declarations[name]+';').join(''),{compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.CommonJS}}).outputText;
- const plan=new Function('phasesRef','activeOptionRef','drawingPath','drawingOptions',code+'return buildSchedule(0);');
+ const plan=new Function('phasesRef','activeOptionRef','drawingPath','drawingOptions','indices',code+'return buildSchedule(0, indices);');
  for(const option of helpers.drawingOptions(test.phases)){
   const schedule=plan({current:test.phases},{current:option.id},helpers.drawingPath,helpers.drawingOptions);
   assert.deepEqual(schedule.map(item=>item.idx),helpers.drawingPath(test.phases,option.id));
   assert.equal(schedule[1].actSched[0].start,schedule[1].actSched[1].start,'Parallel actions stay parallel');
  }
  assert.deepEqual(plan({current:test.phases},{current:'option-from-another-system'},helpers.drawingPath,helpers.drawingOptions).map(item=>item.idx), helpers.drawingPath(test.phases,helpers.drawingOptions(test.phases)[0].id));
+ const groups=helpers.drawingPlaybackGroups(test.phases); assert.deepEqual(groups,[[0,1],[2],[3]]);
+ assert.deepEqual(helpers.drawingPlaybackGroups(fixture.phases),[[0,1,2]]);
+ assert.deepEqual(plan({current:test.phases},{current:test.optionId},helpers.drawingPath,helpers.drawingOptions,[3]).map(item=>item.idx),[3],'Option-only playback excludes the common beginning');
  let root=createRoot(document.getElementById('root'));
  await act(async()=>root.render(React.createElement(Editor)));await flush(80);
  assert.equal(document.querySelectorAll('.ph-thumb').length,3,'Old linear system must load');
+ assert.equal(document.querySelector('.ed-layout').classList.contains('drawing-library-collapsed'),false,'Library/Playbook must be visible by default');
  await click(document.getElementById('phClone'));
  assert.equal(document.querySelectorAll('.ph-thumb').length,4);
  assert.equal(helpers.drawingOptions((await exportJson()).phases).length,0,'Cloning an old system must not create an option');
@@ -108,6 +112,16 @@ const exportJson=async()=>{await click([...document.querySelectorAll('.ed-tool')
  let cloned=await exportJson();assert.equal(helpers.drawingPath(cloned.phases).length,3);
  assert.equal(document.querySelectorAll('.ph-thumb').length,5);
  await click(document.getElementById('edUndoBtn'));
+ // Separate buttons: option reader starts at the branch, top Animation starts at common.
+ await click(button('▶ Lire cette option'));
+ assert(document.querySelector('.ph-thumb.active').getAttribute('aria-label').includes('Coupe au cercle'));
+ await click(document.getElementById('edAnimateBtn'));
+ assert(document.querySelector('.ph-thumb.active').getAttribute('aria-label').includes('Début commun'));
+ const visited=new Set();
+ for(let frame=0;frame<85;frame++){await flush(50);visited.add(document.querySelector('.ph-thumb.active')?.getAttribute('aria-label') || '');}
+ assert([...visited].some(label=>label.includes('Option 1')),'Global playback must advance through the first option');
+ assert([...visited].some(label=>label.includes('Coupe au cercle')),'Global playback must advance through the other option');
+ await click(button('■ Arrêter'));
  // Actual official save path must preserve all branches, source actions, and positions.
  await click(button('Save fixture'));await flush(150);
  assert.equal(saves,1);const stored=savedSystem.schemaDataList[0];assert(stored);
