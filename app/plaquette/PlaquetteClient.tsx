@@ -17,6 +17,7 @@
 
 import React, { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
+import { addDrawingOption, drawingOptions, drawingPath, removeDrawingOption, type DrawingOptionPhase } from '@/lib/drawing-options';
 import { machineBallCount, machineReserves, collectorForBasket, drawShootingMachine } from '@/lib/drawing-shooting-machine';
 import { createClient } from '@/lib/supabase/client';
 import { getExercise, updateExercise } from "@/lib/exercises";
@@ -261,7 +262,7 @@ const EDIT_EXERCISE_ID_KEY = "mybasket_edit_exercise_id";
   type Line = { sourceMachineId?: string; targetMachineId?: string; returnMachineId?: string; id: string; action: string; from: Pt; to: Pt; ctrls?: Pt[]; ctrl?: Pt; points?: Pt[]; rotation?: number; color?: string; target?: 'basket'; targetBasketId?: string; sourcePlayerId?: string; targetPlayerId?: string; order?: number; startMode?: 'withPrevious' | 'afterPrevious'; duration?: number; targetMode?: 'player' | 'playerCurrentPoint'; createdTargetPoint?: Pt };
   type ActSched = { line: Line; start: number; dur: number; end: number };
   type Sched = { idx: number; start: number; span: number; end: number; actSched: ActSched[] };
-  type Phase = { players: Player[]; objects: Obj[]; lines: Line[]; notes: string; duration?: number; startMode?: 'withPrevious' | 'afterPrevious' };
+  type Phase = DrawingOptionPhase & { players: Player[]; objects: Obj[]; lines: Line[]; notes: string; duration?: number; startMode?: 'withPrevious' | 'afterPrevious' };
   type Tool =
     | { kind: 'none' }
     | { kind: 'player'; label: string; team: 'att' | 'def'; shape: 'circle' | 'square'; coach?: boolean }
@@ -286,6 +287,7 @@ const resetPlaquette = () => {
   localStorage.removeItem("mybasket_edit_schema_index");
   localStorage.removeItem("mybasket_scouting_pending");
 
+  setActiveOptionId(null); activeOptionRef.current = null; setOptionFormOpen(false);
   setTitle("Nouveau play");
   setPhases([emptyPhase()]);
   setCurrent(0);
@@ -299,6 +301,18 @@ const resetPlaquette = () => {
 };
   const [phases, setPhases] = useState<Phase[]>([emptyPhase()]);
   const [current, setCurrent] = useState(0);
+  const [activeOptionId, setActiveOptionId] = useState<string | null>(null);
+  const activeOptionRef = useRef<string | null>(null);
+  const [optionName, setOptionName] = useState('');
+  const [drawingLibraryOpen, setDrawingLibraryOpen] = useState(false);
+  const [optionFormOpen, setOptionFormOpen] = useState(false);
+  const [videoOptionsMode, setVideoOptionsMode] = useState<'selected' | 'all'>('selected');
+  const recordingOptionLabel = useRef('');
+  const options = drawingOptions(phases);
+  const selectedOption = options.find(option => option.id === (phases[current]?.option?.id || activeOptionId)) || options[0];
+  const visiblePhaseIndices = drawingPath(phases, selectedOption?.id);
+  const visiblePhaseNumber = Math.max(1, visiblePhaseIndices.indexOf(current) + 1);
+
   const [courtType, setCourtType] = useState<'half' | 'full'>('half');
   const [editorMode, setEditorMode] = useState<'draw' | 'animate'>('draw');
   const [notesOpen, setNotesOpen] = useState(false);
@@ -2568,10 +2582,13 @@ if (anim && anim.balls) {
     const phs = phasesRef.current;
     const sched: Sched[] = [];
     let prevStart = 0, prevSpan = 0;
-    for (let i = startPhase; i < phs.length; i++) {
+    const optionId = phs[startPhase]?.option?.id || activeOptionRef.current || drawingOptions(phs)[0]?.id;
+    const path = drawingPath(phs, optionId);
+    const startIndex = Math.max(0, path.indexOf(startPhase));
+    for (const [pathIndex, i] of path.slice(startIndex).entries()) {
       const actSched = buildPhaseActionSched(i);
       const span = phaseSpanMs(i, actSched);
-      const start = i === startPhase ? 0 : (phaseStartMode(phs[i]) === 'withPrevious' ? prevStart : prevStart + prevSpan);
+      const start = pathIndex === 0 ? 0 : (phaseStartMode(phs[i]) === 'withPrevious' ? prevStart : prevStart + prevSpan);
       sched.push({ idx: i, start, span, end: start + span, actSched });
       prevStart = start; prevSpan = span;
     }
@@ -2913,7 +2930,7 @@ const owners=ownersAtClock(sched,ballEventsRef.current,clock);
     if (rafRef.current) { cancelAnimationFrame(rafRef.current); rafRef.current = null; }
     renderAnimFrame(totalMsRef.current); // fige les positions finales
     animPosRef.current = null;
-    setCurrent(phasesRef.current.length - 1);
+    setCurrent(scheduleRef.current.at(-1)?.idx ?? currentRef.current);
     if (tlBarRef.current) tlBarRef.current.style.width = '100%';
     render();
     const cb = onAnimEndRef.current; onAnimEndRef.current = null; if (cb) cb();
@@ -2933,9 +2950,10 @@ const owners=ownersAtClock(sched,ballEventsRef.current,clock);
   const playAnim = () => {
     const phs = phasesRef.current;
     if (!phs.length) return;
-    const hasAction = phs.some((p) => p.lines.some((l) => MOVE_KINDS.includes(l.action) || BALL_KINDS.includes(l.action)));
-    if (!hasAction && phs.length < 2) { showHint('Crée des actions ou des phases pour animer'); return; }
-    const start = (currentRef.current >= phs.length - 1 && currentRef.current > 0) ? 0 : currentRef.current;
+    const path = drawingPath(phs, phs[currentRef.current]?.option?.id || activeOptionRef.current || drawingOptions(phs)[0]?.id);
+    const hasAction = path.some((index) => { const p = phs[index]; return p.lines.some((l) => MOVE_KINDS.includes(l.action) || BALL_KINDS.includes(l.action)); });
+    if (!hasAction && path.length < 2) { showHint('Crée des actions ou des phases pour animer'); return; }
+    const start = currentRef.current === path.at(-1) ? (path[0] ?? 0) : currentRef.current;
     const sched = buildSchedule(start);
     if (!sched.length) { showHint('Rien à animer'); return; }
     scheduleRef.current = sched;
@@ -3886,7 +3904,8 @@ useEffect(() => {
       setFuture([]);
 
       window.setTimeout(() => {
-        if (!alive) return;
+        // A late initial repaint must not restore an earlier phase over a new option/edit.
+        if (!alive || phasesRef.current !== loadedPhases || currentRef.current !== safeCurrent) return;
         phasesRef.current = loadedPhases;
         currentRef.current = safeCurrent;
         if (data.courtType === "half" || data.courtType === "full") {
@@ -4377,7 +4396,7 @@ const exportJson = () => {
         const sim = i > 0 && phaseStartMode(ph) === 'withPrevious';
         ensure(8 + imgH + 6 + acts.length * 5 + 10);
         doc.setTextColor(bord[0], bord[1], bord[2]); doc.setFont(undefined, 'bold'); doc.setFontSize(12);
-        doc.text(`Phase ${i + 1}  •  ${phaseDuration(ph)}s${sim ? '  •  simultanée' : ''}`, M, y); y += 5;
+        doc.text(`${ph.option?.name || (drawingOptions(phasesRef.current).length ? 'Début commun' : '')} · Phase ${i + 1}  •  ${phaseDuration(ph)}s${sim ? '  •  simultanée' : ''}`, M, y); y += 5;
         const imgX = M + (CW - imgW) / 2;
         if (images[i]) { try { doc.addImage(images[i], 'PNG', imgX, y, imgW, imgH); } catch { /* img */ } }
         doc.setDrawColor(gold[0], gold[1], gold[2]); doc.setLineWidth(0.4); doc.rect(imgX, y, imgW, imgH);
@@ -4440,6 +4459,9 @@ const exportJson = () => {
   const recordVideo = async () => {
     const canvas = canvasRef.current;
     if (!canvas || recording) return;
+    const previousOption = selectedOption?.id || null;
+    const previousPhase = current;
+    const exportOptions = videoOptionsMode === 'all' && options.length ? options : [selectedOption];
     if (typeof MediaRecorder === 'undefined' || typeof canvas.captureStream !== 'function') {
       showHint('Export vidéo indisponible. Essayez Chrome ou Safari à jour.'); return;
     }
@@ -4462,6 +4484,13 @@ const exportJson = () => {
       const draw = () => {
         context.fillStyle = '#ffffff'; context.fillRect(0, 0, capture.width, capture.height);
         context.drawImage(canvas, 0, 0, capture.width, capture.height);
+        if (recordingOptionLabel.current) {
+          context.font = `600 ${Math.max(12, Math.round(capture.width / 45))}px sans-serif`;
+          const label = recordingOptionLabel.current;
+          const width = Math.min(capture.width - 16, context.measureText(label).width + 20);
+          context.fillStyle = 'rgba(107,26,44,.94)'; context.fillRect(8, 8, width, 32);
+          context.fillStyle = '#fff'; context.fillText(label, 18, 30, width - 20);
+        }
         copyFrame = requestAnimationFrame(draw);
       };
       draw();
@@ -4474,7 +4503,11 @@ const exportJson = () => {
         rec!.onerror = () => reject(new Error('L’enregistrement vidéo a échoué.'));
       });
       rec.start(1000);
-      await Promise.race([playWholeForRecording(), stopped]);
+      for (const option of exportOptions) {
+        activeOptionRef.current = option?.id || null;
+        recordingOptionLabel.current = option?.name || '';
+        await Promise.race([playWholeForRecording(), stopped]);
+      }
       await new Promise(resolve => setTimeout(resolve, 350));
       if (rec.state !== 'inactive') rec.stop();
       await stopped;
@@ -4492,6 +4525,9 @@ const exportJson = () => {
     } catch (error) {
       showHint(error instanceof Error ? error.message : 'Échec de l’export MP4. Essayez Chrome ou Safari à jour.');
     } finally {
+      activeOptionRef.current = previousOption; setActiveOptionId(previousOption);
+      currentRef.current = previousPhase; setCurrent(previousPhase);
+      recordingOptionLabel.current = '';
       cancelAnimationFrame(copyFrame);
       if (rec && rec.state !== 'inactive') rec.stop();
       stream?.getTracks().forEach(track => track.stop());
@@ -4561,12 +4597,17 @@ const exportJson = () => {
 };
   // Next : nouvelle phase repartant de l'état FINAL de la phase courante (joueurs replacés, bon porteur, actions vides)
   const nextPhase = () => {
+    const here = phasesRef.current[currentRef.current];
+    if (here && options.some(option => option.fromPhaseId === here.phaseId)) {
+      chooseOption(selectedOption?.id || options[0].id); return;
+    }
     pushHistory();
     const idx = currentRef.current;
     const cur = phasesRef.current[idx];
     const fin = cur ? computePhaseFinalState(idx) : null;
     const newPhase: Phase = fin
       ? {
+          phaseId: uid(), option: cur?.option ? { ...cur.option } : undefined,
           players: fin.players,
           // Le H et les textes sont propres au schéma courant : ils ne sont jamais
           // recopiés automatiquement dans le schéma suivant.
@@ -4582,17 +4623,71 @@ const exportJson = () => {
     setPhases((prev) => { const np = [...prev]; np.splice(idx + 1, 0, newPhase); return np; });
     setCurrent((c) => c + 1); setSelection([]); setEditingId(null);
   };
-  const clonePhase = () => { pushHistory(); setPhases((prev) => { const copy = JSON.parse(JSON.stringify(prev[current])) as Phase; const np = [...prev]; np.splice(current + 1, 0, copy); return np; }); setCurrent((c) => c + 1); setSelection([]); };
-  const emptyPhaseBtn = () => { pushHistory(); updatePhase(() => emptyPhase()); setSelection([]); };
-  const delPhase = () => {
-    pushHistory(); setSelection([]);
-    setPhases((prev) => {
-      if (prev.length <= 1) { setCurrent(0); return [emptyPhase()]; }
-      const np = prev.filter((_, i) => i !== current);
-      setCurrent((cur) => Math.min(cur, np.length - 1));
-      return np;
-    });
+  const clonePhase = () => {
+    pushHistory(); stopAnim();
+    const original = phases[current];
+    const copy = JSON.parse(JSON.stringify(original)) as Phase; copy.phaseId = uid();
+    const next = [...phases]; next.splice(current + 1, 0, copy);
+    // Cloning the fork phase extends the common path, never creates a hidden phase.
+    const linked = next.map(phase => phase.option && original.phaseId && phase.option.fromPhaseId === original.phaseId
+      ? { ...phase, option: { ...phase.option, fromPhaseId: copy.phaseId! } } : phase);
+    setPhases(linked); setCurrent(current + 1); setSelection([]);
   };
+  const emptyPhaseBtn = () => { pushHistory(); updatePhase(phase => ({ ...emptyPhase(), phaseId: phase.phaseId, option: phase.option })); setSelection([]); };
+  const delPhase = () => {
+    const phase = phases[current];
+    if (options.some(option => option.fromPhaseId === phase?.phaseId)) {
+      showHint('Cette phase est le départ des options. Supprime les options avant de la retirer.'); return;
+    }
+    pushHistory(); setSelection([]); stopAnim();
+    const next = phases.filter((_, index) => index !== current);
+    const valid = next.length ? next : [emptyPhase()];
+    const nextPath = drawingPath(valid, selectedOption?.id);
+    setPhases(valid); setCurrent(nextPath.at(-1) ?? 0);
+  };
+
+  const chooseOption = (id: string) => {
+    stopAnim(); activeOptionRef.current = id; setActiveOptionId(id);
+    const first = phases.findIndex(phase => phase.option?.id === id);
+    if (first >= 0) { currentRef.current = first; setCurrent(first); }
+    setSelection([]); setOptionFormOpen(false);
+  };
+  const createOption = () => {
+    const existing = drawingOptions(phases);
+    const anchorIndex = existing.length ? phases.findIndex(phase => phase.phaseId === existing[0].fromPhaseId) : current;
+    if (anchorIndex < 0) { showHint('Phase source introuvable.'); return; }
+    const final = computePhaseFinalState(anchorIndex);
+    const source = phases[anchorIndex];
+    const continuation: Phase = {
+      players: final.players,
+      objects: source.objects.filter(object => object.kind !== 'handoff' && object.kind !== 'text')
+        .map(object => object.kind === 'shootingMachine' ? { ...object, ballCount: final.machineBalls[object.id] ?? machineBallCount(object) } : { ...object }),
+      lines: [], notes: '', duration: 1.5, startMode: 'afterPrevious',
+    };
+    const result = addDrawingOption(phases, anchorIndex, continuation, optionName, uid);
+    stopAnim(); pushHistory(); setPhases(result.phases); setCurrent(result.current);
+    currentRef.current = result.current; phasesRef.current = result.phases;
+    activeOptionRef.current = result.optionId; setActiveOptionId(result.optionId);
+    setOptionName(''); setOptionFormOpen(false); setSelection([]);
+  };
+  const renameOption = (name: string) => {
+    if (!selectedOption || !name.trim()) return;
+    pushHistory(); setPhases(previous => previous.map(phase => phase.option?.id === selectedOption.id
+      ? { ...phase, option: { ...phase.option, name: name.trim() } } : phase));
+  };
+  const deleteOption = () => {
+    if (!selectedOption || !window.confirm(`Supprimer « ${selectedOption.name} » et ses phases ? Tu peux annuler avec ↶.`)) return;
+    stopAnim(); pushHistory();
+    const next = removeDrawingOption(phases, selectedOption.id);
+    setPhases(next); setCurrent(0); setSelection([]);
+    activeOptionRef.current = drawingOptions(next)[0]?.id || null;
+    setActiveOptionId(activeOptionRef.current);
+  };
+  const readSelectedOption = () => {
+    stopAnim(); activeOptionRef.current = selectedOption?.id || null;
+    currentRef.current = 0; setCurrent(0); setEditorMode('animate'); playAnim();
+  };
+
 
   // ----------------------- Helpers UI -----------------------
   const isPlayer = (label: string, team: 'att' | 'def', shape: 'circle' | 'square', coach = false) =>
@@ -4711,6 +4806,7 @@ const exportJson = () => {
         <span>Fermer</span>
       </Link>
 
+      <button type="button" className="drawing-library-toggle" aria-expanded={drawingLibraryOpen} onClick={() => setDrawingLibraryOpen(value => !value)}>☷ Bibliothèque</button>
       <div
         className={'ed-tool' + (editorMode === 'draw' ? ' active' : '')}
         onClick={() => setEditorMode('draw')}
@@ -4811,7 +4907,7 @@ const exportJson = () => {
     </div>
   </div>
 
-  <div className="ed-layout">
+  <div className={'ed-layout' + (!drawingLibraryOpen ? ' drawing-library-collapsed' : '')}>
             {/* -------- BIBLIOTHÈQUE / ORGANISATION -------- */}
             <div className="ed-library">
               <ContentNavigator
@@ -4847,19 +4943,42 @@ const exportJson = () => {
               </div>
 
               <div id="tabPhases">
-                <div className="ph-counter" id="phCounter">PHASE {current + 1}/{phases.length}</div>
+                <div className="ph-counter" id="phCounter">PHASE {visiblePhaseNumber}/{visiblePhaseIndices.length}</div>
                 <div className="ph-actions">
                   <div className="ph-act" id="phNext" onClick={nextPhase}><span className="ico">→</span><span>Next</span></div>
                   <div className="ph-act" id="phClone" onClick={clonePhase}><span className="ico">⎘</span><span>Clone</span></div>
                   <div className="ph-act" id="phEmpty" onClick={emptyPhaseBtn}><span className="ico">▢</span><span>Empty</span></div>
                   <div className="ph-act" id="phDel" onClick={delPhase}><span className="ico">🗑</span><span>Del</span></div>
                 </div>
+                <div className="drawing-options-panel">
+                  <div className="option-panel-heading">{options.length ? 'OPTIONS DU SYSTÈME' : 'PLUSIEURS LECTURES ?'}</div>
+                  {options.length > 0 && <>
+                    <div className="option-common-label">Début commun · jusqu’à la phase {phases.findIndex(phase => phase.phaseId === options[0].fromPhaseId) + 1}</div>
+                    <div className="drawing-options-list" role="group" aria-label="Options du système">
+                      {options.map(option => <button type="button" key={option.id} aria-pressed={selectedOption?.id === option.id}
+                        onClick={() => chooseOption(option.id)}><span>⑂ {option.name}</span><small>{phases.filter(phase => phase.option?.id === option.id).length} phases</small></button>)}
+                    </div>
+                    <details className="option-settings" key={selectedOption?.id}>
+                      <summary>Renommer / supprimer l’option</summary>
+                      <label>Nom de l’option<input key={selectedOption?.name} defaultValue={selectedOption?.name || ''} maxLength={60} onBlur={event => { if (event.target.value.trim() !== selectedOption?.name) renameOption(event.target.value); }} onKeyDown={event => { if (event.key === 'Enter') event.currentTarget.blur(); }} /></label>
+                      <button type="button" className="option-delete" onClick={deleteOption}>Supprimer cette option</button>
+                    </details>
+                  </>}
+                  {!optionFormOpen ? <button type="button" className="option-add" onClick={() => { setOptionName(''); setOptionFormOpen(true); }}>+ {options.length ? 'Ajouter une option' : 'Créer des options ici'}</button>
+                    : <form onSubmit={event => { event.preventDefault(); createOption(); }} className="option-create-form">
+                      <label>Nom de la nouvelle option<input autoFocus maxLength={60} placeholder="Ex. Backdoor" value={optionName} onChange={event => setOptionName(event.target.value)} /></label>
+                      <small>À partir de la fin de la phase {options.length ? phases.findIndex(phase => phase.phaseId === options[0].fromPhaseId) + 1 : current + 1}. Les positions et ballons sont repris.</small>
+                      <div><button type="button" onClick={() => setOptionFormOpen(false)}>Annuler</button><button type="submit">Créer l’option</button></div>
+                    </form>}
+                </div>
                 <div className="phases-list" id="phasesList">
-                  {phases.map((p, i) => (
+                  {visiblePhaseIndices.map((i, pathIndex) => { const p = phases[i]; return (
                     <div
-                      key={i}
+                      key={p.phaseId || i}
+                      role="button" tabIndex={0} aria-label={`Phase ${pathIndex + 1}${p.option ? ' · ' + p.option.name : ' · Début commun'}`}
+                      onKeyDown={event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); stopAnim(); setCurrent(i); setSelection([]); } }}
                       className={'ph-thumb' + (i === current ? ' active' : '')}
-                      onClick={() => { setCurrent(i); setSelection([]); }}
+                      onClick={() => { stopAnim(); setCurrent(i); currentRef.current = i; setSelection([]); }}
                       style={phaseCourtThumbnailUrl ? { backgroundImage: `url(${phaseCourtThumbnailUrl})` } : undefined}
                     >
                       {p.players.map((pl) => (
@@ -4872,13 +4991,14 @@ const exportJson = () => {
                           <span key={o.id} style={{ position: 'absolute', left: `${o.x * 100}%`, top: `${(o.y / 0.5) * 100}%`, width: 4, height: 4, marginLeft: -2, marginTop: -2, borderRadius: '50%', background: '#0F0F12' }} />
                         )
                       ))}
-                      <span className="pnum">{i + 1}</span>
+                      <span className="pnum">{pathIndex + 1}</span>
+                      <span className="option-phase-label">{p.option?.name || (options.length ? 'Début commun' : '')}</span>
                       <span style={{ position: 'absolute', bottom: 1, right: 2, fontSize: 8, fontWeight: 700, color: '#0F0F12', background: 'rgba(255,255,255,0.78)', borderRadius: 3, padding: '0 2px', lineHeight: 1.3 }}>{p.duration ?? 1.5}s</span>
                       {i > 0 && p.startMode === 'withPrevious' && (
                         <span title="Démarre en même temps que la précédente" style={{ position: 'absolute', top: 1, left: 2, fontSize: 9, fontWeight: 700, color: '#fff', background: 'var(--or, #D4A24C)', borderRadius: 3, padding: '0 2px', lineHeight: 1.3 }}>⇉</span>
                       )}
                     </div>
-                  ))}
+                  ); })}
                 </div>
 
                 {notesOpen && (
@@ -4895,7 +5015,7 @@ const exportJson = () => {
                 )}
 
                 <div id="timingPanel" style={{ marginTop: '.85rem', paddingTop: '.85rem', borderTop: '1px solid var(--gris-med)' }}>
-                  <div className="sec-lab" style={{ marginBottom: '.45rem' }}>TIMING — PHASE {current + 1}</div>
+                  <div className="sec-lab" style={{ marginBottom: '.45rem' }}>TIMING — PHASE {visiblePhaseNumber}</div>
                   <label style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: '.8rem', marginBottom: '.5rem' }}>
                     Durée (s)
                     <input
@@ -4993,6 +5113,10 @@ const exportJson = () => {
 
             {/* -------- TERRAIN -------- */}
             <div className="ed-canvas-wrap" style={{ position: 'relative' }}>
+              <div className="drawing-option-context">
+                <span>{selectedOption ? `Début commun › ${selectedOption.name}` : 'Système · déroulé des phases'}</span>
+                <span>Phase {visiblePhaseNumber} / {visiblePhaseIndices.length}</span>
+              </div>
               <div className="court-view-switch">
                 <button type="button" className="court-view-switch-btn" id="courtToggleBtn" onClick={toggleCourt}>
                   🏟 Terrain : {courtType === 'half' ? 'Demi' : 'Complet'}
@@ -5013,6 +5137,18 @@ const exportJson = () => {
                 onPointerLeave={onPointerUp}
                 onDoubleClick={onDoubleClick}
               ></canvas>
+              <div className="drawing-option-reader">
+                <button type="button" onClick={isPlaying ? pauseAnim : readSelectedOption}>{isPlaying ? 'Ⅱ Pause' : `▶ Lire ${selectedOption ? 'cette option' : 'le système'}`}</button>
+                <button type="button" onClick={stopAnim}>■ Arrêter</button>
+              </div>
+              {options.length > 0 && <details className="drawing-option-overview">
+                <summary>Vue des options · {options.length} lectures</summary>
+                <div className="option-tree-common">Début commun · {drawingPath(phases).length} phases</div>
+                {options.map(option => <div key={option.id} className="option-tree-row">
+                  <button type="button" aria-pressed={selectedOption?.id === option.id} onClick={() => chooseOption(option.id)}>⑂ {option.name}</button>
+                  <div>{drawingPath(phases, option.id).filter(index => phases[index].option).map((index, position) => <button type="button" key={phases[index].phaseId || index} onClick={() => { chooseOption(option.id); setCurrent(index); currentRef.current = index; }}><span className="option-mini-court" style={{ backgroundImage: `url(${phaseCourtThumbnailUrl})` }}>{phases[index].players.map(player => <i key={player.id} style={{ left: `${player.x * 100}%`, top: `${player.y / (courtType === 'full' ? 1.25 : .5) * 100}%`, background: player.team === 'def' ? '#D62828' : '#6B1A2C' }}>{player.label}</i>)}</span><span>Phase {position + 1}</span></button>)}</div>
+                </div>)}
+              </details>}
             </div>
 
             {/* -------- DROITE -------- */}
@@ -5785,6 +5921,12 @@ const exportJson = () => {
               <div style={{ fontWeight: 800, fontSize: '1.05rem', color: 'var(--bordeaux, #6B1A2C)', marginBottom: '.2rem' }}>🎬 Export vidéo</div>
               <div style={{ fontSize: '.78rem', color: '#6b6b6b', marginBottom: '.9rem' }}>Toutes les phases sont rejouées et enregistrées (joueurs, ballon, passes, dribbles, cuts, écrans, tirs, objets).</div>
 
+              {options.length > 0 && <label className="drawing-video-route">Parcours à exporter
+                <select value={videoOptionsMode} onChange={event => setVideoOptionsMode(event.target.value as 'selected' | 'all')}>
+                  <option value="selected">{selectedOption?.name} · avec le début commun</option>
+                  <option value="all">Toutes les options à la suite</option>
+                </select>
+              </label>}
               <div style={{ fontSize: '.78rem', fontWeight: 700, marginBottom: '.3rem' }}>Qualité</div>
               <div style={{ display: 'flex', gap: 6, marginBottom: '.8rem' }}>
                 {([['std', 'Compact'], ['hd', 'HD · partage'], ['fhd', 'Full HD']] as const).map(([v, lab]) => (
@@ -6078,4 +6220,43 @@ html{font-size:15px}
   .ed-canvas-wrap{height:100%!important;min-height:0!important;padding:.65rem 1rem!important;justify-content:flex-start!important}
   #playCanvas[data-court="full"]{width:auto!important;height:auto!important;max-width:100%!important;max-height:calc(100vh - 145px)!important;object-fit:contain!important}
 }
+/* Options de système : metadata only, existing linear editor remains available. */
+.drawing-options-panel{order:2;margin:.2rem 0 .8rem;padding:.7rem;border:1px solid #e4d8cb;border-radius:10px;background:#fff}
+.option-panel-heading{font-size:.64rem;font-weight:900;letter-spacing:.06em;color:#6B1A2C;margin-bottom:.45rem}
+.option-common-label,.option-create-form small{font-size:.67rem;line-height:1.45;color:#73685f;display:block;margin:.3rem 0}
+.drawing-options-list{display:grid;gap:5px}
+.drawing-options-list button,.option-add,.option-create-form button,.option-tree-row button,.drawing-option-reader button{font:inherit;font-size:.72rem;border:1px solid #e3d9d2;background:#fff;border-radius:7px;cursor:pointer;padding:.45rem .5rem;color:#4b2630}
+.drawing-options-list button{display:flex;justify-content:space-between;gap:5px;text-align:left;align-items:center;overflow-wrap:anywhere}
+.drawing-options-list button small{font-size:.6rem;white-space:nowrap}
+.drawing-options-list button[aria-pressed=true],.option-tree-row button[aria-pressed=true]{background:#6B1A2C;color:#fff;border-color:#6B1A2C}
+.option-add{width:100%;margin-top:.5rem;border-color:#D4A24C;font-weight:700}
+.option-create-form label,.option-settings label,.drawing-video-route{font-size:.7rem;font-weight:700;display:grid;gap:5px}
+.option-create-form input,.option-settings input,.drawing-video-route select{width:100%;min-width:0;border:1px solid #d9ccc7;border-radius:6px;padding:.4rem;font:inherit;background:#fff;color:#38262c}
+.option-create-form>div{display:flex;gap:5px;margin-top:.4rem;justify-content:flex-end}
+.option-create-form button[type=submit]{background:#6B1A2C;color:white}
+.option-settings{font-size:.66rem;margin-top:.5rem}.option-settings summary{cursor:pointer;color:#766a65}.option-settings label{margin-top:.4rem}
+.option-delete{background:none;border:0;color:#a2293d;font:inherit;padding:.5rem 0;cursor:pointer}
+.option-phase-label{position:absolute;top:3px;right:3px;max-width:80%;font-size:9px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;background:#ffffffeb;color:#6B1A2C;padding:2px 4px;border-radius:3px}
+.drawing-option-context{width:100%;display:flex;justify-content:space-between;gap:8px;color:#6B1A2C;font-size:.7rem;font-weight:700;padding:0 0 .4rem;flex-shrink:0}
+.drawing-option-reader{width:100%;display:flex;gap:6px;justify-content:center;flex-wrap:wrap;margin-top:.5rem;flex-shrink:0}
+.drawing-option-reader button:first-child{background:#6B1A2C;color:#fff}
+.drawing-option-overview{width:100%;margin-top:.6rem;flex-shrink:0;border:1px solid #e4d8cb;border-radius:8px;background:#fff;padding:.55rem;font-size:.7rem;max-height:200px;overflow:auto}
+.drawing-option-overview summary{cursor:pointer;font-weight:700;color:#6B1A2C}.option-tree-common{padding:.5rem;color:#786956;border-bottom:1px solid #eee}
+.option-tree-row{display:flex;gap:8px;align-items:center;padding:.35rem 0;border-bottom:1px solid #f2ece7}.option-tree-row>button{min-width:100px;max-width:45%;overflow-wrap:anywhere}.option-tree-row>div{display:flex;flex-wrap:wrap;gap:4px}.option-tree-row button{font-size:.65rem}
+.drawing-video-route{margin-bottom:.8rem}
+.ed-left .phases-list{height:auto!important;max-height:280px!important;flex-shrink:0}
+@media(min-width:901px){.ed-canvas-wrap{overflow-y:auto!important}#playCanvas{flex-shrink:0;width:auto!important;height:auto!important;max-width:100%!important;max-height:calc(100vh - 290px)!important;object-fit:contain}}
+@media(max-width:900px){.drawing-option-context{padding-top:.5rem}.drawing-options-list{grid-template-columns:repeat(auto-fit,minmax(130px,1fr))}}
+
+.drawing-library-toggle{background:transparent;border:1px solid #ffffff55;color:#fff;font:inherit;font-size:.72rem;padding:.45rem .55rem;border-radius:6px;cursor:pointer}
+.option-mini-court{display:block;position:relative;width:76px;height:55px;background-size:100% 100%;background-position:center;background-color:#d5b97d;border-radius:4px;margin-bottom:3px}
+.option-mini-court i{font-style:normal;position:absolute;width:9px;height:9px;font-size:6px;line-height:9px;border-radius:50%;color:white;transform:translate(-50%,-50%)}
+.drawing-library-collapsed .ed-library{display:none!important}
+@media(min-width:901px){
+ .ed-layout.drawing-library-collapsed{grid-template-columns:230px minmax(0,1fr) 270px!important;grid-template-areas:"phases canvas right"!important}
+ .drawing-library-collapsed .ed-left{grid-column:1!important}.drawing-library-collapsed .ed-canvas-wrap{grid-column:2!important}.drawing-library-collapsed .ed-right{grid-column:3!important}
+}
+@media(min-width:901px) and (max-width:1100px){.ed-layout.drawing-library-collapsed{grid-template-columns:210px minmax(0,1fr) 220px!important}}
+@media(max-width:900px){.ed-layout.drawing-library-collapsed{grid-template-areas:"phases" "canvas" "right";grid-template-rows:auto auto auto}.drawing-library-toggle{font-size:.65rem}}
+
 `;
