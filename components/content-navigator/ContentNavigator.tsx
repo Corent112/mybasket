@@ -5,16 +5,19 @@ import {createPlaybook,type Playbook} from '@/lib/playbook';
 import {createPlaybookSeries,createPersonalSystemTag,deletePersonalSystemTag,renamePersonalSystemTag,ensureDefaultPersonalSystemTags,listPersonalSystemTags,type PersonalSystemTag,type PlaybookSeries} from '@/lib/playbook-series';
 import {attachPrivateSystemToPlaybook,createDrawingSeason,detachPrivateSystemFromPlaybook,deletePrivateSystem,duplicatePrivateSystem,ensureDrawingSeasons,listDrawingTeams,loadDrawingSystems,renamePrivateSystem,renameSeries,setPrivateSystemTags,type DrawingSeason,type DrawingSystem,type DrawingTeam} from '@/lib/drawing-workspace';
 import './content-navigator.css';
+import DrawingExerciseLibrary from './DrawingExerciseLibrary';
+import type { Exercise } from '@/types/exercise';
 
-type Props={embedded?:boolean;initialKind?:'exercise'|'system';onPreviewSystem?:(system:DrawingSystem)=>void;onSaveSystem?:(system:DrawingSystem)=>void|Promise<void>};
+type Props={embedded?:boolean;initialKind?:'exercise'|'system';onPreviewSystem?:(system:DrawingSystem)=>void;onSaveSystem?:(system:DrawingSystem)=>void|Promise<void>;onPreviewExercise?:(exercise:Exercise,index:number)=>void;onSaveExercise?:()=>void|Promise<void>};
 type CreateModal='playbook'|'series'|'season'|'tag'|null;
 const LIBRARY='__private_library__';
 const uniq=(v:string[])=>Array.from(new Set(v.filter(Boolean)));
 
-export default function ContentNavigator({embedded=false,onPreviewSystem,onSaveSystem}:Props){
+export default function ContentNavigator({embedded=false,initialKind='system',onPreviewSystem,onSaveSystem,onPreviewExercise,onSaveExercise}:Props){
+ const[libraryKind,setLibraryKind]=useState<'exercise'|'system'>(initialKind);
  const[teams,setTeams]=useState<DrawingTeam[]>([]),[seasons,setSeasons]=useState<DrawingSeason[]>([]),[playbooks,setPlaybooks]=useState<Playbook[]>([]),[series,setSeries]=useState<PlaybookSeries[]>([]),[systems,setSystems]=useState<DrawingSystem[]>([]),[tags,setTags]=useState<PersonalSystemTag[]>([]);
  const[teamId,setTeamId]=useState(''),[season,setSeason]=useState('2026-2027'),[playbookId,setPlaybookId]=useState(''),[tag,setTag]=useState(''),[q,setQ]=useState(''),[libraryQ,setLibraryQ]=useState(''),[openSeries,setOpenSeries]=useState<Set<string>>(new Set()),[selected,setSelected]=useState(''),[busy,setBusy]=useState(false),[actionId,setActionId]=useState('');
- const[view,setView]=useState<'playbook'|'library'>('playbook'),[expanded,setExpanded]=useState(false),[dragTarget,setDragTarget]=useState(''),[toast,setToast]=useState(''),[openLibraryFolders,setOpenLibraryFolders]=useState<Set<string>>(new Set(['__unclassified__']));
+ const[view,setView]=useState<'playbook'|'library'>(initialKind==='exercise'?'library':'playbook'),[expanded,setExpanded]=useState(false),[dragTarget,setDragTarget]=useState(''),[toast,setToast]=useState(''),[openLibraryFolders,setOpenLibraryFolders]=useState<Set<string>>(new Set(['__unclassified__']));
  const[modal,setModal]=useState<CreateModal>(null),[createName,setCreateName]=useState(''),[createTags,setCreateTags]=useState<string[]>([]);
  const[addSystemId,setAddSystemId]=useState(''),[addPlaybookId,setAddPlaybookId]=useState(''),[addSeriesId,setAddSeriesId]=useState('');
  async function load(){try{const[t,ss,ws,tg]=await Promise.all([listDrawingTeams(),ensureDrawingSeasons(),loadDrawingSystems(),ensureDefaultPersonalSystemTags()]);setTeams(t);setSeasons(ss);setSystems(ws.systems);setPlaybooks(ws.playbooks);setSeries(ws.series);setTags(tg)}catch(e){console.error('DESSIN workspace',e)}}
@@ -53,7 +56,7 @@ export default function ContentNavigator({embedded=false,onPreviewSystem,onSaveS
    return ordered;
  },[libraryVisible]);
  const selectedIndex=visible.findIndex(s=>s.id===selected);
- useEffect(()=>{const h=(e:KeyboardEvent)=>{if(!(e.metaKey||e.ctrlKey)||!selected)return;if(e.key.toLowerCase()==='c'){e.preventDefault();localStorage.setItem('mybasket_copied_system_id',selected);flash('Système copié')}if(e.key.toLowerCase()==='v'){const id=localStorage.getItem('mybasket_copied_system_id');if(id){e.preventDefault();void doDuplicate(id)}}};window.addEventListener('keydown',h);return()=>window.removeEventListener('keydown',h)},[selected,playbookId]);
+ useEffect(()=>{const h=(e:KeyboardEvent)=>{if(!(e.metaKey||e.ctrlKey)||!selected||(view==='library'&&libraryKind==='exercise'))return;if(e.key.toLowerCase()==='c'){e.preventDefault();localStorage.setItem('mybasket_copied_system_id',selected);flash('Système copié')}if(e.key.toLowerCase()==='v'){const id=localStorage.getItem('mybasket_copied_system_id');if(id){e.preventDefault();void doDuplicate(id)}}};window.addEventListener('keydown',h);return()=>window.removeEventListener('keydown',h)},[selected,playbookId,view,libraryKind]);
  function openCreate(kind:CreateModal){setCreateName(kind==='season'?'2027-2028':'');setCreateTags([]);setModal(kind)}
  async function submitCreate(){const name=createName.trim();if(!name)return;setBusy(true);try{
    if(modal==='season'){const row=await createDrawingSeason(name);await load();setSeason(row.label);flash('Saison créée')}
@@ -149,6 +152,11 @@ export default function ContentNavigator({embedded=false,onPreviewSystem,onSaveS
   {toast&&<div className='cn46-toast'>{toast}</div>}
   <div className='cn46-head'><div><BookOpen size={16}/><b>DESSIN</b></div><button onClick={()=>setExpanded(v=>!v)} title={expanded?'Réduire':'Agrandir'}>{expanded?<Minimize2 size={15}/>:<Maximize2 size={15}/>}</button></div>
   <div className='cn46-mode'><button className={view==='playbook'?'active':''} onClick={()=>setView('playbook')}>PLAYBOOK</button><button className={view==='library'?'active':''} onClick={()=>setView('library')}>BIBLIOTHÈQUE</button></div>
+  {view==='library'&&<div className='cn-library-kinds' role='group' aria-label='Type de bibliothèque'>
+    <button type='button' aria-pressed={libraryKind==='system'} onClick={()=>setLibraryKind('system')}>Systèmes</button>
+    <button type='button' aria-pressed={libraryKind==='exercise'} onClick={()=>setLibraryKind('exercise')}>Exercices</button>
+  </div>}
+  {view==='library'&&libraryKind==='exercise'?<DrawingExerciseLibrary onOpen={onPreviewExercise} onSave={onSaveExercise}/>:<>
   <div className='cn44-selects'>
    <label>Équipe<select value={teamId} onChange={e=>{setTeamId(e.target.value);setPlaybookId('')}}><option value=''>Toutes mes équipes</option><optgroup label='Mes équipes'>{teams.filter(t=>!t.scouted).map(t=><option key={t.id} value={t.id}>{t.name}</option>)}</optgroup><optgroup label='Équipes scoutées'>{teams.filter(t=>t.scouted).map(t=><option key={t.id} value={t.id}>{t.name}</option>)}</optgroup></select></label>
    <label>Saison<div className='row'><select value={season} onChange={e=>{setSeason(e.target.value);setPlaybookId('')}}>{seasons.map(s=><option key={s.id}>{s.label}</option>)}</select><button onClick={()=>openCreate('season')} title='Nouvelle saison'><Plus size={14}/></button></div></label>
@@ -170,6 +178,7 @@ export default function ContentNavigator({embedded=false,onPreviewSystem,onSaveS
     <button className='cn46-add-system' onClick={()=>setView('library')}><Plus size={14}/> Ajouter un système depuis ma bibliothèque</button>
     {selected&&<div className='cn46-nav-actions'>{selectedIndex>0&&<button onClick={()=>previewSystem(visible[selectedIndex-1].id)}>← Précédent</button>}<button onClick={()=>previewSystem(selected)}>Afficher</button>{selectedIndex>=0&&selectedIndex<visible.length-1&&<button onClick={()=>previewSystem(visible[selectedIndex+1].id)}>Suivant →</button>}<button onClick={()=>void doDuplicate(selected)}><Copy size={12}/> Dupliquer</button></div>}
    </>}
+  </>}
   {addSystemId&&<div className='cn44-modal-back' onMouseDown={()=>setAddSystemId('')}><div className='cn44-modal cn49-add-modal' onMouseDown={e=>e.stopPropagation()}><div className='modal-title'><b>Ajouter à un Playbook</b><button onClick={()=>setAddSystemId('')}><X size={16}/></button></div>
    <label>Playbook<select value={addPlaybookId} onChange={e=>{setAddPlaybookId(e.target.value);setAddSeriesId('')}}><option value=''>Choisir un Playbook…</option>{playbooks.map(p=><option key={p.id} value={p.id}>{p.title}{p.season?` · ${p.season}`:''}</option>)}</select></label>
    <label>Série<select value={addSeriesId} onChange={e=>setAddSeriesId(e.target.value)} disabled={!addPlaybookId}><option value=''>Sans série</option>{series.filter(sr=>sr.playbook_id===addPlaybookId).sort((a,b)=>a.position-b.position).map(sr=><option key={sr.id} value={sr.id}>{sr.name}</option>)}</select></label>

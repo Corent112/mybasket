@@ -20,6 +20,8 @@ import Link from 'next/link';
 import { addDrawingOption, drawingOptions, drawingPath, drawingPlaybackGroups, removeDrawingOption, type DrawingOptionPhase } from '@/lib/drawing-options';
 import { machineBallCount, machineReserves, collectorForBasket, drawShootingMachine } from '@/lib/drawing-shooting-machine';
 import { createClient } from '@/lib/supabase/client';
+import type { Exercise } from '@/types/exercise';
+import { exerciseDrawingEntries, replaceExerciseDrawingGroup } from '@/lib/drawing-exercise-library';
 import { getExercise, updateExercise } from "@/lib/exercises";
 import { getSystem, updateSystem } from "@/lib/systems";
 import { uploadSchemaImage } from "@/lib/supabase/upload-schema";
@@ -288,6 +290,7 @@ const resetPlaquette = () => {
   localStorage.removeItem("mybasket_scouting_pending");
 
   setActiveOptionId(null); activeOptionRef.current = null; setOptionFormOpen(false);
+  setOpenedLibraryExercise(null);
   setTitle("Nouveau play");
   setPhases([emptyPhase()]);
   setCurrent(0);
@@ -303,6 +306,7 @@ const resetPlaquette = () => {
   const [current, setCurrent] = useState(0);
   const [activeOptionId, setActiveOptionId] = useState<string | null>(null);
   const activeOptionRef = useRef<string | null>(null);
+  const drawingLoadTokenRef = useRef(0);
   const playbackQueueRef = useRef<number[][]>([]);
   const playbackModeRef = useRef<'all' | 'option' | null>(null);
   const [optionName, setOptionName] = useState('');
@@ -564,6 +568,7 @@ const resetPlaquette = () => {
 
 useEffect(() => {
   const loadFromSource = async (previewSystemId?: string) => {
+    const loadToken = ++drawingLoadTokenRef.current;
     try {
       setExoInsertMode(!!localStorage.getItem(RETURN_KEY));
       setShootingGridPending(!!localStorage.getItem("mybasket_shooting_grid_pending"));
@@ -590,6 +595,7 @@ useEffect(() => {
 
         if (systemeId) {
           const systeme = await getSystem(systemeId);
+          if (loadToken !== drawingLoadTokenRef.current) return;
           const schemaDataList = Array.isArray((systeme as any)?.schemaDataList)
             ? (systeme as any).schemaDataList
             : [];
@@ -630,7 +636,7 @@ useEffect(() => {
         }
       }
 
-      if (!schemaData) {
+      if (!schemaData || loadToken !== drawingLoadTokenRef.current) {
         return;
       }
 
@@ -685,6 +691,7 @@ useEffect(() => {
 
   void loadFromSource();
   const handlePreviewSystem=(event:Event)=>{
+    setOpenedLibraryExercise(null);
     const systemId=(event as CustomEvent<{systemId?:string}>).detail?.systemId;
     if(systemId){
       // L'ID est mémorisé immédiatement au clic Bibliothèque, avant même le chargement Supabase.
@@ -727,6 +734,7 @@ useEffect(() => {
   // Système actuellement ouvert directement depuis la Bibliothèque.
   // Cet id permet à "Enregistrer" de mettre à jour ce même système sans créer de copie.
   const [openedLibrarySystemId, setOpenedLibrarySystemId] = useState<string | null>(null);
+  const [openedLibraryExercise, setOpenedLibraryExercise] = useState<{id:string; index:number; groupId?:string} | null>(null);
 
   // ContentNavigator mémorise l'id du système choisi dans localStorage.
   // On le relit au moment exact où l'utilisateur clique sur Enregistrer :
@@ -740,7 +748,7 @@ useEffect(() => {
   const [terrainPanelOpen, setTerrainPanelOpen] = useState(true);
   const [selectionPanelOpen, setSelectionPanelOpen] = useState(true);
   const [exportOpen, setExportOpen] = useState(false);
-  const [saving, setSaving] = useState<null | 'systeme' | 'exercice' | 'library-system'>(null);
+  const [saving, setSaving] = useState<null | 'systeme' | 'exercice' | 'library-system' | 'library-exercise'>(null);
   const [savePlaybooks,setSavePlaybooks]=useState<Playbook[]>([]);
   const [savePlaybookId,setSavePlaybookId]=useState('');
   const [saveSeries,setSaveSeries]=useState<PlaybookSeries[]>([]);
@@ -4700,6 +4708,59 @@ const exportJson = () => {
     activeOptionRef.current = drawingOptions(next)[0]?.id || null;
     setActiveOptionId(activeOptionRef.current);
   };
+  const previewLibraryExercise = (exercise: Exercise, index: number) => {
+    drawingLoadTokenRef.current++;
+    const data = exerciseDrawingEntries(exercise)[index];
+    if (!Array.isArray(data?.phases) || !data.phases.length) { showHint('Ce schéma est une image seule, sans données modifiables.'); return; }
+    stopAnim(); setOpenedLibrarySystemId(null);
+    setOpenedLibraryExercise({id:exercise.id,index,groupId:data.schemaGroupId});
+    for (const key of ['mybasket_drawing_source_system_id','mybasket_current_system_id','mybasket_edit_systeme_id','mybasket_edit_system_id']) localStorage.removeItem(key);
+    localStorage.setItem(EDIT_EXERCISE_ID_KEY, exercise.id);
+    localStorage.setItem(EDIT_INDEX_KEY, String(index));
+    const loaded = JSON.parse(JSON.stringify(data.phases)) as Phase[];
+    phasesRef.current = loaded; currentRef.current = 0; setPhases(loaded); setCurrent(0);
+    activeOptionRef.current = null; setActiveOptionId(null); setOptionFormOpen(false);
+    setTitle(exercise.title); setSelection([]); selectionRef.current = []; setPast([]); setFuture([]);
+    setSheet({ category:'',level:'',theme:'',duration:'',material:'',objectives:'',instructions:'',variants:'',coaching:'', ...data.sheet });
+    const court = data.courtType === 'full' ? 'full' : 'half'; setCourtType(court); courtRef.current = court;
+    applyCourtStyle(data.courtStyle || DEFAULT_COURT_STYLE);
+    applyCourtBranding(data.courtBranding || DEFAULT_COURT_BRANDING);
+    setEditorMode('draw');
+  };
+  const saveOpenedLibraryExercise = async () => {
+    if (!openedLibraryExercise || saving) return;
+    const source = openedLibraryExercise;
+    const savedPhases = JSON.parse(JSON.stringify(phasesRef.current)) as Phase[];
+    const savedTitle = title;
+    const savedCourt = courtRef.current;
+    const savedStyle = JSON.parse(JSON.stringify(courtStyleRef.current));
+    const savedBranding = JSON.parse(JSON.stringify(courtBrandingRef.current));
+    const savedSheet = JSON.parse(JSON.stringify(sheet));
+    setSaving('library-exercise');
+    try {
+      const existing = await getExercise(source.id);
+      if (!existing) throw new Error('Exercice introuvable.');
+      const original = exerciseDrawingEntries(existing)[source.index];
+      if (!original || (source.groupId && original.schemaGroupId !== source.groupId)) throw new Error('Les schémas ont changé. Rouvre l’exercice avant de sauvegarder.');
+      const images = await captureAllPhaseImages();
+      if (images.length !== savedPhases.length) throw new Error('La capture des phases est incomplète.');
+      const groupId = crypto.randomUUID();
+      const urls: string[] = [];
+      for (let index = 0; index < images.length; index++) urls.push(await uploadSchemaImage(images[index], `exercices/${source.id}/schemas/${groupId}`, `phase-${index + 1}.png`));
+      const replacement = urls.map((url, index) => ({title:`${savedTitle} - Phase ${index + 1}`,schemaGroupId:groupId,phaseIndex:index,current:index,
+        courtType:savedCourt,courtStyle:savedStyle,courtBranding:savedBranding,sheet:savedSheet,phases:savedPhases,imageData:url,phaseImages:urls,editable:true}));
+      const updated = await updateExercise(source.id, {title:savedTitle,...replaceExerciseDrawingGroup(existing,source.index,replacement)});
+      if (!updated) throw new Error('Les modifications de l’exercice n’ont pas été enregistrées.');
+      const verified = await getExercise(source.id);
+      if (!verified || !exerciseDrawingEntries(verified).some(entry => entry?.schemaGroupId === groupId)) throw new Error('La nouvelle version n’a pas été conservée.');
+      setOpenedLibraryExercise({...source,groupId}); setSaveOpen(false); setSaveMsg(true);
+      window.setTimeout(() => setSaveMsg(false), 1800);
+      window.dispatchEvent(new CustomEvent('mybasket:library-exercise-saved',{detail:{exerciseId:source.id}}));
+      showHint('Modifications enregistrées dans le même exercice.');
+    } catch (error) { alert(error instanceof Error ? error.message : 'Sauvegarde impossible.'); }
+    finally { setSaving(null); }
+  };
+
   const readSelectedOption = () => {
     if (playbackModeRef.current === 'option' && playingRef.current) { pauseAnim(); return; }
     if (playbackModeRef.current === 'option' && animPosRef.current) { resumeAnim(); return; }
@@ -4936,7 +4997,10 @@ const exportJson = () => {
               <ContentNavigator
           embedded
           initialKind="system"
+          onPreviewExercise={previewLibraryExercise}
+          onSaveExercise={saveOpenedLibraryExercise}
           onPreviewSystem={(system) => {
+            setOpenedLibraryExercise(null);
             // Liaison directe Bibliothèque -> Dessin : l'ID édité reste connu
             // sans dépendre d'un CustomEvent ou du localStorage.
             setOpenedLibrarySystemId(system.id);
@@ -4952,6 +5016,7 @@ const exportJson = () => {
             }));
           }}
           onSaveSystem={(system) => {
+            if (openedLibraryExercise) { showHint('Ouvre ce système avant de sauvegarder ses modifications.'); return; }
             setOpenedLibrarySystemId(system.id);
             void saveOpenedLibrarySystem(system.id);
           }}
@@ -5355,6 +5420,7 @@ const exportJson = () => {
                 <button
                   disabled={!!saving}
                   onClick={async () => {
+                    if (openedLibraryExercise) { await saveOpenedLibraryExercise(); return; }
                     let systemId = openedLibrarySystemId;
                     try {
                       systemId =
@@ -5377,7 +5443,7 @@ const exportJson = () => {
                   }}
                   style={{ padding: '.75rem', borderRadius: 9, border: 'none', background: 'var(--or, #D4A24C)', color: '#0F0F12', fontWeight: 900, fontSize: '.9rem', cursor: saving ? 'wait' : 'pointer' }}
                 >
-                  {saving === 'library-system' ? 'Enregistrement…' : '💾 Enregistrer les modifications'}
+                  {saving === 'library-system' || saving === 'library-exercise' ? 'Enregistrement…' : openedLibraryExercise ? '💾 Enregistrer les modifications de l’exercice' : '💾 Enregistrer les modifications'}
                 </button>
 
                 {exoInsertMode && (

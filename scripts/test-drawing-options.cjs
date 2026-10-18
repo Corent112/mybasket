@@ -21,6 +21,11 @@ const fixture={title:'Test options',current:1,courtType:'half',phases:[phase('Co
  {id:'cut',action:'cut',sourcePlayerId:'1',from:{x:.5,y:.4},to:{x:.7,y:.3},order:2,startMode:'withPrevious'},
 ]},phase('Suite originale')]};
 let transfer=structuredClone(fixture); let savedSystem={id:'system',title:'Test options',schemaDataList:[]}; let saves=0;
+let exercise={id:'exercise',title:'Exercice test',description:'Consignes à conserver',schemaVideo:'video-to-keep',schemaImages:['old-a','old-b1','old-b2','raster'],schemaDataList:[
+ {schemaGroupId:'a',title:'Autre schéma',phases:[phase('A intact')],imageData:'old-a'},
+ {schemaGroupId:'b',title:'Schéma à modifier',phases:[phase('B 1'),phase('B 2')],imageData:'old-b1'},
+ {schemaGroupId:'b',title:'Schéma à modifier',phases:[phase('B 1'),phase('B 2')],imageData:'old-b2'},
+]};let exerciseSaves=0;
 const supabase={auth:{getUser:async()=>({data:{user:null}})}};
 const React=require('react');
 const originalLoad=Module._load;
@@ -28,18 +33,19 @@ Module._load=function(request,parent,isMain){
  const stubs={
   'next/link':({children,...props})=>React.createElement('a',props,children),
   '@/lib/supabase/client':{createClient:()=>supabase},
-  '@/lib/exercises':{},
+  '@/lib/exercises':{getExercise:async()=>exercise,listMyExercises:async()=>[exercise],updateExercise:async(id,patch)=>{assert.equal(id,'exercise');exerciseSaves++;assert(!('description' in patch));exercise={...exercise,...structuredClone(patch)};return exercise;}},
   '@/lib/systems':{getSystem:async()=>savedSystem,updateSystem:async(id,data)=>{assert.equal(id,'system');saves++;savedSystem={...savedSystem,...structuredClone(data)};return savedSystem;}},
   '@/lib/supabase/upload-schema':{uploadSchemaImage:async()=>`https://example.test/schema.png`},
-  '@/components/content-navigator/ContentNavigator':props=>React.createElement('button',{onClick:()=>props.onSaveSystem({id:'system'})},'Save fixture'),
+  '@/components/content-navigator/ContentNavigator':props=>React.createElement(React.Fragment,null,React.createElement('button',{onClick:()=>props.onSaveSystem({id:'system'})},'Save fixture'),React.createElement('button',{onClick:()=>props.onPreviewExercise(exercise,1)},'Open exercise fixture'),React.createElement('button',{onClick:props.onSaveExercise},'Save exercise fixture')),
   '@/lib/plaquette-transfer':{getPlaquetteTransfer:async()=>transfer ? structuredClone(transfer):null,setPlaquetteTransfer:async()=>{},removePlaquetteTransfer:async()=>{}},
   '@/lib/playbook-series':{listPrivatePlaybooks:async()=>[],listPlaybookSeries:async()=>[],listPersonalSystemTags:async()=>[],ensureDefaultPersonalSystemTags:async()=>[]},
-  '@/lib/playbook':{}, '@/lib/drawing-workspace':{listDrawingTeams:async()=>[],ensureDrawingSeasons:async()=>[]},
+  '@/lib/playbook':{}, '@/lib/drawing-workspace':{listDrawingTeams:async()=>[],ensureDrawingSeasons:async()=>[],loadDrawingSystems:async()=>({systems:[],playbooks:[],series:[]})},
  };
  if(stubs[request])return stubs[request];
  if(request.startsWith('@/'))request=path.resolve(__dirname,'..',request.slice(2));
  return originalLoad.call(this,request,parent,isMain);
 };
+require.extensions['.css']=()=>{};
 for(const ext of ['.ts','.tsx'])require.extensions[ext]=(mod,file)=>mod._compile(ts.transpileModule(fs.readFileSync(file,'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX,esModuleInterop:true}}).outputText,file);
 const {act}=React; const {createRoot}=require('react-dom/client');
 const Editor=require('../app/plaquette/PlaquetteClient.tsx').default;
@@ -135,6 +141,26 @@ const exportJson=async()=>{await click([...document.querySelectorAll('.ed-tool')
  assert.equal(document.querySelectorAll('.ph-thumb').length,4);
  await click(button('Supprimer cette option'));assert.equal(document.querySelectorAll('.drawing-options-list button').length,1);
  await click(document.getElementById('edUndoBtn'));assert.equal(document.querySelectorAll('.drawing-options-list button').length,2,'Undo restores branch and its phases');
+ // Exercise editing is scoped to its opened group, without changing the other drawings.
+ await click(button('Open exercise fixture'));
+ assert.equal(document.querySelectorAll('.ph-thumb').length,2);
+ await click(document.getElementById('phNext'));
+ await click(button('Save exercise fixture'));await flush(120);
+ assert.equal(exerciseSaves,1);assert.equal(exercise.description,'Consignes à conserver');assert.equal(exercise.schemaVideo,'video-to-keep');
+ assert.equal(exercise.schemaDataList[0].phases[0].notes,'A intact');assert.equal(exercise.schemaImages[0],'old-a');assert.equal(exercise.schemaImages.at(-1),'raster');
+ assert.equal(exercise.schemaDataList.length,4);assert.equal(exercise.schemaImages.length,5);
+ await click(button('Open exercise fixture'));assert.equal(document.querySelectorAll('.ph-thumb').length,3,'Saved exercise reopens all modified phases');
  await act(async()=>root.unmount());
+ // Actual navigator: exercise tab, search, groups, and return to Playbook.
+ const Navigator=require('../components/content-navigator/ContentNavigator.tsx').default;
+ let openedGroup=null;root=createRoot(document.getElementById('root'));
+ await act(async()=>root.render(React.createElement(Navigator,{initialKind:'exercise',onPreviewExercise:(item,index)=>{openedGroup={id:item.id,index}}})));await flush(50);
+ assert(button('Systèmes'));assert(button('Exercices'));assert(document.querySelector('.cn-exercise'));
+ await click(document.querySelectorAll('.cn-exercise-open')[1]);assert.deepEqual(openedGroup,{id:'exercise',index:1});
+ await fill(document.querySelector('.cn-exercises input'),'absent');assert.equal(document.querySelectorAll('.cn-exercise').length,0);
+ await fill(document.querySelector('.cn-exercises input'),'exercice');assert(document.querySelector('.cn-exercise'));
+ await click(button('PLAYBOOK'));assert(document.body.textContent.includes('Reprends un Playbook'));
+ await act(async()=>root.unmount());
+ console.log('Exercise library: existing group preserved, image-only drawing/video/instructions intact, update in place, reopen, search and navigator tabs passed.');
  console.log('Drawing options: legacy load, final positions/possession, independent branches, rename, official save/reopen, simultaneous actions, delete and undo passed.');
 })().catch(error=>{console.error(error);process.exitCode=1;});
