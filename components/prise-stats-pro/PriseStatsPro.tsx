@@ -61,6 +61,8 @@ import {
   formatOffset,
 } from "@/lib/video-sync";
 import PickQuickTagger from '@/components/prise-stats-pro/PickQuickTagger';
+import { queueSharedMarker, flushSharedMarkers } from '@/lib/live-marker-queue';
+import { sharedMatchFollower, sharedSessionKey } from '@/lib/live-match-authority';
 import { createSharedLiveSession, joinSharedLiveSession, openSharedPossession, savePickEvent, subscribeSharedLive, updateSharedLiveState, type SharedLiveState } from '@/lib/live-mutualization';
 import {
   attachMatchVideoFile,
@@ -887,9 +889,20 @@ export default function PriseStatsProPage() {
   const [sharedRole, setSharedRole] = useState<'individual'|'collective'>(codingMode === 'live-individual' ? 'individual' : 'collective');
   const [sharedLive, setSharedLive] = useState<SharedLiveState | null>(null);
   const [showPickQuick, setShowPickQuick] = useState(false);
+  const sharedFollowerRef = useRef(false);
+  sharedFollowerRef.current = sharedMatchFollower(sharedLive, codingMode);
+  const sharedFollower = sharedFollowerRef.current;
+  const sharedClientIdRef = useRef(`web_${typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : uid()}`);
   const sharedLiveRef = useRef<SharedLiveState | null>(null);
   useEffect(() => { sharedLiveRef.current = sharedLive; }, [sharedLive]);
   useEffect(() => sharedLive ? subscribeSharedLive(sharedLive.id, setSharedLive) : undefined, [sharedLive?.id]);
+  useEffect(() => {
+    if (!sharedLive?.id) return;
+    const flush = () => { void flushSharedMarkers(sharedLive.id); };
+    flush(); window.addEventListener('online', flush);
+    const timer = window.setInterval(flush, 5000);
+    return () => { window.removeEventListener('online', flush); window.clearInterval(timer); };
+  }, [sharedLive?.id]);
   const [importedLiveSource, setImportedLiveSource] = useState<Record<string, any> | null>(null);
   const [teamId, setTeamId] = useState('');
   const [activeTeamId, setActiveTeamId] = useState('');
@@ -1413,15 +1426,31 @@ export default function PriseStatsProPage() {
     setLiveMatchId(matchId);
   };
 
-  // Le poste qui a créé la session publie l’état commun. Les autres écrans
+  // Le poste individuel pilote l’état commun. Les autres écrans
   // reçoivent ces changements par Supabase Realtime.
   useEffect(() => {
     const shared = sharedLiveRef.current;
-    if (!shared) return;
+    if (screen !== 'live' || projectBusy || !shared || codingMode !== 'live-individual' || shared.controllerClientId !== sharedClientIdRef.current) return;
     const us = Object.values(perQ).reduce((n:any,row:any)=>n+Number(row?.us||0),0);
     const them = Object.values(perQ).reduce((n:any,row:any)=>n+Number(row?.them||0),0);
     void updateSharedLiveState(shared.id,{current_period:q,current_clock:fmt(secs),current_lineup:onCourt.slice(),score_us:us,score_them:them}).catch(()=>{});
-  }, [q, secs, onCourt, perQ]);
+  }, [q, secs, onCourt, perQ, sharedLive?.id, sharedLive?.controllerClientId, codingMode, screen]);
+
+  // Le collectif suit l’état reçu, sans relancer son propre chrono.
+  useEffect(() => {
+    if (!sharedFollower || !sharedLive) return;
+    setRunning(false);
+    setQ(sharedLive.currentPeriod);
+    const [minutes, seconds] = sharedLive.currentClock.split(':').map(Number);
+    if (Number.isFinite(minutes) && Number.isFinite(seconds)) setSecs(minutes * 60 + seconds);
+    setOnCourt(sharedLive.currentLineup.slice());
+  }, [sharedFollower, sharedLive]);
+
+  useEffect(() => {
+    if (!sharedFollower || !sharedLive?.currentOffense) return;
+    const context = sharedLive.currentOffense === 'us' ? 'attaque' : 'defense';
+    setDraft({...emptyDraft(), context}); setStage('context');
+  }, [sharedFollower, sharedLive?.currentPossessionId, sharedLive?.currentOffense]);
 
   // Recalcule les lignes boxscore (mapping identique à finishMatch) à partir
   // de l'état courant, pour l'upsert live de match_player_stats.
@@ -1454,7 +1483,7 @@ export default function PriseStatsProPage() {
   const syncLiveAggregates = (arr: StatA[], court: string[], perQuarters: typeof perQ) => {
     const matchId = liveMatchIdRef.current;
     const teamId = liveTeamIdRef.current;
-    if (!matchId || !teamId) return;
+    if (!matchId || !teamId || sharedFollowerRef.current) return;
     const us = Object.values(perQuarters).reduce((s, q) => s + (q?.us || 0), 0);
     const them = Object.values(perQuarters).reduce((s, q) => s + (q?.them || 0), 0);
     upsertLiveMatchAggregates({
@@ -1823,8 +1852,9 @@ export default function PriseStatsProPage() {
   // le JSON du projet.
   useEffect(() => {
     const matchId = String(liveMatchIdRef.current || '');
-    if (!matchId || matchId.startsWith('local_')) return;
+    if (!matchId || matchId.startsWith('local_') || sharedFollowerRef.current) return;
     const timer = window.setTimeout(() => {
+      if (sharedFollowerRef.current) return;
       const supabase = createClient();
       void supabase
         .from('match_stats')
@@ -1840,6 +1870,7 @@ export default function PriseStatsProPage() {
   }, [opponent, date, home, matchType]);
 
   const persistProjectState = () => {
+    if (sharedFollowerRef.current) return;
     const matchId = liveMatchIdRef.current;
     if (!matchId) return;
     saveProjectState({
@@ -1852,6 +1883,7 @@ export default function PriseStatsProPage() {
   };
 
   const saveProjectNow = async (closeAfter = false) => {
+    if (sharedFollowerRef.current) { flash('Marqueurs conservés séparément · le projet est piloté par LiveStats individuel'); if (closeAfter) { setSharedLive(null); sharedLiveRef.current = null; setLiveMatch(null,null); setScreen('setup'); } return; }
     const matchId = liveMatchIdRef.current;
     if (!matchId || matchId.startsWith('local_')) {
       flash('Projet non sauvegardable : connexion Supabase requise');
@@ -2072,6 +2104,18 @@ export default function PriseStatsProPage() {
       if (s.montageNote != null) setMontageNote(String(s.montageNote));
 
       setLiveMatch(matchId, team.id);
+      try {
+        const station = JSON.parse(window.sessionStorage.getItem(`mybasket:shared-post:${matchId}`) || 'null');
+        if (station?.joinCode && !sharedLiveRef.current) {
+          const session = await joinSharedLiveSession(station.joinCode);
+          if (session.matchId === matchId) {
+            if (station.clientId) sharedClientIdRef.current = station.clientId;
+            setSharedLive(session); sharedLiveRef.current = session; setMutualizedLive(true);
+            setSharedRole(station.role === 'individual' ? 'individual' : 'collective');
+            setCodingMode(station.role === 'individual' ? 'live-individual' : 'live');
+          }
+        }
+      } catch { /* La reprise du projet reste disponible en cas d'erreur réseau. */ }
       // AJOUT · on NE remet PAS l'horloge source à zéro : on la recale sur le
       // temps de codage déjà écoulé (codingElapsed), pour poursuivre un brouillon
       // codé sans vidéo avec une chronologie source continue.
@@ -2127,10 +2171,15 @@ export default function PriseStatsProPage() {
     setProjectBusy(true);
     try {
       const session = await joinSharedLiveSession(joinLiveCode);
+      if (sharedRole === 'individual') {
+        await updateSharedLiveState(session.id, {controller_client_id: sharedClientIdRef.current});
+        session.controllerClientId = sharedClientIdRef.current;
+      }
       setSharedLive(session); sharedLiveRef.current = session; setMutualizedLive(true);
       setCodingMode(sharedRole === 'individual' ? 'live-individual' : 'live');
       await resumeProject(session.matchId, 'resume');
       setCodingMode(sharedRole === 'individual' ? 'live-individual' : 'live');
+      try { window.sessionStorage.setItem(`mybasket:shared-post:${session.matchId}`, JSON.stringify({joinCode:session.joinCode, role:sharedRole, clientId:sharedClientIdRef.current})); } catch {}
       flash(`Session ${session.joinCode} rejointe · poste ${sharedRole === 'individual' ? 'individuel' : 'collectif'}`);
     } catch (e:any) {
       console.error('Rejoindre Live mutualisé:', e); flash('Code de session introuvable ou accès non autorisé');
@@ -2138,6 +2187,7 @@ export default function PriseStatsProPage() {
   };
 
   const removeProject = async (matchId: string) => {
+    if (sharedFollowerRef.current) { flash('Projet piloté par LiveStats individuel'); return; }
     if (!window.confirm('Supprimer définitivement ce brouillon ?')) return;
     setProjectBusy(true);
     const res = await deleteProject(matchId);
@@ -2724,6 +2774,7 @@ export default function PriseStatsProPage() {
   // MÊME SANS vidéo : c'est ce qui permet de coder un match en direct et de caler
   // la vidéo après coup. Avec une vidéo, on garde la synchro lecture/pause.
   const toggleClockAndVideo = () => {
+    if (sharedFollowerRef.current) { flash('Chrono piloté par LiveStats individuel'); return; }
     const clockRunning = runningRef.current;
     if (!hasVideoLoaded()) {
       // Sans vidéo : au premier PLAY du quart-temps, on mémorise son début sur
@@ -3191,7 +3242,7 @@ export default function PriseStatsProPage() {
 
   // chrono + calcul automatique du temps de jeu
   useEffect(() => {
-    if (!running) return;
+    if (!running || sharedFollowerRef.current) return;
 
     const t = setInterval(() => {
       // +1 seconde pour chaque joueur actuellement sur le terrain.
@@ -3239,13 +3290,13 @@ export default function PriseStatsProPage() {
   // persistance par équipe
   useEffect(() => {
     if (screen === 'setup' || !teamId) return;
-    try { window.localStorage.setItem(SESSION_KEY(teamId), JSON.stringify({ actions, perQ, q, onCourt, opponent, teamName, home, minutesByPlayer })); } catch { /* noop */ }
-  }, [actions, perQ, q, onCourt, screen, teamId, opponent, teamName, home, minutesByPlayer]);
+    try { window.localStorage.setItem(sharedSessionKey(teamId, liveMatchIdRef.current, sharedLiveRef.current?.id, codingMode), JSON.stringify({ actions, perQ, q, onCourt, opponent, teamName, home, minutesByPlayer })); } catch { /* noop */ }
+  }, [actions, perQ, q, onCourt, screen, teamId, opponent, teamName, home, minutesByPlayer, codingMode, sharedLive?.id]);
 
   const flash = (m: string) => { setToast(m); window.clearTimeout((flash as any)._t); (flash as any)._t = window.setTimeout(() => setToast(null), 1500); };
 
   const sumPerQ = (key: 'us' | 'them') =>
-    Object.values(perQ).reduce((total, item) => total + item[key], 0);
+    sharedFollower && sharedLive ? (key === 'us' ? sharedLive.scoreUs : sharedLive.scoreThem) : Object.values(perQ).reduce((total, item) => total + item[key], 0);
 
   /* -------- création du match -------- */
   const selTeam = setupTeams.find((t) => t.id === teamId);
@@ -3308,6 +3359,7 @@ export default function PriseStatsProPage() {
     setMatchJerseyNumbers((current) => ({ ...current, [playerId]: value }));
   };
   const startMatch = async () => {
+    if (mutualizedLive && codingMode !== 'live-individual') { flash('Crée le match depuis LiveStats individuel, puis rejoins son code en collectif'); return; }
     if (!selTeam || hasDuplicateMatchNumbers || hasInvalidMatchNumbers || projectBusy) return;
     setProjectBusy(true);
 
@@ -3380,12 +3432,14 @@ export default function PriseStatsProPage() {
 
         if (mutualizedLive && !String(ensured.matchId).startsWith('local_')) {
           try {
-            const clientId = `web_${uid()}`;
+            const clientId = sharedClientIdRef.current;
             const session = await createSharedLiveSession(String(ensured.matchId), String(ensured.teamId), clientId, starters.slice());
             const firstPossession = await openSharedPossession(session, 1, '10:00', starters.slice(), 'us');
-            const ready = { ...session, currentPossessionId: String(firstPossession.id) };
+            const ready = { ...session, currentPossessionId: String(firstPossession.id), currentOffense: 'us' as const };
             setSharedLive(ready);
             sharedLiveRef.current = ready;
+            setSharedRole('individual');
+            try { window.sessionStorage.setItem(`mybasket:shared-post:${ensured.matchId}`, JSON.stringify({joinCode:ready.joinCode, role:'individual', clientId:sharedClientIdRef.current})); } catch {}
           } catch (e) {
             console.error('Live mutualisé:', e);
             flash('Match créé, mais la session mutualisée n’a pas pu démarrer');
@@ -3431,6 +3485,7 @@ export default function PriseStatsProPage() {
 
   /* -------- horloge / quart-temps -------- */
   const changeQ = (d: number) => {
+    if (sharedFollowerRef.current) { flash('Période pilotée par LiveStats individuel'); return; }
     const nq = Math.max(1, q + d);
     if (codingMode === 'live' && d > 0) {
       const raw = getRawCodingTime();
@@ -3452,6 +3507,27 @@ export default function PriseStatsProPage() {
 
   /* -------- enregistrement (auto, sans validation) -------- */
   const commit = (d: Draft) => {
+    if (sharedFollowerRef.current) {
+      const shared = sharedLiveRef.current;
+      if (!shared || !shared.currentPossessionId) { flash('Attends une possession ouverte par LiveStats individuel'); return; }
+      if (!d.tempsFort && !d.systemeJeu && !d.coverage) { flash('Choisis un système ou un temps fort à marquer'); return; }
+      const stamp = stampVideo();
+      const marker = { ...emptyDraft(), context: shared.currentOffense === 'us' ? 'attaque' : shared.currentOffense === 'them' ? 'defense' : d.context, systemeJeu: d.systemeJeu,
+        tempsFort: d.tempsFort, coverage: d.coverage, actionType: 'marqueur',
+        id: `marker_${sharedClientIdRef.current}_${typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : uid()}`,
+        q: shared.currentPeriod, clock: shared.currentClock, lineup: shared.currentLineup.slice(), ...stamp,
+        liveSessionId: shared.id, possessionId: shared.currentPossessionId, codingSource: 'collective' as const,
+        systemeSlot: d.systemeJeu || null, systemeId: (systemMapping[d.systemeJeu] as string | undefined) ?? null,
+        systemeName: systemForSlot(d.systemeJeu)?.title ?? null, playbookId: playbookId || null,
+      };
+      try { queueSharedMarker({matchId: shared.matchId, teamId: shared.teamId, action: marker}); }
+      catch { flash('Stockage local indisponible : marqueur non enregistré, réessaie'); return; }
+      setActions(arr => [...arr, marker as StatA]);
+      void flushSharedMarkers(shared.id);
+      setDraft({...emptyDraft(), context: d.context}); setStage(stageAfterContext(d.context));
+      flash(window.navigator.onLine ? 'Marqueur ajouté' : 'Marqueur gardé sur cet appareil · en attente du réseau');
+      return;
+    }
     const vstamp = stampVideo();
     // Filet : si le début de période n'a pas été posé via le chrono, on utilise
     // le premier événement de cette période comme ancre source approximative.
@@ -3658,7 +3734,7 @@ export default function PriseStatsProPage() {
     if (!samePossession) {
       possessionStartRef.current = getRawCodingTime();
       const shared = sharedLiveRef.current;
-      if (shared) {
+      if (shared && codingMode === 'live-individual') {
         void openSharedPossession(shared, q, fmt(secs), onCourt.slice(), next === 'attaque' ? 'us' : 'them')
           .then((pos:any) => {
             const updated = { ...sharedLiveRef.current!, currentPossessionId: String(pos.id), currentPeriod: q, currentClock: fmt(secs), currentLineup: onCourt.slice() };
@@ -3819,6 +3895,7 @@ export default function PriseStatsProPage() {
 
   /* -------- handlers -------- */
   const ctxPick = (c: Ctx) => {
+    if (sharedFollowerRef.current && sharedLiveRef.current?.currentOffense && c !== (sharedLiveRef.current.currentOffense === 'us' ? 'attaque' : 'defense')) { flash('La possession est pilotée par LiveStats individuel'); return; }
     if (c === 'defense') markClipEndNow();
     possessionStartRef.current = getRawCodingTime(); // AJOUT · début de possession (temps source)
     setDraft({ ...draft, context: c, systemeJeu: '', tempsFort: '', coverage: '' });
@@ -3841,6 +3918,7 @@ export default function PriseStatsProPage() {
     setStage(stageAfterSystem());
   };
   const tempsPick = (id: string) => {
+    if (sharedFollowerRef.current) { commit({...draft, tempsFort: id}); return; }
     if (codingMode === 'live-individual') {
       setStage(draft.context === 'defense' ? 'result' : (draft.playerId ? 'result' : 'player'));
       return;
@@ -4230,10 +4308,11 @@ export default function PriseStatsProPage() {
     if (id) afterPD({ ...draft, assist: true, assistPlayerId: id });
     else afterPD({ ...draft, assist: false, assistPlayerId: null });
   };
-  const usBtn = (d: number) => setPerQ((p) => { const cur = p[q] || { us: 0, them: 0 }; return { ...p, [q]: { ...cur, us: Math.max(0, cur.us + d) } }; });
-  const themBtn = (d: number) => setPerQ((p) => { const cur = p[q] || { us: 0, them: 0 }; return { ...p, [q]: { ...cur, them: Math.max(0, cur.them + d) } }; });
+  const usBtn = (d: number) => { if (sharedFollowerRef.current) return; setPerQ((p) => { const cur = p[q] || { us: 0, them: 0 }; return { ...p, [q]: { ...cur, us: Math.max(0, cur.us + d) } }; }); };
+  const themBtn = (d: number) => { if (sharedFollowerRef.current) return; setPerQ((p) => { const cur = p[q] || { us: 0, them: 0 }; return { ...p, [q]: { ...cur, them: Math.max(0, cur.them + d) } }; }); };
 
   const patchActionPlayers = (actionId: string, patch: { playerId?: string | null; assist?: boolean | null; assistPlayerId?: string | null; reboundPlayerId?: string | null; reboundFoulPlayerId?: string | null }) => {
+    if (sharedFollowerRef.current) { flash('Attribution des joueurs pilotée par LiveStats individuel'); return; }
     const current = actions.find((a) => a.id === actionId);
     if (!current) return;
     const updated: StatA = { ...current, ...patch };
@@ -4338,6 +4417,7 @@ export default function PriseStatsProPage() {
 
 
   const removeAction = (id: string) => {
+    if (sharedFollowerRef.current) { flash('Les actions du match se corrigent dans LiveStats individuel'); return; }
     const a = actions.find((x) => x.id === id);
     if (!a) return;
 
@@ -4357,6 +4437,7 @@ export default function PriseStatsProPage() {
     }
   };
   const beginHistoryCorrection = (a: StatA, targetStage: string) => {
+    if (sharedFollowerRef.current) { flash('Les actions du match se corrigent dans LiveStats individuel'); return; }
     // Si une autre correction était ouverte, on restitue d'abord son score.
     const previous = editingActionRef.current;
     if (previous && previous.id !== a.id) {
@@ -4423,6 +4504,7 @@ export default function PriseStatsProPage() {
   };
 
   const swap = (outId: string) => {
+    if (sharedFollowerRef.current) { flash('Changements pilotés par LiveStats individuel'); return; }
     if (!subSel) {
       flash('Choisis un remplaçant');
       return;
@@ -4434,6 +4516,7 @@ export default function PriseStatsProPage() {
   };
 
   const finishMatch = async () => {
+    if (sharedFollowerRef.current) { flash('Fin de match pilotée par LiveStats individuel'); return; }
     if (!actions.length) {
       flash('Aucune action à enregistrer');
       return;
@@ -4940,7 +5023,7 @@ export default function PriseStatsProPage() {
                   <div className="individualLinkBox" style={{marginTop:10}}>
                     <label style={{display:'flex',alignItems:'center',gap:10,fontWeight:800}}>
                       <input type="checkbox" checked={mutualizedLive} onChange={(e)=>setMutualizedLive(e.target.checked)} />
-                      MODE MUTUALISÉ · Live Individuel + Live Temps Forts + Stats Coach
+                      MODE MUTUALISÉ · Individuel maître + marqueurs collectifs
                     </label>
                   </div>
                 )}
@@ -4949,7 +5032,7 @@ export default function PriseStatsProPage() {
                     <label>Rejoindre le même match depuis un 2e ordinateur</label>
                     <div style={{display:'flex',gap:8,flexWrap:'wrap'}}>
                       <input value={joinLiveCode} onChange={(e)=>setJoinLiveCode(e.target.value.toUpperCase())} placeholder="MB-4821" style={{minWidth:130}} />
-                      <select value={sharedRole} onChange={(e)=>setSharedRole(e.target.value as any)}><option value="individual">🏀 Live Individuel · stats / score / lineup / résultat</option><option value="collective">⚡ Live Temps Forts · systèmes / picks / contexte tactique</option></select>
+                      <select value={sharedRole} onChange={(e)=>setSharedRole(e.target.value as any)}><option value="individual">🏀 Individuel · pilote le match</option><option value="collective">⚡ Collectif · ajoute des marqueurs</option></select>
                       <button type="button" disabled={!joinLiveCode.trim() || projectBusy} onClick={joinMutualizedLive}>↔ Rejoindre</button>
                     </div>
                   </div>
@@ -5648,10 +5731,10 @@ export default function PriseStatsProPage() {
                     <div className="vmcTeam opponent"><b>{opponent || 'ADVERSAIRE'}</b><strong>{scoreThem}</strong><small>Fautes {themTeamFouls}</small></div>
                   </div>
                   <div className="vmcScoreAdjust">
-                    <button onClick={() => setPerQ((p) => { const cur = p[q] || { us: 0, them: 0 }; return { ...p, [q]: { ...cur, us: Math.max(0, cur.us - 1) } }; })}>− NOUS</button>
-                    <button onClick={() => setPerQ((p) => { const cur = p[q] || { us: 0, them: 0 }; return { ...p, [q]: { ...cur, us: cur.us + 1 } }; })}>+ NOUS</button>
-                    <button onClick={() => setPerQ((p) => { const cur = p[q] || { us: 0, them: 0 }; return { ...p, [q]: { ...cur, them: Math.max(0, cur.them - 1) } }; })}>− ADV</button>
-                    <button onClick={() => setPerQ((p) => { const cur = p[q] || { us: 0, them: 0 }; return { ...p, [q]: { ...cur, them: cur.them + 1 } }; })}>+ ADV</button>
+                    <button disabled={sharedFollower} onClick={() => setPerQ((p) => { const cur = p[q] || { us: 0, them: 0 }; return { ...p, [q]: { ...cur, us: Math.max(0, cur.us - 1) } }; })}>− NOUS</button>
+                    <button disabled={sharedFollower} onClick={() => setPerQ((p) => { const cur = p[q] || { us: 0, them: 0 }; return { ...p, [q]: { ...cur, us: cur.us + 1 } }; })}>+ NOUS</button>
+                    <button disabled={sharedFollower} onClick={() => setPerQ((p) => { const cur = p[q] || { us: 0, them: 0 }; return { ...p, [q]: { ...cur, them: Math.max(0, cur.them - 1) } }; })}>− ADV</button>
+                    <button disabled={sharedFollower} onClick={() => setPerQ((p) => { const cur = p[q] || { us: 0, them: 0 }; return { ...p, [q]: { ...cur, them: cur.them + 1 } }; })}>+ ADV</button>
                   </div>
                   <button className="vmcNextQuarter" onClick={() => changeQ(1)}>
                     QT SUIVANT <span>➜</span>
@@ -5766,6 +5849,7 @@ export default function PriseStatsProPage() {
                         <button className="backBtn sm" onClick={goBackStage}>← Retour</button>
                       )
                     )}
+                    {sharedFollower && <div className="tip">Marqueurs uniquement · chrono, score et changements pilotés par LiveStats individuel{isOffline ? ' · hors ligne : dernier état reçu' : ''}</div>}
                     {renderStage()}
                   </div>
                   <div className="lc-foot">
@@ -5858,7 +5942,7 @@ export default function PriseStatsProPage() {
                     <button
                       type="button"
                       className={`pbtoggle tableSwap ${subSel !== null ? 'on' : ''}`}
-                      onClick={() => setSubSel((s) => (s === null ? '' : null))}
+                      disabled={sharedFollower} onClick={() => setSubSel((s) => (s === null ? '' : null))}
                     >
                       ⇄
                     </button>
@@ -5874,7 +5958,7 @@ export default function PriseStatsProPage() {
                       key={p.id}
                       type="button"
                       className={`playerTableRow bench ${subSel === p.id ? 'sel' : ''}`}
-                      onClick={() => setSubSel(p.id)}
+                      disabled={sharedFollower} onClick={() => setSubSel(p.id)}
                     >
                       <span className="ptNum">{p.num}</span>
                       <span className="ptName">{p.name}</span>
@@ -6233,9 +6317,9 @@ export default function PriseStatsProPage() {
       {/* §25 · popup clips COMMUNE — Historique & Timeline */}
       {screen === 'live' && sharedLive && (
         <div style={{position:'fixed',right:18,bottom:18,zIndex:9000,display:'flex',gap:8,alignItems:'center',background:'#111',color:'#fff',padding:'9px 12px',borderRadius:14,boxShadow:'0 8px 30px #0004'}}>
-          <span style={{fontSize:12}}><b>● MUTUALISÉ</b> · {sharedRole === 'individual' ? '🏀 INDIV' : '⚡ TEMPS FORTS'} · {sharedLive.joinCode} · Q{sharedLive.currentPeriod} · {sharedLive.currentClock}</span>
+          <span style={{fontSize:12}}><b>● MUTUALISÉ</b> · {codingMode === 'live-individual' ? '🏀 INDIV · maître' : '⚡ MARQUEURS · suit l’individuel'} · {sharedLive.joinCode} · Q{sharedLive.currentPeriod} · {sharedLive.currentClock}</span>
           {codingMode === 'live' && <button type="button" onClick={()=>setShowPickQuick(true)} style={{padding:'7px 10px',borderRadius:9,fontWeight:900}}>PICK</button>}
-          <button type="button" onClick={()=>window.open(`/management/live-mutualise?session=${sharedLive.id}`,'mybasket-coach-live','popup=yes,width=1500,height=950')} style={{padding:'7px 10px',borderRadius:9,fontWeight:900}}>📊 STATS LIVE ↗</button>
+          <button type="button" onClick={()=>window.open(`/management/live-mutualise?session=${sharedLive.id}`,'mybasket-coach-live','popup=yes,width=1500,height=950')} style={{padding:'7px 10px',borderRadius:9,fontWeight:900}}>📊 Voir la mutualisation ↗</button>
         </div>
       )}
       {showPickQuick && sharedLive && sharedLive.currentPossessionId && (
@@ -7141,6 +7225,9 @@ export default function PriseStatsProPage() {
   }
 
   function renderStage() {
+    if (sharedFollower && !['context','systeme','inbound','temps','coverage'].includes(stage)) {
+      return <div className="tip"><p>Le résultat est codé dans LiveStats individuel.</p><button className="qbtn" onClick={() => commit(draft)}>✓ Ajouter ce marqueur</button><button className="qbtn" onClick={() => setStage('temps')}>Choisir un temps fort</button></div>;
+    }
     switch (stage) {
       case 'context':
         return <>{head(codingMode === 'live-individual' ? 'Phase individuelle' : 'Contexte de possession', codingMode === 'live-individual' ? 'Attaque : choisis d’abord le joueur · Défense : choisis d’abord le résultat' : 'Choix uniquement au début du quart-temps')}<div className="grid c2 big">

@@ -1,0 +1,32 @@
+const fs=require('fs'),ts=require('typescript'),vm=require('vm'),assert=require('node:assert/strict'),Module=require('module');
+require.extensions['.ts']=(m,p)=>m._compile(ts.transpileModule(fs.readFileSync(p,'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2020}}).outputText,p);
+const {sharedMatchFollower,sharedSessionKey}=require('../lib/live-match-authority.ts');
+assert.equal(sharedMatchFollower({id:'session'},'live'),true);
+assert.equal(sharedMatchFollower({id:'session'},'live-individual'),false);
+assert.equal(sharedMatchFollower(null,'live'),false);
+assert.notEqual(sharedSessionKey('team','match','session','live'),sharedSessionKey('team','match','session','live-individual'));
+assert.notEqual(sharedSessionKey('team','match2','session2','live'),sharedSessionKey('team','match','session','live'));
+assert.equal(sharedSessionKey('team',null,undefined,'live'),'mybasket_prise_stats_session_team');
+const source=fs.readFileSync('components/prise-stats-pro/PriseStatsPro.tsx','utf8');
+const ast=ts.createSourceFile('board.tsx',source,ts.ScriptTarget.Latest,true,ts.ScriptKind.TSX);
+const found={};function walk(n){if(ts.isVariableDeclaration(n)&&n.initializer)found[n.name.getText(ast)]=n.initializer.getText(ast);ts.forEachChild(n,walk)}walk(ast);
+function actual(name,context){const js=ts.transpileModule('('+found[name]+')', {compilerOptions:{target:ts.ScriptTarget.ES2020}}).outputText;return vm.runInNewContext(js,context)}
+const blocked=()=>{throw Error('Collective touched match state')};
+const shared={id:'s',matchId:'m',teamId:'t',currentPeriod:3,currentClock:'04:12',currentLineup:['p1','p2'],currentPossessionId:'pos',currentOffense:'them'};
+const ctx={liveMatchIdRef:{current:'m'},liveTeamIdRef:{current:'t'},sharedFollowerRef:{current:true},sharedLiveRef:{current:shared},flash:()=>{},window:{navigator:{onLine:false}},setOnCourt:blocked,setQ:blocked,setSecs:blocked,setRunning:blocked,saveProjectState:blocked,finalizeLiveMatch:blocked,upsertLiveMatchAggregates:blocked,deleteLiveAction:blocked,setActions:blocked};
+for(const name of ['toggleClockAndVideo','changeQ','swap','finishMatch','persistProjectState','saveProjectNow','removeAction','beginHistoryCorrection','syncLiveAggregates']) actual(name,ctx)();
+let queued,local=[];
+const markerCtx={...ctx,stampVideo:()=>({videoTime:120,clipStart:116,clipEnd:124}),emptyDraft:()=>({actionType:'',shotType:'',shotResult:'',ftMade:0,ftAttempts:0,assist:false,playerId:''}),sharedClientIdRef:{current:'collective'},uid:()=>String(local.length),systemMapping:{horn:'system1'},systemForSlot:()=>({title:'Horn'}),playbookId:'pb',queueSharedMarker:item=>queued=item,flushSharedMarkers:async()=>{},setActions:fn=>local=fn(local),setDraft:()=>{},setStage:()=>{},stageAfterContext:()=> 'systeme'};
+actual('commit',markerCtx)({context:'attaque',tempsFort:'pick_side',systemeJeu:'horn',shotType:'3PTS',shotResult:'made',ftMade:3});
+assert.equal(queued.action.actionType,'marqueur');assert.equal(queued.action.codingSource,'collective');assert.equal(queued.action.context,'defense');assert.equal(queued.action.q,3);assert.equal(queued.action.clock,'04:12');assert.equal(queued.action.possessionId,'pos');assert.equal(queued.action.shotResult,'');assert.equal(queued.action.ftMade,0);assert.equal(local.length,1);
+const store={};let writes=[],online=false,fail=true;
+global.window={navigator:{get onLine(){return online}},localStorage:{setItem:(k,v)=>{store[k]=v;window.localStorage[k]=v},getItem:k=>store[k]??null,removeItem:k=>{delete store[k];delete window.localStorage[k]}}};
+const oldLoad=Module._load;Module._load=function(r,p,m){if(r==='@/lib/stats-supabase')return{persistLiveAction:async item=>{writes.push(item);return{ok:!fail}}};return oldLoad.call(this,r,p,m)};
+const queue=require('../lib/live-marker-queue.ts');
+(async()=>{
+queue.queueSharedMarker(queued);queue.queueSharedMarker({...queued,action:{...queued.action,id:'second'}});
+await queue.flushSharedMarkers('s');assert.equal(writes.length,0);assert.equal(Object.keys(store).length,2);
+online=true;await queue.flushSharedMarkers('s');assert.equal(Object.keys(store).length,2,'Network failure must preserve both markers');
+fail=false;await Promise.all([queue.flushSharedMarkers('s'),queue.flushSharedMarkers('s')]);assert.equal(Object.keys(store).length,0);assert.equal(writes.length,3,'Failed first write + exactly two retries');
+assert(source.includes('Voir la mutualisation'));console.log('Mutualization: individual authority, collective mutation guards, independent caches, source possession/time/lineup, marker without statistics, offline queue/retry and both-mode consultation passed. No production writes.');
+})().catch(e=>{console.error(e);process.exitCode=1});

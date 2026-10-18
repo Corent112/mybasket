@@ -7,6 +7,7 @@ export type SharedLiveState = {
   id: string; matchId: string; teamId: string; joinCode: string;
   status: 'live'|'paused'|'ended'; controllerClientId: string|null;
   currentPeriod: number; currentClock: string; currentPossessionId: string|null;
+  currentOffense?: 'us'|'them';
   currentLineup: string[]; scoreUs: number; scoreThem: number;
 };
 export type PickPayload = {
@@ -64,10 +65,31 @@ export async function savePickEvent(session:SharedLiveState, possessionId:string
 }
 
 export function subscribeSharedLive(sessionId:string, onState:(s:SharedLiveState)=>void, onPossession?:()=>void) {
-  const sb=createClient();
+  const sb=createClient(); let disposed=false; let polling=false;
+  // Realtime + rattrapage périodique : une reconnexion ne doit pas laisser le
+  // collectif sur un ancien chrono ou un ancien cinq.
+  const refresh=async()=>{
+    if(disposed || polling || !window.navigator.onLine) return;
+    polling=true;
+    try {
+      const {data,error}=await sb.from('live_sessions').select('*').eq('id',sessionId).maybeSingle();
+      if(!disposed && !error && data) {
+        const next=map(data);
+        if(next.currentPossessionId) {
+          const {data:pos}=await sb.from('live_possessions').select('offense').eq('id',next.currentPossessionId).maybeSingle();
+          if(pos?.offense==='us'||pos?.offense==='them') next.currentOffense=pos.offense;
+        }
+        if(!disposed) onState(next);
+      }
+    } catch { /* Dernier état visible conservé hors ligne. */ }
+    finally { polling=false; }
+  };
   const ch=sb.channel(`mybasket-live:${sessionId}`)
-    .on('postgres_changes',{event:'UPDATE',schema:'public',table:'live_sessions',filter:`id=eq.${sessionId}`},(p:any)=>onState(map(p.new)))
-    .on('postgres_changes',{event:'*',schema:'public',table:'live_possessions',filter:`session_id=eq.${sessionId}`},()=>onPossession?.())
+    .on('postgres_changes',{event:'UPDATE',schema:'public',table:'live_sessions',filter:`id=eq.${sessionId}`},()=>{void refresh();})
+    .on('postgres_changes',{event:'*',schema:'public',table:'live_possessions',filter:`session_id=eq.${sessionId}`},()=>{onPossession?.();void refresh();})
     .subscribe();
-  return ()=>{ void sb.removeChannel(ch); };
+  void refresh();
+  const timer=window.setInterval(()=>void refresh(),2000);
+  const reconnect=()=>void refresh(); window.addEventListener('online',reconnect);
+  return ()=>{ disposed=true;window.clearInterval(timer);window.removeEventListener('online',reconnect);void sb.removeChannel(ch); };
 }
