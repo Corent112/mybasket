@@ -70,6 +70,7 @@ const exportJson=async()=>{await click([...document.querySelectorAll('.ed-tool')
   assert.deepEqual(schedule.map(item=>item.idx),helpers.drawingPath(test.phases,option.id));
   assert.equal(schedule[1].actSched[0].start,schedule[1].actSched[1].start,'Parallel actions stay parallel');
  }
+ assert.deepEqual(plan({current:test.phases},{current:'option-from-another-system'},helpers.drawingPath,helpers.drawingOptions).map(item=>item.idx), helpers.drawingPath(test.phases,helpers.drawingOptions(test.phases)[0].id));
  let root=createRoot(document.getElementById('root'));
  await act(async()=>root.render(React.createElement(Editor)));await flush(80);
  assert.equal(document.querySelectorAll('.ph-thumb').length,3,'Old linear system must load');

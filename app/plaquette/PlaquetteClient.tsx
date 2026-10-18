@@ -2582,7 +2582,8 @@ if (anim && anim.balls) {
     const phs = phasesRef.current;
     const sched: Sched[] = [];
     let prevStart = 0, prevSpan = 0;
-    const optionId = phs[startPhase]?.option?.id || activeOptionRef.current || drawingOptions(phs)[0]?.id;
+    const availableOptions = drawingOptions(phs);
+    const optionId = phs[startPhase]?.option?.id || availableOptions.find(option => option.id === activeOptionRef.current)?.id || availableOptions[0]?.id;
     const path = drawingPath(phs, optionId);
     const startIndex = Math.max(0, path.indexOf(startPhase));
     for (const [pathIndex, i] of path.slice(startIndex).entries()) {
@@ -2950,7 +2951,8 @@ const owners=ownersAtClock(sched,ballEventsRef.current,clock);
   const playAnim = () => {
     const phs = phasesRef.current;
     if (!phs.length) return;
-    const path = drawingPath(phs, phs[currentRef.current]?.option?.id || activeOptionRef.current || drawingOptions(phs)[0]?.id);
+    const availableOptions = drawingOptions(phs);
+    const path = drawingPath(phs, phs[currentRef.current]?.option?.id || availableOptions.find(option => option.id === activeOptionRef.current)?.id || availableOptions[0]?.id);
     const hasAction = path.some((index) => { const p = phs[index]; return p.lines.some((l) => MOVE_KINDS.includes(l.action) || BALL_KINDS.includes(l.action)); });
     if (!hasAction && path.length < 2) { showHint('Crée des actions ou des phases pour animer'); return; }
     const start = currentRef.current === path.at(-1) ? (path[0] ?? 0) : currentRef.current;
