@@ -414,10 +414,15 @@ export default function InstitutionalPlayerWorkflow({ structureId }: { structure
   });
   const selectablePlayers = filteredPlayers.filter((player) => !player.archived);
   const allVisibleSelected = selectablePlayers.length > 0 && selectablePlayers.every((player) => selected.includes(player.id));
-  const toggleVisiblePlayers = () => setSelected((previous) => {
-    const visibleIds = new Set(selectablePlayers.map((player) => player.id));
-    return allVisibleSelected ? previous.filter((id) => !visibleIds.has(id)) : Array.from(new Set([...previous, ...visibleIds]));
-  });
+  const toggleVisiblePlayers = () => setSelected(allVisibleSelected ? [] : selectablePlayers.map((player) => player.id));
+  const selectablePlayerIds = selectablePlayers.map((player) => player.id).join(",");
+  useEffect(() => {
+    const visibleIds = new Set(selectablePlayerIds.split(",").filter(Boolean));
+    setSelected((previous) => {
+      const next = previous.filter((id) => visibleIds.has(id));
+      return next.length === previous.length ? previous : next;
+    });
+  }, [selectablePlayerIds]);
   const currentParts = parts.filter((x) => x.event_id === activeEvent);
   const attendanceCounts = {
     present: currentParts.filter((item) => item.status === "present").length,
