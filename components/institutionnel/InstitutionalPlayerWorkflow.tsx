@@ -382,6 +382,12 @@ export default function InstitutionalPlayerWorkflow({ structureId }: { structure
     const sexOk = sexFilter === "all" || (sexFilter === "boys" ? isBoy(p) : isGirl(p));
     return sexOk && (!search.trim() || haystack.includes(search.trim().toLowerCase())) && (!clubFilter || p.club_name === clubFilter) && (!categoryFilter || p.category === categoryFilter);
   });
+  const selectablePlayers = filteredPlayers.filter((player) => !player.archived);
+  const allVisibleSelected = selectablePlayers.length > 0 && selectablePlayers.every((player) => selected.includes(player.id));
+  const toggleVisiblePlayers = () => setSelected((previous) => {
+    const visibleIds = new Set(selectablePlayers.map((player) => player.id));
+    return allVisibleSelected ? previous.filter((id) => !visibleIds.has(id)) : Array.from(new Set([...previous, ...visibleIds]));
+  });
   const currentParts = parts.filter((x) => x.event_id === activeEvent);
   const pMap = new Map<string, Player>(validatedPlayers.map((p) => [p.id, p]));
 
@@ -445,7 +451,7 @@ export default function InstitutionalPlayerWorkflow({ structureId }: { structure
               <button className={sexFilter === "boys" ? "on" : ""} onClick={() => setSexFilter("boys")}>Garçons <span>{boysCount}</span></button>
               <button className={sexFilter === "girls" ? "on" : ""} onClick={() => setSexFilter("girls")}>Filles <span>{girlsCount}</span></button>
             </div>
-            <div className="baseActions"><span className="viewHint">Clique sur un joueur pour ouvrir sa fiche complète.</span><button type="button" className="ghost" onClick={() => setShowPlayerImport(true)}>⇧ Importer des joueurs</button><button type="button" onClick={() => setShowCreatePlayer(true)}>+ Ajouter un joueur</button></div>
+            <div className="baseActions"><button type="button" className="ghost" disabled={!selectablePlayers.length} aria-pressed={allVisibleSelected} onClick={toggleVisiblePlayers}>{allVisibleSelected ? "Tout désélectionner" : `Tout sélectionner (${selectablePlayers.length})`}</button><span className="viewHint">Clique sur un joueur pour ouvrir sa fiche complète.</span><button type="button" className="ghost" onClick={() => setShowPlayerImport(true)}>⇧ Importer des joueurs</button><button type="button" onClick={() => setShowCreatePlayer(true)}>+ Ajouter un joueur</button></div>
           </section>
 
           <section className="toolbar cleanToolbar">
