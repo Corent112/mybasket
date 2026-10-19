@@ -5,7 +5,7 @@ export const maxDuration=60;
 const json=(body:unknown,status=200)=>NextResponse.json(body,{status});
 export async function POST(req:Request){
  const b=await req.json().catch(()=>({})),structureId=String(b.structureId||''),action=String(b.action||''),eventId=String(b.eventId||''),selectionId=String(b.selectionId||''),ids=[...new Set<string>((Array.isArray(b.playerIds)?b.playerIds:[]).map(String))];
- if(!structureId||!ids.length||!['add_to_selection','remove_from_detection','remove_from_selection'].includes(action))return json({error:'Choisis des joueurs et une action.'},400);
+ if(!structureId||!ids.length||!['add_to_selection','remove_from_detection','remove_from_selection','set_detection_attendance'].includes(action))return json({error:'Choisis des joueurs et une action.'},400);
  const ctx=await institutionalSportActor(structureId);if('error'in ctx)return ctx.error;if(!canManageSport(ctx.member))return json({error:'Droits insuffisants'},403);const db=ctx.admin;
  if(action!=='remove_from_selection'){
   if(!eventId)return json({error:'Entraînement ou détection manquant.'},400);
@@ -13,12 +13,32 @@ export async function POST(req:Request){
   const found=new Set<string>();
   if(event.data){for(let start=0;start<ids.length;start+=100){const rows=await db.from('institutional_detection_participants').select('player_id').eq('event_id',eventId).in('player_id',ids.slice(start,start+100));if(rows.error)return json({error:rows.error.message},400);for(const row of rows.data||[])found.add(String(row.player_id));}}
   else{
-   if(action==='remove_from_detection')return json({error:'Journée de détection introuvable.'},404);
+   if(action!=='add_to_selection')return json({error:'Journée de détection introuvable.'},404);
    const training=await db.from('institutional_events').select('id').eq('id',eventId).eq('structure_id',structureId).eq('archived',false).maybeSingle();if(training.error||!training.data)return json({error:'Entraînement introuvable dans cette institution.'},404);
    const session=await db.from('institutional_player_attendance_sessions').select('id').eq('structure_id',structureId).eq('event_id',eventId).maybeSingle();if(session.error||!session.data)return json({error:'Aucun groupe de joueurs associé à cet entraînement.'},404);
    for(let start=0;start<ids.length;start+=100){const rows=await db.from('institutional_player_attendance_records').select('player_id').eq('structure_id',structureId).eq('session_id',session.data.id).in('player_id',ids.slice(start,start+100));if(rows.error)return json({error:rows.error.message},400);for(const row of rows.data||[])found.add(String(row.player_id));}
   }
   if(ids.some(id=>!found.has(id)))return json({error:'La liste a changé. Recharge les participants avant de réessayer.'},409);
+  if(action==='set_detection_attendance'){
+   const status=String(b.status||'');if(!['present','absent','excused'].includes(status))return json({error:'Choisis Présent, Absent ou Excusé.'},400);
+   const players:any[]=[];
+   for(let start=0;start<ids.length;start+=100){const result=await db.from('institutional_players').select('id,profile_data,updated_at').eq('structure_id',structureId).in('id',ids.slice(start,start+100));if(result.error)return json({error:result.error.message},400);players.push(...(result.data||[]));}
+   if(ids.some(id=>!players.some(player=>String(player.id)===id)))return json({error:'Une fiche est indisponible. Recharge les participants.'},409);
+   const updatedPlayerIds:string[]=[];
+   for(let start=0;start<players.length;start+=3){
+    const results=await Promise.all(players.slice(start,start+3).map(async player=>{
+     try{const profile=player.profile_data||{},profileData={...profile,detectionAttendance:{...profile.detectionAttendance,[eventId]:status}};
+      let query=db.from('institutional_players').update({profile_data:profileData,updated_at:new Date().toISOString()}).eq('id',player.id).eq('structure_id',structureId);
+      query=player.updated_at?query.eq('updated_at',player.updated_at):query.is('updated_at',null);
+      const result=await query.select('id').maybeSingle();return !result.error&&!!result.data;
+     }catch{return false;}
+    }));
+    results.forEach((ok,index)=>{if(ok)updatedPlayerIds.push(String(players[start+index].id));});
+    if(results.some(ok=>!ok))break;
+   }
+   const pendingPlayerIds=ids.filter(id=>!updatedPlayerIds.includes(id));
+   return json({ok:!pendingPlayerIds.length,updatedPlayerIds,pendingPlayerIds,...(pendingPlayerIds.length?{error:`${updatedPlayerIds.length} présence(s) enregistrée(s). Certaines fiches ont changé ou sont indisponibles. Les autres restent cochées : réessaie.`}:{})},pendingPlayerIds.length?409:200);
+  }
   if(action==='remove_from_detection'){
    const removed:string[]=[];for(let start=0;start<ids.length;start+=100){const result=await db.from('institutional_detection_participants').delete().eq('event_id',eventId).in('player_id',ids.slice(start,start+100)).select('player_id');if(result.error)return json({error:result.error.message,removedPlayerIds:removed},400);removed.push(...(result.data||[]).map((row:any)=>String(row.player_id)));}return json({ok:true,removedPlayerIds:removed});
   }
