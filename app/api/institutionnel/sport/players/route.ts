@@ -239,6 +239,16 @@ export async function POST(req: Request) {
     }
   }
 
+  if (mode === "detach") {
+    const selectionId = String(body.selectionId || ""), playerId = String(body.playerId || "");
+    if (!selectionId || !playerId) return NextResponse.json({error:"Sélection ou joueur manquant"},{status:400});
+    const selection = await ctx.admin.from("institutional_selections").select("id").eq("id",selectionId).eq("structure_id",structureId).maybeSingle();
+    if (selection.error || !selection.data) return NextResponse.json({error:"Sélection introuvable dans cette institution"},{status:404});
+    const removed = await ctx.admin.from("institutional_selection_players").delete().eq("selection_id",selectionId).eq("player_id",playerId).select("id");
+    if (removed.error) return NextResponse.json({error:removed.error.message},{status:400});
+    return NextResponse.json({ok:true});
+  }
+
   if (mode === "attach") {
     const playerId = String(body.playerId || "");
     const selectionId = String(body.selectionId || "");
@@ -283,13 +293,14 @@ export async function POST(req: Request) {
         ctx.user.id
       );
 
-      const playerData = player.profile_data || {
+      const playerData = {
+        ...(player.profile_data || {}),
         firstName: player.first_name,
         lastName: player.last_name,
-        dob: player.birthdate || "",
-        photo: player.photo_url || null,
-        club: player.club_name || "",
-        categorie: player.category || "",
+        dob: player.birthdate || player.profile_data?.dob || "",
+        photo: player.photo_url || player.profile_data?.photo || null,
+        club: player.club_name || player.profile_data?.club || "",
+        categorie: player.category || player.profile_data?.categorie || "",
       };
 
       const teamPlayerId = await createTeamPlayer(ctx.admin, {

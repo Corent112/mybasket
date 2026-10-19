@@ -17,6 +17,9 @@ export async function POST(req:Request){
  if(!canManageSport(ctx.member))return json({error:'Droits insuffisants'},403);
  const selection=await ctx.admin.from('institutional_selections').select('id,name,category,gender,season_label').eq('id',selectionId).eq('structure_id',structureId).neq('status','archived').maybeSingle();
  if(selection.error||!selection.data)return json({error:'Sélection introuvable dans cette institution'},404);
+ const members=await ctx.admin.from('institutional_selection_players').select('player_id').eq('selection_id',selectionId).eq('status','active');
+ if(members.error)return json({error:members.error.message},400);
+ const rosterIds=[...new Set<string>((members.data||[]).map((member:any)=>String(member.player_id)))];
  let day:any;
  let calendarType=types[String(b.event_type||'')]||'Autre';
  if(b.eventId){const q=await ctx.admin.from('institutional_detection_events').select('*').eq('id',String(b.eventId)).eq('structure_id',structureId).eq('archived',false).maybeSingle();if(q.error||!q.data)return json({error:'Journée introuvable'},404);day=q.data;const prior=await ctx.admin.from('institutional_events').select('event_type').eq('id',day.id).eq('structure_id',structureId).maybeSingle();calendarType=prior.data?.event_type||types[day.event_type]||'Autre';}
@@ -32,5 +35,13 @@ export async function POST(req:Request){
   if(!b.eventId)await ctx.admin.from('institutional_detection_events').delete().eq('id',day.id).eq('structure_id',structureId);
   return json({error:calendar.error?.message||'Rattachement au calendrier impossible'},400);
  }
- return json({ok:true,event:day,selection:selection.data});
+ // Import only when creating the day or when explicitly requested. Never reset an existing attendance status.
+ if((!b.eventId || b.importRoster===true) && rosterIds.length){
+  const participants=await ctx.admin.from('institutional_detection_participants').upsert(rosterIds.map(player_id=>({event_id:day.id,player_id,status:'invited'})),{onConflict:'event_id,player_id',ignoreDuplicates:true});
+  if(participants.error){
+   if(!b.eventId){await ctx.admin.from('institutional_events').delete().eq('id',day.id).eq('structure_id',structureId);await ctx.admin.from('institutional_detection_events').delete().eq('id',day.id).eq('structure_id',structureId);}
+   return json({error:participants.error.message},400);
+  }
+ }
+ return json({ok:true,event:day,selection:selection.data,rosterCount:rosterIds.length});
 }

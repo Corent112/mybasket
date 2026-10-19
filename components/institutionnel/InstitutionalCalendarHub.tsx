@@ -469,6 +469,11 @@ export default function InstitutionalCalendarHub({
     });
   }
 
+  async function prepareSelectionRoster(eventId:string) {
+    const response=await fetch("/api/institutionnel/sport/event-roster",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({structureId,eventId})});
+    const result=await response.json();if(!response.ok)throw new Error(result.error||"Effectif non repris");return result;
+  }
+
   async function saveEvent() {
     if(eventSavingRef.current)return;
     if(!eventForm||!eventForm.title.trim())return alert('Donne un titre à l’événement.');
@@ -509,10 +514,15 @@ export default function InstitutionalCalendarHub({
       updated_at: new Date().toISOString(),
     };
 
-      let id:string;
+      let id:string;let newEventIds:string[]=[];
       if(eventForm.id){const q=await sb.from('institutional_events').update(payload).eq('id',eventForm.id).eq('structure_id',structureId).select('id').single();if(q.error)throw q.error;id=String(q.data.id);}
-      else{const q=await sb.from('institutional_events').insert(eventPreview.dates.map(event_date=>({...payload,event_date,created_by:user.id}))).select('id,event_date');if(q.error)throw q.error;id=String(q.data?.slice().sort((a:{event_date:string},b:{event_date:string})=>a.event_date.localeCompare(b.event_date))[0]?.id||'');}
+      else{const q=await sb.from('institutional_events').insert(eventPreview.dates.map(event_date=>({...payload,event_date,created_by:user.id}))).select('id,event_date');if(q.error)throw q.error;newEventIds=(q.data||[]).map((event:{id:string})=>event.id);id=String(q.data?.slice().sort((a:{event_date:string},b:{event_date:string})=>a.event_date.localeCompare(b.event_date))[0]?.id||'');}
       setEventForm(null);await load();setSelectedEventId(id||null);
+      if(payload.selection_id && newEventIds.length){
+        const failures:string[]=[];
+        for(const eventId of newEventIds){try{await prepareSelectionRoster(eventId);}catch{failures.push(eventId);}}
+        if(failures.length)alert(`${failures.length} événement(s) enregistré(s), mais leur effectif n’a pas pu être repris. Ouvre l’événement et clique sur « Reprendre l’effectif » pour réessayer.`);
+      }
     }catch(error){alert(error instanceof Error?error.message:(error as {message?:string})?.message||'Enregistrement impossible.');}
     finally{eventSavingRef.current=false;setSavingEvent(false);}
   }
@@ -1009,6 +1019,7 @@ export default function InstitutionalCalendarHub({
             </button>
           </div>
 
+          {selectedEvent.selection_id&&<button type="button" className="ghost" disabled={resourceBusy} onClick={async()=>{setResourceBusy(true);try{const result=await prepareSelectionRoster(selectedEvent.id);alert(`${result.count} joueur(s) dans l’effectif ; ${result.added} ajout(s). Les présences déjà saisies sont conservées.`);}catch(error){alert(error instanceof Error?error.message:"Effectif indisponible");}finally{setResourceBusy(false)}}}>Reprendre l’effectif de la sélection</button>}
           <div className="prepGrid">
             <div className="addResource">
               <h4>Ajouter ce qu’il faut pour l’événement</h4>
@@ -1303,7 +1314,7 @@ export default function InstitutionalCalendarHub({
                 </select>
                 {selectionError&&<small role="alert">{selectionError}</small>}
                 {selections.length===0&&!selectionError&&<small>Aucun groupe constitué pour cette institution. Les sélections et groupes de « Détections & sélections » apparaîtront ici.</small>}
-                <button type="button" className="ghost" onClick={()=>void load()}>Actualiser les listes</button>
+                <button type="button" className="ghost" onClick={()=>void load()}>Actualiser les listes</button><small>Les joueurs de la sélection choisie seront repris dans la feuille de présence du nouvel événement. Aucun email n’est envoyé.</small>
               </label>
               <label>
                 Catégorie / couleur

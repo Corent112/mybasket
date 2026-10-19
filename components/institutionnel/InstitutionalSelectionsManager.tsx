@@ -13,6 +13,7 @@ type InstitutionalPlayer = {
   club_name: string | null;
   category: string | null;
   linked_user_id: string | null;
+  sex?: string | null;
   photo_url?: string | null;
   profile_data?: Record<string, unknown> | null;
   email?: string | null;
@@ -83,10 +84,15 @@ export default function InstitutionalSelectionsManager({
   const [form, setForm] = useState({
     name: structureType === "federation" ? "Équipe de France U16" : "Sélection U13",
     category: structureType === "federation" ? "U16" : "U13",
-    seasonLabel: "2026-2027",
+    seasonLabel: `${new Date().getFullYear()-(new Date().getMonth()<6?1:0)}-${new Date().getFullYear()+(new Date().getMonth()<6?0:1)}`,
     gender: "",
   });
-  const [existingPlayer, setExistingPlayer] = useState("");
+  const [chosenPlayers, setChosenPlayers] = useState<string[]>([]);
+  const [playerSearch, setPlayerSearch] = useState("");
+  const [categoryFilter, setCategoryFilter] = useState("");
+  const [genderFilter, setGenderFilter] = useState("");
+  const [seasonFilter, setSeasonFilter] = useState("");
+  useEffect(() => { setChosenPlayers([]); }, [opened]);
   const [staffEmail, setStaffEmail] = useState("");
   const [staffRole, setStaffRole] = useState("Responsable sélection");
   const [linkUserEmail, setLinkUserEmail] = useState<Record<string, string>>({});
@@ -96,6 +102,10 @@ export default function InstitutionalSelectionsManager({
     () => rows.find((row) => row.id === opened) || null,
     [rows, opened]
   );
+
+  const memberIds = new Set(current?.players?.map(entry => entry.player_id) || []);
+  const availablePlayers = allPlayers.filter(player => !memberIds.has(player.id) && (!categoryFilter || player.category === categoryFilter) && (!genderFilter || (genderFilter === "M" ? ["m","masculin","male","garcon","garçon","homme"] : ["f","féminin","feminin","female","fille","femme"]).includes((player.sex || "").trim().toLowerCase())) && `${player.first_name} ${player.last_name} ${player.club_name || ""}`.toLowerCase().includes(playerSearch.trim().toLowerCase()));
+  const seasonOptions = Array.from(new Set(rows.map(row => row.season_label).filter(Boolean)));
 
   async function load() {
     const [selectionRes, playerRes, teamRes] = await Promise.all([
@@ -201,30 +211,30 @@ export default function InstitutionalSelectionsManager({
     }
   }
 
-  async function addExistingPlayer() {
-    if (!current || !existingPlayer) return;
-
+  async function addExistingPlayers() {
+    if (!current || !chosenPlayers.length || busy) return;
+    setBusy(true);setMessage("");
+    const added: string[] = [];
+    try {
+      for (const playerId of chosenPlayers) {
+        const response = await fetch("/api/institutionnel/sport/players", {method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({structureId,mode:"attach",selectionId:current.id,playerId})});
+        const json = await response.json();
+        if (!response.ok) throw new Error(json.error || "Ajout impossible");
+        added.push(playerId);
+      }
+      setMessage(`${added.length} joueur(s) ajouté(s) à ${current.name}.`);
+    } catch (error) { alert(`${error instanceof Error ? error.message : "Ajout impossible"}. ${added.length} ajout(s) enregistré(s) ; les autres restent cochés pour réessayer.`); }
+    finally { setChosenPlayers(previous => previous.filter(id => !added.includes(id)));await load();setBusy(false); }
+  }
+  async function removeMember(playerId:string, name:string) {
+    if (!current || busy || !window.confirm(`Retirer ${name} de ${current.name} ?\n\nLa fiche joueur, les autres sélections et les statistiques seront conservées.`)) return;
     setBusy(true);
-    const response = await fetch("/api/institutionnel/sport/players", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        structureId,
-        mode: "attach",
-        selectionId: current.id,
-        playerId: existingPlayer,
-      }),
-    });
-    const json = await response.json().catch(() => ({}));
-    setBusy(false);
-
-    if (!response.ok) return alert(json.error || "Ajout impossible.");
-
-    setExistingPlayer("");
-    setMessage(
-      "Joueur existant ajouté à la sélection sans créer une nouvelle identité."
-    );
-    await load();
+    try {
+      const response = await fetch("/api/institutionnel/sport/players",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({structureId,mode:"detach",selectionId:current.id,playerId})});
+      const json = await response.json();if (!response.ok) throw new Error(json.error || "Retrait impossible");
+      await load();setMessage("Joueur retiré de cet effectif.");
+    } catch (error) { alert(error instanceof Error ? error.message : "Retrait impossible"); }
+    finally { setBusy(false); }
   }
 
   async function addSelectionStaff() {
@@ -353,13 +363,9 @@ export default function InstitutionalSelectionsManager({
       <div className="head">
         <div>
           <small>SÉLECTIONS</small>
-          <h3>La même logique joueur que dans Mes équipes</h3>
+          <h3>Mes sélections et leurs effectifs</h3>
           <p>
-            Une sélection est une vraie équipe MyBasket. La création d’un joueur
-            utilise exactement le formulaire joueur existant : photo, identité,
-            licence, postes, taille, poids, tuteurs et informations sportives.
-            Ensuite la fiche complète donne accès au RPE, à la charge,
-            aux entraînements, à la grille de tir, aux stats, à la vidéo et au suivi.
+            Crée une sélection par catégorie, sexe et saison. Choisis ensuite les joueurs de son effectif pour les retrouver lors de la création d’un entraînement ou d’un événement.
           </p>
         </div>
         <button className="primary" onClick={() => setShowCreate((v) => !v)}>
@@ -370,25 +376,26 @@ export default function InstitutionalSelectionsManager({
       {showCreate && (
         <div className="createSelection">
           <input
-            placeholder="Nom de la sélection"
+            aria-label="Nom de la sélection" placeholder="Nom de la sélection"
             value={form.name}
             onChange={(e) => setForm((v) => ({ ...v, name: e.target.value }))}
           />
           <input
-            placeholder="Catégorie"
+            aria-label="Catégorie de la sélection" list="selection-age-categories" placeholder="Catégorie (U11, U12…)"
             value={form.category}
             onChange={(e) =>
               setForm((v) => ({ ...v, category: e.target.value }))
             }
           />
           <input
-            placeholder="Saison"
+            aria-label="Saison de la sélection" placeholder="Saison"
             value={form.seasonLabel}
             onChange={(e) =>
               setForm((v) => ({ ...v, seasonLabel: e.target.value }))
             }
           />
-          <select
+          <datalist id="selection-age-categories">{["U9","U10","U11","U12","U13","U14","U15","U16","U17","U18"].map(category=><option key={category}>{category}</option>)}</datalist>
+          <select aria-label="Sexe de la sélection"
             value={form.gender}
             onChange={(e) => setForm((v) => ({ ...v, gender: e.target.value }))}
           >
@@ -402,16 +409,17 @@ export default function InstitutionalSelectionsManager({
         </div>
       )}
 
+      <label className="seasonFilter">Saison des sélections <select value={seasonFilter} onChange={event=>setSeasonFilter(event.target.value)}><option value="">Toutes les saisons</option>{seasonOptions.map(season=><option key={season!} value={season!}>{season}</option>)}</select></label>
       <div className="selectionGrid">
-        {rows.map((row) => (
+        {rows.filter(row=>!seasonFilter || row.season_label===seasonFilter).map((row) => (
           <button
             className={opened === row.id ? "selectionCard on" : "selectionCard"}
             key={row.id}
-            onClick={() => setOpened(row.id)}
+            disabled={busy} onClick={() => setOpened(row.id)}
           >
             <b>{row.name}</b>
             <span>
-              {row.category || "—"} · {row.season_label || "—"}
+              {row.category || "—"} · {row.gender === "M" ? "Masculin" : row.gender === "F" ? "Féminin" : "Mixte"} · {row.season_label || "—"}
             </span>
             <small>
               {row.players?.length || 0} joueur(s) · {row.staff?.length || 0} responsable(s)
@@ -432,6 +440,7 @@ export default function InstitutionalSelectionsManager({
               </p>
             </div>
             <div className="detailActions">
+              <button className="primary" onClick={()=>document.getElementById("selection-event-tools")?.scrollIntoView({behavior:"smooth",block:"start"})}>Créer un événement avec cet effectif</button>
               <button className="primary" onClick={() => setShowPlayerForm(true)}>
                 + Créer un joueur
               </button>
@@ -481,31 +490,12 @@ export default function InstitutionalSelectionsManager({
             </div>
 
             <div className="panel">
-              <h4>Ajouter un joueur existant</h4>
-              <p>
-                On rattache son identité existante à la sélection sans recréer
-                une deuxième fiche institutionnelle.
-              </p>
-              <div className="inline">
-                <select
-                  value={existingPlayer}
-                  onChange={(e) => setExistingPlayer(e.target.value)}
-                >
-                  <option value="">Choisir un joueur…</option>
-                  {allPlayers.map((player) => (
-                    <option key={player.id} value={player.id}>
-                      {player.last_name} {player.first_name}
-                    </option>
-                  ))}
-                </select>
-                <button
-                  className="primary"
-                  disabled={busy || !existingPlayer}
-                  onClick={addExistingPlayer}
-                >
-                  Ajouter
-                </button>
-              </div>
+              <h4>Composer l’effectif depuis la base joueurs</h4>
+              <p>Coche les joueurs que tu souhaites ajouter à {current.name}. Les membres actuels sont déjà dans la liste ci-dessous.</p>
+              <div className="rosterFilters"><input aria-label="Rechercher des joueurs" placeholder="Nom, prénom ou club" value={playerSearch} onChange={e=>setPlayerSearch(e.target.value)}/><select aria-label="Catégorie des joueurs" value={categoryFilter} onChange={e=>setCategoryFilter(e.target.value)}><option value="">Toutes les catégories</option>{Array.from(new Set(allPlayers.map(player=>player.category).filter(Boolean))).sort().map(category=><option key={category!} value={category!}>{category}</option>)}</select><select aria-label="Sexe des joueurs" value={genderFilter} onChange={e=>setGenderFilter(e.target.value)}><option value="">Tous</option><option value="M">Garçons</option><option value="F">Filles</option></select></div>
+              <div className="rosterChecks">{availablePlayers.map(player=><label key={player.id}><input type="checkbox" disabled={busy} checked={chosenPlayers.includes(player.id)} onChange={()=>setChosenPlayers(previous=>previous.includes(player.id)?previous.filter(id=>id!==player.id):[...previous,player.id])}/><span><b>{player.last_name} {player.first_name}</b><small>{player.category || "Catégorie non renseignée"} · {player.club_name || "Club non renseigné"}</small></span></label>)}</div>
+              {!availablePlayers.length && <p>Aucun joueur à ajouter avec ces filtres.</p>}
+              <div className="inline"><button type="button" disabled={busy} onClick={()=>setChosenPlayers(availablePlayers.map(player=>player.id))}>Tout cocher ({availablePlayers.length})</button><button type="button" disabled={busy} onClick={()=>setChosenPlayers([])}>Tout décocher</button><button className="primary" disabled={busy || !chosenPlayers.length} onClick={()=>void addExistingPlayers()}>{busy?"Enregistrement…":`Ajouter les ${chosenPlayers.length} joueurs cochés`}</button></div>
             </div>
           </div>
 
@@ -595,6 +585,7 @@ export default function InstitutionalSelectionsManager({
                   </div>
 
                   <div className="openLinks">
+                    <button type="button" disabled={busy} onClick={()=>void removeMember(player.id,`${player.first_name} ${player.last_name}`)}>Retirer de la sélection</button>
                     {entry.team_player_id && (
                       <a href={`/equipes/${current.team_id}/${entry.team_player_id}`}>
                         Ouvrir la fiche complète
@@ -624,7 +615,7 @@ export default function InstitutionalSelectionsManager({
             )}
           </div>
 
-          <InstitutionalSelectionOperations structureId={structureId} selection={current} />
+          <div id="selection-event-tools"><InstitutionalSelectionOperations structureId={structureId} selection={current} /></div>
         </section>
       )}
 
@@ -723,6 +714,8 @@ export default function InstitutionalSelectionsManager({
       )}
 
       <style jsx>{`
+        .seasonFilter{display:flex;align-items:center;gap:10px;font-weight:800;color:#6b1a2c}.seasonFilter select,.rosterFilters input,.rosterFilters select{border:1px solid #ddcfc8;border-radius:8px;padding:9px;background:white;min-width:0}.rosterFilters{display:flex;flex-wrap:wrap;gap:8px}.rosterFilters input{flex:1}.rosterChecks{display:grid;gap:6px;margin:12px 0;grid-template-columns:repeat(auto-fit,minmax(200px,1fr))}.rosterChecks label{display:flex;gap:8px;align-items:center;border:1px solid #eadfd8;border-radius:9px;padding:9px}.rosterChecks span{display:grid;gap:3px}.rosterChecks small{font-size:.7rem;color:#80716a}.rosterChecks input{width:16px;height:16px;flex:0 0 auto}
+
         .selections{display:grid;gap:14px}
         .notice{padding:10px 12px;border-radius:10px;border:1px solid #c9e2cf;background:#eef8f1;color:#27623a;font-weight:900}
         .head,.detailHead{display:flex;justify-content:space-between;gap:16px;align-items:flex-start}
