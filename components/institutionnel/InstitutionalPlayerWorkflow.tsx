@@ -1,6 +1,7 @@
 "use client";
 
 import {categoryMatches,playerAgeCategory,currentInstitutionSeason} from "@/lib/institutionnel/player-category";
+import InstitutionalDetectionWorkspace from "./InstitutionalDetectionWorkspace";
 import InstitutionalSelectionsManager from "@/components/institutionnel/InstitutionalSelectionsManager";
 
 import { useEffect, useMemo, useState } from "react";
@@ -111,6 +112,7 @@ const safeProfile = (player?: Player | null) => player?.profile_data || {};
 
 export default function InstitutionalPlayerWorkflow({ structureId, structureType = "committee" }: { structureId: string; structureType?: "committee" | "league" | "federation" | "pole" }) {
   const sb = useMemo(() => createClient(), []);
+  const [focusedSelectionId,setFocusedSelectionId]=useState("");
   const [tab, setTab] = useState<Tab>("base");
   const [players, setPlayers] = useState<Player[]>([]);
   const [referrals, setReferrals] = useState<Referral[]>([]);
@@ -508,7 +510,7 @@ export default function InstitutionalPlayerWorkflow({ structureId, structureType
 
   return (
     <div className="wf">
-      <div className="hero">
+      <div className={`hero ${tab==="detections"||tab==="selections"?"workspaceHidden":""}`}>
         <div className="heroIdentityBlock">
           <div className="heroIcon" aria-hidden="true">♟</div>
           <div>
@@ -538,7 +540,7 @@ export default function InstitutionalPlayerWorkflow({ structureId, structureType
         <button className={tab === "transfers" ? "on" : ""} onClick={() => setTab("transfers")}>Passations</button>
       </nav>
 
-      {tab === "selections" && <InstitutionalSelectionsManager structureId={structureId} structureType={structureType} onOpenBase={()=>setTab("base")} onCreateDetection={ids=>{setDraftDayPlayerIds(ids);setActiveEvent("");setDaySelectionId("");setTab("detections");}}/>}
+      {tab === "selections" && <InstitutionalSelectionsManager initialSelectionId={focusedSelectionId} onOpenDetection={eventId=>{if(eventId)setActiveEvent(eventId);setTab("detections");}} structureId={structureId} structureType={structureType} onOpenBase={()=>setTab("base")} onCreateDetection={ids=>{setDraftDayPlayerIds(ids);setActiveEvent("");setDaySelectionId("");setTab("detections");}}/>}
 
       {tab === "base" && (
         <>
@@ -629,12 +631,15 @@ export default function InstitutionalPlayerWorkflow({ structureId, structureType
         </>
       )}
 
-      {tab === "detections" && (
-        <>
-          <section className="card"><div className="sectionHead"><div><p>SAISONS</p><h3>Suivi institutionnel</h3></div><span>{seasons.length} saison(s)</span></div><div className="line"><input value={seasonLabel} onChange={(e) => setSeasonLabel(e.target.value)} placeholder="2026-2027" /><button onClick={createSeason}>+ Créer la saison</button></div></section>
-          <section className="card"><div className="sectionHead"><div><p>DÉTECTIONS & SÉLECTIONS</p><h3>Détection / entraînement</h3></div><span>{selected.length} joueur(s) sélectionné(s) depuis la base</span></div>{draftDayPlayerIds.length>0&&<div className="draftDayGroup"><b>{draftDayPlayerIds.length} joueurs prêts à être ajoutés</b><span>Choisis la date et le lieu, puis crée la journée. Tous seront ajoutés depuis la base.</span><button type="button" className="ghost" onClick={()=>setDraftDayPlayerIds([])}>Annuler ce groupe</button></div>}<p className="hint">Détection / entraînement : ajoute autant de joueurs que nécessaire depuis la base. Le rattachement à une sélection est facultatif et ne modifie pas son effectif.</p><InstitutionalSelectionPicker structureId={structureId} value={daySelectionId} onChange={(id,selection)=>{setDaySelectionId(id);}}/><div className="grid"><input value={eform.title} onChange={(e) => setEform({ ...eform, title: e.target.value })} /><select value={eform.event_type} onChange={(e) => setEform({ ...eform, event_type: e.target.value, title: ["Journée de détection", "Entraînement"].includes(eform.title) ? (e.target.value === "training" ? "Entraînement" : "Journée de détection") : eform.title })}>{Object.entries(EVENT_LABELS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}</select><input type="date" value={eform.event_date} onChange={(e) => setEform({ ...eform, event_date: e.target.value })} /><input type="time" value={eform.start_time} onChange={(e) => setEform({ ...eform, start_time: e.target.value })} /><input placeholder="Lieu" value={eform.location} onChange={(e) => setEform({ ...eform, location: e.target.value })} /><button disabled={!!busy} onClick={createEvent}>{busy==="day"?"Enregistrement…":draftDayPlayerIds.length?`Créer la journée avec ${draftDayPlayerIds.length} joueurs`:"+ Créer la journée"}</button></div><div className="line"><select value={activeEvent} onChange={(e) => setActiveEvent(e.target.value)}><option value="">Choisir une journée</option>{events.map((e) => <option key={e.id} value={e.id}>{e.event_date} · {e.title}</option>)}</select><button type="button" className="ghost" disabled={!activeEvent || !!busy} onClick={()=>void saveDaySelection(true)}>Enregistrer le rattachement</button><button type="button" className="ghost" disabled={!activeEvent || !!busy} onClick={()=>void saveDaySelection(true,true)}>Reprendre l’effectif de la sélection</button><button type="button" className="ghost" disabled={!activeEvent || reportBusy} onClick={()=>void exportDayReport()}>{reportBusy?"Création du PDF…":"Exporter le rapport PDF"}</button><button type="button" className="ghost" disabled={!activeEvent || !!busy} onClick={() => void removeDetectionDay()}>{busy === "archive_detection_event" ? "Suppression…" : "Supprimer la journée"}</button><button disabled={!activeEvent || !!busy} onClick={()=>{setPickerIds([]);setPickerSearch("");setPlayerPicker(true);}}>+ Ajouter des joueurs à la détection</button></div>{activeEvent && <div className="dayCounts" aria-live="polite"><span><b>{attendanceCounts.present}</b> présents</span><span><b>{attendanceCounts.absent}</b> absents</span><span><b>{attendanceCounts.excused}</b> excusés</span><span><b>{attendanceCounts.pending}</b> présence à renseigner</span><span><b>{currentParts.length}</b> convoqués</span></div>}{activeEvent && <div className="partList">{currentParts.map((x) => { const p = pMap.get(x.player_id); return p ? <div className="part" key={x.id}><b>{p.first_name} {p.last_name}</b><div className="participantActions"><select aria-label={`Présence de ${p.first_name} ${p.last_name}`} disabled={!!busy} value={STATUS_LABELS[x.status] ? x.status : ""} onChange={(e) => patchStatus(x.id, e.target.value)}><option value="">Présence à renseigner</option>{Object.entries(STATUS_LABELS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}</select><select aria-label={`Décision pour ${p.first_name} ${p.last_name}`} disabled={!!busy} value={p.profile_data?.detectionDecisions?.[x.event_id] ?? (["selected", "waiting", "not_selected"].includes(x.status) ? x.status : "")} onChange={(e) => void patchDecision(x, e.target.value)}><option value="">Décision à prendre</option><option value="selected">Retenu</option><option value="waiting">Liste d’attente</option><option value="not_selected">Non retenu</option></select><button type="button" className="removeParticipant" disabled={!!busy} aria-label={`Retirer ${p.first_name} ${p.last_name} de cet événement`} title="Retirer de cet événement" onClick={() => void removeEventParticipant(x, p)}>×</button></div></div> : null; })}</div>}</section>
-        </>
-      )}
+      {tab === "detections" && <InstitutionalDetectionWorkspace structureId={structureId} events={events} eventId={activeEvent} onEventChange={setActiveEvent} parts={currentParts.map(part=>({...part,player:pMap.get(part.player_id)}))} busy={!!busy} draftCount={draftDayPlayerIds.length} onAdd={()=>{setPickerIds([]);setPickerSearch("");setPlayerPicker(true);}} onPresence={(id,status)=>void patchStatus(id,status)} onDecision={(part,decision)=>void patchDecision(part,decision)} onRemove={(part,player)=>void removeEventParticipant(part,player)} onReload={loadSupportingData} onReport={()=>void exportDayReport()} reportBusy={reportBusy} onOpenSelection={id=>{setFocusedSelectionId(id);setTab("selections");}}
+      newDayForm={<div className="dayForm">
+       {draftDayPlayerIds.length>0&&<div className="draftDayGroup"><b>{draftDayPlayerIds.length} joueurs prêts à être ajoutés</b><button type="button" className="ghost" onClick={()=>setDraftDayPlayerIds([])}>Annuler ce groupe</button></div>}
+       <div className="grid"><label>Titre<input value={eform.title} onChange={e=>setEform({...eform,title:e.target.value})}/></label><label>Type<select value={eform.event_type} onChange={e=>setEform({...eform,event_type:e.target.value,title:["Journée de détection","Entraînement"].includes(eform.title)?e.target.value==="training"?"Entraînement":"Journée de détection":eform.title})}>{Object.entries(EVENT_LABELS).map(([key,label])=><option key={key} value={key}>{label}</option>)}</select></label><label>Date<input type="date" value={eform.event_date} onChange={e=>setEform({...eform,event_date:e.target.value})}/></label><label>Début<input type="time" value={eform.start_time} onChange={e=>setEform({...eform,start_time:e.target.value})}/></label><label>Lieu<input value={eform.location} placeholder="Gymnase…" onChange={e=>setEform({...eform,location:e.target.value})}/></label></div>
+       <details><summary>Reprendre un effectif de sélection (facultatif)</summary><InstitutionalSelectionPicker structureId={structureId} value={daySelectionId} onChange={id=>setDaySelectionId(id)}/></details>
+       <button disabled={!!busy} onClick={()=>void createEvent()}>{busy==="day"?"Enregistrement…":draftDayPlayerIds.length?`Créer avec ${draftDayPlayerIds.length} joueurs`:"Créer la journée"}</button>
+       <details><summary>Suivi des saisons</summary><div className="line"><input aria-label="Saison de suivi" value={seasonLabel} onChange={e=>setSeasonLabel(e.target.value)}/><button onClick={()=>void createSeason()}>Ajouter la saison</button></div></details>
+      </div>}
+      settings={<><InstitutionalSelectionPicker structureId={structureId} value={daySelectionId} onChange={id=>setDaySelectionId(id)}/><div className="line"><button type="button" className="ghost" disabled={!activeEvent||!!busy} onClick={()=>void saveDaySelection(true)}>Enregistrer le rattachement</button><button type="button" className="ghost" disabled={!activeEvent||!daySelectionId||!!busy} onClick={()=>void saveDaySelection(true,true)}>Ajouter l’effectif source</button><button type="button" className="ghost" disabled={!activeEvent||!!busy} onClick={()=>void removeDetectionDay()}>Supprimer la journée</button></div></>}/>}
 
       {tab === "transfers" && (
         <>
@@ -765,6 +770,10 @@ function Info({ label, value }: { label: string; value?: string | null }) {
 }
 
 const css = `
+.hero.workspaceHidden{display:none!important}
+
+.dayForm{display:grid;gap:13px}.dayForm label{display:grid;gap:5px;font-size:.75rem;color:#896f65}.dayForm details summary{font-size:.75rem;cursor:pointer;color:#8e7165}.dayForm>button{justify-self:start}.dayForm .grid{margin:0}
+
 .draftDayGroup{display:flex;align-items:center;gap:10px;flex-wrap:wrap;background:#f5f1ed;border:1px solid #e6dbd2;border-radius:9px;padding:10px;margin-bottom:12px;font-size:.8rem}.draftDayGroup span{color:#7b6c65}
 
 .rosterPicker{position:fixed;inset:0;background:#21121b88;z-index:1000;padding:24px;display:flex;align-items:center;justify-content:center}.rosterPickerBody{background:#fff;border-radius:18px;padding:22px;width:min(980px,100%);max-height:90dvh;display:flex;flex-direction:column;gap:16px;box-shadow:0 20px 80px #0003}.rosterPickerGrid{overflow:auto;display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:10px}.rosterChoice{border:1px solid #e6ddd8;border-radius:12px;padding:14px;display:flex;gap:10px;align-items:center;background:white;cursor:pointer}.rosterChoice.already{background:#e9e5e3;color:#746b67;cursor:default}.rosterChoice.chosen{border-color:#6b1a2c;background:#faf0f3}.rosterChoice span{display:grid;gap:5px}.rosterChoice small{font-size:11px}.rosterPicker footer{display:flex;justify-content:space-between;gap:12px;align-items:center;flex-wrap:wrap}
