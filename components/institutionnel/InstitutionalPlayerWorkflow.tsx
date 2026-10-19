@@ -1,6 +1,7 @@
 "use client";
 
 import {categoryMatches,playerAgeCategory,currentInstitutionSeason} from "@/lib/institutionnel/player-category";
+import InstitutionalDayResources from "./InstitutionalDayResources";
 import InstitutionalDetectionWorkspace from "./InstitutionalDetectionWorkspace";
 import InstitutionalSelectionsManager from "@/components/institutionnel/InstitutionalSelectionsManager";
 
@@ -338,17 +339,19 @@ export default function InstitutionalPlayerWorkflow({ structureId, structureType
     if (!event || reportBusy) return;
     setReportBusy(true);
     try {
-      const [institution, selectionResponse] = await Promise.all([
+      const [institution, selectionResponse, resources] = await Promise.all([
         sb.from("institutional_structures").select("name,logo_url").eq("id",structureId).maybeSingle(),
         fetch(`/api/institutionnel/sport/selections?structureId=${encodeURIComponent(structureId)}`,{cache:"no-store"}),
+        sb.from("institutional_event_resources").select("id,title,note,file_url").eq("structure_id",structureId).eq("event_id",event.id).order("created_at"),
       ]);
       if (institution.error || !institution.data) throw new Error("Institution indisponible");
+      if(resources.error)throw new Error("Documents de la journée indisponibles : "+resources.error.message);
       const selectionJson = await selectionResponse.json();
       if (!selectionResponse.ok) throw new Error(selectionJson.error || "Sélections indisponibles");
       const linkedId = dayLinks.find((link) => link.id === event.id)?.selection_id;
       const selection = selectionJson.selections?.find((item:DaySelection) => item.id === linkedId);
       const {createDetectionReportPdf} = await import("@/lib/institutionnel/detection-report-pdf");
-      const doc = await createDetectionReportPdf({institution:institution.data,event,selection,participants:currentParts.map(item=>({ ...item, player:players.find(player=>player.id===item.player_id) }))});
+      const doc = await createDetectionReportPdf({institution:institution.data,event,selection,resources:resources.data||[],eventUrl:`${window.location.origin}/institutionnel/${structureId}?tab=Mon%20calendrier&event=${encodeURIComponent(event.id)}`,participants:currentParts.map(item=>({ ...item, player:players.find(player=>player.id===item.player_id) }))});
       doc.save(`rapport-journee-${event.event_date}.pdf`);
     } catch (error) { alert(error instanceof Error ? error.message : "Export impossible"); }
     finally { setReportBusy(false); }
@@ -639,6 +642,7 @@ export default function InstitutionalPlayerWorkflow({ structureId, structureType
        <button disabled={!!busy} onClick={()=>void createEvent()}>{busy==="day"?"Enregistrement…":draftDayPlayerIds.length?`Créer avec ${draftDayPlayerIds.length} joueurs`:"Créer la journée"}</button>
        <details><summary>Suivi des saisons</summary><div className="line"><input aria-label="Saison de suivi" value={seasonLabel} onChange={e=>setSeasonLabel(e.target.value)}/><button onClick={()=>void createSeason()}>Ajouter la saison</button></div></details>
       </div>}
+      content={<InstitutionalDayResources key={activeEvent} structureId={structureId} eventId={activeEvent} eventTitle={events.find(event=>event.id===activeEvent)?.title||"Entraînement"}/>}
       settings={<><InstitutionalSelectionPicker structureId={structureId} value={daySelectionId} onChange={id=>setDaySelectionId(id)}/><div className="line"><button type="button" className="ghost" disabled={!activeEvent||!!busy} onClick={()=>void saveDaySelection(true)}>Enregistrer le rattachement</button><button type="button" className="ghost" disabled={!activeEvent||!daySelectionId||!!busy} onClick={()=>void saveDaySelection(true,true)}>Ajouter l’effectif source</button></div></>}/>}
 
       {tab === "transfers" && (
