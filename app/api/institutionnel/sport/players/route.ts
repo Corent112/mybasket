@@ -182,6 +182,11 @@ export async function POST(req: Request) {
       ctx.admin.from("institutional_selection_players").select("id",{count:"exact",head:true}).eq("selection_id",selectionId).eq("status","active")
     ]);
     if(teamCapacity.error||rosterCount.error)return NextResponse.json({error:"Vérification de l’effectif impossible"},{status:400});
+    if(teamCapacity.data?.metadata?.institutionRosterKind==='preselection'){
+      const write=await ctx.admin.from('institutional_selection_players').upsert({selection_id:selectionId,player_id:playerId,team_player_id:null,status:'active',created_by:ctx.user.id},{onConflict:'selection_id,player_id',ignoreDuplicates:true});
+      if(write.error)return NextResponse.json({error:write.error.message},{status:400});
+      return NextResponse.json({ok:true,preselection:true});
+    }
     const maxPlayers=Number(teamCapacity.data?.metadata?.institutionSelectionMaxPlayers)===10?10:12;
     if((rosterCount.count||0)>=maxPlayers)return NextResponse.json({error:`Sélection complète : ${maxPlayers} joueurs maximum. Les détections et entraînements restent sans limite.`},{status:409});
     try {

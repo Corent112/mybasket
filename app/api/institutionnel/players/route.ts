@@ -1,3 +1,4 @@
+import {syncPreselectionDecision} from '@/lib/institutionnel/preselection-roster';
 import {loadInstitutionSeason,withPlayerCategory,playerAgeCategory} from "@/lib/institutionnel/player-category";
 import { NextResponse } from "next/server";
 import {
@@ -117,6 +118,7 @@ export async function POST(req: Request) {
     const result = await query.select("id").maybeSingle();
     if (result.error) return NextResponse.json({ error: result.error.message }, { status: 400 });
     if (!result.data) return NextResponse.json({ error: "La fiche vient de changer. Rechargez puis réessayez." }, { status: 409 });
+    try{await syncPreselectionDecision(ctx.admin,structureId,eventId,playerId,ctx.user.id);}catch{return NextResponse.json({ok:true,profileData,warning:"Décision enregistrée. La mise à jour de la présélection a échoué : enregistre à nouveau la décision pour réessayer."});}
     return NextResponse.json({ ok: true, profileData });
   }
 

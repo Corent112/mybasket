@@ -84,11 +84,13 @@ export async function GET(req: Request) {
 
   const capacities=teamIds.length?await ctx.admin.from("teams").select("id,metadata").in("id",teamIds):{data:[]};
   if("error" in capacities && capacities.error)return NextResponse.json({error:capacities.error.message},{status:400});
+  const kindByTeam=new Map((capacities.data||[]).map((team:any)=>[team.id,team.metadata?.institutionRosterKind]));
   const capByTeam=new Map((capacities.data||[]).map((team:any)=>[team.id,Number(team.metadata?.institutionSelectionMaxPlayers)===10?10:12]));
   return NextResponse.json({
     selections: (selections || []).map((selection: any) => ({
       ...selection,
-      max_players:capByTeam.get(selection.team_id)||12,
+      roster_kind:kindByTeam.get(selection.team_id)==="preselection"?"preselection":"selection",
+      max_players:kindByTeam.get(selection.team_id)==="preselection"?null:capByTeam.get(selection.team_id)||12,
       players: (playersBySelection.get(String(selection.id)) || []).map(entry=>({...entry,player:entry.player?withPlayerCategory(entry.player,selection.season_label):null})),
       staff: staffByTeam.get(String(selection.team_id)) || [],
     })),
@@ -101,6 +103,7 @@ export async function POST(req: Request) {
   const name = String(body.name || "").trim();
   const category = String(body.category || "").trim();
   const seasonLabel = String(body.seasonLabel || "").trim();
+  const rosterKind=body.rosterKind==="preselection"?"preselection":"selection";
   const maxPlayers = Number(body.maxPlayers || 12);
   if (![10,12].includes(maxPlayers)) return NextResponse.json({error:"Choisis un maximum de 10 ou 12 joueurs"},{status:400});
   const gender = String(body.gender || "").trim() || null;
@@ -124,9 +127,10 @@ export async function POST(req: Request) {
     if(selection.error||!selection.data)return NextResponse.json({error:"Sélection introuvable"},{status:404});
     const members=await ctx.admin.from("institutional_selection_players").select("id",{count:"exact",head:true}).eq("selection_id",selection.data.id).eq("status","active");
     if(members.error)return NextResponse.json({error:members.error.message},{status:400});
-    if((members.count||0)>maxPlayers)return NextResponse.json({error:"Retire d’abord des joueurs pour respecter ce plafond. Aucun joueur n’a été retiré automatiquement."},{status:409});
+    if(rosterKind!=="preselection"&&(members.count||0)>maxPlayers)return NextResponse.json({error:"Retire d’abord des joueurs pour respecter ce plafond. Aucun joueur n’a été retiré automatiquement."},{status:409});
     const team=await ctx.admin.from("teams").select("metadata").eq("id",selection.data.team_id).maybeSingle();if(team.error||!team.data)return NextResponse.json({error:"Équipe introuvable"},{status:404});
-    const write=await ctx.admin.from("teams").update({metadata:{...team.data.metadata,institutionSelectionMaxPlayers:maxPlayers}}).eq("id",selection.data.team_id);if(write.error)return NextResponse.json({error:write.error.message},{status:400});return NextResponse.json({ok:true,maxPlayers});
+    if(team.data.metadata?.institutionRosterKind==="preselection"&&rosterKind!=="preselection"&&(members.count||0)>0)return NextResponse.json({error:"Crée une sélection finale distincte, puis ajoute les 10 ou 12 joueurs depuis une journée. La présélection reste disponible pour les entraînements."},{status:409});
+    const write=await ctx.admin.from("teams").update({metadata:{...team.data.metadata,institutionRosterKind:rosterKind,institutionSelectionMaxPlayers:maxPlayers}}).eq("id",selection.data.team_id);if(write.error)return NextResponse.json({error:write.error.message},{status:400});return NextResponse.json({ok:true,maxPlayers});
   }
   const teamId = crypto.randomUUID();
   const detectionEventId = String(body.detectionEventId || "");
@@ -149,6 +153,7 @@ export async function POST(req: Request) {
     category,
     coach_name: "",
     metadata: {
+      institutionRosterKind:rosterKind,
       institutionSelectionMaxPlayers:maxPlayers,
       institutionManaged: true,
       institutionStructureId: structureId,
@@ -211,6 +216,6 @@ export async function POST(req: Request) {
 
   return NextResponse.json({
     ok: true,
-    selection: selectionWrite.data,
+    selection: {...selectionWrite.data,roster_kind:rosterKind},
   });
 }

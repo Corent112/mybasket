@@ -398,7 +398,7 @@ export default function InstitutionalPlayerWorkflow({ structureId, structureType
     if (busy) return;
     try {
       const result = await playerAction("set_detection_decision", { eventId: participant.event_id, playerId: participant.player_id, decision });
-      if (result) setPlayers((current) => current.map((player) => player.id === participant.player_id ? { ...player, profile_data: result.profileData } : player));
+      if (result) {setPlayers((current) => current.map((player) => player.id === participant.player_id ? { ...player, profile_data: result.profileData } : player));await loadSupportingData();if(result.warning)alert(result.warning);}
       return !!result;
     } catch {
       alert("Impossible d’enregistrer la décision. Réessayez.");
@@ -635,7 +635,7 @@ export default function InstitutionalPlayerWorkflow({ structureId, structureType
       newDayForm={<div className="dayForm">
        {draftDayPlayerIds.length>0&&<div className="draftDayGroup"><b>{draftDayPlayerIds.length} joueurs prêts à être ajoutés</b><button type="button" className="ghost" onClick={()=>setDraftDayPlayerIds([])}>Annuler ce groupe</button></div>}
        <div className="grid"><label>Titre<input value={eform.title} onChange={e=>setEform({...eform,title:e.target.value})}/></label><label>Type<select value={eform.event_type} onChange={e=>setEform({...eform,event_type:e.target.value,title:["Journée de détection","Entraînement"].includes(eform.title)?e.target.value==="training"?"Entraînement":"Journée de détection":eform.title})}>{Object.entries(EVENT_LABELS).map(([key,label])=><option key={key} value={key}>{label}</option>)}</select></label><label>Date<input type="date" value={eform.event_date} onChange={e=>setEform({...eform,event_date:e.target.value})}/></label><label>Début<input type="time" value={eform.start_time} onChange={e=>setEform({...eform,start_time:e.target.value})}/></label><label>Lieu<input value={eform.location} placeholder="Gymnase…" onChange={e=>setEform({...eform,location:e.target.value})}/></label></div>
-       <details><summary>Reprendre un effectif de sélection (facultatif)</summary><InstitutionalSelectionPicker structureId={structureId} value={daySelectionId} onChange={id=>setDaySelectionId(id)}/></details>
+       <div><b>Quel groupe participe à cette journée ?</b><p className="hint">Choisis une présélection : son effectif est ajouté automatiquement. Les décisions Retenu / Non retenu mettent à jour les journées suivantes. Une sélection finale reste limitée à 10 ou 12.</p><InstitutionalSelectionPicker structureId={structureId} value={daySelectionId} onChange={id=>setDaySelectionId(id)}/></div>
        <button disabled={!!busy} onClick={()=>void createEvent()}>{busy==="day"?"Enregistrement…":draftDayPlayerIds.length?`Créer avec ${draftDayPlayerIds.length} joueurs`:"Créer la journée"}</button>
        <details><summary>Suivi des saisons</summary><div className="line"><input aria-label="Saison de suivi" value={seasonLabel} onChange={e=>setSeasonLabel(e.target.value)}/><button onClick={()=>void createSeason()}>Ajouter la saison</button></div></details>
       </div>}
