@@ -3,7 +3,7 @@ import { jsPDF } from 'jspdf';
 type Player = { first_name?:string; last_name?:string; club_name?:string; category?:string; photo_url?:string|null };
 type Institution = { name:string; logo_url?:string|null; email?:string|null };
 
-async function imageData(url?:string|null):Promise<string|null>{
+export async function imageData(url?:string|null):Promise<string|null>{
  if(!url)return null;
  return new Promise(resolve=>{
   const image=new Image(); image.crossOrigin='anonymous';

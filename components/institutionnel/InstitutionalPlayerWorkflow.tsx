@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
+import InstitutionalSelectionPicker, { type DaySelection } from "@/components/institutionnel/InstitutionalSelectionPicker";
 import InstitutionalResources from "@/components/institutionnel/InstitutionalResources";
 import InstitutionalPlayerPerformance from "@/components/institutionnel/InstitutionalPlayerPerformance";
 import InstitutionalPlayerSheet from "@/components/institutionnel/InstitutionalPlayerSheet";
@@ -83,6 +84,7 @@ type Share = { id: string; player_id: string; source_structure_id: string; acces
 
 const EVENT_LABELS: Record<string, string> = {
   detection: "Détection",
+  training: "Entraînement",
   camp: "Stage",
   selection: "Sélection",
   tournament: "Tournoi intercomités",
@@ -117,6 +119,10 @@ export default function InstitutionalPlayerWorkflow({ structureId }: { structure
   const [referralUrl, setReferralUrl] = useState("");
   const [selected, setSelected] = useState<string[]>([]);
   const [activeEvent, setActiveEvent] = useState("");
+  const [daySelectionId, setDaySelectionId] = useState("");
+  const [dayLinks, setDayLinks] = useState<Array<{id:string;selection_id:string|null;event_type?:string}>>([]);
+  const [reportBusy, setReportBusy] = useState(false);
+  useEffect(() => { setDaySelectionId(dayLinks.find((link) => link.id === activeEvent)?.selection_id || ""); }, [activeEvent, dayLinks]);
   const [busy, setBusy] = useState("");
   const [showDocs, setShowDocs] = useState(false);
   const [showReferralPoster, setShowReferralPoster] = useState(false);
@@ -160,6 +166,9 @@ export default function InstitutionalPlayerWorkflow({ structureId }: { structure
   }
 
   async function loadSupportingData() {
+    const linksResponse = await fetch(`/api/institutionnel/detection-days?structureId=${encodeURIComponent(structureId)}`, {cache:"no-store"});
+    const linksJson = await linksResponse.json().catch(() => ({}));
+    if (linksResponse.ok) setDayLinks(linksJson.links || []);
     const [e, pa, t, sh, st, ss] = await Promise.all([
       sb.from("institutional_detection_events").select("*").eq("structure_id", structureId).eq("archived", false).order("event_date", { ascending: false }),
       sb.from("institutional_detection_participants").select("*"),
@@ -294,13 +303,41 @@ export default function InstitutionalPlayerWorkflow({ structureId }: { structure
 
   const toggle = (id: string) => setSelected((v) => (v.includes(id) ? v.filter((x) => x !== id) : [...v, id]));
 
-  async function createEvent() {
-    const { data: { user } } = await sb.auth.getUser();
-    if (!user || !eform.title.trim()) return;
-    const q = await sb.from("institutional_detection_events").insert({ structure_id: structureId, ...eform, location: eform.location || null, created_by: user.id }).select("id").single();
-    if (q.error) return alert(q.error.message);
-    setActiveEvent(q.data.id);
-    await loadSupportingData();
+  async function saveDaySelection(existing = false) {
+    if (busy) return;
+    if (!daySelectionId) return alert("Choisis une sélection avec sa catégorie, son sexe et sa saison.");
+    if (existing && !activeEvent) return;
+    setBusy("day");
+    try {
+      const response = await fetch("/api/institutionnel/detection-days", {method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({structureId,selectionId:daySelectionId,...(existing?{eventId:activeEvent}:eform)})});
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error || "Enregistrement impossible");
+      setActiveEvent(result.event.id);
+      await loadSupportingData();
+    } catch (error) { alert(error instanceof Error ? error.message : "Enregistrement impossible"); }
+    finally { setBusy(""); }
+  }
+  async function createEvent() { await saveDaySelection(false); }
+
+  async function exportDayReport() {
+    const event = events.find((item) => item.id === activeEvent);
+    if (!event || reportBusy) return;
+    setReportBusy(true);
+    try {
+      const [institution, selectionResponse] = await Promise.all([
+        sb.from("institutional_structures").select("name,logo_url").eq("id",structureId).maybeSingle(),
+        fetch(`/api/institutionnel/sport/selections?structureId=${encodeURIComponent(structureId)}`,{cache:"no-store"}),
+      ]);
+      if (institution.error || !institution.data) throw new Error("Institution indisponible");
+      const selectionJson = await selectionResponse.json();
+      if (!selectionResponse.ok) throw new Error(selectionJson.error || "Sélections indisponibles");
+      const linkedId = dayLinks.find((link) => link.id === event.id)?.selection_id;
+      const selection = selectionJson.selections?.find((item:DaySelection) => item.id === linkedId);
+      const {createDetectionReportPdf} = await import("@/lib/institutionnel/detection-report-pdf");
+      const doc = await createDetectionReportPdf({institution:institution.data,event,selection,participants:parts.filter(item=>item.event_id===event.id).map(item=>({ ...item, player:players.find(player=>player.id===item.player_id) }))});
+      doc.save(`rapport-journee-${event.event_date}.pdf`);
+    } catch (error) { alert(error instanceof Error ? error.message : "Export impossible"); }
+    finally { setReportBusy(false); }
   }
 
   async function removeDetectionDay() {
@@ -575,7 +612,7 @@ export default function InstitutionalPlayerWorkflow({ structureId }: { structure
       {tab === "detections" && (
         <>
           <section className="card"><div className="sectionHead"><div><p>SAISONS</p><h3>Suivi institutionnel</h3></div><span>{seasons.length} saison(s)</span></div><div className="line"><input value={seasonLabel} onChange={(e) => setSeasonLabel(e.target.value)} placeholder="2026-2027" /><button onClick={createSeason}>+ Créer la saison</button></div></section>
-          <section className="card"><div className="sectionHead"><div><p>DÉTECTIONS & SÉLECTIONS</p><h3>Créer une journée puis constituer le groupe</h3></div><span>{selected.length} joueur(s) sélectionné(s) depuis la base</span></div><div className="grid"><input value={eform.title} onChange={(e) => setEform({ ...eform, title: e.target.value })} /><select value={eform.event_type} onChange={(e) => setEform({ ...eform, event_type: e.target.value })}>{Object.entries(EVENT_LABELS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}</select><input type="date" value={eform.event_date} onChange={(e) => setEform({ ...eform, event_date: e.target.value })} /><input type="time" value={eform.start_time} onChange={(e) => setEform({ ...eform, start_time: e.target.value })} /><input placeholder="Lieu" value={eform.location} onChange={(e) => setEform({ ...eform, location: e.target.value })} /><button onClick={createEvent}>+ Créer</button></div><div className="line"><select value={activeEvent} onChange={(e) => setActiveEvent(e.target.value)}><option value="">Choisir une journée</option>{events.map((e) => <option key={e.id} value={e.id}>{e.event_date} · {e.title}</option>)}</select><button type="button" className="ghost" disabled={!activeEvent || !!busy} onClick={() => void removeDetectionDay()}>{busy === "archive_detection_event" ? "Suppression…" : "Supprimer la journée"}</button><button onClick={addToEvent}>Ajouter les joueurs sélectionnés</button><button className="ghost" onClick={() => setTab("base")}>Choisir dans Base joueurs</button></div>{activeEvent && <div className="dayCounts" aria-live="polite"><span><b>{attendanceCounts.present}</b> présents</span><span><b>{attendanceCounts.absent}</b> absents</span><span><b>{attendanceCounts.pending}</b> présence à renseigner</span><span><b>{currentParts.length}</b> convoqués</span></div>}{activeEvent && <div className="partList">{currentParts.map((x) => { const p = pMap.get(x.player_id); return p ? <div className="part" key={x.id}><b>{p.first_name} {p.last_name}</b><div className="participantActions"><select aria-label={`Présence de ${p.first_name} ${p.last_name}`} disabled={!!busy} value={STATUS_LABELS[x.status] ? x.status : ""} onChange={(e) => patchStatus(x.id, e.target.value)}><option value="">Présence à renseigner</option>{Object.entries(STATUS_LABELS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}</select><select aria-label={`Décision pour ${p.first_name} ${p.last_name}`} disabled={!!busy} value={p.profile_data?.detectionDecisions?.[x.event_id] ?? (["selected", "waiting", "not_selected"].includes(x.status) ? x.status : "")} onChange={(e) => void patchDecision(x, e.target.value)}><option value="">Décision à prendre</option><option value="selected">Sélectionné</option><option value="waiting">Liste d’attente</option><option value="not_selected">Non retenu</option></select><button type="button" className="removeParticipant" disabled={!!busy} aria-label={`Retirer ${p.first_name} ${p.last_name} de cet événement`} title="Retirer de cet événement" onClick={() => void removeEventParticipant(x, p)}>×</button></div></div> : null; })}</div>}</section>
+          <section className="card"><div className="sectionHead"><div><p>DÉTECTIONS & SÉLECTIONS</p><h3>Créer une journée puis constituer le groupe</h3></div><span>{selected.length} joueur(s) sélectionné(s) depuis la base</span></div><InstitutionalSelectionPicker structureId={structureId} value={daySelectionId} onChange={(id,selection)=>{setDaySelectionId(id);}}/><div className="grid"><input value={eform.title} onChange={(e) => setEform({ ...eform, title: e.target.value })} /><select value={eform.event_type} onChange={(e) => setEform({ ...eform, event_type: e.target.value, title: ["Journée de détection", "Entraînement"].includes(eform.title) ? (e.target.value === "training" ? "Entraînement" : "Journée de détection") : eform.title })}>{Object.entries(EVENT_LABELS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}</select><input type="date" value={eform.event_date} onChange={(e) => setEform({ ...eform, event_date: e.target.value })} /><input type="time" value={eform.start_time} onChange={(e) => setEform({ ...eform, start_time: e.target.value })} /><input placeholder="Lieu" value={eform.location} onChange={(e) => setEform({ ...eform, location: e.target.value })} /><button disabled={!!busy || !daySelectionId} onClick={createEvent}>{busy==="day"?"Enregistrement…":"+ Créer la journée"}</button></div><div className="line"><select value={activeEvent} onChange={(e) => setActiveEvent(e.target.value)}><option value="">Choisir une journée</option>{events.map((e) => <option key={e.id} value={e.id}>{e.event_date} · {e.title}</option>)}</select><button type="button" className="ghost" disabled={!activeEvent || !daySelectionId || !!busy} onClick={()=>void saveDaySelection(true)}>Enregistrer le rattachement</button><button type="button" className="ghost" disabled={!activeEvent || reportBusy} onClick={()=>void exportDayReport()}>{reportBusy?"Création du PDF…":"Exporter le rapport PDF"}</button><button type="button" className="ghost" disabled={!activeEvent || !!busy} onClick={() => void removeDetectionDay()}>{busy === "archive_detection_event" ? "Suppression…" : "Supprimer la journée"}</button><button onClick={addToEvent}>Ajouter les joueurs sélectionnés</button><button className="ghost" onClick={() => setTab("base")}>Choisir dans Base joueurs</button></div>{activeEvent && <div className="dayCounts" aria-live="polite"><span><b>{attendanceCounts.present}</b> présents</span><span><b>{attendanceCounts.absent}</b> absents</span><span><b>{attendanceCounts.pending}</b> présence à renseigner</span><span><b>{currentParts.length}</b> convoqués</span></div>}{activeEvent && <div className="partList">{currentParts.map((x) => { const p = pMap.get(x.player_id); return p ? <div className="part" key={x.id}><b>{p.first_name} {p.last_name}</b><div className="participantActions"><select aria-label={`Présence de ${p.first_name} ${p.last_name}`} disabled={!!busy} value={STATUS_LABELS[x.status] ? x.status : ""} onChange={(e) => patchStatus(x.id, e.target.value)}><option value="">Présence à renseigner</option>{Object.entries(STATUS_LABELS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}</select><select aria-label={`Décision pour ${p.first_name} ${p.last_name}`} disabled={!!busy} value={p.profile_data?.detectionDecisions?.[x.event_id] ?? (["selected", "waiting", "not_selected"].includes(x.status) ? x.status : "")} onChange={(e) => void patchDecision(x, e.target.value)}><option value="">Décision à prendre</option><option value="selected">Sélectionné</option><option value="waiting">Liste d’attente</option><option value="not_selected">Non retenu</option></select><button type="button" className="removeParticipant" disabled={!!busy} aria-label={`Retirer ${p.first_name} ${p.last_name} de cet événement`} title="Retirer de cet événement" onClick={() => void removeEventParticipant(x, p)}>×</button></div></div> : null; })}</div>}</section>
         </>
       )}
 

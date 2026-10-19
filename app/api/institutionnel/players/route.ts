@@ -110,6 +110,8 @@ export async function POST(req: Request) {
   if (action === "archive_detection_event") {
     const eventId = String(body.eventId || "");
     if (!eventId) return NextResponse.json({ error: "Journée manquante" }, { status: 400 });
+    const calendar = await ctx.admin.from("institutional_events").update({ archived: true }).eq("id", eventId).eq("structure_id", structureId);
+    if (calendar.error) return NextResponse.json({ error: calendar.error.message }, { status: 400 });
     const result = await ctx.admin.from("institutional_detection_events")
       .update({ archived: true }).eq("id", eventId).eq("structure_id", structureId)
       .select("id").maybeSingle();
