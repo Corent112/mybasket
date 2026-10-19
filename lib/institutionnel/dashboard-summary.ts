@@ -1,3 +1,4 @@
+import {playerAgeCategory} from "./player-category";
 type Player = {birthdate?:string|null;category?:string|null;sex?:string|null;archived?:boolean|null};
 type Cohort = {id:string;program_id?:string;name:string;capacity?:number|null;fee_amount_cents?:number|null;training_programs?:{name?:string|null;code?:string|null}|null};
 type Candidate = {id:string;cohort_id:string;administrative_status?:string|null;payment_exempt?:boolean|null;fee_override_cents?:number|null};
@@ -6,7 +7,7 @@ type Submission = {candidate_id:string;request_id:string;status:string};
 type Payment = {candidate_id:string;amount_cents?:number|null};
 const normalized=(value:unknown)=>String(value||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').trim().toUpperCase();
 // Basketball categories use the age reached in the calendar year ending the season.
-// Existing manually assigned categories always take precedence over birthdate inference.
+// Birthdate determines age; the manually entered category is a fallback only.
 export function institutionalSeasonEndYear(label?:string|null):number|null {
  const value=String(label||'').trim();
  const full=value.match(/^(20\d{2})\s*[-/–—]\s*(20\d{2}|\d{2})$/);
@@ -14,6 +15,8 @@ export function institutionalSeasonEndYear(label?:string|null):number|null {
  return /^20\d{2}$/.test(value)?Number(value):null;
 }
 function institutionalAgeCategory(player:Player,seasonYear:number|null):number|null {
+ const inferred=seasonYear===null?null:playerAgeCategory(player.birthdate,`${seasonYear-1}-${seasonYear}`);
+ if(inferred)return Number(inferred.slice(1));
  const category=normalized(player.category);
  if(category){const explicit=category.match(/(?:^|\b)U\s*-?\s*(\d{1,2})(?!\d)/);return explicit?Number(explicit[1]):null;}
  if(seasonYear===null)return null;

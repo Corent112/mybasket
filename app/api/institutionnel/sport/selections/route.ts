@@ -1,3 +1,4 @@
+import {withPlayerCategory} from "@/lib/institutionnel/player-category";
 import { NextResponse } from "next/server";
 import {
   canManageSport,
@@ -81,10 +82,14 @@ export async function GET(req: Request) {
     staffByTeam.set(key, [...(staffByTeam.get(key) || []), member]);
   }
 
+  const capacities=teamIds.length?await ctx.admin.from("teams").select("id,metadata").in("id",teamIds):{data:[]};
+  if("error" in capacities && capacities.error)return NextResponse.json({error:capacities.error.message},{status:400});
+  const capByTeam=new Map((capacities.data||[]).map((team:any)=>[team.id,Number(team.metadata?.institutionSelectionMaxPlayers)===10?10:12]));
   return NextResponse.json({
     selections: (selections || []).map((selection: any) => ({
       ...selection,
-      players: playersBySelection.get(String(selection.id)) || [],
+      max_players:capByTeam.get(selection.team_id)||12,
+      players: (playersBySelection.get(String(selection.id)) || []).map(entry=>({...entry,player:entry.player?withPlayerCategory(entry.player,selection.season_label):null})),
       staff: staffByTeam.get(String(selection.team_id)) || [],
     })),
   });
@@ -96,9 +101,11 @@ export async function POST(req: Request) {
   const name = String(body.name || "").trim();
   const category = String(body.category || "").trim();
   const seasonLabel = String(body.seasonLabel || "").trim();
+  const maxPlayers = Number(body.maxPlayers || 12);
+  if (![10,12].includes(maxPlayers)) return NextResponse.json({error:"Choisis un maximum de 10 ou 12 joueurs"},{status:400});
   const gender = String(body.gender || "").trim() || null;
 
-  if (!structureId || !name) {
+  if (!structureId || (!name && body.action!=="set_capacity")) {
     return NextResponse.json(
       { error: "Institution ou nom de sélection manquant" },
       { status: 400 }
@@ -112,6 +119,15 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Droits insuffisants" }, { status: 403 });
   }
 
+  if(body.action==="set_capacity"){
+    const selection=await ctx.admin.from("institutional_selections").select("id,team_id").eq("id",String(body.selectionId||"")).eq("structure_id",structureId).maybeSingle();
+    if(selection.error||!selection.data)return NextResponse.json({error:"Sélection introuvable"},{status:404});
+    const members=await ctx.admin.from("institutional_selection_players").select("id",{count:"exact",head:true}).eq("selection_id",selection.data.id).eq("status","active");
+    if(members.error)return NextResponse.json({error:members.error.message},{status:400});
+    if((members.count||0)>maxPlayers)return NextResponse.json({error:"Retire d’abord des joueurs pour respecter ce plafond. Aucun joueur n’a été retiré automatiquement."},{status:409});
+    const team=await ctx.admin.from("teams").select("metadata").eq("id",selection.data.team_id).maybeSingle();if(team.error||!team.data)return NextResponse.json({error:"Équipe introuvable"},{status:404});
+    const write=await ctx.admin.from("teams").update({metadata:{...team.data.metadata,institutionSelectionMaxPlayers:maxPlayers}}).eq("id",selection.data.team_id);if(write.error)return NextResponse.json({error:write.error.message},{status:400});return NextResponse.json({ok:true,maxPlayers});
+  }
   const teamId = crypto.randomUUID();
   const detectionEventId = String(body.detectionEventId || "");
   if (detectionEventId) {
@@ -133,6 +149,7 @@ export async function POST(req: Request) {
     category,
     coach_name: "",
     metadata: {
+      institutionSelectionMaxPlayers:maxPlayers,
       institutionManaged: true,
       institutionStructureId: structureId,
       institutionKind: "selection",

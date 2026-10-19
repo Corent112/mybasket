@@ -1,3 +1,4 @@
+import {loadInstitutionSeason,withPlayerCategory} from "@/lib/institutionnel/player-category";
 import { NextResponse } from "next/server";
 import {
   canManageSport,
@@ -105,7 +106,8 @@ export async function GET(req: Request) {
     return NextResponse.json({ error: error.message }, { status: 400 });
   }
 
-  return NextResponse.json({ players: data || [] });
+  const seasonLabel=await loadInstitutionSeason(ctx.admin,structureId);
+  return NextResponse.json({ players: (data||[]).map(player=>withPlayerCategory(player,seasonLabel)),seasonLabel });
 }
 
 export async function POST(req: Request) {
@@ -175,6 +177,13 @@ export async function POST(req: Request) {
       return NextResponse.json({ ok: true, alreadyExists: true });
     }
 
+    const [teamCapacity,rosterCount]=await Promise.all([
+      ctx.admin.from("teams").select("metadata").eq("id",selection.team_id).maybeSingle(),
+      ctx.admin.from("institutional_selection_players").select("id",{count:"exact",head:true}).eq("selection_id",selectionId).eq("status","active")
+    ]);
+    if(teamCapacity.error||rosterCount.error)return NextResponse.json({error:"Vérification de l’effectif impossible"},{status:400});
+    const maxPlayers=Number(teamCapacity.data?.metadata?.institutionSelectionMaxPlayers)===10?10:12;
+    if((rosterCount.count||0)>=maxPlayers)return NextResponse.json({error:`Sélection complète : ${maxPlayers} joueurs maximum. Les détections et entraînements restent sans limite.`},{status:409});
     try {
       const ownerId = await getTeamOwner(
         ctx.admin,
@@ -224,6 +233,13 @@ export async function POST(req: Request) {
 
       if (write.error) throw new Error(write.error.message);
 
+      // Recheck after insertion as another coach can add at the same time. Undo only this new membership if full.
+      const finalCount=await ctx.admin.from("institutional_selection_players").select("id",{count:"exact",head:true}).eq("selection_id",selectionId).eq("status","active");
+      if(finalCount.error || (finalCount.count||0)>maxPlayers){
+        const undo=await ctx.admin.from("institutional_selection_players").delete().eq("selection_id",selectionId).eq("player_id",playerId);
+        if(undo.error)throw new Error(undo.error.message);
+        return NextResponse.json({error:finalCount.error?.message||`Sélection complète : ${maxPlayers} joueurs maximum. Cet ajout n’a pas été conservé.`},{status:409});
+      }
       return NextResponse.json({
         ok: true,
         teamId: selection.team_id,
@@ -231,7 +247,7 @@ export async function POST(req: Request) {
       });
     } catch (error: any) {
       return NextResponse.json(
-        { error: error?.message || "Ajout impossible" },
+        { error: String(error?.message||"").includes("TEAM_PLAYER_LIMIT_REACHED") ? "La limite de l’équipe est atteinte. Pour un groupe de détection ou d’entraînement, utilise le bouton dédié : les joueurs restent dans la base, sans création d’un effectif d’équipe." : error?.message || "Ajout impossible" },
         { status: 400 }
       );
     }

@@ -1,5 +1,6 @@
 "use client";
 
+import {categoryMatches,withPlayerCategory} from "@/lib/institutionnel/player-category";
 import { useEffect, useMemo, useState } from "react";
 import InstitutionalSelectionTraining from "@/components/institutionnel/InstitutionalSelectionTraining";
 import InstitutionalSelectionOperations from "@/components/institutionnel/InstitutionalSelectionOperations";
@@ -37,6 +38,7 @@ type SelectionPlayer = {
 };
 
 type Selection = {
+  max_players?:number;
   id: string;
   team_id: string;
   name: string;
@@ -57,6 +59,7 @@ type Props = {
   structureId: string;
   structureType: "committee" | "league" | "federation" | "pole";
   onOpenBase?: () => void;
+  onCreateDetection?: (playerIds:string[])=>void;
 };
 
 type ShareState = {
@@ -72,8 +75,10 @@ export default function InstitutionalSelectionsManager({
   structureId,
   structureType,
   onOpenBase,
+  onCreateDetection,
 }: Props) {
   const [rows, setRows] = useState<Selection[]>([]);
+  const [baseSeason,setBaseSeason]=useState<string|undefined>();
   const [allPlayers, setAllPlayers] = useState<InstitutionalPlayer[]>([]);
   const [secondaryTeams, setSecondaryTeams] = useState<SecondaryTeam[]>([]);
   const [opened, setOpened] = useState("");
@@ -89,6 +94,7 @@ export default function InstitutionalSelectionsManager({
     category: structureType === "federation" ? "U16" : "U13",
     seasonLabel: `${new Date().getFullYear()-(new Date().getMonth()<6?1:0)}-${new Date().getFullYear()+(new Date().getMonth()<6?0:1)}`,
     gender: "",
+    maxPlayers:12,
   });
   const [chosenPlayers, setChosenPlayers] = useState<string[]>([]);
   const [playerSearch, setPlayerSearch] = useState("");
@@ -107,7 +113,7 @@ export default function InstitutionalSelectionsManager({
   );
 
   const memberIds = new Set(current?.players?.map(entry => entry.player_id) || []);
-  const availablePlayers = allPlayers.filter(player => (!categoryFilter || player.category === categoryFilter) && (!genderFilter || (genderFilter === "M" ? ["m","masculin","male","garcon","garçon","homme"] : ["f","féminin","feminin","female","fille","femme"]).includes((player.sex || "").trim().toLowerCase())) && `${player.first_name} ${player.last_name} ${player.club_name || ""}`.toLowerCase().includes(playerSearch.trim().toLowerCase()));
+  const availablePlayers = allPlayers.map(player=>withPlayerCategory(player,current?.season_label||baseSeason)).filter(player => categoryMatches(player.category,categoryFilter) && (!genderFilter || (genderFilter === "M" ? ["m","masculin","male","garcon","garçon","homme"] : ["f","féminin","feminin","female","fille","femme"]).includes((player.sex || "").trim().toLowerCase())) && `${player.first_name} ${player.last_name} ${player.club_name || ""}`.toLowerCase().includes(playerSearch.trim().toLowerCase()));
   const seasonOptions = Array.from(new Set(rows.map(row => row.season_label).filter(Boolean)));
 
   async function load() {
@@ -144,7 +150,8 @@ export default function InstitutionalSelectionsManager({
     }
 
     setRows(selectionJson.selections || []);
-    setAllPlayers(playerJson.players || []);
+    setBaseSeason(playerJson.seasonLabel);
+    setAllPlayers((playerJson.players || []).map((player:InstitutionalPlayer)=>withPlayerCategory(player,current?.season_label||playerJson.seasonLabel)));
     setSecondaryTeams(
       (teamJson.teams || []).filter(
         (row: SecondaryTeam) => row.kind === "secondary"
@@ -158,6 +165,7 @@ export default function InstitutionalSelectionsManager({
 
   async function createSelection() {
     if (!form.name.trim() || !form.category.trim() || !form.seasonLabel.trim()) return alert("Renseigne le nom, la catégorie et la saison.");
+    if(creationPlayerIds.length>form.maxPlayers)return alert(`Choisis au maximum ${form.maxPlayers} joueurs pour cette sélection.`);
     setBusy(true);setMessage("");
     let selectionId="";const added:string[]=[];
     try {
@@ -177,6 +185,7 @@ export default function InstitutionalSelectionsManager({
 
   async function addExistingPlayers() {
     if (!current || !chosenPlayers.length || busy) return;
+    if((current.players?.length||0)+chosenPlayers.length>(current.max_players||12))return alert(`Cette sélection est limitée à ${current.max_players||12} joueurs. Retire des coches ou des membres avant de valider.`);
     setBusy(true);setMessage("");
     const added: string[] = [];
     try {
@@ -367,7 +376,8 @@ export default function InstitutionalSelectionsManager({
             <option value="M">Masculin</option>
             <option value="F">Féminin</option>
           </select>
-          <div className="creationRoster"><h4>Joueurs de la base à intégrer</h4><p>Choisis les joueurs déjà enregistrés. Si un joueur manque, crée d’abord sa fiche dans la base.</p><input aria-label="Rechercher dans la base à la création" placeholder="Nom, prénom ou club" value={creationSearch} onChange={event=>setCreationSearch(event.target.value)}/><div className="inline"><button type="button" disabled={busy} onClick={()=>setCreationPlayerIds(allPlayers.filter(player=>`${player.first_name} ${player.last_name} ${player.club_name||""}`.toLowerCase().includes(creationSearch.toLowerCase())).map(player=>player.id))}>Tout cocher dans cette recherche</button><button type="button" disabled={busy} onClick={()=>setCreationPlayerIds([])}>Tout décocher</button></div><div className="rosterChecks">{allPlayers.filter(player=>`${player.first_name} ${player.last_name} ${player.club_name||""}`.toLowerCase().includes(creationSearch.toLowerCase())).map(player=><label key={player.id}><input type="checkbox" disabled={busy} checked={creationPlayerIds.includes(player.id)} onChange={()=>setCreationPlayerIds(previous=>previous.includes(player.id)?previous.filter(id=>id!==player.id):[...previous,player.id])}/><span><b>{player.last_name} {player.first_name}</b><small>{player.category||"Catégorie non renseignée"} · {player.club_name||"Club non renseigné"}</small></span></label>)}</div><small>{creationPlayerIds.length} joueur(s) choisi(s)</small></div>
+          <label>Nombre maximum de joueurs<select value={form.maxPlayers} onChange={event=>setForm(previous=>({...previous,maxPlayers:Number(event.target.value)}))}><option value={10}>10 joueurs maximum</option><option value={12}>12 joueurs maximum</option></select></label>
+          <div className="creationRoster"><h4>Joueurs de la base à intégrer</h4><p>Choisis les joueurs déjà enregistrés. Si un joueur manque, crée d’abord sa fiche dans la base.</p><input aria-label="Rechercher dans la base à la création" placeholder="Nom, prénom ou club" value={creationSearch} onChange={event=>setCreationSearch(event.target.value)}/><div className="inline"><button type="button" disabled={busy} onClick={()=>setCreationPlayerIds(allPlayers.filter(player=>`${player.first_name} ${player.last_name} ${player.club_name||""}`.toLowerCase().includes(creationSearch.toLowerCase())).map(player=>player.id))}>Tout cocher dans cette recherche</button><button type="button" disabled={busy} onClick={()=>setCreationPlayerIds([])}>Tout décocher</button></div><div className="rosterChecks">{allPlayers.filter(player=>`${player.first_name} ${player.last_name} ${player.club_name||""}`.toLowerCase().includes(creationSearch.toLowerCase())).map(player=><label key={player.id}><input type="checkbox" disabled={busy} checked={creationPlayerIds.includes(player.id)} onChange={()=>setCreationPlayerIds(previous=>previous.includes(player.id)?previous.filter(id=>id!==player.id):[...previous,player.id])}/><span><b>{player.last_name} {player.first_name}</b><small>{player.category||"Catégorie non renseignée"} · {player.club_name||"Club non renseigné"}</small></span></label>)}</div><small>{creationPlayerIds.length} / {form.maxPlayers} joueurs choisis{creationPlayerIds.length>form.maxPlayers?" — retire des joueurs avant de créer":""}</small></div>
           <button className="primary" disabled={busy} onClick={createSelection}>
             {busy ? "Création…" : "Créer"}
           </button>
@@ -413,18 +423,9 @@ export default function InstitutionalSelectionsManager({
 
           <nav className="detailTabs" aria-label="Onglets de la sélection"><button type="button" className={detailTab==="roster"?"active":""} onClick={()=>setDetailTab("roster")}>Effectif</button><button type="button" className={detailTab==="training"?"active":""} onClick={()=>setDetailTab("training")}>Entraînements</button></nav>
           {detailTab==="roster"&&<>
-          <div className="featureStrip">
-            <span><b>📷 Photo</b>Upload direct</span>
-            <span><b>♥ RPE</b>Suivi individuel</span>
-            <span><b>↗ Charge</b>Charge d’entraînement</span>
-            <span><b>▦ Entraînements</b>Historique & présence</span>
-            <span><b>◎ Grille de tir</b>Shot chart</span>
-            <span><b>▶ Vidéo</b>Clips & stats</span>
-          </div>
-
           <div className="twoCols">
-            <div className="panel">
-              <h4>Responsables de la sélection</h4>
+            <details className="panel staffPanel">
+              <summary>Responsables de la sélection ({current.staff?.length||0})</summary>
               <p>
                 Ils obtiennent un accès Premium à cette sélection et la voient
                 dans leur espace Mes équipes.
@@ -452,21 +453,23 @@ export default function InstitutionalSelectionsManager({
                   </span>
                 ))}
               </div>
-            </div>
+            </details>
 
-            <div className="panel">
-              <h4>Composer l’effectif depuis la base joueurs</h4>
-              <p>Coche les joueurs que tu souhaites ajouter à {current.name}. Les membres actuels sont déjà dans la liste ci-dessous.</p>
-              <div className="rosterFilters"><input aria-label="Rechercher des joueurs" placeholder="Nom, prénom ou club" value={playerSearch} onChange={e=>setPlayerSearch(e.target.value)}/><select aria-label="Catégorie des joueurs" value={categoryFilter} onChange={e=>setCategoryFilter(e.target.value)}><option value="">Toutes les catégories</option>{Array.from(new Set(allPlayers.map(player=>player.category).filter(Boolean))).sort().map(category=><option key={category!} value={category!}>{category}</option>)}</select><select aria-label="Sexe des joueurs" value={genderFilter} onChange={e=>setGenderFilter(e.target.value)}><option value="">Tous</option><option value="M">Garçons</option><option value="F">Filles</option></select></div>
+            <div className="panel rosterComposer">
+              <h4>Choisir les joueurs dans la base</h4>
+              <p>Sélection finale : {current.max_players||12} joueurs maximum. Pour un groupe plus large, utilise « Créer une détection / entraînement ».</p>
+              <div className="rosterFilters"><input aria-label="Rechercher des joueurs" placeholder="Nom, prénom ou club" value={playerSearch} onChange={e=>setPlayerSearch(e.target.value)}/><select aria-label="Catégorie des joueurs" value={categoryFilter} onChange={e=>setCategoryFilter(e.target.value)}><option value="">Tous les âges</option><option value="group:u13">Groupe U13 — U12 + U13</option>{Array.from(new Set(allPlayers.map(player=>player.category).filter(Boolean))).sort().map(category=><option key={category!} value={category!}>{category}</option>)}</select><select aria-label="Sexe des joueurs" value={genderFilter} onChange={e=>setGenderFilter(e.target.value)}><option value="">Tous</option><option value="M">Garçons</option><option value="F">Filles</option></select></div>
+              <div className="selectionActionBar"><button type="button" disabled={busy} onClick={()=>setChosenPlayers(availablePlayers.filter(player=>!memberIds.has(player.id)).map(player=>player.id))}>Tout cocher ({availablePlayers.length})</button><button type="button" disabled={busy} onClick={()=>setChosenPlayers([])}>Tout décocher</button><button className="primary" disabled={busy || !chosenPlayers.length || (current.players?.length||0)+chosenPlayers.length>(current.max_players||12)} onClick={()=>void addExistingPlayers()}>{busy?"Enregistrement…":`Ajouter à la sélection (${chosenPlayers.length})`}</button>{onCreateDetection && (chosenPlayers.length>0 || memberIds.size>0) && <button type="button" className="groupAction" disabled={busy} onClick={()=>onCreateDetection([...new Set([...memberIds,...chosenPlayers])])}>Créer une détection / entraînement ({new Set([...memberIds,...chosenPlayers]).size})</button>}<span>{chosenPlayers.length} nouveau(x) coché(s) · {Math.max(0,(current.max_players||12)-(current.players?.length||0))} places en sélection</span></div>
               <div className="rosterChecks">{availablePlayers.map(player=><label key={player.id} style={{background:memberIds.has(player.id)?"#e9e5e3":chosenPlayers.includes(player.id)?"#faf0f3":"white"}}><input type="checkbox" disabled={busy || memberIds.has(player.id)} checked={memberIds.has(player.id) || chosenPlayers.includes(player.id)} onChange={()=>setChosenPlayers(previous=>previous.includes(player.id)?previous.filter(id=>id!==player.id):[...previous,player.id])}/><span><b>{player.last_name} {player.first_name}</b><small>{player.category || "Catégorie non renseignée"} · {player.club_name || "Club non renseigné"}{memberIds.has(player.id)?" · Déjà ajouté":""}</small></span></label>)}</div>
               {!availablePlayers.length && <p>Aucun joueur à ajouter avec ces filtres.</p>}
-              <div className="inline"><button type="button" disabled={busy} onClick={()=>setChosenPlayers(availablePlayers.filter(player=>!memberIds.has(player.id)).map(player=>player.id))}>Tout cocher ({availablePlayers.length})</button><button type="button" disabled={busy} onClick={()=>setChosenPlayers([])}>Tout décocher</button><button className="primary" disabled={busy || !chosenPlayers.length} onClick={()=>void addExistingPlayers()}>{busy?"Enregistrement…":`Ajouter à la sélection (${chosenPlayers.length})`}</button></div>
+
             </div>
           </div>
 
+          <div className="panel"><label>Plafond de cette sélection<select disabled={busy} value={current.max_players||12} onChange={async event=>{setBusy(true);try{const response=await fetch("/api/institutionnel/sport/selections",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({structureId,action:"set_capacity",selectionId:current.id,maxPlayers:Number(event.target.value)})});const result=await response.json();if(!response.ok)throw new Error(result.error);await load();}catch(error){alert(error instanceof Error?error.message:"Modification impossible");}finally{setBusy(false)}}}><option value={10}>10 joueurs maximum</option><option value={12}>12 joueurs maximum</option></select></label>{(current.players?.length||0)>(current.max_players||12)&&<p role="alert">Cet effectif dépasse le plafond. Les joueurs existants sont conservés : retire ceux qui ne font pas partie de la sélection finale.</p>}</div>
           <div className="roster">
             <div className="rosterHead">
-              <b>Effectif & accès</b>
+              <b>Effectif : {current.players?.length||0} / {current.max_players||12} joueurs</b>
               <span>
                 Chaque ligne ouvre la vraie fiche MyBasket complète.
               </span>
@@ -717,6 +720,8 @@ export default function InstitutionalSelectionsManager({
         .pdfNote{border-left:4px solid #d4a24c;background:#fff9ec;border-radius:8px;padding:10px 12px;display:grid;gap:2px}.pdfNote b{color:#6b1a2c}.pdfNote span{font-size:.72rem;color:#766961}
         @media(max-width:1100px){.featureStrip{grid-template-columns:repeat(3,1fr)}.selectionGrid{grid-template-columns:repeat(2,minmax(0,1fr))}.roster article{grid-template-columns:52px 1fr 1fr}.userLink,.openLinks{grid-column:2/-1}}
         @media(max-width:800px){.head,.detailHead{flex-direction:column}.createSelection,.selectionGrid,.twoCols{grid-template-columns:1fr}.featureStrip{grid-template-columns:repeat(2,1fr)}.inline{flex-direction:column}.roster article{grid-template-columns:52px 1fr}.context,.userLink,.openLinks{grid-column:1/-1}}
+
+        .twoCols{grid-template-columns:minmax(0,1fr);align-items:start}.staffPanel{padding:9px 12px;background:#faf9f8}.staffPanel summary{cursor:pointer;color:#6b1a2c;font-weight:700;font-size:.8rem}.staffPanel[open] summary{margin-bottom:12px}.panel.rosterComposer{padding:12px}.rosterFilters{display:flex;gap:8px;flex-wrap:wrap;margin:10px 0}.rosterFilters input{flex:1;min-width:180px}.rosterChecks{display:grid;grid-template-columns:1fr;gap:0;max-height:none;overflow:visible}.rosterChecks label{display:flex;align-items:center;gap:10px;min-height:36px;padding:6px 10px;border:0;border-bottom:1px solid #eee8e4;border-radius:0;font-size:.8rem}.rosterChecks label>input{width:16px;height:16px;flex:none;accent-color:#6b1a2c}.rosterChecks label>span{display:grid;grid-template-columns:minmax(170px,1fr) minmax(140px,1fr);align-items:center;gap:12px;width:100%;min-width:0}.rosterChecks b{font-size:.8rem;font-weight:650;line-height:1.35}.rosterChecks small{font-size:.72rem;line-height:1.35;color:#84756f}.selectionActionBar{display:flex;gap:7px;flex-wrap:wrap;align-items:center;padding:9px 0;background:#fff;position:sticky;top:70px;z-index:2;border-bottom:1px solid #e7ddd7}.selectionActionBar button{padding:7px 10px;border:1px solid #e0d4cd;border-radius:7px;background:white;color:#6b1a2c;font-size:.75rem}.selectionActionBar .primary{background:#6b1a2c;color:white}.selectionActionBar button:disabled{opacity:.45;cursor:default}.selectionActionBar .groupAction{background:#f4f0eb}.selectionActionBar span{font-size:.7rem;color:#87766f}.detailActions button,.detailActions a{font-size:.75rem;padding:7px 10px}.selectionCard{padding:10px;border-radius:8px}.selectionCard b{font-size:.85rem}.head p,.detailHead p{font-size:.8rem}.roster article{padding:8px;border-radius:8px}.avatar{width:38px;height:38px}.roster article{grid-template-columns:38px minmax(140px,1fr) minmax(200px,1fr) minmax(200px,1fr) auto}@media(max-width:800px){.roster article{grid-template-columns:38px 1fr}.rosterChecks label>span{grid-template-columns:1fr;gap:2px}.selectionActionBar{top:56px}.twoCols{grid-template-columns:1fr}}
       `}</style>
     </div>
   );

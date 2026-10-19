@@ -1,4 +1,5 @@
 "use client";
+import {playerAgeCategory} from "@/lib/institutionnel/player-category";
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
@@ -255,6 +256,7 @@ export default function InstitutionalPlayerSheet({ structureId, player, referral
 
   const archived = Boolean(player.archived) || String(profile?.lifecycle?.workflowStatus) === "archived";
   const age = ageFromBirthdate(form.birthdate);
+  const ageCategory=playerAgeCategory(form.birthdate,(player as any).category_season)||form.category;
   const initials = `${form.first_name?.[0] || "?"}${form.last_name?.[0] || ""}`.toUpperCase();
   const latestMeasure = measurements[0] || null;
   const medicalEntries = Array.isArray(profile.medicalEntries) ? profile.medicalEntries : [];
@@ -325,7 +327,7 @@ export default function InstitutionalPlayerSheet({ structureId, player, referral
         <button className="backLink" onClick={onClose}>← <span>Retour à la liste des joueurs</span></button>
         <div className="topActions">
           <button className="actionBtn" onClick={() => setTab("Informations")}>✎ <span>Modifier</span></button>
-          {!archived && clean(player.category).toUpperCase().startsWith("U13") && <button className="actionBtn" onClick={()=>onSave({...form,category:"U14"})}>↑ <span>Passer en U14</span></button>}
+
           {archived ? <button className="actionBtn success" onClick={onRestore}>↺ <span>Restaurer</span></button> : <button className="actionBtn" onClick={onArchive}>▣ <span>Archiver</span></button>}
           <button className="actionBtn danger" onClick={onDelete}>⌫ <span>Supprimer</span></button>
           <button className="close" onClick={onClose} aria-label="Fermer">×</button>
@@ -340,7 +342,7 @@ export default function InstitutionalPlayerSheet({ structureId, player, referral
             <p>Né le {fmtDate(form.birthdate)}{age != null ? ` (${age} ans)` : ""} <i>•</i> {form.sex === "F" ? "Féminin" : form.sex === "M" ? "Masculin" : "Sexe —"} <i>•</i> {form.nationality || "Nationalité —"}</p>
             <div className="headerFacts">
               <HeaderFact label="Club actuel" value={form.club_name || "—"} />
-              <HeaderFact label="Catégorie" value={form.category || "—"} />
+              <HeaderFact label="Catégorie d’âge" value={ageCategory || "—"} />
               <HeaderFact label="Poste principal" value={form.position || "—"} />
               <HeaderFact label="Poste secondaire" value={form.secondary_position || "—"} />
             </div>
@@ -406,7 +408,7 @@ export default function InstitutionalPlayerSheet({ structureId, player, referral
               <Field label="Date de naissance" type="date" value={form.birthdate} onChange={(v) => patch("birthdate", v)} />
               <Select label="Sexe" value={form.sex} onChange={(v) => patch("sex", v)} options={["M", "F"]} />
               <Field label="Club actuel" value={form.club_name} onChange={(v) => patch("club_name", v)} />
-              <Field label="Catégorie" value={form.category} onChange={(v) => patch("category", v)} />
+              <div><b>Catégorie d’âge</b><p>{ageCategory || "Renseigne la date de naissance"} · {(player as any).category_season || "Saison actuelle"}</p></div>
               <Select label="Poste principal" value={form.position} onChange={(v) => patch("position", v)} options={["Meneur", "Arrière", "Ailier", "Ailier-fort", "Pivot"]} />
               <Select label="Poste secondaire" value={form.secondary_position} onChange={(v) => patch("secondary_position", v)} options={["Meneur", "Arrière", "Ailier", "Ailier-fort", "Pivot"]} />
               <Field label="N° maillot" value={form.jersey_number} onChange={(v) => patch("jersey_number", v)} />

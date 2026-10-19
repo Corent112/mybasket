@@ -1,3 +1,4 @@
+import {loadInstitutionSeason,withPlayerCategory,playerAgeCategory} from "@/lib/institutionnel/player-category";
 import { NextResponse } from "next/server";
 import {
   canManageSport,
@@ -65,9 +66,11 @@ export async function GET(req: Request) {
     );
   }
 
+  const seasonLabel=await loadInstitutionSeason(ctx.admin,structureId);
   return NextResponse.json({
+    seasonLabel,
     players: (players || []).map((p: any) => ({
-      ...p,
+      ...withPlayerCategory(p,seasonLabel),
       workflow_status: lifecycle(p.profile_data, Boolean(p.archived)),
     })),
     referrals: referrals || [],
@@ -86,6 +89,16 @@ export async function POST(req: Request) {
   const ctx = await actor(structureId);
   if ("error" in ctx) return ctx.error;
 
+  if(action==="set_detection_attendance"){
+    const eventId=String(body.eventId||""),playerId=String(body.playerId||""),status=String(body.status||"");
+    if(!eventId||!playerId||!["invited","confirmed","present","absent","excused"].includes(status))return NextResponse.json({error:"Présence invalide"},{status:400});
+    const event=await ctx.admin.from("institutional_detection_events").select("id").eq("id",eventId).eq("structure_id",structureId).eq("archived",false).maybeSingle();if(event.error||!event.data)return NextResponse.json({error:"Journée indisponible"},{status:404});
+    const participant=await ctx.admin.from("institutional_detection_participants").select("id,status").eq("event_id",eventId).eq("player_id",playerId).maybeSingle();if(participant.error||!participant.data)return NextResponse.json({error:"Joueur absent de cette journée"},{status:404});
+    const player=await ctx.admin.from("institutional_players").select("id,profile_data,updated_at").eq("id",playerId).eq("structure_id",structureId).maybeSingle();if(player.error||!player.data)return NextResponse.json({error:"Fiche indisponible"},{status:404});
+    const profile=player.data.profile_data||{},profileData={...profile,detectionAttendance:{...profile.detectionAttendance,[eventId]:status}};
+    let query=ctx.admin.from("institutional_players").update({profile_data:profileData,updated_at:new Date().toISOString()}).eq("id",playerId).eq("structure_id",structureId);query=player.data.updated_at?query.eq("updated_at",player.data.updated_at):query.is("updated_at",null);const result=await query.select("id").maybeSingle();if(result.error||!result.data)return NextResponse.json({error:result.error?.message||"La fiche a changé : recharge puis réessaie."},{status:409});
+    return NextResponse.json({ok:true,profileData,status});
+  }
   if (action === "set_detection_decision") {
     const eventId = String(body.eventId || ""), playerId = String(body.playerId || "");
     const decision = String(body.decision || "");
@@ -249,7 +262,7 @@ export async function POST(req: Request) {
         last_name: lastName,
         birthdate: referral.birthdate || null,
         club_name: referral.club_name || null,
-        category: referral.category || null,
+        category: playerAgeCategory(referral.birthdate,await loadInstitutionSeason(ctx.admin,structureId)) || referral.category || null,
         status: "followed",
         archived: false,
         position_primary: null,
@@ -321,7 +334,7 @@ export async function POST(req: Request) {
         last_name: lastName,
         birthdate: clean(patch.birthdate),
         club_name: clean(patch.club_name),
-        category: clean(patch.category),
+        category: playerAgeCategory(patch.birthdate,await loadInstitutionSeason(ctx.admin,structureId)) || clean(patch.category),
         email: clean(patch.email),
         phone: clean(patch.phone),
         sex: clean(patch.sex),
@@ -413,7 +426,7 @@ export async function POST(req: Request) {
         last_name: lastName,
         birthdate: clean(patch.birthdate),
         club_name: clean(patch.club_name),
-        category: clean(patch.category),
+        category: playerAgeCategory(patch.birthdate,await loadInstitutionSeason(ctx.admin,structureId)) || clean(patch.category),
         email: clean(patch.email),
         phone: clean(patch.phone),
         sex: clean(patch.sex),

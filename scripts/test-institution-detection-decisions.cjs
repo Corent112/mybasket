@@ -8,9 +8,9 @@ async function run(options={}){
 }
 (async()=>{
 const ui=fs.readFileSync('components/institutionnel/InstitutionalPlayerWorkflow.tsx','utf8');
-const countsCode=ui.slice(ui.indexOf('  const attendanceCounts ='),ui.indexOf('  const pMap ='));
+const countsCode=ui.slice(ui.indexOf('  const attendanceCounts ='),ui.indexOf('  const pickerPlayers='));
 const ctx={currentParts:[{status:'present'},{status:'present'},{status:'absent'},{status:'invited'},{status:'selected'}]};vm.createContext(ctx);vm.runInContext(countsCode+'globalThis.counts=attendanceCounts',ctx);assert.equal(ctx.counts.present,2);assert.equal(ctx.counts.absent,1);assert.equal(ctx.counts.pending,2);
-const start=ui.indexOf('  async function removeDetectionDay()'),end=ui.indexOf('  async function addToEvent()',start),removeCode=ui.slice(start,end);
+const start=ui.indexOf('  async function removeDetectionDay()'),end=ui.indexOf('  async function addToEvent(',start),removeCode=ui.slice(start,end);
 for(const mode of ['cancel','fail','success']){let writes=0,reset=false;const c={events:[{id:'day',title:'Test',event_date:'2026-10-19'}],activeEvent:'day',busy:'',fmtDate:()=>'',window:{confirm:()=>mode!=='cancel'},playerAction:async()=>{writes++;return mode==='success'?{ok:true}:null},setEvents:()=>{reset=true},setParts:()=>{},setActiveEvent:()=>{},setBusy:()=>{},alert:()=>{}};vm.createContext(c);vm.runInContext(removeCode+'globalThis.removeDay=removeDetectionDay',c);await c.removeDay();assert.equal(writes,mode==='cancel'?0:1);assert.equal(reset,mode==='success');}
 let x=await run();assert.equal(x.result.status,200);const write=x.calls.find(c=>c.patch);assert.equal(write.patch.profile_data.medical.keep,true);assert.equal(write.patch.profile_data.detectionDecisions.other,'waiting');assert.equal(write.patch.profile_data.detectionDecisions.day,'selected');assert.deepEqual(write.filters,[['id','p'],['structure_id','institution'],['updated_at','old']]);assert(!x.calls.some(c=>c.table==='institutional_detection_participants'&&c.patch));
 for(const [opts,status] of [[{denied:true},403],[{missing:'institutional_detection_events'},404],[{missing:'institutional_detection_participants'},404],[{conflict:true},409],[{error:true},400],[{body:{decision:'bad'}},400]])assert.equal((await run(opts)).result.status,status);

@@ -1,4 +1,4 @@
-const fs=require('fs'),vm=require('vm'),ts=require('typescript'),assert=require('node:assert/strict');const context={exports:{}};
+const fs=require('fs'),vm=require('vm'),ts=require('typescript'),assert=require('node:assert/strict');const helper={exports:{}};vm.runInNewContext(ts.transpileModule(fs.readFileSync("lib/institutionnel/player-category.ts","utf8"),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2020}}).outputText,helper);const context={exports:{},require:()=>helper.exports};
 vm.runInNewContext(ts.transpileModule(fs.readFileSync('lib/institutionnel/dashboard-summary.ts','utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2020}}).outputText,context);
 const {institutionalPlayerCounts:players,institutionalTrainingProgramSummaries:formations}=context.exports;
 const counts=players([{category:'U12',sex:'F'},{category:'U13F',sex:null},{category:'U14',sex:'Féminine'},{category:'U13',sex:'M'},{category:'U14M',sex:null},{category:'U13',sex:'F',archived:true},{category:'U18',sex:'F'}]);
@@ -12,10 +12,10 @@ const paid=formations(programs,cohorts,[{id:'one',cohort_id:'a',payment_exempt:t
 console.log('Institution dashboard: U12/U13 grouping, sexes, archives, null candidate statuses, actual documents/payments, formation isolation, multiple promotions and newly created formations passed.');
 
 const seasonCounts=players([{category:null,birthdate:'2014-04-22',sex:'M'},{category:'',birthdate:'2015-12-31',sex:'F'},{birthdate:'2013-01-01',sex:'M'},{birthdate:'2013-12-31',sex:'F'},{category:'U14',birthdate:'2014-04-22',sex:'F'},{category:'U18',birthdate:'2014-04-22',sex:'M'},{birthdate:'2016-04-22',sex:'M'},{birthdate:'2014-22-04',sex:'M'},{birthdate:'2014-02-30',sex:'F'},{birthdate:null,sex:'M'},{birthdate:'2014-04-22',sex:'M',archived:true}], '2026-2027');
-assert.equal(seasonCounts.u13m,1);assert.equal(seasonCounts.u13f,1);assert.equal(seasonCounts.u14m,1);assert.equal(seasonCounts.u14f,2);assert.equal(seasonCounts.players,10);
+assert.equal(seasonCounts.u13m,2);assert.equal(seasonCounts.u13f,2);assert.equal(seasonCounts.u14m,1);assert.equal(seasonCounts.u14f,1);assert.equal(seasonCounts.players,10);
 assert.equal(players([{birthdate:'2014-12-31',sex:'M'}],'2027-2028').u14m,1);
 assert.equal(players([{birthdate:'2014-01-01',sex:'M'}],null).u13m,0);
 assert.equal(players([{category:'U13',birthdate:null,sex:'boy'}],null).u13m,1);
 assert.equal(context.exports.institutionalSeasonEndYear('2026/27'),2027);
 assert.equal(context.exports.institutionalSeasonEndYear('2026-2028'),null);
-console.log('Institution age counters: birthdate fallback, basketball season, U12/U13 grouping, manual category priority, archives and invalid/missing dates passed.');
+console.log('Institution age counters: birthdate fallback, basketball season, U12/U13 grouping, birthdate priority, archives and invalid/missing dates passed.');

@@ -55,6 +55,10 @@ export async function POST(req: Request) {
     const group = await ctx.admin.from("institutional_detection_events").select("id,title,event_date").eq("structure_id", structureId).eq("id", eventId).eq("archived", false).maybeSingle();
     if (group.error || !group.data)
         return NextResponse.json({ error: "Groupe introuvable dans cette institution" }, { status: 404 });
+    const parts = await ctx.admin.from("institutional_detection_participants").select("player_id").eq("event_id", eventId);
+    if (parts.error)
+        return NextResponse.json({ error: parts.error.message }, { status: 400 });
+    if(new Set((parts.data||[]).map((row:any)=>row.player_id)).size>12)return NextResponse.json({error:"Ce groupe de détection dépasse 12 joueurs. Compose une sélection de 10 ou 12 joueurs dans Sélections, sans réduire le groupe d’entraînement."},{status:409});
     const request = (payload: Record<string, unknown>) => new Request(req.url, { method: "POST", headers: req.headers, body: JSON.stringify(payload) });
     const created = await createSelection(request({ structureId, detectionEventId: eventId, name: group.data.title, category: groupCategory(group.data.title), seasonLabel: competitionSeason([{ date: group.data.event_date }]) || currentBasketballSeason() }));
     if (!created)
@@ -62,9 +66,6 @@ export async function POST(req: Request) {
     const result = await created.json();
     if (!created.ok)
         return NextResponse.json(result, { status: created.status });
-    const parts = await ctx.admin.from("institutional_detection_participants").select("player_id").eq("event_id", eventId);
-    if (parts.error)
-        return NextResponse.json({ error: parts.error.message }, { status: 400 });
     const members = await ctx.admin.from("institutional_selection_players").select("player_id").eq("selection_id", result.selection.id);
     if (members.error)
         return NextResponse.json({ error: members.error.message }, { status: 400 });
