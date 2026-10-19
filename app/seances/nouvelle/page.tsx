@@ -3,11 +3,12 @@
 import { useEffect, useMemo, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { clearSessionBuilderItems, loadSessionBuilderItems } from "@/lib/session-builder";
+import InstitutionalPracticeSelectionPicker from "@/components/institutionnel/InstitutionalPracticeSelectionPicker";
 import SessionPhotoImport from "@/components/ai/SessionPhotoImport";
 import type { AiSessionScan } from "@/lib/import/session-scan-types";
 import NextSessionAdvicePanel from "@/components/development/NextSessionAdvicePanel";
 
-type Team = { id: string; name: string; club_logo_url?: string | null; gymnasium?: string | null };
+type Team = { institutionId?:string;selectionId?:string; id: string; name: string; club_logo_url?: string | null; gymnasium?: string | null };
 type Player = { id: string; team_id: string; first_name?: string | null; last_name?: string | null; position_primary?: string | null };
 type SessionExercise = { exercise_id: string; title: string; who: string; duration_minutes: number; situation_image_url: string; explanation: string; instructions: string; variants?: string; sort_order: number };
 type CompositionTeam = { id: string; name: string; playerIds: string[] };
@@ -401,6 +402,7 @@ export default function NouvelleSeancePage() {
         }
       }
     }
+    if(selectedTeam?.institutionId && selectedTeam.selectionId){try{const response=await fetch("/api/institutionnel/practice-session-link",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({structureId:selectedTeam.institutionId,selectionId:selectedTeam.selectionId,sessionId})});const result=await response.json();if(!response.ok)throw new Error(result.error||"Rattachement impossible");}catch(error){setEditingId(sessionId);setSaving(false);alert(`La séance est enregistrée, mais le rattachement a échoué : ${error instanceof Error?error.message:"Réessaie"}. Enregistre à nouveau pour réessayer.`);return;}}
     await supabase.from("profiles").update({ active_practice_session_id: null }).eq("id", user.id); await clearSessionBuilderItems(); setSaving(false); window.location.href = `/seances/${sessionId}`;
   }
 
@@ -408,6 +410,7 @@ export default function NouvelleSeancePage() {
   return <main className="page">
     <header className="hero"><span>MYBASKET · MODE COACH</span><h1>{editingId ? "MODIFIER LA SÉANCE" : "CONSTRUIRE LA SÉANCE"}</h1><p>Prépare les présents, compose tes groupes et organise ton practice plan.</p></header>
 
+    <InstitutionalPracticeSelectionPicker onChoose={team=>{if(!team){setTeamId("");setSelection([]);return;}setTeams(prev=>[...prev.filter(t=>t.id!==team.id),team]);setPlayers(prev=>[...prev.filter(p=>p.team_id!==team.id),...team.players.map(p=>({id:p.id,team_id:team.id,first_name:p.firstName,last_name:p.lastName,position_primary:p.position}))]);setTeamId(team.id);setSelection(team.players.map(p=>p.id));}}/>
     <section className="panel info"><div className="panelTitle"><span>01</span><div><h2>Informations</h2><p>Cadre général de la séance</p></div></div><div className="infoGrid"><label>Titre<input value={title} onChange={(e) => setTitle(e.target.value)} /></label><label>Équipe<select value={teamId} onChange={(e) => { setTeamId(e.target.value); setSelection([]); }}><option value="">Choisir</option>{teams.map((team) => <option key={team.id} value={team.id}>{team.name}</option>)}</select></label><label>Thème<input value={theme} onChange={(e) => setTheme(e.target.value)} /></label><label>Date<input type="date" value={date} onChange={(e) => setDate(e.target.value)} /></label><label>Début<input type="time" value={startTime} onChange={(e) => setStartTime(e.target.value)} /></label><label>Fin<input type="time" value={endTime} onChange={(e) => setEndTime(e.target.value)} /></label><label className="wide">Lieu<input value={location} onChange={(e) => setLocation(e.target.value)} /></label></div></section>
     {!editingId && teamId && date && <section className="calendarLinkPanel">
       <div className="calendarLinkHead"><div><span>CALENDRIER</span><strong>{calendarCandidateLoading ? "Recherche…" : calendarCandidates.length ? `${calendarCandidates.length} créneau${calendarCandidates.length>1?"x":""} trouvé${calendarCandidates.length>1?"s":""}` : "Aucun créneau existant"}</strong></div>{selectedCalendarCandidate && <b>✓ Prérempli</b>}</div>

@@ -1,8 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import PlayerForm from "@/components/equipes/PlayerForm";
-import type { Player as MyBasketPlayer } from "@/types/player";
+import InstitutionalSelectionTraining from "@/components/institutionnel/InstitutionalSelectionTraining";
 import InstitutionalSelectionOperations from "@/components/institutionnel/InstitutionalSelectionOperations";
 
 type InstitutionalPlayer = {
@@ -57,6 +56,7 @@ type Selection = {
 type Props = {
   structureId: string;
   structureType: "committee" | "league" | "federation" | "pole";
+  onOpenBase?: () => void;
 };
 
 type ShareState = {
@@ -71,6 +71,7 @@ type ShareState = {
 export default function InstitutionalSelectionsManager({
   structureId,
   structureType,
+  onOpenBase,
 }: Props) {
   const [rows, setRows] = useState<Selection[]>([]);
   const [allPlayers, setAllPlayers] = useState<InstitutionalPlayer[]>([]);
@@ -79,7 +80,9 @@ export default function InstitutionalSelectionsManager({
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
   const [showCreate, setShowCreate] = useState(false);
-  const [showPlayerForm, setShowPlayerForm] = useState(false);
+  const [detailTab, setDetailTab] = useState<"roster"|"training">("roster");
+  const [creationPlayerIds, setCreationPlayerIds] = useState<string[]>([]);
+  const [creationSearch, setCreationSearch] = useState("");
   const [share, setShare] = useState<ShareState>(null);
   const [form, setForm] = useState({
     name: structureType === "federation" ? "Équipe de France U16" : "Sélection U13",
@@ -92,7 +95,7 @@ export default function InstitutionalSelectionsManager({
   const [categoryFilter, setCategoryFilter] = useState("");
   const [genderFilter, setGenderFilter] = useState("");
   const [seasonFilter, setSeasonFilter] = useState("");
-  useEffect(() => { setChosenPlayers([]); }, [opened]);
+
   const [staffEmail, setStaffEmail] = useState("");
   const [staffRole, setStaffRole] = useState("Responsable sélection");
   const [linkUserEmail, setLinkUserEmail] = useState<Record<string, string>>({});
@@ -104,7 +107,7 @@ export default function InstitutionalSelectionsManager({
   );
 
   const memberIds = new Set(current?.players?.map(entry => entry.player_id) || []);
-  const availablePlayers = allPlayers.filter(player => !memberIds.has(player.id) && (!categoryFilter || player.category === categoryFilter) && (!genderFilter || (genderFilter === "M" ? ["m","masculin","male","garcon","garçon","homme"] : ["f","féminin","feminin","female","fille","femme"]).includes((player.sex || "").trim().toLowerCase())) && `${player.first_name} ${player.last_name} ${player.club_name || ""}`.toLowerCase().includes(playerSearch.trim().toLowerCase()));
+  const availablePlayers = allPlayers.filter(player => (!categoryFilter || player.category === categoryFilter) && (!genderFilter || (genderFilter === "M" ? ["m","masculin","male","garcon","garçon","homme"] : ["f","féminin","feminin","female","fille","femme"]).includes((player.sex || "").trim().toLowerCase())) && `${player.first_name} ${player.last_name} ${player.club_name || ""}`.toLowerCase().includes(playerSearch.trim().toLowerCase()));
   const seasonOptions = Array.from(new Set(rows.map(row => row.season_label).filter(Boolean)));
 
   async function load() {
@@ -154,61 +157,22 @@ export default function InstitutionalSelectionsManager({
   }, [structureId]);
 
   async function createSelection() {
-    if (!form.name.trim()) return alert("Nom obligatoire.");
-
-    setBusy(true);
-    const response = await fetch("/api/institutionnel/sport/selections", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ structureId, ...form }),
-    });
-    const json = await response.json().catch(() => ({}));
-    setBusy(false);
-
-    if (!response.ok) return alert(json.error || "Création impossible.");
-
-    setShowCreate(false);
-    setMessage("Sélection créée avec son équipe MyBasket complète.");
-    await load();
-
-    if (json.selection?.id) setOpened(json.selection.id);
-  }
-
-  async function createPlayer(player: MyBasketPlayer) {
-    if (!current) return;
-
-    setBusy(true);
-    const response = await fetch("/api/institutionnel/sport/players", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        structureId,
-        mode: "create_full",
-        selectionId: current.id,
-        playerData: {
-          ...player,
-          club: player.club || "",
-          categorie: player.categorie || current.category || "",
-        },
-      }),
-    });
-    const json = await response.json().catch(() => ({}));
-    setBusy(false);
-
-    if (!response.ok) {
-      alert(json.error || "Création du joueur impossible.");
-      return;
-    }
-
-    setShowPlayerForm(false);
-    setMessage(
-      "Joueur créé avec la fiche MyBasket complète : photo, identité, RPE, charge, entraînements, grille de tir, stats, vidéo et suivi."
-    );
-    await load();
-
-    if (json.teamId && json.teamPlayerId) {
-      window.location.href = `/equipes/${json.teamId}/${json.teamPlayerId}`;
-    }
+    if (!form.name.trim() || !form.category.trim() || !form.seasonLabel.trim()) return alert("Renseigne le nom, la catégorie et la saison.");
+    setBusy(true);setMessage("");
+    let selectionId="";const added:string[]=[];
+    try {
+      const response=await fetch("/api/institutionnel/sport/selections",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({structureId,...form})});
+      const json=await response.json();if(!response.ok)throw new Error(json.error||"Création impossible");
+      selectionId=json.selection.id;setOpened(selectionId);setDetailTab("roster");setShowCreate(false);
+      for(const playerId of creationPlayerIds){
+        const attached=await fetch("/api/institutionnel/sport/players",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({structureId,mode:"attach",selectionId,playerId})});
+        const result=await attached.json();if(!attached.ok)throw new Error(result.error||"Ajout du joueur impossible");added.push(playerId);
+      }
+      setCreationPlayerIds([]);setMessage(`Sélection créée avec ${added.length} joueur(s) de la base.`);
+    } catch(error) {
+      if(selectionId){setChosenPlayers(creationPlayerIds.filter(id=>!added.includes(id)));setCreationPlayerIds([]);}
+      alert(error instanceof Error?error.message:"Création impossible");
+    } finally {try{await load();}catch{setMessage("Actualise pour recharger les sélections enregistrées.");}finally{setBusy(false)}}
   }
 
   async function addExistingPlayers() {
@@ -403,6 +367,7 @@ export default function InstitutionalSelectionsManager({
             <option value="M">Masculin</option>
             <option value="F">Féminin</option>
           </select>
+          <div className="creationRoster"><h4>Joueurs de la base à intégrer</h4><p>Choisis les joueurs déjà enregistrés. Si un joueur manque, crée d’abord sa fiche dans la base.</p><input aria-label="Rechercher dans la base à la création" placeholder="Nom, prénom ou club" value={creationSearch} onChange={event=>setCreationSearch(event.target.value)}/><div className="inline"><button type="button" disabled={busy} onClick={()=>setCreationPlayerIds(allPlayers.filter(player=>`${player.first_name} ${player.last_name} ${player.club_name||""}`.toLowerCase().includes(creationSearch.toLowerCase())).map(player=>player.id))}>Tout cocher dans cette recherche</button><button type="button" disabled={busy} onClick={()=>setCreationPlayerIds([])}>Tout décocher</button></div><div className="rosterChecks">{allPlayers.filter(player=>`${player.first_name} ${player.last_name} ${player.club_name||""}`.toLowerCase().includes(creationSearch.toLowerCase())).map(player=><label key={player.id}><input type="checkbox" disabled={busy} checked={creationPlayerIds.includes(player.id)} onChange={()=>setCreationPlayerIds(previous=>previous.includes(player.id)?previous.filter(id=>id!==player.id):[...previous,player.id])}/><span><b>{player.last_name} {player.first_name}</b><small>{player.category||"Catégorie non renseignée"} · {player.club_name||"Club non renseigné"}</small></span></label>)}</div><small>{creationPlayerIds.length} joueur(s) choisi(s)</small></div>
           <button className="primary" disabled={busy} onClick={createSelection}>
             {busy ? "Création…" : "Créer"}
           </button>
@@ -415,7 +380,7 @@ export default function InstitutionalSelectionsManager({
           <button
             className={opened === row.id ? "selectionCard on" : "selectionCard"}
             key={row.id}
-            disabled={busy} onClick={() => setOpened(row.id)}
+            disabled={busy} onClick={() => {setOpened(row.id);setChosenPlayers([]);}}
           >
             <b>{row.name}</b>
             <span>
@@ -440,14 +405,14 @@ export default function InstitutionalSelectionsManager({
               </p>
             </div>
             <div className="detailActions">
-              <button className="primary" onClick={()=>document.getElementById("selection-event-tools")?.scrollIntoView({behavior:"smooth",block:"start"})}>Créer un événement avec cet effectif</button>
-              <button className="primary" onClick={() => setShowPlayerForm(true)}>
-                + Créer un joueur
-              </button>
+              <button className="primary" onClick={()=>setDetailTab("training")}>Créer un événement avec cet effectif</button>
+              <button className="primary" onClick={()=>onOpenBase?onOpenBase():window.location.assign(`/institutionnel/${structureId}?tab=Joueurs`)}>Ajouter un joueur dans la base</button>
               <a href={`/equipes/${current.team_id}`}>Ouvrir l’équipe complète →</a>
             </div>
           </div>
 
+          <nav className="detailTabs" aria-label="Onglets de la sélection"><button type="button" className={detailTab==="roster"?"active":""} onClick={()=>setDetailTab("roster")}>Effectif</button><button type="button" className={detailTab==="training"?"active":""} onClick={()=>setDetailTab("training")}>Entraînements</button></nav>
+          {detailTab==="roster"&&<>
           <div className="featureStrip">
             <span><b>📷 Photo</b>Upload direct</span>
             <span><b>♥ RPE</b>Suivi individuel</span>
@@ -493,9 +458,9 @@ export default function InstitutionalSelectionsManager({
               <h4>Composer l’effectif depuis la base joueurs</h4>
               <p>Coche les joueurs que tu souhaites ajouter à {current.name}. Les membres actuels sont déjà dans la liste ci-dessous.</p>
               <div className="rosterFilters"><input aria-label="Rechercher des joueurs" placeholder="Nom, prénom ou club" value={playerSearch} onChange={e=>setPlayerSearch(e.target.value)}/><select aria-label="Catégorie des joueurs" value={categoryFilter} onChange={e=>setCategoryFilter(e.target.value)}><option value="">Toutes les catégories</option>{Array.from(new Set(allPlayers.map(player=>player.category).filter(Boolean))).sort().map(category=><option key={category!} value={category!}>{category}</option>)}</select><select aria-label="Sexe des joueurs" value={genderFilter} onChange={e=>setGenderFilter(e.target.value)}><option value="">Tous</option><option value="M">Garçons</option><option value="F">Filles</option></select></div>
-              <div className="rosterChecks">{availablePlayers.map(player=><label key={player.id}><input type="checkbox" disabled={busy} checked={chosenPlayers.includes(player.id)} onChange={()=>setChosenPlayers(previous=>previous.includes(player.id)?previous.filter(id=>id!==player.id):[...previous,player.id])}/><span><b>{player.last_name} {player.first_name}</b><small>{player.category || "Catégorie non renseignée"} · {player.club_name || "Club non renseigné"}</small></span></label>)}</div>
+              <div className="rosterChecks">{availablePlayers.map(player=><label key={player.id} style={{background:memberIds.has(player.id)?"#e9e5e3":chosenPlayers.includes(player.id)?"#faf0f3":"white"}}><input type="checkbox" disabled={busy || memberIds.has(player.id)} checked={memberIds.has(player.id) || chosenPlayers.includes(player.id)} onChange={()=>setChosenPlayers(previous=>previous.includes(player.id)?previous.filter(id=>id!==player.id):[...previous,player.id])}/><span><b>{player.last_name} {player.first_name}</b><small>{player.category || "Catégorie non renseignée"} · {player.club_name || "Club non renseigné"}{memberIds.has(player.id)?" · Déjà ajouté":""}</small></span></label>)}</div>
               {!availablePlayers.length && <p>Aucun joueur à ajouter avec ces filtres.</p>}
-              <div className="inline"><button type="button" disabled={busy} onClick={()=>setChosenPlayers(availablePlayers.map(player=>player.id))}>Tout cocher ({availablePlayers.length})</button><button type="button" disabled={busy} onClick={()=>setChosenPlayers([])}>Tout décocher</button><button className="primary" disabled={busy || !chosenPlayers.length} onClick={()=>void addExistingPlayers()}>{busy?"Enregistrement…":`Ajouter les ${chosenPlayers.length} joueurs cochés`}</button></div>
+              <div className="inline"><button type="button" disabled={busy} onClick={()=>setChosenPlayers(availablePlayers.filter(player=>!memberIds.has(player.id)).map(player=>player.id))}>Tout cocher ({availablePlayers.length})</button><button type="button" disabled={busy} onClick={()=>setChosenPlayers([])}>Tout décocher</button><button className="primary" disabled={busy || !chosenPlayers.length} onClick={()=>void addExistingPlayers()}>{busy?"Enregistrement…":`Ajouter à la sélection (${chosenPlayers.length})`}</button></div>
             </div>
           </div>
 
@@ -615,15 +580,9 @@ export default function InstitutionalSelectionsManager({
             )}
           </div>
 
-          <div id="selection-event-tools"><InstitutionalSelectionOperations structureId={structureId} selection={current} /></div>
+          </>}
+          {detailTab==="training"&&<div id="selection-event-tools"><InstitutionalSelectionTraining structureId={structureId} selectionId={current.id}/><InstitutionalSelectionOperations structureId={structureId} selection={current} /></div>}
         </section>
-      )}
-
-      {showPlayerForm && current && (
-        <PlayerForm
-          onClose={() => setShowPlayerForm(false)}
-          onSave={(player) => void createPlayer(player)}
-        />
       )}
 
       {share && (
@@ -714,6 +673,7 @@ export default function InstitutionalSelectionsManager({
       )}
 
       <style jsx>{`
+        .creationRoster{grid-column:1/-1;width:100%;padding-top:12px;border-top:1px solid #e7deda}.creationRoster h4{margin:0 0 6px;color:#6b1a2c}.detailTabs{display:flex;gap:8px;margin:16px 0}.detailTabs button{border:1px solid #ddcfc8;background:white;color:#6b1a2c;border-radius:999px;padding:10px 16px;font-weight:800}.detailTabs button.active{background:#6b1a2c;color:white}
         .seasonFilter{display:flex;align-items:center;gap:10px;font-weight:800;color:#6b1a2c}.seasonFilter select,.rosterFilters input,.rosterFilters select{border:1px solid #ddcfc8;border-radius:8px;padding:9px;background:white;min-width:0}.rosterFilters{display:flex;flex-wrap:wrap;gap:8px}.rosterFilters input{flex:1}.rosterChecks{display:grid;gap:6px;margin:12px 0;grid-template-columns:repeat(auto-fit,minmax(200px,1fr))}.rosterChecks label{display:flex;gap:8px;align-items:center;border:1px solid #eadfd8;border-radius:9px;padding:9px}.rosterChecks span{display:grid;gap:3px}.rosterChecks small{font-size:.7rem;color:#80716a}.rosterChecks input{width:16px;height:16px;flex:0 0 auto}
 
         .selections{display:grid;gap:14px}

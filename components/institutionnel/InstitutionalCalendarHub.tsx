@@ -254,6 +254,7 @@ export default function InstitutionalCalendarHub({
   const eventSavingRef=useRef(false);
   const [eventForm, setEventForm] = useState<EventForm | null>(null);
   const [selectedEventId, setSelectedEventId] = useState<string | null>(null);
+  useEffect(()=>{const id=new URLSearchParams(window.location.search).get("event");if(id)setSelectedEventId(id);},[]);
   const [resourceType, setResourceType] = useState<ResourceType>("note");
   const [resourceTitle, setResourceTitle] = useState("Note");
   const [resourceNote, setResourceNote] = useState("");

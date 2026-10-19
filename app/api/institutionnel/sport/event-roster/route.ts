@@ -15,7 +15,10 @@ export async function POST(req:Request){
  if(selection.error||!selection.data?.season_label)return json({error:'Choisis une sélection avec une saison renseignée'},400);
  const members=await db.from('institutional_selection_players').select('player_id').eq('selection_id',selection.data.id).eq('status','active');
  if(members.error)return json({error:members.error.message},400);
- const ids=[...new Set<string>((members.data||[]).map((p:any)=>String(p.player_id)))];
+ const memberIds=[...new Set<string>((members.data||[]).map((p:any)=>String(p.player_id)))];
+ const requested=Array.isArray(body.playerIds)?new Set<string>(body.playerIds.map(String)):null;
+ if(requested&&[...requested].some(id=>!memberIds.includes(id)))return json({error:'Joueur absent de cette sélection'},400);
+ const ids=requested?memberIds.filter(id=>requested.has(id)):memberIds;
  let season=await db.from('institutional_player_tracking_seasons').select('id').eq('structure_id',structureId).eq('season_label',selection.data.season_label).eq('archived',false).maybeSingle();
  if(season.error)return json({error:season.error.message},400);
  if(!season.data){season=await db.from('institutional_player_tracking_seasons').insert({structure_id:structureId,season_label:selection.data.season_label,created_by:ctx.user.id}).select('id').single();if(season.error||!season.data)return json({error:season.error?.message||'Saison indisponible'},400);}

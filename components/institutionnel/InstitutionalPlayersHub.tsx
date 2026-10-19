@@ -20,7 +20,7 @@ export default function InstitutionalPlayersHub({ structureId, structureType }: 
 
   // Les comités conservent la base joueurs et accèdent aussi aux sélections reliées au calendrier.
   if (!isPoleContext) {
-    return <div><InstitutionalFamilyForms key={structureId} structureId={structureId}/><nav style={{display:"flex",gap:8,marginBottom:16,flexWrap:"wrap"}}><button type="button" style={{border:"1px solid #e4d7d1",borderRadius:20,padding:"10px 16px",fontWeight:800,cursor:"pointer",background:committeeView==="workflow"?"#6b1a2c":"#fff",color:committeeView==="workflow"?"#fff":"#6b1a2c"}} onClick={()=>setCommitteeView("workflow")} aria-pressed={committeeView==="workflow"}>Base joueurs · Détections</button><button type="button" style={{border:"1px solid #e4d7d1",borderRadius:20,padding:"10px 16px",fontWeight:800,cursor:"pointer",background:committeeView==="selections"?"#6b1a2c":"#fff",color:committeeView==="selections"?"#fff":"#6b1a2c"}} onClick={()=>setCommitteeView("selections")} aria-pressed={committeeView==="selections"}>Sélections</button></nav>{committeeView==="workflow"?<InstitutionalPlayerWorkflow structureId={structureId}/>:<InstitutionalSelectionsManager structureId={structureId} structureType={structureType}/>}</div>;
+    return <div><InstitutionalFamilyForms key={structureId} structureId={structureId}/><InstitutionalPlayerWorkflow structureId={structureId} structureType={structureType}/></div>;
   }
 
   return (
@@ -36,13 +36,12 @@ export default function InstitutionalPlayersHub({ structureId, structureType }: 
 
       <nav className="iphTabs">
         <button className={poleView === "pole" ? "on" : ""} onClick={() => setPoleView("pole")}>Pôle · Polistes · Partenaires</button>
-        <button className={poleView === "selections" ? "on" : ""} onClick={() => setPoleView("selections")}>Sélections</button>
-        <button className={poleView === "workflow" ? "on" : ""} onClick={() => setPoleView("workflow")}>Base joueurs · Détection</button>
+        <button className={poleView === "workflow" ? "on" : ""} onClick={() => setPoleView("workflow")}>Base · Détections · Sélections</button>
       </nav>
 
       {poleView === "pole" && <InstitutionalPoleRosterV3 structureId={structureId} />}
       {poleView === "selections" && <InstitutionalSelectionsManager structureId={structureId} structureType={structureType} />}
-      {poleView === "workflow" && <InstitutionalPlayerWorkflow structureId={structureId} />}
+      {poleView === "workflow" && <InstitutionalPlayerWorkflow structureId={structureId} structureType={structureType} />}
 
       <style jsx>{`
         .iph{display:grid;gap:18px;padding-bottom:30px}

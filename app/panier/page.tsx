@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
+import InstitutionalPracticeSelectionPicker from "@/components/institutionnel/InstitutionalPracticeSelectionPicker";
 import { createClient } from "@/lib/supabase/client";
 
 type CartItem = {
@@ -42,6 +43,7 @@ type TeamPlayer = {
 };
 
 type Team = {
+  institutionId?: string; selectionId?: string;
   id: string;
   name?: string;
   clubName?: string;
@@ -1019,6 +1021,11 @@ setLoading(false);
     );
   }
 
+  const [pendingInstitutionLink,setPendingInstitutionLink]=useState<{structureId:string;selectionId:string;sessionId:string}|null>(null);
+  async function linkInstitutionSession(payload:{structureId:string;selectionId:string;sessionId:string}) {
+    const response=await fetch("/api/institutionnel/practice-session-link",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(payload)});
+    const result=await response.json();if(!response.ok)throw new Error(result.error||"Rattachement impossible");setPendingInstitutionLink(null);
+  }
   async function saveSessionToCalendar(): Promise<boolean> {
   const {
     data: { user },
@@ -1255,6 +1262,7 @@ setLoading(false);
     return false;
   }
 
+  if(selectedTeam?.institutionId && selectedTeam.selectionId){const payload={structureId:selectedTeam.institutionId,selectionId:selectedTeam.selectionId,sessionId:createdSession.id};try{await linkInstitutionSession(payload);}catch(error){setPendingInstitutionLink(payload);alert("La séance est enregistrée. Le rattachement à l’institution a échoué : utilise le bouton Réessayer sans recréer la séance.");}}
   return true;
 }
 
@@ -2183,6 +2191,7 @@ setLoading(false);
         </div>
       </section>
 
+      {pendingInstitutionLink && <div role="alert">Séance enregistrée : rattachement à la sélection à terminer. <button onClick={()=>void linkInstitutionSession(pendingInstitutionLink).catch(error=>alert(error.message))}>Réessayer le rattachement</button></div>}
       {sessionModalOpen && (
         <div className="modalOverlay">
           <div className="sessionModal">
@@ -2234,6 +2243,7 @@ setLoading(false);
               </label>
             </div>
 
+            <InstitutionalPracticeSelectionPicker onChoose={(team)=>{if(!team){setSelectedTeamId("");setSessionPlayers(emptyPlayers);return;}setTeams(prev=>[...prev.filter(t=>t.id!==team.id),team]);setSelectedTeamId(team.id);const grouped:SessionPlayers={guard:[],forward:[],center:[]};team.players.forEach(player=>grouped[normalizePosition(player)].push(player));setSessionPlayers(grouped);}}/>
             <label className="fullLabel">
               Équipe associée
               <select

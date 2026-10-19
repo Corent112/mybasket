@@ -54,7 +54,7 @@ export async function GET(req: Request) {
     ? await ctx.admin
         .from("institutional_players")
         .select(
-          "id,first_name,last_name,birthdate,club_name,category,linked_user_id,photo_url"
+          "id,first_name,last_name,birthdate,club_name,category,linked_user_id,photo_url,position_primary"
         )
         .in("id", playerIds)
     : { data: [] as any[] };
