@@ -30,6 +30,19 @@ export function familyPlayerPatch(body:any,profile:Record<string,any>,group:Fami
     const value=String(body[input]??'').trim();if(!value)continue;if(value.length>max)throw Error('Une information est trop longue.');
     if(input==='club_name')patch.club_name=value;else extra[dest]=value;count++;
   }
+  for(const [input,dest,max] of [['guardian1_name','guardian1Name',150],['guardian2_name','guardian2Name',150],['other_sports','otherSports',500]] as const) {
+    const value=String(body[input]??'').trim();if(!value)continue;
+    if(value.length>max)throw Error('Une information est trop longue.');
+    extra[dest]=value;count++;
+  }
+  const years=String(body.basketball_years??'').trim();
+  if(years){const n=Number(years);if(!Number.isInteger(n)||n<0||n>80)throw Error('Renseignez un nombre d’années de basket entre 0 et 80.');extra.basketballYears=String(n);count++;}
+  for(const [input,dest] of [['tutor1_phone','guardian1Phone'],['tutor2_phone','guardian2Phone'],['tutor1_email','guardian1Email'],['tutor2_email','guardian2Email']] as const) {
+    const value=String(body[input]??'').trim();if(!value)continue;
+    if(input.endsWith('_email')){if(value.length>254||! /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value))throw Error('Vérifiez les adresses email des tuteurs.');}
+    else if(!/^[+()\d\s.-]{6,30}$/.test(value)||value.replace(/\D/g,'').length<6)throw Error('Vérifiez les numéros de téléphone des tuteurs.');
+    patch[input]=value;extra[dest]=value;count++;
+  }
   if(!count)throw Error('Renseignez au moins une information.');
   const now=new Date().toISOString();
   extra.familyQuestionnaire={submittedAt:now,group};patch.profile_data=extra;patch.updated_at=now;
