@@ -86,6 +86,38 @@ export async function POST(req: Request) {
   const ctx = await actor(structureId);
   if ("error" in ctx) return ctx.error;
 
+  if (action === "set_detection_decision") {
+    const eventId = String(body.eventId || ""), playerId = String(body.playerId || "");
+    const decision = String(body.decision || "");
+    if (!eventId || !playerId || !["", "selected", "waiting", "not_selected"].includes(decision))
+      return NextResponse.json({ error: "Décision invalide" }, { status: 400 });
+    const event = await ctx.admin.from("institutional_detection_events").select("id").eq("id", eventId).eq("structure_id", structureId).eq("archived", false).maybeSingle();
+    if (event.error || !event.data) return NextResponse.json({ error: "Journée indisponible" }, { status: 404 });
+    const participant = await ctx.admin.from("institutional_detection_participants").select("id").eq("event_id", eventId).eq("player_id", playerId).maybeSingle();
+    if (participant.error || !participant.data) return NextResponse.json({ error: "Joueur absent de cette journée" }, { status: 404 });
+    const player = await ctx.admin.from("institutional_players").select("id,profile_data,updated_at").eq("id", playerId).eq("structure_id", structureId).maybeSingle();
+    if (player.error || !player.data) return NextResponse.json({ error: "Fiche indisponible" }, { status: 404 });
+    const profile = player.data.profile_data || {};
+    const profileData = { ...profile, detectionDecisions: { ...profile.detectionDecisions, [eventId]: decision } };
+    let query = ctx.admin.from("institutional_players").update({ profile_data: profileData, updated_at: new Date().toISOString() }).eq("id", playerId).eq("structure_id", structureId);
+    query = player.data.updated_at ? query.eq("updated_at", player.data.updated_at) : query.is("updated_at", null);
+    const result = await query.select("id").maybeSingle();
+    if (result.error) return NextResponse.json({ error: result.error.message }, { status: 400 });
+    if (!result.data) return NextResponse.json({ error: "La fiche vient de changer. Rechargez puis réessayez." }, { status: 409 });
+    return NextResponse.json({ ok: true, profileData });
+  }
+
+  if (action === "archive_detection_event") {
+    const eventId = String(body.eventId || "");
+    if (!eventId) return NextResponse.json({ error: "Journée manquante" }, { status: 400 });
+    const result = await ctx.admin.from("institutional_detection_events")
+      .update({ archived: true }).eq("id", eventId).eq("structure_id", structureId)
+      .select("id").maybeSingle();
+    if (result.error) return NextResponse.json({ error: result.error.message }, { status: 400 });
+    if (!result.data) return NextResponse.json({ error: "Journée introuvable dans cette institution" }, { status: 404 });
+    return NextResponse.json({ ok: true });
+  }
+
   if (action === "remove_detection_participant") {
     const eventId = String(body.eventId || "");
     const participantId = String(body.participantId || "");

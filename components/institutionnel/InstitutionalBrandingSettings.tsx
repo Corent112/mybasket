@@ -29,6 +29,10 @@ export default function InstitutionalBrandingSettings({
 }) {
   const supabase = useMemo(() => createClient(), []);
   const [branding, setBranding] = useState<Branding | null>(null);
+  const [institutionName, setInstitutionName] = useState("");
+  const [savingName, setSavingName] = useState(false);
+  const [nameMessage, setNameMessage] = useState("");
+  const [nameError, setNameError] = useState(false);
   const [primary, setPrimary] = useState(DEFAULT_PRIMARY);
   const [secondary, setSecondary] = useState(DEFAULT_SECONDARY);
   const [logoUrl, setLogoUrl] = useState<string | null>(null);
@@ -51,6 +55,7 @@ export default function InstitutionalBrandingSettings({
 
     const row = data as Branding;
     setBranding(row);
+    setInstitutionName(row.name);
     setLogoUrl(row.logo_url ?? null);
     setSignatureUrl(row.email_signature_url ?? null);
     setPrimary(validHex(row.document_primary_color, DEFAULT_PRIMARY));
@@ -60,6 +65,29 @@ export default function InstitutionalBrandingSettings({
   useEffect(() => {
     void load();
   }, [structureId]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  async function saveInstitutionName(event: React.FormEvent) {
+    event.preventDefault();
+    const name = institutionName.trim();
+    setNameMessage("");setNameError(false);
+    if (!name || name.length > 150) {
+      setNameError(true);setNameMessage("Renseigne un nom de 1 à 150 caractères.");return;
+    }
+    setSavingName(true);
+    try {
+      const result = await supabase.from("institutional_structures")
+        .update({ name, updated_at: new Date().toISOString() })
+        .eq("id", structureId).select("id,name").maybeSingle();
+      if (result.error) throw result.error;
+      if (!result.data) throw new Error("Enregistrement refusé. Vérifie tes droits sur cette institution.");
+      setInstitutionName(result.data.name);
+      setBranding((current) => current ? { ...current, name: result.data.name } : current);
+      setNameMessage("Nom de l’institution enregistré.");
+      onSaved?.();
+    } catch (error) {
+      setNameError(true);setNameMessage(error instanceof Error ? error.message : "Enregistrement impossible. Réessayez.");
+    } finally { setSavingName(false); }
+  }
 
   async function uploadLogo(event: ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0];
@@ -181,6 +209,11 @@ export default function InstitutionalBrandingSettings({
         <span>Ces réglages sont repris automatiquement sur les documents officiels.</span>
       </div>
 
+      <form className="nameForm" onSubmit={saveInstitutionName}>
+        <label htmlFor="institution-name">Nom de l’institution</label>
+        <div><input id="institution-name" required maxLength={150} value={institutionName} disabled={!branding || savingName} onChange={(event) => {setInstitutionName(event.target.value);setNameMessage("");}}/><button type="submit" disabled={!branding || savingName || !institutionName.trim()}>{savingName ? "Enregistrement…" : "Enregistrer le nom"}</button></div>
+        {nameMessage && <p role={nameError ? "alert" : "status"} className={nameError ? "nameError" : "nameSuccess"}>{nameMessage}</p>}
+      </form>
       <div className="layout">
         <div className="logoCard">
           <span className="label">Logo officiel</span>
@@ -283,6 +316,7 @@ export default function InstitutionalBrandingSettings({
       {message && <div className="message">{message}</div>}
 
       <style jsx>{`
+        .nameForm{margin-top:18px;padding:16px;border:1px solid #eadfd8;border-radius:14px;background:#fffaf7}.nameForm label{display:block;font-size:.8rem;font-weight:900;color:#4e3439;margin-bottom:8px}.nameForm>div{display:flex;gap:10px;flex-wrap:wrap}.nameForm input{flex:1;min-width:180px;border:1px solid #d9cbc4;border-radius:9px;padding:10px;font:inherit}.nameForm button{border:0;border-radius:9px;background:#6b1a2c;color:white;padding:10px 14px;font-weight:800;cursor:pointer}.nameForm button:disabled{opacity:.6;cursor:default}.nameForm p{margin:10px 0 0;font-size:.8rem}.nameSuccess{color:#27653b}.nameError{color:#a12632}
         .branding{border-bottom:1px solid #eee2db;padding-bottom:20px;margin-bottom:20px}
         .heading p{margin:0;color:#d4a24c;font-size:.68rem;font-weight:1000;letter-spacing:.12em}
         .heading h2{margin:3px 0;color:#321015}

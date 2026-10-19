@@ -3,7 +3,7 @@ const path='app/api/institutionnel/players/route.ts',source=fs.readFileSync(path
 const post=ast.statements.find(node=>ts.isFunctionDeclaration(node)&&node.name?.text==='POST');
 async function run({authorized=true,eventExists=true,participantExists=true,deleteError=null,body={structureId:'institution-a',action:'remove_detection_participant',eventId:'event-a',participantId:'participant-a'}}={}){
  const queries=[];
- const admin={from(table){const query={table,filters:[],deleted:false};queries.push(query);return {select(){return this},eq(key,value){query.filters.push([key,value]);return this},delete(){query.deleted=true;return this},async maybeSingle(){return table==='institutional_detection_events'?{data:eventExists?{id:'event-a'}:null,error:null}:{data:participantExists?{id:'participant-a'}:null,error:deleteError}}};}};
+ const admin={from(table){const query={table,filters:[],deleted:false,patch:null};queries.push(query);return {select(){return this},eq(key,value){query.filters.push([key,value]);return this},delete(){query.deleted=true;return this},update(patch){query.patch=patch;return this},async maybeSingle(){return table==='institutional_detection_events'?{data:eventExists?{id:'event-a'}:null,error:deleteError}:{data:participantExists?{id:'participant-a'}:null,error:deleteError}}};}};
  const context={exports:{},NextResponse:{json:(body,options={})=>({body,status:options.status||200})},actor:async()=>authorized?{admin,user:{id:'user-a'}}:{error:{status:403}}};vm.createContext(context);
  vm.runInContext(ts.transpileModule(post.getText(ast),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2020}}).outputText,context);
  return {result:await context.exports.POST({json:async()=>body}),queries};
@@ -14,5 +14,11 @@ async function run({authorized=true,eventExists=true,participantExists=true,dele
  x=await run({eventExists:false});assert.equal(x.result.status,404);assert.equal(x.queries.some(q=>q.deleted),false);
  x=await run({participantExists:false});assert.equal(x.result.status,404);
  x=await run({deleteError:{message:'Deletion refused'}});assert.equal(x.result.status,400);assert.equal(x.result.body.error,'Deletion refused');
+ const dayBody={structureId:'institution-a',action:'archive_detection_event',eventId:'event-a'};
+ x=await run({body:dayBody});assert.equal(x.result.status,200);assert.equal(x.queries.length,1);assert.equal(x.queries[0].table,'institutional_detection_events');assert.deepEqual(x.queries[0].filters,[['id','event-a'],['structure_id','institution-a']]);assert.equal(x.queries[0].patch.archived,true);assert.equal(x.queries[0].deleted,false);
+ x=await run({body:dayBody,authorized:false});assert.equal(x.result.status,403);assert.equal(x.queries.length,0);
+ x=await run({body:dayBody,eventExists:false});assert.equal(x.result.status,404);
+ x=await run({body:dayBody,deleteError:{message:'Write refused'}});assert.equal(x.result.status,400);
+ console.log('Day removal: institution-scoped archive, authorization and write errors passed; no player or participant deletion.');
  console.log('Event participant removal: institution authorization, event scope, participant scope, preserved player sheet and errors passed.');
 })().catch(e=>{console.error(e);process.exitCode=1;});
