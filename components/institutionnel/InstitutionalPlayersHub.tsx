@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import InstitutionalFamilyForms from "./InstitutionalFamilyForms";
 import InstitutionalPlayerWorkflow from "@/components/institutionnel/InstitutionalPlayerWorkflow";
 import InstitutionalSelectionsManager from "@/components/institutionnel/InstitutionalSelectionsManager";
 import InstitutionalPoleRosterV3 from "@/components/institutionnel/InstitutionalPoleRosterV3";
@@ -19,11 +20,12 @@ export default function InstitutionalPlayersHub({ structureId, structureType }: 
 
   // Les comités conservent la base joueurs et accèdent aussi aux sélections reliées au calendrier.
   if (!isPoleContext) {
-    return <div><nav style={{display:"flex",gap:8,marginBottom:16,flexWrap:"wrap"}}><button type="button" style={{border:"1px solid #e4d7d1",borderRadius:20,padding:"10px 16px",fontWeight:800,cursor:"pointer",background:committeeView==="workflow"?"#6b1a2c":"#fff",color:committeeView==="workflow"?"#fff":"#6b1a2c"}} onClick={()=>setCommitteeView("workflow")} aria-pressed={committeeView==="workflow"}>Base joueurs · Détections</button><button type="button" style={{border:"1px solid #e4d7d1",borderRadius:20,padding:"10px 16px",fontWeight:800,cursor:"pointer",background:committeeView==="selections"?"#6b1a2c":"#fff",color:committeeView==="selections"?"#fff":"#6b1a2c"}} onClick={()=>setCommitteeView("selections")} aria-pressed={committeeView==="selections"}>Sélections</button></nav>{committeeView==="workflow"?<InstitutionalPlayerWorkflow structureId={structureId}/>:<InstitutionalSelectionsManager structureId={structureId} structureType={structureType}/>}</div>;
+    return <div><InstitutionalFamilyForms key={structureId} structureId={structureId}/><nav style={{display:"flex",gap:8,marginBottom:16,flexWrap:"wrap"}}><button type="button" style={{border:"1px solid #e4d7d1",borderRadius:20,padding:"10px 16px",fontWeight:800,cursor:"pointer",background:committeeView==="workflow"?"#6b1a2c":"#fff",color:committeeView==="workflow"?"#fff":"#6b1a2c"}} onClick={()=>setCommitteeView("workflow")} aria-pressed={committeeView==="workflow"}>Base joueurs · Détections</button><button type="button" style={{border:"1px solid #e4d7d1",borderRadius:20,padding:"10px 16px",fontWeight:800,cursor:"pointer",background:committeeView==="selections"?"#6b1a2c":"#fff",color:committeeView==="selections"?"#fff":"#6b1a2c"}} onClick={()=>setCommitteeView("selections")} aria-pressed={committeeView==="selections"}>Sélections</button></nav>{committeeView==="workflow"?<InstitutionalPlayerWorkflow structureId={structureId}/>:<InstitutionalSelectionsManager structureId={structureId} structureType={structureType}/>}</div>;
   }
 
   return (
     <div className="iph">
+      <InstitutionalFamilyForms key={structureId} structureId={structureId}/>
       <div className="iphHead">
         <div>
           <p>INSTITUTION · JOUEURS</p>
