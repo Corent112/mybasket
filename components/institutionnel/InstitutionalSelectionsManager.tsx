@@ -224,7 +224,7 @@ export default function InstitutionalSelectionsManager({
       }
       setMessage(`${added.length} joueur(s) ajouté(s) à ${current.name}.`);
     } catch (error) { alert(`${error instanceof Error ? error.message : "Ajout impossible"}. ${added.length} ajout(s) enregistré(s) ; les autres restent cochés pour réessayer.`); }
-    finally { setChosenPlayers(previous => previous.filter(id => !added.includes(id)));await load();setBusy(false); }
+    finally { setChosenPlayers(previous => previous.filter(id => !added.includes(id)));try { await load(); } catch { setMessage("Les ajouts enregistrés sont conservés. Actualise la page pour recharger l’effectif."); } finally { setBusy(false); } }
   }
   async function removeMember(playerId:string, name:string) {
     if (!current || busy || !window.confirm(`Retirer ${name} de ${current.name} ?\n\nLa fiche joueur, les autres sélections et les statistiques seront conservées.`)) return;
