@@ -16,6 +16,7 @@ export async function POST(req:Request){
  const ctx=await institutionalSportActor(structureId);if('error'in ctx)return ctx.error;
  if(!canManageSport(ctx.member))return json({error:'Droits insuffisants'},403);
  const selection=selectionId?await ctx.admin.from('institutional_selections').select('id,name,category,gender,season_label').eq('id',selectionId).eq('structure_id',structureId).neq('status','archived').maybeSingle():{data:null,error:null};
+ if(!b.eventId&&!selectionId)return json({error:'Choisis le groupe de préparation de la sélection cible avant de créer une journée.'},400);
  if(selectionId&&(selection.error||!selection.data))return json({error:'Sélection introuvable dans cette institution'},404);
  const members=selectionId?await ctx.admin.from('institutional_selection_players').select('player_id').eq('selection_id',selectionId).eq('status','active'):{data:[],error:null};
  if(members.error)return json({error:members.error.message},400);

@@ -5,13 +5,14 @@ import {createClient} from '@/lib/supabase/client';
 import {loadSelectionTrainingHistory} from '@/lib/institutionnel/selection-training-history';
 type TrainingEvent={id:string;title:string;event_date:string;start_time:string|null;end_time:string|null;location:string|null;event_type:string;description:string|null;isDetection?:boolean};
 type Resource={id:string;event_id:string;title:string;note:string|null;file_url:string|null};
-export default function InstitutionalSelectionTraining({structureId,selectionId,onManageDay,onOpenSelection}:{structureId:string;selectionId:string;onManageDay?:(id:string)=>void;onOpenSelection?:(id:string)=>void}){
+export default function InstitutionalSelectionTraining({structureId,selectionId,preparationSelectionIds=[],onManageDay,onOpenSelection}:{structureId:string;selectionId:string;preparationSelectionIds?:string[];onManageDay?:(id:string)=>void;onOpenSelection?:(id:string)=>void}){
  const[rosters,setRosters]=useState<Record<string,TrainingRosterMember[]>>({});
- const db=useMemo(()=>createClient(),[]),[events,setEvents]=useState<TrainingEvent[]>([]),[resources,setResources]=useState<Resource[]>([]),[counts,setCounts]=useState<Record<string,{total:number;present:number}>>({}),[period,setPeriod]=useState('past'),[error,setError]=useState(''),[loading,setLoading]=useState(true);
+ const db=useMemo(()=>createClient(),[]),[events,setEvents]=useState<TrainingEvent[]>([]),[resources,setResources]=useState<Resource[]>([]),[counts,setCounts]=useState<Record<string,{total:number;present:number}>>({}),[period,setPeriod]=useState('all'),[error,setError]=useState(''),[loading,setLoading]=useState(true);
  useEffect(()=>{let alive=true;void(async()=>{setLoading(true);setError('');try{
-  const history=await loadSelectionTrainingHistory(db,structureId,selectionId);
+  const histories=await Promise.all([...new Set([selectionId,...preparationSelectionIds])].map(id=>loadSelectionTrainingHistory(db,structureId,id)));
+  const history={events:[...new Map(histories.flatMap(h=>h.events).map(event=>[event.id,event])).values()].sort((a,b)=>b.event_date.localeCompare(a.event_date)),resources:histories.flatMap(h=>h.resources),counts:Object.assign({},...histories.map(h=>h.counts)),rosters:Object.assign({},...histories.map(h=>h.rosters))};
   if(alive){setEvents(history.events as TrainingEvent[]);setResources(history.resources as Resource[]);setCounts(history.counts);setRosters(history.rosters);}
- }catch(e){if(alive)setError((e as {message?:string}).message||'Historique indisponible');}finally{if(alive)setLoading(false)}})();return()=>{alive=false}},[db,structureId,selectionId]);
+ }catch(e){if(alive)setError((e as {message?:string}).message||'Historique indisponible');}finally{if(alive)setLoading(false)}})();return()=>{alive=false}},[db,structureId,selectionId,preparationSelectionIds.join(",")]);
  const now=new Date(),today=`${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-${String(now.getDate()).padStart(2,'0')}`;
  const training=events.filter(event=>event.isDetection||/entra[iî]nement|stage/i.test(event.event_type));
  const visible=training.filter(event=>period==='all'||(period==='past'?event.event_date<today:event.event_date>=today));

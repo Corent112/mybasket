@@ -42,6 +42,7 @@ type SelectionPlayer = {
 };
 
 type Selection = {
+  preparation_target_id?:string|null;
   max_players?:number|null;
   roster_kind?:string;
   id: string;
@@ -63,6 +64,7 @@ type Selection = {
 type Props = {
   structureId: string;
   structureType: "committee" | "league" | "federation" | "pole";
+  onPrepareSelection?:(id:string)=>void;
   onOpenBase?: () => void;
   onCreateDetection?: (playerIds:string[])=>void;
   initialSelectionId?:string;
@@ -81,6 +83,7 @@ type ShareState = {
 export default function InstitutionalSelectionsManager({
   structureId,
   structureType,
+  onPrepareSelection,
   onOpenBase,
   onCreateDetection,
   initialSelectionId,
@@ -107,7 +110,7 @@ export default function InstitutionalSelectionsManager({
     seasonLabel: `${new Date().getFullYear()-(new Date().getMonth()<6?1:0)}-${new Date().getFullYear()+(new Date().getMonth()<6?0:1)}`,
     gender: "",
     maxPlayers:12,
-    rosterKind:"preselection",
+    rosterKind:"selection",
   });
   const [chosenPlayers, setChosenPlayers] = useState<string[]>([]);
   const [playerSearch, setPlayerSearch] = useState("");
@@ -361,13 +364,13 @@ export default function InstitutionalSelectionsManager({
       <div className="head">
         <div>
           <small>SÉLECTIONS</small>
-          <h3>Présélections & sélections finales</h3>
+          <h3>Équipes de sélection</h3>
           <p>
-            Présélection sans limite pour le suivi des entraînements ; sélection finale de 10 ou 12 joueurs. Les fiches restent dans la base.
+            Retrouve les équipes finales, les fiches des joueurs, les matchs et les statistiques. Les journées se préparent dans l’onglet Préparation.
           </p>
         </div>
         <button className="primary" onClick={() => setShowCreate((v) => !v)}>
-          + Nouveau groupe
+          + Créer une sélection
         </button>
       </div>
 
@@ -401,7 +404,7 @@ export default function InstitutionalSelectionsManager({
             <option value="M">Masculin</option>
             <option value="F">Féminin</option>
           </select>
-          <label>Type de groupe<select value={form.rosterKind} onChange={event=>setForm(previous=>({...previous,rosterKind:event.target.value}))}><option value="preselection">Présélection — sans limite</option><option value="selection">Sélection finale — 10 ou 12</option></select></label>{form.rosterKind!=="preselection"&&<label>Nombre maximum de joueurs<select value={form.maxPlayers} onChange={event=>setForm(previous=>({...previous,maxPlayers:Number(event.target.value)}))}><option value={10}>10 joueurs maximum</option><option value={12}>12 joueurs maximum</option></select></label>}
+          <label>Nombre maximum de joueurs<select value={form.maxPlayers} onChange={event=>setForm(previous=>({...previous,maxPlayers:Number(event.target.value)}))}><option value={10}>10 joueurs maximum</option><option value={12}>12 joueurs maximum</option></select></label>
           <div className="creationRoster"><h4>Joueurs de la base à intégrer</h4><p>Choisis les joueurs déjà enregistrés. Si un joueur manque, crée d’abord sa fiche dans la base.</p><input aria-label="Rechercher dans la base à la création" placeholder="Nom, prénom ou club" value={creationSearch} onChange={event=>setCreationSearch(event.target.value)}/><div className="inline"><button type="button" disabled={busy} onClick={()=>setCreationPlayerIds(eligibleBasePlayers.filter(player=>`${player.first_name} ${player.last_name} ${player.club_name||""}`.toLowerCase().includes(creationSearch.toLowerCase())).map(player=>player.id))}>Tout cocher dans cette recherche</button><button type="button" disabled={busy} onClick={()=>setCreationPlayerIds([])}>Tout décocher</button></div><div className="rosterChecks">{eligibleBasePlayers.filter(player=>`${player.first_name} ${player.last_name} ${player.club_name||""}`.toLowerCase().includes(creationSearch.toLowerCase())).map(player=><label key={player.id}><input type="checkbox" disabled={busy} checked={creationPlayerIds.includes(player.id)} onChange={()=>setCreationPlayerIds(previous=>previous.includes(player.id)?previous.filter(id=>id!==player.id):[...previous,player.id])}/><span><b>{player.last_name} {player.first_name}</b><small>{player.category||"Catégorie non renseignée"} · {player.club_name||"Club non renseigné"}</small></span></label>)}</div><small>{creationPlayerIds.length} / {form.rosterKind==="preselection"?"sans limite":form.maxPlayers} joueurs choisis{form.rosterKind!=="preselection"&&creationPlayerIds.length>form.maxPlayers?" — retire des joueurs avant de créer":""}</small></div>
           <button className="primary" disabled={busy} onClick={createSelection}>
             {busy ? "Création…" : "Créer"}
@@ -411,7 +414,7 @@ export default function InstitutionalSelectionsManager({
 
       <label className="seasonFilter">Saison des sélections <select value={seasonFilter} onChange={event=>setSeasonFilter(event.target.value)}><option value="">Toutes les saisons</option>{seasonOptions.map(season=><option key={season!} value={season!}>{season}</option>)}</select></label>
       <div className="selectionGrid">
-        {rows.filter(row=>!seasonFilter || row.season_label===seasonFilter).map((row) => (
+        {rows.filter(row=>(row.roster_kind!=="preselection"||row.id===opened)&&(!seasonFilter || row.season_label===seasonFilter)).map((row) => (
           <button
             className={opened === row.id ? "selectionCard on" : "selectionCard"}
             key={row.id}
@@ -442,11 +445,11 @@ export default function InstitutionalSelectionsManager({
             <div className="detailActions">
               <button className="primary" onClick={()=>setDetailTab("training")}>Créer un événement avec cet effectif</button>
               <button className="primary" onClick={()=>onOpenBase?onOpenBase():window.location.assign(`/institutionnel/${structureId}?tab=Joueurs`)}>Ajouter un joueur dans la base</button>
-              <a href={`/equipes/${current.team_id}`}>Ouvrir l’équipe complète →</a>
+              <div className="teamActions">{onPrepareSelection&&<button type="button" className="primary" onClick={()=>onPrepareSelection(current.preparation_target_id||current.id)}>Préparer les détections & entraînements</button>}<a href={`/equipes/${current.team_id}`}>Équipe complète · Matchs & statistiques →</a></div>
             </div>
           </div>
 
-          <nav className="detailTabs" aria-label="Onglets de la sélection"><button type="button" className={detailTab==="roster"?"active":""} onClick={()=>setDetailTab("roster")}>Effectif</button><button type="button" className={detailTab==="training"?"active":""} onClick={()=>setDetailTab("training")}>Entraînements</button><button type="button" className={detailTab==="documents"?"active":""} onClick={()=>setDetailTab("documents")}>Documents</button></nav>
+          <nav className="detailTabs" aria-label="Onglets de la sélection"><button type="button" className={detailTab==="roster"?"active":""} onClick={()=>setDetailTab("roster")}>Effectif</button><button type="button" className={detailTab==="training"?"active":""} onClick={()=>setDetailTab("training")}>Séances & documents liés</button><button type="button" className={detailTab==="documents"?"active":""} onClick={()=>setDetailTab("documents")}>Documents</button></nav>
           {detailTab==="roster"&&<>
           <div className="twoCols">
             <details className="panel staffPanel">
@@ -615,7 +618,7 @@ export default function InstitutionalSelectionsManager({
 
           </>}
           {detailTab==="documents"&&<section className="selectionDocuments"><div className="documentsHead"><div><h3>Documents · {current.name}</h3><p>Prépare les documents de l’effectif ou des joueurs cochés.</p></div><label>Destinataires<select value={docScope} onChange={event=>{setDocScope(event.target.value as "all"|"checked");setDocAction(null);}}><option value="all">Tout l’effectif ({current.players?.length||0})</option><option value="checked" disabled={!checkedMemberIds.length}>Joueurs cochés ({checkedMemberIds.length})</option></select></label></div><div className="documentChoices">{([{action:"trombinoscope",title:"Trombinoscope",description:"Photos, noms et catégories · PDF"},{action:"note",title:"Convocation",description:"Date, lieu, horaires et liste des joueurs"},{action:"info",title:"Fiche de renseignements",description:"Identités et coordonnées déjà enregistrées"}] as const).map(item=><button key={item.action} disabled={!documentPlayers.length} className={docAction===item.action?"active":""} onClick={()=>setDocAction(item.action)}><small>DOCUMENT</small><b>{item.title}</b><span>{item.description}</span><em>Préparer pour {documentPlayers.length} joueur(s) →</em></button>)}</div>{!documentPlayers.length&&<p>Ajoute des joueurs à l’effectif ou coche les destinataires depuis l’onglet Effectif.</p>}{docAction&&documentPlayers.length>0&&<InstitutionalSelectionDocuments key={`${current.id}:${docAction}:${docScope}`} structureId={structureId} players={documentPlayers} initialAction={docAction} onClose={()=>setDocAction(null)}/>}</section>}
-          {detailTab==="training"&&<div id="selection-event-tools">{onOpenDetection&&<button type="button" className="primary" onClick={()=>onOpenDetection()}>Gérer les groupes et préparer une sélection</button>}<InstitutionalSelectionTraining structureId={structureId} selectionId={current.id} onManageDay={onOpenDetection} onOpenSelection={id=>{void load();setOpened(id);setDetailTab("roster");}}/><InstitutionalSelectionOperations structureId={structureId} selection={current} /></div>}
+          {detailTab==="training"&&<div id="selection-event-tools">{onPrepareSelection&&<button type="button" className="primary" onClick={()=>onPrepareSelection(current.preparation_target_id||current.id)}>Ouvrir la préparation de cette sélection</button>}<InstitutionalSelectionTraining structureId={structureId} selectionId={current.id} preparationSelectionIds={rows.filter(row=>row.preparation_target_id===current.id).map(row=>row.id)} onManageDay={onOpenDetection} onOpenSelection={id=>{void load();setOpened(id);setDetailTab("roster");}}/></div>}
         </section>
       )}
 
@@ -749,7 +752,7 @@ export default function InstitutionalSelectionsManager({
         .shareModal label{display:grid;gap:5px;color:#6f6059;font-size:.74rem;font-weight:900}
         .shareActions{display:flex;justify-content:flex-end;gap:7px}.shareActions>button:not(.primary){border:1px solid #ddcfc8;border-radius:9px;background:#fff;color:#6b1a2c;font-weight:900;padding:9px 12px}
         .pdfNote{border-left:4px solid #d4a24c;background:#fff9ec;border-radius:8px;padding:10px 12px;display:grid;gap:2px}.pdfNote b{color:#6b1a2c}.pdfNote span{font-size:.72rem;color:#766961}
-        @media(max-width:1100px){.featureStrip{grid-template-columns:repeat(3,1fr)}.selectionGrid{grid-template-columns:repeat(2,minmax(0,1fr))}.roster article{grid-template-columns:52px 1fr 1fr}.userLink,.openLinks{grid-column:2/-1}}
+        @media(max-width:1100px){.featureStrip{grid-template-columns:repeat(3,1fr)}.teamActions{display:flex;gap:12px;align-items:center;flex-wrap:wrap}.selectionGrid{grid-template-columns:repeat(2,minmax(0,1fr))}.roster article{grid-template-columns:52px 1fr 1fr}.userLink,.openLinks{grid-column:2/-1}}
         @media(max-width:800px){.head,.detailHead{flex-direction:column}.createSelection,.selectionGrid,.twoCols{grid-template-columns:1fr}.featureStrip{grid-template-columns:repeat(2,1fr)}.inline{flex-direction:column}.roster article{grid-template-columns:52px 1fr}.context,.userLink,.openLinks{grid-column:1/-1}}
 
         .twoCols{grid-template-columns:minmax(0,1fr);align-items:start}.staffPanel{padding:9px 12px;background:#faf9f8}.staffPanel summary{cursor:pointer;color:#6b1a2c;font-weight:700;font-size:.8rem}.staffPanel[open] summary{margin-bottom:12px}.panel.rosterComposer{padding:12px}.rosterFilters{display:flex;gap:8px;flex-wrap:wrap;margin:10px 0}.rosterFilters input{flex:1;min-width:180px}.rosterChecks{display:grid;grid-template-columns:1fr;gap:0;max-height:none;overflow:visible}.rosterChecks label{display:flex;align-items:center;gap:10px;min-height:36px;padding:6px 10px;border:0;border-bottom:1px solid #eee8e4;border-radius:0;font-size:.8rem}.rosterChecks label>input{width:16px;height:16px;flex:none;accent-color:#6b1a2c}.rosterChecks label>span{display:grid;grid-template-columns:minmax(170px,1fr) minmax(140px,1fr);align-items:center;gap:12px;width:100%;min-width:0}.rosterChecks b{font-size:.8rem;font-weight:650;line-height:1.35}.rosterChecks small{font-size:.72rem;line-height:1.35;color:#84756f}.selectionActionBar{display:flex;gap:7px;flex-wrap:wrap;align-items:center;padding:9px 0;background:#fff;position:sticky;top:70px;z-index:2;border-bottom:1px solid #e7ddd7}.selectionActionBar button{padding:7px 10px;border:1px solid #e0d4cd;border-radius:7px;background:white;color:#6b1a2c;font-size:.75rem}.selectionActionBar .primary{background:#6b1a2c;color:white}.selectionActionBar button:disabled{opacity:.45;cursor:default}.selectionActionBar .groupAction{background:#f4f0eb}.selectionActionBar span{font-size:.7rem;color:#87766f}.detailActions button,.detailActions a{font-size:.75rem;padding:7px 10px}.selectionCard{padding:10px;border-radius:8px}.selectionCard b{font-size:.85rem}.head p,.detailHead p{font-size:.8rem}.roster article{padding:8px;border-radius:8px}.avatar{width:38px;height:38px}.roster article{grid-template-columns:38px minmax(140px,1fr) minmax(200px,1fr) minmax(200px,1fr) auto}@media(max-width:800px){.roster article{grid-template-columns:38px 1fr}.rosterChecks label>span{grid-template-columns:1fr;gap:2px}.selectionActionBar{top:56px}.twoCols{grid-template-columns:1fr}}

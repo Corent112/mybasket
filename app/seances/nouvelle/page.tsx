@@ -61,6 +61,8 @@ const shortTime = (v?: string | null) => v ? String(v).slice(0,5) : "";
 
 export default function NouvelleSeancePage() {
   const supabase = createClient();
+  const [institutionContext,setInstitutionContext]=useState<{structureId:string;selectionId:string;eventId:string;teamId:string}|null>(null);
+  const [contextError,setContextError]=useState("");
   const [teams, setTeams] = useState<Team[]>([]);
   const [players, setPlayers] = useState<Player[]>([]);
   const [teamId, setTeamId] = useState("");
@@ -132,6 +134,16 @@ export default function NouvelleSeancePage() {
     } else {
       const builderItems = await loadSessionBuilderItems();
       setExercises(builderItems.map((item, index) => ({ exercise_id: item.item_id ?? "", title: item.title, who: item.assigned_to ?? "CP", duration_minutes: item.duration_minutes ?? 10, situation_image_url: item.image_url ?? "", explanation: item.description ?? "", instructions: typeof item.metadata?.instructions === "string" ? item.metadata.instructions : "", variants: typeof item.metadata?.variants === "string" ? item.metadata.variants : "", sort_order: index })));
+    }
+    const params=new URLSearchParams(window.location.search),institutionId=params.get('institutionId'),institutionSelectionId=params.get('selectionId'),institutionEventId=params.get('institutionEventId');
+    if(!sessionId&&institutionId&&institutionSelectionId&&institutionEventId){
+      try{
+        const response=await fetch(`/api/institutionnel/sport/selections?structureId=${encodeURIComponent(institutionId)}`,{cache:'no-store'}),result=await response.json();if(!response.ok)throw new Error(result.error||'Sélection indisponible');
+        const selected=result.selections?.find((row:any)=>row.id===institutionSelectionId&&row.roster_kind!=='preselection');if(!selected)throw new Error('Sélection cible introuvable');
+        const day=await supabase.from('institutional_events').select('id,title,event_date,start_time,end_time,location,selection_id').eq('id',institutionEventId).eq('structure_id',institutionId).eq('archived',false).maybeSingle();if(day.error||!day.data)throw new Error('Journée introuvable');
+        const group=result.selections.find((row:any)=>row.id===day.data.selection_id);if(day.data.selection_id!==selected.id&&group?.preparation_target_id!==selected.id)throw new Error('Cette journée ne prépare pas la sélection choisie');
+        setInstitutionContext({structureId:institutionId,selectionId:selected.id,eventId:day.data.id,teamId:selected.team_id});setTeams(previous=>[...previous.filter(team=>team.id!==selected.team_id),{id:selected.team_id,name:selected.name,institutionId,selectionId:selected.id}]);setTeamId(selected.team_id);setTitle(day.data.title||'Entraînement');setDate(day.data.event_date);setStartTime((day.data.start_time||'10:00').slice(0,5));setEndTime((day.data.end_time||'11:30').slice(0,5));setLocation(day.data.location||'');
+      }catch(error){setContextError(error instanceof Error?error.message:'Journée indisponible');}
     }
     setLoading(false);
   }
@@ -272,6 +284,8 @@ export default function NouvelleSeancePage() {
   }
 
   async function save() {
+    if(contextError)return alert(contextError);
+    if(institutionContext&&teamId!==institutionContext.teamId)return alert("Conserve l’équipe cible pour rattacher cette séance à la journée de préparation.");
     setSaving(true);
     const { data: { user }, error: userError } = await supabase.auth.getUser();
     if (userError || !user) { setSaving(false); return alert("Tu dois être connecté."); }
@@ -402,14 +416,15 @@ export default function NouvelleSeancePage() {
         }
       }
     }
-    if(selectedTeam?.institutionId && selectedTeam.selectionId){try{const response=await fetch("/api/institutionnel/practice-session-link",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({structureId:selectedTeam.institutionId,selectionId:selectedTeam.selectionId,sessionId})});const result=await response.json();if(!response.ok)throw new Error(result.error||"Rattachement impossible");}catch(error){setEditingId(sessionId);setSaving(false);alert(`La séance est enregistrée, mais le rattachement a échoué : ${error instanceof Error?error.message:"Réessaie"}. Enregistre à nouveau pour réessayer.`);return;}}
-    await supabase.from("profiles").update({ active_practice_session_id: null }).eq("id", user.id); await clearSessionBuilderItems(); setSaving(false); window.location.href = `/seances/${sessionId}`;
+    if(selectedTeam?.institutionId && selectedTeam.selectionId){try{const response=await fetch("/api/institutionnel/practice-session-link",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({structureId:selectedTeam.institutionId,selectionId:selectedTeam.selectionId,sessionId,...(institutionContext?{eventId:institutionContext.eventId}:{})})});const result=await response.json();if(!response.ok)throw new Error(result.error||"Rattachement impossible");}catch(error){setEditingId(sessionId);setSaving(false);alert(`La séance est enregistrée, mais le rattachement a échoué : ${error instanceof Error?error.message:"Réessaie"}. Enregistre à nouveau pour réessayer.`);return;}}
+    await supabase.from("profiles").update({ active_practice_session_id: null }).eq("id", user.id); await clearSessionBuilderItems(); setSaving(false); window.location.href = institutionContext?`/institutionnel/${institutionContext.structureId}?tab=Joueurs&preparationDay=${encodeURIComponent(institutionContext.eventId)}`:`/seances/${sessionId}`;
   }
 
   if (loading) return <main className="page loading">Chargement du mode Coach…</main>;
   return <main className="page">
     <header className="hero"><span>MYBASKET · MODE COACH</span><h1>{editingId ? "MODIFIER LA SÉANCE" : "CONSTRUIRE LA SÉANCE"}</h1><p>Prépare les présents, compose tes groupes et organise ton practice plan.</p></header>
 
+    {institutionContext&&<section className="calendarLinkPanel"><strong>Cette séance sera liée à la journée de préparation.</strong><p>Les présences et l’effectif de la journée restent conservés.</p></section>}{contextError&&<p role="alert">{contextError}</p>}
     <InstitutionalPracticeSelectionPicker onChoose={team=>{if(!team){setTeamId("");setSelection([]);return;}setTeams(prev=>[...prev.filter(t=>t.id!==team.id),team]);setPlayers(prev=>[...prev.filter(p=>p.team_id!==team.id),...team.players.map(p=>({id:p.id,team_id:team.id,first_name:p.firstName,last_name:p.lastName,position_primary:p.position}))]);setTeamId(team.id);setSelection(team.players.map(p=>p.id));}}/>
     <section className="panel info"><div className="panelTitle"><span>01</span><div><h2>Informations</h2><p>Cadre général de la séance</p></div></div><div className="infoGrid"><label>Titre<input value={title} onChange={(e) => setTitle(e.target.value)} /></label><label>Équipe<select value={teamId} onChange={(e) => { setTeamId(e.target.value); setSelection([]); }}><option value="">Choisir</option>{teams.map((team) => <option key={team.id} value={team.id}>{team.name}</option>)}</select></label><label>Thème<input value={theme} onChange={(e) => setTheme(e.target.value)} /></label><label>Date<input type="date" value={date} onChange={(e) => setDate(e.target.value)} /></label><label>Début<input type="time" value={startTime} onChange={(e) => setStartTime(e.target.value)} /></label><label>Fin<input type="time" value={endTime} onChange={(e) => setEndTime(e.target.value)} /></label><label className="wide">Lieu<input value={location} onChange={(e) => setLocation(e.target.value)} /></label></div></section>
     {!editingId && teamId && date && <section className="calendarLinkPanel">

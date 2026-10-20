@@ -9,6 +9,23 @@ export async function POST(req:Request){
  const [session,selection]=await Promise.all([db.from('practice_sessions').select('*').eq('id',sessionId).eq('user_id',ctx.user.id).maybeSingle(),db.from('institutional_selections').select('id,team_id,name').eq('id',selectionId).eq('structure_id',structureId).neq('status','archived').maybeSingle()]);
  if(session.error||!session.data||selection.error||!selection.data)return json({error:'Séance ou sélection introuvable'},404);
  const practice=session.data;if(practice.team_id!==selection.data.team_id)return json({error:'La séance ne correspond pas à l’équipe de cette sélection'},400);
+ const sourceEventId=String(b.eventId||'');
+ if(sourceEventId){
+  const day=await db.from('institutional_events').select('id,selection_id').eq('id',sourceEventId).eq('structure_id',structureId).eq('archived',false).maybeSingle();
+  if(day.error||!day.data||!day.data.selection_id)return json({error:'Journée de préparation introuvable'},404);
+  if(day.data.selection_id!==selectionId){
+   const group=await db.from('institutional_selections').select('team_id').eq('id',day.data.selection_id).eq('structure_id',structureId).neq('status','archived').maybeSingle();
+   if(group.error||!group.data)return json({error:'Groupe de préparation introuvable'},404);
+   const team=await db.from('teams').select('metadata').eq('id',group.data.team_id).maybeSingle();
+   if(team.error||team.data?.metadata?.institutionRosterKind!=='preselection'||team.data.metadata.institutionPreparationTargetId!==selectionId)return json({error:'Cette journée ne prépare pas la sélection choisie'},400);
+  }
+  const exercises=await db.from('practice_session_exercises').select('title,duration_minutes').eq('session_id',sessionId).order('sort_order');if(exercises.error)return json({error:exercises.error.message},400);
+  const note=[practice.theme,...(exercises.data||[]).map((exercise:any)=>`${exercise.title}${exercise.duration_minutes?` (${exercise.duration_minutes} min)`:''}`)].filter(Boolean).join(' · ');
+  const hash=Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(`${sourceEventId}:${sessionId}`)))).map(n=>n.toString(16).padStart(2,'0')).join('');
+  const resourceId=`${hash.slice(0,8)}-${hash.slice(8,12)}-5${hash.slice(13,16)}-8${hash.slice(17,20)}-${hash.slice(20,32)}`;
+  const resource=await db.from('institutional_event_resources').upsert({id:resourceId,structure_id:structureId,event_id:sourceEventId,resource_type:'document',title:practice.title||'Fiche séance et exercices',file_url:`/seances/${sessionId}`,note:note||null,completed:false,created_by:ctx.user.id},{onConflict:'id'});if(resource.error)return json({error:resource.error.message},400);
+  return json({ok:true,eventId:sourceEventId});
+ }
  const [snapshot,members]=await Promise.all([db.from('practice_session_players').select('player_id').eq('session_id',sessionId).eq('selected',true),db.from('institutional_selection_players').select('player_id,team_player_id').eq('selection_id',selectionId).eq('status','active')]);
  if(snapshot.error||members.error)return json({error:'Effectif de la séance indisponible'},400);
  const chosen=new Set((snapshot.data||[]).map((row:any)=>String(row.player_id))),playerIds=(members.data||[]).filter((row:any)=>chosen.has(String(row.team_player_id))).map((row:any)=>String(row.player_id));

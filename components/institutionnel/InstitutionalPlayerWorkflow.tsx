@@ -3,6 +3,8 @@
 import {categoryMatches,playerAgeCategory,currentInstitutionSeason} from "@/lib/institutionnel/player-category";
 import InstitutionalDayResources from "./InstitutionalDayResources";
 import InstitutionalDetectionWorkspace from "./InstitutionalDetectionWorkspace";
+import InstitutionalDayRosterImport from "./InstitutionalDayRosterImport";
+import InstitutionalPreparationHub from "./InstitutionalPreparationHub";
 import InstitutionalSelectionsManager from "@/components/institutionnel/InstitutionalSelectionsManager";
 
 import { useEffect, useMemo, useState } from "react";
@@ -113,6 +115,9 @@ const safeProfile = (player?: Player | null) => player?.profile_data || {};
 
 export default function InstitutionalPlayerWorkflow({ structureId, structureType = "committee" }: { structureId: string; structureType?: "committee" | "league" | "federation" | "pole" }) {
   const sb = useMemo(() => createClient(), []);
+  const [dayPanel,setDayPanel]=useState<"roster"|"documents">("roster");
+  useEffect(()=>{const day=new URLSearchParams(window.location.search).get("preparationDay");if(day){setActiveEvent(day);setDayPanel("documents");setTab("detections");}},[]);
+  const [preparationTargetId,setPreparationTargetId]=useState("");
   const [focusedSelectionId,setFocusedSelectionId]=useState("");
   const [tab, setTab] = useState<Tab>("base");
   const [players, setPlayers] = useState<Player[]>([]);
@@ -198,7 +203,7 @@ export default function InstitutionalPlayerWorkflow({ structureId, structureType
     setShares(((sh.data || []) as unknown) as Share[]);
     setReferralToken(String(st.data?.player_referral_token || ""));
     setSeasons((ss.data || []) as Season[]);
-    if (!activeEvent && e.data?.[0]?.id) setActiveEvent(e.data[0].id);
+
   }
 
   async function ensureReferralLink() {
@@ -317,13 +322,13 @@ export default function InstitutionalPlayerWorkflow({ structureId, structureType
 
   const toggle = (id: string) => setSelected((v) => (v.includes(id) ? v.filter((x) => x !== id) : [...v, id]));
 
-  async function saveDaySelection(existing = false, importRoster = false) {
+  async function saveDaySelection(existing = false, importRoster = false, sourceSelectionId = daySelectionId) {
     if (busy) return;
 
     if (existing && !activeEvent) return;
     setBusy("day");
     try {
-      const response = await fetch("/api/institutionnel/detection-days", {method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({structureId,selectionId:daySelectionId,importRoster,...(existing?{eventId:activeEvent}:{...eform,playerIds:draftDayPlayerIds})})});
+      const response = await fetch("/api/institutionnel/detection-days", {method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({structureId,selectionId:sourceSelectionId,importRoster,...(existing?{eventId:activeEvent}:{...eform,playerIds:draftDayPlayerIds})})});
       const result = await response.json();
       if (!response.ok) throw new Error(result.error || "Enregistrement impossible");
       await loadSupportingData();
@@ -332,7 +337,7 @@ export default function InstitutionalPlayerWorkflow({ structureId, structureType
     } catch (error) { alert(error instanceof Error ? error.message : "Enregistrement impossible"); }
     finally { setBusy(""); }
   }
-  async function createEvent() { await saveDaySelection(false); }
+  async function createEvent(sourceSelectionId: string) { await saveDaySelection(false,false,sourceSelectionId); }
 
   async function exportDayReport() {
     const event = events.find((item) => item.id === activeEvent);
@@ -349,7 +354,8 @@ export default function InstitutionalPlayerWorkflow({ structureId, structureType
       const selectionJson = await selectionResponse.json();
       if (!selectionResponse.ok) throw new Error(selectionJson.error || "Sélections indisponibles");
       const linkedId = dayLinks.find((link) => link.id === event.id)?.selection_id;
-      const selection = selectionJson.selections?.find((item:DaySelection) => item.id === linkedId);
+      const linkedSelection = selectionJson.selections?.find((item:DaySelection) => item.id === linkedId);
+      const selection = selectionJson.selections?.find((item:DaySelection)=>item.id===linkedSelection?.preparation_target_id)||linkedSelection;
       const {createDetectionReportPdf} = await import("@/lib/institutionnel/detection-report-pdf");
       const doc = await createDetectionReportPdf({institution:institution.data,event,selection,resources:resources.data||[],eventUrl:`${window.location.origin}/institutionnel/${structureId}?tab=Mon%20calendrier&event=${encodeURIComponent(event.id)}`,participants:currentParts.map(item=>({ ...item, player:players.find(player=>player.id===item.player_id) }))});
       doc.save(`rapport-journee-${event.event_date}.pdf`);
@@ -536,14 +542,14 @@ export default function InstitutionalPlayerWorkflow({ structureId, structureType
 
       {playerPicker && <section className="rosterPicker" role="dialog" aria-modal="true" aria-label="Choisir dans la base joueurs"><div className="rosterPickerBody"><div className="sectionHead"><div><h3>Choisir dans la base joueurs</h3><p>{tab === "detections" ? "Les joueurs déjà ajoutés sont grisés et conservent leur présence." : "Sélectionne les fiches à transmettre."}</p></div><button type="button" className="ghost" onClick={()=>setPlayerPicker(false)} aria-label="Fermer">×</button></div><input value={pickerSearch} onChange={e=>setPickerSearch(e.target.value)} placeholder="Nom, club, catégorie…"/><div className="line"><select aria-label="Catégorie des joueurs à ajouter" value={pickerCategory} onChange={e=>setPickerCategory(e.target.value)}><option value="">Tous les âges</option><option value="group:u13">Groupe U13 — U12 + U13</option>{categories.map(category=><option key={category}>{category}</option>)}</select><select aria-label="Sexe des joueurs à ajouter" value={pickerSex} onChange={e=>setPickerSex(e.target.value)}><option value="">Tous</option><option value="M">Garçons</option><option value="F">Filles</option></select></div><div className="line"><button type="button" className="ghost" disabled={!!busy||!addablePickerIds.length} onClick={()=>setPickerIds(previous=>allPickerChecked?previous.filter(id=>!addablePickerIds.includes(id)):[...new Set([...previous,...addablePickerIds])])}>{allPickerChecked?"Décocher cette liste":`Tout sélectionner (${addablePickerIds.length})`}</button><button type="button" className="ghost" disabled={!!busy} onClick={()=>setPickerIds([])}>Tout décocher</button></div><div className="rosterPickerGrid">{pickerPlayers.map(p=>{const already=tab === "detections" && currentParts.some(x=>x.player_id===p.id);const checked=already || pickerIds.includes(p.id);return <label className={`rosterChoice ${already ? "already" : checked ? "chosen" : ""}`} key={p.id}><input type="checkbox" disabled={already || !!busy} checked={checked} onChange={()=>setPickerIds(prev=>prev.includes(p.id)?prev.filter(id=>id!==p.id):[...prev,p.id])}/><span><b>{p.first_name} {p.last_name}</b><small>{p.category} · {p.club_name}{already ? " · Déjà ajouté" : ""}</small></span></label>;})}</div><footer><span>{pickerIds.length} joueur(s) à ajouter</span><button disabled={!pickerIds.length || !!busy} onClick={()=>{if(tab==="detections")void addToEvent(pickerIds);else{setSelected(pickerIds);setPlayerPicker(false);}}}>{tab==="detections" ? "Ajouter à la détection" : "Valider les joueurs de la passation"}</button></footer></div></section>}
       <nav className="tabs">
-        <button className={tab === "base" ? "on" : ""} onClick={() => setTab("base")}>Base joueurs <em>{validatedPlayers.length}</em></button>
+        <button className={tab === "base" ? "on" : ""} onClick={() => setTab("base")}>Base de joueurs <em>{validatedPlayers.length}</em></button>
         <button className={tab === "referrals" ? "on" : ""} onClick={() => setTab("referrals")}>Signalements <em>{pendingReferrals.length}</em></button>
-        <button className={tab === "detections" ? "on" : ""} onClick={() => setTab("detections")}>Détections</button>
-        <button className={tab === "selections" ? "on" : ""} onClick={() => setTab("selections")}>Sélections · Entraînements</button>
-        <button className={tab === "transfers" ? "on" : ""} onClick={() => setTab("transfers")}>Passations</button>
+        <button className={tab === "detections" ? "on" : ""} onClick={() => setTab("detections")}>Préparation</button>
+        <button className={tab === "selections" ? "on" : ""} onClick={() => setTab("selections")}>Sélections</button>
+        <button className={tab === "transfers" ? "on" : ""} onClick={() => setTab("transfers")}>Passation</button>
       </nav>
 
-      {tab === "selections" && <InstitutionalSelectionsManager initialSelectionId={focusedSelectionId} onOpenDetection={eventId=>{if(eventId)setActiveEvent(eventId);setTab("detections");}} structureId={structureId} structureType={structureType} onOpenBase={()=>setTab("base")} onCreateDetection={ids=>{setDraftDayPlayerIds(ids);setActiveEvent("");setDaySelectionId("");setTab("detections");}}/>}
+      {tab === "selections" && <InstitutionalSelectionsManager initialSelectionId={focusedSelectionId} onPrepareSelection={id=>{setPreparationTargetId(id);setActiveEvent("");setTab("detections");}} onOpenDetection={eventId=>{setActiveEvent(eventId||"");setDayPanel("roster");setTab("detections");}} structureId={structureId} structureType={structureType} onOpenBase={()=>setTab("base")} onCreateDetection={ids=>{setDraftDayPlayerIds(ids);setActiveEvent("");setDaySelectionId("");setTab("detections");}}/>}
 
       {tab === "base" && (
         <>
@@ -634,16 +640,18 @@ export default function InstitutionalPlayerWorkflow({ structureId, structureType
         </>
       )}
 
-      {tab === "detections" && <InstitutionalDetectionWorkspace structureId={structureId} events={events} eventId={activeEvent} onEventChange={setActiveEvent} parts={currentParts.map(part=>({...part,player:pMap.get(part.player_id)}))} busy={!!busy} draftCount={draftDayPlayerIds.length} onAdd={()=>{setPickerIds([]);setPickerSearch("");setPlayerPicker(true);}} onPresence={(id,status)=>void patchStatus(id,status)} onDecision={(part,decision)=>void patchDecision(part,decision)} onRemove={(part,player)=>void removeEventParticipant(part,player)} onReload={async()=>{await Promise.all([loadSupportingData(),loadPlayersAndReferrals()]);}} onReport={()=>void exportDayReport()} onDeleteDay={()=>void removeDetectionDay()} reportBusy={reportBusy} onOpenSelection={id=>{setFocusedSelectionId(id);setTab("selections");}}
+      {tab === "detections" && <InstitutionalPreparationHub structureId={structureId} events={events} links={dayLinks} parts={parts} eventId={activeEvent} initialTargetId={preparationTargetId} onOpenDay={(id,panel)=>{setActiveEvent(id);setDayPanel(panel||"roster");}} onOpenSelection={id=>{setFocusedSelectionId(id);setTab("selections");}} onReload={loadSupportingData}>{context=><InstitutionalDetectionWorkspace initialTab={dayPanel} newDayMode={context.newDay} targetSelectionId={context.target?.id}  structureId={structureId} events={context.days} eventId={activeEvent} onEventChange={setActiveEvent} parts={currentParts.map(part=>({...part,player:pMap.get(part.player_id)}))} busy={!!busy} draftCount={draftDayPlayerIds.length} onAdd={()=>{setPickerIds([]);setPickerSearch("");setPlayerPicker(true);}} onPresence={(id,status)=>void patchStatus(id,status)} onDecision={(part,decision)=>void patchDecision(part,decision)} onRemove={(part,player)=>void removeEventParticipant(part,player)} onReload={async()=>{await Promise.all([loadSupportingData(),loadPlayersAndReferrals()]);}} onReport={()=>void exportDayReport()} onDeleteDay={()=>void removeDetectionDay()} reportBusy={reportBusy} onOpenSelection={id=>{setFocusedSelectionId(id);setTab("selections");}}
       newDayForm={<div className="dayForm">
        {draftDayPlayerIds.length>0&&<div className="draftDayGroup"><b>{draftDayPlayerIds.length} joueurs prêts à être ajoutés</b><button type="button" className="ghost" onClick={()=>setDraftDayPlayerIds([])}>Annuler ce groupe</button></div>}
        <div className="grid"><label>Titre<input value={eform.title} onChange={e=>setEform({...eform,title:e.target.value})}/></label><label>Type<select value={eform.event_type} onChange={e=>setEform({...eform,event_type:e.target.value,title:["Journée de détection","Entraînement"].includes(eform.title)?e.target.value==="training"?"Entraînement":"Journée de détection":eform.title})}>{Object.entries(EVENT_LABELS).map(([key,label])=><option key={key} value={key}>{label}</option>)}</select></label><label>Date<input type="date" value={eform.event_date} onChange={e=>setEform({...eform,event_date:e.target.value})}/></label><label>Début<input type="time" value={eform.start_time} onChange={e=>setEform({...eform,start_time:e.target.value})}/></label><label>Lieu<input value={eform.location} placeholder="Gymnase…" onChange={e=>setEform({...eform,location:e.target.value})}/></label></div>
-       <div><b>Quel groupe participe à cette journée ?</b><p className="hint">Choisis une présélection : son effectif est ajouté automatiquement. Les décisions Retenu / Non retenu mettent à jour les journées suivantes. Une sélection finale reste limitée à 10 ou 12.</p><InstitutionalSelectionPicker structureId={structureId} value={daySelectionId} onChange={id=>setDaySelectionId(id)}/></div>
-       <button disabled={!!busy} onClick={()=>void createEvent()}>{busy==="day"?"Enregistrement…":draftDayPlayerIds.length?`Créer avec ${draftDayPlayerIds.length} joueurs`:"Créer la journée"}</button>
+       <div><b>Sélection cible : {context.target?.name}</b><p className="hint">{context.group?.name} · Effectif de préparation sans limite. Les présences et décisions restent propres à chaque journée.</p></div>
+       <InstitutionalDayRosterImport key={context.group?.id||"new-day"} structureId={structureId} players={validatedPlayers} memberIds={draftDayPlayerIds} maxPlayers={null} busy={!!busy} onAdd={async ids=>{setDraftDayPlayerIds(previous=>[...new Set([...previous,...ids])]);return ids;}}/>
+       <p className="hint">Les joueurs repris seront ajoutés lors de la création de la journée. Les anciennes présences restent conservées.</p>
+       <button disabled={!!busy||!context.group} onClick={()=>void createEvent(context.group!.id)}>{busy==="day"?"Enregistrement…":draftDayPlayerIds.length?`Créer avec ${draftDayPlayerIds.length} joueurs`:"Créer la journée"}</button>
        <details><summary>Suivi des saisons</summary><div className="line"><input aria-label="Saison de suivi" value={seasonLabel} onChange={e=>setSeasonLabel(e.target.value)}/><button onClick={()=>void createSeason()}>Ajouter la saison</button></div></details>
       </div>}
-      content={<InstitutionalDayResources key={activeEvent} structureId={structureId} eventId={activeEvent} eventTitle={events.find(event=>event.id===activeEvent)?.title||"Entraînement"}/>}
-      settings={<><InstitutionalSelectionPicker structureId={structureId} value={daySelectionId} onChange={id=>setDaySelectionId(id)}/><div className="line"><button type="button" className="ghost" disabled={!activeEvent||!!busy} onClick={()=>void saveDaySelection(true)}>Enregistrer le rattachement</button><button type="button" className="ghost" disabled={!activeEvent||!daySelectionId||!!busy} onClick={()=>void saveDaySelection(true,true)}>Ajouter l’effectif source</button></div></>}/>}
+      content={<InstitutionalDayResources key={activeEvent} structureId={structureId} eventId={activeEvent} selectionId={context.target?.id} eventTitle={events.find(event=>event.id===activeEvent)?.title||"Entraînement"}/>}
+      settings={<><InstitutionalSelectionPicker structureId={structureId} value={daySelectionId} onChange={id=>setDaySelectionId(id)}/><div className="line"><button type="button" className="ghost" disabled={!activeEvent||!!busy} onClick={()=>void saveDaySelection(true)}>Enregistrer le rattachement</button><button type="button" className="ghost" disabled={!activeEvent||!daySelectionId||!!busy} onClick={()=>void saveDaySelection(true,true)}>Ajouter l’effectif source</button></div></>}/>}</InstitutionalPreparationHub>}
 
       {tab === "transfers" && (
         <>
