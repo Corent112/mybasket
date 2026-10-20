@@ -1,3 +1,4 @@
+import {informationConsentReceipt} from '@/lib/institutionnel/information-consent';
 import { createHash } from "crypto";
 import { NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin-server";
@@ -16,11 +17,15 @@ export async function GET(_req:Request,{params}:{params:Promise<{token:string}>}
 }
 export async function POST(req:Request,{params}:{params:Promise<{token:string}>}){
   const{token}=await params;const db=createAdminClient();if(!db)return NextResponse.json({error:"Service indisponible"},{status:500});
-  const q=await db.from("institutional_parent_questionnaires").select("id,player_id,status,expires_at").eq("token_hash",h(token)).maybeSingle();
+  const q=await db.from("institutional_parent_questionnaires").select("id,structure_id,player_id,status,expires_at").eq("token_hash",h(token)).maybeSingle();
   if(!q.data||q.data.status==="revoked")return NextResponse.json({error:"Lien invalide"},{status:404});
   if(Date.parse(q.data.expires_at)<Date.now())return NextResponse.json({error:"Lien expiré"},{status:410});
   const b=await req.json().catch(()=>({}));
+  if(b.dataConsent!==true)return NextResponse.json({error:"Veuillez accepter la collecte et l’utilisation des informations avant de transmettre."},{status:400});
+  const structure=await db.from("institutional_structures").select("name").eq("id",q.data.structure_id).maybeSingle();
+  if(structure.error||!structure.data)return NextResponse.json({error:"Institution indisponible. Réessayez."},{status:503});
   const response={
+    dataConsent:informationConsentReceipt(structure.data.name,q.data.structure_id),
     guardian1_name:String(b.guardian1_name||"").trim(),guardian1_relation:String(b.guardian1_relation||"").trim(),
     guardian1_email:String(b.guardian1_email||"").trim(),guardian1_phone:String(b.guardian1_phone||"").trim(),
     guardian1_height_cm:b.guardian1_height_cm?Number(b.guardian1_height_cm):null,

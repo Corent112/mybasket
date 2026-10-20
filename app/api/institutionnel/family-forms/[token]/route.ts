@@ -1,3 +1,4 @@
+import {informationConsentReceipt} from '@/lib/institutionnel/information-consent';
 import { NextResponse } from 'next/server';
 import { createAdminClient } from '@/lib/supabase/admin-server';
 import { belongsToFamilyGroup, familyBirthdate, familyGroup, familyName, familyPlayerPatch } from '@/lib/institutionnel/family-form';
@@ -16,7 +17,7 @@ export async function POST(req:Request,{params}:{params:Promise<{token:string}>}
   if(!rateLimit(`family:${claim.structureId}:${getClientIp(req.headers)}`,30,60000).allowed)return json({error:'Trop de tentatives. Réessayez dans une minute.'},429);
   const db=createAdminClient();if(!db)return json({error:'Service indisponible'},503);
   let b:any;try {const raw=await req.text();if(raw.length>10000)return json({error:'Formulaire trop volumineux'},413);b=JSON.parse(raw);}catch{return json({error:'Formulaire invalide'},400);}
-  const institution=await db.from('institutional_structures').select('season_label').eq('id',claim.structureId).maybeSingle();
+  const institution=await db.from('institutional_structures').select('name,season_label').eq('id',claim.structureId).maybeSingle();
   if(institution.error||!institution.data)return json({error:'Institution indisponible. Réessayez.'},503);
   const seasonLabel=institution.data.season_label;
   if(b.action==='find') {
@@ -32,10 +33,12 @@ export async function POST(req:Request,{params}:{params:Promise<{token:string}>}
   const ticket=readFamilyClaim(String(b.ticket||''),'institution-family-player');
   if(!ticket||ticket.structureId!==claim.structureId||ticket.group!==claim.group)return json({error:'Vérifiez de nouveau l’identité du joueur avant de transmettre.'},403);
   if(b.confirm!==true)return json({error:'Confirmez que vous êtes autorisé à renseigner cette fiche.'},400);
+  if(b.dataConsent!==true)return json({error:'Veuillez accepter la collecte et l’utilisation des informations avant de transmettre.'},400);
   const current=await db.from('institutional_players').select('id,structure_id,birthdate,category,sex,archived,status,profile_data,updated_at').eq('id',ticket.playerId!).eq('structure_id',claim.structureId).maybeSingle();
   if(current.error)return json({error:'Lecture impossible. Réessayez.'},503);
   if(!current.data||!belongsToFamilyGroup(current.data,claim.group,seasonLabel))return json({error:'Cette fiche n’est plus disponible dans ce groupe.'},404);
   let patch:Record<string,any>;try{patch=familyPlayerPatch(b.fields||{},current.data.profile_data||{},claim.group);}catch(error){return json({error:error instanceof Error?error.message:'Informations invalides'},400);}
+  patch.profile_data.familyQuestionnaire={...patch.profile_data.familyQuestionnaire,dataConsent:informationConsentReceipt(institution.data.name,claim.structureId,patch.updated_at)};
   let query=db.from('institutional_players').update(patch).eq('id',current.data.id).eq('structure_id',claim.structureId);
   query=current.data.updated_at?query.eq('updated_at',current.data.updated_at):query.is('updated_at',null);
   const saved=await query.select('id').maybeSingle();
