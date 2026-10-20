@@ -1,5 +1,7 @@
 "use client";
 
+import InstitutionalSelectionCompetitions from "./InstitutionalSelectionCompetitions";
+import {selectionCategory} from "@/lib/institutionnel/selection-competitions";
 import {categoryMatches,withPlayerCategory} from "@/lib/institutionnel/player-category";
 import { useEffect, useMemo, useState } from "react";
 import InstitutionalDayRosterImport from "./InstitutionalDayRosterImport";
@@ -100,7 +102,7 @@ export default function InstitutionalSelectionsManager({
   const [editError, setEditError] = useState("");
   const [editForm, setEditForm] = useState({name:"",category:"",gender:"",seasonLabel:""});
   const [showCreate, setShowCreate] = useState(false);
-  const [detailTab, setDetailTab] = useState<"roster"|"training"|"documents">("roster");
+  const [detailTab, setDetailTab] = useState<"roster"|"training"|"documents"|"competitions">("roster");
   const [creationPlayerIds, setCreationPlayerIds] = useState<string[]>([]);
   const [creationSearch, setCreationSearch] = useState("");
   const [checkedMemberIds,setCheckedMemberIds]=useState<string[]>([]);
@@ -119,6 +121,8 @@ export default function InstitutionalSelectionsManager({
   const [playerSearch, setPlayerSearch] = useState("");
   const [categoryFilter, setCategoryFilter] = useState("");
   const [genderFilter, setGenderFilter] = useState("");
+  const [selectionAge,setSelectionAge]=useState("");
+  const [selectionSex,setSelectionSex]=useState("");
   const [seasonFilter, setSeasonFilter] = useState("");
 
   const [staffEmail, setStaffEmail] = useState("");
@@ -435,8 +439,9 @@ export default function InstitutionalSelectionsManager({
       )}
 
       <label className="seasonFilter">Saison des sélections <select value={seasonFilter} onChange={event=>setSeasonFilter(event.target.value)}><option value="">Toutes les saisons</option>{seasonOptions.map(season=><option key={season!} value={season!}>{season}</option>)}</select></label>
+      <div className="selectionFilters"><label>Catégorie<select aria-label="Catégorie des sélections" value={selectionAge} onChange={e=>{setSelectionAge(e.target.value);setOpened("")}}><option value="">Toutes les catégories</option>{Array.from(new Set(rows.map(r=>selectionCategory(r.category)).filter(Boolean))).sort().map(age=><option key={age} value={age}>{age}</option>)}</select></label><label>Sexe<select aria-label="Sexe des sélections" value={selectionSex} onChange={e=>{setSelectionSex(e.target.value);setOpened("")}}><option value="">Tous</option><option value="F">Féminin</option><option value="M">Masculin</option><option value="mixed">Mixte</option></select></label></div>
       <div className="selectionGrid">
-        {rows.filter(row=>(row.roster_kind!=="preselection"||row.id===opened)&&(!seasonFilter || row.season_label===seasonFilter)).map((row) => (
+        {rows.filter(row=>(row.roster_kind!=="preselection"||row.id===opened)&&(!seasonFilter || row.season_label===seasonFilter)&&(!selectionAge||selectionCategory(row.category)===selectionAge)&&(!selectionSex||(row.gender||"mixed")===selectionSex)).map((row) => (
           <button
             className={opened === row.id ? "selectionCard on" : "selectionCard"}
             key={row.id}
@@ -451,7 +456,7 @@ export default function InstitutionalSelectionsManager({
             </small>
           </button>
         ))}
-        {!rows.length && <div className="empty">Aucune sélection créée.</div>}
+        {!rows.some(row=>row.roster_kind!=="preselection"&&(!seasonFilter||row.season_label===seasonFilter)&&(!selectionAge||selectionCategory(row.category)===selectionAge)&&(!selectionSex||(row.gender||"mixed")===selectionSex))&&<div className="empty">Aucune sélection avec ces filtres.</div>}
       </div>
 
       {current && (
@@ -483,7 +488,7 @@ export default function InstitutionalSelectionsManager({
             {editError&&<p role="alert">{editError}</p>}
             <div className="inline"><button className="primary" type="submit" disabled={busy}>{busy?"Enregistrement…":"Enregistrer les modifications"}</button><button type="button" disabled={busy} onClick={()=>setEditing(false)}>Annuler</button></div>
           </form>}
-          <nav className="detailTabs" aria-label="Onglets de la sélection"><button type="button" className={detailTab==="roster"?"active":""} onClick={()=>setDetailTab("roster")}>Effectif</button><button type="button" className={detailTab==="training"?"active":""} onClick={()=>setDetailTab("training")}>Séances & documents liés</button><button type="button" className={detailTab==="documents"?"active":""} onClick={()=>setDetailTab("documents")}>Documents</button></nav>
+          <nav className="detailTabs" aria-label="Onglets de la sélection">{current.roster_kind!=="preselection"&&<button type="button" className={detailTab==="competitions"?"active":""} onClick={()=>setDetailTab("competitions")}>Tournois & matchs</button>}<button type="button" className={detailTab==="roster"?"active":""} onClick={()=>setDetailTab("roster")}>Effectif</button><button type="button" className={detailTab==="training"?"active":""} onClick={()=>setDetailTab("training")}>Séances & documents liés</button><button type="button" className={detailTab==="documents"?"active":""} onClick={()=>setDetailTab("documents")}>Documents</button></nav>
           {detailTab==="roster"&&<>
           <div className="twoCols">
             <details className="panel staffPanel">
@@ -652,6 +657,7 @@ export default function InstitutionalSelectionsManager({
 
           </>}
           {detailTab==="documents"&&<section className="selectionDocuments"><div className="documentsHead"><div><h3>Documents · {current.name}</h3><p>Prépare les documents de l’effectif ou des joueurs cochés.</p></div><label>Destinataires<select value={docScope} onChange={event=>{setDocScope(event.target.value as "all"|"checked");setDocAction(null);}}><option value="all">Tout l’effectif ({current.players?.length||0})</option><option value="checked" disabled={!checkedMemberIds.length}>Joueurs cochés ({checkedMemberIds.length})</option></select></label></div><div className="documentChoices">{([{action:"trombinoscope",title:"Trombinoscope",description:"Photos, noms et catégories · PDF"},{action:"note",title:"Convocation",description:"Date, lieu, horaires et liste des joueurs"},{action:"info",title:"Fiche de renseignements",description:"Identités et coordonnées déjà enregistrées"}] as const).map(item=><button key={item.action} disabled={!documentPlayers.length&&item.action!=="info"} className={docAction===item.action?"active":""} onClick={()=>setDocAction(item.action)}><small>DOCUMENT</small><b>{item.title}</b><span>{item.description}</span><em>Préparer pour {documentPlayers.length} joueur(s) →</em></button>)}</div>{!documentPlayers.length&&<p>Ajoute des joueurs à l’effectif ou coche les destinataires depuis l’onglet Effectif.</p>}{docAction&&(docAction==="info"||documentPlayers.length>0)&&<InstitutionalSelectionDocuments key={`${current.id}:${docAction}:${docScope}`} structureId={structureId} selectionId={current.id} selectionName={current.name} players={documentPlayers} initialAction={docAction} onClose={()=>setDocAction(null)}/>}</section>}
+          {detailTab==="competitions"&&<InstitutionalSelectionCompetitions key={current.id} structureId={structureId} selection={current}/>}
           {detailTab==="training"&&<div id="selection-event-tools">{onPrepareSelection&&<button type="button" className="primary" onClick={()=>onPrepareSelection(current.preparation_target_id||current.id)}>Ouvrir la préparation de cette sélection</button>}<InstitutionalSelectionTraining structureId={structureId} selectionId={current.id} preparationSelectionIds={rows.filter(row=>row.preparation_target_id===current.id).map(row=>row.id)} onManageDay={onOpenDetection} onOpenSelection={id=>{void load();setOpened(id);setDetailTab("roster");}}/></div>}
         </section>
       )}
@@ -744,6 +750,8 @@ export default function InstitutionalSelectionsManager({
       )}
 
       <style jsx>{`
+ .selectionFilters{display:flex;gap:12px;flex-wrap:wrap}.selectionFilters label{display:grid;gap:5px;font-size:12px;color:#6b1a2c}.selectionFilters select{padding:8px;border:1px solid #ddcfc8;border-radius:7px;background:white}.detailTabs{flex-wrap:wrap}
+
         .selectionEdit{padding:16px;margin:12px 0;border:1px solid #ddcfc8;border-radius:12px;background:#faf7f5}.editHeading{display:flex;justify-content:space-between;align-items:center;margin-bottom:12px}.editFields{display:grid;grid-template-columns:2fr 1fr 1fr 1fr;gap:12px;margin-bottom:12px}.editFields label{display:grid;gap:6px;font-size:12px;font-weight:700;min-width:0}.editFields input,.editFields select{width:100%;min-width:0;box-sizing:border-box;padding:9px;border:1px solid #ddcfc8;border-radius:8px;background:white}.selectionEdit [role=alert]{color:#a12035}@media(max-width:700px){.editFields{grid-template-columns:1fr 1fr}}@media(max-width:420px){.editFields{grid-template-columns:1fr}}
 
         .creationRoster{grid-column:1/-1;width:100%;padding-top:12px;border-top:1px solid #e7deda}.creationRoster h4{margin:0 0 6px;color:#6b1a2c}.detailTabs{display:flex;gap:8px;margin:16px 0}.detailTabs button{border:1px solid #ddcfc8;background:white;color:#6b1a2c;border-radius:999px;padding:10px 16px;font-weight:800}.detailTabs button.active{background:#6b1a2c;color:white}

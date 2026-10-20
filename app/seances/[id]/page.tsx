@@ -1,4 +1,5 @@
 "use client";
+import {downloadSessionPdf} from "@/lib/institutionnel/session-pdf-download";
 
 import { openFileSameTab } from "@/lib/client-file-actions";
 
@@ -312,24 +313,9 @@ export default function SeanceDetailPage() {
   }
 
   async function generatePdf() {
-    if (!id) return;
-
+    if(!id||generatingPdf)return;
     setGeneratingPdf(true);
-
-    const response = await fetch(`/api/seances/${id}/pdf`, {
-      method: "POST",
-    });
-
-    const data = await response.json();
-    setGeneratingPdf(false);
-
-    if (!response.ok) {
-      alert(data.error ?? "Erreur génération PDF");
-      return;
-    }
-
-    await loadSession(id);
-    openFileSameTab(data.pdfUrl);
+    try{await downloadSessionPdf(id,session?.title||"fiche-seance");await loadSession(id)}catch(error){alert(error instanceof Error?error.message:"Téléchargement impossible")}finally{setGeneratingPdf(false)}
   }
 
   async function removeSession() {

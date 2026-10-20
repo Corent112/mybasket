@@ -1,6 +1,7 @@
 "use client";
 
-import {useEffect,useMemo,useState} from "react";
+import {useEffect,useMemo,useRef,useState} from "react";
+import {performanceTotals} from "@/lib/institutionnel/selection-competitions";
 import TeamShootingGrids from "@/components/equipes/TeamShootingGrids";
 import {createClient} from "@/lib/supabase/client";
 import type {Player} from "@/types/player";
@@ -11,7 +12,7 @@ type Props={
   player:{id:string;first_name:string;last_name:string;photo_url?:string|null};
 };
 type Totals={games:number;minutes:number;pts:number;reb:number;ast:number;stl:number;blk:number;turnovers:number;p2m:number;p2a:number;p3m:number;p3a:number;ftm:number;fta:number};
-type MatchRow={id:string;date:string;opponent:string;teamName:string;context:"club"|"pole"|"selection";selectionLevel?:string|null;pts:number;reb:number;ast:number;minutes:number};
+type MatchRow={teamId:string;playerId:string;category?:string;tournaments?:Array<{id:string;name:string}>;id:string;date:string;opponent:string;teamName:string;context:"club"|"pole"|"selection";selectionLevel?:string|null;pts:number;reb:number;ast:number;minutes:number};
 type Payload={totals:Record<Context,Totals>;matches:MatchRow[];sources:Array<{context:string;teamId:string;playerId:string;teamName:string;selectionLevel?:string|null}>};
 
 const empty:Totals={games:0,minutes:0,pts:0,reb:0,ast:0,stl:0,blk:0,turnovers:0,p2m:0,p2a:0,p3m:0,p3a:0,ftm:0,fta:0};
@@ -19,8 +20,12 @@ const pct=(m:number,a:number)=>a?Math.round(m/a*1000)/10:0;
 const one=(n:number)=>Number(n||0).toFixed(1);
 
 export default function InstitutionalPlayerPerformance({structureId,player}:Props){
+ const requestRef=useRef(0);
  const sb=useMemo(()=>createClient(),[]);
  const [view,setView]=useState<"stats"|"shooting">("stats");
+ const [teamFilter,setTeamFilter]=useState("");
+ const [tournamentFilter,setTournamentFilter]=useState("");
+ const [error,setError]=useState("");
  const [context,setContext]=useState<Context>("all");
  const [data,setData]=useState<Payload|null>(null);
  const [loading,setLoading]=useState(false);
@@ -37,13 +42,15 @@ export default function InstitutionalPlayerPerformance({structureId,player}:Prop
  } as unknown as Player),[player]);
 
  async function load(){
-   setLoading(true);
+   const requestId=++requestRef.current;setLoading(true);setError("");setData(null);
+   try{
    const r=await fetch(`/api/institutionnel/player-performance?structureId=${encodeURIComponent(structureId)}&playerId=${encodeURIComponent(player.id)}`,{cache:"no-store"});
    const j=await r.json().catch(()=>null);
-   setLoading(false);
-   if(r.ok)setData(j); else alert(j?.error||"Lecture des statistiques impossible.");
+   if(requestId!==requestRef.current)return;
+   if(r.ok)setData(j); else setError(j?.error||"Lecture des statistiques impossible.");
+   }catch{if(requestId===requestRef.current)setError("Connexion interrompue. Réessaie.")}finally{if(requestId===requestRef.current)setLoading(false)}
  }
- useEffect(()=>{void load()},[structureId,player.id]); // eslint-disable-line
+ useEffect(()=>{void load();return()=>{requestRef.current++}},[structureId,player.id]); // eslint-disable-line
 
  async function openLink(){
    setShowLink(true);
@@ -64,8 +71,12 @@ export default function InstitutionalPlayerPerformance({structureId,player}:Prop
    if(!r.ok)return alert(j.error||"Liaison impossible.");
    setShowLink(false);await load();
  }
- const t=data?.totals?.[context]||empty;
- const rows=(data?.matches||[]).filter(m=>context==="all"||m.context===context);
+ useEffect(()=>{setTeamFilter("");setTournamentFilter("");},[structureId,player.id,context]);
+ const contextRows=(data?.matches||[]).filter(m=>context==="all"||m.context===context);
+ const rows=contextRows.filter(m=>(!teamFilter||m.teamId===teamFilter)&&(!tournamentFilter||m.tournaments?.some(t=>t.id===tournamentFilter)));
+ const t=performanceTotals(rows);
+ const teamsInStats=[...new Map(contextRows.map(m=>[m.teamId,{id:m.teamId,name:m.teamName,category:m.category}])).values()];
+ const tournaments=[...new Map(contextRows.filter(m=>!teamFilter||m.teamId===teamFilter).flatMap(m=>m.tournaments||[]).map(t=>[t.id,t])).values()];
 
  return <section className="ipp">
    <div className="ippHead"><div><p>PERFORMANCE</p><h3>Statistiques & grilles de tirs</h3><span>Une seule fiche joueur, avec les performances séparées selon son environnement.</span></div>
@@ -82,12 +93,14 @@ export default function InstitutionalPlayerPerformance({structureId,player}:Prop
       {context==="selection"&&<span>Sélection : événements ponctuels départementaux, régionaux, nationaux ou autres. <button className="linkBtn" onClick={openLink}>+ Relier une équipe de sélection</button></span>}
       {context==="all"&&"Toutes les performances connues du joueur, sans mélanger leur origine dans le détail."}
     </div>
+    <div className="statFilters"><label>Sélection / équipe<select aria-label="Équipe des statistiques" value={teamFilter} onChange={e=>{setTeamFilter(e.target.value);setTournamentFilter("")}}><option value="">Toutes les équipes</option>{teamsInStats.map(team=><option key={team.id} value={team.id}>{team.name} · {team.category||"—"}</option>)}</select></label><label>Tournoi<select aria-label="Tournoi des statistiques" value={tournamentFilter} onChange={e=>setTournamentFilter(e.target.value)}><option value="">Tous les matchs</option>{tournaments.map(t=><option key={t.id} value={t.id}>{t.name}</option>)}</select></label></div>
+    {error&&<p role="alert">{error} <button onClick={()=>void load()}>Réessayer</button></p>}
     {loading?<div className="empty">Chargement…</div>:<>
       <div className="kpis">
        <K label="Matchs" value={String(t.games)}/><K label="Points / match" value={t.games?one(t.pts/t.games):"—"}/><K label="Rebonds / match" value={t.games?one(t.reb/t.games):"—"}/><K label="Passes / match" value={t.games?one(t.ast/t.games):"—"}/><K label="Minutes / match" value={t.games?one(t.minutes/t.games):"—"}/><K label="2PTS" value={t.p2a?`${pct(t.p2m,t.p2a)}%`:"—"}/><K label="3PTS" value={t.p3a?`${pct(t.p3m,t.p3a)}%`:"—"}/><K label="LF" value={t.fta?`${pct(t.ftm,t.fta)}%`:"—"}/>
       </div>
       <div className="matchTable"><div className="tr th"><span>Date</span><span>Contexte</span><span>Équipe / adversaire</span><span>PTS</span><span>REB</span><span>PD</span><span>MIN</span></div>
-       {rows.map(m=><div className="tr" key={`${m.context}-${m.id}`}><span>{m.date?new Date(`${m.date}T12:00:00`).toLocaleDateString("fr-FR"):"—"}</span><span><b className={`badge ${m.context}`}>{m.context==="club"?"Club":m.context==="pole"?"Pôle":`Sélection${m.selectionLevel?` · ${level(m.selectionLevel)}`:""}`}</b></span><span>{m.teamName}{m.opponent?` · vs ${m.opponent}`:""}</span><b>{m.pts}</b><span>{m.reb}</span><span>{m.ast}</span><span>{m.minutes||"—"}</span></div>)}
+       {rows.map(m=><div className="tr" key={`${m.context}-${m.id}`}><span>{m.date?new Date(`${m.date}T12:00:00`).toLocaleDateString("fr-FR"):"—"}</span><span><b className={`badge ${m.context}`}>{m.context==="club"?"Club":m.context==="pole"?"Pôle":`Sélection${m.selectionLevel?` · ${level(m.selectionLevel)}`:""}`}</b></span><span>{m.teamName}{m.opponent?` · vs ${m.opponent}`:""}{m.tournaments?.map(t=><small key={t.id}> · {t.name}</small>)} <a href={`/prise-stats-pro?project=${encodeURIComponent(m.id)}&mode=resume&tab=players`}>Voir le match →</a></span><b>{m.pts}</b><span>{m.reb}</span><span>{m.ast}</span><span>{m.minutes==null?"—":one(m.minutes)}</span></div>)}
        {!rows.length&&<div className="empty">Aucun match relié dans ce contexte pour le moment.</div>}
       </div>
     </>}
@@ -106,7 +119,8 @@ export default function InstitutionalPlayerPerformance({structureId,player}:Prop
     <label>Libellé facultatif<input value={link.label} onChange={e=>setLink(v=>({...v,label:e.target.value}))} placeholder="Ex. Ligue Île-de-France U15"/></label>
     <div className="actions"><button className="ghost" onClick={()=>setShowLink(false)}>Annuler</button><button onClick={saveSelectionLink}>Enregistrer la liaison</button></div>
    </div></div>}
-   <style jsx>{`.ipp{border-top:1px solid #eadfd8;margin-top:18px;padding-top:16px;display:grid;gap:12px}.ippHead{display:flex;justify-content:space-between;gap:12px;align-items:flex-start}.ipp p{margin:0;color:#d4a24c;font-size:.68rem;font-weight:1000;letter-spacing:.12em}.ipp h3{margin:3px 0;color:#6b1a2c}.ipp span{color:#7f7169}.mainTabs,.contextTabs,.actions{display:flex;gap:6px;flex-wrap:wrap}.mainTabs button,.contextTabs button{border:1px solid #ddcfc8;background:#fff;color:#6b1a2c;border-radius:999px;padding:8px 11px;font-weight:900}.mainTabs button.on,.contextTabs button.on{background:#6b1a2c;color:#fff}.contextHelp{background:#fbf7f3;border:1px solid #eadfd8;border-radius:10px;padding:9px 11px;font-size:.78rem;color:#675b56}.linkBtn{padding:5px 8px;margin-left:8px}.kpis{display:grid;grid-template-columns:repeat(8,minmax(85px,1fr));gap:7px}.kpi{border:1px solid #eadfd8;border-radius:11px;padding:9px;background:#fff;text-align:center}.kpi b{display:block;color:#6b1a2c;font-size:1.05rem}.kpi small{font-size:.62rem;color:#8b7d77;text-transform:uppercase;font-weight:900}.matchTable{border:1px solid #eadfd8;border-radius:12px;overflow:auto}.tr{display:grid;grid-template-columns:95px 150px minmax(220px,1fr) 55px 55px 55px 55px;gap:7px;padding:8px 10px;border-top:1px solid #f0e8e4;align-items:center;font-size:.76rem;min-width:760px}.tr.th{background:#faf7f5;border-top:0;color:#6b1a2c;font-weight:1000}.badge{display:inline-flex;padding:4px 7px;border-radius:999px;font-size:.66rem}.badge.club{background:#eef4ff;color:#315c9b}.badge.pole{background:#fff2d8;color:#8a5a00}.badge.selection{background:#f3eafa;color:#70438c}.empty{text-align:center;padding:20px;color:#8b7e78}.shootingIntro{color:#675b56!important;letter-spacing:0!important;font-size:.8rem!important}.modalBack{position:fixed;inset:0;background:rgba(25,15,18,.5);z-index:200;display:grid;place-items:center;padding:15px}.modal{width:min(620px,100%);background:#fff;border-radius:16px;padding:18px;display:grid;gap:10px}.modal label{display:grid;gap:5px;color:#6b1a2c;font-weight:900;font-size:.76rem}.modal input,.modal select{border:1px solid #ddd1ca;border-radius:9px;padding:9px}.modal .actions{justify-content:flex-end}.ghost{background:#fff!important;color:#6b1a2c!important;border:1px solid #d8c8c1!important}@media(max-width:1100px){.kpis{grid-template-columns:repeat(4,1fr)}}@media(max-width:720px){.ippHead{display:grid}.kpis{grid-template-columns:repeat(2,1fr)}}`}</style>
+   <style jsx>{` .statFilters{display:flex;gap:12px;flex-wrap:wrap}.statFilters label{display:grid;gap:5px;font-size:12px;color:#6b1a2c}.statFilters select{padding:8px;max-width:100%;border:1px solid #ddcfc8;border-radius:7px;background:white}.tr a{color:#6b1a2c;font-size:11px}[role=alert]{color:#a12a43!important}
+.ipp{border-top:1px solid #eadfd8;margin-top:18px;padding-top:16px;display:grid;gap:12px}.ippHead{display:flex;justify-content:space-between;gap:12px;align-items:flex-start}.ipp p{margin:0;color:#d4a24c;font-size:.68rem;font-weight:1000;letter-spacing:.12em}.ipp h3{margin:3px 0;color:#6b1a2c}.ipp span{color:#7f7169}.mainTabs,.contextTabs,.actions{display:flex;gap:6px;flex-wrap:wrap}.mainTabs button,.contextTabs button{border:1px solid #ddcfc8;background:#fff;color:#6b1a2c;border-radius:999px;padding:8px 11px;font-weight:900}.mainTabs button.on,.contextTabs button.on{background:#6b1a2c;color:#fff}.contextHelp{background:#fbf7f3;border:1px solid #eadfd8;border-radius:10px;padding:9px 11px;font-size:.78rem;color:#675b56}.linkBtn{padding:5px 8px;margin-left:8px}.kpis{display:grid;grid-template-columns:repeat(8,minmax(85px,1fr));gap:7px}.kpi{border:1px solid #eadfd8;border-radius:11px;padding:9px;background:#fff;text-align:center}.kpi b{display:block;color:#6b1a2c;font-size:1.05rem}.kpi small{font-size:.62rem;color:#8b7d77;text-transform:uppercase;font-weight:900}.matchTable{border:1px solid #eadfd8;border-radius:12px;overflow:auto}.tr{display:grid;grid-template-columns:95px 150px minmax(220px,1fr) 55px 55px 55px 55px;gap:7px;padding:8px 10px;border-top:1px solid #f0e8e4;align-items:center;font-size:.76rem;min-width:760px}.tr.th{background:#faf7f5;border-top:0;color:#6b1a2c;font-weight:1000}.badge{display:inline-flex;padding:4px 7px;border-radius:999px;font-size:.66rem}.badge.club{background:#eef4ff;color:#315c9b}.badge.pole{background:#fff2d8;color:#8a5a00}.badge.selection{background:#f3eafa;color:#70438c}.empty{text-align:center;padding:20px;color:#8b7e78}.shootingIntro{color:#675b56!important;letter-spacing:0!important;font-size:.8rem!important}.modalBack{position:fixed;inset:0;background:rgba(25,15,18,.5);z-index:200;display:grid;place-items:center;padding:15px}.modal{width:min(620px,100%);background:#fff;border-radius:16px;padding:18px;display:grid;gap:10px}.modal label{display:grid;gap:5px;color:#6b1a2c;font-weight:900;font-size:.76rem}.modal input,.modal select{border:1px solid #ddd1ca;border-radius:9px;padding:9px}.modal .actions{justify-content:flex-end}.ghost{background:#fff!important;color:#6b1a2c!important;border:1px solid #d8c8c1!important}@media(max-width:1100px){.kpis{grid-template-columns:repeat(4,1fr)}}@media(max-width:720px){.ippHead{display:grid}.kpis{grid-template-columns:repeat(2,1fr)}}`}</style>
  </section>
 }
 function K({label,value}:{label:string;value:string}){return <div className="kpi"><b>{value}</b><small>{label}</small></div>}

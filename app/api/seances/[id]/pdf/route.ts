@@ -492,6 +492,11 @@ export async function POST(
     clubLogoSource = await resolveClubLogo(supabase, session, sessionOwnerId);
   }
 
+  const institutionContext=parseSessionNotes(session).institutionContext;
+  if(institutionContext?.structureId&&logoAdmin&&session.team_id){
+    const linked=await logoAdmin.from('institutional_selections').select('id').eq('structure_id',String(institutionContext.structureId)).eq('team_id',String(session.team_id)).maybeSingle();
+    if(linked.data){const institution=await logoAdmin.from('institutional_structures').select('logo_url').eq('id',String(institutionContext.structureId)).maybeSingle();if(institution.data?.logo_url)clubLogoSource=institution.data.logo_url;}
+  }
   const myBasketLogo = await imageDataUri("/logo-mybasket02.png");
   const clubLogo = await imageDataUri(clubLogoSource);
 
@@ -508,27 +513,27 @@ export async function POST(
           ]),
         );
 
-        const sourceDeroulement =
+        const sourceDeroulement = institutionContext ? exercise.explanation :
           source.deroulement ??
           source.description ??
           source.explanation ??
           exercise.explanation ??
           null;
 
-        const sourceConsignes =
+        const sourceConsignes = institutionContext ? exercise.instructions :
           source.consignes ??
           source.instructions ??
           exercise.instructions ??
           null;
 
-        const sourceVariantes =
+        const sourceVariantes = institutionContext ? exercise.variants :
           source.variantes ??
           source.variants ??
           exercise.variants ??
           null;
 
         return {
-          title: String(source.title || exercise.title || "Exercice"),
+          title: String((institutionContext?exercise.title:source.title) || exercise.title || "Exercice"),
           who: exercise.who ? String(exercise.who) : null,
           duration_minutes:
             exercise.duration_minutes == null

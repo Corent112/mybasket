@@ -77,12 +77,28 @@ export async function PATCH(req:Request){
  const calendar=await ctx.admin.from('institutional_events').select('*').eq('id',eventId).eq('structure_id',structureId).maybeSingle();
  if(calendar.error)return json({error:calendar.error.message},400);
  if(calendar.data?.archived)return json({error:'Cet événement est archivé.'},409);
+ let selectionPatch:{}|{selection_id:string}={};
+ if(Object.prototype.hasOwnProperty.call(b,'targetSelectionId')){
+  const targetId=String(b.targetSelectionId||'');
+  const selected=await ctx.admin.from('institutional_selections').select('id,team_id').eq('id',targetId).eq('structure_id',structureId).neq('status','archived').maybeSingle();
+  if(selected.error||!selected.data)return json({error:'Choisis une sélection cible de cette institution.'},400);
+  const selectedTeam=await ctx.admin.from('teams').select('metadata').eq('id',selected.data.team_id).maybeSingle();
+  if(selectedTeam.error||!selectedTeam.data||selectedTeam.data.metadata?.institutionRosterKind==='preselection')return json({error:'La cible doit être une sélection finale.'},400);
+  let sameTarget=calendar.data?.selection_id===targetId;
+  if(calendar.data?.selection_id&&!sameTarget){
+   const oldGroup=await ctx.admin.from('institutional_selections').select('team_id').eq('id',calendar.data.selection_id).eq('structure_id',structureId).maybeSingle();
+   if(oldGroup.error)return json({error:'Rattachement actuel indisponible.'},400);
+   if(oldGroup.data){const groupTeam=await ctx.admin.from('teams').select('metadata').eq('id',oldGroup.data.team_id).maybeSingle();if(groupTeam.error)return json({error:'Rattachement actuel indisponible.'},400);sameTarget=groupTeam.data?.metadata?.institutionPreparationTargetId===targetId;}
+  }
+  if(!sameTarget)selectionPatch={selection_id:targetId};
+ }
+
  // Preserve multi-day/all-day calendar settings; they are managed in the calendar.
  if(calendar.data?.end_date&&calendar.data.end_date!==calendar.data.event_date&&date!==day.data.event_date)return json({error:'Modifie les dates de cet événement sur plusieurs jours depuis le calendrier.'},409);
  const fields={title,event_date:date,event_type:type==='training'?'other':type,start_time:start||null,location:location||null};
  const write=await ctx.admin.from('institutional_detection_events').update(fields).eq('id',eventId).eq('structure_id',structureId).eq('archived',false);
  if(write.error)return json({error:write.error.message},400);
- const calendarFields={title,event_date:date,event_type:types[type],start_time:calendar.data?.all_day?null:start||null,end_time:calendar.data?.all_day?null:end||null,location:location||null,description:description||null,...(calendar.data?.end_date===calendar.data?.event_date?{end_date:date}:{})};
+ const calendarFields={...selectionPatch,title,event_date:date,event_type:types[type],start_time:calendar.data?.all_day?null:start||null,end_time:calendar.data?.all_day?null:end||null,location:location||null,description:description||null,...(calendar.data?.end_date===calendar.data?.event_date?{end_date:date}:{})};
  const calendarWrite=calendar.data?await ctx.admin.from('institutional_events').update(calendarFields).eq('id',eventId).eq('structure_id',structureId):await ctx.admin.from('institutional_events').insert({...calendarFields,id:eventId,structure_id:structureId,event_domain:'player',source_type:'selection',archived:false,created_by:ctx.user.id});
  if(calendarWrite.error){
   const old=day.data;

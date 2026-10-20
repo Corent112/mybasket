@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
+import {downloadSessionPdf} from "@/lib/institutionnel/session-pdf-download";
 import {basketDayIds,loadBasketDay,BASKET_DAY_KEY,type BasketDayContext} from "@/lib/institutionnel/basket-day-context";
 import InstitutionalPracticeSelectionPicker from "@/components/institutionnel/InstitutionalPracticeSelectionPicker";
 import { createClient } from "@/lib/supabase/client";
@@ -278,6 +279,12 @@ export default function PanierPage() {
   const [dayContextLoading,setDayContextLoading]=useState(true);
   const [dayContextError,setDayContextError]=useState("");
   const [dayLinked,setDayLinked]=useState(false);
+  const savedDaySessionIdRef=useRef("");
+  const [savedDaySession,setSavedDaySession]=useState<{id:string;title:string;eventId:string}|null>(null);
+  const [sessionFlowError,setSessionFlowError]=useState("");
+  const [pdfBusy,setPdfBusy]=useState(false);
+  async function downloadSavedSession(id:string,title:string){if(pdfBusy)return;setPdfBusy(true);setSessionFlowError("");try{await downloadSessionPdf(id,title)}catch(error){setSessionFlowError(error instanceof Error?error.message:"Téléchargement impossible")}finally{setPdfBusy(false)}}
+  async function retryInstitutionLink(){if(!pendingInstitutionLink||savingSession)return;setSavingSession(true);setSessionFlowError("");try{await linkInstitutionSession(pendingInstitutionLink);if(pendingInstitutionLink.eventId){await resetSessionBuilderAfterGeneration();setSessionModalOpen(false)}}catch(error){setSessionFlowError(error instanceof Error?error.message:"Rattachement impossible")}finally{setSavingSession(false)}}
   async function loadDayContext(){
     setDayContextLoading(true);setDayContextError("");
     try{
@@ -287,7 +294,7 @@ export default function PanierPage() {
       const ids=basketDayIds(hasQuery?{structureId:params.get('institutionId'),selectionId:params.get('selectionId'),eventId:params.get('institutionEventId')}:stored);
       if(!ids){if(hasQuery)throw Error('Lien de journée incomplet. Reviens depuis la préparation.');return;}
       const context=await loadBasketDay(ids);setDayContext(context);setTeams(previous=>[...previous.filter(team=>team.id!==context.team.id),context.team]);setSelectedTeamId(context.team.id);setSessionDate(context.date);setSessionStartTime(context.startTime);setSessionEndTime(context.endTime);setSessionTheme(context.title);
-      try{sessionStorage.setItem(BASKET_DAY_KEY,JSON.stringify(ids))}catch{}
+      try{sessionStorage.setItem(BASKET_DAY_KEY,JSON.stringify(ids));const pending=JSON.parse(sessionStorage.getItem('mybasket:pending-day-session')||'null');if(pending?.eventId===ids.eventId&&pending?.structureId===ids.structureId){setPendingInstitutionLink(pending);setSavedDaySession({id:pending.sessionId,title:context.title,eventId:ids.eventId});}}catch{}
     }catch(error){setDayContextError(error instanceof Error?error.message:'Chargement impossible');}
     finally{setDayContextLoading(false)}
   }
@@ -1043,7 +1050,7 @@ setLoading(false);
   const [pendingInstitutionLink,setPendingInstitutionLink]=useState<{structureId:string;selectionId:string;sessionId:string;eventId?:string}|null>(null);
   async function linkInstitutionSession(payload:{structureId:string;selectionId:string;sessionId:string;eventId?:string}) {
     const response=await fetch("/api/institutionnel/practice-session-link",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(payload)});
-    const result=await response.json();if(!response.ok)throw new Error(result.error||"Rattachement impossible");setPendingInstitutionLink(null);if(payload.eventId)setDayLinked(true);
+    const result=await response.json();if(!response.ok)throw new Error(result.error||"Rattachement impossible");setPendingInstitutionLink(null);if(payload.eventId){setDayLinked(true);try{sessionStorage.removeItem("mybasket:pending-day-session")}catch{}}
   }
   async function saveSessionToCalendar(): Promise<boolean> {
   const {
@@ -1128,6 +1135,7 @@ setLoading(false);
       club_logo_url: resolvedClubLogo,
       mybasket_logo_url: "/logo-mybasket02.png",
       notes: JSON.stringify({
+        ...(dayContext?{institutionContext:{structureId:dayContext.structureId,selectionId:dayContext.selectionId,eventId:dayContext.eventId}}:{}),
         player_positions: playerPositionMap,
         club_logo_url: resolvedClubLogo,
         team_reference_id: selectedTeamId || null,
@@ -1251,7 +1259,8 @@ setLoading(false);
 
   if(dayContext){
     const payload={structureId:dayContext.structureId,selectionId:dayContext.selectionId,eventId:dayContext.eventId,sessionId:createdSession.id};
-    try{await linkInstitutionSession(payload);return true;}catch{setPendingInstitutionLink(payload);alert("La séance est enregistrée. Réessaie le rattachement ci-dessous sans recréer la séance.");return false;}
+    savedDaySessionIdRef.current=createdSession.id;setSavedDaySession({id:createdSession.id,title:sessionTheme,eventId:dayContext.eventId});setPendingInstitutionLink(payload);try{sessionStorage.setItem('mybasket:pending-day-session',JSON.stringify(payload))}catch{}
+    try{await linkInstitutionSession(payload);return true;}catch(error){setSessionFlowError(error instanceof Error?error.message:"Rattachement impossible");return false;}
   }
   const { error } = await supabase.from("calendar_events").insert({
     user_id: user.id,
@@ -1349,6 +1358,11 @@ setLoading(false);
       return;
     }
 
+    if(dayContext){
+      setSessionFlowError("");
+      try{const saved=await saveSessionToCalendar();if(saved){await resetSessionBuilderAfterGeneration();setSessionModalOpen(false);if(savedDaySessionIdRef.current)await downloadSavedSession(savedDaySessionIdRef.current,sessionTheme)}}catch(error){setSessionFlowError(error instanceof Error?error.message:"Enregistrement impossible")}finally{setSavingSession(false)}
+      return;
+    }
     const totalMinutes = sortedItems.reduce(
       (sum, item) => sum + Number(item.duration_minutes ?? 15),
       0
@@ -2218,7 +2232,8 @@ setLoading(false);
         </div>
       </section>
 
-      {pendingInstitutionLink && <div role="alert">Séance enregistrée : rattachement à la sélection à terminer. <button onClick={()=>void linkInstitutionSession(pendingInstitutionLink).then(async()=>{if(pendingInstitutionLink.eventId){await resetSessionBuilderAfterGeneration();setSessionModalOpen(false);}}).catch(error=>alert(error.message))}>Réessayer le rattachement</button></div>}
+      {(savedDaySession||sessionFlowError)&&<section className="dayBasketContext"><b>{pendingInstitutionLink?"Séance enregistrée · rattachement à terminer":"Séance enregistrée et liée à la journée"}</b>{sessionFlowError&&<p role="alert">{sessionFlowError}</p>}{savedDaySession&&<div><Link href={`/seances/${savedDaySession.id}`}>Ouvrir la séance →</Link><button type="button" disabled={pdfBusy||savingSession} onClick={()=>void downloadSavedSession(savedDaySession.id,savedDaySession.title)}>{pdfBusy?"Génération du PDF…":"Télécharger le PDF"}</button>{dayContext&&<Link href={`/institutionnel/${dayContext.structureId}?tab=Joueurs&preparationDay=${savedDaySession.eventId}`}>Revenir à la journée</Link>}</div>}{pendingInstitutionLink&&<button type="button" disabled={savingSession} onClick={()=>void retryInstitutionLink()}>Réessayer le rattachement</button>}</section>}
+
       {sessionModalOpen && (
         <div className="modalOverlay">
           <div className="sessionModal">
@@ -2546,6 +2561,7 @@ setLoading(false);
               </div>
             </section>
 
+            {(pendingInstitutionLink||sessionFlowError)&&<div className="sessionLinkError" role="alert"><b>La séance est enregistrée.</b><p>{sessionFlowError||"Le rattachement à la journée reste à terminer."}</p>{pendingInstitutionLink&&<button type="button" disabled={savingSession} onClick={()=>void retryInstitutionLink()}>{savingSession?"Rattachement…":"Réessayer le rattachement"}</button>}{savedDaySession&&<a href={`/seances/${savedDaySession.id}`}>Ouvrir la séance enregistrée</a>}</div>}
             <div className="modalActions">
               <button
                 type="button"
@@ -2559,9 +2575,9 @@ setLoading(false);
                 type="button"
                 className="saveBtn"
                 onClick={generateSessionPdf}
-                disabled={savingSession}
+                disabled={savingSession||!!pendingInstitutionLink}
               >
-                {savingSession ? "Enregistrement…" : "📄 Générer la fiche PDF"}
+                {savingSession ? "Enregistrement…" : dayContext?"Enregistrer et lier la séance":"📄 Générer la fiche PDF"}
               </button>
             </div>
           </div>
@@ -2569,6 +2585,8 @@ setLoading(false);
       )}
 
       <style jsx>{`
+ .sessionLinkError{padding:14px;margin:15px 0;border:1px solid #e0b8c2;border-radius:10px;background:#fff5f7;color:#801d37}.sessionLinkError button{margin-right:15px}.sessionLinkError a{color:#6b1a2c}
+
         .dayBasketContext{max-width:1200px;margin:0 auto 22px;padding:16px;border:1px solid #d7bec4;border-radius:12px;background:#faf5f6;color:#6b1a2c}.dayBasketContext p{font-size:13px}.dayBasketContext>div{display:flex;gap:12px;flex-wrap:wrap;align-items:center}.dayBasketContext button{padding:8px;border:1px solid #d7bec4;border-radius:7px;background:white;color:#6b1a2c;cursor:pointer}.dayBasketContext a{color:#6b1a2c;font-size:13px;font-weight:700}
 
         .compositionBuilder{margin-top:22px;padding:18px;border:1px solid #ead8ca;border-radius:18px;background:#fffaf6}

@@ -1,0 +1,4 @@
+export type SelectionTournament={id:string;name:string;date:string;location:string;matchIds:string[];playerIds:string[]};
+export function tournamentsOf(metadata:any):SelectionTournament[]{return Array.isArray(metadata?.institutionTournaments)?metadata.institutionTournaments.filter((t:any)=>t&&typeof t.id==='string'&&typeof t.name==='string'&&Array.isArray(t.matchIds)):[];}
+export function selectionCategory(value:unknown){return String(value||'').match(/U\d+/i)?.[0].toUpperCase()||String(value||'').trim();}
+export function performanceTotals(rows:any[]){const t={games:rows.length,minutes:0,pts:0,reb:0,ast:0,stl:0,blk:0,turnovers:0,p2m:0,p2a:0,p3m:0,p3a:0,ftm:0,fta:0};for(const row of rows)for(const key of Object.keys(t) as (keyof typeof t)[])if(key!=='games')t[key]+=Number(row[key])||0;return t;}
