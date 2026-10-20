@@ -6,6 +6,14 @@ export async function GET(req:Request){
  const structureId=new URL(req.url).searchParams.get('structureId')||'';
  if(!structureId)return json({error:'Institution manquante'},400);
  const ctx=await institutionalSportActor(structureId);if('error'in ctx)return ctx.error;
+ const eventId=new URL(req.url).searchParams.get('eventId');
+ if(eventId){
+  const day=await ctx.admin.from('institutional_detection_events').select('*').eq('id',eventId).eq('structure_id',structureId).eq('archived',false).maybeSingle();
+  if(day.error||!day.data)return json({error:'Journée introuvable'},404);
+  const calendar=await ctx.admin.from('institutional_events').select('*').eq('id',eventId).eq('structure_id',structureId).eq('archived',false).maybeSingle();
+  if(calendar.error)return json({error:calendar.error.message},400);
+  return json({event:day.data,calendar:calendar.data});
+ }
  const links:any[]=[];
  for(let start=0;;start+=1000){const q=await ctx.admin.from('institutional_events').select('id,selection_id,event_type').eq('structure_id',structureId).eq('archived',false).order('id').range(start,start+999);if(q.error)return json({error:q.error.message},400);links.push(...(q.data||[]));if((q.data||[]).length<1000)break;}
  return json({links});
@@ -51,4 +59,35 @@ export async function POST(req:Request){
   }
  }
  return json({ok:true,event:day,selection:selection.data,rosterCount:participantsIds.length});
+}
+
+// Edit only the day's details. Roster, decisions, resources and selection links are untouched.
+export async function PATCH(req:Request){
+ const b=await req.json().catch(()=>({})),structureId=String(b.structureId||''),eventId=String(b.eventId||'');
+ if(!structureId||!eventId)return json({error:'Institution ou journée manquante'},400);
+ const ctx=await institutionalSportActor(structureId);if('error'in ctx)return ctx.error;
+ if(!canManageSport(ctx.member))return json({error:'Droits insuffisants'},403);
+ const title=String(b.title||'').trim(),date=String(b.event_date||''),type=String(b.event_type||''),location=String(b.location||'').trim(),description=String(b.description||'').trim();
+ const start=String(b.start_time||''),end=String(b.end_time||'');
+ const validTime=(value:string)=>!value||/^([01]\d|2[0-3]):[0-5]\d$/.test(value);
+ const dateValue=new Date(date+'T12:00:00Z');
+ if(!title||title.length>200||!/^\d{4}-\d{2}-\d{2}$/.test(date)||!Number.isFinite(dateValue.getTime())||dateValue.toISOString().slice(0,10)!==date||!types[type]||!validTime(start)||!validTime(end)||(end&&(!start||end<=start))||location.length>500||description.length>10000)return json({error:'Vérifie le titre, la date et les horaires (fin après début).'},400);
+ const day=await ctx.admin.from('institutional_detection_events').select('*').eq('id',eventId).eq('structure_id',structureId).eq('archived',false).maybeSingle();
+ if(day.error||!day.data)return json({error:'Journée introuvable dans cette institution'},404);
+ const calendar=await ctx.admin.from('institutional_events').select('*').eq('id',eventId).eq('structure_id',structureId).maybeSingle();
+ if(calendar.error)return json({error:calendar.error.message},400);
+ if(calendar.data?.archived)return json({error:'Cet événement est archivé.'},409);
+ // Preserve multi-day/all-day calendar settings; they are managed in the calendar.
+ if(calendar.data?.end_date&&calendar.data.end_date!==calendar.data.event_date&&date!==day.data.event_date)return json({error:'Modifie les dates de cet événement sur plusieurs jours depuis le calendrier.'},409);
+ const fields={title,event_date:date,event_type:type==='training'?'other':type,start_time:start||null,location:location||null};
+ const write=await ctx.admin.from('institutional_detection_events').update(fields).eq('id',eventId).eq('structure_id',structureId).eq('archived',false);
+ if(write.error)return json({error:write.error.message},400);
+ const calendarFields={title,event_date:date,event_type:types[type],start_time:calendar.data?.all_day?null:start||null,end_time:calendar.data?.all_day?null:end||null,location:location||null,description:description||null,...(calendar.data?.end_date===calendar.data?.event_date?{end_date:date}:{})};
+ const calendarWrite=calendar.data?await ctx.admin.from('institutional_events').update(calendarFields).eq('id',eventId).eq('structure_id',structureId):await ctx.admin.from('institutional_events').insert({...calendarFields,id:eventId,structure_id:structureId,event_domain:'player',source_type:'selection',archived:false,created_by:ctx.user.id});
+ if(calendarWrite.error){
+  const old=day.data;
+  const rollback=await ctx.admin.from('institutional_detection_events').update({title:old.title,event_date:old.event_date,event_type:old.event_type,start_time:old.start_time,location:old.location}).eq('id',eventId).eq('structure_id',structureId);
+  return json({error:rollback.error?'Sauvegarde interrompue. Recharge pour vérifier les informations avant de réessayer.':'Enregistrement impossible. Les anciennes informations ont été conservées.'},500);
+ }
+ return json({ok:true,event:{...day.data,...fields}});
 }
