@@ -96,6 +96,9 @@ export default function InstitutionalSelectionsManager({
   const [opened, setOpened] = useState(initialSelectionId||"");
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
+  const [editing, setEditing] = useState(false);
+  const [editError, setEditError] = useState("");
+  const [editForm, setEditForm] = useState({name:"",category:"",gender:"",seasonLabel:""});
   const [showCreate, setShowCreate] = useState(false);
   const [detailTab, setDetailTab] = useState<"roster"|"training"|"documents">("roster");
   const [creationPlayerIds, setCreationPlayerIds] = useState<string[]>([]);
@@ -188,6 +191,25 @@ export default function InstitutionalSelectionsManager({
   useEffect(() => {
     void load();
   }, [structureId]);
+
+  function editSelection() {
+    if (!current) return;
+    setEditForm({name:current.name,category:current.category||"",gender:current.gender||"",seasonLabel:current.season_label||""});
+    setEditError("");setEditing(true);
+  }
+  useEffect(()=>{setEditing(false);setEditError("");},[opened,structureId]);
+  async function saveSelection(event: React.FormEvent) {
+    event.preventDefault();if(!current||busy)return;
+    setBusy(true);setEditError("");
+    try {
+      const response=await fetch("/api/institutionnel/sport/selections",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({structureId,selectionId:current.id,action:"update_selection",...editForm})});
+      const result=await response.json();if(!response.ok)throw new Error(result.error||"Enregistrement impossible");
+      setRows(previous=>previous.map(row=>row.id===current.id?{...row,...result.selection}:row));
+      setSeasonFilter(previous=>previous?result.selection.season_label:previous);
+      setEditing(false);setMessage("Informations de la sélection enregistrées.");
+    } catch(error) {setEditError(error instanceof Error?error.message:"Connexion interrompue. Tes modifications restent disponibles, réessaie.");}
+    finally {setBusy(false);}
+  }
 
   async function createSelection() {
     if (!form.name.trim() || !form.category.trim() || !form.seasonLabel.trim()) return alert("Renseigne le nom, la catégorie et la saison.");
@@ -443,12 +465,24 @@ export default function InstitutionalSelectionsManager({
               </p>
             </div>
             <div className="detailActions">
+              <button type="button" disabled={busy} onClick={editSelection}>Modifier les informations</button>
               <button className="primary" onClick={()=>setDetailTab("training")}>Créer un événement avec cet effectif</button>
               <button className="primary" onClick={()=>onOpenBase?onOpenBase():window.location.assign(`/institutionnel/${structureId}?tab=Joueurs`)}>Ajouter un joueur dans la base</button>
               <div className="teamActions">{onPrepareSelection&&<button type="button" className="primary" onClick={()=>onPrepareSelection(current.preparation_target_id||current.id)}>Préparer les détections & entraînements</button>}<a href={`/equipes/${current.team_id}`}>Équipe complète · Matchs & statistiques →</a></div>
             </div>
           </div>
 
+          {editing&&<form className="selectionEdit" onSubmit={saveSelection} aria-label="Modifier la sélection">
+            <div className="editHeading"><b>Informations de la sélection</b><button type="button" aria-label="Fermer les modifications" disabled={busy} onClick={()=>setEditing(false)}>×</button></div>
+            <div className="editFields">
+              <label>Nom<input required maxLength={160} disabled={busy} value={editForm.name} onChange={e=>setEditForm(v=>({...v,name:e.target.value}))}/></label>
+              <label>Catégorie<input required placeholder="U13" pattern="[Uu][0-9]{1,2}[MmFf]?" disabled={busy} value={editForm.category} onChange={e=>setEditForm(v=>({...v,category:e.target.value}))}/></label>
+              <label>Sexe<select disabled={busy} value={editForm.gender} onChange={e=>setEditForm(v=>({...v,gender:e.target.value}))}><option value="">Mixte</option><option value="M">Masculin</option><option value="F">Féminin</option></select></label>
+              <label>Saison<input required pattern="[0-9]{4}-[0-9]{4}" placeholder="2026-2027" disabled={busy} value={editForm.seasonLabel} onChange={e=>setEditForm(v=>({...v,seasonLabel:e.target.value}))}/></label>
+            </div>
+            {editError&&<p role="alert">{editError}</p>}
+            <div className="inline"><button className="primary" type="submit" disabled={busy}>{busy?"Enregistrement…":"Enregistrer les modifications"}</button><button type="button" disabled={busy} onClick={()=>setEditing(false)}>Annuler</button></div>
+          </form>}
           <nav className="detailTabs" aria-label="Onglets de la sélection"><button type="button" className={detailTab==="roster"?"active":""} onClick={()=>setDetailTab("roster")}>Effectif</button><button type="button" className={detailTab==="training"?"active":""} onClick={()=>setDetailTab("training")}>Séances & documents liés</button><button type="button" className={detailTab==="documents"?"active":""} onClick={()=>setDetailTab("documents")}>Documents</button></nav>
           {detailTab==="roster"&&<>
           <div className="twoCols">
@@ -710,6 +744,8 @@ export default function InstitutionalSelectionsManager({
       )}
 
       <style jsx>{`
+        .selectionEdit{padding:16px;margin:12px 0;border:1px solid #ddcfc8;border-radius:12px;background:#faf7f5}.editHeading{display:flex;justify-content:space-between;align-items:center;margin-bottom:12px}.editFields{display:grid;grid-template-columns:2fr 1fr 1fr 1fr;gap:12px;margin-bottom:12px}.editFields label{display:grid;gap:6px;font-size:12px;font-weight:700;min-width:0}.editFields input,.editFields select{width:100%;min-width:0;box-sizing:border-box;padding:9px;border:1px solid #ddcfc8;border-radius:8px;background:white}.selectionEdit [role=alert]{color:#a12035}@media(max-width:700px){.editFields{grid-template-columns:1fr 1fr}}@media(max-width:420px){.editFields{grid-template-columns:1fr}}
+
         .creationRoster{grid-column:1/-1;width:100%;padding-top:12px;border-top:1px solid #e7deda}.creationRoster h4{margin:0 0 6px;color:#6b1a2c}.detailTabs{display:flex;gap:8px;margin:16px 0}.detailTabs button{border:1px solid #ddcfc8;background:white;color:#6b1a2c;border-radius:999px;padding:10px 16px;font-weight:800}.detailTabs button.active{background:#6b1a2c;color:white}
         .seasonFilter{display:flex;align-items:center;gap:10px;font-weight:800;color:#6b1a2c}.seasonFilter select,.rosterFilters input,.rosterFilters select{border:1px solid #ddcfc8;border-radius:8px;padding:9px;background:white;min-width:0}.rosterFilters{display:flex;flex-wrap:wrap;gap:8px}.rosterFilters input{flex:1}.rosterChecks{display:grid;gap:6px;margin:12px 0;grid-template-columns:repeat(auto-fit,minmax(200px,1fr))}.rosterChecks label{display:flex;gap:8px;align-items:center;border:1px solid #eadfd8;border-radius:9px;padding:9px}.rosterChecks span{display:grid;gap:3px}.rosterChecks small{font-size:.7rem;color:#80716a}.rosterChecks input{width:16px;height:16px;flex:0 0 auto}
 

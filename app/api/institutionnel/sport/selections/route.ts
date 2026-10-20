@@ -127,6 +127,29 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Droits insuffisants" }, { status: 403 });
   }
 
+  if (body.action === "update_selection") {
+    if (!name || name.length > 160 || !/^U\d{1,2}(?:[MF])?$/i.test(category) || !/^\d{4}-\d{4}$/.test(seasonLabel) || Number(seasonLabel.slice(5)) !== Number(seasonLabel.slice(0,4)) + 1 || ![null,"M","F"].includes(gender)) {
+      return NextResponse.json({error:"Renseigne un nom, une catégorie (ex. U13), une saison consécutive (ex. 2026-2027) et un sexe valide."},{status:400});
+    }
+    category = category.toUpperCase();
+    const selected = await ctx.admin.from("institutional_selections").select("id,team_id,name,category,gender,season_label").eq("id",String(body.selectionId||"")).eq("structure_id",structureId).neq("status","archived").maybeSingle();
+    if (selected.error || !selected.data) return NextResponse.json({error:"Sélection introuvable dans cette institution"},{status:404});
+    const previous = selected.data;
+    const team = await ctx.admin.from("teams").select("name,club_name,category,metadata").eq("id",previous.team_id).maybeSingle();
+    const links = await ctx.admin.from("institutional_team_links").select("id,label,season_label").eq("structure_id",structureId).eq("team_id",previous.team_id).eq("kind","selection");
+    if (team.error || !team.data || links.error) return NextResponse.json({error:"Informations liées indisponibles. Réessaie."},{status:400});
+    const fields = {name,category,gender,season_label:seasonLabel};
+    const write = await ctx.admin.from("institutional_selections").update(fields).eq("id",previous.id).eq("structure_id",structureId);
+    if (write.error) return NextResponse.json({error:write.error.message},{status:400});
+    const teamWrite = await ctx.admin.from("teams").update({name,club_name:name,category,metadata:{...team.data.metadata,name,category,cat:category,season:seasonLabel},updated_at:new Date().toISOString()}).eq("id",previous.team_id);
+    const linkWrite = teamWrite.error ? {error:teamWrite.error} : await ctx.admin.from("institutional_team_links").update({label:name,season_label:seasonLabel}).eq("structure_id",structureId).eq("team_id",previous.team_id).eq("kind","selection");
+    if (teamWrite.error || linkWrite.error) {
+      const rollback = await ctx.admin.from("institutional_selections").update({name:previous.name,category:previous.category,gender:previous.gender,season_label:previous.season_label}).eq("id",previous.id).eq("structure_id",structureId);
+      const teamRollback = teamWrite.error ? {error:null} : await ctx.admin.from("teams").update(team.data).eq("id",previous.team_id);
+      return NextResponse.json({error:rollback.error||teamRollback.error ? "Synchronisation interrompue. Recharge la fiche pour vérifier les informations avant de réessayer." : "Enregistrement impossible. Les informations précédentes ont été conservées. Réessaie."},{status:500});
+    }
+    return NextResponse.json({ok:true,selection:{...previous,...fields}});
+  }
   if(body.action==='save_information_staff'){
     let staff;try{staff=normalizeInformationStaff(body.staff)}catch(error){return NextResponse.json({error:error instanceof Error?error.message:'Staff invalide'},{status:400});}
     const selection=await ctx.admin.from('institutional_selections').select('id,team_id').eq('id',String(body.selectionId||'')).eq('structure_id',structureId).neq('status','archived').maybeSingle();if(selection.error||!selection.data)return NextResponse.json({error:'Sélection introuvable dans cette institution'},{status:404});
