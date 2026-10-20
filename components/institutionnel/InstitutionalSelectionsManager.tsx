@@ -2,6 +2,7 @@
 
 import {categoryMatches,withPlayerCategory} from "@/lib/institutionnel/player-category";
 import { useEffect, useMemo, useState } from "react";
+import InstitutionalDayRosterImport from "./InstitutionalDayRosterImport";
 import InstitutionalSelectionDocuments from "./InstitutionalSelectionDocuments";
 import InstitutionalSelectionTraining from "@/components/institutionnel/InstitutionalSelectionTraining";
 import InstitutionalSelectionOperations from "@/components/institutionnel/InstitutionalSelectionOperations";
@@ -205,13 +206,14 @@ export default function InstitutionalSelectionsManager({
     } finally {try{await load();}catch{setMessage("Actualise pour recharger les sélections enregistrées.");}finally{setBusy(false)}}
   }
 
-  async function addExistingPlayers() {
-    if (!current || !chosenPlayers.length || busy) return;
-    if(current.roster_kind!=="preselection"&&(current.players?.length||0)+chosenPlayers.length>(current.max_players||12))return alert(`Cette sélection est limitée à ${current.max_players||12} joueurs. Retire des coches ou des membres avant de valider.`);
+  async function addExistingPlayers(requestedIds = chosenPlayers): Promise<string[]> {
+    const playerIds=[...new Set(requestedIds)].filter(id=>!memberIds.has(id)&&eligibleBasePlayers.some(player=>player.id===id));
+    if (!current || !playerIds.length || busy) return [];
+    if(current.roster_kind!=="preselection"&&(current.players?.length||0)+playerIds.length>(current.max_players||12)){alert(`Cette sélection est limitée à ${current.max_players||12} joueurs. Retire des coches ou des membres avant de valider.`);return [];}
     setBusy(true);setMessage("");
     const added: string[] = [];
     try {
-      for (const playerId of chosenPlayers) {
+      for (const playerId of playerIds) {
         const response = await fetch("/api/institutionnel/sport/players", {method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({structureId,mode:"attach",selectionId:current.id,playerId})});
         const json = await response.json();
         if (!response.ok) throw new Error(json.error || "Ajout impossible");
@@ -220,6 +222,7 @@ export default function InstitutionalSelectionsManager({
       setMessage(`${added.length} joueur(s) ajouté(s) à ${current.name}.`);
     } catch (error) { alert(`${error instanceof Error ? error.message : "Ajout impossible"}. ${added.length} ajout(s) enregistré(s) ; les autres restent cochés pour réessayer.`); }
     finally { setChosenPlayers(previous => previous.filter(id => !added.includes(id)));try { await load(); } catch { setMessage("Les ajouts enregistrés sont conservés. Actualise la page pour recharger l’effectif."); } finally { setBusy(false); } }
+    return added;
   }
   async function removeMember(playerId:string, name:string) {
     if (!current || busy || !window.confirm(`Retirer ${name} de ${current.name} ?\n\nLa fiche joueur, les autres sélections et les statistiques seront conservées.`)) return;
@@ -477,6 +480,7 @@ export default function InstitutionalSelectionsManager({
               </div>
             </details>
 
+            <InstitutionalDayRosterImport key={current.id} structureId={structureId} players={eligibleBasePlayers} memberIds={[...memberIds]} maxPlayers={current.roster_kind==="preselection"?null:current.max_players||12} busy={busy} onAdd={ids=>addExistingPlayers(ids)}/>
             <details className="panel rosterComposer" open={!current.players?.length?true:undefined}>
               <summary>＋ Ajouter des joueurs depuis la base</summary>
               <p>{current.roster_kind==="preselection"?"Présélection sans limite. Reprends cet effectif dans les entraînements ; les décisions Retenu / Non retenu le feront évoluer.":`Sélection finale : ${current.max_players||12} joueurs maximum. Pour les entraînements, crée une présélection sans limite.`}</p>
