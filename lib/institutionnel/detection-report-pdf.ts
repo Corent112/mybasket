@@ -2,7 +2,7 @@ import {jsPDF} from 'jspdf';
 import {imageData} from './trombinoscope-pdf';
 export type DayReportResource={id?:string;title:string;note?:string|null;file_url?:string|null};
 type Input={institution:{name:string;logo_url?:string|null};event:{id:string;title:string;event_date:string;start_time?:string|null;location?:string|null};eventUrl?:string;selection?:{name:string;category?:string|null;gender?:string|null;season_label?:string|null};resources?:DayReportResource[];participants:Array<{status:string;player?:{first_name:string;last_name:string;club_name?:string|null;photo_url?:string|null;profile_data?:any}}>};
-const labels:Record<string,string>={present:'Présent',absent:'Absent',excused:'Excusé',invited:'Invité',confirmed:'Confirmé',selected:'Retenu',waiting:'Attente',not_selected:'Non retenu'};
+const labels:Record<string,string>={present:'Présent',absent:'Absent',excused:'Excusé',invited:'Invité',confirmed:'Confirmé',selected:'Retenu',waiting:'Attente',not_selected:'Non gardé'};
 export function reportResourceUrl(value?:string|null,origin='https://mybasket.vercel.app'){
  if(!value)return null;try{const url=new URL(value,origin);return ['https:','http:'].includes(url.protocol)?url.href:null;}catch{return null;}
 }

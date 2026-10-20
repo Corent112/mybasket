@@ -1,3 +1,4 @@
+import {normalizeInformationStaff} from "@/lib/institutionnel/selection-information";
 import {withPlayerCategory} from "@/lib/institutionnel/player-category";
 import { NextResponse } from "next/server";
 import {
@@ -85,11 +86,13 @@ export async function GET(req: Request) {
   const capacities=teamIds.length?await ctx.admin.from("teams").select("id,metadata").in("id",teamIds):{data:[]};
   if("error" in capacities && capacities.error)return NextResponse.json({error:capacities.error.message},{status:400});
   const kindByTeam=new Map((capacities.data||[]).map((team:any)=>[team.id,team.metadata?.institutionRosterKind]));
+  const informationByTeam=new Map((capacities.data||[]).map((team:any)=>[team.id,Array.isArray(team.metadata?.institutionInformationStaff)?team.metadata.institutionInformationStaff:[]]));
   const targetByTeam=new Map((capacities.data||[]).map((team:any)=>[team.id,team.metadata?.institutionPreparationTargetId||null]));
   const capByTeam=new Map((capacities.data||[]).map((team:any)=>[team.id,Number(team.metadata?.institutionSelectionMaxPlayers)===10?10:12]));
   return NextResponse.json({
     selections: (selections || []).map((selection: any) => ({
       ...selection,
+      information_staff:informationByTeam.get(selection.team_id)||[],
       preparation_target_id:targetByTeam.get(selection.team_id)||null,
       roster_kind:kindByTeam.get(selection.team_id)==="preselection"?"preselection":"selection",
       max_players:kindByTeam.get(selection.team_id)==="preselection"?null:capByTeam.get(selection.team_id)||12,
@@ -124,6 +127,12 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Droits insuffisants" }, { status: 403 });
   }
 
+  if(body.action==='save_information_staff'){
+    let staff;try{staff=normalizeInformationStaff(body.staff)}catch(error){return NextResponse.json({error:error instanceof Error?error.message:'Staff invalide'},{status:400});}
+    const selection=await ctx.admin.from('institutional_selections').select('id,team_id').eq('id',String(body.selectionId||'')).eq('structure_id',structureId).neq('status','archived').maybeSingle();if(selection.error||!selection.data)return NextResponse.json({error:'Sélection introuvable dans cette institution'},{status:404});
+    const team=await ctx.admin.from('teams').select('metadata').eq('id',selection.data.team_id).maybeSingle();if(team.error||!team.data)return NextResponse.json({error:'Équipe de sélection indisponible'},{status:404});
+    const result=await ctx.admin.from('teams').update({metadata:{...team.data.metadata,institutionInformationStaff:staff}}).eq('id',selection.data.team_id);if(result.error)return NextResponse.json({error:result.error.message},{status:400});return NextResponse.json({ok:true,staff});
+  }
   let preparationTargetId=String(body.preparationTargetId||'');
   if(body.action==='ensure_preparation'||body.action==='link_preparation'){
     preparationTargetId=String(body.targetSelectionId||'');
