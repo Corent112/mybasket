@@ -77,6 +77,32 @@ function SectionTitle({ eyebrow, title, help, right }: { eyebrow: string; title:
 export default function InstitutionalPlayerSheet({ structureId, player, referral, busy, onClose, onSave, onArchive, onRestore, onDelete, players = [], referralUrl = "", onOpenPlayer, onCopyReferralLink }: Props) {
   const sb = useMemo(() => createClient(), []);
   const profile = player?.profile_data || {};
+  const [pdfBusy,setPdfBusy]=useState(false);
+  const [pdfError,setPdfError]=useState("");
+  async function exportPdf(){
+    setPdfBusy(true);setPdfError("");
+    try{
+      const [institution,performanceResponse]=await Promise.all([
+        sb.from("institutional_structures").select("name,logo_url,season_label").eq("id",structureId).single(),
+        fetch(`/api/institutionnel/player-performance?structureId=${encodeURIComponent(structureId)}&playerId=${encodeURIComponent(player.id)}`,{cache:"no-store"})
+      ]);
+      if(institution.error||!institution.data)throw Error("Impossible de récupérer les informations du comité.");
+      const performance=await performanceResponse.json();if(!performanceResponse.ok)throw Error(performance.error||"Impossible de récupérer les statistiques.");
+      const {createPlayerProfilePdf}=await import("@/lib/institutionnel/player-profile-pdf");
+      const readAll=async(table:string,columns:string,filterPlayer=true)=>{
+        const rows:any[]=[];
+        for(let start=0;;start+=1000){let query=sb.from(table).select(columns).eq("structure_id",structureId);if(filterPlayer)query=query.eq("player_id",player.id);const result=await query.order("id").range(start,start+999);if(result.error)throw Error(result.error.message);rows.push(...(result.data||[]));if((result.data||[]).length<1000)return rows;}
+      };
+      const [savedMeasures,savedAttendance,savedSessions]=await Promise.all([
+        readAll("institutional_player_measurements","id,measured_at,height_cm,weight_kg,wingspan_cm,shoe_size"),
+        readAll("institutional_player_attendance_records","id,session_id,status"),
+        readAll("institutional_player_attendance_sessions","id,session_date,title,location",false)
+      ]);
+      const doc=await createPlayerProfilePdf({player,institution:institution.data,matches:performance.matches||[],referral,measurements:savedMeasures,attendance:savedAttendance.map(r=>({...r,session:savedSessions.find(s=>s.id===r.session_id)}))});
+      doc.save(`fiche-${player.first_name}-${player.last_name}`.replace(/[^a-zA-Z0-9À-ÿ_-]/g,"-")+".pdf");
+    }catch(error){setPdfError(error instanceof Error?error.message:"Export PDF impossible.");}finally{setPdfBusy(false);}
+  }
+
   const [tab, setTab] = useState<Tab>("Aperçu");
   const [saving, setSaving] = useState("");
   const [seasons, setSeasons] = useState<Season[]>([]);
@@ -325,7 +351,7 @@ export default function InstitutionalPlayerSheet({ structureId, player, referral
 
       <div className="topBar">
         <button className="backLink" onClick={onClose}>← <span>Retour à la liste des joueurs</span></button>
-        <div className="topActions">
+        <div className="topActions"><button className="actionBtn" disabled={pdfBusy||!!saving||!!busy} onClick={()=>void exportPdf()} title="Exporter les informations enregistrées ; enregistrer les modifications avant l’export">{pdfBusy?"Création du PDF…":"Exporter la fiche PDF"}</button>
           <button className="actionBtn" onClick={() => setTab("Informations")}>✎ <span>Modifier</span></button>
 
           {archived ? <button className="actionBtn success" onClick={onRestore}>↺ <span>Restaurer</span></button> : <button className="actionBtn" onClick={onArchive}>▣ <span>Archiver</span></button>}
@@ -334,7 +360,7 @@ export default function InstitutionalPlayerSheet({ structureId, player, referral
         </div>
       </div>
 
-      <header className="playerHeader">
+      {pdfError && <p role="alert" style={{color:"#a92323"}}>{pdfError}</p>}<header className="playerHeader">
         <div className="playerIdentity">
           <div className="avatar">{form.photo_url ? <img src={form.photo_url} alt="" /> : initials}</div>
           <div className="playerTitle">
