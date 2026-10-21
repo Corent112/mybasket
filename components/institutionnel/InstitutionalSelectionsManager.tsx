@@ -470,6 +470,7 @@ export default function InstitutionalSelectionsManager({
               </p>
             </div>
             <div className="detailActions">
+              <button type="button" className="primary" disabled={busy||!current.players?.length} onClick={()=>{setDocScope("all");setDetailTab("documents");setDocAction("trombinoscope");}}>Trombinoscope PDF</button>
               <button type="button" disabled={busy} onClick={editSelection}>Modifier les informations</button>
               <button className="primary" onClick={()=>setDetailTab("training")}>Créer un événement avec cet effectif</button>
               <button className="primary" onClick={()=>onOpenBase?onOpenBase():window.location.assign(`/institutionnel/${structureId}?tab=Joueurs`)}>Ajouter un joueur dans la base</button>
@@ -543,7 +544,7 @@ export default function InstitutionalSelectionsManager({
               </span>
             </div>
 
-            <div className="memberBulk"><button type="button" disabled={busy||!current.players?.length} onClick={()=>setCheckedMemberIds(checkedMemberIds.length===(current.players?.length||0)?[]:(current.players||[]).map(entry=>entry.player_id))}>{checkedMemberIds.length===(current.players?.length||0)&&checkedMemberIds.length?"Tout décocher":"Tout cocher"}</button><b>{checkedMemberIds.length} coché(s)</b><button type="button" disabled={busy||!checkedMemberIds.length} onClick={()=>{setDocScope("checked");setDocAction(null);setDetailTab("documents");}}>Documents des joueurs cochés</button><button type="button" className="removeBulk" disabled={busy||!checkedMemberIds.length} onClick={()=>void removeCheckedMembers()}>Retirer de la sélection</button></div>
+            <div className="memberBulk"><button type="button" disabled={busy||!current.players?.length} onClick={()=>setCheckedMemberIds(checkedMemberIds.length===(current.players?.length||0)?[]:(current.players||[]).map(entry=>entry.player_id))}>{checkedMemberIds.length===(current.players?.length||0)&&checkedMemberIds.length?"Tout décocher":"Tout cocher"}</button><b>{checkedMemberIds.length} coché(s)</b><button type="button" disabled={busy||!checkedMemberIds.length} onClick={()=>{setDocScope("checked");setDetailTab("documents");setDocAction("trombinoscope");}}>Trombinoscope PDF des joueurs cochés</button><button type="button" disabled={busy||!checkedMemberIds.length} onClick={()=>{setDocScope("checked");setDocAction(null);setDetailTab("documents");}}>Documents des joueurs cochés</button><button type="button" className="removeBulk" disabled={busy||!checkedMemberIds.length} onClick={()=>void removeCheckedMembers()}>Retirer de la sélection</button></div>
             {current.players?.map((entry) => {
               const player = entry.player;
               if (!player) return null;
