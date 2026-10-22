@@ -17,6 +17,7 @@ import {
   deletePlayer,
   computeTeamKpis,
 } from "../../../lib/equipes-store";
+import InstitutionalTeamPlayerPicker, {type SelectionRoster} from "@/components/institutionnel/InstitutionalTeamPlayerPicker";
 import PlayerTeamAttachment from "@/components/equipes/PlayerTeamAttachment";
 import PlayerForm from "@/components/equipes/PlayerForm";
 import TeamForm from "@/components/equipes/TeamForm";
@@ -765,6 +766,10 @@ export default function EquipeDetailPage({
   const { teamId } = use(params);
   const router = useRouter();
   const [team, setTeam] = useState<Team | undefined>();
+  const [institutionPickerOpen,setInstitutionPickerOpen]=useState(false);
+  const [selectionRoster,setSelectionRoster]=useState<SelectionRoster|null>(null);
+  const institutionStructureId=String((team as any)?.institutionStructureId||""), institutionSelectionId=String((team as any)?.institutionSelectionId||"");
+  const institutionalTeam=Boolean(institutionStructureId&&institutionSelectionId);
   const [showCodedStats, setShowCodedStats] = useState(false);
   const [competitionRevision, setCompetitionRevision] = useState(0);
   const [editingTeam, setEditingTeam] = useState(false);
@@ -789,7 +794,14 @@ export default function EquipeDetailPage({
 
   const dashboard = useTeamDashboardData(teamId, team);
   const officialStats = useLnbTeamStatistics(teamId, team?.competitionSource === "lnb", competitionRevision);
-  const rosterPlayers = useMemo(() => (team?.players || []).map(p => fillLnbIdentity(p, officialStats.data?.players?.find((row:any) => row.playerId === p.id))), [team?.players, officialStats.data]);
+  const rosterPlayers = useMemo(() => {
+    const source=institutionalTeam&&selectionRoster ? selectionRoster.players.filter(entry=>entry.player).map(entry=>{
+      const original=team?.players.find(p=>p.id===entry.team_player_id);
+      const p=entry.player;
+      return {...original,id:entry.team_player_id||p.id,firstName:p.first_name,lastName:p.last_name,photo:p.photo_url,club:p.club_name,categorie:p.category,postePrincipal:p.position_primary||original?.postePrincipal||"",institutionCanonicalId:p.id,institutionProjectionPending:!entry.team_player_id} as Player;
+    }):team?.players||[];
+    return source.map(p=>fillLnbIdentity(p,officialStats.data?.players?.find((row:any)=>row.playerId===p.id)));
+  },[team?.players,officialStats.data,institutionalTeam,selectionRoster]);
   const livePlayerAverages = useMemo(
     () => team?.competitionSource === "lnb" ? Object.fromEntries((officialStats.data?.players || []).filter((row:any) => row.playerId && row.s_games != null).map((row:any) => [row.playerId, { games:row.s_games, pts:row.s_points_average, reb:row.s_rebounds_total_average, ast:row.s_assists_average, stl:row.s_steals_average }])) : buildPlayerLiveAverages(dashboard.statRows),
     [dashboard.statRows, officialStats.data, team?.competitionSource],
@@ -823,7 +835,7 @@ export default function EquipeDetailPage({
   const canManageRpeQuestionnaires =
     Boolean(team) &&
     (isOwner || team?.collaborationPermissions?.rpe_manage_questionnaires === true);
-  const playerLimitReached = (team?.players.length ?? 0) >= 15;
+  const playerLimitReached = !institutionalTeam && (team?.players.length ?? 0) >= 15;
 
   async function reload() {
     try {
@@ -1091,7 +1103,11 @@ export default function EquipeDetailPage({
     }
 
     try {
-      await deletePlayer(teamId, p.id);
+      if(institutionalTeam&&(p as any).institutionCanonicalId){
+        const response=await fetch("/api/institutionnel/sport/players",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({structureId:institutionStructureId,selectionId:institutionSelectionId,mode:"detach",playerId:(p as any).institutionCanonicalId})});
+        const data=await response.json();if(!response.ok)throw Error(data.error||"Retrait impossible");
+        setSelectionRoster(previous=>previous?{...previous,players:previous.players.filter(entry=>entry.player_id!==(p as any).institutionCanonicalId)}:previous);
+      }else await deletePlayer(teamId, p.id);
       await reload();
       flash("Joueur retiré");
     } catch (error) {
@@ -1101,6 +1117,7 @@ export default function EquipeDetailPage({
   }
 
   function openPlayer(p: Player) {
+    if((p as any).institutionProjectionPending){router.push(`/institutionnel/${institutionStructureId}?tab=Joueurs`);return;}
     if (managing && canManagePlayers) setPlayerForm({ open: true, player: p });
     else router.push(`/equipes/${teamId}/${p.id}`);
   }
@@ -1287,7 +1304,7 @@ export default function EquipeDetailPage({
             <div className="tl-hero-sub">
               {team.categorieLabel || `${team.cat}`}
               <span className="dot" style={{ background: couleurs[1] }} />
-              {team.players.length} joueur{team.players.length > 1 ? "s" : ""}
+              {rosterPlayers.length} joueur{rosterPlayers.length > 1 ? "s" : ""}
               {dashboard.loading && (
                 <span className="dash-loading">Synchronisation...</span>
               )}
@@ -1321,7 +1338,7 @@ export default function EquipeDetailPage({
                   <div className="ffbb-next-opponent">{String(kpi.val).split("|||")[2]}</div>
                 </div>
               ) : (
-                <div className="val">{kpi.val}</div>
+                <div className="val">{institutionalTeam&&kpi.lbl==="Effectif"?rosterPlayers.length:kpi.val}</div>
               )}
               <div className="lbl">{kpi.lbl}</div>
               <small>{kpi.hint}</small>
@@ -1491,8 +1508,8 @@ export default function EquipeDetailPage({
                 </span>
                 <h2>Effectif</h2>
                 <span className="right">
-                  {team.players.length}/15 joueur
-                  {team.players.length > 1 ? "s" : ""}
+                  {rosterPlayers.length}{institutionalTeam?(selectionRoster?.max_players?`/${selectionRoster.max_players}`:""):"/15"} joueur
+                  {rosterPlayers.length > 1 ? "s" : ""}
                 </span>
               </div>
               <div className="tl-roster">
@@ -1526,7 +1543,7 @@ export default function EquipeDetailPage({
                     </div>
                     <div className="tl-pposte">{p.postePrincipal}</div>
                     <div className="tl-pstat">
-                      {officialStats.loading ? "Chargement LNB…" : officialStats.error ? "Statistiques LNB indisponibles" : getLivePlayerLabel(p, livePlayerAverages)}{team.competitionSource === "lnb" && livePlayerAverages[p.id] && <small style={{display:"block",color:"#a38147"}}>LNB · {livePlayerAverages[p.id].games} MJ</small>}
+                      {(p as any).institutionProjectionPending ? "Liaison statistiques en attente" : officialStats.loading ? "Chargement LNB…" : officialStats.error ? "Statistiques LNB indisponibles" : getLivePlayerLabel(p, livePlayerAverages)}{team.competitionSource === "lnb" && livePlayerAverages[p.id] && <small style={{display:"block",color:"#a38147"}}>LNB · {livePlayerAverages[p.id].games} MJ</small>}
                     </div>
                   </div>
                 ))}
@@ -1538,7 +1555,7 @@ export default function EquipeDetailPage({
                         alert("Effectif complet : une équipe MyBasket est limitée à 15 joueurs actifs.");
                         return;
                       }
-                      setPlayerForm({ open: true });
+                      if(institutionalTeam)setInstitutionPickerOpen(true);else setPlayerForm({ open: true });
                     }}
                   >
                     <span className="plus">+</span>
@@ -1548,7 +1565,7 @@ export default function EquipeDetailPage({
               </div>
             </section>
 
-            {managing && canManagePlayers && isOwner && !playerLimitReached && <div style={{ marginBottom: 20 }}><PlayerTeamAttachment teamId={teamId} onDone={reload} /></div>}
+            {!institutionalTeam && managing && canManagePlayers && isOwner && !playerLimitReached && <div style={{ marginBottom: 20 }}><PlayerTeamAttachment teamId={teamId} onDone={reload} /></div>}
 
             {/* ---------- ÉVÉNEMENTS + INFOS ---------- */}
             <section className="tl-2col">
@@ -1746,6 +1763,7 @@ export default function EquipeDetailPage({
         </div>
       </div>
 
+      {institutionalTeam && <InstitutionalTeamPlayerPicker key={teamId} structureId={institutionStructureId} selectionId={institutionSelectionId} teamId={teamId} open={institutionPickerOpen} onClose={()=>setInstitutionPickerOpen(false)} onDone={reload} onRoster={setSelectionRoster}/>}
       {editingTeam && isOwner && (
         <TeamForm
           team={team}
