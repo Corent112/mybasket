@@ -152,6 +152,7 @@ export default function InstitutionalPlayerWorkflow({ structureId, structureType
   const [openedPlayerId, setOpenedPlayerId] = useState<string | null>(null);
   const [search, setSearch] = useState("");
   const [clubFilter, setClubFilter] = useState("");
+  const [clubNormalizationMessage,setClubNormalizationMessage]=useState("");
   const [categoryFilter, setCategoryFilter] = useState("");
   const [sexFilter, setSexFilter] = useState<"all" | "boys" | "girls">("all");
   const [showArchived, setShowArchived] = useState(false);
@@ -569,7 +570,7 @@ export default function InstitutionalPlayerWorkflow({ structureId, structureType
           <section className="toolbar cleanToolbar">
             <div className="searchBox">⌕<input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Rechercher un joueur, un club, une catégorie…" /></div>
             <select value={categoryFilter} onChange={(e) => setCategoryFilter(e.target.value)}><option value="">Tous les âges</option><option value="group:u13">Groupe U13 — U12 + U13</option>{categories.map((x) => <option key={x}>{x}</option>)}</select>
-            <select value={clubFilter} onChange={(e) => setClubFilter(e.target.value)}><option value="">Club</option>{clubs.map((x) => <option key={x}>{x}</option>)}</select><button type="button" className="ghost" disabled={!!busy} onClick={async()=>{try{const result=await playerAction("normalize_clubs");if(result){await loadPlayersAndReferrals();alert(`${result.updated} fiche(s) harmonisée(s). Les clubs ambigus restent séparés.`);}}catch(error){alert(error instanceof Error?error.message:"Harmonisation impossible.");}finally{setBusy("");}}}>Harmoniser les clubs</button>
+            <select value={clubFilter} onChange={(e) => setClubFilter(e.target.value)}><option value="">Club</option>{clubs.map((x) => <option key={x}>{x}</option>)}</select><button type="button" className="ghost" disabled={!!busy} onClick={async()=>{try{const result=await playerAction("normalize_clubs");if(result){await loadPlayersAndReferrals();setClubNormalizationMessage(`${result.updated} fiche(s) harmonisée(s). Les clubs ambigus restent séparés.`);}}catch(error){alert(error instanceof Error?error.message:"Harmonisation impossible.");}finally{setBusy("");}}}>Harmoniser les clubs</button>{clubNormalizationMessage&&<span role="status">{clubNormalizationMessage}</span>}
             <label className="archiveToggle"><input type="checkbox" checked={showArchived} onChange={(e) => setShowArchived(e.target.checked)} /> Archivés</label>
           </section>
 

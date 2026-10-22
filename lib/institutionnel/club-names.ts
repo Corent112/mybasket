@@ -4,9 +4,12 @@ const clean=(value:string)=>value.trim().replace(/\s+/g,' ');
 const acronym=(value:string)=>{const list=words(value);return list.map(word=>/^\d+$/.test(word)?word:word[0]).join('');};
 export function clubDirectory(values:Array<string|null|undefined>){
  const groups=new Map<string,string[]>();for(const raw of values){if(!raw?.trim())continue;const name=clean(raw),key=clubNameKey(name);if(!key)continue;groups.set(key,[...new Set([...(groups.get(key)||[]),name])]);}
- const preferred=(names:string[])=>[...names].sort((a,b)=>b.length-a.length||Number(a===a.toUpperCase())-Number(b===b.toUpperCase())||a.localeCompare(b,'fr'))[0];
+ const style=(name:string)=>name===name.toUpperCase()?0:(/^[A-ZÀ-Ÿ]/.test(name)?10:0)+(name.match(/[A-ZÀ-Ÿ]/g)||[]).length;
+ const preferred=(names:string[])=>{const value=[...names].sort((a,b)=>b.length-a.length||style(b)-style(a)||a.localeCompare(b,'fr'))[0];return value===value.toUpperCase()?value:value.replace(/(^|\s)([a-zà-ÿ])/g,(_,space,letter)=>space+letter.toUpperCase());};
  const canonical=new Map<string,string>([...groups].map(([key,names])=>[key,preferred(names)]));
- const full=[...canonical.entries()].filter(([,name])=>words(name).filter(w=>!/^\d+$/.test(w)).length>=2);
+ // An omitted arrondissement is safe only when exactly one numbered version exists.
+ for(const [key,label]of canonical){if(/\d/.test(key))continue;const numbered=[...canonical.entries()].filter(([candidate])=>/\d/.test(candidate)&&candidate.replace(/\d/g,'')===key);if(numbered.length===1)canonical.set(key,numbered[0][1]);}
+ const full=[...new Map([...canonical.entries()].filter(([,name])=>words(name).filter(w=>!/^\d+$/.test(w)).length>=2).map(entry=>[entry[1],entry])).values()];
  for(const [key,names]of groups){const name=preferred(names);if(!/^[a-z]{2,6}\d*$/i.test(words(name).join(''))||words(name).filter(w=>!/^\d+$/.test(w)).length>1)continue;
   const short=words(name).join(''),hasNumber=/\d/.test(short);const matches=full.filter(([fullKey,label])=>fullKey!==key&&(hasNumber?acronym(label)===short:acronym(label).replace(/\d/g,'')===short));
   if(matches.length===1)canonical.set(key,matches[0][1]);
