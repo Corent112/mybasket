@@ -3,6 +3,7 @@ import {playerAgeCategory} from "@/lib/institutionnel/player-category";
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
+import {loadPlayerAttendance,playerAttendanceSummary,type PlayerAttendanceSession,type PlayerAttendanceRecord} from "@/lib/institutionnel/player-attendance";
 import InstitutionalPlayerShootingGrids from "@/components/institutionnel/InstitutionalPlayerShootingGrids";
 
 const TABS = [
@@ -10,6 +11,7 @@ const TABS = [
   "Informations",
   "Profil joueur",
   "Tests",
+  "Présences",
   "Grilles de tir",
   "Médical",
   "Bilans",
@@ -47,8 +49,8 @@ type Measurement = {
 };
 
 type Season = { id: string; season_label: string };
-type AttendanceSession = { id:string; session_date:string; title:string; location:string|null; session_type?:string|null };
-type AttendanceRecord = { id:string; session_id:string; season_id:string|null; player_id:string; status:"present"|"absent"|"excused" };
+type AttendanceSession = PlayerAttendanceSession;
+type AttendanceRecord = PlayerAttendanceRecord;
 
 const today = () => new Date().toISOString().slice(0, 10);
 const clean = (v: unknown) => String(v ?? "").trim();
@@ -93,12 +95,11 @@ export default function InstitutionalPlayerSheet({ structureId, player, referral
         const rows:any[]=[];
         for(let start=0;;start+=1000){let query=sb.from(table).select(columns).eq("structure_id",structureId);if(filterPlayer)query=query.eq("player_id",player.id);const result=await query.order("id").range(start,start+999);if(result.error)throw Error(result.error.message);rows.push(...(result.data||[]));if((result.data||[]).length<1000)return rows;}
       };
-      const [savedMeasures,savedAttendance,savedSessions]=await Promise.all([
+      const [savedMeasures,attendance]=await Promise.all([
         readAll("institutional_player_measurements","id,measured_at,height_cm,weight_kg,wingspan_cm,shoe_size"),
-        readAll("institutional_player_attendance_records","id,session_id,status"),
-        readAll("institutional_player_attendance_sessions","id,session_date,title,location",false)
+        loadPlayerAttendance(sb,structureId,player.id)
       ]);
-      const doc=await createPlayerProfilePdf({player,institution:institution.data,matches:performance.matches||[],referral,measurements:savedMeasures,attendance:savedAttendance.map(r=>({...r,session:savedSessions.find(s=>s.id===r.session_id)}))});
+      const doc=await createPlayerProfilePdf({player,institution:institution.data,matches:performance.matches||[],referral,measurements:savedMeasures,attendance:attendance.records.map(r=>({...r,session:attendance.sessions.find(s=>s.id===r.session_id)}))});
       doc.save(`fiche-${player.first_name}-${player.last_name}`.replace(/[^a-zA-Z0-9À-ÿ_-]/g,"-")+".pdf");
     }catch(error){setPdfError(error instanceof Error?error.message:"Export PDF impossible.");}finally{setPdfBusy(false);}
   }
@@ -109,6 +110,8 @@ export default function InstitutionalPlayerSheet({ structureId, player, referral
   const [measurements, setMeasurements] = useState<Measurement[]>([]);
   const [attendanceSessions, setAttendanceSessions] = useState<AttendanceSession[]>([]);
   const [attendanceRecords, setAttendanceRecords] = useState<AttendanceRecord[]>([]);
+  const [attendanceError,setAttendanceError]=useState("");
+  const attendanceRequest=useRef(0);
   const [measure, setMeasure] = useState({ season_id: "", measured_at: today(), height_cm: "", weight_kg: "", wingspan_cm: "", shoe_size: "" });
   const [form, setForm] = useState<any>({});
   const playerRailRef = useRef<HTMLDivElement>(null);
@@ -170,31 +173,29 @@ export default function InstitutionalPlayerSheet({ structureId, player, referral
   }, [player.id]);
 
   useEffect(() => {
+    setAttendanceRecords([]);setAttendanceSessions([]);
     void loadMeasurements();
-    const refresh=()=>{ if(document.visibilityState!=="hidden") void loadMeasurements(); };
-    window.addEventListener("focus",refresh);
-    document.addEventListener("visibilitychange",refresh);
-    return()=>{window.removeEventListener("focus",refresh);document.removeEventListener("visibilitychange",refresh)};
+    const refresh=()=>{if(document.visibilityState!=="hidden")void loadMeasurements();};
+    window.addEventListener("focus",refresh);document.addEventListener("visibilitychange",refresh);
+    const timer=window.setInterval(refresh,30000);
+    return()=>{attendanceRequest.current++;window.clearInterval(timer);window.removeEventListener("focus",refresh);document.removeEventListener("visibilitychange",refresh);};
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [player.id, structureId]);
+  }, [player.id, structureId, player.profile_data?.detectionAttendance]);
 
   async function loadMeasurements() {
-    const [s, m, ar] = await Promise.all([
-      sb.from("institutional_player_tracking_seasons").select("id,season_label").eq("structure_id", structureId).eq("archived", false).order("season_label", { ascending: false }),
-      sb.from("institutional_player_measurements").select("id,season_id,measured_at,height_cm,weight_kg,wingspan_cm,shoe_size").eq("structure_id", structureId).eq("player_id", player.id).order("measured_at", { ascending: false }),
-      sb.from("institutional_player_attendance_records").select("id,session_id,season_id,player_id,status").eq("structure_id",structureId).eq("player_id",player.id),
-    ]);
-    if (!s.error) {
-      const rows = (s.data || []) as Season[];
-      setSeasons(rows);
-      setMeasure((v) => ({ ...v, season_id: v.season_id || rows[0]?.id || "" }));
-    }
-    if (!m.error) setMeasurements((m.data || []) as Measurement[]);
-    if (!ar.error) {
-      const rows=(ar.data||[]) as AttendanceRecord[];setAttendanceRecords(rows);
-      const ids=[...new Set(rows.map(x=>x.session_id))];
-      if(ids.length){const q=await sb.from("institutional_player_attendance_sessions").select("id,session_date,title,location,session_type").in("id",ids).order("session_date",{ascending:false});if(!q.error)setAttendanceSessions((q.data||[]) as AttendanceSession[])} else setAttendanceSessions([]);
-    }
+    const request=++attendanceRequest.current;
+    try{
+      const [s,m,attendance]=await Promise.all([
+        sb.from("institutional_player_tracking_seasons").select("id,season_label").eq("structure_id",structureId).eq("archived",false).order("season_label",{ascending:false}),
+        sb.from("institutional_player_measurements").select("id,season_id,measured_at,height_cm,weight_kg,wingspan_cm,shoe_size").eq("structure_id",structureId).eq("player_id",player.id).order("measured_at",{ascending:false}),
+        loadPlayerAttendance(sb,structureId,player.id).then(data=>({data,error:null as unknown})).catch(error=>({data:null,error}))
+      ]);
+      if(request!==attendanceRequest.current)return;
+      if(!s.error){const rows=(s.data||[]) as Season[];setSeasons(rows);setMeasure(v=>({...v,season_id:v.season_id||rows[0]?.id||""}));}
+      if(!m.error)setMeasurements((m.data||[]) as Measurement[]);
+      if(!attendance.data)throw (attendance.error instanceof Error?attendance.error:new Error("Présences indisponibles."));
+      setAttendanceRecords(attendance.data.records);setAttendanceSessions(attendance.data.sessions);setAttendanceError("");
+    }catch(error){if(request===attendanceRequest.current)setAttendanceError(error instanceof Error?error.message:"Présences indisponibles.");}
   }
 
   const patch = (key: string, value: any) => setForm((v: any) => ({ ...v, [key]: value }));
@@ -291,14 +292,8 @@ export default function InstitutionalPlayerSheet({ structureId, player, referral
   const profiling = profile.profiling || {};
   const sportsReport = profile.sportsReport || {};
   const poleFollowup = profile.poleFollowup || {};
-  const currentAttendanceSeasonId=seasons[0]?.id||null;
-  const attendancePastIds=new Set(attendanceSessions.filter((x)=>String(x.session_date||"").slice(0,10)<=today()).map((x)=>x.id));
-  const countedAttendance=attendanceRecords.filter((x)=>attendancePastIds.has(x.session_id)&&(!currentAttendanceSeasonId||!x.season_id||x.season_id===currentAttendanceSeasonId));
-  const attendanceTotal=countedAttendance.length;
-  const attendancePresent=countedAttendance.filter((x)=>x.status==="present").length;
-  const attendanceExcused=countedAttendance.filter((x)=>x.status==="excused").length;
-  const attendanceAbsent=countedAttendance.filter((x)=>x.status==="absent").length;
-  const attendanceRate=attendanceTotal?Math.round(attendancePresent/attendanceTotal*100):0;
+  const attendanceSummary=playerAttendanceSummary(attendanceRecords,attendanceSessions,seasons[0],today());
+  const {present:attendancePresent,absent:attendanceAbsent,excused:attendanceExcused,total:attendanceTotal,rate:attendanceRate}=attendanceSummary;
 
   const selectionItems = Array.isArray(profile.selections) ? profile.selections : [];
   const strengths = clean(profiling.strengths).split(/[\n,;•]+/).map((x:string)=>x.trim()).filter(Boolean).slice(0,6);
@@ -395,12 +390,12 @@ export default function InstitutionalPlayerSheet({ structureId, player, referral
             <button className="textLink" onClick={() => setTab("Informations")}>Voir toutes les informations →</button>
           </DashboardCard>
 
-          <DashboardCard title={seasons[0]?.season_label ? `Saison ${seasons[0].season_label}` : "Présences"} right={<button className="textLink" onClick={() => setTab("Informations")}>Voir le détail →</button>}>
-            <div className="attendanceTop">
+          <DashboardCard title={seasons[0]?.season_label ? `Saison ${seasons[0].season_label}` : "Présences"} right={<button className="textLink" onClick={() => setTab("Présences")}>Voir le détail →</button>}>
+            {attendanceError&&<p role="alert">{attendanceError} <button type="button" onClick={()=>void loadMeasurements()}>Réessayer</button></p>}<div className="attendanceTop">
               <div><span>Présences</span><strong>{attendancePresent} / {attendanceTotal}</strong></div>
               <div className="rateRing" style={{"--rate": `${attendanceRate * 3.6}deg`} as React.CSSProperties}><b>{attendanceRate}%</b></div>
             </div>
-            <div className="attendanceStats"><div><b>{attendanceAbsent}</b><span>Absences</span></div><div><b>{attendanceExcused}</b><span>Abs. excusées</span></div><div><b>{Math.max(0, attendanceTotal-attendancePresent-attendanceAbsent-attendanceExcused)}</b><span>En attente</span></div></div>
+            <div className="attendanceStats"><div><b>{attendanceAbsent}</b><span>Absences</span></div><div><b>{attendanceExcused}</b><span>Abs. excusées</span></div><div><b>{attendanceSummary.pending}</b><span>En attente</span></div></div>
           </DashboardCard>
 
           <DashboardCard title="Sélections" right={<span className="mutedSmall">Historique</span>}>
@@ -408,7 +403,7 @@ export default function InstitutionalPlayerSheet({ structureId, player, referral
           </DashboardCard>
 
           <DashboardCard title="Derniers événements" right={<span className="mutedSmall">Convocations</span>}>
-            <div className="eventList">{attendanceSessions.slice(0,5).map((session)=>{const row=attendanceRecords.find((r)=>r.session_id===session.id);return <div className="eventRow" key={session.id}><span>{fmtDate(session.session_date)}</span><b>{session.title}</b><StatusPill status={row?.status || "absent"} /></div>})}{!attendanceSessions.length&&<div className="emptyCompact">Aucun événement enregistré.</div>}</div>
+            <div className="eventList">{attendanceSessions.slice(0,5).map((session)=>{const row=attendanceRecords.find((r)=>r.session_id===session.id);return <div className="eventRow" key={session.id}><span>{fmtDate(session.session_date)}</span><b>{session.title}</b><StatusPill status={row?.status || "pending"} /></div>})}{!attendanceSessions.length&&<div className="emptyCompact">Aucun événement enregistré.</div>}</div>
           </DashboardCard>
 
           <DashboardCard title="Progression anthropométrique" right={<button className="textLink" onClick={() => setTab("Tests")}>Voir tous les tests →</button>}>
@@ -481,6 +476,12 @@ export default function InstitutionalPlayerSheet({ structureId, player, referral
 
         {tab === "Profil joueur" && <ProfileEditor value={profiling} saving={saving === "profiling"} onSave={(value) => saveProfileSection("profiling", value)} />}
 
+        {tab === "Présences" && <section className="panel"><SectionTitle eyebrow="PRÉSENCES" title="Détections & entraînements" help="Les statuts proviennent des journées et séances enregistrées." right={<button type="button" className="textLink" onClick={()=>void loadMeasurements()}>Actualiser</button>}/>
+          {attendanceError&&<p role="alert">{attendanceError}</p>}
+          <div className="metricGrid"><Metric label="Présents" value={String(attendancePresent)}/><Metric label="Absents" value={String(attendanceAbsent)}/><Metric label="Excusés" value={String(attendanceExcused)}/><Metric label="À renseigner" value={String(attendanceSummary.pending)}/></div>
+          <div className="eventList">{attendanceSessions.map(session=>{const record=attendanceRecords.find(r=>r.session_id===session.id);return <div className="eventRow" key={session.id}><span>{fmtDate(session.session_date)}</span><div><b>{session.title}</b>{session.location&&<small>{session.location}</small>}</div><StatusPill status={record?.status||"pending"}/></div>;})}{!attendanceSessions.length&&!attendanceError&&<p>Aucune présence reliée à cette fiche.</p>}</div>
+        </section>}
+
         {tab === "Tests" && <section className="panel"><SectionTitle eyebrow="TESTS" title="Anthropométrie & mesures" help="Historique longitudinal : taille, poids, envergure et pointure." />
           <div className="measureCurrent"><Metric label="Taille actuelle" value={form.height_cm ? `${form.height_cm} cm` : "—"} /><Metric label="Poids actuel" value={form.weight_kg ? `${form.weight_kg} kg` : "—"} /><Metric label="Envergure actuelle" value={form.wingspan_cm ? `${form.wingspan_cm} cm` : "—"} /><Metric label="Dernière mesure" value={latestMeasure ? fmtDate(latestMeasure.measured_at) : "—"} /></div>
           <div className="measureForm"><select value={measure.season_id} onChange={(e) => setMeasure((v) => ({ ...v, season_id: e.target.value }))}><option value="">Saison</option>{seasons.map((s) => <option key={s.id} value={s.id}>{s.season_label}</option>)}</select><input type="date" value={measure.measured_at} onChange={(e) => setMeasure((v) => ({ ...v, measured_at: e.target.value }))} /><input placeholder="Taille cm" value={measure.height_cm} onChange={(e) => setMeasure((v) => ({ ...v, height_cm: e.target.value }))} /><input placeholder="Poids kg" value={measure.weight_kg} onChange={(e) => setMeasure((v) => ({ ...v, weight_kg: e.target.value }))} /><input placeholder="Envergure cm" value={measure.wingspan_cm} onChange={(e) => setMeasure((v) => ({ ...v, wingspan_cm: e.target.value }))} /><input placeholder="Pointure" value={measure.shoe_size} onChange={(e) => setMeasure((v) => ({ ...v, shoe_size: e.target.value }))} /><button className="primary" onClick={addMeasurement} disabled={saving === "measure"}>{saving === "measure" ? "Ajout…" : "+ Ajouter la mesure"}</button></div>
@@ -504,7 +505,7 @@ function DashboardCard({ title, right, className = "", children }: { title: stri
 
 function QuickFact({ icon, label, value }: { icon: string; label: string; value: string }) { return <div className="quickFact"><span className="quickIcon">{icon}</span><div><span>{label}</span><b>{value}</b></div></div>; }
 
-function StatusPill({ status }: { status: "present" | "absent" | "excused" }) { const text = status === "present" ? "Présent" : status === "excused" ? "Absent excusé" : "Absent"; return <strong className={`statusPill ${status}`}>{text}</strong>; }
+function StatusPill({ status }: { status: PlayerAttendanceRecord["status"] }) { const text = status === "present" ? "Présent" : status === "excused" ? "Absent excusé" : status === "absent" ? "Absent" : "À renseigner"; return <strong className={`statusPill ${status}`}>{text}</strong>; }
 
 function ChipList({ items, empty }: { items: string[]; empty: string }) { return <div className="chipList">{items.length ? items.map((x,i)=><span key={`${x}-${i}`}>{x}</span>) : <em>{empty}</em>}</div>; }
 

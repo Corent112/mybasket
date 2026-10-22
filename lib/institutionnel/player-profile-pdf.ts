@@ -41,7 +41,7 @@ export async function createPlayerProfilePdf(input:{player:Record<string,any>;in
    for(const row of rows){paragraph([row.date,row.title,row.name,row.status].filter(Boolean).join(' · '),9,true);if(row.notes)paragraph(row.notes);if(row.url||row.file_url)paragraph(row.url||row.file_url,8);}
  }
  if(input.measurements?.length){section('Historique des mesures');for(const m of input.measurements)paragraph([m.measured_at,m.height_cm!=null?`Taille ${m.height_cm} cm`:null,m.weight_kg!=null?`Poids ${m.weight_kg} kg`:null,m.wingspan_cm!=null?`Envergure ${m.wingspan_cm} cm`:null,m.shoe_size!=null?`Pointure ${m.shoe_size}`:null].filter(Boolean).join(' · '));}
- if(input.attendance?.length){section('Présences enregistrées');const statuses:Record<string,string>={present:'Présent',absent:'Absent',excused:'Excusé'};for(const r of input.attendance)paragraph([r.session?.session_date,r.session?.title,statuses[r.status]||r.status,r.session?.location].filter(Boolean).join(' · '));}
+ if(input.attendance?.length){section('Présences enregistrées');const statuses:Record<string,string>={present:'Présent',absent:'Absent',excused:'Excusé',pending:'À renseigner'};for(const r of input.attendance)paragraph([r.session?.session_date,r.session?.title,statuses[r.status]||r.status,r.session?.location].filter(Boolean).join(' · '));}
  const matches=input.matches||[];
  section(`Statistiques par match (${matches.length})`);
  if(!matches.length)paragraph('Aucun match joué lié à cette fiche.');
