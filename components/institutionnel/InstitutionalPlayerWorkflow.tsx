@@ -357,8 +357,9 @@ export default function InstitutionalPlayerWorkflow({ structureId, structureType
       const linkedSelection = selectionJson.selections?.find((item:DaySelection) => item.id === linkedId);
       const selection = selectionJson.selections?.find((item:DaySelection)=>item.id===linkedSelection?.preparation_target_id)||linkedSelection;
       const {createDetectionReportPdf} = await import("@/lib/institutionnel/detection-report-pdf");
-      const doc = await createDetectionReportPdf({institution:institution.data,event,selection,resources:resources.data||[],eventUrl:`${window.location.origin}/institutionnel/${structureId}?tab=Mon%20calendrier&event=${encodeURIComponent(event.id)}`,participants:currentParts.map(item=>({ ...item, player:players.find(player=>player.id===item.player_id) }))});
-      doc.save(`rapport-journee-${event.event_date}.pdf`);
+      const {downloadCombinedDayReport,reportAttachmentKind}=await import("@/lib/institutionnel/day-report-attachments");
+      const doc = await createDetectionReportPdf({pageLabel:(resources.data||[]).some((resource:{title:string;file_url?:string|null})=>reportAttachmentKind(resource,window.location.origin))?"1":undefined,institution:institution.data,event,selection,resources:resources.data||[],eventUrl:`${window.location.origin}/institutionnel/${structureId}?tab=Mon%20calendrier&event=${encodeURIComponent(event.id)}`,participants:currentParts.map(item=>({ ...item, player:players.find(player=>player.id===item.player_id) }))});
+      await downloadCombinedDayReport(doc,resources.data||[],`rapport-journee-${event.event_date}.pdf`);
     } catch (error) { alert(error instanceof Error ? error.message : "Export impossible"); }
     finally { setReportBusy(false); }
   }

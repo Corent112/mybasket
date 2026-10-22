@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import {downloadSessionPdf} from "@/lib/institutionnel/session-pdf-download";
 import {basketDayIds,loadBasketDay,BASKET_DAY_KEY,type BasketDayContext} from "@/lib/institutionnel/basket-day-context";
+import {loadInstitutionPracticeTeams} from "@/lib/institutionnel/institution-practice-teams";
 import InstitutionalPracticeSelectionPicker from "@/components/institutionnel/InstitutionalPracticeSelectionPicker";
 import { createClient } from "@/lib/supabase/client";
 
@@ -278,13 +279,14 @@ export default function PanierPage() {
   const [dayContext,setDayContext]=useState<BasketDayContext|null>(null);
   const [dayContextLoading,setDayContextLoading]=useState(true);
   const [dayContextError,setDayContextError]=useState("");
+  const [institutionTeamsError,setInstitutionTeamsError]=useState("");
   const [dayLinked,setDayLinked]=useState(false);
   const savedDaySessionIdRef=useRef("");
   const [savedDaySession,setSavedDaySession]=useState<{id:string;title:string;eventId:string}|null>(null);
   const [sessionFlowError,setSessionFlowError]=useState("");
   const [pdfBusy,setPdfBusy]=useState(false);
   async function downloadSavedSession(id:string,title:string){if(pdfBusy)return;setPdfBusy(true);setSessionFlowError("");try{await downloadSessionPdf(id,title)}catch(error){setSessionFlowError(error instanceof Error?error.message:"Téléchargement impossible")}finally{setPdfBusy(false)}}
-  async function retryInstitutionLink(){if(!pendingInstitutionLink||savingSession)return;setSavingSession(true);setSessionFlowError("");try{await linkInstitutionSession(pendingInstitutionLink);if(pendingInstitutionLink.eventId){await resetSessionBuilderAfterGeneration();setSessionModalOpen(false)}}catch(error){setSessionFlowError(error instanceof Error?error.message:"Rattachement impossible")}finally{setSavingSession(false)}}
+  async function retryInstitutionLink(){if(!pendingInstitutionLink||savingSession)return;setSavingSession(true);setSessionFlowError("");try{await linkInstitutionSession(pendingInstitutionLink);await resetSessionBuilderAfterGeneration();setSessionModalOpen(false)}catch(error){setSessionFlowError(error instanceof Error?error.message:"Rattachement impossible")}finally{setSavingSession(false)}}
   async function loadDayContext(){
     setDayContextLoading(true);setDayContextError("");
     try{
@@ -352,8 +354,8 @@ const subtotal = useMemo(() => {
 
   async function loadTeamsAndPlayers() {
     const { data: teamRows, error: teamError } = await supabase.from("teams").select("*").order("name");
-    if (teamError) { console.error(teamError); setTeams(readTeamsFromLocalStorage()); return; }
-    const rawTeams = (teamRows ?? []) as Array<Record<string, any>>;
+    if (teamError) console.error(teamError);
+    const rawTeams = (teamError?readTeamsFromLocalStorage():(teamRows ?? [])) as Array<Record<string, any>>;
     const teamIds = rawTeams.map((team) => String(team.id || "")).filter(Boolean);
     const clubIds = Array.from(new Set(rawTeams.map((team) => String(team.club_id || "")).filter(Boolean)));
     const [{ data: playerRows }, { data: clubRows }] = await Promise.all([
@@ -371,6 +373,7 @@ const subtotal = useMemo(() => {
       const club = clubs.get(String(team.club_id || "")) || {};
       return { ...team, id: String(team.id), name: String(team.name || team.nom || "Équipe"), clubName: String(club.name || club.nom || ""), club_logo_url: String(team.club_logo_url || team.logo_url || team.logo || club.logo_url || club.club_logo_url || club.logo || club.image_url || club.avatar_url || ""), players: playersByTeam.get(String(team.id)) || [] } as Team;
     }));
+    try{const institutionTeams=await loadInstitutionPracticeTeams();setInstitutionTeamsError("");setTeams(previous=>{const merged=new Map(previous.map(team=>[team.id,team]));for(const team of institutionTeams)merged.set(team.id,{...merged.get(team.id),...team});return [...merged.values()];});}catch(error){setInstitutionTeamsError(error instanceof Error?error.message:"Équipes institutionnelles indisponibles.");}
   }
 
   async function loadCart() {
@@ -1065,7 +1068,7 @@ setLoading(false);
 
   const isUuid = (value: string | null | undefined) =>
     !!value &&
-    /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{12}$/i.test(
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
       value
     );
 
@@ -1294,7 +1297,7 @@ setLoading(false);
     return false;
   }
 
-  if(selectedTeam?.institutionId && selectedTeam.selectionId){const payload={structureId:selectedTeam.institutionId,selectionId:selectedTeam.selectionId,sessionId:createdSession.id};try{await linkInstitutionSession(payload);}catch(error){setPendingInstitutionLink(payload);alert("La séance est enregistrée. Le rattachement à l’institution a échoué : utilise le bouton Réessayer sans recréer la séance.");}}
+  if(selectedTeam?.institutionId && selectedTeam.selectionId){const payload={structureId:selectedTeam.institutionId,selectionId:selectedTeam.selectionId,sessionId:createdSession.id};savedDaySessionIdRef.current=createdSession.id;setSavedDaySession({id:createdSession.id,title:sessionTheme,eventId:createdSession.id});setPendingInstitutionLink(payload);try{await linkInstitutionSession(payload);}catch(error){setSessionFlowError(error instanceof Error?error.message:"Rattachement impossible");return false;}}
   return true;
 }
 
@@ -1358,7 +1361,7 @@ setLoading(false);
       return;
     }
 
-    if(dayContext){
+    if(dayContext||selectedTeam.institutionId){
       setSessionFlowError("");
       try{const saved=await saveSessionToCalendar();if(saved){await resetSessionBuilderAfterGeneration();setSessionModalOpen(false);if(savedDaySessionIdRef.current)await downloadSavedSession(savedDaySessionIdRef.current,sessionTheme)}}catch(error){setSessionFlowError(error instanceof Error?error.message:"Enregistrement impossible")}finally{setSavingSession(false)}
       return;
@@ -1945,6 +1948,7 @@ setLoading(false);
         <p>Gérez vos achats, vos contenus et construisez votre séance.</p>
       </section>
 
+      {institutionTeamsError&&<p role="alert">{institutionTeamsError} <button type="button" onClick={()=>void loadTeamsAndPlayers()}>Recharger les équipes</button></p>}
       {(dayContext||dayContextError)&&<section className="dayBasketContext"><b>{dayLinked?"Séance liée à la journée":"Préparer la séance de cette journée"}</b>{dayContext&&<p>{dayContext.title} · {dayContext.date} · {dayContext.team.name}{dayContext.location?` · ${dayContext.location}`:""}</p>}<p>Choisis et organise tes exercices dans le panier, puis utilise « Générer ma fiche séance ». La séance sera liée à la journée sans modifier ses présences.</p>{dayContextError&&<p role="alert">{dayContextError}</p>}<div><Link href="/bibliotheque">Ajouter des exercices depuis la bibliothèque</Link>{dayContext&&<Link href={`/institutionnel/${dayContext.structureId}?tab=Joueurs&preparationDay=${dayContext.eventId}`}>Revenir à la journée</Link>}<button type="button" disabled={savingSession} onClick={()=>void loadDayContext()}>Recharger la journée</button><button type="button" disabled={savingSession} onClick={cancelDayContext}>Détacher ce panier de la journée</button></div></section>}
       <section className="cartGrid">
         <div className="panel">
@@ -2299,7 +2303,7 @@ setLoading(false);
                 <option value="">Sélectionner une équipe</option>
                 {teams.map((team) => (
                   <option key={team.id} value={team.id}>
-                    {team.name ?? team.clubName ?? "Équipe sans nom"}
+                    {team.institutionId?"Institution · ":""}{team.name ?? team.clubName ?? "Équipe sans nom"}
                     {team.category || team.categorie
                       ? ` (${team.category ?? team.categorie})`
                       : ""}

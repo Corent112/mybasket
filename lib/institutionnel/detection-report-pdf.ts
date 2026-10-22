@@ -1,7 +1,7 @@
 import {jsPDF} from 'jspdf';
 import {imageData} from './trombinoscope-pdf';
 export type DayReportResource={id?:string;title:string;note?:string|null;file_url?:string|null};
-type Input={institution:{name:string;logo_url?:string|null};event:{id:string;title:string;event_date:string;start_time?:string|null;location?:string|null};eventUrl?:string;selection?:{name:string;category?:string|null;gender?:string|null;season_label?:string|null};resources?:DayReportResource[];participants:Array<{status:string;player?:{first_name:string;last_name:string;club_name?:string|null;photo_url?:string|null;profile_data?:any}}>};
+type Input={pageLabel?:string;institution:{name:string;logo_url?:string|null};event:{id:string;title:string;event_date:string;start_time?:string|null;location?:string|null};eventUrl?:string;selection?:{name:string;category?:string|null;gender?:string|null;season_label?:string|null};resources?:DayReportResource[];participants:Array<{status:string;player?:{first_name:string;last_name:string;club_name?:string|null;photo_url?:string|null;profile_data?:any}}>};
 const labels:Record<string,string>={present:'Présent',absent:'Absent',excused:'Excusé',invited:'Invité',confirmed:'Confirmé',selected:'Retenu',waiting:'Attente',not_selected:'Non gardé'};
 export function reportResourceUrl(value?:string|null,origin='https://mybasket.vercel.app'){
  if(!value)return null;try{const url=new URL(value,origin);return ['https:','http:'].includes(url.protocol)?url.href:null;}catch{return null;}
@@ -65,6 +65,6 @@ export async function createDetectionReportPdf(input:Input){
   if(resource.note)text(resource.note,tx,y+3.2,88-(tx-x),6.1,muted);
  });
  if(resources.length>12){const url=reportResourceUrl(input.eventUrl);text(`+ ${resources.length-12} autres documents sur la journée`,10,197,277,6.5,wine);if(url)doc.link(10,194,200,4,{url});}
- text('MyBasket  |  Rapport de journée',10,205,200,7,muted);text('1 / 1',278,205,10,7,muted);
+ text('MyBasket  |  Rapport de journée',10,205,200,7,muted);text(input.pageLabel||'1 / 1',278,205,10,7,muted);
  return doc;
 }

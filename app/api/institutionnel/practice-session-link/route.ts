@@ -32,6 +32,9 @@ export async function POST(req:Request){
   const resource=await db.from('institutional_event_resources').upsert({id:resourceId,structure_id:structureId,event_id:sourceEventId,resource_type:'document',title:practice.title||'Fiche séance et exercices',file_url:`/seances/${sessionId}`,note:note||null,completed:false,created_by:ctx.user.id},{onConflict:'id'});if(resource.error)return json({error:resource.error.message},400);
   return json({ok:true,eventId:sourceEventId});
  }
+ const institution=await db.from('institutional_structures').select('name,logo_url').eq('id',structureId).maybeSingle();if(institution.error||!institution.data)return json({error:institution.error?.message||'Institution indisponible'},400);
+ let institutionNotes:any={};try{institutionNotes=typeof practice.notes==='string'?JSON.parse(practice.notes):practice.notes||{}}catch{}
+ const institutionSnapshot=await db.from('practice_sessions').update({...(institution.data.logo_url?{club_logo_url:institution.data.logo_url}:{}),notes:JSON.stringify({...institutionNotes,institutionContext:{structureId,selectionId,eventId:sessionId},institutionName:institution.data.name,institutionLogoUrl:institution.data.logo_url||null})}).eq('id',sessionId).eq('user_id',ctx.user.id);if(institutionSnapshot.error)return json({error:institutionSnapshot.error.message},400);
  const [snapshot,members]=await Promise.all([db.from('practice_session_players').select('player_id').eq('session_id',sessionId).eq('selected',true),db.from('institutional_selection_players').select('player_id,team_player_id').eq('selection_id',selectionId).eq('status','active')]);
  if(snapshot.error||members.error)return json({error:'Effectif de la séance indisponible'},400);
  const chosen=new Set((snapshot.data||[]).map((row:any)=>String(row.player_id))),playerIds=(members.data||[]).filter((row:any)=>chosen.has(String(row.team_player_id))).map((row:any)=>String(row.player_id));
