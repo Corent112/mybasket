@@ -4265,7 +4265,7 @@ export default function PriseStatsProPage() {
   };
   const rebPick = (id: string) => {
     markClipEndNow();
-    const d = { ...draft, reboundType: id };
+    const d = { ...draft, reboundType: id, reboundPlayerId: null };
 
     // Après un contre, la conséquence choisie décide seule de la possession :
     // ATTAQUE  + touche               -> reste ATTAQUE
@@ -4277,10 +4277,6 @@ export default function PriseStatsProPage() {
       return;
     }
 
-    if (codingMode === 'live') {
-      commit(d);
-      return;
-    }
     if (isMyRebound(d.context, id)) setDraft(d);
     else commit(d);
   };
@@ -5631,7 +5627,7 @@ export default function PriseStatsProPage() {
         </div>
       </header>
 
-      {!(codingMode === 'live-individual' || codingMode === 'live') && <div className="qstrip">
+      {<div className="qstrip" aria-label="Scores par quart-temps">
         {Object.keys(perQ).map((k) => <span key={k} className={`qbox ${+k === q ? 'cur' : ''}`}>{periodLabel(+k)} <b>{perQ[+k].us}-{perQ[+k].them}</b></span>)}
         <span className="foulbox usf">Fautes équipe {teamName || 'Nous'} <b>{usTeamFouls}</b></span>
         <span className="foulbox themf">Fautes adv. <b>{themTeamFouls}</b></span>
@@ -7707,14 +7703,14 @@ export default function PriseStatsProPage() {
         const rebDefaults: Record<string, string> = { 'off': 'Rebond offensif', 'def': 'Rebond défensif', 'touche-pour': 'Touche / sortie pour moi', 'touche-contre': 'Touche / sortie contre moi' };
         const rebCfg = codingButtonsFor('rebound');
         const rebLabelOf = (id: string) => rebCfg.find((c) => c.key === id)?.label ?? rebDefaults[id];
-        const reb: string[] = (codingMode === 'live-individual' ? ['off', 'def'] : ['off', 'def', 'touche-pour', 'touche-contre']).filter((id) => rebCfg.some((c) => c.key === id));
+        const reb: string[] = ['off', 'def', 'touche-pour', 'touche-contre'];
         return <>{head('Conséquence', codingMode === 'live-individual' ? (draft.context === 'defense' ? 'Tir adverse raté : RO adverse ou RD pour nous' : 'Tir raté : RO ou RD') : 'Rebond sur tir manqué')}<div className="grid c2">{reb.map((id) => <button key={id} className={`chip ${draft.reboundType === id ? 'active' : ''}`} onClick={() => rebPick(id)}>{rebLabelOf(id)}</button>)}</div>
           <div className="sublbl">Faute au rebond</div>
           <div className="grid c2">
             <button className="chip" onClick={() => reboundFoulPick('drawn')}>🔔 Faute provoquée</button>
             <button className="chip" onClick={() => reboundFoulPick('committed')}>🟨 Faute commise</button>
           </div>
-          {draft.reboundType && isMyRebound(draft.context, draft.reboundType) && <><div className="sublbl">Qui prend le rebond ?</div>{players3(draft.reboundPlayerId, rebWho)}{codingMode !== 'live-individual' && <button className="chip" style={{ marginTop: 8 }} onClick={() => commit(draft)}>Sans précision →</button>}</>}
+          {draft.reboundType && isMyRebound(draft.context, draft.reboundType) && <><div className="sublbl">Qui prend le rebond ?</div>{players3(draft.reboundPlayerId, rebWho)}<button type="button" className="chip" style={{ marginTop: 8 }} onClick={() => commit({ ...draft, reboundPlayerId: null })}>Équipe</button></>}
         </>;
       }
       case 'rebound-foul-player': {
