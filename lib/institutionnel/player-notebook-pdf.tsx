@@ -1,3 +1,4 @@
+import {siblingDetailsLabel} from './player-family-details';
 import React from "react";
 import {
   Document,Page,Text,View,Image,StyleSheet,Svg,Polyline,Circle
@@ -137,6 +138,8 @@ export function PlayerNotebookPdf({snapshot}:{snapshot:PlayerNotebookSnapshot}){
       <View style={s.box}>
         <Text style={s.h2}>Contexte utile au suivi</Text>
         <Text style={s.muted}>{parent.school_context||"Contexte scolaire non renseigné."}</Text>
+        {parent.shoe_size?<Text style={s.muted}>Pointure : {parent.shoe_size}</Text>:null}
+        {parent.siblings_details?.length?<Text style={s.muted}>{siblingDetailsLabel(parent.siblings_details)}</Text>:null}
         {parent.siblings_context?<Text style={[s.muted,{marginTop:5}]}>{parent.siblings_context}</Text>:null}
         {parent.useful_context?<Text style={[s.muted,{marginTop:5}]}>{parent.useful_context}</Text>:null}
       </View>

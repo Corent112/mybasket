@@ -1,7 +1,8 @@
 "use client";
+import SiblingDetailsFields from "@/components/institutionnel/SiblingDetailsFields";
 import { useEffect,useState } from "react";
 import {informationConsentText} from "@/lib/institutionnel/information-consent";
-const EMPTY={guardian1_name:"",guardian1_relation:"Mère",guardian1_email:"",guardian1_phone:"",guardian1_height_cm:"",
+const EMPTY={shoe_size:"",siblings_details:[],guardian1_name:"",guardian1_relation:"Mère",guardian1_email:"",guardian1_phone:"",guardian1_height_cm:"",
 guardian2_name:"",guardian2_relation:"Père",guardian2_email:"",guardian2_phone:"",guardian2_height_cm:"",
 address:"",postal_code:"",city:"",school_context:"",siblings_context:"",useful_context:""};
 
@@ -13,12 +14,13 @@ export default function Page({params}:{params:Promise<{token:string}>}){
  const j=await r.json();if(!r.ok)throw new Error(j.error||"Erreur");setDone(true);}catch(error){setMsg(error instanceof Error?error.message:"Transmission impossible. Réessayez.");}finally{setBusy(false)}}
  if(!meta&&msg)return <main className="shell"><div className="card">{msg}</div><style jsx>{css}</style></main>;
  if(done)return <main className="shell"><div className="card"><h1>Merci</h1><p>Les informations ont bien été transmises.</p></div><style jsx>{css}</style></main>;
- const F=({k,l,type="text"}:{k:string,l:string,type?:string})=><label>{l}<input type={type} value={form[k]||""} onChange={e=>setForm({...form,[k]:e.target.value})}/></label>;
+ const F=({k,l,type="text"}:{k:string,l:string,type?:string})=><label>{l}<input type={type} step={k==="shoe_size"?"any":undefined} min={k==="shoe_size"?15:undefined} max={k==="shoe_size"?60:undefined} value={form[k]||""} onChange={e=>setForm({...form,[k]:e.target.value})}/></label>;
  const T=({k,l}:{k:string,l:string})=><label className="wide">{l}<textarea rows={3} value={form[k]||""} onChange={e=>setForm({...form,[k]:e.target.value})}/></label>;
  return <main className="shell"><form className="card" onSubmit={send}><p className="eyebrow">{meta?.structure?.name||"MYBASKET"}</p><h1>Informations famille</h1>
  <p className="intro">{meta?.player?.first_name} {meta?.player?.last_name}</p>
  <h2>Responsable 1</h2><div className="grid"><F k="guardian1_name" l="Nom et prénom"/><F k="guardian1_relation" l="Lien avec le joueur"/><F k="guardian1_email" l="Email" type="email"/><F k="guardian1_phone" l="Téléphone"/><F k="guardian1_height_cm" l="Taille (cm)"/></div>
  <h2>Responsable 2</h2><div className="grid"><F k="guardian2_name" l="Nom et prénom"/><F k="guardian2_relation" l="Lien avec le joueur"/><F k="guardian2_email" l="Email" type="email"/><F k="guardian2_phone" l="Téléphone"/><F k="guardian2_height_cm" l="Taille (cm)"/></div>
+ <h2>Informations du joueur</h2><div className="grid"><F k="shoe_size" l="Pointure (EU)" type="number"/></div><SiblingDetailsFields value={form.siblings_details||[]} disabled={busy} onChange={value=>setForm({...form,siblings_details:value})}/>
  <h2>Contexte</h2><div className="grid"><F k="address" l="Adresse"/><F k="postal_code" l="Code postal"/><F k="city" l="Ville"/><T k="school_context" l="Contexte scolaire utile"/><T k="siblings_context" l="Fratrie / contexte familial utile"/><T k="useful_context" l="Autre information utile à l'accompagnement"/></div>
  <p className="privacy">Ces informations sont destinées au suivi du joueur par la structure qui vous a transmis ce lien.</p><label className="consent"><input type="checkbox" required checked={dataConsent} onChange={e=>setDataConsent(e.target.checked)}/><span>{informationConsentText(meta?.structure?.name||"la structure organisatrice")}</span></label>{msg&&<p role="alert">{msg}</p>}<button disabled={busy||!dataConsent}>{busy?"Enregistrement…":"Enregistrer et transmettre"}</button></form><style jsx>{css}</style></main>
 }

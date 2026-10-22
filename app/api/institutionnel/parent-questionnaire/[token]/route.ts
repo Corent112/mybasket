@@ -1,3 +1,4 @@
+import {normalizeSiblingDetails,normalizeShoeSize} from '@/lib/institutionnel/player-family-details';
 import {informationConsentReceipt} from '@/lib/institutionnel/information-consent';
 import { createHash } from "crypto";
 import { NextResponse } from "next/server";
@@ -24,7 +25,18 @@ export async function POST(req:Request,{params}:{params:Promise<{token:string}>}
   if(b.dataConsent!==true)return NextResponse.json({error:"Veuillez accepter la collecte et l’utilisation des informations avant de transmettre."},{status:400});
   const structure=await db.from("institutional_structures").select("name").eq("id",q.data.structure_id).maybeSingle();
   if(structure.error||!structure.data)return NextResponse.json({error:"Institution indisponible. Réessayez."},{status:503});
+  let shoeSize:string|null,siblingDetails:ReturnType<typeof normalizeSiblingDetails>;
+  try{shoeSize=normalizeShoeSize(b.shoe_size);siblingDetails=normalizeSiblingDetails(b.siblings_details??[]);}catch(error){return NextResponse.json({error:error instanceof Error?error.message:'Informations invalides'},{status:400});}
+  if(shoeSize!==null||siblingDetails.length){
+    const current=await db.from('institutional_players').select('profile_data,updated_at').eq('id',q.data.player_id).eq('structure_id',q.data.structure_id).maybeSingle();
+    if(current.error||!current.data)return NextResponse.json({error:'Fiche joueur indisponible.'},{status:503});
+    const profile={...current.data.profile_data,...(shoeSize!==null?{shoeSize}:{}),...(siblingDetails.length?{siblingDetails}:{})};
+    let update=db.from('institutional_players').update({profile_data:profile,updated_at:new Date().toISOString()}).eq('id',q.data.player_id).eq('structure_id',q.data.structure_id);
+    update=current.data.updated_at?update.eq('updated_at',current.data.updated_at):update.is('updated_at',null);
+    const saved=await update.select('id').maybeSingle();if(saved.error||!saved.data)return NextResponse.json({error:'La fiche a changé ou n’a pas pu être enregistrée. Réessayez.'},{status:409});
+  }
   const response={
+    shoe_size:shoeSize||"",siblings_details:siblingDetails,
     dataConsent:informationConsentReceipt(structure.data.name,q.data.structure_id),
     guardian1_name:String(b.guardian1_name||"").trim(),guardian1_relation:String(b.guardian1_relation||"").trim(),
     guardian1_email:String(b.guardian1_email||"").trim(),guardian1_phone:String(b.guardian1_phone||"").trim(),

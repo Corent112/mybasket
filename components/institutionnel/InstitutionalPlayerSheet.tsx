@@ -1,4 +1,6 @@
 "use client";
+import SiblingDetailsFields from "./SiblingDetailsFields";
+import {normalizeSiblingDetails,normalizeShoeSize} from "@/lib/institutionnel/player-family-details";
 import {playerAgeCategory} from "@/lib/institutionnel/player-category";
 
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -157,6 +159,7 @@ export default function InstitutionalPlayerSheet({ structureId, player, referral
     other_sports: profile.otherSports || "",
     shoe_size: profile.shoeSize || "",
     siblings: profile.siblings || "",
+    sibling_details: Array.isArray(profile.siblingDetails) ? profile.siblingDetails : [],
   });
 
   useEffect(() => {
@@ -201,12 +204,15 @@ export default function InstitutionalPlayerSheet({ structureId, player, referral
   const patch = (key: string, value: any) => setForm((v: any) => ({ ...v, [key]: value }));
 
   async function saveBase(extraProfile: Record<string, any> = {}) {
+    try {
+    if(Object.prototype.hasOwnProperty.call(extraProfile,"siblingDetails"))extraProfile.siblingDetails=normalizeSiblingDetails(form.sibling_details);
+    if(Object.prototype.hasOwnProperty.call(extraProfile,"shoeSize"))extraProfile.shoeSize=normalizeShoeSize(form.shoe_size);
     setSaving("save");
     await onSave({
       ...form,
       profile_extra: extraProfile,
     });
-    setSaving("");
+    }catch(error){alert(error instanceof Error?error.message:"Enregistrement impossible.")}finally{setSaving("");}
   }
 
   async function removePhoto() {
@@ -447,7 +453,8 @@ export default function InstitutionalPlayerSheet({ structureId, player, referral
               <Field label="Années de basket" type="number" value={form.basketball_years} onChange={(v) => patch("basketball_years", v)} />
               <Field label="Autres sports pratiqués" value={form.other_sports} onChange={(v) => patch("other_sports", v)} />
               <Field label="Pointure" type="number" value={form.shoe_size} onChange={(v) => patch("shoe_size", v)} />
-              <Field label="Frères / sœurs" value={form.siblings} onChange={(v) => patch("siblings", v)} />
+              <SiblingDetailsFields value={form.sibling_details} disabled={!!saving} onChange={value=>patch("sibling_details",value)} />
+              <Field label="Frères / sœurs · précisions" value={form.siblings} onChange={(v) => patch("siblings", v)} />
             </div>
           </div>
           <div className="subTitle">Anthropométrie & croissance</div>
@@ -471,7 +478,7 @@ export default function InstitutionalPlayerSheet({ structureId, player, referral
           </div>
           <label className="textArea">Observations<textarea value={form.observations} onChange={(e) => patch("observations", e.target.value)} /></label>
           <label className="textArea">Provenance<input value={form.provenance} onChange={(e) => patch("provenance", e.target.value)} /></label>
-          <div className="saveLine"><button className="primary" disabled={saving === "save" || busy === "save_player"} onClick={() => saveBase({ growth: { ...(profile.growth || {}), boneAge: num(String(form.bone_age)), sittingHeightCm: num(String(form.sitting_height_cm)) }, street: clean(form.street) || null, postalCode: clean(form.postal_code) || null, city: clean(form.city) || null, basketballYears: clean(form.basketball_years) || null, otherSports: clean(form.other_sports) || null, shoeSize: clean(form.shoe_size) || null, siblings: clean(form.siblings) || null })}>{saving === "save" ? "Enregistrement…" : "Enregistrer la fiche"}</button></div>
+          <div className="saveLine"><button className="primary" disabled={saving === "save" || busy === "save_player"} onClick={() => saveBase({ growth: { ...(profile.growth || {}), boneAge: num(String(form.bone_age)), sittingHeightCm: num(String(form.sitting_height_cm)) }, street: clean(form.street) || null, postalCode: clean(form.postal_code) || null, city: clean(form.city) || null, basketballYears: clean(form.basketball_years) || null, otherSports: clean(form.other_sports) || null, shoeSize: clean(form.shoe_size) || null, siblings: clean(form.siblings) || null, siblingDetails: form.sibling_details })}>{saving === "save" ? "Enregistrement…" : "Enregistrer la fiche"}</button></div>
         </section>}
 
         {tab === "Profil joueur" && <ProfileEditor value={profiling} saving={saving === "profiling"} onSave={(value) => saveProfileSection("profiling", value)} />}

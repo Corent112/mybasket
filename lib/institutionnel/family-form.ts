@@ -1,3 +1,4 @@
+import {normalizeSiblingDetails,normalizeShoeSize} from './player-family-details';
 import { institutionalPlayerCounts } from './dashboard-summary';
 export const FAMILY_GROUPS = [
   {id:'u13m',label:'U13 garçons',detail:'Joueurs U12 et U13'},
@@ -43,6 +44,9 @@ export function familyPlayerPatch(body:any,profile:Record<string,any>,group:Fami
     else if(!/^[+()\d\s.-]{6,30}$/.test(value)||value.replace(/\D/g,'').length<6)throw Error('Vérifiez les numéros de téléphone des tuteurs.');
     patch[input]=value;extra[dest]=value;count++;
   }
+  const shoeSize=normalizeShoeSize(body.shoe_size);if(shoeSize!==null){extra.shoeSize=shoeSize;count++;}
+  if(Array.isArray(body.siblings_details)&&body.siblings_details.length){extra.siblingDetails=normalizeSiblingDetails(body.siblings_details);count++;}
+  if(body.siblings_details!==undefined&&!Array.isArray(body.siblings_details))throw Error('Fratrie invalide.');
   if(!count)throw Error('Renseignez au moins une information.');
   const now=new Date().toISOString();
   extra.familyQuestionnaire={submittedAt:now,group};patch.profile_data=extra;patch.updated_at=now;
