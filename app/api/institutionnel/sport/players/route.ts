@@ -206,16 +206,24 @@ export async function POST(req: Request) {
         categorie: player.category || player.profile_data?.categorie || "",
       };
 
+      let projectionPending = false;
       const teamPlayerId = await createTeamPlayer(ctx.admin, {
         teamId: String(selection.team_id),
         ownerId,
         player: playerData,
         canonicalPlayerId: playerId,
+      }).catch((error: any) => {
+        // The institution roster has its own checked 10/12-player capacity.
+        // A legacy team quota must not discard the canonical membership.
+        // Keep the projection absent, never delete historical players to free slots.
+        if (!String(error?.message || "").includes("TEAM_PLAYER_LIMIT_REACHED")) throw error;
+        projectionPending = true;
+        return null;
       });
 
       const previousLink = await ctx.admin.from("institutional_player_team_links").select("id").eq("structure_id",structureId).eq("player_id",playerId).eq("team_id",selection.team_id).maybeSingle();
       if(previousLink.error)throw new Error(previousLink.error.message);
-      const linkWrite = previousLink.data ? {error:null} : await ctx.admin
+      const linkWrite = previousLink.data || !teamPlayerId ? {error:null} : await ctx.admin
         .from("institutional_player_team_links")
         .insert({
           structure_id: structureId,
@@ -249,6 +257,7 @@ export async function POST(req: Request) {
         ok: true,
         teamId: selection.team_id,
         teamPlayerId,
+        projectionPending,
       });
     } catch (error: any) {
       return NextResponse.json(

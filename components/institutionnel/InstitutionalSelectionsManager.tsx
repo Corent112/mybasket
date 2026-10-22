@@ -578,6 +578,7 @@ export default function InstitutionalSelectionsManager({
                     </small>
                   </div>
 
+                  {!entry.team_player_id && current.roster_kind!=="preselection" && <small role="status">Inscrit dans la sélection · liaison aux statistiques de l’équipe en attente.</small>}
                   <details className="memberSettings"><summary>Options de la fiche</summary><div>
                   <div className="context">
                     <label>Équipe secondaire / club suivi</label>
