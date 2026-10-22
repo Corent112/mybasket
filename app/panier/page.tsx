@@ -37,6 +37,7 @@ type CartItem = {
 };
 
 type TeamPlayer = {
+  institutionPlayerId?: string;
   id: string;
   firstName?: string;
   lastName?: string;
@@ -330,7 +331,7 @@ export default function PanierPage() {
       item.item_type === "session"
   );
 
-  const selectedTeam = teams.find((team) => team.id === selectedTeamId);
+  const selectedTeam: Team | undefined = dayContext?.team.id===selectedTeamId ? dayContext.team : teams.find((team) => team.id === selectedTeamId);
 
 const purchaseItems = useMemo(
   () => [...productItems, ...subscriptionItems],
@@ -659,6 +660,7 @@ setLoading(false);
     }
 
     const players = selectedTeam.players ?? selectedTeam.effectif ?? [];
+    if (!players.length) { alert(dayContext ? "Aucune joueuse / aucun joueur dans cette journée. Ajoute-les à l’effectif de la journée, puis recharge le panier." : "Aucun joueur dans cette équipe."); return; }
 
     const next: SessionPlayers = {
       guard: [],
@@ -680,10 +682,7 @@ setLoading(false);
     }));
   }
 
-  function dropPlayer(to: PlayerPosition) {
-    if (!draggedPlayer) return;
-
-    const { player } = draggedPlayer;
+  function movePlayerToPosition(player: TeamPlayer, to: PlayerPosition) {
 
     setSessionPlayers((prev) => {
       const withoutPlayer = {
@@ -699,6 +698,10 @@ setLoading(false);
     });
 
     setDraggedPlayer(null);
+  }
+
+  function dropPlayer(to: PlayerPosition) {
+    if (draggedPlayer) movePlayerToPosition(draggedPlayer.player,to);
   }
 
   async function createCheckout(provider: "stripe" | "paypal" | "apple_pay") {
@@ -1140,6 +1143,7 @@ setLoading(false);
       notes: JSON.stringify({
         ...(dayContext?{institutionContext:{structureId:dayContext.structureId,selectionId:dayContext.selectionId,eventId:dayContext.eventId}}:{}),
         player_positions: playerPositionMap,
+        ...(dayContext?{institution_session_players:positionedPlayers.map(({player,position})=>({id:player.id,first_name:player.firstName||"",last_name:player.lastName||"",position}))}:{}),
         club_logo_url: resolvedClubLogo,
         team_reference_id: selectedTeamId || null,
 
@@ -1224,7 +1228,7 @@ setLoading(false);
     }
   }
 
-  if (positionedPlayers.length > 0) {
+  if (positionedPlayers.length > 0 && !dayContext) {
     const playerSnapshot = await supabase.from("practice_session_players").insert(
       positionedPlayers.map(({ player, position }) => ({
         user_id: user.id,
@@ -2317,7 +2321,7 @@ setLoading(false);
               className="importBtn"
               onClick={importPlayersFromSelectedTeam}
             >
-              👥 Importer les joueurs de cette équipe
+              👥 {dayContext ? "Importer les joueuses / joueurs de cette journée" : "Importer les joueurs de cette équipe"}
             </button>
 
             <p className="help">
@@ -2354,6 +2358,9 @@ setLoading(false);
                           }
                         >
                           <span>{playerName(player)}</span>
+                          <select aria-label={`Poste de ${playerName(player)}`} value={position} onChange={e=>movePlayerToPosition(player,e.target.value as PlayerPosition)}>
+                            <option value="guard">Arrière</option><option value="forward">Ailier</option><option value="center">Intérieur</option>
+                          </select>
                           <button
                             type="button"
                             onClick={() => removePlayer(position, player.id)}
@@ -3178,6 +3185,8 @@ setLoading(false);
           font-size: 13px;
         }
 
+        .playerChip > span { min-width: 0; flex: 1; overflow-wrap: anywhere; }
+        .playerChip select { width: 83px; flex-shrink: 0; padding: 4px; font-size: 11px; border: 1px solid #ddd; border-radius: 5px; }
         .playerChip button {
           border: none;
           background: #7a0d24;

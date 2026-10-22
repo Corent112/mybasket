@@ -12,7 +12,12 @@ export async function GET(req:Request){
   if(day.error||!day.data)return json({error:'Journée introuvable'},404);
   const calendar=await ctx.admin.from('institutional_events').select('*').eq('id',eventId).eq('structure_id',structureId).eq('archived',false).maybeSingle();
   if(calendar.error)return json({error:calendar.error.message},400);
-  return json({event:day.data,calendar:calendar.data});
+  // Read the actual day roster, independently of final selection membership.
+  const participants:any[]=[];
+  for(let start=0;;start+=1000){const result=await ctx.admin.from('institutional_detection_participants').select('id,player_id').eq('event_id',eventId).order('id').range(start,start+999);if(result.error)return json({error:result.error.message},400);participants.push(...(result.data||[]));if((result.data||[]).length<1000)break;}
+  const ids=[...new Set<string>(participants.map(p=>String(p.player_id)))],players:any[]=[];
+  for(let start=0;start<ids.length;start+=100){const result=await ctx.admin.from('institutional_players').select('id,first_name,last_name,position_primary').eq('structure_id',structureId).eq('archived',false).in('id',ids.slice(start,start+100));if(result.error)return json({error:result.error.message},400);players.push(...(result.data||[]));}
+  return json({event:day.data,calendar:calendar.data,players});
  }
  const links:any[]=[];
  for(let start=0;;start+=1000){const q=await ctx.admin.from('institutional_events').select('id,selection_id,event_type').eq('structure_id',structureId).eq('archived',false).order('id').range(start,start+999);if(q.error)return json({error:q.error.message},400);links.push(...(q.data||[]));if((q.data||[]).length<1000)break;}

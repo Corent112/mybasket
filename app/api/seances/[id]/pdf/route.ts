@@ -164,6 +164,13 @@ async function loadPresentPlayers(
   session: GenericRow,
   sessionId: string,
 ) {
+  const notes = typeof session.notes === "string" ? (()=>{try{return JSON.parse(session.notes)}catch{return {}}})() : session.notes || {};
+  // Day participants retain their canonical institution identity. No final-team
+  // membership or duplicate player record is needed to include them in a session.
+  if(notes.institutionContext && Array.isArray(notes.institution_session_players)){
+    const positions=savedPlayerPositionMap(session);
+    return notes.institution_session_players.filter((p:GenericRow)=>p.id).map((p:GenericRow)=>({...p,player_id:p.id,position:normalizePosition(positions[p.id]||p.position)}));
+  }
   const { data: directRows } = await supabase
     .from("practice_session_players")
     .select("*")
