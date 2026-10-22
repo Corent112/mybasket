@@ -308,11 +308,18 @@ export default function InstitutionalResources({ structureId, compact = false, s
   }
 
   async function archive(row: SavedDocument) {
-    if (!confirm(`Archiver « ${row.title} » ?`)) return;
-    const q = await supabase.from("institutional_documents").update({ archived: true, archived_at: new Date().toISOString() }).eq("id", row.id);
-    if (q.error) return alert(q.error.message);
-    if (docId === row.id) { setDocId(null); setActiveTemplate(null); setHtml(""); }
-    await load();
+    if (busy || !window.confirm(`Supprimer « ${row.title} » de vos documents ? Le modèle d’origine reste disponible.`)) return;
+    setBusy(true);
+    try {
+      const result = await supabase.from("institutional_documents")
+        .update({ archived: true, archived_at: new Date().toISOString() })
+        .eq("id", row.id).eq("structure_id", structureId).eq("archived", false).select("id");
+      if (result.error) throw new Error(result.error.message);
+      if (!result.data?.length) throw new Error("Le document n’a pas pu être supprimé. Vérifie tes droits puis réessaie.");
+      setSaved(previous=>previous.filter(item=>item.id!==row.id));
+      if (docId===row.id) { setDocId(null);setActiveTemplate(null);setHtml(""); }
+    } catch (error) { alert(error instanceof Error ? error.message : "Suppression impossible."); }
+    finally { setBusy(false); }
   }
 
   if (!structure) return <div className="resources-loading">Chargement des ressources…</div>;
@@ -338,7 +345,7 @@ export default function InstitutionalResources({ structureId, compact = false, s
         </>
       )}
 
-      {(savedOnly || showSaved) && <section className="saved"><div className="saved-head"><div><b>Documents enregistrés</b><span>Ils restent modifiables, duplicables et imprimables.</span></div>{!savedOnly && <button type="button" onClick={() => setShowSaved(false)}>← Modèles</button>}</div>{saved.length === 0 ? <p className="empty">Aucun document créé pour le moment.</p> : <div className="saved-grid">{saved.map((row) => <article key={row.id}><small>{row.content?.category || "Document"}</small><h3>{row.title}</h3><span>{new Intl.DateTimeFormat("fr-FR").format(new Date(row.updated_at || row.created_at))}</span><div><button type="button" onClick={() => openSaved(row)}>Ouvrir / modifier</button><button type="button" className="danger" onClick={() => void archive(row)}>Archiver</button></div></article>)}</div>}</section>}
+      {(savedOnly || showSaved) && <section className="saved"><div className="saved-head"><div><b>Documents enregistrés</b><span>Ils restent modifiables, duplicables et imprimables.</span></div>{!savedOnly && <button type="button" onClick={() => setShowSaved(false)}>← Modèles</button>}</div>{saved.length === 0 ? <p className="empty">Aucun document créé pour le moment.</p> : <div className="saved-grid">{saved.map((row) => <article key={row.id}><small>{row.content?.category || "Document"}</small><h3>{row.title}</h3><span>{new Intl.DateTimeFormat("fr-FR").format(new Date(row.updated_at || row.created_at))}</span><div><button type="button" onClick={() => openSaved(row)}>Ouvrir / modifier</button><button type="button" className="danger" disabled={busy} aria-label={`Supprimer ${row.title}`} onClick={() => void archive(row)}>Supprimer</button></div></article>)}</div>}</section>}
 
       {activeTemplate && (
         <section className="editor" ref={editorRef}>

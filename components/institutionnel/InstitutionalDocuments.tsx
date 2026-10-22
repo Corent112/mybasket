@@ -72,6 +72,8 @@ export default function InstitutionalDocuments({ structureId }: { structureId: s
   const [title, setTitle] = useState("");
   const [text, setText] = useState("");
   const [open, setOpen] = useState<D | null>(null);
+  const [removingId, setRemovingId] = useState<string | null>(null);
+  const [removeError, setRemoveError] = useState("");
 
   async function load() {
     const { data } = await s
@@ -149,13 +151,20 @@ export default function InstitutionalDocuments({ structureId }: { structureId: s
     await load();
   }
 
-  async function remove(id: string) {
-    if (!confirm("Archiver ce document ?")) return;
-    await s
-      .from("institutional_documents")
-      .update({ archived: true, archived_at: new Date().toISOString() })
-      .eq("id", id);
-    await load();
+  async function remove(row: D) {
+    if (removingId || !window.confirm(`Supprimer « ${row.title} » de vos documents ?`)) return;
+    setRemovingId(row.id);setRemoveError("");
+    try {
+      const result = await s.from("institutional_documents")
+        .update({ archived: true, archived_at: new Date().toISOString() })
+        .eq("id", row.id).eq("structure_id", structureId).eq("archived", false).select("id");
+      if (result.error) throw new Error(result.error.message);
+      if (!result.data?.length) throw new Error("Le document n’a pas pu être supprimé. Vérifie tes droits puis réessaie.");
+      setRows(previous=>previous.filter(item=>item.id!==row.id));
+      if (open?.id===row.id) setOpen(null);
+    } catch (error) {
+      setRemoveError(error instanceof Error ? error.message : "Suppression impossible.");
+    } finally { setRemovingId(null); }
   }
 
   function openRow(row: D) {
@@ -200,6 +209,7 @@ export default function InstitutionalDocuments({ structureId }: { structureId: s
         </div>
       </div>
 
+      {removeError && <p role="alert">{removeError}</p>}
       <div className="grid">
         {rows.map((r) => (
           <article key={r.id} onClick={() => openRow(r)}>
@@ -218,13 +228,17 @@ export default function InstitutionalDocuments({ structureId }: { structureId: s
             </div>
             <span>Ouvrir →</span>
             <button
+              type="button"
               className="danger"
+              disabled={!!removingId}
+              aria-label={`Supprimer ${r.title}`}
+              title="Supprimer ce document"
               onClick={(e) => {
                 e.stopPropagation();
-                void remove(r.id);
+                void remove(r);
               }}
             >
-              ×
+              {removingId===r.id ? "Suppression…" : "Supprimer"}
             </button>
           </article>
         ))}
@@ -270,7 +284,7 @@ export default function InstitutionalDocuments({ structureId }: { structureId: s
       )}
 
       <style jsx>{`
-        .docs{display:grid;gap:14px}.create{display:grid;grid-template-columns:220px 1fr 1.5fr auto;gap:9px;align-items:center;background:#faf6ef;border:1px solid #ead8b5;border-radius:14px;padding:13px}.create small,.editor small{color:#b37b20;font-weight:1000;letter-spacing:.1em}.create h3{margin:3px 0;color:#4d1420}.create input,.create textarea{border:1px solid #ddcfc8;border-radius:10px;padding:10px;background:white;box-sizing:border-box}.create textarea{min-height:42px;resize:vertical}.create>div:last-child{display:flex;gap:6px}.create button,.upload,.editor button{border:0;border-radius:9px;background:#6b1a2c;color:white;padding:9px 11px;font-weight:900;cursor:pointer;white-space:nowrap}.grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:9px}.grid article{position:relative;display:grid;grid-template-columns:42px 1fr;gap:10px;border:1px solid #eadfd9;border-radius:14px;padding:13px;background:white;cursor:pointer;transition:.15s}.grid article:hover{transform:translateY(-2px);box-shadow:0 8px 24px rgba(63,30,37,.08);border-color:#d7b5bd}.icon{width:42px;height:42px;border-radius:11px;background:#f7efe9;display:grid;place-items:center;font-size:20px}.grid small{color:#b37b20;text-transform:uppercase;font-weight:900;font-size:.62rem}.grid h3{margin:3px 0;color:#42131e;font-size:.94rem}.grid p{margin:0;color:#7e7069;font-size:.73rem;line-height:1.4}.grid article>span{grid-column:2;color:#6b1a2c;font-size:.72rem;font-weight:900}.danger{position:absolute;right:8px;top:8px;border:0;background:transparent;color:#a23a4c;font-size:18px}.overlay{position:fixed;inset:0;z-index:9999;background:rgba(28,14,18,.6);display:grid;place-items:center;padding:20px}.editor{width:min(900px,100%);background:white;border-radius:18px;overflow:hidden;box-shadow:0 20px 80px rgba(0,0,0,.25)}.editor header{display:flex;justify-content:space-between;gap:12px;padding:18px 20px;background:linear-gradient(135deg,#6b1a2c,#42101a)}.editor header input{display:block;width:min(650px,80vw);border:0;background:transparent;color:white;font-size:1.35rem;font-weight:1000;outline:0}.editor header button{background:white;color:#6b1a2c}.editor>textarea{width:100%;min-height:440px;box-sizing:border-box;border:0;padding:28px;font:15px/1.65 Arial;resize:vertical;outline:0}.editor footer{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:13px 18px;border-top:1px solid #eee2dc;color:#7b6d66;font-size:.72rem}.editor footer>div{display:flex;gap:7px}.editor .ghost{background:white;color:#6b1a2c;border:1px solid #d9bec5}@media(max-width:1000px){.create{grid-template-columns:1fr 1fr}.grid{grid-template-columns:1fr 1fr}}@media(max-width:650px){.create,.grid{grid-template-columns:1fr}.editor footer{align-items:flex-start;flex-direction:column}}
+        .docs{display:grid;gap:14px}.create{display:grid;grid-template-columns:220px 1fr 1.5fr auto;gap:9px;align-items:center;background:#faf6ef;border:1px solid #ead8b5;border-radius:14px;padding:13px}.create small,.editor small{color:#b37b20;font-weight:1000;letter-spacing:.1em}.create h3{margin:3px 0;color:#4d1420}.create input,.create textarea{border:1px solid #ddcfc8;border-radius:10px;padding:10px;background:white;box-sizing:border-box}.create textarea{min-height:42px;resize:vertical}.create>div:last-child{display:flex;gap:6px}.create button,.upload,.editor button{border:0;border-radius:9px;background:#6b1a2c;color:white;padding:9px 11px;font-weight:900;cursor:pointer;white-space:nowrap}.grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:9px}.grid article{position:relative;display:grid;grid-template-columns:42px 1fr;gap:10px;border:1px solid #eadfd9;border-radius:14px;padding:13px;background:white;cursor:pointer;transition:.15s}.grid article:hover{transform:translateY(-2px);box-shadow:0 8px 24px rgba(63,30,37,.08);border-color:#d7b5bd}.icon{width:42px;height:42px;border-radius:11px;background:#f7efe9;display:grid;place-items:center;font-size:20px}.grid small{color:#b37b20;text-transform:uppercase;font-weight:900;font-size:.62rem}.grid h3{margin:3px 0;color:#42131e;font-size:.94rem}.grid p{margin:0;color:#7e7069;font-size:.73rem;line-height:1.4}.grid article>span{grid-column:2;color:#6b1a2c;font-size:.72rem;font-weight:900}.danger{grid-column:2;justify-self:start;border:1px solid #e6bcbc;border-radius:7px;background:#fff;color:#a23a4c;font-size:12px;padding:6px 9px;cursor:pointer}.danger:disabled{opacity:.5;cursor:default}.overlay{position:fixed;inset:0;z-index:9999;background:rgba(28,14,18,.6);display:grid;place-items:center;padding:20px}.editor{width:min(900px,100%);background:white;border-radius:18px;overflow:hidden;box-shadow:0 20px 80px rgba(0,0,0,.25)}.editor header{display:flex;justify-content:space-between;gap:12px;padding:18px 20px;background:linear-gradient(135deg,#6b1a2c,#42101a)}.editor header input{display:block;width:min(650px,80vw);border:0;background:transparent;color:white;font-size:1.35rem;font-weight:1000;outline:0}.editor header button{background:white;color:#6b1a2c}.editor>textarea{width:100%;min-height:440px;box-sizing:border-box;border:0;padding:28px;font:15px/1.65 Arial;resize:vertical;outline:0}.editor footer{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:13px 18px;border-top:1px solid #eee2dc;color:#7b6d66;font-size:.72rem}.editor footer>div{display:flex;gap:7px}.editor .ghost{background:white;color:#6b1a2c;border:1px solid #d9bec5}@media(max-width:1000px){.create{grid-template-columns:1fr 1fr}.grid{grid-template-columns:1fr 1fr}}@media(max-width:650px){.create,.grid{grid-template-columns:1fr}.editor footer{align-items:flex-start;flex-direction:column}}
       `}</style>
     </div>
   );
