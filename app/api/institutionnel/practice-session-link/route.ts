@@ -53,3 +53,15 @@ export async function GET(req:Request){
  for(const row of resources.data||[]){const sessionId=row.file_url?.match(/^\/seances\/([^/?#]+)$/)?.[1];let pdfUrl=null;if(sessionId){const session=await ctx.admin.from('practice_sessions').select('pdf_url,user_id,notes').eq('id',sessionId).maybeSingle();if(session.error)return json({error:session.error.message},400);let context:any=null;try{context=(typeof session.data?.notes==='string'?JSON.parse(session.data.notes):session.data?.notes)?.institutionContext}catch{};if(session.data&&(session.data.user_id===ctx.user.id||(context?.structureId===structureId&&context?.eventId===eventId))){const exercises=await ctx.admin.from('practice_session_exercises').select('title,duration_minutes,situation_image_url').eq('session_id',sessionId).order('sort_order');if(exercises.error)return json({error:exercises.error.message},400);exerciseMap[row.id]=exercises.data||[];pdfUrl=session.data.pdf_url||null;}}rows.push({...row,pdf_url:pdfUrl});}
  return json({rows,exerciseMap});
 }
+
+// Remove only this event's attachment. Keep the reusable session and exercises.
+export async function DELETE(req:Request){
+ const body=await req.json().catch(()=>({})),structureId=String(body.structureId||''),eventId=String(body.eventId||''),resourceId=String(body.resourceId||'');
+ if(!structureId||!eventId||!resourceId)return json({error:'Institution, journée ou séance manquante.'},400);
+ const ctx=await institutionalSportActor(structureId);if('error'in ctx)return ctx.error;
+ if(!canManageSport(ctx.member))return json({error:'Droits insuffisants.'},403);
+ const result=await ctx.admin.from('institutional_event_resources').delete().eq('id',resourceId).eq('structure_id',structureId).eq('event_id',eventId).select('id');
+ if(result.error)return json({error:result.error.message},400);
+ if(!result.data?.length)return json({error:'Cette séance ou pièce jointe n’est plus rattachée à cette journée.'},404);
+ return json({ok:true});
+}
