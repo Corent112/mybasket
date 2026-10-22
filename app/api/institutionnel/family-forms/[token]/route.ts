@@ -1,3 +1,4 @@
+import {clubDirectory,loadInstitutionClubNames} from '@/lib/institutionnel/club-names';
 import {informationConsentReceipt} from '@/lib/institutionnel/information-consent';
 import { NextResponse } from 'next/server';
 import { createAdminClient } from '@/lib/supabase/admin-server';
@@ -10,7 +11,7 @@ export async function GET(_req:Request,{params}:{params:Promise<{token:string}>}
   const db=createAdminClient();if(!db)return json({error:'Service indisponible'},503);
   const {data,error}=await db.from('institutional_structures').select('name,logo_url,season_label').eq('id',claim.structureId).maybeSingle();
   if(error||!data)return json({error:'Institution introuvable'},404);
-  return json({name:data.name,logo:data.logo_url,season:data.season_label,group:familyGroup(claim.group)});
+  return json({name:data.name,logo:data.logo_url,season:data.season_label,clubs:await loadInstitutionClubNames(db,claim.structureId),group:familyGroup(claim.group)});
 }
 export async function POST(req:Request,{params}:{params:Promise<{token:string}>}) {
   const {token}=await params,claim=readFamilyClaim(token,'institution-family');if(!claim)return json({error:'Lien invalide ou expiré'},410);
@@ -38,6 +39,7 @@ export async function POST(req:Request,{params}:{params:Promise<{token:string}>}
   if(current.error)return json({error:'Lecture impossible. Réessayez.'},503);
   if(!current.data||!belongsToFamilyGroup(current.data,claim.group,seasonLabel))return json({error:'Cette fiche n’est plus disponible dans ce groupe.'},404);
   let patch:Record<string,any>;try{patch=familyPlayerPatch(b.fields||{},current.data.profile_data||{},claim.group);}catch(error){return json({error:error instanceof Error?error.message:'Informations invalides'},400);}
+  if(patch.club_name)patch.club_name=clubDirectory(await loadInstitutionClubNames(db,claim.structureId)).resolve(patch.club_name);
   patch.profile_data.familyQuestionnaire={...patch.profile_data.familyQuestionnaire,dataConsent:informationConsentReceipt(institution.data.name,claim.structureId,patch.updated_at)};
   let query=db.from('institutional_players').update(patch).eq('id',current.data.id).eq('structure_id',claim.structureId);
   query=current.data.updated_at?query.eq('updated_at',current.data.updated_at):query.is('updated_at',null);

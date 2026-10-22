@@ -1,4 +1,5 @@
 "use client";
+import ClubNameInput from "./ClubNameInput";
 import SiblingDetailsFields from "./SiblingDetailsFields";
 import {normalizeSiblingDetails,normalizeShoeSize} from "@/lib/institutionnel/player-family-details";
 import {playerAgeCategory} from "@/lib/institutionnel/player-category";
@@ -97,11 +98,13 @@ export default function InstitutionalPlayerSheet({ structureId, player, referral
         const rows:any[]=[];
         for(let start=0;;start+=1000){let query=sb.from(table).select(columns).eq("structure_id",structureId);if(filterPlayer)query=query.eq("player_id",player.id);const result=await query.order("id").range(start,start+999);if(result.error)throw Error(result.error.message);rows.push(...(result.data||[]));if((result.data||[]).length<1000)return rows;}
       };
-      const [savedMeasures,attendance]=await Promise.all([
+      const [savedMeasures,attendance,seasonEntries,trackingSeasons]=await Promise.all([
         readAll("institutional_player_measurements","id,measured_at,height_cm,weight_kg,wingspan_cm,shoe_size"),
-        loadPlayerAttendance(sb,structureId,player.id)
+        loadPlayerAttendance(sb,structureId,player.id),
+        readAll("institutional_player_season_entries","id,season_id,club_name,position_label"),
+        readAll("institutional_player_tracking_seasons","id,season_label",false)
       ]);
-      const doc=await createPlayerProfilePdf({player,institution:institution.data,matches:performance.matches||[],referral,measurements:savedMeasures,attendance:attendance.records.map(r=>({...r,session:attendance.sessions.find(s=>s.id===r.session_id)}))});
+      const doc=await createPlayerProfilePdf({player,institution:institution.data,matches:performance.matches||[],referral,seasonEntries,trackingSeasons,measurements:savedMeasures,attendance:attendance.records.map(r=>({...r,session:attendance.sessions.find(s=>s.id===r.session_id)}))});
       doc.save(`fiche-${player.first_name}-${player.last_name}`.replace(/[^a-zA-Z0-9À-ÿ_-]/g,"-")+".pdf");
     }catch(error){setPdfError(error instanceof Error?error.message:"Export PDF impossible.");}finally{setPdfBusy(false);}
   }
@@ -434,7 +437,7 @@ export default function InstitutionalPlayerSheet({ structureId, player, referral
               <Field label="Nom" value={form.last_name} onChange={(v) => patch("last_name", v)} />
               <Field label="Date de naissance" type="date" value={form.birthdate} onChange={(v) => patch("birthdate", v)} />
               <Select label="Sexe" value={form.sex} onChange={(v) => patch("sex", v)} options={["M", "F"]} />
-              <Field label="Club actuel" value={form.club_name} onChange={(v) => patch("club_name", v)} />
+              <ClubNameInput clubs={players.map(p=>p.club_name||"")} value={form.club_name} onChange={v=>patch("club_name",v)}/>
               <div><b>Catégorie d’âge</b><p>{ageCategory || "Renseigne la date de naissance"} · {(player as any).category_season || "Saison actuelle"}</p></div>
               <Select label="Poste principal" value={form.position} onChange={(v) => patch("position", v)} options={["Meneur", "Arrière", "Ailier", "Ailier-fort", "Pivot"]} />
               <Select label="Poste secondaire" value={form.secondary_position} onChange={(v) => patch("secondary_position", v)} options={["Meneur", "Arrière", "Ailier", "Ailier-fort", "Pivot"]} />

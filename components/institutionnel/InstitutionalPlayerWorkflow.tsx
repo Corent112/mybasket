@@ -1,4 +1,6 @@
 "use client";
+import ClubNameInput from "./ClubNameInput";
+import {clubDirectory} from "@/lib/institutionnel/club-names";
 
 import {categoryMatches,playerAgeCategory,currentInstitutionSeason} from "@/lib/institutionnel/player-category";
 import InstitutionalDayResources from "./InstitutionalDayResources";
@@ -178,7 +180,8 @@ export default function InstitutionalPlayerWorkflow({ structureId, structureType
     const r = await fetch(`/api/institutionnel/players?structureId=${encodeURIComponent(structureId)}`, { cache: "no-store" });
     const j = await r.json().catch(() => ({}));
     if (!r.ok) return alert(j.error || "Lecture des joueurs impossible");
-    setPlayers((j.players || []) as Player[]);
+    const directory=clubDirectory((j.players||[]).map((p:Player)=>p.club_name));
+    setPlayers((j.players || []).map((p:Player)=>({...p,club_name:p.club_name?directory.resolve(p.club_name):p.club_name})) as Player[]);
     if(j.seasonLabel)setSeasonLabel(j.seasonLabel);
     setReferrals((j.referrals || []) as Referral[]);
     if (preferPlayer) setOpenedPlayerId(preferPlayer);
@@ -566,7 +569,7 @@ export default function InstitutionalPlayerWorkflow({ structureId, structureType
           <section className="toolbar cleanToolbar">
             <div className="searchBox">⌕<input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Rechercher un joueur, un club, une catégorie…" /></div>
             <select value={categoryFilter} onChange={(e) => setCategoryFilter(e.target.value)}><option value="">Tous les âges</option><option value="group:u13">Groupe U13 — U12 + U13</option>{categories.map((x) => <option key={x}>{x}</option>)}</select>
-            <select value={clubFilter} onChange={(e) => setClubFilter(e.target.value)}><option value="">Club</option>{clubs.map((x) => <option key={x}>{x}</option>)}</select>
+            <select value={clubFilter} onChange={(e) => setClubFilter(e.target.value)}><option value="">Club</option>{clubs.map((x) => <option key={x}>{x}</option>)}</select><button type="button" className="ghost" disabled={!!busy} onClick={async()=>{try{const result=await playerAction("normalize_clubs");if(result){await loadPlayersAndReferrals();alert(`${result.updated} fiche(s) harmonisée(s). Les clubs ambigus restent séparés.`);}}catch(error){alert(error instanceof Error?error.message:"Harmonisation impossible.");}finally{setBusy("");}}}>Harmoniser les clubs</button>
             <label className="archiveToggle"><input type="checkbox" checked={showArchived} onChange={(e) => setShowArchived(e.target.checked)} /> Archivés</label>
           </section>
 
@@ -676,7 +679,7 @@ export default function InstitutionalPlayerWorkflow({ structureId, structureType
               <label>Nationalité<input value={createPlayerForm.nationality} onChange={(e) => setCreatePlayerForm(v => ({...v, nationality:e.target.value}))} /></label>
             </div></div>
             <div className="createSection"><b>Basket</b><div className="createGrid">
-              <label>Club<input value={createPlayerForm.club_name} onChange={(e) => setCreatePlayerForm(v => ({...v, club_name:e.target.value}))} /></label>
+              <ClubNameInput label="Club" clubs={clubs} value={createPlayerForm.club_name} onChange={value=>setCreatePlayerForm(v=>({...v,club_name:value}))}/>
               <label>Catégorie d’âge — {seasonLabel}<input readOnly value={playerAgeCategory(createPlayerForm.birthdate,seasonLabel)||createPlayerForm.category} placeholder="Calculée à partir de la naissance"/></label>
               <label>Taille (cm)<input type="number" value={createPlayerForm.height_cm} onChange={(e) => setCreatePlayerForm(v => ({...v, height_cm:e.target.value}))} /></label>
               <label>Poste<input value={createPlayerForm.position} onChange={(e) => setCreatePlayerForm(v => ({...v, position:e.target.value}))} /></label>

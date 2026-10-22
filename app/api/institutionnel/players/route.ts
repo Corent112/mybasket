@@ -1,3 +1,4 @@
+import {clubDirectory,loadInstitutionClubNames} from '@/lib/institutionnel/club-names';
 import {syncPreselectionDecision} from '@/lib/institutionnel/preselection-roster';
 import {loadInstitutionSeason,withPlayerCategory,playerAgeCategory} from "@/lib/institutionnel/player-category";
 import { NextResponse } from "next/server";
@@ -89,6 +90,16 @@ export async function POST(req: Request) {
 
   const ctx = await actor(structureId);
   if ("error" in ctx) return ctx.error;
+
+  if(action==="normalize_clubs"){
+    let updated=0;
+    try{
+      const rows:any[]=[];for(let start=0;;start+=1000){const result=await ctx.admin.from('institutional_players').select('id,club_name').eq('structure_id',structureId).order('id').range(start,start+999);if(result.error)throw Error(result.error.message);rows.push(...(result.data||[]));if((result.data||[]).length<1000)break;}
+      const directory=clubDirectory(rows.map(row=>row.club_name)),changes=rows.filter(row=>row.club_name&&directory.resolve(row.club_name)!==row.club_name);
+      for(const row of changes){const result=await ctx.admin.from('institutional_players').update({club_name:directory.resolve(row.club_name),updated_at:new Date().toISOString()}).eq('structure_id',structureId).eq('id',row.id).eq('club_name',row.club_name).select('id');if(result.error)throw Error(result.error.message);updated+=(result.data||[]).length;}
+      return NextResponse.json({ok:true,updated});
+    }catch(error){return NextResponse.json({error:error instanceof Error?error.message:'Harmonisation impossible.',updated},{status:400});}
+  }
 
   if(action==="set_detection_attendance"){
     const eventId=String(body.eventId||""),playerId=String(body.playerId||""),status=String(body.status||"");
@@ -335,7 +346,7 @@ export async function POST(req: Request) {
         first_name: firstName,
         last_name: lastName,
         birthdate: clean(patch.birthdate),
-        club_name: clean(patch.club_name),
+        club_name: clean(patch.club_name)?clubDirectory(await loadInstitutionClubNames(ctx.admin,structureId)).resolve(String(patch.club_name)):null,
         category: playerAgeCategory(patch.birthdate,await loadInstitutionSeason(ctx.admin,structureId)) || clean(patch.category),
         email: clean(patch.email),
         phone: clean(patch.phone),
@@ -427,7 +438,7 @@ export async function POST(req: Request) {
         first_name: firstName,
         last_name: lastName,
         birthdate: clean(patch.birthdate),
-        club_name: clean(patch.club_name),
+        club_name: clean(patch.club_name)?clubDirectory(await loadInstitutionClubNames(ctx.admin,structureId)).resolve(String(patch.club_name)):null,
         category: playerAgeCategory(patch.birthdate,await loadInstitutionSeason(ctx.admin,structureId)) || clean(patch.category),
         email: clean(patch.email),
         phone: clean(patch.phone),

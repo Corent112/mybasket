@@ -1,0 +1,8 @@
+'use client';
+import {useId,useMemo,useState} from 'react';
+import {clubDirectory,suggestClubNames} from '@/lib/institutionnel/club-names';
+export default function ClubNameInput({value,onChange,clubs,label='Club actuel'}:{value:string;onChange:(value:string)=>void;clubs:string[];label?:string}){
+ const id=useId(),directory=useMemo(()=>clubDirectory(clubs),[clubs]);
+ const [focused,setFocused]=useState(false),suggestions=suggestClubNames(value,directory.names);
+ return <label>{label}<input list={id} autoComplete="off" maxLength={150} value={value} onFocus={()=>setFocused(true)} onChange={e=>onChange(e.target.value)} onBlur={()=>{setFocused(false);const resolved=directory.resolve(value);if(resolved!==value)onChange(resolved);}}/><datalist id={id}>{(suggestions.length?suggestions:directory.names).map(name=><option key={name} value={name}/>)}</datalist>{focused&&suggestions.length>0&&<div className="suggestions">{suggestions.map(name=><button key={name} type="button" onMouseDown={e=>e.preventDefault()} onClick={()=>{onChange(name);setFocused(false);}}>{name}</button>)}</div>}<small>Choisis le club proposé pour garder le même nom sur toutes les fiches.</small><style jsx>{`.suggestions{display:grid;border:1px solid #e0d3d8;border-radius:7px;overflow:hidden}.suggestions button{text-align:left;border:0;border-bottom:1px solid #f2e9ed;background:white;color:#701b32;padding:8px;font-size:12px;cursor:pointer}label{display:grid;gap:6px;font-size:13px;font-weight:700}input{min-width:0;width:100%;box-sizing:border-box;border:1px solid #ddd1ca;border-radius:8px;padding:10px;background:#fff;color:inherit;font:inherit}small{font-size:10px;font-weight:400;color:#81747b}`}</style></label>;
+}
