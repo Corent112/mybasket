@@ -1,6 +1,15 @@
 const fs=require('fs'),ts=require('typescript'),vm=require('vm'),assert=require('node:assert/strict');require.extensions['.ts']=(m,p)=>m._compile(ts.transpileModule(fs.readFileSync(p,'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2020,esModuleInterop:true}}).outputText,p);
 const helper=require('../lib/institutionnel/selection-information.ts'),xlsx=require('xlsx'),staff=[{id:'coach',lastName:'STAFF',firstName:'Test',role:'Entraîneur',street:'12 rue exemple',postalCode:'07500',city:'Paris',phone:'0612345678',email:'coach@example.test',heightCm:'185',birthdate:'1988-04-02',club:'Club'}];
 const people=Array.from({length:37},(_,i)=>({id:'p'+i,first_name:'Prénom '+i,last_name:'JOUEUR '+i,birthdate:'2014-03-02',height_cm:170,tutor1_phone:'0611223344',tutor1_email:'parent@example.test',club_name:'Club',profile_data:{street:'Rue',postalCode:'07500',city:'Paris',basketballYears:'0',otherSports:'Natation'}}));
+const originalIds=people.map(p=>p.id), watchedOptions={watchPlayerIds:['p4','p2','p0']};
+assert.deepEqual(helper.informationExportRows(people,[],watchedOptions).rows.slice(0,5).map(p=>p.id),['p0','p2','p4','p1','p3']);
+assert.deepEqual(people.map(p=>p.id),originalIds,'Export must not reorder the actual roster');
+const orderedBook=helper.selectionInformationWorkbook(xlsx,people,[],'Institution A','U13F',watchedOptions);
+assert.deepEqual(xlsx.utils.sheet_to_json(orderedBook.Sheets.Renseignements,{header:1}).slice(5,8).map(row=>row[1]),['JOUEUR 0','JOUEUR 2','JOUEUR 4']);
+const institutionHtml=helper.selectionInformationHtml(people,[],{name:'Institution A',logo_url:'https://example.test/institution-a.png'},'U13F',watchedOptions);
+assert(institutionHtml.includes('https://example.test/institution-a.png'));assert(institutionHtml.includes('Institution A'));
+assert.deepEqual([...institutionHtml.matchAll(/data-player-id="([^"]+)"/g)].slice(0,3).map(match=>match[1]),['p0','p2','p4']);
+assert(fs.readFileSync('components/institutionnel/InstitutionalSelectionsManager.tsx','utf8').includes('Créer une action</button>'));
 const rows=helper.normalizeInformationStaff(staff);assert.equal(rows[0].phone,'0612345678');for(const bad of [[...staff,{...staff[0]}],[{...staff[0],email:'bad'}],[{...staff[0],birthdate:'2026-02-31'}],[{...staff[0],lastName:'',firstName:''}]])assert.throws(()=>helper.normalizeInformationStaff(bad));
 const options={columns:helper.INFORMATION_COLUMNS.map(([key])=>key),watchPlayerIds:['p0','p2','p4']};
 const book=helper.selectionInformationWorkbook(xlsx,people,staff,'Comité test','U13F',options);assert.deepEqual(book.SheetNames,['Renseignements']);const sheet=book.Sheets.Renseignements,data=xlsx.utils.sheet_to_json(sheet,{header:1,defval:''});assert.equal(data.filter(row=>row[1]==='JOUEUR 36').length,1);const staffTitle=data.findIndex(row=>row[0]==='Staff technique'),coach=data.findIndex(row=>row[1]==='STAFF');assert(staffTitle>data.findIndex(row=>row[1]==='JOUEUR 36'));assert(coach>staffTitle);assert.equal(data[coach][12],'12 rue exemple');assert.equal(data[5][15],0);assert.equal(sheet[xlsx.utils.encode_cell({r:5,c:3})].t,'d');

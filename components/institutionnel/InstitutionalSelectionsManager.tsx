@@ -476,7 +476,7 @@ export default function InstitutionalSelectionsManager({
               </p>
             </div>
             <div className="detailActions">
-              <button type="button" className="primary" disabled={busy||!current.players?.length} onClick={()=>{setDocScope("all");setDetailTab("documents");setDocAction("trombinoscope");}}>Trombinoscope PDF</button>
+              <button type="button" className="primary" disabled={busy||!current.players?.length} onClick={()=>{setDocScope("all");setDetailTab("documents");setDocAction(null);}}>Créer une action</button>
               <button type="button" disabled={busy} onClick={editSelection}>Modifier les informations</button>
               <button className="primary" onClick={()=>setDetailTab("training")}>Créer un événement avec cet effectif</button>
               <button className="primary" onClick={()=>onOpenBase?onOpenBase():window.location.assign(`/institutionnel/${structureId}?tab=Joueurs`)}>Ajouter un joueur dans la base</button>

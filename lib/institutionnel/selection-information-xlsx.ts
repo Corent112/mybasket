@@ -1,3 +1,4 @@
+import {orderInformationPlayers} from './selection-information';
 import {unzipSync,zipSync,strFromU8,strToU8} from 'fflate';
 /** Add a true XLSX cell fill while keeping SheetJS date formats and values intact. */
 export function highlightInformationWorkbook(bytes:Uint8Array,watchedRows:number[]){
@@ -12,6 +13,6 @@ export function highlightInformationWorkbook(bytes:Uint8Array,watchedRows:number
  sheet=sheet.replace('</worksheet>','<pageSetup orientation="landscape" paperSize="9" fitToWidth="1" fitToHeight="0"/></worksheet>');files['xl/worksheets/sheet1.xml']=strToU8(sheet);return zipSync(files);
 }
 export function downloadInformationWorkbook(xlsx:typeof import('xlsx'),book:import('xlsx').WorkBook,watchIds:string[],players:any[]){
- const raw=new Uint8Array(xlsx.write(book,{type:'array',bookType:'xlsx',cellDates:true})),rows=players.flatMap((player,index)=>watchIds.includes(String(player.id))?[index+6]:[]),bytes=highlightInformationWorkbook(raw,rows);
+ const raw=new Uint8Array(xlsx.write(book,{type:'array',bookType:'xlsx',cellDates:true})),rows=orderInformationPlayers(players,watchIds).flatMap((player,index)=>watchIds.includes(String(player.id))?[index+6]:[]),bytes=highlightInformationWorkbook(raw,rows);
  const buffer=new ArrayBuffer(bytes.length);new Uint8Array(buffer).set(bytes);const url=URL.createObjectURL(new Blob([buffer],{type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'})),link=document.createElement('a');link.href=url;link.download='fiche-renseignements-selection.xlsx';link.click();setTimeout(()=>URL.revokeObjectURL(url),10000);
 }
