@@ -63,9 +63,9 @@ export async function POST(req: Request) {
   const existing = await ctx.admin.from("institutional_members").select("id,role").eq("structure_id", structureId).eq("user_id", userId).maybeSingle();
   if(existing.error)return NextResponse.json({error:existing.error.message},{status:400});
   if(existing.data?.role==="owner")return NextResponse.json({error:"Le propriétaire conserve son rôle."},{status:403});
-  const payload = { role, status: "active", permissions: permissionsFor(role), updated_at: new Date().toISOString() };
+  const payload = { role, status: "active", permissions: permissionsFor(role) };
   const write = existing.data?.id
-    ? await ctx.admin.from("institutional_members").update(payload).eq("id", existing.data.id)
+    ? await ctx.admin.from("institutional_members").update(payload).eq("id", existing.data.id).eq("structure_id", structureId)
     : await ctx.admin.from("institutional_members").insert({ structure_id: structureId, user_id: userId, ...payload });
   if (write.error) return NextResponse.json({ error: write.error.message }, { status: 400 });
   return NextResponse.json({ ok: true, invited });
@@ -83,7 +83,7 @@ export async function PATCH(req: Request) {
   const target=await ctx.admin.from("institutional_members").select("id,role").eq("id",memberId).eq("structure_id",structureId).maybeSingle();
   if(target.error||!target.data)return NextResponse.json({error:"Membre introuvable"},{status:404});
   if(target.data.role==="owner")return NextResponse.json({error:"Le propriétaire conserve son rôle."},{status:403});
-  const q = await ctx.admin.from("institutional_members").update({ role, permissions: permissionsFor(role), updated_at: new Date().toISOString() }).eq("id", memberId).eq("structure_id", structureId);
+  const q = await ctx.admin.from("institutional_members").update({ role, permissions: permissionsFor(role) }).eq("id", memberId).eq("structure_id", structureId);
   if (q.error) return NextResponse.json({ error: q.error.message }, { status: 400 });
   return NextResponse.json({ ok: true });
 }
@@ -95,7 +95,8 @@ export async function DELETE(req: Request) {
   const ctx = await actorContext(structureId);
   if ("error" in ctx) return ctx.error;
   if (!new Set(["owner", "admin"]).has(String(ctx.member.role))) return NextResponse.json({ error: "Droits insuffisants" }, { status: 403 });
-  const q = await ctx.admin.from("institutional_members").update({ status: "revoked", updated_at: new Date().toISOString() }).eq("id", memberId).eq("structure_id", structureId).neq("role", "owner");
+  const q = await ctx.admin.from("institutional_members").update({ status: "revoked" }).eq("id", memberId).eq("structure_id", structureId).neq("role", "owner");
   if (q.error) return NextResponse.json({ error: q.error.message }, { status: 400 });
   return NextResponse.json({ ok: true });
 }
+
