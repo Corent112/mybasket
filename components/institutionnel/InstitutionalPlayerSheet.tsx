@@ -83,7 +83,7 @@ export default function InstitutionalPlayerSheet({ structureId, player, referral
   const sb = useMemo(() => createClient(), []);
   const profile = player?.profile_data || {};
   const [institutionType,setInstitutionType]=useState('');
-  useEffect(()=>{let active=true;setInstitutionType('');sb.from("institutional_structures").select("structure_type").eq("id",structureId).maybeSingle().then(({data})=>{if(active)setInstitutionType(data?.structure_type||'')});return()=>{active=false}},[sb,structureId]);
+  useEffect(()=>{let active=true;setInstitutionType('');sb.from("institutional_structures").select("structure_type").eq("id",structureId).maybeSingle().then(({data}:{data:{structure_type?:string}|null})=>{if(active)setInstitutionType(data?.structure_type||'')});return()=>{active=false}},[sb,structureId]);
   const hasDepartmentalSelection=['league','pole','federation'].includes(institutionType);
   const [pdfBusy,setPdfBusy]=useState(false);
   const [pdfError,setPdfError]=useState("");
