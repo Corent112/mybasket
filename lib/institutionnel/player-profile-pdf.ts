@@ -7,7 +7,7 @@ export function playerProfileSections(player:Record<string,any>):Array<[string,R
  const p=player.profile_data||{};
  return [
  ['Identité et coordonnées', [['Nom',player.last_name],['Prénom',player.first_name],['Naissance',player.birthdate],['Catégorie',player.category],['Sexe',player.sex==='F'?'Féminin':player.sex==='M'?'Masculin':player.sex],['Nationalité',p.nationality],['Téléphone',player.phone],['Email',player.email],['Adresse',p.street||p.address],['Code postal',p.postalCode||p.postal_code],['Ville',p.city]]],
- ['Profil sportif', [['Club',player.club_name],['Licence',player.license_number||p.licenseNumber],['Poste principal',player.position_primary||p.position],['Poste secondaire',player.position_secondary||p.secondaryPosition],['Main dominante',player.dominant_hand||p.dominantHand],['Maillot',p.jerseyNumber],['Couleur du maillot',p.jerseyColor],['Années de basket',p.basketballYears],['Autres sports',p.otherSports]]],
+ ['Profil sportif', [['Club',player.club_name],['Sélection départementale',p.departmentalSelectionName],['Sélection régionale',p.regionalSelectionName],['Licence',player.license_number||p.licenseNumber],['Poste principal',player.position_primary||p.position],['Poste secondaire',player.position_secondary||p.secondaryPosition],['Main dominante',player.dominant_hand||p.dominantHand],['Maillot',p.jerseyNumber],['Couleur du maillot',p.jerseyColor],['Années de basket',p.basketballYears],['Autres sports',p.otherSports]]],
  ['Mensurations', [['Taille (cm)',player.height_cm],['Poids (kg)',player.weight_kg??p.weight],['Envergure (cm)',player.wingspan_cm],['Pointure',p.shoeSize],['Taille du père (cm)',player.father_height_cm],['Taille de la mère (cm)',player.mother_height_cm]]],
  ['Famille et scolarité', [['Responsable 1',p.guardian1Name],['Téléphone responsable 1',player.tutor1_phone||p.guardian1Phone],['Email responsable 1',player.tutor1_email||p.guardian1Email],['Responsable 2',p.guardian2Name],['Téléphone responsable 2',player.tutor2_phone||p.guardian2Phone],['Email responsable 2',player.tutor2_email||p.guardian2Email],['Frères et sœurs',[p.siblings,siblingDetailsLabel(p.siblingDetails)].filter(Boolean).join(' ; ')],['Établissement',player.school||p.school],['Classe',player.class_name||p.className]]],
  ['Croissance', [['Âge osseux',p.growth?.boneAge],['Taille assise (cm)',p.growth?.sittingHeightCm]]],
@@ -83,3 +83,4 @@ export async function createPlayerProfilePdf(input:{player:Record<string,any>;in
  const count=doc.getNumberOfPages();for(let page=1;page<=count;page++){doc.setPage(page);rule(281);font(7,false,muted);doc.text(`MyBasket / ${new Date().toLocaleDateString('fr-FR')} / Informations enregistrées`,16,286);doc.text(`${page} / ${count}`,194,286,{align:'right'});}
  return doc;
 }
+

@@ -82,6 +82,9 @@ function SectionTitle({ eyebrow, title, help, right }: { eyebrow: string; title:
 export default function InstitutionalPlayerSheet({ structureId, player, referral, busy, onClose, onSave, onArchive, onRestore, onDelete, players = [], referralUrl = "", onOpenPlayer, onCopyReferralLink }: Props) {
   const sb = useMemo(() => createClient(), []);
   const profile = player?.profile_data || {};
+  const [institutionType,setInstitutionType]=useState('');
+  useEffect(()=>{let active=true;setInstitutionType('');sb.from("institutional_structures").select("structure_type").eq("id",structureId).maybeSingle().then(({data})=>{if(active)setInstitutionType(data?.structure_type||'')});return()=>{active=false}},[sb,structureId]);
+  const hasDepartmentalSelection=['league','pole','federation'].includes(institutionType);
   const [pdfBusy,setPdfBusy]=useState(false);
   const [pdfError,setPdfError]=useState("");
   async function exportPdf(){
@@ -153,6 +156,8 @@ export default function InstitutionalPlayerSheet({ structureId, player, referral
     tutor2_email: player.tutor2_email || profile.guardian2Email || "",
     observations: profile.observations || "",
     provenance: profile.provenance || "",
+    departmental_selection_name: profile.departmentalSelectionName || "",
+    regional_selection_name: profile.regionalSelectionName || "",
     bone_age: profile.growth?.boneAge ?? "",
     sitting_height_cm: profile.growth?.sittingHeightCm ?? "",
     street: profile.street || profile.address || "",
@@ -438,6 +443,8 @@ export default function InstitutionalPlayerSheet({ structureId, player, referral
               <Field label="Date de naissance" type="date" value={form.birthdate} onChange={(v) => patch("birthdate", v)} />
               <Select label="Sexe" value={form.sex} onChange={(v) => patch("sex", v)} options={["M", "F"]} />
               <ClubNameInput clubs={players.map(p=>p.club_name||"")} value={form.club_name} onChange={v=>patch("club_name",v)}/>
+              {hasDepartmentalSelection&&<Field label="Sélection départementale · nom exact du comité" value={form.departmental_selection_name} onChange={v=>patch("departmental_selection_name",v)}/>}
+              {institutionType==='federation'&&<Field label="Sélection régionale · nom exact de la région" value={form.regional_selection_name} onChange={v=>patch("regional_selection_name",v)}/>}
               <div><b>Catégorie d’âge</b><p>{ageCategory || "Renseigne la date de naissance"} · {(player as any).category_season || "Saison actuelle"}</p></div>
               <Select label="Poste principal" value={form.position} onChange={(v) => patch("position", v)} options={["Meneur", "Arrière", "Ailier", "Ailier-fort", "Pivot"]} />
               <Select label="Poste secondaire" value={form.secondary_position} onChange={(v) => patch("secondary_position", v)} options={["Meneur", "Arrière", "Ailier", "Ailier-fort", "Pivot"]} />
@@ -575,4 +582,5 @@ const css = `
 @media(max-width:1100px){.dashboardGrid{grid-template-columns:1fr 1fr}.headerFacts{grid-template-columns:repeat(2,1fr);gap:10px}.headerFact:nth-child(3){padding-left:0;border-left:0}.fields,.fields.four,.ratings,.poleGrid{grid-template-columns:1fr 1fr}.measureForm{grid-template-columns:1fr 1fr}.measureForm button{grid-column:1/-1}}
 @media(max-width:760px){.playerSwitcher{margin:10px 10px 0;padding:10px}.switcherHead{align-items:flex-start}.referralQuick{min-width:0}.referralQuick>img{width:48px;height:48px}.referralQuickLink code{max-width:130px}.railPlayer{flex-basis:84px}.railAvatar{width:50px;height:56px}.sheet{width:100%;border-radius:12px}.topBar{padding:0 12px}.topActions .actionBtn span,.backLink span{display:none}.playerHeader{margin:10px 10px 0;padding:12px;min-height:auto}.playerIdentity{gap:12px}.avatar{width:74px;height:90px}.nameRow h2{font-size:1.15rem}.playerTitle>p{margin:5px 0 10px}.headerFacts{grid-template-columns:1fr 1fr}.headerFact{padding:0 10px}.jerseyNumber{display:none}.tabs{margin:10px 10px 0}.content{padding:10px}.dashboardGrid{grid-template-columns:1fr}.dashCard{min-height:auto}.editLayout{grid-template-columns:1fr}.fields,.fields.four,.ratings,.twoText,.poleGrid,.quickGrid{grid-template-columns:1fr}.photoCol{grid-template-columns:140px 1fr;align-items:start}.measureTable{overflow:auto}.tr{min-width:700px}.listForm{grid-template-columns:1fr}.eventRow{grid-template-columns:72px 1fr auto}}
 `;
+
 

@@ -398,9 +398,12 @@ export async function POST(req: Request) {
     const previousStatus = lifecycle(oldProfile, Boolean(current.data.archived));
     const nextStatus = action === "validate_player" ? "validated" : previousStatus;
     const profileExtra = patch.profile_extra && typeof patch.profile_extra === "object" ? patch.profile_extra : {};
+    for(const key of ['departmental_selection_name','regional_selection_name'])if(Object.prototype.hasOwnProperty.call(patch,key)&&(typeof patch[key]!=='string'||patch[key].trim().length>200))return NextResponse.json({error:"Nom de sélection invalide (200 caractères maximum)."},{status:400});
     const nextProfile = {
       ...oldProfile,
       ...profileExtra,
+      departmentalSelectionName: Object.prototype.hasOwnProperty.call(patch,'departmental_selection_name')?clean(patch.departmental_selection_name):oldProfile.departmentalSelectionName??null,
+      regionalSelectionName: Object.prototype.hasOwnProperty.call(patch,'regional_selection_name')?clean(patch.regional_selection_name):oldProfile.regionalSelectionName??null,
       position: clean(patch.position) ?? oldProfile.position ?? null,
       secondaryPosition: clean(patch.secondary_position) ?? oldProfile.secondaryPosition ?? null,
       jerseyNumber: clean(patch.jersey_number) ?? oldProfile.jerseyNumber ?? null,
@@ -464,6 +467,7 @@ export async function POST(req: Request) {
         updated_at: new Date().toISOString(),
       })
       .eq("id", playerId)
+      .eq("structure_id", structureId)
       .select(PLAYER_SELECT)
       .single();
 
@@ -568,3 +572,4 @@ export async function POST(req: Request) {
 
   return NextResponse.json({ error: "Action inconnue" }, { status: 400 });
 }
+
