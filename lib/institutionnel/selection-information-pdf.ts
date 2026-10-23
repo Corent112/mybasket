@@ -1,0 +1,16 @@
+import {jsPDF} from 'jspdf';
+import {informationExportRows,type SelectionInformationOptions,type SelectionInformationStaff} from './selection-information';
+import {imageData} from './trombinoscope-pdf';
+export async function createSelectionInformationPdf(players:any[],staff:SelectionInformationStaff[],institution:{name:string;logo_url?:string|null},selectionName:string,options:SelectionInformationOptions={}){
+ const {columns,rows,staffRows}=informationExportRows(players,staff,options);
+ const doc=new jsPDF({orientation:'landscape',unit:'mm',format:columns.length>12?'a3':'a4'}),width=doc.internal.pageSize.getWidth(),height=doc.internal.pageSize.getHeight(),margin=10;
+ const logo=await imageData(institution.logo_url);if(institution.logo_url&&!logo)throw Error('Le logo de l’institution ne peut pas être chargé. Réessaie avant de télécharger.');
+ const weights:Record<string,number>={number:5,lastName:18,firstName:17,street:29,postalCode:8,city:17,phone:17,email:31,height:8,birthdate:14,club:25};
+ const units=columns.map(([key])=>weights[key]||12),total=units.reduce((a,b)=>a+b,0),widths=units.map(n=>n/total*(width-margin*2));let y=0,page=0;
+ function text(value:unknown,x:number,baseline:number,w:number,bold=false){const s=(value instanceof Date?value.toLocaleDateString('fr-FR'):String(value??'')).replace(/\s+/g,' ').trim();doc.setFont('helvetica',bold?'bold':'normal');doc.setFontSize(8);const natural=doc.getTextWidth(s);doc.setFontSize(natural>w-2?Math.max(2,8*(w-2)/natural):8);doc.text(s,x+w/2,baseline,{align:'center'});}
+ function header(){page++;doc.setTextColor('#701b32');if(logo){const props=doc.getImageProperties(logo),scale=Math.min(25/props.width,23/props.height);doc.addImage(logo,'JPEG',margin,8,props.width*scale,props.height*scale);}doc.setFont('helvetica','bold');doc.setFontSize(15);doc.text(institution.name,width/2,15,{align:'center'});doc.setFontSize(13);doc.text('FICHE DE RENSEIGNEMENTS',width/2,23,{align:'center'});doc.setFontSize(9);doc.text(selectionName,width/2,30,{align:'center'});doc.setTextColor('#356740');doc.setFontSize(8);doc.text(`${rows.filter(row=>row.watched).length} joueur(s) à suivre en tête du tableau`,width-margin,37,{align:'right'});y=41;line(columns.map(([,label])=>label),'#dedede',true);}
+ function line(values:unknown[],fill:string,bold=false){let x=margin;doc.setDrawColor('#bfc1c5');doc.setLineWidth(.2);columns.forEach(([key],i)=>{doc.setFillColor(fill);doc.rect(x,y,widths[i],9,'FD');doc.setTextColor('#28252a');text(!bold&&key==='number'?'':values[i],x,y+5.6,widths[i],bold);x+=widths[i]});y+=9;}
+ function next(){if(y+9>height-15){doc.setTextColor('#777777');doc.setFontSize(8);doc.text(String(page),width-margin,height-7,{align:'right'});doc.addPage();header();}}
+ header();rows.forEach(row=>{next();line(row.values,row.watched?'#e5f3e8':'#ffffff')});if(staffRows.length){next();doc.setFillColor('#dedede');doc.rect(margin,y,width-margin*2,9,'F');doc.setFontSize(9);doc.setFont('helvetica','bold');doc.text('STAFF TECHNIQUE',margin+2,y+6);y+=9;staffRows.forEach(row=>{next();line(row.values,'#ffffff')});}
+ doc.setTextColor('#777777');doc.setFontSize(8);doc.text(`${players.length} joueur(s) · ${staff.length} membre(s) du staff`,margin,height-7);doc.text(String(page),width-margin,height-7,{align:'right'});return doc;
+}
