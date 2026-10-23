@@ -1,3 +1,4 @@
+import {canManageInstitutionTraining} from "@/lib/institutionnel/training-permissions";
 import {NextResponse} from "next/server";
 import {createClient} from "@/lib/supabase/server";
 import {createAdminClient} from "@/lib/supabase/admin-server";
@@ -16,7 +17,7 @@ export async function POST(request:Request){
  let institutionMember=false;
  if(!instructor&&!["ceo","superadmin"].includes(String(profile?.platform_role||""))){
   const{data:cohort}=await supabase.from("training_cohorts").select("institution_id").eq("id",cohortId).maybeSingle();
-  if(cohort?.institution_id){const{data:member}=await supabase.from("institutional_members").select("id").eq("structure_id",cohort.institution_id).eq("user_id",user.id).eq("status","active").maybeSingle();institutionMember=!!member}
+  if(cohort?.institution_id){const{data:member}=await supabase.from("institutional_members").select("id,role,permissions").eq("structure_id",cohort.institution_id).eq("user_id",user.id).eq("status","active").maybeSingle();institutionMember=canManageInstitutionTraining(member)}
  }
  if(!instructor&&!institutionMember&&!["ceo","superadmin"].includes(String(profile?.platform_role||"")))return NextResponse.json({error:"Accès formation requis"},{status:403});
  const tutorName=String(body.tutorName||""),tutorEmail=String(body.tutorEmail||"").trim().toLowerCase();
@@ -49,7 +50,7 @@ export async function PATCH(request: Request) {
  db.from("training_instructors").select("id").eq("cohort_id",cohortId).eq("user_id",user.id).maybeSingle(),
  db.from("profiles").select("platform_role").eq("id",user.id).maybeSingle()]);
  let allowed=!!instructor||["ceo","superadmin"].includes(String(profile?.platform_role||""));
- if(!allowed&&cohort?.institution_id){const {data:member}=await db.from("institutional_members").select("id").eq("structure_id",cohort.institution_id).eq("user_id",user.id).eq("status","active").maybeSingle();allowed=!!member;}
+ if(!allowed&&cohort?.institution_id){const {data:member}=await db.from("institutional_members").select("id,role,permissions").eq("structure_id",cohort.institution_id).eq("user_id",user.id).eq("status","active").maybeSingle();allowed=canManageInstitutionTraining(member);}
  if(!allowed)return NextResponse.json({error:"Accès formation requis"},{status:403});
  const fields=["first_name","last_name","email","phone","club_name","notes","license_number","administrative_status","payment_exempt"];
  const patch=Object.fromEntries(Object.entries(body.patch||{}).filter(([key])=>fields.includes(key)));
@@ -72,7 +73,7 @@ export async function DELETE(request:Request){
  db.from("training_instructors").select("id").eq("cohort_id",cohortId).eq("user_id",user.id).maybeSingle(),
  db.from("profiles").select("platform_role").eq("id",user.id).maybeSingle()]);
  let allowed=!!cohort&&(!!instructor||["ceo","superadmin"].includes(String(profile?.platform_role||"")));
- if(!allowed&&cohort?.institution_id){const {data:member}=await db.from("institutional_members").select("id").eq("structure_id",cohort.institution_id).eq("user_id",user.id).eq("status","active").maybeSingle();allowed=!!member;}
+ if(!allowed&&cohort?.institution_id){const {data:member}=await db.from("institutional_members").select("id,role,permissions").eq("structure_id",cohort.institution_id).eq("user_id",user.id).eq("status","active").maybeSingle();allowed=canManageInstitutionTraining(member);}
  if(!allowed)return NextResponse.json({error:"Accès formation requis"},{status:403});
  // Une seule suppression : les contraintes de la base restent appliquées atomiquement.
  // Ne supprime jamais le compte utilisateur ni les inscriptions aux autres formations.

@@ -1,3 +1,4 @@
+import {canManageInstitutionTraining} from "@/lib/institutionnel/training-permissions";
 import {NextResponse} from "next/server";
 import {createClient} from "@/lib/supabase/server";
 import {createAdminClient} from "@/lib/supabase/admin-server";
@@ -7,8 +8,8 @@ async function allowed(supabase:any,userId:string,cohortId:string){
  const[{data:i},{data:p},{data:c}]=await Promise.all([supabase.from("training_instructors").select("id").eq("cohort_id",cohortId).eq("user_id",userId).maybeSingle(),supabase.from("profiles").select("platform_role").eq("id",userId).maybeSingle(),supabase.from("training_cohorts").select("institution_id").eq("id",cohortId).maybeSingle()]);
  if(i||["ceo","superadmin"].includes(String(p?.platform_role||"")))return true;
  if(!c?.institution_id)return false;
- const{data:m}=await supabase.from("institutional_members").select("id").eq("structure_id",c.institution_id).eq("user_id",userId).eq("status","active").maybeSingle();
- return !!m;
+ const{data:m}=await supabase.from("institutional_members").select("id,role,permissions").eq("structure_id",c.institution_id).eq("user_id",userId).eq("status","active").maybeSingle();
+ return canManageInstitutionTraining(m);
 }
 async function sendMail(to:string,subject:string,html:string,attachment:string,filename:string){const key=process.env.RESEND_API_KEY;if(!key)return false;const from=process.env.MYBASKET_EMAIL_FROM||"MyBasket <notifications@mybasket.fr>";const content=Buffer.from(attachment,"utf8").toString("base64");const r=await fetch("https://api.resend.com/emails",{method:"POST",headers:{Authorization:`Bearer ${key}`,"Content-Type":"application/json"},body:JSON.stringify({from,to:[to],subject,html,attachments:[{filename,content}]})});return r.ok}
 function documentHtml(candidate:any,structure:any,cohort:any,template:string,subject:string,extra:string){

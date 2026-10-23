@@ -1,0 +1,7 @@
+import {createHmac,timingSafeEqual,createHash} from 'node:crypto';
+type Claim={purpose:'institution-coach-attendance';structureId:string;selectionId:string;issuedBy:string;exp:number};
+function signature(value:string){const key=process.env.SUPABASE_SERVICE_ROLE_KEY;if(!key)throw Error('Service indisponible');return createHmac('sha256',key).update('mybasket-coach-attendance-v1:'+value).digest('base64url');}
+export function signCoachAttendance(claim:Claim){const value=Buffer.from(JSON.stringify(claim)).toString('base64url');return value+'.'+signature(value);}
+export function readCoachAttendance(token:string):Claim|null{try{if(token.length>2500)return null;const [value,sig,...rest]=token.split('.');if(!value||!sig||rest.length)return null;const expected=Buffer.from(signature(value)),actual=Buffer.from(sig);if(actual.length!==expected.length||!timingSafeEqual(actual,expected))return null;const c=JSON.parse(Buffer.from(value,'base64url').toString());if(c.purpose!=='institution-coach-attendance'||!Number.isFinite(c.exp)||c.exp<=Date.now()||!['structureId','selectionId','issuedBy'].every(k=>typeof c[k]==='string'&&c[k].length>0))return null;return c;}catch{return null}}
+export const attendanceTokenHash=(token:string)=>createHash('sha256').update(token).digest('hex');
+export function attendanceSessionId(selectionId:string,date:string){const h=createHash('sha256').update(`institution-coach-attendance:${selectionId}:${date}`).digest('hex');return `${h.slice(0,8)}-${h.slice(8,12)}-4${h.slice(13,16)}-a${h.slice(17,20)}-${h.slice(20,32)}`;}

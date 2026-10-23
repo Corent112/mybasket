@@ -1,3 +1,4 @@
+import {canManageInstitutionTraining} from "@/lib/institutionnel/training-permissions";
 import {NextResponse} from "next/server";
 import {createHash,randomBytes} from "node:crypto";
 import QRCode from "qrcode";
@@ -20,7 +21,7 @@ export async function PATCH(request: Request) {
  db.from("training_instructors").select("id").eq("cohort_id",cohortId).eq("user_id",user.id).maybeSingle(),
  db.from("profiles").select("platform_role").eq("id",user.id).maybeSingle()]);
  let allowed=!!cohort&&(!!instructor||["ceo","superadmin"].includes(String(profile?.platform_role||"")));
- if(!allowed&&cohort?.institution_id){const {data:member}=await db.from("institutional_members").select("id").eq("structure_id",cohort.institution_id).eq("user_id",user.id).eq("status","active").maybeSingle();allowed=!!member;}
+ if(!allowed&&cohort?.institution_id){const {data:member}=await db.from("institutional_members").select("id,role,permissions").eq("structure_id",cohort.institution_id).eq("user_id",user.id).eq("status","active").maybeSingle();allowed=canManageInstitutionTraining(member);}
  if(!allowed)return NextResponse.json({error:"Accès formation requis"},{status:403});
  const [{data:session},{data:candidate},existing]=await Promise.all([
  db.from("training_attendance_sessions").select("id").eq("id",sessionId).eq("cohort_id",cohortId).maybeSingle(),

@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import {institutionTabsFor} from "@/lib/institutionnel/training-permissions";
 import {useEffect,useMemo,useState} from "react";
 import type {CSSProperties} from "react";
 import {createClient} from "@/lib/supabase/client";
@@ -35,34 +36,40 @@ const typeLabel=(type:Structure["structure_type"])=>type==="committee"?"Comité"
 
 export default function InstitutionalWorkspace({structureId}:{structureId:string}){
  const sb=useMemo(()=>createClient(),[]);const[structure,setStructure]=useState<Structure|null>(null);const[tab,setTabState]=useState<Tab>("Dashboard");const[msg,setMsg]=useState("");const[menuOpen,setMenuOpen]=useState(false);
- const go=(next:string)=>{if(!TABS.includes(next as Tab))return;const value=next as Tab;setTabState(value);setMenuOpen(false);if(typeof window!=="undefined"){const url=new URL(window.location.href);url.searchParams.set("tab",value);window.history.replaceState({},"",url.toString());window.scrollTo({top:0,behavior:"smooth"});}};
+ const [membership,setMembership]=useState<any>(null),[membershipLoaded,setMembershipLoaded]=useState(false);
+ const permittedTabs=institutionTabsFor(membership);
+ const canOpen=(next:string)=>membershipLoaded&&(permittedTabs===null||permittedTabs.includes(next));
+ const go=(next:string)=>{if(!TABS.includes(next as Tab)||!canOpen(next))return;const value=next as Tab;setTabState(value);setMenuOpen(false);if(typeof window!=="undefined"){const url=new URL(window.location.href);url.searchParams.set("tab",value);window.history.replaceState({},"",url.toString());window.scrollTo({top:0,behavior:"smooth"});}};
+ useEffect(()=>{let active=true;(async()=>{const {data:{user}}=await sb.auth.getUser();if(!user){if(active)setMembershipLoaded(true);return;}const result=await sb.from("institutional_members").select("role,permissions").eq("structure_id",structureId).eq("user_id",user.id).eq("status","active").maybeSingle();if(active){setMembership(result.data||null);setMembershipLoaded(true);}})();return()=>{active=false}},[sb,structureId]);
+ useEffect(()=>{if(!membershipLoaded)return;if(!canOpen(tab)){const allowed=TABS.filter(t=>canOpen(t));if(allowed.length)setTabState(allowed[0]);}},[membershipLoaded,membership,tab]);
  async function reload(){const q=await sb.from("institutional_structures").select("*").eq("id",structureId).single();if(q.error){setMsg(q.error.message);return;}setStructure(q.data as Structure)}
  useEffect(()=>{void reload()},[structureId]); // eslint-disable-line react-hooks/exhaustive-deps
  useEffect(()=>{if(typeof window==="undefined")return;const requested=new URLSearchParams(window.location.search).get("tab");if(requested&&TABS.includes(requested as Tab))setTabState(requested as Tab)},[]);
- if(!structure)return <main className="loadingPage">{msg||"Chargement…"}<style jsx>{`:global(.site-header),:global(.footer){display:none!important}`}</style></main>;
+ if(!structure||!membershipLoaded)return <main className="loadingPage">{msg||"Chargement…"}<style jsx>{`:global(.site-header),:global(.footer){display:none!important}`}</style></main>;
+ if(!membership)return <main className="loadingPage">Accès réservé aux membres de cette institution.</main>;
  const primary=structure.document_primary_color||"#6B1A2C",secondary=structure.document_secondary_color||"#D4A24C",meta=META[tab];
  return <main className="institutionShell" style={{"--inst-primary":primary,"--inst-secondary":secondary} as CSSProperties}>
    <aside className={menuOpen?"sidebar open":"sidebar"}>
     <div className="brand">{structure.logo_url?<img src={structure.logo_url} alt={`Logo ${structure.name}`}/>:<><strong>{structure.short_name||structure.name}</strong><span>{typeLabel(structure.structure_type).toUpperCase()}</span></>}</div>
-    <nav className="sideNav" aria-label="Navigation Institution">{TABS.filter(t=>t!=="Dossiers de sortie"||structure.structure_type==="pole").map(t=><button key={t} className={tab===t?"on":""} onClick={()=>go(t)}><i>{META[t].icon}</i><span>{t}</span></button>)}</nav>
+    <nav className="sideNav" aria-label="Navigation Institution">{TABS.filter(t=>canOpen(t)&&(t!=="Dossiers de sortie"||structure.structure_type==="pole")).map(t=><button key={t} className={canOpen(tab)&&tab===t?"on":""} onClick={()=>go(t)}><i>{META[t].icon}</i><span>{t}</span></button>)}</nav>
     <div className="sideIdentity"><button className="logoButton" onClick={()=>go("Paramètres")} title="Modifier le logo">{structure.logo_url?<img src={structure.logo_url} alt={structure.name}/>:<span>{(structure.short_name||structure.name).slice(0,2).toUpperCase()}</span>}</button><div><b>{structure.short_name||structure.name}</b><small>{typeLabel(structure.structure_type)}</small></div></div>
     <button className="backAccount" onClick={()=>{location.href="/mon-compte"}}>↪ Mon compte</button>
    </aside>
    {menuOpen&&<button className="overlay" aria-label="Fermer le menu" onClick={()=>setMenuOpen(false)}/>}
    <section className="workspace">
-    <header className="topbar"><button className="burger" onClick={()=>setMenuOpen(v=>!v)} aria-label="Menu">☰</button><div className="seasonSelector"><small>Saison</small><b>{structure.season_label||"Non définie"}</b><span>⌄</span></div><div className="topRight"><button onClick={()=>go("Paramètres")} title="Paramètres">⚙</button><span className="userBubble">{(structure.short_name||structure.name).slice(0,2).toUpperCase()}</span></div></header>
+    <header className="topbar"><button className="burger" onClick={()=>setMenuOpen(v=>!v)} aria-label="Menu">☰</button><div className="seasonSelector"><small>Saison</small><b>{structure.season_label||"Non définie"}</b><span>⌄</span></div><div className="topRight">{canOpen("Paramètres")&&<button onClick={()=>go("Paramètres")} title="Paramètres">⚙</button>}<span className="userBubble">{(structure.short_name||structure.name).slice(0,2).toUpperCase()}</span></div></header>
     <div className="content">
      <div className="pageTitle"><p>ESPACE {typeLabel(structure.structure_type).toUpperCase()}</p><h1>{meta.title}</h1><span>{meta.subtitle}</span></div>
-     {tab==="Dashboard"&&<InstitutionalDashboardConnected structureId={structureId} go={go}/>} 
-     {tab==="Joueurs"&&<section className="surface"><InstitutionalPlayersHub structureId={structureId} structureType={structure.structure_type}/><div className="related"><h3>Ressources liées au parcours joueur</h3><InstitutionalResources structureId={structureId} compact categories={["Joueurs","PPF / Pôle","Sélection / Stage"]}/></div></section>}
-     {tab==="Dossiers de sortie"&&structure.structure_type==="pole"&&<section className="surface"><PoleExitDossiers structureId={structureId}/></section>}
-     {tab==="Formation des cadres"&&<section className="surface"><div className="sectionHead"><div><p>FORMATION DES CADRES</p><h2>Formations, inscrits et dossiers</h2><span>La promotion est la source unique : dossier, cotisation, présence, documents, évaluation et communications.</span></div><Link href="/formation/gestion">Vue plein écran →</Link></div><TrainingManager institutionId={structureId}/></section>}
-     {tab==="Mon calendrier"&&<InstitutionalCalendarHub structureId={structureId} onGoTraining={()=>go("Formation des cadres")} onGoPlayers={()=>go("Joueurs")}/>} 
-     {tab==="Documents"&&<InstitutionalDocumentCenter structureId={structureId} go={go}/>} 
-     {tab==="Communication"&&<section className="surface"><div className="sectionHead"><div><p>COMMUNICATION</p><h2>Tous les publics au même endroit</h2><span>Annuaire, joueurs et candidats de formation sont récupérés automatiquement.</span></div></div><InstitutionalCommunicationCenter structureId={structureId}/></section>}
-     {tab==="Ressources"&&<section className="surface"><div className="sectionHead"><div><p>CENTRE DE RESSOURCES</p><h2>Bibliothèque de modèles Institution</h2><span>Les modèles sont réutilisables ; les documents nominatifs sont générés depuis le joueur ou la formation.</span></div></div><InstitutionalResources structureId={structureId}/></section>}
-     {tab==="Membres & droits"&&<section className="surface"><div className="sectionHead"><div><p>COLLABORATION</p><h2>Membres & droits</h2><span>Les droits de la structure commandent aussi les actions Joueurs et Formation des cadres.</span></div></div><InstitutionalMembers structureId={structureId}/></section>}
-     {tab==="Paramètres"&&<section className="surface settings"><InstitutionalBrandingSettings structureId={structureId} onSaved={()=>void reload()}/><div className="separator"/><div className="sectionHead"><div><p>FORMULAIRES</p><h2>Formulaires de l’Institution</h2><span>Crée ici les formulaires transversaux. Le signalement joueur public est géré depuis Joueurs → Détection & passations.</span></div></div><InstitutionalFormBuilder structureId={structureId}/></section>}
+     {canOpen(tab)&&tab==="Dashboard"&&<InstitutionalDashboardConnected structureId={structureId} go={go}/>} 
+     {canOpen(tab)&&tab==="Joueurs"&&<section className="surface"><InstitutionalPlayersHub structureId={structureId} structureType={structure.structure_type}/><div className="related"><h3>Ressources liées au parcours joueur</h3><InstitutionalResources structureId={structureId} compact categories={["Joueurs","PPF / Pôle","Sélection / Stage"]}/></div></section>}
+     {canOpen(tab)&&tab==="Dossiers de sortie"&&structure.structure_type==="pole"&&<section className="surface"><PoleExitDossiers structureId={structureId}/></section>}
+     {canOpen(tab)&&tab==="Formation des cadres"&&<section className="surface"><div className="sectionHead"><div><p>FORMATION DES CADRES</p><h2>Formations, inscrits et dossiers</h2><span>La promotion est la source unique : dossier, cotisation, présence, documents, évaluation et communications.</span></div><Link href="/formation/gestion">Vue plein écran →</Link></div><TrainingManager institutionId={structureId}/></section>}
+     {canOpen(tab)&&tab==="Mon calendrier"&&<InstitutionalCalendarHub structureId={structureId} onGoTraining={()=>go("Formation des cadres")} onGoPlayers={()=>go("Joueurs")}/>} 
+     {canOpen(tab)&&tab==="Documents"&&<InstitutionalDocumentCenter structureId={structureId} go={go}/>} 
+     {canOpen(tab)&&tab==="Communication"&&<section className="surface"><div className="sectionHead"><div><p>COMMUNICATION</p><h2>Tous les publics au même endroit</h2><span>Annuaire, joueurs et candidats de formation sont récupérés automatiquement.</span></div></div><InstitutionalCommunicationCenter structureId={structureId}/></section>}
+     {canOpen(tab)&&tab==="Ressources"&&<section className="surface"><div className="sectionHead"><div><p>CENTRE DE RESSOURCES</p><h2>Bibliothèque de modèles Institution</h2><span>Les modèles sont réutilisables ; les documents nominatifs sont générés depuis le joueur ou la formation.</span></div></div><InstitutionalResources structureId={structureId}/></section>}
+     {canOpen(tab)&&tab==="Membres & droits"&&<section className="surface"><div className="sectionHead"><div><p>COLLABORATION</p><h2>Membres & droits</h2><span>Les droits de la structure commandent aussi les actions Joueurs et Formation des cadres.</span></div></div><InstitutionalMembers structureId={structureId}/></section>}
+     {canOpen(tab)&&tab==="Paramètres"&&<section className="surface settings"><InstitutionalBrandingSettings structureId={structureId} onSaved={()=>void reload()}/><div className="separator"/><div className="sectionHead"><div><p>FORMULAIRES</p><h2>Formulaires de l’Institution</h2><span>Crée ici les formulaires transversaux. Le signalement joueur public est géré depuis Joueurs → Détection & passations.</span></div></div><InstitutionalFormBuilder structureId={structureId}/></section>}
     </div>
    </section>
    <style jsx>{`

@@ -1284,7 +1284,7 @@ export default function TrainingManager({ institutionId }: { institutionId?: str
 
           {tab === "settings" && (
             <section className="panel settings">
-              <div className="panel-head"><div><p>PARAMÈTRES</p><h3>Règles de cette formation</h3><span>Tu peux modifier ici la promotion sélectionnée.</span></div></div>
+              <div className="panel-head"><div><p>PARAMÈTRES</p><h3>Règles de cette formation</h3><span>Tu peux modifier ici la promotion sélectionnée.</span></div></div>{institutionId&&<div className="panel" style={{marginBottom:16}}><h4>Accès des collaborateurs</h4><p>Le rôle Formation / secrétariat permet de suivre les candidats et l’état des dossiers. Le rôle Administrateur de l’institution reste limité à cette institution.</p><a href={`/institutionnel/${institutionId}?tab=Membres%20%26%20droits`}>Gérer les membres et leurs droits →</a></div>}
               <div className="settings-grid">
                 <label>
                   Année / saison

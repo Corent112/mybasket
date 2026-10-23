@@ -11,6 +11,10 @@ export async function GET(req:Request){
  try{
  const links=await ctx.admin.from('institutional_player_team_links').select('team_id,team_player_id,relation_type').eq('structure_id',structureId).eq('player_id',playerId);if(links.error)throw Error(links.error.message);
  const raw:any[]=(links.data||[]).filter((x:any)=>x.team_id&&x.team_player_id).map((x:any)=>({teamId:x.team_id,playerId:x.team_player_id,context:x.relation_type==='selection'?'selection':'club'}));
+ // The selection roster itself is authoritative, even if an older auxiliary link is missing.
+ const ownedSelections=await ctx.admin.from('institutional_selections').select('id,team_id').eq('structure_id',structureId);if(ownedSelections.error)throw Error(ownedSelections.error.message);
+ const selectionIds=(ownedSelections.data||[]).map((s:any)=>s.id);
+ if(selectionIds.length){const memberships=await ctx.admin.from('institutional_selection_players').select('selection_id,team_player_id').eq('player_id',playerId).in('selection_id',selectionIds);if(memberships.error)throw Error(memberships.error.message);for(const membership of memberships.data||[]){const selection=(ownedSelections.data||[]).find((s:any)=>s.id===membership.selection_id);if(selection?.team_id&&membership.team_player_id)raw.push({teamId:selection.team_id,playerId:membership.team_player_id,context:'selection'});}}
  // Older Pôle and manually linked sources use existing dedicated relation tables.
  for(const [table,columns,mapper]of [
   ['institutional_pole_player_memberships','pole_team_id,pole_player_id',(x:any)=>({teamId:x.pole_team_id,playerId:x.pole_player_id,context:'pole'})],

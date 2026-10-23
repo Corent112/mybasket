@@ -168,13 +168,14 @@ export async function POST(req: Request) {
 
     const existing = await ctx.admin
       .from("institutional_selection_players")
-      .select("id")
+      .select("id,team_player_id,status")
       .eq("selection_id", selectionId)
       .eq("player_id", playerId)
       .maybeSingle();
 
-    if (existing.data?.id) {
-      return NextResponse.json({ ok: true, alreadyExists: true });
+    if (existing.error) return NextResponse.json({error:existing.error.message},{status:400});
+    if (existing.data?.id && !body.syncExisting) {
+      return NextResponse.json({ ok: true, alreadyExists: true, teamPlayerId:existing.data.team_player_id });
     }
 
     const [teamCapacity,rosterCount]=await Promise.all([
@@ -188,7 +189,7 @@ export async function POST(req: Request) {
       return NextResponse.json({ok:true,preselection:true});
     }
     const maxPlayers=Number(teamCapacity.data?.metadata?.institutionSelectionMaxPlayers)===10?10:12;
-    if((rosterCount.count||0)>=maxPlayers)return NextResponse.json({error:`Sélection complète : ${maxPlayers} joueurs maximum. Les détections et entraînements restent sans limite.`},{status:409});
+    if(!existing.data?.id&&(rosterCount.count||0)>=maxPlayers)return NextResponse.json({error:`Sélection complète : ${maxPlayers} joueurs maximum. Les détections et entraînements restent sans limite.`},{status:409});
     try {
       const ownerId = await getTeamOwner(
         ctx.admin,
@@ -206,8 +207,12 @@ export async function POST(req: Request) {
         categorie: player.category || player.profile_data?.categorie || "",
       };
 
+      const previousLink = await ctx.admin.from("institutional_player_team_links").select("id,team_player_id").eq("structure_id",structureId).eq("player_id",playerId).eq("team_id",selection.team_id).maybeSingle();
+      if(previousLink.error)throw new Error(previousLink.error.message);
+      const knownId=existing.data?.team_player_id||previousLink.data?.team_player_id;
+      if(knownId){const known=await ctx.admin.from("players").select("id,team_id,metadata").eq("id",knownId).maybeSingle();if(known.error||!known.data||!(known.data.team_id===selection.team_id||known.data.metadata?.additionalTeamIds?.includes(selection.team_id)))throw new Error("La fiche liée à cette équipe est indisponible. Aucun doublon n’a été créé.");}
       let projectionPending = false;
-      const teamPlayerId = await createTeamPlayer(ctx.admin, {
+      const teamPlayerId = knownId || await createTeamPlayer(ctx.admin, {
         teamId: String(selection.team_id),
         ownerId,
         player: playerData,
@@ -221,9 +226,8 @@ export async function POST(req: Request) {
         return null;
       });
 
-      const previousLink = await ctx.admin.from("institutional_player_team_links").select("id").eq("structure_id",structureId).eq("player_id",playerId).eq("team_id",selection.team_id).maybeSingle();
-      if(previousLink.error)throw new Error(previousLink.error.message);
-      const linkWrite = previousLink.data || !teamPlayerId ? {error:null} : await ctx.admin
+
+      const linkWrite = !teamPlayerId ? {error:null} : previousLink.data ? await ctx.admin.from("institutional_player_team_links").update({team_player_id:teamPlayerId}).eq("id",previousLink.data.id).eq("structure_id",structureId).eq("player_id",playerId).eq("team_id",selection.team_id) : await ctx.admin
         .from("institutional_player_team_links")
         .insert({
           structure_id: structureId,
@@ -236,19 +240,16 @@ export async function POST(req: Request) {
 
       if (linkWrite.error) throw new Error(linkWrite.error.message);
 
-      const write = await ctx.admin.from("institutional_selection_players").insert({
-        selection_id: selectionId,
-        player_id: playerId,
-        team_player_id: teamPlayerId,
-        status: "active",
-        created_by: ctx.user.id,
-      });
+      if(body.syncExisting && !teamPlayerId)return NextResponse.json({error:"Le joueur est conservé dans la sélection, mais la liaison statistiques reste bloquée par la limite de l’équipe. Aucune statistique n’a été effacée."},{status:409});
+      const write = existing.data?.id
+        ? await ctx.admin.from("institutional_selection_players").update({team_player_id:teamPlayerId}).eq("id",existing.data.id).eq("selection_id",selectionId).eq("player_id",playerId)
+        : await ctx.admin.from("institutional_selection_players").insert({selection_id:selectionId,player_id:playerId,team_player_id:teamPlayerId,status:"active",created_by:ctx.user.id});
 
       if (write.error) throw new Error(write.error.message);
 
       // Recheck after insertion as another coach can add at the same time. Undo only this new membership if full.
       const finalCount=await ctx.admin.from("institutional_selection_players").select("id",{count:"exact",head:true}).eq("selection_id",selectionId).eq("status","active");
-      if(finalCount.error || (finalCount.count||0)>maxPlayers){
+      if(!existing.data?.id && (finalCount.error || (finalCount.count||0)>maxPlayers)){
         const undo=await ctx.admin.from("institutional_selection_players").delete().eq("selection_id",selectionId).eq("player_id",playerId);
         if(undo.error)throw new Error(undo.error.message);
         return NextResponse.json({error:finalCount.error?.message||`Sélection complète : ${maxPlayers} joueurs maximum. Cet ajout n’a pas été conservé.`},{status:409});

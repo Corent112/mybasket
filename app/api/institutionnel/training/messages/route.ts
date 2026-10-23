@@ -1,3 +1,4 @@
+import {canManageInstitutionTraining} from "@/lib/institutionnel/training-permissions";
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin-server";
@@ -29,8 +30,8 @@ export async function POST(request: Request) {
   const { data: profile } = await supabase.from("profiles").select("platform_role").eq("id", user.id).maybeSingle();
   if (!instructor && !["ceo", "superadmin"].includes(String(profile?.platform_role || ""))) {
     const { data: cohort } = await supabase.from("training_cohorts").select("institution_id").eq("id", cohortId).maybeSingle();
-    const { data: member } = cohort?.institution_id ? await supabase.from("institutional_members").select("id").eq("structure_id", cohort.institution_id).eq("user_id", user.id).eq("status", "active").maybeSingle() : { data: null } as any;
-    if (!member) return NextResponse.json({ error: "Accès formateur requis" }, { status: 403 });
+    const { data: member } = cohort?.institution_id ? await supabase.from("institutional_members").select("id,role,permissions").eq("structure_id", cohort.institution_id).eq("user_id", user.id).eq("status", "active").maybeSingle() : { data: null } as any;
+    if (!canManageInstitutionTraining(member)) return NextResponse.json({ error: "Accès formateur requis" }, { status: 403 });
   }
   if (!admin) return NextResponse.json({ error: "Service email indisponible" }, { status: 500 });
 
