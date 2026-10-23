@@ -30,7 +30,9 @@ export function orderInformationPlayers<T extends {id?:unknown}>(players:T[],wat
  return [...players.filter(player=>watched.has(String(player.id))),...players.filter(player=>!watched.has(String(player.id)))];
 }
 export function informationExportRows(players:any[],staff:SelectionInformationStaff[],options:SelectionInformationOptions={}){
- const keys=[...new Set(options.columns??DEFAULT_INFORMATION_COLUMNS)],columns=keys.flatMap(key=>{const column=INFORMATION_COLUMNS.find(([id])=>id===key);return column?[column]:[]});
+ const keys=[...new Set(options.columns??DEFAULT_INFORMATION_COLUMNS)];
+ if(keys.includes('motherHeight')&&keys.includes('fatherHeight')){keys.splice(keys.indexOf('fatherHeight'),1);keys.splice(keys.indexOf('motherHeight')+1,0,'fatherHeight');}
+ const columns=keys.flatMap(key=>{const column=INFORMATION_COLUMNS.find(([id])=>id===key);return column?[column]:[]});
  if(!columns.length)throw Error('Choisis au moins une colonne.');
  const allowed=new Set(players.map(p=>String(p.id))),watch=[...new Set(options.watchPlayerIds||[])].filter(id=>allowed.has(id));if(watch.length>3)throw Error('Choisis au maximum 3 joueurs à surveiller.');
  const orderedPlayers=orderInformationPlayers(players,watch);
