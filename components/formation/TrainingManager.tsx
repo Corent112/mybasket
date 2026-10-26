@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
+import AttendanceBulkPresence from "@/components/formation/AttendanceBulkPresence";
 import AttendanceGroupQr from "@/components/formation/AttendanceGroupQr";
 import AttendanceCell from "@/components/formation/AttendanceCell";
 import AttendanceSigningDialog from "@/components/formation/AttendanceSigningDialog";
@@ -1150,6 +1151,7 @@ export default function TrainingManager({ institutionId }: { institutionId?: str
             <section className="panel">
               <div className="panel-head attendance-heading"><div><p>ÉMARGEMENT</p><h3>Présences & signatures</h3><span>{cohort?.name||"Formation"}</span></div><span>{candidates.length} stagiaires · {sessions.length} demi-journées · {attendance.filter(record=>["present","late"].includes(record.status)&&readAttendanceSignature(record.notes)).length} signatures</span></div>
               <div className="attendance-toolbar"><input aria-label="Rechercher un stagiaire dans les présences" placeholder="Rechercher un stagiaire" value={attendanceSearch} onChange={event=>setAttendanceSearch(event.target.value)}/><label>Jour affiché<select aria-label="Afficher toutes les dates ou une journée" value={attendanceDay} onChange={event=>setAttendanceDay(event.target.value)}><option value="">Toute la formation</option>{Array.from(new Set(sessions.map(session=>session.session_date))).sort().map(date=><option key={date} value={date}>{new Date(`${date}T12:00:00`).toLocaleDateString("fr-FR",{day:"numeric",month:"long",year:"numeric"})}</option>)}</select></label><button type="button" className="ghost" onClick={()=>void downloadCohortPdf("attendance")}>Exporter tout le monde</button><button type="button" disabled={attendanceChecked.size===0} onClick={()=>void downloadCohortPdf("attendance",Array.from(attendanceChecked))}>Exporter la sélection ({attendanceChecked.size})</button></div>
+              <AttendanceBulkPresence key={cohortId} cohortId={cohortId} sessions={visibleAttendanceSessions} candidates={candidates.filter(candidate=>attendanceChecked.has(candidate.id))} isPresent={(sessionId,candidateId)=>attendance.some(row=>row.session_id===sessionId&&row.candidate_id===candidateId&&row.status==="present")} onRefresh={()=>loadCohort(cohortId)}/>
               <AttendanceGroupQr cohortId={cohortId} sessions={visibleAttendanceSessions} presentCount={id=>attendance.filter(row=>row.session_id===id&&["present","late"].includes(row.status)).length} onRefresh={()=>loadCohort(cohortId)}/>
               <details className="attendance-session-settings" open={attendanceSessionFormOpen||!!editingSessionId} onToggle={event=>setAttendanceSessionFormOpen(event.currentTarget.open)}><summary>Ajouter ou modifier une demi-journée</summary>
               <div className="session-create simple-session">
