@@ -2,8 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
-import AttendanceBulkPresence from "@/components/formation/AttendanceBulkPresence";
-import AttendanceGroupQr from "@/components/formation/AttendanceGroupQr";
+import AttendanceWorkspace from "@/components/formation/AttendanceWorkspace";
 import AttendanceCell from "@/components/formation/AttendanceCell";
 import AttendanceSigningDialog from "@/components/formation/AttendanceSigningDialog";
 import {readAttendanceSignature,attendanceMetadata} from "@/lib/institutionnel/training-attendance-signature";
@@ -768,6 +767,11 @@ export default function TrainingManager({ institutionId }: { institutionId?: str
     setAttendanceBusy(items=>[...items,key]);
     try{await persistAttendance(sessionId,candidateId,status);}catch(error){alert(error instanceof Error?error.message:"Enregistrement impossible");}finally{setAttendanceBusy(items=>items.filter(item=>item!==key));}
   }
+  async function removeAttendanceSignature(candidate:Candidate,session:AttendanceSession){
+    if(!confirm(`Supprimer uniquement la signature de ${candidate.first_name||""} ${candidate.last_name||""} pour « ${session.title} » ? La présence sera conservée.`))return;
+    const key=`${session.id}:${candidate.id}`;setAttendanceBusy(items=>[...items,key]);
+    try{const status=attendance.find(row=>row.session_id===session.id&&row.candidate_id===candidate.id)?.status||"present";await persistAttendance(session.id,candidate.id,status,null);}catch(error){alert(error instanceof Error?error.message:"Suppression impossible");}finally{setAttendanceBusy(items=>items.filter(item=>item!==key));}
+  }
   async function resetAttendance(candidate:Candidate,session:AttendanceSession){
     if(!confirm(`Effacer la présence et la signature de ${candidate.first_name||""} ${candidate.last_name||""} pour « ${session.title} » ? La case reviendra à « À renseigner » sans retour arrière.`))return;
     const key=`${session.id}:${candidate.id}`;setAttendanceBusy(items=>[...items,key]);
@@ -781,9 +785,9 @@ export default function TrainingManager({ institutionId }: { institutionId?: str
     const key=`${session.id}:${candidate.id}`;setAttendanceBusy(items=>[...items,key]);
     try{await attendanceAction(candidate,session,"undo");setAttendanceNotice("Dernière modification annulée.");setLastAttendanceChange(null);}catch(e){alert(e instanceof Error?e.message:"Annulation impossible");}finally{setAttendanceBusy(items=>items.filter(item=>item!==key));}
   }
-  function attendanceControl(candidate:Candidate,session:AttendanceSession,record?:Attendance){
+  function attendanceControl(candidate:Candidate,session:AttendanceSession,record?:Attendance,wide=false){
     const status=record?.status||"unknown",present=status==="present"||status==="late",signature=readAttendanceSignature(record?.notes),busy=attendanceBusy.includes(`${session.id}:${candidate.id}`),canUndo=!!attendanceMetadata(record?.notes).mybasketAttendancePrevious;
-    return <AttendanceCell status={status} signature={!!signature} busy={busy} canUndo={canUndo} wide={!!attendanceDay} label={`${candidate.first_name||""} ${candidate.last_name||""} — ${session.title}`} onStatus={value=>{if(value==="unknown")void resetAttendance(candidate,session);else void setAttendance(session.id,candidate.id,value);}} onSign={()=>setSignatureTarget({candidate,session})} onRemove={()=>void resetAttendance(candidate,session)} onUndo={()=>void undoAttendance(candidate,session)}/>;
+    return <AttendanceCell status={status} signature={!!signature} busy={busy} canUndo={canUndo} wide={wide} label={`${candidate.first_name||""} ${candidate.last_name||""} — ${session.title}`} onStatus={value=>{if(value==="unknown")void resetAttendance(candidate,session);else void setAttendance(session.id,candidate.id,value);}} onSign={()=>setSignatureTarget({candidate,session})} onRemove={()=>void removeAttendanceSignature(candidate,session)} onUndo={()=>void undoAttendance(candidate,session)}/>;
   }
 
   async function saveEvaluation(candidate: Candidate, patch: Partial<Evaluation>) {
@@ -1149,11 +1153,7 @@ export default function TrainingManager({ institutionId }: { institutionId?: str
 
           {tab === "attendance" && (
             <section className="panel">
-              <div className="panel-head attendance-heading"><div><p>ÉMARGEMENT</p><h3>Présences & signatures</h3><span>{cohort?.name||"Formation"}</span></div><span>{candidates.length} stagiaires · {sessions.length} demi-journées · {attendance.filter(record=>["present","late"].includes(record.status)&&readAttendanceSignature(record.notes)).length} signatures</span></div>
-              <div className="attendance-toolbar"><input aria-label="Rechercher un stagiaire dans les présences" placeholder="Rechercher un stagiaire" value={attendanceSearch} onChange={event=>setAttendanceSearch(event.target.value)}/><label>Jour affiché<select aria-label="Afficher toutes les dates ou une journée" value={attendanceDay} onChange={event=>setAttendanceDay(event.target.value)}><option value="">Toute la formation</option>{Array.from(new Set(sessions.map(session=>session.session_date))).sort().map(date=><option key={date} value={date}>{new Date(`${date}T12:00:00`).toLocaleDateString("fr-FR",{day:"numeric",month:"long",year:"numeric"})}</option>)}</select></label><button type="button" className="ghost" onClick={()=>void downloadCohortPdf("attendance")}>Exporter tout le monde</button><button type="button" disabled={attendanceChecked.size===0} onClick={()=>void downloadCohortPdf("attendance",Array.from(attendanceChecked))}>Exporter la sélection ({attendanceChecked.size})</button></div>
-              <AttendanceBulkPresence key={cohortId} cohortId={cohortId} sessions={visibleAttendanceSessions} candidates={candidates.filter(candidate=>attendanceChecked.has(candidate.id))} isPresent={(sessionId,candidateId)=>attendance.some(row=>row.session_id===sessionId&&row.candidate_id===candidateId&&row.status==="present")} onRefresh={()=>loadCohort(cohortId)}/>
-              <AttendanceGroupQr cohortId={cohortId} sessions={visibleAttendanceSessions} presentCount={id=>attendance.filter(row=>row.session_id===id&&["present","late"].includes(row.status)).length} onRefresh={()=>loadCohort(cohortId)}/>
-              <details className="attendance-session-settings" open={attendanceSessionFormOpen||!!editingSessionId} onToggle={event=>setAttendanceSessionFormOpen(event.currentTarget.open)}><summary>Ajouter ou modifier une demi-journée</summary>
+              <AttendanceWorkspace key={cohortId} cohortId={cohortId} title={cohort?.name||"Formation"} sessions={sessions} candidates={candidates} attendance={attendance} checked={attendanceChecked} onChecked={setAttendanceChecked} onRefresh={()=>loadCohort(cohortId)} onExport={ids=>void downloadCohortPdf("attendance",ids)} onPreview={()=>void previewAttendancePdf()} renderCell={attendanceControl} onEditSession={editSession} onRemoveSession={session=>void removeSession(session)} sessionTools={<details className="attendance-session-settings" open={attendanceSessionFormOpen||!!editingSessionId} onToggle={event=>setAttendanceSessionFormOpen(event.currentTarget.open)}><summary>Ajouter ou modifier une demi-journée</summary>
               <div className="session-create simple-session">
                 <input value={sessionForm.title} onChange={(e) => setSessionForm({ ...sessionForm, title: e.target.value })} placeholder="Ex. Journée 1" />
                 <input type="date" value={sessionForm.session_date} onChange={(e) => setSessionForm({ ...sessionForm, session_date: e.target.value })} />
@@ -1165,49 +1165,10 @@ export default function TrainingManager({ institutionId }: { institutionId?: str
 
               </div>
 
-              </details>
-              <div className="attendance-export-note">ⓘ Le filtre change l’affichage. Choisissez l’export de toute la promotion ou des candidats cochés. Les deux exports contiennent toutes les demi-journées, avec leurs statuts et signatures, sur une page A4 paysage.</div>
-              <div className="attendance-selection"><label><input type="checkbox" checked={attendanceSelectedOnly} onChange={event=>setAttendanceSelectedOnly(event.target.checked)}/> Afficher uniquement les candidats cochés</label><span>{attendanceChecked.size} sélectionné(s)</span>{attendanceChecked.size>0&&<button type="button" className="ghost" onClick={()=>{setAttendanceChecked(new Set());setAttendanceSelectedOnly(false);}}>Effacer la sélection</button>}</div>
-              <div className="table-scroll attendance-viewport" role="region" aria-label="Tableau des présences, défilement de la page">
-                <table className={`attendance-grid ${attendanceDay?"day-view":""}`} style={{tableLayout:"fixed",minWidth:170+visibleAttendanceSessions.length*(attendanceDay?210:110)}}>
-                  <colgroup><col style={{width:170}}/>{visibleAttendanceSessions.map(session=><col key={session.id} style={{width:attendanceDay?210:110}}/>)}</colgroup>
-                  <thead>
-                    <tr className="attendance-date-header"><th>Stagiaire</th>{attendanceDates.map(date=><th key={date} colSpan={visibleAttendanceSessions.filter(session=>session.session_date===date).length}>{new Date(`${date}T12:00:00`).toLocaleDateString("fr-FR",{day:"numeric",month:"long",year:"numeric"})}</th>)}</tr>
-                    <tr className="attendance-session-header">
-                      <th><label className="attendance-check"><input type="checkbox" aria-label="Cocher tous les candidats affichés" checked={attendanceCandidates.length>0&&attendanceCandidates.every(candidate=>attendanceChecked.has(candidate.id))} onChange={event=>{const checked=event.target.checked;setAttendanceChecked(previous=>{const next=new Set(previous);attendanceCandidates.forEach(candidate=>{if(checked)next.add(candidate.id);else next.delete(candidate.id);});return next;});}}/> Nom · Club</label></th>
-                      {visibleAttendanceSessions.map((s) => (
-                        <th key={s.id}>
-                          <b>{s.title}</b>
-                          <small>{s.start_time?.slice(0,5)||""}{s.end_time?`–${s.end_time.slice(0,5)}`:""}</small>
-                          <details className="attendance-session-menu"><summary aria-label={`Options de ${s.title}`}>⋯</summary><span className="session-head-actions">
-                            <button className="mini-action" onClick={() => editSession(s)}>Modifier</button>
-                            <button className="mini-action danger-text" onClick={() => void removeSession(s)}>Supprimer</button>
-                          </span></details>
-                        </th>
-                      ))}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {attendanceCandidates.map((c) => (
-                      <tr key={c.id}>
-                        <td><label className="attendance-check"><input type="checkbox" aria-label={`Sélectionner ${c.first_name||""} ${c.last_name||""} pour l’export`} checked={attendanceChecked.has(c.id)} onChange={event=>{const checked=event.target.checked;setAttendanceChecked(previous=>{const next=new Set(previous);if(checked)next.add(c.id);else next.delete(c.id);return next;});}}/><span><b>{c.first_name} {c.last_name}</b><small>{c.club_name}</small></span></label></td>
-                        {visibleAttendanceSessions.map((s) => {
-                          const record = attendance.find((a) => a.session_id === s.id && a.candidate_id === c.id);
-                          const present = record?.status === "present" || record?.status === "late";
-                          return (
-                            <td key={s.id} className="presence-check">
-                              {attendanceControl(c,s,record)}
-                            </td>
-                          );
-                        })}
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-              {attendanceCandidates.length===0&&<div className="empty-state mini-empty">Aucun stagiaire pour cette recherche.</div>}
+              </details>}/>
               {attendanceNotice&&<div role="status" className="attendance-notice"><span>✓ {attendanceNotice}</span>{lastAttendanceChange&&<button type="button" className="ghost" disabled={attendanceBusy.includes(`${lastAttendanceChange.sessionId}:${lastAttendanceChange.candidateId}`)} onClick={()=>{const candidate=candidates.find(item=>item.id===lastAttendanceChange.candidateId),session=sessions.find(item=>item.id===lastAttendanceChange.sessionId);if(candidate&&session)void undoAttendance(candidate,session);}}>↶ Annuler</button>}</div>}
-              <section className="attendance-pdf-card"><header><div><b>PDF · Toute la formation</b><small>Tous les stagiaires · Toutes les demi-journées · Statuts et signatures</small></div><button type="button" className="ghost" disabled={attendancePdfBusy} onClick={()=>void previewAttendancePdf()}>{attendancePdfBusy?"Chargement…":attendancePdfPreview?"Actualiser l’aperçu":"Voir l’aperçu PDF"}</button></header>{attendancePdfPreview?<><iframe src={attendancePdfPreview} title="Aperçu complet de la feuille d’émargement"/><a href={attendancePdfPreview} target="_blank" rel="noopener noreferrer">Ouvrir l’aperçu en grand</a></>:<p>Le PDF rassemble toute la formation sur une page A4 paysage, quel que soit le jour affiché.</p>}</section>
+
+              {attendancePdfPreview&&<section className="attendance-pdf-card"><header><div><b>PDF · Toute la formation</b><small>Tous les stagiaires · Toutes les demi-journées · Statuts et signatures</small></div><button type="button" className="ghost" disabled={attendancePdfBusy} onClick={()=>void previewAttendancePdf()}>{attendancePdfBusy?"Chargement…":attendancePdfPreview?"Actualiser l’aperçu":"Voir l’aperçu PDF"}</button></header>{attendancePdfPreview?<><iframe src={attendancePdfPreview} title="Aperçu complet de la feuille d’émargement"/><a href={attendancePdfPreview} target="_blank" rel="noopener noreferrer">Ouvrir l’aperçu en grand</a></>:<p>Le PDF rassemble toute la formation sur une page A4 paysage, quel que soit le jour affiché.</p>}</section>}
             </section>
           )}
 
