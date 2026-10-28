@@ -1,7 +1,7 @@
 import {NextResponse} from "next/server";
 import {createHash,timingSafeEqual} from "node:crypto";
 import {createAdminClient} from "@/lib/supabase/admin-server";
-import {attendanceMetadata,saveAttendancePrevious,withAttendanceSignature} from "@/lib/institutionnel/training-attendance-signature";
+import {attendanceMetadata,readAttendanceSignature,saveAttendancePrevious,withAttendanceSignature} from "@/lib/institutionnel/training-attendance-signature";
 import {normalizeAttendanceSignature,updateAttendanceRecord} from "@/lib/institutionnel/training-attendance-server";
 export async function POST(request:Request,{params}:{params:Promise<{id:string}>}){
  const db=createAdminClient();if(!db)return NextResponse.json({error:"Signature indisponible"},{status:503});
@@ -12,8 +12,8 @@ export async function POST(request:Request,{params}:{params:Promise<{id:string}>
  const link=attendanceMetadata(record?.notes).mybasketAttendancePhone;
  const actual=createHash("sha256").update(body.token).digest("hex");
  if(!record||typeof link?.hash!=="string"||! /^[a-f0-9]{64}$/.test(link.hash)||!timingSafeEqual(Buffer.from(actual,"hex"),Buffer.from(link.hash,"hex")))return NextResponse.json({error:"Lien annulé ou invalide"},{status:403});
- if(!Number.isFinite(Date.parse(link.expiresAt))||Date.parse(link.expiresAt)<=Date.now())return NextResponse.json({error:"Lien expiré. Demandez un nouveau QR code."},{status:410});
- if(link.usedAt){if(body.action==="inspect")return NextResponse.json({completed:true},{headers:{"Cache-Control":"no-store"}});return NextResponse.json({error:"Cette signature a déjà été enregistrée."},{status:409});}
+ // Valid tokens remain active until explicitly revoked or replaced, including previously issued links.
+ if(link.usedAt||readAttendanceSignature(record.notes)){if(body.action==="inspect")return NextResponse.json({completed:true},{headers:{"Cache-Control":"no-store"}});return NextResponse.json({error:"Cette signature a déjà été enregistrée."},{status:409});}
  if(!["present","late"].includes(record.status))return NextResponse.json({error:"La présence a été modifiée. Demandez un nouveau QR code."},{status:409});
  const [{data:session},{data:candidate}]=await Promise.all([
  db.from("training_attendance_sessions").select("id,cohort_id,title,session_date,start_time,end_time").eq("id",record.session_id).maybeSingle(),

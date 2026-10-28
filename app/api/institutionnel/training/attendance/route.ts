@@ -38,7 +38,7 @@ export async function PATCH(request: Request) {
   }else if(action==="phone"){
    if(!previous||!["present","late"].includes(previous.status))return NextResponse.json({error:"Choisissez Présent avant de faire signer."},{status:400});
    if(!createAdminClient())return NextResponse.json({error:"Signature téléphone indisponible : configuration serveur requise."},{status:503});
-   const token=randomBytes(32).toString("hex"),expiresAt=new Date(Date.now()+10*60*1000).toISOString();
+   const token=randomBytes(32).toString("hex"),expiresAt=null;
    const metadata=attendanceMetadata(notes);
    metadata.mybasketAttendancePhone={hash:createHash("sha256").update(token).digest("hex"),expiresAt,issuedBy:user.id};
    notes=JSON.stringify(metadata);nextStatus=previous.status;

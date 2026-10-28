@@ -7,7 +7,8 @@ export async function POST(request:Request,{params}:{params:Promise<{id:string}>
  const db=createAdminClient();if(!db)return NextResponse.json({error:'Signature indisponible.'},{status:503});
  const body=await request.json().catch(()=>null),{id}=await params;if(!body||! /^[a-f0-9]{64}$/.test(String(body.token||''))||! /^[a-f0-9-]{36}$/i.test(id)||!['inspect','sign'].includes(body.action))return NextResponse.json({error:'Lien invalide.'},{status:400});
  const {data:anchor,error}=await db.from('training_candidate_attendance').select('id,session_id,notes').eq('id',id).maybeSingle();if(error)return NextResponse.json({error:'Lecture impossible.'},{status:503});const link=attendanceMetadata(anchor?.notes).mybasketAttendanceGroupPhone,hash=createHash('sha256').update(body.token).digest('hex');
- if(!anchor||! /^[a-f0-9]{64}$/.test(String(link?.hash||''))||!timingSafeEqual(Buffer.from(hash,'hex'),Buffer.from(link.hash,'hex')))return NextResponse.json({error:'QR code annulé ou invalide.'},{status:403});if(!Number.isFinite(Date.parse(link.expiresAt))||Date.parse(link.expiresAt)<=Date.now())return NextResponse.json({error:'QR code expiré. Demandez un nouveau code.'},{status:410});
+ if(!anchor||! /^[a-f0-9]{64}$/.test(String(link?.hash||''))||!timingSafeEqual(Buffer.from(hash,'hex'),Buffer.from(link.hash,'hex')))return NextResponse.json({error:'QR code annulé ou invalide.'},{status:403});
+ // Valid tokens remain active until explicitly revoked or replaced, including previously issued links.
  const {data:session}=await db.from('training_attendance_sessions').select('id,cohort_id,title,session_date,start_time,end_time').eq('id',anchor.session_id).maybeSingle();if(!session)return NextResponse.json({error:'Demi-journée introuvable.'},{status:404});
  const reply=(data:any)=>NextResponse.json(data,{headers:{'Cache-Control':'no-store'}});
  try{

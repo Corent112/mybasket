@@ -1,7 +1,7 @@
 export type AttendanceSignature = {image: string; signedAt: string; recordedBy: string};
-export type AttendancePhoneLink = {hash:string;expiresAt:string;issuedBy:string;usedAt?:string};
+export type AttendancePhoneLink = {hash:string;expiresAt:string|null;issuedBy:string;usedAt?:string};
 export function attendanceMetadata(notes?:string|null):Record<string,any>{
- try{const value=JSON.parse(notes||"");if(value&&typeof value==="object"&&!Array.isArray(value)&&(typeof value.notes==="string"||value.mybasketAttendanceSignature||value.mybasketAttendancePhone||value.mybasketAttendancePrevious))return value;}catch{}
+ try{const value=JSON.parse(notes||"");if(value&&typeof value==="object"&&!Array.isArray(value)&&(typeof value.notes==="string"||value.mybasketAttendanceSignature||value.mybasketAttendancePhone||value.mybasketAttendanceGroupPhone||value.mybasketAttendancePrevious))return value;}catch{}
  return {notes:notes||""};
 }
 export function readAttendanceSignature(notes?: string | null): AttendanceSignature | null {
