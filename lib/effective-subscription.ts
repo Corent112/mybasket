@@ -117,34 +117,15 @@ export async function getEffectiveSubscriptionForUser(options: {
     (row: any) => row?.plan_id && subscriptionIsUsable(row, now),
   );
 
-  if (paidSubscription?.plan_id) {
-    const { data: plan, error: planError } = await client
-      .from("subscription_plans")
-      .select("*")
-      .eq("id", paidSubscription.plan_id)
-      .maybeSingle();
-
-    if (planError) {
-      console.error("Lecture plan abonnement impossible :", planError.message);
-    }
-
-    if (plan) {
-      return {
-        active: true,
-        source: "paid",
-        plan,
-        subscription: paidSubscription,
-      };
-    }
-  }
-
+  // L’accès offert explicitement par un administrateur prime pendant sa validité.
   if (admin && options.email) {
     const email = normalize(options.email);
     const { data: grants, error: grantsError } = await admin
       .from("free_access_grants")
-      .select("id,user_email,plan_slug,status,starts_at,ends_at,created_at")
+      .select("*")
       .ilike("user_email", email)
       .eq("status", "active")
+      .order("updated_at", { ascending: false })
       .order("created_at", { ascending: false })
       .limit(20);
 
@@ -196,5 +177,27 @@ export async function getEffectiveSubscriptionForUser(options: {
     }
   }
 
+  if (paidSubscription?.plan_id) {
+    const { data: plan, error: planError } = await client
+      .from("subscription_plans")
+      .select("*")
+      .eq("id", paidSubscription.plan_id)
+      .maybeSingle();
+
+    if (planError) {
+      console.error("Lecture plan abonnement impossible :", planError.message);
+    }
+
+    if (plan) {
+      return {
+        active: true,
+        source: "paid",
+        plan,
+        subscription: paidSubscription,
+      };
+    }
+  }
+
   return { active: false, source: null, plan: null, subscription: null };
 }
+

@@ -1,8 +1,9 @@
+import { applyAdminUserPlan } from "@/lib/admin/apply-user-plan";
 import Link from "next/link";
 import styles from "./page.module.css";
 import { revalidatePath } from "next/cache";
 import DeleteUserButton from "./DeleteUserButton";
-import {readAdminRows,resolveAdminUserSubscription} from "@/lib/admin/user-subscriptions";
+import {readAllAuthUsers,readAdminRows,resolveAdminUserSubscription} from "@/lib/admin/user-subscriptions";
 
 import { requireAdmin } from "@/lib/admin/guard";
 import { createAdminClient } from "@/lib/supabase/admin-server";
@@ -85,12 +86,8 @@ async function createUserAction(formData: FormData) {
     );
   }
 
-  const { data: usersData, error: listError } =
-    await adminClient.auth.admin.listUsers({ page: 1, perPage: 1000 });
-
-  if (listError) throw listError;
-
-  let authUser = usersData.users.find(
+  const authUsers = await readAllAuthUsers(adminClient);
+  let authUser = authUsers.find(
     (candidate) => candidate.email?.trim().toLowerCase() === email,
   );
 
@@ -155,37 +152,17 @@ async function changeSubscriptionAction(formData: FormData) {
 
   const { data: plan, error: planError } = await adminClient
     .from("subscription_plans")
-    .select("id")
+    .select("id,slug,name")
     .eq("id", planId)
     .eq("status", "active")
     .maybeSingle();
   if (planError) throw planError;
   if (!plan?.id) throw new Error("Abonnement introuvable ou inactif.");
 
-  const { data: activeRows, error: activeError } = await adminClient
-    .from("subscriptions")
-    .select("id")
-    .eq("user_id", userId)
-    .in("status", ["active", "trialing"])
-    .order("created_at", { ascending: false })
-    .limit(1);
-  if (activeError) throw activeError;
-
-  const current = activeRows?.[0];
-  if (current?.id) {
-    const { error } = await adminClient
-      .from("subscriptions")
-      .update({ plan_id: planId, status: "active" })
-      .eq("id", current.id);
-    if (error) throw error;
-  } else {
-    const { error } = await adminClient
-      .from("subscriptions")
-      .insert({ user_id: userId, plan_id: planId, status: "active" });
-    if (error) throw error;
-  }
+  await applyAdminUserPlan(adminClient, userId, plan);
 
   revalidatePath("/admin/utilisateurs");
+  revalidatePath("/admin/paiements");
   revalidatePath("/mon-compte");
   revalidatePath("/institutionnel");
 }
@@ -235,32 +212,24 @@ async function deleteUserAction(formData: FormData) {
 export default async function AdminUtilisateursPage() {
   const { supabase, user: currentUser } = await requireAdmin();
 
-  const { data: profilesData } = await supabase
-    .from("profiles")
-    .select("*")
-    .order("created_at", { ascending: false });
-
   const adminClient = createAdminClient();
   const readClient = adminClient || supabase;
-  const [subscriptionsData,plansData,grantsResult] = await Promise.all([
+  const [profilesData,subscriptionsData,plansData,grantsResult] = await Promise.all([
+    readAdminRows(readClient,"profiles"),
     readAdminRows(readClient,"subscriptions"),
     readAdminRows(readClient,"subscription_plans"),
     adminClient ? readAdminRows(adminClient,"free_access_grants").then(data=>({data,error:""})).catch(error=>({data:[],error:error.message as string})) : Promise.resolve({data:[],error:"Lecture des accès offerts indisponible : configuration serveur manquante."}),
   ]);
   const storedProfiles = (profilesData || []) as Profile[];
-  const authResult = adminClient
-    ? await adminClient.auth.admin.listUsers({ page: 1, perPage: 1000 })
-    : null;
-
+  const authUsers = adminClient ? await readAllAuthUsers(adminClient) : [];
   const profilesById = new Map(storedProfiles.map((profile) => [profile.id, profile]));
-  const authUsers = authResult && !authResult.error ? authResult.data.users : [];
 
   const profiles: Profile[] = authUsers.length
     ? authUsers.map((authUser: any) => {
         const profile = profilesById.get(authUser.id);
         return {
           id: authUser.id,
-          email: profile?.email || authUser.email || null,
+          email: authUser.email || profile?.email || null,
           display_name:
             profile?.display_name ||
             String(authUser.user_metadata?.display_name || authUser.user_metadata?.full_name || "") ||
@@ -436,6 +405,8 @@ export default async function AdminUtilisateursPage() {
                 {profiles.map((user) => {
                   const access = accessByUser.get(user.id)!;
                   const plan = access.active ? access.plan : null;
+                  const startsAt = access.subscription?.starts_at || access.subscription?.current_period_start || null;
+                  const endsAt = access.subscription?.ends_at || access.subscription?.current_period_end || null;
 
                   return (
                     <tr key={user.id}>
@@ -472,6 +443,7 @@ export default async function AdminUtilisateursPage() {
                           <div>
                           <strong className={styles.subscriptionLabel}>{access.active ? access.plan?.name || "Abonnement" : "Sans abonnement actif"}</strong>
                           <small className={styles.subscriptionSource}>{access.source === "free" ? "Accès offert" : access.active ? "Abonnement attribué" : access.plan ? `Ancien abonnement : ${access.plan.name || "—"}` : "Aucun accès attribué"}</small>
+                          {access.active && (startsAt || endsAt) && <small className={styles.subscriptionSource}>{startsAt ? `Du ${formatDate(startsAt)}` : ""}{endsAt ? ` au ${formatDate(endsAt)}` : " · Sans date de fin"}</small>}
                           <form key={`${user.id}-${plan?.id || "none"}-${access.source}`} action={changeSubscriptionAction} className={styles.subscriptionForm}>
                             <input type="hidden" name="user_id" value={user.id} />
                             <select name="plan_id" defaultValue={plan?.id || ""} aria-label={`Abonnement de ${user.email || user.display_name || "l’utilisateur"}`}>

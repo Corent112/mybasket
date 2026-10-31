@@ -1,3 +1,5 @@
+import { readAdminRows, readAllAuthUsers, resolveAdminUserSubscription } from "@/lib/admin/user-subscriptions";
+import { applyAdminUserPlan } from "@/lib/admin/apply-user-plan";
 import Link from "next/link";
 import { revalidatePath } from "next/cache";
 import styles from "./page.module.css";
@@ -125,7 +127,7 @@ async function changeUserSubscriptionAction(formData: FormData) {
 
   const { data: plan, error: planError } = await adminClient
     .from("subscription_plans")
-    .select("id,target,status")
+    .select("id,name,slug,target,status")
     .eq("id", planId)
     .eq("status", "active")
     .maybeSingle();
@@ -135,29 +137,7 @@ async function changeUserSubscriptionAction(formData: FormData) {
     throw new Error("Abonnement individuel introuvable ou inactif.");
   }
 
-  const { data: activeRows, error: activeError } = await adminClient
-    .from("subscriptions")
-    .select("id")
-    .eq("user_id", userId)
-    .in("status", ["active", "trialing"])
-    .order("created_at", { ascending: false })
-    .limit(1);
-
-  if (activeError) throw activeError;
-
-  const current = activeRows?.[0];
-  if (current?.id) {
-    const { error } = await adminClient
-      .from("subscriptions")
-      .update({ plan_id: planId, status: "active" })
-      .eq("id", current.id);
-    if (error) throw error;
-  } else {
-    const { error } = await adminClient
-      .from("subscriptions")
-      .insert({ user_id: userId, plan_id: planId, status: "active" });
-    if (error) throw error;
-  }
+  await applyAdminUserPlan(adminClient, userId, plan);
 
   revalidatePath("/admin/paiements");
   revalidatePath("/admin/utilisateurs");
@@ -427,6 +407,9 @@ async function disableFreeAccessAction(formData: FormData) {
     .eq("id", id);
 
   revalidatePath("/admin/paiements");
+  revalidatePath("/admin/utilisateurs");
+  revalidatePath("/mon-compte");
+  revalidatePath("/institutionnel");
 }
 
 export default async function AdminPaiementsPage() {
@@ -443,44 +426,25 @@ export default async function AdminPaiementsPage() {
     .select("*")
     .order("created_at", { ascending: false });
 
-  const { data: freeAccessData } = await supabase
-    .from("free_access_grants")
-    .select("*")
-    .order("created_at", { ascending: false });
-
-
-
-  const [{ data: profilesData }, { data: subscriptionsData }, { data: plansData }] =
-    await Promise.all([
-      supabase
-        .from("profiles")
-        .select("id,email,display_name,platform_role")
-        .order("created_at", { ascending: false }),
-      supabase
-        .from("subscriptions")
-        .select("id,user_id,plan_id,status,created_at")
-        .in("status", ["active", "trialing"]),
-      supabase
-        .from("subscription_plans")
-        .select("id,name,slug,target,status,sort_order")
-        .eq("target", "individual")
-        .eq("status", "active")
-        .order("sort_order", { ascending: true }),
-    ]);
-
-  const profiles = (profilesData || []) as UserProfile[];
-  const userSubscriptions = (subscriptionsData || []) as UserSubscription[];
-  const userPlans = (plansData || []) as UserPlan[];
-  const plansById = new Map(userPlans.map((plan) => [plan.id, plan]));
-  const subscriptionsByUser = new Map<string, UserSubscription>();
-  userSubscriptions
-    .slice()
-    .sort((a, b) => String(b.created_at || "").localeCompare(String(a.created_at || "")))
-    .forEach((subscription) => {
-      if (!subscriptionsByUser.has(subscription.user_id)) {
-        subscriptionsByUser.set(subscription.user_id, subscription);
-      }
-    });
+  const adminClient = createAdminClient();
+  const readClient = adminClient || supabase;
+  const [profilesData, subscriptionsData, plansData, freeAccessData, authUsers] = await Promise.all([
+    readAdminRows(readClient, "profiles"),
+    readAdminRows(readClient, "subscriptions"),
+    readAdminRows(readClient, "subscription_plans"),
+    readAdminRows(readClient, "free_access_grants"),
+    adminClient ? readAllAuthUsers(adminClient) : Promise.resolve([]),
+  ]);
+  const storedProfiles = new Map(profilesData.map(profile => [profile.id, profile]));
+  const profiles = (authUsers.length ? authUsers.map(user => ({
+    ...storedProfiles.get(user.id), id: user.id, email: user.email || storedProfiles.get(user.id)?.email,
+    display_name: storedProfiles.get(user.id)?.display_name || user.user_metadata?.display_name || null,
+  })) : profilesData) as UserProfile[];
+  const allPlans = plansData as UserPlan[];
+  const userPlans = allPlans.filter(plan => plan.status === "active" && plan.target === "individual")
+    .sort((a,b) => Number(a.sort_order || 0) - Number(b.sort_order || 0));
+  const accessByUser = new Map(profiles.map(profile => [profile.id,
+    resolveAdminUserSubscription(profile, subscriptionsData, freeAccessData, allPlans)]));
 
   const payments = (paymentsData || []) as Payment[];
   const promoCodes = (promoCodesData || []) as PromoCode[];
@@ -585,10 +549,8 @@ export default async function AdminPaiementsPage() {
               </thead>
               <tbody>
                 {profiles.map((profile) => {
-                  const subscription = subscriptionsByUser.get(profile.id);
-                  const currentPlan = subscription?.plan_id
-                    ? plansById.get(subscription.plan_id)
-                    : null;
+                  const access = accessByUser.get(profile.id)!;
+                  const currentPlan = access.active ? access.plan : null;
                   const isPlatformAdmin = ["ceo", "superadmin"].includes(
                     String(profile.platform_role || ""),
                   );
@@ -605,14 +567,14 @@ export default async function AdminPaiementsPage() {
                             Accès total CEO
                           </span>
                         ) : (
-                          <strong>{currentPlan?.name || "Aucun abonnement actif"}</strong>
+                          <div><strong>{currentPlan?.name || "Aucun abonnement actif"}</strong>{access.source === "free" && <small style={{display:"block"}}>Accès offert</small>}</div>
                         )}
                       </td>
                       <td>
                         {isPlatformAdmin ? (
                           <span>Géré par le rôle plateforme</span>
                         ) : (
-                          <form action={changeUserSubscriptionAction} className={styles.actions}>
+                          <form key={`${profile.id}-${currentPlan?.id || "none"}-${access.source}`} action={changeUserSubscriptionAction} className={styles.actions}>
                             <input type="hidden" name="user_id" value={profile.id} />
                             <select
                               name="plan_id"
@@ -625,6 +587,7 @@ export default async function AdminPaiementsPage() {
                                   Choisir un abonnement
                                 </option>
                               ) : null}
+                              {currentPlan?.id && !userPlans.some(plan => plan.id === currentPlan.id) ? <option value={currentPlan.id}>{currentPlan.name}</option> : null}
                               {userPlans.map((plan) => (
                                 <option key={plan.id} value={plan.id}>
                                   {plan.name || "Abonnement"}

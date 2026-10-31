@@ -30,7 +30,7 @@ export async function POST(request: NextRequest) {
       const { data, error } = await admin.auth.admin.listUsers({ page, perPage: 200 });
       if (error) return unavailable();
       existingUser = data.users.find((user) => user.email?.trim().toLowerCase() === email) || null;
-      if (existingUser || data.users.length < 200) break;
+      if (existingUser || data.users.length === 0) break;
     }
     if (!existingUser) return success();
     // Les fiches importées ont un compte non confirmé, sans mot de passe.
