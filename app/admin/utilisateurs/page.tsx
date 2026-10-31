@@ -2,6 +2,7 @@ import Link from "next/link";
 import styles from "./page.module.css";
 import { revalidatePath } from "next/cache";
 import DeleteUserButton from "./DeleteUserButton";
+import {readAdminRows,resolveAdminUserSubscription} from "@/lib/admin/user-subscriptions";
 
 import { requireAdmin } from "@/lib/admin/guard";
 import { createAdminClient } from "@/lib/supabase/admin-server";
@@ -18,17 +19,12 @@ type Profile = {
   last_sign_in_at: string | null;
 };
 
-type Subscription = {
-  user_id: string;
-  plan_id: string | null;
-  status: string | null;
-};
-
 type Plan = {
   id: string;
   name: string | null;
   slug?: string | null;
   target?: string | null;
+  sort_order?: number | null;
   status?: string | null;
 };
 
@@ -244,18 +240,14 @@ export default async function AdminUtilisateursPage() {
     .select("*")
     .order("created_at", { ascending: false });
 
-  const { data: subscriptionsData } = await supabase
-    .from("subscriptions")
-    .select("*");
-
-  const { data: plansData } = await supabase
-    .from("subscription_plans")
-    .select("id,name,slug,target,status")
-    .eq("status", "active")
-    .order("sort_order", { ascending: true });
-
-  const storedProfiles = (profilesData || []) as Profile[];
   const adminClient = createAdminClient();
+  const readClient = adminClient || supabase;
+  const [subscriptionsData,plansData,grantsResult] = await Promise.all([
+    readAdminRows(readClient,"subscriptions"),
+    readAdminRows(readClient,"subscription_plans"),
+    adminClient ? readAdminRows(adminClient,"free_access_grants").then(data=>({data,error:""})).catch(error=>({data:[],error:error.message as string})) : Promise.resolve({data:[],error:"Lecture des accès offerts indisponible : configuration serveur manquante."}),
+  ]);
+  const storedProfiles = (profilesData || []) as Profile[];
   const authResult = adminClient
     ? await adminClient.auth.admin.listUsers({ page: 1, perPage: 1000 })
     : null;
@@ -283,14 +275,10 @@ export default async function AdminUtilisateursPage() {
         };
       })
     : storedProfiles;
-  const subscriptions = (subscriptionsData || []) as Subscription[];
   const plans = (plansData || []) as Plan[];
 
-  const subscriptionsByUser = new Map(
-    subscriptions.map((subscription) => [subscription.user_id, subscription])
-  );
-
-  const plansById = new Map(plans.map((plan) => [plan.id, plan]));
+  const accessByUser = new Map(profiles.map(user=>[user.id,resolveAdminUserSubscription(user,subscriptionsData,grantsResult.data,plansData)]));
+  const selectablePlans = plans.filter(plan=>plan.status==="active").sort((a,b)=>Number(a.sort_order||0)-Number(b.sort_order||0));
 
   const totalUsers = profiles.length;
   const coaches = profiles.filter((user) =>
@@ -303,9 +291,7 @@ export default async function AdminUtilisateursPage() {
   const suspendedUsers = profiles.filter(
     (user) => user.status === "suspended"
   ).length;
-  const subscribedUsers = subscriptions.filter(
-    (subscription) => subscription.status === "active"
-  ).length;
+  const subscribedUsers = profiles.filter(user=>accessByUser.get(user.id)?.active).length;
   const neverConnected = profiles.filter((user) => !user.last_sign_in_at).length;
 
   return (
@@ -373,6 +359,7 @@ export default async function AdminUtilisateursPage() {
           </div>
         </section>
 
+        {grantsResult.error && <p role="alert">{grantsResult.error}</p>}
         <section className={styles.statsGrid}>
           <div className={styles.statCard}>
             <strong>{totalUsers}</strong>
@@ -447,10 +434,8 @@ export default async function AdminUtilisateursPage() {
 
               <tbody>
                 {profiles.map((user) => {
-                  const subscription = subscriptionsByUser.get(user.id);
-                  const plan = subscription?.plan_id
-                    ? plansById.get(subscription.plan_id)
-                    : null;
+                  const access = accessByUser.get(user.id)!;
+                  const plan = access.active ? access.plan : null;
 
                   return (
                     <tr key={user.id}>
@@ -484,11 +469,15 @@ export default async function AdminUtilisateursPage() {
                         {["ceo", "superadmin"].includes(user.platform_role || "") ? (
                           <span className={styles.planBadge}>Accès total CEO</span>
                         ) : (
-                          <form action={changeSubscriptionAction} className={styles.subscriptionForm}>
+                          <div>
+                          <strong className={styles.subscriptionLabel}>{access.active ? access.plan?.name || "Abonnement" : "Sans abonnement actif"}</strong>
+                          <small className={styles.subscriptionSource}>{access.source === "free" ? "Accès offert" : access.active ? "Abonnement attribué" : access.plan ? `Ancien abonnement : ${access.plan.name || "—"}` : "Aucun accès attribué"}</small>
+                          <form key={`${user.id}-${plan?.id || "none"}-${access.source}`} action={changeSubscriptionAction} className={styles.subscriptionForm}>
                             <input type="hidden" name="user_id" value={user.id} />
                             <select name="plan_id" defaultValue={plan?.id || ""} aria-label={`Abonnement de ${user.email || user.display_name || "l’utilisateur"}`}>
-                              {!plan?.id ? <option value="" disabled>Sans abonnement</option> : null}
-                              {plans.map((availablePlan) => (
+                              {!plan?.id ? <option value="" disabled>Choisir une offre</option> : null}
+                              {plan?.id && !selectablePlans.some(p=>p.id===plan.id) ? <option value={plan.id}>{plan.name} (offre inactive)</option> : null}
+                              {selectablePlans.map((availablePlan) => (
                                 <option key={availablePlan.id} value={availablePlan.id}>
                                   {availablePlan.name || "Abonnement"}
                                 </option>
@@ -496,6 +485,7 @@ export default async function AdminUtilisateursPage() {
                             </select>
                             <button type="submit">Appliquer</button>
                           </form>
+                          </div>
                         )}
                       </td>
 

@@ -54,7 +54,7 @@ function timestamp(value: unknown) {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
-function subscriptionIsUsable(row: any, now = Date.now()) {
+export function subscriptionIsUsable(row: any, now = Date.now()) {
   const status = normalize(row?.status);
   if (!['active', 'trialing'].includes(status)) return false;
 
@@ -70,7 +70,7 @@ function subscriptionIsUsable(row: any, now = Date.now()) {
   return true;
 }
 
-function grantIsUsable(row: any, now = Date.now()) {
+export function grantIsUsable(row: any, now = Date.now()) {
   if (normalize(row?.status) !== "active") return false;
   const startsAt = timestamp(row?.starts_at);
   const endsAt = timestamp(row?.ends_at);
