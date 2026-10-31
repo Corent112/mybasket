@@ -42,13 +42,14 @@ export async function POST(request: NextRequest) {
       options: { redirectTo: `${siteUrl}/auth/reset-password` },
     });
     const token = data?.properties?.hashed_token;
-    if (error || !token) {
+    const verificationType = data?.properties?.verification_type;
+    if (error || !token || !["recovery", "magiclink", "signup", "invite"].includes(String(verificationType))) {
       console.error("[password-reset] Génération du lien impossible", error?.code);
       return unavailable();
     }
     const link = new URL("/auth/callback", siteUrl);
     link.searchParams.set("token_hash", token);
-    link.searchParams.set("type", type);
+    link.searchParams.set("type", verificationType!);
     link.searchParams.set("next", "/auth/reset-password");
     const url = link.toString();
     const delivery = await sendTransactionalEmail({

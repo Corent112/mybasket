@@ -16,7 +16,7 @@ function load(scenario = {}) {
     },
     generateLink: async (args) => {
       calls.push(["generate", args]);
-      return scenario.tokenError ? {error:{code:"failed"}} : {data:{properties:{hashed_token:"test-token"}}};
+      return scenario.tokenError ? {error:{code:"failed"}} : {data:{properties:{hashed_token:"test-token",verification_type:scenario.verificationType||args.type}}};
     },
   } } };
   const mocks = {
@@ -55,6 +55,9 @@ function load(scenario = {}) {
     assert.equal((await post({json:async()=>({email:"coach@example.org"}),headers:new Headers()})).status,503);
   }
   const missing=load({missing:true});
+  const converted=load({verificationType:"signup"});
+  assert.equal((await converted.post({json:async()=>({email:"coach@example.org"}),headers:new Headers()})).status,200);
+  assert.match(converted.calls.find(x=>x[0]==="email")[1].text,/type=signup/);
   assert.equal((await missing.post({json:async()=>({email:"absent@example.org"}),headers:new Headers()})).status,200);
   assert.equal(missing.calls.some(x=>x[0]==="generate"||x[0]==="email"),false);
   assert.equal((await load({limited:true}).post({json:async()=>({email:"coach@example.org"}),headers:new Headers()})).status,429);
