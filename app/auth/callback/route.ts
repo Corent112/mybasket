@@ -21,7 +21,7 @@ export async function GET(request: NextRequest) {
       | EmailOtpType
       | null;
 
-  const next = safeInternalPath(
+  const next = type === "recovery" ? "/auth/reset-password" : safeInternalPath(
     request.nextUrl.searchParams.get("next"),
     "/mon-compte",
   );
@@ -76,3 +76,4 @@ export async function GET(request: NextRequest) {
 
   return NextResponse.redirect(destination);
 }
+

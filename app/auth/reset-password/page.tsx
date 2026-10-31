@@ -18,6 +18,11 @@ function ResetPasswordContent() {
 
   useEffect(() => {
     let alive = true;
+    if (params.get("error")) {
+      setValidSession(false);
+      setChecking(false);
+      return;
+    }
 
     async function checkRecoverySession() {
       const { data, error: sessionError } = await supabase.auth.getUser();
@@ -25,18 +30,20 @@ function ResetPasswordContent() {
 
       if (sessionError || !data.user) {
         setValidSession(false);
-        if (!error) {
-          setError("Ce lien de réinitialisation est invalide ou a expiré. Demande un nouveau lien.");
-        }
+        setError((current) => current || "Ce lien de réinitialisation est invalide ou a expiré. Demande un nouveau lien.");
       } else {
         setValidSession(true);
       }
       setChecking(false);
     }
 
-    void checkRecoverySession();
+    void checkRecoverySession().catch(() => {
+      if (!alive) return;
+      setError("Impossible de vérifier le lien. Vérifie ta connexion et recharge la page.");
+      setChecking(false);
+    });
     return () => { alive = false; };
-  }, [supabase, error]);
+  }, [supabase, params]);
 
   async function savePassword(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -70,6 +77,8 @@ function ResetPasswordContent() {
       await supabase.auth.signOut();
       router.replace("/connexion?password-updated=1");
       router.refresh();
+    } catch {
+      setError("Impossible d’enregistrer le mot de passe. Vérifie ta connexion et réessaie.");
     } finally {
       setBusy(false);
     }
@@ -133,3 +142,4 @@ function ResetPasswordContent() {
 export default function ResetPasswordPage() {
   return <Suspense fallback={null}><ResetPasswordContent /></Suspense>;
 }
+

@@ -195,6 +195,12 @@ function ConnexionContent() {
         const payload = await response.json().catch(() => ({}));
 
         if (!response.ok) {
+          if (payload?.code === "ACCOUNT_EXISTS") {
+            setTab("reset");
+            setPassword("");
+            setInfo("Ton compte existe déjà. Clique sur « Envoyer le lien » pour créer ou réinitialiser ton mot de passe et retrouver tes accès.");
+            return;
+          }
           setErr(payload?.error || "Impossible de créer le compte.");
           return;
         }
@@ -244,27 +250,19 @@ function ConnexionContent() {
         return;
       }
 
-      const recoveryNext = "/auth/reset-password";
-
-      const { error } =
-        await supabase.auth.resetPasswordForEmail(
-          cleanEmail,
-          {
-            redirectTo:
-              `${window.location.origin}/auth/callback?next=${encodeURIComponent(
-                recoveryNext,
-              )}`,
-          },
-        );
-
-      if (error) {
-        setErr(error.message);
+      const response = await fetch("/api/auth/reset-password", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: cleanEmail }),
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        setErr(payload?.error || "Impossible d’envoyer le lien. Réessaie dans quelques minutes.");
         return;
       }
-
-      setInfo(
-        "Email de réinitialisation envoyé. Clique sur le lien reçu pour choisir ton nouveau mot de passe.",
-      );
+      setInfo(payload.message);
+    } catch {
+      setErr("La connexion a échoué. Vérifie ton réseau et réessaie.");
     } finally {
       setBusy(false);
     }
@@ -622,3 +620,4 @@ const CSS = `
   text-decoration: none;
 }
 `;
+
