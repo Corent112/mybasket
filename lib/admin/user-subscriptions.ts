@@ -22,6 +22,6 @@ export async function readAllAuthUsers(client:any){
 }
 export async function readAdminRows(client:any,table:string,select='*'){
  const rows:Row[]=[];
- for(let start=0;;start+=1000){const {data,error}=await client.from(table).select(select).order('id').range(start,start+999);if(error)throw Error(`Lecture ${table} impossible : ${error.message}`);rows.push(...(data||[]));if((data||[]).length<1000)return rows;}
+ for(let start=0;;){const {data,error}=await client.from(table).select(select).order('id').range(start,start+999);if(error)throw Error(`Lecture ${table} impossible : ${error.message}`);if(!data?.length)return rows;rows.push(...data);start+=data.length;}
 }
 
