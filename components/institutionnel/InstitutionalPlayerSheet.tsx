@@ -102,7 +102,7 @@ export default function InstitutionalPlayerSheet({ structureId, player, referral
         for(let start=0;;start+=1000){let query=sb.from(table).select(columns).eq("structure_id",structureId);if(filterPlayer)query=query.eq("player_id",player.id);const result=await query.order("id").range(start,start+999);if(result.error)throw Error(result.error.message);rows.push(...(result.data||[]));if((result.data||[]).length<1000)return rows;}
       };
       const [savedMeasures,attendance,seasonEntries,trackingSeasons]=await Promise.all([
-        readAll("institutional_player_measurements","id,measured_at,height_cm,weight_kg,wingspan_cm,shoe_size"),
+        readAll("institutional_player_measurements","*"),
         loadPlayerAttendance(sb,structureId,player.id),
         readAll("institutional_player_season_entries","id,season_id,club_name,position_label"),
         readAll("institutional_player_tracking_seasons","id,season_label",false)

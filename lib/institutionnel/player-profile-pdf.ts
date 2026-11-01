@@ -1,3 +1,4 @@
+import {playerPdfDetailRows} from '../player-pdf-details';
 import {siblingDetailsLabel} from './player-family-details';
 import {jsPDF} from 'jspdf';
 import {imageData} from './trombinoscope-pdf';
@@ -15,7 +16,7 @@ export function playerProfileSections(player:Record<string,any>):Array<[string,R
  ];
 }
 /** Editorial player dossier. Every value comes from the saved player record. */
-export async function createPlayerProfilePdf(input:{player:Record<string,any>;institution:{name:string;logo_url?:string|null;season_label?:string|null};matches?:Record<string,any>[];referral?:Record<string,any>|null;measurements?:Record<string,any>[];attendance?:Record<string,any>[];seasonEntries?:Record<string,any>[];trackingSeasons?:Record<string,any>[]}){
+export async function createPlayerProfilePdf(input:{player:Record<string,any>;institution:{name:string;logo_url?:string|null;season_label?:string|null};matches?:Record<string,any>[];referral?:Record<string,any>|null;measurements?:Record<string,any>[];attendance?:Record<string,any>[];seasonEntries?:Record<string,any>[];trackingSeasons?:Record<string,any>[];extraSections?:Array<{title:string;records:Record<string,any>[]}>}){
  const {player,institution}=input,p=player.profile_data||{},doc=new jsPDF({format:'a4',unit:'mm'});
  const [logo,photo]=await Promise.all([imageData(institution.logo_url),imageData(player.photo_url)]);
  if(institution.logo_url&&!logo)throw Error('Le logo du comité est inaccessible. Réessaie avant d’exporter la fiche.');
@@ -59,7 +60,7 @@ export async function createPlayerProfilePdf(input:{player:Record<string,any>;in
  if(filled(profiling.notes)){section('Regard du coach');paragraph(profiling.notes);}
  const ratings=Object.entries(profiling.ratings||{}).filter(([,v])=>typeof v==='number'&&Number.isFinite(v)&&v>0);
  if(ratings.length){section('Évaluations enregistrées');for(const [label,value]of ratings){space(9);font(8,true);doc.text(label,16,y);doc.setFillColor(pale);doc.roundedRect(65,y-3,110,3,1,1,'F');doc.setFillColor(wine);doc.roundedRect(65,y-3,110*Math.min(10,Number(value))/10,3,1,1,'F');font(8);doc.text(`${value}/10`,194,y,{align:'right'});y+=8;}}
- for(const [title,value]of [['Bilan sportif',sports],['Suivi Pôle',pole]] as const){const values=Object.entries(value).filter(([k,v])=>k!=='updatedAt'&&filled(v));if(values.length){section(title);for(const [key,value]of values)paragraph(`${key==='title'?'Objectif':key==='notes'?'Notes':key} : ${typeof value==='object'?JSON.stringify(value):value}`);}}
+ for(const [title,value]of [['Bilan sportif',sports],['Suivi Pôle',pole]] as const){const values=Object.entries(value).filter(([k,v])=>k!=='updatedAt'&&filled(v));if(values.length){section(title);for(const [label,detail]of playerPdfDetailRows(value))paragraph(`${label} : ${detail}`);}}
  // Curves use real dated measurements only; missing points are omitted, never zero-filled.
  const measurements=[...(input.measurements||[])].sort((a,b)=>String(a.measured_at||'').localeCompare(String(b.measured_at||'')));
  if(measurements.length){newPage('SUIVI ANTHROPOMÉTRIQUE');section('Évolution des mesures');
@@ -71,15 +72,18 @@ export async function createPlayerProfilePdf(input:{player:Record<string,any>;in
    const coords=points.map((m,i)=>({x:end===start?(left+right)/2:left+(dates[i]-start)*(right-left)/(end-start),y:top+5+(max-Number(m[key]))/span*(h-5)}));
    coords.forEach((point,i)=>{if(i)doc.line(coords[i-1].x,coords[i-1].y,point.x,point.y);doc.setFillColor(wine);doc.circle(point.x,point.y,1,'F');});font(7,false,muted);doc.text(date(points[0].measured_at),left,top+43);doc.text(date(points.at(-1)!.measured_at),right,top+43,{align:'right'});y=top+57;
   }
-  section('Mesures enregistrées');for(const m of measurements)paragraph([date(m.measured_at),m.height_cm!=null?`Taille ${m.height_cm} cm`:null,m.weight_kg!=null?`Poids ${m.weight_kg} kg`:null,m.wingspan_cm!=null?`Envergure ${m.wingspan_cm} cm`:null,m.shoe_size!=null?`Pointure ${m.shoe_size}`:null].filter(Boolean).join(' / '),8);
+  section('Mesures enregistrées');for(const m of measurements){paragraph(date(m.measured_at)||'Mesure sans date',9,true);for(const [label,value] of playerPdfDetailRows(m))if(label!=='Date de mesure'){paragraph(`${label} : ${value}`,8);}}
  }
  newPage('INFORMATIONS COMPLÉMENTAIRES');
  for(const [title,values]of playerProfileSections(player)){if(values.some(([,v])=>filled(v))){section(title);rows(values);}}
  if(input.referral){section('Signalement d’origine');rows([['Auteur',input.referral.reporter_name],['Email',input.referral.reporter_email],['Rôle',input.referral.reporter_role],['Lieu',input.referral.venue],['Date',date(input.referral.created_at)],['Observation',input.referral.reason]]);}
- for(const [title,key]of [['Suivi médical','medicalEntries'],['Bilans','bilans'],['Documents associés','documents']]){const records=p[key];if(!Array.isArray(records)||!records.length)continue;section(title);for(const row of records){paragraph([row.date,row.title,row.name,row.status].filter(Boolean).join(' / '),9,true);if(row.notes)paragraph(row.notes);if(row.url||row.file_url)paragraph(row.url||row.file_url,8);}}
+ for(const [title,key]of [['Suivi médical','medicalEntries'],['Bilans','bilans'],['Documents associés','documents']]){const records=p[key];if(!Array.isArray(records)||!records.length)continue;section(title);for(const row of records){paragraph([row.date,row.title,row.name,row.status].filter(Boolean).join(' / '),9,true);for(const [label,value]of playerPdfDetailRows(row))paragraph(`${label} : ${value}`,8);}}
  if(input.attendance?.length){newPage('PRÉSENCES & MATCHS');section('Présences enregistrées');const statuses:Record<string,string>={present:'Présent',absent:'Absent',excused:'Excusé',pending:'À renseigner'};for(const r of input.attendance)paragraph([date(r.session?.session_date),r.session?.title,statuses[r.status]||r.status,r.session?.location].filter(Boolean).join(' / '),8);}
- const matches=input.matches||[];section(`Statistiques par match (${matches.length})`);if(!matches.length)paragraph('Aucun match joué lié à cette fiche.');
- for(const match of matches){space(28);paragraph(`${date(match.date)||'Date non renseignée'} / ${match.teamName||''} vs ${match.opponent||'Adversaire non renseigné'}`,9,true);paragraph([match.category,match.matchCategory,...(match.tournaments||[]).map((t:any)=>t.name)].filter(Boolean).join(' / '),8);const v=(key:string)=>filled(match[key])?match[key]:'—';paragraph(`PTS ${v('pts')}   REB ${v('reb')}   PD ${v('ast')}   INT ${v('stl')}   CTR ${v('blk')}   BP ${v('turnovers')}   MIN ${match.minutes==null?'—':Number(match.minutes).toFixed(1)}`,8);paragraph(`2PTS ${v('p2m')}/${v('p2a')}   3PTS ${v('p3m')}/${v('p3a')}   LF ${v('ftm')}/${v('fta')}`,8);y+=3;}
+ if(p.growth&&Object.keys(p.growth).length){section('Croissance détaillée');for(const [label,value]of playerPdfDetailRows(p.growth))paragraph(`${label} : ${value}`,8);}
+ for(const extra of input.extraSections||[]){if(!extra.records.length)continue;newPage(extra.title.toLocaleUpperCase('fr'));section(extra.title);for(const record of extra.records){for(const [label,value]of playerPdfDetailRows(record))paragraph(`${label} : ${value}`,8);y+=5;}}
+ const matches=input.matches||[];newPage('STATISTIQUES');section(`Statistiques par match (${matches.length})`);if(!matches.length)paragraph('Aucun match joué lié à cette fiche.');
+ if(matches.length){const mean=(key:string)=>{const values=matches.map(m=>m[key]).filter(v=>v!=null&&v!==''&&Number.isFinite(Number(v))).map(Number);return values.length?(values.reduce((a,b)=>a+b,0)/values.length).toFixed(1):'—';};paragraph(`Moyennes sur les matchs renseignés : PTS ${mean('pts')} / REB ${mean('reb')} / PD ${mean('ast')} / INT ${mean('stl')} / CTR ${mean('blk')} / BP ${mean('turnovers')} / MIN ${mean('minutes')}`,8);}
+ for(const match of matches){space(28);paragraph(`${date(match.date)||'Date non renseignée'} / ${match.teamName||''} vs ${match.opponent||'Adversaire non renseigné'}`,9,true);paragraph([match.category,match.matchCategory,...(match.tournaments||[]).map((t:any)=>t.name)].filter(Boolean).join(' / '),8);const v=(key:string)=>filled(match[key])?match[key]:'—';paragraph(`PTS ${v('pts')}   REB ${v('reb')}   PD ${v('ast')}   INT ${v('stl')}   CTR ${v('blk')}   BP ${v('turnovers')}   MIN ${match.minutes==null?'—':Number(match.minutes).toFixed(1)}`,8);paragraph(`2PTS ${v('p2m')}/${v('p2a')}   3PTS ${v('p3m')}/${v('p3a')}   LF ${v('ftm')}/${v('fta')}`,8);paragraph(`REB OFF ${v('offReb')}   REB DÉF ${v('defReb')}   FAUTES ${v('pf')}   ÉVAL ${v('eval')}   +/- ${v('plusMinus')}`,8);y+=3;}
  const count=doc.getNumberOfPages();for(let page=1;page<=count;page++){doc.setPage(page);rule(281);font(7,false,muted);doc.text(`MyBasket / ${new Date().toLocaleDateString('fr-FR')} / Informations enregistrées`,16,286);doc.text(`${page} / ${count}`,194,286,{align:'right'});}
  return doc;
 }

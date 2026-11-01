@@ -1569,7 +1569,15 @@ export default function JoueurDetailPage({
       const [{createPlayerProfilePdf},{teamPlayerPdfInput}]=await Promise.all([import("@/lib/institutionnel/player-profile-pdf"),import("@/lib/team-player-profile-pdf")]);
       const official=officialSeasons.find(s=>s.teamId===(statsTeamId==="all"?teamId:statsTeamId))?.data.players.find((r:any)=>r.playerId===playerId);
       const savedPlayer=fillLnbIdentity(player,official);
-      const doc=await createPlayerProfilePdf(teamPlayerPdfInput({player:savedPlayer,team,matches:liveStats.matches,tests,growth,medical,documents,bilans}));
+      const readAll=async(table:string,options:{team?:boolean;user?:string}={team:true})=>{const all:any[]=[];for(let start=0;;){let query=supabase.from(table).select("*").eq("player_id",playerId);if(options.team!==false)query=query.eq("team_id",teamId);if(options.user)query=query.eq("user_id",options.user);const r=await query.order("id").range(start,start+999);if(r.error)throw Error(`Chargement incomplet : ${table}. Réessaie avant d’exporter.`);if(!r.data?.length)return all;all.push(...r.data);start+=r.data.length;}};
+      const {data:{user}}=await supabase.auth.getUser();if(!user)throw Error("Reconnecte-toi avant d’exporter.");
+      const unavailable:any[]=[];
+      const optional=async(table:string,label:string,options?:{team?:boolean;user?:string})=>{try{return await readAll(table,options)}catch{unavailable.push({rubrique:label,informations:"Données non disponibles au moment de l’export. Recharge la fiche pour réessayer."});return []}};
+      const [savedTests,savedMedical,savedDocuments,savedBilans,assessments,profileNotes,loads,wellness]=await Promise.all([
+        readAll("player_tests"),readAll("player_medical_entries"),readAll("player_documents"),readAll("player_bilans"),
+        optional("player_profile_assessments","Profilage"),optional("player_profile_notes","Notes de profilage",{team:false,user:user.id}),optional("training_load_entries","Charge et RPE"),optional("player_wellness_responses","Wellness")
+      ]);
+      const doc=await createPlayerProfilePdf(teamPlayerPdfInput({player:savedPlayer,team,matches:liveStats.matches,tests:savedTests,growth,medical:savedMedical,documents:savedDocuments,bilans:savedBilans,extraSections:[{title:"Profilage et évaluations",records:assessments},{title:"Notes de profilage",records:profileNotes},{title:"Charge et RPE",records:loads},{title:"Wellness et récupération",records:wellness},{title:"Rubriques non disponibles",records:unavailable}]}));
       doc.save(`fiche-${player.firstName}-${player.lastName}`.replace(/[^a-zA-Z0-9À-ÿ_-]/g,"-")+".pdf");
     }catch(error){setProfilePdfError(error instanceof Error?error.message:"Export PDF impossible.");}finally{setProfilePdfBusy(false);}
   }
