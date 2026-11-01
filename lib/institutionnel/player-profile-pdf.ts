@@ -33,14 +33,14 @@ export async function createPlayerProfilePdf(input:{player:Record<string,any>;in
  const paragraph=(value:unknown,size=9,bold=false)=>{font(size,bold);const lines:string[]=doc.splitTextToSize(String(value??'').replace(/\r/g,''),width);for(const text of lines){space(5);font(size,bold);doc.text(text,16,y);y+=5;}};
  const section=(title:string)=>{space(20);y+=5;doc.setFillColor(wine);doc.rect(16,y-4,1.5,6,'F');font(11,true,wine);doc.text(title.toLocaleUpperCase('fr'),21,y);y+=9;};
  const rows=(values:Row[])=>{for(const [label,value]of values.filter(([,v])=>filled(v))){space(12);font(7,true,muted);doc.text(label.toLocaleUpperCase('fr'),16,y);y+=4;paragraph(value,9);y+=2;}};
- const metrics=[['TAILLE',player.height_cm,'cm'],['POIDS',player.weight_kg??p.weight,'kg'],['ENVERGURE',player.wingspan_cm,'cm']];
- // Cover: institution identity, player photo and the three key measurements.
+ const metrics=[['TAILLE',player.height_cm,'cm'],['ENVERGURE',player.wingspan_cm,'cm']];
+ // Cover: institution identity, player photo and height and wingspan only; weight remains in the detailed follow-up.
  doc.setFillColor('#faf8f8');doc.rect(0,0,210,297,'F');doc.setFillColor(wine);doc.rect(0,0,210,5,'F');
  doc.setDrawColor('#ebe5e8');doc.setLineWidth(.6);doc.circle(105,36,48);doc.circle(105,36,36);
  if(logo)picture(logo,75,12,60,43);else{font(15,true,wine);doc.text(doc.splitTextToSize(institution.name,170),105,31,{align:'center'});}
  let nameSize=25;font(nameSize,true,wine);while(doc.getTextWidth(name.toLocaleUpperCase('fr'))>178&&nameSize>12)font(--nameSize,true,wine);doc.text(doc.splitTextToSize(name.toLocaleUpperCase('fr'),178),105,72,{align:'center'});
  font(10,true);doc.text(doc.splitTextToSize(institution.name,178),105,85,{align:'center'});font(9,false,muted);doc.text('FICHE JOUEUR'+(institution.season_label?' / '+institution.season_label:''),105,94,{align:'center'});
- metrics.forEach(([label,value,unit],index)=>{const x=16+index*61;doc.setFillColor('#ffffff');doc.roundedRect(x,105,56,28,3,3,'F');font(8,true,muted);doc.text(String(label),x+28,114,{align:'center'});font(18,true,wine);doc.text(filled(value)?`${value} ${unit}`:'—',x+28,126,{align:'center'});});
+ metrics.forEach(([label,value,unit],index)=>{const cardWidth=86.5,x=16+index*(cardWidth+5);doc.setFillColor('#ffffff');doc.roundedRect(x,105,cardWidth,28,3,3,'F');font(8,true,muted);doc.text(String(label),x+cardWidth/2,114,{align:'center'});font(18,true,wine);doc.text(filled(value)?`${value} ${unit}`:'—',x+cardWidth/2,126,{align:'center'});});
  const position=[player.position_primary||p.position,player.position_secondary||p.secondaryPosition].filter(Boolean).join(' / ');
  font(11,true,wine);doc.text(position?`POSTE ${position}`:'POSTE NON RENSEIGNÉ',145,147,{align:'center'});
  doc.setFillColor('#eee8eb');doc.roundedRect(103,154,91,109,3,3,'F');if(photo)picture(photo,105,156,87,105);else{font(10,false,muted);doc.text('Photo non renseignée',148.5,210,{align:'center'});}

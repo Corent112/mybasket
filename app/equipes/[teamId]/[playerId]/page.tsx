@@ -945,6 +945,8 @@ export default function JoueurDetailPage({
   const [player, setPlayer] = useState<PlayerExtra | undefined>();
   const [team, setTeam] = useState<Team | undefined>();
   const [identityLoading, setIdentityLoading] = useState(true);
+  const [profilePdfBusy,setProfilePdfBusy]=useState(false);
+  const [profilePdfError,setProfilePdfError]=useState("");
   const [playerTeams, setPlayerTeams] = useState<Team[]>([]);
   const [statsTeamId, setStatsTeamId] = useState(teamId);
   const [officialSeasons, setOfficialSeasons] = useState<Array<{ teamId: string; data: any }>>([]);
@@ -1559,6 +1561,19 @@ export default function JoueurDetailPage({
     }
   }
 
+  async function exportPlayerPdf(){
+    if(!player||!team||profilePdfBusy)return;
+    setProfilePdfBusy(true);setProfilePdfError("");
+    try{
+      if(matchStatsError)throw Error("Les statistiques n’ont pas pu être chargées. Recharge la fiche avant l’export.");
+      const [{createPlayerProfilePdf},{teamPlayerPdfInput}]=await Promise.all([import("@/lib/institutionnel/player-profile-pdf"),import("@/lib/team-player-profile-pdf")]);
+      const official=officialSeasons.find(s=>s.teamId===(statsTeamId==="all"?teamId:statsTeamId))?.data.players.find((r:any)=>r.playerId===playerId);
+      const savedPlayer=fillLnbIdentity(player,official);
+      const doc=await createPlayerProfilePdf(teamPlayerPdfInput({player:savedPlayer,team,matches:liveStats.matches,tests,growth,medical,documents,bilans}));
+      doc.save(`fiche-${player.firstName}-${player.lastName}`.replace(/[^a-zA-Z0-9À-ÿ_-]/g,"-")+".pdf");
+    }catch(error){setProfilePdfError(error instanceof Error?error.message:"Export PDF impossible.");}finally{setProfilePdfBusy(false);}
+  }
+
   function exportProfile() {
     if (!player) return;
 
@@ -2009,14 +2024,18 @@ export default function JoueurDetailPage({
       </aside>
 
       <main className="player-main">
+        {profilePdfError&&<p role="alert" style={{color:"#a3283d"}}>{profilePdfError}</p>}
         <div className="player-topbar">
           <button className="player-back-inline" onClick={() => router.push(`/equipes/${teamId}`)}>
             ← Retour à l'équipe
           </button>
 
           <div className="player-actions">
+            <button className="light-btn outline" disabled={profilePdfBusy||matchStatsLoading} onClick={()=>void exportPlayerPdf()}>
+              {profilePdfBusy?"Création du PDF…":"⬇ Exporter la fiche PDF"}
+            </button>
             <button className="light-btn outline" onClick={exportProfile}>
-              ⬇ Exporter le profil
+              Exporter les données JSON
             </button>
 
             {(p as any).poleProtected === true && (p as any).secondaryTeam === true ? (
