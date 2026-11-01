@@ -261,7 +261,7 @@ const EDIT_EXERCISE_ID_KEY = "mybasket_edit_exercise_id";
   type Pt = { x: number; y: number };
   type Player = { id: string; x: number; y: number; label: string; team: 'att' | 'def'; shape: 'circle' | 'square'; coach?: boolean; rotation?: number; name?: string; color?: string; size?: number; photo?: string; hasBall?: boolean; ballCount?: number; linkedPlayerId?: string; linkedPlayerName?: string; linkedTeamId?: string; linkedTeamName?: string };
   type Obj = { id: string; x: number; y: number; kind: string; ballCount?: number; infiniteBalls?: boolean; collectsShots?: boolean; text?: string; rotation?: number; size?: number; scaleX?: number; scaleY?: number; points?: Pt[]; color?: string; sourcePlayerId?: string; targetPlayerId?: string };
-  type Line = { sourceMachineId?: string; targetMachineId?: string; returnMachineId?: string; id: string; action: string; from: Pt; to: Pt; ctrls?: Pt[]; ctrl?: Pt; points?: Pt[]; rotation?: number; color?: string; target?: 'basket'; targetBasketId?: string; sourcePlayerId?: string; targetPlayerId?: string; order?: number; startMode?: 'withPrevious' | 'afterPrevious'; duration?: number; targetMode?: 'player' | 'playerCurrentPoint'; createdTargetPoint?: Pt };
+  type Line = { returnPlayerId?: string; sourceMachineId?: string; targetMachineId?: string; returnMachineId?: string; id: string; action: string; from: Pt; to: Pt; ctrls?: Pt[]; ctrl?: Pt; points?: Pt[]; rotation?: number; color?: string; target?: 'basket'; targetBasketId?: string; sourcePlayerId?: string; targetPlayerId?: string; order?: number; startMode?: 'withPrevious' | 'afterPrevious'; duration?: number; targetMode?: 'player' | 'playerCurrentPoint'; createdTargetPoint?: Pt };
   type ActSched = { line: Line; start: number; dur: number; end: number };
   type Sched = { idx: number; start: number; span: number; end: number; actSched: ActSched[] };
   type Phase = DrawingOptionPhase & { players: Player[]; objects: Obj[]; lines: Line[]; notes: string; duration?: number; startMode?: 'withPrevious' | 'afterPrevious' };
@@ -272,7 +272,7 @@ const EDIT_EXERCISE_ID_KEY = "mybasket_edit_exercise_id";
     | { kind: 'object'; obj: string };
   type Sel = { type: 'player' | 'object' | 'line'; id: string } | null;
   type SelItem = { type: 'player' | 'object' | 'line'; id: string };
-  type BallEvent = { src:string|null; target:string|null; shoot:boolean; wStart:number; wEnd:number; from?:Pt; to?:Pt; tMode?:'player'|'playerCurrentPoint'; createdPt?:Pt; basketPt?:Pt; machineFrom?:Pt; machineTarget?:Pt; returnMachineId?:string; returnPt?:Pt };
+  type BallEvent = { returnPlayerId?:string; src:string|null; target:string|null; shoot:boolean; wStart:number; wEnd:number; from?:Pt; to?:Pt; tMode?:'player'|'playerCurrentPoint'; createdPt?:Pt; basketPt?:Pt; machineFrom?:Pt; machineTarget?:Pt; returnMachineId?:string; returnPt?:Pt };
   type TeamPlayer = { id: string; name: string; number?: string; photo?: string; position?: string; teamId: string; teamName: string; color?: string };
 
   // Données mockées — remplacer ensuite par un fetch Supabase (voir loadTeamPlayers)
@@ -2668,13 +2668,17 @@ if (anim && anim.balls) {
       s.actSched.forEach((a) => {
         if (a.line.action !== 'pass' && a.line.action !== 'shoot') return;
 
+        const phase=phasesRef.current[s.idx];
+        const rebounder=a.line.action==='shoot'?phase.players.find(p=>p.id===a.line.returnPlayerId&&!p.coach):undefined;
+        const collector=!rebounder&&a.line.action==='shoot'?phase.objects.find(o=>o.id===a.line.returnMachineId&&o.kind==='shootingMachine'):undefined;
         evs.push({
           src: a.line.sourcePlayerId || a.line.sourceMachineId || null,
-          target: a.line.targetPlayerId || a.line.targetMachineId || a.line.returnMachineId || null,
+          target: a.line.action==='shoot' ? rebounder?.id || collector?.id || null : a.line.targetPlayerId || a.line.targetMachineId || null,
           machineFrom: a.line.sourceMachineId ? phasesRef.current[s.idx].objects.find(o=>o.id===a.line.sourceMachineId) : undefined,
           machineTarget: a.line.targetMachineId ? phasesRef.current[s.idx].objects.find(o=>o.id===a.line.targetMachineId) : undefined,
-          returnMachineId: a.line.returnMachineId,
-          returnPt: a.line.returnMachineId ? phasesRef.current[s.idx].objects.find(o=>o.id===a.line.returnMachineId) : undefined,
+          returnPlayerId: rebounder?.id,
+          returnMachineId: collector?.id,
+          returnPt: rebounder || collector,
           shoot: a.line.action === 'shoot',
           wStart: s.start + a.start,
           wEnd: s.start + a.end,
@@ -2784,7 +2788,7 @@ if (anim && anim.balls) {
       evs.forEach((e) => {
         if (e.wEnd <= candidate.time) {
           if (e.src) removeOwnerBall(owners, e.src);
-          if ((!e.shoot || e.returnMachineId) && e.target) addOwnerBall(owners, e.target);
+          if ((!e.shoot || e.returnMachineId || e.returnPlayerId) && e.target) addOwnerBall(owners, e.target);
         } else if (e.wStart <= candidate.time && candidate.time < e.wEnd) {
           if (e.src) removeOwnerBall(owners, e.src);
         }
@@ -2857,7 +2861,7 @@ if (anim && anim.balls) {
     endedEvents.forEach((e) => {
       if (e.src) removeOwnerBall(owners, e.src);
 
-      if ((!e.shoot || e.returnMachineId) && e.target) {
+      if ((!e.shoot || e.returnMachineId || e.returnPlayerId) && e.target) {
         addOwnerBall(owners, e.target);
       }
     });
@@ -2919,11 +2923,12 @@ if (anim && anim.balls) {
 
       const duration = Math.max(1, active.wEnd - active.wStart);
       const progress = Math.min(1, Math.max(0, (clock - active.wStart) / duration));
-      if(active.shoot && active.returnPt && progress >= .75) {
+      const recoveryPoint=active.returnPlayerId ? playerPosAtClock(sched,active.returnPlayerId,clock)||active.returnPt : active.returnPt;
+      if(active.shoot && recoveryPoint && progress >= .75) {
         const t=ease((progress-.75)/.25);
-        balls.push({x:target.x+(active.returnPt.x-target.x)*t,y:target.y+(active.returnPt.y-target.y)*t});
+        balls.push({x:target.x+(recoveryPoint.x-target.x)*t,y:target.y+(recoveryPoint.y-target.y)*t});
       } else {
-        const te=ease(active.shoot && active.returnPt ? progress/.75 : progress);
+        const te=ease(active.shoot && recoveryPoint ? progress/.75 : progress);
         const arc = Math.sin(te * Math.PI) * 0.05;
         balls.push({x:from.x+(target.x-from.x)*te,y:from.y+(target.y-from.y)*te-arc});
       }
@@ -3764,7 +3769,7 @@ const owners=ownersAtClock(sched,ballEventsRef.current,clock);
         ...p,
         players: p.players.filter((z) => !has('player', z.id)),
         objects: p.objects.filter((z) => !has('object', z.id)),
-        lines: p.lines.filter((z) => !has('line', z.id) && !(z.sourceMachineId && has('object',z.sourceMachineId)) && !(z.targetMachineId && has('object',z.targetMachineId))).map(z=>z.returnMachineId&&has('object',z.returnMachineId)?{...z,returnMachineId:undefined}:z),
+        lines: p.lines.filter((z) => !has('line', z.id) && !(z.sourceMachineId && has('object',z.sourceMachineId)) && !(z.targetMachineId && has('object',z.targetMachineId))).map(z=>({...z,...(z.returnMachineId&&has('object',z.returnMachineId)?{returnMachineId:undefined}:{}),...(z.returnPlayerId&&has('player',z.returnPlayerId)?{returnPlayerId:undefined}:{})})),
       };
     }));
     setSelection([]); setEditingId(null);
@@ -4596,7 +4601,7 @@ const exportJson = () => {
   for (const e of evs) {
     if (e.src) removeOwnerBall(owners, e.src);
 
-    if ((!e.shoot || e.returnMachineId) && e.target) {
+    if ((!e.shoot || e.returnMachineId || e.returnPlayerId) && e.target) {
       addOwnerBall(owners, e.target);
     }
   }
@@ -5364,11 +5369,15 @@ const exportJson = () => {
                           <label><input type="checkbox" checked={selectedMachine.collectsShots!==false} onChange={e=>updateMachine({collectsShots:e.target.checked})}/> Récupérer les prochains tirs près du panier</label>
                           <small>Le tir conserve sa cible sur le panier. Le ballon revient ensuite dans la machine.</small>
                         </div>}
-                        {selectedShot && <label className="settings-label">Ballon récupéré après le tir
-                          <select value={selectedShot.returnMachineId||''} onChange={e=>{pushHistory();const id=e.target.value||undefined;setPhases(prev=>prev.map((phase,i)=>i===current?{...phase,lines:phase.lines.map(l=>l.id===selectedShot.id?{...l,returnMachineId:id}:l)}:phase));}}>
+                        {selectedShot && <label className="settings-label">Rebond / récupération après le tir
+                          <select aria-label="Joueur ou machine qui récupère le ballon après le tir" value={selectedShot.returnPlayerId?`player:${selectedShot.returnPlayerId}`:selectedShot.returnMachineId?`machine:${selectedShot.returnMachineId}`:''} onChange={e=>{pushHistory();const value=e.target.value;const returnPlayerId=value.startsWith('player:')?value.slice(7):undefined;const returnMachineId=value.startsWith('machine:')?value.slice(8):undefined;setPhases(prev=>prev.map((phase,i)=>i===current?{...phase,lines:phase.lines.map(l=>l.id===selectedShot.id?{...l,returnPlayerId,returnMachineId}:l)}:phase));}}>
                             <option value="">Sans récupération</option>
-                            {ph?.objects.filter(o=>o.kind==='shootingMachine').map((o,i)=><option key={o.id} value={o.id}>Machine {i+1}</option>)}
+                            <optgroup label="Joueurs · rebond">
+                              {ph?.players.filter(p=>!p.coach).map(p=><option key={p.id} value={`player:${p.id}`}>Joueur {p.label}{p.name?` · ${p.name}`:''}{p.id===selectedShot.sourcePlayerId?' · propre rebond':''}</option>)}
+                            </optgroup>
+                            {!!ph?.objects.some(o=>o.kind==='shootingMachine')&&<optgroup label="Machines à ballons">{ph.objects.filter(o=>o.kind==='shootingMachine').map((o,i)=><option key={o.id} value={`machine:${o.id}`}>Machine {i+1}</option>)}</optgroup>}
                           </select>
+                          <small>Le tir reste dirigé vers le panier. Le ballon rejoint ensuite le joueur choisi et lui reste attaché à la fin de la phase.</small>
                         </label>}
 
                         <label className="settings-label">Taille</label>
