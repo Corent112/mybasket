@@ -2617,15 +2617,37 @@ if (anim && anim.balls) {
 
   // position d'un joueur DANS une phase à l'instant local (ms) — chaîne ses déplacements action par action.
   // Chaque action part de la position du joueur AU DÉBUT de cette action (jamais sa position finale globale).
+  const reboundSpotForShot = (phase:Phase,line:Line):Pt => {
+    const hoop=lateralBasketPoint(phase,line.targetBasketId)||basketFor(courtRef.current,line.from);
+    // Move inside the court from the actual hoop (top, bottom or lateral).
+    const dx=.5-hoop.x,dy=.5-hoop.y,d=Math.hypot(dx,dy)||1;
+    return {x:Math.max(.03,Math.min(.97,hoop.x+dx/d*.055)),y:Math.max(.03,Math.min(.97,hoop.y+dy/d*.055))};
+  };
   const phasePlayerPosAt = (s: Sched, playerId: string, local: number): Pt | null => {
     const ph = phasesRef.current[s.idx]; if (!ph) return null;
     const pl = ph.players.find((p) => p.id === playerId);
     let pos: Pt | null = pl ? { x: pl.x, y: pl.y } : null;
     const moves = s.actSched.filter((a) => MOVE_KINDS.includes(a.line.action) && a.line.sourcePlayerId === playerId);
-    for (const a of moves) {
-      if (local >= a.end) { pos = { ...a.line.to }; continue; }   // action terminée
-      if (local >= a.start) return actionPointN(pos || a.line.from, a.line, ease((local - a.start) / a.dur)); // action en cours
-      break; // action pas encore démarrée
+    const rebounds=pl&&!pl.coach?s.actSched.filter(a=>a.line.action==='shoot'&&a.line.returnPlayerId===playerId):[];
+    if(!rebounds.length){
+      for (const a of moves) {
+        if (local >= a.end) { pos = { ...a.line.to }; continue; }
+        if (local >= a.start) return actionPointN(pos || a.line.from, a.line, ease((local - a.start) / a.dur));
+        break;
+      }
+      return pos;
+    }
+    const recoveryMoves=rebounds.map(a=>{
+      const start=a.start+a.dur*.55,end=a.start+a.dur*.95;
+      return {start,end,dur:Math.max(1,end-start),line:{...a.line,action:'cut',from:pos||a.line.from,to:reboundSpotForShot(ph,a.line),ctrl:undefined,ctrls:undefined,points:undefined}};
+    });
+    const motions=[...moves,...recoveryMoves].sort((a,b)=>a.start-b.start);
+    let previous:{from:Pt;line:Line;start:number;end:number;dur:number}|null=null;
+    const at=(motion:NonNullable<typeof previous>,time:number):Pt=>time>=motion.end?{...motion.line.to}:actionPointN(motion.from,motion.line,ease(Math.max(0,Math.min(1,(time-motion.start)/Math.max(1,motion.dur)))));
+    for(const motion of motions){
+      if(local<motion.start)break;
+      const from:Pt=previous?at(previous,motion.start):pos||motion.line.from;
+      previous={...motion,from};pos=at(previous,local);
     }
     return pos;
   };
@@ -2901,7 +2923,7 @@ if (anim && anim.balls) {
     // Ballons en vol : passe ou tir actif.
     activeEvents.forEach((active) => {
       const from = active.machineFrom || (active.src
-        ? playerPosAtClock(sched, active.src, clock)
+        ? playerPosAtClock(sched, active.src, active.shoot?active.wStart:clock)
         : active.from || null);
 
       if (!from) return;
@@ -5377,7 +5399,7 @@ const exportJson = () => {
                             </optgroup>
                             {!!ph?.objects.some(o=>o.kind==='shootingMachine')&&<optgroup label="Machines à ballons">{ph.objects.filter(o=>o.kind==='shootingMachine').map((o,i)=><option key={o.id} value={`machine:${o.id}`}>Machine {i+1}</option>)}</optgroup>}
                           </select>
-                          <small>Le tir reste dirigé vers le panier. Le ballon rejoint ensuite le joueur choisi et lui reste attaché à la fin de la phase.</small>
+                          <small>Le tir reste dirigé vers le panier. Le joueur choisi va au rebond sous ce panier, y récupère le ballon et y termine la phase.</small>
                         </label>}
 
                         <label className="settings-label">Taille</label>
