@@ -1,4 +1,5 @@
 import { type NextRequest, NextResponse } from "next/server";
+import {isSameOriginMutation} from "./lib/security/request-origin";
 import { updateSession } from "./lib/supabase/proxy";
 
 /**
@@ -24,7 +25,7 @@ function requiresAuthentication(pathname: string) {
 function applySecurityHeaders(response: NextResponse, request: NextRequest) {
   const pathname = request.nextUrl.pathname;
 
-  response.headers.set("X-Frame-Options", "DENY");
+  response.headers.set("X-Frame-Options", "SAMEORIGIN");
   response.headers.set("X-Content-Type-Options", "nosniff");
   response.headers.set("Referrer-Policy", "strict-origin-when-cross-origin");
   response.headers.set(
@@ -47,6 +48,9 @@ function applySecurityHeaders(response: NextResponse, request: NextRequest) {
 
 export async function proxy(request: NextRequest) {
   const pathname = request.nextUrl.pathname;
+  if(pathname.startsWith("/api/")&&!["GET","HEAD","OPTIONS"].includes(request.method)&&!isSameOriginMutation(request)){
+    return applySecurityHeaders(NextResponse.json({error:"Requête intersite refusée."},{status:403}),request);
+  }
 
   // Pages publiques : aucune requête Supabase dans le proxy.
   if (!requiresAuthentication(pathname)) {

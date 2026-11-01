@@ -704,45 +704,18 @@ setLoading(false);
     if (draggedPlayer) movePlayerToPosition(draggedPlayer.player,to);
   }
 
-  async function createCheckout(provider: "stripe" | "paypal" | "apple_pay") {
-  if (provider !== "stripe") {
-    alert("Ce moyen de paiement arrive bientôt.");
-    return;
+  const [checkoutBusy,setCheckoutBusy]=useState(false);
+  const [checkoutError,setCheckoutError]=useState("");
+  const checkoutLock=useRef(false);
+  async function createCheckout(provider:"stripe"|"paypal"|"apple_pay"){
+    if(checkoutLock.current)return;checkoutLock.current=true;setCheckoutBusy(true);setCheckoutError("");
+    try{
+      const response=await fetch("/api/checkout/stripe",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({preferredMethod:provider==="stripe"?"card":provider})});
+      const data=await response.json();if(!response.ok)throw Error(data.error||"Paiement momentanément indisponible.");
+      const destination=new URL(data.url);if(destination.protocol!=="https:"||destination.hostname!=="checkout.stripe.com")throw Error("Adresse de paiement invalide.");
+      window.location.assign(destination.href);
+    }catch(error){setCheckoutError(error instanceof Error?error.message:"Paiement momentanément indisponible.");checkoutLock.current=false;setCheckoutBusy(false)}
   }
-
-  try {
-    const response = await fetch("/api/checkout/stripe", {
-      method: "POST",
-    });
-
-    const text = await response.text();
-
-    let data: { url?: string; error?: string } = {};
-
-    try {
-      data = JSON.parse(text);
-    } catch {
-      console.error("Réponse non JSON /api/checkout/stripe :", text);
-      alert("Erreur serveur Stripe. Détail affiché dans la console.");
-      return;
-    }
-
-    if (!response.ok) {
-      alert(data.error ?? "Erreur paiement");
-      return;
-    }
-
-    if (!data.url) {
-      alert("Stripe n'a pas renvoyé d'URL de paiement.");
-      return;
-    }
-
-    window.location.href = data.url;
-  } catch (error) {
-    console.error("Erreur checkout:", error);
-    alert("Erreur technique lors du paiement.");
-  }
-}
 
   const allSessionPlayers = useMemo(
     () => [
@@ -2225,16 +2198,19 @@ setLoading(false);
           <button type="button">OK</button>
         </div>
 
+        {checkoutError&&<p role="alert" style={{color:"#a3283d"}}>{checkoutError}</p>}
+        {checkoutBusy&&<p role="status">Ouverture de la page de paiement sécurisée…</p>}
+        <p style={{fontSize:12,color:"#766b70"}}>Paiement sécurisé sur Stripe. Apple Pay et PayPal sont proposés selon leur disponibilité.</p>
         <div className="payBox">
-          <button type="button" onClick={() => createCheckout("stripe")}>
+          <button type="button" disabled={checkoutBusy} onClick={() => createCheckout("stripe")}>
             💳 Carte bancaire
           </button>
 
-          <button type="button" onClick={() => createCheckout("paypal")}>
+          <button type="button" disabled={checkoutBusy} onClick={() => createCheckout("paypal")}>
             PayPal
           </button>
 
-          <button type="button" onClick={() => createCheckout("apple_pay")}>
+          <button type="button" disabled={checkoutBusy} onClick={() => createCheckout("apple_pay")}>
              Pay
           </button>
         </div>

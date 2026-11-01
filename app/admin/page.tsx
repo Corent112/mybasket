@@ -10,6 +10,7 @@ const menu = [
   ["Boutique", "/admin/boutique", "🛍️"],
   ["Abonnements", "/admin/abonnements", "💳"],
   ["Paiements", "/admin/paiements", "💰"],
+  ["Sécurité & paiement en ligne", "/admin/securite", "🔒"],
   ["Exercices", "/admin/exercices", "🏀"],
   ["Systèmes", "/admin/systemes", "📋"],
   ["Séances", "/admin/seances", "🗓️"],

@@ -7,6 +7,8 @@ const buckets = new Map<string, Bucket>();
 
 export function rateLimit(key: string, limit = 8, windowMs = 60_000) {
   const now = Date.now();
+  // Best-effort instance protection; the edge WAF/Supabase limits remain necessary.
+  if(buckets.size>=10000){for(const [id,value] of buckets){if(value.resetAt<=now)buckets.delete(id)}if(buckets.size>=10000)return {allowed:false,remaining:0,resetAt:now+windowMs};}
   const bucket = buckets.get(key);
 
   if (!bucket || bucket.resetAt <= now) {

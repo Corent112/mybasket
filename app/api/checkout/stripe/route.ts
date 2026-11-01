@@ -1,6 +1,11 @@
 import { NextResponse } from "next/server";
 import Stripe from "stripe";
 import { createClient } from "@/lib/supabase/server";
+import {createAdminClient} from "@/lib/supabase/admin-server";
+import {getSiteUrl} from "@/lib/site-url";
+import {checkoutItemsDigest,safeQuantity} from "@/lib/payments/checkout-integrity";
+import {isSameOriginMutation} from "@/lib/security/request-origin";
+import {rateLimit} from "@/lib/security/rate-limit";
 
 type CartItem = {
   id: string;
@@ -31,16 +36,8 @@ function getStripe() {
   return new Stripe(key);
 }
 
-function siteUrl() {
-  return (process.env.NEXT_PUBLIC_SITE_URL || "http://localhost:3000").replace(/\/$/, "");
-}
-
-function toPositiveQuantity(value: number | null | undefined) {
-  return Math.max(1, Math.min(99, Number(value || 1)));
-}
-
 async function resolveSafeItem(supabase: Awaited<ReturnType<typeof createClient>>, item: CartItem): Promise<PayableItem | null> {
-  const quantity = toPositiveQuantity(item.quantity);
+  const quantity = safeQuantity(item.quantity);
 
   if (item.item_type === "product") {
     if (!item.item_id) return null;
@@ -124,9 +121,11 @@ async function resolveSafeItem(supabase: Awaited<ReturnType<typeof createClient>
 
 export async function POST(request: Request) {
   try {
+    if(!isSameOriginMutation(request))return NextResponse.json({error:"Requête refusée."},{status:403});
+    if(!process.env.STRIPE_SECRET_KEY||!process.env.STRIPE_WEBHOOK_SECRET)return NextResponse.json({error:"Le paiement en ligne est momentanément indisponible."},{status:503});
     const stripe = getStripe();
     const body = await request.json().catch(() => ({})) as { preferredMethod?: string };
-    const preferredMethod = body.preferredMethod === "apple_pay" ? "apple_pay" : "card";
+    const preferredMethod = ["apple_pay","paypal"].includes(String(body.preferredMethod)) ? body.preferredMethod : "card";
     const supabase = await createClient();
 
     const {
@@ -138,6 +137,8 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "Non connecté" }, { status: 401 });
     }
 
+    if(!rateLimit(`checkout:${user.id}`,8,60000).allowed)return NextResponse.json({error:"Trop de tentatives. Réessaie dans une minute."},{status:429});
+    const db=createAdminClient();if(!db)return NextResponse.json({error:"Paiement indisponible."},{status:503});
     const { data, error } = await supabase
       .from("cart_items")
       .select("*")
@@ -156,10 +157,11 @@ export async function POST(request: Request) {
       if (safe) payableItems.push(safe);
     }
 
-    if (payableItems.length === 0) {
+    if (payableItems.length !== cartItems.length || payableItems.length === 0 || payableItems.length > 100) {
       return NextResponse.json({ error: "Aucun article payant valide dans le panier." }, { status: 400 });
     }
 
+    if(payableItems.filter(i=>i.item_type==="subscription").length>1)return NextResponse.json({error:"Choisis un seul abonnement par commande."},{status:400});
     const totalCents = payableItems.reduce(
       (sum, item) => {
         const line = item.unitCents * item.quantity;
@@ -175,6 +177,7 @@ export async function POST(request: Request) {
     }, 0);
     const subtotalCents = totalCents - taxCents;
 
+    if(!Number.isSafeInteger(totalCents)||totalCents<50||totalCents>99999999)return NextResponse.json({error:"Montant du panier invalide."},{status:400});
     const now = new Date().toISOString();
     const completeOrderPayload = {
       user_id: user.id, status: "pending", payment_provider: "stripe",
@@ -182,11 +185,11 @@ export async function POST(request: Request) {
       subtotal_cents: subtotalCents, tax_cents: taxCents, total_cents: totalCents,
       created_at: now, updated_at: now,
     };
-    let orderResult = await supabase.from("orders").insert(completeOrderPayload).select("id").single();
+    let orderResult = await db.from("orders").insert(completeOrderPayload).select("id").single();
 
     // Compatibilité avec les bases plus anciennes qui n'ont pas encore les colonnes *_cents.
     if (orderResult.error?.code === "PGRST204" || orderResult.error?.message?.includes("schema cache")) {
-      orderResult = await supabase.from("orders").insert({
+      orderResult = await db.from("orders").insert({
         user_id: user.id, status: "pending", payment_provider: "stripe",
         subtotal: subtotalCents / 100, tax: taxCents / 100, total: totalCents / 100,
         created_at: now, updated_at: now,
@@ -199,6 +202,7 @@ export async function POST(request: Request) {
     }
 
     const orderItemsPayload = payableItems.map((item) => ({
+      id: crypto.randomUUID(),
       order_id: order.id,
       user_id: user.id,
       item_type: item.item_type,
@@ -214,19 +218,19 @@ export async function POST(request: Request) {
       assigned_to: item.assigned_to,
       sort_order: item.sort_order ?? 0,
       metadata: {
-        ...(item.metadata ?? {}),
+        cart_item_id:item.id,
         billing_period: item.item_type === "subscription" ? item.assigned_to : null,
       },
       created_at: new Date().toISOString(),
     }));
 
-    let { error: orderItemsError } = await supabase
+    let { error: orderItemsError } = await db
       .from("order_items")
       .insert(orderItemsPayload);
 
     if (orderItemsError?.code === "PGRST204" || orderItemsError?.message?.includes("schema cache")) {
       const legacyPayload = orderItemsPayload.map(({ price_cents, unit_price_cents, ...item }) => item);
-      const retry = await supabase.from("order_items").insert(legacyPayload);
+      const retry = await db.from("order_items").insert(legacyPayload);
       orderItemsError = retry.error;
     }
 
@@ -250,30 +254,29 @@ export async function POST(request: Request) {
           },
         },
       })),
-      success_url: `${siteUrl()}/panier/success?order=${order.id}`,
-      cancel_url: `${siteUrl()}/panier`,
+      success_url: `${getSiteUrl(request)}/panier/success?order=${order.id}`,
+      cancel_url: `${getSiteUrl(request)}/panier`,
       metadata: {
         order_id: order.id,
         user_id: user.id,
-        preferred_method: preferredMethod,
+        preferred_method: String(preferredMethod),
+        items_digest: checkoutItemsDigest(orderItemsPayload),
+        integrity_version: "1",
       },
-    });
+    },{idempotencyKey:`checkout-${order.id}`});
 
     if (!session.url) {
       return NextResponse.json({ error: "Impossible de créer la session Stripe." }, { status: 500 });
     }
 
-    await supabase
-      .from("orders")
-      .update({ stripe_session_id: session.id, updated_at: new Date().toISOString() })
-      .eq("id", order.id);
-
+    const bound=await db.from("orders").update({stripe_session_id:session.id,updated_at:new Date().toISOString()}).eq("id",order.id).eq("user_id",user.id);
+    if(bound.error){await stripe.checkout.sessions.expire(session.id);throw new Error("Session non enregistrée");}
     return NextResponse.json({ url: session.url });
   } catch (error) {
     console.error("Erreur checkout Stripe:", error);
 
     return NextResponse.json(
-      { error: error instanceof Error ? error.message : "Erreur serveur Stripe inconnue." },
+      { error: "Impossible de préparer le paiement. Réessaie dans quelques instants." },
       { status: 500 }
     );
   }

@@ -39,7 +39,8 @@ export function safeInternalPath(
   const path = String(value || fallback).trim();
 
   if (!path.startsWith("/")) return fallback;
-  if (path.startsWith("//")) return fallback;
+  if (path.startsWith("//") || /[\\\x00-\x20\x7f]/.test(path)) return fallback;
+  try { if(new URL(path,"https://mybasket.invalid").origin!=="https://mybasket.invalid")return fallback; } catch { return fallback; }
   if (/^\/\s*https?:\/\//i.test(path)) return fallback;
 
   return path;

@@ -46,6 +46,10 @@ export async function requireAdmin() {
     redirect("/mon-compte");
   }
 
+  const assurance = await supabase.auth.mfa.getAuthenticatorAssuranceLevel();
+  if(assurance.error)redirect("/mon-compte/securite?next=/admin");
+  if(assurance.data.nextLevel === "aal2" && assurance.data.currentLevel !== "aal2")redirect("/mon-compte/securite?next=/admin");
+
   return {
     user,
     profile: {

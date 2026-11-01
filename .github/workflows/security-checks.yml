@@ -1,0 +1,22 @@
+name: Security and payment regression checks
+on:
+  push:
+    branches: [main]
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  security:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - run: npm audit --omit=dev --audit-level=moderate
+      - run: node scripts/test-secure-checkout.cjs
+      - run: node scripts/test-admin-mfa-guard.cjs
+      - run: node scripts/test-password-recovery.cjs
+      - run: node scripts/test-admin-user-subscriptions.cjs

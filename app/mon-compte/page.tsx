@@ -1317,6 +1317,7 @@ return (
                 <p style={{ margin: '0 0 1.1rem', fontSize: '.82rem', color: '#6f6f6f' }}>
                   Modifie le mot de passe de ton compte MyBasket.
                 </p>
+                <Link href="/mon-compte/securite">Configurer la double authentification →</Link>
 
                 <div className="mc-row">
                   <label className="k">Mot de passe actuel</label>
