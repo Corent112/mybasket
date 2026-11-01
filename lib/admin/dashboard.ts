@@ -1,5 +1,6 @@
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin-server";
+import {readAllAuthUsers} from "@/lib/admin/user-subscriptions";
 
 export type AdminDashboardData = {
   users: number;
@@ -103,7 +104,7 @@ export async function getAdminDashboardData(): Promise<AdminDashboardData> {
 
   const admin = createAdminClient();
   const authUsersPromise = admin
-    ? admin.auth.admin.listUsers({ page: 1, perPage: 1000 }).then(({ data, error }: { data: { users: unknown[] }; error: unknown }) => error ? null : data.users.length).catch(() => null)
+    ? readAllAuthUsers(admin).then(users=>users.length).catch(()=>null)
     : Promise.resolve(null);
 
   const [
