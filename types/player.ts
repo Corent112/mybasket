@@ -97,6 +97,7 @@ export interface ComparaisonEquipe {
 }
 
 export interface Player {
+  clubHistory?: import("../lib/player-club-history").PlayerClubSeason[];
   id: string;
   /** Id réel Supabase du joueur, utilisé par match_player_stats.player_id. */
   supabasePlayerId?: string | null;

@@ -4,6 +4,7 @@
 import { use, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { getPlayer, getTeam, getTeams, upsertPlayer } from "../../../../lib/equipes-store";
+import PlayerClubHistory from "@/components/players/PlayerClubHistory";
 import PolePlayerTeamLinks from "@/components/equipes/PolePlayerTeamLinks";
 import PlayerTeamAttachment from "@/components/equipes/PlayerTeamAttachment";
 import PlayerForm from "../../../../components/equipes/PlayerForm";
@@ -1574,11 +1575,11 @@ export default function JoueurDetailPage({
       const {data:{user}}=await supabase.auth.getUser();if(!user)throw Error("Reconnecte-toi avant d’exporter.");
       const unavailable:any[]=[];
       const optional=async(table:string,label:string,options?:{team?:boolean;user?:string})=>{try{return await readAll(table,options)}catch{unavailable.push({rubrique:label,informations:"Données non disponibles au moment de l’export. Recharge la fiche pour réessayer."});return []}};
-      const [savedTests,savedMedical,savedDocuments,savedBilans,assessments,profileNotes,loads,wellness]=await Promise.all([
+      const [savedTests,savedMedical,savedDocuments,savedBilans,assessments,profileNotes]=await Promise.all([
         readAll("player_tests"),readAll("player_medical_entries"),readAll("player_documents"),readAll("player_bilans"),
-        optional("player_profile_assessments","Profilage"),optional("player_profile_notes","Notes de profilage",{team:false,user:user.id}),optional("training_load_entries","Charge et RPE"),optional("player_wellness_responses","Wellness")
+        optional("player_profile_assessments","Profilage"),optional("player_profile_notes","Notes de profilage",{team:false,user:user.id})
       ]);
-      const doc=await createPlayerProfilePdf(teamPlayerPdfInput({player:savedPlayer,team,matches:liveStats.matches,tests:savedTests,growth,medical:savedMedical,documents:savedDocuments,bilans:savedBilans,extraSections:[{title:"Profilage et évaluations",records:assessments},{title:"Notes de profilage",records:profileNotes},{title:"Charge et RPE",records:loads},{title:"Wellness et récupération",records:wellness},{title:"Rubriques non disponibles",records:unavailable}]}));
+      const doc=await createPlayerProfilePdf(teamPlayerPdfInput({player:savedPlayer,team,matches:liveStats.matches,tests:savedTests,growth,medical:savedMedical,documents:savedDocuments,bilans:savedBilans,extraSections:[{title:"Profilage et évaluations",records:assessments},{title:"Notes de profilage",records:profileNotes},{title:"Rubriques non disponibles",records:unavailable}]}));
       doc.save(`fiche-${player.firstName}-${player.lastName}`.replace(/[^a-zA-Z0-9À-ÿ_-]/g,"-")+".pdf");
     }catch(error){setProfilePdfError(error instanceof Error?error.message:"Export PDF impossible.");}finally{setProfilePdfBusy(false);}
   }
@@ -2154,7 +2155,7 @@ export default function JoueurDetailPage({
         )}
 
         {tab === "Informations" && (
-          <><InformationTab p={p} team={team} latestHeight={latestHeight} latestWeight={latestWeight} latestWingspan={latestWingspan} /><PolePlayerTeamLinks playerId={String(playerId)} onChanged={async()=>{await reload();flash("Rattachements mis à jour ✓")}} /></>
+          <><InformationTab p={p} team={team} latestHeight={latestHeight} latestWeight={latestWeight} latestWingspan={latestWingspan} /><PlayerClubHistory key={String(playerId)} value={p.clubHistory} onSave={async rows=>{const latest=await getPlayer(String(teamId),String(playerId));if(!latest)throw Error("Joueur introuvable.");await upsertPlayer(String(teamId),{...latest,clubHistory:rows});await reload();}} /><PolePlayerTeamLinks playerId={String(playerId)} onChanged={async()=>{await reload();flash("Rattachements mis à jour ✓")}} /></>
         )}
 
         {tab === "Stats & Vidéo" && (statsTeamId === "all" ? playerTeams : [playerTeams.find(t => t.id === statsTeamId) || team]).filter(t => t?.competitionSource === "lnb").map(t => t && <LnbPlayerStats key={t.id} teamId={t.id} playerId={String(playerId)} externalData={officialSeasons.find(item => item.teamId === t.id)?.data} externalLoading={matchStatsLoading} externalError={matchStatsError} />)}
@@ -3534,6 +3535,7 @@ function computeAutoInsights(
 }
 
 function PlayerMatchStatsTable({ matches, loading = false, error = "" }: { matches: PlayerLiveMatchLine[]; loading?: boolean; error?: string }) {
+  const [detailed, setDetailed] = useState(false);
   const [search, setSearch] = useState("");
   const [sort, setSort] = useState("date");
   const [category, setCategory] = useState<PlayerMatchCategory>("all");
@@ -3555,10 +3557,10 @@ function PlayerMatchStatsTable({ matches, loading = false, error = "" }: { match
     return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`;
   };
   const percent = (made: number, attempted: number) => attempted ? `${percentStat(made, attempted)} %` : "—";
-  return <section className="light-card player-match-card" style={{ marginBottom: 18, minWidth: 0 }} aria-label="Statistiques du joueur par match">
+  return <section className={`light-card player-match-card ${detailed ? "detailed" : "general"}`} style={{ marginBottom: 18, minWidth: 0 }} aria-label="Statistiques du joueur par match">
     <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 12, justifyContent: "space-between", marginBottom: 12 }}>
       <div><h3 style={{ marginBottom: 4 }}>Statistiques par match <span>({rows.length})</span></h3><p style={{ margin: 0, fontSize: 12, color: "#737780" }}>{games} match{games > 1 ? "s" : ""} joué{games > 1 ? "s" : ""} · moyennes = totaux ÷ matchs joués · temps de jeu en min:s</p></div>
-      <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}><div className="statsModes" role="group" aria-label="Présentation des statistiques"><button aria-pressed={!detailed} onClick={()=>setDetailed(false)}>Général</button><button aria-pressed={detailed} onClick={()=>setDetailed(true)}>Détaillées</button></div>
         <select aria-label="Type de matchs du joueur" value={category} onChange={event => setCategory(event.target.value as PlayerMatchCategory)} style={{ padding: 8, border: "1px solid #e0e2e6", borderRadius: 8 }}><option value="all">Tous les matchs</option><option value="championship">Championnat</option><option value="cup">Coupe</option><option value="friendly">Amical</option></select>
         <input aria-label="Rechercher un match dans les statistiques" placeholder="Adversaire ou date…" value={search} onChange={event => setSearch(event.target.value)} style={{ padding: 8, border: "1px solid #e0e2e6", borderRadius: 8, maxWidth: "100%" }} />
         <select aria-label="Trier les statistiques par match" value={sort} onChange={event => setSort(event.target.value)} style={{ padding: 8, border: "1px solid #e0e2e6", borderRadius: 8 }}><option value="date">Plus récents</option><option value="points">Points</option><option value="rebounds">Rebonds</option><option value="assists">Passes décisives</option></select>
@@ -3567,12 +3569,12 @@ function PlayerMatchStatsTable({ matches, loading = false, error = "" }: { match
     {loading ? <p role="status">Chargement des statistiques…</p> : error ? <p role="alert">Statistiques indisponibles : {error}</p> : rows.length === 0 ? <p className="empty-small">{matches.length ? "Aucun match ne correspond à la recherche." : "Aucune statistique enregistrée pour ce joueur sur les matchs sélectionnés."}</p> :
       <div style={{ overflowX: "auto" }} tabIndex={0} aria-label="Tableau des matchs, défilement horizontal">
         <table className="player-match-table" style={{ width: "100%", whiteSpace: "nowrap" }}>
-          <thead><tr>{["Date", "Adversaire", "Type", "Score", "MIN", "PTS", "2PTS", "3PTS", "LF", "% Tir", "% 3PTS", "% LF", "RO", "RD", "REB", "PD", "INT", "CTR", "BP", "FP", "Éval", "+/−"].map(label => <th scope="col" key={label} style={{ position: "sticky", top: 0, background: "#fbf7f4", color: "#6b1a2c", zIndex: 1 }}>{label}</th>)}</tr></thead>
+          <thead><tr>{["Date", "Adversaire", "Type", "Score", "MIN", "PTS", "2PTS", "3PTS", "LF", "% Tir", "% 3PTS", "% LF", "RO", "RD", "REB", "PD", "INT", "CTR", "BP", "FP", "Éval", "+/−"].map((label,index) => <th className={[9,10,11,12,13,16,17,18,19].includes(index)?"detailCol":""} scope="col" key={label} style={{ position: "sticky", top: 0, background: "#6b1a2c", color: "#ffffff", zIndex: 1 }}>{label}</th>)}</tr></thead>
           <tbody>{rows.map(match => <tr key={match.matchId}>
             <td>{fmtDate(match.date)}</td><th scope="row" style={{ textAlign: "left" }}>{match.opponent || "—"}{match.teamLabel && <small style={{ display: "block", fontWeight: 400, color: "#817981", fontSize: 10 }}>{match.teamLabel}</small>}</th><td>{categoryLabel(match.category)}</td>
             <td>{match.hasScore ? `${match.usScore}–${match.themScore}` : "—"}</td>
             <td>{match.present ? time(match.minutes) : "—"}</td><td><b>{match.present ? match.pts : "—"}</b></td>
-            {[`${match.p2m}/${match.p2a}`, `${match.p3m}/${match.p3a}`, `${match.ftm}/${match.fta}`, percent(match.p2m + match.p3m, match.p2a + match.p3a), percent(match.p3m, match.p3a), percent(match.ftm, match.fta), match.offReb, match.defReb, match.reb, match.ast, match.stl, match.blk, match.to, match.pf, match.eval, match.plusMinus==null?"—":match.plusMinus>0?`+${match.plusMinus}`:match.plusMinus].map((value, index) => <td key={index}>{match.present ? value : "—"}</td>)}
+            {[`${match.p2m}/${match.p2a}`, `${match.p3m}/${match.p3a}`, `${match.ftm}/${match.fta}`, percent(match.p2m + match.p3m, match.p2a + match.p3a), percent(match.p3m, match.p3a), percent(match.ftm, match.fta), match.offReb, match.defReb, match.reb, match.ast, match.stl, match.blk, match.to, match.pf, match.eval, match.plusMinus==null?"—":match.plusMinus>0?`+${match.plusMinus}`:match.plusMinus].map((value, index) => <td className={[3,4,5,6,7,10,11,12,13].includes(index)?"detailCol":""} key={index}>{match.present ? value : "—"}</td>)}
           </tr>)}</tbody>
           <tfoot>{["Totaux", "Moyennes"].map(label => {
             const average = label === "Moyennes";
@@ -3582,8 +3584,8 @@ function PlayerMatchStatsTable({ matches, loading = false, error = "" }: { match
               <th scope="row" colSpan={4} style={{ textAlign: "left" }}>{label} · {games} MJ</th>
               <td>{allMinutesKnown ? time(average ? sum("minutes") / games : sum("minutes")) : "—"}</td><td>{value("pts")}</td>
               <td>{pair("p2m", "p2a")}</td><td>{pair("p3m", "p3a")}</td><td>{pair("ftm", "fta")}</td>
-              <td>{percent(sum("p2m") + sum("p3m"), sum("p2a") + sum("p3a"))}</td><td>{percent(sum("p3m"), sum("p3a"))}</td><td>{percent(sum("ftm"), sum("fta"))}</td>
-              {(["offReb", "defReb", "reb", "ast", "stl", "blk", "to", "pf", "eval"] as const).map(key => <td key={key}>{value(key)}</td>)}
+              <td className="detailCol">{percent(sum("p2m") + sum("p3m"), sum("p2a") + sum("p3a"))}</td><td className="detailCol">{percent(sum("p3m"), sum("p3a"))}</td><td className="detailCol">{percent(sum("ftm"), sum("fta"))}</td>
+              {(["offReb", "defReb", "reb", "ast", "stl", "blk", "to", "pf", "eval"] as const).map(key => <td className={["offReb","defReb","stl","blk","to","pf"].includes(key)?"detailCol":""} key={key}>{value(key)}</td>)}
               <td>{played.length>0&&played.every(match=>match.plusMinus!=null)?value("plusMinus"):"—"}</td>
             </tr>;
           })}</tfoot>
@@ -3593,15 +3595,15 @@ function PlayerMatchStatsTable({ matches, loading = false, error = "" }: { match
     <style jsx>{`
       .player-match-card{padding:22px!important;border:1px solid #e9ded8!important;border-radius:18px!important;box-shadow:0 8px 28px #35142105}
       .player-match-card h3{font-family:Arial,sans-serif!important;font-size:19px!important;font-weight:750!important;text-transform:none!important;letter-spacing:0!important;color:#6b1a2c}
-      .player-match-table{width:100%;border-collapse:separate!important;border-spacing:0;min-width:1450px;font:12px Arial,sans-serif!important;font-variant-numeric:tabular-nums}
-      .player-match-table th,.player-match-table td{padding:13px 9px!important;text-align:center;border:0!important;border-bottom:1px solid #eee7e2!important;white-space:nowrap;line-height:1.4;font-size:12px!important}
+      .general .detailCol{display:none!important}.statsModes{display:flex;border:1px solid #e1d5d9;border-radius:9px;overflow:hidden}.statsModes button{padding:8px 12px;border:0;background:#fff;color:#6b1a2c;font-weight:700;cursor:pointer}.statsModes button[aria-pressed=true]{background:#6b1a2c;color:#fff}.general .player-match-table{min-width:900px}.player-match-table{width:100%;border-collapse:separate!important;border-spacing:0;min-width:1450px;font:12px Arial,sans-serif!important;font-variant-numeric:tabular-nums}
+      .player-match-table th,.player-match-table td{padding:11px 8px!important;text-align:center;border:0!important;border-bottom:1px solid #eee7e2!important;white-space:nowrap;line-height:1.4;font-size:12px!important}
       .player-match-table thead th{font-size:10px!important;font-weight:750;letter-spacing:.03em;min-width:42px}
       .player-match-table tbody th{text-transform:none!important;font-weight:700!important;color:#302328!important;background:transparent!important}
-      .player-match-table tbody tr:nth-child(even){background:#fcfaf8}.player-match-table tbody tr:hover{background:#fff5e8}
+      .player-match-table tbody tr:nth-child(even){background:#f4edef}.player-match-table tbody tr:hover{background:#fff5e8}
       .player-match-table td:first-child,.player-match-table th:first-child{text-align:left;min-width:104px}
       .player-match-table tfoot th{font-family:Arial,sans-serif!important;font-size:12px!important;color:#6b1a2c!important;text-transform:none!important;letter-spacing:0}
       .player-match-table tfoot td{font-weight:750}.player-match-table tfoot tr:last-child td,.player-match-table tfoot tr:last-child th{border-bottom:0!important}
-      @media(max-width:760px){.player-match-card{padding:14px!important}.player-match-table{min-width:1350px}}
+      @media(max-width:760px){.player-match-card{padding:14px!important}.detailed .player-match-table{min-width:1350px}}
     `}</style>
   </section>;
 }

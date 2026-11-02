@@ -1,4 +1,5 @@
 "use client";
+import PlayerClubHistory from "@/components/players/PlayerClubHistory";
 import ClubNameInput from "./ClubNameInput";
 import SiblingDetailsFields from "./SiblingDetailsFields";
 import {normalizeSiblingDetails,normalizeShoeSize} from "@/lib/institutionnel/player-family-details";
@@ -433,6 +434,7 @@ export default function InstitutionalPlayerSheet({ structureId, player, referral
           <DashboardCard title="Objectifs" className="compactCard"><ChipList items={objectives} empty="Aucun objectif renseigné" /></DashboardCard>
         </div>}
 
+        {tab === "Informations" && <PlayerClubHistory key={player.id} value={profile.clubHistory} onSave={rows=>Promise.resolve(onSave({...form,profile_extra:{clubHistory:rows}}))} />}
         {tab === "Informations" && <section className="panel formPanel">
           <SectionTitle eyebrow="INFORMATIONS" title="Fiche joueur complète" help="Toutes les informations d'identité, sportives, scolaires et anthropométriques du joueur." />
           <div className="editLayout">

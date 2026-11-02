@@ -1,3 +1,4 @@
+import {normalizeClubHistory} from '../player-club-history';
 import {playerPdfDetailRows} from '../player-pdf-details';
 import {siblingDetailsLabel} from './player-family-details';
 import {jsPDF} from 'jspdf';
@@ -26,9 +27,9 @@ export async function createPlayerProfilePdf(input:{player:Record<string,any>;in
  const date=(v:any)=>/^\d{4}-\d{2}-\d{2}/.test(String(v||''))?String(v).slice(0,10).split('-').reverse().join('/'):String(v||'');
  const font=(size:number,bold=false,color=ink)=>{doc.setFont('helvetica',bold?'bold':'normal');doc.setFontSize(size);doc.setTextColor(color);};
  const picture=(data:string,x:number,y:number,w:number,h:number)=>{const image=doc.getImageProperties(data),scale=Math.min(w/image.width,h/image.height);doc.addImage(data,'JPEG',x+(w-image.width*scale)/2,y+(h-image.height*scale)/2,image.width*scale,image.height*scale);};
- const rule=(y:number)=>{doc.setDrawColor(line);doc.setLineWidth(.25);doc.line(16,y,194,y);};
+ const rule=(y:number)=>{doc.setDrawColor(line);doc.setLineWidth(.25);doc.line(16,y,doc.internal.pageSize.getWidth()-16,y);};
  let y=48;
- const header=(label='DOSSIER JOUEUR')=>{doc.setFillColor(wine);doc.rect(0,0,210,3,'F');if(logo)picture(logo,16,10,18,19);font(8,true,wine);doc.text(doc.splitTextToSize(institution.name,145),logo?40:16,17);font(8,false,muted);doc.text(label+(institution.season_label?' / '+institution.season_label:''),logo?40:16,29);rule(36);font(10,true);doc.text(doc.splitTextToSize(name,178),16,43);y=54;};
+ const header=(label='DOSSIER JOUEUR')=>{doc.setFillColor(wine);doc.rect(0,0,doc.internal.pageSize.getWidth(),3,'F');if(logo)picture(logo,16,10,18,19);font(8,true,wine);doc.text(doc.splitTextToSize(institution.name,145),logo?40:16,17);font(8,false,muted);doc.text(label+(institution.season_label?' / '+institution.season_label:''),logo?40:16,29);rule(36);font(10,true);doc.text(doc.splitTextToSize(name,178),16,43);y=54;};
  const newPage=(label:string)=>{doc.addPage();header(label);};
  const space=(height:number)=>{if(y+height>bottom)newPage('DOSSIER JOUEUR / SUITE');};
  const paragraph=(value:unknown,size=9,bold=false)=>{font(size,bold);const lines:string[]=doc.splitTextToSize(String(value??'').replace(/\r/g,''),width);for(const text of lines){space(5);font(size,bold);doc.text(text,16,y);y+=5;}};
@@ -50,7 +51,14 @@ export async function createPlayerProfilePdf(input:{player:Record<string,any>;in
  font(8,false,muted);doc.text('PARCOURS / PROFIL / SUIVI / INFORMATIONS',16,278);
  newPage('PARCOURS & PROFIL');
  const entries:Array<Record<string,any>>=[...(input.seasonEntries||[])].map(entry=>({...entry,season:input.trackingSeasons?.find(season=>season.id===entry.season_id)?.season_label||''})).sort((a,b)=>String(a.season).localeCompare(String(b.season)));
- section('Parcours club');if(entries.length){for(const entry of entries)paragraph([entry.season,entry.club_name,entry.position_label].filter(Boolean).join(' / '));}else paragraph(player.club_name||'Parcours non renseigné.');
+ section('Parcours club');
+ const career=[...normalizeClubHistory(p.clubHistory).map(row=>({season:row.season,club:row.club,category:row.category,level:row.level})),...entries.map(row=>({season:row.season,club:row.club_name||'',category:row.category||'',level:row.position_label?`Poste : ${row.position_label}`:''}))];
+ const seenCareer=new Set<string>();
+ const careerRows=career.filter(row=>{const key=`${row.season}|${row.club}`.toLocaleLowerCase('fr');if(seenCareer.has(key))return false;seenCareer.add(key);return true}).sort((a,b)=>b.season.localeCompare(a.season));
+ if(careerRows.length){
+  const careerHead=()=>{space(12);doc.setFillColor(wine);doc.rect(16,y-5,178,9,'F');font(8,true,'#ffffff');['SAISON','CLUB','CATÉGORIE','NIVEAU'].forEach((label,i)=>doc.text(label,[19,46,115,146][i],y));y+=10;};careerHead();
+  for(const row of careerRows){const values=[row.season,row.club,row.category,row.level],xs=[19,46,115,146],widths=[24,65,28,46];font(8);const lines=values.map((value,i)=>doc.splitTextToSize(value||'—',widths[i]));const h=Math.max(...lines.map(l=>l.length))*4+5;if(y+h>bottom){newPage('PARCOURS / SUITE');careerHead()}doc.setFillColor(pale);doc.rect(16,y-4,178,h,'F');font(8);lines.forEach((line,i)=>doc.text(line,xs[i],y));y+=h;}
+ }else paragraph(player.club_name||'Parcours non renseigné.');
  if(filled(p.basketballYears))paragraph(`Pratique du basket : ${p.basketballYears} année(s)`,9);
  const profiling=p.profiling||{},sports=p.sportsReport||{},pole=p.poleFollowup||{};
  if(filled(profiling.profile)){section('Profil');paragraph(profiling.profile);}
@@ -80,11 +88,32 @@ export async function createPlayerProfilePdf(input:{player:Record<string,any>;in
  for(const [title,key]of [['Suivi médical','medicalEntries'],['Bilans','bilans'],['Documents associés','documents']]){const records=p[key];if(!Array.isArray(records)||!records.length)continue;section(title);for(const row of records){paragraph([row.date,row.title,row.name,row.status].filter(Boolean).join(' / '),9,true);for(const [label,value]of playerPdfDetailRows(row))paragraph(`${label} : ${value}`,8);}}
  if(input.attendance?.length){newPage('PRÉSENCES & MATCHS');section('Présences enregistrées');const statuses:Record<string,string>={present:'Présent',absent:'Absent',excused:'Excusé',pending:'À renseigner'};for(const r of input.attendance)paragraph([date(r.session?.session_date),r.session?.title,statuses[r.status]||r.status,r.session?.location].filter(Boolean).join(' / '),8);}
  if(p.growth&&Object.keys(p.growth).length){section('Croissance détaillée');for(const [label,value]of playerPdfDetailRows(p.growth))paragraph(`${label} : ${value}`,8);}
- for(const extra of input.extraSections||[]){if(!extra.records.length)continue;newPage(extra.title.toLocaleUpperCase('fr'));section(extra.title);for(const record of extra.records){for(const [label,value]of playerPdfDetailRows(record))paragraph(`${label} : ${value}`,8);y+=5;}}
- const matches=input.matches||[];newPage('STATISTIQUES');section(`Statistiques par match (${matches.length})`);if(!matches.length)paragraph('Aucun match joué lié à cette fiche.');
- if(matches.length){const mean=(key:string)=>{const values=matches.map(m=>m[key]).filter(v=>v!=null&&v!==''&&Number.isFinite(Number(v))).map(Number);return values.length?(values.reduce((a,b)=>a+b,0)/values.length).toFixed(1):'—';};paragraph(`Moyennes sur les matchs renseignés : PTS ${mean('pts')} / REB ${mean('reb')} / PD ${mean('ast')} / INT ${mean('stl')} / CTR ${mean('blk')} / BP ${mean('turnovers')} / MIN ${mean('minutes')}`,8);}
- for(const match of matches){space(28);paragraph(`${date(match.date)||'Date non renseignée'} / ${match.teamName||''} vs ${match.opponent||'Adversaire non renseigné'}`,9,true);paragraph([match.category,match.matchCategory,...(match.tournaments||[]).map((t:any)=>t.name)].filter(Boolean).join(' / '),8);const v=(key:string)=>filled(match[key])?match[key]:'—';paragraph(`PTS ${v('pts')}   REB ${v('reb')}   PD ${v('ast')}   INT ${v('stl')}   CTR ${v('blk')}   BP ${v('turnovers')}   MIN ${match.minutes==null?'—':Number(match.minutes).toFixed(1)}`,8);paragraph(`2PTS ${v('p2m')}/${v('p2a')}   3PTS ${v('p3m')}/${v('p3a')}   LF ${v('ftm')}/${v('fta')}`,8);paragraph(`REB OFF ${v('offReb')}   REB DÉF ${v('defReb')}   FAUTES ${v('pf')}   ÉVAL ${v('eval')}   +/- ${v('plusMinus')}`,8);y+=3;}
- const count=doc.getNumberOfPages();for(let page=1;page<=count;page++){doc.setPage(page);rule(281);font(7,false,muted);doc.text(`MyBasket / ${new Date().toLocaleDateString('fr-FR')} / Informations enregistrées`,16,286);doc.text(`${page} / ${count}`,194,286,{align:'right'});}
+ for(const extra of input.extraSections||[]){if(/rpe|charge|wellness|récupération/i.test(extra.title)||!extra.records.length)continue;newPage(extra.title.toLocaleUpperCase('fr'));section(extra.title);for(const record of extra.records){for(const [label,value]of playerPdfDetailRows(record))paragraph(`${label} : ${value}`,8);y+=5;}}
+ const seenMatches=new Set<string>();
+ const matches=(input.matches||[]).filter(match=>{if(match.present===false)return false;const id=match.matchId||match.match_id;if(!id)return true;const key=`${match.teamId||match.team_id||''}:${id}`;if(seenMatches.has(key))return false;seenMatches.add(key);return true;});
+ const columns=[['Date',18],['Équipe',24],['Adversaire',33],['Score',16],['MIN',13],['PTS',10],['2PTS',16],['%',12],['3PTS',16],['%',12],['LF',16],['%',12],['RO',9],['RD',9],['RT',9],['PD',9],['INT',9],['CT',9],['BP',9],['FP',9],['Éval',11],['+/-',11]] as const;
+ const tableWidth=265,totalWidth=columns.reduce((n,col)=>n+col[1],0),widths=columns.map(col=>col[1]*tableWidth/totalWidth);
+ const finite=(value:unknown)=>value!==null&&value!==undefined&&value!==''&&Number.isFinite(Number(value));
+ const value=(v:unknown)=>finite(v)?String(v):'—';
+ const time=(v:unknown)=>{if(!finite(v))return '—';const seconds=Math.round(Number(v)*60);return `${Math.floor(seconds/60)}:${String(seconds%60).padStart(2,'0')}`;};
+ const pct=(made:unknown,attempts:unknown)=>finite(made)&&finite(attempts)&&Number(attempts)>0?`${Math.round(Number(made)/Number(attempts)*100)}%`:'—';
+ const pair=(m:Record<string,any>,a:string,b:string)=>`${value(m[a])}/${value(m[b])}`;
+ const tableHead=()=>{doc.setFillColor(wine);doc.rect(16,y-5,tableWidth,10,'F');font(7,true,'#ffffff');let x=16;columns.forEach((col,i)=>{doc.text(col[0],x+widths[i]/2,y+1,{align:'center'});x+=widths[i]});y+=12;};
+ const statsPage=()=>{doc.addPage('a4','landscape');header('STATISTIQUES PAR MATCH');font(8,false,muted);doc.text(`${matches.length} match(s) joué(s) · Données enregistrées · — : non renseigné`,16,y);y+=10;tableHead();};
+ statsPage();
+ const tableRow=(values:string[],summary=false,index=0)=>{font(7,summary);const lines=values.map((text,i)=>doc.splitTextToSize(text,widths[i]-3));const height=Math.max(1,...lines.map(line=>line.length))*3.5+4;
+  if(y+height>doc.internal.pageSize.getHeight()-24)statsPage();doc.setFillColor(summary?'#eee1e6':index%2?'#ffffff':pale);doc.rect(16,y-4,tableWidth,height,'F');font(7,summary);let x=16;lines.forEach((line,i)=>{doc.text(line,x+widths[i]/2,y,{align:'center'});x+=widths[i]});y+=height;
+ };
+ if(!matches.length){font(9);doc.text('Aucun match joué lié à cette fiche.',16,y);}
+ matches.forEach((m,index)=>tableRow([date(m.date)||'—',m.teamName||m.teamLabel||'—',m.opponent||'—',m.hasScore===false?'—':finite(m.usScore)&&finite(m.themScore)?`${m.usScore}-${m.themScore}`:'—',time(m.minutes),value(m.pts),pair(m,'p2m','p2a'),pct(m.p2m,m.p2a),pair(m,'p3m','p3a'),pct(m.p3m,m.p3a),pair(m,'ftm','fta'),pct(m.ftm,m.fta),value(m.offReb),value(m.defReb),value(m.reb),value(m.ast),value(m.stl),value(m.blk),value(m.turnovers),value(m.pf),value(m.eval),value(m.plusMinus)],false,index));
+ if(matches.length){
+  const aggregate=(key:string,average=false)=>{const values=matches.map(m=>m[key]).filter(finite).map(Number);return values.length?(values.reduce((a,b)=>a+b,0)/(average?values.length:1)).toFixed(average?1:0):'—';};
+  for(const average of [false,true]){const pairTotal=(a:string,b:string)=>`${aggregate(a,average)}/${aggregate(b,average)}`;const percent=(a:string,b:string)=>{const valid=matches.filter(m=>finite(m[a])&&finite(m[b]));return valid.length?pct(valid.reduce((n,m)=>n+Number(m[a]),0),valid.reduce((n,m)=>n+Number(m[b]),0)):'—';};
+   tableRow([average?'Moyennes':'Totaux',`${matches.length} MJ`,'','',matches.every(m=>finite(m.minutes))?time(matches.reduce((total,m)=>total+Number(m.minutes),0)/(average?matches.length:1)):'—',aggregate('pts',average),pairTotal('p2m','p2a'),percent('p2m','p2a'),pairTotal('p3m','p3a'),percent('p3m','p3a'),pairTotal('ftm','fta'),percent('ftm','fta'),...['offReb','defReb','reb','ast','stl','blk','turnovers','pf','eval','plusMinus'].map(key=>aggregate(key,average))],true);
+  }
+  y+=5;font(7,false,muted);if(y<doc.internal.pageSize.getHeight()-25)doc.text('RO / RD / RT : rebonds off. / déf. / total · PD : passes · INT : interceptions · CT : contres · BP : balles perdues · FP : fautes',16,y);
+ }
+ const count=doc.getNumberOfPages();for(let page=1;page<=count;page++){doc.setPage(page);const pageHeight=doc.internal.pageSize.getHeight(),pageWidth=doc.internal.pageSize.getWidth();rule(pageHeight-16);font(7,false,muted);doc.text(`MyBasket / ${new Date().toLocaleDateString('fr-FR')} / Informations enregistrées`,16,pageHeight-11);doc.text(`${page} / ${count}`,pageWidth-16,pageHeight-11,{align:'right'});}
  return doc;
 }
 
