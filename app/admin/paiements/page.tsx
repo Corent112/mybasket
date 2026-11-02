@@ -487,6 +487,7 @@ export default async function AdminPaiementsPage() {
           </div>
 
           <div className={styles.heroActions}>
+            <Link href="/admin/securite#versements">Compte bancaire & versements</Link>
             <Link href="/admin/paiements/export">Exporter</Link>
           </div>
         </section>

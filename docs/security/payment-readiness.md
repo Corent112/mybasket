@@ -26,3 +26,5 @@ Limits / compatibility:
 - Pending old Stripe sessions without `items_digest` fail closed and require operator reconciliation; do not silently grant access from mutable historical order items.
 - A successful dependency audit is not a penetration test or a guarantee of zero vulnerabilities. Live RLS/configuration and all unrelated API routes have not been certified.
 - Receipt delivery retains existing best-effort semantics. Replays do not intentionally send a second receipt; an email delivery failure needs separate reconciliation.
+
+Admin payout setup: `/admin/securite#versements` is reachable from Payments and links to the official Stripe Business settings. Bank details are entered only at Stripe; no RIB/IBAN storage or account-switch action is added to MyBasket. Switching the merchant account requires matching server credentials and webhook configuration in Vercel plus redeployment. The page reports environment configuration only, not verified account activation, enabled methods, payout readiness or successful webhook delivery.
