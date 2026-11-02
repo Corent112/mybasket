@@ -1,3 +1,4 @@
+import {resolveCanonicalPoleRoster} from "@/lib/institutionnel/pole-roster-links";
 import { createAdminClient } from "@/lib/supabase/admin-server";
 async function optionalRows(query:any){
   try{const r=await query; return r?.error?[]:(r?.data||[])}catch{return []}
@@ -12,6 +13,7 @@ async function buildPoleTracking(db:any, structureId:string, playerId:string){
   const seeds:any[]=[];
   memberships.forEach((m:any)=>seeds.push({kind:"pole",teamId:String(m.pole_team_id),playerId:String(m.pole_player_id)}));
   links.forEach((l:any)=>seeds.push({kind:"club",teamId:String(l.partner_team_id),playerId:String(l.partner_player_id)}));
+  const canonical=await resolveCanonicalPoleRoster(db,{canonicalPlayerId:playerId,structureId});if(canonical)seeds.push(...canonical.sources);
   const uniq=new Map<string,any>();seeds.forEach(x=>uniq.set(`${x.teamId}|${x.playerId}`,x));
   const sources=[...uniq.values()];
   if(!sources.length)return null;

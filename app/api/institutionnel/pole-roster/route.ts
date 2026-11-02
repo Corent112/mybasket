@@ -222,7 +222,7 @@ export async function GET(req: Request) {
     const partners = partnerIds.length
       ? await ctx.db
           .from("teams")
-          .select("id,name,club_name,category,coach_name,club_logo_url,metadata")
+          .select("id,name,club_name,category,coach_name,club_logo_url,user_id,metadata")
           .in("id", partnerIds)
       : { data: [], error: null };
 
@@ -240,7 +240,7 @@ export async function GET(req: Request) {
     if(selections.error)throw Error(selections.error.message);
     const memberships=canonicalIds.length?await ctx.db.from("institutional_selection_players").select("selection_id,player_id").in("player_id",canonicalIds).eq("status","active"):{data:[],error:null};
     if(memberships.error)throw Error(memberships.error.message);
-    const partnerById = new Map(
+    const partnerById = new Map<string,any>(
       (partners.data || []).map((team: any) => [String(team.id), team])
     );
 
@@ -255,6 +255,7 @@ export async function GET(req: Request) {
         ...link,
         team: partnerById.get(String(link.team_id)) || null,
         staff:(staff.data||[]).filter((member:any)=>member.team_id===link.team_id).map((member:any)=>({...member,access_ready:activeStaff.has(`${member.team_id}:${member.user_id}`)})),
+        can_configure:ctx.canManage&&partnerById.get(String(link.team_id))?.user_id===ctx.user.id,
         access: "consultation",
       })),
     });
@@ -274,11 +275,20 @@ export async function POST(req: Request) {
   if(!canManageSport(ctx.member))return NextResponse.json({error:"Droits insuffisants"},{status:403});
   const roster=await getCtx(structureId);if(!roster)return NextResponse.json({error:"Accès Pôle refusé"},{status:403});
   try {
-    if(body.action==="create_partner") {
+    if(body.action==="create_partner"||body.action==="update_partner") {
       const name=String(body.name||"").trim(),clubName=String(body.clubName||"").trim(),category=String(body.category||"").trim();
       if(!name||name.length>160||!clubName||!category)return NextResponse.json({error:"Renseigne le nom de l’équipe, le club et la catégorie."},{status:400});
       const staff=(Array.isArray(body.staff)?body.staff:[]).map((m:any)=>({name:String(m.name||"").trim(),email:String(m.email||"").trim().toLowerCase(),role:m.role==="Assistant"?"Assistant":"Coach principal"}));
       if(staff.length>2||!staff.some((m:any)=>m.role==="Coach principal"&&m.name&&m.email)||staff.some((m:any)=>!m.name||!/^\S+@\S+\.\S+$/.test(m.email))||new Set(staff.map((m:any)=>m.email)).size!==staff.length)return NextResponse.json({error:"Renseigne le nom et une adresse mail valide pour chaque membre du staff. Le coach principal est obligatoire."},{status:400});
+      if(body.action==="update_partner") {
+        const id=String(body.teamId||'');
+        const link=await ctx.admin.from('institutional_pole_teams').select('id').eq('structure_id',structureId).eq('team_id',id).eq('team_kind','partner').eq('active',true).maybeSingle();
+        const team=await ctx.admin.from('teams').select('id,user_id,metadata').eq('id',id).maybeSingle();
+        if(link.error||!link.data||team.error||!team.data)return NextResponse.json({error:'Équipe partenaire introuvable'},{status:404});
+        if(team.data.user_id!==ctx.user.id)return NextResponse.json({error:'Seul le responsable actuel peut modifier le staff de cette équipe.'},{status:403});
+        const write=await ctx.admin.from('teams').update({metadata:{...team.data.metadata,institutionPartnerStaff:staff,institutionPartnerOwnerPending:true},updated_at:new Date().toISOString()}).eq('id',id).eq('user_id',ctx.user.id);
+        if(write.error)throw Error(write.error.message);return NextResponse.json({ok:true,teamId:id});
+      }
       const season=roster.structure.season_label||"2026-2027";
       // Refuse an accidental double submission without changing any existing club.
       const links=await ctx.admin.from("institutional_pole_teams").select("team_id").eq("structure_id",structureId).eq("team_kind","partner").eq("season_label",season).eq("active",true);

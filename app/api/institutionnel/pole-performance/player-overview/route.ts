@@ -1,3 +1,4 @@
+import {resolveCanonicalPoleRoster} from "@/lib/institutionnel/pole-roster-links";
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin-server";
@@ -102,7 +103,9 @@ export async function GET(req: Request) {
     one(db.from("institutional_pole_player_team_links").select("*").eq("pole_player_id", playerId).eq("active", true).maybeSingle()),
   ]);
 
-  const seed = asPoleMembership || asPartnerLink || asPoleLink;
+  const canonical=await resolveCanonicalPoleRoster(db,{rosterPlayerId:playerId});
+  if(canonical&&!canonical.sources.some(source=>source.teamId===teamId))return NextResponse.json({error:"Ce joueur n’est pas rattaché à cette équipe"},{status:403});
+  const seed = canonical || asPoleMembership || asPartnerLink || asPoleLink;
   if (!seed) return NextResponse.json({ linked: false, sources: [], timeline: [], alerts: [] });
 
   const structureId = String(seed.structure_id);
@@ -127,6 +130,7 @@ export async function GET(req: Request) {
     sourceSeed.push({ kind: "club", teamId: String(l.partner_team_id), playerId: String(l.partner_player_id), seasonId: l.season_id ?? null });
   }
 
+  if(canonical)sourceSeed.push(...canonical.sources);
   const uniq = new Map<string, typeof sourceSeed[number]>();
   sourceSeed.forEach((s) => uniq.set(`${s.teamId}|${s.playerId}`, s));
   const rawSources = [...uniq.values()];
