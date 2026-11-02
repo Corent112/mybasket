@@ -1,59 +1,25 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import InstitutionalFamilyForms from "./InstitutionalFamilyForms";
-import InstitutionalPlayerWorkflow from "@/components/institutionnel/InstitutionalPlayerWorkflow";
-import InstitutionalSelectionsManager from "@/components/institutionnel/InstitutionalSelectionsManager";
-import InstitutionalPoleRosterV3 from "@/components/institutionnel/InstitutionalPoleRosterV3";
+import InstitutionalPlayerWorkflow from "./InstitutionalPlayerWorkflow";
+import InstitutionalSelectionsManager from "./InstitutionalSelectionsManager";
+import InstitutionalPoleWorkspace from "./InstitutionalPoleWorkspace";
 
-type Props = {
-  structureId: string;
-  structureType: "committee" | "league" | "federation" | "pole";
-};
-
-type PoleView = "pole" | "selections" | "workflow";
-
-export default function InstitutionalPlayersHub({ structureId, structureType }: Props) {
-  const isPoleContext = structureType === "league" || structureType === "pole";
-  const [poleView, setPoleView] = useState<PoleView>("pole");
-  const [committeeView,setCommitteeView]=useState<"workflow"|"selections">("workflow");
-
-  // Les comités conservent la base joueurs et accèdent aussi aux sélections reliées au calendrier.
-  if (!isPoleContext) {
-    return <div><InstitutionalFamilyForms key={structureId} structureId={structureId}/><InstitutionalPlayerWorkflow structureId={structureId} structureType={structureType}/></div>;
-  }
-
-  return (
-    <div className="iph">
-      <InstitutionalFamilyForms key={structureId} structureId={structureId}/>
-      <div className="iphHead">
-        <div>
-          <p>INSTITUTION · JOUEURS</p>
-          <h2>Suivi Pôle & parcours joueur</h2>
-          <span>L’effectif Pôle, les sélections et les fiches joueur restent reliés à une identité unique.</span>
-        </div>
-      </div>
-
-      <nav className="iphTabs">
-        <button className={poleView === "pole" ? "on" : ""} onClick={() => setPoleView("pole")}>Pôle · Polistes · Partenaires</button>
-        <button className={poleView === "workflow" ? "on" : ""} onClick={() => setPoleView("workflow")}>Base · Détections · Sélections</button>
-      </nav>
-
-      {poleView === "pole" && <InstitutionalPoleRosterV3 structureId={structureId} />}
-      {poleView === "selections" && <InstitutionalSelectionsManager structureId={structureId} structureType={structureType} />}
-      {poleView === "workflow" && <InstitutionalPlayerWorkflow structureId={structureId} structureType={structureType} />}
-
-      <style jsx>{`
-        .iph{display:grid;gap:18px;padding-bottom:30px}
-        .iphHead{padding:20px 22px;background:#fff;border:1px solid #e5eaf1;border-radius:14px;box-shadow:0 2px 10px rgba(30,64,175,.03)}
-        .iphHead p{margin:0;color:#1765e5;font-size:.66rem;font-weight:900;letter-spacing:.12em}
-        .iphHead h2{margin:5px 0 6px;color:#172341;font-size:1.35rem}
-        .iphHead span{color:#7b889c;font-size:.8rem;line-height:1.5}
-        .iphTabs{display:flex;gap:10px;overflow:auto;background:#fff;border:1px solid #e5eaf1;border-radius:12px;padding:0 10px}
-        .iphTabs button{position:relative;white-space:nowrap;border:0;background:transparent;color:#5b6d88;padding:14px 4px 12px;font-weight:800;cursor:pointer}
-        .iphTabs button.on{color:#1765e5}
-        .iphTabs button.on:after{content:"";position:absolute;left:0;right:0;bottom:-1px;height:3px;background:#1765e5;border-radius:3px}
-      `}</style>
-    </div>
-  );
+type Props = {structureId:string;structureType:"committee"|"league"|"federation"|"pole"};
+type View="players"|"selections"|"partners"|"workflow";
+export default function InstitutionalPlayersHub({structureId,structureType}:Props){
+ const isPole=structureType==="league"||structureType==="pole";
+ const [view,setView]=useState<View>("players");
+ useEffect(()=>{setView("players")},[structureId]);
+ useEffect(()=>{function open(event:Event){if((event as CustomEvent).detail?.structureId===structureId)setView("players");}window.addEventListener("mybasket:institution-polistes",open);return()=>window.removeEventListener("mybasket:institution-polistes",open)},[structureId]);
+ if(!isPole)return <div><InstitutionalFamilyForms key={structureId} structureId={structureId}/><InstitutionalPlayerWorkflow structureId={structureId} structureType={structureType}/></div>;
+ return <div className="institutionPlayers">
+  <nav aria-label="Parcours des joueurs" className="tabs">{([["players","Polistes"],["selections","Sélections"],["partners","Équipes partenaires"],["workflow","Base · Détections · Événements"]] as const).map(([key,label])=><button key={key} type="button" aria-pressed={view===key} className={view===key?'active':''} onClick={()=>setView(key)}>{label}</button>)}</nav>
+  {(view==="players"||view==="partners")&&<InstitutionalPoleWorkspace key={structureId} structureId={structureId} view={view}/>}
+  {view==="selections"&&<InstitutionalSelectionsManager structureId={structureId} structureType={structureType} onOpenBase={()=>setView("workflow")}/>}
+  {view==="workflow"&&<InstitutionalPlayerWorkflow structureId={structureId} structureType={structureType}/>}
+  <details className="forms"><summary>Questionnaires de renseignements · QR codes</summary><InstitutionalFamilyForms key={structureId} structureId={structureId}/></details>
+  <style jsx>{`.institutionPlayers{display:grid;gap:20px;min-width:0;padding-bottom:24px}.tabs{display:flex;gap:20px;flex-wrap:wrap;border-bottom:1px solid #eadfd8}.tabs button{border:0;border-bottom:3px solid transparent;background:transparent;color:#7a6b66;font-size:13px;font-weight:750;padding:12px 0;cursor:pointer}.tabs button.active{border-color:#6b1a2c;color:#6b1a2c}.forms{border:1px solid #eadfd8;border-radius:10px;padding:12px;background:#faf8f6}.forms summary{font-size:12px;color:#6b1a2c;font-weight:750;cursor:pointer}.forms[open] summary{margin-bottom:14px}@media(max-width:650px){.tabs{gap:12px}.tabs button{font-size:12px}}`}</style>
+ </div>;
 }

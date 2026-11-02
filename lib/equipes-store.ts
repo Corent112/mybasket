@@ -1,3 +1,4 @@
+import { institutionTeamVisible } from "@/lib/institutionnel/team-visibility";
 // lib/equipes-store.ts
 // Store équipes 100% Supabase.
 
@@ -500,7 +501,7 @@ function findPlayerByAnyId(
 /*                                  ÉQUIPES                                   */
 /* -------------------------------------------------------------------------- */
 
-export async function getTeams(): Promise<Team[]> {
+export async function getTeams(options: { includeInstitutionSelections?: boolean } = {}): Promise<Team[]> {
   const supabase = createClient();
   const userId = await getUserId();
 
@@ -520,7 +521,7 @@ export async function getTeams(): Promise<Team[]> {
       .eq("status", "active"),
   ]);
 
-  const ownedRows = ownedResult.data ?? [];
+  const ownedRows = (ownedResult.data ?? []).filter((row:any)=>options.includeInstitutionSelections || institutionTeamVisible(row.metadata));
   const ownedError = ownedResult.error;
   const membershipRows = membershipResult.data ?? [];
   const membershipError = membershipResult.error;
@@ -553,7 +554,7 @@ export async function getTeams(): Promise<Team[]> {
       logSupabaseError("Erreur chargement équipes partagées", error);
       throw error;
     }
-    sharedRows = data ?? [];
+    sharedRows = (data ?? []).filter((row:any)=>options.includeInstitutionSelections || institutionTeamVisible(row.metadata));
   }
 
   const membershipByTeam = new Map<string, any>(
@@ -616,11 +617,19 @@ export async function getTeams(): Promise<Team[]> {
   if (matchesError) logSupabaseError("Erreur chargement team_matches", matchesError);
   if (statsError) logSupabaseError("Erreur chargement match_stats", statsError);
 
+  let partnerData:{players:any[]}={players:[]};
+  if(teams.some((team:any)=>team.institutionKind==="partner"||team.institutionalTeamKind==="partner")){
+    const partnerResponse=await fetch("/api/institutionnel/partner-roster",{cache:"no-store"});
+    if(!partnerResponse.ok)throw new Error("Les polistes partenaires ne peuvent pas être chargés. Réessaie.");
+    partnerData=await partnerResponse.json();
+  }
+  const mergedPlayers=new Map<string,any>((playersData??[]).map((row:any)=>[String(row.id),row]));
+  for(const row of partnerData.players||[]){const existing=mergedPlayers.get(row.id);mergedPlayers.set(row.id,{...existing,...row,metadata:{...existing?.metadata,...row.metadata,additionalTeamIds:[...new Set([...(existing?.metadata?.additionalTeamIds||[]),...(row.metadata?.additionalTeamIds||[])])]}});}
   const playersByTeam = new Map<string, Player[]>();
   const matchesByTeam = new Map<string, TeamMatch[]>();
   const statsByTeam = new Map<string, MatchRecord[]>();
 
-  (playersData ?? []).forEach((row: any) => {
+  [...mergedPlayers.values()].forEach((row: any) => {
     const player = normalizePlayerRow(row);
     for (const currentTeamId of new Set([String(row.team_id), ...(player.additionalTeamIds || [])])) {
       if (!teamIds.includes(currentTeamId)) continue;
@@ -657,7 +666,7 @@ export async function getTeams(): Promise<Team[]> {
 }
 
 export async function getTeam(teamId: string): Promise<Team | undefined> {
-  const teams = await getTeams();
+  const teams = await getTeams({ includeInstitutionSelections: true });
   return teams.find((team: Team) => idsMatch(team.id, teamId));
 }
 
@@ -842,6 +851,12 @@ export async function upsertPlayer(
     }
   }
 
+  if(!isNewPlayer && (player.additionalTeamIds||[]).includes(teamId) && player.primaryTeamId!==teamId) {
+    const response=await fetch("/api/institutionnel/partner-roster",{method:"PATCH",headers:{"Content-Type":"application/json"},body:JSON.stringify({teamId,player})});
+    if(response.ok){const result=await response.json();return normalizePlayerRow(result.player);}
+    // Ordinary multi-team players keep their existing RLS-backed save path.
+    if(response.status!==403&&response.status!==404){const result=await response.json().catch(()=>({}));throw Error(result.error||"Enregistrement impossible");}
+  }
   // Les données métier restent rattachées au propriétaire de l'équipe,
   // même lorsqu'un collaborateur réalise l'action.
   let primaryTeamId = teamId;

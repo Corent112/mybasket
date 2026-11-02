@@ -32,6 +32,17 @@ async function createTeamPlayer(
   const existing = await admin.from("players").select("id").eq("team_id",teamId).eq("metadata->>institutionCentralPlayerId",canonicalPlayerId).maybeSingle();
   if(existing.error)throw new Error(existing.error.message);
   if(existing.data?.id)return String(existing.data.id);
+  const linked=await admin.from("players").select("id,team_id,metadata,updated_at").eq("metadata->>institutionCentralPlayerId",canonicalPlayerId).limit(2);
+  if(linked.error)throw Error(linked.error.message);
+  if(linked.data?.length===1){
+    const source=linked.data[0];
+    const additional=[...new Set([...(source.metadata?.additionalTeamIds||[]),teamId])].filter(id=>id!==source.team_id);
+    let q=admin.from("players").update({metadata:{...source.metadata,additionalTeamIds:additional},updated_at:new Date().toISOString()}).eq("id",source.id);
+    q=source.updated_at?q.eq("updated_at",source.updated_at):q.is("updated_at",null);
+    const attached=await q.select('id').maybeSingle();if(attached.error||!attached.data)throw Error('La fiche a changé. Recharge puis réessaie.');
+    return String(source.id);
+  }
+  // Legacy projections are preserved. Never merge/delete historical stat identities.
   const row = {
     id: crypto.randomUUID(),
     user_id: ownerId,

@@ -242,9 +242,9 @@ export default function MonComptePage() {
     }));
 
     try {
-      const response = await fetch("/api/account/partner-teams", { cache: "no-store" });
+      const response = await fetch("/api/institutionnel/partner-teams/mine", { cache: "no-store" });
       const json = await response.json().catch(() => ({}));
-      const remote = response.ok && Array.isArray(json.teams) ? json.teams : [];
+      const remote = response.ok && Array.isArray(json.teams) ? json.teams.map((item:any)=>({linkId:item.id,structureId:item.structure?.id,teamId:item.team.id,name:item.team.name,category:item.team.category,clubName:item.team.club_name,logo:item.team.club_logo_url||item.team.logo_url,season:item.season_label,institutionName:item.structure?.name,playerCount:item.assignments?.length||0,coachName:item.team.coach_name,access:item.access})) : [];
       const merged = [...remote];
       for (const item of local) {
         if (!merged.some((x: any) => String(x.teamId) === String(item.teamId))) merged.push(item);
@@ -1045,7 +1045,7 @@ const isInstitutionPartnerTeam=(team:Team)=>{
   if (aliases.includes(VERIFIED_POLE_TEAM_ID)) return false;
   if (aliases.includes(VERIFIED_PBA_PARTNER_TEAM_ID)) return true;
 
-  return kind==="partner" ||
+  return raw.institutionKind==="partner" || raw.institutionalTeamKind==="partner" || kind==="partner" ||
     kind==="partenaire" ||
     isPartnerTeam(team) ||
     aliases.some((id)=>institutionalPartnerIds.has(id));
@@ -1478,8 +1478,8 @@ return (
                           </div>
 
                           <div className="mc-team-actions mc-team-actions-horizontal">
-                            <button className="main" onClick={() => router.push(`/equipes/${item.teamId}`)}>
-                              Voir la page de l'équipe →
+                            <button className="main" onClick={() => router.push(item.access==="consultation"&&item.structureId?`/institutionnel/${item.structureId}?tab=Joueurs`:`/equipes/${item.teamId}`)}>
+                              Suivre l’équipe et les polistes →
                             </button>
                           </div>
                         </div>

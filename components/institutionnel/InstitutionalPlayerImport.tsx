@@ -184,7 +184,7 @@ function fullName(first: string, last: string) {
   return [norm(first), norm(last)].filter(Boolean).join(" ");
 }
 
-export default function InstitutionalPlayerImport({ open, structureId, existingPlayers, onClose, onImported }:{ open:boolean; structureId:string; existingPlayers:ExistingPlayer[]; onClose:()=>void; onImported:()=>void|Promise<void> }) {
+export default function InstitutionalPlayerImport({ open, structureId, existingPlayers, onClose, onImported, destination = "institution" }:{ open:boolean; structureId:string; existingPlayers:ExistingPlayer[]; onClose:()=>void; onImported:()=>void|Promise<void>; destination?:"institution"|"pole" }) {
   const [mode,setMode]=useState<Mode>("large");
   const [rows,setRows]=useState<ImportRow[]>([]);
   const [fileName,setFileName]=useState("");
@@ -283,9 +283,9 @@ export default function InstitutionalPlayerImport({ open, structureId, existingP
     // Relecture juste avant écriture : protège aussi contre un joueur créé depuis l'ouverture de la fenêtre.
     let freshPlayers=existingPlayers;
     try {
-      const check=await fetch(`/api/institutionnel/players?structureId=${encodeURIComponent(structureId)}`,{cache:"no-store"});
+      const check=await fetch(`/api/institutionnel/${destination==="pole"?"pole-roster":"players"}?structureId=${encodeURIComponent(structureId)}`,{cache:"no-store"});
       const data=await check.json().catch(()=>({}));
-      if (check.ok && Array.isArray(data.players)) freshPlayers=data.players as ExistingPlayer[];
+      if (check.ok && Array.isArray(data.players)) freshPlayers=data.players.map((p:any)=>({...p,birthdate:p.birthdate||p.birth_date})) as ExistingPlayer[];
     } catch {}
     const safeChosen=chosen.filter(r=>{
       const d=duplicateAgainstExisting(r,freshPlayers);
@@ -299,7 +299,7 @@ export default function InstitutionalPlayerImport({ open, structureId, existingP
         guardian2_name:r.guardian2_name,guardian2_phone:r.guardian2_phone,guardian2_email:r.guardian2_email,
         profile_extra:{ address:r.address, postal_code:r.postal_code, city:r.city, external_license_id:r.external_license_id, import_source:fileName } };
       try {
-        const res=await fetch('/api/institutionnel/players',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({structureId,action:'create_player',player})});
+        const res=await fetch(destination==="pole"?'/api/institutionnel/pole-roster':'/api/institutionnel/players',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({structureId,action:'create_player',player})});
         const data=await res.json().catch(()=>({}));
         if (!res.ok || !data?.player?.id) failures.push(`${r.first_name} ${r.last_name}`); else created++;
       } catch { failures.push(`${r.first_name} ${r.last_name}`); }

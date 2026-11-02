@@ -23,7 +23,7 @@ export async function POST(req: Request) {
 
   const origin = new URL(req.url).origin;
 
-  if (scope === "team" || scope === "selection") {
+  if (scope === "team" || scope === "selection" || scope === "partner") {
     const email = String(body.email || "").trim().toLowerCase();
     const role = String(body.role || "Coach").trim() || "Coach";
     const accessLevel = String(body.accessLevel || "premium");
@@ -53,6 +53,15 @@ export async function POST(req: Request) {
       );
     }
 
+    // A structure member must never grant access to an arbitrary team UUID.
+    const link=scope==="partner"
+      ? await ctx.admin.from("institutional_pole_teams").select("id").eq("structure_id",structureId).eq("team_id",teamId).eq("team_kind","partner").eq("active",true).maybeSingle()
+      : await ctx.admin.from("institutional_team_links").select("id").eq("structure_id",structureId).eq("team_id",teamId).maybeSingle();
+    if(link.error||!link.data)return NextResponse.json({error:"Cette équipe n’appartient pas à cette institution."},{status:403});
+    if(scope==="partner"){
+      const team=await ctx.admin.from("teams").select("metadata").eq("id",teamId).single();
+      if(team.error||!team.data.metadata?.institutionPartnerStaff?.some((s:any)=>s.email===email&&s.role===role))return NextResponse.json({error:"Choisis un membre du staff enregistré pour cette équipe."},{status:400});
+    }
     try {
       const { userId, invited } = await resolveOrInviteUser(
         ctx.admin,
@@ -81,6 +90,20 @@ export async function POST(req: Request) {
         return NextResponse.json({ error: write.error.message }, { status: 400 });
       }
 
+      if(scope==="partner") {
+        const membership=await ctx.admin.from("team_members").upsert({team_id:teamId,user_id:userId,role,status:"active",permissions:{view_team:true,players:true,sessions:true,livestats:true,media:true,rpe:true,rpe_individual:true,rpe_group:true},invited_by:ctx.user.id,updated_at:new Date().toISOString()},{onConflict:"team_id,user_id"});
+        if(membership.error)return NextResponse.json({error:"Le staff est enregistré mais l’accès équipe n’a pas pu être activé. Réessaie."},{status:400});
+        // Only a newly created institution partner can be handed to its registered head coach.
+        // Existing partner club ownership is never reassigned by this activation flow.
+        if(role==="Coach principal"){
+          const pending=await ctx.admin.from("teams").select("metadata,user_id").eq("id",teamId).single();
+          if(pending.error)return NextResponse.json({error:"Accès activé, finalisation du responsable impossible. Réessaie."},{status:400});
+          if(pending.data.metadata?.institutionPartnerOwnerPending===true){
+            const handover=await ctx.admin.from("teams").update({user_id:userId,metadata:{...pending.data.metadata,institutionPartnerOwnerPending:false},updated_at:new Date().toISOString()}).eq("id",teamId).eq("user_id",pending.data.user_id);
+            if(handover.error)return NextResponse.json({error:"Accès activé, finalisation du responsable impossible. Réessaie."},{status:400});
+          }
+        }
+      }
       return NextResponse.json({ ok: true, invited, userId });
     } catch (error: any) {
       return NextResponse.json(

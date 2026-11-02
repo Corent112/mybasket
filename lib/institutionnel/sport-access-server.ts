@@ -1,3 +1,4 @@
+import {readAllAuthUsers} from "@/lib/admin/user-subscriptions";
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin-server";
@@ -64,13 +65,16 @@ export async function resolveOrInviteUser(
   const { data: profile } = await admin
     .from("profiles")
     .select("id,email")
-    .ilike("email", normalized)
+    .eq("email", normalized)
     .maybeSingle();
 
   if (profile?.id) {
     return { userId: String(profile.id), invited: false };
   }
 
+  // Imported institution contacts can already have an Auth identity without a profile/password.
+  const existing=(await readAllAuthUsers(admin)).find((user:any)=>String(user.email||'').trim().toLowerCase()===normalized);
+  if(existing?.id)return {userId:String(existing.id),invited:false};
   const invite = await admin.auth.admin.inviteUserByEmail(normalized, {
     redirectTo,
   });

@@ -2,6 +2,7 @@
 // Onglet « Mon compte › Mes Équipes » — version Supabase.
 "use client";
 
+import { institutionTeamVisible } from "@/lib/institutionnel/team-visibility";
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
@@ -550,7 +551,7 @@ export default function MesEquipesPage() {
 
       if (teamsRes.error) throw teamsRes.error;
 
-      const mappedTeams = ((teamsRes.data ?? []) as any[]).map(mapTeamRow);
+      const mappedTeams = ((teamsRes.data ?? []) as any[]).filter(row=>institutionTeamVisible(row.metadata)).map(mapTeamRow);
       const teamIds = mappedTeams.map((team) => team.id).filter(Boolean);
 
       let players: any[] = [];

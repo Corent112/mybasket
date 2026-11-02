@@ -89,15 +89,18 @@ export async function GET() {
       ? membership.permissions
       : {}) as RawPermissions;
 
-    const active = Boolean(rights?.collaboration && rights?.teams);
+    const staff=await admin.from("institutional_team_staff").select("structure_id").eq("team_id",teamId).eq("user_id",user.id).eq("status","active").maybeSingle();
+    const partner=staff.data?await admin.from("institutional_pole_teams").select("id").eq("structure_id",staff.data.structure_id).eq("team_id",teamId).eq("team_kind","partner").eq("active",true).maybeSingle():{data:null};
+    const institutionAccess=Boolean(partner.data);
+    const active = institutionAccess || Boolean(rights?.collaboration && rights?.teams);
     accessByTeam[teamId] = {
       active,
       permissions: {
         view_team: active && raw.view_team !== false,
         players: active && raw.players === true,
-        sessions: active && raw.sessions === true && Boolean(rights?.sessions),
-        livestats: active && raw.livestats === true && Boolean(rights?.livestats),
-        stats: active && raw.livestats === true && Boolean(rights?.stats),
+        sessions: active && raw.sessions === true && Boolean(institutionAccess || rights?.sessions),
+        livestats: active && raw.livestats === true && Boolean(institutionAccess || rights?.livestats),
+        stats: active && raw.livestats === true && Boolean(institutionAccess || rights?.stats),
         media: active && raw.media === true,
       },
     };

@@ -1,0 +1,60 @@
+const fs=require('node:fs'),vm=require('node:vm'),assert=require('node:assert/strict'),ts=require('typescript'),crypto=require('node:crypto');
+const clone=x=>JSON.parse(JSON.stringify(x));
+function db(initial={}){
+ const tables=clone(initial),writes=[];let failure='';
+ const api={tables,writes,fail(table,op){failure=table+':'+op},from(table){let op='select',payload,filters=[],single=false,limit=Infinity,head=false,count=false;
+ const q={select(_fields,opts){head=opts?.head;count=opts?.count;return q},eq(k,v){filters.push(x=>String(k.includes('->>')?x[k.split('->>')[0]]?.[k.split('->>')[1]]:x[k])===String(v));return q},neq(k,v){filters.push(x=>x[k]!==v);return q},in(k,v){filters.push(x=>v.includes(x[k]));return q},is(k,v){filters.push(x=>(x[k]??null)===v);return q},order(){return q},limit(n){limit=n;return q},maybeSingle(){single=true;return q},single(){single=true;return q},insert(v){op='insert';payload=v;return q},update(v){op='update';payload=v;return q},upsert(v){op='upsert';payload=v;return q},delete(){op='delete';return q},then(resolve,reject){try{
+ if(failure===table+':'+op){failure='';return Promise.resolve({data:null,error:{message:'Simulated failure'}}).then(resolve,reject)}
+ tables[table]??=[];let selected=tables[table].filter(x=>filters.every(f=>f(x))).slice(0,limit);
+ if(op!=='select'){writes.push({table,op,payload:clone(payload??{})});if(op==='insert'||op==='upsert'){selected=(Array.isArray(payload)?payload:[payload]).map(v=>({id:v.id||crypto.randomUUID(),...clone(v)}));for(const row of selected){const existing=op==='upsert'?tables[table].find(x=>table==='team_members'?x.team_id===row.team_id&&x.user_id===row.user_id:table==='institutional_pole_partner_assignments'?x.structure_id===row.structure_id&&x.pole_player_id===row.pole_player_id&&x.partner_team_id===row.partner_team_id&&x.season_label===row.season_label:false):null;if(existing){Object.assign(existing,row);row.id=existing.id;}else tables[table].push(row);}}else if(op==='update')selected.forEach(x=>Object.assign(x,clone(payload)));else tables[table]=tables[table].filter(x=>!selected.includes(x));}
+ const data=head?null:single?(selected[0]||null):clone(selected);return Promise.resolve({data,error:null,count:count?selected.length:undefined}).then(resolve,reject);
+ }catch(e){return Promise.reject(e).then(resolve,reject)}}};return q;}};return api;
+}
+const response={json:(data,init={})=>({status:init.status||200,json:async()=>data})};
+let database,user={id:'owner',email:'owner@example.test'},manage=true,invites=0;
+function load(file,extras={}){const context={exports:{},crypto,URL,Date,console,require:name=>{
+ if(name==='next/server')return {NextResponse:response};
+ if(name==='@/lib/supabase/server')return {createClient:async()=>({auth:{getUser:async()=>({data:{user}})}})};
+ if(name==='@/lib/supabase/admin-server')return {createAdminClient:()=>database};
+ if(name==='@/lib/institutionnel/sport-access-server')return {canManageSport:m=>['owner','admin','performance'].includes(m.role),institutionalSportActor:async()=>!user?{error:response.json({error:'Non connecté'},{status:401})}:{admin:database,user,member:{role:manage?'owner':'viewer'}},resolveOrInviteUser:async()=>{invites++;return{userId:'coach',invited:false}}};
+ if(name==='@/lib/institutionnel/selection-information')return {normalizeInformationStaff:x=>x};
+ if(name==='@/lib/institutionnel/player-category')return {withPlayerCategory:p=>p,playerAgeCategory:()=> 'U18'};
+ if(extras[name])return extras[name];throw Error('Unexpected import '+name);
+ }};vm.createContext(context);vm.runInContext(ts.transpileModule(fs.readFileSync(file,'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2020,jsx:ts.JsxEmit.ReactJSX,esModuleInterop:true}}).outputText,context);return context.exports;}
+const request=body=>({url:'https://mybasket.vercel.app/api/test',json:async()=>body});
+const base=()=>({institutional_structures:[{id:'s',name:'Pôle Exemple',structure_type:'pole',season_label:'2026-2027'}],institutional_members:[{id:'m',structure_id:'s',user_id:'owner',role:'owner',status:'active'}],institutional_pole_teams:[{id:'polelink',structure_id:'s',team_id:'pole',team_kind:'pole',active:true}],teams:[{id:'pole',user_id:'owner',name:'Pôle Exemple',club_name:'Pôle Exemple',metadata:{}}]});
+(async()=>{
+ const visibility=load('lib/institutionnel/team-visibility.ts').institutionTeamVisible;
+ assert.equal(visibility({institutionKind:'selection'}),false);assert.equal(visibility({institutionKind:'selection',institutionShowInMyTeams:true}),true);assert.equal(visibility({institutionKind:'partner'}),true);assert.equal(visibility({}),true);
+ const roster=load('app/api/institutionnel/pole-roster/route.ts');database=db(base());manage=false;let r=await roster.POST(request({structureId:'s',action:'create_partner'}));assert.equal(r.status,403);assert.equal(database.writes.length,0);manage=true;
+ const partner={structureId:'s',action:'create_partner',name:'Club Exemple U18',clubName:'Club Exemple',category:'U18',staff:[{name:'Coach Exemple',email:'coach@example.test',role:'Coach principal'}]};
+ r=await roster.POST(request(partner));assert.equal(r.status,200);const partnerId=(await r.json()).teamId;assert.equal(database.tables.teams.length,2);assert.equal(invites,0);assert(!database.tables.free_access_grants);assert.equal(database.tables.teams[1].user_id,'owner');
+ r=await roster.POST(request(partner));assert.equal(r.status,409);assert.equal(database.tables.teams.length,2);
+ database.fail('institutional_pole_teams','insert');r=await roster.POST(request({...partner,name:'Autre équipe'}));assert.equal(r.status,400);assert.equal(database.tables.teams.length,2,'Failed link rolls back only the new team');
+ r=await roster.POST(request({structureId:'s',action:'create_player',player:{first_name:'Vincent',last_name:'Dupont',birthdate:'2009-03-12',sex:'Masculin',height_cm:'190'}}));assert.equal(r.status,200);assert.equal(database.tables.players.length,1);assert.equal(database.tables.institutional_players.length,1);assert.equal(database.tables.players[0].metadata.institutionCentralPlayerId,database.tables.institutional_players[0].id);const pid=database.tables.players[0].id;
+ r=await roster.POST(request({structureId:'s',action:'create_player',player:{first_name:'VINCENT',last_name:'Dupont',birthdate:'2009-03-12',sex:'M'}}));assert.equal(r.status,409);assert.equal(database.tables.players.length,1);
+ const assignment=load('app/api/institutionnel/pole-partners/route.ts');r=await assignment.POST(request({structureId:'s',playerId:pid,partnerTeamId:partnerId}));assert.equal(r.status,200);assert(database.tables.players[0].metadata.additionalTeamIds.includes(partnerId));assert.equal(database.tables.players.length,1);
+ const outsider=await assignment.POST(request({structureId:'s',playerId:'unrelated',partnerTeamId:partnerId}));assert.equal(outsider.status,400);
+ const access=load('app/api/institutionnel/sport/access/route.ts');r=await access.POST(request({structureId:'s',scope:'partner',teamId:'unrelated',email:'coach@example.test'}));assert.equal(r.status,403);assert.equal(invites,0);
+ r=await access.POST(request({structureId:'s',scope:'partner',teamId:partnerId,email:'other@example.test',role:'Coach principal'}));assert.equal(r.status,400);assert.equal(invites,0);
+ r=await access.POST(request({structureId:'s',scope:'partner',teamId:partnerId,email:'coach@example.test',role:'Coach principal'}));assert.equal(r.status,200);assert.equal(invites,1);assert.equal(database.tables.team_members[0].team_id,partnerId);assert.equal(database.tables.teams[1].user_id,'coach');assert(!database.tables.free_access_grants,'No personal Premium grant');
+ const linkedRoster=load('app/api/institutionnel/partner-roster/route.ts');user={id:'coach',email:'coach@example.test'};
+ r=await linkedRoster.GET();assert.equal(r.status,200);assert.equal((await r.json()).players[0].id,pid);
+ r=await linkedRoster.PATCH(request({teamId:'unrelated',player:{id:pid,firstName:'Hacked',lastName:'Name'}}));assert.equal(r.status,403);
+ r=await linkedRoster.PATCH(request({teamId:partnerId,player:{id:pid,firstName:'Vincent',lastName:'Dupont',taille:'192',user_id:'attacker',additionalTeamIds:['unrelated']}}));assert.equal(r.status,200);assert.equal(database.tables.players[0].height,'192');assert.equal(database.tables.players[0].user_id,'owner');assert(!database.tables.players[0].metadata.additionalTeamIds.includes('unrelated'));
+ user={id:'owner',email:'owner@example.test'};r=await assignment.DELETE(request({structureId:'s',assignmentId:database.tables.institutional_pole_partner_assignments[0].id}));assert.equal(r.status,200);assert(!database.tables.players[0].metadata.additionalTeamIds.includes(partnerId));assert.equal(database.tables.players.length,1);assert.equal(database.tables.institutional_players.length,1);
+ user={id:'coach',email:'coach@example.test'};r=await linkedRoster.GET();assert.equal((await r.json()).players.length,0,'Removed assignment cannot expose the player');
+ user={id:'owner',email:'owner@example.test'};const selections=load('app/api/institutionnel/sport/selections/route.ts');database.tables.institutional_selections=[{id:'sel',structure_id:'s',team_id:'selection-team',status:'active'}];database.tables.teams.push({id:'selection-team',user_id:'owner',metadata:{institutionKind:'selection',keep:'history'}});
+ r=await selections.POST(request({structureId:'s',selectionId:'foreign',action:'publish_team'}));assert.equal(r.status,404);
+ const count=database.tables.teams.length;r=await selections.POST(request({structureId:'s',selectionId:'sel',action:'publish_team'}));assert.equal(r.status,200);r=await selections.POST(request({structureId:'s',selectionId:'sel',action:'publish_team'}));assert.equal(r.status,200);assert.equal(database.tables.teams.length,count);assert.equal(database.tables.teams.at(-1).metadata.keep,'history');assert.equal(database.tables.teams.at(-1).metadata.institutionShowInMyTeams,true);
+ user=null;r=await selections.POST(request({structureId:'s',selectionId:'sel',action:'publish_team'}));assert.equal(r.status,401);
+ database=db({profiles:[]});let lookedUp=false;
+ const accessHelper=load('lib/institutionnel/sport-access-server.ts',{'@/lib/admin/user-subscriptions':{readAllAuthUsers:async()=>{lookedUp=true;return[{id:'imported-no-profile',email:'coach@example.test'}]}}});
+ const known=await accessHelper.resolveOrInviteUser(database,' COACH@example.test ','https://mybasket.test');assert.equal(known.userId,'imported-no-profile');assert.equal(known.invited,false);assert(lookedUp,'Imported Auth identity is reused even without a profile');
+ const playerSource=fs.readFileSync('app/api/institutionnel/sport/players/route.ts','utf8');
+ const ast=ts.createSourceFile('players.ts',playerSource,ts.ScriptTarget.Latest,true);const fn=ast.statements.find(n=>ts.isFunctionDeclaration(n)&&n.name?.text==='createTeamPlayer');
+ const helperContext={exports:{},crypto,Date};vm.createContext(helperContext);vm.runInContext(ts.transpileModule(fn.getText(ast)+'\nexports.createTeamPlayer=createTeamPlayer;', {compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2020}}).outputText,helperContext);
+ database=db({players:[{id:'shared-player',team_id:'pole',metadata:{institutionCentralPlayerId:'canonical',additionalTeamIds:['club']},updated_at:'old'}]});
+ const reused=await helperContext.exports.createTeamPlayer(database,{teamId:'selection',ownerId:'owner',player:{},canonicalPlayerId:'canonical'});assert.equal(reused,'shared-player');assert.equal(database.tables.players.length,1);assert(database.tables.players[0].metadata.additionalTeamIds.includes('selection'));assert(database.tables.players[0].metadata.additionalTeamIds.includes('club'));
+ console.log('PASS: scoped permissions, controlled handover to registered head coach, no global Premium, partner creation rollback, duplicate protection, canonical player identity, assignment/removal, cross-team access denial, selection publication without copies.');
+})().catch(e=>{console.error(e);process.exitCode=1});

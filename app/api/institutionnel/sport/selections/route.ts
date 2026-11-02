@@ -92,6 +92,7 @@ export async function GET(req: Request) {
   return NextResponse.json({
     selections: (selections || []).map((selection: any) => ({
       ...selection,
+      in_my_teams:(capacities.data||[]).find((team:any)=>team.id===selection.team_id)?.metadata?.institutionShowInMyTeams===true,
       information_staff:informationByTeam.get(selection.team_id)||[],
       preparation_target_id:targetByTeam.get(selection.team_id)||null,
       roster_kind:kindByTeam.get(selection.team_id)==="preselection"?"preselection":"selection",
@@ -127,6 +128,15 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Droits insuffisants" }, { status: 403 });
   }
 
+  if (body.action === "publish_team") {
+    const selection = await ctx.admin.from("institutional_selections").select("id,team_id").eq("id",String(body.selectionId||"")).eq("structure_id",structureId).neq("status","archived").maybeSingle();
+    if(selection.error||!selection.data)return NextResponse.json({error:"Sélection introuvable"},{status:404});
+    const team=await ctx.admin.from("teams").select("id,metadata").eq("id",selection.data.team_id).single();
+    if(team.error)return NextResponse.json({error:team.error.message},{status:400});
+    const write=await ctx.admin.from("teams").update({metadata:{...team.data.metadata,institutionShowInMyTeams:true},updated_at:new Date().toISOString()}).eq("id",team.data.id);
+    if(write.error)return NextResponse.json({error:write.error.message},{status:400});
+    return NextResponse.json({ok:true,teamId:team.data.id});
+  }
   if (body.action === "update_selection") {
     if (!name || name.length > 160 || !/^U\d{1,2}(?:[MF])?$/i.test(category) || !/^\d{4}-\d{4}$/.test(seasonLabel) || Number(seasonLabel.slice(5)) !== Number(seasonLabel.slice(0,4)) + 1 || ![null,"M","F"].includes(gender)) {
       return NextResponse.json({error:"Renseigne un nom, une catégorie (ex. U13), une saison consécutive (ex. 2026-2027) et un sexe valide."},{status:400});
@@ -221,6 +231,7 @@ export async function POST(req: Request) {
       institutionManaged: true,
       institutionStructureId: structureId,
       institutionKind: "selection",
+      institutionShowInMyTeams: false,
       institutionSelectionId: selectionId,
       institutionAllAccess: true,
       season: seasonLabel,

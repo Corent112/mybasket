@@ -46,6 +46,7 @@ type SelectionPlayer = {
 };
 
 type Selection = {
+  in_my_teams?: boolean;
   preparation_target_id?:string|null;
   max_players?:number|null;
   roster_kind?:string;
@@ -151,6 +152,11 @@ export default function InstitutionalSelectionsManager({
   }
   const seasonOptions = Array.from(new Set(rows.map(row => row.season_label).filter(Boolean)));
 
+  async function publishTeam(selection: Selection) {
+    if(busy)return;setBusy(true);setMessage("");
+    try {const response=await fetch("/api/institutionnel/sport/selections",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({structureId,selectionId:selection.id,action:"publish_team"})});const result=await response.json();if(!response.ok)throw Error(result.error||"Ajout impossible");await load();setMessage("La sélection est disponible dans Mes équipes. Les joueurs et l’historique sont conservés.");}
+    catch(error){setMessage(error instanceof Error?error.message:"Connexion interrompue");}finally{setBusy(false);}
+  }
   async function load() {
     const [selectionRes, playerRes, teamRes] = await Promise.all([
       fetch(
@@ -458,7 +464,7 @@ export default function InstitutionalSelectionsManager({
               {row.category || "—"} · {row.gender === "M" ? "Masculin" : row.gender === "F" ? "Féminin" : "Mixte"} · {row.season_label || "—"}
             </span>
             <small>
-              {row.players?.length || 0} joueur(s) · {row.staff?.length || 0} responsable(s)
+              {row.players?.length || 0} joueur(s) · {row.in_my_teams ? "✓ Dans Mes équipes" : "Institution uniquement"}
             </small>
           </button>
         ))}
@@ -480,7 +486,7 @@ export default function InstitutionalSelectionsManager({
               <button type="button" disabled={busy} onClick={editSelection}>Modifier les informations</button>
               <button className="primary" onClick={()=>setDetailTab("training")}>Créer un événement avec cet effectif</button>
               <button className="primary" onClick={()=>onOpenBase?onOpenBase():window.location.assign(`/institutionnel/${structureId}?tab=Joueurs`)}>Ajouter un joueur dans la base</button>
-              <div className="teamActions">{onPrepareSelection&&<button type="button" className="primary" onClick={()=>onPrepareSelection(current.preparation_target_id||current.id)}>Préparer les détections & entraînements</button>}<a href={`/equipes/${current.team_id}`}>Équipe complète · Matchs & statistiques →</a></div>
+              <div className="teamActions">{onPrepareSelection&&<button type="button" className="primary" onClick={()=>onPrepareSelection(current.preparation_target_id||current.id)}>Préparer les détections & entraînements</button>}{current.in_my_teams ? <a href={`/equipes/${current.team_id}`}>Ouvrir dans Mes équipes →</a> : <button type="button" disabled={busy} onClick={()=>void publishTeam(current)}>Ajouter à Mes équipes</button>}</div>
             </div>
           </div>
 
