@@ -18,7 +18,7 @@ function isAdminRole(role: unknown) {
   return normalized === "ceo" || normalized === "superadmin" || normalized === "admin";
 }
 
-function buildAccess(enabled: Set<string>, forceAll = false) {
+function buildAccess(enabled: Set<string>, forceAll = false, institutionMember = false) {
   const exact = Object.fromEntries(
     ALL_MATRIX_PERMISSION_KEYS.map((key) => [key, forceAll || enabled.has(key)]),
   );
@@ -34,6 +34,7 @@ function buildAccess(enabled: Set<string>, forceAll = false) {
     ...exact,
     ...aliases,
     ...SYSTEM_ACCESS,
+    institutionnel: forceAll || institutionMember || enabled.has("institutionnel"),
   };
 }
 
@@ -50,7 +51,17 @@ export async function GET() {
     });
   }
 
-  const [profileResult, effective] = await Promise.all([
+  const membershipClient = createAdminClient() || supabase;
+  const institutionAccess = async () => {
+    const memberships = await membershipClient.from("institutional_members")
+      .select("structure_id").eq("user_id", user.id).eq("status", "active");
+    if (memberships.error || !memberships.data?.length) return false;
+    const structures = await membershipClient.from("institutional_structures")
+      .select("id").in("id", memberships.data.map(row => row.structure_id))
+      .eq("archived", false).limit(1);
+    return !structures.error && !!structures.data?.length;
+  };
+  const [profileResult, effective, institutionMember] = await Promise.all([
     supabase
       .from("profiles")
       .select("platform_role,status")
@@ -61,6 +72,7 @@ export async function GET() {
       userId: user.id,
       email: user.email,
     }),
+    institutionAccess(),
   ]);
 
   if (isAdminRole(profileResult.data?.platform_role)) {
@@ -77,7 +89,7 @@ export async function GET() {
 
   const planId = effective.subscription?.plan_id || effective.plan?.id || null;
   if (!effective.active || !planId) {
-    return NextResponse.json(buildAccess(new Set()), {
+    return NextResponse.json(buildAccess(new Set(), false, institutionMember), {
       headers: { "Cache-Control": "private, no-store, max-age=0" },
     });
   }
@@ -91,7 +103,7 @@ export async function GET() {
 
   if (error) {
     console.error("Lecture droits abonnement impossible :", error.message);
-    return NextResponse.json(buildAccess(new Set()), {
+    return NextResponse.json(buildAccess(new Set(), false, institutionMember), {
       headers: { "Cache-Control": "private, no-store, max-age=0" },
     });
   }
@@ -102,7 +114,7 @@ export async function GET() {
       .map((row: { section_key: string }) => row.section_key),
   );
 
-  return NextResponse.json(buildAccess(enabled), {
+  return NextResponse.json(buildAccess(enabled, false, institutionMember), {
     headers: { "Cache-Control": "private, no-store, max-age=0" },
   });
 }

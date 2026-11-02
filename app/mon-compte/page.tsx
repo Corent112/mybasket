@@ -558,6 +558,33 @@ export default function MonComptePage() {
   load();
 }, [router, supabase]);
 
+  // A responsible person can validate or revoke access while this account is open.
+  useEffect(() => {
+    if (!uid) return;
+    let active = true, pending = false;
+    const refresh = async () => {
+      if (document.visibilityState !== "visible" || pending) return;
+      pending = true;
+      try {
+        const response = await fetch("/api/access", { cache: "no-store" });
+        if (response.ok || response.status === 401) {
+          const rights = await response.json();
+          if (active) setAccessMap(rights);
+        }
+      } catch { /* Keep current navigation during a temporary network failure. */ }
+      finally { pending = false; }
+    };
+    window.addEventListener("focus", refresh);
+    document.addEventListener("visibilitychange", refresh);
+    const timer = window.setInterval(refresh, 30000);
+    return () => {
+      active = false;
+      window.clearInterval(timer);
+      window.removeEventListener("focus", refresh);
+      document.removeEventListener("visibilitychange", refresh);
+    };
+  }, [uid]);
+
   const readFile = (file: File): Promise<string> =>
     new Promise((resolve, reject) => {
       const reader = new FileReader();

@@ -2,6 +2,8 @@ import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin-server";
 
+import { resolveOrInviteUser } from "@/lib/institutionnel/sport-access-server";
+
 const ROLES = new Set(["admin", "formation", "performance", "communication", "lecture"]);
 
 function permissionsFor(role: string) {
@@ -47,18 +49,13 @@ export async function POST(req: Request) {
   if ("error" in ctx) return ctx.error;
   if (!new Set(["owner", "admin"]).has(String(ctx.member.role))) return NextResponse.json({ error: "Seuls le propriétaire ou un administrateur peut inviter des membres." }, { status: 403 });
 
-  let userId = "";
-  let invited = false;
-  const { data: profile } = await ctx.admin.from("profiles").select("id,email").ilike("email", email).maybeSingle();
-  if (profile?.id) {
-    userId = String(profile.id);
-  } else {
-    const origin = new URL(req.url).origin;
-    const invite = await ctx.admin.auth.admin.inviteUserByEmail(email, { redirectTo: `${origin}/institutionnel/${structureId}` });
-    if (invite.error || !invite.data.user?.id) return NextResponse.json({ error: invite.error?.message || "Invitation Supabase impossible" }, { status: 400 });
-    userId = invite.data.user.id;
-    invited = true;
+  let resolved: { userId: string; invited: boolean };
+  try {
+    resolved = await resolveOrInviteUser(ctx.admin, email, `${new URL(req.url).origin}/institutionnel/${structureId}`);
+  } catch {
+    return NextResponse.json({ error: "Impossible de retrouver ou d’inviter ce compte. Réessaie." }, { status: 400 });
   }
+  const { userId, invited } = resolved;
 
   const existing = await ctx.admin.from("institutional_members").select("id,role").eq("structure_id", structureId).eq("user_id", userId).maybeSingle();
   if(existing.error)return NextResponse.json({error:existing.error.message},{status:400});
