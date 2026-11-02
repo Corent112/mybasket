@@ -61,9 +61,13 @@ export async function GET(req:Request){
  const player=await db.from('players').select('id,team_id').eq('id',playerId).maybeSingle();
  if(player.error)return NextResponse.json({error:'Lecture du joueur impossible'},{status:503});
  if(!player.data)return NextResponse.json({isPoliste:false});
- const links=await db.from('institutional_pole_teams').select('structure_id').eq('team_id',player.data.team_id).eq('team_kind','pole').eq('active',true);
- if(links.error)return NextResponse.json({error:'Lecture du rattachement Pôle impossible'},{status:503});
- for(const link of links.data||[]){
+ const [links,primary]=await Promise.all([
+  db.from('institutional_pole_teams').select('structure_id').eq('team_id',player.data.team_id).eq('team_kind','pole').eq('active',true),
+  db.from('institutional_team_links').select('structure_id').eq('team_id',player.data.team_id).eq('kind','primary')
+ ]);
+ if(links.error||primary.error)return NextResponse.json({error:'Lecture du rattachement Pôle impossible'},{status:503});
+ const structures=[...new Map([...(links.data||[]),...(primary.data||[])].map((link:any)=>[link.structure_id,link])).values()] as Array<{structure_id:string}>;
+ for(const link of structures){
   const c=await ctx(link.structure_id);if(!c)continue;
   const [partners,assignments,selections]=await Promise.all([
    db.from('institutional_pole_teams').select('team_id').eq('structure_id',link.structure_id).eq('team_kind','partner').eq('active',true),

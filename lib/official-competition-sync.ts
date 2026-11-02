@@ -1,12 +1,19 @@
 export type OfficialConnection={id:string;team_id:string;source_url:string;ffbb_team_name?:string|null;competition_kind?:string|null};
 /** Refresh scores in their existing connection. Never recreate the team or replace coded match stats. */
-export async function refreshOfficialConnection(db:any,teamId:string,connection:OfficialConnection,fetcher:typeof fetch=fetch){
+export async function refreshOfficialConnection(db:any,teamId:string,connection:OfficialConnection,fetcher:typeof fetch=fetch,directReader?:(url:string,team:string)=>Promise<any>){
  if(connection.team_id!==teamId)throw Error('Cette compétition n’est pas reliée à cette équipe.');
  const query=new URLSearchParams({url:connection.source_url});
  if(connection.ffbb_team_name)query.set('team',connection.ffbb_team_name);
- const response=await fetcher(`/api/ffbb/competition?${query}`,{cache:'no-store'});
- const parsed=await response.json();
- if(!response.ok)throw Error(parsed.error||'La source officielle est indisponible. Les résultats enregistrés sont conservés.');
+ let parsed:any;
+ // Same public FFBB reader as the team banner: Vercel can be refused while the coach's browser succeeds.
+ if((directReader||typeof window!=="undefined")&&/^https:\/\/competitions\.ffbb\.com\//i.test(connection.source_url)){
+  try{const read=directReader||(await import("@/lib/ffbb-api")).fetchTeamFromFfbbApi;const direct=await read(connection.source_url,connection.ffbb_team_name||'');if(direct?.mode==='team'&&direct.matches?.length)parsed=direct;}catch{/* Server remains a fallback; never clear saved scores on a network failure. */}
+ }
+ if(!parsed){
+  const response=await fetcher(`/api/ffbb/competition?${query}`,{cache:'no-store'});
+  parsed=await response.json();
+  if(!response.ok)throw Error(parsed.error||'La source officielle est indisponible. Les résultats enregistrés sont conservés.');
+ }
  if(parsed.mode!=='team'||!Array.isArray(parsed.matches))throw Error('Choisis à nouveau le club officiel pour actualiser cette compétition.');
  const timestamp=new Date().toISOString();
  const matches=parsed.matches.filter((game:any)=>game.sourceKey&&/^\d{4}-\d{2}-\d{2}$/.test(game.date));

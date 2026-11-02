@@ -11,5 +11,9 @@ const game={sourceKey:'game',date:'2026-10-25',round:'J5',time:'15:00',homeAway:
  const count=db.writes.length;await assert.rejects(()=>refresh(db,'unrelated',connection,fetcher));assert.equal(db.writes.length,count);
  for(const response of [{ok:false,json:async()=>({error:'Source indisponible'})},{ok:true,json:async()=>({mode:'choose-team',teams:[]})},{ok:true,json:async()=>({mode:'team',matches:[]})}]){await assert.rejects(()=>refresh(db,'team',connection,async()=>response));assert.equal(db.rows[0].our_score,80);assert.equal(db.writes.length,count)}
  db.fail();await assert.rejects(()=>refresh(db,'team',connection,fetcher),/enregistrement impossible/);assert.equal(db.writes.length,count);
+ let serverCalls=0;
+ await refresh(db,'team',connection,async()=>{serverCalls++;throw Error('Server unavailable')},async()=>({mode:'team',matches:[{...game,ourScore:95}]}));assert.equal(serverCalls,0);assert.equal(db.rows[0].our_score,95);
+ await refresh(db,'team',connection,fetcher,async()=>{throw Error('Direct FFBB unavailable')});assert.equal(db.rows[0].our_score,80);
+ console.log('PASS: browser FFBB reader recovers scores when the server calendar is empty, with server fallback when direct reading fails.');
  console.log('PASS: official refresh replaces stale scores, preserves zero and connection identity, avoids duplicates, scopes the team, and retains data on provider/write failure.');
 })().catch(e=>{console.error(e);process.exitCode=1});
