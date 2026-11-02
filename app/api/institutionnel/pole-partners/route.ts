@@ -52,3 +52,29 @@ export async function DELETE(req:Request){
  if(!others.data?.length){const p=await c.db.from("players").select("metadata").eq("id",assigned.pole_player_id).single();if(p.error)return NextResponse.json({error:p.error.message},{status:400});const write=await c.db.from("players").update({metadata:{...p.data.metadata,additionalTeamIds:(p.data.metadata?.additionalTeamIds||[]).filter((id:string)=>id!==assigned.partner_team_id)},updated_at:new Date().toISOString()}).eq("id",assigned.pole_player_id);if(write.error)return NextResponse.json({error:write.error.message},{status:400});}
  return NextResponse.json({ok:true});
 }
+
+export async function GET(req:Request){
+ const sb=await createClient();const {data:{user}}=await sb.auth.getUser();if(!user)return NextResponse.json({error:'Non connecté'},{status:401});
+ const playerId=new URL(req.url).searchParams.get('playerId')||'';
+ if(!playerId)return NextResponse.json({error:'Joueur obligatoire'},{status:400});
+ const db=createAdminClient()||sb;
+ const player=await db.from('players').select('id,team_id').eq('id',playerId).maybeSingle();
+ if(player.error)return NextResponse.json({error:'Lecture du joueur impossible'},{status:503});
+ if(!player.data)return NextResponse.json({isPoliste:false});
+ const links=await db.from('institutional_pole_teams').select('structure_id').eq('team_id',player.data.team_id).eq('team_kind','pole').eq('active',true);
+ if(links.error)return NextResponse.json({error:'Lecture du rattachement Pôle impossible'},{status:503});
+ for(const link of links.data||[]){
+  const c=await ctx(link.structure_id);if(!c)continue;
+  const [partners,assignments,selections]=await Promise.all([
+   db.from('institutional_pole_teams').select('team_id').eq('structure_id',link.structure_id).eq('team_kind','partner').eq('active',true),
+   db.from('institutional_pole_partner_assignments').select('id,partner_team_id,season_label').eq('structure_id',link.structure_id).eq('pole_player_id',playerId).eq('active',true),
+   db.from('institutional_selections').select('id,name').eq('structure_id',link.structure_id).neq('status','archived')
+  ]);
+  if(partners.error||assignments.error||selections.error)return NextResponse.json({error:'Lecture des équipes partenaires impossible'},{status:503});
+  const ids=(partners.data||[]).map((p:any)=>p.team_id);
+  const teams=ids.length?await db.from('teams').select('id,name,category').in('id',ids):{data:[],error:null};
+  if(teams.error)return NextResponse.json({error:'Lecture des équipes impossible'},{status:503});
+  return NextResponse.json({isPoliste:true,structureId:link.structure_id,partners:teams.data||[],assignments:assignments.data||[],selections:selections.data||[]});
+ }
+ return NextResponse.json({isPoliste:false});
+}

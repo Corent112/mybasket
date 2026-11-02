@@ -474,7 +474,7 @@ export async function GET(req: NextRequest) {
         const apiPayload = await fetchTeamFromFfbbApi(url, requestedTeam);
         return NextResponse.json(apiPayload, {
           headers: {
-            "Cache-Control": "private, max-age=0, s-maxage=60, stale-while-revalidate=300",
+            "Cache-Control": "private, no-store",
           },
         });
       } catch (apiError) {

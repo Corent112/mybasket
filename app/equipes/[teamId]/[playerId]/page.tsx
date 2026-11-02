@@ -4,6 +4,7 @@
 import { use, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { getPlayer, getTeam, getTeams, upsertPlayer } from "../../../../lib/equipes-store";
+import PolePlayerTeamLinks from "@/components/equipes/PolePlayerTeamLinks";
 import PlayerTeamAttachment from "@/components/equipes/PlayerTeamAttachment";
 import PlayerForm from "../../../../components/equipes/PlayerForm";
 import RadarChart from "../../../../components/equipes/RadarChart";
@@ -2153,7 +2154,7 @@ export default function JoueurDetailPage({
         )}
 
         {tab === "Informations" && (
-          <InformationTab p={p} team={team} latestHeight={latestHeight} latestWeight={latestWeight} latestWingspan={latestWingspan} />
+          <><InformationTab p={p} team={team} latestHeight={latestHeight} latestWeight={latestWeight} latestWingspan={latestWingspan} /><PolePlayerTeamLinks playerId={String(playerId)} onChanged={async()=>{await reload();flash("Rattachements mis à jour ✓")}} /></>
         )}
 
         {tab === "Stats & Vidéo" && (statsTeamId === "all" ? playerTeams : [playerTeams.find(t => t.id === statsTeamId) || team]).filter(t => t?.competitionSource === "lnb").map(t => t && <LnbPlayerStats key={t.id} teamId={t.id} playerId={String(playerId)} externalData={officialSeasons.find(item => item.teamId === t.id)?.data} externalLoading={matchStatsLoading} externalError={matchStatsError} />)}

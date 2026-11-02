@@ -1,0 +1,21 @@
+const fs=require('node:fs'),vm=require('node:vm'),assert=require('node:assert/strict'),ts=require('typescript'),{JSDOM}=require('jsdom');
+const dom=new JSDOM('<div id="root"></div>',{url:'https://mybasket.test'});global.window=dom.window;global.document=dom.window.document;global.navigator=dom.window.navigator;global.IS_REACT_ACT_ENVIRONMENT=true;
+const React=require('react'),{createRoot}=require('react-dom/client'),{act}=React;
+const connection={id:'c',team_id:'team',source_url:'https://competitions.ffbb.com/ligues/idf/comites/75/clubs/exemple/equipes/123',ffbb_team_name:'Club Exemple',competition_kind:'championship',is_primary:true};
+const games=[{connection_id:'c',team_id:'team',source_match_key:'g',match_date:'2026-10-25',opponent:'Adversaire',home_away:'home',our_score:null,opponent_score:null}];
+let count=0,callbacks=0,unavailable=false,score=80;
+const db={auth:{getUser:async()=>({data:{user:{id:'owner'}}})},from(table){let values,mode='read';const q={select(){return q},eq(){return q},in(){return q},order(){return q},update(p){mode='write';values=p;return q},upsert(p){mode='write';values=p;return q},then(resolve){if(mode==='write'){if(table==='ffbb_synced_matches')for(const p of values){let row=games.find(g=>g.source_match_key===p.source_match_key);if(row)Object.assign(row,p);else games.push(p)}else Object.assign(connection,values)}return Promise.resolve({data:table==='ffbb_team_connections'?[connection]:games,error:null}).then(resolve)}};return q}};
+const fetchMock=async()=>{count++;return{ok:!unavailable,json:async()=>unavailable?{error:'Source temporairement indisponible'}:{mode:'team',matches:[{sourceKey:'g',date:'2026-10-25',opponent:'Adversaire',homeAway:'home',ourScore:score,opponentScore:70}]}}};
+const compile=source=>ts.transpileModule(source,{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2020,jsx:ts.JsxEmit.ReactJSX,esModuleInterop:true}}).outputText;
+const service={exports:{},URLSearchParams,Date,Error,fetch:fetchMock};vm.runInNewContext(compile(fs.readFileSync('lib/official-competition-sync.ts','utf8')),service);
+const app={exports:{},window,document,URL,Date,Error,fetch:fetchMock,console,require:n=>n==='@/lib/supabase/client'?{createClient:()=>db}:n==='@/lib/official-competition-sync'?service.exports:n==='@/lib/competition-calendar'?{syncCompetitionCalendar:async()=>0}:n==='@/components/equipes/LnbPlayerStats'?{__esModule:true,default:()=>null}:require(n)};
+vm.runInNewContext(compile(fs.readFileSync('components/equipes/TeamFfbbCompetition.tsx','utf8')),app);
+const root=createRoot(document.getElementById('root')),tick=()=>new Promise(r=>setTimeout(r,0));
+(async()=>{
+ await act(async()=>{root.render(React.createElement(app.exports.default,{teamId:'team',source:'ffbb',onConnected:()=>callbacks++}));await tick();await tick()});
+ assert.equal(count,1);assert.equal(callbacks,1);assert.equal(games[0].our_score,80);assert.equal(connection.is_primary,true);
+ await act(async()=>{[...document.querySelectorAll('button')].find(b=>b.textContent==='Résultats').click();await tick()});assert(document.querySelector('tbody').textContent.includes('80 – 70'));
+ unavailable=true;await act(async()=>{window.dispatchEvent(new window.Event('focus'));await tick();await tick()});assert.equal(count,2);assert(document.querySelector('[role=alert]').textContent.includes('Source temporairement indisponible'));assert(document.querySelector('tbody').textContent.includes('80 – 70'));assert.equal(callbacks,1);
+ unavailable=false;score=90;await act(async()=>{[...document.querySelectorAll('button')].find(b=>b.textContent.includes('Tout actualiser')).click();await tick();await tick()});assert(document.querySelector('tbody').textContent.includes('90 – 70'));assert.equal(games.length,1);assert.equal(callbacks,2);
+ await act(async()=>root.unmount());console.log('PASS: real calendar refresh on opening and focus, immediate updated score rendering, manual retry, parent counters refreshed, saved scores retained on source failure.');
+})().catch(e=>{console.error(e);root.unmount();process.exitCode=1});
