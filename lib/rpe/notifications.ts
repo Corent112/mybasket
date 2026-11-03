@@ -1,11 +1,8 @@
+import { renderDailyDigest } from "@/lib/rpe/daily-digest";
 import { createAdminClient } from "@/lib/supabase/admin-server";
 import { sendTransactionalEmail } from "@/lib/server-notifications";
 import { sendRpeExternalMessage } from "@/lib/rpe/external-messaging";
-import {
-  averageOtherPlayers,
-  evaluateRpe,
-  type RpeEvaluation,
-} from "@/lib/rpe/engine";
+import type { RpeEvaluation } from "@/lib/rpe/engine";
 
 type Recipient = {
   userId: string;
@@ -529,33 +526,24 @@ export async function sendWellnessDailyDigest(input: {
   const admin = createAdminClient();
   if (!admin) return { sent: 0, skipped: 0 };
 
-  const [{ data: team }, { data: players }, { data: responses }] = await Promise.all([
+  const results = await Promise.all([
     admin.from("teams").select("*").eq("id", input.teamId).maybeSingle(),
     admin.from("players").select("id,first_name,last_name").eq("team_id", input.teamId).order("last_name"),
     admin.from("player_wellness_responses")
-      .select("player_id,fatigue,sleep,stress,soreness,comment,pain_zones,pain_details,created_at")
+      .select("player_id,fatigue,sleep,stress,comment,pain_zones,pain_details,created_at")
       .eq("team_id", input.teamId).eq("response_kind", "wellness").eq("response_date", input.responseDate)
       .order("created_at", { ascending: true }),
   ]);
-  if (!responses?.length) return { sent: 0, skipped: 0 };
-
-  const latest = new Map<string, any>();
-  for (const row of responses) latest.set(String(row.player_id), row);
-  const playerById = new Map((players || []).map((p:any)=>[String(p.id),p]));
-  const vals = Array.from(latest.values());
-  const avg=(key:string)=>Math.round((vals.reduce((a:number,r:any)=>a+Number(r?.[key]||0),0)/vals.length)*10)/10;
-  const rows = Array.from(latest.entries()).map(([id,row]:any)=>{
-    const p:any=playerById.get(id); const name=[p?.first_name,p?.last_name].filter(Boolean).join(" ")||"Joueur";
-    const meta=row?.pain_details?._wellness||{}; const pains=Array.isArray(row?.pain_zones)?row.pain_zones.length:0;
-    return `<tr><td style="padding:10px 7px;border-bottom:1px solid #403A36;font-weight:800">${esc(name)}</td><td align="center" style="padding:10px 5px;border-bottom:1px solid #403A36">${esc(row.sleep)}/10</td><td align="center" style="padding:10px 5px;border-bottom:1px solid #403A36">${esc(row.fatigue)}/10</td><td align="center" style="padding:10px 5px;border-bottom:1px solid #403A36">${esc(row.stress)}/10</td><td align="center" style="padding:10px 5px;border-bottom:1px solid #403A36">${esc(meta.mood ?? "—")}${meta.mood!=null?"/10":""}</td><td align="center" style="padding:10px 5px;border-bottom:1px solid #403A36">${meta.hitReceived?"🥊 Oui":"Non"}</td><td align="center" style="padding:10px 5px;border-bottom:1px solid #403A36">${pains? `🔴 ${pains}`:"—"}</td></tr>`;
-  }).join("");
-  const missing=(players||[]).filter((p:any)=>!latest.has(String(p.id)));
-  const logo=teamLogoFromRow(team); const href=`${appUrl()}/equipes/${encodeURIComponent(input.teamId)}?tab=load`;
-  const html=`<!doctype html><html><body style="margin:0;background:#171717;font-family:Arial,sans-serif;color:#fff"><table width="100%" cellspacing="0"><tr><td align="center" style="padding:28px 12px"><table width="100%" style="max-width:1040px;background:#1D1D1D;border-radius:22px;overflow:hidden;border:1px solid #3A302A"><tr><td style="background:#6B1A2C;padding:27px 30px"><table width="100%"><tr><td><div style="font-size:12px;font-weight:900;letter-spacing:.14em;color:#D4A24C">MYBASKET · WELLNESS</div><div style="margin-top:8px;font-size:30px;font-weight:900">Bilan du matin</div><div style="margin-top:5px;color:#EBDDE1">${esc(input.teamName)} · ${esc(frDate(input.responseDate))}</div></td><td width="94" align="right">${teamLogoHtml(input.teamName,logo)}</td></tr></table></td></tr><tr><td style="height:5px;background:#D4A24C"></td></tr>
-<tr><td style="padding:22px"><table width="100%" cellspacing="7"><tr><td align="center" style="padding:14px;background:#242424;border:1px solid #4A403A;border-radius:13px"><b style="font-size:22px">${latest.size}/${players?.length||latest.size}</b><div style="font-size:9px;color:#D4A24C">RÉPONSES</div></td><td align="center" style="padding:14px;background:#242424;border:1px solid #4A403A;border-radius:13px"><b style="font-size:22px">${avg("sleep")}</b><div style="font-size:9px;color:#D4A24C">SOMMEIL</div></td><td align="center" style="padding:14px;background:#242424;border:1px solid #4A403A;border-radius:13px"><b style="font-size:22px">${avg("fatigue")}</b><div style="font-size:9px;color:#D4A24C">FATIGUE</div></td><td align="center" style="padding:14px;background:#242424;border:1px solid #4A403A;border-radius:13px"><b style="font-size:22px">${avg("stress")}</b><div style="font-size:9px;color:#D4A24C">STRESS</div></td></tr></table></td></tr>
-<tr><td style="padding:0 24px 18px"><div style="font-size:11px;font-weight:900;color:#D4A24C;letter-spacing:.1em">TABLEAU ÉQUIPE</div><table width="100%" style="margin-top:8px;border-collapse:collapse;color:#fff"><thead><tr style="background:#2B2928"><th align="left" style="padding:9px 7px">Joueur</th><th>Sommeil</th><th>Fatigue</th><th>Stress</th><th>Humeur</th><th>Coup</th><th>Douleurs</th></tr></thead><tbody>${rows}</tbody></table></td></tr>
-${missing.length?`<tr><td style="padding:0 24px 18px"><div style="padding:14px;border-radius:14px;background:#292625;color:#CBBDB6"><strong style="color:#fff">Sans réponse (${missing.length}) :</strong> ${esc(missing.map((p:any)=>[p.first_name,p.last_name].filter(Boolean).join(" ")).join(" · "))}</div></td></tr>`:""}
-<tr><td align="center" style="padding:8px 24px 28px"><a href="${esc(href)}" style="display:inline-block;background:#6B1A2C;color:#fff;text-decoration:none;border-radius:999px;padding:14px 24px;font-weight:900;border:1px solid #D4A24C">OUVRIR LE WELLNESS →</a></td></tr><tr><td style="background:#111;padding:18px;text-align:center;color:#A99D96;font-size:11px">Résumé automatique du questionnaire Wellness du matin. Ces indicateurs ne constituent pas un diagnostic médical.</td></tr></table></td></tr></table></body></html>`;
+  for (const result of results) if (result.error) throw result.error;
+  const team = results[0].data;
+  const players = results[1].data || [];
+  const responses = results[2].data || [];
+  if (!responses.length || !players.length) return { sent: 0, skipped: 0 };
+  const html = renderDailyDigest({
+    ...input, kind: "wellness", players, responses,
+    teamLogo: teamLogoFromRow(team),
+    href: `${appUrl()}/equipes/${encodeURIComponent(input.teamId)}?tab=load`,
+  });
 
   const recipients=await alertRecipients(input.teamId,true); let sent=0,skipped=0;
   for(const recipient of recipients){
@@ -577,333 +565,36 @@ export async function sendRpeDailyDigest(input: {
   const admin = createAdminClient();
   if (!admin) return { sent: 0, skipped: 0 };
 
-  const [
-    { data: team },
-    { data: players },
-    { data: responses },
-    { data: plan },
-    { data: storedAlerts },
-    { data: wellnessResponses },
-  ] = await Promise.all([
+  const results = await Promise.all([
     admin.from("teams").select("*").eq("id", input.teamId).maybeSingle(),
-    admin
-      .from("players")
-      .select("id,first_name,last_name,photo_url")
-      .eq("team_id", input.teamId)
-      .order("last_name"),
-    admin
-      .from("player_wellness_responses")
-      .select(
-        "player_id,rpe,duration_minutes,fatigue,soreness,sleep,stress,comment,pain_zones,pain_details,is_injured,created_at",
-      )
-      .eq("team_id", input.teamId)
-      .eq("response_kind", "post_session")
-      .eq("response_date", input.responseDate)
-      .not("rpe", "is", null)
-      .order("created_at", { ascending: true }),
-    admin
-      .from("team_load_plans")
-      .select("planned_rpe")
-      .eq("team_id", input.teamId)
-      .eq("plan_date", input.responseDate)
-      .maybeSingle(),
-    admin
-      .from("rpe_alerts")
-      .select("player_id,severity,email_sent_at,triggered_at")
-      .eq("team_id", input.teamId)
-      .eq("response_date", input.responseDate),
-    admin
-      .from("player_wellness_responses")
-      .select("player_id,fatigue,soreness,sleep,stress,comment,pain_zones,pain_details,is_injured,created_at")
-      .eq("team_id", input.teamId)
-      .eq("response_kind", "wellness")
-      .eq("response_date", input.responseDate)
-      .order("created_at", { ascending: true }),
+    admin.from("players").select("id,first_name,last_name,photo_url")
+      .eq("team_id", input.teamId).order("last_name"),
+    admin.from("player_wellness_responses")
+      .select("player_id,rpe,duration_minutes,comment,pain_zones,pain_details,is_injured,created_at")
+      .eq("team_id", input.teamId).eq("response_kind", "post_session")
+      .eq("response_date", input.responseDate).order("created_at", { ascending: true }),
+    admin.from("team_load_plans").select("planned_rpe")
+      .eq("team_id", input.teamId).eq("plan_date", input.responseDate).maybeSingle(),
+    admin.from("player_wellness_responses")
+      .select("player_id,fatigue,sleep,stress,comment,pain_zones,pain_details,created_at")
+      .eq("team_id", input.teamId).eq("response_kind", "wellness")
+      .eq("response_date", input.responseDate).order("created_at", { ascending: true }),
   ]);
-
-  if (!players?.length) return { sent: 0, skipped: 0 };
-
-  const latest = new Map<string, any>();
-  for (const row of responses || []) {
-    latest.set(String(row.player_id), row);
-  }
-
-  if (!latest.size) return { sent: 0, skipped: 0 };
-
-  const latestWellness = new Map<string, any>();
-  for (const row of wellnessResponses || []) latestWellness.set(String(row.player_id), row);
-
+  // A failed morning query must not become a fabricated "no pain/no response".
+  for (const result of results) if (result.error) throw result.error;
+  const team = results[0].data;
+  const players = results[1].data || [];
+  const responses = results[2].data || [];
+  const plan = results[3].data;
+  const wellnessResponses = results[4].data || [];
+  if (!players.length || !responses.length) return { sent: 0, skipped: 0 };
   const recipients = await alertRecipients(input.teamId, true);
   if (!recipients.length) return { sent: 0, skipped: 0 };
-
-  const target =
-    plan?.planned_rpe == null ? null : Number(plan.planned_rpe);
-
-  const teamLogo = teamLogoFromRow(team);
-  const playerById = new Map(
-    players.map((player: any) => [String(player.id), player]),
-  );
-
-  const allResponses = Array.from(latest.entries()).map(
-    ([playerId, row]) => ({
-      player_id: playerId,
-      rpe: Number(row.rpe),
-      created_at: row.created_at,
-    }),
-  );
-
-  const evaluated = Array.from(latest.entries()).map(
-    ([playerId, row]) => {
-      const player: any = playerById.get(playerId);
-      const groupAverage = averageOtherPlayers(allResponses, playerId);
-
-      const evaluation = evaluateRpe({
-        rpeValue: Number(row.rpe),
-        targetRpe: target,
-        groupAverage,
-      });
-
-      return {
-        playerId,
-        player,
-        row,
-        evaluation,
-      };
-    },
-  );
-
-  const values = evaluated.map((item) => Number(item.row.rpe || 0));
-  const average =
-    Math.round(
-      (values.reduce((a, b) => a + b, 0) / values.length) * 10,
-    ) / 10;
-
-  const red = evaluated.filter(
-    (item) => item.evaluation.severity === "alert",
-  );
-  const orange = evaluated.filter(
-    (item) => item.evaluation.severity === "watch",
-  );
-  const green = evaluated.filter(
-    (item) => item.evaluation.severity === "normal",
-  );
-
-  const missing = (players || []).filter(
-    (player: any) => !latest.has(String(player.id)),
-  );
-
-  const storedByPlayer = new Map(
-    (storedAlerts || []).map((row: any) => [
-      String(row.player_id),
-      row,
-    ]),
-  );
-
-  const painLabels: Record<string,string> = {
-    head_front:"Tête / visage", neck_front:"Cou", shoulder_left_front:"Épaule G", shoulder_right_front:"Épaule D", chest_front:"Thorax", plexus_front:"Plexus", abdomen_front:"Abdos", elbow_left_front:"Coude G", elbow_right_front:"Coude D", wrist_left_front:"Poignet G", wrist_right_front:"Poignet D", hip_left_front:"Hanche G", hip_right_front:"Hanche D", thigh_left_front:"Cuisse G", thigh_right_front:"Cuisse D", knee_left_front:"Genou G", knee_right_front:"Genou D", calf_left_front:"Mollet G", calf_right_front:"Mollet D", ankle_left_front:"Cheville G", ankle_right_front:"Cheville D", head_back:"Arrière tête", neck_back:"Nuque", shoulder_left_back:"Épaule G dos", shoulder_right_back:"Épaule D dos", upper_back:"Haut dos", lower_back:"Lombaires", elbow_left_back:"Coude G dos", elbow_right_back:"Coude D dos", wrist_left_back:"Poignet G dos", wrist_right_back:"Poignet D dos", glute_left:"Fessier G", glute_right:"Fessier D", hamstring_left:"Ischio G", hamstring_right:"Ischio D", knee_left_back:"Genou G arrière", knee_right_back:"Genou D arrière", calf_left:"Mollet G", calf_right:"Mollet D", ankle_left_back:"Cheville G dos", ankle_right_back:"Cheville D dos"
-  };
-
-  const tableRows = evaluated
-    .map(({ player, row, evaluation }) => {
-      const status = evaluation.severity === "alert" ? "🔴" : evaluation.severity === "watch" ? "🟠" : "🟢";
-      const name = [player?.first_name, player?.last_name].filter(Boolean).join(" ") || "Joueur";
-      const wellness = latestWellness.get(String(player?.id)) || {};
-      const zonesSource = Array.isArray(row.pain_zones) && row.pain_zones.length ? row.pain_zones : wellness.pain_zones;
-      const zones = Array.isArray(zonesSource) ? zonesSource.map((id:string) => painLabels[id] || id) : [];
-      const pain = zones.length ? zones.join(", ") : "—";
-      const meta = wellness?.pain_details?._wellness || row?.pain_details?._wellness || {};
-      const fatigue = row.fatigue ?? wellness.fatigue ?? "—";
-      const sleep = row.sleep ?? wellness.sleep ?? "—";
-      const stress = row.stress ?? wellness.stress ?? "—";
-      const soreness = row.soreness ?? wellness.soreness ?? "—";
-      const load = Number(row.duration_minutes || 0) * Number(row.rpe || 0);
-      return `<tr>
-        <td style="padding:10px 7px;border-bottom:1px solid #EEE6E1;font-size:12px;font-weight:800;white-space:nowrap">${status} ${esc(name)}</td>
-        <td align="center" style="padding:10px 4px;border-bottom:1px solid #EEE6E1;font-size:12px">${esc(row.duration_minutes ?? "—")}</td>
-        <td align="center" style="padding:10px 4px;border-bottom:1px solid #EEE6E1;font-size:13px;font-weight:900;color:#6B1A2C">${esc(row.rpe)}</td>
-        <td align="center" style="padding:10px 4px;border-bottom:1px solid #EEE6E1;font-size:12px;font-weight:800">${load || "—"}</td>
-        <td align="center" style="padding:10px 4px;border-bottom:1px solid #EEE6E1;font-size:12px">${esc(fatigue)}/10</td>
-        <td align="center" style="padding:10px 4px;border-bottom:1px solid #EEE6E1;font-size:12px">${esc(soreness)}/10</td>
-        <td align="center" style="padding:10px 4px;border-bottom:1px solid #EEE6E1;font-size:12px">${esc(sleep)}/10</td>
-        <td align="center" style="padding:10px 4px;border-bottom:1px solid #EEE6E1;font-size:12px">${esc(stress)}/10</td>
-        <td align="center" style="padding:10px 4px;border-bottom:1px solid #EEE6E1;font-size:12px">${meta.mood != null ? esc(meta.mood)+"/10" : "—"}</td>
-        <td align="center" style="padding:10px 4px;border-bottom:1px solid #EEE6E1;font-size:11px">${meta.hitReceived ? "Oui" : "Non"}</td>
-        <td style="padding:10px 6px;border-bottom:1px solid #EEE6E1;font-size:11px;max-width:150px">${esc(pain)}</td>
-        <td style="padding:10px 6px;border-bottom:1px solid #EEE6E1;font-size:11px;max-width:160px">${esc(row.comment || "—")}</td>
-      </tr>`;
-    }).join("");
-
-  const attentionBlocks = [...red, ...orange]
-    .map(({ playerId, player, row, evaluation }) => {
-      const isRed = evaluation.severity === "alert";
-      const name =
-        [player?.first_name, player?.last_name]
-          .filter(Boolean)
-          .join(" ") || "Joueur";
-
-      const stored: any = storedByPlayer.get(playerId);
-
-      const sentLabel =
-        isRed && stored?.email_sent_at
-          ? `<div style="margin-top:8px;font-size:11px;font-weight:800;color:#44704D">✓ Alerte immédiate déjà envoyée</div>`
-          : "";
-
-      const reason = isRed
-        ? `RPE supérieur de ${esc(
-            signed(evaluation.targetDelta),
-          )} au prévu et de ${esc(
-            signed(evaluation.groupDelta),
-          )} à la moyenne des autres joueurs.`
-        : `RPE supérieur de ${esc(
-            signed(evaluation.targetDelta),
-          )} à la charge prévue. L’écart au groupe (${esc(
-            signed(evaluation.groupDelta),
-          )}) reste sous le second seuil de +2.`;
-
-      return `<div style="margin-top:12px;padding:16px;border-radius:15px;border:1px solid ${
-        isRed ? "#F1C7C3" : "#F0D8A9"
-      };background:${isRed ? "#FFF4F3" : "#FFF9ED"}">
-        <table role="presentation" width="100%"><tr>
-          <td valign="top">
-            <div style="font-size:14px;font-weight:900;color:#241D1A">${
-              isRed ? "🔴" : "🟠"
-            } ${esc(name)}</div>
-            <div style="margin-top:4px;font-size:12px;color:#71645E">${esc(
-              reason,
-            )}</div>
-            ${sentLabel}
-          </td>
-          <td width="82" align="right" valign="top">
-            <div style="font-size:24px;font-weight:900;color:#6B1A2C">${esc(
-              row.rpe,
-            )}<span style="font-size:12px;color:#8E8079">/10</span></div>
-          </td>
-        </tr></table>
-      </div>`;
-    })
-    .join("");
-
-  const missingNames = missing
-    .map((player: any) =>
-      [player.first_name, player.last_name]
-        .filter(Boolean)
-        .join(" "),
-    )
-    .filter(Boolean)
-    .join(" · ");
-
-  const href = `${appUrl()}/equipes/${encodeURIComponent(
-    input.teamId,
-  )}?tab=load`;
-
-  const digestHtml = `<!doctype html>
-<html>
-<body style="margin:0;padding:0;background:#171717;font-family:Arial,Helvetica,sans-serif;color:#FFFFFF">
-<table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="background:#171717">
-<tr><td align="center" style="padding:28px 12px">
-<table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="max-width:760px;background:#1D1D1D;border-radius:22px;overflow:hidden;border:1px solid #3A302A">
-<tr><td style="background:#6B1A2C;padding:27px 30px">
-  <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">
-    <tr>
-      <td valign="middle">
-        <div style="font-size:12px;font-weight:900;letter-spacing:.14em;color:#D4A24C">MYBASKET · CHARGE & RPE</div>
-        <div style="margin-top:8px;font-size:30px;font-weight:900;color:#FFFFFF">Récapitulatif quotidien — RPE & Wellness</div>
-        <div style="margin-top:5px;font-size:13px;color:#EBDDE1">${esc(
-          input.teamName,
-        )} · ${esc(frDate(input.responseDate))}</div>
-      </td>
-      <td width="94" align="right" valign="middle">${teamLogoHtml(
-        input.teamName,
-        teamLogo,
-      )}</td>
-    </tr>
-  </table>
-</td></tr>
-<tr><td style="height:5px;background:#D4A24C"></td></tr>
-
-<tr><td style="padding:22px 22px 10px">
-<table role="presentation" width="100%" cellspacing="7">
-<tr>
-<td width="25%" align="center" style="padding:14px 5px;border-radius:13px;background:#242424;border:1px solid #4A403A"><div style="font-size:22px;font-weight:900;color:#FFFFFF">${latest.size}/${players.length}</div><div style="font-size:9px;font-weight:900;color:#D4A24C;letter-spacing:.08em">RÉPONSES</div></td>
-<td width="25%" align="center" style="padding:14px 5px;border-radius:13px;background:#242424;border:1px solid #4A403A"><div style="font-size:22px;font-weight:900;color:#FFFFFF">${average}</div><div style="font-size:9px;font-weight:900;color:#D4A24C;letter-spacing:.08em">RPE MOYEN</div></td>
-<td width="25%" align="center" style="padding:14px 5px;border-radius:13px;background:#242424;border:1px solid #4A403A"><div style="font-size:22px;font-weight:900;color:#FFFFFF">${
-    target ?? "—"
-  }</div><div style="font-size:9px;font-weight:900;color:#D4A24C;letter-spacing:.08em">RPE PRÉVU</div></td>
-<td width="25%" align="center" style="padding:14px 5px;border-radius:13px;background:#242424;border:1px solid #4A403A"><div style="font-size:22px;font-weight:900;color:#FFFFFF">${
-    red.length + orange.length
-  }</div><div style="font-size:9px;font-weight:900;color:#D4A24C;letter-spacing:.08em">ATTENTIONS</div></td>
-</tr>
-</table>
-</td></tr>
-
-<tr><td style="padding:12px 24px">
-  <div style="font-size:11px;font-weight:900;letter-spacing:.1em;color:#D4A24C">TABLEAU ÉQUIPE</div>
-  <table width="100%" cellspacing="0" cellpadding="0" style="margin-top:8px;border-collapse:collapse;color:#FFFFFF">
-    <thead><tr style="background:#2B2928">
-      <th align="left" style="padding:9px 7px;font-size:10px;color:#D9CCC5">Joueur</th>
-      <th style="padding:9px 4px;font-size:10px;color:#D9CCC5">Min</th>
-      <th style="padding:9px 4px;font-size:10px;color:#D9CCC5">RPE</th>
-      <th style="padding:9px 4px;font-size:10px;color:#D9CCC5">Charge</th>
-      <th style="padding:9px 4px;font-size:10px;color:#D9CCC5">Fatigue</th>
-      <th style="padding:9px 4px;font-size:10px;color:#D9CCC5">Gêne</th>
-      <th style="padding:9px 4px;font-size:10px;color:#D9CCC5">Sommeil</th>
-      <th style="padding:9px 4px;font-size:10px;color:#D9CCC5">Stress</th>
-      <th style="padding:9px 4px;font-size:10px;color:#D9CCC5">Humeur</th>
-      <th style="padding:9px 4px;font-size:10px;color:#D9CCC5">Coup reçu</th>
-      <th align="left" style="padding:9px 6px;font-size:10px;color:#D9CCC5">Zones douloureuses</th>
-      <th align="left" style="padding:9px 6px;font-size:10px;color:#D9CCC5">Commentaire</th>
-    </tr></thead>
-    <tbody>${tableRows
-      .replaceAll("#EEE6E1", "#403A36")
-      .replaceAll("#6B1A2C", "#D4A24C")}</tbody>
-  </table>
-</td></tr>
-
-<tr><td style="padding:12px 24px 6px">
-  <div style="font-size:11px;font-weight:900;letter-spacing:.1em;color:#D4A24C">POINTS D’ATTENTION</div>
-  ${
-    attentionBlocks ||
-    `<div style="margin-top:10px;padding:15px;border-radius:14px;background:#203126;color:#8ED49A;font-size:13px;font-weight:700">🟢 Aucun point d’attention aujourd’hui.</div>`
-  }
-</td></tr>
-
-${
-  missing.length
-    ? `<tr><td style="padding:16px 24px 4px"><div style="padding:14px 16px;border-radius:14px;background:#292625;font-size:12px;color:#CBBDB6"><strong style="color:#FFFFFF">Sans réponse (${missing.length}) :</strong> ${esc(
-        missingNames,
-      )}</div></td></tr>`
-    : ""
-}
-
-<tr><td style="padding:20px 24px">
-  <div style="padding:17px;border-radius:15px;background:#242424;border:1px solid #4A403A">
-    <div style="font-size:12px;font-weight:900;color:#FFFFFF">À retenir</div>
-    <div style="margin-top:8px;font-size:12px;line-height:20px;color:#D7CBC5">🔴 ${
-      red.length
-    } alerte${red.length > 1 ? "s" : ""} élevée${
-    red.length > 1 ? "s" : ""
-  } · 🟠 ${orange.length} point${
-    orange.length > 1 ? "s" : ""
-  } d’attention · 🟢 ${green.length} dans la zone attendue · ⚪ ${
-    missing.length
-  } sans réponse</div>
-  </div>
-</td></tr>
-
-<tr><td align="center" style="padding:5px 24px 28px">
-  <a href="${esc(
-    href,
-  )}" style="display:inline-block;background:#6B1A2C;color:#FFFFFF;text-decoration:none;border-radius:999px;padding:14px 24px;font-size:13px;font-weight:900;border:1px solid #D4A24C">OUVRIR LE SUIVI DE CHARGE →</a>
-</td></tr>
-
-<tr><td style="background:#111111;padding:18px 28px;text-align:center;border-top:1px solid #3D3632">
-  <div style="font-size:12px;font-weight:900;color:#D4A24C">MYBASKET</div>
-  <div style="margin-top:5px;font-size:11px;line-height:17px;color:#A99D96">Ce rapport présente des indicateurs de suivi de charge et ne constitue pas un diagnostic médical.</div>
-  <div style="margin-top:4px;font-size:10px;line-height:16px;color:#827872">Vous recevez cet email car vous êtes configuré pour recevoir le récapitulatif Charge & RPE de cette équipe.</div>
-</td></tr>
-</table>
-</td></tr></table>
-</body></html>`;
+  const digestHtml = renderDailyDigest({
+    ...input, kind: "post_session", players, responses, wellnessResponses,
+    plannedRpe: plan?.planned_rpe, teamLogo: teamLogoFromRow(team),
+    href: `${appUrl()}/equipes/${encodeURIComponent(input.teamId)}?tab=load`,
+  });
 
   let sent = 0;
   let skipped = 0;

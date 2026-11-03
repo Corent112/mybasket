@@ -2,15 +2,9 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
+import { PAIN_ZONES, type PainZone } from "@/lib/rpe/pain-zones";
 
 type PublicPlayer = { id: string; first_name: string; last_name: string };
-type PainZone = {
-  id: string;
-  label: string;
-  side: "front" | "back";
-  x: number;
-  y: number;
-};
 type PainDetail = {
   intensity: number;
   type: string;
@@ -18,39 +12,7 @@ type PainDetail = {
   comment: string;
 };
 
-const PAIN_ZONES: PainZone[] = [
-  { id: "head_front", label: "Tête", side: "front", x: 48, y: 4 },
-  { id: "shoulder_left_front", label: "Épaule gauche", side: "front", x: 72, y: 20 },
-  { id: "shoulder_right_front", label: "Épaule droite", side: "front", x: 28, y: 20 },
-  { id: "plexus_front", label: "Plexus", side: "front", x: 50, y: 27 },
-  { id: "biceps_left_front", label: "Biceps gauche", side: "front", x: 78, y: 35 },
-  { id: "biceps_right_front", label: "Biceps droit", side: "front", x: 22, y: 35 },
-  { id: "abdomen_front", label: "Abdos", side: "front", x: 50, y: 39 },
-  { id: "fingers_left_front", label: "Doigts / main gauche", side: "front", x: 80, y: 51 },
-  { id: "fingers_right_front", label: "Doigts / main droite", side: "front", x: 20, y: 51 },
-  { id: "hip_left_front", label: "Hanche gauche", side: "front", x: 61, y: 48 },
-  { id: "hip_right_front", label: "Hanche droite", side: "front", x: 39, y: 48 },
-  { id: "thigh_left_front", label: "Cuisse gauche", side: "front", x: 61, y: 59 },
-  { id: "thigh_right_front", label: "Cuisse droite", side: "front", x: 39, y: 59 },
-  { id: "knee_left_front", label: "Genou gauche", side: "front", x: 62, y: 72 },
-  { id: "knee_right_front", label: "Genou droit", side: "front", x: 38, y: 72 },
-  { id: "tibia_left_front", label: "Tibia / cheville gauche", side: "front", x: 62, y: 83 },
-  { id: "tibia_right_front", label: "Tibia / cheville droite", side: "front", x: 38, y: 83 },
-  { id: "neck_back", label: "Nuque", side: "back", x: 50, y: 8 },
-  { id: "upper_back", label: "Dos", side: "back", x: 50, y: 20 },
-  { id: "elbow_left_back", label: "Coude gauche", side: "back", x: 24, y: 34 },
-  { id: "elbow_right_back", label: "Coude droit", side: "back", x: 76, y: 34 },
-  { id: "wrist_left_back", label: "Poignet gauche", side: "back", x: 18, y: 43 },
-  { id: "wrist_right_back", label: "Poignet droit", side: "back", x: 82, y: 43 },
-  { id: "hamstring_left", label: "Ischio gauche", side: "back", x: 39, y: 49 },
-  { id: "hamstring_right", label: "Ischio droit", side: "back", x: 61, y: 49 },
-  { id: "calf_left", label: "Mollet gauche", side: "back", x: 39, y: 61 },
-  { id: "calf_right", label: "Mollet droit", side: "back", x: 61, y: 61 },
-  { id: "achilles_left_back", label: "Tendon gauche", side: "back", x: 39, y: 72 },
-  { id: "achilles_right_back", label: "Tendon droit", side: "back", x: 61, y: 72 },
-  { id: "foot_left_back", label: "Pied gauche", side: "back", x: 39, y: 82 },
-  { id: "foot_right_back", label: "Pied droit", side: "back", x: 61, y: 82 },
-];
+
 type FormPayload = {
   valid: boolean;
   team_name?: string;
