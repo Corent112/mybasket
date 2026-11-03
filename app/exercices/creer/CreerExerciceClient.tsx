@@ -6,7 +6,7 @@ import { saveExercise, updateExercise, getExercise } from "@/lib/exercises";
 import ExercisePhotoImport from "@/components/ai/ExercisePhotoImport";
 import type { AiExerciseImport } from "@/lib/import/types";
 import { importToPlaquetteSchema, renderSchemaPreviews } from "@/lib/import/plaquette-converter";
-import { getPlaquetteTransfer, setPlaquetteTransfer, removePlaquetteTransfer } from "@/lib/plaquette-transfer";
+import { getPlaquetteTransfer, setPlaquetteTransfer, removePlaquetteTransfer, preparePlaquetteNavigation } from "@/lib/plaquette-transfer";
 
 type Ex = {
   title: string;
@@ -180,6 +180,9 @@ export default function CreerExerciceClient() {
 
   const [ex, setEx] = useState<Ex>(blank());
   const [toast, setToast] = useState("");
+  const [drawingOpening,setDrawingOpening]=useState(false);
+  const [drawingOpenError,setDrawingOpenError]=useState("");
+  const drawingPending=useRef(false);
   const [exerciseStorageId, setExerciseStorageId] = useState<string>(editId || "");
   /** Passe à vrai dès qu'on a exigé un titre (fin d'import, ou tentative
    *  d'enregistrement). L'erreur est ensuite DÉDUITE du champ : elle
@@ -281,7 +284,7 @@ export default function CreerExerciceClient() {
     }
 
     const key = `${draftKey}_storage_id`;
-    const existing = localStorage.getItem(key);
+    let existing:string|null=null;try{existing=localStorage.getItem(key)}catch{}
 
     if (existing) {
       setExerciseStorageId(existing);
@@ -289,7 +292,7 @@ export default function CreerExerciceClient() {
     }
 
     const temporaryDraftId = crypto.randomUUID();
-    localStorage.setItem(key, temporaryDraftId);
+    try{localStorage.setItem(key, temporaryDraftId)}catch{}
     setExerciseStorageId(temporaryDraftId);
   }, [editId, draftKey]);
 
@@ -505,54 +508,37 @@ export default function CreerExerciceClient() {
     }))
     .filter((item) => !!item.src);
 
-  const openDraw = (index?: number) => {
-    // MODE INSERTION : ouvrir DESSIN ne crée JAMAIS un exercice.
-    // L'exercice n'existera en base qu'au clic sur « Enregistrer » dans ce formulaire.
-    const storageKey = `${draftKey}_storage_id`;
-    const targetStorageId =
-      editId || exerciseStorageId || localStorage.getItem(storageKey) || crypto.randomUUID();
-
-    localStorage.setItem(storageKey, targetStorageId);
-    setExerciseStorageId(targetStorageId);
-    localStorage.setItem('mybasket_drawing_flow', 'insert-exercise-draft');
-    localStorage.setItem(RETURN_KEY, editId ? `/exercices/creer?id=${editId}` : '/exercices/creer');
-    localStorage.setItem('mybasket_current_exercise_id', targetStorageId);
-    if (editId) localStorage.setItem(EDIT_EXERCISE_ID_KEY, editId);
-    else localStorage.removeItem(EDIT_EXERCISE_ID_KEY);
-
-    const cleanDataList = syncSchemas(ex.schemaImages, ex.schemaDataList);
-    // Contrat DESSIN v2 : aucune écriture asynchrone ne peut bloquer l'ouverture.
-    try {
-      localStorage.setItem(`${draftKey}_sync`, JSON.stringify({ ...ex, schemaDataList: cleanDataList }));
-    } catch (error) {
-      console.warn('Copie locale du brouillon exercice impossible :', error);
-    }
-
-    if (typeof index !== 'number') {
-      localStorage.removeItem(EDIT_INDEX_KEY);
-      localStorage.removeItem(EDIT_SCHEMA_GROUP_KEY);
-      window.location.assign('/plaquette?mode=insert&return=exercise');
-      return;
-    }
-
-    const schemaData = cleanDataList[index];
-    const schemaImage = ex.schemaImages[index];
-    const schemaGroupId = schemaData?.schemaGroupId || crypto.randomUUID();
-    localStorage.setItem(EDIT_INDEX_KEY, String(index));
-    localStorage.setItem(EDIT_SCHEMA_GROUP_KEY, schemaGroupId);
-
-    const loadPayload = {
-      title: schemaData?.title || `Schéma ${index + 1}`, editIndex: index, schemaGroupId,
-      courtType: schemaData?.courtType || 'half',
-      phases: Array.isArray(schemaData?.phases) ? schemaData.phases : [],
-      sheet: schemaData?.sheet ?? null,
-      current: typeof schemaData?.current === 'number' ? schemaData.current : 0,
-      imageData: schemaData?.imageData || schemaImage || '',
-      phaseImages: Array.isArray(schemaData?.phaseImages) ? schemaData.phaseImages : (schemaImage ? [schemaImage] : []),
-    };
-    void setPlaquetteTransfer(LOAD_KEY, loadPayload)
-      .then(() => router.push('/plaquette?mode=edit&return=exercise'))
-      .catch((error) => { console.error(error); flash('Impossible de charger ce schéma'); });
+  const openDraw = async (index?: number) => {
+    if(drawingPending.current)return;
+    drawingPending.current=true;setDrawingOpening(true);setDrawingOpenError("");
+    try{
+      const storageKey=`${draftKey}_storage_id`;
+      let previousId:string|null=null;try{previousId=localStorage.getItem(storageKey)}catch{}
+      const targetStorageId=editId||exerciseStorageId||previousId||crypto.randomUUID();
+      const cleanDataList=syncSchemas(ex.schemaImages,ex.schemaDataList);
+      const context:Record<string,string|null>={
+        [storageKey]:targetStorageId,
+        mybasket_drawing_flow:'insert-exercise-draft',
+        [RETURN_KEY]:editId?`/exercices/creer?id=${editId}`:'/exercices/creer',
+        mybasket_current_exercise_id:targetStorageId,
+        [EDIT_EXERCISE_ID_KEY]:editId||null,
+        [EDIT_INDEX_KEY]:null,
+        [EDIT_SCHEMA_GROUP_KEY]:null,
+      };
+      const extra:Record<string,unknown>={};
+      if(typeof index==='number'){
+        const schemaData=cleanDataList[index],schemaImage=ex.schemaImages[index];
+        const schemaGroupId=schemaData?.schemaGroupId||crypto.randomUUID();
+        context[EDIT_INDEX_KEY]=String(index);context[EDIT_SCHEMA_GROUP_KEY]=schemaGroupId;
+        extra[LOAD_KEY]={title:schemaData?.title||`Schéma ${index+1}`,editIndex:index,schemaGroupId,courtType:schemaData?.courtType||'half',phases:Array.isArray(schemaData?.phases)?schemaData.phases:[],sheet:schemaData?.sheet??null,current:typeof schemaData?.current==='number'?schemaData.current:0,imageData:schemaData?.imageData||schemaImage||'',phaseImages:Array.isArray(schemaData?.phaseImages)?schemaData.phaseImages:(schemaImage?[schemaImage]:[])};
+      }
+      await preparePlaquetteNavigation(draftKey,{...ex,schemaDataList:cleanDataList},context,extra);
+      setExerciseStorageId(targetStorageId);
+      window.location.assign(typeof index==='number'?'/plaquette?mode=edit&return=exercise':'/plaquette?mode=insert&return=exercise');
+    }catch(error){
+      console.error('Ouverture du dessin impossible',error);
+      setDrawingOpenError("Le navigateur n’a pas pu préparer l’ouverture du dessin. Tes informations restent dans ce formulaire. Réessaie ; si le problème persiste, ferme les autres onglets MyBasket.");
+    }finally{drawingPending.current=false;setDrawingOpening(false)}
   };
 
   const removeSchema = (index: number) =>
@@ -940,13 +926,14 @@ export default function CreerExerciceClient() {
             <span className="ce-lab-soft">(50 phases max)</span>
           </label>
 
+          {drawingOpenError&&<p role="alert" style={{color:"#a12642",background:"#fff1f3",padding:12,borderRadius:8}}>{drawingOpenError}</p>}
           <div className="ce-schemas">
             {drawingPreviews.map(({ src, index }) => (
               <div key={`${src}-${index}`} className="ce-schema">
                 <img src={src} alt={`Schéma ${index + 1}`} />
 
                 <div className="ce-schema-acts">
-                  <button type="button" onClick={() => openDraw(index)}>
+                  <button type="button" disabled={drawingOpening} onClick={() => void openDraw(index)}>
                     ✏️ Modifier
                   </button>
 
@@ -962,9 +949,9 @@ export default function CreerExerciceClient() {
             ))}
 
             {ex.schemaImages.length < 50 && (
-              <button type="button" className="ce-draw" onClick={() => openDraw()}>
+              <button type="button" className="ce-draw" disabled={drawingOpening} onClick={() => void openDraw()}>
                 <span className="ce-draw-ico">✏️</span>
-                <b>Ajouter un schéma</b>
+                <b>{drawingOpening?"Ouverture du dessin…":"Ajouter un schéma"}</b>
                 <small>{ex.schemaImages.length}/50 phases ajoutées</small>
               </button>
             )}
