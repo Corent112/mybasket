@@ -760,6 +760,9 @@ useEffect(() => {
   const [selectionPanelOpen, setSelectionPanelOpen] = useState(true);
   const [exportOpen, setExportOpen] = useState(false);
   const [saving, setSaving] = useState<null | 'systeme' | 'exercice' | 'library-system' | 'library-exercise'>(null);
+  const insertionPending = useRef(false);
+  const [insertionStatus, setInsertionStatus] = useState('');
+  const [insertionError, setInsertionError] = useState('');
   const [savePlaybooks,setSavePlaybooks]=useState<Playbook[]>([]);
   const [savePlaybookId,setSavePlaybookId]=useState('');
   const [saveSeries,setSaveSeries]=useState<PlaybookSeries[]>([]);
@@ -3839,32 +3842,31 @@ const clearTerrain = () => {
 };
 const captureAllPhaseImages = async () => {
   const canvas = canvasRef.current;
-  if (!canvas) return [];
-
+  if (!canvas) throw new Error("Le terrain n’est pas prêt. Réessaie dans un instant.");
   const previous = currentRef.current;
+  const phaseCount = phasesRef.current.length;
   const images: string[] = [];
-
-  for (let i = 0; i < phasesRef.current.length; i++) {
-    currentRef.current = i;
-    setCurrent(i);
-
-    render();
-
-    await new Promise((resolve) => requestAnimationFrame(resolve));
-
-    try {
-      images.push(canvas.toDataURL("image/png"));
-    } catch {
-      // ignore
+  // Capture statique de toutes les phases, même pendant la lecture d’une option.
+  // Aucun setCurrent/RAF entre deux captures : React et l’animation ne peuvent
+  // ni remplacer la phase courante ni suspendre l’insertion en arrière-plan.
+  stopAnim();
+  try {
+    for (let i = 0; i < phaseCount; i++) {
+      currentRef.current = i;
+      render();
+      const image = canvas.toDataURL("image/png");
+      if (!image.startsWith("data:image/png")) throw new Error(`La phase ${i + 1} n’a pas pu être capturée.`);
+      images.push(image);
     }
+    return images;
+  } catch (error) {
+    throw new Error(`Impossible de préparer tous les schémas. Aucun dessin n’a été retiré. ${error instanceof Error ? error.message : ''}`);
+  } finally {
+    currentRef.current = previous;
+    render();
   }
-
-  currentRef.current = previous;
-  setCurrent(previous);
-  render();
-
-  return images;
 };
+
 const exportPng = () => {
   render();
 
@@ -4001,7 +4003,9 @@ const buildPlaquetteResult = async (opts: {
 }) => {
   const { isSysteme, targetId, schemaGroupId, editIndex, captureVideo = false } = opts;
 
+  const fullPhases = structuredClone(phasesRef.current);
   const phaseImagesBase64 = await captureAllPhaseImages();
+  if (phaseImagesBase64.length !== fullPhases.length) throw new Error("Toutes les phases doivent être capturées avant l’insertion.");
   if (phaseImagesBase64.length === 0) throw new Error("Aucune phase capturée");
 
   const folder = isSysteme
@@ -4009,7 +4013,11 @@ const buildPlaquetteResult = async (opts: {
     : `exercices/${targetId}/schemas/${schemaGroupId}`;
 
   const uploadedUrls: string[] = [];
+  // La fiche exercice sait déjà envoyer ses images au clic Sauvegarder.
+  // Insérer reste donc un transfert local, sans attendre le réseau/Supabase.
+  const localExerciseInsert = !isSysteme && new URLSearchParams(window.location.search).get("return") === "exercise";
   for (let i = 0; i < phaseImagesBase64.length; i += 1) {
+    if (localExerciseInsert) { uploadedUrls.push(phaseImagesBase64[i]); continue; }
     const url = await uploadSchemaImage(
       phaseImagesBase64[i],
       folder,
@@ -4050,7 +4058,6 @@ const buildPlaquetteResult = async (opts: {
     } catch (e) { console.warn('Capture automatique animation système impossible',e); }
   }
 
-  const fullPhases = Array.isArray(phasesRef.current) ? phasesRef.current : [];
 
   const schemaDataList = uploadedUrls.map((url, phaseIndex) => ({
     title: `${title || "Schéma"} - Phase ${phaseIndex + 1}`,
@@ -4088,6 +4095,7 @@ const buildPlaquetteResult = async (opts: {
 // Flux RETOUR : ouvert depuis /exercices/creer ou /systemes/creer.
 // On réutilise l'ID / le type existants puis on revient sur la page de création.
 const saveAndInsertToExo = async () => {
+  if (insertionPending.current || saving) return;
   const canvas = canvasRef.current;
   if (!canvas) {
     alert("Canvas introuvable");
@@ -4095,8 +4103,18 @@ const saveAndInsertToExo = async () => {
   }
 
   const previousCurrent = currentRef.current;
-
+  insertionPending.current = true;
+  setInsertionError('');
+  setInsertionStatus(`Insertion des ${phasesRef.current.length} schémas…`);
+  // Laisser le navigateur afficher le retour visuel avant la capture synchrone.
+  await new Promise(resolve => window.setTimeout(resolve, 0));
   try {
+    const explicitExercise = new URLSearchParams(window.location.search).get("return") === "exercise";
+    const roomRaw = drawingSessionStorage.getItem("mybasket_exercise_schema_room");
+    const room = roomRaw === null ? 50 : Number(roomRaw);
+    if (explicitExercise && Number.isFinite(room) && phasesRef.current.length > room) {
+      throw new Error(`La fiche peut encore recevoir ${room} phases (50 maximum). Tes ${phasesRef.current.length} phases sont conservées ici ; aucune insertion partielle n’a été faite.`);
+    }
     const returnPath = drawingSessionStorage.getItem(RETURN_KEY) || "";
     const fromGamePlan = isGamePlanReturnContext();
     const fromScouting = isScoutingReturnContext();
@@ -4161,7 +4179,10 @@ const saveAndInsertToExo = async () => {
         : `/exercices/creer?id=${targetId}`);
   } catch (error: any) {
     console.error("ERREUR saveAndInsertToExo", error);
-    alert(error?.message || JSON.stringify(error));
+    setInsertionError(error?.message || "L’insertion a échoué. Tes dessins sont conservés ; tu peux réessayer.");
+  } finally {
+    insertionPending.current = false;
+    setInsertionStatus('');
   }
 };
 
@@ -4902,6 +4923,8 @@ const exportJson = () => {
       <main>
    {/* ===================== PLAQUETTE ===================== */}
 <section className="page editor-page active" data-page="plaquette">
+  {insertionStatus && <div role="status" aria-live="polite" style={{position:'fixed',inset:0,zIndex:5000,background:'rgba(255,255,255,.85)',display:'grid',placeItems:'center',color:'#6B1A2C',fontWeight:800}}>{insertionStatus}</div>}
+  {insertionError && <div role="alert" style={{padding:'12px 16px',background:'#fff0f0',color:'#8a152b',fontWeight:700}}>{insertionError}</div>}
   <div className="ed-toolbar">
     <div className="toolbar-left">
       {exoInsertMode && (
@@ -4909,10 +4932,12 @@ const exportJson = () => {
           type="button"
           className="ed-tool"
           onClick={saveAndInsertToExo}
+          disabled={!!insertionStatus || !!saving}
+          title="Insérer toutes les phases dans la fiche"
           style={{ background: '#D9A441', color: '#1a1208', border: 'none' }}
         >
           <span className="icn">💾</span>
-          <span>{shootingGridPending ? 'Insérer dans la grille de tir' : scoutingPending ? 'Insérer au scouting' : 'Insérer'}</span>
+          <span>{shootingGridPending ? 'Insérer dans la grille de tir' : scoutingPending ? 'Insérer au scouting' : `Insérer les ${phases.length} schémas`}</span>
         </button>
       )}
 

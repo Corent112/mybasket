@@ -520,6 +520,7 @@ export default function CreerExerciceClient() {
       const context:Record<string,string|null>={
         [storageKey]:targetStorageId,
         mybasket_drawing_flow:'insert-exercise-draft',
+        mybasket_exercise_schema_room:String(Math.max(0,50-ex.schemaImages.length)),
         [RETURN_KEY]:editId?`/exercices/creer?id=${editId}`:'/exercices/creer',
         mybasket_current_exercise_id:targetStorageId,
         [EDIT_EXERCISE_ID_KEY]:editId||null,
@@ -536,6 +537,8 @@ export default function CreerExerciceClient() {
         const schemaData=cleanDataList[index],schemaImage=ex.schemaImages[index];
         const schemaGroupId=schemaData?.schemaGroupId||crypto.randomUUID();
         context[EDIT_INDEX_KEY]=String(index);context[EDIT_SCHEMA_GROUP_KEY]=schemaGroupId;
+        const replacedCount=schemaData?.schemaGroupId?cleanDataList.filter(item=>item.schemaGroupId===schemaData.schemaGroupId).length:1;
+        context.mybasket_exercise_schema_room=String(Math.max(0,50-ex.schemaImages.length+replacedCount));
         extra[LOAD_KEY]={title:schemaData?.title||`Schéma ${index+1}`,editIndex:index,schemaGroupId,courtType:schemaData?.courtType||'half',phases:Array.isArray(schemaData?.phases)?schemaData.phases:[],sheet:schemaData?.sheet??null,current:typeof schemaData?.current==='number'?schemaData.current:0,imageData:schemaData?.imageData||schemaImage||'',phaseImages:Array.isArray(schemaData?.phaseImages)?schemaData.phaseImages:(schemaImage?[schemaImage]:[])};
       }
       await preparePlaquetteNavigation(draftKey,{...ex,schemaDataList:cleanDataList},context,extra);

@@ -24,17 +24,42 @@ function openDb(): Promise<IDBDatabase> {
   });
 }
 
+// Safari can open the database but leave an individual transaction pending.
+// Bound reads/writes/deletes too, so the existing same-tab fallback can run.
+function transferTransaction<T>(db: IDBDatabase, mode: IDBTransactionMode, run: (store: IDBObjectStore) => IDBRequest, read = false): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(STORE_NAME, mode);
+    let settled = false;
+    let value: T;
+    const finish = (error?: Error) => {
+      if (settled) return;
+      settled = true;
+      window.clearTimeout(timer);
+      error ? reject(error) : resolve(value);
+    };
+    const timer = window.setTimeout(() => {
+      finish(new Error("Transfert du dessin trop long"));
+      try { tx.abort(); } catch {}
+    }, 5000);
+    tx.oncomplete = () => finish();
+    tx.onerror = () => finish(tx.error || new Error("Transfert du dessin impossible"));
+    tx.onabort = () => finish(tx.error || new Error("Transfert du dessin annulé"));
+    try {
+      const request = run(tx.objectStore(STORE_NAME));
+      request.onsuccess = () => { value = (request.result ?? null) as T; if (read) finish(); };
+      request.onerror = () => finish(request.error || new Error("Transfert du dessin impossible"));
+    } catch (error) {
+      finish(error instanceof Error ? error : new Error("Dessin non transférable"));
+      try { tx.abort(); } catch {}
+    }
+  });
+}
+
 export async function setPlaquetteTransfer(key: string, value: unknown): Promise<void> {
   try {
     const db = await openDb();
     try {
-      await new Promise<void>((resolve, reject) => {
-        const tx = db.transaction(STORE_NAME, "readwrite");
-        tx.objectStore(STORE_NAME).put(value, key);
-        tx.oncomplete = () => resolve();
-        tx.onerror = () => reject(tx.error || new Error("Écriture IndexedDB impossible"));
-        tx.onabort = () => reject(tx.error || new Error("Écriture IndexedDB annulée"));
-      });
+      await transferTransaction<void>(db, "readwrite", store => store.put(value, key));
     } finally { db.close(); }
     try { drawingSessionStorage.removeItem(fallbackKey(key)); } catch {}
     // Compatibilité avec les anciens écrans qui lisent encore localStorage :
@@ -56,12 +81,7 @@ export async function getPlaquetteTransfer<T>(key: string): Promise<T | null> {
   try {
     const db = await openDb();
     try {
-      const value = await new Promise<T | null>((resolve, reject) => {
-        const tx = db.transaction(STORE_NAME, "readonly");
-        const request = tx.objectStore(STORE_NAME).get(key);
-        request.onsuccess = () => resolve((request.result as T | undefined) ?? null);
-        request.onerror = () => reject(request.error || new Error("Lecture IndexedDB impossible"));
-      });
+      const value = await transferTransaction<T | null>(db, "readonly", store => store.get(key), true);
       if (value !== null) return value;
     } finally { db.close(); }
   } catch {}
@@ -76,13 +96,7 @@ export async function removePlaquetteTransfer(key: string): Promise<void> {
   try {
     const db = await openDb();
     try {
-      await new Promise<void>((resolve, reject) => {
-        const tx = db.transaction(STORE_NAME, "readwrite");
-        tx.objectStore(STORE_NAME).delete(key);
-        tx.oncomplete = () => resolve();
-        tx.onerror = () => reject(tx.error || new Error("Suppression IndexedDB impossible"));
-        tx.onabort = () => reject(tx.error || new Error("Suppression IndexedDB annulée"));
-      });
+      await transferTransaction<void>(db, "readwrite", store => store.delete(key));
     } finally { db.close(); }
   } catch {}
   try { drawingSessionStorage.removeItem(key); drawingSessionStorage.removeItem(fallbackKey(key)); } catch {}
