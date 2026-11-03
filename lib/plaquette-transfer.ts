@@ -1,3 +1,4 @@
+import {drawingSessionStorage} from "./drawing-session-storage";
 const DB_NAME = "mybasket-transfers";
 const STORE_NAME = "payloads";
 const DB_VERSION = 1;
@@ -35,23 +36,23 @@ export async function setPlaquetteTransfer(key: string, value: unknown): Promise
         tx.onabort = () => reject(tx.error || new Error("Écriture IndexedDB annulée"));
       });
     } finally { db.close(); }
-    try { window.localStorage.removeItem(fallbackKey(key)); } catch {}
+    try { drawingSessionStorage.removeItem(fallbackKey(key)); } catch {}
     // Compatibilité avec les anciens écrans qui lisent encore localStorage :
     // on garde un miroir si le navigateur a assez de place. L’échec du miroir
     // n’empêche jamais le transfert IndexedDB.
     try {
-      window.localStorage.removeItem(key);
-      window.localStorage.setItem(key, JSON.stringify(value));
+      drawingSessionStorage.removeItem(key);
+      drawingSessionStorage.setItem(key, JSON.stringify(value));
     } catch {}
     return;
   } catch {
-    window.localStorage.setItem(key, JSON.stringify(value));
-    window.localStorage.setItem(fallbackKey(key),"1");
+    drawingSessionStorage.setItem(key, JSON.stringify(value));
+    drawingSessionStorage.setItem(fallbackKey(key),"1");
   }
 }
 
 export async function getPlaquetteTransfer<T>(key: string): Promise<T | null> {
-  try {if(window.localStorage.getItem(fallbackKey(key))){const raw=window.localStorage.getItem(key);if(raw)return JSON.parse(raw) as T;}}catch{}
+  try {if(drawingSessionStorage.getItem(fallbackKey(key))){const raw=drawingSessionStorage.getItem(key);if(raw)return JSON.parse(raw) as T;}}catch{}
   try {
     const db = await openDb();
     try {
@@ -66,7 +67,7 @@ export async function getPlaquetteTransfer<T>(key: string): Promise<T | null> {
   } catch {}
 
   if (typeof window === "undefined") return null;
-  const raw = window.localStorage.getItem(key);
+  const raw = drawingSessionStorage.getItem(key);
   if (!raw) return null;
   try { return JSON.parse(raw) as T; } catch { return null; }
 }
@@ -84,7 +85,7 @@ export async function removePlaquetteTransfer(key: string): Promise<void> {
       });
     } finally { db.close(); }
   } catch {}
-  try { window.localStorage.removeItem(key); window.localStorage.removeItem(fallbackKey(key)); } catch {}
+  try { drawingSessionStorage.removeItem(key); drawingSessionStorage.removeItem(fallbackKey(key)); } catch {}
 }
 
 /** Save the current form before navigation; release only its redundant browser mirrors. */
@@ -105,19 +106,19 @@ export async function preparePlaquetteNavigation(draftKey:string,draft:unknown,c
     } finally {db.close()}
   } catch(error) {
     // Without IndexedDB, preserve the freshest form in the existing sync fallback.
-    window.localStorage.setItem(`${draftKey}_sync`,JSON.stringify(draft));
+    drawingSessionStorage.setItem(`${draftKey}_sync`,JSON.stringify(draft));
     for(const [key,value]of Object.entries(extra)){
-      window.localStorage.setItem(key,JSON.stringify(value));
-      window.localStorage.setItem(fallbackKey(key),'1');
+      drawingSessionStorage.setItem(key,JSON.stringify(value));
+      drawingSessionStorage.setItem(fallbackKey(key),'1');
     }
   }
   if(stored){
-    window.localStorage.removeItem(draftKey);
-    window.localStorage.removeItem(fallbackKey(draftKey));
-    window.localStorage.removeItem(`${draftKey}_sync`);
-    for(const key of Object.keys(extra)){window.localStorage.removeItem(key);window.localStorage.removeItem(fallbackKey(key));}
+    drawingSessionStorage.removeItem(draftKey);
+    drawingSessionStorage.removeItem(fallbackKey(draftKey));
+    drawingSessionStorage.removeItem(`${draftKey}_sync`);
+    for(const key of Object.keys(extra)){drawingSessionStorage.removeItem(key);drawingSessionStorage.removeItem(fallbackKey(key));}
   }
-  const previous=new Map(Object.keys(context).map(key=>[key,window.localStorage.getItem(key)]));
-  try {for(const [key,value]of Object.entries(context))value===null?window.localStorage.removeItem(key):window.localStorage.setItem(key,value)}
-  catch(error){for(const [key,value]of previous){try{value===null?window.localStorage.removeItem(key):window.localStorage.setItem(key,value)}catch{}}throw error}
+  const previous=new Map(Object.keys(context).map(key=>[key,drawingSessionStorage.getItem(key)]));
+  try {for(const [key,value]of Object.entries(context))value===null?drawingSessionStorage.removeItem(key):drawingSessionStorage.setItem(key,value)}
+  catch(error){for(const [key,value]of previous){try{value===null?drawingSessionStorage.removeItem(key):drawingSessionStorage.setItem(key,value)}catch{}}throw error}
 }

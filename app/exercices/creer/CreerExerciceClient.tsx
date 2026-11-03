@@ -1,5 +1,6 @@
 "use client";
 
+import {drawingSessionStorage as localStorage} from "@/lib/drawing-session-storage";
 import { useEffect, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { saveExercise, updateExercise, getExercise } from "@/lib/exercises";
@@ -524,6 +525,11 @@ export default function CreerExerciceClient() {
         [EDIT_EXERCISE_ID_KEY]:editId||null,
         [EDIT_INDEX_KEY]:null,
         [EDIT_SCHEMA_GROUP_KEY]:null,
+        mybasket_current_system_id:null,
+        mybasket_edit_system_id:null,
+        mybasket_edit_systeme_id:null,
+        mybasket_scouting_pending:null,
+        mybasket_shooting_grid_pending:null,
       };
       const extra:Record<string,unknown>={};
       if(typeof index==='number'){

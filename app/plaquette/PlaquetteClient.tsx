@@ -1,4 +1,5 @@
 'use client';
+import {drawingSessionStorage} from '@/lib/drawing-session-storage';
 
 /**
  * app/plaquette/page.tsx
@@ -280,14 +281,14 @@ const EDIT_EXERCISE_ID_KEY = "mybasket_edit_exercise_id";
 
   const emptyPhase = (): Phase => ({ players: [], objects: [], lines: [], notes: '', duration: 1.5, startMode: 'afterPrevious' });
 const resetPlaquette = () => {
-  localStorage.removeItem("mybasket_plaquette_load");
+  drawingSessionStorage.removeItem("mybasket_plaquette_load");
   localStorage.removeItem("mybasket_plaquette_result");
   localStorage.removeItem("mybasket_plaquette_mode");
   localStorage.removeItem("mybasket_plaquette_return");
-  localStorage.removeItem("mb_plaquette_return_to");
-  localStorage.removeItem("mybasket_edit_exercise_id");
-  localStorage.removeItem("mybasket_edit_schema_index");
-  localStorage.removeItem("mybasket_scouting_pending");
+  drawingSessionStorage.removeItem("mb_plaquette_return_to");
+  drawingSessionStorage.removeItem("mybasket_edit_exercise_id");
+  drawingSessionStorage.removeItem("mybasket_edit_schema_index");
+  drawingSessionStorage.removeItem("mybasket_scouting_pending");
 
   setActiveOptionId(null); activeOptionRef.current = null; setOptionFormOpen(false);
   setOpenedLibraryExercise(null);
@@ -570,14 +571,15 @@ useEffect(() => {
   const loadFromSource = async (previewSystemId?: string) => {
     const loadToken = ++drawingLoadTokenRef.current;
     try {
-      setExoInsertMode(!!localStorage.getItem(RETURN_KEY));
-      setShootingGridPending(!!localStorage.getItem("mybasket_shooting_grid_pending"));
-      setScoutingPending(!!localStorage.getItem("mybasket_scouting_pending"));
-
       const params = new URLSearchParams(window.location.search);
+      const explicitExerciseReturn=params.get("return")==="exercise";
+      setExoInsertMode(explicitExerciseReturn||!!drawingSessionStorage.getItem(RETURN_KEY));
+      setShootingGridPending(!explicitExerciseReturn&&!!drawingSessionStorage.getItem("mybasket_shooting_grid_pending"));
+      setScoutingPending(!explicitExerciseReturn&&!!drawingSessionStorage.getItem("mybasket_scouting_pending"));
+
       const plaquetteType = params.get("type") || "exercise";
 
-      const editIndexRaw = localStorage.getItem(EDIT_INDEX_KEY);
+      const editIndexRaw = drawingSessionStorage.getItem(EDIT_INDEX_KEY);
       const parsedEditIndex =
         editIndexRaw !== null && editIndexRaw !== ""
           ? Number(editIndexRaw)
@@ -591,7 +593,7 @@ useEffect(() => {
 
       if (plaquetteType === "systeme" || previewSystemId) {
         const systemeId =
-          previewSystemId || localStorage.getItem("mybasket_edit_systeme_id");
+          previewSystemId || drawingSessionStorage.getItem("mybasket_edit_systeme_id");
 
         if (systemeId) {
           const systeme = await getSystem(systemeId);
@@ -628,7 +630,7 @@ useEffect(() => {
         // elle nécessite un index explicite.
         if (editIndex === null) return;
 
-        const exerciseId = localStorage.getItem(EDIT_EXERCISE_ID_KEY);
+        const exerciseId = drawingSessionStorage.getItem(EDIT_EXERCISE_ID_KEY);
 
         if (exerciseId) {
           const exercise = await getExercise(exerciseId);
@@ -3895,12 +3897,14 @@ const markManagementGamePlanReturn = () => {
 const isScoutingReturnContext = () => {
   if (typeof window === "undefined") return false;
   const params = new URLSearchParams(window.location.search);
-  return params.get("scouting") === "1" || !!localStorage.getItem("mybasket_scouting_pending");
+  if(params.get("return")==="exercise")return false;
+  return params.get("scouting") === "1" || !!drawingSessionStorage.getItem("mybasket_scouting_pending");
 };
 
 const isGamePlanReturnContext = () => {
   if (typeof window === "undefined") return false;
   const params = new URLSearchParams(window.location.search);
+  if(params.get("return")==="exercise")return false;
   return (
     params.get("return") === "game-plan" ||
     params.get("target") === "gameplan" ||
@@ -3914,16 +3918,16 @@ useEffect(() => {
   const loadFromTransfer = async () => {
     const params = new URLSearchParams(window.location.search);
     const explicitExerciseReturn = params.get("return") === "exercise";
-    const hasReturnPath = !!localStorage.getItem(RETURN_KEY);
+    const hasReturnPath = !!drawingSessionStorage.getItem(RETURN_KEY);
     const hasExerciseTarget =
-      !!localStorage.getItem("mybasket_current_exercise_id") ||
-      !!localStorage.getItem("mybasket_edit_exercise_id");
+      !!drawingSessionStorage.getItem("mybasket_current_exercise_id") ||
+      !!drawingSessionStorage.getItem("mybasket_edit_exercise_id");
 
     // Le bouton Insérer dépend du contexte de retour, jamais de la réussite
     // du chargement d'un ancien payload de schéma.
     if (alive) setExoInsertMode(hasReturnPath || explicitExerciseReturn || hasExerciseTarget);
-    if (alive) setShootingGridPending(!!localStorage.getItem("mybasket_shooting_grid_pending"));
-    if (alive) setScoutingPending(!!localStorage.getItem("mybasket_scouting_pending"));
+    if (alive) setShootingGridPending(!explicitExerciseReturn&&!!drawingSessionStorage.getItem("mybasket_shooting_grid_pending"));
+    if (alive) setScoutingPending(!explicitExerciseReturn&&!!drawingSessionStorage.getItem("mybasket_scouting_pending"));
 
     try {
       const data = await getPlaquetteTransfer<any>(LOAD_KEY);
@@ -4093,45 +4097,45 @@ const saveAndInsertToExo = async () => {
   const previousCurrent = currentRef.current;
 
   try {
-    const returnPath = localStorage.getItem(RETURN_KEY) || "";
+    const returnPath = drawingSessionStorage.getItem(RETURN_KEY) || "";
     const fromGamePlan = isGamePlanReturnContext();
     const fromScouting = isScoutingReturnContext();
 
-    const isSysteme =
+    const isSysteme = new URLSearchParams(window.location.search).get("return")!=="exercise" && (
       fromGamePlan || fromScouting ||
       returnPath.includes("/systemes") ||
-      !!localStorage.getItem("mybasket_current_system_id") ||
-      !!localStorage.getItem("mybasket_edit_system_id") ||
-      !!localStorage.getItem("mybasket_edit_systeme_id");
+      !!drawingSessionStorage.getItem("mybasket_current_system_id") ||
+      !!drawingSessionStorage.getItem("mybasket_edit_system_id") ||
+      !!drawingSessionStorage.getItem("mybasket_edit_systeme_id"));
 
     const targetId = isSysteme
-      ? localStorage.getItem("mybasket_current_system_id") ||
-        localStorage.getItem("mybasket_edit_system_id") ||
-        localStorage.getItem("mybasket_edit_systeme_id") ||
+      ? drawingSessionStorage.getItem("mybasket_current_system_id") ||
+        drawingSessionStorage.getItem("mybasket_edit_system_id") ||
+        drawingSessionStorage.getItem("mybasket_edit_systeme_id") ||
         crypto.randomUUID()
-      : localStorage.getItem("mybasket_current_exercise_id") ||
-        localStorage.getItem("mybasket_edit_exercise_id") ||
+      : drawingSessionStorage.getItem("mybasket_current_exercise_id") ||
+        drawingSessionStorage.getItem("mybasket_edit_exercise_id") ||
         crypto.randomUUID();
 
-    const editIndexRaw = localStorage.getItem(EDIT_INDEX_KEY);
+    const editIndexRaw = drawingSessionStorage.getItem(EDIT_INDEX_KEY);
     const editIndex =
       editIndexRaw !== null && editIndexRaw !== ""
         ? Number(editIndexRaw)
         : null;
 
     const schemaGroupId =
-      localStorage.getItem("mybasket_edit_schema_group_id") ||
+      drawingSessionStorage.getItem("mybasket_edit_schema_group_id") ||
       crypto.randomUUID();
 
     await buildPlaquetteResult({ isSysteme, targetId, schemaGroupId, editIndex });
 
     // RETURN_KEY reste présent jusqu'au chargement de la fiche cible.
-    localStorage.removeItem("mybasket_edit_exercise_id");
-    localStorage.removeItem("mybasket_edit_system_id");
-    localStorage.removeItem("mybasket_edit_systeme_id");
-    localStorage.removeItem("mybasket_plaquette_load");
-    localStorage.removeItem("mybasket_edit_schema_group_id");
-    if (!fromScouting) localStorage.removeItem("mybasket_scouting_pending");
+    drawingSessionStorage.removeItem("mybasket_edit_exercise_id");
+    drawingSessionStorage.removeItem("mybasket_edit_system_id");
+    drawingSessionStorage.removeItem("mybasket_edit_systeme_id");
+    drawingSessionStorage.removeItem("mybasket_plaquette_load");
+    drawingSessionStorage.removeItem("mybasket_edit_schema_group_id");
+    if (!fromScouting) drawingSessionStorage.removeItem("mybasket_scouting_pending");
 
     currentRef.current = previousCurrent;
 
@@ -4178,7 +4182,7 @@ const saveAndGoCreate = async (kind: "systeme" | "exercice") => {
   try {
     const fromGamePlan = isGamePlanReturnContext();
     const fromScouting = isScoutingReturnContext();
-    const returnPath = localStorage.getItem(RETURN_KEY) || "";
+    const returnPath = drawingSessionStorage.getItem(RETURN_KEY) || "";
     const isSysteme = fromGamePlan || fromScouting || kind === "systeme";
 
     // IMPORTANT : ici on est en CRÉATION DIRECTE depuis la plaquette.
@@ -4196,16 +4200,16 @@ const saveAndGoCreate = async (kind: "systeme" | "exercice") => {
       captureVideo: isSysteme,
     });
 
-    if (!fromGamePlan && !fromScouting) localStorage.removeItem(RETURN_KEY);
-    localStorage.removeItem("mybasket_plaquette_load");
-    localStorage.removeItem("mybasket_edit_schema_index");
-    localStorage.removeItem("mybasket_edit_schema_group_id");
-    localStorage.removeItem("mybasket_edit_exercise_id");
-    localStorage.removeItem("mybasket_current_exercise_id");
-    localStorage.removeItem("mybasket_edit_system_id");
-    localStorage.removeItem("mybasket_edit_systeme_id");
-    localStorage.removeItem("mybasket_current_system_id");
-    if (!fromScouting) localStorage.removeItem("mybasket_scouting_pending");
+    if (!fromGamePlan && !fromScouting) drawingSessionStorage.removeItem(RETURN_KEY);
+    drawingSessionStorage.removeItem("mybasket_plaquette_load");
+    drawingSessionStorage.removeItem("mybasket_edit_schema_index");
+    drawingSessionStorage.removeItem("mybasket_edit_schema_group_id");
+    drawingSessionStorage.removeItem("mybasket_edit_exercise_id");
+    drawingSessionStorage.removeItem("mybasket_current_exercise_id");
+    drawingSessionStorage.removeItem("mybasket_edit_system_id");
+    drawingSessionStorage.removeItem("mybasket_edit_systeme_id");
+    drawingSessionStorage.removeItem("mybasket_current_system_id");
+    if (!fromScouting) drawingSessionStorage.removeItem("mybasket_scouting_pending");
 
     currentRef.current = previousCurrent;
     setSaveOpen(false);
@@ -4751,8 +4755,8 @@ const exportJson = () => {
     stopAnim(); setOpenedLibrarySystemId(null);
     setOpenedLibraryExercise({id:exercise.id,index,groupId:data.schemaGroupId});
     for (const key of ['mybasket_drawing_source_system_id','mybasket_current_system_id','mybasket_edit_systeme_id','mybasket_edit_system_id']) localStorage.removeItem(key);
-    localStorage.setItem(EDIT_EXERCISE_ID_KEY, exercise.id);
-    localStorage.setItem(EDIT_INDEX_KEY, String(index));
+    drawingSessionStorage.setItem(EDIT_EXERCISE_ID_KEY, exercise.id);
+    drawingSessionStorage.setItem(EDIT_INDEX_KEY, String(index));
     const loaded = JSON.parse(JSON.stringify(data.phases)) as Phase[];
     phasesRef.current = loaded; currentRef.current = 0; setPhases(loaded); setCurrent(0);
     activeOptionRef.current = null; setActiveOptionId(null); setOptionFormOpen(false);
@@ -4918,7 +4922,7 @@ const exportJson = () => {
         onClick={() => {
           localStorage.removeItem('mybasket_plaquette_return');
           localStorage.removeItem('mybasket_plaquette_load');
-          localStorage.removeItem(RETURN_KEY);
+          drawingSessionStorage.removeItem(RETURN_KEY);
         }}
       >
         <span className="icn">✕</span>
