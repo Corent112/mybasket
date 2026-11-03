@@ -11,11 +11,11 @@ type View="players"|"selections"|"partners"|"workflow";
 export default function InstitutionalPlayersHub({structureId,structureType}:Props){
  const isPole=structureType==="league"||structureType==="pole";
  const [view,setView]=useState<View>("players");
- useEffect(()=>{setView("players")},[structureId]);
+ useEffect(()=>{setView(new URLSearchParams(window.location.search).get("institutionView")==="selections"?"selections":"players")},[structureId]);
  useEffect(()=>{function open(event:Event){if((event as CustomEvent).detail?.structureId===structureId)setView("players");}window.addEventListener("mybasket:institution-polistes",open);return()=>window.removeEventListener("mybasket:institution-polistes",open)},[structureId]);
  if(!isPole)return <div><InstitutionalFamilyForms key={structureId} structureId={structureId}/><InstitutionalPlayerWorkflow structureId={structureId} structureType={structureType}/></div>;
  return <div className="institutionPlayers">
-  <nav aria-label="Parcours des joueurs" className="tabs">{([["players","Polistes"],["selections","Sélections"],["partners","Équipes partenaires"],["workflow","Base · Détections · Événements"]] as const).map(([key,label])=><button key={key} type="button" aria-pressed={view===key} className={view===key?'active':''} onClick={()=>setView(key)}>{label}</button>)}</nav>
+  <nav aria-label="Parcours des joueurs" className="tabs">{([["players","Joueurs"],["selections","Sélections / Pôles"],["partners","Équipes partenaires"],["workflow","Base · Détections · Événements"]] as const).map(([key,label])=><button key={key} type="button" aria-pressed={view===key} className={view===key?'active':''} onClick={()=>setView(key)}>{label}</button>)}</nav>
   {(view==="players"||view==="partners")&&<InstitutionalPoleWorkspace key={structureId} structureId={structureId} view={view}/>}
   {view==="selections"&&<InstitutionalSelectionsManager structureId={structureId} structureType={structureType} onOpenBase={()=>setView("workflow")}/>}
   {view==="workflow"&&<InstitutionalPlayerWorkflow structureId={structureId} structureType={structureType}/>}

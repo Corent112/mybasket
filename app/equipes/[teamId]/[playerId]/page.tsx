@@ -4,6 +4,8 @@
 import { use, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { getPlayer, getTeam, getTeams, upsertPlayer } from "../../../../lib/equipes-store";
+import PlayerTestLink from "@/components/players/PlayerTestLink";
+import {PLAYER_TEST_CATALOG} from "@/lib/player-test-catalog";
 import PlayerClubHistory from "@/components/players/PlayerClubHistory";
 import PolePlayerTeamLinks from "@/components/equipes/PolePlayerTeamLinks";
 import PlayerTeamAttachment from "@/components/equipes/PlayerTeamAttachment";
@@ -273,28 +275,7 @@ type TeamPlayerComparisonStat = {
 };
 
 
-const TEST_CATALOG: Array<{ category: TestCategory; label: string; unit: string }> = [
-  { category: "Anthropométrie", label: "Taille", unit: "cm" },
-  { category: "Anthropométrie", label: "Poids", unit: "kg" },
-  { category: "Anthropométrie", label: "Envergure", unit: "cm" },
-  { category: "Anthropométrie", label: "Taille assise", unit: "cm" },
-  { category: "Anthropométrie", label: "Longueur main", unit: "cm" },
-  { category: "Anthropométrie", label: "Largeur main", unit: "cm" },
-  { category: "Athlétique", label: "Sprint 5m", unit: "s" },
-  { category: "Athlétique", label: "Sprint 10m", unit: "s" },
-  { category: "Athlétique", label: "Sprint 20m", unit: "s" },
-  { category: "Athlétique", label: "Détente sèche", unit: "cm" },
-  { category: "Athlétique", label: "Détente avec élan", unit: "cm" },
-  { category: "Athlétique", label: "Lane Agility", unit: "s" },
-  { category: "Athlétique", label: "T-Test", unit: "s" },
-  { category: "Endurance", label: "VMA", unit: "km/h" },
-  { category: "Endurance", label: "Yo-Yo IR1", unit: "m" },
-  { category: "Endurance", label: "Yo-Yo IR2", unit: "m" },
-  { category: "Endurance", label: "Luc Léger", unit: "palier" },
-  { category: "Force", label: "Trap Bar", unit: "kg" },
-  { category: "Force", label: "Squat", unit: "kg" },
-  { category: "Force", label: "Développé couché", unit: "kg" },
-];
+const TEST_CATALOG = PLAYER_TEST_CATALOG as Array<{category:TestCategory;label:string;unit:string}>;
 
 const DEFAULT_GROWTH: GrowthProfile = {
   sex: "garcon",
@@ -987,6 +968,7 @@ export default function JoueurDetailPage({
   const [bilans, setBilans] = useState<PlayerBilan[]>([]);
 
   const [testModal, setTestModal] = useState(false);
+  const [testLinkOpen,setTestLinkOpen]=useState(false);
   const [medicalModal, setMedicalModal] = useState(false);
   const [docModal, setDocModal] = useState(false);
   const [docUploading, setDocUploading] = useState(false);
@@ -1607,6 +1589,14 @@ export default function JoueurDetailPage({
     setTestModal(true);
   }
 
+  useEffect(()=>{
+    if(tab!=="Tests")return;
+    let live=true,pending=false;
+    const refresh=async()=>{if(pending||document.visibilityState!=="visible")return;pending=true;try{const r=await supabase.from("player_tests").select("*").eq("team_id",teamId).eq("player_id",playerId).order("date",{ascending:false});if(live&&!r.error)setTests((r.data||[]).map((row:any)=>({...row,value:Number(row.value)})));}finally{pending=false}};
+    void refresh();const timer=window.setInterval(refresh,30000);window.addEventListener("focus",refresh);document.addEventListener("visibilitychange",refresh);
+    return()=>{live=false;clearInterval(timer);window.removeEventListener("focus",refresh);document.removeEventListener("visibilitychange",refresh)};
+  },[tab,teamId,playerId,supabase]);
+
   async function saveTest() {
     if (!testDraft.date || !testDraft.label || !testDraft.value) {
       alert("Date, test et valeur sont obligatoires.");
@@ -2198,7 +2188,7 @@ export default function JoueurDetailPage({
             setGrowth={saveGrowthProfile}
             currentHeightCm={currentHeightCm}
             prediction={growthPrediction}
-            onAddTest={openNewTest}
+            onAddTest={()=>setTestLinkOpen(true)}
             onDeleteTest={async (id) => {
               const { error } = await supabase.from("player_tests").delete().eq("id", id);
               if (error) {
@@ -2321,6 +2311,7 @@ export default function JoueurDetailPage({
 
         {editing && <PlayerForm initial={p} onSave={handleSave} onClose={() => setEditing(false)} />}
 
+        {testLinkOpen&&<Modal title="Ajouter des tests · QR code et lien" onClose={()=>setTestLinkOpen(false)}><PlayerTestLink teamId={String(teamId)} onManual={()=>{setTestLinkOpen(false);openNewTest()}}/></Modal>}
         {testModal && (
           <Modal title="Ajouter un test" onClose={() => setTestModal(false)}>
             <div className="modal-grid">

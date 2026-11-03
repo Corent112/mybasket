@@ -92,6 +92,7 @@ export async function GET(req: Request) {
   return NextResponse.json({
     selections: (selections || []).map((selection: any) => ({
       ...selection,
+      group_type:(capacities.data||[]).find((team:any)=>team.id===selection.team_id)?.metadata?.institutionGroupType==="pole"?"pole":"selection",
       in_my_teams:(capacities.data||[]).find((team:any)=>team.id===selection.team_id)?.metadata?.institutionShowInMyTeams===true,
       information_staff:informationByTeam.get(selection.team_id)||[],
       preparation_target_id:targetByTeam.get(selection.team_id)||null,
@@ -109,7 +110,8 @@ export async function POST(req: Request) {
   let name = String(body.name || "").trim();
   let category = String(body.category || "").trim();
   let seasonLabel = String(body.seasonLabel || "").trim();
-  let rosterKind=body.rosterKind==="preselection"?"preselection":"selection";
+  const groupType=body.groupType==="pole"?"pole":"selection";
+  let rosterKind=groupType==="pole"||body.rosterKind==="preselection"?"preselection":"selection";
   const maxPlayers = Number(body.maxPlayers || 12);
   if (![10,12].includes(maxPlayers)) return NextResponse.json({error:"Choisis un maximum de 10 ou 12 joueurs"},{status:400});
   let gender = String(body.gender || "").trim() || null;
@@ -226,6 +228,7 @@ export async function POST(req: Request) {
     coach_name: "",
     metadata: {
       ...(preparationTargetId?{institutionPreparationTargetId:preparationTargetId}:{}),
+      institutionGroupType:groupType,
       institutionRosterKind:rosterKind,
       institutionSelectionMaxPlayers:maxPlayers,
       institutionManaged: true,

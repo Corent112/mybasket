@@ -46,6 +46,7 @@ type SelectionPlayer = {
 };
 
 type Selection = {
+  group_type?: "selection"|"pole";
   in_my_teams?: boolean;
   preparation_target_id?:string|null;
   max_players?:number|null;
@@ -119,7 +120,9 @@ export default function InstitutionalSelectionsManager({
     gender: "",
     maxPlayers:12,
     rosterKind:"selection",
+    groupType:"selection",
   });
+  useEffect(()=>{if(new URLSearchParams(window.location.search).get("createGroup")==="1")setShowCreate(true)},[structureId]);
   const [chosenPlayers, setChosenPlayers] = useState<string[]>([]);
   const [playerSearch, setPlayerSearch] = useState("");
   const [categoryFilter, setCategoryFilter] = useState("");
@@ -225,7 +228,7 @@ export default function InstitutionalSelectionsManager({
 
   async function createSelection() {
     if (!form.name.trim() || !form.category.trim() || !form.seasonLabel.trim()) return alert("Renseigne le nom, la catégorie et la saison.");
-    if(form.rosterKind!=="preselection"&&creationPlayerIds.length>form.maxPlayers)return alert(`Choisis au maximum ${form.maxPlayers} joueurs pour cette sélection.`);
+    if(form.groupType!=="pole"&&form.rosterKind!=="preselection"&&creationPlayerIds.length>form.maxPlayers)return alert(`Choisis au maximum ${form.maxPlayers} joueurs pour cette sélection.`);
     setBusy(true);setMessage("");
     let selectionId="";const added:string[]=[];
     try {
@@ -402,18 +405,18 @@ export default function InstitutionalSelectionsManager({
       <div className="head">
         <div>
           <small>SÉLECTIONS</small>
-          <h3>Équipes de sélection</h3>
+          <h3>Sélections et pôles</h3>
           <p>
             Retrouve les équipes finales, les fiches des joueurs, les matchs et les statistiques. Les journées se préparent dans l’onglet Préparation.
           </p>
         </div>
         <button className="primary" onClick={() => setShowCreate((v) => !v)}>
-          + Créer une sélection
+          + Créer une sélection / un pôle
         </button>
       </div>
 
       {showCreate && (
-        <div className="createSelection">
+        <div className="createSelection"><label>Type de groupe<select aria-label="Type de groupe" value={form.groupType} onChange={e=>setForm(v=>({...v,groupType:e.target.value,rosterKind:e.target.value==="pole"?"preselection":"selection"}))}><option value="selection">Sélection</option><option value="pole">Pôle</option></select></label>
           <input
             aria-label="Nom de la sélection" placeholder="Nom de la sélection"
             value={form.name}
@@ -442,7 +445,7 @@ export default function InstitutionalSelectionsManager({
             <option value="M">Masculin</option>
             <option value="F">Féminin</option>
           </select>
-          <label>Nombre maximum de joueurs<select value={form.maxPlayers} onChange={event=>setForm(previous=>({...previous,maxPlayers:Number(event.target.value)}))}><option value={10}>10 joueurs maximum</option><option value={12}>12 joueurs maximum</option></select></label>
+          {form.groupType!=="pole"&&<label>Nombre maximum de joueurs<select value={form.maxPlayers} onChange={event=>setForm(previous=>({...previous,maxPlayers:Number(event.target.value)}))}><option value={10}>10 joueurs maximum</option><option value={12}>12 joueurs maximum</option></select></label>}
           <div className="creationRoster"><h4>Joueurs de la base à intégrer</h4><p>Choisis les joueurs déjà enregistrés. Si un joueur manque, crée d’abord sa fiche dans la base.</p><input aria-label="Rechercher dans la base à la création" placeholder="Nom, prénom ou club" value={creationSearch} onChange={event=>setCreationSearch(event.target.value)}/><div className="inline"><button type="button" disabled={busy} onClick={()=>setCreationPlayerIds(eligibleBasePlayers.filter(player=>`${player.first_name} ${player.last_name} ${player.club_name||""}`.toLowerCase().includes(creationSearch.toLowerCase())).map(player=>player.id))}>Tout cocher dans cette recherche</button><button type="button" disabled={busy} onClick={()=>setCreationPlayerIds([])}>Tout décocher</button></div><div className="rosterChecks">{eligibleBasePlayers.filter(player=>`${player.first_name} ${player.last_name} ${player.club_name||""}`.toLowerCase().includes(creationSearch.toLowerCase())).map(player=><label key={player.id}><input type="checkbox" disabled={busy} checked={creationPlayerIds.includes(player.id)} onChange={()=>setCreationPlayerIds(previous=>previous.includes(player.id)?previous.filter(id=>id!==player.id):[...previous,player.id])}/><span><b>{player.last_name} {player.first_name}</b><small>{player.category||"Catégorie non renseignée"} · {player.club_name||"Club non renseigné"}</small></span></label>)}</div><small>{creationPlayerIds.length} / {form.rosterKind==="preselection"?"sans limite":form.maxPlayers} joueurs choisis{form.rosterKind!=="preselection"&&creationPlayerIds.length>form.maxPlayers?" — retire des joueurs avant de créer":""}</small></div>
           <button className="primary" disabled={busy} onClick={createSelection}>
             {busy ? "Création…" : "Créer"}
@@ -459,7 +462,7 @@ export default function InstitutionalSelectionsManager({
             key={row.id}
             disabled={busy} onClick={() => {setOpened(row.id);setChosenPlayers([]);}}
           >
-            <b>{row.roster_kind==="preselection"?"Présélection · ":"Sélection finale · "}{row.name}</b>
+            <b>{row.group_type==="pole"?"Pôle · ":row.roster_kind==="preselection"?"Présélection · ":"Sélection finale · "}{row.name}</b>
             <span>
               {row.category || "—"} · {row.gender === "M" ? "Masculin" : row.gender === "F" ? "Féminin" : "Mixte"} · {row.season_label || "—"}
             </span>
@@ -539,7 +542,7 @@ export default function InstitutionalSelectionsManager({
             <InstitutionalDayRosterImport key={current.id} structureId={structureId} players={eligibleBasePlayers} memberIds={[...memberIds]} maxPlayers={current.roster_kind==="preselection"?null:current.max_players||12} busy={busy} onAdd={ids=>addExistingPlayers(ids)}/>
             <details className="panel rosterComposer" open={!current.players?.length?true:undefined}>
               <summary>＋ Ajouter des joueurs depuis la base</summary>
-              <p>{current.roster_kind==="preselection"?"Présélection sans limite. Reprends cet effectif dans les entraînements ; les décisions Retenu / Non retenu le feront évoluer.":`Sélection finale : ${current.max_players||12} joueurs maximum. Pour les entraînements, crée une présélection sans limite.`}</p>
+              <p>{current.group_type==="pole"?"Pôle : effectif sans plafond de sélection, fiches et statistiques liées au groupe.":current.roster_kind==="preselection"?"Présélection sans limite. Reprends cet effectif dans les entraînements ; les décisions Retenu / Non retenu le feront évoluer.":`Sélection finale : ${current.max_players||12} joueurs maximum. Pour les entraînements, crée une présélection sans limite.`}</p>
               <div className="rosterFilters"><input aria-label="Rechercher des joueurs" placeholder="Nom, prénom ou club" value={playerSearch} onChange={e=>setPlayerSearch(e.target.value)}/><select aria-label="Catégorie des joueurs" value={categoryFilter} onChange={e=>setCategoryFilter(e.target.value)}><option value="">Tous les âges</option><option value="group:u13">Groupe U13 — U12 + U13</option>{Array.from(new Set(allPlayers.map(player=>player.category).filter(Boolean))).sort().map(category=><option key={category!} value={category!}>{category}</option>)}</select><select aria-label="Sexe des joueurs" value={genderFilter} onChange={e=>setGenderFilter(e.target.value)}><option value="">Tous</option><option value="M">Garçons</option><option value="F">Filles</option></select></div>
               <div className="selectionActionBar"><button type="button" disabled={busy} onClick={()=>setChosenPlayers(availablePlayers.filter(player=>!memberIds.has(player.id)).map(player=>player.id))}>Tout cocher ({availablePlayers.length})</button><button type="button" disabled={busy} onClick={()=>setChosenPlayers([])}>Tout décocher</button><button className="primary" disabled={busy || !chosenPlayers.length || (current.roster_kind!=="preselection"&&(current.players?.length||0)+chosenPlayers.length>(current.max_players||12))} onClick={()=>void addExistingPlayers()}>{busy?"Enregistrement…":`Ajouter à ${current.roster_kind==="preselection"?"la présélection":"mon équipe"} (${chosenPlayers.length})`}</button>{onCreateDetection && (chosenPlayers.length>0 || memberIds.size>0) && <button type="button" className="groupAction" disabled={busy} onClick={()=>onCreateDetection([...new Set([...memberIds,...chosenPlayers])])}>Créer une détection / entraînement ({new Set([...memberIds,...chosenPlayers]).size})</button>}<span>{chosenPlayers.length} nouveau(x) coché(s) · {current.roster_kind==="preselection"?"sans limite":`${Math.max(0,(current.max_players||12)-(current.players?.length||0))} places en sélection finale`}</span></div>
               <div className="rosterChecks">{availablePlayers.map(player=><label key={player.id} style={{background:memberIds.has(player.id)?"#e9e5e3":chosenPlayers.includes(player.id)?"#faf0f3":"white"}}><input type="checkbox" disabled={busy || memberIds.has(player.id)} checked={memberIds.has(player.id) || chosenPlayers.includes(player.id)} onChange={()=>setChosenPlayers(previous=>previous.includes(player.id)?previous.filter(id=>id!==player.id):[...previous,player.id])}/><span><b>{player.last_name} {player.first_name}</b><small>{player.category || "Catégorie non renseignée"} · {player.club_name || "Club non renseigné"}{memberIds.has(player.id)?" · Déjà ajouté":""}</small></span></label>)}</div>
@@ -549,7 +552,7 @@ export default function InstitutionalSelectionsManager({
             </details>
           </div>
 
-          <div className="panel"><label>Type et plafond du groupe<select disabled={busy} value={current.roster_kind==="preselection"?"preselection":current.max_players||12} onChange={async event=>{setBusy(true);try{const response=await fetch("/api/institutionnel/sport/selections",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({structureId,action:"set_capacity",selectionId:current.id,rosterKind:event.target.value==="preselection"?"preselection":"selection",maxPlayers:event.target.value==="preselection"?12:Number(event.target.value)})});const result=await response.json();if(!response.ok)throw new Error(result.error);await load();}catch(error){alert(error instanceof Error?error.message:"Modification impossible");}finally{setBusy(false)}}}><option value="preselection">Présélection — sans limite</option><option value={10}>Sélection finale — 10 maximum</option><option value={12}>Sélection finale — 12 maximum</option></select></label>{current.roster_kind!=="preselection"&&(current.players?.length||0)>(current.max_players||12)&&<p role="alert">Cet effectif dépasse le plafond. Les joueurs existants sont conservés : retire ceux qui ne font pas partie de la sélection finale.</p>}</div>
+          {current.group_type!=="pole"&&<div className="panel"><label>Type et plafond du groupe<select disabled={busy} value={current.roster_kind==="preselection"?"preselection":current.max_players||12} onChange={async event=>{setBusy(true);try{const response=await fetch("/api/institutionnel/sport/selections",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({structureId,action:"set_capacity",selectionId:current.id,rosterKind:event.target.value==="preselection"?"preselection":"selection",maxPlayers:event.target.value==="preselection"?12:Number(event.target.value)})});const result=await response.json();if(!response.ok)throw new Error(result.error);await load();}catch(error){alert(error instanceof Error?error.message:"Modification impossible");}finally{setBusy(false)}}}><option value="preselection">Présélection — sans limite</option><option value={10}>Sélection finale — 10 maximum</option><option value={12}>Sélection finale — 12 maximum</option></select></label>{current.roster_kind!=="preselection"&&(current.players?.length||0)>(current.max_players||12)&&<p role="alert">Cet effectif dépasse le plafond. Les joueurs existants sont conservés : retire ceux qui ne font pas partie de la sélection finale.</p>}</div>}
           <div className="roster">
             <div className="rosterHead">
               <b>Effectif : {current.players?.length||0} / {current.roster_kind==="preselection"?"sans limite":current.max_players||12} joueurs</b>

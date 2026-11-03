@@ -275,6 +275,14 @@ export async function POST(req: Request) {
   if(!canManageSport(ctx.member))return NextResponse.json({error:"Droits insuffisants"},{status:403});
   const roster=await getCtx(structureId);if(!roster)return NextResponse.json({error:"Accès Pôle refusé"},{status:403});
   try {
+    if(body.action==="archive_player"||body.action==="restore_player"){
+      const team=await ensurePoleTeam(roster),id=String(body.playerId||'');
+      const found=await ctx.admin.from('players').select('id,metadata,updated_at').eq('id',id).eq('team_id',team.id).maybeSingle();
+      if(found.error||!found.data)return NextResponse.json({error:'Fiche introuvable dans cette institution.'},{status:404});
+      let query=ctx.admin.from('players').update({metadata:{...found.data.metadata,institutionRosterArchived:body.action==='archive_player'},updated_at:new Date().toISOString()}).eq('id',id).eq('team_id',team.id);query=found.data.updated_at?query.eq('updated_at',found.data.updated_at):query.is('updated_at',null);const write=await query.select('id');
+      if(write.error)throw Error(write.error.message);if(!write.data?.length)return NextResponse.json({error:'La fiche a changé. Actualise et réessaie.'},{status:409});
+      return NextResponse.json({ok:true,archived:body.action==='archive_player'});
+    }
     if(body.action==="create_partner"||body.action==="update_partner") {
       const name=String(body.name||"").trim(),clubName=String(body.clubName||"").trim(),category=String(body.category||"").trim();
       if(!name||name.length>160||!clubName||!category)return NextResponse.json({error:"Renseigne le nom de l’équipe, le club et la catégorie."},{status:400});
