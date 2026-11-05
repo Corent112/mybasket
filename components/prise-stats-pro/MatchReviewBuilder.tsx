@@ -50,6 +50,7 @@ export type MatchReviewBlock = {
   subtitle?: string;
   color: string;
   columns: 1 | 2 | 3 | 4;
+  closesClip?: boolean;
   buttonSize?: "compact" | "normal" | "large";
   controls: MatchReviewControl[];
   kind?: "buttons" | "players" | "shot-chart" | "context";
@@ -98,6 +99,9 @@ export type MatchReviewEvent = {
   clipStart?: number;
   clipEnd?: number;
   clipOpenedBy?: string;
+  clipTags?: MatchReviewEvent[];
+  boundaryOnly?: boolean;
+  quarter?: number;
   preRoll: number;
   postRoll: number;
   videoTime: number | null;
@@ -115,6 +119,8 @@ type Props = {
   players?: PlayerOption[];
   getVideoTime?: () => number | null;
   onSeek?: (time: number) => void;
+  quarter?: number;
+  onEditClip?: (event: MatchReviewEvent) => void;
   onPlayClip?: (start: number, end: number) => void;
   embedded?: boolean;
   initialEditorOpen?: boolean;
@@ -604,6 +610,8 @@ export default function MatchReviewBuilder({
   getVideoTime,
   onSeek,
   onPlayClip,
+  onEditClip,
+  quarter,
   embedded = false,
   initialEditorOpen = false,
   onClose,
@@ -663,6 +671,7 @@ export default function MatchReviewBuilder({
         storageGet(`${EVENT_STORAGE_PREFIX}${projectId}`) || "[]",
       );
       setEvents(Array.isArray(saved) ? saved : []);
+      setContext(null);
     } catch {
       setEvents([]);
     }
@@ -824,7 +833,7 @@ export default function MatchReviewBuilder({
           : (control.value ?? 1)),
       time: getVideoTime?.() ?? null,
     };
-    if (control.clipRole && !control.requirePlayer && !control.requireComment && nextDraft.value !== "") {
+    if ((control.clipRole || (block.closesClip && currentOpen) || (currentOpen && control.type === "button")) && !control.requirePlayer && !control.requireComment && nextDraft.value !== "") {
       record(nextDraft, "");
       return;
     }
@@ -836,6 +845,7 @@ export default function MatchReviewBuilder({
     const key = (event: KeyboardEvent) => {
       if (
         editing ||
+        event.repeat ||
         event.ctrlKey ||
         event.metaKey ||
         event.altKey ||
@@ -859,6 +869,75 @@ export default function MatchReviewBuilder({
     window.addEventListener("keydown", key);
     return () => window.removeEventListener("keydown", key);
   });
+  const openClip = events.find((event) => event.templateId === active?.id && event.clipRole);
+  const currentOpen = openClip?.clipRole === "start" ? openClip : undefined;
+
+  const persistEvents = (added: MatchReviewEvent[]) => {
+    const next = [...added].reverse().concat(events);
+    try {
+      const durable = !projectId || storageSet(`${EVENT_STORAGE_PREFIX}${projectId}`, JSON.stringify(next));
+      setEvents(next);
+      added.forEach((event) => onRecord?.(event));
+      return durable ? " ✓" : " · conservé dans cet onglet uniquement.";
+    } catch {
+      setMessage("Saisie non enregistrée : stockage indisponible.");
+      return null;
+    }
+  };
+
+  const closeBounds = (time: number) => {
+    if (!currentOpen || currentOpen.videoTime == null || time <= currentOpen.videoTime) return null;
+    const tags = events.slice(0, events.indexOf(currentOpen)).filter((event) => event.templateId === active.id && event.clipOpenedBy === currentOpen.id && !event.clipRole);
+    return { clipStart: currentOpen.videoTime, clipEnd: time, clipOpenedBy: currentOpen.id, quarter: currentOpen.quarter ?? quarter, clipTags: tags.slice().reverse() };
+  };
+
+  const boundary = (b: MatchReviewBlock, label: string, side: typeof context, time: number, role: "start" | "end"): MatchReviewEvent => ({
+    id: uid(), templateId: active.id, templateName: active.name, blockId: b.id, blockTitle: b.title,
+    controlId: b.id, controlLabel: label, controlType: "button", value: null, playerId: null, playerName: null,
+    comment: "", createClip: role === "end", preRoll: 0, postRoll: 0, videoTime: time,
+    createdAt: new Date().toISOString(), context: side, quarter, clipRole: role, boundaryOnly: true,
+  });
+
+  const selectContext = (b: MatchReviewBlock, side: "attaque" | "defense") => {
+    if (editing) return;
+    if (currentOpen?.context === side) return;
+    const time = getVideoTime?.();
+    if (time == null || !Number.isFinite(time)) {
+      setContext(side);
+      setMessage("Chargez une vidéo pour ouvrir un clip.");
+      return;
+    }
+    const added: MatchReviewEvent[] = [];
+    if (currentOpen) {
+      const bounds = closeBounds(time);
+      if (!bounds) { setMessage("Placez la fin après le début du clip."); return; }
+      added.push({ ...boundary(b, "Changement de statut", currentOpen.context ?? context, time, "end"), ...bounds });
+    }
+    added.push(boundary(b, side === "attaque" ? "Attaque" : "Défense", side, time, "start"));
+    const suffix = persistEvents(added);
+    if (suffix === null) return;
+    setContext(side);
+    setDraft(null);
+    setPoint(null);
+    setShotZoneId(null);
+    setComment("");
+    setMessage((currentOpen ? "Clip précédent clôturé · " : "") + "Nouveau clip ouvert" + suffix);
+  };
+
+  const closeBlock = (b: MatchReviewBlock, shot?: { zone: string; x: number; y: number }) => {
+    if (editing || !currentOpen) return;
+    const time = getVideoTime?.();
+    const bounds = time != null && Number.isFinite(time) ? closeBounds(time) : null;
+    if (!bounds || time == null) { setMessage("Placez la fin après le début du clip."); return; }
+    const player = players.find((p) => p.id === playerId);
+    const suffix = persistEvents([{
+      ...boundary(b, b.title, currentOpen.context ?? context, time, "end"), ...bounds,
+      ...(shot ? { boundaryOnly: false, playerId: player?.id ?? null, playerName: player?.name ?? null,
+        shotPosition: { x: shot.x, y: shot.y }, shotZoneId: shot.zone, shotType } : {}),
+    }]);
+    if (suffix !== null) { setDraft(null); setComment(""); setMessage("Clip clôturé" + suffix); }
+  };
+
   const record = (draftToSave = draft, note = comment) => {
     const draft = draftToSave;
     const b = active.blocks.find((b) => b.id === draft?.blockId),
@@ -876,17 +955,17 @@ export default function MatchReviewBuilder({
       setMessage("Renseignez le résultat ou le texte.");
       return;
     }
-    const latestMarker = events.find((event) => event.templateId === active.id && event.clipRole);
-    const openClip = latestMarker?.clipRole === "start" ? latestMarker : undefined;
-    if (c.clipRole && (draft.time == null || !Number.isFinite(draft.time) || draft.time < 0)) {
+    const openClip = currentOpen;
+    const role = c.clipRole ?? (b.closesClip && openClip ? "end" : undefined);
+    if (role && (draft.time == null || !Number.isFinite(draft.time) || draft.time < 0)) {
       setMessage("Chargez une vidéo pour placer un début ou une fin de clip.");
       return;
     }
-    if (c.clipRole === "start" && openClip) {
+    if (role === "start" && openClip) {
       setMessage("Un clip est déjà ouvert. Clôturez-le avant d’en ouvrir un autre.");
       return;
     }
-    if (c.clipRole === "end" && (!openClip || openClip.videoTime == null || draft.time! <= openClip.videoTime)) {
+    if (role === "end" && (!openClip || openClip.videoTime == null || draft.time! <= openClip.videoTime)) {
       setMessage(openClip ? "Placez la fin après le début du clip." : "Marquez d’abord le début du clip.");
       return;
     }
@@ -904,46 +983,36 @@ export default function MatchReviewBuilder({
       playerId: player?.id || null,
       playerName: player?.name || null,
       comment: note.trim(),
-      createClip: c.clipRole === "end" || (!c.clipRole && !!c.createClip),
-      clipRole: c.clipRole,
-      ...(c.clipRole === "end" && openClip ? {
-        clipStart: openClip.videoTime!,
-        clipEnd: draft.time!,
-        clipOpenedBy: openClip.id,
-      } : {}),
+      createClip: role === "end" || (!role && !openClip && !!c.createClip),
+      clipRole: role,
+      clipOpenedBy: !role ? openClip?.id : undefined,
+      ...(role === "end" ? closeBounds(draft.time!) : {}),
       preRoll: Math.max(0, c.preRoll || 0),
       postRoll: Math.max(0, c.postRoll || 0),
+      quarter: role === "end" ? openClip?.quarter ?? quarter : quarter,
       videoTime: draft.time,
       createdAt: new Date().toISOString(),
-      context,
+      context: role === "start" ? context : openClip?.context ?? context,
       shotPosition: point,
       shotZoneId: point ? shotZoneId : null,
       shotType: point ? shotType : null,
     };
-    const next = [event, ...events];
-    let durable = true;
-    try {
-      if (projectId)
-        durable = storageSet(
-          `${EVENT_STORAGE_PREFIX}${projectId}`,
-          JSON.stringify(next),
-        );
-    } catch {
-      setMessage("Saisie non enregistrée : stockage indisponible.");
-      return;
-    }
-    setEvents(next);
-    onRecord?.(event);
+    const suffix = persistEvents([event]);
+    if (suffix === null) return;
     setDraft(null);
     setPoint(null);
     setShotZoneId(null);
     setComment("");
-    const status = c.clipRole === "start" ? "Clip ouvert" : c.clipRole === "end" ? "Clip clôturé" : "Action personnalisée enregistrée";
-    setMessage(durable ? `${status} ✓` : `${status} · conservé dans cet onglet uniquement.`);
+    const status = role === "start" ? "Clip ouvert" : role === "end" ? "Clip clôturé" : "Action personnalisée enregistrée";
+    setMessage(status + suffix);
   };
   const previewEvent = (event: MatchReviewEvent) => {
-    if (event.clipStart != null && event.clipEnd != null && onPlayClip) {
-      onPlayClip(event.clipStart, event.clipEnd);
+    const clip = event.clipRole === "end" ? event : event.clipOpenedBy
+      ? events.find((item) => item.clipRole === "end" && item.clipOpenedBy === event.clipOpenedBy)
+      : undefined;
+    if (clip?.clipStart != null && clip.clipEnd != null && onPlayClip) {
+      if (onEditClip) onEditClip(clip);
+      else onPlayClip(clip.clipStart, clip.clipEnd);
     } else if (event.videoTime != null) {
       onSeek?.(Math.max(0, event.videoTime - (event.clipRole ? 0 : event.preRoll)));
     }
@@ -1269,6 +1338,9 @@ export default function MatchReviewBuilder({
                     >
                       {b.title}
                     </button>
+                    {!editing && b.closesClip && currentOpen && b.kind !== "shot-chart" && (
+                      <button type="button" onClick={() => closeBlock(b)}>Clôturer ici</button>
+                    )}
                     {editing && (
                       <button
                         aria-label={`Configurer ${b.title}`}
@@ -1313,14 +1385,14 @@ export default function MatchReviewBuilder({
                     ) : b.kind === "context" ? (
                       <div className={styles.controls}>
                         <button
-                          aria-pressed={context === "attaque"}
-                          onClick={() => setContext("attaque")}
+                          aria-pressed={(currentOpen?.context ?? context) === "attaque"}
+                          onClick={() => selectContext(b, "attaque")}
                         >
                           Attaque
                         </button>
                         <button
-                          aria-pressed={context === "defense"}
-                          onClick={() => setContext("defense")}
+                          aria-pressed={(currentOpen?.context ?? context) === "defense"}
+                          onClick={() => selectContext(b, "defense")}
                         >
                           Défense
                         </button>
@@ -1380,6 +1452,7 @@ export default function MatchReviewBuilder({
                               }
                               showLabels={false}
                               onPick={(zone, position) => {
+                                if (b.closesClip) closeBlock(b, { zone: zone.id, x: position.x / 100, y: position.y / 100 });
                                 setShotZoneId(zone.id);
                                 setPoint({
                                   x: position.x / 100,
@@ -1669,6 +1742,12 @@ export default function MatchReviewBuilder({
                 </>
               ) : (
                 <>
+                  {block.kind !== "context" && (
+                    <label><input type="checkbox" checked={!!block.closesClip}
+                      onChange={(e) => patchBlock(block.id, { closesClip: e.target.checked })} />
+                      Clôturer le clip depuis ce bloc
+                    </label>
+                  )}
                   <span>Taille du bloc</span>
                   <div className={styles.variants}>
                     {[
@@ -1810,7 +1889,7 @@ export default function MatchReviewBuilder({
             <b>
               {draftControl
                 ? `${draftBlock?.title} · ${draftControl.label}`
-                : "Sélectionnez un bouton pour préparer une action"}
+                : currentOpen ? `Clip ${currentOpen.context === "attaque" ? "attaque" : currentOpen.context === "defense" ? "défense" : ""} ouvert · ${currentOpen.videoTime?.toFixed(1)} s` : "Sélectionnez un bouton pour préparer une action"}
             </b>
             <div className={styles.two}>
               <label>

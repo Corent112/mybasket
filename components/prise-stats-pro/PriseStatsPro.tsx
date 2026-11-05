@@ -46,7 +46,7 @@ import {
 } from "@/lib/google-drive/client";
 import VideoSyncModal from "@/components/prise-stats-pro/VideoSyncModal";
 import { readCodingProfiles, writeCodingProfiles, normalizeCodingProfileHighlights } from "@/lib/live-coding-profile-store";
-import { highlightLabel, highlightBaseKey } from "@/lib/livestat-labels";
+import { highlightLabel, versionedHighlightKey, highlightBaseKey } from "@/lib/livestat-labels";
 import LiveCodingSettingsModal, { DEFAULT_WORKFLOW_PREFS, type LiveWorkflowPrefs, type LiveCodingProfile, type CodingButtonGroup } from "@/components/prise-stats-pro/LiveCodingSettingsModal";
 import LivePlayerAssociationModal, { type AssociableLiveAction } from "@/components/prise-stats-pro/LivePlayerAssociationModal";
 import MatchReviewBuilder, { MatchReviewWindowPicker, type MatchReviewEvent, type MatchReviewLayout } from "@/components/prise-stats-pro/MatchReviewBuilder";
@@ -503,7 +503,12 @@ const isSupabaseUuid = (value: string | null | undefined) =>
     value
   );
 
+const isReviewTag = (a: StatA) => a.actionType === 'marqueur' && a.tempsFort?.startsWith('cw1:mon-mode-');
+const clipEditKey = (a: StatA) => isReviewTag(a) && a.clipStart != null && a.clipEnd != null
+  ? `mon-mode:${a.q}:${a.context}:${a.clipStart}:${a.clipEnd}` : a.id;
+
 function describe(a: StatA, find: (id: string | null) => Player | undefined) {
+  if (isReviewTag(a)) return { b: "TAG", c: "b-neutral", t: highlightLabel(a.tempsFort) };
   if (a.actionType === 'tir') {
     if (a.context === 'defense') {
       const made = a.shotResult === 'made';
@@ -747,6 +752,7 @@ function computeAnalytics(actions: StatA[], roster: Player[]) {
   const defKeys = new Set<string>();
   const defSeq: boolean[] = [];
   actions.forEach((a) => {
+    if (isReviewTag(a)) return;
     const key = `${a.context}:${a.possessionStart ?? a.id}`;
     if (a.context === 'attaque') offKeys.add(key);
     else if (a.context === 'defense') defKeys.add(key);
@@ -754,7 +760,7 @@ function computeAnalytics(actions: StatA[], roster: Player[]) {
   const offPoss = offKeys.size;
   const defPoss = defKeys.size;
   Array.from(defKeys).forEach((key) => {
-    const list = actions.filter((a) => `${a.context}:${a.possessionStart ?? a.id}` === key);
+    const list = actions.filter((a) => !isReviewTag(a) && `${a.context}:${a.possessionStart ?? a.id}` === key);
     defSeq.push(list.reduce((sum, a) => sum + themPtsOf(a), 0) === 0);
   });
   let maxStreak = 0, cur = 0; defSeq.forEach((stop) => { if (stop) { cur++; maxStreak = Math.max(maxStreak, cur); } else cur = 0; });
@@ -2363,6 +2369,45 @@ export default function PriseStatsProPage() {
     flash('Clip ' + fmt(Math.round(start)) + (end != null ? ' → ' + fmt(Math.round(end)) : ''));
   };
 
+  const recordReviewEvent = (event: MatchReviewEvent) => {
+    if (event.clipRole === 'start') return;
+    const pending = Boolean(event.clipOpenedBy && event.clipRole !== 'end');
+    const bounds = event.clipStart != null && event.clipEnd != null
+      ? { start: event.clipStart, end: event.clipEnd }
+      : event.createClip && event.videoTime != null
+        ? { start: Math.max(0, event.videoTime - event.preRoll), end: event.videoTime + event.postRoll }
+        : null;
+    const entries = [...(event.clipTags ?? []), ...(!event.boundaryOnly ? [event] : [])];
+    if (!entries.length && bounds) entries.push(event);
+    const period = event.quarter ?? q;
+    const sync = videoSyncRef.current;
+    const anchor = sync.periodMarkers?.[String(period)];
+    const rate = Number.isFinite(sync.rate) && sync.rate > 0 ? sync.rate : 1;
+    const toSource = (time: number) => anchor?.start != null && anchor.sourceStart != null
+      ? anchor.sourceStart + (time - anchor.start) / rate
+      : sync.mode === 'native' ? time : (time - sync.offset) / rate;
+    const markers = entries.map((tag): StatA => ({
+      ...emptyDraft(), id: tag.id, q: period, clock: fmt(secs), lineup: [],
+      context: tag.context ?? event.context ?? '', playerId: tag.playerId,
+      actionType: 'marqueur',
+      tempsFort: versionedHighlightKey(`mon-mode-${tag.controlId}`, tag.controlLabel),
+      zone: tag.shotZoneId ?? '', courtX: tag.shotPosition?.x ?? null, courtY: tag.shotPosition?.y ?? null,
+      syncStatus: bounds ? 'prepared' : null,
+      videoTime: tag.videoTime == null ? null : toSource(tag.videoTime),
+      clipStart: bounds ? toSource(bounds.start) : null, clipEnd: bounds ? toSource(bounds.end) : null,
+    }));
+    setActions((previous) => [...previous.filter((a) => !markers.some((marker) => marker.id === a.id)), ...markers]);
+    const matchId = liveMatchIdRef.current, teamId = liveTeamIdRef.current;
+    if (matchId && teamId && !pending) {
+      void (async () => {
+        for (const marker of markers) {
+          const result = await persistLiveAction({ matchId, teamId, action: { ...marker, codingSource: 'post' } });
+          if (!result.ok) flash('Saisie conservée dans le projet · synchronisation non terminée');
+        }
+      })();
+    }
+  };
+
   const hasLocalVideo = () => ((videoProvider === 'local' || videoProvider === 'google_drive') && !!videoRef.current) || !!clipVideoRef.current;
   const nudgeVideo = (dir: -1 | 1) => {
     // Priorité à la vidéo du popup clip si elle est ouverte, sinon la vidéo centrale.
@@ -2506,9 +2551,13 @@ export default function PriseStatsProPage() {
   const [drawTool, setDrawTool] = useState<'arrow' | 'circle' | 'rect' | 'text' | null>(null);
   const drawStartRef = useRef<{ x: number; y: number } | null>(null);
 
-  const getClipEdit = (id: string): ClipEdit => clipEdits[id] || { trimStart: null, trimEnd: null, note: '', draws: [] };
+  const resolveClipEditKey = (id: string) => { const action = actions.find((a) => a.id === id); return action ? clipEditKey(action) : id; };
+  const getClipEdit = (id: string): ClipEdit => clipEdits[resolveClipEditKey(id)] || { trimStart: null, trimEnd: null, note: '', draws: [] };
   const setClipEdit = (id: string, upd: Partial<ClipEdit>) =>
-    setClipEdits((prev) => ({ ...prev, [id]: { ...getClipEdit(id), ...upd } }));
+    setClipEdits((prev) => {
+      const key = resolveClipEditKey(id);
+      return { ...prev, [key]: { ...(prev[key] ?? { trimStart: null, trimEnd: null, note: '', draws: [] }), ...upd } };
+    });
 
   // Navigation précédent / suivant dans la liste chronologique des actions.
   const gotoEvt = (dir: -1 | 1) => {
@@ -2548,7 +2597,7 @@ export default function PriseStatsProPage() {
     const sub = [periodLabel(a.q), a.clock, p ? `#${p.num} ${p.name}` : null].filter(Boolean).join(' · ');
     // Reprend le rognage + la note saisis dans la popup clip (édition locale),
     // sinon retombe sur les repères auto de l'action.
-    const ce = clipEdits[a.id];
+    const ce = clipEdits[clipEditKey(a)];
     const cs = (ce?.trimStart ?? a.clipStart) ?? null;
     const cEnd = (ce?.trimEnd ?? a.clipEnd) ?? null;
     const note = ce?.note || '';
@@ -5806,9 +5855,13 @@ export default function PriseStatsProPage() {
                   onSeek={seekVideo}
                   onPlayClip={playVideoBounds}
                   onLayoutChange={setMatchReviewLayout}
-                  onRecord={(event: MatchReviewEvent) => {
-                    const who = event.playerName ? ` · ${event.playerName}` : '';
-                    flash(`${event.controlLabel}${who} enregistré ✓`);
+                  quarter={q}
+                  onRecord={recordReviewEvent}
+                  onEditClip={(event) => {
+                    const ids = new Set([event.id, ...(event.clipTags ?? []).map((tag) => tag.id)]);
+                    const marker = actions.find((a) => isReviewTag(a) && ids.has(a.id));
+                    if (marker) openClipModal('Clip · Mon mode', [marker]);
+                    else if (event.clipStart != null && event.clipEnd != null) playVideoBounds(event.clipStart, event.clipEnd);
                   }}
                 />
               ) : (
@@ -7752,6 +7805,13 @@ function BoxView({ actions, roster, teamId, minutesByPlayer = {}, onChangeMinute
   const [boxTab, setBoxTab] = useState<'box' | 'box-advanced' | 'team' | 'matrix' | 'systems' | 'search' | 'lineups' | 'shot' | 'video'>('box');
   // Bloc C · onglet initial demandé depuis l'Historique (tab=history → Collectif, tab=players → Boxscore).
   useEffect(() => { if (initialTab) setBoxTab(initialTab); }, [initialTab]);
+  const reviewTags = new Map<string, { label: string; side: string; items: StatA[] }>();
+  for (const action of actions.filter(isReviewTag)) {
+    const key = `${action.context}:${action.tempsFort}`;
+    const row = reviewTags.get(key) ?? { label: tags.label(action.tempsFort), side: action.context, items: [] };
+    row.items.push(action);
+    reviewTags.set(key, row);
+  }
   const [boxSide, setBoxSide] = useState<'attaque' | 'defense'>('attaque');
   const [matrixSide, setMatrixSide] = useState<'attaque' | 'defense'>('attaque');
   const [sysSide, setSysSide] = useState<'attaque' | 'defense'>('attaque');
@@ -7823,9 +7883,9 @@ function BoxView({ actions, roster, teamId, minutesByPlayer = {}, onChangeMinute
 
   const videoClips = actions.filter((a) => a.videoTime != null || a.clipStart != null);
 
-  const sideActions = (side: 'attaque' | 'defense') => actions.filter((a) => a.context === side);
+  const sideActions = (side: 'attaque' | 'defense') => actions.filter((a) => a.context === side && !isReviewTag(a));
   const tfRowsFor = (side: 'attaque' | 'defense') => A.tfUsed.map((t) => {
-    const list = actions.filter((a) => a.context === side && a.tempsFort === t.id);
+    const list = actions.filter((a) => a.context === side && a.tempsFort === t.id && !isReviewTag(a));
     const made = list.filter((a) => a.actionType === 'tir' && a.shotResult === 'made').length;
     const missed = list.filter((a) => a.actionType === 'tir' && a.shotResult === 'missed').length;
     const lost = list.filter((a) => side === 'attaque' ? a.actionType === 'perte' : a.actionType === 'perte-adverse').length;
@@ -8105,6 +8165,15 @@ function BoxView({ actions, roster, teamId, minutesByPlayer = {}, onChangeMinute
           <button key={k} className={`box-tab ${boxTab === k ? 'on' : ''}`} onClick={() => setBoxTab(k)}>{l}</button>
         ))}
       </div>
+
+      {(boxTab === 'box' || boxTab === 'team') && reviewTags.size > 0 && (
+        <div className="cardrow" aria-label="Tags de Mon mode">
+          {Array.from(reviewTags, ([key, row]) => (
+            <Card key={key} t={`${row.side === 'attaque' ? 'Attaque · ' : row.side === 'defense' ? 'Défense · ' : ''}${row.label}`}
+              v={row.items.length} onClick={() => openList(row.label, row.items)} />
+          ))}
+        </div>
+      )}
 
       {/* ===== Boxscore joueurs ===== */}
       {boxTab === 'box' && <div style={{display:'flex',justifyContent:'flex-end',margin:'0 0 10px'}}><button type="button" className="ghost on" onClick={() => onSaveMinutes?.()}>💾 Enregistrer les temps de jeu</button></div>}
