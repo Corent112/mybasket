@@ -14,6 +14,7 @@
  *  - box-score consultable + analyses (temps forts/joueur, lineups, stops, possessions)
  */
 
+import { createPortal } from "react-dom";
 import { type MouseEvent, useEffect, useRef, useState } from 'react';
 import { CODING_MODES, type CodingMode, isPostLikeCodingMode } from '@/components/prise-stats-pro/coding-modes';
 import { createClient } from "@/lib/supabase/client";
@@ -1778,6 +1779,30 @@ export default function PriseStatsProPage() {
   const [projects, setProjects] = useState<LiveProjectSummary[]>([]);
   const [projectBusy, setProjectBusy] = useState(false);
   const [showProjectMenu, setShowProjectMenu] = useState(false);
+  const [projectMenuTop, setProjectMenuTop] = useState(64);
+  const projectMenuTrigger = useRef<HTMLButtonElement>(null);
+  useEffect(() => {
+    if (!showProjectMenu) return;
+    const position = () => setProjectMenuTop(Math.max(8, Math.min(window.innerHeight - 140, (projectMenuTrigger.current?.getBoundingClientRect().bottom ?? 56) + 8)));
+    const dismiss = (event: PointerEvent) => {
+      if (event.target instanceof Element && !event.target.closest('#live-project-menu,.menuDots')) setShowProjectMenu(false);
+    };
+    const escape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') { setShowProjectMenu(false); projectMenuTrigger.current?.focus(); }
+    };
+    position();
+    document.querySelector<HTMLButtonElement>('#live-project-menu button')?.focus({ preventScroll: true });
+    window.addEventListener('resize', position);
+    window.addEventListener('scroll', position, true);
+    document.addEventListener('pointerdown', dismiss);
+    document.addEventListener('keydown', escape);
+    return () => {
+      window.removeEventListener('resize', position);
+      window.removeEventListener('scroll', position, true);
+      document.removeEventListener('pointerdown', dismiss);
+      document.removeEventListener('keydown', escape);
+    };
+  }, [showProjectMenu]);
   const [showMatchInfo, setShowMatchInfo] = useState(false);
   const [layoutMode, setLayoutMode] = useState<'balanced' | 'coding'>('balanced');
   const [showPlayerAssociation, setShowPlayerAssociation] = useState(false);
@@ -3131,6 +3156,7 @@ export default function PriseStatsProPage() {
       return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || el.isContentEditable;
     };
     const onKeyDown = (e: KeyboardEvent) => {
+      if (document.getElementById('live-project-menu')) return;
       // ÉCHAP doit fonctionner partout, même si un champ / select a encore le focus.
       // On le traite donc avant le filtre "typing".
       if (e.key === 'Escape') {
@@ -5633,9 +5659,9 @@ export default function PriseStatsProPage() {
           <button className={`ghost ${screen === 'box' ? 'on' : ''}`} onClick={() => { if (screen === 'box') { setScreen('live'); return; } inspectionVideoTimeRef.current = getCurrentVideoTime(); pauseVideo(); setRunning(false); setScreen('box'); }}>📊 Box-score</button>
           {screen === 'box' && <button className="ghost on" onClick={() => setShowReportExport(true)}>📄 Rapport PDF</button>}
           <div className="projectMenuWrap">
-            <button className={`ghost menuDots ${showProjectMenu ? 'on' : ''}`} onClick={() => setShowProjectMenu((v) => !v)} aria-label="Menu projet">•••</button>
-            {showProjectMenu && (
-              <div className="projectMenu">
+            <button ref={projectMenuTrigger} aria-expanded={showProjectMenu} aria-controls="live-project-menu" className={`ghost menuDots ${showProjectMenu ? 'on' : ''}`} onClick={() => setShowProjectMenu((v) => !v)} aria-label="Menu projet">•••</button>
+            {showProjectMenu && createPortal(
+              <div id="live-project-menu" className="projectMenu" style={{ top: projectMenuTop, maxHeight: `calc(100dvh - ${projectMenuTop + 12}px)` }}>
                 <button onClick={() => { setShowProjectMenu(false); void saveProjectNow(false); }}>💾 Enregistrer</button>
                 <button onClick={() => { setShowProjectMenu(false); void saveProjectNow(true); }}>💾 Enregistrer et fermer</button>
                 <div className="projectMenuSep" />
@@ -5672,7 +5698,7 @@ export default function PriseStatsProPage() {
                 <button onClick={() => { setShowProjectMenu(false); openMontageWindow(); }}>🎬 Montage</button>
                 <div className="projectMenuSep" />
                 <button className="danger" onClick={() => { setShowProjectMenu(false); void finishMatch(); }}>🏁 Terminer le match</button>
-              </div>
+              </div>, document.body
             )}
           </div>
         </div>
@@ -8655,7 +8681,7 @@ function Style() {
       .cm-t { font-size: 13px; font-weight: 900; letter-spacing: .03em; } .cm-s { font-size: 9px; color: var(--mute); font-weight: 800; letter-spacing: .12em; }
       .cm-head-r { display: flex; gap: 10px; align-items: center; }
 
-      .projectMenuWrap{position:relative}.menuDots{min-width:44px;justify-content:center;font-size:16px;letter-spacing:2px}.projectMenu{position:absolute;right:0;top:calc(100% + 8px);z-index:2500;width:280px;padding:8px;border:1px solid var(--border);border-radius:12px;background:#0d1626;box-shadow:0 18px 50px rgba(0,0,0,.45);display:grid;gap:4px}.projectMenu button{width:100%;border:0;border-radius:8px;background:transparent;color:#eef3fb;text-align:left;padding:9px 10px;font-size:11px;font-weight:850;cursor:pointer}.projectMenu button:hover{background:rgba(255,255,255,.07)}.projectMenu .danger{color:#ff8792}.layoutToggleRow{display:grid;grid-template-columns:1fr auto 1fr;align-items:center;gap:8px;padding:8px 10px;border-radius:8px;background:rgba(255,255,255,.04);color:#8f9bb0;font-size:10px;font-weight:850}.layoutToggleRow span:last-child{text-align:right}.layoutToggleRow span.on{color:#fff}.layoutToggle{position:relative!important;width:42px!important;height:22px!important;padding:0!important;border:1px solid var(--gold)!important;border-radius:999px!important;background:#111b2d!important}.layoutToggle i{position:absolute;top:3px;left:3px;width:14px;height:14px;border-radius:50%;background:var(--gold);transition:transform .18s ease}.layoutToggle.coding i{transform:translateX(20px)}.projectMenuSep{height:1px;background:var(--border);margin:4px 2px}.trackpadHint{font-size:10px;color:#9eabc0;border:1px solid var(--border);border-radius:999px;padding:5px 9px}.stageHeadWithConfig{position:relative}.stageHeadWithConfig .stageConfigBtn{position:absolute;right:0;top:0;width:30px;height:30px;border:1px solid var(--border);border-radius:8px;background:rgba(212,162,76,.10);color:var(--gold);font-weight:900;cursor:pointer}.panelResizeHandle{min-width:7px;border-radius:999px;background:linear-gradient(180deg,transparent 8%,rgba(212,162,76,.28) 24%,rgba(212,162,76,.58) 50%,rgba(212,162,76,.28) 76%,transparent 92%);cursor:col-resize;display:flex;align-items:center;justify-content:center;touch-action:none;user-select:none}.panelResizeHandle span{font-size:14px;color:#d4a24c;opacity:.8;writing-mode:vertical-rl}.videoMaximized{grid-template-columns:1fr!important}.videoMaximized>.panelResizeHandle,.videoMaximized>.lc-code,.videoMaximized>.lc-right{display:none!important}.videoMaximized>.lc-video{grid-column:1!important;width:100%;min-width:0}.videoMaximized .videoSlot.big{min-height:0;height:100%}.videoMaximized .vplayer{height:100%;max-height:none}.codingLogicSetup{margin-top:10px;border:1px solid var(--border);border-radius:11px;background:var(--panel);padding:10px;display:grid;gap:8px}.codingLogicSetupHead{display:flex;align-items:center;justify-content:space-between;gap:10px}.codingLogicSetupHead>div{display:grid;gap:2px}.codingLogicSetupHead b{font-size:10px;color:var(--gold)}.codingLogicSetupHead small{font-size:9px;color:var(--mute)}.codingLogicSetupHead button,.codingLogicSetupRow button{border:1px solid var(--gold);border-radius:8px;background:rgba(212,162,76,.1);color:var(--gold);padding:7px 9px;font-size:9px;font-weight:900;cursor:pointer}.codingLogicSetupRow{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:7px}.codingLogicSetupRow select{min-width:0;border:1px solid var(--border);border-radius:8px;background:var(--card);color:var(--txt);padding:8px;font-size:10px}.codingLogicPath{display:flex;align-items:center;gap:4px;flex-wrap:wrap}.codingLogicPath span{border:1px solid #35415a;border-radius:999px;background:#111b2d;color:#c4cedd;padding:4px 7px;font-size:8px;font-weight:850}.codingLogicPath i{font-style:normal;color:#65738b;font-size:8px}.codingLogicPath em{flex-basis:100%;font-style:normal;color:#8794aa;font-size:8px;margin-top:2px}.foulOutcomeGrid{display:grid;grid-template-columns:1fr 1fr;gap:8px}.foulOutcomeGrid .foulTouch{grid-column:1/-1}.foulOutcomeGrid .chip{min-height:44px}.individualDefenseHint{border:1px solid #39465d;border-radius:9px;background:#101a2b;padding:7px 9px;color:#9eabc0;font-size:9px}.individualLinkBox{margin-top:10px;border:1px solid var(--border);background:var(--panel);border-radius:10px;padding:10px}.individualLinkBox label{display:block;color:var(--mute);font-size:10px;font-weight:850;margin-bottom:6px}.individualLinkBox select{width:100%;border:1px solid var(--border);border-radius:8px;background:var(--card);color:var(--txt);padding:8px}.cm-video{grid-template-columns:repeat(4,minmax(0,1fr)) !important}.cm-vid-note{margin-top:6px;font-size:8px;font-weight:850;color:var(--gold)}
+      .projectMenuWrap{position:relative}.menuDots{min-width:44px;justify-content:center;font-size:16px;letter-spacing:2px}.projectMenu{position:fixed;right:12px;z-index:12000;width:min(280px,calc(100vw - 24px));overflow:auto;overscroll-behavior:contain;box-sizing:border-box;padding:8px;border:1px solid var(--border);border-radius:12px;background:#0d1626;box-shadow:0 18px 50px rgba(0,0,0,.45);display:grid;gap:4px}.projectMenu{--border:#34415a;--gold:#d4a24c}.projectMenu button{width:100%;border:0;border-radius:8px;background:transparent;color:#eef3fb;text-align:left;padding:9px 10px;font-size:11px;font-weight:850;cursor:pointer}.projectMenu button:hover{background:rgba(255,255,255,.07)}.projectMenu .danger{color:#ff8792}.layoutToggleRow{display:grid;grid-template-columns:1fr auto 1fr;align-items:center;gap:8px;padding:8px 10px;border-radius:8px;background:rgba(255,255,255,.04);color:#8f9bb0;font-size:10px;font-weight:850}.layoutToggleRow span:last-child{text-align:right}.layoutToggleRow span.on{color:#fff}.layoutToggle{position:relative!important;width:42px!important;height:22px!important;padding:0!important;border:1px solid var(--gold)!important;border-radius:999px!important;background:#111b2d!important}.layoutToggle i{position:absolute;top:3px;left:3px;width:14px;height:14px;border-radius:50%;background:var(--gold);transition:transform .18s ease}.layoutToggle.coding i{transform:translateX(20px)}.projectMenuSep{height:1px;background:var(--border);margin:4px 2px}.trackpadHint{font-size:10px;color:#9eabc0;border:1px solid var(--border);border-radius:999px;padding:5px 9px}.stageHeadWithConfig{position:relative}.stageHeadWithConfig .stageConfigBtn{position:absolute;right:0;top:0;width:30px;height:30px;border:1px solid var(--border);border-radius:8px;background:rgba(212,162,76,.10);color:var(--gold);font-weight:900;cursor:pointer}.panelResizeHandle{min-width:7px;border-radius:999px;background:linear-gradient(180deg,transparent 8%,rgba(212,162,76,.28) 24%,rgba(212,162,76,.58) 50%,rgba(212,162,76,.28) 76%,transparent 92%);cursor:col-resize;display:flex;align-items:center;justify-content:center;touch-action:none;user-select:none}.panelResizeHandle span{font-size:14px;color:#d4a24c;opacity:.8;writing-mode:vertical-rl}.videoMaximized{grid-template-columns:1fr!important}.videoMaximized>.panelResizeHandle,.videoMaximized>.lc-code,.videoMaximized>.lc-right{display:none!important}.videoMaximized>.lc-video{grid-column:1!important;width:100%;min-width:0}.videoMaximized .videoSlot.big{min-height:0;height:100%}.videoMaximized .vplayer{height:100%;max-height:none}.codingLogicSetup{margin-top:10px;border:1px solid var(--border);border-radius:11px;background:var(--panel);padding:10px;display:grid;gap:8px}.codingLogicSetupHead{display:flex;align-items:center;justify-content:space-between;gap:10px}.codingLogicSetupHead>div{display:grid;gap:2px}.codingLogicSetupHead b{font-size:10px;color:var(--gold)}.codingLogicSetupHead small{font-size:9px;color:var(--mute)}.codingLogicSetupHead button,.codingLogicSetupRow button{border:1px solid var(--gold);border-radius:8px;background:rgba(212,162,76,.1);color:var(--gold);padding:7px 9px;font-size:9px;font-weight:900;cursor:pointer}.codingLogicSetupRow{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:7px}.codingLogicSetupRow select{min-width:0;border:1px solid var(--border);border-radius:8px;background:var(--card);color:var(--txt);padding:8px;font-size:10px}.codingLogicPath{display:flex;align-items:center;gap:4px;flex-wrap:wrap}.codingLogicPath span{border:1px solid #35415a;border-radius:999px;background:#111b2d;color:#c4cedd;padding:4px 7px;font-size:8px;font-weight:850}.codingLogicPath i{font-style:normal;color:#65738b;font-size:8px}.codingLogicPath em{flex-basis:100%;font-style:normal;color:#8794aa;font-size:8px;margin-top:2px}.foulOutcomeGrid{display:grid;grid-template-columns:1fr 1fr;gap:8px}.foulOutcomeGrid .foulTouch{grid-column:1/-1}.foulOutcomeGrid .chip{min-height:44px}.individualDefenseHint{border:1px solid #39465d;border-radius:9px;background:#101a2b;padding:7px 9px;color:#9eabc0;font-size:9px}.individualLinkBox{margin-top:10px;border:1px solid var(--border);background:var(--panel);border-radius:10px;padding:10px}.individualLinkBox label{display:block;color:var(--mute);font-size:10px;font-weight:850;margin-bottom:6px}.individualLinkBox select{width:100%;border:1px solid var(--border);border-radius:8px;background:var(--card);color:var(--txt);padding:8px}.cm-video{grid-template-columns:repeat(4,minmax(0,1fr)) !important}.cm-vid-note{margin-top:6px;font-size:8px;font-weight:850;color:var(--gold)}
       @media(max-width:900px){.cm-video{grid-template-columns:1fr !important}.projectMenu{position:fixed;right:12px;top:72px;width:min(300px,calc(100vw - 24px))}.panelResizeHandle{display:none!important}.videoMaximized>.lc-code,.videoMaximized>.lc-right{display:none!important}}
       .cm-ghost { display: flex; align-items: center; gap: 7px; background: var(--panel2); border: 1px solid var(--border); border-radius: 10px; padding: 9px 14px; font-size: 12px; font-weight: 800; color: var(--txt); cursor: pointer; }
       .cm-ghost.sm { padding: 6px 11px; font-size: 11px; }

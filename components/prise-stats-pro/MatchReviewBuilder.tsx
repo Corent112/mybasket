@@ -37,6 +37,7 @@ export type MatchReviewControl = {
   requireComment?: boolean;
   createClip?: boolean;
   clipRole?: "start" | "end";
+  afterClick?: "keep" | "close" | "switch";
   preRoll?: number;
   postRoll?: number;
   options?: string[];
@@ -833,7 +834,7 @@ export default function MatchReviewBuilder({
           : (control.value ?? 1)),
       time: getVideoTime?.() ?? null,
     };
-    if ((control.clipRole || (block.closesClip && currentOpen) || (currentOpen && control.type === "button")) && !control.requirePlayer && !control.requireComment && nextDraft.value !== "") {
+    if ((control.afterClick || control.clipRole || (block.closesClip && currentOpen) || (currentOpen && control.type === "button")) && !control.requirePlayer && !control.requireComment && nextDraft.value !== "") {
       record(nextDraft, "");
       return;
     }
@@ -845,6 +846,8 @@ export default function MatchReviewBuilder({
     const key = (event: KeyboardEvent) => {
       if (
         editing ||
+        event.defaultPrevented ||
+        document.querySelector('[aria-modal="true"]:not([aria-label="Constructeur Mon mode"]), #live-project-menu') != null ||
         event.repeat ||
         event.ctrlKey ||
         event.metaKey ||
@@ -956,7 +959,20 @@ export default function MatchReviewBuilder({
       return;
     }
     const openClip = currentOpen;
-    const role = c.clipRole ?? (b.closesClip && openClip ? "end" : undefined);
+    const side = openClip?.context ?? context;
+    const switchSide = c.afterClick === "switch";
+    if (switchSide && !side) {
+      setMessage("Choisissez d’abord Attaque ou Défense.");
+      return;
+    }
+    const nextSide = side === "attaque" ? "defense" : "attaque";
+    const role = c.afterClick === "keep" ? undefined
+      : c.afterClick === "close" || switchSide ? (openClip ? "end" : undefined)
+      : c.clipRole ?? (b.closesClip && openClip ? "end" : undefined);
+    if (switchSide && (draft.time == null || !Number.isFinite(draft.time))) {
+      setMessage("Chargez une vidéo pour changer de statut et ouvrir le clip suivant.");
+      return;
+    }
     if (role && (draft.time == null || !Number.isFinite(draft.time) || draft.time < 0)) {
       setMessage("Chargez une vidéo pour placer un début ou une fin de clip.");
       return;
@@ -983,7 +999,7 @@ export default function MatchReviewBuilder({
       playerId: player?.id || null,
       playerName: player?.name || null,
       comment: note.trim(),
-      createClip: role === "end" || (!role && !openClip && !!c.createClip),
+      createClip: role === "end" || (!c.afterClick && !role && !openClip && !!c.createClip),
       clipRole: role,
       clipOpenedBy: !role ? openClip?.id : undefined,
       ...(role === "end" ? closeBounds(draft.time!) : {}),
@@ -997,14 +1013,17 @@ export default function MatchReviewBuilder({
       shotZoneId: point ? shotZoneId : null,
       shotType: point ? shotType : null,
     };
-    const suffix = persistEvents([event]);
+    const suffix = persistEvents(switchSide
+      ? [event, boundary(b, nextSide === "attaque" ? "Attaque" : "Défense", nextSide, draft.time!, "start")]
+      : [event]);
     if (suffix === null) return;
+    if (switchSide) setContext(nextSide);
     setDraft(null);
     setPoint(null);
     setShotZoneId(null);
     setComment("");
     const status = role === "start" ? "Clip ouvert" : role === "end" ? "Clip clôturé" : "Action personnalisée enregistrée";
-    setMessage(status + suffix);
+    setMessage(switchSide ? `${openClip ? "Clip clôturé · " : ""}${nextSide === "attaque" ? "Attaque" : "Défense"} · nouveau clip ouvert${suffix}` : status + suffix);
   };
   const previewEvent = (event: MatchReviewEvent) => {
     const clip = event.clipRole === "end" ? event : event.clipOpenedBy
@@ -1597,13 +1616,24 @@ export default function MatchReviewBuilder({
                     </select>
                   </label>
                   <label>
-                    Raccourci
+                    Raccourci clavier
                     <input
                       maxLength={1}
                       value={control.shortcut || ""}
-                      onChange={(e) =>
-                        patchControl({ shortcut: e.target.value })
-                      }
+                      placeholder="Ex. P"
+                      onChange={(e) => {
+                        const key = e.target.value.toLowerCase();
+                        if (key && (!/^[a-z0-9]$/.test(key) || key === "b")) {
+                          setMessage("Choisissez une lettre ou un chiffre. B est réservé à la lecture.");
+                          return;
+                        }
+                        if (key && active.blocks.some((block) => block.controls.some((button) => button.id !== control.id && button.shortcut?.toLowerCase() === key))) {
+                          setMessage(`Le raccourci ${key.toUpperCase()} est déjà attribué.`);
+                          return;
+                        }
+                        patchControl({ shortcut: key });
+                        setMessage("");
+                      }}
                     />
                   </label>
                   {control.type === "choice" && (
@@ -1638,6 +1668,18 @@ export default function MatchReviewBuilder({
                     Commentaire obligatoire
                   </label>
                   <label>
+                    Après ce bouton
+                    <select value={control.afterClick ?? "auto"} onChange={(e) => {
+                      const rule = e.target.value;
+                      patchControl({ afterClick: rule === "keep" || rule === "close" || rule === "switch" ? rule : undefined });
+                    }}>
+                      <option value="auto">Suivre le réglage du bloc / clip vidéo</option>
+                      <option value="keep">Poser le tag et garder le clip ouvert</option>
+                      <option value="close">Clôturer le clip et garder le statut</option>
+                      <option value="switch">Clôturer et basculer Attaque / Défense</option>
+                    </select>
+                  </label>
+                  {!control.afterClick && <label>
                     Clip vidéo
                     <select
                       value={control.clipRole ?? (control.createClip ? "instant" : "none")}
@@ -1654,8 +1696,8 @@ export default function MatchReviewBuilder({
                       <option value="start">Ouvrir un clip</option>
                       <option value="end">Clôturer le clip ouvert</option>
                     </select>
-                  </label>
-                  {control.createClip && !control.clipRole && (
+                  </label>}
+                  {control.createClip && !control.clipRole && !control.afterClick && (
                     <div className={styles.two}>
                       <label>
                         Avant (s)

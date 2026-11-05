@@ -248,7 +248,6 @@ export default function MontageStudio({
   const [editorReady, setEditorReady] = useState(false);
   const [libraryError, setLibraryError] = useState("");
   const tags = useLivestatTags(teamId);
-  const clipLabel = (action: ActionRow) => action.clip_title || [players.find(player => player.id === action.player_id)?.name, actionLabel(action, key => tags.label(key))].filter(Boolean).join(" · ");
   const [selectedIndex, setSelectedIndex] = useState(0);
   const [filter, setFilter] = useState<"all" | "made" | "missed" | "video">("all");
   const [search, setSearch] = useState("");
@@ -282,6 +281,8 @@ export default function MontageStudio({
   const imageInputRef = useRef<HTMLInputElement | null>(null);
   const audioInputRef = useRef<HTMLInputElement | null>(null);
   const [players, setPlayers] = useState<PlayerRow[]>([]);
+  const playerNames = useMemo(() => new Map(players.map((player) => [String(player.id), player.name])), [players]);
+  const clipLabel = (action: ActionRow) => action.clip_title || [playerNames.get(String(action.player_id ?? "")), actionLabel(action, key => tags.label(key))].filter(Boolean).join(" · ");
   const [selectedPlayerFilter, setSelectedPlayerFilter] = useState(initialPlayerId || "");
   const [selectedSystemFilter, setSelectedSystemFilter] = useState("");
   const [selectedThemeId, setSelectedThemeId] = useState("");
@@ -678,14 +679,21 @@ export default function MontageStudio({
     (selected?.clip_end || 0) - (selected?.clip_start || 0),
   );
 
+  const receivedById = useMemo(() => new Map(receivedClips.map((clip, index) => [String(clip.actionId), { clip, index }])), [receivedClips]);
+  const actionsById = useMemo(() => new Map(actions.map((action) => [String(action.id), action])), [actions]);
+  const selectedLibraryIds = useMemo(() => new Set(librarySelection), [librarySelection]);
+
+  const withReceivedDetails = (action: ActionRow): ActionRow => {
+    const incoming = receivedById.get(String(action.id))?.clip;
+    return incoming ? { ...action, clip_title: incoming.title || action.clip_title, resolved_clip_start: incoming.clipStart ?? action.resolved_clip_start, resolved_clip_end: incoming.clipEnd ?? action.resolved_clip_end } : action;
+  };
   const filteredActions = useMemo(() => {
     const normalize = (value: string) => value.normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase();
     const tokens = normalize(search.trim()).split(/\s+/).filter(Boolean);
 
-    return actions.map(action => {
-      const incoming = receivedClips.find(clip => clip.actionId === action.id);
-      return incoming ? { ...action, clip_title: incoming.title || action.clip_title, resolved_clip_start: incoming.clipStart ?? action.resolved_clip_start, resolved_clip_end: incoming.clipEnd ?? action.resolved_clip_end } : action;
-    }).filter((action) => {
+    const themeIds = selectedThemeId ? themes.find((row) => row.id === selectedThemeId)?.actionIds : undefined;
+    const allowedIds = themeIds ? new Set(themeIds) : null;
+    return actions.map(withReceivedDetails).filter((action) => {
       if (filter === "made" && action.shot_result !== "made") return false;
       if (filter === "missed" && action.shot_result !== "missed") return false;
       if (
@@ -704,19 +712,15 @@ export default function MontageStudio({
       if (selectedPlayerFilter && String(action.player_id || "") !== selectedPlayerFilter) return false;
       if (selectedContextFilter && action.context !== selectedContextFilter) return false;
       if (selectedSystemFilter && String(action.temps_fort || "") !== selectedSystemFilter) return false;
-      if (selectedThemeId) {
-        const theme = themes.find((row) => row.id === selectedThemeId);
-        if (theme && !theme.actionIds.includes(String(action.id))) return false;
-      }
-
+      if (allowedIds && !allowedIds.has(String(action.id))) return false;
       if (!tokens.length) return true;
 
-      const player = players.find((row) => String(row.id) === String(action.player_id || ""));
+      const playerName = playerNames.get(String(action.player_id || ""));
       const match = matchMap.get(String(action.match_id));
-      const haystack = normalize(`${clipLabel(action)} ${actionSub(action, matchMap)} ${player?.name || ""} ${action.shot_type || ""} ${action.action_type || ""} ${action.temps_fort ? tags.label(action.temps_fort) : ""} ${match?.match_date || ""}`);
+      const haystack = normalize(`${clipLabel(action)} ${actionSub(action, matchMap)} ${playerName || ""} ${action.shot_type || ""} ${action.action_type || ""} ${action.temps_fort ? tags.label(action.temps_fort) : ""} ${match?.match_date || ""}`);
       return tokens.every(token=>haystack.includes(token));
     });
-  }, [actions, receivedClips, filter, matchMap, search, selectedMatchFilter, selectedActionFilter, selectedPlayerFilter, selectedSystemFilter, selectedContextFilter, selectedThemeId, themes, players, tags]);
+  }, [actions, receivedById, playerNames, filter, matchMap, search, selectedMatchFilter, selectedActionFilter, selectedPlayerFilter, selectedSystemFilter, selectedContextFilter, selectedThemeId, themes, players, tags]);
 
   useEffect(() => {
     const video = videoRef.current;
@@ -915,34 +919,31 @@ export default function MontageStudio({
   const insertionIndex = () =>
     items.length === 0 ? 0 : clamp(selectedIndex + 1, 0, items.length);
 
-  const addAction = (action: ActionRow, position?: number) => {
-    if (!hasMontageBounds(action)) { flash("Cette action ne possède pas de bornes vidéo exploitables."); return false; }
+  const addActions = (incoming: ActionRow[], position?: number) => {
+    if (!incoming.length || incoming.some(action => !hasMontageBounds(action))) return false;
     const insertAt = position == null ? items.length : clamp(position, 0, items.length);
+    const additions = incoming.map((action): MontageItem => ({
+      action_id: String(action.id), item_type: "clip", sort_order: 0,
+      title: action.clip_title || clipLabel(action),
+      note: receivedById.get(String(action.id))?.clip.note || "",
+      clip_start: clipStart(action), clip_end: clipEnd(action),
+      freeze_time: null, freeze_duration: null, annotations: [], action,
+      track: "video", timeline_start: playhead, volume: 1,
+    }));
     setItems((current) => {
-      const next: MontageItem = {
-        action_id: String(action.id),
-        item_type: "clip",
-        sort_order: insertAt,
-        title: action.clip_title || clipLabel(action),
-        note: receivedClips.find(clip => clip.actionId === action.id)?.note || "",
-        clip_start: clipStart(action),
-        clip_end: clipEnd(action),
-        freeze_time: null,
-        freeze_duration: null,
-        annotations: [],
-        action,
-        track: "video",
-        timeline_start: playhead,
-        volume: 1,
-      };
       const rows = [...current];
-      rows.splice(position == null ? rows.length : Math.min(position, rows.length), 0, next);
-      return rows.map((item, index) => ({ ...item, sort_order: index }));
+      rows.splice(position == null ? rows.length : Math.min(insertAt, rows.length), 0, ...additions);
+      return enforceTimelineSequence(rows);
     });
     setSelectedIndex(insertAt);
     setClipPreviewIndex(null);
     setMontagePlaying(false);
-    setPlayhead(position == null ? totalDuration : timelineStartOf(items[insertAt], insertAt));
+    setPlayhead(items.slice(0, insertAt).reduce((time, item) => time + (montageTrack(item) === "video" ? montageItemDuration(item) : 0), 0));
+    for (const action of incoming) registerAddedClip(action);
+    return true;
+  };
+
+  const registerAddedClip = (action: ActionRow) => {
     if (!themes.some(theme=>theme.name===RECEIVED_PLAYLIST_NAME && theme.actionIds.includes(action.id))) {
       const sourceTeamId = teamId;
       manualReceiptQueueRef.current = manualReceiptQueueRef.current.then(async()=>{
@@ -954,6 +955,12 @@ export default function MontageStudio({
           return [...current.filter(row=>row.id!==playlist.id),{...playlist,actionIds:Array.from(new Set([...(previous?.actionIds || []),action.id]))}];
         });
       }).catch(error=>flash(`Clip inséré. Sa référence dans Mes clips ajoutés n’a pas pu être enregistrée : ${error instanceof Error ? error.message : 'erreur réseau'}`));
+    }
+  };
+  const addAction = (action: ActionRow, position?: number) => {
+    if (!addActions([action], position)) {
+      flash("Cette action ne possède pas de bornes vidéo exploitables.");
+      return false;
     }
     flash("Clip ajouté dans la timeline");
     return true;
@@ -1496,13 +1503,13 @@ export default function MontageStudio({
       source = source.filter(action => ids.has(action.id));
     }
     return [...source].sort((a, b) => {
-      if (clipSort === "received") { const rank = (action: ActionRow) => receivedClips.findIndex(clip => clip.actionId === action.id); const delta = rank(b) - rank(a); if (delta) return delta; }
+      if (clipSort === "received") { const rank = (action: ActionRow) => receivedById.get(String(action.id))?.index ?? -1; const delta = rank(b) - rank(a); if (delta) return delta; }
       if (clipSort === "player") return clipLabel(a).localeCompare(clipLabel(b), "fr");
       if (clipSort === "action") return String(a.action_type || "").localeCompare(String(b.action_type || ""), "fr");
       const date = (row: ActionRow) => String(matchMap.get(String(row.match_id))?.match_date || "");
       return clipSort === "oldest" ? date(a).localeCompare(date(b)) : date(b).localeCompare(date(a));
     });
-  }, [filteredActions, favoriteActionIds, libraryView, receivedClips, themes, items, clipSort, matchMap]);
+  }, [filteredActions, favoriteActionIds, libraryView, receivedClips, themes, items, clipSort, matchMap, receivedById, players, tags]);
 
   useEffect(() => { setClipLimit(48); setClipPreviewIndex(null); }, [search, filter, selectedMatchFilter, selectedActionFilter, selectedPlayerFilter, selectedSystemFilter, selectedContextFilter, selectedThemeId, libraryView, clipSort]);
 
@@ -1895,16 +1902,19 @@ export default function MontageStudio({
   };
 
   const addSelectedLibraryClips = () => {
-    const selectedActions = librarySelection.map(id => { const action = actions.find(action => String(action.id) === id); const clip = receivedClips.find(row => row.actionId === id); return action && clip ? { ...action, clip_title: clip.title || action.clip_title, resolved_clip_start: clip.clipStart ?? action.resolved_clip_start, resolved_clip_end: clip.clipEnd ?? action.resolved_clip_end } : action; }).filter((action): action is ActionRow => Boolean(action));
-    if (!selectedActions.length) {
-      flash("Sélectionne au moins un clip.");
+    const selectedActions = librarySelection.flatMap(id => {
+      const action = actionsById.get(id);
+      return action ? [withReceivedDetails(action)] : [];
+    });
+    const playable = selectedActions.filter(hasMontageBounds);
+    if (!addActions(playable)) {
+      flash("Aucun clip sélectionné n’a de bornes vidéo exploitables.");
       return;
     }
-    if (selectedActions.some(action => !hasMontageBounds(action))) { flash("Un clip sélectionné n’a pas de bornes vidéo. La sélection est conservée."); return; }
-    selectedActions.forEach((action) => addAction(action));
-    setSelectedIndex(items.length + selectedActions.length - 1);
-    flash(`${selectedActions.length} clip${selectedActions.length > 1 ? "s" : ""} ajouté${selectedActions.length > 1 ? "s" : ""} au montage`);
-    setLibrarySelection([]);
+    const added = new Set(playable.map(action => String(action.id)));
+    const remaining = librarySelection.filter(id => !added.has(id));
+    flash(`${playable.length} clip(s) ajouté(s)${remaining.length ? ` · ${remaining.length} conservé(s) dans la sélection, bornes indisponibles` : ""}`);
+    setLibrarySelection(remaining);
   };
 
   const presentMontage = async () => {
@@ -2213,7 +2223,7 @@ export default function MontageStudio({
           </details>
           <div style={{ padding: "8px 0", display: "grid", gap: 6 }}>
             {librarySelection.length > 0 ? <>
-            <strong>{librarySelection.length} actions sélectionnées · {new Set(actions.filter(action => librarySelection.includes(action.id)).map(action => action.match_id)).size} matchs</strong>
+            <strong>{librarySelection.length} actions sélectionnées · {new Set(actions.filter(action => selectedLibraryIds.has(String(action.id))).map(action => action.match_id)).size} matchs</strong>
             <button disabled={!librarySelection.length} onClick={addSelectedLibraryClips}>＋ Ajouter la sélection au montage</button>
             {themes.length > 0 && <select className="mp-library-select" aria-label="Ajouter la sélection à une playlist" value="" onChange={event=>{const playlistId=event.target.value;if(playlistId) void (async()=>{for(const actionId of librarySelection) await addActionToTheme(playlistId,actionId);})();}}>
               <option value="">Ajouter à une playlist…</option>{themes.map(theme=><option key={theme.id} value={theme.id}>{theme.name}</option>)}
@@ -2239,7 +2249,7 @@ export default function MontageStudio({
                     event.dataTransfer.effectAllowed = "copy";
                   }}
                 >
-                  <input type="checkbox" aria-label={`Sélectionner ${clipLabel(action)}`} disabled={!hasBounds} title={!hasBounds ? "Cette action ne possède pas de timecode vidéo." : "Sélectionner ce clip"} checked={librarySelection.includes(id)} onChange={() => toggleLibrarySelection(id)} />
+                  <input type="checkbox" aria-label={`Sélectionner ${clipLabel(action)}`} disabled={!hasBounds} title={!hasBounds ? "Cette action ne possède pas de timecode vidéo." : "Sélectionner ce clip"} checked={selectedLibraryIds.has(id)} onChange={() => toggleLibrarySelection(id)} />
                   <button className="mp-match-clip-open" onClick={() => setClipPreviewIndex(index)}>
                     <span className="mp-match-thumb"><ClipThumbnail src={actionVideoUrl(action, matchMap)} time={clipStart(action)} /><small>{hasBounds ? `${duration.toFixed(1)} s` : "Sans timecode"}</small></span>
                     <span className="mp-match-copy">
