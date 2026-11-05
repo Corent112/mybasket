@@ -1052,9 +1052,13 @@ export default function MontageStudio({
             const playlist = incomingSourcesRef.current.themes.find(theme => theme.name === RECEIVED_PLAYLIST_NAME && theme.actionIds.includes(synced.id)) || await saveReceivedClipReference(supabase, user.id, teamId, synced.id);
             if (!active) return;
             setThemes(current => {
-              const previous = current.find(row => row.id === playlist.id);
-              const next = { ...playlist, actionIds: Array.from(new Set([...(previous?.actionIds || []), synced.id])) };
-              return [...current.filter(row => row.id !== playlist.id), next];
+              let updated = current;
+              for (const destination of [playlist, clip.playlist].filter((entry) => entry != null)) {
+                const previous = updated.find(row => row.id === destination.id);
+                const next = { ...destination, actionIds: Array.from(new Set([...(previous?.actionIds || []), synced.id])) };
+                updated = [...updated.filter(row => row.id !== destination.id), next];
+              }
+              return updated;
             });
             setTransferError("");
           } catch (error) {

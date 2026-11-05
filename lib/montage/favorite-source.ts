@@ -1,3 +1,4 @@
+import { saveReceivedClipReference } from "./received-playlist";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { enqueueIncomingClip, readIncomingClips, waitForIncomingReceipt, type IncomingMontageClip } from "./incoming-clips";
 
@@ -5,6 +6,7 @@ import { enqueueIncomingClip, readIncomingClips, waitForIncomingReceipt, type In
 export async function sendActionToMontageLibrary(
   supabase: SupabaseClient, teamId: string, sourceId: string, matchId?: string | null,
   transfer?: Pick<IncomingMontageClip, "clipStart" | "clipEnd" | "title" | "note">,
+  playlistName?: string,
 ): Promise<string> {
   const { data: { user }, error: authError } = await supabase.auth.getUser();
   if (authError) throw new Error(authError.message);
@@ -29,8 +31,9 @@ export async function sendActionToMontageLibrary(
     { onConflict: "user_id,team_id,action_id" },
   );
   if (error && !transfer) throw new Error(error.message);
+  const playlist = playlistName ? await saveReceivedClipReference(supabase, user.id, teamId, actionId, playlistName) : undefined;
   if (transfer) {
-    enqueueIncomingClip(user.id, teamId, { ...transfer, actionId, matchId });
+    enqueueIncomingClip(user.id, teamId, { ...transfer, actionId, matchId, playlist });
     const request = readIncomingClips(user.id, teamId).find(row => row.actionId === actionId);
     if (!request || !await waitForIncomingReceipt(user.id, teamId, request.transferId)) {
       throw new Error("Clip en attente de réception. Ouvre Montage : il reste dans la file d’envoi, il n’est pas encore confirmé dans la playlist Clips reçus.");

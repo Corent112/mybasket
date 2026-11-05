@@ -226,7 +226,10 @@ const drop=async(target,payload,clientX=0)=>{const event=new Event('drop',{bubbl
  await act(async()=>restoredRoot.unmount());
  const Modal=require('../components/prise-stats-pro/ActionClipsModal.tsx').default;
  let added=0;await act(async()=>{createRoot(document.getElementById('root')).render(React.createElement(Modal,{open:true,actions:[{id:'a',matchId:'m1',q:1,clipStart:10,clipEnd:16}],title:'Clip',videoUrl:'https://example.test/valid.mp4',onClose:()=>{},onAddToMontage:()=>added++}))});await flush();
- assert.equal(document.querySelectorAll('.acm-details').length,3);
+ assert.equal(document.querySelectorAll('.acm-details').length,4);
+ await click([...document.querySelectorAll('button')].find(el=>el.textContent==='Tout sélectionner'));
+ assert.equal(document.querySelector('.acm-details input[type=checkbox]').checked,true);
+ assert.equal([...document.querySelectorAll('button')].find(el=>el.textContent==='Exporter la sélection').disabled,false);
  assert.ok([...document.querySelectorAll('.acm-details')].every(el=>!el.open),'Clip details, trim and note start collapsed');
  await click([...document.querySelectorAll('button')].find(el=>el.textContent.includes('Ajouter au montage')));assert.equal(added,1);
  console.log('Montage: pistes séparées, titres superposés/cartons, déplacement inter-pistes, sauvegarde/réouverture, collections et aperçu allégé validés.');

@@ -20,6 +20,7 @@
  * Aucune dépendance à PriseStatsPro : tout arrive par props.
  * ========================================================================== */
 
+import { downloadLocalExport, exportSequentialClipsLocally } from "@/lib/local-montage-export";
 import { highlightLabel } from "@/lib/livestat-labels";
 import { type PointerEvent as ReactPointerEvent, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { type VideoSyncState, NATIVE_SYNC, resolveActionClipBounds } from '@/lib/video-sync';
@@ -77,6 +78,7 @@ export type ActionClipsModalProps = {
   syncForAction?: (action: ClipAction) => VideoSyncState;
   startIndex?: number;
   onClose: () => void;
+  onSendSelection?: (actions: ClipAction[]) => Promise<string>;
   onAddToMontage?: (action: ClipAction) => void;
   onSaveNote?: (action: ClipAction, note: string) => void;
   onTrim?: (action: ClipAction, clipStart: number, clipEnd: number) => void;
@@ -106,6 +108,10 @@ const systemLabelOf = (a?: ClipAction): string =>
 export default function ActionClipsModal(props: ActionClipsModalProps) {
   useLocalMatchVideoVersion();
   const { open, actions, title, videoUrl, onClose, onAddToMontage, onSaveNote, onTrim } = props;
+  const [selection, setSelection] = useState<Set<number>>(new Set());
+  const [batchStatus, setBatchStatus] = useState("");
+  const [batchBusy, setBatchBusy] = useState(false);
+  useEffect(() => { setSelection(new Set()); setBatchStatus(""); }, [open, title, actions.length]);
   const [index, setIndex] = useState(props.startIndex ?? 0);
   const [full, setFull] = useState(false);
   const [note, setNote] = useState('');
@@ -315,6 +321,34 @@ export default function ActionClipsModal(props: ActionClipsModalProps) {
     stopRef.current = () => v.removeEventListener('timeupdate', onTick);
   };
 
+  const runBatch = async (send: boolean) => {
+    const rows = actions.filter((_, i) => selection.has(i));
+    if (!rows.length || batchBusy) return;
+    setBatchBusy(true);
+    setBatchStatus(send ? "Envoi en cours…" : "Préparation de la vidéo…");
+    try {
+      if (send && props.onSendSelection) {
+        setBatchStatus(await props.onSendSelection(rows));
+      } else {
+        const sources = await Promise.all(rows.map(async (action) => {
+          const matchId = String(action.matchId ?? action.match_id ?? "");
+          const url = getLocalMatchVideoUrl(matchId)
+            ?? (matchId && props.teamId ? await restoreMatchVideoForClip(matchId, props.teamId).catch(() => null).then(() => getLocalMatchVideoUrl(matchId)) : null)
+            ?? props.videoUrlForAction?.(action) ?? videoUrl;
+          const bounds = resolveActionClipBounds(action, props.syncForAction?.(action) ?? props.sync ?? NATIVE_SYNC);
+          const edit = props.getEdit?.(action);
+          const start = edit?.trimStart ?? bounds.start, end = edit?.trimEnd ?? bounds.end;
+          if (!url || start == null || end == null || end <= start) throw Error("Une action sélectionnée n’a pas de vidéo ou de bornes valides.");
+          return { url, start, end };
+        }));
+        const result = await exportSequentialClipsLocally(sources, "clips-mybasket", (progress) => setBatchStatus(`Export · ${Math.round(progress)} %`));
+        downloadLocalExport(result);
+        setBatchStatus("Vidéo téléchargée.");
+      }
+    } catch (error) { setBatchStatus(error instanceof Error ? error.message : "Opération impossible."); }
+    finally { setBatchBusy(false); }
+  };
+
   if (!open || actions.length === 0 || !current) return null;
   const hasVideo = !!currentVideoUrl;
   const cur = current;
@@ -390,6 +424,25 @@ export default function ActionClipsModal(props: ActionClipsModalProps) {
             <button onClick={applyBoundedPlayback}>↻ Rejouer</button>
             <button disabled={index === actions.length - 1} onClick={() => go(1)}>Suivant →</button>
           </div>
+
+          <details className="acm-details">
+            <summary>Sélection de clips · {selection.size}/{actions.length}</summary>
+            <div className="acm-tools">
+              <button disabled={batchBusy} onClick={() => setSelection(new Set(actions.map((_, i) => i)))}>Tout sélectionner</button>
+              <button disabled={batchBusy} onClick={() => setSelection(new Set())}>Tout désélectionner</button>
+              <button disabled={batchBusy || !selection.size} onClick={() => void runBatch(false)}>Exporter la sélection</button>
+              {props.onSendSelection && <button disabled={batchBusy || !selection.size} onClick={() => void runBatch(true)}>Envoyer dans Montage · par tag</button>}
+            </div>
+            <div style={{ maxHeight: 180, overflowY: 'auto', display: 'grid', gap: 6 }}>
+              {actions.map((action, i) => <label key={i}>
+                <input type="checkbox" disabled={batchBusy} checked={selection.has(i)} onChange={(event) => {
+                  const checked = event.target.checked;
+                  setSelection(current => { const next = new Set(current); if (checked) next.add(i); else next.delete(i); return next; });
+                }} /> {i + 1}. {[periodLabel(action.q), action.clock, props.tempsFortLabel?.(action.tempsFort) || props.describe?.(action) || action.actionType].filter(Boolean).join(' · ')}
+              </label>)}
+            </div>
+            {batchStatus && <small role="status">{batchStatus}</small>}
+          </details>
 
           <details className="acm-details"><summary>Informations du clip</summary><div className="acm-infos">
             <Info k="Match" v={cur.matchLabel} />

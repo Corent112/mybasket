@@ -1025,7 +1025,15 @@ export default function PriseStatsProPage() {
     };
   }, []);
   const [codingProfileOwner,setCodingProfileOwner]=useState('');
-  useEffect(()=>{let alive=true;void createClient().auth.getUser().then(({data}: {data:{user:{id:string}|null}})=>{if(alive)setCodingProfileOwner(data.user?.id||'');});return()=>{alive=false;};},[]);
+  useEffect(() => {
+    const client = createClient();
+    let alive = true;
+    const { data: { subscription } } = client.auth.onAuthStateChange((event: string, session: {user: {id: string}} | null) => {
+      if (alive && event !== 'INITIAL_SESSION') setCodingProfileOwner(session?.user.id ?? '');
+    });
+    void client.auth.getUser().then(({ data }: {data: {user: {id: string} | null}}) => { if (alive) setCodingProfileOwner(data.user?.id ?? ''); });
+    return () => { alive = false; subscription.unsubscribe(); };
+  }, []);
   const [codingProfiles, setCodingProfiles] = useState<LiveCodingProfile[]>([]);
   const [selectedCodingProfileId, setSelectedCodingProfileId] = useState('');
   const [profileConfig,setProfileConfig] = useState<LiveCodingProfile | null>(null);
@@ -2647,6 +2655,28 @@ export default function PriseStatsProPage() {
     } catch (error) {
       flash(error instanceof Error ? error.message : 'Impossible d’envoyer ce clip dans Montage.');
     }
+  };
+  const sendSelectedToMontage = async (selection: StatA[]) => {
+    const destinationTeam = String(liveTeamIdRef.current || activeTeamId || teamId || '');
+    openMontageDestination(destinationTeam);
+    const client = createClient();
+    let sent = 0;
+    const failed: string[] = [];
+    for (const action of selection) {
+      try {
+        const edit = clipEdits[clipEditKey(action)];
+        const bounds = resolveActionClipBounds(action, videoSyncRef.current);
+        const start = edit?.trimStart ?? bounds.start, end = edit?.trimEnd ?? bounds.end;
+        if (start == null || end == null || end <= start) throw Error('Bornes vidéo manquantes.');
+        const tag = tags.label(action.tempsFort) || tags.label(action.actionType) || 'Autres actions';
+        const player = find(action.playerId)?.name;
+        await sendActionToMontageLibrary(client, destinationTeam, action.id, liveMatchIdRef.current,
+          { clipStart: start, clipEnd: end, title: [player, tag].filter(Boolean).join(' · '), note: edit?.note },
+          tag);
+        sent++;
+      } catch (error) { failed.push(error instanceof Error ? error.message : 'Envoi impossible.'); }
+    }
+    return failed.length ? `${sent} reçu(s), ${failed.length} non confirmé(s) · ${failed[0]}` : `${sent} clip(s) reçus et classés par tag dans Montage`;
   };
   const removeMontageItem = (caid: string) => setMontageItems((prev) => prev.filter((x) => x.caid !== caid));
   const moveMontageItem = (idx: number, dir: -1 | 1) => {
@@ -5121,7 +5151,7 @@ export default function PriseStatsProPage() {
                       <button type="button" onClick={() => setShowMatchReviewBuilder(true)}>Créer / modifier</button>
                     </div>
 
-                    <MatchReviewWindowPicker />
+                    {codingProfileOwner && <MatchReviewWindowPicker ownerId={codingProfileOwner} />}
                     <div className="matchReviewConstructorGrid">
                       <div><strong>01</strong><b>Blocs</b><span>Place et redimensionne tes blocs : joueurs, shot chart ou blocs personnels.</span></div>
                       <div><strong>02</strong><b>Boutons</b><span>Bouton simple, + / −, compteur, note, choix multiple ou texte.</span></div>
@@ -5525,8 +5555,10 @@ export default function PriseStatsProPage() {
           onChanged={() => { setCodingDbNonce((n) => n + 1); tags.reload(); }}
           onClose={() => setShowCodingSettings(false)}
         />
-        {showMatchReviewBuilder && (
+        {showMatchReviewBuilder && codingProfileOwner && (
           <MatchReviewBuilder
+                  key={codingProfileOwner}
+                  ownerId={codingProfileOwner}
             players={setupRoster.map((player) => ({ id: player.id, name: player.name, num: player.num }))}
             initialEditorOpen
             onSaved={() => { setCodingMode('match-review'); setShowMatchReviewBuilder(false); flash('Fenêtre de Mon mode enregistrée et sélectionnée ✓'); }}
@@ -5713,7 +5745,7 @@ export default function PriseStatsProPage() {
       {screen === 'box' ? (
         <>
           <VideoReselectBanner />
-          <BoxView actions={actions} roster={roster} teamId={activeTeamId || teamId} minutesByPlayer={minutesByPlayer} onChangeMinutes={(playerId, seconds) => setMinutesByPlayer((current) => ({ ...current, [playerId]: Math.max(0, Math.round(seconds)) }))} onSaveMinutes={() => { void persistProjectStateRef.current(); flash('Temps de jeu enregistrés ✓'); }} videoProvider={videoProvider} videoUrl={videoUrl} sync={videoSync} oppRoster={oppRoster} onAddToMontage={addToMontage} onSaveNote={(id, note) => setClipEdit(id, { note })} onTrim={(id, cs, ce) => setClipEdit(id, { trimStart: cs, trimEnd: ce })} getEdit={(id) => getClipEdit(id)} initialTab={initialBoxTab} />
+          <BoxView actions={actions} roster={roster} teamId={activeTeamId || teamId} minutesByPlayer={minutesByPlayer} onChangeMinutes={(playerId, seconds) => setMinutesByPlayer((current) => ({ ...current, [playerId]: Math.max(0, Math.round(seconds)) }))} onSaveMinutes={() => { void persistProjectStateRef.current(); flash('Temps de jeu enregistrés ✓'); }} videoProvider={videoProvider} videoUrl={videoUrl} sync={videoSync} oppRoster={oppRoster} onAddToMontage={addToMontage} onSendSelection={sendSelectedToMontage} onSaveNote={(id, note) => setClipEdit(id, { note })} onTrim={(id, cs, ce) => setClipEdit(id, { trimStart: cs, trimEnd: ce })} getEdit={(id) => getClipEdit(id)} initialTab={initialBoxTab} />
         </>
       ) : (
         <>
@@ -5872,8 +5904,10 @@ export default function PriseStatsProPage() {
 
             {/* ============ CENTRE · CODAGE (wizard) ============ */}
             <aside className={`lc lc-code ${workTab === 'coding' ? 'mshow' : ''}`}>
-              {codingMode === 'match-review' ? (
+              {codingMode === 'match-review' ? (!codingProfileOwner ? <p>Connexion requise pour ouvrir tes fenêtres de codage.</p> : (
                 <MatchReviewBuilder
+                  key={codingProfileOwner}
+                  ownerId={codingProfileOwner}
                   embedded
                   projectId={String(liveMatchId || `draft_${teamId}_${date}`)}
                   players={roster.map((player) => ({ id: player.id, name: player.name, num: player.num }))}
@@ -5890,7 +5924,7 @@ export default function PriseStatsProPage() {
                     else if (event.clipStart != null && event.clipEnd != null) playVideoBounds(event.clipStart, event.clipEnd);
                   }}
                 />
-              ) : (
+              )) : (
                 <>
                   <div className="lc-head codeTop">
                     <button className="headBack" disabled={stage === 'context' || stageHistory.length === 0} onClick={goBackStage}>←</button>
@@ -6342,8 +6376,10 @@ export default function PriseStatsProPage() {
         onClose={() => setShowCodingSettings(false)}
       />
 
-      {showMatchReviewBuilder && (
+      {showMatchReviewBuilder && codingProfileOwner && (
         <MatchReviewBuilder
+                  key={codingProfileOwner}
+                  ownerId={codingProfileOwner}
           projectId={String(liveMatchId || `draft_${teamId}_${date}`)}
           players={roster.map((player) => ({ id: player.id, name: player.name, num: player.num }))}
           getVideoTime={() => hasVideoLoaded() ? getCurrentVideoTime() : null}
@@ -6446,6 +6482,7 @@ export default function PriseStatsProPage() {
         sync={videoSync}
         onClose={() => setClipModal(null)}
         onAddToMontage={(a: ClipAction) => addToMontage(a as unknown as StatA)}
+        onSendSelection={(rows) => sendSelectedToMontage(rows as unknown as StatA[])}
         onSaveNote={(a: ClipAction, note: string) => { if (a.id) { setClipEdit(a.id, { note }); flash('Note enregistrée'); } }}
         onTrim={(a: ClipAction, cs: number, ce: number) => { if (a.id) { setClipEdit(a.id, { trimStart: cs, trimEnd: ce }); flash('Rognage enregistré'); } }}
         getEdit={(a: ClipAction) => a.id ? getClipEdit(a.id) : undefined}
@@ -7817,7 +7854,7 @@ export default function PriseStatsProPage() {
 }
 
 /* ============================ Box-score ============================ */
-function BoxView({ actions, roster, teamId, minutesByPlayer = {}, onChangeMinutes, onSaveMinutes, videoProvider = 'none', videoUrl = '', sync = NATIVE_SYNC, oppRoster = [], onAddToMontage, onSaveNote, onTrim, getEdit, initialTab }: { actions: StatA[]; roster: Player[]; teamId?: string; minutesByPlayer?: Record<string, number>; onChangeMinutes?: (playerId: string, seconds: number) => void; onSaveMinutes?: () => void; videoProvider?: string; videoUrl?: string; sync?: VideoSyncState; oppRoster?: { id: string; num: string; name: string }[]; onAddToMontage?: (a: StatA) => void; onSaveNote?: (id: string, note: string) => void; onTrim?: (id: string, cs: number, ce: number) => void; getEdit?: (id: string) => { note?: string; trimStart?: number | null; trimEnd?: number | null } | undefined; initialTab?: 'box' | 'team' | null }) {
+function BoxView({ actions, roster, teamId, minutesByPlayer = {}, onChangeMinutes, onSaveMinutes, videoProvider = 'none', videoUrl = '', sync = NATIVE_SYNC, oppRoster = [], onAddToMontage, onSendSelection, onSaveNote, onTrim, getEdit, initialTab }: { actions: StatA[]; roster: Player[]; teamId?: string; minutesByPlayer?: Record<string, number>; onChangeMinutes?: (playerId: string, seconds: number) => void; onSaveMinutes?: () => void; videoProvider?: string; videoUrl?: string; sync?: VideoSyncState; oppRoster?: { id: string; num: string; name: string }[]; onAddToMontage?: (a: StatA) => void; onSendSelection?: (rows: StatA[]) => Promise<string>; onSaveNote?: (id: string, note: string) => void; onTrim?: (id: string, cs: number, ce: number) => void; getEdit?: (id: string) => { note?: string; trimStart?: number | null; trimEnd?: number | null } | undefined; initialTab?: 'box' | 'team' | null }) {
   const tags = useLivestatTags(teamId);
   // AJOUT §12 · find reconnaît aussi les joueurs adverses (préfixe opp_).
   const find = (id: string | null) => roster.find((p) => p.id === id)
@@ -8542,6 +8579,7 @@ function BoxView({ actions, roster, teamId, minutesByPlayer = {}, onChangeMinute
         videoUrl={(videoProvider === 'local' || videoProvider === 'google_drive') ? videoUrl : ''}
         sync={sync}
         onClose={() => { setClipList(null); setClipAction(null); }}
+        onSendSelection={onSendSelection ? (rows) => onSendSelection(rows as unknown as StatA[]) : undefined}
         onAddToMontage={onAddToMontage ? (a: ClipAction) => onAddToMontage(a as unknown as StatA) : undefined}
         onSaveNote={onSaveNote ? (a: ClipAction, note: string) => { if (a.id) onSaveNote(a.id, note); } : undefined}
         onTrim={onTrim ? (a: ClipAction, cs: number, ce: number) => { if (a.id) onTrim(a.id, cs, ce); } : undefined}

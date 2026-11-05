@@ -1,5 +1,6 @@
 export const MONTAGE_INCOMING_EVENT = "mybasket:montage-incoming";
 export type IncomingMontageClip = {
+  playlist?: { id: string; name: string };
   transferId: string; actionId: string; matchId?: string | null;
   clipStart: number | null; clipEnd: number | null; title?: string; note?: string;
 };
