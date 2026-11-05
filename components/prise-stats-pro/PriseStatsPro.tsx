@@ -2329,8 +2329,10 @@ export default function PriseStatsProPage() {
     // Bornes DÉJÀ synchronisées (source → position réelle dans la vidéo). On ne
     // lit jamais clipStart/clipEnd bruts sans passer par la synchronisation.
     const bounds = resolveActionClipBounds(a, videoSyncRef.current);
-    const start = bounds.start;
-    const end = bounds.end;
+    playVideoBounds(bounds.start, bounds.end);
+  };
+  // Custom windows already capture absolute media positions.
+  const playVideoBounds = (start: number | null, end: number | null) => {
     if (!hasVideoLoaded() || start == null) { flash('Clip à synchroniser'); return; }
     if (videoProvider === 'youtube') { flash('YouTube lié — repère à ' + fmt(Math.round(start))); return; }
 
@@ -5800,8 +5802,9 @@ export default function PriseStatsProPage() {
                   embedded
                   projectId={String(liveMatchId || `draft_${teamId}_${date}`)}
                   players={roster.map((player) => ({ id: player.id, name: player.name, num: player.num }))}
-                  getVideoTime={getCurrentVideoTime}
+                  getVideoTime={() => hasVideoLoaded() ? getCurrentVideoTime() : null}
                   onSeek={seekVideo}
+                  onPlayClip={playVideoBounds}
                   onLayoutChange={setMatchReviewLayout}
                   onRecord={(event: MatchReviewEvent) => {
                     const who = event.playerName ? ` · ${event.playerName}` : '';
@@ -6264,7 +6267,7 @@ export default function PriseStatsProPage() {
         <MatchReviewBuilder
           projectId={String(liveMatchId || `draft_${teamId}_${date}`)}
           players={roster.map((player) => ({ id: player.id, name: player.name, num: player.num }))}
-          getVideoTime={getCurrentVideoTime}
+          getVideoTime={() => hasVideoLoaded() ? getCurrentVideoTime() : null}
           onLayoutChange={setMatchReviewLayout}
           initialEditorOpen
           onSaved={() => { setShowMatchReviewBuilder(false); flash('Fenêtre de Mon mode enregistrée et sélectionnée ✓'); }}

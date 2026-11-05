@@ -36,6 +36,7 @@ export type MatchReviewControl = {
   requirePlayer?: boolean;
   requireComment?: boolean;
   createClip?: boolean;
+  clipRole?: "start" | "end";
   preRoll?: number;
   postRoll?: number;
   options?: string[];
@@ -93,6 +94,10 @@ export type MatchReviewEvent = {
   playerName: string | null;
   comment: string;
   createClip: boolean;
+  clipRole?: "start" | "end";
+  clipStart?: number;
+  clipEnd?: number;
+  clipOpenedBy?: string;
   preRoll: number;
   postRoll: number;
   videoTime: number | null;
@@ -110,6 +115,7 @@ type Props = {
   players?: PlayerOption[];
   getVideoTime?: () => number | null;
   onSeek?: (time: number) => void;
+  onPlayClip?: (start: number, end: number) => void;
   embedded?: boolean;
   initialEditorOpen?: boolean;
   onClose?: () => void;
@@ -125,10 +131,26 @@ const EVENT_STORAGE_PREFIX = "mybasket.match-review.events.v2.";
 const storageGet = (key: string): string | null => {
   if (typeof window === "undefined") return null;
   try {
+    const temporary = window.sessionStorage.getItem(key);
+    if (temporary !== null) return temporary;
+  } catch {}
+  try {
     return window.localStorage.getItem(key);
   } catch {
     return null;
   }
+};
+
+// A full local store must not prevent editing in the current browser tab.
+const storageSet = (key: string, value: string): boolean => {
+  try {
+    window.localStorage.setItem(key, value);
+  } catch {
+    window.sessionStorage.setItem(key, value);
+    return false;
+  }
+  try { window.sessionStorage.removeItem(key); } catch {}
+  return true;
 };
 
 const uid = () => {
@@ -513,7 +535,7 @@ export function MatchReviewWindowPicker() {
           disabled={!windows.length}
           onChange={(event) => {
             try {
-              window.localStorage.setItem(
+              storageSet(
                 ACTIVE_TEMPLATE_STORAGE,
                 event.target.value,
               );
@@ -581,6 +603,7 @@ export default function MatchReviewBuilder({
   players = [],
   getVideoTime,
   onSeek,
+  onPlayClip,
   embedded = false,
   initialEditorOpen = false,
   onClose,
@@ -656,8 +679,9 @@ export default function MatchReviewBuilder({
         !dirty &&
         Array.isArray(data?.templates)
       ) {
-        setTemplates(data.templates);
-        setActiveId(data.activeId);
+        const next = data.templates.length ? data.templates : [blankTemplate()];
+        setTemplates(next);
+        setActiveId(data.activeId || next[0].id);
       }
     };
     window.addEventListener("mybasket:mon-mode-saved", sync);
@@ -726,15 +750,10 @@ export default function MatchReviewBuilder({
       return;
     }
     try {
-      window.localStorage.setItem(TEMPLATE_STORAGE, JSON.stringify(templates));
-      if (
-        window.localStorage.getItem(TEMPLATE_STORAGE) !==
-        JSON.stringify(templates)
-      )
-        throw new Error("storage verification");
-      window.localStorage.setItem(ACTIVE_TEMPLATE_STORAGE, active.id);
+      const durable = storageSet(TEMPLATE_STORAGE, JSON.stringify(templates));
+      try { storageSet(ACTIVE_TEMPLATE_STORAGE, active.id); } catch {}
       setDirty(false);
-      setMessage("Fenêtre enregistrée dans ce navigateur ✓");
+      setMessage(durable ? "Fenêtre enregistrée dans ce navigateur ✓" : "Stockage plein : fenêtre enregistrée pour cet onglet uniquement.");
       window.dispatchEvent(
         new CustomEvent("mybasket:mon-mode-saved", {
           detail: { origin: origin.current, templates, activeId: active.id },
@@ -795,7 +814,7 @@ export default function MatchReviewBuilder({
       setControlId(control.id);
       return;
     }
-    setDraft({
+    const nextDraft = {
       blockId: block.id,
       controlId: control.id,
       value:
@@ -804,7 +823,12 @@ export default function MatchReviewBuilder({
           ? ""
           : (control.value ?? 1)),
       time: getVideoTime?.() ?? null,
-    });
+    };
+    if (control.clipRole && !control.requirePlayer && !control.requireComment && nextDraft.value !== "") {
+      record(nextDraft, "");
+      return;
+    }
+    setDraft(nextDraft);
     setComment("");
     setMessage("");
   };
@@ -834,8 +858,9 @@ export default function MatchReviewBuilder({
     };
     window.addEventListener("keydown", key);
     return () => window.removeEventListener("keydown", key);
-  }, [active, editing, getVideoTime]);
-  const record = () => {
+  });
+  const record = (draftToSave = draft, note = comment) => {
+    const draft = draftToSave;
     const b = active.blocks.find((b) => b.id === draft?.blockId),
       c = b?.controls.find((c) => c.id === draft?.controlId);
     if (!b || !c || !draft) return;
@@ -843,12 +868,26 @@ export default function MatchReviewBuilder({
       setMessage("Sélectionnez un joueur.");
       return;
     }
-    if (c.requireComment && !comment.trim()) {
+    if (c.requireComment && !note.trim()) {
       setMessage("Renseignez un commentaire.");
       return;
     }
     if (draft.value === "") {
       setMessage("Renseignez le résultat ou le texte.");
+      return;
+    }
+    const latestMarker = events.find((event) => event.templateId === active.id && event.clipRole);
+    const openClip = latestMarker?.clipRole === "start" ? latestMarker : undefined;
+    if (c.clipRole && (draft.time == null || !Number.isFinite(draft.time) || draft.time < 0)) {
+      setMessage("Chargez une vidéo pour placer un début ou une fin de clip.");
+      return;
+    }
+    if (c.clipRole === "start" && openClip) {
+      setMessage("Un clip est déjà ouvert. Clôturez-le avant d’en ouvrir un autre.");
+      return;
+    }
+    if (c.clipRole === "end" && (!openClip || openClip.videoTime == null || draft.time! <= openClip.videoTime)) {
+      setMessage(openClip ? "Placez la fin après le début du clip." : "Marquez d’abord le début du clip.");
       return;
     }
     const player = players.find((p) => p.id === playerId);
@@ -864,8 +903,14 @@ export default function MatchReviewBuilder({
       value: draft.value,
       playerId: player?.id || null,
       playerName: player?.name || null,
-      comment: comment.trim(),
-      createClip: !!c.createClip,
+      comment: note.trim(),
+      createClip: c.clipRole === "end" || (!c.clipRole && !!c.createClip),
+      clipRole: c.clipRole,
+      ...(c.clipRole === "end" && openClip ? {
+        clipStart: openClip.videoTime!,
+        clipEnd: draft.time!,
+        clipOpenedBy: openClip.id,
+      } : {}),
       preRoll: Math.max(0, c.preRoll || 0),
       postRoll: Math.max(0, c.postRoll || 0),
       videoTime: draft.time,
@@ -876,9 +921,10 @@ export default function MatchReviewBuilder({
       shotType: point ? shotType : null,
     };
     const next = [event, ...events];
+    let durable = true;
     try {
       if (projectId)
-        window.localStorage.setItem(
+        durable = storageSet(
           `${EVENT_STORAGE_PREFIX}${projectId}`,
           JSON.stringify(next),
         );
@@ -892,7 +938,15 @@ export default function MatchReviewBuilder({
     setPoint(null);
     setShotZoneId(null);
     setComment("");
-    setMessage("Action personnalisée enregistrée ✓");
+    const status = c.clipRole === "start" ? "Clip ouvert" : c.clipRole === "end" ? "Clip clôturé" : "Action personnalisée enregistrée";
+    setMessage(durable ? `${status} ✓` : `${status} · conservé dans cet onglet uniquement.`);
+  };
+  const previewEvent = (event: MatchReviewEvent) => {
+    if (event.clipStart != null && event.clipEnd != null && onPlayClip) {
+      onPlayClip(event.clipStart, event.clipEnd);
+    } else if (event.videoTime != null) {
+      onSeek?.(Math.max(0, event.videoTime - (event.clipRole ? 0 : event.preRoll)));
+    }
   };
   const startGesture = (
     e: ReactPointerEvent<HTMLElement>,
@@ -1130,15 +1184,30 @@ export default function MatchReviewBuilder({
                   )
                 )
                   return;
-                setPast((p) => [...p, templates]);
-                setFuture([]);
+                const saved = safeParseTemplates().filter((t) => t.id !== active.id);
+                let durable: boolean;
+                try {
+                  durable = storageSet(TEMPLATE_STORAGE, JSON.stringify(saved));
+                } catch {
+                  setMessage("Suppression impossible : stockage indisponible.");
+                  return;
+                }
                 const remaining = templates.filter((t) => t.id !== active.id);
                 const next = remaining.length ? remaining : [blankTemplate()];
+                const savedActiveId = saved.find((t) => t.id === next[0].id)?.id || saved[0]?.id || "";
+                try { storageSet(ACTIVE_TEMPLATE_STORAGE, savedActiveId); } catch {}
+                setPast([]);
+                setFuture([]);
                 setTemplates(next);
                 setActiveId(next[0].id);
                 setSelected(null);
                 setControlId(null);
-                setDirty(true);
+                setDraft(null);
+                setDirty(JSON.stringify(remaining) !== JSON.stringify(saved));
+                setMessage(durable ? "Fenêtre supprimée ✓" : "Fenêtre retirée pour cet onglet uniquement : stockage indisponible.");
+                window.dispatchEvent(new CustomEvent("mybasket:mon-mode-saved", {
+                  detail: { origin: origin.current, templates: saved, activeId: savedActiveId },
+                }));
               }}
             >
               Supprimer la fenêtre
@@ -1496,16 +1565,24 @@ export default function MatchReviewBuilder({
                     Commentaire obligatoire
                   </label>
                   <label>
-                    <input
-                      type="checkbox"
-                      checked={!!control.createClip}
-                      onChange={(e) =>
-                        patchControl({ createClip: e.target.checked })
-                      }
-                    />{" "}
-                    Marquer un clip vidéo
+                    Clip vidéo
+                    <select
+                      value={control.clipRole ?? (control.createClip ? "instant" : "none")}
+                      onChange={(e) => {
+                        const role = e.target.value;
+                        patchControl({
+                          createClip: role === "instant",
+                          clipRole: role === "start" || role === "end" ? role : undefined,
+                        });
+                      }}
+                    >
+                      <option value="none">Aucun clip</option>
+                      <option value="instant">Clip autour du clic</option>
+                      <option value="start">Ouvrir un clip</option>
+                      <option value="end">Clôturer le clip ouvert</option>
+                    </select>
                   </label>
-                  {control.createClip && (
+                  {control.createClip && !control.clipRole && (
                     <div className={styles.two}>
                       <label>
                         Avant (s)
@@ -1798,7 +1875,7 @@ export default function MatchReviewBuilder({
                   >
                     Annuler la saisie
                   </button>
-                  <button className={styles.primary} onClick={record}>
+                  <button className={styles.primary} onClick={() => record()}>
                     Enregistrer l’action
                   </button>
                 </div>
@@ -1838,11 +1915,7 @@ export default function MatchReviewBuilder({
                       key={event.id}
                       disabled={event.videoTime == null || !onSeek}
                       title={`${event.controlLabel} · ${event.videoTime?.toFixed(1) ?? "–"} s`}
-                      onClick={() =>
-                        onSeek?.(
-                          Math.max(0, (event.videoTime || 0) - event.preRoll),
-                        )
-                      }
+                      onClick={() => previewEvent(event)}
                     >
                       {event.controlLabel}
                     </button>
@@ -1854,16 +1927,14 @@ export default function MatchReviewBuilder({
                 className={styles.event}
                 key={event.id}
                 disabled={event.videoTime == null || !onSeek}
-                onClick={() =>
-                  onSeek?.(Math.max(0, (event.videoTime || 0) - event.preRoll))
-                }
+                onClick={() => previewEvent(event)}
               >
                 <span>
                   {event.videoTime == null
                     ? "—"
                     : `${event.videoTime.toFixed(1)} s`}
                 </span>
-                <b>{event.controlLabel}</b>
+                <b>{event.controlLabel}{event.clipStart != null && event.clipEnd != null ? ` · Clip ${(event.clipEnd - event.clipStart).toFixed(1)} s` : ""}</b>
                 <span>{event.playerName || "Équipe"}</span>
                 <span>{event.value}</span>
               </button>

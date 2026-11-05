@@ -1401,7 +1401,7 @@ setLoading(false);
 
         const selectedGroups = item.drawingGroups?.length ? selectedDrawingGroups(item.drawingGroups,item.selectedDrawingIds) : null;
         const situationImages = selectedGroups
-          ? selectedGroups.map(group => `<div style="grid-column:1/-1;border:1px solid #e2d4d7;padding:4px;margin-bottom:4px"><strong>${escapeDrawingHtml(group.label)}</strong><div class="schemasGrid schemasCount${Math.min(group.images.length,6)}">${group.images.map(image => `<img src="${escapeDrawingHtml(image)}" alt="Schéma"/>`).join("")}</div></div>`).join("") || '<div class="emptySchema">Aucun schéma sélectionné</div>'
+          ? selectedGroups.map(group => `<div class="schemaGroup"><strong>${escapeDrawingHtml(group.label)}</strong><div class="schemasGrid schemasCount${Math.min(group.images.length,6)}">${group.images.map(image => `<img src="${escapeDrawingHtml(image)}" alt="Schéma"/>`).join("")}</div></div>`).join("") || '<div class="emptySchema">Aucun schéma sélectionné</div>'
           :
           images.length > 0
             ? images
@@ -1437,7 +1437,7 @@ setLoading(false);
             </td>
             <td class="explain">
               <strong>${item.title}</strong>
-              <p>${formatText(item.session_deroulement ?? "")}</p>
+              <p>${formatText(item.session_deroulement ?? "").replace(/(^|<br \/>)(Situation\s+\d+[^<]*)/gi, '$1<span class="situationHeading">$2</span>')}</p>
             </td>
             <td class="instructions">
               <p>${formatText(item.session_consignes_variantes ?? "")}</p>
@@ -1651,6 +1651,31 @@ setLoading(false);
               text-align: center;
             }
 
+            .practiceTable { table-layout: fixed; width: 100%; }
+            .practiceTable td { box-sizing: border-box; overflow-wrap: anywhere; }
+            .practiceTable .situation, .practiceTable .explain, .practiceTable .instructions {
+              width: auto;
+              vertical-align: top;
+            }
+            .schemaGroup {
+              grid-column: 1 / -1;
+              width: 100%;
+              min-width: 0;
+              box-sizing: border-box;
+              border: 1px solid #e2d4d7;
+              padding: 4px;
+            }
+            .schemaGroup strong { display: block; margin-bottom: 4px; }
+            .schemaGroup .schemasGrid { gap: 4px; }
+            .schemaGroup .schemasCount3, .schemaGroup .schemasCount4 {
+              grid-template-columns: repeat(3, minmax(0, 1fr));
+            }
+            .explain .situationHeading {
+              display: inline-block;
+              margin-top: .65em;
+              color: #6b1a2c;
+              font-weight: 700;
+            }
             .schemasGrid {
               display: grid;
               gap: 6px;
@@ -1665,17 +1690,21 @@ setLoading(false);
             .schemasCount2,
             .schemasCount3,
             .schemasCount4 {
-              grid-template-columns: repeat(2, 1fr);
+              grid-template-columns: repeat(2, minmax(0, 1fr));
             }
 
             .schemasCount5,
             .schemasCount6 {
-              grid-template-columns: repeat(3, 1fr);
+              grid-template-columns: repeat(3, minmax(0, 1fr));
             }
 
             .situation img {
-              width: 125px;
-              height: 90px;
+              width: 100%;
+              max-width: 125px;
+              min-width: 0;
+              box-sizing: border-box;
+              height: auto;
+              aspect-ratio: 125 / 90;
               object-fit: contain;
               border: 1px solid #ddd;
               border-radius: 6px;
@@ -1683,7 +1712,7 @@ setLoading(false);
             }
 
             .emptySchema {
-              width: 230px;
+              width: min(100%, 230px);
               height: 120px;
               margin: 0 auto;
               border: 1px solid #ddd;
@@ -1705,7 +1734,7 @@ setLoading(false);
             .explain p,
             .instructions p {
               margin: 5px 0 0;
-              line-height: 1.28;
+              line-height: 1.45;
             }
 
             .instructions {
@@ -1734,7 +1763,7 @@ setLoading(false);
 
             tr.textDense .explain p,
             tr.textDense .instructions p {
-              line-height: 1.18;
+              line-height: 1.4;
               margin-top: 3px;
             }
 
@@ -1749,7 +1778,7 @@ setLoading(false);
 
             tr.textVeryDense .explain p,
             tr.textVeryDense .instructions p {
-              line-height: 1.12;
+              line-height: 1.38;
               margin-top: 2px;
             }
 
@@ -1875,7 +1904,8 @@ setLoading(false);
               ${playersColumn("CENTER", sessionPlayers.center)}
             </div>
 
-            <table>
+            <table class="practiceTable">
+              <colgroup><col style="width:5%"/><col style="width:6%"/><col style="width:32%"/><col style="width:34%"/><col style="width:23%"/></colgroup>
               <thead>
                 <tr>
                   <th>QUI</th>
@@ -3167,7 +3197,7 @@ setLoading(false);
 
         .playersBoard {
           display: grid;
-          grid-template-columns: repeat(3, 1fr);
+          grid-template-columns: repeat(3, minmax(0, 1fr));
           gap: 14px;
         }
 
