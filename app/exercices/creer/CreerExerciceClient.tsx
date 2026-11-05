@@ -1,5 +1,7 @@
 "use client";
 
+import { exerciseText } from "@/lib/exercise-text";
+
 import { exerciseDrawingMarkers } from "@/lib/exercise-drawing-groups";
 
 import {drawingSessionStorage as localStorage} from "@/lib/drawing-session-storage";
@@ -71,10 +73,9 @@ const toNum = (v: string): number | undefined => {
   return Number.isNaN(n) ? undefined : n;
 };
 
-const asText = (v: any): string => (Array.isArray(v) ? v.join("\n") : v || "");
 
 const toLines = (v: string): string[] =>
-  v
+  exerciseText(v)
     .split("\n")
     .map((x) => x.trim())
     .filter(Boolean);
@@ -369,10 +370,10 @@ export default function CreerExerciceClient() {
             base = {
               ...base,
               title: existing.title || "",
-              organisation: asText((existing as any).organisation),
-              deroulement: asText((existing as any).deroulement),
-              consignes: asText((existing as any).consignes),
-              variantes: asText((existing as any).variantes),
+              organisation: exerciseText((existing as any).organisation),
+              deroulement: exerciseText((existing as any).deroulement),
+              consignes: exerciseText((existing as any).consignes),
+              variantes: exerciseText((existing as any).variantes),
               plots: String((existing as any).plots ?? ""),
               ballons: String((existing as any).ballons ?? ""),
               paniers: String((existing as any).paniers ?? ""),
@@ -484,6 +485,10 @@ export default function CreerExerciceClient() {
 
         setEx({
           ...base,
+          organisation: exerciseText(base.organisation),
+          deroulement: exerciseText(base.deroulement),
+          consignes: exerciseText(base.consignes),
+          variantes: exerciseText(base.variantes),
           schemaDataList: syncSchemas(base.schemaImages, base.schemaDataList),
         });
       } catch (error) {
@@ -789,7 +794,7 @@ export default function CreerExerciceClient() {
 
       const payload = {
         title: ex.title.trim(),
-        organisation: ex.organisation,
+        organisation: exerciseText(ex.organisation),
         deroulement: toLines(ex.deroulement),
         consignes: toLines(ex.consignes),
         variantes: toLines(ex.variantes),

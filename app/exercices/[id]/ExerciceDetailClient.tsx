@@ -1,5 +1,7 @@
 "use client";
 
+import { exerciseText } from "@/lib/exercise-text";
+
 import { exerciseDrawingMarkers } from "@/lib/exercise-drawing-groups";
 
 import { useEffect, useMemo, useState } from "react";
@@ -9,18 +11,7 @@ import { getExercise } from "@/lib/exercises";
 import type { Exercise } from "@/types/exercise";
 
 function normalizeList(value: unknown): string[] {
-  if (Array.isArray(value)) {
-    return value.map((x) => String(x).trim()).filter(Boolean);
-  }
-
-  if (typeof value === "string") {
-    return value
-      .split(/\n|,/)
-      .map((x) => x.trim())
-      .filter(Boolean);
-  }
-
-  return [];
+  return exerciseText(value).split(/\r?\n/).map(line => line.trim()).filter(Boolean);
 }
 
 function rawText(exercise: Exercise, key: string) {
