@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
+import { exerciseDrawingGroups, selectedDrawingGroups, type ExerciseDrawingGroup } from "@/lib/exercise-drawing-groups";
 import {downloadSessionPdf} from "@/lib/institutionnel/session-pdf-download";
 import {basketDayIds,loadBasketDay,BASKET_DAY_KEY,type BasketDayContext} from "@/lib/institutionnel/basket-day-context";
 import {loadInstitutionPracticeTeams} from "@/lib/institutionnel/institution-practice-teams";
@@ -27,6 +28,8 @@ type CartItem = {
   variants?: string | string[] | null;
   schemaImages?: string[];
   schema_images?: string[];
+  drawingGroups?: ExerciseDrawingGroup[];
+  selectedDrawingIds?: string[];
 
   // Contenu utilisé uniquement pour la fiche séance générée.
   use_mybasket_content?: boolean;
@@ -247,6 +250,17 @@ function readTeamsFromLocalStorage(): Team[] {
   return [];
 }
 
+function drawingSelectionKey(id: string) { return `mybasket:cart-drawing-options:${id}`; }
+function readDrawingSelection(id: string): string[] | undefined {
+  try {
+    const value = JSON.parse(sessionStorage.getItem(drawingSelectionKey(id)) ?? "null");
+    return Array.isArray(value) ? value.filter((entry): entry is string => typeof entry === "string") : undefined;
+  } catch { return undefined; }
+}
+function escapeDrawingHtml(value: string) {
+  return value.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;");
+}
+
 function uniqueImages(images: Array<string | null | undefined>) {
   return Array.from(new Set(images.filter(Boolean) as string[]));
 }
@@ -463,6 +477,8 @@ const subtotal = useMemo(() => {
         image_url: schemas[0] ?? item.image_url,
         schema_images: schemas,
         schemaImages: schemas,
+        drawingGroups: exerciseDrawingGroups(exercise.schema_images?.length ? exercise.schema_images : exercise.schemaImages ?? [], exercise.schema_data_list ?? exercise.schemaDataList, exercise.schema_data),
+        selectedDrawingIds: readDrawingSelection(item.id),
         consignes:
           exercise.consignes ??
           exercise.instructions ??
@@ -553,6 +569,14 @@ setLoading(false);
 
   loadCart();
 }
+
+  function toggleDrawingOption(item: CartItem, id: string, checked: boolean) {
+    const selected = new Set(item.selectedDrawingIds ?? item.drawingGroups?.filter(group => group.id).map(group => group.id) ?? []);
+    if (checked) selected.add(id); else selected.delete(id);
+    const next = [...selected];
+    setItems(prev => prev.map(row => row.id === item.id ? { ...row, selectedDrawingIds: next } : row));
+    try { sessionStorage.setItem(drawingSelectionKey(item.id), JSON.stringify(next)); } catch {}
+  }
 
   function toggleMyBasketContent(id: string, checked: boolean) {
     setItems((prev) =>
@@ -1124,6 +1148,9 @@ setLoading(false);
         // même si une ancienne version de Supabase / du typage ne restitue
         // pas correctement team_composition_blocks.
         team_composition_blocks: compositionBlocks,
+        exercise_drawing_groups: Object.fromEntries([...sessionItems]
+          .sort((a,b) => a.sort_order - b.sort_order)
+          .flatMap((item,index) => item.drawingGroups?.length ? [[index, selectedDrawingGroups(item.drawingGroups,item.selectedDrawingIds)]] : [])),
       }),
       visibility: "private",
       pdf_generated: true,
@@ -1153,6 +1180,7 @@ setLoading(false);
 
   if (sortedSessionItems.length > 0) {
     const exerciseRows = sortedSessionItems.map((item, index) => {
+      const selectedGroups = item.drawingGroups?.length ? selectedDrawingGroups(item.drawingGroups,item.selectedDrawingIds) : null;
       const finalDeroulement = String(item.session_deroulement ?? "").trim();
       const finalConsignesVariantes = String(
         item.session_consignes_variantes ?? "",
@@ -1165,7 +1193,7 @@ setLoading(false);
         title: item.title,
         who: coachCode(item.assigned_to),
         duration_minutes: Number(item.duration_minutes ?? 15),
-        situation_image_url:
+        situation_image_url: selectedGroups ? selectedGroups[0]?.images[0] ?? null :
           item.schemaImages?.[0] ||
           item.schema_images?.[0] ||
           item.image_url ||
@@ -1371,7 +1399,10 @@ setLoading(false);
         const images =
           schemas.length > 0 ? schemas : item.image_url ? [item.image_url] : [];
 
-        const situationImages =
+        const selectedGroups = item.drawingGroups?.length ? selectedDrawingGroups(item.drawingGroups,item.selectedDrawingIds) : null;
+        const situationImages = selectedGroups
+          ? selectedGroups.map(group => `<div style="grid-column:1/-1;border:1px solid #e2d4d7;padding:4px;margin-bottom:4px"><strong>${escapeDrawingHtml(group.label)}</strong><div class="schemasGrid schemasCount${Math.min(group.images.length,6)}">${group.images.map(image => `<img src="${escapeDrawingHtml(image)}" alt="Schéma"/>`).join("")}</div></div>`).join("") || '<div class="emptySchema">Aucun schéma sélectionné</div>'
+          :
           images.length > 0
             ? images
                 .map(
@@ -2090,6 +2121,18 @@ setLoading(false);
                       </div>
 
                       <p>{item.description}</p>
+                      {!!item.drawingGroups?.length && (
+                        <fieldset style={{border:"1px solid #e2d4d7",padding:10,borderRadius:8,margin:"8px 0"}}>
+                          <legend>Options à inclure dans la fiche séance</legend>
+                          {item.drawingGroups.map(group => group.id ? (
+                            <label key={group.id} style={{display:"flex",gap:8,alignItems:"center",marginBottom:5}}>
+                              <input type="checkbox" checked={item.selectedDrawingIds === undefined || item.selectedDrawingIds.includes(group.id)} onChange={event => toggleDrawingOption(item,group.id,event.target.checked)} />
+                              {group.label}
+                            </label>
+                          ) : <div key="common" style={{marginBottom:5}}>Début commun inclus</div>)}
+                        </fieldset>
+                      )}
+
 
                       <div className="settings">
                         <label>

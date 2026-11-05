@@ -1,3 +1,4 @@
+import { savedExerciseDrawingGroups } from "@/lib/exercise-drawing-groups";
 import React from "react";
 import path from "node:path";
 import { readFile } from "node:fs/promises";
@@ -18,6 +19,7 @@ type PdfExercise = {
   duration_minutes: number | null;
   situation_image_url?: string | null;
   schema_urls?: string[] | null;
+  schema_groups?: { label: string; images: string[] }[];
   explanation: string | null;
   instructions: string | null;
   variants?: string | null;
@@ -510,15 +512,20 @@ export async function POST(
   const normalizedExercises: PdfExercise[] = await Promise.all(
     exerciseRows.map(
       async (exercise): Promise<PdfExercise> => {
-        const source =
-          sourceExerciseById.get(String(exercise.exercise_id || "")) || {};
-
-        const imageUrls = Array.from(
-          new Set([
-            ...normalizeExerciseImages(source),
-            ...normalizeExerciseImages(exercise),
-          ]),
-        );
+        const source = sourceExerciseById.get(String(exercise.exercise_id || "")) || {};
+        const imageUrls = Array.from(new Set([
+          ...normalizeExerciseImages(source),
+          ...normalizeExerciseImages(exercise),
+        ]));
+        const approvedImages = new Set([
+          ...imageUrls,
+          ...(Array.isArray(source.schema_images) ? source.schema_images : []),
+        ]);
+        const savedGroups = savedExerciseDrawingGroups(session.notes, Number(exercise.sort_order));
+        const schemaGroups = savedGroups ? await Promise.all(savedGroups.map(async group => ({
+          label: group.label,
+          images: await Promise.all(group.images.filter(url => approvedImages.has(url)).map(async url => (await imageDataUri(url)) || url)),
+        }))) : undefined;
 
         const sourceDeroulement = institutionContext ? exercise.explanation :
           source.deroulement ??
@@ -546,9 +553,10 @@ export async function POST(
             exercise.duration_minutes == null
               ? null
               : Number(exercise.duration_minutes),
-          situation_image_url: imageUrls[0] || null,
+          schema_groups: schemaGroups,
+          situation_image_url: schemaGroups ? null : imageUrls[0] || null,
           schema_urls: await Promise.all(
-            imageUrls.map(async (url) => (await imageDataUri(url)) || url),
+            (schemaGroups ? [] : imageUrls).map(async (url) => (await imageDataUri(url)) || url),
           ),
           explanation: sourceDeroulement
             ? cleanDatabaseText(sourceDeroulement)

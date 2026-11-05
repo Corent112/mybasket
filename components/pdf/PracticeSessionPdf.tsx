@@ -37,6 +37,7 @@ type Exercise = {
   duration_minutes: number | null;
   situation_image_url?: string | null;
   schema_urls?: string[] | null;
+  schema_groups?: { label: string; images: string[] }[];
   explanation: string | null;
   instructions: string | null;
   variants?: string | null;
@@ -220,7 +221,7 @@ export default function PracticeSessionPdf({ session, players, exercises }: Prop
           ) as string[];
 
           return (
-            <View key={`${exercise.title}-${index}`} style={styles.exerciseRow} wrap={false}>
+            <View key={`${exercise.title}-${index}`} style={styles.exerciseRow} wrap={Boolean(exercise.schema_groups)}>
               <View style={styles.whoCellBody}>
                 <Text>{shortCoachCode(exercise.who)}</Text>
               </View>
@@ -229,7 +230,18 @@ export default function PracticeSessionPdf({ session, players, exercises }: Prop
               </View>
               <View style={styles.schemaCellBody}>
                 <Text style={styles.exerciseTitle}>{exercise.title || `Exercice ${index + 1}`}</Text>
-                {images.length ? (
+                {exercise.schema_groups ? (
+                  <View style={{borderWidth:0.6,borderColor:"#e2d4d7",padding:3}}>
+                    {exercise.schema_groups.map((group, groupIndex) => (
+                      <View key={groupIndex} style={{marginBottom:4}}>
+                        <Text style={styles.exerciseTitle}>{group.label}</Text>
+                        <View style={styles.imageGrid}>
+                          {group.images.map((image,i) => <Image key={i} src={image} style={group.images.length === 1 ? styles.singleImage : group.images.length === 2 ? styles.doubleImage : styles.multiImage} />)}
+                        </View>
+                      </View>
+                    ))}
+                  </View>
+                ) : images.length ? (
                   <View style={styles.imageGrid}>
                     {images.map((image, imageIndex) => (
                       <Image

@@ -1,5 +1,7 @@
 "use client";
 
+import { exerciseDrawingMarkers } from "@/lib/exercise-drawing-groups";
+
 import {drawingSessionStorage as localStorage} from "@/lib/drawing-session-storage";
 import { useEffect, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
@@ -502,6 +504,8 @@ export default function CreerExerciceClient() {
     return () => window.clearTimeout(timer);
   }, [draftKey, ex]);
 
+  const markers = exerciseDrawingMarkers(ex.schemaImages, ex.schemaDataList);
+  const hasOptions = markers.some(Boolean);
   const drawingPreviews = syncSchemas(ex.schemaImages, ex.schemaDataList)
     .map((schema: any, index: number) => ({
       index,
@@ -939,6 +943,7 @@ export default function CreerExerciceClient() {
           <div className="ce-schemas">
             {drawingPreviews.map(({ src, index }) => (
               <div key={`${src}-${index}`} className="ce-schema">
+                {hasOptions && <strong style={{display:"block",padding:6,color:"#6B1A2C"}}>{markers[index]?.label ?? "Début commun"}</strong>}
                 <img src={src} alt={`Schéma ${index + 1}`} />
 
                 <div className="ce-schema-acts">

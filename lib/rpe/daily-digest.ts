@@ -164,11 +164,21 @@ function status(entry: DigestEntry, kind: DailyDigestInput["kind"], target: numb
 function renderEveningTable(input: DailyDigestInput, model: ReturnType<typeof buildDailyDigest>, date: string, logo: string) {
   const value = (n: number | null) => n === null ? "—" : n.toLocaleString("fr-FR");
   const cell = "padding:9px 4px;border-bottom:1px solid #494144;vertical-align:top;overflow-wrap:anywhere";
+  const summary = [
+    ["Réponses", `${model.answered.length} / ${model.total}`],
+    ["RPE moyen", value(model.averageRpe)],
+    ["RPE prévu", value(model.target)],
+    ["Attentions", model.target === null ? "—" : String(model.watchCount + model.redCount)],
+  ];
   const rows = model.answered.map(e => {
     const flag = e.injured ? "Blessure déclarée" : e.evaluation?.severity === "alert" ? "Alerte RPE" : e.evaluation?.severity === "watch" ? "Écart RPE" : "";
+    const severity = e.evaluation?.severity;
+    const dotColor = severity === "alert" ? "#FF6269" : severity === "watch" ? "#FFAD4D" : severity === "normal" ? "#57D477" : "#A6A6A6";
+    const dotLabel = severity === "alert" ? "Alerte RPE" : severity === "watch" ? "Point d’attention RPE" : severity === "normal" ? "Seuil RPE non dépassé" : "Non évalué";
+    const dot = `<span role="img" aria-label="${dotLabel}" title="${dotLabel}" style="color:${dotColor};font-size:15px">●</span> `;
     const notes = text(e.evening?.comment);
     const pains = e.eveningPain.map(p => `<div>${esc(p.label)} : <strong style="color:#F1CC77">${p.intensity === null ? "note non renseignée" : esc(value(p.intensity)) + "/10"}</strong>${p.comment ? `<br/>${esc(p.comment)}` : ""}</div>`).join("");
-    return `<tr data-player="${esc(e.id)}"><td style="${cell}"><strong>${esc(e.name)}</strong>${flag ? `<br/><span style="font-size:11px;color:#F1CC77">${flag}</span>` : ""}</td><td align="center" style="${cell}">${value(e.duration)}</td><td align="center" style="${cell}">${value(e.rpe)}</td><td align="center" style="${cell}">${value(e.load)}</td><td style="${cell}">${pains || "—"}${notes ? `<div style="margin-top:4px">Commentaire : ${esc(notes)}</div>` : ""}</td></tr>`;
+    return `<tr data-player="${esc(e.id)}"><td style="${cell}"><strong>${dot}${esc(e.name)}</strong>${flag ? `<br/><span style="font-size:11px;color:#F1CC77">${flag}</span>` : ""}</td><td align="center" style="${cell}">${value(e.duration)}</td><td align="center" style="${cell}">${value(e.rpe)}</td><td align="center" style="${cell}">${value(e.load)}</td><td style="${cell}">${pains || "—"}${notes ? `<div style="margin-top:4px">Commentaire : ${esc(notes)}</div>` : ""}</td></tr>`;
   }).join("");
   const href = /^https?:\/\//i.test(input.href) ? input.href : "";
   return `<!doctype html><html lang="fr"><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/><title>Bilan RPE du soir</title></head>
@@ -178,7 +188,8 @@ function renderEveningTable(input: DailyDigestInput, model: ReturnType<typeof bu
 <tr><td style="padding:18px;background:${colors.burgundy};border-bottom:4px solid ${colors.gold}">
 <table role="presentation" width="100%" cellspacing="0" cellpadding="0"><tr><td><div style="font-size:11px;font-weight:800;color:#F1CC77">MYBASKET · CHARGE &amp; RPE</div><h1 style="font-size:24px;margin:8px 0">Bilan RPE du soir</h1><div style="font-size:13px">${esc(input.teamName)} · ${esc(date)}</div></td>${logo ? `<td align="right" width="60">${logo}</td>` : ""}</tr></table>
 </td></tr>
-<tr><td style="padding:16px 10px;font-size:14px;line-height:22px"><strong style="color:#F1CC77">${model.answered.length} / ${model.total}</strong> réponses · RPE moyen : <strong style="color:#F1CC77">${model.averageRpe === null ? "—" : value(model.averageRpe) + "/10"}</strong>${model.target === null ? "" : ` · RPE prévu : ${value(model.target)}/10`}</td></tr>
+<tr><td style="padding:12px 6px"><table role="presentation" width="100%" cellspacing="4" cellpadding="0" style="table-layout:fixed"><tr>${summary.map(([label,amount]) => `<td width="25%" align="center" style="padding:9px 3px;border:1px solid #514744;border-radius:9px;background:#252323;overflow-wrap:anywhere"><strong style="font-size:19px;color:#FFFFFF">${amount}</strong><br/><span style="font-size:10px;font-weight:800;color:#F1CC77;text-transform:uppercase">${label}</span></td>`).join("")}</tr></table>
+<div style="padding:5px 4px;font-size:11px;line-height:17px;color:#DDD"><span style="color:#57D477">●</span> Seuil non dépassé · <span style="color:#FFAD4D">●</span> Attention · <span style="color:#FF6269">●</span> Alerte · <span style="color:#A6A6A6">●</span> Non évalué</div></td></tr>
 <tr><td style="padding:0 6px"><table aria-label="Réponses RPE du soir" width="100%" cellspacing="0" cellpadding="0" style="width:100%;table-layout:fixed;border-collapse:collapse;font-size:13px;line-height:18px;color:#FFFFFF"><thead><tr style="background:${colors.burgundy}">
 ${[["Joueur",24],["Min",10],["RPE",10],["Charge",15],["Douleurs déclarées",41]].map(([label,width],i) => `<th scope="col" width="${width}%" align="${i === 0 || i === 4 ? "left" : "center"}" style="${cell};font-size:12px">${label}</th>`).join("")}
 </tr></thead><tbody>${rows || `<tr><td colspan="5" style="${cell}">Aucune réponse RPE.</td></tr>`}</tbody></table></td></tr>

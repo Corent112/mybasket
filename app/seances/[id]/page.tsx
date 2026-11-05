@@ -1,4 +1,6 @@
 "use client";
+
+import { savedExerciseDrawingGroups } from "@/lib/exercise-drawing-groups";
 import {downloadSessionPdf} from "@/lib/institutionnel/session-pdf-download";
 
 import { openFileSameTab } from "@/lib/client-file-actions";
@@ -23,6 +25,7 @@ type PracticeSession = {
   club_logo_url: string | null;
   mybasket_logo_url: string | null;
   pdf_url: string | null;
+  notes?: unknown;
   team_composition_blocks?: Array<{
     id?: string;
     title: string;
@@ -552,7 +555,9 @@ export default function SeanceDetailPage() {
           {exercises.length === 0 ? (
             <div className="emptyRow">Aucun exercice dans cette séance.</div>
           ) : (
-            exercises.map((exercise) => (
+            exercises.map((exercise) => {
+              const groups = savedExerciseDrawingGroups(session?.notes, exercise.sort_order);
+              return (
               <div className="tableRow" key={exercise.id}>
                 <div className="compactCell">{shortCoachCode(exercise.who)}</div>
                 <div className="compactCell">{parsePracticeDuration(exercise.duration_minutes, 0)}'</div>
@@ -560,7 +565,14 @@ export default function SeanceDetailPage() {
                 <div className="situation">
                   <strong>{exercise.title}</strong>
 
-                  {exercise.situation_image_url ? (
+                  {groups ? (
+                    <div style={{display:"grid",gap:10,border:"1px solid #e2d4d7",padding:8}}>
+                      {groups.map(group => <div key={group.id}><strong>{group.label}</strong>
+                        {group.images.map((image,index) => <img key={index} src={image} alt={`${group.label} — phase ${index + 1}`} />)}
+                      </div>)}
+                      {!groups.length && <span>Aucun schéma sélectionné</span>}
+                    </div>
+                  ) : exercise.situation_image_url ? (
                     <img
                       src={exercise.situation_image_url}
                       alt={exercise.title}
@@ -573,7 +585,8 @@ export default function SeanceDetailPage() {
                 <div className="textCell">{cleanPracticeText(exercise.explanation) || "—"}</div>
                 <div className="textCell">{cleanPracticeText(exercise.instructions) || "—"}</div>
               </div>
-            ))
+              );
+            })
           )}
         </section>
 

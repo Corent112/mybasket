@@ -1,5 +1,7 @@
 "use client";
 
+import { exerciseDrawingMarkers } from "@/lib/exercise-drawing-groups";
+
 import { useEffect, useMemo, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
@@ -110,6 +112,8 @@ export default function ExerciceDetailClient() {
   }, [id, router, supabase]);
 
   const images = useMemo(() => getSchemaImages(exercise), [exercise]);
+  const markers = exerciseDrawingMarkers(images, exercise?.schemaDataList, exercise?.schemaData);
+  const hasOptions = markers.some(Boolean);
   const videos = useMemo(() => getVideos(exercise), [exercise]);
 
   const steps = normalizeList(
@@ -401,16 +405,18 @@ export default function ExerciceDetailClient() {
                   )}
                 </div>
 
+                {hasOptions && <p style={{color:"#6B1A2C",fontWeight:800}}>{markers[current]?.label ?? "Début commun"}</p>}
                 {images.length > 1 && (
                   <div className="thumbs">
                     {images.map((src, index) => (
                       <button
                         key={`${src}-${index}`}
                         type="button"
-                        className={index === current ? "active" : ""}
+                        className={`${index === current ? "active" : ""}${hasOptions ? " with-marker" : ""}`}
                         onClick={() => setCurrent(index)}
                       >
                         <img src={src} alt={`Phase ${index + 1}`} />
+                        {hasOptions && <span style={{display:"block",fontSize:10,color:"#6B1A2C"}}>{markers[index]?.label ?? "Commun"}</span>}
                       </button>
                     ))}
                   </div>
@@ -803,6 +809,9 @@ export default function ExerciceDetailClient() {
           background: #eee;
           position: relative;
         }
+
+        .thumbs button.with-marker { height: auto; min-height: 58px; overflow-wrap: anywhere; }
+        .thumbs button.with-marker img { height: 54px; display: block; }
 
         .thumbs button.active {
           border-color: #f47b20;
