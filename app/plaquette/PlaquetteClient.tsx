@@ -18,7 +18,7 @@ import {drawingSessionStorage} from '@/lib/drawing-session-storage';
 
 import React, { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
-import { addDrawingOption, drawingOptions, drawingPath, drawingPlaybackGroups, removeDrawingOption, type DrawingOptionPhase } from '@/lib/drawing-options';
+import { addDrawingOption, drawingOptions, drawingPath, drawingPlaybackGroups, drawingRecordingSegments, removeDrawingOption, type DrawingOptionPhase } from '@/lib/drawing-options';
 import { machineBallCount, machineReserves, collectorForBasket, drawShootingMachine } from '@/lib/drawing-shooting-machine';
 import { createClient } from '@/lib/supabase/client';
 import type { Exercise } from '@/types/exercise';
@@ -313,7 +313,7 @@ const resetPlaquette = () => {
   const [optionName, setOptionName] = useState('');
   const [drawingLibraryOpen, setDrawingLibraryOpen] = useState(true);
   const [optionFormOpen, setOptionFormOpen] = useState(false);
-  const [videoOptionsMode, setVideoOptionsMode] = useState<'selected' | 'all'>('selected');
+  const [videoOptionsMode, setVideoOptionsMode] = useState<'selected' | 'all'>('all');
   const recordingOptionLabel = useRef('');
   const options = drawingOptions(phases);
   const selectedOption = options.find(option => option.id === (phases[current]?.option?.id || activeOptionId)) || options[0];
@@ -4532,21 +4532,23 @@ const exportJson = () => {
 
   // ----------------------- Export vidéo (MP4 / WebM) -----------------------
   // joue toute l'animation depuis la 1ʳᵉ phase et résout la promesse à la fin
-  const playWholeForRecording = () => new Promise<void>((resolve) => {
+  const playWholeForRecording = (indices?: number[]) => new Promise<void>((resolve) => {
     playbackQueueRef.current = []; playbackModeRef.current = null;
     if (rafRef.current) { cancelAnimationFrame(rafRef.current); rafRef.current = null; }
     playingRef.current = false; animPosRef.current = null;
     currentRef.current = 0; setCurrent(0);
     onAnimEndRef.current = resolve;
-    playAnim();
-    if (!playingRef.current) { onAnimEndRef.current = null; resolve(); } // rien à animer
+    playAnim(indices);
+    if (playingRef.current) renderAnimFrame(0);
+    else { onAnimEndRef.current = null; resolve(); } // rien à animer
   });
   const recordVideo = async () => {
     const canvas = canvasRef.current;
     if (!canvas || recording) return;
     const previousOption = selectedOption?.id || null;
     const previousPhase = current;
-    const exportOptions = videoOptionsMode === 'all' && options.length ? options : [selectedOption];
+    const segments = drawingRecordingSegments(phasesRef.current, videoOptionsMode, previousOption);
+    if (!segments.length) { showHint('Aucune phase à exporter.'); return; }
     if (typeof MediaRecorder === 'undefined' || typeof canvas.captureStream !== 'function') {
       showHint('Export vidéo indisponible. Essayez Chrome ou Safari à jour.'); return;
     }
@@ -4588,10 +4590,10 @@ const exportJson = () => {
         rec!.onerror = () => reject(new Error('L’enregistrement vidéo a échoué.'));
       });
       rec.start(1000);
-      for (const option of exportOptions) {
-        activeOptionRef.current = option?.id || null;
-        recordingOptionLabel.current = option?.name || '';
-        await Promise.race([playWholeForRecording(), stopped]);
+      for (const segment of segments) {
+        recordingOptionLabel.current = segment.label;
+        await Promise.race([playWholeForRecording(segment.indices), stopped]);
+        if (rec.state === 'inactive') throw new Error('L’enregistrement s’est arrêté avant la fin de la vidéo.');
       }
       await new Promise(resolve => setTimeout(resolve, 350));
       if (rec.state !== 'inactive') rec.stop();
@@ -4610,6 +4612,7 @@ const exportJson = () => {
     } catch (error) {
       showHint(error instanceof Error ? error.message : 'Échec de l’export MP4. Essayez Chrome ou Safari à jour.');
     } finally {
+      stopAnim();
       activeOptionRef.current = previousOption; setActiveOptionId(previousOption);
       currentRef.current = previousPhase; setCurrent(previousPhase);
       recordingOptionLabel.current = '';
@@ -6082,8 +6085,9 @@ const exportJson = () => {
               {options.length > 0 && <label className="drawing-video-route">Parcours à exporter
                 <select value={videoOptionsMode} onChange={event => setVideoOptionsMode(event.target.value as 'selected' | 'all')}>
                   <option value="selected">{selectedOption?.name} · avec le début commun</option>
-                  <option value="all">Toutes les options à la suite</option>
+                  <option value="all">Toutes les options à la suite ({options.length})</option>
                 </select>
+                {videoOptionsMode === 'all' && <small>Un seul MP4 : le début commun est rejoué avant chaque option, avec son nom à l’écran.</small>}
               </label>}
               <div style={{ fontSize: '.78rem', fontWeight: 700, marginBottom: '.3rem' }}>Qualité</div>
               <div style={{ display: 'flex', gap: 6, marginBottom: '.8rem' }}>

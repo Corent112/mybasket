@@ -77,6 +77,11 @@ const exportJson=async()=>{await click([...document.querySelectorAll('.ed-tool')
   assert.equal(schedule[1].actSched[0].start,schedule[1].actSched[1].start,'Parallel actions stay parallel');
  }
  assert.deepEqual(plan({current:test.phases},{current:'option-from-another-system'},helpers.drawingPath,helpers.drawingOptions).map(item=>item.idx), helpers.drawingPath(test.phases,helpers.drawingOptions(test.phases)[0].id));
+ const recording = helpers.drawingRecordingSegments(test.phases,'all',test.optionId);
+ assert.deepEqual(recording.map(segment=>segment.indices),[[0,1,2],[0,1,3]]);
+ for(const segment of recording) assert.deepEqual(plan({current:test.phases},{current:'stale'},helpers.drawingPath,helpers.drawingOptions,segment.indices).map(item=>item.idx),segment.indices);
+ assert.deepEqual(helpers.drawingRecordingSegments(test.phases,'selected',test.optionId).map(segment=>segment.indices),[[0,1,3]]);
+ assert.deepEqual(helpers.drawingRecordingSegments(fixture.phases,'all').map(segment=>segment.indices),[[0,1,2]]);
  const groups=helpers.drawingPlaybackGroups(test.phases); assert.deepEqual(groups,[[0,1],[2],[3]]);
  assert.deepEqual(helpers.drawingPlaybackGroups(fixture.phases),[[0,1,2]]);
  assert.deepEqual(plan({current:test.phases},{current:test.optionId},helpers.drawingPath,helpers.drawingOptions,[3]).map(item=>item.idx),[3],'Option-only playback excludes the common beginning');

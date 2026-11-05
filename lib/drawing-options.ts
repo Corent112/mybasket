@@ -51,3 +51,15 @@ export function drawingPlaybackGroups(phases: DrawingOptionPhase[]): number[][] 
     phases.flatMap((phase, index) => phase.option?.id === option.id ? [index] : [])
   )].filter(indices => indices.length > 0);
 }
+
+
+/** Each recording starts at its own common prefix, then follows only its branch. */
+export function drawingRecordingSegments(phases: DrawingOptionPhase[], mode: "all" | "selected", selectedId?: string | null) {
+  const options = drawingOptions(phases);
+  const selected = options.find(option => option.id === selectedId) ?? options[0];
+  const routes = mode === "all" && options.length ? options : [selected];
+  return routes.map(option => ({
+    label: option?.name ?? "",
+    indices: drawingPath(phases, option?.id),
+  })).filter(segment => segment.indices.length > 0);
+}
