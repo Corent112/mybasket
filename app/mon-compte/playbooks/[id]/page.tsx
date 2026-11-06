@@ -1021,7 +1021,7 @@ const CSS = `
 .pb-cover img {
   width: 100%;
   height: 100%;
-  object-fit: cover;
+  object-fit: contain;
 }
 .pb-cover-placeholder { font-size: 48px; }
 .pb-open-hint {

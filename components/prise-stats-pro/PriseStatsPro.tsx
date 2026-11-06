@@ -6515,7 +6515,7 @@ export default function PriseStatsProPage() {
     const titleKeys:Record<string,string>={'Système de jeu':'system','Temps fort':'temps',"Défense sur l'écran":'coverage',"Type d'action":draft.context==='defense'?'def-action':'att-action',"Action du joueur":draft.context==='defense'?'def-action':'att-action','Conséquence':'rebound','Faute commise':'foul','Faute provoquée':'foul'};
     const stageKeys:Record<string,string>={systeme:'system',temps:'temps',action:draft.context==='defense'?'def-action':'att-action',coverage:'coverage',result:'result',rebound:'rebound'};
     const customTitle=profileConfig?.blockTitles?.[(stageKeys[stage]||titleKeys[t]) as keyof NonNullable<LiveCodingProfile['blockTitles']>];
-    return <div className="wzhead"><div className="wzstep">{NAV[navIdx].toUpperCase()}</div><select aria-label="Fenêtre de codage" value={selectedCodingProfileId} onChange={e=>selectCodingWindow(e.target.value)} style={{maxWidth:'100%',marginBottom:8}}><option value="">Fenêtre par défaut MyBasket</option>{codingProfiles.map(p=><option key={p.id} value={p.id}>{p.name}</option>)}</select><div className="wztitle">{customTitle||t}</div>{s && <div className="wzsub">{s}</div>}</div>; }
+    return <div className="wzhead"><div className="wzstep">{NAV[navIdx].toUpperCase()}</div><div className="wztitle">{customTitle||t}</div>{s && <div className="wzsub">{s}</div>}</div>; }
   function tileGrid(arr: { id: string; label: string; ic?: string }[], sel: string, fn: (id: string) => void) {
     return <div className="grid c3">{arr.map((o) => { const labelSize = o.label.length > 24 ? 'xs' : o.label.length > 16 ? 'sm' : o.label.length > 11 ? 'md' : ''; return <button key={o.id} className={`bt ${o.id === 'libre' ? 'systemLibre' : ''} ${sel === o.id ? 'active' : ''}`} onClick={() => fn(o.id)}><span className="ic">{o.ic || '•'}</span><span className={`lbl ${labelSize}`}>{o.label}</span></button>; })}</div>;
   }
@@ -7597,7 +7597,7 @@ export default function PriseStatsProPage() {
         };
 
         return (
-          <>
+          <div className="resultStage">
             {head(
               'Résultat',
               !isPostLikeCodingMode(codingMode)
@@ -7758,7 +7758,7 @@ export default function PriseStatsProPage() {
                 )}
               </>
             )}
-          </>
+          </div>
         );
       }
       case 'ft':
@@ -11299,6 +11299,55 @@ function Style() {
         .pickResultActions,
         .foulOutcomeGrid { align-items:stretch; grid-auto-rows:58px; }
         .lc-body .grid { align-items:stretch; }
+
+        /* Let labels and their controls take their natural height in the scrollable panel. */
+        .lc-body .resultStage {
+          flex: 0 0 auto;
+          min-width: 0;
+          display: grid;
+          gap: 7px;
+          align-content: start;
+        }
+        .resultStage .sublbl,
+        .resultStage .resultSectionLabel {
+          margin: 6px 0 0 !important;
+          line-height: 1.3;
+          font-weight: 750;
+          color: #b4bfd3;
+        }
+        .resultStage .resultAllActionsGrid,
+        .resultStage .pickResultActions,
+        .resultStage .foulOutcomeGrid { grid-auto-rows: auto; }
+        .lc-body .resultStage :is(.chip, .res, .segb, .resultActionBtn) {
+          height: auto !important;
+          min-height: 44px !important;
+          max-height: none !important;
+          margin-bottom: 0;
+          text-align: center;
+          white-space: normal;
+          overflow-wrap: anywhere;
+        }
+        .lc-body .systemChoiceLayout .bt {
+          display: grid;
+          grid-template-columns: 24px minmax(0, 1fr) 24px;
+          column-gap: 5px;
+          align-items: center;
+          height: auto !important;
+          max-height: none !important;
+        }
+        .lc-body .systemChoiceLayout .bt .ic { grid-column: 1; }
+        .lc-body .systemChoiceLayout .bt .lbl {
+          grid-column: 2;
+          color: #fff !important;
+          text-align: center !important;
+          overflow-wrap: anywhere;
+        }
+        .lc-right .scZone .sc {
+          margin-inline: auto;
+          box-sizing: border-box;
+          padding: 4px;
+        }
+        .lc-right .scZone .sc-svg { height: auto; max-width: 100%; }
 
         @media(max-width:760px){
           .resultAllActionsGrid,
