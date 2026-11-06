@@ -25,8 +25,16 @@ function compile(ctx,code){vm.createContext(ctx);vm.runInContext(ts.transpileMod
  compile(parentCtx,normalize+'\nexports.consume=async()=>{const resultStored=await getPlaquetteTransfer(RESULT_KEY);'+consumer+';return base;};');
  const merged=await parentCtx.exports.consume();assert.equal(merged.title,draft.title);assert.equal(merged.organisation,draft.organisation);assert.equal(merged.schemaImages.length,3);assert.equal(merged.schemaImages[0],'existing.png');assert.equal(merged.schemaDataList[2].phases[1].title,'Phase 2');assert.equal(await t.getPlaquetteTransfer('mybasket_plaquette_result'),null);assert.equal(t.storage.getItem('mb_plaquette_return_to'),null);
  // Exercise persistence already converts every inserted phase and group thumbnail to Storage URLs.
- let saveMap;function findSave(node){if(ts.isVariableDeclaration(node)&&node.name.getText(ast)==='cleanSchemaDataList')saveMap=node.getText(ast);ts.forEachChild(node,findSave)}findSave(ast);assert(saveMap);
- const saveCtx={exports:{},crypto,ex:merged,uploadedSchemaImages:merged.schemaImages.map((_,i)=>`https://example.test/saved-${i}.png`)};compile(saveCtx,normalize+'\nconst '+saveMap+';exports.schemas=cleanSchemaDataList;');assert.equal(saveCtx.exports.schemas.length,3);assert.equal(saveCtx.exports.schemas[1].imageData,'https://example.test/saved-1.png');assert.deepEqual(Array.from(saveCtx.exports.schemas[2].phaseImages),['https://example.test/saved-1.png','https://example.test/saved-2.png']);
+ const mediaCode=parent.slice(parent.indexOf('      const uploadedSchemaUrls'),parent.indexOf('      const payload =',parent.indexOf('      const uploadedSchemaUrls')));
+ const uploadsByImage=new Map(merged.schemaImages.slice(1).map((image,i)=>[image,`https://example.test/saved-${i+1}.png`]));
+ const savedUploads=[];
+ const saveCtx={exports:{},crypto,ex:merged,exerciseStorageId:'existing-exercise',uploadBase64Image:async image=>{savedUploads.push(image);return uploadsByImage.get(image)}};
+ compile(saveCtx,normalize+'\nexports.prepare=async()=>{'+mediaCode+'return cleanSchemaDataList;};');
+ const prepared=await saveCtx.exports.prepare();
+ assert.equal(prepared.length,3);assert.equal(prepared[1].imageData,'https://example.test/saved-1.png');
+ assert.deepEqual(Array.from(prepared[2].phaseImages),['https://example.test/saved-1.png','https://example.test/saved-2.png']);
+ assert.equal(savedUploads.length,2);
+
  const twice=await parentCtx.exports.consume();assert.equal(twice.schemaImages.length,3);
  const edit=handler(t,raw,draft);await edit.open(0);assert.equal(edit.state.url,'/plaquette?mode=edit&return=exercise');assert.equal((await t.getPlaquetteTransfer('mybasket_plaquette_load')).schemaGroupId,'existing-group');ctx.window.location.search='?mode=edit&return=exercise';ctx.window.location.href='';await ctx.exports.insert();parentCtx.base=JSON.parse(t.storage.getItem('mybasket-exercise-test_sync'));const edited=await parentCtx.exports.consume();assert.equal(edited.schemaImages.length,2);assert(edited.schemaDataList.every(s=>s.schemaGroupId==='existing-group'));assert.equal(edited.organisation,draft.organisation);
  const previousSchemas=JSON.stringify(edited.schemaImages);let capacityError='';ctx.setInsertionError=value=>{capacityError=value};t.storage.setItem('mybasket_exercise_schema_room','1');ctx.window.location.href='';await ctx.exports.insert();assert(capacityError.includes('aucune insertion partielle'));assert.equal(ctx.window.location.href,'');assert.equal(JSON.stringify(edited.schemaImages),previousSchemas);assert.equal(ctx.insertionPending.current,false);

@@ -1,3 +1,4 @@
+import { exerciseText } from "@/lib/exercise-text";
 import { createClient } from "@/lib/supabase/client";
 import type {
   Exercise,
@@ -250,9 +251,9 @@ function exerciseToRow(ex: any, userId: string) {
     description: ex.description ?? ex.organisation ?? "",
     organisation: ex.organisation ?? ex.description ?? "",
 
-    consignes: ex.consignes ?? ex.instructions ?? "",
-    deroulement: ex.deroulement ?? "",
-    variantes: ex.variantes ?? "",
+    consignes: exerciseText(ex.consignes ?? ex.instructions),
+    deroulement: exerciseText(ex.deroulement),
+    variantes: exerciseText(ex.variantes),
 
     plots: ex.plots ?? null,
     ballons: ex.ballons ?? null,
@@ -463,11 +464,12 @@ export async function getExercise(
   return rowToExercise(existing);
 }
 
-export async function saveExercise(ex: any): Promise<Exercise | null> {
+export async function saveExercise(ex: any, options?: { throwOnError?: boolean }): Promise<Exercise | null> {
   const supabase = createClient();
   const user = await getCurrentUser();
 
   if (!user) {
+    if (options?.throwOnError) throw new Error("Reconnecte-toi avant de sauvegarder.");
     if (isBrowser()) alert("Tu dois être connecté pour sauvegarder l’exercice.");
     return null;
   }
@@ -494,6 +496,7 @@ export async function saveExercise(ex: any): Promise<Exercise | null> {
         existing.user_id === user.id;
 
       if (!ceo && !isMine) {
+    if (options?.throwOnError) throw new Error("Tu ne peux modifier que tes exercices.");
         if (isBrowser()) alert("Tu ne peux modifier que tes exercices.");
         return null;
       }
@@ -521,6 +524,7 @@ export async function saveExercise(ex: any): Promise<Exercise | null> {
         .maybeSingle();
 
       if (error) {
+      if (options?.throwOnError) throw new Error(error.message || "Écriture refusée par Supabase.");
         showSupabaseError("Erreur Supabase saveExercise update:", error);
         return null;
       }
@@ -538,6 +542,7 @@ export async function saveExercise(ex: any): Promise<Exercise | null> {
     .maybeSingle();
 
   if (error) {
+      if (options?.throwOnError) throw new Error(error.message || "Écriture refusée par Supabase.");
     showSupabaseError("Erreur Supabase saveExercise insert:", error);
     return null;
   }
@@ -547,7 +552,8 @@ export async function saveExercise(ex: any): Promise<Exercise | null> {
 
 export async function updateExercise(
   id: string | null | undefined,
-  patch: Partial<Exercise>
+  patch: Partial<Exercise>,
+  options?: { throwOnError?: boolean }
 ): Promise<Exercise | null> {
   if (!id) return null;
 
@@ -555,6 +561,7 @@ export async function updateExercise(
   const user = await getCurrentUser();
 
   if (!user) {
+    if (options?.throwOnError) throw new Error("Reconnecte-toi avant de sauvegarder.");
     if (isBrowser()) alert("Tu dois être connecté pour modifier l’exercice.");
     return null;
   }
@@ -562,6 +569,7 @@ export async function updateExercise(
   const existing = await getExerciseRaw(id);
 
   if (!existing) {
+    if (options?.throwOnError) throw new Error("Exercice introuvable ou inaccessible.");
     if (isBrowser()) alert("Exercice introuvable.");
     return null;
   }
@@ -570,6 +578,7 @@ export async function updateExercise(
   const isMine = existing.user_id === user.id;
 
   if (!ceo && !isMine) {
+    if (options?.throwOnError) throw new Error("Tu ne peux modifier que tes exercices.");
     if (isBrowser()) alert("Tu ne peux modifier que tes exercices.");
     return null;
   }
@@ -599,6 +608,7 @@ export async function updateExercise(
     .maybeSingle();
 
   if (error) {
+      if (options?.throwOnError) throw new Error(error.message || "Écriture refusée par Supabase.");
     showSupabaseError("Erreur Supabase updateExercise:", error);
     return null;
   }

@@ -74,12 +74,6 @@ const toNum = (v: string): number | undefined => {
 };
 
 
-const toLines = (v: string): string[] =>
-  exerciseText(v)
-    .split("\n")
-    .map((x) => x.trim())
-    .filter(Boolean);
-
 const blank = (): Ex => ({
   title: "",
   organisation: "",
@@ -176,6 +170,7 @@ export default function CreerExerciceClient() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const editId = searchParams.get("id");
+  const resumeDraft = searchParams.get("reprendre") === "1";
 
   const imgInput = useRef<HTMLInputElement | null>(null);
   const vidInput = useRef<HTMLInputElement | null>(null);
@@ -184,6 +179,11 @@ export default function CreerExerciceClient() {
 
   const [ex, setEx] = useState<Ex>(blank());
   const [toast, setToast] = useState("");
+  const [loadedDraftKey, setLoadedDraftKey] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+  const savingRef = useRef(false);
+  const [saveError, setSaveError] = useState("");
+  const pendingVideo = useRef<File | null>(null);
   const [drawingOpening,setDrawingOpening]=useState(false);
   const [drawingOpenError,setDrawingOpenError]=useState("");
   const drawingPending=useRef(false);
@@ -343,7 +343,7 @@ export default function CreerExerciceClient() {
           base = { ...base, ...syncDraft };
         }
 
-        if (!editId && !returningFromPlaquette) {
+        if (!editId && !returningFromPlaquette && !resumeDraft) {
           // Nouvelle création réelle : purge aussi les restes du précédent aller/retour Dessin.
           // C'est ce qui empêchait l'ancien exercice de réapparaître.
           await removePlaquetteTransfer(RESULT_KEY);
@@ -394,6 +394,17 @@ export default function CreerExerciceClient() {
               schemaImages,
               schemaDataList: syncSchemas(schemaImages, schemaDataList),
             };
+          }
+        }
+
+        // The server copy is the baseline; an unsaved local edit wins on reopening.
+        const draft = (editId || returningFromPlaquette || resumeDraft) ? (draftStored ?? syncDraft) : null;
+        if (draft) base = { ...base, ...draft };
+        if (draft && base.videos.some(video => video.startsWith("blob:"))) {
+          const file = await getPlaquetteTransfer<File>(`${draftKey}_video`);
+          if (file instanceof File) {
+            pendingVideo.current = file;
+            base.videos = [URL.createObjectURL(file)];
           }
         }
 
@@ -491,6 +502,7 @@ export default function CreerExerciceClient() {
           variantes: exerciseText(base.variantes),
           schemaDataList: syncSchemas(base.schemaImages, base.schemaDataList),
         });
+        setLoadedDraftKey(draftKey);
       } catch (error) {
         console.error(error);
         flash("Erreur lors du chargement");
@@ -498,16 +510,17 @@ export default function CreerExerciceClient() {
     };
 
     load();
-  }, [editId, draftKey]);
+  }, [editId, draftKey, resumeDraft]);
 
   useEffect(() => {
+    if (loadedDraftKey !== draftKey || saving) return;
     const timer = window.setTimeout(() => {
       void setPlaquetteTransfer(draftKey, ex).catch((error) => {
         console.warn("Sauvegarde brouillon exercice impossible", error);
       });
     }, 120);
     return () => window.clearTimeout(timer);
-  }, [draftKey, ex]);
+  }, [draftKey, ex, loadedDraftKey, saving]);
 
   const markers = exerciseDrawingMarkers(ex.schemaImages, ex.schemaDataList);
   const hasOptions = markers.some(Boolean);
@@ -617,13 +630,15 @@ export default function CreerExerciceClient() {
     // fichiers peuvent dépasser la mémoire du navigateur. On garde un aperçu
     // local et le fichier lui-même jusqu'à l'enregistrement.
     const previewUrl = URL.createObjectURL(file);
-    (window as any).__mybasketExerciseVideoFile = file;
+    pendingVideo.current = file;
+    void setPlaquetteTransfer(`${draftKey}_video`, file).catch(() => {});
     setEx((current) => ({ ...current, videos: [previewUrl] }));
     event.target.value = "";
   };
 
   const removeVideo = () => {
-    (window as any).__mybasketExerciseVideoFile = null;
+    pendingVideo.current = null;
+    void removePlaquetteTransfer(`${draftKey}_video`).catch(() => {});
     setEx((current) => ({ ...current, videos: [] }));
   };
 
@@ -726,6 +741,8 @@ export default function CreerExerciceClient() {
   }
 
   const save = async () => {
+    if (savingRef.current) return;
+    setSaveError("");
     if (!ex.title.trim()) {
       // Le titre est le seul champ obligatoire. Un toast de 2,6 s disparaît
       // avant que l'utilisateur ait compris ce qu'on lui demande : on marque
@@ -737,19 +754,27 @@ export default function CreerExerciceClient() {
       return;
     }
 
-    if (!exerciseStorageId) {
+    if (!exerciseStorageId || loadedDraftKey !== draftKey) {
       flash("Chargement de l’exercice en cours, réessaie dans une seconde");
       return;
     }
 
+    savingRef.current = true;
+    setSaving(true);
+    let completed = false;
     try {
+      // Keep the draft even when uploads or the database request fail.
+      await setPlaquetteTransfer(draftKey, ex).catch(() => {});
+      if (!pendingVideo.current && ex.videos.some(video => video.startsWith("blob:"))) {
+        throw new Error("Sélectionne à nouveau le fichier vidéo. Le texte et les schémas sont conservés.");
+      }
       const uploadedImages = await Promise.all(
         ex.images.map((image) =>
           uploadBase64Image(image, `exercices/${exerciseStorageId}/images`)
         )
       );
 
-      const pendingVideoFile = (window as any).__mybasketExerciseVideoFile as File | null | undefined;
+      const pendingVideoFile = pendingVideo.current;
       const uploadedVideos = pendingVideoFile
         ? [await uploadVideoFile(pendingVideoFile, `exercices/${exerciseStorageId}/videos`)]
         : await Promise.all(
@@ -758,46 +783,38 @@ export default function CreerExerciceClient() {
             )
           );
 
-      const uploadedSchemaImages = await Promise.all(
-        ex.schemaImages.map((image) =>
-          uploadBase64Image(image, `exercices/${exerciseStorageId}/schemas/imported`)
-        )
-      );
-
-      const cleanSchemaDataList = syncSchemas(ex.schemaImages, ex.schemaDataList).map(
-        (schema, index) => {
-          const imageData =
-            typeof schema?.imageData === "string" && schema.imageData.startsWith("data:image")
-              ? uploadedSchemaImages[index] || schema.imageData
-              : schema?.imageData;
-
-          // Les miniatures d'import sont en base64 : on les remplace par leur
-          // URL Storage en respectant l'ordre des phases du schéma.
-          const phaseImages = Array.isArray(schema?.phaseImages)
-            ? schema.phaseImages.map((image: string) => {
-                if (!image?.startsWith?.("data:image")) return image;
-                const globalIndex = ex.schemaImages.indexOf(image);
-                if (globalIndex >= 0 && uploadedSchemaImages[globalIndex]) {
-                  return uploadedSchemaImages[globalIndex];
-                }
-                return uploadedSchemaImages[index] || image;
-              })
-            : [];
-
-          return {
-            ...schema,
-            imageData,
-            phaseImages,
-          };
+      const uploadedSchemaUrls = new Map<string, string>();
+      const storeSchemaImage = async (image: string) => {
+        if (!image.startsWith("data:image")) return image;
+        const cached = uploadedSchemaUrls.get(image);
+        if (cached) return cached;
+        const url = await uploadBase64Image(image, `exercices/${exerciseStorageId}/schemas/imported`);
+        uploadedSchemaUrls.set(image, url);
+        return url;
+      };
+      const resolveImages = async (value: any): Promise<any> => {
+        if (typeof value === "string") return storeSchemaImage(value);
+        if (Array.isArray(value)) {
+          const result = [];
+          for (const item of value) result.push(await resolveImages(item));
+          return result;
         }
-      );
+        if (value && typeof value === "object") {
+          const entries: Array<[string, unknown]> = [];
+          for (const [key, item] of Object.entries(value)) entries.push([key, await resolveImages(item)]);
+          return Object.fromEntries(entries);
+        }
+        return value;
+      };
+      const uploadedSchemaImages: string[] = await resolveImages(ex.schemaImages);
+      const cleanSchemaDataList = await resolveImages(syncSchemas(ex.schemaImages, ex.schemaDataList));
 
       const payload = {
         title: ex.title.trim(),
         organisation: exerciseText(ex.organisation),
-        deroulement: toLines(ex.deroulement),
-        consignes: toLines(ex.consignes),
-        variantes: toLines(ex.variantes),
+        deroulement: exerciseText(ex.deroulement),
+        consignes: exerciseText(ex.consignes),
+        variantes: exerciseText(ex.variantes),
         plots: toNum(ex.plots),
         ballons: toNum(ex.ballons),
         paniers: toNum(ex.paniers),
@@ -818,24 +835,20 @@ export default function CreerExerciceClient() {
       };
 
       const saved = editId
-        ? await updateExercise(editId, payload)
-        : await saveExercise(payload);
+        ? await updateExercise(editId, payload, { throwOnError: true })
+        : await saveExercise(payload, { throwOnError: true });
 
-      if (!saved) {
-        flash("Erreur Supabase : exercice non enregistré");
-        return;
+      if (!saved) throw new Error("Aucune confirmation d’enregistrement reçue.");
+      completed = true;
+      setLoadedDraftKey(null);
+      await removePlaquetteTransfer(`${draftKey}_video`).catch(() => {});
+      await removePlaquetteTransfer(draftKey).catch(() => {});
+      await removePlaquetteTransfer(RESULT_KEY).catch(() => {});
+      await removePlaquetteTransfer(LOAD_KEY).catch(() => {});
+      for (const key of [`${draftKey}_sync`, EDIT_INDEX_KEY, RETURN_KEY, EDIT_EXERCISE_ID_KEY,
+        EDIT_SCHEMA_GROUP_KEY, "mybasket_current_exercise_id", `${draftKey}_storage_id`]) {
+        try { localStorage.removeItem(key); } catch {}
       }
-
-      await removePlaquetteTransfer(draftKey);
-      localStorage.removeItem(`${draftKey}_sync`);
-      await removePlaquetteTransfer(RESULT_KEY);
-      localStorage.removeItem(EDIT_INDEX_KEY);
-      await removePlaquetteTransfer(LOAD_KEY);
-      localStorage.removeItem(RETURN_KEY);
-      localStorage.removeItem(EDIT_EXERCISE_ID_KEY);
-      localStorage.removeItem(EDIT_SCHEMA_GROUP_KEY);
-      localStorage.removeItem("mybasket_current_exercise_id");
-      localStorage.removeItem(`${draftKey}_storage_id`);
 
       const goId = saved?.id ?? editId;
 
@@ -847,7 +860,11 @@ export default function CreerExerciceClient() {
       }, 600);
     } catch (error) {
       console.error("Erreur sauvegarde exercice :", error);
-      flash("Erreur lors de la sauvegarde");
+      const detail = error instanceof Error ? error.message
+        : error && typeof error === "object" && "message" in error ? String(error.message) : "Erreur inconnue";
+      setSaveError(`Enregistrement impossible : ${detail} Le formulaire reste ouvert.`);
+    } finally {
+      if (!completed) { savingRef.current = false; setSaving(false); }
     }
   };
 
@@ -1205,11 +1222,12 @@ export default function CreerExerciceClient() {
           Annuler
         </button>
 
-        <button type="button" className="ce-btn save" onClick={save}>
-          💾 {editId ? "METTRE À JOUR L’EXERCICE" : "SAUVEGARDER L’EXERCICE"}
+        <button type="button" className="ce-btn save" onClick={save} disabled={saving || loadedDraftKey !== draftKey}>
+          💾 {saving ? "ENREGISTREMENT…" : editId ? "METTRE À JOUR L’EXERCICE" : "SAUVEGARDER L’EXERCICE"}
         </button>
       </div>
 
+      {saveError && <p role="alert" style={{ color: "#8f1d32", textAlign: "right" }}>{saveError}</p>}
       {toast && <div className="ce-toast">{toast}</div>}
     </div>
   );
