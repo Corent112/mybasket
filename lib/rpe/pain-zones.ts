@@ -46,3 +46,33 @@ const LEGACY_PAIN_LABELS: Record<string,string> = {
 export function painZoneLabel(id: string): string {
   return PAIN_ZONES.find(zone => zone.id === id)?.label || LEGACY_PAIN_LABELS[id] || "Autre zone déclarée";
 }
+
+type PainReport = { pain_zones?: unknown; pain_details?: unknown };
+export type PainAlertZone = { label: string; intensity: number | null; previousIntensity: number | null; reason: "new" | "increase" };
+
+function painIntensity(details: unknown, id: string): number | null {
+  if (!details || typeof details !== "object" || !Object.prototype.hasOwnProperty.call(details, id)) return null;
+  const raw = (details as Record<string, { intensity?: unknown } | null>)[id]?.intensity;
+  if (typeof raw !== "number" && (typeof raw !== "string" || !raw.trim())) return null;
+  const score = Number(raw);
+  return Number.isFinite(score) && score >= 0 && score <= 10 ? score : null;
+}
+
+export function comparePainReports(zones: unknown[], details: unknown, previous: PainReport | null): PainAlertZone[] {
+  const previousZones = new Set(Array.isArray(previous?.pain_zones) ? previous.pain_zones : []);
+  const alerts: PainAlertZone[] = [];
+  for (const id of new Set(zones)) {
+    if (typeof id !== "string" || !id || id.startsWith("_")) continue;
+    const intensity = painIntensity(details, id);
+    const label = painZoneLabel(id);
+    if (!previousZones.has(id)) {
+      alerts.push({ label, intensity, previousIntensity: null, reason: "new" });
+      continue;
+    }
+    const previousIntensity = painIntensity(previous?.pain_details, id);
+    if (intensity !== null && previousIntensity !== null && intensity - previousIntensity > 2) {
+      alerts.push({ label, intensity, previousIntensity, reason: "increase" });
+    }
+  }
+  return alerts;
+}

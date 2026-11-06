@@ -308,7 +308,7 @@ export async function sendWellnessPainAlert(input: {
   teamName: string;
   playerName: string;
   responseDate: string;
-  zones: Array<{ label: string; intensity: number; previousIntensity: number | null; reason: "new" | "increase" }>;
+  zones: Array<{ label: string; intensity: number | null; previousIntensity: number | null; reason: "new" | "increase" }>;
 }) {
   const admin = createAdminClient();
   if (!admin || !input.zones.length) return;
@@ -326,14 +326,14 @@ export async function sendWellnessPainAlert(input: {
     : "Une nouvelle zone douloureuse vient d’être déclarée par un joueur.";
 
   const rows = input.zones.map((zone) => {
-    const delta = zone.previousIntensity == null ? null : zone.intensity - zone.previousIntensity;
+    const delta = zone.previousIntensity == null || zone.intensity == null ? null : zone.intensity - zone.previousIntensity;
     const reason = zone.reason === "new"
       ? "Nouvelle douleur"
       : `Aggravation (+${delta})`;
     const previous = zone.previousIntensity == null ? "—" : `${zone.previousIntensity}/10`;
     return `<tr>
       <td style="padding:14px 10px;border-bottom:1px solid #EEE6E1;font-size:13px;font-weight:900;color:#241D1A">${esc(zone.label)}</td>
-      <td align="center" style="padding:14px 8px;border-bottom:1px solid #EEE6E1;font-size:20px;font-weight:900;color:#B42318">${esc(zone.intensity)}/10</td>
+      <td align="center" style="padding:14px 8px;border-bottom:1px solid #EEE6E1;font-size:20px;font-weight:900;color:#B42318">${zone.intensity == null ? "—" : esc(zone.intensity) + "/10"}</td>
       <td align="center" style="padding:14px 8px;border-bottom:1px solid #EEE6E1;font-size:13px;color:#625650">${esc(previous)}</td>
       <td style="padding:14px 10px;border-bottom:1px solid #EEE6E1;font-size:12px;font-weight:800;color:#9B1C31">${esc(reason)}</td>
     </tr>`;
@@ -388,7 +388,7 @@ export async function sendWellnessPainAlert(input: {
 
 <tr><td style="background:#FBF8F6;padding:18px 28px;text-align:center;border-top:1px solid #EFE6E0">
 <div style="font-size:12px;font-weight:900;color:#6B1A2C">MYBASKET</div>
-<div style="margin-top:5px;font-size:11px;line-height:17px;color:#958780">Email envoyé automatiquement à la suite du questionnaire Wellness. Ces informations sont des indicateurs de suivi et ne constituent pas un diagnostic médical.</div>
+<div style="margin-top:5px;font-size:11px;line-height:17px;color:#958780">Email envoyé automatiquement à la suite d’une réponse au questionnaire. Ces informations sont des indicateurs de suivi et ne constituent pas un diagnostic médical.</div>
 </td></tr>
 </table></td></tr></table></body></html>`;
 

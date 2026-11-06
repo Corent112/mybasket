@@ -171,17 +171,18 @@ function renderEveningTable(input: DailyDigestInput, model: ReturnType<typeof bu
     ["Attentions", model.target === null ? "—" : String(model.watchCount + model.redCount)],
   ];
   const hasComments = model.answered.some(e => text(e.evening?.comment) || e.eveningPain.some(p => p.comment));
-  const columns = [["Joueur",24],["Min",10],["RPE",10],["Charge",15],["Douleurs déclarées",hasComments ? 24 : 41], ...(hasComments ? [["Commentaires",17]] : [])];
+  const columns = [["",6],["Joueur",22],["Min",10],["RPE",10],["Charge",15],["Douleurs déclarées",hasComments ? 20 : 37], ...(hasComments ? [["Commentaires",17]] : [])];
   const rows = model.answered.map(e => {
     const flag = e.injured ? "Blessure déclarée" : e.evaluation?.severity === "alert" ? "Alerte RPE" : e.evaluation?.severity === "watch" ? "Écart RPE" : "";
     const severity = e.evaluation?.severity;
-    const dotColor = severity === "alert" ? "#FF6269" : severity === "watch" ? "#FFAD4D" : severity === "normal" ? "#57D477" : "#A6A6A6";
-    const dotLabel = severity === "alert" ? "Alerte RPE" : severity === "watch" ? "Point d’attention RPE" : severity === "normal" ? "Seuil RPE non dépassé" : "Non évalué";
-    const dot = `<span role="img" aria-label="${dotLabel}" title="${dotLabel}" style="color:${dotColor};font-size:15px">●</span> `;
+    const status = e.injured || severity === "alert" ? ["#FF6269", e.injured ? "Blessure déclarée" : "Alerte RPE"]
+      : e.eveningPain.length || severity === "watch" ? ["#FFAD4D", e.eveningPain.length ? "Douleur déclarée" : "Point d’attention RPE"]
+      : severity === "normal" ? ["#57D477", "Seuil RPE non dépassé"] : ["#A6A6A6", "RPE non évalué"];
+    const dot = `<span role="img" aria-label="${status[1]}" title="${status[1]}" style="color:${status[0]};font-size:19px;line-height:18px">●</span>`;
     const notes = text(e.evening?.comment);
     const pains = e.eveningPain.map(p => `<div>${esc(p.label)} : <strong style="color:#F1CC77">${p.intensity === null ? "note non renseignée" : esc(value(p.intensity)) + "/10"}</strong></div>`).join("");
     const comments = [notes, ...e.eveningPain.flatMap(p => p.comment ? [`${p.label} : ${p.comment}`] : [])].filter(Boolean).map(note => `<div>${esc(note)}</div>`).join("");
-    return `<tr data-player="${esc(e.id)}"><td style="${cell}"><strong>${dot}${esc(e.name)}</strong>${flag ? `<br/><span style="font-size:11px;color:#F1CC77">${flag}</span>` : ""}</td><td align="center" style="${cell}">${value(e.duration)}</td><td align="center" style="${cell}">${value(e.rpe)}</td><td align="center" style="${cell}">${value(e.load)}</td><td style="${cell}">${pains || "—"}</td>${hasComments ? `<td style="${cell}">${comments || "—"}</td>` : ""}</tr>`;
+    return `<tr data-player="${esc(e.id)}"><td align="center" style="${cell}">${dot}</td><td style="${cell}"><strong>${esc(e.name)}</strong>${flag ? `<br/><span style="font-size:11px;color:#F1CC77">${flag}</span>` : ""}</td><td align="center" style="${cell}">${value(e.duration)}</td><td align="center" style="${cell}">${value(e.rpe)}</td><td align="center" style="${cell}">${value(e.load)}</td><td style="${cell}">${pains || "—"}</td>${hasComments ? `<td style="${cell}">${comments || "—"}</td>` : ""}</tr>`;
   }).join("");
   const href = /^https?:\/\//i.test(input.href) ? input.href : "";
   return `<!doctype html><html lang="fr"><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/><title>Bilan RPE du soir</title></head>
@@ -192,9 +193,9 @@ function renderEveningTable(input: DailyDigestInput, model: ReturnType<typeof bu
 <table role="presentation" width="100%" cellspacing="0" cellpadding="0"><tr><td><div style="font-size:11px;font-weight:800;color:#F1CC77">MYBASKET · CHARGE &amp; RPE</div><h1 style="font-size:24px;margin:8px 0">Bilan RPE du soir</h1><div style="font-size:13px">${esc(input.teamName)} · ${esc(date)}</div></td>${logo ? `<td align="right" width="60">${logo}</td>` : ""}</tr></table>
 </td></tr>
 <tr><td style="padding:12px 6px"><table role="presentation" width="100%" cellspacing="4" cellpadding="0" style="table-layout:fixed"><tr>${summary.map(([label,amount]) => `<td width="25%" align="center" style="padding:9px 3px;border:1px solid #514744;border-radius:9px;background:#252323;overflow-wrap:anywhere"><strong style="font-size:19px;color:#FFFFFF">${amount}</strong><br/><span style="font-size:10px;font-weight:800;color:#F1CC77;text-transform:uppercase">${label}</span></td>`).join("")}</tr></table>
-<div style="padding:5px 4px;font-size:11px;line-height:17px;color:#DDD"><span style="color:#57D477">●</span> Seuil non dépassé · <span style="color:#FFAD4D">●</span> Attention · <span style="color:#FF6269">●</span> Alerte · <span style="color:#A6A6A6">●</span> Non évalué</div></td></tr>
+<div style="padding:5px 4px;font-size:11px;line-height:17px;color:#DDD"><span style="color:#57D477">●</span> Seuil non dépassé · <span style="color:#FFAD4D">●</span> Douleur ou écart RPE · <span style="color:#FF6269">●</span> Blessure ou alerte RPE · <span style="color:#A6A6A6">●</span> Non évalué</div></td></tr>
 <tr><td style="padding:0 6px"><table aria-label="Réponses RPE du soir" width="100%" cellspacing="0" cellpadding="0" style="width:100%;table-layout:fixed;border-collapse:collapse;font-size:13px;line-height:18px;color:#FFFFFF"><thead><tr style="background:${colors.burgundy}">
-${columns.map(([label,width],i) => `<th scope="col" width="${width}%" align="${i === 0 || i >= 4 ? "left" : "center"}" style="${cell};font-size:12px">${label}</th>`).join("")}
+${columns.map(([label,width],i) => `<th scope="col" width="${width}%" align="${i === 1 || i >= 5 ? "left" : "center"}" style="${cell};font-size:12px"${i === 0 ? ' aria-label="Statut"' : ""}>${label}</th>`).join("")}
 </tr></thead><tbody>${rows || `<tr><td colspan="${columns.length}" style="${cell}">Aucune réponse RPE.</td></tr>`}</tbody></table></td></tr>
 ${model.missing.length ? `<tr><td style="padding:16px 10px;font-size:13px;line-height:20px"><strong>Sans réponse :</strong> ${esc(model.missing.map(e => e.name).join(" · "))}</td></tr>` : ""}
 ${href ? `<tr><td align="center" style="padding:16px 10px"><a href="${esc(href)}" style="display:inline-block;padding:12px 16px;background:${colors.burgundy};color:#FFFFFF;text-decoration:none;font-weight:800;font-size:13px">Ouvrir le suivi dans MyBasket</a></td></tr>` : ""}

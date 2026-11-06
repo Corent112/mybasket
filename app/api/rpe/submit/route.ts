@@ -3,6 +3,8 @@ import { createAdminClient } from "@/lib/supabase/admin-server";
 import { averageOtherPlayers, evaluateRpe } from "@/lib/rpe/engine";
 import { sendCriticalRpeAlert, sendWellnessPainAlert } from "@/lib/rpe/notifications";
 
+import { comparePainReports } from "@/lib/rpe/pain-zones";
+
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
@@ -75,6 +77,7 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: savedResponseError.message }, { status: 400 });
     }
 
+    let painSaved = false;
     if (savedResponse?.id) {
       const painZones = Array.isArray(body?.painZones)
         ? body.painZones.map((value: unknown) => String(value)).slice(0, 20)
@@ -93,6 +96,7 @@ export async function POST(request: Request) {
         })
         .eq("id", savedResponse.id);
 
+      painSaved = !injuredError;
       if (injuredError) {
         // Compatibilité pendant le déploiement de la migration additive :
         // l'ancien wellness continue de fonctionner même si les nouvelles
@@ -111,14 +115,12 @@ export async function POST(request: Request) {
       }
     }
 
-    if (responseKind !== "post_session") {
-      const currentZones = Array.isArray(body?.painZones) ? body.painZones.map((value: unknown) => String(value)) : [];
-      const currentDetails = body?.painDetails && typeof body.painDetails === "object" && !Array.isArray(body.painDetails) ? body.painDetails as Record<string, any> : {};
-
-      if (currentZones.length && savedResponse?.id) {
-        const { data: previous } = await admin
+    // Pain alerts apply to both forms, independently of workload and injury status.
+    if (painSaved && savedResponse?.id && Array.isArray(body?.painZones) && body.painZones.length) {
+      try {
+        const { data: previous, error: historyError } = await admin
           .from("player_wellness_responses")
-          .select("pain_zones,pain_details,response_date,created_at")
+          .select("pain_zones,pain_details")
           .eq("team_id", link.team_id)
           .eq("player_id", playerId)
           .eq("response_kind", responseKind)
@@ -127,21 +129,8 @@ export async function POST(request: Request) {
           .order("created_at", { ascending: false })
           .limit(1)
           .maybeSingle();
-
-        const previousZones = Array.isArray(previous?.pain_zones) ? previous.pain_zones.map(String) : [];
-        const previousDetails = previous?.pain_details && typeof previous.pain_details === "object" && !Array.isArray(previous.pain_details) ? previous.pain_details as Record<string, any> : {};
-        const zoneLabels: Record<string, string> = {
-          head_front:"Tête / visage", neck_front:"Cou", shoulder_left_front:"Épaule gauche", shoulder_right_front:"Épaule droite", chest_front:"Thorax", plexus_front:"Plexus", abdomen_front:"Abdominaux", elbow_left_front:"Coude gauche", elbow_right_front:"Coude droit", wrist_left_front:"Poignet / main gauche", wrist_right_front:"Poignet / main droite", hip_left_front:"Hanche gauche", hip_right_front:"Hanche droite", thigh_left_front:"Cuisse gauche", thigh_right_front:"Cuisse droite", knee_left_front:"Genou gauche", knee_right_front:"Genou droit", calf_left_front:"Mollet gauche", calf_right_front:"Mollet droit", ankle_left_front:"Cheville / pied gauche", ankle_right_front:"Cheville / pied droit", head_back:"Arrière de la tête", neck_back:"Nuque", shoulder_left_back:"Épaule gauche (dos)", shoulder_right_back:"Épaule droite (dos)", upper_back:"Haut du dos", lower_back:"Lombaires", elbow_left_back:"Coude gauche (dos)", elbow_right_back:"Coude droit (dos)", wrist_left_back:"Poignet / main gauche (dos)", wrist_right_back:"Poignet / main droite (dos)", glute_left:"Fessier gauche", glute_right:"Fessier droit", hamstring_left:"Ischio gauche", hamstring_right:"Ischio droit", knee_left_back:"Genou gauche (arrière)", knee_right_back:"Genou droit (arrière)", calf_left:"Mollet gauche", calf_right:"Mollet droit", ankle_left_back:"Cheville / pied gauche (dos)", ankle_right_back:"Cheville / pied droit (dos)"
-        };
-        const alerts = currentZones.flatMap((zoneId: string) => {
-          const intensity = Number(currentDetails?.[zoneId]?.intensity || 0);
-          const wasPresent = previousZones.includes(zoneId);
-          const previousIntensity = wasPresent ? Number(previousDetails?.[zoneId]?.intensity || 0) : null;
-          if (!wasPresent) return [{ label: zoneLabels[zoneId] || zoneId, intensity, previousIntensity: null, reason: "new" as const }];
-          if (previousIntensity !== null && intensity >= previousIntensity + 2) return [{ label: zoneLabels[zoneId] || zoneId, intensity, previousIntensity, reason: "increase" as const }];
-          return [];
-        });
-
+        if (historyError) throw new Error(historyError.message);
+        const alerts = comparePainReports(body.painZones.slice(0, 20), body.painDetails, previous);
         if (alerts.length) {
           const [{ data: team }, { data: player }] = await Promise.all([
             admin.from("teams").select("name").eq("id", link.team_id).maybeSingle(),
@@ -155,10 +144,12 @@ export async function POST(request: Request) {
             zones: alerts,
           });
         }
+      } catch (error) {
+        console.error("Alerte douleur non envoyée :", error);
       }
-
-      return NextResponse.json({ ok: true, injured });
     }
+
+    if (responseKind !== "post_session") return NextResponse.json({ ok: true, injured });
 
     // Un joueur blessé reste visible dans le récapitulatif, mais sa réponse
     // ne participe ni aux moyennes groupe ni aux alertes RPE comparatives.
