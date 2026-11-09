@@ -129,6 +129,7 @@ export type AiExerciseDiagram = {
   rectified?: boolean;
   /** Calage sur les marquages internes du demi-terrain. */
   landmarkAligned?: boolean;
+  landmarkMarkerCount?: number;
   /** Image de référence recadrée sur les lignes du terrain, orientée comme les objets. */
   courtReference?: { url: string; play: AiRect };
   /** Score du redressement (marquages officiels retrouvés), quand applicable. */

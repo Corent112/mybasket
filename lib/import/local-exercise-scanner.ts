@@ -49,6 +49,7 @@ import {
   regionSignature,
   signatureDistance,
 } from "./court-geometry";
+import { registerMarkedCourt } from "./marked-court";
 import { traceLandmarkArrows } from "./landmark-arrows";
 import { isolateLandmarkInk, locateFilledLandmarkCourt, registerLandmarkCourt } from "./landmark-court";
 import { recoverReferenceInk } from "./reference-ink";
@@ -1125,38 +1126,44 @@ export async function scanExerciseLocally(
       // looking for strokes. Keep these proposals in the review rather than
       // allowing a high stroke count to promote a false court.
       if (!isVideo && !labelled.length) {
-        const direct = registerLandmarkCourt(canvas);
-        const cropped = !direct?.anchors.painted || !direct.anchors.corners
+        const marked = registerMarkedCourt(canvas);
+        const direct = marked ? null : registerLandmarkCourt(canvas);
+        const cropped = !marked && (!direct?.anchors.painted || !direct.anchors.corners)
           ? locateFilledLandmarkCourt(canvas) : null;
         const match = cropped ?? (direct ? { source: canvas, registered: direct } : null);
-        if (match) {
-          const { source, registered } = match;
-          const { canvas: aligned, play, anchors } = registered;
+        const registered = marked ?? match?.registered;
+        if (registered) {
+          const source = marked?.source ?? match?.source ?? canvas;
+          const { canvas: aligned, play } = registered;
+          const painted = marked ? true : Boolean(match?.registered.anchors.painted);
+          const landmarks = marked?.markers.map(point => courtToCanonical(point, "half")) ?? [];
           const courtReference = makeCourtReference(aligned, play);
           if (courtReference) {
-            debug.note(`${cropped ? "Photo recadrée sur la raquette. " : ""}Calage sur ligne de fond, coins de raquette et arc à 3 points${anchors.corners ? " (raccords latéraux reconnus)" : ""}.`);
+            debug.note(marked ? `Calage sur ${landmarks.length} points de repère visibles.`
+              : `${cropped ? "Photo recadrée sur la raquette. " : ""}Calage sur ligne de fond, coins de raquette et arc à 3 points.`);
             state.rectifiedImage = courtReference.url;
             const geometry: CourtGeometry = {
               rect: play, play, playDetected: true, kind: "half", orientation: "identity",
               confidence: .65, reasons: ["Repères de raquette et de ligne à trois points"],
             };
             const analysis = await debug.time("vision-reperes-terrain", () =>
-              analyseGraphic(isolateLandmarkInk(aligned), geometry, "reperes")).catch(error => {
+              analyseGraphic(isolateLandmarkInk(marked?.analysisCanvas ?? aligned), geometry, "reperes")).catch(error => {
                 debug.note(`Tracés non analysés après calage : ${error instanceof Error ? error.message : String(error)}`);
                 return null;
               });
-            const players = (analysis?.players ?? []).filter(player => player.label && player.labelConfident !== false);
+            const players = (analysis?.players ?? []).filter(player => player.label && player.labelConfident !== false
+              && !landmarks.some(point => Math.hypot(point.x-player.x, point.y-player.y) < .055));
             const keys = new Set(players.map(player => player.key));
             const keyTop = courtToCanonical({ x: 5.05 / 15, y: 0 }, "half");
             const keyEnd = courtToCanonical({ x: 9.95 / 15, y: 5.8 / 14 }, "half");
             const inPaint = (point: AiPoint) => point.x > keyTop.x - .015 && point.x < keyEnd.x + .015
               && point.y < keyEnd.y + .02;
-            const traced = traceLandmarkArrows(source, registered.toCourt, anchors.painted);
+            const traced = traceLandmarkArrows(source, registered.toCourt, painted);
             const fallbackActions = (analysis?.actions ?? []).filter(action => action.action !== "screen"
               && (action.confidence ?? 0) >= .65
               // On the printed key, inner lane lines can survive the outer
               // contour mask. Do not promote isolated fragments of those lines.
-              && !(anchors.painted && action.from && inPaint(action.from) && inPaint(action.to)))
+              && !(painted && action.from && inPaint(action.from) && inPaint(action.to)))
               .map(action => ({
                 ...action, fromPlayer: keys.has(action.fromPlayer ?? "") ? action.fromPlayer : undefined,
                 toPlayer: keys.has(action.toPlayer ?? "") ? action.toPlayer : undefined, confidence: .45,
@@ -1174,10 +1181,10 @@ export async function scanExerciseLocally(
               const fromPlayer = action.from ? nearby(action.from) : undefined;
               return { ...action, fromPlayer, order: index + 1,
                 toPlayer: action.action === "pass" ? nearby(action.to, fromPlayer) : undefined };
-            }) : fallbackActions;
+            }) : marked ? [] : fallbackActions;
             state.referenceFallback = {
               detected: true, courtType: "half", players, objects: [], actions, notes: "", rectified: true,
-              courtReference, landmarkAligned: true,
+              courtReference, landmarkAligned: true, landmarkMarkerCount: marked?.markers.length,
             };
             continue;
           }

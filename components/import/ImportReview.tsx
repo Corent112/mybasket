@@ -835,9 +835,12 @@ export default function ImportReview({
       <div style={styles.header}>
         <div>
           <h2 style={styles.title}>{result.referenceFallback && !diagram.players.length && !diagram.actions.length && !diagram.objects.length ? "Reconstitue le schéma sur le calque" : "Vérifie le schéma importé"}</h2>
-          {result.referenceFallback && <p style={styles.hint}>Le terrain est reconnu. Vérifie les tracés proposés et ajoute les joueurs et les mouvements manquants.</p>}
+          {result.referenceFallback && <p style={styles.hint}>{diagram.landmarkMarkerCount && !diagram.players.length && !diagram.actions.length && !diagram.objects.length
+            ? "Les points ont servi au calage. Ajoute un joueur ou une action si tu veux enregistrer un schéma."
+            : "Le terrain est reconnu. Vérifie les tracés proposés et ajoute les joueurs et les mouvements manquants."}</p>}
           <p style={styles.subtitle}>
-            {diagram.landmarkAligned ? "Calage sur la raquette et la ligne à trois points" : diagram.rectified
+            {diagram.landmarkMarkerCount ? `Calage sur ${diagram.landmarkMarkerCount} points de repère`
+              : diagram.landmarkAligned ? "Calage sur la raquette et la ligne à trois points" : diagram.rectified
               ? `Terrain redressé (fiabilité ${Math.round((diagram.rectifyScore ?? 0) * 100)} %)`
               : "Terrain détecté sans redressement"}
             {typeof result.importConfidence === "number"
