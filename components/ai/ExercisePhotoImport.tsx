@@ -122,7 +122,7 @@ export default function ExercisePhotoImport({ onImported, playersOnly = false, d
     try {
       const exercise = playersOnly && isImage
         ? await scanPlayersOnly(file)
-        : refineImportedExercise(await scanExerciseLocally(file, setStatus));
+        : refineImportedExercise(await scanExerciseLocally(file, setStatus, { drawingOnly }));
 
       setPending(exercise);
       setWarnings(exercise.warnings);

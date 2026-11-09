@@ -50,7 +50,7 @@ import {
   signatureDistance,
 } from "./court-geometry";
 import { traceLandmarkArrows } from "./landmark-arrows";
-import { isolateLandmarkInk, registerLandmarkCourt } from "./landmark-court";
+import { isolateLandmarkInk, locateFilledLandmarkCourt, registerLandmarkCourt } from "./landmark-court";
 import { recoverReferenceInk } from "./reference-ink";
 import { recoverRedArrows } from "./reference-arrows";
 import { analyseGraphic } from "./diagram-vision";
@@ -1065,7 +1065,8 @@ export async function collectFromRegion(
 
 export async function scanExerciseLocally(
   file: File,
-  onStatus?: (message: string) => void
+  onStatus?: (message: string) => void,
+  options?: { drawingOnly?: boolean },
 ): Promise<AiExerciseImport> {
   const debug = createImportDebug();
   const warnings: string[] = [];
@@ -1117,17 +1118,23 @@ export async function scanExerciseLocally(
       }
 
       onStatus?.(`Reconstruction des schémas dans Plaquette${suffix}…`);
-      const labelled = graphicRegions(layout, canvas.width, canvas.height);
+      // In the Plaquette we import one photograph. OCR text that happens to
+      // resemble a diagram caption must not select a different part of it.
+      const labelled = options?.drawingOnly ? [] : graphicRegions(layout, canvas.width, canvas.height);
       // Single upright paper diagrams: calibrate the basketball markings before
       // looking for strokes. Keep these proposals in the review rather than
       // allowing a high stroke count to promote a false court.
       if (!isVideo && !labelled.length) {
-        const registered = registerLandmarkCourt(canvas);
-        if (registered) {
+        const direct = registerLandmarkCourt(canvas);
+        const cropped = !direct?.anchors.painted || !direct.anchors.corners
+          ? locateFilledLandmarkCourt(canvas) : null;
+        const match = cropped ?? (direct ? { source: canvas, registered: direct } : null);
+        if (match) {
+          const { source, registered } = match;
           const { canvas: aligned, play, anchors } = registered;
           const courtReference = makeCourtReference(aligned, play);
           if (courtReference) {
-            debug.note(`Calage sur ligne de fond, coins de raquette et arc à 3 points${anchors.corners ? " (raccords latéraux reconnus)" : ""}.`);
+            debug.note(`${cropped ? "Photo recadrée sur la raquette. " : ""}Calage sur ligne de fond, coins de raquette et arc à 3 points${anchors.corners ? " (raccords latéraux reconnus)" : ""}.`);
             state.rectifiedImage = courtReference.url;
             const geometry: CourtGeometry = {
               rect: play, play, playDetected: true, kind: "half", orientation: "identity",
@@ -1144,7 +1151,7 @@ export async function scanExerciseLocally(
             const keyEnd = courtToCanonical({ x: 9.95 / 15, y: 5.8 / 14 }, "half");
             const inPaint = (point: AiPoint) => point.x > keyTop.x - .015 && point.x < keyEnd.x + .015
               && point.y < keyEnd.y + .02;
-            const traced = traceLandmarkArrows(canvas, registered.toCourt, anchors.painted);
+            const traced = traceLandmarkArrows(source, registered.toCourt, anchors.painted);
             const fallbackActions = (analysis?.actions ?? []).filter(action => action.action !== "screen"
               && (action.confidence ?? 0) >= .65
               // On the printed key, inner lane lines can survive the outer

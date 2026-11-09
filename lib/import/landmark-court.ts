@@ -264,3 +264,55 @@ export function isolateLandmarkInk(aligned: HTMLCanvasElement): HTMLCanvasElemen
   ctx.putImageData(pixels,0,0);
   return canvas;
 }
+
+/**
+ * Locate a printed, colored key even when the photo includes empty margins.
+ * Each proposed crop still has to prove the court against the line landmarks.
+ */
+export function locateFilledLandmarkCourt(photo: HTMLCanvasElement) {
+  const probe = document.createElement("canvas");
+  const scale = Math.min(1, 420 / Math.max(photo.width, photo.height));
+  const w = probe.width = Math.max(1, Math.round(photo.width * scale));
+  const h = probe.height = Math.max(1, Math.round(photo.height * scale));
+  const ctx = probe.getContext("2d", { willReadFrequently: true });
+  if (!ctx) return null;
+  ctx.drawImage(photo, 0, 0, w, h);
+  const { data } = ctx.getImageData(0, 0, w, h);
+  const columns = new Uint32Array(w), rows = new Uint32Array(h);
+  let total = 0;
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+    const i = (y * w + x) * 4, r = data[i], g = data[i + 1], b = data[i + 2];
+    if (r < 85 || r - g < 45 || r - b < 45) continue;
+    columns[x]++; rows[y]++; total++;
+  }
+  if (total < w * h * .016) return null;
+  const quantile = (axis: Uint32Array, fraction: number) => {
+    let count = 0;
+    for (let i = 0; i < axis.length; i++) {
+      count += axis[i];
+      if (count >= total * fraction) return i;
+    }
+    return axis.length - 1;
+  };
+  const x0 = quantile(columns, .012), x1 = quantile(columns, .988);
+  const y0 = quantile(rows, .012), y1 = quantile(rows, .988);
+  const keyW = (x1-x0) * photo.width/w, keyH = (y1-y0) * photo.height/h;
+  const center = (x0+x1)/2 * photo.width/w, top = y0 * photo.height/h;
+  const fill = total / Math.max(1, (x1-x0)*(y1-y0));
+  if (keyW < 24 || keyH < 24 || fill < .55 || fill > 1.18 || keyW/keyH < .72 || keyW/keyH > 1.65) return null;
+
+  for (const [halfWidth, above, depth] of [[1.7,.13,2.65],[1.63,.12,2.5],[1.76,.19,2.8],[1.62,.08,2.72]]) {
+    const left = Math.max(0, Math.floor(center - halfWidth*keyW));
+    const right = Math.min(photo.width, Math.ceil(center + halfWidth*keyW));
+    const start = Math.max(0, Math.floor(top - above*keyH));
+    const end = Math.min(photo.height, Math.ceil(top + depth*keyH));
+    const source = document.createElement("canvas");
+    source.width = right-left; source.height = end-start;
+    const crop = source.getContext("2d");
+    if (!crop) continue;
+    crop.drawImage(photo, left,start,source.width,source.height,0,0,source.width,source.height);
+    const registered = registerLandmarkCourt(source);
+    if (registered?.anchors.painted && registered.anchors.corners) return { source, registered };
+  }
+  return null;
+}
