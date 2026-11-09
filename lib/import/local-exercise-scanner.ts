@@ -960,6 +960,24 @@ export async function collectFromRegion(
   }
 
   if (usedRectified && rectified && rectified.level === "moyenne") state.mediumConfidence = true;
+  try {
+    // Use the same oriented bitmap and the same play rect as symbol detection.
+    const source = analysis.workCanvas;
+    const play = analysis.playRect;
+    const scale = Math.min(1, 900 / Math.max(source.width, source.height));
+    const preview = document.createElement("canvas");
+    preview.width = Math.max(1, Math.round(source.width * scale));
+    preview.height = Math.max(1, Math.round(source.height * scale));
+    const ctx = preview.getContext("2d");
+    if (ctx && source.width && source.height && play.x1 > play.x0 && play.y1 > play.y0) {
+      ctx.drawImage(source, 0, 0, preview.width, preview.height);
+      candidate.courtReference = {
+        url: preview.toDataURL("image/jpeg", 0.85),
+        play: { x0: play.x0 / source.width, x1: play.x1 / source.width,
+          y0: play.y0 / source.height, y1: play.y1 / source.height },
+      };
+    }
+  } catch { /* La numérisation reste utilisable sans calque de référence. */ }
   state.contentSignatures.add(content);
   state.accepted.push(region);
   state.diagrams.push(candidate);

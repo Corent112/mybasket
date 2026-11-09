@@ -188,6 +188,7 @@ function diagram(overrides = {}) {
     actions: [],
     rectified: true,
     rectifyScore: 0.72,
+    courtReference: { url: RECTIFIED_PNG, play: { x0: 0.1, y0: 0.1, x1: 0.9, y1: 0.9 } },
     ...overrides,
   };
 }
@@ -358,7 +359,7 @@ async function main() {
       typeof converted.y === "number" &&
       typeof converted.label === "string" &&
       converted.shape === "circle" &&
-      converted.rotation === 0 &&
+      converted.rotation === 180 &&
       typeof converted.hasBall === "boolean",
     converted ? JSON.stringify({ shape: converted.shape, rotation: converted.rotation }) : "absent"
   );
@@ -376,7 +377,7 @@ async function main() {
   await click("Annuler");
   check("aucune injection après annulation", injections.length === 0, `injections=${injections.length}`);
   check("écran de validation refermé", !text().includes("Analyse terminée"));
-  check("bouton d'import de nouveau disponible", !!findButton("📸 Importer photo / vidéo"));
+  check("bouton d'import de nouveau disponible", !!findButton("📸 Scanner un schéma"));
   // Annulation depuis l'écran de correction : retour au résumé, toujours rien.
   await runImport(importResult());
   await click("Corriger");
@@ -438,9 +439,24 @@ async function main() {
   await click("Corriger");
   check(
     "calque de comparaison disponible dans la correction",
-    /calque/i.test(text()),
+    /photo alignée sur le terrain/i.test(text()),
     text().slice(0, 400)
   );
+  await click("Retracer un mouvement");
+  const canvas = document.querySelector("canvas");
+  canvas.setPointerCapture = () => {};
+  canvas.getBoundingClientRect = () => ({left:0, top:0, width:canvas.width, height:canvas.height});
+  const pointer = async (kind, x, y) => act(async () => {
+    canvas.dispatchEvent(new dom.window.MouseEvent(kind, { bubbles: true, clientX: x, clientY: y }));
+  });
+  await pointer("pointerdown", 160, 140);
+  await pointer("pointermove", 230, 190);
+  await pointer("pointermove", 300, 160);
+  await pointer("pointerup", 300, 160);
+  await click("Valider l’import");
+  const traced = ui.importToPlaquetteSchema(lastImported)?.phases[0]?.lines[0];
+  check("tracé sur la photo inséré en dessin natif avec sa courbe",
+    traced?.action === "freedraw" && traced?.points?.length === 3 && traced.points[1].y > traced.points[2].y);
   await unmount();
 
   await mount();

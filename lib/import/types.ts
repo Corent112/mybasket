@@ -127,6 +127,8 @@ export type AiExerciseDiagram = {
   sourceLabel?: string;
   /** true si ce schéma vient d'un terrain redressé par homographie. */
   rectified?: boolean;
+  /** Image de référence recadrée sur les lignes du terrain, orientée comme les objets. */
+  courtReference?: { url: string; play: AiRect };
   /** Score du redressement (marquages officiels retrouvés), quand applicable. */
   rectifyScore?: number;
   /** Empreinte visuelle du graphique, utilisée pour dédoublonner les vidéos. */

@@ -18,6 +18,8 @@ import {drawingSessionStorage} from '@/lib/drawing-session-storage';
 
 import React, { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
+import dynamic from 'next/dynamic';
+import type { AiExerciseImport } from '@/lib/import/types';
 import { addDrawingOption, drawingOptions, drawingPath, drawingPlaybackGroups, drawingRecordingSegments, removeDrawingOption, type DrawingOptionPhase } from '@/lib/drawing-options';
 import { machineBallCount, machineReserves, collectorForBasket, drawShootingMachine } from '@/lib/drawing-shooting-machine';
 import { createClient } from '@/lib/supabase/client';
@@ -32,6 +34,8 @@ import { listPrivatePlaybooks, listPlaybookSeries, listPersonalSystemTags, ensur
 import { createPlaybook, type Playbook } from '@/lib/playbook';
 import { listDrawingTeams, ensureDrawingSeasons, createDrawingSeason, type DrawingTeam, type DrawingSeason } from '@/lib/drawing-workspace';
 
+
+const ExercisePhotoImport = dynamic(() => import("@/components/ai/ExercisePhotoImport"), { ssr: false });
 
 type CourtStyle = {
   floorColor: string;
@@ -759,6 +763,7 @@ useEffect(() => {
   const [terrainPanelOpen, setTerrainPanelOpen] = useState(true);
   const [selectionPanelOpen, setSelectionPanelOpen] = useState(true);
   const [exportOpen, setExportOpen] = useState(false);
+  const [photoImportOpen, setPhotoImportOpen] = useState(false);
   const [saving, setSaving] = useState<null | 'systeme' | 'exercice' | 'library-system' | 'library-exercise'>(null);
   const insertionPending = useRef(false);
   const [insertionStatus, setInsertionStatus] = useState('');
@@ -861,6 +866,32 @@ const currentRef = useRef(current);
   // ----------------------- Historique (undo/redo) -----------------------
   const snap = () => ({ phases: JSON.parse(JSON.stringify(phases)) as Phase[], current });
   const pushHistory = () => { setPast((p) => [...p.slice(-49), snap()]); setFuture([]); };
+  const insertPhotoDrawing = async (result: AiExerciseImport) => {
+    const { importToPlaquetteSchema } = await import('@/lib/import/plaquette-converter');
+    const drawing = importToPlaquetteSchema(result);
+    if (!drawing) throw new Error("Aucun schéma reconnu sur cette image.");
+    const existing = phasesRef.current;
+    const hasContent = existing.some(p => p.players.length || p.objects.length || p.lines.length || p.notes.trim());
+    if (hasContent && drawing.courtType !== courtRef.current) {
+      throw new Error("Cette photo utilise un autre format de terrain. Ouvre une nouvelle plaquette pour l’ajouter sans modifier ton dessin actuel.");
+    }
+    const next = hasContent ? [...existing, ...drawing.phases] : drawing.phases;
+    const index = hasContent ? existing.length : 0;
+    stopAnim();
+    pushHistory();
+    phasesRef.current = next;
+    currentRef.current = index;
+    courtRef.current = drawing.courtType;
+    setCourtType(drawing.courtType);
+    setPhases(next);
+    setCurrent(index);
+    activeOptionRef.current = null;
+    setActiveOptionId(null);
+    setSelection([]);
+    setTool({ kind: 'none' });
+    setPhotoImportOpen(false);
+    showHint(`${drawing.phases.length} phase(s) importée(s) · modifiables sur le terrain`);
+  };
   const undo = () => {
     setPast((p) => {
       if (!p.length) return p;
@@ -5038,6 +5069,10 @@ const exportJson = () => {
         🗑
       </div>
 
+      <button type="button" className="ed-tool" onClick={() => setPhotoImportOpen(true)} title="Importer un dessin depuis une image">
+        <span className="icn">📷</span><span>Importer une photo</span>
+      </button>
+
       <div style={{ position: 'relative' }}>
         <div className="ed-tool" onClick={() => setExportOpen((v) => !v)}>
           <span className="icn">📤</span>
@@ -6046,6 +6081,19 @@ const exportJson = () => {
                 </button>
               </div>
             </div>
+          </div>
+        )}
+
+        {photoImportOpen && (
+          <div style={{ position: 'fixed', inset: 0, zIndex: 4000, background: '#0009', display: 'grid', placeItems: 'center', padding: '1rem' }}>
+            <section role="dialog" aria-modal="true" aria-label="Importer une photo sur la Plaquette"
+              style={{ background: '#fff', color: '#17151c', borderRadius: 14, width: 'min(1120px, 100%)', maxHeight: '92dvh', overflow: 'auto', padding: '1rem' }}>
+              <header style={{ display: 'flex', justifyContent: 'space-between', gap: 12, marginBottom: 12 }}>
+                <strong>Importer un dessin depuis une photo</strong>
+                <button type="button" className="btn btn-outline btn-small" onClick={() => setPhotoImportOpen(false)}>Fermer</button>
+              </header>
+              <ExercisePhotoImport drawingOnly onImported={insertPhotoDrawing} />
+            </section>
           </div>
         )}
 

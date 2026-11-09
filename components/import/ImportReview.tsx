@@ -204,7 +204,11 @@ export default function ImportReview({
   const [diagrams, setDiagrams] = useState<AiExerciseDiagram[]>(initial);
   const [current, setCurrent] = useState(Math.min(initialDiagram, Math.max(0, initial.length - 1)));
   const [selection, setSelection] = useState<Selection>(null);
-  const [overlay, setOverlay] = useState(0);
+  const [overlay, setOverlay] = useState(0.45);
+  const [traceMode, setTraceMode] = useState(false);
+  const [traceKind, setTraceKind] = useState<AiDiagramActionKind>("freedraw");
+  const traceRef = useRef<AiPoint[] | null>(null);
+  const [tracePreview, setTracePreview] = useState<AiPoint[]>([]);
   const [addMode, setAddMode] = useState<AiDetectionType | null>(null);
   const [dragging, setDragging] = useState(false);
 
@@ -226,14 +230,17 @@ export default function ImportReview({
   }, [courtType]);
 
   useEffect(() => {
-    if (!result.rectifiedImage) return;
+    setOverlayReady(false);
+    overlayImage.current = null;
+    if (!diagram?.courtReference?.url) return;
     const image = new Image();
     image.onload = () => {
       overlayImage.current = image;
       setOverlayReady(true);
     };
-    image.src = result.rectifiedImage;
-  }, [result.rectifiedImage]);
+    image.src = diagram.courtReference.url;
+    return () => { image.onload = null; };
+  }, [diagram?.courtReference?.url]);
 
   /* ------------------------------------------------------------- rendu */
 
@@ -254,10 +261,14 @@ export default function ImportReview({
     }
 
     // Calque : la photo redressée, sous le dessin, pour comparer d'un coup d'œil.
-    if (overlay > 0 && overlayReady && overlayImage.current) {
+    if (overlay > 0 && overlayReady && overlayImage.current && diagram.courtReference) {
       ctx.save();
       ctx.globalAlpha = overlay;
-      ctx.drawImage(overlayImage.current, 0, 0, width, height);
+      const area = playRect(courtType);
+      const { play } = diagram.courtReference;
+      const w = (area.x1 - area.x0) * width / (play.x1 - play.x0);
+      const h = (area.y1 - area.y0) * height / (play.y1 - play.y0);
+      ctx.drawImage(overlayImage.current, area.x0 * width - play.x0 * w, area.y0 * height - play.y0 * h, w, h);
       ctx.restore();
     }
 
@@ -277,6 +288,19 @@ export default function ImportReview({
 
     const toPixel = (point: AiPoint) => canonicalToPixel(point, width, height, courtType);
 
+    if (tracePreview.length > 1) {
+      ctx.save();
+      ctx.strokeStyle = COLORS.selected;
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      tracePreview.forEach((point, index) => {
+        const p = toPixel(point);
+        if (index) ctx.lineTo(p.x, p.y); else ctx.moveTo(p.x, p.y);
+      });
+      ctx.stroke();
+      ctx.restore();
+    }
+
     // Trajectoires
     diagram.actions.forEach((action, index) => {
       const from = toPixel(action.from ?? action.to);
@@ -284,7 +308,7 @@ export default function ImportReview({
       const doubt = needsReview(action.confidence);
       const isSelected = selection?.kind === "action" && selection.index === index;
       ctx.save();
-      ctx.strokeStyle = isSelected ? COLORS.selected : doubt ? COLORS.doubt : COLORS.ink;
+      ctx.strokeStyle = isSelected ? COLORS.selected : doubt ? COLORS.doubt : action.color || COLORS.ink;
       ctx.lineWidth = isSelected ? 4 : 3;
       ctx.setLineDash(action.action === "pass" ? [9, 6] : []);
       ctx.beginPath();
@@ -300,15 +324,28 @@ export default function ImportReview({
       }
       ctx.stroke();
       ctx.setLineDash([]);
-      // pointe
-      const angle = Math.atan2(to.y - from.y, to.x - from.x);
-      ctx.beginPath();
-      ctx.moveTo(to.x, to.y);
-      ctx.lineTo(to.x - 13 * Math.cos(angle - 0.4), to.y - 13 * Math.sin(angle - 0.4));
-      ctx.lineTo(to.x - 13 * Math.cos(angle + 0.4), to.y - 13 * Math.sin(angle + 0.4));
-      ctx.closePath();
-      ctx.fillStyle = isSelected ? COLORS.selected : doubt ? COLORS.doubt : COLORS.ink;
-      ctx.fill();
+      // The last segment gives the direction of curved paths.
+      const last = action.points?.at(-1);
+      const previous = action.points?.at(-2);
+      const tip = last ? toPixel(last) : to;
+      const start = previous ? toPixel(previous) : from;
+      const angle = Math.atan2(tip.y - start.y, tip.x - start.x);
+      if (action.action !== "freedraw") {
+        ctx.beginPath();
+        if (action.action === "screen") {
+          const dx = 8 * Math.sin(angle), dy = 8 * Math.cos(angle);
+          ctx.moveTo(tip.x - dx, tip.y + dy);
+          ctx.lineTo(tip.x + dx, tip.y - dy);
+          ctx.stroke();
+        } else {
+          ctx.moveTo(tip.x, tip.y);
+          ctx.lineTo(tip.x - 13 * Math.cos(angle - 0.4), tip.y - 13 * Math.sin(angle - 0.4));
+          ctx.lineTo(tip.x - 13 * Math.cos(angle + 0.4), tip.y - 13 * Math.sin(angle + 0.4));
+          ctx.closePath();
+          ctx.fillStyle = ctx.strokeStyle;
+          ctx.fill();
+        }
+      }
       // poignées d'extrémité
       for (const [end, point] of [["from", from], ["to", to]] as Array<["from" | "to", { x: number; y: number }]>) {
         const handleSelected = isSelected && selection?.kind === "action" && selection.end === end;
@@ -403,7 +440,7 @@ export default function ImportReview({
       ctx.fillText(type === "unknown" ? "?" : String(player.label ?? ""), 0, 1);
       ctx.restore();
     });
-  }, [diagram, courtType, overlay, overlayReady, selection, nativeCourtReady]);
+  }, [diagram, courtType, overlay, overlayReady, selection, nativeCourtReady, tracePreview]);
 
   useEffect(() => {
     draw();
@@ -454,6 +491,14 @@ export default function ImportReview({
     const canvas = canvasRef.current;
     if (!canvas) return;
 
+    if (traceMode) {
+      const point = pixelToCanonical(x, y, canvas.width, canvas.height, courtType);
+      traceRef.current = [point];
+      setTracePreview([point]);
+      event.currentTarget.setPointerCapture(event.pointerId);
+      return;
+    }
+
     if (addMode) {
       const point = pixelToCanonical(x, y, canvas.width, canvas.height, courtType);
       const label = String(
@@ -485,12 +530,21 @@ export default function ImportReview({
   };
 
   const handlePointerMove = (event: React.PointerEvent<HTMLCanvasElement>) => {
-    if (!dragging || !selection || !diagram) return;
+    if ((!traceRef.current && (!dragging || !selection)) || !diagram) return;
     const canvas = canvasRef.current;
     if (!canvas) return;
     const { x, y } = pointerPosition(event);
     const point = pixelToCanonical(x, y, canvas.width, canvas.height, courtType);
 
+    if (traceRef.current) {
+      const last = traceRef.current.at(-1)!;
+      if (Math.hypot(last.x - point.x, last.y - point.y) > 0.002 && traceRef.current.length < 800) {
+        traceRef.current.push(point);
+        setTracePreview([...traceRef.current]);
+      }
+      return;
+    }
+    if (!selection) return;
     updateDiagram((item) => {
       if (selection.kind === "player") {
         const players = item.players.map((player, index) =>
@@ -508,15 +562,32 @@ export default function ImportReview({
       }
       const actions = item.actions.map((action, index) => {
         if (index !== selection.index) return action;
+        const endpoint = selection.end === "to" ? action.to : action.from ?? action.to;
+        const points = action.points?.map((p, i, arr) => {
+          const t = i / Math.max(1, arr.length - 1);
+          const weight = selection.end === "to" ? t : 1 - t;
+          return { x: p.x + weight * (point.x - endpoint.x), y: p.y + weight * (point.y - endpoint.y) };
+        });
         return selection.end === "to"
-          ? { ...action, to: point, points: undefined, confidence: 1, source: "corrigé à la main" }
-          : { ...action, from: point, points: undefined, confidence: 1, source: "corrigé à la main" };
+          ? { ...action, to: point, toPlayer: undefined, points, confidence: 1, source: "corrigé à la main" }
+          : { ...action, from: point, fromPlayer: undefined, points, confidence: 1, source: "corrigé à la main" };
       });
       return { ...item, actions };
     });
   };
 
-  const handlePointerUp = () => setDragging(false);
+  const handlePointerUp = () => {
+    setDragging(false);
+    const points = traceRef.current;
+    traceRef.current = null;
+    setTracePreview([]);
+    if (!points || points.length < 2) return;
+    updateDiagram(item => ({ ...item, actions: [...item.actions, {
+      action: traceKind, from: points[0], to: points[points.length - 1], points,
+      confidence: 1, source: "retracé à la main",
+    }] }));
+    setSelection({ kind: "action", index: diagram.actions.length, end: "to" });
+  };
 
   const removeSelected = () => {
     if (!selection || !diagram) return;
@@ -753,11 +824,11 @@ export default function ImportReview({
             onPointerDown={handlePointerDown}
             onPointerMove={handlePointerMove}
             onPointerUp={handlePointerUp}
-            onPointerCancel={handlePointerUp}
+            onPointerCancel={() => { traceRef.current = null; setTracePreview([]); setDragging(false); }}
           />
-          {result.rectifiedImage ? (
+          {diagram.courtReference ? (
             <label style={styles.slider}>
-              Calque photo redressée
+              Photo alignée sur le terrain
               <input
                 type="range"
                 min={0}
@@ -777,18 +848,31 @@ export default function ImportReview({
               <button
                 type="button"
                 style={addMode === "attacker" ? styles.buttonPrimary : styles.button}
-                onClick={() => setAddMode(addMode === "attacker" ? null : "attacker")}
+                onClick={() => { setTraceMode(false); setAddMode(addMode === "attacker" ? null : "attacker"); }}
               >
                 + Attaquant
               </button>
               <button
                 type="button"
                 style={addMode === "defender" ? styles.buttonPrimary : styles.button}
-                onClick={() => setAddMode(addMode === "defender" ? null : "defender")}
+                onClick={() => { setTraceMode(false); setAddMode(addMode === "defender" ? null : "defender"); }}
               >
                 + Défenseur
               </button>
             </div>
+            <div style={styles.row}>
+              <button type="button" style={traceMode ? styles.buttonPrimary : styles.button}
+                aria-pressed={traceMode} onClick={() => { setTraceMode(!traceMode); setAddMode(null); }}>
+                Retracer un mouvement
+              </button>
+              {traceMode && <select aria-label="Type de mouvement à retracer" value={traceKind}
+                onChange={event => setTraceKind(event.target.value as AiDiagramActionKind)}>
+                <option value="freedraw">Dessin libre</option><option value="cut">Déplacement</option>
+                <option value="pass">Passe</option><option value="dribble">Dribble</option>
+                <option value="screen">Écran</option><option value="shoot">Tir</option>
+              </select>}
+            </div>
+            {traceMode && <p style={styles.hint}>Suis le tracé de la photo du départ à l’arrivée.</p>}
             {addMode ? <p style={styles.hint}>Clique sur le terrain pour le placer.</p> : null}
           </section>
 

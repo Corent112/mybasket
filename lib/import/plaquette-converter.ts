@@ -479,14 +479,16 @@ function drawObjectNative(ctx: CanvasRenderingContext2D, o: any, x: number, y: n
 
 function drawLineNative(ctx: CanvasRenderingContext2D, l: any, toPx: (p: AiPoint) => AiPoint, courtWidth: number) {
   const w = Math.max(2, courtWidth * 0.0035);
-  ctx.lineWidth = w; ctx.strokeStyle = COLORS.ink; ctx.fillStyle = COLORS.ink; ctx.lineCap = "round"; ctx.lineJoin = "round"; ctx.setLineDash([]);
+  ctx.lineWidth = w; ctx.strokeStyle = l.color || COLORS.ink; ctx.fillStyle = l.color || COLORS.ink; ctx.lineCap = "round"; ctx.lineJoin = "round"; ctx.setLineDash([]);
   if (l.action === "freedraw" && Array.isArray(l.points) && l.points.length > 1) {
     ctx.beginPath(); l.points.forEach((point: AiPoint, index: number) => { const q = toPx(point); if (index === 0) ctx.moveTo(q.x, q.y); else ctx.lineTo(q.x, q.y); }); ctx.stroke(); return;
   }
   const raw = [l.from, ...(Array.isArray(l.ctrls) ? l.ctrls : l.ctrl ? [l.ctrl] : []), l.to].filter(Boolean).map((p: AiPoint) => toPx(p));
-  const poly = catmullRom(raw); if (poly.length < 2) return;
+  const traced = Array.isArray(l.points) && l.points.length >= 2;
+  const poly: AiPoint[] = traced ? l.points.map(toPx) : catmullRom(raw);
+  if (poly.length < 2) return;
   if (l.action === "pass") ctx.setLineDash([w * 3, w * 2.4]);
-  if (l.action === "dribble") {
+  if (l.action === "dribble" && !traced) {
     const total = poly.slice(1).reduce((sum, p, i) => sum + Math.hypot(p.x - poly[i].x, p.y - poly[i].y), 0) || 1;
     const waves = Math.max(3, Math.round(total / 18));
     ctx.beginPath();

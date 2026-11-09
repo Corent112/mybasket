@@ -43,6 +43,7 @@ type Props = {
   onImported: (exercise: AiExerciseImport) => void | Promise<void>;
   /** Vision 2 : ne détecte que les joueurs + leurs numéros/positions. */
   playersOnly?: boolean;
+  drawingOnly?: boolean;
 };
 
 /** Étapes de l'écran : rien → analyse → résumé → correction. */
@@ -53,7 +54,7 @@ const rect = (r: { x0: number; y0: number; x1: number; y1: number }) =>
 
 const plural = (count: number, one: string, many: string) => (count > 1 ? many : one);
 
-export default function ExercisePhotoImport({ onImported, playersOnly = false }: Props) {
+export default function ExercisePhotoImport({ onImported, playersOnly = false, drawingOnly = false }: Props) {
   const inputRef = useRef<HTMLInputElement | null>(null);
   const [step, setStep] = useState<Step>("idle");
   const [busy, setBusy] = useState(false);
@@ -101,7 +102,7 @@ export default function ExercisePhotoImport({ onImported, playersOnly = false }:
   const analyze = async (file: File) => {
     const isImage = file.type.startsWith("image/");
     const isVideo = file.type.startsWith("video/");
-    if (!isImage && !isVideo) {
+    if (!isImage && (!isVideo || drawingOnly)) {
       setError("Choisis une photo ou une vidéo.");
       return;
     }
@@ -128,7 +129,7 @@ export default function ExercisePhotoImport({ onImported, playersOnly = false }:
       if (IMPORT_DEBUG_ENABLED) setDebug(exercise.debug ?? null);
       if (isImage) setSourceImage(URL.createObjectURL(file));
       setStatus("");
-      setStep("summary");
+      setStep(drawingOnly && diagramsOf(exercise).length ? "review" : "summary");
     } catch (e) {
       setStatus("");
       setStep("idle");
@@ -149,13 +150,13 @@ export default function ExercisePhotoImport({ onImported, playersOnly = false }:
 
     const count = diagramsOf(corrected).length;
     setStep("idle");
-    setPending(null);
     setCompare(false);
     setBusy(true);
     setStatus("Préremplissage du formulaire et de Plaquette…");
 
     try {
       await onImported(corrected);
+      setPending(null);
       setWarnings(corrected.warnings);
       setStatus(
         `✓ Numérisation terminée${
@@ -171,6 +172,8 @@ export default function ExercisePhotoImport({ onImported, playersOnly = false }:
     } catch (e) {
       setStatus("");
       setError(e instanceof Error ? e.message : "Le préremplissage a échoué.");
+      setPending(corrected);
+      setStep(count ? "review" : "summary");
     } finally {
       setBusy(false);
       injecting.current = false;
@@ -202,7 +205,7 @@ export default function ExercisePhotoImport({ onImported, playersOnly = false }:
       <div className="ce-ai-copy">
         <span className="ce-ai-badge">NUMÉRISATION GRATUITE</span>
         <div>
-          <b>Exercice sur papier, capture d’écran ou vidéo ?</b>
+          <b>{drawingOnly ? "Importe une photo ou une capture d’écran" : "Exercice sur papier, capture d’écran ou vidéo ?"}</b>
           <p>
             MyBasket détecte le terrain, redresse la perspective, isole joueurs et tracés puis reconstruit chaque dessin
             avec les objets natifs de Plaquette. Tu peux aussi glisser-déposer une image ici. Rien n’est enregistré tant que tu n’as pas validé.
@@ -218,7 +221,7 @@ export default function ExercisePhotoImport({ onImported, playersOnly = false }:
         ref={inputRef}
         hidden
         type="file"
-        accept="image/jpeg,image/png,image/webp,video/mp4,video/quicktime,video/webm"
+        accept={drawingOnly ? "image/*" : "image/jpeg,image/png,image/webp,video/mp4,video/quicktime,video/webm"}
         onChange={(event) => {
           const file = event.target.files?.[0];
           if (file) void analyze(file);
