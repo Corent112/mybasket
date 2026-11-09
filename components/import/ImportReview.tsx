@@ -172,7 +172,9 @@ export function diagramsOf(result: AiExerciseImport): AiExerciseDiagram[] {
 
 /** Nombre total d'éléments à vérifier, tous schémas confondus. */
 export function countReviewItems(result: AiExerciseImport): number {
-  return diagramsOf(result).reduce((total, diagram) => total + reviewItemsOfDiagram(diagram).length, 0);
+  const diagrams = diagramsOf(result);
+  if (!diagrams.length) return reviewItemsOfDiagram(result.referenceFallback).length;
+  return diagrams.reduce((total, diagram) => total + reviewItemsOfDiagram(diagram).length, 0);
 }
 
 /* -------------------------------------------------------------------------- */
@@ -797,7 +799,7 @@ export default function ImportReview({
     <div style={styles.wrapper}>
       <div style={styles.header}>
         <div>
-          <h2 style={styles.title}>{result.referenceFallback ? "Reconstitue le schéma sur le calque" : "Vérifie le schéma importé"}</h2>
+          <h2 style={styles.title}>{result.referenceFallback && !diagram.players.length && !diagram.actions.length && !diagram.objects.length ? "Reconstitue le schéma sur le calque" : "Vérifie le schéma importé"}</h2>
           {result.referenceFallback && <p style={styles.hint}>Le terrain est reconnu. Vérifie les tracés proposés et ajoute les joueurs et les mouvements manquants.</p>}
           <p style={styles.subtitle}>
             {diagram.rectified

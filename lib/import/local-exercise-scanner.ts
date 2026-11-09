@@ -47,6 +47,7 @@ import {
   regionSignature,
   signatureDistance,
 } from "./court-geometry";
+import { recoverReferenceInk } from "./reference-ink";
 import { recoverRedArrows } from "./reference-arrows";
 import { analyseGraphic } from "./diagram-vision";
 import { courtMarkingScore, quadBounds, rectifyCourt, type Rectified } from "./court-rectify";
@@ -756,6 +757,7 @@ export type DiagramCollector = {
   accepted: AiRect[];
   rectifiedImage?: string;
   referenceFallback?: AiExerciseDiagram;
+  flatReference?: ReturnType<typeof flatCourtReference>;
   mediumConfidence: boolean;
 };
 
@@ -1008,6 +1010,7 @@ export async function collectFromRegion(
       const reference = flat ?? rectified;
       const courtReference = makeCourtReference(reference.canvas, reference.play);
       if (courtReference) {
+        state.flatReference = flat;
         state.referenceFallback = {
           detected: true, courtType: rectified.kind, players: [], objects: [],
           actions: recoverRedArrows(reference), notes: "", rectified: !flat,
@@ -1184,6 +1187,19 @@ export async function scanExerciseLocally(
       }
     }
 
+    const referenceFallback = !isVideo && diagrams.length === 0 ? state.referenceFallback : undefined;
+    if (referenceFallback && state.flatReference) {
+      onStatus?.("Recherche des joueurs et des tracés noirs…");
+      try {
+        const recovered = await recoverReferenceInk(state.flatReference, referenceFallback.actions);
+        referenceFallback.players = recovered.players;
+        referenceFallback.actions = [...recovered.actions, ...referenceFallback.actions]
+          .map((action, index) => ({ ...action, order: index + 1 }));
+      } catch (error) {
+        debug.note(`Reconnaissance des tracés noirs indisponible : ${error instanceof Error ? error.message : String(error)}`);
+      }
+    }
+
     /* ------------------------------------------------------------ champs */
 
     const titleRaw = (bestZones.title || "").split("\n")[0].trim();
@@ -1321,7 +1337,7 @@ export async function scanExerciseLocally(
       diagrams,
       source: "local",
       rectifiedImage: state.rectifiedImage,
-      referenceFallback: !isVideo && diagrams.length === 0 ? state.referenceFallback : undefined,
+      referenceFallback,
       importConfidence,
       confidence: {
         text: bestOcrConfidence,

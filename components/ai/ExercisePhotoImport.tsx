@@ -237,7 +237,9 @@ export default function ExercisePhotoImport({ onImported, playersOnly = false, d
             <strong style={summaryStyles.title}>Analyse terminée</strong>
             <span style={summaryStyles.line}>
               {diagramCount === 0
-                ? "Aucun schéma détecté"
+                ? pending.referenceFallback && (pending.referenceFallback.players.length || pending.referenceFallback.actions.length)
+                  ? `${pending.referenceFallback.players.length} joueur(s) et ${pending.referenceFallback.actions.length} action(s) proposés`
+                  : "Aucun schéma détecté"
                 : `${diagramCount} ${plural(diagramCount, "schéma détecté", "schémas détectés")}`}
             </span>
             <span style={toCheck > 0 ? summaryStyles.lineWarn : summaryStyles.line}>
