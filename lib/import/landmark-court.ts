@@ -1,4 +1,4 @@
-import type { AiRect } from "./types";
+import type { AiPoint, AiRect } from "./types";
 
 type Rail = { start: number; end: number; score: number };
 type Knot = [number, number];
@@ -17,6 +17,7 @@ function interpolate(knots: Knot[], x: number): number {
 export function registerLandmarkCourt(source: HTMLCanvasElement): {
   canvas: HTMLCanvasElement;
   play: AiRect;
+  toCourt: (point: AiPoint) => AiPoint;
   anchors: { keyLeft: number; keyRight: number; baseline: number; keyEnd: number; arc: number; corners: number[] | null; painted: boolean };
 } | null {
   if (source.width < source.height * .84 || source.width > source.height * 1.65) return null;
@@ -182,8 +183,7 @@ export function registerLandmarkCourt(source: HTMLCanvasElement): {
   const corners = cornerL && cornerR &&
     Math.abs((cornerL.start - left.start) - (right.start - cornerR.start)) < .06
     ? [cornerL.start, cornerR.start] : null;
-  for (let y=0;y<height;y++) {
-    const sy=interpolate(yKnots,y/(height-1));
+  const transverseKnots = (sy: number): Knot[] => {
     const leftX = edgeAt(left,sy), rightX = edgeAt(right,sy);
     const keyL = keyAt(key.l,sy), keyR = keyAt(key.r,sy);
     const blend = corners ? Math.max(0, Math.min(1, (key.y-sy)/(key.y-top))) : 0;
@@ -193,6 +193,15 @@ export function registerLandmarkCourt(source: HTMLCanvasElement): {
       xKnots.splice(1,0,[.9/15, (leftX+(keyL-leftX)*t)*(1-blend)+corners[0]*blend]);
       xKnots.splice(4,0,[14.1/15, (rightX+(keyR-rightX)*t)*(1-blend)+corners[1]*blend]);
     }
+    return xKnots;
+  };
+  const toCourt = ({x,y}: AiPoint): AiPoint => ({
+    x: interpolate(transverseKnots(y).map(([court, photo]) => [photo, court]), x),
+    y: interpolate(yKnots.map(([court, photo]) => [photo, court]), y),
+  });
+  for (let y=0;y<height;y++) {
+    const sy=interpolate(yKnots,y/(height-1));
+    const xKnots = transverseKnots(sy);
     for (let x=0;x<width;x++) {
       const sx=interpolate(xKnots,x/(width-1));
       const dst=(y*width+x)*4;
@@ -202,7 +211,7 @@ export function registerLandmarkCourt(source: HTMLCanvasElement): {
     }
   }
   output.putImageData(image,0,0);
-  return {canvas,play:{x0:0,y0:0,x1:width,y1:height},anchors:{keyLeft:key.l.end,keyRight:key.r.end,baseline:top,keyEnd:key.y,arc:arc.y,corners,painted:paintLimits.length >= 4}};
+  return {canvas,toCourt,play:{x0:0,y0:0,x1:width,y1:height},anchors:{keyLeft:key.l.end,keyRight:key.r.end,baseline:top,keyEnd:key.y,arc:arc.y,corners,painted:paintLimits.length >= 4}};
 }
 
 /** Remove registered court ink from the analysis copy, keeping the review photo intact. */

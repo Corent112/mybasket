@@ -49,6 +49,7 @@ import {
   regionSignature,
   signatureDistance,
 } from "./court-geometry";
+import { traceLandmarkArrows } from "./landmark-arrows";
 import { isolateLandmarkInk, registerLandmarkCourt } from "./landmark-court";
 import { recoverReferenceInk } from "./reference-ink";
 import { recoverRedArrows } from "./reference-arrows";
@@ -1143,7 +1144,8 @@ export async function scanExerciseLocally(
             const keyEnd = courtToCanonical({ x: 9.95 / 15, y: 5.8 / 14 }, "half");
             const inPaint = (point: AiPoint) => point.x > keyTop.x - .015 && point.x < keyEnd.x + .015
               && point.y < keyEnd.y + .02;
-            const actions = (analysis?.actions ?? []).filter(action => action.action !== "screen"
+            const traced = traceLandmarkArrows(canvas, registered.toCourt, anchors.painted);
+            const fallbackActions = (analysis?.actions ?? []).filter(action => action.action !== "screen"
               && (action.confidence ?? 0) >= .65
               // On the printed key, inner lane lines can survive the outer
               // contour mask. Do not promote isolated fragments of those lines.
@@ -1153,6 +1155,19 @@ export async function scanExerciseLocally(
                 toPlayer: keys.has(action.toPlayer ?? "") ? action.toPlayer : undefined, confidence: .45,
                 source: "Tracé analysé après calage sur les lignes du terrain : à vérifier",
               }));
+            const nearby = (point: AiPoint, exclude?: string) => {
+              const matches = players.filter(player => player.key !== exclude)
+                .map(player => ({ player, distance: Math.hypot(player.x-point.x, player.y-point.y) }))
+                .sort((a,b) => a.distance-b.distance);
+              const first = matches[0];
+              return first && first.distance < .05 && (!matches[1] || matches[1].distance-first.distance > .022)
+                ? first.player.key : undefined;
+            };
+            const actions = traced.length ? traced.map((action, index) => {
+              const fromPlayer = action.from ? nearby(action.from) : undefined;
+              return { ...action, fromPlayer, order: index + 1,
+                toPlayer: action.action === "pass" ? nearby(action.to, fromPlayer) : undefined };
+            }) : fallbackActions;
             state.referenceFallback = {
               detected: true, courtType: "half", players, objects: [], actions, notes: "", rectified: true,
               courtReference, landmarkAligned: true,
