@@ -83,6 +83,23 @@ function pickControlPoints(points: AiPoint[], max = 5): AiPoint[] {
   return out;
 }
 
+/** Remove scanned zigzags from the movement path; the native tool draws them. */
+function dribbleControls(points: AiPoint[], courtType: "half" | "full"): AiPoint[] {
+  if (points.length < 3) return [];
+  const from = points[0], to = points[points.length - 1];
+  const dx = to.x - from.x, dy = to.y - from.y;
+  const length2 = dx * dx + dy * dy;
+  if (length2 < 1e-6) return [];
+  const bins = Array.from({ length: 5 }, () => ({ x: 0, y: 0, count: 0 }));
+  for (const point of points.slice(1, -1)) {
+    const t = ((point.x - from.x) * dx + (point.y - from.y) * dy) / length2;
+    if (t < .08 || t > .92) continue;
+    const bin = bins[Math.floor(t * bins.length)];
+    bin.x += point.x; bin.y += point.y; bin.count++;
+  }
+  return bins.filter(bin => bin.count).map(bin => clampPoint({ x: bin.x / bin.count, y: bin.y / bin.count }, courtType));
+}
+
 /** Un diagramme détecté → une Phase Plaquette native. */
 function diagramToPhase(diagram: AiExerciseDiagram, courtType: "half" | "full"): PlaquettePhase {
   const idByKey = new Map<string, string>();
@@ -144,15 +161,19 @@ function diagramToPhase(diagram: AiExerciseDiagram, courtType: "half" | "full"):
     ...((object.confidence ?? 1) < 0.5 ? { needsReview: true } : {}),
   }));
 
+  const positions = new Map(players.map(player => [player.id, { x: player.x, y: player.y }]));
   const lines = diagram.actions.map((action, index) => {
     const sourcePlayerId = action.fromPlayer ? idByKey.get(action.fromPlayer) : undefined;
-    const targetPlayerId = action.toPlayer ? idByKey.get(action.toPlayer) : undefined;
+    const targetPlayerId = action.action === "pass" && action.toPlayer && action.toPlayer !== action.fromPlayer ? idByKey.get(action.toPlayer) : undefined;
     const source = players.find((player) => player.id === sourcePlayerId);
     const target = players.find((player) => player.id === targetPlayerId);
 
-    const from = source ? { x: source.x, y: source.y } : clampPoint(action.from, courtType);
-    const to = target ? { x: target.x, y: target.y } : clampPoint(action.to, courtType);
+    const from = (source && positions.get(source.id)) || clampPoint(action.from, courtType);
+    const to = (target && positions.get(target.id)) || clampPoint(action.to, courtType);
+    if (source && ["cut", "screen", "dribble"].includes(action.action)) positions.set(source.id, to);
     const isShoot = action.action === "shoot";
+    const nativeDribble = action.action === "dribble";
+    const linkedPass = action.action === "pass" && Boolean(sourcePlayerId || targetPlayerId);
 
     return {
       id: uid(),
@@ -164,7 +185,9 @@ function diagramToPhase(diagram: AiExerciseDiagram, courtType: "half" | "full"):
       // `points` garde le chemin Vision complet, même pour cut/pass/dribble.
       // La Plaquette V15 sait rendre ce chemin directement. Les `ctrls` restent
       // présents comme repli natif si l'utilisateur édite ensuite la trajectoire.
-      ...(action.points?.length
+      ...(nativeDribble && action.points?.length
+        ? { ctrls: dribbleControls(action.points, courtType) }
+        : action.points?.length && !linkedPass
         ? {
             points: action.points.map((point) => clampPoint(point, courtType)),
             ...(action.action !== "freedraw" && action.points.length > 2
@@ -174,7 +197,7 @@ function diagramToPhase(diagram: AiExerciseDiagram, courtType: "half" | "full"):
         : {}),
       ...(action.color ? { color: action.color } : {}),
       ...(sourcePlayerId ? { sourcePlayerId } : {}),
-      ...(targetPlayerId ? { targetPlayerId } : {}),
+      ...(targetPlayerId ? { targetPlayerId, targetMode: "playerCurrentPoint" as const } : {}),
       ...(isShoot ? { target: "basket" as const } : {}),
       order: index + 1,
       startMode: "afterPrevious" as const,

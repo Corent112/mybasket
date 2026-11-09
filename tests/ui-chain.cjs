@@ -511,8 +511,8 @@ async function main() {
     diagrams: [
       diagram({
         players: [
-          player("7", 0.3, 0.2, { type: "unknown", typeConfidence: 0.2 }),
-          player("8", 0.5, 0.25, { labelConfident: false }),
+          { ...player("7", 0.3, 0.2, { type: "unknown", typeConfidence: 0.2 }), key: "p7" },
+          { ...player("8", 0.5, 0.25, { labelConfident: false }), key: "p8" },
         ],
         actions: [
           {
@@ -536,8 +536,22 @@ async function main() {
     !!findButton("Valider malgré"),
     buttons().map((b) => b.textContent).join(" | ").slice(0, 300)
   );
+  await click("Tracé pass");
+  for (const [label, value] of [["Joueur au départ", "p7"], ["Destinataire", "p8"]]) {
+    const field = [...document.querySelectorAll("label")].find(element => element.textContent.startsWith(label));
+    const select = field?.querySelector("select");
+    await act(async () => {
+      select.value = value;
+      select.dispatchEvent(new dom.window.Event("change", { bubbles: true }));
+    });
+  }
   await click("Valider malgré");
   const schemaReview = ui.importToPlaquetteSchema(lastImported);
+  const pass = schemaReview.phases[0].lines[0];
+  check("la passe corrigée transmet le passeur et le destinataire à la Plaquette",
+    pass.sourcePlayerId === schemaReview.phases[0].players[0].id &&
+    pass.targetPlayerId === schemaReview.phases[0].players[1].id &&
+    pass.targetMode === "playerCurrentPoint");
   const flagged = schemaReview.phases[0].players.filter((p) => p.needsReview === true);
   check("needsReview propagé aux objets Plaquette", flagged.length >= 1, `marqués=${flagged.length}`);
   const labelFlag = schemaReview.phases[0].players.find((p) => p.label === "8");

@@ -1411,9 +1411,10 @@ const currentRef = useRef(current);
   const lineStartN = (ph: Phase, l: Line): Pt => {
     if (!l.sourcePlayerId) return l.from;
     const pl = ph.players.find((p) => p.id === l.sourcePlayerId); if (!pl) return l.from;
-    const idx = ph.lines.findIndex((z) => z.id === l.id);
-    const upto = idx < 0 ? ph.lines.length : idx;
-    for (let i = upto - 1; i >= 0; i--) { const z = ph.lines[i]; if (z.sourcePlayerId === l.sourcePlayerId && MOVE_ACTIONS.includes(z.action)) return z.to; }
+    const ordered = orderedActions(ph);
+    const idx = ordered.findIndex((z) => z.id === l.id);
+    const upto = idx < 0 ? ordered.length : idx;
+    for (let i = upto - 1; i >= 0; i--) { const z = ordered[i]; if (z.sourcePlayerId === l.sourcePlayerId && MOVE_ACTIONS.includes(z.action)) return z.to; }
     return { x: pl.x, y: pl.y };
   };
   // joueur le plus proche d'un point (jeton OU fin logique), pour le snap de la passe
@@ -1650,12 +1651,26 @@ const currentRef = useRef(current);
     }
     return out;
   };
+  const anchoredScannedPath = (l: Line, from: Pt, to: Pt): Pt[] | undefined => {
+    const points = l.points;
+    if (!points || points.length < 2) return undefined;
+    if (!l.sourcePlayerId && !l.targetPlayerId) return points;
+    const first = points[0], last = points[points.length - 1];
+    return points.map((point, i) => {
+      const t = i / (points.length - 1);
+      return {
+        x: point.x + (1 - t) * (from.x - first.x) + t * (to.x - last.x),
+        y: point.y + (1 - t) * (from.y - first.y) + t * (to.y - last.y),
+      };
+    });
+  };
   // polyligne échantillonnée d'une trajectoire (du départ à l'arrivée, en passant par les points)
   const linePoly = (canvas: HTMLCanvasElement, l: Line): Pt[] => {
     // Vision import : `points` contient la géométrie réellement scannée.
     // On la restitue telle quelle au lieu de la remplacer par une spline.
-    if (l.action !== 'freedraw' && Array.isArray(l.points) && l.points.length >= 2) {
-      return l.points.map((point) => toPx(canvas, point));
+    if (l.action !== 'freedraw' && l.points?.length) {
+      const scanned = anchoredScannedPath(l, resolveFrom(l), resolveTo(l));
+      if (scanned) return scanned.map((point) => toPx(canvas, point));
     }
     const g = lineGeom(canvas, l);
     return catmullRom([g.f, ...g.ctrls, g.t]);
@@ -2564,9 +2579,8 @@ if (anim && anim.balls) {
 
   // point (canonique) à la fraction t le long de la trajectoire d'une action (courbe respectée)
   const actionPointN = (startN: Pt, line: Line, t: number): Pt => {
-    const poly = Array.isArray(line.points) && line.points.length >= 2
-      ? line.points
-      : catmullRom([startN, ...lineCtrls(line), line.to], 24);
+    const poly = anchoredScannedPath(line, startN, line.to)
+      ?? catmullRom([startN, ...lineCtrls(line), line.to], 24);
     if (poly.length < 2) return poly[0] || startN;
     let total = 0; const seg: number[] = [];
     for (let i = 1; i < poly.length; i++) { const d = Math.hypot(poly[i].x - poly[i - 1].x, poly[i].y - poly[i - 1].y); seg.push(d); total += d; }
@@ -2969,12 +2983,10 @@ if (anim && anim.balls) {
       if (active.shoot) {
         target = active.basketPt || basketFor(courtRef.current, from);
       } else if (active.target) {
-        target =
-          playerPosAtClock(sched, active.target, clock) ||
-          active.machineTarget ||
-          active.createdPt ||
-          active.to ||
-          from;
+        target = active.tMode === 'playerCurrentPoint'
+          ? playerPosAtClock(sched, active.target, active.wEnd) || active.to || from
+          : active.machineTarget || active.createdPt ||
+            playerPosAtClock(sched, active.target, clock) || active.to || from;
       } else {
         target = active.to || from;
       }
@@ -3591,7 +3603,9 @@ const owners=ownersAtClock(sched,ballEventsRef.current,clock);
         return { ...p, lines: p.lines.map((z) => {
           if (z.id !== id) return z;
           if (which === 'from') return { ...z, from: n, points: undefined };
-          if (which === 'to') return { ...z, to: n, points: undefined };
+          if (which === 'to') return z.action === 'pass' && z.targetPlayerId
+            ? { ...z, to: n, points: undefined, targetMode: 'player' as const, createdTargetPoint: n }
+            : { ...z, to: n, points: undefined };
           const cur = z.ctrls ?? (z.ctrl ? [z.ctrl] : []);
           const next = cur.slice();
           if (index != null && index < next.length) next[index] = n; else next.push(n);
@@ -4880,6 +4894,34 @@ const exportJson = () => {
   const actionIcon = (a: string) => (a === 'pass' ? '→' : a === 'dribble' ? '~' : a === 'cut' ? '↗' : a === 'screen' ? '⊥' : a === 'shoot' ? '◎' : '•');
   const actionName = (a: string) => (a === 'pass' ? 'Passe' : a === 'dribble' ? 'Dribble' : a === 'cut' ? 'Cut' : a === 'screen' ? 'Écran' : a === 'shoot' ? 'Tir' : a);
   const actionWho = (l: Line) => (l.action === 'pass' ? `${playerLabelById(l.sourcePlayerId || l.sourceMachineId)}→${playerLabelById(l.targetPlayerId || l.targetMachineId)}` : playerLabelById(l.sourcePlayerId));
+  const selectedTimingAction = selection.length === 1 && selection[0].type === 'line'
+    ? acts.find(action => action.id === selection[0].id) : undefined;
+  const editActionLink = (line: Line, change: 'source' | 'target' | 'mode', value: string) => {
+    if (!ph) return;
+    stopAnim();
+    pushHistory();
+    const shownTarget = resolveTo(line);
+    updatePhase(phase => ({
+      ...phase,
+      lines: phase.lines.map(item => {
+        if (item.id !== line.id) return item;
+        if (change === 'source') return {
+          ...item, from: resolveFrom(line), points: undefined, sourcePlayerId: value || undefined,
+          sourceMachineId: undefined,
+          ...(item.targetPlayerId === value ? { targetPlayerId: undefined, targetMode: undefined, createdTargetPoint: undefined, to: shownTarget } : {}),
+        };
+        if (change === 'target') return {
+          ...item, targetPlayerId: value || undefined, targetMachineId: undefined, points: undefined,
+          to: shownTarget, targetMode: value ? 'playerCurrentPoint' : undefined, createdTargetPoint: undefined,
+        };
+        return {
+          ...item, points: undefined, to: shownTarget,
+          targetMode: value === 'playerCurrentPoint' ? 'playerCurrentPoint' : 'player',
+          createdTargetPoint: value === 'playerCurrentPoint' ? undefined : shownTarget,
+        };
+      }),
+    }));
+  };
   const toggleActionWith = (lineId: string) => { pushHistory(); updatePhase((p) => ({ ...p, lines: p.lines.map((l) => (l.id === lineId ? { ...l, startMode: l.startMode === 'withPrevious' ? 'afterPrevious' : 'withPrevious' } : l)) })); };
 
   // Réordonne les actions de la phase sans toucher aux autres éléments du terrain.
@@ -5296,6 +5338,42 @@ const exportJson = () => {
                         );
                       })}
                     </div>
+                    {selectedTimingAction && ph && (
+                      <div style={{ display: 'grid', gap: 6, marginTop: 8, fontSize: '.75rem' }}>
+                        {!selectedTimingAction.sourceMachineId && (
+                          <label>Joueur au départ
+                            <select className="form-select" value={selectedTimingAction.sourcePlayerId || ''}
+                              onChange={event => editActionLink(selectedTimingAction, 'source', event.target.value)}>
+                              <option value="">Point libre</option>
+                              {ph.players.filter(player => player.id !== selectedTimingAction.targetPlayerId).map(player =>
+                                <option key={player.id} value={player.id}>{player.label}</option>)}
+                            </select>
+                          </label>
+                        )}
+                        {selectedTimingAction.action === 'pass' && !selectedTimingAction.targetMachineId && (
+                          <>
+                            <label>Destinataire
+                              <select className="form-select" value={selectedTimingAction.targetPlayerId || ''}
+                                onChange={event => editActionLink(selectedTimingAction, 'target', event.target.value)}>
+                                <option value="">Point libre</option>
+                                {ph.players.filter(player => player.id !== selectedTimingAction.sourcePlayerId).map(player =>
+                                  <option key={player.id} value={player.id}>{player.label}</option>)}
+                              </select>
+                            </label>
+                            {selectedTimingAction.targetPlayerId && (
+                              <label>Point d’arrivée
+                                <select className="form-select" value={selectedTimingAction.targetMode || 'player'}
+                                  onChange={event => editActionLink(selectedTimingAction, 'mode', event.target.value)}>
+                                  <option value="playerCurrentPoint">Position du joueur à la réception</option>
+                                  <option value="player">Point fixe sur le terrain</option>
+                                </select>
+                              </label>
+                            )}
+                            <div>Glisse la pointe de la passe pour fixer un autre point d’arrivée.</div>
+                          </>
+                        )}
+                      </div>
+                    )}
                   </div>
                 </div>
 

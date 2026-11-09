@@ -691,6 +691,29 @@ export default function ImportReview({
     }));
   };
 
+  const setActionPlayer = (index: number, end: "from" | "to", key: string) => {
+    updateDiagram(item => ({
+      ...item,
+      actions: item.actions.map((line, i) => {
+        if (i !== index) return line;
+        const player = item.players.find(candidate => candidate.key === key);
+        if (!player) return end === "from" ? { ...line, fromPlayer: undefined } : { ...line, toPlayer: undefined };
+        const lastMove = item.actions.slice(0, index).findLast(action =>
+          action.fromPlayer === key && ["cut", "screen", "dribble"].includes(action.action));
+        const point = lastMove?.to ?? { x: player.x, y: player.y };
+        const previous = end === "from" ? line.from ?? line.to : line.to;
+        const points = line.points?.map((p, j, all) => {
+          const t = j / Math.max(1, all.length - 1);
+          const weight = end === "from" ? 1 - t : t;
+          return { x: p.x + weight * (point.x - previous.x), y: p.y + weight * (point.y - previous.y) };
+        });
+        return end === "from"
+          ? { ...line, from: point, fromPlayer: key, points }
+          : { ...line, to: point, toPlayer: key, points };
+      }),
+    }));
+  };
+
   const confirmSelected = () => {
     if (!selection || !diagram) return;
     updateDiagram((item) => {
@@ -970,6 +993,32 @@ export default function ImportReview({
                       Trajectoire détectée : <strong>{selectedAction.action}</strong>. Choisis sa signification MyBasket ;
                       la géométrie du tracé est conservée.
                     </p>
+                    {selectedAction.action !== "freedraw" && (
+                      <div style={styles.fieldRow}>
+                        <label style={styles.fieldLabel}>
+                          Joueur au départ
+                          <select value={selectedAction.fromPlayer ?? ""} style={styles.input}
+                            onChange={event => setActionPlayer(selection.index, "from", event.target.value)}>
+                            <option value="">Point libre</option>
+                            {diagram.players.filter(player => player.key !== selectedAction.toPlayer).map(player => (
+                              <option key={player.key} value={player.key}>{player.label || "Sans numéro"}</option>
+                            ))}
+                          </select>
+                        </label>
+                        {selectedAction.action === "pass" && (
+                          <label style={styles.fieldLabel}>
+                            Destinataire
+                            <select value={selectedAction.toPlayer ?? ""} style={styles.input}
+                              onChange={event => setActionPlayer(selection.index, "to", event.target.value)}>
+                              <option value="">Point libre</option>
+                              {diagram.players.filter(player => player.key !== selectedAction.fromPlayer).map(player => (
+                                <option key={player.key} value={player.key}>{player.label || "Sans numéro"}</option>
+                              ))}
+                            </select>
+                          </label>
+                        )}
+                      </div>
+                    )}
                     <div style={styles.actionGrid}>
                       {actionChoices.map((choice) => (
                         <button

@@ -1193,7 +1193,13 @@ export async function scanExerciseLocally(
       try {
         const recovered = await recoverReferenceInk(state.flatReference, referenceFallback.actions);
         referenceFallback.players = recovered.players;
-        referenceFallback.actions = [...recovered.actions, ...referenceFallback.actions]
+        const colored = referenceFallback.actions.map(action => {
+          const from = action.from;
+          const nearby = from ? recovered.players.filter(player =>
+            player.team === "def" && Math.hypot(player.x - from.x, player.y - from.y) < .04) : [];
+          return nearby.length === 1 ? { ...action, fromPlayer: nearby[0].key } : action;
+        });
+        referenceFallback.actions = [...recovered.actions, ...colored]
           .map((action, index) => ({ ...action, order: index + 1 }));
       } catch (error) {
         debug.note(`Reconnaissance des tracés noirs indisponible : ${error instanceof Error ? error.message : String(error)}`);

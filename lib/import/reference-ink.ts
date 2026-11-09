@@ -150,7 +150,7 @@ export async function recoverReferenceInk(
     }
   }
 
-  const cutEnds: AiPoint[] = [];
+  const cutEnds: { head: Blob; cut: AiDiagramAction }[] = [];
   for (const glyph of digits(marks).filter(b=>!rings.some(r=>distance(r,b)<bw(r)*.5)).slice(0,12)) {
     const matches=heads.filter(h=>!used.has(h) && distance(h,glyph)>unit*.12).map(h=>{
       const samples=profile(glyph,h,Math.max(2,Math.round(unit*.009)));
@@ -159,12 +159,12 @@ export async function recoverReferenceInk(
     if (!(matches[0]?.score>.86) || matches[0].score-(matches[1]?.score??0)<.12) continue;
     const key=await addPlayer(glyph,glyph);
     addAction("cut",glyph,matches[0].h,key);
-    cutEnds.push(matches[0].h);
+    cutEnds.push({ head: matches[0].h, cut: actions[actions.length - 1] });
   }
 
   // Follow connected thick pixels through the junction. A sustained oscillation
   // across the chord distinguishes a dribble from an extra straight arrow.
-  for (const start of cutEnds) {
+  for (const { head: start, cut } of cutEnds) {
     for(const head of heads) {
       if(used.has(head)||distance(start,head)<unit*.16) continue;
       const {length,ux,uy}=vector(start,head);
@@ -196,7 +196,7 @@ export async function recoverReferenceInk(
         else if (cross>extreme+unit*.004) {if(trend<0) turns++; trend=1; extreme=cross;}
       }
       if(turns<5) continue;
-      addAction("dribble",start,head,undefined,path.filter((_,i)=>i%Math.max(1,Math.round(unit*.003))===0));
+      addAction("dribble",start,head,cut.fromPlayer,path.filter((_,i)=>i%Math.max(1,Math.round(unit*.003))===0));
       break;
     }
   }
@@ -204,5 +204,26 @@ export async function recoverReferenceInk(
     const p=canonical(glyph);
     if(redActions.some(a=>a.from && distance(a.from,p)<.04)) await addPlayer(glyph,glyph,true);
   }
+  // A pass towards the end of a cut reaches that player after the move.
+  // Match unambiguous same-team recipients only, and play the move first.
+  for (const pass of actions.filter(action => action.action === "pass" && action.fromPlayer)) {
+    const passer = players.find(player => player.key === pass.fromPlayer);
+    const candidates = players.filter(player => player !== passer && player.team === passer?.team)
+      .map(player => {
+        const move = cutEnds.find(({ cut }) => cut.fromPlayer === player.key)?.cut;
+        return { player, move, gap: distance(pass.to, move?.to ?? player) };
+      }).sort((a, b) => a.gap - b.gap);
+    const best = candidates[0];
+    if (!best || best.gap > .055 || (candidates[1] && candidates[1].gap - best.gap < .022)) continue;
+    pass.toPlayer = best.player.key;
+    if (best.move) {
+      actions.splice(actions.indexOf(pass), 1);
+      actions.splice(actions.indexOf(best.move) + 1, 0, pass);
+    }
+  }
+  const firstPasser = actions.find(action => action.action === "pass" && action.fromPlayer)?.fromPlayer;
+  const ringPlayers = players.filter(player => rings.some(ring => distance(player, canonical(ring)) < .012));
+  const carrier = ringPlayers.find(player => player.key === firstPasser) ?? (ringPlayers.length === 1 ? ringPlayers[0] : undefined);
+  if (carrier) carrier.hasBall = true;
   return {players,actions};
 }
